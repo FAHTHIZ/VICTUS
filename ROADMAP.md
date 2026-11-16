@@ -9,21 +9,21 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 ## Phase 0 — Foundation and project quality
 - [x] Project identity, principles, repository layout, agent contract, roadmap, architecture and license policy.
 - [x] Minimal C++20 core/runtime/test slice and initial CMake/desktop CI.
-- [ ] Verify hosted CI; fix any failures.
-- [ ] Formatting, static analysis, sanitizers, warning policy and dependency scanning.
+- [x] Verify hosted CI; fix any failures.
+- [~] Formatting, static analysis, sanitizers, warning policy and dependency scanning. (Sanitizer CI lanes, -Werror policy and .clang-format done; clang-tidy and dependency scanning pending.)
 - [ ] Reproducible developer setup, presets, troubleshooting and contribution workflow.
 **Exit:** clean Debug/Release build and tests on supported desktop CI.
 
 ## Phase 1 — Runtime, platform layer and diagnostics
-- [ ] Lifecycle, ownership, shutdown ordering, error/result types and validated configuration.
-- [ ] Structured logging, diagnostic events, crash context, build metadata and tracing.
+- [~] Lifecycle, ownership, shutdown ordering, error/result types and validated configuration. (Result/Error, JSON config parsing done.)
+- [x] Structured logging, diagnostic events, crash context, build metadata and tracing.
 - [ ] Platform services: filesystem, paths, clock, threads, window, input, device capabilities and lifecycle.
 - [ ] CLI modes: editor, game, headless, cook, test, benchmark and package.
 - [ ] Stable project configuration and runtime/editor/server target separation.
 **Exit:** predictable lifecycle and useful diagnostics in graphical and headless modes.
 
 ## Phase 2 — Performance laboratory
-- [ ] Reproducible benchmark harness with warm-up, repetitions, machine/build metadata and machine-readable output.
+- [x] Reproducible benchmark harness with warm-up, repetitions, machine/build metadata and machine-readable output.
 - [ ] CPU/GPU profiling, frame/tick histograms, p50/p95/p99, memory accounting and allocation tracking.
 - [ ] Workloads for ECS, jobs, transforms, physics, animation, visibility, rendering, asset import, streaming, networking and saves.
 - [ ] Desktop baselines; Android physical-device baselines when hardware is available.
@@ -32,7 +32,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 
 ## Phase 3 — Core simulation, ECS and jobs
 - [ ] Benchmark custom SoA/archetype approaches against Flecs and EnTT on VICTUS workloads.
-- [ ] Compare task schedulers and define dependency, affinity, cancellation and priority semantics.
+- [~] Compare task schedulers and define dependency, affinity, cancellation and priority semantics. (VICTUS work-stealing JobSystem + TaskGraph with priorities implemented and benchmarked; external comparison pending.)
 - [ ] VICTUS-owned ECS/system API or documented reason to expose a dependency.
 - [ ] Transform hierarchy, spatial indexes, events, deterministic random streams and controlled simulation clock.
 - [ ] Versioned snapshots, serialization, migrations and headless simulation host.

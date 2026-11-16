@@ -54,7 +54,7 @@ Requires CMake 3.24+ and a C++20 compiler:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ctest --test-dir build --build-config Release --output-on-failure
-./build/victus_runtime
+./build/bin/victus_bench_core   # core benchmark baseline
 ~~~
 
 For Visual Studio/Xcode, run the executable from the matching configuration output directory. See [CMake presets](CMakePresets.json).
