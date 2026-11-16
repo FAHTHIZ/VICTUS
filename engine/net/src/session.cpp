@@ -77,7 +77,6 @@ struct KeyBits {
         else hi |= 1ull << (i - 64);
     }
     KeyBits operator|(KeyBits o) const noexcept { return {lo | o.lo, hi | o.hi}; }
-    friend bool operator==(KeyBits, KeyBits) = default;
 };
 
 struct InputFrame {
@@ -1342,7 +1341,8 @@ struct NetClient::Impl {
         }
         // Everything else: interpolate between snapshots `interpolation_delay` in the past.
         const double render = now + clock_offset - options.interpolation_delay;
-        for (auto& [id, rm] : entities) {
+        for (auto& entry : entities) {
+            auto& rm = entry.second;
             if (rm.local || rm.samples.empty() || !w.alive(rm.e)) continue;
             auto* tr = w.get<Transform>(rm.e);
             if (!tr) continue;
