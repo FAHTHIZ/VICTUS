@@ -315,5 +315,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Anyone holding the token can take the character over (it is a bearer secret; with `--insecure` it travels in clear). Held characters are frozen in place and can be hit or pushed while their owner is away; games can react to `client_dropped`. No persistence across server restarts. Revisit when player identities arrive (bind tokens to accounts).
 
+## ADR-0031 — State probes in capture digests (accepted 2026-11-17)
+**Problem.** Capture digests covered entity names and transforms only. A script whose score, timer or state machine diverged, or a body whose velocity changed before it had moved 0.1 mm, passed the replay check until (and unless) a transform drifted, and then the report named the symptom, not the cause.
+
+**Candidates.** (1) Registered probes that add readable `@path|kind|value` lines next to the transform lines (Factorio's "heuristic CRC" of selected crucial state plus human-readable tags in its state dumps, https://www.factorio.com/blog/post/fff-55 and https://factorio.com/blog/post/fff-47). (2) Hash the serialized scene (every component) — complete, but editor-only and cosmetic fields would fail replays, and the report could only say which bytes differ. (3) Per-subsystem checksums recorded after each system (Photon Quantum's `recordChecksum` steps and per-component checksum dumps, https://doc.photonengine.com/quantum/v1/community-wiki/knowledge-base/debugging_desyncs) — pinpoints the system, but says nothing about which value, and needs one hash per system per digest. (4) Scripts opt in through `save_state()` — reuses existing code but most scripts do not implement it.
+
+**Decision.** (1). `gameplay::register_state_probe(name, fn)`; the script host probes started instances' own primitive fields (`_`-prefixed fields are private), physics probes velocities, spin and grounded state; values are rounded to 1e-4 and sorted with the other lines. Capture format version 2 marks probe-aware digests; version-1 captures keep transform-only digests so recorded regression suites stay valid.
+
+**Evidence.** STATUS Slice 29: a script-only divergence that moves nothing fails with "Keeper: script.score 11 expected 10" (and is missed by a version-1 capture of the same run); all four templates record and replay clean with probes; version-1 captures from the previous build still verify.
+
+**Risks / revisit triggers.** Any newly probed value can make older version-2 captures of a changed game fail; deliberate. Scripts that keep caches or debug counters in public fields make replays fail on them — rename to `_field`. Revisit (bump the format) when adding probes for joints, animation or UI, and if probe cost shows up in profiles of large scenes.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
