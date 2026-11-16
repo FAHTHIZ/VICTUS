@@ -1,18 +1,32 @@
 # VICTUS Performance Strategy
 
-Scale simulation and rendering across desktop/mobile. Do not promise identical desktop effects on every phone. Define tiers and preserve simulation semantics.
+Performance is a measured property of a specific build, device, driver, workload and quality profile—not a marketing adjective. Scale simulation and rendering from capable desktops to constrained mobile hardware without silently changing authoritative game rules.
 
-## Measure
-CPU/GPU frame time and subsystem timings; simulation tick/queue depth; resident/peak memory and allocations; asset import/decode/upload; streaming latency/cache hit rate; startup/package size; mobile battery/temperature where hardware permits. Record hardware, OS, driver, power mode, build flags, scene/settings, cache state, repetitions and variance. Report median/tail percentiles where meaningful.
+## Measurement
+Track CPU/GPU frame time and subsystem timings; simulation tick and queue depth; resident/peak memory and allocations; asset import/decode/upload; streaming latency/cache hit rate; shader compilation; network bandwidth/latency; save/load; startup/package size; mobile battery and sustained thermals where hardware permits. Record hardware, OS, driver, power mode, build flags, scene, settings, cache state, repetitions and variance. Report percentiles where meaningful.
+
+## Workload coverage
+Maintain reproducible benchmarks for:
+- ECS iteration, structural changes, transforms, jobs and large populations.
+- 2D sprite batches, tilemaps, overdraw, 2D lighting and particles.
+- 3D draw submission, geometry, materials, shadows, lighting, post effects and GPU memory.
+- Physics broadphase, character movement, navigation and crowds.
+- Skeletal animation, blend graphs, VFX simulation and audio mixing.
+- Asset import/cook/cache, texture transcode, shader compile and streaming.
+- Multiplayer replication, serialization, packet budgets and server tick stability.
+- Save/load, world transitions, startup, editor responsiveness and package size.
 
 ## Simulation
-Profile ECS iteration, structural changes, locality and component size. Batch independent systems and declare read/write dependencies. Use deterministic random streams/event queues. LOD tiers: full entity, simplified entity, regional aggregate, event-driven dormant. Preserve population/resource/ownership/time/relationship/event invariants. Bound catch-up and define overload. Separate authoritative ticks from render interpolation. Use spatial indexes/incremental updates.
+Profile ECS layout, locality, component size, structural changes and scheduler overhead. Use deterministic random streams and explicit event ordering where feasible. LOD tiers may include full entity, simplified entity, regional aggregate and event-driven dormant state. Preserve population/resource/ownership/time/relationship/event invariants. Bound catch-up and define overload behavior. Keep authoritative ticks separate from render interpolation.
 
 ## Rendering
-Render graph with explicit lifetime/synchronization; GPU culling/indirect draws where beneficial; mesh LOD, instancing, occlusion and streaming; mipmaps/platform compression/residency budgets; capability-constrained shader variants; dynamic resolution/adaptive quality with user override; scalable shadows/post effects. Profile CPU submission and GPU execution separately.
+Use explicit resource lifetimes/synchronization and avoid unnecessary CPU/GPU stalls. Evaluate GPU culling, indirect draws, instancing, occlusion, mesh LOD, texture residency and streaming on target hardware. Use capability-constrained shader variants and quality tiers. Dynamic resolution/adaptive quality must be measurable and user-overridable. Profile CPU submission and GPU execution separately. Advanced effects are optional where bandwidth, thermal or memory budgets make them unsuitable.
 
 ## Mobile
-Respect sustained thermals, budget CPU/GPU memory, handle suspend/resume/context loss, async-load with bounded upload budgets, reduce overdraw/bandwidth, validate physical devices. Emulators cannot prove thermal or battery behavior.
+Budget CPU/GPU memory and bandwidth; manage thermal throttling; handle suspend/resume and graphics context/device loss; bound asynchronous uploads; minimize startup and package size; validate touch and controller input. Emulators cannot establish sustained thermal or battery behavior. Publish physical-device results only when actually measured.
 
-## Benchmarks
-Stable workloads for entity scaling, settlement simulation, terrain/foliage streaming, animation crowds, physics broadphase, asset cook/cache, render-pass/GPU memory, save/load. Another developer must reproduce every published result.
+## Server and network
+Measure server tick budget, entity count, replication bandwidth, serialization cost, packet loss behavior, connection count, memory per session and recovery. Test headless servers independently of render workloads.
+
+## Benchmark quality
+Use stable workloads, warm/cold cache cases, repeated runs and machine-readable results. Never compare unequal scenes, quality settings, drivers or thermal conditions. Keep raw data and commands so another developer can reproduce every published claim.
