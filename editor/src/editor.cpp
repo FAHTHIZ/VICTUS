@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Editor core: projects, scenes, editing operations, undo, selection, play mode, rendering.
+#include "victus/gameui/gameui.hpp"
 #include "victus/editor/editor.hpp"
 
 #include "victus/core/profiler.hpp"
@@ -597,6 +598,7 @@ void Editor::reset_simulation() {
     // whenever the host changes.
     sim_ = gameplay::Simulation();
     gameplay::add_builtin_systems(sim_);
+    gameui::add_ui_systems(sim_);
     sim_.input = input_.get();
 }
 

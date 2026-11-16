@@ -26,3 +26,7 @@ victus_configure_target(victus_bench_animation)
 add_executable(victus_bench_particles particles_bench.cpp bench_harness.cpp)
 target_link_libraries(victus_bench_particles PRIVATE VICTUS::Particles)
 victus_configure_target(victus_bench_particles)
+
+add_executable(victus_bench_gameui gameui_bench.cpp bench_harness.cpp)
+target_link_libraries(victus_bench_gameui PRIVATE VICTUS::Gameui)
+victus_configure_target(victus_bench_gameui)

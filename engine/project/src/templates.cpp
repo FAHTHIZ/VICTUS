@@ -3,6 +3,7 @@
 // built-in behaviours, so a new project shows motion, lighting and a camera on first launch.
 #include "victus/animation/animation.hpp"
 #include "victus/particles/particles.hpp"
+#include "victus/gameui/gameui.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/physics/physics.hpp"
@@ -148,6 +149,56 @@ void sun(Scene& s) {
     l.type = LightComponent::Type::Directional;
     l.color = {1.0f, 0.96f, 0.9f, 1};
     l.intensity = 3.0f;
+}
+
+// ---- In-game UI (HUD) ---------------------------------------------------------------------------
+
+Entity ui_rect(Scene& s, Entity parent, std::string_view name, math::Vec2 anchor, math::Vec2 pivot, math::Vec2 pos,
+               math::Vec2 size) {
+    const Entity e = s.create(name, parent);
+    gameui::UiRectComponent r;
+    r.anchor_min = r.anchor_max = anchor;
+    r.pivot = pivot;
+    r.position = pos;
+    r.size = size;
+    s.world().add<gameui::UiRectComponent>(e, r);
+    return e;
+}
+
+gameui::UiTextComponent& ui_text(Scene& s, Entity e, std::string_view text, float size, bool bold) {
+    auto& t = s.world().add<gameui::UiTextComponent>(e);
+    t.text = std::string(text);
+    t.font_size = size;
+    t.bold = bold;
+    return t;
+}
+
+// A HUD canvas (authored at 1280x720, scaled with the window height) driven by hud.luau. Its
+// "Controls" button (top-right) toggles the panel below it listing the controls (also H).
+Entity hud(Scene& s, std::string_view controls, math::Vec2 panel_size) {
+    const Entity canvas = s.create("HUD");
+    s.world().add<gameui::UiCanvasComponent>(canvas);
+    attach(s, canvas, "scripts/hud.luau");
+
+    const Entity help = ui_rect(s, canvas, "Help Button", {1, 0}, {1, 0}, {-24, 24}, {164, 52});
+    s.world().add<gameui::UiPanelComponent>(help).border_width = 1.5f;
+    s.world().add<gameui::UiButtonComponent>(help).action = "toggle_help";
+    ui_text(s, help, "Controls", 22, true);
+
+    const Entity panel = ui_rect(s, canvas, "Controls Panel", {1, 0}, {1, 0}, {-24, 88}, panel_size); // under the button
+    auto& pp = s.world().add<gameui::UiPanelComponent>(panel);
+    pp.border_width = 1.5f;
+    gameui::UiRectComponent inner;
+    inner.anchor_min = {0, 0};
+    inner.anchor_max = {1, 1};
+    inner.size = {-40, -32}; // 20 x 16 padding
+    const Entity body = s.create("Controls Text", panel);
+    s.world().add<gameui::UiRectComponent>(body, inner);
+    auto& t = ui_text(s, body, controls, 22, false);
+    t.align = gameui::TextAlign::Left;
+    t.vertical_align = gameui::VerticalAlign::Top;
+    t.color = {0.92f, 0.94f, 1.0f, 1};
+    return canvas;
 }
 
 void build_3d(Scene& s) {
@@ -346,6 +397,8 @@ void build_3d(Scene& s) {
     l.color = {1.0f, 0.62f, 0.3f, 1};
     l.intensity = 12.0f;
     l.range = 7.0f;
+
+    (void)hud(s, "W A S D  or  arrow keys   walk\nSpace   jump\nWalk into the crates and the gate\nH   show / hide this panel", {450, 128});
 }
 
 SpriteComponent& sprite(Scene& s, Entity e, math::Vec2 size, math::Color tint, std::int32_t layer) {
@@ -470,6 +523,21 @@ void build_2d(Scene& s) {
     const Entity spinner = add(s, "Spinner", {4.5f, 0.2f, 0});
     sprite(s, spinner, {1.2f, 1.2f}, {0.95f, 0.85f, 0.2f, 1}, 1);
     s.world().add<RotatorComponent>(spinner) = {{0, 0, 1}, 90.0f};
+
+    // HUD: coin counter (updated by platformer.luau), a hidden win banner and the controls panel.
+    const Entity canvas = hud(s, "A / D  or  Left / Right   run\nSpace, W or Up   jump\nS or Down   drop through the ledge\nH   show / hide this panel",
+                              {450, 128});
+    const Entity counter = ui_rect(s, canvas, "Coin Counter", {0, 0}, {0, 0}, {24, 24}, {236, 60});
+    s.world().add<gameui::UiPanelComponent>(counter).border_width = 1.5f;
+    ui_text(s, counter, "Coins 0 / 3", 28, true).color = {1.0f, 0.86f, 0.35f, 1};
+    const Entity banner = ui_rect(s, canvas, "Win Banner", {0.5f, 0}, {0.5f, 0}, {0, 120}, {560, 88});
+    auto& bp = s.world().add<gameui::UiPanelComponent>(banner);
+    bp.color = {0.12f, 0.09f, 0.03f, 0.85f};
+    bp.border_color = {1.0f, 0.8f, 0.3f, 0.9f};
+    bp.border_width = 2.5f;
+    bp.corner_radius = 16;
+    ui_text(s, banner, "All coins collected!", 40, true).color = {1.0f, 0.86f, 0.35f, 1};
+    s.world().get<gameui::UiRectComponent>(banner)->visible = false;
 }
 
 void build_simulation(Scene& s) {
@@ -595,6 +663,13 @@ function Player:start()
     for _, e in scene.query("Collider2D") do
         if starts_with(e.name, "Coin") then self.total += 1 end
     end
+    self:show_score()
+end
+
+-- The HUD counter (a UiText on the "Coin Counter" panel).
+function Player:show_score()
+    local counter = scene.find("Coin Counter")
+    if counter then counter:set_text("Coins " .. self.score .. " / " .. self.total) end
 end
 
 function Player:fixed_update(dt)
@@ -622,7 +697,12 @@ function Player:on_trigger_enter(other)
         audio.play(self.coin_sound)
         self.score += 1
         log.info("Coin collected:", self.score, "/", self.total)
-        if self.score == self.total then log.info("All coins collected!") end
+        self:show_score()
+        if self.score == self.total then
+            log.info("All coins collected!")
+            local banner = scene.find("Win Banner")
+            if banner then banner:set_visible(true) end
+        end
     end
 end
 
@@ -698,6 +778,26 @@ end
 return Orbit
 )lua";
 
+constexpr const char* kHud = R"lua(-- HUD canvas: clicks on its buttons bubble up here as on_click(button, action). The
+-- "Controls" button (or H) shows and hides the controls panel.
+local Hud = {}
+
+function Hud:toggle_help()
+    local panel = scene.find("Controls Panel")
+    if panel then panel:set_visible(not panel:visible()) end
+end
+
+function Hud:on_click(button, action)
+    if action == "toggle_help" then self:toggle_help() end
+end
+
+function Hud:update(dt)
+    if input.pressed("H") then self:toggle_help() end
+end
+
+return Hud
+)lua";
+
 } // namespace
 
 const std::vector<TemplateInfo>& templates() {
@@ -717,13 +817,15 @@ std::vector<TemplateFile> template_files(std::string_view id) {
                 {std::string(robot::kModelPath) + ".meta", robot::meta()},
                 {"assets/scripts/follow_camera.luau", kFollowCamera},
                 {"assets/scripts/crate.luau", kCrate},
-                {"assets/audio/impact.wav", synth_impact()}};
+                {"assets/audio/impact.wav", synth_impact()},
+                {"assets/scripts/hud.luau", kHud}};
     if (id == "2d")
         return {{"assets/scripts/platformer.luau", kPlatformer},
                 {"assets/scripts/coin.luau", kCoin},
                 {"assets/audio/jump.wav", synth_jump()},
                 {"assets/audio/coin.wav", synth_coin()},
-                {"assets/audio/music.wav", synth_music()}};
+                {"assets/audio/music.wav", synth_music()},
+                {"assets/scripts/hud.luau", kHud}};
     if (id == "simulation") return {{"assets/scripts/orbit_camera.luau", kOrbitCamera}};
     return {};
 }
@@ -735,6 +837,7 @@ void register_components() {
     audio::register_components();
     animation::register_components();
     particles::register_components();
+    gameui::register_components();
 }
 
 Status build_template_scene(std::string_view id, Scene& s) {

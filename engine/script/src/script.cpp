@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/animation/animation.hpp"
+#include "victus/gameui/gameui.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/script/script.hpp"
 
@@ -871,6 +872,103 @@ int entity_drop_through(lua_State* L) {
     return 1;
 }
 
+// ---- In-game UI ---------------------------------------------------------------------------------
+
+// entity:set_text(value): sets the entity's UiText (numbers and booleans are converted).
+int entity_set_text(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    size_t len = 0;
+    const char* text = luaL_tolstring(L, 2, &len);
+    auto* t = s.world().get<gameui::UiTextComponent>(e);
+    if (!t) luaL_error(L, "entity has no UiText component");
+    t->text.assign(text, len);
+    return 0;
+}
+int entity_text(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* t = s.world().get<gameui::UiTextComponent>(e);
+    if (t) lua_pushlstring(L, t->text.data(), t->text.size());
+    else lua_pushnil(L);
+    return 1;
+}
+// entity:set_visible(bool): the UiCanvas when the entity is a canvas root, else its UiRect.
+int entity_set_visible(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const bool v = lua_toboolean(L, 2) != 0;
+    if (auto* c = s.world().get<gameui::UiCanvasComponent>(e)) c->visible = v;
+    else if (auto* r = s.world().get<gameui::UiRectComponent>(e)) r->visible = v;
+    else luaL_error(L, "entity has no UiRect or UiCanvas component");
+    return 0;
+}
+int entity_visible(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    if (const auto* c = s.world().get<gameui::UiCanvasComponent>(e)) lua_pushboolean(L, c->visible);
+    else if (const auto* r = s.world().get<gameui::UiRectComponent>(e)) lua_pushboolean(L, r->visible);
+    else lua_pushnil(L);
+    return 1;
+}
+// entity:ui_state() -> {visible, hovered, pressed, focused, x, y, width, height, clicks}
+// (pixels, from the last layout) or nil before the first layout.
+int entity_ui_state(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* st = s.world().get<gameui::UiStateComponent>(e);
+    if (!st) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 9);
+    const auto set_b = [&](const char* k, bool v) {
+        lua_pushboolean(L, v);
+        lua_setfield(L, -2, k);
+    };
+    const auto set_n = [&](const char* k, double v) {
+        lua_pushnumber(L, v);
+        lua_setfield(L, -2, k);
+    };
+    set_b("visible", st->visible);
+    set_b("hovered", st->hovered);
+    set_b("pressed", st->pressed);
+    set_b("focused", st->focused);
+    set_n("x", st->rect.x);
+    set_n("y", st->rect.y);
+    set_n("width", st->rect.w);
+    set_n("height", st->rect.h);
+    set_n("clicks", static_cast<double>(st->clicks));
+    return 1;
+}
+// ui.screen_size() -> width, height (pixels the UI is laid out for).
+int ui_screen_size(lua_State* L) {
+    const math::Vec2 sz = gameui::screen_size(scene_of(L));
+    lua_pushnumber(L, sz.x);
+    lua_pushnumber(L, sz.y);
+    return 2;
+}
+int ui_pointer_over(lua_State* L) {
+    lua_pushboolean(L, gameui::pointer_over_ui(scene_of(L)));
+    return 1;
+}
+int ui_focus(lua_State* L) {
+    auto& s = scene_of(L);
+    gameui::focus(s, lua_isnoneornil(L, 1) ? Entity{} : check_live(L, 1, s));
+    return 0;
+}
+int ui_focused(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = gameui::focused(s);
+    push_entity(L, s.world().alive(e) ? e : Entity{});
+    return 1;
+}
+int ui_click(lua_State* L) {
+    auto& s = scene_of(L);
+    lua_pushboolean(L, gameui::click(s, check_live(L, 1, s)));
+    return 1;
+}
+
 // entity:character_state() -> {valid, grounded, on_steep_slope, ground_normal, velocity, ground}
 int entity_character_state(lua_State* L) {
     auto& s = scene_of(L);
@@ -1184,6 +1282,11 @@ void open_victus_libs(lua_State* L) {
                                 {"stop_audio", entity_stop_audio},
                                 {"pause_audio", entity_pause_audio},
                                 {"audio_playing", entity_audio_playing},
+                                {"set_text", entity_set_text},
+                                {"text", entity_text},
+                                {"set_visible", entity_set_visible},
+                                {"visible", entity_visible},
+                                {"ui_state", entity_ui_state},
                                 {nullptr, nullptr}};
     for (const luaL_Reg* f = methods; f->name; ++f) {
         lua_pushcfunction(L, f->func, f->name);
@@ -1244,6 +1347,10 @@ void open_victus_libs(lua_State* L) {
                                   {"set_muted", audio_set_muted}, {"muted", audio_muted},
                                   {nullptr, nullptr}};
     register_lib(L, "audio", audio_fns);
+    const luaL_Reg ui_fns[] = {{"screen_size", ui_screen_size}, {"pointer_over_ui", ui_pointer_over},
+                               {"focus", ui_focus},             {"focused", ui_focused},
+                               {"click", ui_click},             {nullptr, nullptr}};
+    register_lib(L, "ui", ui_fns);
     lua_pushcfunction(L, log_info, "print");
     lua_setglobal(L, "print");
 }
@@ -1371,6 +1478,7 @@ void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, co
         (void)h.call(in, "update", &dt);
     }
     dispatch_physics_events(scene);
+    dispatch_ui_events(scene);
     h.counters.instances = h.instances.size();
 }
 
@@ -1405,6 +1513,29 @@ void ScriptHost::dispatch_physics_events(scene::Scene& scene) {
     for (const auto& ev : events) {
         notify(ev.a, ev.b, ev, false);
         notify(ev.b, ev.a, ev, true);
+    }
+}
+
+void ScriptHost::dispatch_ui_events(scene::Scene& scene) {
+    if (gameui::events(scene).empty()) return;
+    Impl& h = *impl_;
+    // Copy: on_click handlers may click other buttons (those events are seen next frame).
+    const std::vector<gameui::ClickEvent> events = gameui::events(scene);
+    gameui::mark_events_delivered(scene);
+    for (const auto& ev : events) {
+        // The button and then each ancestor, so a menu script on a parent handles its buttons.
+        for (Entity e = ev.button; !e.is_null() && scene.world().alive(e); e = scene.parent(e)) {
+            const auto* sc = scene.world().get<ScriptComponent>(e);
+            if (!sc || !sc->enabled) continue;
+            auto it = h.instances.find(e.bits());
+            if (it == h.instances.end() || it->second.faulted || !it->second.started) continue;
+            lua_State* L = h.L;
+            (void)h.call_with(it->second, "on_click", [&] {
+                push_entity(L, scene.world().alive(ev.button) ? ev.button : Entity{});
+                lua_pushlstring(L, ev.action.data(), ev.action.size());
+                return 2;
+            });
+        }
     }
 }
 

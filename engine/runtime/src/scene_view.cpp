@@ -42,6 +42,7 @@ std::optional<render::Camera2D> scene_camera_2d(Scene& scene, float viewport_hei
 Result<std::unique_ptr<SceneView>> SceneView::create(render::GpuContext& ctx, rhi::Format target_format) {
     std::unique_ptr<SceneView> v(new SceneView());
     v->format_ = target_format;
+    v->gpu_ = &ctx;
     auto r = render::SceneRenderer::create(ctx);
     if (!r) return std::move(r).error();
     v->renderer_ = std::move(r).value();
@@ -76,13 +77,29 @@ Result<SceneViewStats> SceneView::render(rhi::CommandBuffer& cmd, Scene& scene, 
         auto pass = cmd.begin_render_pass(rp);
         sprites_->render(pass, cmd);
         pass.end();
+        VICTUS_TRY_STATUS(render_ui(cmd, scene, assets, target, width, height, options, stats));
         return stats;
     }
     stats.extract = extract_scene(scene, assets, *renderer_, options.settings, options.camera_3d);
     if (options.overlay_3d) options.overlay_3d(*renderer_);
     VICTUS_TRY_STATUS(renderer_->render(cmd, target, width, height, format_));
     stats.scene = renderer_->stats();
+    VICTUS_TRY_STATUS(render_ui(cmd, scene, assets, target, width, height, options, stats));
     return stats;
+}
+
+Status SceneView::render_ui(rhi::CommandBuffer& cmd, Scene& scene, GpuAssetCache& assets, rhi::TextureHandle target,
+                            std::uint32_t width, std::uint32_t height, const SceneViewOptions& options, SceneViewStats& stats) {
+    if (!options.draw_ui || scene.world().count<gameui::UiCanvasComponent>() == 0) return {};
+    if (!ui_) {
+        auto r = GameUiRenderer::create(*gpu_, format_);
+        if (!r) return std::move(r).error();
+        ui_ = std::move(r).value();
+    }
+    auto s = ui_->render(cmd, scene, assets, target, width, height);
+    if (!s) return std::move(s).error();
+    stats.ui = *s;
+    return {};
 }
 
 } // namespace victus::runtime
