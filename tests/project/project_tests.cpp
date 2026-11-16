@@ -5,6 +5,7 @@
 #include "victus/project/project.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
+#include "victus/navigation/navigation.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/physics/physics.hpp"
@@ -202,6 +203,7 @@ struct TemplateRun {
     std::unique_ptr<assets::AssetDatabase> db;
     std::unique_ptr<animation::AnimationSystem> animation;
     std::unique_ptr<particles::ParticleSystem> particles;
+    std::unique_ptr<navigation::NavigationSystem> navigation;
     std::unique_ptr<audio::AudioEngine> audio;
     gameplay::Simulation sim;
     gameplay::ManualInput input;
@@ -268,6 +270,8 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     animation::add_animation_systems(r->sim, *r->animation);
     r->particles = std::make_unique<particles::ParticleSystem>();
     particles::add_particle_systems(r->sim, *r->particles);
+    r->navigation = std::make_unique<navigation::NavigationSystem>();
+    navigation::add_navigation_systems(r->sim, *r->navigation);
     audio::EngineOptions ao;
     ao.assets_root = dir / "assets";
     ao.null_device = true;
@@ -498,6 +502,44 @@ TEST_CASE("templates: 3D player moves with WASD and the camera follows") {
     CHECK(math::length(r->pos("Crate 3") - crate_before) > 0.5f);
     CHECK(r->audio->stats().one_shots >= 1); // falling crates played impact sounds
     CHECK(r->audio->stats().load_errors == 0);
+    CHECK(r->host->stats().errors == 0);
+    for (const auto& e : r->host->recent_errors()) MESSAGE(e);
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("templates: 3D companion follows the player over the navmesh") {
+    const auto dir = temp_dir("tpl3dnav");
+    auto r = start_template("3d", dir);
+    r->frames(2);
+    REQUIRE(r->navigation->valid()); // built on first use from the static colliders
+    CHECK(r->navigation->stats().polygons > 0);
+    const scene::Entity buddy = r->scene.find_by_name("Buddy");
+    REQUIRE_FALSE(buddy.is_null());
+    CHECK(r->navigation->agent_state(buddy).active);
+    const math::Vec3 b0 = r->pos("Buddy");
+    // Walk the player to the far right edge; the buddy re-plans and follows.
+    r->input.set_key("D", true);
+    r->frames(100);
+    r->input.set_key("D", false);
+    const math::Vec3 p = r->pos("Player");
+    CHECK(p.x > 7.0f);
+    CHECK(r->navigation->stats().moving == 1);
+    r->frames(300);
+    const math::Vec3 b1 = r->pos("Buddy");
+    CAPTURE(b0);
+    CAPTURE(b1);
+    CAPTURE(p);
+    CHECK(b1.x > b0.x + 6.0f);
+    const float gap = std::hypot(b1.x - p.x, b1.z - p.z);
+    CHECK(gap < 2.6f);
+    CHECK(gap > 0.8f); // keeps its distance
+    CHECK(std::fabs(b1.y) < 0.1f); // walked on the ground (character mover)
+    CHECK(r->navigation->stats().moving == 0); // arrived and idles
+    for (const scene::Entity c : r->scene.children(buddy)) {
+        const auto anim = r->animation->status(r->scene, c);
+        if (anim.valid) CHECK(anim.clip == "Idle");
+    }
     CHECK(r->host->stats().errors == 0);
     for (const auto& e : r->host->recent_errors()) MESSAGE(e);
     std::error_code ec;

@@ -30,3 +30,7 @@ victus_configure_target(victus_bench_particles)
 add_executable(victus_bench_gameui gameui_bench.cpp bench_harness.cpp)
 target_link_libraries(victus_bench_gameui PRIVATE VICTUS::Gameui)
 victus_configure_target(victus_bench_gameui)
+
+add_executable(victus_bench_navigation navigation_bench.cpp bench_harness.cpp)
+target_link_libraries(victus_bench_navigation PRIVATE VICTUS::Navigation)
+victus_configure_target(victus_bench_navigation)

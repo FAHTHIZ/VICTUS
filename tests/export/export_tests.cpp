@@ -66,6 +66,7 @@ TEST_CASE("export: executable names are file-system safe") {
     CHECK(player::executable_base_name("v1.2-beta") == "v1.2-beta");
     CHECK(player::third_party_notices().find("Jolt Physics") != std::string_view::npos);
     CHECK(player::third_party_notices().find("Box2D") != std::string_view::npos);
+    CHECK(player::third_party_notices().find("Recast & Detour") != std::string_view::npos);
     CHECK(player::third_party_notices().find("Luau") != std::string_view::npos);
     CHECK(player::third_party_notices().find("Dear ImGui") != std::string_view::npos);
     CHECK(player::third_party_notices().find("SIL OPEN FONT LICENSE") != std::string_view::npos);

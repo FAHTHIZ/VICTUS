@@ -234,7 +234,7 @@ TEST_CASE("editor: 3D project workflow end to end") {
     // Template scripts run in play mode: the player is a simulated character standing on the
     // ground, the camera follows, no script errors.
     REQUIRE(h.ed->play_scripts() != nullptr);
-    CHECK(h.ed->play_scripts()->stats().instances == 6); // camera, player, 3 crates, HUD
+    CHECK(h.ed->play_scripts()->stats().instances == 7); // camera, player, buddy, 3 crates, HUD
     CHECK(h.ed->play_scripts()->stats().errors == 0);
     {
         const Entity ap = s.find_by_name("Player");
@@ -246,6 +246,10 @@ TEST_CASE("editor: 3D project workflow end to end") {
         CHECK(cs.grounded);
         CHECK(play.world().get<Transform>(pp)->position.y == doctest::Approx(0.0f).epsilon(0.05));
     }
+    // The companion's navmesh was built for the play session.
+    REQUIRE(h.ed->play_navigation() != nullptr);
+    CHECK(h.ed->play_navigation()->valid());
+    CHECK(h.ed->play_navigation()->stats().agents == 1);
     h.ed->create_entity(editor::Primitive::Sphere); // play-time edit, not undoable, discarded
     CHECK(h.ed->undo_stack().size() == undo_depth);
     auto play_px = h.viewport();
@@ -255,6 +259,18 @@ TEST_CASE("editor: 3D project workflow end to end") {
     CHECK(&h.ed->active_scene() == &s);
     CHECK(s.world().get<Transform>(spinner)->rotation == authored);
     CHECK(h.ed->play_scripts() == nullptr);
+    CHECK(h.ed->play_navigation() == nullptr);
+    // View > Navigation Mesh previews the navmesh while editing.
+    h.ed->set_show_navmesh(true);
+    h.frames(1);
+    REQUIRE(h.ed->navmesh_preview() != nullptr);
+    CHECK(h.ed->navmesh_preview()->valid());
+    CHECK(h.ed->navmesh_preview()->stats().polygons > 0);
+    const std::uint32_t builds = h.ed->navmesh_preview()->stats().builds;
+    h.frames(2);
+    CHECK(h.ed->navmesh_preview()->stats().builds == builds); // unchanged scene: no rebuild
+    test::save_output("editor_viewport_navmesh", Harness::VW, Harness::VH, h.viewport());
+    h.ed->set_show_navmesh(false);
 
     // Save and reopen: the edits persist and the scene is clean.
     REQUIRE(h.ed->save_scene().ok());

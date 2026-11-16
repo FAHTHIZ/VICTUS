@@ -129,3 +129,8 @@ victus_add_test(victus_particles_tests
     SOURCES particles/particles_tests.cpp
     DEPS VICTUS::Particles VICTUS::Core
     LABELS particles)
+
+victus_add_test(victus_navigation_tests
+    SOURCES navigation/navigation_tests.cpp
+    DEPS VICTUS::Navigation VICTUS::Physics VICTUS::Core
+    LABELS navigation)

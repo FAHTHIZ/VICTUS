@@ -150,3 +150,26 @@ function(victus_fetch_miniaudio)
         target_link_libraries(victus_miniaudio PUBLIC Threads::Threads ${CMAKE_DL_LIBS} m)
     endif()
 endfunction()
+
+# Recast & Detour 1.6.0 (zlib). https://github.com/recastnavigation/recastnavigation/releases/tag/v1.6.0
+# VICTUS compiles Recast (navmesh generation), Detour (navmesh + queries) and DetourCrowd (agent
+# steering/avoidance) sources into one static library instead of using the upstream CMake project
+# (which adds install/export rules and demo targets).
+function(victus_fetch_recast)
+    if(TARGET victus_recast)
+        return()
+    endif()
+    FetchContent_Declare(recastnavigation
+        URL https://github.com/recastnavigation/recastnavigation/archive/refs/tags/v1.6.0.tar.gz
+        URL_HASH SHA256=d48ca0121962fa0639502c0f56c4e3ae72f98e55d88727225444f500775c0074
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        SOURCE_SUBDIR victus_no_cmake)
+    FetchContent_MakeAvailable(recastnavigation)
+    set(dir ${recastnavigation_SOURCE_DIR})
+    file(GLOB sources ${dir}/Recast/Source/*.cpp ${dir}/Detour/Source/*.cpp ${dir}/DetourCrowd/Source/*.cpp)
+    add_library(victus_recast STATIC ${sources})
+    target_include_directories(victus_recast SYSTEM PUBLIC ${dir}/Recast/Include ${dir}/Detour/Include ${dir}/DetourCrowd/Include)
+    set_target_properties(victus_recast PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_options(victus_recast PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
+    victus_third_party_tsan(victus_recast)
+endfunction()

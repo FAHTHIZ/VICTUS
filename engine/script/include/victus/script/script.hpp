@@ -33,6 +33,12 @@
 // `audio.set_muted(bus, m)/muted(bus)`, `audio.available()`; entity methods `play_audio()`,
 // `stop_audio()`, `pause_audio(paused)`, `audio_playing()` for the entity's AudioSource.
 //
+// Navigation API (when a NavigationSystem is bound; the navmesh is built on first use from the
+// scene's static colliders): `nav.available()`, `nav.find_path(from, to) -> {points}, partial`,
+// `nav.nearest(p, extent?)`, `nav.raycast(from, to) -> hit, point, normal`,
+// `nav.random_point(seed?)`, `nav.rebuild()`; entity methods for NavAgent entities
+// `set_destination(p)`, `stop()` and `nav_state()`.
+//
 // Safety: every VM is sandboxed (read-only standard libraries and globals, per-script global
 // tables, no io/os/package/debug access), each call has a wall-clock budget enforced through the
 // interrupt callback, and the heap has a byte limit. A failing instance is disabled and its
