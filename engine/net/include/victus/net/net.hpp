@@ -21,7 +21,10 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/scene/scene.hpp"
 
+#include <array>
 #include <cstdint>
+#include <filesystem>
+#include <optional>
 #include <memory>
 #include <span>
 #include <string>
@@ -76,6 +79,7 @@ struct TransportEvent {
     PeerId peer{0};
     Channel channel{Channel::Reliable};
     std::vector<std::uint8_t> data;
+    std::string reason; // Disconnected: why, when the transport knows (e.g. "wrong password")
 };
 
 struct PeerStats {
@@ -83,6 +87,9 @@ struct PeerStats {
     std::uint64_t bytes_sent{0}, bytes_received{0};
     std::uint64_t packets_sent{0}, packets_received{0};
     std::uint64_t packets_dropped{0}; // emulated drops (LinkConditions)
+    bool encrypted{false};            // an encrypted, authenticated session is open with the peer
+    std::string remote_key;           // client: the server's public key (hex) once verified
+    std::uint64_t packets_rejected{0}; // forged, corrupted or replayed packets discarded
 };
 
 class Transport {
@@ -99,6 +106,8 @@ public:
     [[nodiscard]] virtual std::string_view name() const = 0;
     // Largest payload accepted per send (larger sends are dropped and logged).
     [[nodiscard]] virtual std::size_t max_payload() const { return 64 * 1024; }
+    // True when every session on this transport is encrypted and authenticated.
+    [[nodiscard]] virtual bool encrypted() const { return false; }
 };
 
 struct UdpOptions {
@@ -175,6 +184,8 @@ struct NetDiagnostics {
     float prediction_error{0};         // client: last reconciliation error of the local player (m)
     std::uint64_t corrections{0};      // client: reconciliations that moved the local player
     std::uint64_t rejected_messages{0}; // server: invalid/over-limit client payloads dropped
+    bool encrypted{false};             // traffic is encrypted and authenticated (with_encryption)
+    std::string server_key;            // client: the server's verified public key (hex)
     std::string status;                // human-readable state ("connected", "rejected: ...")
 };
 
@@ -213,6 +224,40 @@ void bind(scene::Scene& scene, NetContext* context);
 // Fails without authority or when the value is too large / not JSON-representable.
 Status set_var(scene::Scene& scene, Entity e, std::string_view key, const json::Value& value);
 [[nodiscard]] json::Value get_var(scene::Scene& scene, Entity e, std::string_view key);
+
+// ---- secure sessions ----------------------------------------------------------------------------
+//
+// with_encryption() wraps any transport so that every packet is encrypted and authenticated
+// (XChaCha20-Poly1305 with per-direction keys from an X25519 handshake, Noise "NX"-style: the
+// client sends an ephemeral key, the server answers with an ephemeral and its long-term static
+// key and proves it holds the static secret). Clients may pin the server's public key; servers may
+// require a password, sent only after the channel is encrypted. Forged, corrupted and replayed
+// packets are discarded. The session layer only sees Connected once the handshake (and password
+// check) has succeeded. See docs/NETWORKING_SPEC.md "Secure sessions".
+
+using Key = std::array<std::uint8_t, 32>;
+struct KeyPair {
+    Key secret{};
+    Key public_key{};
+};
+// Fills `out` from the operating system's cryptographic random generator.
+Status random_bytes(std::span<std::uint8_t> out);
+[[nodiscard]] Result<KeyPair> generate_key_pair();
+[[nodiscard]] Key public_key_of(const Key& secret);
+[[nodiscard]] std::string key_to_hex(const Key& key);
+[[nodiscard]] Result<Key> key_from_hex(std::string_view hex);
+// Loads a server secret key (64 hex characters) or creates one (file readable only by the owner
+// on POSIX) so the public key players pin stays the same across restarts.
+[[nodiscard]] Result<KeyPair> load_or_create_key(const std::filesystem::path& path);
+
+struct SecureOptions {
+    std::optional<Key> server_secret;       // servers: long-term static key (required)
+    std::optional<Key> expected_server_key; // clients: refuse servers with another public key
+    std::string password;                   // servers: required from clients when non-empty; clients: sent
+    double handshake_timeout{5.0};          // seconds from connection to an open session
+};
+inline constexpr std::size_t kSecureOverhead = 26; // per-packet bytes added by encryption
+[[nodiscard]] std::unique_ptr<Transport> with_encryption(std::unique_ptr<Transport> inner, SecureOptions options);
 
 // ---- sessions ---------------------------------------------------------------------------------
 

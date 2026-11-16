@@ -186,6 +186,16 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             if (!c) return std::move(c).error();
             t = net::with_conditions(std::move(t), *c);
         }
+        if (!o.insecure) {
+            net::SecureOptions sec;
+            if (!o.server_key.empty()) {
+                auto k = net::key_from_hex(o.server_key);
+                if (!k) return make_error(ErrorCode::InvalidArgument, "server key: " + k.error().message);
+                sec.expected_server_key = *k;
+            }
+            sec.password = o.net_password;
+            t = net::with_encryption(std::move(t), std::move(sec));
+        }
         net::ClientOptions co;
         co.host = addr->first;
         co.port = addr->second;

@@ -23,6 +23,9 @@ struct PlayerOptions {
     std::string connect;         // host[:port] of a `victus serve` server; empty = play offline
     std::string player_name{"player"}; // name shown to other players when connected
     std::string net_conditions;  // link emulation for testing, e.g. "latency=80,loss=0.05"
+    std::string server_key;      // expected server public key (hex); empty = accept and report it
+    std::string net_password;    // sent to servers started with --password (over the encrypted channel)
+    bool insecure{false};        // connect without encryption (to servers started with --insecure)
     // Save games folder; empty = `<user data>/saves/<game>` for exported games and
     // `<project>/.victus/saves` when running a project.
     fs::Path saves;

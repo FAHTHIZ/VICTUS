@@ -3,7 +3,8 @@
 // transports, and full server/client sessions — handshake and validation, player templates,
 // input routing, client-side prediction and reconciliation, interpolated proxies, network
 // variables, script messages, despawn on disconnect, snapshot budgets and malformed traffic,
-// and (Slice 23) delta snapshots against acknowledged baselines.
+// (Slice 23) delta snapshots against acknowledged baselines and (Slice 26) encrypted,
+// authenticated sessions.
 #include "victus/net/net.hpp"
 #include "victus/net/wire.hpp"
 
@@ -14,6 +15,7 @@
 
 #include <doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -784,4 +786,343 @@ TEST_CASE("session: delta snapshots need less bandwidth than full snapshots") {
     const double delta = measure(true);
     MESSAGE("bytes per snapshot (incl. reliable traffic): full " << full << ", delta " << delta);
     CHECK(delta < full * 0.6);
+}
+
+// ---- secure sessions (Slice 26) -----------------------------------------------------------------
+
+namespace {
+
+// Records what passes through to the wire and can inject packets (an on-path attacker).
+class TapTransport final : public Transport {
+public:
+    explicit TapTransport(std::unique_ptr<Transport> inner) : inner_(std::move(inner)) {}
+    Result<PeerId> connect(std::string_view host, std::uint16_t port) override { return inner_->connect(host, port); }
+    void send(PeerId peer, Channel channel, std::span<const std::uint8_t> data) override {
+        sent.push_back({channel, {data.begin(), data.end()}});
+        inner_->send(peer, channel, data);
+    }
+    void disconnect(PeerId peer) override { inner_->disconnect(peer); }
+    void poll(double now, std::vector<TransportEvent>& out) override { inner_->poll(now, out); }
+    PeerStats stats(PeerId peer) const override { return inner_->stats(peer); }
+    std::string_view name() const override { return inner_->name(); }
+    void inject(PeerId peer, Channel channel, const std::vector<std::uint8_t>& data) { inner_->send(peer, channel, data); }
+    std::vector<std::pair<Channel, std::vector<std::uint8_t>>> sent;
+
+private:
+    std::unique_ptr<Transport> inner_;
+};
+
+struct SecurePair {
+    MemoryNetwork net;
+    std::unique_ptr<Transport> server, client;
+    TapTransport* tap{nullptr};
+    PeerId to_server{0}, to_client{0};
+    std::vector<TransportEvent> se, ce;
+    KeyPair server_key = std::move(generate_key_pair()).value();
+
+    SecurePair(SecureOptions co, std::string server_password = {}, bool secure_server = true, bool secure_client = true) {
+        std::unique_ptr<Transport> s = std::move(net.listen(9)).value();
+        if (secure_server) {
+            SecureOptions so;
+            so.server_secret = server_key.secret;
+            so.password = std::move(server_password);
+            s = with_encryption(std::move(s), so);
+        }
+        server = std::move(s);
+        auto t = std::make_unique<TapTransport>(net.endpoint());
+        tap = t.get();
+        client = secure_client ? with_encryption(std::move(t), std::move(co)) : std::unique_ptr<Transport>(std::move(t));
+        to_server = client->connect("memory", 9).value();
+    }
+    void pump(int rounds = 6, double now = 0) {
+        for (int i = 0; i < rounds; ++i) {
+            client->poll(now, ce);
+            server->poll(now, se);
+        }
+        for (const auto& e : se)
+            if (e.type == TransportEvent::Type::Connected) to_client = e.peer;
+    }
+    static int count(const std::vector<TransportEvent>& v, TransportEvent::Type t) {
+        return static_cast<int>(std::count_if(v.begin(), v.end(), [&](const TransportEvent& e) { return e.type == t; }));
+    }
+};
+
+std::vector<std::uint8_t> bytes(std::string_view s) { return {s.begin(), s.end()}; }
+
+} // namespace
+
+TEST_CASE("secure: keys, hex and key files") {
+    const auto a = generate_key_pair().value();
+    const auto b = generate_key_pair().value();
+    CHECK(a.secret != b.secret);
+    CHECK(public_key_of(a.secret) == a.public_key);
+    CHECK(key_from_hex(key_to_hex(a.public_key)).value() == a.public_key);
+    CHECK(key_from_hex(std::string(key_to_hex(a.public_key)) + "\n").ok());
+    CHECK_FALSE(key_from_hex("abc").ok());
+    CHECK_FALSE(key_from_hex(std::string(64, 'g')).ok());
+    const auto file = script_dir() / "keys" / "server.key";
+    std::filesystem::remove(file);
+    const auto created = load_or_create_key(file).value();
+    const auto loaded = load_or_create_key(file).value();
+    CHECK(created.public_key == loaded.public_key);
+    CHECK(created.secret == loaded.secret);
+#if !defined(_WIN32)
+    const auto perms = std::filesystem::status(file).permissions();
+    CHECK((perms & (std::filesystem::perms::group_all | std::filesystem::perms::others_all)) == std::filesystem::perms::none);
+#endif
+    std::ofstream(file, std::ios::trunc) << "not a key";
+    CHECK_FALSE(load_or_create_key(file).ok());
+}
+
+TEST_CASE("secure: handshake, encrypted exchange on both channels and pinned keys") {
+    SecureOptions co;
+    SecurePair p(co);
+    p.pump();
+    REQUIRE(SecurePair::count(p.se, TransportEvent::Type::Connected) == 1);
+    REQUIRE(SecurePair::count(p.ce, TransportEvent::Type::Connected) == 1);
+    CHECK(p.client->encrypted());
+    CHECK(p.client->stats(p.to_server).encrypted);
+    CHECK(p.client->stats(p.to_server).remote_key == key_to_hex(p.server_key.public_key));
+    CHECK(p.client->max_payload() == 64 * 1024 - kSecureOverhead);
+    p.se.clear(), p.ce.clear();
+    const auto secret = bytes("attack at dawn, the password is swordfish");
+    p.client->send(p.to_server, Channel::Reliable, secret);
+    p.client->send(p.to_server, Channel::Unreliable, bytes("u1"));
+    p.server->send(p.to_client, Channel::Unreliable, bytes("pong"));
+    p.server->send(p.to_client, Channel::Reliable, {});
+    p.pump();
+    REQUIRE(p.se.size() == 2);
+    CHECK(p.se[0].data == secret);
+    CHECK(p.se[1].channel == Channel::Unreliable);
+    CHECK(p.se[1].data == bytes("u1"));
+    REQUIRE(p.ce.size() == 2);
+    CHECK(p.ce[0].data == bytes("pong"));
+    CHECK(p.ce[1].data.empty());
+    // Nothing readable went over the wire.
+    for (const auto& [ch, pkt] : p.tap->sent)
+        CHECK(std::search(pkt.begin(), pkt.end(), secret.begin(), secret.begin() + 13) == pkt.end());
+
+    // Pinning another key: refused before any data flows (the matching case is the next test).
+    SecureOptions wrong_pin;
+    wrong_pin.expected_server_key = generate_key_pair().value().public_key;
+    SecurePair bad(wrong_pin);
+    bad.pump();
+    CHECK(SecurePair::count(bad.se, TransportEvent::Type::Connected) == 0);
+    REQUIRE(SecurePair::count(bad.ce, TransportEvent::Type::Disconnected) == 1);
+    CHECK(bad.ce.back().reason.find("server key mismatch") != std::string::npos);
+}
+
+TEST_CASE("secure: pinned server key matches across reconnects") {
+    const auto kp = generate_key_pair().value();
+    MemoryNetwork net;
+    SecureOptions so;
+    so.server_secret = kp.secret;
+    auto server = with_encryption(std::move(net.listen(4)).value(), so);
+    for (int i = 0; i < 2; ++i) {
+        SecureOptions co;
+        co.expected_server_key = kp.public_key;
+        auto client = with_encryption(net.endpoint(), co);
+        const PeerId sp = client->connect("memory", 4).value();
+        std::vector<TransportEvent> se, ce;
+        for (int r = 0; r < 6; ++r) client->poll(0, ce), server->poll(0, se);
+        REQUIRE(SecurePair::count(ce, TransportEvent::Type::Connected) == 1);
+        CHECK(client->stats(sp).remote_key == key_to_hex(kp.public_key));
+    }
+}
+
+TEST_CASE("secure: passwords, plaintext peers and handshake timeouts") {
+    SecureOptions right;
+    right.password = "open sesame";
+    SecurePair good(right, "open sesame");
+    good.pump();
+    CHECK(SecurePair::count(good.se, TransportEvent::Type::Connected) == 1);
+    CHECK(SecurePair::count(good.ce, TransportEvent::Type::Connected) == 1);
+    // The password itself never appears on the wire.
+    const auto pw = bytes("open sesame");
+    for (const auto& [ch, pkt] : good.tap->sent) CHECK(std::search(pkt.begin(), pkt.end(), pw.begin(), pw.end()) == pkt.end());
+
+    SecureOptions wrong;
+    wrong.password = "let me in";
+    SecurePair bad(wrong, "open sesame");
+    bad.pump(10);
+    CHECK(SecurePair::count(bad.se, TransportEvent::Type::Connected) == 0);
+    REQUIRE(SecurePair::count(bad.ce, TransportEvent::Type::Disconnected) == 1);
+    CHECK(bad.ce.back().reason == "server refused the connection: wrong password");
+
+    SecurePair none({}, "open sesame");
+    none.pump(10);
+    CHECK(SecurePair::count(none.ce, TransportEvent::Type::Disconnected) == 1);
+
+    // A plaintext client is dropped by a secure server without reaching the session layer.
+    SecurePair plain_client({}, {}, true, false);
+    plain_client.pump();
+    plain_client.client->send(plain_client.to_server, Channel::Reliable, bytes("hello?"));
+    plain_client.pump(10);
+    CHECK(plain_client.se.empty());
+    CHECK(SecurePair::count(plain_client.ce, TransportEvent::Type::Disconnected) == 1);
+
+    // A secure client facing a server that answers with something else gives up with a reason.
+    SecurePair plain_server({}, {}, false, true);
+    plain_server.pump();
+    REQUIRE(plain_server.to_client != 0);
+    plain_server.server->send(plain_server.to_client, Channel::Reliable, bytes("welcome, stranger"));
+    plain_server.pump();
+    REQUIRE(SecurePair::count(plain_server.ce, TransportEvent::Type::Disconnected) == 1);
+    CHECK(plain_server.ce.back().reason.find("does not use encryption") != std::string::npos);
+
+    // A server that never answers: the client times out after handshake_timeout.
+    SecurePair silent({}, {}, false, true);
+    silent.pump(2, 0.0);
+    silent.pump(2, 6.0);
+    REQUIRE(SecurePair::count(silent.ce, TransportEvent::Type::Disconnected) == 1);
+    CHECK(silent.ce.back().reason == "secure handshake timed out");
+}
+
+TEST_CASE("secure: forged, corrupted and replayed packets are discarded") {
+    SecurePair p({});
+    p.pump();
+    REQUIRE(p.to_client != 0);
+    p.se.clear();
+    p.tap->sent.clear();
+    p.client->send(p.to_server, Channel::Reliable, bytes("transfer 10 coins"));
+    p.client->send(p.to_server, Channel::Unreliable, bytes("move left"));
+    p.pump();
+    REQUIRE(p.se.size() == 2);
+    REQUIRE(p.tap->sent.size() == 2);
+    const auto reliable = p.tap->sent[0].second;
+    const auto unreliable = p.tap->sent[1].second;
+    p.se.clear();
+    // Replays on either channel.
+    p.tap->inject(p.to_server, Channel::Reliable, reliable);
+    p.tap->inject(p.to_server, Channel::Unreliable, unreliable);
+    // A flipped ciphertext bit, a flipped counter, a packet moved to the other channel, junk.
+    auto flipped = reliable;
+    flipped[12] ^= 0x01;
+    auto recount = unreliable;
+    recount[1] ^= 0x40;
+    p.tap->inject(p.to_server, Channel::Reliable, flipped);
+    p.tap->inject(p.to_server, Channel::Unreliable, recount);
+    p.tap->inject(p.to_server, Channel::Unreliable, reliable);
+    p.tap->inject(p.to_server, Channel::Unreliable, std::vector<std::uint8_t>(40, 0xA3));
+    p.tap->inject(p.to_server, Channel::Unreliable, std::vector<std::uint8_t>(3, 0xA3));
+    p.pump();
+    CHECK(p.se.empty());
+    CHECK(p.server->stats(p.to_client).packets_rejected == 7);
+    // Out-of-order unreliable packets inside the window are still accepted once each.
+    p.tap->sent.clear();
+    for (int i = 0; i < 3; ++i) p.client->send(p.to_server, Channel::Unreliable, bytes("u" + std::to_string(i)));
+    REQUIRE(p.tap->sent.size() == 3);
+    auto late = p.tap->sent;
+    p.tap->sent.clear();
+    p.pump(); // delivered in order: u0 u1 u2
+    p.se.clear();
+    for (int i = 0; i < 40; ++i) p.client->send(p.to_server, Channel::Unreliable, bytes("n"));
+    p.pump();
+    CHECK(p.se.size() == 40);
+    p.se.clear();
+    p.tap->inject(p.to_server, Channel::Unreliable, late[1].second); // 41 packets old, already seen
+    p.pump();
+    CHECK(p.se.empty());
+    // The session still works afterwards.
+    p.client->send(p.to_server, Channel::Reliable, bytes("still here"));
+    p.pump();
+    REQUIRE(p.se.size() == 1);
+    CHECK(p.se[0].data == bytes("still here"));
+}
+
+TEST_CASE("secure: a full game session runs encrypted over a lossy link") {
+    const auto kp = generate_key_pair().value();
+    MemoryNetwork network;
+    Peer server_peer;
+    SecureOptions so;
+    so.server_secret = kp.secret;
+    so.password = "arena-pass";
+    ServerOptions sopt;
+    sopt.game_id = "arena";
+    NetServer server(with_encryption(std::move(network.listen(7778)).value(), so), sopt);
+    server.install(server_peer.sim);
+    LinkConditions link;
+    link.latency_ms = 40;
+    link.jitter_ms = 10;
+    link.loss = 0.05f;
+    link.seed = 7;
+    std::vector<std::unique_ptr<Peer>> peers;
+    std::vector<std::unique_ptr<NetClient>> clients;
+    for (const char* name : {"ann", "bob"}) {
+        peers.push_back(std::make_unique<Peer>());
+        SecureOptions co;
+        co.expected_server_key = kp.public_key;
+        co.password = "arena-pass";
+        clients.push_back(std::make_unique<NetClient>(with_encryption(with_conditions(network.endpoint(), link), co),
+                                                      client_options(7778, name)));
+        clients.back()->install(peers.back()->sim);
+    }
+    // An intruder without the password never becomes a player.
+    Peer intruder_peer;
+    SecureOptions ico;
+    ico.password = "guess";
+    NetClient intruder(with_encryption(network.endpoint(), ico), client_options(7778, "eve"));
+    intruder.install(intruder_peer.sim);
+    for (int i = 0; i < 240; ++i) {
+        peers[0]->input.set_key("D", true);
+        server_peer.tick();
+        for (auto& p : peers) p->tick();
+        intruder_peer.tick();
+    }
+    REQUIRE(clients[0]->connected());
+    REQUIRE(clients[1]->connected());
+    CHECK(server.clients().size() == 2);
+    CHECK(server.diagnostics().encrypted);
+    const auto d = clients[0]->diagnostics();
+    CHECK(d.encrypted);
+    CHECK(d.server_key == key_to_hex(kp.public_key));
+    CHECK(d.snapshots_received > 100);
+    CHECK(intruder.failed());
+    CHECK(intruder.diagnostics().status == "server refused the connection: wrong password");
+    // Ann walked right on the server and Bob sees it.
+    const Entity ann = [&] {
+        for (const auto& c : server.clients())
+            if (c.name == "ann") return c.player;
+        return Entity{};
+    }();
+    REQUIRE_FALSE(ann.is_null());
+    CHECK(server_peer.position(ann).x > 5.0f);
+}
+
+TEST_CASE("secure: encrypted UDP loopback over ENet") {
+    const auto kp = generate_key_pair().value();
+    UdpOptions so_udp;
+    so_udp.port = 27991;
+    so_udp.bind_address = "127.0.0.1";
+    auto st = create_udp_transport(so_udp);
+    REQUIRE(st);
+    SecureOptions so;
+    so.server_secret = kp.secret;
+    auto server = with_encryption(std::move(*st), so);
+    SecureOptions co;
+    co.expected_server_key = kp.public_key;
+    auto client = with_encryption(std::move(create_udp_transport({})).value(), co);
+    const PeerId sp = client->connect("127.0.0.1", 27991).value();
+    std::vector<TransportEvent> se, ce;
+    PeerId cp = 0;
+    const auto start = std::chrono::steady_clock::now();
+    bool got = false;
+    while (std::chrono::steady_clock::now() - start < std::chrono::seconds(5) && !got) {
+        client->poll(0, ce);
+        server->poll(0, se);
+        for (auto& e : se) {
+            if (e.type == TransportEvent::Type::Connected) {
+                cp = e.peer;
+                server->send(cp, Channel::Reliable, bytes("hello over udp"));
+            }
+        }
+        se.clear();
+        for (auto& e : ce)
+            if (e.type == TransportEvent::Type::Received && e.data == bytes("hello over udp")) got = true;
+        ce.clear();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(got);
+    CHECK(client->stats(sp).encrypted);
+    CHECK(client->stats(sp).remote_key == key_to_hex(kp.public_key));
 }

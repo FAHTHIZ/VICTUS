@@ -1047,6 +1047,7 @@ NetDiagnostics NetServer::diagnostics() const {
     d.snapshot_bytes = m.last_snapshot_bytes;
     d.entities_deferred = m.last_deferred;
     d.rejected_messages = m.rejected;
+    d.encrypted = m.transport->encrypted();
     d.status = "serving " + std::to_string(d.clients) + " client(s) over " + std::string(m.transport->name());
     return d;
 }
@@ -1063,6 +1064,7 @@ struct NetClient::Impl {
     std::vector<Template> templates;
     enum class State { Idle, Connecting, Handshake, Connected, Failed } state{State::Idle};
     std::string status{"not connected"};
+    std::string server_key; // verified public key of an encrypted server (hex)
     PeerId server{0};
     std::uint16_t id{0};
     double now{0}, last_heard{0};
@@ -1356,6 +1358,7 @@ struct NetClient::Impl {
             if (ev.peer != server) return;
             state = State::Handshake;
             status = "handshaking";
+            server_key = transport->stats(server).remote_key;
             ByteWriter w;
             w.u8(kHello);
             w.u32(kMagic);
@@ -1368,7 +1371,10 @@ struct NetClient::Impl {
         case TransportEvent::Type::Disconnected:
             if (ev.peer != server) return;
             server = 0;
-            if (state != State::Failed) fail(state == State::Connected ? "disconnected from server" : "could not reach the server");
+            if (state != State::Failed)
+                fail(!ev.reason.empty()            ? ev.reason
+                     : state == State::Connected ? "disconnected from server"
+                                                 : "could not reach the server");
             break;
         case TransportEvent::Type::Received: {
             if (ev.peer != server) return;
@@ -1618,6 +1624,8 @@ NetDiagnostics NetClient::diagnostics() const {
     d.snapshot_bytes = m.last_snapshot_bytes;
     d.prediction_error = m.last_error;
     d.corrections = m.corrections;
+    d.encrypted = m.transport->encrypted();
+    d.server_key = m.server_key;
     d.status = m.status;
     return d;
 }

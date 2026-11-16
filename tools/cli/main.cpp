@@ -49,11 +49,13 @@ constexpr const char* kUsage =
     "  import <project>                                           import changed assets (exit 1 on failure)\n"
     "  run <project> [--scene S] [--frames N] [--screenshot PNG] [--quality TIER]  play a scene\n"
     "      [--connect HOST[:PORT]] [--name NAME]                  ...as a client of a `victus serve` server\n"
+    "      [--server-key HEX] [--password P] [--insecure]         ...pin the server key / join a protected server\n"
     "      [--record F.vcapture] [--replay F.vcapture]            ...record a play session, or watch one replay\n"
     "  simulate <project> [--frames N] [--hold KEYS] [--save F]   run gameplay and scripts headless (no GPU)\n"
     "           [--record F.vcapture] [--replay F.vcapture]         ...record a session, or replay one and verify it\n"
     "           [--connect HOST[:PORT]]                           ...as a headless multiplayer client\n"
     "  serve <project> [--port P] [--max-clients N] [--frames N]  host a multiplayer session (dedicated server)\n"
+    "        [--password P] [--key FILE] [--insecure]              ...encrypted by default; prints its public key\n"
     "  check <project>                                            validate scenes and script syntax\n"
     "  export <project> --out DIR [--name EXE] [--player PATH]    package a runnable game folder\n"
     "  version                                                    print the engine version\n"
@@ -157,6 +159,9 @@ int cmd_run(const std::vector<std::string>& a) {
         .flag("strict", "exit with code 3 if any script raised an error")
         .option("connect", "join a `victus serve` server at host[:port]")
         .option("name", "player name shown to others when connected", "player")
+        .option("server-key", "with --connect: refuse servers whose public key differs (printed by `victus serve`)")
+        .option("password", "with --connect: password of a server started with --password")
+        .flag("insecure", "with --connect: join a server started with --insecure (no encryption)")
         .option("conditions", "emulate a bad link, e.g. latency=80,jitter=10,loss=0.05")
         .option("saves", "save games folder (default: <project>/.victus/saves)")
         .option("record", "record input, frame times and state digests to this .vcapture file")
@@ -169,6 +174,9 @@ int cmd_run(const std::vector<std::string>& a) {
     o.connect = p.get("connect");
     o.player_name = p.get("name");
     o.net_conditions = p.get("conditions");
+    o.server_key = p.get("server-key");
+    o.net_password = p.get("password");
+    o.insecure = p.has("insecure");
     o.project = p.get("project");
     o.scene = p.get("scene");
     o.max_frames = static_cast<std::uint64_t>(p.get_number("frames", 0));
@@ -299,11 +307,27 @@ Result<std::unique_ptr<net::Transport>> condition(std::unique_ptr<net::Transport
     return net::with_conditions(std::move(t), *c);
 }
 
+// Clients encrypt unless --insecure; --server-key pins the server's public key.
+Result<std::unique_ptr<net::Transport>> secure_client(std::unique_ptr<net::Transport> t, const cli::Parser& p) {
+    if (p.has("insecure")) {
+        if (p.has("password") || p.has("server-key")) return make_error(ErrorCode::InvalidArgument, "--password/--server-key need encryption; remove --insecure");
+        return t;
+    }
+    net::SecureOptions so;
+    if (p.has("server-key")) {
+        auto k = net::key_from_hex(p.get("server-key"));
+        if (!k) return make_error(ErrorCode::InvalidArgument, "--server-key: " + k.error().message);
+        so.expected_server_key = *k;
+    }
+    so.password = p.get("password");
+    return net::with_encryption(std::move(t), std::move(so));
+}
+
 void print_net(const net::NetContext& ctx) {
     const auto d = ctx.diagnostics();
-    std::printf("net: %s, %u clients, %u replicated entities, rtt %.1f ms, sent %.1f KB, received %.1f KB, "
+    std::printf("net: %s (%s), %u clients, %u replicated entities, rtt %.1f ms, sent %.1f KB, received %.1f KB, "
                 "snapshots %llu sent / %llu received (%llu delta), last snapshot %u bytes, %llu corrections, %llu rejected messages\n",
-                d.status.c_str(), d.clients, d.entities, d.rtt_ms, static_cast<double>(d.bytes_sent) / 1024.0,
+                d.status.c_str(), d.encrypted ? "encrypted" : "unencrypted", d.clients, d.entities, d.rtt_ms, static_cast<double>(d.bytes_sent) / 1024.0,
                 static_cast<double>(d.bytes_received) / 1024.0, static_cast<unsigned long long>(d.snapshots_sent),
                 static_cast<unsigned long long>(d.snapshots_received), static_cast<unsigned long long>(d.delta_snapshots), d.snapshot_bytes,
                 static_cast<unsigned long long>(d.corrections), static_cast<unsigned long long>(d.rejected_messages));
@@ -322,6 +346,9 @@ int cmd_simulate(const std::vector<std::string>& a) {
         .option("saves", "save games folder for the save API (default: <project>/.victus/saves)")
         .option("connect", "join a `victus serve` server at host[:port] (runs in real time)")
         .option("name", "player name sent to the server", "player")
+        .option("server-key", "with --connect: refuse servers whose public key differs (printed by `victus serve`)")
+        .option("password", "with --connect: password of a server started with --password")
+        .flag("insecure", "with --connect: join a server started with --insecure (no encryption)")
         .option("conditions", "emulate a bad link, e.g. latency=80,jitter=10,loss=0.05,bandwidth=256")
         .option("expect-players", "with --connect: exit 4 unless at least N players were seen", "0")
         .option("record", "record input, frame times and state digests to this .vcapture file")
@@ -375,12 +402,14 @@ int cmd_simulate(const std::vector<std::string>& a) {
         if (!t) return error(t.error().message);
         auto tc = condition(std::move(*t), p.get("conditions"));
         if (!tc) return error(tc.error().message);
+        auto ts = secure_client(std::move(*tc), p);
+        if (!ts) return error(ts.error().message);
         net::ClientOptions co;
         co.host = addr->first;
         co.port = addr->second;
         co.name = p.get("name");
         co.game_id = hs->game_id();
-        client = std::make_unique<net::NetClient>(std::move(*tc), co);
+        client = std::make_unique<net::NetClient>(std::move(*ts), co);
         client->install(hs->sim);
         std::signal(SIGINT, on_signal);
     }
@@ -467,6 +496,9 @@ int cmd_serve(const std::vector<std::string>& a) {
         .option("max-clients", "maximum connected players", "8")
         .option("frames", "stop after N frames (0 = until Ctrl+C)", "0")
         .option("conditions", "emulate a bad link on every client, e.g. latency=80,loss=0.05")
+        .option("key", "server secret key file, created if missing (default: <project>/.victus/server.key)")
+        .option("password", "players must send this password (it travels encrypted)")
+        .flag("insecure", "accept unencrypted clients only (no keys, no passwords); for trusted networks")
         .option("expect-clients", "exit 4 unless at least N clients joined", "0");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
@@ -482,15 +514,30 @@ int cmd_serve(const std::vector<std::string>& a) {
     if (!t) return error(t.error().message);
     auto tc = condition(std::move(*t), p.get("conditions"));
     if (!tc) return error(tc.error().message);
+    std::unique_ptr<net::Transport> transport = std::move(*tc);
+    std::string key_line = "unencrypted (--insecure): only use on networks you trust";
+    if (p.has("insecure")) {
+        if (p.has("password")) return error("--password needs encryption; remove --insecure");
+    } else {
+        const fs::Path key_file = p.has("key") ? fs::Path(p.get("key")) : hs->proj->root() / ".victus" / "server.key";
+        auto kp = net::load_or_create_key(key_file);
+        if (!kp) return error(kp.error().message);
+        net::SecureOptions sec;
+        sec.server_secret = kp->secret;
+        sec.password = p.get("password");
+        transport = net::with_encryption(std::move(transport), std::move(sec));
+        key_line = "encrypted; server key " + net::key_to_hex(kp->public_key) + (p.has("password") ? " (password required)" : "");
+    }
     net::ServerOptions so;
     so.game_id = hs->game_id();
     so.max_clients = max_clients;
-    net::NetServer server(std::move(*tc), so);
+    net::NetServer server(std::move(transport), so);
     server.install(hs->sim);
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
     std::printf("serving '%s' (%s) on UDP port %u, up to %u players. Ctrl+C stops.\n",
                 hs->proj->settings().name.c_str(), hs->scene_rel.c_str(), uo.port, max_clients);
+    std::printf("%s\n", key_line.c_str());
     std::fflush(stdout);
     const auto frames = static_cast<std::uint64_t>(p.get_number("frames", 0));
     std::size_t most = 0;

@@ -203,3 +203,23 @@ function(victus_fetch_enet)
     endif()
     victus_third_party_tsan(victus_enet)
 endfunction()
+
+# Monocypher 4.0.2 (CC0-1.0 or BSD-2-Clause). https://monocypher.org/
+# X25519, BLAKE2b and XChaCha20-Poly1305 for encrypted, authenticated multiplayer sessions
+# (engine/net/src/secure.cpp, ADR-0028). Two C files compiled into a static library.
+function(victus_fetch_monocypher)
+    if(TARGET victus_monocypher)
+        return()
+    endif()
+    FetchContent_Declare(monocypher
+        URL https://github.com/LoupVaillant/Monocypher/archive/refs/tags/4.0.2.tar.gz
+        URL_HASH SHA256=bc1ca30b1b2654e4e7daf2492c0d204200e55137f23fda6b7142fd7d523bd6b4
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        SOURCE_SUBDIR victus_no_cmake)
+    FetchContent_MakeAvailable(monocypher)
+    add_library(victus_monocypher STATIC ${monocypher_SOURCE_DIR}/src/monocypher.c)
+    target_include_directories(victus_monocypher SYSTEM PUBLIC ${monocypher_SOURCE_DIR}/src)
+    set_target_properties(victus_monocypher PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 99)
+    target_compile_options(victus_monocypher PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w,-w>)
+    victus_third_party_tsan(victus_monocypher)
+endfunction()
