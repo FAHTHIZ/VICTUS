@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <format>
 
 namespace victus::render {
@@ -15,10 +16,52 @@ namespace {
 struct FrameUniforms {
     Mat4 view_proj;
 };
-struct ObjectUniforms {
+// Per-instance vertex data (vertex buffer slot 1, locations 4..10): model matrix columns, then
+// the inverse-transpose 3x3 normal matrix as three padded columns.
+struct InstanceData {
     Mat4 model;
-    Mat4 normal_matrix;
+    Vec4 normal[3];
 };
+static_assert(sizeof(InstanceData) == 112);
+
+InstanceData make_instance(const Mat4& model) {
+    InstanceData d;
+    d.model = model;
+    const Mat4 n = transpose(inverse(model));
+    for (int i = 0; i < 3; ++i) d.normal[i] = Vec4(n[i].x, n[i].y, n[i].z, 0.0f);
+    return d;
+}
+
+std::uint64_t mix(std::uint64_t h, std::uint64_t v) noexcept {
+    h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+    return h;
+}
+std::uint64_t bits(float f) noexcept {
+    std::uint32_t u;
+    std::memcpy(&u, &f, sizeof u);
+    return u;
+}
+std::uint64_t handle_bits(rhi::TextureHandle t) noexcept { return (std::uint64_t{t.generation} << 32) | t.index; }
+
+std::uint64_t material_key(const Material& m) noexcept {
+    std::uint64_t h = 0;
+    for (float f : {m.base_color.r, m.base_color.g, m.base_color.b, m.base_color.a, m.emissive.r, m.emissive.g,
+                    m.emissive.b, m.emissive_strength, m.metallic, m.roughness, m.normal_scale, m.alpha_cutoff})
+        h = mix(h, bits(f));
+    for (auto t : {m.base_color_texture, m.metallic_roughness_texture, m.normal_texture, m.emissive_texture})
+        h = mix(h, handle_bits(t));
+    return mix(h, (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u));
+}
+
+bool same_material(const Material& a, const Material& b) noexcept {
+    auto eq = [](const Color& x, const Color& y) { return x.r == y.r && x.g == y.g && x.b == y.b && x.a == y.a; };
+    return eq(a.base_color, b.base_color) && eq(a.emissive, b.emissive) && a.emissive_strength == b.emissive_strength &&
+           a.metallic == b.metallic && a.roughness == b.roughness && a.normal_scale == b.normal_scale &&
+           a.alpha_cutoff == b.alpha_cutoff && a.base_color_texture == b.base_color_texture &&
+           a.metallic_roughness_texture == b.metallic_roughness_texture && a.normal_texture == b.normal_texture &&
+           a.emissive_texture == b.emissive_texture && a.double_sided == b.double_sided && a.unlit == b.unlit &&
+           a.cast_shadows == b.cast_shadows;
+}
 struct GpuPointLight {
     Vec4 position_range;
     Vec4 color_intensity;
@@ -47,7 +90,6 @@ struct MaterialUniforms {
 };
 struct ShadowUniforms {
     Mat4 light_view_proj;
-    Mat4 model;
 };
 struct SkyUniforms {
     Mat4 inv_view_proj;
@@ -210,15 +252,26 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
         if (!*s) return std::move(*s).error();
 
     const rhi::VertexBufferLayout mesh_layout{0, sizeof(Vertex3D), false};
+    const rhi::VertexBufferLayout instance_layout{1, sizeof(InstanceData), true};
+    std::vector<rhi::VertexAttribute> model_attrs;
+    for (std::uint32_t i = 0; i < 4; ++i) model_attrs.push_back({4 + i, 1, rhi::VertexFormat::Float4, i * 16});
+    std::vector<rhi::VertexAttribute> normal_attrs;
+    for (std::uint32_t i = 0; i < 3; ++i) normal_attrs.push_back({8 + i, 1, rhi::VertexFormat::Float4, 64 + i * 16});
+    auto with = [](std::vector<rhi::VertexAttribute> a, const std::vector<rhi::VertexAttribute>& b) {
+        a.insert(a.end(), b.begin(), b.end());
+        return a;
+    };
     rhi::PipelineDesc opaque;
     opaque.name = "pbr_opaque";
     opaque.vertex = mesh_vs.value();
     opaque.fragment = pbr_fs.value();
-    opaque.vertex_buffers = {mesh_layout};
-    opaque.attributes = {{0, 0, rhi::VertexFormat::Float3, 0},
-                         {1, 0, rhi::VertexFormat::Float3, 12},
-                         {2, 0, rhi::VertexFormat::Float2, 24},
-                         {3, 0, rhi::VertexFormat::Float4, 32}};
+    opaque.vertex_buffers = {mesh_layout, instance_layout};
+    opaque.attributes = with(with({{0, 0, rhi::VertexFormat::Float3, 0},
+                                   {1, 0, rhi::VertexFormat::Float3, 12},
+                                   {2, 0, rhi::VertexFormat::Float2, 24},
+                                   {3, 0, rhi::VertexFormat::Float4, 32}},
+                                  model_attrs),
+                             normal_attrs);
     opaque.depth_test = opaque.depth_write = true;
     opaque.depth_compare = rhi::CompareOp::LessEqual; // also accepts depth pre-pass values
     opaque.color_targets = {{rhi::Format::RGBA16_FLOAT, rhi::BlendMode::Opaque}};
@@ -236,8 +289,8 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     prepass.name = "depth_prepass";
     prepass.vertex = depth_vs.value();
     prepass.fragment = shadow_fs.value();
-    prepass.vertex_buffers = {mesh_layout};
-    prepass.attributes = {{0, 0, rhi::VertexFormat::Float3, 0}};
+    prepass.vertex_buffers = {mesh_layout, instance_layout};
+    prepass.attributes = with({{0, 0, rhi::VertexFormat::Float3, 0}}, model_attrs);
     prepass.depth_test = prepass.depth_write = true;
     prepass.depth_compare = rhi::CompareOp::Less;
     prepass.depth_format = r->depth_format_;
@@ -254,8 +307,8 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     shadow.name = "shadow_depth";
     shadow.vertex = shadow_vs.value();
     shadow.fragment = shadow_fs.value();
-    shadow.vertex_buffers = {mesh_layout};
-    shadow.attributes = {{0, 0, rhi::VertexFormat::Float3, 0}};
+    shadow.vertex_buffers = {mesh_layout, instance_layout};
+    shadow.attributes = with({{0, 0, rhi::VertexFormat::Float3, 0}}, model_attrs);
     shadow.cull = rhi::CullMode::None;
     shadow.depth_test = shadow.depth_write = true;
     shadow.depth_compare = rhi::CompareOp::Less;
@@ -321,6 +374,7 @@ SceneRenderer::~SceneRenderer() {
     for (auto t : exposure_)
         if (t) d.destroy(t);
     if (line_buffer_) d.destroy(line_buffer_);
+    if (instance_buffer_) d.destroy(instance_buffer_);
     pool_.clear();
 }
 
@@ -371,7 +425,8 @@ void SceneRenderer::add_point_light(const PointLight& light) { points_.push_back
 void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const Mat4& model) {
     if (!mesh.valid()) return;
     ++stats_.submitted;
-    draws_.push_back({&mesh, material, model, 0.0f});
+    draws_.push_back({&mesh, material, model, 0.0f,
+                      mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh))});
 }
 
 void SceneRenderer::line(Vec3 a, Vec3 b, Color color) {
@@ -508,9 +563,56 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         if (a->material.double_sided != b->material.double_sided) return !a->material.double_sided;
         if (a->material.base_color_texture.index != b->material.base_color_texture.index)
             return a->material.base_color_texture.index < b->material.base_color_texture.index;
+        if (a->batch_key != b->batch_key) return a->batch_key < b->batch_key;
         return a->distance < b->distance;
     });
     stats_.visible = static_cast<std::uint32_t>(visible.size());
+
+    // Instancing: consecutive draws with the same mesh and identical material become one batch.
+    // Every pass reads its own contiguous range of the per-frame instance buffer.
+    std::vector<InstanceData> instances;
+    instances.reserve(visible.size() + stats_.shadow_casters);
+    auto build_batches = [&](const std::vector<const Draw*>& list, bool match_material) {
+        std::vector<Batch> out;
+        for (const Draw* d : list) {
+            const auto offset = static_cast<std::uint32_t>(instances.size());
+            instances.push_back(make_instance(d->model));
+            if (S.instancing && !out.empty()) {
+                const Draw* f = out.back().first;
+                if (f->mesh == d->mesh && (!match_material || same_material(f->material, d->material))) {
+                    ++out.back().instance_count;
+                    continue;
+                }
+            }
+            out.push_back({d, offset, 1});
+        }
+        return out;
+    };
+    const std::vector<Batch> main_batches = build_batches(visible, true);
+    std::array<std::vector<Batch>, 4> shadow_batches;
+    for (std::uint32_t c = 0; c < cascade_count_; ++c) {
+        std::sort(casters[c].begin(), casters[c].end(),
+                  [](const Draw* a, const Draw* b) { return a->mesh < b->mesh; });
+        shadow_batches[c] = build_batches(casters[c], false);
+        stats_.shadow_batches += static_cast<std::uint32_t>(shadow_batches[c].size());
+    }
+    stats_.main_batches = static_cast<std::uint32_t>(main_batches.size());
+    stats_.instances_uploaded = static_cast<std::uint32_t>(instances.size());
+    if (!instances.empty()) {
+        const auto needed = static_cast<std::uint32_t>(instances.size());
+        if (needed > instance_capacity_) {
+            if (instance_buffer_) dev.destroy(instance_buffer_);
+            instance_capacity_ = std::max({needed, instance_capacity_ * 2, 256u});
+            auto b = dev.create_buffer(
+                {"scene_instances", instance_capacity_ * static_cast<std::uint32_t>(sizeof(InstanceData)),
+                 rhi::BufferUsageVertex});
+            if (!b) return std::move(b).error();
+            instance_buffer_ = b.value();
+        }
+        cmd.upload_buffer(instance_buffer_, 0,
+                          {reinterpret_cast<const std::uint8_t*>(instances.data()), instances.size() * sizeof(InstanceData)}, true);
+    }
+    constexpr auto kInstanceStride = static_cast<std::uint32_t>(sizeof(InstanceData));
     for (std::uint32_t c = 0; c < cascade_count_; ++c) stats_.shadow_draws += static_cast<std::uint32_t>(casters[c].size());
 
     // Nearest point lights when over budget.
@@ -537,7 +639,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             line_buffer_ = b.value();
         }
         cmd.upload_buffer(line_buffer_, 0,
-                          {reinterpret_cast<const std::uint8_t*>(lines_.data()), lines_.size() * sizeof(LineVertex)});
+                          {reinterpret_cast<const std::uint8_t*>(lines_.data()), lines_.size() * sizeof(LineVertex)}, true);
     }
 
     const bool ssao = S.ssao && env_.ao_intensity > 0.0f && env_.ao_radius > 0.0f;
@@ -593,12 +695,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 for (std::uint32_t c = 0; c < cascade_count_; ++c) {
                     const float x = static_cast<float>((c & 1u) * shadow_res), y = static_cast<float>((c >> 1u) * shadow_res);
                     ctx.pass->set_viewport({x, y, static_cast<float>(shadow_res), static_cast<float>(shadow_res), 0, 1});
-                    for (const Draw* d : casters[c]) {
-                        ShadowUniforms su{cascade_vp_[c], d->model};
-                        ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, su);
-                        ctx.pass->bind_vertex_buffer(0, d->mesh->vertices);
-                        ctx.pass->bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
-                        ctx.pass->draw_indexed(d->mesh->index_count);
+                    ShadowUniforms su{cascade_vp_[c]};
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, su);
+                    for (const Batch& b : shadow_batches[c]) {
+                        ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
+                        ctx.pass->bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
+                        ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
+                        ctx.pass->draw_indexed(b.first->mesh->index_count, b.instance_count);
                     }
                 }
             });
@@ -619,19 +722,20 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 FrameUniforms frame{view_proj};
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame);
                 rhi::PipelineHandle bound{};
-                for (const Draw* d : visible) {
+                for (const Batch& b : main_batches) {
+                    const Draw* d = b.first;
                     if (d->material.alpha_cutoff > 0.0f) continue; // alpha-tested: depth comes from the main pass
                     const rhi::PipelineHandle want = d->material.double_sided ? prepass_double_ : prepass_cull_;
                     if (!(bound == want)) {
                         pass.bind_pipeline(want);
                         bound = want;
                     }
-                    ObjectUniforms obj{d->model, Mat4::identity()};
-                    ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 1, obj);
                     pass.bind_vertex_buffer(0, d->mesh->vertices);
+                    pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                     pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
-                    pass.draw_indexed(d->mesh->index_count);
-                    ++stats_.prepass_draws;
+                    pass.draw_indexed(d->mesh->index_count, b.instance_count);
+                    stats_.prepass_draws += b.instance_count;
+                    ++stats_.prepass_batches;
                 }
             });
     }
@@ -710,20 +814,19 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame);
             ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, lighting);
             rhi::PipelineHandle bound{};
-            for (const Draw* d : visible) {
+            for (const Batch& b : main_batches) {
+                const Draw* d = b.first;
                 const rhi::PipelineHandle want = d->material.double_sided ? opaque_double_ : opaque_cull_;
                 if (!(bound == want)) {
                     pass.bind_pipeline(want);
                     bound = want;
                 }
                 const Material& m = d->material;
-                ObjectUniforms obj{d->model, transpose(inverse(d->model))};
                 MaterialUniforms mat{};
                 mat.base_color = m.base_color.vec();
                 mat.emissive = rgb(m.emissive, m.emissive_strength);
                 mat.params = {m.metallic, m.roughness, m.normal_scale, m.alpha_cutoff};
                 mat.flags = {m.normal_texture ? 1.0f : 0.0f, m.unlit ? 1.0f : 0.0f, 0, 0};
-                ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 1, obj);
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
                 auto pick = [](rhi::TextureHandle t, rhi::TextureHandle fallback) { return t ? t : fallback; };
                 pass.bind_texture(rhi::ShaderStage::Fragment, 0, pick(m.base_color_texture, ctx_.white()), ctx_.linear_repeat());
@@ -733,8 +836,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 4, shadow_tex, ctx_.shadow_compare());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 5, ao_tex, ctx_.linear_clamp());
                 pass.bind_vertex_buffer(0, d->mesh->vertices);
+                pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                 pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
-                pass.draw_indexed(d->mesh->index_count);
+                pass.draw_indexed(d->mesh->index_count, b.instance_count);
             }
             if (!lines_.empty()) {
                 pass.bind_pipeline(line_pipeline_);

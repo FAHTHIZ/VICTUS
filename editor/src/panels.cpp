@@ -156,6 +156,7 @@ const char* kind_icon(assets::AssetKind k) {
 
 void Editor::frame(float dt) {
     if (dt > 0) fps_ = fps_ <= 0 ? 1.0f / dt : fps_ * 0.95f + 0.05f / dt;
+    view_->renderer().set_frame_time(dt); // auto exposure adapts in real time
     if (status_time_ > 0) status_time_ -= dt;
     if (input_) input_->set_enabled(play_state_ == PlayState::Playing && viewport_focused_);
     if (play_state_ == PlayState::Playing && play_scene_) sim_.tick(*play_scene_, dt);
@@ -394,6 +395,15 @@ void Editor::draw_menu_bar() {
         if (ImGui::MenuItem("Reset Layout")) layout_built_ = false;
         ImGui::MenuItem("Physics Colliders", nullptr, &show_colliders_);
         ImGui::MenuItem("UI Demo Window", nullptr, &show_demo_);
+        if (ImGui::BeginMenu("Rendering Quality")) {
+            for (auto tier : {render::QualityTier::Low, render::QualityTier::Medium, render::QualityTier::High,
+                              render::QualityTier::Ultra}) {
+                const std::string label(render::quality_tier_name(tier));
+                if (ImGui::MenuItem(label.c_str(), nullptr, quality_ == tier) && quality_ != tier)
+                    if (auto st = set_quality(tier); !st.ok()) notify("could not save quality: " + st.error().message, true);
+            }
+            ImGui::EndMenu();
+        }
         ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();
@@ -492,9 +502,11 @@ void Editor::draw_viewport() {
         // Overlay: mode + stats.
         ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 6));
         const bool two_d = runtime::scene_view_mode(active_scene()) == runtime::ViewMode::TwoD;
-        ImGui::TextDisabled("%s  %s  |  %u meshes  %u sprites  %u lights", two_d ? "2D" : "3D",
-                            play_state_ == PlayState::Editing ? "editor camera" : "game camera",
-                            last_view_stats_.extract.meshes, last_view_stats_.sprites, last_view_stats_.extract.lights);
+        const std::string tier(render::quality_tier_name(quality_));
+        ImGui::TextDisabled("%s  %s  |  %s quality  |  %u meshes (%u draws)  %u sprites  %u lights", two_d ? "2D" : "3D",
+                            play_state_ == PlayState::Editing ? "editor camera" : "game camera", tier.c_str(),
+                            last_view_stats_.extract.meshes, render_stats().main_batches, last_view_stats_.sprites,
+                            last_view_stats_.extract.lights);
         if (play_state_ == PlayState::Editing)
             viewport_input({avail.x, avail.y}, hovered);
         (void)origin;

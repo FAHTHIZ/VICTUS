@@ -78,6 +78,11 @@ public:
     [[nodiscard]] project::Project* project() noexcept { return project_ ? &*project_ : nullptr; }
     [[nodiscard]] assets::AssetDatabase* assets() noexcept { return db_.get(); }
     [[nodiscard]] Status reimport_assets();
+    // Viewport/play rendering quality. Changing it updates the project's `rendering.quality` and
+    // saves the project file, so `victus run` and exported games use the same tier.
+    [[nodiscard]] render::QualityTier quality() const noexcept { return quality_; }
+    [[nodiscard]] Status set_quality(render::QualityTier tier);
+    [[nodiscard]] const render::SceneStats& render_stats() const;
 
     // ---- scenes ----
     [[nodiscard]] Status open_scene(std::string_view relative_path);
@@ -195,6 +200,8 @@ private:
     std::unique_ptr<player::PlatformInput> input_;     // game input, enabled while the viewport has focus
     float script_poll_{0};
     bool show_colliders_{true};
+    render::QualityTier quality_{render::QualityTier::High};
+    void apply_quality();
     std::vector<physics::DebugLine> collider_scratch_;
     bool focus_viewport_{false};
     PlayState play_state_{PlayState::Editing};

@@ -245,8 +245,11 @@ public:
     void push_uniforms(ShaderStage stage, std::uint32_t slot, const T& value) {
         push_uniforms(stage, slot, &value, static_cast<std::uint32_t>(sizeof(T)));
     }
-    // Copies through a staging buffer; must be called outside render passes.
-    void upload_buffer(BufferHandle buffer, std::uint32_t offset, std::span<const std::uint8_t> data);
+    // Copies through a staging buffer; must be called outside render passes. `discard` declares that
+    // the previous contents are no longer needed (per-frame dynamic data): if the GPU is still
+    // reading the buffer from an earlier submission the backend renames it instead of stalling.
+    void upload_buffer(BufferHandle buffer, std::uint32_t offset, std::span<const std::uint8_t> data,
+                       bool discard = false);
     void upload_texture(TextureHandle texture, std::span<const std::uint8_t> pixels, std::uint32_t mip = 0,
                         std::uint32_t layer = 0);
     void generate_mipmaps(TextureHandle texture);

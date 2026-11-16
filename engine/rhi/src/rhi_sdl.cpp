@@ -628,7 +628,7 @@ void CommandBuffer::push_uniforms(ShaderStage stage, std::uint32_t slot, const v
     else SDL_PushGPUFragmentUniformData(cb, slot, data, size);
 }
 
-void CommandBuffer::upload_buffer(BufferHandle buffer, std::uint32_t offset, std::span<const std::uint8_t> data) {
+void CommandBuffer::upload_buffer(BufferHandle buffer, std::uint32_t offset, std::span<const std::uint8_t> data, bool discard) {
     if (data.empty()) return;
     auto& impl = *device_->impl_;
     auto* entry = impl.buffers.get(buffer);
@@ -651,7 +651,7 @@ void CommandBuffer::upload_buffer(BufferHandle buffer, std::uint32_t offset, std
     SDL_GPUCopyPass* cp = SDL_BeginGPUCopyPass(static_cast<SDL_GPUCommandBuffer*>(cmd_));
     SDL_GPUTransferBufferLocation src{impl.upload, 0};
     SDL_GPUBufferRegion dst{entry->buf, offset, size};
-    SDL_UploadToGPUBuffer(cp, &src, &dst, false);
+    SDL_UploadToGPUBuffer(cp, &src, &dst, discard);
     SDL_EndGPUCopyPass(cp);
     device_->stats_.uploads++;
     device_->stats_.upload_bytes += size;

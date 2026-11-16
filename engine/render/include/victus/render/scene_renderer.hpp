@@ -114,6 +114,7 @@ struct RenderSettings {
     std::uint32_t bloom_levels{5};        // 1..8 mip levels
     bool fxaa{true};
     bool auto_exposure{true};             // allowed; scenes enable it through Environment
+    bool instancing{true};                // merge identical mesh+material draws into instanced batches
     std::uint32_t max_point_lights{16};   // <= SceneRenderer::kMaxPointLights
 
     [[nodiscard]] static RenderSettings preset(QualityTier tier) noexcept;
@@ -126,6 +127,9 @@ struct SceneStats {
     std::uint32_t point_lights{0};
     std::uint32_t shadow_cascades{0}, shadow_draws{0}, prepass_draws{0};
     std::uint32_t render_width{0}, render_height{0};
+    // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
+    std::uint32_t main_batches{0}, shadow_batches{0}, prepass_batches{0};
+    std::uint32_t instances_uploaded{0};
 };
 
 class SceneRenderer {
@@ -168,6 +172,12 @@ private:
         Material material;
         math::Mat4 model;
         float distance;
+        std::uint64_t batch_key; // equal keys => same mesh and identical material
+    };
+    // A run of consecutive instances in the per-frame instance buffer sharing one mesh/material.
+    struct Batch {
+        const Draw* first;
+        std::uint32_t instance_offset, instance_count;
     };
     struct LineVertex {
         math::Vec3 pos;
@@ -191,6 +201,8 @@ private:
     RenderSettings settings_;
     rhi::BufferHandle line_buffer_;
     std::uint32_t line_capacity_{0};
+    rhi::BufferHandle instance_buffer_;
+    std::uint32_t instance_capacity_{0}; // in instances
     rhi::Format depth_format_{rhi::Format::D32_FLOAT};
 
     Camera3D camera_;

@@ -63,6 +63,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_fixture.cpp
         render/gpu_render_tests.cpp
         render/gpu_quality_tests.cpp
+        render/gpu_instancing_tests.cpp
         render/gpu_scene_tests.cpp
         render/gpu_ui_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
