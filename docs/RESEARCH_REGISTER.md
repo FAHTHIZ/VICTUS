@@ -123,6 +123,11 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-16 (Slice 22, save games)
+- Unreal Engine saving and loading — https://dev.epicgames.com/documentation/en-us/unreal-engine/saving-and-loading-your-game-in-unreal-engine: `USaveGame` objects saved to a slot name + user index; multiple slots per user. Informed named slots and slot listing.
+- Godot "Saving games" — https://docs.godotengine.org/en/stable/tutorials/io/saving_games.html: persistable nodes return dictionaries from `save()`, written as JSON lines and recreated on load; JSON is readable but larger than binary `store_var`. Informed the per-script `save_state`/`load_state` hooks and JSON payloads.
+- Open questions: binary/compressed checkpoints for large worlds (benchmark first), platform save locations and cloud sync per store, capturing physics velocities and playback state.
+
 ## Research conclusions added 2026-11-16 (Slice 21, prefabs)
 - Unity prefabs — https://docs.unity3d.com/Manual/Prefabs.html: reusable GameObject templates; instance overrides on components, data or child objects; variants as predefined variations. Informed the override and Apply/Revert UX; property-level overrides and variants deferred.
 - Godot PackedScene — https://docs.godotengine.org/en/stable/classes/class_packedscene.html: a serialized scene whose `instantiate()` creates the node hierarchy and child scenes. Informed `instantiate` as a scene-format snapshot rather than a separate format.

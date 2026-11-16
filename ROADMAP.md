@@ -97,7 +97,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 - [x] Scripting runtime: Luau 0.747 sandboxed VM, `ScriptComponent` + `.luau` assets, entity/scene/input/time/log API, lifecycle (`start`/`update`/`fixed_update`/`reload`), editor-visible properties with per-entity overrides, hot reload in editor and `victus run`, time/memory budgets, `victus check` and headless `victus simulate` (Slice 5).
 - [ ] Script debugging (breakpoints/stepping), type checking in `victus check`, API versioning, events/messages between scripts.
 - [ ] Visual scripting graph with typed nodes, validation, debugging and deterministic serialization.
-- [ ] Save/load, checkpoints, profile data, version migration and recovery.
+- [~] Save/load, checkpoints, profile data, version migration and recovery. Done (Slice 22): `SaveStore` slots (`.vsave`, checksummed, atomic writes, `.bak` recovery, listing), data-version migrations (C++ and Luau `save.migrate`), project `save_version`, Luau `save.*` API for profile/progress data, whole-scene checkpoints with per-script `save_state`/`load_state` and entity references by id, per-user saves for exported games and `.victus/saves` for development, quick save/load (F5/F9, LB/RB) in the 2D and 3D templates. Remaining: physics velocities and animation/particle/audio playback state in checkpoints (bodies restart at rest), multiplayer checkpoints, cloud/platform save backends, an editor save browser, compression/encryption of save files.
 **Exit:** complete playable 3D game loop authored in VICTUS with both code and visual-logic options.
 
 ## Phase 10 — Physics, animation, AI, audio and UI

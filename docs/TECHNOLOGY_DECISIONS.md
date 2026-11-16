@@ -238,5 +238,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Component-level overrides discard upstream changes to an overridden component; nested prefabs are flattened (lose their own link). Revisit when variants/nesting are implemented.
 
+## ADR-0024 — Save games and checkpoints (accepted 2026-11-16)
+**Problem.** Games need durable progress/profile data that survives crashes and game updates, and players expect quick save/load of the whole game state, without VICTUS games each inventing a file format.
+
+**Candidates.** Unreal-style save objects (https://dev.epicgames.com/documentation/en-us/unreal-engine/saving-and-loading-your-game-in-unreal-engine): typed `USaveGame` objects written to named slots per user; strong typing, but engine-reflected classes and no built-in whole-world capture. Godot's documented pattern (https://docs.godotengine.org/en/stable/tutorials/io/saving_games.html): persistable nodes return dictionaries from `save()` and are recreated on load, as JSON lines or binary `store_var`; flexible, but every game writes its own loader and recovery. VICTUS-native: JSON slots with checksums, backups and versioned migrations, plus checkpoints built on the existing scene snapshot format and per-script `save_state`/`load_state` hooks.
+
+**Decision.** The VICTUS-native design. JSON keeps saves inspectable and reuses the engine's parser and limits; the checksum + `.bak` + atomic rename protect against torn writes; `data_version` with ordered migrations makes save compatibility an explicit, testable contract. Checkpoints reuse `Scene::save/load` (component serializers already versioned), so every serializable component is captured without per-game code, while scripts own their private state through hooks (Godot's `save()` idea). Restores happen at a frame boundary to keep systems consistent.
+
+**Evidence.** STATUS Slice 22: store, migration, checkpoint and physics restore tests; template quick save/load tests; exported game writing to the per-user folder.
+
+**Risks / revisit triggers.** Large worlds make JSON checkpoints slow and big (consider binary or compressed payloads, measured first). Runtime state outside components (physics velocities, playback positions) is lost on restore. Multiplayer needs server-side snapshots instead of client checkpoints.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
