@@ -123,6 +123,11 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-16 (Slice 18, input)
+- SDL3 gamepad API — https://wiki.libsdl.org/SDL3/CategoryGamepad (zlib). `SDL_OpenGamepad`, `SDL_GetGamepadButton/Axis` and `SDL_EVENT_GAMEPAD_ADDED/REMOVED` over a standard layout (`SDL_GAMEPAD_BUTTON_SOUTH/EAST/WEST/NORTH`, shoulders, sticks, D-pad; axes `LEFTX/LEFTY/RIGHTX/RIGHTY/LEFT_TRIGGER/RIGHT_TRIGGER`, sticks −32768..32767, triggers 0..32767). VICTUS binding names mirror these positional names so one map fits Xbox, PlayStation and Switch pads.
+- gainput — https://github.com/jkuhlmann/gainput (MIT). Action mapping with its own device layer; archived and unmaintained since 2021-09-07; considered and not adopted (ADR-0021).
+- Open questions: per-player device assignment for local multiplayer, touch gestures, rumble, persisted user rebinding.
+
 ## Research conclusions added 2026-11-16 (Slice 17, networking)
 - ENet 1.3.18 — https://github.com/lsalzman/enet (MIT). Reliable and unreliable sequenced channels over UDP with fragmentation and RTT estimates; no encryption. Used behind `net::Transport`.
 - Valve GameNetworkingSockets v1.6.1 — https://github.com/ValveSoftware/GameNetworkingSockets/releases/tag/v1.6.1 (BSD-3). Encryption and P2P, but requires OpenSSL/libsodium and protobuf; the candidate transport for authenticated public servers.

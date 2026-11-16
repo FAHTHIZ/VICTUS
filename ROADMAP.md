@@ -91,7 +91,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 ## Phase 9 — Gameplay framework and scripting
 - [ ] Game instance/session, world/level lifecycle, game mode/rules, game state and player state.
 - [~] Actors/entities, components, player controllers, pawns/characters, cameras and spawn points. Done: entities/components (Slice 3), scripted player control (Slice 5), 3D physics characters (Slice 11). Remaining: reusable controller/camera rigs and spawn points.
-- [ ] Input actions/mappings for keyboard, mouse, controllers and touch. (Raw keyboard/mouse input is available to scripts via `input.*`; no action maps or gamepad/touch bindings yet.)
+- [~] Input actions/mappings for keyboard, mouse, controllers and touch. Done (Slice 18): named actions in `victus.project` with defaults, key/mouse/gamepad button and stick/trigger half-axis bindings, dead zones, Luau action/value/vector/rebind API, SDL3 gamepads (up to 4), validation in `victus check`, `--hold Pad.*`, gamepad input over the network, templates playable with a pad. Remaining: touch, per-player device assignment for local multiplayer, a rebinding UI with persisted user overrides, an editor input-actions panel, rumble.
 - [ ] Interaction, gameplay events, timers, tags, attributes, inventory/ability primitives as modular systems.
 - [ ] Prefabs/packed scenes, reusable components, variants and safe instantiation.
 - [x] Scripting runtime: Luau 0.747 sandboxed VM, `ScriptComponent` + `.luau` assets, entity/scene/input/time/log API, lifecycle (`start`/`update`/`fixed_update`/`reload`), editor-visible properties with per-entity overrides, hot reload in editor and `victus run`, time/memory budgets, `victus check` and headless `victus simulate` (Slice 5).

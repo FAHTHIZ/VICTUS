@@ -205,5 +205,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** ENet traffic is unencrypted and unauthenticated: add encryption/auth (GameNetworkingSockets or yojimbo transport, or DTLS) before public servers. Full snapshots without delta compression cost bandwidth with many entities. No physics rollback or lag compensation yet.
 
+## ADR-0021 — Input actions (accepted 2026-11-16)
+**Problem.** Scripts hard-coded key names, so games could not be played with a gamepad or rebound, and network input only carried keys. Input is user-facing in every game, so options were compared.
+
+**Candidates.** Raw SDL3 events and SDL gamepad calls exposed directly to scripts (no abstraction, every game re-implements mapping and dead zones); a third-party action library such as gainput (MIT; actions, devices and recording, but its own device layer duplicates SDL and the repository was archived in September 2021, unmaintained); an owned action map in `engine/gameplay` over the existing `InputSource` interface, with SDL3 only as the device backend.
+
+**Decision.** Owned `gameplay::InputMap`: named actions with button bindings or positive/negative axis bindings and a dead zone, bindings written as readable strings (`Space`, `Mouse0`, `Pad.South`, `Pad.LeftX+`) using SDL3's standard gamepad layout names, stored in the `input` section of `victus.project` with defaults, validated on load and by `victus check`. Devices stay behind `InputSource`, so the same map is evaluated over SDL input, headless `ManualInput` and the network's `RemoteInput`; protocol v2 sends merged gamepad state (buttons bitmask plus six quantized axes). No new dependency.
+
+**Evidence.** STATUS Slice 18: input-map, Luau, template, project and network tests; CLI smoke with `--hold Pad.*`.
+
+**Risks / revisit triggers.** Gamepads are merged into one for single-player and network input; local multiplayer needs per-player device assignment. Touch and rumble are not covered. Revisit if games need input contexts/stacks or combos.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
