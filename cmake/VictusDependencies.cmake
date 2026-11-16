@@ -173,3 +173,33 @@ function(victus_fetch_recast)
     target_compile_options(victus_recast PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
     victus_third_party_tsan(victus_recast)
 endfunction()
+
+# ENet 1.3.18 (MIT). https://github.com/lsalzman/enet/releases/tag/v1.3.18
+# Reliable/unreliable UDP transport used by engine/net. Compiled from source into a static library
+# with the POSIX feature macros its configure step would detect (all present on Linux/macOS).
+function(victus_fetch_enet)
+    if(TARGET victus_enet)
+        return()
+    endif()
+    FetchContent_Declare(enet
+        URL https://github.com/lsalzman/enet/archive/refs/tags/v1.3.18.tar.gz
+        URL_HASH SHA256=28603c895f9ed24a846478180ee72c7376b39b4bb1287b73877e5eae7d96b0dd
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        SOURCE_SUBDIR victus_no_cmake)
+    FetchContent_MakeAvailable(enet)
+    set(dir ${enet_SOURCE_DIR})
+    add_library(victus_enet STATIC
+        ${dir}/callbacks.c ${dir}/compress.c ${dir}/host.c ${dir}/list.c ${dir}/packet.c
+        ${dir}/peer.c ${dir}/protocol.c ${dir}/unix.c ${dir}/win32.c)
+    target_include_directories(victus_enet SYSTEM PUBLIC ${dir}/include)
+    set_target_properties(victus_enet PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 99)
+    target_compile_options(victus_enet PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w,-w>)
+    if(WIN32)
+        target_compile_definitions(victus_enet PRIVATE _WINSOCK_DEPRECATED_NO_WARNINGS _CRT_SECURE_NO_WARNINGS)
+        target_link_libraries(victus_enet PUBLIC ws2_32 winmm)
+    elseif(UNIX)
+        target_compile_definitions(victus_enet PRIVATE HAS_FCNTL=1 HAS_POLL=1 HAS_GETADDRINFO=1 HAS_GETNAMEINFO=1
+            HAS_INET_PTON=1 HAS_INET_NTOP=1 HAS_MSGHDR_FLAGS=1 HAS_SOCKLEN_T=1)
+    endif()
+    victus_third_party_tsan(victus_enet)
+endfunction()

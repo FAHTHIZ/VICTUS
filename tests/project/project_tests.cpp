@@ -10,6 +10,7 @@
 #include "victus/assets/database.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
+#include "victus/net/net.hpp"
 
 #include <filesystem>
 
@@ -240,9 +241,9 @@ struct TemplateRun {
     }
 };
 
-std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir) {
+std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir, bool create = true) {
     project::register_components();
-    auto p = project::Project::create(dir, "Scripted", id);
+    auto p = create ? project::Project::create(dir, "Scripted", id) : project::Project::open(dir);
     REQUIRE(p.ok());
     auto r = std::make_unique<TemplateRun>();
     auto path = p->startup_scene_path();
@@ -556,6 +557,88 @@ TEST_CASE("templates: simulation camera orbits the field") {
     CHECK(math::length(c1 - c0) > 0.5f);
     CHECK(c1.y == doctest::Approx(c0.y));
     CHECK(r->host->stats().errors == 0);
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("templates: multiplayer arena plays offline and over a network session") {
+    const auto dir = temp_dir("tplmp");
+    {
+        // Offline: the template player is the player; walking right collects coins.
+        auto r = start_template("multiplayer", dir);
+        r->frames(30);
+        const auto player = r->scene.find_by_name("Player");
+        REQUIRE_FALSE(player.is_null());
+        CHECK(net::get_var(r->scene, player, "score").as_number() == 0.0);
+        CHECK(r->text("Net Status").find("Offline") != std::string::npos);
+        r->input.set_key("D", true);
+        r->frames(150);
+        CHECK(r->pos("Player").x > 8.0f);
+        CHECK(r->pos("Player").x < 11.7f); // stopped by the arena wall
+        r->input.set_key("D", false);
+        r->frames(20);
+        CHECK(net::get_var(r->scene, player, "score").as_number() >= 1.0); // Coin 1 is on the way
+        CHECK(r->text("Scoreboard Text").find("You") != std::string::npos);
+        CHECK(r->host->stats().errors == 0);
+    }
+    {
+        // Server + two clients on an in-memory network, all running the template's scripts.
+        net::MemoryNetwork network;
+        auto server_run = start_template("multiplayer", dir, false);
+        net::ServerOptions so;
+        so.game_id = "mp";
+        net::NetServer server(std::move(network.listen(1)).value(), so);
+        server.install(server_run->sim);
+        std::vector<std::unique_ptr<TemplateRun>> runs;
+        std::vector<std::unique_ptr<net::NetClient>> clients;
+        for (const char* name : {"ann", "ben"}) {
+            runs.push_back(start_template("multiplayer", dir, false));
+            net::ClientOptions co;
+            co.host = "memory";
+            co.port = 1;
+            co.name = name;
+            co.game_id = "mp";
+            clients.push_back(std::make_unique<net::NetClient>(network.endpoint(), co));
+            clients.back()->install(runs.back()->sim);
+        }
+        auto step = [&](int n) {
+            for (int i = 0; i < n; ++i) {
+                server_run->frames(1);
+                for (auto& r : runs) r->frames(1);
+            }
+        };
+        step(60);
+        REQUIRE(clients[0]->connected());
+        REQUIRE(clients[1]->connected());
+        CHECK(server.clients().size() == 2);
+        // Ann (client 1, spawned at about (1.7, 0, 0.2) on the ring around the template) walks
+        // diagonally through Coin 1 at (3.3, 0.7, 1.4); ben stands still.
+        runs[0]->input.set_key("D", true);
+        runs[0]->input.set_key("S", true);
+        step(30);
+        runs[0]->input.set_key("D", false);
+        runs[0]->input.set_key("S", false);
+        step(30);
+        double ann = 0, ben = -1;
+        for (const auto& c : clients[1]->clients()) { // as ben sees the scores
+            REQUIRE_FALSE(c.player.is_null());
+            const double v = net::get_var(runs[1]->scene, c.player, "score").as_number();
+            (c.name == "ann" ? ann : ben) = v;
+        }
+        CHECK(ann >= 1.0);
+        CHECK(ben == 0.0);
+        // Ben's camera follows his own predicted player and his HUD shows the session.
+        const auto ben_player = clients[1]->local_player();
+        REQUIRE_FALSE(ben_player.is_null());
+        const auto cam = runs[1]->pos("Main Camera");
+        const auto bp = runs[1]->scene.world().get<scene::Transform>(ben_player)->position;
+        CHECK(std::abs(cam.x - bp.x) < 1.0f);
+        CHECK(runs[1]->text("Net Status").find("Online   player ") != std::string::npos);
+        CHECK(runs[1]->text("Scoreboard Text").find("ann") != std::string::npos);
+        CHECK(runs[1]->text("Scoreboard Text").find("(you)") != std::string::npos);
+        CHECK(server_run->host->stats().errors == 0);
+        for (auto& r : runs) CHECK(r->host->stats().errors == 0);
+    }
     std::error_code ec;
     sfs::remove_all(dir, ec);
 }

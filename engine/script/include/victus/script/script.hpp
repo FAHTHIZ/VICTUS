@@ -39,6 +39,14 @@
 // `nav.random_point(seed?)`, `nav.rebuild()`; entity methods for NavAgent entities
 // `set_destination(p)`, `stop()` and `nav_state()`.
 //
+// Networking API (meaningful when a NetServer/NetClient session is bound; offline every entity
+// is local and has authority): `net.role()` ("offline"/"server"/"client"), `net.is_server()`,
+// `net.is_client()`, `net.authority()`, `net.id()`, `net.connected()`, `net.local_player()`,
+// `net.send(name, value?, to?)`, `net.clients()`, `net.stats()`; entity methods `set_net(key, v)`
+// (authority only, replicated), `get_net(key)`, `has_authority()`, `is_local()`, `owner()`.
+// Messages arrive as `function M:on_net_message(name, value, sender)` after update. In a session,
+// `input.*` inside a script reads the input of the client that owns the entity (none on proxies).
+//
 // Safety: every VM is sandboxed (read-only standard libraries and globals, per-script global
 // tables, no io/os/package/debug access), each call has a wall-clock budget enforced through the
 // interrupt callback, and the heap has a byte limit. A failing instance is disabled and its
@@ -128,6 +136,7 @@ private:
     explicit ScriptHost(std::unique_ptr<Impl> impl);
     void dispatch_physics_events(scene::Scene& scene);
     void dispatch_ui_events(scene::Scene& scene);
+    void dispatch_net_messages(scene::Scene& scene);
     std::unique_ptr<Impl> impl_;
 };
 
