@@ -17,6 +17,7 @@
 #include "victus/project/project.hpp"
 #include "victus/runtime/hot_reload.hpp"
 #include "victus/runtime/scene_view.hpp"
+#include "victus/scene/prefab.hpp"
 #include "victus/script/script.hpp"
 #include "victus/ui/ui.hpp"
 
@@ -137,6 +138,22 @@ public:
     void rename(scene::Entity e, std::string name);
     // Adds a model asset (glTF) as a new entity tree.
     scene::Entity instantiate_asset(const Uuid& asset);
+    // ---- prefabs (undoable while editing; the prefab files themselves are not part of undo) ----
+    // Saves `e`'s subtree as a prefab asset (default "prefabs/<name>.vprefab", made unique) and
+    // turns `e` into an instance of it. Returns the new asset's UUID.
+    Result<Uuid> create_prefab(scene::Entity e, std::string_view relative_path = {});
+    // Adds an instance of a prefab asset at the camera target (or under `parent`).
+    scene::Entity instantiate_prefab(const Uuid& asset, scene::Entity parent = scene::kNullEntity);
+    // Writes the instance's current content to its prefab and updates every instance in the scene.
+    Status apply_prefab(scene::Entity instance);
+    // Discards the instance's overrides and brings it back in line with its prefab.
+    Status revert_prefab(scene::Entity instance);
+    // Turns the instance into ordinary entities (no link to the prefab any more).
+    void unpack_prefab(scene::Entity instance);
+    // Updates every instance of `asset` in the edited scene from the prefab file; returns how many.
+    Result<std::size_t> update_prefab_instances(const Uuid& asset);
+    // The prefab file of an asset UUID.
+    [[nodiscard]] Result<scene::Prefab> load_prefab(const Uuid& asset) const;
     // Records an edit made directly to `entity` (before = snapshot captured earlier).
     void record_edit(std::string label, std::vector<EntityState> before);
     [[nodiscard]] UndoStack& undo_stack() noexcept { return undo_; }
@@ -284,6 +301,10 @@ private:
     std::string input_error_;
     std::unordered_map<std::string, std::string> binding_text_; // typed bindings per action side
     void draw_input_actions();
+    void draw_prefab_section(scene::Entity e);
+    // Marks components of `e` that differ from `before` as prefab overrides (instance parts only).
+    void mark_prefab_overrides(scene::Entity e, const std::vector<EntityState>& before);
+    std::unordered_map<std::string, std::uint64_t> written_prefabs_; // path -> hash of our last write
     std::string rename_buffer_;
     Uuid renaming_;
 

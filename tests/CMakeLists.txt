@@ -27,6 +27,7 @@ victus_add_test(victus_ecs_tests
 
 victus_add_test(victus_scene_tests
     SOURCES
+        scene/prefab_tests.cpp
         scene/scene_tests.cpp
     DEPS VICTUS::Scene
     LABELS scene)

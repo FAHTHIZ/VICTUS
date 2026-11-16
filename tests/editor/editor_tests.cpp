@@ -445,3 +445,98 @@ TEST_CASE("editor: assets changed on disk are hot-reloaded without a manual reim
     h.ed->stop();
     h.frames(1);
 }
+
+TEST_CASE("editor: prefabs are created, instantiated, overridden, applied, reverted and hot-reloaded") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Pfb", "Pfb", "3d").ok());
+    h.frames(2);
+    auto& ed = *h.ed;
+    Scene& s = ed.edit_scene();
+
+    // A "Lamp" with a Bulb child becomes a prefab; the original turns into its first instance.
+    const Entity lamp = ed.create_entity(editor::Primitive::Cube);
+    ed.rename(lamp, "Lamp");
+    const Entity bulb = ed.create_entity(editor::Primitive::PointLight, lamp);
+    ed.rename(bulb, "Bulb");
+    auto asset = ed.create_prefab(lamp);
+    REQUIRE(asset);
+    const auto* rec = ed.assets()->find(*asset);
+    REQUIRE(rec);
+    CHECK(rec->path == "prefabs/Lamp.vprefab");
+    CHECK(rec->kind == assets::AssetKind::Prefab);
+    CHECK(sfs::exists(h.dir / "Pfb" / "assets" / "prefabs" / "Lamp.vprefab.meta"));
+    REQUIRE(s.world().get<PrefabInstance>(lamp));
+    CHECK(s.world().get<PrefabPart>(bulb));
+    // Undo removes the link, redo restores it.
+    ed.undo();
+    CHECK_FALSE(s.world().has<PrefabInstance>(s.find_by_name("Lamp")));
+    ed.redo();
+    const Entity lamp1 = s.find_by_name("Lamp");
+    REQUIRE(s.world().get<PrefabInstance>(lamp1));
+
+    // A second instance from the asset browser path.
+    const Entity lamp2 = ed.instantiate_prefab(*asset);
+    REQUIRE_FALSE(lamp2.is_null());
+    CHECK(s.children(lamp2).size() == 1);
+    const Entity bulb2 = s.children(lamp2)[0];
+
+    // Renaming a part of instance 2 records a "name" override on its root.
+    ed.rename(bulb2, "Red bulb");
+    REQUIRE(s.world().get<PrefabInstance>(lamp2)->overrides.size() == 1);
+    CHECK(s.world().get<PrefabInstance>(lamp2)->overrides[0].component == "name");
+
+    // Apply from instance 1: brighter bulb -> instance 2 gets it, keeps its own name override.
+    const Entity bulb1 = s.children(lamp1)[0];
+    s.world().get<LightComponent>(bulb1)->intensity = 42.0f;
+    REQUIRE(ed.apply_prefab(bulb1).ok()); // any entity of the instance works
+    CHECK(s.world().get<LightComponent>(s.children(lamp2)[0])->intensity == doctest::Approx(42.0f));
+    CHECK(s.world().get<Name>(s.children(lamp2)[0])->value == "Red bulb");
+    auto saved = load_prefab_file(h.dir / "Pfb" / "assets" / "prefabs" / "Lamp.vprefab");
+    REQUIRE(saved);
+    CHECK(saved->size() == 2);
+    // Our own write is not reported as an outside change.
+    const std::size_t msgs_before = ed.messages().size();
+    (void)ed.check_asset_changes();
+    for (std::size_t i = msgs_before; i < ed.messages().size(); ++i) CHECK(ed.messages()[i].find("Reloaded prefab") == std::string::npos);
+
+    // Revert drops the override.
+    REQUIRE(ed.revert_prefab(lamp2).ok());
+    CHECK(s.world().get<Name>(s.children(lamp2)[0])->value == "Bulb");
+    CHECK(s.world().get<PrefabInstance>(lamp2)->overrides.empty());
+    ed.undo();
+    CHECK(s.world().get<Name>(s.children(lamp2)[0])->value == "Red bulb");
+
+    // Editing the prefab file outside the editor updates both instances (hot reload).
+    Prefab outside = *saved;
+    {
+        json::Value root = outside.entities[0];
+        json::Value comps = root["components"];
+        json::Value mesh = comps["MeshRenderer"];
+        mesh.set("primitive", "sphere");
+        comps.set("MeshRenderer", mesh);
+        root.set("components", comps);
+        outside.entities.as_array()[0] = root;
+    }
+    REQUIRE(save_prefab_file(outside, h.dir / "Pfb" / "assets" / "prefabs" / "Lamp.vprefab").ok());
+    sfs::last_write_time(h.dir / "Pfb" / "assets" / "prefabs" / "Lamp.vprefab",
+                         sfs::file_time_type::clock::now() + std::chrono::seconds(3));
+    CHECK(ed.check_asset_changes() == 1);
+    CHECK(s.world().get<MeshRendererComponent>(lamp1)->primitive == "sphere");
+    CHECK(s.world().get<MeshRendererComponent>(lamp2)->primitive == "sphere");
+    const auto& msgs = ed.messages();
+    CHECK(std::find(msgs.begin(), msgs.end(), "Reloaded prefab prefabs/Lamp.vprefab (2 instances updated)") != msgs.end());
+
+    // Unpack: lamp2 becomes ordinary entities. Scene save/reopen keeps lamp1's link.
+    ed.unpack_prefab(lamp2);
+    CHECK_FALSE(s.world().has<PrefabInstance>(lamp2));
+    CHECK_FALSE(s.world().has<PrefabPart>(s.children(lamp2)[0]));
+    REQUIRE(ed.save_scene().ok());
+    h.frames(2);
+    // Play mode: scripts can spawn the prefab too (scene.instantiate through the asset index).
+    ed.play();
+    h.frames(2);
+    ed.stop();
+    h.frames(1);
+}

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/scene/scene.hpp"
 
+#include "victus/scene/prefab.hpp"
+
 #include "victus/core/fs.hpp"
 
 #include <algorithm>
@@ -225,6 +227,8 @@ SerializerRegistry::SerializerRegistry() {
             s.flip_y = v["flip_y"].as_bool(false);
             return {};
         });
+
+    detail::register_prefab_serializers(*this);
 }
 
 // ---- scene -----------------------------------------------------------------------------------

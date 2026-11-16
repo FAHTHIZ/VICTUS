@@ -80,6 +80,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     if (e == ".gltf" || e == ".glb") return AssetKind::Model;
     if (e == ".vscene") return AssetKind::Scene;
     if (e == ".luau") return AssetKind::Script;
+    if (e == ".vprefab") return AssetKind::Prefab;
     if (e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac") return AssetKind::Audio;
     return AssetKind::Unknown;
 }

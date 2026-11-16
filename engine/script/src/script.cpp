@@ -74,6 +74,7 @@ struct ScriptHost::Impl {
     std::unordered_map<std::string, Module> modules;
     std::unordered_map<std::uint64_t, Instance> instances;
     std::vector<std::string> recent_errors;
+    std::unordered_map<std::string, PrefabSource> prefabs;
     HostStats counters;
     double next_watch{0};
 
@@ -615,6 +616,55 @@ int scene_spawn(lua_State* L) {
     const char* name = luaL_optstring(L, 1, "Entity");
     const Entity parent = lua_isnoneornil(L, 2) ? Entity{} : check_live(L, 2, s);
     push_entity(L, s.create(name, parent));
+    return 1;
+}
+
+} // namespace
+
+Result<PrefabSource> read_prefab(const std::filesystem::path& assets_root, std::string_view path) {
+    auto file = fs::resolve_under(assets_root, path);
+    if (!file) return std::move(file).error();
+    auto prefab = scene::load_prefab_file(*file);
+    if (!prefab) return std::move(prefab).error();
+    PrefabSource src;
+    src.prefab = std::move(*prefab);
+    sfs::path meta = *file;
+    meta += ".meta";
+    if (auto text = fs::read_text(meta, 1u << 20)) {
+        if (auto doc = json::parse(*text); doc && (*doc)["uuid"].is_string()) (void)Uuid::parse((*doc)["uuid"].as_string(), src.asset);
+    }
+    return src;
+}
+
+namespace {
+
+// scene.instantiate(path, {position = vector, parent = Entity, name = string}?) -> Entity
+int scene_instantiate(lua_State* L) {
+    auto& h = host_of(L);
+    auto& s = scene_of(L);
+    const std::string path = luaL_checkstring(L, 1);
+    scene::InstantiateOptions o;
+    if (!lua_isnoneornil(L, 2)) {
+        luaL_checktype(L, 2, LUA_TTABLE);
+        lua_getfield(L, 2, "position");
+        if (!lua_isnil(L, -1)) o.position = check_vec3(L, -1);
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "parent");
+        if (!lua_isnil(L, -1)) o.parent = check_live(L, -1, s);
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "name");
+        if (!lua_isnil(L, -1)) o.name = luaL_checkstring(L, -1);
+        lua_pop(L, 1);
+    }
+    auto it = h.prefabs.find(path);
+    if (it == h.prefabs.end()) {
+        auto loaded = h.options.prefab_loader ? h.options.prefab_loader(path) : read_prefab(h.options.assets_root, path);
+        if (!loaded) luaL_error(L, "scene.instantiate: cannot load prefab '%s': %s", path.c_str(), loaded.error().message.c_str());
+        it = h.prefabs.emplace(path, std::move(*loaded)).first;
+    }
+    auto e = scene::instantiate(s, it->second.prefab, it->second.asset, o);
+    if (!e) luaL_error(L, "scene.instantiate('%s'): %s", path.c_str(), e.error().message.c_str());
+    push_entity(L, *e);
     return 1;
 }
 
@@ -1726,7 +1776,8 @@ void open_victus_libs(lua_State* L) {
     lua_setuserdatametatable(L, kEntityTag);
 
     const luaL_Reg scene_fns[] = {{"find", scene_find},     {"spawn", scene_spawn}, {"destroy", scene_destroy},
-                                  {"query", scene_query},   {"count", scene_count}, {nullptr, nullptr}};
+                                  {"query", scene_query},   {"count", scene_count}, {"instantiate", scene_instantiate},
+                                  {nullptr, nullptr}};
     register_lib(L, "scene", scene_fns);
     const luaL_Reg input_fns[] = {{"down", input_down},
                                   {"pressed", input_pressed},
@@ -2140,6 +2191,7 @@ HostStats ScriptHost::stats() const {
 
 const std::vector<std::string>& ScriptHost::recent_errors() const noexcept { return impl_->recent_errors; }
 const HostOptions& ScriptHost::options() const noexcept { return impl_->options; }
+void ScriptHost::forget_prefabs() { impl_->prefabs.clear(); }
 void ScriptHost::set_input_map(gameplay::InputMap map) { impl_->options.input_map = std::move(map); }
 
 void add_script_systems(gameplay::Simulation& sim, ScriptHost& host) {

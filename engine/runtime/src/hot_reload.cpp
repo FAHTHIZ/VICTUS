@@ -24,6 +24,7 @@ std::vector<std::string> HotReloadReport::lines() const {
     for (const auto& p : reimported_paths) out.push_back("reloaded " + p);
     for (const auto& f : failed) out.push_back("reload failed, keeping the previous version: " + f);
     for (const auto& a : audio) out.push_back("reloaded audio " + a);
+    for (const auto& p : prefabs) out.push_back("reloaded prefab " + p);
     for (const auto& r : restart_needed) out.push_back(r + " changed; restart to see it");
     return out;
 }
@@ -99,6 +100,8 @@ HotReloadReport AssetHotReloader::check() {
         const assets::AssetKind kind = assets::kind_for_extension(ext);
         if (kind == assets::AssetKind::Audio) {
             report.audio.push_back(path);
+        } else if (kind == assets::AssetKind::Prefab) {
+            report.prefabs.push_back(path);
         } else if (kind == assets::AssetKind::Texture || kind == assets::AssetKind::Model) {
             continue; // handled above (or a dependency of a model that was re-imported)
         } else if (ext == ".bin") {

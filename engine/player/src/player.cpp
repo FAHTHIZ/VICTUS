@@ -99,6 +99,13 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     so.assets_root = (*db)->assets_dir();
     so.watch_files = o.hot_reload && !packaged;
     so.input_map = proj->settings().input;
+    // Exported games have no .meta files; prefab UUIDs come from the asset index.
+    so.prefab_loader = [assets = db->get()](std::string_view prefab_path) -> Result<script::PrefabSource> {
+        auto src = script::read_prefab(assets->assets_dir(), prefab_path);
+        if (src && src->asset.is_nil())
+            if (const auto* rec = assets->find_path(prefab_path)) src->asset = rec->uuid;
+        return src;
+    };
     auto scripts = script::ScriptHost::create(so);
     if (!scripts) return std::move(scripts).error();
     // Worker threads for physics (and future parallel systems); 0 = hardware_concurrency - 1.
@@ -174,7 +181,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
                 runtime::AssetHotReloader::apply(changes, &cache, &animations);
                 if (audio_engine)
                     for (const auto& clip : changes.audio) (void)(*audio_engine)->reload_clip(clip);
-                report.assets_reloaded += changes.reimported.size() + changes.audio.size();
+                if (!changes.prefabs.empty()) (*scripts)->forget_prefabs(); // new instances use the new version
+                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size();
             }
         }
         const float dt = o.max_frames ? 1.0f / 60.0f : static_cast<float>(now - last);

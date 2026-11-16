@@ -10,6 +10,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
+#include "victus/scene/prefab.hpp"
 #include "victus/script/script.hpp"
 
 #include "robot.hpp"
@@ -135,6 +136,33 @@ MeshRendererComponent& mesh(Scene& s, Entity e, std::string_view primitive, math
     m.metallic = metallic;
     m.roughness = roughness;
     return m;
+}
+
+// The 3D template's crate prefab (assets/prefabs/crate.vprefab): a physics box with an impact
+// sound script. The scene's crates are instances of it and the player drops more at runtime.
+constexpr const char* kCratePrefabPath = "assets/prefabs/crate.vprefab";
+constexpr const char* kCratePrefabUuid = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f001";
+constexpr const char* kCrateLocalUuid = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f002";
+
+Prefab crate_prefab() {
+    Scene s;
+    Uuid local;
+    (void)Uuid::parse(kCrateLocalUuid, local);
+    const Entity crate = s.create("Crate", kNullEntity, local);
+    s.world().get<Transform>(crate)->scale = {0.6f, 0.6f, 0.6f};
+    mesh(s, crate, "cube", {0.62f, 0.45f, 0.28f, 1}, 0.0f, 0.7f);
+    s.world().add<physics::RigidBodyComponent>(crate).mass = 4.0f;
+    s.world().add<physics::ColliderComponent>(crate).friction = 0.7f;
+    attach(s, crate, "scripts/crate.luau");
+    return make_prefab(s, crate);
+}
+
+std::string crate_prefab_meta() {
+    json::Value m = json::Value::object();
+    m.set("victus_meta", 1);
+    m.set("uuid", kCratePrefabUuid);
+    m.set("importer", "");
+    return json::stringify(m, true) + "\n";
 }
 
 Entity camera_3d(Scene& s, math::Vec3 eye, math::Vec3 target) {
@@ -318,14 +346,16 @@ void build_3d(Scene& s) {
         j.max_limit = 100;
     }
 
-    for (int i = 0; i < 3; ++i) {
-        const Entity crate = add(s, "Crate " + std::to_string(i + 1),
-                                 {3.6f + 0.05f * static_cast<float>(i), 0.3f + 0.62f * static_cast<float>(i), 2.0f});
-        s.world().get<Transform>(crate)->scale = {0.6f, 0.6f, 0.6f};
-        mesh(s, crate, "cube", {0.62f, 0.45f, 0.28f, 1}, 0.0f, 0.7f);
-        s.world().add<physics::RigidBodyComponent>(crate).mass = 4.0f;
-        s.world().add<physics::ColliderComponent>(crate).friction = 0.7f;
-        attach(s, crate, "scripts/crate.luau");
+    {
+        const Prefab crate = crate_prefab();
+        Uuid asset;
+        (void)Uuid::parse(kCratePrefabUuid, asset);
+        for (int i = 0; i < 3; ++i) {
+            InstantiateOptions o;
+            o.name = "Crate " + std::to_string(i + 1);
+            o.position = math::Vec3{3.6f + 0.05f * static_cast<float>(i), 0.3f + 0.62f * static_cast<float>(i), 2.0f};
+            (void)instantiate(s, crate, asset, o);
+        }
     }
 
     const Entity bob = add(s, "Floating Gem", {1.0f, 2.6f, -2.0f});
@@ -418,7 +448,7 @@ void build_3d(Scene& s) {
     l.intensity = 12.0f;
     l.range = 7.0f;
 
-    (void)hud(s, "WASD, arrows or left stick   walk\nSpace or A button   jump\nWalk into the crates and the gate\nH or View button   show / hide this panel", {470, 128});
+    (void)hud(s, "WASD, arrows or left stick   walk\nSpace or A button   jump\nE or X button   drop a crate (prefab)\nWalk into the crates and the gate\nH or View button   show / hide this panel", {470, 156});
 }
 
 // ---- Multiplayer arena ------------------------------------------------------------------------
@@ -708,14 +738,29 @@ local Player = {}
 Player.speed = 5
 Player.jump_speed = 6
 Player.bounds = 9 -- stay within this distance of the origin on X and Z
+Player.crate = "prefabs/crate.vprefab" -- dropped with "interact" (E, gamepad X)
+Player.max_crates = 8                  -- the oldest dropped crate is removed beyond this
 
 function Player:start()
     self.robot = self.entity:find_child("Robot")
     self.dust = self.entity:find_child("Dust")
     self.clip = "Idle"
+    self.dropped = {}
+    self.facing = vector.create(0, 0, 1)
+end
+
+-- Drops an instance of the crate prefab in front of the player.
+function Player:drop_crate()
+    local p = self.entity.position + self.facing * 1.4 + vector.create(0, 1.6, 0)
+    local crate = scene.instantiate(self.crate, { position = p, name = "Dropped Crate" })
+    table.insert(self.dropped, crate)
+    if #self.dropped > self.max_crates then
+        scene.destroy(table.remove(self.dropped, 1))
+    end
 end
 
 function Player:update(dt)
+    if input.action_pressed("interact") then self:drop_crate() end
     -- Actions work with WASD/arrows and a gamepad's left stick (partial tilt walks slower).
     local stick = input.vector("move_x", "move_y")
     local move = vector.create(stick.x, 0, -stick.y) * self.speed
@@ -741,6 +786,7 @@ function Player:update(dt)
     local v = self.entity.velocity
     local speed = vector.magnitude(vector.create(v.x, 0, v.z))
     if speed > 0.3 then
+        self.facing = vector.normalize(vector.create(v.x, 0, v.z))
         self.robot.rotation = vector.create(0, math.deg(math.atan2(v.x, v.z)), 0)
     end
     local clip = (speed > 0.3 and self.entity.grounded) and "Walk" or "Idle"
@@ -1158,6 +1204,8 @@ std::vector<TemplateFile> template_files(std::string_view id) {
                 {"assets/scripts/follow_camera.luau", kFollowCamera},
                 {"assets/scripts/companion.luau", kCompanion},
                 {"assets/scripts/crate.luau", kCrate},
+                {kCratePrefabPath, json::stringify(prefab_to_json(crate_prefab())) + "\n"},
+                {std::string(kCratePrefabPath) + ".meta", crate_prefab_meta()},
                 {"assets/audio/impact.wav", synth_impact()},
                 {"assets/scripts/hud.luau", kHud}};
     if (id == "2d")
