@@ -6,7 +6,20 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  LINUX_DEPS: >-
+    ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev
+    libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libegl1-mesa-dev
+    libdecor-0-dev libasound2-dev libpulse-dev libdrm-dev libgbm-dev libudev-dev
+    mesa-vulkan-drivers libvulkan1 xvfb
 jobs:
+  shaders:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generated shader library matches sources
+        run: python3 tools/shaders/compile_shaders.py --check
+
   build-and-test:
     strategy:
       fail-fast: false
@@ -16,12 +29,32 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DVICTUS_BUILD_TESTS=ON -DVICTUS_WARNINGS_AS_ERRORS=ON
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
       - name: Test
-        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
+        shell: bash
+        run: |
+          # Linux runners have Mesa lavapipe (software Vulkan): GPU tests must run there.
+          if [ "$RUNNER_OS" = "Linux" ]; then export VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen; fi
+          ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
+      - name: Windowed swapchain smoke test
+        if: runner.os == 'Linux'
+        run: xvfb-run -a ./build/bin/victus_render_showcase --frames 20 --screenshot build/showcase.png --width 640 --height 360
+      - name: Upload rendered images
+        if: runner.os == 'Linux' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renders-${{ matrix.os }}-${{ matrix.build_type }}
+          path: |
+            build/test_output/*.png
+            build/showcase.png
+          if-no-files-found: ignore
+
   sanitizers:
     strategy:
       fail-fast: false
@@ -30,9 +63,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DVICTUS_SANITIZE=${{ matrix.sanitize }} -DVICTUS_BUILD_BENCHMARKS=OFF
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVICTUS_SANITIZE=${{ matrix.sanitize }} -DVICTUS_BUILD_BENCHMARKS=OFF -DVICTUS_BUILD_SAMPLES=OFF
       - name: Build
         run: cmake --build build --parallel
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          # The Mesa driver itself is not sanitizer-instrumented; GPU tests run in the main matrix.
+          export VICTUS_NO_GPU=1
+          ctest --test-dir build --output-on-failure

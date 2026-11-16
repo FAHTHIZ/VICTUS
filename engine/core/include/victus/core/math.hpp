@@ -189,6 +189,8 @@ struct Color {
     static Color hex(std::uint32_t rgb, float alpha = 1.0f) noexcept {
         return {((rgb >> 16) & 0xff) / 255.0f, ((rgb >> 8) & 0xff) / 255.0f, (rgb & 0xff) / 255.0f, alpha};
     }
+    // sRGB-encoded 0xRRGGBB (as picked in art tools) decoded to linear light for 3D shading.
+    static Color srgb(std::uint32_t rgb, float alpha = 1.0f) noexcept;
     friend constexpr bool operator==(Color, Color) = default;
 };
 [[nodiscard]] float srgb_to_linear(float c) noexcept;

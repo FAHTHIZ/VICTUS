@@ -13,10 +13,19 @@ Mandatory for code, libraries, SDKs, tools, datasets, fonts, models, textures, a
 9. Re-audit upgrades/releases.
 10. Escalate ambiguous/copyleft/custom terms for owner/legal review.
 
+## Adopted
+| Component | Version / pin | License (verified from upstream LICENSE) | Use | Distribution |
+|---|---|---|---|---|
+| SDL3 | 3.4.20, release tarball SHA-256 `f3bb06f55bed9557227a700af2ea62e49497ebdf58037732a731a5fb3ef8581f` | Zlib | Platform, input, SDL_GPU RHI backend | Statically linked; notice must ship with binaries |
+| doctest | 2.5.3 (vendored `third_party/doctest`) | MIT | Unit tests only | Not shipped in games |
+| stb (stb_image, stb_image_write, stb_truetype) | commit `9600522de53973336fa033a289858a4354cbb04c` (vendored `third_party/stb`) | MIT or public domain (dual, `third_party/stb/LICENSE`) | Image decode/encode, font rasterisation | Linked into engine |
+| glslang (glslangValidator) | build-time tool only | BSD-3-Clause / mixed (tool, not redistributed) | GLSL → SPIR-V for built-in shaders | Not shipped; generated SPIR-V is VICTUS output |
+| SPIRV-Cross | build-time tool only | Apache-2.0 (tool, not redistributed) | SPIR-V → MSL and reflection | Not shipped |
+| Mesa lavapipe | CI/test environment only | MIT | Software Vulkan for headless GPU tests | Not shipped |
+
 ## Candidate list — not adopted
 | Component | Candidate use | License expectation (verify exact version) |
 |---|---|---|
-| SDL3 | Platform/window/input | zlib |
 | Flecs / EnTT | ECS | MIT |
 | Taskflow | Task graphs | MIT |
 | enkiTS | Scheduler | zlib |
@@ -32,7 +41,6 @@ Mandatory for code, libraries, SDKs, tools, datasets, fonts, models, textures, a
 | miniaudio | Audio | MIT-0/public-domain option |
 | Dear ImGui/ImGuizmo | Editor/gizmos | MIT |
 | Tracy | Profiling | BSD-3-Clause |
-| Catch2/doctest | Tests | BSL-1.0/MIT |
 | Blender | External authoring | GPL-3.0-or-later; keep external |
 | OpenUSD | Scene interchange | Apache-2.0; inspect dependencies |
 

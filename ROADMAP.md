@@ -2,7 +2,7 @@
 
 Living, evidence-driven plan. Work directly on `main` in small, buildable commits. Status reflects verified repository state, never ambition.
 
-**Current maturity:** bootstrap foundation; not a production engine.
+**Current maturity:** core runtime + platform + RHI + real 2D/3D renderer verified on Vulkan; no editor, assets or gameplay yet. Not a production engine.
 
 Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocked.
 
@@ -17,7 +17,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 ## Phase 1 — Runtime, platform layer and diagnostics
 - [~] Lifecycle, ownership, shutdown ordering, error/result types and validated configuration. (Result/Error, JSON config parsing done.)
 - [x] Structured logging, diagnostic events, crash context, build metadata and tracing.
-- [ ] Platform services: filesystem, paths, clock, threads, window, input, device capabilities and lifecycle.
+- [~] Platform services: filesystem, paths, clock, threads, window, input, device capabilities and lifecycle. (SDL3 windows, keyboard/mouse/gamepad/touch input, lifecycle events, clipboard, GPU capabilities implemented; mobile lifecycle untested on devices.)
 - [ ] CLI modes: editor, game, headless, cook, test, benchmark and package.
 - [ ] Stable project configuration and runtime/editor/server target separation.
 **Exit:** predictable lifecycle and useful diagnostics in graphical and headless modes.
@@ -41,10 +41,10 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 **Exit:** headless simulation saves, reloads, replays and passes correctness/performance workloads.
 
 ## Phase 4 — Graphics API and rendering foundation
-- [ ] Research and record backend choices: Vulkan, D3D12, Metal, OpenGL/ES or other justified fallback; compare specialist abstractions.
-- [ ] VICTUS-owned RHI, capability model, device/swapchain/resource lifetime, synchronization and diagnostics.
-- [ ] Render graph, frame resources, shader compilation/cache/reflection and GPU profiling.
-- [ ] Real 2D and 3D render paths; validated geometry, textures, materials and camera.
+- [x] Research and record backend choices: Vulkan, D3D12, Metal, OpenGL/ES or other justified fallback; compare specialist abstractions. (ADR-0003: SDL_GPU behind VICTUS RHI.)
+- [~] VICTUS-owned RHI, capability model, device/swapchain/resource lifetime, synchronization and diagnostics. (Implemented and tested on Vulkan; Metal/D3D12 unexecuted.)
+- [~] Render graph, frame resources, shader compilation/cache/reflection and GPU profiling. (Render graph with culling/aliasing/transient pool, offline shader pipeline with reflection done; GPU timing pending.)
+- [x] Real 2D and 3D render paths; validated geometry, textures, materials and camera. (SpriteBatch; forward PBR with shadow map, point lights, sky, tonemap; pixel-verified tests.)
 - [ ] Backend/device-loss recovery and compatibility fallbacks.
 **Exit:** actual 2D and 3D scenes render on the validated desktop backend; mobile path has a verified capability plan.
 
