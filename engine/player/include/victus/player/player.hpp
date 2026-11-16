@@ -23,6 +23,9 @@ struct PlayerOptions {
     std::string connect;         // host[:port] of a `victus serve` server; empty = play offline
     std::string player_name{"player"}; // name shown to other players when connected
     std::string net_conditions;  // link emulation for testing, e.g. "latency=80,loss=0.05"
+    // Save games folder; empty = `<user data>/saves/<game>` for exported games and
+    // `<project>/.victus/saves` when running a project.
+    fs::Path saves;
 };
 
 struct PlayerReport {

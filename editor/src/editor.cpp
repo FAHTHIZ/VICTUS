@@ -778,7 +778,11 @@ void Editor::play() {
         script::HostOptions so;
         so.assets_root = db_->assets_dir();
         so.watch_files = true;
-        if (project_) so.input_map = project_->settings().input;
+        if (project_) {
+            so.input_map = project_->settings().input;
+            so.save_version = project_->settings().save_version;
+            so.save_directory = project_->dev_save_directory();
+        }
         if (auto host = script::ScriptHost::create(so)) {
             play_scripts_ = std::move(host).value();
             script::add_script_systems(sim_, *play_scripts_);

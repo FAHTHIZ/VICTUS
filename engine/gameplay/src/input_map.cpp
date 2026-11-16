@@ -248,6 +248,8 @@ InputMap default_input_map() {
     m.add("sprint", {"LeftShift", "Pad.LeftStick"});
     m.add("pause", {"Escape", "Pad.Start"});
     m.add("help", {"H", "Pad.Back"});
+    m.add("quick_save", {"F5", "Pad.LeftShoulder"});
+    m.add("quick_load", {"F9", "Pad.RightShoulder"});
     return m;
 }
 

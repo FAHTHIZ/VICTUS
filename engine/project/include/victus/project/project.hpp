@@ -31,6 +31,9 @@ struct ProjectSettings {
     float render_scale{0.0f};
     // Input actions ("input" section); projects without one use the engine defaults.
     gameplay::InputMap input = gameplay::default_input_map();
+    // Version of the game's save data ("save_version"); raise it when the shape of saved data
+    // changes and register a migration (save.migrate) from the previous version.
+    std::uint32_t save_version{1};
     json::Value extra = json::Value::object(); // unknown keys preserved verbatim
 };
 
@@ -67,6 +70,9 @@ public:
     [[nodiscard]] Status save() const;
 
     [[nodiscard]] const fs::Path& root() const noexcept { return root_; }
+    // Where development runs (editor play mode, `victus run`, `victus simulate`) keep save games:
+    // `.victus/saves`, separate from the saves of the exported game.
+    [[nodiscard]] fs::Path dev_save_directory() const { return root_ / ".victus" / "saves"; }
     [[nodiscard]] fs::Path file() const { return root_ / kProjectFileName; }
     [[nodiscard]] fs::Path assets_dir() const { return root_ / "assets"; }
     [[nodiscard]] fs::Path scenes_dir() const { return root_ / "scenes"; }

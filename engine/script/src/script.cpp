@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <format>
+#include <optional>
 #include <unordered_map>
 
 namespace victus::script {
@@ -78,6 +79,19 @@ struct ScriptHost::Impl {
     HostStats counters;
     double next_watch{0};
 
+    // Saves: created on first use when options.save_directory is set.
+    std::unique_ptr<gameplay::SaveStore> save_store;
+    std::unordered_map<std::uint32_t, int> migration_refs; // from-version -> Luau function ref
+    std::optional<Value> pending_restore;                  // checkpoint applied after update
+    std::unordered_map<std::string, Value> pending_states; // entity id -> load_state() argument
+    lua_State* active{nullptr};                            // thread running save.read (migrations)
+
+    gameplay::SaveStore* store() {
+        if (!save_store && !options.save_directory.empty())
+            save_store = std::make_unique<gameplay::SaveStore>(options.save_directory, options.save_version);
+        return save_store.get();
+    }
+
     // Context of the current call.
     scene::Scene* scene{nullptr};
     gameplay::FrameTime time{};
@@ -106,16 +120,22 @@ struct ScriptHost::Impl {
     }
 
     // Protected call with the time budget armed. On error the message is reported and popped.
-    bool pcall(int nargs, int nresults, std::string_view what) {
-        deadline = options.call_budget_seconds > 0 ? now_seconds() + options.call_budget_seconds : 0;
-        interrupt_counter = 0;
-        const int st = lua_pcall(L, nargs, nresults, 0);
-        deadline = 0;
+    // Nested calls (a script's save.checkpoint calling other scripts' save_state) share the
+    // outer call's budget.
+    bool pcall(int nargs, int nresults, std::string_view what) { return pcall_on(L, nargs, nresults, what); }
+    bool pcall_on(lua_State* T, int nargs, int nresults, std::string_view what) {
+        const double outer = deadline;
+        if (outer <= 0) {
+            deadline = options.call_budget_seconds > 0 ? now_seconds() + options.call_budget_seconds : 0;
+            interrupt_counter = 0;
+        }
+        const int st = lua_pcall(T, nargs, nresults, 0);
+        deadline = outer;
         ++counters.calls;
         if (st == LUA_OK) return true;
-        const char* msg = lua_tostring(L, -1);
+        const char* msg = lua_tostring(T, -1);
         report(std::format("{}: {}", what, msg ? msg : "unknown error"));
-        lua_pop(L, 1);
+        lua_pop(T, 1);
         return false;
     }
 
@@ -284,9 +304,20 @@ void interrupt(lua_State* L, int gc) {
 
 // ---- JSON <-> Lua ----------------------------------------------------------------------------
 
-void push_json(lua_State* L, const Value& v, int depth = 0) {
+void push_entity(lua_State* L, Entity e);
+
+// `refs`: objects of the form {"$entity": id} become entities of the active scene (save data).
+void push_json(lua_State* L, const Value& v, int depth = 0, bool refs = false) {
     if (depth > kMaxConvertDepth) luaL_error(L, "value nested too deeply");
     lua_rawcheckstack(L, 3);
+    if (refs && v.is_object() && v.size() == 1 && v.as_object().front().first == "$entity") {
+        auto* h = static_cast<ScriptHost::Impl*>(lua_callbacks(L)->userdata);
+        Uuid id;
+        const Value& s = v.as_object().front().second;
+        if (h->scene && s.is_string() && Uuid::parse(s.as_string(), id)) push_entity(L, h->scene->find(id));
+        else lua_pushnil(L);
+        return;
+    }
     switch (v.type()) {
     case json::Type::Null: lua_pushnil(L); return;
     case json::Type::Bool: lua_pushboolean(L, v.as_bool()); return;
@@ -300,7 +331,7 @@ void push_json(lua_State* L, const Value& v, int depth = 0) {
         }
         lua_createtable(L, static_cast<int>(a.size()), 0);
         for (std::size_t i = 0; i < a.size(); ++i) {
-            push_json(L, a[i], depth + 1);
+            push_json(L, a[i], depth + 1, refs);
             lua_rawseti(L, -2, static_cast<int>(i + 1));
         }
         return;
@@ -309,7 +340,7 @@ void push_json(lua_State* L, const Value& v, int depth = 0) {
         const auto& o = v.as_object();
         lua_createtable(L, 0, static_cast<int>(o.size()));
         for (const auto& [k, x] : o) {
-            push_json(L, x, depth + 1);
+            push_json(L, x, depth + 1, refs);
             lua_setfield(L, -2, k.c_str());
         }
         return;
@@ -317,7 +348,8 @@ void push_json(lua_State* L, const Value& v, int depth = 0) {
     }
 }
 
-Value to_json(lua_State* L, int idx, int depth = 0) {
+// `refs`: entities become {"$entity": id} (save data) instead of null.
+Value to_json(lua_State* L, int idx, int depth = 0, bool refs = false) {
     if (depth > kMaxConvertDepth) luaL_error(L, "value nested too deeply");
     idx = lua_absindex(L, idx);
     switch (lua_type(L, idx)) {
@@ -339,7 +371,7 @@ Value to_json(lua_State* L, int idx, int depth = 0) {
             Value arr = Value::array();
             for (int i = 1; i <= n; ++i) {
                 lua_rawgeti(L, idx, i);
-                arr.push(to_json(L, -1, depth + 1));
+                arr.push(to_json(L, -1, depth + 1, refs));
                 lua_pop(L, 1);
             }
             return arr;
@@ -347,10 +379,21 @@ Value to_json(lua_State* L, int idx, int depth = 0) {
         Value obj = Value::object();
         lua_pushnil(L);
         while (lua_next(L, idx) != 0) {
-            if (lua_type(L, -2) == LUA_TSTRING) obj.set(lua_tostring(L, -2), to_json(L, -1, depth + 1));
+            if (lua_type(L, -2) == LUA_TSTRING) obj.set(lua_tostring(L, -2), to_json(L, -1, depth + 1, refs));
             lua_pop(L, 1);
         }
         return obj;
+    }
+    case LUA_TUSERDATA: {
+        if (!refs) return Value();
+        auto* ref = static_cast<const EntityRef*>(lua_touserdatatagged(L, idx, kEntityTag));
+        auto* h = static_cast<ScriptHost::Impl*>(lua_callbacks(L)->userdata);
+        if (!ref || !h->scene) return Value();
+        const Entity e{ref->index, ref->generation};
+        if (!h->scene->world().alive(e)) return Value();
+        Value o = Value::object();
+        o.set("$entity", h->scene->uuid(e).to_string());
+        return o;
     }
     default: return Value();
     }
@@ -1705,6 +1748,227 @@ int entity_audio_playing(lua_State* L) {
     return 1;
 }
 
+// ---- save games ----------------------------------------------------------------------------------
+
+int save_fail(lua_State* L, const std::string& message) {
+    lua_pushnil(L);
+    lua_pushstring(L, message.c_str());
+    return 2;
+}
+
+constexpr const char* kNoSaves = "saves are not available (no save directory)";
+
+int save_available(lua_State* L) {
+    lua_pushboolean(L, host_of(L).store() != nullptr);
+    return 1;
+}
+
+int save_version(lua_State* L) {
+    lua_pushinteger(L, static_cast<int>(host_of(L).options.save_version));
+    return 1;
+}
+
+// save.write(slot, data, label?) -> true | nil, error
+int save_write(lua_State* L) {
+    auto& h = host_of(L);
+    const std::string slot = luaL_checkstring(L, 1);
+    luaL_checkany(L, 2);
+    const std::string label = luaL_optstring(L, 3, "");
+    auto* store = h.store();
+    if (!store) return save_fail(L, kNoSaves);
+    const Value data = to_json(L, 2, 0, true);
+    if (auto st = store->write(slot, data, label); !st) return save_fail(L, st.error().message);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// save.read(slot) -> data, info | nil, error
+int save_read(lua_State* L) {
+    auto& h = host_of(L);
+    const std::string slot = luaL_checkstring(L, 1);
+    auto* store = h.store();
+    if (!store) return save_fail(L, kNoSaves);
+    lua_State* outer = h.active;
+    h.active = L;
+    auto file = store->read(slot);
+    h.active = outer;
+    if (!file) return save_fail(L, file.error().message);
+    push_json(L, file->data, 0, true);
+    lua_createtable(L, 0, 5);
+    lua_pushinteger(L, static_cast<int>(file->data_version));
+    lua_setfield(L, -2, "version");
+    lua_pushnumber(L, static_cast<double>(file->saved_at));
+    lua_setfield(L, -2, "saved_at");
+    lua_pushstring(L, file->label.c_str());
+    lua_setfield(L, -2, "label");
+    lua_pushboolean(L, file->recovered);
+    lua_setfield(L, -2, "recovered");
+    lua_pushboolean(L, file->migrated);
+    lua_setfield(L, -2, "migrated");
+    return 2;
+}
+
+int save_exists(lua_State* L) {
+    auto* store = host_of(L).store();
+    lua_pushboolean(L, store && store->exists(luaL_checkstring(L, 1)));
+    return 1;
+}
+
+int save_delete(lua_State* L) {
+    const std::string slot = luaL_checkstring(L, 1);
+    auto* store = host_of(L).store();
+    if (!store) return save_fail(L, kNoSaves);
+    if (auto st = store->remove(slot); !st) return save_fail(L, st.error().message);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// save.list() -> { {slot, label, saved_at, version, damaged}, ... } newest first
+int save_list(lua_State* L) {
+    auto* store = host_of(L).store();
+    const auto slots = store ? store->list() : std::vector<gameplay::SlotInfo>{};
+    lua_createtable(L, static_cast<int>(slots.size()), 0);
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        const auto& s = slots[i];
+        lua_createtable(L, 0, 5);
+        lua_pushstring(L, s.slot.c_str());
+        lua_setfield(L, -2, "slot");
+        lua_pushstring(L, s.label.c_str());
+        lua_setfield(L, -2, "label");
+        lua_pushnumber(L, static_cast<double>(s.saved_at));
+        lua_setfield(L, -2, "saved_at");
+        lua_pushinteger(L, static_cast<int>(s.data_version));
+        lua_setfield(L, -2, "version");
+        lua_pushboolean(L, s.damaged);
+        lua_setfield(L, -2, "damaged");
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    return 1;
+}
+
+// save.migrate(from, fn): fn(data) returns the data upgraded from version `from` to `from + 1`.
+int save_migrate(lua_State* L) {
+    auto& h = host_of(L);
+    const int from = luaL_checkinteger(L, 1);
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+    if (from < 1) luaL_error(L, "save.migrate: versions start at 1");
+    auto* store = h.store();
+    if (!store) return save_fail(L, kNoSaves);
+    const auto key = static_cast<std::uint32_t>(from);
+    if (auto it = h.migration_refs.find(key); it != h.migration_refs.end()) lua_unref(L, it->second);
+    h.migration_refs[key] = lua_ref(L, 2);
+    ScriptHost::Impl* hp = &h;
+    store->add_migration(key, [hp, key](Value data) -> Result<Value> {
+        lua_State* T = hp->active ? hp->active : hp->L;
+        const int top = lua_gettop(T);
+        lua_getref(T, hp->migration_refs[key]);
+        push_json(T, data, 0, true);
+        if (!hp->pcall_on(T, 1, 1, std::format("save.migrate({})", key))) {
+            lua_settop(T, top);
+            return make_error(ErrorCode::ScriptError, "the migration function raised an error");
+        }
+        Value out = to_json(T, -1, 0, true);
+        lua_settop(T, top);
+        if (out.is_null()) return make_error(ErrorCode::ScriptError, "the migration function returned nil");
+        return out;
+    });
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+bool multiplayer(scene::Scene& s) { return net::role_of(s) != net::Role::Offline; }
+
+// save.checkpoint(slot, label?) -> true | nil, error. Also used by ScriptHost::checkpoint.
+int save_checkpoint(lua_State* L) {
+    auto& h = host_of(L);
+    auto& s = scene_of(L);
+    const std::string slot = luaL_checkstring(L, 1);
+    const std::string label = luaL_optstring(L, 2, "");
+    if (multiplayer(s)) return save_fail(L, "checkpoints are not available in multiplayer sessions");
+    auto* store = h.store();
+    if (!store) return save_fail(L, kNoSaves);
+    std::vector<std::uint64_t> keys;
+    for (const auto& [k, in] : h.instances)
+        if (in.started && !in.faulted) keys.push_back(k);
+    std::sort(keys.begin(), keys.end());
+    Value scripts = Value::object();
+    for (const std::uint64_t k : keys) {
+        auto it = h.instances.find(k);
+        if (it == h.instances.end()) continue;
+        const Entity e{static_cast<std::uint32_t>(k), static_cast<std::uint32_t>(k >> 32)};
+        if (!s.world().alive(e)) continue;
+        lua_getref(L, it->second.ref);
+        lua_getfield(L, -1, "save_state");
+        if (!lua_isfunction(L, -1)) {
+            lua_pop(L, 2);
+            continue;
+        }
+        lua_pushvalue(L, -2);
+        const std::string path = it->second.path;
+        if (h.pcall_on(L, 1, 1, std::format("{}:save_state", path))) {
+            Value state = to_json(L, -1, 0, true);
+            lua_pop(L, 1);
+            if (!state.is_null()) scripts.set(s.uuid(e).to_string(), std::move(state));
+        }
+        lua_pop(L, 1); // instance
+    }
+    Value data = Value::object();
+    data.set("victus_checkpoint", 1);
+    data.set("scene", s.save());
+    data.set("scripts", std::move(scripts));
+    if (auto st = store->write(slot, data, label); !st) return save_fail(L, st.error().message);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+Result<Value> read_checkpoint(ScriptHost::Impl& h, scene::Scene& s, std::string_view slot) {
+    if (multiplayer(s)) return make_error(ErrorCode::Unsupported, "checkpoints are not available in multiplayer sessions");
+    auto* store = h.store();
+    if (!store) return make_error(ErrorCode::Unsupported, kNoSaves);
+    auto file = store->read(slot, false);
+    if (!file) return std::move(file).error();
+    if (file->data["victus_checkpoint"].as_int(0) != 1 || !file->data["scene"].is_object())
+        return make_error(ErrorCode::InvalidArgument, std::format("save slot '{}' is not a checkpoint", slot));
+    // Validate the scene before the live one is replaced.
+    scene::Scene probe;
+    if (auto st = probe.load(file->data["scene"]); !st)
+        return make_error(st.error().code, std::format("checkpoint '{}': {}", slot, st.error().message));
+    return std::move(file->data);
+}
+
+// save.restore(slot) -> true | nil, error. The scene is replaced at the end of this update.
+int save_restore(lua_State* L) {
+    auto& h = host_of(L);
+    auto& s = scene_of(L);
+    auto data = read_checkpoint(h, s, luaL_checkstring(L, 1));
+    if (!data) return save_fail(L, data.error().message);
+    h.pending_restore = std::move(*data);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+int scene_find_id(lua_State* L) {
+    auto& s = scene_of(L);
+    Uuid id;
+    if (!Uuid::parse(luaL_checkstring(L, 1), id)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    push_entity(L, s.find(id));
+    return 1;
+}
+
+Status apply_checkpoint(ScriptHost::Impl& h, scene::Scene& s, const Value& data) {
+    for (auto& [k, in] : h.instances) h.drop(in);
+    h.instances.clear();
+    if (auto st = s.load(data["scene"]); !st) return st;
+    s.update_transforms();
+    h.pending_states.clear();
+    if (const Value* scripts = data.find("scripts"); scripts && scripts->is_object())
+        for (const auto& [id, state] : scripts->as_object()) h.pending_states.emplace(id, state);
+    return {};
+}
+
 void open_victus_libs(lua_State* L) {
     // Entity metatable.
     lua_newtable(L); // metatable
@@ -1777,7 +2041,7 @@ void open_victus_libs(lua_State* L) {
 
     const luaL_Reg scene_fns[] = {{"find", scene_find},     {"spawn", scene_spawn}, {"destroy", scene_destroy},
                                   {"query", scene_query},   {"count", scene_count}, {"instantiate", scene_instantiate},
-                                  {nullptr, nullptr}};
+                                  {"find_id", scene_find_id}, {nullptr, nullptr}};
     register_lib(L, "scene", scene_fns);
     const luaL_Reg input_fns[] = {{"down", input_down},
                                   {"pressed", input_pressed},
@@ -1847,6 +2111,13 @@ void open_victus_libs(lua_State* L) {
                                 {"stats", net_stats},
                                 {nullptr, nullptr}};
     register_lib(L, "net", net_fns);
+    const luaL_Reg save_fns[] = {{"available", save_available}, {"version", save_version},
+                                 {"write", save_write},         {"read", save_read},
+                                 {"exists", save_exists},       {"delete", save_delete},
+                                 {"list", save_list},           {"migrate", save_migrate},
+                                 {"checkpoint", save_checkpoint}, {"restore", save_restore},
+                                 {nullptr, nullptr}};
+    register_lib(L, "save", save_fns);
     lua_pushcfunction(L, log_info, "print");
     lua_setglobal(L, "print");
 }
@@ -1972,12 +2243,31 @@ void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, co
             in.started = true;
             if (!h.call(in, "start", nullptr)) continue;
             if (!scene.world().alive(item.e)) continue;
+            if (!h.pending_states.empty()) {
+                if (auto ps = h.pending_states.find(scene.uuid(item.e).to_string()); ps != h.pending_states.end()) {
+                    const Value state = std::move(ps->second);
+                    h.pending_states.erase(ps);
+                    lua_State* L = h.L;
+                    if (!h.call_with(in, "load_state", [&] {
+                            push_json(L, state, 0, true);
+                            return 1;
+                        }))
+                        continue;
+                    if (!scene.world().alive(item.e)) continue;
+                }
+            }
         }
         (void)h.call(in, "update", &dt);
     }
     dispatch_physics_events(scene);
     dispatch_ui_events(scene);
     dispatch_net_messages(scene);
+    h.pending_states.clear(); // states of entities that no longer have a script
+    if (h.pending_restore) {
+        const Value data = std::move(*h.pending_restore);
+        h.pending_restore.reset();
+        if (auto st = apply_checkpoint(h, scene, data); !st) h.report(std::format("save.restore: {}", st.error().message));
+    }
     h.input = h.default_input;
     h.counters.instances = h.instances.size();
 }
@@ -2173,6 +2463,37 @@ Result<json::Value> ScriptHost::eval(std::string_view source, scene::Scene* scen
     lua_settop(L, top);
     return v;
 }
+
+Status ScriptHost::checkpoint(scene::Scene& scene, std::string_view slot, std::string_view label) {
+    Impl& h = *impl_;
+    scene::Scene* outer = h.scene;
+    h.scene = &scene;
+    lua_State* L = h.L;
+    const int top = lua_gettop(L);
+    lua_pushcfunction(L, save_checkpoint, "save.checkpoint");
+    lua_pushstring(L, std::string(slot).c_str()); // (an empty string_view may carry a null pointer)
+    lua_pushstring(L, std::string(label).c_str());
+    Status result;
+    if (!h.pcall(2, 2, "checkpoint")) {
+        result = make_error(ErrorCode::ScriptError, "checkpoint failed (see the script errors)");
+    } else if (!lua_toboolean(L, -2)) {
+        const char* msg = lua_tostring(L, -1);
+        result = make_error(ErrorCode::IoError, msg ? msg : "checkpoint failed");
+    }
+    lua_settop(L, top);
+    h.scene = outer;
+    return result;
+}
+
+Status ScriptHost::restore(scene::Scene& scene, std::string_view slot) {
+    Impl& h = *impl_;
+    auto data = read_checkpoint(h, scene, slot);
+    if (!data) return std::move(data).error();
+    h.pending_restore.reset();
+    return apply_checkpoint(h, scene, *data);
+}
+
+gameplay::SaveStore* ScriptHost::saves() { return impl_->store(); }
 
 void ScriptHost::reset_instances() {
     for (auto& [k, in] : impl_->instances) impl_->drop(in);

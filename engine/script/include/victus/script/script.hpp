@@ -59,6 +59,18 @@
 // Messages arrive as `function M:on_net_message(name, value, sender)` after update. In a session,
 // `input.*` inside a script reads the input of the client that owns the entity (none on proxies).
 //
+// Save API (when HostOptions::save_directory is set; otherwise `save.available()` is false and the
+// other calls return nil plus an error): `save.write(slot, data, label?)`, `save.read(slot) ->
+// data, info` (info: version, saved_at, label, recovered, migrated), `save.exists(slot)`,
+// `save.delete(slot)`, `save.list()`, `save.version()`, `save.migrate(from, fn)` (fn(data) returns
+// the data upgraded to version from + 1; they run in order when an older save is read).
+// Checkpoints capture the whole scene: `save.checkpoint(slot, label?)` writes every entity plus
+// what each script's `function M:save_state()` returns; `save.restore(slot)` validates the slot
+// and, at the end of the frame's update, reloads the scene from it, restarts every script and
+// passes its state to `function M:load_state(state)` right after `start`. Entities inside saved
+// data are stored by id and come back as entities (nil if gone). `scene.find_id(id)` finds an
+// entity by its `entity.id`. Checkpoints are refused in multiplayer sessions.
+//
 // Safety: every VM is sandboxed (read-only standard libraries and globals, per-script global
 // tables, no io/os/package/debug access), each call has a wall-clock budget enforced through the
 // interrupt callback, and the heap has a byte limit. A failing instance is disabled and its
@@ -68,6 +80,7 @@
 #include "victus/core/result.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/gameplay/input_map.hpp"
+#include "victus/gameplay/save.hpp"
 #include "victus/scene/prefab.hpp"
 #include "victus/scene/scene.hpp"
 
@@ -113,6 +126,10 @@ struct HostOptions {
     // Resolves `scene.instantiate(path)`. Empty: reads `<assets_root>/<path>` and the UUID from
     // its `.meta` sidecar (nil when there is none). Players pass one backed by the asset database.
     std::function<Result<PrefabSource>(std::string_view path)> prefab_loader;
+    // Folder behind the `save` API (empty: saves unavailable) and the game's save data version
+    // (the project's "save_version").
+    std::filesystem::path save_directory;
+    std::uint32_t save_version{1};
 };
 
 struct HostStats {
@@ -158,6 +175,13 @@ public:
     [[nodiscard]] const HostOptions& options() const noexcept;
     // Drops cached prefabs so the next scene.instantiate re-reads them (hot reload).
     void forget_prefabs();
+    // Writes a checkpoint of `scene` (entities + every started script's save_state()) to `slot`.
+    [[nodiscard]] Status checkpoint(scene::Scene& scene, std::string_view slot, std::string_view label = {});
+    // Loads a checkpoint into `scene` now (not from inside update): reloads the entities, drops
+    // every script instance and hands each script its state after its next start.
+    [[nodiscard]] Status restore(scene::Scene& scene, std::string_view slot);
+    // The save store, or nullptr when HostOptions::save_directory is empty.
+    [[nodiscard]] gameplay::SaveStore* saves();
     // Replaces the input actions scripts see (e.g. edited in the editor while playing).
     void set_input_map(gameplay::InputMap map);
 
