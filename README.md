@@ -1,53 +1,81 @@
 # VICTUS
 
-**An independent, cross-platform engine for real games, high-fidelity rendering, and large-scale simulation.**
+**An independent, cross-platform engine for complete games, real-time rendering, and large-scale simulation.**
 
-VICTUS is a general-purpose engine project pursuing the breadth of a modern game engine: developers should be able to build and ship complete, playable games with it—not just run simulations or view technical demos. It also aims to support demanding worlds and complex simulations, from capable desktop systems to constrained mobile devices. Auroria may become one demanding showcase, but VICTUS must never depend on a single game.
+VICTUS aims to give developers an end-to-end path from an empty project to a finished, playable, distributable game. It is intended for 2D and 3D games, high-fidelity visuals, simulation-heavy worlds, mobile experiences, multiplayer projects, and dedicated servers. It must provide real gameplay and real rendering—not just technical demos.
 
-**Status:** early foundation, not a production-ready engine. The goals below describe the intended product, not capabilities already delivered. A feature is complete only when implemented, integrated, tested, and demonstrated in a real workflow.
+**Status:** early foundation; not production-ready. This README describes product goals, not delivered capabilities. Every feature remains planned until implementation, integration, tests, and a usable workflow prove it.
 
-## Product goals
+## What VICTUS is being built to provide
 
-- **Complete gameplay:** a real game runtime and gameplay framework with input, cameras, scenes, entities, physics, collision, animation, audio, UI, scripting/logic, save systems, and the foundations needed to build complete interactive games.
-- **Actual rendering:** a real graphics pipeline—not mock screens or placeholder visuals—with geometry submission, materials, lighting, shadows, post-processing, asset streaming, and scalable quality tiers. Pursue high-end visual fidelity while supporting standard and mobile hardware.
-- **Deep simulation:** scalable systems for populations, economies, ecosystems, physics, and autonomous agents, with simulation correctness independent of camera visibility and render frame rate.
-- **Professional creation tools:** an integrated editor, world and scene tools, asset import and processing, animation and material workflows, debugging, profiling, and packaging.
-- **Cross-platform delivery:** a modular runtime and practical build, deployment, and optimization workflows for desktop and mobile, with additional platforms evaluated through research and testing.
-- **Independent engineering:** VICTUS owns its core architecture and developer experience. Specialized open-source libraries may be integrated behind replaceable interfaces when justified; another complete engine must not provide VICTUS's core.
+- **Complete gameplay framework:** worlds, scenes, entities, components, game modes/states, player controllers, cameras, input mapping, interaction, physics, navigation, gameplay AI, scripting, visual scripting, events, timers, save/load, and reusable prefabs.
+- **Real 2D and 3D development:** dedicated 2D and 3D workflows, sprites, tilemaps, UI, physics, 3D meshes, skeletal animation, materials, terrain, large worlds, and spatial audio.
+- **Actual rendering:** a production-oriented graphics architecture with PBR materials, lighting, shadows, reflections, post-processing, GPU profiling, particles, visual effects, atmosphere, water, scalable quality tiers, and researched advanced rendering paths.
+- **Complete creator tools:** VICTUS Studio, scene/world editing, visual graphs, material/shader tools, animation tools, terrain and procedural tools, cinematic sequencing, asset inspection, debugging, profiling, and play-in-editor.
+- **Production pipeline:** asset import and validation, stable asset IDs, dependency tracking, incremental cooking, caching, build automation, packaging, platform presets, crash diagnostics, and reproducible releases.
+- **Multiplayer and online foundations:** authoritative server architecture, replication, prediction/reconciliation, interpolation, dedicated/headless servers, network simulation, and replaceable online-service integrations.
+- **Large-scale simulation:** deterministic and controlled simulation where feasible, populations, economies, ecosystems, crowds, autonomous agents, world streaming, and validated simulation LOD.
+- **Extensibility:** documented VICTUS APIs, plugin/module boundaries, safe modding architecture, versioning, migration tools, and an ecosystem that does not require another complete engine.
+- **Cross-platform delivery:** Windows, Linux, macOS, Android, and iOS as researched and validated targets; web, XR, and console support only when technically and legally viable. Console development depends on platform-holder access and approval.
+- **Three complete reference projects:** a 2D game, a 3D gameplay-focused game, and a simulation project, all built with VICTUS systems rather than hidden custom workarounds.
 
-## Engineering principles
+## Product principles
 
-1. Research major architectural choices; record evidence, trade-offs, and rejected alternatives.
-2. Measure before optimizing. Publish reproducible benchmarks rather than unsupported performance claims.
-3. Own the engine architecture while reusing proven specialist libraries where sensible.
-4. Keep gameplay, simulation, and rendering properly decoupled.
-5. Treat mobile CPU, GPU, memory, bandwidth, startup time, and thermals as first-class constraints.
-6. Provide scalable quality settings and graceful degradation without silently breaking gameplay or simulation correctness.
-7. Treat the editor, importer, debugger, profiler, and packaging pipeline as essential engine systems.
-8. Finish each subsystem as an integrated, tested, documented capability before marking it complete.
-9. Keep the main branch buildable and remove obsolete or duplicate implementations.
-10. Respect source-code, asset, license, patent, and trademark rights.
+1. **Independent core:** VICTUS owns its architecture, runtime, editor experience, project model, and public APIs. Specialist libraries may be used behind replaceable interfaces after research and license review.
+2. **Complete, not cosmetic:** no placeholder, mock, or screenshot-only feature counts as implemented.
+3. **Finish vertical slices:** implement, integrate, test, profile, document, and demonstrate each subsystem before marking it complete.
+4. **Measure performance:** publish reproducible results with hardware, OS, driver, build, quality settings, and test methodology.
+5. **Mobile is a first-class constraint:** account for memory, bandwidth, battery, sustained thermals, startup, and device capability.
+6. **Separate concerns:** gameplay, authoritative simulation, presentation, rendering, editor, and server execution have clear boundaries.
+7. **Build for creators:** usability, undo/redo, recovery, import feedback, debugging, tutorials, and packaging are engine requirements.
+8. **Keep main buildable:** use small verified commits, remove obsolete implementations, and never claim unverified support.
+9. **Respect rights and safety:** audit code, assets, licenses, patents, trademarks, plugin boundaries, and untrusted project content.
 
-## Repository
+## Development status
 
-`include/victus/` public headers · `src/` engine/runtime · `tests/` tests · `docs/` specifications · `tools/` tooling · `.github/workflows/` CI · `AGENTS.md` agent contract · `ROADMAP.md` implementation plan.
+VICTUS is currently at its bootstrap stage. The roadmap is aspirational and must not be confused with implemented functionality. See [ROADMAP.md](ROADMAP.md) and [docs/STATUS.md](docs/STATUS.md) for verified progress.
+
+## Repository map
+
+- `include/victus/` — public engine interfaces
+- `src/` — engine and runtime implementation
+- `tests/` — automated tests
+- `tools/` — developer and content tools
+- `docs/` — architecture, subsystem specifications, research, and status
+- `.github/workflows/` — CI
+- `AGENTS.md` — autonomous engineering contract
+- `ROADMAP.md` — complete implementation roadmap
 
 ## Build
 
 Requires CMake 3.24+ and a C++20 compiler:
 
-```bash
+~~~bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ctest --test-dir build --build-config Release --output-on-failure
 ./build/victus_runtime
-```
+~~~
 
 For Visual Studio/Xcode, run the executable from the matching configuration output directory. See [CMake presets](CMakePresets.json).
 
-## Start here
+## Engineering documents
 
-Read [AGENTS.md](AGENTS.md), [ROADMAP.md](ROADMAP.md), [architecture](docs/ARCHITECTURE.md), [technology decisions](docs/TECHNOLOGY_DECISIONS.md), [research register](docs/RESEARCH_REGISTER.md), [editor spec](docs/EDITOR_SPEC.md), [performance strategy](docs/PERFORMANCE_STRATEGY.md), [platform strategy](docs/PLATFORM_STRATEGY.md), [license policy](docs/THIRD_PARTY_AND_LICENSES.md), and [status](docs/STATUS.md).
+- [Autonomous engineering contract](AGENTS.md)
+- [Roadmap](ROADMAP.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Gameplay specification](docs/GAMEPLAY_SPEC.md)
+- [Rendering specification](docs/RENDERING_SPEC.md)
+- [Networking specification](docs/NETWORKING_SPEC.md)
+- [Production pipeline specification](docs/PRODUCTION_PIPELINE_SPEC.md)
+- [Reference projects and acceptance](docs/REFERENCE_PROJECTS.md)
+- [Editor specification](docs/EDITOR_SPEC.md)
+- [Performance strategy](docs/PERFORMANCE_STRATEGY.md)
+- [Platform strategy](docs/PLATFORM_STRATEGY.md)
+- [Research register](docs/RESEARCH_REGISTER.md)
+- [Technology decisions](docs/TECHNOLOGY_DECISIONS.md)
+- [Third-party and license policy](docs/THIRD_PARTY_AND_LICENSES.md)
+- [Engineering status](docs/STATUS.md)
 
 ## License
 
