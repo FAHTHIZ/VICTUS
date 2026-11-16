@@ -269,7 +269,7 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     // Run right: the player stops at the right wall and collects the coin on the ground.
     r->input.set_key("D", true);
     r->frames(300);
-    CHECK(r->pos("Player").x == doctest::Approx(8.8f - 0.45f).epsilon(2e-3));
+    CHECK(r->pos("Player").x == doctest::Approx(8.8f - 0.43f).epsilon(2e-3)); // capsule radius 0.43
     CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
     CHECK(r->scene.find_by_name("Coin 3").is_null());
     CHECK_FALSE(r->scene.find_by_name("Coin 1").is_null());
@@ -304,6 +304,27 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     r->input.set_key("Right", false);
     r->frames(30);
     CHECK(r->scene.find_by_name("Coin 1").is_null());
+    // The lantern hangs from its bracket on a live revolute joint.
+    const scene::Entity lantern = r->scene.find_by_name("Lantern");
+    CHECK(r->physics->joint_state(lantern).active);
+    CHECK(r->pos("Lantern").y == doctest::Approx(1.5f).epsilon(2e-2));
+    // One-way ledge: from the ground directly below, jump up through it and land on top...
+    const scene::Entity player = r->scene.find_by_name("Player");
+    r->scene.world().get<scene::Transform>(player)->position = {2.5f, -2.55f, 0};
+    r->frames(30);
+    REQUIRE(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
+    r->input.set_key("Space", true);
+    r->frames(5);
+    r->input.set_key("Space", false);
+    r->frames(90);
+    CHECK(r->pos("Player").y == doctest::Approx(-0.8f + 0.45f).epsilon(2e-2));
+    CHECK(r->physics->character_state(player).grounded);
+    // ...then hold S to drop back through to the ground.
+    r->input.set_key("S", true);
+    r->frames(5);
+    r->input.set_key("S", false);
+    r->frames(60);
+    CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
     CHECK(r->host->stats().errors == 0);
     for (const auto& e : r->host->recent_errors()) MESSAGE(e);
     std::error_code ec;

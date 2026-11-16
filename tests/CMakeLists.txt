@@ -103,6 +103,7 @@ victus_add_test(victus_physics_tests
     SOURCES
         physics/physics_tests.cpp
         physics/character_joint_tests.cpp
+        physics/character_joint_2d_tests.cpp
     DEPS VICTUS::Physics VICTUS::Core
     LABELS physics)
 

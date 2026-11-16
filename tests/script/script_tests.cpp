@@ -494,6 +494,67 @@ return { valid = cs.valid, grounded = cs.grounded, ny = cs.ground_normal.y, grou
     CHECK(std::abs(q.value()["angle"].as_number()) > 60.0); // ~90 deg/s for ~1.7 s, wraps at 180
 }
 
+TEST_CASE("script: 2D character, one-way drop-through and 2D joint motor") {
+    TempDir d("victus_script_character2d");
+    d.write("scripts/runner.luau", R"lua(
+local Runner = {}
+function Runner:update(dt)
+    self.t = (self.t or 0) + dt
+    if self.t > 0.5 and not self.dropped and self.entity.grounded then
+        self.dropped = self.entity:drop_through()
+        self.entity.name = "Runner:dropped"
+    end
+    if self.t > 0.2 and not self.motor then
+        self.motor = true
+        scene.find("Wheel"):set_motor(true, 180)
+    end
+end
+return Runner
+)lua");
+    auto host = make_host(d);
+    auto pw = physics::PhysicsWorld::create();
+    REQUIRE(pw.ok());
+    auto& world = *pw.value();
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    physics::add_physics_systems(sim, world);
+    Scene s;
+    const auto box = [&](const char* name, math::Vec2 p, math::Vec2 size, bool one_way) {
+        const Entity e = s.create(name);
+        s.world().get<Transform>(e)->position = {p.x, p.y, 0};
+        physics::Collider2DComponent c;
+        c.size = size;
+        c.one_way = one_way;
+        s.world().add<physics::Collider2DComponent>(e, c);
+        return e;
+    };
+    box("Floor", {0, -0.5f}, {40, 1}, false);
+    box("Ledge", {0, 2}, {4, 0.2f}, true);
+    const Entity wheel = box("Wheel", {10, 3}, {1, 1}, false);
+    s.world().add<physics::RigidBody2DComponent>(wheel, physics::RigidBody2DComponent{});
+    s.world().add<physics::Joint2DComponent>(wheel, physics::Joint2DComponent{});
+    const Entity runner = scripted(s, "Runner", "scripts/runner.luau");
+    s.world().get<Transform>(runner)->position = {0, 2.7f, 0};
+    s.world().add<physics::CharacterController2DComponent>(runner, physics::CharacterController2DComponent{});
+    for (int i = 0; i < 150; ++i) sim.tick(s, 1.0f / 60);
+    CHECK(s.world().get<scene::Name>(runner)->value == "Runner:dropped");
+    CHECK(s.world().get<Transform>(runner)->position.y == doctest::Approx(0.5f).epsilon(0.05)); // on the floor
+    CHECK(s.world().get<physics::Joint2DComponent>(wheel)->motor);
+    auto q = host->eval(R"lua(
+local r = scene.find("Runner:dropped")
+local cs = r:character_state()
+local js = scene.find("Wheel"):joint_state()
+return { grounded = cs.grounded, ground = cs.ground and cs.ground.name or "", active = js.active,
+         spin = scene.find("Wheel").angular_velocity.z, floor = scene.find("Floor"):drop_through() }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["grounded"].as_bool());
+    CHECK(q.value()["ground"].as_string() == "Floor");
+    CHECK(q.value()["active"].as_bool());
+    CHECK(q.value()["spin"].as_number() == doctest::Approx(3.14159).epsilon(0.02));
+    CHECK_FALSE(q.value()["floor"].as_bool());
+}
+
 TEST_CASE("script: animation playback API") {
     TempDir d("victus_script_animation");
     d.write("scripts/dancer.luau", R"lua(

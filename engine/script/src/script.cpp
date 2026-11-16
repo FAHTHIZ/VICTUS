@@ -861,6 +861,16 @@ int entity_jump(lua_State* L) {
     return 1;
 }
 
+// entity:drop_through(seconds?) -> bool: a 2D character ignores one-way platforms for `seconds`
+// (default 0.25) so it falls through the one it stands on. False for anything but a 2D character.
+int entity_drop_through(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* w = physics::world_of(s);
+    lua_pushboolean(L, w && w->drop_through(e, static_cast<float>(luaL_optnumber(L, 2, 0.25))));
+    return 1;
+}
+
 // entity:character_state() -> {valid, grounded, on_steep_slope, ground_normal, velocity, ground}
 int entity_character_state(lua_State* L) {
     auto& s = scene_of(L);
@@ -1026,7 +1036,7 @@ int entity_joint_state(lua_State* L) {
     return 1;
 }
 
-// entity:set_motor(enabled, speed): hinge (deg/s) or slider (m/s) motor.
+// entity:set_motor(enabled, speed): hinge/revolute/wheel (deg/s) or slider/prismatic (m/s) motor, 3D or 2D.
 int entity_set_motor(lua_State* L) {
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
@@ -1037,6 +1047,9 @@ int entity_set_motor(lua_State* L) {
     } else if (auto* j = s.world().get<physics::JointComponent>(e)) {
         j->motor = enabled;
         j->motor_speed = speed;
+    } else if (auto* j2 = s.world().get<physics::Joint2DComponent>(e)) {
+        j2->motor = enabled;
+        j2->motor_speed = speed;
     }
     return 0;
 }
@@ -1156,6 +1169,7 @@ void open_victus_libs(lua_State* L) {
                                 {"add_angular_impulse", entity_physics_apply<&physics::PhysicsWorld::add_angular_impulse>},
                                 {"move_character", entity_move_character},
                                 {"jump", entity_jump},
+                                {"drop_through", entity_drop_through},
                                 {"character_state", entity_character_state},
                                 {"play_animation", entity_play_animation},
                                 {"animation", entity_animation},

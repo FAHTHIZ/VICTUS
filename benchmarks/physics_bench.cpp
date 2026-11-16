@@ -152,5 +152,66 @@ int main(int argc, char** argv) {
         for (const auto c : chars) grounded += (*w)->character_state(c).grounded ? 1 : 0;
         if (grounded < n * 9 / 10) return 3; // the benchmark must measure walking, not falling
     }
+    // 2D characters: N CharacterController2Ds running back and forth on a ground under a row of
+    // one-way platforms (one fixed step each; includes the mover's plane solve, casts and ground probe).
+    for (const int n : {64, 256}) {
+        scene::Scene s;
+        const auto ground = s.create("ground");
+        s.world().add<physics::Collider2DComponent>(ground).size = {2000, 1};
+        s.world().get<scene::Transform>(ground)->position = {0, -0.5f, 0};
+        for (int i = 0; i < 128; ++i) {
+            const auto p = s.create("ledge");
+            s.world().get<scene::Transform>(p)->position = {static_cast<float>(i) * 4.0f, 2.0f, 0};
+            auto& c = s.world().add<physics::Collider2DComponent>(p);
+            c.size = {2.5f, 0.3f};
+            c.one_way = true;
+        }
+        std::vector<scene::Entity> chars;
+        for (int i = 0; i < n; ++i) {
+            const auto c = s.create("character");
+            s.world().get<scene::Transform>(c)->position = {static_cast<float>(i) * 2.0f, 0.55f, 0};
+            s.world().add<physics::CharacterController2DComponent>(c);
+            chars.push_back(c);
+        }
+        auto w = physics::PhysicsWorld::create();
+        if (!w) return 1;
+        for (int i = 0; i < 30; ++i) (*w)->step(s, kDt);
+        int frame = 0;
+        h.run("physics2d/step_" + std::to_string(n) + "_characters", static_cast<std::size_t>(n), [&] {
+            const float a = static_cast<float>(frame++) * 0.05f;
+            for (std::size_t i = 0; i < chars.size(); ++i)
+                (*w)->move_character(chars[i], {4.0f * std::sin(a + static_cast<float>(i)), 0, 0});
+            (*w)->step(s, kDt);
+        });
+        int grounded = 0;
+        for (const auto c : chars) grounded += (*w)->character_state(c).grounded ? 1 : 0;
+        if (grounded < n * 9 / 10) return 3;
+    }
+    // 2D joints: chains of 20 revolute-jointed links hanging from the world and swinging
+    // (one fixed step; every link stays awake because the chains start horizontal).
+    for (const int chains : {10, 50}) {
+        scene::Scene s;
+        for (int c = 0; c < chains; ++c) {
+            Uuid prev{};  // nil
+            for (int i = 0; i < 20; ++i) {
+                const auto e = s.create("link");
+                s.world().get<scene::Transform>(e)->position = {static_cast<float>(c) * 30.0f + static_cast<float>(i) * 0.5f + 0.25f, 0, 0};
+                s.world().add<physics::RigidBody2DComponent>(e);
+                auto& col = s.world().add<physics::Collider2DComponent>(e);
+                col.size = {0.5f, 0.1f};
+                auto& j = s.world().add<physics::Joint2DComponent>(e);
+                j.type = physics::Joint2DComponent::Type::Revolute;
+                j.anchor = {-0.25f, 0};
+                j.connected = prev; // nil: the first link hangs from the world
+                prev = s.uuid(e);
+            }
+        }
+        auto w = physics::PhysicsWorld::create();
+        if (!w) return 1;
+        (*w)->step(s, kDt);
+        if ((*w)->stats().joints_2d != static_cast<std::uint32_t>(chains * 20)) return 4;
+        const int links = chains * 20;
+        h.run("physics2d/step_" + std::to_string(links) + "_chain_links", static_cast<std::size_t>(links), [&] { (*w)->step(s, kDt); });
+    }
     return 0;
 }

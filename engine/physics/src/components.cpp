@@ -84,8 +84,39 @@ void register_components() {
             .field(&Collider2DComponent::friction, "friction", {.min = 0, .max = 10, .speed = 0.01f})
             .field(&Collider2DComponent::restitution, "restitution", {.min = 0, .max = 1, .speed = 0.01f})
             .field(&Collider2DComponent::is_trigger, "is_trigger")
+            .field(&Collider2DComponent::one_way, "one_way", {.tooltip = "Pass through from below, land on top (local +Y)"})
             .field(&Collider2DComponent::layer, "layer", {.min = 0, .max = 15})
             .field(&Collider2DComponent::mask, "mask", {.hint = "bitmask16"})
+            .commit();
+        scene::Schema<CharacterController2DComponent>("CharacterController2D", "Physics 2D")
+            .field(&CharacterController2DComponent::size, "size",
+                   {.min = 0.05f, .max = 100, .speed = 0.01f, .tooltip = "Capsule width x height, centred on the origin"})
+            .field(&CharacterController2DComponent::max_slope, "max_slope", {.min = 1, .max = 89, .speed = 0.5f, .tooltip = "degrees"})
+            .field(&CharacterController2DComponent::snap_distance, "snap_distance", {.min = 0, .max = 10, .speed = 0.01f})
+            .field(&CharacterController2DComponent::gravity_scale, "gravity_scale", {.min = -10, .max = 10, .speed = 0.05f})
+            .field(&CharacterController2DComponent::push_force, "push_force", {.min = 0, .max = 1e6f, .speed = 1, .tooltip = "N"})
+            .field(&CharacterController2DComponent::air_control, "air_control", {.min = 0, .max = 1, .speed = 0.01f})
+            .field(&CharacterController2DComponent::layer, "layer", {.min = 0, .max = 15})
+            .field(&CharacterController2DComponent::mask, "mask", {.hint = "bitmask16"})
+            .commit();
+        scene::Schema<Joint2DComponent>("Joint2D", "Physics 2D")
+            .enumeration(&Joint2DComponent::type, "type", {"weld", "revolute", "prismatic", "distance", "wheel"})
+            .field(&Joint2DComponent::connected, "connected", {.tooltip = "Other 2D body; empty = world", .hint = "entity"})
+            .field(&Joint2DComponent::anchor, "anchor", {.speed = 0.01f})
+            .field(&Joint2DComponent::axis, "axis", {.speed = 0.01f, .tooltip = "prismatic: slide axis; wheel: suspension axis"})
+            .field(&Joint2DComponent::connected_anchor, "connected_anchor",
+                   {.speed = 0.01f, .tooltip = "distance: point on the connected entity (local), or a world point"})
+            .field(&Joint2DComponent::limits, "limits")
+            .field(&Joint2DComponent::min_limit, "min_limit", {.speed = 0.1f, .tooltip = "revolute: degrees; others: m"})
+            .field(&Joint2DComponent::max_limit, "max_limit", {.speed = 0.1f, .tooltip = "revolute: degrees; others: m"})
+            .field(&Joint2DComponent::motor, "motor")
+            .field(&Joint2DComponent::motor_speed, "motor_speed", {.speed = 0.1f, .tooltip = "revolute/wheel: deg/s; others: m/s"})
+            .field(&Joint2DComponent::motor_force, "motor_force", {.min = 0, .max = 1e9f, .speed = 1})
+            .field(&Joint2DComponent::spring, "spring")
+            .field(&Joint2DComponent::spring_hertz, "spring_hertz", {.min = 0, .max = 1000, .speed = 0.05f})
+            .field(&Joint2DComponent::spring_damping, "spring_damping", {.min = 0, .max = 100, .speed = 0.01f})
+            .field(&Joint2DComponent::break_force, "break_force", {.min = 0, .max = 1e9f, .speed = 1, .tooltip = "0 = unbreakable"})
+            .field(&Joint2DComponent::collide_connected, "collide_connected")
             .commit();
     });
 }
