@@ -271,5 +271,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Bit-exact floating point is not guaranteed across compilers, OSes or architectures (the same article warns about debug vs release and different machines); captures should be re-recorded per platform if CI shows that. Systems that read wall-clock time or threads with racy order would break determinism. Digests do not see script-only state.
 
+## ADR-0027 — Entity-level capture divergence reports (accepted 2026-11-17)
+**Problem.** A capture replay that only says "frame 120: digest X, got Y" tells a developer that gameplay changed but not what changed; finding the cause meant re-running and diffing by hand.
+
+**Candidates.** (1) Store the hashed state lines with each digest and diff them on mismatch (like Factorio's desync reports, which keep both game states so they can be compared, https://wiki.factorio.com/Desynchronization). (2) Store a hash per entity: small, but the report can only name entities, not what or how much changed. (3) Store nothing and re-record a reference run on demand: needs the old build, which is usually gone after the regression lands.
+
+**Decision.** Candidate 1, capped at 4096 entities per digest (`Capture::detail_limit`, 0 disables). The lines are the exact digest input, so the report and the digest can never disagree, and they are human-readable for manual diffing. Factorio's experience (https://factorio.com/blog/post/fff-47) is that at the first diverging tick the difference is usually tiny, so reporting the first differing digest with up to three named entities is what matters.
+
+**Evidence.** STATUS Slice 25: unit, editor and CLI checks name the moved entity and component; 300-frame captures are 20 KB (58 entities) and 184 KB (580+ entities).
+
+**Risks / revisit triggers.** Captures of large scenes grow with entities × digests; if this matters, store per-entity hashes beyond the cap or compress. Divergence in state not covered by the lines (script variables, velocities) still shows up only later as a transform change.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

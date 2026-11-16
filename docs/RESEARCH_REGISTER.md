@@ -123,6 +123,12 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-17 (Slice 25, divergence reports)
+- Factorio wiki "Desynchronization" — https://wiki.factorio.com/Desynchronization: a desync report keeps both the player's and the server's copy of the game state; it records the state at the desync rather than the cause, and its files can be compared with text diff tools. Informed keeping the hashed state lines inside the capture.
+- Factorio Friday Facts #47 — https://factorio.com/blog/post/fff-47: a replay that checks the CRC every tick stops at the first desynchronized tick, where the difference is typically just one variable; human-readable tags make the diff usable. Informed reporting the first diverging digest with named entities and readable values.
+- Factorio Friday Facts #55 — https://factorio.com/blog/post/fff-55: a cheap "heuristic" CRC of crucial state runs every tick, with full-state checks reserved for debugging. Informed keeping the digest interval at 60 frames with optional detail.
+- Open questions: per-entity hashes beyond the detail cap, including script variables in the state lines.
+
 ## Research conclusions added 2026-11-16 (Slice 24, regression captures)
 - Gaffer On Games "Deterministic Lockstep" — https://gafferongames.com/post/deterministic_lockstep/: the same initial condition and inputs must give exactly the same result; a checksum of the physics state at the end of each frame would be identical; determinism on one machine/binary/OS does not imply it across compilers, OSes or architectures, or even between debug and release. Informed digests every N frames and the cross-platform caveat (our Debug and Release builds did match on this machine).
 - Luau standard library — https://luau.org/library: `math.randomseed(seed)` makes later `math.random` calls a deterministic sequence that depends only on the seed (the VM's default seed varies per run). Informed `HostOptions::random_seed`; Luau's implementation takes a 32-bit integer, so the 64-bit capture seed is folded.
