@@ -556,6 +556,66 @@ TEST_CASE("session: two clients over a lossy, delayed link play together") {
     CHECK(b.clients().size() == 1);
 }
 
+TEST_CASE("session: a listen-server host plays alongside remote clients") {
+    ServerOptions so;
+    so.host_player = true;
+    so.host_name = "  Hostess\n";
+    Session s(so);
+    s.step(1);
+    // The host's character exists before anyone joins and is driven by the server's own input.
+    const Entity host = s.server->local_player();
+    REQUIRE(!host.is_null());
+    CHECK(is_local(s.server_peer.scene, host));
+    CHECK(has_authority(s.server_peer.scene, host));
+    REQUIRE(s.server->clients().size() == 1);
+    CHECK(s.server->clients()[0].id == kServerId);
+    CHECK(s.server->clients()[0].name == "Hostess");
+    CHECK(s.server->diagnostics().clients == 0); // network clients only
+    CHECK(s.server_peer.find("server:true:1") != scene::kNullEntity);
+
+    NetClient& a = s.add_client("alice");
+    s.step(60);
+    REQUIRE(a.connected());
+    Peer& pa = *s.peers[0];
+    REQUIRE(a.clients().size() == 2);
+    Entity a_view_of_host;
+    for (const auto& c : a.clients())
+        if (c.id == kServerId) {
+            CHECK(c.name == "Hostess");
+            a_view_of_host = c.player;
+        }
+    REQUIRE(!a_view_of_host.is_null());
+    CHECK_FALSE(is_local(pa.scene, a_view_of_host));
+    CHECK(pa.find("client:false:2") != scene::kNullEntity);
+    const Entity srv_a = s.server_player(a.local_id());
+    REQUIRE(!srv_a.is_null());
+    CHECK(horizontal(s.server_peer.position(srv_a), s.server_peer.position(host)) > 1.0f);
+
+    // The host holds D: only the host's character moves, and alice sees it move.
+    const math::Vec3 host_start = s.server_peer.position(host);
+    const math::Vec3 a_start = s.server_peer.position(srv_a);
+    s.server_peer.input.set_key("D", true);
+    s.step(120);
+    s.server_peer.input.set_key("D", false);
+    const math::Vec3 host_moved = s.server_peer.position(host);
+    CHECK(host_moved.x - host_start.x > 5.0f);
+    CHECK(horizontal(s.server_peer.position(srv_a), a_start) < 1e-3f);
+    s.step(30);
+    const math::Vec3 host_rest = s.server_peer.position(host);
+    CHECK(horizontal(pa.position(a_view_of_host), host_rest) < 0.1f);
+    // Alice's input still drives only alice.
+    pa.input.set_key("A", true);
+    s.step(60);
+    pa.input.set_key("A", false);
+    CHECK(a_start.x - s.server_peer.position(srv_a).x > 2.0f);
+    CHECK(horizontal(s.server_peer.position(host), host_rest) < 1e-3f);
+    // The host's character survives clients leaving.
+    a.disconnect(0);
+    s.step(30);
+    CHECK(s.server_peer.scene.world().alive(host));
+    CHECK(s.server->clients().size() == 1);
+}
+
 TEST_CASE("session: gamepad sticks and buttons reach the server's scripts") {
     Session s;
     LinkConditions lossy;

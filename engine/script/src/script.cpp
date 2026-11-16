@@ -1248,7 +1248,7 @@ int net_connected(lua_State* L) {
     lua_pushboolean(L, c && c->connected());
     return 1;
 }
-// net.local_player() -> the entity this machine's input drives (client), or nil
+// net.local_player() -> the entity this machine's input drives (client or listen-server host), or nil
 int net_local_player(lua_State* L) {
     auto& s = scene_of(L);
     const auto* c = net::context_of(s);

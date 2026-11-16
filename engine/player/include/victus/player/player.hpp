@@ -26,6 +26,14 @@ struct PlayerOptions {
     std::string server_key;      // expected server public key (hex); empty = accept and report it
     std::string net_password;    // sent to servers started with --password (over the encrypted channel)
     bool insecure{false};        // connect without encryption (to servers started with --insecure)
+    // Listen server: host a session on UDP `host_port` and play in it (others join with
+    // connect). Encrypted with `host_key` (created if missing; empty = `<project>/.victus/
+    // server.key`, or next to the user's saves for exported games) unless `insecure`;
+    // `net_password` protects it.
+    bool host{false};
+    std::uint16_t host_port{0};  // 0 = net::kDefaultPort
+    std::uint16_t max_clients{8};
+    fs::Path host_key;
     // Save games folder; empty = `<user data>/saves/<game>` for exported games and
     // `<project>/.victus/saves` when running a project.
     fs::Path saves;

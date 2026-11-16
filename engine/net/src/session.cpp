@@ -189,7 +189,8 @@ bool valid_name(std::string_view n) {
 std::string clean_player_name(std::string n) {
     std::string out;
     for (const char c : n)
-        if (c > 31 && c < 127 && out.size() < kMaxPlayerName) out.push_back(c);
+        if (c > 31 && c < 127 && out.size() < kMaxPlayerName && !(c == ' ' && out.empty())) out.push_back(c);
+    while (!out.empty() && out.back() == ' ') out.pop_back();
     return out.empty() ? std::string("player") : out;
 }
 
@@ -490,6 +491,7 @@ struct NetServer::Impl {
     std::uint32_t next_net_id{1};
     std::uint16_t next_client_id{1};
     double now{0};
+    Entity host_player; // listen server: the host's own character (owner kServerId)
 
     struct Tracked {
         Entity e;
@@ -570,7 +572,26 @@ struct NetServer::Impl {
             static const RemoteInput none;
             return &none;
         };
+        if (options.host_player) spawn_host();
     }
+
+    // Listen server: the host plays too. Its character is server-owned, so it reads the local
+    // input (the routing fallback) and is simulated authoritatively with no prediction.
+    void spawn_host() {
+        const std::string name = clean_player_name(options.host_name);
+        for (std::size_t i = 0; i < templates.size(); ++i) {
+            const Template& tpl = templates[i];
+            auto e = instantiate(*scene, tpl, name);
+            if (!e) {
+                VICTUS_LOG_ERROR("net", "cannot spawn the host's player: {}", e.error().message);
+                continue;
+            }
+            if (auto* tr = scene->world().get<Transform>(*e)) tr->position = tpl.position;
+            if (i == 0) host_player = *e;
+            (void)track(*e, kPlayer, tpl.uuid, kServerId, name);
+        }
+    }
+    [[nodiscard]] bool hosting() const { return options.host_player && scene && scene->world().alive(host_player); }
 
     void write_spawn(ByteWriter& w, std::uint32_t id, const Tracked& t) {
         w.u8(kSpawn);
@@ -591,9 +612,15 @@ struct NetServer::Impl {
     }
     void write_roster(ByteWriter& w) {
         w.u8(kRoster);
-        std::uint32_t n = 0;
+        std::uint32_t n = hosting() ? 1 : 0;
         for (const auto& [p, c] : clients) n += c.welcomed;
         w.varuint(n);
+        if (hosting()) {
+            w.u16(kServerId);
+            w.str(clean_player_name(options.host_name));
+            const auto* st = scene->world().get<NetState>(host_player);
+            w.varuint(st ? st->net_id : 0);
+        }
         for (const auto& [p, c] : clients) {
             if (!c.welcomed) continue;
             w.u16(c.id);
@@ -1021,8 +1048,11 @@ Status NetServer::send(std::string_view name, const json::Value& value, std::uin
 
 std::vector<NetMessage> NetServer::take_messages() { return std::exchange(impl_->inbox, {}); }
 
+Entity NetServer::local_player() const noexcept { return impl_->hosting() ? impl_->host_player : Entity{}; }
+
 std::vector<ClientInfo> NetServer::clients() const {
     std::vector<ClientInfo> out;
+    if (impl_->hosting()) out.push_back({kServerId, clean_player_name(impl_->options.host_name), impl_->host_player, 0.0f});
     for (const auto& [peer, c] : impl_->clients) {
         if (!c.welcomed) continue;
         out.push_back({c.id, c.name, c.player, impl_->transport->stats(peer).rtt_ms});
