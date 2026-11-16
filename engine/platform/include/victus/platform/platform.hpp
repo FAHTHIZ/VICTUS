@@ -64,11 +64,21 @@ public:
     [[nodiscard]] bool mouse_pressed(MouseButton b) const noexcept {
         return mouse_[static_cast<std::size_t>(b)] && !prev_mouse_[static_cast<std::size_t>(b)];
     }
+    [[nodiscard]] bool mouse_released(MouseButton b) const noexcept {
+        return !mouse_[static_cast<std::size_t>(b)] && prev_mouse_[static_cast<std::size_t>(b)];
+    }
     [[nodiscard]] math::Vec2 mouse_position() const noexcept { return mouse_pos_; }
     [[nodiscard]] math::Vec2 mouse_delta() const noexcept { return mouse_delta_; }
     [[nodiscard]] float wheel() const noexcept { return wheel_; }
     [[nodiscard]] const std::string& text_input() const noexcept { return text_; }
     [[nodiscard]] const GamepadState& gamepad(std::size_t i) const noexcept { return pads_[i < kMaxGamepads ? i : 0]; }
+    // Gamepad buttons/axes as they were before this frame's events (for press/release edges).
+    [[nodiscard]] bool gamepad_button_prev(std::size_t pad, GamepadButton b) const noexcept {
+        return prev_pad_buttons_[pad < kMaxGamepads ? pad : 0][static_cast<std::size_t>(b)];
+    }
+    [[nodiscard]] float gamepad_axis_prev(std::size_t pad, GamepadAxis a) const noexcept {
+        return prev_pad_axes_[pad < kMaxGamepads ? pad : 0][static_cast<std::size_t>(a)];
+    }
     [[nodiscard]] const std::vector<TouchPoint>& touches() const noexcept { return touches_; }
 
     // Mutation API used by the platform backend, input playback and tests.
@@ -95,6 +105,8 @@ private:
     float wheel_{0};
     std::string text_;
     std::array<GamepadState, kMaxGamepads> pads_{};
+    std::array<std::array<bool, static_cast<std::size_t>(GamepadButton::Count)>, kMaxGamepads> prev_pad_buttons_{};
+    std::array<std::array<float, static_cast<std::size_t>(GamepadAxis::Count)>, kMaxGamepads> prev_pad_axes_{};
     std::vector<TouchPoint> touches_;
 };
 

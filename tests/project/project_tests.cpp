@@ -251,6 +251,7 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     REQUIRE(r->scene.load_file(*path).ok());
     script::HostOptions o;
     o.assets_root = dir / "assets";
+    o.input_map = p->settings().input;
     auto h = script::ScriptHost::create(o);
     REQUIRE(h.ok());
     r->host = std::move(h).value();
@@ -505,6 +506,139 @@ TEST_CASE("templates: 3D player moves with WASD and the camera follows") {
     CHECK(r->audio->stats().load_errors == 0);
     CHECK(r->host->stats().errors == 0);
     for (const auto& e : r->host->recent_errors()) MESSAGE(e);
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("templates: gamepads drive the 3D, 2D and multiplayer players through input actions") {
+    using gameplay::gamepad_axis_index;
+    using gameplay::gamepad_button_index;
+    {
+        const auto dir = temp_dir("pad3d");
+        auto r = start_template("3d", dir);
+        r->frames(2);
+        const math::Vec3 p0 = r->pos("Player");
+        // Full tilt up-right walks at full speed diagonally; half tilt walks slower.
+        r->input.set_gamepad_axis(0, gamepad_axis_index("LeftX"), 0.7071f);
+        r->input.set_gamepad_axis(0, gamepad_axis_index("LeftY"), -0.7071f);
+        r->frames(30);
+        const math::Vec3 p1 = r->pos("Player");
+        CHECK(p1.x > p0.x + 0.8f);
+        CHECK(p1.z < p0.z - 0.8f);
+        r->input.set_gamepad_axis(0, gamepad_axis_index("LeftX"), 0.0f);
+        r->input.set_gamepad_axis(0, gamepad_axis_index("LeftY"), -1.0f);
+        r->frames(30);
+        const float full = p1.z - r->pos("Player").z;
+        r->input.set_gamepad_axis(0, gamepad_axis_index("LeftY"), -0.6f);
+        const math::Vec3 p2 = r->pos("Player");
+        r->frames(30);
+        const float half = p2.z - r->pos("Player").z;
+        CAPTURE(full);
+        CAPTURE(half);
+        CHECK(full > 2.0f);
+        CHECK(half == doctest::Approx(full * 0.5f).epsilon(0.15));
+        r->input.set_gamepad_axis(0, gamepad_axis_index("LeftY"), 0.0f);
+        r->frames(20);
+        // South (A) jumps.
+        const float y0 = r->pos("Player").y;
+        r->input.set_gamepad_button(0, gamepad_button_index("South"), true);
+        r->frames(12);
+        CHECK(r->pos("Player").y > y0 + 0.5f);
+        r->input.set_gamepad_button(0, gamepad_button_index("South"), false);
+        r->frames(60);
+        // View/Back toggles the help panel like H.
+        const bool shown = r->ui_visible("Controls Panel");
+        r->input.set_gamepad_button(0, gamepad_button_index("Back"), true);
+        r->frames(1);
+        r->input.set_gamepad_button(0, gamepad_button_index("Back"), false);
+        r->frames(1);
+        CHECK(r->ui_visible("Controls Panel") != shown);
+        CHECK(r->host->stats().errors == 0);
+        for (const auto& e : r->host->recent_errors()) MESSAGE(e);
+        std::error_code ec;
+        sfs::remove_all(dir, ec);
+    }
+    {
+        const auto dir = temp_dir("pad2d");
+        auto r = start_template("2d", dir);
+        r->frames(30);
+        const float x0 = r->pos("Player").x;
+        r->input.set_gamepad_axis(0, gamepad_axis_index("LeftX"), 1.0f);
+        r->frames(30);
+        CHECK(r->pos("Player").x > x0 + 1.0f);
+        r->input.set_gamepad_axis(0, gamepad_axis_index("LeftX"), 0.0f);
+        r->input.set_gamepad_button(0, gamepad_button_index("South"), true);
+        r->frames(10);
+        r->input.set_gamepad_button(0, gamepad_button_index("South"), false);
+        CHECK(r->pos("Player").y > -1.5f);
+        r->frames(120);
+        CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
+        CHECK(r->host->stats().errors == 0);
+        std::error_code ec;
+        sfs::remove_all(dir, ec);
+    }
+    {
+        const auto dir = temp_dir("padmp");
+        auto r = start_template("multiplayer", dir);
+        r->frames(30);
+        const math::Vec3 p0 = r->pos("Player");
+        r->input.set_gamepad_axis(0, gamepad_axis_index("LeftX"), -1.0f);
+        r->frames(30);
+        CHECK(r->pos("Player").x < p0.x - 1.0f);
+        CHECK(r->host->stats().errors == 0);
+        std::error_code ec;
+        sfs::remove_all(dir, ec);
+    }
+}
+
+TEST_CASE("project: input actions are saved, rebindable in the file and validated") {
+    const auto dir = temp_dir("input");
+    auto p = project::Project::create(dir, "Input", "2d");
+    REQUIRE(p.ok());
+    CHECK(p->settings().input == gameplay::default_input_map());
+    auto& jump = p->settings().input.actions[static_cast<std::size_t>(
+        p->settings().input.find("jump") - p->settings().input.actions.data())];
+    jump.positive = {gameplay::parse_binding("K").value(), gameplay::parse_binding("Pad.North").value()};
+    REQUIRE(p->save().ok());
+    auto q = project::Project::open(dir);
+    REQUIRE(q.ok());
+    REQUIRE(q->settings().input.find("jump"));
+    CHECK(q->settings().input.find("jump")->positive.size() == 2);
+    CHECK(gameplay::binding_to_string(q->settings().input.find("jump")->positive[0]) == "K");
+    CHECK_FALSE(q->settings().extra.find("input"));
+
+    // The rebinding reaches the template's scripts: K jumps, Space no longer does.
+    auto r = start_template("2d", dir, false);
+    r->frames(30);
+    r->input.set_key("Space", true);
+    r->frames(10);
+    r->input.set_key("Space", false);
+    CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
+    r->input.set_key("K", true);
+    r->frames(10);
+    r->input.set_key("K", false);
+    CHECK(r->pos("Player").y > -1.5f);
+    r.reset();
+
+    // A project without an "input" section gets the defaults; a broken one fails to open.
+    auto text = fs::read_text(dir / "victus.project");
+    REQUIRE(text.ok());
+    auto doc = json::parse(*text);
+    REQUIRE(doc.ok());
+    json::Object without;
+    for (const auto& [k, v] : doc->as_object())
+        if (k != "input") without.emplace_back(k, v);
+    REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(json::Value(without))).ok());
+    auto d = project::Project::open(dir);
+    REQUIRE(d.ok());
+    CHECK(d->settings().input == gameplay::default_input_map());
+    auto broken = json::parse(R"({"actions": [{"name": "jump", "bindings": ["Pad.Nope"]}]})");
+    REQUIRE(broken.ok());
+    doc->set("input", *broken);
+    REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(*doc)).ok());
+    auto e = project::Project::open(dir);
+    REQUIRE_FALSE(e.ok());
+    CHECK(e.error().message.find("Pad.Nope") != std::string::npos);
     std::error_code ec;
     sfs::remove_all(dir, ec);
 }

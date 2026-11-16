@@ -34,6 +34,7 @@ victus_add_test(victus_scene_tests
 victus_add_test(victus_script_tests
     SOURCES
         script/script_tests.cpp
+        script/input_map_tests.cpp
     DEPS VICTUS::Script VICTUS::Animation
     LABELS script)
 

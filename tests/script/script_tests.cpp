@@ -212,6 +212,97 @@ return M
     CHECK(host->stats().errors == 0);
 }
 
+TEST_CASE("script: input actions, gamepads and rebinding") {
+    TempDir d("victus_script_actions");
+    d.write("scripts/actions.luau", R"lua(
+local M = {}
+function M:start()
+    local names = input.actions()
+    assert(#names >= 10, "default actions")
+    local b = input.bindings("move_x")
+    assert(b[1] == "D" and b[#b] == "-Pad.DpadLeft", table.concat(b, ","))
+    assert(not pcall(input.action, "no_such_action"), "unknown action raises")
+    local ok, err = input.rebind("jump", { "J", "Pad.North" })
+    assert(ok, err)
+    ok, err = input.rebind("bad", { "Pad.Nope" })
+    assert(not ok and string.find(err, "Pad.Nope"), "bad rebind reports")
+    assert(input.rebind("throttle", { "Pad.RightTrigger", "-Pad.LeftTrigger" }))
+    self.jumps = 0
+end
+function M:update(dt)
+    local v = input.vector("move_x", "move_y")
+    if input.action_pressed("jump") then self.jumps += 1 end
+    local pad = input.gamepad_connected() and 1 or 0
+    -- Report through the transform: x/y = move vector, z = jumps; scale.x = throttle,
+    -- scale.y = gamepad connected, scale.z = raw South button.
+    self.entity.position = vector.create(v.x, v.y, self.jumps)
+    self.entity.scale = vector.create(input.value("throttle"), pad, input.gamepad_button("A") and 1 or 0)
+end
+return M
+)lua");
+    Scene s;
+    const Entity root = scripted(s, "Root", "scripts/actions.luau");
+    auto host = make_host(d);
+    gameplay::ManualInput in;
+    gameplay::Simulation sim;
+    sim.input = &in;
+    script::add_script_systems(sim, *host);
+    const auto step = [&] {
+        sim.tick(s, 1.0f / 60.0f);
+        in.end_frame();
+    };
+    const auto pos = [&] { return s.world().get<Transform>(root)->position; };
+    const auto scl = [&] { return s.world().get<Transform>(root)->scale; };
+
+    step();
+    for (const auto& e : host->recent_errors()) MESSAGE(e);
+    REQUIRE(host->stats().errors == 0);
+    CHECK(scl().y == 0.0f);
+
+    // Diagonal keys are clamped to unit length.
+    in.set_key("D", true);
+    in.set_key("W", true);
+    step();
+    CHECK(pos().x == doctest::Approx(0.7071f).epsilon(0.01));
+    CHECK(pos().y == doctest::Approx(0.7071f).epsilon(0.01));
+    in.set_key("D", false);
+    in.set_key("W", false);
+
+    // Left stick half-left and pushed up (SDL +Y is down).
+    in.set_gamepad_axis(0, gameplay::gamepad_axis_index("LeftX"), -0.6f);
+    in.set_gamepad_axis(0, gameplay::gamepad_axis_index("LeftY"), -0.2f);
+    step();
+    CHECK(pos().x == doctest::Approx(-0.5f));
+    CHECK(pos().y == doctest::Approx(0.0f)); // within the dead zone
+    CHECK(scl().y == 1.0f);
+
+    // Rebound jump: Space no longer jumps, J and the North button do; edges count once.
+    in.set_key("Space", true);
+    step();
+    CHECK(pos().z == 0.0f);
+    in.set_key("J", true);
+    step();
+    step();
+    CHECK(pos().z == 1.0f);
+    in.set_key("J", false);
+    in.set_gamepad_button(0, gameplay::gamepad_button_index("North"), true);
+    step();
+    CHECK(pos().z == 1.0f); // J then North with no gap is one continuous hold
+    in.set_gamepad_button(0, gameplay::gamepad_button_index("North"), false);
+    step();
+    in.set_gamepad_button(0, gameplay::gamepad_button_index("North"), true);
+    step();
+    CHECK(pos().z == 2.0f);
+
+    // Negative trigger binding and raw button query.
+    in.set_gamepad_axis(0, gameplay::gamepad_axis_index("LeftTrigger"), 1.0f);
+    in.set_gamepad_button(0, gameplay::gamepad_button_index("South"), true);
+    step();
+    CHECK(scl().x == doctest::Approx(-1.0f));
+    CHECK(scl().z == 1.0f);
+    CHECK(host->stats().errors == 0);
+}
+
 TEST_CASE("script: sandbox, budgets and error isolation") {
     TempDir d("victus_script_safety");
     d.write("scripts/bad_runtime.luau", R"lua(

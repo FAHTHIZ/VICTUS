@@ -64,6 +64,8 @@ foreach(t 3d 2d simulation multiplayer)
     if(NOT LAST_OUTPUT MATCHES " 0 script errors")
         message(FATAL_ERROR "simulate reported script errors for ${t}: ${LAST_OUTPUT}")
     endif()
+    # The same through a gamepad's left stick (input actions).
+    run_ok("${VICTUS_CLI}" simulate "${dir}" --frames 60 --hold Pad.LeftX+ --hold Pad.South)
     if(run_gpu)
         run_ok("${VICTUS_CLI}" run "${dir}" --strict --frames 5 --width 320 --height 180 --screenshot "${WORK}/run_${t}.png")
         if(NOT EXISTS "${WORK}/run_${t}.png")
@@ -115,6 +117,20 @@ execute_process(
 if(NOT mp_rcs STREQUAL "0;4" OR NOT mp_err MATCHES "different game")
     message(FATAL_ERROR "mismatched client was not rejected (${mp_rcs}): ${mp_out}${mp_err}")
 endif()
+
+# Unknown controls are refused: by --hold (exit 1) and in the project's input actions (check exit 1).
+execute_process(COMMAND "${VICTUS_CLI}" simulate "${WORK}/game_2d" --frames 5 --hold Pad.Nope RESULT_VARIABLE rc OUTPUT_QUIET ERROR_QUIET)
+if(NOT rc EQUAL 1)
+    message(FATAL_ERROR "simulate accepted an unknown --hold control (${rc})")
+endif()
+file(READ "${WORK}/game_2d/victus.project" project_text)
+string(REPLACE "\"Pad.South\"" "\"Pad.Soth\"" bad_project "${project_text}")
+file(WRITE "${WORK}/game_2d/victus.project" "${bad_project}")
+execute_process(COMMAND "${VICTUS_CLI}" check "${WORK}/game_2d" RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT rc EQUAL 1 OR NOT "${out}${err}" MATCHES "Pad.Soth")
+    message(FATAL_ERROR "check did not report the unknown input control (${rc}): ${out}${err}")
+endif()
+file(WRITE "${WORK}/game_2d/victus.project" "${project_text}")
 
 # A broken script is reported by check (exit 1) and by simulate (exit 3).
 file(WRITE "${WORK}/game_2d/assets/scripts/broken.luau" "local M = {}\nfunction M:update(dt\nreturn M\n")

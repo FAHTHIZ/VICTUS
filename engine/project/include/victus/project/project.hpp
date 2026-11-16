@@ -4,6 +4,7 @@
 #pragma once
 #include "victus/core/fs.hpp"
 #include "victus/core/json.hpp"
+#include "victus/gameplay/input_map.hpp"
 #include "victus/scene/scene.hpp"
 
 #include <string>
@@ -28,6 +29,8 @@ struct ProjectSettings {
     // scale override (0 = the tier's default).
     std::string render_quality{"high"};
     float render_scale{0.0f};
+    // Input actions ("input" section); projects without one use the engine defaults.
+    gameplay::InputMap input = gameplay::default_input_map();
     json::Value extra = json::Value::object(); // unknown keys preserved verbatim
 };
 

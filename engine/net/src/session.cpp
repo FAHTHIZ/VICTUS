@@ -84,7 +84,16 @@ struct InputFrame {
     std::uint32_t seq{0};
     KeyBits keys;
     std::uint8_t mouse{0};
+    // Gamepads merged into one: any pad's buttons, the strongest deflection per axis.
+    bool pad{false};
+    std::uint16_t pad_buttons{0};
+    std::array<std::int16_t, gameplay::kGamepadAxisCount> pad_axes{};
 };
+
+std::int16_t quantize_axis(float v) {
+    return static_cast<std::int16_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * 32767.0f));
+}
+float axis_value(std::int16_t q) { return static_cast<float>(q) / 32767.0f; }
 
 InputFrame sample(const gameplay::InputSource* in, std::uint32_t seq) {
     InputFrame f;
@@ -94,6 +103,18 @@ InputFrame sample(const gameplay::InputSource* in, std::uint32_t seq) {
         if (in->key_down(kKeys[i])) f.keys.set(static_cast<int>(i));
     for (int b = 0; b < 8; ++b)
         if (in->mouse_down(b)) f.mouse |= static_cast<std::uint8_t>(1u << b);
+    std::array<float, gameplay::kGamepadAxisCount> axes{};
+    for (int p = 0; p < gameplay::kMaxGamepads; ++p) {
+        if (!in->gamepad_connected(p)) continue;
+        f.pad = true;
+        for (int b = 0; b < gameplay::kGamepadButtonCount; ++b)
+            if (in->gamepad_button(p, b)) f.pad_buttons |= static_cast<std::uint16_t>(1u << b);
+        for (int a = 0; a < gameplay::kGamepadAxisCount; ++a) {
+            const float v = in->gamepad_axis(p, a);
+            if (std::fabs(v) > std::fabs(axes[static_cast<std::size_t>(a)])) axes[static_cast<std::size_t>(a)] = v;
+        }
+    }
+    for (std::size_t a = 0; a < axes.size(); ++a) f.pad_axes[a] = quantize_axis(axes[a]);
     return f;
 }
 
@@ -101,14 +122,18 @@ InputFrame sample(const gameplay::InputSource* in, std::uint32_t seq) {
 class RemoteInput final : public gameplay::InputSource {
 public:
     void apply(const InputFrame& f) {
-        prev_ = cur_;
-        prev_mouse_ = mouse_;
+        hold();
         cur_ = f.keys;
         mouse_ = f.mouse;
+        pad_ = f.pad;
+        buttons_ = f.pad_buttons;
+        axes_ = f.pad_axes;
     }
     void hold() {
         prev_ = cur_;
         prev_mouse_ = mouse_;
+        prev_buttons_ = buttons_;
+        prev_axes_ = axes_;
     }
     [[nodiscard]] bool key_down(std::string_view k) const override { return cur_.test(key_index(k)); }
     [[nodiscard]] bool key_pressed(std::string_view k) const override {
@@ -123,10 +148,25 @@ public:
     [[nodiscard]] bool mouse_pressed(int b) const override { return mouse_down(b) && !((prev_mouse_ >> b) & 1); }
     [[nodiscard]] math::Vec2 mouse_position() const override { return {}; }
     [[nodiscard]] math::Vec2 mouse_delta() const override { return {}; }
+    [[nodiscard]] bool mouse_released(int b) const override {
+        return b >= 0 && b < 8 && !((mouse_ >> b) & 1) && ((prev_mouse_ >> b) & 1);
+    }
+    [[nodiscard]] bool gamepad_connected(int pad) const override { return pad == 0 && pad_; }
+    [[nodiscard]] bool gamepad_button(int pad, int b, bool previous = false) const override {
+        if (pad != 0 || b < 0 || b >= gameplay::kGamepadButtonCount) return false;
+        return (((previous ? prev_buttons_ : buttons_) >> b) & 1u) != 0;
+    }
+    [[nodiscard]] float gamepad_axis(int pad, int a, bool previous = false) const override {
+        if (pad != 0 || a < 0 || a >= gameplay::kGamepadAxisCount) return 0;
+        return axis_value((previous ? prev_axes_ : axes_)[static_cast<std::size_t>(a)]);
+    }
 
 private:
     KeyBits cur_, prev_;
     std::uint8_t mouse_{0}, prev_mouse_{0};
+    bool pad_{false};
+    std::uint16_t buttons_{0}, prev_buttons_{0};
+    std::array<std::int16_t, gameplay::kGamepadAxisCount> axes_{}, prev_axes_{};
 };
 
 std::vector<std::uint8_t> encode_json(const json::Value& v) {
@@ -605,6 +645,13 @@ struct NetServer::Impl {
             frames[i].keys.lo = r.u64();
             frames[i].keys.hi = r.u64();
             frames[i].mouse = r.u8();
+            const std::uint8_t pad = r.u8();
+            if (pad > 1) return violation(c, "malformed input");
+            if (pad) {
+                frames[i].pad = true;
+                frames[i].pad_buttons = static_cast<std::uint16_t>(r.u16() & ((1u << gameplay::kGamepadButtonCount) - 1));
+                for (auto& a : frames[i].pad_axes) a = static_cast<std::int16_t>(r.u16());
+            }
         }
         const double client_time = r.f64();
         if (!r.done()) return violation(c, "malformed input");
@@ -700,6 +747,9 @@ struct NetServer::Impl {
                 c.inputs.pop_front();
                 f.keys = f.keys | next.keys; // keep presses from skipped frames
                 f.mouse |= next.mouse;
+                f.pad_buttons |= next.pad_buttons; // newest axes, merged buttons
+                f.pad = f.pad || next.pad;
+                f.pad_axes = next.pad_axes;
                 f.seq = next.seq;
             }
             c.input.apply(f);
@@ -1257,6 +1307,11 @@ struct NetClient::Impl {
             w.u64(h.keys.lo);
             w.u64(h.keys.hi);
             w.u8(h.mouse);
+            w.u8(h.pad ? 1 : 0);
+            if (h.pad) {
+                w.u16(h.pad_buttons);
+                for (const auto a : h.pad_axes) w.u16(static_cast<std::uint16_t>(a));
+            }
         }
         w.f64(now);
         send(Channel::Unreliable, w);
