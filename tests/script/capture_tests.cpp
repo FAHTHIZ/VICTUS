@@ -133,6 +133,44 @@ TEST_CASE("capture: CaptureReplay checks digests at their frames") {
     CHECK(rp.diverged());
     CHECK(rp.frame() == 4);
     CHECK(rp.digests_checked() == 2);
+    // The recorded per-entity state names the entity that diverged.
+    MESSAGE(rp.mismatch());
+    CHECK(rp.mismatch() == "frame 4: Mover: position (5, 0, 0) expected (4, 0, 0)");
+}
+
+TEST_CASE("capture: divergence reports name changed, missing and extra entities") {
+    scene::Scene a;
+    const auto p = a.create("Player");
+    a.create("Coin");
+    a.create("Coin");
+    const auto want = gameplay::state_lines(a);
+    CHECK(want.front() == "#entities 3");
+    CHECK(gameplay::describe_difference(want, want) == "state differs");
+    a.world().get<scene::Transform>(p)->rotation = math::Quat::axis_angle({0, 1, 0}, 1.57079633f);
+    a.destroy(a.find_by_name("Coin"));
+    a.create("Ghost");
+    const auto got = gameplay::state_lines(a);
+    const auto text = gameplay::describe_difference(want, got);
+    MESSAGE(text);
+    CHECK(text.find("Coin: 1 present, expected 2") != std::string::npos);
+    CHECK(text.find("Ghost: not in the recording") != std::string::npos);
+    CHECK(text.find("Player: rotation (0, 0.7071, 0, 0.7071) expected (0, 0, 0, 1)") != std::string::npos);
+    CHECK(gameplay::describe_difference(want, got, 1).find("; 2 more") != std::string::npos);
+    // Captures keep the state through save/parse, and detail can be turned off.
+    Capture c;
+    c.digest_interval = 1;
+    c.add_frame({}, 0.01f);
+    c.after_tick(a);
+    auto back = Capture::parse(c.to_text());
+    REQUIRE(back);
+    REQUIRE(back.value().digests.size() == 1);
+    CHECK(back.value().digests[0].state == got);
+    Capture lean;
+    lean.detail_limit = 0;
+    lean.add_frame({}, 0.01f);
+    lean.finish(a);
+    CHECK(lean.digests.at(0).state.empty());
+    CHECK(lean.to_text().find("\"state\"") == std::string::npos);
 }
 
 TEST_CASE("capture: a script random seed repeats math.random") {

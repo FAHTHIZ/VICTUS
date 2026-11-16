@@ -4,6 +4,7 @@
 // with undo, play mode isolation, save and reopen).
 #include "../render/gpu_fixture.hpp"
 #include "victus/editor/editor.hpp"
+#include "victus/gameplay/capture.hpp"
 #include "victus/editor/undo.hpp"
 
 #include "victus/render/image.hpp"
@@ -264,6 +265,58 @@ TEST_CASE("editor: 3D project workflow end to end") {
     CHECK(s.world().get<Transform>(spinner)->rotation == authored);
     CHECK(h.ed->play_scripts() == nullptr);
     CHECK(h.ed->play_navigation() == nullptr);
+    // Play > Record Capture: Stop saves a capture; replaying it reproduces every digest even
+    // though the editor now ticks with a different frame time.
+    CHECK(h.ed->captures().empty());
+    h.ed->record();
+    CHECK(h.ed->recording());
+    CHECK(h.ed->play_state() == editor::PlayState::Playing);
+    h.frames(40, 1.0f / 60.0f);
+    h.frames(30, 1.0f / 30.0f);
+    h.ed->stop();
+    CHECK_FALSE(h.ed->recording());
+    const auto caps = h.ed->captures();
+    REQUIRE(caps.size() == 1);
+    CHECK(caps[0] == h.ed->last_capture());
+    CHECK(caps[0].parent_path() == h.dir / "Game" / ".victus" / "captures");
+    {
+        auto cap = gameplay::Capture::load(caps[0]);
+        REQUIRE(cap);
+        CHECK(cap->frames.size() == 70);
+        CHECK(cap->scene == "scenes/main.vscene");
+        CHECK(cap->seed != 0);
+        REQUIRE(cap->digests.size() == 2); // frame 60 and the final 70
+        CHECK_FALSE(cap->digests.back().state.empty());
+        // A tampered copy (the player recorded elsewhere) must be reported by name.
+        bool moved = false;
+        for (auto& line : cap->digests.back().state)
+            if (line.rfind("Player|", 0) == 0) {
+                line = "Player|12345 0 0" + line.substr(line.find('|', 7));
+                moved = true;
+            }
+        REQUIRE(moved);
+        cap->digests.back().value = gameplay::digest_of(cap->digests.back().state);
+        REQUIRE(cap->save(h.dir / "tampered.vcapture"));
+    }
+    REQUIRE(h.ed->replay(caps[0]).ok());
+    CHECK(h.ed->replaying());
+    for (int i = 0; i < 100 && h.ed->replay_result().empty(); ++i) h.frames(1, 1.0f / 45.0f);
+    MESSAGE(h.ed->replay_result());
+    CHECK_FALSE(h.ed->replay_diverged());
+    CHECK(h.ed->replay_result() == "Replay matched: 70 frames, 2 digests");
+    CHECK(h.ed->play_state() == editor::PlayState::Paused);
+    h.ed->play(); // a finished replay stays paused
+    CHECK(h.ed->play_state() == editor::PlayState::Paused);
+    REQUIRE(h.ed->replay(h.dir / "tampered.vcapture").ok());
+    for (int i = 0; i < 100 && h.ed->replay_result().empty(); ++i) h.frames(1);
+    MESSAGE(h.ed->replay_result());
+    CHECK(h.ed->replay_diverged());
+    CHECK(h.ed->replay_result().find("frame 70: Player: position (") != std::string::npos);
+    CHECK(h.ed->replay_result().find(") expected (1.2345, 0, 0)") != std::string::npos);
+    h.ed->stop();
+    CHECK(h.ed->captures().size() == 1); // replays never write captures
+    CHECK_FALSE(h.ed->replay(h.dir / "missing.vcapture").ok());
+    CHECK(h.ed->play_state() == editor::PlayState::Editing);
     // View > Navigation Mesh previews the navmesh while editing.
     h.ed->set_show_navmesh(true);
     h.frames(1);

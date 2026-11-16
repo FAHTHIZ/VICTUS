@@ -10,6 +10,7 @@
 #include "victus/core/log.hpp"
 #include "victus/editor/undo.hpp"
 #include "victus/core/jobs.hpp"
+#include "victus/gameplay/capture.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/physics/physics.hpp"
@@ -174,6 +175,22 @@ public:
     void stop();
     [[nodiscard]] PlayState play_state() const noexcept { return play_state_; }
 
+    // ---- regression captures (Play > Record / Replay) ----
+    // Starts play mode while recording input, frame times and state digests with a fresh script
+    // seed. Stop saves the capture to <project>/.victus/captures/<scene>-<time>.vcapture.
+    void record();
+    [[nodiscard]] bool recording() const noexcept { return recording_ != nullptr; }
+    // Starts play mode driven by a capture: its seed, frame times and input replace live ones.
+    // The session pauses when the capture ends or the first digest differs; replay_result()
+    // then reports "N digests match" or the frame and entities that diverged.
+    [[nodiscard]] Status replay(const std::filesystem::path& capture);
+    [[nodiscard]] bool replaying() const noexcept { return replay_ != nullptr && !replay_->done() && !replay_->diverged(); }
+    [[nodiscard]] const std::string& replay_result() const noexcept { return replay_result_; }
+    [[nodiscard]] bool replay_diverged() const noexcept { return replay_diverged_; }
+    // Captures saved for the open project, newest first.
+    [[nodiscard]] std::vector<std::filesystem::path> captures() const;
+    [[nodiscard]] const std::filesystem::path& last_capture() const noexcept { return last_capture_; }
+
     // ---- viewport ----
     [[nodiscard]] EditorCamera& camera() noexcept { return camera_; }
     // Ray pick in viewport pixel coordinates (origin top-left). Returns the closest entity.
@@ -256,6 +273,15 @@ private:
     std::vector<physics::DebugLine> collider_scratch_;
     bool focus_viewport_{false};
     PlayState play_state_{PlayState::Editing};
+    void start_play(std::uint64_t seed);
+    void tick_play(float dt);
+    std::unique_ptr<gameplay::Capture> recording_;        // while recording
+    std::unique_ptr<gameplay::Capture> replay_capture_;   // while replaying
+    std::unique_ptr<gameplay::CaptureReplay> replay_;
+    gameplay::ReplayInput captured_input_;
+    std::string replay_result_;
+    bool replay_diverged_{false};
+    std::filesystem::path last_capture_;
     std::vector<Uuid> selection_;
     EditorCamera camera_;
     render::Camera2D last_cam2d_;
