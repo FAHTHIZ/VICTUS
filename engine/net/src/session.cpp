@@ -1285,16 +1285,16 @@ struct NetClient::Impl {
         for (std::uint16_t i = 0; i < n && r.ok(); ++i) {
             const std::uint64_t head = r.varuint();
             if (head >> 34) r.fail(); // id beyond 32 bits
-            const auto id = static_cast<std::uint32_t>(head >> 2);
-            const QState* known = find_state(*base, id);
+            const auto eid = static_cast<std::uint32_t>(head >> 2);
+            const QState* known = find_state(*base, eid);
             QState st = known ? *known : kZero;
             if (head & kHasPosition)
                 for (std::size_t k = 0; k < 3; ++k)
                     st.p[k] = static_cast<std::int32_t>(std::clamp<std::int64_t>(st.p[k] + unzigzag(r.varuint()), INT32_MIN, INT32_MAX));
             if (head & kHasRotation)
                 for (auto& c : st.q) c = static_cast<std::uint16_t>(std::clamp<std::int64_t>(c + unzigzag(r.varuint()), 0, 65535));
-            put_state(view, id, st);
-            list.push_back({id, position_of(st), rotation_of(st)});
+            put_state(view, eid, st);
+            list.push_back({eid, position_of(st), rotation_of(st)});
         }
         if (!r.done()) return;
         ++snapshots_received;
