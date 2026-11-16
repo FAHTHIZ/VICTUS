@@ -36,7 +36,7 @@ namespace victus::net {
 using scene::Entity;
 
 // 2: gamepad state in input frames; 3: delta snapshots against acknowledged baselines
-inline constexpr std::uint32_t kProtocolVersion = 3;
+inline constexpr std::uint32_t kProtocolVersion = 4; // 4: reconnect tokens in hello/welcome
 inline constexpr std::uint16_t kDefaultPort = 27960;
 inline constexpr std::uint16_t kServerId = 0;      // sender id of messages from the server
 inline constexpr std::uint16_t kAllClients = 0xFFFF;
@@ -184,6 +184,8 @@ struct NetDiagnostics {
     float prediction_error{0};         // client: last reconciliation error of the local player (m)
     std::uint64_t corrections{0};      // client: reconciliations that moved the local player
     std::uint64_t rejected_messages{0}; // server: invalid/over-limit client payloads dropped
+    std::uint32_t reconnects{0};       // client: times it rejoined after losing the connection
+    std::uint32_t held_players{0};     // server: dropped clients whose characters await a reconnect
     bool encrypted{false};             // traffic is encrypted and authenticated (with_encryption)
     std::string server_key;            // client: the server's verified public key (hex)
     std::string status;                // human-readable state ("connected", "rejected: ...")
@@ -278,6 +280,10 @@ struct ServerOptions {
     // server's local input (sim.input). It is listed in clients() and rosters with id 0.
     bool host_player{false};
     std::string host_name{"host"};
+    // A client whose connection drops (timeout, network change) can rejoin within this many
+    // seconds and get its character back; meanwhile the character stays in the world with no
+    // input. Clients that leave on purpose or are kicked are removed at once. 0 = off.
+    float reconnect_grace{30.0f};
 };
 
 class NetServer final : public NetContext {
@@ -322,6 +328,10 @@ struct ClientOptions {
     float snap_distance{2.0f};        // errors beyond this teleport the local player
     float input_redundancy{4};        // input frames repeated in each packet (loss tolerance)
     double timeout{10.0};             // seconds without server traffic before giving up
+    // After losing an established connection, keep trying to rejoin (reclaiming this player's
+    // character) for this many seconds before failing. 0 = fail immediately.
+    double reconnect_window{20.0};
+    double reconnect_interval{1.0};   // seconds between rejoin attempts
 };
 
 class NetClient final : public NetContext {

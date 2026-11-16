@@ -181,6 +181,43 @@ ClientOptions client_options(std::uint16_t port, const char* name) {
     return o;
 }
 
+// A client link that can go down: sends and received events vanish and connecting fails, as
+// when a laptop changes networks. `cut(true)` also closes the connection so the server notices
+// (as it would after an ENet timeout); `cut(false)` leaves the server unaware.
+class FlakyTransport final : public Transport {
+public:
+    explicit FlakyTransport(std::unique_ptr<Transport> inner) : inner_(std::move(inner)) {}
+    bool down{false};
+    void cut(bool server_notices) {
+        down = true;
+        if (server_notices)
+            for (const PeerId p : peers_) inner_->disconnect(p);
+        peers_.clear();
+    }
+    Result<PeerId> connect(std::string_view host, std::uint16_t port) override {
+        if (down) return make_error(ErrorCode::NetworkError, "network is down");
+        auto p = inner_->connect(host, port);
+        if (p) peers_.push_back(*p);
+        return p;
+    }
+    void send(PeerId peer, Channel channel, std::span<const std::uint8_t> data) override {
+        if (!down) inner_->send(peer, channel, data);
+    }
+    void disconnect(PeerId peer) override {
+        if (!down) inner_->disconnect(peer); // a goodbye cannot cross a dead link
+    }
+    void poll(double now, std::vector<TransportEvent>& out) override {
+        std::vector<TransportEvent> got;
+        inner_->poll(now, got);
+        if (!down) out.insert(out.end(), std::make_move_iterator(got.begin()), std::make_move_iterator(got.end()));
+    }
+    PeerStats stats(PeerId peer) const override { return inner_->stats(peer); }
+    std::string_view name() const override { return "flaky"; }
+
+private:
+    std::unique_ptr<Transport> inner_;
+    std::vector<PeerId> peers_;
+};
 // A server and clients on one in-memory network, stepped in lock-step at 60 Hz.
 struct Session {
     MemoryNetwork network;
@@ -210,6 +247,19 @@ struct Session {
             server_peer.tick();
             for (auto& p : peers) p->tick();
         }
+    }
+    // A client with a link the test can cut; fast timeouts so drops are noticed in half a second.
+    NetClient& add_flaky_client(const char* name, FlakyTransport*& link) {
+        peers.push_back(std::make_unique<Peer>(extra));
+        auto t = std::make_unique<FlakyTransport>(network.endpoint());
+        link = t.get();
+        auto o = client_options(7777, name);
+        o.timeout = 0.5;
+        o.reconnect_window = 3.0;
+        o.reconnect_interval = 0.25;
+        clients.push_back(std::make_unique<NetClient>(std::move(t), o));
+        clients.back()->install(peers.back()->sim);
+        return *clients.back();
     }
     // Server-side player entity of client `id`.
     Entity server_player(std::uint16_t id) {
@@ -616,6 +666,124 @@ TEST_CASE("session: a listen-server host plays alongside remote clients") {
     CHECK(s.server->clients().size() == 1);
 }
 
+std::size_t count_named(Scene& s, std::string_view name) {
+    std::size_t n = 0;
+    s.world().each<scene::Name>([&](Entity, scene::Name& nm) { n += nm.value == name; });
+    return n;
+}
+
+TEST_CASE("session: a dropped client reconnects and gets its character back") {
+    ServerOptions so;
+    so.reconnect_grace = 5.0f;
+    Session s(so);
+    FlakyTransport* link = nullptr;
+    NetClient& a = s.add_flaky_client("alice", link);
+    NetClient& b = s.add_client("bob");
+    s.step(60);
+    REQUIRE(a.connected());
+    REQUIRE(b.connected());
+    Peer& pa = *s.peers[0];
+    Peer& pb = *s.peers[1];
+    const std::uint16_t a_id = a.local_id();
+    const Entity srv_a = s.server_player(a_id);
+    const Entity a_local = a.local_player();
+    REQUIRE(!srv_a.is_null());
+    REQUIRE(set_var(s.server_peer.scene, srv_a, "score", json::Value(7.0)).ok());
+    pa.input.set_key("D", true);
+    s.step(60);
+    pa.input.set_key("D", false);
+    s.step(20);
+    const math::Vec3 before = s.server_peer.position(srv_a);
+
+    SUBCASE("the server noticed the drop: the character is held, then reclaimed") {
+        link->cut(true);
+        s.step(5);
+        CHECK(s.server->diagnostics().held_players == 1);
+        CHECK(s.server->clients().size() == 1);              // bob only
+        CHECK(s.server_peer.scene.world().alive(srv_a));     // still in the world, idle
+        CHECK(b.clients().size() == 1);
+        s.step(40);                                          // alice times out (0.5 s)
+        CHECK_FALSE(a.connected());
+        CHECK_FALSE(a.failed());
+        CHECK(a.diagnostics().status.find("reconnecting") != std::string::npos);
+        CHECK(horizontal(s.server_peer.position(srv_a), before) < 1e-3f);
+    }
+    SUBCASE("the server did not notice: the rejoin retires the stale connection") {
+        link->cut(false);
+        s.step(45);
+        CHECK(s.server->clients().size() == 2);              // the server still thinks alice is there
+        CHECK_FALSE(a.connected());
+        CHECK_FALSE(a.failed());
+    }
+    link->down = false;
+    s.step(60);
+    REQUIRE(a.connected());
+    CHECK(a.local_id() == a_id);
+    CHECK(a.diagnostics().reconnects == 1);
+    CHECK(a.diagnostics().status.find("reconnected") != std::string::npos);
+    CHECK(s.server->diagnostics().held_players == 0);
+    REQUIRE(s.server->clients().size() == 2);
+    CHECK(s.server_player(a_id) == srv_a);                  // the same character, not a new one
+    CHECK(a.local_player() == a_local);                     // and the same local entity
+    CHECK(count_named(pa.scene, "alice") == 1);
+    CHECK(count_named(s.server_peer.scene, "alice") == 1);
+    CHECK(count_named(pb.scene, "alice") == 1);
+    CHECK(a.clients().size() == 2);
+    CHECK(get_var(pa.scene, a_local, "score").as_number() == 7.0);
+    CHECK(horizontal(pa.position(a_local), before) < 0.2f);
+    // Input flows again after the rejoin.
+    pa.input.set_key("D", true);
+    s.step(60);
+    pa.input.set_key("D", false);
+    s.step(30);
+    CHECK(s.server_peer.position(srv_a).x - before.x > 2.0f);
+    CHECK(horizontal(pa.position(a_local), s.server_peer.position(srv_a)) < 0.1f);
+    CHECK(s.server->diagnostics().rejected_messages == 0);
+}
+
+TEST_CASE("session: held characters expire, and leaving on purpose is immediate") {
+    ServerOptions so;
+    so.reconnect_grace = 1.0f;
+    Session s(so);
+    FlakyTransport* link = nullptr;
+    NetClient& a = s.add_flaky_client("alice", link);
+    s.step(60);
+    REQUIRE(a.connected());
+    Peer& pa = *s.peers[0];
+    const std::uint16_t old_id = a.local_id();
+    const Entity srv_a = s.server_player(old_id);
+    const Entity old_local = a.local_player();
+    link->cut(true);
+    s.step(90); // past the 1 s grace
+    CHECK(s.server->diagnostics().held_players == 0);
+    CHECK_FALSE(s.server_peer.scene.world().alive(srv_a));
+    // Back within the client's window but after the grace: a fresh player, old copies pruned.
+    link->down = false;
+    s.step(60);
+    REQUIRE(a.connected());
+    CHECK(a.local_id() != old_id);
+    CHECK_FALSE(pa.scene.world().alive(old_local));
+    REQUIRE(!a.local_player().is_null());
+    CHECK(is_local(pa.scene, a.local_player()));
+    CHECK(count_named(pa.scene, "alice") == 1);
+    CHECK(count_named(s.server_peer.scene, "alice") == 1);
+    // A client that never gets back fails once its window is over.
+    link->cut(true);
+    s.step(60 * 4);
+    CHECK(a.failed());
+    CHECK(a.diagnostics().status.find("could not reconnect") != std::string::npos);
+    CHECK(s.server->diagnostics().held_players == 0); // grace (1 s) ran out on the server too
+    // Saying goodbye releases the character at once.
+    NetClient& b = s.add_client("bob");
+    s.step(30);
+    REQUIRE(b.connected());
+    const Entity srv_b = s.server_player(b.local_id());
+    b.disconnect(0);
+    s.step(2);
+    CHECK(s.server->diagnostics().held_players == 0);
+    CHECK_FALSE(s.server_peer.scene.world().alive(srv_b));
+}
+
 TEST_CASE("session: gamepad sticks and buttons reach the server's scripts") {
     Session s;
     LinkConditions lossy;
@@ -706,6 +874,7 @@ TEST_CASE("session: malformed and abusive client traffic is dropped, then kicked
     hello.u32(kProtocolVersion);
     hello.str("arena");
     hello.str("mallory");
+    hello.u64(0); // no reconnect token
     raw->send(sp, Channel::Reliable, hello.data());
     for (int i = 0; i < 5; ++i) raw->poll(0, ev), s.step(1);
     CHECK(s.server->clients().size() == 2);

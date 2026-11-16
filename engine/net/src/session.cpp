@@ -492,6 +492,15 @@ struct NetServer::Impl {
     std::uint16_t next_client_id{1};
     double now{0};
     Entity host_player; // listen server: the host's own character (owner kServerId)
+    // Characters of clients whose connection dropped, kept for options.reconnect_grace seconds.
+    struct Held {
+        std::uint16_t id{0};
+        std::string name;
+        std::uint64_t token{0};
+        Entity player;
+        double deadline{0};
+    };
+    std::vector<Held> held;
 
     struct Tracked {
         Entity e;
@@ -509,6 +518,7 @@ struct NetServer::Impl {
         std::string name;
         bool welcomed{false};
         Entity player;
+        std::uint64_t token{0}; // presented by this client to reclaim its character after a drop
         std::deque<InputFrame> inputs;
         std::uint32_t last_received_seq{0}, last_processed_seq{0};
         RemoteInput input;
@@ -554,7 +564,34 @@ struct NetServer::Impl {
             w.str("too many invalid messages");
             send(c, Channel::Reliable, w);
             transport->disconnect(c.peer);
-            drop_client(c.peer);
+            drop_client(c.peer, true);
+        }
+    }
+
+    static std::uint64_t new_token() {
+        std::uint64_t t = 0;
+        while (t == 0) {
+            std::array<std::uint8_t, 8> b{};
+            if (!random_bytes(b)) return 0; // no rejoin for this client
+            for (const auto x : b) t = t << 8 | x;
+        }
+        return t;
+    }
+
+    void release_held(const Held& h) {
+        VICTUS_LOG_INFO("net", "client {} '{}' did not come back", h.id, h.name);
+        inbox.push_back({h.id, "client_left", json::Value(static_cast<double>(h.id))});
+        for (auto& [nid, t] : tracked)
+            if (t.owner == h.id && scene->world().alive(t.e)) scene->destroy(t.e);
+    }
+    void expire_held() {
+        for (auto it = held.begin(); it != held.end();) {
+            if (now < it->deadline) {
+                ++it;
+                continue;
+            }
+            release_held(*it);
+            it = held.erase(it);
         }
     }
 
@@ -662,6 +699,7 @@ struct NetServer::Impl {
         const std::uint32_t version = r.u32();
         const std::string game = r.str(kMaxGameId);
         const std::string name = r.str(kMaxPlayerName * 4);
+        const std::uint64_t token = r.u64();
         auto reject = [&](const std::string& why) {
             ByteWriter w;
             w.u8(kReject);
@@ -678,20 +716,40 @@ struct NetServer::Impl {
         if (version != kProtocolVersion)
             return reject("protocol version " + std::to_string(version) + " != server " + std::to_string(kProtocolVersion));
         if (game != options.game_id) return reject("different game or scene (server runs '" + options.game_id + "')");
-        std::size_t active = 0;
+        // A rejoin can arrive before the server noticed the old connection died: retire it first.
+        if (token)
+            for (auto& [p, other] : clients)
+                if (other.peer != c.peer && other.welcomed && other.token == token) {
+                    const PeerId old = other.peer;
+                    transport->disconnect(old);
+                    drop_client(old, false);
+                    break;
+                }
+        const auto back = token ? std::find_if(held.begin(), held.end(), [&](const Held& h) { return h.token == token; }) : held.end();
+        const bool rejoin = back != held.end();
+        std::size_t active = held.size();
         for (const auto& [p, other] : clients) active += other.welcomed;
-        if (active >= options.max_clients) return reject("server full");
+        if (!rejoin && active >= options.max_clients) return reject("server full");
         scan_new(); // so the new client receives every scene entity before the roster
 
-        c.id = next_client_id++;
-        if (next_client_id == kAllClients) next_client_id = 1;
-        c.name = clean_player_name(name);
+        if (rejoin) {
+            c.id = back->id;
+            c.name = back->name;
+            c.player = back->player;
+            held.erase(back);
+        } else {
+            c.id = next_client_id++;
+            if (next_client_id == kAllClients) next_client_id = 1;
+            c.name = clean_player_name(name);
+        }
         c.welcomed = true;
         c.tokens = options.message_rate;
+        c.token = options.reconnect_grace > 0 ? new_token() : 0;
         ByteWriter w;
         w.u8(kWelcome);
         w.u16(c.id);
         w.u32(tick);
+        w.u64(c.token);
         send(c, Channel::Reliable, w);
         // Existing world state, then this client's player (announced to everyone).
         for (const auto& [id, t] : tracked) {
@@ -704,6 +762,14 @@ struct NetServer::Impl {
                 write_vars(vw, id, st->vars);
                 send(c, Channel::Reliable, vw);
             }
+        }
+        if (rejoin) {
+            ByteWriter rw;
+            write_roster(rw);
+            broadcast(Channel::Reliable, rw);
+            inbox.push_back({c.id, "client_rejoined", json::Value(static_cast<double>(c.id))});
+            VICTUS_LOG_INFO("net", "client {} '{}' reconnected", c.id, c.name);
+            return;
         }
         for (std::size_t i = 0; i < templates.size(); ++i) {
             const Template& tpl = templates[i];
@@ -778,11 +844,18 @@ struct NetServer::Impl {
         inbox.push_back({c.id, name, std::move(v).value()});
     }
 
-    void drop_client(PeerId peer) {
+    // `on_purpose`: the client said goodbye or was kicked, so its character goes at once;
+    // otherwise (lost connection) it is held for a reconnect when the client has a token.
+    void drop_client(PeerId peer, bool on_purpose) {
         const auto it = clients.find(peer);
         if (it == clients.end()) return;
         Client& c = it->second;
-        if (c.welcomed) {
+        if (c.welcomed && !on_purpose && c.token && options.reconnect_grace > 0) {
+            VICTUS_LOG_INFO("net", "client {} '{}' lost its connection; holding its character for {} s", c.id, c.name,
+                            options.reconnect_grace);
+            held.push_back({c.id, c.name, c.token, c.player, now + options.reconnect_grace});
+            inbox.push_back({c.id, "client_dropped", json::Value(static_cast<double>(c.id))});
+        } else if (c.welcomed) {
             VICTUS_LOG_INFO("net", "client {} '{}' left", c.id, c.name);
             inbox.push_back({c.id, "client_left", json::Value(static_cast<double>(c.id))});
             // Its player entities go away (despawns are broadcast in replicate()).
@@ -801,7 +874,7 @@ struct NetServer::Impl {
     void handle_event(TransportEvent& ev) {
         switch (ev.type) {
         case TransportEvent::Type::Connected: clients[ev.peer].peer = ev.peer; break;
-        case TransportEvent::Type::Disconnected: drop_client(ev.peer); break;
+        case TransportEvent::Type::Disconnected: drop_client(ev.peer, false); break;
         case TransportEvent::Type::Received: {
             in_meter.add(ev.data.size());
             auto it = clients.find(ev.peer);
@@ -815,7 +888,7 @@ struct NetServer::Impl {
             else if (type == kClientMessage && ev.channel == Channel::Reliable) handle_message(c, r);
             else if (type == kClientGoodbye) {
                 transport->disconnect(c.peer);
-                drop_client(c.peer);
+                drop_client(c.peer, true);
             } else violation(c, "unexpected message type");
             break;
         }
@@ -830,6 +903,7 @@ struct NetServer::Impl {
         pending.clear();
         transport->poll(now, events);
         for (auto& ev : events) handle_event(ev);
+        expire_held();
         // One input frame per client per tick; catch up (merging) when the buffer grows.
         for (auto& [peer, c] : clients) {
             if (!c.welcomed) continue;
@@ -1077,6 +1151,7 @@ NetDiagnostics NetServer::diagnostics() const {
     d.snapshot_bytes = m.last_snapshot_bytes;
     d.entities_deferred = m.last_deferred;
     d.rejected_messages = m.rejected;
+    d.held_players = static_cast<std::uint32_t>(m.held.size());
     d.encrypted = m.transport->encrypted();
     d.status = "serving " + std::to_string(d.clients) + " client(s) over " + std::string(m.transport->name());
     return d;
@@ -1092,7 +1167,12 @@ struct NetClient::Impl {
     Scene* scene{nullptr};
     bool begun{false};
     std::vector<Template> templates;
-    enum class State { Idle, Connecting, Handshake, Connected, Failed } state{State::Idle};
+    enum class State { Idle, Connecting, Handshake, Connected, Reconnecting, Failed } state{State::Idle};
+    std::uint64_t token{0};      // from the welcome; presented when rejoining
+    bool rejoining{false};       // the current connection attempt is a rejoin
+    bool resync{false};          // after a rejoin: entities not re-announced are stale
+    double rejoin_deadline{0}, next_attempt{0};
+    std::uint32_t reconnects{0};
     std::string status{"not connected"};
     std::string server_key; // verified public key of an encrypted server (hex)
     PeerId server{0};
@@ -1111,6 +1191,7 @@ struct NetClient::Impl {
         std::uint16_t owner{kServerId};
         bool local{false};
         std::deque<Sample> samples;
+        bool confirmed{true}; // re-announced by the server since the last rejoin
     };
     std::map<std::uint32_t, Remote> entities;
     Entity local_player;
@@ -1153,6 +1234,48 @@ struct NetClient::Impl {
         VICTUS_LOG_WARN("net", "{}", status);
     }
 
+    // An established connection was lost: try to rejoin (and keep the world as it is) while the
+    // window lasts, then fail.
+    void lost(std::string why) {
+        if (state == State::Failed) return;
+        const bool was_established = state == State::Connected || rejoining;
+        if (!was_established || token == 0 || options.reconnect_window <= 0) return fail(std::move(why));
+        if (!rejoining) {
+            rejoin_deadline = now + options.reconnect_window;
+            VICTUS_LOG_WARN("net", "{}; reconnecting", why);
+        }
+        rejoining = true;
+        state = State::Reconnecting;
+        status = "reconnecting (" + why + ")";
+        next_attempt = std::max(next_attempt, now + 0.25);
+    }
+    void try_rejoin() {
+        if (now > rejoin_deadline) return fail("could not reconnect within " + std::to_string(static_cast<int>(options.reconnect_window)) + " s");
+        if (now < next_attempt) return;
+        next_attempt = now + std::max(0.1, options.reconnect_interval);
+        auto peer = transport->connect(options.host, options.port);
+        if (!peer) return; // try again later
+        server = *peer;
+        state = State::Connecting;
+        status = "reconnecting to " + options.host + ":" + std::to_string(options.port);
+        last_heard = now;
+    }
+    // The server accepted the rejoin: baselines, prediction history and timing restart, and every
+    // entity must be re-announced (ones that are not are pruned when the roster arrives).
+    void restart_after_rejoin() {
+        views.clear();
+        snapshot_ack = 0;
+        history.clear();
+        pending_correction = {};
+        clock_valid = false;
+        for (auto& [nid, rm] : entities) {
+            rm.confirmed = false;
+            rm.samples.clear();
+        }
+        resync = true;
+        ++reconnects;
+    }
+
     void begin(Scene& s) {
         scene = &s;
         begun = true;
@@ -1189,7 +1312,16 @@ struct NetClient::Impl {
         const math::Quat q = r.quat();
         const std::string name = r.str(kMaxNameBytes * 2);
         if (!r.done() || net_id == 0) return;
-        if (entities.count(net_id)) return;
+        if (const auto known = entities.find(net_id); known != entities.end()) {
+            known->second.confirmed = true; // re-announced after a rejoin
+            if (known->second.local && scene->world().alive(known->second.e)) {
+                if (auto* tr = scene->world().get<Transform>(known->second.e)) {
+                    tr->position = p; // the server's position after the gap
+                    tr->rotation = q;
+                }
+            }
+            return;
+        }
         Entity e;
         if (kind == kSceneEntity) {
             e = scene->find(uuid);
@@ -1271,6 +1403,21 @@ struct NetClient::Impl {
         }
         if (!r.done()) return;
         roster = std::move(list);
+        if (resync) {
+            // The roster follows the re-sent world: whatever the server did not re-announce is gone.
+            resync = false;
+            for (auto it = entities.begin(); it != entities.end();) {
+                if (it->second.confirmed) {
+                    ++it;
+                    continue;
+                }
+                if (scene->world().alive(it->second.e)) scene->destroy(it->second.e);
+                if (it->second.e == local_player) local_player = {};
+                it = entities.erase(it);
+            }
+            for (auto& c : roster)
+                if (!c.player.is_null() && !scene->world().alive(c.player)) c.player = {};
+        }
         if (!synced) {
             // The first roster follows the server's full world state: networked scene entities the
             // server did not announce no longer exist there (e.g. destroyed before we joined).
@@ -1395,17 +1542,19 @@ struct NetClient::Impl {
             w.u32(kProtocolVersion);
             w.str(options.game_id);
             w.str(options.name);
+            w.u64(rejoining ? token : 0);
             send(Channel::Reliable, w);
             break;
         }
-        case TransportEvent::Type::Disconnected:
+        case TransportEvent::Type::Disconnected: {
             if (ev.peer != server) return;
             server = 0;
-            if (state != State::Failed)
-                fail(!ev.reason.empty()            ? ev.reason
-                     : state == State::Connected ? "disconnected from server"
-                                                 : "could not reach the server");
+            const bool transient = ev.reason.find("timed out") != std::string::npos;
+            if (!ev.reason.empty() && !(rejoining && transient)) fail(ev.reason); // a refusal: retrying cannot help
+            else if (state == State::Connected || rejoining) lost(ev.reason.empty() ? "disconnected from server" : ev.reason);
+            else if (state != State::Failed) fail("could not reach the server");
             break;
+        }
         case TransportEvent::Type::Received: {
             if (ev.peer != server) return;
             in_meter.add(ev.data.size());
@@ -1413,15 +1562,27 @@ struct NetClient::Impl {
             ByteReader r(ev.data);
             const std::uint8_t type = r.u8();
             switch (type) {
-            case kWelcome:
-                id = r.u16();
+            case kWelcome: {
+                const std::uint16_t new_id = r.u16();
                 server_tick = r.u32();
-                if (r.done()) {
-                    state = State::Connected;
-                    status = "connected as client " + std::to_string(id);
-                    VICTUS_LOG_INFO("net", "{}", status);
+                const std::uint64_t new_token = r.u64();
+                if (!r.done()) break;
+                if (rejoining) {
+                    restart_after_rejoin();
+                    if (new_id != id) { // the server no longer held our character: we are a new player
+                        for (auto& [nid, rm] : entities)
+                            if (rm.local) rm.confirmed = false;
+                        local_player = {};
+                    }
+                    rejoining = false;
                 }
+                id = new_id;
+                token = new_token;
+                state = State::Connected;
+                status = "connected as client " + std::to_string(id) + (reconnects ? " (reconnected)" : "");
+                VICTUS_LOG_INFO("net", "{}", status);
                 break;
+            }
             case kReject: fail("rejected by server: " + r.str(512)); break;
             case kServerGoodbye: fail("server closed the connection: " + r.str(512)); break;
             case kSpawn: handle_spawn(r); break;
@@ -1454,11 +1615,12 @@ struct NetClient::Impl {
         events.clear();
         transport->poll(now, events);
         for (const auto& ev : events) handle(ev);
-        if (state != State::Failed && state != State::Idle && now - last_heard > options.timeout) {
-            fail("connection timed out");
+        if (state != State::Failed && state != State::Idle && state != State::Reconnecting && now - last_heard > options.timeout) {
             if (server) transport->disconnect(server);
             server = 0;
+            lost("connection timed out");
         }
+        if (state == State::Reconnecting) try_rejoin();
         if (state != State::Connected) return;
         // Sample this tick's input, remember it for reconciliation and send the newest frames.
         const InputFrame f = sample(input, ++seq);
@@ -1654,6 +1816,7 @@ NetDiagnostics NetClient::diagnostics() const {
     d.snapshot_bytes = m.last_snapshot_bytes;
     d.prediction_error = m.last_error;
     d.corrections = m.corrections;
+    d.reconnects = m.reconnects;
     d.encrypted = m.transport->encrypted();
     d.server_key = m.server_key;
     d.status = m.status;
