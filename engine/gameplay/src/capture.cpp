@@ -9,6 +9,7 @@
 #include <charconv>
 #include <cmath>
 #include <format>
+#include <map>
 
 namespace victus::gameplay {
 
@@ -66,10 +67,10 @@ std::string name_path(const scene::Scene& s, scene::Entity e) {
 
 } // namespace
 
-std::string state_digest(const scene::Scene& scene) {
+std::vector<std::string> state_lines(const scene::Scene& scene) {
     auto& world = const_cast<scene::Scene&>(scene).world(); // read-only iteration
     std::vector<std::string> lines;
-    lines.reserve(world.alive_count());
+    lines.reserve(world.alive_count() + 1);
     world.each<scene::Transform>([&](scene::Entity e, scene::Transform& t) {
         math::Quat q = t.rotation;
         if (q.w < 0) q = {-q.x, -q.y, -q.z, -q.w};
@@ -79,9 +80,109 @@ std::string state_digest(const scene::Scene& scene) {
                                     round_to(t.scale.y, 1e4), round_to(t.scale.z, 1e4)));
     });
     std::sort(lines.begin(), lines.end());
-    std::uint64_t h = fnv1a64(std::to_string(world.alive_count()));
-    for (const auto& l : lines) h = fnv1a64(l + "\n", h);
+    lines.insert(lines.begin(), "#entities " + std::to_string(world.alive_count()));
+    return lines;
+}
+
+std::string digest_of(const std::vector<std::string>& lines) {
+    std::uint64_t h = 0xcbf29ce484222325ull;
+    for (const auto& l : lines) {
+        h = fnv1a64(l, h);
+        h = fnv1a64("\n", h);
+    }
     return std::format("{:016x}", h);
+}
+
+std::string state_digest(const scene::Scene& scene) { return digest_of(state_lines(scene)); }
+
+namespace {
+
+struct ParsedLine {
+    std::string path;
+    std::string groups[3]; // position, rotation, scale ("1 2 3" in 1e-4 units)
+};
+
+ParsedLine parse_line(const std::string& l) {
+    ParsedLine p;
+    // The name path may contain '|'; the last three '|' separate the numeric groups.
+    std::size_t cut[3];
+    std::size_t pos = l.size();
+    for (int i = 2; i >= 0; --i) {
+        pos = l.rfind('|', pos == 0 ? 0 : pos - 1);
+        if (pos == std::string::npos) return {l, {}};
+        cut[i] = pos;
+    }
+    p.path = l.substr(0, cut[0]);
+    p.groups[0] = l.substr(cut[0] + 1, cut[1] - cut[0] - 1);
+    p.groups[1] = l.substr(cut[1] + 1, cut[2] - cut[1] - 1);
+    p.groups[2] = l.substr(cut[2] + 1);
+    return p;
+}
+
+std::string pretty(const std::string& group) {
+    std::string out = "(";
+    std::size_t start = 0;
+    bool first = true;
+    while (start < group.size()) {
+        std::size_t end = group.find(' ', start);
+        if (end == std::string::npos) end = group.size();
+        long long v = 0;
+        std::from_chars(group.data() + start, group.data() + end, v);
+        out += (first ? "" : ", ") + std::format("{:g}", static_cast<double>(v) / 1e4);
+        first = false;
+        start = end + 1;
+    }
+    return out + ")";
+}
+
+} // namespace
+
+std::string describe_difference(const std::vector<std::string>& expected, const std::vector<std::string>& actual,
+                                std::size_t max_items) {
+    std::vector<std::string> items;
+    std::size_t more = 0;
+    auto add = [&](std::string s) {
+        if (items.size() < max_items) items.push_back(std::move(s));
+        else ++more;
+    };
+    auto count_of = [](const std::vector<std::string>& v) {
+        return !v.empty() && v.front().rfind("#entities ", 0) == 0 ? v.front().substr(10) : std::string("?");
+    };
+    if (count_of(expected) != count_of(actual)) add("entity count " + count_of(actual) + ", expected " + count_of(expected));
+    // Group the lines by entity path (names may repeat).
+    std::map<std::string, std::pair<std::vector<ParsedLine>, std::vector<ParsedLine>>> by_path;
+    for (const auto& l : expected)
+        if (l.rfind("#entities ", 0) != 0) {
+            auto p = parse_line(l);
+            by_path[p.path].first.push_back(std::move(p));
+        }
+    for (const auto& l : actual)
+        if (l.rfind("#entities ", 0) != 0) {
+            auto p = parse_line(l);
+            by_path[p.path].second.push_back(std::move(p));
+        }
+    static const char* kWhat[3] = {"position", "rotation", "scale"};
+    for (const auto& [path, pair] : by_path) {
+        const auto& [want, got] = pair;
+        if (want.size() != got.size()) {
+            if (want.empty()) add(path + ": not in the recording");
+            else if (got.empty()) add(path + ": missing");
+            else add(std::format("{}: {} present, expected {}", path, got.size(), want.size()));
+            continue;
+        }
+        for (std::size_t i = 0; i < want.size(); ++i) {
+            for (int g = 0; g < 3; ++g) {
+                if (want[i].groups[g] == got[i].groups[g]) continue;
+                add(std::format("{}: {} {} expected {}", path, kWhat[g], pretty(got[i].groups[g]), pretty(want[i].groups[g])));
+                break;
+            }
+        }
+    }
+    if (items.empty()) return "state differs";
+    std::string out;
+    for (const auto& it : items) out += (out.empty() ? "" : "; ") + it;
+    if (more) out += std::format("; {} more", more);
+    return out;
 }
 
 // ---- capture ------------------------------------------------------------------------------------
@@ -93,12 +194,20 @@ void Capture::add_frame(const InputState& input, float dt) {
 
 void Capture::after_tick(const scene::Scene& s) {
     const auto n = static_cast<std::uint64_t>(frames.size());
-    if (digest_interval && n % digest_interval == 0) digests.push_back({n, state_digest(s)});
+    if (!digest_interval || n % digest_interval != 0) return;
+    auto lines = state_lines(s);
+    Digest d{n, digest_of(lines), {}};
+    if (detail_limit && lines.size() <= detail_limit + 1) d.state = std::move(lines);
+    digests.push_back(std::move(d));
 }
 
 void Capture::finish(const scene::Scene& s) {
     const auto n = static_cast<std::uint64_t>(frames.size());
-    if (digests.empty() || digests.back().frame != n) digests.push_back({n, state_digest(s)});
+    if (!digests.empty() && digests.back().frame == n) return;
+    auto lines = state_lines(s);
+    Digest d{n, digest_of(lines), {}};
+    if (detail_limit && lines.size() <= detail_limit + 1) d.state = std::move(lines);
+    digests.push_back(std::move(d));
 }
 
 namespace {
@@ -168,6 +277,11 @@ std::string Capture::to_text() const {
         json::Value o = json::Value::object();
         o.set("frame", d.frame);
         o.set("digest", d.value);
+        if (!d.state.empty()) {
+            json::Value st = json::Value::array();
+            for (const auto& l : d.state) st.as_array().push_back(l);
+            o.set("state", st);
+        }
         dg.as_array().push_back(o);
     }
     doc.set("digests", dg);
@@ -245,8 +359,12 @@ Result<Capture> Capture::parse(std::string_view text) {
         c.frame_dt.push_back(dt);
     }
     if (const auto* dg = doc->find("digests"); dg && dg->is_array())
-        for (const auto& d : dg->as_array())
-            c.digests.push_back({static_cast<std::uint64_t>(d["frame"].as_int(0)), d["digest"].as_string_or("")});
+        for (const auto& d : dg->as_array()) {
+            Digest out{static_cast<std::uint64_t>(d["frame"].as_int(0)), d["digest"].as_string_or(""), {}};
+            if (const auto* st = d.find("state"); st && st->is_array())
+                for (const auto& l : st->as_array()) out.state.push_back(l.as_string_or(""));
+            c.digests.push_back(std::move(out));
+        }
     return c;
 }
 
@@ -264,11 +382,14 @@ bool CaptureReplay::end_tick(const scene::Scene& scene) {
     const auto& d = capture_->digests;
     while (next_digest_ < d.size() && d[next_digest_].frame < frame_) ++next_digest_;
     if (next_digest_ >= d.size() || d[next_digest_].frame != frame_) return true;
-    const std::string got = state_digest(scene);
+    const auto lines = state_lines(scene);
+    const std::string got = digest_of(lines);
     ++checked_;
-    const auto& want = d[next_digest_++].value;
-    if (got == want) return true;
-    if (mismatch_.empty()) mismatch_ = std::format("frame {}: expected {}, got {}", frame_, want, got);
+    const auto& want = d[next_digest_++];
+    if (got == want.value) return true;
+    if (mismatch_.empty())
+        mismatch_ = want.state.empty() ? std::format("frame {}: expected digest {}, got {}", frame_, want.value, got)
+                                       : std::format("frame {}: {}", frame_, describe_difference(want.state, lines));
     return false;
 }
 

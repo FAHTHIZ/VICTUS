@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <format>
 #include <cmath>
 #include <cstdlib>
@@ -752,10 +753,95 @@ Entity Editor::pick(math::Vec2 pixel, math::Vec2 size) {
 
 void Editor::play() {
     if (play_state_ == PlayState::Paused) {
+        if (replay_ && (replay_->done() || replay_->diverged())) return; // a finished replay stays paused
         play_state_ = PlayState::Playing;
         return;
     }
     if (play_state_ == PlayState::Playing) return;
+    start_play(0);
+}
+
+void Editor::record() {
+    if (play_state_ != PlayState::Editing) return;
+    auto c = std::make_unique<gameplay::Capture>();
+    c->seed = Random(static_cast<std::uint64_t>(platform::Platform::seconds() * 1e9)).next_u64() | 1;
+    if (project_) c->project = project_->settings().name;
+    c->scene = scene_path_;
+    const auto seed = c->seed;
+    start_play(seed);
+    if (play_state_ != PlayState::Playing) return;
+    recording_ = std::move(c);
+    captured_input_ = {};
+    sim_.input = &captured_input_;
+    notify("Recording - Stop saves the capture");
+}
+
+Status Editor::replay(const std::filesystem::path& path) {
+    if (play_state_ != PlayState::Editing) stop();
+    auto c = gameplay::Capture::load(path);
+    if (!c) return std::move(c).error();
+    if (c->frames.empty()) return make_error(ErrorCode::InvalidArgument, "capture has no frames");
+    if (!c->scene.empty() && c->scene != scene_path_)
+        notify(std::format("capture was recorded in {}, replaying in {}", c->scene, scene_path_.empty() ? "an unsaved scene" : scene_path_), true);
+    auto cap = std::make_unique<gameplay::Capture>(std::move(*c));
+    start_play(cap->seed);
+    if (play_state_ != PlayState::Playing) return make_error(ErrorCode::InvalidArgument, "cannot start play mode");
+    replay_capture_ = std::move(cap);
+    replay_ = std::make_unique<gameplay::CaptureReplay>(*replay_capture_);
+    replay_result_.clear();
+    replay_diverged_ = false;
+    sim_.input = &replay_->input();
+    notify(std::format("Replaying {} ({} frames)", path.filename().string(), replay_capture_->frames.size()));
+    return {};
+}
+
+std::vector<std::filesystem::path> Editor::captures() const {
+    std::vector<std::filesystem::path> out;
+    if (!project_) return out;
+    std::error_code ec;
+    const auto dir = project_->root() / ".victus" / "captures";
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec))
+        if (e.is_regular_file(ec) && e.path().extension() == ".vcapture") out.push_back(e.path());
+    std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) {
+        std::error_code e1, e2;
+        const auto ta = std::filesystem::last_write_time(a, e1), tb = std::filesystem::last_write_time(b, e2);
+        return ta != tb ? ta > tb : a.filename() > b.filename();
+    });
+    return out;
+}
+
+void Editor::tick_play(float dt) {
+    if (replay_) {
+        if (replay_->done() || replay_->diverged()) return;
+        dt = replay_->begin_tick();
+        sim_.tick(*play_scene_, dt);
+        if (!replay_->end_tick(*play_scene_)) {
+            replay_diverged_ = true;
+            replay_result_ = "Replay diverged at " + replay_->mismatch();
+            play_state_ = PlayState::Paused;
+            notify(replay_result_, true);
+        } else if (replay_->done()) {
+            replay_result_ = std::format("Replay matched: {} frames, {} digests", replay_->frame(), replay_->digests_checked());
+            play_state_ = PlayState::Paused;
+            notify(replay_result_);
+        }
+        return;
+    }
+    if (recording_) {
+        // The live input is sampled once per frame and fed back through a ReplayInput, so the
+        // recording sees exactly the states its replay will.
+        const auto state = input_ ? gameplay::sample_input(*input_) : gameplay::InputState{};
+        recording_->add_frame(state, dt);
+        captured_input_.set(state);
+        sim_.tick(*play_scene_, dt);
+        captured_input_.end_frame();
+        recording_->after_tick(*play_scene_);
+        return;
+    }
+    sim_.tick(*play_scene_, dt);
+}
+
+void Editor::start_play(std::uint64_t seed) {
     // Commit any in-flight inspector edit to the authored scene first.
     if (pending_dirty_ && !pending_before_.empty()) record_edit("Edit", std::move(pending_before_));
     pending_before_.clear();
@@ -777,7 +863,8 @@ void Editor::play() {
     if (db_) {
         script::HostOptions so;
         so.assets_root = db_->assets_dir();
-        so.watch_files = true;
+        so.watch_files = seed == 0; // captures need the scripts they were recorded with
+        so.random_seed = seed;
         if (project_) {
             so.input_map = project_->settings().input;
             so.save_version = project_->settings().save_version;
@@ -841,6 +928,27 @@ void Editor::pause() {
 
 void Editor::stop() {
     if (play_state_ == PlayState::Editing) return;
+    if (recording_ && play_scene_ && !recording_->frames.empty()) {
+        recording_->finish(*play_scene_);
+        if (project_) {
+            const auto now = std::chrono::system_clock::now();
+            const std::string stem = scene_path_.empty() ? std::string("scene") : std::filesystem::path(scene_path_).stem().string();
+            auto path = project_->root() / ".victus" / "captures" /
+                        std::format("{}-{:%Y%m%d-%H%M%S}.vcapture", stem, std::chrono::floor<std::chrono::seconds>(now));
+            for (int i = 2; std::filesystem::exists(path); ++i)
+                path.replace_filename(std::format("{}-{:%Y%m%d-%H%M%S}-{}.vcapture", stem,
+                                                  std::chrono::floor<std::chrono::seconds>(now), i));
+            if (auto st = recording_->save(path); st) {
+                last_capture_ = path;
+                notify(std::format("Saved capture {} ({} frames)", path.filename().string(), recording_->frames.size()));
+            } else {
+                notify("cannot save capture: " + st.error().message, true);
+            }
+        }
+    }
+    recording_.reset();
+    replay_.reset();
+    replay_capture_.reset();
     play_scene_.reset();
     reset_simulation();
     play_scripts_.reset();

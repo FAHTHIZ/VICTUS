@@ -193,7 +193,7 @@ void Editor::frame(float dt) {
         (void)capture_from(*input_);
     }
     if (input_) input_->set_enabled(play_state_ == PlayState::Playing && viewport_focused_);
-    if (play_state_ == PlayState::Playing && play_scene_) sim_.tick(*play_scene_, dt);
+    if (play_state_ == PlayState::Playing && play_scene_) tick_play(dt);
     // Inspector property discovery follows script edits made in an external editor.
     if ((script_poll_ += dt) >= 1.0f) {
         script_poll_ = 0;
@@ -445,6 +445,25 @@ void Editor::draw_menu_bar() {
         }
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Play")) {
+        if (ImGui::MenuItem(editing ? "Play" : "Resume", nullptr, false, play_state_ != PlayState::Playing)) play();
+        if (ImGui::MenuItem("Pause", nullptr, false, play_state_ == PlayState::Playing)) pause();
+        if (ImGui::MenuItem("Stop", nullptr, false, !editing)) stop();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Record Capture", nullptr, false, editing && project_.has_value())) record();
+        const auto list = captures();
+        if (ImGui::MenuItem("Replay Last Capture", nullptr, false, !list.empty() && !recording()))
+            if (auto st = replay(list.front()); !st.ok()) notify("cannot replay: " + st.error().message, true);
+        if (ImGui::BeginMenu("Replay Capture", !list.empty() && !recording())) {
+            for (const auto& c : list)
+                if (ImGui::MenuItem(c.filename().string().c_str()))
+                    if (auto st = replay(c); !st.ok()) notify("cannot replay: " + st.error().message, true);
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Copy Captures Folder Path", nullptr, false, project_.has_value() && platform_ != nullptr))
+            platform_->set_clipboard((project_->root() / ".victus" / "captures").string());
+        ImGui::EndMenu();
+    }
     ImGui::EndMainMenuBar();
 }
 
@@ -455,13 +474,18 @@ void Editor::draw_toolbar() {
     const float h = ImGui::GetFrameHeight();
     if (ImGui::BeginViewportSideBar("##toolbar", vp, ImGuiDir_Up, h, flags)) {
         if (ImGui::BeginMenuBar()) {
-            const float w = 210.0f;
+            const float w = 300.0f;
             ImGui::SetCursorPosX(std::max(0.0f, (ImGui::GetWindowWidth() - w) * 0.5f));
             const bool editing = play_state_ == PlayState::Editing;
             if (editing) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.95f, 0.45f, 1));
                 if (ImGui::MenuItem("> Play")) play();
                 ImGui::PopStyleColor();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1));
+                if (ImGui::MenuItem("(o) Record", nullptr, false, project_.has_value())) record();
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("Play while recording input for a deterministic replay (Play > Replay Capture)");
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.4f, 1));
                 if (ImGui::MenuItem("[] Stop")) stop();
@@ -472,7 +496,18 @@ void Editor::draw_toolbar() {
                     play();
                 }
             }
-            ImGui::TextDisabled(editing ? "Editing" : play_state_ == PlayState::Playing ? "Playing" : "Paused");
+            if (recording()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1), "REC");
+            } else if (replay_ && !replay_result_.empty()) {
+                ImGui::TextColored(replay_diverged_ ? ImVec4(1.0f, 0.5f, 0.3f, 1) : ImVec4(0.45f, 0.95f, 0.45f, 1), "%s",
+                                   replay_diverged_ ? "Diverged" : "Matched");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", replay_result_.c_str());
+            } else if (replay_) {
+                ImGui::TextDisabled("Replaying %llu/%zu", static_cast<unsigned long long>(replay_->frame()),
+                                    replay_capture_ ? replay_capture_->frames.size() : std::size_t{0});
+            } else {
+                ImGui::TextDisabled(editing ? "Editing" : play_state_ == PlayState::Playing ? "Playing" : "Paused");
+            }
             ImGui::EndMenuBar();
         }
     }

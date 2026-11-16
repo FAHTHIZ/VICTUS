@@ -79,6 +79,14 @@ private:
 // (rounded to 0.1 mm / 1e-4) plus the entity count. Equal scenes give equal digests across runs;
 // runtime UUIDs and creation order do not matter.
 [[nodiscard]] std::string state_digest(const scene::Scene& scene);
+// The digest's input: one sorted "name/path|px py pz|qx qy qz qw|sx sy sz" line per entity with a
+// transform (integers in 1e-4 units), preceded by "#entities N".
+[[nodiscard]] std::vector<std::string> state_lines(const scene::Scene& scene);
+[[nodiscard]] std::string digest_of(const std::vector<std::string>& lines);
+// Human-readable difference between two state_lines() results, naming up to `max_items`
+// entities, e.g. "Player: position (1.2, 0, 3) expected (1.19, 0, 3)".
+[[nodiscard]] std::string describe_difference(const std::vector<std::string>& expected, const std::vector<std::string>& actual,
+                                              std::size_t max_items = 3);
 
 struct Capture {
     std::string project;   // informational: project name
@@ -89,9 +97,13 @@ struct Capture {
     struct Digest {
         std::uint64_t frame{0}; // taken after this many ticks
         std::string value;
+        std::vector<std::string> state; // state_lines() when recorded with detail (names what diverged)
     };
     std::vector<Digest> digests;
     std::uint32_t digest_interval{60}; // frames between digests while recording
+    // Store the per-entity state behind each digest (up to this many entities; 0 = never) so a
+    // divergence can name the entities that differ.
+    std::size_t detail_limit{4096};
 
     // Records one tick's input; call before the tick.
     void add_frame(const InputState& input, float dt);
@@ -119,7 +131,8 @@ public:
     [[nodiscard]] ReplayInput& input() noexcept { return input_; }
     [[nodiscard]] std::uint64_t digests_checked() const noexcept { return checked_; }
     [[nodiscard]] bool diverged() const noexcept { return !mismatch_.empty(); }
-    // "frame 120: expected <digest>, got <digest>" for the first divergence.
+    // "frame 120: Player: position (...) expected (...)" for the first divergence (digests
+    // instead of entity names when the capture has no detail).
     [[nodiscard]] const std::string& mismatch() const noexcept { return mismatch_; }
 
 private:
