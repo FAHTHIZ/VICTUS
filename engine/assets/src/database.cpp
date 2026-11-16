@@ -25,6 +25,7 @@ std::string default_importer(AssetKind kind) {
     case AssetKind::Model: return "gltf";
     case AssetKind::Scene: return "scene";
     case AssetKind::Script: return ""; // used directly from source, nothing to cook
+    case AssetKind::Audio: return "";  // decoded at runtime by the audio engine
     default: return "";
     }
 }
@@ -79,6 +80,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     if (e == ".gltf" || e == ".glb") return AssetKind::Model;
     if (e == ".vscene") return AssetKind::Scene;
     if (e == ".luau") return AssetKind::Script;
+    if (e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac") return AssetKind::Audio;
     return AssetKind::Unknown;
 }
 

@@ -6,6 +6,7 @@
 #include "victus/core/cli.hpp"
 #include "victus/core/log.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/audio/audio.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/player/player.hpp"
 #include "victus/project/project.hpp"
@@ -198,6 +199,12 @@ int cmd_simulate(const std::vector<std::string>& a) {
     gameplay::add_builtin_systems(sim);
     script::add_script_systems(sim, **host);
     physics::add_physics_systems(sim, **physics_world);
+    audio::EngineOptions ao; // mixed without a device so audio calls behave as in the game
+    ao.assets_root = proj->root() / "assets";
+    ao.null_device = true;
+    auto audio_engine = audio::AudioEngine::create(ao);
+    if (!audio_engine) return error(audio_engine.error().message);
+    audio::add_audio_systems(sim, **audio_engine);
     sim.input = &input;
     const auto frames = static_cast<std::uint64_t>(p.get_number("frames", 600));
     for (std::uint64_t f = 0; f < frames; ++f) {

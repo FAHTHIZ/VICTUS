@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Luau scripting: lifecycle, entity/scene/input API, sandboxing, budgets, errors, hot reload.
+#include "victus/audio/audio.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
 #include "victus/gameplay/gameplay.hpp"
@@ -8,8 +9,10 @@
 
 #include "doctest.h"
 
+#include <cmath>
 #include <filesystem>
 #include <set>
+#include <vector>
 
 using namespace victus;
 using scene::Entity;
@@ -423,4 +426,58 @@ return { hit = hit.entity.name, n = #zone, available = physics.available(), g = 
     CHECK(q.value()["available"].as_bool());
     CHECK(q.value()["g"].as_number() == doctest::Approx(-9.81));
     CHECK(std::abs(q.value()["vy"].as_number()) < 0.1);
+}
+
+TEST_CASE("script: audio one-shots, entity sources and bus control") {
+    TempDir d("victus_script_audio");
+    std::vector<float> tone(4800);
+    for (std::size_t i = 0; i < tone.size(); ++i) tone[i] = 0.5f * std::sin(static_cast<float>(i) * 0.0576f);
+    REQUIRE(audio::write_wav(d.path / "tone.wav", tone.data(), tone.size(), 1, 48000).ok());
+    d.write("scripts/speaker.luau", R"lua(
+local Speaker = {}
+function Speaker:update(dt)
+    if not self.started then
+        self.started = true
+        self.ok_entity = self.entity:play_audio()
+        self.ok_shot = audio.play("tone.wav", { volume = 0.5, bus = "Ui", position = vector.create(1, 0, 0) })
+        self.ok_missing = audio.play("missing.wav")
+        audio.set_volume("Music", 0.25)
+        audio.set_muted("Voice", true)
+    end
+    self.entity.name = string.format("%s|%s|%s|%s|%.2f|%s", tostring(self.ok_entity), tostring(self.ok_shot),
+        tostring(self.ok_missing), tostring(self.entity:audio_playing()), audio.volume("Music"), tostring(audio.muted("Voice")))
+end
+return Speaker
+)lua");
+    auto host = make_host(d);
+    // Without an engine the API is inert.
+    {
+        Scene empty;
+        auto r = host->eval("return { audio.available(), audio.play('tone.wav'), audio.volume() }", &empty);
+        REQUIRE(r.ok());
+        CHECK(json::stringify(*r, false) == "[false,false,0]");
+    }
+    audio::register_components();
+    audio::EngineOptions o;
+    o.assets_root = d.path;
+    o.null_device = true;
+    auto a = audio::AudioEngine::create(o);
+    REQUIRE(a.ok());
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    audio::add_audio_systems(sim, **a);
+    Scene s;
+    const Entity e = scripted(s, "Speaker", "scripts/speaker.luau");
+    auto& src = s.world().add<audio::AudioSourceComponent>(e);
+    src.clip = "tone.wav";
+    src.play_on_start = false;
+    src.spatial = false;
+    sim.tick(s, 1.0f / 60);
+    sim.tick(s, 1.0f / 60);
+    CHECK(s.world().get<scene::Name>(e)->value == "true|true|false|true|0.25|true");
+    CHECK((*a)->stats().one_shots == 1);
+    CHECK((*a)->bus_volume(audio::Bus::Music) == doctest::Approx(0.25f));
+    auto bad = host->eval("audio.set_volume('Nope', 1)", &s);
+    REQUIRE_FALSE(bad.ok());
+    CHECK(bad.error().message.find("unknown audio bus") != std::string::npos);
 }

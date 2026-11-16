@@ -130,6 +130,8 @@ void Editor::close_project() {
     undo_.clear();
     cache_.reset();
     edit_scripts_.reset();
+    audio_.reset(); // clips resolve against the project's assets
+    audio_failed_ = false;
     db_.reset();
     project_.reset();
     scene_ = std::make_unique<Scene>();
@@ -555,9 +557,27 @@ void Editor::play() {
         }
     }
     if (play_physics_) physics::add_physics_systems(sim_, *play_physics_);
+    if (auto* a = audio()) {
+        a->stop_all();
+        audio::add_audio_systems(sim_, *a);
+    }
     focus_viewport_ = true;
     play_state_ = PlayState::Playing;
     notify("Playing - changes made now are discarded on Stop");
+}
+
+audio::AudioEngine* Editor::audio() {
+    if (!audio_ && !audio_failed_ && db_) {
+        audio::EngineOptions o;
+        o.assets_root = db_->assets_dir();
+        o.null_device = audio::audio_disabled_by_env();
+        if (auto a = audio::AudioEngine::create(o)) audio_ = std::move(a).value();
+        else {
+            audio_failed_ = true;
+            notify("audio disabled: " + a.error().message, true);
+        }
+    }
+    return audio_.get();
 }
 
 jobs::JobSystem& Editor::workers() {
@@ -583,6 +603,7 @@ void Editor::stop() {
     reset_simulation();
     play_scripts_.reset();
     play_physics_.reset();
+    if (audio_) audio_->stop_all();
     if (input_) input_->set_enabled(false);
     play_state_ = PlayState::Editing;
     pending_before_.clear();

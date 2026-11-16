@@ -5,6 +5,7 @@
 #include "victus/core/jobs.hpp"
 #include "victus/core/log.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/audio/audio.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/platform/platform.hpp"
 #include "victus/player/platform_input.hpp"
@@ -65,6 +66,13 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     gameplay::add_builtin_systems(sim);
     script::add_script_systems(sim, **scripts);
     physics::add_physics_systems(sim, **physics_world);
+    // Audio is optional: without a device (or with VICTUS_NO_AUDIO=1) the game runs silently.
+    audio::EngineOptions ao;
+    ao.assets_root = (*db)->assets_dir();
+    ao.null_device = audio::audio_disabled_by_env();
+    auto audio_engine = audio::AudioEngine::create(ao);
+    if (audio_engine) audio::add_audio_systems(sim, **audio_engine);
+    else VICTUS_LOG_WARN("player", "audio disabled: {}", audio_engine.error().message);
     sim.input = &input;
     PlayerReport report;
     report.backend = dev.capabilities().driver_name;

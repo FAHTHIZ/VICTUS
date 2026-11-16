@@ -2,7 +2,7 @@
 
 Living, evidence-driven plan. Work directly on `main` in small, buildable commits. Status reflects verified repository state, never ambition.
 
-**Current maturity:** core runtime, platform, RHI, real 2D/3D renderer (Vulkan verified), ECS/scenes, asset pipeline, an editor with project templates, a standalone player, a `victus` CLI, Luau gameplay scripting with hot reload and 3D/2D rigid-body physics (Jolt/Box2D). No audio or networking yet. Not a production engine.
+**Current maturity:** core runtime, platform, RHI, real 2D/3D renderer (Vulkan verified), ECS/scenes, asset pipeline, an editor with project templates, a standalone player, a `victus` CLI, Luau gameplay scripting with hot reload and 3D/2D rigid-body physics (Jolt/Box2D) and audio (miniaudio). No networking or export yet. Not a production engine.
 
 Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocked.
 
@@ -25,7 +25,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 ## Phase 2 — Performance laboratory
 - [x] Reproducible benchmark harness with warm-up, repetitions, machine/build metadata and machine-readable output.
 - [ ] CPU/GPU profiling, frame/tick histograms, p50/p95/p99, memory accounting and allocation tracking.
-- [~] Workloads for ECS, jobs, transforms (done: `victus_bench_scene`, `victus_bench_script`, `victus_bench_physics`), animation, visibility, rendering, asset import, streaming, networking and saves.
+- [~] Workloads for ECS, jobs, transforms (done: `victus_bench_scene`, `victus_bench_script`, `victus_bench_physics`, `victus_bench_audio`), animation, visibility, rendering, asset import, streaming, networking and saves.
 - [ ] Desktop baselines; Android physical-device baselines when hardware is available.
 - [ ] Performance budgets and regression gates based on measured reference hardware.
 **Exit:** another developer can reproduce the published results and compare equivalent workloads.
@@ -105,7 +105,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 - [ ] Skeletal animation, blend spaces, state machines, retargeting, root motion and animation tooling.
 - [ ] Navigation meshes, pathfinding, avoidance, crowds and behavior/state systems.
 - [ ] Gameplay AI: perception, decision systems, behavior trees/utility/state machines and debugging.
-- [ ] Audio playback, buses/mixing, spatialization, effects, streaming and profiling.
+- [~] Audio playback, buses/mixing, spatialization, effects, streaming and profiling. Done (Slice 7): miniaudio 0.11.26 behind `victus::audio`, `AudioSource`/`AudioListener`, WAV/Ogg/MP3/FLAC, six buses with volume/mute, 3D attenuation following transforms, streaming music, one-shots, Luau API, editor inspector + preview, null-device mixing tests. Remaining: effects/reverb, HRTF, ducking, profiling view.
 - [ ] Runtime UI, layout, input/accessibility, localization and visual UI editor.
 - [ ] Particle/VFX system, GPU/CPU emitters, trails, curves, collision and VFX authoring.
 **Exit:** reference game exercises the systems together without one-off engine bypasses.

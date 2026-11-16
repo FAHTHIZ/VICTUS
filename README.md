@@ -33,7 +33,7 @@ VICTUS aims to give developers an end-to-end path from an empty project to a fin
 
 ## Development status
 
-VICTUS is early and not production-ready. What exists and is tested today: core runtime (jobs, memory, profiling, JSON, logging), SDL3 platform layer, an RHI on SDL_GPU (Vulkan verified), a render graph, real 2D sprite and 3D PBR/shadow rendering, an archetype ECS, a versioned scene format, a texture/glTF asset pipeline, the VICTUS editor, Luau gameplay scripting with hot reload, 3D (Jolt) and 2D (Box2D) rigid-body physics with triggers, queries and script collision events, a standalone player and the `victus` CLI. Audio, networking and export are not implemented yet. [docs/STATUS.md](docs/STATUS.md) lists exactly what is verified and how; [ROADMAP.md](ROADMAP.md) is the plan.
+VICTUS is early and not production-ready. What exists and is tested today: core runtime (jobs, memory, profiling, JSON, logging), SDL3 platform layer, an RHI on SDL_GPU (Vulkan verified), a render graph, real 2D sprite and 3D PBR/shadow rendering, an archetype ECS, a versioned scene format, a texture/glTF asset pipeline, the VICTUS editor, Luau gameplay scripting with hot reload, 3D (Jolt) and 2D (Box2D) rigid-body physics with triggers, queries and script collision events, miniaudio-based audio (buses, 3D spatialization, streaming music, script API), a standalone player and the `victus` CLI. Networking and export are not implemented yet. [docs/STATUS.md](docs/STATUS.md) lists exactly what is verified and how; [ROADMAP.md](ROADMAP.md) is the plan.
 
 ## Quick start
 
@@ -83,6 +83,8 @@ Available globals: `scene.find/spawn/destroy/query/count`, `input.down/pressed/r
 
 Physics: add `RigidBody`/`Collider` (3D) or `RigidBody2D`/`Collider2D` (2D) from the inspector's Add Component menu. Scripts get `physics.raycast/raycast2d/overlap_sphere/overlap_box/overlap_circle/overlap_box2d/gravity/set_gravity`, entity `velocity`, `angular_velocity`, `add_force/add_impulse/add_torque/add_angular_impulse`, and the callbacks `on_collision_enter(other, info)`, `on_collision_exit(other)`, `on_trigger_enter(other)` and `on_trigger_exit(other)`. View > Physics Colliders toggles collider wireframes in the editor viewport.
 
+Audio: add `AudioSource` (clip, bus, volume, pitch, loop, play on start, stream, spatial with min/max distance and rolloff) and `AudioListener` from the inspector's Audio menu; drag a `.wav/.ogg/.mp3/.flac` asset onto the clip field, double-click an audio asset to preview it. Scripts get `audio.play(clip, {volume, pitch, bus, position})`, `audio.set_volume/volume/set_muted/muted(bus)`, `audio.available()` and entity `play_audio/stop_audio/pause_audio/audio_playing`. Buses: `master`, `music`, `sfx`, `ui`, `ambient`, `voice`. Set `VICTUS_NO_AUDIO=1` to run without an output device (mixing still happens). The 2D template ships generated jump/coin/music sounds and the 3D crates play impact sounds.
+
 In the editor: Play/Stop runs the scene in place on a copy (edits made during play are discarded), Ctrl+S saves, Ctrl+Z/Ctrl+Y undo/redo, F frames the selection, right-drag orbits, middle-drag pans, the wheel zooms. Drop `.gltf`/`.glb`/`.png`/`.jpg` files into the project's `assets/` folder and press Reimport; drag a model from the asset table into the viewport to instantiate it, or a `.luau` script onto an entity's Script component (double-click attaches it to the selection).
 
 A game can currently be shipped by copying `victus_player` next to a `game/` folder containing the project; running `victus_player` with no arguments starts it. A proper `victus export` command is planned. Your project files are plain JSON and assets you own; Apache-2.0 allows commercial use.
@@ -91,7 +93,7 @@ For Visual Studio/Xcode generators, binaries are under `build/bin/<Config>/`. Se
 
 ## Repository map
 
-- `engine/<module>/` — engine modules (`core`, `platform`, `rhi`, `render`, `ecs`, `scene`, `assets`, `runtime`, `ui`, `gameplay`, `physics`, `script`, `project`, `player`), each with `include/victus/<module>/` and `src/`
+- `engine/<module>/` — engine modules (`core`, `platform`, `rhi`, `render`, `ecs`, `scene`, `assets`, `runtime`, `ui`, `gameplay`, `physics`, `audio`, `script`, `project`, `player`), each with `include/victus/<module>/` and `src/`
 - `editor/` — the VICTUS editor (library + executable)
 - `apps/player/` — standalone game player
 - `tools/` — `victus` CLI and shader compiler

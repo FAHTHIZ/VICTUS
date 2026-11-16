@@ -84,5 +84,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Cross-platform bit-exact determinism is not claimed (Jolt supports it with `CROSS_PLATFORM_DETERMINISTIC`, which costs speed; revisit for lockstep networking). Character controllers (`JPH::CharacterVirtual`), joints, mesh/convex-hull colliders and 2D polygons are not exposed yet. If either upstream stalls, the owned component API allows swapping the backend without touching scenes or scripts.
 
+## ADR-0010 — Audio engine (accepted 2026-11-16)
+**Problem.** Games need low-latency playback of sound effects and streamed music, mixing buses with volume/mute, 3D spatialization following scene transforms, and decoding of common formats, on desktop and mobile, with headless tests that can assert real mixed output.
+
+**Candidates.** miniaudio 0.11.26 (single-file C, public domain or MIT-0, David Reid; backends for WASAPI, CoreAudio, ALSA/PulseAudio/JACK, AAudio/OpenSL ES, Web Audio; built-in WAV/FLAC/MP3 decoders, node graph, spatializer); SDL3 audio (already linked, but only device/streams: no decoding, mixing or spatialization); OpenAL Soft (LGPL, dynamic linking constraints); FMOD/Wwise (proprietary, per-title licensing); SoLoud (zlib; less active).
+
+**Decision.** miniaudio 0.11.26 fetched as a pinned release tarball (SHA-256 verified) and compiled from one implementation unit (`engine/audio/third_party/miniaudio_impl.c`) with `MA_NO_ENCODING`, stb_vorbis from miniaudio's `extras/` for Ogg Vorbis, warnings disabled, behind an owned API (`victus::audio`). Scenes see only `AudioSource`/`AudioListener` components (serialized, reflected into the inspector, exposed to Luau). Six fixed buses (Master, Music, Sfx, Ui, Ambient, Voice) are miniaudio sound groups under Master. `AudioEngine::create` falls back to a no-device engine when no output exists (or `VICTUS_NO_AUDIO=1`), and `render()` pulls mixed frames from that engine so tests assert actual sample output. On Apple, `MA_NO_RUNTIME_LINKING` links CoreAudio/AudioToolbox directly (required for iOS App Store builds).
+
+**Evidence.** `victus_audio_tests` (6 cases: null-device mixing of a WAV clip with non-silent output, finishing and looping, bus volume/mute, pause/stop; spatial attenuation by listener distance and panning; one-shot reaping, voice cap and bad-clip reporting; streamed Ogg Vorbis and FLAC decoding; component serialization and system-driven playback; MP3 is decoded by miniaudio but not covered by a test file), script audio case in `victus_script_tests`, template audio assertions in `victus_project_tests`, `victus_bench_audio` (see STATUS).
+
+**Risks / revisit triggers.** No DSP effects (reverb, filters, ducking) or HRTF exposed yet; Opus is not decoded; streaming reads files directly (no packed-archive VFS yet, revisit with `victus export`). Device hot-plug relies on miniaudio's default rerouting.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
