@@ -326,5 +326,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Any newly probed value can make older version-2 captures of a changed game fail; deliberate. Scripts that keep caches or debug counters in public fields make replays fail on them — rename to `_field`. Revisit (bump the format) when adding probes for joints, animation or UI, and if probe cost shows up in profiles of large scenes.
 
+## ADR-0032 — Editor-hosted play sessions and replication inspection (accepted 2026-11-17)
+**Problem.** Multiplayer games could only be debugged from terminals (`victus serve`, `victus run --connect`) with no view of who owns what, which entities are replicated to whom, or what bandwidth they cost.
+
+**Candidates.** (1) The editor's Play-mode scene becomes a listen server (the existing `NetServer` with a host player) and the editor reads counters the session keeps per entity and per client (Unreal's Play-In-Editor "Play As Listen Server" net mode and the configurable player count, https://dev.epicgames.com/documentation/en-us/unreal-engine/play-in-editor-multiplayer-options-in-unreal-engine ; Unity Netcode for GameObjects' Network Profiler with per-frame byte totals and per-object activity, https://docs-multiplayer.unity3d.com/tools/current/profiler/). (2) Run a separate `victus serve` process and attach to it over a debug socket — isolates crashes but needs a second protocol and process management. (3) Inspect packet captures — no ownership or relevance information.
+
+**Decision.** (1). Counters live in the session (cheap integer adds in the snapshot and variable loops) and are exposed as plain structs (`ReplicationInfo`, `ClientDiagnostics`) so other tools (CLI, future profilers) can use them. Editor hosting always uses real encrypted UDP so external clients can join with the shown key; recording stays offline so captures remain deterministic.
+
+**Evidence.** STATUS Slice 30: an in-process client joins the editor-hosted session over UDP with the pinned key and appears in the clients and replication tables with the right owner and traffic.
+
+**Risks / revisit triggers.** The editor process now also carries server load; heavy sessions should use `victus serve`. Revisit when adding multi-client play mode (several clients in one editor) and when sessions exceed a few thousand replicated entities (table virtualisation, sampling).
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

@@ -22,6 +22,7 @@ Provide headless server builds that run authoritative gameplay/simulation withou
 
 ## Test and debug
 Provide deterministic network simulation for latency, jitter, packet loss, reordering and bandwidth caps. Add replication inspectors, per-entity ownership views, bandwidth counters, server tick metrics, replay/capture and reconnect tests. Test two or more clients against a local dedicated server in CI where feasible.
+Implemented in Slice 30 (ADR-0032): `NetServer::replication()`/`client_diagnostics()` and `NetClient::replication()` expose per-entity owner, updates, bytes, variable traffic, last update tick and relevance, and per-client RTT, traffic, acks, input queue and violations; the editor shows them in its Network window.
 
 ## Listen servers
 Implemented in Slice 27 (ADR-0029). `ServerOptions::host_player` spawns a server-owned (`kServerId`) copy of each player template for the host at the template position; input routing falls back to the server's own input for server-owned entities, so the host's character runs the same script code as offline. Rosters and `clients()` list the host first as id 0; `NetServer::local_player()` returns its character. Remote clients see it as an ordinary interpolated player. The host has no prediction, interpolation or corrections; the session ends when the host leaves (no migration yet).

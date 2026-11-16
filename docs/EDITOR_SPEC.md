@@ -37,6 +37,7 @@ VICTUS Studio is a first-class creation environment. A developer should be able 
 - Safe transfer of selected authored settings without sharing mutable state.
 - Inspect entities, components, physics, AI decisions, events, network ownership and runtime variables.
 - Record/replay test sessions and capture regression evidence.
+- Multiplayer: Play as Host (Slice 30) runs Play mode as an encrypted listen server with the editor as player 0; View > Network shows the server key, join command, bandwidth graphs, clients and a per-entity replication table, and the inspector shows the selected entity's live network state. Multi-client play inside the editor is still to do.
 
 ## Reliability and UX
 Keyboard-first workflows; undo/redo for destructive operations; autosave and recovery; asynchronous previews/import; clear cancellation and error recovery; accessibility and localization; project schema migration; no silent destructive conversion.
