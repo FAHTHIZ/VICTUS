@@ -1183,12 +1183,32 @@ function Coin:start()
     self.hops = self.entity:get_net("hops") or 0
 end
 
+-- A random spot in the arena at least `clearance` away from every player (so a coin never
+-- reappears under someone who is standing still).
+Coin.clearance = 2.5
+function Coin:free_spot()
+    local spot = self.base
+    for _ = 1, 16 do
+        spot = vector.create((math.random() * 2 - 1) * self.area, self.base.y, (math.random() * 2 - 1) * self.area)
+        local clear = true
+        for _, p in scene.query("CharacterController") do
+            local d = p.position - spot
+            if d.x * d.x + d.z * d.z < self.clearance * self.clearance then
+                clear = false
+                break
+            end
+        end
+        if clear then return spot end
+    end
+    return spot
+end
+
 function Coin:update(dt)
     if not net.authority() then return end
     local hops = self.entity:get_net("hops") or 0
     if hops ~= self.hops then
         self.hops = hops
-        self.base = vector.create((math.random() * 2 - 1) * self.area, self.base.y, (math.random() * 2 - 1) * self.area)
+        self.base = self:free_spot()
     end
     self.t += dt
     self.entity:rotate(vector.create(0, 0, 1), self.spin_speed * dt)
