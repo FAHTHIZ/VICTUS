@@ -99,6 +99,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     so.assets_root = (*db)->assets_dir();
     so.watch_files = o.hot_reload && !packaged;
     so.input_map = proj->settings().input;
+    so.save_version = proj->settings().save_version;
+    so.save_directory = !o.saves.empty() ? o.saves
+                        : packaged      ? gameplay::default_save_directory(proj->settings().name)
+                                        : proj->dev_save_directory();
     // Exported games have no .meta files; prefab UUIDs come from the asset index.
     so.prefab_loader = [assets = db->get()](std::string_view prefab_path) -> Result<script::PrefabSource> {
         auto src = script::read_prefab(assets->assets_dir(), prefab_path);

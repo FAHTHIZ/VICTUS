@@ -153,7 +153,8 @@ int cmd_run(const std::vector<std::string>& a) {
         .flag("strict", "exit with code 3 if any script raised an error")
         .option("connect", "join a `victus serve` server at host[:port]")
         .option("name", "player name shown to others when connected", "player")
-        .option("conditions", "emulate a bad link, e.g. latency=80,jitter=10,loss=0.05");
+        .option("conditions", "emulate a bad link, e.g. latency=80,jitter=10,loss=0.05")
+        .option("saves", "save games folder (default: <project>/.victus/saves)");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
     player::PlayerOptions o;
@@ -169,6 +170,7 @@ int cmd_run(const std::vector<std::string>& a) {
     o.fullscreen = p.has("fullscreen");
     o.hot_reload = !p.has("no-hot-reload");
     o.quality = p.get("quality");
+    o.saves = p.get("saves");
     auto r = player::run(o);
     if (!r) return error(r.error().message);
     std::printf("ran %llu frames in %.2f s on %s at %s quality (%llu script errors)\n",
@@ -213,7 +215,7 @@ struct Headless {
     gameplay::ManualInput input;
     gameplay::Simulation sim;
 
-    Status open(const std::string& project_dir, const std::string& scene_arg) {
+    Status open(const std::string& project_dir, const std::string& scene_arg, const std::string& saves = {}) {
         project::register_components();
         auto pr = project::Project::open(project_dir);
         if (!pr) return pr.error();
@@ -225,6 +227,8 @@ struct Headless {
         script::HostOptions so;
         so.assets_root = proj->root() / "assets";
         so.input_map = proj->settings().input;
+        so.save_version = proj->settings().save_version;
+        so.save_directory = saves.empty() ? proj->dev_save_directory() : fs::Path(saves);
         auto h = script::ScriptHost::create(so);
         if (!h) return h.error();
         host = std::move(*h);
@@ -300,6 +304,7 @@ int cmd_simulate(const std::vector<std::string>& a) {
         .option("hold", "comma-separated controls held for the whole run, e.g. D,Space or Pad.LeftX+,Pad.South")
         .option("print", "comma-separated entity names whose final position is printed")
         .option("save", "write the final scene state to this .vscene file")
+        .option("saves", "save games folder for the save API (default: <project>/.victus/saves)")
         .option("connect", "join a `victus serve` server at host[:port] (runs in real time)")
         .option("name", "player name sent to the server", "player")
         .option("conditions", "emulate a bad link, e.g. latency=80,jitter=10,loss=0.05,bandwidth=256")
@@ -307,7 +312,7 @@ int cmd_simulate(const std::vector<std::string>& a) {
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
     auto hs = std::make_unique<Headless>();
-    if (auto st = hs->open(p.get("project"), p.get("scene")); !st) return error(st.error().message);
+    if (auto st = hs->open(p.get("project"), p.get("scene"), p.get("saves")); !st) return error(st.error().message);
     for (const auto& k : split_list(p.get("hold"))) {
         auto b = gameplay::parse_binding(k);
         if (!b) return error("--hold: " + b.error().message);

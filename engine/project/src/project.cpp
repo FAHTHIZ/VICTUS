@@ -34,6 +34,7 @@ Value settings_to_json(const ProjectSettings& s) {
     if (s.render_scale > 0.0f) rendering.set("render_scale", s.render_scale);
     v.set("rendering", std::move(rendering));
     v.set("input", s.input.to_json());
+    if (s.save_version != 1) v.set("save_version", s.save_version);
     return v;
 }
 
@@ -65,10 +66,14 @@ Status settings_from_json(const Value& v, ProjectSettings& s) {
     } else {
         s.input = gameplay::default_input_map();
     }
+    const auto save_version = v["save_version"].as_int(1);
+    if (save_version < 1 || save_version > 1000000) return bad("save_version must be between 1 and 1000000");
+    s.save_version = static_cast<std::uint32_t>(save_version);
     s.extra = Value::object();
     for (const auto& [key, value] : v.as_object()) {
         if (key == "format" || key == "version" || key == "name" || key == "startup_scene" || key == "template" ||
-            key == "engine_version" || key == "window" || key == "rendering" || key == "input")
+            key == "engine_version" || key == "window" || key == "rendering" || key == "input" ||
+            key == "save_version")
             continue;
         s.extra.set(key, value);
     }
@@ -98,7 +103,7 @@ std::string readme(std::string_view name, std::string_view template_name) {
            "\n\nCreated with VICTUS from the " + std::string(template_name) +
            " template.\n\n- `victus.project` - project settings\n- `assets/` - source assets (each with a `.meta` file; "
            "commit both)\n- `assets/scripts/` - Luau gameplay scripts, hot reloaded while playing in the editor\n"
-           "- `scenes/` - scenes (`.vscene`, JSON)\n- `.victus/` - import cache, safe to delete\n\n"
+           "- `scenes/` - scenes (`.vscene`, JSON)\n- `.victus/` - import cache and development save games, safe to delete\n\n"
            "Open the folder in the VICTUS editor, or run `victus run <this folder>`.\n";
 }
 } // namespace

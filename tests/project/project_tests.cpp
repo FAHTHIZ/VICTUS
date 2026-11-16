@@ -252,6 +252,8 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     script::HostOptions o;
     o.assets_root = dir / "assets";
     o.input_map = p->settings().input;
+    o.save_directory = p->dev_save_directory();
+    o.save_version = p->settings().save_version;
     auto h = script::ScriptHost::create(o);
     REQUIRE(h.ok());
     r->host = std::move(h).value();
@@ -589,6 +591,103 @@ TEST_CASE("templates: gamepads drive the 3D, 2D and multiplayer players through 
         std::error_code ec;
         sfs::remove_all(dir, ec);
     }
+}
+
+TEST_CASE("templates: quick save and quick load restore the 2D and 3D games") {
+    const auto press = [](TemplateRun& r, const char* key) {
+        r.input.set_key(key, true);
+        r.frames(1);
+        r.input.set_key(key, false);
+        r.frames(1);
+    };
+    const auto toast = [](TemplateRun& r) {
+        const auto* rect = r.scene.world().get<gameui::UiRectComponent>(r.scene.find_by_name("Save Status"));
+        return rect && rect->visible ? r.text("Save Status") : std::string();
+    };
+    {
+        const auto dir = temp_dir("quicksave2d");
+        auto r = start_template("2d", dir);
+        r->frames(30);
+        CHECK(toast(*r).empty());
+        press(*r, "F9");
+        CHECK(toast(*r) == "No quick save yet (F5 saves)");
+        r->input.set_key("D", true);
+        r->frames(300); // collects Coin 3 at the right wall
+        r->input.set_key("D", false);
+        CHECK(r->text("Coin Counter") == "Coins 1 / 3");
+        press(*r, "F5");
+        CHECK(toast(*r) == "Game saved");
+        CHECK(sfs::exists(dir / ".victus" / "saves" / "quick.vsave"));
+        const float saved_x = r->pos("Player").x;
+        r->input.set_key("A", true);
+        r->frames(90);
+        r->input.set_key("A", false);
+        CHECK(r->pos("Player").x < saved_x - 3.0f);
+        press(*r, "F9");
+        CHECK(r->pos("Player").x == doctest::Approx(saved_x).epsilon(1e-3));
+        CHECK(r->text("Coin Counter") == "Coins 1 / 3"); // score and total from load_state
+        CHECK(r->scene.find_by_name("Coin 3").is_null());
+        CHECK_FALSE(r->scene.find_by_name("Coin 1").is_null());
+        CHECK(toast(*r) == "Game loaded");
+        r->frames(150); // the toast hides after two seconds
+        CHECK(toast(*r).empty());
+        CHECK(r->host->stats().errors == 0);
+        r.reset();
+        std::error_code ec;
+        sfs::remove_all(dir, ec);
+    }
+    {
+        const auto dir = temp_dir("quicksave3d");
+        auto r = start_template("3d", dir);
+        r->frames(30);
+        const auto dropped = [&] {
+            int n = 0;
+            r->scene.world().each<scene::Name>([&](scene::Entity, scene::Name& nm) { n += nm.value == "Dropped Crate"; });
+            return n;
+        };
+        press(*r, "E");
+        r->frames(30);
+        CHECK(dropped() == 1);
+        press(*r, "F5");
+        press(*r, "E");
+        press(*r, "E");
+        CHECK(dropped() == 3);
+        press(*r, "F9");
+        CHECK(dropped() == 1);
+        CHECK(toast(*r) == "Game loaded");
+        // The player's list of dropped crates came back as entities: dropping 8 more removes the
+        // restored one first (the cap is 8).
+        for (int i = 0; i < 8; ++i) press(*r, "E");
+        CHECK(dropped() == 8);
+        CHECK(r->host->stats().errors == 0);
+        r.reset();
+        std::error_code ec;
+        sfs::remove_all(dir, ec);
+    }
+}
+
+TEST_CASE("project: save_version is saved and validated") {
+    const auto dir = temp_dir("savever");
+    auto p = project::Project::create(dir, "Saves", "simulation");
+    REQUIRE(p.ok());
+    CHECK(p->settings().save_version == 1);
+    auto text = fs::read_text(dir / "victus.project");
+    REQUIRE(text.ok());
+    CHECK(text->find("save_version") == std::string::npos); // the default is not written
+    p->settings().save_version = 4;
+    REQUIRE(p->save().ok());
+    auto q = project::Project::open(dir);
+    REQUIRE(q.ok());
+    CHECK(q->settings().save_version == 4);
+    CHECK_FALSE(q->settings().extra.find("save_version"));
+    CHECK(q->dev_save_directory() == q->root() / ".victus" / "saves");
+    auto doc = json::parse(*fs::read_text(dir / "victus.project"));
+    REQUIRE(doc.ok());
+    doc->set("save_version", 0);
+    REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(*doc)).ok());
+    CHECK_FALSE(project::Project::open(dir).ok());
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
 }
 
 TEST_CASE("project: input actions are saved, rebindable in the file and validated") {

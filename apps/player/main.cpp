@@ -16,7 +16,8 @@ int main(int argc, char** argv) {
         .option("quality", "rendering quality: low, medium, high or ultra (default: project setting)")
         .flag("fullscreen", "run fullscreen")
         .option("connect", "join a multiplayer server at host[:port]")
-        .option("name", "player name shown to others when connected", "player");
+        .option("name", "player name shown to others when connected", "player")
+        .option("saves", "save games folder (default: the per-user VICTUS saves folder)");
     if (auto st = p.parse(argc, argv); !st) return std::fprintf(stderr, "%s\n%s", st.error().message.c_str(), p.help().c_str()), 2;
     victus::player::PlayerOptions o;
     o.project = p.get("project");
@@ -31,6 +32,7 @@ int main(int argc, char** argv) {
     o.quality = p.get("quality");
     o.connect = p.get("connect");
     o.player_name = p.get("name");
+    o.saves = p.get("saves");
     auto r = victus::player::run(o);
     if (!r) return std::fprintf(stderr, "victus_player: %s\n", r.error().message.c_str()), 1;
     return 0;

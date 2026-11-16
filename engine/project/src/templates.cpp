@@ -204,8 +204,9 @@ gameui::UiTextComponent& ui_text(Scene& s, Entity e, std::string_view text, floa
 }
 
 // A HUD canvas (authored at 1280x720, scaled with the window height) driven by hud.luau. Its
-// "Controls" button (top-right) toggles the panel below it listing the controls (also H).
-Entity hud(Scene& s, std::string_view controls, math::Vec2 panel_size) {
+// "Controls" button (top-right) toggles the panel below it listing the controls (also H). With
+// `saves`, a hidden "Save Status" toast (bottom centre) reports quick saves and loads.
+Entity hud(Scene& s, std::string_view controls, math::Vec2 panel_size, bool saves = false) {
     const Entity canvas = s.create("HUD");
     s.world().add<gameui::UiCanvasComponent>(canvas);
     attach(s, canvas, "scripts/hud.luau");
@@ -228,6 +229,12 @@ Entity hud(Scene& s, std::string_view controls, math::Vec2 panel_size) {
     t.align = gameui::TextAlign::Left;
     t.vertical_align = gameui::VerticalAlign::Top;
     t.color = {0.92f, 0.94f, 1.0f, 1};
+    if (saves) {
+        const Entity toast = ui_rect(s, canvas, "Save Status", {0.5f, 1}, {0.5f, 1}, {0, -32}, {420, 56});
+        s.world().get<gameui::UiRectComponent>(toast)->visible = false;
+        s.world().add<gameui::UiPanelComponent>(toast).border_width = 1.5f;
+        ui_text(s, toast, "Saved", 24, true);
+    }
     return canvas;
 }
 
@@ -448,7 +455,7 @@ void build_3d(Scene& s) {
     l.intensity = 12.0f;
     l.range = 7.0f;
 
-    (void)hud(s, "WASD, arrows or left stick   walk\nSpace or A button   jump\nE or X button   drop a crate (prefab)\nWalk into the crates and the gate\nH or View button   show / hide this panel", {470, 156});
+    (void)hud(s, "WASD, arrows or left stick   walk\nSpace or A button   jump\nE or X button   drop a crate (prefab)\nF5 / F9 or LB / RB   quick save / load\nWalk into the crates and the gate\nH or View button   show / hide this panel", {470, 178}, true);
 }
 
 // ---- Multiplayer arena ------------------------------------------------------------------------
@@ -689,8 +696,8 @@ void build_2d(Scene& s) {
     s.world().add<RotatorComponent>(spinner) = {{0, 0, 1}, 90.0f};
 
     // HUD: coin counter (updated by platformer.luau), a hidden win banner and the controls panel.
-    const Entity canvas = hud(s, "A / D, arrows or left stick   run\nSpace, W, Up or A button   jump\nS, Down or stick down   drop through the ledge\nH or View button   show / hide this panel",
-                              {470, 128});
+    const Entity canvas = hud(s, "A / D, arrows or left stick   run\nSpace, W, Up or A button   jump\nS, Down or stick down   drop through the ledge\nF5 / F9 or LB / RB   quick save / load\nH or View button   show / hide this panel",
+                              {470, 156}, true);
     const Entity counter = ui_rect(s, canvas, "Coin Counter", {0, 0}, {0, 0}, {24, 24}, {236, 60});
     s.world().add<gameui::UiPanelComponent>(counter).border_width = 1.5f;
     ui_text(s, counter, "Coins 0 / 3", 28, true).color = {1.0f, 0.86f, 0.35f, 1};
@@ -757,6 +764,19 @@ function Player:drop_crate()
     if #self.dropped > self.max_crates then
         scene.destroy(table.remove(self.dropped, 1))
     end
+end
+
+-- Checkpoints (quick save): entities in the returned table are stored by id.
+function Player:save_state()
+    return { dropped = self.dropped, facing = self.facing }
+end
+
+function Player:load_state(state)
+    self.dropped = {}
+    for _, crate in state.dropped or {} do
+        if crate then table.insert(self.dropped, crate) end
+    end
+    if state.facing then self.facing = state.facing end
 end
 
 function Player:update(dt)
@@ -889,6 +909,18 @@ function Player:start()
     self:show_score()
 end
 
+-- Checkpoints (quick save): collected coins are already gone from the saved scene.
+function Player:save_state()
+    return { score = self.score, total = self.total, spawn = self.spawn }
+end
+
+function Player:load_state(state)
+    self.score = state.score or 0
+    self.total = state.total or self.total
+    self.spawn = state.spawn or self.spawn
+    self:show_score()
+end
+
 -- The HUD counter (a UiText on the "Coin Counter" panel).
 function Player:show_score()
     local counter = scene.find("Coin Counter")
@@ -1003,8 +1035,47 @@ return Orbit
 )lua";
 
 constexpr const char* kHud = R"lua(-- HUD canvas: clicks on its buttons bubble up here as on_click(button, action). The
--- "Controls" button (or H) shows and hides the controls panel.
+-- "Controls" button (or H) shows and hides the controls panel. When the HUD has a "Save Status"
+-- toast, "quick_save" (F5, LB) writes a checkpoint of the whole scene to the "quick" slot and
+-- "quick_load" (F9, RB) restores it; every script's save_state/load_state carries its own data.
 local Hud = {}
+Hud.slot = "quick"
+Hud.toast_seconds = 2
+
+function Hud:start()
+    self.toast = 0
+end
+
+function Hud:notify(text)
+    local t = scene.find("Save Status")
+    if not t then return end
+    t:set_text(text)
+    t:set_visible(true)
+    self.toast = self.toast_seconds
+end
+
+function Hud:quick_save()
+    local ok, err = save.checkpoint(self.slot, "Quick save")
+    self:notify(if ok then "Game saved" else "Save failed: " .. tostring(err))
+end
+
+function Hud:quick_load()
+    if not save.exists(self.slot) then
+        self:notify("No quick save yet (F5 saves)")
+        return
+    end
+    local ok, err = save.restore(self.slot) -- the scene is replaced at the end of this frame
+    if not ok then self:notify("Load failed: " .. tostring(err)) end
+end
+
+-- Checkpoint hooks: the restored HUD confirms the load.
+function Hud:save_state()
+    return { saved = true }
+end
+
+function Hud:load_state(state)
+    self:notify("Game loaded")
+end
 
 function Hud:toggle_help()
     local panel = scene.find("Controls Panel")
@@ -1017,6 +1088,17 @@ end
 
 function Hud:update(dt)
     if input.action_pressed("help") then self:toggle_help() end
+    if scene.find("Save Status") then
+        if input.action_pressed("quick_save") then self:quick_save() end
+        if input.action_pressed("quick_load") then self:quick_load() end
+    end
+    if self.toast > 0 then
+        self.toast -= dt
+        if self.toast <= 0 then
+            local t = scene.find("Save Status")
+            if t then t:set_visible(false) end
+        end
+    end
 end
 
 return Hud
