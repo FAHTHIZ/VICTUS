@@ -8,6 +8,13 @@
 #include "victus/editor/undo.hpp"
 
 #include "victus/render/image.hpp"
+#include "victus/gameplay/gameplay.hpp"
+#include "victus/gameui/gameui.hpp"
+#include "victus/net/net.hpp"
+#include "victus/physics/physics.hpp"
+#include "victus/project/project.hpp"
+#include "victus/script/script.hpp"
+#include <thread>
 
 #include <algorithm>
 #include <chrono>
@@ -592,4 +599,181 @@ TEST_CASE("editor: prefabs are created, instantiated, overridden, applied, rever
     h.frames(2);
     ed.stop();
     h.frames(1);
+}
+
+namespace {
+// A second machine joining the editor's session: the project's startup scene with its scripts and
+// physics, driven by ManualInput, over real UDP.
+struct JoiningPlayer {
+    Scene scene;
+    std::unique_ptr<script::ScriptHost> host;
+    std::unique_ptr<physics::PhysicsWorld> physics_world;
+    gameplay::ManualInput input;
+    gameplay::Simulation sim;
+    std::unique_ptr<net::NetClient> client;
+
+    void start(const project::Project& p, const std::string& scene_path, std::uint16_t port, const std::string& server_key) {
+        REQUIRE(scene.load_file(p.root() / scene_path).ok());
+        script::HostOptions so;
+        so.assets_root = p.assets_dir();
+        so.input_map = p.settings().input;
+        so.save_directory = p.dev_save_directory();
+        host = std::move(script::ScriptHost::create(so)).value();
+        physics_world = std::move(physics::PhysicsWorld::create()).value();
+        gameplay::add_builtin_systems(sim);
+        gameui::add_ui_systems(sim);
+        script::add_script_systems(sim, *host);
+        physics::add_physics_systems(sim, *physics_world);
+        sim.input = &input;
+        auto t = net::create_udp_transport({});
+        REQUIRE(t.ok());
+        net::SecureOptions sec;
+        auto key = net::key_from_hex(server_key);
+        REQUIRE(key.ok());
+        sec.expected_server_key = *key; // pinned: the key the editor shows
+        net::ClientOptions co;
+        co.host = "127.0.0.1";
+        co.port = port;
+        co.name = "guest";
+        co.game_id = net::make_game_id(p.settings().name, scene_path);
+        client = std::make_unique<net::NetClient>(net::with_encryption(std::move(*t), std::move(sec)), co);
+        client->install(sim);
+    }
+    void tick() {
+        sim.tick(scene, 1.0f / 60.0f);
+        input.end_frame();
+    }
+};
+} // namespace
+
+TEST_CASE("editor: play as host, a player joins over UDP and the Network window inspects replication") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Arena", "Arena", "multiplayer").ok());
+    h.frames(1);
+
+    // Settings are validated and only change on success.
+    editor::NetPlaySettings bad = h.ed->net_settings();
+    bad.conditions = "latency=abc";
+    CHECK_FALSE(h.ed->set_net_settings(bad).ok());
+    bad = h.ed->net_settings();
+    bad.insecure = true;
+    bad.password = "secret";
+    CHECK_FALSE(h.ed->set_net_settings(bad).ok());
+    CHECK(h.ed->net_settings() == editor::NetPlaySettings{});
+
+    // Offline Play has no server; the Network window says so.
+    h.ed->set_show_network(true);
+    h.ed->play();
+    h.frames(3);
+    CHECK(h.ed->play_server() == nullptr);
+    h.ed->stop();
+    h.frames(1);
+
+    // Host on a random high port; the editor's character exists before anyone joins.
+    const auto port = static_cast<std::uint16_t>(41000 + Random(static_cast<std::uint64_t>(
+                                                                    std::chrono::steady_clock::now().time_since_epoch().count()))
+                                                             .next_u32() % 9000);
+    editor::NetPlaySettings ns;
+    ns.port = port;
+    ns.player_name = "Editor Host";
+    REQUIRE(h.ed->set_net_settings(ns).ok());
+    h.ed->play_host();
+    REQUIRE(h.ed->play_state() == editor::PlayState::Playing);
+    REQUIRE(h.ed->play_server() != nullptr);
+    CHECK(h.ed->server_key().size() == 64);
+    CHECK(h.ed->join_command().find(std::to_string(port)) != std::string::npos);
+    CHECK(h.ed->join_command().find(h.ed->server_key()) != std::string::npos);
+    h.frames(2);
+    const net::NetServer& srv = *h.ed->play_server();
+    const Entity host_player = srv.local_player();
+    REQUIRE_FALSE(host_player.is_null());
+    REQUIRE(srv.clients().size() == 1);
+    CHECK(srv.clients()[0].name == "Editor Host");
+    CHECK(srv.client_diagnostics().empty());
+
+    // A second machine joins with the pinned key shown in the editor.
+    JoiningPlayer guest;
+    guest.start(*h.ed->project(), h.ed->scene_path(), port, h.ed->server_key());
+    for (int i = 0; i < 400 && !guest.client->connected(); ++i) {
+        guest.tick();
+        h.frames(1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    REQUIRE(guest.client->connected());
+    CHECK(guest.client->diagnostics().encrypted);
+    // The guest walks right for a second while both machines keep ticking.
+    guest.input.set_key("D", true);
+    for (int i = 0; i < 90; ++i) {
+        guest.tick();
+        h.frames(1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    guest.input.set_key("D", false);
+    for (int i = 0; i < 20; ++i) {
+        guest.tick();
+        h.frames(1);
+    }
+
+    const auto clients = srv.client_diagnostics();
+    REQUIRE(clients.size() == 1);
+    CHECK(clients[0].name == "guest");
+    CHECK(clients[0].encrypted);
+    CHECK(clients[0].snapshot_ack > 0);
+    const Entity guest_on_host = clients[0].player;
+    REQUIRE(h.ed->active_scene().world().alive(guest_on_host));
+    CHECK(h.ed->active_scene().world().get<Transform>(guest_on_host)->position.x > 1.5f); // walked right on the host
+
+    // Replication rows name both players with their owners and count traffic.
+    bool saw_host = false, saw_guest = false;
+    std::uint64_t updates = 0;
+    for (const auto& r : srv.replication()) {
+        updates += r.updates;
+        if (r.entity == host_player) {
+            saw_host = true;
+            CHECK(r.owner == net::kServerId);
+            CHECK(r.local);
+        }
+        if (r.entity == guest_on_host) {
+            saw_guest = true;
+            CHECK(r.owner == clients[0].id);
+            CHECK(r.player);
+            CHECK(r.updates > 0);
+            CHECK(r.relevant_clients == 1);
+        }
+    }
+    CHECK(saw_host);
+    CHECK(saw_guest);
+    CHECK(updates > 0);
+
+    // The Network window and the inspector's live Network section draw for the guest's character.
+    h.ed->select(guest_on_host);
+    h.frames(3);
+    CHECK(h.ed->is_selected(guest_on_host));
+
+    // Captures stay offline: while in Host mode, Record does not host.
+    h.ed->stop();
+    h.frames(1);
+    CHECK(h.ed->play_server() == nullptr);
+    for (int i = 0; i < 60 && guest.client->connected(); ++i) {
+        guest.tick();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK_FALSE(guest.client->connected());
+    CHECK(guest.client->diagnostics().status.find("shutting down") != std::string::npos);
+    h.ed->record();
+    h.frames(2);
+    CHECK(h.ed->recording());
+    CHECK(h.ed->play_server() == nullptr);
+    h.ed->stop();
+    h.frames(1);
+
+    // A port already in use: Play as Host reports the error and stays in edit mode.
+    auto blocker = net::create_udp_transport({.port = port});
+    REQUIRE(blocker.ok());
+    h.ed->play_host();
+    CHECK(h.ed->play_state() == editor::PlayState::Editing);
+    CHECK(h.ed->play_server() == nullptr);
+    CHECK(h.ed->messages().back().find("cannot host") != std::string::npos);
 }

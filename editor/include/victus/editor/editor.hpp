@@ -5,6 +5,7 @@
 #pragma once
 #include "victus/animation/animation.hpp"
 #include "victus/navigation/navigation.hpp"
+#include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/core/log.hpp"
@@ -41,6 +42,21 @@ struct EditorOptions {
 };
 
 enum class PlayState : std::uint8_t { Editing, Playing, Paused };
+
+// How Play runs the scene. Host: the editor is a listen server on UDP `port` and plays the
+// host's character; others join with `victus run <project> --connect <ip>:<port>` (or the
+// exported player). Settings live with the editor session, not in the project file.
+struct NetPlaySettings {
+    enum class Mode : std::uint8_t { Offline, Host };
+    Mode mode{Mode::Offline};
+    std::uint16_t port{net::kDefaultPort};
+    std::uint16_t max_clients{8};
+    std::string player_name{"host"};
+    std::string password;        // required from clients when non-empty (needs encryption)
+    bool insecure{false};        // plaintext session (no key, no password)
+    std::string conditions;      // link emulation on the host's sends, e.g. "latency=80,loss=0.05"
+    friend bool operator==(const NetPlaySettings&, const NetPlaySettings&) = default;
+};
 
 enum class Primitive : std::uint8_t { Empty, Cube, Sphere, Plane, Cylinder, Camera, DirectionalLight, PointLight, Sprite };
 
@@ -175,6 +191,21 @@ public:
     void stop();
     [[nodiscard]] PlayState play_state() const noexcept { return play_state_; }
 
+    // ---- network play (Play > Play as Host, Window > Network) ----
+    // Validated (link conditions parse, a password needs encryption); applies to the next Play.
+    [[nodiscard]] Status set_net_settings(NetPlaySettings settings);
+    [[nodiscard]] const NetPlaySettings& net_settings() const noexcept { return net_settings_; }
+    // Starts play mode as a listen server (the settings' mode becomes Host).
+    void play_host();
+    // The running session's server (null when offline or editing).
+    [[nodiscard]] const net::NetServer* play_server() const noexcept { return play_server_.get(); }
+    // Public key players pin with --server-key (hex; empty for insecure or before hosting).
+    [[nodiscard]] const std::string& server_key() const noexcept { return server_key_; }
+    // Join command for other machines/terminals, e.g. "victus run <project> --connect 127.0.0.1:27960 ...".
+    [[nodiscard]] std::string join_command() const;
+    void set_show_network(bool show) noexcept { show_network_ = show; }
+    [[nodiscard]] bool show_network() const noexcept { return show_network_; }
+
     // ---- regression captures (Play > Record / Replay) ----
     // Starts play mode while recording input, frame times and state digests with a fresh script
     // seed. Stop saves the capture to <project>/.victus/captures/<scene>-<time>.vcapture.
@@ -273,7 +304,18 @@ private:
     std::vector<physics::DebugLine> collider_scratch_;
     bool focus_viewport_{false};
     PlayState play_state_{PlayState::Editing};
-    void start_play(std::uint64_t seed);
+    void start_play(std::uint64_t seed, bool networked = false);
+    [[nodiscard]] Status start_hosting();
+    void draw_network();
+    void draw_network_section(scene::Entity e);
+    NetPlaySettings net_settings_;
+    std::unique_ptr<net::NetServer> play_server_; // listen server of a hosted play session
+    std::string server_key_;
+    bool show_network_{false};
+    std::string net_filter_;
+    std::string net_error_;
+    float net_sample_{0};
+    std::vector<float> net_send_history_, net_receive_history_; // kbps, 4 samples per second
     void tick_play(float dt);
     std::unique_ptr<gameplay::Capture> recording_;        // while recording
     std::unique_ptr<gameplay::Capture> replay_capture_;   // while replaying

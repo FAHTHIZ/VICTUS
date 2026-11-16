@@ -6,7 +6,8 @@
 //   --frames N        exit after N frames
 //   --screenshot PNG  write the final frame
 //   --play            enter play mode after opening the project
-//   --show WINDOW     open a window after opening (input-actions)
+//   --show WINDOW     open a window after opening (input-actions, network)
+//   --host            enter play mode as a listen server (--port, default 27960)
 //   --select NAME     select an entity by name after opening
 //   --data-dir DIR    use DIR instead of the user data directory (recent list, layout)
 #include "victus/core/build_info.hpp"
@@ -40,7 +41,9 @@ int main(int argc, char** argv) {
         .option("height", "window height", "900")
         .option("data-dir", "override the user data directory")
         .option("select", "select the entity with this name after opening")
-        .option("show", "open a window after opening: input-actions")
+        .option("show", "open a window after opening: input-actions, network")
+        .option("port", "UDP port for --host", "27960")
+        .flag("host", "enter play mode as a listen server after opening")
         .flag("play", "enter play mode after opening");
     if (auto st = args.parse(argc, argv); !st) {
         std::fprintf(stderr, "%s\n%s", st.error().message.c_str(), args.help().c_str());
@@ -93,9 +96,18 @@ int main(int argc, char** argv) {
     }
     if (args.has("show")) {
         if (args.get("show") == "input-actions") ed.set_show_input_actions(true);
+        else if (args.get("show") == "network") ed.set_show_network(true);
         else std::fprintf(stderr, "victus_editor: unknown window '%s' for --show\n", args.get("show").c_str());
     }
-    if (args.has("play") && ed.has_project()) ed.play();
+    if (args.has("host") && ed.has_project()) {
+        editor::NetPlaySettings ns = ed.net_settings();
+        ns.port = static_cast<std::uint16_t>(args.get_number("port", net::kDefaultPort));
+        if (auto st = ed.set_net_settings(ns); !st.ok()) return fail("network settings", st.error());
+        ed.play_host();
+        if (!ed.play_server()) return fail("host", make_error(ErrorCode::InvalidArgument, "could not host (see log)"));
+    } else if (args.has("play") && ed.has_project()) {
+        ed.play();
+    }
 
     rhi::TextureHandle frame;
     std::uint32_t fw = 0, fh = 0;

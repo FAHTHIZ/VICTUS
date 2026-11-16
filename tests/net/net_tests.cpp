@@ -924,6 +924,103 @@ TEST_CASE("session: snapshot budget defers low-priority entities but keeps every
     CHECK(fresh == 150);
 }
 
+TEST_CASE("session: replication counters per entity and per client for debugging tools") {
+    ServerOptions so;
+    so.host_player = true;
+    so.host_name = "Host";
+    so.snapshot_budget = 400;
+    Session s(so, 60); // 60 spinning markers: the budget defers some each snapshot
+    NetClient& a = s.add_client("alice");
+    s.step(90);
+    REQUIRE(a.connected());
+
+    // Server: every tracked entity is listed once, ordered by net id, with names and owners.
+    const auto rows = s.server->replication();
+    REQUIRE(rows.size() == s.server->diagnostics().entities);
+    REQUIRE(std::is_sorted(rows.begin(), rows.end(), [](const auto& x, const auto& y) { return x.net_id < y.net_id; }));
+    const Entity srv_alice = s.server_player(a.local_id());
+    const ReplicationInfo* alice_row = nullptr;
+    const ReplicationInfo* host_row = nullptr;
+    const ReplicationInfo* crate_row = nullptr;
+    std::uint64_t updates = 0, deferred = 0;
+    for (const auto& r : rows) {
+        updates += r.updates;
+        deferred += r.deferred;
+        if (r.entity == srv_alice) alice_row = &r;
+        if (r.entity == s.server->local_player()) host_row = &r;
+        if (r.name == "Crate 0") crate_row = &r;
+        CHECK(r.relevant_clients <= 1);
+    }
+    REQUIRE(alice_row);
+    REQUIRE(host_row);
+    REQUIRE(crate_row);
+    CHECK(alice_row->player);
+    CHECK_FALSE(alice_row->local);
+    CHECK(alice_row->owner == a.local_id());
+    CHECK(host_row->player);
+    CHECK(host_row->local);
+    CHECK(host_row->owner == kServerId);
+    CHECK_FALSE(crate_row->player);
+    CHECK(crate_row->relevant_clients == 1);
+    CHECK(crate_row->updates >= 1); // its first position reaches the client
+    CHECK(crate_row->bytes >= crate_row->updates);
+    CHECK(updates > 60);  // spinning markers keep being sent
+    CHECK(deferred > 0);  // ...and the 400-byte budget defers some of them
+    // The busy markers were updated recently; an entity's last update is never in the future.
+    for (const auto& r : rows) CHECK(r.last_update <= s.server_peer.sim.time().time + 1e-9);
+
+    // Network variables count per entity: a jump sets alice's "jumps" variable on the server.
+    Peer& pa = *s.peers[0];
+    pa.input.set_key("Space", true);
+    s.step(1);
+    pa.input.set_key("Space", false);
+    s.step(20);
+    bool alice_listed = false;
+    for (const auto& r : s.server->replication())
+        if (r.entity == srv_alice) {
+            alice_listed = true;
+            CHECK(r.vars == 1);
+            CHECK(r.var_updates == 1); // one client received one update
+            CHECK(r.var_bytes > 0);
+        }
+    CHECK(alice_listed);
+
+    // Client: it sees the same net ids, knows which one it predicts and counts what it received.
+    const auto mine = a.replication();
+    CHECK(mine.size() == s.server->replication().size());
+    std::size_t local = 0;
+    std::uint64_t received = 0, received_bytes = 0;
+    for (const auto& r : mine) {
+        local += r.local;
+        received += r.updates;
+        received_bytes += r.bytes;
+        if (r.local) {
+            CHECK(r.entity == a.local_player());
+            CHECK(r.player);
+            CHECK(r.owner == a.local_id());
+            CHECK(r.vars == 1);
+            CHECK(r.var_updates == 1);
+        }
+    }
+    CHECK(local == 1);
+    CHECK(received > 60);
+    CHECK(received_bytes >= received);
+
+    // Per-client diagnostics: alice is connected, acknowledges snapshots and has sent input.
+    auto cd = s.server->client_diagnostics();
+    REQUIRE(cd.size() == 1);
+    CHECK(cd[0].id == a.local_id());
+    CHECK(cd[0].name == "alice");
+    CHECK(cd[0].player == srv_alice);
+    CHECK_FALSE(cd[0].held);
+    CHECK(cd[0].snapshot_seq > 0);
+    CHECK(cd[0].snapshot_ack > 0);
+    CHECK(cd[0].snapshot_ack <= cd[0].snapshot_seq);
+    CHECK(cd[0].bytes_sent > 0);
+    CHECK(cd[0].bytes_received > 0);
+    CHECK(cd[0].violations == 0);
+}
+
 TEST_CASE("session: late joiners get the current world and prune destroyed scene objects") {
     Session s;
     s.step(5);
