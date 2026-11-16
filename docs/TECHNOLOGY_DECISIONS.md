@@ -304,5 +304,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** The host has zero latency to the authority (unfair for competitive games; use `victus serve`). The session ends when the host quits (no host migration). The server ticks inside the host's frame loop, so a slow host slows everyone; revisit with a fixed-rate server tick if hosts drop frames.
 
+## ADR-0030 — Reconnect with server-issued tokens and held characters (accepted 2026-11-17)
+**Problem.** A dropped connection (Wi-Fi blip, network switch, a frozen laptop) removed the player's character and score; the client could only fail and start over as a new player.
+
+**Candidates.** (1) Server-issued random token in the welcome, presented in a later hello; the server holds the character for a grace period (Unreal's inactive PlayerState model, https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Runtime/Engine/GameFramework/AGameMode). (2) Match by network address — no protocol change, but addresses change on exactly the network switches reconnect exists for, and NAT can make two players share one. (3) Match by player name — trivial to spoof and names are not unique. (4) Transport-level session resumption (keep the session alive under a new address, like QUIC connection migration) — invisible to the session layer, but ENet has no migration and the encrypted layer would need resumable keys.
+
+**Decision.** (1), protocol version 4. Tokens come from the OS random generator and travel only after the handshake (encrypted by default). Held characters stay in the world idle, leave the roster and count toward `max_clients`; a hello whose token matches a still-connected client retires that stale connection first. Clients retry every `reconnect_interval` (1 s) for `reconnect_window` (20 s); after a rejoin they drop snapshot baselines, prediction history and clock sync and prune entities the server did not re-announce. Secure-layer refusals (wrong password or key) are final; handshake timeouts during a rejoin are retried.
+
+**Evidence.** STATUS Slice 28: two session tests (server noticed / did not notice the drop, same id and character afterwards, score kept, no duplicates on any machine; grace expiry gives a fresh player and prunes the old one; a client that never returns fails; goodbyes release at once) and a real encrypted UDP run where a client frozen for 16 s rejoined as the same client.
+
+**Risks / revisit triggers.** Anyone holding the token can take the character over (it is a bearer secret; with `--insecure` it travels in clear). Held characters are frozen in place and can be hit or pushed while their owner is away; games can react to `client_dropped`. No persistence across server restarts. Revisit when player identities arrive (bind tokens to accounts).
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
