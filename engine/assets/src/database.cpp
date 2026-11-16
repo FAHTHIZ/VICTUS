@@ -375,4 +375,14 @@ Status AssetDatabase::set_settings(const Uuid& uuid, json::Value settings) {
     return write_meta(copy);
 }
 
+animation::SetProvider animation_provider(AssetDatabase& db) {
+    return [&db](const Uuid& uuid) -> std::shared_ptr<const animation::AnimationSet> {
+        const AssetRecord* r = db.find(uuid);
+        if (!r || r->kind != AssetKind::Model) return nullptr;
+        auto model = db.load_model(uuid);
+        if (!model || model->nodes.empty()) return nullptr;
+        return std::make_shared<animation::AnimationSet>(make_animation_set(*model));
+    };
+}
+
 } // namespace victus::assets

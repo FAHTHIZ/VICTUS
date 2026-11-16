@@ -102,4 +102,8 @@ private:
     std::unordered_map<std::string, std::size_t> by_path_;
 };
 
+// Animation sets for the animation system, loaded from cooked models in `db` (which must outlive
+// the provider). Returns null for unknown assets, non-models and models without nodes.
+[[nodiscard]] animation::SetProvider animation_provider(AssetDatabase& db);
+
 } // namespace victus::assets

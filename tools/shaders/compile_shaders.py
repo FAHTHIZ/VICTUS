@@ -4,7 +4,7 @@
 
 For every *.vert / *.frag / *.comp in engine/render/shaders this produces:
   * SPIR-V (glslangValidator -V)            -> Vulkan
-  * MSL 2.1 (spirv-cross --msl)              -> Metal
+  * MSL 2.1 (spirv-cross --msl, compiled with -DVICTUS_MSL=1) -> Metal
   * resource counts (spirv-cross --reflect)  -> SDL_GPU shader create info
 
 Generated files are committed so engine builds do not require shader tools.
@@ -46,7 +46,12 @@ def run(cmd):
 def compile_one(path, tmp):
     spv = tmp / (path.name + ".spv")
     run(["glslangValidator", "-V", "--quiet", "--target-env", "vulkan1.0", str(path), "-o", str(spv)])
-    msl = run(["spirv-cross", str(spv), "--msl", "--msl-version", "20100", "--msl-decoration-binding"])
+    # MSL is generated from a second compile with VICTUS_MSL defined so shaders can pick
+    # Metal-specific binding numbers (SDL_GPU orders Metal buffers as uniforms, then storage).
+    spv_msl = tmp / (path.name + ".msl.spv")
+    run(["glslangValidator", "-V", "--quiet", "--target-env", "vulkan1.0", "-DVICTUS_MSL=1", str(path), "-o",
+         str(spv_msl)])
+    msl = run(["spirv-cross", str(spv_msl), "--msl", "--msl-version", "20100", "--msl-decoration-binding"])
     refl = json.loads(run(["spirv-cross", str(spv), "--reflect"]))
     counts = {
         "samplers": len(refl.get("textures", [])) + len(refl.get("separate_images", [])),

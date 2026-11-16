@@ -71,7 +71,7 @@ enum class Filter : std::uint8_t { Nearest, Linear };
 enum class AddressMode : std::uint8_t { Repeat, ClampToEdge, MirroredRepeat };
 enum class ShaderStage : std::uint8_t { Vertex, Fragment, Compute };
 enum class IndexType : std::uint8_t { U16, U32 };
-enum class VertexFormat : std::uint8_t { Float, Float2, Float3, Float4, UByte4Norm, UShort2Norm, Int4, UInt };
+enum class VertexFormat : std::uint8_t { Float, Float2, Float3, Float4, UByte4Norm, UShort2Norm, Int4, UInt, UShort4 };
 enum class PresentMode : std::uint8_t { VSync, Immediate, Mailbox };
 
 // Generational handles: stale handles are detected rather than dereferenced.

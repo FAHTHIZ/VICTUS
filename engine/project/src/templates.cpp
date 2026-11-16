@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Built-in project templates. Each produces a scene that runs immediately (Play) with the
 // built-in behaviours, so a new project shows motion, lighting and a camera on first launch.
+#include "victus/animation/animation.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/physics/physics.hpp"
@@ -573,6 +574,7 @@ void register_components() {
     script::register_components();
     physics::register_components();
     audio::register_components();
+    animation::register_components();
 }
 
 Status build_template_scene(std::string_view id, Scene& s) {

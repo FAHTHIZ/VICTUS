@@ -77,6 +77,22 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
     }
     auto tex_or = [&](std::int32_t i) { return i >= 0 ? gpu->textures[static_cast<std::size_t>(i)] : rhi::TextureHandle{}; };
     for (auto& mesh : model.meshes) {
+        std::vector<math::Aabb> bounds;
+        std::int32_t max_joint = -1;
+        if (mesh.data.skinned()) {
+            for (std::size_t v = 0; v < mesh.data.skin.size(); ++v) {
+                const render::SkinVertex& sv = mesh.data.skin[v];
+                for (int k = 0; k < 4; ++k) {
+                    if (sv.weights[k] <= 0.0f) continue;
+                    const std::uint16_t j = sv.joints[k];
+                    if (j >= bounds.size()) bounds.resize(j + 1u);
+                    bounds[j].expand(mesh.data.vertices[v].position);
+                    max_joint = std::max<std::int32_t>(max_joint, j);
+                }
+            }
+        }
+        gpu->joint_bounds.push_back(std::move(bounds));
+        gpu->max_joint.push_back(max_joint);
         auto g = ctx_.create_mesh(mesh.data, mesh.name);
         if (!g) return fail(std::move(g).error());
         gpu->meshes.push_back(*g);
@@ -103,6 +119,7 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
         mesh.data.indices.shrink_to_fit();
     }
     model.textures.clear();
+    for (const auto& n : model.nodes) gpu->skeleton.push_back({.name = n.name, .parent = n.parent, .rest = {n.translation, n.rotation, n.scale}});
     gpu->cpu = std::move(model);
     const GpuModel* raw = gpu.get();
     models_[uuid] = std::move(gpu);
@@ -139,19 +156,24 @@ Entity instantiate_model(Scene& scene, const Uuid& model_uuid, const assets::Coo
         t->rotation = node.rotation;
         t->scale = node.scale;
         created[i] = e;
-        if (node.meshes.size() == 1) {
-            auto& mr = scene.world().add<MeshRendererComponent>(e);
+        auto add_mesh = [&](Entity target, std::uint32_t mi) {
+            auto& mr = scene.world().add<MeshRendererComponent>(target);
             mr.mesh_asset = model_uuid;
-            mr.mesh_index = node.meshes[0];
+            mr.mesh_index = mi;
+            if (node.skin >= 0 && model.meshes[mi].data.skinned())
+                scene.world().add<animation::SkinnedMeshComponent>(target, scene.uuid(root), static_cast<std::uint32_t>(node.skin));
+        };
+        if (node.meshes.size() == 1) {
+            add_mesh(e, node.meshes[0]);
         } else {
             // Multi-primitive nodes get one child per primitive so each has its own component.
-            for (const std::uint32_t mi : node.meshes) {
-                const Entity part = scene.create(std::format("{}[{}]", node.name, mi), e);
-                auto& mr = scene.world().add<MeshRendererComponent>(part);
-                mr.mesh_asset = model_uuid;
-                mr.mesh_index = mi;
-            }
+            for (const std::uint32_t mi : node.meshes) add_mesh(scene.create(std::format("{}[{}]", node.name, mi), e), mi);
         }
+    }
+    if (!model.animations.empty()) {
+        auto& a = scene.world().add<animation::AnimatorComponent>(root);
+        a.model = model_uuid;
+        a.clip = model.animations.front().name;
     }
     return root;
 }
@@ -184,6 +206,42 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     env.ao_radius = std::max(e.ao_radius, 0.0f);
     sun.shadow_distance = std::max(e.shadow_distance, 1.0f);
 }
+
+namespace {
+
+// Joint entities of skeletons, cached per (skeleton root, model) in a scene resource and
+// re-resolved when an entity dies or is renamed.
+struct SkinBindings {
+    struct Entry {
+        Entity root;
+        Uuid model;
+        std::vector<Entity> nodes;
+    };
+    std::unordered_map<std::uint64_t, Entry> entries;
+};
+
+const std::vector<Entity>& skeleton_nodes(Scene& scene, Entity root, const Uuid& model_uuid, const GpuModel& model) {
+    auto* res = scene.world().resource<SkinBindings>();
+    if (!res) res = &scene.world().set_resource<SkinBindings>();
+    if (res->entries.size() > 4096) res->entries.clear(); // bound memory for scenes that churn characters
+    const std::uint64_t key = root.bits() * 0x9e3779b97f4a7c15ull ^ UuidHash{}(model_uuid);
+    auto& entry = res->entries[key];
+    bool valid = entry.root == root && entry.model == model_uuid && entry.nodes.size() == model.skeleton.size();
+    for (std::size_t i = 0; valid && i < entry.nodes.size(); ++i) {
+        const Entity e = entry.nodes[i];
+        if (e == Entity{}) continue;
+        const auto* n = scene.world().alive(e) ? scene.world().get<Name>(e) : nullptr;
+        valid = n && n->value == model.skeleton[i].name && scene.is_descendant(e, root);
+    }
+    if (!valid) {
+        entry.root = root;
+        entry.model = model_uuid;
+        entry.nodes = animation::bind_nodes(scene, root, model.skeleton);
+    }
+    return entry.nodes;
+}
+
+} // namespace
 
 ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRenderer& renderer,
                            const SceneViewSettings& settings, const render::Camera3D* camera_override) {
@@ -239,7 +297,8 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     renderer.begin(camera, sun, env);
     for (const auto& p : points) renderer.add_point_light(p);
 
-    w.each<MeshRendererComponent, WorldTransform>([&](const MeshRendererComponent& mr, const WorldTransform& wt) {
+    std::vector<math::Mat4> palette;
+    w.each<MeshRendererComponent, WorldTransform>([&](Entity entity, const MeshRendererComponent& mr, const WorldTransform& wt) {
         if (!mr.visible) return;
         if (!mr.mesh_asset.is_nil()) {
             auto model = assets.model(mr.mesh_asset);
@@ -251,7 +310,36 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             m.base_color = {m.base_color.r * mr.base_color.r, m.base_color.g * mr.base_color.g,
                             m.base_color.b * mr.base_color.b, m.base_color.a * mr.base_color.a};
             m.cast_shadows = mr.cast_shadows;
-            renderer.submit((*model)->meshes[mr.mesh_index], m, wt.matrix);
+            const GpuModel& gm = **model;
+            const auto* skinned = w.get<animation::SkinnedMeshComponent>(entity);
+            if (skinned && gm.max_joint[mr.mesh_index] >= 0 && skinned->skin < gm.cpu.skins.size()) {
+                const assets::ModelSkin& skin = gm.cpu.skins[skinned->skin];
+                const Entity root = scene.find(skinned->skeleton);
+                if (root != Entity{} && static_cast<std::size_t>(gm.max_joint[mr.mesh_index]) < skin.joints.size()) {
+                    const auto& nodes = skeleton_nodes(scene, root, mr.mesh_asset, gm);
+                    const math::Mat4 inv_model = math::inverse(wt.matrix);
+                    const auto& jb = gm.joint_bounds[mr.mesh_index];
+                    palette.resize(skin.joints.size());
+                    math::Aabb bounds;
+                    for (std::size_t j = 0; j < skin.joints.size(); ++j) {
+                        const Entity je = skin.joints[j] < nodes.size() ? nodes[skin.joints[j]] : Entity{};
+                        const auto* jw = je != Entity{} ? w.get<WorldTransform>(je) : nullptr;
+                        // Unbound joints keep the bind pose relative to the mesh (identity skin matrix).
+                        const math::Mat4 world_skin = jw ? jw->matrix * skin.inverse_bind[j] : wt.matrix;
+                        palette[j] = jw ? inv_model * world_skin : math::Mat4{};
+                        if (j < jb.size() && jb[j].valid()) {
+                            const math::Aabb b = jb[j].transformed(world_skin);
+                            bounds.expand(b.min);
+                            bounds.expand(b.max);
+                        }
+                    }
+                    renderer.submit_skinned(gm.meshes[mr.mesh_index], m, wt.matrix, palette, bounds);
+                    ++stats.meshes;
+                    ++stats.skinned;
+                    return;
+                }
+            }
+            renderer.submit(gm.meshes[mr.mesh_index], m, wt.matrix);
             ++stats.meshes;
             return;
         }

@@ -4,10 +4,12 @@
 #include "cgltf.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <format>
 #include <map>
+#include <set>
 #include <utility>
 
 namespace victus::assets {
@@ -212,7 +214,11 @@ public:
                 n.scale = n.scale * settings_.scale;
             }
         }
+        import_skins();
+        import_animations();
         if (model_.meshes.empty()) return make_error(ErrorCode::InvalidArgument, "glTF contains no triangle meshes");
+        if (auto st = validate_model(model_); !st)
+            return make_error(ErrorCode::ParseError, std::format("{}: {}", path_.filename().string(), st.error().message));
         return std::move(model_);
     }
 
@@ -358,9 +364,17 @@ private:
             return out;
         }
         const cgltf_accessor *pos = nullptr, *nrm = nullptr, *uv = nullptr, *tan = nullptr;
+        const cgltf_accessor *joints[2] = {nullptr, nullptr}, *weights[2] = {nullptr, nullptr};
         for (cgltf_size a = 0; a < prim.attributes_count; ++a) {
             const cgltf_attribute& attr = prim.attributes[a];
             switch (attr.type) {
+            case cgltf_attribute_type_joints:
+                if (attr.index < 2) joints[attr.index] = attr.data;
+                else warn(std::format("{}: JOINTS_{} ignored (up to 8 influences are read, 4 kept)", out.name, attr.index));
+                break;
+            case cgltf_attribute_type_weights:
+                if (attr.index < 2) weights[attr.index] = attr.data;
+                break;
             case cgltf_attribute_type_position: pos = attr.data; break;
             case cgltf_attribute_type_normal: nrm = attr.data; break;
             case cgltf_attribute_type_tangent: tan = attr.data; break;
@@ -393,6 +407,33 @@ private:
         if (has_tangents) {
             const auto t = unpack(tan);
             for (cgltf_size i = 0; i < count; ++i) verts[i].tangent = {t[i * 4], t[i * 4 + 1], t[i * 4 + 2], t[i * 4 + 3]};
+        }
+        // Skin: up to two JOINTS_n/WEIGHTS_n sets, reduced to the 4 strongest normalized influences.
+        if (joints[0] && weights[0]) {
+            const cgltf_size sets = joints[1] && weights[1] ? 2 : 1;
+            for (cgltf_size set = 0; set < sets; ++set)
+                if (joints[set]->type != cgltf_type_vec4 || weights[set]->type != cgltf_type_vec4 || joints[set]->count != count ||
+                    weights[set]->count != count)
+                    return make_error(ErrorCode::ParseError, out.name + ": JOINTS/WEIGHTS must be vec4 with one entry per vertex");
+            out.data.skin.resize(count);
+            for (cgltf_size i = 0; i < count; ++i) {
+                std::uint32_t j[8]{};
+                float w[8]{};
+                for (cgltf_size set = 0; set < sets; ++set) {
+                    cgltf_uint ju[4]{};
+                    float wf[4]{};
+                    cgltf_accessor_read_uint(joints[set], i, ju, 4);
+                    cgltf_accessor_read_float(weights[set], i, wf, 4);
+                    for (int k = 0; k < 4; ++k) {
+                        if (ju[k] > 65535) return make_error(ErrorCode::ParseError, out.name + ": joint index out of range");
+                        j[set * 4 + static_cast<cgltf_size>(k)] = ju[k];
+                        w[set * 4 + static_cast<cgltf_size>(k)] = std::isfinite(wf[k]) ? std::max(wf[k], 0.0f) : 0.0f;
+                    }
+                }
+                out.data.skin[i] = render::make_skin_vertex(j, w, sets * 4);
+            }
+        } else if (joints[0] || weights[0]) {
+            warn(out.name + ": JOINTS_0 without WEIGHTS_0 (or the reverse); skin ignored");
         }
         // Indices, converting strips/fans to lists.
         std::vector<std::uint32_t> raw;
@@ -442,10 +483,113 @@ private:
             if (node->has_scale) n.scale = {node->scale[0], node->scale[1], node->scale[2]};
         }
         if (node->mesh) n.meshes = mesh_map_[static_cast<std::size_t>(node->mesh - data_->meshes)];
-        if (node->skin) warn(n.name + ": skinning is imported as static geometry (animation system pending)");
+        if (node->skin) n.skin = static_cast<std::int32_t>(node->skin - data_->skins); // remapped in import_skins
+        if (node->weights_count > 0 || (node->mesh && node->mesh->weights_count > 0))
+            warn(n.name + ": morph target weights are not supported; base shape used");
         const auto index = static_cast<std::int32_t>(model_.nodes.size());
+        node_map_[node] = static_cast<std::uint32_t>(index);
         model_.nodes.push_back(std::move(n));
         for (cgltf_size c = 0; c < node->children_count; ++c) add_node(node->children[c], index, depth + 1);
+    }
+
+    void import_skins() {
+        std::vector<std::int32_t> remap(data_->skins_count, -1);
+        for (cgltf_size si = 0; si < data_->skins_count; ++si) {
+            const cgltf_skin& src = data_->skins[si];
+            ModelSkin skin;
+            skin.name = src.name ? src.name : std::format("skin{}", si);
+            bool ok = src.joints_count > 0 && src.joints_count <= 65535;
+            for (cgltf_size j = 0; ok && j < src.joints_count; ++j) {
+                const auto it = node_map_.find(src.joints[j]);
+                if (it == node_map_.end()) ok = false;
+                else skin.joints.push_back(it->second);
+            }
+            const cgltf_accessor* ibm = src.inverse_bind_matrices;
+            if (ok && ibm && (ibm->type != cgltf_type_mat4 || ibm->count < src.joints_count)) ok = false;
+            if (!ok) {
+                warn(skin.name + ": joints are not part of the imported scene or inverse bind matrices are invalid; skin dropped");
+                continue;
+            }
+            skin.inverse_bind.resize(skin.joints.size());
+            if (ibm) {
+                for (cgltf_size j = 0; j < skin.joints.size(); ++j)
+                    cgltf_accessor_read_float(ibm, j, &skin.inverse_bind[j].c[0].x, 16);
+            }
+            remap[si] = static_cast<std::int32_t>(model_.skins.size());
+            model_.skins.push_back(std::move(skin));
+        }
+        for (ModelNode& n : model_.nodes) {
+            if (n.skin < 0) continue;
+            n.skin = remap[static_cast<std::size_t>(n.skin)];
+            if (n.skin < 0) continue;
+            // Joint indices beyond the skin would read past the palette: drop the skin instead.
+            const std::size_t joints = model_.skins[static_cast<std::size_t>(n.skin)].joints.size();
+            for (const std::uint32_t mi : n.meshes)
+                for (const render::SkinVertex& v : model_.meshes[mi].data.skin)
+                    for (const std::uint16_t j : v.joints)
+                        if (j >= joints) n.skin = -1;
+            if (n.skin < 0) warn(n.name + ": vertex joint indices exceed the skin's joint count; rendered unskinned");
+        }
+    }
+
+    void import_animations() {
+        std::set<std::string> names;
+        for (cgltf_size ai = 0; ai < data_->animations_count; ++ai) {
+            const cgltf_animation& src = data_->animations[ai];
+            animation::Clip clip;
+            clip.name = src.name && *src.name ? src.name : std::format("animation{}", ai);
+            while (!names.insert(clip.name).second) clip.name += "_";
+            bool warned_weights = false;
+            for (cgltf_size ci = 0; ci < src.channels_count; ++ci) {
+                const cgltf_animation_channel& ch = src.channels[ci];
+                if (!ch.target_node || !ch.sampler || !ch.sampler->input || !ch.sampler->output) continue;
+                const auto it = node_map_.find(ch.target_node);
+                if (it == node_map_.end()) continue;
+                animation::Channel out;
+                out.node = it->second;
+                switch (ch.target_path) {
+                case cgltf_animation_path_type_translation: out.path = animation::Path::Translation; break;
+                case cgltf_animation_path_type_rotation: out.path = animation::Path::Rotation; break;
+                case cgltf_animation_path_type_scale: out.path = animation::Path::Scale; break;
+                default:
+                    if (!warned_weights) warn(clip.name + ": morph weight channels are not supported; skipped");
+                    warned_weights = true;
+                    continue;
+                }
+                switch (ch.sampler->interpolation) {
+                case cgltf_interpolation_type_step: out.interpolation = animation::Interpolation::Step; break;
+                case cgltf_interpolation_type_cubic_spline: out.interpolation = animation::Interpolation::CubicSpline; break;
+                default: out.interpolation = animation::Interpolation::Linear; break;
+                }
+                out.times = unpack(ch.sampler->input);
+                out.values = unpack(ch.sampler->output);
+                if (out.times.empty() || cgltf_num_components(ch.sampler->output->type) != out.components()) {
+                    warn(std::format("{}: channel {} has invalid sampler data; skipped", clip.name, ci));
+                    continue;
+                }
+                const ModelNode& node = model_.nodes[out.node];
+                if (node.parent < 0 && out.path != animation::Path::Rotation && settings_.scale != 1.0f)
+                    for (float& v : out.values) v *= settings_.scale; // root nodes carry the import scale
+                if (out.path == animation::Path::Rotation && out.interpolation != animation::Interpolation::CubicSpline) {
+                    for (std::size_t k = 0; k + 3 < out.values.size(); k += 4) {
+                        const math::Quat q = math::normalize(math::Quat{out.values[k], out.values[k + 1], out.values[k + 2], out.values[k + 3]});
+                        out.values[k] = q.x, out.values[k + 1] = q.y, out.values[k + 2] = q.z, out.values[k + 3] = q.w;
+                    }
+                }
+                if (auto st = animation::validate(animation::Clip{.name = clip.name, .duration = 0, .channels = {out}}, model_.nodes.size());
+                    !st) {
+                    warn(std::format("{}: channel {}: {}; skipped", clip.name, ci, st.error().message));
+                    continue;
+                }
+                clip.duration = std::max(clip.duration, out.times.back());
+                clip.channels.push_back(std::move(out));
+            }
+            if (clip.channels.empty()) {
+                warn(clip.name + ": no supported channels; animation skipped");
+                continue;
+            }
+            model_.animations.push_back(std::move(clip));
+        }
     }
 
     const fs::Path& path_;
@@ -458,6 +602,7 @@ private:
     std::vector<std::vector<std::uint32_t>> mesh_map_;
     std::map<std::pair<const cgltf_image*, bool>, std::int32_t> textures_;
     std::map<const cgltf_material*, std::uint32_t> materials_;
+    std::map<const cgltf_node*, std::uint32_t> node_map_;
     std::int32_t default_material_{-1};
 };
 

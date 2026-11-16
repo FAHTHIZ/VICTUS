@@ -34,7 +34,7 @@ victus_add_test(victus_scene_tests
 victus_add_test(victus_script_tests
     SOURCES
         script/script_tests.cpp
-    DEPS VICTUS::Script
+    DEPS VICTUS::Script VICTUS::Animation
     LABELS script)
 
 victus_add_test(victus_project_tests
@@ -47,6 +47,7 @@ if(VICTUS_WITH_GRAPHICS)
 victus_add_test(victus_asset_tests
     SOURCES
         assets/asset_tests.cpp
+        assets/animation_asset_tests.cpp
     DEPS VICTUS::Assets
     LABELS assets)
 
@@ -64,6 +65,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_render_tests.cpp
         render/gpu_quality_tests.cpp
         render/gpu_instancing_tests.cpp
+        render/gpu_skinning_tests.cpp
         render/gpu_scene_tests.cpp
         render/gpu_ui_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
@@ -108,3 +110,8 @@ victus_add_test(victus_audio_tests
     DEPS VICTUS::Audio VICTUS::Core
     LABELS audio)
 target_compile_definitions(victus_audio_tests PRIVATE VICTUS_MINIAUDIO_DATA_DIR="${VICTUS_MINIAUDIO_DIR}/data")
+
+victus_add_test(victus_animation_tests
+    SOURCES animation/animation_tests.cpp
+    DEPS VICTUS::Animation VICTUS::Core
+    LABELS animation)

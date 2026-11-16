@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Luau scripting: lifecycle, entity/scene/input API, sandboxing, budgets, errors, hot reload.
+#include "victus/animation/animation.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
@@ -490,6 +491,69 @@ return { valid = cs.valid, grounded = cs.grounded, ny = cs.ground_normal.y, grou
     CHECK(q.value()["jvalid"].as_bool());
     CHECK(q.value()["active"].as_bool());
     CHECK(std::abs(q.value()["angle"].as_number()) > 60.0); // ~90 deg/s for ~1.7 s, wraps at 180
+}
+
+TEST_CASE("script: animation playback API") {
+    TempDir d("victus_script_animation");
+    d.write("scripts/dancer.luau", R"lua(
+local Dancer = {}
+function Dancer:start()
+    local clips = self.entity:animation_clips()
+    self.entity.name = "Dancer:" .. #clips .. ":" .. clips[1] .. ":" .. clips[2]
+end
+function Dancer:update(dt)
+    self.t = (self.t or 0) + dt
+    if self.t > 0.25 and not self.switched then
+        self.switched = self.entity:play_animation("Spin", 0)
+        self.bad = self.entity:play_animation("Missing")
+    end
+end
+return Dancer
+)lua");
+    auto host = make_host(d);
+    auto set = std::make_shared<animation::AnimationSet>();
+    set->nodes.push_back({.name = "Hips", .parent = -1, .rest = {.translation = {0, 1, 0}}});
+    animation::Clip slide{.name = "Slide", .duration = 1.0f};
+    slide.channels.push_back({.node = 0, .path = animation::Path::Translation, .interpolation = animation::Interpolation::Linear,
+                              .times = {0, 1}, .values = {0, 1, 0, 2, 1, 0}});
+    animation::Clip spin{.name = "Spin", .duration = 1.0f};
+    const math::Quat q1 = math::Quat::axis_angle({0, 1, 0}, 1.0f);
+    spin.channels.push_back({.node = 0, .path = animation::Path::Rotation, .interpolation = animation::Interpolation::Linear,
+                             .times = {0, 1}, .values = {0, 0, 0, 1, q1.x, q1.y, q1.z, q1.w}});
+    set->clips = {slide, spin};
+    const Uuid model = Uuid::generate();
+    animation::AnimationSystem anim;
+    anim.add_set(model, set);
+
+    gameplay::Simulation sim;
+    animation::add_animation_systems(sim, anim);
+    script::add_script_systems(sim, *host);
+    Scene s;
+    const Entity dancer = scripted(s, "Dancer", "scripts/dancer.luau");
+    const Entity hips = s.create("Hips", dancer);
+    auto& a = s.world().add<animation::AnimatorComponent>(dancer);
+    a.model = model;
+    a.clip = "Slide";
+    for (int i = 0; i < 30; ++i) sim.tick(s, 1.0f / 60);
+    CHECK(s.world().get<scene::Name>(dancer)->value == "Dancer:2:Slide:Spin");
+    CHECK(s.world().get<animation::AnimatorComponent>(dancer)->clip == "Spin");
+    auto q = host->eval(R"lua(
+local d = scene.find("Dancer:2:Slide:Spin")
+local st = d:animation()
+return { valid = st.valid, clip = st.clip, playing = st.playing, looping = st.looping, duration = st.duration,
+         time = st.time, none = scene.find("Hips"):play_animation("Spin") }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["valid"].as_bool());
+    CHECK(q.value()["clip"].as_string() == "Spin");
+    CHECK(q.value()["playing"].as_bool());
+    CHECK(q.value()["looping"].as_bool());
+    CHECK(q.value()["duration"].as_number() == doctest::Approx(1.0));
+    CHECK(q.value()["time"].as_number() > 0.0);
+    CHECK_FALSE(q.value()["none"].as_bool()); // no Animator on Hips
+    // Spin was switched in with no fade: Hips rotates about Y and has left the slide.
+    const auto* t = s.world().get<Transform>(hips);
+    CHECK(std::abs(t->rotation.y) > 0.01f);
 }
 
 TEST_CASE("script: audio one-shots, entity sources and bus control") {

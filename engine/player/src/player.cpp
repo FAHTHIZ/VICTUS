@@ -7,6 +7,7 @@
 #include "victus/core/log.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
+#include "victus/animation/animation.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/platform/platform.hpp"
 #include "victus/player/export.hpp"
@@ -105,6 +106,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     gameplay::add_builtin_systems(sim);
     script::add_script_systems(sim, **scripts);
     physics::add_physics_systems(sim, **physics_world);
+    animation::AnimationSystem animations({.provider = assets::animation_provider(**db), .jobs = &workers});
+    animation::add_animation_systems(sim, animations);
     // Audio is optional: without a device (or with VICTUS_NO_AUDIO=1) the game runs silently.
     audio::EngineOptions ao;
     ao.assets_root = (*db)->assets_dir();

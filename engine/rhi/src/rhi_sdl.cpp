@@ -126,6 +126,7 @@ SDL_GPUVertexElementFormat to_sdl(VertexFormat f) {
     case VertexFormat::UShort2Norm: return SDL_GPU_VERTEXELEMENTFORMAT_USHORT2_NORM;
     case VertexFormat::Int4: return SDL_GPU_VERTEXELEMENTFORMAT_INT4;
     case VertexFormat::UInt: return SDL_GPU_VERTEXELEMENTFORMAT_UINT;
+    case VertexFormat::UShort4: return SDL_GPU_VERTEXELEMENTFORMAT_USHORT4;
     }
     return SDL_GPU_VERTEXELEMENTFORMAT_FLOAT;
 }

@@ -9,6 +9,7 @@
 
 #include <array>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -130,6 +131,8 @@ struct SceneStats {
     // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
     std::uint32_t main_batches{0}, shadow_batches{0}, prepass_batches{0};
     std::uint32_t instances_uploaded{0};
+    std::uint32_t skinned_draws{0};    // skinned submissions this frame
+    std::uint32_t joints_uploaded{0};  // joint matrices in the per-frame palette
 };
 
 class SceneRenderer {
@@ -150,6 +153,12 @@ public:
     void begin(const Camera3D& camera, const DirectionalLight& sun, const Environment& env);
     void add_point_light(const PointLight& light);
     void submit(const GpuMesh& mesh, const Material& material, const math::Mat4& model);
+    // Skinned draw (GPU skinning). `joints` are skin matrices in the mesh's model space
+    // (inverse(model) * joint_world * inverse_bind); `world_bounds` must contain the posed mesh.
+    // Falls back to submit() when the mesh has no skin stream or no joints are given. Skinned
+    // instances of one mesh+material are still batched into one instanced draw.
+    void submit_skinned(const GpuMesh& mesh, const Material& material, const math::Mat4& model,
+                        std::span<const math::Mat4> joints, const math::Aabb& world_bounds);
     void line(math::Vec3 a, math::Vec3 b, math::Color color);
     void box(const math::Aabb& box, math::Color color);
     void grid(float half_size, float spacing, math::Color color);
@@ -173,6 +182,9 @@ private:
         math::Mat4 model;
         float distance;
         std::uint64_t batch_key; // equal keys => same mesh and identical material
+        std::uint32_t palette{0}; // first joint matrix in palette_ (skinned only)
+        bool skinned{false};
+        math::Aabb world_bounds;  // skinned only (static draws use mesh bounds * model)
     };
     // A run of consecutive instances in the per-frame instance buffer sharing one mesh/material.
     struct Batch {
@@ -192,6 +204,7 @@ private:
     TransientTexturePool pool_;
     rhi::PipelineHandle opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_;
     rhi::PipelineHandle prepass_cull_, prepass_double_;
+    rhi::PipelineHandle skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_;
     std::unordered_map<std::string, rhi::PipelineHandle> post_; // "<shader>/<format>/<blend>"
     rhi::TextureHandle no_shadow_;
     rhi::TextureHandle exposure_[2];
@@ -203,6 +216,9 @@ private:
     std::uint32_t line_capacity_{0};
     rhi::BufferHandle instance_buffer_;
     std::uint32_t instance_capacity_{0}; // in instances
+    rhi::BufferHandle palette_buffer_;
+    std::uint32_t palette_capacity_{0}; // in matrices
+    std::vector<math::Mat4> palette_;
     rhi::Format depth_format_{rhi::Format::D32_FLOAT};
 
     Camera3D camera_;

@@ -559,6 +559,9 @@ void Editor::play() {
         }
     }
     if (play_physics_) physics::add_physics_systems(sim_, *play_physics_);
+    play_animation_ = std::make_unique<animation::AnimationSystem>(
+        animation::AnimationSettings{.provider = db_ ? assets::animation_provider(*db_) : animation::SetProvider{}, .jobs = &workers()});
+    animation::add_animation_systems(sim_, *play_animation_);
     if (auto* a = audio()) {
         a->stop_all();
         audio::add_audio_systems(sim_, *a);
@@ -605,6 +608,7 @@ void Editor::stop() {
     reset_simulation();
     play_scripts_.reset();
     play_physics_.reset();
+    play_animation_.reset();
     if (audio_) audio_->stop_all();
     if (input_) input_->set_enabled(false);
     play_state_ = PlayState::Editing;

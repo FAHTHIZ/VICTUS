@@ -24,11 +24,13 @@ struct InstanceData {
 };
 static_assert(sizeof(InstanceData) == 112);
 
-InstanceData make_instance(const Mat4& model) {
+// normal[0].w carries the first joint matrix of a skinned instance (exact as float up to 2^24).
+InstanceData make_instance(const Mat4& model, std::uint32_t palette = 0) {
     InstanceData d;
     d.model = model;
     const Mat4 n = transpose(inverse(model));
     for (int i = 0; i < 3; ++i) d.normal[i] = Vec4(n[i].x, n[i].y, n[i].z, 0.0f);
+    d.normal[0].w = static_cast<float>(palette);
     return d;
 }
 
@@ -248,8 +250,15 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     auto line_vs = get("line.vert");
     auto line_fs = get("line.frag");
     auto depth_vs = get("depth.vert");
-    for (auto* s : {&mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &full_vs, &sky_fs, &line_vs, &line_fs, &depth_vs})
+    auto skin_vs = get("mesh_skinned.vert");
+    auto skin_depth_vs = get("depth_skinned.vert");
+    auto skin_shadow_vs = get("shadow_skinned.vert");
+    for (auto* s : {&mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &full_vs, &sky_fs, &line_vs, &line_fs, &depth_vs, &skin_vs,
+                    &skin_depth_vs, &skin_shadow_vs})
         if (!*s) return std::move(*s).error();
+    const rhi::VertexBufferLayout skin_layout{2, sizeof(SkinVertex), false};
+    const std::vector<rhi::VertexAttribute> skin_attrs{{11, 2, rhi::VertexFormat::UShort4, 0},
+                                                       {12, 2, rhi::VertexFormat::Float4, 8}};
 
     const rhi::VertexBufferLayout mesh_layout{0, sizeof(Vertex3D), false};
     const rhi::VertexBufferLayout instance_layout{1, sizeof(InstanceData), true};
@@ -284,6 +293,21 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     p = dev.create_pipeline(opaque);
     if (!p) return std::move(p).error();
     r->opaque_double_ = p.value();
+    // Skinned variants: same state, extra skin stream and joint palette.
+    rhi::PipelineDesc skinned = opaque;
+    skinned.name = "pbr_skinned";
+    skinned.vertex = skin_vs.value();
+    skinned.vertex_buffers = {mesh_layout, instance_layout, skin_layout};
+    skinned.attributes = with(opaque.attributes, skin_attrs);
+    skinned.cull = rhi::CullMode::Back;
+    p = dev.create_pipeline(skinned);
+    if (!p) return std::move(p).error();
+    r->skin_cull_ = p.value();
+    skinned.name = "pbr_skinned_double_sided";
+    skinned.cull = rhi::CullMode::None;
+    p = dev.create_pipeline(skinned);
+    if (!p) return std::move(p).error();
+    r->skin_double_ = p.value();
 
     rhi::PipelineDesc prepass;
     prepass.name = "depth_prepass";
@@ -302,6 +326,22 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     p = dev.create_pipeline(prepass);
     if (!p) return std::move(p).error();
     r->prepass_double_ = p.value();
+    rhi::PipelineDesc skin_prepass = prepass;
+    skin_prepass.name = "depth_prepass_skinned";
+    skin_prepass.vertex = skin_depth_vs.value();
+    skin_prepass.vertex_buffers = {mesh_layout, instance_layout, skin_layout};
+    skin_prepass.attributes = with(with({{0, 0, rhi::VertexFormat::Float3, 0}}, model_attrs),
+                                   {{8, 1, rhi::VertexFormat::Float4, 64}});
+    skin_prepass.attributes = with(skin_prepass.attributes, skin_attrs);
+    skin_prepass.cull = rhi::CullMode::Back;
+    p = dev.create_pipeline(skin_prepass);
+    if (!p) return std::move(p).error();
+    r->skin_prepass_cull_ = p.value();
+    skin_prepass.name = "depth_prepass_skinned_double_sided";
+    skin_prepass.cull = rhi::CullMode::None;
+    p = dev.create_pipeline(skin_prepass);
+    if (!p) return std::move(p).error();
+    r->skin_prepass_double_ = p.value();
 
     rhi::PipelineDesc shadow;
     shadow.name = "shadow_depth";
@@ -318,6 +358,15 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     p = dev.create_pipeline(shadow);
     if (!p) return std::move(p).error();
     r->shadow_pipeline_ = p.value();
+    shadow.name = "shadow_depth_skinned";
+    shadow.vertex = skin_shadow_vs.value();
+    shadow.vertex_buffers = {mesh_layout, instance_layout, skin_layout};
+    shadow.attributes = with(with(with({{0, 0, rhi::VertexFormat::Float3, 0}}, model_attrs),
+                                  {{8, 1, rhi::VertexFormat::Float4, 64}}),
+                             skin_attrs);
+    p = dev.create_pipeline(shadow);
+    if (!p) return std::move(p).error();
+    r->skin_shadow_ = p.value();
 
     rhi::PipelineDesc sky;
     sky.name = "sky";
@@ -367,8 +416,9 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
 SceneRenderer::~SceneRenderer() {
     auto& d = ctx_.device();
     for (auto pl : {opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_, prepass_cull_,
-                    prepass_double_})
+                    prepass_double_, skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_})
         if (pl) d.destroy(pl);
+    if (palette_buffer_) d.destroy(palette_buffer_);
     for (auto& [k, pl] : post_) d.destroy(pl);
     if (no_shadow_) d.destroy(no_shadow_);
     for (auto t : exposure_)
@@ -417,6 +467,7 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     points_.clear();
     draws_.clear();
     lines_.clear();
+    palette_.clear();
     stats_ = {};
 }
 
@@ -427,6 +478,23 @@ void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const 
     ++stats_.submitted;
     draws_.push_back({&mesh, material, model, 0.0f,
                       mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh))});
+}
+
+void SceneRenderer::submit_skinned(const GpuMesh& mesh, const Material& material, const Mat4& model,
+                                   std::span<const Mat4> joints, const Aabb& world_bounds) {
+    if (!mesh.skinned() || joints.empty()) {
+        submit(mesh, material, model);
+        return;
+    }
+    if (!mesh.valid()) return;
+    ++stats_.submitted;
+    ++stats_.skinned_draws;
+    Draw d{&mesh, material, model, 0.0f, mix(mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh)), 0x5c1du)};
+    d.palette = static_cast<std::uint32_t>(palette_.size());
+    d.skinned = true;
+    d.world_bounds = world_bounds;
+    palette_.insert(palette_.end(), joints.begin(), joints.end());
+    draws_.push_back(d);
 }
 
 void SceneRenderer::line(Vec3 a, Vec3 b, Color color) {
@@ -542,7 +610,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     std::array<std::vector<const Draw*>, 4> casters;
     visible.reserve(draws_.size());
     for (Draw& d : draws_) {
-        const Aabb world = d.mesh->bounds.transformed(d.model);
+        const Aabb world = d.skinned ? d.world_bounds : d.mesh->bounds.transformed(d.model);
         if (d.material.cast_shadows) {
             bool any = false;
             for (std::uint32_t c = 0; c < cascade_count_; ++c)
@@ -576,10 +644,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         std::vector<Batch> out;
         for (const Draw* d : list) {
             const auto offset = static_cast<std::uint32_t>(instances.size());
-            instances.push_back(make_instance(d->model));
+            instances.push_back(make_instance(d->model, d->palette));
             if (S.instancing && !out.empty()) {
                 const Draw* f = out.back().first;
-                if (f->mesh == d->mesh && (!match_material || same_material(f->material, d->material))) {
+                if (f->mesh == d->mesh && f->skinned == d->skinned &&
+                    (!match_material || same_material(f->material, d->material))) {
                     ++out.back().instance_count;
                     continue;
                 }
@@ -591,13 +660,29 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const std::vector<Batch> main_batches = build_batches(visible, true);
     std::array<std::vector<Batch>, 4> shadow_batches;
     for (std::uint32_t c = 0; c < cascade_count_; ++c) {
-        std::sort(casters[c].begin(), casters[c].end(),
-                  [](const Draw* a, const Draw* b) { return a->mesh < b->mesh; });
+        std::sort(casters[c].begin(), casters[c].end(), [](const Draw* a, const Draw* b) {
+            if (a->skinned != b->skinned) return !a->skinned;
+            return a->mesh < b->mesh;
+        });
         shadow_batches[c] = build_batches(casters[c], false);
         stats_.shadow_batches += static_cast<std::uint32_t>(shadow_batches[c].size());
     }
     stats_.main_batches = static_cast<std::uint32_t>(main_batches.size());
     stats_.instances_uploaded = static_cast<std::uint32_t>(instances.size());
+    stats_.joints_uploaded = static_cast<std::uint32_t>(palette_.size());
+    if (!palette_.empty()) {
+        const auto needed = static_cast<std::uint32_t>(palette_.size());
+        if (needed > palette_capacity_) {
+            if (palette_buffer_) dev.destroy(palette_buffer_);
+            palette_capacity_ = std::max({needed, palette_capacity_ * 2, 256u});
+            auto b = dev.create_buffer({"joint_palette", palette_capacity_ * static_cast<std::uint32_t>(sizeof(Mat4)),
+                                        rhi::BufferUsageStorageRead});
+            if (!b) return std::move(b).error();
+            palette_buffer_ = b.value();
+        }
+        cmd.upload_buffer(palette_buffer_, 0,
+                          {reinterpret_cast<const std::uint8_t*>(palette_.data()), palette_.size() * sizeof(Mat4)}, true);
+    }
     if (!instances.empty()) {
         const auto needed = static_cast<std::uint32_t>(instances.size());
         if (needed > instance_capacity_) {
@@ -691,13 +776,20 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         graph.add_pass(
             "shadow", [&](PassBuilder& b) { b.write_depth(shadow_map, rhi::LoadOp::Clear, 1.0f); },
             [&](PassContext& ctx) {
-                ctx.pass->bind_pipeline(shadow_pipeline_);
                 for (std::uint32_t c = 0; c < cascade_count_; ++c) {
                     const float x = static_cast<float>((c & 1u) * shadow_res), y = static_cast<float>((c >> 1u) * shadow_res);
                     ctx.pass->set_viewport({x, y, static_cast<float>(shadow_res), static_cast<float>(shadow_res), 0, 1});
                     ShadowUniforms su{cascade_vp_[c]};
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, su);
+                    rhi::PipelineHandle bound{};
                     for (const Batch& b : shadow_batches[c]) {
+                        const rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : shadow_pipeline_;
+                        if (!(bound == want)) {
+                            ctx.pass->bind_pipeline(want);
+                            if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                            bound = want;
+                        }
+                        if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
                         ctx.pass->bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                         ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
@@ -725,11 +817,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 for (const Batch& b : main_batches) {
                     const Draw* d = b.first;
                     if (d->material.alpha_cutoff > 0.0f) continue; // alpha-tested: depth comes from the main pass
-                    const rhi::PipelineHandle want = d->material.double_sided ? prepass_double_ : prepass_cull_;
+                    const rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_prepass_double_ : skin_prepass_cull_)
+                                                                : (d->material.double_sided ? prepass_double_ : prepass_cull_);
                     if (!(bound == want)) {
                         pass.bind_pipeline(want);
+                        if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
                         bound = want;
                     }
+                    if (d->skinned) pass.bind_vertex_buffer(2, d->mesh->skin);
                     pass.bind_vertex_buffer(0, d->mesh->vertices);
                     pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                     pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
@@ -816,11 +911,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             rhi::PipelineHandle bound{};
             for (const Batch& b : main_batches) {
                 const Draw* d = b.first;
-                const rhi::PipelineHandle want = d->material.double_sided ? opaque_double_ : opaque_cull_;
+                const rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_double_ : skin_cull_)
+                                                            : (d->material.double_sided ? opaque_double_ : opaque_cull_);
                 if (!(bound == want)) {
                     pass.bind_pipeline(want);
+                    if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
                     bound = want;
                 }
+                if (d->skinned) pass.bind_vertex_buffer(2, d->mesh->skin);
                 const Material& m = d->material;
                 MaterialUniforms mat{};
                 mat.base_color = m.base_color.vec();
