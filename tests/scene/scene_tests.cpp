@@ -185,3 +185,54 @@ TEST_CASE("scene: duplicate copies a subtree with fresh identities") {
     CHECK(names(s, s.children(kids[0])) == std::vector<std::string>{"C"});
     CHECK(s.children(b).size() == 1); // original untouched
 }
+
+TEST_CASE("scene: entity snapshots restore state, subtrees and sibling order") {
+    Scene s;
+    const Entity a = s.create("A");
+    const Entity b = s.create("B");
+    const Entity c = s.create("C");
+    const Entity b1 = s.create("B1", b);
+    const Entity b2 = s.create("B2", b1);
+    s.world().get<Transform>(b1)->position = {1, 2, 3};
+    s.world().add<MeshRendererComponent>(b1).primitive = "cube";
+
+    // Property snapshot round trip.
+    const json::Value before = s.save_entity(b1);
+    s.world().get<Transform>(b1)->position = {9, 9, 9};
+    s.world().remove<MeshRendererComponent>(b1);
+    s.world().add<LightComponent>(b1);
+    s.world().get<Name>(b1)->value = "renamed";
+    REQUIRE(s.restore_entity(before).ok());
+    CHECK(s.world().get<Transform>(b1)->position.x == doctest::Approx(1));
+    CHECK(s.world().has<MeshRendererComponent>(b1));
+    CHECK_FALSE(s.world().has<LightComponent>(b1));
+    CHECK(s.world().get<Name>(b1)->value == "B1");
+
+    // Delete a middle root subtree and restore it in its original position.
+    const Uuid bu = s.uuid(b), b2u = s.uuid(b2);
+    const json::Value subtree = s.save_subtree(b);
+    CHECK(subtree.size() == 3);
+    s.destroy(b);
+    CHECK(s.find(bu).is_null());
+    CHECK(s.roots().size() == 2);
+    REQUIRE(s.restore_subtree(subtree).ok());
+    const auto roots = s.roots();
+    REQUIRE(roots.size() == 3);
+    CHECK(s.uuid(roots[0]) == s.uuid(a));
+    CHECK(s.uuid(roots[1]) == bu);
+    CHECK(s.uuid(roots[2]) == s.uuid(c));
+    const Entity rb2 = s.find(b2u);
+    REQUIRE_FALSE(rb2.is_null());
+    CHECK(s.world().get<Name>(s.parent(rb2))->value == "B1");
+    CHECK(s.world().get<MeshRendererComponent>(s.parent(rb2))->primitive == "cube");
+
+    // move_before reorders, reparents and rejects cycles.
+    CHECK(s.move_before(c, a));
+    CHECK(s.world().get<Name>(s.roots()[0])->value == "C");
+    const Entity nb = s.find(bu);
+    CHECK_FALSE(s.move_before(nb, kNullEntity, s.find(b2u))); // under own descendant
+    CHECK(s.move_before(a, kNullEntity, nb));                  // append as child
+    CHECK(s.parent(a) == nb);
+    CHECK(s.world().get<Hierarchy>(a)->depth == 1);
+    CHECK(s.children(nb).back() == a);
+}

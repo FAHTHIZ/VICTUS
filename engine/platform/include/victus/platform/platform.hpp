@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -159,10 +160,20 @@ public:
     [[nodiscard]] bool headless() const noexcept { return !desc_.video; }
     [[nodiscard]] bool quit_requested() const noexcept { return quit_; }
     void request_quit() noexcept { quit_ = true; }
+    // Withdraws a quit request (e.g. the user cancelled closing a window with unsaved work).
+    void cancel_quit() noexcept { quit_ = false; }
+    // Native folder picker. Asynchronous: `done` runs on the calling thread inside a later
+    // poll_events() with the chosen folder, or an empty string when cancelled/unavailable.
+    void show_folder_dialog(Window* parent, const std::string& default_location,
+                            std::function<void(std::string)> done);
     [[nodiscard]] const char* video_driver() const noexcept;
     [[nodiscard]] static double seconds() noexcept;
     [[nodiscard]] std::string clipboard() const;
     void set_clipboard(const std::string& text);
+    // Receives every raw OS event (an `SDL_Event*`) before VICTUS processes it. Intended for
+    // engine-level integrations such as the UI layer; game code should use `input()`.
+    using NativeEventHook = std::function<void(const void* native_event)>;
+    void set_native_event_hook(NativeEventHook hook) { native_hook_ = std::move(hook); }
 
 private:
     explicit Platform(const PlatformDesc& desc) : desc_(desc) {}
@@ -171,6 +182,9 @@ private:
     InputState input_;
     bool quit_{false};
     std::vector<void*> gamepads_;
+    NativeEventHook native_hook_;
+    struct DialogState;
+    std::shared_ptr<DialogState> dialogs_;
 };
 
 } // namespace victus::platform

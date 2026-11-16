@@ -30,6 +30,12 @@ victus_add_test(victus_scene_tests
     DEPS VICTUS::Scene
     LABELS scene)
 
+victus_add_test(victus_project_tests
+    SOURCES
+        project/project_tests.cpp
+    DEPS VICTUS::Project
+    LABELS project)
+
 if(VICTUS_WITH_GRAPHICS)
 victus_add_test(victus_asset_tests
     SOURCES
@@ -49,7 +55,26 @@ victus_add_test(victus_gpu_tests
         render/gpu_fixture.cpp
         render/gpu_render_tests.cpp
         render/gpu_scene_tests.cpp
-    DEPS VICTUS::Runtime VICTUS::Platform
+        render/gpu_ui_tests.cpp
+    DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")
+
+victus_add_test(victus_editor_tests
+    SOURCES
+        render/gpu_fixture.cpp
+        editor/editor_tests.cpp
+    DEPS VICTUS::EditorCore VICTUS::Platform
+    LABELS "editor;gpu")
+target_compile_definitions(victus_editor_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")
+endif()
+
+if(VICTUS_WITH_GRAPHICS)
+add_test(NAME victus_cli_smoke
+    COMMAND ${CMAKE_COMMAND}
+        -DVICTUS_CLI=$<TARGET_FILE:victus_cli>
+        -DVICTUS_PLAYER=$<TARGET_FILE:victus_player_app>
+        -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_smoke
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/cli_smoke.cmake)
+set_tests_properties(victus_cli_smoke PROPERTIES LABELS "cli;gpu")
 endif()

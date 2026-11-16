@@ -4,7 +4,7 @@
 
 VICTUS aims to give developers an end-to-end path from an empty project to a finished, playable, distributable game. It is intended for 2D and 3D games, high-fidelity visuals, simulation-heavy worlds, mobile experiences, multiplayer projects, and dedicated servers. It must provide real gameplay and real rendering—not just technical demos.
 
-**Status:** early foundation; not production-ready. This README describes product goals, not delivered capabilities. Every feature remains planned until implementation, integration, tests, and a usable workflow prove it.
+**Status:** early; not production-ready. The list below describes product goals; see [Development status](#development-status) for what works today. A feature counts as delivered only when implementation, integration, tests and a usable workflow prove it.
 
 ## What VICTUS is being built to provide
 
@@ -33,31 +33,44 @@ VICTUS aims to give developers an end-to-end path from an empty project to a fin
 
 ## Development status
 
-VICTUS is currently at its bootstrap stage. The roadmap is aspirational and must not be confused with implemented functionality. See [ROADMAP.md](ROADMAP.md) and [docs/STATUS.md](docs/STATUS.md) for verified progress.
+VICTUS is early and not production-ready. What exists and is tested today: core runtime (jobs, memory, profiling, JSON, logging), SDL3 platform layer, an RHI on SDL_GPU (Vulkan verified), a render graph, real 2D sprite and 3D PBR/shadow rendering, an archetype ECS, a versioned scene format, a texture/glTF asset pipeline, the VICTUS editor, a standalone player and the `victus` CLI. Scripting, physics, audio, networking and export are not implemented yet. [docs/STATUS.md](docs/STATUS.md) lists exactly what is verified and how; [ROADMAP.md](ROADMAP.md) is the plan.
 
-## Repository map
+## Quick start
 
-- `include/victus/` — public engine interfaces
-- `src/` — engine and runtime implementation
-- `tests/` — automated tests
-- `tools/` — developer and content tools
-- `docs/` — architecture, subsystem specifications, research, and status
-- `.github/workflows/` — CI
-- `AGENTS.md` — autonomous engineering contract
-- `ROADMAP.md` — complete implementation roadmap
-
-## Build
-
-Requires CMake 3.24+ and a C++20 compiler:
+Build (CMake 3.24+, a C++20 compiler; dependencies are fetched and pinned automatically, no account or sign-in needed):
 
 ~~~bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ctest --test-dir build --build-config Release --output-on-failure
-./build/bin/victus_bench_core   # core benchmark baseline
 ~~~
 
-For Visual Studio/Xcode, run the executable from the matching configuration output directory. See [CMake presets](CMakePresets.json).
+Create, edit and run a project:
+
+~~~bash
+./build/bin/victus templates                         # 3d, 2d, simulation
+./build/bin/victus new MyGame --template 3d          # creates MyGame/victus.project, scenes/, assets/
+./build/bin/victus_editor MyGame                     # open in the editor (or run with no arguments for the launcher)
+./build/bin/victus run MyGame                        # run the game in its own window
+./build/bin/victus import MyGame                     # import/cook assets dropped into MyGame/assets
+~~~
+
+In the editor: Play/Stop runs the scene in place on a copy (edits made during play are discarded), Ctrl+S saves, Ctrl+Z/Ctrl+Y undo/redo, F frames the selection, right-drag orbits, middle-drag pans, the wheel zooms. Drop `.gltf`/`.glb`/`.png`/`.jpg` files into the project's `assets/` folder and press Reimport; drag a model from the asset table into the viewport to instantiate it.
+
+A game can currently be shipped by copying `victus_player` next to a `game/` folder containing the project; running `victus_player` with no arguments starts it. A proper `victus export` command is planned. Your project files are plain JSON and assets you own; Apache-2.0 allows commercial use.
+
+For Visual Studio/Xcode generators, binaries are under `build/bin/<Config>/`. See [CMake presets](CMakePresets.json).
+
+## Repository map
+
+- `engine/<module>/` — engine modules (`core`, `platform`, `rhi`, `render`, `ecs`, `scene`, `assets`, `runtime`, `ui`, `gameplay`, `project`, `player`), each with `include/victus/<module>/` and `src/`
+- `editor/` — the VICTUS editor (library + executable)
+- `apps/player/` — standalone game player
+- `tools/` — `victus` CLI and shader compiler
+- `samples/`, `benchmarks/`, `tests/` — samples, benchmark harness, automated tests
+- `third_party/` — vendored dependencies with licence files
+- `docs/` — architecture, specifications, research, decisions and status
+- `AGENTS.md` — autonomous engineering contract
 
 ## Engineering documents
 

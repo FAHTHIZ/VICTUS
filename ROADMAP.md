@@ -2,7 +2,7 @@
 
 Living, evidence-driven plan. Work directly on `main` in small, buildable commits. Status reflects verified repository state, never ambition.
 
-**Current maturity:** core runtime + platform + RHI + real 2D/3D renderer verified on Vulkan; no editor, assets or gameplay yet. Not a production engine.
+**Current maturity:** core runtime, platform, RHI, real 2D/3D renderer (Vulkan verified), ECS/scenes, asset pipeline, an editor with project templates, a standalone player and a `victus` CLI. No scripting, physics, audio or networking yet. Not a production engine.
 
 Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocked.
 
@@ -18,8 +18,8 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 - [~] Lifecycle, ownership, shutdown ordering, error/result types and validated configuration. (Result/Error, JSON config parsing done.)
 - [x] Structured logging, diagnostic events, crash context, build metadata and tracing.
 - [~] Platform services: filesystem, paths, clock, threads, window, input, device capabilities and lifecycle. (SDL3 windows, keyboard/mouse/gamepad/touch input, lifecycle events, clipboard, GPU capabilities implemented; mobile lifecycle untested on devices.)
-- [ ] CLI modes: editor, game, headless, cook, test, benchmark and package.
-- [ ] Stable project configuration and runtime/editor/server target separation.
+- [~] CLI modes: editor, game, headless, cook, test, benchmark and package. (`victus new/templates/info/import/run`, `victus_editor`, `victus_player` done; package/cook/headless pending.)
+- [~] Stable project configuration and runtime/editor/server target separation. (Versioned `victus.project`; separate editor and player targets; server target pending.)
 **Exit:** predictable lifecycle and useful diagnostics in graphical and headless modes.
 
 ## Phase 2 — Performance laboratory
@@ -60,12 +60,12 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 **Exit:** import, validate, cook, cache, hot-reload and load real project assets on a clean machine.
 
 ## Phase 6 — VICTUS Studio editor core
-- [ ] Project launcher/templates, dockable workspace, command palette and saved layouts.
-- [ ] Scene/world viewport, camera, hierarchy, inspector, selection, gizmos and snapping.
-- [ ] Undo/redo command model, multi-selection, autosave and crash recovery.
-- [ ] Asset browser, metadata/dependency inspector, import queue and previews.
-- [ ] Logs, entity diagnostics, profiler, project settings and build configuration.
-- [ ] Isolated play-in-editor with safe play/pause/step/stop and authored-world protection.
+- [~] Project launcher/templates, dockable workspace, command palette and saved layouts. (Launcher, 3 templates, docking workspace with persisted ImGui layout done; command palette pending.)
+- [~] Scene/world viewport, camera, hierarchy, inspector, selection, gizmos and snapping. (Viewport, 2D/3D editor camera, hierarchy, inspector, click selection done; gizmos/snapping pending.)
+- [~] Undo/redo command model, multi-selection, autosave and crash recovery. (Snapshot-based undo/redo with dirty tracking done; multi-selection/autosave pending.)
+- [~] Asset browser, metadata/dependency inspector, import queue and previews. (Asset table with drag/drop instantiate and reimport done; previews pending.)
+- [~] Logs, entity diagnostics, profiler, project settings and build configuration. (Console over the log ring sink done.)
+- [x] Isolated play-in-editor with safe play/pause/step/stop and authored-world protection.
 **Exit:** create project, import assets, author a scene, save/reopen and play without editing engine source.
 
 ## Phase 7 — Complete 2D development

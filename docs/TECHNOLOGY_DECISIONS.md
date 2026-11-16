@@ -50,8 +50,14 @@ SDL3 3.4.20 (zlib), fetched by pinned URL + SHA-256 (`cmake/VictusDependencies.c
 - glTF: cgltf 1.15 (MIT, single header, no dependencies) chosen over tinygltf (pulls in JSON library + stb) and fastgltf (C++20, simdjson dependency, faster but larger). File access is sandboxed to the asset's directory; remote URIs are rejected.
 - Layering note: `engine/assets` depends on `engine/render` only for CPU types (`Image`, `MeshData`); a future split of those types into a GPU-free module will let headless cookers drop the render dependency.
 
-## ADR-0005 — Editor## ADR-0005 — Editor
-Open. Prototype Dear ImGui docking for internal tools and richer shell options (Qt, Avalonia or native) for accessibility/text/assets. Review Qt licensing and packaging.
+## ADR-0005 — Editor UI (accepted 2026-11-16)
+**Decision.** The VICTUS editor (`victus_editor`) is built on Dear ImGui v1.93.0-docking (commit `b916186e`, MIT), vendored unmodified in `third_party/imgui`. Only the upstream SDL3 *platform* backend is used; rendering goes through VICTUS's own renderer in `engine/ui` on the VICTUS RHI, so the editor exercises the same GPU path as games (Vulkan verified, Metal/D3D12 via SDL_GPU). The editor is a library (`victus_editor_core`) plus a thin executable so it can be driven headlessly by tests.
+
+**Candidates.** Qt 6 (LGPL-3.0/commercial; strong accessibility, text and native widgets but heavy packaging, dynamic-linking obligations and a second rendering stack); Avalonia/.NET (MIT but needs a managed runtime and a GPU interop layer); a custom retained UI (largest effort, no ecosystem). ImGui wins today on embeddability, licensing, one-process debugging and iteration speed.
+
+**Risks / revisit triggers.** ImGui has limited accessibility (screen readers), IME and rich-text support and the docking branch API moves. Mitigation: editor features live in VICTUS code behind panels, undo commands and the scene/asset APIs, not in ImGui state, so a shell replacement does not touch engine data. Revisit before a 1.0 editor if accessibility or text-heavy tools (script editing, localisation) require it. Runtime game UI is a separate decision (Phase 9); ImGui is not the shipped game UI.
+
+**Fonts.** ImGui's embedded ProggyClean/ProggyForever fonts (MIT, Tristan Grimmer / Disco Hello) are used; no other fonts are bundled.
 
 ## ADR-0006 — Original license
 Selected: Apache-2.0 for original VICTUS code. Third-party components retain their own licenses/notices. Maintain SBOM.

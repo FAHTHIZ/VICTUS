@@ -50,6 +50,12 @@ jobs:
       - name: Windowed swapchain smoke test
         if: runner.os == 'Linux'
         run: xvfb-run -a ./build/bin/victus_render_showcase --frames 20 --screenshot build/showcase.png --width 640 --height 360
+      - name: Editor and player smoke test
+        if: runner.os == 'Linux'
+        run: |
+          ./build/bin/victus new build/smoke3d --template 3d
+          xvfb-run -a ./build/bin/victus_editor build/smoke3d --data-dir build/editor-data --frames 30 --width 1280 --height 720 --screenshot build/editor.png
+          xvfb-run -a ./build/bin/victus run build/smoke3d --frames 30 --screenshot build/player.png
       - name: Upload rendered images
         if: always()
         uses: actions/upload-artifact@v4
@@ -58,6 +64,9 @@ jobs:
           path: |
             build/test_output/*.png
             build/showcase.png
+            build/editor.png
+            build/player.png
+            build/test_output/cli_smoke/*.png
           if-no-files-found: ignore
 
   sanitizers:

@@ -238,9 +238,16 @@ void SceneRenderer::box(const Aabb& bx, Color color) {
 
 void SceneRenderer::grid(float half, float spacing, Color color) {
     if (spacing <= 0) return;
-    for (float x = -half; x <= half + 1e-4f; x += spacing) {
-        line({x, 0, -half}, {x, 0, half}, color);
-        line({-half, 0, x}, {half, 0, x}, color);
+    // Lines are emitted as short segments: long lines that cross the camera plane are clipped
+    // into degenerate, screen-filling primitives by some rasterizers (observed on llvmpipe).
+    const int cells = static_cast<int>(std::floor(2.0f * half / spacing + 1e-4f));
+    for (int i = 0; i <= cells; ++i) {
+        const float x = -half + static_cast<float>(i) * spacing;
+        for (int j = 0; j < cells; ++j) {
+            const float z0 = -half + static_cast<float>(j) * spacing, z1 = z0 + spacing;
+            line({x, 0, z0}, {x, 0, z1}, color);
+            line({z0, 0, x}, {z1, 0, x}, color);
+        }
     }
 }
 

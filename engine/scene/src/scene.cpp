@@ -326,6 +326,42 @@ bool Scene::set_parent(Entity child, Entity new_parent, bool keep_world) {
     return true;
 }
 
+Entity Scene::next_sibling(Entity e) const noexcept {
+    const Hierarchy* h = world_.get<Hierarchy>(e);
+    return h ? h->next_sibling : kNullEntity;
+}
+
+bool Scene::move_before(Entity e, Entity next, Entity new_parent) {
+    if (!world_.alive(e) || e == next) return false;
+    if (!next.is_null()) {
+        if (!world_.alive(next)) return false;
+        new_parent = parent(next);
+    }
+    if (!new_parent.is_null() && (new_parent == e || !world_.alive(new_parent) || is_descendant(new_parent, e))) return false;
+    unlink(e);
+    if (next.is_null()) {
+        link_child(new_parent, e);
+        return true;
+    }
+    Hierarchy* h = world_.get<Hierarchy>(e);
+    Hierarchy* nh = world_.get<Hierarchy>(next);
+    Entity* first = &first_root_;
+    std::uint32_t depth = 0;
+    if (!new_parent.is_null()) {
+        Hierarchy* ph = world_.get<Hierarchy>(new_parent);
+        first = &ph->first_child;
+        depth = ph->depth + 1;
+    }
+    h->parent = new_parent;
+    h->next_sibling = next;
+    h->prev_sibling = nh->prev_sibling;
+    if (!nh->prev_sibling.is_null()) world_.get<Hierarchy>(nh->prev_sibling)->next_sibling = e;
+    else *first = e;
+    nh->prev_sibling = e;
+    fix_depth(e, depth);
+    return true;
+}
+
 Entity Scene::parent(Entity e) const noexcept {
     const Hierarchy* h = world_.get<Hierarchy>(e);
     return h ? h->parent : kNullEntity;
@@ -423,6 +459,40 @@ void Scene::clear() {
 
 // ---- serialization ---------------------------------------------------------------------------
 
+Value Scene::save_entity(Entity e) const {
+    Value ev = Value::object();
+    if (!world_.alive(e)) return ev;
+    ev.set("uuid", uuid_value(uuid(e)));
+    if (const Name* nm = world_.get<Name>(e)) ev.set("name", nm->value);
+    if (const Entity p = parent(e); !p.is_null()) ev.set("parent", uuid_value(uuid(p)));
+    const auto& registry = SerializerRegistry::instance();
+    std::vector<std::pair<std::string, Value>> comps;
+    for (const ecs::ComponentId id : world_.components_of(e)) {
+        if (const ComponentSerializer* s = registry.by_id(id)) comps.emplace_back(s->name, s->save(world_.get_raw(e, id)));
+    }
+    if (const UnknownComponents* u = world_.get<UnknownComponents>(e)) {
+        for (const auto& [k, v] : u->components) comps.emplace_back(k, v);
+    }
+    std::sort(comps.begin(), comps.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    Value cv = Value::object();
+    for (auto& [k, v] : comps) cv.set(k, std::move(v));
+    ev.set("components", std::move(cv));
+    return ev;
+}
+
+Value Scene::save_subtree(Entity e) const {
+    Value out = Value::array();
+    if (!world_.alive(e)) return out;
+    std::vector<Entity> order;
+    collect_subtree(e, order);
+    for (const Entity x : order) {
+        Value ev = save_entity(x);
+        if (const Entity n = next_sibling(x); !n.is_null()) ev.set("next", uuid_value(uuid(n)));
+        out.push(std::move(ev));
+    }
+    return out;
+}
+
 Value Scene::save() const {
     Value doc = Value::object();
     doc.set("format", "victus.scene");
@@ -431,27 +501,71 @@ Value Scene::save() const {
     Value entities = Value::array();
     std::vector<Entity> order;
     for (const Entity r : roots()) collect_subtree(r, order);
-    const auto& registry = SerializerRegistry::instance();
-    for (const Entity e : order) {
-        Value ev = Value::object();
-        ev.set("uuid", uuid_value(uuid(e)));
-        if (const Name* nm = world_.get<Name>(e)) ev.set("name", nm->value);
-        if (const Entity p = parent(e); !p.is_null()) ev.set("parent", uuid_value(uuid(p)));
-        std::vector<std::pair<std::string, Value>> comps;
-        for (const ecs::ComponentId id : world_.components_of(e)) {
-            if (const ComponentSerializer* s = registry.by_id(id)) comps.emplace_back(s->name, s->save(world_.get_raw(e, id)));
-        }
-        if (const UnknownComponents* u = world_.get<UnknownComponents>(e)) {
-            for (const auto& [k, v] : u->components) comps.emplace_back(k, v);
-        }
-        std::sort(comps.begin(), comps.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-        Value cv = Value::object();
-        for (auto& [k, v] : comps) cv.set(k, std::move(v));
-        ev.set("components", std::move(cv));
-        entities.push(std::move(ev));
-    }
+    for (const Entity e : order) entities.push(save_entity(e));
     doc.set("entities", std::move(entities));
     return doc;
+}
+
+Status Scene::load_components(Entity e, const Value& comps) {
+    if (comps.is_null()) return {};
+    if (!comps.is_object()) return bad("entity components must be an object");
+    const auto& registry = SerializerRegistry::instance();
+    for (const auto& [key, value] : comps.as_object()) {
+        if (const ComponentSerializer* s = registry.by_name(key)) {
+            void* p = world_.add_raw(e, s->id);
+            if (auto st = s->load(p, value); !st.ok())
+                return make_error(ErrorCode::ParseError, "entity " + uuid(e).to_string() + ": " + st.error().message);
+        } else {
+            auto* u = world_.get<UnknownComponents>(e);
+            if (!u) u = &world_.add<UnknownComponents>(e);
+            u->components.emplace_back(key, value);
+        }
+    }
+    return {};
+}
+
+static Error bad_entity(std::string_view m) { return Error{ErrorCode::ParseError, std::string(m)}; }
+
+Result<Entity> Scene::restore_entity(const Value& ev) {
+    Uuid id;
+    if (!ev.is_object() || !read_uuid(ev["uuid"], id) || id.is_nil()) return bad_entity("snapshot: missing or invalid uuid");
+    Entity parent_entity = kNullEntity;
+    if (const Value* pv = ev.find("parent"); pv && !pv->is_null()) {
+        Uuid pid;
+        if (!read_uuid(*pv, pid) || (parent_entity = find(pid)).is_null())
+            return bad_entity("snapshot " + id.to_string() + ": parent does not exist");
+    }
+    Entity e = find(id);
+    const std::string nm = ev["name"].as_string_or("Entity");
+    if (e.is_null()) {
+        e = create(nm, parent_entity, id);
+    } else {
+        if (Name* n = world_.get<Name>(e)) n->value = nm;
+        if (parent(e) != parent_entity && !set_parent(e, parent_entity)) return bad_entity("snapshot " + id.to_string() + ": invalid parent");
+        // Replace all serializable components.
+        const auto& registry = SerializerRegistry::instance();
+        for (const ecs::ComponentId cid : world_.components_of(e)) {
+            if (registry.by_id(cid)) world_.remove_raw(e, cid);
+        }
+        world_.remove<UnknownComponents>(e);
+    }
+    if (const Value* nv = ev.find("next"); nv && !nv->is_null()) {
+        Uuid nid;
+        if (read_uuid(*nv, nid)) {
+            if (const Entity n = find(nid); !n.is_null() && parent(n) == parent_entity) move_before(e, n);
+        }
+    }
+    VICTUS_TRY_STATUS(load_components(e, ev["components"]));
+    return e;
+}
+
+Status Scene::restore_subtree(const Value& snapshots) {
+    if (!snapshots.is_array()) return bad("subtree snapshot must be an array");
+    for (std::size_t i = 0; i < snapshots.size(); ++i) {
+        auto r = restore_entity(snapshots[i]);
+        if (!r) return std::move(r).error();
+    }
+    return {};
 }
 
 Status Scene::load(const Value& doc) {
@@ -492,27 +606,10 @@ Status Scene::load(const Value& doc) {
         }
     }
     // Pass 3: components.
-    const auto& registry = SerializerRegistry::instance();
     for (std::size_t i = 0; i < entities.size(); ++i) {
-        const Value& comps = entities[i]["components"];
-        if (comps.is_null()) continue;
-        if (!comps.is_object()) {
+        if (auto st = load_components(created[i], entities[i]["components"]); !st.ok()) {
             clear();
-            return bad("entity components must be an object");
-        }
-        for (const auto& [key, value] : comps.as_object()) {
-            if (const ComponentSerializer* s = registry.by_name(key)) {
-                void* p = world_.add_raw(created[i], s->id);
-                if (auto st = s->load(p, value); !st.ok()) {
-                    const std::string msg = "entity " + uuid(created[i]).to_string() + ": " + st.error().message;
-                    clear();
-                    return make_error(ErrorCode::ParseError, msg);
-                }
-            } else {
-                auto* u = world_.get<UnknownComponents>(created[i]);
-                if (!u) u = &world_.add<UnknownComponents>(created[i]);
-                u->components.emplace_back(key, value);
-            }
+            return st;
         }
     }
     update_transforms();

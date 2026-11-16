@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: Apache-2.0
+// VICTUS projects: a folder owned by the developer containing `victus.project`, `assets/`,
+// `scenes/` and a disposable `.victus/` cache. Shared by the editor, CLI and player.
+#pragma once
+#include "victus/core/fs.hpp"
+#include "victus/core/json.hpp"
+#include "victus/scene/scene.hpp"
+
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace victus::project {
+
+inline constexpr std::string_view kProjectFileName = "victus.project";
+inline constexpr int kProjectFormatVersion = 1;
+inline constexpr std::string_view kSceneExtension = ".vscene";
+
+struct ProjectSettings {
+    std::string name{"Untitled"};
+    std::string startup_scene{"scenes/main.vscene"}; // project-relative
+    std::string template_id;
+    std::string engine_version;   // engine version that created/last saved the project
+    int window_width{1280};
+    int window_height{720};
+    bool vsync{true};
+    json::Value extra = json::Value::object(); // unknown keys preserved verbatim
+};
+
+struct TemplateInfo {
+    std::string id;           // "3d", "2d", "simulation"
+    std::string display_name;
+    std::string description;
+};
+
+[[nodiscard]] const std::vector<TemplateInfo>& templates();
+// Fills `scene` with the template's starter content (cleared first).
+[[nodiscard]] Status build_template_scene(std::string_view template_id, scene::Scene& scene);
+
+class Project {
+public:
+    // Creates a new project in `directory` (must not exist or be empty).
+    [[nodiscard]] static Result<Project> create(const fs::Path& directory, std::string_view name,
+                                                std::string_view template_id);
+    // Opens a project folder or its `victus.project` file.
+    [[nodiscard]] static Result<Project> open(const fs::Path& path);
+    [[nodiscard]] static bool is_project_dir(const fs::Path& directory);
+
+    [[nodiscard]] Status save() const;
+
+    [[nodiscard]] const fs::Path& root() const noexcept { return root_; }
+    [[nodiscard]] fs::Path file() const { return root_ / kProjectFileName; }
+    [[nodiscard]] fs::Path assets_dir() const { return root_ / "assets"; }
+    [[nodiscard]] fs::Path scenes_dir() const { return root_ / "scenes"; }
+    [[nodiscard]] fs::Path cache_dir() const { return root_ / ".victus"; }
+    [[nodiscard]] ProjectSettings& settings() noexcept { return settings_; }
+    [[nodiscard]] const ProjectSettings& settings() const noexcept { return settings_; }
+
+    // Sandboxed resolution of project-relative paths (rejects absolute paths and '..').
+    [[nodiscard]] Result<fs::Path> resolve(std::string_view relative) const;
+    // Project-relative, forward-slash form of a path inside the project; empty if outside.
+    [[nodiscard]] std::string relative(const fs::Path& path) const;
+    [[nodiscard]] Result<fs::Path> startup_scene_path() const { return resolve(settings_.startup_scene); }
+    // All *.vscene files under scenes/ (project-relative, sorted).
+    [[nodiscard]] std::vector<std::string> scenes() const;
+
+private:
+    fs::Path root_;
+    ProjectSettings settings_;
+};
+
+// Recently opened projects (most recent first), persisted in the user data directory.
+class RecentProjects {
+public:
+    explicit RecentProjects(fs::Path file = default_file());
+    [[nodiscard]] static fs::Path default_file();
+    [[nodiscard]] const std::vector<fs::Path>& entries() const noexcept { return entries_; }
+    void add(const fs::Path& project_root);
+    void remove(const fs::Path& project_root);
+    [[nodiscard]] Status save() const;
+
+private:
+    fs::Path file_;
+    std::vector<fs::Path> entries_;
+    static constexpr std::size_t kMax = 16;
+};
+
+} // namespace victus::project

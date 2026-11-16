@@ -130,7 +130,7 @@ TEST_CASE("gpu: 3D PBR scene with shadows, sky and culling") {
     CHECK(r.stats().submitted == 3);
     CHECK(r.stats().culled == 1);
     CHECK(r.stats().visible == 2);
-    CHECK(r.stats().lines == 22);
+    CHECK(r.stats().lines == 220); // 11 lines per axis, each split into 10 one-unit segments
     CHECK(r.graph_info().executed_passes.size() == 3);
 
     auto px = dev.read_texture(target);
