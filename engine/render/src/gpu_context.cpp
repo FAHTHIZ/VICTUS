@@ -4,6 +4,7 @@
 #include "victus/render/builtin_shaders.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <format>
 
@@ -30,6 +31,23 @@ Result<std::unique_ptr<GpuContext>> GpuContext::create(rhi::Device& device) {
     auto n = solid(*ctx, 0xFFFF8080u, false, "default_flat_normal");
     if (!n) return std::move(n).error();
     ctx->flat_normal_ = n.value();
+    {
+        // Alpha = (1 - r^2)^2: smooth to the edge with no visible rim when scaled up.
+        Image disc;
+        disc.width = disc.height = 64;
+        disc.pixels.resize(64 * 64 * 4);
+        for (std::uint32_t y = 0; y < 64; ++y)
+            for (std::uint32_t x = 0; x < 64; ++x) {
+                const float dx = (static_cast<float>(x) + 0.5f) / 32.0f - 1.0f, dy = (static_cast<float>(y) + 0.5f) / 32.0f - 1.0f;
+                const float f = std::max(0.0f, 1.0f - (dx * dx + dy * dy));
+                std::uint8_t* px = disc.pixels.data() + (y * 64 + x) * 4;
+                px[0] = px[1] = px[2] = 255;
+                px[3] = static_cast<std::uint8_t>(std::lround(255.0f * f * f));
+            }
+        auto sp = ctx->create_texture(disc, {false, true, "default_soft_particle"});
+        if (!sp) return std::move(sp).error();
+        ctx->soft_particle_ = sp.value();
+    }
 
     auto make_sampler = [&](rhi::Filter f, rhi::AddressMode a, bool compare) -> Result<rhi::SamplerHandle> {
         rhi::SamplerDesc s;
@@ -63,7 +81,7 @@ Result<std::unique_ptr<GpuContext>> GpuContext::create(rhi::Device& device) {
 
 GpuContext::~GpuContext() {
     for (auto& [name, s] : shaders_) device_.destroy(s);
-    for (auto t : {white_, black_, flat_normal_})
+    for (auto t : {white_, black_, flat_normal_, soft_particle_})
         if (t) device_.destroy(t);
     for (auto s : {linear_repeat_, linear_clamp_, nearest_clamp_, nearest_repeat_, shadow_})
         if (s) device_.destroy(s);

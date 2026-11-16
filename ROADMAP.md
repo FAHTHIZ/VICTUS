@@ -107,7 +107,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 - [ ] Gameplay AI: perception, decision systems, behavior trees/utility/state machines and debugging.
 - [~] Audio playback, buses/mixing, spatialization, effects, streaming and profiling. Done (Slice 7): miniaudio 0.11.26 behind `victus::audio`, `AudioSource`/`AudioListener`, WAV/Ogg/MP3/FLAC, six buses with volume/mute, 3D attenuation following transforms, streaming music, one-shots, Luau API, editor inspector + preview, null-device mixing tests. Remaining: effects/reverb, HRTF, ducking, profiling view.
 - [ ] Runtime UI, layout, input/accessibility, localization and visual UI editor.
-- [ ] Particle/VFX system, GPU/CPU emitters, trails, curves, collision and VFX authoring.
+- [~] Particle/VFX system, GPU/CPU emitters, trails, curves, collision and VFX authoring. Done (Slice 13): deterministic CPU emitters (`ParticleEmitter`: rate/bursts/cycles, shapes, gravity/drag, size/colour over life with HDR glow, spin, alpha/additive), parallel simulation, soft depth-faded instanced billboards in the HDR pass, 2D sprite path, Luau control, template fire/sparks/smoke/dust/coin sparkles. Remaining: GPU simulation, trails/ribbons, flipbooks, curve editing, collision, sub-emitters, lit particles, VFX authoring tools.
 **Exit:** reference game exercises the systems together without one-off engine bypasses.
 
 ## Phase 11 — Cinematics, procedural and world authoring

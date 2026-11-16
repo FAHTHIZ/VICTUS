@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/runtime/scene_rendering.hpp"
+#include "victus/particles/particles.hpp"
 
 #include "victus/core/log.hpp"
 #include "victus/gameplay/gameplay.hpp"
@@ -356,6 +357,26 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         renderer.submit(*mesh, m, wt.matrix);
         ++stats.meshes;
     });
+
+    std::vector<particles::EmitterView> emitters;
+    particles::gather(scene, emitters);
+    for (const particles::EmitterView& v : emitters) {
+        render::ParticleMaterial pm;
+        pm.blend = v.emitter->blend == particles::Blend::Additive ? render::ParticleBlend::Additive : render::ParticleBlend::Alpha;
+        pm.softness = v.emitter->softness;
+        if (!v.emitter->texture.is_nil()) {
+            auto tex = assets.texture(v.emitter->texture);
+            if (tex) pm.texture = *tex;
+            else ++stats.missing_assets;
+        }
+        // Billboard and ParticleInstance share one 48-byte layout (position+size, colour, rotation).
+        static_assert(sizeof(particles::Billboard) == sizeof(render::ParticleInstance));
+        const std::span<const render::ParticleInstance> instances(reinterpret_cast<const render::ParticleInstance*>(v.billboards.data()),
+                                                                  v.billboards.size());
+        renderer.submit_particles(instances, pm, v.bounds);
+        ++stats.particle_emitters;
+        stats.particles += static_cast<std::uint32_t>(v.billboards.size());
+    }
     return stats;
 }
 
@@ -381,6 +402,28 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
         batch.draw(sp);
         ++count;
     });
+    // 2D particles: one sprite per billboard on the emitter's layer (XY plane, Z ignored).
+    std::vector<particles::EmitterView> emitters;
+    particles::gather(scene, emitters);
+    for (const particles::EmitterView& v : emitters) {
+        rhi::TextureHandle texture = assets.context().soft_particle();
+        if (!v.emitter->texture.is_nil()) {
+            auto tex = assets.texture(v.emitter->texture);
+            if (tex) texture = *tex;
+        }
+        for (const particles::Billboard& b : v.billboards) {
+            render::Sprite sp;
+            sp.texture = texture;
+            sp.position = {b.position.x, b.position.y};
+            sp.size = {b.size, b.size};
+            sp.rotation = b.rotation;
+            sp.color = {std::min(b.color.r, 1.0f), std::min(b.color.g, 1.0f), std::min(b.color.b, 1.0f), b.color.a};
+            sp.layer = v.emitter->layer;
+            sp.additive = v.emitter->blend == particles::Blend::Additive;
+            batch.draw(sp);
+            ++count;
+        }
+    }
     return count;
 }
 

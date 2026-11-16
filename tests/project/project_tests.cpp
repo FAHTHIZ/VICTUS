@@ -4,6 +4,7 @@
 #include "victus/project/project.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
+#include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
@@ -199,6 +200,7 @@ struct TemplateRun {
     std::unique_ptr<physics::PhysicsWorld> physics;
     std::unique_ptr<assets::AssetDatabase> db;
     std::unique_ptr<animation::AnimationSystem> animation;
+    std::unique_ptr<particles::ParticleSystem> particles;
     std::unique_ptr<audio::AudioEngine> audio;
     gameplay::Simulation sim;
     gameplay::ManualInput input;
@@ -242,6 +244,8 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     anim.provider = assets::animation_provider(*r->db);
     r->animation = std::make_unique<animation::AnimationSystem>(anim);
     animation::add_animation_systems(r->sim, *r->animation);
+    r->particles = std::make_unique<particles::ParticleSystem>();
+    particles::add_particle_systems(r->sim, *r->particles);
     audio::EngineOptions ao;
     ao.assets_root = dir / "assets";
     ao.null_device = true;
@@ -270,6 +274,9 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     CHECK(r->scene.find_by_name("Coin 3").is_null());
     CHECK_FALSE(r->scene.find_by_name("Coin 1").is_null());
     CHECK(r->audio->stats().one_shots == 1); // coin pickup sound
+    // The pickup burst came from the shared Sparkles emitter; remaining coins still glitter.
+    CHECK(particles::status(r->scene, r->scene.find_by_name("Sparkles")).emitted == 28);
+    CHECK(particles::status(r->scene, r->scene.find_by_name("Glitter")).alive > 0);
     r->input.set_key("D", false);
     // Jump: rises, then lands back on the ground.
     r->input.set_key("Space", true);
@@ -311,10 +318,13 @@ TEST_CASE("templates: 3D character climbs the steps, jumps and swings the gate")
     const scene::Entity gate = r->scene.find_by_name("Gate");
     REQUIRE(r->physics->character_state(player).grounded);
     REQUIRE(r->physics->joint_state(gate).active);
+    const scene::Entity dust = r->scene.find_by_name("Dust");
+    CHECK(particles::status(r->scene, dust).emitted == 0);
     // Jump in place.
     r->input.set_key("Space", true);
     r->frames(1);
     r->input.set_key("Space", false);
+    CHECK(particles::status(r->scene, dust).emitted == 14); // take-off puff
     float apex = 0;
     for (int i = 0; i < 40; ++i) {
         r->frames(1);
@@ -323,6 +333,12 @@ TEST_CASE("templates: 3D character climbs the steps, jumps and swings the gate")
     CHECK(apex > 1.5f); // 6 m/s -> 1.83 m
     r->frames(50);
     CHECK(r->physics->character_state(player).grounded);
+    CHECK(particles::status(r->scene, dust).emitted == 24); // + landing puff
+    // The brazier burns: fire, sparks and smoke are all alive.
+    for (const char* fx : {"Fire", "Sparks", "Smoke"}) {
+        CAPTURE(fx);
+        CHECK(particles::status(r->scene, r->scene.find_by_name(fx)).alive > 0);
+    }
     // Walk to the stairs and up all three steps.
     r->input.set_key("W", true);
     r->frames(54); // z 0.5 -> -4

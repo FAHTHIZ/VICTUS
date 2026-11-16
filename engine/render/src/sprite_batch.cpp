@@ -52,6 +52,11 @@ Result<std::unique_ptr<SpriteBatch>> SpriteBatch::create(GpuContext& ctx, rhi::F
     auto pipe = ctx.device().create_pipeline(p);
     if (!pipe) return std::move(pipe).error();
     b->pipeline_ = pipe.value();
+    p.name = "sprite_batch_additive";
+    p.color_targets = {{color_format, rhi::BlendMode::Additive}};
+    auto add = ctx.device().create_pipeline(p);
+    if (!add) return std::move(add).error();
+    b->additive_pipeline_ = add.value();
     VICTUS_TRY_STATUS(b->ensure_capacity(1024));
     return b;
 }
@@ -59,6 +64,7 @@ Result<std::unique_ptr<SpriteBatch>> SpriteBatch::create(GpuContext& ctx, rhi::F
 SpriteBatch::~SpriteBatch() {
     auto& d = ctx_.device();
     if (pipeline_) d.destroy(pipeline_);
+    if (additive_pipeline_) d.destroy(additive_pipeline_);
     if (vertex_buffer_) d.destroy(vertex_buffer_);
     if (index_buffer_) d.destroy(index_buffer_);
 }
@@ -134,6 +140,7 @@ Status SpriteBatch::prepare(rhi::CommandBuffer& cmd) {
         const Sprite& sa = sprites_[a];
         const Sprite& sb = sprites_[b];
         if (sa.layer != sb.layer) return sa.layer < sb.layer;
+        if (sa.additive != sb.additive) return !sa.additive;
         const auto ta = sa.texture ? sa.texture.index : white.index;
         const auto tb = sb.texture ? sb.texture.index : white.index;
         return ta < tb;
@@ -142,8 +149,8 @@ Status SpriteBatch::prepare(rhi::CommandBuffer& cmd) {
     for (std::uint32_t i = 0; i < count; ++i) {
         const Sprite& s = sprites_[order_[i]];
         const rhi::TextureHandle tex = s.texture ? s.texture : white;
-        if (batches_.empty() || !(batches_.back().texture == tex))
-            batches_.push_back({tex, i * 6, 0});
+        if (batches_.empty() || !(batches_.back().texture == tex) || batches_.back().additive != s.additive)
+            batches_.push_back({tex, i * 6, 0, s.additive});
         batches_.back().index_count += 6;
         const float c = std::cos(s.rotation), sn = std::sin(s.rotation);
         float u0 = s.uv.x, v0 = s.uv.y, u1 = s.uv.z, v1 = s.uv.w;
@@ -167,12 +174,17 @@ Status SpriteBatch::prepare(rhi::CommandBuffer& cmd) {
 void SpriteBatch::render(rhi::RenderPass& pass, rhi::CommandBuffer& cmd) {
     if (batches_.empty()) return;
     VICTUS_PROFILE_SCOPE("SpriteBatch::render");
-    pass.bind_pipeline(pipeline_);
-    cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, view_proj_);
-    pass.bind_vertex_buffer(0, vertex_buffer_);
-    pass.bind_index_buffer(index_buffer_, rhi::IndexType::U32);
     const rhi::SamplerHandle sampler = pixel_art_ ? ctx_.nearest_clamp() : ctx_.linear_clamp();
+    bool bound = false, additive = false;
     for (const Batch& b : batches_) {
+        if (!bound || b.additive != additive) {
+            pass.bind_pipeline(b.additive ? additive_pipeline_ : pipeline_);
+            cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, view_proj_);
+            pass.bind_vertex_buffer(0, vertex_buffer_);
+            pass.bind_index_buffer(index_buffer_, rhi::IndexType::U32);
+            bound = true;
+            additive = b.additive;
+        }
         pass.bind_texture(rhi::ShaderStage::Fragment, 0, b.texture, sampler);
         pass.draw_indexed(b.index_count, 1, b.first_index, 0, 0);
     }

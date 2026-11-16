@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Luau scripting: lifecycle, entity/scene/input API, sandboxing, budgets, errors, hot reload.
 #include "victus/animation/animation.hpp"
+#include "victus/particles/particles.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
@@ -554,6 +555,50 @@ return { valid = st.valid, clip = st.clip, playing = st.playing, looping = st.lo
     // Spin was switched in with no fade: Hips rotates about Y and has left the slide.
     const auto* t = s.world().get<Transform>(hips);
     CHECK(std::abs(t->rotation.y) > 0.01f);
+}
+
+TEST_CASE("script: particle emitter API") {
+    TempDir d("victus_script_particles");
+    d.write("scripts/fx.luau", R"lua(
+local Fx = {}
+function Fx:update(dt)
+    self.frames = (self.frames or 0) + 1
+    if self.frames == 1 then
+        self.ok = self.entity:emit_particles(7)
+        self.stopped = self.entity:set_emitting(false)
+        self.plain = scene.find("Plain"):emit_particles(3)
+    elseif self.frames == 3 then
+        local st = self.entity:particles()
+        self.entity.name = string.format("Fx|%s|%s|%s|%d|%s|%s", tostring(self.ok), tostring(self.stopped),
+            tostring(self.plain), st.alive, tostring(st.emitting), tostring(st.valid))
+    end
+end
+return Fx
+)lua");
+    auto host = make_host(d);
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    particles::ParticleSystem ps;
+    particles::add_particle_systems(sim, ps);
+    Scene s;
+    s.create("Plain");
+    const Entity fx = scripted(s, "Fx", "scripts/fx.luau");
+    auto& c = s.world().add<particles::ParticleEmitterComponent>(fx);
+    c.rate = 0; // only the scripted burst
+    c.lifetime_min = c.lifetime_max = 10;
+    for (int i = 0; i < 3; ++i) sim.tick(s, 1.0f / 60);
+    CHECK(s.world().get<scene::Name>(fx)->value == "Fx|true|true|false|7|false|true");
+    CHECK(particles::status(s, fx).alive == 7);
+    auto q = host->eval(R"lua(
+local fx = scene.find("Fx|true|true|false|7|false|true")
+local reset = fx:reset_particles()
+local none = scene.find("Plain"):particles()
+return { reset = reset, none = none.valid, alive = fx:particles().alive }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["reset"].as_bool());
+    CHECK_FALSE(q.value()["none"].as_bool());
+    CHECK(q.value()["alive"].as_number() == doctest::Approx(0.0));
 }
 
 TEST_CASE("script: audio one-shots, entity sources and bus control") {

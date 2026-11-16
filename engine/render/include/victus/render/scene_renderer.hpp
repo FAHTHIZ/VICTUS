@@ -59,6 +59,21 @@ struct PointLight {
     float range{10.0f};
 };
 
+// Particles are camera-facing billboards drawn after opaque geometry into the HDR target, as
+// soft particles (they fade where they meet scene depth). Alpha batches are drawn back to front
+// and their particles sorted back to front; additive batches need no sorting.
+enum class ParticleBlend : std::uint8_t { Alpha, Additive };
+struct ParticleInstance {
+    math::Vec4 position_size; // xyz world position, w size (full width in metres)
+    math::Vec4 color;         // linear RGBA, rgb may exceed 1 for glowing particles
+    math::Vec4 params;        // x rotation (radians), yzw reserved
+};
+struct ParticleMaterial {
+    rhi::TextureHandle texture; // invalid => built-in soft disc
+    ParticleBlend blend{ParticleBlend::Alpha};
+    float softness{0.25f};      // metres over which particles fade into geometry
+};
+
 enum class Tonemapper : std::uint8_t { None, Aces, Neutral, Reinhard };
 [[nodiscard]] std::string_view tonemapper_name(Tonemapper t) noexcept;
 [[nodiscard]] std::optional<Tonemapper> parse_tonemapper(std::string_view name) noexcept;
@@ -133,6 +148,8 @@ struct SceneStats {
     std::uint32_t instances_uploaded{0};
     std::uint32_t skinned_draws{0};    // skinned submissions this frame
     std::uint32_t joints_uploaded{0};  // joint matrices in the per-frame palette
+    std::uint32_t particle_batches{0}; // visible particle batches (one draw each)
+    std::uint32_t particles{0};        // particles drawn
 };
 
 class SceneRenderer {
@@ -159,6 +176,10 @@ public:
     // instances of one mesh+material are still batched into one instanced draw.
     void submit_skinned(const GpuMesh& mesh, const Material& material, const math::Mat4& model,
                         std::span<const math::Mat4> joints, const math::Aabb& world_bounds);
+    // One batch of billboards sharing a material (e.g. one emitter); `bounds` (world space,
+    // including particle sizes) is used for frustum culling and batch ordering.
+    void submit_particles(std::span<const ParticleInstance> particles, const ParticleMaterial& material,
+                          const math::Aabb& bounds);
     void line(math::Vec3 a, math::Vec3 b, math::Color color);
     void box(const math::Aabb& box, math::Color color);
     void grid(float half_size, float spacing, math::Color color);
@@ -191,6 +212,12 @@ private:
         const Draw* first;
         std::uint32_t instance_offset, instance_count;
     };
+    struct ParticleBatch {
+        ParticleMaterial material;
+        std::uint32_t offset, count;
+        math::Aabb bounds;
+        float distance{0};
+    };
     struct LineVertex {
         math::Vec3 pos;
         std::uint32_t color;
@@ -204,6 +231,7 @@ private:
     TransientTexturePool pool_;
     rhi::PipelineHandle opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_;
     rhi::PipelineHandle prepass_cull_, prepass_double_;
+    rhi::PipelineHandle particle_alpha_, particle_additive_;
     rhi::PipelineHandle skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_;
     std::unordered_map<std::string, rhi::PipelineHandle> post_; // "<shader>/<format>/<blend>"
     rhi::TextureHandle no_shadow_;
@@ -227,6 +255,10 @@ private:
     std::vector<PointLight> points_;
     std::vector<Draw> draws_;
     std::vector<LineVertex> lines_;
+    std::vector<ParticleInstance> particles_, particle_upload_;
+    std::vector<ParticleBatch> particle_batches_;
+    rhi::BufferHandle particle_buffer_;
+    std::uint32_t particle_capacity_{0}; // in particles
     std::array<math::Mat4, 4> cascade_vp_{math::Mat4::identity(), math::Mat4::identity(), math::Mat4::identity(),
                                           math::Mat4::identity()};
     std::array<float, 4> cascade_splits_{};

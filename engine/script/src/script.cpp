@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/animation/animation.hpp"
+#include "victus/particles/particles.hpp"
 #include "victus/script/script.hpp"
 
 #include "victus/core/fs.hpp"
@@ -952,6 +953,57 @@ int entity_animation_clips(lua_State* L) {
     return 1;
 }
 
+// entity:emit_particles(count) -> bool. Queues `count` particles on the entity's
+// ParticleEmitter for the next update (works while the emitter is not emitting: bursts on demand).
+int entity_emit_particles(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const double n = luaL_checknumber(L, 2);
+    const auto count = static_cast<std::uint32_t>(std::clamp(n, 0.0, 65536.0));
+    lua_pushboolean(L, particles::emit(s, e, count));
+    return 1;
+}
+
+// entity:set_emitting(on) -> bool. Starts/stops continuous emission (live particles finish).
+int entity_set_emitting(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* c = s.world().get<particles::ParticleEmitterComponent>(e);
+    if (c) c->emitting = lua_toboolean(L, 2) != 0;
+    lua_pushboolean(L, c != nullptr);
+    return 1;
+}
+
+// entity:reset_particles() -> bool. Kills live particles and restarts the emitter cycle.
+int entity_reset_particles(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    lua_pushboolean(L, particles::reset(s, e));
+    return 1;
+}
+
+// entity:particles() -> {valid, emitting, alive, emitted, time, finished}
+int entity_particles(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const particles::EmitterStatus st = particles::status(s, e);
+    const auto* c = s.world().get<particles::ParticleEmitterComponent>(e);
+    lua_createtable(L, 0, 6);
+    lua_pushboolean(L, st.valid);
+    lua_setfield(L, -2, "valid");
+    lua_pushboolean(L, c && c->emitting);
+    lua_setfield(L, -2, "emitting");
+    lua_pushnumber(L, st.alive);
+    lua_setfield(L, -2, "alive");
+    lua_pushnumber(L, static_cast<double>(st.emitted));
+    lua_setfield(L, -2, "emitted");
+    lua_pushnumber(L, st.time);
+    lua_setfield(L, -2, "time");
+    lua_pushboolean(L, st.finished);
+    lua_setfield(L, -2, "finished");
+    return 1;
+}
+
 // entity:joint_state() -> {valid, active, broken, angle, position, force}
 int entity_joint_state(lua_State* L) {
     auto& s = scene_of(L);
@@ -1108,6 +1160,10 @@ void open_victus_libs(lua_State* L) {
                                 {"play_animation", entity_play_animation},
                                 {"animation", entity_animation},
                                 {"animation_clips", entity_animation_clips},
+                                {"emit_particles", entity_emit_particles},
+                                {"set_emitting", entity_set_emitting},
+                                {"reset_particles", entity_reset_particles},
+                                {"particles", entity_particles},
                                 {"joint_state", entity_joint_state},
                                 {"set_motor", entity_set_motor},
                                 {"play_audio", entity_play_audio},

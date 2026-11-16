@@ -4,6 +4,7 @@
 // operation is also a plain method so tests and tools can drive the editor without input.
 #pragma once
 #include "victus/animation/animation.hpp"
+#include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/undo.hpp"
@@ -196,6 +197,7 @@ private:
     std::unique_ptr<script::ScriptHost> play_scripts_; // fresh per play session, hot reloads files
     std::unique_ptr<physics::PhysicsWorld> play_physics_; // fresh per play session
     std::unique_ptr<animation::AnimationSystem> play_animation_; // fresh per play session
+    std::unique_ptr<particles::ParticleSystem> play_particles_;  // fresh per play session
     std::unique_ptr<audio::AudioEngine> audio_;           // opened on first use, kept across sessions
     bool audio_failed_{false};
     std::unique_ptr<script::ScriptHost> edit_scripts_; // inspector property discovery

@@ -2,6 +2,7 @@
 // Built-in project templates. Each produces a scene that runs immediately (Play) with the
 // built-in behaviours, so a new project shows motion, lighting and a camera on first launch.
 #include "victus/animation/animation.hpp"
+#include "victus/particles/particles.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/physics/physics.hpp"
@@ -121,6 +122,8 @@ Entity add(Scene& s, std::string_view name, math::Vec3 pos, Entity parent = kNul
     return e;
 }
 
+particles::ParticleEmitterComponent& emitter(Scene& s, Entity e) { return s.world().add<particles::ParticleEmitterComponent>(e); }
+
 MeshRendererComponent& mesh(Scene& s, Entity e, std::string_view primitive, math::Color color, float metallic,
                             float roughness) {
     auto& m = s.world().add<MeshRendererComponent>(e);
@@ -189,6 +192,28 @@ void build_3d(Scene& s) {
     // the direction of travel.
     const Entity robot = robot::instantiate(s, "Robot", player);
     s.world().get<Transform>(robot)->scale = {0.85f, 0.85f, 0.85f};
+    {
+        // Dust kicked up on jumps and landings: bursts emitted by player.luau.
+        auto& d = emitter(s, add(s, "Dust", {0, 0.05f, 0}, player));
+        d.emitting = false;
+        d.max_particles = 64;
+        d.shape = particles::Shape::Cone;
+        d.radius = 0.35f;
+        d.angle = 80;
+        d.speed_min = 0.8f;
+        d.speed_max = 1.8f;
+        d.drag = 3.0f;
+        d.gravity = {0, 0.4f, 0};
+        d.lifetime_min = 0.45f;
+        d.lifetime_max = 0.8f;
+        d.size_start = 0.25f;
+        d.size_end = 0.7f;
+        d.size_variation = 0.4f;
+        d.color_start = {0.62f, 0.6f, 0.56f, 0.45f};
+        d.color_end = {0.62f, 0.6f, 0.56f, 0.0f};
+        d.spin_min = -60;
+        d.spin_max = 60;
+    }
 
     // Three 0.3 m steps up to a platform (character step_height is 0.35 m).
     for (int i = 0; i < 3; ++i) {
@@ -244,7 +269,78 @@ void build_3d(Scene& s) {
     s.world().add<physics::RigidBodyComponent>(pillar).type = physics::BodyType::Static;
     s.world().add<physics::ColliderComponent>(pillar).shape = physics::ColliderComponent::Shape::Cylinder;
 
-    const Entity lamp = add(s, "Warm Lamp", {0.5f, 2.2f, 2.5f});
+    // A brazier whose fire, sparks and smoke are particle emitters; the warm lamp above it is the
+    // fire's light. Fire and sparks are additive and HDR (> 1) so they glow through bloom.
+    const Entity brazier = add(s, "Brazier", {0.5f, 0.3f, 2.5f});
+    s.world().get<Transform>(brazier)->scale = {0.7f, 0.6f, 0.7f};
+    mesh(s, brazier, "cylinder", {0.18f, 0.17f, 0.16f, 1}, 1.0f, 0.55f);
+    s.world().add<physics::RigidBodyComponent>(brazier).type = physics::BodyType::Static;
+    s.world().add<physics::ColliderComponent>(brazier).shape = physics::ColliderComponent::Shape::Cylinder;
+    {
+        auto& f = emitter(s, add(s, "Fire", {0.5f, 0.62f, 2.5f}));
+        f.blend = particles::Blend::Additive;
+        f.rate = 70;
+        f.max_particles = 128;
+        f.shape = particles::Shape::Cone;
+        f.radius = 0.2f;
+        f.angle = 12;
+        f.speed_min = 0.5f;
+        f.speed_max = 1.1f;
+        f.gravity = {0, 1.2f, 0}; // buoyancy
+        f.drag = 1.2f;
+        f.lifetime_min = 0.45f;
+        f.lifetime_max = 0.85f;
+        f.size_start = 0.5f;
+        f.size_end = 0.08f;
+        f.size_variation = 0.3f;
+        f.color_start = {1.0f, 0.55f, 0.16f, 1};
+        f.color_end = {0.8f, 0.08f, 0.02f, 0};
+        f.intensity = 2.5f;
+        f.spin_min = -90;
+        f.spin_max = 90;
+        f.softness = 0.15f;
+    }
+    {
+        auto& sp = emitter(s, add(s, "Sparks", {0.5f, 0.7f, 2.5f}));
+        sp.blend = particles::Blend::Additive;
+        sp.rate = 14;
+        sp.max_particles = 64;
+        sp.shape = particles::Shape::Point;
+        sp.angle = 25;
+        sp.speed_min = 1.6f;
+        sp.speed_max = 3.2f;
+        sp.gravity = {0, -1.8f, 0};
+        sp.drag = 0.6f;
+        sp.lifetime_min = 0.8f;
+        sp.lifetime_max = 1.6f;
+        sp.size_start = 0.06f;
+        sp.size_end = 0.02f;
+        sp.color_start = {1.0f, 0.82f, 0.45f, 1};
+        sp.color_end = {1.0f, 0.3f, 0.05f, 0};
+        sp.intensity = 6.0f;
+    }
+    {
+        auto& sm = emitter(s, add(s, "Smoke", {0.5f, 1.15f, 2.5f}));
+        sm.rate = 6;
+        sm.max_particles = 48;
+        sm.shape = particles::Shape::Cone;
+        sm.radius = 0.15f;
+        sm.angle = 10;
+        sm.speed_min = 0.35f;
+        sm.speed_max = 0.6f;
+        sm.gravity = {0.15f, 0.1f, 0}; // a slight breeze
+        sm.lifetime_min = 2.2f;
+        sm.lifetime_max = 3.2f;
+        sm.size_start = 0.35f;
+        sm.size_end = 1.5f;
+        sm.color_start = {0.22f, 0.21f, 0.2f, 0.32f};
+        sm.color_end = {0.3f, 0.3f, 0.3f, 0};
+        sm.spin_min = -20;
+        sm.spin_max = 20;
+        sm.softness = 0.5f;
+    }
+
+    const Entity lamp = add(s, "Warm Lamp", {0.5f, 1.4f, 2.5f});
     auto& l = s.world().add<LightComponent>(lamp);
     l.type = LightComponent::Type::Point;
     l.color = {1.0f, 0.62f, 0.3f, 1};
@@ -312,6 +408,42 @@ void build_2d(Scene& s) {
         cc.radius = 0.3f;
         cc.is_trigger = true;
         attach(s, coin, "scripts/coin.luau");
+        // A faint glitter around each coin (a child, so it disappears with the coin).
+        auto& g = emitter(s, add(s, "Glitter", {}, coin));
+        g.blend = particles::Blend::Additive;
+        g.rate = 7;
+        g.max_particles = 16;
+        g.shape = particles::Shape::Sphere;
+        g.radius = 0.35f;
+        g.speed_min = 0.05f;
+        g.speed_max = 0.25f;
+        g.lifetime_min = 0.5f;
+        g.lifetime_max = 0.9f;
+        g.size_start = 0.2f;
+        g.size_end = 0.0f;
+        g.color_start = {1.0f, 0.95f, 0.6f, 1};
+        g.color_end = {1.0f, 0.8f, 0.3f, 0};
+        g.layer = 3;
+    }
+    {
+        // Burst at a collected coin: platformer.luau moves this emitter there and emits.
+        auto& sp = emitter(s, add(s, "Sparkles", {0, 0, 0}));
+        sp.emitting = false;
+        sp.blend = particles::Blend::Additive;
+        sp.max_particles = 128;
+        sp.shape = particles::Shape::Sphere;
+        sp.radius = 0.1f;
+        sp.speed_min = 2.0f;
+        sp.speed_max = 4.0f;
+        sp.drag = 2.5f;
+        sp.gravity = {0, -4.0f, 0};
+        sp.lifetime_min = 0.4f;
+        sp.lifetime_max = 0.8f;
+        sp.size_start = 0.2f;
+        sp.size_end = 0.02f;
+        sp.color_start = {1.0f, 0.88f, 0.35f, 1};
+        sp.color_end = {1.0f, 0.45f, 0.1f, 0};
+        sp.layer = 5;
     }
 
     const Entity music = add(s, "Music", {0, 0, 0});
@@ -355,7 +487,7 @@ void build_simulation(Scene& s) {
 constexpr const char* kPlayer3d = R"lua(-- Walks the character with WASD or the arrow keys and jumps with Space. The entity has a
 -- CharacterController (it slides along walls, climbs steps and pushes physics bodies); the
 -- child "Robot" model faces the direction of travel and cross-fades between its "Idle" and
--- "Walk" animation clips.
+-- "Walk" animation clips. Its child "Dust" particle emitter puffs on jumps and landings.
 -- Fields below are defaults; override them per entity in the editor inspector.
 local Player = {}
 Player.speed = 5
@@ -364,6 +496,7 @@ Player.bounds = 9 -- stay within this distance of the origin on X and Z
 
 function Player:start()
     self.robot = self.entity:find_child("Robot")
+    self.dust = self.entity:find_child("Dust")
     self.clip = "Idle"
 end
 
@@ -381,7 +514,14 @@ function Player:update(dt)
         move = vector.create(move.x, 0, 0)
     end
     self.entity:move_character(move)
-    if input.pressed("Space") then self.entity:jump(self.jump_speed) end
+    local grounded = self.entity.grounded
+    if input.pressed("Space") and grounded then
+        self.entity:jump(self.jump_speed)
+        if self.dust then self.dust:emit_particles(14) end
+    end
+    -- Landing puff: grounded again after being airborne.
+    if grounded and self.was_grounded == false and self.dust then self.dust:emit_particles(10) end
+    self.was_grounded = grounded
     if not self.robot then return end
     -- Face the direction actually travelled (the robot model looks down +Z) and pick the clip.
     local v = self.entity.velocity
@@ -473,6 +613,11 @@ end
 
 function Player:on_trigger_enter(other)
     if starts_with(other.name, "Coin") then
+        local fx = scene.find("Sparkles")
+        if fx then
+            fx.position = other.position
+            fx:emit_particles(28)
+        end
         other:destroy()
         audio.play(self.coin_sound)
         self.score += 1
@@ -589,6 +734,7 @@ void register_components() {
     physics::register_components();
     audio::register_components();
     animation::register_components();
+    particles::register_components();
 }
 
 Status build_template_scene(std::string_view id, Scene& s) {
