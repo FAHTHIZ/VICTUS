@@ -2,7 +2,8 @@
 // Networking tests (Slice 17): wire format bounds, link emulation, the in-memory and ENet UDP
 // transports, and full server/client sessions — handshake and validation, player templates,
 // input routing, client-side prediction and reconciliation, interpolated proxies, network
-// variables, script messages, despawn on disconnect, snapshot budgets and malformed traffic.
+// variables, script messages, despawn on disconnect, snapshot budgets and malformed traffic,
+// and (Slice 23) delta snapshots against acknowledged baselines.
 #include "victus/net/net.hpp"
 #include "victus/net/wire.hpp"
 
@@ -710,4 +711,77 @@ TEST_CASE("session: late joiners get the current world and prune destroyed scene
     REQUIRE(c2 != scene::kNullEntity);
     CHECK(horizontal(p.position(c2), {2, 0, 2}) < 0.2f);
     CHECK(p.find("Crate 0") != scene::kNullEntity);
+}
+
+TEST_CASE("session: delta snapshots omit acknowledged state and stay exact under loss") {
+    // Header of a snapshot without entries: type, tick, input ack, echo, held, seq, baseline, count.
+    constexpr std::uint32_t kHeader = 1 + 4 + 4 + 8 + 8 + 4 + 4 + 2;
+    Session s;
+    LinkConditions lossy;
+    lossy.latency_ms = 30;
+    lossy.jitter_ms = 10;
+    lossy.loss = 0.2f;
+    lossy.seed = 11;
+    NetClient& a = s.add_client("alice", lossy);
+    NetClient& b = s.add_client("bob");
+    s.step(90);
+    REQUIRE(a.connected());
+    REQUIRE(b.connected());
+    Peer& pa = *s.peers[0];
+    Peer& pb = *s.peers[1];
+    // Alice walks (her packets and snapshots lose 20%), then everything comes to rest.
+    pa.input.set_key("D", true);
+    pa.input.set_key("S", true);
+    s.step(90);
+    pa.input.set_key("D", false);
+    pa.input.set_key("S", false);
+    s.step(120);
+    CHECK(s.server->diagnostics().delta_snapshots > 100);
+    CHECK(a.diagnostics().delta_snapshots > 30);
+    CHECK(b.diagnostics().delta_snapshots > 30);
+    // Every replicated entity decoded to the server's state (millimetre quantization) for both.
+    const Entity srv_a = s.server_player(a.local_id());
+    Entity b_view_of_a;
+    for (const auto& c : b.clients())
+        if (c.id == a.local_id()) b_view_of_a = c.player;
+    REQUIRE(!b_view_of_a.is_null());
+    CHECK(math::length(pb.position(b_view_of_a) - s.server_peer.position(srv_a)) < 2e-3f);
+    CHECK(math::length(pa.position(a.local_player()) - s.server_peer.position(srv_a)) < 0.02f);
+    for (int i = 0; i < 3; ++i) {
+        const std::string name = "Crate " + std::to_string(i);
+        const math::Vec3 truth = s.server_peer.position(s.server_peer.find(name));
+        CHECK(math::length(pa.position(pa.find(name)) - truth) < 2e-3f);
+        CHECK(math::length(pb.position(pb.find(name)) - truth) < 2e-3f);
+    }
+    // At rest, acknowledged entities are not repeated: snapshots carry only their header.
+    s.step(30);
+    CHECK(s.server->diagnostics().snapshot_bytes == kHeader);
+    CHECK(b.diagnostics().snapshot_bytes == kHeader);
+}
+
+TEST_CASE("session: delta snapshots need less bandwidth than full snapshots") {
+    // The same scripted minute-fraction (60 markers spinning in place, one player walking) with
+    // and without delta encoding; reports the measured server bytes per snapshot.
+    auto measure = [](bool delta) {
+        ServerOptions so;
+        so.delta_snapshots = delta;
+        so.snapshot_budget = 4000;
+        Session s(so, 60);
+        NetClient& c = s.add_client("walker");
+        s.step(60);
+        REQUIRE(c.connected());
+        const auto before = s.server->diagnostics();
+        s.peers[0]->input.set_key("D", true);
+        s.step(120);
+        s.peers[0]->input.set_key("D", false);
+        s.step(120);
+        const auto after = s.server->diagnostics();
+        CHECK(after.entities_deferred == 0);
+        return static_cast<double>(after.bytes_sent - before.bytes_sent) /
+               static_cast<double>(after.snapshots_sent - before.snapshots_sent);
+    };
+    const double full = measure(false);
+    const double delta = measure(true);
+    MESSAGE("bytes per snapshot (incl. reliable traffic): full " << full << ", delta " << delta);
+    CHECK(delta < full * 0.6);
 }

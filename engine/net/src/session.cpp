@@ -204,6 +204,73 @@ Uuid read_uuid(ByteReader& r) {
     return u;
 }
 
+// ---- snapshot states ---------------------------------------------------------------------------
+// Snapshots carry quantized transforms so server and client agree bit-for-bit on what a client
+// knows: positions in millimetres, rotations as the wire's 16-bit components. Each snapshot is
+// encoded against a baseline (an earlier snapshot the client acknowledged); entities equal to
+// their baseline are omitted and the rest send small zigzag-varint deltas per component.
+
+constexpr float kPosScale = 1000.0f; // 1 mm
+constexpr std::size_t kServerViews = 32; // sent snapshots remembered per client (~1 s at 30 Hz)
+constexpr std::size_t kClientViews = 64;
+
+struct QState {
+    std::array<std::int32_t, 3> p{};
+    std::array<std::uint16_t, 4> q{32768, 32768, 32768, 65535}; // identity
+    bool operator==(const QState&) const = default;
+};
+
+QState quantize(math::Vec3 p, math::Quat q) {
+    QState s;
+    const float in[3] = {p.x, p.y, p.z};
+    for (int i = 0; i < 3; ++i)
+        s.p[static_cast<std::size_t>(i)] = static_cast<std::int32_t>(std::clamp(std::llround(static_cast<double>(in[i]) * kPosScale), -1'000'000'000ll, 1'000'000'000ll));
+    if (q.w < 0) q = {-q.x, -q.y, -q.z, -q.w};
+    const float c[4] = {q.x, q.y, q.z, q.w};
+    for (int i = 0; i < 4; ++i) {
+        const float k = std::clamp(c[i], -1.0f, 1.0f);
+        s.q[static_cast<std::size_t>(i)] = static_cast<std::uint16_t>(static_cast<std::int32_t>(k * 32767.0f) + 32768);
+    }
+    return s;
+}
+math::Vec3 position_of(const QState& s) {
+    return {static_cast<float>(s.p[0]) / kPosScale, static_cast<float>(s.p[1]) / kPosScale, static_cast<float>(s.p[2]) / kPosScale};
+}
+math::Quat rotation_of(const QState& s) {
+    float c[4];
+    for (int i = 0; i < 4; ++i) c[i] = (static_cast<float>(s.q[static_cast<std::size_t>(i)]) - 32768.0f) / 32767.0f;
+    const float len = std::sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2] + c[3] * c[3]);
+    if (len < 1e-3f) return {};
+    return {c[0] / len, c[1] / len, c[2] / len, c[3] / len};
+}
+
+// What a client knows after decoding one snapshot: net id -> state, sorted by id.
+using View = std::vector<std::pair<std::uint32_t, QState>>;
+const QState* find_state(const View& v, std::uint32_t id) {
+    const auto it = std::lower_bound(v.begin(), v.end(), id, [](const auto& e, std::uint32_t k) { return e.first < k; });
+    return it != v.end() && it->first == id ? &it->second : nullptr;
+}
+void put_state(View& v, std::uint32_t id, const QState& st) {
+    const auto it = std::lower_bound(v.begin(), v.end(), id, [](const auto& e, std::uint32_t k) { return e.first < k; });
+    if (it != v.end() && it->first == id) it->second = st;
+    else v.insert(it, {id, st});
+}
+std::uint64_t zigzag(std::int64_t v) { return (static_cast<std::uint64_t>(v) << 1) ^ static_cast<std::uint64_t>(v >> 63); }
+std::int64_t unzigzag(std::uint64_t v) { return static_cast<std::int64_t>(v >> 1) ^ -static_cast<std::int64_t>(v & 1); }
+
+enum EntryFlags : std::uint32_t { kHasPosition = 1, kHasRotation = 2 };
+
+void write_entry(ByteWriter& w, std::uint32_t id, const QState& st, const QState& base) {
+    std::uint32_t flags = 0;
+    if (st.p != base.p) flags |= kHasPosition;
+    if (st.q != base.q) flags |= kHasRotation;
+    w.varuint((static_cast<std::uint64_t>(id) << 2) | flags);
+    if (flags & kHasPosition)
+        for (std::size_t i = 0; i < 3; ++i) w.varuint(zigzag(static_cast<std::int64_t>(st.p[i]) - base.p[i]));
+    if (flags & kHasRotation)
+        for (std::size_t i = 0; i < 4; ++i) w.varuint(zigzag(static_cast<std::int64_t>(st.q[i]) - base.q[i]));
+}
+
 // ---- scene helpers ----------------------------------------------------------------------------
 
 struct Template {
@@ -448,18 +515,20 @@ struct NetServer::Impl {
         float tokens{0};
         std::uint32_t violations{0};
         struct Sent {
-            math::Vec3 p;
-            math::Quat q;
+            QState q; // last sent state (non-delta mode)
             double at{-1e9};
             float priority{0};
         };
         std::unordered_map<std::uint32_t, Sent> sent;
+        // Delta snapshots: what each recent snapshot told the client, and the newest it confirmed.
+        std::uint32_t snapshot_seq{0}, snapshot_ack{0};
+        std::deque<std::pair<std::uint32_t, View>> views;
     };
     std::map<PeerId, Client> clients;
     std::vector<NetMessage> inbox;
     std::vector<TransportEvent> events;
     Meter out_meter, in_meter;
-    std::uint64_t snapshots_sent{0};
+    std::uint64_t snapshots_sent{0}, delta_snapshots{0};
     std::uint32_t last_snapshot_bytes{0}, last_deferred{0};
     std::uint64_t rejected{0};
     NetServer* owner_ctx{nullptr};
@@ -653,7 +722,10 @@ struct NetServer::Impl {
             }
         }
         const double client_time = r.f64();
+        const std::uint32_t snapshot_ack = r.u32();
         if (!r.done()) return violation(c, "malformed input");
+        if (snapshot_ack > c.snapshot_seq) return violation(c, "acknowledged an unsent snapshot");
+        c.snapshot_ack = std::max(c.snapshot_ack, snapshot_ack);
         constexpr std::uint64_t kValidHi = kKeyCount > 64 ? (1ull << (kKeyCount - 64)) - 1 : 0;
         if (newest <= c.last_received_seq) return; // stale or duplicated packet
         c.echo_time = client_time;
@@ -801,9 +873,17 @@ struct NetServer::Impl {
             if (c.snapshot_accum + 1e-5f < interval) continue;
             c.snapshot_accum = std::fmod(c.snapshot_accum, interval);
             const Transform* viewer = w.alive(c.player) ? w.get<Transform>(c.player) : nullptr;
+            // Baseline: the newest snapshot the client acknowledged that we still remember.
+            const View* baseline = nullptr;
+            if (options.delta_snapshots && c.snapshot_ack)
+                for (const auto& [seq, v] : c.views)
+                    if (seq == c.snapshot_ack) baseline = &v;
+            const std::uint32_t baseline_seq = baseline ? c.snapshot_ack : 0;
+            static const View kEmpty;
+            const View& base = baseline ? *baseline : kEmpty;
             struct Candidate {
                 std::uint32_t id;
-                const Transform* t;
+                QState q;
                 float priority;
             };
             std::vector<Candidate> cands;
@@ -813,12 +893,16 @@ struct NetServer::Impl {
                 if (!xf || (ni && !ni->replicate_transform)) continue;
                 if (ni && ni->relevancy_radius > 0 && viewer && math::length(xf->position - viewer->position) > ni->relevancy_radius) continue;
                 auto& sent = c.sent[id];
-                const bool changed = math::length(xf->position - sent.p) > 1e-4f ||
-                                     std::abs(xf->rotation.x - sent.q.x) + std::abs(xf->rotation.y - sent.q.y) +
-                                             std::abs(xf->rotation.z - sent.q.z) + std::abs(xf->rotation.w - sent.q.w) > 1e-4f;
-                if (!changed && now - sent.at < kResendInterval) continue;
+                const QState q = quantize(xf->position, xf->rotation);
+                if (options.delta_snapshots) {
+                    // Anything the client has not confirmed yet is (re)sent until it is acknowledged.
+                    const QState* known = find_state(base, id);
+                    if (known && *known == q) continue;
+                } else {
+                    if (sent.q == q && now - sent.at < kResendInterval) continue; // unchanged, resent each second
+                }
                 sent.priority += (ni ? ni->priority : 1.0f) * (tr.owner == c.id ? 4.0f : 1.0f);
-                cands.push_back({id, xf, sent.priority});
+                cands.push_back({id, q, sent.priority});
             }
             std::sort(cands.begin(), cands.end(), [](const Candidate& a, const Candidate& b) {
                 return a.priority != b.priority ? a.priority > b.priority : a.id < b.id;
@@ -829,29 +913,43 @@ struct NetServer::Impl {
             sw.u32(c.last_processed_seq);
             sw.f64(c.echo_time);
             sw.f64(now - c.echo_received);
+            const std::uint32_t seq = ++c.snapshot_seq;
+            sw.u32(seq);
+            sw.u32(baseline_seq);
+            View view;
+            if (options.delta_snapshots) {
+                view.reserve(base.size() + cands.size());
+                for (const auto& e : base)
+                    if (tracked.count(e.first)) view.push_back(e); // despawned entities drop out
+            }
             const std::size_t count_at = sw.size();
             sw.u16(0);
             std::uint16_t n = 0;
             std::uint32_t deferred = 0;
             for (const auto& cd : cands) {
-                constexpr std::size_t kEntryMax = 5 + 12 + 8;
+                constexpr std::size_t kEntryMax = 6 + 3 * 10 + 4 * 3;
                 if (sw.size() + kEntryMax > options.snapshot_budget || n == 0xFFFF) {
                     ++deferred;
                     continue;
                 }
-                sw.varuint(cd.id);
-                sw.vec3(cd.t->position);
-                sw.quat(cd.t->rotation);
+                static const QState kZero{};
+                const QState* known = find_state(base, cd.id);
+                write_entry(sw, cd.id, cd.q, known ? *known : kZero);
+                if (options.delta_snapshots) put_state(view, cd.id, cd.q);
                 auto& sent = c.sent[cd.id];
-                sent.p = cd.t->position;
-                sent.q = cd.t->rotation;
+                sent.q = cd.q;
                 sent.at = now;
                 sent.priority = 0;
                 ++n;
             }
             sw.patch_u16(count_at, n);
             send(c, Channel::Unreliable, sw);
+            if (options.delta_snapshots) {
+                c.views.emplace_back(seq, std::move(view));
+                while (c.views.size() > kServerViews) c.views.pop_front();
+            }
             ++snapshots_sent;
+            delta_snapshots += baseline_seq != 0;
             last_snapshot_bytes = static_cast<std::uint32_t>(sw.size());
             last_deferred = deferred;
         }
@@ -945,6 +1043,7 @@ NetDiagnostics NetServer::diagnostics() const {
     d.bytes_sent = m.out_meter.total;
     d.bytes_received = m.in_meter.total;
     d.snapshots_sent = m.snapshots_sent;
+    d.delta_snapshots = m.delta_snapshots;
     d.snapshot_bytes = m.last_snapshot_bytes;
     d.entities_deferred = m.last_deferred;
     d.rejected_messages = m.rejected;
@@ -999,7 +1098,9 @@ struct NetClient::Impl {
     bool clock_valid{false};
     float rtt_ms{0};
     std::uint32_t last_snapshot_tick{0};
-    std::uint64_t snapshots_received{0};
+    std::uint64_t snapshots_received{0}, delta_snapshots{0}, undecodable_snapshots{0};
+    std::deque<std::pair<std::uint32_t, View>> views; // decoded snapshots usable as baselines
+    std::uint32_t snapshot_ack{0};                     // newest decoded snapshot (sent with input)
     std::uint32_t last_snapshot_bytes{0};
     std::vector<ClientInfo> roster;
     bool synced{false};
@@ -1097,6 +1198,9 @@ struct NetClient::Impl {
     void handle_despawn(ByteReader& r) {
         const auto net_id = static_cast<std::uint32_t>(r.varuint());
         if (!r.done()) return;
+        // Net ids are never reused, so the id can leave every baseline (the server drops it too).
+        for (auto& [s, v] : views)
+            v.erase(std::remove_if(v.begin(), v.end(), [&](const auto& e) { return e.first == net_id; }), v.end());
         const auto it = entities.find(net_id);
         if (it == entities.end()) return;
         if (scene->world().alive(it->second.e)) scene->destroy(it->second.e);
@@ -1154,7 +1258,21 @@ struct NetClient::Impl {
         const std::uint32_t ack = r.u32();
         const double echo = r.f64();
         const double held = r.f64();
+        const std::uint32_t snap_seq = r.u32();
+        const std::uint32_t baseline_seq = r.u32();
         const std::uint16_t n = r.u16();
+        if (!r.ok()) return;
+        static const View kEmpty;
+        const View* base = &kEmpty;
+        if (baseline_seq) {
+            base = nullptr;
+            for (const auto& [s, v] : views)
+                if (s == baseline_seq) base = &v;
+            if (!base) { // baseline forgotten (should not happen): wait for a decodable snapshot
+                ++undecodable_snapshots;
+                return;
+            }
+        }
         struct Entry {
             std::uint32_t id;
             math::Vec3 p;
@@ -1162,15 +1280,30 @@ struct NetClient::Impl {
         };
         std::vector<Entry> list;
         list.reserve(n);
+        View view = *base;
+        static const QState kZero{};
         for (std::uint16_t i = 0; i < n && r.ok(); ++i) {
-            Entry e;
-            e.id = static_cast<std::uint32_t>(r.varuint());
-            e.p = r.vec3();
-            e.q = r.quat();
-            list.push_back(e);
+            const std::uint64_t head = r.varuint();
+            if (head >> 34) r.fail(); // id beyond 32 bits
+            const auto id = static_cast<std::uint32_t>(head >> 2);
+            const QState* known = find_state(*base, id);
+            QState st = known ? *known : kZero;
+            if (head & kHasPosition)
+                for (std::size_t k = 0; k < 3; ++k)
+                    st.p[k] = static_cast<std::int32_t>(std::clamp<std::int64_t>(st.p[k] + unzigzag(r.varuint()), INT32_MIN, INT32_MAX));
+            if (head & kHasRotation)
+                for (auto& c : st.q) c = static_cast<std::uint16_t>(std::clamp<std::int64_t>(c + unzigzag(r.varuint()), 0, 65535));
+            put_state(view, id, st);
+            list.push_back({id, position_of(st), rotation_of(st)});
         }
         if (!r.done()) return;
         ++snapshots_received;
+        delta_snapshots += baseline_seq != 0;
+        if (snap_seq > snapshot_ack) {
+            snapshot_ack = snap_seq;
+            views.emplace_back(snap_seq, std::move(view));
+            while (views.size() > kClientViews) views.pop_front();
+        }
         if (echo > 0) {
             const float sample_rtt = static_cast<float>(std::max(0.0, (now - echo - held)) * 1000.0);
             rtt_ms = rtt_ms == 0 ? sample_rtt : rtt_ms + (sample_rtt - rtt_ms) * 0.1f;
@@ -1313,6 +1446,7 @@ struct NetClient::Impl {
             }
         }
         w.f64(now);
+        w.u32(snapshot_ack);
         send(Channel::Unreliable, w);
     }
 
@@ -1480,6 +1614,7 @@ NetDiagnostics NetClient::diagnostics() const {
     d.bytes_sent = m.out_meter.total;
     d.bytes_received = m.in_meter.total;
     d.snapshots_received = m.snapshots_received;
+    d.delta_snapshots = m.delta_snapshots;
     d.snapshot_bytes = m.last_snapshot_bytes;
     d.prediction_error = m.last_error;
     d.corrections = m.corrections;

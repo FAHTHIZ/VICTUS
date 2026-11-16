@@ -287,10 +287,10 @@ Result<std::unique_ptr<net::Transport>> condition(std::unique_ptr<net::Transport
 void print_net(const net::NetContext& ctx) {
     const auto d = ctx.diagnostics();
     std::printf("net: %s, %u clients, %u replicated entities, rtt %.1f ms, sent %.1f KB, received %.1f KB, "
-                "snapshots %llu sent / %llu received, last snapshot %u bytes, %llu corrections, %llu rejected messages\n",
+                "snapshots %llu sent / %llu received (%llu delta), last snapshot %u bytes, %llu corrections, %llu rejected messages\n",
                 d.status.c_str(), d.clients, d.entities, d.rtt_ms, static_cast<double>(d.bytes_sent) / 1024.0,
                 static_cast<double>(d.bytes_received) / 1024.0, static_cast<unsigned long long>(d.snapshots_sent),
-                static_cast<unsigned long long>(d.snapshots_received), d.snapshot_bytes,
+                static_cast<unsigned long long>(d.snapshots_received), static_cast<unsigned long long>(d.delta_snapshots), d.snapshot_bytes,
                 static_cast<unsigned long long>(d.corrections), static_cast<unsigned long long>(d.rejected_messages));
 }
 
