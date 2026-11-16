@@ -241,5 +241,12 @@ This file records only verified state. Every entry lists what was built, how it 
 - Measured: none (no performance-relevant change; input evaluation is a few lookups per action per frame).
 - Known gaps: no touch, local multiplayer device assignment, persisted user rebinding/rebinding UI, editor input panel or rumble; physical gamepads were not tested (none in the sandbox; SDL event paths are covered by `ManualInput`-based tests only).
 
+### 2026-11-16 — Slice 19: editor Input Actions panel
+- CI before this slice: run 43913286299 (33384d4) failed on macOS/Windows with the same two warnings as Slice 17 (fix 7a9462c was pushed right after it); Linux and sanitizer jobs green.
+- Built (commit 374365f): Edit > Input Actions... window listing every action (axis/button), bindings as removable chips that wrap, + Listen per side (captures the next key except Escape, right/middle mouse button, gamepad button or stick/trigger pushed past half way; Escape cancels), typed bindings, rename, dead-zone slider, Make Axis, Delete, Add Action, Reset to Defaults. `Editor::set_input_map` validates (syntax, duplicate or empty names, unknown keys) and refuses invalid maps unchanged, saves `victus.project` and applies to a running play session via new `ScriptHost::set_input_map`. `gameplay::capture_binding` for press-to-bind UIs. `victus_editor --show input-actions`.
+- Verification (local, Ubuntu 26.04, GCC 15.2, lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1 VICTUS_NO_AUDIO=1`): Debug `-Werror` `ctest` 18/18 pass. `victus_script_tests` 19 cases / 308 assertions (new capture_binding case: Mouse0 ignored, held controls not re-captured, half-way stick threshold, triggers as whole axis); `victus_editor_tests` 5 / 212 (new: panel draws, bad key and duplicate refused, Listen binds J and Pad.RightX-, Escape cancels, reopened project matches, edits during play reach the running scripts). Editor screenshot (1280×800, `--show input-actions`) inspected: chips wrap inside the window, nothing clipped.
+- Measured: none (editor UI only).
+- Known gaps: no in-game rebinding UI or per-player overrides, touch, rumble, local multiplayer device assignment; Listen cannot capture Escape (type it instead).
+
 ## Next task
-Slice 19: an editor Input Actions panel (edit, add, reset bindings; saved to `victus.project`), then Phase 13 hot reload for assets and shaders, or Phase 12 follow-ups (delta compression, encryption) per ROADMAP.md.
+Slice 20: Phase 13 hot reload for assets and shaders (scripts already reload) with a clear fallback, or Phase 12 follow-ups (delta compression, encryption) per ROADMAP.md.
