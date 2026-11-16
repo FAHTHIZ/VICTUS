@@ -2168,6 +2168,14 @@ Result<std::unique_ptr<ScriptHost>> ScriptHost::create(HostOptions options) {
     lua_callbacks(L)->interrupt = &interrupt;
     luaL_openlibs(L);
     open_victus_libs(L);
+    if (const std::uint64_t seed = impl->options.random_seed) {
+        // math.randomseed takes a 32-bit integer; fold the 64-bit seed into it.
+        lua_getglobal(L, "math");
+        lua_getfield(L, -1, "randomseed");
+        lua_pushinteger(L, static_cast<int>(static_cast<std::uint32_t>(seed ^ (seed >> 32)) & 0x7fffffff));
+        lua_call(L, 1, 0);
+        lua_pop(L, 1);
+    }
     luaL_sandbox(L);
     impl->next_watch = now_seconds() + impl->options.watch_interval_seconds;
     return std::unique_ptr<ScriptHost>(new ScriptHost(std::move(impl)));

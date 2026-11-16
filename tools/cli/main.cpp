@@ -6,6 +6,8 @@
 #include "victus/core/build_info.hpp"
 #include "victus/core/cli.hpp"
 #include "victus/core/log.hpp"
+#include "victus/gameplay/capture.hpp"
+#include "victus/core/hash.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
@@ -47,7 +49,9 @@ constexpr const char* kUsage =
     "  import <project>                                           import changed assets (exit 1 on failure)\n"
     "  run <project> [--scene S] [--frames N] [--screenshot PNG] [--quality TIER]  play a scene\n"
     "      [--connect HOST[:PORT]] [--name NAME]                  ...as a client of a `victus serve` server\n"
+    "      [--record F.vcapture] [--replay F.vcapture]            ...record a play session, or watch one replay\n"
     "  simulate <project> [--frames N] [--hold KEYS] [--save F]   run gameplay and scripts headless (no GPU)\n"
+    "           [--record F.vcapture] [--replay F.vcapture]         ...record a session, or replay one and verify it\n"
     "           [--connect HOST[:PORT]]                           ...as a headless multiplayer client\n"
     "  serve <project> [--port P] [--max-clients N] [--frames N]  host a multiplayer session (dedicated server)\n"
     "  check <project>                                            validate scenes and script syntax\n"
@@ -154,10 +158,14 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("connect", "join a `victus serve` server at host[:port]")
         .option("name", "player name shown to others when connected", "player")
         .option("conditions", "emulate a bad link, e.g. latency=80,jitter=10,loss=0.05")
-        .option("saves", "save games folder (default: <project>/.victus/saves)");
+        .option("saves", "save games folder (default: <project>/.victus/saves)")
+        .option("record", "record input, frame times and state digests to this .vcapture file")
+        .option("replay", "replay a .vcapture file (exit 5 if the game state diverges)");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
     player::PlayerOptions o;
+    o.record = p.get("record");
+    o.replay = p.get("replay");
     o.connect = p.get("connect");
     o.player_name = p.get("name");
     o.net_conditions = p.get("conditions");
@@ -178,6 +186,11 @@ int cmd_run(const std::vector<std::string>& a) {
                 static_cast<unsigned long long>(r->script_errors));
     if (!r->net_status.empty()) std::printf("net: %s\n", r->net_status.c_str());
     if (r->assets_reloaded) std::printf("hot reload: %zu assets reloaded\n", r->assets_reloaded);
+    if (!o.record.empty()) std::printf("recorded capture: %s\n", o.record.string().c_str());
+    if (!o.replay.empty()) {
+        if (!r->replay_mismatch.empty()) return (void)error("replay diverged at " + r->replay_mismatch), 5;
+        std::printf("replay: %llu state digests match\n", static_cast<unsigned long long>(r->digests_checked));
+    }
     return p.has("strict") && r->script_errors ? 3 : 0;
 }
 
@@ -215,7 +228,8 @@ struct Headless {
     gameplay::ManualInput input;
     gameplay::Simulation sim;
 
-    Status open(const std::string& project_dir, const std::string& scene_arg, const std::string& saves = {}) {
+    Status open(const std::string& project_dir, const std::string& scene_arg, const std::string& saves = {},
+                std::uint64_t random_seed = 0) {
         project::register_components();
         auto pr = project::Project::open(project_dir);
         if (!pr) return pr.error();
@@ -229,6 +243,7 @@ struct Headless {
         so.input_map = proj->settings().input;
         so.save_version = proj->settings().save_version;
         so.save_directory = saves.empty() ? proj->dev_save_directory() : fs::Path(saves);
+        so.random_seed = random_seed;
         auto h = script::ScriptHost::create(so);
         if (!h) return h.error();
         host = std::move(*h);
@@ -308,11 +323,39 @@ int cmd_simulate(const std::vector<std::string>& a) {
         .option("connect", "join a `victus serve` server at host[:port] (runs in real time)")
         .option("name", "player name sent to the server", "player")
         .option("conditions", "emulate a bad link, e.g. latency=80,jitter=10,loss=0.05,bandwidth=256")
-        .option("expect-players", "with --connect: exit 4 unless at least N players were seen", "0");
+        .option("expect-players", "with --connect: exit 4 unless at least N players were seen", "0")
+        .option("record", "record input, frame times and state digests to this .vcapture file")
+        .option("replay", "replay a .vcapture file headless; exit 5 at the first diverging state digest")
+        .option("seed", "script random seed (math.random) for this run; recordings store it", "0");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
+    const bool recording = p.has("record"), replaying = p.has("replay");
+    if ((recording || replaying) && p.has("connect")) return error("--record/--replay work offline only");
+    if (recording && replaying) return error("choose either --record or --replay");
+    std::optional<gameplay::Capture> capture;
+    std::optional<gameplay::CaptureReplay> replay;
+    gameplay::ReplayInput captured_input;
+    std::uint64_t seed = static_cast<std::uint64_t>(p.get_number("seed", 0));
+    if (replaying) {
+        auto c = gameplay::Capture::load(p.get("replay"));
+        if (!c) return error(c.error().message);
+        capture = std::move(*c);
+        seed = capture->seed;
+    } else if (recording) {
+        capture.emplace();
+        if (!seed) seed = Random(static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count())).next_u64() | 1;
+        capture->seed = seed;
+    }
     auto hs = std::make_unique<Headless>();
-    if (auto st = hs->open(p.get("project"), p.get("scene"), p.get("saves")); !st) return error(st.error().message);
+    if (auto st = hs->open(p.get("project"), p.get("scene"), p.get("saves"), seed); !st) return error(st.error().message);
+    if (replaying) {
+        replay.emplace(*capture);
+        hs->sim.input = &replay->input();
+    } else if (recording) {
+        capture->project = hs->proj->settings().name;
+        capture->scene = hs->scene_rel;
+        hs->sim.input = &captured_input;
+    }
     for (const auto& k : split_list(p.get("hold"))) {
         auto b = gameplay::parse_binding(k);
         if (!b) return error("--hold: " + b.error().message);
@@ -342,13 +385,29 @@ int cmd_simulate(const std::vector<std::string>& a) {
         std::signal(SIGINT, on_signal);
     }
 
-    const auto frames = static_cast<std::uint64_t>(p.get_number("frames", 600));
+    const auto frames = replaying ? static_cast<std::uint64_t>(capture->frames.size())
+                                  : static_cast<std::uint64_t>(p.get_number("frames", 600));
     std::size_t most_players = 0;
     Pacer pacer(60.0);
     std::uint64_t f = 0;
     for (; f < frames && !g_stop.load(); ++f) {
-        hs->sim.tick(hs->scene, 1.0f / 60.0f);
+        float dt = 1.0f / 60.0f;
+        if (replaying) dt = replay->begin_tick();
+        else if (recording) {
+            const auto state = gameplay::sample_input(hs->input);
+            capture->add_frame(state, dt);
+            captured_input.set(state);
+        }
+        hs->sim.tick(hs->scene, dt);
         hs->input.end_frame();
+        if (replaying && !replay->end_tick(hs->scene)) {
+            ++f;
+            break;
+        }
+        if (recording) {
+            captured_input.end_frame();
+            capture->after_tick(hs->scene);
+        }
         if (client) {
             most_players = std::max(most_players, client->clients().size());
             if (client->failed()) break;
@@ -377,6 +436,17 @@ int cmd_simulate(const std::vector<std::string>& a) {
     }
     if (p.has("save"))
         if (auto s2 = hs->scene.save_file(p.get("save")); !s2) return error(s2.error().message);
+    if (recording) {
+        capture->finish(hs->scene);
+        if (auto s2 = capture->save(p.get("record")); !s2) return error(s2.error().message);
+        std::printf("recorded %zu frames, seed %016llx, %zu state digests -> %s\n", capture->frames.size(),
+                    static_cast<unsigned long long>(seed), capture->digests.size(), p.get("record").c_str());
+    }
+    if (replaying) {
+        if (replay->diverged()) return (void)error("replay diverged at " + replay->mismatch()), 5;
+        std::printf("replay: %llu frames, %llu state digests match\n", static_cast<unsigned long long>(replay->frame()),
+                    static_cast<unsigned long long>(replay->digests_checked()));
+    }
     if (client) {
         const bool failed = client->failed();
         client->disconnect(hs->sim.time().time);

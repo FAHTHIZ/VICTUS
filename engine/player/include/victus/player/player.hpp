@@ -26,6 +26,11 @@ struct PlayerOptions {
     // Save games folder; empty = `<user data>/saves/<game>` for exported games and
     // `<project>/.victus/saves` when running a project.
     fs::Path saves;
+    // Regression captures (offline only): record this session's input, frame times, script
+    // random seed and state digests to a .vcapture file, or replay one (keyboard ignored; the run
+    // ends with the capture and reports the first frame whose state digest differs).
+    fs::Path record;
+    fs::Path replay;
 };
 
 struct PlayerReport {
@@ -37,6 +42,8 @@ struct PlayerReport {
     std::string quality;         // quality tier used
     std::string net_status;      // last multiplayer status when --connect was used
     std::size_t assets_reloaded{0}; // textures/models/audio hot-reloaded while running
+    std::uint64_t digests_checked{0}; // replay: state digests compared
+    std::string replay_mismatch;    // replay: first divergence ("frame N: expected X, got Y")
 };
 
 [[nodiscard]] Result<PlayerReport> run(const PlayerOptions& options);
