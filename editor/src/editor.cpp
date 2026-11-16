@@ -67,6 +67,8 @@ Result<std::unique_ptr<Editor>> Editor::create(render::GpuContext& gpu, ui::UiCo
 }
 
 Editor::~Editor() {
+    if (play_server_) play_server_->shutdown(sim_.time().time); // tell joined players we are gone
+    play_server_.reset();
     if (log_sink_) log::logger().remove_sink(log_sink_);
     cache_.reset();
     if (viewport_tex_) gpu_.device().destroy(viewport_tex_);
@@ -758,11 +760,75 @@ void Editor::play() {
         return;
     }
     if (play_state_ == PlayState::Playing) return;
-    start_play(0);
+    start_play(0, net_settings_.mode == NetPlaySettings::Mode::Host);
+}
+
+void Editor::play_host() {
+    if (play_state_ != PlayState::Editing) return;
+    net_settings_.mode = NetPlaySettings::Mode::Host;
+    start_play(0, true);
+}
+
+Status Editor::set_net_settings(NetPlaySettings s) {
+    if (!s.conditions.empty())
+        if (auto c = net::parse_conditions(s.conditions); !c) return make_error(ErrorCode::InvalidArgument, "link conditions: " + c.error().message);
+    if (s.insecure && !s.password.empty()) return make_error(ErrorCode::InvalidArgument, "a password needs encryption; turn off insecure");
+    if (s.max_clients == 0 || s.max_clients > 64) return make_error(ErrorCode::InvalidArgument, "max clients must be 1-64");
+    if (s.port == 0) return make_error(ErrorCode::InvalidArgument, "port must be 1-65535");
+    net_settings_ = std::move(s);
+    return {};
+}
+
+std::string Editor::join_command() const {
+    std::string cmd = "victus run \"";
+    cmd += project_ ? project_->root().string() : std::string("<project>");
+    cmd += std::format("\" --connect 127.0.0.1:{} --name player2", net_settings_.port);
+    if (net_settings_.insecure) cmd += " --insecure";
+    else if (!server_key_.empty()) cmd += " --server-key " + server_key_;
+    if (!net_settings_.password.empty()) cmd += " --password <password>";
+    return cmd;
+}
+
+Status Editor::start_hosting() {
+    if (!project_) return make_error(ErrorCode::InvalidArgument, "no project");
+    net::UdpOptions uo;
+    uo.port = net_settings_.port;
+    uo.max_peers = net_settings_.max_clients + 4u; // room to tell extra peers the server is full
+    auto transport = net::create_udp_transport(uo);
+    if (!transport) return std::move(transport).error();
+    std::unique_ptr<net::Transport> t = std::move(*transport);
+    if (!net_settings_.conditions.empty()) {
+        auto c = net::parse_conditions(net_settings_.conditions);
+        if (!c) return std::move(c).error();
+        t = net::with_conditions(std::move(t), *c);
+    }
+    server_key_.clear();
+    if (!net_settings_.insecure) {
+        // Same key file as `victus serve` / `victus run --host`, so pinned keys keep working.
+        auto kp = net::load_or_create_key(project_->root() / ".victus" / "server.key");
+        if (!kp) return std::move(kp).error();
+        net::SecureOptions sec;
+        sec.server_secret = kp->secret;
+        sec.password = net_settings_.password;
+        t = net::with_encryption(std::move(t), std::move(sec));
+        server_key_ = net::key_to_hex(kp->public_key);
+    }
+    net::ServerOptions so;
+    so.game_id = net::make_game_id(project_->settings().name, scene_path_);
+    so.max_clients = net_settings_.max_clients;
+    so.host_player = true;
+    so.host_name = net_settings_.player_name;
+    play_server_ = std::make_unique<net::NetServer>(std::move(t), so);
+    play_server_->install(sim_);
+    net_send_history_.clear();
+    net_receive_history_.clear();
+    net_sample_ = 0;
+    return {};
 }
 
 void Editor::record() {
     if (play_state_ != PlayState::Editing) return;
+    if (net_settings_.mode == NetPlaySettings::Mode::Host) notify("captures record offline sessions; recording without hosting");
     auto c = std::make_unique<gameplay::Capture>();
     c->seed = Random(static_cast<std::uint64_t>(platform::Platform::seconds() * 1e9)).next_u64() | 1;
     if (project_) c->project = project_->settings().name;
@@ -839,9 +905,21 @@ void Editor::tick_play(float dt) {
         return;
     }
     sim_.tick(*play_scene_, dt);
+    if (play_server_) {
+        // Bandwidth history for the Network window (4 samples per second, last 30 s).
+        if ((net_sample_ += dt) >= 0.25f) {
+            net_sample_ = 0;
+            const auto d = play_server_->diagnostics();
+            net_send_history_.push_back(d.send_kbps);
+            net_receive_history_.push_back(d.receive_kbps);
+            constexpr std::size_t kSamples = 120;
+            if (net_send_history_.size() > kSamples) net_send_history_.erase(net_send_history_.begin());
+            if (net_receive_history_.size() > kSamples) net_receive_history_.erase(net_receive_history_.begin());
+        }
+    }
 }
 
-void Editor::start_play(std::uint64_t seed) {
+void Editor::start_play(std::uint64_t seed, bool networked) {
     // Commit any in-flight inspector edit to the authored scene first.
     if (pending_dirty_ && !pending_before_.empty()) record_edit("Edit", std::move(pending_before_));
     pending_before_.clear();
@@ -889,9 +967,27 @@ void Editor::start_play(std::uint64_t seed) {
         a->stop_all();
         audio::add_audio_systems(sim_, *a);
     }
+    if (networked) {
+        if (auto st = start_hosting(); !st.ok()) {
+            notify("cannot host: " + st.error().message, true);
+            play_server_.reset();
+            play_scene_.reset();
+            reset_simulation();
+            play_scripts_.reset();
+            play_physics_.reset();
+            play_animation_.reset();
+            play_particles_.reset();
+            play_navigation_.reset();
+            return;
+        }
+    }
     focus_viewport_ = true;
     play_state_ = PlayState::Playing;
-    notify("Playing - changes made now are discarded on Stop");
+    if (play_server_)
+        notify(std::format("Hosting on UDP port {} ({}) - others join with: {}", net_settings_.port,
+                           server_key_.empty() ? "insecure" : "encrypted", join_command()));
+    else
+        notify("Playing - changes made now are discarded on Stop");
 }
 
 audio::AudioEngine* Editor::audio() {
@@ -949,6 +1045,10 @@ void Editor::stop() {
     recording_.reset();
     replay_.reset();
     replay_capture_.reset();
+    if (play_server_) {
+        play_server_->shutdown(sim_.time().time); // joined players see "server shutting down"
+        play_server_.reset();
+    }
     play_scene_.reset();
     reset_simulation();
     play_scripts_.reset();

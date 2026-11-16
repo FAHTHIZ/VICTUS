@@ -15,6 +15,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -509,6 +510,10 @@ struct NetServer::Impl {
         std::uint16_t owner{kServerId};
         std::string name;
         json::Value sent_vars = json::Value::object();
+        // Debugging counters (replication()).
+        std::uint64_t updates{0}, bytes{0}, var_updates{0}, var_bytes{0}, deferred{0};
+        double last_update{-1};
+        std::set<std::uint16_t> relevant_to; // client ids whose latest snapshot considered it
     };
     std::map<std::uint32_t, Tracked> tracked;
 
@@ -965,6 +970,10 @@ struct NetServer::Impl {
             ByteWriter vw;
             write_vars(vw, id, diff);
             broadcast(Channel::Reliable, vw);
+            std::uint64_t receivers = 0;
+            for (const auto& [peer, c] : clients) receivers += c.welcomed;
+            tr.var_updates += receivers;
+            tr.var_bytes += receivers * vw.size();
         }
         // Snapshots per client within the byte budget, highest accumulated priority first.
         const float interval = 1.0f / std::max(1.0f, options.snapshot_rate);
@@ -991,8 +1000,15 @@ struct NetServer::Impl {
             for (auto& [id, tr] : tracked) {
                 const auto* ni = w.get<NetworkIdentityComponent>(tr.e);
                 const auto* xf = w.get<Transform>(tr.e);
-                if (!xf || (ni && !ni->replicate_transform)) continue;
-                if (ni && ni->relevancy_radius > 0 && viewer && math::length(xf->position - viewer->position) > ni->relevancy_radius) continue;
+                if (!xf || (ni && !ni->replicate_transform)) {
+                    tr.relevant_to.erase(c.id);
+                    continue;
+                }
+                if (ni && ni->relevancy_radius > 0 && viewer && math::length(xf->position - viewer->position) > ni->relevancy_radius) {
+                    tr.relevant_to.erase(c.id);
+                    continue;
+                }
+                tr.relevant_to.insert(c.id);
                 auto& sent = c.sent[id];
                 const QState q = quantize(xf->position, xf->rotation);
                 if (options.delta_snapshots) {
@@ -1029,13 +1045,19 @@ struct NetServer::Impl {
             std::uint32_t deferred = 0;
             for (const auto& cd : cands) {
                 constexpr std::size_t kEntryMax = 6 + 3 * 10 + 4 * 3;
+                auto& tr = tracked[cd.id];
                 if (sw.size() + kEntryMax > options.snapshot_budget || n == 0xFFFF) {
                     ++deferred;
+                    ++tr.deferred;
                     continue;
                 }
                 static const QState kZero{};
                 const QState* known = find_state(base, cd.id);
+                const std::size_t entry_at = sw.size();
                 write_entry(sw, cd.id, cd.q, known ? *known : kZero);
+                ++tr.updates;
+                tr.bytes += sw.size() - entry_at;
+                tr.last_update = now;
                 if (options.delta_snapshots) put_state(view, cd.id, cd.q);
                 auto& sent = c.sent[cd.id];
                 sent.q = cd.q;
@@ -1157,6 +1179,81 @@ NetDiagnostics NetServer::diagnostics() const {
     return d;
 }
 
+namespace {
+std::string entity_name(Scene* scene, Entity e) {
+    if (!scene || !scene->world().alive(e)) return {};
+    const auto* n = scene->world().get<scene::Name>(e);
+    return n ? n->value : std::string();
+}
+std::uint32_t var_count(Scene* scene, Entity e) {
+    if (!scene || !scene->world().alive(e)) return 0;
+    const auto* st = scene->world().get<NetState>(e);
+    return st && st->vars.is_object() ? static_cast<std::uint32_t>(st->vars.size()) : 0u;
+}
+} // namespace
+
+std::vector<ReplicationInfo> NetServer::replication() const {
+    const Impl& m = *impl_;
+    std::vector<ReplicationInfo> out;
+    out.reserve(m.tracked.size());
+    for (const auto& [id, t] : m.tracked) {
+        ReplicationInfo r;
+        r.net_id = id;
+        r.entity = t.e;
+        r.name = entity_name(m.scene, t.e);
+        if (r.name.empty()) r.name = t.name;
+        r.owner = t.owner;
+        r.player = t.kind == kPlayer;
+        r.local = r.player && t.owner == kServerId; // the listen-server host's character
+        r.updates = t.updates;
+        r.bytes = t.bytes;
+        r.var_updates = t.var_updates;
+        r.var_bytes = t.var_bytes;
+        r.last_update = t.last_update;
+        r.deferred = t.deferred;
+        for (const std::uint16_t c : t.relevant_to)
+            for (const auto& [peer, cl] : m.clients)
+                if (cl.welcomed && cl.id == c) ++r.relevant_clients;
+        r.vars = var_count(m.scene, t.e);
+        out.push_back(std::move(r));
+    }
+    return out;
+}
+
+std::vector<ClientDiagnostics> NetServer::client_diagnostics() const {
+    const Impl& m = *impl_;
+    std::vector<ClientDiagnostics> out;
+    for (const auto& [peer, c] : m.clients) {
+        if (!c.welcomed) continue;
+        const PeerStats ps = m.transport->stats(peer);
+        ClientDiagnostics d;
+        d.id = c.id;
+        d.name = c.name;
+        d.player = c.player;
+        d.rtt_ms = ps.rtt_ms;
+        d.bytes_sent = ps.bytes_sent;
+        d.bytes_received = ps.bytes_received;
+        d.packets_dropped = ps.packets_dropped;
+        d.packets_rejected = ps.packets_rejected;
+        d.snapshot_seq = c.snapshot_seq;
+        d.snapshot_ack = c.snapshot_ack;
+        d.input_queue = static_cast<std::uint32_t>(c.inputs.size());
+        d.violations = c.violations;
+        d.encrypted = ps.encrypted;
+        out.push_back(std::move(d));
+    }
+    for (const auto& h : m.held) {
+        ClientDiagnostics d;
+        d.id = h.id;
+        d.name = h.name;
+        d.player = h.player;
+        d.held = true;
+        out.push_back(std::move(d));
+    }
+    std::sort(out.begin(), out.end(), [](const ClientDiagnostics& a, const ClientDiagnostics& b) { return a.id < b.id; });
+    return out;
+}
+
 // =================================================================================================
 // Client
 // =================================================================================================
@@ -1192,6 +1289,9 @@ struct NetClient::Impl {
         bool local{false};
         std::deque<Sample> samples;
         bool confirmed{true}; // re-announced by the server since the last rejoin
+        bool player{false};
+        std::uint64_t updates{0}, bytes{0}, var_updates{0}, var_bytes{0}; // replication()
+        double last_update{-1};
     };
     std::map<std::uint32_t, Remote> entities;
     Entity local_player;
@@ -1356,7 +1456,9 @@ struct NetClient::Impl {
             history.clear();
             pending_correction = {};
         }
-        entities[net_id] = Remote{e, owner, st.local, {}};
+        Remote rm{e, owner, st.local, {}};
+        rm.player = kind == kPlayer;
+        entities[net_id] = std::move(rm);
     }
 
     void handle_despawn(ByteReader& r) {
@@ -1373,11 +1475,14 @@ struct NetClient::Impl {
     }
 
     void handle_vars(ByteReader& r) {
+        const std::size_t size = r.remaining() + 1; // + message type byte
         const auto net_id = static_cast<std::uint32_t>(r.varuint());
         const std::string text = r.str(64 * 1024);
         if (!r.done()) return;
         const auto it = entities.find(net_id);
         if (it == entities.end() || !scene->world().alive(it->second.e)) return;
+        ++it->second.var_updates;
+        it->second.var_bytes += size;
         auto v = decode_json(text, 64 * 1024);
         if (!v || !v->is_object()) return;
         NetState& st = state_of(*scene, it->second.e);
@@ -1456,12 +1561,14 @@ struct NetClient::Impl {
             std::uint32_t id;
             math::Vec3 p;
             math::Quat q;
+            std::size_t bytes;
         };
         std::vector<Entry> list;
         list.reserve(n);
         View view = *base;
         static const QState kZero{};
         for (std::uint16_t i = 0; i < n && r.ok(); ++i) {
+            const std::size_t entry_at = r.remaining();
             const std::uint64_t head = r.varuint();
             if (head >> 34) r.fail(); // id beyond 32 bits
             const auto eid = static_cast<std::uint32_t>(head >> 2);
@@ -1473,7 +1580,7 @@ struct NetClient::Impl {
             if (head & kHasRotation)
                 for (auto& c : st.q) c = static_cast<std::uint16_t>(std::clamp<std::int64_t>(c + unzigzag(r.varuint()), 0, 65535));
             put_state(view, eid, st);
-            list.push_back({eid, position_of(st), rotation_of(st)});
+            list.push_back({eid, position_of(st), rotation_of(st), entry_at - r.remaining()});
         }
         if (!r.done()) return;
         ++snapshots_received;
@@ -1499,6 +1606,9 @@ struct NetClient::Impl {
             const auto it = entities.find(en.id);
             if (it == entities.end()) continue;
             Remote& rm = it->second;
+            ++rm.updates;
+            rm.bytes += en.bytes;
+            rm.last_update = now;
             if (rm.local) {
                 reconcile(ack, en.p);
                 continue;
@@ -1821,6 +1931,29 @@ NetDiagnostics NetClient::diagnostics() const {
     d.server_key = m.server_key;
     d.status = m.status;
     return d;
+}
+
+std::vector<ReplicationInfo> NetClient::replication() const {
+    const Impl& m = *impl_;
+    std::vector<ReplicationInfo> out;
+    out.reserve(m.entities.size());
+    for (const auto& [id, rm] : m.entities) {
+        ReplicationInfo r;
+        r.net_id = id;
+        r.entity = rm.e;
+        r.name = entity_name(m.scene, rm.e);
+        r.owner = rm.owner;
+        r.player = rm.player;
+        r.local = rm.local;
+        r.updates = rm.updates;
+        r.bytes = rm.bytes;
+        r.var_updates = rm.var_updates;
+        r.var_bytes = rm.var_bytes;
+        r.last_update = rm.last_update;
+        r.vars = var_count(m.scene, rm.e);
+        out.push_back(std::move(r));
+    }
+    return out;
 }
 
 } // namespace victus::net

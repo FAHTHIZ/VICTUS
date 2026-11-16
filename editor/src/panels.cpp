@@ -357,6 +357,7 @@ void Editor::draw_workspace(float) {
     draw_assets();
     draw_console();
     draw_input_actions();
+    draw_network();
     draw_status_bar();
     handle_shortcuts();
 }
@@ -433,6 +434,7 @@ void Editor::draw_menu_bar() {
         if (ImGui::MenuItem("Reset Layout")) layout_built_ = false;
         ImGui::MenuItem("Physics Colliders", nullptr, &show_colliders_);
         ImGui::MenuItem("Navigation Mesh", nullptr, &show_navmesh_);
+        ImGui::MenuItem("Network", nullptr, &show_network_);
         ImGui::MenuItem("UI Demo Window", nullptr, &show_demo_);
         if (ImGui::BeginMenu("Rendering Quality")) {
             for (auto tier : {render::QualityTier::Low, render::QualityTier::Medium, render::QualityTier::High,
@@ -449,6 +451,16 @@ void Editor::draw_menu_bar() {
         if (ImGui::MenuItem(editing ? "Play" : "Resume", nullptr, false, play_state_ != PlayState::Playing)) play();
         if (ImGui::MenuItem("Pause", nullptr, false, play_state_ == PlayState::Playing)) pause();
         if (ImGui::MenuItem("Stop", nullptr, false, !editing)) stop();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Play as Host", nullptr, false, editing && project_.has_value())) play_host();
+        if (ImGui::BeginMenu("Network Mode", editing)) {
+            NetPlaySettings s = net_settings_;
+            if (ImGui::MenuItem("Offline", nullptr, s.mode == NetPlaySettings::Mode::Offline)) s.mode = NetPlaySettings::Mode::Offline;
+            if (ImGui::MenuItem("Host (listen server)", nullptr, s.mode == NetPlaySettings::Mode::Host)) s.mode = NetPlaySettings::Mode::Host;
+            (void)set_net_settings(s);
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Network Settings...")) show_network_ = true;
         ImGui::Separator();
         if (ImGui::MenuItem("Record Capture", nullptr, false, editing && project_.has_value())) record();
         const auto list = captures();
@@ -479,8 +491,11 @@ void Editor::draw_toolbar() {
             const bool editing = play_state_ == PlayState::Editing;
             if (editing) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.95f, 0.45f, 1));
-                if (ImGui::MenuItem("> Play")) play();
+                if (ImGui::MenuItem(net_settings_.mode == NetPlaySettings::Mode::Host ? "> Play (Host)" : "> Play")) play();
                 ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(net_settings_.mode == NetPlaySettings::Mode::Host ? "Play as a listen server (Play > Network Mode)"
+                                                                                         : "Play offline (Play > Network Mode)");
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1));
                 if (ImGui::MenuItem("(o) Record", nullptr, false, project_.has_value())) record();
                 ImGui::PopStyleColor();
@@ -496,7 +511,12 @@ void Editor::draw_toolbar() {
                     play();
                 }
             }
-            if (recording()) {
+            if (play_server_) {
+                const auto d = play_server_->diagnostics();
+                ImGui::TextColored(ImVec4(0.45f, 0.8f, 1.0f, 1), "HOST %u", d.clients + 1);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%u players, %.1f kbps out - View > Network", d.clients + 1, static_cast<double>(d.send_kbps));
+                if (ImGui::IsItemClicked()) show_network_ = true;
+            } else if (recording()) {
                 ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1), "REC");
             } else if (replay_ && !replay_result_.empty()) {
                 ImGui::TextColored(replay_diverged_ ? ImVec4(1.0f, 0.5f, 0.3f, 1) : ImVec4(0.45f, 0.95f, 0.45f, 1), "%s",
@@ -1155,6 +1175,7 @@ void Editor::draw_inspector() {
         const bool changed = inspect_components(e);
         if (changed) active_scene().update_transforms();
         end_inspector_frame(e, changed);
+        draw_network_section(e);
     }
     if (play_state_ != PlayState::Editing) {
         ImGui::Spacing();

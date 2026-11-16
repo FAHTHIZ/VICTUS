@@ -191,6 +191,41 @@ struct NetDiagnostics {
     std::string status;                // human-readable state ("connected", "rejected: ...")
 };
 
+// Per-entity replication counters for debugging tools (editor Network panel, `victus` CLI).
+// Server: what it sent to every client; client: what it received from the server.
+struct ReplicationInfo {
+    std::uint32_t net_id{0};
+    Entity entity;
+    std::string name;
+    std::uint16_t owner{kServerId};
+    bool player{false};            // spawned from a player template (one per client / the host)
+    bool local{false};             // client: predicted by this machine (its own player)
+    std::uint64_t updates{0};      // snapshot entries sent (all clients) / received
+    std::uint64_t bytes{0};        // snapshot bytes of those entries
+    std::uint64_t var_updates{0};  // reliable network-variable updates sent (all clients) / received
+    std::uint64_t var_bytes{0};    // bytes of those updates
+    double last_update{-1};        // session time of the newest snapshot entry (-1 = never)
+    std::uint32_t relevant_clients{0}; // server: clients whose latest snapshot considered it relevant
+    std::uint64_t deferred{0};     // server: times the snapshot budget left it out
+    std::uint32_t vars{0};         // replicated variables currently set
+};
+
+// Server-side view of one connected (or held) client for debugging tools.
+struct ClientDiagnostics {
+    std::uint16_t id{0};
+    std::string name;
+    Entity player;
+    bool held{false};               // connection dropped; character waits for a reconnect
+    float rtt_ms{0};
+    std::uint64_t bytes_sent{0}, bytes_received{0}; // transport totals for this peer
+    std::uint64_t packets_dropped{0}, packets_rejected{0};
+    std::uint32_t snapshot_seq{0};  // newest snapshot sent to this client
+    std::uint32_t snapshot_ack{0};  // newest snapshot it acknowledged
+    std::uint32_t input_queue{0};   // input frames waiting to be applied
+    std::uint32_t violations{0};    // malformed or over-limit payloads so far
+    bool encrypted{false};
+};
+
 // What scripts and gameplay code see of the session (published on the scene by both sessions).
 class NetContext {
 public:
@@ -206,6 +241,8 @@ public:
     [[nodiscard]] virtual std::vector<ClientInfo> clients() const = 0;
     [[nodiscard]] virtual Entity local_player() const noexcept = 0; // client: the predicted player
     [[nodiscard]] virtual NetDiagnostics diagnostics() const = 0;
+    // Replicated entities with their traffic counters, ordered by net id.
+    [[nodiscard]] virtual std::vector<ReplicationInfo> replication() const = 0;
 };
 
 inline constexpr std::size_t kMaxMessageBytes = 1024;
@@ -307,6 +344,9 @@ public:
     [[nodiscard]] std::vector<ClientInfo> clients() const override; // includes the host (id 0) when hosting
     [[nodiscard]] Entity local_player() const noexcept override; // listen server: the host's character
     [[nodiscard]] NetDiagnostics diagnostics() const override;
+    [[nodiscard]] std::vector<ReplicationInfo> replication() const override;
+    // Network clients (not the host), welcomed and held, ordered by id.
+    [[nodiscard]] std::vector<ClientDiagnostics> client_diagnostics() const;
 
     // Manual driving (tests, tools); install() calls these from its systems.
     void receive(scene::Scene& scene, double now);
@@ -354,6 +394,7 @@ public:
     [[nodiscard]] std::vector<ClientInfo> clients() const override;
     [[nodiscard]] Entity local_player() const noexcept override;
     [[nodiscard]] NetDiagnostics diagnostics() const override;
+    [[nodiscard]] std::vector<ReplicationInfo> replication() const override;
 
     // True once the server refused or dropped the connection (see diagnostics().status).
     [[nodiscard]] bool failed() const noexcept;
