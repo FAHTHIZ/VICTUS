@@ -179,7 +179,7 @@ TEST_CASE("editor: 3D project workflow end to end") {
         if (!e.is_null()) picked.insert(s.world().get<Name>(e)->value);
     }
     CHECK(picked.count("Spinning Cube") == 1);
-    CHECK(picked.count("Floating Sphere") == 1);
+    CHECK(picked.count("Player") == 1);
 
     // Create, undo, redo.
     const Entity cube = h.ed->create_entity(editor::Primitive::Cube);
@@ -230,6 +230,16 @@ TEST_CASE("editor: 3D project workflow end to end") {
     const Entity play_spinner = play.find(s.uuid(spinner));
     REQUIRE_FALSE(play_spinner.is_null());
     CHECK_FALSE(play.world().get<Transform>(play_spinner)->rotation == authored);
+    // Template scripts run in play mode: the player bobs, the camera follows, no script errors.
+    REQUIRE(h.ed->play_scripts() != nullptr);
+    CHECK(h.ed->play_scripts()->stats().instances == 2);
+    CHECK(h.ed->play_scripts()->stats().errors == 0);
+    {
+        const Entity ap = s.find_by_name("Player");
+        const Entity pp = play.find(s.uuid(ap));
+        REQUIRE_FALSE(pp.is_null());
+        CHECK(play.world().get<Transform>(pp)->position.y != doctest::Approx(s.world().get<Transform>(ap)->position.y));
+    }
     h.ed->create_entity(editor::Primitive::Sphere); // play-time edit, not undoable, discarded
     CHECK(h.ed->undo_stack().size() == undo_depth);
     auto play_px = h.viewport();
@@ -238,6 +248,7 @@ TEST_CASE("editor: 3D project workflow end to end") {
     CHECK(h.ed->play_state() == editor::PlayState::Editing);
     CHECK(&h.ed->active_scene() == &s);
     CHECK(s.world().get<Transform>(spinner)->rotation == authored);
+    CHECK(h.ed->play_scripts() == nullptr);
 
     // Save and reopen: the edits persist and the scene is clean.
     REQUIRE(h.ed->save_scene().ok());

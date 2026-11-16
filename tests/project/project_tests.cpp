@@ -2,6 +2,7 @@
 #include "doctest.h"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/project/project.hpp"
+#include "victus/script/script.hpp"
 
 #include <filesystem>
 
@@ -15,7 +16,7 @@ sfs::path temp_dir(const char* tag) {
 } // namespace
 
 TEST_CASE("gameplay: fixed and variable phases, built-in behaviours") {
-    gameplay::register_components();
+    project::register_components();
     scene::Scene s;
     const auto e = s.create("spinner");
     s.world().add<gameplay::RotatorComponent>(e) = {{0, 1, 0}, 90.0f};
@@ -53,7 +54,7 @@ TEST_CASE("gameplay: fixed and variable phases, built-in behaviours") {
 }
 
 TEST_CASE("project: create from every template, reopen, sandboxing") {
-    gameplay::register_components();
+    project::register_components();
     for (const auto& tpl : project::templates()) {
         CAPTURE(tpl.id);
         const auto dir = temp_dir("proj");
@@ -126,4 +127,121 @@ TEST_CASE("project: recent projects list") {
     REQUIRE(r.entries().size() == 2);
     CHECK(r.entries()[0] == fs::Path("/a"));
     sfs::remove_all(file.parent_path());
+}
+
+namespace {
+struct TemplateRun {
+    scene::Scene scene;
+    std::unique_ptr<script::ScriptHost> host;
+    gameplay::Simulation sim;
+    gameplay::ManualInput input;
+    void frames(int n) {
+        for (int i = 0; i < n; ++i) {
+            sim.tick(scene, 1.0f / 60.0f);
+            input.end_frame();
+        }
+    }
+    math::Vec3 pos(const char* name) {
+        const auto e = scene.find_by_name(name);
+        REQUIRE_FALSE(e.is_null());
+        return scene.world().get<scene::Transform>(e)->position;
+    }
+};
+
+std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir) {
+    project::register_components();
+    auto p = project::Project::create(dir, "Scripted", id);
+    REQUIRE(p.ok());
+    auto r = std::make_unique<TemplateRun>();
+    auto path = p->startup_scene_path();
+    REQUIRE(path.ok());
+    REQUIRE(r->scene.load_file(*path).ok());
+    script::HostOptions o;
+    o.assets_root = dir / "assets";
+    auto h = script::ScriptHost::create(o);
+    REQUIRE(h.ok());
+    r->host = std::move(h).value();
+    gameplay::add_builtin_systems(r->sim);
+    script::add_script_systems(r->sim, *r->host);
+    r->sim.input = &r->input;
+    return r;
+}
+} // namespace
+
+TEST_CASE("templates: 2D platformer is playable through its scripts") {
+    const auto dir = temp_dir("tpl2d");
+    auto r = start_template("2d", dir);
+    r->frames(30); // settle: the player starts on the ground
+    CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(1e-3));
+    CHECK(r->host->stats().instances == 4); // player + 3 coins
+    // Run right: the player stops at the right wall and collects the coin on the ground.
+    r->input.set_key("D", true);
+    r->frames(300);
+    CHECK(r->pos("Player").x == doctest::Approx(8.8f - 0.45f).epsilon(1e-3));
+    CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(1e-3));
+    CHECK(r->scene.find_by_name("Coin 3").is_null());
+    CHECK_FALSE(r->scene.find_by_name("Coin 1").is_null());
+    r->input.set_key("D", false);
+    // Jump: rises, then lands back on the ground.
+    r->input.set_key("Space", true);
+    r->frames(10);
+    r->input.set_key("Space", false);
+    CHECK(r->pos("Player").y > -1.5f);
+    r->frames(120);
+    CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(1e-3));
+    // Walk left under the low platform, jump onto it and collect Coin 1.
+    r->input.set_key("A", true);
+    r->frames(60); // x ~ 2.55
+    r->input.set_key("A", false);
+    r->frames(2);
+    const float x = r->pos("Player").x;
+    CAPTURE(x);
+    r->input.set_key("Left", true);
+    r->frames(40);   // to x ~ -1.4, past the platform's left edge
+    r->input.set_key("Left", false);
+    r->input.set_key("Space", true);
+    r->input.set_key("Right", true);
+    r->frames(25);   // jump up and right onto the platform
+    r->input.set_key("Space", false);
+    r->frames(60);
+    r->input.set_key("Right", false);
+    r->frames(30);
+    CHECK(r->scene.find_by_name("Coin 1").is_null());
+    CHECK(r->host->stats().errors == 0);
+    for (const auto& e : r->host->recent_errors()) MESSAGE(e);
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("templates: 3D player moves with WASD and the camera follows") {
+    const auto dir = temp_dir("tpl3d");
+    auto r = start_template("3d", dir);
+    r->frames(2);
+    const math::Vec3 p0 = r->pos("Player"), c0 = r->pos("Main Camera");
+    r->input.set_key("W", true);
+    r->frames(60);
+    const math::Vec3 p1 = r->pos("Player"), c1 = r->pos("Main Camera");
+    CHECK(p1.z < p0.z - 4.0f); // ~5 units/s forward (-Z)
+    CHECK(p1.x == doctest::Approx(p0.x));
+    CHECK(c1.z < c0.z - 2.0f); // smoothed follow
+    r->frames(240);
+    CHECK(r->pos("Player").z == doctest::Approx(-9.0f)); // clamped to bounds
+    CHECK(r->host->stats().errors == 0);
+    for (const auto& e : r->host->recent_errors()) MESSAGE(e);
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("templates: simulation camera orbits the field") {
+    const auto dir = temp_dir("tplsim");
+    auto r = start_template("simulation", dir);
+    r->frames(1);
+    const math::Vec3 c0 = r->pos("Main Camera");
+    r->frames(120);
+    const math::Vec3 c1 = r->pos("Main Camera");
+    CHECK(math::length(c1 - c0) > 0.5f);
+    CHECK(c1.y == doctest::Approx(c0.y));
+    CHECK(r->host->stats().errors == 0);
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
 }

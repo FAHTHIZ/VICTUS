@@ -45,8 +45,9 @@ Result<std::unique_ptr<Editor>> Editor::create(render::GpuContext& gpu, ui::UiCo
                                                platform::Window* window, const EditorOptions& options) {
     std::unique_ptr<Editor> ed(new Editor(gpu, ui, platform, window));
     ed->options_ = options;
-    gameplay::register_components();
-    gameplay::add_builtin_systems(ed->sim_);
+    project::register_components();
+    if (platform) ed->input_ = std::make_unique<player::PlatformInput>(platform->input());
+    ed->reset_simulation();
     ed->recent_ = std::make_unique<project::RecentProjects>(options.recent_file);
     ed->log_sink_ = std::make_shared<log::RingSink>(4096);
     log::logger().add_sink(ed->log_sink_);
@@ -99,6 +100,12 @@ Status Editor::open_project(const fs::Path& path) {
     const auto imported = db_->import_all();
     for (const auto& m : imported.messages) notify(m, imported.failed > 0);
     cache_ = std::make_unique<runtime::GpuAssetCache>(gpu_, db_.get());
+    {
+        script::HostOptions so;
+        so.assets_root = db_->assets_dir();
+        if (auto host = script::ScriptHost::create(so)) edit_scripts_ = std::move(host).value();
+        else notify("scripting unavailable: " + host.error().message, true);
+    }
     recent_->add(project_->root());
     (void)recent_->save();
     const std::string startup = project_->settings().startup_scene;
@@ -122,6 +129,7 @@ void Editor::close_project() {
     selection_.clear();
     undo_.clear();
     cache_.reset();
+    edit_scripts_.reset();
     db_.reset();
     project_.reset();
     scene_ = std::make_unique<Scene>();
@@ -527,9 +535,29 @@ void Editor::play() {
         return;
     }
     play_scene_ = std::move(copy);
-    sim_.reset();
+    reset_simulation();
+    if (db_) {
+        script::HostOptions so;
+        so.assets_root = db_->assets_dir();
+        so.watch_files = true;
+        if (auto host = script::ScriptHost::create(so)) {
+            play_scripts_ = std::move(host).value();
+            script::add_script_systems(sim_, *play_scripts_);
+        } else {
+            notify("scripts disabled: " + host.error().message, true);
+        }
+    }
+    focus_viewport_ = true;
     play_state_ = PlayState::Playing;
     notify("Playing - changes made now are discarded on Stop");
+}
+
+void Editor::reset_simulation() {
+    // Systems capture the script host by reference, so the simulation is rebuilt (not just reset)
+    // whenever the host changes.
+    sim_ = gameplay::Simulation();
+    gameplay::add_builtin_systems(sim_);
+    sim_.input = input_.get();
 }
 
 void Editor::pause() {
@@ -539,6 +567,9 @@ void Editor::pause() {
 void Editor::stop() {
     if (play_state_ == PlayState::Editing) return;
     play_scene_.reset();
+    reset_simulation();
+    play_scripts_.reset();
+    if (input_) input_->set_enabled(false);
     play_state_ = PlayState::Editing;
     pending_before_.clear();
     pending_dirty_ = false;

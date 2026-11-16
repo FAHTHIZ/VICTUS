@@ -7,8 +7,10 @@
 #include "victus/core/log.hpp"
 #include "victus/editor/undo.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/player/platform_input.hpp"
 #include "victus/project/project.hpp"
 #include "victus/runtime/scene_view.hpp"
+#include "victus/script/script.hpp"
 #include "victus/ui/ui.hpp"
 
 #include <memory>
@@ -82,6 +84,8 @@ public:
     [[nodiscard]] const std::string& scene_path() const noexcept { return scene_path_; }
     [[nodiscard]] bool dirty() const noexcept { return undo_.dirty(); }
     // Scene being edited, or the play copy while playing.
+    // Script host of the current play session (null while editing).
+    [[nodiscard]] const script::ScriptHost* play_scripts() const noexcept { return play_scripts_.get(); }
     [[nodiscard]] scene::Scene& active_scene() noexcept { return play_scene_ ? *play_scene_ : *scene_; }
     [[nodiscard]] scene::Scene& edit_scene() noexcept { return *scene_; }
 
@@ -156,6 +160,8 @@ private:
     void draw_overlays_3d(render::SceneRenderer& r);
     void draw_overlays_2d(render::SpriteBatch& b);
     void prune_selection();
+    void reset_simulation();
+    bool inspect_script(script::ScriptComponent& c);
 
     render::GpuContext& gpu_;
     ui::UiContext& ui_;
@@ -172,6 +178,11 @@ private:
     std::string scene_path_;
     UndoStack undo_;
     gameplay::Simulation sim_;
+    std::unique_ptr<script::ScriptHost> play_scripts_; // fresh per play session, hot reloads files
+    std::unique_ptr<script::ScriptHost> edit_scripts_; // inspector property discovery
+    std::unique_ptr<player::PlatformInput> input_;     // game input, enabled while the viewport has focus
+    float script_poll_{0};
+    bool focus_viewport_{false};
     PlayState play_state_{PlayState::Editing};
     std::vector<Uuid> selection_;
     EditorCamera camera_;

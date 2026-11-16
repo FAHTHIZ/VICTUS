@@ -40,7 +40,7 @@ A VICTUS-owned RHI abstracts devices, queues, resources, descriptors, synchroniz
 Do not promise parity across devices. A feature is supported only on validated backend/device combinations.
 
 ## Gameplay subsystems
-Physics, navigation, animation, audio, UI, input, AI, scripting, visual scripting and save/load have VICTUS-owned interfaces, explicit ownership and testable contracts. Gameplay AI (decision-making/perception) is distinct from simulation agents (large-scale autonomous population behavior).
+Physics, navigation, animation, audio, UI, input, AI, scripting, visual scripting and save/load have VICTUS-owned interfaces, explicit ownership and testable contracts. Scripting (implemented, `engine/script`) runs Luau inside a `ScriptHost` that is registered as Simulation systems; scripts reach the world only through the scene, serializer registry and `gameplay::InputSource`, so the same scripts run in the editor, the player and headless `victus simulate` (servers, CI). Gameplay AI (decision-making/perception) is distinct from simulation agents (large-scale autonomous population behavior).
 
 ## Networking
 Networking is server-authoritative by default for competitive/shared-state games. Separate transport, serialization, replication, prediction, reconciliation, interpolation, relevancy, session services and game-specific rules. Headless server uses the same authoritative gameplay/simulation code as the client. Online service providers are replaceable integrations, not engine dependencies.

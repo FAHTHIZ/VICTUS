@@ -77,7 +77,8 @@ std::string readme(std::string_view name, std::string_view template_name) {
     return std::string("# ") + std::string(name) +
            "\n\nCreated with VICTUS from the " + std::string(template_name) +
            " template.\n\n- `victus.project` - project settings\n- `assets/` - source assets (each with a `.meta` file; "
-           "commit both)\n- `scenes/` - scenes (`.vscene`, JSON)\n- `.victus/` - import cache, safe to delete\n\n"
+           "commit both)\n- `assets/scripts/` - Luau gameplay scripts, hot reloaded while playing in the editor\n"
+           "- `scenes/` - scenes (`.vscene`, JSON)\n- `.victus/` - import cache, safe to delete\n\n"
            "Open the folder in the VICTUS editor, or run `victus run <this folder>`.\n";
 }
 } // namespace
@@ -107,9 +108,16 @@ Result<Project> Project::create(const fs::Path& directory, std::string_view name
     p.settings_.template_id = std::string(template_id);
     p.settings_.engine_version = build::version();
 
-    gameplay::register_components();
+    register_components();
     scene::Scene starter;
     VICTUS_TRY_STATUS(build_template_scene(template_id, starter));
+    for (const TemplateFile& f : template_files(template_id)) {
+        auto path = p.resolve(f.path);
+        if (!path) return std::move(path).error();
+        sfs::create_directories(path->parent_path(), ec);
+        if (ec) return make_error(ErrorCode::IoError, "cannot create " + path->parent_path().string() + ": " + ec.message());
+        VICTUS_TRY_STATUS(fs::write_text_atomic(*path, f.content));
+    }
     starter.name = "Main";
     auto scene_path = p.resolve(p.settings_.startup_scene);
     if (!scene_path) return std::move(scene_path).error();

@@ -1,0 +1,118 @@
+// SPDX-License-Identifier: Apache-2.0
+// Luau gameplay scripting.
+//
+// A script is a Luau module (a `.luau` file in the project's assets folder) that returns a table.
+// Entities opt in with a ScriptComponent naming the file. Each scripted entity gets its own
+// instance table whose metatable is the module, so module fields act as defaults and the
+// component's `properties` override them per entity:
+//
+//     local Mover = {}
+//     Mover.speed = 4                      -- editable default, overridable per entity
+//     function Mover:start() end           -- once, before the first update
+//     function Mover:update(dt)            -- every frame
+//         local p = self.entity.position
+//         self.entity.position = p + vector.create(input.axis("A", "D"), 0, 0) * self.speed * dt
+//     end
+//     function Mover:fixed_update(dt) end  -- at the simulation's fixed rate
+//     function Mover:reload() end          -- after hot reload replaced the module
+//     return Mover
+//
+// Safety: every VM is sandboxed (read-only standard libraries and globals, per-script global
+// tables, no io/os/package/debug access), each call has a wall-clock budget enforced through the
+// interrupt callback, and the heap has a byte limit. A failing instance is disabled and its
+// error logged (channel "script") until the module is reloaded.
+#pragma once
+#include "victus/core/json.hpp"
+#include "victus/core/result.hpp"
+#include "victus/gameplay/gameplay.hpp"
+#include "victus/scene/scene.hpp"
+
+#include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace victus::script {
+
+struct ScriptComponent {
+    std::string script;                         // path relative to the assets folder, e.g. "scripts/mover.luau"
+    json::Value properties = json::Value::object(); // per-entity overrides of module fields
+    bool enabled{true};
+};
+
+// Registers the "Script" component serializer. Idempotent.
+void register_components();
+
+// A module field that the editor can show and override (number, bool, string or vector).
+struct PropertyInfo {
+    std::string name;
+    json::Value default_value; // number, bool, string or [x, y, z]
+};
+
+struct HostOptions {
+    std::filesystem::path assets_root;   // scripts are resolved under this folder
+    double call_budget_seconds{0.25};    // per start/update call; exceeded calls raise an error
+    std::size_t memory_limit_bytes{256u << 20};
+    bool watch_files{false};             // poll script files for changes and hot reload them
+    double watch_interval_seconds{0.5};
+};
+
+struct HostStats {
+    std::size_t modules{0};
+    std::size_t instances{0};
+    std::size_t faulted{0};
+    std::uint64_t calls{0};
+    std::uint64_t errors{0};
+    std::uint64_t reloads{0};
+    std::size_t heap_bytes{0};
+};
+
+// Owns one sandboxed Luau VM and runs the scripts of one scene.
+class ScriptHost {
+public:
+    static Result<std::unique_ptr<ScriptHost>> create(HostOptions options);
+    ~ScriptHost();
+    ScriptHost(const ScriptHost&) = delete;
+    ScriptHost& operator=(const ScriptHost&) = delete;
+
+    // Runs start/update for every enabled ScriptComponent (Phase::Update) and fixed_update
+    // (Phase::FixedUpdate). Called by the systems that add_script_systems() installs.
+    void update(scene::Scene& scene, const gameplay::FrameTime& time, const gameplay::InputSource* input);
+    void fixed_update(scene::Scene& scene, const gameplay::FrameTime& time, const gameplay::InputSource* input);
+
+    // Re-reads changed script files now (also done periodically when watch_files is set).
+    // Returns the number of modules that were reloaded successfully.
+    std::size_t reload_changed();
+
+    // Compiles and runs a module (cached) and lists its editable fields. Used by the editor.
+    [[nodiscard]] Result<std::vector<PropertyInfo>> describe(std::string_view script_path);
+
+    // Runs a chunk of Luau source in the sandbox (tests, console). Returns its first result
+    // converted to JSON (null when it returns nothing).
+    [[nodiscard]] Result<json::Value> eval(std::string_view source, scene::Scene* scene = nullptr,
+                                           std::string_view chunk_name = "eval");
+
+    // Drops all instances (start runs again on the next update). Modules stay cached.
+    void reset_instances();
+
+    [[nodiscard]] HostStats stats() const;
+    [[nodiscard]] const std::vector<std::string>& recent_errors() const noexcept;
+    [[nodiscard]] const HostOptions& options() const noexcept;
+
+    struct Impl;
+
+private:
+    explicit ScriptHost(std::unique_ptr<Impl> impl);
+    std::unique_ptr<Impl> impl_;
+};
+
+// Installs "script.update" (Update) and "script.fixed_update" (FixedUpdate) systems that drive
+// `host` with the simulation's time and input. The host must outlive the simulation's use.
+void add_script_systems(gameplay::Simulation& sim, ScriptHost& host);
+
+// Compiles source to Luau bytecode without running it; returns the compile error message on
+// failure (used by import validation and tests).
+[[nodiscard]] Status check_syntax(std::string_view source, std::string_view chunk_name);
+
+} // namespace victus::script

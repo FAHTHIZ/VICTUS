@@ -73,7 +73,9 @@ public:
 
     // Mutation API used by the platform backend, input playback and tests.
     void begin_frame() noexcept;
-    void set_key(Key k, bool down) noexcept { keys_[idx(k)] = down; }
+    void set_key(Key k, bool down) noexcept {
+        if (k != Key::Unknown) keys_[idx(k)] = down; // unmapped keys are never reported as held
+    }
     void set_mouse_button(MouseButton b, bool down) noexcept { mouse_[static_cast<std::size_t>(b)] = down; }
     void set_mouse_position(math::Vec2 p) noexcept {
         mouse_delta_ += p - mouse_pos_;

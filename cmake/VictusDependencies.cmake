@@ -31,3 +31,33 @@ function(victus_fetch_sdl3)
         add_library(SDL3::SDL3 ALIAS SDL3-static)
     endif()
 endfunction()
+
+# Luau 0.747 (MIT). https://github.com/luau-lang/luau/releases/tag/0.747
+# Only the VM and compiler are linked; the CLI, analysis, code generation and tests are not built.
+function(victus_fetch_luau)
+    if(TARGET Luau.VM)
+        return()
+    endif()
+    set(LUAU_BUILD_CLI OFF CACHE BOOL "" FORCE)
+    set(LUAU_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(LUAU_BUILD_WEB OFF CACHE BOOL "" FORCE)
+    set(LUAU_WERROR OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(luau
+        URL https://github.com/luau-lang/luau/archive/refs/tags/0.747.tar.gz
+        URL_HASH SHA256=2c72471f91c42af7f2c07cc4cc602b27c215346d491d7ab3d80da63050ad43f2
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        EXCLUDE_FROM_ALL SYSTEM)
+    FetchContent_MakeAvailable(luau)
+    # Luau's sources are third-party: never apply VICTUS warnings-as-errors or sanitizer-only flags.
+    foreach(t Luau.VM Luau.Compiler Luau.Ast Luau.Common Luau.Bytecode)
+        if(TARGET ${t})
+            set_target_properties(${t} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+            # Upstream builds warning-free with its own flags; GCC -O3 reports false-positive
+            # -Warray-bounds in lgc.cpp. Silence third-party diagnostics rather than patch them.
+            get_target_property(_type ${t} TYPE)
+            if(NOT _type STREQUAL "INTERFACE_LIBRARY")
+                target_compile_options(${t} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
+            endif()
+        endif()
+    endforeach()
+endfunction()

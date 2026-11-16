@@ -2,7 +2,7 @@
 
 Living, evidence-driven plan. Work directly on `main` in small, buildable commits. Status reflects verified repository state, never ambition.
 
-**Current maturity:** core runtime, platform, RHI, real 2D/3D renderer (Vulkan verified), ECS/scenes, asset pipeline, an editor with project templates, a standalone player and a `victus` CLI. No scripting, physics, audio or networking yet. Not a production engine.
+**Current maturity:** core runtime, platform, RHI, real 2D/3D renderer (Vulkan verified), ECS/scenes, asset pipeline, an editor with project templates, a standalone player, a `victus` CLI and Luau gameplay scripting with hot reload. No physics, audio or networking yet. Not a production engine.
 
 Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocked.
 
@@ -91,10 +91,11 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 ## Phase 9 — Gameplay framework and scripting
 - [ ] Game instance/session, world/level lifecycle, game mode/rules, game state and player state.
 - [ ] Actors/entities, components, player controllers, pawns/characters, cameras and spawn points.
-- [ ] Input actions/mappings for keyboard, mouse, controllers and touch.
+- [ ] Input actions/mappings for keyboard, mouse, controllers and touch. (Raw keyboard/mouse input is available to scripts via `input.*`; no action maps or gamepad/touch bindings yet.)
 - [ ] Interaction, gameplay events, timers, tags, attributes, inventory/ability primitives as modular systems.
 - [ ] Prefabs/packed scenes, reusable components, variants and safe instantiation.
-- [ ] Scripting API, reflection/serialization, hot reload, debugging and versioning.
+- [x] Scripting runtime: Luau 0.747 sandboxed VM, `ScriptComponent` + `.luau` assets, entity/scene/input/time/log API, lifecycle (`start`/`update`/`fixed_update`/`reload`), editor-visible properties with per-entity overrides, hot reload in editor and `victus run`, time/memory budgets, `victus check` and headless `victus simulate` (Slice 5).
+- [ ] Script debugging (breakpoints/stepping), type checking in `victus check`, API versioning, events/messages between scripts.
 - [ ] Visual scripting graph with typed nodes, validation, debugging and deterministic serialization.
 - [ ] Save/load, checkpoints, profile data, version migration and recovery.
 **Exit:** complete playable 3D game loop authored in VICTUS with both code and visual-logic options.

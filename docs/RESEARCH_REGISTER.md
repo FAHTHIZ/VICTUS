@@ -57,6 +57,10 @@ Shortlist only, not legal determination or adopted dependencies. Check upstream 
 - Khronos describes glTF 2.0 as an API-neutral runtime delivery format with scene, mesh, material, camera, skin and animation data. It is a strong import/cook interchange baseline, but does not replace VICTUS authoring or world-streaming systems.
 - Khronos describes OpenXR as a royalty-free common API for AR/VR devices. XR remains an optional, evidence-gated extension after the core renderer and input model are stable.
 
+## Research conclusions added 2026-11-16 (Slice 5)
+- Scripting: Luau 0.747 (luau-lang/luau, MIT) was chosen over Lua 5.4, LuaJIT, Wren, AngelScript, C# and WASM (ADR-0008). Deciding factors: a supported sandbox (`luaL_sandbox`, read-only globals), VM interrupts for time budgets, gradual typing, a native `vector` value type, interpreter-only portability to iOS/consoles, and active releases. LuaJIT was rejected because its JIT is not permitted on iOS/consoles and its release cadence is irregular.
+- Physics (next slice): Box2D v3.2.0 (2026-10-19, MIT; adds double-precision large-world positions) for 2D and Jolt v5.7.0 (2026-11-14, MIT; always-deterministic simulation, samples on iOS/Android) for 3D. Box3D (announced 2026-06) noted as a younger alternative; Jolt is preferred for maturity and shipped-title track record.
+
 ## Open research questions
 Graphics: actual backend/device support; Android Vulkan/fallback; Apple Metal; shader compile/reflection/hot reload; abstraction overhead; multithreaded recording/synchronization; 2D/3D shared resource model.
 Gameplay: data-oriented ECS versus higher-level object facade; reflection/serialization; visual graph runtime; prefab references/variants; deterministic gameplay testing.
