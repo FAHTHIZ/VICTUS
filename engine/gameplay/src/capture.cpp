@@ -10,6 +10,7 @@
 #include <cmath>
 #include <format>
 #include <map>
+#include <mutex>
 
 namespace victus::gameplay {
 
@@ -65,20 +66,65 @@ std::string name_path(const scene::Scene& s, scene::Entity e) {
     return path;
 }
 
+struct ProbeRegistry {
+    std::mutex mutex;
+    std::vector<std::pair<std::string, StateProbe>> probes;
+};
+
+ProbeRegistry& probes() {
+    static ProbeRegistry r;
+    return r;
+}
+
 } // namespace
 
-std::vector<std::string> state_lines(const scene::Scene& scene) {
+void register_state_probe(std::string name, StateProbe probe) {
+    auto& r = probes();
+    std::lock_guard lock(r.mutex);
+    for (auto& [n, p] : r.probes)
+        if (n == name) {
+            p = std::move(probe);
+            return;
+        }
+    r.probes.emplace_back(std::move(name), std::move(probe));
+}
+
+std::string probe_line(const scene::Scene& scene, scene::Entity e, std::string_view kind, std::string_view value) {
+    return std::format("@{}|{}|{}", name_path(scene, e), kind, value);
+}
+
+std::string probe_number(double v) {
+    if (!std::isfinite(v)) return v != v ? "nan" : (v > 0 ? "inf" : "-inf");
+    const double r = std::round(v * 1e4);
+    if (r == 0) return "0";
+    return std::format("{}", r / 1e4);
+}
+
+std::string probe_vector(math::Vec3 v) {
+    return std::format("({}, {}, {})", probe_number(v.x), probe_number(v.y), probe_number(v.z));
+}
+
+std::string probe_vector(math::Vec2 v) { return std::format("({}, {})", probe_number(v.x), probe_number(v.y)); }
+
+std::vector<std::string> state_lines(const scene::Scene& scene, bool with_probes) {
     auto& world = const_cast<scene::Scene&>(scene).world(); // read-only iteration
     std::vector<std::string> lines;
     lines.reserve(world.alive_count() + 1);
     world.each<scene::Transform>([&](scene::Entity e, scene::Transform& t) {
         math::Quat q = t.rotation;
         if (q.w < 0) q = {-q.x, -q.y, -q.z, -q.w};
-        lines.push_back(std::format("{}|{} {} {}|{} {} {} {}|{} {} {}", name_path(scene, e), round_to(t.position.x, 1e4),
+        std::string path = name_path(scene, e);
+        if (with_probes && !path.empty() && (path.front() == '@' || path.front() == '\\')) path.insert(path.begin(), '\\');
+        lines.push_back(std::format("{}|{} {} {}|{} {} {} {}|{} {} {}", path, round_to(t.position.x, 1e4),
                                     round_to(t.position.y, 1e4), round_to(t.position.z, 1e4), round_to(q.x, 1e4),
                                     round_to(q.y, 1e4), round_to(q.z, 1e4), round_to(q.w, 1e4), round_to(t.scale.x, 1e4),
                                     round_to(t.scale.y, 1e4), round_to(t.scale.z, 1e4)));
     });
+    if (with_probes) {
+        auto& r = probes();
+        std::lock_guard lock(r.mutex);
+        for (const auto& [n, p] : r.probes) p(scene, lines);
+    }
     std::sort(lines.begin(), lines.end());
     lines.insert(lines.begin(), "#entities " + std::to_string(world.alive_count()));
     return lines;
@@ -93,7 +139,7 @@ std::string digest_of(const std::vector<std::string>& lines) {
     return std::format("{:016x}", h);
 }
 
-std::string state_digest(const scene::Scene& scene) { return digest_of(state_lines(scene)); }
+std::string state_digest(const scene::Scene& scene, bool with_probes) { return digest_of(state_lines(scene, with_probes)); }
 
 namespace {
 
@@ -151,16 +197,26 @@ std::string describe_difference(const std::vector<std::string>& expected, const 
     if (count_of(expected) != count_of(actual)) add("entity count " + count_of(actual) + ", expected " + count_of(expected));
     // Group the lines by entity path (names may repeat).
     std::map<std::string, std::pair<std::vector<ParsedLine>, std::vector<ParsedLine>>> by_path;
-    for (const auto& l : expected)
-        if (l.rfind("#entities ", 0) != 0) {
-            auto p = parse_line(l);
-            by_path[p.path].first.push_back(std::move(p));
+    // Probe lines ("@path|kind|value"), grouped by path and kind.
+    std::map<std::pair<std::string, std::string>, std::pair<std::vector<std::string>, std::vector<std::string>>> by_probe;
+    auto sort_line = [&](const std::string& l, bool want) {
+        if (l.rfind("#entities ", 0) == 0) return;
+        if (!l.empty() && l.front() == '@') {
+            const std::size_t v = l.rfind('|');
+            const std::size_t k = v == std::string::npos || v == 0 ? std::string::npos : l.rfind('|', v - 1);
+            if (k != std::string::npos && k > 0) {
+                auto& slot = by_probe[{l.substr(1, k - 1), l.substr(k + 1, v - k - 1)}];
+                (want ? slot.first : slot.second).push_back(l.substr(v + 1));
+                return;
+            }
         }
-    for (const auto& l : actual)
-        if (l.rfind("#entities ", 0) != 0) {
-            auto p = parse_line(l);
-            by_path[p.path].second.push_back(std::move(p));
-        }
+        auto p = parse_line(l);
+        if (p.path.size() > 1 && p.path.front() == '\\') p.path.erase(p.path.begin());
+        (want ? by_path[p.path].first : by_path[p.path].second).push_back(std::move(p));
+    };
+    for (const auto& l : expected) sort_line(l, true);
+    for (const auto& l : actual) sort_line(l, false);
+    std::vector<std::string> reported_paths;
     static const char* kWhat[3] = {"position", "rotation", "scale"};
     for (const auto& [path, pair] : by_path) {
         const auto& [want, got] = pair;
@@ -168,6 +224,7 @@ std::string describe_difference(const std::vector<std::string>& expected, const 
             if (want.empty()) add(path + ": not in the recording");
             else if (got.empty()) add(path + ": missing");
             else add(std::format("{}: {} present, expected {}", path, got.size(), want.size()));
+            reported_paths.push_back(path);
             continue;
         }
         for (std::size_t i = 0; i < want.size(); ++i) {
@@ -177,6 +234,21 @@ std::string describe_difference(const std::vector<std::string>& expected, const 
                 break;
             }
         }
+    }
+    for (const auto& [key, pair] : by_probe) {
+        const auto& [path, kind] = key;
+        if (std::find(reported_paths.begin(), reported_paths.end(), path) != reported_paths.end()) continue;
+        const auto& [want, got] = pair;
+        if (want == got) continue;
+        if (want.empty()) add(std::format("{}: {} {} not in the recording", path, kind, got.front()));
+        else if (got.empty()) add(std::format("{}: {} missing, expected {}", path, kind, want.front()));
+        else if (want.size() != got.size()) add(std::format("{}: {} {} values, expected {}", path, kind, got.size(), want.size()));
+        else
+            for (std::size_t i = 0; i < want.size(); ++i)
+                if (want[i] != got[i]) {
+                    add(std::format("{}: {} {} expected {}", path, kind, got[i], want[i]));
+                    break;
+                }
     }
     if (items.empty()) return "state differs";
     std::string out;
@@ -195,7 +267,7 @@ void Capture::add_frame(const InputState& input, float dt) {
 void Capture::after_tick(const scene::Scene& s) {
     const auto n = static_cast<std::uint64_t>(frames.size());
     if (!digest_interval || n % digest_interval != 0) return;
-    auto lines = state_lines(s);
+    auto lines = state_lines(s, version >= 2);
     Digest d{n, digest_of(lines), {}};
     if (detail_limit && lines.size() <= detail_limit + 1) d.state = std::move(lines);
     digests.push_back(std::move(d));
@@ -204,7 +276,7 @@ void Capture::after_tick(const scene::Scene& s) {
 void Capture::finish(const scene::Scene& s) {
     const auto n = static_cast<std::uint64_t>(frames.size());
     if (!digests.empty() && digests.back().frame == n) return;
-    auto lines = state_lines(s);
+    auto lines = state_lines(s, version >= 2);
     Digest d{n, digest_of(lines), {}};
     if (detail_limit && lines.size() <= detail_limit + 1) d.state = std::move(lines);
     digests.push_back(std::move(d));
@@ -230,7 +302,7 @@ Error bad(std::string what) { return make_error(ErrorCode::ParseError, "capture:
 std::string Capture::to_text() const {
     json::Value doc = json::Value::object();
     doc.set("format", kFormat);
-    doc.set("version", kCaptureFormatVersion);
+    doc.set("version", version);
     doc.set("project", project);
     doc.set("scene", scene);
     doc.set("seed", std::format("{:016x}", seed));
@@ -306,6 +378,7 @@ Result<Capture> Capture::parse(std::string_view text) {
     if (version < 1 || version > static_cast<std::int64_t>(kCaptureFormatVersion))
         return bad(std::format("format version {} is not supported (this build reads up to {})", version, kCaptureFormatVersion));
     Capture c;
+    c.version = static_cast<std::uint32_t>(version);
     c.project = (*doc)["project"].as_string_or("");
     c.scene = (*doc)["scene"].as_string_or("");
     const std::string seed = (*doc)["seed"].as_string_or("0");
@@ -382,7 +455,7 @@ bool CaptureReplay::end_tick(const scene::Scene& scene) {
     const auto& d = capture_->digests;
     while (next_digest_ < d.size() && d[next_digest_].frame < frame_) ++next_digest_;
     if (next_digest_ >= d.size() || d[next_digest_].frame != frame_) return true;
-    const auto lines = state_lines(scene);
+    const auto lines = state_lines(scene, capture_->version >= 2);
     const std::string got = digest_of(lines);
     ++checked_;
     const auto& want = d[next_digest_++];

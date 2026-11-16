@@ -3,6 +3,7 @@
 
 #include "internal.hpp"
 #include "victus/core/profiler.hpp"
+#include "victus/gameplay/capture.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -193,7 +194,40 @@ PhysicsWorld* world_of(scene::Scene& scene) {
     return b ? b->world : nullptr;
 }
 
+namespace {
+
+// Capture digests: velocities of moving bodies and characters, so a replay names a body that
+// moves differently before its position drifts.
+void physics_probe(const scene::Scene& cs, std::vector<std::string>& lines) {
+    auto& s = const_cast<scene::Scene&>(cs); // read-only
+    const PhysicsWorld* w = world_of(s);
+    if (!w) return;
+    auto& ecs = s.world();
+    ecs.each<RigidBodyComponent>([&](Entity e, RigidBodyComponent& rb) {
+        if (rb.type == BodyType::Static) return;
+        lines.push_back(gameplay::probe_line(s, e, "physics.velocity", gameplay::probe_vector(w->linear_velocity(e))));
+        lines.push_back(gameplay::probe_line(s, e, "physics.spin", gameplay::probe_vector(w->angular_velocity(e))));
+    });
+    ecs.each<RigidBody2DComponent>([&](Entity e, RigidBody2DComponent& rb) {
+        if (rb.type == BodyType::Static) return;
+        const math::Vec3 v = w->linear_velocity(e);
+        lines.push_back(gameplay::probe_line(s, e, "physics.velocity", gameplay::probe_vector(math::Vec2{v.x, v.y})));
+        lines.push_back(gameplay::probe_line(s, e, "physics.spin", gameplay::probe_number(w->angular_velocity(e).z)));
+    });
+    auto character = [&](Entity e) {
+        const CharacterState c = w->character_state(e);
+        if (!c.valid) return;
+        lines.push_back(gameplay::probe_line(s, e, "physics.velocity", gameplay::probe_vector(c.velocity)));
+        lines.push_back(gameplay::probe_line(s, e, "physics.grounded", c.grounded ? "true" : "false"));
+    };
+    ecs.each<CharacterControllerComponent>([&](Entity e, CharacterControllerComponent&) { character(e); });
+    ecs.each<CharacterController2DComponent>([&](Entity e, CharacterController2DComponent&) { character(e); });
+}
+
+} // namespace
+
 void add_physics_systems(gameplay::Simulation& sim, PhysicsWorld& world) {
+    gameplay::register_state_probe("physics", physics_probe);
     PhysicsWorld* w = &world;
     sim.add_system("physics.begin_frame", gameplay::Phase::PreUpdate, [w](scene::Scene& scene, const gameplay::FrameTime&) {
         if (world_of(scene) != w) bind(scene, w);
