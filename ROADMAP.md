@@ -1,158 +1,167 @@
 # VICTUS Roadmap
 
-Living, evidence-driven plan. Status reflects verified repository state, not intention. Work directly on main in small, buildable commits.
+Living, evidence-driven plan. Work directly on `main` in small, buildable commits. Status reflects verified repository state, never ambition.
 
-**Phase:** 0 — foundation. **Maturity:** early bootstrap, not a production engine.
+**Current maturity:** bootstrap foundation; not a production engine.
 
-Legend: [x] verified in repository · [~] partial/in progress · [ ] not started · [!] blocked.
+Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocked.
 
-## Phase 0 — Foundation
-- [x] Project identity, principles and repository layout.
-- [x] Autonomous-agent contract and direct-main delivery rules.
-- [x] Roadmap, architecture, research and subsystem specifications.
-- [x] Third-party/license policy.
-- [x] Minimal C++20 core/runtime/test slice.
-- [x] CMake build and initial desktop CI.
-- [ ] Verify hosted CI and resolve environment failures.
-- [ ] Add formatting/static analysis and sanitizer lanes.
-- [ ] Add setup scripts and troubleshooting.
+## Phase 0 — Foundation and project quality
+- [x] Project identity, principles, repository layout, agent contract, roadmap, architecture and license policy.
+- [x] Minimal C++20 core/runtime/test slice and initial CMake/desktop CI.
+- [ ] Verify hosted CI; fix any failures.
+- [ ] Formatting, static analysis, sanitizers, warning policy and dependency scanning.
+- [ ] Reproducible developer setup, presets, troubleshooting and contribution workflow.
+**Exit:** clean Debug/Release build and tests on supported desktop CI.
 
-## Phase 1 — Runtime and diagnostics
-- [ ] Lifecycle, ownership and shutdown ordering.
-- [ ] Structured logging, categories, sinks and diagnostic events.
-- [ ] Error/result types and validated configuration.
-- [ ] Platform abstraction: filesystem, clock, threads, window, input, paths, device capabilities.
-- [ ] CLI modes: editor, game, headless, cook, test, benchmark.
-- [ ] Crash diagnostics, build metadata, metrics and tracing.
-**Exit:** Debug/Release builds, tests, headless launch, predictable shutdown and useful diagnostics on desktop CI.
+## Phase 1 — Runtime, platform layer and diagnostics
+- [ ] Lifecycle, ownership, shutdown ordering, error/result types and validated configuration.
+- [ ] Structured logging, diagnostic events, crash context, build metadata and tracing.
+- [ ] Platform services: filesystem, paths, clock, threads, window, input, device capabilities and lifecycle.
+- [ ] CLI modes: editor, game, headless, cook, test, benchmark and package.
+- [ ] Stable project configuration and runtime/editor/server target separation.
+**Exit:** predictable lifecycle and useful diagnostics in graphical and headless modes.
 
-## Phase 2 — Performance lab
-- [ ] Benchmark harness with warm-up, repetitions and machine/build metadata.
-- [ ] CPU profiler, scoped timings and trace export.
-- [ ] GPU timestamp/query abstraction.
-- [ ] Memory accounting, allocations and high-water marks.
-- [ ] Frame/tick histograms and p50/p95/p99.
-- [ ] Synthetic entity, transform, visibility, asset decode, streaming and scheduler workloads.
-- [ ] Machine-readable results and baseline methodology.
-- [ ] Baselines on desktop and Android hardware when available.
-**Exit:** reproducible benchmark command and documented methodology; no unsupported claims.
+## Phase 2 — Performance laboratory
+- [ ] Reproducible benchmark harness with warm-up, repetitions, machine/build metadata and machine-readable output.
+- [ ] CPU/GPU profiling, frame/tick histograms, p50/p95/p99, memory accounting and allocation tracking.
+- [ ] Workloads for ECS, jobs, transforms, physics, animation, visibility, rendering, asset import, streaming, networking and saves.
+- [ ] Desktop baselines; Android physical-device baselines when hardware is available.
+- [ ] Performance budgets and regression gates based on measured reference hardware.
+**Exit:** another developer can reproduce the published results and compare equivalent workloads.
 
-## Phase 3 — Simulation kernel
-- [ ] Compare Flecs, EnTT and custom archetype/SoA using VICTUS workloads.
-- [ ] Compare Taskflow, enkiTS and custom scheduler; test affinity/cancellation.
-- [ ] VICTUS-owned ECS/system API or documented reason to expose dependency.
-- [ ] Transform hierarchy and spatial queries.
-- [ ] Controlled simulation clock, bounded catch-up, pause/step.
-- [ ] Event model, deterministic random streams and ordering rules.
-- [ ] Versioned snapshots, serialization and migrations.
-- [ ] Headless simulation host.
-- [ ] LOD tiers: full entities, simplified entities, regional aggregates, event-driven dormant regions.
-- [ ] Invariant tests for LOD transitions/population/resource totals.
-- [ ] Large-population benchmarks.
-**Exit:** headless simulation runs, saves, reloads and replays documented workloads; LOD correctness tests pass.
+## Phase 3 — Core simulation, ECS and jobs
+- [ ] Benchmark custom SoA/archetype approaches against Flecs and EnTT on VICTUS workloads.
+- [ ] Compare task schedulers and define dependency, affinity, cancellation and priority semantics.
+- [ ] VICTUS-owned ECS/system API or documented reason to expose a dependency.
+- [ ] Transform hierarchy, spatial indexes, events, deterministic random streams and controlled simulation clock.
+- [ ] Versioned snapshots, serialization, migrations and headless simulation host.
+- [ ] Simulation LOD: full entities, simplified entities, regional aggregates and event-driven dormant regions.
+- [ ] Invariant tests for populations, resources, ownership, time, relationships and event ordering.
+**Exit:** headless simulation saves, reloads, replays and passes correctness/performance workloads.
 
-## Phase 4 — Graphics/RHI
-- [ ] ADR comparing bgfx, Diligent, direct Vulkan/Metal/D3D12 behind VICTUS RHI and alternatives.
-- [ ] Verify Windows/Linux/Android/Apple backend matrix.
-- [ ] Prototype surface/device/swapchain/resource lifetime/shader compilation.
-- [ ] VICTUS RHI without third-party types in public interfaces.
-- [ ] Render graph, frame resources and GPU synchronization.
-- [ ] Validated triangle/clear demo and debug output.
-- [ ] Shader build/cache/reflection and device capability profiles.
-- [ ] Compatibility fallback.
-**Exit:** minimal scene on desktop and mobile-capable backend, documented limitations.
+## Phase 4 — Graphics API and rendering foundation
+- [ ] Research and record backend choices: Vulkan, D3D12, Metal, OpenGL/ES or other justified fallback; compare specialist abstractions.
+- [ ] VICTUS-owned RHI, capability model, device/swapchain/resource lifetime, synchronization and diagnostics.
+- [ ] Render graph, frame resources, shader compilation/cache/reflection and GPU profiling.
+- [ ] Real 2D and 3D render paths; validated geometry, textures, materials and camera.
+- [ ] Backend/device-loss recovery and compatibility fallbacks.
+**Exit:** actual 2D and 3D scenes render on the validated desktop backend; mobile path has a verified capability plan.
 
-## Phase 5 — Asset pipeline
-- [ ] Stable asset IDs, metadata, dependency graph and source-to-cooked model.
-- [ ] glTF 2.0 import first; assess FBX/SDK licensing separately.
-- [ ] Mesh/material/skeleton/animation/image/HDR import.
-- [ ] Texture mips, color management, GPU compression and platform variants.
-- [ ] Geometry validation, mesh optimization, LOD and collision proxies.
-- [ ] Content-addressed cache, incremental cook and invalidation.
-- [ ] Background import, cancellation, progress and recoverable errors.
-- [ ] Asset registry/dependency inspection and Blender export presets.
-- [ ] Evaluate OpenUSD for complex scene interchange.
-**Exit:** import glTF, cook variants, load at runtime, detect source changes and report diagnostics.
+## Phase 5 — Asset pipeline and content cooking
+- [ ] Stable asset IDs, metadata, dependency graph and versioned source-to-cooked format.
+- [ ] glTF 2.0/GLB import, validation, mesh/material/skin/animation/image/HDR handling.
+- [ ] Evaluate authoring interchange such as OpenUSD separately from runtime delivery formats.
+- [ ] Texture mips, color management, platform compression and asset variants.
+- [ ] Mesh optimization, LODs, collision proxies and import validation.
+- [ ] Content-addressed cache, incremental cook, dependency invalidation and deterministic outputs.
+- [ ] Background import, cancellation, progress, recoverable errors and asset diagnostics.
+- [ ] External DCC workflow and Blender interchange/export presets.
+**Exit:** import, validate, cook, cache, hot-reload and load real project assets on a clean machine.
 
-## Phase 6 — VICTUS Studio editor
-- [ ] Prototype Dear ImGui docking vs Qt/Avalonia/native shell.
-- [ ] Project manager/templates; dockable workspace and command palette.
-- [ ] Scene viewport, camera, selection and gizmos.
-- [ ] Hierarchy, inspector and component editing.
-- [ ] Snapping, multi-select, undo/redo.
-- [ ] Asset browser, import queue and previews.
-- [ ] Material/shader editing and diagnostics.
-- [ ] Isolated play/pause/step/stop.
-- [ ] Save/reopen, corrupt-asset recovery, logs and profiler.
-- [ ] Layouts, preferences and accessibility.
-**Exit:** create project, import model, assemble scene, save/reopen and run without source edits.
+## Phase 6 — VICTUS Studio editor core
+- [ ] Project launcher/templates, dockable workspace, command palette and saved layouts.
+- [ ] Scene/world viewport, camera, hierarchy, inspector, selection, gizmos and snapping.
+- [ ] Undo/redo command model, multi-selection, autosave and crash recovery.
+- [ ] Asset browser, metadata/dependency inspector, import queue and previews.
+- [ ] Logs, entity diagnostics, profiler, project settings and build configuration.
+- [ ] Isolated play-in-editor with safe play/pause/step/stop and authored-world protection.
+**Exit:** create project, import assets, author a scene, save/reopen and play without editing engine source.
 
-## Phase 7 — Renderer and world
-- [ ] PBR and color management.
-- [ ] Forward/clustered baseline; deferred only if justified.
-- [ ] Shadows, cascades, contact shadows and scalable quality.
-- [ ] Image-based/environment lighting and probes.
-- [ ] Screen-space effects with mobile fallbacks.
-- [ ] GPU culling/indirect draws where beneficial.
-- [ ] Mesh LOD, instancing, occlusion and streaming.
-- [ ] Virtual texturing/virtual geometry research prototypes.
-- [ ] Terrain, foliage, water, atmosphere and large-world precision.
-- [ ] World cells, async IO and memory budgets.
-- [ ] High-end/standard/mobile/compatibility tiers; dynamic resolution.
-**Exit:** representative outdoor scene with measured quality tiers on desktop and mobile.
+## Phase 7 — Complete 2D development
+- [ ] 2D camera, sprites, atlases, batching, sorting/layers and pixel-art controls.
+- [ ] Tilemaps, tile sets, autotiling, grid and 2D world editing.
+- [ ] 2D physics, collision shapes, queries and debug visualization.
+- [ ] 2D animation, skeletal/rigged workflows where justified, particles and parallax.
+- [ ] 2D UI, input, audio, scene transitions and 2D lighting/effects.
+- [ ] 2D templates, profiling, export and playable reference game.
+**Exit:** build and ship a complete 2D game using only supported VICTUS workflows.
 
-## Phase 8 — Essential systems
-- [ ] Jolt candidate physics behind VICTUS API; character controllers/collision queries.
-- [ ] Recast/Detour candidate navigation and crowd movement.
-- [ ] Skeletal animation, blending, state machines and retargeting.
-- [ ] Audio, spatialization, buses and streaming.
-- [ ] Input mapping, gamepad and touch.
-- [ ] Scripting evaluation, sandboxing, hot reload and API stability.
-- [ ] UI runtime and visual UI authoring.
-- [ ] Save/load, checkpoints and migrations.
-- [ ] Networking evaluation: transport, replication, prediction and authority.
-- [ ] Localization, accessibility and platform services.
-**Exit:** interactive sample uses physics, animation, navigation, audio, input, UI and save/load.
+## Phase 8 — Complete 3D renderer and world systems
+- [ ] PBR materials, physically meaningful units/color management, forward/clustered baseline and justified alternatives.
+- [ ] Direct/indirect lighting, shadows, reflection probes, environment lighting and scalable global illumination.
+- [ ] Post-processing, temporal techniques, anti-aliasing, depth of field, motion blur and tone mapping.
+- [ ] GPU culling/indirect draws where beneficial; instancing, occlusion, mesh LOD and streaming.
+- [ ] Terrain, foliage, water, atmosphere, weather, sky/clouds and large-world precision.
+- [ ] Decals, dynamic environment effects and destruction interfaces.
+- [ ] Scalable high/standard/mobile/compatibility tiers, dynamic resolution and user overrides.
+- [ ] Research-only advanced paths: ray tracing, virtualized geometry/textures and other high-cost features; implement only after evidence.
+**Exit:** representative outdoor and indoor scenes with measured quality tiers on desktop and mobile.
 
-## Phase 9 — Procedural creation
-- [ ] Typed procedural graph, validation and deterministic seeds.
-- [ ] Terrain/biome/vegetation generation.
-- [ ] Building/settlement generation and rule-based placement.
-- [ ] Scatter, spline and road tools.
-- [ ] Material/shader graph; animation graph/state machine.
-- [ ] Cinematic sequencer and asset optimization reports.
-- [ ] Optional AI-assisted authoring with human review and reproducibility.
-**Exit:** reproducible procedural environment generated, edited, saved, cooked and loaded at multiple quality tiers.
+## Phase 9 — Gameplay framework and scripting
+- [ ] Game instance/session, world/level lifecycle, game mode/rules, game state and player state.
+- [ ] Actors/entities, components, player controllers, pawns/characters, cameras and spawn points.
+- [ ] Input actions/mappings for keyboard, mouse, controllers and touch.
+- [ ] Interaction, gameplay events, timers, tags, attributes, inventory/ability primitives as modular systems.
+- [ ] Prefabs/packed scenes, reusable components, variants and safe instantiation.
+- [ ] Scripting API, reflection/serialization, hot reload, debugging and versioning.
+- [ ] Visual scripting graph with typed nodes, validation, debugging and deterministic serialization.
+- [ ] Save/load, checkpoints, profile data, version migration and recovery.
+**Exit:** complete playable 3D game loop authored in VICTUS with both code and visual-logic options.
 
-## Phase 10 — Cross-platform/mobile hardening
-- [ ] Windows/Linux packages; macOS/Metal build and signing.
-- [ ] Android arm64 runtime, touch, thermal/memory profiling and device matrix.
-- [ ] iOS build/signing feasibility and policy review.
-- [ ] Backend fallback matrix, low-memory eviction and context recreation.
-- [ ] Suspend/resume, battery-aware pacing and quality adaptation.
-- [ ] Package size/startup budgets and device smoke tests.
-**Exit:** tested device matrix, reproducible builds and sustained performance evidence.
+## Phase 10 — Physics, animation, AI, audio and UI
+- [ ] 3D/2D physics, rigid bodies, character controllers, collision queries, joints and debug tools.
+- [ ] Skeletal animation, blend spaces, state machines, retargeting, root motion and animation tooling.
+- [ ] Navigation meshes, pathfinding, avoidance, crowds and behavior/state systems.
+- [ ] Gameplay AI: perception, decision systems, behavior trees/utility/state machines and debugging.
+- [ ] Audio playback, buses/mixing, spatialization, effects, streaming and profiling.
+- [ ] Runtime UI, layout, input/accessibility, localization and visual UI editor.
+- [ ] Particle/VFX system, GPU/CPU emitters, trails, curves, collision and VFX authoring.
+**Exit:** reference game exercises the systems together without one-off engine bypasses.
 
-## Phase 11 — Production/ecosystem
-- [ ] Plugin/module SDK and versioning.
-- [ ] Public API stability and migration guides.
-- [ ] Docs site/tutorials; 3D, simulation, mobile and headless examples.
-- [ ] Modding/sandbox security model.
-- [ ] Localization/accessibility.
-- [ ] Release automation/changelog/semantic versioning.
-- [ ] Security response, dependency updates and performance regression dashboard.
-- [ ] Governance and long-term support.
-**Exit:** external developer installs VICTUS, follows tutorial, builds a supported sample and diagnoses performance.
+## Phase 11 — Cinematics, procedural and world authoring
+- [ ] Timeline/sequencer, camera rigs, animation tracks, events, audio and render/export.
+- [ ] Material/shader graph, animation graph and procedural graph.
+- [ ] Terrain/biome/vegetation, spline/road, scatter and settlement tools.
+- [ ] Deterministic procedural seeds, validation and reproducible generation.
+- [ ] Optional AI-assisted authoring with human review, provenance and reproducibility.
+**Exit:** create, edit, save, cook and play a substantial procedural world and cinematic sequence.
+
+## Phase 12 — Multiplayer and online runtime
+- [ ] Transport abstraction, authoritative server model and session lifecycle.
+- [ ] Entity/property/event replication, relevancy, ownership and bandwidth budgets.
+- [ ] Client prediction, reconciliation, interpolation and lag-tolerant movement.
+- [ ] Dedicated/headless server builds, server config, logs and graceful shutdown.
+- [ ] Network emulation for latency, jitter, packet loss and bandwidth constraints.
+- [ ] Multiplayer debugging, replay/recording, reconnect and persistence.
+- [ ] Replaceable interfaces for matchmaking, lobbies, identity and platform services; no mandatory vendor lock-in.
+- [ ] Security model, input validation, server authority and abuse-resistant boundaries.
+**Exit:** two or more clients play a representative networked game against an authoritative dedicated server under repeatable network tests.
+
+## Phase 13 — Production, collaboration and ecosystem
+- [ ] Build automation, asset cooking, incremental compilation, caching and reproducible packaging.
+- [ ] Hot reload for code/assets/shaders where safe; clear fallback when reload is unsupported.
+- [ ] Automated unit/integration/gameplay tests, smoke tests and deterministic regression captures.
+- [ ] Crash reporting, symbol handling, diagnostics export and privacy controls.
+- [ ] Source-control integration, project diffs/merges, collaboration foundations and conflict handling.
+- [ ] Plugin/module SDK, versioned public APIs, extension lifecycle and migration tooling.
+- [ ] Modding sandbox, permissions, package signing/validation and safe content boundaries.
+- [ ] Localization, accessibility, tutorials, sample templates and API documentation.
+- [ ] Release automation, changelog, SBOM, security response and dependency update process.
+**Exit:** an external developer can install VICTUS, collaborate on a project, build, test, package and diagnose a shipped game.
+
+## Phase 14 — Mobile, XR and additional platform validation
+- [ ] Windows/Linux desktop runtime and editor; macOS/Metal runtime/editor.
+- [ ] Android arm64 runtime, touch, thermal/memory profiling, lifecycle and physical-device matrix.
+- [ ] iOS runtime/build/signing feasibility and policy validation.
+- [ ] Mobile asset variants, low-memory eviction, context recreation, suspend/resume and battery-aware pacing.
+- [ ] OpenXR integration research and XR input/rendering only after desktop/mobile core is stable.
+- [ ] Web/WebAssembly feasibility study; only pursue if required APIs, threading, memory and distribution constraints are acceptable.
+- [ ] Console support only with platform-holder access, SDK agreements and compliance; never imply support without it.
+**Exit:** documented, reproducible platform matrix with actual build, launch, input, rendering and package tests.
+
+## Phase 15 — Reference projects and production readiness
+- [ ] Complete 2D game demonstrating the 2D workflow.
+- [ ] Complete 3D gameplay game demonstrating rendering, gameplay, AI, audio, UI, saves and packaging.
+- [ ] Complete simulation project demonstrating large populations, simulation LOD, persistence and headless mode.
+- [ ] Optional multiplayer sample demonstrating dedicated server and network diagnostics.
+- [ ] Build all references from clean checkouts in CI; run gameplay smoke/regression tests.
+- [ ] Profile on named desktop and mobile hardware; publish reproducible reports and known limitations.
+- [ ] External usability testing, tutorials, migration docs and stable release criteria.
+**Exit:** independent developers can build, run, test and package the reference projects using documented workflows. Production readiness is a measured release decision, not a roadmap checkbox.
 
 ## Definition of done
-A checkbox is complete only when implementation is on main, tests pass, build commands work, errors/fallbacks are handled, platform/dependency limits are documented, performance claims have evidence, diff is audited and SHA plus verification are recorded in docs/STATUS.md.
+A task is complete only when code is integrated on main, relevant tests pass, build commands work, errors/fallbacks are handled, platform and license limits are documented, performance claims have evidence, the diff is audited, and SHA plus verification are recorded in `docs/STATUS.md`. A demo or placeholder is not completion.
 
-## Immediate next actions
-1. Verify GitHub Actions.
-2. Add formatting/static analysis and sanitizer lanes.
-3. Implement structured diagnostics/result types.
-4. Build benchmark harness before selecting performance libraries.
-5. Run ECS/scheduler bake-offs.
-6. Prototype graphics backend candidates.
-
-Update status after every verified milestone. Never mark work complete based only on generated code.
+## Execution order
+Follow dependency order and complete each subsystem end-to-end. If a phase is blocked by unavailable hardware, credentials or platform-holder access, document the precise blocker and continue independent work. After every verified commit, update status and immediately proceed to the next unblocked task.
