@@ -82,6 +82,12 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     runtime::GpuAssetCache cache(**gpu, db->get());
     auto view = runtime::SceneView::create(**gpu, rhi::Format::RGBA8_UNORM);
     if (!view) return std::move(view).error();
+    const std::string quality_name = o.quality.empty() ? proj->settings().render_quality : o.quality;
+    const auto tier = render::parse_quality_tier(quality_name);
+    if (!tier) return make_error(ErrorCode::InvalidArgument, "unknown quality tier '" + quality_name + "'");
+    render::RenderSettings quality = render::RenderSettings::preset(*tier);
+    if (proj->settings().render_scale > 0.0f) quality.render_scale = proj->settings().render_scale;
+    (*view)->renderer().set_settings(quality);
 
     script::HostOptions so;
     so.assets_root = (*db)->assets_dir();
@@ -110,6 +116,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     PlayerReport report;
     report.backend = dev.capabilities().driver_name;
     report.packaged = packaged;
+    report.quality = std::string(render::quality_tier_name(*tier));
     VICTUS_LOG_INFO("player", "{}: {} on {}", proj->settings().name, rel, report.backend);
 
     rhi::TextureHandle frame;
@@ -125,6 +132,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         const float dt = o.max_frames ? 1.0f / 60.0f : static_cast<float>(now - last);
         last = now;
         sim.tick(scene, dt);
+        (*view)->renderer().set_frame_time(dt);
 
         auto cmd = dev.begin_commands();
         std::uint32_t sw = 0, sh = 0;

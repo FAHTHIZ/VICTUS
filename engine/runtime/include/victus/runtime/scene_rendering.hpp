@@ -4,6 +4,7 @@
 // - instantiate_model() turns a cooked model's node graph into scene entities.
 // - extract_scene() feeds a scene's cameras, lights, meshes and sprites to the renderers.
 #pragma once
+#include "victus/gameplay/gameplay.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/render/scene_renderer.hpp"
 #include "victus/render/sprite_batch.hpp"
@@ -65,6 +66,10 @@ struct SceneViewSettings {
     // Used when the scene has no primary camera.
     render::Camera3D fallback_camera = render::Camera3D::look_at({6, 5, 8}, {0, 0.5f, 0});
 };
+
+// Copies an Environment component into renderer environment/sun settings (clamped).
+void apply_environment(const gameplay::EnvironmentComponent& component, render::Environment& env,
+                       render::DirectionalLight& sun);
 
 // Requires up-to-date WorldTransforms (call scene.update_transforms() first). Calls
 // renderer.begin() and submits everything; the caller then calls renderer.render().

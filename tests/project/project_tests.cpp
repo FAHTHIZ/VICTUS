@@ -115,6 +115,65 @@ TEST_CASE("project: unknown settings keys survive a save") {
     sfs::remove_all(dir);
 }
 
+TEST_CASE("project: rendering quality settings round-trip and validate") {
+    const auto dir = temp_dir("quality");
+    auto p = project::Project::create(dir, "Quality", "3d");
+    REQUIRE(p.ok());
+    CHECK(p->settings().render_quality == "high");
+    CHECK(p->settings().render_scale == 0.0f);
+    p->settings().render_quality = "low";
+    p->settings().render_scale = 0.5f;
+    REQUIRE(p->save().ok());
+    auto q = project::Project::open(dir);
+    REQUIRE(q.ok());
+    CHECK(q->settings().render_quality == "low");
+    CHECK(q->settings().render_scale == 0.5f);
+    CHECK_FALSE(q->settings().extra.find("rendering")); // a known key, not preserved as "extra"
+
+    auto text = fs::read_text(dir / "victus.project");
+    REQUIRE(text.ok());
+    auto doc = json::parse(*text);
+    REQUIRE(doc.ok());
+    json::Value bad = json::Value::object();
+    bad.set("quality", "cinematic");
+    doc->set("rendering", bad);
+    REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(*doc)).ok());
+    CHECK_FALSE(project::Project::open(dir).ok());
+    bad.set("quality", "medium");
+    bad.set("render_scale", 9.0);
+    doc->set("rendering", bad);
+    REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(*doc)).ok());
+    CHECK_FALSE(project::Project::open(dir).ok());
+    sfs::remove_all(dir);
+}
+
+TEST_CASE("project: 3D template ships an Environment that round-trips") {
+    project::register_components();
+    scene::Scene s;
+    REQUIRE(project::build_template_scene("3d", s).ok());
+    const gameplay::EnvironmentComponent* found = nullptr;
+    s.world().each<gameplay::EnvironmentComponent>([&](const gameplay::EnvironmentComponent& e) { found = &e; });
+    REQUIRE(found);
+    CHECK(found->shadow_distance == 30.0f);
+    const std::string text = json::stringify(s.save());
+    scene::Scene t;
+    REQUIRE(t.load(json::parse(text).value()).ok());
+    int count = 0;
+    t.world().each<gameplay::EnvironmentComponent>([&](const gameplay::EnvironmentComponent& e) {
+        ++count;
+        CHECK(e.bloom_intensity == doctest::Approx(0.04f));
+        CHECK(e.tonemapper == gameplay::EnvironmentComponent::Tonemapper::Aces);
+    });
+    CHECK(count == 1);
+    // Enum values are validated on load.
+    std::string broken = text;
+    const auto pos = broken.find("\"aces\"");
+    REQUIRE(pos != std::string::npos);
+    broken.replace(pos, 6, "\"warm\"");
+    scene::Scene u;
+    CHECK_FALSE(u.load(json::parse(broken).value()).ok());
+}
+
 TEST_CASE("project: recent projects list") {
     const auto file = temp_dir("recent") / "recent.json";
     {

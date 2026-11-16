@@ -132,7 +132,33 @@ struct OscillatorComponent {
     bool has_origin{false};
 };
 
-// Registers serializers ("Rotator", "Oscillator"). Idempotent; call once at startup before
+// Scene-wide look: sky/ambient lighting and post-processing controls. The first entity with
+// this component drives the scene's environment; quality tiers decide which effects run.
+struct EnvironmentComponent {
+    enum class Tonemapper : std::uint8_t { None, Aces, Neutral, Reinhard };
+    math::Color sky_zenith{0.18f, 0.36f, 0.75f, 1};
+    math::Color sky_horizon{0.62f, 0.72f, 0.85f, 1};
+    math::Color ground{0.22f, 0.2f, 0.18f, 1};
+    float ambient_intensity{0.6f};
+    bool draw_sky{true};
+    math::Color clear_color{0.05f, 0.05f, 0.06f, 1};
+    Tonemapper tonemapper{Tonemapper::Aces};
+    float exposure{1.0f};
+    float exposure_compensation{0.0f};
+    bool auto_exposure{false};
+    float auto_exposure_min_ev{-4.0f};
+    float auto_exposure_max_ev{6.0f};
+    float saturation{1.0f};
+    float contrast{1.0f};
+    float vignette{0.25f};
+    float bloom_intensity{0.05f};
+    float bloom_threshold{1.0f};
+    float ao_intensity{1.0f};
+    float ao_radius{0.6f};
+    float shadow_distance{40.0f};
+};
+
+// Registers serializers ("Rotator", "Oscillator", "Environment"). Idempotent; call once at startup before
 // loading scenes so these components are not treated as unknown.
 void register_components();
 // Adds the built-in behaviour systems to a simulation.

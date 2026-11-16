@@ -13,6 +13,7 @@ int main(int argc, char** argv) {
     p.positional("project", "project folder (default: <executable dir>/game)")
         .option("frames", "exit after N frames", "0")
         .option("screenshot", "write the last frame to this PNG")
+        .option("quality", "rendering quality: low, medium, high or ultra (default: project setting)")
         .flag("fullscreen", "run fullscreen");
     if (auto st = p.parse(argc, argv); !st) return std::fprintf(stderr, "%s\n%s", st.error().message.c_str(), p.help().c_str()), 2;
     victus::player::PlayerOptions o;
@@ -25,6 +26,7 @@ int main(int argc, char** argv) {
     o.max_frames = static_cast<std::uint64_t>(p.get_number("frames", 0));
     o.screenshot = p.get("screenshot");
     o.fullscreen = p.has("fullscreen");
+    o.quality = p.get("quality");
     auto r = victus::player::run(o);
     if (!r) return std::fprintf(stderr, "victus_player: %s\n", r.error().message.c_str()), 1;
     return 0;

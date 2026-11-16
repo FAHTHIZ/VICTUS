@@ -19,6 +19,7 @@ struct PlayerOptions {
     std::string screenshot;      // PNG written after the last frame (requires max_frames)
     bool fullscreen{false};
     bool hot_reload{false};      // re-read changed scripts while running (development)
+    std::string quality;         // low|medium|high|ultra; empty = project rendering.quality
 };
 
 struct PlayerReport {
@@ -27,6 +28,7 @@ struct PlayerReport {
     std::string backend;
     std::uint64_t script_errors{0};
     bool packaged{false};        // ran from an exported game.vpak
+    std::string quality;         // quality tier used
 };
 
 [[nodiscard]] Result<PlayerReport> run(const PlayerOptions& options);

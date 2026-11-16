@@ -79,12 +79,12 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 
 ## Phase 8 — Complete 3D renderer and world systems
 - [ ] PBR materials, physically meaningful units/color management, forward/clustered baseline and justified alternatives.
-- [ ] Direct/indirect lighting, shadows, reflection probes, environment lighting and scalable global illumination.
-- [ ] Post-processing, temporal techniques, anti-aliasing, depth of field, motion blur and tone mapping.
+- [~] Direct/indirect lighting, shadows, reflection probes, environment lighting and scalable global illumination. Done (Slice 9): cascaded shadow maps, SSAO, specular occlusion, analytic sky/environment lighting. Remaining: reflection probes, GI, clustered lights.
+- [~] Post-processing, temporal techniques, anti-aliasing, depth of field, motion blur and tone mapping. Done (Slice 9): dual-filter bloom, GPU auto exposure, ACES/PBR Neutral/Reinhard tonemapping with grading/vignette, FXAA 3.11. Remaining: TAA/upscaling, DOF, motion blur.
 - [ ] GPU culling/indirect draws where beneficial; instancing, occlusion, mesh LOD and streaming.
 - [ ] Terrain, foliage, water, atmosphere, weather, sky/clouds and large-world precision.
 - [ ] Decals, dynamic environment effects and destruction interfaces.
-- [ ] Scalable high/standard/mobile/compatibility tiers, dynamic resolution and user overrides.
+- [~] Scalable high/standard/mobile/compatibility tiers, dynamic resolution and user overrides. Done (Slice 9): Low/Medium/High/Ultra presets, render scale, per-project setting and `--quality` override. Remaining: dynamic resolution, device-based defaults, mobile GPU validation.
 - [ ] Research-only advanced paths: ray tracing, virtualized geometry/textures and other high-cost features; implement only after evidence.
 **Exit:** representative outdoor and indoor scenes with measured quality tiers on desktop and mobile.
 

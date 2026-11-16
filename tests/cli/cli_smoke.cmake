@@ -69,6 +69,22 @@ foreach(t 3d 2d simulation)
         if(NOT EXISTS "${WORK}/run_${t}.png")
             message(FATAL_ERROR "run did not write a screenshot for ${t}")
         endif()
+        if(NOT LAST_OUTPUT MATCHES "at high quality")
+            message(FATAL_ERROR "run did not use the project's default quality for ${t}: ${LAST_OUTPUT}")
+        endif()
+        # Every quality tier renders the template.
+        foreach(q low medium ultra)
+            run_ok("${VICTUS_CLI}" run "${dir}" --strict --frames 3 --width 320 --height 180 --quality ${q}
+                   --screenshot "${WORK}/run_${t}_${q}.png")
+            if(NOT LAST_OUTPUT MATCHES "at ${q} quality" OR NOT EXISTS "${WORK}/run_${t}_${q}.png")
+                message(FATAL_ERROR "run --quality ${q} failed for ${t}: ${LAST_OUTPUT}")
+            endif()
+        endforeach()
+        execute_process(COMMAND "${VICTUS_CLI}" run "${dir}" --frames 1 --quality cinematic
+                        RESULT_VARIABLE rc OUTPUT_QUIET ERROR_VARIABLE err)
+        if(rc EQUAL 0 OR NOT err MATCHES "unknown quality tier")
+            message(FATAL_ERROR "run accepted an unknown quality tier (${rc}): ${err}")
+        endif()
     endif()
 endforeach()
 

@@ -2,6 +2,7 @@
 #include "victus/runtime/scene_rendering.hpp"
 
 #include "victus/core/log.hpp"
+#include "victus/gameplay/gameplay.hpp"
 
 #include <algorithm>
 #include <format>
@@ -155,6 +156,35 @@ Entity instantiate_model(Scene& scene, const Uuid& model_uuid, const assets::Coo
     return root;
 }
 
+static_assert(static_cast<int>(gameplay::EnvironmentComponent::Tonemapper::Reinhard) ==
+              static_cast<int>(render::Tonemapper::Reinhard));
+static_assert(static_cast<int>(gameplay::EnvironmentComponent::Tonemapper::Neutral) ==
+              static_cast<int>(render::Tonemapper::Neutral));
+
+void apply_environment(const gameplay::EnvironmentComponent& e, render::Environment& env, render::DirectionalLight& sun) {
+    env.sky_zenith = e.sky_zenith;
+    env.sky_horizon = e.sky_horizon;
+    env.ground = e.ground;
+    env.ambient_intensity = std::max(e.ambient_intensity, 0.0f);
+    env.draw_sky = e.draw_sky;
+    env.clear_color = e.clear_color;
+    env.tonemap = true;
+    env.tonemapper = static_cast<render::Tonemapper>(e.tonemapper);
+    env.exposure = std::max(e.exposure, 0.0f);
+    env.exposure_compensation = e.exposure_compensation;
+    env.auto_exposure = e.auto_exposure;
+    env.auto_exposure_min_ev = e.auto_exposure_min_ev;
+    env.auto_exposure_max_ev = std::max(e.auto_exposure_min_ev, e.auto_exposure_max_ev);
+    env.saturation = std::max(e.saturation, 0.0f);
+    env.contrast = std::max(e.contrast, 0.0f);
+    env.vignette = std::clamp(e.vignette, 0.0f, 1.0f);
+    env.bloom_intensity = std::max(e.bloom_intensity, 0.0f);
+    env.bloom_threshold = std::max(e.bloom_threshold, 0.0f);
+    env.ao_intensity = std::max(e.ao_intensity, 0.0f);
+    env.ao_radius = std::max(e.ao_radius, 0.0f);
+    sun.shadow_distance = std::max(e.shadow_distance, 1.0f);
+}
+
 ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRenderer& renderer,
                            const SceneViewSettings& settings, const render::Camera3D* camera_override) {
     ExtractStats stats;
@@ -199,7 +229,14 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         }
     });
     if (!has_sun) sun.intensity = 0.0f;
-    renderer.begin(camera, sun, settings.environment);
+    render::Environment env = settings.environment;
+    bool has_env = false;
+    w.each<gameplay::EnvironmentComponent>([&](const gameplay::EnvironmentComponent& e) {
+        if (has_env) return;
+        has_env = true;
+        apply_environment(e, env, sun);
+    });
+    renderer.begin(camera, sun, env);
     for (const auto& p : points) renderer.add_point_light(p);
 
     w.each<MeshRendererComponent, WorldTransform>([&](const MeshRendererComponent& mr, const WorldTransform& wt) {

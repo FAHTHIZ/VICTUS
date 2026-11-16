@@ -2,8 +2,10 @@
 #include "victus/gameplay/gameplay.hpp"
 
 #include "victus/core/profiler.hpp"
+#include "victus/scene/reflect.hpp"
 
 #include <algorithm>
+#include <mutex>
 #include <cmath>
 
 namespace victus::gameplay {
@@ -87,6 +89,32 @@ void register_components() {
             c.phase = v["phase"].as_float(c.phase);
             return {};
         });
+    static std::once_flag once;
+    std::call_once(once, [] {
+        using E = EnvironmentComponent;
+        scene::Schema<E>("Environment", "Rendering")
+            .field(&E::sky_zenith, "sky_zenith", {.hint = "color_hdr"})
+            .field(&E::sky_horizon, "sky_horizon", {.hint = "color_hdr"})
+            .field(&E::ground, "ground", {.hint = "color_hdr"})
+            .field(&E::ambient_intensity, "ambient_intensity", {.min = 0, .max = 16, .speed = 0.01f})
+            .field(&E::draw_sky, "draw_sky")
+            .field(&E::clear_color, "clear_color", {.tooltip = "Background when the sky is not drawn"})
+            .enumeration(&E::tonemapper, "tonemapper", {"none", "aces", "neutral", "reinhard"})
+            .field(&E::exposure, "exposure", {.min = 0.001f, .max = 1000, .speed = 0.01f, .tooltip = "Manual exposure multiplier"})
+            .field(&E::exposure_compensation, "exposure_compensation", {.min = -10, .max = 10, .speed = 0.05f, .tooltip = "EV stops"})
+            .field(&E::auto_exposure, "auto_exposure", {.tooltip = "Eye adaptation to the scene's average brightness"})
+            .field(&E::auto_exposure_min_ev, "auto_exposure_min_ev", {.min = -16, .max = 16, .speed = 0.05f})
+            .field(&E::auto_exposure_max_ev, "auto_exposure_max_ev", {.min = -16, .max = 16, .speed = 0.05f})
+            .field(&E::saturation, "saturation", {.min = 0, .max = 2, .speed = 0.01f})
+            .field(&E::contrast, "contrast", {.min = 0.5f, .max = 2, .speed = 0.01f})
+            .field(&E::vignette, "vignette", {.min = 0, .max = 1, .speed = 0.01f})
+            .field(&E::bloom_intensity, "bloom_intensity", {.min = 0, .max = 4, .speed = 0.005f})
+            .field(&E::bloom_threshold, "bloom_threshold", {.min = 0, .max = 64, .speed = 0.01f})
+            .field(&E::ao_intensity, "ao_intensity", {.min = 0, .max = 4, .speed = 0.01f})
+            .field(&E::ao_radius, "ao_radius", {.min = 0.01f, .max = 10, .speed = 0.01f})
+            .field(&E::shadow_distance, "shadow_distance", {.min = 1, .max = 5000, .speed = 0.5f})
+            .commit();
+    });
 }
 
 void add_builtin_systems(Simulation& sim) {
