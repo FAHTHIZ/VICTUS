@@ -346,7 +346,12 @@ Result<CookedTexture> AssetDatabase::load_texture(const Uuid& uuid) {
     const AssetRecord* rec = find(uuid);
     if (!rec || rec->importer != "texture") return make_error(ErrorCode::NotFound, "no texture asset " + uuid.to_string());
     auto imported = import(uuid);
-    if (!imported) return std::move(imported).error();
+    if (!imported) {
+        // Keep using the last good import (e.g. a source saved half-way while hot reloading).
+        std::error_code ec;
+        if (packaged_ || !std::filesystem::is_regular_file(cooked_path(uuid), ec)) return std::move(imported).error();
+        VICTUS_LOG_WARN("assets", "{}; using the previous import", imported.error().message);
+    }
     auto bytes = fs::read_binary(cooked_path(uuid));
     if (!bytes) return std::move(bytes).error();
     return deserialize_texture(*bytes);
@@ -356,7 +361,12 @@ Result<CookedModel> AssetDatabase::load_model(const Uuid& uuid) {
     const AssetRecord* rec = find(uuid);
     if (!rec || rec->importer != "gltf") return make_error(ErrorCode::NotFound, "no model asset " + uuid.to_string());
     auto imported = import(uuid);
-    if (!imported) return std::move(imported).error();
+    if (!imported) {
+        // Keep using the last good import (e.g. a source saved half-way while hot reloading).
+        std::error_code ec;
+        if (packaged_ || !std::filesystem::is_regular_file(cooked_path(uuid), ec)) return std::move(imported).error();
+        VICTUS_LOG_WARN("assets", "{}; using the previous import", imported.error().message);
+    }
     auto bytes = fs::read_binary(cooked_path(uuid));
     if (!bytes) return std::move(bytes).error();
     return deserialize_model(*bytes);

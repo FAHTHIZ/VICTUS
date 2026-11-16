@@ -108,6 +108,10 @@ public:
     Status play_one_shot(std::string_view clip, const OneShot& options = {});
     // Decodes and caches a clip ahead of first use.
     Status preload(std::string_view clip);
+    // Hot reload: forgets the decoded clip so the file is read again, and restarts entity
+    // sources that were playing it (from the beginning, with the new data). One-shots already
+    // playing finish with the old data. Returns the number of sources restarted.
+    std::size_t reload_clip(std::string_view clip);
 
     // ---- buses (Master scales everything) ----
     void set_bus_volume(Bus b, float volume);

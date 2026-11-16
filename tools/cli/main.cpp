@@ -148,7 +148,7 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("height", "window height (default: project setting)", "0")
         .option("quality", "rendering quality: low, medium, high or ultra (default: project setting)")
         .flag("fullscreen", "run fullscreen")
-        .flag("no-hot-reload", "do not reload scripts when their files change")
+        .flag("no-hot-reload", "do not reload scripts, textures, models and audio when their files change")
         .flag("strict", "exit with code 3 if any script raised an error")
         .option("connect", "join a `victus serve` server at host[:port]")
         .option("name", "player name shown to others when connected", "player")
@@ -174,6 +174,7 @@ int cmd_run(const std::vector<std::string>& a) {
                 static_cast<unsigned long long>(r->frames), r->seconds, r->backend.c_str(), r->quality.c_str(),
                 static_cast<unsigned long long>(r->script_errors));
     if (!r->net_status.empty()) std::printf("net: %s\n", r->net_status.c_str());
+    if (r->assets_reloaded) std::printf("hot reload: %zu assets reloaded\n", r->assets_reloaded);
     return p.has("strict") && r->script_errors ? 3 : 0;
 }
 

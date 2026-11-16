@@ -21,5 +21,6 @@ victus_add_module(runtime
         src/scene_rendering.cpp
         src/scene_view.cpp
         src/game_ui.cpp
+        src/hot_reload.cpp
         ${_fonts_cpp}
     DEPS VICTUS::Assets VICTUS::Scene VICTUS::Gameplay VICTUS::Animation VICTUS::Particles VICTUS::Gameui VICTUS::Ui)

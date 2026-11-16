@@ -194,9 +194,10 @@ void Editor::frame(float dt) {
     if (input_) input_->set_enabled(play_state_ == PlayState::Playing && viewport_focused_);
     if (play_state_ == PlayState::Playing && play_scene_) sim_.tick(*play_scene_, dt);
     // Inspector property discovery follows script edits made in an external editor.
-    if (edit_scripts_ && (script_poll_ += dt) >= 1.0f) {
+    if ((script_poll_ += dt) >= 1.0f) {
         script_poll_ = 0;
-        (void)edit_scripts_->reload_changed();
+        if (edit_scripts_) (void)edit_scripts_->reload_changed();
+        (void)check_asset_changes(); // textures, models and audio edited outside the editor
     }
     if (!project_) draw_launcher();
     else draw_workspace(dt);

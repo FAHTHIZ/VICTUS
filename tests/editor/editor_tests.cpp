@@ -6,6 +6,10 @@
 #include "victus/editor/editor.hpp"
 #include "victus/editor/undo.hpp"
 
+#include "victus/render/image.hpp"
+
+#include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <set>
 
@@ -403,6 +407,40 @@ TEST_CASE("editor: input actions panel edits, captures bindings and saves the pr
     renamed.add("dash", {"Q", "Pad.East"});
     REQUIRE(h.ed->set_input_map(renamed).ok());
     CHECK(h.ed->play_scripts()->options().input_map.find("dash") != nullptr);
+    h.frames(2);
+    h.ed->stop();
+    h.frames(1);
+}
+
+TEST_CASE("editor: assets changed on disk are hot-reloaded without a manual reimport") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Hot", "Hot", "3d").ok());
+    h.frames(2);
+    CHECK(h.ed->check_asset_changes() == 0);
+    const auto assets_dir = h.dir / "Hot" / "assets";
+    auto png = render::encode_png(render::make_checker(8, 2, 0xff0000ffu, 0xffffffffu));
+    REQUIRE(png.ok());
+    REQUIRE(fs::write_atomic(assets_dir / "decal.png", *png).ok());
+    CHECK(h.ed->check_asset_changes() == 1);
+    REQUIRE(h.ed->assets()->find_path("decal.png"));
+    const auto& msgs = h.ed->messages();
+    CHECK(std::find(msgs.begin(), msgs.end(), "Reloaded decal.png") != msgs.end());
+    // Saving the scene from the editor is not reported as an outside change needing a restart.
+    REQUIRE(h.ed->save_scene().ok());
+    const std::size_t before = h.ed->messages().size();
+    (void)h.ed->check_asset_changes();
+    for (std::size_t i = before; i < h.ed->messages().size(); ++i)
+        CHECK(h.ed->messages()[i].find("restart") == std::string::npos);
+    // While playing, a re-import swaps the asset in the running session too.
+    h.ed->play();
+    h.frames(2);
+    png = render::encode_png(render::make_checker(8, 2, 0xff00ff00u, 0xffffffffu));
+    REQUIRE(png.ok());
+    REQUIRE(fs::write_atomic(assets_dir / "decal.png", *png).ok());
+    sfs::last_write_time(assets_dir / "decal.png", sfs::file_time_type::clock::now() + std::chrono::seconds(2));
+    CHECK(h.ed->check_asset_changes() == 1);
     h.frames(2);
     h.ed->stop();
     h.frames(1);
