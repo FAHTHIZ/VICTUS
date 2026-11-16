@@ -61,3 +61,51 @@ function(victus_fetch_luau)
         endif()
     endforeach()
 endfunction()
+
+# Jolt Physics 5.7.0 (MIT). https://github.com/jrouwe/JoltPhysics/releases/tag/v5.7.0
+# Built as a static library without samples, tests, debug renderer, profiler or GPU compute.
+# AVX/AVX2/FMA/F16C/LZCNT/TZCNT are disabled so binaries run on every x86-64 CPU with SSE4.2;
+# ARM builds use NEON automatically.
+function(victus_fetch_jolt)
+    if(TARGET Jolt)
+        return()
+    endif()
+    foreach(opt TARGET_UNIT_TESTS TARGET_HELLO_WORLD TARGET_PERFORMANCE_TEST TARGET_SAMPLES TARGET_VIEWER
+                ENABLE_ALL_WARNINGS INTERPROCEDURAL_OPTIMIZATION FLOATING_POINT_EXCEPTIONS_ENABLED ENABLE_INSTALL
+                OVERRIDE_CXX_FLAGS JPH_USE_DX12 JPH_USE_VK JPH_USE_MTL JPH_USE_CPU_COMPUTE USE_AVX USE_AVX2 USE_AVX512
+                USE_F16C USE_FMADD USE_LZCNT USE_TZCNT DEBUG_RENDERER_IN_DEBUG_AND_RELEASE PROFILER_IN_DEBUG_AND_RELEASE
+                ENABLE_OBJECT_STREAM USE_STATIC_MSVC_RUNTIME_LIBRARY GENERATE_DEBUG_SYMBOLS JPH_BUILD_SHARED_LIBS)
+        set(${opt} OFF CACHE BOOL "" FORCE)
+    endforeach()
+    # VICTUS subclasses Jolt interfaces (job system, listeners) from RTTI-enabled code.
+    set(CPP_RTTI_ENABLED ON CACHE BOOL "" FORCE)
+    set(OBJECT_LAYER_BITS 32 CACHE STRING "" FORCE)
+    FetchContent_Declare(JoltPhysics
+        URL https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.7.0.tar.gz
+        URL_HASH SHA256=9a0a405f2375dc4bd9f72486c56e1cbc7794c6a62e42fc48fadea45dfc93dacc
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        SOURCE_SUBDIR Build
+        EXCLUDE_FROM_ALL SYSTEM)
+    FetchContent_MakeAvailable(JoltPhysics)
+    set_target_properties(Jolt PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_options(Jolt PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
+endfunction()
+
+# Box2D 3.2.0 (MIT). https://github.com/erincatto/box2d/releases/tag/v3.2.0
+function(victus_fetch_box2d)
+    if(TARGET box2d)
+        return()
+    endif()
+    foreach(opt BOX2D_SAMPLES BOX2D_BENCHMARKS BOX2D_DOCS BOX2D_UNIT_TESTS BOX2D_VALIDATE BOX2D_PROFILE
+                BOX2D_SANITIZE BOX2D_COMPILE_WARNING_AS_ERROR BOX2D_DOUBLE_PRECISION)
+        set(${opt} OFF CACHE BOOL "" FORCE)
+    endforeach()
+    FetchContent_Declare(box2d
+        URL https://github.com/erincatto/box2d/archive/refs/tags/v3.2.0.tar.gz
+        URL_HASH SHA256=ffec747b27a2267016f8d0240d658c82d187fb2271fa0f69fcbe53fbc067180d
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        EXCLUDE_FROM_ALL SYSTEM)
+    FetchContent_MakeAvailable(box2d)
+    set_target_properties(box2d PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_options(box2d PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w,-w>)
+endfunction()

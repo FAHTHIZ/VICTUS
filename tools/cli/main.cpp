@@ -6,6 +6,7 @@
 #include "victus/core/cli.hpp"
 #include "victus/core/log.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/physics/physics.hpp"
 #include "victus/player/player.hpp"
 #include "victus/project/project.hpp"
 #include "victus/scene/scene.hpp"
@@ -191,9 +192,12 @@ int cmd_simulate(const std::vector<std::string>& a) {
     if (!host) return error(host.error().message);
     gameplay::ManualInput input;
     for (const auto& k : split_list(p.get("hold"))) input.set_key(k, true);
+    auto physics_world = physics::PhysicsWorld::create(); // single-threaded: reproducible output
+    if (!physics_world) return error(physics_world.error().message);
     gameplay::Simulation sim;
     gameplay::add_builtin_systems(sim);
     script::add_script_systems(sim, **host);
+    physics::add_physics_systems(sim, **physics_world);
     sim.input = &input;
     const auto frames = static_cast<std::uint64_t>(p.get_number("frames", 600));
     for (std::uint64_t f = 0; f < frames; ++f) {

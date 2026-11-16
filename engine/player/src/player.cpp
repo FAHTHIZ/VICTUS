@@ -2,8 +2,10 @@
 #include "victus/player/player.hpp"
 
 #include "victus/assets/database.hpp"
+#include "victus/core/jobs.hpp"
 #include "victus/core/log.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/physics/physics.hpp"
 #include "victus/platform/platform.hpp"
 #include "victus/player/platform_input.hpp"
 #include "victus/project/project.hpp"
@@ -52,10 +54,17 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     so.watch_files = o.hot_reload;
     auto scripts = script::ScriptHost::create(so);
     if (!scripts) return std::move(scripts).error();
+    // Worker threads for physics (and future parallel systems); 0 = hardware_concurrency - 1.
+    jobs::JobSystem workers(0);
+    physics::PhysicsSettings ps;
+    ps.jobs = &workers;
+    auto physics_world = physics::PhysicsWorld::create(ps);
+    if (!physics_world) return std::move(physics_world).error();
     PlatformInput input((*plat)->input());
     gameplay::Simulation sim;
     gameplay::add_builtin_systems(sim);
     script::add_script_systems(sim, **scripts);
+    physics::add_physics_systems(sim, **physics_world);
     sim.input = &input;
     PlayerReport report;
     report.backend = dev.capabilities().driver_name;

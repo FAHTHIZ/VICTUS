@@ -5,6 +5,7 @@
 #include "victus/core/build_info.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/platform/platform.hpp"
+#include "victus/scene/reflect.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -50,6 +51,69 @@ bool vec2_edit(const char* label, math::Vec2& v, float speed = 0.05f) {
     float f[2] = {v.x, v.y};
     const bool changed = ImGui::DragFloat2(label, f, speed, 0, 0, "%.3f");
     if (changed) v = {f[0], f[1]};
+    return changed;
+}
+
+
+// Editor widgets for one reflected field. Returns true when the value changed.
+bool field_edit(const scene::FieldInfo& f, void* comp) {
+    const char* label = f.label.c_str();
+    const float speed = f.speed > 0 ? f.speed : 0.05f;
+    const float lo = f.bounded() ? f.min : 0.0f, hi = f.bounded() ? f.max : 0.0f;
+    bool changed = false;
+    switch (f.kind) {
+    case scene::FieldKind::Bool: changed = ImGui::Checkbox(label, &f.ref<bool>(comp)); break;
+    case scene::FieldKind::Float: changed = ImGui::DragFloat(label, &f.ref<float>(comp), speed, lo, hi, "%.3f"); break;
+    case scene::FieldKind::Int:
+    case scene::FieldKind::UInt: {
+        if (f.hint == "bitmask16") {
+            auto bits = static_cast<std::uint32_t>(f.get_int(comp));
+            if (ImGui::TreeNode(label)) {
+                for (int i = 0; i < 16; ++i) {
+                    bool on = (bits >> i) & 1u;
+                    if (i % 8) ImGui::SameLine();
+                    ImGui::PushID(i);
+                    if (ImGui::Checkbox("##bit", &on)) {
+                        bits = on ? (bits | (1u << i)) : (bits & ~(1u << i));
+                        changed = true;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Layer %d", i);
+                    ImGui::PopID();
+                }
+                ImGui::TreePop();
+            }
+            if (changed) f.set_int(comp, bits);
+            break;
+        }
+        int v = static_cast<int>(f.get_int(comp));
+        if (ImGui::DragInt(label, &v, 0.1f, static_cast<int>(lo), static_cast<int>(hi))) {
+            if (f.kind == scene::FieldKind::UInt && v < 0) v = 0;
+            f.set_int(comp, v);
+            changed = true;
+        }
+        break;
+    }
+    case scene::FieldKind::Vec2: changed = vec2_edit(label, f.ref<math::Vec2>(comp), speed); break;
+    case scene::FieldKind::Vec3: changed = vec3_edit(label, f.ref<math::Vec3>(comp), speed); break;
+    case scene::FieldKind::Color: changed = color_edit(label, f.ref<math::Color>(comp)); break;
+    case scene::FieldKind::String: changed = ImGui::InputText(label, &f.ref<std::string>(comp)); break;
+    case scene::FieldKind::Enum: {
+        int cur = static_cast<int>(f.get_int(comp));
+        const char* preview = cur >= 0 && cur < static_cast<int>(f.enum_names.size()) ? f.enum_names[cur].c_str() : "?";
+        if (ImGui::BeginCombo(label, preview)) {
+            for (int i = 0; i < static_cast<int>(f.enum_names.size()); ++i) {
+                if (ImGui::Selectable(f.enum_names[i].c_str(), i == cur) && i != cur) {
+                    f.set_int(comp, i);
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        break;
+    }
+    case scene::FieldKind::Uuid: ImGui::Text("%s: %s", label, f.ref<Uuid>(comp).to_string().c_str()); break;
+    }
+    if (!f.tooltip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", f.tooltip.c_str());
     return changed;
 }
 
@@ -311,6 +375,7 @@ void Editor::draw_menu_bar() {
     }
     if (ImGui::BeginMenu("View")) {
         if (ImGui::MenuItem("Reset Layout")) layout_built_ = false;
+        ImGui::MenuItem("Physics Colliders", nullptr, &show_colliders_);
         ImGui::MenuItem("UI Demo Window", nullptr, &show_demo_);
         ImGui::EndMenu();
     }
@@ -708,6 +773,22 @@ bool Editor::inspect_components(Entity e) {
         changed |= ImGui::DragFloat("Phase (rad)", &o->phase, 0.01f);
     }
     if (auto* sc = w.get<script::ScriptComponent>(e); sc && removable("Script", remove_script)) changed |= inspect_script(*sc);
+    // Reflected components (physics and every future schema-driven component).
+    const scene::ComponentSchema* remove_schema = nullptr;
+    for (const scene::ComponentSchema* schema : scene::schemas()) {
+        void* comp = w.get_raw(e, schema->id);
+        if (!comp) continue;
+        ImGui::PushID(schema->name.c_str());
+        bool remove = false;
+        if (removable(schema->name.c_str(), remove))
+            for (const auto& f : schema->fields) changed |= field_edit(f, comp);
+        if (remove) remove_schema = schema;
+        ImGui::PopID();
+    }
+    if (remove_schema) {
+        w.remove_raw(e, remove_schema->id);
+        changed = true;
+    }
     if (const auto* u = w.get<UnknownComponents>(e); u && !u->components.empty()) {
         if (ImGui::CollapsingHeader("Unknown Components")) {
             for (const auto& [name, value] : u->components) ImGui::BulletText("%s (preserved)", name.c_str());
@@ -773,6 +854,23 @@ bool Editor::inspect_components(Entity e) {
         if (!w.has<script::ScriptComponent>(e) && ImGui::MenuItem("Script")) {
             w.add<script::ScriptComponent>(e);
             changed = true;
+        }
+        // Reflected components grouped by category.
+        std::vector<std::string> categories;
+        for (const auto* schema : scene::schemas())
+            if (std::find(categories.begin(), categories.end(), schema->category) == categories.end())
+                categories.push_back(schema->category);
+        for (const auto& cat : categories) {
+            if (!ImGui::BeginMenu(cat.c_str())) continue;
+            for (const auto* schema : scene::schemas()) {
+                if (schema->category != cat) continue;
+                const bool present = w.get_raw(e, schema->id) != nullptr;
+                if (ImGui::MenuItem(schema->name.c_str(), nullptr, false, !present)) {
+                    (void)w.add_raw(e, schema->id);
+                    changed = true;
+                }
+            }
+            ImGui::EndMenu();
         }
         ImGui::EndPopup();
     }

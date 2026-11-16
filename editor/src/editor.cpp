@@ -536,6 +536,13 @@ void Editor::play() {
     }
     play_scene_ = std::move(copy);
     reset_simulation();
+    play_physics_.reset();
+    {
+        physics::PhysicsSettings ps;
+        ps.jobs = &workers();
+        if (auto pw = physics::PhysicsWorld::create(ps)) play_physics_ = std::move(pw).value();
+        else notify("physics disabled: " + pw.error().message, true);
+    }
     if (db_) {
         script::HostOptions so;
         so.assets_root = db_->assets_dir();
@@ -547,9 +554,15 @@ void Editor::play() {
             notify("scripts disabled: " + host.error().message, true);
         }
     }
+    if (play_physics_) physics::add_physics_systems(sim_, *play_physics_);
     focus_viewport_ = true;
     play_state_ = PlayState::Playing;
     notify("Playing - changes made now are discarded on Stop");
+}
+
+jobs::JobSystem& Editor::workers() {
+    if (!jobs_) jobs_ = std::make_unique<jobs::JobSystem>(0);
+    return *jobs_;
 }
 
 void Editor::reset_simulation() {
@@ -569,6 +582,7 @@ void Editor::stop() {
     play_scene_.reset();
     reset_simulation();
     play_scripts_.reset();
+    play_physics_.reset();
     if (input_) input_->set_enabled(false);
     play_state_ = PlayState::Editing;
     pending_before_.clear();
@@ -622,6 +636,11 @@ void Editor::draw_overlays_3d(render::SceneRenderer& r) {
                                               {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
         for (const auto& edge : kEdges) r.line(c[edge[0]], c[edge[1]], {1.0f, 0.55f, 0.1f, 1});
     }
+    if (show_colliders_) {
+        collider_scratch_.clear();
+        physics::collider_lines(s, collider_scratch_);
+        for (const auto& l : collider_scratch_) r.line(l.a, l.b, l.color);
+    }
 }
 
 void Editor::draw_overlays_2d(render::SpriteBatch& b) {
@@ -641,6 +660,11 @@ void Editor::draw_overlays_2d(render::SpriteBatch& b) {
         b.draw_line({bq.x, bq.y}, {c.x, c.y}, 2 * px, orange, 1000);
         b.draw_line({c.x, c.y}, {d.x, d.y}, 2 * px, orange, 1000);
         b.draw_line({d.x, d.y}, {a.x, a.y}, 2 * px, orange, 1000);
+    }
+    if (show_colliders_) {
+        collider_scratch_.clear();
+        physics::collider_lines(s, collider_scratch_);
+        for (const auto& l : collider_scratch_) b.draw_line({l.a.x, l.a.y}, {l.b.x, l.b.y}, 1.5f * px, l.color, 999);
     }
 }
 
