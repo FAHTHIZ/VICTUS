@@ -32,7 +32,8 @@ namespace victus::net {
 
 using scene::Entity;
 
-inline constexpr std::uint32_t kProtocolVersion = 2; // 2: gamepad state in input frames
+// 2: gamepad state in input frames; 3: delta snapshots against acknowledged baselines
+inline constexpr std::uint32_t kProtocolVersion = 3;
 inline constexpr std::uint16_t kDefaultPort = 27960;
 inline constexpr std::uint16_t kServerId = 0;      // sender id of messages from the server
 inline constexpr std::uint16_t kAllClients = 0xFFFF;
@@ -168,6 +169,7 @@ struct NetDiagnostics {
     float send_kbps{0}, receive_kbps{0}; // rolling one-second averages
     std::uint64_t bytes_sent{0}, bytes_received{0};
     std::uint64_t snapshots_sent{0}, snapshots_received{0};
+    std::uint64_t delta_snapshots{0};  // snapshots encoded against an acknowledged baseline
     std::uint32_t snapshot_bytes{0};   // size of the last snapshot sent/received
     std::uint32_t entities_deferred{0}; // server: entities left out of the last snapshot by the budget
     float prediction_error{0};         // client: last reconciliation error of the local player (m)
@@ -223,6 +225,10 @@ struct ServerOptions {
     float message_rate{60.0f};        // reliable client messages per second allowed (burst = rate)
     std::uint32_t max_violations{20}; // malformed payloads before a client is kicked
     float spawn_spacing{2.5f};        // player copies are placed on a ring around the template
+    // Encode each snapshot against the newest one the client acknowledged: entities it already
+    // knows are omitted and positions travel as millimetre deltas. Off: every changed entity is
+    // sent in full and unchanged ones are repeated once a second (loss recovery).
+    bool delta_snapshots{true};
 };
 
 class NetServer final : public NetContext {

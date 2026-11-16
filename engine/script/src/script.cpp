@@ -1318,6 +1318,7 @@ int net_stats(lua_State* L) {
     num("send_kbps", d.send_kbps);
     num("receive_kbps", d.receive_kbps);
     num("snapshot_bytes", d.snapshot_bytes);
+    num("delta_snapshots", static_cast<double>(d.delta_snapshots));
     num("prediction_error", d.prediction_error);
     num("corrections", static_cast<double>(d.corrections));
     lua_pushlstring(L, d.status.data(), d.status.size());
