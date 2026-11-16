@@ -102,6 +102,14 @@ public:
     virtual void add_impulse(Entity e, math::Vec3 i) = 0;
     virtual void add_torque(Entity e, math::Vec3 t) = 0;
     virtual void add_angular_impulse(Entity e, math::Vec3 i) = 0;
+    [[nodiscard]] virtual bool has_character(Entity e) const = 0;
+    virtual void move_character(Entity e, math::Vec3 v) = 0;
+    virtual bool jump_character(Entity e, float speed) = 0;
+    virtual bool drop_through(Entity e, float seconds) = 0;
+    [[nodiscard]] virtual CharacterState character_state(Entity e) const = 0;
+    [[nodiscard]] virtual bool has_joint(Entity e) const = 0;
+    [[nodiscard]] virtual JointState joint_state(Entity e) const = 0;
+    virtual void set_joint_motor(Entity e, bool enabled, float speed) = 0;
     virtual void set_gravity(math::Vec2 g) = 0;
     [[nodiscard]] virtual math::Vec2 gravity() const = 0;
     virtual void stats(PhysicsStats& out) const = 0;

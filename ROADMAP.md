@@ -71,7 +71,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 ## Phase 7 — Complete 2D development
 - [ ] 2D camera, sprites, atlases, batching, sorting/layers and pixel-art controls.
 - [ ] Tilemaps, tile sets, autotiling, grid and 2D world editing.
-- [x] 2D physics, collision shapes, queries and debug visualization: Box2D 3.2.0 bodies, box/circle/capsule colliders, triggers, raycast/overlap queries, editor collider overlay (Slice 6).
+- [x] 2D physics, collision shapes, queries and debug visualization: Box2D 3.2.0 bodies, box/circle/capsule colliders, triggers, raycast/overlap queries, editor collider overlay (Slice 6); 2D character mover, one-way platforms and 2D joints (Slice 14).
 - [ ] 2D animation, skeletal/rigged workflows where justified, particles and parallax.
 - [ ] 2D UI, input, audio, scene transitions and 2D lighting/effects.
 - [ ] 2D templates, profiling, export and playable reference game.
@@ -101,7 +101,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 **Exit:** complete playable 3D game loop authored in VICTUS with both code and visual-logic options.
 
 ## Phase 10 — Physics, animation, AI, audio and UI
-- [~] 3D/2D physics, rigid bodies, character controllers, collision queries, joints and debug tools. Done (Slice 6): Jolt 5.7.0 + Box2D 3.2.0 behind `victus::physics`, rigid bodies, box/sphere/capsule/cylinder colliders, triggers, layers/masks, raycasts/overlaps, contact events to scripts, collider debug lines, reflected inspector. Done (Slice 11): 3D character controller (Jolt `CharacterVirtual`: slopes, steps, ground detection, jumping, pushing, moving platforms) and 3D joints (fixed/point/hinge/slider/distance with limits, motors, breaking). Remaining: mesh/convex colliders, 2D character controller and joints, 2D polygons, ragdolls.
+- [~] 3D/2D physics, rigid bodies, character controllers, collision queries, joints and debug tools. Done (Slice 6): Jolt 5.7.0 + Box2D 3.2.0 behind `victus::physics`, rigid bodies, box/sphere/capsule/cylinder colliders, triggers, layers/masks, raycasts/overlaps, contact events to scripts, collider debug lines, reflected inspector. Done (Slice 11): 3D character controller (Jolt `CharacterVirtual`: slopes, steps, ground detection, jumping, pushing, moving platforms) and 3D joints (fixed/point/hinge/slider/distance with limits, motors, breaking). Done (Slice 14): 2D character controller on the Box2D geometric mover (ground detection, max slope, snapping, pushing, one-way platforms with drop-through) and 2D joints (weld/revolute/prismatic/distance/wheel with limits, springs, motors, breaking). Remaining: mesh/convex colliders, 2D polygons/chains, ragdolls.
 - [~] Skeletal animation, blend spaces, state machines, retargeting, root motion and animation tooling. Done (Slice 12): glTF skins and clips imported/cooked, GPU skinning in all mesh passes, `Animator` playback with loops and cross-fades, parallel evaluation, Luau control. Remaining: blend spaces, state machines, layers, root motion, IK, retargeting, morph targets, animation editor tooling.
 - [ ] Navigation meshes, pathfinding, avoidance, crowds and behavior/state systems.
 - [ ] Gameplay AI: perception, decision systems, behavior trees/utility/state machines and debugging.

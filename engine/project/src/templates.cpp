@@ -377,23 +377,35 @@ void build_2d(Scene& s) {
     sprite(s, add(s, "Sun Disc", {5.5f, 3.2f, -0.5f}), {1.6f, 1.6f}, {1.0f, 0.86f, 0.35f, 1}, -9);
     const math::Color dirt{0.45f, 0.3f, 0.2f, 1}, wall{0.3f, 0.22f, 0.16f, 1};
     solid_2d(s, "Ground", {0, -4.2f, 0}, {40, 2.4f}, {0.22f, 0.55f, 0.27f, 1}, 0.6f);
-    solid_2d(s, "Platform", {2.5f, -1.0f, 0}, {3.0f, 0.4f}, dirt, 0.6f);
+    // One-way: jump up through it from below, land on top, press S/Down to drop back through.
+    const Entity ledge = solid_2d(s, "Platform", {2.5f, -1.0f, 0}, {3.0f, 0.4f}, {0.62f, 0.44f, 0.26f, 1}, 0.6f);
+    s.world().get<physics::Collider2DComponent>(ledge)->one_way = true;
     solid_2d(s, "Platform High", {-1.5f, 1.0f, 0}, {2.5f, 0.4f}, dirt, 0.6f);
     // Frictionless walls keep the player inside the camera view (half width ~8.9 at 16:9)
     // without letting it cling to them mid-air.
     solid_2d(s, "Platform Wall Left", {-9.3f, 1.0f, 0}, {1.0f, 14.0f}, wall, 0.0f);
     solid_2d(s, "Platform Wall Right", {9.3f, 1.0f, 0}, {1.0f, 14.0f}, wall, 0.0f);
 
+    // A lantern swinging on a revolute joint from a wall bracket: bump it or jump into it.
+    sprite(s, add(s, "Bracket", {-6.5f, 2.45f, 0}), {0.7f, 0.12f}, wall, 1);
+    const Entity lantern = add(s, "Lantern", {-6.5f, 1.5f, 0});
+    sprite(s, lantern, {0.36f, 0.5f}, {1.0f, 0.72f, 0.3f, 1}, 1);
+    sprite(s, add(s, "Chain", {0, 0.57f, 0}, lantern), {0.05f, 0.65f}, {0.2f, 0.18f, 0.16f, 1}, 0);
+    auto& lrb = s.world().add<physics::RigidBody2DComponent>(lantern);
+    lrb.mass = 0.6f;
+    lrb.angular_damping = 0.3f;
+    s.world().add<physics::Collider2DComponent>(lantern).size = {0.36f, 0.5f};
+    auto& hinge = s.world().add<physics::Joint2DComponent>(lantern);
+    hinge.type = physics::Joint2DComponent::Type::Revolute;
+    hinge.anchor = {0, 0.9f}; // the bracket, 0.9 m above the lantern's centre
+
     const Entity player = add(s, "Player", {-4.0f, -2.55f, 0});
     sprite(s, player, {0.9f, 0.9f}, {0.95f, 0.45f, 0.15f, 1}, 2);
-    auto& prb = s.world().add<physics::RigidBody2DComponent>(player);
-    prb.fixed_rotation = true;
-    prb.gravity_scale = 2.6f; // snappier arcs than real-world gravity
-    prb.bullet = true;
-    auto& pc = s.world().add<physics::Collider2DComponent>(player);
-    pc.size = {0.9f, 0.9f};
-    pc.rounding = 0.04f;
-    pc.friction = 0.0f; // the script sets horizontal velocity directly
+    auto& pc = s.world().add<physics::CharacterController2DComponent>(player);
+    pc.size = {0.86f, 0.9f};
+    pc.gravity_scale = 2.6f; // snappier arcs than real-world gravity
+    pc.air_control = 0.8f;
+    pc.push_force = 30.0f;
     attach(s, player, "scripts/platformer.luau");
 
     const math::Vec3 coins[] = {{2.5f, -0.2f, 0}, {-1.5f, 1.8f, 0}, {6.0f, -2.4f, 0}};
@@ -562,13 +574,13 @@ end
 return Follow
 )lua";
 
-constexpr const char* kPlatformer = R"lua(-- Platformer controller on a physics body: A/D or Left/Right to run, Space, W or Up to jump.
--- The entity has a dynamic RigidBody2D with fixed rotation; level geometry uses static
--- Collider2D boxes, and coins are trigger colliders collected in on_trigger_enter.
+constexpr const char* kPlatformer = R"lua(-- Platformer controller on a CharacterController2D: A/D or Left/Right to run, Space, W or Up
+-- to jump, S or Down to drop through one-way platforms. The Box2D mover slides along walls,
+-- lands on one-way platforms only from above and nudges physics bodies (the lantern); coins
+-- are trigger colliders collected in on_trigger_enter.
 local Player = {}
 Player.speed = 6
 Player.jump_speed = 12
-Player.ground_probe = 0.08 -- how far below the feet counts as standing
 Player.jump_sound = "audio/jump.wav"
 Player.coin_sound = "audio/coin.wav"
 
@@ -578,8 +590,6 @@ end
 
 function Player:start()
     self.spawn = self.entity.position
-    local size = self.entity:get("Collider2D").size
-    self.hx, self.hy = size[1] * 0.5, size[2] * 0.5
     self.score = 0
     self.total = 0
     for _, e in scene.query("Collider2D") do
@@ -587,27 +597,17 @@ function Player:start()
     end
 end
 
-function Player:grounded()
-    local p = self.entity.position
-    local down = vector.create(0, -1, 0)
-    for _, dx in { -self.hx * 0.9, 0, self.hx * 0.9 } do
-        local hit = physics.raycast2d(p + vector.create(dx, 0, 0), down, self.hy + self.ground_probe, nil, self.entity)
-        if hit and not starts_with(hit.entity.name, "Coin") then return true end
-    end
-    return false
-end
-
 function Player:fixed_update(dt)
-    local v = self.entity.velocity
-    local vy = v.y
-    if (input.down("Space") or input.down("W") or input.down("Up")) and vy <= 0.1 and self:grounded() then
-        vy = self.jump_speed
+    local e = self.entity
+    e:move_character(vector.create(input.axis("A", "D", "Left", "Right") * self.speed, 0, 0))
+    if (input.down("S") or input.down("Down")) and e.grounded then
+        e:drop_through()
+    elseif (input.down("Space") or input.down("W") or input.down("Up")) and e:jump(self.jump_speed) then
         audio.play(self.jump_sound, { volume = 0.6 })
     end
-    self.entity.velocity = vector.create(input.axis("A", "D", "Left", "Right") * self.speed, vy, 0)
-    if self.entity.position.y < -20 then -- fell off the world
-        self.entity.position = self.spawn
-        self.entity.velocity = vector.zero
+    if e.position.y < -20 then -- fell off the world
+        e.position = self.spawn
+        e.velocity = vector.create(0, 0, 0)
     end
 end
 
@@ -703,7 +703,7 @@ return Orbit
 const std::vector<TemplateInfo>& templates() {
     static const std::vector<TemplateInfo> list = {
         {"3d", "3D Scene", "An animated robot character you walk with WASD/arrow keys and jump with Space (Luau + CharacterController) that climbs steps, swings a hinged gate and shoves a stack of physics crates with positional impact sounds, a follow camera, sun shadows, PBR primitives and a point light."},
-        {"2d", "2D Game", "A playable platformer on Box2D physics with music and sound effects: run with A/D or arrows, jump with Space, collect the coins. Gameplay is in Luau scripts."},
+        {"2d", "2D Game", "A playable platformer on Box2D physics with music and sound effects: a CharacterController2D you run with A/D or arrows and jump with Space, a one-way ledge you jump through and drop off with S/Down, a lantern swinging on a joint and coins to collect. Gameplay is in Luau scripts."},
         {"simulation", "Simulation",
          "576 entities animated by native systems, with a scripted orbiting camera: a starting point for simulation work."},
     };

@@ -137,13 +137,56 @@ struct Collider2DComponent {
     float friction{0.6f};
     float restitution{0.0f};
     bool is_trigger{false};
+    // One-way platform: bodies and characters pass through from below and land on top. "Up" is the
+    // entity's local +Y rotated into the world.
+    bool one_way{false};
     std::uint32_t layer{0};
     std::uint32_t mask{kAllLayers};
     friend bool operator==(const Collider2DComponent&, const Collider2DComponent&) = default;
 };
 
+// Kinematic 2D walker (a capsule centred on the entity origin, moved with Box2D's plane solver).
+// It slides along walls, follows slopes up to max_slope, snaps down onto ground within
+// snap_distance, climbs small ledges with its rounded bottom, rides moving platforms, lands on
+// one-way platforms, pushes dynamic bodies and is seen by raycasts and triggers. A Collider2D or
+// RigidBody2D on the same entity is ignored. Gameplay drives it with move_character()/jump_character().
+struct CharacterController2DComponent {
+    math::Vec2 size{0.8f, 1.0f};  // capsule width x total height (m)
+    float max_slope{50.0f};       // degrees; steeper surfaces are walls
+    float snap_distance{0.15f};   // keeps walking characters on downward slopes and steps (m)
+    float gravity_scale{1.0f};
+    float push_force{60.0f};      // maximum force on dynamic bodies in the way (N); 0 = no pushing
+    float air_control{0.5f};      // 0 = no steering in the air, 1 = full ground control
+    std::uint32_t layer{0};
+    std::uint32_t mask{kAllLayers};
+    friend bool operator==(const CharacterController2DComponent&, const CharacterController2DComponent&) = default;
+};
+
+// A 2D constraint between this entity's body and `connected` (or the world when null). Anchors and
+// the axis are in local space and captured in world space when the joint is created.
+struct Joint2DComponent {
+    enum class Type : std::uint8_t { Weld, Revolute, Prismatic, Distance, Wheel };
+    Type type{Type::Revolute};
+    Uuid connected;               // entity with a 2D body; nil = attached to the world
+    math::Vec2 anchor;            // local attachment point on this entity
+    math::Vec2 axis{1, 0};        // local slide axis (prismatic) or suspension axis (wheel)
+    math::Vec2 connected_anchor;  // distance: point local to `connected`, or a world point when nil
+    bool limits{false};
+    float min_limit{-45.0f};      // revolute: degrees; prismatic/wheel/distance: metres
+    float max_limit{45.0f};
+    bool motor{false};
+    float motor_speed{0.0f};      // revolute/wheel: degrees per second; prismatic/distance: m/s
+    float motor_force{1000.0f};   // maximum motor torque (N*m) or force (N)
+    bool spring{false};           // soft weld/revolute/prismatic/distance; the wheel always has one
+    float spring_hertz{4.0f};
+    float spring_damping{0.7f};
+    float break_force{0.0f};      // N (or N*m for torque); 0 = unbreakable
+    bool collide_connected{false};
+    friend bool operator==(const Joint2DComponent&, const Joint2DComponent&) = default;
+};
+
 // Registers the reflected component schemas ("RigidBody", "Collider", "CharacterController",
-// "Joint", "RigidBody2D", "Collider2D"). Idempotent.
+// "Joint", "RigidBody2D", "Collider2D", "CharacterController2D", "Joint2D"). Idempotent.
 void register_components();
 
 // ---- queries and events ----------------------------------------------------------------------
@@ -203,6 +246,7 @@ struct PhysicsSettings {
 struct PhysicsStats {
     std::uint32_t bodies_3d{0}, active_3d{0};
     std::uint32_t bodies_2d{0}, awake_2d{0};
+    std::uint32_t characters_2d{0}, joints_2d{0};
     std::uint64_t steps{0};
     std::uint32_t contacts_last_step{0};
     double last_step_ms{0};
@@ -260,17 +304,20 @@ public:
     void add_torque(Entity e, math::Vec3 torque);
     void add_angular_impulse(Entity e, math::Vec3 impulse);
 
-    // ---- characters ----
+    // ---- characters (CharacterController in 3D, CharacterController2D in 2D) ----
     // Desired horizontal walking velocity (m/s, world space; Y is ignored). Persists until changed.
     void move_character(Entity e, math::Vec3 velocity);
     // Jumps with the given upward speed on the next step. Returns false (and does nothing) when the
     // character is not grounded.
     bool jump_character(Entity e, float speed);
     [[nodiscard]] CharacterState character_state(Entity e) const;
+    // 2D characters: ignore one-way platforms for `seconds` so the character drops through the one it
+    // stands on. Returns false when the entity has no 2D character.
+    bool drop_through(Entity e, float seconds = 0.25f);
 
-    // ---- joints ----
+    // ---- joints (Joint in 3D, Joint2D in 2D) ----
     [[nodiscard]] JointState joint_state(Entity e) const;
-    // Writes the Joint's motor fields and applies them to the live constraint without rebuilding it.
+    // Writes the Joint/Joint2D motor fields and applies them to the live constraint without rebuilding it.
     void set_joint_motor(scene::Scene& scene, Entity e, bool enabled, float speed);
 
     void set_gravity(math::Vec3 g);

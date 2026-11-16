@@ -33,7 +33,7 @@ VICTUS aims to give developers an end-to-end path from an empty project to a fin
 
 ## Development status
 
-VICTUS is early and not production-ready. What exists and is tested today: core runtime (jobs, memory, profiling, JSON, logging), SDL3 platform layer, an RHI on SDL_GPU (Vulkan verified), a render graph, real 2D sprite rendering and 3D PBR rendering with cascaded shadows, SSAO, bloom, auto exposure, filmic tonemapping, FXAA, automatic GPU instancing and Low/Medium/High/Ultra quality tiers, an archetype ECS, a versioned scene format, a texture/glTF asset pipeline, the VICTUS editor, Luau gameplay scripting with hot reload, 3D (Jolt) and 2D (Box2D) rigid-body physics with triggers, queries and script collision events, miniaudio-based audio (buses, 3D spatialization, streaming music, script API), a standalone player and the `victus` CLI. `victus export` packaging. Networking is not implemented yet. [docs/STATUS.md](docs/STATUS.md) lists exactly what is verified and how; [ROADMAP.md](ROADMAP.md) is the plan.
+VICTUS is early and not production-ready. What exists and is tested today: core runtime (jobs, memory, profiling, JSON, logging), SDL3 platform layer, an RHI on SDL_GPU (Vulkan verified), a render graph, real 2D sprite rendering and 3D PBR rendering with cascaded shadows, SSAO, bloom, auto exposure, filmic tonemapping, FXAA, automatic GPU instancing and Low/Medium/High/Ultra quality tiers, an archetype ECS, a versioned scene format, a texture/glTF asset pipeline, the VICTUS editor, Luau gameplay scripting with hot reload, 3D (Jolt) and 2D (Box2D) rigid-body physics with triggers, queries and script collision events, 3D and 2D character controllers (slopes, steps, one-way platforms, pushing bodies), 3D and 2D joints with limits, motors and breaking, glTF skeletal animation with GPU skinning and cross-fades, CPU particles with soft HDR billboards, miniaudio-based audio (buses, 3D spatialization, streaming music, script API), a standalone player, the `victus` CLI and `victus export` packaging. Networking is not implemented yet. [docs/STATUS.md](docs/STATUS.md) lists exactly what is verified and how; [ROADMAP.md](ROADMAP.md) is the plan.
 
 ## Quick start
 
@@ -62,7 +62,7 @@ Create, edit and run a project:
 
 `victus export` imports stale assets, validates every scene and script (it fails on syntax errors or missing script references), and writes the player executable, `game/game.vpak` (project, scenes, scripts, audio and cooked textures/models; source images and glTF files are not shipped), `THIRD_PARTY_NOTICES.txt` and an `export.json` manifest. Export for the platform you are on; cross-platform export needs a player built for the target.
 
-Template controls: 2D platformer — A/D or arrows to run, Space/W/Up to jump, collect the coins; 3D — WASD/arrows roll the ball (it knocks over the physics crate stack) and the camera follows; simulation — the camera orbits the wave field. In the editor, click the viewport after pressing Play so the game receives the keyboard.
+Template controls: 2D platformer — A/D or arrows to run, Space/W/Up to jump (also up through the light one-way ledge), S/Down to drop back through it, bump the swinging lantern, collect the coins; 3D — WASD/arrows walk the animated robot (it climbs the steps, swings the hinged gate and shoves the crate stack), Space jumps, and the camera follows; simulation — the camera orbits the wave field. In the editor, click the viewport after pressing Play so the game receives the keyboard.
 
 ### Scripting
 
@@ -86,19 +86,19 @@ return Spin
 
 Available globals: `scene.find/spawn/destroy/query/count`, `input.down/pressed/released/axis/mouse_*`, `time.delta/now/frame`, `log.info/warn/error`. Entities expose `position`, `rotation` (Euler degrees), `scale`, `name`, `parent`, `forward/right/up`, and `get/set/has/remove` for any component as JSON-like tables. Scripts run sandboxed with time and memory limits, so a bad loop reports an error instead of freezing the editor.
 
-Physics: add `RigidBody`/`Collider` (3D) or `RigidBody2D`/`Collider2D` (2D) from the inspector's Add Component menu. Scripts get `physics.raycast/raycast2d/overlap_sphere/overlap_box/overlap_circle/overlap_box2d/gravity/set_gravity`, entity `velocity`, `angular_velocity`, `add_force/add_impulse/add_torque/add_angular_impulse`, and the callbacks `on_collision_enter(other, info)`, `on_collision_exit(other)`, `on_trigger_enter(other)` and `on_trigger_exit(other)`. View > Physics Colliders toggles collider wireframes in the editor viewport.
+Physics: add `RigidBody`/`Collider` (3D) or `RigidBody2D`/`Collider2D` (2D) from the inspector's Add Component menu. Scripts get `physics.raycast/raycast2d/overlap_sphere/overlap_box/overlap_circle/overlap_box2d/gravity/set_gravity`, entity `velocity`, `angular_velocity`, `add_force/add_impulse/add_torque/add_angular_impulse`, and the callbacks `on_collision_enter(other, info)`, `on_collision_exit(other)`, `on_trigger_enter(other)` and `on_trigger_exit(other)`. Characters: add `CharacterController` (3D) or `CharacterController2D` (2D) and call `entity:move_character(velocity)` each fixed update, `entity:jump(speed)` (only succeeds when grounded), `entity.grounded`, `entity:character_state()` and, in 2D, `entity:drop_through(seconds?)` to fall through `Collider2D`s marked `one_way`. Joints: `Joint` (fixed/point/hinge/slider/distance) and `Joint2D` (weld/revolute/prismatic/distance/wheel) connect an entity to another or to the world, with limits, springs, motors (`entity:set_motor(on, speed)`) and `break_force`; `entity:joint_state()` reports whether it is active or broken. View > Physics Colliders toggles collider wireframes in the editor viewport.
 
 Audio: add `AudioSource` (clip, bus, volume, pitch, loop, play on start, stream, spatial with min/max distance and rolloff) and `AudioListener` from the inspector's Audio menu; drag a `.wav/.ogg/.mp3/.flac` asset onto the clip field, double-click an audio asset to preview it. Scripts get `audio.play(clip, {volume, pitch, bus, position})`, `audio.set_volume/volume/set_muted/muted(bus)`, `audio.available()` and entity `play_audio/stop_audio/pause_audio/audio_playing`. Buses: `master`, `music`, `sfx`, `ui`, `ambient`, `voice`. Set `VICTUS_NO_AUDIO=1` to run without an output device (mixing still happens). The 2D template ships generated jump/coin/music sounds and the 3D crates play impact sounds.
 
 In the editor: Play/Stop runs the scene in place on a copy (edits made during play are discarded), Ctrl+S saves, Ctrl+Z/Ctrl+Y undo/redo, F frames the selection, right-drag orbits, middle-drag pans, the wheel zooms. Drop `.gltf`/`.glb`/`.png`/`.jpg` files into the project's `assets/` folder and press Reimport; drag a model from the asset table into the viewport to instantiate it, or a `.luau` script onto an entity's Script component (double-click attaches it to the selection).
 
-A game can currently be shipped by copying `victus_player` next to a `game/` folder containing the project; running `victus_player` with no arguments starts it. A proper `victus export` command is planned. Your project files are plain JSON and assets you own; Apache-2.0 allows commercial use.
+Ship a game with `victus export` (above); the result runs anywhere the player runs, with no editor or SDK installed. Your project files are plain JSON and assets you own; Apache-2.0 allows commercial use.
 
 For Visual Studio/Xcode generators, binaries are under `build/bin/<Config>/`. See [CMake presets](CMakePresets.json).
 
 ## Repository map
 
-- `engine/<module>/` — engine modules (`core`, `platform`, `rhi`, `render`, `ecs`, `scene`, `assets`, `runtime`, `ui`, `gameplay`, `physics`, `audio`, `script`, `project`, `player`), each with `include/victus/<module>/` and `src/`
+- `engine/<module>/` — engine modules (`core`, `platform`, `rhi`, `render`, `ecs`, `scene`, `assets`, `runtime`, `ui`, `gameplay`, `physics`, `animation`, `particles`, `audio`, `script`, `project`, `player`), each with `include/victus/<module>/` and `src/`
 - `editor/` — the VICTUS editor (library + executable)
 - `apps/player/` — standalone game player
 - `tools/` — `victus` CLI and shader compiler

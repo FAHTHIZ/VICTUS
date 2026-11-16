@@ -136,16 +136,31 @@ void PhysicsWorld::add_angular_impulse(Entity e, math::Vec3 i) { VICTUS_PHYS_DIS
 
 #undef VICTUS_PHYS_DISPATCH
 
-void PhysicsWorld::move_character(Entity e, math::Vec3 v) { impl_->w3->move_character(e, v); }
-bool PhysicsWorld::jump_character(Entity e, float speed) { return impl_->w3->jump_character(e, speed); }
-CharacterState PhysicsWorld::character_state(Entity e) const { return impl_->w3->character_state(e); }
-JointState PhysicsWorld::joint_state(Entity e) const { return impl_->w3->joint_state(e); }
+void PhysicsWorld::move_character(Entity e, math::Vec3 v) {
+    if (impl_->w2->has_character(e)) impl_->w2->move_character(e, v);
+    else impl_->w3->move_character(e, v);
+}
+bool PhysicsWorld::jump_character(Entity e, float speed) {
+    return impl_->w2->has_character(e) ? impl_->w2->jump_character(e, speed) : impl_->w3->jump_character(e, speed);
+}
+CharacterState PhysicsWorld::character_state(Entity e) const {
+    return impl_->w2->has_character(e) ? impl_->w2->character_state(e) : impl_->w3->character_state(e);
+}
+bool PhysicsWorld::drop_through(Entity e, float seconds) { return impl_->w2->drop_through(e, seconds); }
+JointState PhysicsWorld::joint_state(Entity e) const {
+    return impl_->w2->has_joint(e) ? impl_->w2->joint_state(e) : impl_->w3->joint_state(e);
+}
 void PhysicsWorld::set_joint_motor(scene::Scene& scene, Entity e, bool enabled, float speed) {
     if (auto* j = scene.world().get<JointComponent>(e)) {
         j->motor = enabled;
         j->motor_speed = speed;
     }
+    if (auto* j = scene.world().get<Joint2DComponent>(e)) {
+        j->motor = enabled;
+        j->motor_speed = speed;
+    }
     impl_->w3->set_joint_motor(e, enabled, speed);
+    impl_->w2->set_joint_motor(e, enabled, speed);
 }
 
 void PhysicsWorld::set_gravity(math::Vec3 g) { impl_->w3->set_gravity(g); }
@@ -317,8 +332,54 @@ void collider_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity onl
         }
         }
     });
+    scene.world().each<CharacterController2DComponent>([&](Entity e, CharacterController2DComponent& c) {
+        if (!only.is_null() && e != only) return;
+        // 2D characters stay upright and are centred on the entity origin.
+        const math::Vec3 centre = scene.world_matrix(e).transform_point({});
+        Emitter em{out, math::Mat4::trs(centre, {}, {1, 1, 1}), kCharacter};
+        const float r = std::max(0.01f, c.size.x * 0.5f);
+        const float half = std::max(0.0f, c.size.y * 0.5f - r);
+        em.circle(Y * half, X, Y, r, 12, 0, pi);
+        em.circle(Y * -half, X, Y, r, 12, pi, 2 * pi);
+        em.line(Y * half + X * r, Y * -half + X * r);
+        em.line(Y * half - X * r, Y * -half - X * r);
+    });
+    scene.world().each<Joint2DComponent>([&](Entity e, Joint2DComponent& j) {
+        if (!only.is_null() && e != only) return;
+        const math::Mat4 m = scene.world_matrix(e);
+        const math::Vec3 a = m.transform_point({j.anchor.x, j.anchor.y, 0});
+        Emitter em{out, math::Mat4::trs(a, {}, {1, 1, 1}), kJoint};
+        constexpr float s = 0.12f;
+        if (j.type == Joint2DComponent::Type::Revolute || j.type == Joint2DComponent::Type::Wheel) em.circle({}, X, Y, s, 12);
+        em.line(X * -s, X * s);
+        em.line(Y * -s, Y * s);
+        if (j.type == Joint2DComponent::Type::Prismatic || j.type == Joint2DComponent::Type::Wheel) {
+            const math::Vec3 axis = m.transform_point({j.axis.x, j.axis.y, 0}) - m.transform_point({});
+            if (math::length(axis) > 1e-6f) em.line(axis * -0.4f / math::length(axis), axis * 0.4f / math::length(axis));
+        }
+        const bool distance = j.type == Joint2DComponent::Type::Distance;
+        const math::Vec3 local{j.connected_anchor.x, j.connected_anchor.y, 0};
+        math::Vec3 to = a;
+        if (!j.connected.is_nil()) {
+            const Entity o = scene.find(j.connected);
+            if (!o.is_null() && scene.world().alive(o)) to = scene.world_matrix(o).transform_point(distance ? local : math::Vec3{});
+        } else if (distance) {
+            to = local;
+        }
+        if (!nearly_equal_points(a, to)) out.push_back({a, to, kJoint});
+    });
     scene.world().each<Collider2DComponent>([&](Entity e, Collider2DComponent& c) {
         if (!only.is_null() && e != only) return;
+        if (scene.world().get<CharacterController2DComponent>(e)) return;
+        if (c.one_way) {
+            // An arrow along the pass-through direction (local +Y).
+            Emitter arrow{out, scene.world_matrix(e), kKinematic};
+            const math::Vec3 o{c.offset.x, c.offset.y, 0};
+            const float len = std::max(0.2f, std::min(0.5f, c.size.y));
+            arrow.line(o, o + Y * len);
+            arrow.line(o + Y * len, o + Y * (len * 0.6f) + X * (len * 0.3f));
+            arrow.line(o + Y * len, o + Y * (len * 0.6f) - X * (len * 0.3f));
+        }
         const auto* rb = scene.world().get<RigidBody2DComponent>(e);
         Emitter em{out, scene.world_matrix(e), color_for(c.is_trigger, rb ? &rb->type : nullptr)};
         const math::Vec3 o{c.offset.x, c.offset.y, 0};
