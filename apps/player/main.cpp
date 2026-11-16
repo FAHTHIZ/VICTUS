@@ -17,6 +17,9 @@ int main(int argc, char** argv) {
         .flag("fullscreen", "run fullscreen")
         .option("connect", "join a multiplayer server at host[:port]")
         .option("name", "player name shown to others when connected", "player")
+        .option("server-key", "refuse servers whose public key differs")
+        .option("password", "password of a protected server")
+        .flag("insecure", "join a server started with --insecure (no encryption)")
         .option("saves", "save games folder (default: the per-user VICTUS saves folder)");
     if (auto st = p.parse(argc, argv); !st) return std::fprintf(stderr, "%s\n%s", st.error().message.c_str(), p.help().c_str()), 2;
     victus::player::PlayerOptions o;
@@ -32,6 +35,9 @@ int main(int argc, char** argv) {
     o.quality = p.get("quality");
     o.connect = p.get("connect");
     o.player_name = p.get("name");
+    o.server_key = p.get("server-key");
+    o.net_password = p.get("password");
+    o.insecure = p.has("insecure");
     o.saves = p.get("saves");
     auto r = victus::player::run(o);
     if (!r) return std::fprintf(stderr, "victus_player: %s\n", r.error().message.c_str()), 1;
