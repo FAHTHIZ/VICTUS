@@ -22,6 +22,10 @@
 //     function Mover:on_trigger_exit(other) end
 //     return Mover
 //
+// Scene API: `scene.find(name)`, `scene.spawn(name?, parent?)`, `scene.destroy(e)`,
+// `scene.query(component)`, `scene.count()`, `scene.instantiate(prefab_path, {position, parent,
+// name}?)` creates an instance of a `.vprefab` asset (its scripts start on the next update).
+//
 // Input API: raw keys/mouse `input.down/pressed/released(key)`, `input.axis(neg, pos, ...)`,
 // `input.mouse_down/mouse_pressed(b)`, `input.mouse_position/mouse_delta()`; actions from the
 // project's input map (keyboard, mouse and gamepads together) `input.action(name)`,
@@ -64,10 +68,12 @@
 #include "victus/core/result.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/gameplay/input_map.hpp"
+#include "victus/scene/prefab.hpp"
 #include "victus/scene/scene.hpp"
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -89,6 +95,12 @@ struct PropertyInfo {
     json::Value default_value; // number, bool, string or [x, y, z]
 };
 
+// A prefab and its asset UUID, as returned by HostOptions::prefab_loader.
+struct PrefabSource {
+    Uuid asset;
+    scene::Prefab prefab;
+};
+
 struct HostOptions {
     std::filesystem::path assets_root;   // scripts are resolved under this folder
     double call_budget_seconds{0.25};    // per start/update call; exceeded calls raise an error
@@ -98,6 +110,9 @@ struct HostOptions {
     // Actions behind input.action/value/vector (the project's "input" section; scripts may
     // rebind them for the session with input.rebind).
     gameplay::InputMap input_map = gameplay::default_input_map();
+    // Resolves `scene.instantiate(path)`. Empty: reads `<assets_root>/<path>` and the UUID from
+    // its `.meta` sidecar (nil when there is none). Players pass one backed by the asset database.
+    std::function<Result<PrefabSource>(std::string_view path)> prefab_loader;
 };
 
 struct HostStats {
@@ -141,6 +156,8 @@ public:
     [[nodiscard]] HostStats stats() const;
     [[nodiscard]] const std::vector<std::string>& recent_errors() const noexcept;
     [[nodiscard]] const HostOptions& options() const noexcept;
+    // Drops cached prefabs so the next scene.instantiate re-reads them (hot reload).
+    void forget_prefabs();
     // Replaces the input actions scripts see (e.g. edited in the editor while playing).
     void set_input_map(gameplay::InputMap map);
 
@@ -157,6 +174,10 @@ private:
 // Installs "script.update" (Update) and "script.fixed_update" (FixedUpdate) systems that drive
 // `host` with the simulation's time and input. The host must outlive the simulation's use.
 void add_script_systems(gameplay::Simulation& sim, ScriptHost& host);
+
+// Reads the prefab `<assets_root>/<path>` and its asset UUID from the `.meta` sidecar (nil when
+// there is none). The default HostOptions::prefab_loader.
+[[nodiscard]] Result<PrefabSource> read_prefab(const std::filesystem::path& assets_root, std::string_view path);
 
 // Compiles source to Luau bytecode without running it; returns the compile error message on
 // failure (used by import validation and tests).

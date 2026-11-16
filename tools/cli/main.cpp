@@ -29,6 +29,7 @@
 #include <thread>
 
 #include <cstdio>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -440,7 +441,7 @@ int cmd_serve(const std::vector<std::string>& a) {
 // Validates every scene (loads, no unknown components) and every script (syntax, module loads,
 // referenced files exist). Exit 1 if anything is wrong.
 int cmd_check(const std::vector<std::string>& a) {
-    cli::Parser p("victus check", "Validate scenes and scripts");
+    cli::Parser p("victus check", "Validate scenes, prefabs and scripts");
     p.positional("project", "project folder", true);
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
@@ -448,18 +449,26 @@ int cmd_check(const std::vector<std::string>& a) {
     auto proj = project::Project::open(p.get("project"));
     if (!proj) return error(proj.error().message);
     const fs::Path assets = proj->root() / "assets";
-    std::size_t problems = 0, scripts = 0, scenes = 0;
+    std::size_t problems = 0, scripts = 0, scenes = 0, prefabs = 0;
     for (const auto& msg : proj->settings().input.validate(
              [](std::string_view k) { return platform::key_from_name(k) != platform::Key::Unknown; })) {
         std::printf("error: victus.project: %s\n", msg.c_str());
         ++problems;
     }
+    std::vector<std::string> prefab_files;
+    std::set<Uuid> prefab_uuids;
     std::error_code ec;
     for (auto it = std::filesystem::recursive_directory_iterator(assets, ec);
          !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
-        if (!it->is_regular_file() || it->path().extension() != ".luau") continue;
-        ++scripts;
+        if (!it->is_regular_file()) continue;
         const std::string rel = std::filesystem::relative(it->path(), assets).generic_string();
+        if (it->path().extension() == scene::kPrefabExtension) {
+            prefab_files.push_back(rel);
+            if (auto src = script::read_prefab(assets, rel); src && !src->asset.is_nil()) prefab_uuids.insert(src->asset);
+            continue;
+        }
+        if (it->path().extension() != ".luau") continue;
+        ++scripts;
         auto text = fs::read_text(it->path());
         if (!text) {
             std::printf("error: %s: %s\n", rel.c_str(), text.error().message.c_str());
@@ -474,20 +483,8 @@ int cmd_check(const std::vector<std::string>& a) {
     so.input_map = proj->settings().input;
     auto host = script::ScriptHost::create(so);
     if (!host) return error(host.error().message);
-    for (const auto& rel : proj->scenes()) {
-        ++scenes;
-        auto path = proj->resolve(rel);
-        scene::Scene scene;
-        if (!path) {
-            std::printf("error: %s: %s\n", rel.c_str(), path.error().message.c_str());
-            ++problems;
-            continue;
-        }
-        if (auto st = scene.load_file(*path); !st) {
-            std::printf("error: %s: %s\n", rel.c_str(), st.error().message.c_str());
-            ++problems;
-            continue;
-        }
+    // Unknown components (warning), scripts that do not load and links to missing prefabs.
+    const auto check_entities = [&](const std::string& rel, scene::Scene& scene) {
         scene.world().each<scene::UnknownComponents>([&](scene::Entity e, scene::UnknownComponents& u) {
             for (const auto& [name, value] : u.components) {
                 std::printf("warning: %s: entity '%s' has unknown component '%s'\n", rel.c_str(),
@@ -503,8 +500,46 @@ int cmd_check(const std::vector<std::string>& a) {
                 ++problems;
             }
         });
+        scene.world().each<scene::PrefabInstance>([&](scene::Entity e, scene::PrefabInstance& pi) {
+            if (!prefab_uuids.contains(pi.prefab))
+                std::printf("warning: %s: entity '%s' is an instance of a prefab that no longer exists (%s); it keeps "
+                            "its saved content\n",
+                            rel.c_str(), entity_name(scene, e).c_str(), pi.prefab.to_string().c_str());
+        });
+    };
+    for (const auto& rel : prefab_files) {
+        ++prefabs;
+        auto src = script::read_prefab(assets, rel);
+        if (!src) {
+            std::printf("error: %s\n", src.error().message.c_str());
+            ++problems;
+            continue;
+        }
+        scene::Scene scene;
+        if (auto e = scene::instantiate(scene, src->prefab, src->asset); !e) {
+            std::printf("error: %s: %s\n", rel.c_str(), e.error().message.c_str());
+            ++problems;
+            continue;
+        }
+        check_entities(rel, scene);
     }
-    std::printf("checked %zu scenes and %zu scripts: %zu problems\n", scenes, scripts, problems);
+    for (const auto& rel : proj->scenes()) {
+        ++scenes;
+        auto path = proj->resolve(rel);
+        scene::Scene scene;
+        if (!path) {
+            std::printf("error: %s: %s\n", rel.c_str(), path.error().message.c_str());
+            ++problems;
+            continue;
+        }
+        if (auto st = scene.load_file(*path); !st) {
+            std::printf("error: %s: %s\n", rel.c_str(), st.error().message.c_str());
+            ++problems;
+            continue;
+        }
+        check_entities(rel, scene);
+    }
+    std::printf("checked %zu scenes, %zu prefabs and %zu scripts: %zu problems\n", scenes, prefabs, scripts, problems);
     return problems ? 1 : 0;
 }
 

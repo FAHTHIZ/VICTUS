@@ -121,6 +121,25 @@ Result<ExportReport> export_game(const ExportOptions& o) {
     }
     VICTUS_TRY_STATUS(pw.add_text(".victus/assets.index.json", json::stringify((*db)->index_json(), false)));
 
+    // Prefabs: every prefab must load; its scripts must exist.
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::Prefab) continue;
+        auto src = script::read_prefab((*db)->assets_dir(), r.path);
+        if (!src) {
+            errors.push_back(src.error().message);
+            continue;
+        }
+        scene::Scene scene;
+        if (auto e = scene::instantiate(scene, src->prefab, r.uuid); !e) {
+            errors.push_back(std::format("{}: {}", r.path, e.error().message));
+            continue;
+        }
+        scene.world().each<script::ScriptComponent>([&](scene::Entity e, script::ScriptComponent& c) {
+            if (!c.script.empty() && !asset_paths.contains(c.script))
+                errors.push_back(std::format("{}: entity '{}' uses missing script '{}'", r.path, entity_label(scene, e), c.script));
+        });
+    }
+
     // Scenes: every scene must load; references to scripts and audio clips must resolve.
     std::vector<std::string> scenes = proj->scenes();
     if (std::find(scenes.begin(), scenes.end(), proj->settings().startup_scene) == scenes.end())

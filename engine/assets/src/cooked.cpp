@@ -86,6 +86,7 @@ const char* to_string(AssetKind kind) noexcept {
     case AssetKind::Scene: return "scene";
     case AssetKind::Script: return "script";
     case AssetKind::Audio: return "audio";
+    case AssetKind::Prefab: return "prefab";
     default: return "unknown";
     }
 }

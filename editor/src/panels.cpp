@@ -176,6 +176,7 @@ const char* kind_icon(assets::AssetKind k) {
     case assets::AssetKind::Scene: return "[scn]";
     case assets::AssetKind::Script: return "[lua]";
     case assets::AssetKind::Audio: return "[snd]";
+    case assets::AssetKind::Prefab: return "[pfb]";
     default: return "[file]";
     }
 }
@@ -534,6 +535,7 @@ void Editor::draw_viewport() {
                 Uuid id;
                 std::memcpy(&id, p->Data, sizeof(Uuid));
                 if (const auto* rec = db_->find(id); rec && rec->kind == assets::AssetKind::Model) instantiate_asset(id);
+                else if (rec && rec->kind == assets::AssetKind::Prefab) instantiate_prefab(id);
             }
             ImGui::EndDragDropTarget();
         }
@@ -624,7 +626,12 @@ void Editor::draw_hierarchy_node(Entity e) {
     if (is_selected(e)) flags |= ImGuiTreeNodeFlags_Selected;
     ImGui::PushID(static_cast<int>(e.index));
     const char* tag = s.world().has<CameraComponent>(e) ? "(cam) " : s.world().has<LightComponent>(e) ? "(light) " : "";
+    const bool prefab_root = s.world().has<scene::PrefabInstance>(e);
+    const bool prefab_part = !prefab_root && s.world().has<scene::PrefabPart>(e);
+    if (prefab_root || prefab_part)
+        ImGui::PushStyleColor(ImGuiCol_Text, prefab_root ? ImVec4(0.45f, 0.75f, 1.0f, 1.0f) : ImVec4(0.62f, 0.8f, 0.98f, 1.0f));
     const bool open = ImGui::TreeNodeEx("##node", flags, "%s%s", tag, n ? n->value.c_str() : "Entity");
+    if (prefab_root || prefab_part) ImGui::PopStyleColor();
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) select(e, ImGui::GetIO().KeyCtrl);
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) frame_selected();
     if (ImGui::BeginDragDropSource()) {
@@ -652,6 +659,18 @@ void Editor::draw_hierarchy_node(Entity e) {
         if (ImGui::MenuItem("Duplicate", "Ctrl+D")) duplicate_selected();
         if (ImGui::MenuItem("Delete", "Del")) delete_selected();
         if (ImGui::MenuItem("Unparent", nullptr, false, !s.parent(e).is_null())) reparent(e, kNullEntity);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Create Prefab", nullptr, false, play_state_ == PlayState::Editing)) {
+            if (auto r = create_prefab(e); !r) notify("Create prefab failed: " + r.error().message, true);
+        }
+        const Entity inst_root = scene::instance_root(s, e);
+        if (ImGui::MenuItem("Apply to Prefab", nullptr, false, !inst_root.is_null() && play_state_ == PlayState::Editing)) {
+            if (auto st = apply_prefab(inst_root); !st) notify("Apply failed: " + st.error().message, true);
+        }
+        if (ImGui::MenuItem("Revert to Prefab", nullptr, false, !inst_root.is_null())) {
+            if (auto st = revert_prefab(inst_root); !st) notify("Revert failed: " + st.error().message, true);
+        }
+        if (ImGui::MenuItem("Unpack Prefab", nullptr, false, !inst_root.is_null())) unpack_prefab(inst_root);
         ImGui::EndPopup();
     }
     if (open) {
@@ -711,14 +730,18 @@ void Editor::begin_inspector_frame(Entity e) {
         pending_dirty_ = false;
     }
     if (!pending_dirty_) {
-        pending_before_ = capture(s, {id});
+        std::vector<Uuid> ids{id};
+        // Edits to a prefab part record overrides on the instance root: capture it for undo.
+        if (const Entity root = scene::instance_root(s, e); !root.is_null() && root != e) ids.push_back(s.uuid(root));
+        pending_before_ = capture(s, ids);
         pending_entity_ = id;
     }
 }
 
-void Editor::end_inspector_frame(Entity, bool changed) {
+void Editor::end_inspector_frame(Entity e, bool changed) {
     if (changed) pending_dirty_ = true;
     if (pending_dirty_ && !ImGui::IsAnyItemActive()) {
+        mark_prefab_overrides(e, pending_before_);
         record_edit("Edit", std::move(pending_before_));
         pending_before_.clear();
         pending_dirty_ = false;
@@ -1018,6 +1041,65 @@ bool Editor::inspect_script(script::ScriptComponent& c) {
     return changed;
 }
 
+void Editor::draw_prefab_section(Entity e) {
+    Scene& s = active_scene();
+    const Entity root = scene::instance_root(s, e);
+    if (root.is_null()) return;
+    const auto* inst = s.world().get<scene::PrefabInstance>(root);
+    const assets::AssetRecord* rec = db_ ? db_->find(inst->prefab) : nullptr;
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.75f, 1.0f, 1.0f));
+    ImGui::TextWrapped("Prefab: %s%s", rec ? rec->path.c_str() : "(missing prefab asset)", root == e ? "" : "  (part)");
+    ImGui::PopStyleColor();
+    const bool editing = play_state_ == PlayState::Editing;
+    const auto flush = [&] {
+        if (pending_dirty_) {
+            record_edit("Edit", std::move(pending_before_));
+            pending_before_.clear();
+            pending_dirty_ = false;
+        }
+    };
+    ImGui::BeginDisabled(!rec || !editing);
+    if (ImGui::Button("Apply")) {
+        flush();
+        if (auto st = apply_prefab(root); !st) notify("Apply failed: " + st.error().message, true);
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Write this instance to the prefab and update every instance");
+    ImGui::SameLine();
+    if (ImGui::Button("Revert")) {
+        flush();
+        if (auto st = revert_prefab(root); !st) notify("Revert failed: " + st.error().message, true);
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Discard overrides and match the prefab");
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Unpack")) {
+        flush();
+        unpack_prefab(root);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the instance into ordinary entities");
+    if (root != e) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Select root")) select(root);
+    }
+    // Only meaningful for the instance in the scene (overrides of the entity shown).
+    if (const auto* src_part = s.world().get<scene::PrefabPart>(e); src_part || root == e) {
+        std::string list;
+        for (const auto& o : inst->overrides) {
+            const bool mine = root == e ? false : o.part == src_part->source;
+            if (root == e || mine) {
+                if (!list.empty()) list += ", ";
+                list += o.component;
+            }
+        }
+        if (root == e && !inst->overrides.empty())
+            ImGui::TextDisabled("%zu override%s in this instance", inst->overrides.size(), inst->overrides.size() == 1 ? "" : "s");
+        else if (!list.empty())
+            ImGui::TextDisabled("Overrides: %s", list.c_str());
+    }
+    ImGui::Separator();
+}
+
 void Editor::draw_inspector() {
     if (!ImGui::Begin(kInspectorWindow)) {
         ImGui::End();
@@ -1033,6 +1115,7 @@ void Editor::draw_inspector() {
         }
     } else {
         if (selection_.size() > 1) ImGui::TextDisabled("%zu selected (editing the last)", selection_.size());
+        draw_prefab_section(e);
         begin_inspector_frame(e);
         const bool changed = inspect_components(e);
         if (changed) active_scene().update_transforms();
@@ -1075,6 +1158,7 @@ void Editor::draw_assets() {
             }
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 if (r.kind == assets::AssetKind::Model) instantiate_asset(r.uuid);
+                else if (r.kind == assets::AssetKind::Prefab) instantiate_prefab(r.uuid);
                 else if (r.kind == assets::AssetKind::Script) {
                     const Entity e = selected();
                     if (!e.is_null()) {
@@ -1098,7 +1182,8 @@ void Editor::draw_assets() {
                 }
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nUUID %s\nDouble-click: %s", r.path.c_str(), r.uuid.to_string().c_str(),
-                                                          r.kind == assets::AssetKind::Model ? "add to scene"
+                                                          r.kind == assets::AssetKind::Model || r.kind == assets::AssetKind::Prefab
+                                                              ? "add to scene"
                                                           : r.kind == assets::AssetKind::Texture ? "assign to selected sprite"
                                                           : r.kind == assets::AssetKind::Script ? "attach to selected entity"
                                                           : r.kind == assets::AssetKind::Audio  ? "preview"

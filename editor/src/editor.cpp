@@ -3,10 +3,14 @@
 #include "victus/gameui/gameui.hpp"
 #include "victus/editor/editor.hpp"
 
+#include "victus/core/fs.hpp"
+#include "victus/core/hash.hpp"
 #include "victus/core/profiler.hpp"
 #include "victus/platform/platform.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <format>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -167,12 +171,27 @@ std::size_t Editor::check_asset_changes() {
     for (const auto& p : changes.reimported_paths) notify("Reloaded " + p);
     for (const auto& f : changes.failed) notify("Reload failed, keeping the previous version: " + f, true);
     for (const auto& a : changes.audio) notify("Reloaded audio " + a);
+    for (const auto& p : changes.prefabs) {
+        if (play_scripts_) play_scripts_->forget_prefabs();
+        const assets::AssetRecord* rec = db_ ? db_->find_path(p) : nullptr;
+        if (!rec) continue;
+        if (auto text = fs::read_text(db_->source_path(*rec)); text) {
+            const auto it = written_prefabs_.find(p);
+            if (it != written_prefabs_.end() && it->second == fnv1a64(*text)) continue; // our own save
+        }
+        if (play_state_ != PlayState::Editing) {
+            notify("Prefab " + p + " changed; stop playing to update its instances");
+            continue;
+        }
+        if (auto n = update_prefab_instances(rec->uuid); !n) notify("Prefab " + p + ": " + n.error().message, true);
+        else notify(std::format("Reloaded prefab {} ({} instance{} updated)", p, *n, *n == 1 ? "" : "s"));
+    }
     for (const auto& r : changes.restart_needed) {
         // Scenes are the editor's own files (saved from here, reopened with File > Open Scene).
         if (assets::kind_for_extension(fs::Path(r).extension().string()) == assets::AssetKind::Scene) continue;
         notify(r + " changed; reopen the project or restart the game to see it");
     }
-    return changes.reimported.size() + changes.audio.size();
+    return changes.reimported.size() + changes.audio.size() + changes.prefabs.size();
 }
 
 // ---- scenes ------------------------------------------------------------------------------------
@@ -369,8 +388,11 @@ void Editor::rename(Entity e, std::string name) {
     Scene& s = active_scene();
     Name* n = s.world().get<Name>(e);
     if (!n || n->value == name) return;
-    auto before = capture(s, {s.uuid(e)});
+    std::vector<Uuid> ids{s.uuid(e)};
+    if (const Entity root = instance_root(s, e); !root.is_null() && root != e) ids.push_back(s.uuid(root));
+    auto before = capture(s, ids);
     n->value = std::move(name);
+    mark_prefab_overrides(e, before);
     record_edit("Rename", std::move(before));
 }
 
@@ -394,6 +416,190 @@ Entity Editor::instantiate_asset(const Uuid& asset) {
     }
     selection_ = {s.uuid(root)};
     return root;
+}
+
+// ---- prefabs -------------------------------------------------------------------------------------
+
+Result<Prefab> Editor::load_prefab(const Uuid& asset) const {
+    if (!db_) return make_error(ErrorCode::InvalidArgument, "no project open");
+    const assets::AssetRecord* rec = db_->find(asset);
+    if (!rec || rec->kind != assets::AssetKind::Prefab)
+        return make_error(ErrorCode::NotFound, "prefab asset " + asset.to_string() + " not found");
+    return load_prefab_file(db_->source_path(*rec));
+}
+
+Result<Uuid> Editor::create_prefab(Entity e, std::string_view relative_path) {
+    if (!db_) return make_error(ErrorCode::InvalidArgument, "no project open");
+    if (play_state_ != PlayState::Editing) return make_error(ErrorCode::InvalidArgument, "stop playing to create prefabs");
+    Scene& s = *scene_;
+    if (!s.world().alive(e)) return make_error(ErrorCode::InvalidArgument, "no entity");
+    std::string rel(relative_path);
+    if (rel.empty()) {
+        std::string base = s.world().get<Name>(e) ? s.world().get<Name>(e)->value : std::string("Prefab");
+        for (char& ch : base)
+            if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '-' && ch != '_') ch = '_';
+        if (base.empty()) base = "Prefab";
+        rel = "prefabs/" + base + std::string(kPrefabExtension);
+        for (int i = 2; sfs::exists(db_->assets_dir() / rel); ++i) rel = std::format("prefabs/{}_{}{}", base, i, kPrefabExtension);
+    } else if (!rel.ends_with(kPrefabExtension)) {
+        rel += kPrefabExtension;
+    }
+    auto clean = fs::sanitize_relative(rel);
+    if (!clean) return std::move(clean).error();
+    const Prefab prefab = make_prefab(s, e);
+    const std::string text = json::stringify(prefab_to_json(prefab)) + "\n";
+    std::error_code ec;
+    sfs::create_directories((db_->assets_dir() / *clean).parent_path(), ec);
+    VICTUS_TRY_STATUS(fs::write_text_atomic(db_->assets_dir() / *clean, text));
+    written_prefabs_[*clean] = fnv1a64(text);
+    (void)db_->refresh();
+    const assets::AssetRecord* rec = db_->find_path(*clean);
+    if (!rec) return make_error(ErrorCode::IoError, "prefab was written but not registered: " + *clean);
+    const Uuid asset = rec->uuid;
+    auto before = capture_subtrees(s, {s.uuid(e)});
+    link_as_instance(s, e, asset);
+    record_edit("Create prefab", std::move(before));
+    notify("Created prefab " + *clean);
+    return asset;
+}
+
+Entity Editor::instantiate_prefab(const Uuid& asset, Entity parent) {
+    auto prefab = load_prefab(asset);
+    if (!prefab) {
+        notify("cannot load prefab: " + prefab.error().message, true);
+        return kNullEntity;
+    }
+    Scene& s = active_scene();
+    InstantiateOptions o;
+    o.parent = parent;
+    if (parent.is_null()) o.position = camera_.target;
+    auto root = scene::instantiate(s, *prefab, asset, o);
+    if (!root) {
+        notify("cannot instantiate prefab: " + root.error().message, true);
+        return kNullEntity;
+    }
+    s.update_transforms();
+    if (play_state_ == PlayState::Editing) {
+        auto after = capture_subtrees(s, {s.uuid(*root)});
+        undo_.push({"Add " + prefab->name, absent(after), after});
+        update_title();
+    }
+    selection_ = {s.uuid(*root)};
+    return *root;
+}
+
+Result<std::size_t> Editor::update_prefab_instances(const Uuid& asset) {
+    auto prefab = load_prefab(asset);
+    if (!prefab) return std::move(prefab).error();
+    Scene& s = *scene_;
+    std::vector<Uuid> roots;
+    for (const Entity e : find_instances(s, asset)) roots.push_back(s.uuid(e));
+    if (roots.empty()) return std::size_t{0};
+    auto before = capture_subtrees(s, roots);
+    auto n = update_instances(s, asset, *prefab);
+    if (!n) return std::move(n).error();
+    // Undo restores the previous instance content (entities the update removed come back too).
+    auto after = capture_subtrees(s, roots);
+    std::vector<Uuid> after_ids;
+    for (const auto& st : after) after_ids.push_back(st.uuid);
+    for (const auto& st : before)
+        if (std::find(after_ids.begin(), after_ids.end(), st.uuid) == after_ids.end()) after.push_back({st.uuid, std::nullopt});
+    for (const auto& st : after)
+        if (std::none_of(before.begin(), before.end(), [&](const EntityState& b) { return b.uuid == st.uuid; }))
+            before.push_back({st.uuid, std::nullopt});
+    undo_.push({"Update prefab instances", std::move(before), std::move(after)});
+    s.update_transforms();
+    prune_selection();
+    update_title();
+    return n;
+}
+
+Status Editor::apply_prefab(Entity instance) {
+    if (play_state_ != PlayState::Editing) return make_error(ErrorCode::InvalidArgument, "stop playing to apply prefab changes");
+    Scene& s = *scene_;
+    const Entity root = instance_root(s, instance);
+    if (root.is_null()) return make_error(ErrorCode::InvalidArgument, "not a prefab instance");
+    const Uuid asset = s.world().get<PrefabInstance>(root)->prefab;
+    auto previous = load_prefab(asset);
+    if (!previous) return std::move(previous).error();
+    auto before = capture_subtrees(s, {s.uuid(root)});
+    const Prefab applied = apply_instance(s, root, *previous);
+    const assets::AssetRecord* rec = db_->find(asset);
+    const std::string text = json::stringify(prefab_to_json(applied)) + "\n";
+    VICTUS_TRY_STATUS(fs::write_text_atomic(db_->source_path(*rec), text));
+    written_prefabs_[rec->path] = fnv1a64(text);
+    record_edit("Apply prefab", std::move(before));
+    auto n = update_prefab_instances(asset);
+    if (!n) return std::move(n).error();
+    notify(std::format("Applied to {} ({} instance{} in this scene)", rec->path, *n, *n == 1 ? "" : "s"));
+    return {};
+}
+
+Status Editor::revert_prefab(Entity instance) {
+    Scene& s = active_scene();
+    const Entity root = instance_root(s, instance);
+    if (root.is_null()) return make_error(ErrorCode::InvalidArgument, "not a prefab instance");
+    auto prefab = load_prefab(s.world().get<PrefabInstance>(root)->prefab);
+    if (!prefab) return std::move(prefab).error();
+    auto before = capture_subtrees(s, {s.uuid(root)});
+    VICTUS_TRY_STATUS(update_instance(s, root, *prefab, /*keep_overrides=*/false));
+    if (play_state_ == PlayState::Editing) {
+        auto after = capture_subtrees(s, {s.uuid(root)});
+        for (const auto& st : before)
+            if (std::none_of(after.begin(), after.end(), [&](const EntityState& a) { return a.uuid == st.uuid; }))
+                after.push_back({st.uuid, std::nullopt});
+        for (const auto& st : after)
+            if (std::none_of(before.begin(), before.end(), [&](const EntityState& b) { return b.uuid == st.uuid; }))
+                before.push_back({st.uuid, std::nullopt});
+        undo_.push({"Revert prefab", std::move(before), std::move(after)});
+        update_title();
+    }
+    s.update_transforms();
+    prune_selection();
+    return {};
+}
+
+void Editor::unpack_prefab(Entity instance) {
+    Scene& s = active_scene();
+    const Entity root = instance_root(s, instance);
+    if (root.is_null()) return;
+    auto before = capture_subtrees(s, {s.uuid(root)});
+    std::vector<Entity> stack{root};
+    while (!stack.empty()) {
+        const Entity e = stack.back();
+        stack.pop_back();
+        if (e != root && s.world().has<PrefabInstance>(e)) continue; // nested instances stay instances
+        s.world().remove<PrefabInstance>(e);
+        s.world().remove<PrefabPart>(e);
+        for (const Entity c : s.children(e)) stack.push_back(c);
+    }
+    record_edit("Unpack prefab", std::move(before));
+}
+
+void Editor::mark_prefab_overrides(Entity e, const std::vector<EntityState>& before) {
+    Scene& s = active_scene();
+    const Entity root = instance_root(s, e);
+    if (root.is_null()) return;
+    const Uuid id = s.uuid(e);
+    const json::Value* old = nullptr;
+    for (const auto& st : before)
+        if (st.uuid == id && st.snapshot) old = &*st.snapshot;
+    if (!old) return;
+    const json::Value now = s.save_entity(e);
+    std::vector<std::string> changed;
+    if (!(now["name"] == (*old)["name"])) changed.emplace_back("name");
+    const json::Value& oc = (*old)["components"];
+    const json::Value& nc = now["components"];
+    if (nc.is_object())
+        for (const auto& [k, v] : nc.as_object())
+            if (const json::Value* o = oc.find(k); !o || !(*o == v)) changed.push_back(k);
+    if (oc.is_object())
+        for (const auto& [k, v] : oc.as_object())
+            if (!nc.find(k)) changed.push_back(k);
+    if (changed.empty()) return;
+    auto prefab = load_prefab(s.world().get<PrefabInstance>(root)->prefab);
+    if (!prefab) return; // missing prefab: the instance keeps its content anyway
+    for (const auto& k : changed) (void)mark_override(s, e, k, *prefab);
 }
 
 void Editor::undo() {

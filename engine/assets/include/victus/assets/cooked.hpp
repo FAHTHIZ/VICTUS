@@ -21,7 +21,7 @@ namespace victus::assets {
 // v2 (Slice 12): mesh skin streams, node skins, skins and animation clips.
 inline constexpr std::uint32_t kCookedFormatVersion = 2;
 
-enum class AssetKind : std::uint8_t { Unknown = 0, Texture = 1, Model = 2, Scene = 3, Script = 4, Audio = 5 };
+enum class AssetKind : std::uint8_t { Unknown = 0, Texture = 1, Model = 2, Scene = 3, Script = 4, Audio = 5, Prefab = 6 };
 [[nodiscard]] const char* to_string(AssetKind kind) noexcept;
 
 struct CookedTexture {

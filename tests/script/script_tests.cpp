@@ -990,3 +990,53 @@ return { active = a.active, moving = a.has_destination, stopped = not b.has_dest
     CHECK(st.value()["rebuilt"].as_bool());
     CHECK(host->stats().errors == 0);
 }
+
+TEST_CASE("script: scene.instantiate creates prefab instances whose scripts run") {
+    TempDir d("victus_script_prefab");
+    script::register_components();
+    // Build the prefab: a "Coin" root with a spinning script and a "Glow" child light.
+    {
+        Scene src;
+        const Entity coin = scripted(src, "Coin", "scripts/spin.luau");
+        src.create("Glow", coin);
+        const scene::Prefab p = scene::make_prefab(src, coin);
+        REQUIRE(scene::save_prefab_file(p, d.path / "prefabs/coin.vprefab").ok());
+        d.write("prefabs/coin.vprefab.meta", R"({"uuid": "6f1e2d3c-4b5a-4978-8a1b-2c3d4e5f6a7b", "version": 1})");
+    }
+    d.write("scripts/spin.luau", R"lua(
+local Spin = {}
+function Spin:update(dt) self.entity.name = "Spun" end
+return Spin
+)lua");
+    d.write("scripts/spawner.luau", R"lua(
+local M = {}
+function M:start()
+    self.a = scene.instantiate("prefabs/coin.vprefab", { position = vector.create(3, 0, 0) })
+    self.b = scene.instantiate("prefabs/coin.vprefab", { parent = self.entity, name = "Child coin" })
+    assert(self.a.position.x == 3, "position")
+    assert(self.b.parent == self.entity, "parent")
+    local ok, err = pcall(scene.instantiate, "prefabs/missing.vprefab")
+    assert(not ok and string.find(err, "missing.vprefab"), "missing prefab error: " .. tostring(err))
+end
+return M
+)lua");
+    Scene s;
+    const Entity spawner = scripted(s, "Spawner", "scripts/spawner.luau");
+    auto host = make_host(d);
+    gameplay::Simulation sim(1.0f / 50.0f);
+    script::add_script_systems(sim, *host);
+    sim.tick(s, 0.02f);
+    sim.tick(s, 0.02f);
+    CHECK(host->stats().errors == 0);
+    const auto instances = scene::find_instances(s);
+    REQUIRE(instances.size() == 2);
+    Uuid expected;
+    REQUIRE(Uuid::parse("6f1e2d3c-4b5a-4978-8a1b-2c3d4e5f6a7b", expected));
+    for (const Entity e : instances) {
+        CHECK(s.world().get<scene::PrefabInstance>(e)->prefab == expected);
+        CHECK(s.world().get<scene::Name>(e)->value == "Spun"); // the instance's script ran
+        CHECK(s.children(e).size() == 1);
+    }
+    CHECK(s.parent(instances[0]) == spawner); // hierarchy order: the spawner (and its child) come first
+    CHECK(s.parent(instances[1]).is_null());
+}
