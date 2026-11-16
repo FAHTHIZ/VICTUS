@@ -2,6 +2,8 @@
 // Editor UI: launcher, dockspace workspace and panels (Dear ImGui).
 #include "victus/editor/editor.hpp"
 
+#include "editor_client.hpp"
+
 #include "victus/core/build_info.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/platform/platform.hpp"
@@ -516,6 +518,14 @@ void Editor::draw_toolbar() {
                 ImGui::TextColored(ImVec4(0.45f, 0.8f, 1.0f, 1), "HOST %u", d.clients + 1);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%u players, %.1f kbps out - View > Network", d.clients + 1, static_cast<double>(d.send_kbps));
                 if (ImGui::IsItemClicked()) show_network_ = true;
+                if (!play_clients_.empty()) {
+                    // Which player the viewport shows and the keyboard drives (Ctrl+1..4 too).
+                    if (ImGui::BeginMenu(std::format("View: {}###viewpeer", peer_label(view_peer_)).c_str())) {
+                        for (std::size_t i = 0; i <= play_clients_.size(); ++i)
+                            if (ImGui::MenuItem(peer_label(i).c_str(), std::format("Ctrl+{}", i + 1).c_str(), view_peer_ == i)) set_view_peer(i);
+                        ImGui::EndMenu();
+                    }
+                }
             } else if (recording()) {
                 ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1), "REC");
             } else if (replay_ && !replay_result_.empty()) {
@@ -1468,6 +1478,13 @@ void Editor::handle_shortcuts() {
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_P)) {
         if (editing) play();
         else stop();
+    }
+    // Ctrl+1..4 switch the viewed player of a hosted session with in-editor clients (also while
+    // the game has the keyboard, so testing several players needs no mouse).
+    if (!editing && !play_clients_.empty()) {
+        constexpr ImGuiKey keys[] = {ImGuiKey_1, ImGuiKey_2, ImGuiKey_3, ImGuiKey_4};
+        for (std::size_t i = 0; i <= play_clients_.size() && i < 4; ++i)
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | keys[i])) set_view_peer(i);
     }
     // While the game has the keyboard, editor shortcuts other than Play/Stop stay out of its way.
     if (!editing && viewport_focused_) return;

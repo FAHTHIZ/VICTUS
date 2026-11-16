@@ -777,3 +777,111 @@ TEST_CASE("editor: play as host, a player joins over UDP and the Network window 
     CHECK(h.ed->play_server() == nullptr);
     CHECK(h.ed->messages().back().find("cannot host") != std::string::npos);
 }
+
+TEST_CASE("editor: in-editor clients join the hosted session and the view switches which player is driven") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Arena", "Arena", "multiplayer").ok());
+    h.frames(1);
+
+    editor::NetPlaySettings ns;
+    ns.editor_clients = 4;
+    CHECK_FALSE(h.ed->set_net_settings(ns).ok()); // 0-3
+    ns.editor_clients = 3;
+    ns.max_clients = 2;
+    CHECK_FALSE(h.ed->set_net_settings(ns).ok()); // more than the server admits
+    ns.max_clients = 8;
+    ns.editor_clients = 2;
+    ns.password = "letmein"; // in-editor clients use the session's key and password
+    ns.port = static_cast<std::uint16_t>(
+        41000 + Random(static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()) ^ 0x9e37u).next_u32() % 9000);
+    REQUIRE(h.ed->set_net_settings(ns).ok());
+
+    gameplay::ManualInput keys;
+    h.ed->set_game_input_override(&keys);
+    h.ed->set_show_network(true);
+    h.ed->play_host();
+    REQUIRE(h.ed->play_server() != nullptr);
+    REQUIRE(h.ed->editor_client_count() == 2);
+    CHECK(h.ed->editor_client(0) == nullptr);
+    CHECK(h.ed->editor_client(3) == nullptr);
+    for (int i = 0; i < 400; ++i) {
+        if (h.ed->editor_client(1)->connected() && h.ed->editor_client(2)->connected()) break;
+        h.frames(1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    REQUIRE(h.ed->editor_client(1)->connected());
+    REQUIRE(h.ed->editor_client(2)->connected());
+    CHECK(h.ed->editor_client(1)->diagnostics().encrypted);
+    const net::NetServer& srv = *h.ed->play_server();
+    CHECK(srv.clients().size() == 3); // host + two in-editor players
+    CHECK(h.ed->peer_label(0) == "Host (host)");
+    CHECK(h.ed->peer_label(1) == "Client 1 (player 2)");
+    CHECK(h.ed->peer_label(3).empty());
+    h.frames(30); // everyone's spawns arrive everywhere
+
+    // Server-side characters of each peer, by name.
+    auto server_player = [&](const std::string& name) {
+        for (const auto& c : srv.clients())
+            if (c.name == name) return c.player;
+        return Entity{};
+    };
+    const Entity host_p = srv.local_player(), p2 = server_player("player 2"), p3 = server_player("player 3");
+    REQUIRE_FALSE(host_p.is_null());
+    REQUIRE_FALSE(p2.is_null());
+    REQUIRE_FALSE(p3.is_null());
+    Scene& host_scene = *h.ed->play_scene();
+    auto x_of = [&](Entity e) { return host_scene.world().get<Transform>(e)->position.x; };
+
+    // View client 1: the held key moves only its character (through its own prediction and the
+    // server), the host's and client 2's stay put.
+    h.ed->set_view_peer(1);
+    CHECK(h.ed->view_peer() == 1);
+    CHECK(&h.ed->active_scene() == h.ed->editor_client_scene(1));
+    const float h0 = x_of(host_p), a0 = x_of(p2), b0 = x_of(p3);
+    keys.set_key("D", true);
+    for (int i = 0; i < 60; ++i) {
+        h.frames(1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    keys.set_key("D", false);
+    h.frames(20);
+    CHECK(x_of(p2) > a0 + 1.0f);
+    CHECK(std::abs(x_of(host_p) - h0) < 0.05f);
+    CHECK(std::abs(x_of(p3) - b0) < 0.05f);
+    // Client 1's own world shows its predicted player moved too; client 2 sees it remotely.
+    const Entity local1 = h.ed->editor_client(1)->local_player();
+    REQUIRE_FALSE(local1.is_null());
+    CHECK(h.ed->editor_client_scene(1)->world().get<Transform>(local1)->position.x > a0 + 1.0f);
+    bool seen_by_2 = false;
+    for (const auto& c : h.ed->editor_client(2)->clients())
+        if (c.name == "player 2" && !c.player.is_null())
+            seen_by_2 = h.ed->editor_client_scene(2)->world().get<Transform>(c.player)->position.x > a0 + 0.8f;
+    CHECK(seen_by_2);
+    // The inspector's network section draws for the client's own player in its world.
+    h.ed->select(local1);
+    h.frames(2);
+    CHECK(h.ed->is_selected(local1));
+
+    // Back to the host: now the host's character moves.
+    h.ed->set_view_peer(7); // out of range: ignored
+    CHECK(h.ed->view_peer() == 1);
+    h.ed->set_view_peer(0);
+    CHECK(&h.ed->active_scene() == h.ed->play_scene());
+    const float a1 = x_of(p2);
+    keys.set_key("D", true);
+    h.frames(60);
+    keys.set_key("D", false);
+    h.frames(10);
+    CHECK(x_of(host_p) > h0 + 1.0f);
+    CHECK(std::abs(x_of(p2) - a1) < 0.3f);
+
+    // Stop ends every peer and returns the view to the edited scene.
+    h.ed->stop();
+    h.frames(1);
+    CHECK(h.ed->editor_client_count() == 0);
+    CHECK(h.ed->view_peer() == 0);
+    CHECK(&h.ed->active_scene() == &h.ed->edit_scene());
+    h.ed->set_game_input_override(nullptr);
+}

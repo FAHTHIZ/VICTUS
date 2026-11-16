@@ -8,6 +8,8 @@
 //   --play            enter play mode after opening the project
 //   --show WINDOW     open a window after opening (input-actions, network)
 //   --host            enter play mode as a listen server (--port, default 27960)
+//   --clients N       with --host: also simulate N (0-3) players inside the editor
+//   --view N          with --clients: show player N (0 = host, 1..N = in-editor clients)
 //   --select NAME     select an entity by name after opening
 //   --data-dir DIR    use DIR instead of the user data directory (recent list, layout)
 #include "victus/core/build_info.hpp"
@@ -17,6 +19,7 @@
 #include "victus/platform/platform.hpp"
 #include "victus/render/image.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 
@@ -44,6 +47,8 @@ int main(int argc, char** argv) {
         .option("show", "open a window after opening: input-actions, network")
         .option("port", "UDP port for --host", "27960")
         .flag("host", "enter play mode as a listen server after opening")
+        .option("clients", "with --host: players simulated inside the editor (0-3)", "0")
+        .option("view", "with --clients: viewed player (0 = host)", "0")
         .flag("play", "enter play mode after opening");
     if (auto st = args.parse(argc, argv); !st) {
         std::fprintf(stderr, "%s\n%s", st.error().message.c_str(), args.help().c_str());
@@ -102,9 +107,11 @@ int main(int argc, char** argv) {
     if (args.has("host") && ed.has_project()) {
         editor::NetPlaySettings ns = ed.net_settings();
         ns.port = static_cast<std::uint16_t>(args.get_number("port", net::kDefaultPort));
+        ns.editor_clients = static_cast<std::uint16_t>(std::clamp(args.get_number("clients", 0), 0.0, 64.0));
         if (auto st = ed.set_net_settings(ns); !st.ok()) return fail("network settings", st.error());
         ed.play_host();
         if (!ed.play_server()) return fail("host", make_error(ErrorCode::InvalidArgument, "could not host (see log)"));
+        ed.set_view_peer(static_cast<std::size_t>(std::clamp(args.get_number("view", 0), 0.0, 64.0)));
     } else if (args.has("play") && ed.has_project()) {
         ed.play();
     }

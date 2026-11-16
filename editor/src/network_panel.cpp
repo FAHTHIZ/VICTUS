@@ -4,6 +4,8 @@
 // Network section for networked entities in play mode.
 #include "victus/editor/editor.hpp"
 
+#include "editor_client.hpp"
+
 #include "victus/platform/platform.hpp"
 
 #include <imgui.h>
@@ -44,7 +46,7 @@ std::string owner_label(const net::NetContext& ctx, std::uint16_t owner) {
 
 void Editor::draw_network() {
     if (!show_network_ || !project_) return;
-    ImGui::SetNextWindowSize(ImVec2(760, 600), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Network", &show_network_)) {
         ImGui::End();
         return;
@@ -73,6 +75,14 @@ void Editor::draw_network() {
             s.max_clients = static_cast<std::uint16_t>(std::clamp(max_clients, 1, 64));
             changed = true;
         }
+        int extra = s.editor_clients;
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::SliderInt("In-editor clients", &extra, 0, 3)) {
+            s.editor_clients = static_cast<std::uint16_t>(extra);
+            changed = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Extra players simulated inside the editor, each with its own world; switch with View or Ctrl+1..4");
         ImGui::SetNextItemWidth(240);
         changed |= ImGui::InputText("Host player name", &s.player_name);
         ImGui::SetNextItemWidth(240);
@@ -131,6 +141,42 @@ void Editor::draw_network() {
         ImGui::PlotLines("##recv", net_receive_history_.data(), static_cast<int>(net_receive_history_.size()), 0, "receive kbps", 0.0f, top, ImVec2(w, 48));
     }
 
+    // ---- in-editor players ----
+    if (!play_clients_.empty() &&
+        ImGui::CollapsingHeader(std::format("In-Editor Players ({})###editorpeers", play_clients_.size() + 1).c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::BeginTable("##peers", 6, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_SizingStretchProp)) {
+            for (const char* h : {"View", "Player", "State", "RTT", "Prediction error", "Received"}) ImGui::TableSetupColumn(h);
+            ImGui::TableHeadersRow();
+            for (std::size_t i = 0; i <= play_clients_.size(); ++i) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::RadioButton(std::format("Ctrl+{}", i + 1).c_str(), view_peer_ == i)) set_view_peer(i);
+                ImGui::PopID();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(peer_label(i).c_str());
+                if (i == 0) {
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted("server (no network delay)");
+                    for (int k = 0; k < 3; ++k) ImGui::TableNextColumn();
+                    continue;
+                }
+                const auto cd = play_clients_[i - 1]->client->diagnostics();
+                ImGui::TableNextColumn();
+                if (cd.connected) ImGui::TextUnformatted(cd.status.c_str());
+                else ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), "%s", cd.status.c_str());
+                ImGui::TableNextColumn();
+                if (cd.connected) ImGui::Text("%.1f ms", static_cast<double>(cd.rtt_ms));
+                ImGui::TableNextColumn();
+                if (cd.connected) ImGui::Text("%.3f m (%llu corrections)", static_cast<double>(cd.prediction_error),
+                                              static_cast<unsigned long long>(cd.corrections));
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(format_bytes(cd.bytes_received).c_str());
+            }
+            ImGui::EndTable();
+        }
+    }
+
     // ---- clients ----
     const auto clients = srv.client_diagnostics();
     if (ImGui::CollapsingHeader(std::format("Clients ({})###clients", clients.size()).c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -145,9 +191,11 @@ void Editor::draw_network() {
                 ImGui::Text("%u", static_cast<unsigned>(c.id));
                 ImGui::TableNextColumn();
                 ImGui::PushID(c.id);
-                if (ImGui::Selectable(c.name.c_str(), !c.player.is_null() && is_selected(c.player), ImGuiSelectableFlags_SpanAllColumns) &&
-                    !c.player.is_null() && play_scene_ && play_scene_->world().alive(c.player))
+                if (ImGui::Selectable(c.name.c_str(), !c.player.is_null() && view_peer_ == 0 && is_selected(c.player), ImGuiSelectableFlags_SpanAllColumns) &&
+                    !c.player.is_null() && play_scene_ && play_scene_->world().alive(c.player)) {
+                    set_view_peer(0); // server-side entities live in the host's world
                     select(c.player);
+                }
                 ImGui::PopID();
                 ImGui::TableNextColumn();
                 if (c.held) ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), "held (reconnecting)");
@@ -190,7 +238,10 @@ void Editor::draw_network() {
                 ImGui::PushID(static_cast<int>(r.net_id));
                 const std::string label = r.player ? r.name + "  [player]" : r.name;
                 const bool alive = play_scene_ && play_scene_->world().alive(r.entity);
-                if (ImGui::Selectable(label.c_str(), alive && is_selected(r.entity), ImGuiSelectableFlags_SpanAllColumns) && alive) select(r.entity);
+                if (ImGui::Selectable(label.c_str(), alive && view_peer_ == 0 && is_selected(r.entity), ImGuiSelectableFlags_SpanAllColumns) && alive) {
+                    set_view_peer(0);
+                    select(r.entity);
+                }
                 ImGui::PopID();
                 ImGui::TableNextColumn();
                 ImGui::TextUnformatted(owner.c_str());
@@ -220,11 +271,13 @@ void Editor::draw_network() {
 
 void Editor::draw_network_section(Entity e) {
     if (!play_scene_ || play_state_ == PlayState::Editing) return;
-    auto& w = play_scene_->world();
+    Scene& viewed = active_scene(); // the host's world or an in-editor client's
+    auto& w = viewed.world();
     const auto* st = w.get<net::NetState>(e);
     if (!st) return;
     if (!ImGui::CollapsingHeader("Network (live)", ImGuiTreeNodeFlags_DefaultOpen)) return;
-    const net::NetContext* ctx = net::context_of(*play_scene_);
+    const net::NetContext* ctx = net::context_of(viewed);
+    if (view_peer_ > 0) ImGui::TextDisabled("As seen by %s", peer_label(view_peer_).c_str());
     if (!ctx) {
         ImGui::TextDisabled("Offline: this machine has authority.");
     } else {
