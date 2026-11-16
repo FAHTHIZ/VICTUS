@@ -95,6 +95,17 @@ UI: put a `UiCanvas` on an entity and give its children `UiRect` (anchors, pivot
 Navigation: add `NavAgent` (speed, acceleration, radius, stopping distance, avoidance) to any entity and call `entity:set_destination(point)`; VICTUS builds a navmesh automatically from the scene's static colliders (Recast & Detour), rebuilds it when they change (kinematic bodies carve an upright cylinder) and steers agents along the path with local avoidance (DetourCrowd). Agents with a `CharacterController` walk through the physics character mover, so gravity, steps and pushing still apply. An optional `NavMeshSurface` sets the agent size, step height, slope and voxel size the mesh is built for. Scripts also get `entity:stop()`, `entity:nav_state()` and `nav.find_path/nearest/raycast/random_point/rebuild/available`. View > Navigation Mesh draws the navmesh (and agent paths in play mode) in the editor viewport. The 3D template's companion robot follows you around the obstacles.
 Input: scripts read named actions instead of hard-coded keys, so keyboards, mice and gamepads (up to four, SDL3 standard layout) all work. Actions live in the `input` section of `victus.project` (created with defaults when absent: `move_x`, `move_y`, `look_x`, `look_y`, `jump`, `fire`, `interact`, `sprint`, `pause`, `help`); each has `bindings` (buttons) or `positive`/`negative` (axes) and an optional `dead_zone` (default 0.2). Controls are key names (`Space`, `W`, `Left`), `Mouse0`–`Mouse2`, gamepad buttons `Pad.South/East/West/North`, `Pad.LeftShoulder`, `Pad.Start`, `Pad.Back`, `Pad.DpadUp`… (aliases `A/B/X/Y/LB/RB/LT/RT/Select/Menu`), and half-axes `Pad.LeftX+`, `Pad.LeftY-`, `Pad.RightTrigger`. Scripts get `input.action/action_pressed/action_released(name)`, `input.value(name)` (−1..1), `input.vector(x_name, y_name)` (clamped to length 1), `input.actions()`, `input.bindings(name)`, `input.rebind(name, {...})` (for the running game), `input.gamepad_connected/gamepad_button/gamepad_axis(pad?)`; raw `input.down/pressed/axis` still work. `victus check` reports unknown controls and `victus simulate --hold Pad.LeftX+` holds a gamepad control headlessly. Gamepad input is carried over the network to the server like keys. In the editor, Edit > Input Actions lists every action: click + Listen and press a key, mouse button, gamepad button or push a stick to bind it (Escape cancels), or type a control name; changes are saved to `victus.project` and apply immediately, even while playing.
 
+### Regression captures
+
+~~~bash
+./build/bin/victus run MyGame --record walk.vcapture          # play normally; input, frame times and state digests are saved
+./build/bin/victus simulate MyGame --replay walk.vcapture     # headless check: exit 5 at the first frame whose state differs
+./build/bin/victus run MyGame --replay walk.vcapture          # watch the recording replay in the game window
+./build/bin/victus simulate MyGame --hold D,Space --frames 600 --record bot.vcapture   # scripted capture for CI
+~~~
+
+A capture stores every frame's input (keys, mouse, gamepads), the frame times, the random seed scripts used for `math.random` and a digest of the scene (entity names and transforms) every 60 frames. Replaying re-runs the game from its first frame with the same input and seed and compares the digests, so a change to scripts, physics or the engine that alters how the game plays fails with the frame where it diverged. Captures work offline (not with `--connect`); determinism is only verified on one machine and compiler so far.
+
 ### Multiplayer
 
 ~~~bash
