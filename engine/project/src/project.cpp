@@ -84,8 +84,7 @@ std::string readme(std::string_view name, std::string_view template_name) {
 } // namespace
 
 bool Project::is_project_dir(const fs::Path& directory) {
-    std::error_code ec;
-    return sfs::is_regular_file(directory / kProjectFileName, ec);
+    return fs::exists(directory / kProjectFileName);
 }
 
 Result<Project> Project::create(const fs::Path& directory, std::string_view name, std::string_view template_id) {
@@ -131,7 +130,7 @@ Result<Project> Project::create(const fs::Path& directory, std::string_view name
 Result<Project> Project::open(const fs::Path& path) {
     std::error_code ec;
     fs::Path root = path;
-    if (sfs::is_regular_file(path, ec) && path.filename() == kProjectFileName) root = path.parent_path();
+    if (path.filename() == kProjectFileName && fs::exists(path)) root = path.parent_path();
     if (!is_project_dir(root)) return make_error(ErrorCode::NotFound, "no victus.project in " + root.string());
     auto text = fs::read_text(root / kProjectFileName, 1u << 20);
     if (!text) return std::move(text).error();
@@ -159,11 +158,9 @@ std::string Project::relative(const fs::Path& path) const {
 
 std::vector<std::string> Project::scenes() const {
     std::vector<std::string> out;
-    std::error_code ec;
-    for (auto it = sfs::recursive_directory_iterator(scenes_dir(), ec); !ec && it != sfs::recursive_directory_iterator();
-         it.increment(ec)) {
-        if (it->is_regular_file(ec) && it->path().extension() == kSceneExtension) out.push_back(relative(it->path()));
-    }
+    const fs::Path dir = scenes_dir();
+    for (const std::string& rel : fs::list_files(dir))
+        if (fs::Path(rel).extension() == kSceneExtension) out.push_back(relative(dir / fs::Path(rel)));
     std::sort(out.begin(), out.end());
     return out;
 }

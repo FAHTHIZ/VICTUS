@@ -99,6 +99,48 @@ Result<std::unique_ptr<AssetDatabase>> AssetDatabase::open(const fs::Path& proje
     return db;
 }
 
+Result<std::unique_ptr<AssetDatabase>> AssetDatabase::open_packaged(const fs::Path& project_root) {
+    std::unique_ptr<AssetDatabase> db(new AssetDatabase(std::filesystem::absolute(project_root)));
+    db->packaged_ = true;
+    auto text = fs::read_text(db->index_path(), 64u << 20);
+    if (!text) return make_error(ErrorCode::NotFound, std::format("not an exported game (no asset index): {}", text.error().message));
+    auto doc = json::parse(*text);
+    if (!doc) return std::move(doc).error();
+    if ((*doc)["victus_asset_index"].as_int(0) != 1 || !(*doc)["assets"].is_array())
+        return make_error(ErrorCode::VersionMismatch, "unsupported asset index version");
+    for (const json::Value& a : (*doc)["assets"].as_array()) {
+        AssetRecord r;
+        auto path = fs::sanitize_relative(a["path"].as_string_or(""));
+        if (!path || !Uuid::parse(a["uuid"].as_string_or(""), r.uuid) || r.uuid.is_nil())
+            return make_error(ErrorCode::ParseError, "invalid asset index entry");
+        r.path = *path;
+        r.kind = kind_for_extension(fs::Path(r.path).extension().string());
+        r.importer = a["importer"].as_string_or("");
+        r.settings = a["settings"].is_object() ? a["settings"] : json::Value::object();
+        if (db->by_uuid_.contains(r.uuid)) return make_error(ErrorCode::ParseError, "duplicate UUID in asset index");
+        db->by_uuid_.emplace(r.uuid, db->records_.size());
+        db->by_path_.emplace(r.path, db->records_.size());
+        db->records_.push_back(std::move(r));
+    }
+    return db;
+}
+
+json::Value AssetDatabase::index_json() const {
+    json::Value assets = json::Value::array();
+    for (const AssetRecord& r : records()) {
+        json::Value a = json::Value::object();
+        a.set("uuid", r.uuid.to_string());
+        a.set("path", r.path);
+        a.set("importer", r.importer);
+        a.set("settings", r.settings);
+        assets.push(std::move(a));
+    }
+    json::Value doc = json::Value::object();
+    doc.set("victus_asset_index", 1);
+    doc.set("assets", std::move(assets));
+    return doc;
+}
+
 fs::Path AssetDatabase::source_path(const AssetRecord& r) const { return assets_dir() / fs::Path(r.path); }
 
 fs::Path AssetDatabase::cooked_path(const Uuid& uuid) const { return cache_dir() / (uuid.to_string() + ".vcooked"); }
@@ -114,6 +156,7 @@ Status AssetDatabase::write_meta(const AssetRecord& r) const {
 
 RefreshReport AssetDatabase::refresh() {
     RefreshReport report;
+    if (packaged_) return report;
     std::vector<std::string> sources;
     std::set<std::string> metas;
     const fs::Path base = assets_dir();
@@ -208,6 +251,7 @@ Result<bool> AssetDatabase::is_up_to_date(const Uuid& uuid) const {
     if (!rec) return make_error(ErrorCode::NotFound, "unknown asset " + uuid.to_string());
     const AssetRecord r = *rec;
     if (!importable(r)) return true;
+    if (packaged_) return fs::exists(cooked_path(uuid));
     auto prefix = read_prefix(cooked_path(uuid), 1u << 20);
     if (!prefix) return false;
     auto header = read_header(*prefix);
@@ -227,6 +271,10 @@ Result<bool> AssetDatabase::import(const Uuid& uuid, std::vector<std::string>* m
     if (!rec) return make_error(ErrorCode::NotFound, "unknown asset " + uuid.to_string());
     const AssetRecord r = *rec;
     if (!importable(r)) return false;
+    if (packaged_) {
+        if (fs::exists(cooked_path(uuid))) return false;
+        return make_error(ErrorCode::NotFound, std::format("{}: cooked data missing from the exported game", r.path));
+    }
     auto fresh = is_up_to_date(uuid);
     if (!fresh) return std::move(fresh).error();
     if (*fresh) return false;
@@ -262,6 +310,7 @@ Result<bool> AssetDatabase::import(const Uuid& uuid, std::vector<std::string>* m
 }
 
 ImportReport AssetDatabase::import_all(jobs::JobSystem* jobs) {
+    if (packaged_) return {};
     std::vector<Uuid> todo;
     for (const auto& r : records())
         if (importable(r)) todo.push_back(r.uuid);
@@ -314,6 +363,7 @@ Result<CookedModel> AssetDatabase::load_model(const Uuid& uuid) {
 }
 
 Status AssetDatabase::set_settings(const Uuid& uuid, json::Value settings) {
+    if (packaged_) return make_error(ErrorCode::Unsupported, "exported games are read-only");
     AssetRecord copy;
     {
         std::lock_guard lock(mutex_);

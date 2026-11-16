@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/audio/audio.hpp"
 
+#include "victus/core/fs.hpp"
 #include "victus/core/log.hpp"
 #include "victus/scene/reflect.hpp"
 
@@ -82,8 +83,109 @@ ma_vec3f world_pos(const math::Mat4& m) { return {m[3].x, m[3].y, m[3].z}; }
 
 } // namespace
 
+// miniaudio VFS that serves clips from mounted packs (exported games) and falls back to the
+// default stdio VFS for loose files. Packed clips are read into memory once per open; streamed
+// music therefore streams from memory (decoding stays incremental).
+struct PackVfs {
+    ma_vfs_callbacks cb{}; // must be first: miniaudio casts ma_vfs* to ma_vfs_callbacks*
+    ma_default_vfs fallback{};
+
+    struct File {
+        bool memory{false};
+        std::vector<std::uint8_t> data;
+        std::size_t pos{0};
+        ma_vfs_file inner{nullptr};
+    };
+
+    static PackVfs& self(ma_vfs* v) { return *reinterpret_cast<PackVfs*>(v); }
+
+    static ma_result open_path(ma_vfs* v, const fs::Path& path, ma_uint32 mode, ma_vfs_file* out, const char* narrow,
+                               const wchar_t* wide) {
+        if (!out) return MA_INVALID_ARGS;
+        *out = nullptr;
+        auto f = std::make_unique<File>();
+        if (fs::is_virtual(path)) {
+            if (mode & MA_OPEN_MODE_WRITE) return MA_ACCESS_DENIED;
+            auto bytes = fs::read_binary(path, 1ull << 31);
+            if (!bytes) return MA_DOES_NOT_EXIST;
+            f->memory = true;
+            f->data = std::move(bytes).value();
+        } else {
+            ma_vfs* fb = reinterpret_cast<ma_vfs*>(&self(v).fallback);
+            const ma_result r = wide ? ma_vfs_open_w(fb, wide, mode, &f->inner) : ma_vfs_open(fb, narrow, mode, &f->inner);
+            if (r != MA_SUCCESS) return r;
+        }
+        *out = f.release();
+        return MA_SUCCESS;
+    }
+    static ma_result on_open(ma_vfs* v, const char* p, ma_uint32 mode, ma_vfs_file* out) {
+        if (!p) return MA_INVALID_ARGS;
+        return open_path(v, fs::Path(p), mode, out, p, nullptr);
+    }
+    static ma_result on_open_w(ma_vfs* v, const wchar_t* p, ma_uint32 mode, ma_vfs_file* out) {
+        if (!p) return MA_INVALID_ARGS;
+        return open_path(v, fs::Path(p), mode, out, nullptr, p);
+    }
+    static ma_result on_close(ma_vfs* v, ma_vfs_file h) {
+        std::unique_ptr<File> f(static_cast<File*>(h));
+        if (f && !f->memory && f->inner) return ma_vfs_close(reinterpret_cast<ma_vfs*>(&self(v).fallback), f->inner);
+        return MA_SUCCESS;
+    }
+    static ma_result on_read(ma_vfs* v, ma_vfs_file h, void* dst, size_t n, size_t* read) {
+        File& f = *static_cast<File*>(h);
+        if (!f.memory) return ma_vfs_read(reinterpret_cast<ma_vfs*>(&self(v).fallback), f.inner, dst, n, read);
+        const std::size_t avail = f.pos < f.data.size() ? f.data.size() - f.pos : 0;
+        const std::size_t count = std::min(avail, n);
+        if (count) std::memcpy(dst, f.data.data() + f.pos, count);
+        f.pos += count;
+        if (read) *read = count;
+        return count == 0 && n > 0 ? MA_AT_END : MA_SUCCESS;
+    }
+    static ma_result on_write(ma_vfs* v, ma_vfs_file h, const void* src, size_t n, size_t* written) {
+        File& f = *static_cast<File*>(h);
+        if (f.memory) return MA_ACCESS_DENIED;
+        return ma_vfs_write(reinterpret_cast<ma_vfs*>(&self(v).fallback), f.inner, src, n, written);
+    }
+    static ma_result on_seek(ma_vfs* v, ma_vfs_file h, ma_int64 offset, ma_seek_origin origin) {
+        File& f = *static_cast<File*>(h);
+        if (!f.memory) return ma_vfs_seek(reinterpret_cast<ma_vfs*>(&self(v).fallback), f.inner, offset, origin);
+        ma_int64 base = 0;
+        if (origin == ma_seek_origin_current) base = static_cast<ma_int64>(f.pos);
+        else if (origin == ma_seek_origin_end) base = static_cast<ma_int64>(f.data.size());
+        const ma_int64 target = base + offset;
+        if (target < 0 || target > static_cast<ma_int64>(f.data.size())) return MA_BAD_SEEK;
+        f.pos = static_cast<std::size_t>(target);
+        return MA_SUCCESS;
+    }
+    static ma_result on_tell(ma_vfs* v, ma_vfs_file h, ma_int64* cursor) {
+        File& f = *static_cast<File*>(h);
+        if (!f.memory) return ma_vfs_tell(reinterpret_cast<ma_vfs*>(&self(v).fallback), f.inner, cursor);
+        if (cursor) *cursor = static_cast<ma_int64>(f.pos);
+        return MA_SUCCESS;
+    }
+    static ma_result on_info(ma_vfs* v, ma_vfs_file h, ma_file_info* info) {
+        File& f = *static_cast<File*>(h);
+        if (!f.memory) return ma_vfs_info(reinterpret_cast<ma_vfs*>(&self(v).fallback), f.inner, info);
+        if (info) info->sizeInBytes = f.data.size();
+        return MA_SUCCESS;
+    }
+
+    PackVfs() {
+        cb.onOpen = on_open;
+        cb.onOpenW = on_open_w;
+        cb.onClose = on_close;
+        cb.onRead = on_read;
+        cb.onWrite = on_write;
+        cb.onSeek = on_seek;
+        cb.onTell = on_tell;
+        cb.onInfo = on_info;
+        ma_default_vfs_init(&fallback, nullptr);
+    }
+};
+
 struct AudioEngine::Impl {
     EngineOptions options;
+    PackVfs vfs; // outlives `engine` (uninitialized explicitly in ~AudioEngine)
     ma_engine engine{};
     bool engine_ok{false};
     bool device{false};
@@ -291,6 +393,7 @@ Result<std::unique_ptr<AudioEngine>> AudioEngine::create(const EngineOptions& op
     impl->options = options;
     impl->volume.fill(1.0f);
     ma_engine_config cfg = ma_engine_config_init();
+    cfg.pResourceManagerVFS = reinterpret_cast<ma_vfs*>(&impl->vfs);
     cfg.channels = std::clamp<std::uint32_t>(options.channels, 1, 8);
     cfg.sampleRate = std::clamp<std::uint32_t>(options.sample_rate, 8000, 192000);
     ma_result r = MA_ERROR;

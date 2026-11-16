@@ -8,6 +8,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/physics/physics.hpp"
+#include "victus/player/export.hpp"
 #include "victus/player/player.hpp"
 #include "victus/project/project.hpp"
 #include "victus/scene/scene.hpp"
@@ -34,6 +35,7 @@ constexpr const char* kUsage =
     "  run <project> [--scene S] [--frames N] [--screenshot PNG]  play the startup (or given) scene\n"
     "  simulate <project> [--frames N] [--hold KEYS] [--save F]   run gameplay and scripts headless (no GPU)\n"
     "  check <project>                                            validate scenes and script syntax\n"
+    "  export <project> --out DIR [--name EXE] [--player PATH]    package a runnable game folder\n"
     "  version                                                    print the engine version\n"
     "\n"
     "Run `victus <command> --help` for command options. The editor is `victus_editor`.\n";
@@ -293,6 +295,31 @@ int cmd_check(const std::vector<std::string>& a) {
     return problems ? 1 : 0;
 }
 
+int cmd_export(const std::vector<std::string>& a) {
+    cli::Parser p("victus export", "Package a project into a runnable game folder (player + game/game.vpak)");
+    p.positional("project", "project folder", true)
+        .option("out", "output folder (created; must be empty or a previous export)", "")
+        .option("name", "executable name (default: project name)", "")
+        .option("player", "player executable to ship (default: victus_player next to victus)", "")
+        .flag("pack-only", "write game/game.vpak and the manifest without copying the player");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message);
+    if (p.get("out").empty()) return error("export needs --out DIR");
+    player::ExportOptions o;
+    o.project = p.get("project");
+    o.output = p.get("out");
+    o.executable_name = p.get("name");
+    o.player_executable = p.get("player");
+    o.include_player = !p.has("pack-only");
+    auto r = player::export_game(o);
+    if (!r) return error(r.error().message);
+    for (const auto& w : r->warnings) std::printf("warning: %s\n", w.c_str());
+    std::printf("exported %zu files (%zu cooked assets), pack %llu bytes: %s\n", r->files, r->cooked_assets,
+                static_cast<unsigned long long>(r->pack_bytes), r->pack.string().c_str());
+    if (!r->executable.empty()) std::printf("run: %s\n", r->executable.string().c_str());
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -306,6 +333,7 @@ int main(int argc, char** argv) {
     if (cmd == "run") return cmd_run(args);
     if (cmd == "simulate") return cmd_simulate(args);
     if (cmd == "check") return cmd_check(args);
+    if (cmd == "export") return cmd_export(args);
     if (cmd == "version" || cmd == "--version") return std::printf("VICTUS %s\n", build::version()), 0;
     if (cmd == "help" || cmd == "--help" || cmd == "-h") return std::printf("%s", kUsage), 0;
     std::fprintf(stderr, "victus: unknown command '%s'\n\n%s", cmd.c_str(), kUsage);

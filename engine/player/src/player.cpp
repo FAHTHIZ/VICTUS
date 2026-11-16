@@ -3,11 +3,13 @@
 
 #include "victus/assets/database.hpp"
 #include "victus/core/jobs.hpp"
+#include "victus/core/pack.hpp"
 #include "victus/core/log.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/platform/platform.hpp"
+#include "victus/player/export.hpp"
 #include "victus/player/platform_input.hpp"
 #include "victus/project/project.hpp"
 #include "victus/render/image.hpp"
@@ -16,14 +18,45 @@
 
 namespace victus::player {
 
+namespace {
+// Keeps an exported game's pack mounted over its folder for the duration of a run.
+struct MountGuard {
+    fs::Path root;
+    ~MountGuard() {
+        if (!root.empty()) fs::unmount(root);
+    }
+};
+} // namespace
+
 Result<PlayerReport> run(const PlayerOptions& o) {
+    // Exported games ship game.vpak instead of loose files: mount it over the game folder so the
+    // project, scenes, scripts, audio and cooked assets are read from the pack.
+    MountGuard mount;
+    const fs::Path pack_path = o.project / std::string(kPackFile);
+    std::error_code ec;
+    const bool packaged = std::filesystem::is_regular_file(pack_path, ec);
+    if (packaged) {
+        auto pk = pack::Pack::open(pack_path);
+        if (!pk) return std::move(pk).error();
+        fs::mount(o.project, std::move(pk).value());
+        mount.root = o.project;
+    }
     auto proj = project::Project::open(o.project);
     if (!proj) return std::move(proj).error();
     project::register_components();
-    auto db = assets::AssetDatabase::open(proj->root());
-    if (!db) return std::move(db).error();
-    const auto imported = (*db)->import_all();
-    for (const auto& m : imported.messages) VICTUS_LOG_WARN("player", "{}", m);
+    std::unique_ptr<assets::AssetDatabase> db_ptr;
+    if (packaged) {
+        auto opened = assets::AssetDatabase::open_packaged(proj->root());
+        if (!opened) return std::move(opened).error();
+        db_ptr = std::move(opened).value();
+    } else {
+        auto opened = assets::AssetDatabase::open(proj->root());
+        if (!opened) return std::move(opened).error();
+        db_ptr = std::move(opened).value();
+        const auto imported = db_ptr->import_all();
+        for (const auto& m : imported.messages) VICTUS_LOG_WARN("player", "{}", m);
+    }
+    auto* db = &db_ptr;
 
     scene::Scene scene;
     const std::string rel = o.scene.empty() ? proj->settings().startup_scene : o.scene;
@@ -52,7 +85,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
 
     script::HostOptions so;
     so.assets_root = (*db)->assets_dir();
-    so.watch_files = o.hot_reload;
+    so.watch_files = o.hot_reload && !packaged;
     auto scripts = script::ScriptHost::create(so);
     if (!scripts) return std::move(scripts).error();
     // Worker threads for physics (and future parallel systems); 0 = hardware_concurrency - 1.
@@ -76,6 +109,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     sim.input = &input;
     PlayerReport report;
     report.backend = dev.capabilities().driver_name;
+    report.packaged = packaged;
     VICTUS_LOG_INFO("player", "{}: {} on {}", proj->settings().name, rel, report.backend);
 
     rhi::TextureHandle frame;
