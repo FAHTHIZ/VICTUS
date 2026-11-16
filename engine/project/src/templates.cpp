@@ -2,6 +2,7 @@
 // Built-in project templates. Each produces a scene that runs immediately (Play) with the
 // built-in behaviours, so a new project shows motion, lighting and a camera on first launch.
 #include "victus/animation/animation.hpp"
+#include "victus/navigation/navigation.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/gameui/gameui.hpp"
 #include "victus/audio/audio.hpp"
@@ -264,6 +265,24 @@ void build_3d(Scene& s) {
         d.color_end = {0.62f, 0.6f, 0.56f, 0.0f};
         d.spin_min = -60;
         d.spin_max = 60;
+    }
+
+    // A small companion robot that follows the player over the navmesh (built automatically from the
+    // static colliders): a NavAgent on a CharacterController, steered by scripts/companion.luau.
+    {
+        const Entity buddy = add(s, "Buddy", {-2.5f, 0, 3.0f});
+        attach(s, buddy, "scripts/companion.luau");
+        auto& cc = s.world().add<physics::CharacterControllerComponent>(buddy);
+        cc.radius = 0.35f;
+        cc.height = 0.8f;
+        cc.push_force = 120.0f;
+        auto& agent = s.world().add<navigation::NavAgentComponent>(buddy);
+        agent.speed = 4.5f;
+        agent.radius = 0.35f;
+        agent.height = 0.8f;
+        agent.stopping_distance = 0.3f;
+        const Entity small = robot::instantiate(s, "Robot", buddy);
+        s.world().get<Transform>(small)->scale = {0.48f, 0.48f, 0.48f};
     }
 
     // Three 0.3 m steps up to a platform (character step_height is 0.35 m).
@@ -619,6 +638,49 @@ end
 return Player
 )lua";
 
+constexpr const char* kCompanion = R"lua(-- A companion that follows `target` over the navmesh. The entity has a NavAgent and a
+-- CharacterController: set_destination() plans a path around the steps, crates and pillars and
+-- the character mover walks it. Its child "Robot" model cross-fades between "Idle" and "Walk".
+local Buddy = {}
+Buddy.target = "Player"
+Buddy.follow_distance = 2.0 -- stays about this far from the target
+Buddy.repath_distance = 0.75 -- re-plans when the target moved this far
+
+function Buddy:start()
+    self.subject = scene.find(self.target)
+    self.robot = self.entity:find_child("Robot")
+    self.clip = "Idle"
+end
+
+function Buddy:update(dt)
+    if self.subject and self.subject.valid then
+        local goal = self.subject.position
+        local here = self.entity.position
+        local offset = vector.create(goal.x - here.x, 0, goal.z - here.z)
+        local distance = vector.magnitude(offset)
+        if distance > self.follow_distance then
+            -- Walk to a point short of the target so the two never bump into each other.
+            local spot = goal - vector.normalize(offset) * (self.follow_distance * 0.75)
+            if not self.goal or vector.magnitude(spot - self.goal) > self.repath_distance then
+                if self.entity:set_destination(spot) then self.goal = spot end
+            end
+        elseif self.goal and distance < self.follow_distance * 0.6 then
+            self.entity:stop()
+            self.goal = nil
+        end
+    end
+    if not self.robot then return end
+    local v = self.entity.velocity
+    local clip = vector.magnitude(vector.create(v.x, 0, v.z)) > 0.3 and "Walk" or "Idle"
+    if clip ~= self.clip then
+        self.clip = clip
+        self.robot:play_animation(clip, 0.2)
+    end
+end
+
+return Buddy
+)lua";
+
 constexpr const char* kFollowCamera = R"lua(-- Smoothly follows the entity named `target`, keeping the starting offset.
 local Follow = {}
 Follow.target = "Player"
@@ -802,7 +864,7 @@ return Hud
 
 const std::vector<TemplateInfo>& templates() {
     static const std::vector<TemplateInfo> list = {
-        {"3d", "3D Scene", "An animated robot character you walk with WASD/arrow keys and jump with Space (Luau + CharacterController) that climbs steps, swings a hinged gate and shoves a stack of physics crates with positional impact sounds, a follow camera, sun shadows, PBR primitives and a point light."},
+        {"3d", "3D Scene", "An animated robot character you walk with WASD/arrow keys and jump with Space (Luau + CharacterController) that climbs steps, swings a hinged gate and shoves a stack of physics crates with positional impact sounds, a companion robot that follows you over an automatic navmesh, a follow camera, sun shadows, PBR primitives and a point light."},
         {"2d", "2D Game", "A playable platformer on Box2D physics with music and sound effects: a CharacterController2D you run with A/D or arrows and jump with Space, a one-way ledge you jump through and drop off with S/Down, a lantern swinging on a joint and coins to collect. Gameplay is in Luau scripts."},
         {"simulation", "Simulation",
          "576 entities animated by native systems, with a scripted orbiting camera: a starting point for simulation work."},
@@ -816,6 +878,7 @@ std::vector<TemplateFile> template_files(std::string_view id) {
                 {robot::kModelPath, robot::gltf()},
                 {std::string(robot::kModelPath) + ".meta", robot::meta()},
                 {"assets/scripts/follow_camera.luau", kFollowCamera},
+                {"assets/scripts/companion.luau", kCompanion},
                 {"assets/scripts/crate.luau", kCrate},
                 {"assets/audio/impact.wav", synth_impact()},
                 {"assets/scripts/hud.luau", kHud}};
@@ -838,6 +901,7 @@ void register_components() {
     animation::register_components();
     particles::register_components();
     gameui::register_components();
+    navigation::register_components();
 }
 
 Status build_template_scene(std::string_view id, Scene& s) {

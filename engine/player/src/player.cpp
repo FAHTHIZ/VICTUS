@@ -9,6 +9,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
+#include "victus/navigation/navigation.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/platform/platform.hpp"
@@ -113,6 +114,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     animation::add_animation_systems(sim, animations);
     particles::ParticleSystem particle_system({.jobs = &workers});
     particles::add_particle_systems(sim, particle_system);
+    navigation::NavigationSystem nav;
+    navigation::add_navigation_systems(sim, nav);
     // Audio is optional: without a device (or with VICTUS_NO_AUDIO=1) the game runs silently.
     audio::EngineOptions ao;
     ao.assets_root = (*db)->assets_dir();

@@ -4,6 +4,7 @@
 // operation is also a plain method so tests and tools can drive the editor without input.
 #pragma once
 #include "victus/animation/animation.hpp"
+#include "victus/navigation/navigation.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/core/log.hpp"
@@ -97,6 +98,10 @@ public:
     // Script host of the current play session (null while editing).
     [[nodiscard]] const script::ScriptHost* play_scripts() const noexcept { return play_scripts_.get(); }
     [[nodiscard]] const physics::PhysicsWorld* play_physics() const noexcept { return play_physics_.get(); }
+    [[nodiscard]] const navigation::NavigationSystem* play_navigation() const noexcept { return play_navigation_.get(); }
+    // View > Navigation Mesh: draws the navmesh (built from static colliders) in the viewport.
+    void set_show_navmesh(bool show) noexcept { show_navmesh_ = show; }
+    [[nodiscard]] const navigation::NavigationSystem* navmesh_preview() const noexcept { return edit_navigation_.get(); }
     // Audio engine for play sessions and clip preview (null if no engine could be created).
     audio::AudioEngine* audio();
     // Shared worker threads (physics), created on first use.
@@ -198,12 +203,16 @@ private:
     std::unique_ptr<physics::PhysicsWorld> play_physics_; // fresh per play session
     std::unique_ptr<animation::AnimationSystem> play_animation_; // fresh per play session
     std::unique_ptr<particles::ParticleSystem> play_particles_;  // fresh per play session
+    std::unique_ptr<navigation::NavigationSystem> play_navigation_; // fresh per play session
     std::unique_ptr<audio::AudioEngine> audio_;           // opened on first use, kept across sessions
     bool audio_failed_{false};
     std::unique_ptr<script::ScriptHost> edit_scripts_; // inspector property discovery
     std::unique_ptr<player::PlatformInput> input_;     // game input, enabled while the viewport has focus
     float script_poll_{0};
     bool show_colliders_{true};
+    bool show_navmesh_{false};
+    std::unique_ptr<navigation::NavigationSystem> edit_navigation_; // navmesh preview while editing
+    std::vector<navigation::DebugLine> nav_scratch_;
     render::QualityTier quality_{render::QualityTier::High};
     void apply_quality();
     std::vector<physics::DebugLine> collider_scratch_;

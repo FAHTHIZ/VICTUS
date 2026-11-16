@@ -565,6 +565,8 @@ void Editor::play() {
     animation::add_animation_systems(sim_, *play_animation_);
     play_particles_ = std::make_unique<particles::ParticleSystem>(particles::ParticleSettings{.jobs = &workers()});
     particles::add_particle_systems(sim_, *play_particles_);
+    play_navigation_ = std::make_unique<navigation::NavigationSystem>();
+    navigation::add_navigation_systems(sim_, *play_navigation_);
     if (auto* a = audio()) {
         a->stop_all();
         audio::add_audio_systems(sim_, *a);
@@ -614,6 +616,7 @@ void Editor::stop() {
     play_physics_.reset();
     play_animation_.reset();
     play_particles_.reset();
+    play_navigation_.reset();
     if (audio_) audio_->stop_all();
     if (input_) input_->set_enabled(false);
     play_state_ = PlayState::Editing;
@@ -672,6 +675,20 @@ void Editor::draw_overlays_3d(render::SceneRenderer& r) {
         collider_scratch_.clear();
         physics::collider_lines(s, collider_scratch_);
         for (const auto& l : collider_scratch_) r.line(l.a, l.b, l.color);
+    }
+    if (show_navmesh_) {
+        navigation::NavigationSystem* nav = play_state_ == PlayState::Editing ? nullptr : play_navigation_.get();
+        if (!nav) {
+            if (!edit_navigation_) edit_navigation_ = std::make_unique<navigation::NavigationSystem>();
+            nav = edit_navigation_.get();
+            // Rebuilds only when static colliders (or NavMeshSurface settings) changed.
+            if (auto st = nav->ensure_built(s); !st) notify(st.error().message, true);
+        } else if (!nav->valid()) {
+            (void)nav->ensure_built(s);
+        }
+        nav_scratch_.clear();
+        nav->debug_lines(nav_scratch_);
+        for (const auto& l : nav_scratch_) r.line(l.a, l.b, l.color);
     }
 }
 

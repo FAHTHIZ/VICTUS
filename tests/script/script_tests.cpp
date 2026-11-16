@@ -7,6 +7,7 @@
 #include "victus/core/hash.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/gameui/gameui.hpp"
+#include "victus/navigation/navigation.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
 
@@ -810,4 +811,91 @@ return { hovered = st.hovered, x = st.x, w = st.width, clicks = st.clicks, click
     auto bad = host->eval("scene.find('Banner'):set_text('x')", &s);
     REQUIRE_FALSE(bad.ok());
     CHECK(bad.error().message.find("no UiText") != std::string::npos);
+}
+
+TEST_CASE("script: navigation queries and agents (nav.*, set_destination, nav_state)") {
+    TempDir d("victus_script_nav");
+    d.write("scripts/walker.luau", R"lua(
+local Walker = {}
+Walker.goal = vector.create(4, 0, 0)
+function Walker:start()
+    self.ok = self.entity:set_destination(self.goal)
+end
+function Walker:update(dt)
+    local st = self.entity:nav_state()
+    if st.reached and not self.done then
+        self.done = true
+        self.entity.name = "Arrived:" .. tostring(self.ok)
+    end
+end
+return Walker
+)lua");
+    auto host = make_host(d);
+    navigation::register_components();
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    navigation::NavigationSystem nav;
+    navigation::add_navigation_systems(sim, nav);
+    Scene s;
+    const Entity floor = s.create("Floor");
+    s.world().get<scene::Transform>(floor)->position = {0, -0.5f, 0};
+    s.world().add<physics::ColliderComponent>(floor).size = {12, 1, 12};
+    const Entity wall = s.create("Wall");
+    s.world().get<scene::Transform>(wall)->position = {0, 1, 1};
+    s.world().add<physics::ColliderComponent>(wall).size = {1, 2, 8}; // z in [-3, 5]
+    const Entity walker = scripted(s, "Walker", "scripts/walker.luau");
+    s.world().get<scene::Transform>(walker)->position = {-4, 0, 0};
+    s.world().add<navigation::NavAgentComponent>(walker);
+
+    // Before any update (bound by hand here; the installed systems bind it each frame) the navmesh
+    // is built on demand by the first query.
+    navigation::bind(s, &nav);
+    auto q = host->eval(R"lua(
+local path, partial = nav.find_path(vector.create(-4, 0, 0), vector.create(4, 0, 0))
+local near = nav.nearest(vector.create(-4, 3, 0))
+local hit, at, normal = nav.raycast(vector.create(-4, 0, 0), vector.create(4, 0, 0))
+local free = nav.raycast(vector.create(-4, 0, 0), vector.create(-4, 0, 4))
+local r = nav.random_point(3)
+local r2 = nav.random_point(3)
+return { available = nav.available(), corners = #path, partial = partial, near_y = near.y,
+         hit = hit, hit_x = at.x, normal_x = normal.x, free = free,
+         same = r == r2, rx = r.x, off = nav.nearest(vector.create(50, 0, 50)) == nil,
+         none = nav.find_path(vector.create(50, 0, 50), vector.create(0, 0, 0)) == nil }
+)lua", &s);
+    if (!q.ok()) MESSAGE(q.error().message);
+    REQUIRE(q.ok());
+    CHECK(q.value()["available"].as_bool());
+    CHECK(q.value()["corners"].as_number() >= 3); // around the wall's -z end
+    CHECK_FALSE(q.value()["partial"].as_bool());
+    CHECK(std::fabs(q.value()["near_y"].as_number()) < 0.25);
+    CHECK(q.value()["hit"].as_bool());
+    CHECK(q.value()["hit_x"].as_number() < -0.5);
+    CHECK(q.value()["normal_x"].as_number() < -0.5);
+    CHECK_FALSE(q.value()["free"].as_bool());
+    CHECK(q.value()["same"].as_bool());
+    CHECK(std::fabs(q.value()["rx"].as_number()) <= 6.0);
+    CHECK(q.value()["off"].as_bool());
+    CHECK(q.value()["none"].as_bool());
+
+    for (int i = 0; i < 60 * 8 && s.world().get<scene::Name>(walker)->value == "Walker"; ++i) sim.tick(s, 1.0f / 60);
+    CHECK(s.world().get<scene::Name>(walker)->value == "Arrived:true");
+    const math::Vec3 p = s.world().get<scene::Transform>(walker)->position;
+    CHECK(std::hypot(p.x - 4, p.z) < 0.3f);
+
+    auto st = host->eval(R"lua(
+local w = scene.find("Arrived:true")
+w:set_destination(vector.create(-4, 0, 4))
+local a = w:nav_state()
+w:stop()
+local b = w:nav_state()
+return { active = a.active, moving = a.has_destination, stopped = not b.has_destination,
+         dx = a.destination.x, rebuilt = nav.rebuild() }
+)lua", &s);
+    REQUIRE(st.ok());
+    CHECK(st.value()["active"].as_bool());
+    CHECK(st.value()["moving"].as_bool());
+    CHECK(st.value()["stopped"].as_bool());
+    CHECK(st.value()["dx"].as_number() == doctest::Approx(-4));
+    CHECK(st.value()["rebuilt"].as_bool());
+    CHECK(host->stats().errors == 0);
 }

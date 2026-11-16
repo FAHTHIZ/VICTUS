@@ -423,6 +423,7 @@ void Editor::draw_menu_bar() {
     if (ImGui::BeginMenu("View")) {
         if (ImGui::MenuItem("Reset Layout")) layout_built_ = false;
         ImGui::MenuItem("Physics Colliders", nullptr, &show_colliders_);
+        ImGui::MenuItem("Navigation Mesh", nullptr, &show_navmesh_);
         ImGui::MenuItem("UI Demo Window", nullptr, &show_demo_);
         if (ImGui::BeginMenu("Rendering Quality")) {
             for (auto tier : {render::QualityTier::Low, render::QualityTier::Medium, render::QualityTier::High,

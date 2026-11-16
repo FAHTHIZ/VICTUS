@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/animation/animation.hpp"
 #include "victus/gameui/gameui.hpp"
+#include "victus/navigation/navigation.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/script/script.hpp"
 
@@ -969,6 +970,119 @@ int ui_click(lua_State* L) {
     return 1;
 }
 
+// ---- navigation (nav.* and entity navigation methods) ----
+navigation::NavigationSystem* nav_of(lua_State* L) {
+    auto& s = scene_of(L);
+    navigation::NavigationSystem* n = navigation::navigation_of(s);
+    if (n && !n->valid()) (void)n->ensure_built(s);
+    return n;
+}
+int nav_available(lua_State* L) {
+    const auto* n = nav_of(L);
+    lua_pushboolean(L, n && n->valid());
+    return 1;
+}
+// nav.find_path(from, to) -> {vector...}, partial  (nil when either end is off the navmesh)
+int nav_find_path(lua_State* L) {
+    const math::Vec3 from = check_vec3(L, 1), to = check_vec3(L, 2);
+    const auto* n = nav_of(L);
+    std::vector<math::Vec3> path;
+    bool partial = false;
+    if (!n || !n->find_path(from, to, path, &partial)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, static_cast<int>(path.size()), 0);
+    for (std::size_t i = 0; i < path.size(); ++i) {
+        push_vec3(L, path[i]);
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    lua_pushboolean(L, partial);
+    return 2;
+}
+// nav.nearest(point, extent?) -> vector or nil
+int nav_nearest(lua_State* L) {
+    const math::Vec3 p = check_vec3(L, 1);
+    const math::Vec3 extent = lua_isnoneornil(L, 2) ? math::Vec3{2, 4, 2} : check_vec3(L, 2);
+    const auto* n = nav_of(L);
+    const auto r = n ? n->nearest(p, extent) : std::nullopt;
+    if (r) push_vec3(L, *r);
+    else lua_pushnil(L);
+    return 1;
+}
+// nav.raycast(from, to) -> hit, point, normal (straight walk along the surface)
+int nav_raycast(lua_State* L) {
+    const math::Vec3 from = check_vec3(L, 1), to = check_vec3(L, 2);
+    const auto* n = nav_of(L);
+    if (!n) {
+        lua_pushboolean(L, true);
+        push_vec3(L, from);
+        push_vec3(L, {});
+        return 3;
+    }
+    const navigation::RaycastResult r = n->raycast(from, to);
+    lua_pushboolean(L, r.hit);
+    push_vec3(L, r.point);
+    push_vec3(L, r.normal);
+    return 3;
+}
+// nav.random_point(seed?) -> vector or nil
+int nav_random_point(lua_State* L) {
+    const auto* n = nav_of(L);
+    static std::uint32_t counter = 0x9e3779b9u; // successive calls without a seed give different points
+    counter = counter * 1664525u + 1013904223u;
+    const auto seed = lua_isnoneornil(L, 1) ? counter : static_cast<std::uint32_t>(luaL_checkinteger(L, 1));
+    const auto r = n ? n->random_point(seed) : std::nullopt;
+    if (r) push_vec3(L, *r);
+    else lua_pushnil(L);
+    return 1;
+}
+// nav.rebuild() -> bool
+int nav_rebuild(lua_State* L) {
+    auto& s = scene_of(L);
+    auto* n = navigation::navigation_of(s);
+    lua_pushboolean(L, n && n->build(s).ok() && n->valid());
+    return 1;
+}
+// entity:set_destination(point) -> bool
+int entity_set_destination(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const math::Vec3 p = check_vec3(L, 2);
+    auto* n = navigation::navigation_of(s);
+    lua_pushboolean(L, n && n->set_destination(s, e, p));
+    return 1;
+}
+int entity_stop(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    if (auto* n = navigation::navigation_of(s)) n->stop(s, e);
+    return 0;
+}
+// entity:nav_state() -> {active, has_destination, reached, partial, destination, velocity, remaining_distance}
+int entity_nav_state(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* n = navigation::navigation_of(s);
+    const navigation::AgentState st = n ? n->agent_state(e) : navigation::AgentState{};
+    lua_createtable(L, 0, 7);
+    lua_pushboolean(L, st.active);
+    lua_setfield(L, -2, "active");
+    lua_pushboolean(L, st.has_destination);
+    lua_setfield(L, -2, "has_destination");
+    lua_pushboolean(L, st.reached);
+    lua_setfield(L, -2, "reached");
+    lua_pushboolean(L, st.partial);
+    lua_setfield(L, -2, "partial");
+    push_vec3(L, st.destination);
+    lua_setfield(L, -2, "destination");
+    push_vec3(L, st.velocity);
+    lua_setfield(L, -2, "velocity");
+    lua_pushnumber(L, st.remaining_distance);
+    lua_setfield(L, -2, "remaining_distance");
+    return 1;
+}
+
 // entity:character_state() -> {valid, grounded, on_steep_slope, ground_normal, velocity, ground}
 int entity_character_state(lua_State* L) {
     auto& s = scene_of(L);
@@ -1287,6 +1401,9 @@ void open_victus_libs(lua_State* L) {
                                 {"set_visible", entity_set_visible},
                                 {"visible", entity_visible},
                                 {"ui_state", entity_ui_state},
+                                {"set_destination", entity_set_destination},
+                                {"stop", entity_stop},
+                                {"nav_state", entity_nav_state},
                                 {nullptr, nullptr}};
     for (const luaL_Reg* f = methods; f->name; ++f) {
         lua_pushcfunction(L, f->func, f->name);
@@ -1351,6 +1468,11 @@ void open_victus_libs(lua_State* L) {
                                {"focus", ui_focus},             {"focused", ui_focused},
                                {"click", ui_click},             {nullptr, nullptr}};
     register_lib(L, "ui", ui_fns);
+    const luaL_Reg nav_fns[] = {{"available", nav_available},       {"find_path", nav_find_path},
+                                {"nearest", nav_nearest},           {"raycast", nav_raycast},
+                                {"random_point", nav_random_point}, {"rebuild", nav_rebuild},
+                                {nullptr, nullptr}};
+    register_lib(L, "nav", nav_fns);
     lua_pushcfunction(L, log_info, "print");
     lua_setglobal(L, "print");
 }
