@@ -10,6 +10,7 @@
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
 #include "victus/navigation/navigation.hpp"
+#include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/platform/platform.hpp"
@@ -124,6 +125,28 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     if (audio_engine) audio::add_audio_systems(sim, **audio_engine);
     else VICTUS_LOG_WARN("player", "audio disabled: {}", audio_engine.error().message);
     sim.input = &input;
+    // Multiplayer: join a server; it spawns this player's character from the scene's template.
+    std::unique_ptr<net::NetClient> client;
+    if (!o.connect.empty()) {
+        auto addr = net::parse_address(o.connect);
+        if (!addr) return std::move(addr).error();
+        auto transport = net::create_udp_transport({});
+        if (!transport) return std::move(transport).error();
+        std::unique_ptr<net::Transport> t = std::move(*transport);
+        if (!o.net_conditions.empty()) {
+            auto c = net::parse_conditions(o.net_conditions);
+            if (!c) return std::move(c).error();
+            t = net::with_conditions(std::move(t), *c);
+        }
+        net::ClientOptions co;
+        co.host = addr->first;
+        co.port = addr->second;
+        co.name = o.player_name;
+        co.game_id = net::make_game_id(proj->settings().name, rel);
+        client = std::make_unique<net::NetClient>(std::move(t), co);
+        client->install(sim);
+        VICTUS_LOG_INFO("player", "connecting to {}:{} as '{}'", co.host, co.port, co.name);
+    }
     PlayerReport report;
     report.backend = dev.capabilities().driver_name;
     report.packaged = packaged;
@@ -191,6 +214,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             }
         }
         break;
+    }
+    if (client) {
+        report.net_status = client->diagnostics().status;
+        client->disconnect(sim.time().time);
     }
     dev.wait_idle();
     if (frame) dev.destroy(frame);

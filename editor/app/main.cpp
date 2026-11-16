@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // VICTUS Editor executable.
 //   victus_editor [project-folder]
-//   victus_editor --new <folder> [--template 3d|2d|simulation] [--name "My Game"]
+//   victus_editor --new <folder> [--template 3d|2d|simulation|multiplayer] [--name "My Game"]
 // Automation (CI, screenshots, docs):
 //   --frames N        exit after N frames
 //   --screenshot PNG  write the final frame

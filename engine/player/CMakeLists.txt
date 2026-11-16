@@ -17,7 +17,7 @@ function(victus_add_notice title file)
         file(APPEND ${_notices_txt} "\n------------------------------------------------------------\n${title}\n------------------------------------------------------------\n(license file not available in this build: ${file})\n")
     endif()
 endfunction()
-foreach(dep sdl3 luau joltphysics box2d recastnavigation miniaudio)
+foreach(dep sdl3 luau joltphysics box2d recastnavigation enet miniaudio)
     FetchContent_GetProperties(${dep})
 endforeach()
 victus_add_notice("VICTUS (Apache-2.0)" "${PROJECT_SOURCE_DIR}/LICENSE")
@@ -31,6 +31,7 @@ victus_add_notice("Lua 5.1 (MIT, included in Luau)" "${luau_SOURCE_DIR}/lua_LICE
 victus_add_notice("Jolt Physics 5.7.0 (MIT)" "${joltphysics_SOURCE_DIR}/LICENSE")
 victus_add_notice("Box2D 3.2.0 (MIT)" "${box2d_SOURCE_DIR}/LICENSE")
 victus_add_notice("Recast & Detour 1.6.0 (zlib)" "${recastnavigation_SOURCE_DIR}/License.txt")
+victus_add_notice("ENet 1.3.18 (MIT)" "${enet_SOURCE_DIR}/LICENSE")
 victus_add_notice("miniaudio 0.11.26 (public domain or MIT-0)" "${miniaudio_SOURCE_DIR}/LICENSE")
 victus_add_notice("stb (stb_image, stb_image_write, stb_truetype; MIT or public domain)" "${PROJECT_SOURCE_DIR}/third_party/stb/LICENSE")
 file(APPEND ${_notices_txt} "\nstb_vorbis (bundled with miniaudio, MIT or public domain): Copyright (c) 2017 Sean Barrett.\n")
@@ -56,4 +57,4 @@ victus_add_module(player
         src/player.cpp
         src/export.cpp
         ${_notices_cpp}
-    DEPS VICTUS::Runtime VICTUS::Project VICTUS::Gameplay VICTUS::Script VICTUS::Platform VICTUS::Audio)
+    DEPS VICTUS::Runtime VICTUS::Project VICTUS::Gameplay VICTUS::Script VICTUS::Platform VICTUS::Audio VICTUS::Net)

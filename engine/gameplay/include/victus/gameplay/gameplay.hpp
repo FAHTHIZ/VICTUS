@@ -75,6 +75,14 @@ private:
     math::Vec2 mouse_pos_{}, prev_pos_{};
 };
 
+// Per-entity input routing, published as a scene world resource by network sessions: scripts
+// on `entity` read input from route(entity, fallback) instead of the simulation's input. A
+// server routes each client's input to the entities that client owns; a client gives entities
+// it does not own no input. Returning `fallback` keeps the default; null means "no input".
+struct InputRouting {
+    std::function<const InputSource*(scene::Entity entity, const InputSource* fallback)> route;
+};
+
 using SystemFn = std::function<void(scene::Scene&, const FrameTime&)>;
 
 struct SystemInfo {

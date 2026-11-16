@@ -134,3 +134,8 @@ victus_add_test(victus_navigation_tests
     SOURCES navigation/navigation_tests.cpp
     DEPS VICTUS::Navigation VICTUS::Physics VICTUS::Core
     LABELS navigation)
+
+victus_add_test(victus_net_tests
+    SOURCES net/net_tests.cpp
+    DEPS VICTUS::Net VICTUS::Script VICTUS::Physics
+    LABELS net)

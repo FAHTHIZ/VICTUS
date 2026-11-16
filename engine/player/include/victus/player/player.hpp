@@ -20,6 +20,9 @@ struct PlayerOptions {
     bool fullscreen{false};
     bool hot_reload{false};      // re-read changed scripts while running (development)
     std::string quality;         // low|medium|high|ultra; empty = project rendering.quality
+    std::string connect;         // host[:port] of a `victus serve` server; empty = play offline
+    std::string player_name{"player"}; // name shown to other players when connected
+    std::string net_conditions;  // link emulation for testing, e.g. "latency=80,loss=0.05"
 };
 
 struct PlayerReport {
@@ -29,6 +32,7 @@ struct PlayerReport {
     std::uint64_t script_errors{0};
     bool packaged{false};        // ran from an exported game.vpak
     std::string quality;         // quality tier used
+    std::string net_status;      // last multiplayer status when --connect was used
 };
 
 [[nodiscard]] Result<PlayerReport> run(const PlayerOptions& options);

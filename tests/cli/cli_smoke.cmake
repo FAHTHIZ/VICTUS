@@ -18,7 +18,7 @@ if(NOT LAST_OUTPUT MATCHES "VICTUS [0-9]+\\.[0-9]+")
     message(FATAL_ERROR "unexpected version output: ${LAST_OUTPUT}")
 endif()
 run_ok("${VICTUS_CLI}" templates)
-foreach(t 3d 2d simulation)
+foreach(t 3d 2d simulation multiplayer)
     if(NOT LAST_OUTPUT MATCHES "${t}")
         message(FATAL_ERROR "template ${t} missing from: ${LAST_OUTPUT}")
     endif()
@@ -39,7 +39,7 @@ if("$ENV{VICTUS_REQUIRE_GPU}" STREQUAL "1" AND NOT "$ENV{VICTUS_NO_GPU}" STREQUA
     set(run_gpu ON)
 endif()
 
-foreach(t 3d 2d simulation)
+foreach(t 3d 2d simulation multiplayer)
     set(dir "${WORK}/game_${t}")
     run_ok("${VICTUS_CLI}" new "${dir}" --template ${t} --name "Smoke ${t}")
     if(NOT EXISTS "${dir}/victus.project" OR NOT EXISTS "${dir}/scenes/main.vscene")
@@ -87,6 +87,34 @@ foreach(t 3d 2d simulation)
         endif()
     endif()
 endforeach()
+
+# Multiplayer over real UDP on loopback: a dedicated server and two headless clients run
+# concurrently; each exits non-zero unless both players met (server --expect-clients, clients
+# --expect-players). One client runs over an emulated lossy, delayed link.
+string(RANDOM LENGTH 3 ALPHABET 0123456789 port_suffix)
+math(EXPR port "27100 + ${port_suffix}")
+set(mp "${WORK}/game_multiplayer")
+execute_process(
+    COMMAND "${VICTUS_CLI}" serve "${mp}" --port ${port} --frames 480 --expect-clients 2
+    COMMAND "${VICTUS_CLI}" simulate "${mp}" --connect 127.0.0.1:${port} --name ann --frames 300 --hold D --expect-players 2
+            --conditions latency=40,jitter=10,loss=0.05
+    COMMAND "${VICTUS_CLI}" simulate "${mp}" --connect 127.0.0.1:${port} --name ben --frames 300 --hold W --expect-players 2
+    RESULTS_VARIABLE mp_rcs OUTPUT_VARIABLE mp_out ERROR_VARIABLE mp_err)
+if(NOT mp_rcs STREQUAL "0;0;0")
+    message(FATAL_ERROR "multiplayer session failed (exit codes ${mp_rcs}):\n${mp_out}\n${mp_err}")
+endif()
+if(NOT mp_out MATCHES "most players seen 2" OR NOT mp_out MATCHES "player [12] 'ann'")
+    message(FATAL_ERROR "unexpected client output: ${mp_out}")
+endif()
+# A client of a different game is refused (exit 4).
+run_ok("${VICTUS_CLI}" new "${WORK}/other_game" --template multiplayer --name "Other")
+execute_process(
+    COMMAND "${VICTUS_CLI}" serve "${mp}" --port ${port} --frames 180
+    COMMAND "${VICTUS_CLI}" simulate "${WORK}/other_game" --connect 127.0.0.1:${port} --frames 120
+    RESULTS_VARIABLE mp_rcs OUTPUT_VARIABLE mp_out ERROR_VARIABLE mp_err)
+if(NOT mp_rcs STREQUAL "0;4" OR NOT mp_err MATCHES "different game")
+    message(FATAL_ERROR "mismatched client was not rejected (${mp_rcs}): ${mp_out}${mp_err}")
+endif()
 
 # A broken script is reported by check (exit 1) and by simulate (exit 3).
 file(WRITE "${WORK}/game_2d/assets/scripts/broken.luau" "local M = {}\nfunction M:update(dt\nreturn M\n")

@@ -3,6 +3,7 @@
 // built-in behaviours, so a new project shows motion, lighting and a camera on first launch.
 #include "victus/animation/animation.hpp"
 #include "victus/navigation/navigation.hpp"
+#include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/gameui/gameui.hpp"
 #include "victus/audio/audio.hpp"
@@ -418,6 +419,120 @@ void build_3d(Scene& s) {
     l.range = 7.0f;
 
     (void)hud(s, "W A S D  or  arrow keys   walk\nSpace   jump\nWalk into the crates and the gate\nH   show / hide this panel", {450, 128});
+}
+
+// ---- Multiplayer arena ------------------------------------------------------------------------
+
+void build_multiplayer(Scene& s) {
+    attach(s, camera_3d(s, {0, 9.0f, 11.0f}, {0, 0.6f, 0}), "scripts/net_camera.luau", [] {
+        json::Value p = json::Value::object();
+        p.set("offset", json::Array{0.0, 7.0, 9.0});
+        return p;
+    }());
+    sun(s);
+    {
+        auto& env = s.world().add<gameplay::EnvironmentComponent>(add(s, "Environment", {0, 0, 0}));
+        env.bloom_intensity = 0.05f;
+        env.ao_intensity = 1.0f;
+        env.shadow_distance = 34.0f;
+    }
+    const Entity ground = add(s, "Arena Floor", {0, 0, 0});
+    s.world().get<Transform>(ground)->scale = {24, 1, 24};
+    mesh(s, ground, "plane", {0.14f, 0.16f, 0.2f, 1}, 0.0f, 0.85f);
+    {
+        s.world().add<physics::RigidBodyComponent>(ground).type = physics::BodyType::Static;
+        auto& c = s.world().add<physics::ColliderComponent>(ground);
+        c.size = {1, 0.2f, 1};
+        c.offset = {0, -0.1f, 0};
+    }
+    // Low walls around the 24 x 24 arena.
+    const math::Color wall_color{0.32f, 0.36f, 0.45f, 1};
+    const struct {
+        const char* name;
+        math::Vec3 at, size;
+    } walls[] = {{"Wall North", {0, 0.5f, -12.25f}, {25, 1, 0.5f}},
+                 {"Wall South", {0, 0.5f, 12.25f}, {25, 1, 0.5f}},
+                 {"Wall West", {-12.25f, 0.5f, 0}, {0.5f, 1, 24}},
+                 {"Wall East", {12.25f, 0.5f, 0}, {0.5f, 1, 24}}};
+    for (const auto& w : walls) {
+        const Entity e = add(s, w.name, w.at);
+        s.world().get<Transform>(e)->scale = w.size;
+        mesh(s, e, "cube", wall_color, 0.0f, 0.7f);
+        s.world().add<physics::RigidBodyComponent>(e).type = physics::BodyType::Static;
+        s.world().add<physics::ColliderComponent>(e);
+    }
+    // Four glowing pillars to run around.
+    for (int i = 0; i < 4; ++i) {
+        const float a = 0.7854f + 1.5708f * static_cast<float>(i);
+        const Entity e = add(s, "Pillar " + std::to_string(i + 1), {std::cos(a) * 6.0f, 1.25f, std::sin(a) * 6.0f});
+        s.world().get<Transform>(e)->scale = {1.1f, 2.5f, 1.1f};
+        mesh(s, e, "cylinder", {0.9f, 0.9f, 0.95f, 1}, 1.0f, 0.25f);
+        s.world().add<physics::RigidBodyComponent>(e).type = physics::BodyType::Static;
+        s.world().add<physics::ColliderComponent>(e).shape = physics::ColliderComponent::Shape::Cylinder;
+        const Entity lamp = add(s, "Pillar Light " + std::to_string(i + 1), {std::cos(a) * 6.0f, 2.9f, std::sin(a) * 6.0f});
+        auto& l = s.world().add<LightComponent>(lamp);
+        l.type = LightComponent::Type::Point;
+        l.color = i % 2 ? math::Color{0.35f, 0.6f, 1.0f, 1} : math::Color{1.0f, 0.55f, 0.3f, 1};
+        l.intensity = 9.0f;
+        l.range = 6.5f;
+    }
+
+    // The player template: every client that joins a server gets its own copy (spawned around the
+    // template's position). Offline (editor Play, `victus run`) it is simply the player.
+    const Entity player = add(s, "Player", {0, 0, 2.0f});
+    attach(s, player, "scripts/net_player.luau");
+    s.world().add<net::NetworkIdentityComponent>(player).player_template = true;
+    {
+        auto& cc = s.world().add<physics::CharacterControllerComponent>(player);
+        cc.radius = 0.6f;
+        cc.height = 1.4f;
+        cc.push_force = 200.0f;
+    }
+    const Entity robot = robot::instantiate(s, "Robot", player);
+    s.world().get<Transform>(robot)->scale = {0.85f, 0.85f, 0.85f};
+    {
+        const Entity badge = add(s, "Badge", {0, 2.05f, 0}, player);
+        s.world().get<Transform>(badge)->scale = {0.32f, 0.32f, 0.32f};
+        mesh(s, badge, "sphere", {0.3f, 0.8f, 1.0f, 1}, 0.0f, 0.3f);
+    }
+
+    // Coins: replicated server objects. Only the server (or offline play) collects them; the
+    // collecting player's "score" network variable goes up and the coin hops elsewhere.
+    for (int i = 0; i < 8; ++i) {
+        const float a = 0.3927f + 0.7854f * static_cast<float>(i);
+        const float r = i % 2 ? 9.0f : 3.6f;
+        const Entity coin = add(s, "Coin " + std::to_string(i + 1), {std::cos(a) * r, 0.7f, std::sin(a) * r});
+        s.world().get<Transform>(coin)->scale = {0.55f, 0.1f, 0.55f}; // a disc, stood up below
+        mesh(s, coin, "cylinder", {1.0f, 0.78f, 0.2f, 1}, 1.0f, 0.25f);
+        s.world().get<Transform>(coin)->rotation = math::Quat::axis_angle({1, 0, 0}, 1.5708f);
+        s.world().add<physics::RigidBodyComponent>(coin).type = physics::BodyType::Kinematic;
+        auto& c = s.world().add<physics::ColliderComponent>(coin);
+        c.shape = physics::ColliderComponent::Shape::Sphere;
+        c.radius = 1.0f;
+        c.is_trigger = true;
+        s.world().add<net::NetworkIdentityComponent>(coin);
+        attach(s, coin, "scripts/net_coin.luau");
+    }
+
+    const Entity canvas = hud(s, "W A S D  or  arrow keys   walk\nSpace   jump\nCollect coins; the server keeps score\nH   show / hide this panel", {470, 128});
+    {
+        const Entity status = ui_rect(s, canvas, "Net Status", {0, 0}, {0, 0}, {24, 24}, {520, 40});
+        auto& t = ui_text(s, status, "Offline", 22, true);
+        t.align = gameui::TextAlign::Left;
+        const Entity board = ui_rect(s, canvas, "Scoreboard", {0, 0}, {0, 0}, {24, 72}, {360, 220});
+        auto& bp = s.world().add<gameui::UiPanelComponent>(board);
+        bp.border_width = 1.5f;
+        gameui::UiRectComponent inner;
+        inner.anchor_min = {0, 0};
+        inner.anchor_max = {1, 1};
+        inner.size = {-32, -24};
+        const Entity body = s.create("Scoreboard Text", board);
+        s.world().add<gameui::UiRectComponent>(body, inner);
+        auto& bt = ui_text(s, body, "", 22, false);
+        bt.align = gameui::TextAlign::Left;
+        bt.vertical_align = gameui::VerticalAlign::Top;
+        attach(s, board, "scripts/net_hud.luau");
+    }
 }
 
 SpriteComponent& sprite(Scene& s, Entity e, math::Vec2 size, math::Color tint, std::int32_t layer) {
@@ -860,6 +975,167 @@ end
 return Hud
 )lua";
 
+constexpr const char* kNetPlayer = R"lua(-- Multiplayer player. On a server every joined client gets a copy of this entity; the server
+-- runs it with that client's input and replicates the result, while the owning client predicts
+-- it locally (net.authority() or is_local()). Other players are proxies on each client: they
+-- only run the cosmetics below (facing, animation, badge colour). Offline it is a normal player.
+-- "score" and "color" are network variables: set by the server, readable everywhere.
+local Player = {}
+Player.speed = 5.5
+Player.jump_speed = 6
+
+local COLORS = {
+    { 0.3, 0.8, 1.0 }, { 1.0, 0.45, 0.35 }, { 0.45, 1.0, 0.5 }, { 1.0, 0.85, 0.3 },
+    { 0.8, 0.5, 1.0 }, { 1.0, 0.6, 0.85 }, { 0.5, 1.0, 0.95 }, { 0.95, 0.95, 0.95 },
+}
+
+function Player:start()
+    self.robot = self.entity:find_child("Robot")
+    self.badge = self.entity:find_child("Badge")
+    self.clip = "Idle"
+    self.last = self.entity.position
+    self.spawn = self.entity.position
+    if net.authority() then
+        self.entity:set_net("score", 0)
+        self.entity:set_net("color", self.entity:owner() % #COLORS + 1)
+    end
+end
+
+function Player:update(dt)
+    local e = self.entity
+    if net.authority() or e:is_local() then
+        local move = vector.create(input.axis("A", "D", "Left", "Right"), 0, input.axis("W", "S", "Up", "Down"))
+        if vector.magnitude(move) > 0 then move = vector.normalize(move) * self.speed end
+        e:move_character(move)
+        if input.pressed("Space") and e.grounded then e:jump(self.jump_speed) end
+        if net.authority() and e.position.y < -10 then e.position = self.spawn end
+    end
+
+    -- Cosmetics on every machine, from how far the entity actually moved this frame.
+    local p = e.position
+    local d = vector.create(p.x - self.last.x, 0, p.z - self.last.z)
+    self.last = p
+    local speed = dt > 0 and vector.magnitude(d) / dt or 0
+    if self.robot then
+        if speed > 0.3 then self.robot.rotation = vector.create(0, math.deg(math.atan2(d.x, d.z)), 0) end
+        local clip = speed > 0.3 and "Walk" or "Idle"
+        if clip ~= self.clip then
+            self.clip = clip
+            self.robot:play_animation(clip, 0.2)
+        end
+    end
+    local color = e:get_net("color")
+    if self.badge and color and color ~= self.color then
+        self.color = color
+        local c = COLORS[color] or COLORS[1]
+        self.badge:set("MeshRenderer", { base_color = { c[1], c[2], c[3], 1 } })
+    end
+end
+
+function Player:on_trigger_enter(other)
+    if not net.authority() or string.sub(other.name, 1, 4) ~= "Coin" then return end
+    self.entity:set_net("score", (self.entity:get_net("score") or 0) + 1)
+    other:set_net("hops", (other:get_net("hops") or 0) + 1) -- the coin moves itself elsewhere
+end
+
+return Player
+)lua";
+
+constexpr const char* kNetCoin = R"lua(-- A replicated coin. The server (or offline play) spins and hovers it and, when a player
+-- collected it (its "hops" network variable changed), moves it somewhere else in the arena.
+-- Clients only see the replicated transform.
+local Coin = {}
+Coin.spin_speed = 180
+Coin.hover = 0.15
+Coin.area = 10 -- relocates within +-area on X and Z
+
+function Coin:start()
+    self.base = self.entity.position
+    self.t = math.random() * 6
+    self.hops = self.entity:get_net("hops") or 0
+end
+
+function Coin:update(dt)
+    if not net.authority() then return end
+    local hops = self.entity:get_net("hops") or 0
+    if hops ~= self.hops then
+        self.hops = hops
+        self.base = vector.create((math.random() * 2 - 1) * self.area, self.base.y, (math.random() * 2 - 1) * self.area)
+    end
+    self.t += dt
+    self.entity:rotate(vector.create(0, 0, 1), self.spin_speed * dt)
+    self.entity.position = self.base + vector.create(0, math.sin(self.t * 3) * self.hover, 0)
+end
+
+return Coin
+)lua";
+
+constexpr const char* kNetCamera = R"lua(-- Follows this machine's player: the predicted local player on a client, otherwise the entity
+-- named `target`.
+local Cam = {}
+Cam.target = "Player"
+Cam.offset = vector.create(0, 7, 9)
+Cam.smoothing = 5
+
+function Cam:update(dt)
+    local subject = net.is_client() and net.local_player() or scene.find(self.target)
+    if not subject or not subject.valid then return end
+    local goal = subject.position + self.offset
+    local k = 1 - math.exp(-self.smoothing * dt)
+    self.entity.position = self.entity.position + (goal - self.entity.position) * k
+    self.entity:look_at(subject.position + vector.create(0, 0.8, 0))
+end
+
+return Cam
+)lua";
+
+constexpr const char* kNetHud = R"lua(-- Session status (role, connection, round trip) and the scoreboard, refreshed a few times
+-- per second from net.stats(), net.clients() and each player's "score" network variable.
+local Board = {}
+Board.interval = 0.25
+
+function Board:start()
+    self.status = scene.find("Net Status")
+    self.text = scene.find("Scoreboard Text")
+    self.wait = 0
+end
+
+function Board:update(dt)
+    self.wait -= dt
+    if self.wait > 0 then return end
+    self.wait = self.interval
+    local st = net.stats()
+    local line
+    if st.role == "client" then
+        if net.connected() then
+            line = string.format("Online   player %d   %d players   ping %.0f ms", net.id(), #net.clients(), st.rtt_ms)
+        else
+            line = "Client   " .. st.status
+        end
+    elseif st.role == "server" then
+        line = string.format("Server   %d players", st.clients)
+    else
+        line = "Offline   (host with: victus serve)"
+    end
+    if self.status then self.status:set_text(line) end
+    local rows = {}
+    local clients = net.clients()
+    if #clients == 0 then
+        local p = scene.find("Player")
+        if p then table.insert(rows, string.format("You   %d", p:get_net("score") or 0)) end
+    else
+        for _, c in clients do
+            local score = (c.player and c.player.valid) and (c.player:get_net("score") or 0) or 0
+            local me = c.id == net.id() and "  (you)" or ""
+            table.insert(rows, string.format("%s   %d%s", c.name, score, me))
+        end
+    end
+    if self.text then self.text:set_text("Scores\n" .. table.concat(rows, "\n")) end
+end
+
+return Board
+)lua";
+
 } // namespace
 
 const std::vector<TemplateInfo>& templates() {
@@ -868,6 +1144,8 @@ const std::vector<TemplateInfo>& templates() {
         {"2d", "2D Game", "A playable platformer on Box2D physics with music and sound effects: a CharacterController2D you run with A/D or arrows and jump with Space, a one-way ledge you jump through and drop off with S/Down, a lantern swinging on a joint and coins to collect. Gameplay is in Luau scripts."},
         {"simulation", "Simulation",
          "576 entities animated by native systems, with a scripted orbiting camera: a starting point for simulation work."},
+        {"multiplayer", "Multiplayer Arena",
+         "A networked coin-collecting arena: host it with `victus serve` and join with `victus run --connect` (or play it offline). Each client gets its own predicted robot from the player template, coins and scores are replicated server state, and the HUD shows the session status and scoreboard."},
     };
     return list;
 }
@@ -890,6 +1168,14 @@ std::vector<TemplateFile> template_files(std::string_view id) {
                 {"assets/audio/music.wav", synth_music()},
                 {"assets/scripts/hud.luau", kHud}};
     if (id == "simulation") return {{"assets/scripts/orbit_camera.luau", kOrbitCamera}};
+    if (id == "multiplayer")
+        return {{"assets/scripts/net_player.luau", kNetPlayer},
+                {robot::kModelPath, robot::gltf()},
+                {std::string(robot::kModelPath) + ".meta", robot::meta()},
+                {"assets/scripts/net_coin.luau", kNetCoin},
+                {"assets/scripts/net_camera.luau", kNetCamera},
+                {"assets/scripts/net_hud.luau", kNetHud},
+                {"assets/scripts/hud.luau", kHud}};
     return {};
 }
 
@@ -902,6 +1188,7 @@ void register_components() {
     particles::register_components();
     gameui::register_components();
     navigation::register_components();
+    net::register_components();
 }
 
 Status build_template_scene(std::string_view id, Scene& s) {
@@ -909,6 +1196,7 @@ Status build_template_scene(std::string_view id, Scene& s) {
     if (id == "3d") build_3d(s);
     else if (id == "2d") build_2d(s);
     else if (id == "simulation") build_simulation(s);
+    else if (id == "multiplayer") build_multiplayer(s);
     else return make_error(ErrorCode::InvalidArgument, "unknown template '" + std::string(id) + "'");
     s.update_transforms();
     return {};

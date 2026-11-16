@@ -10,6 +10,7 @@
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
 #include "victus/navigation/navigation.hpp"
+#include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/player/export.hpp"
@@ -18,7 +19,13 @@
 #include "victus/scene/scene.hpp"
 #include "victus/script/script.hpp"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <filesystem>
+#include <optional>
+#include <thread>
 
 #include <cstdio>
 #include <string>
@@ -32,12 +39,15 @@ constexpr const char* kUsage =
     "usage: victus <command> [options]\n"
     "\n"
     "commands:\n"
-    "  new <folder> [--template 3d|2d|simulation] [--name NAME]   create a project\n"
+    "  new <folder> [--template 3d|2d|simulation|multiplayer] [--name NAME]\n"
     "  templates                                                  list project templates\n"
     "  info <project>                                             show project settings, scenes, assets\n"
     "  import <project>                                           import changed assets (exit 1 on failure)\n"
     "  run <project> [--scene S] [--frames N] [--screenshot PNG] [--quality TIER]  play a scene\n"
+    "      [--connect HOST[:PORT]] [--name NAME]                  ...as a client of a `victus serve` server\n"
     "  simulate <project> [--frames N] [--hold KEYS] [--save F]   run gameplay and scripts headless (no GPU)\n"
+    "           [--connect HOST[:PORT]]                           ...as a headless multiplayer client\n"
+    "  serve <project> [--port P] [--max-clients N] [--frames N]  host a multiplayer session (dedicated server)\n"
     "  check <project>                                            validate scenes and script syntax\n"
     "  export <project> --out DIR [--name EXE] [--player PATH]    package a runnable game folder\n"
     "  version                                                    print the engine version\n"
@@ -64,7 +74,7 @@ bool wants_help(const std::vector<std::string>& a) {
 int cmd_new(const std::vector<std::string>& a) {
     cli::Parser p("victus new", "Create a project from a template");
     p.positional("folder", "new project folder", true)
-        .option("template", "3d, 2d or simulation", "3d")
+        .option("template", "3d, 2d, simulation or multiplayer", "3d")
         .option("name", "project name (default: folder name)");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message + "\n" + p.help());
@@ -138,10 +148,16 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("quality", "rendering quality: low, medium, high or ultra (default: project setting)")
         .flag("fullscreen", "run fullscreen")
         .flag("no-hot-reload", "do not reload scripts when their files change")
-        .flag("strict", "exit with code 3 if any script raised an error");
+        .flag("strict", "exit with code 3 if any script raised an error")
+        .option("connect", "join a `victus serve` server at host[:port]")
+        .option("name", "player name shown to others when connected", "player")
+        .option("conditions", "emulate a bad link, e.g. latency=80,jitter=10,loss=0.05");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
     player::PlayerOptions o;
+    o.connect = p.get("connect");
+    o.player_name = p.get("name");
+    o.net_conditions = p.get("conditions");
     o.project = p.get("project");
     o.scene = p.get("scene");
     o.max_frames = static_cast<std::uint64_t>(p.get_number("frames", 0));
@@ -156,6 +172,7 @@ int cmd_run(const std::vector<std::string>& a) {
     std::printf("ran %llu frames in %.2f s on %s at %s quality (%llu script errors)\n",
                 static_cast<unsigned long long>(r->frames), r->seconds, r->backend.c_str(), r->quality.c_str(),
                 static_cast<unsigned long long>(r->script_errors));
+    if (!r->net_status.empty()) std::printf("net: %s\n", r->net_status.c_str());
     return p.has("strict") && r->script_errors ? 3 : 0;
 }
 
@@ -177,8 +194,100 @@ std::vector<std::string> split_list(const std::string& s) {
     return out;
 }
 
+// The game simulation of `victus simulate` and `victus serve`: gameplay, UI, scripts, physics,
+// animation, particles, navigation and (device-less) audio on a scene, without a window or GPU.
+struct Headless {
+    std::optional<project::Project> proj;
+    std::string scene_rel;
+    scene::Scene scene;
+    std::unique_ptr<script::ScriptHost> host;
+    std::unique_ptr<physics::PhysicsWorld> physics_world;
+    std::unique_ptr<assets::AssetDatabase> db;
+    std::unique_ptr<animation::AnimationSystem> animations;
+    particles::ParticleSystem particle_system; // single-threaded like physics; identical either way
+    navigation::NavigationSystem nav;
+    std::unique_ptr<audio::AudioEngine> audio_engine;
+    gameplay::ManualInput input;
+    gameplay::Simulation sim;
+
+    Status open(const std::string& project_dir, const std::string& scene_arg) {
+        project::register_components();
+        auto pr = project::Project::open(project_dir);
+        if (!pr) return pr.error();
+        proj.emplace(std::move(*pr));
+        scene_rel = scene_arg.empty() ? proj->settings().startup_scene : scene_arg;
+        auto path = scene_arg.empty() ? proj->startup_scene_path() : proj->resolve(scene_arg);
+        if (!path) return path.error();
+        if (auto st = scene.load_file(*path); !st) return st;
+        script::HostOptions so;
+        so.assets_root = proj->root() / "assets";
+        auto h = script::ScriptHost::create(so);
+        if (!h) return h.error();
+        host = std::move(*h);
+        auto pw = physics::PhysicsWorld::create(); // single-threaded: reproducible output
+        if (!pw) return pw.error();
+        physics_world = std::move(*pw);
+        gameplay::add_builtin_systems(sim);
+        gameui::add_ui_systems(sim);
+        script::add_script_systems(sim, *host);
+        physics::add_physics_systems(sim, *physics_world);
+        // Animation needs cooked models: open the asset database when the project has one.
+        if (auto d = assets::AssetDatabase::open(proj->root())) db = std::move(*d);
+        animations = std::make_unique<animation::AnimationSystem>(
+            animation::AnimationSettings{.provider = db ? assets::animation_provider(*db) : animation::SetProvider{}});
+        animation::add_animation_systems(sim, *animations);
+        particles::add_particle_systems(sim, particle_system);
+        navigation::add_navigation_systems(sim, nav);
+        audio::EngineOptions ao; // mixed without a device so audio calls behave as in the game
+        ao.assets_root = proj->root() / "assets";
+        ao.null_device = true;
+        auto ae = audio::AudioEngine::create(ao);
+        if (!ae) return ae.error();
+        audio_engine = std::move(*ae);
+        audio::add_audio_systems(sim, *audio_engine);
+        sim.input = &input;
+        return {};
+    }
+    [[nodiscard]] std::string game_id() const { return net::make_game_id(proj->settings().name, scene_rel); }
+};
+
+std::atomic<bool> g_stop{false};
+extern "C" void on_signal(int) { g_stop.store(true); }
+
+// Paces a loop at `hz` against the wall clock; returns seconds since start.
+struct Pacer {
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point start = Clock::now();
+    Clock::time_point next = start;
+    double step;
+    explicit Pacer(double hz) : step(1.0 / hz) {}
+    void wait() {
+        next += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(step));
+        const auto now = Clock::now();
+        if (next > now) std::this_thread::sleep_until(next);
+        else if (now - next > std::chrono::milliseconds(250)) next = now; // fell far behind: do not spiral
+    }
+};
+
+Result<std::unique_ptr<net::Transport>> condition(std::unique_ptr<net::Transport> t, const std::string& spec) {
+    if (spec.empty()) return t;
+    auto c = net::parse_conditions(spec);
+    if (!c) return c.error();
+    return net::with_conditions(std::move(t), *c);
+}
+
+void print_net(const net::NetContext& ctx) {
+    const auto d = ctx.diagnostics();
+    std::printf("net: %s, %u clients, %u replicated entities, rtt %.1f ms, sent %.1f KB, received %.1f KB, "
+                "snapshots %llu sent / %llu received, last snapshot %u bytes, %llu corrections, %llu rejected messages\n",
+                d.status.c_str(), d.clients, d.entities, d.rtt_ms, static_cast<double>(d.bytes_sent) / 1024.0,
+                static_cast<double>(d.bytes_received) / 1024.0, static_cast<unsigned long long>(d.snapshots_sent),
+                static_cast<unsigned long long>(d.snapshots_received), d.snapshot_bytes,
+                static_cast<unsigned long long>(d.corrections), static_cast<unsigned long long>(d.rejected_messages));
+}
+
 // Runs a scene's gameplay and scripts at a fixed 1/60 s step without a window or GPU. Used for
-// CI checks of game logic, dedicated-server style runs and simulation batch jobs.
+// CI checks of game logic, simulation batch jobs and (with --connect) headless test clients.
 int cmd_simulate(const std::vector<std::string>& a) {
     cli::Parser p("victus simulate", "Run a scene's gameplay and scripts headless");
     p.positional("project", "project folder", true)
@@ -186,63 +295,134 @@ int cmd_simulate(const std::vector<std::string>& a) {
         .option("frames", "number of 1/60 s frames to run", "600")
         .option("hold", "comma-separated keys held for the whole run, e.g. D,Space")
         .option("print", "comma-separated entity names whose final position is printed")
-        .option("save", "write the final scene state to this .vscene file");
+        .option("save", "write the final scene state to this .vscene file")
+        .option("connect", "join a `victus serve` server at host[:port] (runs in real time)")
+        .option("name", "player name sent to the server", "player")
+        .option("conditions", "emulate a bad link, e.g. latency=80,jitter=10,loss=0.05,bandwidth=256")
+        .option("expect-players", "with --connect: exit 4 unless at least N players were seen", "0");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
-    project::register_components();
-    auto proj = project::Project::open(p.get("project"));
-    if (!proj) return error(proj.error().message);
-    auto path = p.has("scene") ? proj->resolve(p.get("scene")) : proj->startup_scene_path();
-    if (!path) return error(path.error().message);
-    scene::Scene scene;
-    if (auto st = scene.load_file(*path); !st) return error(st.error().message);
-    script::HostOptions so;
-    so.assets_root = proj->root() / "assets";
-    auto host = script::ScriptHost::create(so);
-    if (!host) return error(host.error().message);
-    gameplay::ManualInput input;
-    for (const auto& k : split_list(p.get("hold"))) input.set_key(k, true);
-    auto physics_world = physics::PhysicsWorld::create(); // single-threaded: reproducible output
-    if (!physics_world) return error(physics_world.error().message);
-    gameplay::Simulation sim;
-    gameplay::add_builtin_systems(sim);
-    gameui::add_ui_systems(sim);
-    script::add_script_systems(sim, **host);
-    physics::add_physics_systems(sim, **physics_world);
-    // Animation needs cooked models: open the asset database when the project has one.
-    auto db = assets::AssetDatabase::open(proj->root());
-    animation::AnimationSystem animations({.provider = db ? assets::animation_provider(**db) : animation::SetProvider{}});
-    animation::add_animation_systems(sim, animations);
-    particles::ParticleSystem particle_system; // single-threaded like physics; identical either way
-    particles::add_particle_systems(sim, particle_system);
-    navigation::NavigationSystem nav;
-    navigation::add_navigation_systems(sim, nav);
-    audio::EngineOptions ao; // mixed without a device so audio calls behave as in the game
-    ao.assets_root = proj->root() / "assets";
-    ao.null_device = true;
-    auto audio_engine = audio::AudioEngine::create(ao);
-    if (!audio_engine) return error(audio_engine.error().message);
-    audio::add_audio_systems(sim, **audio_engine);
-    sim.input = &input;
-    const auto frames = static_cast<std::uint64_t>(p.get_number("frames", 600));
-    for (std::uint64_t f = 0; f < frames; ++f) {
-        sim.tick(scene, 1.0f / 60.0f);
-        input.end_frame();
+    auto hs = std::make_unique<Headless>();
+    if (auto st = hs->open(p.get("project"), p.get("scene")); !st) return error(st.error().message);
+    for (const auto& k : split_list(p.get("hold"))) hs->input.set_key(k, true);
+
+    std::unique_ptr<net::NetClient> client;
+    if (p.has("connect")) {
+        log::logger().add_sink(std::make_shared<log::ConsoleSink>(false));
+        auto addr = net::parse_address(p.get("connect"));
+        if (!addr) return error(addr.error().message);
+        auto t = net::create_udp_transport({});
+        if (!t) return error(t.error().message);
+        auto tc = condition(std::move(*t), p.get("conditions"));
+        if (!tc) return error(tc.error().message);
+        net::ClientOptions co;
+        co.host = addr->first;
+        co.port = addr->second;
+        co.name = p.get("name");
+        co.game_id = hs->game_id();
+        client = std::make_unique<net::NetClient>(std::move(*tc), co);
+        client->install(hs->sim);
+        std::signal(SIGINT, on_signal);
     }
-    const auto& st = (*host)->stats();
+
+    const auto frames = static_cast<std::uint64_t>(p.get_number("frames", 600));
+    std::size_t most_players = 0;
+    Pacer pacer(60.0);
+    std::uint64_t f = 0;
+    for (; f < frames && !g_stop.load(); ++f) {
+        hs->sim.tick(hs->scene, 1.0f / 60.0f);
+        hs->input.end_frame();
+        if (client) {
+            most_players = std::max(most_players, client->clients().size());
+            if (client->failed()) break;
+            pacer.wait();
+        }
+    }
+    const auto& st = hs->host->stats();
     std::printf("simulated %llu frames (%.2f s game time): %zu entities, %zu script instances, %llu script errors\n",
-                static_cast<unsigned long long>(frames), sim.time().time, scene.world().alive_count(), st.instances,
+                static_cast<unsigned long long>(f), hs->sim.time().time, hs->scene.world().alive_count(), st.instances,
                 static_cast<unsigned long long>(st.errors));
-    for (const auto& e : (*host)->recent_errors()) std::fprintf(stderr, "script error: %s\n", e.c_str());
+    for (const auto& e : hs->host->recent_errors()) std::fprintf(stderr, "script error: %s\n", e.c_str());
+    if (client) {
+        print_net(*client);
+        std::printf("net: client id %u, most players seen %zu\n", client->local_id(), most_players);
+        for (const auto& c : client->clients()) {
+            const auto score = c.player.is_null() ? json::Value{} : net::get_var(hs->scene, c.player, "score");
+            std::printf("net: player %u '%s' score %s\n", c.id, c.name.c_str(), json::stringify(score, false).c_str());
+        }
+    }
     for (const auto& name : split_list(p.get("print"))) {
-        const auto e = scene.find_by_name(name);
-        if (const auto* t = e != scene::kNullEntity ? scene.world().get<scene::Transform>(e) : nullptr)
+        const auto e = hs->scene.find_by_name(name);
+        if (const auto* t = e != scene::kNullEntity ? hs->scene.world().get<scene::Transform>(e) : nullptr)
             std::printf("%s: %.3f %.3f %.3f\n", name.c_str(), t->position.x, t->position.y, t->position.z);
         else
             std::printf("%s: (not found)\n", name.c_str());
     }
     if (p.has("save"))
-        if (auto s2 = scene.save_file(p.get("save")); !s2) return error(s2.error().message);
+        if (auto s2 = hs->scene.save_file(p.get("save")); !s2) return error(s2.error().message);
+    if (client) {
+        const bool failed = client->failed();
+        client->disconnect(hs->sim.time().time);
+        if (failed) return (void)error("connection failed: " + client->diagnostics().status), 4;
+        if (most_players < static_cast<std::size_t>(p.get_number("expect-players", 0)))
+            return (void)error("expected at least " + p.get("expect-players") + " players, saw " + std::to_string(most_players)), 4;
+    }
+    return st.errors ? 3 : 0;
+}
+
+// Dedicated server: runs the scene headless in real time at 60 Hz and replicates it to clients.
+int cmd_serve(const std::vector<std::string>& a) {
+    cli::Parser p("victus serve", "Host a multiplayer session (headless dedicated server)");
+    p.positional("project", "project folder", true)
+        .option("scene", "project-relative scene (default: startup scene)")
+        .option("port", "UDP port to listen on", std::to_string(net::kDefaultPort))
+        .option("bind", "local address to bind (default: all interfaces)")
+        .option("max-clients", "maximum connected players", "8")
+        .option("frames", "stop after N frames (0 = until Ctrl+C)", "0")
+        .option("conditions", "emulate a bad link on every client, e.g. latency=80,loss=0.05")
+        .option("expect-clients", "exit 4 unless at least N clients joined", "0");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message);
+    log::logger().add_sink(std::make_shared<log::ConsoleSink>(false)); // joins, leaves, rejects
+    auto hs = std::make_unique<Headless>();
+    if (auto st = hs->open(p.get("project"), p.get("scene")); !st) return error(st.error().message);
+    net::UdpOptions uo;
+    uo.port = static_cast<std::uint16_t>(p.get_number("port", net::kDefaultPort));
+    uo.bind_address = p.get("bind");
+    const auto max_clients = static_cast<std::uint16_t>(p.get_number("max-clients", 8));
+    uo.max_peers = max_clients + 4u; // room to tell extra peers the server is full
+    auto t = net::create_udp_transport(uo);
+    if (!t) return error(t.error().message);
+    auto tc = condition(std::move(*t), p.get("conditions"));
+    if (!tc) return error(tc.error().message);
+    net::ServerOptions so;
+    so.game_id = hs->game_id();
+    so.max_clients = max_clients;
+    net::NetServer server(std::move(*tc), so);
+    server.install(hs->sim);
+    std::signal(SIGINT, on_signal);
+    std::signal(SIGTERM, on_signal);
+    std::printf("serving '%s' (%s) on UDP port %u, up to %u players. Ctrl+C stops.\n",
+                hs->proj->settings().name.c_str(), hs->scene_rel.c_str(), uo.port, max_clients);
+    std::fflush(stdout);
+    const auto frames = static_cast<std::uint64_t>(p.get_number("frames", 0));
+    std::size_t most = 0;
+    Pacer pacer(60.0);
+    std::uint64_t f = 0;
+    for (; (frames == 0 || f < frames) && !g_stop.load(); ++f) {
+        hs->sim.tick(hs->scene, 1.0f / 60.0f);
+        most = std::max(most, server.clients().size());
+        if (f % (60 * 30) == 0 && f) print_net(server), std::fflush(stdout);
+        pacer.wait();
+    }
+    server.shutdown(hs->sim.time().time);
+    const auto& st = hs->host->stats();
+    std::printf("served %llu frames (%.2f s): most players %zu, %llu script errors\n", static_cast<unsigned long long>(f),
+                hs->sim.time().time, most, static_cast<unsigned long long>(st.errors));
+    print_net(server);
+    for (const auto& e : hs->host->recent_errors()) std::fprintf(stderr, "script error: %s\n", e.c_str());
+    if (most < static_cast<std::size_t>(p.get_number("expect-clients", 0)))
+        return (void)error("expected at least " + p.get("expect-clients") + " clients, saw " + std::to_string(most)), 4;
     return st.errors ? 3 : 0;
 }
 
@@ -339,6 +519,11 @@ int cmd_export(const std::vector<std::string>& a) {
 } // namespace
 
 int main(int argc, char** argv) {
+#ifdef SIGPIPE
+    // A closed stdout (a pipeline reader that already exited) must not kill a running server
+    // or client; writes then fail quietly instead.
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
     if (argc < 2) return std::fprintf(stderr, "%s", kUsage), 2;
     const std::string cmd = argv[1];
     const auto args = rest(argc, argv);
@@ -348,6 +533,7 @@ int main(int argc, char** argv) {
     if (cmd == "import") return cmd_import(args);
     if (cmd == "run") return cmd_run(args);
     if (cmd == "simulate") return cmd_simulate(args);
+    if (cmd == "serve") return cmd_serve(args);
     if (cmd == "check") return cmd_check(args);
     if (cmd == "export") return cmd_export(args);
     if (cmd == "version" || cmd == "--version") return std::printf("VICTUS %s\n", build::version()), 0;

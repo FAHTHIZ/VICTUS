@@ -2,6 +2,7 @@
 #include "victus/animation/animation.hpp"
 #include "victus/gameui/gameui.hpp"
 #include "victus/navigation/navigation.hpp"
+#include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/script/script.hpp"
 
@@ -80,6 +81,16 @@ struct ScriptHost::Impl {
     gameplay::FrameTime time{};
     float fixed_dt{1.0f / 60.0f};
     const gameplay::InputSource* input{nullptr};
+    const gameplay::InputSource* default_input{nullptr};
+
+    // Selects the input `e`'s script reads: multiplayer sessions route remote players' inputs to
+    // the entities they own (and give proxies no input at all).
+    void route(Entity e) {
+        input = default_input;
+        if (!scene) return;
+        if (const auto* r = scene->world().resource<gameplay::InputRouting>(); r && r->route)
+            input = r->route(e, default_input);
+    }
 
     ~Impl() {
         if (L) lua_close(L);
@@ -970,6 +981,152 @@ int ui_click(lua_State* L) {
     return 1;
 }
 
+// ---- networking (net.* and entity network methods) ----
+const char* role_name(net::Role r) {
+    switch (r) {
+    case net::Role::Server: return "server";
+    case net::Role::Client: return "client";
+    case net::Role::Offline: break;
+    }
+    return "offline";
+}
+int net_role(lua_State* L) {
+    lua_pushstring(L, role_name(net::role_of(scene_of(L))));
+    return 1;
+}
+int net_is_server(lua_State* L) {
+    lua_pushboolean(L, net::role_of(scene_of(L)) == net::Role::Server);
+    return 1;
+}
+int net_is_client(lua_State* L) {
+    lua_pushboolean(L, net::role_of(scene_of(L)) == net::Role::Client);
+    return 1;
+}
+// net.authority() -> true offline or on the server (where shared game state may change)
+int net_authority(lua_State* L) {
+    lua_pushboolean(L, net::role_of(scene_of(L)) != net::Role::Client);
+    return 1;
+}
+int net_id(lua_State* L) {
+    const auto* c = net::context_of(scene_of(L));
+    lua_pushinteger(L, c ? c->local_id() : 0);
+    return 1;
+}
+int net_connected(lua_State* L) {
+    const auto* c = net::context_of(scene_of(L));
+    lua_pushboolean(L, c && c->connected());
+    return 1;
+}
+// net.local_player() -> the entity this machine's input drives (client), or nil
+int net_local_player(lua_State* L) {
+    auto& s = scene_of(L);
+    const auto* c = net::context_of(s);
+    const Entity e = c ? c->local_player() : Entity{};
+    if (s.world().alive(e)) push_entity(L, e);
+    else lua_pushnil(L);
+    return 1;
+}
+// net.send(name, value?, to?) -> ok, error   (clients always send to the server)
+int net_send(lua_State* L) {
+    auto& s = scene_of(L);
+    const char* name = luaL_checkstring(L, 1);
+    const Value v = lua_isnoneornil(L, 2) ? Value{} : to_json(L, 2);
+    const auto to = lua_isnoneornil(L, 3) ? net::kAllClients : static_cast<std::uint16_t>(luaL_checkinteger(L, 3));
+    auto* c = net::context_of(s);
+    if (!c) {
+        lua_pushboolean(L, false);
+        lua_pushstring(L, "not in a network session");
+        return 2;
+    }
+    const Status st = c->send(name, v, to);
+    lua_pushboolean(L, st.ok());
+    if (st.ok()) lua_pushnil(L);
+    else lua_pushstring(L, st.error().message.c_str());
+    return 2;
+}
+// net.clients() -> {{id, name, player, rtt_ms}...}
+int net_clients(lua_State* L) {
+    auto& s = scene_of(L);
+    const auto* c = net::context_of(s);
+    const std::vector<net::ClientInfo> list = c ? c->clients() : std::vector<net::ClientInfo>{};
+    lua_createtable(L, static_cast<int>(list.size()), 0);
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        const auto& ci = list[i];
+        lua_createtable(L, 0, 4);
+        lua_pushinteger(L, ci.id);
+        lua_setfield(L, -2, "id");
+        lua_pushlstring(L, ci.name.data(), ci.name.size());
+        lua_setfield(L, -2, "name");
+        if (s.world().alive(ci.player)) {
+            push_entity(L, ci.player);
+            lua_setfield(L, -2, "player");
+        }
+        lua_pushnumber(L, ci.rtt_ms);
+        lua_setfield(L, -2, "rtt_ms");
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    return 1;
+}
+// net.stats() -> diagnostics table
+int net_stats(lua_State* L) {
+    const auto* c = net::context_of(scene_of(L));
+    const net::NetDiagnostics d = c ? c->diagnostics() : net::NetDiagnostics{};
+    lua_createtable(L, 0, 12);
+    auto num = [&](const char* k, double v) {
+        lua_pushnumber(L, v);
+        lua_setfield(L, -2, k);
+    };
+    lua_pushstring(L, role_name(d.role));
+    lua_setfield(L, -2, "role");
+    lua_pushboolean(L, d.connected);
+    lua_setfield(L, -2, "connected");
+    num("tick", d.tick);
+    num("clients", d.clients);
+    num("entities", d.entities);
+    num("rtt_ms", d.rtt_ms);
+    num("send_kbps", d.send_kbps);
+    num("receive_kbps", d.receive_kbps);
+    num("snapshot_bytes", d.snapshot_bytes);
+    num("prediction_error", d.prediction_error);
+    num("corrections", static_cast<double>(d.corrections));
+    lua_pushlstring(L, d.status.data(), d.status.size());
+    lua_setfield(L, -2, "status");
+    return 1;
+}
+// entity:set_net(key, value) -> ok, error   (authority only; replicated to every client)
+int entity_set_net(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const char* key = luaL_checkstring(L, 2);
+    const Value v = lua_isnoneornil(L, 3) ? Value{} : to_json(L, 3);
+    const Status st = net::set_var(s, e, key, v);
+    lua_pushboolean(L, st.ok());
+    if (st.ok()) lua_pushnil(L);
+    else lua_pushstring(L, st.error().message.c_str());
+    return 2;
+}
+int entity_get_net(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    push_json(L, net::get_var(s, e, luaL_checkstring(L, 2)));
+    return 1;
+}
+int entity_has_authority(lua_State* L) {
+    auto& s = scene_of(L);
+    lua_pushboolean(L, net::has_authority(s, check_live(L, 1, s)));
+    return 1;
+}
+int entity_is_local(lua_State* L) {
+    auto& s = scene_of(L);
+    lua_pushboolean(L, net::is_local(s, check_live(L, 1, s)));
+    return 1;
+}
+int entity_owner(lua_State* L) {
+    auto& s = scene_of(L);
+    lua_pushinteger(L, net::owner_of(s, check_live(L, 1, s)));
+    return 1;
+}
+
 // ---- navigation (nav.* and entity navigation methods) ----
 navigation::NavigationSystem* nav_of(lua_State* L) {
     auto& s = scene_of(L);
@@ -1404,6 +1561,11 @@ void open_victus_libs(lua_State* L) {
                                 {"set_destination", entity_set_destination},
                                 {"stop", entity_stop},
                                 {"nav_state", entity_nav_state},
+                                {"set_net", entity_set_net},
+                                {"get_net", entity_get_net},
+                                {"has_authority", entity_has_authority},
+                                {"is_local", entity_is_local},
+                                {"owner", entity_owner},
                                 {nullptr, nullptr}};
     for (const luaL_Reg* f = methods; f->name; ++f) {
         lua_pushcfunction(L, f->func, f->name);
@@ -1473,6 +1635,18 @@ void open_victus_libs(lua_State* L) {
                                 {"random_point", nav_random_point}, {"rebuild", nav_rebuild},
                                 {nullptr, nullptr}};
     register_lib(L, "nav", nav_fns);
+    const luaL_Reg net_fns[] = {{"role", net_role},
+                                {"is_server", net_is_server},
+                                {"is_client", net_is_client},
+                                {"authority", net_authority},
+                                {"id", net_id},
+                                {"connected", net_connected},
+                                {"local_player", net_local_player},
+                                {"send", net_send},
+                                {"clients", net_clients},
+                                {"stats", net_stats},
+                                {nullptr, nullptr}};
+    register_lib(L, "net", net_fns);
     lua_pushcfunction(L, log_info, "print");
     lua_setglobal(L, "print");
 }
@@ -1533,6 +1707,7 @@ void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, co
     h.scene = &scene;
     h.time = time;
     h.input = input;
+    h.default_input = input;
     if (h.options.watch_files && now_seconds() >= h.next_watch) {
         reload_changed();
         h.next_watch = now_seconds() + h.options.watch_interval_seconds;
@@ -1592,6 +1767,7 @@ void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, co
         }
         Impl::Instance& in = it->second;
         if (in.faulted) continue;
+        h.route(item.e);
         if (!in.started) {
             in.started = true;
             if (!h.call(in, "start", nullptr)) continue;
@@ -1601,6 +1777,8 @@ void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, co
     }
     dispatch_physics_events(scene);
     dispatch_ui_events(scene);
+    dispatch_net_messages(scene);
+    h.input = h.default_input;
     h.counters.instances = h.instances.size();
 }
 
@@ -1621,6 +1799,7 @@ void ScriptHost::dispatch_physics_events(scene::Scene& scene) {
         const char* fn = ev.trigger ? (begin ? "on_trigger_enter" : "on_trigger_exit")
                                     : (begin ? "on_collision_enter" : "on_collision_exit");
         lua_State* L = h.L;
+        h.route(self);
         (void)h.call_with(it->second, fn, [&] {
             push_entity(L, scene.world().alive(other) ? other : Entity{});
             if (ev.trigger || !begin) return 1;
@@ -1652,6 +1831,7 @@ void ScriptHost::dispatch_ui_events(scene::Scene& scene) {
             auto it = h.instances.find(e.bits());
             if (it == h.instances.end() || it->second.faulted || !it->second.started) continue;
             lua_State* L = h.L;
+            h.route(e);
             (void)h.call_with(it->second, "on_click", [&] {
                 push_entity(L, scene.world().alive(ev.button) ? ev.button : Entity{});
                 lua_pushlstring(L, ev.action.data(), ev.action.size());
@@ -1669,6 +1849,7 @@ void ScriptHost::fixed_update(scene::Scene& scene, const gameplay::FrameTime& ti
     h.time = time;
     h.fixed_dt = time.dt;
     h.input = input;
+    h.default_input = input;
     std::vector<std::uint64_t> keys;
     keys.reserve(h.instances.size());
     for (const auto& [k, in] : h.instances)
@@ -1681,7 +1862,38 @@ void ScriptHost::fixed_update(scene::Scene& scene, const gameplay::FrameTime& ti
         if (!sc || !sc->enabled) continue;
         auto it = h.instances.find(k);
         if (it == h.instances.end() || it->second.faulted) continue;
+        h.route(e);
         (void)h.call(it->second, "fixed_update", &dt);
+    }
+    h.input = h.default_input;
+}
+
+void ScriptHost::dispatch_net_messages(scene::Scene& scene) {
+    net::NetContext* ctx = net::context_of(scene);
+    if (!ctx) return;
+    const std::vector<net::NetMessage> messages = ctx->take_messages();
+    if (messages.empty()) return;
+    Impl& h = *impl_;
+    std::vector<std::uint64_t> keys;
+    for (const auto& [k, in] : h.instances)
+        if (in.started && !in.faulted) keys.push_back(k);
+    for (const auto& m : messages) {
+        for (const std::uint64_t k : keys) {
+            const Entity e{static_cast<std::uint32_t>(k), static_cast<std::uint32_t>(k >> 32)};
+            if (!scene.world().alive(e)) continue;
+            const auto* sc = scene.world().get<ScriptComponent>(e);
+            if (!sc || !sc->enabled) continue;
+            auto it = h.instances.find(k);
+            if (it == h.instances.end() || it->second.faulted) continue;
+            lua_State* L = h.L;
+            h.route(e);
+            (void)h.call_with(it->second, "on_net_message", [&] {
+                lua_pushlstring(L, m.name.data(), m.name.size());
+                push_json(L, m.value);
+                lua_pushinteger(L, m.sender);
+                return 3;
+            });
+        }
     }
 }
 
