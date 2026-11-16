@@ -101,8 +101,9 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     (*view)->renderer().set_settings(quality);
 
     // Regression captures: the replayed capture fixes the script seed; a recording picks one.
-    if ((!o.record.empty() || !o.replay.empty()) && !o.connect.empty())
-        return make_error(ErrorCode::InvalidArgument, "record/replay captures work offline only (not with --connect)");
+    if ((!o.record.empty() || !o.replay.empty()) && (!o.connect.empty() || o.host))
+        return make_error(ErrorCode::InvalidArgument, "record/replay captures work offline only (not with --connect or --host)");
+    if (o.host && !o.connect.empty()) return make_error(ErrorCode::InvalidArgument, "choose either host or connect");
     if (!o.record.empty() && !o.replay.empty()) return make_error(ErrorCode::InvalidArgument, "choose either record or replay");
     std::optional<gameplay::Capture> replay_capture;
     if (!o.replay.empty()) {
@@ -205,6 +206,50 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         client->install(sim);
         VICTUS_LOG_INFO("player", "connecting to {}:{} as '{}'", co.host, co.port, co.name);
     }
+    // Listen server: this player hosts the session and plays in it.
+    std::unique_ptr<net::NetServer> server;
+    if (o.host) {
+        net::UdpOptions uo;
+        uo.port = o.host_port ? o.host_port : net::kDefaultPort;
+        uo.max_peers = o.max_clients + 4u; // room to tell extra peers the server is full
+        auto transport = net::create_udp_transport(uo);
+        if (!transport) return std::move(transport).error();
+        std::unique_ptr<net::Transport> t = std::move(*transport);
+        if (!o.net_conditions.empty()) {
+            auto c = net::parse_conditions(o.net_conditions);
+            if (!c) return std::move(c).error();
+            t = net::with_conditions(std::move(t), *c);
+        }
+        std::string security = "unencrypted (insecure): only use on networks you trust";
+        if (o.insecure) {
+            if (!o.net_password.empty()) return make_error(ErrorCode::InvalidArgument, "a password needs encryption; remove insecure");
+        } else {
+            fs::Path key_file = o.host_key;
+            if (key_file.empty()) {
+                if (packaged) {
+                    const fs::Path sd = gameplay::default_save_directory(proj->settings().name);
+                    key_file = sd.parent_path() / (sd.filename().string() + ".server.key");
+                } else {
+                    key_file = proj->root() / ".victus" / "server.key";
+                }
+            }
+            auto kp = net::load_or_create_key(key_file);
+            if (!kp) return std::move(kp).error();
+            net::SecureOptions sec;
+            sec.server_secret = kp->secret;
+            sec.password = o.net_password;
+            t = net::with_encryption(std::move(t), std::move(sec));
+            security = "encrypted; server key " + net::key_to_hex(kp->public_key);
+        }
+        net::ServerOptions so2;
+        so2.game_id = net::make_game_id(proj->settings().name, rel);
+        so2.max_clients = o.max_clients;
+        so2.host_player = true;
+        so2.host_name = o.player_name;
+        server = std::make_unique<net::NetServer>(std::move(t), so2);
+        server->install(sim);
+        VICTUS_LOG_INFO("player", "hosting on UDP port {} as '{}' ({})", uo.port, o.player_name, security);
+    }
     PlayerReport report;
     report.backend = dev.capabilities().driver_name;
     report.packaged = packaged;
@@ -296,6 +341,11 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             }
         }
         break;
+    }
+    if (server) {
+        const auto joined = server->diagnostics().clients;
+        report.net_status = "hosted the session; " + std::to_string(joined) + (joined == 1 ? " client" : " clients") + " connected at exit";
+        server->shutdown(sim.time().time);
     }
     if (client) {
         report.net_status = client->diagnostics().status;

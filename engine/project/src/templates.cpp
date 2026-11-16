@@ -1226,7 +1226,7 @@ Cam.offset = vector.create(0, 7, 9)
 Cam.smoothing = 5
 
 function Cam:update(dt)
-    local subject = net.is_client() and net.local_player() or scene.find(self.target)
+    local subject = net.local_player() or scene.find(self.target) -- client or listen-server host
     if not subject or not subject.valid then return end
     local goal = subject.position + self.offset
     local k = 1 - math.exp(-self.smoothing * dt)
@@ -1261,9 +1261,13 @@ function Board:update(dt)
             line = "Client   " .. st.status
         end
     elseif st.role == "server" then
-        line = string.format("Server   %d players", st.clients)
+        if net.local_player() then
+            line = string.format("Hosting   %d players", #net.clients())
+        else
+            line = string.format("Server   %d players", st.clients)
+        end
     else
-        line = "Offline   (host with: victus serve)"
+        line = "Offline   (host with: victus_player --host or victus serve)"
     end
     if self.status then self.status:set_text(line) end
     local rows = {}

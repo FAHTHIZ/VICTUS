@@ -274,6 +274,10 @@ struct ServerOptions {
     // knows are omitted and positions travel as millimetre deltas. Off: every changed entity is
     // sent in full and unchanged ones are repeated once a second (loss recovery).
     bool delta_snapshots{true};
+    // Listen server: spawn a character for the host from the player template, driven by the
+    // server's local input (sim.input). It is listed in clients() and rosters with id 0.
+    bool host_player{false};
+    std::string host_name{"host"};
 };
 
 class NetServer final : public NetContext {
@@ -294,8 +298,8 @@ public:
     [[nodiscard]] bool connected() const noexcept override { return true; }
     Status send(std::string_view name, const json::Value& value, std::uint16_t to = kAllClients) override;
     [[nodiscard]] std::vector<NetMessage> take_messages() override;
-    [[nodiscard]] std::vector<ClientInfo> clients() const override;
-    [[nodiscard]] Entity local_player() const noexcept override { return {}; }
+    [[nodiscard]] std::vector<ClientInfo> clients() const override; // includes the host (id 0) when hosting
+    [[nodiscard]] Entity local_player() const noexcept override; // listen server: the host's character
     [[nodiscard]] NetDiagnostics diagnostics() const override;
 
     // Manual driving (tests, tools); install() calls these from its systems.

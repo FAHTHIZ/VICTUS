@@ -49,6 +49,7 @@ constexpr const char* kUsage =
     "  import <project>                                           import changed assets (exit 1 on failure)\n"
     "  run <project> [--scene S] [--frames N] [--screenshot PNG] [--quality TIER]  play a scene\n"
     "      [--connect HOST[:PORT]] [--name NAME]                  ...as a client of a `victus serve` server\n"
+    "      [--host] [--port P] [--max-clients N]                  ...host a session and play in it (listen server)\n"
     "      [--server-key HEX] [--password P] [--insecure]         ...pin the server key / join a protected server\n"
     "      [--record F.vcapture] [--replay F.vcapture]            ...record a play session, or watch one replay\n"
     "  simulate <project> [--frames N] [--hold KEYS] [--save F]   run gameplay and scripts headless (no GPU)\n"
@@ -158,10 +159,14 @@ int cmd_run(const std::vector<std::string>& a) {
         .flag("no-hot-reload", "do not reload scripts, textures, models and audio when their files change")
         .flag("strict", "exit with code 3 if any script raised an error")
         .option("connect", "join a `victus serve` server at host[:port]")
+        .flag("host", "host a multiplayer session and play in it (listen server)")
+        .option("port", "with --host: UDP port to listen on", std::to_string(net::kDefaultPort))
+        .option("max-clients", "with --host: players who may join", "8")
+        .option("key", "with --host: secret key file, created if missing (default: <project>/.victus/server.key)")
         .option("name", "player name shown to others when connected", "player")
         .option("server-key", "with --connect: refuse servers whose public key differs (printed by `victus serve`)")
-        .option("password", "with --connect: password of a server started with --password")
-        .flag("insecure", "with --connect: join a server started with --insecure (no encryption)")
+        .option("password", "with --connect: password of a protected server; with --host: require it")
+        .flag("insecure", "no encryption: join a server started with --insecure, or host one")
         .option("conditions", "emulate a bad link, e.g. latency=80,jitter=10,loss=0.05")
         .option("saves", "save games folder (default: <project>/.victus/saves)")
         .option("record", "record input, frame times and state digests to this .vcapture file")
@@ -177,6 +182,10 @@ int cmd_run(const std::vector<std::string>& a) {
     o.server_key = p.get("server-key");
     o.net_password = p.get("password");
     o.insecure = p.has("insecure");
+    o.host = p.has("host");
+    o.host_port = static_cast<std::uint16_t>(p.get_number("port", net::kDefaultPort));
+    o.max_clients = static_cast<std::uint16_t>(p.get_number("max-clients", 8));
+    o.host_key = p.get("key");
     o.project = p.get("project");
     o.scene = p.get("scene");
     o.max_frames = static_cast<std::uint64_t>(p.get_number("frames", 0));

@@ -16,10 +16,14 @@ int main(int argc, char** argv) {
         .option("quality", "rendering quality: low, medium, high or ultra (default: project setting)")
         .flag("fullscreen", "run fullscreen")
         .option("connect", "join a multiplayer server at host[:port]")
+        .flag("host", "host a multiplayer session and play in it (listen server)")
+        .option("port", "UDP port to host on", "27960")
+        .option("max-clients", "players who may join a hosted session", "8")
+        .option("key", "host secret key file, created if missing (default: <project>/.victus/server.key)")
         .option("name", "player name shown to others when connected", "player")
         .option("server-key", "refuse servers whose public key differs")
-        .option("password", "password of a protected server")
-        .flag("insecure", "join a server started with --insecure (no encryption)")
+        .option("password", "password of a protected server (or of the hosted session)")
+        .flag("insecure", "no encryption: join a server started with --insecure, or host one")
         .option("saves", "save games folder (default: the per-user VICTUS saves folder)");
     if (auto st = p.parse(argc, argv); !st) return std::fprintf(stderr, "%s\n%s", st.error().message.c_str(), p.help().c_str()), 2;
     victus::player::PlayerOptions o;
@@ -38,6 +42,10 @@ int main(int argc, char** argv) {
     o.server_key = p.get("server-key");
     o.net_password = p.get("password");
     o.insecure = p.has("insecure");
+    o.host = p.has("host");
+    o.host_port = static_cast<std::uint16_t>(p.get_number("port", 27960));
+    o.max_clients = static_cast<std::uint16_t>(p.get_number("max-clients", 8));
+    o.host_key = p.get("key");
     o.saves = p.get("saves");
     auto r = victus::player::run(o);
     if (!r) return std::fprintf(stderr, "victus_player: %s\n", r.error().message.c_str()), 1;
