@@ -337,5 +337,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** The editor process now also carries server load; heavy sessions should use `victus serve`. Revisit when adding multi-client play mode (several clients in one editor) and when sessions exceed a few thousand replicated entities (table virtualisation, sampling).
 
+## ADR-0033 — In-editor clients as full client machines over loopback UDP (accepted 2026-11-17)
+**Problem.** Testing a multiplayer game from the editor needed several terminals; prediction, interpolation and per-player HUDs could not be checked side by side with the host.
+
+**Candidates.** (1) Each in-editor player is a complete client (own scene copy, scripts, physics) talking to the editor's listen server over real UDP loopback with the session's encryption (Unreal's Play-In-Editor "Number of Players" with "Run Under One Process", https://dev.epicgames.com/documentation/en-us/unreal-engine/play-in-editor-multiplayer-options-in-unreal-engine). (2) Clients on `MemoryNetwork` — deterministic and faster, but the editor's server is on UDP for external players, and a second transport would hide UDP/encryption problems. (3) Separate player windows/instances launched by the editor (as in Unity Multiplayer Play Mode, whose up to three Virtual Players open in separate windows, https://docs-multiplayer.unity3d.com/mppm/current/about/) — isolation and real windows, but process management, an extra editor instance per player and no shared inspector.
+
+**Decision.** (1), capped at 3 clients. The viewed peer gets the keyboard and the panels; the rest idle. Nothing is shared between peers except assets on disk and the job system.
+
+**Evidence.** STATUS Slice 31: two in-editor clients join with key and password; driving one moves only its character on the server, its prediction and the other client's remote copy.
+
+**Risks / revisit triggers.** Simulation cost scales with peers; heavy projects should test with `victus run --connect`. Revisit for split-screen viewing, bots driving idle peers, or more than 3 clients.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
