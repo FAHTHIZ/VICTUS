@@ -4,6 +4,7 @@
 // base64-embedded buffer. Textures are not exported. Used for round-trip tests and generated
 // template content; the output re-imports through import_gltf.
 #include "victus/assets/importers.hpp"
+#include "victus/core/hash.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -17,21 +18,6 @@ namespace {
 
 constexpr int kFloat = 5126, kUShort = 5123, kUInt = 5125;
 constexpr int kArrayBuffer = 34962, kElementArrayBuffer = 34963;
-
-std::string base64(const std::vector<std::uint8_t>& in) {
-    static constexpr char kTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve((in.size() + 2) / 3 * 4);
-    for (std::size_t i = 0; i < in.size(); i += 3) {
-        const std::uint32_t b0 = in[i], b1 = i + 1 < in.size() ? in[i + 1] : 0u, b2 = i + 2 < in.size() ? in[i + 2] : 0u;
-        const std::uint32_t v = (b0 << 16) | (b1 << 8) | b2;
-        out += kTable[(v >> 18) & 63];
-        out += kTable[(v >> 12) & 63];
-        out += i + 1 < in.size() ? kTable[(v >> 6) & 63] : '=';
-        out += i + 2 < in.size() ? kTable[v & 63] : '=';
-    }
-    return out;
-}
 
 json::Value floats(std::initializer_list<float> v) {
     json::Value a = json::Value::array();
@@ -87,7 +73,7 @@ public:
         }
         json::Value buffer = json::Value::object();
         buffer.set("byteLength", static_cast<std::uint64_t>(buffer_.size()));
-        buffer.set("uri", "data:application/octet-stream;base64," + base64(buffer_));
+        buffer.set("uri", "data:application/octet-stream;base64," + base64_encode(buffer_));
         json::Value buffers = json::Value::array();
         buffers.push(std::move(buffer));
         doc.set("buffers", std::move(buffers));

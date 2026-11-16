@@ -40,7 +40,7 @@ victus_add_test(victus_script_tests
 victus_add_test(victus_project_tests
     SOURCES
         project/project_tests.cpp
-    DEPS VICTUS::Project
+    DEPS VICTUS::Project VICTUS::Assets
     LABELS project)
 
 if(VICTUS_WITH_GRAPHICS)
@@ -48,7 +48,8 @@ victus_add_test(victus_asset_tests
     SOURCES
         assets/asset_tests.cpp
         assets/animation_asset_tests.cpp
-    DEPS VICTUS::Assets
+        assets/template_robot_tests.cpp
+    DEPS VICTUS::Assets VICTUS::Project
     LABELS assets)
 
 victus_add_test(victus_render_tests

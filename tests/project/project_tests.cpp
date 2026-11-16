@@ -4,6 +4,7 @@
 #include "victus/project/project.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
+#include "victus/assets/database.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
 
@@ -196,7 +197,8 @@ struct TemplateRun {
     scene::Scene scene;
     std::unique_ptr<script::ScriptHost> host;
     std::unique_ptr<physics::PhysicsWorld> physics;
-    animation::AnimationSystem animation;
+    std::unique_ptr<assets::AssetDatabase> db;
+    std::unique_ptr<animation::AnimationSystem> animation;
     std::unique_ptr<audio::AudioEngine> audio;
     gameplay::Simulation sim;
     gameplay::ManualInput input;
@@ -232,8 +234,14 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     REQUIRE(w.ok());
     r->physics = std::move(w).value();
     physics::add_physics_systems(r->sim, *r->physics);
-    // Headless: no cooked models, so animators resolve nothing but scripts can still call them.
-    animation::add_animation_systems(r->sim, r->animation);
+    // Clips come from the project's asset database (imported on demand, no GPU needed).
+    auto db = assets::AssetDatabase::open(dir);
+    REQUIRE(db.ok());
+    r->db = std::move(db).value();
+    animation::AnimationSettings anim;
+    anim.provider = assets::animation_provider(*r->db);
+    r->animation = std::make_unique<animation::AnimationSystem>(anim);
+    animation::add_animation_systems(r->sim, *r->animation);
     audio::EngineOptions ao;
     ao.assets_root = dir / "assets";
     ao.null_device = true;
@@ -354,8 +362,17 @@ TEST_CASE("templates: 3D player moves with WASD and the camera follows") {
     CHECK(p1.z < p0.z - 4.0f); // ~5 units/s forward (-Z)
     CHECK(p1.x == doctest::Approx(p0.x));
     CHECK(c1.z < c0.z - 2.0f); // smoothed follow
+    // The robot walks while moving and faces the direction of travel (-Z: yaw 180 degrees).
+    const scene::Entity robot = r->scene.find_by_name("Robot");
+    const auto walking = r->animation->status(r->scene, robot);
+    CHECK(walking.valid);
+    CHECK(walking.clip == "Walk");
+    CHECK(walking.animated_nodes > 0);
+    const math::Vec3 facing = r->scene.world().get<scene::Transform>(robot)->rotation.rotate({0, 0, 1});
+    CHECK(facing.z == doctest::Approx(-1.0f).epsilon(0.01));
     r->frames(240);
     CHECK(r->pos("Player").z == doctest::Approx(-9.0f).epsilon(0.02)); // stops at the bounds
+    CHECK(r->animation->status(r->scene, robot).clip == "Idle"); // blocked at the bounds: idles
     CHECK(r->pos("Player").y == doctest::Approx(0.0f).epsilon(0.05)); // standing on the ground
     // The crate stack fell onto the ground collider and came to rest stacked.
     CHECK(r->pos("Crate 1").y == doctest::Approx(0.3f).epsilon(0.03));

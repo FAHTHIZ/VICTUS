@@ -6,6 +6,19 @@
 
 using namespace victus;
 
+TEST_CASE("hash: base64 RFC 4648 test vectors") {
+    auto enc = [](std::string_view t) {
+        return victus::base64_encode({reinterpret_cast<const std::uint8_t*>(t.data()), t.size()});
+    };
+    CHECK(enc("") == "");
+    CHECK(enc("f") == "Zg==");
+    CHECK(enc("fo") == "Zm8=");
+    CHECK(enc("foo") == "Zm9v");
+    CHECK(enc("foob") == "Zm9vYg==");
+    CHECK(enc("fooba") == "Zm9vYmE=");
+    CHECK(enc("foobar") == "Zm9vYmFy");
+}
+
 TEST_CASE("hash: fnv1a64 reference values") {
     CHECK(fnv1a64("") == 0xcbf29ce484222325ull);
     CHECK(fnv1a64("a") == 0xaf63dc4c8601ec8cull);

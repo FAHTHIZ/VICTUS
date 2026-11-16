@@ -179,7 +179,8 @@ TEST_CASE("editor: 3D project workflow end to end") {
         if (!e.is_null()) picked.insert(s.world().get<Name>(e)->value);
     }
     CHECK(picked.count("Spinning Cube") == 1);
-    CHECK(picked.count("Ball") == 1); // the player's mesh child
+    // The player's skinned robot (its body primitives are the Body[0]/Body[1] parts).
+    CHECK((picked.count("Body[0]") + picked.count("Body[1]")) >= 1);
 
     // Create, undo, redo.
     const Entity cube = h.ed->create_entity(editor::Primitive::Cube);
