@@ -4,9 +4,11 @@
 #include "victus/runtime/hot_reload.hpp"
 
 #include "victus/assets/database.hpp"
+#include "victus/core/hash.hpp"
 #include "victus/core/jobs.hpp"
 #include "victus/core/pack.hpp"
 #include "victus/core/log.hpp"
+#include "victus/gameplay/capture.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
@@ -21,6 +23,9 @@
 #include "victus/render/image.hpp"
 #include "victus/runtime/scene_view.hpp"
 #include "victus/script/script.hpp"
+
+#include <algorithm>
+#include <optional>
 
 namespace victus::player {
 
@@ -95,7 +100,20 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     if (proj->settings().render_scale > 0.0f) quality.render_scale = proj->settings().render_scale;
     (*view)->renderer().set_settings(quality);
 
+    // Regression captures: the replayed capture fixes the script seed; a recording picks one.
+    if ((!o.record.empty() || !o.replay.empty()) && !o.connect.empty())
+        return make_error(ErrorCode::InvalidArgument, "record/replay captures work offline only (not with --connect)");
+    if (!o.record.empty() && !o.replay.empty()) return make_error(ErrorCode::InvalidArgument, "choose either record or replay");
+    std::optional<gameplay::Capture> replay_capture;
+    if (!o.replay.empty()) {
+        auto c = gameplay::Capture::load(o.replay);
+        if (!c) return std::move(c).error();
+        replay_capture = std::move(*c);
+    }
+    gameplay::Capture recording;
+    if (!o.record.empty()) recording.seed = Random(static_cast<std::uint64_t>(platform::Platform::seconds() * 1e9)).next_u64() | 1;
     script::HostOptions so;
+    so.random_seed = replay_capture ? replay_capture->seed : recording.seed;
     so.assets_root = (*db)->assets_dir();
     so.watch_files = o.hot_reload && !packaged;
     so.input_map = proj->settings().input;
@@ -138,6 +156,20 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     if (audio_engine) audio::add_audio_systems(sim, **audio_engine);
     else VICTUS_LOG_WARN("player", "audio disabled: {}", audio_engine.error().message);
     sim.input = &input;
+    // Captures drive the simulation through a ReplayInput in both directions, so a recording sees
+    // exactly the input states its replay will feed back.
+    gameplay::ReplayInput captured_input;
+    std::optional<gameplay::CaptureReplay> replay;
+    if (replay_capture) {
+        replay.emplace(*replay_capture);
+        sim.input = &replay->input();
+        if (!replay_capture->scene.empty() && replay_capture->scene != rel)
+            VICTUS_LOG_WARN("player", "capture was recorded in {}, replaying in {}", replay_capture->scene, rel);
+    } else if (!o.record.empty()) {
+        recording.project = proj->settings().name;
+        recording.scene = rel;
+        sim.input = &captured_input;
+    }
     // Development runs reload changed textures, models and audio while the game runs.
     std::unique_ptr<runtime::AssetHotReloader> reloader;
     if (o.hot_reload && !packaged) reloader = std::make_unique<runtime::AssetHotReloader>(**db);
@@ -189,9 +221,23 @@ Result<PlayerReport> run(const PlayerOptions& o) {
                 report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size();
             }
         }
-        const float dt = o.max_frames ? 1.0f / 60.0f : static_cast<float>(now - last);
+        float dt = o.max_frames ? 1.0f / 60.0f : std::clamp(static_cast<float>(now - last), 1e-4f, 0.25f);
         last = now;
+        if (replay) {
+            if (replay->done()) break;
+            dt = replay->begin_tick();
+        } else if (!o.record.empty()) {
+            const auto state = gameplay::sample_input(input);
+            recording.add_frame(state, dt);
+            captured_input.set(state);
+        }
         sim.tick(scene, dt);
+        if (replay) {
+            if (!replay->end_tick(scene)) VICTUS_LOG_WARN("player", "replay diverged at {}", replay->mismatch());
+        } else if (!o.record.empty()) {
+            captured_input.end_frame();
+            recording.after_tick(scene);
+        }
         (*view)->renderer().set_frame_time(dt);
 
         auto cmd = dev.begin_commands();
@@ -244,6 +290,14 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     if (client) {
         report.net_status = client->diagnostics().status;
         client->disconnect(sim.time().time);
+    }
+    if (replay) {
+        report.digests_checked = replay->digests_checked();
+        report.replay_mismatch = replay->mismatch();
+    }
+    if (!o.record.empty() && !recording.frames.empty()) {
+        recording.finish(scene);
+        if (auto st = recording.save(o.record); !st && result.ok()) result = std::move(st).error();
     }
     dev.wait_idle();
     if (frame) dev.destroy(frame);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "doctest.h"
 #include "victus/gameui/gameui.hpp"
+#include "victus/gameplay/capture.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/project/project.hpp"
 #include "victus/audio/audio.hpp"
@@ -13,6 +14,7 @@
 #include "victus/net/net.hpp"
 
 #include <filesystem>
+#include <functional>
 
 using namespace victus;
 namespace sfs = std::filesystem;
@@ -241,7 +243,7 @@ struct TemplateRun {
     }
 };
 
-std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir, bool create = true) {
+std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir, bool create = true, std::uint64_t seed = 0) {
     project::register_components();
     auto p = create ? project::Project::create(dir, "Scripted", id) : project::Project::open(dir);
     REQUIRE(p.ok());
@@ -254,6 +256,7 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     o.input_map = p->settings().input;
     o.save_directory = p->dev_save_directory();
     o.save_version = p->settings().save_version;
+    o.random_seed = seed;
     auto h = script::ScriptHost::create(o);
     REQUIRE(h.ok());
     r->host = std::move(h).value();
@@ -874,4 +877,99 @@ TEST_CASE("templates: multiplayer arena plays offline and over a network session
     }
     std::error_code ec;
     sfs::remove_all(dir, ec);
+}
+
+namespace {
+// Runs `frames` ticks of `r`, feeding its ManualInput through a recorder (as the player does).
+void record_session(TemplateRun& r, gameplay::Capture& cap, int frames, const std::function<void(int)>& script) {
+    gameplay::ReplayInput fed;
+    r.sim.input = &fed;
+    for (int i = 0; i < frames; ++i) {
+        script(i);
+        const auto state = gameplay::sample_input(r.input);
+        cap.add_frame(state, 1.0f / 60.0f);
+        fed.set(state);
+        r.sim.tick(r.scene, 1.0f / 60.0f);
+        fed.end_frame();
+        r.input.end_frame();
+        cap.after_tick(r.scene);
+    }
+    cap.finish(r.scene);
+    r.sim.input = &r.input;
+}
+
+int count_named(scene::Scene& s, std::string_view prefix) {
+    int n = 0;
+    s.world().each<scene::Name>([&](scene::Entity, scene::Name& nm) { n += nm.value.rfind(prefix, 0) == 0; });
+    return n;
+}
+} // namespace
+
+TEST_CASE("captures: a recorded 3D session replays exactly; a nudged replay reports the frame") {
+    const auto dir = temp_dir("tplcap");
+    gameplay::Capture cap;
+    cap.seed = 0x5eed;
+    cap.digest_interval = 30;
+    int crates_recorded = 0;
+    {
+        auto r = start_template("3d", dir, true, cap.seed);
+        record_session(*r, cap, 360, [&](int i) {
+            r->input.set_key("W", i >= 10 && i < 120);
+            r->input.set_key("E", i == 60 || i == 61 || i == 200); // drop crates (prefab instances)
+            r->input.set_key("D", i >= 130 && i < 220);
+            r->input.set_key("Space", i == 150);
+            r->input.set_gamepad_axis(0, 0, i >= 240 && i < 300 ? -0.6f : 0.0f); // left stick
+        });
+        crates_recorded = count_named(r->scene, "Crate");
+        CHECK(r->host->stats().errors == 0);
+    }
+    REQUIRE(cap.digests.size() == 12);
+    // Through the file format.
+    auto parsed = gameplay::Capture::parse(cap.to_text());
+    REQUIRE(parsed.ok());
+    CHECK(parsed->frames == cap.frames);
+    CHECK(parsed->seed == cap.seed);
+
+    auto replay_into = [&](TemplateRun& r, gameplay::CaptureReplay& rp, int nudge_at) {
+        r.sim.input = &rp.input();
+        while (!rp.done()) {
+            const float dt = rp.begin_tick();
+            r.sim.tick(r.scene, dt);
+            if (static_cast<int>(rp.frame()) == nudge_at)
+                r.scene.world().get<scene::Transform>(r.scene.find_by_name("Player"))->position.x += 0.01f;
+            if (!rp.end_tick(r.scene)) break;
+        }
+    };
+    {
+        auto r = start_template("3d", dir, false, parsed->seed);
+        gameplay::CaptureReplay rp(*parsed);
+        replay_into(*r, rp, -1);
+        CHECK_FALSE(rp.diverged());
+        CHECK(rp.digests_checked() == 12);
+        CHECK(count_named(r->scene, "Crate") == crates_recorded);
+    }
+    {
+        auto r = start_template("3d", dir, false, parsed->seed);
+        gameplay::CaptureReplay rp(*parsed);
+        replay_into(*r, rp, 100);
+        CHECK(rp.diverged());
+        CHECK(rp.mismatch().rfind("frame 120:", 0) == 0);
+        CHECK(rp.frame() == 120);
+    }
+}
+
+TEST_CASE("captures: script random seeds make coin hops repeatable") {
+    const auto dir = temp_dir("tplseed");
+    auto coin_after_walk = [&](std::uint64_t seed, bool create) {
+        auto r = start_template("multiplayer", dir, create, seed);
+        r->input.set_key("D", true);
+        r->frames(170); // collects Coin 1, which hops to a random free spot
+        CHECK(net::get_var(r->scene, r->scene.find_by_name("Player"), "score").as_number() >= 1.0);
+        return r->pos("Coin 1");
+    };
+    const math::Vec3 a = coin_after_walk(7, true);
+    const math::Vec3 b = coin_after_walk(7, false);
+    const math::Vec3 c = coin_after_walk(8, false);
+    CHECK(math::length(a - b) < 1e-5f);
+    CHECK(math::length(a - c) > 0.1f);
 }

@@ -130,6 +130,9 @@ struct HostOptions {
     // (the project's "save_version").
     std::filesystem::path save_directory;
     std::uint32_t save_version{1};
+    // Nonzero: math.random starts from this seed, so runs with the same input repeat exactly
+    // (regression captures). Zero: Luau's default per-VM seed.
+    std::uint64_t random_seed{0};
 };
 
 struct HostStats {
