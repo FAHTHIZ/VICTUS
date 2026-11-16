@@ -348,5 +348,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Simulation cost scales with peers; heavy projects should test with `victus run --connect`. Revisit for split-screen viewing, bots driving idle peers, or more than 3 clients.
 
+## ADR-0034 — Material assets as small JSON files referencing textures by UUID (accepted 2026-11-17)
+**Problem.** Mesh renderers only had a colour, metallic and roughness; a game could not put a texture on a primitive, tile a floor texture or share one look across many objects without importing a glTF per surface.
+
+**Candidates.** (1) A `.vmat` JSON asset (PBR factors, four texture slots by asset UUID, UV scale/offset, filter, alpha cutoff, unlit, double sided) used from source like prefabs and referenced from `MeshRenderer`. (2) Inline material fields on `MeshRenderer` — no sharing, every entity edited separately. (3) A cooked binary material format — consistent with textures/models, but materials are tiny, hand-editable and change often; cooking adds a step without a size or speed benefit. (4) A material graph — the long-term direction (ROADMAP Phase 11), but it needs a shader compiler at import time first.
+
+**Decision.** (1). Texture references are UUIDs so renames keep working; type errors in the file are reported (not silently defaulted) while missing keys keep defaults. The material replaces the mesh's own material; `MeshRenderer.base_color` stays a per-entity tint. The GPU asset cache memoizes results including failures, so a broken file is read once; broken or missing materials fall back to the component's own look and count as missing assets. UV scale/offset follow KHR_texture_transform's order (scale, then translate). Files are saved with 6 significant digits so hand-typed values stay readable.
+
+**Evidence.** STATUS Slice 33: tiling 8× multiplies on-screen checker transitions; hot reload swaps an edited material without a restart; broken JSON and unknown UUIDs keep drawing; export and `victus check` reject bad references.
+
+**Risks / revisit triggers.** No material inheritance/instances yet; shader variants are fixed to the built-in PBR shader. Revisit when project shaders or a material graph land (the file gains a `shader` field and parameters), or if material count makes per-file loading slow.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

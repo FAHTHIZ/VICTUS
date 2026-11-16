@@ -123,6 +123,11 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-17 (Slice 33, material assets)
+- glTF KHR_texture_transform — https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_texture_transform/README.md (accessed 2026-11-17): an affine UV transform applied as scale, then rotation, then translation (`translation * rotation * scale`). VICTUS materials store scale and offset in the same order (`uv * scale + offset`), so glTF transforms without rotation map 1:1 if imported later.
+- Godot BaseMaterial3D — https://docs.godotengine.org/en/stable/classes/class_basematerial3d.html (accessed 2026-11-17): `uv1_scale` multiplies and `uv1_offset` adds to UVs; `texture_filter` offers nearest/linear with and without mipmaps and anisotropy. VICTUS starts with linear (trilinear, mipmapped) and nearest; anisotropic filtering is an open item.
+- Open questions: material graphs and project-authored shaders, triplanar mapping, per-texture sampler overrides, material instances (parent + overrides).
+
 ## Research conclusions added 2026-11-17 (Slice 31, in-editor clients)
 - Unreal Engine PIE multiplayer options — https://dev.epicgames.com/documentation/en-us/unreal-engine/play-in-editor-multiplayer-options-in-unreal-engine (accessed 2026-11-17): Number of Players and Play Number of Clients set how many client instances PIE creates alongside a listen server. VICTUS adopts the count-based model inside one process.
 - Unity Multiplayer Play Mode — https://docs-multiplayer.unity3d.com/mppm/current/about/ (accessed 2026-11-17): up to four players at once (the main Editor Player and three Virtual Players, which open in separate windows; the page does not say whether they are separate processes). Informed the small cap (3 extra, 4 total).
