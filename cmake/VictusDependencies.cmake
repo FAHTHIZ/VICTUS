@@ -66,6 +66,16 @@ endfunction()
 # Built as a static library without samples, tests, debug renderer, profiler or GPU compute.
 # AVX/AVX2/FMA/F16C/LZCNT/TZCNT are disabled so binaries run on every x86-64 CPU with SSE4.2;
 # ARM builds use NEON automatically.
+# ThreadSanitizer only understands synchronization it can see: third-party libraries that run on
+# VICTUS worker threads (Jolt's job graph, Box2D tasks, miniaudio's mixer) must be instrumented
+# too, or their atomics look like data races. Only TSan is propagated; warnings stay disabled.
+function(victus_third_party_tsan target)
+    if(VICTUS_SANITIZE MATCHES "thread" AND NOT MSVC)
+        target_compile_options(${target} PRIVATE -fsanitize=thread -fno-omit-frame-pointer)
+        target_link_options(${target} INTERFACE -fsanitize=thread)
+    endif()
+endfunction()
+
 function(victus_fetch_jolt)
     if(TARGET Jolt)
         return()
@@ -89,6 +99,7 @@ function(victus_fetch_jolt)
     FetchContent_MakeAvailable(JoltPhysics)
     set_target_properties(Jolt PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_options(Jolt PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
+    victus_third_party_tsan(Jolt)
 endfunction()
 
 # Box2D 3.2.0 (MIT). https://github.com/erincatto/box2d/releases/tag/v3.2.0
@@ -108,4 +119,34 @@ function(victus_fetch_box2d)
     FetchContent_MakeAvailable(box2d)
     set_target_properties(box2d PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_options(box2d PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w,-w>)
+    victus_third_party_tsan(box2d)
+endfunction()
+
+# miniaudio 0.11.26 (public domain / MIT-0). Single-file library: VICTUS compiles the
+# implementation in its own translation unit (engine/audio/third_party/miniaudio_impl.c) with
+# third-party warning settings; stb_vorbis from miniaudio's extras provides Ogg Vorbis.
+function(victus_fetch_miniaudio)
+    if(TARGET victus_miniaudio)
+        return()
+    endif()
+    FetchContent_Declare(miniaudio
+        URL https://github.com/mackron/miniaudio/archive/refs/tags/0.11.26.tar.gz
+        URL_HASH SHA256=838ba55a21c9142adf7b76bdc4351e5cd8b7ae128f46b25ec25f94ae9969c600
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        SOURCE_SUBDIR victus_no_cmake) # use the sources only, not miniaudio's CMake project
+    FetchContent_MakeAvailable(miniaudio)
+    set(VICTUS_MINIAUDIO_DIR ${miniaudio_SOURCE_DIR} CACHE INTERNAL "miniaudio source directory")
+    add_library(victus_miniaudio STATIC ${PROJECT_SOURCE_DIR}/engine/audio/third_party/miniaudio_impl.c)
+    target_include_directories(victus_miniaudio SYSTEM PUBLIC ${miniaudio_SOURCE_DIR})
+    target_compile_definitions(victus_miniaudio PUBLIC MA_NO_ENCODING)
+    set_target_properties(victus_miniaudio PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 99)
+    target_compile_options(victus_miniaudio PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w,-w>)
+    victus_third_party_tsan(victus_miniaudio)
+    if(APPLE)
+        target_compile_definitions(victus_miniaudio PUBLIC MA_NO_RUNTIME_LINKING)
+        target_link_libraries(victus_miniaudio PUBLIC "-framework CoreFoundation" "-framework CoreAudio" "-framework AudioToolbox")
+    elseif(UNIX)
+        find_package(Threads REQUIRED)
+        target_link_libraries(victus_miniaudio PUBLIC Threads::Threads ${CMAKE_DL_LIBS} m)
+    endif()
 endfunction()

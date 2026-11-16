@@ -2,6 +2,7 @@
 #include "doctest.h"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/project/project.hpp"
+#include "victus/audio/audio.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
 
@@ -135,6 +136,7 @@ struct TemplateRun {
     scene::Scene scene;
     std::unique_ptr<script::ScriptHost> host;
     std::unique_ptr<physics::PhysicsWorld> physics;
+    std::unique_ptr<audio::AudioEngine> audio;
     gameplay::Simulation sim;
     gameplay::ManualInput input;
     void frames(int n) {
@@ -169,6 +171,13 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     REQUIRE(w.ok());
     r->physics = std::move(w).value();
     physics::add_physics_systems(r->sim, *r->physics);
+    audio::EngineOptions ao;
+    ao.assets_root = dir / "assets";
+    ao.null_device = true;
+    auto a = audio::AudioEngine::create(ao);
+    REQUIRE(a.ok());
+    r->audio = std::move(a).value();
+    audio::add_audio_systems(r->sim, *r->audio);
     r->sim.input = &r->input;
     return r;
 }
@@ -180,6 +189,8 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     r->frames(30); // settle: the player starts on the ground
     CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
     CHECK(r->host->stats().instances == 4); // player + 3 coins
+    CHECK(r->audio->is_playing(r->scene.find_by_name("Music"))); // looping streamed music
+    CHECK(r->audio->stats().one_shots == 0);
     // Run right: the player stops at the right wall and collects the coin on the ground.
     r->input.set_key("D", true);
     r->frames(300);
@@ -187,12 +198,14 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
     CHECK(r->scene.find_by_name("Coin 3").is_null());
     CHECK_FALSE(r->scene.find_by_name("Coin 1").is_null());
+    CHECK(r->audio->stats().one_shots == 1); // coin pickup sound
     r->input.set_key("D", false);
     // Jump: rises, then lands back on the ground.
     r->input.set_key("Space", true);
     r->frames(10);
     r->input.set_key("Space", false);
     CHECK(r->pos("Player").y > -1.5f);
+    CHECK(r->audio->stats().one_shots == 2); // + jump sound (the mixer is not pulled, so none finished)
     r->frames(120);
     CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
     // Walk left under the low platform, jump onto it and collect Coin 1.
@@ -248,6 +261,8 @@ TEST_CASE("templates: 3D player moves with WASD and the camera follows") {
     r->frames(60);
     CAPTURE(r->pos("Player"));
     CHECK(math::length(r->pos("Crate 3") - crate_before) > 0.5f);
+    CHECK(r->audio->stats().one_shots >= 1); // falling crates played impact sounds
+    CHECK(r->audio->stats().load_errors == 0);
     CHECK(r->host->stats().errors == 0);
     for (const auto& e : r->host->recent_errors()) MESSAGE(e);
     std::error_code ec;

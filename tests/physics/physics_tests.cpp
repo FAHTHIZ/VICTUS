@@ -94,7 +94,7 @@ TEST_CASE("3D simulation on the job system matches expectations") {
     auto w = make_world(s);
     ground_3d(scene);
     std::vector<Entity> boxes;
-    for (int i = 0; i < 20; ++i) boxes.push_back(box_3d(scene, {static_cast<float>(i % 5) * 1.5f - 3, 1.0f + i * 0.4f, 0}));
+    for (int i = 0; i < 20; ++i) boxes.push_back(box_3d(scene, {static_cast<float>(i % 5) * 1.5f - 3, 1.0f + static_cast<float>(i) * 0.4f, 0}));
     run(*w, scene, 240);
     for (Entity b : boxes) CHECK(scene.world().get<Transform>(b)->position.y > 0.3f);
 }
@@ -231,7 +231,7 @@ TEST_CASE("2D on the job system with many bodies") {
     ground_2d(scene);
     std::vector<Entity> boxes;
     for (int i = 0; i < 60; ++i)
-        boxes.push_back(box_2d(scene, {static_cast<float>(i % 10) * 1.1f - 5, 1.0f + (i / 10) * 1.1f, 0}));
+        boxes.push_back(box_2d(scene, {static_cast<float>(i % 10) * 1.1f - 5, 1.0f + static_cast<float>(i / 10) * 1.1f, 0}));
     run(*w, scene, 300);
     for (Entity b : boxes) CHECK(scene.world().get<Transform>(b)->position.y > 0.3f);
 }

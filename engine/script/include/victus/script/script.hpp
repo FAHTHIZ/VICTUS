@@ -28,6 +28,11 @@
 // entity members `velocity`, `angular_velocity` and methods `add_force`, `add_impulse`,
 // `add_torque`, `add_angular_impulse`.
 //
+// Audio API (no-ops returning false when no AudioEngine is bound): `audio.play(clip, {volume,
+// pitch, bus, position})` for one-shots, `audio.set_volume(bus, v)/volume(bus)`,
+// `audio.set_muted(bus, m)/muted(bus)`, `audio.available()`; entity methods `play_audio()`,
+// `stop_audio()`, `pause_audio(paused)`, `audio_playing()` for the entity's AudioSource.
+//
 // Safety: every VM is sandboxed (read-only standard libraries and globals, per-script global
 // tables, no io/os/package/debug access), each call has a wall-clock budget enforced through the
 // interrupt callback, and the heap has a byte limit. A failing instance is disabled and its

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Built-in project templates. Each produces a scene that runs immediately (Play) with the
 // built-in behaviours, so a new project shows motion, lighting and a camera on first launch.
+#include "victus/audio/audio.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
@@ -8,6 +9,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <string>
+#include <vector>
 
 namespace victus::project {
 
@@ -23,6 +27,83 @@ math::Quat look_rotation(math::Vec3 dir) {
     const float yaw = std::atan2(-dir.x, -dir.z);
     const float pitch = std::asin(std::clamp(dir.y, -1.0f, 1.0f));
     return math::Quat::euler(pitch, yaw, 0.0f);
+}
+
+// ---- procedural template sounds ------------------------------------------------------------
+// Templates ship small synthesized WAV clips so new projects have audio without bundled media.
+
+constexpr std::uint32_t kRate = 22050;
+constexpr float kTau = 6.28318530718f;
+
+std::string wav_string(const std::vector<float>& pcm) {
+    const auto bytes = audio::encode_wav(pcm.data(), pcm.size(), 1, kRate);
+    return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
+std::vector<float> samples(float seconds) { return std::vector<float>(static_cast<std::size_t>(seconds * kRate)); }
+
+// Upward pitch sweep with a soft square-ish tone.
+std::string synth_jump() {
+    auto pcm = samples(0.16f);
+    float phase = 0;
+    for (std::size_t i = 0; i < pcm.size(); ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(pcm.size());
+        phase += kTau * (320.0f + 520.0f * t) / kRate;
+        const float tone = std::tanh(2.5f * std::sin(phase));
+        pcm[i] = 0.32f * tone * (1.0f - t) * std::min(1.0f, t * 40.0f);
+    }
+    return wav_string(pcm);
+}
+
+// Two-note bell blip (B5 then E6).
+std::string synth_coin() {
+    auto pcm = samples(0.32f);
+    for (std::size_t i = 0; i < pcm.size(); ++i) {
+        const float s = static_cast<float>(i) / kRate;
+        const float f = s < 0.07f ? 987.77f : 1318.51f;
+        const float local = s < 0.07f ? s : s - 0.07f;
+        const float env = std::exp(-local * 9.0f) * std::min(1.0f, local * 400.0f);
+        pcm[i] = 0.3f * env * (std::sin(kTau * f * s) + 0.3f * std::sin(kTau * 2.0f * f * s));
+    }
+    return wav_string(pcm);
+}
+
+// Low thud: decaying sine drop plus a short noise burst (deterministic LCG noise).
+std::string synth_impact() {
+    auto pcm = samples(0.22f);
+    std::uint32_t seed = 12345u;
+    float phase = 0;
+    for (std::size_t i = 0; i < pcm.size(); ++i) {
+        const float s = static_cast<float>(i) / kRate;
+        phase += kTau * (140.0f - 260.0f * s) / kRate;
+        seed = seed * 1664525u + 1013904223u;
+        const float noise = static_cast<float>(seed >> 8) / 8388608.0f - 1.0f;
+        pcm[i] = 0.6f * std::exp(-s * 22.0f) * std::sin(phase) + 0.18f * std::exp(-s * 60.0f) * noise;
+    }
+    return wav_string(pcm);
+}
+
+// Four-bar arpeggio (Am - F - C - G) with soft plucks; loops seamlessly at 4 s.
+std::string synth_music() {
+    auto pcm = samples(4.0f);
+    const float chords[4][3] = {{220.00f, 261.63f, 329.63f},
+                                {174.61f, 220.00f, 261.63f},
+                                {261.63f, 329.63f, 392.00f},
+                                {196.00f, 246.94f, 293.66f}};
+    constexpr float kStep = 0.125f; // eighth notes at 120 BPM
+    for (std::size_t i = 0; i < pcm.size(); ++i) {
+        const float s = static_cast<float>(i) / kRate;
+        const int bar = std::min(3, static_cast<int>(s));
+        const int step = static_cast<int>(s / kStep);
+        const float local = s - static_cast<float>(step) * kStep;
+        const float f = chords[bar][step % 3] * ((step % 6) >= 3 ? 2.0f : 1.0f);
+        const float pluck = std::exp(-local * 14.0f) * std::min(1.0f, local * 300.0f);
+        const float bass = 0.5f * std::sin(kTau * chords[bar][0] * 0.5f * s);
+        const float bar_local = s - static_cast<float>(bar);
+        const float bass_env = std::min(1.0f, bar_local * 50.0f) * std::min(1.0f, (1.0f - bar_local) * 50.0f);
+        pcm[i] = 0.16f * pluck * (std::sin(kTau * f * s) + 0.25f * std::sin(kTau * 3.0f * f * s)) + 0.1f * bass * bass_env;
+    }
+    return wav_string(pcm);
 }
 
 void attach(Scene& s, Entity e, std::string_view path, json::Value properties = json::Value::object()) {
@@ -98,6 +179,7 @@ void build_3d(Scene& s) {
         mesh(s, crate, "cube", {0.62f, 0.45f, 0.28f, 1}, 0.0f, 0.7f);
         s.world().add<physics::RigidBodyComponent>(crate).mass = 4.0f;
         s.world().add<physics::ColliderComponent>(crate).friction = 0.7f;
+        attach(s, crate, "scripts/crate.luau");
     }
 
     const Entity bob = add(s, "Floating Gem", {1.0f, 2.6f, -2.0f});
@@ -181,6 +263,15 @@ void build_2d(Scene& s) {
         cc.is_trigger = true;
         attach(s, coin, "scripts/coin.luau");
     }
+
+    const Entity music = add(s, "Music", {0, 0, 0});
+    auto& ms = s.world().add<audio::AudioSourceComponent>(music);
+    ms.clip = "audio/music.wav";
+    ms.bus = audio::Bus::Music;
+    ms.volume = 0.35f;
+    ms.loop = true;
+    ms.stream = true;
+    ms.spatial = false;
 
     const Entity spinner = add(s, "Spinner", {4.5f, 0.2f, 0});
     sprite(s, spinner, {1.2f, 1.2f}, {0.95f, 0.85f, 0.2f, 1}, 1);
@@ -272,6 +363,8 @@ local Player = {}
 Player.speed = 6
 Player.jump_speed = 12
 Player.ground_probe = 0.08 -- how far below the feet counts as standing
+Player.jump_sound = "audio/jump.wav"
+Player.coin_sound = "audio/coin.wav"
 
 local function starts_with(s, prefix)
     return string.sub(s, 1, #prefix) == prefix
@@ -303,6 +396,7 @@ function Player:fixed_update(dt)
     local vy = v.y
     if (input.down("Space") or input.down("W") or input.down("Up")) and vy <= 0.1 and self:grounded() then
         vy = self.jump_speed
+        audio.play(self.jump_sound, { volume = 0.6 })
     end
     self.entity.velocity = vector.create(input.axis("A", "D", "Left", "Right") * self.speed, vy, 0)
     if self.entity.position.y < -20 then -- fell off the world
@@ -314,6 +408,7 @@ end
 function Player:on_trigger_enter(other)
     if starts_with(other.name, "Coin") then
         other:destroy()
+        audio.play(self.coin_sound)
         self.score += 1
         log.info("Coin collected:", self.score, "/", self.total)
         if self.score == self.total then log.info("All coins collected!") end
@@ -321,6 +416,34 @@ function Player:on_trigger_enter(other)
 end
 
 return Player
+)lua";
+
+constexpr const char* kCrate = R"lua(-- Plays a positional impact sound when the crate hits something hard enough.
+local Crate = {}
+Crate.sound = "audio/impact.wav"
+Crate.min_speed = 1.5 -- m/s before impact
+Crate.cooldown = 0.12
+
+function Crate:start()
+    self.speed = 0
+    self.last = -1
+end
+
+function Crate:update(dt)
+    -- Runs before the physics step, so this is the speed going into any contact this frame.
+    self.speed = vector.magnitude(self.entity.velocity)
+end
+
+function Crate:on_collision_enter(other, info)
+    local now = time.now()
+    if self.speed >= self.min_speed and now - self.last >= self.cooldown then
+        self.last = now
+        audio.play(self.sound, { position = info.point, volume = math.min(1, self.speed / 6),
+                                 pitch = 0.9 + math.random() * 0.2 })
+    end
+end
+
+return Crate
 )lua";
 
 constexpr const char* kCoin = R"lua(-- Spins and hovers (a kinematic trigger body); the player script collects it on contact.
@@ -368,8 +491,8 @@ return Orbit
 
 const std::vector<TemplateInfo>& templates() {
     static const std::vector<TemplateInfo> list = {
-        {"3d", "3D Scene", "A ball you drive with WASD/arrow keys (Luau script) that shoves a stack of physics crates, a follow camera, sun shadows, PBR primitives and a point light."},
-        {"2d", "2D Game", "A playable platformer on Box2D physics: run with A/D or arrows, jump with Space, collect the coins. Gameplay is in Luau scripts."},
+        {"3d", "3D Scene", "A ball you drive with WASD/arrow keys (Luau script) that shoves a stack of physics crates with positional impact sounds, a follow camera, sun shadows, PBR primitives and a point light."},
+        {"2d", "2D Game", "A playable platformer on Box2D physics with music and sound effects: run with A/D or arrows, jump with Space, collect the coins. Gameplay is in Luau scripts."},
         {"simulation", "Simulation",
          "576 entities animated by native systems, with a scripted orbiting camera: a starting point for simulation work."},
     };
@@ -378,8 +501,16 @@ const std::vector<TemplateInfo>& templates() {
 
 std::vector<TemplateFile> template_files(std::string_view id) {
     if (id == "3d")
-        return {{"assets/scripts/player.luau", kPlayer3d}, {"assets/scripts/follow_camera.luau", kFollowCamera}};
-    if (id == "2d") return {{"assets/scripts/platformer.luau", kPlatformer}, {"assets/scripts/coin.luau", kCoin}};
+        return {{"assets/scripts/player.luau", kPlayer3d},
+                {"assets/scripts/follow_camera.luau", kFollowCamera},
+                {"assets/scripts/crate.luau", kCrate},
+                {"assets/audio/impact.wav", synth_impact()}};
+    if (id == "2d")
+        return {{"assets/scripts/platformer.luau", kPlatformer},
+                {"assets/scripts/coin.luau", kCoin},
+                {"assets/audio/jump.wav", synth_jump()},
+                {"assets/audio/coin.wav", synth_coin()},
+                {"assets/audio/music.wav", synth_music()}};
     if (id == "simulation") return {{"assets/scripts/orbit_camera.luau", kOrbitCamera}};
     return {};
 }
@@ -388,6 +519,7 @@ void register_components() {
     gameplay::register_components();
     script::register_components();
     physics::register_components();
+    audio::register_components();
 }
 
 Status build_template_scene(std::string_view id, Scene& s) {

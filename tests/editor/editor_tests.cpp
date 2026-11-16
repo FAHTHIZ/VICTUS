@@ -232,7 +232,7 @@ TEST_CASE("editor: 3D project workflow end to end") {
     CHECK_FALSE(play.world().get<Transform>(play_spinner)->rotation == authored);
     // Template scripts run in play mode: the player bobs, the camera follows, no script errors.
     REQUIRE(h.ed->play_scripts() != nullptr);
-    CHECK(h.ed->play_scripts()->stats().instances == 2);
+    CHECK(h.ed->play_scripts()->stats().instances == 5); // camera, player, 3 crates
     CHECK(h.ed->play_scripts()->stats().errors == 0);
     {
         const Entity ap = s.find_by_name("Player");

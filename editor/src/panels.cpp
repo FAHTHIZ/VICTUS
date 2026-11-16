@@ -56,7 +56,7 @@ bool vec2_edit(const char* label, math::Vec2& v, float speed = 0.05f) {
 
 
 // Editor widgets for one reflected field. Returns true when the value changed.
-bool field_edit(const scene::FieldInfo& f, void* comp) {
+bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db) {
     const char* label = f.label.c_str();
     const float speed = f.speed > 0 ? f.speed : 0.05f;
     const float lo = f.bounded() ? f.min : 0.0f, hi = f.bounded() ? f.max : 0.0f;
@@ -96,7 +96,23 @@ bool field_edit(const scene::FieldInfo& f, void* comp) {
     case scene::FieldKind::Vec2: changed = vec2_edit(label, f.ref<math::Vec2>(comp), speed); break;
     case scene::FieldKind::Vec3: changed = vec3_edit(label, f.ref<math::Vec3>(comp), speed); break;
     case scene::FieldKind::Color: changed = color_edit(label, f.ref<math::Color>(comp)); break;
-    case scene::FieldKind::String: changed = ImGui::InputText(label, &f.ref<std::string>(comp)); break;
+    case scene::FieldKind::String: {
+        auto& str = f.ref<std::string>(comp);
+        changed = ImGui::InputText(label, &str);
+        // Asset-path fields accept a drop from the asset table when the kind matches the hint.
+        if (f.hint == "audio" && ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
+                Uuid id;
+                std::memcpy(&id, p->Data, sizeof(Uuid));
+                if (const auto* rec = db ? db->find(id) : nullptr; rec && rec->kind == assets::AssetKind::Audio) {
+                    str = rec->path;
+                    changed = true;
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+        break;
+    }
     case scene::FieldKind::Enum: {
         int cur = static_cast<int>(f.get_int(comp));
         const char* preview = cur >= 0 && cur < static_cast<int>(f.enum_names.size()) ? f.enum_names[cur].c_str() : "?";
@@ -130,6 +146,7 @@ const char* kind_icon(assets::AssetKind k) {
     case assets::AssetKind::Model: return "[mdl]";
     case assets::AssetKind::Scene: return "[scn]";
     case assets::AssetKind::Script: return "[lua]";
+    case assets::AssetKind::Audio: return "[snd]";
     default: return "[file]";
     }
 }
@@ -781,7 +798,7 @@ bool Editor::inspect_components(Entity e) {
         ImGui::PushID(schema->name.c_str());
         bool remove = false;
         if (removable(schema->name.c_str(), remove))
-            for (const auto& f : schema->fields) changed |= field_edit(f, comp);
+            for (const auto& f : schema->fields) changed |= field_edit(f, comp, db_.get());
         if (remove) remove_schema = schema;
         ImGui::PopID();
     }
@@ -1017,6 +1034,10 @@ void Editor::draw_assets() {
                         w.get<script::ScriptComponent>(e)->script = r.path;
                         record_edit("Assign script", std::move(before));
                     }
+                } else if (r.kind == assets::AssetKind::Audio) {
+                    if (auto* a = audio()) {
+                        if (auto st = a->play_one_shot(r.path, {.bus = audio::Bus::Ui}); !st) notify(st.error().message, true);
+                    }
                 } else if (r.kind == assets::AssetKind::Texture) {
                     const Entity e = selected();
                     if (auto* sp = e.is_null() ? nullptr : active_scene().world().get<SpriteComponent>(e)) {
@@ -1030,6 +1051,7 @@ void Editor::draw_assets() {
                                                           r.kind == assets::AssetKind::Model ? "add to scene"
                                                           : r.kind == assets::AssetKind::Texture ? "assign to selected sprite"
                                                           : r.kind == assets::AssetKind::Script ? "attach to selected entity"
+                                                          : r.kind == assets::AssetKind::Audio  ? "preview"
                                                                                                  : "-");
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", assets::to_string(r.kind));
