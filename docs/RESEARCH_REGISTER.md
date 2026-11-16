@@ -123,6 +123,11 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-16 (Slice 24, regression captures)
+- Gaffer On Games "Deterministic Lockstep" — https://gafferongames.com/post/deterministic_lockstep/: the same initial condition and inputs must give exactly the same result; a checksum of the physics state at the end of each frame would be identical; determinism on one machine/binary/OS does not imply it across compilers, OSes or architectures, or even between debug and release. Informed digests every N frames and the cross-platform caveat (our Debug and Release builds did match on this machine).
+- Luau standard library — https://luau.org/library: `math.randomseed(seed)` makes later `math.random` calls a deterministic sequence that depends only on the seed (the VM's default seed varies per run). Informed `HostOptions::random_seed`; Luau's implementation takes a 32-bit integer, so the 64-bit capture seed is folded.
+- Open questions: cross-platform float determinism of Jolt/Box2D builds, digesting script state, capture of networked sessions.
+
 ## Research conclusions added 2026-11-16 (Slice 23, delta snapshots)
 - Quake 3 network model (Fabien Sanglard's source review) — https://fabiensanglard.net/quake3/network.php: snapshots are diffed against the last one the client acknowledged; when an update or ack is lost the server keeps using the older acknowledged baseline, so the next packet carries old and new changes; with no usable baseline it diffs against a zeroed dummy snapshot. Adopted directly.
 - Gaffer On Games "Snapshot Compression" — https://gafferongames.com/post/snapshot_compression/: encode relative to the most recent acknowledged snapshot; quantize positions (512 values/m) and orientations with smallest-three (29 bits absolute, ~23 bits as deltas). Informed the millimetre quantization; smallest-three and bit packing deferred.

@@ -260,5 +260,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** A client whose acks are all lost for more than ~1 s gets full (zero-baseline) snapshots until one arrives. Memory is O(clients × views × entities) on the server; very large worlds need sparse views or interest management. Positions beyond ±1000 km clamp.
 
+## ADR-0026 — Input-replay regression captures (accepted 2026-11-16)
+**Problem.** Gameplay regressions (script, physics or engine changes that alter how a game plays) need a repeatable test that a developer can create by simply playing, and that CI can run headless.
+
+**Candidates.** (1) Input recording with state checksums: rely on a deterministic simulation given the same initial state and inputs, record only inputs and verify periodic digests (the determinism and per-frame checksum idea in https://gafferongames.com/post/deterministic_lockstep/). (2) State recording: store full scene snapshots every frame and compare; robust to nondeterminism but large and it cannot replay changed code to find regressions. (3) Golden screenshots: catch visual changes but are GPU/driver dependent and say nothing about gameplay state.
+
+**Decision.** Candidate 1. VICTUS already steps simulation with explicit frame times and single-threaded Jolt/Box2D in headless runs; the only nondeterministic gameplay input found was Luau's per-VM `math.random` seed, now fixed per run through `math.randomseed` (https://luau.org/library: the sequence "depends only on seed"). Recording feeds the simulation through the same `ReplayInput` used for playback, so pressed/released edges match by construction. Digests hash names and transforms rounded to 0.1 mm so replays are compared semantically, not by runtime UUIDs.
+
+**Evidence.** STATUS Slice 24: four templates, player-to-headless and Debug-to-Release replays matching; divergence detected at the expected frame.
+
+**Risks / revisit triggers.** Bit-exact floating point is not guaranteed across compilers, OSes or architectures (the same article warns about debug vs release and different machines); captures should be re-recorded per platform if CI shows that. Systems that read wall-clock time or threads with racy order would break determinism. Digests do not see script-only state.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
