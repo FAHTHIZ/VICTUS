@@ -72,6 +72,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_ui_tests.cpp
         render/gpu_particle_tests.cpp
         render/gpu_game_ui_tests.cpp
+        render/gpu_hot_reload_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")

@@ -2,6 +2,7 @@
 // Audio tests run the real miniaudio mixer without an output device and inspect the mixed frames.
 #include "doctest.h"
 #include "victus/audio/audio.hpp"
+#include "victus/core/fs.hpp"
 #include "victus/scene/reflect.hpp"
 
 #include <cmath>
@@ -260,6 +261,38 @@ TEST_CASE("audio: components serialize and systems drive the engine") {
     a->stop(e);
     sim.tick(s, 1.0f / 60.0f);
     CHECK_FALSE(a->is_playing(e));
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("audio: reload_clip picks up a changed file and restarts its sources") {
+    const auto dir = temp_dir("reload");
+    write_tone(dir / "music.wav", 1.0f, 0.2f);
+    auto a = make_engine(dir);
+    scene::Scene s;
+    const auto e = add_source(s, "music.wav", false);
+    s.world().get<audio::AudioSourceComponent>(e)->loop = true;
+    a->update(s);
+    (void)mix(*a, 4800);
+    const float quiet = mix(*a, 4800).rms();
+    CHECK(quiet == doctest::Approx(0.2f / std::sqrt(2.0f)).epsilon(0.1));
+    // The file changes on disk: the old decoded data stays until the clip is reloaded.
+    write_tone(dir / "music.wav", 1.0f, 0.6f);
+    CHECK(mix(*a, 4800).rms() == doctest::Approx(quiet).epsilon(0.1));
+    CHECK(a->reload_clip("music.wav") == 1);
+    a->update(s);
+    (void)mix(*a, 480);
+    const float loud = mix(*a, 4800).rms();
+    CHECK(loud == doctest::Approx(0.6f / std::sqrt(2.0f)).epsilon(0.1));
+    CHECK(a->is_playing(e));
+    CHECK(a->stats().voices == 1);
+    // A clip nothing plays reloads nothing; a broken file silences the source instead of crashing.
+    CHECK(a->reload_clip("other.wav") == 0);
+    REQUIRE(fs::write_atomic(dir / "music.wav", std::vector<std::uint8_t>{'n', 'o', 'p', 'e'}).ok());
+    CHECK(a->reload_clip("music.wav") == 0);
+    a->update(s);
+    (void)mix(*a, 480); // up to one period was already mixed before the reload
+    CHECK(mix(*a, 4800).rms() < 1e-4f);
     std::error_code ec;
     sfs::remove_all(dir, ec);
 }

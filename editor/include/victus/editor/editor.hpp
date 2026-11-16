@@ -15,6 +15,7 @@
 #include "victus/physics/physics.hpp"
 #include "victus/player/platform_input.hpp"
 #include "victus/project/project.hpp"
+#include "victus/runtime/hot_reload.hpp"
 #include "victus/runtime/scene_view.hpp"
 #include "victus/script/script.hpp"
 #include "victus/ui/ui.hpp"
@@ -81,6 +82,10 @@ public:
     [[nodiscard]] project::Project* project() noexcept { return project_ ? &*project_ : nullptr; }
     [[nodiscard]] assets::AssetDatabase* assets() noexcept { return db_.get(); }
     [[nodiscard]] Status reimport_assets();
+    // Hot reload: re-imports textures/models changed on disk and swaps them in the viewport and
+    // a running play session, reloads changed audio clips, and notifies about files that need a
+    // restart. Polled about once a second from frame(); returns the number of assets reloaded.
+    std::size_t check_asset_changes();
     // Viewport/play rendering quality. Changing it updates the project's `rendering.quality` and
     // saves the project file, so `victus run` and exported games use the same tier.
     [[nodiscard]] render::QualityTier quality() const noexcept { return quality_; }
@@ -207,6 +212,7 @@ private:
     std::optional<project::Project> project_;
     std::unique_ptr<assets::AssetDatabase> db_;
     std::unique_ptr<runtime::GpuAssetCache> cache_;
+    std::unique_ptr<runtime::AssetHotReloader> hot_reload_; // watches assets/ while a project is open
     std::unique_ptr<runtime::SceneView> view_;
     std::unique_ptr<scene::Scene> scene_;
     std::unique_ptr<scene::Scene> play_scene_;

@@ -101,6 +101,7 @@ Status Editor::open_project(const fs::Path& path) {
     const auto imported = db_->import_all();
     for (const auto& m : imported.messages) notify(m, imported.failed > 0);
     cache_ = std::make_unique<runtime::GpuAssetCache>(gpu_, db_.get());
+    hot_reload_ = std::make_unique<runtime::AssetHotReloader>(*db_);
     {
         script::HostOptions so;
         so.assets_root = db_->assets_dir();
@@ -131,6 +132,7 @@ void Editor::close_project() {
     stop();
     selection_.clear();
     undo_.clear();
+    hot_reload_.reset();
     cache_.reset();
     edit_scripts_.reset();
     audio_.reset(); // clips resolve against the project's assets
@@ -153,6 +155,24 @@ Status Editor::reimport_assets() {
                std::to_string(report.failed) + " failed",
            report.failed > 0);
     return {};
+}
+
+std::size_t Editor::check_asset_changes() {
+    if (!hot_reload_) return 0;
+    const auto changes = hot_reload_->check();
+    if (changes.empty()) return 0;
+    runtime::AssetHotReloader::apply(changes, cache_.get(), play_animation_.get());
+    if (audio_)
+        for (const auto& clip : changes.audio) (void)audio_->reload_clip(clip);
+    for (const auto& p : changes.reimported_paths) notify("Reloaded " + p);
+    for (const auto& f : changes.failed) notify("Reload failed, keeping the previous version: " + f, true);
+    for (const auto& a : changes.audio) notify("Reloaded audio " + a);
+    for (const auto& r : changes.restart_needed) {
+        // Scenes are the editor's own files (saved from here, reopened with File > Open Scene).
+        if (assets::kind_for_extension(fs::Path(r).extension().string()) == assets::AssetKind::Scene) continue;
+        notify(r + " changed; reopen the project or restart the game to see it");
+    }
+    return changes.reimported.size() + changes.audio.size();
 }
 
 // ---- scenes ------------------------------------------------------------------------------------

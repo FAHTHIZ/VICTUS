@@ -486,6 +486,66 @@ Status AudioEngine::preload(std::string_view clip) {
     return {};
 }
 
+std::size_t AudioEngine::reload_clip(std::string_view clip) {
+    const std::string key(clip);
+    if (auto it = impl_->preloaded.find(key); it != impl_->preloaded.end()) {
+        ma_sound_uninit(it->second.get());
+        impl_->preloaded.erase(it);
+    }
+    impl_->failed.erase(key);
+    // Release every voice of the clip first: decoded data is shared and reference-counted, so
+    // it is only read again once nothing holds it.
+    struct Restart {
+        Entity e;
+        std::unique_ptr<ma_sound> old;
+        bool stream;
+        Bus bus;
+        bool playing;
+        float volume, pitch;
+        bool looping, spatial;
+        ma_vec3f position;
+        float min_d, max_d, rolloff;
+        ma_attenuation_model model;
+    };
+    std::vector<Restart> restarts;
+    for (auto& [e, v] : impl_->voices) {
+        if (v.clip != key || !v.sound) continue;
+        ma_sound* s = v.sound.get();
+        restarts.push_back({e, std::move(v.sound), v.stream, v.bus,
+                            ma_sound_is_playing(s) == MA_TRUE && ma_sound_at_end(s) != MA_TRUE, ma_sound_get_volume(s),
+                            ma_sound_get_pitch(s), ma_sound_is_looping(s) == MA_TRUE,
+                            ma_sound_is_spatialization_enabled(s) == MA_TRUE, ma_sound_get_position(s),
+                            ma_sound_get_min_distance(s), ma_sound_get_max_distance(s), ma_sound_get_rolloff(s),
+                            ma_sound_get_attenuation_model(s)});
+        ma_sound_uninit(s);
+    }
+    std::size_t restarted = 0;
+    for (auto& r : restarts) {
+        auto& v = impl_->voices[r.e];
+        auto s = impl_->open(key, r.bus, r.stream);
+        if (!s) {
+            impl_->voices.erase(r.e); // the new file is broken; the source stays silent
+            continue;
+        }
+        v.sound = std::move(s).value();
+        ma_sound* n = v.sound.get();
+        ma_sound_set_volume(n, r.volume);
+        ma_sound_set_pitch(n, r.pitch);
+        ma_sound_set_looping(n, r.looping ? MA_TRUE : MA_FALSE);
+        ma_sound_set_spatialization_enabled(n, r.spatial ? MA_TRUE : MA_FALSE);
+        ma_sound_set_position(n, r.position.x, r.position.y, r.position.z);
+        ma_sound_set_min_distance(n, r.min_d);
+        ma_sound_set_max_distance(n, r.max_d);
+        ma_sound_set_rolloff(n, r.rolloff);
+        ma_sound_set_attenuation_model(n, r.model);
+        if (r.playing) {
+            ma_sound_start(n);
+            ++restarted;
+        }
+    }
+    return restarted;
+}
+
 void AudioEngine::set_bus_volume(Bus b, float v) {
     const auto i = static_cast<std::size_t>(b);
     if (i >= kBusCount) return;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/gameui/gameui.hpp"
 #include "victus/player/player.hpp"
+#include "victus/runtime/hot_reload.hpp"
 
 #include "victus/assets/database.hpp"
 #include "victus/core/jobs.hpp"
@@ -126,6 +127,9 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     if (audio_engine) audio::add_audio_systems(sim, **audio_engine);
     else VICTUS_LOG_WARN("player", "audio disabled: {}", audio_engine.error().message);
     sim.input = &input;
+    // Development runs reload changed textures, models and audio while the game runs.
+    std::unique_ptr<runtime::AssetHotReloader> reloader;
+    if (o.hot_reload && !packaged) reloader = std::make_unique<runtime::AssetHotReloader>(**db);
     // Multiplayer: join a server; it spawns this player's character from the scene's template.
     std::unique_ptr<net::NetClient> client;
     if (!o.connect.empty()) {
@@ -164,6 +168,15 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         if ((*plat)->quit_requested()) break;
         if ((*plat)->input().key_pressed(platform::Key::Escape) && !o.fullscreen && o.max_frames == 0) break;
         const double now = platform::Platform::seconds();
+        if (reloader) {
+            const auto changes = reloader->poll(now);
+            if (!changes.empty()) {
+                runtime::AssetHotReloader::apply(changes, &cache, &animations);
+                if (audio_engine)
+                    for (const auto& clip : changes.audio) (void)(*audio_engine)->reload_clip(clip);
+                report.assets_reloaded += changes.reimported.size() + changes.audio.size();
+            }
+        }
         const float dt = o.max_frames ? 1.0f / 60.0f : static_cast<float>(now - last);
         last = now;
         sim.tick(scene, dt);
