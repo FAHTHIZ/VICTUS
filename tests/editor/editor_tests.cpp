@@ -342,3 +342,68 @@ TEST_CASE("editor: rendering quality selector applies, persists and reopens") {
     h.frames(1);
     CHECK(h.ed->render_stats().shadow_cascades == 1);
 }
+
+TEST_CASE("editor: input actions panel edits, captures bindings and saves the project") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    CHECK(h.ed->input_map() == nullptr);
+    REQUIRE(h.ed->create_project(h.dir / "Input", "Input", "3d").ok());
+    REQUIRE(h.ed->input_map() != nullptr);
+    CHECK(*h.ed->input_map() == gameplay::default_input_map());
+    h.ed->set_show_input_actions(true);
+    h.frames(2); // the panel draws every action without errors
+
+    // Invalid maps are refused and change nothing.
+    gameplay::InputMap bad = *h.ed->input_map();
+    bad.actions[0].positive.push_back({.kind = gameplay::InputBinding::Kind::Key, .key = "Qq"});
+    CHECK_FALSE(h.ed->set_input_map(bad).ok());
+    gameplay::InputMap dup = *h.ed->input_map();
+    dup.actions.push_back(dup.actions[0]);
+    CHECK_FALSE(h.ed->set_input_map(dup).ok());
+    CHECK(*h.ed->input_map() == gameplay::default_input_map());
+
+    // Listen: the next key goes to the action and is saved to victus.project.
+    gameplay::ManualInput in;
+    h.ed->begin_binding_capture("jump");
+    CHECK(h.ed->capturing_binding());
+    CHECK_FALSE(h.ed->capture_from(in)); // nothing pressed yet
+    in.set_key("J", true);
+    CHECK(h.ed->capture_from(in));
+    CHECK_FALSE(h.ed->capturing_binding());
+    const auto* jump = h.ed->input_map()->find("jump");
+    REQUIRE(jump);
+    CHECK(gameplay::binding_to_string(jump->positive.back()) == "J");
+    in.end_frame();
+
+    // A stick pushed left binds the negative half-axis; Escape cancels without binding.
+    h.ed->begin_binding_capture("look_x", true);
+    in.set_gamepad_axis(0, gameplay::gamepad_axis_index("RightX"), -0.9f);
+    CHECK(h.ed->capture_from(in));
+    const auto* look = h.ed->input_map()->find("look_x");
+    REQUIRE(look);
+    CHECK(gameplay::binding_to_string(look->negative.back()) == "Pad.RightX-");
+    in.end_frame();
+    const std::size_t before = h.ed->input_map()->find("fire")->positive.size();
+    h.ed->begin_binding_capture("fire");
+    in.set_key("Escape", true);
+    CHECK(h.ed->capture_from(in));
+    CHECK_FALSE(h.ed->capturing_binding());
+    CHECK(h.ed->input_map()->find("fire")->positive.size() == before);
+
+    auto reopened = project::Project::open(h.dir / "Input");
+    REQUIRE(reopened.ok());
+    CHECK(reopened->settings().input == *h.ed->input_map());
+
+    // While playing, edits reach the running scripts.
+    h.ed->play();
+    h.frames(2);
+    REQUIRE(h.ed->play_scripts());
+    gameplay::InputMap renamed = *h.ed->input_map();
+    renamed.add("dash", {"Q", "Pad.East"});
+    REQUIRE(h.ed->set_input_map(renamed).ok());
+    CHECK(h.ed->play_scripts()->options().input_map.find("dash") != nullptr);
+    h.frames(2);
+    h.ed->stop();
+    h.frames(1);
+}
