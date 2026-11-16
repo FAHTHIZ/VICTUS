@@ -67,6 +67,7 @@ scene::Entity instantiate_model(scene::Scene& scene, const Uuid& model_uuid, con
 struct ExtractStats {
     std::uint32_t meshes{0}, sprites{0}, lights{0}, missing_assets{0};
     std::uint32_t skinned{0}; // meshes drawn with GPU skinning
+    std::uint32_t particle_emitters{0}, particles{0}; // submitted (before camera culling)
     bool camera_found{false};
 };
 

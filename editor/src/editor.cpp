@@ -562,6 +562,8 @@ void Editor::play() {
     play_animation_ = std::make_unique<animation::AnimationSystem>(
         animation::AnimationSettings{.provider = db_ ? assets::animation_provider(*db_) : animation::SetProvider{}, .jobs = &workers()});
     animation::add_animation_systems(sim_, *play_animation_);
+    play_particles_ = std::make_unique<particles::ParticleSystem>(particles::ParticleSettings{.jobs = &workers()});
+    particles::add_particle_systems(sim_, *play_particles_);
     if (auto* a = audio()) {
         a->stop_all();
         audio::add_audio_systems(sim_, *a);
@@ -609,6 +611,7 @@ void Editor::stop() {
     play_scripts_.reset();
     play_physics_.reset();
     play_animation_.reset();
+    play_particles_.reset();
     if (audio_) audio_->stop_all();
     if (input_) input_->set_enabled(false);
     play_state_ = PlayState::Editing;

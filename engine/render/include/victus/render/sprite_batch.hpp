@@ -30,6 +30,7 @@ struct Sprite {
     math::Color color{1, 1, 1, 1};
     std::int32_t layer{0};
     bool flip_x{false}, flip_y{false};
+    bool additive{false}; // additive blending (glows, sparks); sorted after alpha sprites of a layer
 };
 
 struct SpriteBatchStats {
@@ -66,11 +67,12 @@ private:
     struct Batch {
         rhi::TextureHandle texture;
         std::uint32_t first_index, index_count;
+        bool additive{false};
     };
     [[nodiscard]] Status ensure_capacity(std::uint32_t sprites);
 
     GpuContext& ctx_;
-    rhi::PipelineHandle pipeline_;
+    rhi::PipelineHandle pipeline_, additive_pipeline_;
     rhi::BufferHandle vertex_buffer_, index_buffer_;
     std::uint32_t capacity_{0};
     math::Mat4 view_proj_;

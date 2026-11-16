@@ -106,6 +106,14 @@ struct BlurUniforms {
     Vec4 proj;
     Vec4 screen;
 };
+struct ParticleFrameUniforms {
+    Mat4 view_proj;
+    Vec4 right, up;
+};
+struct ParticleUniforms {
+    Vec4 proj;   // view depth = proj.x / (depth + proj.y)
+    Vec4 screen; // xy: 1 / render size, z: 1 / softness
+};
 struct BloomDownUniforms {
     Vec4 params;
     Vec4 threshold;
@@ -253,8 +261,10 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     auto skin_vs = get("mesh_skinned.vert");
     auto skin_depth_vs = get("depth_skinned.vert");
     auto skin_shadow_vs = get("shadow_skinned.vert");
+    auto particle_vs = get("particle.vert");
+    auto particle_fs = get("particle.frag");
     for (auto* s : {&mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &full_vs, &sky_fs, &line_vs, &line_fs, &depth_vs, &skin_vs,
-                    &skin_depth_vs, &skin_shadow_vs})
+                    &skin_depth_vs, &skin_shadow_vs, &particle_vs, &particle_fs})
         if (!*s) return std::move(*s).error();
     const rhi::VertexBufferLayout skin_layout{2, sizeof(SkinVertex), false};
     const std::vector<rhi::VertexAttribute> skin_attrs{{11, 2, rhi::VertexFormat::UShort4, 0},
@@ -395,6 +405,21 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     if (!p) return std::move(p).error();
     r->line_pipeline_ = p.value();
 
+    // Particles: instanced billboards, no depth attachment (the shader samples scene depth).
+    for (const bool additive : {false, true}) {
+        rhi::PipelineDesc pd;
+        pd.name = additive ? "particles_additive" : "particles_alpha";
+        pd.vertex = particle_vs.value();
+        pd.fragment = particle_fs.value();
+        pd.vertex_buffers = {{0, sizeof(ParticleInstance), true}};
+        pd.attributes = {{0, 0, rhi::VertexFormat::Float4, 0}, {1, 0, rhi::VertexFormat::Float4, 16}, {2, 0, rhi::VertexFormat::Float4, 32}};
+        pd.cull = rhi::CullMode::None;
+        pd.color_targets = {{rhi::Format::RGBA16_FLOAT, additive ? rhi::BlendMode::Additive : rhi::BlendMode::Alpha}};
+        p = dev.create_pipeline(pd);
+        if (!p) return std::move(p).error();
+        (additive ? r->particle_additive_ : r->particle_alpha_) = p.value();
+    }
+
     // 1x1 cleared depth texture bound when shadows are disabled (compare always passes).
     rhi::TextureDesc ns;
     ns.name = "no_shadow";
@@ -416,7 +441,8 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
 SceneRenderer::~SceneRenderer() {
     auto& d = ctx_.device();
     for (auto pl : {opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_, prepass_cull_,
-                    prepass_double_, skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_})
+                    prepass_double_, skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_,
+                    particle_alpha_, particle_additive_})
         if (pl) d.destroy(pl);
     if (palette_buffer_) d.destroy(palette_buffer_);
     for (auto& [k, pl] : post_) d.destroy(pl);
@@ -425,6 +451,7 @@ SceneRenderer::~SceneRenderer() {
         if (t) d.destroy(t);
     if (line_buffer_) d.destroy(line_buffer_);
     if (instance_buffer_) d.destroy(instance_buffer_);
+    if (particle_buffer_) d.destroy(particle_buffer_);
     pool_.clear();
 }
 
@@ -468,6 +495,8 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     draws_.clear();
     lines_.clear();
     palette_.clear();
+    particles_.clear();
+    particle_batches_.clear();
     stats_ = {};
 }
 
@@ -495,6 +524,14 @@ void SceneRenderer::submit_skinned(const GpuMesh& mesh, const Material& material
     d.world_bounds = world_bounds;
     palette_.insert(palette_.end(), joints.begin(), joints.end());
     draws_.push_back(d);
+}
+
+void SceneRenderer::submit_particles(std::span<const ParticleInstance> particles, const ParticleMaterial& material,
+                                     const Aabb& bounds) {
+    if (particles.empty() || !bounds.valid()) return;
+    particle_batches_.push_back({material, static_cast<std::uint32_t>(particles_.size()),
+                                 static_cast<std::uint32_t>(particles.size()), bounds, 0.0f});
+    particles_.insert(particles_.end(), particles.begin(), particles.end());
 }
 
 void SceneRenderer::line(Vec3 a, Vec3 b, Color color) {
@@ -727,6 +764,54 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                           {reinterpret_cast<const std::uint8_t*>(lines_.data()), lines_.size() * sizeof(LineVertex)}, true);
     }
 
+    // Particles: cull batches, order them back to front, sort alpha batches' particles back to
+    // front, then upload everything as one instance stream.
+    std::vector<ParticleBatch> particle_draws;
+    particle_upload_.clear();
+    for (ParticleBatch b : particle_batches_) {
+        if (!frustum.intersects(b.bounds)) continue;
+        b.distance = length(b.bounds.center() - camera_.position);
+        particle_draws.push_back(b);
+    }
+    std::stable_sort(particle_draws.begin(), particle_draws.end(),
+                     [](const ParticleBatch& a, const ParticleBatch& b) { return a.distance > b.distance; });
+    {
+        const Vec3 fwd = camera_.forward();
+        std::vector<std::pair<float, std::uint32_t>> order;
+        for (ParticleBatch& b : particle_draws) {
+            const auto first = static_cast<std::uint32_t>(particle_upload_.size());
+            if (b.material.blend == ParticleBlend::Alpha) {
+                order.clear();
+                for (std::uint32_t i = 0; i < b.count; ++i) {
+                    const Vec4& p = particles_[b.offset + i].position_size;
+                    order.emplace_back(dot(Vec3{p.x, p.y, p.z} - camera_.position, fwd), b.offset + i);
+                }
+                std::sort(order.begin(), order.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+                for (const auto& o : order) particle_upload_.push_back(particles_[o.second]);
+            } else {
+                particle_upload_.insert(particle_upload_.end(), particles_.begin() + b.offset, particles_.begin() + b.offset + b.count);
+            }
+            b.offset = first;
+        }
+    }
+    stats_.particle_batches = static_cast<std::uint32_t>(particle_draws.size());
+    stats_.particles = static_cast<std::uint32_t>(particle_upload_.size());
+    if (!particle_upload_.empty()) {
+        const auto needed = static_cast<std::uint32_t>(particle_upload_.size());
+        if (needed > particle_capacity_) {
+            if (particle_buffer_) dev.destroy(particle_buffer_);
+            particle_capacity_ = std::max(needed, particle_capacity_ * 2);
+            auto b = dev.create_buffer({"particles", particle_capacity_ * static_cast<std::uint32_t>(sizeof(ParticleInstance)),
+                                        rhi::BufferUsageVertex});
+            if (!b) return std::move(b).error();
+            particle_buffer_ = b.value();
+        }
+        cmd.upload_buffer(particle_buffer_, 0,
+                          {reinterpret_cast<const std::uint8_t*>(particle_upload_.data()),
+                           particle_upload_.size() * sizeof(ParticleInstance)},
+                          true);
+    }
+
     const bool ssao = S.ssao && env_.ao_intensity > 0.0f && env_.ao_radius > 0.0f;
     const bool prepass = S.depth_prepass || ssao;
     const bool bloom = S.bloom && env_.bloom_intensity > 0.0f;
@@ -803,7 +888,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const RGTexture hdr = graph.create_texture("hdr_color", hdr_desc);
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
-    depth_desc.usage = rhi::TextureUsageDepthTarget | (ssao ? rhi::TextureUsageSampled : 0u);
+    depth_desc.usage = rhi::TextureUsageDepthTarget | ((ssao || !particle_draws.empty()) ? rhi::TextureUsageSampled : 0u);
     const RGTexture depth = graph.create_texture("scene_depth", depth_desc);
 
     if (prepass) {
@@ -945,6 +1030,42 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.draw(static_cast<std::uint32_t>(lines_.size()));
             }
         });
+
+    if (!particle_draws.empty()) {
+        ParticleFrameUniforms pf{};
+        pf.view_proj = view_proj;
+        const Mat4 cam_world = inverse(camera_.view);
+        pf.right = Vec4(normalize(cam_world.transform_vector({1, 0, 0})), 0);
+        pf.up = Vec4(normalize(cam_world.transform_vector({0, 1, 0})), 0);
+        graph.add_pass(
+            "particles",
+            [&](PassBuilder& b) {
+                b.read(depth);
+                b.write_color(hdr, rhi::LoadOp::Load);
+            },
+            [&, pf, proj, rw, rh](PassContext& ctx) {
+                rhi::RenderPass& pass = *ctx.pass;
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, pf);
+                pass.bind_vertex_buffer(0, particle_buffer_);
+                rhi::PipelineHandle bound{};
+                for (const ParticleBatch& b : particle_draws) {
+                    const rhi::PipelineHandle want = b.material.blend == ParticleBlend::Additive ? particle_additive_ : particle_alpha_;
+                    if (!(bound == want)) {
+                        pass.bind_pipeline(want);
+                        bound = want;
+                    }
+                    ParticleUniforms pu{};
+                    pu.proj = {proj[3].z, proj[2].z, 0, 0};
+                    pu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), 1.0f / std::max(b.material.softness, 1e-3f), 0};
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, pu);
+                    pass.bind_texture(rhi::ShaderStage::Fragment, 0, b.material.texture ? b.material.texture : ctx_.soft_particle(),
+                                      ctx_.linear_clamp());
+                    pass.bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(depth), ctx_.nearest_clamp());
+                    pass.bind_vertex_buffer(0, particle_buffer_, b.offset * static_cast<std::uint32_t>(sizeof(ParticleInstance)));
+                    pass.draw(6, b.count);
+                }
+            });
+    }
 
     // Dual-filter bloom: progressively halved mip chain, then tent upsampling back up.
     RGTexture bloom_result;

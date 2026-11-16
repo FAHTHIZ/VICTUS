@@ -69,6 +69,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_skinning_tests.cpp
         render/gpu_scene_tests.cpp
         render/gpu_ui_tests.cpp
+        render/gpu_particle_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")
@@ -116,3 +117,8 @@ victus_add_test(victus_animation_tests
     SOURCES animation/animation_tests.cpp
     DEPS VICTUS::Animation VICTUS::Core
     LABELS animation)
+
+victus_add_test(victus_particles_tests
+    SOURCES particles/particles_tests.cpp
+    DEPS VICTUS::Particles VICTUS::Core
+    LABELS particles)

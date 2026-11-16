@@ -8,6 +8,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
+#include "victus/particles/particles.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/player/export.hpp"
 #include "victus/player/player.hpp"
@@ -209,6 +210,8 @@ int cmd_simulate(const std::vector<std::string>& a) {
     auto db = assets::AssetDatabase::open(proj->root());
     animation::AnimationSystem animations({.provider = db ? assets::animation_provider(**db) : animation::SetProvider{}});
     animation::add_animation_systems(sim, animations);
+    particles::ParticleSystem particle_system; // single-threaded like physics; identical either way
+    particles::add_particle_systems(sim, particle_system);
     audio::EngineOptions ao; // mixed without a device so audio calls behave as in the game
     ao.assets_root = proj->root() / "assets";
     ao.null_device = true;
