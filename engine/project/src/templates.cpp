@@ -8,6 +8,8 @@
 #include "victus/project/project.hpp"
 #include "victus/script/script.hpp"
 
+#include "robot.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -172,7 +174,7 @@ void build_3d(Scene& s) {
     s.world().add<physics::RigidBodyComponent>(cube).type = physics::BodyType::Kinematic; // turned by Rotator
     s.world().add<physics::ColliderComponent>(cube);
 
-    // The player is a CharacterController (origin at the feet) with the rolling ball as a child mesh:
+    // The player is a CharacterController (origin at the feet) with the animated robot as its visual:
     // it walks, climbs the steps, jumps and shoves the dynamic crates and the gate.
     const Entity player = add(s, "Player", {0, 0, 0.5f});
     attach(s, player, "scripts/player.luau");
@@ -182,9 +184,11 @@ void build_3d(Scene& s) {
         cc.height = 1.4f;
         cc.push_force = 400.0f;
     }
-    const Entity ball = add(s, "Ball", {0, 0.7f, 0}, player);
-    s.world().get<Transform>(ball)->scale = {1.4f, 1.4f, 1.4f};
-    mesh(s, ball, "sphere", {0.1f, 0.35f, 0.9f, 1}, 0.0f, 0.25f);
+    // The visible character is the skinned template robot (assets/models/robot.gltf), scaled to
+    // the 1.4 m capsule; the player script plays its "Idle"/"Walk" clips and turns it to face
+    // the direction of travel.
+    const Entity robot = robot::instantiate(s, "Robot", player);
+    s.world().get<Transform>(robot)->scale = {0.85f, 0.85f, 0.85f};
 
     // Three 0.3 m steps up to a platform (character step_height is 0.35 m).
     for (int i = 0; i < 3; ++i) {
@@ -350,7 +354,8 @@ void build_simulation(Scene& s) {
 
 constexpr const char* kPlayer3d = R"lua(-- Walks the character with WASD or the arrow keys and jumps with Space. The entity has a
 -- CharacterController (it slides along walls, climbs steps and pushes physics bodies); the
--- child "Ball" mesh rolls in the direction of travel.
+-- child "Robot" model faces the direction of travel and cross-fades between its "Idle" and
+-- "Walk" animation clips.
 -- Fields below are defaults; override them per entity in the editor inspector.
 local Player = {}
 Player.speed = 5
@@ -358,7 +363,8 @@ Player.jump_speed = 6
 Player.bounds = 9 -- stay within this distance of the origin on X and Z
 
 function Player:start()
-    self.ball = self.entity:find_child("Ball")
+    self.robot = self.entity:find_child("Robot")
+    self.clip = "Idle"
 end
 
 function Player:update(dt)
@@ -376,11 +382,17 @@ function Player:update(dt)
     end
     self.entity:move_character(move)
     if input.pressed("Space") then self.entity:jump(self.jump_speed) end
-    -- Roll the ball by the distance actually travelled.
+    if not self.robot then return end
+    -- Face the direction actually travelled (the robot model looks down +Z) and pick the clip.
     local v = self.entity.velocity
     local speed = vector.magnitude(vector.create(v.x, 0, v.z))
-    if self.ball and speed > 0.01 then
-        self.ball:rotate(vector.create(v.z, 0, -v.x), speed * dt * 82) -- degrees: distance / radius
+    if speed > 0.3 then
+        self.robot.rotation = vector.create(0, math.deg(math.atan2(v.x, v.z)), 0)
+    end
+    local clip = (speed > 0.3 and self.entity.grounded) and "Walk" or "Idle"
+    if clip ~= self.clip then
+        self.clip = clip
+        self.robot:play_animation(clip, 0.2)
     end
 end
 
@@ -545,7 +557,7 @@ return Orbit
 
 const std::vector<TemplateInfo>& templates() {
     static const std::vector<TemplateInfo> list = {
-        {"3d", "3D Scene", "A rolling-ball character you walk with WASD/arrow keys and jump with Space (Luau + CharacterController) that climbs steps, swings a hinged gate and shoves a stack of physics crates with positional impact sounds, a follow camera, sun shadows, PBR primitives and a point light."},
+        {"3d", "3D Scene", "An animated robot character you walk with WASD/arrow keys and jump with Space (Luau + CharacterController) that climbs steps, swings a hinged gate and shoves a stack of physics crates with positional impact sounds, a follow camera, sun shadows, PBR primitives and a point light."},
         {"2d", "2D Game", "A playable platformer on Box2D physics with music and sound effects: run with A/D or arrows, jump with Space, collect the coins. Gameplay is in Luau scripts."},
         {"simulation", "Simulation",
          "576 entities animated by native systems, with a scripted orbiting camera: a starting point for simulation work."},
@@ -556,6 +568,8 @@ const std::vector<TemplateInfo>& templates() {
 std::vector<TemplateFile> template_files(std::string_view id) {
     if (id == "3d")
         return {{"assets/scripts/player.luau", kPlayer3d},
+                {robot::kModelPath, robot::gltf()},
+                {std::string(robot::kModelPath) + ".meta", robot::meta()},
                 {"assets/scripts/follow_camera.luau", kFollowCamera},
                 {"assets/scripts/crate.luau", kCrate},
                 {"assets/audio/impact.wav", synth_impact()}};

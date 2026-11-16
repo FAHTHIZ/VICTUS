@@ -17,6 +17,21 @@ std::uint64_t fnv1a64(std::span<const std::uint8_t> bytes, std::uint64_t seed) n
     return h;
 }
 
+std::string base64_encode(std::span<const std::uint8_t> in) {
+    static constexpr char kTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((in.size() + 2) / 3 * 4);
+    for (std::size_t i = 0; i < in.size(); i += 3) {
+        const std::uint32_t b0 = in[i], b1 = i + 1 < in.size() ? in[i + 1] : 0u, b2 = i + 2 < in.size() ? in[i + 2] : 0u;
+        const std::uint32_t v = (b0 << 16) | (b1 << 8) | b2;
+        out += kTable[(v >> 18) & 63];
+        out += kTable[(v >> 12) & 63];
+        out += i + 1 < in.size() ? kTable[(v >> 6) & 63] : '=';
+        out += i + 2 < in.size() ? kTable[v & 63] : '=';
+    }
+    return out;
+}
+
 std::string Uuid::to_string() const {
     char buf[37];
     std::snprintf(buf, sizeof buf, "%08x-%04x-%04x-%04x-%012llx", static_cast<unsigned>(hi >> 32),

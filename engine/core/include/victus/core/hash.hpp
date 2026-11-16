@@ -19,6 +19,9 @@ namespace victus {
 }
 [[nodiscard]] std::uint64_t fnv1a64(std::span<const std::uint8_t> bytes, std::uint64_t seed = 0xcbf29ce484222325ull) noexcept;
 
+// Standard base64 (RFC 4648 section 4, '=' padding), e.g. for glTF data URIs.
+[[nodiscard]] std::string base64_encode(std::span<const std::uint8_t> bytes);
+
 // Deterministic PCG32 random stream (O'Neill, Apache-2.0 reference algorithm).
 // Identical output on every platform for a given seed/stream: required for replays,
 // procedural generation and lockstep simulation.
