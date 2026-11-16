@@ -227,5 +227,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Large asset trees make each scan slower (benchmark before adopting notifications). Modification-time resolution on some file systems is coarse (size changes and the next scan still catch it). Model node-graph changes need re-instantiation to show fully.
 
+## ADR-0023 — Prefabs (accepted 2026-11-16)
+**Problem.** Games need reusable entity hierarchies that can be placed many times, tweaked per placement, updated centrally, and spawned from scripts, without breaking references between entities or scene merges.
+
+**Candidates.** Unity-style prefabs (https://docs.unity3d.com/Manual/Prefabs.html): instances keep links to source objects and store property-level modifications, plus nested prefabs and variants; very flexible, large implementation and UI surface. Godot `PackedScene` (https://docs.godotengine.org/en/stable/classes/class_packedscene.html): a serialized scene instantiated as a subtree, with "editable children"; simple, but every scene is a prefab and overrides are coarse. VICTUS-native: a `.vprefab` file in the scene snapshot format, instance root with `PrefabInstance`, parts tagged with `PrefabPart`, component-level overrides, deterministic derived uuids.
+
+**Decision.** The VICTUS-native design: it reuses the existing versioned component serializers (no second format), keeps instances valid scene data (an unpacked or prefab-less scene still loads), and derived uuids make instantiation deterministic for diffs, networking and tests. Component-level overrides are the first step; per-property overrides, variants and nesting are recorded as remaining work in ROADMAP Phase 9.
+
+**Evidence.** STATUS Slice 21: scene, script and editor tests; template runs in the editor-less player and an exported build.
+
+**Risks / revisit triggers.** Component-level overrides discard upstream changes to an overridden component; nested prefabs are flattened (lose their own link). Revisit when variants/nesting are implemented.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

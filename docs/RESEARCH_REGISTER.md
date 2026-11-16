@@ -123,6 +123,11 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-16 (Slice 21, prefabs)
+- Unity prefabs — https://docs.unity3d.com/Manual/Prefabs.html: reusable GameObject templates; instance overrides on components, data or child objects; variants as predefined variations. Informed the override and Apply/Revert UX; property-level overrides and variants deferred.
+- Godot PackedScene — https://docs.godotengine.org/en/stable/classes/class_packedscene.html: a serialized scene whose `instantiate()` creates the node hierarchy and child scenes. Informed `instantiate` as a scene-format snapshot rather than a separate format.
+- Open questions: property-level override storage, variant inheritance chains, replicating runtime spawns.
+
 ## Research conclusions added 2026-11-16 (Slice 20, hot reload)
 - SDL3 `SDL_ReleaseGPUTexture` — https://wiki.libsdl.org/SDL3/SDL_ReleaseGPUTexture: the texture is freed "as soon as it is safe to do so", so evicting a texture between frames while earlier command buffers are in flight is safe; the handle must not be used afterwards (the cache drops it).
 - efsw — https://github.com/SpartanJ/efsw (MIT): file watcher over inotify, FSEvents/kqueue, Windows I/O completion ports (ReadDirectoryChangesExW/W) with a generic polling fallback. Not adopted for now (ADR-0022); the candidate if polling becomes too slow.
