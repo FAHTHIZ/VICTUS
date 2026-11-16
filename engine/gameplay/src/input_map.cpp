@@ -251,4 +251,25 @@ InputMap default_input_map() {
     return m;
 }
 
+std::optional<InputBinding> capture_binding(const InputSource& in, const std::vector<std::string>& keys) {
+    for (const auto& k : keys)
+        if (in.key_pressed(k)) return InputBinding{.kind = InputBinding::Kind::Key, .key = k};
+    for (int b = 1; b < 3; ++b)
+        if (in.mouse_pressed(b)) return InputBinding{.kind = InputBinding::Kind::Mouse, .index = b};
+    for (int pad = 0; pad < kMaxGamepads; ++pad) {
+        if (!in.gamepad_connected(pad)) continue;
+        for (int b = 0; b < kGamepadButtonCount; ++b)
+            if (in.gamepad_button(pad, b) && !in.gamepad_button(pad, b, true))
+                return InputBinding{.kind = InputBinding::Kind::GamepadButton, .index = b};
+        for (int a = 0; a < kGamepadAxisCount; ++a) {
+            const float now = in.gamepad_axis(pad, a), before = in.gamepad_axis(pad, a, true);
+            const bool trigger = a >= 4;
+            if (std::fabs(now) >= 0.5f && std::fabs(before) < 0.5f)
+                return InputBinding{.kind = InputBinding::Kind::GamepadAxis, .index = a,
+                                    .direction = trigger ? 0 : (now > 0 ? 1 : -1)};
+        }
+    }
+    return std::nullopt;
+}
+
 } // namespace victus::gameplay

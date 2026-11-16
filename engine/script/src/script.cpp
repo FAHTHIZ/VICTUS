@@ -2140,6 +2140,7 @@ HostStats ScriptHost::stats() const {
 
 const std::vector<std::string>& ScriptHost::recent_errors() const noexcept { return impl_->recent_errors; }
 const HostOptions& ScriptHost::options() const noexcept { return impl_->options; }
+void ScriptHost::set_input_map(gameplay::InputMap map) { impl_->options.input_map = std::move(map); }
 
 void add_script_systems(gameplay::Simulation& sim, ScriptHost& host) {
     gameplay::Simulation* simp = &sim;

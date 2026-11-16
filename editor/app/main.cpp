@@ -6,6 +6,7 @@
 //   --frames N        exit after N frames
 //   --screenshot PNG  write the final frame
 //   --play            enter play mode after opening the project
+//   --show WINDOW     open a window after opening (input-actions)
 //   --select NAME     select an entity by name after opening
 //   --data-dir DIR    use DIR instead of the user data directory (recent list, layout)
 #include "victus/core/build_info.hpp"
@@ -39,6 +40,7 @@ int main(int argc, char** argv) {
         .option("height", "window height", "900")
         .option("data-dir", "override the user data directory")
         .option("select", "select the entity with this name after opening")
+        .option("show", "open a window after opening: input-actions")
         .flag("play", "enter play mode after opening");
     if (auto st = args.parse(argc, argv); !st) {
         std::fprintf(stderr, "%s\n%s", st.error().message.c_str(), args.help().c_str());
@@ -88,6 +90,10 @@ int main(int argc, char** argv) {
     if (args.has("select") && ed.has_project()) {
         const auto e = ed.edit_scene().find_by_name(args.get("select"));
         if (!e.is_null()) ed.select(e);
+    }
+    if (args.has("show")) {
+        if (args.get("show") == "input-actions") ed.set_show_input_actions(true);
+        else std::fprintf(stderr, "victus_editor: unknown window '%s' for --show\n", args.get("show").c_str());
     }
     if (args.has("play") && ed.has_project()) ed.play();
 

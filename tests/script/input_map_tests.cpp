@@ -127,3 +127,29 @@ TEST_CASE("input map: project JSON round-trip, validation and errors") {
     CHECK(problems[0].find("unknown key 'Qq'") != std::string::npos);
     CHECK(problems[1].find("no bindings") != std::string::npos);
 }
+
+TEST_CASE("input map: capture_binding reports the first new control") {
+    using namespace victus::gameplay;
+    ManualInput in;
+    const std::vector<std::string> keys{"Space", "J"};
+    CHECK_FALSE(capture_binding(in, keys).has_value());
+    in.set_mouse(0, true); // the click on the UI itself is ignored
+    CHECK_FALSE(capture_binding(in, keys).has_value());
+    in.set_mouse(2, true);
+    CHECK(binding_to_string(*capture_binding(in, keys)) == "Mouse2");
+    in.end_frame();
+    CHECK_FALSE(capture_binding(in, keys).has_value()); // held, not new
+    in.set_key("J", true);
+    CHECK(binding_to_string(*capture_binding(in, keys)) == "J");
+    in.end_frame();
+    in.set_gamepad_button(1, gamepad_button_index("North"), true);
+    CHECK(binding_to_string(*capture_binding(in, keys)) == "Pad.North");
+    in.end_frame();
+    in.set_gamepad_axis(0, gamepad_axis_index("LeftY"), 0.3f); // not past half way
+    CHECK_FALSE(capture_binding(in, keys).has_value());
+    in.set_gamepad_axis(0, gamepad_axis_index("LeftY"), 0.8f);
+    CHECK(binding_to_string(*capture_binding(in, keys)) == "Pad.LeftY+");
+    in.end_frame();
+    in.set_gamepad_axis(0, gamepad_axis_index("RightTrigger"), 1.0f);
+    CHECK(binding_to_string(*capture_binding(in, keys)) == "Pad.RightTrigger");
+}

@@ -86,6 +86,21 @@ public:
     [[nodiscard]] render::QualityTier quality() const noexcept { return quality_; }
     [[nodiscard]] Status set_quality(render::QualityTier tier);
     [[nodiscard]] const render::SceneStats& render_stats() const;
+    // Project input actions (Edit > Input Actions). set_input_map validates the map (syntax,
+    // duplicate names, unknown keys), saves `victus.project` and applies it to a running play
+    // session; on error nothing changes.
+    [[nodiscard]] const gameplay::InputMap* input_map() const noexcept;
+    [[nodiscard]] Status set_input_map(gameplay::InputMap map);
+    void set_show_input_actions(bool show) noexcept { show_input_actions_ = show; }
+    [[nodiscard]] bool show_input_actions() const noexcept { return show_input_actions_; }
+    // "Press a control to bind": the next key (except Escape, which cancels), right/middle mouse
+    // button, gamepad button or stick/trigger push is added to `action` (its negative side when
+    // `negative`). The editor polls its own input each frame; capture_from() feeds a source directly.
+    void begin_binding_capture(std::string action, bool negative = false);
+    void cancel_binding_capture() noexcept { capture_action_.clear(); }
+    [[nodiscard]] bool capturing_binding() const noexcept { return !capture_action_.empty(); }
+    // Returns true when a control was captured (or the capture was cancelled with Escape).
+    bool capture_from(const gameplay::InputSource& input);
 
     // ---- scenes ----
     [[nodiscard]] Status open_scene(std::string_view relative_path);
@@ -257,6 +272,12 @@ private:
     std::string save_as_path_;
     bool layout_built_{false};
     bool show_demo_{false};
+    bool show_input_actions_{false};
+    std::string capture_action_;
+    bool capture_negative_{false};
+    std::string input_error_;
+    std::unordered_map<std::string, std::string> binding_text_; // typed bindings per action side
+    void draw_input_actions();
     std::string rename_buffer_;
     Uuid renaming_;
 

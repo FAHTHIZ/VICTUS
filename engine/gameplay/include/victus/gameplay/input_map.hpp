@@ -10,6 +10,7 @@
 #include "victus/gameplay/gameplay.hpp"
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -78,6 +79,11 @@ public:
 
     friend bool operator==(const InputMap&, const InputMap&) = default;
 };
+
+// The first control that went down this frame, for "press a key to bind" UIs: one of `keys`
+// (key names to watch), a mouse button other than Mouse0 (it clicks the UI), a gamepad button,
+// or a gamepad axis pushed past half way (a half-axis binding; triggers bind as the whole axis).
+[[nodiscard]] std::optional<InputBinding> capture_binding(const InputSource& in, const std::vector<std::string>& keys);
 
 // move_x, move_y, look_x, look_y, jump, fire, interact, sprint, pause, help: WASD/arrows, mouse,
 // Space/E/Shift/Escape/H and the matching gamepad sticks and buttons.

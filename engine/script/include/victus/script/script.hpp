@@ -141,6 +141,8 @@ public:
     [[nodiscard]] HostStats stats() const;
     [[nodiscard]] const std::vector<std::string>& recent_errors() const noexcept;
     [[nodiscard]] const HostOptions& options() const noexcept;
+    // Replaces the input actions scripts see (e.g. edited in the editor while playing).
+    void set_input_map(gameplay::InputMap map);
 
     struct Impl;
 

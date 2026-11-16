@@ -187,6 +187,10 @@ void Editor::frame(float dt) {
     if (dt > 0) fps_ = fps_ <= 0 ? 1.0f / dt : fps_ * 0.95f + 0.05f / dt;
     view_->renderer().set_frame_time(dt); // auto exposure adapts in real time
     if (status_time_ > 0) status_time_ -= dt;
+    if (input_ && capturing_binding()) {
+        input_->set_enabled(true); // "press a control to bind" listens to every device
+        (void)capture_from(*input_);
+    }
     if (input_) input_->set_enabled(play_state_ == PlayState::Playing && viewport_focused_);
     if (play_state_ == PlayState::Playing && play_scene_) sim_.tick(*play_scene_, dt);
     // Inspector property discovery follows script edits made in an external editor.
@@ -350,6 +354,7 @@ void Editor::draw_workspace(float) {
     draw_inspector();
     draw_assets();
     draw_console();
+    draw_input_actions();
     draw_status_bar();
     handle_shortcuts();
 }
@@ -396,6 +401,8 @@ void Editor::draw_menu_bar() {
         if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, !selection_.empty())) duplicate_selected();
         if (ImGui::MenuItem("Delete", "Del", false, !selection_.empty())) delete_selected();
         if (ImGui::MenuItem("Frame Selected", "F", false, !selection_.empty())) frame_selected();
+        ImGui::Separator();
+        ImGui::MenuItem("Input Actions...", nullptr, &show_input_actions_);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Entity")) {
@@ -1133,6 +1140,130 @@ void Editor::draw_console() {
     }
     if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4) ImGui::SetScrollHereY(1.0f);
     ImGui::EndChild();
+    ImGui::End();
+}
+
+// ---- input actions -------------------------------------------------------------------------------
+
+void Editor::draw_input_actions() {
+    if (!show_input_actions_ || !project_) return;
+    ImGui::SetNextWindowSize(ImVec2(720, 560), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Input Actions", &show_input_actions_)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::TextWrapped("Scripts read these with input.action(\"jump\"), input.value(\"move_x\") and "
+                       "input.vector(\"move_x\", \"move_y\"). Changes are saved to victus.project.");
+    if (!input_error_.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", input_error_.c_str());
+    ImGui::Separator();
+
+    gameplay::InputMap map = project_->settings().input;
+    bool changed = false;
+    int remove_action = -1;
+    const auto binding_chips = [&](gameplay::InputAction& a, std::vector<gameplay::InputBinding>& list, bool negative) {
+        int remove = -1;
+        // Items flow left to right and wrap onto indented lines when the row is full.
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const auto fit = [&](float width) {
+            if (ImGui::GetContentRegionAvail().x < width) {
+                ImGui::NewLine();
+                ImGui::SetCursorPosX(90);
+            }
+        };
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            const std::string label = gameplay::binding_to_string(list[i]) + "  x";
+            fit(ImGui::CalcTextSize(label.c_str()).x + style.FramePadding.x * 2);
+            if (ImGui::SmallButton(label.c_str())) remove = static_cast<int>(i);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove this binding");
+            ImGui::PopID();
+            ImGui::SameLine();
+        }
+        if (remove >= 0) {
+            list.erase(list.begin() + remove);
+            changed = true;
+        }
+        const bool listening = capture_action_ == a.name && capture_negative_ == negative;
+        fit(ImGui::CalcTextSize(listening ? "press a control... (Esc cancels)" : "+ Listen").x + style.FramePadding.x * 2);
+        if (ImGui::SmallButton(listening ? "press a control... (Esc cancels)" : "+ Listen")) {
+            if (listening) cancel_binding_capture();
+            else begin_binding_capture(a.name, negative);
+        }
+        // Or type a control by name (e.g. Escape, which Listen uses to cancel).
+        ImGui::SameLine();
+        fit(130);
+        std::string& text = binding_text_[a.name + (negative ? "-" : "+")];
+        ImGui::SetNextItemWidth(130);
+        if (ImGui::InputTextWithHint("##type", "or type + Enter", &text, ImGuiInputTextFlags_EnterReturnsTrue)) {
+            if (auto b = gameplay::parse_binding(text)) {
+                list.push_back(*b);
+                changed = true;
+                text.clear();
+            } else {
+                input_error_ = b.error().message;
+            }
+        }
+    };
+    for (std::size_t ai = 0; ai < map.actions.size(); ++ai) {
+        auto& a = map.actions[ai];
+        ImGui::PushID(static_cast<int>(ai));
+        const bool axis = !a.negative.empty();
+        const bool open = ImGui::TreeNodeEx("##action", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
+                                            "%s   (%s)", a.name.c_str(), axis ? "axis" : "button");
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - 60));
+        if (ImGui::SmallButton("Delete")) remove_action = static_cast<int>(ai);
+        if (open) {
+            std::string name = a.name;
+            ImGui::SetNextItemWidth(200);
+            if (ImGui::InputText("Name", &name, ImGuiInputTextFlags_EnterReturnsTrue) && !name.empty() && name != a.name) {
+                a.name = name;
+                changed = true;
+            }
+            ImGui::TextDisabled(axis ? "Positive" : "Bindings");
+            ImGui::SameLine(90);
+            ImGui::PushID("pos");
+            binding_chips(a, a.positive, false);
+            ImGui::PopID();
+            if (axis) {
+                ImGui::TextDisabled("Negative");
+                ImGui::SameLine(90);
+                ImGui::PushID("neg");
+                binding_chips(a, a.negative, true);
+                ImGui::PopID();
+            } else if (ImGui::SmallButton("Make Axis")) {
+                // An axis needs a negative side; start listening for it.
+                begin_binding_capture(a.name, true);
+            }
+            float dz = a.dead_zone;
+            ImGui::SetNextItemWidth(200);
+            if (ImGui::SliderFloat("Dead zone", &dz, 0.0f, 0.9f, "%.2f")) a.dead_zone = dz;
+            if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+    if (remove_action >= 0) {
+        map.actions.erase(map.actions.begin() + remove_action);
+        changed = true;
+    }
+    ImGui::Separator();
+    if (ImGui::Button("Add Action")) {
+        int n = 1;
+        std::string name = "action";
+        while (map.find(name)) name = "action_" + std::to_string(++n);
+        map.actions.push_back({.name = name});
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset to Defaults")) {
+        map = gameplay::default_input_map();
+        changed = true;
+    }
+    if (changed) {
+        if (auto st = set_input_map(std::move(map)); !st) input_error_ = st.error().message;
+        else input_error_.clear();
+    }
     ImGui::End();
 }
 

@@ -735,6 +735,63 @@ Status Editor::set_quality(render::QualityTier tier) {
     return {};
 }
 
+const gameplay::InputMap* Editor::input_map() const noexcept {
+    return project_ ? &project_->settings().input : nullptr;
+}
+
+Status Editor::set_input_map(gameplay::InputMap map) {
+    if (!project_) return make_error(ErrorCode::InvalidArgument, "no project open");
+    auto parsed = gameplay::InputMap::from_json(map.to_json()); // names, duplicates, syntax
+    if (!parsed) return parsed.error();
+    for (const auto& a : map.actions)
+        if (a.name.empty()) return make_error(ErrorCode::InvalidArgument, "input action names cannot be empty");
+    const auto problems =
+        map.validate([](std::string_view k) { return platform::key_from_name(k) != platform::Key::Unknown; });
+    if (!problems.empty()) return make_error(ErrorCode::InvalidArgument, problems.front());
+    gameplay::InputMap previous = project_->settings().input;
+    project_->settings().input = map;
+    if (auto st = project_->save(); !st) {
+        project_->settings().input = std::move(previous);
+        return st;
+    }
+    if (play_scripts_) play_scripts_->set_input_map(std::move(map));
+    return {};
+}
+
+void Editor::begin_binding_capture(std::string action, bool negative) {
+    capture_action_ = std::move(action);
+    capture_negative_ = negative;
+}
+
+bool Editor::capture_from(const gameplay::InputSource& input) {
+    if (capture_action_.empty() || !project_) return false;
+    if (input.key_pressed("Escape")) {
+        capture_action_.clear();
+        return true;
+    }
+    static const std::vector<std::string> keys = [] {
+        std::vector<std::string> k;
+        for (auto i = 1u; i < static_cast<unsigned>(platform::Key::Count); ++i) {
+            const auto key = static_cast<platform::Key>(i);
+            if (key != platform::Key::Escape) k.emplace_back(platform::key_name(key));
+        }
+        return k;
+    }();
+    const auto binding = gameplay::capture_binding(input, keys);
+    if (!binding) return false;
+    gameplay::InputMap map = project_->settings().input;
+    for (auto& a : map.actions) {
+        if (a.name != capture_action_) continue;
+        auto& list = capture_negative_ ? a.negative : a.positive;
+        if (std::find(list.begin(), list.end(), *binding) == list.end()) list.push_back(*binding);
+    }
+    const std::string text = gameplay::binding_to_string(*binding);
+    if (auto st = set_input_map(std::move(map)); !st) input_error_ = st.error().message;
+    else notify("Bound " + text + " to " + capture_action_);
+    capture_action_.clear();
+    return true;
+}
+
 const render::SceneStats& Editor::render_stats() const { return view_->renderer().stats(); }
 
 Status Editor::render(rhi::CommandBuffer& cmd) {
