@@ -26,6 +26,7 @@ struct PlayerReport {
     double seconds{0};
     std::string backend;
     std::uint64_t script_errors{0};
+    bool packaged{false};        // ran from an exported game.vpak
 };
 
 [[nodiscard]] Result<PlayerReport> run(const PlayerOptions& options);

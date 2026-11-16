@@ -95,5 +95,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** No DSP effects (reverb, filters, ducking) or HRTF exposed yet; Opus is not decoded; streaming reads files directly (no packed-archive VFS yet, revisit with `victus export`). Device hot-plug relies on miniaudio's default rerouting.
 
+## ADR-0011 — Game packaging and the `.vpak` archive (accepted 2026-11-16)
+**Problem.** Games must ship as a runnable folder that contains no editor-only data (source images, glTF, `.meta` files), never runs importers on players' machines, loads fast on mobile storage, and can be checked for corruption.
+
+**Candidates.** Loose folders (simple, but slow to open thousands of files on mobile, easy to tamper with and ship sources by mistake); zip via miniz/libzip (standard tooling, but zip's central directory and per-entry extras add parsing surface and compression is per-entry deflate only); PhysicsFS (zlib; full VFS but another dependency and C-style global state); an owned archive format.
+
+**Decision.** An owned, deliberately small format (`victus/core/pack.hpp`): 40-byte header, 16-byte-aligned payloads, a table of contents with sanitized relative paths, per-entry FNV-1a 64 checksums verified on every read and a TOC checksum verified on open; offsets and sizes are bounds-checked against the file, duplicate or escaping paths are rejected. Entries are written in sorted order, so the same project exports byte-identical packs. A codec field is reserved (only "stored" today). `fs::mount(root, pack)` overlays a pack on a folder so `read_binary/read_text/exists/list_files` transparently read pack entries; everything above core (projects, scenes, scripts, audio through a miniaudio VFS, cooked assets) works unchanged. `AssetDatabase::open_packaged` reads an asset index written at export instead of scanning and never imports or writes. `victus export` validates scenes and scripts before writing, copies the player, embeds third-party license texts collected at configure time from the pinned dependency sources, and writes an `export.json` manifest.
+
+**Evidence.** `victus_core_tests` pack and mount cases (round trip, reproducible output, corrupted payload/header/TOC/truncation detection, path escapes, overlay precedence and listing), `victus_export_tests` (export contents, packaged texture/model/scene/script/audio loading from a mounted pack with nothing written next to it, re-export, refusal to write into unrelated or in-project folders, broken-script and missing-reference failures), `victus_cli_smoke` exports all three templates and runs each exported game headless with a screenshot.
+
+**Risks / revisit triggers.** No compression yet (cooked textures are uncompressed RGBA8 mip chains; GPU texture compression and LZ4/zstd are the next size wins). Packs are read with buffered reads, not memory-mapped. FNV-1a detects corruption, not tampering; signing is a later item. Export targets the host platform only.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

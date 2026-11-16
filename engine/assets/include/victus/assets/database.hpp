@@ -55,7 +55,16 @@ public:
     [[nodiscard]] static Result<std::unique_ptr<AssetDatabase>> open(const fs::Path& project_root,
                                                                      RefreshReport* report = nullptr);
 
-    // Rescans assets/, creating .meta files for new sources.
+    // Opens an exported game: records come from `.victus/assets.index.json` (written by
+    // index_json() at export time), nothing is scanned, imported or written, and cooked data is
+    // read as-is. Works on loose folders and on packs mounted at `project_root` (fs::mount).
+    [[nodiscard]] static Result<std::unique_ptr<AssetDatabase>> open_packaged(const fs::Path& project_root);
+    [[nodiscard]] bool packaged() const noexcept { return packaged_; }
+    // Serializes every record (uuid, path, kind, importer, settings) for open_packaged().
+    [[nodiscard]] json::Value index_json() const;
+    [[nodiscard]] fs::Path index_path() const { return root_ / ".victus" / "assets.index.json"; }
+
+    // Rescans assets/, creating .meta files for new sources. No-op for packaged databases.
     [[nodiscard]] RefreshReport refresh();
     // Imports every importable asset whose cooked entry is stale. Parallel when jobs != null.
     [[nodiscard]] ImportReport import_all(jobs::JobSystem* jobs = nullptr);
@@ -86,6 +95,7 @@ private:
     [[nodiscard]] Status write_meta(const AssetRecord& r) const;
 
     fs::Path root_;
+    bool packaged_{false};
     mutable std::mutex mutex_;
     std::vector<AssetRecord> records_;
     std::unordered_map<Uuid, std::size_t, UuidHash> by_uuid_;

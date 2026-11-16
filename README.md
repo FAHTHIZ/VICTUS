@@ -33,7 +33,7 @@ VICTUS aims to give developers an end-to-end path from an empty project to a fin
 
 ## Development status
 
-VICTUS is early and not production-ready. What exists and is tested today: core runtime (jobs, memory, profiling, JSON, logging), SDL3 platform layer, an RHI on SDL_GPU (Vulkan verified), a render graph, real 2D sprite and 3D PBR/shadow rendering, an archetype ECS, a versioned scene format, a texture/glTF asset pipeline, the VICTUS editor, Luau gameplay scripting with hot reload, 3D (Jolt) and 2D (Box2D) rigid-body physics with triggers, queries and script collision events, miniaudio-based audio (buses, 3D spatialization, streaming music, script API), a standalone player and the `victus` CLI. Networking and export are not implemented yet. [docs/STATUS.md](docs/STATUS.md) lists exactly what is verified and how; [ROADMAP.md](ROADMAP.md) is the plan.
+VICTUS is early and not production-ready. What exists and is tested today: core runtime (jobs, memory, profiling, JSON, logging), SDL3 platform layer, an RHI on SDL_GPU (Vulkan verified), a render graph, real 2D sprite and 3D PBR/shadow rendering, an archetype ECS, a versioned scene format, a texture/glTF asset pipeline, the VICTUS editor, Luau gameplay scripting with hot reload, 3D (Jolt) and 2D (Box2D) rigid-body physics with triggers, queries and script collision events, miniaudio-based audio (buses, 3D spatialization, streaming music, script API), a standalone player and the `victus` CLI. `victus export` packaging. Networking is not implemented yet. [docs/STATUS.md](docs/STATUS.md) lists exactly what is verified and how; [ROADMAP.md](ROADMAP.md) is the plan.
 
 ## Quick start
 
@@ -55,7 +55,11 @@ Create, edit and run a project:
 ./build/bin/victus import MyGame                     # import/cook assets dropped into MyGame/assets
 ./build/bin/victus check MyGame                      # validate scenes and script syntax
 ./build/bin/victus simulate MyGame --frames 600 --hold D   # run gameplay + scripts headless (no GPU)
+./build/bin/victus export MyGame --out MyGame-export  # runnable folder: player + game/game.vpak
+./MyGame-export/MyGame                               # play the exported game
 ~~~
+
+`victus export` imports stale assets, validates every scene and script (it fails on syntax errors or missing script references), and writes the player executable, `game/game.vpak` (project, scenes, scripts, audio and cooked textures/models; source images and glTF files are not shipped), `THIRD_PARTY_NOTICES.txt` and an `export.json` manifest. Export for the platform you are on; cross-platform export needs a player built for the target.
 
 Template controls: 2D platformer — A/D or arrows to run, Space/W/Up to jump, collect the coins; 3D — WASD/arrows roll the ball (it knocks over the physics crate stack) and the camera follows; simulation — the camera orbits the wave field. In the editor, click the viewport after pressing Play so the game receives the keyboard.
 

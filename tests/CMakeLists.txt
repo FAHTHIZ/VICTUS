@@ -14,6 +14,7 @@ victus_add_test(victus_core_tests
         core/log_tests.cpp
         core/math_tests.cpp
         core/memory_tests.cpp
+        core/pack_tests.cpp
         core/profiler_tests.cpp
     DEPS VICTUS::Core
     LABELS core)
@@ -76,6 +77,12 @@ target_compile_definitions(victus_editor_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="$
 endif()
 
 if(VICTUS_WITH_GRAPHICS)
+victus_add_test(victus_export_tests
+    SOURCES
+        export/export_tests.cpp
+    DEPS VICTUS::Player
+    LABELS export)
+
 add_test(NAME victus_cli_smoke
     COMMAND ${CMAKE_COMMAND}
         -DVICTUS_CLI=$<TARGET_FILE:victus_cli>

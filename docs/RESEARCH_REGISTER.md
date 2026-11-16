@@ -65,6 +65,9 @@ Shortlist only, not legal determination or adopted dependencies. Check upstream 
 ## Research conclusions added 2026-11-16 (Slice 7)
 - Audio: miniaudio 0.11.26 (mackron/miniaudio, public domain or MIT-0) was verified as the latest release (published 2026-10-31, GitHub releases API) and chosen over SDL3 audio, OpenAL Soft, SoLoud and proprietary FMOD/Wwise (ADR-0010). Deciding factors: single-file build with no runtime dependencies, backends for every target platform including AAudio/OpenSL ES and Web Audio, built-in decoders and spatializer, a no-device mode for deterministic headless tests, and a license that needs no attribution. Open questions: DSP effects/reverb and HRTF (miniaudio has no HRTF; Steam Audio is a candidate), Opus decoding, streaming from packed archives.
 
+## Research conclusions added 2026-11-16 (Slice 8)
+- Packaging: an owned `.vpak` format was chosen over zip (miniz/libzip) and PhysicsFS (ADR-0011) to keep the parsing surface small, keep payloads aligned for future memory mapping, verify per-entry checksums and produce byte-reproducible exports; no new dependency was added. Open questions: compression codec (LZ4 for speed vs. zstd for ratio), GPU texture compression (ASTC for mobile, BC7 for desktop, e.g. via Basis Universal/KTX2), signing, and platform bundles (APK/AAB, iOS/macOS app bundles).
+
 ## Open research questions
 Graphics: actual backend/device support; Android Vulkan/fallback; Apple Metal; shader compile/reflection/hot reload; abstraction overhead; multithreaded recording/synchronization; 2D/3D shared resource model.
 Gameplay: data-oriented ECS versus higher-level object facade; reflection/serialization; visual graph runtime; prefab references/variants; deterministic gameplay testing.

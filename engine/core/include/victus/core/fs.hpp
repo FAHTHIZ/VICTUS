@@ -4,10 +4,15 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace victus::pack {
+class Pack;
+}
 
 namespace victus::fs {
 
@@ -24,6 +29,21 @@ using Path = std::filesystem::path;
 [[nodiscard]] Result<std::string> sanitize_relative(std::string_view relative);
 // Resolves a sanitized relative path under root.
 [[nodiscard]] Result<Path> resolve_under(const Path& root, std::string_view relative);
+
+// Virtual mounts: a pack mounted at `root` makes its entries readable as `root/<entry>` through
+// read_binary/read_text/exists/list_files (mounted content wins over loose files). Used by the
+// player to run exported games from `game.vpak` without touching game code. Thread-safe.
+void mount(const Path& root, std::shared_ptr<const pack::Pack> pack);
+void unmount(const Path& root);
+void unmount_all();
+[[nodiscard]] bool is_mounted(const Path& root);
+// True when `path` names an entry of a mounted pack (reads come from the pack, not the disk).
+[[nodiscard]] bool is_virtual(const Path& path);
+// True for a regular file on disk or an entry of a mounted pack.
+[[nodiscard]] bool exists(const Path& path);
+// Recursive file listing under `dir` (relative '/'-separated paths, sorted, de-duplicated),
+// merging loose files and mounted pack entries. Hidden entries ('.'-prefixed) are skipped.
+[[nodiscard]] std::vector<std::string> list_files(const Path& dir);
 
 [[nodiscard]] Path executable_path();
 [[nodiscard]] Path executable_dir();

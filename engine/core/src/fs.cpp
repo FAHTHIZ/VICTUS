@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/core/fs.hpp"
 
+#include "victus/core/pack.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <format>
 #include <fstream>
+#include <algorithm>
+#include <mutex>
 #include <random>
+#include <set>
+#include <utility>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -23,7 +29,126 @@
 
 namespace victus::fs {
 
+namespace {
+
+struct Mount {
+    Path root; // absolute, lexically normal
+    std::shared_ptr<const pack::Pack> pack;
+};
+
+std::mutex g_mount_mutex;
+std::vector<Mount> g_mounts;
+
+Path normal_abs(const Path& p) {
+    std::error_code ec;
+    Path a = std::filesystem::absolute(p, ec);
+    if (ec) a = p;
+    a = a.lexically_normal();
+    // "dir/sub/.." normalizes to "dir/"; drop the trailing separator so it compares equal to "dir".
+    if (!a.has_filename() && a.has_relative_path()) a = a.parent_path();
+    return a;
+}
+
+// Relative '/' path of `p` under `root`, or empty when outside (or equal to) root.
+std::string relative_under(const Path& p, const Path& root) {
+    const Path rel = p.lexically_relative(root);
+    if (rel.empty()) return {};
+    std::string s = rel.generic_string();
+    if (s == "." || s.starts_with("..")) return {};
+    if (s.ends_with("/.")) s.resize(s.size() - 2);
+    return s;
+}
+
+std::vector<Mount> mounts_snapshot() {
+    std::lock_guard lock(g_mount_mutex);
+    return g_mounts;
+}
+
+} // namespace
+
+void mount(const Path& root, std::shared_ptr<const pack::Pack> pack) {
+    const Path r = normal_abs(root);
+    std::lock_guard lock(g_mount_mutex);
+    std::erase_if(g_mounts, [&](const Mount& m) { return m.root == r; });
+    if (pack) g_mounts.push_back({r, std::move(pack)});
+}
+
+void unmount(const Path& root) { mount(root, nullptr); }
+
+void unmount_all() {
+    std::lock_guard lock(g_mount_mutex);
+    g_mounts.clear();
+}
+
+bool is_mounted(const Path& root) {
+    const Path r = normal_abs(root);
+    std::lock_guard lock(g_mount_mutex);
+    return std::any_of(g_mounts.begin(), g_mounts.end(), [&](const Mount& m) { return m.root == r; });
+}
+
+bool is_virtual(const Path& path) {
+    const auto mounts = mounts_snapshot();
+    if (mounts.empty()) return false;
+    const Path p = normal_abs(path);
+    for (const Mount& m : mounts) {
+        const std::string rel = relative_under(p, m.root);
+        if (!rel.empty() && m.pack->contains(rel)) return true;
+    }
+    return false;
+}
+
+bool exists(const Path& path) {
+    const auto mounts = mounts_snapshot();
+    if (!mounts.empty()) {
+        const Path p = normal_abs(path);
+        for (const Mount& m : mounts) {
+            const std::string rel = relative_under(p, m.root);
+            if (!rel.empty() && m.pack->contains(rel)) return true;
+        }
+    }
+    std::error_code ec;
+    return std::filesystem::is_regular_file(path, ec);
+}
+
+std::vector<std::string> list_files(const Path& dir) {
+    std::set<std::string> out;
+    const auto mounts = mounts_snapshot();
+    if (!mounts.empty()) {
+        const Path d = normal_abs(dir);
+        for (const Mount& m : mounts) {
+            if (d == m.root) {
+                for (auto& e : m.pack->list()) out.insert(std::move(e));
+                continue;
+            }
+            const std::string rel = relative_under(d, m.root);
+            if (rel.empty()) continue;
+            for (const auto& e : m.pack->list(rel)) out.insert(e.substr(rel.size() + 1));
+        }
+    }
+    std::error_code ec;
+    for (auto it = std::filesystem::recursive_directory_iterator(dir, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+        const std::string name = it->path().filename().string();
+        if (!name.empty() && name[0] == '.') {
+            if (it->is_directory(ec)) it.disable_recursion_pending();
+            continue;
+        }
+        if (it->is_regular_file(ec)) out.insert(std::filesystem::relative(it->path(), dir, ec).generic_string());
+    }
+    std::vector<std::string> v;
+    for (const auto& s : out)
+        if (!s.empty() && s[0] != '.' && s.find("/.") == std::string::npos) v.push_back(s);
+    return v;
+}
+
 Result<std::vector<std::uint8_t>> read_binary(const Path& path, std::uint64_t max_bytes) {
+    if (const auto mounts = mounts_snapshot(); !mounts.empty()) {
+        const Path p = normal_abs(path);
+        for (const Mount& m : mounts) {
+            const std::string rel = relative_under(p, m.root);
+            if (!rel.empty() && m.pack->contains(rel)) return m.pack->read(rel, max_bytes);
+        }
+    }
     std::error_code ec;
     const auto size = std::filesystem::file_size(path, ec);
     if (ec) return make_error(ErrorCode::NotFound, std::format("cannot stat '{}': {}", path.string(), ec.message()));

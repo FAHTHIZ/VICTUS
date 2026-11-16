@@ -2,7 +2,7 @@
 
 Living, evidence-driven plan. Work directly on `main` in small, buildable commits. Status reflects verified repository state, never ambition.
 
-**Current maturity:** core runtime, platform, RHI, real 2D/3D renderer (Vulkan verified), ECS/scenes, asset pipeline, an editor with project templates, a standalone player, a `victus` CLI, Luau gameplay scripting with hot reload and 3D/2D rigid-body physics (Jolt/Box2D) and audio (miniaudio). No networking or export yet. Not a production engine.
+**Current maturity:** core runtime, platform, RHI, real 2D/3D renderer (Vulkan verified), ECS/scenes, asset pipeline, an editor with project templates, a standalone player, a `victus` CLI, Luau gameplay scripting with hot reload and 3D/2D rigid-body physics (Jolt/Box2D) and audio (miniaudio), and `victus export` packaging into a pack-based runnable game folder. No networking yet. Not a production engine.
 
 Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocked.
 
@@ -18,7 +18,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 - [~] Lifecycle, ownership, shutdown ordering, error/result types and validated configuration. (Result/Error, JSON config parsing done.)
 - [x] Structured logging, diagnostic events, crash context, build metadata and tracing.
 - [~] Platform services: filesystem, paths, clock, threads, window, input, device capabilities and lifecycle. (SDL3 windows, keyboard/mouse/gamepad/touch input, lifecycle events, clipboard, GPU capabilities implemented; mobile lifecycle untested on devices.)
-- [~] CLI modes: editor, game, headless, cook, test, benchmark and package. (`victus new/templates/info/import/run`, `victus_editor`, `victus_player` done; package/cook/headless pending.)
+- [~] CLI modes: editor, game, headless, cook, test, benchmark and package. (`victus new/templates/info/import/run/check/simulate/export`, `victus_editor`, `victus_player` done; `simulate` is the headless mode and `export` packages; a separate cook-only command is pending.)
 - [~] Stable project configuration and runtime/editor/server target separation. (Versioned `victus.project`; separate editor and player targets; server target pending.)
 **Exit:** predictable lifecycle and useful diagnostics in graphical and headless modes.
 
@@ -130,7 +130,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 **Exit:** two or more clients play a representative networked game against an authoritative dedicated server under repeatable network tests.
 
 ## Phase 13 — Production, collaboration and ecosystem
-- [ ] Build automation, asset cooking, incremental compilation, caching and reproducible packaging.
+- [~] Build automation, asset cooking, incremental compilation, caching and reproducible packaging. Done (Slice 8): `victus export` (validated, byte-reproducible `.vpak` archive with checksummed entries, cooked-only assets, embedded third-party notices, manifest) and the player's packaged mode. Remaining: compression, GPU texture compression (ASTC/BC), cross-platform targets, signing, build automation.
 - [ ] Hot reload for code/assets/shaders where safe; clear fallback when reload is unsupported.
 - [ ] Automated unit/integration/gameplay tests, smoke tests and deterministic regression captures.
 - [ ] Crash reporting, symbol handling, diagnostics export and privacy controls.
