@@ -17,8 +17,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DVICTUS_BUILD_TESTS=ON
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DVICTUS_BUILD_TESTS=ON -DVICTUS_WARNINGS_AS_ERRORS=ON
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
       - name: Test
         run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
+  sanitizers:
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitize: ["address,undefined", "thread"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DVICTUS_SANITIZE=${{ matrix.sanitize }} -DVICTUS_BUILD_BENCHMARKS=OFF
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

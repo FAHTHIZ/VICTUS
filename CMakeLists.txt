@@ -1,34 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
 cmake_minimum_required(VERSION 3.24)
-project(VICTUS VERSION 0.1.0 DESCRIPTION "Simulation-first cross-platform real-time engine" LANGUAGES CXX)
+project(VICTUS VERSION 0.2.0 DESCRIPTION "Independent cross-platform game engine" LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 option(VICTUS_BUILD_TESTS "Build VICTUS automated tests" ON)
+option(VICTUS_BUILD_BENCHMARKS "Build VICTUS benchmark executables" ON)
 option(VICTUS_WARNINGS_AS_ERRORS "Treat project warnings as errors" OFF)
+set(VICTUS_SANITIZE "" CACHE STRING "Sanitizers for VICTUS targets: '', 'address,undefined', 'thread'")
 
-add_library(victus_core src/core/engine_clock.cpp)
-add_library(VICTUS::Core ALIAS victus_core)
-target_include_directories(victus_core PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
-target_compile_features(victus_core PUBLIC cxx_std_20)
+include(VictusTargets)
 
-if(MSVC)
-    target_compile_options(victus_core PRIVATE /W4 /permissive-)
-    if(VICTUS_WARNINGS_AS_ERRORS)
-        target_compile_options(victus_core PRIVATE /WX)
-    endif()
-else()
-    target_compile_options(victus_core PRIVATE -Wall -Wextra -Wpedantic)
-    if(VICTUS_WARNINGS_AS_ERRORS)
-        target_compile_options(victus_core PRIVATE -Werror)
-    endif()
+if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
 
-add_executable(victus_runtime src/runtime/main.cpp)
-target_link_libraries(victus_runtime PRIVATE VICTUS::Core)
+add_subdirectory(engine/core)
 
 if(VICTUS_BUILD_TESTS)
     enable_testing()
-    add_executable(victus_core_tests tests/core/engine_clock_tests.cpp)
-    target_link_libraries(victus_core_tests PRIVATE VICTUS::Core)
-    add_test(NAME victus_core_tests COMMAND victus_core_tests)
+    add_subdirectory(tests)
+endif()
+if(VICTUS_BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
 endif()
