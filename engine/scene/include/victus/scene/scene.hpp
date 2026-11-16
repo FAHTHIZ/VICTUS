@@ -162,6 +162,10 @@ public:
     [[nodiscard]] bool is_descendant(Entity e, Entity ancestor) const noexcept;
     // Deep copy of an entity subtree (new UUIDs), parented next to the original.
     Entity duplicate(Entity e);
+    // Moves `e` immediately before sibling `next` (adopting next's parent), or to the end of
+    // `parent`'s children when `next` is null. Rejects cycles. Keeps the local transform.
+    bool move_before(Entity e, Entity next, Entity parent = kNullEntity);
+    [[nodiscard]] Entity next_sibling(Entity e) const noexcept;
 
     [[nodiscard]] Entity find(Uuid uuid) const noexcept;
     [[nodiscard]] Entity find_by_name(std::string_view name) const;
@@ -181,6 +185,18 @@ public:
     [[nodiscard]] Status save_file(const std::filesystem::path& path) const;
     [[nodiscard]] Status load_file(const std::filesystem::path& path);
 
+    // Per-entity snapshots (editor undo/redo, prefabs, network baselines). A snapshot holds
+    // uuid, name, parent uuid, the uuid of the next sibling (ordering) and all serializable
+    // components; it does not include children.
+    [[nodiscard]] json::Value save_entity(Entity e) const;
+    // Snapshots of `e` and its descendants, parents first.
+    [[nodiscard]] json::Value save_subtree(Entity e) const;
+    // Creates the entity if its uuid is unknown, otherwise replaces its name, parent, order and
+    // components with the snapshot's. The parent (if any) must already exist.
+    [[nodiscard]] Result<Entity> restore_entity(const json::Value& snapshot);
+    // Restores a save_subtree() array in order.
+    [[nodiscard]] Status restore_subtree(const json::Value& snapshots);
+
     std::string name{"Untitled"};
 
 private:
@@ -188,6 +204,7 @@ private:
     void unlink(Entity child);
     void collect_subtree(Entity e, std::vector<Entity>& out) const;
     void fix_depth(Entity e, std::uint32_t depth);
+    [[nodiscard]] Status load_components(Entity e, const json::Value& comps);
 
     ecs::World world_;
     std::unordered_map<Uuid, Entity, UuidHash> by_uuid_;

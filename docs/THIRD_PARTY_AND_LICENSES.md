@@ -20,6 +20,7 @@ Mandatory for code, libraries, SDKs, tools, datasets, fonts, models, textures, a
 | doctest | 2.5.3 (vendored `third_party/doctest`) | MIT | Unit tests only | Not shipped in games |
 | stb (stb_image, stb_image_write, stb_truetype) | commit `9600522de53973336fa033a289858a4354cbb04c` (vendored `third_party/stb`) | MIT or public domain (dual, `third_party/stb/LICENSE`) | Image decode/encode, font rasterisation | Linked into engine |
 | cgltf | v1.15 (vendored `third_party/cgltf/cgltf.h`, SHA-256 `e378a21c084bf1f288bb799de827bb26906efb024255f1ecf1705ea13f11c6ec`) | MIT (`third_party/cgltf/LICENSE`, Copyright (c) 2018-2021 Johannes Kuhlmann) | glTF 2.0 / GLB parsing in the asset importer | Linked into editor/cooker; notice must ship |
+| Dear ImGui | v1.93.0-docking, commit `b916186e66aa3c02b72c6ca17455516512ed8049` (vendored `third_party/imgui`, unmodified; core + `backends/imgui_impl_sdl3` + `misc/cpp/imgui_stdlib`) | MIT (`third_party/imgui/LICENSE.txt`, Copyright (c) 2014-2026 Omar Cornut); embedded ProggyClean and ProggyForever fonts MIT (Tristan Grimmer; Disco Hello) | Editor UI (`engine/ui`, `victus_editor`) | Linked into editor and, via `engine/ui`, available to tools; notice must ship with the editor |
 | glslang (glslangValidator) | build-time tool only | BSD-3-Clause / mixed (tool, not redistributed) | GLSL → SPIR-V for built-in shaders | Not shipped; generated SPIR-V is VICTUS output |
 | SPIRV-Cross | build-time tool only | Apache-2.0 (tool, not redistributed) | SPIR-V → MSL and reflection | Not shipped |
 | Mesa lavapipe | CI/test environment only | MIT | Software Vulkan for headless GPU tests | Not shipped |
@@ -40,7 +41,7 @@ Mandatory for code, libraries, SDKs, tools, datasets, fonts, models, textures, a
 | glTF loaders | Import | Verify exact release |
 | KTX/Basis | Texture/transcoding | Verify release and codecs |
 | miniaudio | Audio | MIT-0/public-domain option |
-| Dear ImGui/ImGuizmo | Editor/gizmos | MIT |
+| ImGuizmo | Editor gizmos | MIT |
 | Tracy | Profiling | BSD-3-Clause |
 | Blender | External authoring | GPL-3.0-or-later; keep external |
 | OpenUSD | Scene interchange | Apache-2.0; inspect dependencies |

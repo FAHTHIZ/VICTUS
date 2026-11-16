@@ -25,6 +25,14 @@ Vec2 Camera2D::screen_to_world(Vec2 pixel, float w, float h) const noexcept {
     return Vec2{local.x * c - local.y * s, local.x * s + local.y * c} + position;
 }
 
+Vec2 Camera2D::world_to_screen(Vec2 world, float w, float h) const noexcept {
+    const float scale = pixels_per_unit * (zoom <= 0 ? 1.0f : zoom);
+    const Vec2 d = world - position;
+    const float c = std::cos(rotation), s = std::sin(rotation);
+    const Vec2 local{d.x * c + d.y * s, -d.x * s + d.y * c};
+    return {w * 0.5f + local.x * scale, h * 0.5f - local.y * scale};
+}
+
 Result<std::unique_ptr<SpriteBatch>> SpriteBatch::create(GpuContext& ctx, rhi::Format color_format, rhi::BlendMode blend) {
     std::unique_ptr<SpriteBatch> b(new SpriteBatch(ctx));
     auto vs = ctx.shader("sprite.vert");

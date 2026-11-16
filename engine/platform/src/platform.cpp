@@ -5,6 +5,9 @@
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
+#include <mutex>
+
 #include <cstring>
 #include <format>
 
@@ -207,11 +210,61 @@ void Platform::handle_gamepad_added(std::uint32_t id) {
     SDL_CloseGamepad(g);
 }
 
+struct Platform::DialogState {
+    struct Request {
+        std::function<void(std::string)> done;
+        std::string result;
+        std::atomic<bool> finished{false};
+    };
+    std::mutex mutex;
+    std::vector<std::shared_ptr<Request>> pending;
+};
+
+void Platform::show_folder_dialog(Window* parent, const std::string& default_location,
+                                  std::function<void(std::string)> done) {
+    if (!dialogs_) dialogs_ = std::make_shared<DialogState>();
+    auto req = std::make_shared<DialogState::Request>();
+    req->done = std::move(done);
+    {
+        std::lock_guard lock(dialogs_->mutex);
+        dialogs_->pending.push_back(req);
+    }
+    // SDL may invoke the callback on another thread; it only records the result.
+    auto* raw = new std::shared_ptr<DialogState::Request>(req);
+    SDL_ShowOpenFolderDialog(
+        [](void* userdata, const char* const* files, int) {
+            auto* holder = static_cast<std::shared_ptr<DialogState::Request>*>(userdata);
+            (*holder)->result = (files && files[0]) ? files[0] : "";
+            (*holder)->finished.store(true, std::memory_order_release);
+            delete holder;
+        },
+        raw, parent ? static_cast<SDL_Window*>(parent->native()) : nullptr,
+        default_location.empty() ? nullptr : default_location.c_str(), false);
+}
+
 std::vector<Event> Platform::poll_events() {
     std::vector<Event> out;
+    if (dialogs_) {
+        std::vector<std::shared_ptr<DialogState::Request>> done;
+        {
+            std::lock_guard lock(dialogs_->mutex);
+            auto& p = dialogs_->pending;
+            for (auto it = p.begin(); it != p.end();) {
+                if ((*it)->finished.load(std::memory_order_acquire)) {
+                    done.push_back(*it);
+                    it = p.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        for (auto& r : done)
+            if (r->done) r->done(r->result);
+    }
     input_.begin_frame();
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
+        if (native_hook_) native_hook_(&e);
         switch (e.type) {
         case SDL_EVENT_QUIT:
             quit_ = true;

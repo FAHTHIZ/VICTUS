@@ -16,6 +16,8 @@ struct Camera2D {
     [[nodiscard]] math::Mat4 view_projection(float viewport_width, float viewport_height) const noexcept;
     // Viewport pixel (origin top-left) to world position.
     [[nodiscard]] math::Vec2 screen_to_world(math::Vec2 pixel, float viewport_width, float viewport_height) const noexcept;
+    // World position to viewport pixel (origin top-left); inverse of screen_to_world.
+    [[nodiscard]] math::Vec2 world_to_screen(math::Vec2 world, float viewport_width, float viewport_height) const noexcept;
 };
 
 struct Sprite {
