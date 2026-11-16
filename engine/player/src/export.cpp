@@ -140,6 +140,24 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         });
     }
 
+    // Materials: every material must parse; texture references must name texture assets.
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::Material) continue;
+        auto m = (*db)->load_material(r.uuid);
+        if (!m) {
+            errors.push_back(m.error().message);
+            continue;
+        }
+        const auto refs = m->textures();
+        for (std::size_t i = 0; i < refs.size(); ++i) {
+            if (refs[i]->is_nil()) continue;
+            const assets::AssetRecord* t = (*db)->find(*refs[i]);
+            if (!t || t->kind != assets::AssetKind::Texture)
+                errors.push_back(std::format("{}: {} texture {} does not exist", r.path, assets::kMaterialTextureSlotNames[i],
+                                             refs[i]->to_string()));
+        }
+    }
+
     // Scenes: every scene must load; references to scripts and audio clips must resolve.
     std::vector<std::string> scenes = proj->scenes();
     if (std::find(scenes.begin(), scenes.end(), proj->settings().startup_scene) == scenes.end())
@@ -164,6 +182,13 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         scene.world().each<script::ScriptComponent>([&](scene::Entity e, script::ScriptComponent& c) {
             if (!c.script.empty() && !asset_paths.contains(c.script))
                 errors.push_back(std::format("{}: entity '{}' uses missing script '{}'", rel, entity_label(scene, e), c.script));
+        });
+        scene.world().each<scene::MeshRendererComponent>([&](scene::Entity e, scene::MeshRendererComponent& c) {
+            if (c.material_asset.is_nil()) return;
+            const assets::AssetRecord* m = (*db)->find(c.material_asset);
+            if (!m || m->kind != assets::AssetKind::Material)
+                errors.push_back(std::format("{}: entity '{}' uses missing material {}", rel, entity_label(scene, e),
+                                             c.material_asset.to_string()));
         });
         scene.world().each<audio::AudioSourceComponent>([&](scene::Entity e, audio::AudioSourceComponent& c) {
             if (!c.clip.empty() && !asset_paths.contains(c.clip))

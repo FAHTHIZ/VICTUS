@@ -41,6 +41,12 @@ public:
     [[nodiscard]] Result<const GpuModel*> model(const Uuid& uuid);
     // Registers an already-cooked model under a UUID (tools, tests, procedural content).
     [[nodiscard]] Result<const GpuModel*> add_model(const Uuid& uuid, assets::CookedModel model);
+    // Material asset (.vmat) resolved to a render material with its textures uploaded. Results
+    // (including failures) are cached until evict()/clear(), so a broken file is read once, not
+    // every frame. Missing or non-texture references leave the slot empty (white/flat default).
+    [[nodiscard]] Result<render::Material> material(const Uuid& uuid);
+    // Drops cached materials only (after a .vmat changed on disk).
+    void evict_materials() noexcept { materials_.clear(); }
     // Built-in primitive mesh: "cube", "sphere", "plane", "cylinder". nullptr when unknown.
     [[nodiscard]] const render::GpuMesh* primitive(std::string_view name);
     // Drops one asset (e.g. after re-import) so the next request reloads it.
@@ -55,6 +61,7 @@ private:
     std::unordered_map<Uuid, rhi::TextureHandle, UuidHash> textures_;
     std::unordered_map<Uuid, std::unique_ptr<GpuModel>, UuidHash> models_;
     std::unordered_map<std::string, render::GpuMesh> primitives_;
+    std::unordered_map<Uuid, Result<render::Material>, UuidHash> materials_;
 };
 
 // Creates one entity per model node under `parent` (a new root named `name` when parent is

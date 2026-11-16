@@ -213,3 +213,42 @@ TEST_CASE("export: broken scripts and missing references fail the export") {
     REQUIRE_FALSE(r.ok());
     CHECK(r.error().code == ErrorCode::NotFound);
 }
+
+TEST_CASE("export: materials ship verbatim and broken material references fail the export") {
+    TempDir tmp("victus_export_mat");
+    const fs::Path src = make_project(tmp.path);
+    player::ExportOptions o;
+    o.project = src;
+    o.output = tmp.path / "out";
+    o.include_player = false;
+    auto db = assets::AssetDatabase::open(src);
+    REQUIRE(db.ok());
+    const Uuid logo = (*db)->find_path("textures/logo.png")->uuid;
+
+    assets::MaterialAsset m;
+    m.base_color_texture = logo;
+    m.uv_scale = {2, 2};
+    REQUIRE(assets::save_material_file(src / "assets" / "materials" / "tiles.vmat", m).ok());
+    auto r = player::export_game(o);
+    REQUIRE_MESSAGE(r.ok(), (r.ok() ? "" : r.error().message));
+    {
+        // Materials are used from source: the file ships as-is.
+        auto pack = pack::Pack::open(r->pack);
+        REQUIRE(pack.ok());
+        CHECK((*pack)->contains("assets/materials/tiles.vmat"));
+    }
+
+    // A material pointing at a texture that does not exist.
+    m.normal_texture = Uuid::generate();
+    REQUIRE(assets::save_material_file(src / "assets" / "materials" / "tiles.vmat", m).ok());
+    std::filesystem::remove_all(o.output);
+    r = player::export_game(o);
+    REQUIRE_FALSE(r.ok());
+    CHECK(r.error().message.find("Normal texture") != std::string::npos);
+
+    // A malformed material file.
+    REQUIRE(fs::write_text_atomic(src / "assets" / "materials" / "tiles.vmat", "{\"victus_material\": 1, \"metallic\": \"x\"}").ok());
+    r = player::export_game(o);
+    REQUIRE_FALSE(r.ok());
+    CHECK(r.error().message.find("metallic") != std::string::npos);
+}

@@ -11,6 +11,7 @@
 // importer id/version + settings) and all dependency hashes still match.
 #pragma once
 #include "victus/assets/cooked.hpp"
+#include "victus/assets/material.hpp"
 #include "victus/assets/importers.hpp"
 #include "victus/core/hash.hpp"
 #include "victus/core/jobs.hpp"
@@ -79,6 +80,8 @@ public:
     // Loads cooked data, importing first when stale.
     [[nodiscard]] Result<CookedTexture> load_texture(const Uuid& uuid);
     [[nodiscard]] Result<CookedModel> load_model(const Uuid& uuid);
+    // Material assets (.vmat) are read from source; texture references are not resolved here.
+    [[nodiscard]] Result<MaterialAsset> load_material(const Uuid& uuid) const;
 
     // Changes import settings (writes the .meta); the next import re-cooks.
     [[nodiscard]] Status set_settings(const Uuid& uuid, json::Value settings);

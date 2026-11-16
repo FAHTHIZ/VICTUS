@@ -5,6 +5,7 @@ add_library(victus_editor_core STATIC
     src/editor.cpp
     src/panels.cpp
     src/network_panel.cpp
+    src/material_panel.cpp
     src/editor_clients.cpp)
 add_library(VICTUS::EditorCore ALIAS victus_editor_core)
 target_include_directories(victus_editor_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

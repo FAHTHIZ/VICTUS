@@ -885,3 +885,80 @@ TEST_CASE("editor: in-editor clients join the hosted session and the view switch
     CHECK(&h.ed->active_scene() == &h.ed->edit_scene());
     h.ed->set_game_input_override(nullptr);
 }
+
+TEST_CASE("editor: materials are created from a selection, edited, assigned with undo and hot-reloaded") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Mat", "Mat", "3d").ok());
+    h.frames(2);
+    auto& ed = *h.ed;
+    Scene& s = ed.edit_scene();
+    const auto assets_dir = h.dir / "Mat" / "assets";
+    auto png = render::encode_png(render::make_checker(16, 2, 0xff0000ffu, 0xff00ff00u));
+    REQUIRE(png.ok());
+    REQUIRE(fs::write_atomic(assets_dir / "bricks.png", *png).ok());
+    (void)ed.check_asset_changes();
+    REQUIRE(ed.assets()->find_path("bricks.png"));
+    const Uuid tex = ed.assets()->find_path("bricks.png")->uuid; // records move on refresh: keep the id
+
+    const Entity box = ed.create_entity(editor::Primitive::Cube);
+    ed.rename(box, "Crate");
+    s.world().get<MeshRendererComponent>(box)->base_color = {0.2f, 0.4f, 0.6f, 1};
+    ed.select(box);
+
+    // New Material starts from the entity's look and takes over its colour.
+    ed.new_material_for_selection();
+    const Uuid mat = s.world().get<MeshRendererComponent>(box)->material_asset;
+    REQUIRE_FALSE(mat.is_nil());
+    const auto* rec = ed.assets()->find(mat);
+    REQUIRE(rec);
+    CHECK(rec->path == "materials/Crate.vmat");
+    CHECK(rec->kind == assets::AssetKind::Material);
+    CHECK(ed.material_editor_open());
+    CHECK(ed.editing_material() == mat);
+    auto loaded = ed.assets()->load_material(mat);
+    REQUIRE(loaded);
+    CHECK(loaded->base_color.b == doctest::Approx(0.6f));
+    CHECK(s.world().get<MeshRendererComponent>(box)->base_color == math::Color{1, 1, 1, 1});
+    h.frames(3); // Material Editor window drawn
+
+    // Edit + save: texture and tiling persist; our own save is not reported as an outside change.
+    assets::MaterialAsset edited = *loaded;
+    edited.base_color_texture = tex;
+    edited.uv_scale = {3, 3};
+    REQUIRE(ed.save_material(mat, edited).ok());
+    sfs::last_write_time(assets_dir / "materials" / "Crate.vmat", sfs::file_time_type::clock::now() + std::chrono::seconds(2));
+    // (touching the mtime alone keeps our hash, so it still counts as our save)
+    const std::size_t before = ed.messages().size();
+    (void)ed.check_asset_changes();
+    for (std::size_t i = before; i < ed.messages().size(); ++i) CHECK(ed.messages()[i].find("Crate.vmat") == std::string::npos);
+    auto reread = assets::load_material_file(assets_dir / "materials" / "Crate.vmat");
+    REQUIRE(reread);
+    CHECK(reread->base_color_texture == tex);
+    CHECK(reread->uv_scale == math::Vec2{3, 3});
+    h.frames(2);
+
+    // An outside edit is reported and picked up by the open editor.
+    edited.roughness = 0.95f;
+    REQUIRE(assets::save_material_file(assets_dir / "materials" / "Crate.vmat", edited).ok());
+    sfs::last_write_time(assets_dir / "materials" / "Crate.vmat", sfs::file_time_type::clock::now() + std::chrono::seconds(4));
+    CHECK(ed.check_asset_changes() >= 1);
+    const auto& msgs = ed.messages();
+    CHECK(std::find(msgs.begin(), msgs.end(), "Reloaded material materials/Crate.vmat") != msgs.end());
+    h.frames(2);
+
+    // Assignment is undoable; non-material assets are rejected.
+    CHECK(ed.assign_material(box, {}));
+    CHECK(s.world().get<MeshRendererComponent>(box)->material_asset.is_nil());
+    ed.undo();
+    CHECK(s.world().get<MeshRendererComponent>(s.find_by_name("Crate"))->material_asset == mat);
+    CHECK_FALSE(ed.assign_material(s.find_by_name("Crate"), tex));
+
+    // The material reference survives a scene save/reopen.
+    REQUIRE(ed.save_scene().ok());
+    const std::string scene_file = ed.scene_path();
+    REQUIRE(ed.open_scene(scene_file).ok());
+    CHECK(ed.edit_scene().world().get<MeshRendererComponent>(ed.edit_scene().find_by_name("Crate"))->material_asset == mat);
+    h.frames(2);
+}

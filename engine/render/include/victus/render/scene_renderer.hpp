@@ -37,6 +37,10 @@ struct Material {
     float roughness{0.5f};
     float normal_scale{1.0f};
     float alpha_cutoff{0.0f}; // >0 enables alpha testing
+    // Texture coordinates are transformed as uv * uv_scale + uv_offset before sampling (tiling).
+    math::Vec2 uv_scale{1, 1};
+    math::Vec2 uv_offset{0, 0};
+    bool nearest_filter{false}; // point sampling (pixel art); default is trilinear
     rhi::TextureHandle base_color_texture, metallic_roughness_texture, normal_texture, emissive_texture;
     bool double_sided{false};
     bool unlit{false};

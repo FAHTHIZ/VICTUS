@@ -179,6 +179,7 @@ const char* kind_icon(assets::AssetKind k) {
     case assets::AssetKind::Script: return "[lua]";
     case assets::AssetKind::Audio: return "[snd]";
     case assets::AssetKind::Prefab: return "[pfb]";
+    case assets::AssetKind::Material: return "[mat]";
     default: return "[file]";
     }
 }
@@ -360,6 +361,7 @@ void Editor::draw_workspace(float) {
     draw_console();
     draw_input_actions();
     draw_network();
+    draw_material_editor();
     draw_status_bar();
     handle_shortcuts();
 }
@@ -429,6 +431,8 @@ void Editor::draw_menu_bar() {
     }
     if (ImGui::BeginMenu("Assets")) {
         if (ImGui::MenuItem("Reimport All")) (void)reimport_assets();
+        if (ImGui::MenuItem("New Material", nullptr, false, db_ != nullptr)) new_material_for_selection();
+        ImGui::MenuItem("Material Editor", nullptr, &show_material_editor_);
         if (ImGui::MenuItem("Copy Assets Folder Path") && platform_) platform_->set_clipboard(project_->assets_dir().string());
         ImGui::EndMenu();
     }
@@ -883,9 +887,39 @@ bool Editor::inspect_components(Entity e) {
         } else {
             ImGui::Text("Mesh: %s #%u", asset_label(db_.get(), m->mesh_asset).c_str(), m->mesh_index);
         }
-        changed |= color_edit("Base Color", m->base_color);
-        changed |= ImGui::SliderFloat("Metallic", &m->metallic, 0.0f, 1.0f);
-        changed |= ImGui::SliderFloat("Roughness", &m->roughness, 0.0f, 1.0f);
+        ImGui::TextUnformatted("Material");
+        const float mat_buttons = m->material_asset.is_nil() ? ImGui::CalcTextSize("New").x + 24.0f
+                                                             : ImGui::CalcTextSize("EditClear").x + 40.0f;
+        ImGui::Button((asset_label(db_.get(), m->material_asset) + "##material").c_str(), ImVec2(-mat_buttons, 0));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop a material (.vmat) from Assets here");
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
+                Uuid id;
+                std::memcpy(&id, p->Data, sizeof(Uuid));
+                if (const auto* rec = db_->find(id); rec && rec->kind == assets::AssetKind::Material) {
+                    m->material_asset = id;
+                    changed = true;
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+        if (m->material_asset.is_nil()) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("New")) new_material_for_selection();
+        } else {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Edit")) open_material_editor(m->material_asset);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear##mat")) {
+                m->material_asset = {};
+                changed = true;
+            }
+        }
+        changed |= color_edit(m->material_asset.is_nil() ? "Base Color" : "Tint", m->base_color);
+        if (m->material_asset.is_nil()) {
+            changed |= ImGui::SliderFloat("Metallic", &m->metallic, 0.0f, 1.0f);
+            changed |= ImGui::SliderFloat("Roughness", &m->roughness, 0.0f, 1.0f);
+        }
         changed |= ImGui::Checkbox("Cast Shadows", &m->cast_shadows);
         ImGui::SameLine();
         changed |= ImGui::Checkbox("Visible", &m->visible);
@@ -1238,6 +1272,8 @@ void Editor::draw_assets() {
                     if (auto* a = audio()) {
                         if (auto st = a->play_one_shot(r.path, {.bus = audio::Bus::Ui}); !st) notify(st.error().message, true);
                     }
+                } else if (r.kind == assets::AssetKind::Material) {
+                    open_material_editor(r.uuid);
                 } else if (r.kind == assets::AssetKind::Texture) {
                     const Entity e = selected();
                     if (auto* sp = e.is_null() ? nullptr : active_scene().world().get<SpriteComponent>(e)) {
@@ -1253,6 +1289,7 @@ void Editor::draw_assets() {
                                                           : r.kind == assets::AssetKind::Texture ? "assign to selected sprite"
                                                           : r.kind == assets::AssetKind::Script ? "attach to selected entity"
                                                           : r.kind == assets::AssetKind::Audio  ? "preview"
+                                                          : r.kind == assets::AssetKind::Material ? "edit"
                                                                                                  : "-");
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", assets::to_string(r.kind));

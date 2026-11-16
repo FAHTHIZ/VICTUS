@@ -24,9 +24,12 @@ void GpuAssetCache::clear() {
     models_.clear();
     for (auto& [name, mesh] : primitives_) ctx_.destroy(mesh);
     primitives_.clear();
+    materials_.clear();
 }
 
 void GpuAssetCache::evict(const Uuid& uuid) {
+    // Materials hold texture handles: any eviction may invalidate them, and they are cheap to rebuild.
+    materials_.clear();
     if (const auto it = textures_.find(uuid); it != textures_.end()) {
         ctx_.device().destroy(it->second);
         textures_.erase(it);
@@ -50,6 +53,45 @@ Result<rhi::TextureHandle> GpuAssetCache::texture(const Uuid& uuid) {
     if (!tex) return tex;
     textures_.emplace(uuid, *tex);
     return tex;
+}
+
+Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
+    if (const auto it = materials_.find(uuid); it != materials_.end()) return it->second;
+    auto build = [&]() -> Result<render::Material> {
+        if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
+        auto src = db_->load_material(uuid);
+        if (!src) return std::move(src).error();
+        render::Material m;
+        m.base_color = src->base_color;
+        m.emissive = src->emissive;
+        m.emissive_strength = src->emissive_strength;
+        m.metallic = src->metallic;
+        m.roughness = src->roughness;
+        m.normal_scale = src->normal_scale;
+        m.alpha_cutoff = src->alpha_cutoff;
+        m.double_sided = src->double_sided;
+        m.unlit = src->unlit;
+        m.uv_scale = src->uv_scale;
+        m.uv_offset = src->uv_offset;
+        m.nearest_filter = src->filter == assets::TextureFilter::Nearest;
+        rhi::TextureHandle* slots[4] = {&m.base_color_texture, &m.metallic_roughness_texture, &m.normal_texture, &m.emissive_texture};
+        const auto refs = src->textures();
+        for (std::size_t i = 0; i < 4; ++i) {
+            if (refs[i]->is_nil()) continue;
+            const assets::AssetRecord* rec = db_->find(*refs[i]);
+            if (!rec || rec->kind != assets::AssetKind::Texture) {
+                VICTUS_LOG_WARN("assets", "material {}: {} texture {} is missing", uuid.to_string(),
+                                assets::kMaterialTextureSlotNames[i], refs[i]->to_string());
+                continue;
+            }
+            if (auto t = texture(*refs[i]); t) *slots[i] = *t;
+            else VICTUS_LOG_WARN("assets", "material {}: {}", uuid.to_string(), t.error().message);
+        }
+        return m;
+    };
+    auto result = build();
+    if (!result) VICTUS_LOG_WARN("assets", "{}", result.error().message);
+    return materials_.emplace(uuid, std::move(result)).first->second;
 }
 
 Result<const GpuModel*> GpuAssetCache::model(const Uuid& uuid) {
@@ -308,6 +350,10 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 return;
             }
             render::Material m = (*model)->mesh_materials[mr.mesh_index];
+            if (!mr.material_asset.is_nil()) {
+                if (auto mat = assets.material(mr.material_asset); mat) m = *mat;
+                else ++stats.missing_assets;
+            }
             m.base_color = {m.base_color.r * mr.base_color.r, m.base_color.g * mr.base_color.g,
                             m.base_color.b * mr.base_color.b, m.base_color.a * mr.base_color.a};
             m.cast_shadows = mr.cast_shadows;
@@ -353,6 +399,15 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         m.base_color = mr.base_color;
         m.metallic = mr.metallic;
         m.roughness = mr.roughness;
+        if (!mr.material_asset.is_nil()) {
+            if (auto mat = assets.material(mr.material_asset); mat) {
+                m = *mat;
+                m.base_color = {m.base_color.r * mr.base_color.r, m.base_color.g * mr.base_color.g,
+                                m.base_color.b * mr.base_color.b, m.base_color.a * mr.base_color.a};
+            } else {
+                ++stats.missing_assets;
+            }
+        }
         m.cast_shadows = mr.cast_shadows;
         renderer.submit(*mesh, m, wt.matrix);
         ++stats.meshes;

@@ -169,6 +169,18 @@ public:
     Result<Uuid> create_prefab(scene::Entity e, std::string_view relative_path = {});
     // Adds an instance of a prefab asset at the camera target (or under `parent`).
     scene::Entity instantiate_prefab(const Uuid& asset, scene::Entity parent = scene::kNullEntity);
+    // ---- materials (.vmat assets; file edits are saved directly and are not scene undo) ----
+    // Writes a new material (default "materials/Material.vmat", made unique). Returns its UUID.
+    Result<Uuid> create_material(std::string_view relative_path = {}, const assets::MaterialAsset& material = {});
+    // Overwrites a material file and refreshes every renderer that uses it.
+    Status save_material(const Uuid& asset, const assets::MaterialAsset& material);
+    // Sets (or clears, with a nil UUID) the material of `e`'s MeshRenderer. Undoable.
+    bool assign_material(scene::Entity e, const Uuid& material);
+    // Creates a material from the selected mesh renderer's look, assigns it and opens the editor.
+    void new_material_for_selection();
+    void open_material_editor(const Uuid& asset);
+    [[nodiscard]] bool material_editor_open() const noexcept { return show_material_editor_; }
+    [[nodiscard]] const Uuid& editing_material() const noexcept { return material_editing_; }
     // Writes the instance's current content to its prefab and updates every instance in the scene.
     Status apply_prefab(scene::Entity instance);
     // Discards the instance's overrides and brings it back in line with its prefab.
@@ -400,6 +412,12 @@ private:
     // Marks components of `e` that differ from `before` as prefab overrides (instance parts only).
     void mark_prefab_overrides(scene::Entity e, const std::vector<EntityState>& before);
     std::unordered_map<std::string, std::uint64_t> written_prefabs_; // path -> hash of our last write
+    void draw_material_editor();
+    bool show_material_editor_{false};
+    bool material_dirty_{false};
+    Uuid material_editing_;
+    assets::MaterialAsset material_edit_;
+    std::unordered_map<std::string, std::uint64_t> written_materials_; // path -> hash of our last write
     std::string rename_buffer_;
     Uuid renaming_;
 

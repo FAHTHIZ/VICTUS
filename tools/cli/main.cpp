@@ -572,7 +572,7 @@ int cmd_serve(const std::vector<std::string>& a) {
 // Validates every scene (loads, no unknown components) and every script (syntax, module loads,
 // referenced files exist). Exit 1 if anything is wrong.
 int cmd_check(const std::vector<std::string>& a) {
-    cli::Parser p("victus check", "Validate scenes, prefabs and scripts");
+    cli::Parser p("victus check", "Validate scenes, prefabs, materials and scripts");
     p.positional("project", "project folder", true);
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
@@ -609,6 +609,30 @@ int cmd_check(const std::vector<std::string>& a) {
             ++problems;
         }
     }
+    // Materials: each must parse and reference existing textures (resolved through the database).
+    std::size_t materials = 0;
+    auto db = assets::AssetDatabase::open(proj->root());
+    if (!db) return error(db.error().message);
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::Material) continue;
+        ++materials;
+        auto m = (*db)->load_material(r.uuid);
+        if (!m) {
+            std::printf("error: %s\n", m.error().message.c_str());
+            ++problems;
+            continue;
+        }
+        const auto refs = m->textures();
+        for (std::size_t i = 0; i < refs.size(); ++i) {
+            if (refs[i]->is_nil()) continue;
+            const assets::AssetRecord* t = (*db)->find(*refs[i]);
+            if (!t || t->kind != assets::AssetKind::Texture) {
+                std::printf("error: %s: %s texture %s does not exist\n", r.path.c_str(), assets::kMaterialTextureSlotNames[i],
+                            refs[i]->to_string().c_str());
+                ++problems;
+            }
+        }
+    }
     script::HostOptions so;
     so.assets_root = assets;
     so.input_map = proj->settings().input;
@@ -628,6 +652,15 @@ int cmd_check(const std::vector<std::string>& a) {
             if (auto d = (*host)->describe(c.script); !d) {
                 std::printf("error: %s: entity '%s': %s\n", rel.c_str(), entity_name(scene, e).c_str(),
                             d.error().message.c_str());
+                ++problems;
+            }
+        });
+        scene.world().each<scene::MeshRendererComponent>([&](scene::Entity e, scene::MeshRendererComponent& c) {
+            if (c.material_asset.is_nil()) return;
+            const assets::AssetRecord* m = (*db)->find(c.material_asset);
+            if (!m || m->kind != assets::AssetKind::Material) {
+                std::printf("error: %s: entity '%s' uses missing material %s\n", rel.c_str(), entity_name(scene, e).c_str(),
+                            c.material_asset.to_string().c_str());
                 ++problems;
             }
         });
@@ -670,7 +703,8 @@ int cmd_check(const std::vector<std::string>& a) {
         }
         check_entities(rel, scene);
     }
-    std::printf("checked %zu scenes, %zu prefabs and %zu scripts: %zu problems\n", scenes, prefabs, scripts, problems);
+    std::printf("checked %zu scenes, %zu prefabs, %zu materials and %zu scripts: %zu problems\n", scenes, prefabs, materials,
+                scripts, problems);
     return problems ? 1 : 0;
 }
 

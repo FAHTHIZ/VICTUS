@@ -8,6 +8,8 @@
 //   - scripts (.luau)                              ignored here; ScriptHost reloads them itself
 //   - prefabs (.vprefab)                           reported in `prefabs`; new instances use the
 //                                                  new version, the editor updates existing ones
+//   - materials (.vmat)                            reported in `materials`; apply() drops cached
+//                                                  materials so the next frame uses the new file
 //   - scenes, fonts, other files                   `restart_needed`: picked up on the next start
 //   - shaders and engine code                      built into the engine; never hot-reloaded
 // A failed re-import keeps the previous cooked data (and GPU resources) in use and is reported
@@ -31,6 +33,7 @@ struct HotReloadReport {
     std::vector<std::string> failed;         // "path: error" (previous version kept)
     std::vector<std::string> audio;          // audio clips to reload (paths relative to assets/)
     std::vector<std::string> prefabs;        // changed prefabs (paths relative to assets/)
+    std::vector<std::string> materials;      // changed materials (paths relative to assets/)
     std::vector<std::string> restart_needed; // files whose changes appear on the next start
     [[nodiscard]] bool empty() const noexcept { return changed.empty(); }
     // One human-readable line per event, for logs and editor notifications.

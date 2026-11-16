@@ -38,6 +38,7 @@ layout(set = 3, binding = 1) uniform Material {
     vec4 emissive;       // rgb * strength
     vec4 params;         // x metallic, y roughness, z normal scale, w alpha cutoff
     vec4 flags;          // x has normal map, y unlit
+    vec4 uv_transform;   // xy scale, zw offset (material tiling)
 } material;
 
 layout(location = 0) out vec4 out_color;
@@ -133,14 +134,15 @@ float shadow_factor(vec3 N, vec3 L) {
 }
 
 void main() {
-    vec4 base = texture(u_base_color, v_uv) * material.base_color;
+    vec2 uv = v_uv * material.uv_transform.xy + material.uv_transform.zw;
+    vec4 base = texture(u_base_color, uv) * material.base_color;
     if (base.a < material.params.w) discard;
-    vec3 emissive = texture(u_emissive, v_uv).rgb * material.emissive.rgb;
+    vec3 emissive = texture(u_emissive, uv).rgb * material.emissive.rgb;
     if (material.flags.y > 0.5) {
         out_color = vec4(base.rgb + emissive, base.a);
         return;
     }
-    vec4 mr = texture(u_metal_rough, v_uv);
+    vec4 mr = texture(u_metal_rough, uv);
     float metallic = clamp(material.params.x * mr.b, 0.0, 1.0);
     float roughness = clamp(material.params.y * mr.g, 0.045, 1.0);
 
@@ -149,7 +151,7 @@ void main() {
     if (material.flags.x > 0.5) {
         vec3 T = normalize(v_tangent.xyz - N * dot(N, v_tangent.xyz));
         vec3 B = cross(N, T) * v_tangent.w;
-        vec3 tn = texture(u_normal_map, v_uv).xyz * 2.0 - 1.0;
+        vec3 tn = texture(u_normal_map, uv).xyz * 2.0 - 1.0;
         tn.xy *= material.params.z;
         N = normalize(mat3(T, B, N) * tn);
     }
