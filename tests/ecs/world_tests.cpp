@@ -34,8 +34,8 @@ struct Tracked {
     }
     ~Tracked() { --live; }
 };
-struct alignas(64) Aligned {
-    float v[4]{};
+struct alignas(64) Aligned { // exactly 64 bytes: no padding (MSVC C4324)
+    float v[16]{};
 };
 } // namespace
 
