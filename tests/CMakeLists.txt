@@ -18,7 +18,25 @@ victus_add_test(victus_core_tests
     DEPS VICTUS::Core
     LABELS core)
 
+victus_add_test(victus_ecs_tests
+    SOURCES
+        ecs/world_tests.cpp
+    DEPS VICTUS::Ecs
+    LABELS ecs)
+
+victus_add_test(victus_scene_tests
+    SOURCES
+        scene/scene_tests.cpp
+    DEPS VICTUS::Scene
+    LABELS scene)
+
 if(VICTUS_WITH_GRAPHICS)
+victus_add_test(victus_asset_tests
+    SOURCES
+        assets/asset_tests.cpp
+    DEPS VICTUS::Assets
+    LABELS assets)
+
 victus_add_test(victus_render_tests
     SOURCES
         render/render_graph_tests.cpp
@@ -30,7 +48,8 @@ victus_add_test(victus_gpu_tests
     SOURCES
         render/gpu_fixture.cpp
         render/gpu_render_tests.cpp
-    DEPS VICTUS::Render VICTUS::Platform
+        render/gpu_scene_tests.cpp
+    DEPS VICTUS::Runtime VICTUS::Platform
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")
 endif()

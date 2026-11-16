@@ -39,10 +39,18 @@ Accepted by owner. Commit coherent verified increments directly to main; keep co
 ## ADR-0007 — Platform layer (accepted 2026-11-16)
 SDL3 3.4.20 (zlib), fetched by pinned URL + SHA-256 (`cmake/VictusDependencies.cmake`), statically linked; `VICTUS_USE_SYSTEM_SDL` allows distro packages. Engine code sees only `victus::platform` (windows, keyboard/mouse/gamepad/touch input, lifecycle events, clipboard). `VICTUS_WITH_GRAPHICS=OFF` builds the core headless without SDL (servers, simulations).
 
-## ADR-0004 — ECS and scheduler
-Open; benchmark required. Compare Flecs, EnTT and focused SoA with identical data/access patterns. Compare Taskflow and enkiTS/custom scheduler for simulation, streaming and editor workloads. Measure memory, iteration, structural changes, scheduling overhead, worker use and platform support. Retain migration seams.
+## ADR-0004 — ECS and scheduler (accepted provisionally 2026-11-16)
+**Decision.** VICTUS owns its ECS (`engine/ecs`): archetype storage with one aligned SoA column per component, archetype add/remove edges, generational 32+32-bit entities, runtime-registered components (needed for scripting and editor-defined data), cached queries over archetypes with exclusion filters, deferred command buffers and parallel iteration via the existing VICTUS job system (chunked `parallel_for`). Structural changes during iteration assert. Scenes (`engine/scene`) layer identity (UUID), hierarchy (intrusive sibling lists in a `Hierarchy` component) and serialization on top; serialization is a registry of named component serializers so unknown components round-trip unchanged.
 
-## ADR-0005 — Editor
+**Why not Flecs/EnTT now.** Both are MIT and excellent; adopting either would expose its API across editor, scripting and networking. A small owned core keeps the replication/serialization/scripting seams under VICTUS control. **Evidence so far:** `victus_bench_scene` (STATUS.md, Slice 3). **Still required:** an identical-workload comparison against Flecs and EnTT; if VICTUS is materially slower on iteration or structural changes, either optimise or adopt behind the `victus::ecs` API. The job system remains custom (Slice 1); Taskflow/enkiTS comparison is still open.
+
+## ADR-0008 — Scene format and asset pipeline (accepted 2026-11-16)
+- Scenes: JSON `{"format":"victus.scene","version":1,"entities":[...]}` with entity UUIDs, parent UUIDs and components sorted by name for diff-friendly files. Loading is 3-pass (create, parent, components). A binary cooked scene format is planned for shipped builds.
+- Assets: every source file gets a `<file>.meta` sidecar (`victus_meta`, `uuid`, `importer`, `settings`) that is meant to be committed with the project. Cooked results go to `<project>/.victus/cache/<uuid>.vcooked` (header `VCOOK`, format version, key hash of source bytes + settings + importer version, dependency hashes); the cache is disposable. Invalid metas are reported, never silently overwritten; duplicated UUIDs (copied files) are reassigned.
+- glTF: cgltf 1.15 (MIT, single header, no dependencies) chosen over tinygltf (pulls in JSON library + stb) and fastgltf (C++20, simdjson dependency, faster but larger). File access is sandboxed to the asset's directory; remote URIs are rejected.
+- Layering note: `engine/assets` depends on `engine/render` only for CPU types (`Image`, `MeshData`); a future split of those types into a GPU-free module will let headless cookers drop the render dependency.
+
+## ADR-0005 — Editor## ADR-0005 — Editor
 Open. Prototype Dear ImGui docking for internal tools and richer shell options (Qt, Avalonia or native) for accessibility/text/assets. Review Qt licensing and packaging.
 
 ## ADR-0006 — Original license

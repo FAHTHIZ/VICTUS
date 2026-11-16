@@ -42,11 +42,16 @@ jobs:
           # Linux runners have Mesa lavapipe (software Vulkan): GPU tests must run there.
           if [ "$RUNNER_OS" = "Linux" ]; then export VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen; fi
           ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
+      - name: GPU backend report
+        shell: bash
+        run: |
+          exe=build/bin/victus_gpu_tests; [ -f "$exe" ] || exe=build/bin/${{ matrix.build_type }}/victus_gpu_tests
+          "$exe" | grep '\[victus\]' || true
       - name: Windowed swapchain smoke test
         if: runner.os == 'Linux'
         run: xvfb-run -a ./build/bin/victus_render_showcase --frames 20 --screenshot build/showcase.png --width 640 --height 360
       - name: Upload rendered images
-        if: runner.os == 'Linux' && always()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: renders-${{ matrix.os }}-${{ matrix.build_type }}

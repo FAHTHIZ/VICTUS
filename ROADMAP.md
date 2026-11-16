@@ -25,7 +25,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 ## Phase 2 — Performance laboratory
 - [x] Reproducible benchmark harness with warm-up, repetitions, machine/build metadata and machine-readable output.
 - [ ] CPU/GPU profiling, frame/tick histograms, p50/p95/p99, memory accounting and allocation tracking.
-- [ ] Workloads for ECS, jobs, transforms, physics, animation, visibility, rendering, asset import, streaming, networking and saves.
+- [~] Workloads for ECS, jobs, transforms (done: `victus_bench_scene`), physics, animation, visibility, rendering, asset import, streaming, networking and saves.
 - [ ] Desktop baselines; Android physical-device baselines when hardware is available.
 - [ ] Performance budgets and regression gates based on measured reference hardware.
 **Exit:** another developer can reproduce the published results and compare equivalent workloads.
@@ -33,9 +33,9 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 ## Phase 3 — Core simulation, ECS and jobs
 - [ ] Benchmark custom SoA/archetype approaches against Flecs and EnTT on VICTUS workloads.
 - [~] Compare task schedulers and define dependency, affinity, cancellation and priority semantics. (VICTUS work-stealing JobSystem + TaskGraph with priorities implemented and benchmarked; external comparison pending.)
-- [ ] VICTUS-owned ECS/system API or documented reason to expose a dependency.
-- [ ] Transform hierarchy, spatial indexes, events, deterministic random streams and controlled simulation clock.
-- [ ] Versioned snapshots, serialization, migrations and headless simulation host.
+- [x] VICTUS-owned ECS/system API or documented reason to expose a dependency. (`engine/ecs`, ADR-0004.)
+- [~] Transform hierarchy (done: `engine/scene`), spatial indexes, events, deterministic random streams and controlled simulation clock.
+- [~] Versioned snapshots, serialization (done: `victus.scene` v1 JSON), migrations and headless simulation host.
 - [ ] Simulation LOD: full entities, simplified entities, regional aggregates and event-driven dormant regions.
 - [ ] Invariant tests for populations, resources, ownership, time, relationships and event ordering.
 **Exit:** headless simulation saves, reloads, replays and passes correctness/performance workloads.
@@ -49,12 +49,12 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 **Exit:** actual 2D and 3D scenes render on the validated desktop backend; mobile path has a verified capability plan.
 
 ## Phase 5 — Asset pipeline and content cooking
-- [ ] Stable asset IDs, metadata, dependency graph and versioned source-to-cooked format.
-- [ ] glTF 2.0/GLB import, validation, mesh/material/skin/animation/image/HDR handling.
+- [~] Stable asset IDs, metadata, dependency graph and versioned source-to-cooked format. (UUID `.meta` sidecars + versioned cooked cache done; cross-asset dependency graph pending.)
+- [~] glTF 2.0/GLB import, validation, mesh/material/skin/animation/image/HDR handling. (Meshes, PBR materials, images, node hierarchy done; skins/animation pending.)
 - [ ] Evaluate authoring interchange such as OpenUSD separately from runtime delivery formats.
-- [ ] Texture mips, color management, platform compression and asset variants.
+- [~] Texture mips, color management (done), platform compression and asset variants.
 - [ ] Mesh optimization, LODs, collision proxies and import validation.
-- [ ] Content-addressed cache, incremental cook, dependency invalidation and deterministic outputs.
+- [~] Content-addressed cache, incremental cook, dependency invalidation and deterministic outputs. (Hash-keyed cooked cache with up-to-date checks done.)
 - [ ] Background import, cancellation, progress, recoverable errors and asset diagnostics.
 - [ ] External DCC workflow and Blender interchange/export presets.
 **Exit:** import, validate, cook, cache, hot-reload and load real project assets on a clean machine.

@@ -1,0 +1,262 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "victus/runtime/scene_rendering.hpp"
+
+#include "victus/core/log.hpp"
+
+#include <algorithm>
+#include <format>
+
+namespace victus::runtime {
+
+using namespace victus::scene;
+
+GpuAssetCache::~GpuAssetCache() { clear(); }
+
+void GpuAssetCache::clear() {
+    for (auto& [id, tex] : textures_) ctx_.device().destroy(tex);
+    textures_.clear();
+    for (auto& [id, model] : models_) {
+        for (auto& m : model->meshes) ctx_.destroy(m);
+        for (auto& t : model->textures) ctx_.device().destroy(t);
+    }
+    models_.clear();
+    for (auto& [name, mesh] : primitives_) ctx_.destroy(mesh);
+    primitives_.clear();
+}
+
+void GpuAssetCache::evict(const Uuid& uuid) {
+    if (const auto it = textures_.find(uuid); it != textures_.end()) {
+        ctx_.device().destroy(it->second);
+        textures_.erase(it);
+    }
+    if (const auto it = models_.find(uuid); it != models_.end()) {
+        for (auto& m : it->second->meshes) ctx_.destroy(m);
+        for (auto& t : it->second->textures) ctx_.device().destroy(t);
+        models_.erase(it);
+    }
+}
+
+Result<rhi::TextureHandle> GpuAssetCache::texture(const Uuid& uuid) {
+    if (const auto it = textures_.find(uuid); it != textures_.end()) return it->second;
+    if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
+    auto cooked = db_->load_texture(uuid);
+    if (!cooked) return std::move(cooked).error();
+    render::TextureOptions opt;
+    opt.srgb = cooked->srgb;
+    opt.name = cooked->name;
+    auto tex = ctx_.create_texture_mips(cooked->mips, opt);
+    if (!tex) return tex;
+    textures_.emplace(uuid, *tex);
+    return tex;
+}
+
+Result<const GpuModel*> GpuAssetCache::model(const Uuid& uuid) {
+    if (const auto it = models_.find(uuid); it != models_.end()) return static_cast<const GpuModel*>(it->second.get());
+    if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
+    auto cooked = db_->load_model(uuid);
+    if (!cooked) return std::move(cooked).error();
+    return add_model(uuid, std::move(cooked).value());
+}
+
+Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::CookedModel model) {
+    evict(uuid);
+    auto gpu = std::make_unique<GpuModel>();
+    auto fail = [&](Error e) -> Result<const GpuModel*> {
+        for (auto& m : gpu->meshes) ctx_.destroy(m);
+        for (auto& t : gpu->textures) ctx_.device().destroy(t);
+        return e;
+    };
+    for (const auto& t : model.textures) {
+        render::TextureOptions opt;
+        opt.srgb = t.srgb;
+        opt.name = t.name;
+        auto tex = ctx_.create_texture_mips(t.mips, opt);
+        if (!tex) return fail(std::move(tex).error());
+        gpu->textures.push_back(*tex);
+    }
+    auto tex_or = [&](std::int32_t i) { return i >= 0 ? gpu->textures[static_cast<std::size_t>(i)] : rhi::TextureHandle{}; };
+    for (auto& mesh : model.meshes) {
+        auto g = ctx_.create_mesh(mesh.data, mesh.name);
+        if (!g) return fail(std::move(g).error());
+        gpu->meshes.push_back(*g);
+        const assets::ModelMaterial& src = model.materials[mesh.material];
+        render::Material m;
+        m.base_color = src.base_color;
+        m.emissive = src.emissive;
+        m.emissive_strength = src.emissive_strength;
+        m.metallic = src.metallic;
+        m.roughness = src.roughness;
+        m.normal_scale = src.normal_scale;
+        m.alpha_cutoff = src.alpha_cutoff;
+        m.double_sided = src.double_sided;
+        m.unlit = src.unlit;
+        m.base_color_texture = tex_or(src.base_color_texture);
+        m.metallic_roughness_texture = tex_or(src.metallic_roughness_texture);
+        m.normal_texture = tex_or(src.normal_texture);
+        m.emissive_texture = tex_or(src.emissive_texture);
+        gpu->mesh_materials.push_back(m);
+        // GPU owns the geometry now; keep only counts/bounds-relevant metadata on the CPU side.
+        mesh.data.vertices.clear();
+        mesh.data.vertices.shrink_to_fit();
+        mesh.data.indices.clear();
+        mesh.data.indices.shrink_to_fit();
+    }
+    model.textures.clear();
+    gpu->cpu = std::move(model);
+    const GpuModel* raw = gpu.get();
+    models_[uuid] = std::move(gpu);
+    return raw;
+}
+
+const render::GpuMesh* GpuAssetCache::primitive(std::string_view name) {
+    const std::string key(name);
+    if (const auto it = primitives_.find(key); it != primitives_.end()) return &it->second;
+    render::MeshData data;
+    if (key == "cube") data = render::make_cube();
+    else if (key == "sphere") data = render::make_uv_sphere();
+    else if (key == "plane") data = render::make_plane({1, 1});
+    else if (key == "cylinder") data = render::make_cylinder();
+    else return nullptr;
+    auto g = ctx_.create_mesh(data, key);
+    if (!g) {
+        VICTUS_LOG_ERROR("runtime", "primitive '{}': {}", key, g.error().message);
+        return nullptr;
+    }
+    return &primitives_.emplace(key, *g).first->second;
+}
+
+Entity instantiate_model(Scene& scene, const Uuid& model_uuid, const assets::CookedModel& model, std::string_view name,
+                         Entity parent) {
+    const Entity root = scene.create(name, parent);
+    std::vector<Entity> created(model.nodes.size());
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+        const assets::ModelNode& node = model.nodes[i];
+        const Entity p = node.parent < 0 ? root : created[static_cast<std::size_t>(node.parent)];
+        const Entity e = scene.create(node.name, p);
+        Transform* t = scene.world().get<Transform>(e);
+        t->position = node.translation;
+        t->rotation = node.rotation;
+        t->scale = node.scale;
+        created[i] = e;
+        if (node.meshes.size() == 1) {
+            auto& mr = scene.world().add<MeshRendererComponent>(e);
+            mr.mesh_asset = model_uuid;
+            mr.mesh_index = node.meshes[0];
+        } else {
+            // Multi-primitive nodes get one child per primitive so each has its own component.
+            for (const std::uint32_t mi : node.meshes) {
+                const Entity part = scene.create(std::format("{}[{}]", node.name, mi), e);
+                auto& mr = scene.world().add<MeshRendererComponent>(part);
+                mr.mesh_asset = model_uuid;
+                mr.mesh_index = mi;
+            }
+        }
+    }
+    return root;
+}
+
+ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRenderer& renderer,
+                           const SceneViewSettings& settings, const render::Camera3D* camera_override) {
+    ExtractStats stats;
+    ecs::World& w = scene.world();
+    render::Camera3D camera = settings.fallback_camera;
+    if (camera_override) {
+        camera = *camera_override;
+        stats.camera_found = true;
+    } else {
+        w.each<CameraComponent, WorldTransform>([&](const CameraComponent& c, const WorldTransform& wt) {
+            if (stats.camera_found || !c.primary) return;
+            math::Vec3 pos, scale;
+            math::Quat rot;
+            math::decompose(wt.matrix, pos, rot, scale);
+            camera = render::Camera3D::from_transform(pos, rot);
+            camera.fov_y = math::radians(c.fov_y_degrees);
+            camera.z_near = c.z_near;
+            camera.z_far = c.z_far;
+            stats.camera_found = true;
+        });
+    }
+
+    render::DirectionalLight sun;
+    bool has_sun = false;
+    std::vector<render::PointLight> points;
+    w.each<LightComponent, WorldTransform>([&](const LightComponent& l, const WorldTransform& wt) {
+        ++stats.lights;
+        if (l.type == LightComponent::Type::Directional) {
+            if (has_sun) return;
+            has_sun = true;
+            sun.direction = math::normalize(wt.matrix.transform_vector({0, 0, -1}));
+            sun.color = l.color;
+            sun.intensity = l.intensity;
+            sun.shadows = l.shadows;
+        } else {
+            render::PointLight p;
+            p.position = wt.matrix.transform_point({});
+            p.color = l.color;
+            p.intensity = l.intensity;
+            p.range = l.range;
+            points.push_back(p);
+        }
+    });
+    if (!has_sun) sun.intensity = 0.0f;
+    renderer.begin(camera, sun, settings.environment);
+    for (const auto& p : points) renderer.add_point_light(p);
+
+    w.each<MeshRendererComponent, WorldTransform>([&](const MeshRendererComponent& mr, const WorldTransform& wt) {
+        if (!mr.visible) return;
+        if (!mr.mesh_asset.is_nil()) {
+            auto model = assets.model(mr.mesh_asset);
+            if (!model || mr.mesh_index >= (*model)->meshes.size()) {
+                ++stats.missing_assets;
+                return;
+            }
+            render::Material m = (*model)->mesh_materials[mr.mesh_index];
+            m.base_color = {m.base_color.r * mr.base_color.r, m.base_color.g * mr.base_color.g,
+                            m.base_color.b * mr.base_color.b, m.base_color.a * mr.base_color.a};
+            m.cast_shadows = mr.cast_shadows;
+            renderer.submit((*model)->meshes[mr.mesh_index], m, wt.matrix);
+            ++stats.meshes;
+            return;
+        }
+        const render::GpuMesh* mesh = mr.primitive.empty() ? nullptr : assets.primitive(mr.primitive);
+        if (!mesh) {
+            ++stats.missing_assets;
+            return;
+        }
+        render::Material m;
+        m.base_color = mr.base_color;
+        m.metallic = mr.metallic;
+        m.roughness = mr.roughness;
+        m.cast_shadows = mr.cast_shadows;
+        renderer.submit(*mesh, m, wt.matrix);
+        ++stats.meshes;
+    });
+    return stats;
+}
+
+std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::SpriteBatch& batch) {
+    std::uint32_t count = 0;
+    scene.world().each<SpriteComponent, WorldTransform>([&](const SpriteComponent& s, const WorldTransform& wt) {
+        render::Sprite sp;
+        if (!s.texture_asset.is_nil()) {
+            auto tex = assets.texture(s.texture_asset);
+            if (tex) sp.texture = *tex;
+        }
+        math::Vec3 pos, scale;
+        math::Quat rot;
+        math::decompose(wt.matrix, pos, rot, scale);
+        sp.position = {pos.x, pos.y};
+        sp.size = {s.size.x * scale.x, s.size.y * scale.y};
+        sp.rotation = math::to_euler(rot).z;
+        sp.origin = s.pivot;
+        sp.color = s.tint;
+        sp.layer = s.layer;
+        sp.flip_x = s.flip_x;
+        sp.flip_y = s.flip_y;
+        batch.draw(sp);
+        ++count;
+    });
+    return count;
+}
+
+} // namespace victus::runtime
