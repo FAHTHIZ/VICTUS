@@ -24,6 +24,10 @@ struct ProjectSettings {
     int window_width{1280};
     int window_height{720};
     bool vsync{true};
+    // Rendering scalability: "low" | "medium" | "high" | "ultra" and an optional resolution
+    // scale override (0 = the tier's default).
+    std::string render_quality{"high"};
+    float render_scale{0.0f};
     json::Value extra = json::Value::object(); // unknown keys preserved verbatim
 };
 

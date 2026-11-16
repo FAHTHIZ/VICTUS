@@ -29,6 +29,10 @@ Value settings_to_json(const ProjectSettings& s) {
     window.set("height", s.window_height);
     window.set("vsync", s.vsync);
     v.set("window", std::move(window));
+    Value rendering = Value::object();
+    rendering.set("quality", s.render_quality);
+    if (s.render_scale > 0.0f) rendering.set("render_scale", s.render_scale);
+    v.set("rendering", std::move(rendering));
     return v;
 }
 
@@ -45,10 +49,18 @@ Status settings_from_json(const Value& v, ProjectSettings& s) {
     s.window_width = static_cast<int>(std::clamp<std::int64_t>(w["width"].as_int(1280), 64, 16384));
     s.window_height = static_cast<int>(std::clamp<std::int64_t>(w["height"].as_int(720), 64, 16384));
     s.vsync = w["vsync"].as_bool(true);
+    const Value& r = v["rendering"];
+    s.render_quality = r["quality"].as_string_or("high");
+    if (s.render_quality != "low" && s.render_quality != "medium" && s.render_quality != "high" &&
+        s.render_quality != "ultra")
+        return bad("rendering.quality must be low, medium, high or ultra");
+    s.render_scale = r["render_scale"].as_float(0.0f);
+    if (!(s.render_scale == 0.0f || (s.render_scale >= 0.25f && s.render_scale <= 2.0f)))
+        return bad("rendering.render_scale must be 0 (tier default) or between 0.25 and 2");
     s.extra = Value::object();
     for (const auto& [key, value] : v.as_object()) {
         if (key == "format" || key == "version" || key == "name" || key == "startup_scene" || key == "template" ||
-            key == "engine_version" || key == "window")
+            key == "engine_version" || key == "window" || key == "rendering")
             continue;
         s.extra.set(key, value);
     }

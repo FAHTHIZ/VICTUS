@@ -106,5 +106,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** No compression yet (cooked textures are uncompressed RGBA8 mip chains; GPU texture compression and LZ4/zstd are the next size wins). Packs are read with buffered reads, not memory-mapped. FNV-1a detects corruption, not tampering; signing is a later item. Export targets the host platform only.
 
+## ADR-0012 — Scalable rendering quality pipeline (accepted 2026-11-16)
+**Problem.** The 3D renderer must look close to modern high-end engines on desktop while the same content runs on phones. Every expensive effect therefore needs a cheaper fallback and a switch, chosen per project and overridable per run, without content changes.
+
+**Candidates.** Deferred shading (G-buffer bandwidth is the main cost on tile-based mobile GPUs); forward with a depth prepass (cheap on tilers, MSAA/FXAA friendly, gives SSAO its depth); clustered forward (better for hundreds of lights, more complexity than today's 16-light limit needs); ray-traced AO/shadows (not available on most mobile hardware).
+
+**Decision.** Forward HDR PBR with an optional depth prepass that feeds SSAO (Alchemy/SAO, optional half resolution + depth-aware blur), cascaded shadow maps (1–4 cascades in a 2×2 atlas, practical split scheme, texel snapping, dithered cascade transitions, optional soft PCF), dual-filter bloom (13-tap Karis downsample, tent upsample, 3–6 levels), GPU auto exposure (64×64 log-luminance → 1×1 R32F ping-pong with separate brighten/darken adaptation speeds), selectable tonemappers (ACES fitted, Khronos PBR Neutral, Reinhard, none) with exposure compensation, saturation, contrast and vignette, then FXAA 3.11. `RenderSettings::preset(QualityTier)` defines Low/Medium/High/Ultra (Low: 0.75 render scale, 1 hard cascade, no SSAO/bloom, 4 lights; Ultra: 4 cascades, full-res 16-sample SSAO, 6 bloom levels); `sanitized()` clamps hand-written values. Per-scene look lives in the reflected `Environment` component; the tier lives in `victus.project` (`rendering.quality`, `rendering.render_scale`) and can be overridden with `--quality`. Each pass is a render-graph node, so disabled effects cost nothing.
+
+**Evidence.** `victus_gpu_tests` "gpu quality" cases (8): pass counts per tier, distant casters shadowed only with CSM, SSAO darkening a crease but not open floor, bloom halo around an emissive, auto exposure normalising dark and bright scenes and adapting over time, tonemapper/grading differences, FXAA reducing hard step edges, render scale; Environment component end-to-end case; `victus_render_tests` preset/sanitize cases; `victus_cli_smoke` runs each template at every tier. Timings in STATUS are llvmpipe CPU numbers only.
+
+**Risks / revisit triggers.** No temporal AA/upscaling, motion blur or depth of field yet; point lights are capped at 16 (move to clustered forward when scenes need more); no reflection probes or GI; tiers are not yet validated on physical mobile GPUs. Revisit the prepass on tilers if measurements show it costs more than it saves.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

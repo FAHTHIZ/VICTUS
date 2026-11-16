@@ -32,7 +32,7 @@ constexpr const char* kUsage =
     "  templates                                                  list project templates\n"
     "  info <project>                                             show project settings, scenes, assets\n"
     "  import <project>                                           import changed assets (exit 1 on failure)\n"
-    "  run <project> [--scene S] [--frames N] [--screenshot PNG]  play the startup (or given) scene\n"
+    "  run <project> [--scene S] [--frames N] [--screenshot PNG] [--quality TIER]  play a scene\n"
     "  simulate <project> [--frames N] [--hold KEYS] [--save F]   run gameplay and scripts headless (no GPU)\n"
     "  check <project>                                            validate scenes and script syntax\n"
     "  export <project> --out DIR [--name EXE] [--player PATH]    package a runnable game folder\n"
@@ -131,6 +131,7 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("screenshot", "write the last frame to this PNG (with --frames)")
         .option("width", "window width (default: project setting)", "0")
         .option("height", "window height (default: project setting)", "0")
+        .option("quality", "rendering quality: low, medium, high or ultra (default: project setting)")
         .flag("fullscreen", "run fullscreen")
         .flag("no-hot-reload", "do not reload scripts when their files change")
         .flag("strict", "exit with code 3 if any script raised an error");
@@ -145,10 +146,12 @@ int cmd_run(const std::vector<std::string>& a) {
     o.height = static_cast<int>(p.get_number("height", 0));
     o.fullscreen = p.has("fullscreen");
     o.hot_reload = !p.has("no-hot-reload");
+    o.quality = p.get("quality");
     auto r = player::run(o);
     if (!r) return error(r.error().message);
-    std::printf("ran %llu frames in %.2f s on %s (%llu script errors)\n", static_cast<unsigned long long>(r->frames),
-                r->seconds, r->backend.c_str(), static_cast<unsigned long long>(r->script_errors));
+    std::printf("ran %llu frames in %.2f s on %s at %s quality (%llu script errors)\n",
+                static_cast<unsigned long long>(r->frames), r->seconds, r->backend.c_str(), r->quality.c_str(),
+                static_cast<unsigned long long>(r->script_errors));
     return p.has("strict") && r->script_errors ? 3 : 0;
 }
 

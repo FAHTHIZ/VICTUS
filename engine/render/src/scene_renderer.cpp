@@ -14,7 +14,6 @@ namespace {
 // std140-compatible uniform blocks; must match engine/render/shaders.
 struct FrameUniforms {
     Mat4 view_proj;
-    Mat4 light_view_proj;
 };
 struct ObjectUniforms {
     Mat4 model;
@@ -26,12 +25,18 @@ struct GpuPointLight {
 };
 struct LightingUniforms {
     Vec4 camera_pos;
+    Vec4 camera_forward;
     Vec4 sun_dir;
     Vec4 sun_color;
     Vec4 sky_color;
     Vec4 horizon_color;
     Vec4 ground_color;
     Vec4 shadow_params;
+    Vec4 cascade_params;
+    Vec4 cascade_splits;
+    Vec4 cascade_texel;
+    Vec4 screen;
+    Mat4 cascade_vp[4];
     GpuPointLight points[SceneRenderer::kMaxPointLights];
 };
 struct MaterialUniforms {
@@ -48,14 +53,126 @@ struct SkyUniforms {
     Mat4 inv_view_proj;
     Vec4 zenith, horizon, ground, sun_dir, sun_color;
 };
-struct PostUniforms {
+struct SsaoUniforms {
+    Mat4 inv_proj;
     Vec4 params;
+    Vec4 screen;
 };
-static_assert(sizeof(LightingUniforms) == 16 * 7 + 32 * SceneRenderer::kMaxPointLights);
+struct BlurUniforms {
+    Vec4 proj;
+    Vec4 screen;
+};
+struct BloomDownUniforms {
+    Vec4 params;
+    Vec4 threshold;
+};
+struct ExposureUniforms {
+    Vec4 params;
+    Vec4 flags;
+};
+struct PostUniforms {
+    Vec4 params, params2, params3;
+};
+static_assert(sizeof(LightingUniforms) == 16 * 12 + 64 * 4 + 32 * SceneRenderer::kMaxPointLights);
+
+constexpr std::uint32_t kLuminanceSize = 64;
 
 bool is_srgb(rhi::Format f) { return f == rhi::Format::RGBA8_SRGB || f == rhi::Format::BGRA8_SRGB; }
 Vec4 rgb(Color c, float scale = 1.0f, float w = 0.0f) { return {c.r * scale, c.g * scale, c.b * scale, w}; }
+Vec4 inv_size(std::uint32_t w, std::uint32_t h, float z = 0.0f, float ww = 0.0f) {
+    return {1.0f / static_cast<float>(w), 1.0f / static_cast<float>(h), z, ww};
+}
+rhi::TextureDesc color_desc(rhi::Format f, std::uint32_t w, std::uint32_t h) {
+    rhi::TextureDesc d;
+    d.format = f;
+    d.width = std::max(1u, w);
+    d.height = std::max(1u, h);
+    d.usage = rhi::TextureUsageColorTarget | rhi::TextureUsageSampled;
+    return d;
+}
 } // namespace
+
+std::string_view tonemapper_name(Tonemapper t) noexcept {
+    switch (t) {
+    case Tonemapper::None: return "none";
+    case Tonemapper::Aces: return "aces";
+    case Tonemapper::Neutral: return "neutral";
+    case Tonemapper::Reinhard: return "reinhard";
+    }
+    return "aces";
+}
+
+std::optional<Tonemapper> parse_tonemapper(std::string_view n) noexcept {
+    for (Tonemapper t : {Tonemapper::None, Tonemapper::Aces, Tonemapper::Neutral, Tonemapper::Reinhard})
+        if (tonemapper_name(t) == n) return t;
+    return std::nullopt;
+}
+
+std::string_view quality_tier_name(QualityTier t) noexcept {
+    switch (t) {
+    case QualityTier::Low: return "low";
+    case QualityTier::Medium: return "medium";
+    case QualityTier::High: return "high";
+    case QualityTier::Ultra: return "ultra";
+    }
+    return "high";
+}
+
+std::optional<QualityTier> parse_quality_tier(std::string_view n) noexcept {
+    for (QualityTier t : {QualityTier::Low, QualityTier::Medium, QualityTier::High, QualityTier::Ultra})
+        if (quality_tier_name(t) == n) return t;
+    return std::nullopt;
+}
+
+RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
+    RenderSettings s;
+    s.tier = tier;
+    switch (tier) {
+    case QualityTier::Low:
+        s.render_scale = 0.75f;
+        s.shadow_cascades = 1;
+        s.shadow_resolution = 1024;
+        s.soft_shadows = false;
+        s.ssao = false;
+        s.bloom = false;
+        s.bloom_levels = 4;
+        s.fxaa = true;
+        s.max_point_lights = 4;
+        break;
+    case QualityTier::Medium:
+        s.render_scale = 1.0f;
+        s.shadow_cascades = 2;
+        s.shadow_resolution = 1024;
+        s.soft_shadows = true;
+        s.ssao = false;
+        s.bloom = true;
+        s.bloom_levels = 4;
+        s.fxaa = true;
+        s.max_point_lights = 8;
+        break;
+    case QualityTier::High: break; // struct defaults
+    case QualityTier::Ultra:
+        s.shadow_cascades = 4;
+        s.shadow_resolution = 2048;
+        s.ssao_half_resolution = false;
+        s.ssao_samples = 16;
+        s.bloom_levels = 6;
+        break;
+    }
+    return s;
+}
+
+RenderSettings RenderSettings::sanitized() const noexcept {
+    RenderSettings s = *this;
+    s.render_scale = std::isfinite(s.render_scale) ? std::clamp(s.render_scale, 0.25f, 2.0f) : 1.0f;
+    s.shadow_cascades = std::clamp(s.shadow_cascades, 1u, 4u);
+    s.shadow_resolution = std::clamp(s.shadow_resolution, 64u, 4096u);
+    s.cascade_split_lambda = std::isfinite(s.cascade_split_lambda) ? std::clamp(s.cascade_split_lambda, 0.0f, 1.0f) : 0.8f;
+    s.ssao_samples = std::clamp(s.ssao_samples, 4u, 32u);
+    s.bloom_levels = std::clamp(s.bloom_levels, 1u, 8u);
+    s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxPointLights);
+    return s;
+}
 
 Camera3D Camera3D::look_at(Vec3 eye, Vec3 target, Vec3 up) {
     Camera3D c;
@@ -88,7 +205,8 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     auto sky_fs = get("sky.frag");
     auto line_vs = get("line.vert");
     auto line_fs = get("line.frag");
-    for (auto* s : {&mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &full_vs, &sky_fs, &line_vs, &line_fs})
+    auto depth_vs = get("depth.vert");
+    for (auto* s : {&mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &full_vs, &sky_fs, &line_vs, &line_fs, &depth_vs})
         if (!*s) return std::move(*s).error();
 
     const rhi::VertexBufferLayout mesh_layout{0, sizeof(Vertex3D), false};
@@ -102,7 +220,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
                          {2, 0, rhi::VertexFormat::Float2, 24},
                          {3, 0, rhi::VertexFormat::Float4, 32}};
     opaque.depth_test = opaque.depth_write = true;
-    opaque.depth_compare = rhi::CompareOp::Less;
+    opaque.depth_compare = rhi::CompareOp::LessEqual; // also accepts depth pre-pass values
     opaque.color_targets = {{rhi::Format::RGBA16_FLOAT, rhi::BlendMode::Opaque}};
     opaque.depth_format = r->depth_format_;
     auto p = dev.create_pipeline(opaque);
@@ -113,6 +231,24 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     p = dev.create_pipeline(opaque);
     if (!p) return std::move(p).error();
     r->opaque_double_ = p.value();
+
+    rhi::PipelineDesc prepass;
+    prepass.name = "depth_prepass";
+    prepass.vertex = depth_vs.value();
+    prepass.fragment = shadow_fs.value();
+    prepass.vertex_buffers = {mesh_layout};
+    prepass.attributes = {{0, 0, rhi::VertexFormat::Float3, 0}};
+    prepass.depth_test = prepass.depth_write = true;
+    prepass.depth_compare = rhi::CompareOp::Less;
+    prepass.depth_format = r->depth_format_;
+    p = dev.create_pipeline(prepass);
+    if (!p) return std::move(p).error();
+    r->prepass_cull_ = p.value();
+    prepass.name = "depth_prepass_double_sided";
+    prepass.cull = rhi::CullMode::None;
+    p = dev.create_pipeline(prepass);
+    if (!p) return std::move(p).error();
+    r->prepass_double_ = p.value();
 
     rhi::PipelineDesc shadow;
     shadow.name = "shadow_depth";
@@ -177,31 +313,47 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
 
 SceneRenderer::~SceneRenderer() {
     auto& d = ctx_.device();
-    for (auto pl : {opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_})
+    for (auto pl : {opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_, prepass_cull_,
+                    prepass_double_})
         if (pl) d.destroy(pl);
-    for (auto& [f, pl] : tonemap_) d.destroy(pl);
+    for (auto& [k, pl] : post_) d.destroy(pl);
     if (no_shadow_) d.destroy(no_shadow_);
+    for (auto t : exposure_)
+        if (t) d.destroy(t);
     if (line_buffer_) d.destroy(line_buffer_);
     pool_.clear();
 }
 
-Result<rhi::PipelineHandle> SceneRenderer::tonemap_pipeline(rhi::Format format) {
-    auto key = static_cast<std::uint8_t>(format);
-    if (auto it = tonemap_.find(key); it != tonemap_.end()) return it->second;
+Result<rhi::PipelineHandle> SceneRenderer::post_pipeline(const char* fragment, rhi::Format format, rhi::BlendMode blend) {
+    std::string key = std::format("{}/{}/{}", fragment, static_cast<int>(format), static_cast<int>(blend));
+    if (auto it = post_.find(key); it != post_.end()) return it->second;
     auto vs = ctx_.shader("fullscreen.vert");
     if (!vs) return std::move(vs).error();
-    auto fs = ctx_.shader("tonemap.frag");
+    auto fs = ctx_.shader(fragment);
     if (!fs) return std::move(fs).error();
     rhi::PipelineDesc d;
-    d.name = "tonemap";
+    d.name = fragment;
     d.vertex = vs.value();
     d.fragment = fs.value();
     d.cull = rhi::CullMode::None;
-    d.color_targets = {{format, rhi::BlendMode::Opaque}};
+    d.color_targets = {{format, blend}};
     auto p = ctx_.device().create_pipeline(d);
     if (!p) return p;
-    tonemap_.emplace(key, p.value());
+    post_.emplace(std::move(key), p.value());
     return p;
+}
+
+Status SceneRenderer::ensure_exposure_textures() {
+    if (exposure_[0]) return {};
+    for (int i = 0; i < 2; ++i) {
+        rhi::TextureDesc d = color_desc(rhi::Format::R32_FLOAT, 1, 1);
+        d.name = i == 0 ? "exposure_a" : "exposure_b";
+        auto t = ctx_.device().create_texture(d);
+        if (!t) return std::move(t).error();
+        exposure_[i] = t.value();
+    }
+    adaptation_valid_ = false;
+    return {};
 }
 
 void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, const Environment& env) {
@@ -251,19 +403,52 @@ void SceneRenderer::grid(float half, float spacing, Color color) {
     }
 }
 
-void SceneRenderer::compute_shadow_matrix() {
+void SceneRenderer::compute_cascades(float aspect, std::uint32_t resolution) {
     const Vec3 d = normalize(sun_.direction);
-    const float r = std::max(1.0f, sun_.shadow_distance * 0.5f);
-    const Vec3 center = camera_.position + camera_.forward() * r;
     const Vec3 up = std::fabs(d.y) > 0.99f ? Vec3{0, 0, 1} : Vec3{0, 1, 0};
     const Mat4 light_view = Mat4::look_at({0, 0, 0}, d, up);
-    Vec3 c = light_view.transform_point(center);
-    // Snap to shadow texels so the shadow does not shimmer as the camera moves.
-    const float texel = (2.0f * r) / static_cast<float>(std::max(1u, sun_.shadow_resolution));
-    c.x = std::floor(c.x / texel) * texel;
-    c.y = std::floor(c.y / texel) * texel;
-    const Mat4 proj = Mat4::orthographic(c.x - r, c.x + r, c.y - r, c.y + r, -c.z - r * 4.0f, -c.z + r * 4.0f);
-    light_vp_ = proj * light_view;
+    const Mat4 inv_view = inverse(camera_.view);
+    const float n = std::max(camera_.z_near, 0.01f);
+    const float f = std::max(n + 0.1f, std::min(sun_.shadow_distance, camera_.z_far));
+    const std::uint32_t count = settings_.shadow_cascades;
+    const float lambda = settings_.cascade_split_lambda;
+    const float tan_y = std::tan(camera_.fov_y * 0.5f), tan_x = tan_y * aspect;
+    cascade_count_ = count;
+    cascade_splits_ = {};
+    cascade_texel_ = {};
+    float prev = n;
+    for (std::uint32_t i = 0; i < 4; ++i) cascade_vp_[i] = Mat4::identity();
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const float t = static_cast<float>(i + 1) / static_cast<float>(count);
+        const float split = lambda * n * std::pow(f / n, t) + (1.0f - lambda) * (n + (f - n) * t);
+        cascade_splits_[i] = split;
+        // Bounding sphere of the frustum slice: rotation invariant, so the projection only
+        // changes when the camera moves (then snapped to whole texels).
+        Vec3 center{};
+        Vec3 corners[8];
+        int k = 0;
+        for (float z : {prev, split})
+            for (float sy : {-1.0f, 1.0f})
+                for (float sx : {-1.0f, 1.0f}) {
+                    corners[k] = inv_view.transform_point({sx * tan_x * z, sy * tan_y * z, -z});
+                    center = center + corners[k];
+                    ++k;
+                }
+        center = center * (1.0f / 8.0f);
+        float r = 0.0f;
+        for (const Vec3& c : corners) r = std::max(r, length(c - center));
+        r = std::ceil(std::max(r, 0.5f) * 16.0f) / 16.0f;
+        Vec3 c = light_view.transform_point(center);
+        const float texel = (2.0f * r) / static_cast<float>(resolution);
+        c.x = std::floor(c.x / texel) * texel;
+        c.y = std::floor(c.y / texel) * texel;
+        // Depth range extends towards the light so off-screen casters still cast.
+        const float back = std::max(r * 4.0f, 30.0f);
+        const Mat4 proj = Mat4::orthographic(c.x - r, c.x + r, c.y - r, c.y + r, -c.z - back, -c.z + r);
+        cascade_vp_[i] = proj * light_view;
+        cascade_texel_[i] = texel;
+        prev = split;
+    }
 }
 
 Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target, std::uint32_t width, std::uint32_t height,
@@ -271,23 +456,47 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     VICTUS_PROFILE_SCOPE("SceneRenderer::render");
     if (width == 0 || height == 0) return {};
     auto& dev = ctx_.device();
-    auto tonemap = tonemap_pipeline(target_format);
-    if (!tonemap) return std::move(tonemap).error();
+    const RenderSettings& S = settings_;
+
+    // Internal 3D resolution (dynamic resolution / render scale).
+    const auto scaled = [&](std::uint32_t v) {
+        return std::max(1u, static_cast<std::uint32_t>(std::lround(static_cast<float>(v) * S.render_scale)));
+    };
+    const std::uint32_t rw = scaled(width), rh = scaled(height);
+    stats_.render_width = rw;
+    stats_.render_height = rh;
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    const Mat4 view_proj = camera_.projection(aspect) * camera_.view;
+    const Mat4 proj = camera_.projection(aspect);
+    const Mat4 view_proj = proj * camera_.view;
     const Frustum frustum = Frustum::from_matrix(view_proj);
     const bool shadows = sun_.shadows && sun_.intensity > 0.0f;
-    if (shadows) compute_shadow_matrix();
-    else light_vp_ = Mat4::identity();
-    const Frustum light_frustum = Frustum::from_matrix(light_vp_);
+    const std::uint32_t shadow_res = std::max(64u, std::min(sun_.shadow_resolution, S.shadow_resolution));
+    if (shadows) compute_cascades(aspect, shadow_res);
+    else {
+        cascade_count_ = 0;
+        cascade_splits_ = {};
+        for (auto& m : cascade_vp_) m = Mat4::identity();
+    }
+    stats_.shadow_cascades = cascade_count_;
+    std::array<Frustum, 4> cascade_frustum{};
+    for (std::uint32_t c = 0; c < cascade_count_; ++c) cascade_frustum[c] = Frustum::from_matrix(cascade_vp_[c]);
 
     // Visibility + sorting (front-to-back within pipeline and base texture runs).
-    std::vector<const Draw*> visible, casters;
+    std::vector<const Draw*> visible;
+    std::array<std::vector<const Draw*>, 4> casters;
     visible.reserve(draws_.size());
     for (Draw& d : draws_) {
         const Aabb world = d.mesh->bounds.transformed(d.model);
-        if (shadows && d.material.cast_shadows && light_frustum.intersects(world)) casters.push_back(&d);
+        if (d.material.cast_shadows) {
+            bool any = false;
+            for (std::uint32_t c = 0; c < cascade_count_; ++c)
+                if (cascade_frustum[c].intersects(world)) {
+                    casters[c].push_back(&d);
+                    any = true;
+                }
+            if (any) ++stats_.shadow_casters;
+        }
         if (!frustum.intersects(world)) {
             ++stats_.culled;
             continue;
@@ -302,15 +511,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         return a->distance < b->distance;
     });
     stats_.visible = static_cast<std::uint32_t>(visible.size());
-    stats_.shadow_casters = static_cast<std::uint32_t>(casters.size());
+    for (std::uint32_t c = 0; c < cascade_count_; ++c) stats_.shadow_draws += static_cast<std::uint32_t>(casters[c].size());
 
     // Nearest point lights when over budget.
-    if (points_.size() > kMaxPointLights) {
-        std::partial_sort(points_.begin(), points_.begin() + kMaxPointLights, points_.end(),
+    const std::size_t light_budget = S.max_point_lights;
+    if (points_.size() > light_budget) {
+        std::partial_sort(points_.begin(), points_.begin() + static_cast<std::ptrdiff_t>(light_budget), points_.end(),
                           [&](const PointLight& a, const PointLight& b) {
                               return length(a.position - camera_.position) < length(b.position - camera_.position);
                           });
-        points_.resize(kMaxPointLights);
+        points_.resize(light_budget);
     }
     stats_.point_lights = static_cast<std::uint32_t>(points_.size());
 
@@ -330,14 +540,30 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                           {reinterpret_cast<const std::uint8_t*>(lines_.data()), lines_.size() * sizeof(LineVertex)});
     }
 
+    const bool ssao = S.ssao && env_.ao_intensity > 0.0f && env_.ao_radius > 0.0f;
+    const bool prepass = S.depth_prepass || ssao;
+    const bool bloom = S.bloom && env_.bloom_intensity > 0.0f;
+    const bool auto_exposure = S.auto_exposure && env_.auto_exposure;
+    const bool fxaa = S.fxaa;
+    if (auto_exposure) VICTUS_TRY_STATUS(ensure_exposure_textures());
+
+    const std::uint32_t atlas_tiles = cascade_count_ > 1 ? 2u : 1u;
+    const std::uint32_t atlas_size = shadow_res * atlas_tiles;
+
     LightingUniforms lighting{};
-    lighting.camera_pos = Vec4(camera_.position, 1.0f);
+    lighting.camera_pos = Vec4(camera_.position, ssao ? 1.0f : 0.0f);
+    lighting.camera_forward = Vec4(camera_.forward(), 0.0f);
     lighting.sun_dir = Vec4(normalize(sun_.direction), shadows ? 1.0f : 0.0f);
     lighting.sun_color = rgb(sun_.color, sun_.intensity);
     lighting.sky_color = rgb(env_.sky_zenith, env_.ambient_intensity, env_.exposure);
     lighting.horizon_color = rgb(env_.sky_horizon, env_.ambient_intensity);
     lighting.ground_color = rgb(env_.ground, env_.ambient_intensity, static_cast<float>(points_.size()));
-    lighting.shadow_params = {1.0f / static_cast<float>(std::max(1u, sun_.shadow_resolution)), 0.0008f, 0.002f, 0.0f};
+    lighting.shadow_params = {1.0f / static_cast<float>(atlas_size), 0.0004f, 1.0f, static_cast<float>(cascade_count_)};
+    lighting.cascade_params = {S.soft_shadows ? 1.0f : 0.0f, 1.0f / static_cast<float>(atlas_tiles), 0.1f, 0.0f};
+    lighting.cascade_splits = {cascade_splits_[0], cascade_splits_[1], cascade_splits_[2], cascade_splits_[3]};
+    lighting.cascade_texel = {cascade_texel_[0], cascade_texel_[1], cascade_texel_[2], cascade_texel_[3]};
+    lighting.screen = inv_size(rw, rh);
+    for (std::uint32_t c = 0; c < 4; ++c) lighting.cascade_vp[c] = cascade_vp_[c];
     for (std::size_t i = 0; i < points_.size(); ++i) {
         const auto& pl = points_[i];
         lighting.points[i] = {Vec4(pl.position, std::max(pl.range, 0.01f)), rgb(pl.color, 1.0f, pl.intensity)};
@@ -357,40 +583,112 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     if (shadows) {
         rhi::TextureDesc sd;
         sd.format = depth_format_;
-        sd.width = sd.height = sun_.shadow_resolution;
+        sd.width = sd.height = atlas_size;
         sd.usage = rhi::TextureUsageDepthTarget | rhi::TextureUsageSampled;
-        shadow_map = graph.create_texture("shadow_map", sd);
+        shadow_map = graph.create_texture("shadow_atlas", sd);
         graph.add_pass(
             "shadow", [&](PassBuilder& b) { b.write_depth(shadow_map, rhi::LoadOp::Clear, 1.0f); },
             [&](PassContext& ctx) {
                 ctx.pass->bind_pipeline(shadow_pipeline_);
-                for (const Draw* d : casters) {
-                    ShadowUniforms su{light_vp_, d->model};
-                    ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, su);
-                    ctx.pass->bind_vertex_buffer(0, d->mesh->vertices);
-                    ctx.pass->bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
-                    ctx.pass->draw_indexed(d->mesh->index_count);
+                for (std::uint32_t c = 0; c < cascade_count_; ++c) {
+                    const float x = static_cast<float>((c & 1u) * shadow_res), y = static_cast<float>((c >> 1u) * shadow_res);
+                    ctx.pass->set_viewport({x, y, static_cast<float>(shadow_res), static_cast<float>(shadow_res), 0, 1});
+                    for (const Draw* d : casters[c]) {
+                        ShadowUniforms su{cascade_vp_[c], d->model};
+                        ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, su);
+                        ctx.pass->bind_vertex_buffer(0, d->mesh->vertices);
+                        ctx.pass->bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
+                        ctx.pass->draw_indexed(d->mesh->index_count);
+                    }
                 }
             });
     }
 
-    rhi::TextureDesc hdr_desc;
-    hdr_desc.format = rhi::Format::RGBA16_FLOAT;
-    hdr_desc.width = width;
-    hdr_desc.height = height;
-    hdr_desc.usage = rhi::TextureUsageColorTarget | rhi::TextureUsageSampled;
+    rhi::TextureDesc hdr_desc = color_desc(rhi::Format::RGBA16_FLOAT, rw, rh);
     const RGTexture hdr = graph.create_texture("hdr_color", hdr_desc);
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
-    depth_desc.usage = rhi::TextureUsageDepthTarget;
+    depth_desc.usage = rhi::TextureUsageDepthTarget | (ssao ? rhi::TextureUsageSampled : 0u);
     const RGTexture depth = graph.create_texture("scene_depth", depth_desc);
+
+    if (prepass) {
+        graph.add_pass(
+            "depth_prepass", [&](PassBuilder& b) { b.write_depth(depth, rhi::LoadOp::Clear, 1.0f); },
+            [&](PassContext& ctx) {
+                rhi::RenderPass& pass = *ctx.pass;
+                FrameUniforms frame{view_proj};
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame);
+                rhi::PipelineHandle bound{};
+                for (const Draw* d : visible) {
+                    if (d->material.alpha_cutoff > 0.0f) continue; // alpha-tested: depth comes from the main pass
+                    const rhi::PipelineHandle want = d->material.double_sided ? prepass_double_ : prepass_cull_;
+                    if (!(bound == want)) {
+                        pass.bind_pipeline(want);
+                        bound = want;
+                    }
+                    ObjectUniforms obj{d->model, Mat4::identity()};
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 1, obj);
+                    pass.bind_vertex_buffer(0, d->mesh->vertices);
+                    pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
+                    pass.draw_indexed(d->mesh->index_count);
+                    ++stats_.prepass_draws;
+                }
+            });
+    }
+
+    RGTexture ao;
+    if (ssao) {
+        const std::uint32_t aw = S.ssao_half_resolution ? std::max(1u, rw / 2) : rw;
+        const std::uint32_t ah = S.ssao_half_resolution ? std::max(1u, rh / 2) : rh;
+        const RGTexture ao_raw = graph.create_texture("ssao_raw", color_desc(rhi::Format::R8_UNORM, aw, ah));
+        ao = graph.create_texture("ssao", color_desc(rhi::Format::R8_UNORM, aw, ah));
+        auto ssao_pl = post_pipeline("ssao.frag", rhi::Format::R8_UNORM);
+        if (!ssao_pl) return std::move(ssao_pl).error();
+        auto blur_pl = post_pipeline("ssao_blur.frag", rhi::Format::R8_UNORM);
+        if (!blur_pl) return std::move(blur_pl).error();
+        SsaoUniforms su{};
+        su.inv_proj = inverse(proj);
+        su.params = {env_.ao_radius, env_.ao_intensity, 0.002f, static_cast<float>(S.ssao_samples)};
+        su.screen = inv_size(rw, rh, 0.5f * static_cast<float>(rh) / std::tan(camera_.fov_y * 0.5f),
+                             std::max(env_.ao_fade_distance, 1.0f));
+        BlurUniforms bu{};
+        bu.proj = {-proj[3].z, 1.0f, proj[2].z, 0.0f};
+        bu.screen = inv_size(aw, ah);
+        graph.add_pass(
+            "ssao",
+            [&](PassBuilder& b) {
+                b.read(depth);
+                b.write_color(ao_raw, rhi::LoadOp::DontCare);
+            },
+            [&, pl = ssao_pl.value(), su](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, su);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(depth), ctx_.nearest_clamp());
+                ctx.pass->draw(3);
+            });
+        graph.add_pass(
+            "ssao_blur",
+            [&](PassBuilder& b) {
+                b.read(ao_raw);
+                b.read(depth);
+                b.write_color(ao, rhi::LoadOp::DontCare);
+            },
+            [&, pl = blur_pl.value(), bu, ao_raw](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, bu);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(ao_raw), ctx_.linear_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(depth), ctx_.nearest_clamp());
+                ctx.pass->draw(3);
+            });
+    }
 
     graph.add_pass(
         "forward",
         [&](PassBuilder& b) {
             if (shadow_map.valid()) b.read(shadow_map);
+            if (ao.valid()) b.read(ao);
             b.write_color(hdr, rhi::LoadOp::Clear, env_.clear_color);
-            b.write_depth(depth, rhi::LoadOp::Clear, 1.0f);
+            b.write_depth(depth, prepass ? rhi::LoadOp::Load : rhi::LoadOp::Clear, 1.0f);
         },
         [&](PassContext& ctx) {
             rhi::RenderPass& pass = *ctx.pass;
@@ -407,7 +705,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.draw(3);
             }
             const rhi::TextureHandle shadow_tex = shadow_map.valid() ? ctx.texture(shadow_map) : no_shadow_;
-            FrameUniforms frame{view_proj, light_vp_};
+            const rhi::TextureHandle ao_tex = ao.valid() ? ctx.texture(ao) : ctx_.white();
+            FrameUniforms frame{view_proj};
             ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame);
             ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, lighting);
             rhi::PipelineHandle bound{};
@@ -432,6 +731,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 2, pick(m.normal_texture, ctx_.flat_normal()), ctx_.linear_repeat());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 3, pick(m.emissive_texture, ctx_.white()), ctx_.linear_repeat());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 4, shadow_tex, ctx_.shadow_compare());
+                pass.bind_texture(rhi::ShaderStage::Fragment, 5, ao_tex, ctx_.linear_clamp());
                 pass.bind_vertex_buffer(0, d->mesh->vertices);
                 pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
                 pass.draw_indexed(d->mesh->index_count);
@@ -444,24 +744,168 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             }
         });
 
-    const rhi::PipelineHandle tm = tonemap.value();
+    // Dual-filter bloom: progressively halved mip chain, then tent upsampling back up.
+    RGTexture bloom_result;
+    if (bloom) {
+        std::uint32_t levels = 0;
+        std::vector<RGTexture> chain;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> sizes;
+        std::uint32_t bw = rw, bh = rh;
+        while (levels < S.bloom_levels && bw >= 4 && bh >= 4) {
+            bw /= 2;
+            bh /= 2;
+            chain.push_back(graph.create_texture(std::format("bloom_{}", levels), color_desc(rhi::Format::RGBA16_FLOAT, bw, bh)));
+            sizes.emplace_back(bw, bh);
+            ++levels;
+        }
+        if (levels > 0) {
+            auto down_pl = post_pipeline("bloom_down.frag", rhi::Format::RGBA16_FLOAT);
+            if (!down_pl) return std::move(down_pl).error();
+            auto up_pl = post_pipeline("bloom_up.frag", rhi::Format::RGBA16_FLOAT, rhi::BlendMode::Additive);
+            if (!up_pl) return std::move(up_pl).error();
+            for (std::uint32_t i = 0; i < levels; ++i) {
+                const RGTexture src = i == 0 ? hdr : chain[i - 1];
+                const auto [sw, sh] = i == 0 ? std::pair{rw, rh} : sizes[i - 1];
+                BloomDownUniforms du{inv_size(sw, sh, i == 0 ? 1.0f : 0.0f),
+                                     {env_.bloom_threshold, env_.bloom_knee, 256.0f, 0.0f}};
+                const RGTexture dst = chain[i];
+                graph.add_pass(
+                    std::format("bloom_down_{}", i),
+                    [src, dst](PassBuilder& b) {
+                        b.read(src);
+                        b.write_color(dst, rhi::LoadOp::DontCare);
+                    },
+                    [this, src, du, pl = down_pl.value()](PassContext& ctx) {
+                        ctx.pass->bind_pipeline(pl);
+                        ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, du);
+                        ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(src), ctx_.linear_clamp());
+                        ctx.pass->draw(3);
+                    });
+            }
+            for (std::uint32_t i = levels - 1; i-- > 0;) {
+                const RGTexture src = chain[i + 1], dst = chain[i];
+                const auto [sw, sh] = sizes[i + 1];
+                PostUniforms up{inv_size(sw, sh, 1.0f, 1.0f), {}, {}};
+                graph.add_pass(
+                    std::format("bloom_up_{}", i),
+                    [src, dst](PassBuilder& b) {
+                        b.read(src);
+                        b.write_color(dst, rhi::LoadOp::Load);
+                    },
+                    [this, src, up, pl = up_pl.value()](PassContext& ctx) {
+                        ctx.pass->bind_pipeline(pl);
+                        ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, up.params);
+                        ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(src), ctx_.linear_clamp());
+                        ctx.pass->draw(3);
+                    });
+            }
+            bloom_result = chain[0];
+        }
+    }
+
+    // Auto exposure: log-luminance image, then adaptation into a persistent 1x1 texture.
+    RGTexture exposure_now;
+    if (auto_exposure) {
+        auto lum_pl = post_pipeline("luminance.frag", rhi::Format::R16_FLOAT);
+        if (!lum_pl) return std::move(lum_pl).error();
+        auto exp_pl = post_pipeline("exposure.frag", rhi::Format::R32_FLOAT);
+        if (!exp_pl) return std::move(exp_pl).error();
+        const RGTexture lum =
+            graph.create_texture("log_luminance", color_desc(rhi::Format::R16_FLOAT, kLuminanceSize, kLuminanceSize));
+        const rhi::TextureDesc one = color_desc(rhi::Format::R32_FLOAT, 1, 1);
+        const RGTexture previous = graph.import_texture("exposure_previous", exposure_[exposure_index_], one);
+        exposure_now = graph.import_texture("exposure_current", exposure_[exposure_index_ ^ 1u], one);
+        const float dt = std::clamp(std::isfinite(frame_time_) ? frame_time_ : 0.0f, 0.0f, 1.0f);
+        ExposureUniforms eu{};
+        eu.params = {1.0f - std::exp(-dt * std::max(env_.adaptation_speed_up, 0.0f)),
+                     1.0f - std::exp(-dt * std::max(env_.adaptation_speed_down, 0.0f)), env_.auto_exposure_min_ev,
+                     std::max(env_.auto_exposure_min_ev, env_.auto_exposure_max_ev)};
+        eu.flags = {adaptation_valid_ ? 0.0f : 1.0f, 0, 0, 0};
+        PostUniforms lu{inv_size(kLuminanceSize, kLuminanceSize), {}, {}};
+        graph.add_pass(
+            "luminance",
+            [&](PassBuilder& b) {
+                b.read(hdr);
+                b.write_color(lum, rhi::LoadOp::DontCare);
+            },
+            [this, hdr, lu, pl = lum_pl.value()](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, lu.params);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(hdr), ctx_.linear_clamp());
+                ctx.pass->draw(3);
+            });
+        graph.add_pass(
+            "exposure",
+            [&](PassBuilder& b) {
+                b.read(lum);
+                b.read(previous);
+                b.write_color(exposure_now, rhi::LoadOp::DontCare);
+            },
+            [this, lum, previous, eu, pl = exp_pl.value()](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, eu);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(lum), ctx_.linear_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(previous), ctx_.nearest_clamp());
+                ctx.pass->draw(3);
+            });
+    }
+
+    // Tonemap (+ grading) into the target, or into an LDR buffer that FXAA resolves.
+    const rhi::Format tonemap_format = fxaa ? rhi::Format::RGBA8_UNORM : target_format;
+    auto tonemap = post_pipeline("tonemap.frag", tonemap_format);
+    if (!tonemap) return std::move(tonemap).error();
+    const RGTexture ldr = fxaa ? graph.create_texture("ldr_color", color_desc(rhi::Format::RGBA8_UNORM, width, height)) : out;
+    PostUniforms post{};
+    const Tonemapper op = env_.tonemap ? env_.tonemapper : Tonemapper::None;
+    post.params = {env_.exposure, env_.vignette, is_srgb(target_format) ? 0.0f : 1.0f, static_cast<float>(op)};
+    post.params2 = {bloom_result.valid() ? env_.bloom_intensity : 0.0f, exposure_now.valid() ? 1.0f : 0.0f,
+                    std::exp2(env_.exposure_compensation), env_.saturation};
+    post.params3 = {env_.contrast, fxaa ? 1.0f : 0.0f, 0.0f, 0.0f};
     graph.add_pass(
         "tonemap",
         [&](PassBuilder& b) {
             b.read(hdr);
-            b.write_color(out, rhi::LoadOp::DontCare);
+            if (bloom_result.valid()) b.read(bloom_result);
+            if (exposure_now.valid()) b.read(exposure_now);
+            b.write_color(ldr, rhi::LoadOp::DontCare);
         },
-        [&](PassContext& ctx) {
+        [&, tm = tonemap.value()](PassContext& ctx) {
             ctx.pass->bind_pipeline(tm);
-            PostUniforms post{{env_.exposure, env_.vignette, is_srgb(target_format) ? 0.0f : 1.0f, env_.tonemap ? 1.0f : 0.0f}};
             ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, post);
             ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(hdr), ctx_.linear_clamp());
+            ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1,
+                                   bloom_result.valid() ? ctx.texture(bloom_result) : ctx_.black(), ctx_.linear_clamp());
+            ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 2,
+                                   exposure_now.valid() ? ctx.texture(exposure_now) : ctx_.white(), ctx_.nearest_clamp());
             ctx.pass->draw(3);
         });
+    if (fxaa) {
+        auto fx = post_pipeline("fxaa.frag", target_format);
+        if (!fx) return std::move(fx).error();
+        PostUniforms fu{inv_size(width, height, is_srgb(target_format) ? 1.0f : 0.0f, 0.75f), {}, {}};
+        graph.add_pass(
+            "fxaa",
+            [&](PassBuilder& b) {
+                b.read(ldr);
+                b.write_color(out, rhi::LoadOp::DontCare);
+            },
+            [this, ldr, fu, pl = fx.value()](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, fu.params);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(ldr), ctx_.linear_clamp());
+                ctx.pass->draw(3);
+            });
+    }
 
     VICTUS_TRY_STATUS(graph.compile());
     VICTUS_TRY_STATUS(graph.execute(dev, cmd, pool_));
     graph_info_ = graph.info();
+    if (auto_exposure) {
+        exposure_index_ ^= 1u;
+        adaptation_valid_ = true;
+    } else {
+        adaptation_valid_ = false;
+    }
     return {};
 }
 

@@ -147,6 +147,13 @@ void sun(Scene& s) {
 void build_3d(Scene& s) {
     attach(s, camera_3d(s, {0, 4.5f, 9}, {0, 0.6f, 0}), "scripts/follow_camera.luau");
     sun(s);
+    {
+        // Scene look: filmic tonemapping with subtle bloom and contact shadows (SSAO).
+        auto& env = s.world().add<gameplay::EnvironmentComponent>(add(s, "Environment", {0, 0, 0}));
+        env.bloom_intensity = 0.04f;
+        env.ao_intensity = 1.0f;
+        env.shadow_distance = 30.0f;
+    }
     const Entity ground = add(s, "Ground", {0, 0, 0});
     s.world().get<Transform>(ground)->scale = {20, 1, 20};
     mesh(s, ground, "plane", {0.16f, 0.17f, 0.19f, 1}, 0.0f, 0.9f);

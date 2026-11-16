@@ -33,7 +33,7 @@ VICTUS aims to give developers an end-to-end path from an empty project to a fin
 
 ## Development status
 
-VICTUS is early and not production-ready. What exists and is tested today: core runtime (jobs, memory, profiling, JSON, logging), SDL3 platform layer, an RHI on SDL_GPU (Vulkan verified), a render graph, real 2D sprite and 3D PBR/shadow rendering, an archetype ECS, a versioned scene format, a texture/glTF asset pipeline, the VICTUS editor, Luau gameplay scripting with hot reload, 3D (Jolt) and 2D (Box2D) rigid-body physics with triggers, queries and script collision events, miniaudio-based audio (buses, 3D spatialization, streaming music, script API), a standalone player and the `victus` CLI. `victus export` packaging. Networking is not implemented yet. [docs/STATUS.md](docs/STATUS.md) lists exactly what is verified and how; [ROADMAP.md](ROADMAP.md) is the plan.
+VICTUS is early and not production-ready. What exists and is tested today: core runtime (jobs, memory, profiling, JSON, logging), SDL3 platform layer, an RHI on SDL_GPU (Vulkan verified), a render graph, real 2D sprite rendering and 3D PBR rendering with cascaded shadows, SSAO, bloom, auto exposure, filmic tonemapping, FXAA and Low/Medium/High/Ultra quality tiers, an archetype ECS, a versioned scene format, a texture/glTF asset pipeline, the VICTUS editor, Luau gameplay scripting with hot reload, 3D (Jolt) and 2D (Box2D) rigid-body physics with triggers, queries and script collision events, miniaudio-based audio (buses, 3D spatialization, streaming music, script API), a standalone player and the `victus` CLI. `victus export` packaging. Networking is not implemented yet. [docs/STATUS.md](docs/STATUS.md) lists exactly what is verified and how; [ROADMAP.md](ROADMAP.md) is the plan.
 
 ## Quick start
 
@@ -52,6 +52,7 @@ Create, edit and run a project:
 ./build/bin/victus new MyGame --template 3d          # creates MyGame/victus.project, scenes/, assets/
 ./build/bin/victus_editor MyGame                     # open in the editor (or run with no arguments for the launcher)
 ./build/bin/victus run MyGame                        # run the game in its own window
+./build/bin/victus run MyGame --quality low          # override the project's quality tier (low/medium/high/ultra)
 ./build/bin/victus import MyGame                     # import/cook assets dropped into MyGame/assets
 ./build/bin/victus check MyGame                      # validate scenes and script syntax
 ./build/bin/victus simulate MyGame --frames 600 --hold D   # run gameplay + scripts headless (no GPU)
