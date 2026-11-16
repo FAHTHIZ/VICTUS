@@ -1,19 +1,29 @@
 # Research Register
 
-Prefer primary documentation, upstream repositories, release notes, issues, benchmarks and exact license texts. Record URL, access date, version/commit, findings and uncertainty.
+Prefer primary documentation, upstream repositories, release notes, issues, benchmarks and exact license texts. Record URL, access date, version/commit, findings and uncertainty. This register is a starting evidence map, not proof that any dependency has been selected or licensed.
 
-## Engine references
-| Project | Study | VICTUS lesson | Caution |
+## Engine and product references
+| Project/source | Study | VICTUS lesson | Caution |
 |---|---|---|---|
-| Unreal | World Partition, Nanite, Lumen, Mass Entity, PCG, cooking/editor UX | Streaming, virtualized rendering, data-oriented simulation, authoring | Proprietary implementation; public docs/behavior only |
-| Unity | Entities/DOTS, Burst, Jobs, SRP, Addressables, Profiler | Data-oriented execution, jobs, render pipelines | Proprietary implementation; public docs only |
-| Godot | Renderer tiers, scene/resources, editor/import/export | Modular renderer and accessible editor | Evaluate scalability/trade-offs |
-| O3DE | Gems, Atom, Asset Processor, serialization | Modular architecture and content processing | Build/maintenance footprint |
-| Bevy | ECS, schedules, reflection, render graph | Parallel scheduling/data-driven design | Rust ecosystem/editor maturity |
-| Filament | PBR, clustered forward, mobile performance | Scalable renderer | Not a complete editor/engine |
-| bgfx | Backend abstraction/shader tooling | RHI candidate | Verify backend/platform matrix |
-| Diligent | Explicit resources and HLSL pipeline | Modern RHI candidate | Verify current exact support |
-| Blender | Geometry Nodes/asset automation | Reuse mature creator tooling | Keep external; don't rebuild Blender |
+| Unreal Engine Gameplay Framework — https://dev.epicgames.com/documentation/en-us/unreal-engine/gameplay-framework-in-unreal-engine | Game instance, modes/states, controllers, pawns, components, cameras and modular gameplay | A reusable gameplay layer is essential between low-level runtime and game code | Learn public concepts; no copying proprietary implementation |
+| Unreal Engine Networking Overview — https://dev.epicgames.com/documentation/unreal-engine/networking-overview-for-unreal-engine | Server authority and networked gameplay | Authority, replication and prediction need explicit architecture | Public docs only |
+| Unity — https://docs.unity3d.com/Manual/index.html | Editor workflows, assets, build profiles, profiling and platform delivery | Production pipeline and usability are core engine capabilities | Proprietary implementation; public docs only |
+| Godot 2D docs — https://docs.godotengine.org/en/stable/tutorials/2d/index.html | Dedicated 2D renderer, physics, tilemaps, particles and animation | 2D must be a complete first-class workflow | Evaluate trade-offs and scaling limits |
+| Godot feature list — https://docs.godotengine.org/en/stable/about/list_of_features.html | Supported workflows/platforms and feature completeness | Use a broad feature checklist when auditing product coverage | Not a performance guarantee |
+| O3DE — https://www.o3de.org/ | Modular engine, Gems, Atom renderer and asset processing | Modularity and production asset workflows | Evaluate build/maintenance footprint |
+| Bevy — https://bevyengine.org/ | ECS, schedules and data-oriented runtime | Benchmark data-oriented approaches | Rust ecosystem and editor maturity differ |
+| Filament — https://github.com/google/filament | PBR and mobile-oriented renderer | Renderer quality and mobile performance reference | Not a complete engine/editor |
+| bgfx — https://github.com/bkaradzic/bgfx | Graphics abstraction and shader tooling | RHI candidate | Verify backend/platform matrix and exact license family |
+| Diligent Engine — https://github.com/DiligentGraphics/DiligentEngine | Explicit resource model and graphics API abstraction | RHI candidate | Verify exact support, maintenance and bundled dependencies |
+| Blender — https://www.blender.org/ | Authoring, geometry nodes and asset workflows | Integrate via open formats and tooling | Keep Blender external; review GPL obligations |
+
+## Standards and interoperability
+| Standard | Source | Use | Important boundary |
+|---|---|---|---|
+| glTF 2.0 | https://registry.khronos.org/glTF/ | Runtime 3D asset delivery, scenes, meshes, materials, cameras, skins and animation | Not a full authoring format or complete streaming system |
+| OpenXR | https://www.khronos.org/openxr/ | Cross-vendor XR runtime interface | Requires runtime/device validation; optional target |
+| Vulkan | https://www.khronos.org/vulkan/ | Explicit graphics/compute backend candidate | Complexity and driver/device coverage must be measured |
+| OpenUSD | https://openusd.org/ | Complex scene interchange and collaboration workflows | Distinguish authoring/interchange from runtime cooked assets |
 
 ## Component candidates (verify exact release)
 | Component | Role | Initial license expectation |
@@ -25,7 +35,7 @@ Prefer primary documentation, upstream repositories, release notes, issues, benc
 | Jolt | Physics | MIT |
 | Recast/Detour | Navigation | zlib |
 | ozz-animation | Animation | MIT |
-| bgfx/bx/bimg | Graphics abstraction | BSD-2-Clause family; verify each |
+| bgfx/bx/bimg | Graphics abstraction | BSD family; verify each |
 | Diligent | Graphics abstraction | Apache-2.0 |
 | Filament | Renderer/reference | Apache-2.0 |
 | meshoptimizer | Geometry | MIT |
@@ -38,12 +48,22 @@ Prefer primary documentation, upstream repositories, release notes, issues, benc
 | Blender | External authoring | GPL-3.0-or-later; keep external |
 | OpenUSD | Scene interchange | Apache-2.0; inspect dependencies |
 
-Shortlist only, not legal determination or adopted dependencies. Check bundled licenses.
+Shortlist only, not legal determination or adopted dependencies. Check upstream LICENSE, bundled notices, transitive dependencies, patent terms and platform support before adoption.
 
-## Research questions
-Graphics: actual backend/platform support; Android Vulkan/fallback; Apple Metal; shader compile/reflection/hot reload; abstraction overhead; multithreaded recording/synchronization.
+## Research conclusions added 2026-11-16
+- Unreal's public Gameplay Framework documentation demonstrates the value of a composable layer for game/session lifetime, rules/state, controllers, pawns, cameras and components. VICTUS therefore specifies its own flexible gameplay framework rather than exposing only ECS primitives.
+- Godot's official 2D documentation explicitly describes a dedicated 2D renderer and physics engine plus tilemaps, particles and animation. VICTUS therefore treats 2D as a complete product track, not merely sprites drawn by the 3D renderer.
+- Unreal's networking overview describes server authority as the source of truth. VICTUS adopts server-authoritative networking as the default shared-state model, with client prediction/reconciliation and impairment testing as explicit requirements.
+- Khronos describes glTF 2.0 as an API-neutral runtime delivery format with scene, mesh, material, camera, skin and animation data. It is a strong import/cook interchange baseline, but does not replace VICTUS authoring or world-streaming systems.
+- Khronos describes OpenXR as a royalty-free common API for AR/VR devices. XR remains an optional, evidence-gated extension after the core renderer and input model are stable.
+
+## Open research questions
+Graphics: actual backend/device support; Android Vulkan/fallback; Apple Metal; shader compile/reflection/hot reload; abstraction overhead; multithreaded recording/synchronization; 2D/3D shared resource model.
+Gameplay: data-oriented ECS versus higher-level object facade; reflection/serialization; visual graph runtime; prefab references/variants; deterministic gameplay testing.
 Simulation: ECS layout on VICTUS workloads; scheduler affinity/cancellation; LOD invariants/causality; determinism across CPU architectures.
-Editor/assets: undo/redo, serialization, recovery, node graph UX, import formats, OpenUSD necessity, cook/cache/versioning.
-Mobile: memory budgets, thermals, texture compression, suspend/resume, minimum device matrix and physical-device CI limits.
+Editor/assets: undo/redo, serialization, recovery, node graph UX, import formats, OpenUSD necessity, cook/cache/versioning, project merges and collaboration.
+Networking: transport candidates, server tick model, prediction scope, replication bandwidth, relevancy and security threat model.
+Mobile/XR: memory budgets, thermals, texture compression, suspend/resume, minimum device matrix, OpenXR runtime coverage and physical-device CI limits.
+Production: code/asset hot reload safety, incremental build cache correctness, mod/plugin isolation, package signing, SBOM and crash privacy.
 
-Search snippets are discovery aids, not license proof. Check upstream LICENSE and bundled notices before adoption and upgrades.
+Search snippets and secondary mirrors are discovery aids, not license proof or normative API references. Confirm claims against primary documentation and exact upstream versions before implementation.
