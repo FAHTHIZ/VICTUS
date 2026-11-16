@@ -216,5 +216,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Gamepads are merged into one for single-player and network input; local multiplayer needs per-player device assignment. Touch and rumble are not covered. Revisit if games need input contexts/stacks or combos.
 
+## ADR-0022 — Asset hot reload (accepted 2026-11-16)
+**Problem.** Iterating on art required restarting the game or pressing Reimport. Reloading must never crash a running game or editor, must work the same on Windows, macOS and Linux, and must say clearly what cannot be reloaded.
+
+**Candidates.** OS change notifications written per platform (inotify, FSEvents/kqueue, ReadDirectoryChangesW: immediate, three code paths, editors that save via rename/temp files produce bursts to debounce); efsw (MIT; wraps those backends with a generic polling fallback, one more dependency); polling file size + modification time from VICTUS's own code (one portable code path, latency bounded by the interval, cost of one directory walk per interval).
+
+**Decision.** Polling in `runtime::AssetHotReloader` (0.5 s in the player, 1 s in the editor), with the asset database's existing content hashes deciding what really needs re-importing, so touched-but-identical files cost nothing. Re-imported textures/models are evicted from `GpuAssetCache` (SDL GPU frees released textures/buffers only once it is safe) and the animation cache; audio clips are reloaded by `AudioEngine::reload_clip`; scripts keep their own watcher. Failed imports keep the last good cooked file (the database falls back to it) and are reported. Scenes, fonts, shaders and code are reported or documented as restart-only. No new dependency; OS notifications (or efsw) remain an option if project sizes make polling expensive.
+
+**Evidence.** STATUS Slice 20: GPU, audio and editor tests; live `victus run` edit of the template robot.
+
+**Risks / revisit triggers.** Large asset trees make each scan slower (benchmark before adopting notifications). Modification-time resolution on some file systems is coarse (size changes and the next scan still catch it). Model node-graph changes need re-instantiation to show fully.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

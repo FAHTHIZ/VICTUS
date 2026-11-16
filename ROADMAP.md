@@ -131,7 +131,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 
 ## Phase 13 — Production, collaboration and ecosystem
 - [~] Build automation, asset cooking, incremental compilation, caching and reproducible packaging. Done (Slice 8): `victus export` (validated, byte-reproducible `.vpak` archive with checksummed entries, cooked-only assets, embedded third-party notices, manifest) and the player's packaged mode. Remaining: compression, GPU texture compression (ASTC/BC), cross-platform targets, signing, build automation.
-- [ ] Hot reload for code/assets/shaders where safe; clear fallback when reload is unsupported.
+- [~] Hot reload for code/assets/shaders where safe; clear fallback when reload is unsupported. Done (Slice 20): `victus run` and the editor (edit and play mode) watch `assets/` and reload textures and models in place (incl. `.meta` settings and glTF dependencies), audio clips (playing sources restart with the new data) and scripts (already, since Slice 3); a broken save keeps the previous import in use and is reported; scenes and fonts are reported as needing a restart. Remaining: font and scene hot reload, re-instantiating models whose node graph changed, shader hot reload (built-in shaders are compiled into the engine; project shaders do not exist yet), C++ code reload.
 - [ ] Automated unit/integration/gameplay tests, smoke tests and deterministic regression captures.
 - [ ] Crash reporting, symbol handling, diagnostics export and privacy controls.
 - [ ] Source-control integration, project diffs/merges, collaboration foundations and conflict handling.

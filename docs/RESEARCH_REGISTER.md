@@ -123,6 +123,11 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-16 (Slice 20, hot reload)
+- SDL3 `SDL_ReleaseGPUTexture` — https://wiki.libsdl.org/SDL3/SDL_ReleaseGPUTexture: the texture is freed "as soon as it is safe to do so", so evicting a texture between frames while earlier command buffers are in flight is safe; the handle must not be used afterwards (the cache drops it).
+- efsw — https://github.com/SpartanJ/efsw (MIT): file watcher over inotify, FSEvents/kqueue, Windows I/O completion ports (ReadDirectoryChangesExW/W) with a generic polling fallback. Not adopted for now (ADR-0022); the candidate if polling becomes too slow.
+- Open questions: debounce for editors that write via temporary files, font atlas rebuilds for font reload, scene reload policy (merge vs restart).
+
 ## Research conclusions added 2026-11-16 (Slice 18, input)
 - SDL3 gamepad API — https://wiki.libsdl.org/SDL3/CategoryGamepad (zlib). `SDL_OpenGamepad`, `SDL_GetGamepadButton/Axis` and `SDL_EVENT_GAMEPAD_ADDED/REMOVED` over a standard layout (`SDL_GAMEPAD_BUTTON_SOUTH/EAST/WEST/NORTH`, shoulders, sticks, D-pad; axes `LEFTX/LEFTY/RIGHTX/RIGHTY/LEFT_TRIGGER/RIGHT_TRIGGER`, sticks −32768..32767, triggers 0..32767). VICTUS binding names mirror these positional names so one map fits Xbox, PlayStation and Switch pads.
 - gainput — https://github.com/jkuhlmann/gainput (MIT). Action mapping with its own device layer; archived and unmaintained since 2021-09-07; considered and not adopted (ADR-0021).
