@@ -123,6 +123,13 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-17 (Slice 26, session security)
+- The Noise Protocol Framework — https://noiseprotocol.org/noise.html: handshake patterns built from DH tokens; NX (`-> e  <- e, ee, s, es`) gives an anonymous initiator and a responder that transmits and proves its static key; a running hash of the transcript is authenticated. Adopted the NX shape and the transcript hash.
+- Stratum V2 protocol security — https://stratumprotocol.org/specification/04-protocol-security/: a production protocol using Noise NX for the same client/server trust model (clients verify the server they connect to; servers do not authenticate clients in the handshake), terminating the session on any MAC failure. Supported choosing NX over XX.
+- Monocypher — https://monocypher.org/: XChaCha20-Poly1305, BLAKE2b, X25519, EdDSA; under 2000 lines, no dependencies, CC0-1.0 or BSD-2-Clause. Chosen library.
+- libsodium documentation — https://doc.libsodium.org/: portable NaCl fork, ISC licence, broad platform support. Rejected for build size, kept as the fallback if more primitives are needed.
+- Open questions: player identity/accounts without a mandatory backend, rekeying, NAT traversal and relays.
+
 ## Research conclusions added 2026-11-17 (Slice 25, divergence reports)
 - Factorio wiki "Desynchronization" — https://wiki.factorio.com/Desynchronization: a desync report keeps both the player's and the server's copy of the game state; it records the state at the desync rather than the cause, and its files can be compared with text diff tools. Informed keeping the hashed state lines inside the capture.
 - Factorio Friday Facts #47 — https://factorio.com/blog/post/fff-47: a replay that checks the CRC every tick stops at the first desynchronized tick, where the difference is typically just one variable; human-readable tags make the diff usable. Informed reporting the first diverging digest with named entities and readable values.

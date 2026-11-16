@@ -282,5 +282,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Captures of large scenes grow with entities × digests; if this matters, store per-entity hashes beyond the cap or compress. Divergence in state not covered by the lines (script variables, velocities) still shows up only later as a transform change.
 
+## ADR-0028 — Encrypted, authenticated multiplayer sessions (accepted 2026-11-17)
+**Problem.** Multiplayer traffic was plaintext: anyone on the path could read it, inject input or impersonate a server, and servers could not restrict who joins. ENet provides no security.
+
+**Candidates.** Libraries: (1) Monocypher 4.0.2 — X25519, BLAKE2b, XChaCha20-Poly1305, two C files under CC0-1.0/BSD-2-Clause, no dependencies, under 2000 lines (https://monocypher.org/). (2) libsodium — the same primitives and more, ISC licence, portable and widely packaged (https://doc.libsodium.org/), but a much larger build (autotools/MSVC projects, no upstream CMake) to vendor on three platforms. (3) DTLS via OpenSSL or mbedTLS — standard, but certificate infrastructure, large dependencies and a datagram layer that would sit awkwardly under ENet's reliability. Protocol: (a) a Noise pattern (https://noiseprotocol.org/noise.html), NX = client anonymous, server transmits its static key (`-> e  <- e, ee, s, es`); (b) netcode.io-style connect tokens from a web backend (needs an online service, conflicts with "no mandatory vendor"); (c) DTLS handshakes.
+
+**Decision.** Monocypher with an NX-style handshake implemented as a `Transport` decorator, so every transport (UDP, memory, link emulation) and both sessions get it without changing the session protocol. Server authentication comes from DH with the static key (`es`) confirmed by an AEAD tag over the transcript; clients may pin the key the server prints, otherwise they trust and report it. Optional server passwords travel only inside the encrypted channel. Encryption is the default for `victus serve` and clients; `--insecure` opts out on both sides.
+
+**Evidence.** STATUS Slice 26: 7 new tests (tampering, replay, pinning, passwords, plaintext peers, a full lossy two-client session, ENet loopback) and a real UDP run with password and pinned key.
+
+**Risks / revisit triggers.** Not a byte-compatible Noise implementation (simplified key schedule, server static key sent in clear); revisit if third-party clients need interoperability. Trust-on-first-use without `--server-key` lets an active attacker learn passwords. No rekeying or player identities yet. Review Monocypher's changelog and advisories before updating the pinned version.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
