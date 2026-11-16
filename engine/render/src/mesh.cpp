@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/render/mesh.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace victus::render {
 using namespace math;
@@ -12,8 +14,41 @@ Aabb MeshData::bounds() const noexcept {
     return box;
 }
 
+SkinVertex make_skin_vertex(const std::uint32_t* joints, const float* weights, std::size_t count) noexcept {
+    SkinVertex out;
+    out.weights[0] = 0.0f;
+    // Insertion into a 4-slot list sorted by descending weight.
+    std::uint32_t best_j[4]{0, 0, 0, 0};
+    float best_w[4]{0, 0, 0, 0};
+    for (std::size_t i = 0; i < count; ++i) {
+        const float w = weights[i];
+        if (!(w > 0.0f)) continue;
+        std::uint32_t j = joints[i];
+        float wv = w;
+        for (int k = 0; k < 4; ++k) {
+            if (wv > best_w[k]) {
+                std::swap(wv, best_w[k]);
+                std::swap(j, best_j[k]);
+            }
+        }
+    }
+    const float sum = best_w[0] + best_w[1] + best_w[2] + best_w[3];
+    if (!(sum > 0.0f)) {
+        out.weights[0] = 1.0f;
+        return out;
+    }
+    for (int k = 0; k < 4; ++k) {
+        out.joints[k] = static_cast<std::uint16_t>(std::min<std::uint32_t>(best_j[k], 0xffffu));
+        out.weights[k] = best_w[k] / sum;
+    }
+    return out;
+}
+
 void MeshData::append(const MeshData& other, const Mat4& transform) {
     const auto base = static_cast<std::uint32_t>(vertices.size());
+    const bool keep_skin = other.skinned() && (vertices.empty() || skinned());
+    if (keep_skin) skin.insert(skin.end(), other.skin.begin(), other.skin.end());
+    else skin.clear();
     const Mat4 normal_m = transpose(inverse(transform));
     for (Vertex3D v : other.vertices) {
         v.position = transform.transform_point(v.position);

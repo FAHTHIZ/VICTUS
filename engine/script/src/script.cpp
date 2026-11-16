@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "victus/animation/animation.hpp"
 #include "victus/script/script.hpp"
 
 #include "victus/core/fs.hpp"
@@ -883,6 +884,74 @@ int entity_character_state(lua_State* L) {
     return 1;
 }
 
+// entity:play_animation(clip, fade?, restart?) -> bool. Cross-fades the entity's Animator to
+// `clip` over `fade` seconds (default: the Animator's crossfade). Before the animation system
+// has run on this scene the clip is only recorded on the component (applied next update).
+int entity_play_animation(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const std::string clip = luaL_checkstring(L, 2);
+    const float fade = static_cast<float>(luaL_optnumber(L, 3, -1.0));
+    const bool restart = lua_isnoneornil(L, 4) ? true : lua_toboolean(L, 4) != 0;
+    if (auto* sys = animation::system_of(s)) {
+        lua_pushboolean(L, sys->play(s, e, clip, fade, restart));
+        return 1;
+    }
+    auto* a = s.world().get<animation::AnimatorComponent>(e);
+    if (a) {
+        a->clip = clip;
+        a->playing = true;
+    }
+    lua_pushboolean(L, a != nullptr);
+    return 1;
+}
+
+// entity:animation() -> {valid, clip, time, duration, playing, looping, finished, blend}
+int entity_animation(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    animation::AnimatorStatus st;
+    if (auto* sys = animation::system_of(s)) st = sys->status(s, e);
+    else if (const auto* a = s.world().get<animation::AnimatorComponent>(e)) {
+        st.clip = a->clip;
+        st.time = a->time;
+        st.playing = a->playing;
+        st.looping = a->loop;
+    }
+    lua_createtable(L, 0, 8);
+    lua_pushboolean(L, st.valid);
+    lua_setfield(L, -2, "valid");
+    lua_pushstring(L, st.clip.c_str());
+    lua_setfield(L, -2, "clip");
+    lua_pushnumber(L, st.time);
+    lua_setfield(L, -2, "time");
+    lua_pushnumber(L, st.duration);
+    lua_setfield(L, -2, "duration");
+    lua_pushboolean(L, st.playing);
+    lua_setfield(L, -2, "playing");
+    lua_pushboolean(L, st.looping);
+    lua_setfield(L, -2, "looping");
+    lua_pushboolean(L, st.finished);
+    lua_setfield(L, -2, "finished");
+    lua_pushnumber(L, st.blend);
+    lua_setfield(L, -2, "blend");
+    return 1;
+}
+
+// entity:animation_clips() -> {names...} (empty until the model resolves)
+int entity_animation_clips(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    std::vector<std::string> names;
+    if (auto* sys = animation::system_of(s)) names = sys->clips(s, e);
+    lua_createtable(L, static_cast<int>(names.size()), 0);
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        lua_pushstring(L, names[i].c_str());
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    return 1;
+}
+
 // entity:joint_state() -> {valid, active, broken, angle, position, force}
 int entity_joint_state(lua_State* L) {
     auto& s = scene_of(L);
@@ -1036,6 +1105,9 @@ void open_victus_libs(lua_State* L) {
                                 {"move_character", entity_move_character},
                                 {"jump", entity_jump},
                                 {"character_state", entity_character_state},
+                                {"play_animation", entity_play_animation},
+                                {"animation", entity_animation},
+                                {"animation_clips", entity_animation_clips},
                                 {"joint_state", entity_joint_state},
                                 {"set_motor", entity_set_motor},
                                 {"play_audio", entity_play_audio},

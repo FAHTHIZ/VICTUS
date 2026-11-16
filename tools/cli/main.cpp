@@ -7,6 +7,7 @@
 #include "victus/core/log.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
+#include "victus/animation/animation.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/player/export.hpp"
 #include "victus/player/player.hpp"
@@ -204,6 +205,10 @@ int cmd_simulate(const std::vector<std::string>& a) {
     gameplay::add_builtin_systems(sim);
     script::add_script_systems(sim, **host);
     physics::add_physics_systems(sim, **physics_world);
+    // Animation needs cooked models: open the asset database when the project has one.
+    auto db = assets::AssetDatabase::open(proj->root());
+    animation::AnimationSystem animations({.provider = db ? assets::animation_provider(**db) : animation::SetProvider{}});
+    animation::add_animation_systems(sim, animations);
     audio::EngineOptions ao; // mixed without a device so audio calls behave as in the game
     ao.assets_root = proj->root() / "assets";
     ao.null_device = true;

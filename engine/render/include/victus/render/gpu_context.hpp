@@ -17,10 +17,12 @@ namespace victus::render {
 struct GpuMesh {
     rhi::BufferHandle vertices;
     rhi::BufferHandle indices;
+    rhi::BufferHandle skin; // SkinVertex stream (slot 2); valid only for skinned meshes
     std::uint32_t vertex_count{0};
     std::uint32_t index_count{0};
     math::Aabb bounds;
     [[nodiscard]] bool valid() const noexcept { return vertices.valid() && indices.valid(); }
+    [[nodiscard]] bool skinned() const noexcept { return skin.valid(); }
 };
 
 struct TextureOptions {

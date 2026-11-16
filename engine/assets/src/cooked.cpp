@@ -135,6 +135,7 @@ std::vector<std::uint8_t> serialize(const CookedHeader& header, const CookedMode
         w.u32(m.material);
         w.array(m.data.vertices);
         w.array(m.data.indices);
+        w.array(m.data.skin);
     }
     w.u32(static_cast<std::uint32_t>(model.nodes.size()));
     for (const auto& n : model.nodes) {
@@ -144,8 +145,65 @@ std::vector<std::uint8_t> serialize(const CookedHeader& header, const CookedMode
         w.pod(n.rotation);
         w.pod(n.scale);
         w.array(n.meshes);
+        w.i32(n.skin);
+    }
+    w.u32(static_cast<std::uint32_t>(model.skins.size()));
+    for (const auto& skin : model.skins) {
+        w.str(skin.name);
+        w.array(skin.joints);
+        w.array(skin.inverse_bind);
+    }
+    w.u32(static_cast<std::uint32_t>(model.animations.size()));
+    for (const auto& clip : model.animations) {
+        w.str(clip.name);
+        w.f32(clip.duration);
+        w.u32(static_cast<std::uint32_t>(clip.channels.size()));
+        for (const auto& ch : clip.channels) {
+            w.u32(ch.node);
+            w.u8(static_cast<std::uint8_t>(ch.path));
+            w.u8(static_cast<std::uint8_t>(ch.interpolation));
+            w.array(ch.times);
+            w.array(ch.values);
+        }
     }
     return w.take();
+}
+
+Status validate_model(const CookedModel& model) {
+    const auto bad = [](std::string what) { return make_error(ErrorCode::InvalidArgument, std::move(what)); };
+    for (std::size_t si = 0; si < model.skins.size(); ++si) {
+        const ModelSkin& skin = model.skins[si];
+        if (skin.joints.empty()) return bad(std::format("skin {} has no joints", si));
+        if (skin.joints.size() > 65535) return bad(std::format("skin {} has too many joints", si));
+        if (skin.inverse_bind.size() != skin.joints.size()) return bad(std::format("skin {} inverse bind count mismatch", si));
+        for (const std::uint32_t j : skin.joints)
+            if (j >= model.nodes.size()) return bad(std::format("skin {} joint node out of range", si));
+    }
+    for (const ModelMesh& mesh : model.meshes)
+        if (!mesh.data.skin.empty() && mesh.data.skin.size() != mesh.data.vertices.size())
+            return bad(std::format("mesh '{}' skin stream size mismatch", mesh.name));
+    for (const ModelNode& node : model.nodes) {
+        if (node.skin < -1 || node.skin >= static_cast<std::int32_t>(model.skins.size())) return bad("node skin index out of range");
+        if (node.skin < 0) continue;
+        const std::size_t joints = model.skins[static_cast<std::size_t>(node.skin)].joints.size();
+        for (const std::uint32_t mi : node.meshes) {
+            for (const render::SkinVertex& v : model.meshes[mi].data.skin)
+                for (const std::uint16_t j : v.joints)
+                    if (j >= joints) return bad(std::format("mesh '{}' joint index exceeds skin '{}'", model.meshes[mi].name, node.name));
+        }
+    }
+    for (const auto& clip : model.animations)
+        if (auto st = animation::validate(clip, model.nodes.size()); !st) return st;
+    return {};
+}
+
+animation::AnimationSet make_animation_set(const CookedModel& model) {
+    animation::AnimationSet set;
+    set.nodes.reserve(model.nodes.size());
+    for (const ModelNode& n : model.nodes)
+        set.nodes.push_back({.name = n.name, .parent = n.parent, .rest = {n.translation, n.rotation, n.scale}});
+    set.clips = model.animations;
+    return set;
 }
 
 Result<CookedHeader> read_header(std::span<const std::uint8_t> bytes) {
@@ -195,7 +253,8 @@ Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) {
     if (!r.u32(n) || n > kMaxItems) return corrupt("mesh count");
     m.meshes.resize(n);
     for (auto& mesh : m.meshes) {
-        if (!r.str(mesh.name) || !r.u32(mesh.material) || !r.array(mesh.data.vertices) || !r.array(mesh.data.indices))
+        if (!r.str(mesh.name) || !r.u32(mesh.material) || !r.array(mesh.data.vertices) || !r.array(mesh.data.indices) ||
+            !r.array(mesh.data.skin))
             return corrupt("mesh");
         if (mesh.material >= m.materials.size()) return corrupt("mesh material index");
         for (const std::uint32_t i : mesh.data.indices)
@@ -206,13 +265,33 @@ Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) {
     for (std::size_t i = 0; i < m.nodes.size(); ++i) {
         auto& node = m.nodes[i];
         if (!r.str(node.name) || !r.i32(node.parent) || !r.pod(node.translation) || !r.pod(node.rotation) ||
-            !r.pod(node.scale) || !r.array(node.meshes))
+            !r.pod(node.scale) || !r.array(node.meshes) || !r.i32(node.skin))
             return corrupt("node");
         if (node.parent < -1 || node.parent >= static_cast<std::int32_t>(i)) return corrupt("node parent order");
         for (const std::uint32_t mi : node.meshes)
             if (mi >= m.meshes.size()) return corrupt("node mesh index");
     }
+    if (!r.u32(n) || n > kMaxItems) return corrupt("skin count");
+    m.skins.resize(n);
+    for (auto& skin : m.skins)
+        if (!r.str(skin.name) || !r.array(skin.joints, kMaxItems) || !r.array(skin.inverse_bind, kMaxItems)) return corrupt("skin");
+    if (!r.u32(n) || n > kMaxItems) return corrupt("animation count");
+    m.animations.resize(n);
+    for (auto& clip : m.animations) {
+        std::uint32_t channels = 0;
+        if (!r.str(clip.name) || !r.f32(clip.duration) || !r.u32(channels) || channels > kMaxItems) return corrupt("animation");
+        clip.channels.resize(channels);
+        for (auto& ch : clip.channels) {
+            std::uint8_t path = 0, interp = 0;
+            if (!r.u32(ch.node) || !r.u8(path) || !r.u8(interp) || path > 2 || interp > 2 || !r.array(ch.times) ||
+                !r.array(ch.values))
+                return corrupt("animation channel");
+            ch.path = static_cast<animation::Path>(path);
+            ch.interpolation = static_cast<animation::Interpolation>(interp);
+        }
+    }
     if (!r.at_end()) return corrupt("trailing bytes");
+    if (auto st = validate_model(m); !st) return corrupt(st.error().message);
     return m;
 }
 

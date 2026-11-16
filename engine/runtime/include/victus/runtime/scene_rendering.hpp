@@ -4,6 +4,7 @@
 // - instantiate_model() turns a cooked model's node graph into scene entities.
 // - extract_scene() feeds a scene's cameras, lights, meshes and sprites to the renderers.
 #pragma once
+#include "victus/animation/animation.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/render/scene_renderer.hpp"
@@ -22,6 +23,11 @@ struct GpuModel {
     std::vector<render::Material> mesh_materials; // one per mesh, textures resolved
     std::vector<rhi::TextureHandle> textures;
     assets::CookedModel cpu; // node graph + materials (vertex data cleared after upload)
+    // GPU skinning metadata, per mesh: bind-space bounds of the vertices influenced by each joint
+    // index (empty for unskinned meshes) and the highest joint index used (-1 = unskinned).
+    std::vector<std::vector<math::Aabb>> joint_bounds;
+    std::vector<std::int32_t> max_joint;
+    std::vector<animation::AnimationSet::Node> skeleton; // node names/parents for joint binding
 };
 
 class GpuAssetCache {
@@ -52,12 +58,15 @@ private:
 };
 
 // Creates one entity per model node under `parent` (a new root named `name` when parent is
-// null) with MeshRenderer components referencing (model_uuid, mesh index). Returns the root.
+// null) with MeshRenderer components referencing (model_uuid, mesh index). Meshes of skinned
+// nodes get a SkinnedMesh bound to the root; models with animations get an Animator on the root
+// playing the first clip. Returns the root.
 scene::Entity instantiate_model(scene::Scene& scene, const Uuid& model_uuid, const assets::CookedModel& model,
                                 std::string_view name, scene::Entity parent = scene::kNullEntity);
 
 struct ExtractStats {
     std::uint32_t meshes{0}, sprites{0}, lights{0}, missing_assets{0};
+    std::uint32_t skinned{0}; // meshes drawn with GPU skinning
     bool camera_found{false};
 };
 

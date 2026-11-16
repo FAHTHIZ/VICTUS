@@ -126,9 +126,20 @@ Result<GpuMesh> GpuContext::create_mesh(const MeshData& mesh, std::string_view n
     g.vertex_count = static_cast<std::uint32_t>(mesh.vertices.size());
     g.index_count = static_cast<std::uint32_t>(mesh.indices.size());
     g.bounds = mesh.bounds();
+    const auto sb_size = static_cast<std::uint32_t>(mesh.skin.size() * sizeof(SkinVertex));
+    if (mesh.skinned()) {
+        auto sb = device_.create_buffer({std::format("{}_skin", name), sb_size, rhi::BufferUsageVertex});
+        if (!sb) {
+            device_.destroy(g.vertices);
+            device_.destroy(g.indices);
+            return std::move(sb).error();
+        }
+        g.skin = sb.value();
+    }
     auto cmd = device_.begin_commands();
     cmd.upload_buffer(g.vertices, 0, {reinterpret_cast<const std::uint8_t*>(mesh.vertices.data()), vb_size});
     cmd.upload_buffer(g.indices, 0, {reinterpret_cast<const std::uint8_t*>(mesh.indices.data()), ib_size});
+    if (g.skin) cmd.upload_buffer(g.skin, 0, {reinterpret_cast<const std::uint8_t*>(mesh.skin.data()), sb_size});
     cmd.submit();
     return g;
 }
@@ -136,6 +147,7 @@ Result<GpuMesh> GpuContext::create_mesh(const MeshData& mesh, std::string_view n
 void GpuContext::destroy(GpuMesh& mesh) {
     if (mesh.vertices) device_.destroy(mesh.vertices);
     if (mesh.indices) device_.destroy(mesh.indices);
+    if (mesh.skin) device_.destroy(mesh.skin);
     mesh = {};
 }
 

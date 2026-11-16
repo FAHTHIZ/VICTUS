@@ -139,5 +139,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Character capsules only (no crouch shape swap or custom shapes yet); characters are updated serially; 2D (Box2D) has no character controller or joints yet; no cone, swing-twist, 6-DOF or ragdoll joints and no position motors. Revisit the serial update if scenes need thousands of characters.
 
+## ADR-0015 — Skeletal animation and GPU skinning (accepted 2026-11-16)
+**Problem.** Characters need imported skeletal animation that plays, loops and cross-fades, is scriptable, renders with correct shadows and depth, and scales to hundreds of characters on mobile-class CPUs and GPUs.
+
+**Candidates.** A third-party runtime (ozz-animation: excellent SoA sampling, but an extra offline format and dependency); CPU skinning (simple, but per-vertex work and buffer uploads every frame scale badly); GPU skinning with a per-draw joint palette; animating joints as ordinary scene entities vs a hidden pose buffer.
+
+**Decision.** An owned `victus::animation` module that samples glTF 2.0 channels directly from the cooked model (STEP, LINEAR with normalized shortest-path quaternions, CUBICSPLINE, clamped ends). Joints stay ordinary scene entities bound by node name under the animator's root, so the editor, scripts, physics attachments and the existing transform propagation all see animated bones; the system writes local transforms in `Phase::Update` and evaluates animators in parallel with `parallel_for`. Skinning runs on the GPU: a separate `SkinVertex` stream (4 × u16 joints + 4 × f32 weights) and skinned vertex-shader variants for the main, pre-pass and shadow passes read a joint palette from a storage buffer; palettes are computed relative to the mesh entity so the skinned node transform is ignored as glTF requires; skinned draws of the same mesh and material still instance, each instance indexing its own palette range. The importer keeps the four strongest influences from up to two JOINTS/WEIGHTS sets and renormalizes them.
+
+**Evidence.** `victus_animation_tests`, asset round-trip tests and pixel-probed `gpu skinning` cases (STATUS Slice 12); `victus_bench_animation`: 1 024 characters × 32 joints update in 1.481 ms on one thread and 0.827 ms with jobs (p50, 2 vCPU 2.9 GHz Xeon, 0 allocations). Source: glTF 2.0 specification skins and animations sections (RESEARCH_REGISTER).
+
+**Risks / revisit triggers.** Entity-per-joint costs ECS memory for very large crowds; revisit with a compact pose buffer plus GPU-side palette generation if crowds reach thousands of animated characters. No dual-quaternion skinning (volume loss at twisting joints), blend trees, state machines, root motion, IK, retargeting or morph targets yet.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

@@ -5,6 +5,7 @@
 // source dependencies with content hashes) followed by the kind-specific payload. The header
 // alone decides whether the cache entry is up to date.
 #pragma once
+#include "victus/animation/animation.hpp"
 #include "victus/core/math.hpp"
 #include "victus/core/result.hpp"
 #include "victus/render/image.hpp"
@@ -17,7 +18,8 @@
 
 namespace victus::assets {
 
-inline constexpr std::uint32_t kCookedFormatVersion = 1;
+// v2 (Slice 12): mesh skin streams, node skins, skins and animation clips.
+inline constexpr std::uint32_t kCookedFormatVersion = 2;
 
 enum class AssetKind : std::uint8_t { Unknown = 0, Texture = 1, Model = 2, Scene = 3, Script = 4, Audio = 5 };
 [[nodiscard]] const char* to_string(AssetKind kind) noexcept;
@@ -56,6 +58,15 @@ struct ModelNode {
     math::Quat rotation;
     math::Vec3 scale{1, 1, 1};
     std::vector<std::uint32_t> meshes; // indices into CookedModel::meshes
+    std::int32_t skin{-1};             // index into CookedModel::skins for skinned meshes
+};
+
+// A glTF skin: joint nodes and their inverse bind matrices (model space -> joint space at bind).
+// Vertex joint indices of meshes bound to the skin index into `joints`.
+struct ModelSkin {
+    std::string name;
+    std::vector<std::uint32_t> joints; // indices into CookedModel::nodes
+    std::vector<math::Mat4> inverse_bind;
 };
 
 struct CookedModel {
@@ -63,8 +74,16 @@ struct CookedModel {
     std::vector<ModelMaterial> materials; // always at least one
     std::vector<CookedTexture> textures;
     std::vector<ModelNode> nodes;
+    std::vector<ModelSkin> skins;
+    std::vector<animation::Clip> animations; // channel node indices refer to `nodes`
     [[nodiscard]] std::size_t triangle_count() const noexcept;
 };
+
+// Validates cross references of skins, node skins, skin streams and clips (used by the
+// importer and by deserialize_model).
+[[nodiscard]] Status validate_model(const CookedModel& model);
+// Node graph (names, parents, rest pose) and clips of a model for the animation system.
+[[nodiscard]] animation::AnimationSet make_animation_set(const CookedModel& model);
 
 struct SourceDependency {
     std::string path; // project-relative, '/' separated

@@ -16,12 +16,28 @@ struct Vertex3D {
 };
 static_assert(sizeof(Vertex3D) == 48);
 
+// Skinning influences for one vertex (vertex buffer slot 2 of skinned meshes): up to four joint
+// indices into the mesh's skin palette with weights summing to 1.
+struct SkinVertex {
+    std::uint16_t joints[4]{0, 0, 0, 0};
+    float weights[4]{1, 0, 0, 0};
+};
+static_assert(sizeof(SkinVertex) == 24);
+
+// Keeps the four largest influences of (joint, weight) pairs and normalizes them; vertices with
+// no positive weight bind fully to joint 0.
+[[nodiscard]] SkinVertex make_skin_vertex(const std::uint32_t* joints, const float* weights, std::size_t count) noexcept;
+
 struct MeshData {
     std::vector<Vertex3D> vertices;
     std::vector<std::uint32_t> indices; // triangle list, counter-clockwise front faces
+    std::vector<SkinVertex> skin;       // empty, or one entry per vertex for skinned meshes
     [[nodiscard]] math::Aabb bounds() const noexcept;
     [[nodiscard]] std::size_t triangle_count() const noexcept { return indices.size() / 3; }
+    // Appends transformed geometry. Skin data is kept only when both meshes are skinned (or this
+    // one is empty); otherwise it is dropped so vertex and skin counts always match.
     void append(const MeshData& other, const math::Mat4& transform);
+    [[nodiscard]] bool skinned() const noexcept { return !skin.empty() && skin.size() == vertices.size(); }
 };
 
 // Recomputes per-vertex tangents from positions/uvs (Lengyel's method) with Gram-Schmidt.

@@ -3,6 +3,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/project/project.hpp"
 #include "victus/audio/audio.hpp"
+#include "victus/animation/animation.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
 
@@ -195,6 +196,7 @@ struct TemplateRun {
     scene::Scene scene;
     std::unique_ptr<script::ScriptHost> host;
     std::unique_ptr<physics::PhysicsWorld> physics;
+    animation::AnimationSystem animation;
     std::unique_ptr<audio::AudioEngine> audio;
     gameplay::Simulation sim;
     gameplay::ManualInput input;
@@ -230,6 +232,8 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     REQUIRE(w.ok());
     r->physics = std::move(w).value();
     physics::add_physics_systems(r->sim, *r->physics);
+    // Headless: no cooked models, so animators resolve nothing but scripts can still call them.
+    animation::add_animation_systems(r->sim, r->animation);
     audio::EngineOptions ao;
     ao.assets_root = dir / "assets";
     ao.null_device = true;

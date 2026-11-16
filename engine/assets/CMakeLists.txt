@@ -9,5 +9,6 @@ victus_add_module(assets
         src/cooked.cpp
         src/database.cpp
         src/importers.cpp
-    DEPS VICTUS::Render
+        src/gltf_export.cpp
+    DEPS VICTUS::Render VICTUS::Animation
     PRIVATE_DEPS victus_cgltf)
