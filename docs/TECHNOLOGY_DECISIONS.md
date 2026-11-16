@@ -293,5 +293,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Not a byte-compatible Noise implementation (simplified key schedule, server static key sent in clear); revisit if third-party clients need interoperability. Trust-on-first-use without `--server-key` lets an active attacker learn passwords. No rekeying or player identities yet. Review Monocypher's changelog and advisories before updating the pinned version.
 
+## ADR-0029 — Listen server: the host plays in its own authoritative session (accepted 2026-11-17)
+**Problem.** Playing together required a separate `victus serve` process plus a client per player; a player could not simply host and play, which is how most small co-op sessions start.
+
+**Candidates.** (1) In-process host character: the server spawns a server-owned copy of the player template driven by the machine's own input (the routing fallback), with no prediction (Unreal and Source "listen server" model; https://developer.valvesoftware.com/wiki/Source_Multiplayer_Networking). (2) In-process server plus a local client over a loopback transport, each with its own scene copy — uniform code paths, but two worlds in memory, double simulation, and the host suffers interpolation delay and corrections for no reason. (3) Spawn a `victus serve` child process and connect to it — no engine changes, but two processes to manage and the same loopback costs as (2).
+
+**Decision.** (1). `ServerOptions::host_player/host_name`; the host's character is tracked like any player (kind `kPlayer`, owner `kServerId`), appears first in rosters and `clients()` as id 0 and is `NetServer::local_player()`; scripts see the same values as offline (`net.authority()` and `is_local()` true). `victus run`/`victus_player --host` wire it up with the same encryption, key file and password options as `victus serve`.
+
+**Evidence.** STATUS Slice 27: a session test with a host and a remote client (independent movement, replication to the client, rosters, the host surviving a client leaving) and a real UDP run of `victus run --host` with a headless client, rendered as "Hosting 2 players".
+
+**Risks / revisit triggers.** The host has zero latency to the authority (unfair for competitive games; use `victus serve`). The session ends when the host quits (no host migration). The server ticks inside the host's frame loop, so a slow host slows everyone; revisit with a fixed-rate server tick if hosts drop frames.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
