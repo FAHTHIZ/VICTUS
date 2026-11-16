@@ -71,6 +71,9 @@ struct MeshRendererComponent {
     Uuid mesh_asset;
     std::uint32_t mesh_index{0};
     std::string primitive; // built-in primitive when mesh_asset is nil: cube|sphere|plane|cylinder
+    // Optional material asset (.vmat). When set it replaces the mesh's own material (and the
+    // metallic/roughness below); base_color still multiplies it as a per-entity tint.
+    Uuid material_asset;
     math::Color base_color{1, 1, 1, 1}; // linear multiplier
     float metallic{0.0f};
     float roughness{0.5f};

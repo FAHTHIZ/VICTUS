@@ -48,11 +48,12 @@ std::uint64_t handle_bits(rhi::TextureHandle t) noexcept { return (std::uint64_t
 std::uint64_t material_key(const Material& m) noexcept {
     std::uint64_t h = 0;
     for (float f : {m.base_color.r, m.base_color.g, m.base_color.b, m.base_color.a, m.emissive.r, m.emissive.g,
-                    m.emissive.b, m.emissive_strength, m.metallic, m.roughness, m.normal_scale, m.alpha_cutoff})
+                    m.emissive.b, m.emissive_strength, m.metallic, m.roughness, m.normal_scale, m.alpha_cutoff,
+                    m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y})
         h = mix(h, bits(f));
     for (auto t : {m.base_color_texture, m.metallic_roughness_texture, m.normal_texture, m.emissive_texture})
         h = mix(h, handle_bits(t));
-    return mix(h, (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u));
+    return mix(h, (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u));
 }
 
 bool same_material(const Material& a, const Material& b) noexcept {
@@ -62,7 +63,8 @@ bool same_material(const Material& a, const Material& b) noexcept {
            a.alpha_cutoff == b.alpha_cutoff && a.base_color_texture == b.base_color_texture &&
            a.metallic_roughness_texture == b.metallic_roughness_texture && a.normal_texture == b.normal_texture &&
            a.emissive_texture == b.emissive_texture && a.double_sided == b.double_sided && a.unlit == b.unlit &&
-           a.cast_shadows == b.cast_shadows;
+           a.cast_shadows == b.cast_shadows && a.uv_scale == b.uv_scale && a.uv_offset == b.uv_offset &&
+           a.nearest_filter == b.nearest_filter;
 }
 struct GpuPointLight {
     Vec4 position_range;
@@ -89,6 +91,7 @@ struct MaterialUniforms {
     Vec4 emissive;
     Vec4 params;
     Vec4 flags;
+    Vec4 uv_transform; // xy scale, zw offset
 };
 struct ShadowUniforms {
     Mat4 light_view_proj;
@@ -1010,12 +1013,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 mat.emissive = rgb(m.emissive, m.emissive_strength);
                 mat.params = {m.metallic, m.roughness, m.normal_scale, m.alpha_cutoff};
                 mat.flags = {m.normal_texture ? 1.0f : 0.0f, m.unlit ? 1.0f : 0.0f, 0, 0};
+                mat.uv_transform = {m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y};
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
                 auto pick = [](rhi::TextureHandle t, rhi::TextureHandle fallback) { return t ? t : fallback; };
-                pass.bind_texture(rhi::ShaderStage::Fragment, 0, pick(m.base_color_texture, ctx_.white()), ctx_.linear_repeat());
-                pass.bind_texture(rhi::ShaderStage::Fragment, 1, pick(m.metallic_roughness_texture, ctx_.white()), ctx_.linear_repeat());
-                pass.bind_texture(rhi::ShaderStage::Fragment, 2, pick(m.normal_texture, ctx_.flat_normal()), ctx_.linear_repeat());
-                pass.bind_texture(rhi::ShaderStage::Fragment, 3, pick(m.emissive_texture, ctx_.white()), ctx_.linear_repeat());
+                const rhi::SamplerHandle tex_sampler = m.nearest_filter ? ctx_.nearest_repeat() : ctx_.linear_repeat();
+                pass.bind_texture(rhi::ShaderStage::Fragment, 0, pick(m.base_color_texture, ctx_.white()), tex_sampler);
+                pass.bind_texture(rhi::ShaderStage::Fragment, 1, pick(m.metallic_roughness_texture, ctx_.white()), tex_sampler);
+                pass.bind_texture(rhi::ShaderStage::Fragment, 2, pick(m.normal_texture, ctx_.flat_normal()), tex_sampler);
+                pass.bind_texture(rhi::ShaderStage::Fragment, 3, pick(m.emissive_texture, ctx_.white()), tex_sampler);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 4, shadow_tex, ctx_.shadow_compare());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 5, ao_tex, ctx_.linear_clamp());
                 pass.bind_vertex_buffer(0, d->mesh->vertices);

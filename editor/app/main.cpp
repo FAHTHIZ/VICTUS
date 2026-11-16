@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
         .option("height", "window height", "900")
         .option("data-dir", "override the user data directory")
         .option("select", "select the entity with this name after opening")
-        .option("show", "open a window after opening: input-actions, network")
+        .option("show", "open a window after opening: input-actions, network, material-editor (selected entity's material)")
         .option("port", "UDP port for --host", "27960")
         .flag("host", "enter play mode as a listen server after opening")
         .option("clients", "with --host: players simulated inside the editor (0-3)", "0")
@@ -102,6 +102,13 @@ int main(int argc, char** argv) {
     if (args.has("show")) {
         if (args.get("show") == "input-actions") ed.set_show_input_actions(true);
         else if (args.get("show") == "network") ed.set_show_network(true);
+        else if (args.get("show") == "material-editor") {
+            const auto* mr = ed.selection().empty() ? nullptr
+                                                    : ed.edit_scene().world().get<scene::MeshRendererComponent>(
+                                                          ed.edit_scene().find(ed.selection().back()));
+            if (mr && !mr->material_asset.is_nil()) ed.open_material_editor(mr->material_asset);
+            else std::fprintf(stderr, "victus_editor: --show material-editor needs --select <entity with a material>\n");
+        }
         else std::fprintf(stderr, "victus_editor: unknown window '%s' for --show\n", args.get("show").c_str());
     }
     if (args.has("host") && ed.has_project()) {

@@ -10,5 +10,6 @@ victus_add_module(assets
         src/database.cpp
         src/importers.cpp
         src/gltf_export.cpp
+        src/material.cpp
     DEPS VICTUS::Render VICTUS::Animation
     PRIVATE_DEPS victus_cgltf)

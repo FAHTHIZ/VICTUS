@@ -184,6 +184,7 @@ SerializerRegistry::SerializerRegistry() {
                 v.set("mesh_index", m.mesh_index);
             }
             if (!m.primitive.empty()) v.set("primitive", m.primitive);
+            if (!m.material_asset.is_nil()) v.set("material", uuid_value(m.material_asset));
             v.set("base_color", to_json(m.base_color));
             v.set("metallic", m.metallic);
             v.set("roughness", m.roughness);
@@ -195,6 +196,7 @@ SerializerRegistry::SerializerRegistry() {
             if (!read_uuid(v["mesh"], m.mesh_asset)) return bad("MeshRenderer.mesh");
             m.mesh_index = static_cast<std::uint32_t>(v["mesh_index"].as_int(0));
             m.primitive = v["primitive"].as_string_or("");
+            if (!read_uuid(v["material"], m.material_asset)) return bad("MeshRenderer.material");
             if (const Value* c = v.find("base_color"); c && !from_json(*c, m.base_color))
                 return bad("MeshRenderer.base_color");
             m.metallic = v["metallic"].as_float(m.metallic);

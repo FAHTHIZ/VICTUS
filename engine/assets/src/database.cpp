@@ -81,6 +81,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     if (e == ".vscene") return AssetKind::Scene;
     if (e == ".luau") return AssetKind::Script;
     if (e == ".vprefab") return AssetKind::Prefab;
+    if (e == ".vmat") return AssetKind::Material;
     if (e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac") return AssetKind::Audio;
     return AssetKind::Unknown;
 }
@@ -394,6 +395,17 @@ animation::SetProvider animation_provider(AssetDatabase& db) {
         if (!model || model->nodes.empty()) return nullptr;
         return std::make_shared<animation::AnimationSet>(make_animation_set(*model));
     };
+}
+
+} // namespace victus::assets
+
+namespace victus::assets {
+
+Result<MaterialAsset> AssetDatabase::load_material(const Uuid& uuid) const {
+    const AssetRecord* rec = find(uuid);
+    if (!rec || rec->kind != AssetKind::Material)
+        return make_error(ErrorCode::NotFound, "material asset " + uuid.to_string() + " not found");
+    return load_material_file(source_path(*rec));
 }
 
 } // namespace victus::assets

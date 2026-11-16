@@ -2,6 +2,8 @@
 // Built-in project templates. Each produces a scene that runs immediately (Play) with the
 // built-in behaviours, so a new project shows motion, lighting and a camera on first launch.
 #include "victus/animation/animation.hpp"
+#include "victus/assets/material.hpp"
+#include "victus/render/image.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -157,6 +159,49 @@ Prefab crate_prefab() {
     return make_prefab(s, crate);
 }
 
+// The 3D template's ground: a tiling grid texture and the material that tiles it 10x across the
+// 20 m floor (2 m squares), so new projects show how materials, textures and UV tiling fit together.
+constexpr const char* kGroundTexturePath = "assets/textures/ground_grid.png";
+constexpr const char* kGroundTextureUuid = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f002";
+constexpr const char* kGroundMaterialPath = "assets/materials/ground.vmat";
+constexpr const char* kGroundMaterialUuid = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f003";
+
+std::string ground_texture() {
+    render::Image img;
+    img.width = img.height = 64;
+    img.pixels.resize(64u * 64u * 4u);
+    for (std::uint32_t y = 0; y < 64; ++y)
+        for (std::uint32_t x = 0; x < 64; ++x) {
+            const bool line = x < 2 || y < 2;              // tile border (one per repeat)
+            const bool sub = x == 32 || y == 32;           // faint half-tile line
+            const std::uint8_t noise = static_cast<std::uint8_t>((x * 73u + y * 151u + x * y * 7u) % 7u);
+            const std::uint8_t v = static_cast<std::uint8_t>((line ? 0x4c : sub ? 0x62 : 0x6c) + noise);
+            std::uint8_t* p = img.pixels.data() + (std::size_t{y} * 64 + x) * 4;
+            p[0] = v;
+            p[1] = static_cast<std::uint8_t>(v + 2);
+            p[2] = static_cast<std::uint8_t>(v + 6);
+            p[3] = 255;
+        }
+    auto png = render::encode_png(img);
+    return png ? std::string(png->begin(), png->end()) : std::string();
+}
+
+std::string asset_meta(const char* uuid, const char* importer) {
+    json::Value m = json::Value::object();
+    m.set("victus_meta", 1);
+    m.set("uuid", uuid);
+    m.set("importer", importer);
+    return json::stringify(m, true) + "\n";
+}
+
+std::string ground_material() {
+    assets::MaterialAsset m;
+    (void)Uuid::parse(kGroundTextureUuid, m.base_color_texture);
+    m.roughness = 0.9f;
+    m.uv_scale = {10, 10};
+    return json::stringify(m.to_json(), true) + "\n";
+}
+
 std::string crate_prefab_meta() {
     json::Value m = json::Value::object();
     m.set("victus_meta", 1);
@@ -250,7 +295,7 @@ void build_3d(Scene& s) {
     }
     const Entity ground = add(s, "Ground", {0, 0, 0});
     s.world().get<Transform>(ground)->scale = {20, 1, 20};
-    mesh(s, ground, "plane", {0.16f, 0.17f, 0.19f, 1}, 0.0f, 0.9f);
+    (void)Uuid::parse(kGroundMaterialUuid, mesh(s, ground, "plane", {1, 1, 1, 1}, 0.0f, 0.9f).material_asset);
     {
         s.world().add<physics::RigidBodyComponent>(ground).type = physics::BodyType::Static;
         auto& c = s.world().add<physics::ColliderComponent>(ground);
@@ -1313,6 +1358,10 @@ std::vector<TemplateFile> template_files(std::string_view id) {
                 {kCratePrefabPath, json::stringify(prefab_to_json(crate_prefab())) + "\n"},
                 {std::string(kCratePrefabPath) + ".meta", crate_prefab_meta()},
                 {"assets/audio/impact.wav", synth_impact()},
+                {kGroundTexturePath, ground_texture()},
+                {std::string(kGroundTexturePath) + ".meta", asset_meta(kGroundTextureUuid, "texture")},
+                {kGroundMaterialPath, ground_material()},
+                {std::string(kGroundMaterialPath) + ".meta", asset_meta(kGroundMaterialUuid, "")},
                 {"assets/scripts/hud.luau", kHud}};
     if (id == "2d")
         return {{"assets/scripts/platformer.luau", kPlatformer},

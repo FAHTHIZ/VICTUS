@@ -180,6 +180,15 @@ std::size_t Editor::check_asset_changes() {
     for (const auto& p : changes.reimported_paths) notify("Reloaded " + p);
     for (const auto& f : changes.failed) notify("Reload failed, keeping the previous version: " + f, true);
     for (const auto& a : changes.audio) notify("Reloaded audio " + a);
+    for (const auto& m : changes.materials) {
+        if (const auto it = written_materials_.find(m); it != written_materials_.end() && db_)
+            if (const auto* rec = db_->find_path(m))
+                if (auto text = fs::read_text(db_->source_path(*rec)); text && fnv1a64(*text) == it->second) continue; // our own save
+        notify("Reloaded material " + m);
+        if (show_material_editor_ && db_)
+            if (const auto* rec = db_->find_path(m); rec && rec->uuid == material_editing_ && !material_dirty_)
+                if (auto fresh = db_->load_material(rec->uuid); fresh) material_edit_ = *fresh; // edited outside the editor
+    }
     for (const auto& p : changes.prefabs) {
         if (play_scripts_) play_scripts_->forget_prefabs();
         const assets::AssetRecord* rec = db_ ? db_->find_path(p) : nullptr;
@@ -200,7 +209,7 @@ std::size_t Editor::check_asset_changes() {
         if (assets::kind_for_extension(fs::Path(r).extension().string()) == assets::AssetKind::Scene) continue;
         notify(r + " changed; reopen the project or restart the game to see it");
     }
-    return changes.reimported.size() + changes.audio.size() + changes.prefabs.size();
+    return changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size();
 }
 
 // ---- scenes ------------------------------------------------------------------------------------
