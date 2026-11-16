@@ -97,6 +97,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     script::HostOptions so;
     so.assets_root = (*db)->assets_dir();
     so.watch_files = o.hot_reload && !packaged;
+    so.input_map = proj->settings().input;
     auto scripts = script::ScriptHost::create(so);
     if (!scripts) return std::move(scripts).error();
     // Worker threads for physics (and future parallel systems); 0 = hardware_concurrency - 1.

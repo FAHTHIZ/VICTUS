@@ -22,10 +22,24 @@ struct FrameTime {
 
 enum class Phase : std::uint8_t { PreUpdate, FixedUpdate, Update, PostUpdate };
 
+// Gamepad controls in the standard (Xbox-like) layout, by position: South = A / Cross, East =
+// B / Circle, West = X / Square, North = Y / Triangle. Indices match platform::GamepadButton and
+// platform::GamepadAxis. Stick axes are -1..1 (+X right, +Y down), triggers 0..1.
+inline constexpr int kGamepadButtonCount = 15;
+inline constexpr int kGamepadAxisCount = 6;
+inline constexpr int kMaxGamepads = 4;
+// "South".."DpadRight" (also accepts "A", "B", "X", "Y", "LB", "RB", "Select"/"Menu"); -1 if unknown.
+[[nodiscard]] int gamepad_button_index(std::string_view name) noexcept;
+// "LeftX", "LeftY", "RightX", "RightY", "LeftTrigger"/"LT", "RightTrigger"/"RT"; -1 if unknown.
+[[nodiscard]] int gamepad_axis_index(std::string_view name) noexcept;
+[[nodiscard]] const char* gamepad_button_name(int index) noexcept;
+[[nodiscard]] const char* gamepad_axis_name(int index) noexcept;
+
 // Platform-independent input queries for gameplay code and scripts. Keys use the platform key
 // names ("A".."Z", "0".."9", "Space", "Enter", "Left", "Right", "Up", "Down", "Escape",
 // "LeftShift", "F1".., see platform::key_name). Mouse buttons:
-// 0 left, 1 middle, 2 right. Headless runs and servers have no input source.
+// 0 left, 1 middle, 2 right. Gamepads 0..kMaxGamepads-1; `previous` asks for last frame's state
+// (used for action edges). Headless runs and servers have no input source.
 class InputSource {
 public:
     virtual ~InputSource() = default;
@@ -36,6 +50,12 @@ public:
     [[nodiscard]] virtual bool mouse_pressed(int button) const = 0;
     [[nodiscard]] virtual math::Vec2 mouse_position() const = 0;
     [[nodiscard]] virtual math::Vec2 mouse_delta() const = 0;
+    [[nodiscard]] virtual bool mouse_released(int /*button*/) const { return false; }
+    [[nodiscard]] virtual bool gamepad_connected(int /*pad*/) const { return false; }
+    [[nodiscard]] virtual bool gamepad_button(int /*pad*/, int /*button*/, bool /*previous*/ = false) const {
+        return false;
+    }
+    [[nodiscard]] virtual float gamepad_axis(int /*pad*/, int /*axis*/, bool /*previous*/ = false) const { return 0; }
 };
 
 // Programmatic input for tests, headless runs, bots and replays. `pressed`/`released` edges are
@@ -51,10 +71,27 @@ public:
         if (button >= 0 && button < 8) mouse_[button] = down;
     }
     void set_mouse_position(math::Vec2 p) noexcept { mouse_pos_ = p; }
+    void set_gamepad_connected(int pad, bool connected) {
+        if (pad >= 0 && pad < kMaxGamepads) pads_[static_cast<std::size_t>(pad)].connected = connected;
+    }
+    // Pressing a button or moving an axis also marks the pad connected.
+    void set_gamepad_button(int pad, int button, bool down) {
+        if (pad < 0 || pad >= kMaxGamepads || button < 0 || button >= kGamepadButtonCount) return;
+        Pad& p = pads_[static_cast<std::size_t>(pad)];
+        p.connected = true;
+        p.buttons[static_cast<std::size_t>(button)] = down;
+    }
+    void set_gamepad_axis(int pad, int axis, float value) {
+        if (pad < 0 || pad >= kMaxGamepads || axis < 0 || axis >= kGamepadAxisCount) return;
+        Pad& p = pads_[static_cast<std::size_t>(pad)];
+        p.connected = true;
+        p.axes[static_cast<std::size_t>(axis)] = std::clamp(value, -1.0f, 1.0f);
+    }
     void end_frame() {
         prev_ = down_;
         prev_mouse_ = mouse_;
         prev_pos_ = mouse_pos_;
+        prev_pads_ = pads_;
     }
     [[nodiscard]] bool key_down(std::string_view k) const override { return has(down_, k); }
     [[nodiscard]] bool key_pressed(std::string_view k) const override { return has(down_, k) && !has(prev_, k); }
@@ -65,14 +102,32 @@ public:
     [[nodiscard]] math::Vec2 mouse_delta() const override {
         return {mouse_pos_.x - prev_pos_.x, mouse_pos_.y - prev_pos_.y};
     }
+    [[nodiscard]] bool mouse_released(int b) const override { return b >= 0 && b < 8 && !mouse_[b] && prev_mouse_[b]; }
+    [[nodiscard]] bool gamepad_connected(int pad) const override {
+        return pad >= 0 && pad < kMaxGamepads && pads_[static_cast<std::size_t>(pad)].connected;
+    }
+    [[nodiscard]] bool gamepad_button(int pad, int button, bool previous = false) const override {
+        if (pad < 0 || pad >= kMaxGamepads || button < 0 || button >= kGamepadButtonCount) return false;
+        return (previous ? prev_pads_ : pads_)[static_cast<std::size_t>(pad)].buttons[static_cast<std::size_t>(button)];
+    }
+    [[nodiscard]] float gamepad_axis(int pad, int axis, bool previous = false) const override {
+        if (pad < 0 || pad >= kMaxGamepads || axis < 0 || axis >= kGamepadAxisCount) return 0;
+        return (previous ? prev_pads_ : pads_)[static_cast<std::size_t>(pad)].axes[static_cast<std::size_t>(axis)];
+    }
 
 private:
+    struct Pad {
+        bool connected{false};
+        std::array<bool, kGamepadButtonCount> buttons{};
+        std::array<float, kGamepadAxisCount> axes{};
+    };
     static bool has(const std::vector<std::string>& v, std::string_view k) {
         return std::find(v.begin(), v.end(), k) != v.end();
     }
     std::vector<std::string> down_, prev_;
     std::array<bool, 8> mouse_{}, prev_mouse_{};
     math::Vec2 mouse_pos_{}, prev_pos_{};
+    std::array<Pad, kMaxGamepads> pads_{}, prev_pads_{};
 };
 
 // Per-entity input routing, published as a scene world resource by network sessions: scripts

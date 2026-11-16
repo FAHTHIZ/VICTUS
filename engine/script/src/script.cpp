@@ -17,6 +17,7 @@
 #include <lualib.h>
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -692,6 +693,143 @@ int input_axis(lua_State* L) {
         if (in && in->key_down(neg)) v = -1;
         if (in && in->key_down(pos)) v = v < 0 ? 0.0f : 1.0f;
         if (v != 0) break;
+    }
+    lua_pushnumber(L, v);
+    return 1;
+}
+
+const gameplay::InputAction& action_arg(lua_State* L, int idx) {
+    const char* name = luaL_checkstring(L, idx);
+    const auto* a = host_of(L).options.input_map.find(name);
+    if (!a) luaL_error(L, "unknown input action '%s' (see the project's input actions)", name);
+    return *a;
+}
+// input.action(name) -> held; action_pressed / action_released -> this frame's edges
+int input_action(lua_State* L) {
+    lua_pushboolean(L, gameplay::InputMap::down(host_of(L).input, action_arg(L, 1)));
+    return 1;
+}
+int input_action_pressed(lua_State* L) {
+    lua_pushboolean(L, gameplay::InputMap::pressed(host_of(L).input, action_arg(L, 1)));
+    return 1;
+}
+int input_action_released(lua_State* L) {
+    lua_pushboolean(L, gameplay::InputMap::released(host_of(L).input, action_arg(L, 1)));
+    return 1;
+}
+// input.value(name) -> -1..1 (analog sticks give partial values)
+int input_value(lua_State* L) {
+    lua_pushnumber(L, gameplay::InputMap::value(host_of(L).input, action_arg(L, 1)));
+    return 1;
+}
+// input.vector(x_action, y_action) -> vector(x, y, 0) with length <= 1
+int input_vector(lua_State* L) {
+    const auto* in = host_of(L).input;
+    float x = gameplay::InputMap::value(in, action_arg(L, 1));
+    float y = gameplay::InputMap::value(in, action_arg(L, 2));
+    const float len = std::sqrt(x * x + y * y);
+    if (len > 1.0f) x /= len, y /= len;
+    lua_pushvector(L, x, y, 0);
+    return 1;
+}
+// input.actions() -> {names}; input.bindings(name) -> {"Space", "Pad.South", ...} (negative
+// bindings are prefixed with "-")
+int input_actions(lua_State* L) {
+    const auto& list = host_of(L).options.input_map.actions;
+    lua_createtable(L, static_cast<int>(list.size()), 0);
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        lua_pushstring(L, list[i].name.c_str());
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    return 1;
+}
+int input_bindings(lua_State* L) {
+    const auto& a = action_arg(L, 1);
+    lua_createtable(L, static_cast<int>(a.positive.size() + a.negative.size()), 0);
+    int n = 0;
+    for (const auto& b : a.positive) {
+        lua_pushstring(L, gameplay::binding_to_string(b).c_str());
+        lua_rawseti(L, -2, ++n);
+    }
+    for (const auto& b : a.negative) {
+        lua_pushstring(L, ("-" + gameplay::binding_to_string(b)).c_str());
+        lua_rawseti(L, -2, ++n);
+    }
+    return 1;
+}
+// input.rebind(name, {bindings...}) -> ok, error. Creates the action if needed; "-X" entries
+// are negative bindings. Lasts for this session (projects keep their saved bindings).
+int input_rebind(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    gameplay::InputAction a;
+    a.name = name;
+    if (const auto* old = host_of(L).options.input_map.find(name)) a.dead_zone = old->dead_zone;
+    const int n = lua_objlen(L, 2);
+    for (int i = 1; i <= n; ++i) {
+        lua_rawgeti(L, 2, i);
+        const char* t = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        if (!t) luaL_error(L, "input.rebind: bindings must be strings");
+        std::string_view text = t;
+        const bool negative = text.size() > 1 && text[0] == '-';
+        if (negative) text.remove_prefix(1);
+        auto b = gameplay::parse_binding(text);
+        if (!b) {
+            lua_pushboolean(L, false);
+            lua_pushstring(L, b.error().message.c_str());
+            return 2;
+        }
+        (negative ? a.negative : a.positive).push_back(std::move(*b));
+    }
+    auto& actions = host_of(L).options.input_map.actions;
+    auto it = std::find_if(actions.begin(), actions.end(), [&](const auto& x) { return x.name == a.name; });
+    if (it != actions.end()) *it = std::move(a);
+    else actions.push_back(std::move(a));
+    lua_pushboolean(L, true);
+    return 1;
+}
+int pad_arg(lua_State* L, int idx) {
+    if (lua_isnoneornil(L, idx)) return -1;
+    const int p = luaL_checkinteger(L, idx);
+    if (p < 0 || p >= gameplay::kMaxGamepads) luaL_error(L, "gamepad index %d out of range 0..%d", p, gameplay::kMaxGamepads - 1);
+    return p;
+}
+// input.gamepad_connected(pad?) -> bool (any gamepad when pad is nil)
+int input_gamepad_connected(lua_State* L) {
+    const auto* in = host_of(L).input;
+    const int pad = pad_arg(L, 1);
+    bool c = false;
+    for (int p = 0; in && p < gameplay::kMaxGamepads; ++p)
+        if ((pad < 0 || p == pad) && in->gamepad_connected(p)) c = true;
+    lua_pushboolean(L, c);
+    return 1;
+}
+// input.gamepad_button("South", pad?) -> held on that (or any) gamepad
+int input_gamepad_button(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    const int b = gameplay::gamepad_button_index(name);
+    if (b < 0) luaL_error(L, "unknown gamepad button '%s'", name);
+    const auto* in = host_of(L).input;
+    const int pad = pad_arg(L, 2);
+    bool down = false;
+    for (int p = 0; in && p < gameplay::kMaxGamepads; ++p)
+        if ((pad < 0 || p == pad) && in->gamepad_connected(p) && in->gamepad_button(p, b)) down = true;
+    lua_pushboolean(L, down);
+    return 1;
+}
+// input.gamepad_axis("LeftX", pad?) -> -1..1 (triggers 0..1); the strongest pad when nil
+int input_gamepad_axis(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    const int a = gameplay::gamepad_axis_index(name);
+    if (a < 0) luaL_error(L, "unknown gamepad axis '%s'", name);
+    const auto* in = host_of(L).input;
+    const int pad = pad_arg(L, 2);
+    float v = 0;
+    for (int p = 0; in && p < gameplay::kMaxGamepads; ++p) {
+        if ((pad >= 0 && p != pad) || !in->gamepad_connected(p)) continue;
+        const float x = in->gamepad_axis(p, a);
+        if (std::fabs(x) > std::fabs(v)) v = x;
     }
     lua_pushnumber(L, v);
     return 1;
@@ -1598,6 +1736,17 @@ void open_victus_libs(lua_State* L) {
                                   {"mouse_position", input_mouse_position},
                                   {"mouse_delta", input_mouse_delta},
                                   {"axis", input_axis},
+                                  {"action", input_action},
+                                  {"action_pressed", input_action_pressed},
+                                  {"action_released", input_action_released},
+                                  {"value", input_value},
+                                  {"vector", input_vector},
+                                  {"actions", input_actions},
+                                  {"bindings", input_bindings},
+                                  {"rebind", input_rebind},
+                                  {"gamepad_connected", input_gamepad_connected},
+                                  {"gamepad_button", input_gamepad_button},
+                                  {"gamepad_axis", input_gamepad_axis},
                                   {nullptr, nullptr}};
     register_lib(L, "input", input_fns);
     const luaL_Reg time_fns[] = {{"delta", time_delta},

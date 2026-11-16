@@ -37,8 +37,9 @@ local P = {}
 P.speed = 4
 function P:update(dt)
     if net.authority() or self.entity:is_local() then
-        local m = vector.create(input.axis("A", "D"), 0, input.axis("W", "S"))
-        self.entity:move_character(m * self.speed)
+        local stick = input.vector("move_x", "move_y") -- keys or a gamepad's left stick
+        self.entity:move_character(vector.create(stick.x, 0, -stick.y) * self.speed)
+        if net.authority() and input.action_pressed("jump") then self.entity:set_net("jumps", (self.entity:get_net("jumps") or 0) + 1) end
     end
 end
 return P
@@ -550,6 +551,40 @@ TEST_CASE("session: two clients over a lossy, delayed link play together") {
     CHECK_FALSE(s.server_peer.scene.world().alive(srv_a));
     CHECK_FALSE(pb.scene.world().alive(b_view_of_a));
     CHECK(b.clients().size() == 1);
+}
+
+TEST_CASE("session: gamepad sticks and buttons reach the server's scripts") {
+    Session s;
+    LinkConditions lossy;
+    lossy.latency_ms = 30;
+    lossy.loss = 0.1f;
+    lossy.seed = 3;
+    NetClient& a = s.add_client("pad", lossy);
+    s.step(60);
+    REQUIRE(a.connected());
+    Peer& pa = *s.peers[0];
+    const Entity srv = s.server_player(a.local_id());
+    REQUIRE(!srv.is_null());
+    const math::Vec3 start = s.server_peer.position(srv);
+    // Half tilt to the left for one second: about half speed (4 m/s * 0.5).
+    pa.input.set_gamepad_axis(0, gameplay::gamepad_axis_index("LeftX"), -0.6f);
+    s.step(60);
+    const float moved = start.x - s.server_peer.position(srv).x;
+    CAPTURE(moved);
+    CHECK(moved == doctest::Approx(2.0f).epsilon(0.2));
+    pa.input.set_gamepad_axis(0, gameplay::gamepad_axis_index("LeftX"), 0.0f);
+    s.step(30);
+    // Three taps of South: each press edge is seen once by the server despite packet loss and
+    // the input redundancy that repeats frames.
+    for (int i = 0; i < 3; ++i) {
+        pa.input.set_gamepad_button(0, gameplay::gamepad_button_index("South"), true);
+        s.step(6);
+        pa.input.set_gamepad_button(0, gameplay::gamepad_button_index("South"), false);
+        s.step(6);
+    }
+    s.step(30);
+    CHECK(get_var(s.server_peer.scene, srv, "jumps").as_number() == 3);
+    CHECK(s.server->diagnostics().rejected_messages == 0);
 }
 
 TEST_CASE("session: handshake validation and server capacity") {

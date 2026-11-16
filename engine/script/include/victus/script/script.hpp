@@ -22,6 +22,14 @@
 //     function Mover:on_trigger_exit(other) end
 //     return Mover
 //
+// Input API: raw keys/mouse `input.down/pressed/released(key)`, `input.axis(neg, pos, ...)`,
+// `input.mouse_down/mouse_pressed(b)`, `input.mouse_position/mouse_delta()`; actions from the
+// project's input map (keyboard, mouse and gamepads together) `input.action(name)`,
+// `input.action_pressed/action_released(name)`, `input.value(name)` (-1..1),
+// `input.vector(x_action, y_action)`, `input.actions()`, `input.bindings(name)`,
+// `input.rebind(name, {"Space", "Pad.South", "-Pad.LeftX"})`; gamepads `input.gamepad_connected(pad?)`,
+// `input.gamepad_button(name, pad?)`, `input.gamepad_axis(name, pad?)`.
+//
 // Physics API (when a PhysicsWorld is bound to the scene): `physics.raycast(origin, dir, max,
 // mask, ignore)`, `physics.raycast2d`, `physics.overlap_sphere/overlap_box/overlap_circle/
 // overlap_box2d`, `physics.gravity()/set_gravity(v)`, `physics.gravity2d()/set_gravity2d(v)`,
@@ -55,6 +63,7 @@
 #include "victus/core/json.hpp"
 #include "victus/core/result.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/gameplay/input_map.hpp"
 #include "victus/scene/scene.hpp"
 
 #include <cstdint>
@@ -86,6 +95,9 @@ struct HostOptions {
     std::size_t memory_limit_bytes{256u << 20};
     bool watch_files{false};             // poll script files for changes and hot reload them
     double watch_interval_seconds{0.5};
+    // Actions behind input.action/value/vector (the project's "input" section; scripts may
+    // rebind them for the session with input.rebind).
+    gameplay::InputMap input_map = gameplay::default_input_map();
 };
 
 struct HostStats {

@@ -5,6 +5,10 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/platform/platform.hpp"
 
+static_assert(static_cast<int>(victus::platform::GamepadButton::Count) == victus::gameplay::kGamepadButtonCount);
+static_assert(static_cast<int>(victus::platform::GamepadAxis::Count) == victus::gameplay::kGamepadAxisCount);
+static_assert(victus::platform::InputState::kMaxGamepads == victus::gameplay::kMaxGamepads);
+
 namespace victus::player {
 
 class PlatformInput final : public gameplay::InputSource {
@@ -24,11 +28,28 @@ public:
     }
     math::Vec2 mouse_position() const override { return state_->mouse_position() - origin_; }
     math::Vec2 mouse_delta() const override { return enabled_ ? state_->mouse_delta() : math::Vec2{}; }
+    bool mouse_released(int button) const override {
+        return enabled_ && valid(button) && state_->mouse_released(button_of(button));
+    }
+    bool gamepad_connected(int pad) const override { return enabled_ && pad_ok(pad) && state_->gamepad(idx(pad)).connected; }
+    bool gamepad_button(int pad, int button, bool previous = false) const override {
+        if (!enabled_ || !pad_ok(pad) || button < 0 || button >= gameplay::kGamepadButtonCount) return false;
+        const auto b = static_cast<platform::GamepadButton>(button);
+        return previous ? state_->gamepad_button_prev(idx(pad), b)
+                        : state_->gamepad(idx(pad)).buttons[static_cast<std::size_t>(button)];
+    }
+    float gamepad_axis(int pad, int axis, bool previous = false) const override {
+        if (!enabled_ || !pad_ok(pad) || axis < 0 || axis >= gameplay::kGamepadAxisCount) return 0;
+        const auto a = static_cast<platform::GamepadAxis>(axis);
+        return previous ? state_->gamepad_axis_prev(idx(pad), a) : state_->gamepad(idx(pad)).axes[static_cast<std::size_t>(axis)];
+    }
 
 private:
     // Unknown names map to Key::Unknown, which is never down.
     static platform::Key lookup(std::string_view key) noexcept { return platform::key_from_name(key); }
     static bool valid(int b) noexcept { return b >= 0 && b < 3; }
+    static bool pad_ok(int p) noexcept { return p >= 0 && p < static_cast<int>(platform::InputState::kMaxGamepads); }
+    static std::size_t idx(int p) noexcept { return static_cast<std::size_t>(p); }
     // Script button numbering: 0 left, 1 middle, 2 right (matches platform::MouseButton order).
     static platform::MouseButton button_of(int b) noexcept { return static_cast<platform::MouseButton>(b); }
     const platform::InputState* state_;

@@ -32,7 +32,7 @@ namespace victus::net {
 
 using scene::Entity;
 
-inline constexpr std::uint32_t kProtocolVersion = 1;
+inline constexpr std::uint32_t kProtocolVersion = 2; // 2: gamepad state in input frames
 inline constexpr std::uint16_t kDefaultPort = 27960;
 inline constexpr std::uint16_t kServerId = 0;      // sender id of messages from the server
 inline constexpr std::uint16_t kAllClients = 0xFFFF;

@@ -16,6 +16,7 @@
 #include "victus/player/export.hpp"
 #include "victus/player/player.hpp"
 #include "victus/project/project.hpp"
+#include "victus/platform/platform.hpp"
 #include "victus/scene/scene.hpp"
 #include "victus/script/script.hpp"
 
@@ -221,6 +222,7 @@ struct Headless {
         if (auto st = scene.load_file(*path); !st) return st;
         script::HostOptions so;
         so.assets_root = proj->root() / "assets";
+        so.input_map = proj->settings().input;
         auto h = script::ScriptHost::create(so);
         if (!h) return h.error();
         host = std::move(*h);
@@ -293,7 +295,7 @@ int cmd_simulate(const std::vector<std::string>& a) {
     p.positional("project", "project folder", true)
         .option("scene", "project-relative scene (default: startup scene)")
         .option("frames", "number of 1/60 s frames to run", "600")
-        .option("hold", "comma-separated keys held for the whole run, e.g. D,Space")
+        .option("hold", "comma-separated controls held for the whole run, e.g. D,Space or Pad.LeftX+,Pad.South")
         .option("print", "comma-separated entity names whose final position is printed")
         .option("save", "write the final scene state to this .vscene file")
         .option("connect", "join a `victus serve` server at host[:port] (runs in real time)")
@@ -304,7 +306,15 @@ int cmd_simulate(const std::vector<std::string>& a) {
     if (auto st = p.parse(a); !st) return error(st.error().message);
     auto hs = std::make_unique<Headless>();
     if (auto st = hs->open(p.get("project"), p.get("scene")); !st) return error(st.error().message);
-    for (const auto& k : split_list(p.get("hold"))) hs->input.set_key(k, true);
+    for (const auto& k : split_list(p.get("hold"))) {
+        auto b = gameplay::parse_binding(k);
+        if (!b) return error("--hold: " + b.error().message);
+        using Kind = gameplay::InputBinding::Kind;
+        if (b->kind == Kind::Key) hs->input.set_key(k, true);
+        else if (b->kind == Kind::Mouse) hs->input.set_mouse(b->index, true);
+        else if (b->kind == Kind::GamepadButton) hs->input.set_gamepad_button(0, b->index, true);
+        else hs->input.set_gamepad_axis(0, b->index, b->direction < 0 ? -1.0f : 1.0f);
+    }
 
     std::unique_ptr<net::NetClient> client;
     if (p.has("connect")) {
@@ -438,6 +448,11 @@ int cmd_check(const std::vector<std::string>& a) {
     if (!proj) return error(proj.error().message);
     const fs::Path assets = proj->root() / "assets";
     std::size_t problems = 0, scripts = 0, scenes = 0;
+    for (const auto& msg : proj->settings().input.validate(
+             [](std::string_view k) { return platform::key_from_name(k) != platform::Key::Unknown; })) {
+        std::printf("error: victus.project: %s\n", msg.c_str());
+        ++problems;
+    }
     std::error_code ec;
     for (auto it = std::filesystem::recursive_directory_iterator(assets, ec);
          !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
@@ -455,6 +470,7 @@ int cmd_check(const std::vector<std::string>& a) {
     }
     script::HostOptions so;
     so.assets_root = assets;
+    so.input_map = proj->settings().input;
     auto host = script::ScriptHost::create(so);
     if (!host) return error(host.error().message);
     for (const auto& rel : proj->scenes()) {

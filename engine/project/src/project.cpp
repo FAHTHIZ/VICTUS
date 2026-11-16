@@ -33,6 +33,7 @@ Value settings_to_json(const ProjectSettings& s) {
     rendering.set("quality", s.render_quality);
     if (s.render_scale > 0.0f) rendering.set("render_scale", s.render_scale);
     v.set("rendering", std::move(rendering));
+    v.set("input", s.input.to_json());
     return v;
 }
 
@@ -57,10 +58,17 @@ Status settings_from_json(const Value& v, ProjectSettings& s) {
     s.render_scale = r["render_scale"].as_float(0.0f);
     if (!(s.render_scale == 0.0f || (s.render_scale >= 0.25f && s.render_scale <= 2.0f)))
         return bad("rendering.render_scale must be 0 (tier default) or between 0.25 and 2");
+    if (const Value* in = v.find("input")) {
+        auto map = gameplay::InputMap::from_json(*in);
+        if (!map) return bad(map.error().message);
+        s.input = std::move(*map);
+    } else {
+        s.input = gameplay::default_input_map();
+    }
     s.extra = Value::object();
     for (const auto& [key, value] : v.as_object()) {
         if (key == "format" || key == "version" || key == "name" || key == "startup_scene" || key == "template" ||
-            key == "engine_version" || key == "window" || key == "rendering")
+            key == "engine_version" || key == "window" || key == "rendering" || key == "input")
             continue;
         s.extra.set(key, value);
     }

@@ -418,7 +418,7 @@ void build_3d(Scene& s) {
     l.intensity = 12.0f;
     l.range = 7.0f;
 
-    (void)hud(s, "W A S D  or  arrow keys   walk\nSpace   jump\nWalk into the crates and the gate\nH   show / hide this panel", {450, 128});
+    (void)hud(s, "WASD, arrows or left stick   walk\nSpace or A button   jump\nWalk into the crates and the gate\nH or View button   show / hide this panel", {470, 128});
 }
 
 // ---- Multiplayer arena ------------------------------------------------------------------------
@@ -514,7 +514,7 @@ void build_multiplayer(Scene& s) {
         attach(s, coin, "scripts/net_coin.luau");
     }
 
-    const Entity canvas = hud(s, "W A S D  or  arrow keys   walk\nSpace   jump\nCollect coins; the server keeps score\nH   show / hide this panel", {470, 128});
+    const Entity canvas = hud(s, "WASD, arrows or left stick   walk\nSpace or A button   jump\nCollect coins; the server keeps score\nH or View button   show / hide this panel", {470, 128});
     {
         const Entity status = ui_rect(s, canvas, "Net Status", {0, 0}, {0, 0}, {24, 24}, {520, 40});
         auto& t = ui_text(s, status, "Offline", 22, true);
@@ -659,8 +659,8 @@ void build_2d(Scene& s) {
     s.world().add<RotatorComponent>(spinner) = {{0, 0, 1}, 90.0f};
 
     // HUD: coin counter (updated by platformer.luau), a hidden win banner and the controls panel.
-    const Entity canvas = hud(s, "A / D  or  Left / Right   run\nSpace, W or Up   jump\nS or Down   drop through the ledge\nH   show / hide this panel",
-                              {450, 128});
+    const Entity canvas = hud(s, "A / D, arrows or left stick   run\nSpace, W, Up or A button   jump\nS, Down or stick down   drop through the ledge\nH or View button   show / hide this panel",
+                              {470, 128});
     const Entity counter = ui_rect(s, canvas, "Coin Counter", {0, 0}, {0, 0}, {24, 24}, {236, 60});
     s.world().add<gameui::UiPanelComponent>(counter).border_width = 1.5f;
     ui_text(s, counter, "Coins 0 / 3", 28, true).color = {1.0f, 0.86f, 0.35f, 1};
@@ -698,7 +698,8 @@ void build_simulation(Scene& s) {
 
 // ---- template scripts ------------------------------------------------------------------------
 
-constexpr const char* kPlayer3d = R"lua(-- Walks the character with WASD or the arrow keys and jumps with Space. The entity has a
+constexpr const char* kPlayer3d = R"lua(-- Walks the character with the "move_x"/"move_y" actions (WASD, arrows, left stick) and jumps
+-- with "jump" (Space, gamepad A). The entity has a
 -- CharacterController (it slides along walls, climbs steps and pushes physics bodies); the
 -- child "Robot" model faces the direction of travel and cross-fades between its "Idle" and
 -- "Walk" animation clips. Its child "Dust" particle emitter puffs on jumps and landings.
@@ -715,10 +716,9 @@ function Player:start()
 end
 
 function Player:update(dt)
-    local x = input.axis("A", "D", "Left", "Right")
-    local z = input.axis("W", "S", "Up", "Down")
-    local move = vector.create(x, 0, z)
-    if vector.magnitude(move) > 0 then move = vector.normalize(move) * self.speed end
+    -- Actions work with WASD/arrows and a gamepad's left stick (partial tilt walks slower).
+    local stick = input.vector("move_x", "move_y")
+    local move = vector.create(stick.x, 0, -stick.y) * self.speed
     -- Stop at the play-area bounds (only the outward component).
     local p = self.entity.position
     if (p.x >= self.bounds and move.x > 0) or (p.x <= -self.bounds and move.x < 0) then
@@ -729,7 +729,7 @@ function Player:update(dt)
     end
     self.entity:move_character(move)
     local grounded = self.entity.grounded
-    if input.pressed("Space") and grounded then
+    if input.action_pressed("jump") and grounded then
         self.entity:jump(self.jump_speed)
         if self.dust then self.dust:emit_particles(14) end
     end
@@ -851,10 +851,11 @@ end
 
 function Player:fixed_update(dt)
     local e = self.entity
-    e:move_character(vector.create(input.axis("A", "D", "Left", "Right") * self.speed, 0, 0))
-    if (input.down("S") or input.down("Down")) and e.grounded then
+    e:move_character(vector.create(input.value("move_x") * self.speed, 0, 0))
+    local vertical = input.value("move_y")
+    if vertical <= -0.5 and e.grounded then
         e:drop_through()
-    elseif (input.down("Space") or input.down("W") or input.down("Up")) and e:jump(self.jump_speed) then
+    elseif (input.action("jump") or vertical >= 0.5) and e:jump(self.jump_speed) then
         audio.play(self.jump_sound, { volume = 0.6 })
     end
     if e.position.y < -20 then -- fell off the world
@@ -969,7 +970,7 @@ function Hud:on_click(button, action)
 end
 
 function Hud:update(dt)
-    if input.pressed("H") then self:toggle_help() end
+    if input.action_pressed("help") then self:toggle_help() end
 end
 
 return Hud
@@ -1004,10 +1005,9 @@ end
 function Player:update(dt)
     local e = self.entity
     if net.authority() or e:is_local() then
-        local move = vector.create(input.axis("A", "D", "Left", "Right"), 0, input.axis("W", "S", "Up", "Down"))
-        if vector.magnitude(move) > 0 then move = vector.normalize(move) * self.speed end
-        e:move_character(move)
-        if input.pressed("Space") and e.grounded then e:jump(self.jump_speed) end
+        local stick = input.vector("move_x", "move_y")
+        e:move_character(vector.create(stick.x, 0, -stick.y) * self.speed)
+        if input.action_pressed("jump") and e.grounded then e:jump(self.jump_speed) end
         if net.authority() and e.position.y < -10 then e.position = self.spawn end
     end
 
