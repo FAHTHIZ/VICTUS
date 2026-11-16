@@ -23,6 +23,9 @@ Provide headless server builds that run authoritative gameplay/simulation withou
 ## Test and debug
 Provide deterministic network simulation for latency, jitter, packet loss, reordering and bandwidth caps. Add replication inspectors, per-entity ownership views, bandwidth counters, server tick metrics, replay/capture and reconnect tests. Test two or more clients against a local dedicated server in CI where feasible.
 
+## Secure sessions
+Implemented in Slice 26 (`engine/net/src/secure.cpp`, ADR-0028). `with_encryption()` wraps any transport. Handshake on the reliable channel: the client sends `0xA1 "VSEC" version e_c`; the server answers `0xA2 e_s s_s tag`, where both sides compute `h = BLAKE2b("VICTUS-SECURE-1" e_c e_s s_s)` and `key_c2s/key_s2c = BLAKE2b(key h, DH(e_c,e_s) || DH(e_c,s_s) || "c2s"/"s2c")`, and `tag` is an empty XChaCha20-Poly1305 message under `key_s2c` with `h` as associated data. The client checks a pinned key if configured, verifies the tag and sends its password (possibly empty) encrypted; the server answers accept, or reject with a reason and disconnects. Data packets are `0xA3 counter:u64 ciphertext mac:16`; the nonce is the counter and channel, the header and channel are associated data, and the first plaintext byte is the message kind. Reliable counters must increase; unreliable counters pass a 64-packet window. Servers keep a long-term secret key (`<project>/.victus/server.key` for `victus serve`) whose public half players can pin with `--server-key`.
+
 ## Online services
 Expose replaceable interfaces for identity, lobbies, matchmaking, friends, leaderboards, voice and platform services. Do not make any one vendor or hosted service mandatory. Document privacy, security, costs and platform restrictions before integrating providers.
 

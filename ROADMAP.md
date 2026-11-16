@@ -126,7 +126,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 - [~] Network emulation for latency, jitter, packet loss and bandwidth constraints. Done (Slice 17): latency/jitter/loss emulation on any transport (`--conditions`). Remaining: bandwidth caps, duplication/reordering profiles.
 - [ ] Multiplayer debugging, replay/recording, reconnect and persistence. Editor network tooling (multi-client play mode, replication inspector) still to do.
 - [ ] Replaceable interfaces for matchmaking, lobbies, identity and platform services; no mandatory vendor lock-in.
-- [~] Security model, input validation, server authority and abuse-resistant boundaries. Done (Slice 17): server authority, clients may only drive their own player, bounded message sizes/rates, malformed packets rejected. Remaining: encryption and authentication, NAT traversal/relays.
+- [~] Security model, input validation, server authority and abuse-resistant boundaries. Done (Slice 17): server authority, clients may only drive their own player, bounded message sizes/rates, malformed packets rejected. Encrypted, authenticated sessions (Slice 26): Noise NX-style X25519 handshake, XChaCha20-Poly1305 packets with replay protection, pinned server keys and server passwords (Monocypher); `victus serve` encrypts by default. Remaining: player identities/accounts, key rotation, NAT traversal/relays.
 **Exit:** two or more clients play a representative networked game against an authoritative dedicated server under repeatable network tests.
 
 ## Phase 13 — Production, collaboration and ecosystem
