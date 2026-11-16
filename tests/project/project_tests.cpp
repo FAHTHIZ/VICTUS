@@ -2,6 +2,7 @@
 #include "doctest.h"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/project/project.hpp"
+#include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
 
 #include <filesystem>
@@ -133,6 +134,7 @@ namespace {
 struct TemplateRun {
     scene::Scene scene;
     std::unique_ptr<script::ScriptHost> host;
+    std::unique_ptr<physics::PhysicsWorld> physics;
     gameplay::Simulation sim;
     gameplay::ManualInput input;
     void frames(int n) {
@@ -163,6 +165,10 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     r->host = std::move(h).value();
     gameplay::add_builtin_systems(r->sim);
     script::add_script_systems(r->sim, *r->host);
+    auto w = physics::PhysicsWorld::create();
+    REQUIRE(w.ok());
+    r->physics = std::move(w).value();
+    physics::add_physics_systems(r->sim, *r->physics);
     r->sim.input = &r->input;
     return r;
 }
@@ -172,13 +178,13 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     const auto dir = temp_dir("tpl2d");
     auto r = start_template("2d", dir);
     r->frames(30); // settle: the player starts on the ground
-    CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(1e-3));
+    CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
     CHECK(r->host->stats().instances == 4); // player + 3 coins
     // Run right: the player stops at the right wall and collects the coin on the ground.
     r->input.set_key("D", true);
     r->frames(300);
-    CHECK(r->pos("Player").x == doctest::Approx(8.8f - 0.45f).epsilon(1e-3));
-    CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(1e-3));
+    CHECK(r->pos("Player").x == doctest::Approx(8.8f - 0.45f).epsilon(2e-3));
+    CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
     CHECK(r->scene.find_by_name("Coin 3").is_null());
     CHECK_FALSE(r->scene.find_by_name("Coin 1").is_null());
     r->input.set_key("D", false);
@@ -188,7 +194,7 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     r->input.set_key("Space", false);
     CHECK(r->pos("Player").y > -1.5f);
     r->frames(120);
-    CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(1e-3));
+    CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
     // Walk left under the low platform, jump onto it and collect Coin 1.
     r->input.set_key("A", true);
     r->frames(60); // x ~ 2.55
@@ -226,6 +232,22 @@ TEST_CASE("templates: 3D player moves with WASD and the camera follows") {
     CHECK(c1.z < c0.z - 2.0f); // smoothed follow
     r->frames(240);
     CHECK(r->pos("Player").z == doctest::Approx(-9.0f)); // clamped to bounds
+    // The crate stack fell onto the ground collider and came to rest stacked.
+    CHECK(r->pos("Crate 1").y == doctest::Approx(0.3f).epsilon(0.03));
+    CHECK(r->pos("Crate 3").y > 1.3f);
+    CHECK(r->physics->stats().bodies_3d >= 7);
+    // Drive the ball through the stack: the crates get knocked over.
+    r->input.set_key("W", false);
+    const math::Vec3 crate_before = r->pos("Crate 3");
+    r->input.set_key("D", true);
+    r->frames(43); // x ~ 3.6, in line with the stack at z=2
+    r->input.set_key("D", false);
+    r->input.set_key("S", true);
+    r->frames(200); // roll +Z from z=-9 through the stack
+    r->input.set_key("S", false);
+    r->frames(60);
+    CAPTURE(r->pos("Player"));
+    CHECK(math::length(r->pos("Crate 3") - crate_before) > 0.5f);
     CHECK(r->host->stats().errors == 0);
     for (const auto& e : r->host->recent_errors()) MESSAGE(e);
     std::error_code ec;

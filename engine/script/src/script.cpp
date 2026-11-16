@@ -4,6 +4,7 @@
 #include "victus/core/fs.hpp"
 #include "victus/core/log.hpp"
 #include "victus/core/profiler.hpp"
+#include "victus/physics/physics.hpp"
 
 #include <lua.h>
 #include <luacode.h>
@@ -182,6 +183,27 @@ struct ScriptHost::Impl {
     void drop(Instance& in) {
         if (in.ref != LUA_NOREF) lua_unref(L, in.ref);
         in.ref = LUA_NOREF;
+    }
+
+    // Calls instance method `fn(self, ...)` if defined; `push` pushes extra arguments and returns
+    // how many it pushed.
+    template <typename Push>
+    bool call_with(Instance& in, const char* fn, Push&& push) {
+        lua_getref(L, in.ref);
+        lua_getfield(L, -1, fn);
+        if (!lua_isfunction(L, -1)) {
+            lua_pop(L, 2);
+            return true;
+        }
+        lua_pushvalue(L, -2);
+        const int nargs = 1 + push();
+        const bool ok = pcall(nargs, 0, std::format("{}:{}", in.path, fn));
+        lua_pop(L, 1); // instance
+        if (!ok) {
+            in.faulted = true;
+            VICTUS_LOG_WARN("script", "{} disabled until it is reloaded", in.path);
+        }
+        return ok;
     }
 
     // Calls instance method `fn` if the module defines it.
@@ -513,7 +535,13 @@ int entity_index(lua_State* L) {
         lua_pushstring(L, n ? n->value.c_str() : "");
     } else if (std::strcmp(key, "parent") == 0) push_entity(L, s.parent(e));
     else if (std::strcmp(key, "id") == 0) lua_pushstring(L, s.uuid(e).to_string().c_str());
-    else luaL_error(L, "Entity has no member '%s'", key);
+    else if (std::strcmp(key, "velocity") == 0) {
+        const auto* w = physics::world_of(s);
+        push_vec3(L, w ? w->linear_velocity(e) : math::Vec3{});
+    } else if (std::strcmp(key, "angular_velocity") == 0) {
+        const auto* w = physics::world_of(s);
+        push_vec3(L, w ? w->angular_velocity(e) : math::Vec3{});
+    } else luaL_error(L, "Entity has no member '%s'", key);
     return 1;
 }
 
@@ -528,6 +556,10 @@ int entity_newindex(lua_State* L) {
     else if (std::strcmp(key, "name") == 0) {
         auto* n = s.world().get<scene::Name>(e);
         if (n) n->value = luaL_checkstring(L, 3);
+    } else if (std::strcmp(key, "velocity") == 0) {
+        if (auto* w = physics::world_of(s)) w->set_linear_velocity(e, check_vec3(L, 3));
+    } else if (std::strcmp(key, "angular_velocity") == 0) {
+        if (auto* w = physics::world_of(s)) w->set_angular_velocity(e, check_vec3(L, 3));
     } else luaL_error(L, "Entity member '%s' is read-only or unknown", key);
     return 0;
 }
@@ -698,6 +730,114 @@ void register_lib(lua_State* L, const char* name, const luaL_Reg* fns) {
     lua_setglobal(L, name);
 }
 
+// ---- physics ----
+
+physics::PhysicsWorld* physics_of(lua_State* L) { return physics::world_of(scene_of(L)); }
+
+physics::PhysicsWorld& check_physics(lua_State* L) {
+    auto* w = physics_of(L);
+    if (!w) luaL_error(L, "physics is not running for this scene");
+    return *w;
+}
+
+std::uint32_t opt_mask(lua_State* L, int idx) {
+    return static_cast<std::uint32_t>(luaL_optinteger(L, idx, physics::kAllLayers));
+}
+
+void push_hit(lua_State* L, const std::optional<physics::RaycastHit>& hit) {
+    if (!hit) {
+        lua_pushnil(L);
+        return;
+    }
+    lua_createtable(L, 0, 4);
+    push_entity(L, hit->entity);
+    lua_setfield(L, -2, "entity");
+    push_vec3(L, hit->point);
+    lua_setfield(L, -2, "point");
+    push_vec3(L, hit->normal);
+    lua_setfield(L, -2, "normal");
+    lua_pushnumber(L, hit->distance);
+    lua_setfield(L, -2, "distance");
+}
+
+void push_entities(lua_State* L, const std::vector<Entity>& list) {
+    lua_createtable(L, static_cast<int>(list.size()), 0);
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        push_entity(L, list[i]);
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+}
+
+// physics.raycast(origin, direction, max_distance = 1000, mask = all, ignore = nil)
+int physics_raycast(lua_State* L) {
+    auto& w = check_physics(L);
+    push_hit(L, w.raycast(check_vec3(L, 1), check_vec3(L, 2), static_cast<float>(luaL_optnumber(L, 3, 1000.0)),
+                          opt_mask(L, 4), opt_entity(L, 5)));
+    return 1;
+}
+// physics.raycast2d(origin, direction, ...) - x/y of the vectors are used.
+int physics_raycast2d(lua_State* L) {
+    auto& w = check_physics(L);
+    const math::Vec3 o = check_vec3(L, 1), d = check_vec3(L, 2);
+    push_hit(L, w.raycast_2d({o.x, o.y}, {d.x, d.y}, static_cast<float>(luaL_optnumber(L, 3, 1000.0)), opt_mask(L, 4),
+                             opt_entity(L, 5)));
+    return 1;
+}
+int physics_overlap_sphere(lua_State* L) {
+    auto& w = check_physics(L);
+    push_entities(L, w.overlap_sphere(check_vec3(L, 1), static_cast<float>(luaL_checknumber(L, 2)), opt_mask(L, 3)));
+    return 1;
+}
+int physics_overlap_box(lua_State* L) {
+    auto& w = check_physics(L);
+    const math::Quat q = lua_isnoneornil(L, 3) ? math::Quat{} : from_euler_degrees(check_vec3(L, 3));
+    push_entities(L, w.overlap_box(check_vec3(L, 1), check_vec3(L, 2), q, opt_mask(L, 4)));
+    return 1;
+}
+int physics_overlap_circle(lua_State* L) {
+    auto& w = check_physics(L);
+    const math::Vec3 c = check_vec3(L, 1);
+    push_entities(L, w.overlap_circle_2d({c.x, c.y}, static_cast<float>(luaL_checknumber(L, 2)), opt_mask(L, 3)));
+    return 1;
+}
+int physics_overlap_box2d(lua_State* L) {
+    auto& w = check_physics(L);
+    const math::Vec3 c = check_vec3(L, 1), h = check_vec3(L, 2);
+    const float angle = math::radians(static_cast<float>(luaL_optnumber(L, 3, 0.0)));
+    push_entities(L, w.overlap_box_2d({c.x, c.y}, {h.x, h.y}, angle, opt_mask(L, 4)));
+    return 1;
+}
+int physics_gravity(lua_State* L) {
+    push_vec3(L, check_physics(L).gravity());
+    return 1;
+}
+int physics_set_gravity(lua_State* L) {
+    check_physics(L).set_gravity(check_vec3(L, 1));
+    return 0;
+}
+int physics_gravity2d(lua_State* L) {
+    const math::Vec2 g = check_physics(L).gravity_2d();
+    lua_pushvector(L, g.x, g.y, 0);
+    return 1;
+}
+int physics_set_gravity2d(lua_State* L) {
+    const math::Vec3 g = check_vec3(L, 1);
+    check_physics(L).set_gravity_2d({g.x, g.y});
+    return 0;
+}
+int physics_available(lua_State* L) {
+    lua_pushboolean(L, physics_of(L) != nullptr);
+    return 1;
+}
+
+template <void (physics::PhysicsWorld::*Fn)(Entity, math::Vec3)>
+int entity_physics_apply(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    if (auto* w = physics::world_of(s)) (w->*Fn)(e, check_vec3(L, 2));
+    return 0;
+}
+
 void open_victus_libs(lua_State* L) {
     // Entity metatable.
     lua_newtable(L); // metatable
@@ -713,6 +853,10 @@ void open_victus_libs(lua_State* L) {
                                 {"translate", entity_translate},
                                 {"rotate", entity_rotate},
                                 {"look_at", entity_look_at},
+                                {"add_force", entity_physics_apply<&physics::PhysicsWorld::add_force>},
+                                {"add_impulse", entity_physics_apply<&physics::PhysicsWorld::add_impulse>},
+                                {"add_torque", entity_physics_apply<&physics::PhysicsWorld::add_torque>},
+                                {"add_angular_impulse", entity_physics_apply<&physics::PhysicsWorld::add_angular_impulse>},
                                 {nullptr, nullptr}};
     for (const luaL_Reg* f = methods; f->name; ++f) {
         lua_pushcfunction(L, f->func, f->name);
@@ -755,6 +899,19 @@ void open_victus_libs(lua_State* L) {
     register_lib(L, "time", time_fns);
     const luaL_Reg log_fns[] = {{"info", log_info}, {"warn", log_warn}, {"error", log_error}, {nullptr, nullptr}};
     register_lib(L, "log", log_fns);
+    const luaL_Reg physics_fns[] = {{"available", physics_available},
+                                    {"raycast", physics_raycast},
+                                    {"raycast2d", physics_raycast2d},
+                                    {"overlap_sphere", physics_overlap_sphere},
+                                    {"overlap_box", physics_overlap_box},
+                                    {"overlap_circle", physics_overlap_circle},
+                                    {"overlap_box2d", physics_overlap_box2d},
+                                    {"gravity", physics_gravity},
+                                    {"set_gravity", physics_set_gravity},
+                                    {"gravity2d", physics_gravity2d},
+                                    {"set_gravity2d", physics_set_gravity2d},
+                                    {nullptr, nullptr}};
+    register_lib(L, "physics", physics_fns);
     lua_pushcfunction(L, log_info, "print");
     lua_setglobal(L, "print");
 }
@@ -881,7 +1038,42 @@ void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, co
         }
         (void)h.call(in, "update", &dt);
     }
+    dispatch_physics_events(scene);
     h.counters.instances = h.instances.size();
+}
+
+void ScriptHost::dispatch_physics_events(scene::Scene& scene) {
+    const auto* world = physics::world_of(scene);
+    if (!world || world->events().empty()) return;
+    Impl& h = *impl_;
+    // Copy: callbacks may spawn/destroy entities, which never mutates the event list, but a
+    // script could step the world in principle.
+    const std::vector<physics::ContactEvent> events = world->events();
+    auto notify = [&](Entity self, Entity other, const physics::ContactEvent& ev, bool flip) {
+        if (!scene.world().alive(self)) return;
+        const auto* sc = scene.world().get<ScriptComponent>(self);
+        if (!sc || !sc->enabled) return;
+        auto it = h.instances.find(self.bits());
+        if (it == h.instances.end() || it->second.faulted || !it->second.started) return;
+        const bool begin = ev.kind == physics::ContactEvent::Kind::Begin;
+        const char* fn = ev.trigger ? (begin ? "on_trigger_enter" : "on_trigger_exit")
+                                    : (begin ? "on_collision_enter" : "on_collision_exit");
+        lua_State* L = h.L;
+        (void)h.call_with(it->second, fn, [&] {
+            push_entity(L, scene.world().alive(other) ? other : Entity{});
+            if (ev.trigger || !begin) return 1;
+            lua_createtable(L, 0, 2);
+            push_vec3(L, ev.point);
+            lua_setfield(L, -2, "point");
+            push_vec3(L, flip ? ev.normal * -1.0f : ev.normal);
+            lua_setfield(L, -2, "normal");
+            return 2;
+        });
+    };
+    for (const auto& ev : events) {
+        notify(ev.a, ev.b, ev, false);
+        notify(ev.b, ev.a, ev, true);
+    }
 }
 
 void ScriptHost::fixed_update(scene::Scene& scene, const gameplay::FrameTime& time,

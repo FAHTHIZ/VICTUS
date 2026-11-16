@@ -84,3 +84,9 @@ add_test(NAME victus_cli_smoke
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/cli_smoke.cmake)
 set_tests_properties(victus_cli_smoke PROPERTIES LABELS "cli;gpu")
 endif()
+
+victus_add_test(victus_physics_tests
+    SOURCES
+        physics/physics_tests.cpp
+    DEPS VICTUS::Physics VICTUS::Core
+    LABELS physics)

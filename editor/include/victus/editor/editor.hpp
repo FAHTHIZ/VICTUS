@@ -6,7 +6,9 @@
 #include "victus/assets/database.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/undo.hpp"
+#include "victus/core/jobs.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/physics/physics.hpp"
 #include "victus/player/platform_input.hpp"
 #include "victus/project/project.hpp"
 #include "victus/runtime/scene_view.hpp"
@@ -86,6 +88,9 @@ public:
     // Scene being edited, or the play copy while playing.
     // Script host of the current play session (null while editing).
     [[nodiscard]] const script::ScriptHost* play_scripts() const noexcept { return play_scripts_.get(); }
+    [[nodiscard]] const physics::PhysicsWorld* play_physics() const noexcept { return play_physics_.get(); }
+    // Shared worker threads (physics), created on first use.
+    jobs::JobSystem& workers();
     [[nodiscard]] scene::Scene& active_scene() noexcept { return play_scene_ ? *play_scene_ : *scene_; }
     [[nodiscard]] scene::Scene& edit_scene() noexcept { return *scene_; }
 
@@ -177,11 +182,15 @@ private:
     std::unique_ptr<scene::Scene> play_scene_;
     std::string scene_path_;
     UndoStack undo_;
+    std::unique_ptr<jobs::JobSystem> jobs_; // created on first use; outlives play_physics_
     gameplay::Simulation sim_;
     std::unique_ptr<script::ScriptHost> play_scripts_; // fresh per play session, hot reloads files
+    std::unique_ptr<physics::PhysicsWorld> play_physics_; // fresh per play session
     std::unique_ptr<script::ScriptHost> edit_scripts_; // inspector property discovery
     std::unique_ptr<player::PlatformInput> input_;     // game input, enabled while the viewport has focus
     float script_poll_{0};
+    bool show_colliders_{true};
+    std::vector<physics::DebugLine> collider_scratch_;
     bool focus_viewport_{false};
     PlayState play_state_{PlayState::Editing};
     std::vector<Uuid> selection_;

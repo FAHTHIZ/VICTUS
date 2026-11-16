@@ -3,6 +3,7 @@
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
 
 #include "doctest.h"
@@ -350,4 +351,76 @@ TEST_CASE("script: component serialization round trip") {
     CHECK_FALSE(c->enabled);
     CHECK(c->properties["speed"].as_number() == 3.5);
     CHECK(c->properties["tint"].size() == 3);
+}
+
+TEST_CASE("script: physics queries, velocities and collision/trigger callbacks") {
+    TempDir d("victus_script_physics");
+    // Callbacks record into the Name of a "Probe" entity so the test can observe them.
+    d.write("scripts/ball.luau", R"lua(
+local Ball = {}
+local probe = nil
+local function note(text)
+    probe.name = probe.name .. text .. ";"
+end
+function Ball:start()
+    probe = scene.find("Probe")
+end
+function Ball:update(dt)
+    if self.entity.position.y < 3 and not self.kicked then
+        self.kicked = true
+        self.entity:add_impulse(vector.create(0, 0, 0))
+        self.entity.velocity = self.entity.velocity + vector.create(0, -1, 0)
+    end
+end
+function Ball:on_collision_enter(other, info)
+    note("hit:" .. other.name .. ":" .. (info.normal.y < -0.5 and "down" or "other"))
+end
+function Ball:on_trigger_enter(other) note("enter:" .. other.name) end
+function Ball:on_trigger_exit(other) note("exit:" .. other.name) end
+return Ball
+)lua");
+    auto host = make_host(d);
+    auto pw = physics::PhysicsWorld::create();
+    REQUIRE(pw.ok());
+    auto& world = *pw.value();
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    physics::add_physics_systems(sim, world);
+    Scene s;
+    const Entity probe_e = s.create("Probe");
+    const Entity ground = s.create("Ground");
+    s.world().get<Transform>(ground)->position = {0, -0.5f, 0};
+    physics::ColliderComponent gc;
+    gc.size = {20, 1, 20};
+    s.world().add<physics::ColliderComponent>(ground, gc);
+    const Entity zone = s.create("Zone");
+    s.world().get<Transform>(zone)->position = {0, 2, 0};
+    physics::ColliderComponent zc;
+    zc.size = {3, 0.3f, 3};
+    zc.is_trigger = true;
+    s.world().add<physics::ColliderComponent>(zone, zc);
+    const Entity ball = scripted(s, "Ball", "scripts/ball.luau");
+    s.world().get<Transform>(ball)->position = {0, 4, 0};
+    physics::ColliderComponent bc;
+    bc.shape = physics::ColliderComponent::Shape::Sphere;
+    bc.radius = 0.5f;
+    s.world().add<physics::ColliderComponent>(ball, bc);
+    s.world().add<physics::RigidBodyComponent>(ball, physics::RigidBodyComponent{});
+    for (int i = 0; i < 150; ++i) sim.tick(s, 1.0f / 60);
+    CHECK(world.has_body(ball));
+    CHECK(s.world().get<Transform>(ball)->position.y == doctest::Approx(0.5f).epsilon(0.03));
+    CHECK(s.world().get<scene::Name>(probe_e)->value == "Probeenter:Zone;exit:Zone;hit:Ground:down;");
+    auto q = host->eval(R"lua(
+local hit = physics.raycast(vector.create(0, 10, 0), vector.create(0, -1, 0), 100)
+local zone = physics.overlap_box(vector.create(0, 2, 0), vector.create(1, 0.5, 1))
+local b = scene.find("Ball")
+return { hit = hit.entity.name, n = #zone, available = physics.available(), g = physics.gravity().y,
+         vy = b.velocity.y }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["hit"].as_string() == "Ball");
+    CHECK(q.value()["n"].as_number() == 0); // triggers are excluded from queries
+    CHECK(q.value()["available"].as_bool());
+    CHECK(q.value()["g"].as_number() == doctest::Approx(-9.81));
+    CHECK(std::abs(q.value()["vy"].as_number()) < 0.1);
 }

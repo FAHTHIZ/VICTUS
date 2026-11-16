@@ -15,7 +15,18 @@
 //     end
 //     function Mover:fixed_update(dt) end  -- at the simulation's fixed rate
 //     function Mover:reload() end          -- after hot reload replaced the module
+//     -- Physics callbacks (dispatched after update, once per event of the frame's fixed steps):
+//     function Mover:on_collision_enter(other, info) end  -- info.point, info.normal (self -> other)
+//     function Mover:on_collision_exit(other) end
+//     function Mover:on_trigger_enter(other) end
+//     function Mover:on_trigger_exit(other) end
 //     return Mover
+//
+// Physics API (when a PhysicsWorld is bound to the scene): `physics.raycast(origin, dir, max,
+// mask, ignore)`, `physics.raycast2d`, `physics.overlap_sphere/overlap_box/overlap_circle/
+// overlap_box2d`, `physics.gravity()/set_gravity(v)`, `physics.gravity2d()/set_gravity2d(v)`,
+// entity members `velocity`, `angular_velocity` and methods `add_force`, `add_impulse`,
+// `add_torque`, `add_angular_impulse`.
 //
 // Safety: every VM is sandboxed (read-only standard libraries and globals, per-script global
 // tables, no io/os/package/debug access), each call has a wall-clock budget enforced through the
@@ -104,6 +115,7 @@ public:
 
 private:
     explicit ScriptHost(std::unique_ptr<Impl> impl);
+    void dispatch_physics_events(scene::Scene& scene);
     std::unique_ptr<Impl> impl_;
 };
 

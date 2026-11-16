@@ -2,6 +2,7 @@
 // Built-in project templates. Each produces a scene that runs immediately (Play) with the
 // built-in behaviours, so a new project shows motion, lighting and a camera on first launch.
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
 #include "victus/script/script.hpp"
 
@@ -68,16 +69,36 @@ void build_3d(Scene& s) {
     const Entity ground = add(s, "Ground", {0, 0, 0});
     s.world().get<Transform>(ground)->scale = {20, 1, 20};
     mesh(s, ground, "plane", {0.16f, 0.17f, 0.19f, 1}, 0.0f, 0.9f);
+    {
+        s.world().add<physics::RigidBodyComponent>(ground).type = physics::BodyType::Static;
+        auto& c = s.world().add<physics::ColliderComponent>(ground);
+        c.size = {1, 0.2f, 1}; // scaled by the transform to 20 x 0.2 x 20, top face at y=0
+        c.offset = {0, -0.1f, 0};
+    }
 
     const Entity cube = add(s, "Spinning Cube", {-2.2f, 0.75f, 0});
     s.world().get<Transform>(cube)->scale = {1.5f, 1.5f, 1.5f};
     mesh(s, cube, "cube", {0.9f, 0.32f, 0.08f, 1}, 0.0f, 0.45f);
     s.world().add<RotatorComponent>(cube) = {{0, 1, 0}, 40.0f};
+    s.world().add<physics::RigidBodyComponent>(cube).type = physics::BodyType::Kinematic; // turned by Rotator
+    s.world().add<physics::ColliderComponent>(cube);
 
     const Entity sphere = add(s, "Player", {0, 1.2f, 0.5f});
     s.world().get<Transform>(sphere)->scale = {1.4f, 1.4f, 1.4f};
     mesh(s, sphere, "sphere", {0.1f, 0.35f, 0.9f, 1}, 0.0f, 0.25f);
     attach(s, sphere, "scripts/player.luau");
+    // Kinematic: the script moves it and it shoves the dynamic crates out of the way.
+    s.world().add<physics::RigidBodyComponent>(sphere).type = physics::BodyType::Kinematic;
+    s.world().add<physics::ColliderComponent>(sphere).shape = physics::ColliderComponent::Shape::Sphere;
+
+    for (int i = 0; i < 3; ++i) {
+        const Entity crate = add(s, "Crate " + std::to_string(i + 1),
+                                 {3.6f + 0.05f * static_cast<float>(i), 0.3f + 0.62f * static_cast<float>(i), 2.0f});
+        s.world().get<Transform>(crate)->scale = {0.6f, 0.6f, 0.6f};
+        mesh(s, crate, "cube", {0.62f, 0.45f, 0.28f, 1}, 0.0f, 0.7f);
+        s.world().add<physics::RigidBodyComponent>(crate).mass = 4.0f;
+        s.world().add<physics::ColliderComponent>(crate).friction = 0.7f;
+    }
 
     const Entity bob = add(s, "Floating Gem", {1.0f, 2.6f, -2.0f});
     s.world().get<Transform>(bob)->scale = {0.5f, 0.5f, 0.5f};
@@ -88,6 +109,8 @@ void build_3d(Scene& s) {
     const Entity pillar = add(s, "Metal Pillar", {2.4f, 1.0f, -0.4f});
     s.world().get<Transform>(pillar)->scale = {1.0f, 2.0f, 1.0f};
     mesh(s, pillar, "cylinder", {0.95f, 0.93f, 0.88f, 1}, 1.0f, 0.3f);
+    s.world().add<physics::RigidBodyComponent>(pillar).type = physics::BodyType::Static;
+    s.world().add<physics::ColliderComponent>(pillar).shape = physics::ColliderComponent::Shape::Cylinder;
 
     const Entity lamp = add(s, "Warm Lamp", {0.5f, 2.2f, 2.5f});
     auto& l = s.world().add<LightComponent>(lamp);
@@ -105,6 +128,17 @@ SpriteComponent& sprite(Scene& s, Entity e, math::Vec2 size, math::Color tint, s
     return sp;
 }
 
+Entity solid_2d(Scene& s, std::string_view name, math::Vec3 at, math::Vec2 size, math::Color color, float friction) {
+    const Entity e = add(s, name, at);
+    sprite(s, e, size, color, 0);
+    auto& rb = s.world().add<physics::RigidBody2DComponent>(e);
+    rb.type = physics::BodyType::Static;
+    auto& c = s.world().add<physics::Collider2DComponent>(e);
+    c.size = size;
+    c.friction = friction;
+    return e;
+}
+
 void build_2d(Scene& s) {
     const Entity cam = add(s, "Main Camera", {0, 0, 10});
     auto& c = s.world().add<CameraComponent>(cam);
@@ -113,15 +147,25 @@ void build_2d(Scene& s) {
 
     sprite(s, add(s, "Sky", {0, 1, -1}), {40, 14}, {0.38f, 0.6f, 0.9f, 1}, -10);
     sprite(s, add(s, "Sun Disc", {5.5f, 3.2f, -0.5f}), {1.6f, 1.6f}, {1.0f, 0.86f, 0.35f, 1}, -9);
-    sprite(s, add(s, "Ground", {0, -4.2f, 0}), {40, 2.4f}, {0.22f, 0.55f, 0.27f, 1}, 0);
-    sprite(s, add(s, "Platform", {2.5f, -1.0f, 0}), {3.0f, 0.4f}, {0.45f, 0.3f, 0.2f, 1}, 0);
-    sprite(s, add(s, "Platform High", {-1.5f, 1.0f, 0}), {2.5f, 0.4f}, {0.45f, 0.3f, 0.2f, 1}, 0);
-    // Walls keep the player inside the camera view (half width ~8.9 at 16:9).
-    sprite(s, add(s, "Platform Wall Left", {-9.3f, 1.0f, 0}), {1.0f, 14.0f}, {0.3f, 0.22f, 0.16f, 1}, 0);
-    sprite(s, add(s, "Platform Wall Right", {9.3f, 1.0f, 0}), {1.0f, 14.0f}, {0.3f, 0.22f, 0.16f, 1}, 0);
+    const math::Color dirt{0.45f, 0.3f, 0.2f, 1}, wall{0.3f, 0.22f, 0.16f, 1};
+    solid_2d(s, "Ground", {0, -4.2f, 0}, {40, 2.4f}, {0.22f, 0.55f, 0.27f, 1}, 0.6f);
+    solid_2d(s, "Platform", {2.5f, -1.0f, 0}, {3.0f, 0.4f}, dirt, 0.6f);
+    solid_2d(s, "Platform High", {-1.5f, 1.0f, 0}, {2.5f, 0.4f}, dirt, 0.6f);
+    // Frictionless walls keep the player inside the camera view (half width ~8.9 at 16:9)
+    // without letting it cling to them mid-air.
+    solid_2d(s, "Platform Wall Left", {-9.3f, 1.0f, 0}, {1.0f, 14.0f}, wall, 0.0f);
+    solid_2d(s, "Platform Wall Right", {9.3f, 1.0f, 0}, {1.0f, 14.0f}, wall, 0.0f);
 
     const Entity player = add(s, "Player", {-4.0f, -2.55f, 0});
     sprite(s, player, {0.9f, 0.9f}, {0.95f, 0.45f, 0.15f, 1}, 2);
+    auto& prb = s.world().add<physics::RigidBody2DComponent>(player);
+    prb.fixed_rotation = true;
+    prb.gravity_scale = 2.6f; // snappier arcs than real-world gravity
+    prb.bullet = true;
+    auto& pc = s.world().add<physics::Collider2DComponent>(player);
+    pc.size = {0.9f, 0.9f};
+    pc.rounding = 0.04f;
+    pc.friction = 0.0f; // the script sets horizontal velocity directly
     attach(s, player, "scripts/platformer.luau");
 
     const math::Vec3 coins[] = {{2.5f, -0.2f, 0}, {-1.5f, 1.8f, 0}, {6.0f, -2.4f, 0}};
@@ -129,6 +173,12 @@ void build_2d(Scene& s) {
     for (const math::Vec3& at : coins) {
         const Entity coin = add(s, "Coin " + std::to_string(++n), at);
         sprite(s, coin, {0.5f, 0.5f}, {1.0f, 0.78f, 0.12f, 1}, 1);
+        auto& rb = s.world().add<physics::RigidBody2DComponent>(coin);
+        rb.type = physics::BodyType::Kinematic; // moved by coin.luau
+        auto& cc = s.world().add<physics::Collider2DComponent>(coin);
+        cc.shape = physics::Collider2DComponent::Shape::Circle;
+        cc.radius = 0.3f;
+        cc.is_trigger = true;
         attach(s, coin, "scripts/coin.luau");
     }
 
@@ -215,106 +265,65 @@ end
 return Follow
 )lua";
 
-constexpr const char* kPlatformer = R"lua(-- Platformer controller: A/D or Left/Right to run, Space, W or Up to jump.
--- Collides with sprites named "Ground" or starting with `solid_prefix`, and collects
--- entities whose name starts with "Coin".
+constexpr const char* kPlatformer = R"lua(-- Platformer controller on a physics body: A/D or Left/Right to run, Space, W or Up to jump.
+-- The entity has a dynamic RigidBody2D with fixed rotation; level geometry uses static
+-- Collider2D boxes, and coins are trigger colliders collected in on_trigger_enter.
 local Player = {}
 Player.speed = 6
 Player.jump_speed = 12
-Player.gravity = 26
-Player.solid_prefix = "Platform"
+Player.ground_probe = 0.08 -- how far below the feet counts as standing
 
 local function starts_with(s, prefix)
     return string.sub(s, 1, #prefix) == prefix
 end
 
-local function half_size(e)
-    local size = e:get("Sprite").size
-    local scale = e.scale
-    return size[1] * 0.5 * scale.x, size[2] * 0.5 * scale.y
-end
-
 function Player:start()
-    self.velocity = vector.zero
-    self.grounded = false
     self.spawn = self.entity.position
-    self.hx, self.hy = half_size(self.entity)
-    self.solids = {}
-    self.coins = {}
-    for _, e in scene.query("Sprite") do
-        local name = e.name
-        if e ~= self.entity then
-            if name == "Ground" or starts_with(name, self.solid_prefix) then
-                local hx, hy = half_size(e)
-                local p = e.position
-                table.insert(self.solids, { x = p.x, y = p.y, hx = hx, hy = hy })
-            elseif starts_with(name, "Coin") then
-                table.insert(self.coins, e)
-            end
-        end
-    end
+    local size = self.entity:get("Collider2D").size
+    self.hx, self.hy = size[1] * 0.5, size[2] * 0.5
     self.score = 0
-    self.total = #self.coins
+    self.total = 0
+    for _, e in scene.query("Collider2D") do
+        if starts_with(e.name, "Coin") then self.total += 1 end
+    end
 end
 
-function Player:overlaps(x, y, s)
-    return math.abs(x - s.x) < self.hx + s.hx - 1e-4 and math.abs(y - s.y) < self.hy + s.hy - 1e-4
+function Player:grounded()
+    local p = self.entity.position
+    local down = vector.create(0, -1, 0)
+    for _, dx in { -self.hx * 0.9, 0, self.hx * 0.9 } do
+        local hit = physics.raycast2d(p + vector.create(dx, 0, 0), down, self.hy + self.ground_probe, nil, self.entity)
+        if hit and not starts_with(hit.entity.name, "Coin") then return true end
+    end
+    return false
 end
 
 function Player:fixed_update(dt)
-    local v = self.velocity
-    local vx = input.axis("A", "D", "Left", "Right") * self.speed
-    local vy = v.y - self.gravity * dt
-    if self.grounded and (input.down("Space") or input.down("W") or input.down("Up")) then
+    local v = self.entity.velocity
+    local vy = v.y
+    if (input.down("Space") or input.down("W") or input.down("Up")) and vy <= 0.1 and self:grounded() then
         vy = self.jump_speed
     end
-    local p = self.entity.position
-    local x = p.x + vx * dt
-    for _, s in self.solids do
-        if self:overlaps(x, p.y, s) then
-            x = if vx > 0 then s.x - s.hx - self.hx else s.x + s.hx + self.hx
-        end
+    self.entity.velocity = vector.create(input.axis("A", "D", "Left", "Right") * self.speed, vy, 0)
+    if self.entity.position.y < -20 then -- fell off the world
+        self.entity.position = self.spawn
+        self.entity.velocity = vector.zero
     end
-    local y = p.y + vy * dt
-    self.grounded = false
-    for _, s in self.solids do
-        if self:overlaps(x, y, s) then
-            if vy <= 0 then
-                y = s.y + s.hy + self.hy
-                self.grounded = true
-            else
-                y = s.y - s.hy - self.hy
-            end
-            vy = 0
-        end
-    end
-    if y < -20 then -- fell off the world
-        x, y, vy = self.spawn.x, self.spawn.y, 0
-    end
-    self.velocity = vector.create(vx, vy, 0)
-    self.entity.position = vector.create(x, y, p.z)
 end
 
-function Player:update(dt)
-    local p = self.entity.position
-    for i = #self.coins, 1, -1 do
-        local coin = self.coins[i]
-        if not coin.valid then
-            table.remove(self.coins, i)
-        elseif vector.magnitude(coin.position - p) < 0.7 then
-            coin:destroy()
-            table.remove(self.coins, i)
-            self.score += 1
-            log.info("Coin collected:", self.score, "/", self.total)
-            if self.score == self.total then log.info("All coins collected!") end
-        end
+function Player:on_trigger_enter(other)
+    if starts_with(other.name, "Coin") then
+        other:destroy()
+        self.score += 1
+        log.info("Coin collected:", self.score, "/", self.total)
+        if self.score == self.total then log.info("All coins collected!") end
     end
 end
 
 return Player
 )lua";
 
-constexpr const char* kCoin = R"lua(-- Spins and hovers; the player script collects it.
+constexpr const char* kCoin = R"lua(-- Spins and hovers (a kinematic trigger body); the player script collects it on contact.
 local Coin = {}
 Coin.spin_speed = 180
 Coin.hover = 0.12
@@ -359,8 +368,8 @@ return Orbit
 
 const std::vector<TemplateInfo>& templates() {
     static const std::vector<TemplateInfo> list = {
-        {"3d", "3D Scene", "A ball you drive with WASD/arrow keys (Luau script), a follow camera, sun shadows, PBR primitives and a point light."},
-        {"2d", "2D Game", "A playable platformer: run with A/D or arrows, jump with Space, collect the coins. Gameplay is in Luau scripts."},
+        {"3d", "3D Scene", "A ball you drive with WASD/arrow keys (Luau script) that shoves a stack of physics crates, a follow camera, sun shadows, PBR primitives and a point light."},
+        {"2d", "2D Game", "A playable platformer on Box2D physics: run with A/D or arrows, jump with Space, collect the coins. Gameplay is in Luau scripts."},
         {"simulation", "Simulation",
          "576 entities animated by native systems, with a scripted orbiting camera: a starting point for simulation work."},
     };
@@ -378,6 +387,7 @@ std::vector<TemplateFile> template_files(std::string_view id) {
 void register_components() {
     gameplay::register_components();
     script::register_components();
+    physics::register_components();
 }
 
 Status build_template_scene(std::string_view id, Scene& s) {

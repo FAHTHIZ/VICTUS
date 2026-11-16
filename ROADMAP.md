@@ -2,7 +2,7 @@
 
 Living, evidence-driven plan. Work directly on `main` in small, buildable commits. Status reflects verified repository state, never ambition.
 
-**Current maturity:** core runtime, platform, RHI, real 2D/3D renderer (Vulkan verified), ECS/scenes, asset pipeline, an editor with project templates, a standalone player, a `victus` CLI and Luau gameplay scripting with hot reload. No physics, audio or networking yet. Not a production engine.
+**Current maturity:** core runtime, platform, RHI, real 2D/3D renderer (Vulkan verified), ECS/scenes, asset pipeline, an editor with project templates, a standalone player, a `victus` CLI, Luau gameplay scripting with hot reload and 3D/2D rigid-body physics (Jolt/Box2D). No audio or networking yet. Not a production engine.
 
 Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocked.
 
@@ -25,7 +25,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 ## Phase 2 — Performance laboratory
 - [x] Reproducible benchmark harness with warm-up, repetitions, machine/build metadata and machine-readable output.
 - [ ] CPU/GPU profiling, frame/tick histograms, p50/p95/p99, memory accounting and allocation tracking.
-- [~] Workloads for ECS, jobs, transforms (done: `victus_bench_scene`), physics, animation, visibility, rendering, asset import, streaming, networking and saves.
+- [~] Workloads for ECS, jobs, transforms (done: `victus_bench_scene`, `victus_bench_script`, `victus_bench_physics`), animation, visibility, rendering, asset import, streaming, networking and saves.
 - [ ] Desktop baselines; Android physical-device baselines when hardware is available.
 - [ ] Performance budgets and regression gates based on measured reference hardware.
 **Exit:** another developer can reproduce the published results and compare equivalent workloads.
@@ -71,7 +71,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 ## Phase 7 — Complete 2D development
 - [ ] 2D camera, sprites, atlases, batching, sorting/layers and pixel-art controls.
 - [ ] Tilemaps, tile sets, autotiling, grid and 2D world editing.
-- [ ] 2D physics, collision shapes, queries and debug visualization.
+- [x] 2D physics, collision shapes, queries and debug visualization: Box2D 3.2.0 bodies, box/circle/capsule colliders, triggers, raycast/overlap queries, editor collider overlay (Slice 6).
 - [ ] 2D animation, skeletal/rigged workflows where justified, particles and parallax.
 - [ ] 2D UI, input, audio, scene transitions and 2D lighting/effects.
 - [ ] 2D templates, profiling, export and playable reference game.
@@ -101,7 +101,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 **Exit:** complete playable 3D game loop authored in VICTUS with both code and visual-logic options.
 
 ## Phase 10 — Physics, animation, AI, audio and UI
-- [ ] 3D/2D physics, rigid bodies, character controllers, collision queries, joints and debug tools.
+- [~] 3D/2D physics, rigid bodies, character controllers, collision queries, joints and debug tools. Done (Slice 6): Jolt 5.7.0 + Box2D 3.2.0 behind `victus::physics`, rigid bodies, box/sphere/capsule/cylinder colliders, triggers, layers/masks, raycasts/overlaps, contact events to scripts, collider debug lines, reflected inspector. Remaining: character controllers, joints, mesh/convex colliders, 2D polygons.
 - [ ] Skeletal animation, blend spaces, state machines, retargeting, root motion and animation tooling.
 - [ ] Navigation meshes, pathfinding, avoidance, crowds and behavior/state systems.
 - [ ] Gameplay AI: perception, decision systems, behavior trees/utility/state machines and debugging.
