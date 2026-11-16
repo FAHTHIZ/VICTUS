@@ -291,6 +291,54 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     sfs::remove_all(dir, ec);
 }
 
+TEST_CASE("templates: 3D character climbs the steps, jumps and swings the gate") {
+    const auto dir = temp_dir("tpl3d_char");
+    auto r = start_template("3d", dir);
+    r->frames(5);
+    const scene::Entity player = r->scene.find_by_name("Player");
+    const scene::Entity gate = r->scene.find_by_name("Gate");
+    REQUIRE(r->physics->character_state(player).grounded);
+    REQUIRE(r->physics->joint_state(gate).active);
+    // Jump in place.
+    r->input.set_key("Space", true);
+    r->frames(1);
+    r->input.set_key("Space", false);
+    float apex = 0;
+    for (int i = 0; i < 40; ++i) {
+        r->frames(1);
+        apex = std::max(apex, r->pos("Player").y);
+    }
+    CHECK(apex > 1.5f); // 6 m/s -> 1.83 m
+    r->frames(50);
+    CHECK(r->physics->character_state(player).grounded);
+    // Walk to the stairs and up all three steps.
+    r->input.set_key("W", true);
+    r->frames(54); // z 0.5 -> -4
+    r->input.set_key("W", false);
+    r->input.set_key("A", true);
+    r->frames(84); // x 0 -> -7
+    r->input.set_key("A", false);
+    r->frames(10);
+    CHECK(r->pos("Player").y == doctest::Approx(0.9f).epsilon(0.06)); // on top of step 3
+    CHECK(r->physics->character_state(player).grounded);
+    // Walk back down, then push through the gate.
+    r->input.set_key("D", true);
+    for (int i = 0; i < 120 && r->pos("Player").x < -4.6f; ++i) r->frames(1);
+    r->input.set_key("D", false);
+    CHECK(r->pos("Player").x >= -4.6f);
+    r->input.set_key("S", true);
+    r->frames(150); // z -4 -> past the gate at z = 4
+    r->input.set_key("S", false);
+    r->frames(10);
+    CHECK(r->pos("Player").z > 4.5f);
+    CHECK(r->pos("Player").y == doctest::Approx(0.0f).epsilon(0.05)); // back on the ground
+    CHECK(std::abs(r->physics->joint_state(gate).angle) > 30.0f);
+    CHECK(r->host->stats().errors == 0);
+    for (const auto& e : r->host->recent_errors()) MESSAGE(e);
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
 TEST_CASE("templates: 3D player moves with WASD and the camera follows") {
     const auto dir = temp_dir("tpl3d");
     auto r = start_template("3d", dir);
@@ -303,7 +351,8 @@ TEST_CASE("templates: 3D player moves with WASD and the camera follows") {
     CHECK(p1.x == doctest::Approx(p0.x));
     CHECK(c1.z < c0.z - 2.0f); // smoothed follow
     r->frames(240);
-    CHECK(r->pos("Player").z == doctest::Approx(-9.0f)); // clamped to bounds
+    CHECK(r->pos("Player").z == doctest::Approx(-9.0f).epsilon(0.02)); // stops at the bounds
+    CHECK(r->pos("Player").y == doctest::Approx(0.0f).epsilon(0.05)); // standing on the ground
     // The crate stack fell onto the ground collider and came to rest stacked.
     CHECK(r->pos("Crate 1").y == doctest::Approx(0.3f).epsilon(0.03));
     CHECK(r->pos("Crate 3").y > 1.3f);

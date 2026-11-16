@@ -136,6 +136,18 @@ void PhysicsWorld::add_angular_impulse(Entity e, math::Vec3 i) { VICTUS_PHYS_DIS
 
 #undef VICTUS_PHYS_DISPATCH
 
+void PhysicsWorld::move_character(Entity e, math::Vec3 v) { impl_->w3->move_character(e, v); }
+bool PhysicsWorld::jump_character(Entity e, float speed) { return impl_->w3->jump_character(e, speed); }
+CharacterState PhysicsWorld::character_state(Entity e) const { return impl_->w3->character_state(e); }
+JointState PhysicsWorld::joint_state(Entity e) const { return impl_->w3->joint_state(e); }
+void PhysicsWorld::set_joint_motor(scene::Scene& scene, Entity e, bool enabled, float speed) {
+    if (auto* j = scene.world().get<JointComponent>(e)) {
+        j->motor = enabled;
+        j->motor_speed = speed;
+    }
+    impl_->w3->set_joint_motor(e, enabled, speed);
+}
+
 void PhysicsWorld::set_gravity(math::Vec3 g) { impl_->w3->set_gravity(g); }
 void PhysicsWorld::set_gravity_2d(math::Vec2 g) { impl_->w2->set_gravity(g); }
 math::Vec3 PhysicsWorld::gravity() const { return impl_->w3->gravity(); }
@@ -186,6 +198,8 @@ constexpr math::Color kStatic{0.35f, 0.8f, 0.45f, 1.0f};
 constexpr math::Color kDynamic{0.3f, 0.65f, 1.0f, 1.0f};
 constexpr math::Color kKinematic{1.0f, 0.75f, 0.25f, 1.0f};
 constexpr math::Color kTrigger{0.95f, 0.35f, 0.85f, 1.0f};
+constexpr math::Color kCharacter{0.3f, 0.95f, 0.95f, 1.0f};
+constexpr math::Color kJoint{1.0f, 0.95f, 0.3f, 1.0f};
 
 math::Color color_for(bool trigger, const BodyType* type) {
     if (trigger) return kTrigger;
@@ -216,6 +230,19 @@ struct Emitter {
             prev = p;
         }
     }
+    void capsule(math::Vec3 o, float radius, float height) {
+        constexpr float pi = std::numbers::pi_v<float>;
+        const math::Vec3 X{1, 0, 0}, Y{0, 1, 0}, Z{0, 0, 1};
+        const float half = std::max(0.0f, height * 0.5f - radius);
+        const math::Vec3 top = o + Y * half, bottom = o - Y * half;
+        circle(top, X, Z, radius);
+        circle(bottom, X, Z, radius);
+        circle(top, X, Y, radius, 12, 0, pi);
+        circle(top, Z, Y, radius, 12, 0, pi);
+        circle(bottom, X, Y, radius, 12, pi, 2 * pi);
+        circle(bottom, Z, Y, radius, 12, pi, 2 * pi);
+        for (math::Vec3 d : {X, X * -1.0f, Z, Z * -1.0f}) line(top + d * radius, bottom + d * radius);
+    }
     void box(math::Vec3 c, math::Vec3 h) {
         math::Vec3 p[8];
         for (int i = 0; i < 8; ++i)
@@ -226,13 +253,49 @@ struct Emitter {
     }
 };
 
+bool nearly_equal_points(math::Vec3 a, math::Vec3 b) { return math::length(a - b) < 1e-4f; }
+
 } // namespace
 
 void collider_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity only) {
     constexpr float pi = std::numbers::pi_v<float>;
     const math::Vec3 X{1, 0, 0}, Y{0, 1, 0}, Z{0, 0, 1};
+    scene.world().each<CharacterControllerComponent>([&](Entity e, CharacterControllerComponent& c) {
+        if (!only.is_null() && e != only) return;
+        // Characters stay upright: draw at the world position without the entity's rotation/scale.
+        const math::Vec3 feet = scene.world_matrix(e).transform_point({});
+        Emitter em{out, math::Mat4::trs(feet, {}, {1, 1, 1}), kCharacter};
+        em.capsule({0, c.height * 0.5f, 0}, c.radius, std::max(c.height, 2 * c.radius));
+        em.line({0, 0, 0}, {0, 0, c.radius * 1.5f}); // forward hint
+    });
+    scene.world().each<JointComponent>([&](Entity e, JointComponent& j) {
+        if (!only.is_null() && e != only) return;
+        const math::Mat4 m = scene.world_matrix(e);
+        const math::Vec3 a = m.transform_point(j.anchor);
+        Emitter em{out, math::Mat4::trs(a, {}, {1, 1, 1}), kJoint};
+        constexpr float s = 0.12f;
+        em.line(X * -s, X * s);
+        em.line(Y * -s, Y * s);
+        em.line(Z * -s, Z * s);
+        if (j.type == JointComponent::Type::Hinge || j.type == JointComponent::Type::Slider) {
+            math::Vec3 axis = m.transform_point(j.axis) - m.transform_point({});
+            if (math::length(axis) > 1e-6f) em.line(axis * -0.4f / math::length(axis), axis * 0.4f / math::length(axis));
+        }
+        // Line to the connected body (or the world point for distance joints).
+        math::Vec3 to = a;
+        if (!j.connected.is_nil()) {
+            const Entity o = scene.find(j.connected);
+            if (!o.is_null() && scene.world().alive(o))
+                to = scene.world_matrix(o).transform_point(j.type == JointComponent::Type::Distance ? j.connected_anchor
+                                                                                                   : math::Vec3{});
+        } else if (j.type == JointComponent::Type::Distance) {
+            to = j.connected_anchor;
+        }
+        if (!nearly_equal_points(a, to)) out.push_back({a, to, kJoint});
+    });
     scene.world().each<ColliderComponent>([&](Entity e, ColliderComponent& c) {
         if (!only.is_null() && e != only) return;
+        if (scene.world().get<CharacterControllerComponent>(e)) return;
         const auto* rb = scene.world().get<RigidBodyComponent>(e);
         Emitter em{out, scene.world_matrix(e), color_for(c.is_trigger, rb ? &rb->type : nullptr)};
         const math::Vec3 o = c.offset;
@@ -243,18 +306,7 @@ void collider_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity onl
             em.circle(o, X, Z, c.radius);
             em.circle(o, Y, Z, c.radius);
             break;
-        case ColliderComponent::Shape::Capsule: {
-            const float half = std::max(0.0f, c.height * 0.5f - c.radius);
-            const math::Vec3 top = o + Y * half, bottom = o - Y * half;
-            em.circle(top, X, Z, c.radius);
-            em.circle(bottom, X, Z, c.radius);
-            em.circle(top, X, Y, c.radius, 12, 0, pi);
-            em.circle(top, Z, Y, c.radius, 12, 0, pi);
-            em.circle(bottom, X, Y, c.radius, 12, pi, 2 * pi);
-            em.circle(bottom, Z, Y, c.radius, 12, pi, 2 * pi);
-            for (math::Vec3 d : {X, X * -1.0f, Z, Z * -1.0f}) em.line(top + d * c.radius, bottom + d * c.radius);
-            break;
-        }
+        case ColliderComponent::Shape::Capsule: em.capsule(o, c.radius, c.height); break;
         case ColliderComponent::Shape::Cylinder: {
             const float half = c.height * 0.5f;
             const math::Vec3 top = o + Y * half, bottom = o - Y * half;

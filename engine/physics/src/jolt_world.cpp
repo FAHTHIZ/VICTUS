@@ -15,6 +15,8 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Collision/GroupFilter.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
@@ -25,6 +27,11 @@
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Constraints/DistanceConstraint.h>
+#include <Jolt/Physics/Constraints/FixedConstraint.h>
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/PointConstraint.h>
+#include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
@@ -144,6 +151,30 @@ public:
 
 private:
     JPH::BodyID ignore_;
+};
+
+// Disables collision between pairs of bodies joined by a Joint with collide_connected = false.
+// Every VICTUS body gets a unique group id; the pair set only changes in sync(), never while the
+// solver runs, so the lookup needs no lock.
+class JointPairFilter final : public JPH::GroupFilter {
+public:
+    static std::uint64_t key(JPH::CollisionGroup::GroupID a, JPH::CollisionGroup::GroupID b) {
+        if (a > b) std::swap(a, b);
+        return (static_cast<std::uint64_t>(a) << 32) | b;
+    }
+    bool CanCollide(const JPH::CollisionGroup& a, const JPH::CollisionGroup& b) const override {
+        if (pairs_.empty()) return true;
+        const auto it = pairs_.find(key(a.GetGroupID(), b.GetGroupID()));
+        return it == pairs_.end() || it->second == 0;
+    }
+    void add(std::uint64_t k) { ++pairs_[k]; }
+    void remove(std::uint64_t k) {
+        if (auto it = pairs_.find(k); it != pairs_.end() && --it->second == 0) pairs_.erase(it);
+    }
+    void clear() { pairs_.clear(); }
+
+private:
+    std::unordered_map<std::uint64_t, int> pairs_;
 };
 
 // ---- Jolt job system on the VICTUS work-stealing pool -------------------------------------------
@@ -286,6 +317,7 @@ public:
         system_->SetGravity(to_jolt(s.gravity));
         contacts_ = std::make_unique<Contacts>(&system_->GetBodyInterfaceNoLock());
         system_->SetContactListener(contacts_.get());
+        group_filter_ = new JointPairFilter();
     }
     ~JoltWorld() override {
         clear();
@@ -302,6 +334,7 @@ public:
         auto& bi = system_->GetBodyInterface();
         std::size_t added = 0;
         scene.world().each<ColliderComponent>([&](Entity e, ColliderComponent& col) {
+            if (scene.world().get<CharacterControllerComponent>(e)) return; // the character owns the shape
             const RigidBodyComponent* rb = scene.world().get<RigidBodyComponent>(e);
             const Pose pose = world_pose(scene, e);
             const math::Vec3 scale = abs(pose.scale);
@@ -348,10 +381,13 @@ public:
             }
         }
         if (added > 64) system_->OptimizeBroadPhase();
+        sync_characters(scene);
+        sync_joints(scene);
     }
 
     void step(scene::Scene& scene, float dt, std::vector<ContactEvent>& events) override {
         sync(scene, dt);
+        update_characters(dt);
         {
             VICTUS_PROFILE_SCOPE("physics.step3d");
             const auto t0 = std::chrono::steady_clock::now();
@@ -377,18 +413,30 @@ public:
             b.rotation = from_jolt(q);
             write_world_pose(scene, e, b.position, b.rotation);
         }
+        for (auto& [key, c] : chars_) {
+            const Entity e{static_cast<std::uint32_t>(key), static_cast<std::uint32_t>(key >> 32)};
+            if (!scene.world().alive(e)) continue;
+            c.position = from_jolt(c.ch->GetPosition());
+            write_world_pose(scene, e, c.position, world_pose(scene, e).rotation);
+        }
+        check_joints(dt);
         const std::size_t before = events.size();
         contacts_->drain(events);
         contacts_last_ = static_cast<std::uint32_t>(events.size() - before);
     }
 
     void clear() override {
+        for (auto& [k, j] : joints_) destroy_joint(j);
+        joints_.clear();
+        group_filter_->clear();
+        for (auto& [k, c] : chars_) destroy_character(c);
+        chars_.clear();
         for (auto& [k, b] : bodies_) destroy(b);
         bodies_.clear();
         if (contacts_) contacts_->reset();
     }
 
-    bool has_body(Entity e) const override { return bodies_.contains(e.bits()); }
+    bool has_body(Entity e) const override { return bodies_.contains(e.bits()) || chars_.contains(e.bits()); }
 
     std::optional<RaycastHit> raycast(math::Vec3 o, math::Vec3 d, float max, std::uint32_t mask,
                                       Entity ignore) const override {
@@ -429,10 +477,12 @@ public:
     }
 
     math::Vec3 linear_velocity(Entity e) const override {
+        if (const auto c = chars_.find(e.bits()); c != chars_.end()) return from_jolt(c->second.ch->GetLinearVelocity());
         const JPH::BodyID id = body_of(e);
         return id.IsInvalid() ? math::Vec3{} : from_jolt(system_->GetBodyInterface().GetLinearVelocity(id));
     }
     void set_linear_velocity(Entity e, math::Vec3 v) override {
+        if (auto c = chars_.find(e.bits()); c != chars_.end()) return c->second.ch->SetLinearVelocity(to_jolt(v));
         if (const JPH::BodyID id = dynamic_body(e); !id.IsInvalid())
             system_->GetBodyInterface().SetLinearVelocity(id, to_jolt(v));
     }
@@ -448,6 +498,11 @@ public:
         if (const JPH::BodyID id = dynamic_body(e); !id.IsInvalid()) system_->GetBodyInterface().AddForce(id, to_jolt(f));
     }
     void add_impulse(Entity e, math::Vec3 i) override {
+        if (auto c = chars_.find(e.bits()); c != chars_.end()) {
+            JPH::CharacterVirtual& ch = *c->second.ch;
+            ch.SetLinearVelocity(ch.GetLinearVelocity() + to_jolt(i) / std::max(0.1f, c->second.comp.mass));
+            return;
+        }
         if (const JPH::BodyID id = dynamic_body(e); !id.IsInvalid())
             system_->GetBodyInterface().AddImpulse(id, to_jolt(i));
     }
@@ -459,6 +514,65 @@ public:
         if (const JPH::BodyID id = dynamic_body(e); !id.IsInvalid())
             system_->GetBodyInterface().AddAngularImpulse(id, to_jolt(i));
     }
+    void move_character(Entity e, math::Vec3 v) override {
+        if (auto c = chars_.find(e.bits()); c != chars_.end()) c->second.desired = {v.x, 0, v.z};
+    }
+    bool jump_character(Entity e, float speed) override {
+        auto c = chars_.find(e.bits());
+        if (c == chars_.end() || c->second.ch->GetGroundState() != JPH::CharacterBase::EGroundState::OnGround) return false;
+        c->second.jump = std::max(0.0f, speed);
+        return true;
+    }
+    CharacterState character_state(Entity e) const override {
+        CharacterState s;
+        const auto c = chars_.find(e.bits());
+        if (c == chars_.end()) return s;
+        const JPH::CharacterVirtual& ch = *c->second.ch;
+        s.valid = true;
+        s.grounded = ch.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+        s.on_steep_slope = ch.GetGroundState() == JPH::CharacterBase::EGroundState::OnSteepGround;
+        if (ch.IsSupported()) {
+            s.ground_normal = from_jolt(ch.GetGroundNormal());
+            s.ground = decode(ch.GetGroundUserData());
+        }
+        s.velocity = from_jolt(ch.GetLinearVelocity());
+        return s;
+    }
+    JointState joint_state(Entity e) const override {
+        JointState s;
+        const auto it = joints_.find(e.bits());
+        if (it == joints_.end()) return s;
+        const Joint& j = it->second;
+        s.valid = true;
+        s.broken = j.broken;
+        s.active = j.c != nullptr && !j.broken;
+        s.force = j.force;
+        if (!j.c) return s;
+        switch (j.comp.type) {
+        case JointComponent::Type::Hinge:
+            s.angle = math::degrees(static_cast<const JPH::HingeConstraint*>(j.c.GetPtr())->GetCurrentAngle());
+            break;
+        case JointComponent::Type::Slider:
+            s.position = static_cast<const JPH::SliderConstraint*>(j.c.GetPtr())->GetCurrentPosition();
+            break;
+        case JointComponent::Type::Distance: {
+            const JPH::RVec3 p1 = j.c->GetBody1()->GetWorldTransform() * j.local1;
+            const JPH::RVec3 p2 = j.c->GetBody2()->GetWorldTransform() * j.local2;
+            s.position = static_cast<float>((p2 - p1).Length());
+            break;
+        }
+        default: break;
+        }
+        return s;
+    }
+    void set_joint_motor(Entity e, bool enabled, float speed) override {
+        auto it = joints_.find(e.bits());
+        if (it == joints_.end()) return;
+        it->second.comp.motor = enabled;
+        it->second.comp.motor_speed = speed;
+        apply_motor(it->second);
+    }
+
     void set_gravity(math::Vec3 g) override { system_->SetGravity(to_jolt(g)); }
     math::Vec3 gravity() const override { return from_jolt(system_->GetGravity()); }
     void stats(PhysicsStats& out) const override {
@@ -481,9 +595,31 @@ private:
         math::Quat rotation;
         std::uint64_t seen{0};
         bool moving{false};
+        JPH::CollisionGroup::GroupID group{JPH::CollisionGroup::cInvalidGroup};
+    };
+
+    struct Character {
+        JPH::Ref<JPH::CharacterVirtual> ch;
+        CharacterControllerComponent comp;
+        math::Vec3 position;    // feet, world space, as last written to the Transform
+        JPH::Vec3 desired{JPH::Vec3::sZero()};
+        float jump{0};
+        std::uint64_t seen{0};
+    };
+
+    struct Joint {
+        JPH::Ref<JPH::TwoBodyConstraint> c;
+        JointComponent comp;
+        JPH::BodyID a, b;       // b invalid = world
+        std::uint64_t pair{0};  // JointPairFilter key, 0 = none
+        JPH::Vec3 local1{JPH::Vec3::sZero()}, local2{JPH::Vec3::sZero()}; // distance anchors in body space
+        bool broken{false};
+        float force{0};
+        std::uint64_t seen{0};
     };
 
     JPH::BodyID body_of(Entity e) const {
+        if (const auto c = chars_.find(e.bits()); c != chars_.end()) return c->second.ch->GetInnerBodyID();
         const auto it = bodies_.find(e.bits());
         return it == bodies_.end() ? JPH::BodyID() : it->second.id;
     }
@@ -542,6 +678,8 @@ private:
         JPH::BodyCreationSettings bcs(shape, to_jolt_r(pose.position), to_jolt(pose.rotation), motion,
                                       make_layer(std::min<std::uint32_t>(col.layer, 15u), col.mask, moving));
         bcs.mUserData = encode(e);
+        out.group = next_group_++;
+        bcs.mCollisionGroup = JPH::CollisionGroup(group_filter_, out.group, 0);
         bcs.mFriction = std::max(0.0f, col.friction);
         bcs.mRestitution = std::clamp(col.restitution, 0.0f, 1.0f);
         bcs.mIsSensor = col.is_trigger;
@@ -580,10 +718,351 @@ private:
 
     void destroy(Entry& b) {
         if (b.id.IsInvalid()) return;
+        // Constraints keep raw body pointers: drop the ones on this body before it is freed. sync_joints
+        // rebuilds them against the replacement body.
+        for (auto& [k, j] : joints_)
+            if (j.c && (j.a == b.id || j.b == b.id)) {
+                destroy_joint(j);
+                j.a = {};
+            }
         auto& bi = system_->GetBodyInterface();
         bi.RemoveBody(b.id);
         bi.DestroyBody(b.id);
         b.id = {};
+    }
+
+    // ---- characters ----
+
+    void sync_characters(scene::Scene& scene) {
+        scene.world().each<CharacterControllerComponent>([&](Entity e, CharacterControllerComponent& comp) {
+            const Pose pose = world_pose(scene, e);
+            auto it = chars_.find(e.bits());
+            JPH::Vec3 velocity = JPH::Vec3::sZero();
+            JPH::Vec3 desired = JPH::Vec3::sZero();
+            if (it != chars_.end() && !(it->second.comp == comp)) {
+                velocity = it->second.ch->GetLinearVelocity();
+                desired = it->second.desired;
+                destroy_character(it->second);
+                chars_.erase(it);
+                it = chars_.end();
+            }
+            if (it == chars_.end()) {
+                Character c;
+                create_character(e, comp, pose.position, c);
+                c.ch->SetLinearVelocity(velocity);
+                c.desired = desired;
+                it = chars_.emplace(e.bits(), std::move(c)).first;
+            }
+            Character& c = it->second;
+            c.seen = generation_;
+            if (!nearly_equal(pose.position, c.position, 1e-4f)) { // gameplay teleported the character
+                c.ch->SetPosition(to_jolt_r(pose.position));
+                c.position = pose.position;
+            }
+        });
+        for (auto it = chars_.begin(); it != chars_.end();) {
+            if (it->second.seen != generation_) {
+                destroy_character(it->second);
+                it = chars_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    void create_character(Entity e, const CharacterControllerComponent& comp, math::Vec3 feet, Character& out) {
+        const float r = std::max(0.05f, comp.radius);
+        const float half = std::max(0.01f, comp.height * 0.5f - r);
+        // Origin at the feet: the capsule centre sits half + r above it.
+        JPH::RotatedTranslatedShapeSettings rts(JPH::Vec3(0, half + r, 0), JPH::Quat::sIdentity(),
+                                                new JPH::CapsuleShape(half, r));
+        JPH::ShapeRefC shape = rts.Create().Get();
+        JPH::Ref<JPH::CharacterVirtualSettings> cs = new JPH::CharacterVirtualSettings();
+        cs->mShape = shape;
+        cs->mInnerBodyShape = shape; // a kinematic twin so raycasts, triggers and dynamic bodies see it
+        cs->mInnerBodyLayer = make_layer(std::min<std::uint32_t>(comp.layer, 15u), comp.mask, true);
+        cs->mMaxSlopeAngle = JPH::DegreesToRadians(std::clamp(comp.max_slope, 1.0f, 89.0f));
+        cs->mMass = std::max(0.1f, comp.mass);
+        cs->mMaxStrength = std::max(0.0f, comp.push_force);
+        // Contacts below the lower hemisphere centre support the character.
+        cs->mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), -r);
+        cs->mEnhancedInternalEdgeRemoval = true;
+        out.ch = new JPH::CharacterVirtual(cs, to_jolt_r(feet), JPH::Quat::sIdentity(), encode(e), system_.get());
+        out.comp = comp;
+        out.position = feet;
+        if (!out.ch->GetInnerBodyID().IsInvalid())
+            system_->GetBodyInterface().SetUserData(out.ch->GetInnerBodyID(), encode(e));
+        const JPH::ObjectLayer layer = cs->mInnerBodyLayer;
+        const QueryBodyFilter bf(out.ch->GetInnerBodyID());
+        out.ch->RefreshContacts(system_->GetDefaultBroadPhaseLayerFilter(layer), system_->GetDefaultLayerFilter(layer), bf,
+                                {}, *temp_);
+    }
+
+    void destroy_character(Character& c) {
+        c.ch = nullptr; // the destructor removes the inner body
+    }
+
+    void update_characters(float dt) {
+        if (chars_.empty() || dt <= 0) return;
+        VICTUS_PROFILE_SCOPE("physics.characters");
+        for (auto& [key, c] : chars_) {
+            JPH::CharacterVirtual& ch = *c.ch;
+            const CharacterControllerComponent& comp = c.comp;
+            const JPH::Vec3 gravity = system_->GetGravity() * comp.gravity_scale;
+            ch.UpdateGroundVelocity();
+            const JPH::Vec3 up = ch.GetUp();
+            const JPH::Vec3 current = ch.GetLinearVelocity();
+            const JPH::Vec3 vertical = up * up.Dot(current);
+            const JPH::Vec3 horizontal = current - vertical;
+            const JPH::Vec3 ground = ch.GetGroundVelocity();
+            const bool on_ground = ch.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+            // Moving towards the ground (not launched off it this step) = keep the feet planted.
+            const bool settled = (vertical - up * up.Dot(ground)).Dot(up) < 0.1f;
+            const bool planted = on_ground && settled && c.jump <= 0;
+            JPH::Vec3 v;
+            if (on_ground && settled) {
+                v = ground + c.desired; // ride moving platforms
+                if (c.jump > 0) v += up * c.jump;
+            } else {
+                const float k = comp.air_control >= 1.0f ? 1.0f
+                                                         : 1.0f - std::exp(-std::max(0.0f, comp.air_control) * 12.0f * dt);
+                v = vertical + horizontal + (c.desired - horizontal) * k;
+            }
+            c.jump = 0;
+            // On walkable ground only the part of gravity pressing into the surface applies, so characters
+            // stand still on slopes up to max_slope instead of creeping downhill.
+            if (planted) v += ch.GetGroundNormal() * ch.GetGroundNormal().Dot(gravity) * dt;
+            else v += gravity * dt;
+            ch.SetLinearVelocity(v);
+            JPH::CharacterVirtual::ExtendedUpdateSettings us;
+            const float step = std::max(0.0f, comp.step_height);
+            us.mStickToFloorStepDown = JPH::Vec3(0, -step, 0);
+            us.mWalkStairsStepUp = JPH::Vec3(0, step, 0);
+            const JPH::ObjectLayer layer = make_layer(std::min<std::uint32_t>(comp.layer, 15u), comp.mask, true);
+            const QueryBodyFilter bf(ch.GetInnerBodyID());
+            ch.ExtendedUpdate(dt, gravity, us, system_->GetDefaultBroadPhaseLayerFilter(layer),
+                              system_->GetDefaultLayerFilter(layer), bf, {}, *temp_);
+        }
+    }
+
+    // ---- joints ----
+
+    void sync_joints(scene::Scene& scene) {
+        scene.world().each<JointComponent>([&](Entity e, JointComponent& comp) {
+            const auto ia = bodies_.find(e.bits());
+            const Entry* other = nullptr;
+            bool resolved = ia != bodies_.end();
+            if (resolved && !comp.connected.is_nil()) {
+                const Entity oe = scene.find(comp.connected);
+                const auto ib = oe.is_null() ? bodies_.end() : bodies_.find(oe.bits());
+                if (ib == bodies_.end() || oe == e) resolved = false;
+                else other = &ib->second;
+            }
+            // A constraint needs at least one simulated body.
+            if (resolved && ia->second.motion != JPH::EMotionType::Dynamic &&
+                (!other || other->motion != JPH::EMotionType::Dynamic))
+                resolved = false;
+            auto it = joints_.find(e.bits());
+            if (!resolved) {
+                if (it != joints_.end()) {
+                    destroy_joint(it->second);
+                    joints_.erase(it);
+                }
+                return;
+            }
+            const JPH::BodyID a = ia->second.id, b = other ? other->id : JPH::BodyID();
+            if (it != joints_.end()) {
+                Joint& j = it->second;
+                JointComponent x = j.comp;
+                x.motor = comp.motor;
+                x.motor_speed = comp.motor_speed;
+                x.motor_force = comp.motor_force;
+                if (!j.c && !j.broken) { // a body was rebuilt
+                    joints_.erase(it);
+                    it = joints_.end();
+                } else if (j.a != a || j.b != b || !(x == comp)) {
+                    destroy_joint(j);
+                    joints_.erase(it);
+                    it = joints_.end();
+                } else if (!(j.comp == comp)) {
+                    j.comp = comp;
+                    apply_motor(j);
+                }
+            }
+            if (it == joints_.end()) {
+                Joint j;
+                j.comp = comp;
+                j.a = a;
+                j.b = b;
+                create_joint(scene, e, ia->second, other, j);
+                it = joints_.emplace(e.bits(), std::move(j)).first;
+            }
+            it->second.seen = generation_;
+        });
+        for (auto it = joints_.begin(); it != joints_.end();) {
+            if (it->second.seen != generation_) {
+                destroy_joint(it->second);
+                it = joints_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    void create_joint(scene::Scene& scene, Entity e, const Entry& body, const Entry* other, Joint& j) {
+        const JointComponent& c = j.comp;
+        const math::Mat4 m = scene.world_matrix(e);
+        const math::Vec3 anchor = m.transform_point(c.anchor);
+        math::Vec3 axis = m.transform_point(c.axis) - m.transform_point({});
+        axis = math::length(axis) > 1e-6f ? math::normalize(axis) : math::Vec3{0, 1, 0};
+        // Any unit vector perpendicular to the axis.
+        const math::Vec3 helper = std::abs(axis.y) < 0.9f ? math::Vec3{0, 1, 0} : math::Vec3{1, 0, 0};
+        const math::Vec3 normal = math::normalize(math::cross(axis, helper));
+        const JPH::RVec3 p = to_jolt_r(anchor);
+        const JPH::Vec3 ax = to_jolt(axis), nx = to_jolt(normal);
+        JPH::Ref<JPH::TwoBodyConstraintSettings> settings;
+        switch (c.type) {
+        case JointComponent::Type::Fixed: {
+            auto* s = new JPH::FixedConstraintSettings();
+            s->mAutoDetectPoint = true;
+            settings = s;
+            break;
+        }
+        case JointComponent::Type::Point: {
+            auto* s = new JPH::PointConstraintSettings();
+            s->mPoint1 = s->mPoint2 = p;
+            settings = s;
+            break;
+        }
+        case JointComponent::Type::Hinge: {
+            auto* s = new JPH::HingeConstraintSettings();
+            s->mPoint1 = s->mPoint2 = p;
+            s->mHingeAxis1 = s->mHingeAxis2 = ax;
+            s->mNormalAxis1 = s->mNormalAxis2 = nx;
+            if (c.limits) {
+                s->mLimitsMin = JPH::DegreesToRadians(std::clamp(std::min(c.min_limit, c.max_limit), -180.0f, 0.0f));
+                s->mLimitsMax = JPH::DegreesToRadians(std::clamp(std::max(c.min_limit, c.max_limit), 0.0f, 180.0f));
+            }
+            s->mMotorSettings.SetTorqueLimit(std::max(0.0f, c.motor_force));
+            settings = s;
+            break;
+        }
+        case JointComponent::Type::Slider: {
+            auto* s = new JPH::SliderConstraintSettings();
+            s->mPoint1 = s->mPoint2 = p;
+            s->SetSliderAxis(ax);
+            if (c.limits) {
+                s->mLimitsMin = std::min(0.0f, std::min(c.min_limit, c.max_limit));
+                s->mLimitsMax = std::max(0.0f, std::max(c.min_limit, c.max_limit));
+            }
+            s->mMotorSettings.SetForceLimit(std::max(0.0f, c.motor_force));
+            settings = s;
+            break;
+        }
+        case JointComponent::Type::Distance: {
+            auto* s = new JPH::DistanceConstraintSettings();
+            const math::Vec3 p1 = other ? scene.world_matrix(scene.find(c.connected)).transform_point(c.connected_anchor)
+                                        : c.connected_anchor;
+            s->mPoint1 = to_jolt_r(p1);
+            s->mPoint2 = p;
+            if (c.limits) {
+                s->mMinDistance = std::max(0.0f, std::min(c.min_limit, c.max_limit));
+                s->mMaxDistance = std::max(s->mMinDistance, std::max(c.min_limit, c.max_limit));
+            }
+            settings = s;
+            break;
+        }
+        }
+        auto& bi = system_->GetBodyInterface();
+        // Body 1 is the connected body (or the world) and body 2 this entity, so slider positions and hinge
+        // angles measure this entity's motion relative to what it is attached to.
+        JPH::TwoBodyConstraint* constraint = bi.CreateConstraint(settings, other ? other->id : JPH::BodyID(), body.id);
+        if (!constraint) return;
+        j.c = constraint;
+        system_->AddConstraint(constraint);
+        if (c.type == JointComponent::Type::Distance) {
+            const auto* s = static_cast<const JPH::DistanceConstraintSettings*>(settings.GetPtr());
+            j.local1 = JPH::Vec3(constraint->GetBody1()->GetWorldTransform().Inversed() * s->mPoint1);
+            j.local2 = JPH::Vec3(constraint->GetBody2()->GetWorldTransform().Inversed() * s->mPoint2);
+        }
+        if (other && !c.collide_connected) {
+            j.pair = JointPairFilter::key(body.group, other->group);
+            group_filter_->add(j.pair);
+        }
+        apply_motor(j);
+        bi.ActivateConstraint(constraint);
+    }
+
+    void apply_motor(Joint& j) {
+        if (!j.c || j.broken) return;
+        const JointComponent& c = j.comp;
+        const JPH::EMotorState state = c.motor ? JPH::EMotorState::Velocity : JPH::EMotorState::Off;
+        if (c.type == JointComponent::Type::Hinge) {
+            auto* h = static_cast<JPH::HingeConstraint*>(j.c.GetPtr());
+            h->GetMotorSettings().SetTorqueLimit(std::max(0.0f, c.motor_force));
+            h->SetMotorState(state);
+            h->SetTargetAngularVelocity(JPH::DegreesToRadians(c.motor_speed));
+        } else if (c.type == JointComponent::Type::Slider) {
+            auto* s = static_cast<JPH::SliderConstraint*>(j.c.GetPtr());
+            s->GetMotorSettings().SetForceLimit(std::max(0.0f, c.motor_force));
+            s->SetMotorState(state);
+            s->SetTargetVelocity(c.motor_speed);
+        } else {
+            return;
+        }
+        system_->GetBodyInterface().ActivateConstraint(j.c);
+    }
+
+    void destroy_joint(Joint& j) {
+        if (j.pair) group_filter_->remove(j.pair);
+        j.pair = 0;
+        if (j.c) system_->RemoveConstraint(j.c);
+        j.c = nullptr;
+    }
+
+    // Reaction magnitude of the last step (N, or N*m for rotation-only reactions) and breaking.
+    void check_joints(float dt) {
+        if (joints_.empty() || dt <= 0) return;
+        const auto len2 = [](const JPH::Vector<2>& v) { return std::sqrt(v[0] * v[0] + v[1] * v[1]); };
+        for (auto& [key, j] : joints_) {
+            if (!j.c || j.broken) continue;
+            float linear = 0, angular = 0;
+            switch (j.comp.type) {
+            case JointComponent::Type::Fixed: {
+                const auto* c = static_cast<const JPH::FixedConstraint*>(j.c.GetPtr());
+                linear = c->GetTotalLambdaPosition().Length();
+                angular = c->GetTotalLambdaRotation().Length();
+                break;
+            }
+            case JointComponent::Type::Point:
+                linear = static_cast<const JPH::PointConstraint*>(j.c.GetPtr())->GetTotalLambdaPosition().Length();
+                break;
+            case JointComponent::Type::Hinge: {
+                const auto* c = static_cast<const JPH::HingeConstraint*>(j.c.GetPtr());
+                linear = c->GetTotalLambdaPosition().Length();
+                angular = len2(c->GetTotalLambdaRotation()) + std::abs(c->GetTotalLambdaRotationLimits());
+                break;
+            }
+            case JointComponent::Type::Slider: {
+                const auto* c = static_cast<const JPH::SliderConstraint*>(j.c.GetPtr());
+                linear = len2(c->GetTotalLambdaPosition()) + std::abs(c->GetTotalLambdaPositionLimits());
+                angular = c->GetTotalLambdaRotation().Length();
+                break;
+            }
+            case JointComponent::Type::Distance:
+                linear = std::abs(static_cast<const JPH::DistanceConstraint*>(j.c.GetPtr())->GetTotalLambdaPosition());
+                break;
+            }
+            // Lambdas are impulses accumulated over the step.
+            j.force = std::max(linear, angular) / dt;
+            if (j.comp.break_force > 0 && j.force > j.comp.break_force) {
+                j.c->SetEnabled(false);
+                j.broken = true;
+                if (j.pair) group_filter_->remove(j.pair); // broken pieces collide again
+                j.pair = 0;
+                system_->GetBodyInterface().ActivateConstraint(j.c);
+            }
+        }
     }
 
     std::vector<Entity> overlap(const JPH::Shape& shape, JPH::RMat44Arg xf, std::uint32_t mask) const {
@@ -614,6 +1093,10 @@ private:
     std::unique_ptr<JPH::PhysicsSystem> system_;
     std::unique_ptr<Contacts> contacts_;
     std::unordered_map<std::uint64_t, Entry> bodies_;
+    std::unordered_map<std::uint64_t, Character> chars_;
+    std::unordered_map<std::uint64_t, Joint> joints_;
+    JPH::Ref<JointPairFilter> group_filter_;
+    JPH::CollisionGroup::GroupID next_group_{0};
     std::uint64_t generation_{0};
     std::uint64_t steps_{0};
     std::uint32_t contacts_last_{0};

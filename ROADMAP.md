@@ -90,7 +90,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 
 ## Phase 9 — Gameplay framework and scripting
 - [ ] Game instance/session, world/level lifecycle, game mode/rules, game state and player state.
-- [ ] Actors/entities, components, player controllers, pawns/characters, cameras and spawn points.
+- [~] Actors/entities, components, player controllers, pawns/characters, cameras and spawn points. Done: entities/components (Slice 3), scripted player control (Slice 5), 3D physics characters (Slice 11). Remaining: reusable controller/camera rigs and spawn points.
 - [ ] Input actions/mappings for keyboard, mouse, controllers and touch. (Raw keyboard/mouse input is available to scripts via `input.*`; no action maps or gamepad/touch bindings yet.)
 - [ ] Interaction, gameplay events, timers, tags, attributes, inventory/ability primitives as modular systems.
 - [ ] Prefabs/packed scenes, reusable components, variants and safe instantiation.
@@ -101,7 +101,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 **Exit:** complete playable 3D game loop authored in VICTUS with both code and visual-logic options.
 
 ## Phase 10 — Physics, animation, AI, audio and UI
-- [~] 3D/2D physics, rigid bodies, character controllers, collision queries, joints and debug tools. Done (Slice 6): Jolt 5.7.0 + Box2D 3.2.0 behind `victus::physics`, rigid bodies, box/sphere/capsule/cylinder colliders, triggers, layers/masks, raycasts/overlaps, contact events to scripts, collider debug lines, reflected inspector. Remaining: character controllers, joints, mesh/convex colliders, 2D polygons.
+- [~] 3D/2D physics, rigid bodies, character controllers, collision queries, joints and debug tools. Done (Slice 6): Jolt 5.7.0 + Box2D 3.2.0 behind `victus::physics`, rigid bodies, box/sphere/capsule/cylinder colliders, triggers, layers/masks, raycasts/overlaps, contact events to scripts, collider debug lines, reflected inspector. Done (Slice 11): 3D character controller (Jolt `CharacterVirtual`: slopes, steps, ground detection, jumping, pushing, moving platforms) and 3D joints (fixed/point/hinge/slider/distance with limits, motors, breaking). Remaining: mesh/convex colliders, 2D character controller and joints, 2D polygons, ragdolls.
 - [ ] Skeletal animation, blend spaces, state machines, retargeting, root motion and animation tooling.
 - [ ] Navigation meshes, pathfinding, avoidance, crowds and behavior/state systems.
 - [ ] Gameplay AI: perception, decision systems, behavior trees/utility/state machines and debugging.

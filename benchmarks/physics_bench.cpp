@@ -9,6 +9,7 @@
 #include "victus/core/jobs.hpp"
 #include "victus/physics/physics.hpp"
 
+#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
@@ -116,6 +117,40 @@ int main(int argc, char** argv) {
                 bench::do_not_optimize(hit);
             }
         });
+    }
+    // Characters: N CharacterControllers walking in circles on a ground with a field of static
+    // pillars (one fixed step each; includes ground detection, stairs/stick-to-floor sweeps).
+    for (const int n : {64, 256}) {
+        scene::Scene s;
+        const auto ground = s.create("ground");
+        s.world().add<physics::ColliderComponent>(ground).size = {400, 1, 400};
+        s.world().get<scene::Transform>(ground)->position = {0, -0.5f, 0};
+        for (int i = 0; i < 256; ++i) {
+            const auto p = s.create("pillar");
+            s.world().get<scene::Transform>(p)->position = {static_cast<float>(i % 16) * 4.0f, 1, static_cast<float>(i / 16) * 4.0f};
+            s.world().add<physics::ColliderComponent>(p).size = {0.5f, 2, 0.5f};
+        }
+        std::vector<scene::Entity> chars;
+        for (int i = 0; i < n; ++i) {
+            const auto c = s.create("character");
+            s.world().get<scene::Transform>(c)->position = {2.0f + static_cast<float>(i % 16) * 4.0f, 0,
+                                                            2.0f + static_cast<float>(i / 16) * 4.0f};
+            s.world().add<physics::CharacterControllerComponent>(c);
+            chars.push_back(c);
+        }
+        auto w = physics::PhysicsWorld::create();
+        if (!w) return 1;
+        for (int i = 0; i < 30; ++i) (*w)->step(s, kDt);
+        int frame = 0;
+        h.run("physics3d/step_" + std::to_string(n) + "_characters", static_cast<std::size_t>(n), [&] {
+            const float a = static_cast<float>(frame++) * 0.05f;
+            for (std::size_t i = 0; i < chars.size(); ++i)
+                (*w)->move_character(chars[i], {3.0f * std::cos(a + static_cast<float>(i)), 0, 3.0f * std::sin(a + static_cast<float>(i))});
+            (*w)->step(s, kDt);
+        });
+        int grounded = 0;
+        for (const auto c : chars) grounded += (*w)->character_state(c).grounded ? 1 : 0;
+        if (grounded < n * 9 / 10) return 3; // the benchmark must measure walking, not falling
     }
     return 0;
 }
