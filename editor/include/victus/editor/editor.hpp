@@ -55,10 +55,15 @@ struct NetPlaySettings {
     std::string password;        // required from clients when non-empty (needs encryption)
     bool insecure{false};        // plaintext session (no key, no password)
     std::string conditions;      // link emulation on the host's sends, e.g. "latency=80,loss=0.05"
+    // Extra players simulated inside the editor (0-3): each is a full client (its own scene copy,
+    // scripts and physics) joined over UDP loopback; View switches the viewport between them.
+    std::uint16_t editor_clients{0};
     friend bool operator==(const NetPlaySettings&, const NetPlaySettings&) = default;
 };
 
 enum class Primitive : std::uint8_t { Empty, Cube, Sphere, Plane, Cylinder, Camera, DirectionalLight, PointLight, Sprite };
+
+struct EditorClient; // an in-editor player of a hosted session (editor_clients.cpp)
 
 struct EditorCamera {
     math::Vec3 target{0, 0.5f, 0};
@@ -144,8 +149,11 @@ public:
     audio::AudioEngine* audio();
     // Shared worker threads (physics), created on first use.
     jobs::JobSystem& workers();
-    [[nodiscard]] scene::Scene& active_scene() noexcept { return play_scene_ ? *play_scene_ : *scene_; }
+    // The scene panels show and edit: the authored scene, or while playing the viewed peer's world.
+    [[nodiscard]] scene::Scene& active_scene() noexcept;
     [[nodiscard]] scene::Scene& edit_scene() noexcept { return *scene_; }
+    // The host's (or offline) play-mode world; null while editing.
+    [[nodiscard]] scene::Scene* play_scene() noexcept { return play_scene_.get(); }
 
     // ---- editing (all undoable while editing; direct while playing) ----
     scene::Entity create_entity(Primitive kind, scene::Entity parent = scene::kNullEntity);
@@ -205,6 +213,18 @@ public:
     [[nodiscard]] std::string join_command() const;
     void set_show_network(bool show) noexcept { show_network_ = show; }
     [[nodiscard]] bool show_network() const noexcept { return show_network_; }
+    // In-editor clients of the hosted session (NetPlaySettings::editor_clients), 1-based.
+    [[nodiscard]] std::size_t editor_client_count() const noexcept;
+    [[nodiscard]] const net::NetClient* editor_client(std::size_t index) const noexcept;
+    [[nodiscard]] scene::Scene* editor_client_scene(std::size_t index) noexcept;
+    // Which peer the viewport, hierarchy and inspector show and the keyboard drives: 0 = host,
+    // 1..n = in-editor client. Out-of-range values are ignored.
+    void set_view_peer(std::size_t peer);
+    [[nodiscard]] std::size_t view_peer() const noexcept { return view_peer_; }
+    [[nodiscard]] std::string peer_label(std::size_t peer) const;
+    // Game input for automation and tests: replaces the platform keyboard/gamepad as the input
+    // of the viewed peer (null restores the platform input). Not owned.
+    void set_game_input_override(gameplay::InputSource* input);
 
     // ---- regression captures (Play > Record / Replay) ----
     // Starts play mode while recording input, frame times and state digests with a fresh script
@@ -234,8 +254,7 @@ public:
     void notify(std::string message, bool error = false);
 
 private:
-    Editor(render::GpuContext& gpu, ui::UiContext& ui, platform::Platform* platform, platform::Window* window)
-        : gpu_(gpu), ui_(ui), platform_(platform), window_(window) {}
+    Editor(render::GpuContext& gpu, ui::UiContext& ui, platform::Platform* platform, platform::Window* window);
 
     // UI (panels.cpp / launcher.cpp)
     void draw_launcher();
@@ -310,6 +329,14 @@ private:
     void draw_network_section(scene::Entity e);
     NetPlaySettings net_settings_;
     std::unique_ptr<net::NetServer> play_server_; // listen server of a hosted play session
+    std::vector<std::unique_ptr<EditorClient>> play_clients_; // in-editor players (editor_clients.cpp)
+    std::size_t view_peer_{0};
+    gameplay::InputSource* game_input_override_{nullptr};
+    gameplay::ManualInput host_idle_input_; // the host's input while a client is viewed
+    void start_editor_clients();
+    void tick_editor_clients(float dt);
+    void stop_editor_clients();
+    void route_input();
     std::string server_key_;
     bool show_network_{false};
     std::string net_filter_;

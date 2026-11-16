@@ -3,6 +3,8 @@
 #include "victus/gameui/gameui.hpp"
 #include "victus/editor/editor.hpp"
 
+#include "editor_client.hpp"
+
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
 #include "victus/core/profiler.hpp"
@@ -66,7 +68,11 @@ Result<std::unique_ptr<Editor>> Editor::create(render::GpuContext& gpu, ui::UiCo
     return ed;
 }
 
+Editor::Editor(render::GpuContext& gpu, ui::UiContext& ui, platform::Platform* platform, platform::Window* window)
+    : gpu_(gpu), ui_(ui), platform_(platform), window_(window) {}
+
 Editor::~Editor() {
+    stop_editor_clients();
     if (play_server_) play_server_->shutdown(sim_.time().time); // tell joined players we are gone
     play_server_.reset();
     if (log_sink_) log::logger().remove_sink(log_sink_);
@@ -651,7 +657,7 @@ Entity Editor::selected() noexcept {
 }
 
 bool Editor::is_selected(Entity e) const {
-    const Scene& s = play_scene_ ? *play_scene_ : *scene_;
+    const Scene& s = const_cast<Editor*>(this)->active_scene();
     return std::find(selection_.begin(), selection_.end(), s.uuid(e)) != selection_.end();
 }
 
@@ -775,6 +781,8 @@ Status Editor::set_net_settings(NetPlaySettings s) {
     if (s.insecure && !s.password.empty()) return make_error(ErrorCode::InvalidArgument, "a password needs encryption; turn off insecure");
     if (s.max_clients == 0 || s.max_clients > 64) return make_error(ErrorCode::InvalidArgument, "max clients must be 1-64");
     if (s.port == 0) return make_error(ErrorCode::InvalidArgument, "port must be 1-65535");
+    if (s.editor_clients > 3) return make_error(ErrorCode::InvalidArgument, "in-editor clients must be 0-3");
+    if (s.editor_clients > s.max_clients) return make_error(ErrorCode::InvalidArgument, "more in-editor clients than max clients");
     net_settings_ = std::move(s);
     return {};
 }
@@ -905,6 +913,7 @@ void Editor::tick_play(float dt) {
         return;
     }
     sim_.tick(*play_scene_, dt);
+    tick_editor_clients(dt);
     if (play_server_) {
         // Bandwidth history for the Network window (4 samples per second, last 30 s).
         if ((net_sample_ += dt) >= 0.25f) {
@@ -981,9 +990,14 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
             return;
         }
     }
+    if (play_server_) start_editor_clients();
+    route_input();
     focus_viewport_ = true;
     play_state_ = PlayState::Playing;
-    if (play_server_)
+    if (play_server_ && !play_clients_.empty())
+        notify(std::format("Hosting on UDP port {} with {} in-editor client{} - View switches between players", net_settings_.port,
+                           play_clients_.size(), play_clients_.size() == 1 ? "" : "s"));
+    else if (play_server_)
         notify(std::format("Hosting on UDP port {} ({}) - others join with: {}", net_settings_.port,
                            server_key_.empty() ? "insecure" : "encrypted", join_command()));
     else
@@ -1015,7 +1029,12 @@ void Editor::reset_simulation() {
     sim_ = gameplay::Simulation();
     gameplay::add_builtin_systems(sim_);
     gameui::add_ui_systems(sim_);
-    sim_.input = input_.get();
+    sim_.input = game_input_override_ ? game_input_override_ : input_.get();
+}
+
+void Editor::set_game_input_override(gameplay::InputSource* input) {
+    game_input_override_ = input;
+    route_input();
 }
 
 void Editor::pause() {
@@ -1045,6 +1064,7 @@ void Editor::stop() {
     recording_.reset();
     replay_.reset();
     replay_capture_.reset();
+    stop_editor_clients();
     if (play_server_) {
         play_server_->shutdown(sim_.time().time); // joined players see "server shutting down"
         play_server_.reset();
