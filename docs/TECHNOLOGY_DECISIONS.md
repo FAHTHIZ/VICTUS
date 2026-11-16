@@ -128,5 +128,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Front-to-back order is only kept within a batch, so heavy overdraw scenes on the Low tier (no prepass) may lose some early-z benefit; instances are rebuilt every frame (no persistent static batches yet); skinned meshes will need their own path.
 
+## ADR-0014 — Character controller and physics joints (accepted 2026-11-16)
+**Problem.** Games need a player character that walks on slopes, climbs stairs, stands on moving platforms and pushes objects without the jitter and tunnelling of a plain rigid body, plus doors, levers, pendulums, ropes and breakable connections. Both must stay behind owned `victus::physics` types so the backend can change.
+
+**Candidates.** A dynamic rigid-body capsule (`JPH::Character`): simple, but friction and stepping need hacks and it is pushed around by the solver. Jolt `CharacterVirtual`: collision-query based, moved by the game each step, with built-in stair walking, floor sticking and contact callbacks. An owned kinematic sweep controller: full control but duplicates work Jolt already ships and tests. For joints: expose Jolt constraint types directly vs a small owned `Joint` component that maps to them.
+
+**Decision.** `CharacterController` component backed by `JPH::CharacterVirtual` (Jolt 5.7.0) with a capsule whose bottom sits at the entity origin and an inner rigid body (`mInnerBodyShape`) so raycasts, triggers and other bodies see the character. Characters are updated before each rigid-body step: ground velocity update, ground-relative desired velocity with exponential air control, gravity only along the ground normal while supported on a walkable slope, then `ExtendedUpdate` with stair step-up and stick-to-floor set to `step_height`. `push_force` sets the maximum force the character exerts on dynamic bodies (`mMaxStrength`). `Joint` component (fixed, point, hinge, slider, distance) references the connected entity by UUID (nil = world); body 1 is the connected body so angles and slider positions measure this entity. Limits, velocity motors (force/torque limited) and a break force (constraint impulse / dt checked after every step, then `SetEnabled(false)`) are supported; a `GroupFilter` gives every body its own group and skips pairs that share a non-colliding joint. Constraints are rebuilt only when bodies or non-motor fields change, and are removed before their bodies.
+
+**Evidence.** `victus_physics_tests` 16 character/joint cases (see STATUS Slice 11), script and template tests, and `victus_bench_physics`: 256 characters step in 0.514 ms p50 on one 2.9 GHz Xeon thread. Sources: Jolt `CharacterVirtual` reference and architecture/constraints documentation (RESEARCH_REGISTER).
+
+**Risks / revisit triggers.** Character capsules only (no crouch shape swap or custom shapes yet); characters are updated serially; 2D (Box2D) has no character controller or joints yet; no cone, swing-twist, 6-DOF or ragdoll joints and no position motors. Revisit the serial update if scenes need thousands of characters.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

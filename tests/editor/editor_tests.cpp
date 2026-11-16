@@ -179,7 +179,7 @@ TEST_CASE("editor: 3D project workflow end to end") {
         if (!e.is_null()) picked.insert(s.world().get<Name>(e)->value);
     }
     CHECK(picked.count("Spinning Cube") == 1);
-    CHECK(picked.count("Player") == 1);
+    CHECK(picked.count("Ball") == 1); // the player's mesh child
 
     // Create, undo, redo.
     const Entity cube = h.ed->create_entity(editor::Primitive::Cube);
@@ -230,7 +230,8 @@ TEST_CASE("editor: 3D project workflow end to end") {
     const Entity play_spinner = play.find(s.uuid(spinner));
     REQUIRE_FALSE(play_spinner.is_null());
     CHECK_FALSE(play.world().get<Transform>(play_spinner)->rotation == authored);
-    // Template scripts run in play mode: the player bobs, the camera follows, no script errors.
+    // Template scripts run in play mode: the player is a simulated character standing on the
+    // ground, the camera follows, no script errors.
     REQUIRE(h.ed->play_scripts() != nullptr);
     CHECK(h.ed->play_scripts()->stats().instances == 5); // camera, player, 3 crates
     CHECK(h.ed->play_scripts()->stats().errors == 0);
@@ -238,7 +239,11 @@ TEST_CASE("editor: 3D project workflow end to end") {
         const Entity ap = s.find_by_name("Player");
         const Entity pp = play.find(s.uuid(ap));
         REQUIRE_FALSE(pp.is_null());
-        CHECK(play.world().get<Transform>(pp)->position.y != doctest::Approx(s.world().get<Transform>(ap)->position.y));
+        REQUIRE(h.ed->play_physics() != nullptr);
+        const physics::CharacterState cs = h.ed->play_physics()->character_state(pp);
+        CHECK(cs.valid);
+        CHECK(cs.grounded);
+        CHECK(play.world().get<Transform>(pp)->position.y == doctest::Approx(0.0f).epsilon(0.05));
     }
     h.ed->create_entity(editor::Primitive::Sphere); // play-time edit, not undoable, discarded
     CHECK(h.ed->undo_stack().size() == undo_depth);

@@ -542,6 +542,9 @@ int entity_index(lua_State* L) {
     } else if (std::strcmp(key, "angular_velocity") == 0) {
         const auto* w = physics::world_of(s);
         push_vec3(L, w ? w->angular_velocity(e) : math::Vec3{});
+    } else if (std::strcmp(key, "grounded") == 0) {
+        const auto* w = physics::world_of(s);
+        lua_pushboolean(L, w && w->character_state(e).grounded);
     } else luaL_error(L, "Entity has no member '%s'", key);
     return 1;
 }
@@ -839,6 +842,84 @@ int entity_physics_apply(lua_State* L) {
     return 0;
 }
 
+// entity:move_character(velocity): desired walking velocity (persists until changed).
+int entity_move_character(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    if (auto* w = physics::world_of(s)) w->move_character(e, check_vec3(L, 2));
+    return 0;
+}
+
+// entity:jump(speed) -> bool (false when not grounded)
+int entity_jump(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* w = physics::world_of(s);
+    lua_pushboolean(L, w && w->jump_character(e, static_cast<float>(luaL_checknumber(L, 2))));
+    return 1;
+}
+
+// entity:character_state() -> {valid, grounded, on_steep_slope, ground_normal, velocity, ground}
+int entity_character_state(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* w = physics::world_of(s);
+    const physics::CharacterState st = w ? w->character_state(e) : physics::CharacterState{};
+    lua_createtable(L, 0, 6);
+    lua_pushboolean(L, st.valid);
+    lua_setfield(L, -2, "valid");
+    lua_pushboolean(L, st.grounded);
+    lua_setfield(L, -2, "grounded");
+    lua_pushboolean(L, st.on_steep_slope);
+    lua_setfield(L, -2, "on_steep_slope");
+    push_vec3(L, st.ground_normal);
+    lua_setfield(L, -2, "ground_normal");
+    push_vec3(L, st.velocity);
+    lua_setfield(L, -2, "velocity");
+    if (!st.ground.is_null()) {
+        push_entity(L, st.ground);
+        lua_setfield(L, -2, "ground");
+    }
+    return 1;
+}
+
+// entity:joint_state() -> {valid, active, broken, angle, position, force}
+int entity_joint_state(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* w = physics::world_of(s);
+    const physics::JointState st = w ? w->joint_state(e) : physics::JointState{};
+    lua_createtable(L, 0, 6);
+    lua_pushboolean(L, st.valid);
+    lua_setfield(L, -2, "valid");
+    lua_pushboolean(L, st.active);
+    lua_setfield(L, -2, "active");
+    lua_pushboolean(L, st.broken);
+    lua_setfield(L, -2, "broken");
+    lua_pushnumber(L, st.angle);
+    lua_setfield(L, -2, "angle");
+    lua_pushnumber(L, st.position);
+    lua_setfield(L, -2, "position");
+    lua_pushnumber(L, st.force);
+    lua_setfield(L, -2, "force");
+    return 1;
+}
+
+// entity:set_motor(enabled, speed): hinge (deg/s) or slider (m/s) motor.
+int entity_set_motor(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const bool enabled = lua_toboolean(L, 2) != 0;
+    const float speed = static_cast<float>(luaL_optnumber(L, 3, 0.0));
+    if (auto* w = physics::world_of(s)) {
+        w->set_joint_motor(s, e, enabled, speed);
+    } else if (auto* j = s.world().get<physics::JointComponent>(e)) {
+        j->motor = enabled;
+        j->motor_speed = speed;
+    }
+    return 0;
+}
+
 // ---- audio ----
 // Audio calls are no-ops (returning false/0) when no audio engine runs for the scene, so the same
 // scripts work in headless simulation and on servers.
@@ -952,6 +1033,11 @@ void open_victus_libs(lua_State* L) {
                                 {"add_impulse", entity_physics_apply<&physics::PhysicsWorld::add_impulse>},
                                 {"add_torque", entity_physics_apply<&physics::PhysicsWorld::add_torque>},
                                 {"add_angular_impulse", entity_physics_apply<&physics::PhysicsWorld::add_angular_impulse>},
+                                {"move_character", entity_move_character},
+                                {"jump", entity_jump},
+                                {"character_state", entity_character_state},
+                                {"joint_state", entity_joint_state},
+                                {"set_motor", entity_set_motor},
                                 {"play_audio", entity_play_audio},
                                 {"stop_audio", entity_stop_audio},
                                 {"pause_audio", entity_pause_audio},

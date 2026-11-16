@@ -12,6 +12,12 @@
 //   write back a local transform relative to their parent.
 // - Moving a dynamic body's Transform from gameplay code teleports it.
 // - 2D bodies simulate in the XY plane; Transform.position.z and the Z rotation are preserved.
+// - A CharacterController makes the entity a kinematic capsule that walks: it slides along
+//   walls, climbs steps, snaps to the ground, respects a maximum slope and pushes dynamic bodies.
+//   Its origin is at the feet. Gameplay drives it with move_character()/jump_character().
+// - A Joint connects the entity's body to another entity's body (or to the world) with a fixed,
+//   point (ball), hinge, slider or distance constraint, optionally limited, motorized and
+//   breakable.
 #pragma once
 #include "victus/core/math.hpp"
 #include "victus/core/result.hpp"
@@ -68,6 +74,43 @@ struct ColliderComponent {
     friend bool operator==(const ColliderComponent&, const ColliderComponent&) = default;
 };
 
+// Kinematic walking capsule (Jolt CharacterVirtual). Entities with a CharacterController do not
+// need a Collider; a Collider on the same entity is ignored.
+struct CharacterControllerComponent {
+    float radius{0.3f};          // capsule radius (m)
+    float height{1.8f};          // total capsule height (m); the entity origin is at the feet
+    float max_slope{50.0f};      // degrees; steeper ground is treated as a wall
+    float step_height{0.35f};    // stairs climbed and ground snapping distance (m); 0 disables both
+    float gravity_scale{1.0f};
+    float mass{70.0f};           // kg, used when pushing dynamic bodies
+    float push_force{200.0f};    // maximum force applied to dynamic bodies in the way (N)
+    float air_control{0.3f};     // 0 = no steering in the air, 1 = full ground control
+    std::uint32_t layer{0};
+    std::uint32_t mask{kAllLayers};
+    friend bool operator==(const CharacterControllerComponent&, const CharacterControllerComponent&) = default;
+};
+
+// A constraint between this entity's body and `connected` (or the world when null). Anchor and
+// axis are in this entity's local space and are captured in world space when play starts.
+struct JointComponent {
+    enum class Type : std::uint8_t { Fixed, Point, Hinge, Slider, Distance };
+    Type type{Type::Hinge};
+    Uuid connected;              // entity with a body; nil = attached to the world
+    math::Vec3 anchor;           // local attachment point
+    math::Vec3 axis{0, 1, 0};    // local hinge/slider axis
+    math::Vec3 connected_anchor; // distance joints: point local to `connected`, or a world point when nil
+    bool limits{false};
+    float min_limit{-45.0f};     // hinge: degrees; slider/distance: metres (distance without limits keeps
+                                 // the authored distance)
+    float max_limit{45.0f};
+    bool motor{false};           // hinge/slider velocity motor
+    float motor_speed{0.0f};     // hinge: degrees per second; slider: metres per second
+    float motor_force{1000.0f};  // maximum motor torque (N*m) or force (N)
+    float break_force{0.0f};     // N (N*m for rotation-only reaction); 0 = unbreakable
+    bool collide_connected{false};
+    friend bool operator==(const JointComponent&, const JointComponent&) = default;
+};
+
 // ---- 2D components --------------------------------------------------------------------------
 
 struct RigidBody2DComponent {
@@ -99,8 +142,8 @@ struct Collider2DComponent {
     friend bool operator==(const Collider2DComponent&, const Collider2DComponent&) = default;
 };
 
-// Registers the reflected component schemas ("RigidBody", "Collider", "RigidBody2D",
-// "Collider2D"). Idempotent.
+// Registers the reflected component schemas ("RigidBody", "Collider", "CharacterController",
+// "Joint", "RigidBody2D", "Collider2D"). Idempotent.
 void register_components();
 
 // ---- queries and events ----------------------------------------------------------------------
@@ -120,6 +163,24 @@ struct ContactEvent {
     bool is_2d{false};
     math::Vec3 point;     // world contact point (Begin only; zero for triggers)
     math::Vec3 normal;    // from a to b (Begin only)
+};
+
+struct CharacterState {
+    bool valid{false};           // the entity has a simulated character
+    bool grounded{false};        // standing on walkable ground
+    bool on_steep_slope{false};  // touching ground steeper than max_slope
+    math::Vec3 ground_normal;
+    math::Vec3 velocity;         // m/s, after the last step
+    Entity ground;               // entity stood on (null for world-less ground or in the air)
+};
+
+struct JointState {
+    bool valid{false};           // the entity has a Joint that is (or was) simulated
+    bool active{false};          // constraint is present and not broken
+    bool broken{false};          // exceeded break_force; stays broken until the component changes
+    float angle{0};              // hinge: degrees
+    float position{0};           // slider: metres along the axis; distance: current distance
+    float force{0};              // magnitude of the reaction force/torque in the last step
 };
 
 struct PhysicsSettings {
@@ -199,6 +260,19 @@ public:
     void add_torque(Entity e, math::Vec3 torque);
     void add_angular_impulse(Entity e, math::Vec3 impulse);
 
+    // ---- characters ----
+    // Desired horizontal walking velocity (m/s, world space; Y is ignored). Persists until changed.
+    void move_character(Entity e, math::Vec3 velocity);
+    // Jumps with the given upward speed on the next step. Returns false (and does nothing) when the
+    // character is not grounded.
+    bool jump_character(Entity e, float speed);
+    [[nodiscard]] CharacterState character_state(Entity e) const;
+
+    // ---- joints ----
+    [[nodiscard]] JointState joint_state(Entity e) const;
+    // Writes the Joint's motor fields and applies them to the live constraint without rebuilding it.
+    void set_joint_motor(scene::Scene& scene, Entity e, bool enabled, float speed);
+
     void set_gravity(math::Vec3 g);
     void set_gravity_2d(math::Vec2 g);
     [[nodiscard]] math::Vec3 gravity() const;
@@ -223,7 +297,7 @@ void add_physics_systems(gameplay::Simulation& sim, PhysicsWorld& world);
 [[nodiscard]] PhysicsWorld* world_of(scene::Scene& scene);
 void bind(scene::Scene& scene, PhysicsWorld* world);
 
-// Collider wireframes computed from components only (no simulation needed): used by the editor
+// Collider wireframes (including character capsules and joint anchors/axes) computed from components only (no simulation needed): used by the editor
 // to visualize colliders while authoring.
 void collider_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity only = {});
 

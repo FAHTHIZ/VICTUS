@@ -171,13 +171,51 @@ void build_3d(Scene& s) {
     s.world().add<physics::RigidBodyComponent>(cube).type = physics::BodyType::Kinematic; // turned by Rotator
     s.world().add<physics::ColliderComponent>(cube);
 
-    const Entity sphere = add(s, "Player", {0, 1.2f, 0.5f});
-    s.world().get<Transform>(sphere)->scale = {1.4f, 1.4f, 1.4f};
-    mesh(s, sphere, "sphere", {0.1f, 0.35f, 0.9f, 1}, 0.0f, 0.25f);
-    attach(s, sphere, "scripts/player.luau");
-    // Kinematic: the script moves it and it shoves the dynamic crates out of the way.
-    s.world().add<physics::RigidBodyComponent>(sphere).type = physics::BodyType::Kinematic;
-    s.world().add<physics::ColliderComponent>(sphere).shape = physics::ColliderComponent::Shape::Sphere;
+    // The player is a CharacterController (origin at the feet) with the rolling ball as a child mesh:
+    // it walks, climbs the steps, jumps and shoves the dynamic crates and the gate.
+    const Entity player = add(s, "Player", {0, 0, 0.5f});
+    attach(s, player, "scripts/player.luau");
+    {
+        auto& cc = s.world().add<physics::CharacterControllerComponent>(player);
+        cc.radius = 0.7f;
+        cc.height = 1.4f;
+        cc.push_force = 400.0f;
+    }
+    const Entity ball = add(s, "Ball", {0, 0.7f, 0}, player);
+    s.world().get<Transform>(ball)->scale = {1.4f, 1.4f, 1.4f};
+    mesh(s, ball, "sphere", {0.1f, 0.35f, 0.9f, 1}, 0.0f, 0.25f);
+
+    // Three 0.3 m steps up to a platform (character step_height is 0.35 m).
+    for (int i = 0; i < 3; ++i) {
+        const float h = 0.3f * static_cast<float>(i + 1);
+        const Entity step = add(s, "Step " + std::to_string(i + 1), {-5.0f - 0.8f * static_cast<float>(i), h * 0.5f, -4.0f});
+        s.world().get<Transform>(step)->scale = {0.8f, h, 3.0f};
+        mesh(s, step, "cube", {0.55f, 0.57f, 0.6f, 1}, 0.0f, 0.8f);
+        s.world().add<physics::ColliderComponent>(step);
+    }
+
+    // A swinging gate on a hinge joint (limited to +-100 degrees) that the player pushes open.
+    {
+        const Entity post = add(s, "Gate Post", {-6.0f, 1.0f, 4.0f});
+        s.world().get<Transform>(post)->scale = {0.2f, 2.0f, 0.2f};
+        mesh(s, post, "cube", {0.3f, 0.3f, 0.32f, 1}, 1.0f, 0.4f);
+        s.world().add<physics::ColliderComponent>(post);
+        const Entity gate = add(s, "Gate", {-5.0f, 1.0f, 4.0f});
+        s.world().get<Transform>(gate)->scale = {1.8f, 1.6f, 0.1f};
+        mesh(s, gate, "cube", {0.75f, 0.2f, 0.18f, 1}, 0.0f, 0.6f);
+        s.world().add<physics::ColliderComponent>(gate);
+        auto& rb = s.world().add<physics::RigidBodyComponent>(gate);
+        rb.mass = 6.0f;
+        rb.angular_damping = 0.8f;
+        auto& j = s.world().add<physics::JointComponent>(gate);
+        j.type = physics::JointComponent::Type::Hinge;
+        j.connected = s.uuid(post);
+        j.anchor = {-0.5f, 0, 0}; // local: the gate's left edge (scaled by the transform)
+        j.axis = {0, 1, 0};
+        j.limits = true;
+        j.min_limit = -100;
+        j.max_limit = 100;
+    }
 
     for (int i = 0; i < 3; ++i) {
         const Entity crate = add(s, "Crate " + std::to_string(i + 1),
@@ -309,32 +347,40 @@ void build_simulation(Scene& s) {
 
 // ---- template scripts ------------------------------------------------------------------------
 
-constexpr const char* kPlayer3d = R"lua(-- Drives the entity across the ground with WASD or the arrow keys and bobs it gently.
+constexpr const char* kPlayer3d = R"lua(-- Walks the character with WASD or the arrow keys and jumps with Space. The entity has a
+-- CharacterController (it slides along walls, climbs steps and pushes physics bodies); the
+-- child "Ball" mesh rolls in the direction of travel.
 -- Fields below are defaults; override them per entity in the editor inspector.
 local Player = {}
 Player.speed = 5
+Player.jump_speed = 6
 Player.bounds = 9 -- stay within this distance of the origin on X and Z
-Player.bob_height = 0.25
 
 function Player:start()
-    self.base_y = self.entity.position.y
-    self.t = 0
+    self.ball = self.entity:find_child("Ball")
 end
 
 function Player:update(dt)
-    self.t += dt
     local x = input.axis("A", "D", "Left", "Right")
     local z = input.axis("W", "S", "Up", "Down")
-    local p = self.entity.position
     local move = vector.create(x, 0, z)
-    if vector.magnitude(move) > 0 then
-        move = vector.normalize(move) * self.speed * dt
-        -- roll in the direction of travel
-        self.entity:rotate(vector.create(z, 0, -x), vector.magnitude(move) * 60)
+    if vector.magnitude(move) > 0 then move = vector.normalize(move) * self.speed end
+    -- Stop at the play-area bounds (only the outward component).
+    local p = self.entity.position
+    if (p.x >= self.bounds and move.x > 0) or (p.x <= -self.bounds and move.x < 0) then
+        move = vector.create(0, 0, move.z)
     end
-    local nx = math.clamp(p.x + move.x, -self.bounds, self.bounds)
-    local nz = math.clamp(p.z + move.z, -self.bounds, self.bounds)
-    self.entity.position = vector.create(nx, self.base_y + math.sin(self.t * 2) * self.bob_height, nz)
+    if (p.z >= self.bounds and move.z > 0) or (p.z <= -self.bounds and move.z < 0) then
+        move = vector.create(move.x, 0, 0)
+    end
+    self.entity:move_character(move)
+    if input.pressed("Space") then self.entity:jump(self.jump_speed) end
+    -- Roll the ball by the distance actually travelled.
+    local v = self.entity.velocity
+    local speed = vector.magnitude(vector.create(v.x, 0, v.z))
+    if self.ball and speed > 0.01 then
+        self.ball:rotate(vector.create(v.z, 0, -v.x), speed * dt * 82) -- degrees: distance / radius
+    end
 end
 
 return Player
@@ -498,7 +544,7 @@ return Orbit
 
 const std::vector<TemplateInfo>& templates() {
     static const std::vector<TemplateInfo> list = {
-        {"3d", "3D Scene", "A ball you drive with WASD/arrow keys (Luau script) that shoves a stack of physics crates with positional impact sounds, a follow camera, sun shadows, PBR primitives and a point light."},
+        {"3d", "3D Scene", "A rolling-ball character you walk with WASD/arrow keys and jump with Space (Luau + CharacterController) that climbs steps, swings a hinged gate and shoves a stack of physics crates with positional impact sounds, a follow camera, sun shadows, PBR primitives and a point light."},
         {"2d", "2D Game", "A playable platformer on Box2D physics with music and sound effects: run with A/D or arrows, jump with Space, collect the coins. Gameplay is in Luau scripts."},
         {"simulation", "Simulation",
          "576 entities animated by native systems, with a scripted orbiting camera: a starting point for simulation work."},

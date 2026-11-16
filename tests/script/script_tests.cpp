@@ -428,6 +428,70 @@ return { hit = hit.entity.name, n = #zone, available = physics.available(), g = 
     CHECK(std::abs(q.value()["vy"].as_number()) < 0.1);
 }
 
+TEST_CASE("script: character controller and joint motor") {
+    TempDir d("victus_script_character");
+    d.write("scripts/walker.luau", R"lua(
+local Walker = {}
+function Walker:update(dt)
+    self.t = (self.t or 0) + dt
+    self.entity:move_character(vector.create(2, 0, 0))
+    if self.t > 0.5 and self.entity.grounded and not self.jumped then
+        self.jumped = self.entity:jump(4)
+        self.entity.name = "Walker:jumped"
+    end
+    local door = scene.find("Door")
+    if self.t > 0.2 and not self.motor then
+        self.motor = true
+        door:set_motor(true, 90)
+    end
+end
+return Walker
+)lua");
+    auto host = make_host(d);
+    auto pw = physics::PhysicsWorld::create();
+    REQUIRE(pw.ok());
+    auto& world = *pw.value();
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    physics::add_physics_systems(sim, world);
+    Scene s;
+    const Entity ground = s.create("Ground");
+    s.world().get<Transform>(ground)->position = {0, -0.5f, 0};
+    physics::ColliderComponent gc;
+    gc.size = {40, 1, 40};
+    s.world().add<physics::ColliderComponent>(ground, gc);
+    const Entity door = s.create("Door");
+    s.world().get<Transform>(door)->position = {0.5f, 1, 5};
+    physics::ColliderComponent dc;
+    dc.size = {1, 2, 0.1f};
+    s.world().add<physics::ColliderComponent>(door, dc);
+    s.world().add<physics::RigidBodyComponent>(door, physics::RigidBodyComponent{});
+    physics::JointComponent j;
+    j.anchor = {-0.5f, 0, 0};
+    s.world().add<physics::JointComponent>(door, j);
+    const Entity walker = scripted(s, "Walker", "scripts/walker.luau");
+    s.world().add<physics::CharacterControllerComponent>(walker, physics::CharacterControllerComponent{});
+    for (int i = 0; i < 120; ++i) sim.tick(s, 1.0f / 60);
+    CHECK(s.world().get<scene::Name>(walker)->value == "Walker:jumped");
+    CHECK(s.world().get<Transform>(walker)->position.x == doctest::Approx(4.0f).epsilon(0.1));
+    CHECK(s.world().get<physics::JointComponent>(door)->motor);
+    auto q = host->eval(R"lua(
+local w = scene.find("Walker:jumped")
+local cs = w:character_state()
+local js = scene.find("Door"):joint_state()
+return { valid = cs.valid, grounded = cs.grounded, ny = cs.ground_normal.y, ground = cs.ground and cs.ground.name or "",
+         active = js.active, angle = js.angle, jvalid = js.valid }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["valid"].as_bool());
+    CHECK(q.value()["grounded"].as_bool());
+    CHECK(q.value()["ground"].as_string() == "Ground");
+    CHECK(q.value()["ny"].as_number() == doctest::Approx(1.0).epsilon(0.01));
+    CHECK(q.value()["jvalid"].as_bool());
+    CHECK(q.value()["active"].as_bool());
+    CHECK(std::abs(q.value()["angle"].as_number()) > 60.0); // ~90 deg/s for ~1.7 s, wraps at 180
+}
+
 TEST_CASE("script: audio one-shots, entity sources and bus control") {
     TempDir d("victus_script_audio");
     std::vector<float> tone(4800);

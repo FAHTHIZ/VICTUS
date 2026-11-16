@@ -56,7 +56,7 @@ bool vec2_edit(const char* label, math::Vec2& v, float speed = 0.05f) {
 
 
 // Editor widgets for one reflected field. Returns true when the value changed.
-bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db) {
+bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db, const scene::Scene* scene) {
     const char* label = f.label.c_str();
     const float speed = f.speed > 0 ? f.speed : 0.05f;
     const float lo = f.bounded() ? f.min : 0.0f, hi = f.bounded() ? f.max : 0.0f;
@@ -127,7 +127,36 @@ bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db
         }
         break;
     }
-    case scene::FieldKind::Uuid: ImGui::Text("%s: %s", label, f.ref<Uuid>(comp).to_string().c_str()); break;
+    case scene::FieldKind::Uuid: {
+        Uuid& id = f.ref<Uuid>(comp);
+        if (f.hint == "entity") {
+            // Entity reference: drop an entity from the hierarchy; the button clears it.
+            std::string shown = "(none)";
+            if (!id.is_nil()) {
+                const Entity target = scene ? scene->find(id) : Entity{};
+                const auto* n = target.is_null() ? nullptr : scene->world().get<scene::Name>(target);
+                shown = n ? n->value : "(missing) " + id.to_string();
+            }
+            ImGui::PushID(label);
+            if (ImGui::SmallButton("x") && !id.is_nil()) {
+                id = {};
+                changed = true;
+            }
+            ImGui::PopID();
+            ImGui::SameLine();
+            ImGui::Text("%s: %s", label, shown.c_str());
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kEntityPayload)) {
+                    std::memcpy(&id, p->Data, sizeof(Uuid));
+                    changed = true;
+                }
+                ImGui::EndDragDropTarget();
+            }
+        } else {
+            ImGui::Text("%s: %s", label, id.to_string().c_str());
+        }
+        break;
+    }
     }
     if (!f.tooltip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", f.tooltip.c_str());
     return changed;
@@ -810,7 +839,7 @@ bool Editor::inspect_components(Entity e) {
         ImGui::PushID(schema->name.c_str());
         bool remove = false;
         if (removable(schema->name.c_str(), remove))
-            for (const auto& f : schema->fields) changed |= field_edit(f, comp, db_.get());
+            for (const auto& f : schema->fields) changed |= field_edit(f, comp, db_.get(), &s);
         if (remove) remove_schema = schema;
         ImGui::PopID();
     }
