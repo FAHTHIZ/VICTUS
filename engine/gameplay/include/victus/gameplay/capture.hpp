@@ -12,13 +12,16 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace victus::gameplay {
 
-inline constexpr std::uint32_t kCaptureFormatVersion = 1;
+// 1: digests cover transforms only. 2: digests also cover state probes (script fields, physics
+// velocities). Version-1 captures still replay against transform-only digests.
+inline constexpr std::uint32_t kCaptureFormatVersion = 2;
 
 // Every key name InputSource implementations understand (see platform::key_name).
 [[nodiscard]] const std::vector<std::string_view>& key_names();
@@ -78,10 +81,26 @@ private:
 // Order-independent hash of the scene's gameplay state: every entity's name path and transform
 // (rounded to 0.1 mm / 1e-4) plus the entity count. Equal scenes give equal digests across runs;
 // runtime UUIDs and creation order do not matter.
-[[nodiscard]] std::string state_digest(const scene::Scene& scene);
+[[nodiscard]] std::string state_digest(const scene::Scene& scene, bool with_probes = true);
 // The digest's input: one sorted "name/path|px py pz|qx qy qz qw|sx sy sz" line per entity with a
-// transform (integers in 1e-4 units), preceded by "#entities N".
-[[nodiscard]] std::vector<std::string> state_lines(const scene::Scene& scene);
+// transform (integers in 1e-4 units), preceded by "#entities N". With probes, every registered
+// state probe adds "@name/path|kind|value" lines (a transform path that starts with '@' or '\\'
+// gets a '\\' prefix so the two kinds never collide).
+[[nodiscard]] std::vector<std::string> state_lines(const scene::Scene& scene, bool with_probes = true);
+
+// A state probe adds lines describing state that transforms do not show (script fields, physics
+// velocities). Probes find their engine objects through scene resources; register them once (by
+// name, idempotent) when the owning system is installed. Lines must be deterministic for equal
+// state and should be built with probe_line().
+using StateProbe = std::function<void(const scene::Scene&, std::vector<std::string>& lines)>;
+void register_state_probe(std::string name, StateProbe probe);
+// "@<name path of e>|<kind>|<value>".
+[[nodiscard]] std::string probe_line(const scene::Scene& scene, scene::Entity e, std::string_view kind, std::string_view value);
+// Deterministic value text for probes: numbers rounded to 1e-4 ("1.25", "0", "-3"), vectors as
+// "(x, y, z)".
+[[nodiscard]] std::string probe_number(double v);
+[[nodiscard]] std::string probe_vector(math::Vec3 v);
+[[nodiscard]] std::string probe_vector(math::Vec2 v);
 [[nodiscard]] std::string digest_of(const std::vector<std::string>& lines);
 // Human-readable difference between two state_lines() results, naming up to `max_items`
 // entities, e.g. "Player: position (1.2, 0, 3) expected (1.19, 0, 3)".
@@ -89,6 +108,7 @@ private:
                                               std::size_t max_items = 3);
 
 struct Capture {
+    std::uint32_t version{kCaptureFormatVersion}; // format the capture was recorded with
     std::string project;   // informational: project name
     std::string scene;     // project-relative scene the session started in
     std::uint64_t seed{0}; // script random seed (math.random)

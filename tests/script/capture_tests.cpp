@@ -2,10 +2,12 @@
 // Regression capture tests (Slice 24): input sampling and replay edges, the .vcapture format
 // (change-only frames, validation), state digests and seeded script randomness.
 #include "victus/gameplay/capture.hpp"
+#include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
 
 #include <doctest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 
@@ -195,4 +197,118 @@ return R
     };
     CHECK(roll(42) == roll(42));
     CHECK(roll(42) != roll(43));
+}
+
+TEST_CASE("capture: state probes add script fields and physics velocities to digests") {
+    const auto dir = std::filesystem::temp_directory_path() / "victus_capture_probes";
+    std::filesystem::create_directories(dir / "scripts");
+    // `score` never moves anything: only the script probe can see it diverge.
+    std::ofstream(dir / "scripts" / "keeper.luau") << R"lua(
+local K = {}
+function K:start() self.score = 0; self.label = "keeper"; self.flag = true; self._hidden = 7; self.aim = vector.create(1, 2, 3) end
+function K:update(dt) self.score += if input.down("Space") then 2 else 1 end
+return K
+)lua";
+    script::register_components();
+    auto run = [&](int frames, Capture* record, gameplay::CaptureReplay* replay) {
+        script::HostOptions o;
+        o.assets_root = dir;
+        auto host = script::ScriptHost::create(o);
+        REQUIRE(host.ok());
+        auto world = physics::PhysicsWorld::create();
+        REQUIRE(world.ok());
+        scene::Scene s;
+        const auto keeper = s.create("Keeper");
+        s.world().add<script::ScriptComponent>(keeper).script = "scripts/keeper.luau";
+        const auto box = s.create("Box");
+        s.world().get<scene::Transform>(box)->position = {0, 10, 0};
+        s.world().add<physics::RigidBodyComponent>(box);
+        s.world().add<physics::ColliderComponent>(box);
+        gameplay::Simulation sim(1.0f / 60.0f);
+        script::add_script_systems(sim, **host);
+        physics::add_physics_systems(sim, **world);
+        if (replay) sim.input = &replay->input();
+        for (int i = 0; i < frames; ++i) {
+            if (replay) (void)replay->begin_tick();
+            if (record) record->add_frame({}, 1.0f / 60.0f);
+            sim.tick(s, 1.0f / 60.0f);
+            if (record) record->after_tick(s);
+            if (replay && !replay->end_tick(s)) break;
+        }
+        if (record) record->finish(s);
+        return gameplay::state_lines(s);
+    };
+    Capture c;
+    c.digest_interval = 5;
+    const auto lines = run(10, &c, nullptr);
+    auto has = [&](std::string_view l) { return std::find(lines.begin(), lines.end(), l) != lines.end(); };
+    CHECK(has("@Keeper|script.score|10"));
+    CHECK(has("@Keeper|script.label|\"keeper\""));
+    CHECK(has("@Keeper|script.flag|true"));
+    CHECK(has("@Keeper|script.aim|(1, 2, 3)"));
+    CHECK(std::none_of(lines.begin(), lines.end(), [](const std::string& l) { return l.find("_hidden") != std::string::npos; }));
+    const auto vel = std::find_if(lines.begin(), lines.end(), [](const std::string& l) { return l.rfind("@Box|physics.velocity|(0, -", 0) == 0; });
+    CHECK(vel != lines.end()); // falling
+    CHECK(has("@Box|physics.spin|(0, 0, 0)"));
+    // Scenes without engine bindings get no probe lines.
+    {
+        scene::Scene empty;
+        CHECK(gameplay::state_lines(empty, false) == std::vector<std::string>{"#entities 0"});
+    }
+
+    // Same run: replays clean. A script-only divergence is named by its field.
+    {
+        gameplay::CaptureReplay rp(c);
+        (void)run(10, nullptr, &rp);
+        CHECK_FALSE(rp.diverged());
+        CHECK(rp.digests_checked() == 2);
+    }
+    {
+        Capture held = c;
+        held.frames[7].keys = {"Space"}; // the script scores double on frame 8; nothing moves
+        gameplay::CaptureReplay rp(held);
+        (void)run(10, nullptr, &rp);
+        REQUIRE(rp.diverged());
+        MESSAGE(rp.mismatch());
+        CHECK(rp.mismatch() == "frame 10: Keeper: script.score 11 expected 10");
+    }
+    // A version-1 capture ignores probes: the same divergence goes unseen, as it did before.
+    {
+        auto v1 = Capture::parse(c.to_text());
+        REQUIRE(v1.ok());
+        CHECK(v1->version == 2);
+        Capture old;
+        old.version = 1;
+        old.digest_interval = 5;
+        (void)run(10, &old, nullptr);
+        auto text = old.to_text();
+        CHECK(text.find("\"version\":1") != std::string::npos);
+        auto back = Capture::parse(text);
+        REQUIRE(back.ok());
+        CHECK(back->version == 1);
+        back->frames[7].keys = {"Space"};
+        gameplay::CaptureReplay rp(*back);
+        (void)run(10, nullptr, &rp);
+        CHECK_FALSE(rp.diverged());
+    }
+}
+
+TEST_CASE("capture: probe lines and entity names that start with '@' never collide") {
+    scene::Scene a;
+    a.create("@Odd");
+    const auto lines = gameplay::state_lines(a);
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[1].rfind("\\@Odd|", 0) == 0);
+    CHECK(gameplay::state_lines(a, false)[1].rfind("@Odd|", 0) == 0); // version 1 unchanged
+    scene::Scene b;
+    const auto e = b.create("@Odd");
+    b.world().get<scene::Transform>(e)->position.x = 2;
+    CHECK(gameplay::describe_difference(lines, gameplay::state_lines(b)) == "@Odd: position (2, 0, 0) expected (0, 0, 0)");
+    std::vector<std::string> want = {"#entities 1", "@P|script.hp|3"}, got = {"#entities 1", "@P|script.hp|2"};
+    CHECK(gameplay::describe_difference(want, got) == "P: script.hp 2 expected 3");
+    CHECK(gameplay::describe_difference(want, {"#entities 1"}) == "P: script.hp missing, expected 3");
+    CHECK(gameplay::describe_difference({"#entities 1"}, got) == "P: script.hp 2 not in the recording");
+    CHECK(gameplay::probe_number(-0.00001) == "0");
+    CHECK(gameplay::probe_number(1.23456) == "1.2346");
+    CHECK(gameplay::probe_vector(math::Vec2{1, -2}) == "(1, -2)");
 }

@@ -9,6 +9,7 @@
 #include "victus/core/fs.hpp"
 #include "victus/core/log.hpp"
 #include "victus/core/profiler.hpp"
+#include "victus/gameplay/capture.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/physics/physics.hpp"
 
@@ -107,6 +108,9 @@ struct ScriptHost::Impl {
         if (const auto* r = scene->world().resource<gameplay::InputRouting>(); r && r->route)
             input = r->route(e, default_input);
     }
+
+    // Scene resources that point at this host (capture probes) check it is still alive.
+    std::shared_ptr<char> alive = std::make_shared<char>();
 
     ~Impl() {
         if (L) lua_close(L);
@@ -2152,6 +2156,78 @@ void register_components() {
         });
 }
 
+// ---- capture probe -------------------------------------------------------------------------------
+
+namespace {
+
+struct HostBinding {
+    ScriptHost::Impl* host{nullptr};
+    std::weak_ptr<char> alive;
+};
+
+void bind_host(scene::Scene& s, ScriptHost::Impl& h) {
+    auto* b = s.world().resource<HostBinding>();
+    if (!b) b = &s.world().set_resource<HostBinding>();
+    if (b->host == &h && !b->alive.expired()) return;
+    b->host = &h;
+    b->alive = h.alive;
+}
+
+constexpr std::size_t kProbeStringLimit = 64;
+
+// Capture digests: every started script's own fields (self.x = ...) of type number, boolean,
+// string or vector, as "script.<field>" lines. Fields starting with '_' are private and skipped.
+void script_probe(const scene::Scene& cs, std::vector<std::string>& lines) {
+    auto& s = const_cast<scene::Scene&>(cs); // read-only
+    const auto* b = s.world().resource<HostBinding>();
+    if (!b || !b->host) return;
+    const auto alive = b->alive.lock();
+    if (!alive) return;
+    ScriptHost::Impl& h = *b->host;
+    lua_State* L = h.L;
+    if (!L || !lua_checkstack(L, 4)) return;
+    for (const auto& [k, in] : h.instances) {
+        if (!in.started || in.faulted || in.ref == LUA_NOREF) continue;
+        const Entity e{static_cast<std::uint32_t>(k), static_cast<std::uint32_t>(k >> 32)};
+        if (!s.world().alive(e)) continue;
+        lua_getref(L, in.ref);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            continue;
+        }
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) { // raw traversal: no metamethods run
+            if (lua_type(L, -2) == LUA_TSTRING) {
+                std::size_t n = 0;
+                const char* key = lua_tolstring(L, -2, &n);
+                std::string value;
+                bool keep = n > 0 && key[0] != '_';
+                switch (lua_type(L, -1)) {
+                case LUA_TNUMBER: value = gameplay::probe_number(lua_tonumber(L, -1)); break;
+                case LUA_TBOOLEAN: value = lua_toboolean(L, -1) ? "true" : "false"; break;
+                case LUA_TSTRING: {
+                    std::size_t len = 0;
+                    const char* str = lua_tolstring(L, -1, &len);
+                    value = "\"" + std::string(str, std::min(len, kProbeStringLimit)) + (len > kProbeStringLimit ? "...\"" : "\"");
+                    break;
+                }
+                case LUA_TVECTOR: {
+                    const float* v = lua_tovector(L, -1);
+                    value = gameplay::probe_vector(math::Vec3{v[0], v[1], v[2]});
+                    break;
+                }
+                default: keep = false; break;
+                }
+                if (keep) lines.push_back(gameplay::probe_line(s, e, "script." + std::string(key, n), value));
+            }
+            lua_pop(L, 1); // value; keep the key for lua_next
+        }
+        lua_pop(L, 1); // instance
+    }
+}
+
+} // namespace
+
 // ---- ScriptHost ----------------------------------------------------------------------------------
 
 ScriptHost::ScriptHost(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -2184,6 +2260,7 @@ Result<std::unique_ptr<ScriptHost>> ScriptHost::create(HostOptions options) {
 void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, const gameplay::InputSource* input) {
     VICTUS_PROFILE_SCOPE("script.update");
     Impl& h = *impl_;
+    bind_host(scene, h);
     h.scene = &scene;
     h.time = time;
     h.input = input;
@@ -2344,6 +2421,7 @@ void ScriptHost::fixed_update(scene::Scene& scene, const gameplay::FrameTime& ti
                               const gameplay::InputSource* input) {
     VICTUS_PROFILE_SCOPE("script.fixed_update");
     Impl& h = *impl_;
+    bind_host(scene, h);
     h.scene = &scene;
     h.time = time;
     h.fixed_dt = time.dt;
@@ -2525,6 +2603,7 @@ void ScriptHost::forget_prefabs() { impl_->prefabs.clear(); }
 void ScriptHost::set_input_map(gameplay::InputMap map) { impl_->options.input_map = std::move(map); }
 
 void add_script_systems(gameplay::Simulation& sim, ScriptHost& host) {
+    gameplay::register_state_probe("script", script_probe);
     gameplay::Simulation* simp = &sim;
     sim.add_system("script.fixed_update", gameplay::Phase::FixedUpdate,
                    [&host, simp](scene::Scene& s, const gameplay::FrameTime& t) { host.fixed_update(s, t, simp->input); });
