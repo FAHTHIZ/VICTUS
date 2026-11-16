@@ -64,7 +64,12 @@ std::vector<Zone> end_capture() {
         all.insert(all.end(), b->zones.begin(), b->zones.end());
         b->zones.clear();
     }
-    std::sort(all.begin(), all.end(), [](const Zone& a, const Zone& b) { return a.begin_ns < b.begin_ns; });
+    // Coarse clocks (100 ns on Windows) give nested zones equal begin times: parents first.
+    std::stable_sort(all.begin(), all.end(), [](const Zone& a, const Zone& b) {
+        if (a.begin_ns != b.begin_ns) return a.begin_ns < b.begin_ns;
+        if (a.thread != b.thread) return a.thread < b.thread;
+        return a.depth < b.depth;
+    });
     return all;
 }
 

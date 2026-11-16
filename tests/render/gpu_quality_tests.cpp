@@ -363,9 +363,20 @@ TEST_CASE("gpu quality: FXAA smooths aliased edges") {
     const Frame off = render_frame(*sr.value(), s, cam, sun, env, content, 192, 128, 1, "quality_fxaa_off");
     s.fxaa = true;
     const Frame on = render_frame(*sr.value(), s, cam, sun, env, content, 192, 128, 1, "quality_fxaa");
-    MESSAGE("hard steps off " << hard_steps(off) << " on " << hard_steps(on));
+    // Blended edge pixels: neither background nor fully lit.
+    auto blended = [](const Frame& f) {
+        int n = 0;
+        for (std::uint32_t y = 0; y < f.h; ++y)
+            for (std::uint32_t x = 0; x < f.w; ++x) n += (f.lum(x, y) > 90 && f.lum(x, y) < 675) ? 1 : 0;
+        return n;
+    };
+    MESSAGE("hard steps off " << hard_steps(off) << " on " << hard_steps(on) << "; blended off " << blended(off)
+                              << " on " << blended(on));
     CHECK(hard_steps(off) > 100);                       // aliased staircase edges
-    CHECK(hard_steps(on) * 2 < hard_steps(off));        // FXAA turns most steps into gradients
+    // FXAA turns steps into gradients. Drivers differ in exactly which pixels blend (lavapipe
+    // 283 -> 112 steps, Apple Metal 288 -> 204), so the bound is loose but still requires a clear win.
+    CHECK(hard_steps(on) * 4 < hard_steps(off) * 3);
+    CHECK(blended(on) >= blended(off) + 80);
     CHECK(on.at(96, 64) == off.at(96, 64));     // flat interior untouched
     CHECK(on.at(2, 2) == off.at(2, 2));
 }
