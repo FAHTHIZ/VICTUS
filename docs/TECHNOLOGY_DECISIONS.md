@@ -183,5 +183,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** No rich text, shaping (complex scripts) or accessibility; revisit text with HarfBuzz when localization lands, and add a visual editor.
 
+## ADR-0019 — Navigation (accepted 2026-11-16)
+**Problem.** Gameplay AI needs walkable-surface generation, path queries and agents that follow paths and avoid each other, authored with no manual navmesh step and scriptable from Luau.
+
+**Candidates.** Recast & Detour 1.6.0 (zlib; industry standard, used by Unity's legacy navmesh lineage, Unreal, Godot 3, O3DE); owned grid A* (simple, poor on 3D levels, no crowd); Godot's `NavigationServer` (engine-coupled); commercial middleware (licensing).
+
+**Decision.** Recast & Detour 1.6.0 (`Recast`, `Detour`, `DetourCrowd` only) as a private dependency of `engine/navigation`. The navmesh is a single tile built on demand from every static, non-trigger 3D `Collider` (box/sphere/capsule/cylinder triangulated in world space, outward winding); kinematic colliders contribute a quantized upright bounding cylinder so Y-rotation does not cause rebuilds; dynamic bodies, triggers and agents are ignored. A geometry signature (FNV-1a over collider shapes, world matrices and `NavMeshSurface` settings) is checked every 0.25 s and triggers rebuilds; agents keep their destinations across rebuilds. Agents are DetourCrowd agents (anticipate turns, visibility/topology optimization, obstacle avoidance and separation); `CharacterController` agents feed the crowd velocity to `PhysicsWorld::move_character` and re-sync the corridor to the physics position each frame, other agents are placed on the surface plus `base_offset`. Recast parameters follow the RecastDemo solo-mesh defaults (edge length 12 m, simplification 1.3, region min/merge 8²/20², 6 verts/poly).
+
+**Evidence.** STATUS Slice 16 tests; `victus_bench_navigation` (Release, p50): build of a 60 × 60 m level with 100 obstacles 44 ms, path query across it 0.028 ms, crowd update 16 agents 0.056 ms and 128 agents 0.87 ms.
+
+**Risks / revisit triggers.** Single-tile builds are synchronous (tens of ms on large levels): move to tiled navmeshes with background rebuilds of dirty tiles (DetourTileCache) for open worlds or frequent kinematic changes. No off-mesh links (jumps, ladders), area costs or 2D navigation yet.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

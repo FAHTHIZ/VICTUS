@@ -112,6 +112,12 @@ No third-party code was added.
 - Tristan Lorach, "Soft Particles" (NVIDIA white paper, 2007) — https://developer.download.nvidia.com/whitepapers/2007/SDK10/SoftParticles_hi.pdf . Compare each particle fragment's depth with the scene depth read as a texture, fade with the scaled, saturated difference, and discard fragments behind the scene. VICTUS reconstructs linear view depth from the depth buffer (`proj[3].z / (d + proj[2].z)` for its 0..1 right-handed projection) and fades over the emitter's `softness` in metres.
 - Open questions: GPU simulation with compute and indirect draws, depth-buffer collisions, trails/ribbons, flipbook animation with motion vectors, and lit particles.
 
+## Research conclusions added 2026-11-16 (Slice 16, navigation)
+- Recast & Detour 1.6.0 — https://github.com/recastnavigation/recastnavigation/releases/tag/v1.6.0 ; build pipeline from `RecastDemo/Source/Sample_SoloMesh.cpp` (heightfield → walkable filters → compact heightfield → erosion → distance field/watershed regions → contours → poly mesh → detail mesh → `dtCreateNavMeshData`). Voxel parameters are converted as `walkableHeight = ceil(h/ch)`, `walkableClimb = floor(climb/ch)`, `walkableRadius = ceil(r/cs)`; polygon vertex indices are 16-bit, so one tile holds < 65 535 vertices.
+- DetourCrowd (`DetourCrowd/Include/DetourCrowd.h`, CrowdTool sample) — agent parameters `collisionQueryRange = 12 r`, `pathOptimizationRange = 30 r`, separation weight 2 and the four obstacle-avoidance quality presets used by the sample; agents are moved by `dtCrowd::update`, and external positions are applied with `dtPathCorridor::movePosition`.
+- Triangles are walkable when `cross(v1 - v0, v2 - v0)` points up (`rcMarkWalkableTriangles`), so collider triangles are wound outward from the convex shape's center.
+- Open questions: tiled/background rebuilds for open worlds (DetourTileCache), off-mesh links for jumps and ladders, area costs, 2D (top-down/platformer) navigation.
+
 ## Research conclusions added 2026-11-16 (Slice 15, in-game UI)
 - Unity uGUI `CanvasScaler.cs` (MatchWidthOrHeight) — https://github.com/Unity-Technologies/uGUI/blob/main/com.unity.ugui/Runtime/UGUI/UI/Core/Layout/CanvasScaler.cs . The scale factor is `2^lerp(log2(w/ref_w), log2(h/ref_h), match)`, so opposite deviations on the two axes cancel at 0.5. VICTUS uses the same blend.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
