@@ -117,5 +117,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** No temporal AA/upscaling, motion blur or depth of field yet; point lights are capped at 16 (move to clustered forward when scenes need more); no reflection probes or GI; tiers are not yet validated on physical mobile GPUs. Revisit the prepass on tilers if measurements show it costs more than it saves.
 
+## ADR-0013 — Automatic GPU instancing (accepted 2026-11-16)
+**Problem.** Scenes repeat the same mesh and material many times (foliage, props, crowds). One draw call per object makes CPU submission the bottleneck long before the GPU is busy, which is worst on mobile drivers.
+
+**Candidates.** Explicit instancing components authored by users; automatic batching of identical draws with per-instance vertex data; GPU-driven culling with indirect draws and storage buffers (best scaling, but needs compute culling and multi-draw-indirect, which are not uniformly available on SDL_GPU targets and older mobile GPUs).
+
+**Decision.** Automatic instancing inside `SceneRenderer`: every mesh draw is instanced (a single object is a batch of one), with model and inverse-transpose normal matrices (112 bytes) in a per-frame vertex buffer at slot 1 using instance step rate. Visible draws are sorted by pipeline, base texture, a mesh+material key, then distance; runs with the same mesh and exactly equal material (checked field by field, not just by hash) become one `draw_indexed` with N instances. Shadow cascades batch by mesh only. Each pass binds its own contiguous instance range by offset (no reliance on base-instance support). The instance buffer grows geometrically and is uploaded with `discard` so in-flight frames are renamed instead of stalling. `RenderSettings::instancing` turns batching off for A/B comparison. Indirect, GPU-driven culling stays a later option.
+
+**Evidence.** `victus_gpu_tests` "gpu instancing" cases (identical image with batching on/off within 1 LSB, batch counts in main/prepass/shadow passes, materials and meshes never merged, buffer growth across frames). `victus_bench_render`: 4 096 cubes, Low tier, 320×180 on llvmpipe: 21.8 ms instanced vs 258.8 ms unbatched (p50).
+
+**Risks / revisit triggers.** Front-to-back order is only kept within a batch, so heavy overdraw scenes on the Low tier (no prepass) may lose some early-z benefit; instances are rebuilt every frame (no persistent static batches yet); skinned meshes will need their own path.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

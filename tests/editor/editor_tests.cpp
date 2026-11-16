@@ -292,3 +292,31 @@ TEST_CASE("editor: 2D and simulation templates render in their modes") {
     test::save_output("editor_viewport_sim", Harness::VW, Harness::VH, sim_px);
     h.ed->stop();
 }
+
+TEST_CASE("editor: rendering quality selector applies, persists and reopens") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Quality", "Quality", "3d").ok());
+    CHECK(h.ed->quality() == render::QualityTier::High);
+    h.frames(2);
+    const auto high = h.ed->render_stats();
+    CHECK(high.shadow_cascades == 3);
+    CHECK(high.main_batches > 0);
+
+    REQUIRE(h.ed->set_quality(render::QualityTier::Low).ok());
+    h.frames(2);
+    const auto low = h.ed->render_stats();
+    CHECK(low.shadow_cascades == 1);
+    CHECK(low.render_width < high.render_width); // low renders at 0.75 scale
+    CHECK(h.ed->project()->settings().render_quality == "low");
+    auto reopened = project::Project::open(h.dir / "Quality");
+    REQUIRE(reopened.ok());
+    CHECK(reopened->settings().render_quality == "low");
+
+    // Reopening the project in the editor restores the tier.
+    REQUIRE(h.ed->open_project(h.dir / "Quality").ok());
+    CHECK(h.ed->quality() == render::QualityTier::Low);
+    h.frames(1);
+    CHECK(h.ed->render_stats().shadow_cascades == 1);
+}

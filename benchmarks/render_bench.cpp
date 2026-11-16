@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
             scene->submit(plane, m, Mat4::identity());
             for (int z = 0; z < kSide; ++z)
                 for (int x = 0; x < kSide; ++x)
-                    scene->submit(cube, m, Mat4::translation({(x - kSide / 2) * 3.0f, 0.5f, (z - kSide / 2) * 3.0f}));
+                    scene->submit(cube, m, Mat4::translation({static_cast<float>(x - kSide / 2) * 3.0f, 0.5f, static_cast<float>(z - kSide / 2) * 3.0f}));
         };
         h.run("scene/frame_1024_cubes_720p_gpu", kSide * kSide, [&] {
             submit_all();
@@ -120,6 +120,41 @@ int main(int argc, char** argv) {
         });
         std::printf("scene: visible %u culled %u casters %u\n", scene->stats().visible, scene->stats().culled,
                     scene->stats().shadow_casters);
+        std::printf("scene: main batches %u shadow batches %u\n", scene->stats().main_batches,
+                    scene->stats().shadow_batches);
+
+        // Instancing A/B: 4096 identical cubes, low tier at a small resolution so draw submission
+        // (not fill rate) dominates.
+        auto small = d.create_texture([&] {
+            rhi::TextureDesc sd = td;
+            sd.name = "bench_small";
+            sd.width = 320;
+            sd.height = 180;
+            return sd;
+        }()).value();
+        constexpr int kBig = 64;
+        render::Camera3D far_cam = render::Camera3D::look_at({0, 90, 140}, {0, 0, 0});
+        far_cam.z_far = 600;
+        render::DirectionalLight far_sun;
+        far_sun.shadow_distance = 300;
+        for (bool instancing : {true, false}) {
+            render::RenderSettings rs = render::RenderSettings::preset(render::QualityTier::Low);
+            rs.instancing = instancing;
+            scene->set_settings(rs);
+            h.run(instancing ? "scene/frame_4096_cubes_low_320p_instanced_gpu" : "scene/frame_4096_cubes_low_320p_unbatched_gpu",
+                  kBig * kBig, [&] {
+                      scene->begin(far_cam, far_sun, {});
+                      for (int z = 0; z < kBig; ++z)
+                          for (int x = 0; x < kBig; ++x)
+                              scene->submit(cube, m, Mat4::translation({static_cast<float>(x - kBig / 2) * 3.0f, 0.5f, static_cast<float>(z - kBig / 2) * 3.0f}));
+                      auto cmd = d.begin_commands();
+                      if (!scene->render(cmd, small, 320, 180, td.format).ok()) std::abort();
+                      cmd.submit_and_wait();
+                  });
+            std::printf("instancing %s: visible %u, main batches %u, shadow batches %u\n", instancing ? "on" : "off",
+                        scene->stats().visible, scene->stats().main_batches, scene->stats().shadow_batches);
+        }
+        d.destroy(small);
         ctx->destroy(cube);
         ctx->destroy(plane);
     }

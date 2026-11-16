@@ -114,6 +114,8 @@ Status Editor::open_project(const fs::Path& path) {
         new_scene();
     }
     camera_ = EditorCamera{};
+    quality_ = render::parse_quality_tier(project_->settings().render_quality).value_or(render::QualityTier::High);
+    apply_quality();
     notify("Opened project " + project_->settings().name);
     return {};
 }
@@ -688,6 +690,25 @@ void Editor::draw_overlays_2d(render::SpriteBatch& b) {
         for (const auto& l : collider_scratch_) b.draw_line({l.a.x, l.a.y}, {l.b.x, l.b.y}, 1.5f * px, l.color, 999);
     }
 }
+
+void Editor::apply_quality() {
+    render::RenderSettings settings = render::RenderSettings::preset(quality_);
+    if (project_ && project_->settings().render_scale > 0.0f) settings.render_scale = project_->settings().render_scale;
+    view_->renderer().set_settings(settings);
+    view_->renderer().reset_adaptation();
+}
+
+Status Editor::set_quality(render::QualityTier tier) {
+    quality_ = tier;
+    apply_quality();
+    if (!project_) return {};
+    project_->settings().render_quality = std::string(render::quality_tier_name(tier));
+    VICTUS_TRY_STATUS(project_->save());
+    notify(std::string("Rendering quality: ") + std::string(render::quality_tier_name(tier)));
+    return {};
+}
+
+const render::SceneStats& Editor::render_stats() const { return view_->renderer().stats(); }
 
 Status Editor::render(rhi::CommandBuffer& cmd) {
     VICTUS_PROFILE_SCOPE("editor.render");
