@@ -92,13 +92,14 @@ endforeach()
 
 # Multiplayer over real UDP on loopback: a dedicated server and two headless clients run
 # concurrently; each exits non-zero unless both players met (server --expect-clients, clients
-# --expect-players). One client runs over an emulated lossy, delayed link.
+# --expect-players). One client runs over an emulated lossy, delayed link. ann stays longer than
+# ben, so ben's final roster (the captured output of the last pipeline command) still lists her.
 string(RANDOM LENGTH 3 ALPHABET 0123456789 port_suffix)
 math(EXPR port "27100 + ${port_suffix}")
 set(mp "${WORK}/game_multiplayer")
 execute_process(
     COMMAND "${VICTUS_CLI}" serve "${mp}" --port ${port} --frames 480 --expect-clients 2
-    COMMAND "${VICTUS_CLI}" simulate "${mp}" --connect 127.0.0.1:${port} --name ann --frames 300 --hold D --expect-players 2
+    COMMAND "${VICTUS_CLI}" simulate "${mp}" --connect 127.0.0.1:${port} --name ann --frames 380 --hold D --expect-players 2
             --conditions latency=40,jitter=10,loss=0.05
     COMMAND "${VICTUS_CLI}" simulate "${mp}" --connect 127.0.0.1:${port} --name ben --frames 300 --hold W --expect-players 2
     RESULTS_VARIABLE mp_rcs OUTPUT_VARIABLE mp_out ERROR_VARIABLE mp_err)
