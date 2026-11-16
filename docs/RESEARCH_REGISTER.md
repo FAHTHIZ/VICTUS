@@ -123,6 +123,11 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-17 (Slice 31, in-editor clients)
+- Unreal Engine PIE multiplayer options — https://dev.epicgames.com/documentation/en-us/unreal-engine/play-in-editor-multiplayer-options-in-unreal-engine (accessed 2026-11-17): Number of Players and Play Number of Clients set how many client instances PIE creates alongside a listen server. VICTUS adopts the count-based model inside one process.
+- Unity Multiplayer Play Mode — https://docs-multiplayer.unity3d.com/mppm/current/about/ (accessed 2026-11-17): up to four players at once (the main Editor Player and three Virtual Players, which open in separate windows; the page does not say whether they are separate processes). Informed the small cap (3 extra, 4 total).
+- Open questions: split-screen viewing of several peers, bots for idle peers, cost of many full client worlds.
+
 ## Research conclusions added 2026-11-17 (Slice 30, editor multiplayer debugging)
 - Unreal Engine, "Play In Editor Multiplayer Options" — https://dev.epicgames.com/documentation/en-us/unreal-engine/play-in-editor-multiplayer-options-in-unreal-engine (accessed 2026-11-17): Play-In-Editor net modes Standalone, Play As Listen Server and Play As Client, with a configurable number of players. VICTUS starts with Offline and Host (listen server); multiple in-editor clients are the next slice.
 - Unity Netcode for GameObjects tools, Network Profiler — https://docs-multiplayer.unity3d.com/tools/current/profiler/ (accessed 2026-11-17): a Messages module with total/named/scene-event bytes sent and received per frame, and an Objects module grouped by network object (RPC bytes, network-variable deltas, spawns, destroys, ownership changes); host-to-self traffic is greyed out. Informed the per-entity updates/bytes columns and the bandwidth graphs.
