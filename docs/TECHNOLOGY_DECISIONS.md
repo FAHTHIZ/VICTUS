@@ -249,5 +249,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Large worlds make JSON checkpoints slow and big (consider binary or compressed payloads, measured first). Runtime state outside components (physics velocities, playback positions) is lost on restore. Multiplayer needs server-side snapshots instead of client checkpoints.
 
+## ADR-0025 — Delta snapshots against acknowledged baselines (accepted 2026-11-16)
+**Problem.** Slice 17 snapshots sent every changed entity in full (12-byte float position + 8-byte rotation) and repeated unchanged ones every second to recover from loss, wasting bandwidth and still leaving up to a second of staleness after a lost packet.
+
+**Candidates.** (1) Quake 3 style (https://fabiensanglard.net/quake3/network.php): the server compares the current state with the last snapshot the client acknowledged, sends only changed fields, and falls back to a zeroed dummy baseline (a full update) when no acknowledged snapshot is available; loss just means an older baseline. (2) Per-entity reliable updates (send each change reliably once): no redundant resends, but head-of-line blocking delays fresh transforms behind stale ones. (3) Gaffer On Games snapshot compression (https://gafferongames.com/post/snapshot_compression/): baseline deltas plus bounded-range quantization and smallest-three quaternions with bit packing.
+
+**Decision.** Candidate 1 with byte-aligned zigzag varints: quantize to 1 mm and the existing 16-bit rotation components so both ends hold identical views; the server keeps 32 views per client, the client 64, acks ride on the existing 60 Hz input packets. Bit packing and smallest-three (candidate 3) are deferred until measurements show the varint format is the bottleneck. The full encoding stays behind `ServerOptions::delta_snapshots` for diagnosis and comparison.
+
+**Evidence.** STATUS Slice 23: 977.5 → 485.6 bytes per snapshot in the test scene; exact decoding for a client on a 20%-loss link; header-only idle snapshots.
+
+**Risks / revisit triggers.** A client whose acks are all lost for more than ~1 s gets full (zero-baseline) snapshots until one arrives. Memory is O(clients × views × entities) on the server; very large worlds need sparse views or interest management. Positions beyond ±1000 km clamp.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

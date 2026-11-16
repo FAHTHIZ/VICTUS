@@ -123,6 +123,11 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-16 (Slice 23, delta snapshots)
+- Quake 3 network model (Fabien Sanglard's source review) — https://fabiensanglard.net/quake3/network.php: snapshots are diffed against the last one the client acknowledged; when an update or ack is lost the server keeps using the older acknowledged baseline, so the next packet carries old and new changes; with no usable baseline it diffs against a zeroed dummy snapshot. Adopted directly.
+- Gaffer On Games "Snapshot Compression" — https://gafferongames.com/post/snapshot_compression/: encode relative to the most recent acknowledged snapshot; quantize positions (512 values/m) and orientations with smallest-three (29 bits absolute, ~23 bits as deltas). Informed the millimetre quantization; smallest-three and bit packing deferred.
+- Open questions: bit packing vs varints measured on real game scenes, per-entity baselines when the newest ack is missing, compressing reliable variable diffs.
+
 ## Research conclusions added 2026-11-16 (Slice 22, save games)
 - Unreal Engine saving and loading — https://dev.epicgames.com/documentation/en-us/unreal-engine/saving-and-loading-your-game-in-unreal-engine: `USaveGame` objects saved to a slot name + user index; multiple slots per user. Informed named slots and slot listing.
 - Godot "Saving games" — https://docs.godotengine.org/en/stable/tutorials/io/saving_games.html: persistable nodes return dictionaries from `save()`, written as JSON lines and recreated on load; JSON is readable but larger than binary `store_var`. Informed the per-script `save_state`/`load_state` hooks and JSON payloads.
