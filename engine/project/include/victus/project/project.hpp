@@ -37,6 +37,17 @@ struct TemplateInfo {
 // Fills `scene` with the template's starter content (cleared first).
 [[nodiscard]] Status build_template_scene(std::string_view template_id, scene::Scene& scene);
 
+struct TemplateFile {
+    std::string path; // project-relative, e.g. "assets/scripts/player.luau"
+    std::string content;
+};
+// Extra files (scripts) a template writes next to its scene.
+[[nodiscard]] std::vector<TemplateFile> template_files(std::string_view template_id);
+
+// Registers the serializers of every engine component a project scene may contain (gameplay
+// behaviours, scripts). Idempotent; call before loading scenes.
+void register_components();
+
 class Project {
 public:
     // Creates a new project in `directory` (must not exist or be empty).

@@ -11,13 +11,13 @@ A candidate is not adopted until exact version, license, platform matrix and mai
 | Shaders | GLSL 450 → SPIR-V (glslang) + MSL 2.1 (SPIRV-Cross), offline, committed | Accepted (ADR-0003) |
 | ECS | Compare Flecs, EnTT, custom SoA | Open |
 | Scheduler | Compare Taskflow, enkiTS, custom | Open |
-| Physics | Jolt candidate | Open |
+| Physics | Box2D v3.2.0 (2D) and Jolt v5.7.0 (3D) candidates, versions verified 2026-11-16 | Open (next slice) |
 | Navigation | Recast/Detour candidate | Open |
 | Animation | ozz-animation candidate | Open |
-| Editor UI | Dear ImGui vs Qt/Avalonia/native shell | Open |
+| Editor UI | Dear ImGui 1.93 docking on the VICTUS RHI | Accepted (ADR-0005) |
 | Asset interchange | glTF 2.0 first; evaluate OpenUSD | Open |
 | Audio | miniaudio candidate | Open |
-| Scripting | Compare Lua, Wren, AngelScript, managed options | Open |
+| Scripting | Luau 0.747 (sandboxed VM, gradual types) behind `victus::script` | Accepted (ADR-0008); visual scripting open |
 
 ## ADR-0001 — C++20 dependency-light foundation
 Accepted for bootstrap. Standard-library-only core gives CI a reliable baseline. Revisit C++23 only after compiler/platform validation.
@@ -61,6 +61,17 @@ SDL3 3.4.20 (zlib), fetched by pinned URL + SHA-256 (`cmake/VictusDependencies.c
 
 ## ADR-0006 — Original license
 Selected: Apache-2.0 for original VICTUS code. Third-party components retain their own licenses/notices. Maintain SBOM.
+
+## ADR-0008 — Gameplay scripting language (accepted 2026-11-16)
+**Problem.** Games need fast-iteration gameplay code that hot reloads in the editor, cannot crash or hang the engine, is safe to run from downloaded projects and mods, and works on every target including iOS (no JIT allowed) and consoles.
+
+**Candidates.** Luau 0.747 (MIT, Roblox; Lua 5.1-derived with gradual typing, a native `vector` type, a built-in sandbox and VM interrupts); Lua 5.4 (MIT; smaller, no sandbox or types, standard library must be stripped by hand); LuaJIT (MIT; fastest on x86/ARM64 desktop but its JIT is forbidden on iOS and consoles, interpreter-only there, and upstream releases are irregular); Wren (MIT; small community, no types); AngelScript (zlib; C++-like, weaker sandboxing story); C# via .NET/Mono (MIT; large runtime, AOT complexity on iOS/consoles, GC pauses); WebAssembly (safe and language-agnostic but needs a toolchain per language and an ABI for every engine call).
+
+**Decision.** Embed Luau (VM + compiler only, fetched as the pinned 0.747 release tarball). `engine/script` owns one VM per `ScriptHost`, applies `luaL_sandbox` (read-only globals, per-module sandboxed threads), a tracking allocator with a hard memory limit and an interrupt-based per-call time budget (an infinite loop raises an error instead of freezing the editor). Scripts are `.luau` assets referenced by a serialized `ScriptComponent` (path + property overrides + enabled). The API (`entity`, `scene`, `input`, `time`, `log`) is VICTUS's own and goes through the scene/serializer registry, so scripts see the same component data as the editor and scene files. Faulted instances are disabled until their file is reloaded; errors go to the log/console with file and line.
+
+**Evidence.** `victus_script_tests` (sandboxing, budget, memory limit, lifecycle, hot reload, properties), the three templates are fully scripted and played headlessly by `victus_project_tests` and `victus simulate` in CI; `victus_bench_script` Release p50 on 2 vCPU Xeon: 10 000 scripted entities `update` 3.89 ms (~0.39 µs/entity incl. transform read/write), 1M-iteration arithmetic loop 8.15 ms.
+
+**Risks / revisit triggers.** Luau's native code generator is not used yet (interpreter only; evaluate on desktop once hot spots are measured). Type checking (Luau.Analysis) is not wired into `victus check` yet. A managed or WASM tier may be added later for heavy systems; C++ remains the language for engine systems. Visual scripting is deferred and will compile to the same runtime API.
 
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

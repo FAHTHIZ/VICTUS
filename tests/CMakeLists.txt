@@ -30,6 +30,12 @@ victus_add_test(victus_scene_tests
     DEPS VICTUS::Scene
     LABELS scene)
 
+victus_add_test(victus_script_tests
+    SOURCES
+        script/script_tests.cpp
+    DEPS VICTUS::Script
+    LABELS script)
+
 victus_add_test(victus_project_tests
     SOURCES
         project/project_tests.cpp

@@ -24,6 +24,7 @@ std::string default_importer(AssetKind kind) {
     case AssetKind::Texture: return "texture";
     case AssetKind::Model: return "gltf";
     case AssetKind::Scene: return "scene";
+    case AssetKind::Script: return ""; // used directly from source, nothing to cook
     default: return "";
     }
 }
@@ -77,6 +78,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     if (e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".tga" || e == ".bmp" || e == ".hdr") return AssetKind::Texture;
     if (e == ".gltf" || e == ".glb") return AssetKind::Model;
     if (e == ".vscene") return AssetKind::Scene;
+    if (e == ".luau") return AssetKind::Script;
     return AssetKind::Unknown;
 }
 

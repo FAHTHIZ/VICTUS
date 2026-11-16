@@ -5,16 +5,18 @@
 #include "victus/core/log.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/platform/platform.hpp"
+#include "victus/player/platform_input.hpp"
 #include "victus/project/project.hpp"
 #include "victus/render/image.hpp"
 #include "victus/runtime/scene_view.hpp"
+#include "victus/script/script.hpp"
 
 namespace victus::player {
 
 Result<PlayerReport> run(const PlayerOptions& o) {
     auto proj = project::Project::open(o.project);
     if (!proj) return std::move(proj).error();
-    gameplay::register_components();
+    project::register_components();
     auto db = assets::AssetDatabase::open(proj->root());
     if (!db) return std::move(db).error();
     const auto imported = (*db)->import_all();
@@ -45,8 +47,16 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     auto view = runtime::SceneView::create(**gpu, rhi::Format::RGBA8_UNORM);
     if (!view) return std::move(view).error();
 
+    script::HostOptions so;
+    so.assets_root = (*db)->assets_dir();
+    so.watch_files = o.hot_reload;
+    auto scripts = script::ScriptHost::create(so);
+    if (!scripts) return std::move(scripts).error();
+    PlatformInput input((*plat)->input());
     gameplay::Simulation sim;
     gameplay::add_builtin_systems(sim);
+    script::add_script_systems(sim, **scripts);
+    sim.input = &input;
     PlayerReport report;
     report.backend = dev.capabilities().driver_name;
     VICTUS_LOG_INFO("player", "{}: {} on {}", proj->settings().name, rel, report.backend);
@@ -115,6 +125,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     dev.wait_idle();
     if (frame) dev.destroy(frame);
     report.seconds = platform::Platform::seconds() - start;
+    report.script_errors = (*scripts)->stats().errors;
     if (!result.ok()) return std::move(result).error();
     return report;
 }

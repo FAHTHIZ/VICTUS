@@ -65,6 +65,7 @@ const char* kind_icon(assets::AssetKind k) {
     case assets::AssetKind::Texture: return "[tex]";
     case assets::AssetKind::Model: return "[mdl]";
     case assets::AssetKind::Scene: return "[scn]";
+    case assets::AssetKind::Script: return "[lua]";
     default: return "[file]";
     }
 }
@@ -75,7 +76,13 @@ const char* kind_icon(assets::AssetKind k) {
 void Editor::frame(float dt) {
     if (dt > 0) fps_ = fps_ <= 0 ? 1.0f / dt : fps_ * 0.95f + 0.05f / dt;
     if (status_time_ > 0) status_time_ -= dt;
+    if (input_) input_->set_enabled(play_state_ == PlayState::Playing && viewport_focused_);
     if (play_state_ == PlayState::Playing && play_scene_) sim_.tick(*play_scene_, dt);
+    // Inspector property discovery follows script edits made in an external editor.
+    if (edit_scripts_ && (script_poll_ += dt) >= 1.0f) {
+        script_poll_ = 0;
+        (void)edit_scripts_->reload_changed();
+    }
     if (!project_) draw_launcher();
     else draw_workspace(dt);
     draw_modals();
@@ -365,6 +372,10 @@ void Editor::draw_status_bar() {
 
 void Editor::draw_viewport() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    if (focus_viewport_) {
+        ImGui::SetNextWindowFocus(); // Play hands keyboard input to the game
+        focus_viewport_ = false;
+    }
     const bool open = ImGui::Begin(kViewportWindow, nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
     if (!open) {
@@ -383,6 +394,10 @@ void Editor::draw_viewport() {
         ImGui::Image(ImTextureRef(ui::UiContext::texture_id(viewport_tex_)), avail);
         const bool hovered = ImGui::IsItemHovered();
         viewport_focused_ = ImGui::IsWindowFocused();
+        if (input_) {
+            const float fb = ImGui::GetIO().DisplayFramebufferScale.x;
+            input_->set_mouse_origin({origin.x * fb, origin.y * fb});
+        }
         // Accept model drops.
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
@@ -603,7 +618,7 @@ bool Editor::inspect_components(Entity e) {
         changed |= vec3_edit("Scale", t->scale, 0.02f);
     }
     bool remove_camera = false, remove_light = false, remove_mesh = false, remove_sprite = false, remove_rot = false,
-         remove_osc = false;
+         remove_osc = false, remove_script = false;
     const auto removable = [](const char* label, bool& remove) {
         bool keep = true;
         const bool open = ImGui::CollapsingHeader(label, &keep, ImGuiTreeNodeFlags_DefaultOpen);
@@ -692,6 +707,7 @@ bool Editor::inspect_components(Entity e) {
         changed |= ImGui::DragFloat("Frequency (Hz)", &o->frequency, 0.01f, 0.0f, 100.0f);
         changed |= ImGui::DragFloat("Phase (rad)", &o->phase, 0.01f);
     }
+    if (auto* sc = w.get<script::ScriptComponent>(e); sc && removable("Script", remove_script)) changed |= inspect_script(*sc);
     if (const auto* u = w.get<UnknownComponents>(e); u && !u->components.empty()) {
         if (ImGui::CollapsingHeader("Unknown Components")) {
             for (const auto& [name, value] : u->components) ImGui::BulletText("%s (preserved)", name.c_str());
@@ -719,6 +735,10 @@ bool Editor::inspect_components(Entity e) {
     }
     if (remove_osc) {
         w.remove<gameplay::OscillatorComponent>(e);
+        changed = true;
+    }
+    if (remove_script) {
+        w.remove<script::ScriptComponent>(e);
         changed = true;
     }
 
@@ -750,7 +770,85 @@ bool Editor::inspect_components(Entity e) {
             w.add<gameplay::OscillatorComponent>(e);
             changed = true;
         }
+        if (!w.has<script::ScriptComponent>(e) && ImGui::MenuItem("Script")) {
+            w.add<script::ScriptComponent>(e);
+            changed = true;
+        }
         ImGui::EndPopup();
+    }
+    return changed;
+}
+
+// Script path (drop a .luau asset), enable toggle, and the module's public fields. Fields keep the
+// script's default until edited; edited values are stored as per-entity overrides.
+bool Editor::inspect_script(script::ScriptComponent& c) {
+    bool changed = ImGui::Checkbox("Enabled", &c.enabled);
+    changed |= ImGui::InputTextWithHint("Script", "scripts/name.luau", &c.script);
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
+            Uuid id;
+            std::memcpy(&id, p->Data, sizeof(Uuid));
+            if (const auto* rec = db_ ? db_->find(id) : nullptr; rec && rec->kind == assets::AssetKind::Script) {
+                c.script = rec->path;
+                changed = true;
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    if (c.script.empty()) {
+        ImGui::TextDisabled("Drop a .luau file from Assets here.");
+        return changed;
+    }
+    if (!edit_scripts_) return changed;
+    auto props = edit_scripts_->describe(c.script);
+    if (!props) {
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", props.error().message.c_str());
+        ImGui::PopTextWrapPos();
+        return changed;
+    }
+    if (!c.properties.is_object()) c.properties = json::Value::object();
+    if (props->empty()) ImGui::TextDisabled("No public fields (declare e.g. `MyScript.speed = 5`).");
+    for (const auto& info : *props) {
+        ImGui::PushID(info.name.c_str());
+        const json::Value* over = c.properties.find(info.name);
+        const json::Value& cur = over ? *over : info.default_value;
+        bool edited = false;
+        json::Value next;
+        if (cur.is_number()) {
+            float f = static_cast<float>(cur.as_number());
+            if ((edited = ImGui::DragFloat(info.name.c_str(), &f, 0.05f))) next = json::Value(static_cast<double>(f));
+        } else if (cur.is_bool()) {
+            bool b = cur.as_bool();
+            if ((edited = ImGui::Checkbox(info.name.c_str(), &b))) next = json::Value(b);
+        } else if (cur.is_string()) {
+            std::string str = cur.as_string();
+            if ((edited = ImGui::InputText(info.name.c_str(), &str))) next = json::Value(str);
+        } else if (cur.is_array() && cur.size() == 3) {
+            float v[3];
+            for (std::size_t i = 0; i < 3; ++i) v[i] = static_cast<float>(cur[i].as_number());
+            if ((edited = ImGui::DragFloat3(info.name.c_str(), v, 0.05f))) {
+                next = json::Value::array();
+                for (float x : v) next.push(json::Value(static_cast<double>(x)));
+            }
+        } else {
+            ImGui::TextDisabled("%s (unsupported type)", info.name.c_str());
+        }
+        if (edited) {
+            c.properties.set(info.name, std::move(next));
+            changed = true;
+        }
+        if (over) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset")) {
+                json::Value kept = json::Value::object();
+                for (const auto& [k, v] : c.properties.as_object())
+                    if (k != info.name) kept.set(k, v);
+                c.properties = std::move(kept);
+                changed = true;
+            }
+        }
+        ImGui::PopID();
     }
     return changed;
 }
@@ -812,7 +910,16 @@ void Editor::draw_assets() {
             }
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 if (r.kind == assets::AssetKind::Model) instantiate_asset(r.uuid);
-                else if (r.kind == assets::AssetKind::Texture) {
+                else if (r.kind == assets::AssetKind::Script) {
+                    const Entity e = selected();
+                    if (!e.is_null()) {
+                        auto before = capture(active_scene(), {active_scene().uuid(e)});
+                        auto& w = active_scene().world();
+                        if (!w.has<script::ScriptComponent>(e)) w.add<script::ScriptComponent>(e);
+                        w.get<script::ScriptComponent>(e)->script = r.path;
+                        record_edit("Assign script", std::move(before));
+                    }
+                } else if (r.kind == assets::AssetKind::Texture) {
                     const Entity e = selected();
                     if (auto* sp = e.is_null() ? nullptr : active_scene().world().get<SpriteComponent>(e)) {
                         auto before = capture(active_scene(), {active_scene().uuid(e)});
@@ -824,6 +931,7 @@ void Editor::draw_assets() {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nUUID %s\nDouble-click: %s", r.path.c_str(), r.uuid.to_string().c_str(),
                                                           r.kind == assets::AssetKind::Model ? "add to scene"
                                                           : r.kind == assets::AssetKind::Texture ? "assign to selected sprite"
+                                                          : r.kind == assets::AssetKind::Script ? "attach to selected entity"
                                                                                                  : "-");
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", assets::to_string(r.kind));
@@ -922,6 +1030,12 @@ void Editor::handle_shortcuts() {
     const ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput) return;
     const bool editing = play_state_ == PlayState::Editing;
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_P)) {
+        if (editing) play();
+        else stop();
+    }
+    // While the game has the keyboard, editor shortcuts other than Play/Stop stay out of its way.
+    if (!editing && viewport_focused_) return;
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S) && editing) {
         if (scene_path_.empty()) show_save_as_ = true;
         else if (auto st = save_scene(); !st.ok()) notify(st.error().message, true);
@@ -930,10 +1044,6 @@ void Editor::handle_shortcuts() {
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) || ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z))
         redo();
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D)) duplicate_selected();
-    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_P)) {
-        if (editing) play();
-        else stop();
-    }
     const bool mouse_nav = ImGui::IsMouseDown(ImGuiMouseButton_Right);
     if (!mouse_nav && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) delete_selected();
     if (!mouse_nav && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) frame_selected();

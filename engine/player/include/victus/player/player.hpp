@@ -18,12 +18,14 @@ struct PlayerOptions {
     std::uint64_t max_frames{0}; // 0 = until closed; >0 also makes time deterministic (1/60 s)
     std::string screenshot;      // PNG written after the last frame (requires max_frames)
     bool fullscreen{false};
+    bool hot_reload{false};      // re-read changed scripts while running (development)
 };
 
 struct PlayerReport {
     std::uint64_t frames{0};
     double seconds{0};
     std::string backend;
+    std::uint64_t script_errors{0};
 };
 
 [[nodiscard]] Result<PlayerReport> run(const PlayerOptions& options);
