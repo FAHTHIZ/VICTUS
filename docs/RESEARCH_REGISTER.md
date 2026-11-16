@@ -122,3 +122,10 @@ No third-party code was added.
 - Unity uGUI `CanvasScaler.cs` (MatchWidthOrHeight) — https://github.com/Unity-Technologies/uGUI/blob/main/com.unity.ugui/Runtime/UGUI/UI/Core/Layout/CanvasScaler.cs . The scale factor is `2^lerp(log2(w/ref_w), log2(h/ref_h), match)`, so opposite deviations on the two axes cancel at 0.5. VICTUS uses the same blend.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
+
+## Research conclusions added 2026-11-16 (Slice 17, networking)
+- ENet 1.3.18 — https://github.com/lsalzman/enet (MIT). Reliable and unreliable sequenced channels over UDP with fragmentation and RTT estimates; no encryption. Used behind `net::Transport`.
+- Valve GameNetworkingSockets v1.6.1 — https://github.com/ValveSoftware/GameNetworkingSockets/releases/tag/v1.6.1 (BSD-3). Encryption and P2P, but requires OpenSSL/libsodium and protobuf; the candidate transport for authenticated public servers.
+- yojimbo v1.15.2 — https://github.com/mas-bandwidth/yojimbo (BSD-3). Connect tokens and encrypted packets; bundles libsodium, netcode and reliable.
+- Snapshot interpolation and client-side prediction follow the common model of rendering remote entities a fixed delay (here 100 ms ≈ 3 snapshots at 30 Hz) in the past and predicting only the locally owned entity, correcting when the server state diverges.
+- Open questions: delta compression against acknowledged snapshots, physics rollback for full input-replay reconciliation, lag compensation, encryption/authentication, NAT traversal.

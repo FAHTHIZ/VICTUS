@@ -194,5 +194,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Single-tile builds are synchronous (tens of ms on large levels): move to tiled navmeshes with background rebuilds of dirty tiles (DetourTileCache) for open worlds or frequent kinematic changes. No off-mesh links (jumps, ladders), area costs or 2D navigation yet.
 
+## ADR-0020 — Networking (accepted 2026-11-16)
+**Problem.** Games need two or more players against an authoritative dedicated server with replication, prediction and interpolation, testable headless and under bad network conditions, without a platform-service dependency. Networking is a high-risk foundation, so alternatives were compared.
+
+**Candidates.** ENet 1.3.18 (MIT; small C library, reliable/unreliable channels over UDP, fragmentation, RTT, used widely; no encryption); Valve GameNetworkingSockets v1.6.1 (BSD-3; encryption, P2P/NAT traversal, but needs OpenSSL or libsodium plus protobuf, heavy to build on every platform); yojimbo v1.15.2 (BSD-3; connect tokens and encrypted packets, bundles libsodium, netcode and reliable, opinionated message model); an owned UDP protocol (full control, large reliability/fragmentation surface to get right).
+
+**Decision.** ENet 1.3.18 behind VICTUS's own `net::Transport` interface (ENet and in-memory loopback backends, plus a link-condition emulator wrapping either), statically linked and private to `engine/net`, so the transport can be swapped (e.g. for GameNetworkingSockets when encryption is needed) without touching sessions or scripts. Above it VICTUS owns the protocol: a versioned handshake carrying a game fingerprint, a server-authoritative session that runs scripts and physics, spawns a player from the scene's `player_template` per client and routes each client's input only to its player, 30 Hz unreliable snapshots of `NetworkIdentity` entities (transform, velocity, script values) and reliable script messages; clients predict their owned player and are corrected past a threshold, and interpolate others 100 ms behind (extrapolating at most 0.1 s, then easing back).
+
+**Evidence.** STATUS Slice 17: `victus_net_tests` (10 cases, 410 assertions) over memory and real UDP transports including emulated latency/jitter/loss; CLI smoke runs a real server with two UDP clients; measured snapshot 216 bytes for 10 entities.
+
+**Risks / revisit triggers.** ENet traffic is unencrypted and unauthenticated: add encryption/auth (GameNetworkingSockets or yojimbo transport, or DTLS) before public servers. Full snapshots without delta compression cost bandwidth with many entities. No physics rollback or lag compensation yet.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
