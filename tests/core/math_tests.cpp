@@ -68,4 +68,9 @@ TEST_CASE("math: aabb transform and color packing") {
     const Color c = Color::hex(0xff8000);
     CHECK(Color::from_rgba8(c.rgba8()).g == doctest::Approx(128.0f / 255.0f));
     CHECK(linear_to_srgb(srgb_to_linear(0.5f)) == doctest::Approx(0.5f));
+    const Color lin = Color::srgb(0xff8000, 0.5f);
+    CHECK(lin.r == doctest::Approx(1.0f));
+    CHECK(lin.g == doctest::Approx(0.2158f).epsilon(0.001));
+    CHECK(lin.b == doctest::Approx(0.0f));
+    CHECK(lin.a == doctest::Approx(0.5f));
 }

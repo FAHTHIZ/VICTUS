@@ -6,7 +6,9 @@ A candidate is not adopted until exact version, license, platform matrix and mai
 |---|---|---|
 | Language | C++20 baseline | Provisional |
 | Build | CMake + CTest | Implemented |
-| Graphics | Compare bgfx, Diligent, direct APIs behind RHI | Open |
+| Platform | SDL3 3.4.20 (window, input, gamepad, lifecycle) behind `victus::platform` | Accepted (ADR-0007) |
+| Graphics | VICTUS RHI with SDL_GPU (Vulkan/Metal/D3D12) as first backend | Accepted (ADR-0003) |
+| Shaders | GLSL 450 → SPIR-V (glslang) + MSL 2.1 (SPIRV-Cross), offline, committed | Accepted (ADR-0003) |
 | ECS | Compare Flecs, EnTT, custom SoA | Open |
 | Scheduler | Compare Taskflow, enkiTS, custom | Open |
 | Physics | Jolt candidate | Open |
@@ -23,8 +25,19 @@ Accepted for bootstrap. Standard-library-only core gives CI a reliable baseline.
 ## ADR-0002 — Main-branch delivery
 Accepted by owner. Commit coherent verified increments directly to main; keep commits small, preserve history and never force-push.
 
-## ADR-0003 — Graphics backend
-Open; prototype required. Compare bgfx, Diligent, direct Vulkan/Metal/D3D12 behind VICTUS RHI and Filament as renderer/reference. Validate Windows/Linux/Android/Apple backend matrix, shader tooling, resource lifetime, multithreaded recording, debugging, build complexity, license and maintenance. Use identical workloads.
+## ADR-0003 — Graphics backend (accepted 2026-11-16)
+**Problem.** VICTUS needs real 2D/3D rendering on Windows, Linux, macOS, Android and iOS now, without a multi-year investment in three native backends before any game can render, and without becoming a wrapper around another engine.
+
+**Candidates.** bgfx (BSD-2; own shader language/toolchain and build system, renderer-level abstraction), Diligent Engine (Apache-2.0; large, heavy build), direct Vulkan + Metal + D3D12 (maximum control, largest cost), SDL_GPU from SDL 3.4.x (zlib; explicit modern API: command buffers, render/copy/compute passes, cycling resources, Vulkan/Metal/D3D12 backends, Android/iOS support, small).
+
+**Decision.** Engine renderers program only against the VICTUS RHI (`engine/rhi/include/victus/rhi/rhi.hpp`: generational handles, formats, pipelines, passes, uploads, readback). Its first backend is SDL_GPU (`engine/rhi/src/rhi_sdl.cpp`). Render graph, renderers, materials, shaders and all scene logic are VICTUS-owned. Shaders are authored once in GLSL 450 using SDL's resource-set convention and compiled offline by `tools/shaders/compile_shaders.py` into SPIR-V + MSL embedded in `engine/render/generated/builtin_shaders.cpp`; CI verifies the generated file matches sources by SHA-256 without needing the tools.
+
+**Evidence.** Vulkan via Mesa lavapipe 26 (Vulkan 1.4) headless and through an X11 swapchain under Xvfb: clear/readback, sprite batching, PBR + shadow-map scene, tonemap and HUD overlay verified by pixel probes and visual inspection (see STATUS.md).
+
+**Risks / gaps.** Metal path compiles shaders to MSL but has not been executed on Apple hardware; D3D12 requires DXIL (not yet generated) so Windows currently uses SDL_GPU's Vulkan driver; no GPU timestamp queries in SDL_GPU 3.4 (CPU profiling only); bindless/ray tracing/mesh shaders are not available through SDL_GPU. **Revisit trigger:** a measured bottleneck or required feature that SDL_GPU cannot provide; a native backend would then be added behind the same RHI. DXC (linux release v1.9.2609) is the planned DXIL path.
+
+## ADR-0007 — Platform layer (accepted 2026-11-16)
+SDL3 3.4.20 (zlib), fetched by pinned URL + SHA-256 (`cmake/VictusDependencies.cmake`), statically linked; `VICTUS_USE_SYSTEM_SDL` allows distro packages. Engine code sees only `victus::platform` (windows, keyboard/mouse/gamepad/touch input, lifecycle events, clipboard). `VICTUS_WITH_GRAPHICS=OFF` builds the core headless without SDL (servers, simulations).
 
 ## ADR-0004 — ECS and scheduler
 Open; benchmark required. Compare Flecs, EnTT and focused SoA with identical data/access patterns. Compare Taskflow and enkiTS/custom scheduler for simulation, streaming and editor workloads. Measure memory, iteration, structural changes, scheduling overhead, worker use and platform support. Retain migration seams.

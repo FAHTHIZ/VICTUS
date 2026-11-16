@@ -197,6 +197,11 @@ Color Color::from_rgba8(std::uint32_t p) noexcept {
     return {(p & 0xff) / 255.0f, ((p >> 8) & 0xff) / 255.0f, ((p >> 16) & 0xff) / 255.0f, ((p >> 24) & 0xff) / 255.0f};
 }
 
+Color Color::srgb(std::uint32_t rgb, float alpha) noexcept {
+    Color c = hex(rgb, alpha);
+    return {srgb_to_linear(c.r), srgb_to_linear(c.g), srgb_to_linear(c.b), alpha};
+}
+
 float srgb_to_linear(float c) noexcept { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); }
 float linear_to_srgb(float c) noexcept { return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f; }
 
