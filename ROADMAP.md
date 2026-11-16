@@ -119,14 +119,14 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 **Exit:** create, edit, save, cook and play a substantial procedural world and cinematic sequence.
 
 ## Phase 12 — Multiplayer and online runtime
-- [ ] Transport abstraction, authoritative server model and session lifecycle.
-- [ ] Entity/property/event replication, relevancy, ownership and bandwidth budgets.
-- [ ] Client prediction, reconciliation, interpolation and lag-tolerant movement.
-- [ ] Dedicated/headless server builds, server config, logs and graceful shutdown.
-- [ ] Network emulation for latency, jitter, packet loss and bandwidth constraints.
-- [ ] Multiplayer debugging, replay/recording, reconnect and persistence.
+- [~] Transport abstraction, authoritative server model and session lifecycle. Done (Slice 17): `net::Transport` with ENet 1.3.18 UDP and in-memory backends, versioned handshake with game fingerprint, join/leave, timeouts, graceful disconnect. Remaining: listen-server (host plays), reconnect, host migration.
+- [~] Entity/property/event replication, relevancy, ownership and bandwidth budgets. Done (Slice 17): `NetworkIdentity` snapshots at 30 Hz (transform, velocity, script values), per-player spawn from a template, ownership, reliable script messages, relevancy radius, per-snapshot byte budget with priority (deferred entities stay fresh). Remaining: delta compression, interest management beyond radius, RPC on arbitrary components.
+- [~] Client prediction, reconciliation, interpolation and lag-tolerant movement. Done (Slice 17): owned-player prediction with server correction, 100 ms snapshot interpolation with bounded extrapolation. Remaining: input-replay reconciliation with physics rollback, lag compensation for hits.
+- [~] Dedicated/headless server builds, server config, logs and graceful shutdown. Done (Slice 17): `victus serve` (port/bind/max clients/frames, SIGINT/SIGTERM shutdown, logs). Remaining: server config files, exported dedicated-server packages.
+- [~] Network emulation for latency, jitter, packet loss and bandwidth constraints. Done (Slice 17): latency/jitter/loss emulation on any transport (`--conditions`). Remaining: bandwidth caps, duplication/reordering profiles.
+- [ ] Multiplayer debugging, replay/recording, reconnect and persistence. Editor network tooling (multi-client play mode, replication inspector) still to do.
 - [ ] Replaceable interfaces for matchmaking, lobbies, identity and platform services; no mandatory vendor lock-in.
-- [ ] Security model, input validation, server authority and abuse-resistant boundaries.
+- [~] Security model, input validation, server authority and abuse-resistant boundaries. Done (Slice 17): server authority, clients may only drive their own player, bounded message sizes/rates, malformed packets rejected. Remaining: encryption and authentication, NAT traversal/relays.
 **Exit:** two or more clients play a representative networked game against an authoritative dedicated server under repeatable network tests.
 
 ## Phase 13 — Production, collaboration and ecosystem

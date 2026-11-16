@@ -33,7 +33,7 @@ VICTUS aims to give developers an end-to-end path from an empty project to a fin
 
 ## Development status
 
-VICTUS is early and not production-ready. What exists and is tested today: core runtime (jobs, memory, profiling, JSON, logging), SDL3 platform layer, an RHI on SDL_GPU (Vulkan verified), a render graph, real 2D sprite rendering and 3D PBR rendering with cascaded shadows, SSAO, bloom, auto exposure, filmic tonemapping, FXAA, automatic GPU instancing and Low/Medium/High/Ultra quality tiers, an archetype ECS, a versioned scene format, a texture/glTF asset pipeline, the VICTUS editor, Luau gameplay scripting with hot reload, 3D (Jolt) and 2D (Box2D) rigid-body physics with triggers, queries and script collision events, 3D and 2D character controllers (slopes, steps, one-way platforms, pushing bodies), 3D and 2D joints with limits, motors and breaking, glTF skeletal animation with GPU skinning and cross-fades, CPU particles with soft HDR billboards, in-game UI (screen-scaled HUDs and menus with text, images and buttons), miniaudio-based audio (buses, 3D spatialization, streaming music, script API), a standalone player, the `victus` CLI and `victus export` packaging. Networking is not implemented yet. [docs/STATUS.md](docs/STATUS.md) lists exactly what is verified and how; [ROADMAP.md](ROADMAP.md) is the plan.
+VICTUS is early and not production-ready. What exists and is tested today: core runtime (jobs, memory, profiling, JSON, logging), SDL3 platform layer, an RHI on SDL_GPU (Vulkan verified), a render graph, real 2D sprite rendering and 3D PBR rendering with cascaded shadows, SSAO, bloom, auto exposure, filmic tonemapping, FXAA, automatic GPU instancing and Low/Medium/High/Ultra quality tiers, an archetype ECS, a versioned scene format, a texture/glTF asset pipeline, the VICTUS editor, Luau gameplay scripting with hot reload, 3D (Jolt) and 2D (Box2D) rigid-body physics with triggers, queries and script collision events, 3D and 2D character controllers (slopes, steps, one-way platforms, pushing bodies), 3D and 2D joints with limits, motors and breaking, glTF skeletal animation with GPU skinning and cross-fades, CPU particles with soft HDR billboards, in-game UI (screen-scaled HUDs and menus with text, images and buttons), miniaudio-based audio (buses, 3D spatialization, streaming music, script API), Recast/Detour navigation, server-authoritative multiplayer over UDP (ENet) with a dedicated headless server, client prediction and interpolation, a standalone player, the `victus` CLI and `victus export` packaging. [docs/STATUS.md](docs/STATUS.md) lists exactly what is verified and how; [ROADMAP.md](ROADMAP.md) is the plan.
 
 ## Quick start
 
@@ -48,7 +48,7 @@ ctest --test-dir build --build-config Release --output-on-failure
 Create, edit and run a project:
 
 ~~~bash
-./build/bin/victus templates                         # 3d, 2d, simulation
+./build/bin/victus templates                         # 3d, 2d, simulation, multiplayer
 ./build/bin/victus new MyGame --template 3d          # creates MyGame/victus.project, scenes/, assets/
 ./build/bin/victus_editor MyGame                     # open in the editor (or run with no arguments for the launcher)
 ./build/bin/victus run MyGame                        # run the game in its own window
@@ -62,7 +62,7 @@ Create, edit and run a project:
 
 `victus export` imports stale assets, validates every scene and script (it fails on syntax errors or missing script references), and writes the player executable, `game/game.vpak` (project, scenes, scripts, audio and cooked textures/models; source images and glTF files are not shipped), `THIRD_PARTY_NOTICES.txt` and an `export.json` manifest. Export for the platform you are on; cross-platform export needs a player built for the target.
 
-Template controls: 2D platformer — A/D or arrows to run, Space/W/Up to jump (also up through the light one-way ledge), S/Down to drop back through it, bump the swinging lantern, collect the coins; 3D — WASD/arrows walk the animated robot (it climbs the steps, swings the hinged gate and shoves the crate stack), Space jumps, and the camera follows; simulation — the camera orbits the wave field. In the editor, click the viewport after pressing Play so the game receives the keyboard.
+Template controls: 2D platformer — A/D or arrows to run, Space/W/Up to jump (also up through the light one-way ledge), S/Down to drop back through it, bump the swinging lantern, collect the coins; 3D — WASD/arrows walk the animated robot (it climbs the steps, swings the hinged gate and shoves the crate stack), Space jumps, and the camera follows; simulation — the camera orbits the wave field; multiplayer — WASD/arrows walk, Space jumps, coins are scored by the server. In the editor, click the viewport after pressing Play so the game receives the keyboard.
 
 ### Scripting
 
@@ -93,8 +93,18 @@ Audio: add `AudioSource` (clip, bus, volume, pitch, loop, play on start, stream,
 UI: put a `UiCanvas` on an entity and give its children `UiRect` (anchors, pivot, position, size) plus `UiPanel`, `UiImage`, `UiText` (built-in Inter or a project `.ttf`), `UiButton` (with an `action` string) or `UiLayout`. The canvas is authored at 1280x720 and scales with the window; it draws over 2D and 3D scenes in the player, editor viewport and screenshots. Scripts get `on_click(button, action)` on the button or any ancestor, entity `set_text/text`, `set_visible/visible`, `ui_state()`, and `ui.screen_size/pointer_over_ui/focus/focused/click`. Both templates ship a HUD (Controls button, H toggles the panel); the 2D one counts coins and shows a banner when all are collected.
 
 Navigation: add `NavAgent` (speed, acceleration, radius, stopping distance, avoidance) to any entity and call `entity:set_destination(point)`; VICTUS builds a navmesh automatically from the scene's static colliders (Recast & Detour), rebuilds it when they change (kinematic bodies carve an upright cylinder) and steers agents along the path with local avoidance (DetourCrowd). Agents with a `CharacterController` walk through the physics character mover, so gravity, steps and pushing still apply. An optional `NavMeshSurface` sets the agent size, step height, slope and voxel size the mesh is built for. Scripts also get `entity:stop()`, `entity:nav_state()` and `nav.find_path/nearest/raycast/random_point/rebuild/available`. View > Navigation Mesh draws the navmesh (and agent paths in play mode) in the editor viewport. The 3D template's companion robot follows you around the obstacles.
+### Multiplayer
 
-In the editor: Play/Stop runs the scene in place on a copy (edits made during play are discarded), Ctrl+S saves, Ctrl+Z/Ctrl+Y undo/redo, F frames the selection, right-drag orbits, middle-drag pans, the wheel zooms. Drop `.gltf`/`.glb`/`.png`/`.jpg` files into the project's `assets/` folder and press Reimport; drag a model from the asset table into the viewport to instantiate it, or a `.luau` script onto an entity's Script component (double-click attaches it to the selection).
+~~~bash
+./build/bin/victus new Arena --template multiplayer
+./build/bin/victus serve Arena --port 27015                     # dedicated headless server (Ctrl+C stops it)
+./build/bin/victus run Arena --connect 127.0.0.1:27015 --name ann   # each player in their own window
+./build/bin/victus simulate Arena --connect 127.0.0.1:27015 --name bot --hold D --frames 600   # headless test client
+./build/bin/victus simulate Arena --connect 127.0.0.1:27015 --conditions latency=80,jitter=15,loss=0.05
+~~~
+
+The server owns the game: it runs scripts and physics, spawns a copy of the scene's player template (an entity whose `NetworkIdentity` has `player_template` on) for every client, applies each client's input to that player only, and sends snapshots of every `NetworkIdentity` entity (transform, velocity, script-declared values) 30 times a second. Clients predict their own player and reconcile with the server, and interpolate everyone else 100 ms in the past. Scripts get `net.role/is_server/is_client/authority/id/connected/local_player/clients/stats`, `net.send(name, value, to?)` with `on_net_message(name, value, sender)`, and entity `set_net/get_net` (replicated values), `has_authority`, `is_local`, `owner`. Clients of a different game or engine build are refused. `--conditions` emulates latency, jitter and loss on either side. Traffic is not encrypted yet; only run servers on networks you trust.
+ runs the scene in place on a copy (edits made during play are discarded), Ctrl+S saves, Ctrl+Z/Ctrl+Y undo/redo, F frames the selection, right-drag orbits, middle-drag pans, the wheel zooms. Drop `.gltf`/`.glb`/`.png`/`.jpg` files into the project's `assets/` folder and press Reimport; drag a model from the asset table into the viewport to instantiate it, or a `.luau` script onto an entity's Script component (double-click attaches it to the selection).
 
 Ship a game with `victus export` (above); the result runs anywhere the player runs, with no editor or SDK installed. Your project files are plain JSON and assets you own; Apache-2.0 allows commercial use.
 
