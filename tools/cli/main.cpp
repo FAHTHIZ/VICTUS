@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // `victus` command-line tool: project creation, asset import, running games and inspection
 // from a terminal or CI. Shares the project, asset and player modules with the editor.
+#include "victus/gameui/gameui.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/core/build_info.hpp"
 #include "victus/core/cli.hpp"
@@ -204,6 +205,7 @@ int cmd_simulate(const std::vector<std::string>& a) {
     if (!physics_world) return error(physics_world.error().message);
     gameplay::Simulation sim;
     gameplay::add_builtin_systems(sim);
+    gameui::add_ui_systems(sim);
     script::add_script_systems(sim, **host);
     physics::add_physics_systems(sim, **physics_world);
     // Animation needs cooked models: open the asset database when the project has one.

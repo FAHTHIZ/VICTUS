@@ -234,7 +234,7 @@ TEST_CASE("editor: 3D project workflow end to end") {
     // Template scripts run in play mode: the player is a simulated character standing on the
     // ground, the camera follows, no script errors.
     REQUIRE(h.ed->play_scripts() != nullptr);
-    CHECK(h.ed->play_scripts()->stats().instances == 5); // camera, player, 3 crates
+    CHECK(h.ed->play_scripts()->stats().instances == 6); // camera, player, 3 crates, HUD
     CHECK(h.ed->play_scripts()->stats().errors == 0);
     {
         const Entity ap = s.find_by_name("Player");

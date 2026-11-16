@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "victus/gameui/gameui.hpp"
 #include "victus/player/player.hpp"
 
 #include "victus/assets/database.hpp"
@@ -105,6 +106,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     PlatformInput input((*plat)->input());
     gameplay::Simulation sim;
     gameplay::add_builtin_systems(sim);
+    gameui::add_ui_systems(sim);
     script::add_script_systems(sim, **scripts);
     physics::add_physics_systems(sim, **physics_world);
     animation::AnimationSystem animations({.provider = assets::animation_provider(**db), .jobs = &workers});

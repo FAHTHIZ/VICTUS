@@ -172,5 +172,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** The mover has no explicit step-up (ledges are climbed only as far as the capsule's rounding slides over them) and no rotating-platform angular carry; one-way filtering for dynamic bodies is per contact and can let fast thin bodies through. Revisit with ground-velocity inheritance and a Box2D upgrade if the mover API changes.
 
+## ADR-0018 — In-game UI (accepted 2026-11-16)
+**Problem.** Games need HUDs and menus that scale with the screen, are authored as scene data, scriptable from Luau and drawn in both 2D and 3D views.
+
+**Candidates.** Dear ImGui widgets directly (immediate mode, editor-styled, not scene data); RmlUi (HTML/CSS, large surface); commercial middleware (Noesis, Coherent: licensing); owned retained components with a small layout core.
+
+**Decision.** Owned retained ECS components in `engine/gameui` (canvas, rect, panel, image, text, button, layout) with headless layout and interaction so tests and `victus simulate` run without a GPU. Canvas scaling follows Unity's `CanvasScaler` match mode (weighted average of log2 width/height ratios). Rendering converts draw items to Dear ImGui 1.93 draw-list geometry in a private context (anti-aliased rounded shapes, dynamic font baking) through the existing RHI UI pipeline; ImGui widgets are not used. Default font: Inter 4 Medium/Bold, SIL OFL 1.1, embedded.
+
+**Evidence.** STATUS Slice 15 tests; `victus_bench_gameui` 520 elements update 0.048 ms, draw list 0.024 ms (p50).
+
+**Risks / revisit triggers.** No rich text, shaping (complex scripts) or accessibility; revisit text with HarfBuzz when localization lands, and add a visual editor.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

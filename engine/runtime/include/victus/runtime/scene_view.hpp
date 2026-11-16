@@ -3,6 +3,7 @@
 // player. Scenes whose primary camera is orthographic render as 2D (sprites, layer-sorted);
 // all others render through the 3D SceneRenderer.
 #pragma once
+#include "victus/runtime/game_ui.hpp"
 #include "victus/runtime/scene_rendering.hpp"
 
 #include <functional>
@@ -26,6 +27,7 @@ struct SceneViewOptions {
     std::function<void(render::SceneRenderer&)> overlay_3d; // extra lines/meshes after extraction
     std::function<void(render::SpriteBatch&)> overlay_2d;   // extra sprites/lines after extraction
     math::Color clear_2d{0.08f, 0.085f, 0.1f, 1};
+    bool draw_ui{true};                           // in-game UI canvases over the frame
 };
 
 struct SceneViewStats {
@@ -33,6 +35,7 @@ struct SceneViewStats {
     ExtractStats extract;
     std::uint32_t sprites{0};
     render::SceneStats scene;
+    GameUiStats ui;
 };
 
 class SceneView {
@@ -50,6 +53,10 @@ private:
     rhi::Format format_{rhi::Format::RGBA8_UNORM};
     std::unique_ptr<render::SceneRenderer> renderer_;
     std::unique_ptr<render::SpriteBatch> sprites_;
+    std::unique_ptr<GameUiRenderer> ui_; // created on first scene with a UI canvas
+    [[nodiscard]] Status render_ui(rhi::CommandBuffer& cmd, scene::Scene& scene, GpuAssetCache& assets, rhi::TextureHandle target,
+                                   std::uint32_t width, std::uint32_t height, const SceneViewOptions& options, SceneViewStats& stats);
+    render::GpuContext* gpu_{nullptr};
 };
 
 } // namespace victus::runtime

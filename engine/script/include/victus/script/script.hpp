@@ -121,6 +121,7 @@ public:
 private:
     explicit ScriptHost(std::unique_ptr<Impl> impl);
     void dispatch_physics_events(scene::Scene& scene);
+    void dispatch_ui_events(scene::Scene& scene);
     std::unique_ptr<Impl> impl_;
 };
 

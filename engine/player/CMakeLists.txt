@@ -34,6 +34,8 @@ victus_add_notice("miniaudio 0.11.26 (public domain or MIT-0)" "${miniaudio_SOUR
 victus_add_notice("stb (stb_image, stb_image_write, stb_truetype; MIT or public domain)" "${PROJECT_SOURCE_DIR}/third_party/stb/LICENSE")
 file(APPEND ${_notices_txt} "\nstb_vorbis (bundled with miniaudio, MIT or public domain): Copyright (c) 2017 Sean Barrett.\n")
 victus_add_notice("cgltf 1.15 (MIT)" "${PROJECT_SOURCE_DIR}/third_party/cgltf/LICENSE")
+victus_add_notice("Dear ImGui 1.93.0 (MIT)" "${PROJECT_SOURCE_DIR}/third_party/imgui/LICENSE.txt")
+victus_add_notice("Inter font 5.2.8 (SIL Open Font License 1.1)" "${PROJECT_SOURCE_DIR}/third_party/fonts/inter/LICENSE.txt")
 
 file(READ ${_notices_txt} _hex HEX)
 string(LENGTH "${_hex}" _hex_len)

@@ -73,7 +73,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 - [ ] Tilemaps, tile sets, autotiling, grid and 2D world editing.
 - [x] 2D physics, collision shapes, queries and debug visualization: Box2D 3.2.0 bodies, box/circle/capsule colliders, triggers, raycast/overlap queries, editor collider overlay (Slice 6); 2D character mover, one-way platforms and 2D joints (Slice 14).
 - [ ] 2D animation, skeletal/rigged workflows where justified, particles and parallax.
-- [ ] 2D UI, input, audio, scene transitions and 2D lighting/effects.
+- [~] 2D UI, input, audio, scene transitions and 2D lighting/effects. Done: input, audio (Slice 7), in-game UI (Slice 15). Remaining: scene transitions, 2D lighting/effects.
 - [ ] 2D templates, profiling, export and playable reference game.
 **Exit:** build and ship a complete 2D game using only supported VICTUS workflows.
 
@@ -106,7 +106,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 - [ ] Navigation meshes, pathfinding, avoidance, crowds and behavior/state systems.
 - [ ] Gameplay AI: perception, decision systems, behavior trees/utility/state machines and debugging.
 - [~] Audio playback, buses/mixing, spatialization, effects, streaming and profiling. Done (Slice 7): miniaudio 0.11.26 behind `victus::audio`, `AudioSource`/`AudioListener`, WAV/Ogg/MP3/FLAC, six buses with volume/mute, 3D attenuation following transforms, streaming music, one-shots, Luau API, editor inspector + preview, null-device mixing tests. Remaining: effects/reverb, HRTF, ducking, profiling view.
-- [ ] Runtime UI, layout, input/accessibility, localization and visual UI editor.
+- [~] Runtime UI, layout, input/accessibility, localization and visual UI editor. Done (Slice 15): `engine/gameui` canvases, anchored rects, panels, images, text (Inter), buttons, layouts, pointer/keyboard interaction, Luau API, rendering in 2D/3D. Remaining: visual UI editor, localization, accessibility, rich text, more widgets.
 - [~] Particle/VFX system, GPU/CPU emitters, trails, curves, collision and VFX authoring. Done (Slice 13): deterministic CPU emitters (`ParticleEmitter`: rate/bursts/cycles, shapes, gravity/drag, size/colour over life with HDR glow, spin, alpha/additive), parallel simulation, soft depth-faded instanced billboards in the HDR pass, 2D sprite path, Luau control, template fire/sparks/smoke/dust/coin sparkles. Remaining: GPU simulation, trails/ribbons, flipbooks, curve editing, collision, sub-emitters, lit particles, VFX authoring tools.
 **Exit:** reference game exercises the systems together without one-off engine bypasses.
 

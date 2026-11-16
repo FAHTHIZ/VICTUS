@@ -6,6 +6,7 @@
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/gameui/gameui.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
 
@@ -714,4 +715,99 @@ return Speaker
     auto bad = host->eval("audio.set_volume('Nope', 1)", &s);
     REQUIRE_FALSE(bad.ok());
     CHECK(bad.error().message.find("unknown audio bus") != std::string::npos);
+}
+
+TEST_CASE("script: in-game UI text, visibility, state and on_click") {
+    TempDir d("victus_script_ui");
+    // The menu script sits on the canvas: clicks on its buttons bubble up to it.
+    d.write("scripts/menu.luau", R"lua(
+local Menu = {}
+function Menu:start()
+    self.score = 0
+    scene.find("Score"):set_text("Score 0")
+    scene.find("Banner"):set_visible(false)
+end
+function Menu:on_click(button, action)
+    if action == "add" then
+        self.score += 1
+        scene.find("Score"):set_text("Score " .. self.score)
+        if self.score >= 2 then scene.find("Banner"):set_visible(true) end
+    end
+    self.last = button.name .. ":" .. action
+end
+function Menu:update(dt)
+    local w, h = ui.screen_size()
+    self.entity.name = (self.last or "none") .. "|" .. w .. "x" .. h
+end
+return Menu
+)lua");
+    auto host = make_host(d);
+    gameui::register_components();
+    gameplay::Simulation sim;
+    gameui::add_ui_systems(sim);
+    script::add_script_systems(sim, *host);
+    gameplay::ManualInput input;
+    sim.input = &input;
+    Scene s;
+    gameui::set_screen_size(s, {640, 360});
+    const Entity canvas = scripted(s, "Menu", "scripts/menu.luau");
+    auto& cc = s.world().add<gameui::UiCanvasComponent>(canvas);
+    cc.reference_size = {640, 360};
+    const auto rect = [&](const char* name, math::Vec2 pos) {
+        const Entity e = s.create(name, canvas);
+        gameui::UiRectComponent r;
+        r.anchor_min = r.anchor_max = {0, 0};
+        r.pivot = {0, 0};
+        r.position = pos;
+        r.size = {100, 40};
+        s.world().add<gameui::UiRectComponent>(e, r);
+        return e;
+    };
+    const Entity score = rect("Score", {10, 10});
+    s.world().add<gameui::UiTextComponent>(score);
+    const Entity add = rect("Add", {10, 100});
+    s.world().add<gameui::UiButtonComponent>(add).action = "add";
+    const Entity banner = rect("Banner", {200, 10});
+    s.world().add<gameui::UiPanelComponent>(banner);
+
+    sim.tick(s, 1.0f / 60);
+    CHECK(s.world().get<gameui::UiTextComponent>(score)->text == "Score 0");
+    CHECK_FALSE(s.world().get<gameui::UiRectComponent>(banner)->visible);
+    // Two real mouse clicks on the button (press + release inside it).
+    input.set_mouse_position({50, 120});
+    for (int i = 0; i < 2; ++i) {
+        input.set_mouse(0, true);
+        sim.tick(s, 1.0f / 60);
+        input.set_mouse(0, false);
+        sim.tick(s, 1.0f / 60);
+    }
+    CHECK(s.world().get<gameui::UiTextComponent>(score)->text == "Score 2");
+    CHECK(s.world().get<gameui::UiRectComponent>(banner)->visible);
+    CHECK(s.world().get<scene::Name>(canvas)->value == "Add:add|640x360");
+
+    auto q = host->eval(R"lua(
+local b = scene.find("Add")
+local st = b:ui_state()
+local clicked = ui.click(b)
+local banner = scene.find("Banner")
+return { hovered = st.hovered, x = st.x, w = st.width, clicks = st.clicks, clicked = clicked,
+         text = scene.find("Score"):text(), visible = banner:visible(), over = ui.pointer_over_ui(),
+         none = scene.find("Banner"):ui_state().pressed }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["hovered"].as_bool());
+    CHECK(q.value()["x"].as_number() == doctest::Approx(10));
+    CHECK(q.value()["w"].as_number() == doctest::Approx(100));
+    CHECK(q.value()["clicks"].as_number() == doctest::Approx(2));
+    CHECK(q.value()["clicked"].as_bool());
+    CHECK(q.value()["text"].as_string() == "Score 2");
+    CHECK(q.value()["visible"].as_bool());
+    CHECK(q.value()["over"].as_bool());
+    CHECK_FALSE(q.value()["none"].as_bool());
+    // The scripted click is delivered to on_click on the next update.
+    sim.tick(s, 1.0f / 60);
+    CHECK(s.world().get<gameui::UiTextComponent>(score)->text == "Score 3");
+    auto bad = host->eval("scene.find('Banner'):set_text('x')", &s);
+    REQUIRE_FALSE(bad.ok());
+    CHECK(bad.error().message.find("no UiText") != std::string::npos);
 }

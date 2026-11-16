@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "doctest.h"
+#include "victus/gameui/gameui.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/project/project.hpp"
 #include "victus/audio/audio.hpp"
@@ -215,6 +216,26 @@ struct TemplateRun {
         REQUIRE_FALSE(e.is_null());
         return scene.world().get<scene::Transform>(e)->position;
     }
+    std::string text(const char* name) {
+        const auto e = scene.find_by_name(name);
+        REQUIRE_FALSE(e.is_null());
+        const auto* t = scene.world().get<gameui::UiTextComponent>(e);
+        REQUIRE(t);
+        return t->text;
+    }
+    bool ui_visible(const char* name) {
+        const auto e = scene.find_by_name(name);
+        REQUIRE_FALSE(e.is_null());
+        return scene.world().get<gameui::UiRectComponent>(e)->visible;
+    }
+    // Presses and releases the left mouse button at a point (pixels, 1280x720 headless).
+    void click_at(math::Vec2 p) {
+        input.set_mouse_position(p);
+        input.set_mouse(0, true);
+        frames(1);
+        input.set_mouse(0, false);
+        frames(1);
+    }
 };
 
 std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir) {
@@ -231,6 +252,7 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     REQUIRE(h.ok());
     r->host = std::move(h).value();
     gameplay::add_builtin_systems(r->sim);
+    gameui::add_ui_systems(r->sim);
     script::add_script_systems(r->sim, *r->host);
     auto w = physics::PhysicsWorld::create();
     REQUIRE(w.ok());
@@ -263,7 +285,8 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     auto r = start_template("2d", dir);
     r->frames(30); // settle: the player starts on the ground
     CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
-    CHECK(r->host->stats().instances == 4); // player + 3 coins
+    CHECK(r->host->stats().instances == 5); // player + 3 coins + HUD
+    CHECK(r->text("Coin Counter") == "Coins 0 / 3");
     CHECK(r->audio->is_playing(r->scene.find_by_name("Music"))); // looping streamed music
     CHECK(r->audio->stats().one_shots == 0);
     // Run right: the player stops at the right wall and collects the coin on the ground.
@@ -273,6 +296,7 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
     CHECK(r->scene.find_by_name("Coin 3").is_null());
     CHECK_FALSE(r->scene.find_by_name("Coin 1").is_null());
+    CHECK(r->text("Coin Counter") == "Coins 1 / 3");
     CHECK(r->audio->stats().one_shots == 1); // coin pickup sound
     // The pickup burst came from the shared Sparkles emitter; remaining coins still glitter.
     CHECK(particles::status(r->scene, r->scene.find_by_name("Sparkles")).emitted == 28);
@@ -304,6 +328,8 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     r->input.set_key("Right", false);
     r->frames(30);
     CHECK(r->scene.find_by_name("Coin 1").is_null());
+    CHECK(r->text("Coin Counter") == "Coins 2 / 3");
+    CHECK_FALSE(r->ui_visible("Win Banner"));
     // The lantern hangs from its bracket on a live revolute joint.
     const scene::Entity lantern = r->scene.find_by_name("Lantern");
     CHECK(r->physics->joint_state(lantern).active);
@@ -329,6 +355,49 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     for (const auto& e : r->host->recent_errors()) MESSAGE(e);
     std::error_code ec;
     sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("templates: HUD controls panel toggles with its button and H; the 2D banner shows on completion") {
+    for (const char* id : {"2d", "3d"}) {
+        CAPTURE(id);
+        const auto dir = temp_dir(id[0] == '2' ? "tplhud2d" : "tplhud3d");
+        auto r = start_template(id, dir);
+        r->frames(2);
+        CHECK(r->ui_visible("Controls Panel"));
+        // The button: anchored top-right, 164x52 at 24 px from the edges of the 1280x720 screen.
+        const scene::Entity help = r->scene.find_by_name("Help Button");
+        const auto* st = r->scene.world().get<gameui::UiStateComponent>(help);
+        REQUIRE(st);
+        CHECK(st->rect.x == doctest::Approx(1280 - 24 - 164));
+        CHECK(st->rect.y == doctest::Approx(24));
+        r->click_at({1170, 50});
+        CHECK_FALSE(r->ui_visible("Controls Panel"));
+        r->click_at({1170, 50});
+        CHECK(r->ui_visible("Controls Panel"));
+        // A press outside the button does nothing.
+        r->click_at({640, 400});
+        CHECK(r->ui_visible("Controls Panel"));
+        r->input.set_key("H", true);
+        r->frames(1);
+        r->input.set_key("H", false);
+        r->frames(1);
+        CHECK_FALSE(r->ui_visible("Controls Panel"));
+        if (id[0] == '2') {
+            // Collect every coin by moving the player onto each one: the banner appears.
+            const scene::Entity player = r->scene.find_by_name("Player");
+            for (const char* coin : {"Coin 1", "Coin 2", "Coin 3"}) {
+                const math::Vec3 at = r->pos(coin);
+                r->scene.world().get<scene::Transform>(player)->position = at;
+                r->frames(3);
+            }
+            CHECK(r->text("Coin Counter") == "Coins 3 / 3");
+            CHECK(r->ui_visible("Win Banner"));
+        }
+        CHECK(r->host->stats().errors == 0);
+        for (const auto& e : r->host->recent_errors()) MESSAGE(e);
+        std::error_code ec;
+        sfs::remove_all(dir, ec);
+    }
 }
 
 TEST_CASE("templates: 3D character climbs the steps, jumps and swings the gate") {

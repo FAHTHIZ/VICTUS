@@ -111,3 +111,8 @@ No third-party code was added; Box2D 3.2.0 was already a dependency.
 No third-party code was added.
 - Tristan Lorach, "Soft Particles" (NVIDIA white paper, 2007) — https://developer.download.nvidia.com/whitepapers/2007/SDK10/SoftParticles_hi.pdf . Compare each particle fragment's depth with the scene depth read as a texture, fade with the scaled, saturated difference, and discard fragments behind the scene. VICTUS reconstructs linear view depth from the depth buffer (`proj[3].z / (d + proj[2].z)` for its 0..1 right-handed projection) and fades over the emitter's `softness` in metres.
 - Open questions: GPU simulation with compute and indirect draws, depth-buffer collisions, trails/ribbons, flipbook animation with motion vectors, and lit particles.
+
+## Research conclusions added 2026-11-16 (Slice 15, in-game UI)
+- Unity uGUI `CanvasScaler.cs` (MatchWidthOrHeight) — https://github.com/Unity-Technologies/uGUI/blob/main/com.unity.ugui/Runtime/UGUI/UI/Core/Layout/CanvasScaler.cs . The scale factor is `2^lerp(log2(w/ref_w), log2(h/ref_h), match)`, so opposite deviations on the two axes cancel at 0.5. VICTUS uses the same blend.
+- Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
+- Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
