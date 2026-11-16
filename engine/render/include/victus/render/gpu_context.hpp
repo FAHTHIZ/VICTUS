@@ -7,6 +7,7 @@
 #include "victus/rhi/rhi.hpp"
 
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -52,6 +53,8 @@ public:
     // Uploads are recorded into their own command buffer and submitted immediately; queue
     // ordering guarantees they complete before later frame command buffers execute.
     [[nodiscard]] Result<rhi::TextureHandle> create_texture(const Image& image, const TextureOptions& options = {});
+    // Uploads a complete pre-built mip chain (e.g. from the asset cooker); options.mipmaps is ignored.
+    [[nodiscard]] Result<rhi::TextureHandle> create_texture_mips(std::span<const Image> chain, const TextureOptions& options = {});
     [[nodiscard]] Result<GpuMesh> create_mesh(const MeshData& mesh, std::string_view name = "mesh");
     void destroy(GpuMesh& mesh);
     // Best available depth format that can also be sampled (shadow maps).

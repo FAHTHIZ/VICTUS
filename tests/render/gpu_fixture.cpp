@@ -3,6 +3,7 @@
 
 #include "victus/render/image.hpp"
 
+#include <cstdio>
 #include <cstring>
 
 #if defined(_WIN32)
@@ -51,9 +52,16 @@ Gpu& gpu() {
             return r;
         }
         r.ctx = std::move(c).value();
-        MESSAGE("GPU: " << r.device->capabilities().driver_name);
         return r;
     }();
+    static const bool reported = [] {
+        // Always printed so CI logs show which backend actually executed (or why it skipped).
+        if (g.device) std::printf("[victus] GPU tests running on backend: %s\n", g.device->capabilities().driver_name.c_str());
+        else std::printf("[victus] GPU tests skipped: %s\n", g.failure.c_str());
+        std::fflush(stdout);
+        return true;
+    }();
+    (void)reported;
     return g;
 }
 

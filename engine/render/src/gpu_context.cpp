@@ -3,6 +3,7 @@
 
 #include "victus/render/builtin_shaders.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <format>
 
@@ -80,23 +81,29 @@ Result<rhi::ShaderHandle> GpuContext::shader(std::string_view name) {
 Result<rhi::TextureHandle> GpuContext::create_texture(const Image& image, const TextureOptions& options) {
     if (image.empty() || image.width == 0 || image.height == 0)
         return make_error(ErrorCode::InvalidArgument, std::format("texture '{}' has no pixels", options.name));
-    std::vector<Image> chain;
-    if (options.mipmaps) chain = build_mip_chain(image, options.srgb);
+    if (options.mipmaps) return create_texture_mips(build_mip_chain(image, options.srgb), options);
+    return create_texture_mips(std::span<const Image>(&image, 1), options);
+}
+
+Result<rhi::TextureHandle> GpuContext::create_texture_mips(std::span<const Image> chain, const TextureOptions& options) {
+    if (chain.empty() || chain[0].empty() || chain[0].width == 0 || chain[0].height == 0)
+        return make_error(ErrorCode::InvalidArgument, std::format("texture '{}' has no pixels", options.name));
+    for (std::size_t m = 0; m < chain.size(); ++m) {
+        const std::uint32_t w = std::max(1u, chain[0].width >> m), h = std::max(1u, chain[0].height >> m);
+        if (chain[m].width != w || chain[m].height != h || chain[m].pixels.size() != std::size_t{w} * h * 4)
+            return make_error(ErrorCode::InvalidArgument, std::format("texture '{}' mip {} has wrong size", options.name, m));
+    }
     rhi::TextureDesc d;
     d.name = options.name;
     d.format = options.srgb ? rhi::Format::RGBA8_SRGB : rhi::Format::RGBA8_UNORM;
-    d.width = image.width;
-    d.height = image.height;
-    d.mip_levels = options.mipmaps ? static_cast<std::uint32_t>(chain.size()) : 1;
+    d.width = chain[0].width;
+    d.height = chain[0].height;
+    d.mip_levels = static_cast<std::uint32_t>(chain.size());
     d.usage = rhi::TextureUsageSampled;
     auto tex = device_.create_texture(d);
     if (!tex) return tex;
     auto cmd = device_.begin_commands();
-    if (options.mipmaps) {
-        for (std::uint32_t m = 0; m < chain.size(); ++m) cmd.upload_texture(tex.value(), chain[m].pixels, m);
-    } else {
-        cmd.upload_texture(tex.value(), image.pixels, 0);
-    }
+    for (std::uint32_t m = 0; m < chain.size(); ++m) cmd.upload_texture(tex.value(), chain[m].pixels, m);
     cmd.submit();
     return tex;
 }
