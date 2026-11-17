@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/runtime/scene_rendering.hpp"
+#include "victus/runtime/surface_shader.hpp"
 #include "victus/particles/particles.hpp"
 
 #include "victus/core/log.hpp"
@@ -24,7 +25,7 @@ void GpuAssetCache::clear() {
     models_.clear();
     for (auto& [name, mesh] : primitives_) ctx_.destroy(mesh);
     primitives_.clear();
-    materials_.clear();
+    evict_shaders();
 }
 
 void GpuAssetCache::evict(const Uuid& uuid) {
@@ -74,6 +75,11 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
         m.uv_scale = src->uv_scale;
         m.uv_offset = src->uv_offset;
         m.nearest_filter = src->filter == assets::TextureFilter::Nearest;
+        m.shader_params = src->shader_params;
+        if (!src->shader.is_nil()) {
+            if (auto sh = surface_shader(src->shader); sh) m.surface_shader = *sh;
+            // else: already logged by surface_shader(); the material renders with built-in PBR
+        }
         rhi::TextureHandle* slots[4] = {&m.base_color_texture, &m.metallic_roughness_texture, &m.normal_texture, &m.emissive_texture};
         const auto refs = src->textures();
         for (std::size_t i = 0; i < 4; ++i) {
@@ -92,6 +98,41 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
     auto result = build();
     if (!result) VICTUS_LOG_WARN("assets", "{}", result.error().message);
     return materials_.emplace(uuid, std::move(result)).first->second;
+}
+
+Result<rhi::ShaderHandle> GpuAssetCache::surface_shader(const Uuid& uuid) {
+    if (const auto it = shaders_.find(uuid); it != shaders_.end()) return it->second;
+    auto build = [&]() -> Result<rhi::ShaderHandle> {
+        if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
+        const assets::AssetRecord* rec = db_->find(uuid);
+        if (!rec || rec->kind != assets::AssetKind::Shader)
+            return make_error(ErrorCode::NotFound, "surface shader " + uuid.to_string() + " is missing");
+        const std::string path = rec->path; // records may move on refresh
+        auto code = db_->load_shader_source(uuid);
+        if (!code) return std::move(code).error();
+        auto compiled = compile_surface_shader(*code, path, ctx_.device().capabilities().backend == rhi::Backend::Metal);
+        if (!compiled) return std::move(compiled).error();
+        rhi::ShaderDesc d;
+        d.name = path;
+        d.stage = rhi::ShaderStage::Fragment;
+        d.spirv = compiled->spirv;
+        d.msl = compiled->msl;
+        d.samplers = compiled->counts.samplers;
+        d.storage_textures = compiled->counts.storage_textures;
+        d.storage_buffers = compiled->counts.storage_buffers;
+        d.uniform_buffers = compiled->counts.uniform_buffers;
+        return ctx_.device().create_shader(d);
+    };
+    auto result = build();
+    if (!result) VICTUS_LOG_ERROR("assets", "{}", result.error().message);
+    return shaders_.emplace(uuid, std::move(result)).first->second;
+}
+
+void GpuAssetCache::evict_shaders() {
+    materials_.clear(); // they hold the shader handles
+    for (auto& [id, sh] : shaders_)
+        if (sh) ctx_.device().destroy(*sh);
+    shaders_.clear();
 }
 
 Result<const GpuModel*> GpuAssetCache::model(const Uuid& uuid) {

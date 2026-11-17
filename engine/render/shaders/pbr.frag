@@ -4,6 +4,10 @@
 // shadow maps (2x2 atlas, PCF, dithered cascade transitions), forward point lights (up to 16),
 // analytic sky environment lighting (diffuse + split-sum specular approximation), screen-space
 // ambient occlusion and emissive.
+//
+// Project surface shaders (.vshader, ADR-0035) are spliced in at VICTUS_SURFACE_CODE: they
+// define `void surface(SurfaceInput i, inout Surface s)`, which runs after the material's
+// textures were sampled and before lighting. The interface below is a stable contract.
 layout(location = 0) in vec3 v_world_pos;
 layout(location = 1) in vec3 v_normal;
 layout(location = 2) in vec2 v_uv;
@@ -29,7 +33,7 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 cascade_params; // x: soft (3x3 PCF), y: atlas tile scale, z: transition fraction
     vec4 cascade_splits; // far view depth of each cascade
     vec4 cascade_texel;  // world-space texel size of each cascade
-    vec4 screen;         // xy: 1 / render size
+    vec4 screen;         // xy: 1 / render size, z: time in seconds (wraps every hour)
     mat4 cascade_vp[4];
     PointLight points[16];
 } lighting;
@@ -39,11 +43,36 @@ layout(set = 3, binding = 1) uniform Material {
     vec4 params;         // x metallic, y roughness, z normal scale, w alpha cutoff
     vec4 flags;          // x has normal map, y unlit
     vec4 uv_transform;   // xy scale, zw offset (material tiling)
+    vec4 custom[4];      // surface shader parameters (material "shader_params")
 } material;
 
 layout(location = 0) out vec4 out_color;
 
 const float PI = 3.14159265359;
+
+// What the lighting uses. Surface shaders may change any field.
+struct Surface {
+    vec3 base_color; // linear albedo
+    float alpha;     // < the material's alpha cutoff discards the pixel
+    vec3 normal;     // world space, unit length, facing the viewer
+    float metallic;
+    float roughness;
+    vec3 emissive;   // linear radiance added after lighting
+    float occlusion; // multiplies ambient light (1 = unoccluded)
+    bool unlit;      // output base_color + emissive without lighting
+};
+// Read-only inputs for surface shaders.
+struct SurfaceInput {
+    vec2 uv;             // material-transformed texture coordinates
+    vec2 mesh_uv;        // the mesh's own texture coordinates
+    vec3 world_position;
+    vec3 view_dir;       // unit vector towards the camera
+    vec3 vertex_normal;  // interpolated geometric normal (world space)
+    float time;          // seconds
+    vec4 params[4];      // the material's shader parameters
+};
+
+// VICTUS_SURFACE_CODE
 
 float distribution_ggx(float NdotH, float a) {
     float a2 = a * a;
@@ -136,18 +165,18 @@ float shadow_factor(vec3 N, vec3 L) {
 void main() {
     vec2 uv = v_uv * material.uv_transform.xy + material.uv_transform.zw;
     vec4 base = texture(u_base_color, uv) * material.base_color;
-    if (base.a < material.params.w) discard;
-    vec3 emissive = texture(u_emissive, uv).rgb * material.emissive.rgb;
-    if (material.flags.y > 0.5) {
-        out_color = vec4(base.rgb + emissive, base.a);
-        return;
-    }
+    vec3 geometric_n = normalize(v_normal);
+    if (!gl_FrontFacing) geometric_n = -geometric_n;
+    Surface s;
+    s.base_color = base.rgb;
+    s.alpha = base.a;
+    s.emissive = texture(u_emissive, uv).rgb * material.emissive.rgb;
+    s.unlit = material.flags.y > 0.5;
+    s.occlusion = 1.0;
     vec4 mr = texture(u_metal_rough, uv);
-    float metallic = clamp(material.params.x * mr.b, 0.0, 1.0);
-    float roughness = clamp(material.params.y * mr.g, 0.045, 1.0);
-
-    vec3 N = normalize(v_normal);
-    if (!gl_FrontFacing) N = -N;
+    s.metallic = clamp(material.params.x * mr.b, 0.0, 1.0);
+    s.roughness = clamp(material.params.y * mr.g, 0.045, 1.0);
+    vec3 N = geometric_n;
     if (material.flags.x > 0.5) {
         vec3 T = normalize(v_tangent.xyz - N * dot(N, v_tangent.xyz));
         vec3 B = cross(N, T) * v_tangent.w;
@@ -155,8 +184,31 @@ void main() {
         tn.xy *= material.params.z;
         N = normalize(mat3(T, B, N) * tn);
     }
+    s.normal = N;
     vec3 V = normalize(lighting.camera_pos.xyz - v_world_pos);
-    vec3 albedo = base.rgb;
+#ifdef VICTUS_SURFACE_SHADER
+    SurfaceInput si;
+    si.uv = uv;
+    si.mesh_uv = v_uv;
+    si.world_position = v_world_pos;
+    si.view_dir = V;
+    si.vertex_normal = geometric_n;
+    si.time = lighting.screen.z;
+    si.params = material.custom;
+    surface(si, s);
+    s.normal = normalize(s.normal);
+    s.metallic = clamp(s.metallic, 0.0, 1.0);
+    s.roughness = clamp(s.roughness, 0.045, 1.0);
+#endif
+    if (s.alpha < material.params.w) discard;
+    if (s.unlit) {
+        out_color = vec4(s.base_color + s.emissive, s.alpha);
+        return;
+    }
+    N = s.normal;
+    vec3 albedo = s.base_color;
+    float metallic = s.metallic;
+    float roughness = s.roughness;
 
     vec3 L = normalize(-lighting.sun_dir.xyz);
     vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * shadow_factor(N, L);
@@ -179,12 +231,13 @@ void main() {
     vec2 ab = env_brdf(NdotV, roughness);
     vec3 R = reflect(-V, N);
     // Specular occlusion approximation: reflections below the local horizon are dimmed.
-    float horizon = clamp(1.0 + dot(R, normalize(v_normal)), 0.0, 1.0);
+    float horizon = clamp(1.0 + dot(R, geometric_n), 0.0, 1.0);
     vec3 specular = environment(R, roughness) * (f0 * ab.x + ab.y) * horizon * horizon;
     float ao = lighting.camera_pos.w > 0.5 ? texture(u_ao, gl_FragCoord.xy * lighting.screen.xy).r : 1.0;
+    ao *= s.occlusion;
     // Specular occlusion from AO (Lagarde & de Rousiers 2014 approximation).
     float spec_ao = clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
     color += kd * albedo * irradiance * ao + specular * spec_ao;
-    color += emissive;
-    out_color = vec4(color, base.a);
+    color += s.emissive;
+    out_color = vec4(color, s.alpha);
 }

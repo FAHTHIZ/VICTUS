@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/render/scene_renderer.hpp"
 
+#include "victus/core/log.hpp"
 #include "victus/core/profiler.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <format>
@@ -53,6 +55,11 @@ std::uint64_t material_key(const Material& m) noexcept {
         h = mix(h, bits(f));
     for (auto t : {m.base_color_texture, m.metallic_roughness_texture, m.normal_texture, m.emissive_texture})
         h = mix(h, handle_bits(t));
+    if (m.surface_shader) {
+        h = mix(h, (std::uint64_t{m.surface_shader.generation} << 32) | m.surface_shader.index);
+        for (const Vec4& p : m.shader_params)
+            for (float f : {p.x, p.y, p.z, p.w}) h = mix(h, bits(f));
+    }
     return mix(h, (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u));
 }
 
@@ -64,7 +71,9 @@ bool same_material(const Material& a, const Material& b) noexcept {
            a.metallic_roughness_texture == b.metallic_roughness_texture && a.normal_texture == b.normal_texture &&
            a.emissive_texture == b.emissive_texture && a.double_sided == b.double_sided && a.unlit == b.unlit &&
            a.cast_shadows == b.cast_shadows && a.uv_scale == b.uv_scale && a.uv_offset == b.uv_offset &&
-           a.nearest_filter == b.nearest_filter;
+           a.nearest_filter == b.nearest_filter && a.surface_shader == b.surface_shader &&
+           std::equal(a.shader_params.begin(), a.shader_params.end(), b.shader_params.begin(),
+                      [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; });
 }
 struct GpuPointLight {
     Vec4 position_range;
@@ -92,6 +101,7 @@ struct MaterialUniforms {
     Vec4 params;
     Vec4 flags;
     Vec4 uv_transform; // xy scale, zw offset
+    Vec4 custom[4];    // surface shader parameters
 };
 struct ShadowUniforms {
     Mat4 light_view_proj;
@@ -134,6 +144,10 @@ constexpr std::uint32_t kLuminanceSize = 64;
 
 bool is_srgb(rhi::Format f) { return f == rhi::Format::RGBA8_SRGB || f == rhi::Format::BGRA8_SRGB; }
 Vec4 rgb(Color c, float scale = 1.0f, float w = 0.0f) { return {c.r * scale, c.g * scale, c.b * scale, w}; }
+std::chrono::steady_clock::time_point render_epoch() {
+    static const auto epoch = std::chrono::steady_clock::now();
+    return epoch;
+}
 Vec4 inv_size(std::uint32_t w, std::uint32_t h, float z = 0.0f, float ww = 0.0f) {
     return {1.0f / static_cast<float>(w), 1.0f / static_cast<float>(h), z, ww};
 }
@@ -301,6 +315,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     auto p = dev.create_pipeline(opaque);
     if (!p) return std::move(p).error();
     r->opaque_cull_ = p.value();
+    r->opaque_desc_ = opaque;
     opaque.name = "pbr_double_sided";
     opaque.cull = rhi::CullMode::None;
     p = dev.create_pipeline(opaque);
@@ -316,6 +331,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     p = dev.create_pipeline(skinned);
     if (!p) return std::move(p).error();
     r->skin_cull_ = p.value();
+    r->skinned_desc_ = skinned;
     skinned.name = "pbr_skinned_double_sided";
     skinned.cull = rhi::CullMode::None;
     p = dev.create_pipeline(skinned);
@@ -441,6 +457,42 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     return r;
 }
 
+rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, bool skinned, bool double_sided) {
+    const std::uint64_t key = (std::uint64_t{fragment.generation} << 32) | fragment.index;
+    auto it = surface_pipelines_.find(key);
+    if (it == surface_pipelines_.end()) {
+        // Hot reload creates new shader handles; drop the oldest sets instead of growing forever.
+        if (surface_pipelines_.size() >= 64) {
+            for (auto& [k, set] : surface_pipelines_)
+                for (auto pl : set)
+                    if (pl) ctx_.device().destroy(pl);
+            surface_pipelines_.clear();
+        }
+        std::array<rhi::PipelineHandle, 4> set{};
+        bool ok = true;
+        for (int i = 0; i < 4 && ok; ++i) {
+            rhi::PipelineDesc d = (i >= 2) ? skinned_desc_ : opaque_desc_;
+            d.name = std::format("surface_{}_{}", fragment.index, i);
+            d.fragment = fragment;
+            d.cull = (i & 1) ? rhi::CullMode::None : rhi::CullMode::Back;
+            auto p = ctx_.device().create_pipeline(d);
+            if (!p) {
+                VICTUS_LOG_ERROR("render", "surface shader pipeline: {}", p.error().message);
+                ok = false;
+                break;
+            }
+            set[static_cast<std::size_t>(i)] = *p;
+        }
+        if (!ok) {
+            for (auto pl : set)
+                if (pl) ctx_.device().destroy(pl);
+            set = {};
+        }
+        it = surface_pipelines_.emplace(key, set).first;
+    }
+    return it->second[(skinned ? 2u : 0u) + (double_sided ? 1u : 0u)];
+}
+
 SceneRenderer::~SceneRenderer() {
     auto& d = ctx_.device();
     for (auto pl : {opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_, prepass_cull_,
@@ -449,6 +501,9 @@ SceneRenderer::~SceneRenderer() {
         if (pl) d.destroy(pl);
     if (palette_buffer_) d.destroy(palette_buffer_);
     for (auto& [k, pl] : post_) d.destroy(pl);
+    for (auto& [k, set] : surface_pipelines_)
+        for (auto pl : set)
+            if (pl) d.destroy(pl);
     if (no_shadow_) d.destroy(no_shadow_);
     for (auto t : exposure_)
         if (t) d.destroy(t);
@@ -668,6 +723,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         visible.push_back(&d);
     }
     std::sort(visible.begin(), visible.end(), [](const Draw* a, const Draw* b) {
+        if (a->material.surface_shader.index != b->material.surface_shader.index)
+            return a->material.surface_shader.index < b->material.surface_shader.index;
         if (a->material.double_sided != b->material.double_sided) return !a->material.double_sided;
         if (a->material.base_color_texture.index != b->material.base_color_texture.index)
             return a->material.base_color_texture.index < b->material.base_color_texture.index;
@@ -837,7 +894,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     lighting.cascade_params = {S.soft_shadows ? 1.0f : 0.0f, 1.0f / static_cast<float>(atlas_tiles), 0.1f, 0.0f};
     lighting.cascade_splits = {cascade_splits_[0], cascade_splits_[1], cascade_splits_[2], cascade_splits_[3]};
     lighting.cascade_texel = {cascade_texel_[0], cascade_texel_[1], cascade_texel_[2], cascade_texel_[3]};
-    lighting.screen = inv_size(rw, rh);
+    {
+        double t = time_ ? *time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - render_epoch()).count();
+        t = std::fmod(std::max(t, 0.0), 3600.0); // keeps float precision for sin(time) and scrolling
+        lighting.screen = inv_size(rw, rh, static_cast<float>(t));
+    }
     for (std::uint32_t c = 0; c < 4; ++c) lighting.cascade_vp[c] = cascade_vp_[c];
     for (std::size_t i = 0; i < points_.size(); ++i) {
         const auto& pl = points_[i];
@@ -904,7 +965,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 rhi::PipelineHandle bound{};
                 for (const Batch& b : main_batches) {
                     const Draw* d = b.first;
-                    if (d->material.alpha_cutoff > 0.0f) continue; // alpha-tested: depth comes from the main pass
+                    // Alpha-tested and surface-shaded draws (which may discard): depth comes from the main pass.
+                    if (d->material.alpha_cutoff > 0.0f || d->material.surface_shader) continue;
                     const rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_prepass_double_ : skin_prepass_cull_)
                                                                 : (d->material.double_sided ? prepass_double_ : prepass_cull_);
                     if (!(bound == want)) {
@@ -999,8 +1061,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             rhi::PipelineHandle bound{};
             for (const Batch& b : main_batches) {
                 const Draw* d = b.first;
-                const rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_double_ : skin_cull_)
-                                                            : (d->material.double_sided ? opaque_double_ : opaque_cull_);
+                rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_double_ : skin_cull_)
+                                                      : (d->material.double_sided ? opaque_double_ : opaque_cull_);
+                if (d->material.surface_shader)
+                    if (const auto custom = surface_pipeline(d->material.surface_shader, d->skinned, d->material.double_sided)) want = custom;
                 if (!(bound == want)) {
                     pass.bind_pipeline(want);
                     if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
@@ -1014,6 +1078,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 mat.params = {m.metallic, m.roughness, m.normal_scale, m.alpha_cutoff};
                 mat.flags = {m.normal_texture ? 1.0f : 0.0f, m.unlit ? 1.0f : 0.0f, 0, 0};
                 mat.uv_transform = {m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y};
+                for (std::size_t i = 0; i < 4; ++i) mat.custom[i] = m.shader_params[i];
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
                 auto pick = [](rhi::TextureHandle t, rhi::TextureHandle fallback) { return t ? t : fallback; };
                 const rhi::SamplerHandle tex_sampler = m.nearest_filter ? ctx_.nearest_repeat() : ctx_.linear_repeat();

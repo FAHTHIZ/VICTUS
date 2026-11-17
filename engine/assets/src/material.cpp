@@ -55,7 +55,7 @@ struct Reader {
             out = {};
             return true;
         }
-        if (!v->is_string() || !Uuid::parse(v->as_string(), out)) return fail(key, "a texture asset UUID or null");
+        if (!v->is_string() || !Uuid::parse(v->as_string(), out)) return fail(key, "an asset UUID or null");
         return true;
     }
     bool fail(const char* key, std::string_view expected) {
@@ -85,6 +85,16 @@ json::Value MaterialAsset::to_json() const {
     v.set("filter", filter == TextureFilter::Nearest ? "nearest" : "linear");
     v.set("unlit", unlit);
     v.set("double_sided", double_sided);
+    v.set("shader", uuid_or_null(shader));
+    Value params = Value::array();
+    std::size_t used = 0;
+    for (std::size_t i = 0; i < shader_params.size(); ++i)
+        if (shader_params[i] != math::Vec4{}) used = i + 1;
+    for (std::size_t i = 0; i < used; ++i) {
+        const math::Vec4& p = shader_params[i];
+        params.push(floats({p.x, p.y, p.z, p.w}));
+    }
+    v.set("shader_params", std::move(params));
     return v;
 }
 
@@ -107,6 +117,22 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
                     r.boolean("unlit", m.unlit) && r.boolean("double_sided", m.double_sided);
     if (!ok) return make_error(ErrorCode::ParseError, r.error);
     m.emissive = {emissive[0], emissive[1], emissive[2], 1.0f};
+    if (!r.uuid("shader", m.shader)) return make_error(ErrorCode::ParseError, r.error);
+    if (const Value* p = v.find("shader_params"); p && !p->is_null()) {
+        if (!p->is_array() || p->size() > kMaterialShaderParams)
+            return make_error(ErrorCode::ParseError, "material field 'shader_params' must be an array of up to 4 vectors");
+        for (std::size_t i = 0; i < p->size(); ++i) {
+            const Value& e = (*p)[i];
+            if (!e.is_array() || e.size() < 1 || e.size() > 4)
+                return make_error(ErrorCode::ParseError, "material field 'shader_params' entries must be arrays of 1-4 numbers");
+            float out[4] = {0, 0, 0, 0};
+            for (std::size_t c = 0; c < e.size(); ++c) {
+                if (!e[c].is_number()) return make_error(ErrorCode::ParseError, "material field 'shader_params' entries must be numbers");
+                out[c] = e[c].as_float();
+            }
+            m.shader_params[i] = {out[0], out[1], out[2], out[3]};
+        }
+    }
     if (const Value* f = v.find("filter"); f && !f->is_null()) {
         if (f->is_string() && f->as_string() == "nearest") m.filter = TextureFilter::Nearest;
         else if (f->is_string() && f->as_string() == "linear") m.filter = TextureFilter::Linear;

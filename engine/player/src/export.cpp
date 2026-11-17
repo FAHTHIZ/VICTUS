@@ -9,6 +9,7 @@
 #include "victus/core/log.hpp"
 #include "victus/core/pack.hpp"
 #include "victus/project/project.hpp"
+#include "victus/runtime/surface_shader.hpp"
 #include "victus/scene/scene.hpp"
 #include "victus/script/script.hpp"
 
@@ -156,6 +157,23 @@ Result<ExportReport> export_game(const ExportOptions& o) {
                 errors.push_back(std::format("{}: {} texture {} does not exist", r.path, assets::kMaterialTextureSlotNames[i],
                                              refs[i]->to_string()));
         }
+        if (!m->shader.is_nil()) {
+            const assets::AssetRecord* sh = (*db)->find(m->shader);
+            if (!sh || sh->kind != assets::AssetKind::Shader)
+                errors.push_back(std::format("{}: surface shader {} does not exist", r.path, m->shader.to_string()));
+        }
+    }
+
+    // Surface shaders: every one must compile (for every backend the game may run on).
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::Shader) continue;
+        const std::string path = r.path;
+        auto code = (*db)->load_shader_source(r.uuid);
+        if (!code) {
+            errors.push_back(std::format("{}: {}", path, code.error().message));
+            continue;
+        }
+        if (auto c = runtime::compile_surface_shader(*code, path, true); !c) errors.push_back(c.error().message);
     }
 
     // Scenes: every scene must load; references to scripts and audio clips must resolve.

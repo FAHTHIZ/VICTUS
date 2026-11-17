@@ -202,6 +202,39 @@ std::string ground_material() {
     return json::stringify(m.to_json(), true) + "\n";
 }
 
+// The spinning cube's look: a project surface shader (glowing bands that scroll up the cube plus
+// a rim glow) driven by per-material parameters, as a starting point for custom shaders.
+constexpr const char* kEnergyShaderPath = "assets/shaders/energy.vshader";
+constexpr const char* kEnergyShaderUuid = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f004";
+constexpr const char* kEnergyMaterialPath = "assets/materials/energy_cube.vmat";
+constexpr const char* kEnergyMaterialUuid = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f005";
+constexpr const char* kEnergyShader = R"(// Energy surface shader (used by materials/energy_cube.vmat).
+// Runs per pixel before lighting. See the Surface/SurfaceInput fields in the VICTUS docs:
+//   i.uv, i.mesh_uv, i.world_position, i.view_dir, i.vertex_normal, i.time, i.params[0..3]
+//   s.base_color, s.alpha, s.normal, s.metallic, s.roughness, s.emissive, s.occlusion, s.unlit
+// Material parameters: params[0] = glow colour (rgb) + band density (w),
+//                      params[1] = x glow strength, y scroll speed, z rim strength
+void surface(SurfaceInput i, inout Surface s) {
+    vec3 glow = i.params[0].rgb;
+    float bands = 0.5 + 0.5 * sin(i.world_position.y * i.params[0].w - i.time * i.params[1].y);
+    bands = smoothstep(0.7, 1.0, bands);
+    float rim = pow(1.0 - clamp(dot(s.normal, i.view_dir), 0.0, 1.0), 3.0);
+    s.emissive += glow * (bands * i.params[1].x + rim * i.params[1].z);
+    s.roughness = mix(s.roughness, 0.2, bands); // the bands read as polished metal
+    s.metallic = max(s.metallic, bands * 0.6);
+}
+)";
+
+std::string energy_material() {
+    assets::MaterialAsset m;
+    m.base_color = {0.9f, 0.32f, 0.08f, 1};
+    m.roughness = 0.45f;
+    (void)Uuid::parse(kEnergyShaderUuid, m.shader);
+    m.shader_params[0] = {1.0f, 0.55f, 0.15f, 6.0f};
+    m.shader_params[1] = {2.5f, 2.0f, 0.3f, 0.0f};
+    return json::stringify(m.to_json(), true) + "\n";
+}
+
 std::string crate_prefab_meta() {
     json::Value m = json::Value::object();
     m.set("victus_meta", 1);
@@ -305,7 +338,7 @@ void build_3d(Scene& s) {
 
     const Entity cube = add(s, "Spinning Cube", {-2.2f, 0.75f, 0});
     s.world().get<Transform>(cube)->scale = {1.5f, 1.5f, 1.5f};
-    mesh(s, cube, "cube", {0.9f, 0.32f, 0.08f, 1}, 0.0f, 0.45f);
+    (void)Uuid::parse(kEnergyMaterialUuid, mesh(s, cube, "cube", {1, 1, 1, 1}, 0.0f, 0.45f).material_asset);
     s.world().add<RotatorComponent>(cube) = {{0, 1, 0}, 40.0f};
     s.world().add<physics::RigidBodyComponent>(cube).type = physics::BodyType::Kinematic; // turned by Rotator
     s.world().add<physics::ColliderComponent>(cube);
@@ -1362,6 +1395,10 @@ std::vector<TemplateFile> template_files(std::string_view id) {
                 {std::string(kGroundTexturePath) + ".meta", asset_meta(kGroundTextureUuid, "texture")},
                 {kGroundMaterialPath, ground_material()},
                 {std::string(kGroundMaterialPath) + ".meta", asset_meta(kGroundMaterialUuid, "")},
+                {kEnergyShaderPath, kEnergyShader},
+                {std::string(kEnergyShaderPath) + ".meta", asset_meta(kEnergyShaderUuid, "")},
+                {kEnergyMaterialPath, energy_material()},
+                {std::string(kEnergyMaterialPath) + ".meta", asset_meta(kEnergyMaterialUuid, "")},
                 {"assets/scripts/hud.luau", kHud}};
     if (id == "2d")
         return {{"assets/scripts/platformer.luau", kPlatformer},

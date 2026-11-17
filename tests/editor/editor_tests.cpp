@@ -948,6 +948,32 @@ TEST_CASE("editor: materials are created from a selection, edited, assigned with
     CHECK(std::find(msgs.begin(), msgs.end(), "Reloaded material materials/Crate.vmat") != msgs.end());
     h.frames(2);
 
+    // Surface shaders: the template is created, assigned to the open material and compiled; a
+    // broken edit is reported with its line.
+    auto shader = ed.create_surface_shader();
+    REQUIRE(shader.ok());
+    const Uuid sh = *shader;
+    CHECK(ed.assets()->find(sh)->path == "shaders/Surface.vshader");
+    CHECK(ed.set_editing_material_shader(sh));
+    CHECK_FALSE(ed.set_editing_material_shader(tex));
+    auto with_shader = assets::load_material_file(assets_dir / "materials" / "Crate.vmat");
+    REQUIRE(with_shader);
+    CHECK(with_shader->shader == sh);
+    h.frames(2); // Shader section drawn with the compile status
+    {
+        const std::string bad = "void surface(SurfaceInput i, inout Surface s) {\n  s.oops = 1.0;\n}\n";
+        const auto file = assets_dir / "shaders" / "Surface.vshader";
+        REQUIRE(fs::write_atomic(file, std::span(reinterpret_cast<const std::uint8_t*>(bad.data()), bad.size())).ok());
+        sfs::last_write_time(file, sfs::file_time_type::clock::now() + std::chrono::seconds(6));
+        CHECK(ed.check_asset_changes() >= 1);
+        const auto& m2 = ed.messages();
+        CHECK(std::any_of(m2.begin(), m2.end(), [](const std::string& m) {
+            return m.find("Shader shaders/Surface.vshader") != std::string::npos && m.find("Surface.vshader:2") != std::string::npos;
+        }));
+        h.frames(2);
+    }
+    CHECK(ed.set_editing_material_shader({}));
+
     // Assignment is undoable; non-material assets are rejected.
     CHECK(ed.assign_material(box, {}));
     CHECK(s.world().get<MeshRendererComponent>(box)->material_asset.is_nil());

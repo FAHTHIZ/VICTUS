@@ -278,7 +278,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
                 if (audio_engine)
                     for (const auto& clip : changes.audio) (void)(*audio_engine)->reload_clip(clip);
                 if (!changes.prefabs.empty()) (*scripts)->forget_prefabs(); // new instances use the new version
-                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size();
+                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size();
             }
         }
         float dt = o.max_frames ? 1.0f / 60.0f : std::clamp(static_cast<float>(now - last), 1e-4f, 0.25f);

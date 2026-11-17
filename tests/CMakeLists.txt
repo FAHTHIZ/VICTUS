@@ -61,8 +61,10 @@ victus_add_test(victus_render_tests
         render/render_graph_tests.cpp
         render/image_mesh_tests.cpp
         render/quality_settings_tests.cpp
-    DEPS VICTUS::Render
+        render/shader_compiler_tests.cpp
+    DEPS VICTUS::Render VICTUS::Shadercompiler
     LABELS render)
+target_compile_definitions(victus_render_tests PRIVATE VICTUS_SHADER_SOURCE_DIR="${PROJECT_SOURCE_DIR}/engine/render/shaders")
 
 victus_add_test(victus_gpu_tests
     SOURCES
@@ -77,6 +79,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_game_ui_tests.cpp
         render/gpu_hot_reload_tests.cpp
         render/gpu_material_tests.cpp
+        render/gpu_surface_shader_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")

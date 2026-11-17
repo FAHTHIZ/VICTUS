@@ -45,7 +45,18 @@ struct Material {
     bool double_sided{false};
     bool unlit{false};
     bool cast_shadows{true};
+    // Project surface shader: a fragment shader compiled from surface_shader_source() (see
+    // below); invalid = the built-in PBR shader. `shader_params` reach it as material.custom[].
+    rhi::ShaderHandle surface_shader;
+    std::array<math::Vec4, 4> shader_params{};
 };
+
+// The built-in PBR fragment shader with a project surface function spliced in (GLSL 450 that
+// defines `void surface(SurfaceInput i, inout Surface s)`; see engine/render/shaders/pbr.frag).
+// `#line` directives keep compiler messages on the user's own line numbers.
+[[nodiscard]] std::string surface_shader_source(std::string_view surface_code);
+// The unmodified pbr.frag source.
+[[nodiscard]] std::string_view pbr_fragment_source() noexcept;
 
 struct DirectionalLight {
     math::Vec3 direction{-0.4f, -1.0f, -0.3f}; // direction the light travels
@@ -168,6 +179,9 @@ public:
     [[nodiscard]] const RenderSettings& settings() const noexcept { return settings_; }
     // Seconds since the previous frame (drives auto exposure adaptation). Default 1/60.
     void set_frame_time(float seconds) noexcept { frame_time_ = seconds; }
+    // Time seen by surface shaders (SurfaceInput.time). Default: seconds since the process
+    // started rendering, so animated shaders also move in the editor's edit mode.
+    void set_time(double seconds) noexcept { time_ = seconds; }
     // Forces auto exposure to jump to the current scene luminance on the next frame.
     void reset_adaptation() noexcept { adaptation_valid_ = false; }
 
@@ -229,6 +243,8 @@ private:
     [[nodiscard]] Result<rhi::PipelineHandle> post_pipeline(const char* fragment, rhi::Format format,
                                                             rhi::BlendMode blend = rhi::BlendMode::Opaque);
     void compute_cascades(float aspect, std::uint32_t resolution);
+    // Pipeline for a project surface shader (created on first use); the built-in one on failure.
+    [[nodiscard]] rhi::PipelineHandle surface_pipeline(rhi::ShaderHandle fragment, bool skinned, bool double_sided);
     [[nodiscard]] Status ensure_exposure_textures();
 
     GpuContext& ctx_;
@@ -238,6 +254,12 @@ private:
     rhi::PipelineHandle particle_alpha_, particle_additive_;
     rhi::PipelineHandle skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_;
     std::unordered_map<std::string, rhi::PipelineHandle> post_; // "<shader>/<format>/<blend>"
+    // Built-in PBR pipeline descriptions, reused for surface shader variants.
+    rhi::PipelineDesc opaque_desc_, skinned_desc_;
+    // Surface shader pipelines by shader handle: [skinned * 2 + double_sided]; all invalid
+    // when creation failed (the built-in pipeline is used and the failure logged once).
+    std::unordered_map<std::uint64_t, std::array<rhi::PipelineHandle, 4>> surface_pipelines_;
+    std::optional<double> time_;
     rhi::TextureHandle no_shadow_;
     rhi::TextureHandle exposure_[2];
     std::uint32_t exposure_index_{0};

@@ -10,8 +10,10 @@
 //                                                  new version, the editor updates existing ones
 //   - materials (.vmat)                            reported in `materials`; apply() drops cached
 //                                                  materials so the next frame uses the new file
+//   - surface shaders (.vshader)                   reported in `shaders`; apply() recompiles them
+//                                                  (a compile error is logged, built-in PBR used)
 //   - scenes, fonts, other files                   `restart_needed`: picked up on the next start
-//   - shaders and engine code                      built into the engine; never hot-reloaded
+//   - built-in shaders and engine code             built into the engine; never hot-reloaded
 // A failed re-import keeps the previous cooked data (and GPU resources) in use and is reported
 // in `failed`, so a half-saved file never breaks the running game.
 #pragma once
@@ -34,6 +36,7 @@ struct HotReloadReport {
     std::vector<std::string> audio;          // audio clips to reload (paths relative to assets/)
     std::vector<std::string> prefabs;        // changed prefabs (paths relative to assets/)
     std::vector<std::string> materials;      // changed materials (paths relative to assets/)
+    std::vector<std::string> shaders;        // changed surface shaders (paths relative to assets/)
     std::vector<std::string> restart_needed; // files whose changes appear on the next start
     [[nodiscard]] bool empty() const noexcept { return changed.empty(); }
     // One human-readable line per event, for logs and editor notifications.
