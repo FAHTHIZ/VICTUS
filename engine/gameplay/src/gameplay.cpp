@@ -91,6 +91,14 @@ void register_components() {
         });
     static std::once_flag once;
     std::call_once(once, [] {
+        using O = MaterialOverridesComponent;
+        scene::Schema<O>("MaterialOverrides", "Rendering")
+            .field(&O::uv_offset, "uv_offset", {.speed = 0.01f, .label = "UV Offset", .tooltip = "Added to the material's texture offset"})
+            .field(&O::uv_scroll, "uv_scroll", {.min = -100, .max = 100, .speed = 0.01f, .label = "UV Scroll", .tooltip = "Texture scroll in UV units per second while playing"})
+            .field(&O::override_emissive, "override_emissive", {.label = "Override Emissive", .tooltip = "Replace the material's emissive colour"})
+            .field(&O::emissive, "emissive", {.label = "Emissive", .hint = "color_hdr"})
+            .field(&O::emissive_strength, "emissive_strength", {.min = 0, .max = 1000, .speed = 0.05f, .label = "Emissive Strength"})
+            .commit();
         using E = EnvironmentComponent;
         scene::Schema<E>("Environment", "Rendering")
             .field(&E::sky_zenith, "sky_zenith", {.hint = "color_hdr"})
@@ -124,6 +132,15 @@ void add_builtin_systems(Simulation& sim) {
             if (math::length(r.axis) <= 0) return;
             const math::Quat dq = math::Quat::axis_angle(r.axis, math::radians(r.degrees_per_second) * t.dt);
             tr.rotation = math::normalize(tr.rotation * dq);
+        });
+    });
+    sim.add_system("builtin.uv_scroll", Phase::Update, [](scene::Scene& s, const FrameTime& t) {
+        s.world().each<MaterialOverridesComponent>([&](MaterialOverridesComponent& o) {
+            if (o.uv_scroll.x == 0 && o.uv_scroll.y == 0) return;
+            o.scrolled.x += o.uv_scroll.x * t.dt;
+            o.scrolled.y += o.uv_scroll.y * t.dt;
+            o.scrolled.x -= std::floor(o.scrolled.x); // stay in [0, 1) so precision never degrades
+            o.scrolled.y -= std::floor(o.scrolled.y);
         });
     });
     sim.add_system("builtin.oscillator", Phase::Update, [](scene::Scene& s, const FrameTime& t) {

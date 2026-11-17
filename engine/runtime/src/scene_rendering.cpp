@@ -341,6 +341,15 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     for (const auto& p : points) renderer.add_point_light(p);
 
     std::vector<math::Mat4> palette;
+    const auto apply_overrides = [&](Entity entity, render::Material& m) {
+        const auto* o = w.get<gameplay::MaterialOverridesComponent>(entity);
+        if (!o) return;
+        m.uv_offset = {m.uv_offset.x + o->uv_offset.x + o->scrolled.x, m.uv_offset.y + o->uv_offset.y + o->scrolled.y};
+        if (o->override_emissive) {
+            m.emissive = o->emissive;
+            m.emissive_strength = o->emissive_strength;
+        }
+    };
     w.each<MeshRendererComponent, WorldTransform>([&](Entity entity, const MeshRendererComponent& mr, const WorldTransform& wt) {
         if (!mr.visible) return;
         if (!mr.mesh_asset.is_nil()) {
@@ -357,6 +366,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             m.base_color = {m.base_color.r * mr.base_color.r, m.base_color.g * mr.base_color.g,
                             m.base_color.b * mr.base_color.b, m.base_color.a * mr.base_color.a};
             m.cast_shadows = mr.cast_shadows;
+            apply_overrides(entity, m);
             const GpuModel& gm = **model;
             const auto* skinned = w.get<animation::SkinnedMeshComponent>(entity);
             if (skinned && gm.max_joint[mr.mesh_index] >= 0 && skinned->skin < gm.cpu.skins.size()) {
@@ -409,6 +419,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             }
         }
         m.cast_shadows = mr.cast_shadows;
+        apply_overrides(entity, m);
         renderer.submit(*mesh, m, wt.matrix);
         ++stats.meshes;
     });

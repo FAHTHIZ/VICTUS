@@ -1114,3 +1114,42 @@ return M
     CHECK(spr->texture_asset.to_string() == "7a1e2d3c-4b5a-4978-8a1b-2c3d4e5f6a03");
     CHECK(spr->tint.g == doctest::Approx(0.0f));
 }
+
+TEST_CASE("script: uv offset, scroll and emissive overrides") {
+    TempDir d("victus_script_overrides");
+    script::register_components();
+    gameplay::register_components();
+    d.write("scripts/glow.luau", R"lua(
+local M = {}
+function M:start()
+    local e = self.entity
+    assert(not e:has("MaterialOverrides"), "starts without overrides")
+    e:set_uv_offset(vector.create(0.25, 0.5, 0))
+    e:set_uv_scroll(vector.create(1, 0, 0))
+    e:set_emissive(vector.create(1, 0.5, 0), 4)
+    local o = e:get("MaterialOverrides")
+    assert(o.override_emissive and o.emissive_strength == 4, "emissive")
+    assert(o.uv_offset[2] == 0.5, "offset")
+end
+function M:update()
+    if time.frame() == 2 then self.entity:set_emissive(nil) end
+end
+return M
+)lua");
+    Scene s;
+    const Entity e = scripted(s, "Lava", "scripts/glow.luau");
+    auto host = make_host(d);
+    gameplay::Simulation sim(1.0f / 50.0f);
+    script::add_script_systems(sim, *host);
+    sim.tick(s, 0.02f);
+    for (const auto& err : host->recent_errors()) MESSAGE(err);
+    CHECK(host->stats().errors == 0);
+    const auto* o = s.world().get<gameplay::MaterialOverridesComponent>(e);
+    REQUIRE(o);
+    CHECK(o->uv_offset.x == doctest::Approx(0.25f));
+    CHECK(o->uv_scroll.x == doctest::Approx(1.0f));
+    CHECK(o->emissive.g == doctest::Approx(0.5f));
+    for (int i = 0; i < 4; ++i) sim.tick(s, 0.02f);
+    CHECK(host->stats().errors == 0);
+    CHECK_FALSE(o->override_emissive);
+}
