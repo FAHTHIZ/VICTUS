@@ -9,6 +9,7 @@
 #include "victus/editor/undo.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/core/json.hpp"
+#include "victus/scene/prefab.hpp"
 
 #include "victus/render/image.hpp"
 #include "victus/gameplay/gameplay.hpp"
@@ -1968,4 +1969,77 @@ TEST_CASE("editor: unsaved edits are autosaved and recovered after a crash") {
     REQUIRE(std::filesystem::exists(untitled));
     REQUIRE(h.ed->save_scene_as("scenes/second").ok());
     CHECK_FALSE(std::filesystem::exists(untitled));
+}
+
+TEST_CASE("editor: merge_edit applies only the fields changed on the primary") {
+    auto parse = [](const char* t) { return *json::parse(t); };
+    const auto before = parse(R"({"Transform":{"position":[0,0,0],"scale":[1,1,1]},"Rotator":{"degrees_per_second":10}})");
+    const auto after = parse(R"({"Transform":{"position":[0,5,0],"scale":[1,1,1]},"MeshRenderer":{"primitive":"cube"}})");
+    const auto target = parse(R"({"Transform":{"position":[1,2,3],"scale":[2,2,2]},"Rotator":{"degrees_per_second":99},"Light":{"type":"point"}})");
+    const auto out = editor::merge_edit(before, after, target);
+    CHECK(out["Transform"]["position"][0].as_number() == 1);
+    CHECK(out["Transform"]["position"][1].as_number() == 5); // only y changed
+    CHECK(out["Transform"]["position"][2].as_number() == 3);
+    CHECK(out["Transform"]["scale"][0].as_number() == 2);    // untouched
+    CHECK(out.find("Rotator") == nullptr);                   // removed on the primary
+    CHECK(out["MeshRenderer"]["primitive"].as_string() == "cube"); // added on the primary
+    CHECK(out["Light"]["type"].as_string() == "point");      // the target's own component stays
+    CHECK(editor::merge_edit(before, before, target) == target);
+}
+
+TEST_CASE("editor: range, box and multi-entity editing of the selection") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Multi", "Multi", "3d").ok());
+    h.frames(2);
+    scene::Scene& s = h.ed->edit_scene();
+    const auto order = h.ed->hierarchy_order();
+    REQUIRE(order.size() > 6);
+    CHECK(order.size() == s.world().alive_count());
+
+    // Shift+click range in hierarchy order; the clicked entity is primary.
+    h.ed->select(order[1]);
+    h.ed->select_range(order[4]);
+    CHECK(h.ed->selection().size() == 4);
+    CHECK(h.ed->selected() == order[4]);
+    h.ed->select_range(order[2]); // extending again keeps the earlier picks
+    CHECK(h.ed->selection().size() == 4);
+    CHECK(h.ed->selected() == order[2]);
+
+    // Box select: the whole viewport picks many objects, an empty corner none; additive keeps.
+    const math::Vec2 size{800, 450};
+    h.ed->clear_selection();
+    CHECK(h.ed->box_select({0, 0}, {1, 1}, size) == 0);
+    const std::size_t all = h.ed->box_select({0, 0}, size, size);
+    CHECK(all >= 4);
+    CHECK(h.ed->selection().size() == all);
+    // Prefab parts collapse to their instance: no selected entity is a part of a selected instance.
+    for (const Uuid& id : h.ed->selection()) {
+        const auto e = s.find(id);
+        const auto root = scene::instance_root(s, e);
+        CHECK((root.is_null() || root == e));
+    }
+    h.ed->clear_selection();
+    const std::size_t left = h.ed->box_select({0, 0}, {size.x * 0.5f, size.y}, size);
+    const std::size_t right = h.ed->box_select({size.x * 0.5f, 0}, size, size, true);
+    CHECK(left + right >= all - 1);
+    CHECK(h.ed->selection().size() == left + right);
+
+    // Multi edit: changing the primary's position.y moves every selected entity's y only.
+    const auto a = h.ed->create_entity(editor::Primitive::Cube);
+    const auto b = h.ed->create_entity(editor::Primitive::Sphere);
+    s.world().get<scene::Transform>(a)->position = {1, 0, 0};
+    s.world().get<scene::Transform>(b)->position = {-3, 2, 7};
+    h.ed->select(b);
+    h.ed->select(a, true); // a is primary
+    const json::Value before = s.save_entity(a);
+    s.world().get<scene::Transform>(a)->position.y = 4;
+    s.world().add<gameplay::RotatorComponent>(a);
+    h.ed->apply_multi_edit(a, before);
+    const auto* tb = s.world().get<scene::Transform>(b);
+    CHECK(tb->position.x == doctest::Approx(-3));
+    CHECK(tb->position.y == doctest::Approx(4));
+    CHECK(tb->position.z == doctest::Approx(7));
+    CHECK(s.world().has<gameplay::RotatorComponent>(b));
 }

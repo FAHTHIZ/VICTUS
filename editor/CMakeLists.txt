@@ -8,6 +8,7 @@ add_library(victus_editor_core STATIC
     src/profiler_panel.cpp
     src/command_palette.cpp
     src/autosave.cpp
+    src/selection.cpp
     src/material_panel.cpp
     src/graph_panel.cpp
     src/sprite_sheets.cpp

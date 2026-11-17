@@ -892,5 +892,21 @@ Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
 Known gaps:
 - Only the scene is autosaved (graphs and materials have their own explicit saves); one copy per scene, no history.
 
+## Slice 67: Multi-selection (roadmap item 16, part 3)
+
+Why: roadmap item 16. Ctrl+click could select several entities but the inspector only edited the last one, and there was no range or box selection.
+
+Built:
+- Hierarchy Shift+click selects the range between the primary selection and the clicked row (depth-first order, `Editor::hierarchy_order`, `select_range`); the clicked entity becomes primary.
+- Viewport box select: left-drag on empty space draws a marquee and selects pickable objects whose bounds centre projects inside it (3D and 2D; prefab parts select their instance; Ctrl/Shift add). `Editor::box_select(a, b, size, additive)`.
+- Multi-entity inspector: with several entities selected, a change on the primary is applied to all of them field by field (`merge_edit`: only changed vector elements, added/removed components), recorded as one undo step covering every selected entity.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
+- `victus_editor_tests` "editor: merge_edit applies only the fields changed on the primary" and "editor: range, box and multi-entity editing of the selection" (range of 4 with the clicked primary, re-extension, box of the full viewport vs. an empty corner, prefab-part collapse, left+right halves add up, position.y edit and an added Rotator propagate while x/z keep).
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- Box select tests bounds centres, not full overlap; no lasso. (Transform gizmos already move every selected root since Slice 51.)
+
 ## Next task
-Roadmap next slice 16 (continued): multi-selection (box select in the viewport, shift/ctrl ranges in the hierarchy, multi-edit inspector).
+Roadmap next slice 17: material graph.
