@@ -123,6 +123,12 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-17 (Slice 36, project surface shaders)
+- Godot spatial shaders — https://docs.godotengine.org/en/stable/tutorials/shaders/shader_reference/spatial_shader.html (accessed 2026-11-17): `fragment()` sets material properties (`ALBEDO`, `ROUGHNESS`, `METALLIC`, `EMISSION`, `NORMAL_MAP`, `AO`, `ALPHA`, ...) and the built-in renderer does the shading; `TIME` is seconds since start and repeats after 3 600 s. VICTUS mirrors this split (surface function before built-in lighting) and the hourly time wrap.
+- glslang releases — https://github.com/KhronosGroup/glslang/releases/tag/16.6.0 (accessed 2026-11-17): 16.6.0 released 2026-09-10; adopted as a library. Its `LICENSE.txt` covers glslang proper with BSD-3-Clause, BSD-2-Clause, MIT and Apache-2.0 parts; the GPL-3.0-with-Bison-exception text applies to Bison files, which the file says were removed.
+- SPIRV-Cross — https://github.com/KhronosGroup/SPIRV-Cross (accessed 2026-11-17): Apache-2.0 library for SPIR-V reflection and conversion to other languages, including MSL; used for MSL output and resource counts.
+- Open questions: shader caches in exported packs, async compilation, material graphs that generate surface code, sprite/particle/post-process hooks.
+
 ## Research conclusions added 2026-11-17 (Slice 33, material assets)
 - glTF KHR_texture_transform — https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_texture_transform/README.md (accessed 2026-11-17): an affine UV transform applied as scale, then rotation, then translation (`translation * rotation * scale`). VICTUS materials store scale and offset in the same order (`uv * scale + offset`), so glTF transforms without rotation map 1:1 if imported later.
 - Godot BaseMaterial3D — https://docs.godotengine.org/en/stable/classes/class_basematerial3d.html (accessed 2026-11-17): `uv1_scale` multiplies and `uv1_offset` adds to UVs; `texture_filter` offers nearest/linear with and without mipmaps and anisotropy. VICTUS starts with linear (trilinear, mipmapped) and nearest; anisotropic filtering is an open item.
