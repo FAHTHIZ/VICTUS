@@ -49,6 +49,21 @@ Result<std::unique_ptr<GpuContext>> GpuContext::create(rhi::Device& device) {
         ctx->soft_particle_ = sp.value();
     }
 
+    {
+        // 1x1 black cubemap bound wherever a scene has no environment map.
+        rhi::TextureDesc cd;
+        cd.name = "default_black_cube";
+        cd.type = rhi::TextureType::Cube;
+        cd.format = rhi::Format::RGBA8_UNORM;
+        auto cube = device.create_texture(cd);
+        if (!cube) return std::move(cube).error();
+        ctx->black_cube_ = cube.value();
+        const std::uint8_t px[4] = {0, 0, 0, 255};
+        auto cmd = device.begin_commands();
+        for (std::uint32_t face = 0; face < 6; ++face) cmd.upload_texture(ctx->black_cube_, px, 0, face);
+        cmd.submit();
+    }
+
     auto make_sampler = [&](rhi::Filter f, rhi::AddressMode a, bool compare) -> Result<rhi::SamplerHandle> {
         rhi::SamplerDesc s;
         s.min_filter = s.mag_filter = s.mip_filter = f;
@@ -81,7 +96,7 @@ Result<std::unique_ptr<GpuContext>> GpuContext::create(rhi::Device& device) {
 
 GpuContext::~GpuContext() {
     for (auto& [name, s] : shaders_) device_.destroy(s);
-    for (auto t : {white_, black_, flat_normal_, soft_particle_})
+    for (auto t : {white_, black_, flat_normal_, soft_particle_, black_cube_})
         if (t) device_.destroy(t);
     for (auto s : {linear_repeat_, linear_clamp_, nearest_clamp_, nearest_repeat_, shadow_})
         if (s) device_.destroy(s);

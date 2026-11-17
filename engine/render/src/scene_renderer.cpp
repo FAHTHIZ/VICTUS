@@ -99,6 +99,8 @@ struct LightingUniforms {
     Vec4 fog_params;
     Vec4 coverage_color;
     Vec4 coverage_params;
+    Vec4 env_params;
+    Vec4 env_sh[9];
     Mat4 cascade_vp[4];
     GpuPointLight points[SceneRenderer::kMaxPointLights];
 };
@@ -115,7 +117,7 @@ struct ShadowUniforms {
 };
 struct SkyUniforms {
     Mat4 inv_view_proj;
-    Vec4 zenith, horizon, ground, sun_dir, sun_color;
+    Vec4 zenith, horizon, ground, sun_dir, sun_color, env;
 };
 struct SsaoUniforms {
     Mat4 inv_proj;
@@ -145,7 +147,7 @@ struct ExposureUniforms {
 struct PostUniforms {
     Vec4 params, params2, params3;
 };
-static_assert(sizeof(LightingUniforms) == 16 * 16 + 64 * 4 + 32 * SceneRenderer::kMaxPointLights);
+static_assert(sizeof(LightingUniforms) == 26 * 16 + 64 * 4 + 32 * SceneRenderer::kMaxPointLights);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 
@@ -974,6 +976,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         lighting.coverage_params = {std::clamp(env_.coverage_roughness, 0.045f, 1.0f), std::clamp(env_.coverage_slope, -1.0f, 1.0f),
                                     std::max(env_.coverage_sharpness, 0.01f), 0.0f};
     }
+    const EnvironmentMap* env_map = env_.environment_map;
+    const float env_intensity = std::isfinite(env_.environment_intensity) ? std::max(env_.environment_intensity, 0.0f) : 1.0f;
+    const float env_rotation = std::isfinite(env_.environment_rotation) ? env_.environment_rotation : 0.0f;
+    if (env_map && env_map->cube()) {
+        lighting.env_params = {1.0f, static_cast<float>(env_map->mip_count() - 1), env_intensity, env_rotation};
+        for (std::size_t i = 0; i < 9; ++i) lighting.env_sh[i] = Vec4(env_map->sh().coefficients[i] * env_intensity, 0.0f);
+    }
     for (std::uint32_t c = 0; c < 4; ++c) lighting.cascade_vp[c] = cascade_vp_[c];
     for (std::size_t i = 0; i < points_.size(); ++i) {
         const auto& pl = points_[i];
@@ -1124,8 +1133,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 sky.ground = rgb(env_.ground);
                 sky.sun_dir = Vec4(-normalize(sun_.direction), 0);
                 sky.sun_color = rgb(sun_.color, sun_.intensity * 4.0f, 0.9995f);
+                const bool has_env = env_map && env_map->cube();
+                if (has_env) {
+                    const float blur = std::isfinite(env_.sky_blur) ? std::clamp(env_.sky_blur, 0.0f, 1.0f) : 0.0f;
+                    sky.env = {1.0f, blur * static_cast<float>(env_map->mip_count() - 1), env_intensity, env_rotation};
+                }
                 pass.bind_pipeline(sky_pipeline_);
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, sky);
+                pass.bind_texture(rhi::ShaderStage::Fragment, 0, has_env ? env_map->cube() : ctx_.black_cube(), ctx_.linear_clamp());
                 pass.draw(3);
             }
             const rhi::TextureHandle shadow_tex = shadow_map.valid() ? ctx.texture(shadow_map) : no_shadow_;
@@ -1160,6 +1175,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 3, pick(m.emissive_texture, ctx_.white()), tex_sampler);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 4, shadow_tex, ctx_.shadow_compare());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 5, ao_tex, ctx_.linear_clamp());
+                pass.bind_texture(rhi::ShaderStage::Fragment, 6, env_map && env_map->cube() ? env_map->cube() : ctx_.black_cube(),
+                                  ctx_.linear_clamp());
                 pass.bind_vertex_buffer(0, d->mesh->vertices);
                 pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                 pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);

@@ -101,6 +101,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     render::RenderSettings quality = render::RenderSettings::preset(*tier);
     if (proj->settings().render_scale > 0.0f) quality.render_scale = proj->settings().render_scale;
     (*view)->renderer().set_settings(quality);
+    if (*tier == render::QualityTier::Low) cache.set_environment_bake(render::EnvironmentBakeSettings::low());
 
     // Regression captures: the replayed capture fixes the script seed; a recording picks one.
     if ((!o.record.empty() || !o.replay.empty()) && (!o.connect.empty() || o.host))

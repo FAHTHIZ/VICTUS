@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/assets/importers.hpp"
+#include "victus/render/environment_map.hpp"
 
 #include "cgltf.h"
 
@@ -75,7 +76,55 @@ CookedTexture cook_texture(const render::Image& image, std::string name, bool sr
     return t;
 }
 
+CookedTexture cook_hdr_texture(const render::ImageF& source, std::string name, std::uint32_t max_size) {
+    const std::uint32_t limit = std::clamp(max_size, 4u, 8192u);
+    const render::ImageF image = render::downsample_to_fit(source, limit, std::max(2u, limit / 2));
+    CookedTexture t;
+    t.name = std::move(name);
+    t.srgb = true;
+    t.hdr = true;
+    t.hdr_width = image.width;
+    t.hdr_height = image.height;
+    t.hdr_pixels.resize(image.pixels.size());
+    for (std::size_t i = 0; i < image.pixels.size(); ++i) t.hdr_pixels[i] = render::float_to_half(image.pixels[i]);
+    const auto sh = render::SphericalHarmonics9::project(image);
+    t.sh = sh.coefficients;
+    // LDR preview (Reinhard, sRGB) at most 1024 wide.
+    const render::ImageF small = render::downsample_to_fit(image, 1024, 512);
+    render::Image ldr;
+    ldr.width = small.width;
+    ldr.height = small.height;
+    ldr.pixels.resize(std::size_t{small.width} * small.height * 4);
+    for (std::size_t i = 0; i < std::size_t{small.width} * small.height; ++i) {
+        for (int c = 0; c < 3; ++c) {
+            const float v = small.pixels[i * 4 + c];
+            const float m = v / (1.0f + v);
+            const float e = m <= 0.0031308f ? m * 12.92f : 1.055f * std::pow(m, 1.0f / 2.4f) - 0.055f;
+            ldr.pixels[i * 4 + c] = static_cast<std::uint8_t>(std::lround(std::clamp(e, 0.0f, 1.0f) * 255.0f));
+        }
+        ldr.pixels[i * 4 + 3] = 255;
+    }
+    t.mips = render::build_mip_chain(ldr, true);
+    return t;
+}
+
 Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSettings& settings) {
+    {
+        auto bytes = fs::read_binary(path);
+        if (!bytes) return std::move(bytes).error();
+        if (render::is_hdr_image(*bytes)) {
+            auto hdr = render::decode_image_hdr(*bytes);
+            if (!hdr) return make_error(ErrorCode::ParseError, std::format("{}: {}", path.string(), hdr.error().message));
+            if (settings.flip_y) {
+                const std::size_t row = std::size_t{hdr->width} * 4;
+                for (std::uint32_t y = 0; y < hdr->height / 2; ++y)
+                    std::swap_ranges(hdr->pixels.begin() + static_cast<std::ptrdiff_t>(y * row),
+                                     hdr->pixels.begin() + static_cast<std::ptrdiff_t>((y + 1) * row),
+                                     hdr->pixels.begin() + static_cast<std::ptrdiff_t>((hdr->height - 1 - y) * row));
+            }
+            return cook_hdr_texture(*hdr, path.filename().string(), settings.max_size);
+        }
+    }
     auto img = render::load_image(path);
     if (!img) return std::move(img).error();
     render::Image& image = *img;

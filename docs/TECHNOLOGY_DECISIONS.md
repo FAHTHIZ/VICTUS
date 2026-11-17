@@ -425,6 +425,13 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 - Decision: (1) and (a). Physics gains a generic runtime-only `StaticShapes2DComponent` so the physics module does not depend on tilemaps; tile sets autotile with a 16-entry side-neighbour mask; one-way tiles never merge vertically so only their top surface supports.
 - Consequences: painting rebuilds one body per map (cheap for typical levels; very large maps rebuild whole). Slopes and per-tile polygons need a later extension of the box list; drawing is per cell without culling.
 
+### ADR-0042: Image-based lighting bakes on the GPU with fragment passes and uses SH9 for diffuse
+- Status: Accepted (2026-11-17, Slice 44).
+- Context: high-end look needs environment lighting and reflections from real HDR skies; the target includes entry-level Android GPUs where SDL_GPU compute support, bandwidth and memory are limited.
+- Candidates: prefilter (1) offline in the cooker, (2) on the CPU at load, (3) on the GPU at load with fragment passes, (4) GPU compute. Diffuse from (a) an irradiance cubemap or (b) 9 spherical-harmonic coefficients (Ramamoorthi & Hanrahan 2001, https://cseweb.ucsd.edu/~ravir/papers/envmap/envmap.pdf). Specular follows the split-sum approximation with GGX importance sampling (Karis 2013, https://cdn2.unrealengine.com/Resources/files/2013SiggraphPresentationsNotes-26915738.pdf) and filtered importance sampling (Křivánek & Colbert, GPU Gems 3 ch. 20, https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-20-gpu-based-importance-sampling).
+- Decision: (3) + (b). The GPU bake runs on every SDL_GPU backend (no compute requirement), takes one frame of work, and its size/sample count scale per quality tier (256/64, Low 128/32); SH9 is computed on the CPU at cook time and costs nine multiply-adds per pixel instead of a second cube fetch. Cubes are RGBA16F; the cooked texture stores half-float equirect pixels (licence: stb, public domain/MIT, already vendored; no new dependency).
+- Consequences: changing an environment needs a re-bake (cheap); dynamic time-of-day (next slice) re-bakes a small cube. Revisit (1) if load time on phones matters more than package size, and add a BRDF LUT if the analytic split-sum approximation shows artefacts.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

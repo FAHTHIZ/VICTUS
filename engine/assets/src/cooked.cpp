@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/assets/cooked.hpp"
 
+#include <cmath>
+
+#include <cstring>
+
 #include "victus/assets/binary.hpp"
 
 #include <format>
@@ -51,6 +55,17 @@ void write_texture_body(BinaryWriter& w, const CookedTexture& t) {
         w.u32(m.height);
         w.raw(m.pixels);
     }
+    w.u8(t.hdr ? 1 : 0);
+    if (t.hdr) {
+        w.u32(t.hdr_width);
+        w.u32(t.hdr_height);
+        w.raw({reinterpret_cast<const std::uint8_t*>(t.hdr_pixels.data()), t.hdr_pixels.size() * 2});
+        for (const auto& c : t.sh) {
+            w.f32(c.x);
+            w.f32(c.y);
+            w.f32(c.z);
+        }
+    }
 }
 
 bool read_texture_body(BinaryReader& r, CookedTexture& t) {
@@ -62,6 +77,19 @@ bool read_texture_body(BinaryReader& r, CookedTexture& t) {
         if (m.width == 0 || m.height == 0 || m.width > kMaxTextureDim || m.height > kMaxTextureDim) return false;
         if (!r.raw(m.pixels, std::uint64_t{m.width} * m.height * 4)) return false;
         if (m.pixels.size() != std::size_t{m.width} * m.height * 4) return false;
+    }
+    if (!r.boolean(t.hdr)) return false;
+    if (t.hdr) {
+        if (!r.u32(t.hdr_width) || !r.u32(t.hdr_height)) return false;
+        if (t.hdr_width == 0 || t.hdr_height == 0 || t.hdr_width > kMaxTextureDim || t.hdr_height > kMaxTextureDim) return false;
+        std::vector<std::uint8_t> raw;
+        const std::uint64_t bytes = std::uint64_t{t.hdr_width} * t.hdr_height * 8;
+        if (!r.raw(raw, bytes) || raw.size() != bytes) return false;
+        t.hdr_pixels.resize(raw.size() / 2);
+        std::memcpy(t.hdr_pixels.data(), raw.data(), raw.size());
+        for (auto& c : t.sh)
+            if (!r.f32(c.x) || !r.f32(c.y) || !r.f32(c.z) || !std::isfinite(c.x) || !std::isfinite(c.y) || !std::isfinite(c.z))
+                return false;
     }
     return true;
 }
@@ -298,6 +326,16 @@ Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) {
     if (!r.at_end()) return corrupt("trailing bytes");
     if (auto st = validate_model(m); !st) return corrupt(st.error().message);
     return m;
+}
+
+render::ImageF CookedTexture::hdr_image() const {
+    render::ImageF img;
+    if (!hdr) return img;
+    img.width = hdr_width;
+    img.height = hdr_height;
+    img.pixels.resize(hdr_pixels.size());
+    for (std::size_t i = 0; i < hdr_pixels.size(); ++i) img.pixels[i] = render::half_to_float(hdr_pixels[i]);
+    return img;
 }
 
 } // namespace victus::assets

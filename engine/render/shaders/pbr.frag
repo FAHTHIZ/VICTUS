@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Metallic-roughness PBR (glTF 2.0 model): GGX/Smith/Schlick, directional sun with cascaded
 // shadow maps (2x2 atlas, PCF, dithered cascade transitions), forward point lights (up to 16),
-// analytic sky environment lighting (diffuse + split-sum specular approximation), screen-space
-// ambient occlusion and emissive.
+// image-based lighting from a baked environment map (GGX-prefiltered cubemap + SH9 irradiance)
+// or the analytic sky (diffuse + split-sum specular approximation), screen-space ambient
+// occlusion and emissive.
 //
 // Project surface shaders (.vshader, ADR-0035) are spliced in at VICTUS_SURFACE_CODE: they
 // define `void surface(SurfaceInput i, inout Surface s)`, which runs after the material's
@@ -22,6 +23,7 @@ layout(set = 2, binding = 2) uniform sampler2D u_normal_map;
 layout(set = 2, binding = 3) uniform sampler2D u_emissive;
 layout(set = 2, binding = 4) uniform sampler2DShadow u_shadow;
 layout(set = 2, binding = 5) uniform sampler2D u_ao;
+layout(set = 2, binding = 6) uniform samplerCube u_env; // prefiltered environment (black 1x1 when absent)
 
 struct PointLight { vec4 position_range; vec4 color_intensity; };
 layout(set = 3, binding = 0) uniform Lighting {
@@ -41,6 +43,8 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 fog_params;     // x start distance, y end distance (linear), z density (exp), w max opacity
     vec4 coverage_color; // rgb coverage albedo (linear), w: global coverage amount 0..1
     vec4 coverage_params; // x coverage roughness, y slope threshold (normal.y), z slope sharpness
+    vec4 env_params;     // x: environment map present, y: max mip, z: intensity, w: rotation (radians about +Y)
+    vec4 env_sh[9];      // SH9 irradiance / pi (rgb), pre-multiplied by the intensity
     mat4 cascade_vp[4];
     PointLight points[16];
 } lighting;
@@ -103,6 +107,25 @@ vec3 environment(vec3 dir, float roughness) {
                          : mix(lighting.horizon_color.rgb, lighting.ground_color.rgb, pow(-h, 0.4));
     vec3 blurred = mix(lighting.ground_color.rgb, lighting.sky_color.rgb, h * 0.5 + 0.5) * 0.5 + lighting.horizon_color.rgb * 0.5;
     return mix(sharp, blurred, roughness * roughness);
+}
+// Environment directions are rotated about +Y by env_params.w (the scene's environment yaw).
+vec3 env_rotate(vec3 d) {
+    float c = cos(lighting.env_params.w), s = sin(lighting.env_params.w);
+    return vec3(c * d.x + s * d.z, d.y, -s * d.x + c * d.z);
+}
+vec3 env_irradiance(vec3 n) {
+    if (lighting.env_params.x < 0.5) return environment(n, 1.0);
+    n = env_rotate(n);
+    vec3 r = lighting.env_sh[0].rgb * 0.282095
+           + lighting.env_sh[1].rgb * (0.488603 * n.y) + lighting.env_sh[2].rgb * (0.488603 * n.z)
+           + lighting.env_sh[3].rgb * (0.488603 * n.x) + lighting.env_sh[4].rgb * (1.092548 * n.x * n.y)
+           + lighting.env_sh[5].rgb * (1.092548 * n.y * n.z) + lighting.env_sh[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0))
+           + lighting.env_sh[7].rgb * (1.092548 * n.x * n.z) + lighting.env_sh[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+    return max(r, vec3(0.0));
+}
+vec3 env_specular(vec3 r, float roughness) {
+    if (lighting.env_params.x < 0.5) return environment(r, roughness);
+    return textureLod(u_env, env_rotate(r), roughness * lighting.env_params.y).rgb * lighting.env_params.z;
 }
 // Karis' analytic approximation of the split-sum environment BRDF (mobile).
 vec2 env_brdf(float NdotV, float roughness) {
@@ -249,12 +272,12 @@ void main() {
     float NdotV = max(dot(N, V), 1e-4);
     vec3 f0 = mix(vec3(0.04), albedo, metallic);
     vec3 kd = (1.0 - fresnel_schlick(NdotV, f0)) * (1.0 - metallic);
-    vec3 irradiance = environment(N, 1.0);
+    vec3 irradiance = env_irradiance(N);
     vec2 ab = env_brdf(NdotV, roughness);
     vec3 R = reflect(-V, N);
     // Specular occlusion approximation: reflections below the local horizon are dimmed.
     float horizon = clamp(1.0 + dot(R, geometric_n), 0.0, 1.0);
-    vec3 specular = environment(R, roughness) * (f0 * ab.x + ab.y) * horizon * horizon;
+    vec3 specular = env_specular(R, roughness) * (f0 * ab.x + ab.y) * horizon * horizon;
     float ao = lighting.camera_pos.w > 0.5 ? texture(u_ao, gl_FragCoord.xy * lighting.screen.xy).r : 1.0;
     ao *= s.occlusion;
     // Specular occlusion from AO (Lagarde & de Rousiers 2014 approximation).

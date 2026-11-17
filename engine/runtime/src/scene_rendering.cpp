@@ -20,6 +20,8 @@ void GpuAssetCache::clear() {
     for (auto& [id, tex] : textures_) ctx_.device().destroy(tex);
     textures_.clear();
     nearest_.clear();
+    environments_.clear();
+    environment_errors_.clear();
     for (auto& [id, model] : models_) {
         for (auto& m : model->meshes) ctx_.destroy(m);
         for (auto& t : model->textures) ctx_.device().destroy(t);
@@ -37,6 +39,8 @@ void GpuAssetCache::evict(const Uuid& uuid) {
     // Materials hold texture handles: any eviction may invalidate them, and they are cheap to rebuild.
     materials_.clear();
     nearest_.erase(uuid);
+    environments_.erase(uuid);
+    environment_errors_.erase(uuid);
     if (const auto it = textures_.find(uuid); it != textures_.end()) {
         ctx_.device().destroy(it->second);
         textures_.erase(it);
@@ -60,6 +64,32 @@ Result<rhi::TextureHandle> GpuAssetCache::texture(const Uuid& uuid) {
     if (!tex) return tex;
     textures_.emplace(uuid, *tex);
     return tex;
+}
+
+Result<const render::EnvironmentMap*> GpuAssetCache::environment(const Uuid& uuid) {
+    if (const auto it = environments_.find(uuid); it != environments_.end())
+        return static_cast<const render::EnvironmentMap*>(it->second.get());
+    if (const auto it = environment_errors_.find(uuid); it != environment_errors_.end()) return it->second;
+    auto build = [&]() -> Result<std::unique_ptr<render::EnvironmentMap>> {
+        if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
+        auto cooked = db_->load_texture(uuid);
+        if (!cooked) return std::move(cooked).error();
+        if (!cooked->hdr)
+            return make_error(ErrorCode::InvalidArgument,
+                              std::format("{}: environment maps need an HDR (.hdr) texture", cooked->name));
+        render::SphericalHarmonics9 sh;
+        sh.coefficients = cooked->sh;
+        return render::EnvironmentMap::create(ctx_, cooked->hdr_image(), sh, env_bake_);
+    };
+    auto env = build();
+    if (!env) {
+        VICTUS_LOG_ERROR("runtime", "environment map {}: {}", uuid.to_string(), env.error().message);
+        environment_errors_.emplace(uuid, env.error());
+        return std::move(env).error();
+    }
+    const render::EnvironmentMap* ptr = env->get();
+    environments_.emplace(uuid, std::move(*env));
+    return ptr;
 }
 
 bool GpuAssetCache::texture_nearest(const Uuid& uuid) {
@@ -361,6 +391,10 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     env.coverage_color = e.coverage_color;
     env.coverage_roughness = e.coverage_roughness;
     env.coverage_slope = e.coverage_slope;
+    // environment_map (an asset) is resolved by extract_scene through the GpuAssetCache.
+    env.environment_intensity = std::isfinite(e.environment_intensity) ? std::max(e.environment_intensity, 0.0f) : 1.0f;
+    env.environment_rotation = std::isfinite(e.environment_rotation) ? math::radians(e.environment_rotation) : 0.0f;
+    env.sky_blur = std::isfinite(e.sky_blur) ? std::clamp(e.sky_blur, 0.0f, 1.0f) : 0.0f;
 }
 static_assert(static_cast<int>(gameplay::EnvironmentComponent::Fog::ExponentialSquared) ==
               static_cast<int>(render::FogMode::ExponentialSquared));
@@ -452,6 +486,10 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         if (has_env) return;
         has_env = true;
         apply_environment(e, env, sun);
+        if (!e.environment_map.is_nil()) {
+            if (auto map = assets.environment(e.environment_map)) env.environment_map = *map;
+            else ++stats.missing_assets;
+        }
     });
     renderer.begin(camera, sun, env);
     for (const auto& p : points) renderer.add_point_light(p);
