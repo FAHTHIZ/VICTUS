@@ -198,7 +198,11 @@ struct RenderSettings {
     std::uint32_t ssao_samples{8};        // 4..32
     bool bloom{true};
     std::uint32_t bloom_levels{5};        // 1..8 mip levels
-    bool fxaa{true};
+    bool fxaa{true};                      // ignored while TAA is active
+    // Temporal anti-aliasing: sub-pixel jitter + reprojected history (camera motion from depth,
+    // moving objects bounded by neighbourhood clipping). Also stabilises SSAO and shadows.
+    bool taa{true};                       // High/Ultra; Low/Medium use FXAA
+    float taa_blend{0.1f};                // weight of the current frame (0.04..1)
     bool auto_exposure{true};             // allowed; scenes enable it through Environment
     bool instancing{true};                // merge identical mesh+material draws into instanced batches
     std::uint32_t max_point_lights{16};   // <= SceneRenderer::kMaxPointLights
@@ -213,6 +217,9 @@ struct SceneStats {
     std::uint32_t point_lights{0};
     std::uint32_t shadow_cascades{0}, shadow_draws{0}, prepass_draws{0};
     std::uint32_t render_width{0}, render_height{0};
+    bool taa{false};                   // TAA resolved this frame
+    bool taa_history{false};           // ... with a valid history (false on the first frame / after a reset)
+    math::Vec2 jitter{};               // sub-pixel jitter in render pixels
     // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
     std::uint32_t main_batches{0}, shadow_batches{0}, prepass_batches{0};
     std::uint32_t transparent_draws{0};
@@ -244,6 +251,9 @@ public:
     void set_time(double seconds) noexcept { time_ = seconds; }
     // Forces auto exposure to jump to the current scene luminance on the next frame.
     void reset_adaptation() noexcept { adaptation_valid_ = false; }
+    // Discards the TAA history (camera cuts, teleports, scene loads) so the next frame does not
+    // blend with unrelated content.
+    void reset_history() noexcept { history_valid_ = false; }
 
     void begin(const Camera3D& camera, const DirectionalLight& sun, const Environment& env);
     void add_point_light(const PointLight& light);
@@ -312,6 +322,7 @@ private:
     [[nodiscard]] rhi::PipelineHandle surface_pipeline(rhi::ShaderHandle fragment, bool skinned, bool double_sided, MaterialBlend blend);
     [[nodiscard]] rhi::PipelineHandle blend_pipeline(MaterialBlend blend, bool skinned, bool double_sided);
     [[nodiscard]] Status ensure_exposure_textures();
+    [[nodiscard]] Status ensure_history(std::uint32_t index, std::uint32_t width, std::uint32_t height);
 
     GpuContext& ctx_;
     TransientTexturePool pool_;
@@ -331,6 +342,12 @@ private:
     rhi::TextureHandle no_shadow_;
     rhi::TextureHandle exposure_[2];
     std::uint32_t exposure_index_{0};
+    rhi::TextureHandle history_[2];
+    std::uint32_t history_w_[2]{}, history_h_[2]{};
+    std::uint32_t history_index_{0};
+    bool history_valid_{false};
+    math::Mat4 prev_view_proj_{math::Mat4::identity()};
+    std::uint64_t frame_index_{0};
     bool adaptation_valid_{false};
     float frame_time_{1.0f / 60.0f};
     RenderSettings settings_;

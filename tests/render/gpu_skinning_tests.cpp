@@ -43,6 +43,7 @@ Shot shoot(SceneRenderer& r, F&& content, bool instancing = true, const char* sa
     RenderSettings s = RenderSettings::preset(QualityTier::High);
     s.ssao = true; // depth pre-pass
     s.instancing = instancing;
+    s.taa = false; // compares exact frames; jitter would differ per frame
     r.set_settings(s);
     Shot out;
     out.cam = Camera3D::look_at(eye, {eye.x, 1, 0});

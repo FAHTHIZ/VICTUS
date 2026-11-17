@@ -3,6 +3,7 @@
 
 #include "victus/core/log.hpp"
 #include "victus/core/profiler.hpp"
+#include "victus/render/temporal.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -153,6 +154,10 @@ struct ExposureUniforms {
 struct PostUniforms {
     Vec4 params, params2, params3;
 };
+struct TaaUniforms {
+    Mat4 reproject;
+    Vec4 params, screen;
+};
 static_assert(sizeof(LightingUniforms) == 26 * 16 + 64 * 4 + 32 * SceneRenderer::kMaxPointLights);
 
 constexpr std::uint32_t kLuminanceSize = 64;
@@ -252,6 +257,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.bloom = false;
         s.bloom_levels = 4;
         s.fxaa = true;
+        s.taa = false;
         s.max_point_lights = 4;
         break;
     case QualityTier::Medium:
@@ -263,6 +269,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.bloom = true;
         s.bloom_levels = 4;
         s.fxaa = true;
+        s.taa = false;
         s.max_point_lights = 8;
         break;
     case QualityTier::High: break; // struct defaults
@@ -285,6 +292,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.cascade_split_lambda = std::isfinite(s.cascade_split_lambda) ? std::clamp(s.cascade_split_lambda, 0.0f, 1.0f) : 0.8f;
     s.ssao_samples = std::clamp(s.ssao_samples, 4u, 32u);
     s.bloom_levels = std::clamp(s.bloom_levels, 1u, 8u);
+    s.taa_blend = std::isfinite(s.taa_blend) ? std::clamp(s.taa_blend, 0.04f, 1.0f) : 0.1f;
     s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxPointLights);
     return s;
 }
@@ -576,6 +584,8 @@ SceneRenderer::~SceneRenderer() {
     if (no_shadow_) d.destroy(no_shadow_);
     for (auto t : exposure_)
         if (t) d.destroy(t);
+    for (auto t : history_)
+        if (t) d.destroy(t);
     if (line_buffer_) d.destroy(line_buffer_);
     if (instance_buffer_) d.destroy(instance_buffer_);
     if (particle_buffer_) d.destroy(particle_buffer_);
@@ -611,6 +621,20 @@ Status SceneRenderer::ensure_exposure_textures() {
         exposure_[i] = t.value();
     }
     adaptation_valid_ = false;
+    return {};
+}
+
+Status SceneRenderer::ensure_history(std::uint32_t index, std::uint32_t width, std::uint32_t height) {
+    if (history_[index] && history_w_[index] == width && history_h_[index] == height) return {};
+    if (history_[index]) ctx_.device().destroy(history_[index]);
+    history_[index] = {};
+    rhi::TextureDesc d = color_desc(rhi::Format::RGBA16_FLOAT, width, height);
+    d.name = index == 0 ? "taa_history_a" : "taa_history_b";
+    auto t = ctx_.device().create_texture(d);
+    if (!t) return std::move(t).error();
+    history_[index] = t.value();
+    history_w_[index] = width;
+    history_h_[index] = height;
     return {};
 }
 
@@ -760,9 +784,18 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     stats_.render_height = rh;
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    const Mat4 proj = camera_.projection(aspect);
+    const Mat4 proj_unjittered = camera_.projection(aspect);
+    const Mat4 view_proj_unjittered = proj_unjittered * camera_.view;
+    const Frustum frustum = Frustum::from_matrix(view_proj_unjittered);
+    // TAA: every 3D pass renders with a sub-pixel jittered projection.
+    const bool taa = S.taa && !capture_mode_;
+    if (!taa) history_valid_ = false;
+    const math::Vec2 jitter = taa ? taa_jitter(frame_index_) : math::Vec2{};
+    const Mat4 proj = taa ? jitter_projection(proj_unjittered, jitter, rw, rh) : proj_unjittered;
     const Mat4 view_proj = proj * camera_.view;
-    const Frustum frustum = Frustum::from_matrix(view_proj);
+    stats_.taa = taa;
+    stats_.taa_history = taa && history_valid_;
+    stats_.jitter = jitter;
     const bool shadows = sun_.shadows && sun_.intensity > 0.0f;
     const std::uint32_t shadow_res = std::max(64u, std::min(sun_.shadow_resolution, S.shadow_resolution));
     if (shadows) compute_cascades(aspect, shadow_res);
@@ -972,7 +1005,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const bool bloom = S.bloom && env_.bloom_intensity > 0.0f;
     const bool auto_exposure = S.auto_exposure && env_.auto_exposure;
     const bool linear_out = env_.linear_output || capture_mode_;
-    const bool fxaa = S.fxaa && !linear_out; // captures keep float precision
+    const bool fxaa = S.fxaa && !linear_out && !taa; // captures keep float precision
     if (auto_exposure) VICTUS_TRY_STATUS(ensure_exposure_textures());
 
     const std::uint32_t atlas_tiles = cascade_count_ > 1 ? 2u : 1u;
@@ -1065,7 +1098,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const RGTexture hdr = graph.create_texture("hdr_color", hdr_desc);
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
-    depth_desc.usage = rhi::TextureUsageDepthTarget | ((ssao || !particle_draws.empty()) ? rhi::TextureUsageSampled : 0u);
+    depth_desc.usage = rhi::TextureUsageDepthTarget | ((ssao || taa || !particle_draws.empty()) ? rhi::TextureUsageSampled : 0u);
     const RGTexture depth = graph.create_texture("scene_depth", depth_desc);
 
     if (prepass) {
@@ -1286,6 +1319,46 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             });
     }
 
+    // TAA resolve into the persistent history; everything after reads the resolved image.
+    RGTexture scene_color = hdr;
+    if (taa) {
+        const std::uint32_t cur = history_index_ ^ 1u, prev = history_index_;
+        VICTUS_TRY_STATUS(ensure_history(cur, rw, rh));
+        if (!history_[prev]) VICTUS_TRY_STATUS(ensure_history(prev, rw, rh)); // steady texture count from frame one
+        const bool have_prev = history_valid_ && history_[prev];
+        auto taa_pl = post_pipeline("taa.frag", rhi::Format::RGBA16_FLOAT);
+        if (!taa_pl) return std::move(taa_pl).error();
+        TaaUniforms tu{};
+        tu.reproject = prev_view_proj_ * inverse(view_proj_unjittered);
+        tu.params = {S.taa_blend, have_prev ? 1.0f : 0.0f, 1.25f, 0.0f};
+        tu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh),
+                     1.0f / static_cast<float>(have_prev ? history_w_[prev] : rw),
+                     1.0f / static_cast<float>(have_prev ? history_h_[prev] : rh)};
+        const RGTexture resolved = graph.import_texture("taa_resolved", history_[cur], color_desc(rhi::Format::RGBA16_FLOAT, rw, rh));
+        RGTexture previous;
+        if (have_prev)
+            previous = graph.import_texture("taa_history", history_[prev],
+                                            color_desc(rhi::Format::RGBA16_FLOAT, history_w_[prev], history_h_[prev]));
+        graph.add_pass(
+            "taa",
+            [&](PassBuilder& b) {
+                b.read(hdr);
+                b.read(depth);
+                if (previous.valid()) b.read(previous);
+                b.write_color(resolved, rhi::LoadOp::DontCare);
+            },
+            [this, hdr, depth, previous, tu, pl = taa_pl.value()](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, tu);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(hdr), ctx_.nearest_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1,
+                                       previous.valid() ? ctx.texture(previous) : ctx.texture(hdr), ctx_.linear_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 2, ctx.texture(depth), ctx_.nearest_clamp());
+                ctx.pass->draw(3);
+            });
+        scene_color = resolved;
+    }
+
     // Dual-filter bloom: progressively halved mip chain, then tent upsampling back up.
     RGTexture bloom_result;
     if (bloom) {
@@ -1306,7 +1379,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             auto up_pl = post_pipeline("bloom_up.frag", rhi::Format::RGBA16_FLOAT, rhi::BlendMode::Additive);
             if (!up_pl) return std::move(up_pl).error();
             for (std::uint32_t i = 0; i < levels; ++i) {
-                const RGTexture src = i == 0 ? hdr : chain[i - 1];
+                const RGTexture src = i == 0 ? scene_color : chain[i - 1];
                 const auto [sw, sh] = i == 0 ? std::pair{rw, rh} : sizes[i - 1];
                 BloomDownUniforms du{inv_size(sw, sh, i == 0 ? 1.0f : 0.0f),
                                      {env_.bloom_threshold, env_.bloom_knee, 256.0f, 0.0f}};
@@ -1367,13 +1440,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         graph.add_pass(
             "luminance",
             [&](PassBuilder& b) {
-                b.read(hdr);
+                b.read(scene_color);
                 b.write_color(lum, rhi::LoadOp::DontCare);
             },
-            [this, hdr, lu, pl = lum_pl.value()](PassContext& ctx) {
+            [this, scene_color, lu, pl = lum_pl.value()](PassContext& ctx) {
                 ctx.pass->bind_pipeline(pl);
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, lu.params);
-                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(hdr), ctx_.linear_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(scene_color), ctx_.linear_clamp());
                 ctx.pass->draw(3);
             });
         graph.add_pass(
@@ -1411,7 +1484,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     graph.add_pass(
         "tonemap",
         [&](PassBuilder& b) {
-            b.read(hdr);
+            b.read(scene_color);
             if (bloom_result.valid()) b.read(bloom_result);
             if (exposure_now.valid()) b.read(exposure_now);
             b.write_color(ldr, rhi::LoadOp::DontCare);
@@ -1419,7 +1492,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         [&, tm = tonemap.value()](PassContext& ctx) {
             ctx.pass->bind_pipeline(tm);
             ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, post);
-            ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(hdr), ctx_.linear_clamp());
+            ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(scene_color), ctx_.linear_clamp());
             ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1,
                                    bloom_result.valid() ? ctx.texture(bloom_result) : ctx_.black(), ctx_.linear_clamp());
             ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 2,
@@ -1447,6 +1520,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     VICTUS_TRY_STATUS(graph.compile());
     VICTUS_TRY_STATUS(graph.execute(dev, cmd, pool_));
     graph_info_ = graph.info();
+    if (taa) {
+        history_index_ ^= 1u;
+        history_valid_ = true;
+        prev_view_proj_ = view_proj_unjittered;
+        ++frame_index_;
+    }
     if (auto_exposure) {
         exposure_index_ ^= 1u;
         adaptation_valid_ = true;

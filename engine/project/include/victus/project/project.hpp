@@ -30,6 +30,10 @@ struct ProjectSettings {
     // scale override (0 = the tier's default).
     std::string render_quality{"high"};
     float render_scale{0.0f};
+    // Dynamic resolution: target frame rate the player holds by lowering the 3D render scale
+    // (down to `dynamic_resolution_min`); 0 disables it.
+    int target_fps{0};
+    float dynamic_resolution_min{0.5f};
     // Input actions ("input" section); projects without one use the engine defaults.
     gameplay::InputMap input = gameplay::default_input_map();
     // Version of the game's save data ("save_version"); raise it when the shape of saved data
