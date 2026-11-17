@@ -36,6 +36,25 @@ private:
     bool done_{false};
 };
 
+// Dynamic GI (ADR-0057): re-captures probes round-robin with the volume itself applied, blending
+// each new capture into the stored probe. Converges to multi-bounce lighting over refresh cycles
+// and follows light changes (sun, moving lights, emissive edits) with a lag of about
+// probe_count / probes-per-frame frames divided by the blend factor.
+class IrradianceRefresher {
+public:
+    void reset() noexcept { next_ = 0; }
+    [[nodiscard]] std::uint32_t next_probe() const noexcept { return next_; }
+    [[nodiscard]] std::uint64_t probes_refreshed() const noexcept { return refreshed_; }
+    // Refreshes up to `max_probes` probes (0 = one full cycle). `blend` in (0, 1]: weight of the new
+    // capture (1 = replace). Feedback renders clamp the volume intensity to 1 so it cannot diverge.
+    [[nodiscard]] Status step(GpuContext& ctx, SceneRenderer& renderer, IrradianceVolume& volume, const CaptureFill& fill,
+                              const IrradianceBakeSettings& settings, std::uint32_t max_probes, float blend = 0.5f);
+
+private:
+    std::uint32_t next_{0};
+    std::uint64_t refreshed_{0};
+};
+
 // Bakes every pass of every probe at once (tools, tests, offline bakes).
 [[nodiscard]] Status bake_irradiance_volume(GpuContext& ctx, SceneRenderer& renderer, IrradianceVolume& volume,
                                             const CaptureFill& fill, const IrradianceBakeSettings& settings = {});

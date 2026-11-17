@@ -604,6 +604,17 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - One volume per frame per renderer, no per-probe visibility/occlusion (DDGI depth moments) yet: thin walls can leak light, mitigated by the normal offset. The texture limits a volume to 32x16x32 probes.
   - Rejected (a): large tooling cost (unwrapping, path tracing) for static scenes only. Rejected (c) as the first step; a dynamic, incrementally updated probe option on High/Ultra remains the second half of item 13.
 
+### ADR-0057: Dynamic GI by round-robin probe refresh with feedback
+- Status: Accepted (Slice 60)
+- Context: ADR-0056 volumes are baked once; a moving sun, time of day, lights switched on or emissive changes left stale indirect light until a manual rebake. Item 13 asks for a dynamic option on High/Ultra. DDGI (Majercik et al. 2019) and Unreal Lumen update probes incrementally with temporal hysteresis; both trace rays, which needs hardware RT or SDF tracing that the SDL_GPU baseline lacks.
+- Options: (a) DDGI with compute ray tracing against a software BVH; (b) re-capture probes with the existing raster cube capture, a few per frame, with the volume applied to the capture (feedback) and blended into the stored SH; (c) full rebake on every change.
+- Decision: (b).
+  - `render::IrradianceRefresher` walks the probes round-robin within a per-step budget, renders each capture with the volume bound (volume intensity clamped to 1 during feedback so the loop cannot diverge with albedo < 1), and mixes the new SH9 into the stored one with weight `blend`. Each cycle adds one bounce; repeated cycles converge to multi-bounce light.
+  - `IrradianceVolumeComponent::dynamic` / `dynamic_blend`. After a volume's bake finished, `extract_scene` spends the remaining per-frame probe budget on its refresh. `RenderSettings::dynamic_gi` gates it: on for High/Ultra, off for Low/Medium.
+- Consequences:
+  - Light changes propagate within about probe_count / budget frames (blend 1), smoother with lower blends. Cost is the per-frame probe budget (default 8 captures of six 16px faces) on the probe renderer.
+  - Same limits as ADR-0056 (no visibility data, one volume per frame). Rejected (a) until a GPU BVH/SDF exists; rejected (c) as it stalls frames and drops the previous lighting.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 
