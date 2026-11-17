@@ -204,7 +204,7 @@ enum class QualityTier : std::uint8_t { Low, Medium, High, Ultra };
 
 struct RenderSettings {
     QualityTier tier{QualityTier::High};
-    float render_scale{1.0f};             // 3D resolution scale (0.25..2), upscaled bilinearly
+    float render_scale{1.0f};             // 3D resolution scale (0.25..2); temporally upscaled with TAA, else bilinearly
     std::uint32_t shadow_cascades{3};     // 1..4, packed into a 2x2 atlas when > 1
     std::uint32_t shadow_resolution{2048}; // per cascade; also capped by DirectionalLight
     float cascade_split_lambda{0.8f};     // 0 uniform .. 1 logarithmic splits
@@ -220,6 +220,10 @@ struct RenderSettings {
     // moving objects bounded by neighbourhood clipping). Also stabilises SSAO and shadows.
     bool taa{true};                       // High/Ultra; Low/Medium use FXAA
     float taa_blend{0.1f};                // weight of the current frame (0.04..1)
+    // Temporal upscaling (ADR-0055): with TAA on and render_scale < 1 (or dynamic resolution
+    // lowering it), the resolve reconstructs at output resolution from jittered samples instead of
+    // upscaling the internal image bilinearly. Off: the TAA history stays at render resolution.
+    bool temporal_upscale{true};
     // Object motion vectors (ADR-0054): opaque draws submitted with a motion id whose transform or
     // joints changed since the previous frame are drawn into a motion buffer the TAA resolve
     // follows, so moving and animated objects keep their history instead of ghosting. TAA only.
@@ -258,6 +262,7 @@ struct SceneStats {
     std::uint32_t render_width{0}, render_height{0};
     bool taa{false};                   // TAA resolved this frame
     bool taa_history{false};           // ... with a valid history (false on the first frame / after a reset)
+    bool temporal_upscale{false};      // ... reconstructed at output resolution from a lower render resolution
     math::Vec2 jitter{};               // sub-pixel jitter in render pixels
     // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
     std::uint32_t main_batches{0}, shadow_batches{0}, prepass_batches{0};

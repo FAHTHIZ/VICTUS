@@ -576,6 +576,19 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - Vertex animation in surface shaders is not seen (they only change fragments today). Ids must be unique per object; the first submission of an id in a frame wins.
   - Rejected (a): it doubles colour bandwidth for every opaque pixel on every frame. Rejected (c): it needs an extra ID target and per-object matrices in a buffer, for the same result.
 
+### ADR-0055: Temporal upscaling inside the TAA resolve
+- Status: Accepted (Slice 58)
+- Context: dynamic resolution and `render_scale < 1` rendered the 3D scene at a lower size and the tonemap stretched it bilinearly, so lower scales cost detail roughly in proportion to the pixel count. TAA already jitters every frame and keeps a history; temporal upscalers (AMD FSR 2, MIT-licensed and documented at gpuopen.com; Unreal TSR documentation; Karis 2014 "High Quality Temporal Supersampling") use that jitter to reconstruct an output-resolution image.
+- Options: (a) integrate FSR 2/3 source (MIT, large: ~10 compute passes, its own resource layout, HLSL/GLSL permutations to port to SDL_GPU MSL); (b) a spatial upscaler only (FSR 1 EASU/RCAS) after TAA; (c) a single-pass reconstruct-and-accumulate resolve owned by VICTUS, sharing taa.frag's reprojection and clipping.
+- Decision: (c).
+  - When TAA is on, `RenderSettings::temporal_upscale` (default on) and the render size is below the output in either axis, the resolve runs `taa_upscale.frag` at output resolution into an output-sized history. Each output pixel gathers the 3x3 render texels around it and weights them by a Gaussian fit of a Blackman-Harris window over their unjittered distance to the output pixel centre (the jitter offset is undone per sample). The reconstructed colour blends with the reprojected, Catmull-Rom sampled, YCoCg-clipped history; its weight scales with the nearest sample's kernel weight, so output pixels between this frame's samples lean on history.
+  - The jitter cycle grows to `ceil(8 * ratio^2)` (FSR 2 recommendation), clamped to 8..64 (`temporal_jitter_period`).
+  - Bloom, exposure and tonemap read the output-resolution image; the bloom chain still starts at render resolution (cost stays tied to render scale).
+  - History stays at output size while dynamic resolution moves the render scale, so scale changes do not reset accumulation.
+- Consequences:
+  - Static and slowly moving content converges towards native-resolution edges (pixel-measured in `victus_gpu_tests`); fast disocclusions show the reconstructed render-resolution image until history builds again. No sharpening pass and no reactive/transparency mask yet: particles and blended draws can smear like in plain TAA.
+  - Low and Medium tiers do not run TAA, so they keep bilinear scaling (mobile cost unchanged). Rejected (a): too large to own across three shader backends for the gain over (c) today; revisit with a measured quality gap. Rejected (b): spatial upscaling cannot recover sub-pixel detail.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

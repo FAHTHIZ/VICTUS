@@ -38,6 +38,7 @@ Value settings_to_json(const ProjectSettings& s) {
         rendering.set("target_fps", s.target_fps);
         rendering.set("dynamic_resolution_min", s.dynamic_resolution_min);
     }
+    if (!s.temporal_upscale) rendering.set("temporal_upscale", false);
     if (s.mobile_quality != "medium") rendering.set("mobile_quality", s.mobile_quality);
     if (s.mobile_target_fps != 30) rendering.set("mobile_target_fps", s.mobile_target_fps);
     v.set("rendering", std::move(rendering));
@@ -77,6 +78,7 @@ Status settings_from_json(const Value& v, ProjectSettings& s) {
     const auto fps = r["target_fps"].as_int(0);
     if (fps < 0 || fps > 1000) return bad("rendering.target_fps must be 0 (off) or between 1 and 1000");
     s.target_fps = static_cast<int>(fps);
+    s.temporal_upscale = r["temporal_upscale"].as_bool(true);
     s.dynamic_resolution_min = r["dynamic_resolution_min"].as_float(0.5f);
     if (!(s.dynamic_resolution_min >= 0.25f && s.dynamic_resolution_min <= 1.0f))
         return bad("rendering.dynamic_resolution_min must be between 0.25 and 1");
