@@ -8,6 +8,7 @@
 
 #include <imgui.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,6 +25,9 @@ struct UiOptions {
     bool docking{true};
     std::string ini_path;       // empty: layout is not persisted
     bool victus_theme{true};
+    // A TrueType/OpenType font to use instead of the built-in vector font (wider glyph coverage: dashes,
+    // middle dots, degree signs, accents). Empty: the built-in font. Read with Platform::read_bundled by the caller.
+    std::vector<std::uint8_t> font_data;
 };
 
 struct UiStats {
