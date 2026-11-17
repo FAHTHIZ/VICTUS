@@ -660,6 +660,10 @@ Known gaps:
 - No GPU-driven culling or indirect draws yet (next slice), and no occlusion culling or clustered (meshlet) LOD.
 - LOD selection uses each object's bounds and largest scale axis; skinned meshes use their submitted bounds.
 
+## Fix: editor primitive names and Debug CI crash (after Slice 54)
+
+The `build-and-test (ubuntu-latest, Debug)` job had crashed in "editor: transform gizmo works in 2D scenes on the XY plane" since Slice 51. An ASan + UBSan Debug build (`/tmp/build-asan`, run on lavapipe) showed a global-buffer-overflow in `Editor::create_entity`: the name table had no entry for `Primitive::SpotLight` (added in Slice 48), so spot lights were named "Sprite" and sprites read past the end of the table. The CI sanitizer job never saw it because it has no GPU and skips editor tests. The table now includes "Spot Light", and a `static_assert` ties its size to the enum. The same 2D gizmo test now checks both names. UBSan also flagged `memcpy` from a null pointer when `BinaryReader::array` read an empty array; zero-length copies are now skipped. Editor tests pass under ASan + UBSan; full ctest 21/21.
+
 ## Next task
 Slice 55: GPU-driven culling and indirect draws where SDL_GPU allows (compute frustum culling into indirect argument buffers, per-instance LOD), then occlusion culling. See ROADMAP.md "Next slices".
 

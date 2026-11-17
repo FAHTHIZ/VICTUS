@@ -1394,6 +1394,11 @@ TEST_CASE("editor: transform gizmo works in 2D scenes on the XY plane") {
     const math::Vec2 vs{float(Harness::VW), float(Harness::VH)};
     Scene& s = ed.edit_scene();
     const Entity sprite = ed.create_entity(editor::Primitive::Sprite);
+    // Every primitive has its own name (the table once missed "Spot Light" and read past its end).
+    CHECK(s.world().get<Name>(sprite)->value == "Sprite");
+    const Entity spot = ed.create_entity(editor::Primitive::SpotLight);
+    CHECK(s.world().get<Name>(spot)->value == "Spot Light");
+    s.destroy(spot);
     const Uuid id = s.uuid(sprite);
     s.world().get<Transform>(sprite)->position = {0, 0, 0};
     s.update_transforms();

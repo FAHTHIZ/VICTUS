@@ -11,6 +11,7 @@
 #include "victus/platform/platform.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <cctype>
 #include <chrono>
 #include <format>
@@ -328,8 +329,9 @@ void Editor::record_edit(std::string label, std::vector<EntityState> before) {
 
 Entity Editor::create_entity(Primitive kind, Entity parent) {
     Scene& s = active_scene();
-    static constexpr const char* kNames[] = {"Entity", "Cube", "Sphere", "Plane", "Cylinder",
-                                             "Camera", "Directional Light", "Point Light", "Sprite"};
+    static constexpr const char* kNames[] = {"Entity", "Cube", "Sphere", "Plane", "Cylinder", "Camera",
+                                             "Directional Light", "Point Light", "Spot Light", "Sprite"};
+    static_assert(std::size(kNames) == static_cast<std::size_t>(Primitive::Sprite) + 1, "one name per Primitive");
     const Entity e = s.create(kNames[static_cast<int>(kind)], parent);
     auto& w = s.world();
     // Place new objects in front of the editor camera focus.
