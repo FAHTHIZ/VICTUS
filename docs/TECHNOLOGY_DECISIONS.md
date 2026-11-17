@@ -359,5 +359,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** No material inheritance/instances yet; shader variants are fixed to the built-in PBR shader. Revisit when project shaders or a material graph land (the file gains a `shader` field and parameters), or if material count makes per-file loading slow.
 
+## ADR-0035 — Project surface shaders compiled at load time with glslang and SPIRV-Cross (accepted 2026-11-17)
+**Problem.** Every mesh used the one built-in PBR shader; games could not author animated, stylised or procedural surfaces (energy fields, dissolves, holograms, water tints) without changing engine code.
+
+**Candidates.** (1) Surface functions in GLSL spliced into the built-in PBR fragment shader and compiled when first used, with glslang and SPIRV-Cross linked into the engine (Godot's spatial shaders, where `fragment()` writes `ALBEDO`, `ROUGHNESS`, `EMISSION` etc. and the built-in renderer does the lighting, with a global `TIME`, https://docs.godotengine.org/en/stable/tutorials/shaders/shader_reference/spatial_shader.html). (2) Whole custom vertex+fragment shaders — full freedom, but every shader must re-implement shadows, SSAO, fog and lighting and breaks whenever the renderer changes. (3) Compile at import time with the `glslangValidator` CLI — needs the Vulkan SDK on every user's machine. (4) A node-based material graph — friendlier, but it needs (1)'s compiler path first.
+
+**Decision.** (1). The `Surface`/`SurfaceInput` structs in `pbr.frag` are a stable contract; the surface runs after texture sampling and before lighting. Shaders cannot add resources — they get four per-material `vec4` parameters (`Material` UBO `custom[4]`) and time, which keeps the pipeline layout identical to the built-in shader so SDL_GPU resource counts never change. Compilation happens in `GpuAssetCache` (results and failures cached; errors fall back to built-in PBR), `victus check`/export compile every shader so broken shaders never ship, and hot reload recompiles. glslang 16.6.0 (released 2026-09-10, https://github.com/KhronosGroup/glslang/releases/tag/16.6.0) and SPIRV-Cross vulkan-sdk-1.4.363.0 are fetched by CMake with pinned hashes; glslang is built without HLSL, optimizer, tools or tests. MSL is generated only on Metal devices.
+
+**Evidence.** STATUS Slice 36: params and time change on-screen pixels; a compile error falls back and recovers through hot reload; error messages carry the `.vshader` line number; the 3D template's glowing cube works in `victus run`, the editor and an exported game.
+
+**Risks / revisit triggers.** glslang adds build time and binary size; first use compiles on the render thread. No D3D12 DXIL path (Vulkan is used on Windows). Revisit for a shader cache on disk/in packs, async compilation, vertex/sprite/post-process hooks, extra textures per shader, or a material graph that emits surface code.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
