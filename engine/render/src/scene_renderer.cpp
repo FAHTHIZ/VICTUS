@@ -157,6 +157,14 @@ struct ParticleUniforms {
     Vec4 proj;   // view depth = proj.x / (depth + proj.y)
     Vec4 screen; // xy: 1 / render size, z: 1 / softness
 };
+struct DecalFrameUniforms {
+    Mat4 mvp;
+};
+struct DecalUniforms {
+    Mat4 inv_view_proj;
+    Mat4 world_to_decal;
+    Vec4 color, uv, screen, axis;
+};
 struct BloomDownUniforms {
     Vec4 params;
     Vec4 threshold;
@@ -251,6 +259,21 @@ std::optional<MaterialBlend> parse_material_blend(std::string_view name) noexcep
     if (name == "opaque") return MaterialBlend::Opaque;
     if (name == "alpha") return MaterialBlend::Alpha;
     if (name == "additive") return MaterialBlend::Additive;
+    return std::nullopt;
+}
+
+std::string_view decal_blend_name(DecalBlend b) noexcept {
+    switch (b) {
+    case DecalBlend::Alpha: return "alpha";
+    case DecalBlend::Additive: return "additive";
+    default: return "multiply";
+    }
+}
+
+std::optional<DecalBlend> parse_decal_blend(std::string_view name) noexcept {
+    if (name == "multiply") return DecalBlend::Multiply;
+    if (name == "alpha") return DecalBlend::Alpha;
+    if (name == "additive") return DecalBlend::Additive;
     return std::nullopt;
 }
 
@@ -394,8 +417,10 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     auto skin_shadow_vs = get("shadow_skinned.vert");
     auto particle_vs = get("particle.vert");
     auto particle_fs = get("particle.frag");
+    auto decal_vs = get("decal.vert");
+    auto decal_fs = get("decal.frag");
     for (auto* s : {&mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &full_vs, &sky_fs, &line_vs, &line_fs, &depth_vs, &skin_vs,
-                    &skin_depth_vs, &skin_shadow_vs, &particle_vs, &particle_fs})
+                    &skin_depth_vs, &skin_shadow_vs, &particle_vs, &particle_fs, &decal_vs, &decal_fs})
         if (!*s) return std::move(*s).error();
     const rhi::VertexBufferLayout skin_layout{2, sizeof(SkinVertex), false};
     const std::vector<rhi::VertexAttribute> skin_attrs{{11, 2, rhi::VertexFormat::UShort4, 0},
@@ -554,6 +579,22 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
         (additive ? r->particle_additive_ : r->particle_alpha_) = p.value();
     }
 
+    // Decals: unit boxes from gl_VertexIndex, no depth attachment (the shader samples scene depth);
+    // front faces culled so each pixel is shaded once, also from inside the box.
+    for (const DecalBlend blend : {DecalBlend::Multiply, DecalBlend::Alpha, DecalBlend::Additive}) {
+        rhi::PipelineDesc pd;
+        pd.name = std::string("decal_") + std::string(decal_blend_name(blend));
+        pd.vertex = decal_vs.value();
+        pd.fragment = decal_fs.value();
+        pd.cull = rhi::CullMode::Front;
+        pd.color_targets = {{r->hdr_format_, blend == DecalBlend::Multiply ? rhi::BlendMode::Multiply
+                                             : blend == DecalBlend::Additive ? rhi::BlendMode::Additive
+                                                                             : rhi::BlendMode::Alpha}};
+        p = dev.create_pipeline(pd);
+        if (!p) return std::move(p).error();
+        r->decal_pipelines_[static_cast<std::size_t>(blend)] = p.value();
+    }
+
     // 1x1 cleared depth texture bound when shadows are disabled (compare always passes).
     rhi::TextureDesc ns;
     ns.name = "no_shadow";
@@ -635,6 +676,8 @@ SceneRenderer::~SceneRenderer() {
     for (auto pl : {opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_, prepass_cull_,
                     prepass_double_, skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_,
                     particle_alpha_, particle_additive_, motion_cull_, motion_double_, skin_motion_cull_, skin_motion_double_})
+        if (pl) d.destroy(pl);
+    for (auto pl : decal_pipelines_)
         if (pl) d.destroy(pl);
     if (motion_buffer_) d.destroy(motion_buffer_);
     if (palette_buffer_) d.destroy(palette_buffer_);
@@ -823,6 +866,7 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     palette_.clear();
     particles_.clear();
     particle_batches_.clear();
+    decals_.clear();
     stats_ = {};
 }
 
@@ -838,6 +882,14 @@ void SceneRenderer::set_irradiance_volume(const IrradianceVolume* volume, float 
 void SceneRenderer::add_reflection_probe(const ReflectionProbe& probe) {
     if (!probe.map || !probe.map->cube() || !probe.box.valid() || probes_.size() >= kMaxReflectionProbes) return;
     probes_.push_back(probe);
+}
+
+void SceneRenderer::add_decal(const Decal& decal) {
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            if (!std::isfinite(decal.transform[c][r])) return;
+    if (decal.color.a <= 0.0f || !std::isfinite(decal.color.a)) return;
+    decals_.push_back(decal);
 }
 
 void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const Mat4& model, std::uint64_t motion_id) {
@@ -1487,6 +1539,28 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         }
     }
     stats_.particle_batches = static_cast<std::uint32_t>(particle_draws.size());
+    // Decals: frustum cull the boxes, keep the nearest kMaxDecals, draw by sort order then distance.
+    std::vector<const Decal*> decal_draws;
+    {
+        static const Aabb kUnit{{-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}};
+        std::vector<std::pair<float, const Decal*>> candidates;
+        for (const Decal& d : decals_) {
+            const Aabb world = kUnit.transformed(d.transform);
+            if (!world.valid() || !frustum.intersects(world)) continue;
+            candidates.emplace_back(length(world.center() - camera_.position), &d);
+        }
+        if (candidates.size() > kMaxDecals) {
+            std::nth_element(candidates.begin(), candidates.begin() + kMaxDecals, candidates.end(),
+                             [](const auto& a, const auto& b) { return a.first < b.first; });
+            candidates.resize(kMaxDecals);
+        }
+        std::stable_sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
+            if (a.second->sort_order != b.second->sort_order) return a.second->sort_order < b.second->sort_order;
+            return a.first > b.first;
+        });
+        for (const auto& c : candidates) decal_draws.push_back(c.second);
+    }
+    stats_.decals = static_cast<std::uint32_t>(decal_draws.size());
     stats_.particles = static_cast<std::uint32_t>(particle_upload_.size());
     if (!particle_upload_.empty()) {
         const auto needed = static_cast<std::uint32_t>(particle_upload_.size());
@@ -1651,7 +1725,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
     depth_desc.usage = rhi::TextureUsageDepthTarget |
-                       ((ssao || taa || occlusion || !particle_draws.empty()) ? rhi::TextureUsageSampled : 0u);
+                       ((ssao || taa || occlusion || !particle_draws.empty() || !decal_draws.empty()) ? rhi::TextureUsageSampled : 0u);
     const RGTexture depth = graph.create_texture("scene_depth", depth_desc);
 
     if (prepass) {
@@ -1790,18 +1864,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             });
     }
 
-    graph.add_pass(
-        "forward",
-        [&](PassBuilder& b) {
-            if (shadow_map.valid()) b.read(shadow_map);
-            if (local_shadow_map.valid()) b.read(local_shadow_map);
-            if (ao.valid()) b.read(ao);
-            b.write_color(hdr, rhi::LoadOp::Clear, env_.clear_color);
-            b.write_depth(depth, prepass ? rhi::LoadOp::Load : rhi::LoadOp::Clear, 1.0f);
-        },
-        [&](PassContext& ctx) {
+    // Opaque geometry, then (with decals) the decal pass, then blended geometry and debug lines.
+    // Without decals one forward pass draws both phases.
+    auto forward_body = [&](PassContext& ctx, bool opaque_phase, bool blended_phase) {
             rhi::RenderPass& pass = *ctx.pass;
-            if (env_.draw_sky) {
+            if (opaque_phase && env_.draw_sky) {
                 SkyUniforms sky{};
                 sky.inv_view_proj = inverse(view_proj);
                 sky.zenith = rgb(env_.sky_background ? env_.background_zenith : env_.sky_zenith);
@@ -1884,7 +1951,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
                 }
             };
-            for (std::size_t bi = 0; bi < main_batches.size(); ++bi) {
+            for (std::size_t bi = 0; opaque_phase && bi < main_batches.size(); ++bi) {
                 const Batch& b = main_batches[bi];
                 const Draw* d = b.first;
                 rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_double_ : skin_cull_)
@@ -1895,7 +1962,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         want = custom;
                 draw_batch(b, want, occlusion ? static_cast<int>(bi) : -1);
             }
-            // Blended geometry after every opaque draw, far to near.
+            if (!blended_phase) return;
+            // Blended geometry after every opaque draw (and the decals), far to near.
             for (const Batch& b : transparent_batches) {
                 const Draw* d = b.first;
                 rhi::PipelineHandle want = blend_pipeline(d->material.blend, d->skinned, d->material.double_sided);
@@ -1911,7 +1979,64 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_vertex_buffer(0, line_buffer_);
                 pass.draw(static_cast<std::uint32_t>(lines_.size()));
             }
-        });
+    };
+    const bool split_forward = !decal_draws.empty();
+    graph.add_pass(
+        "forward",
+        [&](PassBuilder& b) {
+            if (shadow_map.valid()) b.read(shadow_map);
+            if (local_shadow_map.valid()) b.read(local_shadow_map);
+            if (ao.valid()) b.read(ao);
+            b.write_color(hdr, rhi::LoadOp::Clear, env_.clear_color);
+            b.write_depth(depth, prepass ? rhi::LoadOp::Load : rhi::LoadOp::Clear, 1.0f);
+        },
+        [&](PassContext& ctx) { forward_body(ctx, true, !split_forward); });
+    if (split_forward) {
+        const Mat4 inv_view_proj = inverse(view_proj);
+        graph.add_pass(
+            "decals",
+            [&](PassBuilder& b) {
+                b.read(depth);
+                b.write_color(hdr, rhi::LoadOp::Load);
+            },
+            [&, inv_view_proj, view_proj, rw, rh](PassContext& ctx) {
+                rhi::RenderPass& pass = *ctx.pass;
+                rhi::PipelineHandle bound{};
+                for (const Decal* d : decal_draws) {
+                    const rhi::PipelineHandle want = decal_pipelines_[static_cast<std::size_t>(d->blend)];
+                    if (!(bound == want)) {
+                        pass.bind_pipeline(want);
+                        bound = want;
+                    }
+                    const DecalFrameUniforms fu{view_proj * d->transform};
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, fu);
+                    DecalUniforms du{};
+                    du.inv_view_proj = inv_view_proj;
+                    du.world_to_decal = inverse(d->transform);
+                    du.color = d->color.vec();
+                    du.uv = d->uv;
+                    const float angle = std::isfinite(d->angle_fade) ? std::clamp(d->angle_fade, 0.0f, 1.0f) : 0.0f;
+                    du.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), static_cast<float>(d->blend), angle};
+                    const float fade = std::isfinite(d->depth_fade) ? std::clamp(d->depth_fade, 0.0f, 1.0f) : 0.0f;
+                    du.axis = Vec4(normalize(d->transform.transform_vector({0, 0, -1})), fade);
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, du);
+                    pass.bind_texture(rhi::ShaderStage::Fragment, 0, d->texture ? d->texture : ctx_.white(),
+                                      d->nearest_filter ? ctx_.nearest_clamp() : ctx_.linear_clamp());
+                    pass.bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(depth), ctx_.nearest_clamp());
+                    pass.draw(36);
+                }
+            });
+        graph.add_pass(
+            "forward_blended",
+            [&](PassBuilder& b) {
+                if (shadow_map.valid()) b.read(shadow_map);
+                if (local_shadow_map.valid()) b.read(local_shadow_map);
+                if (ao.valid()) b.read(ao);
+                b.write_color(hdr, rhi::LoadOp::Load);
+                b.write_depth(depth, rhi::LoadOp::Load, 1.0f);
+            },
+            [&](PassContext& ctx) { forward_body(ctx, false, true); });
+    }
 
     if (!particle_draws.empty()) {
         ParticleFrameUniforms pf{};

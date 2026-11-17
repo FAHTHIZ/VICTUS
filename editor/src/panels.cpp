@@ -490,6 +490,7 @@ void Editor::draw_menu_bar() {
         item("Directional Light", Primitive::DirectionalLight);
         item("Point Light", Primitive::PointLight);
         item("Spot Light", Primitive::SpotLight);
+        item("Decal", Primitive::Decal);
         ImGui::Separator();
         if (ImGui::MenuItem("Terrain", nullptr, false, db_ != nullptr && play_state_ == PlayState::Editing))
             if (auto t = create_terrain(); !t) notify("cannot create terrain: " + t.error().message, true);
@@ -900,6 +901,7 @@ void Editor::draw_hierarchy() {
         if (ImGui::MenuItem("Directional Light")) create_entity(Primitive::DirectionalLight);
         if (ImGui::MenuItem("Point Light")) create_entity(Primitive::PointLight);
         if (ImGui::MenuItem("Spot Light")) create_entity(Primitive::SpotLight);
+        if (ImGui::MenuItem("Decal")) create_entity(Primitive::Decal);
         ImGui::EndPopup();
     }
     ImGui::SameLine();
