@@ -152,6 +152,7 @@ Status Editor::create_project(const fs::Path& directory, std::string_view name, 
 
 void Editor::close_project() {
     stop();
+    close_sequence();
     gizmo_cancel();
     selection_.clear();
     tile_stroke_ = {};
@@ -232,7 +233,7 @@ std::size_t Editor::check_asset_changes() {
     }
     for (const auto& q : changes.sequences) {
         if (play_sequencer_) play_sequencer_->reload(q);
-        notify("Reloaded sequence " + q);
+        sequence_changed_on_disk(q);
     }
     for (const auto& m : changes.materials) {
         if (const auto it = written_materials_.find(m); it != written_materials_.end() && db_)
@@ -279,6 +280,7 @@ std::size_t Editor::check_asset_changes() {
 
 void Editor::set_scene(std::unique_ptr<Scene> s, std::string path) {
     stop();
+    end_sequence_preview(); // restores the outgoing scene before it goes away
     gizmo_cancel();
     scene_ = std::move(s);
     scene_path_ = std::move(path);
@@ -315,6 +317,7 @@ Status Editor::save_scene() {
     if (!path) return std::move(path).error();
     std::error_code ec;
     sfs::create_directories(path->parent_path(), ec);
+    end_sequence_preview(); // never save previewed transforms
     VICTUS_TRY_STATUS(save_terrains());
     VICTUS_TRY_STATUS(scene_->save_file(*path));
     undo_.mark_saved();
@@ -1049,6 +1052,7 @@ void Editor::tick_play(float dt) {
 
 void Editor::start_play(std::uint64_t seed, bool networked) {
     gizmo_cancel(); // a half-finished drag never leaks into play mode
+    end_sequence_preview(); // play the authored scene, not the previewed pose
     // Commit any in-flight inspector edit to the authored scene first.
     if (pending_dirty_ && !pending_before_.empty()) record_edit("Edit", std::move(pending_before_));
     pending_before_.clear();

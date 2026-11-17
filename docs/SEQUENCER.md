@@ -96,3 +96,13 @@ auto doc = sequence->to_json();               // deterministic; Sequence::parse 
 ```
 
 `set_sequence(scene, entity, sequence)` plays an in-memory sequence (editor previews, tests).
+
+## Editor
+
+Window > Sequencer (or the command palette entry "Sequencer") opens the timeline panel.
+
+- New creates `sequences/Sequence.vseq`; Open or drop a `.vseq` from the asset browser onto the panel. Assign attaches the open sequence to the selected entity's `SequencePlayer` (undoable) and uses it as the preview player.
+- + Track adds transform, animation, audio, camera-cut or event tracks. The track context menu sets the target entity name, toggles relative (offset) transforms and removes the track.
+- Click or drag the ruler to scrub. Play previews in edit mode through `SequencerSystem::seek`; stopping or closing the preview restores the transforms, primary camera and animator state it touched. Saving the scene, switching scenes and entering play mode end the preview first, and autosave pauses during preview.
+- Double-click a lane to add a key, drag diamonds to retime them, Delete Key removes the selection. Record Key captures the target's current transform at the playhead (as an offset for relative tracks). The key inspector edits per-type values; audio clips can be dropped from the asset browser.
+- Sequence edits have their own undo/redo stack; Save writes deterministic JSON via `Sequence::to_json`. Changes made outside the editor reload the open sequence unless it has unsaved edits.

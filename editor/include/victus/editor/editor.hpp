@@ -293,6 +293,63 @@ public:
     [[nodiscard]] bool material_editor_open() const noexcept { return show_material_editor_; }
     [[nodiscard]] const Uuid& editing_material() const noexcept { return material_editing_; }
 
+    // ---- sequencer (.vseq timelines, docs/SEQUENCER.md; sequencer_panel.cpp) ----
+    // The Sequencer panel edits one sequence file with its own undo history; edits are saved
+    // explicitly. Scrubbing previews the sequence on a SequencePlayer entity of the edit scene; the
+    // previewed transforms, camera flags and animators are put back when the preview ends (before
+    // saving the scene, playing, switching scenes, or with end_sequence_preview()).
+    enum class SeqChannel : std::uint8_t { Position, Rotation, Scale, Keys };
+    struct SeqKey {
+        int track{-1};
+        SeqChannel channel{SeqChannel::Keys};
+        int index{-1};
+        [[nodiscard]] bool valid() const noexcept { return track >= 0 && index >= 0; }
+        friend bool operator==(const SeqKey&, const SeqKey&) = default;
+    };
+    // Writes an empty sequence (default "sequences/Sequence.vseq", made unique) and returns its path.
+    Result<std::string> create_sequence(std::string_view relative_path = {}, float duration = 5.0f);
+    // Opens a sequence in the panel. `player` previews it (default: the selected entity when it
+    // has a SequencePlayer, else the first SequencePlayer using `path`).
+    Status open_sequence(std::string_view path, scene::Entity player = scene::kNullEntity);
+    // Adds a SequencePlayer to `e` (or retargets its own) that plays the open sequence. Undoable.
+    bool assign_sequence(scene::Entity e);
+    void close_sequence();
+    Status save_sequence();
+    [[nodiscard]] const sequencer::Sequence* editing_sequence() const noexcept { return seq_doc_ ? &*seq_doc_ : nullptr; }
+    [[nodiscard]] const std::string& editing_sequence_path() const noexcept { return seq_path_; }
+    [[nodiscard]] bool sequence_dirty() const noexcept { return seq_dirty_; }
+    [[nodiscard]] bool sequencer_open() const noexcept { return show_sequencer_; }
+    void set_show_sequencer(bool show) noexcept { show_sequencer_ = show; }
+    // Applies `edit` to the open sequence as one undo step (keys are re-sorted, the duration grows
+    // to the last key) and refreshes the preview. False without an open sequence.
+    bool edit_sequence(const std::function<void(sequencer::Sequence&)>& edit);
+    // Appends a track; returns its index (-1 without an open sequence or at the track limit).
+    int sequence_add_track(sequencer::TrackType type, std::string target = {}, std::string name = {});
+    bool sequence_remove_track(int track);
+    // Keys position, rotation and scale of the transform track's target at `time` from its
+    // current local transform (relative tracks store the offset from the preview start).
+    SeqKey sequence_record_transform(int track, float time);
+    // Adds a key to a non-transform track: `value` is the clip (animation/audio), event name or
+    // camera target. A key at the same time is replaced.
+    SeqKey sequence_add_key(int track, float time, std::string value = {});
+    // Moves a key to a new time (clamped to >= 0); returns its new position after re-sorting.
+    SeqKey sequence_move_key(SeqKey key, float time);
+    bool sequence_delete_key(SeqKey key);
+    [[nodiscard]] std::optional<float> sequence_key_time(SeqKey key) const;
+    bool sequence_undo();
+    bool sequence_redo();
+    [[nodiscard]] bool sequence_can_undo() const noexcept { return !seq_undo_.empty(); }
+    [[nodiscard]] bool sequence_can_redo() const noexcept { return !seq_redo_.empty(); }
+    // Preview: moves the playhead and applies the sequence to the edit scene (no events or audio).
+    void sequence_seek(float time);
+    [[nodiscard]] float sequence_time() const noexcept { return seq_time_; }
+    // Plays the preview in real time from frame() (loops at the end).
+    void sequence_preview_play(bool playing);
+    [[nodiscard]] bool sequence_previewing() const noexcept { return seq_backup_.has_value(); }
+    [[nodiscard]] scene::Entity sequence_preview_player();
+    // Restores the entities changed by the preview.
+    void end_sequence_preview();
+
     // ---- visual script graphs (.vgraph assets, ADR-0058/ADR-0059; graph_panel.cpp) ----
     // The Graph Editor edits one graph file. Graph edits have their own undo history (the file is a
     // project asset, not scene data) and are saved explicitly; play mode hot-reloads saved graphs.
@@ -756,6 +813,43 @@ private:
     Uuid material_editing_;
     assets::MaterialAsset material_edit_;
     std::unordered_map<std::string, std::uint64_t> written_materials_; // path -> hash of our last write
+    // sequencer panel (sequencer_panel.cpp)
+    void draw_sequencer();
+    void refresh_sequence_preview();
+    void update_sequence_preview(float dt);
+    void sequence_changed_on_disk(const std::string& path);
+    bool show_sequencer_{false};
+    std::string seq_path_;
+    std::optional<sequencer::Sequence> seq_doc_;
+    std::vector<sequencer::Sequence> seq_undo_, seq_redo_;
+    bool seq_dirty_{false};
+    float seq_time_{0};
+    bool seq_playing_{false};
+    float seq_zoom_{80.0f}; // pixels per second
+    Uuid seq_player_;
+    SeqKey seq_selected_;
+    int seq_track_selected_{-1};
+    struct SeqDrag {
+        SeqKey key;
+        float time{0};
+        bool moved{false};
+    };
+    std::optional<SeqDrag> seq_drag_;
+    sequencer::Track seq_scratch_; // key inspector edits (committed when an edit finishes)
+    SeqKey seq_scratch_for_;
+    char seq_target_buf_[128]{};
+    std::unique_ptr<sequencer::SequencerSystem> edit_sequencer_;
+    struct SeqBackup {
+        struct Item {
+            Uuid uuid;
+            scene::Transform transform;
+            std::optional<bool> camera_primary;
+            std::optional<animation::AnimatorComponent> animator;
+        };
+        std::vector<Item> items;
+    };
+    std::optional<SeqBackup> seq_backup_;
+    std::unordered_map<std::string, std::uint64_t> written_sequences_; // path -> hash of our last write
     // visual script graph editor (graph_panel.cpp)
     void draw_graph_editor();
     void draw_graph_side_panel();

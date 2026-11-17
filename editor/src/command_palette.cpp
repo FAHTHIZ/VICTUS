@@ -159,6 +159,7 @@ std::vector<EditorCommand> Editor::commands() {
     toggle("Terrain Tools", &show_terrain_tools_);
     toggle("Material Editor", &show_material_editor_);
     toggle("Graph Editor", &show_graph_editor_);
+    toggle("Sequencer", &show_sequencer_);
     add("View: Toggle Profiler", {}, true, [this] { set_show_profiler(!show_profiler_); });
     for (auto tier : {render::QualityTier::Low, render::QualityTier::Medium, render::QualityTier::High, render::QualityTier::Ultra})
         add("View: Rendering Quality " + std::string(render::quality_tier_name(tier)), {}, quality_ != tier, [this, tier] {
