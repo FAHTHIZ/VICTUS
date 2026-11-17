@@ -798,6 +798,28 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         apply_reflection_probes(scene, assets, renderer, settings, stats);
         apply_irradiance_volumes(scene, assets, renderer, settings, camera.position, stats);
     }
+    static_assert(static_cast<int>(gameplay::DecalComponent::Blend::Additive) == static_cast<int>(render::DecalBlend::Additive));
+    static_assert(static_cast<int>(gameplay::DecalComponent::Blend::Alpha) == static_cast<int>(render::DecalBlend::Alpha));
+    w.each<gameplay::DecalComponent, WorldTransform>([&](const gameplay::DecalComponent& d, const WorldTransform& wt) {
+        if (!d.visible) return;
+        render::Decal decal;
+        const math::Vec3 size{std::max(d.size.x, 0.001f), std::max(d.size.y, 0.001f), std::max(d.size.z, 0.001f)};
+        decal.transform = wt.matrix * math::Mat4::scale(size);
+        if (!d.texture.is_nil()) {
+            auto tex = assets.texture(d.texture);
+            if (tex) decal.texture = *tex;
+            else ++stats.missing_assets;
+            decal.nearest_filter = assets.texture_nearest(d.texture);
+        }
+        decal.color = d.color;
+        decal.blend = static_cast<render::DecalBlend>(std::min<int>(static_cast<int>(d.blend), 2));
+        decal.uv = {d.uv_min.x, d.uv_min.y, d.uv_max.x, d.uv_max.y};
+        decal.angle_fade = d.angle_fade;
+        decal.depth_fade = d.depth_fade;
+        decal.sort_order = d.sort_order;
+        renderer.add_decal(decal);
+        ++stats.decals;
+    });
 
     std::vector<math::Mat4> palette;
     const auto apply_overrides = [&](Entity entity, render::Material& m) {

@@ -368,8 +368,8 @@ void Editor::record_edit(std::string label, std::vector<EntityState> before) {
 Entity Editor::create_entity(Primitive kind, Entity parent) {
     Scene& s = active_scene();
     static constexpr const char* kNames[] = {"Entity", "Cube", "Sphere", "Plane", "Cylinder", "Camera",
-                                             "Directional Light", "Point Light", "Spot Light", "Sprite"};
-    static_assert(std::size(kNames) == static_cast<std::size_t>(Primitive::Sprite) + 1, "one name per Primitive");
+                                             "Directional Light", "Point Light", "Spot Light", "Sprite", "Decal"};
+    static_assert(std::size(kNames) == static_cast<std::size_t>(Primitive::Decal) + 1, "one name per Primitive");
     const Entity e = s.create(kNames[static_cast<int>(kind)], parent);
     auto& w = s.world();
     // Place new objects in front of the editor camera focus.
@@ -409,6 +409,12 @@ Entity Editor::create_entity(Primitive kind, Entity parent) {
         break;
     }
     case Primitive::Sprite: w.add<SpriteComponent>(e); break;
+    case Primitive::Decal: {
+        // Projects straight down onto the ground below the focus point.
+        w.add<gameplay::DecalComponent>(e).size = {1.0f, 1.0f, 1.0f};
+        w.get<Transform>(e)->rotation = math::Quat::euler(math::radians(-90.0f), 0, 0);
+        break;
+    }
     }
     s.update_transforms();
     const Uuid id = s.uuid(e);
@@ -781,6 +787,9 @@ math::Aabb Editor::entity_bounds(Entity e, bool* has_mesh) {
             local = {{0, 0, -0.01f}, {tm->cell_size.x, tm->cell_size.y, 0.01f}};
         }
         mesh = true;
+    } else if (const auto* dc = s.world().get<gameplay::DecalComponent>(e)) {
+        // The projection box (outlined when selected); not pickable, it would cover the surfaces it decorates.
+        local = {dc->size * -0.5f, dc->size * 0.5f};
     } else {
         local = {{-0.25f, -0.25f, -0.25f}, {0.25f, 0.25f, 0.25f}};
     }

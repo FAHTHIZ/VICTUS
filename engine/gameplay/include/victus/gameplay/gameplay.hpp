@@ -310,6 +310,22 @@ struct IrradianceVolumeComponent {
     float dynamic_blend{0.5f};
 };
 
+// Projected decal (ADR-0064): a box centred on the entity (size scaled by the entity's scale)
+// projects `texture` along the entity's local -Z axis onto the opaque surfaces inside it.
+struct DecalComponent {
+    enum class Blend : std::uint8_t { Multiply, Alpha, Additive }; // matches render::DecalBlend
+    Uuid texture;                       // nil = solid colour
+    math::Vec3 size{1.0f, 1.0f, 0.5f};  // box width, height, projection depth (metres)
+    math::Color color{1, 1, 1, 1};      // linear tint; alpha = opacity
+    Blend blend{Blend::Multiply};
+    math::Vec2 uv_min{0, 0};            // texture region (top-left)
+    math::Vec2 uv_max{1, 1};            // texture region (bottom-right)
+    float angle_fade{0.3f};             // 0 = every surface .. 1 = only surfaces facing the axis
+    float depth_fade{0.2f};             // fade over this fraction of the depth at the box ends
+    std::int32_t sort_order{0};         // higher draws over lower
+    bool visible{true};
+};
+
 // Registers serializers ("Rotator", "Oscillator", "Environment"). Idempotent; call once at startup before
 // loading scenes so these components are not treated as unknown.
 void register_components();

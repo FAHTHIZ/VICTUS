@@ -682,6 +682,17 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - The collider is rebuilt whole on every edit (fine up to 1025^2; sculpt tools may need per-region updates later).
   - Revisit (b)/(c) when the renderer gains vertex texture fetch and per-draw custom vertex shaders, and (d) when materials gain more samplers.
 
+### ADR-0064: Projected decals as a depth-reconstruction pass between opaque and blended geometry
+- Status: Accepted (Slice 77)
+- Context: roadmap item 21 needs decals (stains, cracks, bullet holes, markings) in the forward renderer, on every quality tier. There is no G-buffer: PBR inputs exist only inside the forward fragment shader. Scene depth is already sampled after the forward pass (soft particles, SSAO, TAA).
+- Options: (a) draw each decal box after opaque geometry, reconstruct the surface position from depth and blend into the HDR colour; (b) clustered forward decals: bin decals into the light clusters and evaluate them inside pbr.frag before lighting (needs a decal atlas or bindless textures, another storage buffer and touches every surface shader); (c) mesh decals (clipped geometry generated on the CPU per decal); (d) a thin G-buffer (albedo/normal) for decal targets.
+- Decision: (a). `render::Decal` is the unit box through a transform, projecting along local -Z; `SceneRenderer::add_decal` collects up to 1024 per frame (frustum culled, nearest kept, drawn by `sort_order` then far to near). When decals are present the forward pass splits into opaque (`forward`), `decals` (no depth attachment, front-face culled box so each pixel shades once also from inside, depth-reconstructed world position, derivatives taken before any discard) and `forward_blended` (blended geometry and debug lines) so glass and water are drawn over decals. Three blend modes: Multiply (dst x mix(1, colour, alpha); modulating lit colour equals modulating albedo for diffuse light), Alpha (unlit paint) and Additive (emissive). Angle fade uses the face normal from depth derivatives; depth fade softens the box ends. `gameplay::DecalComponent` ("Decal" schema) is extracted by the runtime; the editor creates one with Create > Decal.
+- Consequences:
+  - Decals cannot change normals, roughness or metalness, and Multiply also scales specular highlights; Alpha decals ignore lighting and shadows.
+  - Decals project onto everything opaque inside the box, including moving objects (no receiver masks yet).
+  - One draw call per decal; fine for hundreds, not for thousands.
+  - Revisit (b) when the renderer gains bindless textures or an atlas, or if per-material decal masks are needed.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

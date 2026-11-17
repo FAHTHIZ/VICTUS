@@ -123,6 +123,19 @@ void register_components() {
             .field(&G::dynamic, "dynamic", {.tooltip = "Keep re-capturing probes so lighting changes propagate (High/Ultra quality)"})
             .field(&G::dynamic_blend, "dynamic_blend", {.min = 0.01f, .max = 1, .speed = 0.01f, .tooltip = "Weight of each new capture: higher reacts faster, lower is steadier"})
             .commit();
+        using D = DecalComponent;
+        scene::Schema<D>("Decal", "Rendering")
+            .field(&D::texture, "texture", {.tooltip = "Projected texture (alpha = coverage); empty = solid colour", .hint = "texture"})
+            .field(&D::size, "size", {.min = 0.01f, .max = 1000, .speed = 0.01f, .tooltip = "Box width, height and projection depth in metres (local -Z projects)"})
+            .field(&D::color, "color", {.tooltip = "Linear tint; alpha is the opacity", .hint = "color_hdr"})
+            .enumeration(&D::blend, "blend", {"multiply", "alpha", "additive"})
+            .field(&D::uv_min, "uv_min", {.min = 0, .max = 1, .speed = 0.005f, .label = "UV Min", .tooltip = "Top-left of the texture region"})
+            .field(&D::uv_max, "uv_max", {.min = 0, .max = 1, .speed = 0.005f, .label = "UV Max", .tooltip = "Bottom-right of the texture region"})
+            .field(&D::angle_fade, "angle_fade", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Fades surfaces facing away from the projection axis (0 = none)"})
+            .field(&D::depth_fade, "depth_fade", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Fraction of the box depth over which the decal fades at its ends"})
+            .field(&D::sort_order, "sort_order", {.min = -1000, .max = 1000, .tooltip = "Higher values draw over lower ones"})
+            .field(&D::visible, "visible")
+            .commit();
         using E = EnvironmentComponent;
         scene::Schema<E>("Environment", "Rendering")
             .field(&E::sky_zenith, "sky_zenith", {.hint = "color_hdr"})

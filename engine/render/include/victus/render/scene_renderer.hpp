@@ -130,6 +130,32 @@ struct ParticleMaterial {
     float softness{0.25f};      // metres over which particles fade into geometry
 };
 
+// Projected decals (ADR-0064): a box (the unit cube [-0.5, 0.5]^3 through `transform`) projects a
+// texture along its local -Z axis onto the opaque surfaces inside it. They are drawn after opaque
+// geometry and before blended geometry by reconstructing positions from scene depth, so in the
+// forward pipeline they cannot change surface normals or PBR inputs:
+//   Multiply: scales the lit colour by the decal colour (dirt, stains, cracks, bullet holes; exact
+//             for diffuse light, since lit diffuse is proportional to albedo),
+//   Alpha:    paints unlit colour over the surface (markings that should not fall into shadow),
+//   Additive: adds emissive light (glowing runes, embers, neon paint).
+// Texture alpha times `color.a` is the opacity. Decals also land on moving objects that enter the box.
+enum class DecalBlend : std::uint8_t { Multiply, Alpha, Additive };
+[[nodiscard]] std::string_view decal_blend_name(DecalBlend b) noexcept;
+[[nodiscard]] std::optional<DecalBlend> parse_decal_blend(std::string_view name) noexcept;
+struct Decal {
+    math::Mat4 transform{math::Mat4::identity()}; // unit cube -> world (scale = box size in metres)
+    rhi::TextureHandle texture;                   // invalid => white
+    math::Color color{1, 1, 1, 1};                // linear; alpha scales opacity
+    math::Vec4 uv{0, 0, 1, 1};                    // u0, v0 (top), u1, v1 (bottom) of the texture region
+    DecalBlend blend{DecalBlend::Multiply};
+    // Surfaces facing away from the projection axis fade out: 0 = project onto every surface in the
+    // box, 1 = only onto surfaces facing the axis head-on. Hides stretching on perpendicular walls.
+    float angle_fade{0.3f};
+    float depth_fade{0.2f}; // fraction of the box depth over which the decal fades at its near/far ends
+    std::int32_t sort_order{0}; // drawn in ascending order (later decals cover earlier ones)
+    bool nearest_filter{false};
+};
+
 enum class Tonemapper : std::uint8_t { None, Aces, Neutral, Reinhard };
 [[nodiscard]] std::string_view tonemapper_name(Tonemapper t) noexcept;
 [[nodiscard]] std::optional<Tonemapper> parse_tonemapper(std::string_view name) noexcept;
@@ -286,6 +312,7 @@ struct SceneStats {
     // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
     std::uint32_t main_batches{0}, shadow_batches{0}, prepass_batches{0};
     std::uint32_t transparent_draws{0};
+    std::uint32_t decals{0};           // decals drawn (after frustum culling)
     std::uint32_t reflection_probes{0}, probe_draws{0}; // probes used / visible draws lit by a probe
     std::uint32_t instances_uploaded{0};
     std::uint32_t skinned_draws{0};    // skinned submissions this frame
@@ -359,6 +386,9 @@ public:
     // (box-projected) for reflections and its SH for diffuse light instead of the scene
     // environment; the smallest containing box wins. The map must outlive the frame.
     void add_reflection_probe(const ReflectionProbe& probe);
+    // Projected decal for this frame (see Decal). At most kMaxDecals per frame (nearest first).
+    static constexpr std::uint32_t kMaxDecals = 1024;
+    void add_decal(const Decal& decal);
     // Irradiance volume (ADR-0056) for this frame: lit surfaces inside its box take diffuse
     // ambient light from its probes (offset `normal_offset` metres along the normal) instead of the
     // environment or reflection probe SH. One volume per frame; cleared by begin(). The volume must
@@ -438,6 +468,7 @@ private:
     rhi::PipelineHandle opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_;
     rhi::PipelineHandle prepass_cull_, prepass_double_;
     rhi::PipelineHandle particle_alpha_, particle_additive_;
+    std::array<rhi::PipelineHandle, 3> decal_pipelines_{}; // by DecalBlend
     rhi::PipelineHandle skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_;
     std::unordered_map<std::string, rhi::PipelineHandle> post_; // "<shader>/<format>/<blend>"
     // Built-in PBR pipeline descriptions, reused for surface shader variants.
@@ -490,6 +521,7 @@ private:
     std::uint32_t light_capacity_{0}, cluster_capacity_{0}; // bytes
     std::vector<Draw> draws_;
     std::vector<ReflectionProbe> probes_;
+    std::vector<Decal> decals_;
     const IrradianceVolume* volume_{nullptr};
     float volume_intensity_{1.0f}, volume_normal_offset_{0.0f};
     bool capture_mode_{false};
