@@ -78,7 +78,7 @@ std::uint64_t material_key(const Material& m) noexcept {
             for (float f : {p.x, p.y, p.z, p.w}) h = mix(h, bits(f));
     }
     return mix(h, (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u) |
-                      (m.vertex_alpha_coverage_mask ? 16u : 0u) | (std::uint64_t{static_cast<std::uint8_t>(m.blend)} << 8));
+                      (m.vertex_alpha_coverage_mask ? 16u : 0u) | (m.shadow_only ? 32u : 0u) | (std::uint64_t{static_cast<std::uint8_t>(m.blend)} << 8));
 }
 
 bool same_material(const Material& a, const Material& b) noexcept {
@@ -93,7 +93,7 @@ bool same_material(const Material& a, const Material& b) noexcept {
            std::equal(a.shader_params.begin(), a.shader_params.end(), b.shader_params.begin(),
                       [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; }) &&
            a.vertex_alpha_coverage_mask == b.vertex_alpha_coverage_mask && a.coverage_response == b.coverage_response &&
-           a.blend == b.blend;
+           a.blend == b.blend && a.shadow_only == b.shadow_only;
 }
 struct LightingUniforms {
     Vec4 camera_pos;
@@ -1085,6 +1085,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 }
             if (any) ++stats_.shadow_casters;
         }
+        if (d.material.shadow_only) continue; // casts, never drawn
         if (!frustum.intersects(world)) {
             ++stats_.culled;
             continue;

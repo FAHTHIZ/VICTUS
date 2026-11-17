@@ -212,3 +212,48 @@ TEST_CASE("gpu: the sky background can differ from the ambient terms") {
     CHECK(channel(b, 2) > 150);
     CHECK(channel(b, 2) > channel(b, 0) + 60);
 }
+
+TEST_CASE("gpu: shadow-only draws cast a shadow but are not drawn") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+    auto plane = ctx.create_mesh(make_plane({40, 40}), "floor");
+    auto cube = ctx.create_mesh(make_cube({1.5f, 0.5f, 1.5f}), "blocker");
+    REQUIRE(plane.ok());
+    REQUIRE(cube.ok());
+    const Camera3D cam = Camera3D::look_at({0, 10, 10}, {0, 0, 0}, {0, 1, 0});
+    DirectionalLight sun;
+    sun.direction = {0, -1, 0};
+    sun.intensity = 3.0f;
+    Environment env = dark_env();
+    env.ambient_intensity = 0.05f;
+    Material floor;
+    floor.base_color = {0.8f, 0.8f, 0.8f, 1};
+    floor.roughness = 0.9f;
+    Material red;
+    red.base_color = {0.9f, 0.05f, 0.05f, 1};
+    const auto model = math::Mat4::translation({0, 3, 0});
+    const auto frame = [&](bool shadow_only) {
+        (*sr)->begin(cam, sun, env);
+        (*sr)->submit(*plane, floor, math::Mat4::identity());
+        Material m = red;
+        m.shadow_only = shadow_only;
+        (*sr)->submit(*cube, m, model);
+        return shoot(**sr);
+    };
+    const auto drawn = frame(false), hidden = frame(true);
+    test::save_output("shadow_only", W, H, hidden);
+    const auto [bx, by] = project(cam, {0, 3.5f, 0});  // the cube's top face
+    const auto [sx, sy] = project(cam, {0, 0, 1.2f});  // floor under the cube, seen past it
+    const auto [lx, ly] = project(cam, {5, 0, 1.2f});  // floor in the sun
+    const std::uint32_t box_drawn = pixel(drawn, W, bx, by), box_hidden = pixel(hidden, W, bx, by);
+    const std::uint32_t shade = pixel(hidden, W, sx, sy), sunny = pixel(hidden, W, lx, ly);
+    MESSAGE("box " << lum(box_drawn) << "/" << lum(box_hidden) << " shade " << lum(shade) << " sun " << lum(sunny));
+    CHECK(channel(box_drawn, 0) > channel(box_drawn, 1) + 60); // drawn: the red cube
+    CHECK(channel(box_hidden, 0) < channel(box_hidden, 1) + 20); // shadow-only: the grey floor shows through
+    CHECK(lum(shade) + 120 < lum(sunny));                        // ...and the floor under it is still in shadow
+    ctx.destroy(*plane);
+    ctx.destroy(*cube);
+}
