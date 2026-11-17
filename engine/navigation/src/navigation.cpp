@@ -35,6 +35,11 @@ constexpr unsigned short kWalkFlag = 0x01;
 
 // ---- geometry collection ---------------------------------------------------------------------------
 
+math::Vec3 vec_at(const std::vector<float>& v, int i) {
+    const auto k = static_cast<std::size_t>(i) * 3;
+    return {v[k], v[k + 1], v[k + 2]};
+}
+
 struct Geometry {
     std::vector<float> verts;
     std::vector<int> tris;
@@ -151,6 +156,61 @@ void each_static_collider(Scene& scene, std::uint32_t layer_mask, Fn&& fn) {
     });
 }
 
+// Static height fields (terrains) placed by the translation and rotation of their world
+// transform, like the physics body.
+math::Mat4 rigid(const math::Mat4& world) {
+    math::Vec3 t, sc;
+    math::Quat q;
+    math::decompose(world, t, q, sc);
+    return math::Mat4::trs(t, q, {1, 1, 1});
+}
+
+// Large fields are sampled with a stride so at most kMaxFieldQuads quads per side reach Recast
+// (its voxel resolution is coarser than that anyway).
+constexpr std::uint32_t kMaxFieldQuads = 512;
+
+template <typename Fn>
+void each_static_heightfield(Scene& scene, std::uint32_t layer_mask, Fn&& fn) {
+    scene.world().each<physics::StaticHeightfieldComponent>([&](Entity e, physics::StaticHeightfieldComponent& c) {
+        if (c.resolution < 2 || !c.heights || c.heights->size() < static_cast<std::size_t>(c.resolution) * c.resolution) return;
+        if (c.layer < 32 && !(layer_mask & (1u << c.layer))) return;
+        fn(e, c);
+    });
+}
+
+void add_heightfield(Geometry& g, const math::Mat4& m, const physics::StaticHeightfieldComponent& c) {
+    const std::uint32_t quads = c.resolution - 1;
+    const std::uint32_t stride = std::max(1u, (quads + kMaxFieldQuads - 1) / kMaxFieldQuads);
+    std::vector<std::uint32_t> xs;
+    for (std::uint32_t i = 0; i < quads; i += stride) xs.push_back(i);
+    xs.push_back(quads);
+    const auto& h = *c.heights;
+    const math::Vec3 up = (m * math::Vec4(0, 1, 0, 0)).xyz();
+    auto point = [&](std::uint32_t x, std::uint32_t z) {
+        return m.transform_point(c.offset + math::Vec3{static_cast<float>(x) * c.spacing.x,
+                                                       h[static_cast<std::size_t>(z) * c.resolution + x],
+                                                       static_cast<float>(z) * c.spacing.y});
+    };
+    const std::size_t first = g.verts.size() / 3;
+    const std::size_t n = xs.size();
+    for (const std::uint32_t z : xs)
+        for (const std::uint32_t x : xs) (void)g.vertex(point(x, z));
+    for (std::size_t j = 0; j + 1 < n; ++j) {
+        for (std::size_t i = 0; i + 1 < n; ++i) {
+            const int a = static_cast<int>(first + j * n + i), b = a + 1;
+            const int cc = static_cast<int>(first + (j + 1) * n + i), d = cc + 1;
+            // Wind each triangle so its normal points along the field's up axis.
+            auto tri = [&](int i0, int i1, int i2) {
+                const auto v = [&](int k) { return vec_at(g.verts, k); };
+                if (math::dot(math::cross(v(i1) - v(i0), v(i2) - v(i0)), up) < 0) std::swap(i1, i2);
+                g.tris.insert(g.tris.end(), {i0, i1, i2});
+            };
+            tri(a, cc, b);
+            tri(b, cc, d);
+        }
+    }
+}
+
 struct Bound {
     math::Vec3 center; // on the vertical axis
     float radius{0}, y_min{0}, y_max{0};
@@ -208,6 +268,13 @@ std::uint64_t geometry_signature(Scene& scene, const NavMeshSurfaceComponent& s)
             return;
         }
         hs.value(c.shape), hs.value(c.size), hs.value(c.radius), hs.value(c.height), hs.value(c.offset);
+        hs.bytes(&m, sizeof(m));
+    });
+    each_static_heightfield(scene, s.layer_mask, [&](Entity e, const physics::StaticHeightfieldComponent& c) {
+        hs.value(e.bits());
+        hs.value(c.resolution), hs.value(c.revision), hs.value(c.offset), hs.value(c.spacing);
+        hs.value(c.heights.get());
+        const math::Mat4 m = rigid(scene.world_matrix(e));
         hs.bytes(&m, sizeof(m));
     });
     return hs.h;
@@ -343,6 +410,9 @@ Status NavigationSystem::build(Scene& scene) {
     each_static_collider(scene, s.layer_mask, [&](Entity e, const physics::ColliderComponent& c, bool kinematic) {
         if (kinematic) add_bound(geo, upright_bound(scene.world_matrix(e), c));
         else add_collider(geo, scene.world_matrix(e), c);
+    });
+    each_static_heightfield(scene, s.layer_mask, [&](Entity e, const physics::StaticHeightfieldComponent& c) {
+        add_heightfield(geo, rigid(scene.world_matrix(e)), c);
     });
     stats_.source_triangles = static_cast<std::uint32_t>(geo.triangle_count());
     ++stats_.builds;

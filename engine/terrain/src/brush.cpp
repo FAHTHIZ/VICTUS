@@ -276,4 +276,40 @@ std::optional<TerrainHit> raycast(scene::Scene& scene, math::Vec3 origin, math::
     return best;
 }
 
+std::optional<TerrainSample> sample_at(scene::Scene& scene, scene::Entity entity, float x, float z) {
+    const auto h = height_at(scene, entity, x, z);
+    if (!h) return std::nullopt;
+    auto& world = scene.world();
+    const auto* rt = world.get<TerrainRuntime>(entity);
+    const auto* wt = world.get<scene::WorldTransform>(entity);
+    const Heightfield& hf = *rt->data;
+    const math::Vec3 size = rt->built_size;
+    const math::Mat4 m = rigid_matrix(wt->matrix);
+    const math::Vec3 local = math::inverse(m).transform_point({x, *h, z});
+    TerrainSample out;
+    out.entity = entity;
+    out.height = *h;
+    const float u = local.x / size.x + 0.5f, v = local.z / size.z + 0.5f;
+    out.weights = hf.weights(u, v);
+    // Central differences of the bilinear surface one sample apart (clamped at the borders).
+    const float dx = size.x / static_cast<float>(hf.resolution - 1), dz = size.z / static_cast<float>(hf.resolution - 1);
+    auto at = [&](float lx, float lz) {
+        const float cx = std::clamp(lx, -size.x * 0.5f, size.x * 0.5f), cz = std::clamp(lz, -size.z * 0.5f, size.z * 0.5f);
+        return local_height(hf, size, cx, cz).value_or(local.y);
+    };
+    const float hx = at(local.x + dx, local.z) - at(local.x - dx, local.z);
+    const float hz = at(local.x, local.z + dz) - at(local.x, local.z - dz);
+    const math::Vec3 n = math::normalize(math::Vec3{-hx / (2.0f * dx), 1.0f, -hz / (2.0f * dz)});
+    out.normal = math::normalize((m * math::Vec4(n, 0.0f)).xyz());
+    return out;
+}
+
+std::optional<TerrainSample> sample_at(scene::Scene& scene, float x, float z) {
+    std::vector<scene::Entity> terrains;
+    scene.world().each<TerrainComponent>([&](scene::Entity e, TerrainComponent&) { terrains.push_back(e); });
+    for (const scene::Entity e : terrains)
+        if (auto s = sample_at(scene, e, x, z)) return s;
+    return std::nullopt;
+}
+
 } // namespace victus::terrain

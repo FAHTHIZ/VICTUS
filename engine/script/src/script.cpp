@@ -14,6 +14,7 @@
 #include "victus/gameplay/capture.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/physics/physics.hpp"
+#include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
 
 #include <lua.h>
@@ -2154,6 +2155,72 @@ int entity_owner(lua_State* L) {
     return 1;
 }
 
+// ---- terrain (terrain.*; read-only queries over resolved Terrain entities) ----
+std::optional<Entity> opt_terrain_entity(lua_State* L, int idx, scene::Scene& s) {
+    if (lua_isnoneornil(L, idx)) return std::nullopt;
+    const Entity e = check_live(L, idx, s);
+    if (!s.world().has<terrain::TerrainComponent>(e)) luaL_error(L, "entity has no Terrain component");
+    return e;
+}
+// terrain.height(x, z, entity?) -> world height or nil outside every (or the given) terrain.
+int terrain_height(lua_State* L) {
+    auto& s = scene_of(L);
+    const auto x = static_cast<float>(luaL_checknumber(L, 1)), z = static_cast<float>(luaL_checknumber(L, 2));
+    const auto e = opt_terrain_entity(L, 3, s);
+    const auto h = e ? terrain::height_at(s, *e, x, z) : terrain::height_at(s, x, z);
+    if (h) lua_pushnumber(L, *h);
+    else lua_pushnil(L);
+    return 1;
+}
+// terrain.sample(x, z, entity?) -> {entity, height, normal, weights = {w0, w1, w2, w3}} or nil.
+int terrain_sample(lua_State* L) {
+    auto& s = scene_of(L);
+    const auto x = static_cast<float>(luaL_checknumber(L, 1)), z = static_cast<float>(luaL_checknumber(L, 2));
+    const auto e = opt_terrain_entity(L, 3, s);
+    const auto r = e ? terrain::sample_at(s, *e, x, z) : terrain::sample_at(s, x, z);
+    if (!r) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 4);
+    push_entity(L, r->entity);
+    lua_setfield(L, -2, "entity");
+    lua_pushnumber(L, r->height);
+    lua_setfield(L, -2, "height");
+    push_vec3(L, r->normal);
+    lua_setfield(L, -2, "normal");
+    lua_createtable(L, 4, 0);
+    for (int i = 0; i < 4; ++i) {
+        lua_pushnumber(L, r->weights[i]);
+        lua_rawseti(L, -2, i + 1);
+    }
+    lua_setfield(L, -2, "weights");
+    return 1;
+}
+// terrain.raycast(origin, direction, max_distance = 1000) -> {entity, point, normal, distance} or nil.
+// Exact against the heightfields; needs no physics world.
+int terrain_raycast(lua_State* L) {
+    auto& s = scene_of(L);
+    const math::Vec3 o = check_vec3(L, 1), d = check_vec3(L, 2);
+    const auto max = static_cast<float>(luaL_optnumber(L, 3, 1000.0));
+    if (!(max >= 0.0f) || !std::isfinite(max)) luaL_error(L, "terrain.raycast: max_distance must be finite and >= 0");
+    const auto hit = terrain::raycast(s, o, d, std::min(max, 1e6f));
+    if (!hit) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 4);
+    push_entity(L, hit->entity);
+    lua_setfield(L, -2, "entity");
+    push_vec3(L, hit->point);
+    lua_setfield(L, -2, "point");
+    push_vec3(L, hit->normal);
+    lua_setfield(L, -2, "normal");
+    lua_pushnumber(L, hit->distance);
+    lua_setfield(L, -2, "distance");
+    return 1;
+}
+
 // ---- navigation (nav.* and entity navigation methods) ----
 navigation::NavigationSystem* nav_of(lua_State* L) {
     auto& s = scene_of(L);
@@ -3342,6 +3409,9 @@ void open_victus_libs(lua_State* L) {
                                 {"random_point", nav_random_point}, {"rebuild", nav_rebuild},
                                 {nullptr, nullptr}};
     register_lib(L, "nav", nav_fns);
+    const luaL_Reg terrain_fns[] = {{"height", terrain_height}, {"sample", terrain_sample},
+                                    {"raycast", terrain_raycast}, {nullptr, nullptr}};
+    register_lib(L, "terrain", terrain_fns);
     const luaL_Reg net_fns[] = {{"role", net_role},
                                 {"is_server", net_is_server},
                                 {"is_client", net_is_client},
