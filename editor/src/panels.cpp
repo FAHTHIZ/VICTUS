@@ -66,6 +66,7 @@ assets::AssetKind asset_kind_for_hint(std::string_view hint) {
     if (hint == "material") return assets::AssetKind::Material;
     if (hint == "prefab") return assets::AssetKind::Prefab;
     if (hint == "spritesheet") return assets::AssetKind::SpriteSheet;
+    if (hint == "tileset") return assets::AssetKind::Tileset;
     return assets::AssetKind::Unknown;
 }
 
@@ -215,6 +216,7 @@ const char* kind_icon(assets::AssetKind k) {
     case assets::AssetKind::Material: return "[mat]";
     case assets::AssetKind::Shader: return "[shd]";
     case assets::AssetKind::SpriteSheet: return "[sht]";
+    case assets::AssetKind::Tileset: return "[tls]";
     default: return "[file]";
     }
 }
@@ -401,6 +403,7 @@ void Editor::draw_workspace(float) {
     draw_input_actions();
     draw_network();
     draw_material_editor();
+    draw_tile_palette();
     draw_status_bar();
     handle_shortcuts();
 }
@@ -484,6 +487,7 @@ void Editor::draw_menu_bar() {
         ImGui::MenuItem("Physics Colliders", nullptr, &show_colliders_);
         ImGui::MenuItem("Navigation Mesh", nullptr, &show_navmesh_);
         ImGui::MenuItem("Network", nullptr, &show_network_);
+        ImGui::MenuItem("Tile Palette", nullptr, &show_tile_palette_);
         ImGui::MenuItem("UI Demo Window", nullptr, &show_demo_);
         if (ImGui::BeginMenu("Rendering Quality")) {
             for (auto tier : {render::QualityTier::Low, render::QualityTier::Medium, render::QualityTier::High,
@@ -659,11 +663,15 @@ void Editor::draw_viewport() {
                             play_state_ == PlayState::Editing ? "editor camera" : "game camera", tier.c_str(),
                             last_view_stats_.extract.meshes, render_stats().main_batches, last_view_stats_.sprites,
                             last_view_stats_.extract.lights);
-        if (play_state_ == PlayState::Editing)
+        if (play_state_ == PlayState::Editing) {
             viewport_input({avail.x, avail.y}, hovered);
-        (void)origin;
+            tile_viewport_input({origin.x, origin.y}, {avail.x, avail.y}, hovered);
+        }
+        // The tile tool owns plain left clicks while a tilemap is selected in a 2D scene.
+        const bool painting = tile_tool_ && two_d && !tile_target().is_null() && !ImGui::GetIO().KeyAlt;
         // Click-to-select (after input so a drag does not select).
-        if (hovered && play_state_ == PlayState::Editing && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !lmb_dragged_) {
+        if (hovered && !painting && play_state_ == PlayState::Editing && ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+            !lmb_dragged_) {
             const ImVec2 m = ImGui::GetMousePos();
             const Entity hit = pick({m.x - origin.x, m.y - origin.y}, {avail.x, avail.y});
             select(hit, ImGui::GetIO().KeyCtrl);
@@ -1313,6 +1321,7 @@ void Editor::draw_assets() {
                     import_edit_ = assets::TextureImportSettings::from_json(r.settings);
                 }
                 if (ImGui::MenuItem("Create Sprite Sheet...")) sheet_texture_ = r.uuid;
+                if (ImGui::MenuItem("Create Tile Set...")) tileset_texture_ = r.uuid;
                 ImGui::EndPopup();
             }
             if (ImGui::BeginDragDropSource()) {
@@ -1340,6 +1349,13 @@ void Editor::draw_assets() {
                     open_material_editor(r.uuid);
                 } else if (r.kind == assets::AssetKind::SpriteSheet) {
                     (void)assign_sprite_sheet(selected(), r.uuid);
+                } else if (r.kind == assets::AssetKind::Tileset) {
+                    Entity e = selected();
+                    if (e.is_null()) {
+                        e = create_entity(Primitive::Empty);
+                        rename(e, "Tilemap");
+                    }
+                    (void)assign_tileset(e, r.uuid);
                 } else if (r.kind == assets::AssetKind::Shader) {
                     if (show_material_editor_) (void)set_editing_material_shader(r.uuid);
                 } else if (r.kind == assets::AssetKind::Texture) {
@@ -1360,6 +1376,7 @@ void Editor::draw_assets() {
                                                           : r.kind == assets::AssetKind::Material ? "edit"
                                                           : r.kind == assets::AssetKind::Shader ? "use in the open material"
                                                           : r.kind == assets::AssetKind::SpriteSheet ? "animate the selected entity"
+                                                          : r.kind == assets::AssetKind::Tileset ? "paint with it on the selected (or a new) entity"
                                                                                                  : "-");
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", assets::to_string(r.kind));
@@ -1418,6 +1435,32 @@ void Editor::draw_assets() {
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) {
             sheet_texture_ = {};
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (!tileset_texture_.is_nil()) ImGui::OpenPopup("Create Tile Set");
+    if (ImGui::BeginPopupModal("Create Tile Set", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const auto* tex = db_ ? db_->find(tileset_texture_) : nullptr;
+        ImGui::Text("Slice %s into a grid of tiles", tex ? tex->path.c_str() : "?");
+        ImGui::InputInt("Columns", &tileset_columns_);
+        ImGui::InputInt("Rows", &tileset_rows_);
+        tileset_columns_ = std::clamp(tileset_columns_, 1, 256);
+        tileset_rows_ = std::clamp(tileset_rows_, 1, 256);
+        const char* collisions[] = {"None", "Solid", "One-way"};
+        ImGui::Combo("Collision", &tileset_collision_, collisions, 3);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Default for every tile; edit per-tile overrides in the .vtileset file");
+        if (ImGui::Button("Create")) {
+            auto made = create_tileset(tileset_texture_, static_cast<std::uint32_t>(tileset_columns_),
+                                       static_cast<std::uint32_t>(tileset_rows_),
+                                       static_cast<tilemap::TileCollision>(std::clamp(tileset_collision_, 0, 2)));
+            if (!made) notify(made.error().message, true);
+            tileset_texture_ = {};
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            tileset_texture_ = {};
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
