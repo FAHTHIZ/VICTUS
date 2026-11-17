@@ -96,6 +96,8 @@ void register_components() {
             .field(&CharacterController2DComponent::gravity_scale, "gravity_scale", {.min = -10, .max = 10, .speed = 0.05f})
             .field(&CharacterController2DComponent::push_force, "push_force", {.min = 0, .max = 1e6f, .speed = 1, .tooltip = "N"})
             .field(&CharacterController2DComponent::air_control, "air_control", {.min = 0, .max = 1, .speed = 0.01f})
+            .field(&CharacterController2DComponent::top_down, "top_down",
+                   {.tooltip = "walk in the X/Y plane with move_character(x, y): no gravity, ground or jumps"})
             .field(&CharacterController2DComponent::layer, "layer", {.min = 0, .max = 15})
             .field(&CharacterController2DComponent::mask, "mask", {.hint = "bitmask16"})
             .commit();

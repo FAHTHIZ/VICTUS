@@ -280,7 +280,10 @@ public:
     }
     bool has_character(Entity e) const override { return chars_.contains(e.bits()); }
     void move_character(Entity e, math::Vec3 v) override {
-        if (const auto c = chars_.find(e.bits()); c != chars_.end()) c->second.desired = v.x;
+        if (const auto c = chars_.find(e.bits()); c != chars_.end()) {
+            c->second.desired = v.x;
+            c->second.desired_y = v.y;
+        }
     }
     bool jump_character(Entity e, float speed) override {
         const auto c = chars_.find(e.bits());
@@ -648,6 +651,7 @@ private:
         math::Quat rotation3d;
         b2Vec2 velocity{};
         float desired{0};   // walking speed along world X
+        float desired_y{0}; // top-down characters: speed along world Y
         float jump{0};
         float drop{0};      // seconds left ignoring one-way platforms
         bool grounded{false}, steep{false}, on_one_way{false};
@@ -764,10 +768,11 @@ private:
             b2Vec2 p{pose.position.x, pose.position.y};
             auto it = chars_.find(e.bits());
             b2Vec2 velocity{};
-            float desired = 0;
+            float desired = 0, desired_y = 0;
             if (it != chars_.end() && !(it->second.comp == comp)) {
                 velocity = it->second.velocity;
                 desired = it->second.desired;
+                desired_y = it->second.desired_y;
                 // Resizing keeps the feet where they were instead of burying the new capsule in the ground.
                 const Character& old = it->second;
                 Character resized;
@@ -787,6 +792,7 @@ private:
                 create_character(e, comp, p, c);
                 c.velocity = velocity;
                 c.desired = desired;
+                c.desired_y = desired_y;
                 it = chars_.emplace(e.bits(), c).first;
             }
             Character& c = it->second;
@@ -851,14 +857,18 @@ private:
         MoverPlanes planes;
         for (auto& [key, c] : chars_) {
             const CharacterController2DComponent& comp = c.comp;
-            const b2Vec2 g = b2MulSV(comp.gravity_scale, world_gravity);
+            const b2Vec2 g = comp.top_down ? b2Vec2{0, 0} : b2MulSV(comp.gravity_scale, world_gravity);
             const float cos_slope = std::cos(radians(std::clamp(comp.max_slope, 1.0f, 89.0f)));
             c.drop = std::max(0.0f, c.drop - dt);
             const b2Vec2 ground_v = ground_velocity(c);
             b2Vec2 v = c.velocity;
             const bool on_ground = c.grounded && v.y - ground_v.y < 0.1f;
             const bool jumped = on_ground && c.jump > 0;
-            if (on_ground) {
+            if (comp.top_down) {
+                // Top-down: walk in the plane with the same responsiveness on both axes, no gravity,
+                // no ground and no jumping.
+                v = {c.desired, c.desired_y};
+            } else if (on_ground) {
                 v = {ground_v.x + c.desired, ground_v.y}; // ride moving platforms
                 if (jumped) v.y += c.jump;
             } else {
@@ -870,8 +880,8 @@ private:
             const bool planted = on_ground && !jumped;
             // On walkable ground only the part of gravity pressing into the surface applies, so characters
             // stand still on slopes up to max_slope instead of creeping downhill.
-            if (planted) v = b2MulAdd(v, b2Dot(c.ground_normal, g) * dt, c.ground_normal);
-            else v = b2MulAdd(v, dt, g);
+            if (planted && !comp.top_down) v = b2MulAdd(v, b2Dot(c.ground_normal, g) * dt, c.ground_normal);
+            else v = b2MulAdd(v, dt, g); // g is zero for top-down characters
 
             b2Vec2 p = c.position;
             const b2Vec2 target = b2MulAdd(p, dt, v);
@@ -898,7 +908,8 @@ private:
                 }
                 return best;
             };
-            int best = probe(p);
+            int best = comp.top_down ? -1 : probe(p);
+            if (comp.top_down) c.steep = false;
             if (best < 0 && planted && comp.snap_distance > 0) {
                 const MoverHit down = cast_mover(c, p, {0, -comp.snap_distance});
                 if (down.fraction < 1.0f && down.normal.y >= cos_slope) {

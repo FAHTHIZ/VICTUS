@@ -157,6 +157,7 @@ struct CharacterController2DComponent {
     float gravity_scale{1.0f};
     float push_force{60.0f};      // maximum force on dynamic bodies in the way (N); 0 = no pushing
     float air_control{0.5f};      // 0 = no steering in the air, 1 = full ground control
+    bool top_down{false};         // walk in the X/Y plane (move_character x and y), no gravity or ground
     std::uint32_t layer{0};
     std::uint32_t mask{kAllLayers};
     friend bool operator==(const CharacterController2DComponent&, const CharacterController2DComponent&) = default;
@@ -321,7 +322,8 @@ public:
     void add_angular_impulse(Entity e, math::Vec3 impulse);
 
     // ---- characters (CharacterController in 3D, CharacterController2D in 2D) ----
-    // Desired horizontal walking velocity (m/s, world space; Y is ignored). Persists until changed.
+    // Desired horizontal walking velocity (m/s, world space; Y is ignored, except by top-down
+    // CharacterController2D characters, which walk along X and Y). Persists until changed.
     void move_character(Entity e, math::Vec3 velocity);
     // Jumps with the given upward speed on the next step. Returns false (and does nothing) when the
     // character is not grounded.

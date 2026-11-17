@@ -102,6 +102,37 @@ TEST_CASE("2D character lands, reports state and walks") {
     CHECK(pos(scene, p).x == doctest::Approx(x).epsilon(0.001));
 }
 
+TEST_CASE("top-down 2D character walks on both axes without gravity, blocked and sliding along walls") {
+    Scene scene;
+    auto w = make_world();
+    box2d(scene, {3.5f, 0}, {1, 20});  // wall face at x = 3
+    box2d(scene, {0, 4.5f}, {20, 1});  // ceiling face at y = 4
+    CharacterController2DComponent c;
+    c.top_down = true;
+    c.size = {0.8f, 0.8f}; // a circle
+    const Entity p = character2d(scene, {0, 0}, c);
+    run(*w, scene, 60);
+    CHECK(pos(scene, p).y == doctest::Approx(0.0f)); // no gravity
+    CHECK_FALSE(w->character_state(p).grounded);
+    CHECK_FALSE(w->jump_character(p, 5.0f));
+    w->move_character(p, {1, 2, 0});
+    run(*w, scene, 60);
+    CHECK(pos(scene, p).x == doctest::Approx(1.0f).epsilon(0.03));
+    CHECK(pos(scene, p).y == doctest::Approx(2.0f).epsilon(0.03));
+    // Into the corner: stops at both faces (radius 0.4) and slides along each on the way.
+    w->move_character(p, {4, 4, 0});
+    run(*w, scene, 120);
+    CHECK(pos(scene, p).x == doctest::Approx(2.6f).epsilon(0.02));
+    CHECK(pos(scene, p).y == doctest::Approx(3.6f).epsilon(0.02));
+    w->move_character(p, {0, -3, 0});
+    run(*w, scene, 30);
+    CHECK(pos(scene, p).y == doctest::Approx(2.1f).epsilon(0.03));
+    w->move_character(p, {});
+    run(*w, scene, 30);
+    CHECK(pos(scene, p).y == doctest::Approx(2.1f).epsilon(0.03));
+    CHECK(w->linear_velocity(p).y == doctest::Approx(0.0f));
+}
+
 TEST_CASE("2D character is blocked by walls and does not stick to them in the air") {
     Scene scene;
     auto w = make_world();
