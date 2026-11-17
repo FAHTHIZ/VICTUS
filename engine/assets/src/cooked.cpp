@@ -90,6 +90,7 @@ const char* to_string(AssetKind kind) noexcept {
     case AssetKind::Material: return "material";
     case AssetKind::Shader: return "shader";
     case AssetKind::SpriteSheet: return "spritesheet";
+    case AssetKind::Tileset: return "tileset";
     default: return "unknown";
     }
 }

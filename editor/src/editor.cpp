@@ -117,6 +117,7 @@ Status Editor::open_project(const fs::Path& path) {
     hot_reload_ = std::make_unique<runtime::AssetHotReloader>(*db_);
     edit_sprites_ = std::make_unique<animation::AnimationSystem>(
         animation::AnimationSettings{.sheets = assets::sprite_sheet_provider(*db_)});
+    tilemaps_ = std::make_unique<tilemap::TilemapSystem>(assets::tileset_provider(*db_));
     {
         script::HostOptions so;
         so.assets_root = db_->assets_dir();
@@ -151,6 +152,7 @@ void Editor::close_project() {
     cache_.reset();
     edit_scripts_.reset();
     edit_sprites_.reset();
+    tilemaps_.reset();
     audio_.reset(); // clips resolve against the project's assets
     audio_failed_ = false;
     db_.reset();
@@ -177,7 +179,7 @@ std::size_t Editor::check_asset_changes() {
     if (!hot_reload_) return 0;
     const auto changes = hot_reload_->check();
     if (changes.empty()) return 0;
-    runtime::AssetHotReloader::apply(changes, cache_.get(), play_animation_.get());
+    runtime::AssetHotReloader::apply(changes, cache_.get(), play_animation_.get(), tilemaps_.get());
     if (edit_sprites_) edit_sprites_->clear_sheets();
     if (audio_)
         for (const auto& clip : changes.audio) (void)audio_->reload_clip(clip);
@@ -222,7 +224,7 @@ std::size_t Editor::check_asset_changes() {
         if (assets::kind_for_extension(fs::Path(r).extension().string()) == assets::AssetKind::Scene) continue;
         notify(r + " changed; reopen the project or restart the game to see it");
     }
-    return changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size();
+    return changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size();
 }
 
 // ---- scenes ------------------------------------------------------------------------------------
@@ -1004,6 +1006,8 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
                                      .sheets = db_ ? assets::sprite_sheet_provider(*db_) : animation::SheetProvider{},
                                      .jobs = &workers()});
     animation::add_animation_systems(sim_, *play_animation_);
+    if (!tilemaps_) tilemaps_ = std::make_unique<tilemap::TilemapSystem>();
+    tilemap::add_tilemap_systems(sim_, *tilemaps_);
     play_particles_ = std::make_unique<particles::ParticleSystem>(particles::ParticleSettings{.jobs = &workers()});
     particles::add_particle_systems(sim_, *play_particles_);
     play_navigation_ = std::make_unique<navigation::NavigationSystem>();

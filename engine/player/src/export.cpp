@@ -187,6 +187,12 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         if (auto sheet = (*db)->load_sprite_sheet(r.uuid); !sheet) errors.push_back(sheet.error().message);
     }
 
+    // Tile sets: every one must parse and point at an existing texture.
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::Tileset) continue;
+        if (auto ts = (*db)->load_tileset(r.uuid); !ts) errors.push_back(ts.error().message);
+    }
+
     // Scenes: every scene must load; references to scripts and audio clips must resolve.
     std::vector<std::string> scenes = proj->scenes();
     if (std::find(scenes.begin(), scenes.end(), proj->settings().startup_scene) == scenes.end())
@@ -225,6 +231,13 @@ Result<ExportReport> export_game(const ExportOptions& o) {
             if (!s || s->kind != assets::AssetKind::SpriteSheet)
                 errors.push_back(std::format("{}: entity '{}' uses missing sprite sheet {}", rel, entity_label(scene, e),
                                              c.sheet.to_string()));
+        });
+        scene.world().each<tilemap::TilemapComponent>([&](scene::Entity e, tilemap::TilemapComponent& c) {
+            if (c.tileset.is_nil()) return;
+            const assets::AssetRecord* t = (*db)->find(c.tileset);
+            if (!t || t->kind != assets::AssetKind::Tileset)
+                errors.push_back(std::format("{}: entity '{}' uses missing tile set {}", rel, entity_label(scene, e),
+                                             c.tileset.to_string()));
         });
         scene.world().each<audio::AudioSourceComponent>([&](scene::Entity e, audio::AudioSourceComponent& c) {
             if (!c.clip.empty() && !asset_paths.contains(c.clip))

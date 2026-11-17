@@ -10,6 +10,7 @@
 #include "victus/navigation/navigation.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
+#include "victus/tilemap/tilemap.hpp"
 
 #include "doctest.h"
 
@@ -1206,4 +1207,73 @@ return M
     for (int i = 0; i < 4; ++i) sim.tick(s, 0.02f);
     CHECK(host->stats().errors == 0);
     CHECK_FALSE(o->override_emissive);
+}
+
+TEST_CASE("script: tilemap painting, queries and coordinates") {
+    TempDir d("victus_script_tilemap");
+    script::register_components();
+    gameplay::register_components();
+    tilemap::register_components();
+    d.write("scripts/level.luau", R"lua(
+local M = {}
+function M:start()
+    local e = self.entity
+    e:set_tile(0, 0, 3)
+    e:set_tile(1, 0, 4, true, false)
+    local t, fx, fy = e:tile(1, 0)
+    assert(t == 4 and fx == true and fy == false, "tile read back")
+    assert(e:tile(5, 5) == nil, "empty cell")
+    assert(e:fill_tiles(0, -2, 9, -2, 1) == 10, "fill count")
+    local x0, y0, x1, y1 = e:tile_bounds()
+    assert(x0 == 0 and y0 == -2 and x1 == 9 and y1 == 0, "bounds")
+    e:set_tile(0, 0, nil)
+    assert(e:tile(0, 0) == nil, "erase")
+    local tx, ty = e:world_to_tile(vector.create(10 + 2.5, 20 - 1.5, 0))
+    assert(tx == 2 and ty == -2, "world_to_tile " .. tx .. "," .. ty)
+    local p = e:tile_to_world(3, 0)
+    assert(math.abs(p.x - (10 + 3.5)) < 1e-4 and math.abs(p.y - 20.5) < 1e-4, "tile_to_world")
+    assert(not pcall(e.set_tile, e, 1e9, 0, 1), "coordinate range")
+    assert(not pcall(e.paint_terrain, e, 0, 5, "lava"), "unknown terrain")
+    local other = scene.spawn("Plain")
+    assert(not pcall(other.set_tile, other, 0, 0, 1), "needs a Tilemap")
+end
+function M:update()
+    if time.frame() == 1 then
+        local e = self.entity
+        e:clear_tiles()
+        e:paint_terrain(0, 5, "ground")
+        e:paint_terrain(1, 5, "ground")
+        assert(e:tile(0, 5) == 2 and e:tile(1, 5) == 8, "terrain masks")
+        e:paint_terrain(1, 5, nil)
+        assert(e:tile(0, 5) == 0, "terrain erase")
+    end
+end
+return M
+)lua");
+    Scene s;
+    const Entity e = scripted(s, "Level", "scripts/level.luau");
+    s.world().get<scene::Transform>(e)->position = {10, 20, 0};
+    const Uuid tsid = Uuid::generate();
+    auto ts = std::make_shared<tilemap::Tileset>();
+    ts->columns = 4;
+    ts->rows = 4;
+    tilemap::Terrain ground;
+    ground.name = "ground";
+    for (int i = 0; i < 16; ++i) ground.tiles[static_cast<std::size_t>(i)] = i;
+    ts->terrains.push_back(ground);
+    tilemap::TilemapComponent map;
+    map.tileset = tsid;
+    s.world().add<tilemap::TilemapComponent>(e, map);
+    tilemap::TilemapSystem tiles;
+    tiles.add_tileset(tsid, ts);
+    auto host = make_host(d);
+    gameplay::Simulation sim(1.0f / 50.0f);
+    tilemap::add_tilemap_systems(sim, tiles);
+    script::add_script_systems(sim, *host);
+    for (int i = 0; i < 4; ++i) sim.tick(s, 0.02f);
+    for (const auto& err : host->recent_errors()) MESSAGE(err);
+    CHECK(host->stats().errors == 0);
+    const auto* m = s.world().get<tilemap::TilemapComponent>(e);
+    CHECK(m->cells.size() == 1);
+    CHECK(m->tile(0, 5) == 0);
 }

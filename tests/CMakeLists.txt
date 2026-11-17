@@ -41,7 +41,7 @@ victus_add_test(victus_script_tests
         script/save_tests.cpp
         script/capture_tests.cpp
         script/scene_transition_tests.cpp
-    DEPS VICTUS::Script VICTUS::Animation
+    DEPS VICTUS::Script VICTUS::Animation VICTUS::Tilemap
     LABELS script)
 
 victus_add_test(victus_project_tests
@@ -84,6 +84,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_material_tests.cpp
         render/gpu_surface_shader_tests.cpp
         render/gpu_sprite_sheet_tests.cpp
+        render/gpu_tilemap_tests.cpp
         render/gpu_vertex_color_tests.cpp
         render/gpu_procedural_mesh_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
@@ -122,6 +123,12 @@ victus_add_test(victus_physics_tests
         physics/character_joint_2d_tests.cpp
     DEPS VICTUS::Physics VICTUS::Core
     LABELS physics)
+
+victus_add_test(victus_tilemap_tests
+    SOURCES
+        tilemap/tilemap_tests.cpp
+    DEPS VICTUS::Tilemap VICTUS::Physics VICTUS::Core
+    LABELS tilemap)
 
 victus_add_test(victus_audio_tests
     SOURCES

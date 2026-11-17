@@ -84,6 +84,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     if (e == ".vmat") return AssetKind::Material;
     if (e == ".vshader") return AssetKind::Shader;
     if (e == ".vsheet") return AssetKind::SpriteSheet;
+    if (e == ".vtileset") return AssetKind::Tileset;
     if (e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac") return AssetKind::Audio;
     return AssetKind::Unknown;
 }
@@ -466,6 +467,32 @@ Result<animation::SpriteSheet> AssetDatabase::load_sprite_sheet(const Uuid& uuid
             return make_error(ErrorCode::NotFound, std::format("{}: texture {} is not a texture asset", path, sheet->texture.to_string()));
     }
     return sheet;
+}
+
+Result<tilemap::Tileset> AssetDatabase::load_tileset(const Uuid& uuid) const {
+    const AssetRecord* rec = find(uuid);
+    if (!rec || rec->kind != AssetKind::Tileset)
+        return make_error(ErrorCode::NotFound, "tile set asset " + uuid.to_string() + " not found");
+    const std::string path = rec->path;
+    auto tileset = tilemap::load_tileset_file(source_path(*rec));
+    if (!tileset) return make_error(tileset.error().code, std::format("{}: {}", path, tileset.error().message));
+    if (!tileset->texture.is_nil()) {
+        const AssetRecord* tex = find(tileset->texture);
+        if (!tex || tex->kind != AssetKind::Texture)
+            return make_error(ErrorCode::NotFound, std::format("{}: texture {} is not a texture asset", path, tileset->texture.to_string()));
+    }
+    return tileset;
+}
+
+tilemap::TilesetProvider tileset_provider(AssetDatabase& db) {
+    return [&db](const Uuid& uuid) -> std::shared_ptr<const tilemap::Tileset> {
+        auto tileset = db.load_tileset(uuid);
+        if (!tileset) {
+            VICTUS_LOG_WARN("assets", "{}", tileset.error().message);
+            return nullptr;
+        }
+        return std::make_shared<tilemap::Tileset>(std::move(*tileset));
+    };
 }
 
 animation::SheetProvider sprite_sheet_provider(AssetDatabase& db) {
