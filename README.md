@@ -86,7 +86,7 @@ return Spin
 
 Available globals: `scene.find/spawn/destroy/query/count`, `input.down/pressed/released/axis/mouse_*`, `time.delta/now/frame`, `log.info/warn/error`. Entities expose `position`, `rotation` (Euler degrees), `scale`, `name`, `parent`, `forward/right/up`, and `get/set/has/remove` for any component as JSON-like tables. Scripts run sandboxed with time and memory limits, so a bad loop reports an error instead of freezing the editor.
 
-Physics: add `RigidBody`/`Collider` (3D) or `RigidBody2D`/`Collider2D` (2D) from the inspector's Add Component menu. Scripts get `physics.raycast/raycast2d/overlap_sphere/overlap_box/overlap_circle/overlap_box2d/gravity/set_gravity`, entity `velocity`, `angular_velocity`, `add_force/add_impulse/add_torque/add_angular_impulse`, and the callbacks `on_collision_enter(other, info)`, `on_collision_exit(other)`, `on_trigger_enter(other)` and `on_trigger_exit(other)`. Characters: add `CharacterController` (3D) or `CharacterController2D` (2D) and call `entity:move_character(velocity)` each fixed update, `entity:jump(speed)` (only succeeds when grounded), `entity.grounded`, `entity:character_state()` and, in 2D, `entity:drop_through(seconds?)` to fall through `Collider2D`s marked `one_way`. Joints: `Joint` (fixed/point/hinge/slider/distance) and `Joint2D` (weld/revolute/prismatic/distance/wheel) connect an entity to another or to the world, with limits, springs, motors (`entity:set_motor(on, speed)`) and `break_force`; `entity:joint_state()` reports whether it is active or broken. View > Physics Colliders toggles collider wireframes in the editor viewport.
+Physics: add `RigidBody`/`Collider` (3D) or `RigidBody2D`/`Collider2D` (2D) from the inspector's Add Component menu. Scripts get `physics.raycast/raycast2d/overlap_sphere/overlap_box/overlap_circle/overlap_box2d/gravity/set_gravity`, entity `velocity`, `angular_velocity`, `add_force/add_impulse/add_torque/add_angular_impulse`, and the callbacks `on_collision_enter(other, info)`, `on_collision_exit(other)`, `on_trigger_enter(other)` and `on_trigger_exit(other)`. Characters: add `CharacterController` (3D) or `CharacterController2D` (2D) and call `entity:move_character(velocity)` each fixed update, `entity:jump(speed)` (only succeeds when grounded), `entity.grounded`, `entity:character_state()` and, in 2D, `entity:drop_through(seconds?)` to fall through `Collider2D`s marked `one_way`. Tick `top_down` on a `CharacterController2D` for top-down games: it moves on both axes with no gravity and slides along walls. Joints: `Joint` (fixed/point/hinge/slider/distance) and `Joint2D` (weld/revolute/prismatic/distance/wheel) connect an entity to another or to the world, with limits, springs, motors (`entity:set_motor(on, speed)`) and `break_force`; `entity:joint_state()` reports whether it is active or broken. View > Physics Colliders toggles collider wireframes in the editor viewport.
 
 Audio: add `AudioSource` (clip, bus, volume, pitch, loop, play on start, stream, spatial with min/max distance and rolloff) and `AudioListener` from the inspector's Audio menu; drag a `.wav/.ogg/.mp3/.flac` asset onto the clip field, double-click an audio asset to preview it. Scripts get `audio.play(clip, {volume, pitch, bus, position})`, `audio.set_volume/volume/set_muted/muted(bus)`, `audio.available()` and entity `play_audio/stop_audio/pause_audio/audio_playing`. Buses: `master`, `music`, `sfx`, `ui`, `ambient`, `voice`. Set `VICTUS_NO_AUDIO=1` to run without an output device (mixing still happens). The 2D template ships generated jump/coin/music sounds and the 3D crates play impact sounds.
 
@@ -157,7 +157,7 @@ For Visual Studio/Xcode generators, binaries are under `build/bin/<Config>/`. Se
 - `editor/` — the VICTUS editor (library + executable)
 - `apps/player/` — standalone game player
 - `tools/` — `victus` CLI and shader compiler
-- `samples/`, `benchmarks/`, `tests/` — samples, benchmark harness, automated tests
+- `samples/`, `benchmarks/`, `tests/` — sample games, benchmark harness, automated tests
 - `third_party/` — vendored dependencies with licence files
 - `docs/` — architecture, specifications, research, decisions and status
 - `AGENTS.md` — autonomous engineering contract
@@ -183,3 +183,9 @@ For Visual Studio/Xcode generators, binaries are under `build/bin/<Config>/`. Se
 ## License
 
 Original VICTUS code: Apache-2.0. Third-party components retain their own licenses and notices.
+
+## Sample games
+
+Complete games made only with engine features; each is a normal project you can open in the editor or run with `victus run`, and each is played to the end headlessly by a CTest (`ctest -L samples`).
+
+- [`samples/dungeon_crawler`](samples/dungeon_crawler/README.md) — top-down maze game: procedurally generated tilemap floors, autotiled walls with colliders, top-down character controller, gems, slimes and a HUD.
