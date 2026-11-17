@@ -11,7 +11,7 @@ layout(set = 3, binding = 0) uniform Sky {
     vec4 ground;
     vec4 sun_dir;   // direction towards the sun
     vec4 sun_color; // rgb * intensity, w: disc size (cos)
-    vec4 env;       // x: environment map present, y: mip (blur), z: intensity, w: rotation (radians about +Y)
+    vec4 env;       // x: environment map present (2: also draw the sun disc), y: mip (blur), z: intensity, w: rotation (radians about +Y)
 } sky;
 layout(location = 0) out vec4 out_color;
 void main() {
@@ -22,7 +22,10 @@ void main() {
     if (sky.env.x > 0.5) {
         float c = cos(sky.env.w), s = sin(sky.env.w);
         vec3 d = vec3(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
-        out_color = vec4(textureLod(u_env, d, sky.env.y).rgb * sky.env.z, 1.0);
+        vec3 e = textureLod(u_env, d, sky.env.y).rgb * sky.env.z;
+        // Physical skies are baked without the sun disc (too small for the cube): add it here.
+        if (sky.env.x > 1.5) e += sky.sun_color.rgb * smoothstep(sky.sun_color.w, 1.0, dot(dir, normalize(sky.sun_dir.xyz)));
+        out_color = vec4(e, 1.0);
         return;
     }
     float h = dir.y;

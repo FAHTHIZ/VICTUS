@@ -255,6 +255,13 @@ struct EnvironmentComponent {
     float environment_intensity{1.0f};
     float environment_rotation{0.0f}; // degrees about +Y
     float sky_blur{0.0f};             // 0 sharp background .. 1 fully blurred
+    // Physically based atmosphere driven by the directional light (used when environment_map is
+    // empty): sky, image-based lighting and, optionally, the sun colour follow time of day.
+    bool physical_sky{false};
+    float atmosphere_density{1.0f};   // Rayleigh (air) density, 1 = Earth
+    float atmosphere_haze{1.0f};      // Mie (aerosol) density, 1 = clear day
+    float atmosphere_intensity{1.0f}; // brightness of sky and IBL relative to the sun
+    bool atmosphere_tints_sun{true};  // sun light colour = atmospheric transmittance (red sunsets)
 };
 
 // Registers serializers ("Rotator", "Oscillator", "Environment"). Idempotent; call once at startup before

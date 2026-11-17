@@ -167,3 +167,54 @@ TEST_CASE("gpu: Environment component resolves an .hdr asset into image-based li
     std::error_code ec;
     sfs::remove_all(project, ec);
 }
+
+TEST_CASE("gpu: physical sky follows the sun and re-bakes only when it moves") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    gameplay::register_components();
+    auto& ctx = *gpu().ctx;
+    runtime::GpuAssetCache cache(ctx, nullptr);
+    scene::Scene s;
+    const scene::Entity cam = s.create("Camera");
+    s.world().get<scene::Transform>(cam)->position = {0, 1, 0};
+    s.world().get<scene::Transform>(cam)->rotation = math::Quat::axis_angle({1, 0, 0}, math::radians(20));
+    s.world().add<scene::CameraComponent>(cam);
+    const scene::Entity sun = s.create("Sun");
+    s.world().add<scene::LightComponent>(sun).shadows = false;
+    const scene::Entity e = s.create("Environment");
+    auto& env = s.world().add<gameplay::EnvironmentComponent>(e);
+    env.physical_sky = true;
+    env.vignette = 0.0f;
+    auto shoot = [&](float elevation_deg) {
+        // Light travels along local -Z; pitch it down by the elevation, facing the camera's view.
+        s.world().get<scene::Transform>(sun)->rotation =
+            math::Quat::axis_angle({0, 1, 0}, math::radians(180)) * math::Quat::axis_angle({1, 0, 0}, math::radians(-elevation_deg));
+        s.update_transforms();
+        auto sr = SceneRenderer::create(ctx);
+        REQUIRE(sr.ok());
+        (void)runtime::extract_scene(s, cache, **sr);
+        auto target = test::make_target(W, H);
+        auto cmd = ctx.device().begin_commands();
+        REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        auto px = ctx.device().read_texture(target).value();
+        ctx.device().destroy(target);
+        return px;
+    };
+    const auto noon = shoot(70.0f);
+    CHECK(cache.atmosphere_bakes() == 1);
+    (void)shoot(70.2f); // below the re-bake threshold
+    CHECK(cache.atmosphere_bakes() == 1);
+    const auto dusk = shoot(3.0f);
+    CHECK(cache.atmosphere_bakes() == 2);
+    test::save_output("physical_sky_noon", W, H, noon);
+    test::save_output("physical_sky_dusk", W, H, dusk);
+    const auto n_top = pixel(noon, W, W / 2, 4), d_low = pixel(dusk, W, W / 2, H - 4);
+    MESSAGE("noon top " << int(channel(n_top, 0)) << "," << int(channel(n_top, 1)) << "," << int(channel(n_top, 2))
+                        << " dusk low " << int(channel(d_low, 0)) << "," << int(channel(d_low, 1)) << ","
+                        << int(channel(d_low, 2)));
+    CHECK(channel(n_top, 2) > channel(n_top, 0) + 40); // blue sky overhead
+    CHECK(channel(d_low, 0) > channel(d_low, 2));       // warm sky towards the low sun
+    const auto night = shoot(-30.0f);
+    const auto k = pixel(night, W, W / 2, 4);
+    CHECK(int(channel(k, 0)) + channel(k, 1) + channel(k, 2) < 30);
+}

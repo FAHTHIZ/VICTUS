@@ -162,6 +162,7 @@ struct Environment {
     // shows the map. Without one, the analytic zenith/horizon/ground gradient is used. The map
     // must outlive the frames that use it.
     const EnvironmentMap* environment_map{nullptr};
+    bool environment_sun_disc{false}; // draw the sun disc over the environment background (physical sky)
     float environment_intensity{1.0f};
     float environment_rotation{0.0f}; // radians about +Y
     float sky_blur{0.0f};             // background blur 0 (sharp) .. 1 (fully rough mip)

@@ -5,12 +5,14 @@
 #include "victus/particles/particles.hpp"
 
 #include "victus/core/log.hpp"
+#include "victus/core/profiler.hpp"
 #include "victus/gameplay/gameplay.hpp"
 
 #include <algorithm>
 #include <format>
 
 namespace victus::runtime {
+
 
 using namespace victus::scene;
 
@@ -22,6 +24,7 @@ void GpuAssetCache::clear() {
     nearest_.clear();
     environments_.clear();
     environment_errors_.clear();
+    atmosphere_.reset();
     for (auto& [id, model] : models_) {
         for (auto& m : model->meshes) ctx_.destroy(m);
         for (auto& t : model->textures) ctx_.device().destroy(t);
@@ -90,6 +93,20 @@ Result<const render::EnvironmentMap*> GpuAssetCache::environment(const Uuid& uui
     const render::EnvironmentMap* ptr = env->get();
     environments_.emplace(uuid, std::move(*env));
     return ptr;
+}
+
+Result<const render::EnvironmentMap*> GpuAssetCache::atmosphere(const render::AtmosphereSettings& s) {
+    if (atmosphere_ && atmosphere_key_.same_as(s)) return static_cast<const render::EnvironmentMap*>(atmosphere_.get());
+    VICTUS_PROFILE_SCOPE("GpuAssetCache::atmosphere");
+    // Bake settings scale the cube; the sky itself is smooth, so a 64-128 px cube is plenty.
+    render::EnvironmentBakeSettings bake = env_bake_;
+    bake.cube_size = std::min(bake.cube_size, 128u);
+    auto env = render::EnvironmentMap::create(ctx_, render::render_atmosphere(s), bake);
+    if (!env) return std::move(env).error();
+    atmosphere_ = std::move(*env); // the previous cube is released once in-flight frames finish
+    atmosphere_key_ = s;
+    ++atmosphere_bakes_;
+    return static_cast<const render::EnvironmentMap*>(atmosphere_.get());
 }
 
 bool GpuAssetCache::texture_nearest(const Uuid& uuid) {
@@ -489,6 +506,26 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         if (!e.environment_map.is_nil()) {
             if (auto map = assets.environment(e.environment_map)) env.environment_map = *map;
             else ++stats.missing_assets;
+        } else if (e.physical_sky) {
+            render::AtmosphereSettings a;
+            a.sun_direction = -sun.direction;
+            const float scale = std::isfinite(e.atmosphere_intensity) ? std::max(e.atmosphere_intensity, 0.0f) : 1.0f;
+            a.sun_illuminance = (has_sun ? sun.intensity : 3.0f) * scale;
+            a.rayleigh_scale = e.atmosphere_density;
+            a.mie_scale = e.atmosphere_haze;
+            a.ground_albedo = {e.ground.r, e.ground.g, e.ground.b};
+            a.width = assets.environment_bake().cube_size <= 128 ? 64 : 128; // Low tier: ~4x cheaper CPU bake
+            if (auto map = assets.atmosphere(a)) {
+                env.environment_map = *map;
+                env.environment_sun_disc = has_sun && a.sun_direction.y > -0.02f; // no sun disc drawn on the ground at night
+                env.environment_rotation = 0.0f; // the sky is baked in world space
+                if (e.atmosphere_tints_sun && has_sun) {
+                    const math::Vec3 t = render::atmosphere_sun_transmittance(a);
+                    sun.color = {sun.color.r * t.x, sun.color.g * t.y, sun.color.b * t.z, sun.color.a};
+                }
+            } else {
+                VICTUS_LOG_ERROR("runtime", "physical sky: {}", map.error().message);
+            }
         }
     });
     renderer.begin(camera, sun, env);

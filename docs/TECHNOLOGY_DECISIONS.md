@@ -432,6 +432,13 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 - Decision: (3) + (b). The GPU bake runs on every SDL_GPU backend (no compute requirement), takes one frame of work, and its size/sample count scale per quality tier (256/64, Low 128/32); SH9 is computed on the CPU at cook time and costs nine multiply-adds per pixel instead of a second cube fetch. Cubes are RGBA16F; the cooked texture stores half-float equirect pixels (licence: stb, public domain/MIT, already vendored; no new dependency).
 - Consequences: changing an environment needs a re-bake (cheap); dynamic time-of-day (next slice) re-bakes a small cube. Revisit (1) if load time on phones matters more than package size, and add a BRDF LUT if the analytic split-sum approximation shows artefacts.
 
+### ADR-0043: Physical sky is evaluated on the CPU into a small equirect and baked through IBL
+- Status: Accepted (2026-11-17, Slice 45).
+- Context: time of day must change sky, ambient and reflections together, and stay cheap on low-end phones.
+- Candidates: (1) per-pixel ray marching in the sky shader (Nishita) — cost every frame and does not light the scene; (2) precomputed LUTs (Bruneton & Neyret 2008, https://inria.hal.science/inria-00288758; Hillaire 2020, https://sebh.github.io/publications/egsr2020.pdf) — best quality incl. multiple scattering but needs compute or several render passes per change; (3) single-scattering evaluation of a 128x64 equirect on the CPU when the sun moves, fed into the existing GPU prefilter + SH9 path.
+- Decision: (3). It reuses ADR-0042, costs nothing per frame, works on every backend, and keeps sky, IBL and sun colour consistent. Coefficients from Hillaire 2020. No new dependency.
+- Consequences: no multiple scattering (compensated by `sky_gain`); re-bakes cost ~21 ms (5 ms on Low) and happen only on ~0.5° sun moves. Revisit with (2) when compute paths exist and for planet-scale views.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

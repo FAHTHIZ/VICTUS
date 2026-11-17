@@ -7,6 +7,7 @@
 #include "victus/animation/animation.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/assets/database.hpp"
+#include "victus/render/atmosphere.hpp"
 #include "victus/render/scene_renderer.hpp"
 #include "victus/render/sprite_batch.hpp"
 #include "victus/scene/scene.hpp"
@@ -44,6 +45,10 @@ public:
     // use and cached; failures are cached and logged once until the asset is evicted).
     [[nodiscard]] Result<const render::EnvironmentMap*> environment(const Uuid& uuid);
     void set_environment_bake(const render::EnvironmentBakeSettings& s) noexcept { env_bake_ = s; }
+    // Physical sky baked into an environment map; re-baked only when the settings change (the
+    // sun by more than about half a degree), so animated time of day stays cheap.
+    [[nodiscard]] Result<const render::EnvironmentMap*> atmosphere(const render::AtmosphereSettings& s);
+    [[nodiscard]] std::uint32_t atmosphere_bakes() const noexcept { return atmosphere_bakes_; }
     [[nodiscard]] const render::EnvironmentBakeSettings& environment_bake() const noexcept { return env_bake_; }
     [[nodiscard]] Result<const GpuModel*> model(const Uuid& uuid);
     // Registers an already-cooked model under a UUID (tools, tests, procedural content).
@@ -82,6 +87,9 @@ private:
     std::unordered_map<Uuid, std::unique_ptr<render::EnvironmentMap>, UuidHash> environments_;
     std::unordered_map<Uuid, Error, UuidHash> environment_errors_;
     render::EnvironmentBakeSettings env_bake_;
+    std::unique_ptr<render::EnvironmentMap> atmosphere_;
+    render::AtmosphereSettings atmosphere_key_;
+    std::uint32_t atmosphere_bakes_{0};
     std::unordered_map<Uuid, std::unique_ptr<GpuModel>, UuidHash> models_;
     std::unordered_map<std::string, render::GpuMesh> primitives_;
     std::unordered_map<Uuid, Result<render::Material>, UuidHash> materials_;
