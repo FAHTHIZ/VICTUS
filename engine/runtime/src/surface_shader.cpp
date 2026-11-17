@@ -3,6 +3,7 @@
 
 #include "victus/render/builtin_shaders.hpp"
 #include "victus/render/scene_renderer.hpp"
+#include "victus/script/material_graph.hpp"
 
 #include <format>
 #include <string>
@@ -27,6 +28,14 @@ Result<shadercompiler::CompiledShader> compile_surface_shader(std::string_view c
                                       "(use i.params[0..3] for per-material values)",
                                       name));
     return compiled;
+}
+
+Result<std::string> load_surface_shader_code(const assets::AssetDatabase& db, const Uuid& uuid) {
+    auto text = db.load_shader_source(uuid);
+    if (!text) return text;
+    const assets::AssetRecord* rec = db.find(uuid);
+    if (!rec || !rec->path.ends_with(script::kMaterialGraphExtension)) return text;
+    return script::material_graph_to_glsl(*text, rec->path);
 }
 
 std::string_view surface_shader_template() noexcept {

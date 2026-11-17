@@ -9,6 +9,7 @@
 
 #include "victus/runtime/scene_rendering.hpp"
 #include "victus/runtime/surface_shader.hpp"
+#include "victus/script/material_graph.hpp"
 
 #include <imgui.h>
 
@@ -308,7 +309,7 @@ void Editor::draw_material_editor() {
         ImGui::TextUnformatted("Surface:");
         ImGui::SameLine();
         ImGui::Button(label.c_str(), ImVec2(-100, 0));
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop a .vshader surface shader from Assets here");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop a .vshader surface shader or .vmatgraph material graph from Assets here");
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
                 Uuid id;
@@ -332,6 +333,22 @@ void Editor::draw_material_editor() {
             } else {
                 notify("cannot create shader: " + id.error().message, true);
             }
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Graph")) {
+            if (auto id = create_material_graph(); id) {
+                m.shader = *id;
+                mark(true, F::Shader);
+                if (auto st = open_graph_editor(*id); !st.ok()) notify(st.error().message, true);
+            } else {
+                notify("cannot create material graph: " + id.error().message, true);
+            }
+        }
+        ImGui::SetItemTooltip("New node-based material graph as this material's shader");
+        if (sh && sh->path.ends_with(script::kMaterialGraphExtension)) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Edit Graph"))
+                if (auto st = open_graph_editor(m.shader); !st.ok()) notify(st.error().message, true);
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("Clear##shader") && !m.shader.is_nil()) {

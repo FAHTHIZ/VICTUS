@@ -212,7 +212,7 @@ Result<rhi::ShaderHandle> GpuAssetCache::surface_shader(const Uuid& uuid) {
         if (!rec || rec->kind != assets::AssetKind::Shader)
             return make_error(ErrorCode::NotFound, "surface shader " + uuid.to_string() + " is missing");
         const std::string path = rec->path; // records may move on refresh
-        auto code = db_->load_shader_source(uuid);
+        auto code = load_surface_shader_code(*db_, uuid);
         if (!code) return std::move(code).error();
         auto compiled = compile_surface_shader(*code, path, ctx_.device().capabilities().backend == rhi::Backend::Metal);
         if (!compiled) return std::move(compiled).error();

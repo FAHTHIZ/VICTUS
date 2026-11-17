@@ -685,9 +685,10 @@ int cmd_check(const std::vector<std::string>& a) {
         if (r.kind != assets::AssetKind::Shader) continue;
         ++shaders;
         const std::string path = r.path;
-        auto code = (*db)->load_shader_source(r.uuid);
+        auto code = runtime::load_surface_shader_code(**db, r.uuid);
         if (!code) {
-            std::printf("error: %s: %s\n", path.c_str(), code.error().message.c_str());
+            const std::string& msg = code.error().message;
+            std::printf("error: %s\n", msg.starts_with(path) ? msg.c_str() : (path + ": " + msg).c_str());
             ++problems;
         } else if (auto c = runtime::compile_surface_shader(*code, path, false); !c) {
             std::printf("error: %s\n", c.error().message.c_str());

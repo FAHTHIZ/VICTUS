@@ -9,6 +9,7 @@
 // uniforms or samplers; it reads material values through the existing material/textures and
 // up to four per-material vec4 parameters (`i.params[0..3]`, MaterialAsset::shader_params).
 #pragma once
+#include "victus/assets/database.hpp"
 #include "victus/core/result.hpp"
 #include "victus/shadercompiler/shader_compiler.hpp"
 
@@ -23,6 +24,10 @@ namespace victus::runtime {
 [[nodiscard]] Result<shadercompiler::CompiledShader> compile_surface_shader(std::string_view code, std::string_view name,
                                                                             bool want_msl = true,
                                                                             std::vector<shadercompiler::Diagnostic>* diagnostics = nullptr);
+
+// The surface function of a shader asset: a .vshader's text, or the GLSL a .vmatgraph material
+// graph compiles to (ADR-0062). Graph errors name the file and node.
+[[nodiscard]] Result<std::string> load_surface_shader_code(const assets::AssetDatabase& db, const Uuid& uuid);
 
 // Template written by the editor's "New Surface Shader" action.
 [[nodiscard]] std::string_view surface_shader_template() noexcept;

@@ -492,6 +492,13 @@ void Editor::draw_menu_bar() {
             if (auto id = create_graph(); !id) notify("cannot create visual script: " + id.error().message, true);
             else if (auto st = open_graph_editor(*id); !st.ok()) notify(st.error().message, true);
         }
+        if (ImGui::MenuItem("New Material Graph", nullptr, false, db_ != nullptr)) {
+            if (auto id = create_material_graph(); !id) notify("cannot create material graph: " + id.error().message, true);
+            else {
+                if (show_material_editor_) (void)set_editing_material_shader(*id);
+                if (auto st = open_graph_editor(*id); !st.ok()) notify(st.error().message, true);
+            }
+        }
         ImGui::MenuItem("Graph Editor", nullptr, &show_graph_editor_);
         if (ImGui::MenuItem("Copy Assets Folder Path") && platform_) platform_->set_clipboard(project_->assets_dir().string());
         ImGui::EndMenu();
@@ -1377,7 +1384,8 @@ void Editor::draw_asset_item(const assets::AssetRecord& r) {
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         if (r.kind == assets::AssetKind::Model) instantiate_asset(r.uuid);
         else if (r.kind == assets::AssetKind::Prefab) instantiate_prefab(r.uuid);
-        else if (r.kind == assets::AssetKind::Script && r.path.ends_with(".vgraph")) {
+        else if ((r.kind == assets::AssetKind::Script && r.path.ends_with(".vgraph")) ||
+                 (r.kind == assets::AssetKind::Shader && r.path.ends_with(".vmatgraph"))) {
             if (auto st = open_graph_editor(r.uuid); !st.ok()) notify(st.error().message, true);
         } else if (r.kind == assets::AssetKind::Script) {
             const Entity e = selected();

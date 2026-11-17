@@ -24,7 +24,7 @@ VICTUS is a general-purpose engine, not an Auroria-specific one. Auroria remains
 14. [x] Visual scripting graph over the Luau runtime: (Slice 61) typed graph model, 85-node library, validation, deterministic `.vgraph` serialization, compiler to Luau, runtime loading with node-annotated errors (ADR-0058); (Slice 62) VICTUS Studio Graph Editor with palette, linking, literals, variables, diagnostics, undo and save (ADR-0059); (Slice 63) play-mode debugging: traced graphs, live node/link highlighting, run counts, runtime error node (ADR-0060).
 15. [x] (Slice 64) Profiler: CPU frame/tick scopes (per system, script host, render pass), GPU wait time (per-pass GPU timestamps pending SDL_GPU support), p50/p95/p99 windows, memory/GPU resource counters, editor Profiler panel with trace recording, `victus run --profile/--trace`.
 16. [x] (Slices 65-67) Editor productivity: command palette, autosave with crash recovery, multi-selection (Shift range, viewport box select, multi-edit inspector).
-17. [ ] Material graph: node-based surface shaders compiled to the existing surface shader path, edited with the graph canvas.
+17. [x] (Slice 68) Material graph: node-based surface shaders (`.vmatgraph`, 55 nodes, generic typed math) compiled to the existing surface shader path, edited with the graph canvas (ADR-0062). Follow-up: custom texture inputs, vertex-stage nodes, live node previews.
 18. [ ] Terrain: heightmap terrain with LOD, splat-map layered materials, sculpt/paint tools, collision, foliage scatter.
 19. [ ] Gameplay AI: behaviour trees with blackboard, perception, editor debug view.
 20. [ ] Timeline/sequencer: tracks for transforms, animation, audio, events and cameras, with an editor panel.
