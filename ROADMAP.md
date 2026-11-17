@@ -2,14 +2,29 @@
 
 Living, evidence-driven plan. Work directly on `main` in small, buildable commits. Status reflects verified repository state, never ambition.
 
-**Current maturity:** core runtime, platform, RHI, real 2D/3D renderer (Vulkan verified), ECS/scenes, asset pipeline, an editor with project templates, a standalone player, a `victus` CLI, Luau gameplay scripting with hot reload and 3D/2D rigid-body physics (Jolt/Box2D) and audio (miniaudio), and `victus export` packaging into a pack-based runnable game folder. No networking yet. Not a production engine.
+**Current maturity (2026-11-17, through Slice 43):** core runtime, SDL3 platform layer, RHI on SDL_GPU (Vulkan verified), render graph, 2D sprite renderer and forward HDR PBR 3D renderer (cascaded shadows, SSAO, bloom, auto exposure, FXAA, instancing, quality tiers, materials, surface shaders, material instances, transparency, fog), archetype ECS, versioned scenes and prefabs, asset pipeline (textures, glTF meshes/skins/animations, cooked cache), VICTUS Studio editor (play-in-editor, multi-client play, material editor, tile painting, input actions), Luau scripting with hot reload, Jolt/Box2D physics with characters and joints, skeletal and sprite animation, CPU particles, in-game UI, miniaudio audio, Recast/Detour navigation, tilemaps, save games, deterministic captures, encrypted server-authoritative multiplayer (ENet, prediction, interpolation, delta snapshots, listen/dedicated servers, reconnect), `victus` CLI and `victus export` packaging, plus one complete 2D sample game (`samples/dungeon_crawler`). Not yet production-ready: no Android/iOS build, no transform gizmos, no TAA/IBL/GI, no GPU texture compression, no visual scripting.
+
+## Direction
+VICTUS is a general-purpose engine, not an Auroria-specific one. Auroria remains a demanding showcase only. The defining product goal is **high-end visual quality that scales down to entry-level Android phones**: every rendering feature must have a cheap mobile path (or a documented Low-tier fallback), favour bandwidth-light techniques on tile-based GPUs, and be measured rather than assumed.
+
+## Next slices (priority order, updated 2026-11-17)
+1. Image-based lighting: HDR environment maps (equirect `.hdr` → cubemap, GGX-prefiltered specular mips, SH9 irradiance), environment-lit sky background, per-scene `Environment.environment_map`.
+2. Physically based sky/atmosphere baked into the environment cubemap (dynamic time of day feeding IBL).
+3. Local reflection probes (box-projected, captured from the scene, baked into cubemaps).
+4. Temporal anti-aliasing with jittered projection and motion vectors; dynamic resolution driven by frame time.
+5. Clustered forward lighting (hundreds of point/spot lights) with spot lights.
+6. GPU texture compression in the cooker (BC7/BC1 desktop, ASTC/ETC2 mobile) with per-platform variants.
+7. Android arm64 build (NDK + Gradle APK, touch, lifecycle, Vulkan device capability checks) and CI job.
+8. Editor transform gizmos and snapping; asset thumbnails.
+9. 3D sample game (third-person arena) as a CTest-driven reference project.
+10. Mesh LODs and vertex/index optimisation via meshoptimizer; GPU-driven culling where SDL_GPU allows.
 
 Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocked.
 
 ## Phase 0 — Foundation and project quality
 - [x] Project identity, principles, repository layout, agent contract, roadmap, architecture and license policy.
 - [x] Minimal C++20 core/runtime/test slice and initial CMake/desktop CI.
-- [x] Verify hosted CI; fix any failures.
+- [x] Verify hosted CI; fix any failures. (Linux/Windows/macOS Debug+Release, ASan+UBSan and TSan lanes.)
 - [~] Formatting, static analysis, sanitizers, warning policy and dependency scanning. (Sanitizer CI lanes, -Werror policy and .clang-format done; clang-tidy and dependency scanning pending.)
 - [ ] Reproducible developer setup, presets, troubleshooting and contribution workflow.
 **Exit:** clean Debug/Release build and tests on supported desktop CI.
@@ -19,7 +34,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 - [x] Structured logging, diagnostic events, crash context, build metadata and tracing.
 - [~] Platform services: filesystem, paths, clock, threads, window, input, device capabilities and lifecycle. (SDL3 windows, keyboard/mouse/gamepad/touch input, lifecycle events, clipboard, GPU capabilities implemented; mobile lifecycle untested on devices.)
 - [~] CLI modes: editor, game, headless, cook, test, benchmark and package. (`victus new/templates/info/import/run/check/simulate/export`, `victus_editor`, `victus_player` done; `simulate` is the headless mode and `export` packages; a separate cook-only command is pending.)
-- [~] Stable project configuration and runtime/editor/server target separation. (Versioned `victus.project`; separate editor and player targets; server target pending.)
+- [~] Stable project configuration and runtime/editor/server target separation. (Versioned `victus.project`; separate editor and player targets; dedicated headless server via `victus serve` (Slice 17).)
 **Exit:** predictable lifecycle and useful diagnostics in graphical and headless modes.
 
 ## Phase 2 — Performance laboratory
@@ -50,7 +65,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 
 ## Phase 5 — Asset pipeline and content cooking
 - [~] Stable asset IDs, metadata, dependency graph and versioned source-to-cooked format. (UUID `.meta` sidecars + versioned cooked cache done; cross-asset dependency graph pending.)
-- [~] glTF 2.0/GLB import, validation, mesh/material/skin/animation/image/HDR handling. (Meshes, PBR materials, images, node hierarchy done; skins/animation pending.)
+- [~] glTF 2.0/GLB import, validation, mesh/material/skin/animation/image/HDR handling. (Meshes, PBR materials, images, node hierarchy, skins and animation clips done (Slice 12); morph targets pending.)
 - [ ] Evaluate authoring interchange such as OpenUSD separately from runtime delivery formats.
 - [~] Texture mips, color management (done), platform compression and asset variants.
 - [ ] Mesh optimization, LODs, collision proxies and import validation.
@@ -61,10 +76,10 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 
 ## Phase 6 — VICTUS Studio editor core
 - [~] Project launcher/templates, dockable workspace, command palette and saved layouts. (Launcher, 3 templates, docking workspace with persisted ImGui layout done; command palette pending.)
-- [~] Scene/world viewport, camera, hierarchy, inspector, selection, gizmos and snapping. (Viewport, 2D/3D editor camera, hierarchy, inspector, click selection done; gizmos/snapping pending.)
+- [~] Scene/world viewport, camera, hierarchy, inspector, selection, gizmos and snapping. (Viewport, 2D/3D editor camera, hierarchy with drag reparent, inspector for every component, click picking done; transform gizmos/snapping pending.)
 - [~] Undo/redo command model, multi-selection, autosave and crash recovery. (Snapshot-based undo/redo with dirty tracking done; multi-selection/autosave pending.)
-- [~] Asset browser, metadata/dependency inspector, import queue and previews. (Asset table with drag/drop instantiate and reimport done; previews pending.)
-- [~] Logs, entity diagnostics, profiler, project settings and build configuration. (Console over the log ring sink done.)
+- [~] Asset browser, metadata/dependency inspector, import queue and previews. (Asset table with drag/drop instantiate, material/texture assignment, prefabs, tile sets and reimport done; thumbnails/previews pending.)
+- [~] Logs, entity diagnostics, profiler, project settings and build configuration. (Console over the log ring sink, Network window, rendering-quality selector and draw-call readout done; profiler panel pending.)
 - [x] Isolated play-in-editor with safe play/pause/step/stop and authored-world protection.
 **Exit:** create project, import assets, author a scene, save/reopen and play without editing engine source.
 
@@ -132,7 +147,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 
 ## Phase 13 — Production, collaboration and ecosystem
 - [~] Build automation, asset cooking, incremental compilation, caching and reproducible packaging. Done (Slice 8): `victus export` (validated, byte-reproducible `.vpak` archive with checksummed entries, cooked-only assets, embedded third-party notices, manifest) and the player's packaged mode. Remaining: compression, GPU texture compression (ASTC/BC), cross-platform targets, signing, build automation.
-- [~] Hot reload for code/assets/shaders where safe; clear fallback when reload is unsupported. Done (Slice 20): `victus run` and the editor (edit and play mode) watch `assets/` and reload textures and models in place (incl. `.meta` settings and glTF dependencies), audio clips (playing sources restart with the new data) and scripts (already, since Slice 3); a broken save keeps the previous import in use and is reported; scenes and fonts are reported as needing a restart. Remaining: font and scene hot reload, re-instantiating models whose node graph changed, shader hot reload (built-in shaders are compiled into the engine; project shaders do not exist yet), C++ code reload.
+- [~] Hot reload for code/assets/shaders where safe; clear fallback when reload is unsupported. Done (Slice 20): `victus run` and the editor (edit and play mode) watch `assets/` and reload textures and models in place (incl. `.meta` settings and glTF dependencies), audio clips (playing sources restart with the new data) and scripts (already, since Slice 3); a broken save keeps the previous import in use and is reported; scenes and fonts are reported as needing a restart. Remaining: font and scene hot reload, re-instantiating models whose node graph changed, built-in shader hot reload (project `.vshader` surface shaders hot reload since Slice 36), C++ code reload.
 - [~] Automated unit/integration/gameplay tests, smoke tests and deterministic regression captures. Done: doctest suites, template smoke tests and CI (earlier slices); Slice 24 `.vcapture` regression captures — `victus run/simulate --record` stores input, frame times, the script random seed and state digests; `--replay` re-runs headless or in the player and fails at the first diverging frame. Slice 25: entity-level divergence reports (captures store per-entity state behind each digest) and editor Record / Replay Capture in play mode. Slice 29: digests cover script fields and physics velocities through state probes (capture format 2; format-1 captures still verify). Remaining: probes for joints, animation and UI, cross-platform determinism, capture-based CI suites per project.
 - [ ] Crash reporting, symbol handling, diagnostics export and privacy controls.
 - [ ] Source-control integration, project diffs/merges, collaboration foundations and conflict handling.
