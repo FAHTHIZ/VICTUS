@@ -3,9 +3,11 @@
 
 #include "victus/core/log.hpp"
 #include "victus/core/profiler.hpp"
+#include "victus/render/light_clusters.hpp"
 #include "victus/render/temporal.hpp"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <chrono>
 #include <cmath>
@@ -80,10 +82,6 @@ bool same_material(const Material& a, const Material& b) noexcept {
            a.vertex_alpha_coverage_mask == b.vertex_alpha_coverage_mask && a.coverage_response == b.coverage_response &&
            a.blend == b.blend;
 }
-struct GpuPointLight {
-    Vec4 position_range;
-    Vec4 color_intensity;
-};
 struct LightingUniforms {
     Vec4 camera_pos;
     Vec4 camera_forward;
@@ -104,7 +102,8 @@ struct LightingUniforms {
     Vec4 env_params;
     Vec4 env_sh[9];
     Mat4 cascade_vp[4];
-    GpuPointLight points[SceneRenderer::kMaxPointLights];
+    Vec4 cluster_grid;
+    Vec4 cluster_depth;
 };
 struct MaterialUniforms {
     Vec4 base_color;
@@ -158,7 +157,7 @@ struct TaaUniforms {
     Mat4 reproject;
     Vec4 params, screen;
 };
-static_assert(sizeof(LightingUniforms) == 26 * 16 + 64 * 4 + 32 * SceneRenderer::kMaxPointLights);
+static_assert(sizeof(LightingUniforms) == 28 * 16 + 64 * 4);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 
@@ -258,7 +257,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.bloom_levels = 4;
         s.fxaa = true;
         s.taa = false;
-        s.max_point_lights = 4;
+        s.max_point_lights = 64;
         break;
     case QualityTier::Medium:
         s.render_scale = 1.0f;
@@ -270,7 +269,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.bloom_levels = 4;
         s.fxaa = true;
         s.taa = false;
-        s.max_point_lights = 8;
+        s.max_point_lights = 256;
         break;
     case QualityTier::High: break; // struct defaults
     case QualityTier::Ultra:
@@ -279,6 +278,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.ssao_half_resolution = false;
         s.ssao_samples = 16;
         s.bloom_levels = 6;
+        s.max_point_lights = 1024;
         break;
     }
     return s;
@@ -293,7 +293,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.ssao_samples = std::clamp(s.ssao_samples, 4u, 32u);
     s.bloom_levels = std::clamp(s.bloom_levels, 1u, 8u);
     s.taa_blend = std::isfinite(s.taa_blend) ? std::clamp(s.taa_blend, 0.04f, 1.0f) : 0.1f;
-    s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxPointLights);
+    s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxLights);
     return s;
 }
 
@@ -577,6 +577,8 @@ SceneRenderer::~SceneRenderer() {
                     particle_alpha_, particle_additive_})
         if (pl) d.destroy(pl);
     if (palette_buffer_) d.destroy(palette_buffer_);
+    if (light_buffer_) d.destroy(light_buffer_);
+    if (cluster_buffer_) d.destroy(cluster_buffer_);
     for (auto& [k, pl] : post_) d.destroy(pl);
     for (auto& [k, set] : surface_pipelines_)
         for (auto pl : set)
@@ -643,6 +645,7 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     sun_ = sun;
     env_ = env;
     points_.clear();
+    spots_.clear();
     draws_.clear();
     probes_.clear();
     lines_.clear();
@@ -653,6 +656,7 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
 }
 
 void SceneRenderer::add_point_light(const PointLight& light) { points_.push_back(light); }
+void SceneRenderer::add_spot_light(const SpotLight& light) { spots_.push_back(light); }
 
 void SceneRenderer::add_reflection_probe(const ReflectionProbe& probe) {
     if (!probe.map || !probe.map->cube() || !probe.box.valid() || probes_.size() >= kMaxReflectionProbes) return;
@@ -925,16 +929,74 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     constexpr auto kInstanceStride = static_cast<std::uint32_t>(sizeof(InstanceData));
     for (std::uint32_t c = 0; c < cascade_count_; ++c) stats_.shadow_draws += static_cast<std::uint32_t>(casters[c].size());
 
-    // Nearest point lights when over budget.
-    const std::size_t light_budget = S.max_point_lights;
-    if (points_.size() > light_budget) {
-        std::partial_sort(points_.begin(), points_.begin() + static_cast<std::ptrdiff_t>(light_budget), points_.end(),
-                          [&](const PointLight& a, const PointLight& b) {
-                              return length(a.position - camera_.position) < length(b.position - camera_.position);
-                          });
-        points_.resize(light_budget);
+    // Local lights: frustum-cull bounding spheres, keep the nearest when over budget, then
+    // assign them to view-space clusters and upload both storage buffers.
+    std::vector<GpuLight> local_lights;
+    local_lights.reserve(points_.size() + spots_.size());
+    std::uint32_t spot_count = 0;
+    {
+        const auto finite_or = [](float v, float d) { return std::isfinite(v) ? v : d; };
+        for (const PointLight& pl : points_) {
+            GpuLight g{};
+            g.position_range = Vec4(pl.position, std::max(finite_or(pl.range, 0.01f), 0.01f));
+            g.color_intensity = rgb(pl.color, 1.0f, std::max(finite_or(pl.intensity, 0.0f), 0.0f));
+            local_lights.push_back(g);
+        }
+        for (const SpotLight& sl : spots_) {
+            GpuLight g{};
+            const float outer = std::clamp(finite_or(sl.outer_angle, 0.5f), 0.001f, 3.1f);
+            const float inner = std::clamp(finite_or(sl.inner_angle, 0.35f), 0.0f, outer);
+            const Vec3 dir = length(sl.direction) > 1e-6f ? normalize(sl.direction) : Vec3{0, -1, 0};
+            g.position_range = Vec4(sl.position, std::max(finite_or(sl.range, 0.01f), 0.01f));
+            g.color_intensity = rgb(sl.color, 1.0f, std::max(finite_or(sl.intensity, 0.0f), 0.0f));
+            g.direction_cos_outer = Vec4(dir, std::cos(outer));
+            g.spot = {std::cos(inner), 1.0f, 0.0f, 0.0f};
+            local_lights.push_back(g);
+        }
+        std::erase_if(local_lights, [&](const GpuLight& g) {
+            const Vec4 b = light_bounding_sphere(g);
+            return g.color_intensity.w <= 0.0f ||
+                   !frustum.intersects(Aabb{{b.x - b.w, b.y - b.w, b.z - b.w}, {b.x + b.w, b.y + b.w, b.z + b.w}});
+        });
+        const std::size_t budget = S.max_point_lights;
+        if (local_lights.size() > budget) {
+            const auto key = [&](const GpuLight& g) {
+                const Vec4 b = light_bounding_sphere(g);
+                return length(Vec3{b.x, b.y, b.z} - camera_.position) - b.w;
+            };
+            std::partial_sort(local_lights.begin(), local_lights.begin() + static_cast<std::ptrdiff_t>(budget), local_lights.end(),
+                              [&](const GpuLight& a, const GpuLight& b) { return key(a) < key(b); });
+            local_lights.resize(budget);
+        }
+        for (const GpuLight& g : local_lights) spot_count += g.spot.y > 0.5f ? 1u : 0u;
     }
-    stats_.point_lights = static_cast<std::uint32_t>(points_.size());
+    const LightClusters clusters =
+        build_light_clusters(local_lights, camera_.view, proj_unjittered, camera_.z_near, camera_.z_far);
+    stats_.point_lights = static_cast<std::uint32_t>(local_lights.size());
+    stats_.spot_lights = spot_count;
+    stats_.light_indices = clusters.index_count;
+    stats_.max_cluster_lights = clusters.max_per_cluster;
+    {
+        const auto upload = [&](rhi::BufferHandle& buf, std::uint32_t& capacity, const char* name, const void* data,
+                                std::size_t bytes) -> Status {
+            const auto needed = static_cast<std::uint32_t>(std::max<std::size_t>(bytes, 64));
+            if (needed > capacity) {
+                if (buf) dev.destroy(buf);
+                capacity = std::max({needed, capacity * 2, 4096u});
+                auto b = dev.create_buffer({name, capacity, rhi::BufferUsageStorageRead});
+                if (!b) return std::move(b).error();
+                buf = b.value();
+            }
+            static const std::array<std::uint8_t, 64> zeros{};
+            if (bytes == 0) cmd.upload_buffer(buf, 0, {zeros.data(), zeros.size()}, true);
+            else cmd.upload_buffer(buf, 0, {static_cast<const std::uint8_t*>(data), bytes}, true);
+            return {};
+        };
+        VICTUS_TRY_STATUS(upload(light_buffer_, light_capacity_, "local_lights", local_lights.data(),
+                                 local_lights.size() * sizeof(GpuLight)));
+        VICTUS_TRY_STATUS(upload(cluster_buffer_, cluster_capacity_, "light_clusters", clusters.data.data(),
+                                 clusters.data.size() * sizeof(std::uint32_t)));
+    }
 
     // Debug line upload happens before any render pass.
     stats_.lines = static_cast<std::uint32_t>(lines_.size() / 2);
@@ -1018,7 +1080,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     lighting.sun_color = rgb(sun_.color, sun_.intensity);
     lighting.sky_color = rgb(env_.sky_zenith, env_.ambient_intensity, env_.exposure);
     lighting.horizon_color = rgb(env_.sky_horizon, env_.ambient_intensity);
-    lighting.ground_color = rgb(env_.ground, env_.ambient_intensity, static_cast<float>(points_.size()));
+    lighting.ground_color = rgb(env_.ground, env_.ambient_intensity, static_cast<float>(local_lights.size()));
+    lighting.cluster_grid = {static_cast<float>(clusters.grid.tiles_x), static_cast<float>(clusters.grid.tiles_y),
+                             static_cast<float>(clusters.grid.slices), static_cast<float>(clusters.grid.max_lights_per_cluster)};
+    lighting.cluster_depth = {clusters.z_near, static_cast<float>(clusters.grid.slices) / std::log(clusters.z_far / clusters.z_near), 0, 0};
     lighting.shadow_params = {1.0f / static_cast<float>(atlas_size), 0.0004f, 1.0f, static_cast<float>(cascade_count_)};
     lighting.cascade_params = {S.soft_shadows ? 1.0f : 0.0f, 1.0f / static_cast<float>(atlas_tiles), 0.1f, 0.0f};
     lighting.cascade_splits = {cascade_splits_[0], cascade_splits_[1], cascade_splits_[2], cascade_splits_[3]};
@@ -1046,10 +1111,6 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         for (std::size_t i = 0; i < 9; ++i) lighting.env_sh[i] = Vec4(env_map->sh().coefficients[i] * env_intensity, 0.0f);
     }
     for (std::uint32_t c = 0; c < 4; ++c) lighting.cascade_vp[c] = cascade_vp_[c];
-    for (std::size_t i = 0; i < points_.size(); ++i) {
-        const auto& pl = points_[i];
-        lighting.points[i] = {Vec4(pl.position, std::max(pl.range, 0.01f)), rgb(pl.color, 1.0f, pl.intensity)};
-    }
 
     RenderGraph graph;
     rhi::TextureDesc target_desc;
@@ -1250,6 +1311,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 }
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 2, pu);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 6, env_cube, ctx_.linear_clamp());
+                pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 0, light_buffer_);
+                pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 1, cluster_buffer_);
                 pass.bind_vertex_buffer(0, d->mesh->vertices);
                 pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                 pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);

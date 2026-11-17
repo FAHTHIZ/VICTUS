@@ -40,7 +40,7 @@ TEST_CASE("quality tiers: sanitized clamps hostile values") {
     s.cascade_split_lambda = -3.0f;
     s.ssao_samples = 1000;
     s.bloom_levels = 0;
-    s.max_point_lights = 400;
+    s.max_point_lights = 100000;
     const RenderSettings z = s.sanitized();
     CHECK(z.render_scale == 1.0f);
     CHECK(z.shadow_cascades == 4);
@@ -48,7 +48,7 @@ TEST_CASE("quality tiers: sanitized clamps hostile values") {
     CHECK(z.cascade_split_lambda == 0.0f);
     CHECK(z.ssao_samples == 32);
     CHECK(z.bloom_levels == 1);
-    CHECK(z.max_point_lights == SceneRenderer::kMaxPointLights);
+    CHECK(z.max_point_lights == SceneRenderer::kMaxLights);
     s.render_scale = 10.0f;
     CHECK(s.sanitized().render_scale == 2.0f);
     s.render_scale = 0.01f;

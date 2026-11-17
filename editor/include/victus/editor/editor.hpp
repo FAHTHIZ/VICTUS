@@ -63,7 +63,7 @@ struct NetPlaySettings {
     friend bool operator==(const NetPlaySettings&, const NetPlaySettings&) = default;
 };
 
-enum class Primitive : std::uint8_t { Empty, Cube, Sphere, Plane, Cylinder, Camera, DirectionalLight, PointLight, Sprite };
+enum class Primitive : std::uint8_t { Empty, Cube, Sphere, Plane, Cylinder, Camera, DirectionalLight, PointLight, SpotLight, Sprite };
 
 struct EditorClient; // an in-editor player of a hosted session (editor_clients.cpp)
 

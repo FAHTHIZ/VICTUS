@@ -19,6 +19,7 @@ victus_add_module(render
         src/environment_map.cpp
         src/atmosphere.cpp
         src/temporal.cpp
+        src/light_clusters.cpp
         src/reflection_capture.cpp
         src/gpu_context.cpp
         src/image.cpp

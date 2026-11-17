@@ -567,6 +567,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     render::DirectionalLight sun;
     bool has_sun = false;
     std::vector<render::PointLight> points;
+    std::vector<render::SpotLight> spots;
     w.each<LightComponent, WorldTransform>([&](const LightComponent& l, const WorldTransform& wt) {
         ++stats.lights;
         if (l.type == LightComponent::Type::Directional) {
@@ -576,6 +577,17 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             sun.color = l.color;
             sun.intensity = l.intensity;
             sun.shadows = l.shadows;
+        } else if (l.type == LightComponent::Type::Spot) {
+            render::SpotLight sl;
+            sl.position = wt.matrix.transform_point({});
+            sl.direction = math::normalize(wt.matrix.transform_vector({0, 0, -1}));
+            sl.color = l.color;
+            sl.intensity = l.intensity;
+            sl.range = l.range;
+            const float outer = std::isfinite(l.outer_angle_degrees) ? std::clamp(l.outer_angle_degrees, 0.1f, 89.5f) : 30.0f;
+            sl.outer_angle = math::radians(outer);
+            sl.inner_angle = math::radians(std::isfinite(l.inner_angle_degrees) ? std::clamp(l.inner_angle_degrees, 0.0f, outer) : outer);
+            spots.push_back(sl);
         } else {
             render::PointLight p;
             p.position = wt.matrix.transform_point({});
@@ -619,6 +631,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     });
     renderer.begin(camera, sun, env);
     for (const auto& p : points) renderer.add_point_light(p);
+    for (const auto& sl : spots) renderer.add_spot_light(sl);
     if (!assets.capturing_probes()) apply_reflection_probes(scene, assets, renderer, settings, stats);
 
     std::vector<math::Mat4> palette;

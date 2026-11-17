@@ -94,6 +94,18 @@ struct PointLight {
     float range{10.0f};
 };
 
+// Cone light. Angles are half-angles in radians from the axis: full intensity inside
+// `inner_angle`, smoothly fading to zero at `outer_angle`.
+struct SpotLight {
+    math::Vec3 position;
+    math::Vec3 direction{0, -1, 0}; // direction light travels
+    math::Color color{1, 1, 1, 1};
+    float intensity{10.0f};
+    float range{10.0f};
+    float inner_angle{0.35f};
+    float outer_angle{0.5f};
+};
+
 // Particles are camera-facing billboards drawn after opaque geometry into the HDR target, as
 // soft particles (they fade where they meet scene depth). Alpha batches are drawn back to front
 // and their particles sorted back to front; additive batches need no sorting.
@@ -205,7 +217,7 @@ struct RenderSettings {
     float taa_blend{0.1f};                // weight of the current frame (0.04..1)
     bool auto_exposure{true};             // allowed; scenes enable it through Environment
     bool instancing{true};                // merge identical mesh+material draws into instanced batches
-    std::uint32_t max_point_lights{16};   // <= SceneRenderer::kMaxPointLights
+    std::uint32_t max_point_lights{512};  // local (point + spot) lights per frame, <= SceneRenderer::kMaxLights
 
     [[nodiscard]] static RenderSettings preset(QualityTier tier) noexcept;
     // Clamps every field into its supported range.
@@ -214,7 +226,10 @@ struct RenderSettings {
 
 struct SceneStats {
     std::uint32_t submitted{0}, visible{0}, culled{0}, shadow_casters{0}, lines{0};
-    std::uint32_t point_lights{0};
+    std::uint32_t point_lights{0};      // local lights used (point + spot)
+    std::uint32_t spot_lights{0};
+    std::uint32_t light_indices{0};     // clustered light index list length
+    std::uint32_t max_cluster_lights{0}; // most lights in one cluster
     std::uint32_t shadow_cascades{0}, shadow_draws{0}, prepass_draws{0};
     std::uint32_t render_width{0}, render_height{0};
     bool taa{false};                   // TAA resolved this frame
@@ -233,7 +248,8 @@ struct SceneStats {
 
 class SceneRenderer {
 public:
-    static constexpr std::uint32_t kMaxPointLights = 16;
+    static constexpr std::uint32_t kMaxLights = 4096;
+    static constexpr std::uint32_t kMaxPointLights = kMaxLights; // former name
     [[nodiscard]] static Result<std::unique_ptr<SceneRenderer>> create(GpuContext& ctx);
     ~SceneRenderer();
     SceneRenderer(const SceneRenderer&) = delete;
@@ -257,6 +273,7 @@ public:
 
     void begin(const Camera3D& camera, const DirectionalLight& sun, const Environment& env);
     void add_point_light(const PointLight& light);
+    void add_spot_light(const SpotLight& light);
     void submit(const GpuMesh& mesh, const Material& material, const math::Mat4& model);
     // Skinned draw (GPU skinning). `joints` are skin matrices in the mesh's model space
     // (inverse(model) * joint_world * inverse_bind); `world_bounds` must contain the posed mesh.
@@ -364,6 +381,9 @@ private:
     DirectionalLight sun_;
     Environment env_;
     std::vector<PointLight> points_;
+    std::vector<SpotLight> spots_;
+    rhi::BufferHandle light_buffer_, cluster_buffer_;
+    std::uint32_t light_capacity_{0}, cluster_capacity_{0}; // bytes
     std::vector<Draw> draws_;
     std::vector<ReflectionProbe> probes_;
     bool capture_mode_{false};
