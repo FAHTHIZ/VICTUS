@@ -25,20 +25,21 @@ layout(set = 2, binding = 4) uniform sampler2DShadow u_shadow;
 layout(set = 2, binding = 5) uniform sampler2D u_ao;
 layout(set = 2, binding = 6) uniform samplerCube u_env; // prefiltered environment (black 1x1 when absent)
 layout(set = 2, binding = 7) uniform sampler2DShadow u_local_shadow; // spot/point shadow atlas (ADR-0052)
+layout(set = 2, binding = 8) uniform sampler2D u_irradiance; // irradiance volume probes (ADR-0056)
 
 // Clustered local lights (see light_clusters.hpp): a light array and, per cluster, an
 // (offset, count) header followed by the flattened light index list.
 // spot: x cos(inner), y 1 = spot, z first shadow tile + 1 (0 = unshadowed), w shadow texel angle.
 // Shadow matrices (world -> atlas uv/depth) follow the lights in the same array, one per tile.
 struct LocalLight { vec4 position_range; vec4 color_intensity; vec4 direction_cos_outer; vec4 spot; };
-// SDL_GPU: SPIR-V fragment storage buffers follow the 8 textures in set 2; MSL buffers are the
+// SDL_GPU: SPIR-V fragment storage buffers follow the 9 textures in set 2; MSL buffers are the
 // 3 uniform buffers first, then storage buffers ([[buffer(3)]], [[buffer(4)]]).
 #ifdef VICTUS_MSL
 layout(std430, set = 2, binding = 3) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 2, binding = 4) readonly buffer Clusters { uint cluster_data[]; };
 #else
-layout(std430, set = 2, binding = 8) readonly buffer Lights { LocalLight local_lights[]; };
-layout(std430, set = 2, binding = 9) readonly buffer Clusters { uint cluster_data[]; };
+layout(std430, set = 2, binding = 9) readonly buffer Lights { LocalLight local_lights[]; };
+layout(std430, set = 2, binding = 10) readonly buffer Clusters { uint cluster_data[]; };
 #endif
 layout(set = 3, binding = 0) uniform Lighting {
     vec4 camera_pos;     // w: ambient occlusion enabled
@@ -63,6 +64,9 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 cluster_grid;   // xyz: tiles x, tiles y, depth slices, w: max lights per cluster
     vec4 cluster_depth;  // x: near, y: slices / log(far / near)
     vec4 local_shadow;   // x: atlas texel size, y: tiles per row, z: index of the first shadow matrix, w: enabled
+    vec4 gi_min;         // irradiance volume: xyz box min, w: active
+    vec4 gi_max;         // xyz box max, w: intensity
+    vec4 gi_counts;      // xyz probes per axis, w: normal offset (metres)
 } lighting;
 layout(set = 3, binding = 1) uniform Material {
     vec4 base_color;
@@ -145,6 +149,32 @@ vec3 sh9(vec4 c[9], vec3 n) {
            + c[5].rgb * (1.092548 * n.y * n.z) + c[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0))
            + c[7].rgb * (1.092548 * n.x * n.z) + c[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
     return max(r, vec3(0.0));
+}
+
+// Irradiance volume (ADR-0056): SH9 probes on a grid, trilinear between them. Tile layout: Y
+// layers side by side, coefficients stacked; rgb = coefficient * validity, a = validity.
+vec4 gi_fetch(int k, float layer, vec2 fxz) {
+    vec2 size = vec2(lighting.gi_counts.x * lighting.gi_counts.y, lighting.gi_counts.z * 9.0);
+    vec2 t = vec2(layer * lighting.gi_counts.x + fxz.x + 0.5, float(k) * lighting.gi_counts.z + fxz.y + 0.5);
+    return textureLod(u_irradiance, t / size, 0.0);
+}
+vec3 volume_irradiance(vec3 p, vec3 n, vec3 fallback) {
+    if (lighting.gi_min.w < 0.5) return fallback;
+    vec3 counts = lighting.gi_counts.xyz;
+    vec3 lo = lighting.gi_min.xyz, hi = lighting.gi_max.xyz;
+    p += n * lighting.gi_counts.w; // offset off the surface: fewer probes from behind walls
+    vec3 eps = (hi - lo) * 1e-4;
+    if (any(lessThan(p, lo - eps)) || any(greaterThan(p, hi + eps))) return fallback;
+    vec3 f = clamp((p - lo) / (hi - lo) * (counts - 1.0), vec3(0.0), counts - 1.0);
+    float y0 = min(floor(f.y), counts.y - 2.0);
+    float ty = f.y - y0;
+    vec4 c[9];
+    for (int k = 0; k < 9; ++k) c[k] = mix(gi_fetch(k, y0, f.xz), gi_fetch(k, y0 + 1.0, f.xz), ty);
+    float valid = c[0].a;
+    if (valid < 1e-3) return fallback;
+    for (int k = 0; k < 9; ++k) c[k].rgb /= valid;
+    vec3 v = sh9(c, n) * lighting.gi_max.w;
+    return mix(fallback, v, min(valid, 1.0));
 }
 vec3 env_irradiance(vec3 n) {
     if (probe.box_min.w > 0.5) return sh9(probe.sh, n);
@@ -358,7 +388,7 @@ void main() {
     float NdotV = max(dot(N, V), 1e-4);
     vec3 f0 = mix(vec3(0.04), albedo, metallic);
     vec3 kd = (1.0 - fresnel_schlick(NdotV, f0)) * (1.0 - metallic);
-    vec3 irradiance = env_irradiance(N);
+    vec3 irradiance = volume_irradiance(v_world_pos, N, env_irradiance(N));
     vec2 ab = env_brdf(NdotV, roughness);
     vec3 R = reflect(-V, N);
     // Specular occlusion approximation: reflections below the local horizon are dimmed.

@@ -118,6 +118,7 @@ struct LightingUniforms {
     Vec4 cluster_grid;
     Vec4 cluster_depth;
     Vec4 local_shadow; // x atlas texel size, y tiles per row, z first shadow matrix index, w enabled
+    Vec4 gi_min, gi_max, gi_counts; // irradiance volume (ADR-0056)
 };
 struct MaterialUniforms {
     Vec4 base_color;
@@ -175,7 +176,7 @@ struct TaaUpscaleUniforms {
     Mat4 reproject;
     Vec4 params, screen, jitter, output;
 };
-static_assert(sizeof(LightingUniforms) == 29 * 16 + 64 * 4);
+static_assert(sizeof(LightingUniforms) == 32 * 16 + 64 * 4);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 
@@ -302,6 +303,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.max_point_lights = 64;
         s.lod_error_pixels = 2.0f;
         s.local_shadows = false;
+        s.irradiance_volumes = false;
         break;
     case QualityTier::Medium:
         s.render_scale = 1.0f;
@@ -814,6 +816,7 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     spots_.clear();
     draws_.clear();
     probes_.clear();
+    volume_ = nullptr;
     lines_.clear();
     palette_.clear();
     particles_.clear();
@@ -823,6 +826,12 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
 
 void SceneRenderer::add_point_light(const PointLight& light) { points_.push_back(light); }
 void SceneRenderer::add_spot_light(const SpotLight& light) { spots_.push_back(light); }
+
+void SceneRenderer::set_irradiance_volume(const IrradianceVolume* volume, float intensity, float normal_offset) {
+    volume_ = volume;
+    volume_intensity_ = std::isfinite(intensity) ? std::max(intensity, 0.0f) : 1.0f;
+    volume_normal_offset_ = std::isfinite(normal_offset) ? std::clamp(normal_offset, 0.0f, 4.0f) : 0.0f;
+}
 
 void SceneRenderer::add_reflection_probe(const ReflectionProbe& probe) {
     if (!probe.map || !probe.map->cube() || !probe.box.valid() || probes_.size() >= kMaxReflectionProbes) return;
@@ -1541,6 +1550,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         for (std::size_t i = 0; i < 9; ++i) lighting.env_sh[i] = Vec4(env_map->sh().coefficients[i] * env_intensity, 0.0f);
     }
     for (std::uint32_t c = 0; c < 4; ++c) lighting.cascade_vp[c] = cascade_vp_[c];
+    const IrradianceVolume* gi = S.irradiance_volumes && volume_ && volume_->texture() && volume_->valid_count() > 0 ? volume_ : nullptr;
+    stats_.irradiance_probes = gi ? gi->valid_count() : 0;
+    if (gi) {
+        const IrradianceGrid& g = gi->grid();
+        lighting.gi_min = Vec4(g.bounds.min, 1.0f);
+        lighting.gi_max = Vec4(g.bounds.max, volume_intensity_);
+        lighting.gi_counts = {static_cast<float>(g.counts[0]), static_cast<float>(g.counts[1]), static_cast<float>(g.counts[2]),
+                              volume_normal_offset_};
+    }
+    const rhi::TextureHandle gi_tex = gi ? gi->texture() : ctx_.black();
     const bool local_shadows = !local_views.empty();
     if (local_shadows)
         lighting.local_shadow = {1.0f / static_cast<float>(S.local_shadow_atlas), static_cast<float>(local_tiles_per_row),
@@ -1831,6 +1850,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 3, pick(m.emissive_texture, ctx_.white()), tex_sampler);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 4, shadow_tex, ctx_.shadow_compare());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 7, local_shadow_tex, ctx_.shadow_compare());
+                pass.bind_texture(rhi::ShaderStage::Fragment, 8, gi_tex, ctx_.linear_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 5, ao_tex, ctx_.linear_clamp());
                 ProbeUniforms pu{};
                 rhi::TextureHandle env_cube = env_map && env_map->cube() ? env_map->cube() : ctx_.black_cube();

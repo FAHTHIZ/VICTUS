@@ -6,6 +6,7 @@
 #pragma once
 #include "victus/render/environment_map.hpp"
 #include "victus/render/gpu_context.hpp"
+#include "victus/render/irradiance_volume.hpp"
 #include "victus/render/render_graph.hpp"
 
 #include <array>
@@ -242,6 +243,9 @@ struct RenderSettings {
     // Local light shadows (ADR-0052): lights with cast_shadows get perspective shadow maps in one
     // atlas of local_shadow_atlas^2 texels split into local_shadow_tile^2 tiles (at most 8x8). Spot
     // lights take one tile, point lights six; lights covering more of the screen win the tiles.
+    // Irradiance volumes (ADR-0056): baked probe grids replace environment diffuse light inside
+    // their box. Off on Low (18 extra texture fetches per lit pixel).
+    bool irradiance_volumes{true};
     bool local_shadows{true};
     std::uint32_t local_shadow_atlas{2048}; // 256..8192
     std::uint32_t local_shadow_tile{512};   // 64..atlas
@@ -263,6 +267,7 @@ struct SceneStats {
     bool taa{false};                   // TAA resolved this frame
     bool taa_history{false};           // ... with a valid history (false on the first frame / after a reset)
     bool temporal_upscale{false};      // ... reconstructed at output resolution from a lower render resolution
+    std::uint32_t irradiance_probes{0}; // baked probes of the irradiance volume used this frame (0 = none)
     math::Vec2 jitter{};               // sub-pixel jitter in render pixels
     // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
     std::uint32_t main_batches{0}, shadow_batches{0}, prepass_batches{0};
@@ -340,6 +345,11 @@ public:
     // (box-projected) for reflections and its SH for diffuse light instead of the scene
     // environment; the smallest containing box wins. The map must outlive the frame.
     void add_reflection_probe(const ReflectionProbe& probe);
+    // Irradiance volume (ADR-0056) for this frame: lit surfaces inside its box take diffuse
+    // ambient light from its probes (offset `normal_offset` metres along the normal) instead of the
+    // environment or reflection probe SH. One volume per frame; cleared by begin(). The volume must
+    // outlive the frame.
+    void set_irradiance_volume(const IrradianceVolume* volume, float intensity = 1.0f, float normal_offset = 0.0f);
     void line(math::Vec3 a, math::Vec3 b, math::Color color);
     void box(const math::Aabb& box, math::Color color);
     void grid(float half_size, float spacing, math::Color color);
@@ -466,6 +476,8 @@ private:
     std::uint32_t light_capacity_{0}, cluster_capacity_{0}; // bytes
     std::vector<Draw> draws_;
     std::vector<ReflectionProbe> probes_;
+    const IrradianceVolume* volume_{nullptr};
+    float volume_intensity_{1.0f}, volume_normal_offset_{0.0f};
     bool capture_mode_{false};
     std::vector<LineVertex> lines_;
     std::vector<ParticleInstance> particles_, particle_upload_;
