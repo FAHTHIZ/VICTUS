@@ -82,6 +82,9 @@ public:
     [[nodiscard]] Result<CookedModel> load_model(const Uuid& uuid);
     // Material assets (.vmat) are read from source; texture references are not resolved here.
     [[nodiscard]] Result<MaterialAsset> load_material(const Uuid& uuid) const;
+    // The material with its parent chain applied (instances inherit unset fields). Fails on a
+    // missing parent, a cycle or a chain deeper than kMaxMaterialDepth.
+    [[nodiscard]] Result<MaterialAsset> resolve_material(const Uuid& uuid) const;
     // Source text of a surface shader asset (.vshader).
     [[nodiscard]] Result<std::string> load_shader_source(const Uuid& uuid) const;
 

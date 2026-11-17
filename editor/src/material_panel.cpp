@@ -69,6 +69,26 @@ Status Editor::save_material(const Uuid& asset, const assets::MaterialAsset& mat
     return {};
 }
 
+Result<Uuid> Editor::create_material_instance(const Uuid& parent, std::string_view relative_path) {
+    if (!db_) return make_error(ErrorCode::InvalidArgument, "no project open");
+    const assets::AssetRecord* p = db_->find(parent);
+    if (!p || p->kind != assets::AssetKind::Material)
+        return make_error(ErrorCode::NotFound, "material asset " + parent.to_string() + " not found");
+    std::string rel(relative_path);
+    if (rel.empty()) {
+        const fs::Path src(p->path);
+        const std::string dir = src.parent_path().empty() ? std::string() : src.parent_path().generic_string() + "/";
+        const std::string stem = src.stem().string();
+        rel = dir + stem + "_instance" + std::string(assets::kMaterialExtension);
+        for (int i = 2; sfs::exists(db_->assets_dir() / rel); ++i)
+            rel = std::format("{}{}_instance_{}{}", dir, stem, i, assets::kMaterialExtension);
+    }
+    assets::MaterialAsset m;
+    m.parent = parent;
+    m.overrides = 0; // inherits everything
+    return create_material(rel, m);
+}
+
 Result<Uuid> Editor::create_surface_shader(std::string_view relative_path) {
     if (!db_) return make_error(ErrorCode::InvalidArgument, "no project open");
     const std::string ext(assets::kShaderExtension);
@@ -125,10 +145,13 @@ bool Editor::assign_material(Entity e, const Uuid& material) {
 
 void Editor::open_material_editor(const Uuid& asset) {
     if (!db_) return;
-    auto m = db_->load_material(asset);
+    // Instances are edited with their inherited values shown; a broken parent chain still opens
+    // the file itself so it can be repaired.
+    auto m = db_->resolve_material(asset);
     if (!m) {
         notify(m.error().message, true);
-        return;
+        m = db_->load_material(asset);
+        if (!m) return;
     }
     material_editing_ = asset;
     material_edit_ = *m;
@@ -138,7 +161,7 @@ void Editor::open_material_editor(const Uuid& asset) {
 
 void Editor::draw_material_editor() {
     if (!show_material_editor_) return;
-    ImGui::SetNextWindowSize(ImVec2(390, 600), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(430, 620), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Material Editor", &show_material_editor_)) {
         ImGui::End();
         return;
@@ -150,9 +173,57 @@ void Editor::draw_material_editor() {
         return;
     }
     ImGui::TextUnformatted(rec->path.c_str());
-    ImGui::Separator();
     assets::MaterialAsset& m = material_edit_;
     bool changed = false;
+    using F = assets::MaterialField;
+    // Instances: editing a field overrides it; the "x" next to an overridden field goes back to
+    // the parent's value. Standalone materials own every field.
+    const bool instance = m.is_instance();
+    auto mark = [&](bool ch, F f) {
+        if (!ch) return false;
+        m.overrides |= assets::field_bit(f);
+        changed = true;
+        return true;
+    };
+    auto inherit_button = [&](F f) {
+        if (!instance) return;
+        ImGui::SameLine();
+        ImGui::PushID(static_cast<int>(f) + 1000);
+        if (m.overrides_field(f)) {
+            if (ImGui::SmallButton("x")) {
+                if (auto parent = db_->resolve_material(m.parent); parent) m.copy_field(*parent, f);
+                m.overrides &= ~assets::field_bit(f);
+                changed = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Overridden here; click to use the parent's value");
+        } else {
+            ImGui::TextDisabled("inherited");
+        }
+        ImGui::PopID();
+    };
+    if (instance) {
+        const assets::AssetRecord* p = db_->find(m.parent);
+        ImGui::TextDisabled("Instance of %s", p ? p->path.c_str() : ("(missing) " + m.parent.to_string()).c_str());
+        if (p) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Edit Parent")) {
+                const Uuid parent_id = m.parent;
+                open_material_editor(parent_id);
+                ImGui::End();
+                return;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Detach")) {
+            m.parent = {}; // keeps the current (resolved) values as its own
+            m.overrides = assets::kAllMaterialFields;
+            changed = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make this a standalone material with the values shown");
+    }
+    ImGui::Separator();
+    // Instances need room for the inherited/override marker after each field.
+    ImGui::PushItemWidth(instance ? ImGui::GetContentRegionAvail().x * 0.48f : ImGui::GetContentRegionAvail().x * 0.62f);
 
     auto color = [&](const char* label, math::Color& c, bool alpha) {
         float v[4] = {c.r, c.g, c.b, c.a};
@@ -161,14 +232,16 @@ void Editor::draw_material_editor() {
         if (ch) c = {v[0], v[1], v[2], alpha ? v[3] : 1.0f};
         return ch;
     };
+    constexpr F kSlotFields[4] = {F::BaseColorTexture, F::MetallicRoughnessTexture, F::NormalTexture, F::EmissiveTexture};
     auto texture_slot = [&](int slot) {
+        const F field = kSlotFields[slot];
         Uuid& ref = *m.textures()[static_cast<std::size_t>(slot)];
         ImGui::PushID(slot);
         const assets::AssetRecord* t = ref.is_nil() ? nullptr : db_->find(ref);
         const std::string label = ref.is_nil() ? "(none)" : t ? t->path : "(missing) " + ref.to_string();
         ImGui::Text("%s:", assets::kMaterialTextureSlotNames[slot]);
         ImGui::SameLine();
-        ImGui::Button(label.c_str(), ImVec2(-60, 0));
+        ImGui::Button(label.c_str(), ImVec2(instance ? -150 : -60, 0));
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop a texture from Assets here");
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
@@ -176,7 +249,7 @@ void Editor::draw_material_editor() {
                 std::memcpy(&id, p->Data, sizeof(Uuid));
                 if (const auto* r = db_->find(id); r && r->kind == assets::AssetKind::Texture) {
                     ref = id;
-                    changed = true;
+                    mark(true, field);
                 }
             }
             ImGui::EndDragDropTarget();
@@ -184,8 +257,9 @@ void Editor::draw_material_editor() {
         ImGui::SameLine();
         if (ImGui::SmallButton("Clear") && !ref.is_nil()) {
             ref = {};
-            changed = true;
+            mark(true, field);
         }
+        inherit_button(field);
         // Data textures must be imported as linear; sRGB decoding would skew normals and roughness.
         if (t && slot != 0 && slot != 3 && t->settings["srgb"].as_bool(true))
             ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "  imported as sRGB; set srgb = false in its .meta");
@@ -193,34 +267,35 @@ void Editor::draw_material_editor() {
     };
 
     if (ImGui::CollapsingHeader("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
-        changed |= color("Base Color", m.base_color, true);
+        mark(color("Base Color", m.base_color, true), F::BaseColor);
+        inherit_button(F::BaseColor);
         texture_slot(0);
-        changed |= ImGui::SliderFloat("Metallic", &m.metallic, 0.0f, 1.0f);
-        changed |= ImGui::SliderFloat("Roughness", &m.roughness, 0.0f, 1.0f);
+        mark(ImGui::SliderFloat("Metallic", &m.metallic, 0.0f, 1.0f), F::Metallic);
+        inherit_button(F::Metallic);
+        mark(ImGui::SliderFloat("Roughness", &m.roughness, 0.0f, 1.0f), F::Roughness);
+        inherit_button(F::Roughness);
         texture_slot(1);
         texture_slot(2);
-        changed |= ImGui::DragFloat("Normal Scale", &m.normal_scale, 0.01f, 0.0f, 4.0f);
+        mark(ImGui::DragFloat("Normal Scale", &m.normal_scale, 0.01f, 0.0f, 4.0f), F::NormalScale);
+        inherit_button(F::NormalScale);
     }
     if (ImGui::CollapsingHeader("Emission")) {
-        changed |= color("Emissive", m.emissive, false);
-        changed |= ImGui::DragFloat("Strength", &m.emissive_strength, 0.05f, 0.0f, 100.0f);
+        mark(color("Emissive", m.emissive, false), F::Emissive);
+        inherit_button(F::Emissive);
+        mark(ImGui::DragFloat("Strength", &m.emissive_strength, 0.05f, 0.0f, 100.0f), F::EmissiveStrength);
+        inherit_button(F::EmissiveStrength);
         texture_slot(3);
     }
     if (ImGui::CollapsingHeader("Texture Coordinates", ImGuiTreeNodeFlags_DefaultOpen)) {
         float sc[2] = {m.uv_scale.x, m.uv_scale.y}, of[2] = {m.uv_offset.x, m.uv_offset.y};
-        if (ImGui::DragFloat2("Tiling", sc, 0.05f, -1000.0f, 1000.0f)) {
-            m.uv_scale = {sc[0], sc[1]};
-            changed = true;
-        }
-        if (ImGui::DragFloat2("Offset", of, 0.01f)) {
-            m.uv_offset = {of[0], of[1]};
-            changed = true;
-        }
+        if (mark(ImGui::DragFloat2("Tiling", sc, 0.05f, -1000.0f, 1000.0f), F::UvScale)) m.uv_scale = {sc[0], sc[1]};
+        inherit_button(F::UvScale);
+        if (mark(ImGui::DragFloat2("Offset", of, 0.01f), F::UvOffset)) m.uv_offset = {of[0], of[1]};
+        inherit_button(F::UvOffset);
         int filter = m.filter == assets::TextureFilter::Nearest ? 1 : 0;
-        if (ImGui::Combo("Filter", &filter, "Linear (smooth)\0Nearest (pixel art)\0")) {
+        if (mark(ImGui::Combo("Filter", &filter, "Linear (smooth)\0Nearest (pixel art)\0"), F::Filter))
             m.filter = filter == 1 ? assets::TextureFilter::Nearest : assets::TextureFilter::Linear;
-            changed = true;
-        }
+        inherit_button(F::Filter);
     }
     if (ImGui::CollapsingHeader("Shader", ImGuiTreeNodeFlags_DefaultOpen)) {
         const assets::AssetRecord* sh = m.shader.is_nil() ? nullptr : db_->find(m.shader);
@@ -235,7 +310,7 @@ void Editor::draw_material_editor() {
                 std::memcpy(&id, p->Data, sizeof(Uuid));
                 if (const auto* r = db_->find(id); r && r->kind == assets::AssetKind::Shader) {
                     m.shader = id;
-                    changed = true;
+                    mark(true, F::Shader);
                 }
             }
             ImGui::EndDragDropTarget();
@@ -244,8 +319,11 @@ void Editor::draw_material_editor() {
         if (ImGui::SmallButton("New")) {
             if (auto id = create_surface_shader(); id) {
                 m.shader = *id;
-                if (m.shader_params[0] == math::Vec4{}) m.shader_params[0] = {1.0f, 0.5f, 0.1f, 2.0f}; // template: colour + speed
-                changed = true;
+                mark(true, F::Shader);
+                if (m.shader_params[0] == math::Vec4{}) {
+                    m.shader_params[0] = {1.0f, 0.5f, 0.1f, 2.0f}; // template: colour + speed
+                    mark(true, F::ShaderParams);
+                }
             } else {
                 notify("cannot create shader: " + id.error().message, true);
             }
@@ -253,8 +331,9 @@ void Editor::draw_material_editor() {
         ImGui::SameLine();
         if (ImGui::SmallButton("Clear##shader") && !m.shader.is_nil()) {
             m.shader = {};
-            changed = true;
+            mark(true, F::Shader);
         }
+        inherit_button(F::Shader);
         if (sh && cache_) {
             // Compile status as the renderer sees it (the cache recompiles after hot reload).
             if (auto compiled = cache_->surface_shader(m.shader); !compiled)
@@ -265,24 +344,36 @@ void Editor::draw_material_editor() {
         for (int i = 0; i < 4; ++i) {
             math::Vec4& p = m.shader_params[static_cast<std::size_t>(i)];
             float v[4] = {p.x, p.y, p.z, p.w};
-            if (ImGui::DragFloat4(std::format("params[{}]", i).c_str(), v, 0.01f)) {
-                p = {v[0], v[1], v[2], v[3]};
-                changed = true;
-            }
+            if (mark(ImGui::DragFloat4(std::format("params[{}]", i).c_str(), v, 0.01f), F::ShaderParams)) p = {v[0], v[1], v[2], v[3]};
         }
+        inherit_button(F::ShaderParams); // the four rows are one field
     }
     if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {
-        changed |= ImGui::SliderFloat("Alpha Cutoff", &m.alpha_cutoff, 0.0f, 1.0f);
-        changed |= ImGui::Checkbox("Unlit", &m.unlit);
-        ImGui::SameLine();
-        changed |= ImGui::Checkbox("Double Sided", &m.double_sided);
+        mark(ImGui::SliderFloat("Alpha Cutoff", &m.alpha_cutoff, 0.0f, 1.0f), F::AlphaCutoff);
+        inherit_button(F::AlphaCutoff);
+        mark(ImGui::Checkbox("Unlit", &m.unlit), F::Unlit);
+        inherit_button(F::Unlit);
+        mark(ImGui::Checkbox("Double Sided", &m.double_sided), F::DoubleSided);
+        inherit_button(F::DoubleSided);
     }
+    ImGui::PopItemWidth();
     ImGui::Separator();
     const Entity sel = selected();
     const auto* mr = sel.is_null() ? nullptr : active_scene().world().get<MeshRendererComponent>(sel);
     ImGui::BeginDisabled(!mr || mr->material_asset == material_editing_);
     if (ImGui::Button("Assign to Selected")) (void)assign_material(sel, material_editing_);
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Create Instance")) {
+        if (auto id = create_material_instance(material_editing_); id) {
+            open_material_editor(*id);
+        } else {
+            notify("cannot create instance: " + id.error().message, true);
+        }
+        ImGui::End();
+        return;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("New material that inherits everything from this one; override what differs");
 
     material_dirty_ |= changed;
     // Save once the user lets go of a slider/colour (not on every drag step); the viewport updates

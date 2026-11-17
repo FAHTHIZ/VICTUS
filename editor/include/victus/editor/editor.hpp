@@ -178,6 +178,9 @@ public:
     bool assign_material(scene::Entity e, const Uuid& material);
     // Creates a material from the selected mesh renderer's look, assigns it and opens the editor.
     void new_material_for_selection();
+    // Writes a material that inherits every field from `parent` (default "<parent>_instance.vmat"
+    // next to it, made unique). Returns its UUID.
+    Result<Uuid> create_material_instance(const Uuid& parent, std::string_view relative_path = {});
     // Writes a new surface shader from the template (default "shaders/Surface.vshader", made
     // unique). Returns its UUID.
     Result<Uuid> create_surface_shader(std::string_view relative_path = {});

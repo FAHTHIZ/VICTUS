@@ -185,9 +185,9 @@ std::size_t Editor::check_asset_changes() {
             if (const auto* rec = db_->find_path(m))
                 if (auto text = fs::read_text(db_->source_path(*rec)); text && fnv1a64(*text) == it->second) continue; // our own save
         notify("Reloaded material " + m);
-        if (show_material_editor_ && db_)
-            if (const auto* rec = db_->find_path(m); rec && rec->uuid == material_editing_ && !material_dirty_)
-                if (auto fresh = db_->load_material(rec->uuid); fresh) material_edit_ = *fresh; // edited outside the editor
+        // Edited outside the editor: the open material (or one of its parents) changed.
+        if (show_material_editor_ && db_ && !material_editing_.is_nil() && !material_dirty_)
+            if (auto fresh = db_->resolve_material(material_editing_); fresh) material_edit_ = *fresh;
     }
     for (const auto& sh : changes.shaders) {
         // Report compile errors right away (the viewport falls back to built-in PBR meanwhile).

@@ -66,6 +66,65 @@ struct Reader {
 
 } // namespace
 
+const char* field_key(MaterialField f) noexcept {
+    switch (f) {
+    case MaterialField::BaseColor: return "base_color";
+    case MaterialField::BaseColorTexture: return "base_color_texture";
+    case MaterialField::Metallic: return "metallic";
+    case MaterialField::Roughness: return "roughness";
+    case MaterialField::MetallicRoughnessTexture: return "metallic_roughness_texture";
+    case MaterialField::NormalTexture: return "normal_texture";
+    case MaterialField::NormalScale: return "normal_scale";
+    case MaterialField::Emissive: return "emissive";
+    case MaterialField::EmissiveStrength: return "emissive_strength";
+    case MaterialField::EmissiveTexture: return "emissive_texture";
+    case MaterialField::AlphaCutoff: return "alpha_cutoff";
+    case MaterialField::UvScale: return "uv_scale";
+    case MaterialField::UvOffset: return "uv_offset";
+    case MaterialField::Filter: return "filter";
+    case MaterialField::Unlit: return "unlit";
+    case MaterialField::DoubleSided: return "double_sided";
+    case MaterialField::Shader: return "shader";
+    case MaterialField::ShaderParams: return "shader_params";
+    default: return "";
+    }
+}
+
+void MaterialAsset::copy_field(const MaterialAsset& src, MaterialField f) {
+    switch (f) {
+    case MaterialField::BaseColor: base_color = src.base_color; break;
+    case MaterialField::BaseColorTexture: base_color_texture = src.base_color_texture; break;
+    case MaterialField::Metallic: metallic = src.metallic; break;
+    case MaterialField::Roughness: roughness = src.roughness; break;
+    case MaterialField::MetallicRoughnessTexture: metallic_roughness_texture = src.metallic_roughness_texture; break;
+    case MaterialField::NormalTexture: normal_texture = src.normal_texture; break;
+    case MaterialField::NormalScale: normal_scale = src.normal_scale; break;
+    case MaterialField::Emissive: emissive = src.emissive; break;
+    case MaterialField::EmissiveStrength: emissive_strength = src.emissive_strength; break;
+    case MaterialField::EmissiveTexture: emissive_texture = src.emissive_texture; break;
+    case MaterialField::AlphaCutoff: alpha_cutoff = src.alpha_cutoff; break;
+    case MaterialField::UvScale: uv_scale = src.uv_scale; break;
+    case MaterialField::UvOffset: uv_offset = src.uv_offset; break;
+    case MaterialField::Filter: filter = src.filter; break;
+    case MaterialField::Unlit: unlit = src.unlit; break;
+    case MaterialField::DoubleSided: double_sided = src.double_sided; break;
+    case MaterialField::Shader: shader = src.shader; break;
+    case MaterialField::ShaderParams: shader_params = src.shader_params; break;
+    default: break;
+    }
+}
+
+MaterialAsset apply_instance(const MaterialAsset& base, const MaterialAsset& instance) {
+    MaterialAsset out = base;
+    for (std::size_t i = 0; i < kMaterialFieldCount; ++i) {
+        const auto f = static_cast<MaterialField>(i);
+        if (instance.overrides_field(f)) out.copy_field(instance, f);
+    }
+    out.parent = instance.parent;
+    out.overrides = instance.overrides;
+    return out;
+}
+
 json::Value MaterialAsset::to_json() const {
     Value v = Value::object();
     v.set("victus_material", kMaterialVersion);
@@ -95,7 +154,17 @@ json::Value MaterialAsset::to_json() const {
         params.push(floats({p.x, p.y, p.z, p.w}));
     }
     v.set("shader_params", std::move(params));
-    return v;
+    if (!is_instance()) return v;
+    // Instances store only what they override.
+    Value inst = Value::object();
+    inst.set("victus_material", kMaterialVersion);
+    inst.set("parent", parent.to_string());
+    for (std::size_t i = 0; i < kMaterialFieldCount; ++i) {
+        const auto f = static_cast<MaterialField>(i);
+        if (overrides_field(f))
+            if (const Value* field = v.find(field_key(f))) inst.set(field_key(f), *field);
+    }
+    return inst;
 }
 
 Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
@@ -138,6 +207,11 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
         else if (f->is_string() && f->as_string() == "linear") m.filter = TextureFilter::Linear;
         else return make_error(ErrorCode::ParseError, "material field 'filter' must be \"linear\" or \"nearest\"");
     }
+    if (!r.uuid("parent", m.parent)) return make_error(ErrorCode::ParseError, r.error);
+    m.overrides = 0;
+    for (std::size_t i = 0; i < kMaterialFieldCount; ++i)
+        if (v.find(field_key(static_cast<MaterialField>(i)))) m.overrides |= field_bit(static_cast<MaterialField>(i));
+    if (!m.is_instance()) m.overrides = kAllMaterialFields;
     m.metallic = std::clamp(m.metallic, 0.0f, 1.0f);
     m.roughness = std::clamp(m.roughness, 0.0f, 1.0f);
     m.alpha_cutoff = std::clamp(m.alpha_cutoff, 0.0f, 1.0f);

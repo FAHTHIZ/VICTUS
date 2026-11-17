@@ -15,6 +15,11 @@
 //     "shader": "<uuid of a .vshader surface shader>" | null,
 //     "shader_params": [[x, y, z, w], ...]   // up to 4, read in the shader as si.params[i]
 //   }
+//
+// Material instances name a parent and contain only the fields they override; everything else
+// comes from the parent (which may itself be an instance):
+//
+//   { "victus_material": 1, "parent": "<uuid of a .vmat>", "base_color": [0.8, 0.1, 0.1, 1] }
 #pragma once
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
@@ -34,6 +39,19 @@ inline constexpr int kMaterialVersion = 1;
 
 enum class TextureFilter : std::uint8_t { Linear = 0, Nearest = 1 };
 
+// Every field a material instance can override (bit index in MaterialAsset::overrides).
+enum class MaterialField : std::uint8_t {
+    BaseColor, BaseColorTexture, Metallic, Roughness, MetallicRoughnessTexture, NormalTexture, NormalScale, Emissive,
+    EmissiveStrength, EmissiveTexture, AlphaCutoff, UvScale, UvOffset, Filter, Unlit, DoubleSided, Shader, ShaderParams,
+    Count
+};
+inline constexpr std::size_t kMaterialFieldCount = static_cast<std::size_t>(MaterialField::Count);
+[[nodiscard]] constexpr std::uint32_t field_bit(MaterialField f) noexcept { return 1u << static_cast<unsigned>(f); }
+inline constexpr std::uint32_t kAllMaterialFields = (1u << kMaterialFieldCount) - 1u;
+// JSON key of a field ("base_color", ...).
+[[nodiscard]] const char* field_key(MaterialField f) noexcept;
+inline constexpr std::size_t kMaxMaterialDepth = 16; // parent chain length limit
+
 struct MaterialAsset {
     math::Color base_color{1, 1, 1, 1}; // linear
     float metallic{0.0f};
@@ -50,6 +68,15 @@ struct MaterialAsset {
     Uuid base_color_texture, metallic_roughness_texture, normal_texture, emissive_texture;
     Uuid shader; // optional surface shader (.vshader); nil = built-in PBR surface
     std::array<math::Vec4, 4> shader_params{};
+    // Instances: the parent material (nil = a standalone material) and which fields this file
+    // sets. from_json() records the keys present; to_json() writes only those for instances.
+    Uuid parent;
+    std::uint32_t overrides{kAllMaterialFields};
+
+    [[nodiscard]] bool is_instance() const noexcept { return !parent.is_nil(); }
+    [[nodiscard]] bool overrides_field(MaterialField f) const noexcept { return (overrides & field_bit(f)) != 0; }
+    // Copies one field's value from `src`.
+    void copy_field(const MaterialAsset& src, MaterialField f);
 
     // Texture slots in a fixed order (base colour, metallic-roughness, normal, emissive), for
     // tools that iterate references (export validation, the material editor).
@@ -68,6 +95,10 @@ struct MaterialAsset {
 };
 
 inline constexpr const char* kMaterialTextureSlotNames[4] = {"Base Color", "Metallic/Roughness", "Normal", "Emissive"};
+
+// Applies `instance`'s overridden fields on top of `base` (a resolved parent). The result keeps
+// the instance's parent and override mask so editors can save it back unchanged.
+[[nodiscard]] MaterialAsset apply_instance(const MaterialAsset& base, const MaterialAsset& instance);
 
 [[nodiscard]] Result<MaterialAsset> load_material_file(const fs::Path& path);
 [[nodiscard]] Status save_material_file(const fs::Path& path, const MaterialAsset& material);

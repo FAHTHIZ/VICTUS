@@ -60,7 +60,7 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
     if (const auto it = materials_.find(uuid); it != materials_.end()) return it->second;
     auto build = [&]() -> Result<render::Material> {
         if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
-        auto src = db_->load_material(uuid);
+        auto src = db_->resolve_material(uuid); // instances inherit from their parents
         if (!src) return std::move(src).error();
         render::Material m;
         m.base_color = src->base_color;

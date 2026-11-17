@@ -409,6 +409,42 @@ Result<MaterialAsset> AssetDatabase::load_material(const Uuid& uuid) const {
     return load_material_file(source_path(*rec));
 }
 
+Result<MaterialAsset> AssetDatabase::resolve_material(const Uuid& uuid) const {
+    std::vector<MaterialAsset> chain; // leaf first
+    std::vector<Uuid> ids;
+    Uuid cur = uuid;
+    for (;;) {
+        if (std::find(ids.begin(), ids.end(), cur) != ids.end()) {
+            std::string path;
+            for (const Uuid& id : ids) {
+                const AssetRecord* r = find(id);
+                path += (r ? r->path : id.to_string()) + " -> ";
+            }
+            const AssetRecord* r = find(cur);
+            return make_error(ErrorCode::InvalidArgument, "material inheritance cycle: " + path + (r ? r->path : cur.to_string()));
+        }
+        if (ids.size() >= kMaxMaterialDepth)
+            return make_error(ErrorCode::LimitExceeded, std::format("material {} has more than {} parent levels", uuid.to_string(),
+                                                                    kMaxMaterialDepth));
+        auto m = load_material(cur);
+        if (!m) {
+            if (ids.empty()) return std::move(m).error();
+            const AssetRecord* child = find(ids.back());
+            return make_error(ErrorCode::NotFound, std::format("{}: parent material {} is missing ({})",
+                                                               child ? child->path : ids.back().to_string(), cur.to_string(),
+                                                               m.error().message));
+        }
+        ids.push_back(cur);
+        const Uuid parent = m->parent;
+        chain.push_back(std::move(m).value());
+        if (parent.is_nil()) break;
+        cur = parent;
+    }
+    MaterialAsset out = chain.back();
+    for (std::size_t i = chain.size() - 1; i-- > 0;) out = apply_instance(out, chain[i]);
+    return out;
+}
+
 Result<std::string> AssetDatabase::load_shader_source(const Uuid& uuid) const {
     const AssetRecord* rec = find(uuid);
     if (!rec || rec->kind != AssetKind::Shader)

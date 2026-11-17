@@ -144,7 +144,7 @@ Result<ExportReport> export_game(const ExportOptions& o) {
     // Materials: every material must parse; texture references must name texture assets.
     for (const assets::AssetRecord& r : (*db)->records()) {
         if (r.kind != assets::AssetKind::Material) continue;
-        auto m = (*db)->load_material(r.uuid);
+        auto m = (*db)->resolve_material(r.uuid); // also checks the parent chain
         if (!m) {
             errors.push_back(m.error().message);
             continue;
