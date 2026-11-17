@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/runtime/scene_rendering.hpp"
+#include "victus/render/reflection_capture.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/runtime/surface_shader.hpp"
 #include "victus/particles/particles.hpp"
@@ -25,6 +26,8 @@ void GpuAssetCache::clear() {
     environments_.clear();
     environment_errors_.clear();
     atmosphere_.reset();
+    probes_.clear();
+    probe_renderer_.reset();
     for (auto& [id, model] : models_) {
         for (auto& m : model->meshes) ctx_.destroy(m);
         for (auto& t : model->textures) ctx_.device().destroy(t);
@@ -107,6 +110,21 @@ Result<const render::EnvironmentMap*> GpuAssetCache::atmosphere(const render::At
     atmosphere_key_ = s;
     ++atmosphere_bakes_;
     return static_cast<const render::EnvironmentMap*>(atmosphere_.get());
+}
+
+Result<render::SceneRenderer*> GpuAssetCache::probe_renderer() {
+    if (!probe_renderer_) {
+        auto r = render::SceneRenderer::create(ctx_);
+        if (!r) return std::move(r).error();
+        probe_renderer_ = std::move(*r);
+        // Captures are small and viewed through rough reflections: skip SSAO, keep shadows.
+        render::RenderSettings s = render::RenderSettings::preset(render::QualityTier::Medium);
+        s.ssao = false;
+        s.shadow_cascades = 1;
+        s.shadow_resolution = 1024;
+        probe_renderer_->set_settings(s);
+    }
+    return probe_renderer_.get();
 }
 
 bool GpuAssetCache::texture_nearest(const Uuid& uuid) {
@@ -452,6 +470,77 @@ const std::vector<Entity>& skeleton_nodes(Scene& scene, Entity root, const Uuid&
 
 } // namespace
 
+namespace {
+// Captures stale probes (within the per-frame budget) and hands every captured probe to the
+// renderer. Captures see the scene without probes (one reflection bounce).
+void apply_reflection_probes(Scene& scene, GpuAssetCache& assets, render::SceneRenderer& renderer,
+                             const SceneViewSettings& settings, ExtractStats& stats) {
+    auto& w = scene.world();
+    struct Found {
+        std::uint64_t key;
+        gameplay::ReflectionProbeComponent probe;
+        math::Vec3 center, capture;
+    };
+    std::vector<Found> found;
+    w.each<gameplay::ReflectionProbeComponent, WorldTransform>(
+        [&](Entity e, const gameplay::ReflectionProbeComponent& p, const WorldTransform& wt) {
+            const math::Vec3 c = wt.matrix.transform_point({});
+            found.push_back({e.bits(), p, c, c + p.capture_offset});
+        });
+    auto& captures = assets.probe_captures();
+    for (auto& [key, entry] : captures) entry.seen = false;
+    std::uint32_t budget = assets.probe_captures_per_frame();
+    for (const Found& f : found) {
+        auto& entry = captures[f.key];
+        entry.seen = true;
+        const std::uint32_t res = std::clamp(f.probe.resolution, 16u, 512u);
+        const bool stale = !entry.map || entry.revision != f.probe.revision || entry.resolution != res ||
+                           math::length(entry.position - f.capture) > 0.01f;
+        if (stale && budget > 0) {
+            --budget;
+            auto r = assets.probe_renderer();
+            if (!r) {
+                VICTUS_LOG_ERROR("runtime", "reflection probe renderer: {}", r.error().message);
+                continue;
+            }
+            assets.set_capturing_probes(true);
+            auto img = render::capture_equirect(assets.context(), **r, f.capture, res,
+                                                [&](render::SceneRenderer& pr, const render::Camera3D& cam) {
+                                                    (void)extract_scene(scene, assets, pr, settings, &cam);
+                                                });
+            assets.set_capturing_probes(false);
+            if (!img) {
+                VICTUS_LOG_ERROR("runtime", "reflection probe capture: {}", img.error().message);
+                continue;
+            }
+            render::EnvironmentBakeSettings bake = assets.environment_bake();
+            bake.cube_size = res;
+            auto map = render::EnvironmentMap::create(assets.context(), *img, bake);
+            if (!map) {
+                VICTUS_LOG_ERROR("runtime", "reflection probe bake: {}", map.error().message);
+                continue;
+            }
+            entry.map = std::move(*map);
+            entry.position = f.capture;
+            entry.revision = f.probe.revision;
+            entry.resolution = res;
+            assets.note_probe_capture();
+        }
+        if (!entry.map) continue;
+        render::ReflectionProbe rp;
+        rp.map = entry.map.get();
+        const math::Vec3 half = math::Vec3{std::abs(f.probe.size.x), std::abs(f.probe.size.y), std::abs(f.probe.size.z)} * 0.5f;
+        rp.box.min = f.center - half;
+        rp.box.max = f.center + half;
+        rp.position = entry.position;
+        rp.intensity = std::isfinite(f.probe.intensity) ? std::max(f.probe.intensity, 0.0f) : 1.0f;
+        renderer.add_reflection_probe(rp);
+        ++stats.reflection_probes;
+    }
+    std::erase_if(captures, [](const auto& kv) { return !kv.second.seen; });
+}
+} // namespace
+
 ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRenderer& renderer,
                            const SceneViewSettings& settings, const render::Camera3D* camera_override) {
     ExtractStats stats;
@@ -530,6 +619,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     });
     renderer.begin(camera, sun, env);
     for (const auto& p : points) renderer.add_point_light(p);
+    if (!assets.capturing_probes()) apply_reflection_probes(scene, assets, renderer, settings, stats);
 
     std::vector<math::Mat4> palette;
     const auto apply_overrides = [&](Entity entity, render::Material& m) {

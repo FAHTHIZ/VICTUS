@@ -49,6 +49,23 @@ public:
     // sun by more than about half a degree), so animated time of day stays cheap.
     [[nodiscard]] Result<const render::EnvironmentMap*> atmosphere(const render::AtmosphereSettings& s);
     [[nodiscard]] std::uint32_t atmosphere_bakes() const noexcept { return atmosphere_bakes_; }
+
+    // Reflection probe captures (managed by extract_scene, keyed by entity).
+    struct ProbeCapture {
+        std::unique_ptr<render::EnvironmentMap> map;
+        math::Vec3 position{};
+        std::uint32_t revision{0}, resolution{0};
+        bool seen{false};
+    };
+    [[nodiscard]] std::unordered_map<std::uint64_t, ProbeCapture>& probe_captures() noexcept { return probes_; }
+    [[nodiscard]] std::uint32_t probe_capture_count() const noexcept { return probe_capture_count_; }
+    void note_probe_capture() noexcept { ++probe_capture_count_; }
+    [[nodiscard]] bool capturing_probes() const noexcept { return capturing_probes_; }
+    void set_capturing_probes(bool on) noexcept { capturing_probes_ = on; }
+    [[nodiscard]] Result<render::SceneRenderer*> probe_renderer();
+    // Captures allowed per extract_scene call (spreads probe captures over frames; 0 = none).
+    void set_probe_captures_per_frame(std::uint32_t n) noexcept { probe_budget_ = n; }
+    [[nodiscard]] std::uint32_t probe_captures_per_frame() const noexcept { return probe_budget_; }
     [[nodiscard]] const render::EnvironmentBakeSettings& environment_bake() const noexcept { return env_bake_; }
     [[nodiscard]] Result<const GpuModel*> model(const Uuid& uuid);
     // Registers an already-cooked model under a UUID (tools, tests, procedural content).
@@ -90,6 +107,10 @@ private:
     std::unique_ptr<render::EnvironmentMap> atmosphere_;
     render::AtmosphereSettings atmosphere_key_;
     std::uint32_t atmosphere_bakes_{0};
+    std::unordered_map<std::uint64_t, ProbeCapture> probes_;
+    std::unique_ptr<render::SceneRenderer> probe_renderer_;
+    std::uint32_t probe_capture_count_{0}, probe_budget_{1};
+    bool capturing_probes_{false};
     std::unordered_map<Uuid, std::unique_ptr<GpuModel>, UuidHash> models_;
     std::unordered_map<std::string, render::GpuMesh> primitives_;
     std::unordered_map<Uuid, Result<render::Material>, UuidHash> materials_;
@@ -112,6 +133,7 @@ scene::Entity instantiate_model(scene::Scene& scene, const Uuid& model_uuid, con
 
 struct ExtractStats {
     std::uint32_t meshes{0}, sprites{0}, lights{0}, missing_assets{0};
+    std::uint32_t reflection_probes{0}; // captured probes handed to the renderer
     std::uint32_t skinned{0}; // meshes drawn with GPU skinning
     std::uint32_t particle_emitters{0}, particles{0}; // submitted (before camera culling)
     bool camera_found{false};

@@ -57,6 +57,15 @@ layout(set = 3, binding = 1) uniform Material {
     vec4 custom[4];      // surface shader parameters (material "shader_params")
 } material;
 
+// Local reflection probe for this draw (box-projected cube bound to u_env instead of the scene's
+// environment), or inactive (box_min.w == 0).
+layout(set = 3, binding = 2) uniform Probe {
+    vec4 box_min;  // xyz world box, w: active
+    vec4 box_max;  // xyz, w: max mip
+    vec4 position; // xyz capture point, w: intensity
+    vec4 sh[9];    // SH9 irradiance / pi captured at the probe, pre-multiplied by the intensity
+} probe;
+
 layout(location = 0) out vec4 out_color;
 
 const float PI = 3.14159265359;
@@ -113,17 +122,28 @@ vec3 env_rotate(vec3 d) {
     float c = cos(lighting.env_params.w), s = sin(lighting.env_params.w);
     return vec3(c * d.x + s * d.z, d.y, -s * d.x + c * d.z);
 }
-vec3 env_irradiance(vec3 n) {
-    if (lighting.env_params.x < 0.5) return environment(n, 1.0);
-    n = env_rotate(n);
-    vec3 r = lighting.env_sh[0].rgb * 0.282095
-           + lighting.env_sh[1].rgb * (0.488603 * n.y) + lighting.env_sh[2].rgb * (0.488603 * n.z)
-           + lighting.env_sh[3].rgb * (0.488603 * n.x) + lighting.env_sh[4].rgb * (1.092548 * n.x * n.y)
-           + lighting.env_sh[5].rgb * (1.092548 * n.y * n.z) + lighting.env_sh[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0))
-           + lighting.env_sh[7].rgb * (1.092548 * n.x * n.z) + lighting.env_sh[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+vec3 sh9(vec4 c[9], vec3 n) {
+    vec3 r = c[0].rgb * 0.282095
+           + c[1].rgb * (0.488603 * n.y) + c[2].rgb * (0.488603 * n.z)
+           + c[3].rgb * (0.488603 * n.x) + c[4].rgb * (1.092548 * n.x * n.y)
+           + c[5].rgb * (1.092548 * n.y * n.z) + c[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0))
+           + c[7].rgb * (1.092548 * n.x * n.z) + c[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
     return max(r, vec3(0.0));
 }
-vec3 env_specular(vec3 r, float roughness) {
+vec3 env_irradiance(vec3 n) {
+    if (probe.box_min.w > 0.5) return sh9(probe.sh, n);
+    if (lighting.env_params.x < 0.5) return environment(n, 1.0);
+    return sh9(lighting.env_sh, env_rotate(n));
+}
+// Parallax-corrected (box-projected) reflection direction (Lagarde & Zanuttini 2012).
+vec3 probe_direction(vec3 p, vec3 r) {
+    vec3 inv = 1.0 / max(abs(r), vec3(1e-5)) * sign(r + vec3(1e-7));
+    vec3 t = max((probe.box_max.xyz - p) * inv, (probe.box_min.xyz - p) * inv);
+    float d = max(min(min(t.x, t.y), t.z), 0.0);
+    return p + r * d - probe.position.xyz;
+}
+vec3 env_specular(vec3 r, float roughness, vec3 p) {
+    if (probe.box_min.w > 0.5) return textureLod(u_env, probe_direction(p, r), roughness * probe.box_max.w).rgb * probe.position.w;
     if (lighting.env_params.x < 0.5) return environment(r, roughness);
     return textureLod(u_env, env_rotate(r), roughness * lighting.env_params.y).rgb * lighting.env_params.z;
 }
@@ -277,7 +297,7 @@ void main() {
     vec3 R = reflect(-V, N);
     // Specular occlusion approximation: reflections below the local horizon are dimmed.
     float horizon = clamp(1.0 + dot(R, geometric_n), 0.0, 1.0);
-    vec3 specular = env_specular(R, roughness) * (f0 * ab.x + ab.y) * horizon * horizon;
+    vec3 specular = env_specular(R, roughness, v_world_pos) * (f0 * ab.x + ab.y) * horizon * horizon;
     float ao = lighting.camera_pos.w > 0.5 ? texture(u_ao, gl_FragCoord.xy * lighting.screen.xy).r : 1.0;
     ao *= s.occlusion;
     // Specular occlusion from AO (Lagarde & de Rousiers 2014 approximation).

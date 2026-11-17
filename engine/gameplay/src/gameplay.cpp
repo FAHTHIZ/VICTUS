@@ -99,6 +99,14 @@ void register_components() {
             .field(&O::emissive, "emissive", {.label = "Emissive", .hint = "color_hdr"})
             .field(&O::emissive_strength, "emissive_strength", {.min = 0, .max = 1000, .speed = 0.05f, .label = "Emissive Strength"})
             .commit();
+        using P = ReflectionProbeComponent;
+        scene::Schema<P>("ReflectionProbe", "Rendering")
+            .field(&P::size, "size", {.min = 0.1f, .max = 10000, .speed = 0.05f, .tooltip = "World-aligned box (metres) that receives this probe and corrects its parallax"})
+            .field(&P::capture_offset, "capture_offset", {.speed = 0.05f, .tooltip = "Capture point relative to the entity; keep it inside the box"})
+            .field(&P::intensity, "intensity", {.min = 0, .max = 64, .speed = 0.01f})
+            .field(&P::resolution, "resolution", {.min = 16, .max = 512, .tooltip = "Cubemap face size of the capture"})
+            .field(&P::revision, "revision", {.tooltip = "Change to recapture (also recaptured when the probe moves)"})
+            .commit();
         using E = EnvironmentComponent;
         scene::Schema<E>("Environment", "Rendering")
             .field(&E::sky_zenith, "sky_zenith", {.hint = "color_hdr"})
