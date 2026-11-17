@@ -137,7 +137,7 @@ struct TerrainComponent {
     [[nodiscard]] float layer_tiling(std::uint32_t i) const noexcept;
 };
 
-// Registers "Terrain". Idempotent.
+// Registers "Terrain" and "Foliage". Idempotent.
 void register_components();
 
 // ---- geometry ------------------------------------------------------------------------------
@@ -176,6 +176,7 @@ struct TerrainRuntime {
 
 struct TerrainStats {
     std::uint32_t terrains{0}, missing_data{0}, chunk_rebuilds{0}, collision_rebuilds{0}, chunks{0};
+    std::uint32_t foliage{0}, foliage_instances{0}, foliage_rebuilds{0}; // foliage entities, live instances, chunk scatters
 };
 
 // Resolves terrain data, keeps chunk meshes in step with edits (only dirty chunks are rebuilt)
@@ -190,6 +191,7 @@ public:
     [[nodiscard]] const TerrainStats& stats() const noexcept { return stats_; }
 
 private:
+    void update_foliage(scene::Scene& scene);
     TerrainProvider provider_;
     std::unordered_map<Uuid, std::shared_ptr<Heightfield>, UuidHash> added_, cache_;
     TerrainStats stats_;
@@ -217,6 +219,49 @@ struct TerrainSample {
 [[nodiscard]] std::optional<TerrainSample> sample_at(scene::Scene& scene, float x, float z);
 // Translation and rotation of a world matrix with the scale removed (how terrains are placed).
 [[nodiscard]] math::Mat4 rigid_matrix(const math::Mat4& world) noexcept;
+
+// ---- foliage -------------------------------------------------------------------------------
+// Scatters instances of the entity's MeshRenderer (mesh, material, tint, shadows) over the
+// Terrain on the same entity or its parent. Placement is deterministic: a jittered grid with
+// `density` points per square metre, each kept with a probability equal to the splat weight of
+// `layer` (so painting a layer paints its foliage) and only where the slope and normalized
+// height are in range. Instances live in terrain local space per terrain chunk and are rebuilt
+// only for chunks whose terrain revision changed. The Foliage entity's own transform is ignored
+// and the MeshRenderer is drawn once per instance within `draw_distance` of the camera.
+inline constexpr std::uint32_t kMaxFoliageInstances = 1u << 20;
+struct FoliageComponent {
+    std::int32_t layer{0};          // splat layer 0..3 that drives density; -1 = everywhere
+    float min_weight{0.3f};         // no instances where the layer weight is below this
+    float density{0.5f};            // candidate points per square metre
+    float min_scale{0.6f}, max_scale{1.0f};
+    float align_to_normal{0.0f};    // 0 = upright .. 1 = follow the surface normal
+    bool random_yaw{true};
+    float max_slope{35.0f};         // degrees
+    float min_height{0.0f}, max_height{1.0f}; // normalized terrain height range
+    float offset{0.0f};             // metres along the instance's up (negative sinks it)
+    float draw_distance{150.0f};    // metres from the camera
+    std::uint32_t seed{1};
+    std::uint32_t max_instances{100000}; // the grid is coarsened to stay below this
+};
+// Written by TerrainSystem on Foliage entities (not saved).
+struct FoliageRuntime {
+    scene::Entity terrain;
+    const Heightfield* built_data{nullptr};
+    math::Vec3 built_size{0, 0, 0};
+    std::uint64_t settings{0};                 // hash of the component the chunks were built with
+    float spacing{0};                          // grid spacing in metres
+    std::vector<std::vector<math::Mat4>> chunks; // terrain local instance matrices per chunk
+    std::vector<math::Aabb> chunk_bounds;      // local bounds of the instance origins
+    std::vector<std::uint64_t> chunk_built;    // terrain chunk revision each was built at
+    std::uint32_t instances{0};
+};
+// Builds the instances of chunk (cx, cz) for a foliage layer (exposed for tests and tools).
+[[nodiscard]] std::vector<math::Mat4> scatter_chunk(const Heightfield& hf, math::Vec3 size, const FoliageComponent& f,
+                                                    float spacing, std::uint32_t cx, std::uint32_t cz);
+// Grid spacing for a foliage layer on a terrain of `size` (density, capped by max_instances).
+[[nodiscard]] float foliage_spacing(math::Vec3 size, const FoliageComponent& f) noexcept;
+// Smooth local-space normal of the bilinear surface at local (x, z) (clamped to the terrain).
+[[nodiscard]] math::Vec3 local_normal(const Heightfield& hf, math::Vec3 size, float x, float z) noexcept;
 
 // ---- editing -------------------------------------------------------------------------------
 

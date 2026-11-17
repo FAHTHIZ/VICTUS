@@ -398,3 +398,139 @@ TEST_CASE("terrain: regions restore edits exactly; rays hit the surface") {
     CHECK(hit->distance == doctest::Approx(60.0f - hit->point.y).epsilon(0.001));
     CHECK_FALSE(raycast(scene, {0, 60, 0}, {0, -1, 0}, 200));
 }
+
+TEST_CASE("terrain: foliage scatter is deterministic and follows layers, slope and height") {
+    const math::Vec3 size{64, 16, 64};
+    auto flat = make_flat(65, 0.5f);
+    REQUIRE(flat.ok());
+    Heightfield hf = std::move(*flat);
+    hf.touch_all();
+    FoliageComponent f;
+    f.layer = -1;
+    f.density = 1.0f;
+    const float spacing = foliage_spacing(size, f);
+    CHECK(spacing == doctest::Approx(1.0f));
+    std::size_t total = 0;
+    for (std::uint32_t cz = 0; cz < 2; ++cz)
+        for (std::uint32_t cx = 0; cx < 2; ++cx) total += scatter_chunk(hf, size, f, spacing, cx, cz).size();
+    CHECK(total == 64u * 64u); // one per grid cell, each in exactly one chunk
+    const auto a = scatter_chunk(hf, size, f, spacing, 1, 0);
+    const auto b = scatter_chunk(hf, size, f, spacing, 1, 0);
+    REQUIRE(a.size() == b.size());
+    for (std::size_t i = 0; i < a.size(); ++i) CHECK(a[i].transform_point({}) == b[i].transform_point({}));
+    for (const auto& m : a) {
+        const math::Vec3 p = m.transform_point({});
+        CHECK(p.x >= -0.001f);
+        CHECK(p.z < 0.001f);
+        CHECK(p.y == doctest::Approx(8.0f));
+        const float s = math::length(m.transform_vector({1, 0, 0}));
+        CHECK(s >= f.min_scale - 1e-4f);
+        CHECK(s <= f.max_scale + 1e-4f);
+        CHECK(m.transform_vector({0, 1, 0}).y == doctest::Approx(s)); // upright
+    }
+    FoliageComponent other = f;
+    other.seed = 2;
+    CHECK(scatter_chunk(hf, size, other, spacing, 1, 0)[0].transform_point({}) != a[0].transform_point({}));
+
+    // Layer-driven: none on layer 0 ground, all where layer 2 is painted at full weight.
+    f.layer = 2;
+    CHECK(scatter_chunk(hf, size, f, spacing, 0, 0).empty());
+    for (std::uint32_t z = 0; z <= 32; ++z)
+        for (std::uint32_t x = 0; x <= 32; ++x) hf.splat[hf.index(x, z)] = pack_weights({0, 0, 1, 0});
+    CHECK(scatter_chunk(hf, size, f, spacing, 0, 0).size() > 32u * 32u * 9u / 10u);
+    f.min_weight = 1.01f; // above every weight
+    CHECK(scatter_chunk(hf, size, f, spacing, 0, 0).empty());
+    f.min_weight = 0.3f;
+
+    // Height range and slope filters.
+    f.layer = -1;
+    f.min_height = 0.6f;
+    CHECK(scatter_chunk(hf, size, f, spacing, 0, 0).empty());
+    f.min_height = 0.0f;
+    Heightfield steep = hf;
+    for (std::uint32_t z = 0; z < 65; ++z)
+        for (std::uint32_t x = 0; x < 65; ++x) steep.heights[steep.index(x, z)] = static_cast<float>(x) / 64.0f * 1.0f;
+    // 16 m rise over 64 m: ~14 degrees.
+    f.max_slope = 10.0f;
+    CHECK(scatter_chunk(steep, size, f, spacing, 0, 0).empty());
+    f.max_slope = 20.0f;
+    f.align_to_normal = 1.0f;
+    const auto tilted = scatter_chunk(steep, size, f, spacing, 0, 0);
+    REQUIRE_FALSE(tilted.empty());
+    const math::Vec3 up = math::normalize(tilted[0].transform_vector({0, 1, 0}));
+    CHECK(up.x < -0.2f); // leans with the slope (surface rises along +x)
+    CHECK(local_normal(steep, size, 0, 0).x == doctest::Approx(up.x).epsilon(0.01));
+
+    // The instance budget coarsens the grid; degenerate settings place nothing.
+    f.max_instances = 100;
+    CHECK(foliage_spacing(size, f) == doctest::Approx(6.4f));
+    f.density = 0;
+    CHECK(foliage_spacing(size, f) == 0.0f);
+    f.density = NAN;
+    CHECK(foliage_spacing(size, f) == 0.0f);
+    CHECK(scatter_chunk(hf, size, f, 0.0f, 0, 0).empty());
+    CHECK(scatter_chunk(hf, size, FoliageComponent{}, 1.0f, 5, 0).empty());
+}
+
+TEST_CASE("terrain: the system scatters foliage for child entities and rebuilds only edited chunks") {
+    register_components();
+    auto data = std::make_shared<Heightfield>(hills(129, 3));
+    TerrainSystem system;
+    const Uuid id = Uuid::generate();
+    system.add_data(id, data);
+    Scene scene;
+    const Entity t = scene.create("Terrain");
+    TerrainComponent comp;
+    comp.data = id;
+    comp.size = {128, 20, 128};
+    comp.collision = false;
+    scene.world().add<TerrainComponent>(t, comp);
+    const Entity grass = scene.create("Grass", t);
+    FoliageComponent f;
+    f.layer = -1;
+    f.density = 0.25f;
+    f.max_slope = 90.0f;
+    scene.world().add<FoliageComponent>(grass, f);
+    const Entity orphan = scene.create("Orphan");
+    scene.world().add<FoliageComponent>(orphan, f);
+    scene.update_transforms();
+    system.update(scene);
+    const auto* rt = scene.world().get<FoliageRuntime>(grass);
+    REQUIRE(rt);
+    CHECK(rt->terrain == t);
+    CHECK(rt->chunks.size() == 16u);
+    CHECK(rt->instances == 64u * 64u);
+    CHECK(system.stats().foliage == 2);
+    CHECK(system.stats().foliage_instances == 64u * 64u);
+    CHECK(system.stats().foliage_rebuilds == 16u);
+    CHECK(scene.world().get<FoliageRuntime>(orphan)->instances == 0);
+
+    // Unchanged: nothing rebuilt. One dab in a chunk interior: only that chunk.
+    system.update(scene);
+    CHECK(system.stats().foliage_rebuilds == 16u);
+    (void)apply_brush(*data, comp.size, {.mode = BrushMode::Raise, .radius = 3, .strength = 1}, -48, -48, 1.0f);
+    system.update(scene);
+    CHECK(system.stats().foliage_rebuilds == 17u);
+    // Changing a setting rebuilds everything and changes the count.
+    scene.world().get<FoliageComponent>(grass)->density = 1.0f;
+    system.update(scene);
+    CHECK(system.stats().foliage_rebuilds == 33u);
+    CHECK(scene.world().get<FoliageRuntime>(grass)->instances == 128u * 128u);
+    // Instances sit on the surface (terrain local space).
+    for (const auto& m : scene.world().get<FoliageRuntime>(grass)->chunks[5]) {
+        const math::Vec3 p = m.transform_point({});
+        CHECK(p.y == doctest::Approx(*local_height(*data, comp.size, p.x, p.z)).epsilon(0.001));
+    }
+
+    // Reflection round trip.
+    const auto* ser = scene::SerializerRegistry::instance().by_name("Foliage");
+    REQUIRE(ser);
+    FoliageComponent edited = f;
+    edited.layer = 3;
+    edited.draw_distance = 42;
+    const json::Value saved = ser->save(&edited);
+    FoliageComponent back;
+    REQUIRE(ser->load(&back, saved).ok());
+    CHECK(back.layer == 3);
+    CHECK(back.draw_distance == doctest::Approx(42.0f));
+}

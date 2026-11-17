@@ -291,15 +291,7 @@ std::optional<TerrainSample> sample_at(scene::Scene& scene, scene::Entity entity
     out.height = *h;
     const float u = local.x / size.x + 0.5f, v = local.z / size.z + 0.5f;
     out.weights = hf.weights(u, v);
-    // Central differences of the bilinear surface one sample apart (clamped at the borders).
-    const float dx = size.x / static_cast<float>(hf.resolution - 1), dz = size.z / static_cast<float>(hf.resolution - 1);
-    auto at = [&](float lx, float lz) {
-        const float cx = std::clamp(lx, -size.x * 0.5f, size.x * 0.5f), cz = std::clamp(lz, -size.z * 0.5f, size.z * 0.5f);
-        return local_height(hf, size, cx, cz).value_or(local.y);
-    };
-    const float hx = at(local.x + dx, local.z) - at(local.x - dx, local.z);
-    const float hz = at(local.x, local.z + dz) - at(local.x, local.z - dz);
-    const math::Vec3 n = math::normalize(math::Vec3{-hx / (2.0f * dx), 1.0f, -hz / (2.0f * dz)});
+    const math::Vec3 n = local_normal(hf, size, local.x, local.z);
     out.normal = math::normalize((m * math::Vec4(n, 0.0f)).xyz());
     return out;
 }

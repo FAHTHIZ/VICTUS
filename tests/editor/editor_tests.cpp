@@ -2252,4 +2252,21 @@ TEST_CASE("editor: terrain strokes sculpt and paint, undo and redo, and are writ
     h.frames(3);
     CHECK(s.world().get<terrain::TerrainRuntime>(t)->data == data);
     (void)original_splat;
+
+    // Foliage scatters on the generated terrain as an undoable child entity.
+    auto bush = ed.add_foliage(t, -1);
+    REQUIRE(bush.ok());
+    CHECK(s.children(t).size() == 1);
+    CHECK(s.world().get<terrain::FoliageComponent>(*bush)->layer == -1);
+    CHECK(s.world().has<MeshRendererComponent>(*bush));
+    h.frames(2);
+    const auto* frt = s.world().get<terrain::FoliageRuntime>(*bush);
+    REQUIRE(frt);
+    CHECK(frt->instances > 100u);
+    ed.undo();
+    CHECK(s.children(t).empty());
+    ed.redo();
+    CHECK(s.children(t).size() == 1);
+    Entity none = s.create("Empty");
+    CHECK_FALSE(ed.add_foliage(none).ok());
 }
