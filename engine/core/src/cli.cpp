@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/core/cli.hpp"
+#include "victus/core/charconv.hpp"
 
 #include <charconv>
 #include <format>
@@ -88,7 +89,7 @@ double Parser::get_number(std::string_view name, double fallback) const {
     const std::string s = get(name);
     double d = fallback;
     if (s.empty()) return fallback;
-    const auto res = std::from_chars(s.data(), s.data() + s.size(), d);
+    const auto res = victus::from_chars_double(s.data(), s.data() + s.size(), d);
     return res.ec == std::errc() ? d : fallback;
 }
 

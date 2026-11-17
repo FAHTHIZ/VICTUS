@@ -182,6 +182,14 @@ public:
                             std::function<void(std::string)> done);
     [[nodiscard]] const char* video_driver() const noexcept;
     [[nodiscard]] static double seconds() noexcept;
+    // Writable per-user folder for saves, caches and unpacked content (ends with a separator). On Android this is
+    // the app's internal storage; on desktop the OS preference folder for `org`/`app`. Empty on failure.
+    [[nodiscard]] static std::string user_data_dir(const std::string& org, const std::string& app);
+    // Reads a file shipped with the application. Relative paths resolve against the APK `assets/` on Android and
+    // against the executable's folder elsewhere; absolute paths are read as-is.
+    [[nodiscard]] static Result<std::vector<std::uint8_t>> read_bundled(const std::string& path);
+    // True on phones and tablets (touch-first input, small screens, battery and thermal limits).
+    [[nodiscard]] static bool is_mobile() noexcept;
     [[nodiscard]] std::string clipboard() const;
     void set_clipboard(const std::string& text);
     // Receives every raw OS event (an `SDL_Event*`) before VICTUS processes it. Intended for

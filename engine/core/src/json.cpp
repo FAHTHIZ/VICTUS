@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/core/json.hpp"
+#include "victus/core/charconv.hpp"
 
 #include <charconv>
 #include <cmath>
@@ -204,7 +205,7 @@ private:
                 break;
         }
         double d = 0.0;
-        const auto res = std::from_chars(text_.data() + start, text_.data() + pos_, d);
+        const auto res = victus::from_chars_double(text_.data() + start, text_.data() + pos_, d);
         if (res.ec != std::errc() || res.ptr != text_.data() + pos_ || !std::isfinite(d)) {
             pos_ = start;
             set_error("invalid number");
