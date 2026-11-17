@@ -303,6 +303,10 @@ struct IrradianceVolumeComponent {
     std::uint32_t resolution{16};        // capture face size per probe (16..128)
     std::uint32_t bounces{2};            // bake passes: 1 = direct light only, each extra pass adds a bounce
     std::uint32_t revision{0};           // change to force a rebake
+    // Dynamic GI (ADR-0057, High/Ultra): after the bake, keep re-capturing probes round-robin so
+    // the volume follows lighting changes. `dynamic_blend` is the weight of each new capture.
+    bool dynamic{false};
+    float dynamic_blend{0.5f};
 };
 
 // Registers serializers ("Rotator", "Oscillator", "Environment"). Idempotent; call once at startup before

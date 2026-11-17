@@ -240,12 +240,16 @@ struct RenderSettings {
     // from it and tests every opaque main-pass instance; survivors are drawn with indirect draws.
     // Conservative: the image is identical with it off. Needs compute (RenderCaps::compute).
     bool occlusion_culling{true};
-    // Local light shadows (ADR-0052): lights with cast_shadows get perspective shadow maps in one
-    // atlas of local_shadow_atlas^2 texels split into local_shadow_tile^2 tiles (at most 8x8). Spot
-    // lights take one tile, point lights six; lights covering more of the screen win the tiles.
     // Irradiance volumes (ADR-0056): baked probe grids replace environment diffuse light inside
     // their box. Off on Low (18 extra texture fetches per lit pixel).
     bool irradiance_volumes{true};
+    // Dynamic GI (ADR-0057): volumes marked dynamic keep re-capturing their probes round-robin with
+    // feedback (each refresh adds a bounce), so lighting changes propagate. High/Ultra only; read
+    // by the runtime, the renderer itself only samples the volume.
+    bool dynamic_gi{true};
+    // Local light shadows (ADR-0052): lights with cast_shadows get perspective shadow maps in one
+    // atlas of local_shadow_atlas^2 texels split into local_shadow_tile^2 tiles (at most 8x8). Spot
+    // lights take one tile, point lights six; lights covering more of the screen win the tiles.
     bool local_shadows{true};
     std::uint32_t local_shadow_atlas{2048}; // 256..8192
     std::uint32_t local_shadow_tile{512};   // 64..atlas

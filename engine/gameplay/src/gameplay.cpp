@@ -116,6 +116,8 @@ void register_components() {
             .field(&G::resolution, "resolution", {.min = 16, .max = 128, .tooltip = "Capture face size per probe"})
             .field(&G::bounces, "bounces", {.min = 1, .max = 4, .tooltip = "Bake passes; each pass after the first adds one light bounce"})
             .field(&G::revision, "revision", {.tooltip = "Change to rebake (also rebaked when the volume moves or resizes)"})
+            .field(&G::dynamic, "dynamic", {.tooltip = "Keep re-capturing probes so lighting changes propagate (High/Ultra quality)"})
+            .field(&G::dynamic_blend, "dynamic_blend", {.min = 0.01f, .max = 1, .speed = 0.01f, .tooltip = "Weight of each new capture: higher reacts faster, lower is steadier"})
             .commit();
         using E = EnvironmentComponent;
         scene::Schema<E>("Environment", "Rendering")

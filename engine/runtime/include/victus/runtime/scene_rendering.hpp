@@ -84,6 +84,7 @@ public:
     struct IrradianceBake {
         std::unique_ptr<render::IrradianceVolume> active, pending;
         render::IrradianceBaker baker;
+        render::IrradianceRefresher refresher; // dynamic volumes, after the bake finished
         render::IrradianceGrid grid;
         std::uint32_t revision{0}, resolution{0}, bounces{0};
         float normal_offset{0.0f};
@@ -169,6 +170,7 @@ struct ExtractStats {
     std::uint32_t reflection_probes{0}; // captured probes handed to the renderer
     std::uint32_t irradiance_volumes{0}; // volumes with baked probes in the scene
     std::uint32_t irradiance_probes_baked{0}; // probes baked during this call
+    std::uint32_t irradiance_probes_refreshed{0}; // dynamic-volume probes re-captured during this call
     std::uint32_t skinned{0}; // meshes drawn with GPU skinning
     std::uint32_t particle_emitters{0}, particles{0}; // submitted (before camera culling)
     bool camera_found{false};

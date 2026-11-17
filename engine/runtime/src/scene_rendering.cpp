@@ -600,6 +600,7 @@ void apply_irradiance_volumes(Scene& scene, GpuAssetCache& assets, render::Scene
                 entry.bounces = bounces;
                 entry.normal_offset = offset;
                 entry.baker.reset();
+                entry.refresher.reset();
                 auto vol = render::IrradianceVolume::create(assets.context(), grid);
                 if (!vol) {
                     VICTUS_LOG_ERROR("runtime", "irradiance volume: {}", vol.error().message);
@@ -636,6 +637,27 @@ void apply_irradiance_volumes(Scene& scene, GpuAssetCache& assets, render::Scene
                         entry.active = std::move(entry.pending);
                         assets.note_irradiance_bake();
                     }
+                }
+            }
+            // Dynamic volumes keep refreshing the finished bake (ADR-0057).
+            if (v.dynamic && entry.active && !entry.pending && budget > 0 && renderer.settings().dynamic_gi) {
+                if (auto r = assets.probe_renderer()) {
+                    render::IrradianceBakeSettings bs;
+                    bs.face_size = res;
+                    bs.intensity = intensity;
+                    bs.normal_offset = offset;
+                    const std::uint64_t before = entry.refresher.probes_refreshed();
+                    assets.set_capturing_probes(true);
+                    const Status st = entry.refresher.step(assets.context(), **r, *entry.active,
+                                                           [&](render::SceneRenderer& pr, const render::Camera3D& cam) {
+                                                               (void)extract_scene(scene, assets, pr, settings, &cam);
+                                                           },
+                                                           bs, budget, v.dynamic_blend);
+                    assets.set_capturing_probes(false);
+                    const auto done = static_cast<std::uint32_t>(entry.refresher.probes_refreshed() - before);
+                    budget -= std::min(budget, done);
+                    stats.irradiance_probes_refreshed += done;
+                    if (!st.ok()) VICTUS_LOG_ERROR("runtime", "irradiance refresh: {}", st.error().message);
                 }
             }
             // While nothing has finished yet, the partially baked first pass already helps.

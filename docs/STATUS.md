@@ -769,5 +769,22 @@ Known gaps:
 - Light changes (sun, time of day, moving lights) need a rebake; no dynamic GI yet.
 - No per-probe visibility (leaking through thin walls is reduced only by the normal offset); one volume bound per frame; no probe placement debug view in the editor.
 
+## Slice 60: Dynamic irradiance volumes
+
+Why: roadmap item 13 (second half). Baked volumes kept stale indirect light after the sun, lights or emissive materials changed.
+
+Built (ADR-0057):
+- `render::IrradianceRefresher`: re-captures probes round-robin within a budget, rendering each capture with the volume itself applied (feedback intensity clamped to 1) and blending the new SH9 into the stored probe (`blend`, 1 = replace).
+- `IrradianceVolumeComponent::dynamic` / `dynamic_blend` (editor inspector via schema). After the bake, `extract_scene` spends the remaining per-frame probe budget refreshing dynamic volumes; `ExtractStats::irradiance_probes_refreshed`.
+- `RenderSettings::dynamic_gi` (High/Ultra on, Low/Medium off).
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror, lavapipe):
+- `victus_gpu_tests` "dynamic refresh follows a lighting change and stays bounded with feedback": a red floor turned green; after one full cycle the bottom probe facing it reads 0.004 red, 0.97 green. Budget 20 over 27 probes wraps (cursor 20 then 13). Six feedback cycles with a white ceiling settle at 0.49 (0.483 -> 0.489 on the last cycle).
+- "dynamic IrradianceVolume components follow emissive changes on High only": the first frame's budget bakes all 18 probes and refreshes none; after the floor emissive turns blue, a Medium-tier frame refreshes 0 probes, a High-tier frame refreshes 18 and the probe reads 0.97 blue.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`; `compile_shaders.py --check` up to date.
+
+Known gaps:
+- No probe visibility data (leaking through thin walls), one volume bound per frame, no editor probe visualisation; cost scales with the probe budget on the probe renderer (not measured on real GPUs yet).
+
 ## Next task
-Roadmap item 13 (second half): a dynamic GI option on High/Ultra (incrementally re-captured probes with visibility data, following the light). Then item 14 visual scripting.
+Roadmap item 14: visual scripting graph over the Luau runtime (graph model and serialization, compile to Luau, editor graph panel, debugging). See ROADMAP.md "Next slices".

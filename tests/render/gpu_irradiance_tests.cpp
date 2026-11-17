@@ -110,11 +110,12 @@ Room make_room() {
 }
 
 // A glowing red floor below the volume and, optionally, a white diffuse ceiling above it.
-void fill_room(const Room& room, SceneRenderer& r, const Camera3D& cam, bool ceiling, bool object) {
+void fill_room(const Room& room, SceneRenderer& r, const Camera3D& cam, bool ceiling, bool object,
+               math::Vec4 floor_color = {1, 0, 0, 1}) {
     r.begin(cam, room.sun, room.env);
     Material floor;
     floor.unlit = true;
-    floor.base_color = {1, 0, 0, 1};
+    floor.base_color = {floor_color.x, floor_color.y, floor_color.z, 1};
     r.submit(room.slab, floor, math::Mat4::translation({0, -1.0f, 0}));
     Material white;
     white.base_color = {1, 1, 1, 1};
@@ -304,4 +305,103 @@ TEST_CASE("gpu: IrradianceVolume components bake progressively and rebake on cha
     stats = runtime::extract_scene(s, cache, **sr);
     CHECK(stats.irradiance_volumes == 0);
     CHECK(cache.irradiance_bakes().empty());
+}
+
+TEST_CASE("gpu: dynamic refresh follows a lighting change and stays bounded with feedback") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    Room room = make_room();
+    math::Vec4 floor_color{1, 0, 0, 1};
+    const CaptureFill fill = [&](SceneRenderer& r, const Camera3D& cam) { fill_room(room, r, cam, true, false, floor_color); };
+    auto vol = IrradianceVolume::create(ctx, room_grid());
+    REQUIRE(vol.ok());
+    IrradianceBakeSettings bs;
+    bs.bounces = 1;
+    bs.normal_offset = 0.3f;
+    REQUIRE(bake_irradiance_volume(ctx, **sr, **vol, fill, bs).ok());
+    const std::uint32_t bottom = (*vol)->grid().index(1, 0, 1), top = (*vol)->grid().index(1, 2, 1);
+    CHECK((*vol)->probe(bottom).diffuse({0, -1, 0}).x > 0.5f);
+    floor_color = {0, 1, 0, 1}; // the floor turns green
+    IrradianceRefresher refresher;
+    REQUIRE(refresher.step(ctx, **sr, **vol, fill, bs, 20, 1.0f).ok());
+    CHECK(refresher.next_probe() == 20);
+    REQUIRE(refresher.step(ctx, **sr, **vol, fill, bs, 20, 1.0f).ok()); // wraps around
+    CHECK(refresher.next_probe() == 13);
+    CHECK(refresher.probes_refreshed() == 40);
+    const math::Vec3 now = (*vol)->probe(bottom).diffuse({0, -1, 0});
+    MESSAGE("bottom probe after the change: " << now.x << "," << now.y);
+    CHECK(now.y > 0.5f);
+    CHECK(now.x < 0.05f);
+    // Feedback through the ceiling over many cycles converges instead of growing without bound.
+    float prev = 0.0f, last = 0.0f;
+    for (int cycle = 0; cycle < 6; ++cycle) {
+        REQUIRE(refresher.step(ctx, **sr, **vol, fill, bs, 0, 0.5f).ok());
+        prev = last;
+        last = (*vol)->probe(top).diffuse({0, 1, 0}).y;
+    }
+    MESSAGE("top probe facing the ceiling: " << prev << " -> " << last);
+    CHECK(last > 0.2f);   // the ceiling bounce arrived
+    CHECK(last < 1.0f);   // bounded by the floor's radiance
+    CHECK(std::abs(last - prev) < 0.1f);
+    ctx.destroy(room.slab);
+    ctx.destroy(room.cube);
+}
+
+TEST_CASE("gpu: dynamic IrradianceVolume components follow emissive changes on High only") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    gameplay::register_components();
+    auto& ctx = *gpu().ctx;
+    runtime::GpuAssetCache cache(ctx, nullptr);
+    scene::Scene s;
+    const scene::Entity env = s.create("Environment");
+    auto& ec = s.world().add<gameplay::EnvironmentComponent>(env);
+    ec.sky_zenith = ec.sky_horizon = ec.ground = {0, 0, 0, 1};
+    ec.ambient_intensity = 0.0f;
+    ec.draw_sky = false;
+    const scene::Entity floor = s.create("Floor");
+    s.world().get<scene::Transform>(floor)->position = {0, -1, 0};
+    s.world().get<scene::Transform>(floor)->scale = {6, 0.1f, 6};
+    auto& fm = s.world().add<scene::MeshRendererComponent>(floor);
+    fm.primitive = "cube";
+    fm.base_color = {0, 0, 0, 1};
+    auto& fo = s.world().add<gameplay::MaterialOverridesComponent>(floor);
+    fo.override_emissive = true;
+    fo.emissive = {1, 0, 0, 1};
+    fo.emissive_strength = 1.0f;
+    const scene::Entity vol = s.create("Volume");
+    s.world().get<scene::Transform>(vol)->position = {0, 0.5f, 0};
+    auto& vc = s.world().add<gameplay::IrradianceVolumeComponent>(vol);
+    vc.size = {4, 2, 4};
+    vc.spacing = 2.0f;
+    vc.bounces = 1;
+    vc.dynamic = true;
+    vc.dynamic_blend = 1.0f;
+    s.update_transforms();
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    cache.set_irradiance_probes_per_frame(18);
+    auto stats = runtime::extract_scene(s, cache, **sr);
+    CHECK(stats.irradiance_probes_baked == 18);
+    CHECK(stats.irradiance_probes_refreshed == 0); // the budget went to the bake
+    auto& bake = cache.irradiance_bakes().begin()->second;
+    REQUIRE(bake.active);
+    const std::uint32_t probe = bake.active->grid().index(1, 0, 1);
+    CHECK(bake.active->probe(probe).diffuse({0, -1, 0}).x > 0.5f);
+    s.world().get<gameplay::MaterialOverridesComponent>(floor)->emissive = {0, 0, 1, 1};
+    // Medium tier: dynamic GI is off, the bake stays as it was.
+    RenderSettings medium = RenderSettings::preset(QualityTier::Medium);
+    CHECK_FALSE(medium.dynamic_gi);
+    (*sr)->set_settings(medium);
+    stats = runtime::extract_scene(s, cache, **sr);
+    CHECK(stats.irradiance_probes_refreshed == 0);
+    (*sr)->set_settings(RenderSettings::preset(QualityTier::High));
+    stats = runtime::extract_scene(s, cache, **sr);
+    CHECK(stats.irradiance_probes_refreshed == 18);
+    CHECK(stats.irradiance_probes_baked == 0);
+    const math::Vec3 now = cache.irradiance_bakes().begin()->second.active->probe(probe).diffuse({0, -1, 0});
+    MESSAGE("after the emissive change: " << now.x << "," << now.y << "," << now.z);
+    CHECK(now.z > 0.5f);
+    CHECK(now.x < 0.05f);
 }

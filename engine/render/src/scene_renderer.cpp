@@ -304,6 +304,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.lod_error_pixels = 2.0f;
         s.local_shadows = false;
         s.irradiance_volumes = false;
+        s.dynamic_gi = false;
         break;
     case QualityTier::Medium:
         s.render_scale = 1.0f;
@@ -319,6 +320,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.lod_error_pixels = 1.5f;
         s.local_shadow_atlas = 1024;
         s.local_shadow_tile = 256;
+        s.dynamic_gi = false;
         break;
     case QualityTier::High: break; // struct defaults
     case QualityTier::Ultra:
