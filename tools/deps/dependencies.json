@@ -1,0 +1,103 @@
+{
+  "_comment": "Read by tools/deps/victus_deps.py. Fetched pins live in cmake/VictusDependencies.cmake; this file adds their verified SPDX licenses, the vendored third_party/ sources and reviewed OSV advisories.",
+  "fetched_licenses": {
+    "SDL3": "Zlib",
+    "luau": "MIT",
+    "JoltPhysics": "MIT",
+    "box2d": "MIT",
+    "miniaudio": "Unlicense OR MIT-0",
+    "recastnavigation": "Zlib",
+    "enet": "MIT",
+    "monocypher": "CC0-1.0 OR BSD-2-Clause",
+    "glslang": "BSD-3-Clause AND BSD-2-Clause AND MIT AND Apache-2.0",
+    "spirv_cross": "Apache-2.0",
+    "bc7enc_rdo": "MIT OR Unlicense",
+    "astcenc": "Apache-2.0",
+    "meshoptimizer": "MIT"
+  },
+  "doc_names": {
+    "SDL3": "SDL3",
+    "luau": "Luau",
+    "JoltPhysics": "Jolt Physics",
+    "box2d": "Box2D",
+    "miniaudio": "miniaudio",
+    "recastnavigation": "Recast & Detour",
+    "enet": "ENet",
+    "monocypher": "Monocypher",
+    "glslang": "glslang",
+    "spirv_cross": "SPIRV-Cross",
+    "bc7enc_rdo": "bc7enc_rdo",
+    "astcenc": "Arm ASTC Encoder",
+    "meshoptimizer": "meshoptimizer"
+  },
+  "vendored": [
+    {
+      "name": "doctest",
+      "version": "2.5.3",
+      "license": "MIT",
+      "repo": "https://github.com/doctest/doctest",
+      "path": "third_party/doctest",
+      "files": [
+        "doctest.h",
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "name": "stb",
+      "version": "9600522de53973336fa033a289858a4354cbb04c",
+      "commit": "9600522de53973336fa033a289858a4354cbb04c",
+      "license": "MIT OR Unlicense",
+      "repo": "https://github.com/nothings/stb",
+      "path": "third_party/stb",
+      "files": [
+        "stb_image.h",
+        "stb_image_write.h",
+        "stb_truetype.h",
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "cgltf",
+      "version": "1.15",
+      "license": "MIT",
+      "repo": "https://github.com/jkuhlmann/cgltf",
+      "path": "third_party/cgltf",
+      "files": [
+        "cgltf.h",
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "Dear ImGui",
+      "version": "b916186e66aa3c02b72c6ca17455516512ed8049",
+      "commit": "b916186e66aa3c02b72c6ca17455516512ed8049",
+      "license": "MIT",
+      "repo": "https://github.com/ocornut/imgui",
+      "path": "third_party/imgui",
+      "files": [
+        "imgui.cpp",
+        "imgui.h",
+        "LICENSE.txt",
+        "VICTUS_VENDOR.md"
+      ]
+    },
+    {
+      "name": "Inter (font)",
+      "version": "5.2.8",
+      "license": "OFL-1.1",
+      "repo": "https://github.com/rsms/inter",
+      "path": "third_party/fonts/inter",
+      "files": [
+        "LICENSE.txt",
+        "Inter-Medium.ttf",
+        "Inter-Bold.ttf"
+      ]
+    }
+  ],
+  "osv_ignore": {
+    "CVE-2026-75148": "cgltf <= 1.15 accessor bounds overflow; mitigated by validate_accessors() in engine/assets/src/importers.cpp (commit 0a6be3c)",
+    "CVE-2026-32845": "cgltf <= 1.15 sparse bounds overflow; mitigated by validate_accessors() in engine/assets/src/importers.cpp (commit 0a6be3c)",
+    "CVE-2026-112019": "cgltf <= 1.15 sparse stride read; VICTUS unpacks sparse accessors itself (importers.cpp, commit 0a6be3c)",
+    "CVE-2026-112018": "cgltf <= 1.15 sparse index write; sparse indices checked against the accessor count before unpacking (importers.cpp, commit 0a6be3c)"
+  }
+}

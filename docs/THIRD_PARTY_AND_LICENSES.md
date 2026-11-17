@@ -8,7 +8,7 @@ Mandatory for code, libraries, SDKs, tools, datasets, fonts, models, textures, a
 4. Check patent, attribution, redistribution, trademark, export and platform terms.
 5. Publicly available does not mean freely redistributable.
 6. Never copy proprietary engine source, leaked code, private assets or unlicensed sample content.
-7. Maintain SPDX/CycloneDX SBOM as dependencies grow.
+7. Maintain SPDX/CycloneDX SBOM as dependencies grow: `python3 tools/deps/victus_deps.py check` verifies pins against this table, `sbom` writes a CycloneDX 1.6 SBOM and `osv` queries known vulnerabilities (CI job `dependencies`, weekly schedule). Reviewed advisories and their mitigations go in `tools/deps/dependencies.json` `osv_ignore`.
 8. Preserve upstream notices and modification records.
 9. Re-audit upgrades/releases.
 10. Escalate ambiguous/copyleft/custom terms for owner/legal review.
