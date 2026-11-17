@@ -135,6 +135,11 @@ void register_components() {
             .field(&E::environment_intensity, "environment_intensity", {.min = 0, .max = 64, .speed = 0.01f, .tooltip = "Scales environment lighting, reflections and background"})
             .field(&E::environment_rotation, "environment_rotation", {.min = -360, .max = 360, .speed = 0.5f, .tooltip = "Degrees about the up axis"})
             .field(&E::sky_blur, "sky_blur", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Blurs the environment background (0 sharp .. 1 rough)"})
+            .field(&E::physical_sky, "physical_sky", {.label = "Physical Sky", .tooltip = "Atmospheric scattering sky lit by the directional light; also lights the scene (used when no environment map is set)"})
+            .field(&E::atmosphere_density, "atmosphere_density", {.min = 0, .max = 20, .speed = 0.01f, .tooltip = "Air density (1 = Earth): bluer sky, redder sunsets"})
+            .field(&E::atmosphere_haze, "atmosphere_haze", {.min = 0, .max = 50, .speed = 0.05f, .tooltip = "Aerosol density (1 = clear): whiter sky, larger sun halo"})
+            .field(&E::atmosphere_intensity, "atmosphere_intensity", {.min = 0, .max = 64, .speed = 0.01f, .tooltip = "Sky and ambient brightness relative to the sun"})
+            .field(&E::atmosphere_tints_sun, "atmosphere_tints_sun", {.tooltip = "Colour the sun light by the atmosphere (warm, dim sunsets)"})
             .commit();
     });
 }

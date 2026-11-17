@@ -1136,7 +1136,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 const bool has_env = env_map && env_map->cube();
                 if (has_env) {
                     const float blur = std::isfinite(env_.sky_blur) ? std::clamp(env_.sky_blur, 0.0f, 1.0f) : 0.0f;
-                    sky.env = {1.0f, blur * static_cast<float>(env_map->mip_count() - 1), env_intensity, env_rotation};
+                    sky.env = {env_.environment_sun_disc ? 2.0f : 1.0f, blur * static_cast<float>(env_map->mip_count() - 1), env_intensity, env_rotation};
                 }
                 pass.bind_pipeline(sky_pipeline_);
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, sky);
