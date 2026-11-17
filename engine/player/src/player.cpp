@@ -19,6 +19,7 @@
 #include "victus/physics/physics.hpp"
 #include "victus/platform/platform.hpp"
 #include "victus/player/export.hpp"
+#include "victus/player/mobile.hpp"
 #include "victus/player/platform_input.hpp"
 #include "victus/project/project.hpp"
 #include "victus/render/image.hpp"
@@ -27,8 +28,10 @@
 #include "victus/script/script.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <format>
 #include <optional>
+#include <thread>
 
 namespace victus::player {
 
@@ -96,7 +99,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     runtime::GpuAssetCache cache(**gpu, db->get());
     auto view = runtime::SceneView::create(**gpu, rhi::Format::RGBA8_UNORM);
     if (!view) return std::move(view).error();
-    const std::string quality_name = o.quality.empty() ? proj->settings().render_quality : o.quality;
+    const bool mobile = platform::Platform::is_mobile();
+    const std::string quality_name = !o.quality.empty() ? o.quality
+                                     : mobile           ? proj->settings().mobile_quality
+                                                        : proj->settings().render_quality;
     const auto tier = render::parse_quality_tier(quality_name);
     if (!tier) return make_error(ErrorCode::InvalidArgument, "unknown quality tier '" + quality_name + "'");
     render::RenderSettings quality = render::RenderSettings::preset(*tier);
@@ -105,9 +111,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     // Dynamic resolution holds the project's target frame rate in interactive runs (fixed-step,
     // recorded and replayed runs keep a constant scale so captures stay deterministic).
     std::optional<render::DynamicResolution> dynamic_resolution;
-    if (proj->settings().target_fps > 0 && o.max_frames == 0 && o.replay.empty() && o.record.empty()) {
+    const int target_fps = mobile ? proj->settings().mobile_target_fps : proj->settings().target_fps;
+    if (target_fps > 0 && o.max_frames == 0 && o.replay.empty() && o.record.empty()) {
         render::DynamicResolutionSettings ds;
-        ds.target_frame_ms = 1000.0f / static_cast<float>(proj->settings().target_fps);
+        ds.target_frame_ms = 1000.0f / static_cast<float>(target_fps);
         ds.min_scale = std::min(proj->settings().dynamic_resolution_min, quality.render_scale);
         ds.max_scale = quality.render_scale;
         dynamic_resolution.emplace(ds, quality.render_scale);
@@ -298,9 +305,33 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     const double start = platform::Platform::seconds();
     double last = start;
     Status result;
+    LifecycleGate lifecycle;
+    bool master_was_muted = false;
     for (;;) {
-        (*plat)->poll_events();
+        for (const auto& ev : (*plat)->poll_events()) {
+            if (ev.type == platform::EventType::AppLowMemory) VICTUS_LOG_WARN("player", "the OS reports low memory");
+            if (!lifecycle.on_event(ev.type)) continue;
+            if (audio_engine) {
+                if (lifecycle.suspended()) {
+                    master_was_muted = (*audio_engine)->bus_muted(audio::Bus::Master);
+                    (*audio_engine)->set_bus_muted(audio::Bus::Master, true);
+                } else {
+                    (*audio_engine)->set_bus_muted(audio::Bus::Master, master_was_muted);
+                }
+            }
+            VICTUS_LOG_INFO("player", "{}", lifecycle.suspended() ? "suspended: app in the background" : "resumed");
+            if (!lifecycle.suspended()) last = platform::Platform::seconds(); // no time jump on resume
+        }
         if ((*plat)->quit_requested()) break;
+        if (lifecycle.suspended()) {
+            // The surface may be gone: render nothing. Networked sessions keep simulating so the
+            // connection and the shared world stay alive; offline games simply pause.
+            const double now = platform::Platform::seconds();
+            if (server || client) sim.tick(scene, std::clamp(static_cast<float>(now - last), 1e-4f, 0.25f));
+            last = now;
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            continue;
+        }
         if ((*plat)->input().key_pressed(platform::Key::Escape) && !o.fullscreen && o.max_frames == 0) break;
         const double now = platform::Platform::seconds();
         if (reloader) {

@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: Apache-2.0
+// Builds the engine (repo root CMakeLists.txt) for arm64-v8a with the NDK, adds SDL's Java glue
+// (fetched from the same pinned, hash-checked SDL release CMake uses) and packages the exported
+// game's game.vpak as an APK asset. Properties (-P on the command line or gradle.properties):
+//   victus.game           exported game folder (the output of `victus export`), required
+//   victus.applicationId  default dev.victus.game
+//   victus.appName        launcher label, default "VICTUS Game"
+//   victus.versionCode / victus.versionName
+//   victus.orientation    activity screenOrientation, default sensorLandscape
+//   victus.sdlSource      optional local SDL3 source tree (skips the download)
+import java.security.MessageDigest
+import javax.inject.Inject
+
+plugins {
+    id 'com.android.application'
+}
+
+def victusRoot = rootProject.file('../..')
+def prop = { String name, String fallback -> (project.findProperty(name) ?: fallback) as String }
+
+// The SDL release is pinned once, in cmake/VictusDependencies.cmake (victus_fetch_sdl3).
+def depsCmake = new File(victusRoot, 'cmake/VictusDependencies.cmake').text
+def sdlPin = (depsCmake =~ /URL (https:\S+\/SDL3-([0-9.]+)\.tar\.gz)\s+URL_HASH SHA256=([0-9a-f]{64})/)
+if (!sdlPin.find()) throw new GradleException('SDL3 URL/hash not found in cmake/VictusDependencies.cmake')
+def sdlUrl = sdlPin.group(1)
+def sdlVersion = sdlPin.group(2)
+def sdlSha256 = sdlPin.group(3)
+
+def sdlJavaDir = layout.buildDirectory.dir('generated/victus/sdl-java')
+def gameAssetsDir = layout.buildDirectory.dir('generated/victus/game-assets')
+
+// Extracts SDL's Android Java sources (org.libsdl.app) from the pinned, hash-checked release
+// tarball, or from a local SDL source tree. Uses injected services (configuration-cache safe).
+abstract class VictusSdlJavaTask extends DefaultTask {
+    @Input abstract Property<String> getUrl()
+    @Input abstract Property<String> getSha256()
+    @Input @Optional abstract Property<String> getLocalSource()
+    @Internal abstract RegularFileProperty getTarball()
+    @OutputDirectory abstract DirectoryProperty getOutputDir()
+    @Inject abstract FileSystemOperations getFs()
+    @Inject abstract ArchiveOperations getArchives()
+
+    static String hashOf(File f) {
+        def md = MessageDigest.getInstance('SHA-256')
+        f.withInputStream { s ->
+            byte[] buf = new byte[1 << 16]
+            int n
+            while ((n = s.read(buf)) > 0) md.update(buf, 0, n)
+        }
+        return md.digest().encodeHex().toString()
+    }
+
+    @TaskAction
+    void extract() {
+        def out = outputDir.get().asFile
+        fs.delete { delete(out) }
+        def javaRel = 'android-project/app/src/main/java'
+        if (localSource.isPresent() && localSource.get()) {
+            fs.copy { from(new File(localSource.get(), javaRel)); into(out) }
+        } else {
+            def tf = tarball.get().asFile
+            if (!tf.exists() || hashOf(tf) != sha256.get()) {
+                tf.parentFile.mkdirs()
+                logger.lifecycle("Downloading ${url.get()}")
+                new URL(url.get()).withInputStream { i -> tf.withOutputStream { o -> o << i } }
+            }
+            def got = hashOf(tf)
+            if (got != sha256.get()) throw new GradleException("SDL tarball hash mismatch: ${got}, expected ${sha256.get()}")
+            fs.copy {
+                from(archives.tarTree(archives.gzip(tf))) {
+                    include "*/${javaRel}/**"
+                    eachFile { d -> d.path = d.path.substring(d.path.indexOf(javaRel) + javaRel.length() + 1) }
+                    includeEmptyDirs = false
+                }
+                into(out)
+            }
+        }
+        if (!new File(out, 'org/libsdl/app/SDLActivity.java').exists())
+            throw new GradleException("SDL Java sources missing in ${out}")
+    }
+}
+
+def fetchSdlJava = tasks.register('victusSdlJava', VictusSdlJavaTask) {
+    description = "Extracts SDL ${sdlVersion}'s Android Java sources (org.libsdl.app)"
+    url = sdlUrl
+    sha256 = sdlSha256
+    localSource = providers.gradleProperty('victus.sdlSource')
+    tarball = layout.buildDirectory.file("downloads/SDL3-${sdlVersion}.tar.gz")
+    outputDir = sdlJavaDir
+}
+
+def copyGame = tasks.register('victusGameAssets', Sync) {
+    description = 'Copies the exported game pack (and its third-party notices) into the APK assets'
+    def game = project.findProperty('victus.game')
+    if (game) {
+        // Accept the `victus export` output folder or its game/ subfolder.
+        def root = new File(game as String)
+        def pack = new File(root, 'game.vpak').isFile() ? new File(root, 'game.vpak') : new File(root, 'game/game.vpak')
+        from(pack)
+        from(root) { include 'THIRD_PARTY_NOTICES.txt' }
+        from(root.parentFile) { include 'THIRD_PARTY_NOTICES.txt' }
+        doFirst {
+            if (!pack.isFile()) throw new GradleException("victus.game: no game.vpak in ${root} or ${root}/game; export the game with `victus export`")
+        }
+    } else {
+        doFirst { throw new GradleException('set -Pvictus.game=<exported game folder> (the output of `victus export`)') }
+    }
+    into(gameAssetsDir)
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+android {
+    namespace = 'dev.victus.player'
+    compileSdk = 36
+    ndkVersion = '29.0.14206865'
+
+    defaultConfig {
+        applicationId = prop('victus.applicationId', 'dev.victus.game')
+        minSdk = 28
+        targetSdk = 36
+        versionCode = prop('victus.versionCode', '1') as int
+        versionName = prop('victus.versionName', '0.1.0')
+        manifestPlaceholders = [victusAppName: prop('victus.appName', 'VICTUS Game'),
+                                victusOrientation: prop('victus.orientation', 'sensorLandscape')]
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DVICTUS_BUILD_TESTS=OFF', '-DVICTUS_BUILD_SAMPLES=OFF', '-DVICTUS_BUILD_BENCHMARKS=OFF',
+                          '-DANDROID_STL=c++_shared'
+                targets 'main', 'SDL3-shared'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = new File(victusRoot, 'CMakeLists.txt')
+            version = '3.31.6'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = false
+            externalNativeBuild { cmake { arguments '-DCMAKE_BUILD_TYPE=Release' } }
+        }
+        debug {
+            // Debug APKs still run the optimized engine: an unoptimized renderer is unusable on phones.
+            externalNativeBuild { cmake { arguments '-DCMAKE_BUILD_TYPE=RelWithDebInfo' } }
+        }
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += [sdlJavaDir]
+            assets.srcDirs += [gameAssetsDir]
+        }
+    }
+
+    androidResources {
+        // Stored, not deflated: the pack is streamed to internal storage on first launch.
+        noCompress += ['vpak']
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false // keep .so files uncompressed and page-aligned in the APK
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+tasks.named('preBuild') { dependsOn(fetchSdlJava, copyGame) }

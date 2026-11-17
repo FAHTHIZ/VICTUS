@@ -821,6 +821,26 @@ int input_mouse_wheel(lua_State* L) {
     lua_pushnumber(L, in ? in->mouse_wheel() : 0.0);
     return 1;
 }
+// input.touch_count() -> fingers currently on the screen
+int input_touch_count(lua_State* L) {
+    const auto* in = host_of(L).input;
+    lua_pushinteger(L, in ? in->touch_count() : 0);
+    return 1;
+}
+// input.touch(i) -> vector(x, y, pressure) normalized to the window, and the finger id; nil when
+// there is no i-th finger (1-based, in touch order)
+int input_touch(lua_State* L) {
+    const auto* in = host_of(L).input;
+    const int i = static_cast<int>(luaL_checkinteger(L, 1)) - 1;
+    if (!in || i < 0 || i >= in->touch_count()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const gameplay::Touch t = in->touch(i);
+    lua_pushvector(L, t.position.x, t.position.y, t.pressure);
+    lua_pushnumber(L, static_cast<double>(t.id));
+    return 2;
+}
 // input.axis("A", "D") -> -1, 0 or 1; extra pairs are alternatives: axis("A","D","Left","Right")
 int input_axis(lua_State* L) {
     const auto* in = host_of(L).input;
@@ -3216,6 +3236,7 @@ void open_victus_libs(lua_State* L) {
                                   {"mouse_pressed", input_mouse_pressed},
                                   {"mouse_position", input_mouse_position},
                                   {"mouse_wheel", input_mouse_wheel}, {"mouse_delta", input_mouse_delta},
+                                  {"touch_count", input_touch_count}, {"touch", input_touch},
                                   {"axis", input_axis},
                                   {"action", input_action},
                                   {"action_pressed", input_action_pressed},

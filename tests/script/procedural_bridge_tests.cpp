@@ -316,3 +316,34 @@ return M
     host->update(s, gameplay::FrameTime{0.02, 0.02f, 2}, &in);
     CHECK(s.world().get<scene::Name>(e)->value == "zoom7"); // cleared at the end of the frame
 }
+
+TEST_CASE("script: input.touch reports fingers in touch order") {
+    TempDir d("victus_script_touch");
+    script::register_components();
+    d.write("scripts/touch.luau", R"lua(
+local M = {}
+function M:update(dt)
+    local n = input.touch_count()
+    local p, id = input.touch(1)
+    local missing = input.touch(n + 1) == nil
+    if p then
+        self.entity.name = string.format("%d:%.2f,%.2f,%.1f:%d:%s", n, p.x, p.y, p.z, id, tostring(missing))
+    else
+        self.entity.name = string.format("%d:none:%s", n, tostring(missing))
+    end
+end
+return M
+)lua");
+    Scene s;
+    const Entity e = scripted(s, "Pad", "scripts/touch.luau");
+    auto host = make_host(d);
+    gameplay::ManualInput in;
+    in.set_touches({{7, {0.25f, 0.75f}, 0.5f}, {9, {0.9f, 0.1f}, 1.0f}});
+    host->update(s, gameplay::FrameTime{0.0, 0.02f, 1}, &in);
+    CHECK(s.world().get<scene::Name>(e)->value == "2:0.25,0.75,0.5:7:true");
+    in.set_touches({});
+    host->update(s, gameplay::FrameTime{0.02, 0.02f, 2}, &in);
+    CHECK(s.world().get<scene::Name>(e)->value == "0:none:true");
+    for (const auto& err : host->recent_errors()) MESSAGE(err);
+    CHECK(host->recent_errors().empty());
+}

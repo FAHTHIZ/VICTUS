@@ -142,6 +142,15 @@ TEST_CASE("project: rendering quality settings round-trip and validate") {
     CHECK(q->settings().target_fps == 30);
     CHECK(q->settings().dynamic_resolution_min == doctest::Approx(0.6f));
     CHECK_FALSE(q->settings().extra.find("rendering")); // a known key, not preserved as "extra"
+    CHECK(q->settings().mobile_quality == "medium");
+    CHECK(q->settings().mobile_target_fps == 30);
+    q->settings().mobile_quality = "low";
+    q->settings().mobile_target_fps = 0;
+    REQUIRE(q->save().ok());
+    auto m = project::Project::open(dir);
+    REQUIRE(m.ok());
+    CHECK(m->settings().mobile_quality == "low");
+    CHECK(m->settings().mobile_target_fps == 0);
 
     auto text = fs::read_text(dir / "victus.project");
     REQUIRE(text.ok());

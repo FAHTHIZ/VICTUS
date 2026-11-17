@@ -38,6 +38,8 @@ Value settings_to_json(const ProjectSettings& s) {
         rendering.set("target_fps", s.target_fps);
         rendering.set("dynamic_resolution_min", s.dynamic_resolution_min);
     }
+    if (s.mobile_quality != "medium") rendering.set("mobile_quality", s.mobile_quality);
+    if (s.mobile_target_fps != 30) rendering.set("mobile_target_fps", s.mobile_target_fps);
     v.set("rendering", std::move(rendering));
     v.set("input", s.input.to_json());
     if (s.save_version != 1) v.set("save_version", s.save_version);
@@ -62,6 +64,13 @@ Status settings_from_json(const Value& v, ProjectSettings& s) {
     if (s.render_quality != "low" && s.render_quality != "medium" && s.render_quality != "high" &&
         s.render_quality != "ultra")
         return bad("rendering.quality must be low, medium, high or ultra");
+    s.mobile_quality = r["mobile_quality"].as_string_or("medium");
+    if (s.mobile_quality != "low" && s.mobile_quality != "medium" && s.mobile_quality != "high" &&
+        s.mobile_quality != "ultra")
+        return bad("rendering.mobile_quality must be low, medium, high or ultra");
+    const auto mfps = r["mobile_target_fps"].as_int(30);
+    if (mfps < 0 || mfps > 1000) return bad("rendering.mobile_target_fps must be 0 (off) or between 1 and 1000");
+    s.mobile_target_fps = static_cast<int>(mfps);
     s.render_scale = r["render_scale"].as_float(0.0f);
     if (!(s.render_scale == 0.0f || (s.render_scale >= 0.25f && s.render_scale <= 2.0f)))
         return bad("rendering.render_scale must be 0 (tier default) or between 0.25 and 2");

@@ -38,6 +38,15 @@ victus_add_notice("glslang 16.6.0 (BSD-3-Clause, BSD-2-Clause, MIT, Apache-2.0)"
 victus_add_notice("SPIRV-Cross vulkan-sdk-1.4.363.0 (Apache-2.0)" "${spirv_cross_SOURCE_DIR}/LICENSE")
 victus_add_notice("bc7enc_rdo b9438627 (MIT, alternatively public domain)" "${bc7enc_rdo_SOURCE_DIR}/LICENSE")
 victus_add_notice("Arm ASTC Encoder 5.7.1 (Apache-2.0)" "${astcenc_SOURCE_DIR}/LICENSE.txt")
+if(ANDROID)
+    # Android apps also ship SDL's Java glue (compiled into classes.dex, zlib like the rest of SDL,
+    # covered above) and the NDK's libc++_shared.so.
+    file(APPEND ${_notices_txt} "\n------------------------------------------------------------\n"
+        "LLVM libc++ / libc++abi (Android NDK, libc++_shared.so)\n"
+        "------------------------------------------------------------\n"
+        "Licensed under the Apache License v2.0 with LLVM Exceptions (https://llvm.org/LICENSE.txt).\n"
+        "The LLVM Exceptions waive attribution requirements for compiled forms; listed for completeness.\n")
+endif()
 victus_add_notice("stb (stb_image, stb_image_write, stb_truetype; MIT or public domain)" "${PROJECT_SOURCE_DIR}/third_party/stb/LICENSE")
 file(APPEND ${_notices_txt} "\nstb_vorbis (bundled with miniaudio, MIT or public domain): Copyright (c) 2017 Sean Barrett.\n")
 victus_add_notice("cgltf 1.15 (MIT)" "${PROJECT_SOURCE_DIR}/third_party/cgltf/LICENSE")
@@ -61,5 +70,6 @@ victus_add_module(player
     SOURCES
         src/player.cpp
         src/export.cpp
+        src/mobile.cpp
         ${_notices_cpp}
     DEPS VICTUS::Runtime VICTUS::Project VICTUS::Gameplay VICTUS::Script VICTUS::Platform VICTUS::Audio VICTUS::Net)
