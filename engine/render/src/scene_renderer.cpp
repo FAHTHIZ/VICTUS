@@ -23,6 +23,18 @@ namespace {
 struct FrameUniforms {
     Mat4 view_proj;
 };
+struct MotionUniforms {
+    Mat4 view_proj, prev_view_proj;
+};
+// Per-instance data of the motion vector pass (vertex buffer slot 1): current model matrix columns
+// (locations 4..7), previous model matrix as three affine rows (8..10) and, for skinned draws, the
+// current / previous palette bases (13).
+struct MotionInstance {
+    Mat4 model;
+    Vec4 prev_rows[3];
+    Vec4 params;
+};
+static_assert(sizeof(MotionInstance) == 128);
 // Per-instance vertex data (vertex buffer slot 1, locations 4..10): model matrix columns, then
 // the inverse-transpose 3x3 normal matrix as three padded columns.
 struct InstanceData {
@@ -614,8 +626,9 @@ SceneRenderer::~SceneRenderer() {
         if (pl) d.destroy(pl);
     for (auto pl : {opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_, prepass_cull_,
                     prepass_double_, skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_,
-                    particle_alpha_, particle_additive_})
+                    particle_alpha_, particle_additive_, motion_cull_, motion_double_, skin_motion_cull_, skin_motion_double_})
         if (pl) d.destroy(pl);
+    if (motion_buffer_) d.destroy(motion_buffer_);
     if (palette_buffer_) d.destroy(palette_buffer_);
     if (light_buffer_) d.destroy(light_buffer_);
     if (cluster_buffer_) d.destroy(cluster_buffer_);
@@ -655,6 +668,62 @@ bool SceneRenderer::ensure_occlusion_pipelines() {
     hiz_depth_ = depth.value();
     hiz_reduce_ = reduce.value();
     occlusion_cull_ = cull.value();
+    return true;
+}
+
+bool SceneRenderer::ensure_motion_pipelines() {
+    if (motion_cull_) return true;
+    if (motion_failed_) return false;
+    auto& d = ctx_.device();
+    auto vs = ctx_.shader("motion.vert");
+    auto skin_vs = vs ? ctx_.shader("motion_skinned.vert") : Result<rhi::ShaderHandle>(vs.error());
+    auto fs = skin_vs ? ctx_.shader("motion.frag") : Result<rhi::ShaderHandle>(skin_vs.error());
+    std::array<rhi::PipelineHandle, 4> made{};
+    std::optional<Error> failure;
+    if (!fs) failure = fs.error();
+    if (!failure) {
+        rhi::PipelineDesc desc;
+        desc.vertex = vs.value();
+        desc.fragment = fs.value();
+        desc.vertex_buffers = {{0, sizeof(Vertex3D), false}, {1, sizeof(MotionInstance), true}};
+        desc.attributes = {{0, 0, rhi::VertexFormat::Float3, 0}};
+        for (std::uint32_t i = 0; i < 4; ++i) desc.attributes.push_back({4 + i, 1, rhi::VertexFormat::Float4, i * 16});
+        for (std::uint32_t i = 0; i < 3; ++i) desc.attributes.push_back({8 + i, 1, rhi::VertexFormat::Float4, 64 + i * 16});
+        // Test against the finished scene depth without writing it: only visible surfaces get motion.
+        desc.depth_test = true;
+        desc.depth_write = false;
+        desc.depth_compare = rhi::CompareOp::LessEqual;
+        desc.depth_format = depth_format_;
+        desc.color_targets = {{rhi::Format::RG16_FLOAT, rhi::BlendMode::Opaque}};
+        rhi::PipelineDesc skin = desc;
+        skin.vertex = skin_vs.value();
+        skin.vertex_buffers.push_back({2, sizeof(SkinVertex), false});
+        skin.attributes.push_back({11, 2, rhi::VertexFormat::UShort4, 0});
+        skin.attributes.push_back({12, 2, rhi::VertexFormat::Float4, 8});
+        skin.attributes.push_back({13, 1, rhi::VertexFormat::Float4, 112});
+        const rhi::PipelineDesc* descs[4] = {&desc, &desc, &skin, &skin};
+        const char* names[4] = {"motion_vectors", "motion_vectors_double_sided", "motion_vectors_skinned",
+                                "motion_vectors_skinned_double_sided"};
+        for (int i = 0; i < 4 && !failure; ++i) {
+            rhi::PipelineDesc pd = *descs[i];
+            pd.name = names[i];
+            pd.cull = (i & 1) ? rhi::CullMode::None : rhi::CullMode::Back;
+            auto p = d.create_pipeline(pd);
+            if (!p) failure = p.error();
+            else made[i] = p.value();
+        }
+    }
+    if (failure) {
+        VICTUS_LOG_WARN("render", "object motion vectors disabled: {}", failure->message);
+        for (auto p : made)
+            if (p) d.destroy(p);
+        motion_failed_ = true;
+        return false;
+    }
+    motion_cull_ = made[0];
+    motion_double_ = made[1];
+    skin_motion_cull_ = made[2];
+    skin_motion_double_ = made[3];
     return true;
 }
 
@@ -756,17 +825,18 @@ void SceneRenderer::add_reflection_probe(const ReflectionProbe& probe) {
     probes_.push_back(probe);
 }
 
-void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const Mat4& model) {
+void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const Mat4& model, std::uint64_t motion_id) {
     if (!mesh.valid()) return;
     ++stats_.submitted;
-    draws_.push_back({&mesh, material, model, 0.0f,
-                      mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh))});
+    Draw d{&mesh, material, model, 0.0f, mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh))};
+    d.motion_id = motion_id;
+    draws_.push_back(d);
 }
 
 void SceneRenderer::submit_skinned(const GpuMesh& mesh, const Material& material, const Mat4& model,
-                                   std::span<const Mat4> joints, const Aabb& world_bounds) {
+                                   std::span<const Mat4> joints, const Aabb& world_bounds, std::uint64_t motion_id) {
     if (!mesh.skinned() || joints.empty()) {
-        submit(mesh, material, model);
+        submit(mesh, material, model, motion_id);
         return;
     }
     if (!mesh.valid()) return;
@@ -776,6 +846,8 @@ void SceneRenderer::submit_skinned(const GpuMesh& mesh, const Material& material
     d.palette = static_cast<std::uint32_t>(palette_.size());
     d.skinned = true;
     d.world_bounds = world_bounds;
+    d.motion_id = motion_id;
+    d.joint_count = static_cast<std::uint32_t>(joints.size());
     palette_.insert(palette_.end(), joints.begin(), joints.end());
     draws_.push_back(d);
 }
@@ -1036,6 +1108,99 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         return a->distance < b->distance;
     });
     stats_.visible = static_cast<std::uint32_t>(visible.size());
+
+    // Object motion vectors: visible opaque draws whose transform or joints changed since the last
+    // frame. Previous joints are appended to this frame's palette so one storage buffer serves both.
+    struct MotionBatch {
+        const Draw* first;
+        std::uint32_t instance_offset, instance_count;
+    };
+    std::vector<MotionInstance> motion_instances;
+    std::vector<MotionBatch> motion_batches;
+    const bool track_motion = taa && S.motion_vectors;
+    if (track_motion && history_valid_ && !motion_prev_.empty()) {
+        std::vector<std::pair<const Draw*, MotionInstance>> moving;
+        for (const Draw* d : visible) {
+            // Alpha-tested draws would write motion through their holes (no discard here).
+            if (d->motion_id == 0 || d->material.alpha_cutoff > 0.0f) continue;
+            const auto it = motion_prev_.find(d->motion_id);
+            if (it == motion_prev_.end()) continue;
+            const MotionState& prev = it->second;
+            const bool moved = std::memcmp(&prev.model, &d->model, sizeof(Mat4)) != 0;
+            const bool same_skeleton = d->skinned && prev.joint_count == d->joint_count;
+            const bool posed = same_skeleton && std::memcmp(motion_joints_.data() + prev.joint_offset, palette_.data() + d->palette,
+                                                            d->joint_count * sizeof(Mat4)) != 0;
+            if (!moved && !posed) continue;
+            MotionInstance mi{};
+            mi.model = d->model;
+            for (int r = 0; r < 3; ++r) mi.prev_rows[r] = {prev.model.c[0][r], prev.model.c[1][r], prev.model.c[2][r], prev.model.c[3][r]};
+            std::uint32_t prev_base = d->palette;
+            if (posed) {
+                prev_base = static_cast<std::uint32_t>(palette_.size());
+                palette_.insert(palette_.end(), motion_joints_.begin() + prev.joint_offset,
+                                motion_joints_.begin() + prev.joint_offset + prev.joint_count);
+            }
+            mi.params = {static_cast<float>(d->palette), static_cast<float>(prev_base), 0.0f, 0.0f};
+            moving.emplace_back(d, mi);
+        }
+        if (!moving.empty() && ensure_motion_pipelines()) {
+            std::stable_sort(moving.begin(), moving.end(), [](const auto& a, const auto& b) {
+                if (a.first->skinned != b.first->skinned) return !a.first->skinned;
+                if (a.first->material.double_sided != b.first->material.double_sided) return !a.first->material.double_sided;
+                if (a.first->mesh != b.first->mesh) return a.first->mesh < b.first->mesh;
+                return a.first->lod < b.first->lod;
+            });
+            for (const auto& [d, mi] : moving) {
+                const auto offset = static_cast<std::uint32_t>(motion_instances.size());
+                motion_instances.push_back(mi);
+                if (!motion_batches.empty()) {
+                    const Draw* f = motion_batches.back().first;
+                    if (f->mesh == d->mesh && f->lod == d->lod && f->skinned == d->skinned &&
+                        f->material.double_sided == d->material.double_sided) {
+                        ++motion_batches.back().instance_count;
+                        continue;
+                    }
+                }
+                motion_batches.push_back({d, offset, 1});
+            }
+            stats_.motion_draws = static_cast<std::uint32_t>(motion_instances.size());
+            stats_.motion_batches = static_cast<std::uint32_t>(motion_batches.size());
+        }
+    }
+    // This frame's state becomes the next frame's "previous" once the frame is recorded.
+    motion_next_.clear();
+    motion_joints_next_.clear();
+    if (track_motion)
+        for (const Draw& d : draws_) {
+            if (d.motion_id == 0) continue;
+            MotionState st{d.model, 0, 0};
+            if (d.skinned) {
+                st.joint_offset = static_cast<std::uint32_t>(motion_joints_next_.size());
+                st.joint_count = d.joint_count;
+                motion_joints_next_.insert(motion_joints_next_.end(), palette_.begin() + d.palette,
+                                           palette_.begin() + d.palette + d.joint_count);
+            }
+            motion_next_.emplace(d.motion_id, st); // the first submission of an id wins
+        }
+    if (!motion_instances.empty()) {
+        const auto needed = static_cast<std::uint32_t>(motion_instances.size());
+        if (needed > motion_capacity_) {
+            if (motion_buffer_) dev.destroy(motion_buffer_);
+            motion_buffer_ = {};
+            motion_capacity_ = std::max({needed, motion_capacity_ * 2, 64u});
+            auto b = dev.create_buffer({"motion_instances", motion_capacity_ * static_cast<std::uint32_t>(sizeof(MotionInstance)),
+                                        rhi::BufferUsageVertex});
+            if (!b) {
+                motion_capacity_ = 0;
+                return std::move(b).error();
+            }
+            motion_buffer_ = b.value();
+        }
+        cmd.upload_buffer(motion_buffer_, 0,
+                          {reinterpret_cast<const std::uint8_t*>(motion_instances.data()),
+                           motion_instances.size() * sizeof(MotionInstance)},
+                          true);
+    }
 
     // Instancing: consecutive draws with the same mesh and identical material become one batch.
     // Every pass reads its own contiguous range of the per-frame instance buffer.
@@ -1762,11 +1927,45 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         if (!taa_pl) return std::move(taa_pl).error();
         TaaUniforms tu{};
         tu.reproject = prev_view_proj_ * inverse(view_proj_unjittered);
-        tu.params = {S.taa_blend, have_prev ? 1.0f : 0.0f, 1.25f, 0.0f};
+        const bool object_motion = have_prev && !motion_batches.empty();
+        tu.params = {S.taa_blend, have_prev ? 1.0f : 0.0f, 1.25f, object_motion ? 1.0f : 0.0f};
         tu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh),
                      1.0f / static_cast<float>(have_prev ? history_w_[prev] : rw),
                      1.0f / static_cast<float>(have_prev ? history_h_[prev] : rh)};
         const RGTexture resolved = graph.import_texture("taa_resolved", history_[cur], color_desc(hdr_format_, rw, rh));
+        RGTexture motion;
+        if (object_motion) {
+            rhi::TextureDesc md = color_desc(rhi::Format::RG16_FLOAT, rw, rh);
+            md.name = "motion_vectors";
+            motion = graph.create_texture("motion_vectors", md);
+            graph.add_pass(
+                "motion_vectors",
+                [&](PassBuilder& b) {
+                    b.write_color(motion, rhi::LoadOp::Clear, {0, 0, 0, 0});
+                    b.write_depth(depth, rhi::LoadOp::Load, 1.0f);
+                },
+                [this, &motion_batches, view_proj](PassContext& ctx) {
+                    rhi::RenderPass& pass = *ctx.pass;
+                    const MotionUniforms mu{view_proj, prev_view_proj_};
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, mu);
+                    rhi::PipelineHandle bound{};
+                    for (const MotionBatch& b : motion_batches) {
+                        const Draw* d = b.first;
+                        const rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_motion_double_ : skin_motion_cull_)
+                                                                    : (d->material.double_sided ? motion_double_ : motion_cull_);
+                        if (!(bound == want)) {
+                            pass.bind_pipeline(want);
+                            if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                            bound = want;
+                        }
+                        if (d->skinned) pass.bind_vertex_buffer(2, d->mesh->skin);
+                        pass.bind_vertex_buffer(0, d->mesh->vertices);
+                        pass.bind_vertex_buffer(1, motion_buffer_, b.instance_offset * static_cast<std::uint32_t>(sizeof(MotionInstance)));
+                        pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
+                        draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
+                    }
+                });
+        }
         RGTexture previous;
         if (have_prev)
             previous = graph.import_texture("taa_history", history_[prev],
@@ -1777,15 +1976,18 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 b.read(hdr);
                 b.read(depth);
                 if (previous.valid()) b.read(previous);
+                if (motion.valid()) b.read(motion);
                 b.write_color(resolved, rhi::LoadOp::DontCare);
             },
-            [this, hdr, depth, previous, tu, pl = taa_pl.value()](PassContext& ctx) {
+            [this, hdr, depth, previous, motion, tu, pl = taa_pl.value()](PassContext& ctx) {
                 ctx.pass->bind_pipeline(pl);
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, tu);
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(hdr), ctx_.nearest_clamp());
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1,
                                        previous.valid() ? ctx.texture(previous) : ctx.texture(hdr), ctx_.linear_clamp());
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 2, ctx.texture(depth), ctx_.nearest_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 3, motion.valid() ? ctx.texture(motion) : ctx.texture(hdr),
+                                       ctx_.nearest_clamp());
                 ctx.pass->draw(3);
             });
         scene_color = resolved;
@@ -1958,6 +2160,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         prev_view_proj_ = view_proj_unjittered;
         ++frame_index_;
     }
+    motion_prev_.swap(motion_next_);
+    motion_joints_.swap(motion_joints_next_);
     if (auto_exposure) {
         exposure_index_ ^= 1u;
         adaptation_valid_ = true;

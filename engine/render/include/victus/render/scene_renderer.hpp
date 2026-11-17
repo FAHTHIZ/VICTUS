@@ -220,6 +220,10 @@ struct RenderSettings {
     // moving objects bounded by neighbourhood clipping). Also stabilises SSAO and shadows.
     bool taa{true};                       // High/Ultra; Low/Medium use FXAA
     float taa_blend{0.1f};                // weight of the current frame (0.04..1)
+    // Object motion vectors (ADR-0054): opaque draws submitted with a motion id whose transform or
+    // joints changed since the previous frame are drawn into a motion buffer the TAA resolve
+    // follows, so moving and animated objects keep their history instead of ghosting. TAA only.
+    bool motion_vectors{true};
     bool auto_exposure{true};             // allowed; scenes enable it through Environment
     bool instancing{true};                // merge identical mesh+material draws into instanced batches
     // Mesh levels of detail: each draw uses the coarsest level whose geometric error, projected
@@ -272,6 +276,8 @@ struct SceneStats {
     // Local light shadows: shadowed lights, atlas tiles rendered, caster draws over all tiles.
     std::uint32_t local_shadow_lights{0}, local_shadow_tiles{0}, local_shadow_draws{0};
     std::uint32_t occlusion_tested{0}, occlusion_batches{0};
+    // Object motion vectors: moving instances drawn into the motion buffer / their batches.
+    std::uint32_t motion_draws{0}, motion_batches{0};
 };
 
 struct SceneRendererOptions {
@@ -310,13 +316,17 @@ public:
     void begin(const Camera3D& camera, const DirectionalLight& sun, const Environment& env);
     void add_point_light(const PointLight& light);
     void add_spot_light(const SpotLight& light);
-    void submit(const GpuMesh& mesh, const Material& material, const math::Mat4& model);
+    // `motion_id` (non-zero, unique per object and stable across frames, e.g. an entity id) lets
+    // the renderer compare the draw with the previous frame and write object motion vectors for
+    // TAA; 0 = no tracking (the object is treated as static, camera motion only).
+    void submit(const GpuMesh& mesh, const Material& material, const math::Mat4& model, std::uint64_t motion_id = 0);
     // Skinned draw (GPU skinning). `joints` are skin matrices in the mesh's model space
     // (inverse(model) * joint_world * inverse_bind); `world_bounds` must contain the posed mesh.
     // Falls back to submit() when the mesh has no skin stream or no joints are given. Skinned
     // instances of one mesh+material are still batched into one instanced draw.
     void submit_skinned(const GpuMesh& mesh, const Material& material, const math::Mat4& model,
-                        std::span<const math::Mat4> joints, const math::Aabb& world_bounds);
+                        std::span<const math::Mat4> joints, const math::Aabb& world_bounds,
+                        std::uint64_t motion_id = 0);
     // One batch of billboards sharing a material (e.g. one emitter); `bounds` (world space,
     // including particle sizes) is used for frustum culling and batch ordering.
     void submit_particles(std::span<const ParticleInstance> particles, const ParticleMaterial& material,
@@ -356,6 +366,13 @@ private:
         std::uint8_t lod{0};      // level of detail picked for this frame
         math::Aabb world_bounds;  // skinned only (static draws use mesh bounds * model)
         int probe{-1};            // reflection probe index (-1: scene environment)
+        std::uint64_t motion_id{0};
+        std::uint32_t joint_count{0}; // skinned only
+    };
+    // Previous-frame state of a tracked object (motion vectors).
+    struct MotionState {
+        math::Mat4 model;
+        std::uint32_t joint_offset{0}, joint_count{0}; // into motion_joints_
     };
     // A run of consecutive instances in the per-frame instance buffer sharing one mesh/material.
     struct Batch {
@@ -382,6 +399,8 @@ private:
     [[nodiscard]] Status ensure_history(std::uint32_t index, std::uint32_t width, std::uint32_t height);
     // Creates the occlusion compute pipelines on first use; false (logged once) when unavailable.
     [[nodiscard]] bool ensure_occlusion_pipelines();
+    // Creates the motion vector pipelines on first use; false (logged once) when unavailable.
+    [[nodiscard]] bool ensure_motion_pipelines();
     [[nodiscard]] Status ensure_buffer(rhi::BufferHandle& buffer, std::uint32_t& capacity, std::uint32_t bytes,
                                        std::uint32_t usage, const char* name);
 
@@ -424,6 +443,12 @@ private:
     std::uint32_t hiz_capacity_{0}, occl_bounds_capacity_{0}, occl_args_capacity_{0}, occl_instances_capacity_{0};
     std::uint32_t occl_batches_{0}; // batches culled by the last frame (for read_occlusion_survivors)
     std::vector<math::Mat4> palette_;
+    rhi::PipelineHandle motion_cull_, motion_double_, skin_motion_cull_, skin_motion_double_;
+    bool motion_failed_{false};
+    rhi::BufferHandle motion_buffer_;
+    std::uint32_t motion_capacity_{0}; // in instances
+    std::unordered_map<std::uint64_t, MotionState> motion_prev_, motion_next_;
+    std::vector<math::Mat4> motion_joints_, motion_joints_next_;
     rhi::Format depth_format_{rhi::Format::D32_FLOAT};
     rhi::Format hdr_format_{rhi::Format::RGBA16_FLOAT};
 

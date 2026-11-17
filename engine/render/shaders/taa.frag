@@ -4,14 +4,17 @@
 // frame is rendered with a sub-pixel jitter; the history is reprojected from scene depth
 // (closest depth of a 3x3 neighbourhood, so silhouettes follow the foreground), sampled with a
 // 5-tap Catmull-Rom filter and clipped to the current neighbourhood's YCoCg colour box, then
-// blended in luminance-weighted space to keep bright pixels from flickering.
+// blended in luminance-weighted space to keep bright pixels from flickering. Surfaces that moved
+// by themselves (rigid or skinned) carry object motion in u_motion (ADR-0054), added to the camera
+// reprojection at the same closest-depth texel.
 layout(location = 0) in vec2 v_uv;
 layout(set = 2, binding = 0) uniform sampler2D u_current;
 layout(set = 2, binding = 1) uniform sampler2D u_history;
 layout(set = 2, binding = 2) uniform sampler2D u_depth;
+layout(set = 2, binding = 3) uniform sampler2D u_motion; // RG: object motion in uv (when params.w)
 layout(set = 3, binding = 0) uniform Taa {
     mat4 reproject;  // current NDC -> previous clip (both unjittered)
-    vec4 params;     // x: current-frame weight, y: history valid, z: clip gamma, w: unused
+    vec4 params;     // x: current-frame weight, y: history valid, z: clip gamma, w: object motion present
     vec4 screen;     // xy: 1 / render size, zw: 1 / history size
 } u;
 layout(location = 0) out vec4 out_color;
@@ -50,6 +53,7 @@ void main() {
     // Neighbourhood moments (YCoCg of luminance-weighted colour) and closest depth.
     vec3 m1 = vec3(0.0), m2 = vec3(0.0);
     float closest = 1.0;
+    vec2 closest_uv = v_uv;
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
             vec2 uv = v_uv + vec2(x, y) * px;
@@ -57,7 +61,11 @@ void main() {
             c = to_ycocg(c / (1.0 + luma(c)));
             m1 += c;
             m2 += c * c;
-            closest = min(closest, textureLod(u_depth, uv, 0.0).r);
+            float d = textureLod(u_depth, uv, 0.0).r;
+            if (d < closest) {
+                closest = d;
+                closest_uv = uv;
+            }
         }
     }
     if (u.params.y < 0.5) { out_color = vec4(current, 1.0); return; }
@@ -65,6 +73,7 @@ void main() {
     vec4 prev = u.reproject * vec4(v_uv.x * 2.0 - 1.0, 1.0 - v_uv.y * 2.0, closest, 1.0);
     vec2 prev_ndc = prev.xy / max(prev.w, 1e-6);
     vec2 prev_uv = vec2(prev_ndc.x * 0.5 + 0.5, 0.5 - prev_ndc.y * 0.5);
+    if (u.params.w > 0.5) prev_uv -= textureLod(u_motion, closest_uv, 0.0).rg;
     if (prev.w <= 0.0 || any(lessThan(prev_uv, vec2(0.0))) || any(greaterThan(prev_uv, vec2(1.0)))) {
         out_color = vec4(current, 1.0);
         return;
