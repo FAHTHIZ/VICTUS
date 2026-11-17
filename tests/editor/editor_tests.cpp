@@ -2270,3 +2270,43 @@ TEST_CASE("editor: terrain strokes sculpt and paint, undo and redo, and are writ
     Entity none = s.create("Empty");
     CHECK_FALSE(ed.add_foliage(none).ok());
 }
+
+TEST_CASE("editor: play sessions run behaviour trees and expose them to the AI debugger") {
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Brains", "Brains", "3d").ok());
+    h.frames(2);
+    auto& ed = *h.ed;
+    const auto tree_file = ed.assets()->assets_dir() / "ai" / "counter.vbt";
+    std::filesystem::create_directories(tree_file.parent_path());
+    REQUIRE(fs::write_text_atomic(tree_file, R"({"blackboard": {"mood": "curious"},
+        "root": {"type": "sequence", "children": [{"type": "wait", "seconds": 0.01}, {"type": "set", "key": "done", "value": true}]}})").ok());
+    Scene& s = ed.edit_scene();
+    const Entity e = s.create("Thinker");
+    s.world().add<ai::BehaviorTreeComponent>(e, ai::BehaviorTreeComponent{.tree = "ai/counter.vbt"});
+    s.world().add<ai::PerceptionComponent>(e, ai::PerceptionComponent{});
+    CHECK(ed.play_ai() == nullptr);
+    CHECK(ed.ai_debug_lines(e).empty());
+    ed.play();
+    h.frames(10);
+    REQUIRE(ed.play_ai() != nullptr);
+    Scene& play = ed.active_scene();
+    const Entity pe = play.find(s.uuid(e));
+    REQUIRE_FALSE(pe.is_null());
+    const auto d = ed.play_ai()->debug(play, pe);
+    REQUIRE(d);
+    CHECK(d->error.empty());
+    CHECK(d->ticks >= 5);
+    CHECK(d->completions >= 1);
+    const auto lines = ed.ai_debug_lines(pe);
+    REQUIRE(lines.size() >= 4);
+    CHECK(lines[0].find("ai/counter.vbt") != std::string::npos);
+    CHECK(lines[1].find("sequence") != std::string::npos);
+    CHECK(std::find(lines.begin(), lines.end(), "bb mood = curious") != lines.end());
+    CHECK(std::find(lines.begin(), lines.end(), "bb done = true") != lines.end());
+    ed.set_show_ai(true);
+    ed.select(e, false);
+    h.frames(2); // debugger window and perception overlay draw without errors
+    ed.stop();
+    CHECK(ed.play_ai() == nullptr);
+}

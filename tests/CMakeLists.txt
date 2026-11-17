@@ -185,6 +185,11 @@ victus_add_test(victus_navigation_tests
     DEPS VICTUS::Navigation VICTUS::Physics VICTUS::Core
     LABELS navigation)
 
+victus_add_test(victus_ai_tests
+    SOURCES ai/ai_tests.cpp
+    DEPS VICTUS::Ai VICTUS::Navigation VICTUS::Physics VICTUS::Core
+    LABELS ai)
+
 victus_add_test(victus_net_tests
     SOURCES net/net_tests.cpp
     DEPS VICTUS::Net VICTUS::Script VICTUS::Physics

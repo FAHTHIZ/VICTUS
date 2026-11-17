@@ -212,6 +212,8 @@ TEST_CASE("assets: database metas, stable UUIDs, incremental cooking and depende
     CHECK_FALSE(normal->settings["srgb"].as_bool(true)); // naming convention → linear
     CHECK(model->kind == AssetKind::Model);
     CHECK(db.find_path("readme.txt")->kind == AssetKind::Unknown);
+    CHECK(kind_for_extension(".vbt") == AssetKind::BehaviorTree);
+    CHECK(std::string(to_string(AssetKind::BehaviorTree)) == "behavior_tree");
     const Uuid wall_id = wall->uuid, model_id = model->uuid;
 
     jobs::JobSystem js(2);
