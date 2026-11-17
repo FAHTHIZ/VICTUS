@@ -116,6 +116,7 @@ struct AiSystem::Impl {
     TreeLoader loader;
     std::unordered_map<std::string, CachedTree> cache;
     std::unordered_map<std::string, ActionFn> actions;
+    ActionFn fallback; // actions with no registered function (Luau script tasks)
     std::unordered_map<Entity, Instance, ecs::EntityHash> instances;
     std::unordered_map<Entity, Blackboard, ecs::EntityHash> blackboards;
     std::unordered_map<Entity, PerceptionState, ecs::EntityHash> perception;
@@ -185,10 +186,9 @@ struct AiSystem::Impl {
                 if (a.has_destination && math::length(a.destination - st.dest) < 1e-3f) nav->stop(*s, e);
             }
         } else if (n.type == NodeType::Action) {
-            if (auto it = actions.find(n.action); it != actions.end() && it->second) {
-                ActionContext ctx{*s, e, *bb, n, dt, false, true};
-                (void)it->second(ctx);
-            }
+            ActionContext ctx{*s, e, *bb, n, dt, false, true};
+            if (auto it = actions.find(n.action); it != actions.end() && it->second) (void)it->second(ctx);
+            else if (fallback) (void)fallback(ctx);
         }
     }
 
@@ -291,13 +291,14 @@ struct AiSystem::Impl {
         case NodeType::MoveTo: return move_to(n, st, first);
         case NodeType::RandomPoint: return random_point(n);
         case NodeType::Action: {
-            const auto it = actions.find(n.action);
-            if (it == actions.end() || !it->second) {
-                if (warned_actions.insert(n.action).second) VICTUS_LOG_WARN("ai", "unknown action \"{}\"", n.action);
-                return NodeStatus::Failure;
-            }
             ActionContext ctx{*s, e, *bb, n, dt, first, false};
-            const NodeStatus r = it->second(ctx);
+            const auto it = actions.find(n.action);
+            NodeStatus r = NodeStatus::Idle;
+            if (it != actions.end() && it->second) r = it->second(ctx);
+            else if (fallback) r = fallback(ctx);
+            if (r == NodeStatus::Idle && (it == actions.end() || !it->second)) {
+                if (warned_actions.insert(n.action).second) VICTUS_LOG_WARN("ai", "unknown action \"{}\"", n.action);
+            }
             return r == NodeStatus::Idle ? NodeStatus::Failure : r;
         }
         case NodeType::Succeed: return NodeStatus::Success;
@@ -507,6 +508,10 @@ AiSystem::AiSystem(TreeLoader loader) : impl_(std::make_unique<Impl>()) {
 AiSystem::~AiSystem() = default;
 
 void AiSystem::register_action(std::string name, ActionFn fn) { impl_->actions[std::move(name)] = std::move(fn); }
+
+void AiSystem::set_fallback_action(ActionFn fn) { impl_->fallback = std::move(fn); }
+
+bool AiSystem::has_fallback_action() const noexcept { return static_cast<bool>(impl_->fallback); }
 
 bool AiSystem::has_action(std::string_view name) const noexcept {
     return impl_->actions.contains(std::string(name));

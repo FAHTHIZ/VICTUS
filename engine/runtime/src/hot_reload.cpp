@@ -30,6 +30,7 @@ std::vector<std::string> HotReloadReport::lines() const {
     for (const auto& m : sprite_sheets) out.push_back("reloaded sprite sheet " + m);
     for (const auto& m : tilesets) out.push_back("reloaded tile set " + m);
     for (const auto& m : terrains) out.push_back("reloaded terrain " + m);
+    for (const auto& m : behavior_trees) out.push_back("reloaded behaviour tree " + m);
     for (const auto& r : restart_needed) out.push_back(r + " changed; restart to see it");
     return out;
 }
@@ -117,6 +118,8 @@ HotReloadReport AssetHotReloader::check() {
             report.tilesets.push_back(path);
         } else if (kind == assets::AssetKind::Terrain) {
             report.terrains.push_back(path);
+        } else if (kind == assets::AssetKind::BehaviorTree) {
+            report.behavior_trees.push_back(path);
         } else if (kind == assets::AssetKind::Texture || kind == assets::AssetKind::Model) {
             continue; // handled above (or a dependency of a model that was re-imported)
         } else if (ext == ".bin") {

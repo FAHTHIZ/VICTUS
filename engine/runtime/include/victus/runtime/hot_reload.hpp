@@ -11,6 +11,8 @@
 //   - materials (.vmat)                            reported in `materials`; apply() drops cached
 //                                                  materials so the next frame uses the new file
 //   - surface shaders (.vshader)                   reported in `shaders`; apply() recompiles them
+//   - behaviour trees (.vbt)                       reported in `behavior_trees`; AiSystem::reload
+//                                                  drops the cached tree and restarts its users
 //   - sprite sheets (.vsheet)                      reported in `sprite_sheets`; apply() re-reads them
 //                                                  (a compile error is logged, built-in PBR used)
 //   - scenes, fonts, other files                   `restart_needed`: picked up on the next start
@@ -42,6 +44,7 @@ struct HotReloadReport {
     std::vector<std::string> sprite_sheets;  // changed sprite sheets (paths relative to assets/)
     std::vector<std::string> tilesets;       // changed tile sets (paths relative to assets/)
     std::vector<std::string> terrains;       // changed .vterrain heightfields (clear TerrainSystem caches)
+    std::vector<std::string> behavior_trees; // changed .vbt trees (AiSystem::reload restarts their users)
     std::vector<std::string> restart_needed; // files whose changes appear on the next start
     [[nodiscard]] bool empty() const noexcept { return changed.empty(); }
     // One human-readable line per event, for logs and editor notifications.

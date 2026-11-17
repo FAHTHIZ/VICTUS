@@ -6,6 +6,7 @@
 #include "victus/project/project.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
+#include "victus/ai/ai.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
@@ -229,6 +230,7 @@ struct TemplateRun {
     std::unique_ptr<animation::AnimationSystem> animation;
     std::unique_ptr<particles::ParticleSystem> particles;
     std::unique_ptr<navigation::NavigationSystem> navigation;
+    std::unique_ptr<ai::AiSystem> ai;
     std::unique_ptr<audio::AudioEngine> audio;
     gameplay::Simulation sim;
     gameplay::ManualInput input;
@@ -301,6 +303,8 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     particles::add_particle_systems(r->sim, *r->particles);
     r->navigation = std::make_unique<navigation::NavigationSystem>();
     navigation::add_navigation_systems(r->sim, *r->navigation);
+    r->ai = std::make_unique<ai::AiSystem>(ai::directory_loader(dir / "assets"));
+    ai::add_ai_systems(r->sim, *r->ai);
     audio::EngineOptions ao;
     ao.assets_root = dir / "assets";
     ao.null_device = true;
@@ -799,6 +803,45 @@ TEST_CASE("templates: 3D companion follows the player over the navmesh") {
         const auto anim = r->animation->status(r->scene, c);
         if (anim.valid) CHECK(anim.clip == "Idle");
     }
+    CHECK(r->host->stats().errors == 0);
+    for (const auto& e : r->host->recent_errors()) MESSAGE(e);
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("templates: 3D sentry scans, then tracks the player with its behaviour tree") {
+    const auto dir = temp_dir("tpl3dsentry");
+    auto r = start_template("3d", dir);
+    const scene::Entity sentry = r->scene.find_by_name("Sentry");
+    const scene::Entity player = r->scene.find_by_name("Player");
+    REQUIRE_FALSE(sentry.is_null());
+    r->frames(30);
+    // Out of range at the start: the Patrol branch sweeps the turret.
+    const ai::Blackboard* bb = r->ai->blackboard(r->scene, sentry);
+    REQUIRE(bb);
+    CHECK_FALSE(bb->has("target"));
+    const math::Quat q0 = r->scene.world().get<scene::Transform>(sentry)->rotation;
+    r->frames(10);
+    CHECK_FALSE(r->scene.world().get<scene::Transform>(sentry)->rotation == q0);
+    auto d = r->ai->debug(r->scene, sentry);
+    REQUIRE(d.has_value());
+    CHECK(d->error.empty());
+    // Walk right into its sight range; it notices the player and turns to face it.
+    r->input.set_key("D", true);
+    r->frames(100);
+    r->input.set_key("D", false);
+    r->frames(90);
+    CHECK(bb->entity("target") == player);
+    const math::Vec3 to = r->pos("Player") - r->pos("Sentry");
+    const math::Vec3 f = r->scene.world().get<scene::Transform>(sentry)->rotation.rotate({0, 0, 1});
+    const float cosang = (f.x * to.x + f.z * to.z) / std::hypot(to.x, to.z);
+    CAPTURE(to);
+    CHECK(cosang > 0.97f);
+    d = r->ai->debug(r->scene, sentry);
+    REQUIRE(d.has_value());
+    bool tracking = false;
+    for (const auto& n : d->nodes) tracking |= n.active && n.label.find("track") != std::string::npos;
+    CHECK(tracking);
     CHECK(r->host->stats().errors == 0);
     for (const auto& e : r->host->recent_errors()) MESSAGE(e);
     std::error_code ec;
