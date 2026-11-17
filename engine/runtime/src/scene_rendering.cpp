@@ -844,9 +844,47 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 ++stats.terrain_chunks;
             }
         });
+    // Foliage entities draw their MeshRenderer once per scattered instance near the camera.
+    std::vector<math::Mat4> foliage;
+    const auto foliage_instances = [&](Entity entity) -> bool {
+        const auto* fr = w.get<terrain::FoliageRuntime>(entity);
+        const auto* fc = fr ? w.get<terrain::FoliageComponent>(entity) : nullptr;
+        if (!fc) return false;
+        foliage.clear();
+        const auto* twt = fr->terrain.is_null() ? nullptr : w.get<WorldTransform>(fr->terrain);
+        if (!twt || fr->instances == 0) return true;
+        const math::Mat4 model = terrain::rigid_matrix(twt->matrix);
+        const float range = std::isfinite(fc->draw_distance) ? std::max(fc->draw_distance, 0.0f) : 0.0f;
+        const float range2 = range * range;
+        for (std::size_t c = 0; c < fr->chunks.size(); ++c) {
+            const auto& list = fr->chunks[c];
+            if (list.empty() || !fr->chunk_bounds[c].valid()) continue;
+            // Skip whole chunks beyond the draw distance (bounding sphere of the instance origins).
+            const math::Aabb& b = fr->chunk_bounds[c];
+            const math::Vec3 centre = model.transform_point(b.center());
+            const float radius = math::length(b.extents());
+            if (math::length(centre - camera.position) - radius > range) continue;
+            for (const math::Mat4& local : list) {
+                const math::Mat4 world = model * local;
+                const math::Vec3 p = world.transform_point({});
+                const math::Vec3 d = p - camera.position;
+                if (math::dot(d, d) <= range2) foliage.push_back(world);
+            }
+        }
+        stats.foliage_instances += static_cast<std::uint32_t>(foliage.size());
+        return true;
+    };
     w.each<MeshRendererComponent, WorldTransform>([&](Entity entity, const MeshRendererComponent& mr, const WorldTransform& wt) {
         if (!mr.visible) return;
         const std::uint64_t motion_id = entity.bits() + 1; // stable per entity; never 0 for live entities
+        const bool scattered = foliage_instances(entity);
+        const auto emit = [&](const render::GpuMesh& mesh, const render::Material& m) {
+            if (!scattered) {
+                renderer.submit(mesh, m, wt.matrix, motion_id);
+                return;
+            }
+            for (const math::Mat4& world : foliage) renderer.submit(mesh, m, world, 0); // static: no motion id
+        };
         const auto* pm = w.get<scene::ProceduralMeshComponent>(entity);
         if (pm && pm->mesh) {
             const render::GpuMesh* mesh = assets.procedural(*pm->mesh);
@@ -866,7 +904,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             }
             m.cast_shadows = mr.cast_shadows;
             apply_overrides(entity, m);
-            renderer.submit(*mesh, m, wt.matrix, motion_id);
+            emit(*mesh, m);
             ++stats.meshes;
             return;
         }
@@ -887,7 +925,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             apply_overrides(entity, m);
             const GpuModel& gm = **model;
             const auto* skinned = w.get<animation::SkinnedMeshComponent>(entity);
-            if (skinned && gm.max_joint[mr.mesh_index] >= 0 && skinned->skin < gm.cpu.skins.size()) {
+            if (!scattered && skinned && gm.max_joint[mr.mesh_index] >= 0 && skinned->skin < gm.cpu.skins.size()) {
                 const assets::ModelSkin& skin = gm.cpu.skins[skinned->skin];
                 const Entity root = scene.find(skinned->skeleton);
                 if (root != Entity{} && static_cast<std::size_t>(gm.max_joint[mr.mesh_index]) < skin.joints.size()) {
@@ -914,7 +952,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                     return;
                 }
             }
-            renderer.submit(gm.meshes[mr.mesh_index], m, wt.matrix, motion_id);
+            emit(gm.meshes[mr.mesh_index], m);
             ++stats.meshes;
             return;
         }
@@ -938,7 +976,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         }
         m.cast_shadows = mr.cast_shadows;
         apply_overrides(entity, m);
-        renderer.submit(*mesh, m, wt.matrix, motion_id);
+        emit(*mesh, m);
         ++stats.meshes;
     });
 

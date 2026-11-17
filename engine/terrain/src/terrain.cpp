@@ -72,6 +72,26 @@ void register_components() {
         scene::SerializerRegistry::instance().add<TerrainComponent>(
             "Terrain", [fields](const TerrainComponent& c) { return fields->save(&c); },
             [fields](TerrainComponent& c, const json::Value& v) -> Status { return fields->load(&c, v); });
+
+        scene::Schema<FoliageComponent> f("Foliage", "3D");
+        f.field(&FoliageComponent::layer, "layer", {.min = -1, .max = 3, .tooltip = "Splat layer that drives density (-1: everywhere)"})
+            .field(&FoliageComponent::min_weight, "min_weight", {.min = 0, .max = 1, .speed = 0.01f})
+            .field(&FoliageComponent::density, "density", {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "Candidate points per square metre"})
+            .field(&FoliageComponent::min_scale, "min_scale", {.min = 0, .max = 100, .speed = 0.01f})
+            .field(&FoliageComponent::max_scale, "max_scale", {.min = 0, .max = 100, .speed = 0.01f})
+            .field(&FoliageComponent::align_to_normal, "align_to_normal", {.min = 0, .max = 1, .speed = 0.01f})
+            .field(&FoliageComponent::random_yaw, "random_yaw")
+            .field(&FoliageComponent::max_slope, "max_slope", {.min = 0, .max = 90, .speed = 0.5f, .tooltip = "Degrees"})
+            .field(&FoliageComponent::min_height, "min_height", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Normalized terrain height"})
+            .field(&FoliageComponent::max_height, "max_height", {.min = 0, .max = 1, .speed = 0.01f})
+            .field(&FoliageComponent::offset, "offset", {.min = -100, .max = 100, .speed = 0.01f, .tooltip = "Metres along the instance up (negative sinks)"})
+            .field(&FoliageComponent::draw_distance, "draw_distance", {.min = 0, .max = 1e5f, .speed = 1})
+            .field(&FoliageComponent::seed, "seed")
+            .field(&FoliageComponent::max_instances, "max_instances", {.min = 1, .max = static_cast<float>(kMaxFoliageInstances)});
+        const scene::ComponentSchema* ffields = &f.commit();
+        scene::SerializerRegistry::instance().add<FoliageComponent>(
+            "Foliage", [ffields](const FoliageComponent& c) { return ffields->save(&c); },
+            [ffields](FoliageComponent& c, const json::Value& v) -> Status { return ffields->load(&c, v); });
     });
 }
 
@@ -333,6 +353,7 @@ void TerrainSystem::update(Scene& scene) {
         world.get<TerrainRuntime>(e)->collision_revision = revision;
         ++stats_.collision_rebuilds;
     }
+    update_foliage(scene);
 }
 
 void add_terrain_systems(gameplay::Simulation& sim, TerrainSystem& system) {

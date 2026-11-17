@@ -250,6 +250,9 @@ public:
     // Writes a new generated heightfield (default "terrain/Terrain.vterrain", made unique; 129
     // samples per side) and creates an entity with a Terrain component using it (undoable).
     Result<scene::Entity> create_terrain(std::string_view relative_path = {}, std::uint32_t resolution = 129);
+    // Adds a "Foliage" child to `terrain` with a Foliage scatter on `layer` (-1: everywhere) and a
+    // green sphere mesh renderer (undoable); swap the mesh for real grass/tree models.
+    Result<scene::Entity> add_foliage(scene::Entity terrain, std::int32_t layer = 0);
     // Terrain sculpting and painting. While the tool is on (and the selected entity has a Terrain
     // in a 3D scene) left-dragging in the viewport applies the brush instead of selecting; Shift
     // inverts Raise/Lower, Ctrl-click in Flatten picks the target height. Each stroke is one undo

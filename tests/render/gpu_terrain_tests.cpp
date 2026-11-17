@@ -92,3 +92,69 @@ TEST_CASE("gpu: terrain chunks draw with splat-blended layer tints") {
     CHECK(channel(l2, 1) > channel(l2, 0) + 40);
     cache.clear();
 }
+
+TEST_CASE("gpu: foliage draws its mesh renderer on the painted layer within the draw distance") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    // Layer 1 painted on the right half only: blue cubes scatter there and nowhere else.
+    auto hf_r = terrain::make_flat(65, 0.0f);
+    REQUIRE(hf_r.ok());
+    auto hf = std::make_shared<terrain::Heightfield>(std::move(*hf_r));
+    for (std::uint32_t z = 0; z < hf->resolution; ++z)
+        for (std::uint32_t x = 0; x < hf->resolution; ++x)
+            hf->splat[hf->index(x, z)] = terrain::pack_weights(x < 32 ? math::Vec4{1, 0, 0, 0} : math::Vec4{0, 1, 0, 0});
+    hf->touch_all();
+    const Uuid id = Uuid::generate();
+    terrain::TerrainSystem system;
+    system.add_data(id, hf);
+
+    Scene s;
+    const Entity cam = s.create("Camera");
+    s.world().get<Transform>(cam)->position = {0, 12, 0};
+    s.world().get<Transform>(cam)->rotation = math::Quat::axis_angle({1, 0, 0}, math::radians(-90));
+    s.world().add<CameraComponent>(cam);
+    const Entity t = s.create("Terrain");
+    terrain::TerrainComponent comp;
+    comp.data = id;
+    comp.size = {40, 4, 40};
+    comp.layer0_tint = {0.6f, 0.6f, 0.6f, 1};
+    comp.layer1_tint = {0.6f, 0.6f, 0.6f, 1};
+    comp.collision = false;
+    s.world().add<terrain::TerrainComponent>(t, comp);
+    const Entity bushes = s.create("Bushes", t);
+    terrain::FoliageComponent f;
+    f.layer = 1;
+    f.min_weight = 0.5f;
+    f.density = 2.0f;
+    f.min_scale = f.max_scale = 0.6f;
+    s.world().add<terrain::FoliageComponent>(bushes, f);
+    MeshRendererComponent mr;
+    mr.primitive = "cube";
+    mr.base_color = {0.05f, 0.1f, 0.9f, 1};
+    s.world().add<MeshRendererComponent>(bushes, mr);
+    s.update_transforms();
+    system.update(s);
+    const auto* rt = s.world().get<terrain::FoliageRuntime>(bushes);
+    REQUIRE(rt);
+    CHECK(rt->instances > 1000u);
+    for (const auto& chunk : rt->chunks)
+        for (const auto& m : chunk) CHECK(m.transform_point({}).x >= -0.4f);
+
+    runtime::GpuAssetCache cache(*gpu().ctx, nullptr);
+    Frame a = draw(s, cache);
+    CHECK(a.stats.foliage_instances == rt->instances);
+    CHECK(a.stats.meshes == 1);
+    const auto l = pixel(a.px, W, 20, 32), r = pixel(a.px, W, 76, 32);
+    MESSAGE("left " << channel(l, 0) << "," << channel(l, 2) << " right " << channel(r, 0) << "," << channel(r, 2));
+    // Bare (lit grey) ground on the left; the right is mostly covered by blue cubes.
+    CHECK(channel(r, 0) + 60 < channel(l, 0));
+    CHECK(channel(r, 2) > channel(r, 0) + 100);
+    CHECK(channel(l, 2) < channel(l, 0) + 80);
+
+    // A short draw distance keeps only instances near the camera (12 m above the centre).
+    s.world().get<terrain::FoliageComponent>(bushes)->draw_distance = 14.0f;
+    system.update(s);
+    a = draw(s, cache);
+    CHECK(a.stats.foliage_instances > 0u);
+    CHECK(a.stats.foliage_instances < rt->instances / 2);
+    cache.clear();
+}

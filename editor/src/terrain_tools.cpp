@@ -66,6 +66,30 @@ Result<Entity> Editor::create_terrain(std::string_view relative_path, std::uint3
     return e;
 }
 
+Result<Entity> Editor::add_foliage(Entity terrain_entity, std::int32_t layer) {
+    if (play_state_ != PlayState::Editing) return make_error(ErrorCode::InvalidArgument, "stop play mode to add foliage");
+    Scene& s = *scene_;
+    if (!s.world().alive(terrain_entity) || !s.world().has<terrain::TerrainComponent>(terrain_entity))
+        return make_error(ErrorCode::InvalidArgument, "add_foliage needs an entity with a Terrain");
+    const Entity e = s.create("Foliage", terrain_entity);
+    auto& w = s.world();
+    terrain::FoliageComponent f;
+    f.layer = std::clamp<std::int32_t>(layer, -1, static_cast<std::int32_t>(terrain::kLayerCount) - 1);
+    w.add<terrain::FoliageComponent>(e) = f;
+    MeshRendererComponent mr;
+    mr.primitive = "sphere";
+    mr.base_color = {0.25f, 0.55f, 0.18f, 1};
+    w.add<MeshRendererComponent>(e) = mr;
+    s.update_transforms();
+    if (terrains_) terrains_->update(s);
+    const Uuid id = s.uuid(e);
+    auto after = capture(s, {id});
+    undo_.push({"Add Foliage", absent(after), std::move(after)});
+    update_title();
+    selection_ = {id};
+    return e;
+}
+
 Entity Editor::terrain_target() {
     if (play_state_ != PlayState::Editing) return kNullEntity;
     const Entity e = selected();
@@ -324,6 +348,13 @@ void Editor::draw_terrain_tools() {
     ImGui::SameLine();
     if (ImGui::Button("Auto Paint"))
         if (auto st = auto_paint_terrain(t); !st) notify("auto paint failed: " + st.error().message, true);
+    ImGui::Separator();
+    if (ImGui::Button("Add Foliage")) {
+        const auto layer = static_cast<std::int32_t>(std::min(terrain_brush_.layer, terrain::kLayerCount - 1));
+        if (auto e = add_foliage(t, layer); !e) notify("add foliage failed: " + e.error().message, true);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("scatters on the paint layer");
     if (!dirty_terrains_.empty()) ImGui::TextDisabled("%zu edited terrain(s) are written on save.", dirty_terrains_.size());
     ImGui::End();
 }
