@@ -375,3 +375,25 @@ TEST_CASE("assets: material instances inherit, override, round trip and reject b
     REQUIRE_FALSE(deep.ok());
     CHECK(deep.error().code == ErrorCode::LimitExceeded);
 }
+
+TEST_CASE("material blend and coverage fields round trip and inherit") {
+    auto doc = json::parse(R"({"victus_material": 1, "blend": "alpha", "vertex_alpha": "coverage_mask", "coverage_response": 0.25})");
+    REQUIRE(doc.ok());
+    auto m = MaterialAsset::from_json(*doc);
+    REQUIRE(m.ok());
+    CHECK(m->blend == MaterialBlendMode::Alpha);
+    CHECK(m->vertex_alpha_coverage_mask);
+    CHECK(m->coverage_response == doctest::Approx(0.25f));
+    auto back = MaterialAsset::from_json(m->to_json());
+    REQUIRE(back.ok());
+    CHECK(back->blend == MaterialBlendMode::Alpha);
+    MaterialAsset parent;
+    parent.blend = MaterialBlendMode::Additive;
+    MaterialAsset child = *m;
+    child.parent = Uuid::generate();
+    child.overrides = field_bit(MaterialField::CoverageResponse);
+    const MaterialAsset merged = apply_instance(parent, child);
+    CHECK(merged.blend == MaterialBlendMode::Additive); // inherited
+    CHECK(merged.coverage_response == doctest::Approx(0.25f));
+    CHECK_FALSE(MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "blend": "glass"})")).ok());
+}

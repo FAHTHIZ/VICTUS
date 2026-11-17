@@ -61,7 +61,7 @@ std::uint64_t material_key(const Material& m) noexcept {
             for (float f : {p.x, p.y, p.z, p.w}) h = mix(h, bits(f));
     }
     return mix(h, (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u) |
-                      (m.vertex_alpha_coverage_mask ? 16u : 0u));
+                      (m.vertex_alpha_coverage_mask ? 16u : 0u) | (std::uint64_t{static_cast<std::uint8_t>(m.blend)} << 8));
 }
 
 bool same_material(const Material& a, const Material& b) noexcept {
@@ -75,7 +75,8 @@ bool same_material(const Material& a, const Material& b) noexcept {
            a.nearest_filter == b.nearest_filter && a.surface_shader == b.surface_shader &&
            std::equal(a.shader_params.begin(), a.shader_params.end(), b.shader_params.begin(),
                       [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; }) &&
-           a.vertex_alpha_coverage_mask == b.vertex_alpha_coverage_mask && a.coverage_response == b.coverage_response;
+           a.vertex_alpha_coverage_mask == b.vertex_alpha_coverage_mask && a.coverage_response == b.coverage_response &&
+           a.blend == b.blend;
 }
 struct GpuPointLight {
     Vec4 position_range;
@@ -180,6 +181,21 @@ std::string_view tonemapper_name(Tonemapper t) noexcept {
 std::optional<Tonemapper> parse_tonemapper(std::string_view n) noexcept {
     for (Tonemapper t : {Tonemapper::None, Tonemapper::Aces, Tonemapper::Neutral, Tonemapper::Reinhard})
         if (tonemapper_name(t) == n) return t;
+    return std::nullopt;
+}
+
+std::string_view material_blend_name(MaterialBlend b) noexcept {
+    switch (b) {
+    case MaterialBlend::Alpha: return "alpha";
+    case MaterialBlend::Additive: return "additive";
+    default: return "opaque";
+    }
+}
+
+std::optional<MaterialBlend> parse_material_blend(std::string_view name) noexcept {
+    if (name == "opaque") return MaterialBlend::Opaque;
+    if (name == "alpha") return MaterialBlend::Alpha;
+    if (name == "additive") return MaterialBlend::Additive;
     return std::nullopt;
 }
 
@@ -480,7 +496,26 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     return r;
 }
 
-rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, bool skinned, bool double_sided) {
+rhi::PipelineHandle SceneRenderer::blend_pipeline(MaterialBlend blend, bool skinned, bool double_sided) {
+    if (blend == MaterialBlend::Opaque) return {};
+    const std::size_t i = (blend == MaterialBlend::Additive ? 4u : 0u) + (skinned ? 2u : 0u) + (double_sided ? 1u : 0u);
+    if (!blend_pipelines_[i]) {
+        rhi::PipelineDesc d = skinned ? skinned_desc_ : opaque_desc_;
+        d.name = std::format("pbr_{}{}{}", material_blend_name(blend), skinned ? "_skinned" : "", double_sided ? "_double_sided" : "");
+        d.cull = double_sided ? rhi::CullMode::None : rhi::CullMode::Back;
+        d.depth_write = false;
+        d.color_targets = {{rhi::Format::RGBA16_FLOAT, blend == MaterialBlend::Additive ? rhi::BlendMode::Additive : rhi::BlendMode::Alpha}};
+        auto p = ctx_.device().create_pipeline(d);
+        if (!p) {
+            VICTUS_LOG_ERROR("render", "blend pipeline: {}", p.error().message);
+            return {};
+        }
+        blend_pipelines_[i] = *p;
+    }
+    return blend_pipelines_[i];
+}
+
+rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, bool skinned, bool double_sided, MaterialBlend blend) {
     const std::uint64_t key = (std::uint64_t{fragment.generation} << 32) | fragment.index;
     auto it = surface_pipelines_.find(key);
     if (it == surface_pipelines_.end()) {
@@ -491,33 +526,36 @@ rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, 
                     if (pl) ctx_.device().destroy(pl);
             surface_pipelines_.clear();
         }
-        std::array<rhi::PipelineHandle, 4> set{};
-        bool ok = true;
-        for (int i = 0; i < 4 && ok; ++i) {
-            rhi::PipelineDesc d = (i >= 2) ? skinned_desc_ : opaque_desc_;
-            d.name = std::format("surface_{}_{}", fragment.index, i);
-            d.fragment = fragment;
-            d.cull = (i & 1) ? rhi::CullMode::None : rhi::CullMode::Back;
-            auto p = ctx_.device().create_pipeline(d);
-            if (!p) {
-                VICTUS_LOG_ERROR("render", "surface shader pipeline: {}", p.error().message);
-                ok = false;
-                break;
-            }
-            set[static_cast<std::size_t>(i)] = *p;
-        }
-        if (!ok) {
-            for (auto pl : set)
-                if (pl) ctx_.device().destroy(pl);
-            set = {};
-        }
-        it = surface_pipelines_.emplace(key, set).first;
+        it = surface_pipelines_.emplace(key, std::array<rhi::PipelineHandle, 12>{}).first;
     }
-    return it->second[(skinned ? 2u : 0u) + (double_sided ? 1u : 0u)];
+    // Variants are created on first use: [blend][skinned][double_sided].
+    const std::size_t i = static_cast<std::size_t>(blend) * 4u + (skinned ? 2u : 0u) + (double_sided ? 1u : 0u);
+    if (i >= it->second.size()) return {};
+    if (!it->second[i]) {
+        if (surface_failed_.contains(key)) return {};
+        rhi::PipelineDesc d = skinned ? skinned_desc_ : opaque_desc_;
+        d.name = std::format("surface_{}_{}", fragment.index, i);
+        d.fragment = fragment;
+        d.cull = double_sided ? rhi::CullMode::None : rhi::CullMode::Back;
+        if (blend != MaterialBlend::Opaque) {
+            d.depth_write = false;
+            d.color_targets = {{rhi::Format::RGBA16_FLOAT, blend == MaterialBlend::Additive ? rhi::BlendMode::Additive : rhi::BlendMode::Alpha}};
+        }
+        auto p = ctx_.device().create_pipeline(d);
+        if (!p) {
+            VICTUS_LOG_ERROR("render", "surface shader pipeline: {}", p.error().message);
+            surface_failed_.insert(key);
+            return {};
+        }
+        it->second[i] = *p;
+    }
+    return it->second[i];
 }
 
 SceneRenderer::~SceneRenderer() {
     auto& d = ctx_.device();
+    for (auto pl : blend_pipelines_)
+        if (pl) d.destroy(pl);
     for (auto pl : {opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_, prepass_cull_,
                     prepass_double_, skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_,
                     particle_alpha_, particle_additive_})
@@ -724,12 +762,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     for (std::uint32_t c = 0; c < cascade_count_; ++c) cascade_frustum[c] = Frustum::from_matrix(cascade_vp_[c]);
 
     // Visibility + sorting (front-to-back within pipeline and base texture runs).
-    std::vector<const Draw*> visible;
+    std::vector<const Draw*> visible, transparent;
     std::array<std::vector<const Draw*>, 4> casters;
     visible.reserve(draws_.size());
     for (Draw& d : draws_) {
         const Aabb world = d.skinned ? d.world_bounds : d.mesh->bounds.transformed(d.model);
-        if (d.material.cast_shadows) {
+        const bool blended = d.material.blend != MaterialBlend::Opaque;
+        if (d.material.cast_shadows && !blended) {
             bool any = false;
             for (std::uint32_t c = 0; c < cascade_count_; ++c)
                 if (cascade_frustum[c].intersects(world)) {
@@ -743,8 +782,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             continue;
         }
         d.distance = length(world.center() - camera_.position);
-        visible.push_back(&d);
+        (blended ? transparent : visible).push_back(&d);
     }
+    std::stable_sort(transparent.begin(), transparent.end(), [](const Draw* a, const Draw* b) { return a->distance > b->distance; });
     std::sort(visible.begin(), visible.end(), [](const Draw* a, const Draw* b) {
         if (a->material.surface_shader.index != b->material.surface_shader.index)
             return a->material.surface_shader.index < b->material.surface_shader.index;
@@ -778,6 +818,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         return out;
     };
     const std::vector<Batch> main_batches = build_batches(visible, true);
+    const std::vector<Batch> transparent_batches = build_batches(transparent, true);
+    stats_.transparent_draws = static_cast<std::uint32_t>(transparent.size());
     std::array<std::vector<Batch>, 4> shadow_batches;
     for (std::uint32_t c = 0; c < cascade_count_; ++c) {
         std::sort(casters[c].begin(), casters[c].end(), [](const Draw* a, const Draw* b) {
@@ -1092,12 +1134,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame);
             ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, lighting);
             rhi::PipelineHandle bound{};
-            for (const Batch& b : main_batches) {
+            auto draw_batch = [&](const Batch& b, rhi::PipelineHandle want) {
                 const Draw* d = b.first;
-                rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_double_ : skin_cull_)
-                                                      : (d->material.double_sided ? opaque_double_ : opaque_cull_);
-                if (d->material.surface_shader)
-                    if (const auto custom = surface_pipeline(d->material.surface_shader, d->skinned, d->material.double_sided)) want = custom;
                 if (!(bound == want)) {
                     pass.bind_pipeline(want);
                     if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
@@ -1126,6 +1164,26 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                 pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
                 pass.draw_indexed(d->mesh->index_count, b.instance_count);
+            };
+            for (const Batch& b : main_batches) {
+                const Draw* d = b.first;
+                rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_double_ : skin_cull_)
+                                                      : (d->material.double_sided ? opaque_double_ : opaque_cull_);
+                if (d->material.surface_shader)
+                    if (const auto custom = surface_pipeline(d->material.surface_shader, d->skinned, d->material.double_sided,
+                                                             MaterialBlend::Opaque))
+                        want = custom;
+                draw_batch(b, want);
+            }
+            // Blended geometry after every opaque draw, far to near.
+            for (const Batch& b : transparent_batches) {
+                const Draw* d = b.first;
+                rhi::PipelineHandle want = blend_pipeline(d->material.blend, d->skinned, d->material.double_sided);
+                if (d->material.surface_shader)
+                    if (const auto custom = surface_pipeline(d->material.surface_shader, d->skinned, d->material.double_sided,
+                                                             d->material.blend))
+                        want = custom;
+                if (want) draw_batch(b, want);
             }
             if (!lines_.empty()) {
                 pass.bind_pipeline(line_pipeline_);

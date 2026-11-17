@@ -369,7 +369,7 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 **Evidence.** STATUS Slice 36: params and time change on-screen pixels; a compile error falls back and recovers through hot reload; error messages carry the `.vshader` line number; the 3D template's glowing cube works in `victus run`, the editor and an exported game.
 
 **Risks / revisit triggers.** glslang adds build time and binary size; first use compiles on the render thread. No D3D12 DXIL path (Vulkan is used on Windows). Revisit for a shader cache on disk/in packs, async compilation, vertex/sprite/post-process hooks, extra textures per shader, or a material graph that emits surface code.
-## ADR-0036 — Packed vertex colour in Vertex3D; fog and coverage in the forward PBR shader (accepted 2026-11-17)
+## ADR-0037 — Packed vertex colour in Vertex3D; fog and coverage in the forward PBR shader (accepted 2026-11-17)
 **Problem.** Procedural and stylised games (AURORIA first) colour meshes per vertex, need distance fog for atmosphere and a weather coverage layer (snow) masked per vertex; VICTUS had none of these.
 
 **Candidates.** (1) One packed RGBA8 colour in every `Vertex3D` (4 bytes, default white so existing meshes are unchanged) plus uniform-driven fog and coverage in `pbr.frag`. (2) A separate optional colour vertex stream — no cost for meshes without colour but doubles pipeline variants. (3) Bake colours into textures — loses per-vertex authoring and needs UVs.
@@ -427,3 +427,9 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
+
+## ADR-0038 — Blended materials as a sorted sub-pass of the forward pass (accepted 2026-11-17)
+- Context: water, glass, decals and glows need alpha and additive blending; the forward renderer only had opaque meshes and separate particle passes.
+- Decision: `Material::blend` (`.vmat` `"blend": "opaque" | "alpha" | "additive"`, inheritable by instances). Blended draws skip the depth pre-pass and shadow casting, are sorted far to near by bounds centre, and are drawn at the end of the forward pass (same lighting, fog and coverage uniforms) with depth test on and depth write off. Pipelines are created on first use per blend × skinned × double-sided, and surface shaders get the same variants. Surface shaders also read the interpolated vertex colour (`SurfaceInput::vertex_color`), so meshes can carry per-vertex data for them.
+- Consequences: straight (non-premultiplied) alpha; per-object, not per-triangle, sorting — intersecting blended meshes can still order wrongly; no order-independent transparency, refraction or screen-space reflections; blended draws do not appear in SSAO or the depth used by soft particles.
+

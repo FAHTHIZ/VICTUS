@@ -14,7 +14,8 @@
 //     "filter": "linear" | "nearest", "unlit": false, "double_sided": false,
 //     "shader": "<uuid of a .vshader surface shader>" | null,
 //     "shader_params": [[x, y, z, w], ...]   // up to 4, read in the shader as si.params[i]
-//     "vertex_alpha": "opacity" | "coverage_mask", "coverage_response": 1
+//     "vertex_alpha": "opacity" | "coverage_mask", "coverage_response": 1,
+//     "blend": "opaque" | "alpha" | "additive"   // blended materials draw after opaque, far to near
 //   }
 //
 // Material instances name a parent and contain only the fields they override; everything else
@@ -39,12 +40,13 @@ inline constexpr std::size_t kMaterialShaderParams = 4;
 inline constexpr int kMaterialVersion = 1;
 
 enum class TextureFilter : std::uint8_t { Linear = 0, Nearest = 1 };
+enum class MaterialBlendMode : std::uint8_t { Opaque = 0, Alpha = 1, Additive = 2 };
 
 // Every field a material instance can override (bit index in MaterialAsset::overrides).
 enum class MaterialField : std::uint8_t {
     BaseColor, BaseColorTexture, Metallic, Roughness, MetallicRoughnessTexture, NormalTexture, NormalScale, Emissive,
     EmissiveStrength, EmissiveTexture, AlphaCutoff, UvScale, UvOffset, Filter, Unlit, DoubleSided, Shader, ShaderParams,
-    VertexAlpha, CoverageResponse, Count
+    VertexAlpha, CoverageResponse, Blend, Count
 };
 inline constexpr std::size_t kMaterialFieldCount = static_cast<std::size_t>(MaterialField::Count);
 [[nodiscard]] constexpr std::uint32_t field_bit(MaterialField f) noexcept { return 1u << static_cast<unsigned>(f); }
@@ -68,6 +70,7 @@ struct MaterialAsset {
     bool double_sided{false};
     bool vertex_alpha_coverage_mask{false}; // vertex alpha marks where the coverage layer may settle
     float coverage_response{1.0f};          // 0..1 response to the scene's snow/dust coverage layer
+    MaterialBlendMode blend{MaterialBlendMode::Opaque};
     Uuid base_color_texture, metallic_roughness_texture, normal_texture, emissive_texture;
     Uuid shader; // optional surface shader (.vshader); nil = built-in PBR surface
     std::array<math::Vec4, 4> shader_params{};
