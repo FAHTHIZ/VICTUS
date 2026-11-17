@@ -1,0 +1,515 @@
+{
+  "format": "victus.scene",
+  "version": 1,
+  "name": "Dungeon",
+  "entities": [
+    {
+      "uuid": "2c819af2-4f18-4f4e-be85-e190545110d3",
+      "name": "Main Camera",
+      "components": {
+        "Camera": {
+          "projection": "orthographic",
+          "fov_y": 60,
+          "ortho_height": 9,
+          "near": 0.1,
+          "far": 100,
+          "primary": true,
+          "pixel_snap": true
+        },
+        "Script": {
+          "script": "scripts/follow_camera.luau",
+          "enabled": true,
+          "properties": {}
+        },
+        "Transform": {
+          "position": [
+            1.5,
+            1.5,
+            10
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "435e9146-9dfb-42dd-b606-e54d922751b1",
+      "name": "Dungeon",
+      "components": {
+        "Script": {
+          "script": "scripts/dungeon.luau",
+          "enabled": true,
+          "properties": {}
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "4f13186d-047e-4911-8a1a-55135b42826f",
+      "name": "Floor",
+      "components": {
+        "Tilemap": {
+          "tileset": "c5b502e3-a826-4a82-8af4-b9ff4700bc89",
+          "cell_size": [
+            1,
+            1
+          ],
+          "tint": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "layer": 0,
+          "collision": false,
+          "friction": 0,
+          "collision_layer": 0,
+          "collision_mask": 65535,
+          "cells": []
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "36e6c332-9b00-4944-a21d-8a55e1f3da68",
+      "name": "Walls",
+      "components": {
+        "Tilemap": {
+          "tileset": "c5b502e3-a826-4a82-8af4-b9ff4700bc89",
+          "cell_size": [
+            1,
+            1
+          ],
+          "tint": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "layer": 1,
+          "collision": true,
+          "friction": 0,
+          "collision_layer": 0,
+          "collision_mask": 65535,
+          "cells": []
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "c94cb8f9-e2c9-4c9e-9715-dcde95a4b6a4",
+      "name": "Hero",
+      "components": {
+        "CharacterController2D": {
+          "size": [
+            0.7,
+            0.7
+          ],
+          "max_slope": 50,
+          "snap_distance": 0,
+          "gravity_scale": 0,
+          "push_force": 0,
+          "air_control": 1,
+          "top_down": true,
+          "layer": 0,
+          "mask": 65535
+        },
+        "Script": {
+          "script": "scripts/hero.luau",
+          "enabled": true,
+          "properties": {}
+        },
+        "Sprite": {
+          "size": [
+            0.9,
+            0.9
+          ],
+          "tint": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "pivot": [
+            0.5,
+            0.5
+          ],
+          "layer": 4,
+          "flip_x": false,
+          "flip_y": false
+        },
+        "Transform": {
+          "position": [
+            1.5,
+            1.5,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "1850fe51-709a-43c7-aa2c-4ffd751d800c",
+      "name": "HUD",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "UiCanvas": {
+          "visible": true,
+          "scale_mode": "scale_with_screen",
+          "reference_size": [
+            1280,
+            720
+          ],
+          "match": 1,
+          "sort_order": 0,
+          "keyboard_navigation": false,
+          "blocks_input": false
+        }
+      }
+    },
+    {
+      "uuid": "0f19f37a-15f0-4684-b27f-a13cf92bb230",
+      "name": "Status Text",
+      "parent": "1850fe51-709a-43c7-aa2c-4ffd751d800c",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "UiPanel": {
+          "color": [
+            0.05,
+            0.04,
+            0.08,
+            0.78
+          ],
+          "corner_radius": 8,
+          "border_color": [
+            1,
+            1,
+            1,
+            0.15
+          ],
+          "border_width": 1.5
+        },
+        "UiRect": {
+          "anchor_min": [
+            0,
+            0
+          ],
+          "anchor_max": [
+            0,
+            0
+          ],
+          "pivot": [
+            0,
+            0
+          ],
+          "position": [
+            20,
+            20
+          ],
+          "size": [
+            620,
+            52
+          ],
+          "visible": true,
+          "opacity": 1,
+          "clip_children": false
+        },
+        "UiText": {
+          "text": "Floor 1",
+          "font_size": 24,
+          "color": [
+            0.95,
+            0.92,
+            0.85,
+            1
+          ],
+          "align": "center",
+          "vertical_align": "middle",
+          "wrap": false,
+          "bold": true,
+          "shadow_color": [
+            0,
+            0,
+            0,
+            0.5
+          ],
+          "shadow_offset": [
+            0,
+            2
+          ],
+          "font": ""
+        }
+      }
+    },
+    {
+      "uuid": "3d13da0d-9aed-4384-8366-34f925827b33",
+      "name": "Banner",
+      "parent": "1850fe51-709a-43c7-aa2c-4ffd751d800c",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "UiPanel": {
+          "color": [
+            0.08,
+            0.06,
+            0.14,
+            0.88
+          ],
+          "corner_radius": 14,
+          "border_color": [
+            0.5,
+            0.85,
+            1,
+            0.9
+          ],
+          "border_width": 2.5
+        },
+        "UiRect": {
+          "anchor_min": [
+            0.5,
+            0.5
+          ],
+          "anchor_max": [
+            0.5,
+            0.5
+          ],
+          "pivot": [
+            0.5,
+            0.5
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "size": [
+            640,
+            96
+          ],
+          "visible": false,
+          "opacity": 1,
+          "clip_children": false
+        },
+        "UiText": {
+          "text": "",
+          "font_size": 36,
+          "color": [
+            0.6,
+            0.9,
+            1,
+            1
+          ],
+          "align": "center",
+          "vertical_align": "middle",
+          "wrap": false,
+          "bold": true,
+          "shadow_color": [
+            0,
+            0,
+            0,
+            0.5
+          ],
+          "shadow_offset": [
+            0,
+            2
+          ],
+          "font": ""
+        }
+      }
+    },
+    {
+      "uuid": "a19bfbe4-df86-4f59-ac06-93b9ed0ef681",
+      "name": "Help Text",
+      "parent": "1850fe51-709a-43c7-aa2c-4ffd751d800c",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "UiRect": {
+          "anchor_min": [
+            1,
+            0
+          ],
+          "anchor_max": [
+            1,
+            0
+          ],
+          "pivot": [
+            1,
+            0
+          ],
+          "position": [
+            -20,
+            20
+          ],
+          "size": [
+            520,
+            52
+          ],
+          "visible": true,
+          "opacity": 0.85,
+          "clip_children": false
+        },
+        "UiText": {
+          "text": "WASD / arrows: walk   Shift: run   R: restart floor",
+          "font_size": 20,
+          "color": [
+            0.85,
+            0.85,
+            0.9,
+            1
+          ],
+          "align": "right",
+          "vertical_align": "middle",
+          "wrap": false,
+          "bold": false,
+          "shadow_color": [
+            0,
+            0,
+            0,
+            0.6
+          ],
+          "shadow_offset": [
+            0,
+            2
+          ],
+          "font": ""
+        }
+      }
+    }
+  ]
+}
