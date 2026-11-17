@@ -70,8 +70,9 @@ enum BufferUsage : std::uint32_t {
     BufferUsageVertex = 1u << 0,
     BufferUsageIndex = 1u << 1,
     BufferUsageIndirect = 1u << 2,
-    BufferUsageStorageRead = 1u << 3,
-    BufferUsageStorageWrite = 1u << 4,
+    BufferUsageStorageRead = 1u << 3,  // read in vertex/fragment shaders
+    BufferUsageStorageWrite = 1u << 4, // written (and read) by compute shaders (read-write binding)
+    BufferUsageComputeRead = 1u << 5,  // read-only binding in compute shaders
 };
 
 enum class TextureType : std::uint8_t { Tex2D, Tex2DArray, Cube, Tex3D };
@@ -103,6 +104,7 @@ using BufferHandle = Handle<struct BufferTag>;
 using SamplerHandle = Handle<struct SamplerTag>;
 using ShaderHandle = Handle<struct ShaderTag>;
 using PipelineHandle = Handle<struct PipelineTag>;
+using ComputePipelineHandle = Handle<struct ComputePipelineTag>;
 
 struct TextureDesc {
     std::string name;
@@ -138,6 +140,33 @@ struct ShaderDesc {
     std::string entry{"main"};
     std::uint32_t samplers{0}, storage_textures{0}, storage_buffers{0}, uniform_buffers{0};
 };
+
+// A compute shader with its resource counts and workgroup size; SDL_GPU binds compute
+// resources by kind: samplers, read-only storage textures/buffers (per pass), read-write
+// storage textures/buffers (when the compute pass begins) and uniform buffers.
+struct ComputePipelineDesc {
+    std::string name;
+    std::span<const std::uint8_t> spirv;
+    std::string_view msl;
+    std::span<const std::uint8_t> dxil;
+    std::string entry{"main"};
+    std::uint32_t samplers{0};
+    std::uint32_t readonly_storage_textures{0}, readonly_storage_buffers{0};
+    std::uint32_t readwrite_storage_textures{0}, readwrite_storage_buffers{0};
+    std::uint32_t uniform_buffers{0};
+    std::uint32_t threads_x{1}, threads_y{1}, threads_z{1};
+};
+
+// Arguments of one indirect indexed draw, as laid out in an indirect buffer (SDL_GPU / Vulkan /
+// Metal / D3D12 share this layout).
+struct IndexedIndirectCommand {
+    std::uint32_t index_count{0};
+    std::uint32_t instance_count{0};
+    std::uint32_t first_index{0};
+    std::int32_t vertex_offset{0};
+    std::uint32_t first_instance{0};
+};
+static_assert(sizeof(IndexedIndirectCommand) == 20);
 
 struct VertexAttribute {
     std::uint32_t location{0};
@@ -209,6 +238,7 @@ struct DeviceCapabilities {
     bool astc_compression{false};
     bool anisotropy{false};
     bool depth_clamp{false};
+    bool compute{false};       // compute pipelines and indirect draws with a first instance
     std::uint32_t max_texture_size{0};
     std::uint32_t max_msaa{1};
 };
@@ -218,6 +248,8 @@ struct DeviceStats {
     std::uint64_t texture_bytes{0}, buffer_bytes{0};
     std::uint64_t frames_submitted{0};
     std::uint64_t draw_calls{0}, uploads{0}, upload_bytes{0};
+    std::uint64_t dispatches{0}, indirect_draws{0};
+    std::uint32_t live_compute_pipelines{0};
 };
 
 class Device;
@@ -237,12 +269,31 @@ public:
               std::uint32_t first_instance = 0);
     void draw_indexed(std::uint32_t index_count, std::uint32_t instance_count = 1, std::uint32_t first_index = 0,
                       std::int32_t vertex_offset = 0, std::uint32_t first_instance = 0);
+    // `draw_count` IndexedIndirectCommand records starting at `offset` (bytes) in `buffer`.
+    void draw_indexed_indirect(BufferHandle buffer, std::uint32_t offset, std::uint32_t draw_count = 1);
     void end();
     [[nodiscard]] bool active() const noexcept { return pass_ != nullptr; }
 
 private:
     friend class CommandBuffer;
     RenderPass(Device* d, void* pass) : device_(d), pass_(pass) {}
+    Device* device_;
+    void* pass_;
+};
+
+class ComputePass {
+public:
+    void bind_pipeline(ComputePipelineHandle pipeline);
+    // Read-only bindings, in slot order of their kind.
+    void bind_storage_buffer(std::uint32_t slot, BufferHandle buffer);
+    void bind_texture(std::uint32_t slot, TextureHandle texture, SamplerHandle sampler);
+    void dispatch(std::uint32_t groups_x, std::uint32_t groups_y = 1, std::uint32_t groups_z = 1);
+    void end();
+    [[nodiscard]] bool active() const noexcept { return pass_ != nullptr; }
+
+private:
+    friend class CommandBuffer;
+    ComputePass(Device* d, void* pass) : device_(d), pass_(pass) {}
     Device* device_;
     void* pass_;
 };
@@ -271,6 +322,9 @@ public:
     // Swapchain texture for this frame (invalid handle when minimized / unavailable).
     [[nodiscard]] TextureHandle acquire_swapchain(platform::Window& window, std::uint32_t& width, std::uint32_t& height);
     [[nodiscard]] RenderPass begin_render_pass(const RenderPassDesc& desc);
+    // Read-write storage buffers are bound for the whole pass (slot order). Their contents are
+    // kept (no cycling), so data uploaded earlier in this command buffer is visible.
+    [[nodiscard]] ComputePass begin_compute_pass(std::span<const BufferHandle> readwrite_buffers);
     void blit(TextureHandle src, TextureHandle dst, Filter filter = Filter::Linear);
     void submit();
     void submit_and_wait();
@@ -279,6 +333,7 @@ public:
 private:
     friend class Device;
     friend class RenderPass;
+    friend class ComputePass;
     CommandBuffer(Device* d, void* cmd) : device_(d), cmd_(cmd) {}
     Device* device_;
     void* cmd_;
@@ -311,17 +366,22 @@ public:
     [[nodiscard]] Result<SamplerHandle> create_sampler(const SamplerDesc& desc);
     [[nodiscard]] Result<ShaderHandle> create_shader(const ShaderDesc& desc);
     [[nodiscard]] Result<PipelineHandle> create_pipeline(const PipelineDesc& desc);
+    [[nodiscard]] Result<ComputePipelineHandle> create_compute_pipeline(const ComputePipelineDesc& desc);
     void destroy(TextureHandle h);
     void destroy(BufferHandle h);
     void destroy(SamplerHandle h);
     void destroy(ShaderHandle h);
     void destroy(PipelineHandle h);
+    void destroy(ComputePipelineHandle h);
     [[nodiscard]] const TextureDesc* describe(TextureHandle h) const;
 
     [[nodiscard]] CommandBuffer begin_commands();
     void wait_idle();
     // Synchronous readback of mip 0 / layer 0 (tests, screenshots, thumbnails).
     [[nodiscard]] Result<std::vector<std::uint8_t>> read_texture(TextureHandle texture);
+    // Synchronous readback of `size` bytes at `offset` (0 = to the end) of a buffer (tests, debug stats).
+    [[nodiscard]] Result<std::vector<std::uint8_t>> read_buffer(BufferHandle buffer, std::uint32_t offset = 0,
+                                                                std::uint32_t size = 0);
 
     [[nodiscard]] void* native() const noexcept { return device_; }
     // Native object lookups for engine backends (e.g. UI renderer integration).
@@ -338,6 +398,7 @@ private:
     Device() = default;
     friend class CommandBuffer;
     friend class RenderPass;
+    friend class ComputePass;
     void* device_{nullptr};
     std::unique_ptr<Impl> impl_;
     DeviceCapabilities caps_;

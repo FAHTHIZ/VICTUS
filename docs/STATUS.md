@@ -664,6 +664,27 @@ Known gaps:
 
 The `build-and-test (ubuntu-latest, Debug)` job had crashed in "editor: transform gizmo works in 2D scenes on the XY plane" since Slice 51. An ASan + UBSan Debug build (`/tmp/build-asan`, run on lavapipe) showed a global-buffer-overflow in `Editor::create_entity`: the name table had no entry for `Primitive::SpotLight` (added in Slice 48), so spot lights were named "Sprite" and sprites read past the end of the table. The CI sanitizer job never saw it because it has no GPU and skips editor tests. The table now includes "Spot Light", and a `static_assert` ties its size to the enum. The same 2D gizmo test now checks both names. UBSan also flagged `memcpy` from a null pointer when `BinaryReader::array` read an empty array; zero-length copies are now skipped. Editor tests pass under ASan + UBSan; full ctest 21/21.
 
+## Slice 55: GPU occlusion culling (Hi-Z and indirect draws)
+
+Why: roadmap item 10. The CPU frustum culls, but every instance in the frustum was shaded, even behind walls.
+
+Built (ADR-0051):
+- RHI compute on SDL_GPU: `ComputePipelineDesc` / `Device::create_compute_pipeline`, `CommandBuffer::begin_compute_pass(read-write buffers)`, `ComputePass` (pipeline, read-only storage buffers, samplers, dispatch), compute uniforms, `RenderPass::draw_indexed_indirect`, `Device::read_buffer`, `BufferUsageComputeRead`, `DeviceCapabilities::compute`, and `dispatches` / `indirect_draws` / `live_compute_pipelines` stats.
+- Shader generator: compute shaders record workgroup sizes and read-only/read-write binding counts. `create_builtin_compute_pipeline` builds them. The generator now only recompiles shaders whose hash changed (`--all` recompiles everything).
+- Shaders: `hiz_depth.comp` (farthest depth per 8x8 tile), `hiz_reduce.comp` (2x2 max per level, down to 1x1), `occlusion_cull.comp` (AABB projected with the jittered view-projection, level picked so the rectangle spans at most 2 tiles per axis, atomic append of survivors per batch).
+- `SceneRenderer`: `RenderSettings::occlusion_culling` (on by default; active whenever the depth pre-pass runs). An `occlusion_cull` render-graph pass runs after the pre-pass, and the main pass draws each opaque batch with one indirect command. `SceneStats::occlusion`, `occlusion_tested`, `occlusion_batches`; `read_occlusion_survivors()` reads back the survivor count for tests and debugging.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Release, lavapipe):
+- `victus_gpu_tests` "gpu compute": the built-in reduce pipeline turns a 4x4 buffer into the expected 2x2 maxima read back with `read_buffer`; dispatch stats and out-of-range readbacks are checked.
+- `victus_gpu_tests` "gpu occlusion culling": a wall hides a 4x4 grid. 19 instances are tested and 3 survive (the wall and two cubes in front). The image is byte-identical with culling off and identical to the scene without the grid. With TAA jitter over 3 frames, 3 survive and the image matches a non-culling renderer. With a low wall, the peeking rows survive (between 3 and 19) and the image matches. Without a pre-pass, no culling and no indirect draws.
+- `victus_render_tests` "shader compiler": built-in compute shaders compile and record workgroup sizes.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- Occluders come only from the current pre-pass (opaque, not alpha-tested or surface-shaded). The pre-pass and shadow passes are not culled (no two-phase / previous-frame Hi-Z yet).
+- No GPU frustum culling or LOD selection, and one indirect draw per CPU batch (SDL_GPU has no draw-count buffers).
+- Not measured on a phone, and Metal is unverified locally. Backends without compute bytecode (no DXIL is generated) log once and render without culling.
+
 ## Next task
-Slice 55: GPU-driven culling and indirect draws where SDL_GPU allows (compute frustum culling into indirect argument buffers, per-instance LOD), then occlusion culling. See ROADMAP.md "Next slices".
+Slice 56: local light shadows (spot and point lights in a shadow atlas, budgeted by screen size, Low-tier fallback). See ROADMAP.md "Next slices".
 

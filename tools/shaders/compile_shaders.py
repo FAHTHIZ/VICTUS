@@ -10,11 +10,16 @@ For every *.vert / *.frag / *.comp in engine/render/shaders this produces:
 Generated files are committed so engine builds do not require shader tools.
 `--check` verifies (without any shader tools) that the generated file was produced
 from the current sources by comparing embedded SHA-256 hashes.
+
+Shaders whose source hash is unchanged keep their previously generated SPIR-V/MSL, so a
+different local glslang/SPIRV-Cross build only affects the shaders that were edited
+(`--all` recompiles everything).
 """
 import argparse
 import hashlib
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -53,12 +58,21 @@ def compile_one(path, tmp):
          str(spv_msl)])
     msl = run(["spirv-cross", str(spv_msl), "--msl", "--msl-version", "20100", "--msl-decoration-binding"])
     refl = json.loads(run(["spirv-cross", str(spv), "--reflect"]))
+    images = refl.get("images", [])
+    ssbos = refl.get("ssbos", [])
     counts = {
         "samplers": len(refl.get("textures", [])) + len(refl.get("separate_images", [])),
-        "storage_textures": len(refl.get("images", [])),
-        "storage_buffers": len(refl.get("ssbos", [])),
+        "storage_textures": len(images),
+        "storage_buffers": len(ssbos),
         "uniform_buffers": len(refl.get("ubos", [])),
     }
+    if path.suffix == ".comp":
+        # Compute shaders split read-only and read-write storage (SDL_GPU binds them separately).
+        counts["storage_textures"] = sum(1 for i in images if i.get("readonly"))
+        counts["storage_buffers"] = sum(1 for b in ssbos if b.get("readonly"))
+        counts["rw_storage_textures"] = len(images) - counts["storage_textures"]
+        counts["rw_storage_buffers"] = len(ssbos) - counts["storage_buffers"]
+        counts["threads"] = refl["entryPoints"][0]["workgroup_size"]
     return spv.read_bytes(), msl, counts
 
 
@@ -75,23 +89,60 @@ def c_string(text):
     return "\n".join(f'R"VICTUSMSL({c})VICTUSMSL"' for c in chunks)
 
 
-def generate():
-    for tool in ("glslangValidator", "spirv-cross"):
-        if not shutil.which(tool):
-            sys.exit(f"{tool} not found (install glslang-tools and spirv-cross)")
+def previous_outputs():
+    """name -> (sha, body text, entry line) from the existing generated file."""
+    if not OUT_CPP.exists():
+        return {}
+    text = OUT_CPP.read_text()
+    out = {}
+    start = text.find("namespace {\n")
+    table = text.find("const BuiltinShader k_shaders[] = {")
+    if start < 0 or table < 0:
+        return {}
+    blocks = re.split(r"(?m)^(?=// \S+ sha256=)", text[start + len("namespace {\n"):table])
+    entries = {m.group(1): m.group(0) for m in re.finditer(r'(?m)^    \{"([^"]+)",.*\},$', text[table:])}
+    for b in blocks:
+        m = re.match(r"// (\S+) sha256=([0-9a-f]+)", b)
+        if m and m.group(1) in entries:
+            out[m.group(1)] = (m.group(2), b.rstrip("\n"), entries[m.group(1)])
+    return out
+
+
+def renumber(text, old, new):
+    return re.sub(rf"\bk_(spirv|msl)_{old}\b", lambda m: f"k_{m.group(1)}_{new}", text)
+
+
+def generate(recompile_all=False):
+    previous = {} if recompile_all else previous_outputs()
+    stale = [s for s in sources() if s.name not in previous or previous[s.name][0] != digest(s)]
+    if stale:
+        for tool in ("glslangValidator", "spirv-cross"):
+            if not shutil.which(tool):
+                sys.exit(f"{tool} not found (install glslang-tools and spirv-cross)")
     entries = []
     body = []
     with tempfile.TemporaryDirectory() as t:
         tmp = pathlib.Path(t)
         for i, src in enumerate(sources()):
+            if src not in stale:
+                _, block, entry = previous[src.name]
+                old = re.search(r"\bk_spirv_(\d+)\b", block).group(1)
+                body.append(renumber(block, old, i))
+                entries.append(renumber(entry, old, i))
+                continue
+            print(f"compiling {src.name}")
             spv, msl, c = compile_one(src, tmp)
             body.append(f"// {src.name} sha256={digest(src)}")
             body.append(f"const std::uint8_t k_spirv_{i}[] = {{\n{c_bytes(spv)}\n}};")
             body.append(f"const char k_msl_{i}[] =\n{c_string(msl)};")
+            extra = ""
+            if "threads" in c:
+                tx, ty, tz = c["threads"]
+                extra = f', {c["rw_storage_textures"]}, {c["rw_storage_buffers"]}, {{{tx}, {ty}, {tz}}}'
             entries.append(
                 f'    {{"{src.name}", rhi::ShaderStage::{STAGES[src.suffix]}, {{k_spirv_{i}, sizeof(k_spirv_{i})}}, '
                 f'{{k_msl_{i}, sizeof(k_msl_{i}) - 1}}, {c["samplers"]}, {c["storage_textures"]}, '
-                f'{c["storage_buffers"]}, {c["uniform_buffers"]}}},')
+                f'{c["storage_buffers"]}, {c["uniform_buffers"]}{extra}}},')
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     text = "\n".join([
         "// SPDX-License-Identifier: Apache-2.0",
@@ -129,5 +180,6 @@ def check():
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--all", action="store_true", help="recompile every shader, not only changed ones")
     a = ap.parse_args()
-    check() if a.check else generate()
+    check() if a.check else generate(a.all)

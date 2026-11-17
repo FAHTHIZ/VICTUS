@@ -1,0 +1,28 @@
+#version 450
+// Hi-Z level 0: the farthest depth of every 8x8 pixel tile of the depth pre-pass.
+// Bindings follow SDL_GPU compute conventions (Vulkan: set 0 samplers, set 1 read-write
+// storage, set 2 uniforms; Metal: [[buffer]] uniforms first, then storage buffers).
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D u_depth;
+#ifdef VICTUS_MSL
+layout(std430, set = 1, binding = 1) buffer HiZ { float hiz[]; };
+#else
+layout(std430, set = 1, binding = 0) buffer HiZ { float hiz[]; };
+#endif
+layout(std140, set = 2, binding = 0) uniform Params {
+    ivec4 size; // depth width, height, level-0 width, height
+} u;
+
+void main() {
+    ivec2 t = ivec2(gl_GlobalInvocationID.xy);
+    if (t.x >= u.size.z || t.y >= u.size.w) return;
+    ivec2 base = t * 8;
+    float m = 0.0;
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) {
+            ivec2 c = base + ivec2(x, y);
+            if (c.x < u.size.x && c.y < u.size.y) m = max(m, texelFetch(u_depth, c, 0).r);
+        }
+    hiz[t.y * u.size.z + t.x] = m;
+}

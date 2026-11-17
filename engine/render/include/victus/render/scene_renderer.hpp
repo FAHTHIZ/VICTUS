@@ -222,6 +222,10 @@ struct RenderSettings {
     bool lods{true};
     float lod_error_pixels{1.0f};
     int force_lod{-1};                    // debugging: >= 0 draws that level (clamped per mesh)
+    // GPU occlusion culling: when the depth pre-pass runs, a compute pass builds a Hi-Z pyramid
+    // from it and tests every opaque main-pass instance; survivors are drawn with indirect draws.
+    // Conservative: the image is identical with it off. Needs compute (RenderCaps::compute).
+    bool occlusion_culling{true};
     std::uint32_t max_point_lights{512};  // local (point + spot) lights per frame, <= SceneRenderer::kMaxLights
 
     [[nodiscard]] static RenderSettings preset(QualityTier tier) noexcept;
@@ -251,6 +255,10 @@ struct SceneStats {
     std::uint32_t particles{0};        // particles drawn
     std::uint32_t lod_draws{0};        // visible draws using a coarser level than LOD 0
     std::uint64_t triangles{0};        // triangles in the main and transparent passes (all instances)
+    // GPU occlusion culling this frame: instances tested on the GPU / main batches drawn
+    // indirectly (survivor counts stay on the GPU; see SceneRenderer::read_occlusion_survivors).
+    bool occlusion{false};
+    std::uint32_t occlusion_tested{0}, occlusion_batches{0};
 };
 
 struct SceneRendererOptions {
@@ -313,6 +321,9 @@ public:
                                 std::uint32_t height, rhi::Format target_format);
 
     [[nodiscard]] const SceneStats& stats() const noexcept { return stats_; }
+    // Debug/test readback (waits for the GPU): instances that passed the last frame's occlusion
+    // test, summed over its culled batches. 0 when the last frame did not cull.
+    [[nodiscard]] Result<std::uint32_t> read_occlusion_survivors();
     [[nodiscard]] const CompiledGraphInfo& graph_info() const noexcept { return graph_info_; }
     // Cascade 0 matrix (identity when shadows are off).
     [[nodiscard]] const math::Mat4& light_view_projection() const noexcept { return cascade_vp_[0]; }
@@ -356,6 +367,10 @@ private:
     [[nodiscard]] rhi::PipelineHandle blend_pipeline(MaterialBlend blend, bool skinned, bool double_sided);
     [[nodiscard]] Status ensure_exposure_textures();
     [[nodiscard]] Status ensure_history(std::uint32_t index, std::uint32_t width, std::uint32_t height);
+    // Creates the occlusion compute pipelines on first use; false (logged once) when unavailable.
+    [[nodiscard]] bool ensure_occlusion_pipelines();
+    [[nodiscard]] Status ensure_buffer(rhi::BufferHandle& buffer, std::uint32_t& capacity, std::uint32_t bytes,
+                                       std::uint32_t usage, const char* name);
 
     GpuContext& ctx_;
     TransientTexturePool pool_;
@@ -390,6 +405,11 @@ private:
     std::uint32_t instance_capacity_{0}; // in instances
     rhi::BufferHandle palette_buffer_;
     std::uint32_t palette_capacity_{0}; // in matrices
+    rhi::ComputePipelineHandle hiz_depth_, hiz_reduce_, occlusion_cull_;
+    bool occlusion_failed_{false};
+    rhi::BufferHandle hiz_buffer_, occl_bounds_, occl_args_, occl_instances_; // capacities in bytes
+    std::uint32_t hiz_capacity_{0}, occl_bounds_capacity_{0}, occl_args_capacity_{0}, occl_instances_capacity_{0};
+    std::uint32_t occl_batches_{0}; // batches culled by the last frame (for read_occlusion_survivors)
     std::vector<math::Mat4> palette_;
     rhi::Format depth_format_{rhi::Format::D32_FLOAT};
     rhi::Format hdr_format_{rhi::Format::RGBA16_FLOAT};

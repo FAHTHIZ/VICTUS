@@ -1,0 +1,71 @@
+#version 450
+// GPU occlusion culling: tests every main-pass instance's world AABB against the Hi-Z
+// pyramid of the depth pre-pass and appends survivors to their batch's indirect draw.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct Instance { vec4 v[7]; }; // mat4 model + 3 normal-matrix rows (112 bytes)
+struct Bounds { vec4 lo; vec4 hi; }; // lo.w = batch index, hi.w = batch instance offset
+
+#ifdef VICTUS_MSL
+layout(std430, set = 0, binding = 1) readonly buffer Instances { Instance instances[]; };
+layout(std430, set = 0, binding = 2) readonly buffer BoundsBuf { Bounds bounds[]; };
+layout(std430, set = 0, binding = 3) readonly buffer HiZ { float hiz[]; };
+layout(std430, set = 1, binding = 4) buffer Args { uint args[]; };
+layout(std430, set = 1, binding = 5) buffer Out { Instance survivors[]; };
+#else
+layout(std430, set = 0, binding = 0) readonly buffer Instances { Instance instances[]; };
+layout(std430, set = 0, binding = 1) readonly buffer BoundsBuf { Bounds bounds[]; };
+layout(std430, set = 0, binding = 2) readonly buffer HiZ { float hiz[]; };
+layout(std430, set = 1, binding = 0) buffer Args { uint args[]; };
+layout(std430, set = 1, binding = 1) buffer Out { Instance survivors[]; };
+#endif
+layout(std140, set = 2, binding = 0) uniform Params {
+    mat4 view_proj;
+    vec4 viewport; // render width, height, depth epsilon, instance count
+    ivec4 meta;    // level count
+    ivec4 levels[16]; // offset, width, height
+} u;
+
+bool visible(Bounds b) {
+    vec2 lo = vec2(1e30), hi = vec2(-1e30);
+    float zmin = 1.0;
+    for (int i = 0; i < 8; ++i) {
+        vec3 p = vec3((i & 1) != 0 ? b.hi.x : b.lo.x, (i & 2) != 0 ? b.hi.y : b.lo.y, (i & 4) != 0 ? b.hi.z : b.lo.z);
+        vec4 c = u.view_proj * vec4(p, 1.0);
+        if (c.w <= 1e-5) return true; // crosses the camera plane: keep
+        vec3 n = c.xyz / c.w;
+        lo = min(lo, n.xy);
+        hi = max(hi, n.xy);
+        zmin = min(zmin, n.z);
+    }
+    if (zmin <= 0.0) return true;
+    vec2 size = u.viewport.xy;
+    // NDC y is up, pixel rows go down; expand one pixel for conservative rasterisation.
+    vec2 p0 = vec2((lo.x * 0.5 + 0.5) * size.x, (0.5 - hi.y * 0.5) * size.y) - 1.0;
+    vec2 p1 = vec2((hi.x * 0.5 + 0.5) * size.x, (0.5 - lo.y * 0.5) * size.y) + 1.0;
+    if (p1.x < 0.0 || p1.y < 0.0 || p0.x >= size.x || p0.y >= size.y) return false; // off screen
+    p0 = clamp(p0, vec2(0.0), size - 1.0);
+    p1 = clamp(p1, vec2(0.0), size - 1.0);
+    // Coarsest level where the rectangle spans at most two tiles per axis (<= 3x3 reads).
+    float extent = max(p1.x - p0.x, p1.y - p0.y);
+    int level = 0;
+    while (level + 1 < u.meta.x && extent > float(8 << level) * 2.0) ++level;
+    ivec4 L = u.levels[level];
+    float tile = float(8 << level);
+    ivec2 t0 = clamp(ivec2(p0 / tile), ivec2(0), L.yz - 1);
+    ivec2 t1 = clamp(ivec2(p1 / tile), ivec2(0), L.yz - 1);
+    float far_depth = 0.0;
+    for (int y = t0.y; y <= t1.y; ++y)
+        for (int x = t0.x; x <= t1.x; ++x) far_depth = max(far_depth, hiz[L.x + y * L.y + x]);
+    return zmin <= far_depth + u.viewport.z;
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= uint(u.viewport.w)) return;
+    Bounds b = bounds[i];
+    if (!visible(b)) return;
+    uint batch = uint(b.lo.w);
+    uint slot = atomicAdd(args[batch * 5u + 1u], 1u);
+    survivors[uint(b.hi.w) + slot] = instances[i];
+}

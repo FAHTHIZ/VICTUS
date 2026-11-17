@@ -3,6 +3,7 @@
 
 #include "victus/core/log.hpp"
 #include "victus/core/profiler.hpp"
+#include "victus/render/builtin_shaders.hpp"
 #include "victus/render/light_clusters.hpp"
 #include "victus/render/temporal.hpp"
 
@@ -623,7 +624,60 @@ SceneRenderer::~SceneRenderer() {
     if (line_buffer_) d.destroy(line_buffer_);
     if (instance_buffer_) d.destroy(instance_buffer_);
     if (particle_buffer_) d.destroy(particle_buffer_);
+    for (auto pl : {hiz_depth_, hiz_reduce_, occlusion_cull_})
+        if (pl) d.destroy(pl);
+    for (auto b : {hiz_buffer_, occl_bounds_, occl_args_, occl_instances_})
+        if (b) d.destroy(b);
     pool_.clear();
+}
+
+bool SceneRenderer::ensure_occlusion_pipelines() {
+    if (occlusion_cull_) return true;
+    if (occlusion_failed_) return false;
+    auto& d = ctx_.device();
+    auto depth = create_builtin_compute_pipeline(d, "hiz_depth.comp");
+    auto reduce = depth ? create_builtin_compute_pipeline(d, "hiz_reduce.comp") : Result<rhi::ComputePipelineHandle>(depth.error());
+    auto cull = reduce ? create_builtin_compute_pipeline(d, "occlusion_cull.comp") : Result<rhi::ComputePipelineHandle>(reduce.error());
+    if (!cull) {
+        VICTUS_LOG_WARN("render", "GPU occlusion culling disabled: {}", cull.error().message);
+        if (depth) d.destroy(depth.value());
+        if (reduce) d.destroy(reduce.value());
+        occlusion_failed_ = true;
+        return false;
+    }
+    hiz_depth_ = depth.value();
+    hiz_reduce_ = reduce.value();
+    occlusion_cull_ = cull.value();
+    return true;
+}
+
+Status SceneRenderer::ensure_buffer(rhi::BufferHandle& buffer, std::uint32_t& capacity, std::uint32_t bytes,
+                                    std::uint32_t usage, const char* name) {
+    if (buffer && bytes <= capacity) return {};
+    auto& d = ctx_.device();
+    if (buffer) d.destroy(buffer);
+    buffer = {};
+    capacity = std::max({bytes, capacity * 2, 4096u});
+    auto b = d.create_buffer({name, capacity, usage});
+    if (!b) {
+        capacity = 0;
+        return std::move(b).error();
+    }
+    buffer = b.value();
+    return {};
+}
+
+Result<std::uint32_t> SceneRenderer::read_occlusion_survivors() {
+    if (occl_batches_ == 0 || !occl_args_) return 0u;
+    auto bytes = ctx_.device().read_buffer(occl_args_, 0, occl_batches_ * sizeof(rhi::IndexedIndirectCommand));
+    if (!bytes) return std::move(bytes).error();
+    std::uint32_t total = 0;
+    for (std::uint32_t i = 0; i < occl_batches_; ++i) {
+        rhi::IndexedIndirectCommand c;
+        std::memcpy(&c, bytes.value().data() + i * sizeof(c), sizeof(c));
+        total += c.instance_count;
+    }
+    return total;
 }
 
 Result<rhi::PipelineHandle> SceneRenderer::post_pipeline(const char* fragment, rhi::Format format, rhi::BlendMode blend) {
@@ -958,7 +1012,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             instance_capacity_ = std::max({needed, instance_capacity_ * 2, 256u});
             auto b = dev.create_buffer(
                 {"scene_instances", instance_capacity_ * static_cast<std::uint32_t>(sizeof(InstanceData)),
-                 rhi::BufferUsageVertex});
+                 rhi::BufferUsageVertex | rhi::BufferUsageComputeRead});
             if (!b) return std::move(b).error();
             instance_buffer_ = b.value();
         }
@@ -966,6 +1020,61 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                           {reinterpret_cast<const std::uint8_t*>(instances.data()), instances.size() * sizeof(InstanceData)}, true);
     }
     constexpr auto kInstanceStride = static_cast<std::uint32_t>(sizeof(InstanceData));
+
+    // GPU occlusion culling setup: per-instance world bounds (tagged with batch index and the
+    // batch's instance offset) and one indirect command per main batch with zero instances; the
+    // cull shader appends survivors. Main batches own instances [0, visible.size()) in order.
+    struct HiZLevel {
+        std::int32_t offset, width, height, pad;
+    };
+    std::array<HiZLevel, 16> hiz_levels{};
+    std::uint32_t hiz_level_count = 0, occl_instance_count = 0;
+    const bool will_prepass = S.depth_prepass || (S.ssao && env_.ao_intensity > 0.0f && env_.ao_radius > 0.0f);
+    const bool occlusion = S.occlusion_culling && will_prepass && dev.capabilities().compute && !main_batches.empty() &&
+                           ensure_occlusion_pipelines();
+    occl_batches_ = 0;
+    if (occlusion) {
+        std::int32_t w = static_cast<std::int32_t>((rw + 7) / 8), h = static_cast<std::int32_t>((rh + 7) / 8), offset = 0;
+        for (;;) {
+            hiz_levels[hiz_level_count++] = {offset, w, h, 0};
+            offset += w * h;
+            if ((w == 1 && h == 1) || hiz_level_count == hiz_levels.size()) break;
+            w = (w + 1) / 2;
+            h = (h + 1) / 2;
+        }
+        occl_instance_count = static_cast<std::uint32_t>(visible.size());
+        std::vector<Vec4> bounds;
+        bounds.reserve(occl_instance_count * 2u);
+        std::vector<rhi::IndexedIndirectCommand> args;
+        args.reserve(main_batches.size());
+        for (std::size_t bi = 0; bi < main_batches.size(); ++bi) {
+            const Batch& b = main_batches[bi];
+            const GpuMeshLod& l = b.first->mesh->lods[std::min<std::uint32_t>(b.first->lod, b.first->mesh->lod_count - 1)];
+            args.push_back({l.index_count, 0, l.first_index, 0, 0});
+            for (std::uint32_t k = 0; k < b.instance_count; ++k) {
+                const Draw* d = visible[b.instance_offset + k];
+                const Aabb world = d->skinned ? d->world_bounds : d->mesh->bounds.transformed(d->model);
+                bounds.emplace_back(world.min, static_cast<float>(bi));
+                bounds.emplace_back(world.max, static_cast<float>(b.instance_offset));
+            }
+        }
+        const auto hiz_bytes = static_cast<std::uint32_t>(hiz_levels[hiz_level_count - 1].offset + 1) * 4u;
+        VICTUS_TRY_STATUS(ensure_buffer(hiz_buffer_, hiz_capacity_, hiz_bytes, rhi::BufferUsageStorageWrite, "hiz_pyramid"));
+        VICTUS_TRY_STATUS(ensure_buffer(occl_bounds_, occl_bounds_capacity_, static_cast<std::uint32_t>(bounds.size() * sizeof(Vec4)),
+                                        rhi::BufferUsageComputeRead, "occlusion_bounds"));
+        VICTUS_TRY_STATUS(ensure_buffer(occl_args_, occl_args_capacity_,
+                                        static_cast<std::uint32_t>(args.size() * sizeof(rhi::IndexedIndirectCommand)),
+                                        rhi::BufferUsageIndirect | rhi::BufferUsageStorageWrite, "occlusion_args"));
+        VICTUS_TRY_STATUS(ensure_buffer(occl_instances_, occl_instances_capacity_, occl_instance_count * kInstanceStride,
+                                        rhi::BufferUsageVertex | rhi::BufferUsageStorageWrite, "occlusion_instances"));
+        cmd.upload_buffer(occl_bounds_, 0, {reinterpret_cast<const std::uint8_t*>(bounds.data()), bounds.size() * sizeof(Vec4)}, true);
+        cmd.upload_buffer(occl_args_, 0,
+                          {reinterpret_cast<const std::uint8_t*>(args.data()), args.size() * sizeof(rhi::IndexedIndirectCommand)},
+                          true);
+        occl_batches_ = static_cast<std::uint32_t>(main_batches.size());
+        stats_.occlusion = true;
+        stats_.occlusion_tested = occl_instance_count;
+    }
     for (std::uint32_t c = 0; c < cascade_count_; ++c) stats_.shadow_draws += static_cast<std::uint32_t>(casters[c].size());
 
     // Local lights: frustum-cull bounding spheres, keep the nearest when over budget, then
@@ -1199,7 +1308,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const RGTexture hdr = graph.create_texture("hdr_color", hdr_desc);
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
-    depth_desc.usage = rhi::TextureUsageDepthTarget | ((ssao || taa || !particle_draws.empty()) ? rhi::TextureUsageSampled : 0u);
+    depth_desc.usage = rhi::TextureUsageDepthTarget |
+                       ((ssao || taa || occlusion || !particle_draws.empty()) ? rhi::TextureUsageSampled : 0u);
     const RGTexture depth = graph.create_texture("scene_depth", depth_desc);
 
     if (prepass) {
@@ -1229,6 +1339,66 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     stats_.prepass_draws += b.instance_count;
                     ++stats_.prepass_batches;
                 }
+            });
+    }
+
+    if (occlusion) {
+        graph.add_pass(
+            "occlusion_cull",
+            [&](PassBuilder& b) {
+                b.read(depth);
+                b.no_raster();
+                b.side_effect();
+            },
+            [&](PassContext& ctx) {
+                const rhi::BufferHandle hiz_rw[] = {hiz_buffer_};
+                {
+                    rhi::ComputePass cp = ctx.cmd.begin_compute_pass(hiz_rw);
+                    if (!cp.active()) return;
+                    const HiZLevel& l0 = hiz_levels[0];
+                    const std::array<std::int32_t, 4> params{static_cast<std::int32_t>(rw), static_cast<std::int32_t>(rh), l0.width,
+                                                             l0.height};
+                    cp.bind_pipeline(hiz_depth_);
+                    cp.bind_texture(0, ctx.texture(depth), ctx_.nearest_clamp());
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Compute, 0, params);
+                    cp.dispatch(static_cast<std::uint32_t>(l0.width + 7) / 8, static_cast<std::uint32_t>(l0.height + 7) / 8);
+                    cp.end();
+                }
+                // One compute pass per level so each reduction sees the previous level's writes.
+                for (std::uint32_t i = 1; i < hiz_level_count; ++i) {
+                    rhi::ComputePass cp = ctx.cmd.begin_compute_pass(hiz_rw);
+                    if (!cp.active()) return;
+                    const HiZLevel& s = hiz_levels[i - 1];
+                    const HiZLevel& t = hiz_levels[i];
+                    const std::array<std::int32_t, 8> params{s.offset, s.width, s.height, 0, t.offset, t.width, t.height, 0};
+                    cp.bind_pipeline(hiz_reduce_);
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Compute, 0, params);
+                    cp.dispatch(static_cast<std::uint32_t>(t.width + 7) / 8, static_cast<std::uint32_t>(t.height + 7) / 8);
+                    cp.end();
+                }
+                struct CullUniforms {
+                    Mat4 view_proj;
+                    Vec4 viewport;
+                    std::array<std::int32_t, 4> meta;
+                    std::array<HiZLevel, 16> levels;
+                } u{};
+                static_assert(sizeof(CullUniforms) == 352);
+                u.view_proj = view_proj;
+                // Depth tolerance against quantisation of the pre-pass depth buffer.
+                const float eps = depth_format_ == rhi::Format::D16_UNORM ? 2e-5f : 1e-6f;
+                u.viewport = {static_cast<float>(rw), static_cast<float>(rh), eps, static_cast<float>(occl_instance_count)};
+                u.meta = {static_cast<std::int32_t>(hiz_level_count), 0, 0, 0};
+                u.levels = hiz_levels;
+                const rhi::BufferHandle cull_rw[] = {occl_args_, occl_instances_};
+                rhi::ComputePass cp = ctx.cmd.begin_compute_pass(cull_rw);
+                if (!cp.active()) return;
+                cp.bind_pipeline(occlusion_cull_);
+                cp.bind_storage_buffer(0, instance_buffer_);
+                cp.bind_storage_buffer(1, occl_bounds_);
+                cp.bind_storage_buffer(2, hiz_buffer_);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Compute, 0, u);
+                cp.dispatch((occl_instance_count + 63) / 64);
+                cp.end();
             });
     }
 
@@ -1312,7 +1482,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame);
             ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, lighting);
             rhi::PipelineHandle bound{};
-            auto draw_batch = [&](const Batch& b, rhi::PipelineHandle want) {
+            // `indirect`: main batch index whose instance count comes from the occlusion pass.
+            auto draw_batch = [&](const Batch& b, rhi::PipelineHandle want, int indirect = -1) {
                 const Draw* d = b.first;
                 if (!(bound == want)) {
                     pass.bind_pipeline(want);
@@ -1354,11 +1525,21 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 0, light_buffer_);
                 pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 1, cluster_buffer_);
                 pass.bind_vertex_buffer(0, d->mesh->vertices);
-                pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                 pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
-                draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
+                if (indirect >= 0) {
+                    // Survivors are packed from the batch's own offset; first_instance stays 0
+                    // (SDL_GPU does not require indirect first-instance support).
+                    pass.bind_vertex_buffer(1, occl_instances_, b.instance_offset * kInstanceStride);
+                    pass.draw_indexed_indirect(occl_args_, static_cast<std::uint32_t>(indirect) *
+                                                               static_cast<std::uint32_t>(sizeof(rhi::IndexedIndirectCommand)));
+                    ++stats_.occlusion_batches;
+                } else {
+                    pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
+                    draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
+                }
             };
-            for (const Batch& b : main_batches) {
+            for (std::size_t bi = 0; bi < main_batches.size(); ++bi) {
+                const Batch& b = main_batches[bi];
                 const Draw* d = b.first;
                 rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_double_ : skin_cull_)
                                                       : (d->material.double_sided ? opaque_double_ : opaque_cull_);
@@ -1366,7 +1547,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     if (const auto custom = surface_pipeline(d->material.surface_shader, d->skinned, d->material.double_sided,
                                                              MaterialBlend::Opaque))
                         want = custom;
-                draw_batch(b, want);
+                draw_batch(b, want, occlusion ? static_cast<int>(bi) : -1);
             }
             // Blended geometry after every opaque draw, far to near.
             for (const Batch& b : transparent_batches) {
