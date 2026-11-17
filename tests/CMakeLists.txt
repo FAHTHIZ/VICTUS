@@ -101,6 +101,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_texture_compression_tests.cpp
         render/gpu_lod_tests.cpp
         render/gpu_occlusion_tests.cpp
+        render/gpu_local_shadow_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")

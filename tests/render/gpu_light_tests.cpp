@@ -178,6 +178,7 @@ TEST_CASE("gpu: scenes author spot lights through LightComponent") {
     (void)runtime::extract_scene(s, cache, **sr, view);
     const auto img = shoot(**sr);
     CHECK((*sr)->stats().spot_lights == 1);
+    CHECK((*sr)->stats().local_shadow_lights == 1); // LightComponent::shadows (default on) casts
     const int centre = lum(pixel(img, W, W / 2, H / 2)), corner = lum(pixel(img, W, 8, H - 8));
     MESSAGE("authored spot centre " << centre << " corner " << corner);
     CHECK(centre > 200);

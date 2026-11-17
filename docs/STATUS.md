@@ -685,6 +685,27 @@ Known gaps:
 - No GPU frustum culling or LOD selection, and one indirect draw per CPU batch (SDL_GPU has no draw-count buffers).
 - Not measured on a phone, and Metal is unverified locally. Backends without compute bytecode (no DXIL is generated) log once and render without culling.
 
+## Slice 56: Local light shadows
+
+Why: roadmap item 11. Spot and point lights lit through walls and objects.
+
+Built (ADR-0052):
+- `PointLight::cast_shadows` and `SpotLight::cast_shadows`; scenes map `LightComponent::shadows` (the editor's existing "Shadows" checkbox) to them.
+- `RenderSettings::local_shadows`, `local_shadow_atlas`, `local_shadow_tile` (High 2048/512 = 16 tiles, Medium 1024/256, Ultra 4096/512, off on Low; sanitised to at most 8x8 tiles).
+- A `local_shadows` render-graph pass draws one perspective tile per spot light and six 90-degree tiles per point light into one depth atlas. Lights in view are ranked by range over distance, and lights that do not fit the budget stay unshadowed (cones wider than 85 degrees too).
+- `pbr.frag`: `u_local_shadow` (sampler 7). World-to-tile matrices follow the lights in the clustered light buffer. The point light face is picked by the major axis. Normal offset scales with the shadow texel angle and distance, and 3x3 PCF follows `soft_shadows`, clamped inside the tile. Surface shaders inherit it.
+- `SceneStats::local_shadow_lights`, `local_shadow_tiles`, `local_shadow_draws`.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Release, lavapipe):
+- `victus_gpu_tests` "gpu local shadows": a cube floating between a light and the floor. For both a spot and a point light, the floor under the cube goes from 699 to 0 (sum of RGB) with shadows on, the open floor and the cube's top stay within 6 of the unshadowed image, and stats report 1 light with 1 or 6 tiles. Disabled by `local_shadows = false` and on Low.
+- "tile budget": in a 4-tile atlas the point light (6 tiles) does not fit, 4 of 5 spots get tiles, and an 86-degree cone is skipped; with 16 tiles all 6 lights take 11 tiles. Sanitising clamps the atlas and tile sizes.
+- "scenes author spot lights": a scene `LightComponent` with default `shadows` casts.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- No caching for static lights or per-light resolution: every shadowed light renders every frame at the tile size.
+- PCF clamps per tile, so cube-face seams can appear at grazing angles. Tiles switch on and off without a fade when the budget changes.
+
 ## Next task
-Slice 56: local light shadows (spot and point lights in a shadow atlas, budgeted by screen size, Low-tier fallback). See ROADMAP.md "Next slices".
+Slice 57: per-object motion vectors for moving and skinned meshes (TAA ghosting), then temporal upscaling. See ROADMAP.md "Next slices".
 

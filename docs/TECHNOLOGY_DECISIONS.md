@@ -539,6 +539,22 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - Fragment shading is saved, but vertex work for hidden objects remains in the pre-pass. A two-phase, previous-frame Hi-Z variant could also cull the pre-pass and shadows later.
   - CPU batching still runs; there is no GPU frustum culling or GPU LOD selection, and indirect draws are one call per batch (no draw-count buffers in SDL_GPU).
 
+### ADR-0052: Local light shadows in one perspective shadow atlas
+- Status: Accepted (Slice 56)
+- Context: spot and point lights (clustered since Slice 48) lit through walls. Scenes have many local lights, phones have little bandwidth, and SDL_GPU exposes no cube-array depth rendering or geometry shaders.
+- Options:
+  - Storage: (a) one 2D depth atlas with a fixed tile grid; (b) cube depth textures per point light plus 2D maps per spot; (c) dual-paraboloid maps for point lights.
+  - Selection: (a) per-light opt-in plus a per-frame budget ranked by screen coverage; (b) every light.
+- Decision: storage (a), selection (a).
+  - `RenderSettings::local_shadow_atlas` / `local_shadow_tile` define a grid of at most 8x8 tiles (High 2048/512, Medium 1024/256, Ultra 4096/512, off on Low). Spot lights take one perspective tile (field of view twice the outer angle, up to 85 degrees). Point lights take six 90-degree tiles, picked in the shader by the major axis of the light-to-surface vector, so no cube textures are needed.
+  - Lights opt in (`PointLight/SpotLight::cast_shadows`; scenes map `LightComponent::shadows`). Candidates in the view are ranked by range divided by the distance to their sphere, and tiles go out in that order; lights that do not fit stay unshadowed.
+  - The world-to-tile matrices (atlas bias included) are appended to the clustered light buffer with the same 64-byte stride, so the PBR shader gains only one sampler (`u_local_shadow`) and no new buffer. Each light stores its first tile and its shadow texel angle; sampling uses a normal offset of about 1.5 texels at the surface's distance, the raster depth bias of the sun shadow pipeline, and the sun's 3x3 PCF setting, clamped inside the tile.
+  - Casters are culled per tile on the CPU and batched like cascades; the shadow pipelines are shared with the sun.
+- Consequences:
+  - Every shadowed light is re-rendered every frame (no caching of static lights yet), and the atlas resolution is per tile, not per light.
+  - Cube-face seams are possible at grazing angles because PCF clamps to each tile. Translucent and alpha-tested casters are not supported in local shadows yet (same as the sun pass).
+  - Budget changes switch lights between shadowed and unshadowed without a fade.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

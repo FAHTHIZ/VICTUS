@@ -24,18 +24,21 @@ layout(set = 2, binding = 3) uniform sampler2D u_emissive;
 layout(set = 2, binding = 4) uniform sampler2DShadow u_shadow;
 layout(set = 2, binding = 5) uniform sampler2D u_ao;
 layout(set = 2, binding = 6) uniform samplerCube u_env; // prefiltered environment (black 1x1 when absent)
+layout(set = 2, binding = 7) uniform sampler2DShadow u_local_shadow; // spot/point shadow atlas (ADR-0052)
 
 // Clustered local lights (see light_clusters.hpp): a light array and, per cluster, an
 // (offset, count) header followed by the flattened light index list.
+// spot: x cos(inner), y 1 = spot, z first shadow tile + 1 (0 = unshadowed), w shadow texel angle.
+// Shadow matrices (world -> atlas uv/depth) follow the lights in the same array, one per tile.
 struct LocalLight { vec4 position_range; vec4 color_intensity; vec4 direction_cos_outer; vec4 spot; };
-// SDL_GPU: SPIR-V fragment storage buffers follow the 7 textures in set 2; MSL buffers are the
+// SDL_GPU: SPIR-V fragment storage buffers follow the 8 textures in set 2; MSL buffers are the
 // 3 uniform buffers first, then storage buffers ([[buffer(3)]], [[buffer(4)]]).
 #ifdef VICTUS_MSL
 layout(std430, set = 2, binding = 3) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 2, binding = 4) readonly buffer Clusters { uint cluster_data[]; };
 #else
-layout(std430, set = 2, binding = 7) readonly buffer Lights { LocalLight local_lights[]; };
-layout(std430, set = 2, binding = 8) readonly buffer Clusters { uint cluster_data[]; };
+layout(std430, set = 2, binding = 8) readonly buffer Lights { LocalLight local_lights[]; };
+layout(std430, set = 2, binding = 9) readonly buffer Clusters { uint cluster_data[]; };
 #endif
 layout(set = 3, binding = 0) uniform Lighting {
     vec4 camera_pos;     // w: ambient occlusion enabled
@@ -59,6 +62,7 @@ layout(set = 3, binding = 0) uniform Lighting {
     mat4 cascade_vp[4];
     vec4 cluster_grid;   // xyz: tiles x, tiles y, depth slices, w: max lights per cluster
     vec4 cluster_depth;  // x: near, y: slices / log(far / near)
+    vec4 local_shadow;   // x: atlas texel size, y: tiles per row, z: index of the first shadow matrix, w: enabled
 } lighting;
 layout(set = 3, binding = 1) uniform Material {
     vec4 base_color;
@@ -225,6 +229,39 @@ float shadow_factor(vec3 N, vec3 L) {
     return mix(1.0, sample_cascade(c, N, L), fade); // last cascade fades out at shadow distance
 }
 
+// Shadow of a local light: spot lights use one atlas tile, point lights six (one per cube face,
+// +X -X +Y -Y +Z -Z, picked by the major axis of the light-to-surface vector).
+float local_shadow(LocalLight l, vec3 Ld, float dist, vec3 N) {
+    if (lighting.local_shadow.w < 0.5 || l.spot.z < 0.5) return 1.0;
+    int tile = int(l.spot.z + 0.5) - 1;
+    if (l.spot.y < 0.5) {
+        vec3 d = -Ld;
+        vec3 a = abs(d);
+        int face = (a.x >= a.y && a.x >= a.z) ? (d.x >= 0.0 ? 0 : 1) : (a.y >= a.z ? (d.y >= 0.0 ? 2 : 3) : (d.z >= 0.0 ? 4 : 5));
+        tile += face;
+    }
+    LocalLight m = local_lights[uint(lighting.local_shadow.z) + uint(tile)];
+    mat4 M = mat4(m.position_range, m.color_intensity, m.direction_cos_outer, m.spot);
+    float ndl = clamp(dot(N, Ld), 0.0, 1.0);
+    // Normal offset of about one shadow texel at this distance (texel angle * distance).
+    vec3 offset = N * (dist * l.spot.w * 1.5 * (1.0 - ndl * 0.5));
+    vec4 p4 = M * vec4(v_world_pos + offset, 1.0);
+    if (p4.w <= 1e-5) return 1.0;
+    vec3 p = p4.xyz / p4.w;
+    if (p.z >= 1.0) return 1.0;
+    float n = lighting.local_shadow.y;
+    float scale = 1.0 / n;
+    vec2 origin = vec2(mod(float(tile), n), floor(float(tile) / n)) * scale;
+    float texel = lighting.local_shadow.x;
+    vec2 lo = origin + vec2(texel * 1.5), hi = origin + vec2(scale - texel * 1.5);
+    vec2 auv = clamp(p.xy, lo, hi);
+    if (lighting.cascade_params.x < 0.5) return texture(u_local_shadow, vec3(auv, p.z));
+    float sum = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) sum += texture(u_local_shadow, vec3(clamp(auv + vec2(x, y) * texel, lo, hi), p.z));
+    return sum / 9.0;
+}
+
 void main() {
     vec2 uv = v_uv * material.uv_transform.xy + material.uv_transform.zw;
     vec4 base = texture(u_base_color, uv) * material.base_color;
@@ -310,6 +347,8 @@ void main() {
                 float t = clamp((cd - l.direction_cos_outer.w) / max(l.spot.x - l.direction_cos_outer.w, 1e-4), 0.0, 1.0);
                 atten *= t * t;
             }
+            if (atten <= 0.0) continue;
+            atten *= local_shadow(l, Ld, dist, N);
             if (atten <= 0.0) continue;
             vec3 radiance = l.color_intensity.rgb * l.color_intensity.w * atten;
             color += brdf(N, V, Ld, radiance, albedo, metallic, roughness);
