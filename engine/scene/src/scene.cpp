@@ -141,6 +141,7 @@ SerializerRegistry::SerializerRegistry() {
             v.set("near", c.z_near);
             v.set("far", c.z_far);
             v.set("primary", c.primary);
+            if (c.pixel_snap) v.set("pixel_snap", true);
             return v;
         },
         [](CameraComponent& c, const Value& v) -> Status {
@@ -151,6 +152,7 @@ SerializerRegistry::SerializerRegistry() {
             c.z_near = v["near"].as_float(c.z_near);
             c.z_far = v["far"].as_float(c.z_far);
             c.primary = v["primary"].as_bool(c.primary);
+            c.pixel_snap = v["pixel_snap"].as_bool(c.pixel_snap);
             if (!(c.z_near > 0.0f) || !(c.z_far > c.z_near)) return bad("Camera near/far");
             return {};
         });

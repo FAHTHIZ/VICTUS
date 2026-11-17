@@ -186,6 +186,8 @@ public:
     // every frame at `fps` (default "<texture>.vsheet" next to it, made unique). Returns its UUID.
     Result<Uuid> create_sprite_sheet(const Uuid& texture, std::uint32_t columns, std::uint32_t rows, float fps = 10.0f,
                                      std::string_view relative_path = {});
+    // Writes a texture's import settings (.meta), re-imports it and refreshes the GPU cache.
+    Status set_texture_import_settings(const Uuid& texture, const assets::TextureImportSettings& settings);
     // Gives `e` a SpriteAnimator playing `sheet`'s first clip (adding a Sprite when missing). Undoable.
     bool assign_sprite_sheet(scene::Entity e, const Uuid& sheet);
     // Writes a new surface shader from the template (default "shaders/Surface.vshader", made
@@ -337,6 +339,8 @@ private:
     std::unique_ptr<animation::AnimationSystem> edit_sprites_;   // previews SpriteAnimator frames while editing
     // "Create Sprite Sheet" popup of the asset table.
     Uuid sheet_texture_;
+    Uuid import_texture_; // "Texture Import Settings" popup target
+    assets::TextureImportSettings import_edit_;
     int sheet_columns_{4}, sheet_rows_{1};
     float sheet_fps_{10.0f};
     std::unique_ptr<particles::ParticleSystem> play_particles_;  // fresh per play session

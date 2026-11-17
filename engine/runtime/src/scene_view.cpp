@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/runtime/scene_view.hpp"
 
+#include <cmath>
+
 #include "victus/core/profiler.hpp"
 
 namespace victus::runtime {
@@ -36,6 +38,10 @@ std::optional<render::Camera2D> scene_camera_2d(Scene& scene, float viewport_hei
     cam.position = {pos.x, pos.y};
     cam.rotation = math::to_euler(rot).z;
     cam.pixels_per_unit = viewport_height / std::max(c->ortho_height, 0.01f);
+    if (c->pixel_snap) {
+        cam.position.x = std::round(cam.position.x * cam.pixels_per_unit) / cam.pixels_per_unit;
+        cam.position.y = std::round(cam.position.y * cam.pixels_per_unit) / cam.pixels_per_unit;
+    }
     return cam;
 }
 
