@@ -92,6 +92,7 @@ struct PointLight {
     math::Color color{1, 1, 1, 1};
     float intensity{10.0f};
     float range{10.0f};
+    bool cast_shadows{false}; // six atlas tiles (cube faces) when within RenderSettings' budget
 };
 
 // Cone light. Angles are half-angles in radians from the axis: full intensity inside
@@ -104,6 +105,7 @@ struct SpotLight {
     float range{10.0f};
     float inner_angle{0.35f};
     float outer_angle{0.5f};
+    bool cast_shadows{false}; // one atlas tile; cones wider than 85 degrees stay unshadowed
 };
 
 // Particles are camera-facing billboards drawn after opaque geometry into the HDR target, as
@@ -226,6 +228,12 @@ struct RenderSettings {
     // from it and tests every opaque main-pass instance; survivors are drawn with indirect draws.
     // Conservative: the image is identical with it off. Needs compute (RenderCaps::compute).
     bool occlusion_culling{true};
+    // Local light shadows (ADR-0052): lights with cast_shadows get perspective shadow maps in one
+    // atlas of local_shadow_atlas^2 texels split into local_shadow_tile^2 tiles (at most 8x8). Spot
+    // lights take one tile, point lights six; lights covering more of the screen win the tiles.
+    bool local_shadows{true};
+    std::uint32_t local_shadow_atlas{2048}; // 256..8192
+    std::uint32_t local_shadow_tile{512};   // 64..atlas
     std::uint32_t max_point_lights{512};  // local (point + spot) lights per frame, <= SceneRenderer::kMaxLights
 
     [[nodiscard]] static RenderSettings preset(QualityTier tier) noexcept;
@@ -258,6 +266,8 @@ struct SceneStats {
     // GPU occlusion culling this frame: instances tested on the GPU / main batches drawn
     // indirectly (survivor counts stay on the GPU; see SceneRenderer::read_occlusion_survivors).
     bool occlusion{false};
+    // Local light shadows: shadowed lights, atlas tiles rendered, caster draws over all tiles.
+    std::uint32_t local_shadow_lights{0}, local_shadow_tiles{0}, local_shadow_draws{0};
     std::uint32_t occlusion_tested{0}, occlusion_batches{0};
 };
 

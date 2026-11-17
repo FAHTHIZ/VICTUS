@@ -604,6 +604,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             sl.color = l.color;
             sl.intensity = l.intensity;
             sl.range = l.range;
+            sl.cast_shadows = l.shadows;
             const float outer = std::isfinite(l.outer_angle_degrees) ? std::clamp(l.outer_angle_degrees, 0.1f, 89.5f) : 30.0f;
             sl.outer_angle = math::radians(outer);
             sl.inner_angle = math::radians(std::isfinite(l.inner_angle_degrees) ? std::clamp(l.inner_angle_degrees, 0.0f, outer) : outer);
@@ -614,6 +615,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             p.color = l.color;
             p.intensity = l.intensity;
             p.range = l.range;
+            p.cast_shadows = l.shadows;
             points.push_back(p);
         }
     });

@@ -105,6 +105,7 @@ struct LightingUniforms {
     Mat4 cascade_vp[4];
     Vec4 cluster_grid;
     Vec4 cluster_depth;
+    Vec4 local_shadow; // x atlas texel size, y tiles per row, z first shadow matrix index, w enabled
 };
 struct MaterialUniforms {
     Vec4 base_color;
@@ -158,7 +159,7 @@ struct TaaUniforms {
     Mat4 reproject;
     Vec4 params, screen;
 };
-static_assert(sizeof(LightingUniforms) == 28 * 16 + 64 * 4);
+static_assert(sizeof(LightingUniforms) == 29 * 16 + 64 * 4);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 
@@ -284,6 +285,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.taa = false;
         s.max_point_lights = 64;
         s.lod_error_pixels = 2.0f;
+        s.local_shadows = false;
         break;
     case QualityTier::Medium:
         s.render_scale = 1.0f;
@@ -297,6 +299,8 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.taa = false;
         s.max_point_lights = 256;
         s.lod_error_pixels = 1.5f;
+        s.local_shadow_atlas = 1024;
+        s.local_shadow_tile = 256;
         break;
     case QualityTier::High: break; // struct defaults
     case QualityTier::Ultra:
@@ -307,6 +311,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.bloom_levels = 6;
         s.max_point_lights = 1024;
         s.lod_error_pixels = 0.5f;
+        s.local_shadow_atlas = 4096;
         break;
     }
     return s;
@@ -324,6 +329,8 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxLights);
     s.lod_error_pixels = std::isfinite(s.lod_error_pixels) ? std::clamp(s.lod_error_pixels, 0.25f, 16.0f) : 1.0f;
     s.force_lod = std::clamp(s.force_lod, -1, static_cast<int>(kMaxMeshLods) - 1);
+    s.local_shadow_atlas = std::clamp(s.local_shadow_atlas, 256u, 8192u);
+    s.local_shadow_tile = std::clamp(s.local_shadow_tile, std::max(64u, s.local_shadow_atlas / 8u), s.local_shadow_atlas);
     return s;
 }
 
@@ -898,6 +905,74 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     std::array<Frustum, 4> cascade_frustum{};
     for (std::uint32_t c = 0; c < cascade_count_; ++c) cascade_frustum[c] = Frustum::from_matrix(cascade_vp_[c]);
 
+    // Local light shadows: rank shadow-casting lights by how much of the view they can cover and
+    // hand out atlas tiles (spot 1, point 6) until the budget runs out.
+    struct LocalShadowView {
+        Mat4 view_proj; // rendering (tile viewport)
+        Mat4 sample;    // world -> atlas uv and depth
+        Frustum frustum;
+    };
+    std::vector<LocalShadowView> local_views;
+    std::vector<std::pair<int, float>> point_shadow(points_.size(), {-1, 0.0f}), spot_shadow(spots_.size(), {-1, 0.0f});
+    const std::uint32_t local_tiles_per_row = S.local_shadows ? std::min(S.local_shadow_atlas / S.local_shadow_tile, 8u) : 0u;
+    {
+        const std::uint32_t max_tiles = local_tiles_per_row * local_tiles_per_row;
+        struct Candidate {
+            float score;
+            bool spot;
+            std::uint32_t index;
+        };
+        std::vector<Candidate> candidates;
+        const auto consider = [&](Vec3 pos, float range, float intensity, bool spot, std::uint32_t index) {
+            if (!std::isfinite(range) || range <= 0.01f || !std::isfinite(intensity) || intensity <= 0.0f) return;
+            if (!frustum.intersects(Aabb{pos - Vec3{range, range, range}, pos + Vec3{range, range, range}})) return;
+            const float gap = std::max(length(pos - camera_.position) - range, 0.1f);
+            candidates.push_back({range / gap, spot, index});
+        };
+        if (max_tiles > 0) {
+            for (std::uint32_t i = 0; i < points_.size(); ++i)
+                if (points_[i].cast_shadows) consider(points_[i].position, points_[i].range, points_[i].intensity, false, i);
+            for (std::uint32_t i = 0; i < spots_.size(); ++i)
+                if (spots_[i].cast_shadows && std::isfinite(spots_[i].outer_angle) && spots_[i].outer_angle <= 1.4835f)
+                    consider(spots_[i].position, spots_[i].range, spots_[i].intensity, true, i);
+        }
+        std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.score > b.score; });
+        const float tile_scale = 1.0f / static_cast<float>(std::max(local_tiles_per_row, 1u));
+        const auto add_view = [&](Vec3 eye, Vec3 dir, Vec3 up, float fov, float range) {
+            const auto tile = static_cast<std::uint32_t>(local_views.size());
+            const Mat4 vp = Mat4::perspective(fov, 1.0f, std::max(0.05f, range * 0.005f), range) * Mat4::look_at(eye, eye + dir, up);
+            // NDC -> atlas uv of this tile (y down), depth unchanged.
+            const float ox = static_cast<float>(tile % local_tiles_per_row) * tile_scale;
+            const float oy = static_cast<float>(tile / local_tiles_per_row) * tile_scale;
+            Mat4 bias = Mat4::identity();
+            bias.c[0].x = 0.5f * tile_scale;
+            bias.c[1].y = -0.5f * tile_scale;
+            bias.c[3] = {ox + 0.5f * tile_scale, oy + 0.5f * tile_scale, 0.0f, 1.0f};
+            local_views.push_back({vp, bias * vp, Frustum::from_matrix(vp)});
+        };
+        for (const Candidate& c : candidates) {
+            const std::uint32_t need = c.spot ? 1u : 6u;
+            if (local_views.size() + need > max_tiles) continue;
+            const auto first = static_cast<int>(local_views.size());
+            const float px = static_cast<float>(S.local_shadow_tile);
+            if (c.spot) {
+                const SpotLight& l = spots_[c.index];
+                const Vec3 dir = length(l.direction) > 1e-6f ? normalize(l.direction) : Vec3{0, -1, 0};
+                const Vec3 up = std::abs(dir.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+                const float outer = std::clamp(l.outer_angle, 0.01f, 1.4835f);
+                add_view(l.position, dir, up, 2.0f * outer, l.range);
+                spot_shadow[c.index] = {first, 2.0f * std::tan(outer) / px};
+            } else {
+                const PointLight& l = points_[c.index];
+                const Vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+                for (int f = 0; f < 6; ++f) add_view(l.position, dirs[f], f == 2 || f == 3 ? Vec3{0, 0, 1} : Vec3{0, 1, 0}, kPi * 0.5f, l.range);
+                point_shadow[c.index] = {first, 2.0f / px};
+            }
+            ++stats_.local_shadow_lights;
+        }
+        stats_.local_shadow_tiles = static_cast<std::uint32_t>(local_views.size());
+    }
+
     // Visibility + sorting (front-to-back within pipeline and base texture runs).
     std::vector<const Draw*> visible, transparent;
     std::array<std::vector<const Draw*>, 4> casters;
@@ -941,6 +1016,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         (blended ? transparent : visible).push_back(&d);
     }
     std::stable_sort(transparent.begin(), transparent.end(), [](const Draw* a, const Draw* b) { return a->distance > b->distance; });
+    std::vector<std::vector<const Draw*>> local_casters(local_views.size());
+    if (!local_views.empty())
+        for (const Draw& d : draws_) {
+            if (!d.material.cast_shadows || d.material.blend != MaterialBlend::Opaque) continue;
+            const Aabb world = d.skinned ? d.world_bounds : d.mesh->bounds.transformed(d.model);
+            for (std::size_t v = 0; v < local_views.size(); ++v)
+                if (local_views[v].frustum.intersects(world)) local_casters[v].push_back(&d);
+        }
     std::sort(visible.begin(), visible.end(), [](const Draw* a, const Draw* b) {
         if (a->material.surface_shader.index != b->material.surface_shader.index)
             return a->material.surface_shader.index < b->material.surface_shader.index;
@@ -987,6 +1070,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         });
         shadow_batches[c] = build_batches(casters[c], false);
         stats_.shadow_batches += static_cast<std::uint32_t>(shadow_batches[c].size());
+    }
+    std::vector<std::vector<Batch>> local_batches(local_views.size());
+    for (std::size_t v = 0; v < local_views.size(); ++v) {
+        std::sort(local_casters[v].begin(), local_casters[v].end(), [](const Draw* a, const Draw* b) {
+            if (a->skinned != b->skinned) return !a->skinned;
+            if (a->mesh != b->mesh) return a->mesh < b->mesh;
+            return a->lod < b->lod;
+        });
+        local_batches[v] = build_batches(local_casters[v], false);
+        stats_.local_shadow_draws += static_cast<std::uint32_t>(local_casters[v].size());
     }
     stats_.main_batches = static_cast<std::uint32_t>(main_batches.size());
     stats_.reflection_probes = static_cast<std::uint32_t>(probes_.size());
@@ -1084,13 +1177,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     std::uint32_t spot_count = 0;
     {
         const auto finite_or = [](float v, float d) { return std::isfinite(v) ? v : d; };
-        for (const PointLight& pl : points_) {
+        for (std::size_t i = 0; i < points_.size(); ++i) {
+            const PointLight& pl = points_[i];
             GpuLight g{};
             g.position_range = Vec4(pl.position, std::max(finite_or(pl.range, 0.01f), 0.01f));
             g.color_intensity = rgb(pl.color, 1.0f, std::max(finite_or(pl.intensity, 0.0f), 0.0f));
+            if (point_shadow[i].first >= 0) g.spot = {0.0f, 0.0f, static_cast<float>(point_shadow[i].first + 1), point_shadow[i].second};
             local_lights.push_back(g);
         }
-        for (const SpotLight& sl : spots_) {
+        for (std::size_t i = 0; i < spots_.size(); ++i) {
+            const SpotLight& sl = spots_[i];
             GpuLight g{};
             const float outer = std::clamp(finite_or(sl.outer_angle, 0.5f), 0.001f, 3.1f);
             const float inner = std::clamp(finite_or(sl.inner_angle, 0.35f), 0.0f, outer);
@@ -1099,6 +1195,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             g.color_intensity = rgb(sl.color, 1.0f, std::max(finite_or(sl.intensity, 0.0f), 0.0f));
             g.direction_cos_outer = Vec4(dir, std::cos(outer));
             g.spot = {std::cos(inner), 1.0f, 0.0f, 0.0f};
+            if (spot_shadow[i].first >= 0) {
+                g.spot.z = static_cast<float>(spot_shadow[i].first + 1);
+                g.spot.w = spot_shadow[i].second;
+            }
             local_lights.push_back(g);
         }
         std::erase_if(local_lights, [&](const GpuLight& g) {
@@ -1141,8 +1241,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             else cmd.upload_buffer(buf, 0, {static_cast<const std::uint8_t*>(data), bytes}, true);
             return {};
         };
-        VICTUS_TRY_STATUS(upload(light_buffer_, light_capacity_, "local_lights", local_lights.data(),
-                                 local_lights.size() * sizeof(GpuLight)));
+        // Shadow sampling matrices follow the lights (same 64-byte stride), one per atlas tile.
+        std::vector<GpuLight> light_data = local_lights;
+        for (const LocalShadowView& v : local_views) {
+            light_data.push_back({v.sample.c[0], v.sample.c[1], v.sample.c[2], v.sample.c[3]});
+        }
+        static_assert(sizeof(GpuLight) == sizeof(Mat4));
+        VICTUS_TRY_STATUS(upload(light_buffer_, light_capacity_, "local_lights", light_data.data(),
+                                 light_data.size() * sizeof(GpuLight)));
         VICTUS_TRY_STATUS(upload(cluster_buffer_, cluster_capacity_, "light_clusters", clusters.data.data(),
                                  clusters.data.size() * sizeof(std::uint32_t)));
     }
@@ -1260,6 +1366,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         for (std::size_t i = 0; i < 9; ++i) lighting.env_sh[i] = Vec4(env_map->sh().coefficients[i] * env_intensity, 0.0f);
     }
     for (std::uint32_t c = 0; c < 4; ++c) lighting.cascade_vp[c] = cascade_vp_[c];
+    const bool local_shadows = !local_views.empty();
+    if (local_shadows)
+        lighting.local_shadow = {1.0f / static_cast<float>(S.local_shadow_atlas), static_cast<float>(local_tiles_per_row),
+                                 static_cast<float>(stats_.point_lights), 1.0f};
 
     RenderGraph graph;
     rhi::TextureDesc target_desc;
@@ -1270,6 +1380,41 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     target_desc.usage = rhi::TextureUsageColorTarget;
     const RGTexture out = graph.import_texture("target", target, target_desc);
     graph.mark_output(out);
+
+    RGTexture local_shadow_map;
+    if (local_shadows) {
+        rhi::TextureDesc sd;
+        sd.format = depth_format_;
+        sd.width = sd.height = S.local_shadow_atlas;
+        sd.usage = rhi::TextureUsageDepthTarget | rhi::TextureUsageSampled;
+        local_shadow_map = graph.create_texture("local_shadow_atlas", sd);
+        graph.add_pass(
+            "local_shadows", [&](PassBuilder& b) { b.write_depth(local_shadow_map, rhi::LoadOp::Clear, 1.0f); },
+            [&](PassContext& ctx) {
+                const auto tile = static_cast<float>(S.local_shadow_tile);
+                for (std::size_t v = 0; v < local_views.size(); ++v) {
+                    const auto t = static_cast<std::uint32_t>(v);
+                    ctx.pass->set_viewport({static_cast<float>(t % local_tiles_per_row) * tile,
+                                            static_cast<float>(t / local_tiles_per_row) * tile, tile, tile, 0, 1});
+                    ShadowUniforms su{local_views[v].view_proj};
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, su);
+                    rhi::PipelineHandle bound{};
+                    for (const Batch& b : local_batches[v]) {
+                        const rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : shadow_pipeline_;
+                        if (!(bound == want)) {
+                            ctx.pass->bind_pipeline(want);
+                            if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                            bound = want;
+                        }
+                        if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
+                        ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
+                        ctx.pass->bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
+                        ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
+                        draw_mesh_lod(*ctx.pass, *b.first->mesh, b.first->lod, b.instance_count);
+                    }
+                }
+            });
+    }
 
     RGTexture shadow_map;
     if (shadows) {
@@ -1452,6 +1597,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         "forward",
         [&](PassBuilder& b) {
             if (shadow_map.valid()) b.read(shadow_map);
+            if (local_shadow_map.valid()) b.read(local_shadow_map);
             if (ao.valid()) b.read(ao);
             b.write_color(hdr, rhi::LoadOp::Clear, env_.clear_color);
             b.write_depth(depth, prepass ? rhi::LoadOp::Load : rhi::LoadOp::Clear, 1.0f);
@@ -1477,6 +1623,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.draw(3);
             }
             const rhi::TextureHandle shadow_tex = shadow_map.valid() ? ctx.texture(shadow_map) : no_shadow_;
+            const rhi::TextureHandle local_shadow_tex = local_shadow_map.valid() ? ctx.texture(local_shadow_map) : no_shadow_;
             const rhi::TextureHandle ao_tex = ao.valid() ? ctx.texture(ao) : ctx_.white();
             FrameUniforms frame{view_proj};
             ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame);
@@ -1508,6 +1655,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 2, pick(m.normal_texture, ctx_.flat_normal()), tex_sampler);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 3, pick(m.emissive_texture, ctx_.white()), tex_sampler);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 4, shadow_tex, ctx_.shadow_compare());
+                pass.bind_texture(rhi::ShaderStage::Fragment, 7, local_shadow_tex, ctx_.shadow_compare());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 5, ao_tex, ctx_.linear_clamp());
                 ProbeUniforms pu{};
                 rhi::TextureHandle env_cube = env_map && env_map->cube() ? env_map->cube() : ctx_.black_cube();
