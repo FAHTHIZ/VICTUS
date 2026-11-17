@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstdint>
 #include <cstring>
 #include <format>
 #include <map>
@@ -235,6 +236,82 @@ cgltf_result sandboxed_read(const cgltf_memory_options*, const cgltf_file_option
 
 void sandboxed_release(const cgltf_memory_options*, const cgltf_file_options*, void* data) { std::free(data); }
 
+// Overflow-checked bounds validation of every buffer view and accessor, run before
+// cgltf_validate(). cgltf <= 1.15 computes these sizes with unchecked arithmetic
+// (CVE-2026-32845, CVE-2026-75148), so crafted counts or offsets could pass its checks and lead
+// to out-of-bounds reads. Sparse indices are checked against the accessor count here too.
+constexpr std::uint64_t kU64Max = ~std::uint64_t{0};
+bool add_ok(std::uint64_t a, std::uint64_t b, std::uint64_t& out) {
+    if (a > kU64Max - b) return false;
+    out = a + b;
+    return true;
+}
+bool mul_ok(std::uint64_t a, std::uint64_t b, std::uint64_t& out) {
+    if (a != 0 && b > kU64Max / a) return false;
+    out = a * b;
+    return true;
+}
+
+// Largest element count accepted for one accessor. Far above any real asset (the importer reads
+// at most 2 GiB files) and keeps count * components * sizeof(float) far from overflowing.
+constexpr std::uint64_t kMaxAccessorCount = 1ull << 28;
+
+bool range_fits(std::uint64_t offset, std::uint64_t length, std::uint64_t size) {
+    std::uint64_t end = 0;
+    return add_ok(offset, length, end) && end <= size;
+}
+
+Result<void> validate_accessors(const cgltf_data& data) {
+    for (cgltf_size i = 0; i < data.buffer_views_count; ++i) {
+        const cgltf_buffer_view& v = data.buffer_views[i];
+        if (!v.buffer) return make_error(ErrorCode::ParseError, std::format("bufferView {} has no buffer", i));
+        if (!range_fits(v.offset, v.size, v.buffer->size))
+            return make_error(ErrorCode::ParseError, std::format("bufferView {} exceeds its buffer", i));
+        if (v.stride != 0 && (v.stride < 4 || v.stride > 252))
+            return make_error(ErrorCode::ParseError, std::format("bufferView {} has invalid byteStride {}", i, v.stride));
+    }
+    for (cgltf_size i = 0; i < data.accessors_count; ++i) {
+        const cgltf_accessor& a = data.accessors[i];
+        if (a.component_type == cgltf_component_type_invalid || a.type == cgltf_type_invalid)
+            return make_error(ErrorCode::ParseError, std::format("accessor {} has an invalid type", i));
+        if (a.count == 0 || a.count > kMaxAccessorCount)
+            return make_error(ErrorCode::ParseError, std::format("accessor {} has invalid count {}", i, a.count));
+        const std::uint64_t element = cgltf_calc_size(a.type, a.component_type);
+        if (a.buffer_view) {
+            std::uint64_t span = 0;
+            if (a.stride < element || !mul_ok(a.stride, a.count - 1, span) || !add_ok(span, element, span) ||
+                !range_fits(a.offset, span, a.buffer_view->size))
+                return make_error(ErrorCode::ParseError, std::format("accessor {} reads outside its bufferView", i));
+        }
+        if (!a.is_sparse) continue;
+        const cgltf_accessor_sparse& sp = a.sparse;
+        if (sp.count == 0 || sp.count > a.count)
+            return make_error(ErrorCode::ParseError, std::format("accessor {}: invalid sparse count {}", i, sp.count));
+        if (sp.indices_component_type != cgltf_component_type_r_8u && sp.indices_component_type != cgltf_component_type_r_16u &&
+            sp.indices_component_type != cgltf_component_type_r_32u)
+            return make_error(ErrorCode::ParseError, std::format("accessor {}: invalid sparse index type", i));
+        if (!sp.indices_buffer_view || !sp.values_buffer_view || !sp.indices_buffer_view->buffer->data ||
+            !sp.values_buffer_view->buffer->data)
+            return make_error(ErrorCode::ParseError, std::format("accessor {}: sparse data is missing", i));
+        const std::uint64_t index_size = cgltf_component_size(sp.indices_component_type);
+        std::uint64_t indices_len = 0, values_len = 0;
+        if (!mul_ok(index_size, sp.count, indices_len) || !range_fits(sp.indices_byte_offset, indices_len, sp.indices_buffer_view->size) ||
+            !mul_ok(element, sp.count, values_len) || !range_fits(sp.values_byte_offset, values_len, sp.values_buffer_view->size))
+            return make_error(ErrorCode::ParseError, std::format("accessor {}: sparse data exceeds its bufferView", i));
+        const std::uint8_t* idx = static_cast<const std::uint8_t*>(sp.indices_buffer_view->buffer->data) +
+                                  sp.indices_buffer_view->offset + sp.indices_byte_offset;
+        for (cgltf_size k = 0; k < sp.count; ++k) {
+            std::uint64_t value = 0;
+            const std::uint8_t* p = idx + k * index_size;
+            for (std::uint64_t b = 0; b < index_size; ++b) value |= std::uint64_t{p[b]} << (8 * b);
+            if (value >= a.count)
+                return make_error(ErrorCode::ParseError,
+                                  std::format("accessor {}: sparse index {} is outside its {} elements", i, value, a.count));
+        }
+    }
+    return {};
+}
+
 const char* result_name(cgltf_result r) {
     switch (r) {
     case cgltf_result_data_too_short: return "data too short";
@@ -440,10 +517,42 @@ private:
         return index;
     }
 
+    // Accessors were bounds-checked by validate_accessors() before this runs. Sparse accessors are
+    // applied here instead of by cgltf_accessor_unpack_floats, which in cgltf <= 1.15 advances the
+    // sparse values by the base view's byteStride (CVE-2026-112019) and does not bound sparse indices
+    // (CVE-2026-112018). Sparse values are tightly packed (glTF 2.0 3.6.2.3).
     static std::vector<float> unpack(const cgltf_accessor* acc) {
-        const cgltf_size n = acc->count * cgltf_num_components(acc->type);
+        const cgltf_size comps = cgltf_num_components(acc->type);
+        const cgltf_size n = acc->count * comps;
         std::vector<float> out(n);
-        cgltf_accessor_unpack_floats(acc, out.data(), n);
+        if (!acc->is_sparse) {
+            cgltf_accessor_unpack_floats(acc, out.data(), n);
+            return out;
+        }
+        cgltf_accessor base = *acc;
+        base.is_sparse = 0;
+        cgltf_accessor_unpack_floats(&base, out.data(), n);
+        const cgltf_accessor_sparse& sp = acc->sparse;
+        cgltf_accessor indices{};
+        indices.component_type = sp.indices_component_type;
+        indices.type = cgltf_type_scalar;
+        indices.count = sp.count;
+        indices.buffer_view = sp.indices_buffer_view;
+        indices.offset = sp.indices_byte_offset;
+        indices.stride = cgltf_component_size(sp.indices_component_type);
+        cgltf_accessor values{};
+        values.component_type = acc->component_type;
+        values.normalized = acc->normalized;
+        values.type = acc->type;
+        values.count = sp.count;
+        values.buffer_view = sp.values_buffer_view;
+        values.offset = sp.values_byte_offset;
+        values.stride = cgltf_calc_size(acc->type, acc->component_type);
+        for (cgltf_size i = 0; i < sp.count; ++i) {
+            const cgltf_size target = cgltf_accessor_read_index(&indices, i);
+            if (target >= acc->count) continue; // rejected by validate_accessors(); defensive
+            cgltf_accessor_read_float(&values, i, out.data() + target * comps, comps);
+        }
         return out;
     }
 
@@ -742,6 +851,9 @@ Result<CookedModel> import_gltf(const fs::Path& path, const ModelImportSettings&
     if (r != cgltf_result_success)
         return make_error(ErrorCode::ParseError, std::format("{}: loading buffers failed: {} {}", path.filename().string(),
                                                              result_name(r), ctx.error));
+    if (auto checked = validate_accessors(*guard.data); !checked)
+        return make_error(ErrorCode::ParseError, std::format("{}: validation failed: {}", path.filename().string(),
+                                                             checked.error().message));
     r = cgltf_validate(guard.data);
     if (r != cgltf_result_success)
         return make_error(ErrorCode::ParseError, std::format("{}: validation failed: {}", path.filename().string(), result_name(r)));

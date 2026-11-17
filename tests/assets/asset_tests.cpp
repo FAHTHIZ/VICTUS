@@ -450,3 +450,118 @@ TEST_CASE("assets: HDR textures cook to half floats with SH irradiance and an LD
     std::vector<std::uint8_t> cut(blob.begin(), blob.end() - 40);
     CHECK_FALSE(deserialize_texture(cut).ok());
 }
+
+namespace {
+json::Value sparse_block(int count, int indices_view, int values_view) {
+    json::Value idx = json::Value::object();
+    idx.set("bufferView", indices_view);
+    idx.set("componentType", 5121); // UNSIGNED_BYTE
+    json::Value val = json::Value::object();
+    val.set("bufferView", values_view);
+    json::Value sp = json::Value::object();
+    sp.set("count", count);
+    sp.set("indices", idx);
+    sp.set("values", val);
+    return sp;
+}
+json::Value buffer_view(std::uint64_t offset, std::uint64_t length, int stride = 0) {
+    json::Value v = json::Value::object();
+    v.set("buffer", 0);
+    v.set("byteOffset", offset);
+    v.set("byteLength", length);
+    if (stride) v.set("byteStride", stride);
+    return v;
+}
+void append_bytes(std::vector<std::uint8_t>& bin, const void* p, std::size_t n) {
+    const auto* b = static_cast<const std::uint8_t*>(p);
+    bin.insert(bin.end(), b, b + n);
+    while (bin.size() % 4) bin.push_back(0);
+}
+} // namespace
+
+// cgltf <= 1.15 advisories CVE-2026-112018/112019/32845/75148: crafted accessors must be rejected by
+// the importer's own checked validation, and valid sparse accessors over strided views must read
+// tightly packed sparse values.
+TEST_CASE("assets: glTF importer hardening against crafted accessors (cgltf advisories)") {
+    TempDir dir("victus_gltf_crafted");
+    auto import_doc = [&](const test::GltfFixture& fx, const char* name) {
+        test::GltfFixture copy = fx;
+        write_text(dir.path / name, copy.gltf_with_data_uri());
+        ImportResult res;
+        ModelImportSettings plain;
+        plain.optimize_meshes = false;
+        return import_gltf(dir.path / name, plain, dir.path, &res);
+    };
+
+    SUBCASE("accessor counts that overflow the bounds check are rejected") {
+        for (double count : {0.0, 4294967296.0, 1099511627776.0, 268435456.0}) {
+            test::GltfFixture fx;
+            json::Value acc = fx.doc["accessors"];
+            json::Value pos = acc[0];
+            pos.set("count", count);
+            json::Array list = acc.as_array();
+            list[0] = pos;
+            fx.doc.set("accessors", json::Value(list));
+            auto m = import_doc(fx, "overflow.gltf");
+            REQUIRE_FALSE(m.ok());
+            if (count > 0) CHECK(m.error().message.find("accessor 0") != std::string::npos);
+        }
+    }
+
+    SUBCASE("sparse indices outside the accessor are rejected") {
+        test::GltfFixture fx;
+        const std::uint8_t indices[] = {7};
+        const float values[] = {9, 9, 9};
+        const auto idx_at = fx.bin.size();
+        append_bytes(fx.bin, indices, sizeof indices);
+        const auto val_at = fx.bin.size();
+        append_bytes(fx.bin, values, sizeof values);
+        json::Array views = fx.doc["bufferViews"].as_array();
+        views.push_back(buffer_view(idx_at, 1));
+        views.push_back(buffer_view(val_at, 12));
+        fx.doc.set("bufferViews", json::Value(views));
+        json::Array accs = fx.doc["accessors"].as_array();
+        accs[0].set("sparse", sparse_block(1, 4, 5));
+        fx.doc.set("accessors", json::Value(accs));
+        auto m = import_doc(fx, "sparse_oob.gltf");
+        REQUIRE_FALSE(m.ok());
+        CHECK(m.error().message.find("sparse index 7") != std::string::npos);
+    }
+
+    SUBCASE("sparse values over a strided base view are read tightly packed") {
+        test::GltfFixture fx;
+        // Positions re-laid out with a 16-byte stride; two sparse replacements for vertices 1 and 2.
+        const float base[] = {-0.5f, 0, -0.5f, 0, 0.5f, 0, -0.5f, 0, 0.5f, 0, 0.5f, 0, -0.5f, 0, 0.5f, 0};
+        const std::uint8_t indices[] = {1, 2};
+        const float values[] = {1, 2, 3, 4, 5, 6};
+        const auto base_at = fx.bin.size();
+        append_bytes(fx.bin, base, sizeof base);
+        const auto idx_at = fx.bin.size();
+        append_bytes(fx.bin, indices, sizeof indices);
+        const auto val_at = fx.bin.size();
+        append_bytes(fx.bin, values, sizeof values);
+        json::Array views = fx.doc["bufferViews"].as_array();
+        views.push_back(buffer_view(base_at, sizeof base, 16));
+        views.push_back(buffer_view(idx_at, 2));
+        views.push_back(buffer_view(val_at, sizeof values));
+        fx.doc.set("bufferViews", json::Value(views));
+        json::Array accs = fx.doc["accessors"].as_array();
+        accs[0].set("bufferView", 4);
+        accs[0].set("sparse", sparse_block(2, 5, 6));
+        accs[0].set("min", json::Value(json::Array{-0.5, 0.0, -0.5}));
+        accs[0].set("max", json::Value(json::Array{4.0, 5.0, 6.0}));
+        fx.doc.set("accessors", json::Value(accs));
+        auto m = import_doc(fx, "sparse_strided.gltf");
+        REQUIRE(m.ok());
+        REQUIRE(m->meshes.size() == 1);
+        const auto& v = m->meshes[0].data.vertices;
+        REQUIRE(v.size() == 4);
+        CHECK(v[0].position.x == doctest::Approx(-0.5f));
+        CHECK(v[1].position.x == doctest::Approx(1.0f));
+        CHECK(v[1].position.z == doctest::Approx(3.0f));
+        CHECK(v[2].position.x == doctest::Approx(4.0f));
+        CHECK(v[2].position.y == doctest::Approx(5.0f));
+        CHECK(v[2].position.z == doctest::Approx(6.0f));
+        CHECK(v[3].position.z == doctest::Approx(0.5f));
+    }
+}
