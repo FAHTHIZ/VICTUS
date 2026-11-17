@@ -404,5 +404,12 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 - Decision: (1). Frames are numbered row by row; clips are explicit frame lists or `from`/`to` ranges with fps and loop. `AnimationSystem::update_sprites` runs inside `update()` (and with dt 0 in the editor for preview); a clip change restarts it; non-looping clips hold the last frame and report `finished`. Missing or invalid sheets leave the Sprite unchanged and are reported by `victus check`/`export`. Sheets hot-reload by clearing the system's cache.
 - Consequences: every frame of a character shares one texture, so the batcher keeps one draw. Linear filtering can bleed neighbouring cells at frame edges; nearest filtering/insets and packed atlases remain open.
 
+### ADR-0039: Texture filtering is an import setting read at draw time
+- Status: Accepted (2026-11-17, Slice 40).
+- Context: pixel-art sprites and sprite sheets need point sampling; linear filtering blurred them and bled neighbouring sheet cells. Materials already had a per-material `filter`, sprites had none.
+- Candidates: (1) a `"filter"` key in the texture's import settings, read by the GPU asset cache when sprites and materials are drawn (Godot exposes texture filtering on the canvas item using the texture, Unity's Texture Import Settings carry a Filter Mode per texture); (2) a filter field on every Sprite component — flexible but repetitive for whole sheets; (3) bake a sampler into the cooked texture — the RHI binds samplers separately from textures, so this would still need a lookup.
+- Decision: (1), with the sprite batch splitting batches by filter and materials using nearest when either the material or its base colour texture asks for it. The setting is not baked into the pixels; changing it re-imports (settings are part of the import key) and evicts the cache.
+- Consequences: one switch per texture fixes pixel art and sheet bleeding everywhere it is used. Wrap mode stays fixed (sprites clamp, materials repeat).
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

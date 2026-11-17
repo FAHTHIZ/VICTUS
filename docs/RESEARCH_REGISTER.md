@@ -123,6 +123,10 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-17 (Slice 40, pixel-art texture filtering)
+- Unity, "Default texture Import Settings window reference" (https://docs.unity3d.com/Manual/texture-type-default.html, accessed 2026-11-17): Filter Mode is a per-texture import setting; Point (no filter) "appears blocky up close", Bilinear "appears blurry up close". Adopted: the filter lives in VICTUS texture import settings (ADR-0039).
+- Godot, CanvasItem (https://docs.godotengine.org/en/stable/classes/class_canvasitem.html, accessed 2026-11-17): `texture_filter` is "the filtering mode used to render this CanvasItem's texture(s)"; nearest "reads from the nearest pixel only". Considered and rejected as the primary switch (per-sprite setting repeats across every sprite of a sheet); VICTUS keeps a per-sprite `nearest` flag only at the render level.
+
 ## Research conclusions added 2026-11-17 (Slice 39, sprite sheets and sprite animation)
 - Godot `Sprite2D` — https://docs.godotengine.org/en/stable/classes/class_sprite2d.html (accessed 2026-11-17): `hframes`/`vframes` are the columns and rows of a sprite sheet and `frame` the cell shown; `region_rect` draws a region of an atlas texture. VICTUS adopts the same grid model (`columns`, `rows`, frames numbered row by row) and exposes the region as `Sprite.uv`.
 - Godot `SpriteFrames` — https://docs.godotengine.org/en/stable/classes/class_spriteframes.html (accessed 2026-11-17): a resource of named animations, each with frames, a playback speed in frames per second and a loop mode (none, linear, ping-pong). VICTUS sheets hold named clips with frame lists, fps and a loop flag; ping-pong is expressed by listing frames (`[0,1,2,1]`) and per-frame durations by repeating frames.
