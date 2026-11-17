@@ -664,19 +664,23 @@ void Editor::draw_viewport() {
                             play_state_ == PlayState::Editing ? "editor camera" : "game camera", tier.c_str(),
                             last_view_stats_.extract.meshes, render_stats().main_batches, last_view_stats_.sprites,
                             last_view_stats_.extract.lights);
-        if (play_state_ == PlayState::Editing) {
-            viewport_input({avail.x, avail.y}, hovered);
-            tile_viewport_input({origin.x, origin.y}, {avail.x, avail.y}, hovered);
-        }
         // The tile tool owns plain left clicks while a tilemap is selected in a 2D scene.
         const bool painting = tile_tool_ && two_d && !tile_target().is_null() && !ImGui::GetIO().KeyAlt;
+        // The transform gizmo takes clicks on its handles before camera navigation and picking.
+        gizmo_viewport({origin.x, origin.y}, {avail.x, avail.y}, hovered, painting);
+        if (play_state_ == PlayState::Editing) {
+            if (!gizmo_consumed_click_) viewport_input({avail.x, avail.y}, hovered);
+            if (!gizmo_consumed_click_) tile_viewport_input({origin.x, origin.y}, {avail.x, avail.y}, hovered);
+        }
         // Click-to-select (after input so a drag does not select).
-        if (hovered && !painting && play_state_ == PlayState::Editing && ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
-            !lmb_dragged_) {
+        if (hovered && !painting && !gizmo_consumed_click_ && play_state_ == PlayState::Editing &&
+            ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !lmb_dragged_) {
             const ImVec2 m = ImGui::GetMousePos();
             const Entity hit = pick({m.x - origin.x, m.y - origin.y}, {avail.x, avail.y});
             select(hit, ImGui::GetIO().KeyCtrl);
         }
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) gizmo_consumed_click_ = false;
+        draw_gizmo_toolbar({origin.x, origin.y}, {avail.x, avail.y});
     }
     ImGui::End();
 }
@@ -1720,6 +1724,7 @@ void Editor::handle_shortcuts() {
     const bool mouse_nav = ImGui::IsMouseDown(ImGuiMouseButton_Right);
     if (!mouse_nav && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) delete_selected();
     if (!mouse_nav && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) frame_selected();
+    gizmo_shortcuts();
 }
 
 } // namespace victus::editor

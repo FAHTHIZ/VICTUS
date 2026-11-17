@@ -44,6 +44,7 @@ int main(int argc, char** argv) {
         .option("height", "window height", "900")
         .option("data-dir", "override the user data directory")
         .option("select", "select the entity with this name after opening")
+        .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
         .option("show", "open a window after opening: input-actions, network, material-editor (selected entity's material)")
         .option("port", "UDP port for --host", "27960")
         .flag("host", "enter play mode as a listen server after opening")
@@ -98,6 +99,18 @@ int main(int argc, char** argv) {
     if (args.has("select") && ed.has_project()) {
         const auto e = ed.edit_scene().find_by_name(args.get("select"));
         if (!e.is_null()) ed.select(e);
+    }
+    {
+        std::string tool = args.get("tool");
+        auto& g = ed.gizmo_settings();
+        if (tool.ends_with("-local")) {
+            g.space = editor::gizmo::Space::Local;
+            tool.resize(tool.size() - 6);
+        }
+        if (tool == "move") g.mode = editor::gizmo::Mode::Translate;
+        else if (tool == "rotate") g.mode = editor::gizmo::Mode::Rotate;
+        else if (tool == "scale") g.mode = editor::gizmo::Mode::Scale;
+        else std::fprintf(stderr, "victus_editor: unknown tool '%s' (move, rotate, scale)\n", tool.c_str());
     }
     if (args.has("show")) {
         if (args.get("show") == "input-actions") ed.set_show_input_actions(true);
