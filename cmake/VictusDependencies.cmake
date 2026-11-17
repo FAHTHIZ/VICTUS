@@ -223,3 +223,58 @@ function(victus_fetch_monocypher)
     target_compile_options(victus_monocypher PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w,-w>)
     victus_third_party_tsan(victus_monocypher)
 endfunction()
+
+# glslang 16.6.0 (BSD-3-Clause, BSD-2-Clause, MIT, Apache-2.0; see its LICENSE.txt).
+# https://github.com/KhronosGroup/glslang/releases/tag/16.6.0
+# GLSL -> SPIR-V for project surface shaders compiled at run time (engine/shadercompiler,
+# ADR-0035). Only the GLSL front end and SPIR-V back end are built (no HLSL, optimizer or tools).
+function(victus_fetch_glslang)
+    if(TARGET glslang)
+        return()
+    endif()
+    foreach(opt ENABLE_GLSLANG_BINARIES ENABLE_HLSL ENABLE_OPT GLSLANG_TESTS GLSLANG_ENABLE_INSTALL BUILD_EXTERNAL
+                ENABLE_PCH ENABLE_GLSLANG_JS BUILD_WERROR)
+        set(${opt} OFF CACHE BOOL "" FORCE)
+    endforeach()
+    FetchContent_Declare(glslang
+        URL https://github.com/KhronosGroup/glslang/archive/refs/tags/16.6.0.tar.gz
+        URL_HASH SHA256=9c09b901149c729df745057dafa815278aaa101b84d2b6e14f16a42de52f97f2
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        EXCLUDE_FROM_ALL SYSTEM)
+    FetchContent_MakeAvailable(glslang)
+    foreach(t glslang SPIRV glslang-default-resource-limits GenericCodeGen MachineIndependent OSDependent)
+        if(TARGET ${t})
+            get_target_property(_type ${t} TYPE)
+            if(NOT _type STREQUAL "INTERFACE_LIBRARY" AND NOT _type STREQUAL "ALIAS")
+                set_target_properties(${t} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+                target_compile_options(${t} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
+                victus_third_party_tsan(${t})
+            endif()
+        endif()
+    endforeach()
+endfunction()
+
+# SPIRV-Cross vulkan-sdk-1.4.363.0 (Apache-2.0).
+# https://github.com/KhronosGroup/SPIRV-Cross/releases/tag/vulkan-sdk-1.4.363.0
+# SPIR-V -> MSL for surface shaders on Metal, and resource reflection. Core, GLSL and MSL only.
+function(victus_fetch_spirv_cross)
+    if(TARGET spirv-cross-msl)
+        return()
+    endif()
+    foreach(opt SPIRV_CROSS_CLI SPIRV_CROSS_ENABLE_TESTS SPIRV_CROSS_ENABLE_HLSL SPIRV_CROSS_ENABLE_CPP
+                SPIRV_CROSS_ENABLE_REFLECT SPIRV_CROSS_ENABLE_C_API SPIRV_CROSS_ENABLE_UTIL SPIRV_CROSS_SHARED)
+        set(${opt} OFF CACHE BOOL "" FORCE)
+    endforeach()
+    set(SPIRV_CROSS_SKIP_INSTALL ON CACHE BOOL "" FORCE)
+    set(SPIRV_CROSS_FORCE_PIC ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(spirv_cross
+        URL https://github.com/KhronosGroup/SPIRV-Cross/archive/refs/tags/vulkan-sdk-1.4.363.0.tar.gz
+        URL_HASH SHA256=f708982e88b763ef5b0394ed468fc2c3628f68cdab89f2e7a946cd628c04e721
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        EXCLUDE_FROM_ALL SYSTEM)
+    FetchContent_MakeAvailable(spirv_cross)
+    foreach(t spirv-cross-core spirv-cross-glsl spirv-cross-msl)
+        target_compile_options(${t} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
+        victus_third_party_tsan(${t})
+    endforeach()
+endfunction()

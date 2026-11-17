@@ -8,6 +8,7 @@
 #include "editor_client.hpp"
 
 #include "victus/runtime/scene_rendering.hpp"
+#include "victus/runtime/surface_shader.hpp"
 
 #include <imgui.h>
 
@@ -66,6 +67,45 @@ Status Editor::save_material(const Uuid& asset, const assets::MaterialAsset& mat
     if (auto text = fs::read_text(path); text) written_materials_[rec->path] = fnv1a64(*text);
     if (cache_) cache_->evict_materials();
     return {};
+}
+
+Result<Uuid> Editor::create_surface_shader(std::string_view relative_path) {
+    if (!db_) return make_error(ErrorCode::InvalidArgument, "no project open");
+    const std::string ext(assets::kShaderExtension);
+    std::string rel(relative_path);
+    if (rel.empty()) {
+        rel = "shaders/Surface" + ext;
+        for (int i = 2; sfs::exists(db_->assets_dir() / rel); ++i) rel = std::format("shaders/Surface_{}{}", i, ext);
+    } else if (!rel.ends_with(ext)) {
+        rel += ext;
+    }
+    auto clean = fs::sanitize_relative(rel);
+    if (!clean) return std::move(clean).error();
+    if (sfs::exists(db_->assets_dir() / *clean)) return make_error(ErrorCode::AlreadyExists, *clean + " already exists");
+    std::error_code ec;
+    sfs::create_directories((db_->assets_dir() / *clean).parent_path(), ec);
+    const std::string_view text = runtime::surface_shader_template();
+    VICTUS_TRY_STATUS(fs::write_atomic(db_->assets_dir() / *clean,
+                                       std::span(reinterpret_cast<const std::uint8_t*>(text.data()), text.size())));
+    (void)db_->refresh();
+    const assets::AssetRecord* rec = db_->find_path(*clean);
+    if (!rec) return make_error(ErrorCode::IoError, "shader was written but not registered: " + *clean);
+    notify("Created surface shader " + *clean + " (edit it in any text editor; changes reload live)");
+    return rec->uuid;
+}
+
+bool Editor::set_editing_material_shader(const Uuid& shader) {
+    if (!db_ || material_editing_.is_nil()) return false;
+    if (!shader.is_nil()) {
+        const assets::AssetRecord* rec = db_->find(shader);
+        if (!rec || rec->kind != assets::AssetKind::Shader) return false;
+    }
+    material_edit_.shader = shader;
+    if (auto st = save_material(material_editing_, material_edit_); !st) {
+        notify("Material save failed: " + st.error().message, true);
+        return false;
+    }
+    return true;
 }
 
 bool Editor::assign_material(Entity e, const Uuid& material) {
@@ -180,6 +220,55 @@ void Editor::draw_material_editor() {
         if (ImGui::Combo("Filter", &filter, "Linear (smooth)\0Nearest (pixel art)\0")) {
             m.filter = filter == 1 ? assets::TextureFilter::Nearest : assets::TextureFilter::Linear;
             changed = true;
+        }
+    }
+    if (ImGui::CollapsingHeader("Shader", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const assets::AssetRecord* sh = m.shader.is_nil() ? nullptr : db_->find(m.shader);
+        const std::string label = m.shader.is_nil() ? "(built-in PBR)" : sh ? sh->path : "(missing) " + m.shader.to_string();
+        ImGui::TextUnformatted("Surface:");
+        ImGui::SameLine();
+        ImGui::Button(label.c_str(), ImVec2(-100, 0));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop a .vshader surface shader from Assets here");
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
+                Uuid id;
+                std::memcpy(&id, p->Data, sizeof(Uuid));
+                if (const auto* r = db_->find(id); r && r->kind == assets::AssetKind::Shader) {
+                    m.shader = id;
+                    changed = true;
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("New")) {
+            if (auto id = create_surface_shader(); id) {
+                m.shader = *id;
+                if (m.shader_params[0] == math::Vec4{}) m.shader_params[0] = {1.0f, 0.5f, 0.1f, 2.0f}; // template: colour + speed
+                changed = true;
+            } else {
+                notify("cannot create shader: " + id.error().message, true);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear##shader") && !m.shader.is_nil()) {
+            m.shader = {};
+            changed = true;
+        }
+        if (sh && cache_) {
+            // Compile status as the renderer sees it (the cache recompiles after hot reload).
+            if (auto compiled = cache_->surface_shader(m.shader); !compiled)
+                ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", compiled.error().message.c_str());
+            else
+                ImGui::TextDisabled("compiled; saved edits reload live");
+        }
+        for (int i = 0; i < 4; ++i) {
+            math::Vec4& p = m.shader_params[static_cast<std::size_t>(i)];
+            float v[4] = {p.x, p.y, p.z, p.w};
+            if (ImGui::DragFloat4(std::format("params[{}]", i).c_str(), v, 0.01f)) {
+                p = {v[0], v[1], v[2], v[3]};
+                changed = true;
+            }
         }
     }
     if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {

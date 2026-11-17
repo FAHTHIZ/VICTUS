@@ -82,6 +82,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     if (e == ".luau") return AssetKind::Script;
     if (e == ".vprefab") return AssetKind::Prefab;
     if (e == ".vmat") return AssetKind::Material;
+    if (e == ".vshader") return AssetKind::Shader;
     if (e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac") return AssetKind::Audio;
     return AssetKind::Unknown;
 }
@@ -406,6 +407,13 @@ Result<MaterialAsset> AssetDatabase::load_material(const Uuid& uuid) const {
     if (!rec || rec->kind != AssetKind::Material)
         return make_error(ErrorCode::NotFound, "material asset " + uuid.to_string() + " not found");
     return load_material_file(source_path(*rec));
+}
+
+Result<std::string> AssetDatabase::load_shader_source(const Uuid& uuid) const {
+    const AssetRecord* rec = find(uuid);
+    if (!rec || rec->kind != AssetKind::Shader)
+        return make_error(ErrorCode::NotFound, "shader asset " + uuid.to_string() + " not found");
+    return fs::read_text(source_path(*rec), 1u << 20);
 }
 
 } // namespace victus::assets

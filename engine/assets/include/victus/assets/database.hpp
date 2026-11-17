@@ -82,6 +82,8 @@ public:
     [[nodiscard]] Result<CookedModel> load_model(const Uuid& uuid);
     // Material assets (.vmat) are read from source; texture references are not resolved here.
     [[nodiscard]] Result<MaterialAsset> load_material(const Uuid& uuid) const;
+    // Source text of a surface shader asset (.vshader).
+    [[nodiscard]] Result<std::string> load_shader_source(const Uuid& uuid) const;
 
     // Changes import settings (writes the .meta); the next import re-cooks.
     [[nodiscard]] Status set_settings(const Uuid& uuid, json::Value settings);

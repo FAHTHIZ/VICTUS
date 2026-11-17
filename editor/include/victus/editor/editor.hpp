@@ -178,6 +178,11 @@ public:
     bool assign_material(scene::Entity e, const Uuid& material);
     // Creates a material from the selected mesh renderer's look, assigns it and opens the editor.
     void new_material_for_selection();
+    // Writes a new surface shader from the template (default "shaders/Surface.vshader", made
+    // unique). Returns its UUID.
+    Result<Uuid> create_surface_shader(std::string_view relative_path = {});
+    // Sets (or clears) the surface shader of the material open in the Material Editor and saves it.
+    bool set_editing_material_shader(const Uuid& shader);
     void open_material_editor(const Uuid& asset);
     [[nodiscard]] bool material_editor_open() const noexcept { return show_material_editor_; }
     [[nodiscard]] const Uuid& editing_material() const noexcept { return material_editing_; }

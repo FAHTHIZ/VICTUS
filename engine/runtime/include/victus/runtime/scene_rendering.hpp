@@ -47,6 +47,11 @@ public:
     [[nodiscard]] Result<render::Material> material(const Uuid& uuid);
     // Drops cached materials only (after a .vmat changed on disk).
     void evict_materials() noexcept { materials_.clear(); }
+    // Surface shader asset (.vshader) compiled into a fragment shader. Failures are cached (and
+    // logged once) like materials; materials using a broken shader fall back to built-in PBR.
+    [[nodiscard]] Result<rhi::ShaderHandle> surface_shader(const Uuid& uuid);
+    // Drops compiled surface shaders and the materials using them (after a .vshader changed).
+    void evict_shaders();
     // Built-in primitive mesh: "cube", "sphere", "plane", "cylinder". nullptr when unknown.
     [[nodiscard]] const render::GpuMesh* primitive(std::string_view name);
     // Drops one asset (e.g. after re-import) so the next request reloads it.
@@ -62,6 +67,7 @@ private:
     std::unordered_map<Uuid, std::unique_ptr<GpuModel>, UuidHash> models_;
     std::unordered_map<std::string, render::GpuMesh> primitives_;
     std::unordered_map<Uuid, Result<render::Material>, UuidHash> materials_;
+    std::unordered_map<Uuid, Result<rhi::ShaderHandle>, UuidHash> shaders_;
 };
 
 // Creates one entity per model node under `parent` (a new root named `name` when parent is

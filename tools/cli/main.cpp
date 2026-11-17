@@ -18,6 +18,7 @@
 #include "victus/player/export.hpp"
 #include "victus/player/player.hpp"
 #include "victus/project/project.hpp"
+#include "victus/runtime/surface_shader.hpp"
 #include "victus/platform/platform.hpp"
 #include "victus/scene/scene.hpp"
 #include "victus/script/script.hpp"
@@ -572,7 +573,7 @@ int cmd_serve(const std::vector<std::string>& a) {
 // Validates every scene (loads, no unknown components) and every script (syntax, module loads,
 // referenced files exist). Exit 1 if anything is wrong.
 int cmd_check(const std::vector<std::string>& a) {
-    cli::Parser p("victus check", "Validate scenes, prefabs, materials and scripts");
+    cli::Parser p("victus check", "Validate scenes, prefabs, materials, shaders and scripts");
     p.positional("project", "project folder", true);
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
@@ -631,6 +632,28 @@ int cmd_check(const std::vector<std::string>& a) {
                             refs[i]->to_string().c_str());
                 ++problems;
             }
+        }
+        if (!m->shader.is_nil()) {
+            const assets::AssetRecord* sh = (*db)->find(m->shader);
+            if (!sh || sh->kind != assets::AssetKind::Shader) {
+                std::printf("error: %s: surface shader %s does not exist\n", r.path.c_str(), m->shader.to_string().c_str());
+                ++problems;
+            }
+        }
+    }
+    // Surface shaders: each must compile; errors name the file and line.
+    std::size_t shaders = 0;
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::Shader) continue;
+        ++shaders;
+        const std::string path = r.path;
+        auto code = (*db)->load_shader_source(r.uuid);
+        if (!code) {
+            std::printf("error: %s: %s\n", path.c_str(), code.error().message.c_str());
+            ++problems;
+        } else if (auto c = runtime::compile_surface_shader(*code, path, false); !c) {
+            std::printf("error: %s\n", c.error().message.c_str());
+            ++problems;
         }
     }
     script::HostOptions so;
@@ -703,8 +726,8 @@ int cmd_check(const std::vector<std::string>& a) {
         }
         check_entities(rel, scene);
     }
-    std::printf("checked %zu scenes, %zu prefabs, %zu materials and %zu scripts: %zu problems\n", scenes, prefabs, materials,
-                scripts, problems);
+    std::printf("checked %zu scenes, %zu prefabs, %zu materials, %zu shaders and %zu scripts: %zu problems\n", scenes, prefabs,
+                materials, shaders, scripts, problems);
     return problems ? 1 : 0;
 }
 

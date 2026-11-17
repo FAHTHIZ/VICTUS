@@ -180,6 +180,7 @@ const char* kind_icon(assets::AssetKind k) {
     case assets::AssetKind::Audio: return "[snd]";
     case assets::AssetKind::Prefab: return "[pfb]";
     case assets::AssetKind::Material: return "[mat]";
+    case assets::AssetKind::Shader: return "[shd]";
     default: return "[file]";
     }
 }
@@ -432,6 +433,10 @@ void Editor::draw_menu_bar() {
     if (ImGui::BeginMenu("Assets")) {
         if (ImGui::MenuItem("Reimport All")) (void)reimport_assets();
         if (ImGui::MenuItem("New Material", nullptr, false, db_ != nullptr)) new_material_for_selection();
+        if (ImGui::MenuItem("New Surface Shader", nullptr, false, db_ != nullptr)) {
+            if (auto id = create_surface_shader(); !id) notify("cannot create shader: " + id.error().message, true);
+            else if (show_material_editor_) (void)set_editing_material_shader(*id);
+        }
         ImGui::MenuItem("Material Editor", nullptr, &show_material_editor_);
         if (ImGui::MenuItem("Copy Assets Folder Path") && platform_) platform_->set_clipboard(project_->assets_dir().string());
         ImGui::EndMenu();
@@ -1274,6 +1279,8 @@ void Editor::draw_assets() {
                     }
                 } else if (r.kind == assets::AssetKind::Material) {
                     open_material_editor(r.uuid);
+                } else if (r.kind == assets::AssetKind::Shader) {
+                    if (show_material_editor_) (void)set_editing_material_shader(r.uuid);
                 } else if (r.kind == assets::AssetKind::Texture) {
                     const Entity e = selected();
                     if (auto* sp = e.is_null() ? nullptr : active_scene().world().get<SpriteComponent>(e)) {
@@ -1290,6 +1297,7 @@ void Editor::draw_assets() {
                                                           : r.kind == assets::AssetKind::Script ? "attach to selected entity"
                                                           : r.kind == assets::AssetKind::Audio  ? "preview"
                                                           : r.kind == assets::AssetKind::Material ? "edit"
+                                                          : r.kind == assets::AssetKind::Shader ? "use in the open material"
                                                                                                  : "-");
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", assets::to_string(r.kind));

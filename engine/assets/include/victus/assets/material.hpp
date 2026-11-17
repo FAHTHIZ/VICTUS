@@ -11,7 +11,9 @@
 //     "normal_texture": null, "normal_scale": 1,
 //     "emissive": [0, 0, 0], "emissive_strength": 1, "emissive_texture": null,
 //     "alpha_cutoff": 0, "uv_scale": [1, 1], "uv_offset": [0, 0],
-//     "filter": "linear" | "nearest", "unlit": false, "double_sided": false
+//     "filter": "linear" | "nearest", "unlit": false, "double_sided": false,
+//     "shader": "<uuid of a .vshader surface shader>" | null,
+//     "shader_params": [[x, y, z, w], ...]   // up to 4, read in the shader as si.params[i]
 //   }
 #pragma once
 #include "victus/core/fs.hpp"
@@ -26,6 +28,8 @@
 namespace victus::assets {
 
 inline constexpr std::string_view kMaterialExtension = ".vmat";
+inline constexpr std::string_view kShaderExtension = ".vshader";
+inline constexpr std::size_t kMaterialShaderParams = 4;
 inline constexpr int kMaterialVersion = 1;
 
 enum class TextureFilter : std::uint8_t { Linear = 0, Nearest = 1 };
@@ -44,6 +48,8 @@ struct MaterialAsset {
     bool unlit{false};
     bool double_sided{false};
     Uuid base_color_texture, metallic_roughness_texture, normal_texture, emissive_texture;
+    Uuid shader; // optional surface shader (.vshader); nil = built-in PBR surface
+    std::array<math::Vec4, 4> shader_params{};
 
     // Texture slots in a fixed order (base colour, metallic-roughness, normal, emissive), for
     // tools that iterate references (export validation, the material editor).

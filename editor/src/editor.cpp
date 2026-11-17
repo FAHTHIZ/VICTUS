@@ -189,6 +189,15 @@ std::size_t Editor::check_asset_changes() {
             if (const auto* rec = db_->find_path(m); rec && rec->uuid == material_editing_ && !material_dirty_)
                 if (auto fresh = db_->load_material(rec->uuid); fresh) material_edit_ = *fresh; // edited outside the editor
     }
+    for (const auto& sh : changes.shaders) {
+        // Report compile errors right away (the viewport falls back to built-in PBR meanwhile).
+        const assets::AssetRecord* rec = db_ ? db_->find_path(sh) : nullptr;
+        if (rec && cache_) {
+            const Uuid id = rec->uuid;
+            if (auto c = cache_->surface_shader(id); !c) notify("Shader " + sh + ": " + c.error().message, true);
+            else notify("Reloaded shader " + sh);
+        }
+    }
     for (const auto& p : changes.prefabs) {
         if (play_scripts_) play_scripts_->forget_prefabs();
         const assets::AssetRecord* rec = db_ ? db_->find_path(p) : nullptr;
@@ -209,7 +218,7 @@ std::size_t Editor::check_asset_changes() {
         if (assets::kind_for_extension(fs::Path(r).extension().string()) == assets::AssetKind::Scene) continue;
         notify(r + " changed; reopen the project or restart the game to see it");
     }
-    return changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size();
+    return changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size();
 }
 
 // ---- scenes ------------------------------------------------------------------------------------

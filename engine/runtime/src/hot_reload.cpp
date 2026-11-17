@@ -26,6 +26,7 @@ std::vector<std::string> HotReloadReport::lines() const {
     for (const auto& a : audio) out.push_back("reloaded audio " + a);
     for (const auto& p : prefabs) out.push_back("reloaded prefab " + p);
     for (const auto& m : materials) out.push_back("reloaded material " + m);
+    for (const auto& m : shaders) out.push_back("reloaded shader " + m);
     for (const auto& r : restart_needed) out.push_back(r + " changed; restart to see it");
     return out;
 }
@@ -105,6 +106,8 @@ HotReloadReport AssetHotReloader::check() {
             report.prefabs.push_back(path);
         } else if (kind == assets::AssetKind::Material) {
             report.materials.push_back(path);
+        } else if (kind == assets::AssetKind::Shader) {
+            report.shaders.push_back(path);
         } else if (kind == assets::AssetKind::Texture || kind == assets::AssetKind::Model) {
             continue; // handled above (or a dependency of a model that was re-imported)
         } else if (ext == ".bin") {
@@ -118,6 +121,7 @@ HotReloadReport AssetHotReloader::check() {
 }
 
 void AssetHotReloader::apply(const HotReloadReport& report, GpuAssetCache* cache, animation::AnimationSystem* animations) {
+    if (cache && !report.shaders.empty()) cache->evict_shaders();
     if (cache && !report.materials.empty()) cache->evict_materials();
     for (const auto& uuid : report.reimported) {
         if (cache) cache->evict(uuid);
