@@ -28,6 +28,7 @@
 #include "victus/script/script.hpp"
 #include "victus/ui/ui.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -47,6 +48,7 @@ namespace victus::editor {
 struct EditorOptions {
     fs::Path recent_file = project::RecentProjects::default_file();
     fs::Path default_project_dir;  // launcher default location; empty = <home>/VICTUS Projects
+    float autosave_seconds{30.0f}; // unsaved scene edits are autosaved this often; 0 disables
 };
 
 enum class PlayState : std::uint8_t { Editing, Playing, Paused };
@@ -346,6 +348,20 @@ public:
     void record_profile_trace(std::size_t frames = 300);
     [[nodiscard]] bool recording_profile_trace() const noexcept;
     [[nodiscard]] const std::filesystem::path& last_profile_trace() const noexcept { return last_profile_trace_; }
+    // ---- autosave & crash recovery ----
+    // Unsaved edits of the open scene are written every autosave_interval() seconds to
+    // <project>/.victus/autosave/; saving or discarding removes the copy. Opening a scene whose
+    // autosave is newer than the file offers recovery (a crash or kill left it behind).
+    void set_autosave_interval(float seconds) noexcept { autosave_seconds_ = std::max(seconds, 0.0f); }
+    [[nodiscard]] float autosave_interval() const noexcept { return autosave_seconds_; }
+    [[nodiscard]] Status autosave_now();
+    [[nodiscard]] fs::Path autosave_path(std::string_view scene_path) const;
+    [[nodiscard]] bool recovery_available() const noexcept { return recovery_.has_value(); }
+    [[nodiscard]] std::string recovery_scene() const { return recovery_ ? recovery_->scene : std::string(); }
+    // Replaces the open scene with the autosaved copy (left unsaved so the user can review it).
+    [[nodiscard]] Status recover_autosave();
+    void discard_autosave();
+
     // ---- command palette ----
     [[nodiscard]] std::vector<EditorCommand> commands();
     // Enabled commands matching `query`, best first (all of them, alphabetically, for an empty query).
@@ -528,6 +544,10 @@ private:
     void draw_network();
     void draw_profiler();
     void draw_command_palette();
+    void update_autosave(float dt);
+    void check_recovery();
+    void remove_autosave(std::string_view scene_path);
+    void draw_recovery_modal();
     void update_profiler();
     void draw_network_section(scene::Entity e);
     NetPlaySettings net_settings_;
@@ -543,6 +563,17 @@ private:
     std::string server_key_;
     bool show_network_{false};
     bool show_profiler_{false};
+    struct Recovery {
+        std::string scene; // "" = untitled
+        fs::Path file;
+        std::int64_t age_s{0};
+    };
+    std::optional<Recovery> recovery_;
+    float autosave_seconds_{30.0f};
+    float autosave_timer_{0.0f};
+    std::uint64_t autosaved_revision_{0};
+    bool autosave_written_{false}; // this session wrote the autosave of the open scene
+    std::string autosave_scene_;   // the scene path that autosave was written for
     bool palette_open_{false};
     bool palette_focus_{false};
     std::string palette_query_;

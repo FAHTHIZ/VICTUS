@@ -875,5 +875,22 @@ Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
 Known gaps:
 - No recently-used ordering or user-defined commands yet; multi-selection editing and autosave are the next parts of item 16.
 
+## Slice 66: Autosave and crash recovery (roadmap item 16, part 2)
+
+Why: roadmap item 16. A crash or forced quit lost every unsaved scene edit.
+
+Built:
+- While editing, a dirty scene is written every `EditorOptions::autosave_seconds` (default 30 s; `set_autosave_interval`, 0 disables) to `<project>/.victus/autosave/<scene path with ~>.vscene` (untitled scenes as `untitled.vscene`); only when the undo revision changed since the last copy. Saving, Save As, "Don't Save" and undoing back to the saved state remove the copy.
+- Opening a scene (or a new untitled scene) whose copy is newer than the scene file shows "Recover Unsaved Changes" (Recover / Discard). Recover loads the copy and leaves the scene unsaved; copies older than the scene file are deleted. API: `autosave_now`, `autosave_path`, `recovery_available/recovery_scene`, `recover_autosave`, `discard_autosave`; `UndoStack::mark_unsaved/revision`.
+- Fix: `Editor::new_scene` dereferenced a missing light component for camera entities without lights (crash).
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
+- `victus_editor_tests` "editor: unsaved edits are autosaved and recovered after a crash": no copy while clean or before the interval, undo-to-clean removes it, close-while-dirty keeps it, reopen offers recovery and restores the extra entity as unsaved, save removes the copy, discard deletes it, older copies are ignored, untitled copies are removed by Save As.
+- Screenshot smoke of the recovery prompt with a copy left in `/tmp/gp/.victus/autosave`.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- Only the scene is autosaved (graphs and materials have their own explicit saves); one copy per scene, no history.
+
 ## Next task
-Roadmap next slice 16 (continued): autosave with crash recovery, then multi-selection (box select, multi-edit inspector).
+Roadmap next slice 16 (continued): multi-selection (box select in the viewport, shift/ctrl ranges in the hierarchy, multi-edit inspector).

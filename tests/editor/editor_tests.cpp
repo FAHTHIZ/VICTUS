@@ -1887,3 +1887,85 @@ TEST_CASE("editor: command palette finds and runs actions, scenes, assets and en
     h.frames(2);
     CHECK(h.ed->command_palette_open());
 }
+
+TEST_CASE("editor: unsaved edits are autosaved and recovered after a crash") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Auto", "Auto", "3d").ok());
+    h.ed->set_autosave_interval(0.5f);
+    h.frames(1);
+    const std::string scene = h.ed->scene_path();
+    const auto copy = h.ed->autosave_path(scene);
+    CHECK(copy.parent_path() == h.ed->project()->root() / ".victus" / "autosave");
+    const std::size_t base = h.ed->edit_scene().world().alive_count();
+    CHECK_FALSE(h.ed->recovery_available());
+
+    // Not dirty: nothing is written; dirty: written after the interval.
+    h.frames(3, 0.25f);
+    CHECK_FALSE(std::filesystem::exists(copy));
+    (void)h.ed->create_entity(editor::Primitive::Cube);
+    REQUIRE(h.ed->dirty());
+    h.frames(1, 0.25f);
+    CHECK_FALSE(std::filesystem::exists(copy));
+    h.frames(2, 0.25f);
+    REQUIRE(std::filesystem::exists(copy));
+
+    // Undoing every edit removes the stale copy.
+    h.ed->undo();
+    h.frames(1);
+    CHECK_FALSE(std::filesystem::exists(copy));
+
+    // "Crash": the project closes while dirty with the copy on disk.
+    (void)h.ed->create_entity(editor::Primitive::Sphere);
+    h.frames(3, 0.25f);
+    REQUIRE(std::filesystem::exists(copy));
+    h.ed->close_project();
+    CHECK(std::filesystem::exists(copy));
+    // Make sure the copy is newer than the scene file even on coarse file clocks.
+    std::filesystem::last_write_time(copy, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(5));
+
+    REQUIRE(h.ed->open_project(h.dir / "Auto").ok());
+    REQUIRE(h.ed->recovery_available());
+    CHECK(h.ed->recovery_scene() == scene);
+    h.frames(2); // the recovery prompt is shown
+    CHECK(h.ed->edit_scene().world().alive_count() == base);
+    REQUIRE(h.ed->recover_autosave().ok());
+    CHECK_FALSE(h.ed->recovery_available());
+    CHECK(h.ed->edit_scene().world().alive_count() == base + 1);
+    CHECK(h.ed->dirty());
+    CHECK(std::filesystem::exists(copy)); // kept until saved or discarded
+    REQUIRE(h.ed->save_scene().ok());
+    CHECK_FALSE(h.ed->dirty());
+    CHECK_FALSE(std::filesystem::exists(copy));
+
+    // Discarding a recovery deletes the copy and keeps the scene file.
+    (void)h.ed->create_entity(editor::Primitive::Cube);
+    REQUIRE(h.ed->autosave_now().ok());
+    std::filesystem::last_write_time(copy, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(5));
+    h.ed->close_project();
+    REQUIRE(h.ed->open_project(h.dir / "Auto").ok());
+    REQUIRE(h.ed->recovery_available());
+    h.ed->discard_autosave();
+    CHECK_FALSE(h.ed->recovery_available());
+    CHECK_FALSE(std::filesystem::exists(copy));
+    CHECK(h.ed->edit_scene().world().alive_count() == base + 1);
+
+    // A copy older than the scene file (saved later elsewhere) is ignored and removed.
+    (void)h.ed->create_entity(editor::Primitive::Cube);
+    REQUIRE(h.ed->autosave_now().ok());
+    std::filesystem::last_write_time(copy, std::filesystem::file_time_type::clock::now() - std::chrono::hours(1));
+    h.ed->close_project();
+    REQUIRE(h.ed->open_project(h.dir / "Auto").ok());
+    CHECK_FALSE(h.ed->recovery_available());
+    CHECK_FALSE(std::filesystem::exists(copy));
+
+    // Untitled scenes autosave too, and Save As removes the untitled copy.
+    h.ed->new_scene();
+    const auto untitled = h.ed->autosave_path("");
+    (void)h.ed->create_entity(editor::Primitive::Cube);
+    REQUIRE(h.ed->autosave_now().ok());
+    REQUIRE(std::filesystem::exists(untitled));
+    REQUIRE(h.ed->save_scene_as("scenes/second").ok());
+    CHECK_FALSE(std::filesystem::exists(untitled));
+}
