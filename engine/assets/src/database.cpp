@@ -83,6 +83,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     if (e == ".vprefab") return AssetKind::Prefab;
     if (e == ".vmat") return AssetKind::Material;
     if (e == ".vshader") return AssetKind::Shader;
+    if (e == ".vsheet") return AssetKind::SpriteSheet;
     if (e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac") return AssetKind::Audio;
     return AssetKind::Unknown;
 }
@@ -450,6 +451,32 @@ Result<std::string> AssetDatabase::load_shader_source(const Uuid& uuid) const {
     if (!rec || rec->kind != AssetKind::Shader)
         return make_error(ErrorCode::NotFound, "shader asset " + uuid.to_string() + " not found");
     return fs::read_text(source_path(*rec), 1u << 20);
+}
+
+Result<animation::SpriteSheet> AssetDatabase::load_sprite_sheet(const Uuid& uuid) const {
+    const AssetRecord* rec = find(uuid);
+    if (!rec || rec->kind != AssetKind::SpriteSheet)
+        return make_error(ErrorCode::NotFound, "sprite sheet asset " + uuid.to_string() + " not found");
+    const std::string path = rec->path; // records may move when the database refreshes
+    auto sheet = animation::load_sprite_sheet_file(source_path(*rec));
+    if (!sheet) return make_error(sheet.error().code, std::format("{}: {}", path, sheet.error().message));
+    if (!sheet->texture.is_nil()) {
+        const AssetRecord* tex = find(sheet->texture);
+        if (!tex || tex->kind != AssetKind::Texture)
+            return make_error(ErrorCode::NotFound, std::format("{}: texture {} is not a texture asset", path, sheet->texture.to_string()));
+    }
+    return sheet;
+}
+
+animation::SheetProvider sprite_sheet_provider(AssetDatabase& db) {
+    return [&db](const Uuid& uuid) -> std::shared_ptr<const animation::SpriteSheet> {
+        auto sheet = db.load_sprite_sheet(uuid);
+        if (!sheet) {
+            VICTUS_LOG_WARN("assets", "{}", sheet.error().message);
+            return nullptr;
+        }
+        return std::make_shared<animation::SpriteSheet>(std::move(*sheet));
+    };
 }
 
 } // namespace victus::assets

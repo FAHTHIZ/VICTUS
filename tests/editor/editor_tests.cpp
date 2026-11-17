@@ -4,6 +4,7 @@
 // with undo, play mode isolation, save and reopen).
 #include "../render/gpu_fixture.hpp"
 #include "victus/editor/editor.hpp"
+#include "victus/animation/animation.hpp"
 #include "victus/gameplay/capture.hpp"
 #include "victus/editor/undo.hpp"
 
@@ -999,6 +1000,39 @@ TEST_CASE("editor: materials are created from a selection, edited, assigned with
     ed.undo();
     CHECK(s.world().get<MeshRendererComponent>(s.find_by_name("Crate"))->material_asset == mat);
     CHECK_FALSE(ed.assign_material(s.find_by_name("Crate"), tex));
+
+    // Sprite sheets: sliced from a texture, assigned (undoably) and previewed while editing.
+    {
+        auto made = ed.create_sprite_sheet(tex, 2, 2, 8.0f);
+        REQUIRE(made.ok());
+        const Uuid sheet_id = *made;
+        CHECK(ed.assets()->find(sheet_id)->path == "bricks.vsheet");
+        CHECK(ed.assets()->find(sheet_id)->kind == assets::AssetKind::SpriteSheet);
+        auto again = ed.create_sprite_sheet(tex, 1, 1);
+        REQUIRE(again.ok());
+        CHECK(ed.assets()->find(*again)->path == "bricks_2.vsheet");
+        CHECK_FALSE(ed.create_sprite_sheet(mat, 2, 2).ok());
+        CHECK_FALSE(ed.create_sprite_sheet(tex, 0, 2).ok());
+        auto data = ed.assets()->load_sprite_sheet(sheet_id);
+        REQUIRE(data.ok());
+        CHECK(data->texture == tex);
+        REQUIRE(data->find("default"));
+        CHECK(data->find("default")->frames.size() == 4);
+        const Entity coin = s.create("Coin");
+        CHECK(ed.assign_sprite_sheet(coin, sheet_id));
+        REQUIRE(s.world().has<animation::SpriteAnimatorComponent>(coin));
+        CHECK(s.world().get<animation::SpriteAnimatorComponent>(coin)->clip == "default");
+        CHECK(s.world().get<SpriteComponent>(coin)->texture_asset == tex);
+        s.world().get<animation::SpriteAnimatorComponent>(coin)->clip.clear();
+        s.world().get<animation::SpriteAnimatorComponent>(coin)->frame = 3;
+        h.frames(2); // edit-mode preview shows frame 3 (bottom right)
+        CHECK(s.world().get<SpriteComponent>(coin)->uv.x == doctest::Approx(0.5f));
+        CHECK(s.world().get<SpriteComponent>(coin)->uv.y == doctest::Approx(0.5f));
+        CHECK_FALSE(ed.assign_sprite_sheet(coin, tex));
+        ed.undo();
+        CHECK_FALSE(s.world().has<animation::SpriteAnimatorComponent>(s.find_by_name("Coin")));
+        s.destroy(s.find_by_name("Coin"));
+    }
 
     // The material reference survives a scene save/reopen.
     REQUIRE(ed.save_scene().ok());

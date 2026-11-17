@@ -27,6 +27,14 @@ void register_components() {
             .field(&AnimatorComponent::crossfade, "crossfade", {.min = 0, .max = 10, .speed = 0.01f, .tooltip = "seconds"})
             .field(&AnimatorComponent::time, "time", {.min = 0, .max = 1e6f, .speed = 0.01f, .tooltip = "seconds"})
             .commit();
+        scene::Schema<SpriteAnimatorComponent>("SpriteAnimator", "Animation")
+            .field(&SpriteAnimatorComponent::sheet, "sheet", {.tooltip = "Sprite sheet (.vsheet) asset", .hint = "spritesheet"})
+            .field(&SpriteAnimatorComponent::clip, "clip", {.tooltip = "Clip to play; empty shows 'frame'"})
+            .field(&SpriteAnimatorComponent::playing, "playing")
+            .field(&SpriteAnimatorComponent::speed, "speed", {.min = -10, .max = 10, .speed = 0.01f})
+            .field(&SpriteAnimatorComponent::time, "time", {.min = -1e6f, .max = 1e6f, .speed = 0.01f, .tooltip = "seconds"})
+            .field(&SpriteAnimatorComponent::frame, "frame", {.min = 0, .max = 65535, .tooltip = "Sheet frame shown when no clip is set"})
+            .commit();
         scene::Schema<SkinnedMeshComponent>("SkinnedMesh", "Animation")
             .field(&SkinnedMeshComponent::skeleton, "skeleton", {.tooltip = "Root entity of the skeleton", .hint = "entity"})
             .field(&SkinnedMeshComponent::skin, "skin", {.min = 0, .max = 1024})
@@ -215,6 +223,17 @@ struct AnimationSystem::Impl {
     std::unordered_map<Uuid, std::shared_ptr<const AnimationSet>, UuidHash> sets;     // explicit
     std::unordered_map<Uuid, std::shared_ptr<const AnimationSet>, UuidHash> cache;    // from provider
     std::vector<Work> work;
+    std::unordered_map<Uuid, std::shared_ptr<const SpriteSheet>, UuidHash> explicit_sheets;
+    std::unordered_map<Uuid, std::shared_ptr<const SpriteSheet>, UuidHash> sheet_cache;
+
+    std::shared_ptr<const SpriteSheet> resolve_sheet(const Uuid& id) {
+        if (id.is_nil()) return nullptr;
+        if (const auto it = explicit_sheets.find(id); it != explicit_sheets.end()) return it->second;
+        if (const auto it = sheet_cache.find(id); it != sheet_cache.end()) return it->second;
+        auto s = settings.sheets ? settings.sheets(id) : nullptr;
+        sheet_cache.emplace(id, s);
+        return s;
+    }
 
     std::shared_ptr<const AnimationSet> resolve(const Uuid& model) {
         if (const auto it = sets.find(model); it != sets.end()) return it->second;
@@ -262,6 +281,7 @@ void AnimationSystem::clear_cache() { impl_->cache.clear(); }
 std::shared_ptr<const AnimationSet> AnimationSystem::set(const Uuid& model) { return impl_->resolve(model); }
 
 void AnimationSystem::update(Scene& scene, float dt) {
+    update_sprites(scene, dt);
     ecs::World& world = scene.world();
     // Structural changes first: add state to new animators, drop state of removed ones.
     std::vector<Entity> missing, orphans;
@@ -385,6 +405,109 @@ void skeleton_lines(Scene& scene, const std::function<void(Vec3, Vec3)>& emit) {
             emit(wb->matrix.transform_point({}), wa->matrix.transform_point({}));
         }
     });
+}
+
+} // namespace victus::animation
+
+// ---- sprite animation ------------------------------------------------------------------------
+
+namespace victus::animation {
+
+namespace {
+// Runtime state: the clip last applied, to restart time when the component's clip changes.
+struct SpriteAnimatorState {
+    std::string clip;
+    bool started{false};
+};
+} // namespace
+
+void AnimationSystem::add_sheet(const Uuid& id, std::shared_ptr<const SpriteSheet> data) { impl_->explicit_sheets[id] = std::move(data); }
+void AnimationSystem::clear_sheets() { impl_->sheet_cache.clear(); }
+std::shared_ptr<const SpriteSheet> AnimationSystem::sheet(const Uuid& id) { return impl_->resolve_sheet(id); }
+
+void AnimationSystem::update_sprites(Scene& scene, float dt) {
+    auto& w = scene.world();
+    std::vector<Entity> fresh;
+    w.each<SpriteAnimatorComponent>([&](Entity e, SpriteAnimatorComponent& a) {
+        auto* sp = w.get<scene::SpriteComponent>(e);
+        if (!sp) return;
+        const auto sheet = impl_->resolve_sheet(a.sheet);
+        if (!sheet) return;
+        auto* st = w.get<SpriteAnimatorState>(e);
+        if (!st) {
+            fresh.push_back(e);
+        } else if (st->clip != a.clip) {
+            if (st->started) a.time = 0; // a clip change restarts; a loaded time is kept
+            st->clip = a.clip;
+        }
+        if (st) st->started = true;
+        if (!sheet->texture.is_nil()) sp->texture_asset = sheet->texture;
+        const SpriteClip* clip = a.clip.empty() ? nullptr : sheet->find(a.clip);
+        if (!clip) {
+            sp->uv = sheet->frame_uv(a.frame);
+            return;
+        }
+        if (a.playing && dt != 0) {
+            a.time += dt * a.speed;
+            // Keep looping clocks small so float precision never degrades.
+            const float dur = clip->duration();
+            if (clip->loop && dur > 0 && std::fabs(a.time) > dur * 1024) a.time = std::fmod(a.time, dur);
+            if (!clip->loop && dur > 0) a.time = std::clamp(a.time, 0.0f, dur);
+        }
+        sp->uv = sheet->frame_uv(clip->frames[clip_frame_at(*clip, a.time)]);
+    });
+    for (const Entity e : fresh) {
+        auto& st = w.add<SpriteAnimatorState>(e);
+        st.clip = w.get<SpriteAnimatorComponent>(e)->clip;
+        st.started = true;
+    }
+}
+
+bool AnimationSystem::play_sprite(Scene& scene, Entity e, std::string_view clip, bool restart) {
+    auto& w = scene.world();
+    auto* a = w.alive(e) ? w.get<SpriteAnimatorComponent>(e) : nullptr;
+    if (!a) return false;
+    const auto sheet = impl_->resolve_sheet(a->sheet);
+    if (!sheet || !sheet->find(clip)) return false;
+    if (a->clip != clip || restart) a->time = 0;
+    a->clip = std::string(clip);
+    a->playing = true;
+    if (auto* st = w.get<SpriteAnimatorState>(e)) st->clip = a->clip; // time already reset
+    return true;
+}
+
+SpriteAnimatorStatus AnimationSystem::sprite_status(Scene& scene, Entity e) {
+    SpriteAnimatorStatus out;
+    auto& w = scene.world();
+    const auto* a = w.alive(e) ? w.get<SpriteAnimatorComponent>(e) : nullptr;
+    if (!a) return out;
+    const auto sheet = impl_->resolve_sheet(a->sheet);
+    if (!sheet) return out;
+    out.valid = true;
+    out.playing = a->playing;
+    out.time = a->time;
+    const SpriteClip* clip = a->clip.empty() ? nullptr : sheet->find(a->clip);
+    if (!clip) {
+        out.frame = std::min(a->frame, sheet->frame_count() - 1);
+        return out;
+    }
+    out.clip = clip->name;
+    out.duration = clip->duration();
+    out.looping = clip->loop;
+    out.clip_frame = clip_frame_at(*clip, a->time);
+    out.frame = clip->frames[out.clip_frame];
+    out.finished = !clip->loop && (a->speed >= 0 ? a->time >= out.duration : a->time <= 0);
+    return out;
+}
+
+std::vector<std::string> AnimationSystem::sprite_clips(Scene& scene, Entity e) {
+    std::vector<std::string> out;
+    auto& w = scene.world();
+    const auto* a = w.alive(e) ? w.get<SpriteAnimatorComponent>(e) : nullptr;
+    if (!a) return out;
+    if (const auto sheet = impl_->resolve_sheet(a->sheet))
+        for (const auto& c : sheet->clips) out.push_back(c.name);
+    return out;
 }
 
 } // namespace victus::animation

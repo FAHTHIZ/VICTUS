@@ -88,7 +88,9 @@ void Editor::start_editor_clients() {
             physics::add_physics_systems(c->sim, *c->physics);
         }
         c->animation = std::make_unique<animation::AnimationSystem>(
-            animation::AnimationSettings{.provider = db_ ? assets::animation_provider(*db_) : animation::SetProvider{}, .jobs = &workers()});
+            animation::AnimationSettings{.provider = db_ ? assets::animation_provider(*db_) : animation::SetProvider{},
+                                         .sheets = db_ ? assets::sprite_sheet_provider(*db_) : animation::SheetProvider{},
+                                         .jobs = &workers()});
         animation::add_animation_systems(c->sim, *c->animation);
         c->particles = std::make_unique<particles::ParticleSystem>(particles::ParticleSettings{.jobs = &workers()});
         particles::add_particle_systems(c->sim, *c->particles);

@@ -7,6 +7,7 @@
 // so servers and `victus simulate` animate exactly like the player. Animators write local
 // Transforms of the bound entities; GPU skinning (runtime) then reads their world transforms.
 #pragma once
+#include "victus/animation/sprite.hpp"
 #include "victus/core/math.hpp"
 #include "victus/core/result.hpp"
 #include "victus/core/hash.hpp"
@@ -105,7 +106,8 @@ struct SkinnedMeshComponent {
     std::uint32_t skin{0};
 };
 
-// Registers Animator and SkinnedMesh (reflection: serialization, inspector, scripts). Idempotent.
+// Registers Animator, SkinnedMesh and SpriteAnimator (reflection: serialization, inspector,
+// scripts). Idempotent.
 void register_components();
 
 // ---- system ----------------------------------------------------------------------------------
@@ -128,6 +130,7 @@ struct AnimationStats {
 
 struct AnimationSettings {
     SetProvider provider;
+    SheetProvider sheets; // sprite sheets for SpriteAnimator (assets::sprite_sheet_provider)
     jobs::JobSystem* jobs{nullptr}; // evaluates animators in parallel when set
     std::uint32_t parallel_threshold{32};
 };
@@ -154,6 +157,21 @@ public:
     [[nodiscard]] std::vector<std::string> clips(scene::Scene& scene, scene::Entity e);
     [[nodiscard]] std::shared_ptr<const AnimationSet> set(const Uuid& model);
     [[nodiscard]] const AnimationStats& stats() const noexcept { return stats_; }
+
+    // ---- sprite animation ----
+    // Registers a sheet directly (tests, procedural content); takes precedence over the provider.
+    void add_sheet(const Uuid& sheet, std::shared_ptr<const SpriteSheet> data);
+    // Forgets cached sheets (after a .vsheet changed) so the provider is asked again.
+    void clear_sheets();
+    [[nodiscard]] std::shared_ptr<const SpriteSheet> sheet(const Uuid& sheet);
+    // Advances every SpriteAnimator by dt and writes its Sprite's texture and uv. update() calls
+    // it; editors call it with dt 0 to preview the authored frame.
+    void update_sprites(scene::Scene& scene, float dt);
+    // Starts `clip` (restart: from its first frame even when already playing). False when the
+    // entity has no SpriteAnimator, its sheet is missing or has no such clip.
+    bool play_sprite(scene::Scene& scene, scene::Entity e, std::string_view clip, bool restart = true);
+    [[nodiscard]] SpriteAnimatorStatus sprite_status(scene::Scene& scene, scene::Entity e);
+    [[nodiscard]] std::vector<std::string> sprite_clips(scene::Scene& scene, scene::Entity e);
 
 private:
     struct Impl;

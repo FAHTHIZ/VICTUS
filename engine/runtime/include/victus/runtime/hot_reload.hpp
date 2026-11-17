@@ -11,6 +11,7 @@
 //   - materials (.vmat)                            reported in `materials`; apply() drops cached
 //                                                  materials so the next frame uses the new file
 //   - surface shaders (.vshader)                   reported in `shaders`; apply() recompiles them
+//   - sprite sheets (.vsheet)                      reported in `sprite_sheets`; apply() re-reads them
 //                                                  (a compile error is logged, built-in PBR used)
 //   - scenes, fonts, other files                   `restart_needed`: picked up on the next start
 //   - built-in shaders and engine code             built into the engine; never hot-reloaded
@@ -37,6 +38,7 @@ struct HotReloadReport {
     std::vector<std::string> prefabs;        // changed prefabs (paths relative to assets/)
     std::vector<std::string> materials;      // changed materials (paths relative to assets/)
     std::vector<std::string> shaders;        // changed surface shaders (paths relative to assets/)
+    std::vector<std::string> sprite_sheets;  // changed sprite sheets (paths relative to assets/)
     std::vector<std::string> restart_needed; // files whose changes appear on the next start
     [[nodiscard]] bool empty() const noexcept { return changed.empty(); }
     // One human-readable line per event, for logs and editor notifications.

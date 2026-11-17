@@ -81,6 +81,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_hot_reload_tests.cpp
         render/gpu_material_tests.cpp
         render/gpu_surface_shader_tests.cpp
+        render/gpu_sprite_sheet_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")
@@ -126,7 +127,7 @@ victus_add_test(victus_audio_tests
 target_compile_definitions(victus_audio_tests PRIVATE VICTUS_MINIAUDIO_DATA_DIR="${VICTUS_MINIAUDIO_DIR}/data")
 
 victus_add_test(victus_animation_tests
-    SOURCES animation/animation_tests.cpp
+    SOURCES animation/animation_tests.cpp animation/sprite_animation_tests.cpp
     DEPS VICTUS::Animation VICTUS::Core
     LABELS animation)
 

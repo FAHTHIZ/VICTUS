@@ -115,6 +115,8 @@ Status Editor::open_project(const fs::Path& path) {
     for (const auto& m : imported.messages) notify(m, imported.failed > 0);
     cache_ = std::make_unique<runtime::GpuAssetCache>(gpu_, db_.get());
     hot_reload_ = std::make_unique<runtime::AssetHotReloader>(*db_);
+    edit_sprites_ = std::make_unique<animation::AnimationSystem>(
+        animation::AnimationSettings{.sheets = assets::sprite_sheet_provider(*db_)});
     {
         script::HostOptions so;
         so.assets_root = db_->assets_dir();
@@ -148,6 +150,7 @@ void Editor::close_project() {
     hot_reload_.reset();
     cache_.reset();
     edit_scripts_.reset();
+    edit_sprites_.reset();
     audio_.reset(); // clips resolve against the project's assets
     audio_failed_ = false;
     db_.reset();
@@ -175,6 +178,7 @@ std::size_t Editor::check_asset_changes() {
     const auto changes = hot_reload_->check();
     if (changes.empty()) return 0;
     runtime::AssetHotReloader::apply(changes, cache_.get(), play_animation_.get());
+    if (edit_sprites_) edit_sprites_->clear_sheets();
     if (audio_)
         for (const auto& clip : changes.audio) (void)audio_->reload_clip(clip);
     for (const auto& p : changes.reimported_paths) notify("Reloaded " + p);
@@ -218,7 +222,7 @@ std::size_t Editor::check_asset_changes() {
         if (assets::kind_for_extension(fs::Path(r).extension().string()) == assets::AssetKind::Scene) continue;
         notify(r + " changed; reopen the project or restart the game to see it");
     }
-    return changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size();
+    return changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size();
 }
 
 // ---- scenes ------------------------------------------------------------------------------------
@@ -993,7 +997,9 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
     }
     if (play_physics_) physics::add_physics_systems(sim_, *play_physics_);
     play_animation_ = std::make_unique<animation::AnimationSystem>(
-        animation::AnimationSettings{.provider = db_ ? assets::animation_provider(*db_) : animation::SetProvider{}, .jobs = &workers()});
+        animation::AnimationSettings{.provider = db_ ? assets::animation_provider(*db_) : animation::SetProvider{},
+                                     .sheets = db_ ? assets::sprite_sheet_provider(*db_) : animation::SheetProvider{},
+                                     .jobs = &workers()});
     animation::add_animation_systems(sim_, *play_animation_);
     play_particles_ = std::make_unique<particles::ParticleSystem>(particles::ParticleSettings{.jobs = &workers()});
     particles::add_particle_systems(sim_, *play_particles_);

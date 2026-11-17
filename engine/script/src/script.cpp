@@ -1786,6 +1786,73 @@ int entity_animation_clips(lua_State* L) {
     return 1;
 }
 
+// entity:play_sprite(clip, restart?) -> bool. Plays a clip of the entity's SpriteAnimator sheet.
+int entity_play_sprite(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const std::string clip = luaL_checkstring(L, 2);
+    const bool restart = lua_isnoneornil(L, 3) ? true : lua_toboolean(L, 3) != 0;
+    if (auto* sys = animation::system_of(s)) {
+        lua_pushboolean(L, sys->play_sprite(s, e, clip, restart));
+        return 1;
+    }
+    auto* a = s.world().get<animation::SpriteAnimatorComponent>(e);
+    if (a) {
+        if (a->clip != clip || restart) a->time = 0;
+        a->clip = clip;
+        a->playing = true;
+    }
+    lua_pushboolean(L, a != nullptr);
+    return 1;
+}
+
+// entity:sprite_animation() -> {valid, clip, frame, clip_frame, time, duration, playing, looping, finished}
+int entity_sprite_animation(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    animation::SpriteAnimatorStatus st;
+    if (auto* sys = animation::system_of(s)) st = sys->sprite_status(s, e);
+    else if (const auto* a = s.world().get<animation::SpriteAnimatorComponent>(e)) {
+        st.clip = a->clip;
+        st.time = a->time;
+        st.playing = a->playing;
+    }
+    lua_createtable(L, 0, 9);
+    lua_pushboolean(L, st.valid);
+    lua_setfield(L, -2, "valid");
+    lua_pushstring(L, st.clip.c_str());
+    lua_setfield(L, -2, "clip");
+    lua_pushnumber(L, st.frame);
+    lua_setfield(L, -2, "frame");
+    lua_pushnumber(L, st.clip_frame);
+    lua_setfield(L, -2, "clip_frame");
+    lua_pushnumber(L, st.time);
+    lua_setfield(L, -2, "time");
+    lua_pushnumber(L, st.duration);
+    lua_setfield(L, -2, "duration");
+    lua_pushboolean(L, st.playing);
+    lua_setfield(L, -2, "playing");
+    lua_pushboolean(L, st.looping);
+    lua_setfield(L, -2, "looping");
+    lua_pushboolean(L, st.finished);
+    lua_setfield(L, -2, "finished");
+    return 1;
+}
+
+// entity:sprite_clips() -> {names...} (empty until the sheet resolves)
+int entity_sprite_clips(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    std::vector<std::string> names;
+    if (auto* sys = animation::system_of(s)) names = sys->sprite_clips(s, e);
+    lua_createtable(L, static_cast<int>(names.size()), 0);
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        lua_pushstring(L, names[i].c_str());
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    return 1;
+}
+
 // entity:emit_particles(count) -> bool. Queues `count` particles on the entity's
 // ParticleEmitter for the next update (works while the emitter is not emitting: bursts on demand).
 int entity_emit_particles(lua_State* L) {
@@ -2307,6 +2374,9 @@ void open_victus_libs(lua_State* L) {
                                 {"drop_through", entity_drop_through},
                                 {"character_state", entity_character_state},
                                 {"play_animation", entity_play_animation},
+                                {"play_sprite", entity_play_sprite},
+                                {"sprite_animation", entity_sprite_animation},
+                                {"sprite_clips", entity_sprite_clips},
                                 {"animation", entity_animation},
                                 {"animation_clips", entity_animation_clips},
                                 {"emit_particles", entity_emit_particles},

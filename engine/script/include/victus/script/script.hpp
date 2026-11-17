@@ -25,6 +25,9 @@
 // Scene API: `scene.find(name)`, `scene.spawn(name?, parent?)`, `scene.destroy(e)`,
 // `scene.query(component)`, `scene.count()`, `scene.instantiate(prefab_path, {position, parent,
 // name}?)` creates an instance of a `.vprefab` asset (its scripts start on the next update).
+// Sprite animation: `entity:play_sprite(clip, restart?)`, `entity:sprite_animation()`
+// ({valid, clip, frame, clip_frame, time, duration, playing, looping, finished}) and
+// `entity:sprite_clips()` drive a SpriteAnimator's sheet clips.
 // Scene transitions: `scene.load(path, params?)` validates a project scene (e.g.
 // "scenes/level2.vscene") and switches to it at the end of this update (true | nil, error);
 // `scene.reload(params?)` restarts the current scene; `scene.current()` is its path and
