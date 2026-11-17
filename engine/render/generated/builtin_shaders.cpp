@@ -4663,7 +4663,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// pbr.frag sha256=a3acebf0f63845cec9f98b184a485ca022affb401f8edc5c67b0aa36eb81a4fc
+// pbr.frag sha256=471e28287b45d4c578f33e71ff28816d79d4838f7ff9916e26f778d78a7239ac
 const std::uint8_t k_spirv_16[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0xa5, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53, 0x4c,
@@ -7132,7 +7132,7 @@ float3 env_specular(thread const float3& r, thread const float& roughness, threa
     return u_env.sample(u_envSmplr, env_rotate(param_4, lighting), level(roughness * lighting.env_params.y)).xyz * lighting.env_params.z;
 }
 
-fragment main0_out main0(main0_in in [[stage_in]], constant Lighting& lighting [[buffer(0)]], constant Material& material [[buffer(1)]], constant Probe& probe [[buffer(2)]], const device Lights& _1390 [[buffer(7)]], const device Clusters& _1358 [[buffer(8)]], texture2d<float> u_base_color [[texture(0)]], texture2d<float> u_metal_rough [[texture(1)]], texture2d<float> u_normal_map [[texture(2)]], texture2d<float> u_emissive [[texture(3)]], depth2d<float> u_shadow [[texture(4)]], texture2d<float> u_ao [[texture(5)]], texturecube<float> u_env [[texture(6)]], sampler u_base_colorSmplr [[sampler(0)]], sampler u_metal_roughSmplr [[sampler(1)]], sampler u_normal_mapSmplr [[sampler(2)]], sampler u_emissiveSmplr [[sampler(3)]], sampler u_shadowSmplr [[sampler(4)]], sampler u_aoSmplr [[sampler(5)]], sampler u_envSmplr [[sampler(6)]], float4 gl_FragCoord [[position]], bool gl_FrontFacing [[front_facing]])
+fragment main0_out main0(main0_in in [[stage_in]], constant Lighting& lighting [[buffer(0)]], constant Material& material [[buffer(1)]], constant Probe& probe [[buffer(2)]], const device Lights& _1390 [[buffer(3)]], const device Clusters& _1358 [[buffer(4)]], texture2d<float> u_base_color [[texture(0)]], texture2d<float> u_metal_rough [[texture(1)]], texture2d<float> u_normal_map [[texture(2)]], texture2d<float> u_emissive [[texture(3)]], depth2d<float> u_shadow [[texture(4)]], texture2d<float> u_ao [[texture(5)]], texturecube<float> u_env [[texture(6)]], sampler u_base_colorSmplr [[sampler(0)]], sampler u_metal_roughSmplr [[sampler(1)]], sampler u_normal_mapSmplr [[sampler(2)]], sampler u_emissiveSmplr [[sampler(3)]], sampler u_shadowSmplr [[sampler(4)]], sampler u_aoSmplr [[sampler(5)]], sampler u_envSmplr [[sampler(6)]], float4 gl_FragCoord [[position]], bool gl_FrontFacing [[front_facing]])
 {
     main0_out out = {};
     float2 uv = (in.v_uv * material.uv_transform.xy) + material.uv_transform.zw;
