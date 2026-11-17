@@ -5,6 +5,7 @@
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/script/script.hpp"
+#include "victus/script/graph.hpp"
 
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
@@ -144,7 +145,20 @@ struct ScriptHost::Impl {
         if (L) lua_close(L);
     }
 
+    // Compiled visual script graphs by module path (runtime errors name the failing node).
+    struct GraphModule {
+        ScriptGraph graph;
+        CompiledGraph compiled;
+    };
+    std::unordered_map<std::string, GraphModule> graphs;
+
     void report(std::string message) {
+        if (message.find(".vgraph:") != std::string::npos)
+            for (const auto& [path, gm] : graphs)
+                if (message.find(path + ":") != std::string::npos) {
+                    message = annotate_graph_error(message, gm.compiled, gm.graph);
+                    break;
+                }
         ++counters.errors;
         VICTUS_LOG_ERROR("script", "{}", message);
         if (recent_errors.size() >= kMaxRecentErrors) recent_errors.erase(recent_errors.begin());
@@ -231,6 +245,22 @@ struct ScriptHost::Impl {
         if (!text) {
             report(std::format("{}: {}", m.path, text.error().message));
             return false;
+        }
+        if (m.path.ends_with(".vgraph")) { // visual script: compile the graph to Luau (ADR-0058)
+            auto graph = parse_graph(*text);
+            if (!graph) {
+                report(std::format("{}: {}", m.path, graph.error().message));
+                return false;
+            }
+            GraphCompileOptions gopt;
+            gopt.source_name = m.path;
+            CompiledGraph compiled = compile_graph(*graph, gopt);
+            if (!compiled.ok()) {
+                report(std::format("{}: {}", m.path, compiled.error_text()));
+                return false;
+            }
+            *text = compiled.source;
+            graphs[m.path] = {std::move(*graph), std::move(compiled)};
         }
         std::string error;
         const int top = lua_gettop(L);
@@ -3809,6 +3839,17 @@ void add_script_systems(gameplay::Simulation& sim, ScriptHost& host) {
                    [&host, simp](scene::Scene& s, const gameplay::FrameTime& t) { host.fixed_update(s, t, simp->input); });
     sim.add_system("script.update", gameplay::Phase::Update,
                    [&host, simp](scene::Scene& s, const gameplay::FrameTime& t) { host.update(s, t, simp->input); });
+}
+
+Result<std::string> luau_source(std::string_view path, std::string text) {
+    if (!path.ends_with(".vgraph")) return text;
+    auto graph = parse_graph(text);
+    if (!graph) return make_error(graph.error().code, std::format("{}: {}", path, graph.error().message));
+    GraphCompileOptions opt;
+    opt.source_name = std::string(path);
+    CompiledGraph compiled = compile_graph(*graph, opt);
+    if (!compiled.ok()) return make_error(ErrorCode::ScriptError, std::format("{}: {}", path, compiled.error_text()));
+    return std::move(compiled.source);
 }
 
 Status check_syntax(std::string_view source, std::string_view chunk_name) {

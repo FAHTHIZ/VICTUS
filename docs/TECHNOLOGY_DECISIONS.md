@@ -615,6 +615,22 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - Light changes propagate within about probe_count / budget frames (blend 1), smoother with lower blends. Cost is the per-frame probe budget (default 8 captures of six 16px faces) on the probe renderer.
   - Same limits as ADR-0056 (no visibility data, one volume per frame). Rejected (a) until a GPU BVH/SDF exists; rejected (c) as it stalls frames and drops the previous lighting.
 
+### ADR-0058: Visual scripting graphs compile to Luau modules
+- Status: Accepted (Slice 61)
+- Context: roadmap item 14 asks for visual scripting over the Luau runtime with typed nodes, validation, debugging and deterministic serialization. Designers should not need a second VM, and graphs must keep every guarantee of scripts (sandbox, call budgets, heap limit, hot reload, per-entity properties, all scripting APIs). References: Unreal Blueprints (event graphs, exec vs pure nodes), Unity Visual Scripting (interpreted graphs; slower than C#), Godot VisualScript (removed in 4.0 for low adoption and maintenance cost), Defold/Roblox (text Luau only).
+- Options: (a) interpret graphs at run time in C++; (b) compile graphs to Luau source and load them as ordinary script modules; (c) compile graphs straight to Luau bytecode.
+- Decision: (b).
+  - `.vgraph` is a JSON document ("format": "victus.graph", version 1): variables (name, type, default, exposed), nodes (id, type, position, literal inputs, config, comment) and links (from [node, pin], to [node, pin]). Serialization sorts nodes, links and literal keys, so files diff cleanly and repeated saves are byte-identical.
+  - Pins are typed (exec, any, number, bool, string, vector, entity). A data input takes at most one link, an exec output feeds one node (Sequence fans out). Unlinked inputs use literals (an entity literal "self" is the scripted entity; another string finds an entity by name).
+  - Node kinds: events (start, update, fixed_update, collision/trigger enter/exit) become module methods; statements expand a Luau template; pure nodes are inlined expressions; flow nodes (Branch, Sequence, For Range, Do Once) become structured control flow; variable get/set read and write `self` fields. Exposed variables are module fields (inspector-editable per entity like script fields); private ones are stored as `_v_<name>` and hidden.
+  - Validation reports errors on the failing node and pin: unknown types/variables/pins, type mismatches, multiple links, duplicate events, exec loops, data loops, statement outputs used from another event, invalid or reserved variable names. Unreachable statements are warnings.
+  - The compiler records the node of every generated line; runtime errors in a graph are reported as `... [node 12 Branch]`. An optional trace mode calls `__vg_trace(node)` before each statement for editor debugging.
+  - `ScriptHost` loads `.vgraph` modules through the compiler (hot reload and budgets unchanged); `script::luau_source` lets `victus check` and `victus export` validate graphs; the asset database classifies `.vgraph` as a script.
+- Consequences:
+  - Graph scripts run at Luau speed with no second runtime, and generated code is readable for debugging. Graph changes reload like scripts.
+  - Converging exec paths are emitted once per path (code duplication, capped at 200k lines). No functions/macros, custom events or per-node breakpoints yet; the editor graph panel and the debugger come in later slices.
+  - Rejected (a): a second execution model to sandbox, budget and keep in sync with every API. Rejected (c): ties the format to Luau's bytecode version and loses readable output for little gain.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

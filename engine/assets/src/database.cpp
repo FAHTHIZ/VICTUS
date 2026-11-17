@@ -79,7 +79,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     if (e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".tga" || e == ".bmp" || e == ".hdr") return AssetKind::Texture;
     if (e == ".gltf" || e == ".glb") return AssetKind::Model;
     if (e == ".vscene") return AssetKind::Scene;
-    if (e == ".luau") return AssetKind::Script;
+    if (e == ".luau" || e == ".vgraph") return AssetKind::Script;
     if (e == ".vprefab") return AssetKind::Prefab;
     if (e == ".vmat") return AssetKind::Material;
     if (e == ".vshader") return AssetKind::Shader;
