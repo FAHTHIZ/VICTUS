@@ -28,8 +28,15 @@ layout(set = 2, binding = 6) uniform samplerCube u_env; // prefiltered environme
 // Clustered local lights (see light_clusters.hpp): a light array and, per cluster, an
 // (offset, count) header followed by the flattened light index list.
 struct LocalLight { vec4 position_range; vec4 color_intensity; vec4 direction_cos_outer; vec4 spot; };
+// SDL_GPU: SPIR-V fragment storage buffers follow the 7 textures in set 2; MSL buffers are the
+// 3 uniform buffers first, then storage buffers ([[buffer(3)]], [[buffer(4)]]).
+#ifdef VICTUS_MSL
+layout(std430, set = 2, binding = 3) readonly buffer Lights { LocalLight local_lights[]; };
+layout(std430, set = 2, binding = 4) readonly buffer Clusters { uint cluster_data[]; };
+#else
 layout(std430, set = 2, binding = 7) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 2, binding = 8) readonly buffer Clusters { uint cluster_data[]; };
+#endif
 layout(set = 3, binding = 0) uniform Lighting {
     vec4 camera_pos;     // w: ambient occlusion enabled
     vec4 camera_forward; // xyz: view direction

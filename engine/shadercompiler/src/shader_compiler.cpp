@@ -6,10 +6,13 @@
 #include <SPIRV/GlslangToSpv.h>
 #include <spirv_msl.hpp>
 
+#include <algorithm>
 #include <cstring>
 #include <format>
 #include <mutex>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 namespace victus::shadercompiler {
 namespace {
@@ -88,6 +91,20 @@ ResourceCounts count(const spirv_cross::Compiler& c) {
     return r;
 }
 
+// SDL_GPU binds Metal buffers as uniform buffers first, then storage buffers
+// ([[buffer(uniforms + i)]]), but SPIR-V numbers storage buffers after the textures of their
+// set. Renumber them so the MSL matches SDL's layout; textures already line up (sampled, then
+// storage). The offline generator gets the same result from VICTUS_MSL bindings in the sources.
+void remap_metal_storage_buffers(spirv_cross::CompilerMSL& msl) {
+    const auto res = msl.get_shader_resources();
+    std::vector<std::pair<std::uint32_t, spirv_cross::ID>> buffers;
+    for (const auto& b : res.storage_buffers) buffers.emplace_back(msl.get_decoration(b.id, spv::DecorationBinding), b.id);
+    std::sort(buffers.begin(), buffers.end());
+    const auto uniforms = static_cast<std::uint32_t>(res.uniform_buffers.size());
+    for (std::size_t i = 0; i < buffers.size(); ++i)
+        msl.set_decoration(buffers[i].second, spv::DecorationBinding, uniforms + static_cast<std::uint32_t>(i));
+}
+
 } // namespace
 
 Result<CompiledShader> compile_glsl(std::string_view source, Stage stage, const CompileOptions& options,
@@ -142,6 +159,7 @@ Result<CompiledShader> compile_glsl(std::string_view source, Stage stage, const 
             mo.set_msl_version(2, 1);
             mo.enable_decoration_binding = true; // same as tools/shaders/compile_shaders.py
             msl.set_msl_options(mo);
+            remap_metal_storage_buffers(msl);
             out.msl = msl.compile();
         }
     } catch (const std::exception& e) {

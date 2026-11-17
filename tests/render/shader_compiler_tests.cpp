@@ -8,10 +8,25 @@
 
 #include "doctest.h"
 
+#include <algorithm>
+#include <cstdlib>
 #include <filesystem>
+#include <string_view>
+#include <vector>
 
 using namespace victus;
 namespace sc = victus::shadercompiler;
+
+namespace {
+// Sorted slot numbers of every `[[buffer(N)]]` / `[[texture(N)]]` attribute in MSL source.
+std::vector<int> metal_slots(std::string_view msl, std::string_view tag) {
+    std::vector<int> out;
+    for (std::size_t p = msl.find(tag); p != std::string_view::npos; p = msl.find(tag, p + 1))
+        out.push_back(std::atoi(std::string(msl.substr(p + tag.size(), 4)).c_str()));
+    std::sort(out.begin(), out.end());
+    return out;
+}
+} // namespace
 
 TEST_CASE("shader compiler: built-in shaders compile with the generator's resource counts") {
     int compiled = 0;
@@ -33,6 +48,10 @@ TEST_CASE("shader compiler: built-in shaders compile with the generator's resour
         CHECK(r->counts.uniform_buffers == b.uniform_buffers);
         CHECK(r->counts.storage_buffers == b.storage_buffers);
         CHECK(r->counts.storage_textures == b.storage_textures);
+        // Metal: the run-time compiler's buffer slots match the offline library (SDL_GPU order:
+        // uniform buffers, then storage buffers), so surface shaders bind like built-ins.
+        CHECK(metal_slots(r->msl, "[[buffer(") == metal_slots(b.msl, "[[buffer("));
+        CHECK(metal_slots(r->msl, "[[texture(") == metal_slots(b.msl, "[[texture("));
         auto again = sc::reflect(r->spirv);
         REQUIRE(again.ok());
         CHECK(*again == r->counts);

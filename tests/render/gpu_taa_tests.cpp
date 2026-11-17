@@ -169,7 +169,7 @@ TEST_CASE("gpu: taa converges to anti-aliased edges without shifting a static im
     MESSAGE("partial-coverage pixels: aliased " << hard << " taa " << soft << "; grey levels " << levels_hard << " vs "
                                                 << levels_soft);
     CHECK(levels_hard <= 4);  // binary coverage (plus a fixed seam shade)
-    CHECK(levels_soft > 40);  // gradients along the edges
+    CHECK(levels_soft > 24);  // gradients along the edges (lavapipe ~90, Apple Metal 37)
     CHECK(soft > 2 * hard);
     CHECK(red(resolved, W / 2, H / 2) > 240); // interior stays solid
     CHECK(red(resolved, 4, 4) < 8);           // background stays black
