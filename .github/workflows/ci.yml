@@ -8,6 +8,11 @@ on:
     - cron: '17 3 * * 1' # weekly: new advisories against unchanged pins
 permissions:
   contents: read
+# A newer push to the same ref supersedes an in-flight run (main previously queued 1 h runs behind
+# each other and macOS jobs were cancelled by the runner limit instead).
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
 env:
   LINUX_DEPS: >-
     ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev
@@ -17,6 +22,7 @@ env:
 jobs:
   shaders:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Generated shader library matches sources
@@ -24,6 +30,7 @@ jobs:
 
   dependencies:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Pins, hashes and license table match cmake/VictusDependencies.cmake
@@ -44,6 +51,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         build_type: [Debug, Release]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux dependencies
@@ -88,6 +96,7 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux dependencies
@@ -128,6 +137,7 @@ jobs:
       matrix:
         sanitize: ["address,undefined", "thread"]
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux dependencies
