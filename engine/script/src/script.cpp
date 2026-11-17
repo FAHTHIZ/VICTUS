@@ -77,6 +77,9 @@ struct ScriptHost::Impl {
     std::unordered_map<std::uint64_t, Instance> instances;
     std::vector<std::string> recent_errors;
     std::unordered_map<std::string, PrefabSource> prefabs;
+    // Asset paths resolved by the rendering API, both ways (material() reports the path).
+    std::unordered_map<std::string, Uuid> asset_uuids;
+    std::unordered_map<Uuid, std::string, UuidHash> asset_paths;
     HostStats counters;
     double next_watch{0};
 
@@ -1140,14 +1143,16 @@ int entity_text(lua_State* L) {
     else lua_pushnil(L);
     return 1;
 }
-// entity:set_visible(bool): the UiCanvas when the entity is a canvas root, else its UiRect.
+// entity:set_visible(bool): the UiCanvas when the entity is a canvas root, else its UiRect, else
+// its MeshRenderer.
 int entity_set_visible(lua_State* L) {
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     const bool v = lua_toboolean(L, 2) != 0;
     if (auto* c = s.world().get<gameui::UiCanvasComponent>(e)) c->visible = v;
     else if (auto* r = s.world().get<gameui::UiRectComponent>(e)) r->visible = v;
-    else luaL_error(L, "entity has no UiRect or UiCanvas component");
+    else if (auto* m = s.world().get<scene::MeshRendererComponent>(e)) m->visible = v;
+    else luaL_error(L, "entity has no UiRect, UiCanvas or MeshRenderer component");
     return 0;
 }
 int entity_visible(lua_State* L) {
@@ -1155,9 +1160,172 @@ int entity_visible(lua_State* L) {
     const Entity e = check_live(L, 1, s);
     if (const auto* c = s.world().get<gameui::UiCanvasComponent>(e)) lua_pushboolean(L, c->visible);
     else if (const auto* r = s.world().get<gameui::UiRectComponent>(e)) lua_pushboolean(L, r->visible);
+    else if (const auto* m = s.world().get<scene::MeshRendererComponent>(e)) lua_pushboolean(L, m->visible);
     else lua_pushnil(L);
     return 1;
 }
+// ---- Rendering ----------------------------------------------------------------------------------
+
+constexpr const char* kPrimitives[] = {"cube", "sphere", "plane", "cylinder"};
+
+bool is_primitive(std::string_view name) {
+    return std::ranges::any_of(kPrimitives, [&](const char* p) { return name == p; });
+}
+
+// Resolves an asset path (or a UUID string) to the asset's UUID; raises a Luau error on failure.
+Uuid resolve_asset(lua_State* L, std::string_view path, const char* fn) {
+    auto& h = host_of(L);
+    const std::string key(path);
+    if (const auto it = h.asset_uuids.find(key); it != h.asset_uuids.end()) return it->second;
+    Uuid id;
+    if (!Uuid::parse(path, id)) {
+        if (h.options.asset_resolver) {
+            auto r = h.options.asset_resolver(path);
+            if (!r) luaL_error(L, "%s: cannot resolve '%s': %s", fn, key.c_str(), r.error().message.c_str());
+            id = *r;
+        } else {
+            auto file = fs::resolve_under(h.options.assets_root, path);
+            if (!file) luaL_error(L, "%s: cannot resolve '%s': %s", fn, key.c_str(), file.error().message.c_str());
+            sfs::path meta = *file;
+            meta += ".meta";
+            bool found = false;
+            if (auto text = fs::read_text(meta, 1u << 20))
+                if (auto doc = json::parse(*text); doc && (*doc)["uuid"].is_string()) found = Uuid::parse((*doc)["uuid"].as_string(), id);
+            if (!found) luaL_error(L, "%s: '%s' is not an imported asset (no UUID in its .meta file)", fn, key.c_str());
+        }
+        if (id.is_nil()) luaL_error(L, "%s: '%s' has no asset UUID", fn, key.c_str());
+    }
+    h.asset_uuids.emplace(key, id);
+    h.asset_paths.emplace(id, key);
+    return id;
+}
+
+void push_asset(lua_State* L, const Uuid& id) {
+    if (id.is_nil()) {
+        lua_pushnil(L);
+        return;
+    }
+    auto& h = host_of(L);
+    const auto it = h.asset_paths.find(id);
+    const std::string text = it != h.asset_paths.end() ? it->second : id.to_string();
+    lua_pushlstring(L, text.data(), text.size());
+}
+
+scene::MeshRendererComponent& check_mesh_renderer(lua_State* L, scene::Scene& s, Entity e) {
+    auto* m = s.world().get<scene::MeshRendererComponent>(e);
+    if (!m) luaL_error(L, "entity has no MeshRenderer component");
+    return *m;
+}
+
+// entity:set_material(path | uuid | nil): the MeshRenderer's .vmat material (nil: the mesh's own).
+int entity_set_material(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto& m = check_mesh_renderer(L, s, e);
+    if (lua_isnoneornil(L, 2)) {
+        m.material_asset = {};
+        return 0;
+    }
+    const std::string_view path = luaL_checkstring(L, 2);
+    Uuid tmp;
+    if (!Uuid::parse(path, tmp) && !path.ends_with(".vmat")) luaL_error(L, "set_material: '%s' is not a .vmat material", std::string(path).c_str());
+    m.material_asset = resolve_asset(L, path, "set_material");
+    return 0;
+}
+// entity:material() -> path (or UUID string when set outside scripts) | nil
+int entity_material(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* m = s.world().get<scene::MeshRendererComponent>(e);
+    if (!m) lua_pushnil(L);
+    else push_asset(L, m->material_asset);
+    return 1;
+}
+// entity:set_mesh(primitive | model_path, mesh_index?)
+int entity_set_mesh(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto& m = check_mesh_renderer(L, s, e);
+    const std::string_view name = luaL_checkstring(L, 2);
+    const auto index = static_cast<std::uint32_t>(std::max(0, luaL_optinteger(L, 3, 0)));
+    if (is_primitive(name)) {
+        m.mesh_asset = {};
+        m.primitive = std::string(name);
+    } else {
+        m.mesh_asset = resolve_asset(L, name, "set_mesh");
+        m.primitive.clear();
+    }
+    m.mesh_index = index;
+    return 0;
+}
+// entity:mesh() -> primitive name | model path, mesh index  (nil without a MeshRenderer)
+int entity_mesh(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* m = s.world().get<scene::MeshRendererComponent>(e);
+    if (!m) {
+        lua_pushnil(L);
+        return 1;
+    }
+    if (m->mesh_asset.is_nil()) lua_pushlstring(L, m->primitive.data(), m->primitive.size());
+    else push_asset(L, m->mesh_asset);
+    lua_pushinteger(L, static_cast<int>(m->mesh_index));
+    return 2;
+}
+// entity:set_color(vector, alpha?): MeshRenderer base color (linear tint) or Sprite tint.
+int entity_set_color(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const math::Vec3 c = check_vec3(L, 2);
+    math::Color* target = nullptr;
+    if (auto* m = s.world().get<scene::MeshRendererComponent>(e)) target = &m->base_color;
+    else if (auto* sp = s.world().get<scene::SpriteComponent>(e)) target = &sp->tint;
+    else luaL_error(L, "entity has no MeshRenderer or Sprite component");
+    const float a = lua_isnoneornil(L, 3) ? target->a : static_cast<float>(luaL_checknumber(L, 3));
+    *target = {c.x, c.y, c.z, a};
+    return 0;
+}
+// entity:color() -> vector, alpha | nil
+int entity_color(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const math::Color* c = nullptr;
+    if (const auto* m = s.world().get<scene::MeshRendererComponent>(e)) c = &m->base_color;
+    else if (const auto* sp = s.world().get<scene::SpriteComponent>(e)) c = &sp->tint;
+    if (!c) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushvector(L, c->r, c->g, c->b);
+    lua_pushnumber(L, c->a);
+    return 2;
+}
+// entity:set_sprite(texture_path | nil): the Sprite's texture.
+int entity_set_sprite(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* sp = s.world().get<scene::SpriteComponent>(e);
+    if (!sp) luaL_error(L, "entity has no Sprite component");
+    sp->texture_asset = lua_isnoneornil(L, 2) ? Uuid{} : resolve_asset(L, luaL_checkstring(L, 2), "set_sprite");
+    return 0;
+}
+// entity:sprite() -> texture path | nil
+int entity_sprite(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* sp = s.world().get<scene::SpriteComponent>(e);
+    if (!sp) lua_pushnil(L);
+    else push_asset(L, sp->texture_asset);
+    return 1;
+}
+// entity:set_cast_shadows(bool)
+int entity_set_cast_shadows(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    check_mesh_renderer(L, s, e).cast_shadows = lua_toboolean(L, 2) != 0;
+    return 0;
+}
+
 // entity:ui_state() -> {visible, hovered, pressed, focused, x, y, width, height, clicks}
 // (pixels, from the last layout) or nil before the first layout.
 int entity_ui_state(lua_State* L) {
@@ -2015,6 +2183,15 @@ void open_victus_libs(lua_State* L) {
                                 {"set_visible", entity_set_visible},
                                 {"visible", entity_visible},
                                 {"ui_state", entity_ui_state},
+                                {"set_material", entity_set_material},
+                                {"material", entity_material},
+                                {"set_mesh", entity_set_mesh},
+                                {"mesh", entity_mesh},
+                                {"set_color", entity_set_color},
+                                {"color", entity_color},
+                                {"set_sprite", entity_set_sprite},
+                                {"sprite", entity_sprite},
+                                {"set_cast_shadows", entity_set_cast_shadows},
                                 {"set_destination", entity_set_destination},
                                 {"stop", entity_stop},
                                 {"nav_state", entity_nav_state},

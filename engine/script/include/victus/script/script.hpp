@@ -59,6 +59,12 @@
 // Messages arrive as `function M:on_net_message(name, value, sender)` after update. In a session,
 // `input.*` inside a script reads the input of the client that owns the entity (none on proxies).
 //
+// Rendering API (entity methods): `set_material(path|nil)` / `material()` swap a MeshRenderer's
+// `.vmat` material asset; `set_mesh("cube"|"sphere"|"plane"|"cylinder"|model_path, index?)`
+// / `mesh()`; `set_color(vector, alpha?)` / `color() -> vector, alpha` (MeshRenderer tint or
+// Sprite tint); `set_sprite(texture_path|nil)`; `set_visible(bool)` / `visible()` also cover
+// MeshRenderers; `set_cast_shadows(bool)`.
+//
 // Save API (when HostOptions::save_directory is set; otherwise `save.available()` is false and the
 // other calls return nil plus an error): `save.write(slot, data, label?)`, `save.read(slot) ->
 // data, info` (info: version, saved_at, label, recovered, migrated), `save.exists(slot)`,
@@ -126,6 +132,10 @@ struct HostOptions {
     // Resolves `scene.instantiate(path)`. Empty: reads `<assets_root>/<path>` and the UUID from
     // its `.meta` sidecar (nil when there is none). Players pass one backed by the asset database.
     std::function<Result<PrefabSource>(std::string_view path)> prefab_loader;
+    // Resolves asset paths used by `entity:set_material/set_mesh/set_sprite` to asset UUIDs.
+    // Empty: reads the UUID from `<assets_root>/<path>.meta`. Players pass one backed by the
+    // asset database (exported games have no .meta files).
+    std::function<Result<Uuid>(std::string_view path)> asset_resolver;
     // Folder behind the `save` API (empty: saves unavailable) and the game's save data version
     // (the project's "save_version").
     std::filesystem::path save_directory;
