@@ -512,6 +512,15 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - Switches pop (no cross-fade or dithering yet); the 1 px default keeps this below visibility on tests.
   - GPU-driven culling and indirect draws are a separate step (SDL_GPU has indirect draws, but no draw count buffer), as are occlusion culling and clustered LOD.
 
+### ADR-0050: Optional packed HDR colour (R11G11B10F) for bandwidth-bound GPUs
+- Status: Accepted (Slice 55)
+- Context: entry-level phones (e.g. Mali-G52 MC2 on a shared LPDDR4X bus) are limited by framebuffer bandwidth, not shader ALU. The HDR scene colour, bloom chain and TAA history were always RGBA16_FLOAT (8 bytes per pixel), and nothing in that chain uses alpha or negative values: blending uses source alpha, FXAA reads luma from the tonemapped LDR target, and tonemap, bloom and TAA read only RGB.
+- Options: (a) keep RGBA16F everywhere; (b) R11G11B10_FLOAT always; (c) R11G11B10_FLOAT opt-in per renderer.
+- Decision: (c). `SceneRendererOptions::compact_hdr` selects R11G11B10_FLOAT for those targets and their pipelines when the device can sample and render to it, else RGBA16F.
+  - It halves colour traffic per pass on tiled GPUs. Its 6/6/5-bit mantissas sit well below tonemapped 8-bit output in practice, which is why most console engines use the same format.
+  - Opt-in keeps desktop output and pixel-exact tests unchanged. Environment maps and reflection captures stay RGBA16F because they are filtered and reused many times.
+- Consequences: the format is fixed when the renderer is created (pipelines are built then). Games enable it on phones; AURORIA does so in its phone profile (D-114).
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 
