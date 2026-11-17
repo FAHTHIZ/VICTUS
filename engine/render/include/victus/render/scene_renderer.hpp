@@ -55,6 +55,9 @@ struct Material {
     bool double_sided{false};
     bool unlit{false};
     bool cast_shadows{true};
+    // Drawn only into shadow maps (sun cascades and local lights), never into the frame: an object
+    // hidden from the camera (a tree crown cut away to show what is under it) keeps its shadow.
+    bool shadow_only{false};
     // Project surface shader: a fragment shader compiled from surface_shader_source() (see
     // below); invalid = the built-in PBR shader. `shader_params` reach it as material.custom[].
     rhi::ShaderHandle surface_shader;

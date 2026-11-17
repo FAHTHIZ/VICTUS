@@ -958,6 +958,8 @@ Known gaps (next parts):
 
 Verification (local, Ubuntu, Release, lavapipe under Xvfb):
 - `victus_gpu_tests` "gpu: the sky background can differ from the ambient terms" (dim ambient sky vs. bright blue backdrop on screen); full `victus_gpu_tests` 84/84.
+- `Material::shadow_only`: the draw goes into the sun cascades and local-light shadow maps but never into the frame, so a game can cut an object away from the camera (AURORIA's see-through tree crowns) and keep its shadow. Defaults off.
+- `victus_gpu_tests` "gpu: shadow-only draws cast a shadow but are not drawn"; full `victus_gpu_tests` 87/87.
 
 ## Slice 70: Terrain sculpt and paint tools, terrain part 2 (roadmap item 18)
 
