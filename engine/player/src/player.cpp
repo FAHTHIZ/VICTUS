@@ -12,6 +12,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
+#include "victus/tilemap/tilemap.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -164,6 +165,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     animation::AnimationSystem animations(
         {.provider = assets::animation_provider(**db), .sheets = assets::sprite_sheet_provider(**db), .jobs = &workers});
     animation::add_animation_systems(sim, animations);
+    tilemap::TilemapSystem tilemaps(assets::tileset_provider(**db));
+    tilemap::add_tilemap_systems(sim, tilemaps);
     particles::ParticleSystem particle_system({.jobs = &workers});
     particles::add_particle_systems(sim, particle_system);
     navigation::NavigationSystem nav;
@@ -291,11 +294,11 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         if (reloader) {
             const auto changes = reloader->poll(now);
             if (!changes.empty()) {
-                runtime::AssetHotReloader::apply(changes, &cache, &animations);
+                runtime::AssetHotReloader::apply(changes, &cache, &animations, &tilemaps);
                 if (audio_engine)
                     for (const auto& clip : changes.audio) (void)(*audio_engine)->reload_clip(clip);
                 if (!changes.prefabs.empty()) (*scripts)->forget_prefabs(); // new instances use the new version
-                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size();
+                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size();
             }
         }
         float dt = o.max_frames ? 1.0f / 60.0f : std::clamp(static_cast<float>(now - last), 1e-4f, 0.25f);

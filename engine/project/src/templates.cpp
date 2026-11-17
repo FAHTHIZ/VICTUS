@@ -5,6 +5,7 @@
 #include "victus/assets/material.hpp"
 #include "victus/render/image.hpp"
 #include "victus/navigation/navigation.hpp"
+#include "victus/tilemap/tilemap.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/gameui/gameui.hpp"
@@ -1429,6 +1430,7 @@ void register_components() {
     gameui::register_components();
     navigation::register_components();
     net::register_components();
+    tilemap::register_components();
 }
 
 Status build_template_scene(std::string_view id, Scene& s) {

@@ -140,6 +140,7 @@ public:
                 ++it;
             }
         }
+        sync_compounds(scene);
         sync_characters(scene);
         sync_joints(scene);
     }
@@ -179,12 +180,16 @@ public:
         chars_.clear();
         for (auto& [k, b] : bodies_) destroy(b);
         bodies_.clear();
+        for (auto& [k, c] : compounds_) destroy_compound(c);
+        compounds_.clear();
         shapes_.clear();
         // Flush end events produced by the destruction so the next session starts clean.
         b2World_Step(world_, 0.0f, 1);
     }
 
-    bool has_body(Entity e) const override { return bodies_.contains(e.bits()) || chars_.contains(e.bits()); }
+    bool has_body(Entity e) const override {
+        return bodies_.contains(e.bits()) || chars_.contains(e.bits()) || compounds_.contains(e.bits());
+    }
 
     std::optional<RaycastHit> raycast(math::Vec2 o, math::Vec2 d, float max, std::uint32_t mask,
                                       Entity ignore) const override {
@@ -344,7 +349,7 @@ public:
         return {g.x, g.y};
     }
     void stats(PhysicsStats& out) const override {
-        out.bodies_2d = static_cast<std::uint32_t>(bodies_.size() + chars_.size());
+        out.bodies_2d = static_cast<std::uint32_t>(bodies_.size() + chars_.size() + compounds_.size());
         out.characters_2d = static_cast<std::uint32_t>(chars_.size());
         out.joints_2d = 0;
         for (const auto& [k, j] : joints_) out.joints_2d += (!j.broken && b2Joint_IsValid(j.id)) ? 1u : 0u;
@@ -463,6 +468,96 @@ private:
         out.position = p;
         out.angle = angle;
         (void)e;
+    }
+
+    struct Compound {
+        b2BodyId body{};
+        std::vector<b2ShapeId> shapes;
+        std::uint64_t revision{0};
+        math::Vec2 scale{1, 1};
+        math::Vec2 position;
+        float angle{0};
+        std::uint64_t seen{0};
+    };
+
+    void create_compound(Entity e, const StaticShapes2DComponent& c, math::Vec2 p, float angle, math::Vec2 scale,
+                         Compound& out) {
+        out.revision = c.revision;
+        out.scale = scale;
+        out.position = p;
+        out.angle = angle;
+        if (c.boxes.empty()) return;
+        b2BodyDef bd = b2DefaultBodyDef();
+        bd.type = b2_staticBody;
+        bd.position = v2(p);
+        bd.rotation = b2MakeRot(angle);
+        out.body = b2CreateBody(world_, &bd);
+        const std::uint32_t layer = std::min<std::uint32_t>(c.layer, 15u);
+        out.shapes.reserve(c.boxes.size());
+        for (const auto& box : c.boxes) {
+            b2ShapeDef sd = b2DefaultShapeDef();
+            sd.material.friction = std::max(0.0f, c.friction);
+            sd.material.restitution = std::clamp(c.restitution, 0.0f, 1.0f);
+            sd.enableSensorEvents = true;
+            sd.enableContactEvents = true;
+            sd.enablePreSolveEvents = box.one_way;
+            if (box.one_way) sd.userData = reinterpret_cast<void*>(kOneWay);
+            sd.filter.categoryBits = 1ull << layer;
+            sd.filter.maskBits = static_cast<std::uint64_t>(c.mask & matrix_[layer] & 0xFFFFu);
+            const float hx = std::max(1e-3f, (box.max.x - box.min.x) * scale.x * 0.5f);
+            const float hy = std::max(1e-3f, (box.max.y - box.min.y) * scale.y * 0.5f);
+            const b2Vec2 centre{(box.min.x + box.max.x) * 0.5f * scale.x, (box.min.y + box.max.y) * 0.5f * scale.y};
+            const b2Polygon poly = b2MakeOffsetBox(hx, hy, centre, b2MakeRot(0));
+            const b2ShapeId id = b2CreatePolygonShape(out.body, &sd, &poly);
+            out.shapes.push_back(id);
+            shapes_[b2StoreShapeId(id)] = e;
+        }
+    }
+
+    void destroy_compound(Compound& c) {
+        if (!b2Body_IsValid(c.body)) return;
+        for (const b2ShapeId s : c.shapes) retired_.push_back(b2StoreShapeId(s));
+        c.shapes.clear();
+        b2DestroyBody(c.body);
+        c.body = {};
+    }
+
+    void sync_compounds(scene::Scene& scene) {
+        scene.world().each<StaticShapes2DComponent>([&](Entity e, StaticShapes2DComponent& c) {
+            const Pose pose = world_pose(scene, e);
+            const math::Vec3 scale = abs(pose.scale);
+            const math::Vec2 p{pose.position.x, pose.position.y};
+            const float angle = z_angle(pose.rotation);
+            auto it = compounds_.find(e.bits());
+            if (it != compounds_.end() &&
+                (it->second.revision != c.revision || std::abs(it->second.scale.x - scale.x) > 1e-4f ||
+                 std::abs(it->second.scale.y - scale.y) > 1e-4f)) {
+                destroy_compound(it->second);
+                compounds_.erase(it);
+                it = compounds_.end();
+            }
+            if (it == compounds_.end()) {
+                Compound k;
+                create_compound(e, c, p, angle, {scale.x, scale.y}, k);
+                it = compounds_.emplace(e.bits(), std::move(k)).first;
+            }
+            Compound& k = it->second;
+            k.seen = generation_;
+            if (std::abs(p.x - k.position.x) > 1e-5f || std::abs(p.y - k.position.y) > 1e-5f ||
+                std::abs(angle - k.angle) > 1e-5f) {
+                if (b2Body_IsValid(k.body)) b2Body_SetTransform(k.body, v2(p), b2MakeRot(angle));
+                k.position = p;
+                k.angle = angle;
+            }
+        });
+        for (auto it = compounds_.begin(); it != compounds_.end();) {
+            if (it->second.seen != generation_) {
+                destroy_compound(it->second);
+                it = compounds_.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 
     void destroy(Entry& b) {
@@ -1088,6 +1183,7 @@ private:
     TaskPool pool_;
     b2WorldId world_{};
     std::unordered_map<std::uint64_t, Entry> bodies_;
+    std::unordered_map<std::uint64_t, Compound> compounds_;
     std::unordered_map<std::uint64_t, Entity> shapes_;
     std::unordered_map<std::uint64_t, Character> chars_;
     std::unordered_map<std::uint64_t, Joint> joints_;

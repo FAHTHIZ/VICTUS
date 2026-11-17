@@ -39,6 +39,7 @@ struct HotReloadReport {
     std::vector<std::string> materials;      // changed materials (paths relative to assets/)
     std::vector<std::string> shaders;        // changed surface shaders (paths relative to assets/)
     std::vector<std::string> sprite_sheets;  // changed sprite sheets (paths relative to assets/)
+    std::vector<std::string> tilesets;       // changed tile sets (paths relative to assets/)
     std::vector<std::string> restart_needed; // files whose changes appear on the next start
     [[nodiscard]] bool empty() const noexcept { return changed.empty(); }
     // One human-readable line per event, for logs and editor notifications.
@@ -56,8 +57,9 @@ public:
     // changed, refreshes metadata and re-imports every stale texture/model.
     [[nodiscard]] HotReloadReport check();
 
-    // Evicts re-imported assets from the GPU cache and animation caches (either may be null).
-    static void apply(const HotReloadReport& report, GpuAssetCache* cache, animation::AnimationSystem* animations);
+    // Evicts re-imported assets from the GPU cache, animation and tile set caches (any may be null).
+    static void apply(const HotReloadReport& report, GpuAssetCache* cache, animation::AnimationSystem* animations,
+                      tilemap::TilemapSystem* tilemaps = nullptr);
 
     [[nodiscard]] std::uint64_t scans() const noexcept { return scans_; }
 

@@ -13,6 +13,7 @@
 #include "victus/gameplay/capture.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/physics/physics.hpp"
+#include "victus/tilemap/tilemap.hpp"
 
 #include <lua.h>
 #include <luacode.h>
@@ -1732,6 +1733,121 @@ int entity_set_uv_offset(lua_State* L) {
     overrides_of(s, e).uv_offset = {v.x, v.y};
     return 0;
 }
+// ---- tilemaps ------------------------------------------------------------------------------
+tilemap::TilemapComponent& tilemap_of(lua_State* L, scene::Scene& s, Entity e) {
+    auto* m = s.world().get<tilemap::TilemapComponent>(e);
+    if (!m) luaL_error(L, "entity has no Tilemap component");
+    return *m;
+}
+std::int32_t check_cell(lua_State* L, int idx) {
+    const double v = luaL_checknumber(L, idx);
+    if (!(v >= -tilemap::kMaxCoordinate && v <= tilemap::kMaxCoordinate))
+        luaL_error(L, "tile coordinate %f is out of range", v);
+    return static_cast<std::int32_t>(std::floor(v));
+}
+std::int32_t opt_tile(lua_State* L, int idx) {
+    if (lua_isnoneornil(L, idx)) return -1;
+    const double v = luaL_checknumber(L, idx);
+    if (!(v >= -1 && v < tilemap::kMaxTiles)) luaL_error(L, "tile index %f is out of range", v);
+    return static_cast<std::int32_t>(v);
+}
+// entity:set_tile(x, y, tile | nil, flip_x?, flip_y?): paints (or erases with nil) one cell.
+int entity_set_tile(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto& m = tilemap_of(L, s, e);
+    const std::int32_t x = check_cell(L, 2), y = check_cell(L, 3);
+    tilemap::set_tile(m, x, y, opt_tile(L, 4), lua_toboolean(L, 5) != 0, lua_toboolean(L, 6) != 0);
+    return 0;
+}
+// entity:tile(x, y) -> tile index or nil, flip_x, flip_y
+int entity_tile(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto& m = tilemap_of(L, s, e);
+    const tilemap::Cell* c = m.cell(check_cell(L, 2), check_cell(L, 3));
+    if (!c || c->tile < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushinteger(L, c->tile);
+    lua_pushboolean(L, c->flip_x);
+    lua_pushboolean(L, c->flip_y);
+    return 3;
+}
+// entity:fill_tiles(x0, y0, x1, y1, tile | nil) -> cells changed (inclusive rectangle).
+int entity_fill_tiles(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto& m = tilemap_of(L, s, e);
+    const std::int32_t x0 = check_cell(L, 2), y0 = check_cell(L, 3), x1 = check_cell(L, 4), y1 = check_cell(L, 5);
+    const std::uint64_t area = static_cast<std::uint64_t>(std::abs(static_cast<std::int64_t>(x1) - x0) + 1) *
+                               static_cast<std::uint64_t>(std::abs(static_cast<std::int64_t>(y1) - y0) + 1);
+    if (area > tilemap::kMaxFillCells) luaL_error(L, "fill_tiles: rectangle has more than %d cells", static_cast<int>(tilemap::kMaxFillCells));
+    lua_pushnumber(L, static_cast<double>(tilemap::fill_tiles(m, x0, y0, x1, y1, opt_tile(L, 6))));
+    return 1;
+}
+// entity:clear_tiles()
+int entity_clear_tiles(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    tilemap::clear_tiles(tilemap_of(L, s, e));
+    return 0;
+}
+// entity:paint_terrain(x, y, name | nil): autotiled painting with the tile set's terrain rules.
+int entity_paint_terrain(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    tilemap_of(L, s, e);
+    const std::int32_t x = check_cell(L, 2), y = check_cell(L, 3);
+    const auto* rt = s.world().get<tilemap::TilemapRuntime>(e);
+    if (!rt || !rt->tileset) luaL_error(L, "paint_terrain: the tilemap's tile set is not loaded");
+    std::int32_t terrain = -1;
+    if (!lua_isnoneornil(L, 4)) {
+        const char* name = luaL_checkstring(L, 4);
+        terrain = rt->tileset->terrain_index(name);
+        if (terrain < 0) luaL_error(L, "paint_terrain: the tile set has no terrain '%s'", name);
+    }
+    const auto ts = rt->tileset; // keep alive while painting
+    tilemap::paint_terrain(tilemap_of(L, s, e), *ts, x, y, terrain);
+    return 0;
+}
+// entity:world_to_tile(point) -> x, y of the cell containing a world position.
+int entity_world_to_tile(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto& m = tilemap_of(L, s, e);
+    const math::Vec3 local = math::inverse(s.world_matrix(e)).transform_point(check_vec3(L, 2));
+    lua_pushinteger(L, static_cast<int>(std::floor(local.x / std::max(m.cell_size.x, 1e-6f))));
+    lua_pushinteger(L, static_cast<int>(std::floor(local.y / std::max(m.cell_size.y, 1e-6f))));
+    return 2;
+}
+// entity:tile_to_world(x, y) -> world position of the cell's centre.
+int entity_tile_to_world(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto& m = tilemap_of(L, s, e);
+    const double x = luaL_checknumber(L, 2), y = luaL_checknumber(L, 3);
+    const math::Vec3 local{(static_cast<float>(std::floor(x)) + 0.5f) * m.cell_size.x,
+                           (static_cast<float>(std::floor(y)) + 0.5f) * m.cell_size.y, 0.0f};
+    push_vec3(L, s.world_matrix(e).transform_point(local));
+    return 1;
+}
+// entity:tile_bounds() -> min_x, min_y, max_x, max_y (inclusive) or nil when empty.
+int entity_tile_bounds(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const tilemap::TileBounds b = tilemap::bounds(tilemap_of(L, s, e));
+    if (b.empty()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushinteger(L, b.min_x);
+    lua_pushinteger(L, b.min_y);
+    lua_pushinteger(L, b.max_x);
+    lua_pushinteger(L, b.max_y);
+    return 4;
+}
 // entity:set_uv_scroll(vector): UV units per second.
 int entity_set_uv_scroll(lua_State* L) {
     auto& s = scene_of(L);
@@ -3023,6 +3139,14 @@ void open_victus_libs(lua_State* L) {
                                 {"set_sprite", entity_set_sprite},
                                 {"sprite", entity_sprite},
                                 {"set_cast_shadows", entity_set_cast_shadows},
+                                {"set_tile", entity_set_tile},
+                                {"tile", entity_tile},
+                                {"fill_tiles", entity_fill_tiles},
+                                {"clear_tiles", entity_clear_tiles},
+                                {"paint_terrain", entity_paint_terrain},
+                                {"world_to_tile", entity_world_to_tile},
+                                {"tile_to_world", entity_tile_to_world},
+                                {"tile_bounds", entity_tile_bounds},
                                 {"set_uv_offset", entity_set_uv_offset},
                                 {"set_uv_scroll", entity_set_uv_scroll},
                                 {"set_emissive", entity_set_emissive},

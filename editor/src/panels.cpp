@@ -232,7 +232,10 @@ void Editor::frame(float dt) {
     }
     if (input_) input_->set_enabled(play_state_ == PlayState::Playing && viewport_focused_);
     if (play_state_ == PlayState::Playing && play_scene_) tick_play(dt);
-    else if (!play_scene_ && edit_sprites_) edit_sprites_->update_sprites(active_scene(), 0); // frame preview
+    else if (!play_scene_) {
+        if (edit_sprites_) edit_sprites_->update_sprites(active_scene(), 0); // frame preview
+        if (tilemaps_) tilemaps_->update(active_scene());                   // tile sets for drawing
+    }
     // Inspector property discovery follows script edits made in an external editor.
     if ((script_poll_ += dt) >= 1.0f) {
         script_poll_ = 0;

@@ -11,6 +11,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
+#include "victus/tilemap/tilemap.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -242,6 +243,7 @@ struct Headless {
     std::unique_ptr<physics::PhysicsWorld> physics_world;
     std::unique_ptr<assets::AssetDatabase> db;
     std::unique_ptr<animation::AnimationSystem> animations;
+    std::unique_ptr<tilemap::TilemapSystem> tilemaps;
     particles::ParticleSystem particle_system; // single-threaded like physics; identical either way
     navigation::NavigationSystem nav;
     std::unique_ptr<audio::AudioEngine> audio_engine;
@@ -290,6 +292,8 @@ struct Headless {
             animation::AnimationSettings{.provider = db ? assets::animation_provider(*db) : animation::SetProvider{},
                                          .sheets = db ? assets::sprite_sheet_provider(*db) : animation::SheetProvider{}});
         animation::add_animation_systems(sim, *animations);
+        tilemaps = std::make_unique<tilemap::TilemapSystem>(db ? assets::tileset_provider(*db) : tilemap::TilesetProvider{});
+        tilemap::add_tilemap_systems(sim, *tilemaps);
         particles::add_particle_systems(sim, particle_system);
         navigation::add_navigation_systems(sim, nav);
         audio::EngineOptions ao; // mixed without a device so audio calls behave as in the game
@@ -586,7 +590,7 @@ int cmd_serve(const std::vector<std::string>& a) {
 // Validates every scene (loads, no unknown components) and every script (syntax, module loads,
 // referenced files exist). Exit 1 if anything is wrong.
 int cmd_check(const std::vector<std::string>& a) {
-    cli::Parser p("victus check", "Validate scenes, prefabs, materials, shaders, sprite sheets and scripts");
+    cli::Parser p("victus check", "Validate scenes, prefabs, materials, shaders, sprite sheets, tile sets and scripts");
     p.positional("project", "project folder", true);
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
@@ -686,6 +690,16 @@ int cmd_check(const std::vector<std::string>& a) {
             ++problems;
         }
     }
+    // Tile sets: each must parse and point at an existing texture.
+    std::size_t tilesets = 0;
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::Tileset) continue;
+        ++tilesets;
+        if (auto ts = (*db)->load_tileset(r.uuid); !ts) {
+            std::printf("error: %s\n", ts.error().message.c_str());
+            ++problems;
+        }
+    }
     script::HostOptions so;
     so.assets_root = assets;
     so.input_map = proj->settings().input;
@@ -723,6 +737,15 @@ int cmd_check(const std::vector<std::string>& a) {
             if (!s || s->kind != assets::AssetKind::SpriteSheet) {
                 std::printf("error: %s: entity '%s' uses missing sprite sheet %s\n", rel.c_str(), entity_name(scene, e).c_str(),
                             c.sheet.to_string().c_str());
+                ++problems;
+            }
+        });
+        scene.world().each<tilemap::TilemapComponent>([&](scene::Entity e, tilemap::TilemapComponent& c) {
+            if (c.tileset.is_nil()) return;
+            const assets::AssetRecord* t = (*db)->find(c.tileset);
+            if (!t || t->kind != assets::AssetKind::Tileset) {
+                std::printf("error: %s: entity '%s' uses missing tile set %s\n", rel.c_str(), entity_name(scene, e).c_str(),
+                            c.tileset.to_string().c_str());
                 ++problems;
             }
         });
@@ -765,8 +788,9 @@ int cmd_check(const std::vector<std::string>& a) {
         }
         check_entities(rel, scene);
     }
-    std::printf("checked %zu scenes, %zu prefabs, %zu materials, %zu shaders, %zu sprite sheets and %zu scripts: %zu problems\n",
-                scenes, prefabs, materials, shaders, sheets, scripts, problems);
+    std::printf("checked %zu scenes, %zu prefabs, %zu materials, %zu shaders, %zu sprite sheets, %zu tile sets and %zu scripts: "
+                "%zu problems\n",
+                scenes, prefabs, materials, shaders, sheets, tilesets, scripts, problems);
     return problems ? 1 : 0;
 }
 

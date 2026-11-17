@@ -73,6 +73,10 @@
 // Sprite tint); `set_sprite(texture_path|nil)`; `set_visible(bool)` / `visible()` also cover
 // MeshRenderers; `set_cast_shadows(bool)`; `set_uv_offset(v)`, `set_uv_scroll(v)` (UV units per
 // second) and `set_emissive(v|nil, strength?)` edit the entity's MaterialOverrides.
+// Tilemaps: `set_tile(x, y, tile|nil, flip_x?, flip_y?)`, `tile(x, y) -> tile|nil, flip_x, flip_y`,
+// `fill_tiles(x0, y0, x1, y1, tile|nil) -> changed`, `clear_tiles()`, `paint_terrain(x, y,
+// name|nil)` (autotiling; needs the tile set loaded), `world_to_tile(point) -> x, y`,
+// `tile_to_world(x, y) -> vector` (cell centre) and `tile_bounds() -> x0, y0, x1, y1 | nil`.
 //
 // Save API (when HostOptions::save_directory is set; otherwise `save.available()` is false and the
 // other calls return nil plus an error): `save.write(slot, data, label?)`, `save.read(slot) ->

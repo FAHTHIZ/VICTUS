@@ -92,6 +92,8 @@ void Editor::start_editor_clients() {
                                          .sheets = db_ ? assets::sprite_sheet_provider(*db_) : animation::SheetProvider{},
                                          .jobs = &workers()});
         animation::add_animation_systems(c->sim, *c->animation);
+        if (!tilemaps_) tilemaps_ = std::make_unique<tilemap::TilemapSystem>();
+        tilemap::add_tilemap_systems(c->sim, *tilemaps_);
         c->particles = std::make_unique<particles::ParticleSystem>(particles::ParticleSettings{.jobs = &workers()});
         particles::add_particle_systems(c->sim, *c->particles);
         c->navigation = std::make_unique<navigation::NavigationSystem>();

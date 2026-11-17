@@ -15,6 +15,7 @@
 #include "victus/assets/importers.hpp"
 #include "victus/core/hash.hpp"
 #include "victus/core/jobs.hpp"
+#include "victus/tilemap/tilemap.hpp"
 
 #include <memory>
 #include <mutex>
@@ -89,6 +90,8 @@ public:
     [[nodiscard]] Result<std::string> load_shader_source(const Uuid& uuid) const;
     // A sprite sheet asset (.vsheet), validated (its texture must be a texture asset).
     [[nodiscard]] Result<animation::SpriteSheet> load_sprite_sheet(const Uuid& uuid) const;
+    // A tile set asset (.vtileset), validated (its texture must be a texture asset).
+    [[nodiscard]] Result<tilemap::Tileset> load_tileset(const Uuid& uuid) const;
 
     // Changes import settings (writes the .meta); the next import re-cooks.
     [[nodiscard]] Status set_settings(const Uuid& uuid, json::Value settings);
@@ -117,5 +120,7 @@ private:
 [[nodiscard]] animation::SetProvider animation_provider(AssetDatabase& db);
 // Sheets for SpriteAnimator (AnimationSettings::sheets); invalid sheets resolve to null (logged).
 [[nodiscard]] animation::SheetProvider sprite_sheet_provider(AssetDatabase& db);
+// Tile sets for tilemap::TilemapSystem; invalid tile sets resolve to null (logged).
+[[nodiscard]] tilemap::TilesetProvider tileset_provider(AssetDatabase& db);
 
 } // namespace victus::assets

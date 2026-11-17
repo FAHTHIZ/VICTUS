@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/runtime/scene_rendering.hpp"
+#include "victus/tilemap/tilemap.hpp"
 #include "victus/runtime/surface_shader.hpp"
 #include "victus/particles/particles.hpp"
 
@@ -607,6 +608,45 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
         batch.draw(sp);
         ++count;
     });
+    // Tilemaps: one sprite per painted cell, through the map's transform.
+    scene.world().each<tilemap::TilemapComponent, tilemap::TilemapRuntime, WorldTransform>(
+        [&](const tilemap::TilemapComponent& map, const tilemap::TilemapRuntime& rt, const WorldTransform& wt) {
+            if (!rt.tileset || map.cells.empty()) return;
+            const tilemap::Tileset& ts = *rt.tileset;
+            rhi::TextureHandle texture{};
+            bool nearest = false;
+            if (!ts.texture.is_nil()) {
+                auto tex = assets.texture(ts.texture);
+                if (tex) texture = *tex;
+                nearest = assets.texture_nearest(ts.texture);
+            }
+            math::Vec3 pos, scale;
+            math::Quat rot;
+            math::decompose(wt.matrix, pos, rot, scale);
+            const float rotation = math::to_euler(rot).z;
+            const math::Vec2 size{map.cell_size.x * scale.x, map.cell_size.y * scale.y};
+            const std::uint32_t tiles = ts.tile_count();
+            for (const auto& [key, cell] : map.cells) {
+                if (cell.tile < 0 || static_cast<std::uint32_t>(cell.tile) >= tiles) continue;
+                const math::Vec3 local{(static_cast<float>(tilemap::key_x(key)) + 0.5f) * map.cell_size.x,
+                                       (static_cast<float>(tilemap::key_y(key)) + 0.5f) * map.cell_size.y, 0.0f};
+                const math::Vec3 p = wt.matrix.transform_point(local);
+                render::Sprite sp;
+                sp.texture = texture;
+                sp.nearest = nearest;
+                sp.position = {p.x, p.y};
+                sp.size = size;
+                sp.rotation = rotation;
+                sp.origin = {0.5f, 0.5f};
+                sp.color = map.tint;
+                sp.layer = map.layer;
+                sp.flip_x = cell.flip_x;
+                sp.flip_y = cell.flip_y;
+                sp.uv = ts.tile_uv(static_cast<std::uint32_t>(cell.tile));
+                batch.draw(sp);
+                ++count;
+            }
+        });
     // 2D particles: one sprite per billboard on the emitter's layer (XY plane, Z ignored).
     std::vector<particles::EmitterView> emitters;
     particles::gather(scene, emitters);

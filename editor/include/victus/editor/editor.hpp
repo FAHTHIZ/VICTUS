@@ -4,6 +4,7 @@
 // operation is also a plain method so tests and tools can drive the editor without input.
 #pragma once
 #include "victus/animation/animation.hpp"
+#include "victus/tilemap/tilemap.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -337,6 +338,7 @@ private:
     std::unique_ptr<physics::PhysicsWorld> play_physics_; // fresh per play session
     std::unique_ptr<animation::AnimationSystem> play_animation_; // fresh per play session
     std::unique_ptr<animation::AnimationSystem> edit_sprites_;   // previews SpriteAnimator frames while editing
+    std::unique_ptr<tilemap::TilemapSystem> tilemaps_;           // tile sets + tile colliders (edit and play)
     // "Create Sprite Sheet" popup of the asset table.
     Uuid sheet_texture_;
     Uuid import_texture_; // "Texture Import Settings" popup target
