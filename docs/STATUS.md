@@ -564,5 +564,46 @@ Known gaps:
 - Gizmo settings last only for the editor session.
 - Asset thumbnails come next.
 
+## Slice 52: asset thumbnails in the editor's asset browser
+
+Why: the Assets panel listed file paths only, so finding a model, material or prefab meant opening it. Previews are in the editor spec (asset browser) and finished roadmap item 8.
+
+Built:
+- `editor/include/victus/editor/thumbnails.hpp` + `editor/src/thumbnails.cpp`: `ThumbnailCache`.
+  - Textures, sprite sheets (first frame) and tile sets show the GPU texture already held by `GpuAssetCache`, with the aspect ratio of the shown region.
+  - Models, materials and prefabs render once into a 128 px RGBA8 target. Each preview builds a private scene: the model's node tree, a sphere wearing the material, or an instance of the prefab. A key light and a neutral grey studio environment light it.
+  - Framing (`thumbnail_camera`): a three-quarter view (yaw 35 degrees, pitch -25 degrees). The distance is solved per box corner so the whole box fits the frustum with a margin. Materials frame the inscribed sphere instead.
+  - Prefabs with sprites and no meshes render in 2D with a fitted orthographic camera.
+  - The preview has its own `SceneView`, with TAA, eye adaptation, SSAO and bloom off (one-shot renders) and one 512 px shadow cascade. It skips reflection-probe capture, so the edited scene's probe captures (keyed by entity) are not disturbed.
+  - Requests queue; `Editor::render` renders at most `set_thumbnail_budget(n)` previews per frame (default 2). Failures are logged once and not retried until invalidated.
+- Invalidation:
+  - Reimport with changes, texture import settings and hot-reloaded textures, models, materials, shaders, sprite sheets or tile sets clear the rendered previews (they re-render over the next frames).
+  - Saving a material refreshes material and prefab previews.
+  - Applying or hot-reloading a prefab refreshes that prefab.
+  - Closing the project frees everything (the cache is destroyed before the asset cache it borrows textures from).
+- Assets panel:
+  - List view: each row shows a small thumbnail.
+  - Grid view: tiles from 32 to 256 px with names cut to fit; a List/Grid toggle and a size slider choose between them.
+  - Both views keep the existing context menus, drag-and-drop, double-click actions and tooltips (moved into `Editor::draw_asset_item`).
+- API: `Editor::thumbnails()`, `asset_thumbnail(uuid)`, `set_asset_view(grid, size)`, `set_thumbnail_budget(n)`. CLI: `victus_editor --asset-grid <px>`.
+
+Verification: local run (Ubuntu 26.04, GCC 15.2, Release, `-Werror`, lavapipe).
+- `editor: thumbnail camera frames the whole box`: every corner of unit, offset and tiny boxes lands inside clip space, seen from above.
+- `editor: asset thumbnails render models, materials and prefabs and refresh on change` (GPU, 3D template):
+  - the texture thumbnail is immediate and scripts have none;
+  - the budget is respected (0 renders nothing; 1 renders exactly one per frame);
+  - the robot model, both materials and the crate prefab render subjects that stand out from the backdrop, and the two materials differ;
+  - saving the energy material as red re-queues it and the new sphere centre is red, while the model preview is kept;
+  - invalidate re-renders, and closing the project drops the cache.
+  - Outputs: `build/test_output/editor_thumbnail_{model,material,prefab}.png`.
+- `editor: assets panel draws list and grid views with thumbnails`: both layouts draw for several frames, the size is clamped, and drawing requests previews.
+- Full ctest 20/20 with `VICTUS_REQUIRE_GPU=1`.
+- `xvfb-run victus_editor <3d template> --asset-grid 72 --screenshot` shows the material spheres, robot and crate tiles; the default list view shows row thumbnails.
+
+Known gaps:
+- Thumbnails are not cached on disk; they re-render (2 per frame) after the editor opens a project.
+- Sprite-sheet animators in prefabs are not advanced (prefab previews show the sprite's full texture).
+- No dependency inspector or import queue view yet.
+
 ## Next task
-Slice 52: asset thumbnails in the editor's asset browser (rendered previews for models, materials, textures and prefabs), then the 3D sample game. See ROADMAP.md "Next slices".
+Slice 53: 3D sample game (third-person arena) as a CTest-driven reference project, then mesh LODs and meshoptimizer. See ROADMAP.md "Next slices".

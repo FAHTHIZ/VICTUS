@@ -76,6 +76,7 @@ Editor::~Editor() {
     if (play_server_) play_server_->shutdown(sim_.time().time); // tell joined players we are gone
     play_server_.reset();
     if (log_sink_) log::logger().remove_sink(log_sink_);
+    thumbnails_.reset();
     cache_.reset();
     if (viewport_tex_) gpu_.device().destroy(viewport_tex_);
 }
@@ -114,6 +115,8 @@ Status Editor::open_project(const fs::Path& path) {
     const auto imported = db_->import_all();
     for (const auto& m : imported.messages) notify(m, imported.failed > 0);
     cache_ = std::make_unique<runtime::GpuAssetCache>(gpu_, db_.get());
+    if (auto thumbs = ThumbnailCache::create(gpu_); thumbs) thumbnails_ = std::move(thumbs).value();
+    else notify("asset thumbnails unavailable: " + thumbs.error().message, true);
     hot_reload_ = std::make_unique<runtime::AssetHotReloader>(*db_);
     edit_sprites_ = std::make_unique<animation::AnimationSystem>(
         animation::AnimationSettings{.sheets = assets::sprite_sheet_provider(*db_)});
@@ -152,6 +155,7 @@ void Editor::close_project() {
     tile_hover_.reset();
     undo_.clear();
     hot_reload_.reset();
+    thumbnails_.reset();
     cache_.reset();
     edit_scripts_.reset();
     edit_sprites_.reset();
@@ -171,7 +175,10 @@ Status Editor::reimport_assets() {
     for (const auto& e : refresh.errors) notify("asset metadata: " + e, true);
     const auto report = db_->import_all();
     for (const auto& m : report.messages) notify(m, report.failed > 0);
-    if (report.imported > 0) cache_->clear();
+    if (report.imported > 0) {
+        cache_->clear();
+        if (thumbnails_) thumbnails_->clear();
+    }
     notify(std::to_string(report.imported) + " imported, " + std::to_string(report.up_to_date) + " up to date, " +
                std::to_string(report.failed) + " failed",
            report.failed > 0);
@@ -182,6 +189,15 @@ std::size_t Editor::check_asset_changes() {
     if (!hot_reload_) return 0;
     const auto changes = hot_reload_->check();
     if (changes.empty()) return 0;
+    if (thumbnails_) {
+        // Previews depend on textures, models, materials and shaders; re-render them all when any
+        // of those changed (spread over frames), otherwise only the changed prefabs.
+        if (!changes.reimported.empty() || !changes.materials.empty() || !changes.shaders.empty() ||
+            !changes.sprite_sheets.empty() || !changes.tilesets.empty())
+            thumbnails_->clear();
+        for (const auto& p : changes.prefabs)
+            if (const auto* rec = db_ ? db_->find_path(p) : nullptr) thumbnails_->invalidate(rec->uuid);
+    }
     runtime::AssetHotReloader::apply(changes, cache_.get(), play_animation_.get(), tilemaps_.get());
     if (edit_sprites_) edit_sprites_->clear_sheets();
     if (audio_)
@@ -573,6 +589,7 @@ Status Editor::apply_prefab(Entity instance) {
     const std::string text = json::stringify(prefab_to_json(applied)) + "\n";
     VICTUS_TRY_STATUS(fs::write_text_atomic(db_->source_path(*rec), text));
     written_prefabs_[rec->path] = fnv1a64(text);
+    if (thumbnails_) thumbnails_->invalidate(asset);
     record_edit("Apply prefab", std::move(before));
     auto n = update_prefab_instances(asset);
     if (!n) return std::move(n).error();
@@ -1349,7 +1366,24 @@ Status Editor::render(rhi::CommandBuffer& cmd) {
     auto stats = view_->render(cmd, s, *cache_, viewport_tex_, w, h, opt);
     if (!stats) return std::move(stats).error();
     last_view_stats_ = *stats;
+    if (thumbnails_ && db_ && thumbnail_budget_ > 0) {
+        VICTUS_PROFILE_SCOPE("editor.thumbnails");
+        auto n = thumbnails_->render_pending(cmd, *cache_, *db_, thumbnail_budget_);
+        if (!n) return std::move(n).error();
+    }
     return {};
+}
+
+std::optional<Thumbnail> Editor::asset_thumbnail(const Uuid& asset) {
+    if (!thumbnails_ || !db_ || !cache_) return std::nullopt;
+    const assets::AssetRecord* rec = db_->find(asset);
+    if (!rec) return std::nullopt;
+    return thumbnails_->get(*rec, *cache_, *db_);
+}
+
+void Editor::set_asset_view(bool grid, float size) noexcept {
+    asset_grid_ = grid;
+    asset_tile_size_ = std::clamp(size, 32.0f, 256.0f);
 }
 
 } // namespace victus::editor

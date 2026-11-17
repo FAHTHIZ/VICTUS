@@ -45,6 +45,7 @@ int main(int argc, char** argv) {
         .option("data-dir", "override the user data directory")
         .option("select", "select the entity with this name after opening")
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
+        .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
         .option("show", "open a window after opening: input-actions, network, material-editor (selected entity's material)")
         .option("port", "UDP port for --host", "27960")
         .flag("host", "enter play mode as a listen server after opening")
@@ -112,6 +113,7 @@ int main(int argc, char** argv) {
         else if (tool == "scale") g.mode = editor::gizmo::Mode::Scale;
         else std::fprintf(stderr, "victus_editor: unknown tool '%s' (move, rotate, scale)\n", tool.c_str());
     }
+    if (const double tile = args.get_number("asset-grid", 0); tile > 0) ed.set_asset_view(true, static_cast<float>(tile));
     if (args.has("show")) {
         if (args.get("show") == "input-actions") ed.set_show_input_actions(true);
         else if (args.get("show") == "network") ed.set_show_network(true);

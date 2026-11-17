@@ -69,6 +69,7 @@ Status Editor::set_texture_import_settings(const Uuid& texture, const assets::Te
     for (const auto& m : messages) notify(m, !imported);
     if (!imported) return std::move(imported).error();
     if (cache_) cache_->evict(texture);
+    if (thumbnails_) thumbnails_->clear(); // materials, models and prefabs may sample it
     notify("Updated import settings of " + path);
     return {};
 }

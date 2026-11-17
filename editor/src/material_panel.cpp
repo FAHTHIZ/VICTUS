@@ -66,6 +66,11 @@ Status Editor::save_material(const Uuid& asset, const assets::MaterialAsset& mat
     VICTUS_TRY_STATUS(assets::save_material_file(path, material));
     if (auto text = fs::read_text(path); text) written_materials_[rec->path] = fnv1a64(*text);
     if (cache_) cache_->evict_materials();
+    if (thumbnails_) {
+        // Material instances inherit from the saved one, and prefabs may wear it.
+        thumbnails_->invalidate_kind(assets::AssetKind::Material);
+        thumbnails_->invalidate_kind(assets::AssetKind::Prefab);
+    }
     return {};
 }
 

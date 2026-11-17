@@ -1426,3 +1426,145 @@ TEST_CASE("editor: transform gizmo works in 2D scenes on the XY plane") {
     ed.undo();
     CHECK(s.world().get<Transform>(s.find(id))->position == math::Vec3{0, 0, 0});
 }
+
+TEST_CASE("editor: thumbnail camera frames the whole box") {
+    for (const math::Aabb box : {math::Aabb{{-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}}, math::Aabb{{10, 0, -3}, {14, 9, 1}},
+                                 math::Aabb{{-0.01f, -0.01f, -0.01f}, {0.01f, 0.01f, 0.01f}}}) {
+        const render::Camera3D cam = editor::thumbnail_camera(box);
+        const math::Mat4 vp = cam.projection(1.0f) * cam.view;
+        for (int i = 0; i < 8; ++i) {
+            const math::Vec3 p{i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z};
+            const math::Vec4 c = vp * math::Vec4{p.x, p.y, p.z, 1};
+            REQUIRE(c.w > 0);
+            CHECK(std::abs(c.x / c.w) <= 1.0f);
+            CHECK(std::abs(c.y / c.w) <= 1.0f);
+            CHECK(c.z / c.w >= 0.0f);
+            CHECK(c.z / c.w <= 1.0f);
+        }
+        // Looking down at the box from above and in front.
+        CHECK(cam.position.y > box.center().y);
+        CHECK(cam.forward().y < 0.0f);
+    }
+}
+
+TEST_CASE("editor: asset thumbnails render models, materials and prefabs and refresh on change") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Thumbs", "Thumbs", "3d").ok());
+    editor::Editor& ed = *h.ed;
+    REQUIRE(ed.thumbnails() != nullptr);
+    auto& db = *ed.assets();
+    const auto* robot = db.find_path("models/robot.gltf");
+    const auto* ground = db.find_path("materials/ground.vmat");
+    const auto* energy = db.find_path("materials/energy_cube.vmat");
+    const auto* crate = db.find_path("prefabs/crate.vprefab");
+    const auto* grid = db.find_path("textures/ground_grid.png");
+    const auto* script = db.find_path("scripts/player.luau");
+    REQUIRE(robot);
+    REQUIRE(ground);
+    REQUIRE(energy);
+    REQUIRE(crate);
+    REQUIRE(grid);
+    REQUIRE(script);
+    const Uuid robot_id = robot->uuid, ground_id = ground->uuid, energy_id = energy->uuid, crate_id = crate->uuid;
+    const Uuid grid_id = grid->uuid, script_id = script->uuid;
+
+    // Textures come straight from the asset cache; scripts have no picture.
+    auto tex = ed.asset_thumbnail(grid_id);
+    REQUIRE(tex.has_value());
+    CHECK(tex->texture.valid());
+    CHECK_FALSE(tex->rendered);
+    CHECK(tex->aspect == doctest::Approx(1.0f));
+    CHECK_FALSE(ed.asset_thumbnail(script_id).has_value());
+
+    // Rendered kinds are queued on first request and rendered within the per-frame budget.
+    ed.set_thumbnail_budget(0);
+    for (const Uuid& id : {robot_id, ground_id, energy_id, crate_id}) CHECK_FALSE(ed.asset_thumbnail(id).has_value());
+    h.frames(2);
+    CHECK(ed.thumbnails()->pending() >= 4);
+    ed.set_thumbnail_budget(1);
+    const auto before = ed.thumbnails()->rendered_total();
+    h.frames(1);
+    CHECK(ed.thumbnails()->rendered_total() == before + 1);
+    ed.set_thumbnail_budget(8);
+    h.frames(2);
+    CHECK(ed.thumbnails()->pending() == 0);
+
+    const auto read = [&](const Uuid& id) {
+        auto t = ed.asset_thumbnail(id);
+        REQUIRE(t.has_value());
+        CHECK(t->rendered);
+        auto px = gpu().ctx->device().read_texture(t->texture);
+        REQUIRE(px.ok());
+        return std::move(px).value();
+    };
+    const std::uint32_t n = ed.thumbnails()->size();
+    const auto distinct = [&](const std::vector<std::uint8_t>& px) {
+        // The subject in the middle differs from the backdrop in the corner.
+        const auto corner = pixel(px, n, 2, 2);
+        int count = 0;
+        for (std::uint32_t y = n / 4; y < 3 * n / 4; y += 4)
+            for (std::uint32_t x = n / 4; x < 3 * n / 4; x += 4)
+                if (diff(pixel(px, n, x, y), corner) > 30) ++count;
+        return count;
+    };
+    const auto robot_px = read(robot_id);
+    const auto ground_px = read(ground_id);
+    const auto energy_px = read(energy_id);
+    const auto crate_px = read(crate_id);
+    test::save_output("editor_thumbnail_model", n, n, robot_px);
+    test::save_output("editor_thumbnail_material", n, n, energy_px);
+    test::save_output("editor_thumbnail_prefab", n, n, crate_px);
+    CHECK(distinct(robot_px) > 20);
+    CHECK(distinct(ground_px) > 20);
+    CHECK(distinct(energy_px) > 20);
+    CHECK(distinct(crate_px) > 20);
+    CHECK(ground_px != energy_px); // different materials, different spheres
+
+    // Saving a material re-renders material previews with the new look.
+    auto mat = db.load_material(energy_id);
+    REQUIRE(mat.ok());
+    assets::MaterialAsset red = *mat;
+    red.base_color = {1, 0, 0, 1};
+    red.emissive = {0, 0, 0, 1};
+    REQUIRE(ed.save_material(energy_id, red).ok());
+    CHECK_FALSE(ed.asset_thumbnail(energy_id).has_value()); // queued again
+    h.frames(3);
+    const auto red_px = read(energy_id);
+    CHECK(red_px != energy_px);
+    {
+        // The centre of the sphere is now clearly red.
+        const auto c = pixel(red_px, n, n / 2, n / 2);
+        CHECK(channel(c, 0) > channel(c, 1) + 20);
+        CHECK(channel(c, 0) > channel(c, 2) + 20);
+    }
+    // ...and leaves model previews alone.
+    CHECK(ed.asset_thumbnail(robot_id).has_value());
+
+    // Reimporting with changes, invalidation and closing drop previews.
+    ed.thumbnails()->invalidate(robot_id);
+    CHECK_FALSE(ed.asset_thumbnail(robot_id).has_value());
+    h.frames(2);
+    CHECK(ed.asset_thumbnail(robot_id).has_value());
+    ed.close_project();
+    CHECK(ed.thumbnails() == nullptr);
+}
+
+TEST_CASE("editor: assets panel draws list and grid views with thumbnails") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "ThumbsUi", "ThumbsUi", "3d").ok());
+    editor::Editor& ed = *h.ed;
+    ed.set_asset_view(true, 1000.0f);
+    CHECK(ed.asset_grid());
+    CHECK(ed.asset_tile_size() == doctest::Approx(256.0f));
+    ed.set_asset_view(true, 64.0f);
+    h.frames(4);
+    ed.set_asset_view(false, 64.0f);
+    h.frames(4);
+    CHECK_FALSE(ed.asset_grid());
+    // Drawing the panel requested previews; the budget renders them over the frames.
+    CHECK(ed.thumbnails()->rendered_total() + ed.thumbnails()->pending() > 0);
+}
