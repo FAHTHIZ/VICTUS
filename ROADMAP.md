@@ -15,7 +15,7 @@ VICTUS is a general-purpose engine, not an Auroria-specific one. Auroria remains
 5. [x] (Slice 48) Clustered forward lighting (hundreds of point/spot lights) with spot lights. Follow-up: local light shadows.
 6. [x] (Slice 49) GPU texture compression in the cooker: BC7/BC1(BC3) for desktop, ASTC 4x4/6x6 for mobile (SDL_GPU has no ETC2), cooked as variants with runtime selection and RGBA8 fallback. Follow-up: per-platform stripping in `victus export`, project-wide default.
 7. [x] (Slice 50) Android arm64 build: NDK + Gradle APK (`platforms/android`, AGP 9.5.1) that packages an exported `game.vpak`, touch input for scripts, background/foreground lifecycle, mobile quality defaults, a required Vulkan 1.1 manifest feature, and a CI job that builds and checks the APK of the 3D template. Follow-up: physical-device runs, on-screen virtual controls, thermal/memory profiling.
-8. [~] (Slice 51) Editor transform gizmos and snapping (done: move/rotate/scale, world/local, snapping, undo, 2D and 3D); asset thumbnails next.
+8. [x] (Slice 51) Editor transform gizmos and snapping (move/rotate/scale, world/local, snapping, undo, 2D and 3D); (Slice 52) asset thumbnails (rendered model/material/prefab previews, texture/sprite sheet/tile set images, list and grid views). Follow-up: on-disk thumbnail cache, pivot/centre toggle, absolute grid snapping.
 9. 3D sample game (third-person arena) as a CTest-driven reference project.
 10. Mesh LODs and vertex/index optimisation via meshoptimizer; GPU-driven culling where SDL_GPU allows.
 
@@ -78,7 +78,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 - [~] Project launcher/templates, dockable workspace, command palette and saved layouts. (Launcher, 3 templates, docking workspace with persisted ImGui layout done; command palette pending.)
 - [~] Scene/world viewport, camera, hierarchy, inspector, selection, gizmos and snapping. (Viewport, 2D/3D editor camera, hierarchy with drag reparent, inspector for every component, click picking done; Slice 51: move/rotate/scale gizmos with world/local space, snapping, one undo entry per drag, prefab overrides, 2D and 3D.)
 - [~] Undo/redo command model, multi-selection, autosave and crash recovery. (Snapshot-based undo/redo with dirty tracking done; multi-selection/autosave pending.)
-- [~] Asset browser, metadata/dependency inspector, import queue and previews. (Asset table with drag/drop instantiate, material/texture assignment, prefabs, tile sets and reimport done; thumbnails/previews pending.)
+- [~] Asset browser, metadata/dependency inspector, import queue and previews. (Asset table with drag/drop instantiate, material/texture assignment, prefabs, tile sets and reimport done; Slice 52: thumbnails for textures, sprite sheets, tile sets and rendered previews of models, materials and prefabs, list and grid views, refreshed on reimport/hot reload/material save. Dependency inspector and import queue pending.)
 - [~] Logs, entity diagnostics, profiler, project settings and build configuration. (Console over the log ring sink, Network window, rendering-quality selector and draw-call readout done; profiler panel pending.)
 - [x] Isolated play-in-editor with safe play/pause/step/stop and authored-world protection.
 **Exit:** create project, import assets, author a scene, save/reopen and play without editing engine source.

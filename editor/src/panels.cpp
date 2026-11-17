@@ -1304,6 +1304,72 @@ void Editor::draw_inspector() {
 
 // ---- assets & console ---------------------------------------------------------------------------
 
+void Editor::draw_asset_item(const assets::AssetRecord& r) {
+    if (r.kind == assets::AssetKind::Texture && ImGui::BeginPopupContextItem("##texctx")) {
+        if (ImGui::MenuItem("Import Settings...")) {
+            import_texture_ = r.uuid;
+            import_edit_ = assets::TextureImportSettings::from_json(r.settings);
+        }
+        if (ImGui::MenuItem("Create Sprite Sheet...")) sheet_texture_ = r.uuid;
+        if (ImGui::MenuItem("Create Tile Set...")) tileset_texture_ = r.uuid;
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginDragDropSource()) {
+        ImGui::SetDragDropPayload(kAssetPayload, &r.uuid, sizeof(Uuid));
+        ImGui::Text("%s %s", kind_icon(r.kind), r.path.c_str());
+        ImGui::EndDragDropSource();
+    }
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        if (r.kind == assets::AssetKind::Model) instantiate_asset(r.uuid);
+        else if (r.kind == assets::AssetKind::Prefab) instantiate_prefab(r.uuid);
+        else if (r.kind == assets::AssetKind::Script) {
+            const Entity e = selected();
+            if (!e.is_null()) {
+                auto before = capture(active_scene(), {active_scene().uuid(e)});
+                auto& w = active_scene().world();
+                if (!w.has<script::ScriptComponent>(e)) w.add<script::ScriptComponent>(e);
+                w.get<script::ScriptComponent>(e)->script = r.path;
+                record_edit("Assign script", std::move(before));
+            }
+        } else if (r.kind == assets::AssetKind::Audio) {
+            if (auto* a = audio()) {
+                if (auto st = a->play_one_shot(r.path, {.bus = audio::Bus::Ui}); !st) notify(st.error().message, true);
+            }
+        } else if (r.kind == assets::AssetKind::Material) {
+            open_material_editor(r.uuid);
+        } else if (r.kind == assets::AssetKind::SpriteSheet) {
+            (void)assign_sprite_sheet(selected(), r.uuid);
+        } else if (r.kind == assets::AssetKind::Tileset) {
+            Entity e = selected();
+            if (e.is_null()) {
+                e = create_entity(Primitive::Empty);
+                rename(e, "Tilemap");
+            }
+            (void)assign_tileset(e, r.uuid);
+        } else if (r.kind == assets::AssetKind::Shader) {
+            if (show_material_editor_) (void)set_editing_material_shader(r.uuid);
+        } else if (r.kind == assets::AssetKind::Texture) {
+            const Entity e = selected();
+            if (auto* sp = e.is_null() ? nullptr : active_scene().world().get<SpriteComponent>(e)) {
+                auto before = capture(active_scene(), {active_scene().uuid(e)});
+                sp->texture_asset = r.uuid;
+                record_edit("Assign texture", std::move(before));
+            }
+        }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nUUID %s\nDouble-click: %s", r.path.c_str(), r.uuid.to_string().c_str(),
+                                                  r.kind == assets::AssetKind::Model || r.kind == assets::AssetKind::Prefab
+                                                      ? "add to scene"
+                                                  : r.kind == assets::AssetKind::Texture ? "assign to selected sprite"
+                                                  : r.kind == assets::AssetKind::Script ? "attach to selected entity"
+                                                  : r.kind == assets::AssetKind::Audio  ? "preview"
+                                                  : r.kind == assets::AssetKind::Material ? "edit"
+                                                  : r.kind == assets::AssetKind::Shader ? "use in the open material"
+                                                  : r.kind == assets::AssetKind::SpriteSheet ? "animate the selected entity"
+                                                  : r.kind == assets::AssetKind::Tileset ? "paint with it on the selected (or a new) entity"
+                                                                                         : "-");
+}
+
 void Editor::draw_assets() {
     if (!ImGui::Begin(kAssetsWindow)) {
         ImGui::End();
@@ -1311,84 +1377,87 @@ void Editor::draw_assets() {
     }
     if (ImGui::Button("Reimport")) (void)reimport_assets();
     ImGui::SameLine();
+    if (ImGui::RadioButton("List", !asset_grid_)) asset_grid_ = false;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Grid", asset_grid_)) asset_grid_ = true;
+    if (asset_grid_) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110);
+        ImGui::SliderFloat("##tile", &asset_tile_size_, 32.0f, 256.0f, "%.0f px");
+    }
+    ImGui::SameLine();
     ImGui::TextDisabled("Drop files into %s", project_->assets_dir().string().c_str());
     ImGui::Separator();
-    if (ImGui::BeginTable("##assets", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable)) {
+    std::vector<assets::AssetRecord> recs = db_ ? db_->records() : std::vector<assets::AssetRecord>{};
+    std::sort(recs.begin(), recs.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+    // Draws an asset's thumbnail aspect-fitted into a square cell (or its text icon).
+    const auto draw_thumb = [this](const assets::AssetRecord& r, float cell) {
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p0, ImVec2(p0.x + cell, p0.y + cell), IM_COL32(40, 42, 48, 255), 3.0f);
+        if (auto t = asset_thumbnail(r.uuid)) {
+            float w = cell, h = cell;
+            if (t->aspect > 1.0f) h = cell / t->aspect;
+            else w = cell * t->aspect;
+            const ImVec2 a(p0.x + (cell - w) * 0.5f, p0.y + (cell - h) * 0.5f);
+            dl->AddImage(ImTextureRef(ui::UiContext::texture_id(t->texture)), a, ImVec2(a.x + w, a.y + h), ImVec2(t->uv.x, t->uv.y),
+                         ImVec2(t->uv.z, t->uv.w));
+        } else {
+            const char* icon = ThumbnailCache::supports(r.kind) && ThumbnailCache::renders(r.kind) ? "..." : kind_icon(r.kind);
+            const ImVec2 ts = ImGui::CalcTextSize(icon);
+            if (ts.x <= cell - 4.0f) // list rows are too small for the text icons (the Kind column says it)
+                dl->AddText(ImVec2(p0.x + (cell - ts.x) * 0.5f, p0.y + (cell - ts.y) * 0.5f), IM_COL32(170, 175, 185, 255), icon);
+        }
+        ImGui::Dummy(ImVec2(cell, cell));
+    };
+    if (asset_grid_) {
+        if (ImGui::BeginChild("##assetgrid")) {
+            const float cell = asset_tile_size_;
+            const float pad = ImGui::GetStyle().ItemSpacing.x;
+            const float label_h = ImGui::GetTextLineHeightWithSpacing();
+            const int columns = std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + pad) / (cell + pad)));
+            int col = 0;
+            for (const auto& r : recs) {
+                ImGui::PushID(r.path.c_str());
+                if (col > 0) ImGui::SameLine();
+                ImGui::BeginGroup();
+                const ImVec2 p0 = ImGui::GetCursorPos();
+                ImGui::Selectable("##tile", false, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap,
+                                  ImVec2(cell, cell + label_h));
+                draw_asset_item(r);
+                ImGui::SetCursorPos(p0);
+                draw_thumb(r, cell);
+                const std::string name = fs::Path(r.path).filename().string();
+                std::string shown = name;
+                while (shown.size() > 3 && ImGui::CalcTextSize(shown.c_str()).x > cell) shown = shown.substr(0, shown.size() - 4) + "..";
+                ImGui::TextUnformatted(shown.c_str());
+                ImGui::EndGroup();
+                ImGui::PopID();
+                col = (col + 1) % columns;
+            }
+        }
+        ImGui::EndChild();
+    } else if (ImGui::BeginTable("##assets", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable)) {
         ImGui::TableSetupColumn("Asset", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 70);
         ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, 90);
         ImGui::TableHeadersRow();
-        std::vector<assets::AssetRecord> recs = db_ ? db_->records() : std::vector<assets::AssetRecord>{};
-        std::sort(recs.begin(), recs.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+        const float row = ImGui::GetTextLineHeight() * 1.6f;
         for (const auto& r : recs) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::PushID(r.path.c_str());
-            ImGui::Selectable(r.path.c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
-            if (r.kind == assets::AssetKind::Texture && ImGui::BeginPopupContextItem("##texctx")) {
-                if (ImGui::MenuItem("Import Settings...")) {
-                    import_texture_ = r.uuid;
-                    import_edit_ = assets::TextureImportSettings::from_json(r.settings);
-                }
-                if (ImGui::MenuItem("Create Sprite Sheet...")) sheet_texture_ = r.uuid;
-                if (ImGui::MenuItem("Create Tile Set...")) tileset_texture_ = r.uuid;
-                ImGui::EndPopup();
-            }
-            if (ImGui::BeginDragDropSource()) {
-                ImGui::SetDragDropPayload(kAssetPayload, &r.uuid, sizeof(Uuid));
-                ImGui::Text("%s %s", kind_icon(r.kind), r.path.c_str());
-                ImGui::EndDragDropSource();
-            }
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                if (r.kind == assets::AssetKind::Model) instantiate_asset(r.uuid);
-                else if (r.kind == assets::AssetKind::Prefab) instantiate_prefab(r.uuid);
-                else if (r.kind == assets::AssetKind::Script) {
-                    const Entity e = selected();
-                    if (!e.is_null()) {
-                        auto before = capture(active_scene(), {active_scene().uuid(e)});
-                        auto& w = active_scene().world();
-                        if (!w.has<script::ScriptComponent>(e)) w.add<script::ScriptComponent>(e);
-                        w.get<script::ScriptComponent>(e)->script = r.path;
-                        record_edit("Assign script", std::move(before));
-                    }
-                } else if (r.kind == assets::AssetKind::Audio) {
-                    if (auto* a = audio()) {
-                        if (auto st = a->play_one_shot(r.path, {.bus = audio::Bus::Ui}); !st) notify(st.error().message, true);
-                    }
-                } else if (r.kind == assets::AssetKind::Material) {
-                    open_material_editor(r.uuid);
-                } else if (r.kind == assets::AssetKind::SpriteSheet) {
-                    (void)assign_sprite_sheet(selected(), r.uuid);
-                } else if (r.kind == assets::AssetKind::Tileset) {
-                    Entity e = selected();
-                    if (e.is_null()) {
-                        e = create_entity(Primitive::Empty);
-                        rename(e, "Tilemap");
-                    }
-                    (void)assign_tileset(e, r.uuid);
-                } else if (r.kind == assets::AssetKind::Shader) {
-                    if (show_material_editor_) (void)set_editing_material_shader(r.uuid);
-                } else if (r.kind == assets::AssetKind::Texture) {
-                    const Entity e = selected();
-                    if (auto* sp = e.is_null() ? nullptr : active_scene().world().get<SpriteComponent>(e)) {
-                        auto before = capture(active_scene(), {active_scene().uuid(e)});
-                        sp->texture_asset = r.uuid;
-                        record_edit("Assign texture", std::move(before));
-                    }
-                }
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nUUID %s\nDouble-click: %s", r.path.c_str(), r.uuid.to_string().c_str(),
-                                                          r.kind == assets::AssetKind::Model || r.kind == assets::AssetKind::Prefab
-                                                              ? "add to scene"
-                                                          : r.kind == assets::AssetKind::Texture ? "assign to selected sprite"
-                                                          : r.kind == assets::AssetKind::Script ? "attach to selected entity"
-                                                          : r.kind == assets::AssetKind::Audio  ? "preview"
-                                                          : r.kind == assets::AssetKind::Material ? "edit"
-                                                          : r.kind == assets::AssetKind::Shader ? "use in the open material"
-                                                          : r.kind == assets::AssetKind::SpriteSheet ? "animate the selected entity"
-                                                          : r.kind == assets::AssetKind::Tileset ? "paint with it on the selected (or a new) entity"
-                                                                                                 : "-");
+            ImGui::Selectable("##row", false,
+                              ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap,
+                              ImVec2(0, row));
+            draw_asset_item(r);
+            ImGui::SameLine(0, 0);
+            draw_thumb(r, row);
+            ImGui::SameLine();
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (row - ImGui::GetTextLineHeight()) * 0.5f);
+            ImGui::TextUnformatted(r.path.c_str());
             ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("%s", assets::to_string(r.kind));
             ImGui::TableNextColumn();
             if (r.importer.empty()) ImGui::TextDisabled("-");

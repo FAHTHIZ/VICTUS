@@ -11,6 +11,7 @@
 #include "victus/assets/database.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/gizmo.hpp"
+#include "victus/editor/thumbnails.hpp"
 #include "victus/editor/undo.hpp"
 #include "victus/core/jobs.hpp"
 #include "victus/gameplay/capture.hpp"
@@ -324,6 +325,18 @@ public:
         bool visible{true};
     };
     [[nodiscard]] GizmoSettings& gizmo_settings() noexcept { return gizmo_; }
+
+    // ---- asset thumbnails (Assets panel) ----
+    // nullptr while no project is open (or when the preview renderer could not be created).
+    [[nodiscard]] ThumbnailCache* thumbnails() noexcept { return thumbnails_.get(); }
+    // Thumbnail of an asset for UI code; queues a preview render when needed.
+    [[nodiscard]] std::optional<Thumbnail> asset_thumbnail(const Uuid& asset);
+    // Assets panel layout: list rows with small thumbnails, or a grid of `size`-pixel tiles.
+    void set_asset_view(bool grid, float size) noexcept;
+    [[nodiscard]] bool asset_grid() const noexcept { return asset_grid_; }
+    [[nodiscard]] float asset_tile_size() const noexcept { return asset_tile_size_; }
+    // Preview renders allowed per editor frame (0 pauses thumbnail rendering).
+    void set_thumbnail_budget(std::uint32_t per_frame) noexcept { thumbnail_budget_ = per_frame; }
     // Frame of the gizmo for the current selection (nullopt: nothing selected or not editing).
     [[nodiscard]] std::optional<gizmo::Frame> gizmo_frame();
     // The camera of the viewport as the gizmo sees it (editor camera, 2D or 3D).
@@ -384,6 +397,11 @@ private:
     std::optional<project::Project> project_;
     std::unique_ptr<assets::AssetDatabase> db_;
     std::unique_ptr<runtime::GpuAssetCache> cache_;
+    std::unique_ptr<ThumbnailCache> thumbnails_; // destroyed before cache_ (borrows its textures)
+    bool asset_grid_{false};
+    float asset_tile_size_{72.0f};
+    std::uint32_t thumbnail_budget_{2};
+    void draw_asset_item(const assets::AssetRecord& r); // context menu, drag source, double-click, tooltip
     std::unique_ptr<runtime::AssetHotReloader> hot_reload_; // watches assets/ while a project is open
     std::unique_ptr<runtime::SceneView> view_;
     std::unique_ptr<scene::Scene> scene_;
