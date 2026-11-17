@@ -42,14 +42,29 @@ static_assert(sizeof(SkinVertex) == 24);
 // no positive weight bind fully to joint 0.
 [[nodiscard]] SkinVertex make_skin_vertex(const std::uint32_t* joints, const float* weights, std::size_t count) noexcept;
 
+// A coarser level of detail of a mesh: its own triangle list over the mesh's vertices, and the
+// geometric error of the simplification in the mesh's own units (how far, at most, the surface
+// moved), which the renderer projects to pixels to pick a level.
+struct MeshLod {
+    std::vector<std::uint32_t> indices;
+    float error{0.0f};
+};
+
+// Most levels a mesh carries (LOD 0, the full mesh, plus kMaxMeshLods - 1 coarser ones).
+inline constexpr std::uint32_t kMaxMeshLods = 8;
+
 struct MeshData {
     std::vector<Vertex3D> vertices;
-    std::vector<std::uint32_t> indices; // triangle list, counter-clockwise front faces
+    std::vector<std::uint32_t> indices; // triangle list, counter-clockwise front faces (LOD 0)
     std::vector<SkinVertex> skin;       // empty, or one entry per vertex for skinned meshes
+    // LOD 1..n, coarsest last, sharing `vertices` (and `skin`); errors never decrease. Collision,
+    // navigation and anything else that reads `indices` always sees the full mesh.
+    std::vector<MeshLod> lods;
     [[nodiscard]] math::Aabb bounds() const noexcept;
     [[nodiscard]] std::size_t triangle_count() const noexcept { return indices.size() / 3; }
     // Appends transformed geometry. Skin data is kept only when both meshes are skinned (or this
-    // one is empty); otherwise it is dropped so vertex and skin counts always match.
+    // one is empty); otherwise it is dropped so vertex and skin counts always match. LODs are
+    // dropped (they no longer describe the merged mesh).
     void append(const MeshData& other, const math::Mat4& transform);
     [[nodiscard]] bool skinned() const noexcept { return !skin.empty() && skin.size() == vertices.size(); }
 };
@@ -58,6 +73,24 @@ struct MeshData {
 void compute_tangents(MeshData& mesh);
 // Smooth normals from triangle geometry (area weighted).
 void compute_normals(MeshData& mesh);
+
+// Reorders triangles for the GPU's post-transform vertex cache and against overdraw, then
+// reorders vertices (and the skin stream) into first-use order for fetch locality. Geometry and
+// every LOD keep the same triangles; only their order and the vertex numbering change.
+void optimize_mesh(MeshData& mesh);
+
+struct LodSettings {
+    std::uint32_t max_lods{3};      // coarser levels to build (0 = none), at most kMaxMeshLods - 1
+    float ratio{0.5f};              // triangle budget of each level relative to the previous one
+    float max_error{0.05f};         // largest error allowed, relative to the mesh's extent
+    std::uint32_t min_triangles{24}; // stop before a level would drop below this
+    bool lock_borders{false};       // keep open boundary edges (e.g. tiles that must stay seamless)
+};
+
+// Builds `mesh.lods` with meshoptimizer's simplifier (positions, normals and UVs weighted), each
+// level optimised for the vertex cache. Levels that would not remove at least 10% more triangles
+// than the previous one are not kept. Returns the number of levels built.
+std::uint32_t generate_lods(MeshData& mesh, const LodSettings& settings = {});
 
 [[nodiscard]] MeshData make_cube(math::Vec3 half_extents = {0.5f, 0.5f, 0.5f});
 [[nodiscard]] MeshData make_uv_sphere(float radius = 0.5f, std::uint32_t segments = 32, std::uint32_t rings = 16);

@@ -22,8 +22,8 @@ namespace victus::assets {
 
 // v2 (Slice 12): mesh skin streams, node skins, skins and animation clips.
 // v3: Vertex3D gained an RGBA8 colour (52 bytes); v4: HDR textures (half-float equirect + SH9);
-// v5: block-compressed texture variants (BC/ASTC, ADR-0047).
-inline constexpr std::uint32_t kCookedFormatVersion = 5;
+// v5: block-compressed texture variants (BC/ASTC, ADR-0047); v6: mesh LODs (ADR-0049).
+inline constexpr std::uint32_t kCookedFormatVersion = 6;
 
 enum class AssetKind : std::uint8_t { Unknown = 0, Texture = 1, Model = 2, Scene = 3, Script = 4, Audio = 5, Prefab = 6, Material = 7, Shader = 8, SpriteSheet = 9, Tileset = 10 };
 [[nodiscard]] const char* to_string(AssetKind kind) noexcept;

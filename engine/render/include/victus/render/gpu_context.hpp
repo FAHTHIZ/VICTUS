@@ -6,6 +6,7 @@
 #include "victus/render/mesh.hpp"
 #include "victus/rhi/rhi.hpp"
 
+#include <array>
 #include <memory>
 #include <span>
 #include <string>
@@ -14,13 +15,21 @@
 
 namespace victus::render {
 
+// One level of detail inside GpuMesh::indices.
+struct GpuMeshLod {
+    std::uint32_t first_index{0}, index_count{0};
+    float error{0.0f}; // geometric error in mesh units (0 for LOD 0)
+};
+
 struct GpuMesh {
     rhi::BufferHandle vertices;
     rhi::BufferHandle indices;
     rhi::BufferHandle skin; // SkinVertex stream (slot 2); valid only for skinned meshes
     std::uint32_t vertex_count{0};
-    std::uint32_t index_count{0};
+    std::uint32_t index_count{0}; // LOD 0
     math::Aabb bounds;
+    std::array<GpuMeshLod, kMaxMeshLods> lods{}; // lods[0] is the full mesh
+    std::uint32_t lod_count{1};
     [[nodiscard]] bool valid() const noexcept { return vertices.valid() && indices.valid(); }
     [[nodiscard]] bool skinned() const noexcept { return skin.valid(); }
 };

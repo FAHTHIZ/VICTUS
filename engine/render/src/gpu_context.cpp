@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstring>
 #include <format>
+#include <vector>
 
 namespace victus::render {
 
@@ -173,8 +174,23 @@ Result<GpuMesh> GpuContext::create_mesh(const MeshData& mesh, std::string_view n
     if (mesh.vertices.empty() || mesh.indices.empty())
         return make_error(ErrorCode::InvalidArgument, std::format("mesh '{}' is empty", name));
     GpuMesh g;
+    // LOD 0 and every coarser level share one index buffer, back to back.
+    std::vector<std::uint32_t> all_lods;
+    const std::vector<std::uint32_t>* indices = &mesh.indices;
+    g.lods[0] = {0, static_cast<std::uint32_t>(mesh.indices.size()), 0.0f};
+    g.lod_count = 1;
+    if (!mesh.lods.empty()) {
+        all_lods = mesh.indices;
+        for (const MeshLod& lod : mesh.lods) {
+            if (g.lod_count >= kMaxMeshLods || lod.indices.empty()) break;
+            g.lods[g.lod_count++] = {static_cast<std::uint32_t>(all_lods.size()), static_cast<std::uint32_t>(lod.indices.size()),
+                                     lod.error};
+            all_lods.insert(all_lods.end(), lod.indices.begin(), lod.indices.end());
+        }
+        indices = &all_lods;
+    }
     const auto vb_size = static_cast<std::uint32_t>(mesh.vertices.size() * sizeof(Vertex3D));
-    const auto ib_size = static_cast<std::uint32_t>(mesh.indices.size() * sizeof(std::uint32_t));
+    const auto ib_size = static_cast<std::uint32_t>(indices->size() * sizeof(std::uint32_t));
     auto vb = device_.create_buffer({std::format("{}_vb", name), vb_size, rhi::BufferUsageVertex});
     if (!vb) return std::move(vb).error();
     auto ib = device_.create_buffer({std::format("{}_ib", name), ib_size, rhi::BufferUsageIndex});
@@ -199,7 +215,7 @@ Result<GpuMesh> GpuContext::create_mesh(const MeshData& mesh, std::string_view n
     }
     auto cmd = device_.begin_commands();
     cmd.upload_buffer(g.vertices, 0, {reinterpret_cast<const std::uint8_t*>(mesh.vertices.data()), vb_size});
-    cmd.upload_buffer(g.indices, 0, {reinterpret_cast<const std::uint8_t*>(mesh.indices.data()), ib_size});
+    cmd.upload_buffer(g.indices, 0, {reinterpret_cast<const std::uint8_t*>(indices->data()), ib_size});
     if (g.skin) cmd.upload_buffer(g.skin, 0, {reinterpret_cast<const std::uint8_t*>(mesh.skin.data()), sb_size});
     cmd.submit();
     return g;

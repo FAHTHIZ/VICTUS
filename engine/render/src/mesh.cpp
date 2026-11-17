@@ -74,6 +74,7 @@ void MeshData::append(const MeshData& other, const Mat4& transform) {
         vertices.push_back(v);
     }
     for (auto i : other.indices) indices.push_back(base + i);
+    lods.clear();
 }
 
 void compute_normals(MeshData& mesh) {

@@ -217,6 +217,11 @@ struct RenderSettings {
     float taa_blend{0.1f};                // weight of the current frame (0.04..1)
     bool auto_exposure{true};             // allowed; scenes enable it through Environment
     bool instancing{true};                // merge identical mesh+material draws into instanced batches
+    // Mesh levels of detail: each draw uses the coarsest level whose geometric error, projected
+    // at the draw's distance, stays within `lod_error_pixels` render pixels (0.25..16).
+    bool lods{true};
+    float lod_error_pixels{1.0f};
+    int force_lod{-1};                    // debugging: >= 0 draws that level (clamped per mesh)
     std::uint32_t max_point_lights{512};  // local (point + spot) lights per frame, <= SceneRenderer::kMaxLights
 
     [[nodiscard]] static RenderSettings preset(QualityTier tier) noexcept;
@@ -244,6 +249,8 @@ struct SceneStats {
     std::uint32_t joints_uploaded{0};  // joint matrices in the per-frame palette
     std::uint32_t particle_batches{0}; // visible particle batches (one draw each)
     std::uint32_t particles{0};        // particles drawn
+    std::uint32_t lod_draws{0};        // visible draws using a coarser level than LOD 0
+    std::uint64_t triangles{0};        // triangles in the main and transparent passes (all instances)
 };
 
 class SceneRenderer {
@@ -314,6 +321,7 @@ private:
         std::uint64_t batch_key; // equal keys => same mesh and identical material
         std::uint32_t palette{0}; // first joint matrix in palette_ (skinned only)
         bool skinned{false};
+        std::uint8_t lod{0};      // level of detail picked for this frame
         math::Aabb world_bounds;  // skinned only (static draws use mesh bounds * model)
         int probe{-1};            // reflection probe index (-1: scene environment)
     };
