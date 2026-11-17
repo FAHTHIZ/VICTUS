@@ -25,6 +25,7 @@
 #include "victus/script/script.hpp"
 
 #include <algorithm>
+#include <format>
 #include <optional>
 
 namespace victus::player {
@@ -128,6 +129,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         if (src && src->asset.is_nil())
             if (const auto* rec = assets->find_path(prefab_path)) src->asset = rec->uuid;
         return src;
+    };
+    so.asset_resolver = [assets = db->get()](std::string_view asset_path) -> Result<Uuid> {
+        if (const auto* rec = assets->find_path(asset_path)) return rec->uuid;
+        return make_error(ErrorCode::NotFound, std::format("no asset at '{}'", asset_path));
     };
     auto scripts = script::ScriptHost::create(so);
     if (!scripts) return std::move(scripts).error();

@@ -1040,3 +1040,77 @@ return M
     CHECK(s.parent(instances[0]) == spawner); // hierarchy order: the spawner (and its child) come first
     CHECK(s.parent(instances[1]).is_null());
 }
+
+TEST_CASE("script: rendering API swaps materials, meshes, colors and sprites") {
+    TempDir d("victus_script_render");
+    script::register_components();
+    d.write("materials/gold.vmat", R"({"victus_material": 1})");
+    d.write("materials/gold.vmat.meta", R"({"uuid": "7a1e2d3c-4b5a-4978-8a1b-2c3d4e5f6a01", "version": 1})");
+    d.write("models/ship.glb", "x");
+    d.write("models/ship.glb.meta", R"({"uuid": "7a1e2d3c-4b5a-4978-8a1b-2c3d4e5f6a02", "version": 1})");
+    d.write("textures/coin.png", "x");
+    d.write("textures/coin.png.meta", R"({"uuid": "7a1e2d3c-4b5a-4978-8a1b-2c3d4e5f6a03", "version": 1})");
+    d.write("materials/raw.vmat", R"({"victus_material": 1})"); // no .meta: not imported
+    d.write("scripts/render.luau", R"lua(
+local M = {}
+function M:start()
+    local e, sp = self.entity, scene.find("Sprite")
+    assert(e:material() == nil, "no material yet")
+    e:set_material("materials/gold.vmat")
+    assert(e:material() == "materials/gold.vmat", "material path")
+    local ok, err = pcall(e.set_material, e, "textures/coin.png")
+    assert(not ok and string.find(err, "vmat"), "non-material rejected: " .. tostring(err))
+    ok, err = pcall(e.set_material, e, "materials/raw.vmat")
+    assert(not ok and string.find(err, "not an imported asset"), "unimported rejected: " .. tostring(err))
+    e:set_mesh("models/ship.glb", 2)
+    local m, i = e:mesh()
+    assert(m == "models/ship.glb" and i == 2, "model mesh")
+    e:set_color(vector.create(1, 0.5, 0.25), 0.5)
+    local c, a = e:color()
+    assert(c.y == 0.5 and a == 0.5, "color")
+    e:set_color(vector.create(0, 1, 0))
+    c, a = e:color()
+    assert(c.x == 0 and a == 0.5, "alpha kept")
+    e:set_visible(false)
+    assert(e:visible() == false, "visible")
+    e:set_cast_shadows(false)
+    sp:set_sprite("textures/coin.png")
+    assert(sp:sprite() == "textures/coin.png", "sprite")
+    sp:set_color(vector.create(1, 0, 0), 1)
+    ok = pcall(scene.find("Empty").set_color, scene.find("Empty"), vector.create(1, 1, 1))
+    assert(not ok, "no renderer error")
+    assert(scene.find("Empty"):material() == nil, "material of plain entity")
+end
+function M:update()
+    local e = self.entity
+    e:set_mesh("sphere")
+    e:set_material(nil)
+    local m = e:mesh()
+    assert(m == "sphere" and e:material() == nil, "primitive reset")
+end
+return M
+)lua");
+    Scene s;
+    const Entity e = scripted(s, "Ship", "scripts/render.luau");
+    s.world().add<scene::MeshRendererComponent>(e).primitive = "cube";
+    const Entity sp = s.create("Sprite");
+    s.world().add<scene::SpriteComponent>(sp);
+    s.create("Empty");
+    auto host = make_host(d);
+    gameplay::Simulation sim(1.0f / 50.0f);
+    script::add_script_systems(sim, *host);
+    sim.tick(s, 0.02f); // start + update
+    for (const auto& err : host->recent_errors()) MESSAGE(err);
+    CHECK(host->stats().errors == 0);
+    const auto* m = s.world().get<scene::MeshRendererComponent>(e);
+    CHECK(m->primitive == "sphere");
+    CHECK(m->mesh_asset.is_nil());
+    CHECK(m->material_asset.is_nil());
+    CHECK_FALSE(m->visible);
+    CHECK_FALSE(m->cast_shadows);
+    CHECK(m->base_color.g == doctest::Approx(1.0f));
+    CHECK(m->base_color.a == doctest::Approx(0.5f));
+    const auto* spr = s.world().get<scene::SpriteComponent>(sp);
+    CHECK(spr->texture_asset.to_string() == "7a1e2d3c-4b5a-4978-8a1b-2c3d4e5f6a03");
+    CHECK(spr->tint.g == doctest::Approx(0.0f));
+}
