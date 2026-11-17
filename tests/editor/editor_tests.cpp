@@ -2169,6 +2169,7 @@ TEST_CASE("editor: terrain is created as an asset and entity, collides in play m
 }
 
 TEST_CASE("editor: terrain strokes sculpt and paint, undo and redo, and are written on save") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
     Harness h;
     REQUIRE(h.init());
     REQUIRE(h.ed->create_project(h.dir / "Sculpt", "Sculpt", "3d").ok());
@@ -2272,6 +2273,7 @@ TEST_CASE("editor: terrain strokes sculpt and paint, undo and redo, and are writ
 }
 
 TEST_CASE("editor: play sessions run behaviour trees and expose them to the AI debugger") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
     Harness h;
     REQUIRE(h.init());
     REQUIRE(h.ed->create_project(h.dir / "Brains", "Brains", "3d").ok());
