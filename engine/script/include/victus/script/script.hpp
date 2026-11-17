@@ -59,6 +59,10 @@
 // `nav.random_point(seed?)`, `nav.rebuild()`; entity methods for NavAgent entities
 // `set_destination(p)`, `stop()` and `nav_state()`.
 //
+// Terrain API (Terrain entities resolved by a TerrainSystem): `terrain.height(x, z, entity?)`,
+// `terrain.sample(x, z, entity?) -> {entity, height, normal, weights}` and
+// `terrain.raycast(origin, dir, max?) -> {entity, point, normal, distance}`; nil off the terrain.
+//
 // Networking API (meaningful when a NetServer/NetClient session is bound; offline every entity
 // is local and has authority): `net.role()` ("offline"/"server"/"client"), `net.is_server()`,
 // `net.is_client()`, `net.authority()`, `net.id()`, `net.connected()`, `net.local_player()`,

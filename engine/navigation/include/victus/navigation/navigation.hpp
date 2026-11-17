@@ -3,7 +3,8 @@
 // (Detour) and agents that steer along paths with local avoidance (DetourCrowd).
 //
 // A scene opts in by having NavAgent entities or by calling the query API; the navmesh is built
-// on demand from every static, non-trigger 3D Collider (no RigidBody, or a Static one) and
+// on demand from every static, non-trigger 3D Collider (no RigidBody, or a Static one) and every
+// static height field (terrain collision, physics::StaticHeightfieldComponent), and
 // rebuilt when those colliders change. An optional NavMeshSurface component (any entity, the
 // first one found) sets the agent dimensions the mesh is built for. Agents with a
 // CharacterController are driven through PhysicsWorld::move_character (the controller handles

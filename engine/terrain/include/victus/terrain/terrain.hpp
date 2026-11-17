@@ -204,6 +204,17 @@ void add_terrain_systems(gameplay::Simulation& sim, TerrainSystem& system);
 // The first terrain (in entity order) covering world (x, z): its world-space height.
 [[nodiscard]] std::optional<float> height_at(scene::Scene& scene, float x, float z);
 
+// Everything gameplay usually wants about the ground under world (x, z): the first terrain (in
+// entity order) covering it, its world height, smooth world normal and blended layer weights
+// (e.g. for footstep sounds or spawning rules).
+struct TerrainSample {
+    scene::Entity entity;
+    float height{0};
+    math::Vec3 normal{0, 1, 0};
+    math::Vec4 weights{1, 0, 0, 0};
+};
+[[nodiscard]] std::optional<TerrainSample> sample_at(scene::Scene& scene, scene::Entity entity, float x, float z);
+[[nodiscard]] std::optional<TerrainSample> sample_at(scene::Scene& scene, float x, float z);
 // Translation and rotation of a world matrix with the scale removed (how terrains are placed).
 [[nodiscard]] math::Mat4 rigid_matrix(const math::Mat4& world) noexcept;
 

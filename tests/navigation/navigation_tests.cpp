@@ -338,3 +338,63 @@ TEST_CASE("navigation: components are reflected and serialize") {
     REQUIRE(back);
     CHECK(*back == a);
 }
+
+TEST_CASE("navigation: static height fields (terrain) are walkable and steep ridges block paths") {
+    // 33 x 33 samples, 0.75 m apart (24 m), ground at y = 1 with a 6 m ridge across the middle
+    // column band for z rows 0..23 (open near +z).
+    Scene s;
+    const Entity t = s.create("Terrain");
+    s.world().get<Transform>(t)->position = {50, 0, 0};
+    s.world().get<Transform>(t)->scale = {4, 4, 4}; // ignored, like the physics body
+    physics::StaticHeightfieldComponent hf;
+    hf.resolution = 33;
+    auto heights = std::make_shared<std::vector<float>>(33 * 33, 1.0f);
+    for (int z = 0; z <= 23; ++z)
+        for (int x = 15; x <= 17; ++x) (*heights)[static_cast<std::size_t>(z) * 33 + static_cast<std::size_t>(x)] = 7.0f;
+    hf.heights = heights;
+    hf.offset = {-12, 0, -12};
+    hf.spacing = {0.75f, 0.75f};
+    hf.revision = 1;
+    s.world().add<physics::StaticHeightfieldComponent>(t, hf);
+    s.update_transforms();
+
+    NavigationSystem nav;
+    REQUIRE(nav.build(s).ok());
+    REQUIRE(nav.valid());
+    CHECK(nav.stats().source_triangles == 32u * 32u * 2u);
+    const auto ground = nav.nearest({45, 3, -5}, {2, 4, 2});
+    REQUIRE(ground);
+    CHECK(ground->y == doctest::Approx(1.0f).epsilon(0.05));
+    std::vector<math::Vec3> path;
+    bool partial = true;
+    REQUIRE(nav.find_path({42, 1, -5}, {58, 1, -5}, path, &partial));
+    CHECK_FALSE(partial);
+    bool around = false;
+    for (const auto& p : path) around |= p.z > 5.0f; // through the gap near +z
+    CHECK(around);
+    CHECK(path_length(path) > 25.0f);
+
+    // Removing the ridge (new heights, new revision) is picked up by ensure_built.
+    auto flat = std::make_shared<std::vector<float>>(33 * 33, 1.0f);
+    auto* c = s.world().get<physics::StaticHeightfieldComponent>(t);
+    c->heights = flat;
+    ++c->revision;
+    const std::uint32_t builds = nav.stats().builds;
+    REQUIRE(nav.ensure_built(s).ok());
+    CHECK(nav.stats().builds == builds + 1);
+    REQUIRE(nav.find_path({42, 1, -5}, {58, 1, -5}, path));
+    CHECK(path_length(path) == doctest::Approx(16.0f).epsilon(0.05));
+
+    // Layer masks exclude fields like colliders.
+    Scene masked;
+    const Entity m = masked.create("Terrain");
+    hf.layer = 3;
+    masked.world().add<physics::StaticHeightfieldComponent>(m, hf);
+    NavMeshSurfaceComponent surface;
+    surface.layer_mask = 1u;
+    masked.world().add<NavMeshSurfaceComponent>(m, surface);
+    masked.update_transforms();
+    NavigationSystem nav3;
+    REQUIRE(nav3.build(masked).ok());
+    CHECK_FALSE(nav3.valid());
+}

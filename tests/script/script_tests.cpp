@@ -10,6 +10,7 @@
 #include "victus/navigation/navigation.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
+#include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
 
 #include "doctest.h"
@@ -1276,4 +1277,57 @@ return M
     const auto* m = s.world().get<tilemap::TilemapComponent>(e);
     CHECK(m->cells.size() == 1);
     CHECK(m->tile(0, 5) == 0);
+}
+
+TEST_CASE("script: terrain height, sample and raycast queries") {
+    TempDir d("victus_script_terrain");
+    script::register_components();
+    gameplay::register_components();
+    terrain::register_components();
+    d.write("scripts/probe.luau", R"lua(
+local M = {}
+function M:update()
+    local h = terrain.height(4, -3)
+    assert(h ~= nil and math.abs(h - (5 + 0.25 * 20)) < 1e-3, "height " .. tostring(h))
+    assert(terrain.height(500, 0) == nil, "off the terrain")
+    local s = terrain.sample(4, -3)
+    assert(s ~= nil and s.entity.name == "Ground", "sample entity")
+    assert(math.abs(s.height - h) < 1e-4, "sample height")
+    assert(s.normal.y > 0.999, "flat normal")
+    assert(s.weights[3] > 0.99 and s.weights[1] < 0.01, "painted layer 2")
+    local hit = terrain.raycast(vector.create(4, 50, -3), vector.create(0, -1, 0))
+    assert(hit ~= nil and math.abs(hit.point.y - h) < 1e-2, "raycast point")
+    assert(math.abs(hit.distance - (50 - h)) < 1e-2, "raycast distance")
+    assert(terrain.raycast(vector.create(4, 50, -3), vector.create(0, 1, 0)) == nil, "raycast miss")
+    assert(terrain.height(4, -3, s.entity) == h, "explicit entity")
+    assert(not pcall(terrain.height, 4, -3, self.entity), "needs a Terrain")
+    assert(not pcall(terrain.raycast, vector.create(0, 0, 0), vector.create(0, -1, 0), -1), "bad distance")
+    self.entity.name = "ok"
+end
+return M
+)lua");
+    Scene s;
+    const Entity probe = scripted(s, "Probe", "scripts/probe.luau");
+    const Entity ground = s.create("Ground");
+    s.world().get<scene::Transform>(ground)->position = {0, 5, 0};
+    auto hf = terrain::make_flat(33, 0.25f);
+    REQUIRE(hf.ok());
+    for (auto& w : hf->splat) w = terrain::pack_weights({0, 0, 1, 0});
+    const Uuid id = Uuid::generate();
+    terrain::TerrainSystem terrains;
+    terrains.add_data(id, std::make_shared<terrain::Heightfield>(std::move(*hf)));
+    terrain::TerrainComponent comp;
+    comp.data = id;
+    comp.size = {64, 20, 64};
+    comp.collision = false;
+    s.world().add<terrain::TerrainComponent>(ground, comp);
+    auto host = make_host(d);
+    gameplay::Simulation sim(1.0f / 50.0f);
+    terrain::add_terrain_systems(sim, terrains);
+    script::add_script_systems(sim, *host);
+    s.update_transforms();
+    for (int i = 0; i < 2; ++i) sim.tick(s, 0.02f);
+    for (const auto& err : host->recent_errors()) MESSAGE(err);
+    CHECK(host->stats().errors == 0);
+    CHECK(s.world().get<scene::Name>(probe)->value == "ok");
 }
