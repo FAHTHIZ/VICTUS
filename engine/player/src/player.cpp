@@ -107,6 +107,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     if (!tier) return make_error(ErrorCode::InvalidArgument, "unknown quality tier '" + quality_name + "'");
     render::RenderSettings quality = render::RenderSettings::preset(*tier);
     if (proj->settings().render_scale > 0.0f) quality.render_scale = proj->settings().render_scale;
+    quality.temporal_upscale = proj->settings().temporal_upscale;
     (*view)->renderer().set_settings(quality);
     // Dynamic resolution holds the project's target frame rate in interactive runs (fixed-step,
     // recorded and replayed runs keep a constant scale so captures stay deterministic).

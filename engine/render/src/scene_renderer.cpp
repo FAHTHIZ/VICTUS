@@ -171,6 +171,10 @@ struct TaaUniforms {
     Mat4 reproject;
     Vec4 params, screen;
 };
+struct TaaUpscaleUniforms {
+    Mat4 reproject;
+    Vec4 params, screen, jitter, output;
+};
 static_assert(sizeof(LightingUniforms) == 29 * 16 + 64 * 4);
 
 constexpr std::uint32_t kLuminanceSize = 64;
@@ -959,11 +963,17 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     // TAA: every 3D pass renders with a sub-pixel jittered projection.
     const bool taa = S.taa && !capture_mode_;
     if (!taa) history_valid_ = false;
-    const math::Vec2 jitter = taa ? taa_jitter(frame_index_) : math::Vec2{};
+    // Temporal upscaling (ADR-0055): below output resolution the TAA resolve reconstructs and
+    // accumulates at the output size, with a longer jitter cycle so every output pixel is visited.
+    const bool upscale = taa && S.temporal_upscale && (rw < width || rh < height);
+    const float upscale_ratio = std::max(static_cast<float>(width) / static_cast<float>(rw),
+                                         static_cast<float>(height) / static_cast<float>(rh));
+    const math::Vec2 jitter = taa ? taa_jitter(frame_index_, upscale ? temporal_jitter_period(upscale_ratio) : 8u) : math::Vec2{};
     const Mat4 proj = taa ? jitter_projection(proj_unjittered, jitter, rw, rh) : proj_unjittered;
     const Mat4 view_proj = proj * camera_.view;
     stats_.taa = taa;
     stats_.taa_history = taa && history_valid_;
+    stats_.temporal_upscale = upscale;
     stats_.jitter = jitter;
     const bool shadows = sun_.shadows && sun_.intensity > 0.0f;
     const std::uint32_t shadow_res = std::max(64u, std::min(sun_.shadow_resolution, S.shadow_resolution));
@@ -1918,21 +1928,29 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
 
     // TAA resolve into the persistent history; everything after reads the resolved image.
     RGTexture scene_color = hdr;
+    std::uint32_t scene_w = rw, scene_h = rh; // size of scene_color
     if (taa) {
         const std::uint32_t cur = history_index_ ^ 1u, prev = history_index_;
-        VICTUS_TRY_STATUS(ensure_history(cur, rw, rh));
-        if (!history_[prev]) VICTUS_TRY_STATUS(ensure_history(prev, rw, rh)); // steady texture count from frame one
+        const std::uint32_t hw = upscale ? width : rw, hh = upscale ? height : rh;
+        VICTUS_TRY_STATUS(ensure_history(cur, hw, hh));
+        if (!history_[prev]) VICTUS_TRY_STATUS(ensure_history(prev, hw, hh)); // steady texture count from frame one
         const bool have_prev = history_valid_ && history_[prev];
-        auto taa_pl = post_pipeline("taa.frag", hdr_format_);
+        auto taa_pl = post_pipeline(upscale ? "taa_upscale.frag" : "taa.frag", hdr_format_);
         if (!taa_pl) return std::move(taa_pl).error();
-        TaaUniforms tu{};
+        TaaUpscaleUniforms tu{};
         tu.reproject = prev_view_proj_ * inverse(view_proj_unjittered);
         const bool object_motion = have_prev && !motion_batches.empty();
         tu.params = {S.taa_blend, have_prev ? 1.0f : 0.0f, 1.25f, object_motion ? 1.0f : 0.0f};
         tu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh),
-                     1.0f / static_cast<float>(have_prev ? history_w_[prev] : rw),
-                     1.0f / static_cast<float>(have_prev ? history_h_[prev] : rh)};
-        const RGTexture resolved = graph.import_texture("taa_resolved", history_[cur], color_desc(hdr_format_, rw, rh));
+                     1.0f / static_cast<float>(have_prev ? history_w_[prev] : hw),
+                     1.0f / static_cast<float>(have_prev ? history_h_[prev] : hh)};
+        // Render pixels are y-down; the projection jitter is y-up (NDC).
+        tu.jitter = {jitter.x, -jitter.y, static_cast<float>(rw), static_cast<float>(rh)};
+        tu.output = {1.0f / static_cast<float>(hw), 1.0f / static_cast<float>(hh), static_cast<float>(hw),
+                     static_cast<float>(hh)};
+        scene_w = hw;
+        scene_h = hh;
+        const RGTexture resolved = graph.import_texture("taa_resolved", history_[cur], color_desc(hdr_format_, hw, hh));
         RGTexture motion;
         if (object_motion) {
             rhi::TextureDesc md = color_desc(rhi::Format::RG16_FLOAT, rw, rh);
@@ -1979,9 +1997,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 if (motion.valid()) b.read(motion);
                 b.write_color(resolved, rhi::LoadOp::DontCare);
             },
-            [this, hdr, depth, previous, motion, tu, pl = taa_pl.value()](PassContext& ctx) {
+            [this, hdr, depth, previous, motion, tu, upscale, pl = taa_pl.value()](PassContext& ctx) {
                 ctx.pass->bind_pipeline(pl);
-                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, tu);
+                if (upscale) ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, tu);
+                else ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, TaaUniforms{tu.reproject, tu.params, tu.screen});
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(hdr), ctx_.nearest_clamp());
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1,
                                        previous.valid() ? ctx.texture(previous) : ctx.texture(hdr), ctx_.linear_clamp());
@@ -2014,7 +2033,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (!up_pl) return std::move(up_pl).error();
             for (std::uint32_t i = 0; i < levels; ++i) {
                 const RGTexture src = i == 0 ? scene_color : chain[i - 1];
-                const auto [sw, sh] = i == 0 ? std::pair{rw, rh} : sizes[i - 1];
+                const auto [sw, sh] = i == 0 ? std::pair{scene_w, scene_h} : sizes[i - 1];
                 BloomDownUniforms du{inv_size(sw, sh, i == 0 ? 1.0f : 0.0f),
                                      {env_.bloom_threshold, env_.bloom_knee, 256.0f, 0.0f}};
                 const RGTexture dst = chain[i];

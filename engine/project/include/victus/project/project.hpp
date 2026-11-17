@@ -34,6 +34,9 @@ struct ProjectSettings {
     // (down to `dynamic_resolution_min`); 0 disables it.
     int target_fps{0};
     float dynamic_resolution_min{0.5f};
+    // Temporal upscaling of a reduced render scale on TAA tiers (rendering.temporal_upscale,
+    // ADR-0055); false keeps bilinear scaling.
+    bool temporal_upscale{true};
     // Phones and tablets (rendering.mobile_quality / rendering.mobile_target_fps): the tier and
     // frame-rate target the player uses there instead of the desktop ones. Mobile GPUs share
     // power and heat with the CPU, so the defaults hold 30 fps at the medium tier.

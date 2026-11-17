@@ -15,6 +15,11 @@ namespace victus::render {
 // repeat. The mean over a full period is close to zero, so a converged image is not shifted.
 [[nodiscard]] math::Vec2 taa_jitter(std::uint64_t frame, std::uint32_t period = 8) noexcept;
 
+// Jitter cycle length for temporal upscaling by `ratio` (output / render size per axis): each
+// output pixel needs about 8 samples, so the cycle grows with the pixel-count ratio (FSR 2 style
+// 8 * ratio^2), clamped to [8, 64].
+[[nodiscard]] std::uint32_t temporal_jitter_period(float ratio) noexcept;
+
 // Returns `proj` with its clip-space output shifted by `pixels` at a `width` x `height` target
 // (x right, y up in NDC). Depth and w are unchanged.
 [[nodiscard]] math::Mat4 jitter_projection(const math::Mat4& proj, math::Vec2 pixels, std::uint32_t width,

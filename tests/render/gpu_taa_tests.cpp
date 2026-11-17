@@ -24,7 +24,7 @@ struct Scene {
     GpuMesh cube;
 };
 
-Scene make_scene(bool taa) {
+Scene make_scene(bool taa, float render_scale = 1.0f, bool temporal_upscale = true) {
     auto& ctx = *gpu().ctx;
     auto sr = SceneRenderer::create(ctx);
     REQUIRE(sr.ok());
@@ -35,7 +35,8 @@ Scene make_scene(bool taa) {
     s.fxaa = false;
     s.ssao = false;
     s.bloom = false;
-    s.render_scale = 1.0f;
+    s.render_scale = render_scale;
+    s.temporal_upscale = temporal_upscale;
     (*sr)->set_settings(s);
     return {std::move(*sr), *cube};
 }
@@ -233,5 +234,72 @@ TEST_CASE("gpu: taa history state, reset and capture mode") {
     CHECK(sc.renderer->stats().render_width == 72);
     CHECK(red(scaled, W / 2, H / 2) > 240);
     CHECK(red(scaled, 4, 4) < 8);
+    gpu().ctx->destroy(sc.cube);
+}
+
+TEST_CASE("temporal upscaling jitter period grows with the upscale ratio") {
+    CHECK(temporal_jitter_period(1.0f) == 8u);
+    CHECK(temporal_jitter_period(0.5f) == 8u);
+    CHECK(temporal_jitter_period(1.5f) == 18u);
+    CHECK(temporal_jitter_period(2.0f) == 32u);
+    CHECK(temporal_jitter_period(4.0f) == 64u);
+    CHECK(temporal_jitter_period(std::nanf("")) == 8u);
+    CHECK(RenderSettings{}.temporal_upscale);
+}
+
+TEST_CASE("gpu: temporal upscaling reconstructs closer to native resolution than bilinear") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Scene native = make_scene(true, 1.0f);
+    Scene bilinear = make_scene(true, 0.5f, false);
+    Scene upscaled = make_scene(true, 0.5f, true);
+    std::vector<std::uint8_t> ref, bil, up;
+    for (int i = 0; i < 64; ++i) {
+        ref = frame(native, 0.0f);
+        bil = frame(bilinear, 0.0f);
+        up = frame(upscaled, 0.0f);
+    }
+    test::save_output("taa_upscale_native", W, H, ref);
+    test::save_output("taa_upscale_bilinear", W, H, bil);
+    test::save_output("taa_upscale_temporal", W, H, up);
+    CHECK(upscaled.renderer->stats().temporal_upscale);
+    CHECK_FALSE(bilinear.renderer->stats().temporal_upscale);
+    CHECK_FALSE(native.renderer->stats().temporal_upscale);
+    CHECK(upscaled.renderer->stats().render_width == W / 2);
+    const double d_bil = mean_abs_diff(ref, bil), d_up = mean_abs_diff(ref, up);
+    MESSAGE("mean abs diff to native TAA: bilinear " << d_bil << ", temporal upscale " << d_up);
+    CHECK(d_up < d_bil * 0.6); // lavapipe: bilinear 2.17, temporal 0.76
+    CHECK(red(up, W / 2, H / 2) > 240);
+    CHECK(red(up, 4, 4) < 8);
+    // Static image: consecutive converged frames barely change (no shimmering from the long cycle).
+    const auto next = frame(upscaled, 0.0f);
+    CHECK(mean_abs_diff(up, next) < 1.5);
+    gpu().ctx->destroy(native.cube);
+    gpu().ctx->destroy(bilinear.cube);
+    gpu().ctx->destroy(upscaled.cube);
+}
+
+TEST_CASE("gpu: temporal upscaling follows camera motion without ghosting") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Scene sc = make_scene(true, 0.5f);
+    for (int i = 0; i < 32; ++i) (void)frame(sc, 0.0f);
+    const auto moved = frame(sc, 1.5f);
+    test::save_output("taa_upscale_moved", W, H, moved);
+    MESSAGE("uncovered pixel " << red(moved, W / 2 + 18, H / 2) << ", moved centre " << red(moved, W / 2 - 24, H / 2));
+    CHECK(red(moved, W / 2 + 18, H / 2) < 24);
+    CHECK(red(moved, W / 2 - 24, H / 2) > 230);
+    // Switching render scale keeps the output-resolution history (dynamic resolution).
+    RenderSettings s = sc.renderer->settings();
+    s.render_scale = 0.75f;
+    sc.renderer->set_settings(s);
+    (void)frame(sc, 1.5f);
+    CHECK(sc.renderer->stats().taa_history);
+    CHECK(sc.renderer->stats().temporal_upscale);
+    // Back to native resolution: the plain TAA path takes over from the larger history.
+    s.render_scale = 1.0f;
+    sc.renderer->set_settings(s);
+    const auto native = frame(sc, 1.5f);
+    CHECK_FALSE(sc.renderer->stats().temporal_upscale);
+    CHECK(sc.renderer->stats().taa_history);
+    CHECK(red(native, W / 2 - 24, H / 2) > 230);
     gpu().ctx->destroy(sc.cube);
 }

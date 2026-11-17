@@ -665,6 +665,10 @@ void Editor::draw_viewport() {
                             tier.c_str(), last_view_stats_.extract.meshes, render_stats().main_batches,
                             static_cast<double>(render_stats().triangles) / 1000.0, render_stats().lod_draws,
                             last_view_stats_.sprites, last_view_stats_.extract.lights);
+        if (!two_d && render_stats().temporal_upscale) {
+            ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 6 + ImGui::GetTextLineHeightWithSpacing()));
+            ImGui::TextDisabled("temporal upscale from %ux%u", render_stats().render_width, render_stats().render_height);
+        }
         // The tile tool owns plain left clicks while a tilemap is selected in a 2D scene.
         const bool painting = tile_tool_ && two_d && !tile_target().is_null() && !ImGui::GetIO().KeyAlt;
         // The transform gizmo takes clicks on its handles before camera navigation and picking.

@@ -21,6 +21,12 @@ math::Vec2 taa_jitter(std::uint64_t frame, std::uint32_t period) noexcept {
     return {halton(i, 2) - 0.5f, halton(i, 3) - 0.5f};
 }
 
+std::uint32_t temporal_jitter_period(float ratio) noexcept {
+    if (!std::isfinite(ratio) || ratio <= 1.0f) return 8u;
+    const float n = std::ceil(8.0f * ratio * ratio);
+    return static_cast<std::uint32_t>(std::clamp(n, 8.0f, 64.0f));
+}
+
 math::Mat4 jitter_projection(const math::Mat4& proj, math::Vec2 pixels, std::uint32_t width, std::uint32_t height) noexcept {
     const float ox = 2.0f * pixels.x / static_cast<float>(std::max(width, 1u));
     const float oy = 2.0f * pixels.y / static_cast<float>(std::max(height, 1u));
