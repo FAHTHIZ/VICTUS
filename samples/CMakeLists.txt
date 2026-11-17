@@ -18,4 +18,17 @@ if(VICTUS_BUILD_TESTS)
             "-DEXPECT=Dungeon cleared!;Floor 3 / 3"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_sample_test.cmake)
     set_tests_properties(victus_sample_dungeon_crawler PROPERTIES LABELS samples TIMEOUT 300)
+
+    # Robot Arena: the autoplay scene's fighter clears all five waves of navmesh-driven robots.
+    add_test(NAME victus_sample_arena
+        COMMAND ${CMAKE_COMMAND}
+            -DVICTUS=$<TARGET_FILE:victus_cli>
+            -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/arena
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/sample_arena
+            -DSCENE=scenes/autoplay.vscene
+            -DFRAMES=12000
+            -DSEED=1
+            "-DEXPECT=Arena cleared!;Wave 5 / 5    Robots 0"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_sample_test.cmake)
+    set_tests_properties(victus_sample_arena PROPERTIES LABELS samples TIMEOUT 300)
 endif()

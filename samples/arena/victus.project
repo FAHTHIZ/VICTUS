@@ -1,0 +1,118 @@
+{
+  "format": "victus.project",
+  "version": 1,
+  "name": "Robot Arena",
+  "startup_scene": "scenes/main.vscene",
+  "engine_version": "0.2.0",
+  "window": {
+    "width": 1280,
+    "height": 720,
+    "vsync": true
+  },
+  "rendering": {
+    "quality": "high"
+  },
+  "input": {
+    "actions": [
+      {
+        "name": "move_x",
+        "positive": [
+          "D",
+          "Right",
+          "Pad.LeftX+",
+          "Pad.DpadRight"
+        ],
+        "negative": [
+          "A",
+          "Left",
+          "Pad.LeftX-",
+          "Pad.DpadLeft"
+        ]
+      },
+      {
+        "name": "move_y",
+        "positive": [
+          "W",
+          "Up",
+          "Pad.LeftY-",
+          "Pad.DpadUp"
+        ],
+        "negative": [
+          "S",
+          "Down",
+          "Pad.LeftY+",
+          "Pad.DpadDown"
+        ]
+      },
+      {
+        "name": "look_x",
+        "positive": [
+          "Pad.RightX+"
+        ],
+        "negative": [
+          "Pad.RightX-"
+        ]
+      },
+      {
+        "name": "look_y",
+        "positive": [
+          "Pad.RightY-"
+        ],
+        "negative": [
+          "Pad.RightY+"
+        ]
+      },
+      {
+        "name": "jump",
+        "bindings": [
+          "Space",
+          "Pad.South"
+        ]
+      },
+      {
+        "name": "sprint",
+        "bindings": [
+          "LeftShift",
+          "Pad.LeftStick"
+        ]
+      },
+      {
+        "name": "help",
+        "bindings": [
+          "H",
+          "Pad.Back"
+        ]
+      },
+      {
+        "name": "quick_save",
+        "bindings": [
+          "F5",
+          "Pad.LeftShoulder"
+        ]
+      },
+      {
+        "name": "quick_load",
+        "bindings": [
+          "F9",
+          "Pad.RightShoulder"
+        ]
+      },
+      {
+        "name": "attack",
+        "bindings": [
+          "Mouse0",
+          "J",
+          "Pad.West",
+          "Pad.RightTrigger"
+        ]
+      },
+      {
+        "name": "restart",
+        "bindings": [
+          "R",
+          "Pad.Start"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "format": "victus.prefab",
+  "version": 1,
+  "name": "Health Orb",
+  "entities": [
+    {
+      "uuid": "32bd9a82-79fa-5a0e-82ec-e34a20d1641b",
+      "name": "Health Orb",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.3,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "a925d0f5-a73e-546b-b7f8-e51dc550d65b"
+        },
+        "Oscillator": {
+          "amplitude": [
+            0,
+            0.25,
+            0
+          ],
+          "frequency": 0.8,
+          "phase": 0
+        },
+        "Rotator": {
+          "axis": [
+            1,
+            1,
+            0
+          ],
+          "degrees_per_second": 60
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.55,
+            0.55,
+            0.55
+          ]
+        }
+      }
+    }
+  ]
+}

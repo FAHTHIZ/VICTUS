@@ -609,5 +609,33 @@ Known gaps:
 
 The `android` CI job had failed since Slice 50. CMake was scanning C++20 sources for module dependencies with the runner's host `clang-scan-deps-21`, and that tool cannot read the NDK compiler's precompiled headers (SDL3's `hid.cpp`). VICTUS uses no modules, so the top-level `CMakeLists.txt` now sets `CMAKE_CXX_SCAN_FOR_MODULES OFF`, and the Gradle build passes the same flag. The local Linux build and ctest (20/20) are unchanged; the Android job is verified on CI.
 
+## Slice 53: 3D sample game (Robot Arena)
+
+Why: roadmap item 9 and reference project 2 need a 3D game that uses the engine's systems together and is tested headless, as the dungeon crawler does for 2D.
+
+Built (`samples/arena`, no engine changes):
+- Game scripts (hand-written Luau):
+  - `arena.luau` runs the rules: five waves (3 to 7 robots) instantiated from `prefabs/enemy_robot.vprefab` at four corner gates, NavAgent steering to the player with repaths, a robot hit every 1.2 s in reach (7 health), three swings to destroy one, a particle burst and sound on death, a 30% health-orb drop (always one when the player is low), score, HUD status bar and wave banner, win/loss and restart (`scene.reload`). `save_state`/`load_state` keep the wave, score, health and every robot/orb (entity references by id).
+  - `player.luau`: camera-relative movement, sprint, jump, swings queued in the shared state, Idle/Walk cross-fade, slash sparks, red hurt flash. Its `autopilot` property follows `nav.find_path` paths to the nearest robot (or an orb when hurt) and swings in reach.
+  - `third_person_camera.luau`: orbit camera (right stick or right-mouse drag) that pulls in when one of three layer-0 raycasts hits a wall or pillar; robots are on layer 2 and never block it.
+  - `arena_state.luau`: shared `require` table through which the scripts talk.
+- `tools/generate_arena.py` rebuilds the level, prefabs, both scenes and `victus.project` from a fresh 3D template project (name-derived uuid5 ids, template art copied with its .meta files).
+- CTest `victus_sample_arena` (label `samples`): `victus check` must report 0 problems, then the autoplay scene runs 12 000 frames with seed 1 and the final scene must show "Arena cleared!" and "Wave 5 / 5    Robots 0".
+- README with controls, the engine features used and limitations.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Release, lavapipe):
+- `victus check samples/arena`: 2 scenes, 2 prefabs, 3 materials, 1 shader, 5 scripts, 0 problems.
+- Autoplay, seed 1: wave 3 by frame 1500, cleared by frame 4500 (8500 points = 100 x wave per robot, 76 health left), 0 script errors.
+- Main scene with nobody at the controls: the robots defeat the player in wave 1 ("Defeated - press R to try again"). Holding W walks the player into the north cover block and stops there.
+- Checkpoint check (temporary script, not committed): save at 25 s, restore at 35 s. Play resumed at wave 3 with the saved robots, score and health, and still cleared the arena.
+- Screenshots (`victus run --screenshot`, high quality) show the HUD status bar, robots, glowing gates, health orbs and shadows. One showed a pillar hiding the player; that led to the three-ray camera probe.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- No title menu or cinematic sequence; enemies are driven by the arena script, not a behaviour tree or visual logic.
+- Melee is a distance and angle test, not physics hit boxes; there is no hit-stop or knock-back.
+- `victus run` at high quality on lavapipe manages about 4.5 frames per second, so long rendered runs are not part of CI.
+
 ## Next task
-Slice 53: 3D sample game (third-person arena) as a CTest-driven reference project, then mesh LODs and meshoptimizer. See ROADMAP.md "Next slices".
+Slice 54: mesh LODs and vertex/index optimisation via meshoptimizer, then GPU-driven culling where SDL_GPU allows. See ROADMAP.md "Next slices".
+

@@ -1,0 +1,3271 @@
+{
+  "format": "victus.scene",
+  "version": 1,
+  "name": "Robot Arena (autoplay)",
+  "entities": [
+    {
+      "uuid": "6fb908ef-af9f-4555-99fe-02b8051fd19e",
+      "name": "Main Camera",
+      "components": {
+        "Camera": {
+          "projection": "perspective",
+          "fov_y": 60,
+          "ortho_height": 10,
+          "near": 0.10000000149011612,
+          "far": 500,
+          "primary": true
+        },
+        "Script": {
+          "script": "scripts/third_person_camera.luau",
+          "enabled": true,
+          "properties": {}
+        },
+        "Transform": {
+          "position": [
+            0,
+            6,
+            11
+          ],
+          "rotation": [
+            -0.2030324786901474,
+            0,
+            0,
+            0.9791720509529114
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "3aad0381-a479-4a75-b938-c14daa33a1d3",
+      "name": "Sun",
+      "components": {
+        "Light": {
+          "type": "directional",
+          "color": [
+            1,
+            0.9599999785423279,
+            0.8999999761581421,
+            1
+          ],
+          "intensity": 3,
+          "range": 10,
+          "shadows": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            10,
+            0
+          ],
+          "rotation": [
+            -0.4702281653881073,
+            0.3804226219654083,
+            0.23511408269405365,
+            0.7608452439308167
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "a9a5151d-ce47-49f7-b4a7-b37a6ea256c3",
+      "name": "Environment",
+      "components": {
+        "Environment": {
+          "sky_zenith": [
+            0.1,
+            0.13,
+            0.28,
+            1
+          ],
+          "sky_horizon": [
+            0.62,
+            0.42,
+            0.36,
+            1
+          ],
+          "ground": [
+            0.2199999988079071,
+            0.20000000298023224,
+            0.18000000715255737,
+            1
+          ],
+          "ambient_intensity": 0.45,
+          "draw_sky": true,
+          "clear_color": [
+            0.05000000074505806,
+            0.05000000074505806,
+            0.05999999865889549,
+            1
+          ],
+          "tonemapper": "aces",
+          "exposure": 1,
+          "exposure_compensation": 0,
+          "auto_exposure": false,
+          "auto_exposure_min_ev": -4,
+          "auto_exposure_max_ev": 6,
+          "saturation": 1,
+          "contrast": 1,
+          "vignette": 0.35,
+          "bloom_intensity": 0.08,
+          "bloom_threshold": 1,
+          "ao_intensity": 1,
+          "ao_radius": 0.6000000238418579,
+          "shadow_distance": 45,
+          "fog": "exponential",
+          "fog_color": [
+            0.45,
+            0.33,
+            0.32,
+            1
+          ],
+          "fog_start": 50,
+          "fog_end": 400,
+          "fog_density": 0.012,
+          "fog_max_opacity": 1,
+          "coverage_amount": 0,
+          "coverage_color": [
+            0.8600000143051147,
+            0.8899999856948853,
+            0.949999988079071,
+            1
+          ],
+          "coverage_roughness": 0.800000011920929,
+          "coverage_slope": 0.550000011920929,
+          "environment_map": null,
+          "environment_intensity": 1,
+          "environment_rotation": 0,
+          "sky_blur": 0,
+          "physical_sky": false,
+          "atmosphere_density": 1,
+          "atmosphere_haze": 1,
+          "atmosphere_intensity": 1,
+          "atmosphere_tints_sun": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "7feca204-3974-5055-b7b6-cf92a5150bb1",
+      "name": "Arena",
+      "components": {
+        "Script": {
+          "script": "scripts/arena.luau",
+          "enabled": true,
+          "properties": {}
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "f368ba8b-a983-57a7-9553-cdb5cb0170a4",
+      "name": "Arena Floor",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            0.20000000298023224,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            -0.10000000149011612,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "plane",
+          "material": "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f003",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.8999999761581421,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05000000074505806,
+          "angular_damping": 0.05000000074505806,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            32,
+            1,
+            32
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "99888b29-b7f8-5223-a906-1d261a3fc8df",
+      "name": "Wall North",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.42,
+            0.4,
+            0.45,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.9,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            0,
+            1,
+            -15.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            32,
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "448d1c14-c142-5705-91bf-0cdcb9cd709d",
+      "name": "Wall South",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.42,
+            0.4,
+            0.45,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.9,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            0,
+            1,
+            15.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            32,
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "90a2099b-de68-560c-8414-c4a291605159",
+      "name": "Wall West",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.42,
+            0.4,
+            0.45,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.9,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            -15.5,
+            1,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            2,
+            30
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "14f03a1d-a484-589d-89ee-c52cac4ed1fa",
+      "name": "Wall East",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.42,
+            0.4,
+            0.45,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.9,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            15.5,
+            1,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            2,
+            30
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "a463ac56-5855-5c27-afda-a72e4951534a",
+      "name": "Pillar 1",
+      "components": {
+        "Collider": {
+          "shape": "cylinder",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cylinder",
+          "base_color": [
+            0.92,
+            0.9,
+            0.85,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            -5,
+            1.5,
+            -5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1.2,
+            3,
+            1.2
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "0a5e503d-130d-5dec-8d68-bd33d12eeda1",
+      "name": "Pillar 2",
+      "components": {
+        "Collider": {
+          "shape": "cylinder",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cylinder",
+          "base_color": [
+            0.92,
+            0.9,
+            0.85,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            5,
+            1.5,
+            -5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1.2,
+            3,
+            1.2
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "f56cabd5-6174-5d63-a6d0-e4a5243620f7",
+      "name": "Pillar 3",
+      "components": {
+        "Collider": {
+          "shape": "cylinder",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cylinder",
+          "base_color": [
+            0.92,
+            0.9,
+            0.85,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            5,
+            1.5,
+            5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1.2,
+            3,
+            1.2
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "3b24dca8-f733-5eda-a590-b09a36ce9074",
+      "name": "Pillar 4",
+      "components": {
+        "Collider": {
+          "shape": "cylinder",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cylinder",
+          "base_color": [
+            0.92,
+            0.9,
+            0.85,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            -5,
+            1.5,
+            5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1.2,
+            3,
+            1.2
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "b2e82344-d107-5c6d-a6bf-a8364c36169c",
+      "name": "Cover 1",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.55,
+            0.43,
+            0.3,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.75,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            0,
+            0.5,
+            -8.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            3,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "9ecda986-e604-5596-943f-4a34fe5a8162",
+      "name": "Cover 2",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.55,
+            0.43,
+            0.3,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.75,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            0,
+            0.5,
+            8.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            3,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "acd8ad28-ee9e-5829-89a3-fbe4f789ae1d",
+      "name": "Cover 3",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.55,
+            0.43,
+            0.3,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.75,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            -8.5,
+            0.5,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "0ee9c165-362d-5810-9318-c8f16ca92047",
+      "name": "Cover 4",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.55,
+            0.43,
+            0.3,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.75,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            8.5,
+            0.5,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "4d1ffb60-6187-5f98-95bc-43410095abed",
+      "name": "Gate 1 Post 1",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.4,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "1b48e292-6988-50e6-9425-a29dd23b63e7"
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            -14.2,
+            1.25,
+            -11.4
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.5,
+            2.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "bbb74e23-59a1-5286-80bb-2f198c5ed6ad",
+      "name": "Gate 1 Post 2",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.4,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "1b48e292-6988-50e6-9425-a29dd23b63e7"
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            -11.4,
+            1.25,
+            -14.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.5,
+            2.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "dc183514-a506-5632-afa8-f0827b6bf501",
+      "name": "Gate 1 Light",
+      "components": {
+        "Light": {
+          "type": "point",
+          "color": [
+            1.0,
+            0.25,
+            0.12,
+            1
+          ],
+          "intensity": 14,
+          "range": 7,
+          "shadows": false
+        },
+        "Transform": {
+          "position": [
+            -13,
+            2.2,
+            -13
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "5c87acc2-7529-53a2-8cb4-cf8d0305d12a",
+      "name": "Gate 2 Post 1",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.4,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "1b48e292-6988-50e6-9425-a29dd23b63e7"
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            14.2,
+            1.25,
+            -11.4
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.5,
+            2.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "12269c77-ea9c-58f9-8208-224d9a02a508",
+      "name": "Gate 2 Post 2",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.4,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "1b48e292-6988-50e6-9425-a29dd23b63e7"
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            11.4,
+            1.25,
+            -14.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.5,
+            2.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "03776a59-995a-5b11-ad69-ab6e52c42ed9",
+      "name": "Gate 2 Light",
+      "components": {
+        "Light": {
+          "type": "point",
+          "color": [
+            1.0,
+            0.25,
+            0.12,
+            1
+          ],
+          "intensity": 14,
+          "range": 7,
+          "shadows": false
+        },
+        "Transform": {
+          "position": [
+            13,
+            2.2,
+            -13
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "b1c2d133-31ec-534a-bc5d-ee1797669495",
+      "name": "Gate 3 Post 1",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.4,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "1b48e292-6988-50e6-9425-a29dd23b63e7"
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            14.2,
+            1.25,
+            11.4
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.5,
+            2.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "8e9df5b8-2bfd-5d07-adf1-9b69e2f27a93",
+      "name": "Gate 3 Post 2",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.4,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "1b48e292-6988-50e6-9425-a29dd23b63e7"
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            11.4,
+            1.25,
+            14.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.5,
+            2.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "0572f2fd-6eec-51ae-a158-c9a6df3ef369",
+      "name": "Gate 3 Light",
+      "components": {
+        "Light": {
+          "type": "point",
+          "color": [
+            1.0,
+            0.25,
+            0.12,
+            1
+          ],
+          "intensity": 14,
+          "range": 7,
+          "shadows": false
+        },
+        "Transform": {
+          "position": [
+            13,
+            2.2,
+            13
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "51158f48-e850-513a-b402-1de35307e777",
+      "name": "Gate 4 Post 1",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.4,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "1b48e292-6988-50e6-9425-a29dd23b63e7"
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            -14.2,
+            1.25,
+            11.4
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.5,
+            2.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "5a08aa75-4d12-5ec2-b4c8-5667916c575b",
+      "name": "Gate 4 Post 2",
+      "components": {
+        "Collider": {
+          "shape": "box",
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "radius": 0.5,
+          "height": 1,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "restitution": 0,
+          "is_trigger": false,
+          "layer": 0,
+          "mask": 65535
+        },
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.4,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "1b48e292-6988-50e6-9425-a29dd23b63e7"
+        },
+        "RigidBody": {
+          "type": "static",
+          "mass": 1,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05,
+          "gravity_scale": 1,
+          "continuous": false,
+          "lock_rotation": false,
+          "start_awake": true,
+          "linear_velocity": [
+            0,
+            0,
+            0
+          ],
+          "angular_velocity": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Transform": {
+          "position": [
+            -11.4,
+            1.25,
+            14.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.5,
+            2.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "08ee69e0-ab46-570d-b2e4-68cec1418dfb",
+      "name": "Gate 4 Light",
+      "components": {
+        "Light": {
+          "type": "point",
+          "color": [
+            1.0,
+            0.25,
+            0.12,
+            1
+          ],
+          "intensity": 14,
+          "range": 7,
+          "shadows": false
+        },
+        "Transform": {
+          "position": [
+            -13,
+            2.2,
+            13
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "1008ef6d-0eaa-5189-8256-6f09e1917af7",
+      "name": "Center Light",
+      "components": {
+        "Light": {
+          "type": "point",
+          "color": [
+            0.6,
+            0.75,
+            1.0,
+            1
+          ],
+          "intensity": 10,
+          "range": 12,
+          "shadows": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            4,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "0ddb1c14-60e7-538f-88b5-f98ddfe47e44",
+      "name": "Hit Burst",
+      "components": {
+        "ParticleEmitter": {
+          "emitting": false,
+          "loop": false,
+          "world_space": true,
+          "duration": 0,
+          "rate": 0,
+          "burst": 0,
+          "max_particles": 256,
+          "lifetime_min": 0.3,
+          "lifetime_max": 0.8,
+          "shape": "sphere",
+          "radius": 0.3,
+          "angle": 25,
+          "box": [
+            1,
+            1,
+            1
+          ],
+          "speed_min": 2,
+          "speed_max": 6,
+          "gravity": [
+            0,
+            -6,
+            0
+          ],
+          "drag": 1.2,
+          "size_start": 0.1,
+          "size_end": 0.019999999552965164,
+          "size_variation": 0,
+          "color_start": [
+            1,
+            0.7,
+            0.3,
+            1
+          ],
+          "color_end": [
+            1,
+            0.15,
+            0.05,
+            0
+          ],
+          "intensity": 8,
+          "spin_min": 0,
+          "spin_max": 0,
+          "blend": "additive",
+          "texture": null,
+          "softness": 0.25,
+          "layer": 0,
+          "seed": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            -10,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "94748d73-6ff7-441c-a444-8c7a75dd21e8",
+      "name": "Player",
+      "components": {
+        "CharacterController": {
+          "radius": 0.5,
+          "height": 1.399999976158142,
+          "max_slope": 50,
+          "step_height": 0.3499999940395355,
+          "gravity_scale": 1,
+          "mass": 70,
+          "push_force": 400,
+          "air_control": 0.30000001192092896,
+          "layer": 0,
+          "mask": 65535
+        },
+        "Script": {
+          "script": "scripts/player.luau",
+          "enabled": true,
+          "properties": {
+            "autopilot": true
+          }
+        },
+        "Transform": {
+          "position": [
+            0,
+            0.05,
+            3
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "3d5ac9cf-82a1-4375-a0a1-fa74d63266e5",
+      "name": "Robot",
+      "parent": "94748d73-6ff7-441c-a444-8c7a75dd21e8",
+      "components": {
+        "Animator": {
+          "model": "5d0b7e2a-91c4-4f3e-8a6d-2c7f19b04e63",
+          "clip": "Idle",
+          "playing": true,
+          "loop": true,
+          "speed": 1,
+          "crossfade": 0.20000000298023224,
+          "time": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.8500000238418579,
+            0.8500000238418579,
+            0.8500000238418579
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "faae5e3a-54bc-4443-aaf5-25d6ef33b514",
+      "name": "Body",
+      "parent": "3d5ac9cf-82a1-4375-a0a1-fa74d63266e5",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "fa18f7a1-ea45-4d5a-80fe-3948e9018f7d",
+      "name": "Body[0]",
+      "parent": "faae5e3a-54bc-4443-aaf5-25d6ef33b514",
+      "components": {
+        "MeshRenderer": {
+          "mesh": "5d0b7e2a-91c4-4f3e-8a6d-2c7f19b04e63",
+          "mesh_index": 0,
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.5,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "SkinnedMesh": {
+          "skeleton": "3d5ac9cf-82a1-4375-a0a1-fa74d63266e5",
+          "skin": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "5fef82e0-c60c-4b5e-9eb7-bd0a13a75feb",
+      "name": "Body[1]",
+      "parent": "faae5e3a-54bc-4443-aaf5-25d6ef33b514",
+      "components": {
+        "MeshRenderer": {
+          "mesh": "5d0b7e2a-91c4-4f3e-8a6d-2c7f19b04e63",
+          "mesh_index": 1,
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.5,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "SkinnedMesh": {
+          "skeleton": "3d5ac9cf-82a1-4375-a0a1-fa74d63266e5",
+          "skin": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "203b893b-8218-468a-a619-8e96694dff26",
+      "name": "Hips",
+      "parent": "3d5ac9cf-82a1-4375-a0a1-fa74d63266e5",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0.7799999713897705,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "e9175241-810b-4349-9959-a385bdd2f7d6",
+      "name": "Spine",
+      "parent": "203b893b-8218-468a-a619-8e96694dff26",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0.07999999821186066,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "8f40a1e7-f848-4812-be12-90761290979d",
+      "name": "Head",
+      "parent": "e9175241-810b-4349-9959-a385bdd2f7d6",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0.5199999809265137,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "cf03be38-f4d0-48d2-a1bd-b6000eaf0302",
+      "name": "UpperArm.L",
+      "parent": "e9175241-810b-4349-9959-a385bdd2f7d6",
+      "components": {
+        "Transform": {
+          "position": [
+            0.33000001311302185,
+            0.4399999976158142,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "d8d669ab-f2e1-4950-85fe-fd22b87553b9",
+      "name": "LowerArm.L",
+      "parent": "cf03be38-f4d0-48d2-a1bd-b6000eaf0302",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            -0.30000001192092896,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "6143795c-ccbc-4c64-85bd-ede795622c8b",
+      "name": "UpperArm.R",
+      "parent": "e9175241-810b-4349-9959-a385bdd2f7d6",
+      "components": {
+        "Transform": {
+          "position": [
+            -0.33000001311302185,
+            0.4399999976158142,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "22a167a6-ff39-4585-9ded-c1f14a7562e3",
+      "name": "LowerArm.R",
+      "parent": "6143795c-ccbc-4c64-85bd-ede795622c8b",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            -0.30000001192092896,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "84269b6c-ffbc-4595-88ff-4c2c81dcdec8",
+      "name": "UpperLeg.L",
+      "parent": "203b893b-8218-468a-a619-8e96694dff26",
+      "components": {
+        "Transform": {
+          "position": [
+            0.12999999523162842,
+            -0.05999999865889549,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "d7d7f148-af75-4a6d-acd7-f218089e3898",
+      "name": "LowerLeg.L",
+      "parent": "84269b6c-ffbc-4595-88ff-4c2c81dcdec8",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            -0.36000001430511475,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "31584c48-6d6f-4d94-9ada-b9c544b79d5e",
+      "name": "UpperLeg.R",
+      "parent": "203b893b-8218-468a-a619-8e96694dff26",
+      "components": {
+        "Transform": {
+          "position": [
+            -0.12999999523162842,
+            -0.05999999865889549,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "5dadcefb-b8e8-45c7-96dc-b07644c34a2b",
+      "name": "LowerLeg.R",
+      "parent": "31584c48-6d6f-4d94-9ada-b9c544b79d5e",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            -0.36000001430511475,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "903434cd-b5c6-4bf6-b294-18dc466fad43",
+      "name": "Dust",
+      "parent": "94748d73-6ff7-441c-a444-8c7a75dd21e8",
+      "components": {
+        "ParticleEmitter": {
+          "emitting": false,
+          "loop": true,
+          "world_space": true,
+          "duration": 0,
+          "rate": 20,
+          "burst": 0,
+          "max_particles": 64,
+          "lifetime_min": 0.44999998807907104,
+          "lifetime_max": 0.800000011920929,
+          "shape": "cone",
+          "radius": 0.3499999940395355,
+          "angle": 80,
+          "box": [
+            1,
+            1,
+            1
+          ],
+          "speed_min": 0.800000011920929,
+          "speed_max": 1.7999999523162842,
+          "gravity": [
+            0,
+            0.4000000059604645,
+            0
+          ],
+          "drag": 3,
+          "size_start": 0.25,
+          "size_end": 0.699999988079071,
+          "size_variation": 0.4000000059604645,
+          "color_start": [
+            0.6200000047683716,
+            0.6000000238418579,
+            0.5600000023841858,
+            0.44999998807907104
+          ],
+          "color_end": [
+            0.6200000047683716,
+            0.6000000238418579,
+            0.5600000023841858,
+            0
+          ],
+          "intensity": 1,
+          "spin_min": -60,
+          "spin_max": 60,
+          "blend": "alpha",
+          "texture": null,
+          "softness": 0.25,
+          "layer": 0,
+          "seed": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0.05000000074505806,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "257d7751-ea71-5a8a-9b36-c0ad8c0fa8d0",
+      "name": "Slash",
+      "components": {
+        "ParticleEmitter": {
+          "emitting": false,
+          "loop": false,
+          "world_space": true,
+          "duration": 0,
+          "rate": 0,
+          "burst": 0,
+          "max_particles": 96,
+          "lifetime_min": 0.18,
+          "lifetime_max": 0.35,
+          "shape": "sphere",
+          "radius": 0.35,
+          "angle": 25,
+          "box": [
+            1,
+            1,
+            1
+          ],
+          "speed_min": 1.5,
+          "speed_max": 4.0,
+          "gravity": [
+            0,
+            -2,
+            0
+          ],
+          "drag": 0.6000000238418579,
+          "size_start": 0.08,
+          "size_end": 0.019999999552965164,
+          "size_variation": 0,
+          "color_start": [
+            0.7,
+            0.9,
+            1.0,
+            1
+          ],
+          "color_end": [
+            0.2,
+            0.5,
+            1.0,
+            0
+          ],
+          "intensity": 8,
+          "spin_min": 0,
+          "spin_max": 0,
+          "blend": "additive",
+          "texture": null,
+          "softness": 0.25,
+          "layer": 0,
+          "seed": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0.9,
+            -1.1
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "parent": "94748d73-6ff7-441c-a444-8c7a75dd21e8"
+    },
+    {
+      "uuid": "6d4d3af5-4a2a-4122-8675-f2c8a15a256f",
+      "name": "HUD",
+      "components": {
+        "Script": {
+          "script": "scripts/hud.luau",
+          "enabled": true,
+          "properties": {}
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "UiCanvas": {
+          "visible": true,
+          "scale_mode": "scale_with_screen",
+          "reference_size": [
+            1280,
+            720
+          ],
+          "match": 1,
+          "sort_order": 0,
+          "keyboard_navigation": false,
+          "blocks_input": false
+        }
+      }
+    },
+    {
+      "uuid": "c9f3b1ab-8160-41f7-9804-2efd3b5ec26b",
+      "name": "Help Button",
+      "parent": "6d4d3af5-4a2a-4122-8675-f2c8a15a256f",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "UiButton": {
+          "interactable": true,
+          "action": "toggle_help",
+          "normal": [
+            0.1599999964237213,
+            0.20000000298023224,
+            0.30000001192092896,
+            0.9200000166893005
+          ],
+          "hovered": [
+            0.23999999463558197,
+            0.3199999928474426,
+            0.5,
+            0.949999988079071
+          ],
+          "pressed": [
+            0.10000000149011612,
+            0.12999999523162842,
+            0.20000000298023224,
+            1
+          ],
+          "disabled": [
+            0.20000000298023224,
+            0.20000000298023224,
+            0.2199999988079071,
+            0.5
+          ]
+        },
+        "UiPanel": {
+          "color": [
+            0.05999999865889549,
+            0.07000000029802322,
+            0.10000000149011612,
+            0.75
+          ],
+          "corner_radius": 10,
+          "border_color": [
+            1,
+            1,
+            1,
+            0.15000000596046448
+          ],
+          "border_width": 1.5
+        },
+        "UiRect": {
+          "anchor_min": [
+            1,
+            0
+          ],
+          "anchor_max": [
+            1,
+            0
+          ],
+          "pivot": [
+            1,
+            0
+          ],
+          "position": [
+            -24,
+            24
+          ],
+          "size": [
+            164,
+            52
+          ],
+          "visible": true,
+          "opacity": 1,
+          "clip_children": false
+        },
+        "UiText": {
+          "text": "Controls",
+          "font_size": 22,
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "align": "center",
+          "vertical_align": "middle",
+          "wrap": false,
+          "bold": true,
+          "shadow_color": [
+            0,
+            0,
+            0,
+            0.44999998807907104
+          ],
+          "shadow_offset": [
+            0,
+            2
+          ],
+          "font": ""
+        }
+      }
+    },
+    {
+      "uuid": "54d47a53-b231-446c-9f34-972e8fe4b2d1",
+      "name": "Controls Panel",
+      "parent": "6d4d3af5-4a2a-4122-8675-f2c8a15a256f",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "UiPanel": {
+          "color": [
+            0.05999999865889549,
+            0.07000000029802322,
+            0.10000000149011612,
+            0.75
+          ],
+          "corner_radius": 10,
+          "border_color": [
+            1,
+            1,
+            1,
+            0.15000000596046448
+          ],
+          "border_width": 1.5
+        },
+        "UiRect": {
+          "anchor_min": [
+            1,
+            0
+          ],
+          "anchor_max": [
+            1,
+            0
+          ],
+          "pivot": [
+            1,
+            0
+          ],
+          "position": [
+            -24,
+            88
+          ],
+          "size": [
+            520,
+            196
+          ],
+          "visible": false,
+          "opacity": 1,
+          "clip_children": false
+        }
+      }
+    },
+    {
+      "uuid": "4f07908f-f903-409f-afe9-0fe8f325c4f9",
+      "name": "Controls Text",
+      "parent": "54d47a53-b231-446c-9f34-972e8fe4b2d1",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "UiRect": {
+          "anchor_min": [
+            0,
+            0
+          ],
+          "anchor_max": [
+            1,
+            1
+          ],
+          "pivot": [
+            0.5,
+            0.5
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "size": [
+            -40,
+            -32
+          ],
+          "visible": true,
+          "opacity": 1,
+          "clip_children": false
+        },
+        "UiText": {
+          "text": "WASD, arrows or left stick   move (Shift sprints)\nLeft mouse, J or X button   swing\nRight mouse drag or right stick   turn the camera\nSpace or A button   jump\nF5 / F9 or LB / RB   quick save / load\nR or Start   restart     H or View   this panel",
+          "font_size": 22,
+          "color": [
+            0.9200000166893005,
+            0.9399999976158142,
+            1,
+            1
+          ],
+          "align": "left",
+          "vertical_align": "top",
+          "wrap": false,
+          "bold": false,
+          "shadow_color": [
+            0,
+            0,
+            0,
+            0.44999998807907104
+          ],
+          "shadow_offset": [
+            0,
+            2
+          ],
+          "font": ""
+        }
+      }
+    },
+    {
+      "uuid": "656f24ae-4f53-4d23-adb5-0ee9f46ed56e",
+      "name": "Save Status",
+      "parent": "6d4d3af5-4a2a-4122-8675-f2c8a15a256f",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "UiPanel": {
+          "color": [
+            0.05999999865889549,
+            0.07000000029802322,
+            0.10000000149011612,
+            0.75
+          ],
+          "corner_radius": 10,
+          "border_color": [
+            1,
+            1,
+            1,
+            0.15000000596046448
+          ],
+          "border_width": 1.5
+        },
+        "UiRect": {
+          "anchor_min": [
+            0.5,
+            1
+          ],
+          "anchor_max": [
+            0.5,
+            1
+          ],
+          "pivot": [
+            0.5,
+            1
+          ],
+          "position": [
+            0,
+            -32
+          ],
+          "size": [
+            420,
+            56
+          ],
+          "visible": false,
+          "opacity": 1,
+          "clip_children": false
+        },
+        "UiText": {
+          "text": "Saved",
+          "font_size": 24,
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "align": "center",
+          "vertical_align": "middle",
+          "wrap": false,
+          "bold": true,
+          "shadow_color": [
+            0,
+            0,
+            0,
+            0.44999998807907104
+          ],
+          "shadow_offset": [
+            0,
+            2
+          ],
+          "font": ""
+        }
+      }
+    },
+    {
+      "uuid": "4b5e3bac-4dbd-5b69-bfe0-c8f9d4d05ac2",
+      "name": "Status Text",
+      "parent": "6d4d3af5-4a2a-4122-8675-f2c8a15a256f",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "UiPanel": {
+          "color": [
+            0.05999999865889549,
+            0.07000000029802322,
+            0.10000000149011612,
+            0.75
+          ],
+          "corner_radius": 10,
+          "border_color": [
+            1,
+            1,
+            1,
+            0.15000000596046448
+          ],
+          "border_width": 1.5
+        },
+        "UiRect": {
+          "anchor_min": [
+            0,
+            0
+          ],
+          "anchor_max": [
+            0,
+            0
+          ],
+          "pivot": [
+            0,
+            0
+          ],
+          "position": [
+            24,
+            24
+          ],
+          "size": [
+            600,
+            52
+          ],
+          "visible": true,
+          "opacity": 1,
+          "clip_children": false
+        },
+        "UiText": {
+          "text": "Wave 0 / 5",
+          "font_size": 24,
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "align": "center",
+          "vertical_align": "middle",
+          "wrap": false,
+          "bold": true,
+          "shadow_color": [
+            0,
+            0,
+            0,
+            0.44999998807907104
+          ],
+          "shadow_offset": [
+            0,
+            2
+          ],
+          "font": ""
+        }
+      }
+    },
+    {
+      "uuid": "54cd7840-6f15-5776-a4a6-e89ef03dfe10",
+      "name": "Banner",
+      "parent": "6d4d3af5-4a2a-4122-8675-f2c8a15a256f",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "UiPanel": {
+          "color": [
+            0.05999999865889549,
+            0.07000000029802322,
+            0.10000000149011612,
+            0.75
+          ],
+          "corner_radius": 10,
+          "border_color": [
+            1,
+            1,
+            1,
+            0.15000000596046448
+          ],
+          "border_width": 1.5
+        },
+        "UiRect": {
+          "anchor_min": [
+            0.5,
+            0.5
+          ],
+          "anchor_max": [
+            0.5,
+            0.5
+          ],
+          "pivot": [
+            0.5,
+            0.5
+          ],
+          "position": [
+            0,
+            -150
+          ],
+          "size": [
+            620,
+            84
+          ],
+          "visible": true,
+          "opacity": 1,
+          "clip_children": false
+        },
+        "UiText": {
+          "text": "Robot Arena",
+          "font_size": 40,
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "align": "center",
+          "vertical_align": "middle",
+          "wrap": false,
+          "bold": true,
+          "shadow_color": [
+            0,
+            0,
+            0,
+            0.44999998807907104
+          ],
+          "shadow_offset": [
+            0,
+            2
+          ],
+          "font": ""
+        }
+      }
+    }
+  ]
+}
