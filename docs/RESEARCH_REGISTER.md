@@ -123,6 +123,11 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-17 (Slice 42, tilemaps)
+- Godot, "Using TileSets" (https://docs.godotengine.org/en/stable/tutorials/2d/using_tilesets.html, accessed 2026-11-17): a TileSet atlas is created from a texture grid of a fixed tile size; collision comes from physics layers with per-tile polygons; terrain sets match corners and sides, corners, or sides, with `-1` for empty neighbours. Adopted: grid atlas (`columns`/`rows`), per-tile collision kinds, side-matching terrains with `-1` for unset entries. Deferred: per-tile polygons and corner matching.
+- Unity, "Tilemap Collider 2D component reference" (https://docs.unity3d.com/Manual/tilemaps/work-with-tilemaps/tilemap-collider-2d-reference.html, accessed 2026-11-17): tile collision shapes are generated per tile and can be merged through a Composite Collider 2D. Adopted: VICTUS merges solid cells into rectangles on one static body by default.
+- Open questions: chunked drawing with camera culling for very large maps, slopes, animated tiles, corner-aware (47-tile) terrains.
+
 ## Research conclusions added 2026-11-17 (Slice 41, procedural meshes and helper processes)
 - Unity `Mesh.SetVertexBufferData` (https://docs.unity3d.com/ScriptReference/Mesh.SetVertexBufferData.html, accessed 2026-11-17): copies packed vertex data directly into a vertex buffer whose layout was declared first with `SetVertexBufferParams`, with minimal validation for speed. Adopted: VICTUS `set_mesh_data` takes a declared `layout` string and decodes packed buffers in C++.
 - Godot `ArrayMesh` (https://docs.godotengine.org/en/stable/classes/class_arraymesh.html, accessed 2026-11-17): `add_surface_from_arrays` builds a surface from vertex, normal, colour, UV and optional index arrays; front faces wind clockwise. Adopted as the table form of `set_mesh_data`; winding is explicit (`flip_winding`, mirrored `scale`) because source engines differ.
