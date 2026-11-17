@@ -8,6 +8,22 @@
 namespace victus::render {
 using namespace math;
 
+namespace {
+std::uint32_t to_byte(float v) noexcept {
+    return static_cast<std::uint32_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
+}
+} // namespace
+
+std::uint32_t pack_vertex_color(const Color& c) noexcept {
+    return to_byte(linear_to_srgb(c.r)) | (to_byte(linear_to_srgb(c.g)) << 8) | (to_byte(linear_to_srgb(c.b)) << 16) |
+           (to_byte(c.a) << 24);
+}
+
+Color unpack_vertex_color(std::uint32_t p) noexcept {
+    auto ch = [&](int shift) { return static_cast<float>((p >> shift) & 0xFFu) / 255.0f; };
+    return {srgb_to_linear(ch(0)), srgb_to_linear(ch(8)), srgb_to_linear(ch(16)), ch(24)};
+}
+
 Aabb MeshData::bounds() const noexcept {
     Aabb box;
     for (const auto& v : vertices) box.expand(v.position);

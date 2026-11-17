@@ -86,6 +86,8 @@ const char* field_key(MaterialField f) noexcept {
     case MaterialField::DoubleSided: return "double_sided";
     case MaterialField::Shader: return "shader";
     case MaterialField::ShaderParams: return "shader_params";
+    case MaterialField::VertexAlpha: return "vertex_alpha";
+    case MaterialField::CoverageResponse: return "coverage_response";
     default: return "";
     }
 }
@@ -110,6 +112,8 @@ void MaterialAsset::copy_field(const MaterialAsset& src, MaterialField f) {
     case MaterialField::DoubleSided: double_sided = src.double_sided; break;
     case MaterialField::Shader: shader = src.shader; break;
     case MaterialField::ShaderParams: shader_params = src.shader_params; break;
+    case MaterialField::VertexAlpha: vertex_alpha_coverage_mask = src.vertex_alpha_coverage_mask; break;
+    case MaterialField::CoverageResponse: coverage_response = src.coverage_response; break;
     default: break;
     }
 }
@@ -154,6 +158,8 @@ json::Value MaterialAsset::to_json() const {
         params.push(floats({p.x, p.y, p.z, p.w}));
     }
     v.set("shader_params", std::move(params));
+    v.set("vertex_alpha", vertex_alpha_coverage_mask ? "coverage_mask" : "opacity");
+    v.set("coverage_response", num(coverage_response));
     if (!is_instance()) return v;
     // Instances store only what they override.
     Value inst = Value::object();
@@ -183,7 +189,8 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
                     r.vec("emissive", emissive, 3, 4) && r.number("emissive_strength", m.emissive_strength) &&
                     r.uuid("emissive_texture", m.emissive_texture) && r.number("alpha_cutoff", m.alpha_cutoff) &&
                     r.vec("uv_scale", &m.uv_scale.x, 2, 2) && r.vec("uv_offset", &m.uv_offset.x, 2, 2) &&
-                    r.boolean("unlit", m.unlit) && r.boolean("double_sided", m.double_sided);
+                    r.boolean("unlit", m.unlit) && r.boolean("double_sided", m.double_sided) &&
+                    r.number("coverage_response", m.coverage_response);
     if (!ok) return make_error(ErrorCode::ParseError, r.error);
     m.emissive = {emissive[0], emissive[1], emissive[2], 1.0f};
     if (!r.uuid("shader", m.shader)) return make_error(ErrorCode::ParseError, r.error);
@@ -207,11 +214,17 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
         else if (f->is_string() && f->as_string() == "linear") m.filter = TextureFilter::Linear;
         else return make_error(ErrorCode::ParseError, "material field 'filter' must be \"linear\" or \"nearest\"");
     }
+    if (const Value* f = v.find("vertex_alpha"); f && !f->is_null()) {
+        if (f->is_string() && f->as_string() == "coverage_mask") m.vertex_alpha_coverage_mask = true;
+        else if (f->is_string() && f->as_string() == "opacity") m.vertex_alpha_coverage_mask = false;
+        else return make_error(ErrorCode::ParseError, "material field 'vertex_alpha' must be \"opacity\" or \"coverage_mask\"");
+    }
     if (!r.uuid("parent", m.parent)) return make_error(ErrorCode::ParseError, r.error);
     m.overrides = 0;
     for (std::size_t i = 0; i < kMaterialFieldCount; ++i)
         if (v.find(field_key(static_cast<MaterialField>(i)))) m.overrides |= field_bit(static_cast<MaterialField>(i));
     if (!m.is_instance()) m.overrides = kAllMaterialFields;
+    m.coverage_response = std::clamp(m.coverage_response, 0.0f, 1.0f);
     m.metallic = std::clamp(m.metallic, 0.0f, 1.0f);
     m.roughness = std::clamp(m.roughness, 0.0f, 1.0f);
     m.alpha_cutoff = std::clamp(m.alpha_cutoff, 0.0f, 1.0f);

@@ -32,6 +32,34 @@ std::string base64_encode(std::span<const std::uint8_t> in) {
     return out;
 }
 
+bool base64_decode(std::string_view in, std::vector<std::uint8_t>& out) {
+    out.clear();
+    while (!in.empty() && in.back() == '=') in.remove_suffix(1);
+    if (in.size() % 4 == 1) return false;
+    auto value = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+    };
+    out.reserve(in.size() / 4 * 3 + 2);
+    std::uint32_t acc = 0;
+    int bits = 0;
+    for (const char c : in) {
+        const int v = value(c);
+        if (v < 0) return false;
+        acc = (acc << 6) | static_cast<std::uint32_t>(v);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<std::uint8_t>((acc >> bits) & 0xFFu));
+        }
+    }
+    return true;
+}
+
 std::string Uuid::to_string() const {
     char buf[37];
     std::snprintf(buf, sizeof buf, "%08x-%04x-%04x-%04x-%012llx", static_cast<unsigned>(hi >> 32),

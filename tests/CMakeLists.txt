@@ -15,6 +15,7 @@ victus_add_test(victus_core_tests
         core/math_tests.cpp
         core/memory_tests.cpp
         core/pack_tests.cpp
+        core/process_tests.cpp
         core/profiler_tests.cpp
     DEPS VICTUS::Core
     LABELS core)
@@ -82,6 +83,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_material_tests.cpp
         render/gpu_surface_shader_tests.cpp
         render/gpu_sprite_sheet_tests.cpp
+        render/gpu_vertex_color_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")

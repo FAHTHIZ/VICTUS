@@ -49,7 +49,17 @@ struct Material {
     // below); invalid = the built-in PBR shader. `shader_params` reach it as material.custom[].
     rhi::ShaderHandle surface_shader;
     std::array<math::Vec4, 4> shader_params{};
+    // Vertex alpha normally multiplies opacity. As a coverage mask it instead marks where the
+    // scene's coverage layer may settle (alpha >= 0.5) and opacity ignores it.
+    bool vertex_alpha_coverage_mask{false};
+    // How strongly the scene's coverage layer (Environment::coverage_*) settles on this material,
+    // 0 (never, e.g. water or glowing embers) .. 1.
+    float coverage_response{1.0f};
 };
+
+enum class FogMode : std::uint8_t { None, Linear, Exponential, ExponentialSquared };
+[[nodiscard]] std::string_view fog_mode_name(FogMode m) noexcept;
+[[nodiscard]] std::optional<FogMode> parse_fog_mode(std::string_view name) noexcept;
 
 // The built-in PBR fragment shader with a project surface function spliced in (GLSL 450 that
 // defines `void surface(SurfaceInput i, inout Surface s)`; see engine/render/shaders/pbr.frag).
@@ -122,6 +132,20 @@ struct Environment {
     float ao_fade_distance{60.0f}; // AO fades out between half this view distance and this
     bool draw_sky{true};
     math::Color clear_color{0.05f, 0.05f, 0.06f, 1}; // when draw_sky is false
+    // Distance fog on lit and unlit opaque geometry (camera distance in metres). The colour is
+    // linear radiance, multiplied by ambient_intensity like the sky colours.
+    FogMode fog_mode{FogMode::None};
+    math::Color fog_color{0.62f, 0.72f, 0.85f, 1};
+    float fog_start{50.0f};    // linear: no fog nearer than this; exponential: fog-free radius
+    float fog_end{400.0f};     // linear: full fog at this distance
+    float fog_density{0.004f}; // exponential modes, per metre
+    float fog_max_opacity{1.0f};
+    // Coverage layer (snow, dust, ash...) on upward-facing surfaces: 0 = none .. 1 = full.
+    float coverage_amount{0.0f};
+    math::Color coverage_color{0.86f, 0.89f, 0.95f, 1}; // linear albedo
+    float coverage_roughness{0.8f};
+    float coverage_slope{0.55f};     // surface normal.y where coverage starts
+    float coverage_sharpness{3.0f};  // ramp steepness above the slope threshold
 };
 
 // Scalability tiers. Low targets entry-level phones, Medium mid-range phones/tablets, High

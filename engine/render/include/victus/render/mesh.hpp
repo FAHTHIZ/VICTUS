@@ -13,8 +13,22 @@ struct Vertex3D {
     math::Vec3 normal{0, 1, 0};
     math::Vec2 uv;
     math::Vec4 tangent{1, 0, 0, 1}; // xyz tangent, w bitangent sign
+    // Per-vertex colour, RGBA8 with red in the lowest byte. RGB is sRGB-encoded (decoded to linear
+    // in the vertex shader, which keeps precision in dark tones); alpha is linear. Multiplies the
+    // material base colour. White (the default) leaves materials unchanged.
+    std::uint32_t color{0xFFFFFFFFu};
 };
-static_assert(sizeof(Vertex3D) == 48);
+static_assert(sizeof(Vertex3D) == 52);
+
+// Packs a linear colour into the Vertex3D::color encoding (sRGB RGB, linear alpha).
+[[nodiscard]] std::uint32_t pack_vertex_color(const math::Color& linear) noexcept;
+// Packs already sRGB-encoded 8-bit channels (e.g. authored palette bytes).
+[[nodiscard]] constexpr std::uint32_t pack_vertex_color_srgb8(std::uint8_t r, std::uint8_t g, std::uint8_t b,
+                                                              std::uint8_t a = 255) noexcept {
+    return std::uint32_t{r} | (std::uint32_t{g} << 8) | (std::uint32_t{b} << 16) | (std::uint32_t{a} << 24);
+}
+// Inverse of pack_vertex_color.
+[[nodiscard]] math::Color unpack_vertex_color(std::uint32_t packed) noexcept;
 
 // Skinning influences for one vertex (vertex buffer slot 2 of skinned meshes): up to four joint
 // indices into the mesh's skin palette with weights summing to 1.

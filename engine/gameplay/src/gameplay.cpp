@@ -121,6 +121,16 @@ void register_components() {
             .field(&E::ao_intensity, "ao_intensity", {.min = 0, .max = 4, .speed = 0.01f})
             .field(&E::ao_radius, "ao_radius", {.min = 0.01f, .max = 10, .speed = 0.01f})
             .field(&E::shadow_distance, "shadow_distance", {.min = 1, .max = 5000, .speed = 0.5f})
+            .enumeration(&E::fog, "fog", {"none", "linear", "exponential", "exponential_squared"})
+            .field(&E::fog_color, "fog_color", {.hint = "color_hdr"})
+            .field(&E::fog_start, "fog_start", {.min = 0, .max = 100000, .speed = 0.5f, .tooltip = "Metres from the camera with no fog"})
+            .field(&E::fog_end, "fog_end", {.min = 0, .max = 100000, .speed = 0.5f, .tooltip = "Linear fog: fully fogged at this distance"})
+            .field(&E::fog_density, "fog_density", {.min = 0, .max = 1, .speed = 0.0005f, .tooltip = "Exponential fog, per metre"})
+            .field(&E::fog_max_opacity, "fog_max_opacity", {.min = 0, .max = 1, .speed = 0.01f})
+            .field(&E::coverage_amount, "coverage_amount", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Snow/dust layer on upward faces"})
+            .field(&E::coverage_color, "coverage_color")
+            .field(&E::coverage_roughness, "coverage_roughness", {.min = 0.05f, .max = 1, .speed = 0.01f})
+            .field(&E::coverage_slope, "coverage_slope", {.min = -1, .max = 1, .speed = 0.01f, .tooltip = "Surface normal Y where coverage starts"})
             .commit();
     });
 }

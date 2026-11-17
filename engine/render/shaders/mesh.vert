@@ -14,6 +14,7 @@ layout(location = 7) in vec4 in_model3;
 layout(location = 8) in vec4 in_normal0;
 layout(location = 9) in vec4 in_normal1;
 layout(location = 10) in vec4 in_normal2;
+layout(location = 13) in vec4 in_color; // RGBA8: sRGB rgb, linear alpha
 layout(set = 1, binding = 0) uniform Frame {
     mat4 view_proj;
 } frame;
@@ -21,6 +22,7 @@ layout(location = 0) out vec3 v_world_pos;
 layout(location = 1) out vec3 v_normal;
 layout(location = 2) out vec2 v_uv;
 layout(location = 3) out vec4 v_tangent;
+layout(location = 4) out vec4 v_color;
 invariant gl_Position;
 void main() {
     mat4 model = mat4(in_model0, in_model1, in_model2, in_model3);
@@ -30,5 +32,8 @@ void main() {
     v_normal = normalize(normal_matrix * in_normal);
     v_tangent = vec4(normalize(mat3(model) * in_tangent.xyz), in_tangent.w);
     v_uv = in_uv;
+    // Exact sRGB decode (vertex colours are stored sRGB-encoded for precision).
+    vec3 c = in_color.rgb;
+    v_color = vec4(mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)), in_color.a);
     gl_Position = frame.view_proj * world;
 }

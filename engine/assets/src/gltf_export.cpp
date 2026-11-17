@@ -104,6 +104,19 @@ json::Value primitive(Writer& w, const ModelMesh& mesh) {
     attrs.set("NORMAL", w.accessor(vv, offsetof(render::Vertex3D, normal), kFloat, verts.size(), "VEC3", {}, {}, stride));
     attrs.set("TEXCOORD_0", w.accessor(vv, offsetof(render::Vertex3D, uv), kFloat, verts.size(), "VEC2", {}, {}, stride));
     attrs.set("TANGENT", w.accessor(vv, offsetof(render::Vertex3D, tangent), kFloat, verts.size(), "VEC4", {}, {}, stride));
+    // COLOR_0 only when some vertex is not white; glTF colours are linear floats.
+    bool any_color = false;
+    for (const auto& v : verts) any_color = any_color || v.color != 0xFFFFFFFFu;
+    if (any_color) {
+        std::vector<float> lin;
+        lin.reserve(verts.size() * 4);
+        for (const auto& v : verts) {
+            const math::Color c = render::unpack_vertex_color(v.color);
+            lin.insert(lin.end(), {c.r, c.g, c.b, c.a});
+        }
+        const std::uint32_t cv = w.view(lin.data(), lin.size() * sizeof(float), kArrayBuffer);
+        attrs.set("COLOR_0", w.accessor(cv, 0, kFloat, verts.size(), "VEC4"));
+    }
     if (mesh.data.skinned()) {
         const auto& skin = mesh.data.skin;
         const std::uint32_t sv = w.view(skin.data(), skin.size() * sizeof(render::SkinVertex), kArrayBuffer);

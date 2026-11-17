@@ -30,6 +30,7 @@ victus_add_module(core
         src/math.cpp
         src/pack.cpp
         src/memory.cpp
+        src/process.cpp
         src/profiler.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/build_info.cpp
     DEPS Threads::Threads)

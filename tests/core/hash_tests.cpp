@@ -6,6 +6,28 @@
 
 using namespace victus;
 
+TEST_CASE("hash: base64 decode round-trips and rejects bad input") {
+    std::vector<std::uint8_t> out;
+    auto dec = [&](std::string_view t) {
+        REQUIRE(victus::base64_decode(t, out));
+        return std::string(out.begin(), out.end());
+    };
+    CHECK(dec("") == "");
+    CHECK(dec("Zg==") == "f");
+    CHECK(dec("Zm8=") == "fo");
+    CHECK(dec("Zm9v") == "foo");
+    CHECK(dec("Zm9vYg") == "foob"); // unpadded
+    CHECK(dec("Zm9vYmFy") == "foobar");
+    CHECK_FALSE(victus::base64_decode("Zm9v!", out));
+    CHECK_FALSE(victus::base64_decode("Z", out));
+    CHECK_FALSE(victus::base64_decode("Zm 9v", out));
+    victus::Random rng(7);
+    std::vector<std::uint8_t> bytes(1000);
+    for (auto& b : bytes) b = static_cast<std::uint8_t>(rng.next_u32());
+    REQUIRE(victus::base64_decode(victus::base64_encode(bytes), out));
+    CHECK(out == bytes);
+}
+
 TEST_CASE("hash: base64 RFC 4648 test vectors") {
     auto enc = [](std::string_view t) {
         return victus::base64_encode({reinterpret_cast<const std::uint8_t*>(t.data()), t.size()});

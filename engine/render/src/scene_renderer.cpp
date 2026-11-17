@@ -51,7 +51,7 @@ std::uint64_t material_key(const Material& m) noexcept {
     std::uint64_t h = 0;
     for (float f : {m.base_color.r, m.base_color.g, m.base_color.b, m.base_color.a, m.emissive.r, m.emissive.g,
                     m.emissive.b, m.emissive_strength, m.metallic, m.roughness, m.normal_scale, m.alpha_cutoff,
-                    m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y})
+                    m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y, m.coverage_response})
         h = mix(h, bits(f));
     for (auto t : {m.base_color_texture, m.metallic_roughness_texture, m.normal_texture, m.emissive_texture})
         h = mix(h, handle_bits(t));
@@ -60,7 +60,8 @@ std::uint64_t material_key(const Material& m) noexcept {
         for (const Vec4& p : m.shader_params)
             for (float f : {p.x, p.y, p.z, p.w}) h = mix(h, bits(f));
     }
-    return mix(h, (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u));
+    return mix(h, (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u) |
+                      (m.vertex_alpha_coverage_mask ? 16u : 0u));
 }
 
 bool same_material(const Material& a, const Material& b) noexcept {
@@ -73,7 +74,8 @@ bool same_material(const Material& a, const Material& b) noexcept {
            a.cast_shadows == b.cast_shadows && a.uv_scale == b.uv_scale && a.uv_offset == b.uv_offset &&
            a.nearest_filter == b.nearest_filter && a.surface_shader == b.surface_shader &&
            std::equal(a.shader_params.begin(), a.shader_params.end(), b.shader_params.begin(),
-                      [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; });
+                      [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; }) &&
+           a.vertex_alpha_coverage_mask == b.vertex_alpha_coverage_mask && a.coverage_response == b.coverage_response;
 }
 struct GpuPointLight {
     Vec4 position_range;
@@ -92,6 +94,10 @@ struct LightingUniforms {
     Vec4 cascade_splits;
     Vec4 cascade_texel;
     Vec4 screen;
+    Vec4 fog_color;
+    Vec4 fog_params;
+    Vec4 coverage_color;
+    Vec4 coverage_params;
     Mat4 cascade_vp[4];
     GpuPointLight points[SceneRenderer::kMaxPointLights];
 };
@@ -138,7 +144,7 @@ struct ExposureUniforms {
 struct PostUniforms {
     Vec4 params, params2, params3;
 };
-static_assert(sizeof(LightingUniforms) == 16 * 12 + 64 * 4 + 32 * SceneRenderer::kMaxPointLights);
+static_assert(sizeof(LightingUniforms) == 16 * 16 + 64 * 4 + 32 * SceneRenderer::kMaxPointLights);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 
@@ -174,6 +180,22 @@ std::string_view tonemapper_name(Tonemapper t) noexcept {
 std::optional<Tonemapper> parse_tonemapper(std::string_view n) noexcept {
     for (Tonemapper t : {Tonemapper::None, Tonemapper::Aces, Tonemapper::Neutral, Tonemapper::Reinhard})
         if (tonemapper_name(t) == n) return t;
+    return std::nullopt;
+}
+
+std::string_view fog_mode_name(FogMode m) noexcept {
+    switch (m) {
+    case FogMode::None: return "none";
+    case FogMode::Linear: return "linear";
+    case FogMode::Exponential: return "exponential";
+    case FogMode::ExponentialSquared: return "exponential_squared";
+    }
+    return "none";
+}
+
+std::optional<FogMode> parse_fog_mode(std::string_view n) noexcept {
+    for (FogMode m : {FogMode::None, FogMode::Linear, FogMode::Exponential, FogMode::ExponentialSquared})
+        if (fog_mode_name(m) == n) return m;
     return std::nullopt;
 }
 
@@ -305,7 +327,8 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     opaque.attributes = with(with({{0, 0, rhi::VertexFormat::Float3, 0},
                                    {1, 0, rhi::VertexFormat::Float3, 12},
                                    {2, 0, rhi::VertexFormat::Float2, 24},
-                                   {3, 0, rhi::VertexFormat::Float4, 32}},
+                                   {3, 0, rhi::VertexFormat::Float4, 32},
+                                   {13, 0, rhi::VertexFormat::UByte4Norm, 48}},
                                   model_attrs),
                              normal_attrs);
     opaque.depth_test = opaque.depth_write = true;
@@ -898,6 +921,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         double t = time_ ? *time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - render_epoch()).count();
         t = std::fmod(std::max(t, 0.0), 3600.0); // keeps float precision for sin(time) and scrolling
         lighting.screen = inv_size(rw, rh, static_cast<float>(t));
+        const float ai = env_.ambient_intensity;
+        lighting.fog_color = {env_.fog_color.r * ai, env_.fog_color.g * ai, env_.fog_color.b * ai,
+                              static_cast<float>(env_.fog_mode)};
+        const float start = std::max(env_.fog_start, 0.0f);
+        lighting.fog_params = {start, std::max(env_.fog_end, start + 0.001f), std::max(env_.fog_density, 0.0f),
+                               std::clamp(env_.fog_max_opacity, 0.0f, 1.0f)};
+        lighting.coverage_color = {env_.coverage_color.r, env_.coverage_color.g, env_.coverage_color.b,
+                                   std::clamp(env_.coverage_amount, 0.0f, 1.0f)};
+        lighting.coverage_params = {std::clamp(env_.coverage_roughness, 0.045f, 1.0f), std::clamp(env_.coverage_slope, -1.0f, 1.0f),
+                                    std::max(env_.coverage_sharpness, 0.01f), 0.0f};
     }
     for (std::uint32_t c = 0; c < 4; ++c) lighting.cascade_vp[c] = cascade_vp_[c];
     for (std::size_t i = 0; i < points_.size(); ++i) {
@@ -1076,7 +1109,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 mat.base_color = m.base_color.vec();
                 mat.emissive = rgb(m.emissive, m.emissive_strength);
                 mat.params = {m.metallic, m.roughness, m.normal_scale, m.alpha_cutoff};
-                mat.flags = {m.normal_texture ? 1.0f : 0.0f, m.unlit ? 1.0f : 0.0f, 0, 0};
+                mat.flags = {m.normal_texture ? 1.0f : 0.0f, m.unlit ? 1.0f : 0.0f, m.vertex_alpha_coverage_mask ? 1.0f : 0.0f,
+                             std::clamp(m.coverage_response, 0.0f, 1.0f)};
                 mat.uv_transform = {m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y};
                 for (std::size_t i = 0; i < 4; ++i) mat.custom[i] = m.shader_params[i];
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
