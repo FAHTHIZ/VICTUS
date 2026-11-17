@@ -4,6 +4,10 @@ project(VICTUS VERSION 0.2.0 DESCRIPTION "Independent cross-platform game engine
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# VICTUS uses no C++20 modules. Without this, CMake scans every C++20 source for module
+# dependencies with whatever clang-scan-deps it finds; on Android CI it picked the host's
+# clang-scan-deps-21, which cannot read the NDK compiler's precompiled headers (SDL3).
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)

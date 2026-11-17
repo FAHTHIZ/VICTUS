@@ -128,7 +128,7 @@ android {
         externalNativeBuild {
             cmake {
                 arguments '-DVICTUS_BUILD_TESTS=OFF', '-DVICTUS_BUILD_SAMPLES=OFF', '-DVICTUS_BUILD_BENCHMARKS=OFF',
-                          '-DANDROID_STL=c++_shared'
+                          '-DANDROID_STL=c++_shared', '-DCMAKE_CXX_SCAN_FOR_MODULES=OFF'
                 targets 'main', 'SDL3-shared'
             }
         }

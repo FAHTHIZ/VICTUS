@@ -605,5 +605,9 @@ Known gaps:
 - Sprite-sheet animators in prefabs are not advanced (prefab previews show the sprite's full texture).
 - No dependency inspector or import queue view yet.
 
+## Fix: Android CI module scanning (after Slice 52)
+
+The `android` CI job had failed since Slice 50. CMake was scanning C++20 sources for module dependencies with the runner's host `clang-scan-deps-21`, and that tool cannot read the NDK compiler's precompiled headers (SDL3's `hid.cpp`). VICTUS uses no modules, so the top-level `CMakeLists.txt` now sets `CMAKE_CXX_SCAN_FOR_MODULES OFF`, and the Gradle build passes the same flag. The local Linux build and ctest (20/20) are unchanged; the Android job is verified on CI.
+
 ## Next task
 Slice 53: 3D sample game (third-person arena) as a CTest-driven reference project, then mesh LODs and meshoptimizer. See ROADMAP.md "Next slices".
