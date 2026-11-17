@@ -123,6 +123,10 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-17 (Slice 37, material instances)
+- Unreal Engine, "Instanced Materials" — https://dev.epicgames.com/documentation/en-us/unreal-engine/instanced-materials-in-unreal-engine (accessed 2026-11-17): instances inherit all attributes from a parent and look identical until edited; only parameterised attributes are editable; constant instances are fixed before run time, dynamic instances are created from scripts. VICTUS adopts constant instances with every field overridable; run-time instances remain open (scripts use `MaterialOverrides` or swap materials).
+- Open questions: parent-locked fields, run-time instances from scripts, caching resolved parents for deep chains.
+
 ## Research conclusions added 2026-11-17 (Slice 36, project surface shaders)
 - Godot spatial shaders — https://docs.godotengine.org/en/stable/tutorials/shaders/shader_reference/spatial_shader.html (accessed 2026-11-17): `fragment()` sets material properties (`ALBEDO`, `ROUGHNESS`, `METALLIC`, `EMISSION`, `NORMAL_MAP`, `AO`, `ALPHA`, ...) and the built-in renderer does the shading; `TIME` is seconds since start and repeats after 3 600 s. VICTUS mirrors this split (surface function before built-in lighting) and the hourly time wrap.
 - glslang releases — https://github.com/KhronosGroup/glslang/releases/tag/16.6.0 (accessed 2026-11-17): 16.6.0 released 2026-09-10; adopted as a library. Its `LICENSE.txt` covers glslang proper with BSD-3-Clause, BSD-2-Clause, MIT and Apache-2.0 parts; the GPL-3.0-with-Bison-exception text applies to Bison files, which the file says were removed.

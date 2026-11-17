@@ -370,5 +370,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** glslang adds build time and binary size; first use compiles on the render thread. No D3D12 DXIL path (Vulkan is used on Windows). Revisit for a shader cache on disk/in packs, async compilation, vertex/sprite/post-process hooks, extra textures per shader, or a material graph that emits surface code.
 
+## ADR-0036 — Material instances as sparse .vmat files with a parent reference (accepted 2026-11-17)
+**Problem.** Variations of one look (team colours, damaged versions, shader parameter tweaks) required copying a whole material; a later change to the shared look had to be repeated in every copy.
+
+**Candidates.** (1) A `"parent"` UUID in the same `.vmat` format, the file storing only the keys it overrides, resolved at load time (Unreal's Material Instance Constants inherit everything from a parent and change only exposed parameters without recompiling, https://dev.epicgames.com/documentation/en-us/unreal-engine/instanced-materials-in-unreal-engine). (2) A separate `.vmatinst` asset type — clearer in listings, but duplicates parsing, references and editor code for the same fields. (3) Parameters explicitly exposed by the parent (Unreal's model) — finer control, but every VICTUS material field is already a plain value, so the extra declaration step brings no benefit yet.
+
+**Decision.** (1). Every field can be overridden; presence of a key is the override (so `null` textures override to none). Resolution happens in `AssetDatabase::resolve_material`, which the renderer cache, export and `check` share; chains are capped at 16 levels and cycles are errors. Because surface shaders read their values from material parameters, instances also vary shader looks without new shaders.
+
+**Evidence.** STATUS Slice 37: three-level inheritance, propagation of parent edits through hot reload, rejected cycles/missing parents, and the editor's inherited/override markers.
+
+**Risks / revisit triggers.** Resolution reads each file in the chain per cache miss (cheap for small chains). Revisit if parents need to lock fields, if run-time instances from scripts are needed, or if load times grow with deep chains (cache resolved parents).
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
