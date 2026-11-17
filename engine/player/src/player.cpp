@@ -13,6 +13,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
+#include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
@@ -188,6 +189,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     animation::add_animation_systems(sim, animations);
     tilemap::TilemapSystem tilemaps(assets::tileset_provider(**db));
     tilemap::add_tilemap_systems(sim, tilemaps);
+    terrain::TerrainSystem terrains(assets::terrain_provider(**db));
+    terrain::add_terrain_systems(sim, terrains);
     particles::ParticleSystem particle_system({.jobs = &workers});
     particles::add_particle_systems(sim, particle_system);
     navigation::NavigationSystem nav;
@@ -345,11 +348,11 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         if (reloader) {
             const auto changes = reloader->poll(now);
             if (!changes.empty()) {
-                runtime::AssetHotReloader::apply(changes, &cache, &animations, &tilemaps);
+                runtime::AssetHotReloader::apply(changes, &cache, &animations, &tilemaps, &terrains);
                 if (audio_engine)
                     for (const auto& clip : changes.audio) (void)(*audio_engine)->reload_clip(clip);
                 if (!changes.prefabs.empty()) (*scripts)->forget_prefabs(); // new instances use the new version
-                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size();
+                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size() + changes.terrains.size();
             }
         }
         if (dynamic_resolution) {

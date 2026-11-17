@@ -21,6 +21,7 @@
 #include "victus/animation/animation.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/runtime/scene_rendering.hpp"
+#include "victus/terrain/terrain.hpp"
 
 #include <cstdint>
 #include <string>
@@ -40,6 +41,7 @@ struct HotReloadReport {
     std::vector<std::string> shaders;        // changed surface shaders (paths relative to assets/)
     std::vector<std::string> sprite_sheets;  // changed sprite sheets (paths relative to assets/)
     std::vector<std::string> tilesets;       // changed tile sets (paths relative to assets/)
+    std::vector<std::string> terrains;       // changed .vterrain heightfields (clear TerrainSystem caches)
     std::vector<std::string> restart_needed; // files whose changes appear on the next start
     [[nodiscard]] bool empty() const noexcept { return changed.empty(); }
     // One human-readable line per event, for logs and editor notifications.
@@ -57,9 +59,10 @@ public:
     // changed, refreshes metadata and re-imports every stale texture/model.
     [[nodiscard]] HotReloadReport check();
 
-    // Evicts re-imported assets from the GPU cache, animation and tile set caches (any may be null).
+    // Evicts re-imported assets from the GPU cache, animation, tile set and terrain caches (any
+    // may be null).
     static void apply(const HotReloadReport& report, GpuAssetCache* cache, animation::AnimationSystem* animations,
-                      tilemap::TilemapSystem* tilemaps = nullptr);
+                      tilemap::TilemapSystem* tilemaps = nullptr, terrain::TerrainSystem* terrains = nullptr);
 
     [[nodiscard]] std::uint64_t scans() const noexcept { return scans_; }
 

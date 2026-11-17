@@ -99,6 +99,13 @@ struct ProceduralMesh {
     std::vector<math::Vec2> uvs;      // empty or one per position
     std::vector<std::uint32_t> colors; // empty or one per position
     std::vector<std::uint32_t> indices; // triangle list
+    // Coarser levels of detail over the same vertices (coarsest last), with the geometric error
+    // of each level in local units; the renderer projects it to pixels to pick a level.
+    struct Lod {
+        std::vector<std::uint32_t> indices;
+        float error{0.0f};
+    };
+    std::vector<Lod> lods;
     math::Aabb bounds;
 };
 // Assigns a fresh id and computes bounds (and smooth normals when none were given), then

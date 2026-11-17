@@ -137,6 +137,7 @@ const char* to_string(AssetKind kind) noexcept {
     case AssetKind::Shader: return "shader";
     case AssetKind::SpriteSheet: return "spritesheet";
     case AssetKind::Tileset: return "tileset";
+    case AssetKind::Terrain: return "terrain";
     default: return "unknown";
     }
 }

@@ -123,6 +123,7 @@ Status Editor::open_project(const fs::Path& path) {
     edit_sprites_ = std::make_unique<animation::AnimationSystem>(
         animation::AnimationSettings{.sheets = assets::sprite_sheet_provider(*db_)});
     tilemaps_ = std::make_unique<tilemap::TilemapSystem>(assets::tileset_provider(*db_));
+    terrains_ = std::make_unique<terrain::TerrainSystem>(assets::terrain_provider(*db_));
     {
         script::HostOptions so;
         so.assets_root = db_->assets_dir();
@@ -174,6 +175,7 @@ void Editor::close_project() {
     graph_live_ = false;
     edit_sprites_.reset();
     tilemaps_.reset();
+    terrains_.reset();
     audio_.reset(); // clips resolve against the project's assets
     audio_failed_ = false;
     db_.reset();
@@ -214,7 +216,7 @@ std::size_t Editor::check_asset_changes() {
         for (const auto& p : changes.prefabs)
             if (const auto* rec = db_ ? db_->find_path(p) : nullptr) thumbnails_->invalidate(rec->uuid);
     }
-    runtime::AssetHotReloader::apply(changes, cache_.get(), play_animation_.get(), tilemaps_.get());
+    runtime::AssetHotReloader::apply(changes, cache_.get(), play_animation_.get(), tilemaps_.get(), terrains_.get());
     if (edit_sprites_) edit_sprites_->clear_sheets();
     if (audio_)
         for (const auto& clip : changes.audio) (void)audio_->reload_clip(clip);
@@ -259,7 +261,7 @@ std::size_t Editor::check_asset_changes() {
         if (assets::kind_for_extension(fs::Path(r).extension().string()) == assets::AssetKind::Scene) continue;
         notify(r + " changed; reopen the project or restart the game to see it");
     }
-    return changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size();
+    return changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size() + changes.terrains.size();
 }
 
 // ---- scenes ------------------------------------------------------------------------------------
@@ -1083,6 +1085,8 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
     animation::add_animation_systems(sim_, *play_animation_);
     if (!tilemaps_) tilemaps_ = std::make_unique<tilemap::TilemapSystem>();
     tilemap::add_tilemap_systems(sim_, *tilemaps_);
+    if (!terrains_) terrains_ = std::make_unique<terrain::TerrainSystem>();
+    terrain::add_terrain_systems(sim_, *terrains_);
     play_particles_ = std::make_unique<particles::ParticleSystem>(particles::ParticleSettings{.jobs = &workers()});
     particles::add_particle_systems(sim_, *play_particles_);
     play_navigation_ = std::make_unique<navigation::NavigationSystem>();

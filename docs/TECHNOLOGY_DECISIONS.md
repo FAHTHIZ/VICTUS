@@ -671,6 +671,17 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - Script graphs keep their exact file format (no domain key); the script compiler refuses material graphs.
   - Rejected (b): duplicate model, serialization and canvas. Rejected (c): pipeline permutations and new resource bindings per graph; revisit when graphs need custom textures or vertex-stage nodes.
 
+### ADR-0063: Chunked heightfield terrain with index-list LODs, skirts and vertex splat weights
+- Status: Accepted (Slice 69)
+- Context: roadmap item 18 needs large outdoor ground that scales to mobile: LOD, layered materials, collision and editing. The renderer already selects mesh LODs by screen-space error and culls per draw (frustum, GPU occlusion); surface shaders can read four material textures, four vec4 parameters and vertex colours; Jolt has a native height-field shape.
+- Options: (a) CPU chunks as procedural meshes with LOD index lists and skirts, splat weights in vertex colours, a built-in surface shader; (b) GPU clipmaps / geometry from a height texture in the vertex shader (needs vertex texture fetch in mesh shaders, new pipelines and a terrain-specific pass); (c) CDLOD quadtree with morphing (needs per-draw morph uniforms and a custom vertex shader); (d) splat weights in a dedicated texture (needs a fifth sampler or a terrain-only material layout).
+- Decision: (a). A `.vterrain` stores u16 heights and RGBA8 splat per sample (2^n+1 per side). Each 32x32-quad chunk is a `scene::ProceduralMesh` whose LODs are index lists over one vertex set (strides 2..32, same diagonal as the full grid); errors are max(geometric error, splat-weight deviation x half the coarse cell) and monotonic, so the existing `select_lod` and instancing/culling paths work unchanged. Skirts (depth max(1.25 x worst geometric error, 0.2% of height, 5 cm)) hide cracks without stitching. The built-in terrain surface shader decodes splat weights from vertex colours (undoing the vertex shader's sRGB decode) and blends layer textures carried in the four material texture slots with per-layer tint and tiling in the shader parameters. Collision uses Jolt `HeightFieldShape` (block size 2/4, ~1 mm quantization) via a runtime-only `physics::StaticHeightfieldComponent`, so physics stays independent of the terrain module. `Heightfield` revisions per chunk let several scenes share one field and rebuild only edited chunks.
+- Consequences:
+  - Painting resolution equals the sample spacing; no per-layer normal/roughness maps (roughness is per terrain); four layers maximum.
+  - No geomorphing: LOD switches pop slightly, bounded by the pixel error threshold.
+  - The collider is rebuilt whole on every edit (fine up to 1025^2; sculpt tools may need per-region updates later).
+  - Revisit (b)/(c) when the renderer gains vertex texture fetch and per-draw custom vertex shaders, and (d) when materials gain more samplers.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

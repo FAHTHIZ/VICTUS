@@ -2125,3 +2125,45 @@ TEST_CASE("editor: material graphs are created, edited on the canvas and shade t
     CHECK(std::any_of(ed.messages().begin(), ed.messages().end(), [](const std::string& m) { return m.find("1 error") != std::string::npos; }));
     h.frames(2);
 }
+
+TEST_CASE("editor: terrain is created as an asset and entity, collides in play mode and undoes") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Land", "Land", "3d").ok());
+    h.frames(2);
+    auto& ed = *h.ed;
+    auto made = ed.create_terrain();
+    REQUIRE(made.ok());
+    Scene& s = ed.edit_scene();
+    const auto* comp = s.world().get<terrain::TerrainComponent>(*made);
+    REQUIRE(comp);
+    const assets::AssetRecord* rec = ed.assets()->find(comp->data);
+    REQUIRE(rec);
+    CHECK(rec->path == "terrain/Terrain.vterrain");
+    CHECK(rec->kind == assets::AssetKind::Terrain);
+    CHECK(ed.assets()->load_terrain(comp->data).ok());
+    h.frames(3); // edit mode builds and draws the chunks
+    const auto* rt = s.world().get<terrain::TerrainRuntime>(*made);
+    REQUIRE(rt);
+    CHECK(rt->chunks.size() == 16);
+    auto second = ed.create_terrain();
+    REQUIRE(second.ok());
+    CHECK(ed.assets()->find(s.world().get<terrain::TerrainComponent>(*second)->data)->path == "terrain/Terrain_2.vterrain");
+    ed.undo();
+    CHECK(s.find(s.uuid(*made)) == *made);
+    std::size_t terrains = 0;
+    s.world().each<terrain::TerrainComponent>([&](Entity, terrain::TerrainComponent&) { ++terrains; });
+    CHECK(terrains == 1);
+
+    // Saved scenes keep the component; play mode gives the terrain a height-field collider.
+    REQUIRE(ed.save_scene().ok());
+    ed.play();
+    h.frames(4);
+    REQUIRE(ed.play_scene());
+    bool collider = false;
+    ed.play_scene()->world().each<physics::StaticHeightfieldComponent>(
+        [&](Entity, physics::StaticHeightfieldComponent& c) { collider = c.resolution == 129; });
+    CHECK(collider);
+    ed.stop();
+}

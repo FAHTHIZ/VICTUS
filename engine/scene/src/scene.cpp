@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <format>
 
 namespace victus::scene {
@@ -671,6 +672,13 @@ Result<std::shared_ptr<const ProceduralMesh>> publish_mesh(ProceduralMesh mesh) 
     if (mesh.indices.size() % 3 != 0) return bad("procedural mesh: index count is not a multiple of 3");
     for (const std::uint32_t i : mesh.indices)
         if (i >= n) return bad(std::format("procedural mesh: index {} out of range ({} vertices)", i, n));
+    if (mesh.lods.size() > 7) return bad("procedural mesh: more than 7 levels of detail");
+    for (const ProceduralMesh::Lod& lod : mesh.lods) {
+        if (lod.indices.empty() || lod.indices.size() % 3 != 0) return bad("procedural mesh: LOD index count is not a positive multiple of 3");
+        if (!std::isfinite(lod.error) || lod.error < 0) return bad("procedural mesh: LOD error must be finite and >= 0");
+        for (const std::uint32_t i : lod.indices)
+            if (i >= n) return bad(std::format("procedural mesh: LOD index {} out of range ({} vertices)", i, n));
+    }
     mesh.bounds = {};
     for (const math::Vec3& p : mesh.positions) mesh.bounds.expand(p);
     if (mesh.normals.empty() && n > 0) {

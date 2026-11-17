@@ -93,6 +93,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_material_graph_tests.cpp
         render/gpu_sprite_sheet_tests.cpp
         render/gpu_tilemap_tests.cpp
+        render/gpu_terrain_tests.cpp
         render/gpu_transparency_tests.cpp
         render/gpu_vertex_color_tests.cpp
         render/gpu_procedural_mesh_tests.cpp
@@ -150,6 +151,12 @@ victus_add_test(victus_tilemap_tests
         tilemap/tilemap_tests.cpp
     DEPS VICTUS::Tilemap VICTUS::Physics VICTUS::Core
     LABELS tilemap)
+
+victus_add_test(victus_terrain_tests
+    SOURCES
+        terrain/terrain_tests.cpp
+    DEPS VICTUS::Terrain VICTUS::Physics VICTUS::Core
+    LABELS terrain)
 
 victus_add_test(victus_audio_tests
     SOURCES

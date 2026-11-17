@@ -3,6 +3,7 @@
 #include "victus/render/reflection_capture.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/runtime/surface_shader.hpp"
+#include "victus/terrain/terrain.hpp"
 #include "victus/particles/particles.hpp"
 
 #include "victus/core/log.hpp"
@@ -40,6 +41,8 @@ void GpuAssetCache::clear() {
         if (entry.mesh.valid()) ctx_.destroy(entry.mesh);
     procedural_.clear();
     evict_shaders();
+    if (terrain_shader_ && *terrain_shader_) ctx_.device().destroy(**terrain_shader_);
+    terrain_shader_.reset();
 }
 
 void GpuAssetCache::evict(const Uuid& uuid) {
@@ -204,6 +207,23 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
     return materials_.emplace(uuid, std::move(result)).first->second;
 }
 
+namespace {
+Result<rhi::ShaderHandle> create_surface_fragment(rhi::Device& device, std::string_view code, const std::string& name) {
+    auto compiled = compile_surface_shader(code, name, device.capabilities().backend == rhi::Backend::Metal);
+    if (!compiled) return std::move(compiled).error();
+    rhi::ShaderDesc d;
+    d.name = name;
+    d.stage = rhi::ShaderStage::Fragment;
+    d.spirv = compiled->spirv;
+    d.msl = compiled->msl;
+    d.samplers = compiled->counts.samplers;
+    d.storage_textures = compiled->counts.storage_textures;
+    d.storage_buffers = compiled->counts.storage_buffers;
+    d.uniform_buffers = compiled->counts.uniform_buffers;
+    return device.create_shader(d);
+}
+} // namespace
+
 Result<rhi::ShaderHandle> GpuAssetCache::surface_shader(const Uuid& uuid) {
     if (const auto it = shaders_.find(uuid); it != shaders_.end()) return it->second;
     auto build = [&]() -> Result<rhi::ShaderHandle> {
@@ -214,22 +234,19 @@ Result<rhi::ShaderHandle> GpuAssetCache::surface_shader(const Uuid& uuid) {
         const std::string path = rec->path; // records may move on refresh
         auto code = load_surface_shader_code(*db_, uuid);
         if (!code) return std::move(code).error();
-        auto compiled = compile_surface_shader(*code, path, ctx_.device().capabilities().backend == rhi::Backend::Metal);
-        if (!compiled) return std::move(compiled).error();
-        rhi::ShaderDesc d;
-        d.name = path;
-        d.stage = rhi::ShaderStage::Fragment;
-        d.spirv = compiled->spirv;
-        d.msl = compiled->msl;
-        d.samplers = compiled->counts.samplers;
-        d.storage_textures = compiled->counts.storage_textures;
-        d.storage_buffers = compiled->counts.storage_buffers;
-        d.uniform_buffers = compiled->counts.uniform_buffers;
-        return ctx_.device().create_shader(d);
+        return create_surface_fragment(ctx_.device(), *code, path);
     };
     auto result = build();
     if (!result) VICTUS_LOG_ERROR("assets", "{}", result.error().message);
     return shaders_.emplace(uuid, std::move(result)).first->second;
+}
+
+Result<rhi::ShaderHandle> GpuAssetCache::terrain_shader() {
+    if (!terrain_shader_) {
+        terrain_shader_ = create_surface_fragment(ctx_.device(), terrain::terrain_surface_code(), "terrain");
+        if (!*terrain_shader_) VICTUS_LOG_ERROR("assets", "built-in terrain shader: {}", terrain_shader_->error().message);
+    }
+    return *terrain_shader_;
 }
 
 void GpuAssetCache::evict_shaders() {
@@ -332,6 +349,7 @@ const render::GpuMesh* GpuAssetCache::procedural(const scene::ProceduralMesh& me
         if (i < mesh.colors.size()) v.color = mesh.colors[i];
     }
     data.indices = mesh.indices;
+    for (const scene::ProceduralMesh::Lod& lod : mesh.lods) data.lods.push_back({lod.indices, lod.error});
     if (!mesh.uvs.empty()) render::compute_tangents(data);
     auto g = ctx_.create_mesh(data, "procedural");
     if (!g) {
@@ -791,6 +809,47 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             m.emissive_strength = o->emissive_strength;
         }
     };
+    w.each<terrain::TerrainComponent, terrain::TerrainRuntime, WorldTransform>(
+        [&](Entity entity, const terrain::TerrainComponent& t, const terrain::TerrainRuntime& rt, const WorldTransform& wt) {
+            if (!rt.data || rt.chunks.empty()) return;
+            render::Material m;
+            m.base_color = {1, 1, 1, 1};
+            m.metallic = 0.0f;
+            m.roughness = std::clamp(t.roughness, 0.0f, 1.0f);
+            m.cast_shadows = t.cast_shadows;
+            if (auto sh = assets.terrain_shader(); sh) m.surface_shader = *sh;
+            rhi::TextureHandle* slots[terrain::kLayerCount] = {&m.base_color_texture, &m.metallic_roughness_texture,
+                                                              &m.normal_texture, &m.emissive_texture};
+            for (std::uint32_t i = 0; i < terrain::kLayerCount; ++i) {
+                const math::Color tint = t.layer_tint(i);
+                float tiling = 0.0f;
+                if (const Uuid& tex = t.layer_texture(i); !tex.is_nil()) {
+                    if (auto h = assets.texture(tex); h) {
+                        *slots[i] = *h;
+                        tiling = std::max(t.layer_tiling(i), 1e-3f);
+                    } else {
+                        ++stats.missing_assets;
+                    }
+                }
+                m.shader_params[i] = {tint.r, tint.g, tint.b, tiling};
+            }
+            // Scale is ignored (the component's size sets the extent): normalized axes.
+            math::Mat4 model = wt.matrix;
+            for (int a = 0; a < 3; ++a) {
+                const math::Vec3 axis = model.c[a].xyz();
+                const float len = math::length(axis);
+                const math::Vec3 unit = len > 1e-8f ? axis * (1.0f / len) : math::Vec3{a == 0 ? 1.0f : 0.0f, a == 1 ? 1.0f : 0.0f, a == 2 ? 1.0f : 0.0f};
+                model.c[a] = math::Vec4(unit, 0.0f);
+            }
+            const std::uint64_t motion_base = (entity.bits() + 1) * 0x9E3779B97F4A7C15ull; // distinct per chunk
+            for (std::size_t i = 0; i < rt.chunks.size(); ++i) {
+                if (!rt.chunks[i]) continue;
+                const render::GpuMesh* mesh = assets.procedural(*rt.chunks[i]);
+                if (!mesh) continue;
+                renderer.submit(*mesh, m, model, (motion_base + i) | 1u);
+                ++stats.terrain_chunks;
+            }
+        });
     w.each<MeshRendererComponent, WorldTransform>([&](Entity entity, const MeshRendererComponent& mr, const WorldTransform& wt) {
         if (!mr.visible) return;
         const std::uint64_t motion_id = entity.bits() + 1; // stable per entity; never 0 for live entities

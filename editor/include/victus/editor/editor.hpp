@@ -5,6 +5,7 @@
 #pragma once
 #include "victus/core/profiler.hpp"
 #include "victus/animation/animation.hpp"
+#include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
@@ -245,6 +246,9 @@ public:
     void continue_tile_stroke(std::int32_t x, std::int32_t y);
     void end_tile_stroke();
     [[nodiscard]] bool tile_stroke_active() const noexcept { return tile_stroke_.active; }
+    // Writes a new generated heightfield (default "terrain/Terrain.vterrain", made unique; 129
+    // samples per side) and creates an entity with a Terrain component using it (undoable).
+    Result<scene::Entity> create_terrain(std::string_view relative_path = {}, std::uint32_t resolution = 129);
     // Writes a new surface shader from the template (default "shaders/Surface.vshader", made
     // unique). Returns its UUID.
     Result<Uuid> create_surface_shader(std::string_view relative_path = {});
@@ -535,6 +539,7 @@ private:
     std::unique_ptr<animation::AnimationSystem> play_animation_; // fresh per play session
     std::unique_ptr<animation::AnimationSystem> edit_sprites_;   // previews SpriteAnimator frames while editing
     std::unique_ptr<tilemap::TilemapSystem> tilemaps_;           // tile sets + tile colliders (edit and play)
+    std::unique_ptr<terrain::TerrainSystem> terrains_;           // terrain chunks + colliders (edit and play)
     // "Create Sprite Sheet" popup of the asset table.
     Uuid sheet_texture_;
     Uuid import_texture_; // "Texture Import Settings" popup target

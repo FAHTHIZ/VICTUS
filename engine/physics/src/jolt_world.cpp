@@ -25,6 +25,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
@@ -380,6 +381,7 @@ public:
                 ++it;
             }
         }
+        sync_heightfields(scene);
         if (added > 64) system_->OptimizeBroadPhase();
         sync_characters(scene);
         sync_joints(scene);
@@ -433,10 +435,12 @@ public:
         chars_.clear();
         for (auto& [k, b] : bodies_) destroy(b);
         bodies_.clear();
+        for (auto& [k, f] : fields_) destroy_field(f);
+        fields_.clear();
         if (contacts_) contacts_->reset();
     }
 
-    bool has_body(Entity e) const override { return bodies_.contains(e.bits()) || chars_.contains(e.bits()); }
+    bool has_body(Entity e) const override { return bodies_.contains(e.bits()) || fields_.contains(e.bits()) || chars_.contains(e.bits()); }
 
     std::optional<RaycastHit> raycast(math::Vec3 o, math::Vec3 d, float max, std::uint32_t mask,
                                       Entity ignore) const override {
@@ -729,6 +733,83 @@ private:
         bi.RemoveBody(b.id);
         bi.DestroyBody(b.id);
         b.id = {};
+    }
+
+    // ---- height fields (terrain) ----
+
+    struct Field {
+        JPH::BodyID id;
+        std::uint64_t revision{0};
+        math::Vec3 position;
+        math::Quat rotation;
+        std::uint64_t seen{0};
+    };
+
+    void destroy_field(Field& f) {
+        if (f.id.IsInvalid()) return;
+        auto& bi = system_->GetBodyInterface();
+        bi.RemoveBody(f.id);
+        bi.DestroyBody(f.id);
+        f.id = {};
+    }
+
+    bool create_field(Entity e, const StaticHeightfieldComponent& c, const Pose& pose, Field& out) {
+        const std::uint32_t n = c.resolution;
+        if (n < 2 || !c.heights || c.heights->size() != static_cast<std::size_t>(n) * n) return false;
+        JPH::HeightFieldShapeSettings hs(c.heights->data(), JPH::Vec3(c.offset.x, c.offset.y, c.offset.z),
+                                         JPH::Vec3(std::max(c.spacing.x, 1e-4f), 1.0f, std::max(c.spacing.y, 1e-4f)), n);
+        hs.mBlockSize = n >= 1025 ? 4 : 2;
+        // Quantize to about a millimetre per sample relative to each block's range.
+        hs.mBitsPerSample = std::max<std::uint32_t>(8, hs.CalculateBitsPerSampleForError(0.001f));
+        auto res = hs.Create();
+        if (res.HasError()) {
+            VICTUS_LOG_WARN("physics", "height field: {}", res.GetError().c_str());
+            return false;
+        }
+        JPH::BodyCreationSettings bcs(res.Get(), to_jolt_r(pose.position), to_jolt(pose.rotation), JPH::EMotionType::Static,
+                                      make_layer(std::min<std::uint32_t>(c.layer, 15u), c.mask, false));
+        bcs.mUserData = encode(e);
+        bcs.mFriction = std::max(0.0f, c.friction);
+        bcs.mRestitution = std::clamp(c.restitution, 0.0f, 1.0f);
+        out.id = system_->GetBodyInterface().CreateAndAddBody(bcs, JPH::EActivation::DontActivate);
+        if (out.id.IsInvalid()) return false;
+        out.revision = c.revision;
+        out.position = pose.position;
+        out.rotation = pose.rotation;
+        return true;
+    }
+
+    void sync_heightfields(scene::Scene& scene) {
+        auto& bi = system_->GetBodyInterface();
+        scene.world().each<StaticHeightfieldComponent>([&](Entity e, StaticHeightfieldComponent& c) {
+            const Pose pose = world_pose(scene, e);
+            auto it = fields_.find(e.bits());
+            if (it != fields_.end() && it->second.revision != c.revision) {
+                destroy_field(it->second);
+                fields_.erase(it);
+                it = fields_.end();
+            }
+            if (it == fields_.end()) {
+                Field f;
+                if (!create_field(e, c, pose, f)) return;
+                it = fields_.emplace(e.bits(), f).first;
+            }
+            Field& f = it->second;
+            f.seen = generation_;
+            if (!nearly_equal(pose.position, f.position) || !nearly_equal(pose.rotation, f.rotation)) {
+                bi.SetPositionAndRotation(f.id, to_jolt_r(pose.position), to_jolt(pose.rotation), JPH::EActivation::DontActivate);
+                f.position = pose.position;
+                f.rotation = pose.rotation;
+            }
+        });
+        for (auto it = fields_.begin(); it != fields_.end();) {
+            if (it->second.seen != generation_) {
+                destroy_field(it->second);
+                it = fields_.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 
     // ---- characters ----
@@ -1093,6 +1174,7 @@ private:
     std::unique_ptr<JPH::PhysicsSystem> system_;
     std::unique_ptr<Contacts> contacts_;
     std::unordered_map<std::uint64_t, Entry> bodies_;
+    std::unordered_map<std::uint64_t, Field> fields_;
     std::unordered_map<std::uint64_t, Character> chars_;
     std::unordered_map<std::uint64_t, Joint> joints_;
     JPH::Ref<JointPairFilter> group_filter_;

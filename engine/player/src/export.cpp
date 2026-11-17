@@ -10,6 +10,7 @@
 #include "victus/core/log.hpp"
 #include "victus/core/pack.hpp"
 #include "victus/project/project.hpp"
+#include "victus/terrain/terrain.hpp"
 #include "victus/runtime/surface_shader.hpp"
 #include "victus/scene/scene.hpp"
 #include "victus/script/script.hpp"
@@ -199,6 +200,12 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         if (auto ts = (*db)->load_tileset(r.uuid); !ts) errors.push_back(ts.error().message);
     }
 
+    // Terrains: every heightfield must load (header, size and checksum).
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::Terrain) continue;
+        if (auto t = (*db)->load_terrain(r.uuid); !t) errors.push_back(t.error().message);
+    }
+
     // Scenes: every scene must load; references to scripts and audio clips must resolve.
     std::vector<std::string> scenes = proj->scenes();
     if (std::find(scenes.begin(), scenes.end(), proj->settings().startup_scene) == scenes.end())
@@ -244,6 +251,20 @@ Result<ExportReport> export_game(const ExportOptions& o) {
             if (!t || t->kind != assets::AssetKind::Tileset)
                 errors.push_back(std::format("{}: entity '{}' uses missing tile set {}", rel, entity_label(scene, e),
                                              c.tileset.to_string()));
+        });
+        scene.world().each<terrain::TerrainComponent>([&](scene::Entity e, terrain::TerrainComponent& c) {
+            const assets::AssetRecord* t = c.data.is_nil() ? nullptr : (*db)->find(c.data);
+            if (!t || t->kind != assets::AssetKind::Terrain)
+                errors.push_back(std::format("{}: entity '{}' uses missing terrain data {}", rel, entity_label(scene, e),
+                                             c.data.to_string()));
+            for (std::uint32_t i = 0; i < terrain::kLayerCount; ++i) {
+                const Uuid& tex = c.layer_texture(i);
+                if (tex.is_nil()) continue;
+                const assets::AssetRecord* x = (*db)->find(tex);
+                if (!x || x->kind != assets::AssetKind::Texture)
+                    errors.push_back(std::format("{}: entity '{}' terrain layer {} uses missing texture {}", rel,
+                                                 entity_label(scene, e), i, tex.to_string()));
+            }
         });
         scene.world().each<audio::AudioSourceComponent>([&](scene::Entity e, audio::AudioSourceComponent& c) {
             if (!c.clip.empty() && !asset_paths.contains(c.clip))

@@ -111,6 +111,8 @@ public:
     [[nodiscard]] Result<rhi::ShaderHandle> surface_shader(const Uuid& uuid);
     // Drops compiled surface shaders and the materials using them (after a .vshader changed).
     void evict_shaders();
+    // The built-in terrain surface shader (terrain::terrain_surface_code()), compiled on first use.
+    [[nodiscard]] Result<rhi::ShaderHandle> terrain_shader();
     // Built-in primitive mesh: "cube", "sphere", "plane", "cylinder". nullptr when unknown.
     [[nodiscard]] const render::GpuMesh* primitive(std::string_view name);
     // GPU copy of a procedural mesh (scene::ProceduralMeshComponent), uploaded on first use and
@@ -149,6 +151,7 @@ private:
     std::unordered_map<std::string, render::GpuMesh> primitives_;
     std::unordered_map<Uuid, Result<render::Material>, UuidHash> materials_;
     std::unordered_map<Uuid, Result<rhi::ShaderHandle>, UuidHash> shaders_;
+    std::optional<Result<rhi::ShaderHandle>> terrain_shader_;
     struct ProceduralEntry {
         render::GpuMesh mesh;
         std::uint64_t last_used{0};
@@ -172,6 +175,7 @@ struct ExtractStats {
     std::uint32_t irradiance_probes_baked{0}; // probes baked during this call
     std::uint32_t irradiance_probes_refreshed{0}; // dynamic-volume probes re-captured during this call
     std::uint32_t skinned{0}; // meshes drawn with GPU skinning
+    std::uint32_t terrain_chunks{0}; // terrain chunk meshes submitted (before culling)
     std::uint32_t particle_emitters{0}, particles{0}; // submitted (before camera culling)
     bool camera_found{false};
 };
