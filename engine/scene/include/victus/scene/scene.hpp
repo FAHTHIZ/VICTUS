@@ -61,12 +61,16 @@ struct CameraComponent {
     bool pixel_snap{false};
 };
 struct LightComponent {
-    enum class Type : std::uint8_t { Directional, Point };
+    enum class Type : std::uint8_t { Directional, Point, Spot };
     Type type{Type::Directional};
     math::Color color{1, 1, 1, 1}; // linear
     float intensity{3.0f};
     float range{10.0f};
     bool shadows{true};
+    // Spot cone half-angles in degrees (full intensity inside `inner`, zero beyond `outer`);
+    // spots shine along the entity's local -Z axis.
+    float inner_angle_degrees{20.0f};
+    float outer_angle_degrees{30.0f};
 };
 // References a mesh inside an asset (glTF/model) by asset UUID and sub-mesh index, plus a
 // material override index (-1 = mesh's own material).

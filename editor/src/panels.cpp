@@ -469,6 +469,7 @@ void Editor::draw_menu_bar() {
         item("Camera", Primitive::Camera);
         item("Directional Light", Primitive::DirectionalLight);
         item("Point Light", Primitive::PointLight);
+        item("Spot Light", Primitive::SpotLight);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Assets")) {
@@ -818,6 +819,7 @@ void Editor::draw_hierarchy() {
         if (ImGui::MenuItem("Camera")) create_entity(Primitive::Camera);
         if (ImGui::MenuItem("Directional Light")) create_entity(Primitive::DirectionalLight);
         if (ImGui::MenuItem("Point Light")) create_entity(Primitive::PointLight);
+        if (ImGui::MenuItem("Spot Light")) create_entity(Primitive::SpotLight);
         ImGui::EndPopup();
     }
     ImGui::SameLine();
@@ -919,13 +921,17 @@ bool Editor::inspect_components(Entity e) {
     }
     if (auto* l = w.get<LightComponent>(e); l && removable("Light", remove_light)) {
         int type = static_cast<int>(l->type);
-        if (ImGui::Combo("Type", &type, "Directional\0Point\0")) {
+        if (ImGui::Combo("Type", &type, "Directional\0Point\0Spot\0")) {
             l->type = static_cast<LightComponent::Type>(type);
             changed = true;
         }
         changed |= color_edit("Color", l->color, false);
         changed |= ImGui::DragFloat("Intensity", &l->intensity, 0.05f, 0.0f, 1000.0f);
-        if (l->type == LightComponent::Type::Point) changed |= ImGui::DragFloat("Range", &l->range, 0.05f, 0.01f, 1000.0f);
+        if (l->type != LightComponent::Type::Directional) changed |= ImGui::DragFloat("Range", &l->range, 0.05f, 0.01f, 1000.0f);
+        if (l->type == LightComponent::Type::Spot) {
+            changed |= ImGui::DragFloat("Inner Angle", &l->inner_angle_degrees, 0.25f, 0.0f, l->outer_angle_degrees, "%.1f deg");
+            changed |= ImGui::DragFloat("Outer Angle", &l->outer_angle_degrees, 0.25f, 0.1f, 89.5f, "%.1f deg");
+        }
         changed |= ImGui::Checkbox("Shadows", &l->shadows);
     }
     if (auto* m = w.get<MeshRendererComponent>(e); m && removable("Mesh Renderer", remove_mesh)) {

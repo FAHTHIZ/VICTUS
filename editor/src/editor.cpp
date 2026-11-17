@@ -290,7 +290,7 @@ void Editor::new_scene() {
     std::vector<Entity> remove;
     for (const Entity e : s->roots()) {
         if (!s->world().has<CameraComponent>(e) && !s->world().has<LightComponent>(e)) remove.push_back(e);
-        else if (s->world().get<LightComponent>(e)->type == LightComponent::Type::Point) remove.push_back(e);
+        else if (s->world().get<LightComponent>(e)->type != LightComponent::Type::Directional) remove.push_back(e);
     }
     for (const Entity e : remove) s->destroy(e);
     s->name = "New Scene";
@@ -340,6 +340,14 @@ Entity Editor::create_entity(Primitive kind, Entity parent) {
         l.type = LightComponent::Type::Point;
         l.intensity = 10.0f;
         w.get<Transform>(e)->position.y += 1.5f;
+        break;
+    }
+    case Primitive::SpotLight: {
+        auto& l = w.add<LightComponent>(e);
+        l.type = LightComponent::Type::Spot;
+        l.intensity = 20.0f;
+        w.get<Transform>(e)->position.y += 3.0f;
+        w.get<Transform>(e)->rotation = math::Quat::euler(math::radians(-90.0f), 0, 0); // points down
         break;
     }
     case Primitive::Sprite: w.add<SpriteComponent>(e); break;

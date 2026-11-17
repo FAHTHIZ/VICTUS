@@ -57,7 +57,8 @@ constexpr EnumName<CameraComponent::Projection> kProjections[] = {
     {CameraComponent::Projection::Perspective, "perspective"},
     {CameraComponent::Projection::Orthographic, "orthographic"}};
 constexpr EnumName<LightComponent::Type> kLightTypes[] = {{LightComponent::Type::Directional, "directional"},
-                                                          {LightComponent::Type::Point, "point"}};
+                                                          {LightComponent::Type::Point, "point"},
+                                                          {LightComponent::Type::Spot, "spot"}};
 
 Value uuid_value(const Uuid& u) { return Value(u.to_string()); }
 bool read_uuid(const Value& v, Uuid& out) {
@@ -168,6 +169,10 @@ SerializerRegistry::SerializerRegistry() {
             v.set("intensity", l.intensity);
             v.set("range", l.range);
             v.set("shadows", l.shadows);
+            if (l.type == LightComponent::Type::Spot) {
+                v.set("inner_angle", l.inner_angle_degrees);
+                v.set("outer_angle", l.outer_angle_degrees);
+            }
             return v;
         },
         [](LightComponent& l, const Value& v) -> Status {
@@ -176,6 +181,8 @@ SerializerRegistry::SerializerRegistry() {
             l.intensity = v["intensity"].as_float(l.intensity);
             l.range = v["range"].as_float(l.range);
             l.shadows = v["shadows"].as_bool(l.shadows);
+            l.inner_angle_degrees = v["inner_angle"].as_float(l.inner_angle_degrees);
+            l.outer_angle_degrees = v["outer_angle"].as_float(l.outer_angle_degrees);
             return {};
         });
 

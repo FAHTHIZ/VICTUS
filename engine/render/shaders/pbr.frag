@@ -1,7 +1,7 @@
 #version 450
 // SPDX-License-Identifier: Apache-2.0
 // Metallic-roughness PBR (glTF 2.0 model): GGX/Smith/Schlick, directional sun with cascaded
-// shadow maps (2x2 atlas, PCF, dithered cascade transitions), forward point lights (up to 16),
+// shadow maps (2x2 atlas, PCF, dithered cascade transitions), clustered forward point and spot lights,
 // image-based lighting from a baked environment map (GGX-prefiltered cubemap + SH9 irradiance)
 // or the analytic sky (diffuse + split-sum specular approximation), screen-space ambient
 // occlusion and emissive.
@@ -25,7 +25,11 @@ layout(set = 2, binding = 4) uniform sampler2DShadow u_shadow;
 layout(set = 2, binding = 5) uniform sampler2D u_ao;
 layout(set = 2, binding = 6) uniform samplerCube u_env; // prefiltered environment (black 1x1 when absent)
 
-struct PointLight { vec4 position_range; vec4 color_intensity; };
+// Clustered local lights (see light_clusters.hpp): a light array and, per cluster, an
+// (offset, count) header followed by the flattened light index list.
+struct LocalLight { vec4 position_range; vec4 color_intensity; vec4 direction_cos_outer; vec4 spot; };
+layout(std430, set = 2, binding = 7) readonly buffer Lights { LocalLight local_lights[]; };
+layout(std430, set = 2, binding = 8) readonly buffer Clusters { uint cluster_data[]; };
 layout(set = 3, binding = 0) uniform Lighting {
     vec4 camera_pos;     // w: ambient occlusion enabled
     vec4 camera_forward; // xyz: view direction
@@ -33,7 +37,7 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 sun_color;      // rgb * intensity
     vec4 sky_color;      // rgb zenith ambient radiance, w: exposure
     vec4 horizon_color;  // rgb horizon ambient radiance
-    vec4 ground_color;   // rgb ground ambient radiance, w: point light count
+    vec4 ground_color;   // rgb ground ambient radiance, w: local light count
     vec4 shadow_params;  // x: atlas texel size, y: depth bias, z: normal bias (texels), w: cascade count
     vec4 cascade_params; // x: soft (3x3 PCF), y: atlas tile scale, z: transition fraction
     vec4 cascade_splits; // far view depth of each cascade
@@ -46,7 +50,8 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 env_params;     // x: environment map present, y: max mip, z: intensity, w: rotation (radians about +Y)
     vec4 env_sh[9];      // SH9 irradiance / pi (rgb), pre-multiplied by the intensity
     mat4 cascade_vp[4];
-    PointLight points[16];
+    vec4 cluster_grid;   // xyz: tiles x, tiles y, depth slices, w: max lights per cluster
+    vec4 cluster_depth;  // x: near, y: slices / log(far / near)
 } lighting;
 layout(set = 3, binding = 1) uniform Material {
     vec4 base_color;
@@ -278,15 +283,30 @@ void main() {
     vec3 L = normalize(-lighting.sun_dir.xyz);
     vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * shadow_factor(N, L);
 
-    int count = int(lighting.ground_color.w);
-    for (int i = 0; i < count && i < 16; ++i) {
-        vec3 to_light = lighting.points[i].position_range.xyz - v_world_pos;
-        float dist = length(to_light);
-        float range = lighting.points[i].position_range.w;
-        float falloff = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
-        float atten = falloff * falloff / (dist * dist + 1.0);
-        vec3 radiance = lighting.points[i].color_intensity.rgb * lighting.points[i].color_intensity.w * atten;
-        color += brdf(N, V, to_light / max(dist, 1e-4), radiance, albedo, metallic, roughness);
+    if (lighting.ground_color.w > 0.5) {
+        vec3 grid = lighting.cluster_grid.xyz;
+        vec2 tile = clamp(floor(gl_FragCoord.xy * lighting.screen.xy * grid.xy), vec2(0.0), grid.xy - 1.0);
+        float view_depth = max(dot(v_world_pos - lighting.camera_pos.xyz, lighting.camera_forward.xyz), lighting.cluster_depth.x);
+        float slice = clamp(floor(log(view_depth / lighting.cluster_depth.x) * lighting.cluster_depth.y), 0.0, grid.z - 1.0);
+        uint cluster = uint((slice * grid.y + tile.y) * grid.x + tile.x);
+        uint first = cluster_data[2u * cluster], count = min(cluster_data[2u * cluster + 1u], uint(lighting.cluster_grid.w));
+        for (uint i = 0u; i < count; ++i) {
+            LocalLight l = local_lights[cluster_data[first + i]];
+            vec3 to_light = l.position_range.xyz - v_world_pos;
+            float dist = length(to_light);
+            float range = l.position_range.w;
+            float falloff = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
+            float atten = falloff * falloff / (dist * dist + 1.0);
+            vec3 Ld = to_light / max(dist, 1e-4);
+            if (l.spot.y > 0.5) { // smooth cone: 1 inside the inner angle, 0 outside the outer
+                float cd = dot(-Ld, l.direction_cos_outer.xyz);
+                float t = clamp((cd - l.direction_cos_outer.w) / max(l.spot.x - l.direction_cos_outer.w, 1e-4), 0.0, 1.0);
+                atten *= t * t;
+            }
+            if (atten <= 0.0) continue;
+            vec3 radiance = l.color_intensity.rgb * l.color_intensity.w * atten;
+            color += brdf(N, V, Ld, radiance, albedo, metallic, roughness);
+        }
     }
 
     float NdotV = max(dot(N, V), 1e-4);

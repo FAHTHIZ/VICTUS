@@ -453,6 +453,13 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 - Decision: (b) now. It adds one fullscreen pass and two history textures, changes no material pipeline, and is correct for the dominant case (camera motion over static geometry); clipping removes ghosts from moving objects at the cost of some softening. The shader interface (reprojection per pixel) lets (a) be added later by replacing the depth-derived position with a velocity sample. TAA is enabled at High/Ultra; Low/Medium keep FXAA because the extra full-resolution RGBA16F read/write is a large share of bandwidth on entry-level phones.
 - Dynamic resolution measures CPU frame time (SDL_GPU exposes no GPU timestamps), scales by sqrt(target/measured) with a cooldown, and recovers in small steps after sustained headroom to avoid oscillation. Fixed-step, recorded and replayed runs keep a constant scale so captures stay deterministic.
 
+### ADR-0046: Clustered forward lighting with CPU light assignment
+- Status: Accepted (Slice 48)
+- Context: the renderer is forward (needed for transparency, cheap MSAA and tile-based mobile GPUs) and limited to 16 lights in a uniform buffer.
+- Options: (a) deferred shading; (b) tiled forward (2D tiles, depth bounds from a pre-pass); (c) clustered forward (Olsson et al. 2012) with 3D clusters, no depth pre-pass dependency; light assignment on the CPU or in a compute shader.
+- Decision: (c) with a 16x9x24 grid, logarithmic slices and CPU assignment. Clusters do not need the depth pre-pass (which the Low tier skips), work for transparent surfaces, and keep a single material path. CPU assignment is a few hundred microseconds for hundreds of lights, avoids compute shaders (unavailable or slow on some mobile drivers) and is unit-testable for conservativeness. Lights and the cluster list live in fragment storage buffers, which SDL_GPU supports on Vulkan, Metal and D3D12.
+- Consequences: very high light counts (thousands, many per cluster) should move assignment to compute; the per-cluster cap (128) drops the farthest lights in extreme overlaps and is reported in stats.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 
