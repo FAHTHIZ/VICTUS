@@ -2312,3 +2312,152 @@ TEST_CASE("editor: play sessions run behaviour trees and expose them to the AI d
     ed.stop();
     CHECK(ed.play_ai() == nullptr);
 }
+
+TEST_CASE("editor: the sequencer panel edits, previews, records and saves sequences") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Cine", "Cine", "3d").ok());
+    h.frames(2);
+    auto& ed = *h.ed;
+    Scene& s = ed.edit_scene();
+    using sequencer::TrackType;
+    const Entity rig = s.create("Rig");
+    const Entity door = s.create("Door", rig);
+    s.world().get<Transform>(door)->position = {1, 0, 0};
+    const Entity cam = s.create("ShotCam");
+    s.world().add<CameraComponent>(cam, CameraComponent{.primary = false});
+    auto door_pos = [&] { return s.world().get<Transform>(door)->position; };
+    ed.select(rig);
+
+    // Create, open, assign.
+    auto path = ed.create_sequence();
+    REQUIRE(path.ok());
+    CHECK(*path == "sequences/Sequence.vseq");
+    REQUIRE(ed.assets()->find_path(*path));
+    CHECK(ed.assets()->find_path(*path)->kind == assets::AssetKind::Sequence);
+    REQUIRE(ed.open_sequence(*path).ok());
+    CHECK(ed.sequencer_open());
+    CHECK(ed.editing_sequence_path() == *path);
+    CHECK(ed.editing_sequence()->duration == doctest::Approx(5));
+    CHECK(ed.sequence_preview_player().is_null());
+    h.frames(2); // panel with "No preview player"
+    REQUIRE(ed.assign_sequence(rig));
+    CHECK(s.world().get<sequencer::SequencePlayerComponent>(rig)->sequence == *path);
+    CHECK(ed.sequence_preview_player() == rig);
+
+    // Record a transform key, move the door, record another; scrubbing interpolates.
+    const int tr = ed.sequence_add_track(TrackType::Transform, "Door");
+    CHECK(tr == 0);
+    const auto k0 = ed.sequence_record_transform(tr, 0);
+    CHECK(k0.valid());
+    ed.sequence_seek(0);
+    CHECK(ed.sequence_previewing());
+    s.world().get<Transform>(door)->position = {1, 4, 0};
+    const auto k1 = ed.sequence_record_transform(tr, 2.0f);
+    REQUIRE(k1.valid());
+    REQUIRE(ed.editing_sequence()->tracks[0].position.size() == 2);
+    CHECK(ed.editing_sequence()->tracks[0].rotation.size() == 2);
+    ed.sequence_seek(1.0f);
+    CHECK(door_pos().y == doctest::Approx(2));
+    CHECK(ed.sequence_dirty());
+
+    // Event and camera tracks.
+    const int ev = ed.sequence_add_track(TrackType::Event);
+    const auto ek = ed.sequence_add_key(ev, 1.5f, "boom");
+    CHECK(ek.valid());
+    CHECK(ed.editing_sequence()->tracks[1].events.at(0).name == "boom");
+    const int ct = ed.sequence_add_track(TrackType::Camera);
+    CHECK(ed.sequence_add_key(ct, 0.5f, "ShotCam").valid());
+    ed.sequence_seek(1.0f);
+    CHECK(s.world().get<CameraComponent>(cam)->primary);
+
+    // Moving a transform key moves its rotation and scale keys too.
+    const auto moved = ed.sequence_move_key(k1, 3.0f);
+    REQUIRE(moved.valid());
+    CHECK(*ed.sequence_key_time(moved) == doctest::Approx(3));
+    CHECK(ed.editing_sequence()->tracks[0].rotation.back().time == doctest::Approx(3));
+    CHECK(ed.editing_sequence()->tracks[0].scale.back().time == doctest::Approx(3));
+    ed.sequence_seek(1.5f);
+    CHECK(door_pos().y == doctest::Approx(2));
+
+    // Delete, undo, redo.
+    CHECK(ed.sequence_delete_key(ek));
+    CHECK(ed.editing_sequence()->tracks[1].events.empty());
+    CHECK(ed.sequence_undo());
+    CHECK(ed.editing_sequence()->tracks[1].events.size() == 1);
+    CHECK(ed.sequence_redo());
+    CHECK(ed.editing_sequence()->tracks[1].events.empty());
+    CHECK(ed.sequence_undo());
+
+    // Real-time preview and the panel drawing with a selected key.
+    ed.sequence_preview_play(true);
+    h.frames(6);
+    CHECK(ed.sequence_time() > 1.5f);
+    ed.sequence_preview_play(false);
+    (void)ed.sequence_add_key(ev, 2.5f, "late");
+    h.frames(3);
+
+    // Ending the preview restores the authored scene.
+    ed.end_sequence_preview();
+    CHECK_FALSE(ed.sequence_previewing());
+    CHECK(door_pos() == math::Vec3{1, 0, 0});
+    CHECK_FALSE(s.world().get<CameraComponent>(cam)->primary);
+
+    // Save: the runtime accepts the file and our own write is not reported as an outside change.
+    REQUIRE(ed.save_sequence().ok());
+    CHECK_FALSE(ed.sequence_dirty());
+    const auto file = ed.assets()->assets_dir() / *path;
+    auto text = fs::read_text(file);
+    REQUIRE(text.ok());
+    auto parsed = sequencer::Sequence::parse(*text);
+    REQUIRE(parsed.ok());
+    CHECK((*parsed)->tracks.size() == 3);
+    CHECK((*parsed)->tracks[0].position.back().time == doctest::Approx(3));
+    CHECK((*parsed)->tracks[1].events.size() == 2);
+    sfs::last_write_time(file, sfs::file_time_type::clock::now() + std::chrono::seconds(2));
+    std::size_t before = ed.messages().size();
+    (void)ed.check_asset_changes();
+    for (std::size_t i = before; i < ed.messages().size(); ++i) CHECK(ed.messages()[i].find("Reloaded sequence") == std::string::npos);
+
+    // An outside edit reloads the open (clean) sequence.
+    REQUIRE(fs::write_text_atomic(file, R"({"duration": 1, "tracks": [{"type": "transform", "target": "Door",
+        "position": [{"t": 0, "v": [0, 0, 0]}, {"t": 0.1, "v": [0, 5, 0]}]}]})").ok());
+    sfs::last_write_time(file, sfs::file_time_type::clock::now() + std::chrono::seconds(4));
+    before = ed.messages().size();
+    (void)ed.check_asset_changes();
+    bool reported = false;
+    for (std::size_t i = before; i < ed.messages().size(); ++i) reported |= ed.messages()[i] == "Reloaded sequence " + *path;
+    CHECK(reported);
+    REQUIRE(ed.editing_sequence()->tracks.size() == 1);
+
+    // Saving the scene while previewing stores the authored pose.
+    ed.sequence_seek(0.1f);
+    CHECK(door_pos().y == doctest::Approx(5));
+    REQUIRE(ed.save_scene_as("scenes/cine.vscene").ok());
+    CHECK_FALSE(ed.sequence_previewing());
+    CHECK(door_pos() == math::Vec3{1, 0, 0});
+
+    // Play sessions run the saved sequence.
+    ed.play();
+    h.frames(20);
+    REQUIRE(ed.play_sequencer() != nullptr);
+    Scene& play = ed.active_scene();
+    const Entity pd = play.find(s.uuid(door));
+    REQUIRE_FALSE(pd.is_null());
+    CHECK(play.world().get<Transform>(pd)->position.y == doctest::Approx(5));
+    ed.stop();
+    CHECK(ed.play_sequencer() == nullptr);
+    CHECK(door_pos() == math::Vec3{1, 0, 0});
+
+    // Relative tracks record offsets from the pre-preview transform.
+    const int rel = ed.sequence_add_track(TrackType::Transform, "Door");
+    REQUIRE(ed.edit_sequence([&](sequencer::Sequence& q) { q.tracks[static_cast<std::size_t>(rel)].relative = true; }));
+    ed.sequence_seek(0);
+    s.world().get<Transform>(door)->position = {1, 0, 2};
+    REQUIRE(ed.sequence_record_transform(rel, 0.5f).valid());
+    CHECK(ed.editing_sequence()->tracks[static_cast<std::size_t>(rel)].position.at(0).value == math::Vec3{0, 0, 2});
+    ed.close_sequence();
+    CHECK(ed.editing_sequence() == nullptr);
+    CHECK(door_pos() == math::Vec3{1, 0, 0});
+}

@@ -56,7 +56,7 @@ void Editor::update_autosave(float dt) {
         autosave_timer_ = 0;
         return;
     }
-    if (autosave_seconds_ <= 0) return;
+    if (autosave_seconds_ <= 0 || sequence_previewing()) return; // previewed poses are not authored edits
     autosave_timer_ += dt;
     if (autosave_timer_ < autosave_seconds_ || (autosave_written_ && autosaved_revision_ == undo_.revision())) return;
     if (auto st = autosave_now(); !st.ok()) {

@@ -250,6 +250,7 @@ void Editor::frame(float dt) {
         if (tilemaps_) tilemaps_->update(active_scene());                   // tile sets for drawing
     }
     update_graph_debug(dt);
+    update_sequence_preview(dt);
     // Inspector property discovery follows script edits made in an external editor.
     if ((script_poll_ += dt) >= 1.0f) {
         script_poll_ = 0;
@@ -422,6 +423,7 @@ void Editor::draw_workspace(float) {
     draw_tile_palette();
     draw_terrain_tools();
     draw_ai_debugger();
+    draw_sequencer();
     draw_status_bar();
     handle_shortcuts();
 }
@@ -514,6 +516,7 @@ void Editor::draw_menu_bar() {
             }
         }
         ImGui::MenuItem("Graph Editor", nullptr, &show_graph_editor_);
+        ImGui::MenuItem("Sequencer", nullptr, &show_sequencer_);
         if (ImGui::MenuItem("Copy Assets Folder Path") && platform_) platform_->set_clipboard(project_->assets_dir().string());
         ImGui::EndMenu();
     }
