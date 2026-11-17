@@ -168,6 +168,13 @@ struct Environment {
     float ao_fade_distance{60.0f}; // AO fades out between half this view distance and this
     bool draw_sky{true};
     math::Color clear_color{0.05f, 0.05f, 0.06f, 1}; // when draw_sky is false
+    // Procedural sky background with its own gradient. Off: the background shows sky_zenith/sky_horizon/ground,
+    // the same terms that light the scene. On: those stay the ambient and the background uses these, so a game can
+    // pair a dim hemisphere ambient with a bright visible sky. Ignored when an environment map is drawn.
+    bool sky_background{false};
+    math::Color background_zenith{0.18f, 0.36f, 0.75f, 1};
+    math::Color background_horizon{0.62f, 0.72f, 0.85f, 1};
+    math::Color background_ground{0.22f, 0.2f, 0.18f, 1};
     // Distance fog on lit and unlit opaque geometry (camera distance in metres). The colour is
     // linear radiance, multiplied by ambient_intensity like the sky colours.
     FogMode fog_mode{FogMode::None};

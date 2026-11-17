@@ -185,3 +185,30 @@ TEST_CASE("gpu: scenes author spot lights through LightComponent") {
     CHECK(corner < 20);
     std::filesystem::remove_all(project);
 }
+
+TEST_CASE("gpu: the sky background can differ from the ambient terms") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    RenderSettings s = plain_settings();
+    (*sr)->set_settings(s);
+    // Looking up: the whole frame is sky.
+    const Camera3D cam = Camera3D::look_at({0, 1, 0}, {0, 100, -1}, {0, 0, -1});
+    Environment env;
+    env.vignette = 0.0f;
+    env.tonemap = false;
+    env.draw_sky = true;
+    env.clear_color = {0, 0, 0, 1};
+    env.sky_zenith = env.sky_horizon = env.ground = {0.02f, 0.02f, 0.02f, 1}; // dim ambient
+    (*sr)->begin(cam, no_sun(), env);
+    const auto dim = shoot(**sr);
+    env.sky_background = true;
+    env.background_zenith = env.background_horizon = {0.1f, 0.3f, 0.9f, 1};
+    (*sr)->begin(cam, no_sun(), env);
+    const auto bright = shoot(**sr);
+    const std::uint32_t c = pixel(dim, W, W / 2, H / 2), b = pixel(bright, W, W / 2, H / 2);
+    CHECK(lum(c) < 150); // sum of three sRGB channels; 0.02 linear is ~39 each
+    CHECK(channel(b, 2) > 150);
+    CHECK(channel(b, 2) > channel(b, 0) + 60);
+}

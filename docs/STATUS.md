@@ -952,5 +952,11 @@ Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror, lavapipe, `SDL_VIDEO
 Known gaps (next parts):
 - No sculpt/smooth/flatten/paint brushes, foliage scatter, Luau terrain API, navmesh from terrain, holes, or per-chunk collision updates (the whole height field is rebuilt per edit). Splat detail lives in vertex colours, so painting resolution equals the sample spacing.
 
+## Game-driven: sky backdrop separate from ambient (for AURORIA)
+- `Environment::sky_background` with `background_zenith`/`background_horizon`/`background_ground`: when set, the procedural sky pass draws this gradient while `sky_zenith`/`sky_horizon`/`ground` keep lighting the scene. Lets a game use a dim hemisphere ambient and a bright painted sky at once (AURORIA's DayNight model). Defaults off; existing scenes unchanged.
+
+Verification (local, Ubuntu, Release, lavapipe under Xvfb):
+- `victus_gpu_tests` "gpu: the sky background can differ from the ambient terms" (dim ambient sky vs. bright blue backdrop on screen); full `victus_gpu_tests` 84/84.
+
 ## Next task
 Roadmap item 18 part 2: terrain sculpt and paint tools in the editor (raise/lower, smooth, flatten, paint layer, undo per stroke).
