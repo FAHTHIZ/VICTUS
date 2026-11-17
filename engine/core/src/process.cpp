@@ -351,10 +351,15 @@ Status ChildProcess::write(std::string_view data) {
     if (stdin_fd_ < 0) return make_error(ErrorCode::IoError, "child stdin is closed");
     // Writing to a pipe whose reader exited raises SIGPIPE; block it on this thread and consume
     // any pending instance so a dead child is reported as an error instead of killing us.
+#if defined(__APPLE__)
+    // macOS has no sigtimedwait; F_SETNOSIGPIPE makes this pipe report EPIPE instead.
+    (void)::fcntl(stdin_fd_, F_SETNOSIGPIPE, 1);
+#else
     sigset_t block, old;
     sigemptyset(&block);
     sigaddset(&block, SIGPIPE);
     pthread_sigmask(SIG_BLOCK, &block, &old);
+#endif
     Status result;
     while (!data.empty()) {
         const ssize_t n = ::write(stdin_fd_, data.data(), data.size());
@@ -365,12 +370,14 @@ Status ChildProcess::write(std::string_view data) {
         }
         data.remove_prefix(static_cast<std::size_t>(n));
     }
+#if !defined(__APPLE__)
     if (!result) {
         const timespec zero{0, 0};
         while (sigtimedwait(&block, nullptr, &zero) > 0) {
         }
     }
     pthread_sigmask(SIG_SETMASK, &old, nullptr);
+#endif
     return result;
 }
 
