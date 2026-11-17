@@ -7,6 +7,7 @@
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
 #include "victus/ai/ai.hpp"
+#include "victus/sequencer/sequencer.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
@@ -231,6 +232,7 @@ struct TemplateRun {
     std::unique_ptr<particles::ParticleSystem> particles;
     std::unique_ptr<navigation::NavigationSystem> navigation;
     std::unique_ptr<ai::AiSystem> ai;
+    std::unique_ptr<sequencer::SequencerSystem> sequencer;
     std::unique_ptr<audio::AudioEngine> audio;
     gameplay::Simulation sim;
     gameplay::ManualInput input;
@@ -305,6 +307,8 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     navigation::add_navigation_systems(r->sim, *r->navigation);
     r->ai = std::make_unique<ai::AiSystem>(ai::directory_loader(dir / "assets"));
     ai::add_ai_systems(r->sim, *r->ai);
+    r->sequencer = std::make_unique<sequencer::SequencerSystem>(sequencer::directory_loader(dir / "assets"));
+    sequencer::add_sequencer_systems(r->sim, *r->sequencer);
     audio::EngineOptions ao;
     ao.assets_root = dir / "assets";
     ao.null_device = true;

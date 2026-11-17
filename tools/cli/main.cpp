@@ -14,6 +14,7 @@
 #include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/ai/ai.hpp"
+#include "victus/sequencer/sequencer.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -263,6 +264,7 @@ struct Headless {
     particles::ParticleSystem particle_system; // single-threaded like physics; identical either way
     navigation::NavigationSystem nav;
     std::unique_ptr<ai::AiSystem> ai_system;
+    std::unique_ptr<sequencer::SequencerSystem> sequencer_system;
     std::unique_ptr<audio::AudioEngine> audio_engine;
     gameplay::ManualInput input;
     gameplay::Simulation sim;
@@ -317,6 +319,8 @@ struct Headless {
         navigation::add_navigation_systems(sim, nav);
         ai_system = std::make_unique<ai::AiSystem>(db ? ai::directory_loader(db->assets_dir()) : ai::TreeLoader{});
         ai::add_ai_systems(sim, *ai_system);
+        sequencer_system = std::make_unique<sequencer::SequencerSystem>(db ? sequencer::directory_loader(db->assets_dir()) : sequencer::SequenceLoader{});
+        sequencer::add_sequencer_systems(sim, *sequencer_system);
         audio::EngineOptions ao; // mixed without a device so audio calls behave as in the game
         ao.assets_root = proj->root() / "assets";
         ao.null_device = true;
@@ -741,6 +745,16 @@ int cmd_check(const std::vector<std::string>& a) {
             ++problems;
         }
     }
+    // Sequences: each must parse.
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::Sequence) continue;
+        auto text = fs::read_text((*db)->source_path(r));
+        auto q = text ? sequencer::Sequence::parse(*text, r.path) : Result<std::shared_ptr<const sequencer::Sequence>>(std::move(text).error());
+        if (!q) {
+            std::printf("error: %s: %s\n", r.path.c_str(), q.error().message.c_str());
+            ++problems;
+        }
+    }
     script::HostOptions so;
     so.assets_root = assets;
     so.input_map = proj->settings().input;
@@ -803,6 +817,15 @@ int cmd_check(const std::vector<std::string>& a) {
             if (!t || t->kind != assets::AssetKind::BehaviorTree) {
                 std::printf("error: %s: entity '%s' uses missing behaviour tree '%s'\n", rel.c_str(), entity_name(scene, e).c_str(),
                             c.tree.c_str());
+                ++problems;
+            }
+        });
+        scene.world().each<sequencer::SequencePlayerComponent>([&](scene::Entity e, sequencer::SequencePlayerComponent& c) {
+            if (c.sequence.empty()) return; // assigned at runtime (Luau play_sequence)
+            const assets::AssetRecord* t = (*db)->find_path(c.sequence);
+            if (!t || t->kind != assets::AssetKind::Sequence) {
+                std::printf("error: %s: entity '%s' uses missing sequence '%s'\n", rel.c_str(), entity_name(scene, e).c_str(),
+                            c.sequence.c_str());
                 ++problems;
             }
         });

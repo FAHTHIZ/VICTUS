@@ -116,11 +116,15 @@ bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db
         auto& str = f.ref<std::string>(comp);
         changed = ImGui::InputText(label, &str);
         // Asset-path fields accept a drop from the asset table when the kind matches the hint.
-        if (f.hint == "audio" && ImGui::BeginDragDropTarget()) {
+        const assets::AssetKind want = f.hint == "audio"           ? assets::AssetKind::Audio
+                                       : f.hint == "sequence"      ? assets::AssetKind::Sequence
+                                       : f.hint == "behavior_tree" ? assets::AssetKind::BehaviorTree
+                                                                   : assets::AssetKind::Unknown;
+        if (want != assets::AssetKind::Unknown && ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
                 Uuid id;
                 std::memcpy(&id, p->Data, sizeof(Uuid));
-                if (const auto* rec = db ? db->find(id) : nullptr; rec && rec->kind == assets::AssetKind::Audio) {
+                if (const auto* rec = db ? db->find(id) : nullptr; rec && rec->kind == want) {
                     str = rec->path;
                     changed = true;
                 }
@@ -219,6 +223,8 @@ const char* kind_icon(assets::AssetKind k) {
     case assets::AssetKind::SpriteSheet: return "[sht]";
     case assets::AssetKind::Tileset: return "[tls]";
     case assets::AssetKind::Terrain: return "[ter]";
+    case assets::AssetKind::BehaviorTree: return "[bt]";
+    case assets::AssetKind::Sequence: return "[seq]";
     default: return "[file]";
     }
 }

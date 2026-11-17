@@ -230,6 +230,10 @@ std::size_t Editor::check_asset_changes() {
         if (play_ai_) play_ai_->reload(t);
         notify("Reloaded behaviour tree " + t);
     }
+    for (const auto& q : changes.sequences) {
+        if (play_sequencer_) play_sequencer_->reload(q);
+        notify("Reloaded sequence " + q);
+    }
     for (const auto& m : changes.materials) {
         if (const auto it = written_materials_.find(m); it != written_materials_.end() && db_)
             if (const auto* rec = db_->find_path(m))
@@ -1109,6 +1113,8 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
     navigation::add_navigation_systems(sim_, *play_navigation_);
     play_ai_ = std::make_unique<ai::AiSystem>(db_ ? ai::directory_loader(db_->assets_dir()) : ai::TreeLoader{});
     ai::add_ai_systems(sim_, *play_ai_);
+    play_sequencer_ = std::make_unique<sequencer::SequencerSystem>(db_ ? sequencer::directory_loader(db_->assets_dir()) : sequencer::SequenceLoader{});
+    sequencer::add_sequencer_systems(sim_, *play_sequencer_);
     if (auto* a = audio()) {
         a->stop_all();
         audio::add_audio_systems(sim_, *a);
@@ -1125,6 +1131,7 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
             play_particles_.reset();
             play_navigation_.reset();
             play_ai_.reset();
+            play_sequencer_.reset();
             return;
         }
     }
@@ -1215,6 +1222,7 @@ void Editor::stop() {
     play_particles_.reset();
     play_navigation_.reset();
     play_ai_.reset();
+    play_sequencer_.reset();
     if (audio_) audio_->stop_all();
     if (input_) input_->set_enabled(false);
     play_state_ = PlayState::Editing;

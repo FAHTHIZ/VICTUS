@@ -5,6 +5,7 @@
 #include "victus/assets/material.hpp"
 #include "victus/render/image.hpp"
 #include "victus/ai/ai.hpp"
+#include "victus/sequencer/sequencer.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
@@ -1510,6 +1511,7 @@ void register_components() {
     gameui::register_components();
     navigation::register_components();
     ai::register_components();
+    sequencer::register_components();
     terrain::register_components();
     net::register_components();
     tilemap::register_components();

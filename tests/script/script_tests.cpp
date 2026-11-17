@@ -11,6 +11,7 @@
 #include "victus/navigation/navigation.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
+#include "victus/sequencer/sequencer.hpp"
 #include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
 
@@ -1442,4 +1443,79 @@ return pcall(function() e:bb_set("x", 1) end)
     CHECK(q->is_bool());
     CHECK_FALSE(q->as_bool());
     (void)lone;
+}
+
+TEST_CASE("script: sequencer playback control, state and on_sequence_event") {
+    TempDir d("victus_script_sequencer");
+    script::register_components();
+    gameplay::register_components();
+    sequencer::register_components();
+    d.write("seq/intro.vseq", R"({"duration": 0.3, "tracks": [
+        {"type": "event", "target": "Door", "keys": [{"t": 0.1, "name": "open", "payload": "fast"}]},
+        {"type": "event", "keys": [{"t": 0.2, "name": "done", "payload": "x"}]}]})");
+    d.write("scripts/director.luau", R"lua(
+local M = {}
+function M:start()
+    assert(sequencer.available(), "sequencer available")
+    assert(self.entity:play_sequence("seq/intro.vseq"), "plays")
+    assert(not self.entity:play_sequence("seq/missing.vseq"), "missing fails")
+    assert(self.entity:play_sequence("seq/intro.vseq"), "plays again")
+    self.entity:pause_sequence()
+    assert(self.entity:sequence_state().paused, "paused")
+    self.entity:pause_sequence(false)
+    self.log = ""
+end
+function M:on_sequence_event(name, payload, player)
+    assert(player == self.entity, "player")
+    self.log ..= name .. "=" .. payload .. ";"
+end
+function M:update(dt)
+    local st = self.entity:sequence_state()
+    if st.finished and not self.reported then
+        self.reported = true
+        self.entity.name = "Finished:" .. self.log .. st.sequence
+        assert(self.entity:seek_sequence(0.05))
+        assert(self.entity:sequence_state().time > 0.04)
+        self.entity:stop_sequence()
+        assert(not self.entity:sequence_state().playing)
+    end
+end
+return M
+)lua");
+    d.write("scripts/door.luau", R"lua(
+local M = {}
+function M:on_sequence_event(name, payload, player)
+    self.entity.name = "Door:" .. name .. ":" .. payload .. ":" .. player.name
+end
+return M
+)lua");
+    auto host = make_host(d);
+    gameplay::Simulation sim(1.0f / 50.0f);
+    script::add_script_systems(sim, *host);
+    sequencer::SequencerSystem seqs(sequencer::directory_loader(d.path));
+    sequencer::add_sequencer_systems(sim, seqs);
+    Scene s;
+    const Entity director = scripted(s, "Director", "scripts/director.luau");
+    s.world().add<sequencer::SequencePlayerComponent>(director, sequencer::SequencePlayerComponent{.play_on_start = false});
+    const Entity door = s.create("Door", director);
+    s.world().add<script::ScriptComponent>(door, script::ScriptComponent{.script = "scripts/door.luau"});
+    for (int i = 0; i < 25; ++i) sim.tick(s, 0.02f);
+    for (const auto& err : host->recent_errors()) MESSAGE(err);
+    CHECK(host->stats().errors == 0);
+    CHECK(s.world().get<scene::Name>(door)->value == "Door:open:fast:Director");
+    CHECK(s.world().get<scene::Name>(director)->value == "Finished:open=fast;done=x;seq/intro.vseq");
+    CHECK(seqs.stats().events == 2);
+
+    // Without a sequencer the calls are harmless.
+    Scene bare;
+    bare.create("Lone");
+    auto q = host->eval(R"lua(
+local e = scene.find("Lone")
+assert(not sequencer.available())
+e:stop_sequence()
+e:pause_sequence(true)
+return not e:play_sequence() and not e:seek_sequence(1) and e:sequence_state() == nil
+)lua", &bare);
+    REQUIRE(q.ok());
+    CHECK(q->as_bool());
 }

@@ -14,6 +14,7 @@
 #include "victus/runtime/surface_shader.hpp"
 #include "victus/scene/scene.hpp"
 #include "victus/ai/ai.hpp"
+#include "victus/sequencer/sequencer.hpp"
 #include "victus/script/script.hpp"
 
 #include <algorithm>
@@ -213,6 +214,14 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         auto text = fs::read_text((*db)->source_path(r));
         if (!text) errors.push_back(std::format("{}: {}", r.path, text.error().message));
         else if (auto t = ai::BehaviorTree::parse(*text, r.path); !t) errors.push_back(std::format("{}: {}", r.path, t.error().message));
+    }
+
+    // Sequences: every one must parse.
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::Sequence) continue;
+        auto text = fs::read_text((*db)->source_path(r));
+        if (!text) errors.push_back(std::format("{}: {}", r.path, text.error().message));
+        else if (auto q = sequencer::Sequence::parse(*text, r.path); !q) errors.push_back(std::format("{}: {}", r.path, q.error().message));
     }
 
     // Scenes: every scene must load; references to scripts and audio clips must resolve.
