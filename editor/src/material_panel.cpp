@@ -241,7 +241,7 @@ void Editor::draw_material_editor() {
         const std::string label = ref.is_nil() ? "(none)" : t ? t->path : "(missing) " + ref.to_string();
         ImGui::Text("%s:", assets::kMaterialTextureSlotNames[slot]);
         ImGui::SameLine();
-        ImGui::Button(label.c_str(), ImVec2(instance ? -150 : -60, 0));
+        ImGui::Button(label.c_str(), ImVec2(instance ? -150.0f : -60.0f, 0.0f));
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop a texture from Assets here");
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
