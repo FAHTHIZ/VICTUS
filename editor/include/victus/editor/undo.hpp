@@ -6,6 +6,7 @@
 #pragma once
 #include "victus/scene/scene.hpp"
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -21,6 +22,9 @@ struct SceneCommand {
     std::string label;
     std::vector<EntityState> before; // parents before children
     std::vector<EntityState> after;
+    // Optional state outside the scene (e.g. terrain samples), applied after the entity states;
+    // called with false on undo and true on redo.
+    std::function<Status(bool redo)> external;
 };
 
 // Applies states: removes entities that must be absent, then restores present ones in order.

@@ -284,3 +284,117 @@ TEST_CASE("terrain: height queries, raycasts and resting bodies follow the trans
     REQUIRE(hit2);
     CHECK(hit2->point.y == doctest::Approx(*ground + 5.0f).epsilon(0.02));
 }
+
+TEST_CASE("terrain: brushes raise, lower, smooth, flatten and paint inside their radius") {
+    const math::Vec3 size{64, 16, 64}; // 1 m between samples at 65
+    auto flat = make_flat(65, 0.5f);
+    REQUIRE(flat.ok());
+    Heightfield hf = std::move(*flat);
+    hf.touch_all();
+    CHECK(brush_weight({.radius = 4, .falloff = 0.5f}, 0.0f) == doctest::Approx(1.0f));
+    CHECK(brush_weight({.radius = 4, .falloff = 0.5f}, 1.9f) == doctest::Approx(1.0f));
+    CHECK(brush_weight({.radius = 4, .falloff = 0.5f}, 3.0f) == doctest::Approx(0.5f));
+    CHECK(brush_weight({.radius = 4, .falloff = 0.5f}, 4.0f) == doctest::Approx(0.0f));
+    CHECK(brush_weight({.radius = 4, .falloff = 0.0f}, 3.9f) == doctest::Approx(1.0f));
+
+    Brush raise{.mode = BrushMode::Raise, .radius = 4, .strength = 1, .falloff = 0.5f};
+    const std::uint64_t rev = hf.revision;
+    const SampleRect r = apply_brush(hf, size, raise, 0, 0, 1.0f); // centre sample (32, 32)
+    REQUIRE_FALSE(r.empty());
+    CHECK(hf.revision > rev);
+    CHECK(r.x0 >= 28);
+    CHECK(r.x1 <= 36);
+    CHECK(hf.heights[hf.index(32, 32)] == doctest::Approx(0.5f + 2.0f / 16.0f)); // radius / 2 metres
+    CHECK(hf.heights[hf.index(20, 32)] == doctest::Approx(0.5f));
+    CHECK(hf.heights[hf.index(35, 32)] > 0.5f);
+    CHECK(hf.heights[hf.index(35, 32)] < hf.heights[hf.index(32, 32)]);
+    for (int i = 0; i < 100; ++i) (void)apply_brush(hf, size, raise, 0, 0, 1.0f);
+    CHECK(hf.heights[hf.index(32, 32)] == doctest::Approx(1.0f)); // clamped
+    CHECK(apply_brush(hf, size, raise, 0, 0, 1.0f).count() < r.count()); // only the rim still moves
+
+    Brush lower = raise;
+    lower.mode = BrushMode::Lower;
+    (void)apply_brush(hf, size, lower, 10, 10, 1.0f);
+    CHECK(hf.heights[hf.index(42, 42)] < 0.5f);
+
+    // Smoothing pulls a spike towards its neighbours; flatten moves towards the target.
+    auto spike = make_flat(65, 0.2f);
+    spike->heights[spike->index(32, 32)] = 0.8f;
+    (void)apply_brush(*spike, size, {.mode = BrushMode::Smooth, .radius = 2, .strength = 1}, 0, 0, 1.0f);
+    CHECK(spike->heights[spike->index(32, 32)] < 0.4f);
+    CHECK(spike->heights[spike->index(31, 32)] > 0.2f);
+    (void)apply_brush(*spike, size, {.mode = BrushMode::Flatten, .radius = 3, .strength = 1, .target = 0.6f}, 0, 0, 1.0f);
+    CHECK(spike->heights[spike->index(32, 32)] == doctest::Approx(0.6f));
+    CHECK(spike->heights[spike->index(33, 32)] == doctest::Approx(0.6f));
+
+    // Painting converges on the layer; untouched samples keep theirs.
+    Brush paint{.mode = BrushMode::Paint, .radius = 3, .strength = 0.2f, .layer = 2};
+    for (int i = 0; i < 40; ++i) (void)apply_brush(hf, size, paint, -20, -20, 0.25f);
+    CHECK(unpack_weights(hf.splat[hf.index(12, 12)]).z > 0.95f);
+    CHECK(unpack_weights(hf.splat[hf.index(32, 32)]).x == doctest::Approx(1.0f));
+    CHECK(apply_brush(hf, size, {.mode = BrushMode::Paint, .layer = 7}, 0, 0, 1.0f).empty());
+
+    // Degenerate input changes nothing.
+    CHECK(apply_brush(hf, size, raise, 500, 0, 1.0f).empty());
+    CHECK(apply_brush(hf, size, raise, NAN, 0, 1.0f).empty());
+    CHECK(apply_brush(hf, size, raise, 0, 0, 0.0f).empty());
+    CHECK(brush_mode_name(BrushMode::Flatten) == "Flatten");
+}
+
+TEST_CASE("terrain: regions restore edits exactly; rays hit the surface") {
+    Heightfield hf = hills(65, 5);
+    const math::Vec3 size{64, 16, 64};
+    const HeightfieldRegion before = copy_region(hf, {-5, 10, 20, 30});
+    CHECK(before.rect == SampleRect{0, 10, 20, 30});
+    CHECK(before.heights.size() == 21u * 21u);
+    const auto original = hf.heights;
+    const auto splat = hf.splat;
+    (void)apply_brush(hf, size, {.mode = BrushMode::Raise, .radius = 5, .strength = 1}, -22, -12, 1.0f);
+    (void)apply_brush(hf, size, {.mode = BrushMode::Paint, .radius = 5, .strength = 1, .layer = 3}, -22, -12, 1.0f);
+    CHECK(hf.heights != original);
+    const std::uint64_t rev = hf.revision;
+    paste_region(hf, before);
+    CHECK(hf.revision > rev);
+    CHECK(hf.heights == original);
+    CHECK(hf.splat == splat);
+    HeightfieldRegion bad = before;
+    bad.heights.pop_back();
+    paste_region(hf, bad); // mismatched sizes are ignored
+    CHECK(hf.heights == original);
+
+    // Straight down onto the field, and a slanted ray.
+    const auto down = raycast_local(hf, size, {3.3f, 40, -7.1f}, {0, -1, 0}, 100);
+    REQUIRE(down);
+    CHECK(down->y == doctest::Approx(*local_height(hf, size, 3.3f, -7.1f)).epsilon(0.001));
+    const auto slant = raycast_local(hf, size, {-40, 30, 0}, {1, -0.5f, 0.2f}, 200);
+    REQUIRE(slant);
+    CHECK(slant->y == doctest::Approx(*local_height(hf, size, slant->x, slant->z)).epsilon(0.01));
+    CHECK_FALSE(raycast_local(hf, size, {0, 40, 0}, {0, 1, 0}, 100)); // pointing away
+    CHECK_FALSE(raycast_local(hf, size, {0, 40, 0}, {0, -1, 0}, 5));  // too short
+    CHECK_FALSE(raycast_local(hf, size, {100, 40, 0}, {0, -1, 0}, 100)); // outside
+
+    // World rays through a placed, rotated terrain.
+    auto shared = std::make_shared<Heightfield>(hf);
+    TerrainSystem system;
+    const Uuid id = Uuid::generate();
+    system.add_data(id, shared);
+    Scene scene;
+    const Entity t = scene.create("Terrain");
+    scene.world().get<Transform>(t)->position = {100, 5, 0};
+    scene.world().get<Transform>(t)->rotation = math::Quat::axis_angle({0, 1, 0}, math::radians(90));
+    scene.world().get<Transform>(t)->scale = {3, 3, 3}; // ignored
+    TerrainComponent comp;
+    comp.data = id;
+    comp.size = size;
+    comp.collision = false;
+    scene.world().add<TerrainComponent>(t, comp);
+    scene.update_transforms();
+    system.update(scene);
+    const auto hit = raycast(scene, {104, 60, 2}, {0, -1, 0}, 200);
+    REQUIRE(hit);
+    CHECK(hit->entity == t);
+    CHECK(hit->point.y == doctest::Approx(*height_at(scene, t, 104, 2)).epsilon(0.01));
+    CHECK(hit->normal.y > 0.2f);
+    CHECK(hit->distance == doctest::Approx(60.0f - hit->point.y).epsilon(0.001));
+    CHECK_FALSE(raycast(scene, {0, 60, 0}, {0, -1, 0}, 200));
+}

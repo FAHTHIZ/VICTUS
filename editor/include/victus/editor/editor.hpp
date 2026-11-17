@@ -37,6 +37,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace victus::platform {
@@ -249,6 +250,26 @@ public:
     // Writes a new generated heightfield (default "terrain/Terrain.vterrain", made unique; 129
     // samples per side) and creates an entity with a Terrain component using it (undoable).
     Result<scene::Entity> create_terrain(std::string_view relative_path = {}, std::uint32_t resolution = 129);
+    // Terrain sculpting and painting. While the tool is on (and the selected entity has a Terrain
+    // in a 3D scene) left-dragging in the viewport applies the brush instead of selecting; Shift
+    // inverts Raise/Lower, Ctrl-click in Flatten picks the target height. Each stroke is one undo
+    // entry; edited heightfields are written back to their .vterrain on save_scene().
+    void set_terrain_tool(bool on) noexcept { terrain_tool_ = on; }
+    [[nodiscard]] bool terrain_tool() const noexcept { return terrain_tool_; }
+    [[nodiscard]] terrain::Brush& terrain_brush() noexcept { return terrain_brush_; }
+    // The terrain surface under a viewport pixel (3D view), or nullopt.
+    [[nodiscard]] std::optional<terrain::TerrainHit> terrain_under(math::Vec2 pixel, math::Vec2 viewport_size);
+    // A stroke on `terrain` at world points: begin, continue with `amount` (seconds of brushing;
+    // long moves are split into dabs), end records the undo entry when anything changed.
+    bool begin_terrain_stroke(scene::Entity terrain, math::Vec3 world_point, bool invert = false);
+    void continue_terrain_stroke(math::Vec3 world_point, float amount);
+    void end_terrain_stroke();
+    [[nodiscard]] bool terrain_stroke_active() const noexcept { return terrain_stroke_.active; }
+    // Whole-terrain operations (undoable): regenerate the heights, repaint the splat map.
+    Status generate_terrain(scene::Entity terrain, const terrain::GenerateSettings& settings);
+    Status auto_paint_terrain(scene::Entity terrain, const terrain::AutoPaintSettings& settings = {});
+    // Heightfields edited since the last save.
+    [[nodiscard]] std::size_t unsaved_terrains() const noexcept { return dirty_terrains_.size(); }
     // Writes a new surface shader from the template (default "shaders/Surface.vshader", made
     // unique). Returns its UUID.
     Result<Uuid> create_surface_shader(std::string_view relative_path = {});
@@ -679,6 +700,31 @@ private:
         std::vector<EntityState> before;
         std::uint64_t revision{0};
     };
+    void draw_terrain_tools();
+    void terrain_viewport_input(math::Vec2 origin, math::Vec2 size, bool hovered);
+    void draw_terrain_overlay(render::SceneRenderer& r);
+    [[nodiscard]] scene::Entity terrain_target();
+    // Shared data of a terrain entity, promoted so asset reloads cannot drop unsaved edits.
+    [[nodiscard]] std::shared_ptr<terrain::Heightfield> editable_terrain(scene::Entity terrain, Uuid* id = nullptr);
+    void push_terrain_edit(std::string label, const Uuid& data, terrain::HeightfieldRegion before,
+                           terrain::HeightfieldRegion after);
+    Status save_terrains();
+    struct TerrainStroke {
+        bool active{false};
+        Uuid data;
+        terrain::Brush brush;
+        math::Mat4 to_local;
+        math::Vec3 last{0, 0, 0}; // local
+        terrain::SampleRect changed;
+        terrain::Heightfield original; // heights and splat at the start of the stroke
+    };
+    terrain::Brush terrain_brush_;
+    TerrainStroke terrain_stroke_;
+    bool terrain_tool_{false};
+    bool show_terrain_tools_{true};
+    std::optional<terrain::TerrainHit> terrain_hover_;
+    terrain::GenerateSettings terrain_generate_;
+    std::unordered_set<Uuid, UuidHash> dirty_terrains_;
     TileBrush tile_brush_;
     TileStroke tile_stroke_;
     bool tile_tool_{false};

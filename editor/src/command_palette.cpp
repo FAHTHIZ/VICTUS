@@ -155,6 +155,7 @@ std::vector<EditorCommand> Editor::commands() {
     toggle("Navigation Mesh", &show_navmesh_);
     toggle("Network", &show_network_);
     toggle("Tile Palette", &show_tile_palette_);
+    toggle("Terrain Tools", &show_terrain_tools_);
     toggle("Material Editor", &show_material_editor_);
     toggle("Graph Editor", &show_graph_editor_);
     add("View: Toggle Profiler", {}, true, [this] { set_show_profiler(!show_profiler_); });

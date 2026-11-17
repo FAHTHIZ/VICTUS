@@ -88,6 +88,7 @@ Status UndoStack::undo(scene::Scene& scene) {
     if (!can_undo()) return {};
     const SceneCommand& c = commands_[position_ - 1];
     VICTUS_TRY_STATUS(apply_states(scene, c.before));
+    if (c.external) VICTUS_TRY_STATUS(c.external(false));
     --position_;
     return {};
 }
@@ -96,6 +97,7 @@ Status UndoStack::redo(scene::Scene& scene) {
     if (!can_redo()) return {};
     const SceneCommand& c = commands_[position_];
     VICTUS_TRY_STATUS(apply_states(scene, c.after));
+    if (c.external) VICTUS_TRY_STATUS(c.external(true));
     ++position_;
     return {};
 }

@@ -2167,3 +2167,89 @@ TEST_CASE("editor: terrain is created as an asset and entity, collides in play m
     CHECK(collider);
     ed.stop();
 }
+
+TEST_CASE("editor: terrain strokes sculpt and paint, undo and redo, and are written on save") {
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Sculpt", "Sculpt", "3d").ok());
+    h.frames(2);
+    auto& ed = *h.ed;
+    auto made = ed.create_terrain();
+    REQUIRE(made.ok());
+    Scene& s = ed.edit_scene();
+    const Entity t = *made;
+    const auto* comp = s.world().get<terrain::TerrainComponent>(t);
+    REQUIRE(comp);
+    const Uuid data_id = comp->data;
+    const std::filesystem::path file = ed.assets()->assets_dir() / ed.assets()->find(data_id)->path;
+    h.frames(2);
+    auto data = s.world().get<terrain::TerrainRuntime>(t)->data;
+    REQUIRE(data);
+    const auto original = data->heights;
+    const auto original_splat = data->splat;
+    const std::size_t centre = data->index(64, 64);
+
+    // The editor camera looks at the terrain centre: the ray under the viewport centre hits it.
+    const auto hover = ed.terrain_under({400, 300}, {800, 600});
+    REQUIRE(hover);
+    CHECK(hover->entity == t);
+    CHECK(ed.pick({400, 300}, {800, 600}) == t);
+
+    ed.select(t, false);
+    ed.set_terrain_tool(true);
+    ed.terrain_brush() = {.mode = terrain::BrushMode::Raise, .radius = 10, .strength = 1};
+    const std::size_t undo_before = ed.undo_stack().size();
+    const math::Vec3 p = s.world().get<scene::Transform>(t)->position;
+    REQUIRE(ed.begin_terrain_stroke(t, p));
+    CHECK(ed.terrain_stroke_active());
+    for (int i = 0; i < 5; ++i) ed.continue_terrain_stroke(p + math::Vec3{static_cast<float>(i), 0, 0}, 0.1f);
+    ed.end_terrain_stroke();
+    CHECK_FALSE(ed.terrain_stroke_active());
+    CHECK(ed.undo_stack().size() == undo_before + 1);
+    const float raised = data->heights[centre];
+    CHECK(raised > original[centre]);
+    CHECK(ed.unsaved_terrains() == 1);
+
+    // An empty stroke records nothing; Shift-inverted strokes lower.
+    REQUIRE(ed.begin_terrain_stroke(t, p));
+    ed.end_terrain_stroke();
+    CHECK(ed.undo_stack().size() == undo_before + 1);
+    REQUIRE(ed.begin_terrain_stroke(t, p, true));
+    ed.continue_terrain_stroke(p, 0.05f);
+    ed.end_terrain_stroke();
+    CHECK(data->heights[centre] < raised);
+    ed.undo();
+    CHECK(data->heights[centre] == doctest::Approx(raised));
+    ed.undo();
+    CHECK(data->heights == original);
+    ed.redo();
+    CHECK(data->heights[centre] == doctest::Approx(raised));
+
+    // Painting, then whole-terrain operations, all undoable.
+    ed.terrain_brush() = {.mode = terrain::BrushMode::Paint, .radius = 8, .strength = 1, .layer = 3};
+    REQUIRE(ed.begin_terrain_stroke(t, p));
+    for (int i = 0; i < 10; ++i) ed.continue_terrain_stroke(p, 0.25f);
+    ed.end_terrain_stroke();
+    CHECK(terrain::unpack_weights(data->splat[centre]).w > 0.9f);
+    REQUIRE(ed.generate_terrain(t, {.seed = 9}).ok());
+    const auto generated = data->heights;
+    CHECK(generated != original);
+    REQUIRE(ed.auto_paint_terrain(t).ok());
+    ed.undo();
+    ed.undo();
+    CHECK(terrain::unpack_weights(data->splat[centre]).w > 0.9f);
+    CHECK(data->heights[centre] == doctest::Approx(raised));
+    ed.redo();
+    CHECK(data->heights == generated);
+
+    // Saving writes the heightfield; the file reloads with the edits (16-bit quantized).
+    REQUIRE(ed.save_scene().ok());
+    CHECK(ed.unsaved_terrains() == 0);
+    auto loaded = terrain::load_file(file);
+    REQUIRE(loaded.ok());
+    CHECK(loaded->heights[centre] == doctest::Approx(generated[centre]).epsilon(1e-4));
+    // Asset reloads keep the edited data.
+    h.frames(3);
+    CHECK(s.world().get<terrain::TerrainRuntime>(t)->data == data);
+    (void)original_splat;
+}

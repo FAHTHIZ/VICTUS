@@ -348,11 +348,7 @@ std::optional<float> height_at(Scene& scene, Entity entity, float x, float z) {
     const auto* wt = world.get<scene::WorldTransform>(entity);
     if (!comp || !rt || !rt->data || !wt) return std::nullopt;
     // Rigid placement: translation and rotation of the world transform, scale ignored.
-    math::Mat4 m = wt->matrix;
-    for (int c = 0; c < 3; ++c) {
-        const math::Vec3 axis = math::normalize(m.c[c].xyz());
-        m.c[c] = math::Vec4(axis, 0.0f);
-    }
+    const math::Mat4 m = rigid_matrix(wt->matrix);
     const math::Mat4 inv = math::inverse(m);
     // Cast along the terrain's local up through the world point: intersect the vertical line.
     const math::Vec3 local = inv.transform_point({x, 0.0f, z});
