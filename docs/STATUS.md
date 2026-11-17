@@ -840,5 +840,24 @@ Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
 Known gaps:
 - No breakpoints or stepping, no variable watch, pure nodes are not highlighted (they are inlined into their users), in-editor client hosts are not traced.
 
+## Slice 64: Profiler
+
+Why: roadmap item 15. Zones existed only for one-off Chrome traces; there was no live view of frame percentiles or per-system cost.
+
+Built (ADR-0061):
+- `profiler::FrameProfiler` (rolling window, default 300 frames): frame p50/p95/p99/mean/max, per-scope totals per frame (mean/p95/max/calls; nested same-name zones counted once per thread; scopes first seen late are averaged over the whole window), pause/reset, record the next N frames for a trace; `profiler::drain`, `profiler::intern`, `report_json` (frame, scopes, host counters).
+- Instrumentation: `simulation.tick` and one `system.<name>` zone per gameplay system, `pass.<name>` per render-graph pass, `frame.render`, `gpu.acquire_swapchain` and `gpu.submit_and_wait` (CPU time waiting on the GPU), on top of the existing script/physics/scene-view zones.
+- `victus run --profile out.json [--trace trace.json]`: JSON report with frame percentiles, scopes and counters (GPU texture/buffer bytes and counts, draw calls per frame, CPU heap when tracking is enabled) plus a console summary; the trace keeps the first 600 frames.
+- Editor View > Profiler (`--show profiler`): frame-time graph, percentiles, sortable scope table, memory and GPU resource counters, Pause, Reset, Record Trace (300 frames) into `<project>/.victus/profiles/trace-<time>.json`.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
+- `victus_core_tests` profiler cases: interned names, frame/scope aggregation with nested zones and call counts, pause/reset, trace recording window and early stop, late scopes, JSON report.
+- `victus_editor_tests` "editor: profiler window reports frame percentiles, scopes and records a trace": system and pass scopes present while playing, pause freezes the window, a 4-frame trace is written into the project and parses as a Chrome trace.
+- `victus run /tmp/gp --frames 60 --profile --trace` on lavapipe: report and 3600-event trace written; summary lists frame.render, gpu.submit_and_wait, systems and passes. Screenshot smoke of the Profiler window while playing.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- No GPU timestamp queries (SDL_GPU lacks them), so per-pass GPU time is not measured; no per-frame memory history graph or allocation call stacks; one profiler per process.
+
 ## Next task
-Roadmap next slice 15: profiler (CPU scopes, GPU pass timings, percentile histograms, memory counters, editor Profiler panel, `victus run --profile`).
+Roadmap next slice 16: editor productivity (multi-select, autosave and crash recovery, command palette).

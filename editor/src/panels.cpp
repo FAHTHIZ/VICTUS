@@ -225,6 +225,7 @@ const char* kind_icon(assets::AssetKind k) {
 // ---- frame --------------------------------------------------------------------------------------
 
 void Editor::frame(float dt) {
+    update_profiler();
     if (dt > 0) fps_ = fps_ <= 0 ? 1.0f / dt : fps_ * 0.95f + 0.05f / dt;
     view_->renderer().set_frame_time(dt); // auto exposure adapts in real time
     if (status_time_ > 0) status_time_ -= dt;
@@ -404,6 +405,7 @@ void Editor::draw_workspace(float) {
     draw_console();
     draw_input_actions();
     draw_network();
+    draw_profiler();
     draw_material_editor();
     draw_graph_editor();
     draw_tile_palette();
@@ -497,6 +499,7 @@ void Editor::draw_menu_bar() {
         ImGui::MenuItem("Physics Colliders", nullptr, &show_colliders_);
         ImGui::MenuItem("Navigation Mesh", nullptr, &show_navmesh_);
         ImGui::MenuItem("Network", nullptr, &show_network_);
+        if (ImGui::MenuItem("Profiler", nullptr, show_profiler_)) set_show_profiler(!show_profiler_);
         ImGui::MenuItem("Tile Palette", nullptr, &show_tile_palette_);
         ImGui::MenuItem("UI Demo Window", nullptr, &show_demo_);
         if (ImGui::BeginMenu("Rendering Quality")) {

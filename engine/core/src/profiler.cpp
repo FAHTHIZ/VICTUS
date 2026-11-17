@@ -9,6 +9,7 @@
 #include <format>
 #include <mutex>
 #include <numeric>
+#include <unordered_set>
 
 namespace victus::profiler {
 
@@ -71,6 +72,29 @@ std::vector<Zone> end_capture() {
         return a.depth < b.depth;
     });
     return all;
+}
+
+std::vector<Zone> drain() {
+    std::vector<Zone> all;
+    std::lock_guard lock(g_registry_mutex);
+    for (auto& b : registry()) {
+        std::lock_guard bl(b->mutex);
+        all.insert(all.end(), b->zones.begin(), b->zones.end());
+        b->zones.clear();
+    }
+    std::stable_sort(all.begin(), all.end(), [](const Zone& a, const Zone& b) {
+        if (a.begin_ns != b.begin_ns) return a.begin_ns < b.begin_ns;
+        if (a.thread != b.thread) return a.thread < b.thread;
+        return a.depth < b.depth;
+    });
+    return all;
+}
+
+const char* intern(std::string_view name) {
+    static std::mutex m;
+    static std::unordered_set<std::string> names; // node-based: element addresses are stable
+    std::lock_guard lock(m);
+    return names.emplace(name).first->c_str();
 }
 
 bool capturing() noexcept { return g_capturing.load(std::memory_order_relaxed); }
@@ -169,6 +193,132 @@ std::vector<double> SampleWindow::ordered() const {
     if (samples_.size() < capacity_) return samples_;
     for (std::size_t i = 0; i < samples_.size(); ++i) out.push_back(samples_[(head_ + i) % samples_.size()]);
     return out;
+}
+
+// ---- FrameProfiler --------------------------------------------------------------------------------
+
+FrameProfiler::FrameProfiler(std::size_t window_frames) : window_(std::max<std::size_t>(window_frames, 1)), frame_ms_(window_) {
+    if (!capturing()) begin_capture();
+}
+
+FrameProfiler::~FrameProfiler() {
+    if (capturing()) (void)end_capture();
+}
+
+void FrameProfiler::reset() {
+    frame_ms_.clear();
+    scopes_.clear();
+    frames_ = 0;
+    last_ns_ = 0;
+}
+
+void FrameProfiler::frame() {
+    if (!capturing()) begin_capture(); // someone ended the capture (e.g. a one-off trace)
+    const std::uint64_t now = now_ns();
+    std::vector<Zone> zones = drain();
+    const bool have_frame = last_ns_ != 0;
+    const double frame_ms = have_frame ? static_cast<double>(now - last_ns_) / 1e6 : 0.0;
+    last_ns_ = now;
+    if (record_left_ > 0) {
+        recorded_.insert(recorded_.end(), zones.begin(), zones.end());
+        if (--record_left_ == 0) record_done_ = true;
+    }
+    if (paused_ || !have_frame) return;
+    frame_ms_.add(frame_ms);
+    ++frames_;
+    // Per name: total time with nested same-name zones counted once (per thread, outermost).
+    struct Acc {
+        double ms{0};
+        double calls{0};
+    };
+    std::stable_sort(zones.begin(), zones.end(), [](const Zone& x, const Zone& y) {
+        return x.thread != y.thread ? x.thread < y.thread : x.begin_ns < y.begin_ns;
+    });
+    std::map<std::string_view, Acc> acc;
+    std::map<std::pair<std::uint32_t, std::string_view>, std::uint64_t> open_until; // thread+name -> end of outermost
+    for (const Zone& z : zones) {
+        const std::string_view name(z.name ? z.name : "?");
+        Acc& a = acc[name];
+        a.calls += 1;
+        auto& until = open_until[{z.thread, name}];
+        if (z.begin_ns >= until) {
+            a.ms += static_cast<double>(z.end_ns - z.begin_ns) / 1e6;
+            until = z.end_ns;
+        }
+    }
+    for (const auto& [name, a] : acc) {
+        auto it = scopes_.find(name);
+        if (it != scopes_.end()) continue;
+        // A scope first seen now gets zero samples for the earlier frames of the window, so every
+        // scope is averaged over the same frames.
+        Scope sc{SampleWindow(window_), SampleWindow(window_)};
+        for (std::size_t i = 1; i < frame_ms_.count(); ++i) {
+            sc.ms.add(0.0);
+            sc.calls.add(0.0);
+        }
+        scopes_.emplace(std::string(name), std::move(sc));
+    }
+    for (auto& [name, sc] : scopes_) {
+        const auto it = acc.find(name);
+        sc.ms.add(it == acc.end() ? 0.0 : it->second.ms);
+        sc.calls.add(it == acc.end() ? 0.0 : it->second.calls);
+    }
+}
+
+FrameReport FrameProfiler::report() const {
+    FrameReport r;
+    r.frames = frame_ms_.count();
+    r.mean_ms = frame_ms_.mean();
+    r.p50_ms = frame_ms_.percentile(50);
+    r.p95_ms = frame_ms_.percentile(95);
+    r.p99_ms = frame_ms_.percentile(99);
+    r.max_ms = frame_ms_.max();
+    r.last_ms = frame_ms_.last();
+    for (const auto& [name, sc] : scopes_)
+        r.scopes.push_back({name, sc.ms.mean(), sc.ms.percentile(95), sc.ms.max(), sc.ms.last(), sc.calls.mean()});
+    std::stable_sort(r.scopes.begin(), r.scopes.end(), [](const ScopeStats& a, const ScopeStats& b) { return a.mean_ms > b.mean_ms; });
+    return r;
+}
+
+void FrameProfiler::record(std::size_t frames) {
+    recorded_.clear();
+    record_done_ = false;
+    record_left_ = frames;
+}
+
+std::vector<Zone> FrameProfiler::take_recording() {
+    if (!record_done_) return {};
+    record_done_ = false;
+    return std::move(recorded_);
+}
+
+std::string report_json(const FrameReport& report) {
+    json::Value root = json::Value::object();
+    root.set("frames", static_cast<double>(report.frames));
+    json::Value frame = json::Value::object();
+    frame.set("mean_ms", report.mean_ms);
+    frame.set("p50_ms", report.p50_ms);
+    frame.set("p95_ms", report.p95_ms);
+    frame.set("p99_ms", report.p99_ms);
+    frame.set("max_ms", report.max_ms);
+    root.set("frame", std::move(frame));
+    json::Value scopes = json::Value::array();
+    for (const auto& s : report.scopes) {
+        json::Value v = json::Value::object();
+        v.set("name", s.name);
+        v.set("mean_ms", s.mean_ms);
+        v.set("p95_ms", s.p95_ms);
+        v.set("max_ms", s.max_ms);
+        v.set("calls_per_frame", s.calls_per_frame);
+        scopes.push(std::move(v));
+    }
+    root.set("scopes", std::move(scopes));
+    if (!report.counters.empty()) {
+        json::Value counters = json::Value::object();
+        for (const auto& [name, value] : report.counters) counters.set(name, value);
+        root.set("counters", std::move(counters));
+    }
+    return json::stringify(root, true) + "\n";
 }
 
 } // namespace victus::profiler

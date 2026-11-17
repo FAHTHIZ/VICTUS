@@ -198,7 +198,7 @@ Status RenderGraph::execute(rhi::Device& device, rhi::CommandBuffer& cmd, Transi
     }
     for (Pass& p : passes_) {
         if (!p.alive) continue;
-        VICTUS_PROFILE_SCOPE("RenderGraph::pass");
+        profiler::ScopedZone pass_zone(profiler::capturing() ? profiler::intern("pass." + p.name) : "RenderGraph::pass");
         std::uint32_t w = 0, h = 0;
         if (p.raster) {
             rhi::RenderPassDesc rp;

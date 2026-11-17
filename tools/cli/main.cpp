@@ -49,7 +49,7 @@ constexpr const char* kUsage =
     "  templates                                                  list project templates\n"
     "  info <project>                                             show project settings, scenes, assets\n"
     "  import <project>                                           import changed assets (exit 1 on failure)\n"
-    "  run <project> [--scene S] [--frames N] [--screenshot PNG] [--quality TIER]  play a scene\n"
+    "  run <project> [--scene S] [--frames N] [--screenshot PNG] [--quality TIER] [--profile F] [--trace F]  play a scene\n"
     "      [--connect HOST[:PORT]] [--name NAME]                  ...as a client of a `victus serve` server\n"
     "      [--host] [--port P] [--max-clients N]                  ...host a session and play in it (listen server)\n"
     "      [--server-key HEX] [--password P] [--insecure]         ...pin the server key / join a protected server\n"
@@ -172,10 +172,14 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("conditions", "emulate a bad link, e.g. latency=80,jitter=10,loss=0.05")
         .option("saves", "save games folder (default: <project>/.victus/saves)")
         .option("record", "record input, frame times and state digests to this .vcapture file")
-        .option("replay", "replay a .vcapture file (exit 5 if the game state diverges)");
+        .option("replay", "replay a .vcapture file (exit 5 if the game state diverges)")
+        .option("profile", "write frame-time percentiles and per-scope timings (JSON) to this file at exit")
+        .option("trace", "write a Chrome/Perfetto trace of the first 600 frames to this file");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
     player::PlayerOptions o;
+    o.profile = p.get("profile");
+    o.trace = p.get("trace");
     o.record = p.get("record");
     o.replay = p.get("replay");
     o.connect = p.get("connect");
@@ -208,6 +212,15 @@ int cmd_run(const std::vector<std::string>& a) {
     if (r->scene_loads)
         std::printf("scenes: %llu transitions, ended in %s\n", static_cast<unsigned long long>(r->scene_loads), r->final_scene.c_str());
     if (!o.record.empty()) std::printf("recorded capture: %s\n", o.record.string().c_str());
+    if (!o.profile.empty() || !o.trace.empty()) {
+        const auto& pr = r->profile;
+        std::printf("frame time: mean %.2f ms, p50 %.2f, p95 %.2f, p99 %.2f, max %.2f over %zu frames\n", pr.mean_ms, pr.p50_ms,
+                    pr.p95_ms, pr.p99_ms, pr.max_ms, pr.frames);
+        for (std::size_t i = 0; i < pr.scopes.size() && i < 8; ++i)
+            std::printf("  %-32s %7.3f ms (p95 %.3f)\n", pr.scopes[i].name.c_str(), pr.scopes[i].mean_ms, pr.scopes[i].p95_ms);
+        if (!o.profile.empty()) std::printf("profile: %s\n", o.profile.string().c_str());
+        if (!o.trace.empty()) std::printf("trace: %s\n", o.trace.string().c_str());
+    }
     if (!o.replay.empty()) {
         if (!r->replay_mismatch.empty()) return (void)error("replay diverged at " + r->replay_mismatch), 5;
         std::printf("replay: %llu state digests match\n", static_cast<unsigned long long>(r->digests_checked));

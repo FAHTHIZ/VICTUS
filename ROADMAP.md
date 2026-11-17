@@ -22,7 +22,7 @@ VICTUS is a general-purpose engine, not an Auroria-specific one. Auroria remains
 12. [x] (Slice 57) Per-object motion vectors for moving and skinned meshes (TAA ghosting); (Slice 58) temporal upscaling in the TAA resolve (ADR-0055). Follow-up: sharpening, reactive mask for particles/blended draws.
 13. [x] Scalable global illumination: (Slice 59) baked irradiance volumes (probe grid, SH9, multi-bounce, progressive runtime bake, ADR-0056); (Slice 60) dynamic volumes on High/Ultra (round-robin refresh with feedback, ADR-0057). Follow-up: probe visibility to reduce leaking, ray-traced probes when a GPU BVH/SDF exists, editor probe debug view.
 14. [x] Visual scripting graph over the Luau runtime: (Slice 61) typed graph model, 85-node library, validation, deterministic `.vgraph` serialization, compiler to Luau, runtime loading with node-annotated errors (ADR-0058); (Slice 62) VICTUS Studio Graph Editor with palette, linking, literals, variables, diagnostics, undo and save (ADR-0059); (Slice 63) play-mode debugging: traced graphs, live node/link highlighting, run counts, runtime error node (ADR-0060).
-15. [ ] Profiler: CPU frame/tick scopes and GPU pass timings, p50/p95/p99 histograms, memory counters, editor Profiler panel and `victus run --profile` report.
+15. [x] (Slice 64) Profiler: CPU frame/tick scopes (per system, script host, render pass), GPU wait time (per-pass GPU timestamps pending SDL_GPU support), p50/p95/p99 windows, memory/GPU resource counters, editor Profiler panel with trace recording, `victus run --profile/--trace`.
 16. [ ] Editor productivity: multi-selection (box/shift/ctrl, multi-edit inspector), autosave with crash recovery, command palette.
 17. [ ] Material graph: node-based surface shaders compiled to the existing surface shader path, edited with the graph canvas.
 18. [ ] Terrain: heightmap terrain with LOD, splat-map layered materials, sculpt/paint tools, collision, foliage scatter.
@@ -51,7 +51,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 
 ## Phase 2 — Performance laboratory
 - [x] Reproducible benchmark harness with warm-up, repetitions, machine/build metadata and machine-readable output.
-- [ ] CPU/GPU profiling, frame/tick histograms, p50/p95/p99, memory accounting and allocation tracking.
+- [~] CPU/GPU profiling, frame/tick histograms, p50/p95/p99, memory accounting and allocation tracking. (Slice 64: continuous frame profiler, per-scope windows, GPU wait scopes, memory counters; GPU timestamp queries pending.)
 - [~] Workloads for ECS, jobs, transforms (done: `victus_bench_scene`, `victus_bench_script`, `victus_bench_physics`, `victus_bench_audio`), animation, visibility, rendering, asset import, streaming, networking and saves.
 - [ ] Desktop baselines; Android physical-device baselines when hardware is available.
 - [ ] Performance budgets and regression gates based on measured reference hardware.
@@ -91,7 +91,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 - [~] Scene/world viewport, camera, hierarchy, inspector, selection, gizmos and snapping. (Viewport, 2D/3D editor camera, hierarchy with drag reparent, inspector for every component, click picking done; Slice 51: move/rotate/scale gizmos with world/local space, snapping, one undo entry per drag, prefab overrides, 2D and 3D.)
 - [~] Undo/redo command model, multi-selection, autosave and crash recovery. (Snapshot-based undo/redo with dirty tracking done; multi-selection/autosave pending.)
 - [~] Asset browser, metadata/dependency inspector, import queue and previews. (Asset table with drag/drop instantiate, material/texture assignment, prefabs, tile sets and reimport done; Slice 52: thumbnails for textures, sprite sheets, tile sets and rendered previews of models, materials and prefabs, list and grid views, refreshed on reimport/hot reload/material save. Dependency inspector and import queue pending.)
-- [~] Logs, entity diagnostics, profiler, project settings and build configuration. (Console over the log ring sink, Network window, rendering-quality selector and draw-call readout done; profiler panel pending.)
+- [~] Logs, entity diagnostics, profiler, project settings and build configuration. (Console over the log ring sink, Network window, rendering-quality selector, draw-call readout and Profiler window (Slice 64) done.)
 - [x] Isolated play-in-editor with safe play/pause/step/stop and authored-world protection.
 **Exit:** create project, import assets, author a scene, save/reopen and play without editing engine source.
 

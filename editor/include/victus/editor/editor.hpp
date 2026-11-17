@@ -3,6 +3,7 @@
 // assets, console), undo/redo and isolated play mode. The class is UI-toolkit driven but every
 // operation is also a plain method so tests and tools can drive the editor without input.
 #pragma once
+#include "victus/core/profiler.hpp"
 #include "victus/animation/animation.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/navigation/navigation.hpp"
@@ -27,6 +28,7 @@
 #include "victus/script/script.hpp"
 #include "victus/ui/ui.hpp"
 
+#include <filesystem>
 #include <memory>
 #include <array>
 #include <optional>
@@ -316,6 +318,21 @@ public:
     [[nodiscard]] const std::string& server_key() const noexcept { return server_key_; }
     // Join command for other machines/terminals, e.g. "victus run <project> --connect 127.0.0.1:27960 ...".
     [[nodiscard]] std::string join_command() const;
+    // Window > Profiler (ADR-0061): rolling frame-time graph with p50/p95/p99, per-scope CPU
+    // timings (systems, scripts, render passes), GPU wait, memory and GPU resource counters.
+    void set_show_profiler(bool show) noexcept {
+        show_profiler_ = show;
+        profiler_focus_ = show;
+    }
+    [[nodiscard]] bool show_profiler() const noexcept { return show_profiler_; }
+    [[nodiscard]] profiler::FrameReport profiler_report() const;
+    void set_profiler_paused(bool paused) noexcept;
+    [[nodiscard]] bool profiler_paused() const noexcept;
+    // Keeps every zone of the next `frames` editor frames and writes them as a Chrome/Perfetto
+    // trace to <project>/.victus/profiles/trace-<time>.json; last_profile_trace() is its path.
+    void record_profile_trace(std::size_t frames = 300);
+    [[nodiscard]] bool recording_profile_trace() const noexcept;
+    [[nodiscard]] const std::filesystem::path& last_profile_trace() const noexcept { return last_profile_trace_; }
     void set_show_network(bool show) noexcept { show_network_ = show; }
     [[nodiscard]] bool show_network() const noexcept { return show_network_; }
     // In-editor clients of the hosted session (NetPlaySettings::editor_clients), 1-based.
@@ -483,6 +500,8 @@ private:
     void start_play(std::uint64_t seed, bool networked = false);
     [[nodiscard]] Status start_hosting();
     void draw_network();
+    void draw_profiler();
+    void update_profiler();
     void draw_network_section(scene::Entity e);
     NetPlaySettings net_settings_;
     std::unique_ptr<net::NetServer> play_server_; // listen server of a hosted play session
@@ -496,6 +515,10 @@ private:
     void route_input();
     std::string server_key_;
     bool show_network_{false};
+    bool show_profiler_{false};
+    bool profiler_focus_{false};
+    std::unique_ptr<profiler::FrameProfiler> frame_profiler_;
+    std::filesystem::path last_profile_trace_;
     std::string net_filter_;
     std::string net_error_;
     float net_sample_{0};

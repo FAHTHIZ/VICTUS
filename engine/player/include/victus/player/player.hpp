@@ -3,6 +3,7 @@
 // the gameplay simulation. Used by `victus run`, the standalone player executable shipped with
 // exported games, and automated smoke tests (frame limit + screenshot).
 #pragma once
+#include "victus/core/profiler.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/core/result.hpp"
 
@@ -41,6 +42,10 @@ struct PlayerOptions {
     // random seed and state digests to a .vcapture file, or replay one (keyboard ignored; the run
     // ends with the capture and reports the first frame whose state digest differs).
     fs::Path record;
+    // Profiling (ADR-0061): write a frame-time/scope summary (JSON) and/or a Chrome/Perfetto
+    // trace of the session (the first 600 frames) when it ends.
+    fs::Path profile;
+    fs::Path trace;
     fs::Path replay;
 };
 
@@ -57,6 +62,7 @@ struct PlayerReport {
     std::string replay_mismatch;    // replay: first divergence ("frame N: expected X, got Y")
     std::uint64_t scene_loads{0};   // scene transitions scripts made (scene.load/reload)
     std::string final_scene;        // the scene running when the player stopped
+    profiler::FrameReport profile;  // with PlayerOptions::profile or trace
 };
 
 [[nodiscard]] Result<PlayerReport> run(const PlayerOptions& options);
