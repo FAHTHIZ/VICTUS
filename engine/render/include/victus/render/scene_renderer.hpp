@@ -115,7 +115,10 @@ enum class ParticleBlend : std::uint8_t { Alpha, Additive };
 struct ParticleInstance {
     math::Vec4 position_size; // xyz world position, w size (full width in metres)
     math::Vec4 color;         // linear RGBA, rgb may exceed 1 for glowing particles
-    math::Vec4 params;        // x rotation (radians), yzw reserved
+    math::Vec4 params;        // x rotation (radians); y flipbook frame (left to right, top to bottom);
+                              // z flipbook grid = columns * 16 + rows (0: whole texture; 1..15 columns and
+                              // rows); w height / width (0 or 1: square; > 1 stretches along the rotated up axis,
+                              // e.g. sparks and rain along their screen velocity)
 };
 struct ParticleMaterial {
     rhi::TextureHandle texture; // invalid => built-in soft disc
