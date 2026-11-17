@@ -134,14 +134,24 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         if (const auto* rec = assets->find_path(asset_path)) return rec->uuid;
         return make_error(ErrorCode::NotFound, std::format("no asset at '{}'", asset_path));
     };
+    so.project_root = proj->root();
+    // Scene transitions start the next scene with a fresh physics world and silence.
+    physics::PhysicsWorld* physics_for_scenes = nullptr;
+    audio::AudioEngine* audio_for_scenes = nullptr;
+    so.on_scene_loaded = [&physics_for_scenes, &audio_for_scenes](scene::Scene&, std::string_view) {
+        if (physics_for_scenes) physics_for_scenes->clear();
+        if (audio_for_scenes) audio_for_scenes->stop_all();
+    };
     auto scripts = script::ScriptHost::create(so);
     if (!scripts) return std::move(scripts).error();
+    (*scripts)->set_current_scene(rel);
     // Worker threads for physics (and future parallel systems); 0 = hardware_concurrency - 1.
     jobs::JobSystem workers(0);
     physics::PhysicsSettings ps;
     ps.jobs = &workers;
     auto physics_world = physics::PhysicsWorld::create(ps);
     if (!physics_world) return std::move(physics_world).error();
+    physics_for_scenes = physics_world->get();
     PlatformInput input((*plat)->input());
     gameplay::Simulation sim;
     gameplay::add_builtin_systems(sim);
@@ -159,7 +169,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     ao.assets_root = (*db)->assets_dir();
     ao.null_device = audio::audio_disabled_by_env();
     auto audio_engine = audio::AudioEngine::create(ao);
-    if (audio_engine) audio::add_audio_systems(sim, **audio_engine);
+    if (audio_engine) {
+        audio::add_audio_systems(sim, **audio_engine);
+        audio_for_scenes = audio_engine->get();
+    }
     else VICTUS_LOG_WARN("player", "audio disabled: {}", audio_engine.error().message);
     sim.input = &input;
     // Captures drive the simulation through a ReplayInput in both directions, so a recording sees
@@ -368,6 +381,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     if (frame) dev.destroy(frame);
     report.seconds = platform::Platform::seconds() - start;
     report.script_errors = (*scripts)->stats().errors;
+    report.scene_loads = (*scripts)->stats().scene_loads;
+    report.final_scene = (*scripts)->current_scene();
     if (!result.ok()) return std::move(result).error();
     return report;
 }

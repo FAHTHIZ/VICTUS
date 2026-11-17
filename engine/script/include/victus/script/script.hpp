@@ -25,6 +25,11 @@
 // Scene API: `scene.find(name)`, `scene.spawn(name?, parent?)`, `scene.destroy(e)`,
 // `scene.query(component)`, `scene.count()`, `scene.instantiate(prefab_path, {position, parent,
 // name}?)` creates an instance of a `.vprefab` asset (its scripts start on the next update).
+// Scene transitions: `scene.load(path, params?)` validates a project scene (e.g.
+// "scenes/level2.vscene") and switches to it at the end of this update (true | nil, error);
+// `scene.reload(params?)` restarts the current scene; `scene.current()` is its path and
+// `scene.params()` the table passed to the load that started it (nil when none). Every script
+// instance is dropped and starts again in the new scene; module-level Luau state persists.
 //
 // Input API: raw keys/mouse `input.down/pressed/released(key)`, `input.axis(neg, pos, ...)`,
 // `input.mouse_down/mouse_pressed(b)`, `input.mouse_position/mouse_delta()`; actions from the
@@ -144,6 +149,14 @@ struct HostOptions {
     // Nonzero: math.random starts from this seed, so runs with the same input repeat exactly
     // (regression captures). Zero: Luau's default per-VM seed.
     std::uint64_t random_seed{0};
+    // Scene transitions (`scene.load(path)`): scene paths are relative to this folder (the
+    // project root). Empty: the parent of assets_root.
+    std::filesystem::path project_root;
+    // Reads a scene document for `scene.load`. Empty: reads `<project_root>/<path>` (through
+    // any mounted pack, so exported games work unchanged).
+    std::function<Result<json::Value>(std::string_view path)> scene_loader;
+    // Called right after a transition replaced the scene (players reset physics, audio, ...).
+    std::function<void(scene::Scene& scene, std::string_view path)> on_scene_loaded;
 };
 
 struct HostStats {
@@ -154,6 +167,7 @@ struct HostStats {
     std::uint64_t errors{0};
     std::uint64_t reloads{0};
     std::size_t heap_bytes{0};
+    std::uint64_t scene_loads{0}; // completed scene transitions
 };
 
 // Owns one sandboxed Luau VM and runs the scripts of one scene.
@@ -198,6 +212,13 @@ public:
     [[nodiscard]] gameplay::SaveStore* saves();
     // Replaces the input actions scripts see (e.g. edited in the editor while playing).
     void set_input_map(gameplay::InputMap map);
+    // The project-relative path of the running scene (`scene.current()`); players set it at
+    // startup and transitions update it.
+    void set_current_scene(std::string path);
+    [[nodiscard]] const std::string& current_scene() const noexcept;
+    // Switches to the scene at `path` now (not from inside update), as `scene.load` would at the
+    // end of an update: validates it first and leaves `scene` untouched on failure.
+    [[nodiscard]] Status load_scene(scene::Scene& scene, std::string_view path, json::Value params = {});
 
     struct Impl;
 
@@ -220,5 +241,9 @@ void add_script_systems(gameplay::Simulation& sim, ScriptHost& host);
 // Compiles source to Luau bytecode without running it; returns the compile error message on
 // failure (used by import validation and tests).
 [[nodiscard]] Status check_syntax(std::string_view source, std::string_view chunk_name);
+
+// Scene paths a script passes as string literals to `scene.load("...")` (export and check
+// verify they exist). Computed paths are not found; they are checked when the call runs.
+[[nodiscard]] std::vector<std::string> scene_references(std::string_view source);
 
 } // namespace victus::script

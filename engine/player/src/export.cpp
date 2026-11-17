@@ -95,6 +95,7 @@ Result<ExportReport> export_game(const ExportOptions& o) {
 
     // Assets: cooked form for imported kinds, verbatim bytes for everything else.
     std::set<std::string> asset_paths;
+    const std::vector<std::string> project_scenes = proj->scenes(); // targets of scene.load
     for (const assets::AssetRecord& r : (*db)->records()) {
         asset_paths.insert(r.path);
         if (r.importer == "texture" || r.importer == "gltf") {
@@ -117,6 +118,9 @@ Result<ExportReport> export_game(const ExportOptions& o) {
                 errors.push_back(st.error().message);
                 continue;
             }
+            for (const std::string& target : script::scene_references(*text))
+                if (std::find(project_scenes.begin(), project_scenes.end(), target) == project_scenes.end())
+                    errors.push_back(std::format("{}: scene.load(\"{}\") names a scene that does not exist", r.path, target));
         }
         if (auto st = pw.add_file("assets/" + r.path, src); !st) errors.push_back(std::format("{}: {}", r.path, st.error().message));
     }

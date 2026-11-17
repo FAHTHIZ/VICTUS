@@ -18,6 +18,7 @@
 #include <lualib.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <chrono>
 #include <cstdlib>
@@ -88,6 +89,16 @@ struct ScriptHost::Impl {
     std::unordered_map<std::uint32_t, int> migration_refs; // from-version -> Luau function ref
     std::optional<Value> pending_restore;                  // checkpoint applied after update
     std::unordered_map<std::string, Value> pending_states; // entity id -> load_state() argument
+    // Scene transitions: the running scene's path, the params it was loaded with and a
+    // validated transition applied at the end of the update.
+    struct SceneRequest {
+        std::string path;
+        Value doc;
+        Value params;
+    };
+    std::string current_scene;
+    Value scene_params;
+    std::optional<SceneRequest> pending_scene;
     lua_State* active{nullptr};                            // thread running save.read (migrations)
 
     gameplay::SaveStore* store() {
@@ -2128,6 +2139,8 @@ int save_checkpoint(lua_State* L) {
     data.set("victus_checkpoint", 1);
     data.set("scene", s.save());
     data.set("scripts", std::move(scripts));
+    if (!h.current_scene.empty()) data.set("scene_path", h.current_scene);
+    if (!h.scene_params.is_null()) data.set("scene_params", h.scene_params);
     if (auto st = store->write(slot, data, label); !st) return save_fail(L, st.error().message);
     lua_pushboolean(L, 1);
     return 1;
@@ -2154,6 +2167,7 @@ int save_restore(lua_State* L) {
     auto& s = scene_of(L);
     auto data = read_checkpoint(h, s, luaL_checkstring(L, 1));
     if (!data) return save_fail(L, data.error().message);
+    h.pending_scene.reset(); // the newest request wins
     h.pending_restore = std::move(*data);
     lua_pushboolean(L, 1);
     return 1;
@@ -2170,11 +2184,99 @@ int scene_find_id(lua_State* L) {
     return 1;
 }
 
+// Reads and validates the scene at `path` before anything is replaced.
+Result<Value> read_scene(ScriptHost::Impl& h, std::string_view path) {
+    if (path.empty()) return make_error(ErrorCode::InvalidArgument, "scene path is empty");
+    Result<Value> doc = make_error(ErrorCode::Unknown, "unreachable");
+    if (h.options.scene_loader) {
+        doc = h.options.scene_loader(path);
+    } else {
+        const fs::Path root = !h.options.project_root.empty() ? h.options.project_root : h.options.assets_root.parent_path();
+        auto file = fs::resolve_under(root, path);
+        if (!file) return std::move(file).error();
+        auto text = fs::read_text(*file);
+        if (!text) return make_error(ErrorCode::NotFound, std::format("no scene at '{}'", path));
+        auto parsed = json::parse(*text);
+        if (!parsed) return make_error(ErrorCode::ParseError, std::format("{}: {}", path, parsed.error().message));
+        doc = std::move(*parsed);
+    }
+    if (!doc) return std::move(doc).error();
+    scene::Scene probe;
+    if (auto st = probe.load(*doc); !st) return make_error(st.error().code, std::format("{}: {}", path, st.error().message));
+    return doc;
+}
+
+Status apply_scene(ScriptHost::Impl& h, scene::Scene& s, ScriptHost::Impl::SceneRequest req) {
+    for (auto& [k, in] : h.instances) h.drop(in);
+    h.instances.clear();
+    h.pending_states.clear();
+    h.pending_restore.reset();
+    if (auto st = s.load(req.doc); !st) return st;
+    s.update_transforms();
+    h.current_scene = std::move(req.path);
+    h.scene_params = std::move(req.params);
+    ++h.counters.scene_loads;
+    VICTUS_LOG_INFO("script", "scene changed to {}", h.current_scene);
+    if (h.options.on_scene_loaded) h.options.on_scene_loaded(s, h.current_scene);
+    return {};
+}
+
+// scene.load(path, params?) -> true | nil, error. The scene is replaced at the end of this update.
+int scene_load_impl(lua_State* L, std::string path, int params_idx) {
+    auto& h = host_of(L);
+    Value params;
+    if (!lua_isnoneornil(L, params_idx)) {
+        luaL_checktype(L, params_idx, LUA_TTABLE);
+        params = to_json(L, params_idx, 0, true);
+    }
+    auto doc = read_scene(h, path);
+    if (!doc) {
+        lua_pushnil(L);
+        lua_pushstring(L, doc.error().message.c_str());
+        return 2;
+    }
+    h.pending_restore.reset(); // the newest request wins
+    h.pending_scene = ScriptHost::Impl::SceneRequest{std::move(path), std::move(*doc), std::move(params)};
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+int scene_load(lua_State* L) { return scene_load_impl(L, luaL_checkstring(L, 1), 2); }
+
+int scene_reload(lua_State* L) {
+    auto& h = host_of(L);
+    if (h.current_scene.empty()) {
+        lua_pushnil(L);
+        lua_pushstring(L, "the running scene has no path");
+        return 2;
+    }
+    return scene_load_impl(L, h.current_scene, 1);
+}
+
+int scene_current(lua_State* L) {
+    auto& h = host_of(L);
+    if (h.current_scene.empty()) lua_pushnil(L);
+    else lua_pushstring(L, h.current_scene.c_str());
+    return 1;
+}
+
+int scene_params(lua_State* L) {
+    auto& h = host_of(L);
+    if (h.scene_params.is_null()) lua_pushnil(L);
+    else push_json(L, h.scene_params, 0, true);
+    return 1;
+}
+
 Status apply_checkpoint(ScriptHost::Impl& h, scene::Scene& s, const Value& data) {
     for (auto& [k, in] : h.instances) h.drop(in);
     h.instances.clear();
     if (auto st = s.load(data["scene"]); !st) return st;
     s.update_transforms();
+    if (const Value* p = data.find("scene_path"); p && p->is_string()) {
+        h.current_scene = p->as_string();
+        const Value* params = data.find("scene_params");
+        h.scene_params = params ? *params : Value{};
+    }
     h.pending_states.clear();
     if (const Value* scripts = data.find("scripts"); scripts && scripts->is_object())
         for (const auto& [id, state] : scripts->as_object()) h.pending_states.emplace(id, state);
@@ -2265,7 +2367,9 @@ void open_victus_libs(lua_State* L) {
 
     const luaL_Reg scene_fns[] = {{"find", scene_find},     {"spawn", scene_spawn}, {"destroy", scene_destroy},
                                   {"query", scene_query},   {"count", scene_count}, {"instantiate", scene_instantiate},
-                                  {"find_id", scene_find_id}, {nullptr, nullptr}};
+                                  {"find_id", scene_find_id}, {"load", scene_load},
+                                  {"reload", scene_reload},   {"current", scene_current},
+                                  {"params", scene_params},   {nullptr, nullptr}};
     register_lib(L, "scene", scene_fns);
     const luaL_Reg input_fns[] = {{"down", input_down},
                                   {"pressed", input_pressed},
@@ -2573,6 +2677,12 @@ void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, co
         h.pending_restore.reset();
         if (auto st = apply_checkpoint(h, scene, data); !st) h.report(std::format("save.restore: {}", st.error().message));
     }
+    if (h.pending_scene) {
+        auto req = std::move(*h.pending_scene);
+        h.pending_scene.reset();
+        const std::string path = req.path;
+        if (auto st = apply_scene(h, scene, std::move(req)); !st) h.report(std::format("scene.load({}): {}", path, st.error().message));
+    }
     h.input = h.default_input;
     h.counters.instances = h.instances.size();
 }
@@ -2820,6 +2930,16 @@ const std::vector<std::string>& ScriptHost::recent_errors() const noexcept { ret
 const HostOptions& ScriptHost::options() const noexcept { return impl_->options; }
 void ScriptHost::forget_prefabs() { impl_->prefabs.clear(); }
 void ScriptHost::set_input_map(gameplay::InputMap map) { impl_->options.input_map = std::move(map); }
+void ScriptHost::set_current_scene(std::string path) { impl_->current_scene = std::move(path); }
+const std::string& ScriptHost::current_scene() const noexcept { return impl_->current_scene; }
+
+Status ScriptHost::load_scene(scene::Scene& scene, std::string_view path, json::Value params) {
+    Impl& h = *impl_;
+    auto doc = read_scene(h, path);
+    if (!doc) return std::move(doc).error();
+    h.pending_scene.reset();
+    return apply_scene(h, scene, Impl::SceneRequest{std::string(path), std::move(*doc), std::move(params)});
+}
 
 void add_script_systems(gameplay::Simulation& sim, ScriptHost& host) {
     gameplay::register_state_probe("script", script_probe);
@@ -2842,6 +2962,30 @@ Status check_syntax(std::string_view source, std::string_view chunk_name) {
     }
     std::free(bc);
     return st;
+}
+
+std::vector<std::string> scene_references(std::string_view source) {
+    std::vector<std::string> out;
+    constexpr std::string_view kCall = "scene.load";
+    for (std::size_t at = source.find(kCall); at != std::string_view::npos; at = source.find(kCall, at + 1)) {
+        if (at > 0) {
+            const char before = source[at - 1];
+            if (std::isalnum(static_cast<unsigned char>(before)) || before == '_' || before == '.') continue;
+        }
+        std::size_t i = at + kCall.size();
+        while (i < source.size() && (source[i] == ' ' || source[i] == '\t')) ++i;
+        if (i >= source.size() || source[i] != '(') continue;
+        ++i;
+        while (i < source.size() && (source[i] == ' ' || source[i] == '\t')) ++i;
+        if (i >= source.size() || (source[i] != '"' && source[i] != '\'')) continue;
+        const char quote = source[i++];
+        const std::size_t end = source.find(quote, i);
+        if (end == std::string_view::npos) continue;
+        const std::string_view path = source.substr(i, end - i);
+        if (path.find('\\') != std::string_view::npos || path.empty()) continue; // escapes: leave to runtime
+        if (std::find(out.begin(), out.end(), path) == out.end()) out.emplace_back(path);
+    }
+    return out;
 }
 
 } // namespace victus::script
