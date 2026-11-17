@@ -236,6 +236,8 @@ function(victus_fetch_glslang)
                 ENABLE_PCH ENABLE_GLSLANG_JS BUILD_WERROR)
         set(${opt} OFF CACHE BOOL "" FORCE)
     endforeach()
+    # RTTI on: the engine is built with RTTI and UBSan's vptr check needs glslang's type info.
+    set(ENABLE_RTTI ON CACHE BOOL "" FORCE)
     FetchContent_Declare(glslang
         URL https://github.com/KhronosGroup/glslang/archive/refs/tags/16.6.0.tar.gz
         URL_HASH SHA256=9c09b901149c729df745057dafa815278aaa101b84d2b6e14f16a42de52f97f2
