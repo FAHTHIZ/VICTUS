@@ -414,4 +414,4 @@ This file records only verified state. Every entry lists what was built, how it 
 - Known gaps: `victus simulate` with seed 0 is random, so sample tests always pass `--seed`; writing `Sprite` from Luau replaces the whole component (unspecified fields reset), so scripts write every field they need.
 
 ## Next task
-Slice 44: a 3D sample game under `samples/` (third-person arena collect-and-avoid game using CharacterController, materials, prefabs, particles, audio, UI and a scripted camera) with an autopilot scene and a `victus_sample_*` CTest, to validate the 3D workflow end to end; fix engine gaps it exposes.
+Slice 44: image-based lighting (HDR equirect environment maps baked on the GPU into a cubemap with GGX-prefiltered mips, CPU SH9 irradiance, cubemap sky background, `Environment.environment_map`). The 3D sample game moves to the roadmap's "Next slices" list (item 9); see ROADMAP.md for the full order.
