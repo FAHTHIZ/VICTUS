@@ -1,0 +1,78 @@
+{
+  "format": "victus.tileset",
+  "version": 1,
+  "texture": "a121ea9c-fb58-4320-adee-4d76d4460f20",
+  "columns": 4,
+  "rows": 7,
+  "collision": "none",
+  "tiles": {
+    "0": {
+      "collision": "solid"
+    },
+    "1": {
+      "collision": "solid"
+    },
+    "2": {
+      "collision": "solid"
+    },
+    "3": {
+      "collision": "solid"
+    },
+    "4": {
+      "collision": "solid"
+    },
+    "5": {
+      "collision": "solid"
+    },
+    "6": {
+      "collision": "solid"
+    },
+    "7": {
+      "collision": "solid"
+    },
+    "8": {
+      "collision": "solid"
+    },
+    "9": {
+      "collision": "solid"
+    },
+    "10": {
+      "collision": "solid"
+    },
+    "11": {
+      "collision": "solid"
+    },
+    "12": {
+      "collision": "solid"
+    },
+    "13": {
+      "collision": "solid"
+    },
+    "14": {
+      "collision": "solid"
+    },
+    "15": {
+      "collision": "solid"
+    }
+  },
+  "terrains": {
+    "wall": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ]
+  }
+}
