@@ -153,6 +153,7 @@ std::vector<EditorCommand> Editor::commands() {
     add("View: Reset Layout", {}, true, [this] { layout_built_ = false; });
     toggle("Physics Colliders", &show_colliders_);
     toggle("Navigation Mesh", &show_navmesh_);
+    toggle("AI Debug", &show_ai_);
     toggle("Network", &show_network_);
     toggle("Tile Palette", &show_tile_palette_);
     toggle("Terrain Tools", &show_terrain_tools_);

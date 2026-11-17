@@ -15,6 +15,7 @@
 #include "victus/animation/animation.hpp"
 #include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
+#include "victus/ai/ai.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -195,6 +196,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     particles::add_particle_systems(sim, particle_system);
     navigation::NavigationSystem nav;
     navigation::add_navigation_systems(sim, nav);
+    ai::AiSystem ai_system(ai::directory_loader((*db)->assets_dir()));
+    ai::add_ai_systems(sim, ai_system);
     // Audio is optional: without a device (or with VICTUS_NO_AUDIO=1) the game runs silently.
     audio::EngineOptions ao;
     ao.assets_root = (*db)->assets_dir();

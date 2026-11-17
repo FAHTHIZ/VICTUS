@@ -13,6 +13,7 @@
 #include "victus/animation/animation.hpp"
 #include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
+#include "victus/ai/ai.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -261,6 +262,7 @@ struct Headless {
     std::unique_ptr<terrain::TerrainSystem> terrains;
     particles::ParticleSystem particle_system; // single-threaded like physics; identical either way
     navigation::NavigationSystem nav;
+    std::unique_ptr<ai::AiSystem> ai_system;
     std::unique_ptr<audio::AudioEngine> audio_engine;
     gameplay::ManualInput input;
     gameplay::Simulation sim;
@@ -313,6 +315,8 @@ struct Headless {
         terrain::add_terrain_systems(sim, *terrains);
         particles::add_particle_systems(sim, particle_system);
         navigation::add_navigation_systems(sim, nav);
+        ai_system = std::make_unique<ai::AiSystem>(db ? ai::directory_loader(db->assets_dir()) : ai::TreeLoader{});
+        ai::add_ai_systems(sim, *ai_system);
         audio::EngineOptions ao; // mixed without a device so audio calls behave as in the game
         ao.assets_root = proj->root() / "assets";
         ao.null_device = true;
@@ -727,6 +731,16 @@ int cmd_check(const std::vector<std::string>& a) {
             ++problems;
         }
     }
+    // Behaviour trees: each must parse.
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::BehaviorTree) continue;
+        auto text = fs::read_text((*db)->source_path(r));
+        auto t = text ? ai::BehaviorTree::parse(*text, r.path) : Result<std::shared_ptr<const ai::BehaviorTree>>(std::move(text).error());
+        if (!t) {
+            std::printf("error: %s: %s\n", r.path.c_str(), t.error().message.c_str());
+            ++problems;
+        }
+    }
     script::HostOptions so;
     so.assets_root = assets;
     so.input_map = proj->settings().input;
@@ -781,6 +795,14 @@ int cmd_check(const std::vector<std::string>& a) {
             if (!t || t->kind != assets::AssetKind::Terrain) {
                 std::printf("error: %s: entity '%s' uses missing terrain data %s\n", rel.c_str(), entity_name(scene, e).c_str(),
                             c.data.to_string().c_str());
+                ++problems;
+            }
+        });
+        scene.world().each<ai::BehaviorTreeComponent>([&](scene::Entity e, ai::BehaviorTreeComponent& c) {
+            const assets::AssetRecord* t = (*db)->find_path(c.tree);
+            if (!t || t->kind != assets::AssetKind::BehaviorTree) {
+                std::printf("error: %s: entity '%s' uses missing behaviour tree '%s'\n", rel.c_str(), entity_name(scene, e).c_str(),
+                            c.tree.c_str());
                 ++problems;
             }
         });

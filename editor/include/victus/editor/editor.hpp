@@ -7,6 +7,7 @@
 #include "victus/animation/animation.hpp"
 #include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
+#include "victus/ai/ai.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -170,6 +171,14 @@ public:
     [[nodiscard]] const script::ScriptHost* play_scripts() const noexcept { return play_scripts_.get(); }
     [[nodiscard]] const physics::PhysicsWorld* play_physics() const noexcept { return play_physics_.get(); }
     [[nodiscard]] const navigation::NavigationSystem* play_navigation() const noexcept { return play_navigation_.get(); }
+    [[nodiscard]] ai::AiSystem* play_ai() noexcept { return play_ai_.get(); }
+    // View > AI Debug: perception cones and targets in the viewport and the AI Debugger window
+    // (behaviour tree state and blackboard of the selected entity) during play.
+    void set_show_ai(bool show) noexcept { show_ai_ = show; }
+    [[nodiscard]] bool show_ai() const noexcept { return show_ai_; }
+    // Text form of the AI Debugger for an entity of the play scene (tree header, one line per node
+    // with its last status, then "bb key = value" lines); empty while editing.
+    [[nodiscard]] std::vector<std::string> ai_debug_lines(scene::Entity e);
     // View > Navigation Mesh: draws the navmesh (built from static colliders) in the viewport.
     void set_show_navmesh(bool show) noexcept { show_navmesh_ = show; }
     [[nodiscard]] const navigation::NavigationSystem* navmesh_preview() const noexcept { return edit_navigation_.get(); }
@@ -572,6 +581,9 @@ private:
     float sheet_fps_{10.0f};
     std::unique_ptr<particles::ParticleSystem> play_particles_;  // fresh per play session
     std::unique_ptr<navigation::NavigationSystem> play_navigation_; // fresh per play session
+    std::unique_ptr<ai::AiSystem> play_ai_;                         // fresh per play session
+    bool show_ai_{false};
+    std::vector<ai::DebugLine> ai_scratch_;
     std::unique_ptr<audio::AudioEngine> audio_;           // opened on first use, kept across sessions
     bool audio_failed_{false};
     std::unique_ptr<script::ScriptHost> edit_scripts_; // inspector property discovery
@@ -704,6 +716,7 @@ private:
         std::uint64_t revision{0};
     };
     void draw_terrain_tools();
+    void draw_ai_debugger();
     void terrain_viewport_input(math::Vec2 origin, math::Vec2 size, bool hovered);
     void draw_terrain_overlay(render::SceneRenderer& r);
     [[nodiscard]] scene::Entity terrain_target();

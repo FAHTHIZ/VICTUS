@@ -100,6 +100,8 @@ void Editor::start_editor_clients() {
         particles::add_particle_systems(c->sim, *c->particles);
         c->navigation = std::make_unique<navigation::NavigationSystem>();
         navigation::add_navigation_systems(c->sim, *c->navigation);
+        c->ai = std::make_unique<ai::AiSystem>(db_ ? ai::directory_loader(db_->assets_dir()) : ai::TreeLoader{});
+        ai::add_ai_systems(c->sim, *c->ai);
         // No audio: only the viewed host plays sound (scripts' audio calls are no-ops here).
 
         auto transport = net::create_udp_transport({});

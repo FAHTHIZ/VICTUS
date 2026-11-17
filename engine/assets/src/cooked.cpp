@@ -138,6 +138,7 @@ const char* to_string(AssetKind kind) noexcept {
     case AssetKind::SpriteSheet: return "spritesheet";
     case AssetKind::Tileset: return "tileset";
     case AssetKind::Terrain: return "terrain";
+    case AssetKind::BehaviorTree: return "behavior_tree";
     default: return "unknown";
     }
 }

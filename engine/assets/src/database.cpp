@@ -86,6 +86,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     if (e == ".vsheet") return AssetKind::SpriteSheet;
     if (e == ".vtileset") return AssetKind::Tileset;
     if (e == terrain::kTerrainExtension) return AssetKind::Terrain;
+    if (e == ".vbt") return AssetKind::BehaviorTree;
     if (e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac") return AssetKind::Audio;
     return AssetKind::Unknown;
 }

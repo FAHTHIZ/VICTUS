@@ -1103,6 +1103,8 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
     particles::add_particle_systems(sim_, *play_particles_);
     play_navigation_ = std::make_unique<navigation::NavigationSystem>();
     navigation::add_navigation_systems(sim_, *play_navigation_);
+    play_ai_ = std::make_unique<ai::AiSystem>(db_ ? ai::directory_loader(db_->assets_dir()) : ai::TreeLoader{});
+    ai::add_ai_systems(sim_, *play_ai_);
     if (auto* a = audio()) {
         a->stop_all();
         audio::add_audio_systems(sim_, *a);
@@ -1118,6 +1120,7 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
             play_animation_.reset();
             play_particles_.reset();
             play_navigation_.reset();
+            play_ai_.reset();
             return;
         }
     }
@@ -1207,6 +1210,7 @@ void Editor::stop() {
     play_animation_.reset();
     play_particles_.reset();
     play_navigation_.reset();
+    play_ai_.reset();
     if (audio_) audio_->stop_all();
     if (input_) input_->set_enabled(false);
     play_state_ = PlayState::Editing;
@@ -1280,6 +1284,11 @@ void Editor::draw_overlays_3d(render::SceneRenderer& r) {
         nav_scratch_.clear();
         nav->debug_lines(nav_scratch_);
         for (const auto& l : nav_scratch_) r.line(l.a, l.b, l.color);
+    }
+    if (show_ai_ && play_ai_ && play_state_ != PlayState::Editing) {
+        ai_scratch_.clear();
+        play_ai_->debug_lines(s, ai_scratch_);
+        for (const auto& l : ai_scratch_) r.line(l.a, l.b, l.color);
     }
 }
 

@@ -5,6 +5,7 @@
 #include "victus/animation/animation.hpp"
 #include "victus/editor/editor.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/ai/ai.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -25,6 +26,7 @@ struct EditorClient {
     std::unique_ptr<animation::AnimationSystem> animation;
     std::unique_ptr<particles::ParticleSystem> particles;
     std::unique_ptr<navigation::NavigationSystem> navigation;
+    std::unique_ptr<ai::AiSystem> ai;
     gameplay::ManualInput idle; // input while another peer is viewed: nothing held
     gameplay::Simulation sim;
     std::unique_ptr<net::NetClient> client;
