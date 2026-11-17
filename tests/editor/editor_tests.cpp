@@ -974,6 +974,25 @@ TEST_CASE("editor: materials are created from a selection, edited, assigned with
     }
     CHECK(ed.set_editing_material_shader({}));
 
+    // Material instances: created next to the parent, inherit everything, save only overrides.
+    auto inst = ed.create_material_instance(mat);
+    REQUIRE(inst.ok());
+    const Uuid inst_id = *inst;
+    CHECK(ed.assets()->find(inst_id)->path == "materials/Crate_instance.vmat");
+    ed.open_material_editor(inst_id);
+    CHECK(ed.editing_material() == inst_id);
+    h.frames(2); // instance header and inherited markers drawn
+    auto inst_file = assets::load_material_file(assets_dir / "materials" / "Crate_instance.vmat");
+    REQUIRE(inst_file);
+    CHECK(inst_file->parent == mat);
+    CHECK(inst_file->overrides == 0);
+    auto inst_resolved = ed.assets()->resolve_material(inst_id);
+    REQUIRE(inst_resolved);
+    CHECK(inst_resolved->roughness == doctest::Approx(0.95f)); // the parent's value
+    CHECK(inst_resolved->base_color_texture == tex);
+    CHECK_FALSE(ed.create_material_instance(tex).ok());
+    ed.open_material_editor(mat);
+
     // Assignment is undoable; non-material assets are rejected.
     CHECK(ed.assign_material(box, {}));
     CHECK(s.world().get<MeshRendererComponent>(box)->material_asset.is_nil());

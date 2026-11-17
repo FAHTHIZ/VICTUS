@@ -284,3 +284,45 @@ TEST_CASE("gpu: MaterialOverrides offset, scroll and emissive adjust one entity'
     CHECK(channel(centre, 2) > channel(centre, 0) + 100);
     cache.clear();
 }
+
+TEST_CASE("gpu: material instances draw with inherited textures and their own overrides") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    MaterialScene s;
+    runtime::GpuAssetCache cache(*gpu().ctx, s.db.get());
+    const int base = transitions(s, cache);
+
+    // An instance that inherits the texture and filter but tiles 8x.
+    assets::MaterialAsset inst;
+    inst.parent = s.material;
+    inst.uv_scale = {8, 8};
+    inst.overrides = assets::field_bit(assets::MaterialField::UvScale);
+    REQUIRE(assets::save_material_file(s.project / "assets" / "materials" / "floor_tiled.vmat", inst).ok());
+    (void)s.db->refresh();
+    const Uuid inst_id = s.db->find_path("materials/floor_tiled.vmat")->uuid;
+    s.scene.world().get<MeshRendererComponent>(s.plane)->material_asset = inst_id;
+    auto resolved = cache.material(inst_id);
+    REQUIRE(resolved.ok());
+    CHECK(resolved->base_color_texture); // inherited
+    CHECK(resolved->nearest_filter);
+    runtime::ExtractStats stats;
+    const int tiled = transitions(s, cache, &stats);
+    CHECK(stats.missing_assets == 0);
+    CHECK(tiled >= base + 4);
+
+    // Parent edits reach the instance through hot reload (instance keeps its own tiling).
+    runtime::AssetHotReloader reloader(*s.db);
+    s.write_material(1.0f, 5); // rewrites the parent with the same texture
+    const auto changes = reloader.check();
+    REQUIRE_FALSE(changes.materials.empty());
+    runtime::AssetHotReloader::apply(changes, &cache, nullptr);
+    CHECK(transitions(s, cache) >= base + 4);
+
+    // A broken chain degrades like a missing material.
+    inst.parent = Uuid::generate();
+    REQUIRE(assets::save_material_file(s.project / "assets" / "materials" / "floor_tiled.vmat", inst).ok());
+    cache.evict_materials();
+    CHECK_FALSE(cache.material(inst_id).ok());
+    (void)transitions(s, cache, &stats);
+    CHECK(stats.missing_assets == 1);
+    cache.clear();
+}

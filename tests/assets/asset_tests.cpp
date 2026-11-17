@@ -5,6 +5,7 @@
 #include "victus/core/hash.hpp"
 
 #include <filesystem>
+#include <format>
 
 using namespace victus;
 using namespace victus::assets;
@@ -276,4 +277,101 @@ TEST_CASE("assets: database metas, stable UUIDs, incremental cooking and depende
     REQUIRE(report.errors.size() == 1);
     CHECK(*fs::read_text(assets / "broken.png.meta") == "{ not json");
     CHECK(db.find_path("broken.png") == nullptr);
+}
+
+TEST_CASE("assets: material instances inherit, override, round trip and reject broken chains") {
+    // JSON: an instance records exactly the keys it sets and writes only those back.
+    auto doc = json::parse(R"({"victus_material": 1, "parent": "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f003",
+                               "base_color": [0, 0, 1, 1], "base_color_texture": null})");
+    REQUIRE(doc.ok());
+    auto inst = MaterialAsset::from_json(*doc);
+    REQUIRE(inst.ok());
+    CHECK(inst->is_instance());
+    CHECK(inst->overrides == (field_bit(MaterialField::BaseColor) | field_bit(MaterialField::BaseColorTexture)));
+    const json::Value written = inst->to_json();
+    CHECK(written.size() == 4); // victus_material, parent, base_color, base_color_texture
+    CHECK(written.find("roughness") == nullptr);
+    auto back = MaterialAsset::from_json(written);
+    REQUIRE(back.ok());
+    CHECK(*back == *inst);
+    auto plain = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1})"));
+    REQUIRE(plain.ok());
+    CHECK(plain->overrides == kAllMaterialFields); // standalone materials own every field
+    CHECK_FALSE(MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "parent": 3})")).ok());
+
+    TempDir project("victus_matinst");
+    const fs::Path dir = project.path / "assets";
+    std::filesystem::create_directories(dir);
+    auto opened = AssetDatabase::open(project.path);
+    REQUIRE(opened.ok());
+    AssetDatabase& db = **opened;
+    auto write = [&](const char* name, const MaterialAsset& m) {
+        REQUIRE(save_material_file(dir / name, m).ok());
+        (void)db.refresh();
+        return db.find_path(name)->uuid;
+    };
+    MaterialAsset base;
+    base.base_color = {1, 0, 0, 1};
+    base.roughness = 0.2f;
+    base.uv_scale = {4, 4};
+    base.base_color_texture = Uuid::generate();
+    const Uuid base_id = write("base.vmat", base);
+    MaterialAsset child;
+    child.parent = base_id;
+    child.base_color = {0, 0, 1, 1};
+    child.overrides = field_bit(MaterialField::BaseColor);
+    const Uuid child_id = write("child.vmat", child);
+    MaterialAsset grandchild;
+    grandchild.parent = child_id;
+    grandchild.metallic = 1.0f;
+    grandchild.base_color_texture = {};
+    grandchild.overrides = field_bit(MaterialField::Metallic) | field_bit(MaterialField::BaseColorTexture);
+    const Uuid gc_id = write("grandchild.vmat", grandchild);
+
+    auto r = db.resolve_material(gc_id);
+    REQUIRE(r.ok());
+    CHECK(r->base_color == math::Color{0, 0, 1, 1}); // from child
+    CHECK(r->roughness == doctest::Approx(0.2f));    // from base
+    CHECK(r->uv_scale == math::Vec2{4, 4});
+    CHECK(r->metallic == doctest::Approx(1.0f));     // own
+    CHECK(r->base_color_texture.is_nil());           // overridden to "none"
+    CHECK(r->parent == child_id);                    // the leaf's own parent and mask are kept
+    CHECK(r->overrides == grandchild.overrides);
+    // Saving the file content (not the resolved values) is untouched by inheritance.
+    auto raw = db.load_material(gc_id);
+    REQUIRE(raw.ok());
+    CHECK(raw->base_color == math::Color{1, 1, 1, 1});
+
+    // Parent edits propagate.
+    base.roughness = 0.7f;
+    (void)write("base.vmat", base);
+    CHECK(db.resolve_material(gc_id)->roughness == doctest::Approx(0.7f));
+
+    // Cycles, missing parents and overly deep chains are errors naming the files.
+    MaterialAsset loop = base;
+    loop.parent = gc_id;
+    loop.overrides = 0;
+    (void)write("base.vmat", loop);
+    auto cyc = db.resolve_material(gc_id);
+    REQUIRE_FALSE(cyc.ok());
+    CHECK(cyc.error().message.find("cycle") != std::string::npos);
+    CHECK(cyc.error().message.find("grandchild.vmat") != std::string::npos);
+    std::filesystem::remove(dir / "base.vmat");
+    std::filesystem::remove(dir / "base.vmat.meta");
+    (void)db.refresh();
+    auto missing = db.resolve_material(gc_id);
+    REQUIRE_FALSE(missing.ok());
+    CHECK(missing.error().message.find("child.vmat: parent material") != std::string::npos);
+
+    MaterialAsset root;
+    Uuid prev = write("chain0.vmat", root);
+    for (int i = 1; i <= static_cast<int>(kMaxMaterialDepth); ++i) {
+        MaterialAsset link;
+        link.parent = prev;
+        link.overrides = 0;
+        prev = write(std::format("chain{}.vmat", i).c_str(), link);
+    }
+    auto deep = db.resolve_material(prev);
+    REQUIRE_FALSE(deep.ok());
+    CHECK(deep.error().code == ErrorCode::LimitExceeded);
 }

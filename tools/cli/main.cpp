@@ -617,7 +617,7 @@ int cmd_check(const std::vector<std::string>& a) {
     for (const assets::AssetRecord& r : (*db)->records()) {
         if (r.kind != assets::AssetKind::Material) continue;
         ++materials;
-        auto m = (*db)->load_material(r.uuid);
+        auto m = (*db)->resolve_material(r.uuid); // also checks the parent chain
         if (!m) {
             std::printf("error: %s\n", m.error().message.c_str());
             ++problems;
