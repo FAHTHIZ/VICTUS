@@ -80,6 +80,8 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
             if (auto sh = surface_shader(src->shader); sh) m.surface_shader = *sh;
             // else: already logged by surface_shader(); the material renders with built-in PBR
         }
+        m.vertex_alpha_coverage_mask = src->vertex_alpha_coverage_mask;
+        m.coverage_response = src->coverage_response;
         rhi::TextureHandle* slots[4] = {&m.base_color_texture, &m.metallic_roughness_texture, &m.normal_texture, &m.emissive_texture};
         const auto refs = src->textures();
         for (std::size_t i = 0; i < 4; ++i) {
@@ -289,7 +291,19 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     env.ao_intensity = std::max(e.ao_intensity, 0.0f);
     env.ao_radius = std::max(e.ao_radius, 0.0f);
     sun.shadow_distance = std::max(e.shadow_distance, 1.0f);
+    env.fog_mode = static_cast<render::FogMode>(e.fog);
+    env.fog_color = e.fog_color;
+    env.fog_start = std::max(e.fog_start, 0.0f);
+    env.fog_end = std::max(e.fog_end, env.fog_start);
+    env.fog_density = std::max(e.fog_density, 0.0f);
+    env.fog_max_opacity = std::clamp(e.fog_max_opacity, 0.0f, 1.0f);
+    env.coverage_amount = std::clamp(e.coverage_amount, 0.0f, 1.0f);
+    env.coverage_color = e.coverage_color;
+    env.coverage_roughness = e.coverage_roughness;
+    env.coverage_slope = e.coverage_slope;
 }
+static_assert(static_cast<int>(gameplay::EnvironmentComponent::Fog::ExponentialSquared) ==
+              static_cast<int>(render::FogMode::ExponentialSquared));
 
 namespace {
 

@@ -24,6 +24,7 @@ layout(std430, set = 0, binding = 1) readonly buffer Joints { mat4 joints[]; } p
 #else
 layout(std430, set = 0, binding = 0) readonly buffer Joints { mat4 joints[]; } palette;
 #endif
+layout(location = 13) in vec4 in_color; // RGBA8: sRGB rgb, linear alpha
 layout(set = 1, binding = 0) uniform Frame {
     mat4 view_proj;
 } frame;
@@ -31,6 +32,7 @@ layout(location = 0) out vec3 v_world_pos;
 layout(location = 1) out vec3 v_normal;
 layout(location = 2) out vec2 v_uv;
 layout(location = 3) out vec4 v_tangent;
+layout(location = 4) out vec4 v_color;
 invariant gl_Position;
 void main() {
     uint base = uint(in_normal0.w + 0.5);
@@ -44,5 +46,8 @@ void main() {
     v_normal = normalize(normal_matrix * (skin3 * in_normal));
     v_tangent = vec4(normalize(mat3(model) * (skin3 * in_tangent.xyz)), in_tangent.w);
     v_uv = in_uv;
+    // Exact sRGB decode (vertex colours are stored sRGB-encoded for precision).
+    vec3 c = in_color.rgb;
+    v_color = vec4(mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)), in_color.a);
     gl_Position = frame.view_proj * world;
 }

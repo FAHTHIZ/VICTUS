@@ -232,6 +232,17 @@ struct EnvironmentComponent {
     float ao_intensity{1.0f};
     float ao_radius{0.6f};
     float shadow_distance{40.0f};
+    enum class Fog : std::uint8_t { None, Linear, Exponential, ExponentialSquared };
+    Fog fog{Fog::None};
+    math::Color fog_color{0.62f, 0.72f, 0.85f, 1};
+    float fog_start{50.0f};
+    float fog_end{400.0f};
+    float fog_density{0.004f};
+    float fog_max_opacity{1.0f};
+    float coverage_amount{0.0f};
+    math::Color coverage_color{0.86f, 0.89f, 0.95f, 1};
+    float coverage_roughness{0.8f};
+    float coverage_slope{0.55f};
 };
 
 // Registers serializers ("Rotator", "Oscillator", "Environment"). Idempotent; call once at startup before

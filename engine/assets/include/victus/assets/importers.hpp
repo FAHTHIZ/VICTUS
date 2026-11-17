@@ -35,7 +35,7 @@ struct ImportResult {
 };
 
 inline constexpr std::uint32_t kTextureImporterVersion = 1;
-inline constexpr std::uint32_t kModelImporterVersion = 2; // v2: skins and animations
+inline constexpr std::uint32_t kModelImporterVersion = 3; // v2: skins and animations; v3: COLOR_0 vertex colours
 
 [[nodiscard]] Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSettings& settings);
 [[nodiscard]] CookedTexture cook_texture(const render::Image& image, std::string name, bool srgb, bool mipmaps,

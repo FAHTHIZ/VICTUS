@@ -369,6 +369,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 **Evidence.** STATUS Slice 36: params and time change on-screen pixels; a compile error falls back and recovers through hot reload; error messages carry the `.vshader` line number; the 3D template's glowing cube works in `victus run`, the editor and an exported game.
 
 **Risks / revisit triggers.** glslang adds build time and binary size; first use compiles on the render thread. No D3D12 DXIL path (Vulkan is used on Windows). Revisit for a shader cache on disk/in packs, async compilation, vertex/sprite/post-process hooks, extra textures per shader, or a material graph that emits surface code.
+## ADR-0036 — Packed vertex colour in Vertex3D; fog and coverage in the forward PBR shader (accepted 2026-11-17)
+**Problem.** Procedural and stylised games (AURORIA first) colour meshes per vertex, need distance fog for atmosphere and a weather coverage layer (snow) masked per vertex; VICTUS had none of these.
+
+**Candidates.** (1) One packed RGBA8 colour in every `Vertex3D` (4 bytes, default white so existing meshes are unchanged) plus uniform-driven fog and coverage in `pbr.frag`. (2) A separate optional colour vertex stream — no cost for meshes without colour but doubles pipeline variants. (3) Bake colours into textures — loses per-vertex authoring and needs UVs.
+
+**Decision.** (1). RGB is stored sRGB-encoded (glTF COLOR_0 linear values are encoded on import) and decoded in the vertex shader; alpha is linear and either opacity or, per material, a coverage mask. Fog is applied in the forward pass after lighting; coverage blends albedo/roughness on faces whose normal.y exceeds a threshold.
+
+**Evidence.** STATUS Slice 35.1 GPU probes.
+
+**Risks / revisit triggers.** 4 extra bytes per vertex for all meshes; revisit if vertex bandwidth matters on mobile. Height fog and sky fog are not done.
 
 ## ADR-0036 — Material instances as sparse .vmat files with a parent reference (accepted 2026-11-17)
 **Problem.** Variations of one look (team colours, damaged versions, shader parameter tweaks) required copying a whole material; a later change to the shared look had to be repeated in every copy.

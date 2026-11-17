@@ -8,10 +8,13 @@
 // Project surface shaders (.vshader, ADR-0035) are spliced in at VICTUS_SURFACE_CODE: they
 // define `void surface(SurfaceInput i, inout Surface s)`, which runs after the material's
 // textures were sampled and before lighting. The interface below is a stable contract.
+// per-vertex colour, a weather coverage layer (snow, dust, ash) on
+// upward faces and distance fog.
 layout(location = 0) in vec3 v_world_pos;
 layout(location = 1) in vec3 v_normal;
 layout(location = 2) in vec2 v_uv;
 layout(location = 3) in vec4 v_tangent;
+layout(location = 4) in vec4 v_color; // linear rgb, alpha: opacity or coverage mask (material.flags.z)
 
 layout(set = 2, binding = 0) uniform sampler2D u_base_color;
 layout(set = 2, binding = 1) uniform sampler2D u_metal_rough;
@@ -34,6 +37,10 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 cascade_splits; // far view depth of each cascade
     vec4 cascade_texel;  // world-space texel size of each cascade
     vec4 screen;         // xy: 1 / render size, z: time in seconds (wraps every hour)
+    vec4 fog_color;      // rgb fog radiance, w: mode (0 off, 1 linear, 2 exponential, 3 exponential squared)
+    vec4 fog_params;     // x start distance, y end distance (linear), z density (exp), w max opacity
+    vec4 coverage_color; // rgb coverage albedo (linear), w: global coverage amount 0..1
+    vec4 coverage_params; // x coverage roughness, y slope threshold (normal.y), z slope sharpness
     mat4 cascade_vp[4];
     PointLight points[16];
 } lighting;
@@ -41,7 +48,7 @@ layout(set = 3, binding = 1) uniform Material {
     vec4 base_color;
     vec4 emissive;       // rgb * strength
     vec4 params;         // x metallic, y roughness, z normal scale, w alpha cutoff
-    vec4 flags;          // x has normal map, y unlit
+    vec4 flags;          // x has normal map, y unlit, z vertex alpha is a coverage mask, w coverage response
     vec4 uv_transform;   // xy scale, zw offset (material tiling)
     vec4 custom[4];      // surface shader parameters (material "shader_params")
 } material;
@@ -165,11 +172,12 @@ float shadow_factor(vec3 N, vec3 L) {
 void main() {
     vec2 uv = v_uv * material.uv_transform.xy + material.uv_transform.zw;
     vec4 base = texture(u_base_color, uv) * material.base_color;
+    bool alpha_is_mask = material.flags.z > 0.5;
     vec3 geometric_n = normalize(v_normal);
     if (!gl_FrontFacing) geometric_n = -geometric_n;
     Surface s;
-    s.base_color = base.rgb;
-    s.alpha = base.a;
+    s.base_color = base.rgb * v_color.rgb;
+    s.alpha = alpha_is_mask ? base.a : base.a * v_color.a;
     s.emissive = texture(u_emissive, uv).rgb * material.emissive.rgb;
     s.unlit = material.flags.y > 0.5;
     s.occlusion = 1.0;
@@ -210,6 +218,18 @@ void main() {
     float metallic = s.metallic;
     float roughness = s.roughness;
 
+    // Coverage layer: settles on faces that point up, scaled by the scene amount, the material's
+    // response and (optionally) the vertex alpha mask.
+    float coverage = lighting.coverage_color.w * material.flags.w;
+    if (coverage > 0.0) {
+        float up = clamp((N.y - lighting.coverage_params.y) * lighting.coverage_params.z, 0.0, 1.0);
+        float mask = alpha_is_mask ? step(0.5, v_color.a) : 1.0;
+        coverage = clamp(coverage * up * mask, 0.0, 1.0);
+        albedo = mix(albedo, lighting.coverage_color.rgb, coverage);
+        roughness = mix(roughness, lighting.coverage_params.x, coverage);
+        metallic = mix(metallic, 0.0, coverage);
+    }
+
     vec3 L = normalize(-lighting.sun_dir.xyz);
     vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * shadow_factor(N, L);
 
@@ -239,5 +259,17 @@ void main() {
     float spec_ao = clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
     color += kd * albedo * irradiance * ao + specular * spec_ao;
     color += s.emissive;
+
+    int fog_mode = int(lighting.fog_color.w + 0.5);
+    if (fog_mode > 0) {
+        float d = length(v_world_pos - lighting.camera_pos.xyz);
+        float f;
+        if (fog_mode == 1) f = clamp((d - lighting.fog_params.x) / max(lighting.fog_params.y - lighting.fog_params.x, 1e-3), 0.0, 1.0);
+        else {
+            float k = max(d - lighting.fog_params.x, 0.0) * lighting.fog_params.z;
+            f = fog_mode == 2 ? 1.0 - exp(-k) : 1.0 - exp(-k * k);
+        }
+        color = mix(color, lighting.fog_color.rgb, f * lighting.fog_params.w);
+    }
     out_color = vec4(color, s.alpha);
 }

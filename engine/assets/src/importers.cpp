@@ -363,7 +363,7 @@ private:
             warn(out.name + ": KHR_draco_mesh_compression is not supported; primitive skipped");
             return out;
         }
-        const cgltf_accessor *pos = nullptr, *nrm = nullptr, *uv = nullptr, *tan = nullptr;
+        const cgltf_accessor *pos = nullptr, *nrm = nullptr, *uv = nullptr, *tan = nullptr, *col = nullptr;
         const cgltf_accessor *joints[2] = {nullptr, nullptr}, *weights[2] = {nullptr, nullptr};
         for (cgltf_size a = 0; a < prim.attributes_count; ++a) {
             const cgltf_attribute& attr = prim.attributes[a];
@@ -380,6 +380,9 @@ private:
             case cgltf_attribute_type_tangent: tan = attr.data; break;
             case cgltf_attribute_type_texcoord:
                 if (attr.index == 0) uv = attr.data;
+                break;
+            case cgltf_attribute_type_color:
+                if (attr.index == 0) col = attr.data;
                 break;
             default: break;
             }
@@ -402,6 +405,18 @@ private:
         if (uv && uv->type == cgltf_type_vec2 && uv->count == count) {
             const auto t = unpack(uv);
             for (cgltf_size i = 0; i < count; ++i) verts[i].uv = {t[i * 2], t[i * 2 + 1]};
+        }
+        // COLOR_0 (linear in glTF; float or normalized ints, RGB or RGBA) -> sRGB-encoded RGBA8.
+        if (col && (col->type == cgltf_type_vec3 || col->type == cgltf_type_vec4) && col->count == count) {
+            const cgltf_size comps = col->type == cgltf_type_vec4 ? 4 : 3;
+            for (cgltf_size i = 0; i < count; ++i) {
+                float c[4]{1, 1, 1, 1};
+                cgltf_accessor_read_float(col, i, c, comps);
+                for (float& v : c) v = std::isfinite(v) ? v : 1.0f;
+                verts[i].color = render::pack_vertex_color({c[0], c[1], c[2], c[3]});
+            }
+        } else if (col) {
+            warn(out.name + ": COLOR_0 must be vec3/vec4 with one entry per vertex; ignored");
         }
         const bool has_tangents = tan && tan->type == cgltf_type_vec4 && tan->count == count;
         if (has_tangents) {

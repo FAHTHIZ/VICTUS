@@ -5,6 +5,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace victus {
 
@@ -21,6 +22,9 @@ namespace victus {
 
 // Standard base64 (RFC 4648 section 4, '=' padding), e.g. for glTF data URIs.
 [[nodiscard]] std::string base64_encode(std::span<const std::uint8_t> bytes);
+// Decodes standard base64 into `out` (cleared first). Padding is optional; whitespace and any
+// character outside the alphabet make the input invalid (returns false, `out` unspecified).
+[[nodiscard]] bool base64_decode(std::string_view text, std::vector<std::uint8_t>& out);
 
 // Deterministic PCG32 random stream (O'Neill, Apache-2.0 reference algorithm).
 // Identical output on every platform for a given seed/stream: required for replays,
