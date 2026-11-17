@@ -8,6 +8,7 @@
 #include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/ai/ai.hpp"
+#include "victus/sequencer/sequencer.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -172,6 +173,7 @@ public:
     [[nodiscard]] const physics::PhysicsWorld* play_physics() const noexcept { return play_physics_.get(); }
     [[nodiscard]] const navigation::NavigationSystem* play_navigation() const noexcept { return play_navigation_.get(); }
     [[nodiscard]] ai::AiSystem* play_ai() noexcept { return play_ai_.get(); }
+    [[nodiscard]] sequencer::SequencerSystem* play_sequencer() noexcept { return play_sequencer_.get(); }
     // View > AI Debug: perception cones and targets in the viewport and the AI Debugger window
     // (behaviour tree state and blackboard of the selected entity) during play.
     void set_show_ai(bool show) noexcept { show_ai_ = show; }
@@ -582,6 +584,7 @@ private:
     std::unique_ptr<particles::ParticleSystem> play_particles_;  // fresh per play session
     std::unique_ptr<navigation::NavigationSystem> play_navigation_; // fresh per play session
     std::unique_ptr<ai::AiSystem> play_ai_;                         // fresh per play session
+    std::unique_ptr<sequencer::SequencerSystem> play_sequencer_;    // fresh per play session
     bool show_ai_{false};
     std::vector<ai::DebugLine> ai_scratch_;
     std::unique_ptr<audio::AudioEngine> audio_;           // opened on first use, kept across sessions

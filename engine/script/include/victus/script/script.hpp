@@ -69,6 +69,12 @@
 // leaves without a C++ action call `self:<action>(dt, first)` -> "running"|"success"|"failure"
 // and `self:on_task_abort(action)` when interrupted.
 //
+// Sequencer API (docs/SEQUENCER.md; needs a sequencer::SequencerSystem bound to the scene):
+// `entity:play_sequence(path?) -> bool`, `entity:stop_sequence()`, `entity:pause_sequence(paused?)`,
+// `entity:seek_sequence(t) -> bool`, `entity:sequence_state() -> {valid, sequence, error, time,
+// duration, playing, paused, finished, loops, camera}`, `sequencer.available()`. Event keys call
+// `on_sequence_event(name, payload, player)` on the track target's script and on the player's.
+//
 // Networking API (meaningful when a NetServer/NetClient session is bound; offline every entity
 // is local and has authority): `net.role()` ("offline"/"server"/"client"), `net.is_server()`,
 // `net.is_client()`, `net.authority()`, `net.id()`, `net.connected()`, `net.local_player()`,
@@ -264,6 +270,7 @@ private:
     explicit ScriptHost(std::unique_ptr<Impl> impl);
     void dispatch_physics_events(scene::Scene& scene);
     void dispatch_ui_events(scene::Scene& scene);
+    void dispatch_sequence_events(scene::Scene& scene);
     void dispatch_net_messages(scene::Scene& scene);
     std::unique_ptr<Impl> impl_;
 };

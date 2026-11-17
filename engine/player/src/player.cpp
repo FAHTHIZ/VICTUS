@@ -16,6 +16,7 @@
 #include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/ai/ai.hpp"
+#include "victus/sequencer/sequencer.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -198,6 +199,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     navigation::add_navigation_systems(sim, nav);
     ai::AiSystem ai_system(ai::directory_loader((*db)->assets_dir()));
     ai::add_ai_systems(sim, ai_system);
+    sequencer::SequencerSystem sequencer_system(sequencer::directory_loader((*db)->assets_dir()));
+    sequencer::add_sequencer_systems(sim, sequencer_system);
     // Audio is optional: without a device (or with VICTUS_NO_AUDIO=1) the game runs silently.
     audio::EngineOptions ao;
     ao.assets_root = (*db)->assets_dir();
@@ -356,7 +359,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
                     for (const auto& clip : changes.audio) (void)(*audio_engine)->reload_clip(clip);
                 if (!changes.prefabs.empty()) (*scripts)->forget_prefabs(); // new instances use the new version
                 for (const auto& t : changes.behavior_trees) ai_system.reload(t);
-                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size() + changes.terrains.size() + changes.behavior_trees.size();
+                for (const auto& q : changes.sequences) sequencer_system.reload(q);
+                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size() + changes.terrains.size() + changes.behavior_trees.size() + changes.sequences.size();
             }
         }
         if (dynamic_resolution) {

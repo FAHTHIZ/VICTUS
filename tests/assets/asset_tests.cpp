@@ -214,6 +214,8 @@ TEST_CASE("assets: database metas, stable UUIDs, incremental cooking and depende
     CHECK(db.find_path("readme.txt")->kind == AssetKind::Unknown);
     CHECK(kind_for_extension(".vbt") == AssetKind::BehaviorTree);
     CHECK(std::string(to_string(AssetKind::BehaviorTree)) == "behavior_tree");
+    CHECK(kind_for_extension(".vseq") == AssetKind::Sequence);
+    CHECK(std::string(to_string(AssetKind::Sequence)) == "sequence");
     const Uuid wall_id = wall->uuid, model_id = model->uuid;
 
     jobs::JobSystem js(2);

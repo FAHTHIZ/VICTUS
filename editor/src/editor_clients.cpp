@@ -102,6 +102,8 @@ void Editor::start_editor_clients() {
         navigation::add_navigation_systems(c->sim, *c->navigation);
         c->ai = std::make_unique<ai::AiSystem>(db_ ? ai::directory_loader(db_->assets_dir()) : ai::TreeLoader{});
         ai::add_ai_systems(c->sim, *c->ai);
+        c->sequencer = std::make_unique<sequencer::SequencerSystem>(db_ ? sequencer::directory_loader(db_->assets_dir()) : sequencer::SequenceLoader{});
+        sequencer::add_sequencer_systems(c->sim, *c->sequencer);
         // No audio: only the viewed host plays sound (scripts' audio calls are no-ops here).
 
         auto transport = net::create_udp_transport({});

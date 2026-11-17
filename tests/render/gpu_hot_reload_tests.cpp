@@ -117,6 +117,11 @@ TEST_CASE("hot reload: textures swap in place, broken saves keep the old version
     r = reloader.check();
     CHECK(contains(r.behavior_trees, "guard.vbt"));
     CHECK(r.restart_needed.empty());
+    // Sequences are reported for SequencerSystem::reload.
+    write_text(project / "assets" / "intro.vseq", R"({"tracks": []})", 9);
+    r = reloader.check();
+    CHECK(contains(r.sequences, "intro.vseq"));
+    CHECK(r.restart_needed.empty());
 
     // New files get metadata and are imported; poll() rate-limits scans.
     const auto scans = reloader.scans();

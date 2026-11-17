@@ -194,3 +194,8 @@ victus_add_test(victus_net_tests
     SOURCES net/net_tests.cpp
     DEPS VICTUS::Net VICTUS::Script VICTUS::Physics
     LABELS net)
+
+victus_add_test(victus_sequencer_tests
+    SOURCES sequencer/sequencer_tests.cpp
+    DEPS VICTUS::Sequencer VICTUS::Animation VICTUS::Audio VICTUS::Core
+    LABELS sequencer)

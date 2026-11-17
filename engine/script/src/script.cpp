@@ -2,6 +2,7 @@
 #include "victus/animation/animation.hpp"
 #include "victus/gameui/gameui.hpp"
 #include "victus/ai/ai.hpp"
+#include "victus/sequencer/sequencer.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -2445,6 +2446,88 @@ int ai_report_noise(lua_State* L) {
     return 0;
 }
 
+// ---- sequencer ----------------------------------------------------------------------------------
+
+// entity:play_sequence(path = nil) -> bool: (re)starts the entity's SequencePlayer (adding one
+// when missing); `path` replaces its sequence asset.
+int entity_play_sequence(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    std::size_t n = 0;
+    const char* path = luaL_optlstring(L, 2, "", &n);
+    auto* q = sequencer::sequencer_of(s);
+    lua_pushboolean(L, q && q->play(s, e, std::string_view(path, n)));
+    return 1;
+}
+
+// entity:stop_sequence(): stops and rewinds (camera cuts are undone).
+int entity_stop_sequence(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    if (auto* q = sequencer::sequencer_of(s)) q->stop(s, e);
+    return 0;
+}
+
+// entity:pause_sequence(paused = true)
+int entity_pause_sequence(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const bool paused = lua_isnoneornil(L, 2) ? true : lua_toboolean(L, 2) != 0;
+    if (auto* q = sequencer::sequencer_of(s)) q->pause(s, e, paused);
+    return 0;
+}
+
+// entity:seek_sequence(time) -> bool: moves the playhead without firing events or audio.
+int entity_seek_sequence(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto t = static_cast<float>(luaL_checknumber(L, 2));
+    auto* q = sequencer::sequencer_of(s);
+    lua_pushboolean(L, q && q->seek(s, e, t));
+    return 1;
+}
+
+// entity:sequence_state() -> {valid, sequence, error, time, duration, playing, paused, finished,
+// loops, camera} or nil without a sequencer.
+int entity_sequence_state(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* q = sequencer::sequencer_of(s);
+    if (!q) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const sequencer::PlaybackState st = q->state(s, e);
+    lua_createtable(L, 0, 10);
+    lua_pushboolean(L, st.valid);
+    lua_setfield(L, -2, "valid");
+    lua_pushlstring(L, st.sequence.data(), st.sequence.size());
+    lua_setfield(L, -2, "sequence");
+    lua_pushlstring(L, st.error.data(), st.error.size());
+    lua_setfield(L, -2, "error");
+    lua_pushnumber(L, st.time);
+    lua_setfield(L, -2, "time");
+    lua_pushnumber(L, st.duration);
+    lua_setfield(L, -2, "duration");
+    lua_pushboolean(L, st.playing);
+    lua_setfield(L, -2, "playing");
+    lua_pushboolean(L, st.paused);
+    lua_setfield(L, -2, "paused");
+    lua_pushboolean(L, st.finished);
+    lua_setfield(L, -2, "finished");
+    lua_pushinteger(L, static_cast<int>(st.loops));
+    lua_setfield(L, -2, "loops");
+    lua_pushlstring(L, st.camera.data(), st.camera.size());
+    lua_setfield(L, -2, "camera");
+    return 1;
+}
+
+// sequencer.available() -> whether timelines play in this scene
+int sequencer_available(lua_State* L) {
+    lua_pushboolean(L, sequencer::sequencer_of(scene_of(L)) != nullptr);
+    return 1;
+}
+
 int entity_nav_state(lua_State* L) {
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
@@ -3434,6 +3517,11 @@ void open_victus_libs(lua_State* L) {
                                 {"bb_set", entity_bb_set},
                                 {"blackboard", entity_blackboard},
                                 {"perception", entity_perception},
+                                {"play_sequence", entity_play_sequence},
+                                {"stop_sequence", entity_stop_sequence},
+                                {"pause_sequence", entity_pause_sequence},
+                                {"seek_sequence", entity_seek_sequence},
+                                {"sequence_state", entity_sequence_state},
                                 {"set_net", entity_set_net},
                                 {"get_net", entity_get_net},
                                 {"has_authority", entity_has_authority},
@@ -3552,6 +3640,8 @@ void open_victus_libs(lua_State* L) {
     register_lib(L, "terrain", terrain_fns);
     const luaL_Reg ai_fns[] = {{"available", ai_available}, {"report_noise", ai_report_noise}, {nullptr, nullptr}};
     register_lib(L, "ai", ai_fns);
+    const luaL_Reg sequencer_fns[] = {{"available", sequencer_available}, {nullptr, nullptr}};
+    register_lib(L, "sequencer", sequencer_fns);
     const luaL_Reg net_fns[] = {{"role", net_role},
                                 {"is_server", net_is_server},
                                 {"is_client", net_is_client},
@@ -3861,6 +3951,7 @@ void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, co
     }
     dispatch_physics_events(scene);
     dispatch_ui_events(scene);
+    dispatch_sequence_events(scene);
     dispatch_net_messages(scene);
     h.pending_states.clear(); // states of entities that no longer have a script
     if (h.pending_restore) {
@@ -3932,6 +4023,36 @@ void ScriptHost::dispatch_ui_events(scene::Scene& scene) {
                 push_entity(L, scene.world().alive(ev.button) ? ev.button : Entity{});
                 lua_pushlstring(L, ev.action.data(), ev.action.size());
                 return 2;
+            });
+        }
+    }
+}
+
+void ScriptHost::dispatch_sequence_events(scene::Scene& scene) {
+    const std::uint64_t done = sequencer::delivered_through(scene);
+    std::vector<sequencer::SequenceEvent> pending;
+    for (const auto& ev : sequencer::events(scene))
+        if (ev.id > done) pending.push_back(ev);
+    if (pending.empty()) return;
+    // Copy and mark first: handlers may play sequences whose events are seen next frame.
+    sequencer::mark_delivered(scene, pending.back().id);
+    Impl& h = *impl_;
+    for (const auto& ev : pending) {
+        // The track target, then the player (once when they are the same entity).
+        const Entity receivers[2] = {ev.target, ev.target == ev.player ? Entity{} : ev.player};
+        for (const Entity e : receivers) {
+            if (e.is_null() || !scene.world().alive(e)) continue;
+            const auto* sc = scene.world().get<ScriptComponent>(e);
+            if (!sc || !sc->enabled) continue;
+            auto it = h.instances.find(e.bits());
+            if (it == h.instances.end() || it->second.faulted || !it->second.started) continue;
+            lua_State* L = h.L;
+            h.route(e);
+            (void)h.call_with(it->second, "on_sequence_event", [&] {
+                lua_pushlstring(L, ev.name.data(), ev.name.size());
+                lua_pushlstring(L, ev.payload.data(), ev.payload.size());
+                push_entity(L, scene.world().alive(ev.player) ? ev.player : Entity{});
+                return 3;
             });
         }
     }
