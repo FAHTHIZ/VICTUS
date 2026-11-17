@@ -94,7 +94,7 @@ public:
         std::uint64_t n = 0;
         if (!u64(n) || n > max_count || !need(n * sizeof(T))) return fail();
         out.resize(n);
-        std::memcpy(out.data(), data_.data() + pos_, n * sizeof(T));
+        if (n != 0) std::memcpy(out.data(), data_.data() + pos_, n * sizeof(T)); // empty vectors may have no storage
         pos_ += n * sizeof(T);
         return true;
     }
