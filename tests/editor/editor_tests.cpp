@@ -17,6 +17,8 @@
 #include "victus/net/net.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
+#include "victus/runtime/surface_shader.hpp"
+#include "victus/script/material_graph.hpp"
 #include "victus/script/script.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include <thread>
@@ -2042,4 +2044,84 @@ TEST_CASE("editor: range, box and multi-entity editing of the selection") {
     CHECK(tb->position.y == doctest::Approx(4));
     CHECK(tb->position.z == doctest::Approx(7));
     CHECK(s.world().has<gameplay::RotatorComponent>(b));
+}
+
+TEST_CASE("editor: material graphs are created, edited on the canvas and shade the open material") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "MatGraph", "MatGraph", "3d").ok());
+    h.frames(2);
+    auto& ed = *h.ed;
+    const Entity box = ed.create_entity(editor::Primitive::Cube);
+    ed.rename(box, "Orb");
+    ed.select(box);
+    ed.new_material_for_selection();
+    const Uuid mat = ed.edit_scene().world().get<MeshRendererComponent>(box)->material_asset;
+    REQUIRE_FALSE(mat.is_nil());
+
+    // A new material graph is a shader asset with the starter graph; it opens in the Graph Editor
+    // with the material node library.
+    auto id = ed.create_material_graph();
+    REQUIRE(id.ok());
+    const Uuid graph = *id;
+    const auto* rec = ed.assets()->find(graph);
+    REQUIRE(rec);
+    CHECK(rec->path == "shaders/MaterialGraph.vmatgraph");
+    CHECK(rec->kind == assets::AssetKind::Shader);
+    REQUIRE(ed.open_graph_editor(graph).ok());
+    CHECK(ed.editing_graph().domain == script::GraphDomain::Material);
+    CHECK(ed.graph_diagnostics().empty());
+    h.frames(2);
+
+    // Script nodes and variables do not belong in material graphs.
+    CHECK(ed.graph_add_node("debug.log") == 0);
+    CHECK_FALSE(ed.graph_add_variable({"speed", script::PinType::Number, json::Value(1.0), true}));
+
+    // Fresnel rim * Parameter 0 colour -> emission.
+    std::uint32_t out = 0;
+    for (const auto& n : ed.editing_graph().nodes)
+        if (n.type == script::kMaterialOutputNode) out = n.id;
+    REQUIRE(out != 0);
+    const auto fres = ed.graph_add_node("mat.fresnel", 0, 300);
+    const auto param = ed.graph_add_node("mat.param0", 0, 420);
+    const auto mul = ed.graph_add_node("mat.multiply", 260, 340);
+    REQUIRE(fres);
+    REQUIRE(param);
+    REQUIRE(mul);
+    CHECK(ed.graph_connect(fres, "value", mul, "a"));
+    CHECK(ed.graph_connect(param, "rgb", mul, "b"));
+    CHECK(ed.graph_connect(mul, "result", out, "emissive"));
+    CHECK(ed.graph_set_literal(fres, "power", json::Value(2.0)));
+    CHECK(ed.graph_set_literal(out, "roughness", json::Value(0.3)));
+    CHECK(ed.graph_diagnostics().empty());
+    h.frames(2);
+
+    // Undo/redo keep the material domain.
+    REQUIRE(ed.graph_undo());
+    CHECK(ed.editing_graph().domain == script::GraphDomain::Material);
+    REQUIRE(ed.graph_redo());
+    CHECK(ed.editing_graph().domain == script::GraphDomain::Material);
+
+    // Assigned to the open material and saved: the renderer compiles the graph.
+    ed.open_material_editor(mat);
+    CHECK(ed.set_editing_material_shader(graph));
+    REQUIRE(ed.save_graph().ok());
+    const auto glsl = runtime::load_surface_shader_code(*ed.assets(), graph);
+    REQUIRE(glsl.ok());
+    CHECK(glsl->find("s.roughness = 0.3;") != std::string::npos);
+    CHECK(glsl->find("s.emissive = ") != std::string::npos);
+    auto mat_file = ed.assets()->load_material(mat);
+    REQUIRE(mat_file);
+    CHECK(mat_file->shader == graph);
+    h.frames(3); // Material Editor shows the compile status, viewport renders with the graph
+    const auto& msgs = ed.messages();
+    CHECK(std::none_of(msgs.begin(), msgs.end(), [](const std::string& m) { return m.find("does not compile") != std::string::npos; }));
+
+    // A broken graph is saved but reported.
+    REQUIRE(ed.graph_remove_node(out));
+    CHECK_FALSE(ed.graph_diagnostics().empty());
+    REQUIRE(ed.save_graph().ok());
+    CHECK(std::any_of(ed.messages().begin(), ed.messages().end(), [](const std::string& m) { return m.find("1 error") != std::string::npos; }));
+    h.frames(2);
 }

@@ -661,6 +661,16 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - One profiler per process; zone cost is two timestamps and a vector push, drained every frame, so it stays on in the editor.
   - No per-pass GPU durations until SDL_GPU exposes timestamp queries (or a native backend is added); the report names this explicitly. Rejected (b): duplicate instrumentation; rejected (c): external dependency and network listener for what the existing capture already provides.
 
+### ADR-0062: Material graphs compile to surface-shader GLSL
+- Status: Accepted (Slice 68)
+- Context: surface shaders (ADR-0035) need GLSL. Artists expect node-based material editing, and VICTUS already has a typed node-graph document model, deterministic serialization and an editor canvas for visual scripts (ADR-0058/0059).
+- Options: (a) reuse the visual-script graph model with a material domain and compile graphs to the surface function of the existing surface-shader path; (b) a separate material graph model and editor; (c) a new shader pipeline with its own uniforms, samplers and permutations per graph.
+- Decision: (a). A `.vmatgraph` is a `victus.graph` document with `"domain": "material"` (`script::GraphDomain`), registered as `AssetKind::Shader`. Material nodes (`mat.*`: Surface Output, Material Surface, UV/positions/view/normals/vertex colour/time, Parameter 0-3, the four material texture slots, constants, generic math, vector, UV and effect nodes; 55 in total) are pure GLSL expression templates. Generic "any" pins take the widest connected type (float < vec2 < vec3 < vec4) and narrower values are splatted or padded, wider ones truncated. The compiler (`compile_material_graph`) emits one local per used node output in dependency order and assigns the Surface fields whose output inputs are linked or given a constant; unlinked fields keep the material's values. `runtime::load_surface_shader_code` turns a shader asset into GLSL (text for `.vshader`, compiled graph for `.vmatgraph`), so `GpuAssetCache`, hot reload, the built-in PBR fallback, `victus check` and export are shared with hand-written shaders. The Graph Editor switches its palette, pin colours, literal editors (colour pickers, vectors) and side panel by domain; saving compiles the GLSL and reports errors.
+- Consequences:
+  - A material graph has exactly the capabilities of a surface shader: no new uniforms or samplers, four vec4 parameters, the material's four textures. Graph errors name the file and node; GLSL errors name generated lines.
+  - Script graphs keep their exact file format (no domain key); the script compiler refuses material graphs.
+  - Rejected (b): duplicate model, serialization and canvas. Rejected (c): pipeline permutations and new resource bindings per graph; revisit when graphs need custom textures or vertex-stage nodes.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

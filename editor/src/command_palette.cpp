@@ -119,6 +119,10 @@ std::vector<EditorCommand> Editor::commands() {
         if (auto id = create_graph(); !id) notify("cannot create visual script: " + id.error().message, true);
         else if (auto st = open_graph_editor(*id); !st.ok()) notify(st.error().message, true);
     });
+    add("Assets: New Material Graph", {}, has_db, [this] {
+        if (auto id = create_material_graph(); !id) notify("cannot create material graph: " + id.error().message, true);
+        else if (auto st = open_graph_editor(*id); !st.ok()) notify(st.error().message, true);
+    });
     add("Assets: New Surface Shader", {}, has_db, [this] {
         if (auto id = create_surface_shader(); !id) notify("cannot create shader: " + id.error().message, true);
     });
@@ -126,6 +130,10 @@ std::vector<EditorCommand> Editor::commands() {
         for (const auto& r : db_->records()) {
             if (r.kind == assets::AssetKind::Script && r.path.ends_with(".vgraph"))
                 add("Open Visual Script: " + r.path, {}, true, [this, id = r.uuid] {
+                    if (auto st = open_graph_editor(id); !st.ok()) notify(st.error().message, true);
+                });
+            else if (r.kind == assets::AssetKind::Shader && r.path.ends_with(".vmatgraph"))
+                add("Open Material Graph: " + r.path, {}, true, [this, id = r.uuid] {
                     if (auto st = open_graph_editor(id); !st.ok()) notify(st.error().message, true);
                 });
             else if (r.kind == assets::AssetKind::Material)

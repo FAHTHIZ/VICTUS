@@ -26,11 +26,18 @@
 
 namespace victus::script {
 
-enum class PinType : std::uint8_t { Exec, Any, Number, Bool, String, Vector, Entity };
+// Vec2/Vec4 exist for material graphs (ADR-0062); in material graphs Number is a GLSL float and
+// Vector a vec3.
+enum class PinType : std::uint8_t { Exec, Any, Number, Bool, String, Vector, Entity, Vec2, Vec4 };
 [[nodiscard]] std::string_view pin_type_name(PinType t) noexcept;
 [[nodiscard]] bool parse_pin_type(std::string_view name, PinType& out) noexcept;
-// Whether a link from an output of type `from` may feed an input of type `to`.
-[[nodiscard]] bool pin_types_compatible(PinType from, PinType to) noexcept;
+// What a graph compiles to: a Luau script module (.vgraph) or a surface shader (.vmatgraph,
+// ADR-0062). Both share this document model, serialization and the editor canvas.
+enum class GraphDomain : std::uint8_t { Script, Material };
+
+// Whether a link from an output of type `from` may feed an input of type `to`. In material
+// graphs every numeric type converts to every other (splat, truncate or pad).
+[[nodiscard]] bool pin_types_compatible(PinType from, PinType to, GraphDomain domain = GraphDomain::Script) noexcept;
 
 struct PinDesc {
     std::string name;
@@ -68,7 +75,10 @@ struct NodeDesc {
 
 // Every built-in node type, in palette order.
 [[nodiscard]] std::span<const NodeDesc> node_library();
+[[nodiscard]] std::span<const NodeDesc> node_library(GraphDomain domain);
+// Searches every domain (node types are unique across domains: material nodes start with "mat.").
 [[nodiscard]] const NodeDesc* find_node_desc(std::string_view type);
+[[nodiscard]] const NodeDesc* find_node_desc(std::string_view type, GraphDomain domain);
 
 struct GraphVariable {
     std::string name; // Luau identifier, no leading underscore
@@ -96,6 +106,7 @@ struct GraphLink {
 
 struct ScriptGraph {
     static constexpr std::uint32_t kVersion = 1;
+    GraphDomain domain{GraphDomain::Script}; // serialized as "domain": "material" when not a script
     std::vector<GraphVariable> variables;
     std::vector<GraphNode> nodes;
     std::vector<GraphLink> links;
@@ -150,7 +161,8 @@ struct CompiledGraph {
 
 // Validates and compiles. Errors leave `source` empty; warnings (unreachable nodes) do not.
 [[nodiscard]] CompiledGraph compile_graph(const ScriptGraph& graph, const GraphCompileOptions& options = {});
-// Validation only (the diagnostics compile_graph would report).
+// Validation only (the diagnostics compile_graph would report; material graphs are validated by
+// validate_material_graph).
 [[nodiscard]] std::vector<GraphDiagnostic> validate_graph(const ScriptGraph& graph);
 
 // Rewrites "<chunk>:LINE:" locations in a Luau error message to name the graph node.

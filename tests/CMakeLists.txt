@@ -90,6 +90,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_hot_reload_tests.cpp
         render/gpu_material_tests.cpp
         render/gpu_surface_shader_tests.cpp
+        render/gpu_material_graph_tests.cpp
         render/gpu_sprite_sheet_tests.cpp
         render/gpu_tilemap_tests.cpp
         render/gpu_transparency_tests.cpp

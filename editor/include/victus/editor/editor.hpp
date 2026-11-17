@@ -259,6 +259,10 @@ public:
     // project asset, not scene data) and are saved explicitly; play mode hot-reloads saved graphs.
     // Writes a starter graph (On Start -> Log; default "scripts/Graph.vgraph", made unique).
     Result<Uuid> create_graph(std::string_view relative_path = {});
+    // Writes a starter material graph (ADR-0062; default "shaders/MaterialGraph.vmatgraph"). A
+    // .vmatgraph is a surface shader asset: materials use it like a .vshader. It opens in the
+    // Graph Editor with the material node library.
+    Result<Uuid> create_material_graph(std::string_view relative_path = {});
     // Loads a graph asset into the Graph Editor and shows it (unsaved edits of the previous graph
     // are discarded).
     Status open_graph_editor(const Uuid& asset);
@@ -694,6 +698,8 @@ private:
     std::unordered_map<std::uint32_t, std::uint64_t> graph_hits_seen_;
     std::optional<script::GraphRuntimeError> graph_error_;
     bool graph_live_{false};
+    bool graph_show_code_{false}; // material graphs: show the generated GLSL
+    Result<Uuid> create_graph_file(std::string_view relative_path, script::GraphDomain domain);
     // Pushes an undo snapshot; consecutive edits with the same non-empty key share one step.
     void graph_begin_edit(std::string_view coalesce_key = {});
     void graph_end_edit();

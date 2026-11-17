@@ -82,7 +82,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     if (e == ".luau" || e == ".vgraph") return AssetKind::Script;
     if (e == ".vprefab") return AssetKind::Prefab;
     if (e == ".vmat") return AssetKind::Material;
-    if (e == ".vshader") return AssetKind::Shader;
+    if (e == ".vshader" || e == ".vmatgraph") return AssetKind::Shader;
     if (e == ".vsheet") return AssetKind::SpriteSheet;
     if (e == ".vtileset") return AssetKind::Tileset;
     if (e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac") return AssetKind::Audio;

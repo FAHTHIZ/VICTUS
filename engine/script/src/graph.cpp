@@ -2,6 +2,7 @@
 // Visual scripting graphs: node library, deterministic serialization, validation and the
 // compiler to Luau (ADR-0058).
 #include "victus/script/graph.hpp"
+#include "victus/script/material_graph.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -24,13 +25,15 @@ std::string_view pin_type_name(PinType t) noexcept {
     case PinType::String: return "string";
     case PinType::Vector: return "vector";
     case PinType::Entity: return "entity";
+    case PinType::Vec2: return "vec2";
+    case PinType::Vec4: return "vec4";
     }
     return "any";
 }
 
 bool parse_pin_type(std::string_view name, PinType& out) noexcept {
     for (PinType t : {PinType::Exec, PinType::Any, PinType::Number, PinType::Bool, PinType::String, PinType::Vector,
-                      PinType::Entity})
+                      PinType::Entity, PinType::Vec2, PinType::Vec4})
         if (pin_type_name(t) == name) {
             out = t;
             return true;
@@ -38,8 +41,14 @@ bool parse_pin_type(std::string_view name, PinType& out) noexcept {
     return false;
 }
 
-bool pin_types_compatible(PinType from, PinType to) noexcept {
+bool pin_types_compatible(PinType from, PinType to, GraphDomain domain) noexcept {
     if (from == PinType::Exec || to == PinType::Exec) return from == to;
+    if (domain == GraphDomain::Material) {
+        const auto numeric = [](PinType t) {
+            return t == PinType::Any || t == PinType::Number || t == PinType::Vec2 || t == PinType::Vector || t == PinType::Vec4;
+        };
+        return from == to || (numeric(from) && numeric(to));
+    }
     return from == to || from == PinType::Any || to == PinType::Any;
 }
 
@@ -283,6 +292,8 @@ std::string literal(PinType type, const Value& v) {
         if (v.is_string()) return string_literal(v.as_string());
         if (v.is_array()) return vector_literal(v);
         return "nil";
+    case PinType::Vec2:
+    case PinType::Vec4:
     case PinType::Exec: break;
     }
     return "nil";
@@ -294,10 +305,19 @@ std::string variable_field(const GraphVariable& v) { return v.exposed ? v.name :
 
 std::span<const NodeDesc> node_library() { return library(); }
 
-const NodeDesc* find_node_desc(std::string_view type) {
-    for (const auto& d : library())
+std::span<const NodeDesc> node_library(GraphDomain domain) {
+    return domain == GraphDomain::Material ? material_node_library() : node_library();
+}
+
+const NodeDesc* find_node_desc(std::string_view type, GraphDomain domain) {
+    for (const auto& d : node_library(domain))
         if (d.type == type) return &d;
     return nullptr;
+}
+
+const NodeDesc* find_node_desc(std::string_view type) {
+    if (const NodeDesc* d = find_node_desc(type, GraphDomain::Script)) return d;
+    return find_node_desc(type, GraphDomain::Material);
 }
 
 // ---- graph editing ----
@@ -335,7 +355,7 @@ void ScriptGraph::remove_node(std::uint32_t id) {
 }
 
 std::vector<PinDesc> ScriptGraph::input_pins(const GraphNode& n) const {
-    const NodeDesc* d = find_node_desc(n.type);
+    const NodeDesc* d = find_node_desc(n.type, domain);
     if (!d) return {};
     std::vector<PinDesc> pins = d->inputs;
     if (d->kind == NodeKind::SetVariable)
@@ -347,7 +367,7 @@ std::vector<PinDesc> ScriptGraph::input_pins(const GraphNode& n) const {
 }
 
 std::vector<PinDesc> ScriptGraph::output_pins(const GraphNode& n) const {
-    const NodeDesc* d = find_node_desc(n.type);
+    const NodeDesc* d = find_node_desc(n.type, domain);
     if (!d) return {};
     std::vector<PinDesc> pins = d->outputs;
     if (d->kind == NodeKind::GetVariable || d->kind == NodeKind::SetVariable)
@@ -364,7 +384,7 @@ bool ScriptGraph::connect(std::uint32_t from_node, std::string_view from_pin, st
     const auto ins = input_pins(*b);
     const PinDesc* o = find_pin(outs, from_pin);
     const PinDesc* i = find_pin(ins, to_pin);
-    if (!o || !i || !pin_types_compatible(o->type, i->type)) return false;
+    if (!o || !i || !pin_types_compatible(o->type, i->type, domain)) return false;
     if (o->type == PinType::Exec)
         std::erase_if(links, [&](const GraphLink& l) { return l.from_node == from_node && l.from_pin == from_pin; });
     else
@@ -383,6 +403,7 @@ json::Value graph_to_json(const ScriptGraph& g) {
     Value doc = Value::object();
     doc.set("format", "victus.graph");
     doc.set("version", ScriptGraph::kVersion);
+    if (g.domain == GraphDomain::Material) doc.set("domain", "material");
     std::uint32_t next = g.next_id;
     for (const auto& n : g.nodes) next = std::max(next, n.id + 1);
     doc.set("next_id", next);
@@ -443,6 +464,9 @@ Result<ScriptGraph> graph_from_json(const json::Value& doc) {
     if (version < 1 || version > ScriptGraph::kVersion)
         return make_error(ErrorCode::VersionMismatch, std::format("unsupported graph version {}", version));
     ScriptGraph g;
+    const std::string domain = doc["domain"].as_string_or("script");
+    if (domain == "material") g.domain = GraphDomain::Material;
+    else if (domain != "script") return make_error(ErrorCode::ParseError, std::format("unknown graph domain '{}'", domain));
     constexpr std::size_t kMaxNodes = 20000;
     for (const Value& v : doc["variables"].is_array() ? doc["variables"].as_array() : json::Array{}) {
         GraphVariable var;
@@ -520,6 +544,10 @@ public:
     Compiler(const ScriptGraph& g, const GraphCompileOptions& o) : g_(g), opt_(o) {}
 
     CompiledGraph run() {
+        if (g_.domain != GraphDomain::Script) {
+            error(0, {}, "this is a material graph: it compiles to a surface shader, not a script");
+            return finish(false);
+        }
         index();
         check_variables();
         check_links();
@@ -583,7 +611,7 @@ private:
         for (const auto& n : g_.nodes) {
             if (n.id == 0) error(0, {}, "node with id 0");
             if (!nodes_.emplace(n.id, &n).second) error(n.id, {}, "duplicate node id");
-            const NodeDesc* d = find_node_desc(n.type);
+            const NodeDesc* d = find_node_desc(n.type, GraphDomain::Script);
             if (!d) error(n.id, {}, std::format("unknown node type '{}'", n.type));
             else descs_[n.id] = d;
         }
@@ -860,7 +888,10 @@ CompiledGraph compile_graph(const ScriptGraph& graph, const GraphCompileOptions&
     return Compiler(graph, options).run();
 }
 
-std::vector<GraphDiagnostic> validate_graph(const ScriptGraph& graph) { return compile_graph(graph).diagnostics; }
+std::vector<GraphDiagnostic> validate_graph(const ScriptGraph& graph) {
+    if (graph.domain == GraphDomain::Material) return validate_material_graph(graph);
+    return compile_graph(graph).diagnostics;
+}
 
 std::string annotate_graph_error(std::string_view message, const CompiledGraph& compiled, const ScriptGraph& graph) {
     // Luau locations look like "scripts/a.vgraph:12: message"; find the first ":<digits>:".

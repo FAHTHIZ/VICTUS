@@ -26,7 +26,7 @@ This file records only verified state. Every entry lists what was built, how it 
 | ECS (`engine/ecs`): archetype SoA world, generational entities, runtime-registered components, cached queries, exclusion filters, parallel `par_each` on the job system, deferred command buffers, resources, structural-change assertions during iteration | Implemented | `victus_ecs_tests` (10 cases), `victus_bench_scene` |
 | Scene (`engine/scene`): UUID identity, names, transforms, parent/child hierarchy with cycle rejection and keep-world reparenting, world-transform propagation, cameras/lights/mesh renderers/sprites, duplicate/find, versioned JSON scene format (`victus.scene` v1) preserving unknown components | Implemented | `victus_scene_tests` (5 cases) |
 | Asset pipeline (`engine/assets`): project asset database with `.meta` sidecars (stable UUIDs, importer settings, duplicate-UUID repair), texture import (mips, sRGB/linear heuristics), glTF 2.0/GLB import via cgltf 1.15 (sandboxed file access, data URIs, PBR materials, normals/tangents generation, KHR unlit/emissive_strength), versioned cooked cache (`.victus/cache/<uuid>.vcooked`) keyed by source+settings hash with up-to-date checks, parallel import ; glTF skins (JOINTS/WEIGHTS 0–1 reduced to the top 4 influences, inverse bind matrices) and animation clips (translation/rotation/scale, STEP/LINEAR/CUBICSPLINE) imported and cooked (format v2) with validation; glTF JSON export for procedural models | Implemented (morph-target weights skipped with a warning) | `victus_asset_tests` (8 cases) |
-| Materials: `.vmat` assets (`AssetKind::Material`, `victus/assets/material.hpp`) with PBR factors, four texture slots by UUID, UV tiling/offset, nearest/linear filter, alpha cutoff, unlit, double sided; `MeshRenderer.material` reference; cached in `GpuAssetCache::material()`; hot reloaded; validated by export and `victus check`; editor Material Editor and drag-and-drop assignment | Implemented (no material instances, project shaders or graphs) | "gpu material" cases in `victus_gpu_tests`, editor materials case, export materials case |
+| Materials: `.vmat` assets (`AssetKind::Material`, `victus/assets/material.hpp`) with PBR factors, four texture slots by UUID, UV tiling/offset, nearest/linear filter, alpha cutoff, unlit, double sided; `MeshRenderer.material` reference; cached in `GpuAssetCache::material()`; hot reloaded; validated by export and `victus check`; editor Material Editor and drag-and-drop assignment | Implemented (instances, project surface shaders and material graphs since Slices 35-68) | "gpu material" cases in `victus_gpu_tests`, editor materials case, export materials case |
 | Runtime scene rendering (`engine/runtime`): GPU asset cache, glTF model instantiation into scene hierarchies, scene → SceneRenderer/SpriteBatch extraction | Implemented | `victus_gpu_tests` end-to-end case: project folder → import → cooked cache → scene save/load → GPU render, pixel-probed |
 | UI layer (`engine/ui`): Dear ImGui 1.93 docking rendered through the VICTUS RHI (own renderer: font atlas + user textures, scissored indexed draws, 16-bit index splitting), SDL3 platform backend via native event hook, dark theme, DPI-aware fonts | Implemented | `victus_gpu_tests` UI case (pixel-probed window + texture) |
 | Gameplay framework (`engine/gameplay`): `Simulation` fixed-step scheduler (accumulator, max-substep clamp, pause/step, time scale), built-in `Rotator`/`Oscillator` behaviours with serialization, `InputSource` interface (platform-backed in player/editor, `ManualInput` for tests/headless/bots) | Implemented | `victus_project_tests` |
@@ -908,5 +908,24 @@ Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
 Known gaps:
 - Box select tests bounds centres, not full overlap; no lasso. (Transform gizmos already move every selected root since Slice 51.)
 
+## Slice 68: Material graphs (roadmap item 17)
+
+Why: roadmap item 17. Surface shaders required hand-written GLSL.
+
+Built:
+- `.vmatgraph` assets (`AssetKind::Shader`): the visual-script graph document with `"domain": "material"` (`script::GraphDomain`, new `vec2`/`vec4` pin types, domain-aware pin compatibility). 55 material nodes (`script::material_node_library`): Surface Output, Material Surface, UV, Mesh UV, World Position, View Direction, Vertex Normal, Vertex Color, Time, Parameter 0-3, Base Color/Metal-Rough/Normal Map/Emissive Texture, Float/Vector 2/Vector 3/Color, Add ... Remap (generic math), Dot/Cross/Normalize/Length/Distance/Split/Combine, Tiling and Offset, Panner, Value Noise, Checker, Fresnel, Sine Wave.
+- `script::compile_material_graph` emits the surface function (one local per used output, generic pins widened to the widest input, unlinked output fields keep the material's values, constants on the output are assigned) with diagnostics for a missing/duplicate output, cycles, foreign nodes, bad links and unused nodes (warnings). `runtime::load_surface_shader_code` feeds graphs into the existing surface-shader path (renderer cache, hot reload, PBR fallback, `victus check`, export).
+- Editor: Graph Editor opens `.vmatgraph` with the material palette, colour swatches and pickers, vector editors, "Use in Material", a generated-GLSL view, and GLSL validation on save; Material Editor "Graph"/"Edit Graph" buttons; Assets menu, command palette and asset double-click entries.
+- Fix: `save_graph` read an asset record after a database refresh could move it.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
+- `victus_gpu_tests` "material graphs: every node compiles to a valid surface shader" (every output of every node into four Surface fields, compiled with glslang; starter graph round trip and MSL), "generic types, constants on the output and unused nodes", "diagnostics", and "gpu: a material graph shades a mesh and hot reloads" (Parameter 0 blue on screen, edited to a red constant via the hot reloader, broken graph falls back to PBR white).
+- `victus_editor_tests` "editor: material graphs are created, edited on the canvas and shade the open material".
+- `victus check` on a project with a material graph; editor screenshot of the Graph Editor with a rim-light graph inspected.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- Same limits as surface shaders: no custom textures or uniforms beyond the four parameters; fragment stage only; no per-node previews.
+
 ## Next task
-Roadmap next slice 17: material graph.
+Roadmap next slice 18: terrain.

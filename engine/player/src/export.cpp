@@ -178,9 +178,10 @@ Result<ExportReport> export_game(const ExportOptions& o) {
     for (const assets::AssetRecord& r : (*db)->records()) {
         if (r.kind != assets::AssetKind::Shader) continue;
         const std::string path = r.path;
-        auto code = (*db)->load_shader_source(r.uuid);
+        auto code = runtime::load_surface_shader_code(**db, r.uuid);
         if (!code) {
-            errors.push_back(std::format("{}: {}", path, code.error().message));
+            const std::string& msg = code.error().message;
+            errors.push_back(msg.starts_with(path) ? msg : std::format("{}: {}", path, msg));
             continue;
         }
         if (auto c = runtime::compile_surface_shader(*code, path, true); !c) errors.push_back(c.error().message);
