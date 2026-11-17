@@ -699,6 +699,29 @@ void Editor::draw_viewport() {
             const Entity hit = pick({m.x - origin.x, m.y - origin.y}, {avail.x, avail.y});
             select(hit, ImGui::GetIO().KeyCtrl);
         }
+        // Box select: a left drag that starts on the viewport (not on a gizmo handle, not
+        // painting tiles, no Alt orbit). Ctrl/Shift add to the selection.
+        if (hovered && !painting && !gizmo_consumed_click_ && play_state_ == PlayState::Editing &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::GetIO().KeyAlt)
+            box_selecting_ = true;
+        if (box_selecting_ && (gizmo_consumed_click_ || play_state_ != PlayState::Editing)) box_selecting_ = false;
+        if (box_selecting_ && lmb_dragged_) {
+            const ImVec2 m = ImGui::GetMousePos();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImVec2 p0(std::min(drag_origin_.x, m.x), std::min(drag_origin_.y, m.y));
+            const ImVec2 p1(std::max(drag_origin_.x, m.x), std::max(drag_origin_.y, m.y));
+            dl->AddRectFilled(p0, p1, IM_COL32(90, 160, 255, 40));
+            dl->AddRect(p0, p1, IM_COL32(90, 160, 255, 200));
+        }
+        if (box_selecting_ && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            if (lmb_dragged_) {
+                const ImVec2 m = ImGui::GetMousePos();
+                const ImGuiIO& io = ImGui::GetIO();
+                (void)box_select({drag_origin_.x - origin.x, drag_origin_.y - origin.y}, {m.x - origin.x, m.y - origin.y},
+                                 {avail.x, avail.y}, io.KeyCtrl || io.KeyShift);
+            }
+            box_selecting_ = false;
+        }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) gizmo_consumed_click_ = false;
         draw_gizmo_toolbar({origin.x, origin.y}, {avail.x, avail.y});
     }
@@ -777,7 +800,10 @@ void Editor::draw_hierarchy_node(Entity e) {
         ImGui::PushStyleColor(ImGuiCol_Text, prefab_root ? ImVec4(0.45f, 0.75f, 1.0f, 1.0f) : ImVec4(0.62f, 0.8f, 0.98f, 1.0f));
     const bool open = ImGui::TreeNodeEx("##node", flags, "%s%s", tag, n ? n->value.c_str() : "Entity");
     if (prefab_root || prefab_part) ImGui::PopStyleColor();
-    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) select(e, ImGui::GetIO().KeyCtrl);
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) {
+        if (ImGui::GetIO().KeyShift) select_range(e);
+        else select(e, ImGui::GetIO().KeyCtrl);
+    }
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) frame_selected();
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload(kEntityPayload, &id, sizeof(Uuid));
@@ -877,8 +903,14 @@ void Editor::begin_inspector_frame(Entity e) {
     }
     if (!pending_dirty_) {
         std::vector<Uuid> ids{id};
+        // Multi-selection edits change every selected entity: capture them all for one undo step.
+        for (const Uuid& other : selection_)
+            if (other != id)
+                if (const Entity oe = s.find(other); !oe.is_null()) ids.push_back(other);
         // Edits to a prefab part record overrides on the instance root: capture it for undo.
-        if (const Entity root = scene::instance_root(s, e); !root.is_null() && root != e) ids.push_back(s.uuid(root));
+        if (const Entity root = scene::instance_root(s, e); !root.is_null() && root != e &&
+            std::find(ids.begin(), ids.end(), s.uuid(root)) == ids.end())
+            ids.push_back(s.uuid(root));
         pending_before_ = capture(s, ids);
         pending_entity_ = id;
     }
@@ -1307,10 +1339,13 @@ void Editor::draw_inspector() {
             pending_dirty_ = false;
         }
     } else {
-        if (selection_.size() > 1) ImGui::TextDisabled("%zu selected (editing the last)", selection_.size());
+        const bool multi = selection_.size() > 1;
+        if (multi) ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "%zu selected: changes apply to all", selection_.size());
         draw_prefab_section(e);
         begin_inspector_frame(e);
+        const json::Value before_frame = multi ? active_scene().save_entity(e) : json::Value();
         const bool changed = inspect_components(e);
+        if (changed && multi) apply_multi_edit(e, before_frame);
         if (changed) active_scene().update_transforms();
         end_inspector_frame(e, changed);
         draw_network_section(e);

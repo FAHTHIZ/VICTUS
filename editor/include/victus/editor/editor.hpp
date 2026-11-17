@@ -85,6 +85,10 @@ struct EditorCommand {
 // Higher is better: consecutive characters and word starts score more, shorter texts win ties.
 [[nodiscard]] int fuzzy_match_score(std::string_view query, std::string_view text) noexcept;
 
+// Multi-entity edits: applies the difference between `before` and `after` (component JSON) to
+// `target`, field by field (vector elements individually); added/removed keys are added/removed.
+[[nodiscard]] json::Value merge_edit(const json::Value& before, const json::Value& after, const json::Value& target);
+
 struct EditorClient; // an in-editor player of a hosted session (editor_clients.cpp)
 
 struct EditorCamera {
@@ -314,6 +318,16 @@ public:
     [[nodiscard]] const std::vector<Uuid>& selection() const noexcept { return selection_; }
     [[nodiscard]] bool is_selected(scene::Entity e) const;
     void frame_selected();
+    // Selects from the primary selection to `to` in hierarchy order (Shift+click); `to` becomes primary.
+    void select_range(scene::Entity to);
+    // Selects pickable entities whose bounds centre projects inside the viewport-pixel rectangle
+    // a..b (prefab parts select their instance). Returns how many were added.
+    std::size_t box_select(math::Vec2 a, math::Vec2 b, math::Vec2 viewport_size, bool additive = false);
+    // Applies the change made to `primary` since snapshot `before` (Scene::save_entity) to the
+    // other selected entities, field by field (the inspector calls this while several are selected).
+    void apply_multi_edit(scene::Entity primary, const json::Value& before);
+    // Every entity in hierarchy (depth-first) order.
+    [[nodiscard]] std::vector<scene::Entity> hierarchy_order();
 
     // ---- play mode ----
     void play();
@@ -574,6 +588,7 @@ private:
     std::uint64_t autosaved_revision_{0};
     bool autosave_written_{false}; // this session wrote the autosave of the open scene
     std::string autosave_scene_;   // the scene path that autosave was written for
+    bool box_selecting_{false};
     bool palette_open_{false};
     bool palette_focus_{false};
     std::string palette_query_;
