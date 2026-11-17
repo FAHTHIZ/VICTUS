@@ -1803,9 +1803,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (env_.draw_sky) {
                 SkyUniforms sky{};
                 sky.inv_view_proj = inverse(view_proj);
-                sky.zenith = rgb(env_.sky_zenith);
-                sky.horizon = rgb(env_.sky_horizon);
-                sky.ground = rgb(env_.ground);
+                sky.zenith = rgb(env_.sky_background ? env_.background_zenith : env_.sky_zenith);
+                sky.horizon = rgb(env_.sky_background ? env_.background_horizon : env_.sky_horizon);
+                sky.ground = rgb(env_.sky_background ? env_.background_ground : env_.ground);
                 sky.sun_dir = Vec4(-normalize(sun_.direction), 0);
                 sky.sun_color = rgb(sun_.color, sun_.intensity * 4.0f, 0.9995f);
                 const bool has_env = env_map && env_map->cube();
