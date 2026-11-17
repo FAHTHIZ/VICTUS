@@ -589,6 +589,21 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - Static and slowly moving content converges towards native-resolution edges (pixel-measured in `victus_gpu_tests`); fast disocclusions show the reconstructed render-resolution image until history builds again. No sharpening pass and no reactive/transparency mask yet: particles and blended draws can smear like in plain TAA.
   - Low and Medium tiers do not run TAA, so they keep bilinear scaling (mobile cost unchanged). Rejected (a): too large to own across three shader backends for the gain over (c) today; revisit with a measured quality gap. Rejected (b): spatial upscaling cannot recover sub-pixel detail.
 
+### ADR-0056: Baked irradiance volumes (probe grid, SH9 per probe)
+- Status: Accepted (Slice 59)
+- Context: diffuse ambient light came only from the sky/environment SH, so interiors, areas under overhangs and surfaces next to bright or coloured geometry received the same ambient light as open ground. Roadmap item 13 asks for scalable GI, baked first. Reference designs: Unity Light Probe Groups / Adaptive Probe Volumes, Unreal Volumetric Lightmaps, Godot LightmapGI probes and DDGI (Majercik et al. 2019) for the dynamic follow-up.
+- Options: (a) lightmaps (UV2 unwrapping, a path tracer, per-object atlases); (b) a regular grid of probes storing SH9 irradiance, interpolated per pixel; (c) jump straight to dynamic ray-traced probes (needs hardware RT or SDF tracing, not available on the SDL_GPU baseline).
+- Decision: (b).
+  - `render::IrradianceGrid` (world-aligned box, 2..32 probes per axis, 2..16 vertically) and `IrradianceVolume` store one `SphericalHarmonics9` per probe plus a validity flag, uploaded to an RGBA16F texture laid out (nx*ny) x (nz*9): rgb = coefficient * valid, a = valid.
+  - `pbr.frag` binds it at fragment sampler 8 (SPIR-V storage buffers moved to 9/10). The world position is offset along the normal, eight probes are interpolated (two bilinear fetches per coefficient, mixed along y), coefficients are divided by the interpolated validity and the result blends with the environment irradiance by that validity, so unbaked probes and points outside the box fall back to the sky.
+  - `IrradianceBaker` captures each probe with `capture_equirect` (the reflection-probe path) and projects it to SH9. It is progressive (`step` with a probe budget) and multi-pass: pass N renders the scene lit by pass N-1, adding one bounce per pass.
+  - Runtime: `gameplay::IrradianceVolumeComponent` (size, spacing, intensity, normal offset, capture resolution, bounces, revision). `extract_scene` bakes stale volumes within `GpuAssetCache::set_irradiance_probes_per_frame` (default 8), keeps the previous bake lighting the scene while a rebake runs, and binds the volume containing the camera (smallest first), else the nearest. Moving or resizing rebakes.
+  - `RenderSettings::irradiance_volumes` (off on Low: environment SH only).
+- Consequences:
+  - Coloured bounce light and darker interiors without UV2 or offline tools; editor scenes bake in the background in a few frames. Light changes need a rebake (revision), so dynamic sun/time of day are not tracked.
+  - One volume per frame per renderer, no per-probe visibility/occlusion (DDGI depth moments) yet: thin walls can leak light, mitigated by the normal offset. The texture limits a volume to 32x16x32 probes.
+  - Rejected (a): large tooling cost (unwrapping, path tracing) for static scenes only. Rejected (c) as the first step; a dynamic, incrementally updated probe option on High/Ultra remains the second half of item 13.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

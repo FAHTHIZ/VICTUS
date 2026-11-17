@@ -96,6 +96,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_procedural_mesh_tests.cpp
         render/gpu_environment_tests.cpp
         render/gpu_reflection_probe_tests.cpp
+        render/gpu_irradiance_tests.cpp
         render/gpu_taa_tests.cpp
         render/gpu_light_tests.cpp
         render/gpu_texture_compression_tests.cpp

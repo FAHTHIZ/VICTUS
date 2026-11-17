@@ -107,6 +107,16 @@ void register_components() {
             .field(&P::resolution, "resolution", {.min = 16, .max = 512, .tooltip = "Cubemap face size of the capture"})
             .field(&P::revision, "revision", {.tooltip = "Change to recapture (also recaptured when the probe moves)"})
             .commit();
+        using G = IrradianceVolumeComponent;
+        scene::Schema<G>("IrradianceVolume", "Rendering")
+            .field(&G::size, "size", {.min = 0.1f, .max = 10000, .speed = 0.05f, .tooltip = "World-aligned box (metres) filled with irradiance probes"})
+            .field(&G::spacing, "spacing", {.min = 0.25f, .max = 100, .speed = 0.05f, .tooltip = "Distance between probes; at most 32 per axis (16 vertically)"})
+            .field(&G::intensity, "intensity", {.min = 0, .max = 64, .speed = 0.01f})
+            .field(&G::normal_offset, "normal_offset", {.min = 0, .max = 4, .speed = 0.01f, .tooltip = "Pushes lookups off surfaces to reduce light leaking through walls"})
+            .field(&G::resolution, "resolution", {.min = 16, .max = 128, .tooltip = "Capture face size per probe"})
+            .field(&G::bounces, "bounces", {.min = 1, .max = 4, .tooltip = "Bake passes; each pass after the first adds one light bounce"})
+            .field(&G::revision, "revision", {.tooltip = "Change to rebake (also rebaked when the volume moves or resizes)"})
+            .commit();
         using E = EnvironmentComponent;
         scene::Schema<E>("Environment", "Rendering")
             .field(&E::sky_zenith, "sky_zenith", {.hint = "color_hdr"})

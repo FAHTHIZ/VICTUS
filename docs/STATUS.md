@@ -747,6 +747,27 @@ Known gaps:
 - No sharpening pass, no reactive mask for particles/blended draws, no lock/thin-feature preservation; fast disocclusions show the render-resolution reconstruction until history rebuilds.
 - Low/Medium tiers (no TAA) keep bilinear scaling. No GPU timings on real hardware yet.
 
-## Next task
-Roadmap item 13: scalable global illumination, starting with baked irradiance probes (a probe grid volume captured from the scene, SH irradiance per probe, trilinear sampling in pbr.frag, Low-tier fallback to the environment SH). See ROADMAP.md "Next slices".
+## Slice 59: Baked irradiance volumes
 
+Why: roadmap item 13 (first half). Diffuse ambient light came only from the sky, so interiors and surfaces next to bright or coloured geometry were lit like open ground.
+
+Built (ADR-0056):
+- `render::IrradianceGrid` / `IrradianceVolume`: a world-aligned box of probes (2..32 per axis, 2..16 vertically), one SH9 per probe with a validity flag, uploaded as an RGBA16F texture; `sample()` on the CPU mirrors the shader.
+- `pbr.frag`: trilinear probe interpolation (validity-weighted, normal offset), blended with the environment irradiance outside the box or where probes are missing. Bound at fragment sampler 8; SPIR-V storage buffers moved to bindings 9/10.
+- `render::IrradianceBaker` / `bake_irradiance_volume`: captures each probe (`capture_equirect`) and projects to SH9; progressive (probe budget per step) and multi-pass (each pass after the first adds a bounce).
+- `SceneRenderer::set_irradiance_volume(volume, intensity, normal_offset)`, `RenderSettings::irradiance_volumes` (off on Low), `SceneStats::irradiance_probes`.
+- `gameplay::IrradianceVolumeComponent` ("IrradianceVolume", Rendering category: size, spacing, intensity, normal_offset, resolution, bounces, revision; editor inspector via schema). `extract_scene` bakes within `GpuAssetCache::set_irradiance_probes_per_frame` (default 8), keeps the previous bake while rebaking, rebakes on move/resize/revision, and binds the volume containing the camera, else the nearest. `ExtractStats::irradiance_volumes` / `irradiance_probes_baked`.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror, lavapipe):
+- `victus_gpu_tests` "irradiance grid: probe positions, counts and sanitizing"; "irradiance volume interpolates valid probes and falls back elsewhere" (half the probes cleared: value blends 50/50 with the fallback).
+- "baked probes see the glowing floor below and later passes add a bounce": bottom probe facing the red floor 0.97 red, facing up 0; a top probe facing a white ceiling: 0.004 after one pass, 0.50 after two. Progressive bake with budget 10 finishes 27 probes in three steps.
+- "lit surfaces inside the volume take diffuse light from its probes": a white cube in a black environment with no lights reads red 0 without the volume, 144 with it, 196 at intensity 2; Low tier binds no probes.
+- "IrradianceVolume components bake progressively and rebake on change": 18 probes over two frames at budget 10, reused when unchanged, old bake kept while a revision change waits for budget, removed with the entity; box lit red 174.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`; `compile_shaders.py --check` up to date.
+
+Known gaps:
+- Light changes (sun, time of day, moving lights) need a rebake; no dynamic GI yet.
+- No per-probe visibility (leaking through thin walls is reduced only by the normal offset); one volume bound per frame; no probe placement debug view in the editor.
+
+## Next task
+Roadmap item 13 (second half): a dynamic GI option on High/Ultra (incrementally re-captured probes with visibility data, following the light). Then item 14 visual scripting.

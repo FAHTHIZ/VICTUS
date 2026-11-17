@@ -27,6 +27,7 @@ void GpuAssetCache::clear() {
     environment_errors_.clear();
     atmosphere_.reset();
     probes_.clear();
+    irradiance_.clear();
     probe_renderer_.reset();
     for (auto& [id, model] : models_) {
         for (auto& m : model->meshes) ctx_.destroy(m);
@@ -559,6 +560,105 @@ void apply_reflection_probes(Scene& scene, GpuAssetCache& assets, render::SceneR
     }
     std::erase_if(captures, [](const auto& kv) { return !kv.second.seen; });
 }
+
+// Advances stale irradiance bakes (within the per-frame probe budget) and binds the volume that
+// contains the camera (the smallest one when several do), else the nearest. Bake captures see the
+// scene without probes or volumes; bounce passes add the volume being baked (ADR-0056).
+void apply_irradiance_volumes(Scene& scene, GpuAssetCache& assets, render::SceneRenderer& renderer,
+                              const SceneViewSettings& settings, math::Vec3 eye, ExtractStats& stats) {
+    auto& w = scene.world();
+    auto& bakes = assets.irradiance_bakes();
+    for (auto& [key, entry] : bakes) entry.seen = false;
+    std::uint32_t budget = assets.irradiance_probes_per_frame();
+    const render::IrradianceVolume* best = nullptr;
+    float best_score = 0.0f, best_intensity = 1.0f, best_offset = 0.0f;
+    bool best_inside = false;
+    w.each<gameplay::IrradianceVolumeComponent, WorldTransform>(
+        [&](Entity e, const gameplay::IrradianceVolumeComponent& v, const WorldTransform& wt) {
+            auto& entry = bakes[e.bits()];
+            entry.seen = true;
+            const math::Vec3 c = wt.matrix.transform_point({});
+            const auto finite = [](float f, float d) { return std::isfinite(f) ? std::abs(f) : d; };
+            const math::Vec3 size{std::max(finite(v.size.x, 1.0f), 0.1f), std::max(finite(v.size.y, 1.0f), 0.1f),
+                                  std::max(finite(v.size.z, 1.0f), 0.1f)};
+            render::IrradianceGrid grid;
+            grid.bounds = {c - size * 0.5f, c + size * 0.5f};
+            grid.counts = render::irradiance_counts_for(size, finite(v.spacing, 2.5f));
+            grid = grid.sanitized();
+            const std::uint32_t res = std::clamp(v.resolution, 16u, 128u), bounces = std::clamp(v.bounces, 1u, 4u);
+            const float offset = std::clamp(finite(v.normal_offset, 0.0f), 0.0f, 4.0f);
+            const float intensity = std::isfinite(v.intensity) ? std::max(v.intensity, 0.0f) : 1.0f;
+            const bool moved = math::length(entry.grid.bounds.min - grid.bounds.min) > 0.01f ||
+                               math::length(entry.grid.bounds.max - grid.bounds.max) > 0.01f || entry.grid.counts != grid.counts;
+            const bool stale = moved || entry.revision != v.revision || entry.resolution != res || entry.bounces != bounces ||
+                               std::abs(entry.normal_offset - offset) > 1e-4f;
+            if (stale || (!entry.active && !entry.pending)) {
+                if (moved) entry.active.reset(); // old probes would light the wrong place
+                entry.grid = grid;
+                entry.revision = v.revision;
+                entry.resolution = res;
+                entry.bounces = bounces;
+                entry.normal_offset = offset;
+                entry.baker.reset();
+                auto vol = render::IrradianceVolume::create(assets.context(), grid);
+                if (!vol) {
+                    VICTUS_LOG_ERROR("runtime", "irradiance volume: {}", vol.error().message);
+                    entry.pending.reset();
+                    return;
+                }
+                entry.pending = std::move(*vol);
+            }
+            if (entry.pending && budget > 0) {
+                auto r = assets.probe_renderer();
+                if (!r) {
+                    VICTUS_LOG_ERROR("runtime", "irradiance probe renderer: {}", r.error().message);
+                } else {
+                    render::IrradianceBakeSettings bs;
+                    bs.face_size = res;
+                    bs.bounces = bounces;
+                    bs.intensity = intensity;
+                    bs.normal_offset = offset;
+                    const std::uint32_t before = entry.baker.probes_baked();
+                    assets.set_capturing_probes(true);
+                    const Status st = entry.baker.step(assets.context(), **r, *entry.pending,
+                                                       [&](render::SceneRenderer& pr, const render::Camera3D& cam) {
+                                                           (void)extract_scene(scene, assets, pr, settings, &cam);
+                                                       },
+                                                       bs, budget);
+                    assets.set_capturing_probes(false);
+                    const std::uint32_t done = entry.baker.probes_baked() - before;
+                    budget -= std::min(budget, done);
+                    stats.irradiance_probes_baked += done;
+                    if (!st.ok()) {
+                        VICTUS_LOG_ERROR("runtime", "irradiance bake: {}", st.error().message);
+                        entry.pending.reset();
+                    } else if (entry.baker.done()) {
+                        entry.active = std::move(entry.pending);
+                        assets.note_irradiance_bake();
+                    }
+                }
+            }
+            // While nothing has finished yet, the partially baked first pass already helps.
+            const render::IrradianceVolume* shown = entry.active ? entry.active.get() : entry.pending.get();
+            if (!shown || shown->valid_count() == 0) return;
+            ++stats.irradiance_volumes;
+            const math::Vec3 lo = grid.bounds.min, hi = grid.bounds.max;
+            const bool inside = eye.x >= lo.x && eye.y >= lo.y && eye.z >= lo.z && eye.x <= hi.x && eye.y <= hi.y && eye.z <= hi.z;
+            const math::Vec3 d{std::max({lo.x - eye.x, 0.0f, eye.x - hi.x}), std::max({lo.y - eye.y, 0.0f, eye.y - hi.y}),
+                               std::max({lo.z - eye.z, 0.0f, eye.z - hi.z})};
+            // Inside volumes rank by size (smaller = more detailed), outside ones after them by distance.
+            const float score = inside ? size.x * size.y * size.z : math::length(d);
+            if (!best || (inside && !best_inside) || (inside == best_inside && score < best_score)) {
+                best = shown;
+                best_inside = inside;
+                best_score = score;
+                best_intensity = intensity;
+                best_offset = offset;
+            }
+        });
+    std::erase_if(bakes, [](const auto& kv) { return !kv.second.seen; });
+    if (best) renderer.set_irradiance_volume(best, best_intensity, best_offset);
+}
 } // namespace
 
 ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRenderer& renderer,
@@ -654,7 +754,10 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     renderer.begin(camera, sun, env);
     for (const auto& p : points) renderer.add_point_light(p);
     for (const auto& sl : spots) renderer.add_spot_light(sl);
-    if (!assets.capturing_probes()) apply_reflection_probes(scene, assets, renderer, settings, stats);
+    if (!assets.capturing_probes()) {
+        apply_reflection_probes(scene, assets, renderer, settings, stats);
+        apply_irradiance_volumes(scene, assets, renderer, settings, camera.position, stats);
+    }
 
     std::vector<math::Mat4> palette;
     const auto apply_overrides = [&](Entity entity, render::Material& m) {

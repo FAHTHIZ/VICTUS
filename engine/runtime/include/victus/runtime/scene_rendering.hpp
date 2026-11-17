@@ -8,6 +8,8 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/render/atmosphere.hpp"
+#include "victus/render/irradiance_bake.hpp"
+#include "victus/render/irradiance_volume.hpp"
 #include "victus/render/scene_renderer.hpp"
 #include "victus/render/sprite_batch.hpp"
 #include "victus/scene/scene.hpp"
@@ -77,6 +79,22 @@ public:
     // Captures allowed per extract_scene call (spreads probe captures over frames; 0 = none).
     void set_probe_captures_per_frame(std::uint32_t n) noexcept { probe_budget_ = n; }
     [[nodiscard]] std::uint32_t probe_captures_per_frame() const noexcept { return probe_budget_; }
+    // Irradiance volumes (managed by extract_scene, keyed by entity). A rebake fills `pending`
+    // progressively while `active` (the last finished bake) keeps lighting the scene.
+    struct IrradianceBake {
+        std::unique_ptr<render::IrradianceVolume> active, pending;
+        render::IrradianceBaker baker;
+        render::IrradianceGrid grid;
+        std::uint32_t revision{0}, resolution{0}, bounces{0};
+        float normal_offset{0.0f};
+        bool seen{false};
+    };
+    [[nodiscard]] std::unordered_map<std::uint64_t, IrradianceBake>& irradiance_bakes() noexcept { return irradiance_; }
+    // Probes baked per extract_scene call, across all volumes (0 = no baking).
+    void set_irradiance_probes_per_frame(std::uint32_t n) noexcept { irradiance_budget_ = n; }
+    [[nodiscard]] std::uint32_t irradiance_probes_per_frame() const noexcept { return irradiance_budget_; }
+    [[nodiscard]] std::uint32_t irradiance_bakes_completed() const noexcept { return irradiance_completed_; }
+    void note_irradiance_bake() noexcept { ++irradiance_completed_; }
     [[nodiscard]] const render::EnvironmentBakeSettings& environment_bake() const noexcept { return env_bake_; }
     [[nodiscard]] Result<const GpuModel*> model(const Uuid& uuid);
     // Registers an already-cooked model under a UUID (tools, tests, procedural content).
@@ -124,6 +142,8 @@ private:
     std::unique_ptr<render::SceneRenderer> probe_renderer_;
     std::uint32_t probe_capture_count_{0}, probe_budget_{1};
     bool capturing_probes_{false};
+    std::unordered_map<std::uint64_t, IrradianceBake> irradiance_;
+    std::uint32_t irradiance_budget_{8}, irradiance_completed_{0};
     std::unordered_map<Uuid, std::unique_ptr<GpuModel>, UuidHash> models_;
     std::unordered_map<std::string, render::GpuMesh> primitives_;
     std::unordered_map<Uuid, Result<render::Material>, UuidHash> materials_;
@@ -147,6 +167,8 @@ scene::Entity instantiate_model(scene::Scene& scene, const Uuid& model_uuid, con
 struct ExtractStats {
     std::uint32_t meshes{0}, sprites{0}, lights{0}, missing_assets{0};
     std::uint32_t reflection_probes{0}; // captured probes handed to the renderer
+    std::uint32_t irradiance_volumes{0}; // volumes with baked probes in the scene
+    std::uint32_t irradiance_probes_baked{0}; // probes baked during this call
     std::uint32_t skinned{0}; // meshes drawn with GPU skinning
     std::uint32_t particle_emitters{0}, particles{0}; // submitted (before camera culling)
     bool camera_found{false};

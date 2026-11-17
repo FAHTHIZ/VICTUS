@@ -21,6 +21,8 @@ victus_add_module(render
         src/temporal.cpp
         src/light_clusters.cpp
         src/reflection_capture.cpp
+        src/irradiance_volume.cpp
+        src/irradiance_bake.cpp
         src/gpu_context.cpp
         src/image.cpp
         src/mesh.cpp

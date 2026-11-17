@@ -293,6 +293,18 @@ struct ReflectionProbeComponent {
     std::uint32_t revision{0};           // change to force a recapture
 };
 
+// A box of irradiance probes centred on the entity (ADR-0056): baked progressively from scene captures,
+// then lit surfaces inside take their diffuse ambient light from it instead of the sky.
+struct IrradianceVolumeComponent {
+    math::Vec3 size{20.0f, 8.0f, 20.0f}; // world-aligned box in metres, centred on the entity
+    float spacing{2.5f};                 // target distance between probes (counts are capped per axis)
+    float intensity{1.0f};
+    float normal_offset{0.25f};          // lookup offset along the surface normal (reduces leaking)
+    std::uint32_t resolution{16};        // capture face size per probe (16..128)
+    std::uint32_t bounces{2};            // bake passes: 1 = direct light only, each extra pass adds a bounce
+    std::uint32_t revision{0};           // change to force a rebake
+};
+
 // Registers serializers ("Rotator", "Oscillator", "Environment"). Idempotent; call once at startup before
 // loading scenes so these components are not treated as unknown.
 void register_components();
