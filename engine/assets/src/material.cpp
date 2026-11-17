@@ -88,6 +88,7 @@ const char* field_key(MaterialField f) noexcept {
     case MaterialField::ShaderParams: return "shader_params";
     case MaterialField::VertexAlpha: return "vertex_alpha";
     case MaterialField::CoverageResponse: return "coverage_response";
+    case MaterialField::Blend: return "blend";
     default: return "";
     }
 }
@@ -114,6 +115,7 @@ void MaterialAsset::copy_field(const MaterialAsset& src, MaterialField f) {
     case MaterialField::ShaderParams: shader_params = src.shader_params; break;
     case MaterialField::VertexAlpha: vertex_alpha_coverage_mask = src.vertex_alpha_coverage_mask; break;
     case MaterialField::CoverageResponse: coverage_response = src.coverage_response; break;
+    case MaterialField::Blend: blend = src.blend; break;
     default: break;
     }
 }
@@ -160,6 +162,7 @@ json::Value MaterialAsset::to_json() const {
     v.set("shader_params", std::move(params));
     v.set("vertex_alpha", vertex_alpha_coverage_mask ? "coverage_mask" : "opacity");
     v.set("coverage_response", num(coverage_response));
+    v.set("blend", blend == MaterialBlendMode::Alpha ? "alpha" : blend == MaterialBlendMode::Additive ? "additive" : "opaque");
     if (!is_instance()) return v;
     // Instances store only what they override.
     Value inst = Value::object();
@@ -224,6 +227,13 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
     for (std::size_t i = 0; i < kMaterialFieldCount; ++i)
         if (v.find(field_key(static_cast<MaterialField>(i)))) m.overrides |= field_bit(static_cast<MaterialField>(i));
     if (!m.is_instance()) m.overrides = kAllMaterialFields;
+    if (const Value* f = v.find("blend"); f && !f->is_null()) {
+        const std::string_view b = f->is_string() ? std::string_view{f->as_string()} : std::string_view{};
+        if (b == "opaque") m.blend = MaterialBlendMode::Opaque;
+        else if (b == "alpha") m.blend = MaterialBlendMode::Alpha;
+        else if (b == "additive") m.blend = MaterialBlendMode::Additive;
+        else return make_error(ErrorCode::ParseError, "material field 'blend' must be \"opaque\", \"alpha\" or \"additive\"");
+    }
     m.coverage_response = std::clamp(m.coverage_response, 0.0f, 1.0f);
     m.metallic = std::clamp(m.metallic, 0.0f, 1.0f);
     m.roughness = std::clamp(m.roughness, 0.0f, 1.0f);

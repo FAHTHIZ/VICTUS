@@ -85,6 +85,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_surface_shader_tests.cpp
         render/gpu_sprite_sheet_tests.cpp
         render/gpu_tilemap_tests.cpp
+        render/gpu_transparency_tests.cpp
         render/gpu_vertex_color_tests.cpp
         render/gpu_procedural_mesh_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui

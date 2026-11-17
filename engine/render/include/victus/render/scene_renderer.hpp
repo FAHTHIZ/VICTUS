@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace victus::render {
@@ -28,6 +29,13 @@ struct Camera3D {
     [[nodiscard]] math::Mat4 projection(float aspect) const noexcept;
     [[nodiscard]] math::Vec3 forward() const noexcept;
 };
+
+// How a material's colour reaches the frame. Opaque draws write depth and are instanced and
+// sorted for state; Alpha (straight alpha) and Additive draws run after all opaque geometry,
+// sorted back to front, test but do not write depth, and cast no shadows.
+enum class MaterialBlend : std::uint8_t { Opaque, Alpha, Additive };
+[[nodiscard]] std::string_view material_blend_name(MaterialBlend b) noexcept;
+[[nodiscard]] std::optional<MaterialBlend> parse_material_blend(std::string_view name) noexcept;
 
 struct Material {
     math::Color base_color{1, 1, 1, 1}; // linear
@@ -55,6 +63,7 @@ struct Material {
     // How strongly the scene's coverage layer (Environment::coverage_*) settles on this material,
     // 0 (never, e.g. water or glowing embers) .. 1.
     float coverage_response{1.0f};
+    MaterialBlend blend{MaterialBlend::Opaque};
 };
 
 enum class FogMode : std::uint8_t { None, Linear, Exponential, ExponentialSquared };
@@ -184,6 +193,7 @@ struct SceneStats {
     std::uint32_t render_width{0}, render_height{0};
     // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
     std::uint32_t main_batches{0}, shadow_batches{0}, prepass_batches{0};
+    std::uint32_t transparent_draws{0};
     std::uint32_t instances_uploaded{0};
     std::uint32_t skinned_draws{0};    // skinned submissions this frame
     std::uint32_t joints_uploaded{0};  // joint matrices in the per-frame palette
@@ -268,7 +278,8 @@ private:
                                                             rhi::BlendMode blend = rhi::BlendMode::Opaque);
     void compute_cascades(float aspect, std::uint32_t resolution);
     // Pipeline for a project surface shader (created on first use); the built-in one on failure.
-    [[nodiscard]] rhi::PipelineHandle surface_pipeline(rhi::ShaderHandle fragment, bool skinned, bool double_sided);
+    [[nodiscard]] rhi::PipelineHandle surface_pipeline(rhi::ShaderHandle fragment, bool skinned, bool double_sided, MaterialBlend blend);
+    [[nodiscard]] rhi::PipelineHandle blend_pipeline(MaterialBlend blend, bool skinned, bool double_sided);
     [[nodiscard]] Status ensure_exposure_textures();
 
     GpuContext& ctx_;
@@ -282,7 +293,9 @@ private:
     rhi::PipelineDesc opaque_desc_, skinned_desc_;
     // Surface shader pipelines by shader handle: [skinned * 2 + double_sided]; all invalid
     // when creation failed (the built-in pipeline is used and the failure logged once).
-    std::unordered_map<std::uint64_t, std::array<rhi::PipelineHandle, 4>> surface_pipelines_;
+    std::unordered_map<std::uint64_t, std::array<rhi::PipelineHandle, 12>> surface_pipelines_;
+    std::unordered_set<std::uint64_t> surface_failed_; // shaders whose pipeline failed (logged once)
+    std::array<rhi::PipelineHandle, 8> blend_pipelines_{}; // [blend-1][skinned][double_sided], created on first use
     std::optional<double> time_;
     rhi::TextureHandle no_shadow_;
     rhi::TextureHandle exposure_[2];

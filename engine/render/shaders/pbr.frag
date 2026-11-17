@@ -77,6 +77,7 @@ struct SurfaceInput {
     vec3 vertex_normal;  // interpolated geometric normal (world space)
     float time;          // seconds
     vec4 params[4];      // the material's shader parameters
+    vec4 vertex_color;   // interpolated vertex colour (rgb linear; alpha as stored)
 };
 
 // VICTUS_SURFACE_CODE
@@ -203,6 +204,7 @@ void main() {
     si.vertex_normal = geometric_n;
     si.time = lighting.screen.z;
     si.params = material.custom;
+    si.vertex_color = v_color;
     surface(si, s);
     s.normal = normalize(s.normal);
     s.metallic = clamp(s.metallic, 0.0, 1.0);
