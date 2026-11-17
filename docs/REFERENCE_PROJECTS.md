@@ -16,6 +16,8 @@ A complete third-person or first-person playable game slice with camera, movemen
 
 **Acceptance:** playable from clean project; automated tests cover key gameplay loop and save migration; quality profiles run on validated desktop and mobile devices where supported.
 
+**Current state (Slice 53):** `samples/arena` (Robot Arena) is a third-person arena fight: camera-relative character movement, an orbit camera with occlusion raycasts, five waves of skinned, animated enemy robots instantiated from a prefab and steered over the navmesh, melee swings, health pickups, particles, emissive hit flashes, positional audio, HUD and quick-save checkpoints. The `victus_sample_arena` CTest runs `victus check` and an autopilot play-through that must clear all five waves. Missing against this definition: title/menu flow, a cinematic sequence, visual logic, save migration tests and validated mobile runs.
+
 ## 3. VICTUS Simulation Project
 A large world with populations, resources, autonomous agents, regional simulation LOD, time progression, save/reload, deterministic workloads where feasible and headless execution.
 
