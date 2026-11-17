@@ -439,6 +439,13 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 - Decision: (3). It reuses ADR-0042, costs nothing per frame, works on every backend, and keeps sky, IBL and sun colour consistent. Coefficients from Hillaire 2020. No new dependency.
 - Consequences: no multiple scattering (compensated by `sky_gain`); re-bakes cost ~21 ms (5 ms on Low) and happen only on ~0.5° sun moves. Revisit with (2) when compute paths exist and for planet-scale views.
 
+### ADR-0044: Reflection probes are captured through readback into the existing IBL bake
+- Status: Accepted (Slice 46)
+- Context: local reflections need scene captures prefiltered like the global environment.
+- Options: (a) render cube faces on the GPU and blit into cube layers, then prefilter in place; (b) render six faces, read back, convert to equirect and reuse `EnvironmentMap::create` (ADR-0042). Per-draw nearest probe versus per-pixel blending of several probes.
+- Decision: (b), because it reuses the verified prefilter/SH path with no new GPU resource types; the stall is bounded by a capture budget (default 1 per frame) and captures only happen on change. Each draw uses the smallest containing axis-aligned box (one probe binding, keeps batching), with Lagarde and Zanuttini 2012 box projection for specular and the probe SH9 for diffuse.
+- Consequences: no seams between probes are hidden yet (no blending/fade); a GPU-only capture path can replace (b) later without changing the component or shader interface.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

@@ -5,6 +5,7 @@
 #include "victus/core/profiler.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -112,6 +113,11 @@ struct MaterialUniforms {
     Vec4 uv_transform; // xy scale, zw offset
     Vec4 custom[4];    // surface shader parameters
 };
+struct ProbeUniforms {
+    Vec4 box_min, box_max, position;
+    Vec4 sh[9];
+};
+static_assert(sizeof(ProbeUniforms) == 12 * 16);
 struct ShadowUniforms {
     Mat4 light_view_proj;
 };
@@ -614,6 +620,7 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     env_ = env;
     points_.clear();
     draws_.clear();
+    probes_.clear();
     lines_.clear();
     palette_.clear();
     particles_.clear();
@@ -622,6 +629,11 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
 }
 
 void SceneRenderer::add_point_light(const PointLight& light) { points_.push_back(light); }
+
+void SceneRenderer::add_reflection_probe(const ReflectionProbe& probe) {
+    if (!probe.map || !probe.map->cube() || !probe.box.valid() || probes_.size() >= kMaxReflectionProbes) return;
+    probes_.push_back(probe);
+}
 
 void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const Mat4& model) {
     if (!mesh.valid()) return;
@@ -784,6 +796,20 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             continue;
         }
         d.distance = length(world.center() - camera_.position);
+        d.probe = -1;
+        float best = std::numeric_limits<float>::max();
+        const Vec3 c = world.center();
+        for (std::size_t p = 0; p < probes_.size(); ++p) {
+            const Aabb& b = probes_[p].box;
+            if (c.x < b.min.x || c.y < b.min.y || c.z < b.min.z || c.x > b.max.x || c.y > b.max.y || c.z > b.max.z) continue;
+            const Vec3 e = b.max - b.min;
+            const float volume = e.x * e.y * e.z;
+            if (volume < best) {
+                best = volume;
+                d.probe = static_cast<int>(p);
+            }
+        }
+        if (d.probe >= 0) ++stats_.probe_draws;
         (blended ? transparent : visible).push_back(&d);
     }
     std::stable_sort(transparent.begin(), transparent.end(), [](const Draw* a, const Draw* b) { return a->distance > b->distance; });
@@ -794,6 +820,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         if (a->material.base_color_texture.index != b->material.base_color_texture.index)
             return a->material.base_color_texture.index < b->material.base_color_texture.index;
         if (a->batch_key != b->batch_key) return a->batch_key < b->batch_key;
+        if (a->probe != b->probe) return a->probe < b->probe;
         return a->distance < b->distance;
     });
     stats_.visible = static_cast<std::uint32_t>(visible.size());
@@ -810,7 +837,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (S.instancing && !out.empty()) {
                 const Draw* f = out.back().first;
                 if (f->mesh == d->mesh && f->skinned == d->skinned &&
-                    (!match_material || same_material(f->material, d->material))) {
+                    (!match_material || (same_material(f->material, d->material) && f->probe == d->probe))) {
                     ++out.back().instance_count;
                     continue;
                 }
@@ -832,6 +859,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         stats_.shadow_batches += static_cast<std::uint32_t>(shadow_batches[c].size());
     }
     stats_.main_batches = static_cast<std::uint32_t>(main_batches.size());
+    stats_.reflection_probes = static_cast<std::uint32_t>(probes_.size());
     stats_.instances_uploaded = static_cast<std::uint32_t>(instances.size());
     stats_.joints_uploaded = static_cast<std::uint32_t>(palette_.size());
     if (!palette_.empty()) {
@@ -943,7 +971,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const bool prepass = S.depth_prepass || ssao;
     const bool bloom = S.bloom && env_.bloom_intensity > 0.0f;
     const bool auto_exposure = S.auto_exposure && env_.auto_exposure;
-    const bool fxaa = S.fxaa;
+    const bool linear_out = env_.linear_output || capture_mode_;
+    const bool fxaa = S.fxaa && !linear_out; // captures keep float precision
     if (auto_exposure) VICTUS_TRY_STATUS(ensure_exposure_textures());
 
     const std::uint32_t atlas_tiles = cascade_count_ > 1 ? 2u : 1u;
@@ -1175,8 +1204,19 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 3, pick(m.emissive_texture, ctx_.white()), tex_sampler);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 4, shadow_tex, ctx_.shadow_compare());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 5, ao_tex, ctx_.linear_clamp());
-                pass.bind_texture(rhi::ShaderStage::Fragment, 6, env_map && env_map->cube() ? env_map->cube() : ctx_.black_cube(),
-                                  ctx_.linear_clamp());
+                ProbeUniforms pu{};
+                rhi::TextureHandle env_cube = env_map && env_map->cube() ? env_map->cube() : ctx_.black_cube();
+                if (d->probe >= 0) {
+                    const ReflectionProbe& p = probes_[static_cast<std::size_t>(d->probe)];
+                    const float pi = std::isfinite(p.intensity) ? std::max(p.intensity, 0.0f) : 1.0f;
+                    pu.box_min = Vec4(p.box.min, 1.0f);
+                    pu.box_max = Vec4(p.box.max, static_cast<float>(p.map->mip_count() - 1));
+                    pu.position = Vec4(p.position, pi);
+                    for (std::size_t i = 0; i < 9; ++i) pu.sh[i] = Vec4(p.map->sh().coefficients[i] * pi, 0.0f);
+                    env_cube = p.map->cube();
+                }
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 2, pu);
+                pass.bind_texture(rhi::ShaderStage::Fragment, 6, env_cube, ctx_.linear_clamp());
                 pass.bind_vertex_buffer(0, d->mesh->vertices);
                 pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                 pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
@@ -1362,7 +1402,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     post.params = {env_.exposure, env_.vignette, is_srgb(target_format) ? 0.0f : 1.0f, static_cast<float>(op)};
     post.params2 = {bloom_result.valid() ? env_.bloom_intensity : 0.0f, exposure_now.valid() ? 1.0f : 0.0f,
                     std::exp2(env_.exposure_compensation), env_.saturation};
-    post.params3 = {env_.contrast, fxaa ? 1.0f : 0.0f, 0.0f, 0.0f};
+    post.params3 = {env_.contrast, fxaa ? 1.0f : 0.0f, linear_out ? 1.0f : 0.0f, 0.0f};
+    if (capture_mode_) { // scene-referred radiance: the viewer's exposure applies later
+        post.params.x = 1.0f;
+        post.params2.y = 0.0f;
+        post.params2.z = 1.0f;
+    }
     graph.add_pass(
         "tonemap",
         [&](PassBuilder& b) {

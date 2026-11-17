@@ -91,6 +91,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_vertex_color_tests.cpp
         render/gpu_procedural_mesh_tests.cpp
         render/gpu_environment_tests.cpp
+        render/gpu_reflection_probe_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")

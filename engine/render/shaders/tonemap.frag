@@ -10,7 +10,7 @@ layout(set = 2, binding = 2) uniform sampler2D u_exposure;
 layout(set = 3, binding = 0) uniform Post {
     vec4 params;  // x: exposure, y: vignette, z: encode sRGB, w: tonemapper (0 none, 1 ACES, 2 neutral, 3 Reinhard)
     vec4 params2; // x: bloom intensity, y: auto exposure, z: exposure compensation (linear), w: saturation
-    vec4 params3; // x: contrast, y: luma in alpha (FXAA input)
+    vec4 params3; // x: contrast, y: luma in alpha (FXAA input), z: linear HDR output (probe captures)
 } post;
 layout(location = 0) out vec4 out_color;
 
@@ -47,6 +47,10 @@ void main() {
         exposure = 0.18 / max(avg, 1e-5);
     }
     c *= exposure * post.params2.z;
+    if (post.params3.z > 0.5) { // scene capture: keep linear radiance (float target)
+        out_color = vec4(max(c, vec3(0.0)), 1.0);
+        return;
+    }
     int op = int(post.params.w + 0.5);
     if (op == 1) c = aces(c);
     else if (op == 2) c = pbr_neutral(c);

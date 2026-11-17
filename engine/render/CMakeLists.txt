@@ -18,6 +18,7 @@ victus_add_module(render
         src/builtin_shaders_lookup.cpp
         src/environment_map.cpp
         src/atmosphere.cpp
+        src/reflection_capture.cpp
         src/gpu_context.cpp
         src/image.cpp
         src/mesh.cpp

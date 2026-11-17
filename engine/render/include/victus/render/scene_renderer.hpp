@@ -114,6 +114,14 @@ enum class Tonemapper : std::uint8_t { None, Aces, Neutral, Reinhard };
 [[nodiscard]] std::optional<Tonemapper> parse_tonemapper(std::string_view name) noexcept;
 
 // Per-scene look (lighting environment and post-processing artistic controls).
+struct ReflectionProbe {
+    const EnvironmentMap* map{nullptr};
+    math::Aabb box;           // world-space influence and parallax box
+    math::Vec3 position{};    // capture point (inside the box)
+    float intensity{1.0f};
+};
+inline constexpr std::size_t kMaxReflectionProbes = 64;
+
 struct Environment {
     math::Color sky_zenith{0.18f, 0.36f, 0.75f, 1};
     math::Color sky_horizon{0.62f, 0.72f, 0.85f, 1};
@@ -163,6 +171,9 @@ struct Environment {
     // must outlive the frames that use it.
     const EnvironmentMap* environment_map{nullptr};
     bool environment_sun_disc{false}; // draw the sun disc over the environment background (physical sky)
+    // Scene captures (reflection probes): skip tonemapping/grading and write linear radiance
+    // times exposure into a float target.
+    bool linear_output{false};
     float environment_intensity{1.0f};
     float environment_rotation{0.0f}; // radians about +Y
     float sky_blur{0.0f};             // background blur 0 (sharp) .. 1 (fully rough mip)
@@ -205,6 +216,7 @@ struct SceneStats {
     // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
     std::uint32_t main_batches{0}, shadow_batches{0}, prepass_batches{0};
     std::uint32_t transparent_draws{0};
+    std::uint32_t reflection_probes{0}, probe_draws{0}; // probes used / visible draws lit by a probe
     std::uint32_t instances_uploaded{0};
     std::uint32_t skinned_draws{0};    // skinned submissions this frame
     std::uint32_t joints_uploaded{0};  // joint matrices in the per-frame palette
@@ -222,6 +234,9 @@ public:
 
     void set_settings(const RenderSettings& settings) noexcept { settings_ = settings.sanitized(); }
     [[nodiscard]] const RenderSettings& settings() const noexcept { return settings_; }
+    // Probe captures: linear scene radiance (no exposure, tonemapping, grading or FXAA).
+    void set_capture_mode(bool on) noexcept { capture_mode_ = on; }
+    [[nodiscard]] bool capture_mode() const noexcept { return capture_mode_; }
     // Seconds since the previous frame (drives auto exposure adaptation). Default 1/60.
     void set_frame_time(float seconds) noexcept { frame_time_ = seconds; }
     // Time seen by surface shaders (SurfaceInput.time). Default: seconds since the process
@@ -243,6 +258,10 @@ public:
     // including particle sizes) is used for frustum culling and batch ordering.
     void submit_particles(std::span<const ParticleInstance> particles, const ParticleMaterial& material,
                           const math::Aabb& bounds);
+    // Local reflection probe: draws whose bounds centre lies inside `box` use the probe's cube
+    // (box-projected) for reflections and its SH for diffuse light instead of the scene
+    // environment; the smallest containing box wins. The map must outlive the frame.
+    void add_reflection_probe(const ReflectionProbe& probe);
     void line(math::Vec3 a, math::Vec3 b, math::Color color);
     void box(const math::Aabb& box, math::Color color);
     void grid(float half_size, float spacing, math::Color color);
@@ -269,6 +288,7 @@ private:
         std::uint32_t palette{0}; // first joint matrix in palette_ (skinned only)
         bool skinned{false};
         math::Aabb world_bounds;  // skinned only (static draws use mesh bounds * model)
+        int probe{-1};            // reflection probe index (-1: scene environment)
     };
     // A run of consecutive instances in the per-frame instance buffer sharing one mesh/material.
     struct Batch {
@@ -328,6 +348,8 @@ private:
     Environment env_;
     std::vector<PointLight> points_;
     std::vector<Draw> draws_;
+    std::vector<ReflectionProbe> probes_;
+    bool capture_mode_{false};
     std::vector<LineVertex> lines_;
     std::vector<ParticleInstance> particles_, particle_upload_;
     std::vector<ParticleBatch> particle_batches_;

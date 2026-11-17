@@ -264,6 +264,17 @@ struct EnvironmentComponent {
     bool atmosphere_tints_sun{true};  // sun light colour = atmospheric transmittance (red sunsets)
 };
 
+// Local reflection probe: captures the scene around the entity once (and again when moved or
+// when `revision` changes) into a prefiltered cubemap; objects whose centre is inside the
+// world-aligned box get box-projected reflections and the probe's diffuse light.
+struct ReflectionProbeComponent {
+    math::Vec3 size{10.0f, 5.0f, 10.0f}; // box extents in metres, centred on the entity
+    math::Vec3 capture_offset{};         // capture point relative to the entity (inside the box)
+    float intensity{1.0f};
+    std::uint32_t resolution{128};       // face size of the capture (16..512)
+    std::uint32_t revision{0};           // change to force a recapture
+};
+
 // Registers serializers ("Rotator", "Oscillator", "Environment"). Idempotent; call once at startup before
 // loading scenes so these components are not treated as unknown.
 void register_components();
