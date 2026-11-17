@@ -40,9 +40,24 @@ enum class Format : std::uint8_t {
     BC1_RGBA_SRGB,
     BC3_RGBA_SRGB,
     BC7_RGBA_SRGB,
+    BC1_RGBA_UNORM,
+    BC3_RGBA_UNORM,
+    BC7_RGBA_UNORM,
+    ASTC_4x4_UNORM,
+    ASTC_4x4_SRGB,
+    ASTC_6x6_UNORM,
+    ASTC_6x6_SRGB,
 };
 [[nodiscard]] bool is_depth(Format f) noexcept;
 [[nodiscard]] std::uint32_t bytes_per_pixel(Format f) noexcept; // 0 for block-compressed formats
+// Block footprint of a format: 1x1 and bytes_per_pixel for uncompressed formats.
+struct FormatBlock {
+    std::uint32_t width{1}, height{1}, bytes{0};
+};
+[[nodiscard]] FormatBlock format_block(Format f) noexcept;
+[[nodiscard]] bool is_compressed(Format f) noexcept;
+// Bytes of one mip level of a width x height image (whole blocks for compressed formats).
+[[nodiscard]] std::uint64_t mip_size_bytes(Format f, std::uint32_t width, std::uint32_t height) noexcept;
 
 enum TextureUsage : std::uint32_t {
     TextureUsageSampled = 1u << 0,

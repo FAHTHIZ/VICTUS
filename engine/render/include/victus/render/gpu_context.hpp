@@ -61,6 +61,11 @@ public:
     [[nodiscard]] Result<rhi::TextureHandle> create_texture(const Image& image, const TextureOptions& options = {});
     // Uploads a complete pre-built mip chain (e.g. from the asset cooker); options.mipmaps is ignored.
     [[nodiscard]] Result<rhi::TextureHandle> create_texture_mips(std::span<const Image> chain, const TextureOptions& options = {});
+    // Uploads a block-compressed mip chain (BC/ASTC). Level m holds rhi::mip_size_bytes(format,
+    // max(1, width >> m), max(1, height >> m)) bytes; options.srgb and options.mipmaps are ignored.
+    [[nodiscard]] Result<rhi::TextureHandle> create_compressed_texture(rhi::Format format, std::uint32_t width, std::uint32_t height,
+                                                                       std::span<const std::vector<std::uint8_t>> levels,
+                                                                       const TextureOptions& options = {});
     [[nodiscard]] Result<GpuMesh> create_mesh(const MeshData& mesh, std::string_view name = "mesh");
     void destroy(GpuMesh& mesh);
     // Best available depth format that can also be sampled (shadow maps).

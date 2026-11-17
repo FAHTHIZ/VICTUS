@@ -11,5 +11,6 @@ victus_add_module(assets
         src/importers.cpp
         src/gltf_export.cpp
         src/material.cpp
+        src/texture_compression.cpp
     DEPS VICTUS::Render VICTUS::Animation VICTUS::Tilemap
-    PRIVATE_DEPS victus_cgltf)
+    PRIVATE_DEPS victus_cgltf victus_bc7enc victus_astcenc)

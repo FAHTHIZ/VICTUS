@@ -58,16 +58,34 @@ void GpuAssetCache::evict(const Uuid& uuid) {
     }
 }
 
+Result<rhi::TextureHandle> upload_cooked_texture(render::GpuContext& ctx, const assets::CookedTexture& texture, bool allow_compressed,
+                                                 std::optional<assets::TextureCodec>* chosen) {
+    if (chosen) chosen->reset();
+    render::TextureOptions opt;
+    opt.srgb = texture.srgb;
+    opt.name = texture.name;
+    if (allow_compressed && !texture.mips.empty()) {
+        for (const auto& variant : texture.compressed) {
+            const rhi::Format format = assets::codec_format(variant.codec, texture.srgb);
+            if (variant.levels.size() != texture.mips.size() || !ctx.device().supports_format(format, rhi::TextureUsageSampled)) continue;
+            auto tex = ctx.create_compressed_texture(format, texture.mips[0].width, texture.mips[0].height, variant.levels, opt);
+            if (!tex) continue; // fall through to the next variant / RGBA8
+            if (chosen) *chosen = variant.codec;
+            return tex;
+        }
+    }
+    return ctx.create_texture_mips(texture.mips, opt);
+}
+
 Result<rhi::TextureHandle> GpuAssetCache::texture(const Uuid& uuid) {
     if (const auto it = textures_.find(uuid); it != textures_.end()) return it->second;
     if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
     auto cooked = db_->load_texture(uuid);
     if (!cooked) return std::move(cooked).error();
-    render::TextureOptions opt;
-    opt.srgb = cooked->srgb;
-    opt.name = cooked->name;
-    auto tex = ctx_.create_texture_mips(cooked->mips, opt);
+    std::optional<assets::TextureCodec> codec;
+    auto tex = upload_cooked_texture(ctx_, *cooked, allow_compressed_, &codec);
     if (!tex) return tex;
+    if (codec) ++compressed_uploads_;
     textures_.emplace(uuid, *tex);
     return tex;
 }
@@ -237,11 +255,10 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
         return e;
     };
     for (const auto& t : model.textures) {
-        render::TextureOptions opt;
-        opt.srgb = t.srgb;
-        opt.name = t.name;
-        auto tex = ctx_.create_texture_mips(t.mips, opt);
+        std::optional<assets::TextureCodec> codec;
+        auto tex = upload_cooked_texture(ctx_, t, allow_compressed_, &codec);
         if (!tex) return fail(std::move(tex).error());
+        if (codec) ++compressed_uploads_;
         gpu->textures.push_back(*tex);
     }
     auto tex_or = [&](std::int32_t i) { return i >= 0 ? gpu->textures[static_cast<std::size_t>(i)] : rhi::TextureHandle{}; };

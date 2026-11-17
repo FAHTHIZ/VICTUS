@@ -13,6 +13,7 @@
 #include "victus/scene/scene.hpp"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -30,6 +31,13 @@ struct GpuModel {
     std::vector<std::int32_t> max_joint;
     std::vector<animation::AnimationSet::Node> skeleton; // node names/parents for joint binding
 };
+
+// Uploads a cooked texture: the first block-compressed variant the device can sample (in the
+// cooker's preference order) when `allow_compressed`, otherwise the RGBA8 mips. `chosen`
+// receives the uploaded codec, or nullopt for RGBA8.
+[[nodiscard]] Result<rhi::TextureHandle> upload_cooked_texture(render::GpuContext& ctx, const assets::CookedTexture& texture,
+                                                               bool allow_compressed = true,
+                                                               std::optional<assets::TextureCodec>* chosen = nullptr);
 
 class GpuAssetCache {
 public:
@@ -49,6 +57,9 @@ public:
     // sun by more than about half a degree), so animated time of day stays cheap.
     [[nodiscard]] Result<const render::EnvironmentMap*> atmosphere(const render::AtmosphereSettings& s);
     [[nodiscard]] std::uint32_t atmosphere_bakes() const noexcept { return atmosphere_bakes_; }
+    // Block-compressed uploads (on by default; off forces RGBA8 for every texture loaded later).
+    void set_compressed_textures(bool enabled) noexcept { allow_compressed_ = enabled; }
+    [[nodiscard]] std::uint32_t compressed_texture_count() const noexcept { return compressed_uploads_; }
 
     // Reflection probe captures (managed by extract_scene, keyed by entity).
     struct ProbeCapture {
@@ -107,6 +118,8 @@ private:
     std::unique_ptr<render::EnvironmentMap> atmosphere_;
     render::AtmosphereSettings atmosphere_key_;
     std::uint32_t atmosphere_bakes_{0};
+    bool allow_compressed_{true};
+    std::uint32_t compressed_uploads_{0};
     std::unordered_map<std::uint64_t, ProbeCapture> probes_;
     std::unique_ptr<render::SceneRenderer> probe_renderer_;
     std::uint32_t probe_capture_count_{0}, probe_budget_{1};

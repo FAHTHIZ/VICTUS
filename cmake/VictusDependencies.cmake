@@ -280,3 +280,49 @@ function(victus_fetch_spirv_cross)
         victus_third_party_tsan(${t})
     endforeach()
 endfunction()
+
+# bc7enc_rdo, commit b9438627eef73a1157e84201b6fa6eb2ffd6d9f0 (MIT, alternatively public domain
+# (Unlicense)). https://github.com/richgel999/bc7enc_rdo
+# BC1/BC3 (rgbcx) and BC7 (bc7enc) block encoders plus the BC7 decoder for the texture cooker
+# (engine/assets texture_compression.cpp, ADR-0047). No releases exist, so a commit is pinned.
+function(victus_fetch_bc7enc)
+    if(TARGET victus_bc7enc)
+        return()
+    endif()
+    FetchContent_Declare(bc7enc_rdo
+        URL https://github.com/richgel999/bc7enc_rdo/archive/b9438627eef73a1157e84201b6fa6eb2ffd6d9f0.tar.gz
+        URL_HASH SHA256=bbb33d1dbb6178a3a2c044956c3cc0b8ea9fc2f2903824379dd86f87d53b64c6
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        SOURCE_SUBDIR victus_no_cmake)
+    FetchContent_MakeAvailable(bc7enc_rdo)
+    add_library(victus_bc7enc STATIC
+        ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp
+        ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp
+        ${bc7enc_rdo_SOURCE_DIR}/bc7decomp.cpp)
+    target_include_directories(victus_bc7enc SYSTEM PUBLIC ${bc7enc_rdo_SOURCE_DIR})
+    set_target_properties(victus_bc7enc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_options(victus_bc7enc PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
+    victus_third_party_tsan(victus_bc7enc)
+endfunction()
+
+# Arm ASTC Encoder 5.7.1 (Apache-2.0). https://github.com/ARM-software/astc-encoder/releases/tag/5.7.1
+# ASTC LDR block encoder/decoder for the texture cooker's mobile variants (ADR-0047). Only the
+# codec library sources (Source/astcenc_*.cpp) are built; the SIMD path follows the compiler's
+# baseline ISA (SSE2 on x86-64, NEON on arm64).
+function(victus_fetch_astcenc)
+    if(TARGET victus_astcenc)
+        return()
+    endif()
+    FetchContent_Declare(astcenc
+        URL https://github.com/ARM-software/astc-encoder/archive/refs/tags/5.7.1.tar.gz
+        URL_HASH SHA256=37ff3928c4c156fb3ac0d1adb5df144ff9c5cdbc8a8e1ffeb20229cc7f35c767
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        SOURCE_SUBDIR victus_no_cmake)
+    FetchContent_MakeAvailable(astcenc)
+    file(GLOB _astc_sources ${astcenc_SOURCE_DIR}/Source/astcenc_*.cpp)
+    add_library(victus_astcenc STATIC ${_astc_sources})
+    target_include_directories(victus_astcenc SYSTEM PUBLIC ${astcenc_SOURCE_DIR}/Source)
+    set_target_properties(victus_astcenc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_options(victus_astcenc PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
+    victus_third_party_tsan(victus_astcenc)
+endfunction()

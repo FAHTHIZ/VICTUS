@@ -66,6 +66,11 @@ void write_texture_body(BinaryWriter& w, const CookedTexture& t) {
             w.f32(c.z);
         }
     }
+    w.u32(static_cast<std::uint32_t>(t.compressed.size()));
+    for (const auto& v : t.compressed) {
+        w.u8(static_cast<std::uint8_t>(v.codec));
+        for (const auto& level : v.levels) w.raw(level);
+    }
 }
 
 bool read_texture_body(BinaryReader& r, CookedTexture& t) {
@@ -90,6 +95,19 @@ bool read_texture_body(BinaryReader& r, CookedTexture& t) {
         for (auto& c : t.sh)
             if (!r.f32(c.x) || !r.f32(c.y) || !r.f32(c.z) || !std::isfinite(c.x) || !std::isfinite(c.y) || !std::isfinite(c.z))
                 return false;
+    }
+    std::uint32_t variants = 0;
+    if (!r.u32(variants) || variants > 8) return false;
+    t.compressed.resize(variants);
+    for (auto& v : t.compressed) {
+        std::uint8_t codec = 0;
+        if (!r.u8(codec) || !parse_texture_codec(to_string(static_cast<TextureCodec>(codec)))) return false;
+        v.codec = static_cast<TextureCodec>(codec);
+        v.levels.resize(t.mips.size());
+        for (std::size_t m = 0; m < t.mips.size(); ++m) {
+            const std::uint64_t bytes = rhi::mip_size_bytes(codec_format(v.codec, t.srgb), t.mips[m].width, t.mips[m].height);
+            if (!r.raw(v.levels[m], bytes) || v.levels[m].size() != bytes) return false;
+        }
     }
     return true;
 }

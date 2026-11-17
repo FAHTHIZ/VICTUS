@@ -460,6 +460,22 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 - Decision: (c) with a 16x9x24 grid, logarithmic slices and CPU assignment. Clusters do not need the depth pre-pass (which the Low tier skips), work for transparent surfaces, and keep a single material path. CPU assignment is a few hundred microseconds for hundreds of lights, avoids compute shaders (unavailable or slow on some mobile drivers) and is unit-testable for conservativeness. Lights and the cluster list live in fragment storage buffers, which SDL_GPU supports on Vulkan, Metal and D3D12.
 - Consequences: very high light counts (thousands, many per cluster) should move assignment to compute; the per-cluster cap (128) drops the farthest lights in extreme overlaps and is reported in stats.
 
+### ADR-0047: Cooker-side BC and ASTC variants with runtime selection
+- Status: Accepted (Slice 49)
+- Context: textures need GPU block compression for memory and bandwidth, especially on phones. SDL_GPU supports BC1-7 and ASTC LDR but no ETC2/EAC formats, and compressed textures cannot have mips generated at run time.
+- Options:
+  - Encoders: (a) Basis Universal / KTX2 supercompression with transcoding at load; (b) direct encoders: bc7enc_rdo (MIT/Unlicense) for BC1/BC3/BC7 and Arm astcenc (Apache-2.0) for ASTC; (c) GPU compute encoders.
+  - Variant handling: one format per platform at export time, or several variants per cooked file with selection at load.
+- Decision: (b), with variants inside the cooked file, selected at load by `supports_format`, falling back to RGBA8.
+  - Direct encoders target each GPU format natively, so there is no intermediate-format quality loss and no runtime transcoder.
+  - Both libraries are small, permissively licensed and portable C++.
+  - Keeping several variants in one cooked file lets the editor, desktop player and phone share a cache. ETC2 is skipped because SDL_GPU cannot create it; ASTC LDR is the common compressed format of Vulkan-capable mobile GPUs (Mali, Adreno, PowerVR, Apple).
+  - Compression is opt-in per asset for now, so existing projects and pixel-exact tests are unchanged.
+- Consequences:
+  - Cook time and cached size grow with each variant. Exports should strip the variants a platform cannot use (follow-up).
+  - Revisit (a) if download size dominates over load time.
+  - HDR textures stay uncompressed until BC6H/ASTC HDR are added.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

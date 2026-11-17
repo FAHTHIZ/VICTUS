@@ -45,6 +45,30 @@ std::uint32_t bytes_per_pixel(Format f) noexcept {
     }
 }
 
+FormatBlock format_block(Format f) noexcept {
+    switch (f) {
+    case Format::BC1_RGBA_SRGB:
+    case Format::BC1_RGBA_UNORM: return {4, 4, 8};
+    case Format::BC3_RGBA_SRGB:
+    case Format::BC3_RGBA_UNORM:
+    case Format::BC7_RGBA_SRGB:
+    case Format::BC7_RGBA_UNORM:
+    case Format::ASTC_4x4_UNORM:
+    case Format::ASTC_4x4_SRGB: return {4, 4, 16};
+    case Format::ASTC_6x6_UNORM:
+    case Format::ASTC_6x6_SRGB: return {6, 6, 16};
+    default: return {1, 1, bytes_per_pixel(f)};
+    }
+}
+
+bool is_compressed(Format f) noexcept { return format_block(f).width > 1; }
+
+std::uint64_t mip_size_bytes(Format f, std::uint32_t width, std::uint32_t height) noexcept {
+    const FormatBlock b = format_block(f);
+    const std::uint64_t bx = (std::uint64_t{width} + b.width - 1) / b.width, by = (std::uint64_t{height} + b.height - 1) / b.height;
+    return bx * by * b.bytes;
+}
+
 namespace {
 
 SDL_GPUTextureFormat to_sdl(Format f) {
@@ -67,6 +91,13 @@ SDL_GPUTextureFormat to_sdl(Format f) {
     case Format::BC1_RGBA_SRGB: return SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM_SRGB;
     case Format::BC3_RGBA_SRGB: return SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM_SRGB;
     case Format::BC7_RGBA_SRGB: return SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM_SRGB;
+    case Format::BC1_RGBA_UNORM: return SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM;
+    case Format::BC3_RGBA_UNORM: return SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM;
+    case Format::BC7_RGBA_UNORM: return SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM;
+    case Format::ASTC_4x4_UNORM: return SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM;
+    case Format::ASTC_4x4_SRGB: return SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM_SRGB;
+    case Format::ASTC_6x6_UNORM: return SDL_GPU_TEXTUREFORMAT_ASTC_6x6_UNORM;
+    case Format::ASTC_6x6_SRGB: return SDL_GPU_TEXTUREFORMAT_ASTC_6x6_UNORM_SRGB;
     default: return SDL_GPU_TEXTUREFORMAT_INVALID;
     }
 }
@@ -241,13 +272,12 @@ struct PipelineEntry {
 };
 
 std::uint64_t texture_bytes(const TextureDesc& d) {
-    const std::uint64_t bpp = bytes_per_pixel(d.format) ? bytes_per_pixel(d.format) : 1;
     std::uint64_t total = 0;
-    std::uint64_t w = d.width, h = d.height;
+    std::uint32_t w = d.width, h = d.height;
     for (std::uint32_t m = 0; m < d.mip_levels; ++m) {
-        total += w * h * bpp;
-        w = std::max<std::uint64_t>(1, w / 2);
-        h = std::max<std::uint64_t>(1, h / 2);
+        total += format_block(d.format).bytes ? mip_size_bytes(d.format, w, h) : std::uint64_t{w} * h;
+        w = std::max(1u, w / 2);
+        h = std::max(1u, h / 2);
     }
     const std::uint64_t layers = d.type == TextureType::Cube ? 6 : d.depth_or_layers;
     return total * layers * d.sample_count;
