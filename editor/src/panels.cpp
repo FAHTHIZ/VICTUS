@@ -414,6 +414,7 @@ void Editor::draw_workspace(float) {
     draw_material_editor();
     draw_graph_editor();
     draw_tile_palette();
+    draw_terrain_tools();
     draw_status_bar();
     handle_shortcuts();
 }
@@ -517,6 +518,7 @@ void Editor::draw_menu_bar() {
         ImGui::MenuItem("Network", nullptr, &show_network_);
         if (ImGui::MenuItem("Profiler", nullptr, show_profiler_)) set_show_profiler(!show_profiler_);
         ImGui::MenuItem("Tile Palette", nullptr, &show_tile_palette_);
+        ImGui::MenuItem("Terrain Tools", nullptr, &show_terrain_tools_);
         ImGui::MenuItem("UI Demo Window", nullptr, &show_demo_);
         if (ImGui::BeginMenu("Rendering Quality")) {
             for (auto tier : {render::QualityTier::Low, render::QualityTier::Medium, render::QualityTier::High,
@@ -698,12 +700,16 @@ void Editor::draw_viewport() {
             ImGui::TextDisabled("temporal upscale from %ux%u", render_stats().render_width, render_stats().render_height);
         }
         // The tile tool owns plain left clicks while a tilemap is selected in a 2D scene.
-        const bool painting = tile_tool_ && two_d && !tile_target().is_null() && !ImGui::GetIO().KeyAlt;
+        // The terrain tool does the same while a terrain is selected in a 3D scene.
+        const bool painting = ((tile_tool_ && two_d && !tile_target().is_null()) ||
+                               (terrain_tool_ && !two_d && !terrain_target().is_null())) &&
+                              !ImGui::GetIO().KeyAlt;
         // The transform gizmo takes clicks on its handles before camera navigation and picking.
         gizmo_viewport({origin.x, origin.y}, {avail.x, avail.y}, hovered, painting);
         if (play_state_ == PlayState::Editing) {
             if (!gizmo_consumed_click_) viewport_input({avail.x, avail.y}, hovered);
             if (!gizmo_consumed_click_) tile_viewport_input({origin.x, origin.y}, {avail.x, avail.y}, hovered);
+            if (!gizmo_consumed_click_) terrain_viewport_input({origin.x, origin.y}, {avail.x, avail.y}, hovered);
         }
         // Click-to-select (after input so a drag does not select).
         if (hovered && !painting && !gizmo_consumed_click_ && play_state_ == PlayState::Editing &&

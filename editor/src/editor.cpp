@@ -156,6 +156,9 @@ void Editor::close_project() {
     selection_.clear();
     tile_stroke_ = {};
     tile_hover_.reset();
+    terrain_stroke_ = {};
+    terrain_hover_.reset();
+    dirty_terrains_.clear();
     undo_.clear();
     hot_reload_.reset();
     thumbnails_.reset();
@@ -304,6 +307,7 @@ Status Editor::save_scene() {
     if (!path) return std::move(path).error();
     std::error_code ec;
     sfs::create_directories(path->parent_path(), ec);
+    VICTUS_TRY_STATUS(save_terrains());
     VICTUS_TRY_STATUS(scene_->save_file(*path));
     undo_.mark_saved();
     if (autosave_written_) remove_autosave(autosave_scene_); // e.g. the untitled copy after Save As
@@ -853,6 +857,14 @@ Entity Editor::pick(math::Vec2 pixel, math::Vec2 size) {
             best = e;
         }
     });
+    // Terrains are hit on their surface (t is a fraction of the near-far segment, like above).
+    const float segment = math::length(far_point - origin);
+    if (segment > 0.0f) {
+        if (terrains_) terrains_->update(s);
+        if (const auto hit = terrain::raycast(s, origin, (far_point - origin) * (1.0f / segment), segment);
+            hit && hit->distance / segment < best_t)
+            best = hit->entity;
+    }
     return best;
 }
 
@@ -1249,6 +1261,7 @@ void Editor::draw_overlays_3d(render::SceneRenderer& r) {
                                               {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
         for (const auto& edge : kEdges) r.line(c[edge[0]], c[edge[1]], {1.0f, 0.55f, 0.1f, 1});
     }
+    draw_terrain_overlay(r);
     if (show_colliders_) {
         collider_scratch_.clear();
         physics::collider_lines(s, collider_scratch_);

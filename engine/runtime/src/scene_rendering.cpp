@@ -834,13 +834,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 m.shader_params[i] = {tint.r, tint.g, tint.b, tiling};
             }
             // Scale is ignored (the component's size sets the extent): normalized axes.
-            math::Mat4 model = wt.matrix;
-            for (int a = 0; a < 3; ++a) {
-                const math::Vec3 axis = model.c[a].xyz();
-                const float len = math::length(axis);
-                const math::Vec3 unit = len > 1e-8f ? axis * (1.0f / len) : math::Vec3{a == 0 ? 1.0f : 0.0f, a == 1 ? 1.0f : 0.0f, a == 2 ? 1.0f : 0.0f};
-                model.c[a] = math::Vec4(unit, 0.0f);
-            }
+            const math::Mat4 model = terrain::rigid_matrix(wt.matrix);
             const std::uint64_t motion_base = (entity.bits() + 1) * 0x9E3779B97F4A7C15ull; // distinct per chunk
             for (std::size_t i = 0; i < rt.chunks.size(); ++i) {
                 if (!rt.chunks[i]) continue;

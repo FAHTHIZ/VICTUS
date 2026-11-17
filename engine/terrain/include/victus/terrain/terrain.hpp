@@ -204,4 +204,69 @@ void add_terrain_systems(gameplay::Simulation& sim, TerrainSystem& system);
 // The first terrain (in entity order) covering world (x, z): its world-space height.
 [[nodiscard]] std::optional<float> height_at(scene::Scene& scene, float x, float z);
 
+// Translation and rotation of a world matrix with the scale removed (how terrains are placed).
+[[nodiscard]] math::Mat4 rigid_matrix(const math::Mat4& world) noexcept;
+
+// ---- editing -------------------------------------------------------------------------------
+
+// Inclusive sample rectangle.
+struct SampleRect {
+    std::int32_t x0{0}, z0{0}, x1{-1}, z1{-1};
+    [[nodiscard]] bool empty() const noexcept { return x1 < x0 || z1 < z0; }
+    [[nodiscard]] std::size_t count() const noexcept {
+        return empty() ? 0 : static_cast<std::size_t>(x1 - x0 + 1) * static_cast<std::size_t>(z1 - z0 + 1);
+    }
+    void merge(const SampleRect& o) noexcept;
+    friend bool operator==(const SampleRect&, const SampleRect&) = default;
+};
+
+enum class BrushMode : std::uint8_t { Raise, Lower, Smooth, Flatten, Paint };
+[[nodiscard]] std::string_view brush_mode_name(BrushMode mode) noexcept;
+
+struct Brush {
+    BrushMode mode{BrushMode::Raise};
+    float radius{6.0f};     // metres (terrain local space)
+    float strength{0.5f};   // 0..1
+    float falloff{0.5f};    // fraction of the radius that fades out (0 = hard edge)
+    std::uint32_t layer{0}; // Paint
+    float target{0.5f};     // Flatten: normalized height
+};
+
+// Brush influence (0..1) at `distance` metres from its centre.
+[[nodiscard]] float brush_weight(const Brush& brush, float distance) noexcept;
+
+// One dab centred at terrain-local (x, z). `amount` scales the effect (seconds of brushing when
+// dragging: Raise/Lower move the centre by strength * amount * radius / 2 metres). Heights stay
+// in 0..1. Returns the changed samples, already touch()ed; empty when nothing changed.
+SampleRect apply_brush(Heightfield& hf, math::Vec3 size, const Brush& brush, float x, float z, float amount);
+
+// The samples of a rectangle (clamped to the field), for undo and redo.
+struct HeightfieldRegion {
+    SampleRect rect;
+    std::vector<float> heights;
+    std::vector<std::uint32_t> splat;
+};
+[[nodiscard]] HeightfieldRegion copy_region(const Heightfield& hf, SampleRect rect);
+// Writes a region back and touch()es it. Regions that do not fit the field are ignored.
+void paste_region(Heightfield& hf, const HeightfieldRegion& region);
+
+// Ray against a heightfield in terrain local space: the first surface point within
+// `max_distance` along the (normalized) direction.
+[[nodiscard]] std::optional<math::Vec3> raycast_local(const Heightfield& hf, math::Vec3 size, math::Vec3 origin,
+                                                     math::Vec3 direction, float max_distance) noexcept;
+
+struct TerrainHit {
+    scene::Entity entity;
+    math::Vec3 point;    // world space
+    math::Vec3 local;    // terrain local space
+    math::Vec3 normal;   // world space
+    float distance{0};
+};
+// World-space ray against one resolved terrain (needs WorldTransform and TerrainRuntime), or
+// against every terrain (closest hit).
+[[nodiscard]] std::optional<TerrainHit> raycast(scene::Scene& scene, scene::Entity entity, math::Vec3 origin,
+                                                math::Vec3 direction, float max_distance);
+[[nodiscard]] std::optional<TerrainHit> raycast(scene::Scene& scene, math::Vec3 origin, math::Vec3 direction,
+                                                float max_distance);
+
 } // namespace victus::terrain
