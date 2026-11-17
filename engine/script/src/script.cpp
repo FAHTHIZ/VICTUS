@@ -2340,9 +2340,8 @@ ai::Value check_ai_value(lua_State* L, int idx) {
     }
     default:
         if (lua_touserdatatagged(L, idx, kEntityTag)) return opt_entity(L, idx);
-        luaL_error(L, "blackboard values must be nil, boolean, number, string, vector or Entity");
+        luaL_error(L, "blackboard values must be nil, boolean, number, string, vector or Entity"); // does not return
     }
-    return {};
 }
 
 ai::Blackboard& check_blackboard(lua_State* L, scene::Scene& s, Entity e) {
