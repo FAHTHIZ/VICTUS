@@ -368,8 +368,8 @@ void Editor::record_edit(std::string label, std::vector<EntityState> before) {
 Entity Editor::create_entity(Primitive kind, Entity parent) {
     Scene& s = active_scene();
     static constexpr const char* kNames[] = {"Entity", "Cube", "Sphere", "Plane", "Cylinder", "Camera",
-                                             "Directional Light", "Point Light", "Spot Light", "Sprite", "Decal"};
-    static_assert(std::size(kNames) == static_cast<std::size_t>(Primitive::Decal) + 1, "one name per Primitive");
+                                             "Directional Light", "Point Light", "Spot Light", "Sprite", "Decal", "2D Light"};
+    static_assert(std::size(kNames) == static_cast<std::size_t>(Primitive::Light2D) + 1, "one name per Primitive");
     const Entity e = s.create(kNames[static_cast<int>(kind)], parent);
     auto& w = s.world();
     // Place new objects in front of the editor camera focus.
@@ -415,6 +415,7 @@ Entity Editor::create_entity(Primitive kind, Entity parent) {
         w.get<Transform>(e)->rotation = math::Quat::euler(math::radians(-90.0f), 0, 0);
         break;
     }
+    case Primitive::Light2D: w.add<gameplay::Light2DComponent>(e); break;
     }
     s.update_transforms();
     const Uuid id = s.uuid(e);
@@ -1334,6 +1335,24 @@ void Editor::draw_overlays_2d(render::SpriteBatch& b) {
         b.draw_line({bq.x, bq.y}, {c.x, c.y}, 2 * px, orange, 1000);
         b.draw_line({c.x, c.y}, {d.x, d.y}, 2 * px, orange, 1000);
         b.draw_line({d.x, d.y}, {a.x, a.y}, 2 * px, orange, 1000);
+        // 2D light reach (radius circle) and, for spots, the outer cone edges.
+        if (const auto* l = s.world().get<gameplay::Light2DComponent>(e); l && l->type != gameplay::Light2DComponent::Type::Global) {
+            const math::Vec3 o = m.transform_point({});
+            const math::Vec3 ax = m.transform_vector({1, 0, 0}), ay = m.transform_vector({0, 1, 0});
+            const float r = l->radius * std::max(std::hypot(ax.x, ax.y), std::hypot(ay.x, ay.y));
+            const math::Color yellow{1.0f, 0.9f, 0.3f, 0.8f};
+            constexpr int kSegments = 48;
+            for (int i = 0; i < kSegments; ++i) {
+                const float t0 = 6.2831853f * static_cast<float>(i) / kSegments, t1 = 6.2831853f * static_cast<float>(i + 1) / kSegments;
+                b.draw_line({o.x + r * std::cos(t0), o.y + r * std::sin(t0)}, {o.x + r * std::cos(t1), o.y + r * std::sin(t1)}, 1.5f * px,
+                            yellow, 1000);
+            }
+            if (l->type == gameplay::Light2DComponent::Type::Spot) {
+                const float base = std::atan2(-ay.y, -ay.x), outer = math::radians(l->outer_angle_degrees);
+                for (const float a2 : {base - outer, base + outer})
+                    b.draw_line({o.x, o.y}, {o.x + r * std::cos(a2), o.y + r * std::sin(a2)}, 1.5f * px, yellow, 1000);
+            }
+        }
     }
     draw_tile_overlay(b, px);
     if (show_colliders_) {

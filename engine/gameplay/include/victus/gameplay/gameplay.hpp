@@ -326,6 +326,21 @@ struct DecalComponent {
     bool visible{true};
 };
 
+// 2D light (ADR-0065). While a scene has an enabled Light2D, lit sprites, tilemaps and alpha 2D
+// particles are multiplied by the sum of the Global lights (ambient) and the Point/Spot lights
+// covering them; without any, 2D scenes stay unlit. Spots shine along the entity's local -Y axis.
+struct Light2DComponent {
+    enum class Type : std::uint8_t { Point, Spot, Global };
+    Type type{Type::Point};
+    math::Color color{1, 1, 1, 1};
+    float intensity{1.0f};
+    float radius{5.0f};               // world units (scaled by the entity's largest XY scale)
+    float inner_angle_degrees{25.0f}; // spot half-angles: full light inside inner,
+    float outer_angle_degrees{40.0f}; // none beyond outer
+    float falloff{1.0f};              // < 1 broader, > 1 tighter
+    bool enabled{true};
+};
+
 // Registers serializers ("Rotator", "Oscillator", "Environment"). Idempotent; call once at startup before
 // loading scenes so these components are not treated as unknown.
 void register_components();

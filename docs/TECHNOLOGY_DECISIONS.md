@@ -693,7 +693,13 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - One draw call per decal; fine for hundreds, not for thousands.
   - Revisit (b) when the renderer gains bindless textures or an atlas, or if per-material decal masks are needed.
 
-## ADR template
+### ADR-0065: 2D lights through a screen-space light accumulation target
+
+- Status: Accepted (Slice 78)
+- Context: 2D scenes (sprites, tilemaps, 2D particles) had no lighting; roadmap item 21 asks for 2D lights. Normal-mapped or shadow-casting 2D lighting needs per-sprite normal maps and occluder geometry that the asset pipeline does not have yet.
+- Decision: `SpriteBatch` gains an opt-in lighting mode. `set_lighting(ambient)` enables it; `render_lights()` (after `prepare()`, before the colour pass) renders an RGBA16F light target at the frame size, cleared to the ambient colour, with one additive quad per point/spot light (`light2d.vert/frag`: smooth window falloff `(1-(d/r)^2)^2` raised to a falloff exponent, spot cone between inner and outer half-angles, view-rectangle culling). Lit sprites use `sprite_lit.frag`, which multiplies the sprite colour by the light texel at `gl_FragCoord`. Sprites opt in with `Sprite::lit`; additive sprites stay emissive; editor overlays are unlit. `gameplay::Light2DComponent` (Point / Spot / Global, colour, intensity, radius, angles, falloff, enabled) is extracted by `extract_sprites`: Global lights sum into the ambient, any enabled 2D light turns lighting on (scenes without them render exactly as before), spot lights shine along local -Y and radius scales with the transform. `SpriteComponent::unlit` opts sprites out; tilemaps and non-additive 2D particles are lit.
+- Consequences: one extra render-target pass per lit 2D frame and one extra texture bind per lit batch; light count is unbounded in practice (per-light quads, culled). No normal maps or 2D shadows yet; those can layer on the same light target later. HDR light values above 1 brighten lit sprites but the 2D target is still RGBA8, so they clip.
+
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 
 ## ADR-0038 — Blended materials as a sorted sub-pass of the forward pass (accepted 2026-11-17)

@@ -1024,8 +1024,43 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     return stats;
 }
 
+std::uint32_t extract_lights_2d(Scene& scene, render::SpriteBatch& batch) {
+    bool any = false;
+    math::Color ambient{0, 0, 0, 1};
+    std::vector<render::Light2D> lights;
+    scene.world().each<gameplay::Light2DComponent, WorldTransform>([&](const gameplay::Light2DComponent& l, const WorldTransform& wt) {
+        if (!l.enabled) return;
+        any = true;
+        const float k = std::isfinite(l.intensity) ? std::max(l.intensity, 0.0f) : 0.0f;
+        if (l.type == gameplay::Light2DComponent::Type::Global) {
+            ambient = {ambient.r + l.color.r * k, ambient.g + l.color.g * k, ambient.b + l.color.b * k, 1};
+            return;
+        }
+        render::Light2D out;
+        out.type = l.type == gameplay::Light2DComponent::Type::Spot ? render::Light2D::Type::Spot : render::Light2D::Type::Point;
+        const math::Vec3 p = wt.matrix.transform_point({});
+        out.position = {p.x, p.y};
+        const math::Vec3 ax = wt.matrix.transform_vector({1, 0, 0}), ay = wt.matrix.transform_vector({0, 1, 0});
+        const float scale = std::max(math::length(math::Vec2{ax.x, ax.y}), math::length(math::Vec2{ay.x, ay.y}));
+        out.radius = l.radius * (scale > 0.0f ? scale : 1.0f);
+        out.color = l.color;
+        out.intensity = k;
+        out.direction = {-ay.x, -ay.y};
+        const float outer = std::isfinite(l.outer_angle_degrees) ? std::clamp(l.outer_angle_degrees, 0.1f, 180.0f) : 40.0f;
+        out.outer_angle = math::radians(outer);
+        out.inner_angle = math::radians(std::isfinite(l.inner_angle_degrees) ? std::clamp(l.inner_angle_degrees, 0.0f, outer) : outer);
+        out.falloff = l.falloff;
+        lights.push_back(out);
+    });
+    if (!any) return 0;
+    batch.set_lighting(ambient);
+    for (const auto& l : lights) batch.add_light(l);
+    return static_cast<std::uint32_t>(lights.size());
+}
+
 std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::SpriteBatch& batch) {
     std::uint32_t count = 0;
+    (void)extract_lights_2d(scene, batch);
     scene.world().each<SpriteComponent, WorldTransform>([&](const SpriteComponent& s, const WorldTransform& wt) {
         render::Sprite sp;
         if (!s.texture_asset.is_nil()) {
@@ -1045,6 +1080,7 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
         sp.flip_x = s.flip_x;
         sp.flip_y = s.flip_y;
         sp.uv = s.uv;
+        sp.lit = !s.unlit;
         batch.draw(sp);
         ++count;
     });
@@ -1083,6 +1119,7 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
                 sp.flip_x = cell.flip_x;
                 sp.flip_y = cell.flip_y;
                 sp.uv = ts.tile_uv(static_cast<std::uint32_t>(cell.tile));
+                sp.lit = true;
                 batch.draw(sp);
                 ++count;
             }
@@ -1108,6 +1145,7 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
             sp.color = {std::min(b.color.r, 1.0f), std::min(b.color.g, 1.0f), std::min(b.color.b, 1.0f), b.color.a};
             sp.layer = v.emitter->layer;
             sp.additive = v.emitter->blend == particles::Blend::Additive;
+            sp.lit = true; // additive particles stay emissive (never lit)
             batch.draw(sp);
             ++count;
         }

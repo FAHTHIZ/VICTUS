@@ -74,6 +74,9 @@ Result<SceneViewStats> SceneView::render(rhi::CommandBuffer& cmd, Scene& scene, 
         stats.sprites = extract_sprites(scene, assets, *sprites_);
         if (options.overlay_2d) options.overlay_2d(*sprites_);
         VICTUS_TRY_STATUS(sprites_->prepare(cmd));
+        VICTUS_TRY_STATUS(sprites_->render_lights(cmd, width, height));
+        stats.lights_2d = sprites_->stats().lights;
+        stats.lighting_2d = sprites_->stats().lighting;
         rhi::RenderPassDesc rp;
         rhi::ColorAttachment color;
         color.texture = target;

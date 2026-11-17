@@ -197,7 +197,11 @@ void apply_environment(const gameplay::EnvironmentComponent& component, render::
 ExtractStats extract_scene(scene::Scene& scene, GpuAssetCache& assets, render::SceneRenderer& renderer,
                            const SceneViewSettings& settings = {}, const render::Camera3D* camera_override = nullptr);
 
-// Draws SpriteComponents (world units, XY plane) into a SpriteBatch in layer order.
+// Enables 2D lighting on `batch` when the scene has an enabled Light2D (ambient = sum of Global
+// lights) and adds its Point/Spot lights; returns the number of local lights. Called by extract_sprites.
+std::uint32_t extract_lights_2d(scene::Scene& scene, render::SpriteBatch& batch);
+// Draws SpriteComponents, tilemaps and 2D particles (world units, XY plane) into a SpriteBatch in
+// layer order, lit by the scene's 2D lights (see extract_lights_2d).
 std::uint32_t extract_sprites(scene::Scene& scene, GpuAssetCache& assets, render::SpriteBatch& batch);
 
 } // namespace victus::runtime

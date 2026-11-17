@@ -109,7 +109,7 @@ std::vector<EditorCommand> Editor::commands() {
         {"Cylinder", Primitive::Cylinder},   {"Sprite", Primitive::Sprite},
         {"Camera", Primitive::Camera},       {"Directional Light", Primitive::DirectionalLight},
         {"Point Light", Primitive::PointLight}, {"Spot Light", Primitive::SpotLight},
-        {"Decal", Primitive::Decal}};
+        {"Decal", Primitive::Decal},         {"2D Light", Primitive::Light2D}};
     for (const auto& [label, p] : prims)
         add(std::string("Entity: Create ") + label, {}, project_.has_value(), [this, kind = p] { (void)create_entity(kind); });
 
