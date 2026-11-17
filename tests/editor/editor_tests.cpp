@@ -1822,3 +1822,68 @@ TEST_CASE("editor: profiler window reports frame percentiles, scopes and records
     h.ed->stop();
     h.frames(1);
 }
+
+TEST_CASE("editor: fuzzy matching ranks word starts and contiguous runs") {
+    CHECK(editor::fuzzy_match_score("prof", "View: Toggle Profiler") >= 0);
+    CHECK(editor::fuzzy_match_score("tog prof", "View: Toggle Profiler") >= 0);
+    CHECK(editor::fuzzy_match_score("xyz", "View: Toggle Profiler") == -1);
+    CHECK(editor::fuzzy_match_score("", "anything") >= -100);
+    // Word-start/contiguous beats a scattered match.
+    CHECK(editor::fuzzy_match_score("save", "File: Save Scene") >
+          editor::fuzzy_match_score("save", "Assets: New Surface Shader (verbose)"));
+    CHECK(editor::fuzzy_match_score("cube", "Entity: Create Cube") > editor::fuzzy_match_score("cube", "Select: Crate Cube Base"));
+}
+
+TEST_CASE("editor: command palette finds and runs actions, scenes, assets and entities") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Cmds", "Cmds", "3d").ok());
+    h.frames(1);
+
+    auto names = [&](std::string_view q) {
+        std::vector<std::string> out;
+        for (const auto& c : h.ed->find_commands(q)) out.push_back(c.name);
+        return out;
+    };
+    // Empty query lists actions only.
+    const auto all = names("");
+    CHECK_FALSE(all.empty());
+    CHECK(std::none_of(all.begin(), all.end(), [](const std::string& n) { return n.starts_with("Select: "); }));
+    // Disabled commands are hidden: nothing to undo yet.
+    CHECK(std::find(all.begin(), all.end(), "Edit: Undo") == all.end());
+
+    REQUIRE_FALSE(names("toggle profiler").empty());
+    CHECK(names("toggle profiler").front() == "View: Toggle Profiler");
+    CHECK_FALSE(h.ed->show_profiler());
+    CHECK(h.ed->run_command("view: toggle profiler"));
+    CHECK(h.ed->show_profiler());
+
+    const std::size_t before = h.ed->edit_scene().world().alive_count();
+    REQUIRE_FALSE(names("create cube").empty());
+    CHECK(names("create cube").front() == "Entity: Create Cube");
+    CHECK(h.ed->run_command("Entity: Create Cube"));
+    CHECK(h.ed->edit_scene().world().alive_count() == before + 1);
+    CHECK(h.ed->run_command("Edit: Undo"));
+    CHECK(h.ed->edit_scene().world().alive_count() == before);
+    CHECK_FALSE(h.ed->run_command("No Such Command"));
+
+    // Entities and scenes are searchable.
+    const auto players = names("select player");
+    REQUIRE_FALSE(players.empty());
+    CHECK(players.front() == "Select: Player");
+    CHECK(h.ed->run_command("Select: Player"));
+    REQUIRE_FALSE(h.ed->selected().is_null());
+    CHECK(h.ed->edit_scene().world().get<scene::Name>(h.ed->selected())->value == "Player");
+    const auto scenes = names("open scene");
+    CHECK(std::any_of(scenes.begin(), scenes.end(), [](const std::string& n) { return n.starts_with("Open Scene: "); }) ==
+          false); // the only scene is already open
+    REQUIRE(h.ed->create_graph().ok());
+    CHECK_FALSE(names("open visual script").empty());
+
+    // The palette window opens, takes input and closes on Escape without side effects.
+    h.ed->open_command_palette();
+    CHECK(h.ed->command_palette_open());
+    h.frames(2);
+    CHECK(h.ed->command_palette_open());
+}

@@ -859,5 +859,21 @@ Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
 Known gaps:
 - No GPU timestamp queries (SDL_GPU lacks them), so per-pass GPU time is not measured; no per-frame memory history graph or allocation call stacks; one profiler per process.
 
+## Slice 65: Command palette (roadmap item 16, part 1)
+
+Why: roadmap item 16 (editor productivity). Every action lived in menus; there was no keyboard way to reach actions, scenes, assets or entities.
+
+Built:
+- Command palette (`editor/src/command_palette.cpp`, Ctrl+Shift+P or F1, View > Command Palette, `--show command-palette`): a centred search box over every File/Edit/Entity/Assets/View/Play action (with shortcuts shown), window toggles, quality tiers, "Open Scene: ...", "Open Visual Script: ...", "Open Material: ...", "Instantiate Prefab/Model: ..." and "Select: <entity>" (selects and frames). Disabled actions are hidden; arrows/Enter run, Escape or a click outside closes.
+- `fuzzy_match_score` (case-insensitive subsequence with word-start, run and substring bonuses; spaces in the query are separators), `Editor::commands/find_commands/run_command` for tools and tests.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
+- `victus_editor_tests` "editor: fuzzy matching ranks word starts and contiguous runs" and "editor: command palette finds and runs actions, scenes, assets and entities" (top results for "toggle profiler", "create cube", "select player"; run toggles a window, creates and undoes an entity, selects an entity; disabled undo hidden; visual scripts listed after creation; the window stays open across frames).
+- Screenshot smoke: `victus_editor <3d project> --show command-palette`.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- No recently-used ordering or user-defined commands yet; multi-selection editing and autosave are the next parts of item 16.
+
 ## Next task
-Roadmap next slice 16: editor productivity (multi-select, autosave and crash recovery, command palette).
+Roadmap next slice 16 (continued): autosave with crash recovery, then multi-selection (box select, multi-edit inspector).

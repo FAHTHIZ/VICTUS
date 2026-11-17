@@ -29,6 +29,7 @@
 #include "victus/ui/ui.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <array>
 #include <optional>
@@ -69,6 +70,18 @@ struct NetPlaySettings {
 };
 
 enum class Primitive : std::uint8_t { Empty, Cube, Sphere, Plane, Cylinder, Camera, DirectionalLight, PointLight, SpotLight, Sprite };
+
+// Command palette entry (Ctrl+Shift+P): every menu action, window toggle, scene, asset and entity.
+struct EditorCommand {
+    std::string name;     // "View: Toggle Profiler", "Open Scene: scenes/main.vscene", "Select: Player"
+    std::string shortcut; // display only
+    bool enabled{true};
+    std::function<void()> run;
+};
+
+// Fuzzy subsequence score of `query` in `text` (case-insensitive); -1 when it does not match.
+// Higher is better: consecutive characters and word starts score more, shorter texts win ties.
+[[nodiscard]] int fuzzy_match_score(std::string_view query, std::string_view text) noexcept;
 
 struct EditorClient; // an in-editor player of a hosted session (editor_clients.cpp)
 
@@ -333,6 +346,19 @@ public:
     void record_profile_trace(std::size_t frames = 300);
     [[nodiscard]] bool recording_profile_trace() const noexcept;
     [[nodiscard]] const std::filesystem::path& last_profile_trace() const noexcept { return last_profile_trace_; }
+    // ---- command palette ----
+    [[nodiscard]] std::vector<EditorCommand> commands();
+    // Enabled commands matching `query`, best first (all of them, alphabetically, for an empty query).
+    [[nodiscard]] std::vector<EditorCommand> find_commands(std::string_view query, std::size_t limit = 50);
+    // Runs the best-matching enabled command whose name equals `name` (case-insensitive).
+    bool run_command(std::string_view name);
+    void open_command_palette() noexcept {
+        palette_open_ = true;
+        palette_focus_ = true;
+        palette_query_.clear();
+        palette_index_ = 0;
+    }
+    [[nodiscard]] bool command_palette_open() const noexcept { return palette_open_; }
     void set_show_network(bool show) noexcept { show_network_ = show; }
     [[nodiscard]] bool show_network() const noexcept { return show_network_; }
     // In-editor clients of the hosted session (NetPlaySettings::editor_clients), 1-based.
@@ -501,6 +527,7 @@ private:
     [[nodiscard]] Status start_hosting();
     void draw_network();
     void draw_profiler();
+    void draw_command_palette();
     void update_profiler();
     void draw_network_section(scene::Entity e);
     NetPlaySettings net_settings_;
@@ -516,6 +543,10 @@ private:
     std::string server_key_;
     bool show_network_{false};
     bool show_profiler_{false};
+    bool palette_open_{false};
+    bool palette_focus_{false};
+    std::string palette_query_;
+    int palette_index_{0};
     bool profiler_focus_{false};
     std::unique_ptr<profiler::FrameProfiler> frame_profiler_;
     std::filesystem::path last_profile_trace_;

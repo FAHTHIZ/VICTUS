@@ -406,6 +406,7 @@ void Editor::draw_workspace(float) {
     draw_input_actions();
     draw_network();
     draw_profiler();
+    draw_command_palette();
     draw_material_editor();
     draw_graph_editor();
     draw_tile_palette();
@@ -495,6 +496,7 @@ void Editor::draw_menu_bar() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
+        if (ImGui::MenuItem("Command Palette...", "Ctrl+Shift+P")) open_command_palette();
         if (ImGui::MenuItem("Reset Layout")) layout_built_ = false;
         ImGui::MenuItem("Physics Colliders", nullptr, &show_colliders_);
         ImGui::MenuItem("Navigation Mesh", nullptr, &show_navmesh_);
@@ -1788,6 +1790,10 @@ void Editor::handle_shortcuts() {
     const ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput) return;
     const bool editing = play_state_ == PlayState::Editing;
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P) || ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
+        open_command_palette();
+        return;
+    }
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_P)) {
         if (editing) play();
         else stop();
