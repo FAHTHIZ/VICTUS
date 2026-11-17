@@ -24,6 +24,8 @@ json::Value TextureImportSettings::to_json() const {
     v.set("max_size", max_size);
     v.set("flip_y", flip_y);
     v.set("filter", nearest ? "nearest" : "linear");
+    if (compression != "none") v.set("compression", compression);
+    if (compression_thorough) v.set("compression_thorough", true);
     return v;
 }
 
@@ -34,6 +36,8 @@ TextureImportSettings TextureImportSettings::from_json(const json::Value& v) {
     s.max_size = static_cast<std::uint32_t>(std::clamp<std::int64_t>(v["max_size"].as_int(s.max_size), 1, 16384));
     s.flip_y = v["flip_y"].as_bool(s.flip_y);
     s.nearest = v["filter"].as_string() == "nearest";
+    if (v["compression"].is_string()) s.compression = v["compression"].as_string();
+    s.compression_thorough = v["compression_thorough"].as_bool(false);
     return s;
 }
 
@@ -43,6 +47,7 @@ json::Value ModelImportSettings::to_json() const {
     v.set("generate_tangents", generate_tangents);
     v.set("import_textures", import_textures);
     v.set("max_texture_size", max_texture_size);
+    if (texture_compression != "none") v.set("texture_compression", texture_compression);
     return v;
 }
 
@@ -54,6 +59,7 @@ ModelImportSettings ModelImportSettings::from_json(const json::Value& v) {
     s.import_textures = v["import_textures"].as_bool(s.import_textures);
     s.max_texture_size =
         static_cast<std::uint32_t>(std::clamp<std::int64_t>(v["max_texture_size"].as_int(s.max_texture_size), 1, 16384));
+    if (v["texture_compression"].is_string()) s.texture_compression = v["texture_compression"].as_string();
     return s;
 }
 
@@ -108,7 +114,22 @@ CookedTexture cook_hdr_texture(const render::ImageF& source, std::string name, s
     return t;
 }
 
+Result<void> compress_cooked_texture(CookedTexture& texture, std::string_view setting, CompressionEffort effort) {
+    auto codecs = parse_compression_setting(setting);
+    if (!codecs) return std::move(codecs).error();
+    texture.compressed.clear();
+    if (texture.hdr || texture.mips.empty()) return {};
+    for (const auto codec : *codecs) {
+        auto mips = compress_mips(texture.mips, codec, texture.srgb, effort);
+        if (!mips) return std::move(mips).error();
+        texture.compressed.push_back(std::move(*mips));
+    }
+    return {};
+}
+
 Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSettings& settings) {
+    if (auto codecs = parse_compression_setting(settings.compression); !codecs)
+        return make_error(ErrorCode::InvalidArgument, std::format("{}: {}", path.string(), codecs.error().message));
     {
         auto bytes = fs::read_binary(path);
         if (!bytes) return std::move(bytes).error();
@@ -135,7 +156,12 @@ Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSe
                              image.pixels.begin() + static_cast<std::ptrdiff_t>((y + 1) * row),
                              image.pixels.begin() + static_cast<std::ptrdiff_t>((image.height - 1 - y) * row));
     }
-    return cook_texture(image, path.filename().string(), settings.srgb, settings.mipmaps, settings.max_size);
+    CookedTexture t = cook_texture(image, path.filename().string(), settings.srgb, settings.mipmaps, settings.max_size);
+    if (auto r = compress_cooked_texture(t, settings.compression,
+                                         settings.compression_thorough ? CompressionEffort::Thorough : CompressionEffort::Fast);
+        !r)
+        return make_error(r.error().code, std::format("{}: {}", path.string(), r.error().message));
+    return t;
 }
 
 // ---- glTF ----------------------------------------------------------------------------------------
@@ -348,7 +374,10 @@ private:
         } else {
             std::string name = image->name ? image->name : std::format("image{}", image - data_->images);
             index = static_cast<std::int32_t>(model_.textures.size());
-            model_.textures.push_back(cook_texture(*img, std::move(name), srgb, true, settings_.max_texture_size));
+            CookedTexture t = cook_texture(*img, std::move(name), srgb, true, settings_.max_texture_size);
+            if (auto r = compress_cooked_texture(t, settings_.texture_compression); !r)
+                warn(std::format("{} texture '{}': {}", slot, t.name, r.error().message));
+            model_.textures.push_back(std::move(t));
         }
         textures_.emplace(key, index);
         return index;

@@ -7,6 +7,7 @@
 #pragma once
 #include "victus/animation/animation.hpp"
 #include "victus/core/math.hpp"
+#include "victus/assets/texture_compression.hpp"
 #include "victus/core/result.hpp"
 #include "victus/render/image.hpp"
 #include "victus/render/mesh.hpp"
@@ -20,8 +21,9 @@
 namespace victus::assets {
 
 // v2 (Slice 12): mesh skin streams, node skins, skins and animation clips.
-// v3: Vertex3D gained an RGBA8 colour (52 bytes); v4: HDR textures (half-float equirect + SH9).
-inline constexpr std::uint32_t kCookedFormatVersion = 4;
+// v3: Vertex3D gained an RGBA8 colour (52 bytes); v4: HDR textures (half-float equirect + SH9);
+// v5: block-compressed texture variants (BC/ASTC, ADR-0047).
+inline constexpr std::uint32_t kCookedFormatVersion = 5;
 
 enum class AssetKind : std::uint8_t { Unknown = 0, Texture = 1, Model = 2, Scene = 3, Script = 4, Audio = 5, Prefab = 6, Material = 7, Shader = 8, SpriteSheet = 9, Tileset = 10 };
 [[nodiscard]] const char* to_string(AssetKind kind) noexcept;
@@ -37,6 +39,9 @@ struct CookedTexture {
     std::uint32_t hdr_width{0}, hdr_height{0};
     std::vector<std::uint16_t> hdr_pixels; // RGBA half floats, row-major, top row first
     std::array<math::Vec3, 9> sh{};
+    // GPU block-compressed copies of `mips` (same level count and sizes) in preference order.
+    // The runtime uploads the first one the device samples and otherwise uses the RGBA8 mips.
+    std::vector<CompressedMips> compressed;
     [[nodiscard]] render::ImageF hdr_image() const; // decoded to RGBA32F
 };
 

@@ -1410,6 +1410,23 @@ void Editor::draw_assets() {
         ImGui::Checkbox("Flip Y", &import_edit_.flip_y);
         int max_size = static_cast<int>(import_edit_.max_size);
         if (ImGui::InputInt("Max Size", &max_size, 256)) import_edit_.max_size = static_cast<std::uint32_t>(std::clamp(max_size, 1, 16384));
+        {
+            // Presets plus whatever custom codec list the .meta already holds.
+            const char* presets[] = {"none", "auto", "small", "bc7", "astc4x4", "astc6x6"};
+            const char* labels[] = {"None (RGBA8)", "Auto (BC7 + ASTC 4x4)", "Small (BC1 + ASTC 6x6)", "Desktop only (BC7)",
+                                    "Mobile only (ASTC 4x4)", "Mobile small (ASTC 6x6)"};
+            int current = -1;
+            for (int i = 0; i < 6; ++i)
+                if (import_edit_.compression == presets[i]) current = i;
+            if (ImGui::BeginCombo("GPU Compression", current >= 0 ? labels[current] : import_edit_.compression.c_str())) {
+                for (int i = 0; i < 6; ++i)
+                    if (ImGui::Selectable(labels[i], i == current)) import_edit_.compression = presets[i];
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Block-compressed copies baked by the cooker; each device loads the first one it supports");
+            ImGui::Checkbox("Thorough encoding", &import_edit_.compression_thorough);
+        }
         if (ImGui::Button("Apply")) {
             if (auto st = set_texture_import_settings(import_texture_, import_edit_); !st) notify(st.error().message, true);
             import_texture_ = {};

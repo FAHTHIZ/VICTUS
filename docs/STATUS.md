@@ -443,5 +443,30 @@ This file records only verified state. Every entry lists what was built, how it 
 - Verification: `victus_render_tests` "light clusters" cases (3): 300 random point/spot lights, 20,000 random frustum points, 80,895 light/point pairs with zero missing assignments and about 2% of the full light x cluster table filled; behind-camera/far lights unassigned; spot spheres enclose their cones; overflow capping. `victus_gpu_tests` (3): 255 lights over a floor (203 visible, at most 18 per cluster, correct colours under each light, dark gap at the missing light, no tile seams in `clustered_lights.png`), spot cone centre/penumbra/outside, and a saved and loaded scene spot light rendered through `extract_scene`. Full suite 20/20 with `VICTUS_REQUIRE_GPU=1`; shader check 27 up to date.
 - Known gaps: no shadows from point or spot lights; light assignment runs on the CPU each frame (fine for about 1000 lights; a compute path would scale further); no light cookies or IES profiles; no area lights.
 
+## Slice 49: GPU texture compression in the cooker
+- Why: RGBA8 textures cost 4 bytes per texel of memory and bandwidth. Block compression cuts that to 1 byte (BC7, ASTC 4x4) or less (BC1 0.5, ASTC 6x6 0.44). On entry-level phones that is the difference between fitting the texture budget and not, and it is a large share of the GPU bandwidth saved.
+- Built: new RHI formats (BC1/BC3/BC7 UNORM, ASTC 4x4 and 6x6 UNORM/sRGB) plus `format_block`, `is_compressed` and `mip_size_bytes`. Texture memory stats now count whole blocks. `assets/texture_compression.hpp`:
+  - `TextureCodec` (bc1, bc3, bc7, astc4x4, astc6x6) and `parse_compression_setting`: "none", "auto" = BC7 + ASTC 4x4, "small" = BC1 + ASTC 6x6, or a `+` list.
+  - `encode_texture`/`decode_texture` use bc7enc_rdo (rgbcx BC1/BC3, bc7enc BC7) and Arm astcenc 5.7.1. Encoding is multithreaded, takes Fast/Thorough effort, and replicates border texels into partial edge blocks.
+  - `image_psnr` and `compress_mips`. BC1 is promoted to BC3 when a texel is translucent.
+- Cooking: the cooker compresses the CPU mip chain it already builds, since compressed textures cannot generate mips at runtime. Cooked format v5 stores the variants after the RGBA8 mips and validates each level's size on load. The texture importer (v3) has `compression` and `compression_thorough`; the model importer (v4) has `texture_compression`. HDR textures keep only their uncompressed preview.
+- Runtime: `runtime::upload_cooked_texture` uploads the first variant the device samples, in cooker order, and falls back to RGBA8. It goes through `GpuContext::create_compressed_texture`, and `GpuAssetCache` uses it for textures and model textures (`set_compressed_textures`, `compressed_texture_count`). The editor's Texture Import Settings dialog has a "GPU Compression" preset combo and "Thorough encoding".
+- Mobile: SDL_GPU exposes no ETC2/EAC formats, so ASTC is the mobile path. It is supported by Mali, Adreno, PowerVR and Apple GPUs.
+- Verification: local run (Ubuntu 26.04, GCC 15.2, lavapipe, Release `-Werror`).
+  - New `victus_asset_tests` cases (5): setting parsing and block sizes; all five codecs, sRGB and linear, on a 64x64 test image. Measured PSNR: BC1 38.7 dB, BC3 38.7, BC7 42.9/43.5, ASTC 4x4 44.4/44.3, ASTC 6x6 36.0. Also covered:
+    - alpha (BC3 promotion, BC7/ASTC alpha PSNR >= 36)
+    - a 52x28 chain down to 1x1
+    - partial edge blocks encoding bit-identically to the border-padded image
+    - cooked round trip with truncation and bad codec bytes rejected
+    - import settings and database recook when `compression` changes
+  - New GPU case: lavapipe reports BC yes and ASTC no. BC7 and BC1 uploads draw at 43.4 dB and 38.2 dB against the RGBA8 upload, and the GPU decode matches the CPU decoder (>= 50 dB). ASTC is refused cleanly, `upload_cooked_texture` picks BC7, and wrong level sizes or uncompressed formats are rejected.
+  - Full suite 20/20 with `VICTUS_REQUIRE_GPU=1`.
+- Known gaps:
+  - Compression is opt-in per texture (default "none"); there is no project-wide default yet.
+  - `victus export` ships every variant; per-platform stripping is not done yet.
+  - No BC5/two-channel normal maps and no BC6H/ASTC HDR for float textures.
+  - ASTC sampling was verified only by the CPU decoder here, because lavapipe lacks ASTC. A real device check comes with the Android slice.
+  - The encoder library is linked into the player even though shipped games never encode.
+
 ## Next task
-Slice 49: GPU texture compression in the cooker (BC7/BC1 desktop, ASTC/ETC2 mobile) with per-platform variants. See ROADMAP.md "Next slices".
+Slice 50: Android arm64 build (NDK + Gradle APK, touch, lifecycle, Vulkan device capability checks) and CI job. See ROADMAP.md "Next slices".

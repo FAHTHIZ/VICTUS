@@ -56,6 +56,7 @@ victus_add_test(victus_asset_tests
         assets/asset_tests.cpp
         assets/animation_asset_tests.cpp
         assets/template_robot_tests.cpp
+        assets/texture_compression_tests.cpp
     DEPS VICTUS::Assets VICTUS::Project
     LABELS assets)
 
@@ -95,6 +96,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_reflection_probe_tests.cpp
         render/gpu_taa_tests.cpp
         render/gpu_light_tests.cpp
+        render/gpu_texture_compression_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")

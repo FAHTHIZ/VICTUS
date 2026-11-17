@@ -141,6 +141,34 @@ Result<rhi::TextureHandle> GpuContext::create_texture_mips(std::span<const Image
     return tex;
 }
 
+Result<rhi::TextureHandle> GpuContext::create_compressed_texture(rhi::Format format, std::uint32_t width, std::uint32_t height,
+                                                                  std::span<const std::vector<std::uint8_t>> levels,
+                                                                  const TextureOptions& options) {
+    if (!rhi::is_compressed(format)) return make_error(ErrorCode::InvalidArgument, std::format("texture '{}': format is not block-compressed", options.name));
+    if (levels.empty() || width == 0 || height == 0)
+        return make_error(ErrorCode::InvalidArgument, std::format("texture '{}' has no blocks", options.name));
+    if (!device_.supports_format(format, rhi::TextureUsageSampled))
+        return make_error(ErrorCode::Unsupported, std::format("texture '{}': compressed format not supported by the device", options.name));
+    for (std::size_t m = 0; m < levels.size(); ++m) {
+        const std::uint32_t w = std::max(1u, width >> m), h = std::max(1u, height >> m);
+        if (levels[m].size() != rhi::mip_size_bytes(format, w, h))
+            return make_error(ErrorCode::InvalidArgument, std::format("texture '{}' mip {} has wrong size", options.name, m));
+    }
+    rhi::TextureDesc d;
+    d.name = options.name;
+    d.format = format;
+    d.width = width;
+    d.height = height;
+    d.mip_levels = static_cast<std::uint32_t>(levels.size());
+    d.usage = rhi::TextureUsageSampled;
+    auto tex = device_.create_texture(d);
+    if (!tex) return tex;
+    auto cmd = device_.begin_commands();
+    for (std::uint32_t m = 0; m < levels.size(); ++m) cmd.upload_texture(tex.value(), levels[m], m);
+    cmd.submit();
+    return tex;
+}
+
 Result<GpuMesh> GpuContext::create_mesh(const MeshData& mesh, std::string_view name) {
     if (mesh.vertices.empty() || mesh.indices.empty())
         return make_error(ErrorCode::InvalidArgument, std::format("mesh '{}' is empty", name));
