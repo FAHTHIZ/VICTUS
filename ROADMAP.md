@@ -69,10 +69,10 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 **Exit:** create project, import assets, author a scene, save/reopen and play without editing engine source.
 
 ## Phase 7 — Complete 2D development
-- [ ] 2D camera, sprites, atlases, batching, sorting/layers and pixel-art controls.
+- [~] 2D camera, sprites, atlases, batching, sorting/layers and pixel-art controls. Done: camera, sprites, batching, layers, grid atlases with `Sprite.uv` (Slice 39). Remaining: pixel-art sampling controls.
 - [ ] Tilemaps, tile sets, autotiling, grid and 2D world editing.
 - [x] 2D physics, collision shapes, queries and debug visualization: Box2D 3.2.0 bodies, box/circle/capsule colliders, triggers, raycast/overlap queries, editor collider overlay (Slice 6); 2D character mover, one-way platforms and 2D joints (Slice 14).
-- [ ] 2D animation, skeletal/rigged workflows where justified, particles and parallax.
+- [~] 2D animation, skeletal/rigged workflows where justified, particles and parallax. Done: particles (Slice 13), sprite sheets and `SpriteAnimator` clips (Slice 39). Remaining: parallax, rigged 2D.
 - [~] 2D UI, input, audio, scene transitions and 2D lighting/effects. Done: input, audio (Slice 7), in-game UI (Slice 15), scene transitions (`scene.load/reload`, Slice 38). Remaining: 2D lighting/effects.
 - [ ] 2D templates, profiling, export and playable reference game.
 **Exit:** build and ship a complete 2D game using only supported VICTUS workflows.
