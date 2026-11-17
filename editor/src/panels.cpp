@@ -243,6 +243,7 @@ void Editor::frame(float dt) {
         script_poll_ = 0;
         if (edit_scripts_) (void)edit_scripts_->reload_changed();
         (void)check_asset_changes(); // textures, models and audio edited outside the editor
+        sync_graph_from_disk();
     }
     if (!project_) draw_launcher();
     else draw_workspace(dt);
@@ -403,6 +404,7 @@ void Editor::draw_workspace(float) {
     draw_input_actions();
     draw_network();
     draw_material_editor();
+    draw_graph_editor();
     draw_tile_palette();
     draw_status_bar();
     handle_shortcuts();
@@ -480,6 +482,12 @@ void Editor::draw_menu_bar() {
             else if (show_material_editor_) (void)set_editing_material_shader(*id);
         }
         ImGui::MenuItem("Material Editor", nullptr, &show_material_editor_);
+        ImGui::Separator();
+        if (ImGui::MenuItem("New Visual Script", nullptr, false, db_ != nullptr)) {
+            if (auto id = create_graph(); !id) notify("cannot create visual script: " + id.error().message, true);
+            else if (auto st = open_graph_editor(*id); !st.ok()) notify(st.error().message, true);
+        }
+        ImGui::MenuItem("Graph Editor", nullptr, &show_graph_editor_);
         if (ImGui::MenuItem("Copy Assets Folder Path") && platform_) platform_->set_clipboard(project_->assets_dir().string());
         ImGui::EndMenu();
     }
@@ -1162,7 +1170,7 @@ bool Editor::inspect_script(script::ScriptComponent& c) {
         ImGui::EndDragDropTarget();
     }
     if (c.script.empty()) {
-        ImGui::TextDisabled("Drop a .luau file from Assets here.");
+        ImGui::TextDisabled("Drop a .luau or .vgraph file from Assets here.");
         return changed;
     }
     if (!edit_scripts_) return changed;
@@ -1327,7 +1335,9 @@ void Editor::draw_asset_item(const assets::AssetRecord& r) {
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         if (r.kind == assets::AssetKind::Model) instantiate_asset(r.uuid);
         else if (r.kind == assets::AssetKind::Prefab) instantiate_prefab(r.uuid);
-        else if (r.kind == assets::AssetKind::Script) {
+        else if (r.kind == assets::AssetKind::Script && r.path.ends_with(".vgraph")) {
+            if (auto st = open_graph_editor(r.uuid); !st.ok()) notify(st.error().message, true);
+        } else if (r.kind == assets::AssetKind::Script) {
             const Entity e = selected();
             if (!e.is_null()) {
                 auto before = capture(active_scene(), {active_scene().uuid(e)});
@@ -1787,6 +1797,7 @@ void Editor::handle_shortcuts() {
     }
     // While the game has the keyboard, editor shortcuts other than Play/Stop stay out of its way.
     if (!editing && viewport_focused_) return;
+    if (graph_focused_) return; // the Graph Editor handles its own save, undo and delete
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S) && editing) {
         if (scene_path_.empty()) show_save_as_ = true;
         else if (auto st = save_scene(); !st.ok()) notify(st.error().message, true);

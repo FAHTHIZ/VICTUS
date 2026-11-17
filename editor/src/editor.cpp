@@ -159,6 +159,14 @@ void Editor::close_project() {
     thumbnails_.reset();
     cache_.reset();
     edit_scripts_.reset();
+    graph_asset_ = {};
+    graph_path_.clear();
+    graph_ = {};
+    graph_diags_.clear();
+    graph_undo_.clear();
+    graph_redo_.clear();
+    graph_dirty_ = false;
+    show_graph_editor_ = false;
     edit_sprites_.reset();
     tilemaps_.reset();
     audio_.reset(); // clips resolve against the project's assets
