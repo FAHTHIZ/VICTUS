@@ -62,6 +62,12 @@
 // Terrain API (Terrain entities resolved by a TerrainSystem): `terrain.height(x, z, entity?)`,
 // `terrain.sample(x, z, entity?) -> {entity, height, normal, weights}` and
 // `terrain.raycast(origin, dir, max?) -> {entity, point, normal, distance}`; nil off the terrain.
+// AI API (docs/AI.md; needs an ai::AiSystem bound to the scene): `entity:bb_get(key)`,
+// `entity:bb_set(key, value|nil)`, `entity:blackboard() -> {key = value}`,
+// `entity:perception() -> {target, visible, last_position, seen, heard, noise_position, ...}`,
+// `ai.available()`, `ai.report_noise(position, loudness?, source?)`. Behaviour tree `action`
+// leaves without a C++ action call `self:<action>(dt, first)` -> "running"|"success"|"failure"
+// and `self:on_task_abort(action)` when interrupted.
 //
 // Networking API (meaningful when a NetServer/NetClient session is bound; offline every entity
 // is local and has authority): `net.role()` ("offline"/"server"/"client"), `net.is_server()`,

@@ -350,6 +350,7 @@ void build_3d(Scene& s) {
     // it walks, climbs the steps, jumps and shoves the dynamic crates and the gate.
     const Entity player = add(s, "Player", {0, 0, 0.5f});
     attach(s, player, "scripts/player.luau");
+    s.world().add<ai::PerceptibleComponent>(player); // noticed by the sentry
     {
         auto& cc = s.world().add<physics::CharacterControllerComponent>(player);
         cc.radius = 0.7f;
@@ -400,6 +401,29 @@ void build_3d(Scene& s) {
         agent.stopping_distance = 0.3f;
         const Entity small = robot::instantiate(s, "Robot", buddy);
         s.world().get<Transform>(small)->scale = {0.48f, 0.48f, 0.48f};
+    }
+
+    // A sentry turret run by a behaviour tree (assets/ai/sentry.vbt): it sweeps its head while
+    // nothing is in sight and turns to track the player once its Perception sees it. The tree's
+    // "scan" and "track" actions are Luau methods of scripts/sentry.luau.
+    {
+        const Entity sentry = add(s, "Sentry", {6.5f, 0, -6.0f});
+        attach(s, sentry, "scripts/sentry.luau");
+        auto& bt = s.world().add<ai::BehaviorTreeComponent>(sentry);
+        bt.tree = "ai/sentry.vbt";
+        auto& eyes = s.world().add<ai::PerceptionComponent>(sentry);
+        eyes.sight_range = 9.0f;
+        eyes.fov = 100.0f;
+        eyes.eye_height = 1.45f;
+        eyes.memory = 1.5f;
+        const Entity base = add(s, "Base", {0, 0.6f, 0}, sentry);
+        s.world().get<Transform>(base)->scale = {0.8f, 1.2f, 0.8f};
+        mesh(s, base, "cylinder", {0.25f, 0.26f, 0.3f, 1}, 1.0f, 0.45f);
+        s.world().add<physics::RigidBodyComponent>(base).type = physics::BodyType::Static;
+        s.world().add<physics::ColliderComponent>(base).shape = physics::ColliderComponent::Shape::Cylinder;
+        const Entity head = add(s, "Head", {0, 1.45f, 0.05f}, sentry);
+        s.world().get<Transform>(head)->scale = {0.55f, 0.4f, 0.7f};
+        mesh(s, head, "cube", {0.85f, 0.86f, 0.9f, 1}, 0.6f, 0.35f);
     }
 
     // Three 0.3 m steps up to a platform (character step_height is 0.35 m).
@@ -943,6 +967,58 @@ end
 return Buddy
 )lua";
 
+constexpr const char* kSentryTree = R"({
+  "root": {"type": "selector", "reactive": true, "children": [
+    {"type": "sequence", "name": "Engage", "children": [
+      {"type": "check", "key": "target", "op": "set"},
+      {"type": "action", "action": "track"}]},
+    {"type": "action", "name": "Patrol", "action": "scan"}]}
+}
+)";
+
+constexpr const char* kSentry = R"lua(-- A sentry turret driven by assets/ai/sentry.vbt. The behaviour tree calls these methods as
+-- tasks (returning "running", "success" or "failure"): scan sweeps the turret while nothing is in
+-- sight; once its Perception writes a `target` to the blackboard, track turns to face it.
+local Sentry = {}
+Sentry.sweep = 50 -- degrees either side of the starting heading
+Sentry.scan_speed = 35 -- degrees per second while scanning
+Sentry.turn_speed = 220 -- degrees per second while tracking
+
+function Sentry:start()
+    self.home = self.entity.rotation.y
+    self.yaw = self.home
+    self.dir = 1
+    self.head = self.entity:find_child("Head")
+end
+
+function Sentry:face(yaw)
+    self.yaw = yaw
+    self.entity.rotation = vector.create(0, yaw, 0)
+end
+
+function Sentry:scan(dt, first)
+    if first and self.head then self.head:set_emissive(vector.create(0.2, 0.6, 1.0), 1.5) end
+    if self.yaw > self.home + self.sweep then self.dir = -1 elseif self.yaw < self.home - self.sweep then self.dir = 1 end
+    self:face(self.yaw + self.dir * self.scan_speed * dt)
+    return "running"
+end
+
+function Sentry:track(dt, first)
+    local target = self.entity:bb_get("target")
+    if not target or not target.valid then return "failure" end
+    if first and self.head then self.head:set_emissive(vector.create(1.0, 0.15, 0.1), 3) end
+    -- Perception looks along +Z, so the heading toward the target is atan2(dx, dz).
+    local d = target.position - self.entity.position
+    local want = math.deg(math.atan2(d.x, d.z))
+    local diff = ((want - self.yaw + 540) % 360) - 180
+    local step = self.turn_speed * dt
+    self:face(self.yaw + math.clamp(diff, -step, step))
+    return "running"
+end
+
+return Sentry
+)lua";
+
 constexpr const char* kFollowCamera = R"lua(-- Smoothly follows the entity named `target`, keeping the starting offset.
 local Follow = {}
 Follow.target = "Player"
@@ -1390,6 +1466,8 @@ std::vector<TemplateFile> template_files(std::string_view id) {
                 {std::string(robot::kModelPath) + ".meta", robot::meta()},
                 {"assets/scripts/follow_camera.luau", kFollowCamera},
                 {"assets/scripts/companion.luau", kCompanion},
+                {"assets/scripts/sentry.luau", kSentry},
+                {"assets/ai/sentry.vbt", kSentryTree},
                 {"assets/scripts/crate.luau", kCrate},
                 {kCratePrefabPath, json::stringify(prefab_to_json(crate_prefab())) + "\n"},
                 {std::string(kCratePrefabPath) + ".meta", crate_prefab_meta()},

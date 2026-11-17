@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Luau scripting: lifecycle, entity/scene/input API, sandboxing, budgets, errors, hot reload.
+#include "victus/ai/ai.hpp"
 #include "victus/animation/animation.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/audio/audio.hpp"
@@ -1330,4 +1331,115 @@ return M
     for (const auto& err : host->recent_errors()) MESSAGE(err);
     CHECK(host->stats().errors == 0);
     CHECK(s.world().get<scene::Name>(probe)->value == "ok");
+}
+
+TEST_CASE("script: AI blackboards, perception, noises and Luau behaviour tree tasks") {
+    TempDir d("victus_script_ai");
+    script::register_components();
+    gameplay::register_components();
+    ai::register_components();
+    d.write("scripts/guard.luau", R"lua(
+local Guard = {}
+function Guard:start()
+    assert(ai.available(), "ai available")
+    self.entity:bb_set("speed", 3)
+    self.entity:bb_set("home", vector.create(1, 2, 3))
+    self.entity:bb_set("tmp", true)
+    self.entity:bb_set("tmp", nil)
+    assert(self.entity:bb_get("tmp") == nil, "nil erases")
+    assert(not pcall(function() self.entity:bb_set("bad", {}) end), "tables rejected")
+    self.waves = 0
+    self.firsts = 0
+end
+function Guard:wave(dt, first)
+    assert(dt > 0, "task dt")
+    if first then self.firsts += 1 end
+    self.waves += 1
+    if self.waves < 3 then return "running" end
+    return "success"
+end
+function Guard:update(dt)
+    local bb = self.entity:blackboard()
+    local p = self.entity:perception()
+    if bb.waved and bb.speed == 3 and p and p.visible and p.target and p.target.name == "Player"
+        and p.seen[1] == p.target and not self.reported then
+        self.reported = true
+        self.entity.name = "Done:" .. self.waves .. ":" .. self.firsts
+        ai.report_noise(vector.create(0, 0, -2), 1, nil)
+    end
+end
+return Guard
+)lua");
+    d.write("scripts/idle.luau", R"lua(
+local M = {}
+function M:aborting() return "running" end
+function M:bogus() return "maybe" end
+function M:on_task_abort(name) self.entity.name = "Aborted:" .. name end
+return M
+)lua");
+    auto host = make_host(d);
+    gameplay::Simulation sim(1.0f / 50.0f);
+    script::add_script_systems(sim, *host);
+    ai::AiSystem brain;
+    ai::add_ai_systems(sim, brain);
+    Scene s;
+    const Entity guard = scripted(s, "Guard", "scripts/guard.luau");
+    ai::PerceptionComponent pc;
+    pc.line_of_sight = false;
+    s.world().add<ai::PerceptionComponent>(guard, pc);
+    const Entity player = s.create("Player");
+    s.world().get<scene::Transform>(player)->position = {0, 0, 5};
+    s.world().add<ai::PerceptibleComponent>(player);
+    auto tree = ai::BehaviorTree::parse(R"({"root": {"type": "sequence", "children": [
+        {"type": "action", "action": "wave"}, {"type": "set", "key": "waved", "value": true}]}})");
+    REQUIRE(tree.ok());
+    brain.set_tree(s, guard, *tree);
+
+    // A running script task is aborted when a reactive selector's earlier branch succeeds; an
+    // invalid return value fails the leaf and is reported.
+    const Entity other = scripted(s, "Other", "scripts/idle.luau");
+    auto reactive = ai::BehaviorTree::parse(R"({"root": {"type": "selector", "reactive": true, "children": [
+        {"type": "check", "key": "stop", "value": true}, {"type": "action", "action": "aborting"}]}})");
+    REQUIRE(reactive.ok());
+    brain.set_tree(s, other, *reactive);
+    const Entity bogus = scripted(s, "Bogus", "scripts/idle.luau");
+    auto bad = ai::BehaviorTree::parse(R"({"root": {"type": "action", "action": "bogus"}})");
+    REQUIRE(bad.ok());
+    brain.set_tree(s, bogus, *bad);
+
+    s.update_transforms();
+    for (int i = 0; i < 3; ++i) sim.tick(s, 0.02f);
+    brain.blackboard(s, other)->set("stop", true);
+    for (int i = 0; i < 3; ++i) sim.tick(s, 0.02f);
+    CHECK(s.world().get<scene::Name>(guard)->value == "Done:3:1");
+    CHECK(s.world().get<scene::Name>(other)->value == "Aborted:aborting");
+    CHECK(brain.blackboard(s, guard)->vec3("home")->z == 3.0f);
+    CHECK(brain.blackboard(s, guard)->boolean("waved"));
+    CHECK_FALSE(brain.blackboard(s, guard)->has("tmp"));
+    const auto bogus_debug = brain.debug(s, bogus);
+    REQUIRE(bogus_debug.has_value());
+    CHECK(bogus_debug->nodes.at(0).status == ai::NodeStatus::Failure);
+    bool reported = false;
+    for (const auto& err : host->recent_errors()) reported |= err.find("task returned \"maybe\"") != std::string::npos;
+    CHECK(reported);
+    sim.tick(s, 0.02f);
+    const ai::PerceptionState* ps = brain.perception(s, guard);
+    REQUIRE(ps);
+    CHECK(ps->heard);
+    CHECK(ps->noise_position.z == doctest::Approx(-2.0f));
+
+    // Without an AI system the queries are harmless and writes report an error.
+    Scene bare;
+    const Entity lone = bare.create("Lone");
+    auto q = host->eval(R"lua(
+local e = scene.find("Lone")
+assert(not ai.available())
+assert(e:bb_get("x") == nil and e:perception() == nil and next(e:blackboard()) == nil)
+ai.report_noise(vector.create(0, 0, 0))
+return pcall(function() e:bb_set("x", 1) end)
+)lua", &bare);
+    REQUIRE(q.ok());
+    CHECK(q->is_bool());
+    CHECK_FALSE(q->as_bool());
+    (void)lone;
 }

@@ -227,6 +227,12 @@ public:
     // Named leaf behaviour for `{ "type": "action", "action": name }`.
     void register_action(std::string name, ActionFn fn);
     [[nodiscard]] bool has_action(std::string_view name) const noexcept;
+    // Runs action leaves whose name has no registered function (the script host installs one so
+    // Luau methods on the entity's script act as tasks). Returning Idle means "not handled": the
+    // leaf fails and an unknown-action warning is logged once. Also called with
+    // ActionContext::aborted when such a running leaf is interrupted.
+    void set_fallback_action(ActionFn fn);
+    [[nodiscard]] bool has_fallback_action() const noexcept;
     // Uses `tree` for the entity instead of loading BehaviorTreeComponent::tree (nullptr: back
     // to the asset). Restarts the tree.
     void set_tree(scene::Scene& scene, Entity e, std::shared_ptr<const BehaviorTree> tree);

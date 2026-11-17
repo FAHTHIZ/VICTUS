@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/animation/animation.hpp"
 #include "victus/gameui/gameui.hpp"
+#include "victus/ai/ai.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
@@ -116,6 +117,8 @@ struct ScriptHost::Impl {
     };
     std::unordered_map<int, Bridge> bridges;
     int next_bridge{1};
+    // The AI system whose unregistered action leaves run script methods (see run_script_task).
+    ai::AiSystem* bound_ai{nullptr};
 
     gameplay::SaveStore* store() {
         if (!save_store && !options.save_directory.empty())
@@ -2311,6 +2314,137 @@ int entity_stop(lua_State* L) {
     return 0;
 }
 // entity:nav_state() -> {active, has_destination, reached, partial, destination, velocity, remaining_distance}
+// ---- AI: blackboards, perception, noises -----------------------------------------------------
+
+void push_ai_value(lua_State* L, const ai::Value& v) {
+    if (const bool* b = std::get_if<bool>(&v)) lua_pushboolean(L, *b);
+    else if (const double* d = std::get_if<double>(&v)) lua_pushnumber(L, *d);
+    else if (const math::Vec3* p = std::get_if<math::Vec3>(&v)) push_vec3(L, *p);
+    else if (const Entity* e = std::get_if<Entity>(&v)) push_entity(L, *e);
+    else if (const std::string* str = std::get_if<std::string>(&v)) lua_pushlstring(L, str->data(), str->size());
+    else lua_pushnil(L);
+}
+
+ai::Value check_ai_value(lua_State* L, int idx) {
+    switch (lua_type(L, idx)) {
+    case LUA_TNIL:
+    case LUA_TNONE: return {};
+    case LUA_TBOOLEAN: return lua_toboolean(L, idx) != 0;
+    case LUA_TNUMBER: return lua_tonumber(L, idx);
+    case LUA_TVECTOR: return check_vec3(L, idx);
+    case LUA_TSTRING: {
+        std::size_t len = 0;
+        const char* str = lua_tolstring(L, idx, &len);
+        return std::string(str, len);
+    }
+    default:
+        if (lua_touserdatatagged(L, idx, kEntityTag)) return opt_entity(L, idx);
+        luaL_error(L, "blackboard values must be nil, boolean, number, string, vector or Entity");
+    }
+    return {};
+}
+
+ai::Blackboard& check_blackboard(lua_State* L, scene::Scene& s, Entity e) {
+    auto* a = ai::ai_of(s);
+    if (!a) luaL_error(L, "AI is not running in this scene");
+    ai::Blackboard* bb = a->blackboard(s, e);
+    if (!bb) luaL_error(L, "entity was destroyed");
+    return *bb;
+}
+
+// entity:bb_get(key) -> value (nil when unset or when AI is not running)
+int entity_bb_get(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const char* key = luaL_checkstring(L, 2);
+    auto* a = ai::ai_of(s);
+    const ai::Blackboard* bb = a ? a->blackboard(s, e) : nullptr;
+    const ai::Value* v = bb ? bb->find(key) : nullptr;
+    if (v) push_ai_value(L, *v);
+    else lua_pushnil(L);
+    return 1;
+}
+
+// entity:bb_set(key, value): nil erases the key.
+int entity_bb_set(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const char* key = luaL_checkstring(L, 2);
+    ai::Value v = check_ai_value(L, 3);
+    ai::Blackboard& bb = check_blackboard(L, s, e);
+    if (std::holds_alternative<std::monostate>(v)) bb.erase(key);
+    else bb.set(key, std::move(v));
+    return 0;
+}
+
+// entity:blackboard() -> {key = value} snapshot ({} when AI is not running)
+int entity_blackboard(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* a = ai::ai_of(s);
+    const ai::Blackboard* bb = a ? a->blackboard(s, e) : nullptr;
+    lua_newtable(L);
+    if (!bb) return 1;
+    for (const auto& [k, v] : bb->entries()) {
+        push_ai_value(L, v);
+        lua_setfield(L, -2, k.c_str());
+    }
+    return 1;
+}
+
+// entity:perception() -> {target, visible, last_position, since_seen, seen = {...}, heard,
+// noise_position, since_heard} or nil when the entity has no PerceptionComponent state yet.
+int entity_perception(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* a = ai::ai_of(s);
+    const ai::PerceptionState* p = a ? a->perception(s, e) : nullptr;
+    if (!p) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 8);
+    push_entity(L, s.world().alive(p->target) ? p->target : Entity{});
+    lua_setfield(L, -2, "target");
+    lua_pushboolean(L, p->visible);
+    lua_setfield(L, -2, "visible");
+    push_vec3(L, p->last_position);
+    lua_setfield(L, -2, "last_position");
+    lua_pushnumber(L, p->since_seen);
+    lua_setfield(L, -2, "since_seen");
+    lua_createtable(L, static_cast<int>(p->seen.size()), 0);
+    int i = 1;
+    for (Entity t : p->seen) {
+        if (!s.world().alive(t)) continue;
+        push_entity(L, t);
+        lua_rawseti(L, -2, i++);
+    }
+    lua_setfield(L, -2, "seen");
+    lua_pushboolean(L, p->heard);
+    lua_setfield(L, -2, "heard");
+    push_vec3(L, p->noise_position);
+    lua_setfield(L, -2, "noise_position");
+    lua_pushnumber(L, p->since_heard);
+    lua_setfield(L, -2, "since_heard");
+    return 1;
+}
+
+// ai.available() -> whether behaviour trees and perception run in this scene
+int ai_available(lua_State* L) {
+    lua_pushboolean(L, ai::ai_of(scene_of(L)) != nullptr);
+    return 1;
+}
+
+// ai.report_noise(position, loudness = 0, source = nil)
+int ai_report_noise(lua_State* L) {
+    auto& s = scene_of(L);
+    const math::Vec3 p = check_vec3(L, 1);
+    const auto loud = static_cast<float>(luaL_optnumber(L, 2, 0.0));
+    const Entity src = opt_entity(L, 3);
+    if (auto* a = ai::ai_of(s)) a->report_noise(p, loud, src);
+    return 0;
+}
+
 int entity_nav_state(lua_State* L) {
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
@@ -3296,6 +3430,10 @@ void open_victus_libs(lua_State* L) {
                                 {"set_destination", entity_set_destination},
                                 {"stop", entity_stop},
                                 {"nav_state", entity_nav_state},
+                                {"bb_get", entity_bb_get},
+                                {"bb_set", entity_bb_set},
+                                {"blackboard", entity_blackboard},
+                                {"perception", entity_perception},
                                 {"set_net", entity_set_net},
                                 {"get_net", entity_get_net},
                                 {"has_authority", entity_has_authority},
@@ -3412,6 +3550,8 @@ void open_victus_libs(lua_State* L) {
     const luaL_Reg terrain_fns[] = {{"height", terrain_height}, {"sample", terrain_sample},
                                     {"raycast", terrain_raycast}, {nullptr, nullptr}};
     register_lib(L, "terrain", terrain_fns);
+    const luaL_Reg ai_fns[] = {{"available", ai_available}, {"report_noise", ai_report_noise}, {nullptr, nullptr}};
+    register_lib(L, "ai", ai_fns);
     const luaL_Reg net_fns[] = {{"role", net_role},
                                 {"is_server", net_is_server},
                                 {"is_client", net_is_client},
@@ -3569,10 +3709,72 @@ Result<std::unique_ptr<ScriptHost>> ScriptHost::create(HostOptions options) {
     return std::unique_ptr<ScriptHost>(new ScriptHost(std::move(impl)));
 }
 
+namespace {
+
+// Behaviour tree action leaves with no C++ action run `self:<action>(dt, first)` on the entity's
+// script, which returns "running", "success" or "failure" (true/nil = success, false = failure).
+// An interrupted running leaf calls `self:on_task_abort(action)` when the script defines it.
+ai::NodeStatus run_script_task(ScriptHost::Impl& h, ai::ActionContext& c) {
+    auto it = h.instances.find(c.entity.bits());
+    if (it == h.instances.end() || it->second.faulted || !it->second.started) return ai::NodeStatus::Idle;
+    auto& in = it->second;
+    lua_State* L = h.L;
+    h.scene = &c.scene;
+    h.route(c.entity);
+    const std::string& name = c.node.action;
+    lua_getref(L, in.ref);
+    lua_getfield(L, -1, c.aborted ? "on_task_abort" : name.c_str());
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        return ai::NodeStatus::Idle;
+    }
+    lua_pushvalue(L, -2);
+    int nargs = 1;
+    if (c.aborted) {
+        lua_pushlstring(L, name.data(), name.size());
+        nargs = 2;
+    } else {
+        lua_pushnumber(L, c.dt);
+        lua_pushboolean(L, c.first);
+        nargs = 3;
+    }
+    if (!h.pcall(nargs, 1, std::format("{}:{}", in.path, c.aborted ? "on_task_abort" : name))) {
+        lua_pop(L, 1); // instance
+        in.faulted = true;
+        VICTUS_LOG_WARN("script", "{} disabled until it is reloaded", in.path);
+        return ai::NodeStatus::Failure;
+    }
+    ai::NodeStatus r = ai::NodeStatus::Success;
+    if (lua_isboolean(L, -1)) {
+        r = lua_toboolean(L, -1) ? ai::NodeStatus::Success : ai::NodeStatus::Failure;
+    } else if (lua_isstring(L, -1) && !lua_isnumber(L, -1)) {
+        const std::string_view v = lua_tostring(L, -1);
+        if (v == "running") r = ai::NodeStatus::Running;
+        else if (v == "failure") r = ai::NodeStatus::Failure;
+        else if (v != "success") {
+            h.report(std::format("{}:{}: task returned \"{}\" (expected running, success or failure)", in.path,
+                                 name, v));
+            r = ai::NodeStatus::Failure;
+        }
+    }
+    lua_pop(L, 2); // result, instance
+    return r;
+}
+
+void bind_ai_tasks(scene::Scene& scene, ScriptHost::Impl& h) {
+    ai::AiSystem* a = ai::ai_of(scene);
+    if (!a || (a == h.bound_ai && a->has_fallback_action())) return;
+    h.bound_ai = a;
+    a->set_fallback_action([&h](ai::ActionContext& c) { return run_script_task(h, c); });
+}
+
+} // namespace
+
 void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, const gameplay::InputSource* input) {
     VICTUS_PROFILE_SCOPE("script.update");
     Impl& h = *impl_;
     bind_host(scene, h);
+    bind_ai_tasks(scene, h);
     h.scene = &scene;
     h.time = time;
     h.input = input;

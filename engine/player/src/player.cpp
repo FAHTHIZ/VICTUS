@@ -355,7 +355,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
                 if (audio_engine)
                     for (const auto& clip : changes.audio) (void)(*audio_engine)->reload_clip(clip);
                 if (!changes.prefabs.empty()) (*scripts)->forget_prefabs(); // new instances use the new version
-                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size() + changes.terrains.size();
+                for (const auto& t : changes.behavior_trees) ai_system.reload(t);
+                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size() + changes.terrains.size() + changes.behavior_trees.size();
             }
         }
         if (dynamic_resolution) {

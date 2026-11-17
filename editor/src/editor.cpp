@@ -226,6 +226,10 @@ std::size_t Editor::check_asset_changes() {
     for (const auto& p : changes.reimported_paths) notify("Reloaded " + p);
     for (const auto& f : changes.failed) notify("Reload failed, keeping the previous version: " + f, true);
     for (const auto& a : changes.audio) notify("Reloaded audio " + a);
+    for (const auto& t : changes.behavior_trees) {
+        if (play_ai_) play_ai_->reload(t);
+        notify("Reloaded behaviour tree " + t);
+    }
     for (const auto& m : changes.materials) {
         if (const auto it = written_materials_.find(m); it != written_materials_.end() && db_)
             if (const auto* rec = db_->find_path(m))

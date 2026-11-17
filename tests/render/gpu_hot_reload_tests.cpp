@@ -112,6 +112,11 @@ TEST_CASE("hot reload: textures swap in place, broken saves keep the old version
     CHECK(contains(r.audio, "music.wav"));
     CHECK(contains(r.restart_needed, "scenes/main.vscene"));
     CHECK(r.lines().size() == 2);
+    // Behaviour trees are reported so the AI system restarts the entities using them.
+    write_text(project / "assets" / "guard.vbt", R"({"root": {"type": "succeed"}})", 9);
+    r = reloader.check();
+    CHECK(contains(r.behavior_trees, "guard.vbt"));
+    CHECK(r.restart_needed.empty());
 
     // New files get metadata and are imported; poll() rate-limits scans.
     const auto scans = reloader.scans();
