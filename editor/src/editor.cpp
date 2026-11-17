@@ -54,6 +54,7 @@ Result<std::unique_ptr<Editor>> Editor::create(render::GpuContext& gpu, ui::UiCo
                                                platform::Window* window, const EditorOptions& options) {
     std::unique_ptr<Editor> ed(new Editor(gpu, ui, platform, window));
     ed->options_ = options;
+    ed->autosave_seconds_ = std::max(options.autosave_seconds, 0.0f);
     project::register_components();
     if (platform) ed->input_ = std::make_unique<player::PlatformInput>(platform->input());
     ed->reset_simulation();
@@ -176,6 +177,8 @@ void Editor::close_project() {
     audio_.reset(); // clips resolve against the project's assets
     audio_failed_ = false;
     db_.reset();
+    recovery_.reset();
+    autosave_written_ = false;
     project_.reset();
     scene_ = std::make_unique<Scene>();
     scene_path_.clear();
@@ -288,6 +291,7 @@ Status Editor::open_scene(std::string_view rel) {
     auto s = std::make_unique<Scene>();
     VICTUS_TRY_STATUS(s->load_file(*path));
     set_scene(std::move(s), std::string(rel));
+    check_recovery();
     return {};
 }
 
@@ -300,6 +304,9 @@ Status Editor::save_scene() {
     sfs::create_directories(path->parent_path(), ec);
     VICTUS_TRY_STATUS(scene_->save_file(*path));
     undo_.mark_saved();
+    if (autosave_written_) remove_autosave(autosave_scene_); // e.g. the untitled copy after Save As
+    remove_autosave(scene_path_);
+    autosave_written_ = false;
     update_title();
     notify("Saved " + scene_path_);
     return {};
@@ -321,11 +328,13 @@ void Editor::new_scene() {
     std::vector<Entity> remove;
     for (const Entity e : s->roots()) {
         if (!s->world().has<CameraComponent>(e) && !s->world().has<LightComponent>(e)) remove.push_back(e);
-        else if (s->world().get<LightComponent>(e)->type != LightComponent::Type::Directional) remove.push_back(e);
+        else if (const auto* l = s->world().get<LightComponent>(e); l && l->type != LightComponent::Type::Directional)
+            remove.push_back(e);
     }
     for (const Entity e : remove) s->destroy(e);
     s->name = "New Scene";
     set_scene(std::move(s), "");
+    check_recovery();
 }
 
 // ---- editing -------------------------------------------------------------------------------------

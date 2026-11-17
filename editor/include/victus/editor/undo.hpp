@@ -46,11 +46,13 @@ public:
     // Saved-state tracking for the "unsaved changes" indicator.
     void mark_saved() noexcept { saved_ = static_cast<std::int64_t>(revision()); }
     [[nodiscard]] bool dirty() const noexcept { return saved_ != static_cast<std::int64_t>(revision()); }
+    // Forces the unsaved state (e.g. after recovering an autosave) until the next mark_saved().
+    void mark_unsaved() noexcept { saved_ = -1; }
+    // A monotonically increasing id per command position so undo-then-new-edit is dirty.
+    [[nodiscard]] std::uint64_t revision() const noexcept { return position_ ? ids_[position_ - 1] : 0; }
     [[nodiscard]] std::size_t size() const noexcept { return commands_.size(); }
 
 private:
-    // A monotonically increasing id per command position so undo-then-new-edit is dirty.
-    [[nodiscard]] std::uint64_t revision() const noexcept { return position_ ? ids_[position_ - 1] : 0; }
     std::vector<SceneCommand> commands_;
     std::vector<std::uint64_t> ids_;
     std::size_t position_{0};

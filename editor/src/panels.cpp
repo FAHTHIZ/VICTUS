@@ -226,6 +226,7 @@ const char* kind_icon(assets::AssetKind k) {
 
 void Editor::frame(float dt) {
     update_profiler();
+    if (play_state_ == PlayState::Editing) update_autosave(dt);
     if (dt > 0) fps_ = fps_ <= 0 ? 1.0f / dt : fps_ * 0.95f + 0.05f / dt;
     view_->renderer().set_frame_time(dt); // auto exposure adapts in real time
     if (status_time_ > 0) status_time_ -= dt;
@@ -1737,6 +1738,7 @@ void Editor::draw_input_actions() {
 // ---- modals & shortcuts -------------------------------------------------------------------------
 
 void Editor::draw_modals() {
+    draw_recovery_modal();
     if (pending_action_ != Pending::None && !ImGui::IsPopupOpen("Unsaved Changes")) ImGui::OpenPopup("Unsaved Changes");
     if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Save changes to %s before %s?", scene_path_.empty() ? "the untitled scene" : scene_path_.c_str(),
@@ -1746,6 +1748,10 @@ void Editor::draw_modals() {
             const Pending a = pending_action_;
             pending_action_ = Pending::None;
             ImGui::CloseCurrentPopup();
+            if (dirty() && project_) {
+                remove_autosave(autosave_written_ ? autosave_scene_ : scene_path_); // Don't Save discards the autosave too
+                autosave_written_ = false;
+            }
             if (a == Pending::Quit) {
                 quit_confirmed_ = true;
                 if (platform_) platform_->request_quit();
