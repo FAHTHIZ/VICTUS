@@ -804,5 +804,24 @@ Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
 Known gaps:
 - No editor graph panel yet (graphs are authored as JSON or through the C++ API); no debugger UI (trace mode exists in the compiler only); no user functions, custom events or comments boxes.
 
+## Slice 62: VICTUS Studio Graph Editor
+
+Why: roadmap item 14. Slice 61 graphs could only be authored as JSON or through the C++ API.
+
+Built (ADR-0059):
+- Graph Editor window (`editor/src/graph_panel.cpp`): node canvas with grid, pan (right/middle drag), category-coloured nodes with typed pin colours, bezier links, drag nodes (snapped to 8 px), drag from any pin to link (dropping on empty canvas opens the palette filtered to compatible nodes and links the pick), right-click a linked input to disconnect, node context menu (delete, duplicate, disconnect all), searchable palette grouped by category, node tooltips with descriptions and problems.
+- Side panel: variables (name, type, exposed, default, quick Get/Set node buttons), the selected node's details (variable choice, literal editors per pin type for unlinked inputs, comment), and a Problems list (click to select and frame the node). Nodes with errors/warnings get red/yellow borders; the toolbar shows "Compiles" or the error count.
+- Own undo/redo history of graph snapshots (coalesced literal and rename edits), Ctrl+S/Z/Y and Delete while the window has focus, dirty marker in the title. Save writes deterministic `.vgraph` and hot-reloads the edit-time inspector host and a running play session. Unsaved-free graphs reload when the file changes on disk.
+- Public API for tools/tests: `create_graph` (starter On Start -> Log, unique `scripts/Graph.vgraph`), `open_graph_editor`, `graph_add_node/remove_node/move_node/connect/disconnect/set_literal/set_config`, `graph_add/update/remove_variable` (rename retargets Get/Set nodes), `graph_undo/redo`, `save_graph`, `assign_graph_to` (undoable scene edit; also the "Use on Selected" button).
+- Assets > New Visual Script and Graph Editor; double-clicking a `.vgraph` opens it; the Script inspector accepts `.vgraph` drops; `victus_editor --graph <path>` opens one at start-up.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
+- `victus_editor_tests` "editor: visual script graphs are created, edited with undo, saved and run in play mode": creation and unique names, rejected node types/links/literals, undo/redo step by step and coalescing, variable rename/remove diagnostics, node removal with links, saved bytes equal the serializer, assigned graph with a per-entity override moves the entity to y=5/z=2 in play mode, undo of the assignment, on-disk change reloads, reopen (243 assertions).
+- Screenshot smoke: `victus_editor <3d project> --frames 30 --graph scripts/Jumper.vgraph --screenshot` shows the canvas (events, branch, input, variable, math, vector nodes with links and literals) and the variables panel.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- No execution highlighting or breakpoints yet; no zoom, multi-select, box select, comments boxes or copy/paste between graphs.
+
 ## Next task
-Roadmap item 14 (continued): the VICTUS Studio graph panel (open/create `.vgraph`, node palette, drag links, literal editing, validation markers, save) and graph debugging (trace highlighting while playing).
+Roadmap item 14 (continued): graph debugging. Play mode compiles graphs with trace instrumentation; the Graph Editor highlights nodes executed recently and the node of the last runtime error.

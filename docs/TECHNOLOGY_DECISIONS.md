@@ -631,6 +631,18 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - Converging exec paths are emitted once per path (code duplication, capped at 200k lines). No functions/macros, custom events or per-node breakpoints yet; the editor graph panel and the debugger come in later slices.
   - Rejected (a): a second execution model to sandbox, budget and keep in sync with every API. Rejected (c): ties the format to Luau's bytecode version and loses readable output for little gain.
 
+### ADR-0059: Graph Editor with its own snapshot undo, drawn with ImDrawList
+- Status: Accepted (Slice 62)
+- Context: Slice 61 graphs needed an editor. Graph files are assets like materials and prefabs, not scene data. Options for the canvas include the imnodes or imgui-node-editor libraries.
+- Options: (a) third-party node-editor library; (b) a canvas drawn with ImGui's ImDrawList and our own hit testing; undo either through the scene UndoStack or a graph-local history.
+- Decision: (b) with a graph-local history.
+  - The canvas draws nodes, pins and bezier links itself (no new dependency, layout matches the `.vgraph` positions directly). Pin hit testing, node dragging, link dragging and panning are handled in `graph_panel.cpp`.
+  - Undo stores serialized graph snapshots (up to 200), coalescing consecutive edits of the same literal, comment or variable. Scene undo is untouched; assigning a graph to an entity is the only scene edit and uses the scene stack.
+  - All edits go through a public API that revalidates after each change, so tests and tools drive the editor without a window.
+- Consequences:
+  - No zoom or minimap yet; nodes are fixed-width. Large graphs cost one serialization per edit (cheap at expected sizes).
+  - Rejected (a): extra dependency with its own docking/state quirks for features we can add incrementally.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

@@ -47,6 +47,7 @@ int main(int argc, char** argv) {
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
         .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
         .option("show", "open a window after opening: input-actions, network, material-editor (selected entity's material)")
+        .option("graph", "open this visual script (path relative to assets/) in the Graph Editor")
         .option("port", "UDP port for --host", "27960")
         .flag("host", "enter play mode as a listen server after opening")
         .option("clients", "with --host: players simulated inside the editor (0-3)", "0")
@@ -125,6 +126,11 @@ int main(int argc, char** argv) {
             else std::fprintf(stderr, "victus_editor: --show material-editor needs --select <entity with a material>\n");
         }
         else std::fprintf(stderr, "victus_editor: unknown window '%s' for --show\n", args.get("show").c_str());
+    }
+    if (args.has("graph") && ed.has_project()) {
+        const auto* rec = ed.assets() ? ed.assets()->find_path(args.get("graph")) : nullptr;
+        if (!rec) std::fprintf(stderr, "victus_editor: no asset '%s' for --graph\n", args.get("graph").c_str());
+        else if (auto st = ed.open_graph_editor(rec->uuid); !st.ok()) return fail("graph", st.error());
     }
     if (args.has("host") && ed.has_project()) {
         editor::NetPlaySettings ns = ed.net_settings();

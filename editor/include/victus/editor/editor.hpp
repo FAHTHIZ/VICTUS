@@ -23,6 +23,7 @@
 #include "victus/runtime/hot_reload.hpp"
 #include "victus/runtime/scene_view.hpp"
 #include "victus/scene/prefab.hpp"
+#include "victus/script/graph.hpp"
 #include "victus/script/script.hpp"
 #include "victus/ui/ui.hpp"
 
@@ -231,6 +232,42 @@ public:
     void open_material_editor(const Uuid& asset);
     [[nodiscard]] bool material_editor_open() const noexcept { return show_material_editor_; }
     [[nodiscard]] const Uuid& editing_material() const noexcept { return material_editing_; }
+
+    // ---- visual script graphs (.vgraph assets, ADR-0058/ADR-0059; graph_panel.cpp) ----
+    // The Graph Editor edits one graph file. Graph edits have their own undo history (the file is a
+    // project asset, not scene data) and are saved explicitly; play mode hot-reloads saved graphs.
+    // Writes a starter graph (On Start -> Log; default "scripts/Graph.vgraph", made unique).
+    Result<Uuid> create_graph(std::string_view relative_path = {});
+    // Loads a graph asset into the Graph Editor and shows it (unsaved edits of the previous graph
+    // are discarded).
+    Status open_graph_editor(const Uuid& asset);
+    [[nodiscard]] bool graph_editor_open() const noexcept { return show_graph_editor_; }
+    [[nodiscard]] const Uuid& editing_graph_asset() const noexcept { return graph_asset_; }
+    [[nodiscard]] const script::ScriptGraph& editing_graph() const noexcept { return graph_; }
+    // Validation of the open graph, refreshed after every edit.
+    [[nodiscard]] const std::vector<script::GraphDiagnostic>& graph_diagnostics() const noexcept { return graph_diags_; }
+    [[nodiscard]] bool graph_dirty() const noexcept { return graph_dirty_; }
+    // Edits of the open graph; each is one undo step. 0 / false when rejected (unknown node type,
+    // missing node or pin, incompatible pin types, duplicate variable name).
+    std::uint32_t graph_add_node(std::string_view type, float x = 0.0f, float y = 0.0f);
+    bool graph_remove_node(std::uint32_t id);
+    bool graph_move_node(std::uint32_t id, float x, float y);
+    bool graph_connect(std::uint32_t from, std::string_view from_pin, std::uint32_t to, std::string_view to_pin);
+    bool graph_disconnect(std::uint32_t node, std::string_view input_pin);
+    bool graph_set_literal(std::uint32_t node, std::string_view input_pin, json::Value value);
+    bool graph_set_config(std::uint32_t node, std::string_view key, json::Value value);
+    bool graph_add_variable(script::GraphVariable variable);
+    // Replaces a variable; a rename also retargets every Get/Set node that used the old name.
+    bool graph_update_variable(std::string_view name, script::GraphVariable variable);
+    bool graph_remove_variable(std::string_view name);
+    bool graph_undo();
+    bool graph_redo();
+    [[nodiscard]] bool graph_can_undo() const noexcept { return !graph_undo_.empty(); }
+    [[nodiscard]] bool graph_can_redo() const noexcept { return !graph_redo_.empty(); }
+    // Writes the open graph to its file and hot-reloads it (edit-time inspector and play mode).
+    Status save_graph();
+    // Points `e`'s Script component (added when missing) at the open graph. Undoable scene edit.
+    bool assign_graph_to(scene::Entity e);
     // Writes the instance's current content to its prefab and updates every instance in the scene.
     Status apply_prefab(scene::Entity instance);
     // Discards the instance's overrides and brings it back in line with its prefab.
@@ -539,6 +576,38 @@ private:
     Uuid material_editing_;
     assets::MaterialAsset material_edit_;
     std::unordered_map<std::string, std::uint64_t> written_materials_; // path -> hash of our last write
+    // visual script graph editor (graph_panel.cpp)
+    void draw_graph_editor();
+    void draw_graph_side_panel();
+    void draw_graph_canvas();
+    // Reloads the open graph when its file changed on disk and there are no unsaved edits.
+    void sync_graph_from_disk();
+    // Pushes an undo snapshot; consecutive edits with the same non-empty key share one step.
+    void graph_begin_edit(std::string_view coalesce_key = {});
+    void graph_end_edit();
+    bool show_graph_editor_{false};
+    bool graph_dirty_{false};
+    bool graph_focused_{false};
+    Uuid graph_asset_;
+    std::string graph_path_;
+    std::uint64_t graph_disk_hash_{0};
+    script::ScriptGraph graph_;
+    std::vector<script::GraphDiagnostic> graph_diags_;
+    std::vector<std::string> graph_undo_, graph_redo_;
+    std::string graph_edit_key_;
+    std::uint32_t graph_selected_{0};
+    math::Vec2 graph_scroll_{40.0f, 40.0f};
+    struct GraphPinDrag {
+        std::uint32_t node{0};
+        std::string pin;
+        bool output{false};
+    };
+    std::optional<GraphPinDrag> graph_link_drag_;
+    std::optional<GraphPinDrag> graph_palette_link_; // link to complete with the node picked from the palette
+    bool graph_node_drag_{false};
+    bool graph_node_moved_{false};
+    math::Vec2 graph_palette_pos_{};
+    std::string graph_palette_search_;
     std::string rename_buffer_;
     Uuid renaming_;
 

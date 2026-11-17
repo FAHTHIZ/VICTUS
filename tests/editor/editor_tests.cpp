@@ -1579,3 +1579,142 @@ TEST_CASE("editor: assets panel draws list and grid views with thumbnails") {
     // Drawing the panel requested previews; the budget renders them over the frames.
     CHECK(ed.thumbnails()->rendered_total() + ed.thumbnails()->pending() > 0);
 }
+
+TEST_CASE("editor: visual script graphs are created, edited with undo, saved and run in play mode") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Graphs", "Graphs", "3d").ok());
+    h.frames(2);
+    auto& ed = *h.ed;
+    const auto assets_dir = h.dir / "Graphs" / "assets";
+
+    // A new graph is a starter (On Start -> Log) that compiles, registered as a script asset.
+    auto id = ed.create_graph();
+    REQUIRE(id.ok());
+    const auto* rec = ed.assets()->find(*id);
+    REQUIRE(rec);
+    CHECK(rec->path == "scripts/Graph.vgraph");
+    CHECK(rec->kind == assets::AssetKind::Script);
+    auto second = ed.create_graph();
+    REQUIRE(second.ok());
+    CHECK(ed.assets()->find(*second)->path == "scripts/Graph_2.vgraph");
+    CHECK_FALSE(ed.create_graph("scripts/Graph").ok()); // exists
+
+    REQUIRE(ed.open_graph_editor(*id).ok());
+    CHECK(ed.graph_editor_open());
+    CHECK(ed.editing_graph_asset() == *id);
+    CHECK(ed.editing_graph().nodes.size() == 2);
+    CHECK(ed.editing_graph().links.size() == 1);
+    CHECK(ed.graph_diagnostics().empty());
+    CHECK_FALSE(ed.graph_dirty());
+    CHECK_FALSE(ed.graph_can_undo());
+    h.frames(2); // draws the canvas and side panel
+
+    // Build: On Start -> Set Position(Make Vector(0, speed, 0)).
+    CHECK(ed.graph_add_node("no.such_node") == 0);
+    const auto set_pos = ed.graph_add_node("entity.set_position", 520, 0);
+    const auto make = ed.graph_add_node("vector.make", 260, 120);
+    REQUIRE(set_pos != 0);
+    REQUIRE(make != 0);
+    CHECK(ed.graph_dirty());
+    CHECK(ed.graph_add_variable({"speed", script::PinType::Number, json::Value(3.0), true}));
+    CHECK_FALSE(ed.graph_add_variable({"speed", script::PinType::Number, {}, true})); // duplicate
+    const auto get = ed.graph_add_node("variable.get", 0, 120);
+    REQUIRE(ed.graph_set_config(get, "variable", json::Value("speed")));
+    CHECK(ed.graph_connect(2, "out", set_pos, "in")); // after the log
+    CHECK(ed.graph_connect(get, "value", make, "y"));
+    CHECK(ed.graph_connect(make, "vector", set_pos, "position"));
+    CHECK_FALSE(ed.graph_connect(make, "vector", set_pos, "in")); // data into exec
+    CHECK_FALSE(ed.graph_connect(make, "vector", make, "x"));     // self link
+    CHECK(ed.graph_set_literal(make, "z", json::Value(2.0)));
+    CHECK_FALSE(ed.graph_set_literal(set_pos, "in", json::Value(1.0))); // exec pins take no literal
+    CHECK(ed.graph_diagnostics().empty());
+    h.frames(2);
+
+    // Undo steps back one edit at a time; redo restores it.
+    const std::string built = script::serialize_graph(ed.editing_graph());
+    REQUIRE(ed.graph_undo()); // literal z
+    CHECK(ed.editing_graph().node(make)->inputs.find("z") == nullptr);
+    REQUIRE(ed.graph_undo()); // vector -> position link
+    CHECK(ed.editing_graph().links.size() == 3);
+    REQUIRE(ed.graph_redo());
+    REQUIRE(ed.graph_redo());
+    CHECK(script::serialize_graph(ed.editing_graph()) == built);
+    CHECK_FALSE(ed.graph_redo());
+
+    // Consecutive literal edits of one pin are one undo step.
+    CHECK(ed.graph_set_literal(make, "x", json::Value(1.0)));
+    CHECK(ed.graph_set_literal(make, "x", json::Value(1.5)));
+    REQUIRE(ed.graph_undo());
+    CHECK(ed.editing_graph().node(make)->inputs.find("x") == nullptr);
+
+    // Renaming a variable retargets its nodes; removing one leaves an error on them.
+    CHECK(ed.graph_update_variable("speed", {"height", script::PinType::Number, json::Value(3.0), true}));
+    CHECK(ed.editing_graph().node(get)->config["variable"].as_string_or("") == "height");
+    CHECK(ed.graph_diagnostics().empty());
+    CHECK(ed.graph_remove_variable("height"));
+    CHECK_FALSE(ed.graph_diagnostics().empty());
+    CHECK(ed.graph_diagnostics().front().node == get);
+    REQUIRE(ed.graph_undo());
+    CHECK(ed.graph_diagnostics().empty());
+
+    // Removing a node drops its links; undo brings both back.
+    const std::size_t links = ed.editing_graph().links.size();
+    CHECK(ed.graph_remove_node(make));
+    CHECK(ed.editing_graph().node(make) == nullptr);
+    CHECK(ed.editing_graph().links.size() == links - 2);
+    REQUIRE(ed.graph_undo());
+    CHECK(ed.editing_graph().links.size() == links);
+    CHECK(ed.graph_move_node(make, 300, 140));
+    CHECK(ed.editing_graph().node(make)->x == 300.0f);
+
+    // Save writes the file; the inspector discovers the exposed variable as a field.
+    REQUIRE(ed.save_graph().ok());
+    CHECK_FALSE(ed.graph_dirty());
+    auto text = fs::read_text(assets_dir / "scripts" / "Graph.vgraph");
+    REQUIRE(text.ok());
+    CHECK(*text == script::serialize_graph(ed.editing_graph()));
+
+    // Assign to an entity with a per-entity override and run it.
+    Scene& s = ed.edit_scene();
+    const Entity box = ed.create_entity(editor::Primitive::Cube);
+    ed.rename(box, "GraphBox");
+    ed.select(box);
+    REQUIRE(ed.assign_graph_to(box));
+    auto* sc = s.world().get<script::ScriptComponent>(box);
+    REQUIRE(sc);
+    CHECK(sc->script == "scripts/Graph.vgraph");
+    sc->properties = json::Value::object();
+    sc->properties.set("height", json::Value(5.0));
+    h.frames(2); // the inspector shows the graph's fields
+    ed.play();
+    h.frames(3);
+    REQUIRE(ed.play_scene());
+    const Entity played = ed.play_scene()->find_by_name("GraphBox");
+    REQUIRE_FALSE(played.is_null());
+    const auto pos = ed.play_scene()->world().get<Transform>(played)->position;
+    CHECK(pos.y == doctest::Approx(5.0f));
+    CHECK(pos.z == doctest::Approx(2.0f));
+    ed.stop();
+    h.frames(1);
+
+    // Undo of the assignment is a scene edit.
+    ed.undo();
+    CHECK_FALSE(s.world().has<script::ScriptComponent>(s.find_by_name("GraphBox")));
+
+    // A file changed on disk reloads into the editor when there are no unsaved edits.
+    auto changed = script::parse_graph(*text);
+    REQUIRE(changed.ok());
+    changed->nodes.front().x = 400;
+    REQUIRE(fs::write_text_atomic(assets_dir / "scripts" / "Graph.vgraph", script::serialize_graph(*changed)).ok());
+    h.frames(70); // the editor polls once a second
+    CHECK(ed.editing_graph().nodes.front().x == 400.0f);
+    CHECK_FALSE(ed.graph_dirty());
+
+    // Graph files reopen as saved.
+    REQUIRE(ed.open_graph_editor(*second).ok());
+    CHECK(ed.editing_graph().nodes.size() == 2);
+    REQUIRE(ed.open_graph_editor(*id).ok());
+    CHECK(ed.editing_graph().nodes.size() == 5);
+}
