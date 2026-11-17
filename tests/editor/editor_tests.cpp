@@ -1223,3 +1223,206 @@ TEST_CASE("editor: tile sets are created from textures and painted in the viewpo
     CHECK(tm2->tile(11, 10) == 8);
     CHECK(tm2->tileset == ts_id);
 }
+
+namespace {
+// Viewport pixel of a world point as the editor's gizmo sees it.
+math::Vec2 gizmo_px(editor::Editor& ed, math::Vec3 p) {
+    const auto s = ed.gizmo_view({float(Harness::VW), float(Harness::VH)}).project(p);
+    REQUIRE(s.has_value());
+    return *s;
+}
+float gizmo_length(editor::Editor& ed, math::Vec3 p) {
+    return ed.gizmo_view({float(Harness::VW), float(Harness::VH)}).world_per_pixel(p) * editor::gizmo::Options{}.size_pixels;
+}
+} // namespace
+
+TEST_CASE("editor: transform gizmo moves, rotates and scales the selection with undo, snapping and cancel") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Gizmo", "Gizmo", "3d").ok());
+    editor::Editor& ed = *h.ed;
+    const math::Vec2 vs{float(Harness::VW), float(Harness::VH)};
+    Scene& s = ed.edit_scene();
+    const Entity cube = ed.create_entity(editor::Primitive::Cube);
+    const Uuid cube_id = s.uuid(cube);
+    s.world().get<Transform>(cube)->position = {0, 0.5f, 0};
+    s.update_transforms();
+    ed.camera().target = {0, 0.5f, 0};
+    ed.camera().distance = 8.0f;
+    ed.select(cube);
+    h.frames(2); // the gizmo draws over the viewport
+    CHECK(ed.gizmo_settings().mode == editor::gizmo::Mode::Translate);
+    REQUIRE(ed.gizmo_frame().has_value());
+    CHECK(ed.gizmo_frame()->pivot == math::Vec3{0, 0.5f, 0});
+
+    // Nothing under the pointer: no drag (the click selects instead).
+    CHECK_FALSE(ed.gizmo_press({2, 2}, vs));
+
+    // Move along X: one undo entry labelled "Move".
+    const std::size_t depth = ed.undo_stack().size();
+    float L = gizmo_length(ed, {0, 0.5f, 0});
+    math::Vec3 grab{L * 0.7f, 0.5f, 0};
+    CHECK(ed.gizmo_hover(gizmo_px(ed, grab), vs) == editor::gizmo::Handle::X);
+    REQUIRE(ed.gizmo_press(gizmo_px(ed, grab), vs));
+    CHECK(ed.gizmo_dragging());
+    ed.gizmo_drag(gizmo_px(ed, grab + math::Vec3{1, 0, 0}), vs);
+    ed.gizmo_drag(gizmo_px(ed, grab + math::Vec3{2, 0, 0}), vs);
+    ed.gizmo_release();
+    CHECK_FALSE(ed.gizmo_dragging());
+    const Transform* t = s.world().get<Transform>(s.find(cube_id));
+    CHECK(t->position.x == doctest::Approx(2.0f).epsilon(0.02));
+    CHECK(t->position.y == doctest::Approx(0.5f));
+    CHECK(t->position.z == doctest::Approx(0.0f).scale(1));
+    REQUIRE(ed.undo_stack().size() == depth + 1);
+    ed.undo();
+    CHECK(s.world().get<Transform>(s.find(cube_id))->position == math::Vec3{0, 0.5f, 0});
+    ed.redo();
+    CHECK(s.world().get<Transform>(s.find(cube_id))->position.x == doctest::Approx(2.0f).epsilon(0.02));
+
+    // Snapping: a 1.3 drag lands on 1.5 with 0.5 steps; Ctrl (invert) turns it off again.
+    s.world().get<Transform>(s.find(cube_id))->position = {0, 0.5f, 0};
+    s.update_transforms();
+    ed.gizmo_settings().snap = true;
+    ed.gizmo_settings().steps.translate = 0.5f;
+    REQUIRE(ed.gizmo_press(gizmo_px(ed, grab), vs));
+    ed.gizmo_drag(gizmo_px(ed, grab + math::Vec3{1.3f, 0, 0}), vs);
+    CHECK(s.world().get<Transform>(s.find(cube_id))->position.x == doctest::Approx(1.5f));
+    ed.gizmo_drag(gizmo_px(ed, grab + math::Vec3{1.3f, 0, 0}), vs, true);
+    CHECK(s.world().get<Transform>(s.find(cube_id))->position.x == doctest::Approx(1.3f).epsilon(0.02));
+    // Cancel (Escape / right click) restores the transform and records nothing.
+    const std::size_t before_cancel = ed.undo_stack().size();
+    ed.gizmo_cancel();
+    CHECK(s.world().get<Transform>(s.find(cube_id))->position == math::Vec3{0, 0.5f, 0});
+    CHECK(ed.undo_stack().size() == before_cancel);
+    // A click on a handle without motion records nothing either.
+    REQUIRE(ed.gizmo_press(gizmo_px(ed, grab), vs));
+    ed.gizmo_release();
+    CHECK(ed.undo_stack().size() == before_cancel);
+    ed.gizmo_settings().snap = false;
+
+    // Rotate about Y by 90 degrees, snapped to 15 degree steps.
+    ed.gizmo_settings().mode = editor::gizmo::Mode::Rotate;
+    ed.gizmo_settings().snap = true;
+    ed.camera().pitch = -1.2f; // look down so the Y ring is open
+    L = gizmo_length(ed, {0, 0.5f, 0});
+    // Grab between X and -Z (away from where the X and Z rings cross the Y ring).
+    const float a0 = math::radians(45.0f);
+    const math::Vec3 ring{L * std::cos(a0), 0.5f, -L * std::sin(a0)};
+    REQUIRE(ed.gizmo_hover(gizmo_px(ed, ring), vs) == editor::gizmo::Handle::Y);
+    REQUIRE(ed.gizmo_press(gizmo_px(ed, ring), vs));
+    const float a = math::radians(45.0f + 88.0f);
+    ed.gizmo_drag(gizmo_px(ed, {L * std::cos(a), 0.5f, -L * std::sin(a)}), vs);
+    h.frames(1); // draws the swept-angle pie while dragging
+    ed.gizmo_release();
+    const math::Vec3 fwd = s.world().get<Transform>(s.find(cube_id))->rotation.rotate({1, 0, 0});
+    CHECK(fwd.x == doctest::Approx(0.0f).scale(1).epsilon(1e-3));
+    CHECK(fwd.z == doctest::Approx(-1.0f).epsilon(1e-3));
+    CHECK(ed.undo_stack().size() == before_cancel + 1);
+    ed.gizmo_settings().snap = false;
+
+    // Local space follows the rotated cube: its X handle now points along world -Z.
+    ed.gizmo_settings().mode = editor::gizmo::Mode::Translate;
+    ed.gizmo_settings().space = editor::gizmo::Space::Local;
+    const math::Vec3 lx = ed.gizmo_frame()->axis(0);
+    CHECK(lx.z == doctest::Approx(-1.0f).epsilon(1e-3));
+    ed.gizmo_settings().space = editor::gizmo::Space::World;
+
+    // Scale X (always local: the cube's own X axis) to 2x.
+    ed.gizmo_settings().mode = editor::gizmo::Mode::Scale;
+    ed.camera().pitch = -0.45f;
+    L = gizmo_length(ed, {0, 0.5f, 0});
+    const math::Vec3 sx = math::Vec3{0, 0.5f, 0} + lx * (L * 0.8f);
+    REQUIRE(ed.gizmo_hover(gizmo_px(ed, sx), vs) == editor::gizmo::Handle::X);
+    REQUIRE(ed.gizmo_press(gizmo_px(ed, sx), vs));
+    ed.gizmo_drag(gizmo_px(ed, math::Vec3{0, 0.5f, 0} + lx * (L * 1.6f)), vs);
+    ed.gizmo_release();
+    const math::Vec3 sc = s.world().get<Transform>(s.find(cube_id))->scale;
+    CHECK(sc.x == doctest::Approx(2.0f).epsilon(0.03));
+    CHECK(sc.y == doctest::Approx(1.0f));
+    ed.undo();
+    CHECK(s.world().get<Transform>(s.find(cube_id))->scale == math::Vec3{1, 1, 1});
+
+    // Hierarchies: with parent and child selected only the parent is moved (the child follows);
+    // a child alone moves in world space even under a scaled, rotated parent.
+    ed.gizmo_settings().mode = editor::gizmo::Mode::Translate;
+    const Entity parent = ed.create_entity(editor::Primitive::Empty);
+    const Uuid parent_id = s.uuid(parent);
+    Transform* pt = s.world().get<Transform>(parent);
+    pt->position = {0, 0.5f, 0};
+    pt->rotation = math::Quat::axis_angle({0, 1, 0}, math::radians(30.0f));
+    pt->scale = {2, 2, 2};
+    REQUIRE(ed.reparent(s.find(cube_id), s.find(parent_id)));
+    Transform* ct = s.world().get<Transform>(s.find(cube_id));
+    ct->position = {0, 0, 0};
+    ct->rotation = {};
+    ct->scale = {1, 1, 1};
+    s.update_transforms();
+    ed.select(s.find(parent_id));
+    ed.select(s.find(cube_id), true); // cube is the active entity
+    REQUIRE(ed.gizmo_press(gizmo_px(ed, grab), vs));
+    ed.gizmo_drag(gizmo_px(ed, grab + math::Vec3{1, 0, 0}), vs);
+    ed.gizmo_release();
+    CHECK(s.world().get<Transform>(s.find(parent_id))->position.x == doctest::Approx(1.0f).epsilon(0.02));
+    CHECK(s.world().get<Transform>(s.find(cube_id))->position == math::Vec3{0, 0, 0});
+    ed.select(s.find(cube_id));
+    const math::Vec3 world0 = s.world_matrix(s.find(cube_id)).c[3].xyz();
+    L = gizmo_length(ed, world0);
+    const math::Vec3 g2 = world0 + math::Vec3{L * 0.7f, 0, 0};
+    REQUIRE(ed.gizmo_press(gizmo_px(ed, g2), vs));
+    ed.gizmo_drag(gizmo_px(ed, g2 + math::Vec3{1, 0, 0}), vs);
+    ed.gizmo_release();
+    const math::Vec3 world1 = s.world_matrix(s.find(cube_id)).c[3].xyz();
+    CHECK(world1.x - world0.x == doctest::Approx(1.0f).epsilon(0.02));
+    CHECK(world1.z == doctest::Approx(world0.z).epsilon(1e-3).scale(1));
+    CHECK(s.world().get<Transform>(s.find(cube_id))->scale == math::Vec3{1, 1, 1});
+
+    // No gizmo while playing.
+    ed.play();
+    CHECK_FALSE(ed.gizmo_frame().has_value());
+    CHECK_FALSE(ed.gizmo_press(gizmo_px(ed, g2), vs));
+    ed.stop();
+    h.frames(1);
+}
+
+TEST_CASE("editor: transform gizmo works in 2D scenes on the XY plane") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Gizmo2D", "Gizmo2D", "2d").ok());
+    editor::Editor& ed = *h.ed;
+    const math::Vec2 vs{float(Harness::VW), float(Harness::VH)};
+    Scene& s = ed.edit_scene();
+    const Entity sprite = ed.create_entity(editor::Primitive::Sprite);
+    const Uuid id = s.uuid(sprite);
+    s.world().get<Transform>(sprite)->position = {0, 0, 0};
+    s.update_transforms();
+    ed.camera().cam2d.position = {0, 0};
+    ed.select(sprite);
+    h.frames(2);
+    REQUIRE(ed.gizmo_view(vs).orthographic());
+    const float L = gizmo_length(ed, {0, 0, 0});
+    const math::Vec3 plane{L * 0.34f, L * 0.34f, 0};
+    REQUIRE(ed.gizmo_hover(gizmo_px(ed, plane), vs) == editor::gizmo::Handle::XY);
+    REQUIRE(ed.gizmo_press(gizmo_px(ed, plane), vs));
+    ed.gizmo_drag(gizmo_px(ed, plane + math::Vec3{1.5f, -0.75f, 0}), vs);
+    ed.gizmo_release();
+    const Transform* t = s.world().get<Transform>(s.find(id));
+    CHECK(t->position.x == doctest::Approx(1.5f).epsilon(0.01));
+    CHECK(t->position.y == doctest::Approx(-0.75f).epsilon(0.01));
+    CHECK(t->position.z == 0.0f);
+    // Rotation in 2D is about Z only.
+    ed.gizmo_settings().mode = editor::gizmo::Mode::Rotate;
+    const math::Vec3 p0 = t->position;
+    REQUIRE(ed.gizmo_hover(gizmo_px(ed, p0 + math::Vec3{L, 0, 0}), vs) == editor::gizmo::Handle::Z);
+    REQUIRE(ed.gizmo_press(gizmo_px(ed, p0 + math::Vec3{L, 0, 0}), vs));
+    ed.gizmo_drag(gizmo_px(ed, p0 + math::Vec3{0, L, 0}), vs);
+    ed.gizmo_release();
+    const math::Vec3 right = s.world().get<Transform>(s.find(id))->rotation.rotate({1, 0, 0});
+    CHECK(right.y == doctest::Approx(1.0f).epsilon(0.01));
+    CHECK(right.z == doctest::Approx(0.0f).scale(1));
+    h.frames(1);
+    ed.undo();
+    ed.undo();
+    CHECK(s.world().get<Transform>(s.find(id))->position == math::Vec3{0, 0, 0});
+}

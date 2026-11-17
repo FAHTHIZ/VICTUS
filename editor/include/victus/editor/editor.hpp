@@ -10,6 +10,7 @@
 #include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/core/log.hpp"
+#include "victus/editor/gizmo.hpp"
 #include "victus/editor/undo.hpp"
 #include "victus/core/jobs.hpp"
 #include "victus/gameplay/capture.hpp"
@@ -310,6 +311,33 @@ public:
     // Forces the viewport size (headless tests); 0 = follow the panel.
     void set_viewport_size_override(std::uint32_t w, std::uint32_t h) { forced_w_ = w; forced_h_ = h; }
 
+    // ---- transform gizmo (viewport; W/E/R pick move/rotate/scale, T toggles world/local) ----
+    // The gizmo sits on the active (last selected) entity and moves every selected entity whose
+    // ancestors are not selected too; rotate and scale pivot about the active entity. A drag is
+    // one undo entry ("Move", "Rotate" or "Scale") and marks prefab overrides. Snapping rounds
+    // the drag to the steps; holding Ctrl while dragging inverts the snap toggle.
+    struct GizmoSettings {
+        gizmo::Mode mode{gizmo::Mode::Translate};
+        gizmo::Space space{gizmo::Space::World};
+        bool snap{false};
+        gizmo::Snap steps;
+        bool visible{true};
+    };
+    [[nodiscard]] GizmoSettings& gizmo_settings() noexcept { return gizmo_; }
+    // Frame of the gizmo for the current selection (nullopt: nothing selected or not editing).
+    [[nodiscard]] std::optional<gizmo::Frame> gizmo_frame();
+    // The camera of the viewport as the gizmo sees it (editor camera, 2D or 3D).
+    [[nodiscard]] gizmo::View gizmo_view(math::Vec2 viewport_size);
+    // Pointer API in viewport pixels (origin top-left). press() starts a drag when a handle is
+    // under the pointer and returns true; drag() applies the transform live; release() records
+    // the undo entry; cancel() restores the transforms from before the drag.
+    [[nodiscard]] gizmo::Handle gizmo_hover(math::Vec2 pixel, math::Vec2 viewport_size);
+    bool gizmo_press(math::Vec2 pixel, math::Vec2 viewport_size);
+    void gizmo_drag(math::Vec2 pixel, math::Vec2 viewport_size, bool invert_snap = false);
+    void gizmo_release();
+    void gizmo_cancel();
+    [[nodiscard]] bool gizmo_dragging() const noexcept { return gizmo_active_.has_value(); }
+
     [[nodiscard]] const std::vector<std::string>& messages() const noexcept { return status_messages_; }
     void notify(std::string message, bool error = false);
 
@@ -495,6 +523,26 @@ private:
     std::unordered_map<std::string, std::uint64_t> written_materials_; // path -> hash of our last write
     std::string rename_buffer_;
     Uuid renaming_;
+
+    // transform gizmo (gizmo_tool.cpp)
+    struct GizmoTarget {
+        Uuid id;
+        scene::Transform local;  // local transform when the drag began
+        math::Vec3 position;     // world TRS when the drag began
+        math::Quat rotation;
+        math::Vec3 scale;
+    };
+    GizmoSettings gizmo_;
+    std::optional<gizmo::Drag> gizmo_active_;
+    std::vector<GizmoTarget> gizmo_targets_;
+    std::vector<EntityState> gizmo_before_;
+    gizmo::Handle gizmo_hot_{gizmo::Handle::None};
+    bool gizmo_consumed_click_{false}; // the current left click started a gizmo drag
+    gizmo::DrawList gizmo_draw_;
+    void apply_gizmo_delta(const gizmo::Delta& d);
+    void gizmo_viewport(math::Vec2 origin, math::Vec2 size, bool hovered, bool painting);
+    void draw_gizmo_toolbar(math::Vec2 origin, math::Vec2 size);
+    void gizmo_shortcuts();
 
     std::vector<std::string> status_messages_;
     std::string status_line_;

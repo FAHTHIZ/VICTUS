@@ -146,6 +146,7 @@ Status Editor::create_project(const fs::Path& directory, std::string_view name, 
 
 void Editor::close_project() {
     stop();
+    gizmo_cancel();
     selection_.clear();
     tile_stroke_ = {};
     tile_hover_.reset();
@@ -233,6 +234,7 @@ std::size_t Editor::check_asset_changes() {
 
 void Editor::set_scene(std::unique_ptr<Scene> s, std::string path) {
     stop();
+    gizmo_cancel();
     scene_ = std::move(s);
     scene_path_ = std::move(path);
     selection_.clear();
@@ -984,6 +986,7 @@ void Editor::tick_play(float dt) {
 }
 
 void Editor::start_play(std::uint64_t seed, bool networked) {
+    gizmo_cancel(); // a half-finished drag never leaks into play mode
     // Commit any in-flight inspector edit to the authored scene first.
     if (pending_dirty_ && !pending_before_.empty()) record_edit("Edit", std::move(pending_before_));
     pending_before_.clear();

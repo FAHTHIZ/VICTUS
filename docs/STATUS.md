@@ -514,5 +514,55 @@ Verification: a new shader_compiler test checks that every builtin shader's run-
 
 Known gaps: the fix is confirmed on Metal only by CI.
 
+## Slice 51: editor transform gizmos and snapping
+
+Why: the editor could only place entities by typing numbers into the inspector. Gizmos are in the editor spec (viewport section) and were the next roadmap item.
+
+Built:
+- `editor/include/victus/editor/gizmo.hpp` + `editor/src/gizmo.cpp`: a VICTUS-owned gizmo module that depends only on VICTUS math. It does not use ImGuizmo; the ideas follow the public behaviour of Unity, Godot and Blender gizmos, and no code was copied.
+  - `gizmo::View` works from one view-projection matrix, so it handles both perspective and orthographic (2D) cameras. It provides projection, rays and pixel size.
+  - Handles keep a constant size on screen (96 px).
+  - Move: X/Y/Z arrows, XY/YZ/ZX plane squares, and a centre square that moves in the view plane.
+  - Rotate: X/Y/Z rings (only the front half is drawn and hit) and an outer ring that turns about the view direction. The angle is unwrapped past 180 degrees. When a ring is nearly edge-on, the drag follows the ring's screen-space tangent instead of solving a degenerate plane. The swept angle is drawn as a pie.
+  - Scale: X/Y/Z box handles and a centre handle for uniform scale. Scale never flips or reaches zero.
+  - Axes that point at the camera and edge-on planes or rings are hidden and cannot be grabbed. In 2D views this leaves exactly the X/Y arrows, the XY plane and the Z ring.
+  - Snapping uses per-mode steps (0.5 units, 15 degrees, 0.1 scale).
+  - Draw lists are screen-space lines and convex polygons.
+- `editor/src/gizmo_tool.cpp`: the editor side.
+  - The gizmo sits on the active (last selected) entity.
+  - A drag moves every selected entity whose ancestors are not also selected. Rotate and scale pivot about the active entity.
+  - Each entity is moved in world space and written back as a local transform under its parent, including rotated or scaled parents. Moves keep rotation and scale bit-exact.
+  - One drag is one undo entry ("Move", "Rotate" or "Scale"), and it marks prefab overrides.
+  - A click on a handle with no motion records nothing. Escape or a right click cancels and restores the transform.
+  - Play, a scene change and closing the project all cancel an open drag.
+  - Pointer API: `gizmo_hover/press/drag/release/cancel`, plus `gizmo_settings()`, `gizmo_frame()` and `gizmo_view()`.
+- Viewport:
+  - Hover highlight. Clicks on handles take priority over picking and camera navigation (Alt still orbits, and the tile tool keeps its clicks).
+  - A live readout next to the cursor (for example "Move 1.500, 0.000, 0.000").
+  - A tool strip: Move/Rotate/Scale, World/Local, Snap, and a "..." popup for the steps and to show or hide the gizmo.
+  - Shortcuts: W/E/R choose the tool and T toggles world/local. They are ignored while the right mouse button flies the camera or a text field is active. Holding Ctrl while dragging inverts snapping.
+- `victus_editor --tool move|rotate|scale[-local]` for screenshots and automation.
+
+Verification: local run (Ubuntu 26.04, GCC 15.2, Release, `-Werror`, lavapipe).
+- New `tests/editor/gizmo_tests.cpp` (7 cases, no GPU):
+  - projection, rays and pixel size, for perspective and 2D orthographic views;
+  - hit tests for every handle, local frames, hidden axes and constant screen size;
+  - axis, plane and view drags, with snapping;
+  - ring drags (direction, unwrapping, snapping, the view ring and the edge-on tangent fallback);
+  - axis and uniform scale;
+  - the 2D handle set;
+  - highlighting and isolation in the draw lists.
+- Two new GPU editor workflows:
+  - 3D: move with undo/redo, snapping and Ctrl inversion, cancel, a no-op click, snapped rotation, the local frame, local scale with undo, a parent and child selected together, a child under a rotated and scaled parent, and no gizmo in play mode.
+  - 2D: an XY plane move and a Z rotation, with undo.
+- Full ctest 20/20 with `VICTUS_REQUIRE_GPU=1`.
+- `xvfb-run victus_editor <3d template> --select "Spinning Cube" --tool move|rotate|scale-local --screenshot` renders the three gizmos over the viewport.
+
+Known gaps:
+- No pivot or centre toggle (the pivot is always the active entity).
+- No absolute grid snapping (snapping rounds the drag delta), no vertex or surface snapping, and no scale snapping to absolute values.
+- Gizmo settings last only for the editor session.
+- Asset thumbnails come next.
+
 ## Next task
-Slice 51: editor transform gizmos and snapping; asset thumbnails. See ROADMAP.md "Next slices".
+Slice 52: asset thumbnails in the editor's asset browser (rendered previews for models, materials, textures and prefabs), then the 3D sample game. See ROADMAP.md "Next slices".
