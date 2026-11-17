@@ -135,6 +135,9 @@ Result<std::optional<std::string>> ChildProcess::read_line(int timeout_ms) {
     for (;;) {
         const auto nl = buffer_.find('\n', scanned);
         if (nl != std::string::npos) {
+            // The whole over-long line may arrive in one read: enforce the limit on it too.
+            if (nl > max_line_)
+                return make_error(ErrorCode::LimitExceeded, std::format("child output line exceeds {} bytes", max_line_));
             std::string line = buffer_.substr(0, nl);
             buffer_.erase(0, nl + 1);
             if (!line.empty() && line.back() == '\r') line.pop_back();

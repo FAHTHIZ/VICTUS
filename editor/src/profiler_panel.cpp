@@ -92,7 +92,9 @@ void Editor::draw_profiler() {
     }
 
     const auto samples = frame_profiler_->frame_times().ordered();
-    std::vector<float> plot(samples.begin(), samples.end());
+    std::vector<float> plot;
+    plot.reserve(samples.size());
+    for (const auto v : samples) plot.push_back(static_cast<float>(v));
     const float top = static_cast<float>(std::max(r.max_ms, 33.4));
     const std::string overlay = std::format("{:.2f} ms ({:.0f} fps)", r.last_ms, r.last_ms > 0 ? 1000.0 / r.last_ms : 0.0);
     ImGui::PlotLines("##frametimes", plot.data(), static_cast<int>(plot.size()), 0, overlay.c_str(), 0.0f, top,
