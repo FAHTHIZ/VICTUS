@@ -123,6 +123,17 @@ void register_components() {
             .field(&G::dynamic, "dynamic", {.tooltip = "Keep re-capturing probes so lighting changes propagate (High/Ultra quality)"})
             .field(&G::dynamic_blend, "dynamic_blend", {.min = 0.01f, .max = 1, .speed = 0.01f, .tooltip = "Weight of each new capture: higher reacts faster, lower is steadier"})
             .commit();
+        using L2 = Light2DComponent;
+        scene::Schema<L2>("Light2D", "Rendering")
+            .enumeration(&L2::type, "type", {"point", "spot", "global"})
+            .field(&L2::color, "color", {.hint = "color_hdr"})
+            .field(&L2::intensity, "intensity", {.min = 0, .max = 64, .speed = 0.01f})
+            .field(&L2::radius, "radius", {.min = 0.01f, .max = 10000, .speed = 0.05f, .tooltip = "Reach in world units; light fades smoothly to zero here"})
+            .field(&L2::inner_angle_degrees, "inner_angle_degrees", {.min = 0, .max = 180, .speed = 0.5f, .label = "Inner Angle", .tooltip = "Spot: full light inside this half-angle", .hint = "degrees"})
+            .field(&L2::outer_angle_degrees, "outer_angle_degrees", {.min = 0.1f, .max = 180, .speed = 0.5f, .label = "Outer Angle", .tooltip = "Spot: no light beyond this half-angle (spots shine along local -Y)", .hint = "degrees"})
+            .field(&L2::falloff, "falloff", {.min = 0.05f, .max = 16, .speed = 0.01f, .tooltip = "Below 1 spreads light further, above 1 concentrates it at the centre"})
+            .field(&L2::enabled, "enabled")
+            .commit();
         using D = DecalComponent;
         scene::Schema<D>("Decal", "Rendering")
             .field(&D::texture, "texture", {.tooltip = "Projected texture (alpha = coverage); empty = solid colour", .hint = "texture"})

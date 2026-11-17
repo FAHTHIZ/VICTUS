@@ -485,6 +485,7 @@ void Editor::draw_menu_bar() {
         item("Plane", Primitive::Plane);
         item("Cylinder", Primitive::Cylinder);
         item("Sprite", Primitive::Sprite);
+        item("2D Light", Primitive::Light2D);
         ImGui::Separator();
         item("Camera", Primitive::Camera);
         item("Directional Light", Primitive::DirectionalLight);
@@ -902,6 +903,7 @@ void Editor::draw_hierarchy() {
         if (ImGui::MenuItem("Point Light")) create_entity(Primitive::PointLight);
         if (ImGui::MenuItem("Spot Light")) create_entity(Primitive::SpotLight);
         if (ImGui::MenuItem("Decal")) create_entity(Primitive::Decal);
+        if (ImGui::MenuItem("2D Light")) create_entity(Primitive::Light2D);
         ImGui::EndPopup();
     }
     ImGui::SameLine();
@@ -1099,6 +1101,8 @@ bool Editor::inspect_components(Entity e) {
         changed |= ImGui::Checkbox("Flip X", &sp->flip_x);
         ImGui::SameLine();
         changed |= ImGui::Checkbox("Flip Y", &sp->flip_y);
+        changed |= ImGui::Checkbox("Unlit", &sp->unlit);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ignore 2D lights (only matters when the scene has a Light2D)");
         if (w.has<animation::SpriteAnimatorComponent>(e)) {
             ImGui::TextDisabled("UV region set by the Sprite Animator");
         } else {

@@ -75,7 +75,7 @@ struct NetPlaySettings {
     friend bool operator==(const NetPlaySettings&, const NetPlaySettings&) = default;
 };
 
-enum class Primitive : std::uint8_t { Empty, Cube, Sphere, Plane, Cylinder, Camera, DirectionalLight, PointLight, SpotLight, Sprite, Decal };
+enum class Primitive : std::uint8_t { Empty, Cube, Sphere, Plane, Cylinder, Camera, DirectionalLight, PointLight, SpotLight, Sprite, Decal, Light2D };
 
 // Command palette entry (Ctrl+Shift+P): every menu action, window toggle, scene, asset and entity.
 struct EditorCommand {

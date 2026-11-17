@@ -34,6 +34,8 @@ struct SceneViewStats {
     ViewMode mode{ViewMode::ThreeD};
     ExtractStats extract;
     std::uint32_t sprites{0};
+    std::uint32_t lights_2d{0}; // 2D lights drawn (0 also when the scene has no 2D lighting)
+    bool lighting_2d{false};    // the 2D frame was lit
     render::SceneStats scene;
     GameUiStats ui;
 };
