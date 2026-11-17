@@ -147,6 +147,8 @@ Status Editor::create_project(const fs::Path& directory, std::string_view name, 
 void Editor::close_project() {
     stop();
     selection_.clear();
+    tile_stroke_ = {};
+    tile_hover_.reset();
     undo_.clear();
     hot_reload_.reset();
     cache_.reset();
@@ -703,6 +705,15 @@ math::Aabb Editor::entity_bounds(Entity e, bool* has_mesh) {
         local = {{-sp->pivot.x * sp->size.x, -sp->pivot.y * sp->size.y, -0.01f},
                  {(1 - sp->pivot.x) * sp->size.x, (1 - sp->pivot.y) * sp->size.y, 0.01f}};
         mesh = true;
+    } else if (const auto* tm = s.world().get<tilemap::TilemapComponent>(e)) {
+        const tilemap::TileBounds b = tilemap::bounds(*tm);
+        if (!b.empty()) {
+            local = {{static_cast<float>(b.min_x) * tm->cell_size.x, static_cast<float>(b.min_y) * tm->cell_size.y, -0.01f},
+                     {static_cast<float>(b.max_x + 1) * tm->cell_size.x, static_cast<float>(b.max_y + 1) * tm->cell_size.y, 0.01f}};
+        } else {
+            local = {{0, 0, -0.01f}, {tm->cell_size.x, tm->cell_size.y, 0.01f}};
+        }
+        mesh = true;
     } else {
         local = {{-0.25f, -0.25f, -0.25f}, {0.25f, 0.25f, 0.25f}};
     }
@@ -739,6 +750,18 @@ Entity Editor::pick(math::Vec2 pixel, math::Vec2 size) {
             if (local.x >= x0 && local.x <= x0 + sp.size.x && local.y >= y0 && local.y <= y0 + sp.size.y &&
                 sp.layer >= best_layer) {
                 best_layer = sp.layer;
+                best = e;
+            }
+        });
+        // Tilemaps are hit on painted cells.
+        s.world().each<tilemap::TilemapComponent, WorldTransform>([&](Entity e, const tilemap::TilemapComponent& tm,
+                                                                      const WorldTransform& wt) {
+            if (tm.layer < best_layer) return;
+            const math::Vec3 local = math::inverse(wt.matrix).transform_point({world.x, world.y, 0});
+            const auto cx = static_cast<std::int32_t>(std::floor(local.x / std::max(tm.cell_size.x, 1e-6f)));
+            const auto cy = static_cast<std::int32_t>(std::floor(local.y / std::max(tm.cell_size.y, 1e-6f)));
+            if (tm.tile(cx, cy) >= 0) {
+                best_layer = tm.layer;
                 best = e;
             }
         });
@@ -1209,6 +1232,7 @@ void Editor::draw_overlays_2d(render::SpriteBatch& b) {
         b.draw_line({c.x, c.y}, {d.x, d.y}, 2 * px, orange, 1000);
         b.draw_line({d.x, d.y}, {a.x, a.y}, 2 * px, orange, 1000);
     }
+    draw_tile_overlay(b, px);
     if (show_colliders_) {
         collider_scratch_.clear();
         physics::collider_lines(s, collider_scratch_);

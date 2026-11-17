@@ -15,6 +15,7 @@
 #include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
 #include "victus/script/script.hpp"
+#include "victus/tilemap/tilemap.hpp"
 #include <thread>
 
 #include <algorithm>
@@ -1050,4 +1051,175 @@ TEST_CASE("editor: materials are created from a selection, edited, assigned with
     REQUIRE(ed.open_scene(scene_file).ok());
     CHECK(ed.edit_scene().world().get<MeshRendererComponent>(ed.edit_scene().find_by_name("Crate"))->material_asset == mat);
     h.frames(2);
+}
+
+TEST_CASE("editor: tile sets are created from textures and painted in the viewport with undo per stroke") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Tiles", "Tiles", "2d").ok());
+    h.frames(2);
+    auto& ed = *h.ed;
+    const auto assets_dir = h.dir / "Tiles" / "assets";
+    auto png = render::encode_png(render::make_checker(32, 8, 0xff3080c0u, 0xff60c040u));
+    REQUIRE(png.ok());
+    REQUIRE(fs::write_atomic(assets_dir / "ground.png", *png).ok());
+    (void)ed.check_asset_changes();
+    REQUIRE(ed.assets()->find_path("ground.png"));
+    const Uuid tex = ed.assets()->find_path("ground.png")->uuid;
+
+    // Creating: default path next to the texture, unique names, validation.
+    auto made = ed.create_tileset(tex, 4, 4);
+    REQUIRE(made.ok());
+    const Uuid ts_id = *made;
+    CHECK(ed.assets()->find(ts_id)->path == "ground.vtileset");
+    CHECK(ed.assets()->find(ts_id)->kind == assets::AssetKind::Tileset);
+    auto again = ed.create_tileset(tex, 2, 2, tilemap::TileCollision::OneWay);
+    REQUIRE(again.ok());
+    CHECK(ed.assets()->find(*again)->path == "ground_2.vtileset");
+    CHECK_FALSE(ed.create_tileset(tex, 0, 4).ok());
+    CHECK_FALSE(ed.create_tileset(ts_id, 2, 2).ok());
+    CHECK_FALSE(ed.create_tileset(tex, 1, 1, tilemap::TileCollision::Solid, "ground.vtileset").ok());
+    auto file = tilemap::load_tileset_file(assets_dir / "ground.vtileset");
+    REQUIRE(file);
+    CHECK(file->texture == tex);
+    CHECK(file->tile_count() == 16);
+    CHECK(file->default_collision == tilemap::TileCollision::Solid);
+
+    // Assigning: adds a Tilemap (undoable) and turns the tile tool on.
+    Scene& s = ed.edit_scene();
+    const Entity map = ed.create_entity(editor::Primitive::Empty);
+    ed.rename(map, "TileLayer");
+    ed.select(map);
+    CHECK_FALSE(ed.assign_tileset(map, tex));
+    REQUIRE(ed.assign_tileset(map, ts_id));
+    CHECK(ed.tile_tool());
+    REQUIRE(s.world().get<tilemap::TilemapComponent>(map));
+    CHECK(s.world().get<tilemap::TilemapComponent>(map)->tileset == ts_id);
+    ed.undo();
+    CHECK_FALSE(s.world().has<tilemap::TilemapComponent>(s.find_by_name("TileLayer")));
+    ed.redo();
+    const Entity g = s.find_by_name("TileLayer");
+    REQUIRE(s.world().has<tilemap::TilemapComponent>(g));
+    ed.select(g);
+    h.frames(2); // palette, grid overlay and tilemap rendering
+
+    // Picking a cell from a viewport pixel.
+    const math::Vec2 vp{float(Harness::VW), float(Harness::VH)};
+    const auto cam = ed.camera().camera2d(float(Harness::VH));
+    auto cell_at = [&](float wx, float wy) { return ed.tile_under(g, cam.world_to_screen({wx, wy}, vp.x, vp.y), vp); };
+    auto c0 = cell_at(0.5f, 0.5f);
+    REQUIRE(c0);
+    CHECK((*c0)[0] == 0);
+    CHECK((*c0)[1] == 0);
+    auto cm = cell_at(-2.5f, 3.5f);
+    REQUIRE(cm);
+    CHECK((*cm)[0] == -3);
+    CHECK((*cm)[1] == 3);
+
+    auto tile = [&](std::int32_t x, std::int32_t y) {
+        return s.world().get<tilemap::TilemapComponent>(s.find_by_name("TileLayer"))->tile(x, y);
+    };
+    // A dragged stroke fills the gaps between cells and is one undo entry.
+    ed.tile_brush().mode = editor::Editor::TileMode::Paint;
+    ed.tile_brush().tile = 5;
+    REQUIRE(ed.begin_tile_stroke(g, 0, 0));
+    CHECK(ed.tile_stroke_active());
+    ed.continue_tile_stroke(4, 0);
+    ed.continue_tile_stroke(4, 2);
+    ed.end_tile_stroke();
+    for (int x = 0; x <= 4; ++x) CHECK(tile(x, 0) == 5);
+    CHECK(tile(4, 1) == 5);
+    CHECK(tile(4, 2) == 5);
+    CHECK(tile(3, 1) == -1);
+    h.frames(2); // collision rebuilt by the edit-time tilemap system
+    {
+        const auto* shapes = s.world().get<physics::StaticShapes2DComponent>(s.find_by_name("TileLayer"));
+        REQUIRE(shapes);
+        CHECK_FALSE(shapes->boxes.empty());
+    }
+    ed.undo();
+    CHECK(tile(0, 0) == -1);
+    CHECK(tile(4, 2) == -1);
+    ed.redo();
+    CHECK(tile(2, 0) == 5);
+
+    auto undo_label = [&] {
+        const auto* c = ed.undo_stack().next_undo();
+        return c ? c->label : std::string();
+    };
+    // A stroke that changes nothing records nothing.
+    const auto undo_before = undo_label();
+    REQUIRE(ed.begin_tile_stroke(s.find_by_name("TileLayer"), 1, 0));
+    ed.end_tile_stroke();
+    CHECK(undo_label() == undo_before);
+
+    // Rectangle fill, flips, erase and the eyedropper.
+    ed.tile_brush().mode = editor::Editor::TileMode::Rectangle;
+    ed.tile_brush().tile = 2;
+    REQUIRE(ed.begin_tile_stroke(s.find_by_name("TileLayer"), -2, -2));
+    ed.continue_tile_stroke(0, -1);
+    CHECK(tile(-1, -2) == -1); // filled on release
+    ed.end_tile_stroke();
+    for (int y = -2; y <= -1; ++y)
+        for (int x = -2; x <= 0; ++x) CHECK(tile(x, y) == 2);
+    ed.tile_brush().mode = editor::Editor::TileMode::Paint;
+    ed.tile_brush().tile = 7;
+    ed.tile_brush().flip_x = true;
+    REQUIRE(ed.begin_tile_stroke(s.find_by_name("TileLayer"), 6, 6));
+    ed.end_tile_stroke();
+    ed.tile_brush() = {};
+    ed.tile_brush().mode = editor::Editor::TileMode::Pick;
+    REQUIRE(ed.begin_tile_stroke(s.find_by_name("TileLayer"), 6, 6));
+    CHECK_FALSE(ed.tile_stroke_active());
+    CHECK(ed.tile_brush().tile == 7);
+    CHECK(ed.tile_brush().flip_x);
+    CHECK(ed.tile_brush().mode == editor::Editor::TileMode::Paint);
+    ed.tile_brush().mode = editor::Editor::TileMode::Erase;
+    REQUIRE(ed.begin_tile_stroke(s.find_by_name("TileLayer"), -2, -2));
+    ed.continue_tile_stroke(0, -2);
+    ed.end_tile_stroke();
+    CHECK(tile(-1, -2) == -1);
+    CHECK(tile(-1, -1) == 2);
+    CHECK(undo_label() == "Erase tiles");
+    ed.undo();
+    CHECK(tile(-1, -2) == 2);
+
+    // Terrain painting picks tiles from the tile set's neighbour rule (hot-reloaded file).
+    {
+        auto ts = tilemap::load_tileset_file(assets_dir / "ground.vtileset");
+        REQUIRE(ts);
+        tilemap::Terrain t;
+        t.name = "grass";
+        for (int i = 0; i < 16; ++i) t.tiles[static_cast<std::size_t>(i)] = i;
+        ts->terrains.push_back(t);
+        REQUIRE(tilemap::save_tileset_file(assets_dir / "ground.vtileset", *ts).ok());
+        (void)ed.check_asset_changes();
+    }
+    ed.tile_brush().mode = editor::Editor::TileMode::Terrain;
+    ed.tile_brush().terrain = 0;
+    REQUIRE(ed.begin_tile_stroke(s.find_by_name("TileLayer"), 10, 10));
+    ed.continue_tile_stroke(12, 10);
+    ed.end_tile_stroke();
+    CHECK(tile(10, 10) == 2);  // east neighbour only
+    CHECK(tile(11, 10) == 10); // east + west
+    CHECK(tile(12, 10) == 8);  // west only
+    ed.tile_brush().mode = editor::Editor::TileMode::Erase;
+    REQUIRE(ed.begin_tile_stroke(s.find_by_name("TileLayer"), 12, 10));
+    ed.end_tile_stroke();
+    CHECK(tile(12, 10) == -1);
+    CHECK(tile(11, 10) == 8); // re-picked after the neighbour was erased
+    h.frames(2);
+
+    // Saved with the scene and restored on reopen.
+    REQUIRE(ed.save_scene().ok());
+    const std::string scene_file = ed.scene_path();
+    REQUIRE(ed.open_scene(scene_file).ok());
+    Scene& s2 = ed.edit_scene();
+    const auto* tm2 = s2.world().get<tilemap::TilemapComponent>(s2.find_by_name("TileLayer"));
+    REQUIRE(tm2);
+    CHECK(tm2->tile(2, 0) == 5);
+    CHECK(tm2->cell(6, 6)->flip_x);
+    CHECK(tm2->tile(11, 10) == 8);
+    CHECK(tm2->tileset == ts_id);
 }

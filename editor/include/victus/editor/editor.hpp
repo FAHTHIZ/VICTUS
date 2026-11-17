@@ -25,6 +25,7 @@
 #include "victus/ui/ui.hpp"
 
 #include <memory>
+#include <array>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -191,6 +192,35 @@ public:
     Status set_texture_import_settings(const Uuid& texture, const assets::TextureImportSettings& settings);
     // Gives `e` a SpriteAnimator playing `sheet`'s first clip (adding a Sprite when missing). Undoable.
     bool assign_sprite_sheet(scene::Entity e, const Uuid& sheet);
+    // ---- tilemaps (.vtileset; painting is undoable, one entry per stroke) ----
+    // Writes a tile set slicing `texture` into columns x rows tiles, all with `collision` (default
+    // "<texture>.vtileset" next to it, made unique). Returns its UUID.
+    Result<Uuid> create_tileset(const Uuid& texture, std::uint32_t columns, std::uint32_t rows,
+                                tilemap::TileCollision collision = tilemap::TileCollision::Solid,
+                                std::string_view relative_path = {});
+    // Gives `e` a Tilemap using `tileset` (or sets its tile set) and selects the tile tool. Undoable.
+    bool assign_tileset(scene::Entity e, const Uuid& tileset);
+    enum class TileMode : std::uint8_t { Paint, Erase, Rectangle, Terrain, Pick };
+    struct TileBrush {
+        TileMode mode{TileMode::Paint};
+        std::int32_t tile{0};
+        std::int32_t terrain{0};
+        bool flip_x{false}, flip_y{false};
+    };
+    [[nodiscard]] TileBrush& tile_brush() noexcept { return tile_brush_; }
+    // While on (and the selected entity has a Tilemap in a 2D scene) left-dragging in the viewport
+    // paints with the brush instead of selecting.
+    void set_tile_tool(bool on) noexcept { tile_tool_ = on; }
+    [[nodiscard]] bool tile_tool() const noexcept { return tile_tool_; }
+    // The cell of `map` under a viewport pixel (2D view), or nullopt.
+    [[nodiscard]] std::optional<std::array<std::int32_t, 2>> tile_under(scene::Entity map, math::Vec2 pixel,
+                                                                        math::Vec2 viewport_size);
+    // A brush stroke on `map`: begin, then continue over cells (gaps are filled with a line; the
+    // rectangle mode fills from the first to the last cell on end), end records one undo entry.
+    bool begin_tile_stroke(scene::Entity map, std::int32_t x, std::int32_t y);
+    void continue_tile_stroke(std::int32_t x, std::int32_t y);
+    void end_tile_stroke();
+    [[nodiscard]] bool tile_stroke_active() const noexcept { return tile_stroke_.active; }
     // Writes a new surface shader from the template (default "shaders/Surface.vshader", made
     // unique). Returns its UUID.
     Result<Uuid> create_surface_shader(std::string_view relative_path = {});
@@ -439,6 +469,25 @@ private:
     void mark_prefab_overrides(scene::Entity e, const std::vector<EntityState>& before);
     std::unordered_map<std::string, std::uint64_t> written_prefabs_; // path -> hash of our last write
     void draw_material_editor();
+    void draw_tile_palette();
+    void draw_tile_overlay(render::SpriteBatch& b, float px);
+    void tile_viewport_input(math::Vec2 origin, math::Vec2 size, bool hovered);
+    [[nodiscard]] scene::Entity tile_target();
+    void apply_tile_brush(std::int32_t x, std::int32_t y);
+    struct TileStroke {
+        bool active{false};
+        Uuid map;
+        std::int32_t x0{0}, y0{0}, x{0}, y{0};
+        std::vector<EntityState> before;
+        std::uint64_t revision{0};
+    };
+    TileBrush tile_brush_;
+    TileStroke tile_stroke_;
+    bool tile_tool_{false};
+    bool show_tile_palette_{true};
+    std::optional<std::array<std::int32_t, 2>> tile_hover_;
+    Uuid tileset_texture_; // "Create Tileset" popup target
+    int tileset_columns_{8}, tileset_rows_{8}, tileset_collision_{1};
     bool show_material_editor_{false};
     bool material_dirty_{false};
     Uuid material_editing_;
