@@ -132,7 +132,8 @@ struct GraphDiagnostic {
 
 struct GraphCompileOptions {
     std::string source_name; // shown in the generated header, e.g. "scripts/door.vgraph"
-    // Emits `__vg_trace(node)` before every statement (editor debugging, ADR-0058).
+    // Emits `__vg_trace(node)` at every event entry and before every statement (editor debugging,
+    // ADR-0058/0060). The recorder comes from the host's `__vg_trace_for(source_name)` when present.
     bool trace{false};
 };
 

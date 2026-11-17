@@ -238,6 +238,7 @@ void Editor::frame(float dt) {
         if (edit_sprites_) edit_sprites_->update_sprites(active_scene(), 0); // frame preview
         if (tilemaps_) tilemaps_->update(active_scene());                   // tile sets for drawing
     }
+    update_graph_debug(dt);
     // Inspector property discovery follows script edits made in an external editor.
     if ((script_poll_ += dt) >= 1.0f) {
         script_poll_ = 0;

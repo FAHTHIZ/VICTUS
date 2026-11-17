@@ -1718,3 +1718,61 @@ TEST_CASE("editor: visual script graphs are created, edited with undo, saved and
     REQUIRE(ed.open_graph_editor(*id).ok());
     CHECK(ed.editing_graph().nodes.size() == 5);
 }
+
+TEST_CASE("editor: graph debugging highlights running nodes and the failing node while playing") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "GraphDebug", "GraphDebug", "3d").ok());
+    h.frames(2);
+    auto& ed = *h.ed;
+    auto id = ed.create_graph("scripts/Debug.vgraph");
+    REQUIRE(id.ok());
+    REQUIRE(ed.open_graph_editor(*id).ok());
+    // Starter: 1 On Start -> 2 Log. Add On Update -> Translate.
+    const auto update = ed.graph_add_node("event.update", 0, 160);
+    const auto move = ed.graph_add_node("entity.translate", 260, 160);
+    REQUIRE(ed.graph_connect(update, "out", move, "in"));
+    REQUIRE(ed.save_graph().ok());
+    const Entity box = ed.create_entity(editor::Primitive::Cube);
+    ed.rename(box, "Traced");
+    REQUIRE(ed.assign_graph_to(box));
+    CHECK(ed.graph_node_heat(update) == 0.0f);
+
+    ed.play();
+    h.frames(4);
+    CHECK(ed.graph_node_runs(1) == 1); // start ran once
+    CHECK(ed.graph_node_runs(update) >= 3);
+    CHECK(ed.graph_node_runs(move) == ed.graph_node_runs(update));
+    CHECK(ed.graph_node_heat(update) > 0.9f); // runs every frame
+    CHECK(ed.graph_node_heat(1) < 1.0f);      // ran once, fading
+    CHECK_FALSE(ed.graph_runtime_error());
+
+    // A live edit that fails at run time: the editor names the node after the hot reload.
+    const auto add = ed.graph_add_node("math.add", 0, 300);
+    REQUIRE(ed.graph_set_literal(add, "a", json::Value("text")));
+    REQUIRE(ed.graph_set_literal(add, "b", json::Value(true)));
+    const auto log = ed.graph_add_node("debug.log", 520, 160);
+    REQUIRE(ed.graph_connect(move, "out", log, "in"));
+    REQUIRE(ed.graph_connect(add, "result", log, "message"));
+    REQUIRE(ed.save_graph().ok());
+    h.frames(3);
+    REQUIRE(ed.graph_runtime_error());
+    CHECK(ed.graph_runtime_error()->node == log);
+    CHECK(ed.graph_runtime_error()->message.find("[node") != std::string::npos);
+
+    // After Stop the error stays visible and the highlights fade out.
+    ed.stop();
+    h.frames(90);
+    CHECK(ed.graph_runtime_error());
+    CHECK(ed.graph_node_heat(update) == 0.0f);
+    // The next session starts clean once the graph is fixed.
+    REQUIRE(ed.graph_remove_node(add));
+    REQUIRE(ed.save_graph().ok());
+    ed.play();
+    h.frames(3);
+    CHECK_FALSE(ed.graph_runtime_error());
+    CHECK(ed.graph_node_runs(log) >= 1);
+    ed.stop();
+    h.frames(1);
+}

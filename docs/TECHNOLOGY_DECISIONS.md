@@ -643,6 +643,15 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - No zoom or minimap yet; nodes are fixed-width. Large graphs cost one serialization per edit (cheap at expected sizes).
   - Rejected (a): extra dependency with its own docking/state quirks for features we can add incrementally.
 
+### ADR-0060: Graph debugging through per-graph trace recorders
+- Status: Accepted (Slice 63)
+- Context: designers need to see which nodes run and where a graph failed. Graphs are compiled Luau (ADR-0058); Luau offers debug hooks (line/call) and per-function instrumentation. Unreal Blueprints highlight executed wires and nodes during PIE; Unity Visual Scripting shows flow animation.
+- Options: (a) Luau debug line hooks mapped through the compiler's line table; (b) compile-time trace calls (`__vg_trace(node)`) recorded by the host; (c) re-interpret graphs in a debug VM.
+- Decision: (b). Traced builds start each module with `local __vg_trace = __vg_trace_for and __vg_trace_for("<path>") or function(_node) end`, so the recorder is bound once per module (no lookup per call) and untraced hosts or other runtimes stay valid. Events and statements are traced; pure nodes are inlined and not traced. The host counts runs per graph and node; the editor turns counts into fading highlights. Runtime errors keep the node from the existing `[node N Title]` annotation.
+- Consequences:
+  - Only editor play mode pays the cost (one C call per traced node); exported games compile without trace.
+  - Breakpoints and stepping need pausing inside a Luau call (debug interrupt + resumable coroutine); left for script debugging (Phase 5 item). Rejected (a): hooks slow every script and the line table does not mark entry points cleanly; rejected (c): a second runtime.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

@@ -268,6 +268,12 @@ public:
     Status save_graph();
     // Points `e`'s Script component (added when missing) at the open graph. Undoable scene edit.
     bool assign_graph_to(scene::Entity e);
+    // Graph debugging while playing (play mode traces graphs, ADR-0060): a node's highlight
+    // (1 when it just ran, fading to 0), its run count this session, and the open graph's last
+    // runtime error (kept after Stop until the next Play).
+    [[nodiscard]] float graph_node_heat(std::uint32_t node) const;
+    [[nodiscard]] std::uint64_t graph_node_runs(std::uint32_t node) const;
+    [[nodiscard]] const std::optional<script::GraphRuntimeError>& graph_runtime_error() const noexcept { return graph_error_; }
     // Writes the instance's current content to its prefab and updates every instance in the scene.
     Status apply_prefab(scene::Entity instance);
     // Discards the instance's overrides and brings it back in line with its prefab.
@@ -582,6 +588,12 @@ private:
     void draw_graph_canvas();
     // Reloads the open graph when its file changed on disk and there are no unsaved edits.
     void sync_graph_from_disk();
+    // Follows the play session's graph trace: highlights and the last runtime error.
+    void update_graph_debug(float dt);
+    std::unordered_map<std::uint32_t, float> graph_heat_;
+    std::unordered_map<std::uint32_t, std::uint64_t> graph_hits_seen_;
+    std::optional<script::GraphRuntimeError> graph_error_;
+    bool graph_live_{false};
     // Pushes an undo snapshot; consecutive edits with the same non-empty key share one step.
     void graph_begin_edit(std::string_view coalesce_key = {});
     void graph_end_edit();
