@@ -100,7 +100,14 @@ TEST_CASE("process: line length limit") {
     o.max_line_bytes = 1000;
     auto child = process::ChildProcess::spawn(o);
     REQUIRE(child);
-    auto r = child.value()->read_line(5000);
-    CHECK_FALSE(r);
+    // A busy CI machine may time out (ok, no line) before the child has written 1000 bytes; keep
+    // reading until the limit trips. The over-long line must never come back as a value.
+    bool failed = false;
+    for (int i = 0; i < 20 && !failed; ++i) {
+        auto r = child.value()->read_line(5000);
+        if (!r) failed = true;
+        else REQUIRE_FALSE(r->has_value());
+    }
+    CHECK(failed);
 }
 #endif
