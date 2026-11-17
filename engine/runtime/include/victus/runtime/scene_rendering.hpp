@@ -38,6 +38,8 @@ public:
     GpuAssetCache& operator=(const GpuAssetCache&) = delete;
 
     [[nodiscard]] Result<rhi::TextureHandle> texture(const Uuid& uuid);
+    // True when the texture's import settings ask for nearest ("filter": "nearest") sampling.
+    [[nodiscard]] bool texture_nearest(const Uuid& uuid);
     [[nodiscard]] Result<const GpuModel*> model(const Uuid& uuid);
     // Registers an already-cooked model under a UUID (tools, tests, procedural content).
     [[nodiscard]] Result<const GpuModel*> add_model(const Uuid& uuid, assets::CookedModel model);
@@ -64,6 +66,7 @@ private:
     render::GpuContext& ctx_;
     assets::AssetDatabase* db_;
     std::unordered_map<Uuid, rhi::TextureHandle, UuidHash> textures_;
+    std::unordered_map<Uuid, bool, UuidHash> nearest_;
     std::unordered_map<Uuid, std::unique_ptr<GpuModel>, UuidHash> models_;
     std::unordered_map<std::string, render::GpuMesh> primitives_;
     std::unordered_map<Uuid, Result<render::Material>, UuidHash> materials_;

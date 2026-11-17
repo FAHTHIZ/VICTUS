@@ -31,6 +31,7 @@ struct Sprite {
     std::int32_t layer{0};
     bool flip_x{false}, flip_y{false};
     bool additive{false}; // additive blending (glows, sparks); sorted after alpha sprites of a layer
+    bool nearest{false};  // point sampling for this sprite (pixel art); begin(.., true) forces it for all
 };
 
 struct SpriteBatchStats {
@@ -68,6 +69,7 @@ private:
         rhi::TextureHandle texture;
         std::uint32_t first_index, index_count;
         bool additive{false};
+        bool nearest{false};
     };
     [[nodiscard]] Status ensure_capacity(std::uint32_t sprites);
 

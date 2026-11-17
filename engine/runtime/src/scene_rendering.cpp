@@ -18,6 +18,7 @@ GpuAssetCache::~GpuAssetCache() { clear(); }
 void GpuAssetCache::clear() {
     for (auto& [id, tex] : textures_) ctx_.device().destroy(tex);
     textures_.clear();
+    nearest_.clear();
     for (auto& [id, model] : models_) {
         for (auto& m : model->meshes) ctx_.destroy(m);
         for (auto& t : model->textures) ctx_.device().destroy(t);
@@ -31,6 +32,7 @@ void GpuAssetCache::clear() {
 void GpuAssetCache::evict(const Uuid& uuid) {
     // Materials hold texture handles: any eviction may invalidate them, and they are cheap to rebuild.
     materials_.clear();
+    nearest_.erase(uuid);
     if (const auto it = textures_.find(uuid); it != textures_.end()) {
         ctx_.device().destroy(it->second);
         textures_.erase(it);
@@ -56,6 +58,16 @@ Result<rhi::TextureHandle> GpuAssetCache::texture(const Uuid& uuid) {
     return tex;
 }
 
+bool GpuAssetCache::texture_nearest(const Uuid& uuid) {
+    if (uuid.is_nil() || !db_) return false;
+    if (const auto it = nearest_.find(uuid); it != nearest_.end()) return it->second;
+    const assets::AssetRecord* rec = db_->find(uuid);
+    const bool nearest = rec && rec->kind == assets::AssetKind::Texture &&
+                         assets::TextureImportSettings::from_json(rec->settings).nearest;
+    nearest_.emplace(uuid, nearest);
+    return nearest;
+}
+
 Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
     if (const auto it = materials_.find(uuid); it != materials_.end()) return it->second;
     auto build = [&]() -> Result<render::Material> {
@@ -74,7 +86,8 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
         m.unlit = src->unlit;
         m.uv_scale = src->uv_scale;
         m.uv_offset = src->uv_offset;
-        m.nearest_filter = src->filter == assets::TextureFilter::Nearest;
+        // Nearest when the material asks for it or its base colour texture is imported as pixel art.
+        m.nearest_filter = src->filter == assets::TextureFilter::Nearest || texture_nearest(src->base_color_texture);
         m.shader_params = src->shader_params;
         if (!src->shader.is_nil()) {
             if (auto sh = surface_shader(src->shader); sh) m.surface_shader = *sh;
@@ -508,6 +521,7 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
         if (!s.texture_asset.is_nil()) {
             auto tex = assets.texture(s.texture_asset);
             if (tex) sp.texture = *tex;
+            sp.nearest = assets.texture_nearest(s.texture_asset);
         }
         math::Vec3 pos, scale;
         math::Quat rot;
@@ -529,13 +543,16 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
     particles::gather(scene, emitters);
     for (const particles::EmitterView& v : emitters) {
         rhi::TextureHandle texture = assets.context().soft_particle();
+        bool nearest = false;
         if (!v.emitter->texture.is_nil()) {
             auto tex = assets.texture(v.emitter->texture);
             if (tex) texture = *tex;
+            nearest = assets.texture_nearest(v.emitter->texture);
         }
         for (const particles::Billboard& b : v.billboards) {
             render::Sprite sp;
             sp.texture = texture;
+            sp.nearest = nearest;
             sp.position = {b.position.x, b.position.y};
             sp.size = {b.size, b.size};
             sp.rotation = b.rotation;

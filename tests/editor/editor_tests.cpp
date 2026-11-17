@@ -1032,6 +1032,16 @@ TEST_CASE("editor: materials are created from a selection, edited, assigned with
         ed.undo();
         CHECK_FALSE(s.world().has<animation::SpriteAnimatorComponent>(s.find_by_name("Coin")));
         s.destroy(s.find_by_name("Coin"));
+        // Pixel-art import settings: written to the .meta and re-imported.
+        auto ts = assets::TextureImportSettings::from_json(ed.assets()->find(tex)->settings);
+        ts.nearest = true;
+        REQUIRE(ed.set_texture_import_settings(tex, ts).ok());
+        CHECK(ed.assets()->find(tex)->settings["filter"].as_string() == "nearest");
+        const auto meta = fs::read_text(assets_dir / "bricks.png.meta");
+        REQUIRE(meta.ok());
+        CHECK(meta->find("\"nearest\"") != std::string::npos);
+        CHECK_FALSE(ed.set_texture_import_settings(mat, ts).ok());
+        h.frames(2);
     }
 
     // The material reference survives a scene save/reopen.

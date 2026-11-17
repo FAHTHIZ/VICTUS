@@ -57,6 +57,22 @@ Result<Uuid> Editor::create_sprite_sheet(const Uuid& texture, std::uint32_t colu
     return id;
 }
 
+Status Editor::set_texture_import_settings(const Uuid& texture, const assets::TextureImportSettings& settings) {
+    if (!db_) return make_error(ErrorCode::InvalidArgument, "no project open");
+    const assets::AssetRecord* t = db_->find(texture);
+    if (!t || t->kind != assets::AssetKind::Texture)
+        return make_error(ErrorCode::NotFound, "texture asset " + texture.to_string() + " not found");
+    const std::string path = t->path; // records move when the database changes
+    VICTUS_TRY_STATUS(db_->set_settings(texture, settings.to_json()));
+    std::vector<std::string> messages;
+    auto imported = db_->import(texture, &messages);
+    for (const auto& m : messages) notify(m, !imported);
+    if (!imported) return std::move(imported).error();
+    if (cache_) cache_->evict(texture);
+    notify("Updated import settings of " + path);
+    return {};
+}
+
 bool Editor::assign_sprite_sheet(Entity e, const Uuid& sheet) {
     if (!db_ || e.is_null()) return false;
     auto data = db_->load_sprite_sheet(sheet);

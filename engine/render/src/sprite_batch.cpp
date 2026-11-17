@@ -143,14 +143,17 @@ Status SpriteBatch::prepare(rhi::CommandBuffer& cmd) {
         if (sa.additive != sb.additive) return !sa.additive;
         const auto ta = sa.texture ? sa.texture.index : white.index;
         const auto tb = sb.texture ? sb.texture.index : white.index;
-        return ta < tb;
+        if (ta != tb) return ta < tb;
+        return !sa.nearest && sb.nearest;
     });
     vertices_.resize(std::size_t{count} * 4);
     for (std::uint32_t i = 0; i < count; ++i) {
         const Sprite& s = sprites_[order_[i]];
         const rhi::TextureHandle tex = s.texture ? s.texture : white;
-        if (batches_.empty() || !(batches_.back().texture == tex) || batches_.back().additive != s.additive)
-            batches_.push_back({tex, i * 6, 0, s.additive});
+        const bool nearest = pixel_art_ || s.nearest;
+        if (batches_.empty() || !(batches_.back().texture == tex) || batches_.back().additive != s.additive ||
+            batches_.back().nearest != nearest)
+            batches_.push_back({tex, i * 6, 0, s.additive, nearest});
         batches_.back().index_count += 6;
         const float c = std::cos(s.rotation), sn = std::sin(s.rotation);
         float u0 = s.uv.x, v0 = s.uv.y, u1 = s.uv.z, v1 = s.uv.w;
@@ -174,7 +177,6 @@ Status SpriteBatch::prepare(rhi::CommandBuffer& cmd) {
 void SpriteBatch::render(rhi::RenderPass& pass, rhi::CommandBuffer& cmd) {
     if (batches_.empty()) return;
     VICTUS_PROFILE_SCOPE("SpriteBatch::render");
-    const rhi::SamplerHandle sampler = pixel_art_ ? ctx_.nearest_clamp() : ctx_.linear_clamp();
     bool bound = false, additive = false;
     for (const Batch& b : batches_) {
         if (!bound || b.additive != additive) {
@@ -185,7 +187,7 @@ void SpriteBatch::render(rhi::RenderPass& pass, rhi::CommandBuffer& cmd) {
             bound = true;
             additive = b.additive;
         }
-        pass.bind_texture(rhi::ShaderStage::Fragment, 0, b.texture, sampler);
+        pass.bind_texture(rhi::ShaderStage::Fragment, 0, b.texture, b.nearest ? ctx_.nearest_clamp() : ctx_.linear_clamp());
         pass.draw_indexed(b.index_count, 1, b.first_index, 0, 0);
     }
 }

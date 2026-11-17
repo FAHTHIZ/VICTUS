@@ -56,6 +56,8 @@ struct CameraComponent {
     float z_near{0.1f};
     float z_far{500.0f};
     bool primary{true};
+    // 2D: rounds the camera position to whole screen pixels so pixel art does not shimmer.
+    bool pixel_snap{false};
 };
 struct LightComponent {
     enum class Type : std::uint8_t { Directional, Point };

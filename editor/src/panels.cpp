@@ -897,8 +897,11 @@ bool Editor::inspect_components(Entity e) {
         }
         if (c->projection == CameraComponent::Projection::Perspective)
             changed |= ImGui::DragFloat("Field of View", &c->fov_y_degrees, 0.2f, 5.0f, 170.0f, "%.1f deg");
-        else
+        else {
             changed |= ImGui::DragFloat("Ortho Height", &c->ortho_height, 0.05f, 0.01f, 10000.0f);
+            changed |= ImGui::Checkbox("Pixel Snap", &c->pixel_snap);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("2D: round the camera position to whole screen pixels");
+        }
         changed |= ImGui::DragFloat("Near", &c->z_near, 0.01f, 0.001f, c->z_far);
         changed |= ImGui::DragFloat("Far", &c->z_far, 1.0f, c->z_near, 100000.0f);
         changed |= ImGui::Checkbox("Primary", &c->primary);
@@ -1302,6 +1305,10 @@ void Editor::draw_assets() {
             ImGui::PushID(r.path.c_str());
             ImGui::Selectable(r.path.c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
             if (r.kind == assets::AssetKind::Texture && ImGui::BeginPopupContextItem("##texctx")) {
+                if (ImGui::MenuItem("Import Settings...")) {
+                    import_texture_ = r.uuid;
+                    import_edit_ = assets::TextureImportSettings::from_json(r.settings);
+                }
                 if (ImGui::MenuItem("Create Sprite Sheet...")) sheet_texture_ = r.uuid;
                 ImGui::EndPopup();
             }
@@ -1363,6 +1370,31 @@ void Editor::draw_assets() {
             ImGui::PopID();
         }
         ImGui::EndTable();
+    }
+    if (!import_texture_.is_nil()) ImGui::OpenPopup("Texture Import Settings");
+    if (ImGui::BeginPopupModal("Texture Import Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const auto* tex = db_ ? db_->find(import_texture_) : nullptr;
+        ImGui::Text("%s", tex ? tex->path.c_str() : "?");
+        int filter = import_edit_.nearest ? 1 : 0;
+        const char* filters[] = {"Linear (smooth)", "Nearest (pixel art)"};
+        if (ImGui::Combo("Filter", &filter, filters, 2)) import_edit_.nearest = filter == 1;
+        ImGui::Checkbox("sRGB colour", &import_edit_.srgb);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off for data textures (normal, metallic-roughness maps)");
+        ImGui::Checkbox("Mipmaps", &import_edit_.mipmaps);
+        ImGui::Checkbox("Flip Y", &import_edit_.flip_y);
+        int max_size = static_cast<int>(import_edit_.max_size);
+        if (ImGui::InputInt("Max Size", &max_size, 256)) import_edit_.max_size = static_cast<std::uint32_t>(std::clamp(max_size, 1, 16384));
+        if (ImGui::Button("Apply")) {
+            if (auto st = set_texture_import_settings(import_texture_, import_edit_); !st) notify(st.error().message, true);
+            import_texture_ = {};
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            import_texture_ = {};
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
     if (!sheet_texture_.is_nil()) ImGui::OpenPopup("Create Sprite Sheet");
     if (ImGui::BeginPopupModal("Create Sprite Sheet", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {

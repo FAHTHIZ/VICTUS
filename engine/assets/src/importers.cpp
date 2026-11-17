@@ -22,6 +22,7 @@ json::Value TextureImportSettings::to_json() const {
     v.set("mipmaps", mipmaps);
     v.set("max_size", max_size);
     v.set("flip_y", flip_y);
+    v.set("filter", nearest ? "nearest" : "linear");
     return v;
 }
 
@@ -31,6 +32,7 @@ TextureImportSettings TextureImportSettings::from_json(const json::Value& v) {
     s.mipmaps = v["mipmaps"].as_bool(s.mipmaps);
     s.max_size = static_cast<std::uint32_t>(std::clamp<std::int64_t>(v["max_size"].as_int(s.max_size), 1, 16384));
     s.flip_y = v["flip_y"].as_bool(s.flip_y);
+    s.nearest = v["filter"].as_string() == "nearest";
     return s;
 }
 

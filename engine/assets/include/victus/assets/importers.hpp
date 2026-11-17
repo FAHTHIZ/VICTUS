@@ -16,6 +16,9 @@ struct TextureImportSettings {
     bool mipmaps{true};
     std::uint32_t max_size{4096}; // larger sources are downsampled by whole mip levels
     bool flip_y{false};
+    // Sampling for sprites, particles and materials using the texture: "nearest" keeps pixel art
+    // crisp (and stops sprite-sheet cells bleeding into each other). Not baked into the pixels.
+    bool nearest{false};
     [[nodiscard]] json::Value to_json() const;
     static TextureImportSettings from_json(const json::Value& v);
 };
