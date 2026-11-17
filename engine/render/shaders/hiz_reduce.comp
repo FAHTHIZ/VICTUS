@@ -1,0 +1,25 @@
+#version 450
+// Hi-Z level k+1 from level k: farthest depth of each 2x2 block (edges clamp).
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#ifdef VICTUS_MSL
+layout(std430, set = 1, binding = 1) buffer HiZ { float hiz[]; };
+#else
+layout(std430, set = 1, binding = 0) buffer HiZ { float hiz[]; };
+#endif
+layout(std140, set = 2, binding = 0) uniform Params {
+    ivec4 src; // offset, width, height
+    ivec4 dst; // offset, width, height
+} u;
+
+void main() {
+    ivec2 t = ivec2(gl_GlobalInvocationID.xy);
+    if (t.x >= u.dst.y || t.y >= u.dst.z) return;
+    float m = 0.0;
+    for (int y = 0; y < 2; ++y)
+        for (int x = 0; x < 2; ++x) {
+            ivec2 s = min(t * 2 + ivec2(x, y), ivec2(u.src.y - 1, u.src.z - 1));
+            m = max(m, hiz[u.src.x + s.y * u.src.y + s.x]);
+        }
+    hiz[u.dst.x + t.y * u.dst.y + t.x] = m;
+}

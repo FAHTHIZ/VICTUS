@@ -521,6 +521,24 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - Opt-in keeps desktop output and pixel-exact tests unchanged. Environment maps and reflection captures stay RGBA16F because they are filtered and reused many times.
 - Consequences: the format is fixed when the renderer is created (pipelines are built then). Games enable it on phones; AURORIA does so in its phone profile (D-114).
 
+### ADR-0051: GPU occlusion culling with a Hi-Z pyramid and indirect draws
+- Status: Accepted (Slice 55)
+- Context: the CPU frustum-culls and instances draws, but everything inside the frustum is shaded, even when a wall hides it. SDL_GPU 3.4 has compute pipelines and indirect draws, but no draw-count buffer (no multi-draw-indirect-count) and, unless the device feature is requested, no non-zero `first_instance` in indirect commands.
+- Options:
+  - Occluders: (a) the depth pre-pass of the current frame; (b) last frame's depth reprojected (two-phase); (c) CPU software rasterised occluders; (d) hardware occlusion queries.
+  - Pyramid storage: (a) a storage buffer with every level packed; (b) a mipped R32F storage texture.
+  - Output: (a) one indirect command per CPU batch with a GPU-written instance count; (b) a fully GPU-built draw list (needs draw-count buffers).
+- Decision: occluders (a), storage (a), output (a).
+  - When the pre-pass runs (SSAO or `depth_prepass`), `hiz_depth.comp` writes the farthest depth of each 8x8 tile, and `hiz_reduce.comp` halves it to 1x1 (one compute pass per level, so SDL orders the writes). `occlusion_cull.comp` projects each opaque main-pass instance's world AABB with the same (TAA-jittered) matrix, picks the coarsest level where the rectangle spans at most 2 tiles per axis and keeps the instance if its nearest depth is not behind the farthest Hi-Z depth (plus a depth-format tolerance). Boxes crossing the camera plane and partly off-screen rectangles are kept; fully off-screen ones are dropped.
+  - Survivors are appended with an atomic counter to the batch's indirect command, packed from the batch's own instance offset, so commands use `first_instance = 0` and the draw binds the instance stream at that offset.
+  - A buffer pyramid needs no extra texture formats or storage-texture usage, which keeps the same path on Vulkan, Metal and D3D12, and phones.
+  - The pre-pass, shadows and transparent draws are unchanged. Only the main (shaded) pass is culled, so the depth buffer, and therefore the image, is identical with culling on or off.
+  - RHI additions: `ComputePipelineDesc`/`create_compute_pipeline`, `ComputePass` (pipelines, read-only storage buffers, samplers, dispatch), read-write buffers per compute pass, compute uniforms, `RenderPass::draw_indexed_indirect`, `Device::read_buffer`, `BufferUsageComputeRead`, `DeviceCapabilities::compute`, dispatch and indirect-draw stats. The shader generator reflects compute workgroup sizes and read-write counts, and only recompiles shaders whose hash changed.
+- Consequences:
+  - Occluders are only pre-pass geometry (opaque, not alpha-tested or surface-shaded). Without a pre-pass (Low tier without SSAO) there is no culling.
+  - Fragment shading is saved, but vertex work for hidden objects remains in the pre-pass. A two-phase, previous-frame Hi-Z variant could also cull the pre-pass and shadows later.
+  - CPU batching still runs; there is no GPU frustum culling or GPU LOD selection, and indirect draws are one call per batch (no draw-count buffers in SDL_GPU).
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

@@ -8,6 +8,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <format>
 
@@ -291,6 +292,7 @@ struct Device::Impl {
     SlotMap<SDL_GPUSampler*> samplers;
     SlotMap<SDL_GPUShader*> shaders;
     SlotMap<PipelineEntry> pipelines;
+    SlotMap<SDL_GPUComputePipeline*> compute_pipelines;
     std::vector<TextureHandle> transient;
     SDL_GPUTransferBuffer* upload{nullptr};
     std::uint32_t upload_size{0};
@@ -326,6 +328,7 @@ Result<std::unique_ptr<Device>> Device::create(const DeviceDesc& desc) {
     caps.astc_compression = SDL_GPUTextureSupportsFormat(dev, SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM_SRGB, SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
     caps.anisotropy = true;
     caps.depth_clamp = true;
+    caps.compute = true; // every SDL_GPU backend has compute and indirect draws
     caps.max_texture_size = 8192; // SDL_GPU guaranteed minimum on supported devices
     for (std::uint32_t s : {8u, 4u, 2u}) {
         if (SDL_GPUTextureSupportsSampleCount(dev, SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, to_sdl_samples(s))) {
@@ -347,6 +350,8 @@ Device::~Device() {
     SDL_WaitForGPUIdle(dev);
     for (auto& e : impl_->pipelines.entries)
         if (e.alive) SDL_ReleaseGPUGraphicsPipeline(dev, e.value.pipe);
+    for (auto& e : impl_->compute_pipelines.entries)
+        if (e.alive) SDL_ReleaseGPUComputePipeline(dev, e.value);
     for (auto& e : impl_->shaders.entries)
         if (e.alive) SDL_ReleaseGPUShader(dev, e.value);
     for (auto& e : impl_->samplers.entries)
@@ -439,6 +444,7 @@ Result<BufferHandle> Device::create_buffer(const BufferDesc& desc) {
     if (desc.usage & BufferUsageIndirect) ci.usage |= SDL_GPU_BUFFERUSAGE_INDIRECT;
     if (desc.usage & BufferUsageStorageRead) ci.usage |= SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
     if (desc.usage & BufferUsageStorageWrite) ci.usage |= SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE;
+    if (desc.usage & BufferUsageComputeRead) ci.usage |= SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ;
     ci.size = desc.size;
     SDL_GPUBuffer* b = SDL_CreateGPUBuffer(static_cast<SDL_GPUDevice*>(device_), &ci);
     if (!b) return make_error(ErrorCode::DeviceError, std::format("create buffer '{}' failed: {}", desc.name, SDL_GetError()));
@@ -579,6 +585,48 @@ void Device::destroy(ShaderHandle h) {
     SDL_ReleaseGPUShader(static_cast<SDL_GPUDevice*>(device_), s);
     stats_.live_shaders = impl_->shaders.live;
 }
+Result<ComputePipelineHandle> Device::create_compute_pipeline(const ComputePipelineDesc& desc) {
+    SDL_GPUComputePipelineCreateInfo ci{};
+    std::string entry = desc.entry;
+    if ((impl_->formats & SDL_GPU_SHADERFORMAT_SPIRV) && !desc.spirv.empty()) {
+        ci.format = SDL_GPU_SHADERFORMAT_SPIRV;
+        ci.code = desc.spirv.data();
+        ci.code_size = desc.spirv.size();
+    } else if ((impl_->formats & SDL_GPU_SHADERFORMAT_MSL) && !desc.msl.empty()) {
+        ci.format = SDL_GPU_SHADERFORMAT_MSL;
+        ci.code = reinterpret_cast<const Uint8*>(desc.msl.data());
+        ci.code_size = desc.msl.size();
+        if (entry == "main") entry = "main0";
+    } else {
+        return make_error(ErrorCode::Unsupported,
+                          std::format("compute shader '{}' has no bytecode for backend {}", desc.name, caps_.driver_name));
+    }
+    if (desc.threads_x == 0 || desc.threads_y == 0 || desc.threads_z == 0)
+        return make_error(ErrorCode::InvalidArgument, std::format("compute shader '{}' has no workgroup size", desc.name));
+    ci.entrypoint = entry.c_str();
+    ci.num_samplers = desc.samplers;
+    ci.num_readonly_storage_textures = desc.readonly_storage_textures;
+    ci.num_readonly_storage_buffers = desc.readonly_storage_buffers;
+    ci.num_readwrite_storage_textures = desc.readwrite_storage_textures;
+    ci.num_readwrite_storage_buffers = desc.readwrite_storage_buffers;
+    ci.num_uniform_buffers = desc.uniform_buffers;
+    ci.threadcount_x = desc.threads_x;
+    ci.threadcount_y = desc.threads_y;
+    ci.threadcount_z = desc.threads_z;
+    SDL_GPUComputePipeline* p = SDL_CreateGPUComputePipeline(static_cast<SDL_GPUDevice*>(device_), &ci);
+    if (!p) return make_error(ErrorCode::DeviceError, std::format("create compute pipeline '{}' failed: {}", desc.name, SDL_GetError()));
+    auto h = impl_->compute_pipelines.insert<ComputePipelineHandle>(p);
+    stats_.live_compute_pipelines = impl_->compute_pipelines.live;
+    return h;
+}
+
+void Device::destroy(ComputePipelineHandle h) {
+    SDL_GPUComputePipeline* p = nullptr;
+    if (!impl_->compute_pipelines.remove(h, p)) return;
+    SDL_ReleaseGPUComputePipeline(static_cast<SDL_GPUDevice*>(device_), p);
+    stats_.live_compute_pipelines = impl_->compute_pipelines.live;
+}
+
 void Device::destroy(PipelineHandle h) {
     PipelineEntry e;
     if (!impl_->pipelines.remove(h, e)) return;
@@ -644,6 +692,34 @@ Result<std::vector<std::uint8_t>> Device::read_texture(TextureHandle h) {
     return out;
 }
 
+Result<std::vector<std::uint8_t>> Device::read_buffer(BufferHandle h, std::uint32_t offset, std::uint32_t size) {
+    auto* e = impl_->buffers.get(h);
+    if (!e) return make_error(ErrorCode::InvalidArgument, "invalid buffer handle");
+    if (offset > e->size) return make_error(ErrorCode::InvalidArgument, "read_buffer offset out of range");
+    if (size == 0) size = e->size - offset;
+    if (size > e->size - offset) return make_error(ErrorCode::InvalidArgument, "read_buffer range out of bounds");
+    auto* dev = static_cast<SDL_GPUDevice*>(device_);
+    SDL_GPUTransferBufferCreateInfo ti{SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD, size, 0};
+    SDL_GPUTransferBuffer* tb = SDL_CreateGPUTransferBuffer(dev, &ti);
+    if (!tb) return make_error(ErrorCode::DeviceError, SDL_GetError());
+    SDL_GPUCommandBuffer* cb = SDL_AcquireGPUCommandBuffer(dev);
+    SDL_GPUCopyPass* cp = SDL_BeginGPUCopyPass(cb);
+    SDL_GPUBufferRegion src{e->buf, offset, size};
+    SDL_GPUTransferBufferLocation dst{tb, 0};
+    SDL_DownloadFromGPUBuffer(cp, &src, &dst);
+    SDL_EndGPUCopyPass(cp);
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cb);
+    SDL_WaitForGPUFences(dev, true, &fence, 1);
+    SDL_ReleaseGPUFence(dev, fence);
+    std::vector<std::uint8_t> out(size);
+    void* mapped = SDL_MapGPUTransferBuffer(dev, tb, false);
+    if (mapped) std::memcpy(out.data(), mapped, size);
+    SDL_UnmapGPUTransferBuffer(dev, tb);
+    SDL_ReleaseGPUTransferBuffer(dev, tb);
+    if (!mapped) return make_error(ErrorCode::DeviceError, "map download buffer failed");
+    return out;
+}
+
 // ---- CommandBuffer -------------------------------------------------------------------
 
 CommandBuffer::~CommandBuffer() {
@@ -656,6 +732,7 @@ CommandBuffer::~CommandBuffer() {
 void CommandBuffer::push_uniforms(ShaderStage stage, std::uint32_t slot, const void* data, std::uint32_t size) {
     auto* cb = static_cast<SDL_GPUCommandBuffer*>(cmd_);
     if (stage == ShaderStage::Vertex) SDL_PushGPUVertexUniformData(cb, slot, data, size);
+    else if (stage == ShaderStage::Compute) SDL_PushGPUComputeUniformData(cb, slot, data, size);
     else SDL_PushGPUFragmentUniformData(cb, slot, data, size);
 }
 
@@ -770,6 +847,25 @@ RenderPass CommandBuffer::begin_render_pass(const RenderPassDesc& desc) {
     return RenderPass(device_, pass);
 }
 
+ComputePass CommandBuffer::begin_compute_pass(std::span<const BufferHandle> readwrite_buffers) {
+    auto& impl = *device_->impl_;
+    std::array<SDL_GPUStorageBufferReadWriteBinding, 8> bindings{};
+    const auto count = static_cast<Uint32>(std::min<std::size_t>(readwrite_buffers.size(), bindings.size()));
+    for (Uint32 i = 0; i < count; ++i) {
+        auto* e = impl.buffers.get(readwrite_buffers[i]);
+        if (!e) {
+            VICTUS_LOG_ERROR("rhi", "compute pass read-write buffer {} invalid", i);
+            return ComputePass(device_, nullptr);
+        }
+        bindings[i].buffer = e->buf;
+        bindings[i].cycle = false;
+    }
+    SDL_GPUComputePass* pass =
+        SDL_BeginGPUComputePass(static_cast<SDL_GPUCommandBuffer*>(cmd_), nullptr, 0, count ? bindings.data() : nullptr, count);
+    if (!pass) VICTUS_LOG_ERROR("rhi", "begin compute pass failed: {}", SDL_GetError());
+    return ComputePass(device_, pass);
+}
+
 void CommandBuffer::blit(TextureHandle src, TextureHandle dst, Filter filter) {
     auto& impl = *device_->impl_;
     auto* s = impl.textures.get(src);
@@ -869,8 +965,44 @@ void RenderPass::draw_indexed(std::uint32_t index_count, std::uint32_t instance_
     SDL_DrawGPUIndexedPrimitives(static_cast<SDL_GPURenderPass*>(pass_), index_count, instance_count, first_index, vertex_offset, first_instance);
     device_->stats_.draw_calls++;
 }
+void RenderPass::draw_indexed_indirect(BufferHandle buffer, std::uint32_t offset, std::uint32_t draw_count) {
+    auto* b = device_->impl_->buffers.get(buffer);
+    if (!b || draw_count == 0) return;
+    SDL_DrawGPUIndexedPrimitivesIndirect(static_cast<SDL_GPURenderPass*>(pass_), b->buf, offset, draw_count);
+    device_->stats_.draw_calls += draw_count;
+    device_->stats_.indirect_draws += draw_count;
+}
 void RenderPass::end() {
     if (pass_) SDL_EndGPURenderPass(static_cast<SDL_GPURenderPass*>(pass_));
+    pass_ = nullptr;
+}
+
+// ---- ComputePass ---------------------------------------------------------------------
+
+void ComputePass::bind_pipeline(ComputePipelineHandle pipeline) {
+    if (auto* p = device_->impl_->compute_pipelines.get(pipeline))
+        SDL_BindGPUComputePipeline(static_cast<SDL_GPUComputePass*>(pass_), *p);
+}
+void ComputePass::bind_storage_buffer(std::uint32_t slot, BufferHandle buffer) {
+    auto* b = device_->impl_->buffers.get(buffer);
+    if (!b) return;
+    SDL_GPUBuffer* buf = b->buf;
+    SDL_BindGPUComputeStorageBuffers(static_cast<SDL_GPUComputePass*>(pass_), slot, &buf, 1);
+}
+void ComputePass::bind_texture(std::uint32_t slot, TextureHandle texture, SamplerHandle sampler) {
+    auto* t = device_->impl_->textures.get(texture);
+    auto* s = device_->impl_->samplers.get(sampler);
+    if (!t || !s) return;
+    SDL_GPUTextureSamplerBinding b{t->tex, *s};
+    SDL_BindGPUComputeSamplers(static_cast<SDL_GPUComputePass*>(pass_), slot, &b, 1);
+}
+void ComputePass::dispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) {
+    if (x == 0 || y == 0 || z == 0) return;
+    SDL_DispatchGPUCompute(static_cast<SDL_GPUComputePass*>(pass_), x, y, z);
+    device_->stats_.dispatches++;
+}
+void ComputePass::end() {
+    if (pass_) SDL_EndGPUComputePass(static_cast<SDL_GPUComputePass*>(pass_));
     pass_ = nullptr;
 }
 

@@ -34,6 +34,18 @@ TEST_CASE("shader compiler: built-in shaders compile with the generator's resour
         const std::filesystem::path file = std::filesystem::path(VICTUS_SHADER_SOURCE_DIR) / std::string(b.name);
         auto text = fs::read_text(file);
         REQUIRE_MESSAGE(text.ok(), std::string(b.name));
+        if (b.stage == rhi::ShaderStage::Compute) {
+            // Built-in compute shaders only come from the offline library (the runtime compiler
+            // serves surface shaders); they must still compile, with their workgroup size recorded.
+            sc::CompileOptions o;
+            o.name = std::string(b.name);
+            o.want_msl = false;
+            auto r = sc::compile_glsl(*text, sc::Stage::Compute, o);
+            REQUIRE_MESSAGE(r.ok(), (r.ok() ? "" : r.error().message));
+            CHECK(b.threads[0] * b.threads[1] * b.threads[2] > 0);
+            CHECK(b.readwrite_storage_buffers > 0);
+            continue;
+        }
         const sc::Stage stage = b.stage == rhi::ShaderStage::Vertex ? sc::Stage::Vertex : sc::Stage::Fragment;
         sc::CompileOptions o;
         o.name = std::string(b.name);

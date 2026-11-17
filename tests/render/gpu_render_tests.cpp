@@ -131,7 +131,7 @@ TEST_CASE("gpu: 3D PBR scene with shadows, sky and culling") {
     CHECK(r.stats().culled == 1);
     CHECK(r.stats().visible == 2);
     CHECK(r.stats().lines == 220); // 11 lines per axis, each split into 10 one-unit segments
-    CHECK(r.graph_info().executed_passes.size() == 16); // High tier: shadow, prepass, 2x SSAO, forward, 9x bloom, tonemap, FXAA
+    CHECK(r.graph_info().executed_passes.size() == 17); // High tier: shadow, prepass, occlusion cull, 2x SSAO, forward, 9x bloom, tonemap, FXAA
 
     auto px = dev.read_texture(target);
     REQUIRE(px.ok());
