@@ -381,5 +381,11 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 **Risks / revisit triggers.** Resolution reads each file in the chain per cache miss (cheap for small chains). Revisit if parents need to lock fields, if run-time instances from scripts are needed, or if load times grow with deep chains (cache resolved parents).
 
+### ADR-0037: Scene transitions are validated at the call and applied at the end of the update
+- Status: Accepted (2026-11-17, Slice 38).
+- Context: games need menus, levels and restarts; before this slice only the startup scene (or a checkpoint) could be loaded.
+- Decision: `scene.load(path, params?)` reads and fully parses the target through `HostOptions::scene_loader` (default: `<project root>/<path>` through mounted packs) and returns `nil, error` when it is missing, outside the project or invalid; a valid request replaces the scene at the end of the current update (the newest of `scene.load`, `scene.reload` and `save.restore` wins). Every script instance is dropped and starts again; the single Luau VM and module-level state survive, and JSON-serialisable `params` reach the next scene via `scene.params()`. Hosts reset physics and audio through `on_scene_loaded`. Checkpoints store the scene path and params. Export/check reject literal `scene.load("...")` targets that are not project scenes.
+- Consequences: transitions are deterministic (captures replay them) and work identically in `victus run`, exported games, `victus simulate` and editor play mode (which changes only its play copy). No additive or asynchronous loading yet: large scenes load synchronously within one frame.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
