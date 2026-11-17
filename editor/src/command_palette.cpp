@@ -112,6 +112,10 @@ std::vector<EditorCommand> Editor::commands() {
     for (const auto& [label, p] : prims)
         add(std::string("Entity: Create ") + label, {}, project_.has_value(), [this, kind = p] { (void)create_entity(kind); });
 
+    add("Entity: Create Terrain", {}, has_db, [this] {
+        if (auto t = create_terrain(); !t) notify("cannot create terrain: " + t.error().message, true);
+    });
+
     // Assets
     add("Assets: Reimport All", {}, has_db, [this] { (void)reimport_assets(); });
     add("Assets: New Material", {}, has_db, [this] { new_material_for_selection(); });

@@ -67,6 +67,7 @@ assets::AssetKind asset_kind_for_hint(std::string_view hint) {
     if (hint == "prefab") return assets::AssetKind::Prefab;
     if (hint == "spritesheet") return assets::AssetKind::SpriteSheet;
     if (hint == "tileset") return assets::AssetKind::Tileset;
+    if (hint == "terrain") return assets::AssetKind::Terrain;
     return assets::AssetKind::Unknown;
 }
 
@@ -217,6 +218,7 @@ const char* kind_icon(assets::AssetKind k) {
     case assets::AssetKind::Shader: return "[shd]";
     case assets::AssetKind::SpriteSheet: return "[sht]";
     case assets::AssetKind::Tileset: return "[tls]";
+    case assets::AssetKind::Terrain: return "[ter]";
     default: return "[file]";
     }
 }
@@ -238,6 +240,7 @@ void Editor::frame(float dt) {
     if (play_state_ == PlayState::Playing && play_scene_) tick_play(dt);
     else if (!play_scene_) {
         if (edit_sprites_) edit_sprites_->update_sprites(active_scene(), 0); // frame preview
+        if (terrains_) terrains_->update(active_scene());                   // terrain chunks in edit mode
         if (tilemaps_) tilemaps_->update(active_scene());                   // tile sets for drawing
     }
     update_graph_debug(dt);
@@ -477,6 +480,9 @@ void Editor::draw_menu_bar() {
         item("Directional Light", Primitive::DirectionalLight);
         item("Point Light", Primitive::PointLight);
         item("Spot Light", Primitive::SpotLight);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Terrain", nullptr, false, db_ != nullptr && play_state_ == PlayState::Editing))
+            if (auto t = create_terrain(); !t) notify("cannot create terrain: " + t.error().message, true);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Assets")) {

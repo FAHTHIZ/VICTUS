@@ -94,6 +94,8 @@ void Editor::start_editor_clients() {
         animation::add_animation_systems(c->sim, *c->animation);
         if (!tilemaps_) tilemaps_ = std::make_unique<tilemap::TilemapSystem>();
         tilemap::add_tilemap_systems(c->sim, *tilemaps_);
+        if (!terrains_) terrains_ = std::make_unique<terrain::TerrainSystem>();
+        terrain::add_terrain_systems(c->sim, *terrains_);
         c->particles = std::make_unique<particles::ParticleSystem>(particles::ParticleSettings{.jobs = &workers()});
         particles::add_particle_systems(c->sim, *c->particles);
         c->navigation = std::make_unique<navigation::NavigationSystem>();

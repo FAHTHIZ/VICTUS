@@ -11,6 +11,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
+#include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
@@ -257,6 +258,7 @@ struct Headless {
     std::unique_ptr<assets::AssetDatabase> db;
     std::unique_ptr<animation::AnimationSystem> animations;
     std::unique_ptr<tilemap::TilemapSystem> tilemaps;
+    std::unique_ptr<terrain::TerrainSystem> terrains;
     particles::ParticleSystem particle_system; // single-threaded like physics; identical either way
     navigation::NavigationSystem nav;
     std::unique_ptr<audio::AudioEngine> audio_engine;
@@ -307,6 +309,8 @@ struct Headless {
         animation::add_animation_systems(sim, *animations);
         tilemaps = std::make_unique<tilemap::TilemapSystem>(db ? assets::tileset_provider(*db) : tilemap::TilesetProvider{});
         tilemap::add_tilemap_systems(sim, *tilemaps);
+        terrains = std::make_unique<terrain::TerrainSystem>(db ? assets::terrain_provider(*db) : terrain::TerrainProvider{});
+        terrain::add_terrain_systems(sim, *terrains);
         particles::add_particle_systems(sim, particle_system);
         navigation::add_navigation_systems(sim, nav);
         audio::EngineOptions ao; // mixed without a device so audio calls behave as in the game
@@ -715,6 +719,14 @@ int cmd_check(const std::vector<std::string>& a) {
             ++problems;
         }
     }
+    // Terrains: each heightfield must load.
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::Terrain) continue;
+        if (auto t = (*db)->load_terrain(r.uuid); !t) {
+            std::printf("error: %s\n", t.error().message.c_str());
+            ++problems;
+        }
+    }
     script::HostOptions so;
     so.assets_root = assets;
     so.input_map = proj->settings().input;
@@ -761,6 +773,14 @@ int cmd_check(const std::vector<std::string>& a) {
             if (!t || t->kind != assets::AssetKind::Tileset) {
                 std::printf("error: %s: entity '%s' uses missing tile set %s\n", rel.c_str(), entity_name(scene, e).c_str(),
                             c.tileset.to_string().c_str());
+                ++problems;
+            }
+        });
+        scene.world().each<terrain::TerrainComponent>([&](scene::Entity e, terrain::TerrainComponent& c) {
+            const assets::AssetRecord* t = c.data.is_nil() ? nullptr : (*db)->find(c.data);
+            if (!t || t->kind != assets::AssetKind::Terrain) {
+                std::printf("error: %s: entity '%s' uses missing terrain data %s\n", rel.c_str(), entity_name(scene, e).c_str(),
+                            c.data.to_string().c_str());
                 ++problems;
             }
         });

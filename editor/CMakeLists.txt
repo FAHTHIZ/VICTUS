@@ -13,6 +13,7 @@ add_library(victus_editor_core STATIC
     src/graph_panel.cpp
     src/sprite_sheets.cpp
     src/tilemaps.cpp
+    src/terrain_tools.cpp
     src/editor_clients.cpp
     src/gizmo.cpp
     src/gizmo_tool.cpp

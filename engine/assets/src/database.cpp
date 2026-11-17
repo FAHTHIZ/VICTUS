@@ -85,6 +85,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     if (e == ".vshader" || e == ".vmatgraph") return AssetKind::Shader;
     if (e == ".vsheet") return AssetKind::SpriteSheet;
     if (e == ".vtileset") return AssetKind::Tileset;
+    if (e == terrain::kTerrainExtension) return AssetKind::Terrain;
     if (e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac") return AssetKind::Audio;
     return AssetKind::Unknown;
 }
@@ -482,6 +483,26 @@ Result<tilemap::Tileset> AssetDatabase::load_tileset(const Uuid& uuid) const {
             return make_error(ErrorCode::NotFound, std::format("{}: texture {} is not a texture asset", path, tileset->texture.to_string()));
     }
     return tileset;
+}
+
+Result<terrain::Heightfield> AssetDatabase::load_terrain(const Uuid& uuid) const {
+    const AssetRecord* rec = find(uuid);
+    if (!rec || rec->kind != AssetKind::Terrain)
+        return make_error(ErrorCode::NotFound, "terrain asset " + uuid.to_string() + " not found");
+    auto hf = terrain::load_file(source_path(*rec));
+    if (!hf) return make_error(hf.error().code, std::format("{}: {}", rec->path, hf.error().message));
+    return hf;
+}
+
+terrain::TerrainProvider terrain_provider(AssetDatabase& db) {
+    return [&db](const Uuid& uuid) -> std::shared_ptr<terrain::Heightfield> {
+        auto hf = db.load_terrain(uuid);
+        if (!hf) {
+            VICTUS_LOG_WARN("assets", "{}", hf.error().message);
+            return nullptr;
+        }
+        return std::make_shared<terrain::Heightfield>(std::move(*hf));
+    };
 }
 
 tilemap::TilesetProvider tileset_provider(AssetDatabase& db) {

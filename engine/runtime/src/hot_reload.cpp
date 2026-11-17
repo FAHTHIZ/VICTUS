@@ -29,6 +29,7 @@ std::vector<std::string> HotReloadReport::lines() const {
     for (const auto& m : shaders) out.push_back("reloaded shader " + m);
     for (const auto& m : sprite_sheets) out.push_back("reloaded sprite sheet " + m);
     for (const auto& m : tilesets) out.push_back("reloaded tile set " + m);
+    for (const auto& m : terrains) out.push_back("reloaded terrain " + m);
     for (const auto& r : restart_needed) out.push_back(r + " changed; restart to see it");
     return out;
 }
@@ -114,6 +115,8 @@ HotReloadReport AssetHotReloader::check() {
             report.sprite_sheets.push_back(path);
         } else if (kind == assets::AssetKind::Tileset) {
             report.tilesets.push_back(path);
+        } else if (kind == assets::AssetKind::Terrain) {
+            report.terrains.push_back(path);
         } else if (kind == assets::AssetKind::Texture || kind == assets::AssetKind::Model) {
             continue; // handled above (or a dependency of a model that was re-imported)
         } else if (ext == ".bin") {
@@ -127,8 +130,9 @@ HotReloadReport AssetHotReloader::check() {
 }
 
 void AssetHotReloader::apply(const HotReloadReport& report, GpuAssetCache* cache, animation::AnimationSystem* animations,
-                             tilemap::TilemapSystem* tilemaps) {
+                             tilemap::TilemapSystem* tilemaps, terrain::TerrainSystem* terrains) {
     if (tilemaps && !report.tilesets.empty()) tilemaps->clear_cache();
+    if (terrains && !report.terrains.empty()) terrains->clear_cache();
     if (cache && !report.shaders.empty()) cache->evict_shaders();
     if (animations && !report.sprite_sheets.empty()) animations->clear_sheets();
     if (cache && !report.materials.empty()) cache->evict_materials();
