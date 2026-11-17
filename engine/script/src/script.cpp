@@ -151,12 +151,21 @@ struct ScriptHost::Impl {
         CompiledGraph compiled;
     };
     std::unordered_map<std::string, GraphModule> graphs;
+    // Visual script debugging (HostOptions::trace_graphs): node run counts and the last error.
+    std::unordered_map<std::string, std::unordered_map<std::uint32_t, std::uint64_t>> graph_hits;
+    std::unordered_map<std::string, GraphRuntimeError> graph_errors;
 
     void report(std::string message) {
         if (message.find(".vgraph:") != std::string::npos)
             for (const auto& [path, gm] : graphs)
                 if (message.find(path + ":") != std::string::npos) {
                     message = annotate_graph_error(message, gm.compiled, gm.graph);
+                    GraphRuntimeError& ge = graph_errors[path];
+                    ge.node = 0;
+                    if (const auto at = message.rfind("[node "); at != std::string::npos)
+                        ge.node = static_cast<std::uint32_t>(std::strtoul(message.c_str() + at + 6, nullptr, 10));
+                    ge.message = message;
+                    ge.serial = counters.errors + 1;
                     break;
                 }
         ++counters.errors;
@@ -254,6 +263,7 @@ struct ScriptHost::Impl {
             }
             GraphCompileOptions gopt;
             gopt.source_name = m.path;
+            gopt.trace = options.trace_graphs;
             CompiledGraph compiled = compile_graph(*graph, gopt);
             if (!compiled.ok()) {
                 report(std::format("{}: {}", m.path, compiled.error_text()));
@@ -261,6 +271,7 @@ struct ScriptHost::Impl {
             }
             *text = compiled.source;
             graphs[m.path] = {std::move(*graph), std::move(compiled)};
+            graph_errors.erase(m.path);
         }
         std::string error;
         const int top = lua_gettop(L);
@@ -1065,6 +1076,21 @@ int log_warn(lua_State* L) {
 int log_error(lua_State* L) {
     VICTUS_LOG_ERROR("script", "{}", concat_args(L));
     return 0;
+}
+
+// Visual script tracing (ADR-0060): `__vg_trace_for(graph)` returns `function(node)` counting runs.
+int graph_trace_hit(lua_State* L) {
+    const char* graph = lua_tostring(L, lua_upvalueindex(1));
+    const auto node = static_cast<std::uint32_t>(luaL_checkinteger(L, 1));
+    auto* h = static_cast<ScriptHost::Impl*>(lua_callbacks(L)->userdata);
+    if (h && graph && h->options.trace_graphs) ++h->graph_hits[graph][node];
+    return 0;
+}
+int graph_trace_for(lua_State* L) {
+    luaL_checkstring(L, 1);
+    lua_pushvalue(L, 1);
+    lua_pushcclosure(L, graph_trace_hit, "__vg_trace", 1);
+    return 1;
 }
 
 void register_lib(lua_State* L, const char* name, const luaL_Reg* fns) {
@@ -3339,6 +3365,8 @@ void open_victus_libs(lua_State* L) {
     lua_setglobal(L, "print");
     lua_pushcfunction(L, script_require, "require");
     lua_setglobal(L, "require");
+    lua_pushcfunction(L, graph_trace_for, "__vg_trace_for");
+    lua_setglobal(L, "__vg_trace_for");
 }
 
 bool editable(lua_State* L, int idx) {
@@ -3819,6 +3847,17 @@ HostStats ScriptHost::stats() const {
 
 const std::vector<std::string>& ScriptHost::recent_errors() const noexcept { return impl_->recent_errors; }
 const HostOptions& ScriptHost::options() const noexcept { return impl_->options; }
+
+std::unordered_map<std::uint32_t, std::uint64_t> ScriptHost::graph_node_hits(std::string_view path) const {
+    const auto it = impl_->graph_hits.find(std::string(path));
+    return it == impl_->graph_hits.end() ? std::unordered_map<std::uint32_t, std::uint64_t>{} : it->second;
+}
+
+std::optional<GraphRuntimeError> ScriptHost::last_graph_error(std::string_view path) const {
+    const auto it = impl_->graph_errors.find(std::string(path));
+    if (it == impl_->graph_errors.end()) return std::nullopt;
+    return it->second;
+}
 void ScriptHost::forget_prefabs() { impl_->prefabs.clear(); }
 void ScriptHost::set_input_map(gameplay::InputMap map) { impl_->options.input_map = std::move(map); }
 void ScriptHost::set_current_scene(std::string path) { impl_->current_scene = std::move(path); }

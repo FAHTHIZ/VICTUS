@@ -109,6 +109,8 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace victus::script {
@@ -168,6 +170,16 @@ struct HostOptions {
     // Resolves `bridge.open(name)` to a helper process (players read the project's "bridges"
     // section, see project::bridge_launch). Empty: bridges are unavailable to scripts.
     std::function<Result<process::LaunchOptions>(std::string_view name)> bridge_launcher;
+    // Compiles visual script graphs with trace instrumentation and records which nodes run
+    // (graph_node_hits). The editor turns it on for play mode (ADR-0060).
+    bool trace_graphs{false};
+};
+
+// The most recent runtime error of a visual script graph.
+struct GraphRuntimeError {
+    std::uint32_t node{0}; // 0 when the failing line does not belong to a node
+    std::string message;   // annotated message ("... [node 3 Log]")
+    std::uint64_t serial{0}; // increases with every error of the host
 };
 
 struct HostStats {
@@ -212,6 +224,11 @@ public:
     [[nodiscard]] HostStats stats() const;
     [[nodiscard]] const std::vector<std::string>& recent_errors() const noexcept;
     [[nodiscard]] const HostOptions& options() const noexcept;
+    // Visual script debugging: how many times each event/statement node of the graph at `path`
+    // has run (needs HostOptions::trace_graphs; empty otherwise).
+    [[nodiscard]] std::unordered_map<std::uint32_t, std::uint64_t> graph_node_hits(std::string_view path) const;
+    // The last runtime error raised by the graph at `path` (cleared when it reloads).
+    [[nodiscard]] std::optional<GraphRuntimeError> last_graph_error(std::string_view path) const;
     // Drops cached prefabs so the next scene.instantiate re-reads them (hot reload).
     void forget_prefabs();
     // Writes a checkpoint of `scene` (entities + every started script's save_state()) to `slot`.

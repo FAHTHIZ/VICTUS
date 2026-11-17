@@ -807,7 +807,10 @@ private:
     void emit_module() {
         line(std::format("-- Generated from {} by VICTUS visual scripting. Edit the graph, not this file.",
                          opt_.source_name.empty() ? std::string("a graph") : opt_.source_name));
-        if (opt_.trace) line("local __vg_trace = __vg_trace or function(_node) end");
+        // Hosts that debug graphs provide __vg_trace_for(graph) returning the per-graph recorder.
+        if (opt_.trace)
+            line(std::format("local __vg_trace = __vg_trace_for and __vg_trace_for({}) or function(_node) end",
+                             string_literal(opt_.source_name)));
         line("local M = {}");
         for (const auto& v : g_.variables)
             line(std::format("M.{} = {}", variable_field(v), v.type == PinType::Entity ? std::string("nil") : literal(v.type, v.default_value)));
@@ -824,6 +827,7 @@ private:
             for (std::size_t i = 1; i < ev.outputs.size(); ++i) params += (params.empty() ? "" : ", ") + local_name(id, ev.outputs[i].name);
             line(std::format("function M:{}({})", ev.method, params), id);
             ++indent_;
+            trace(id);
             std::vector<std::string> locals;
             for (std::uint32_t r : reach_) {
                 const NodeDesc* d = descs_.at(r);

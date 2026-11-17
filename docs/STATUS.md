@@ -823,5 +823,22 @@ Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
 Known gaps:
 - No execution highlighting or breakpoints yet; no zoom, multi-select, box select, comments boxes or copy/paste between graphs.
 
+## Slice 63: Visual script debugging
+
+Why: roadmap item 14 asks for graph debugging; Slice 61 only had trace instrumentation in the compiler.
+
+Built (ADR-0060):
+- `HostOptions::trace_graphs` compiles graphs with trace calls at every event entry and statement; the host provides `__vg_trace_for(graph)` (a per-graph recorder closure) and counts node runs. `ScriptHost::graph_node_hits(path)` and `last_graph_error(path)` (node parsed from the `[node N Title]` annotation; cleared when the graph reloads).
+- The editor's play session traces graphs. The Graph Editor shows "Live" while playing, an orange glow on nodes that just ran (fading over ~0.7 s) and on the exec links between them, run counts in node tooltips, and a red border plus a clickable "Runtime error in node #N" banner for the failing node (kept after Stop until the next Play). `Editor::graph_node_heat/graph_node_runs/graph_runtime_error` expose the state.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
+- `victus_script_tests` "graph: traced hosts count node runs and keep the last error per graph": 5 updates count the event and branch 5 times and the branch body twice, pure nodes are not traced, the failing node is reported with its id, a fixed graph clears the error on reload, untraced hosts record nothing.
+- `victus_editor_tests` "editor: graph debugging highlights running nodes and the failing node while playing": start runs once, update/translate counts match, heat near 1 for per-frame nodes, a live edit that fails names the node after hot reload, the error persists after Stop while highlights fade, a fixed graph runs clean next session.
+- Screenshot smoke while playing (`--play --graph scripts/Jumper.vgraph`): the update → branch → false → log path glows.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- No breakpoints or stepping, no variable watch, pure nodes are not highlighted (they are inlined into their users), in-editor client hosts are not traced.
+
 ## Next task
-Roadmap item 14 (continued): graph debugging. Play mode compiles graphs with trace instrumentation; the Graph Editor highlights nodes executed recently and the node of the last runtime error.
+Roadmap next slice 15: profiler (CPU scopes, GPU pass timings, percentile histograms, memory counters, editor Profiler panel, `victus run --profile`).

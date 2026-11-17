@@ -167,6 +167,10 @@ void Editor::close_project() {
     graph_redo_.clear();
     graph_dirty_ = false;
     show_graph_editor_ = false;
+    graph_heat_.clear();
+    graph_hits_seen_.clear();
+    graph_error_.reset();
+    graph_live_ = false;
     edit_sprites_.reset();
     tilemaps_.reset();
     audio_.reset(); // clips resolve against the project's assets
@@ -1036,6 +1040,7 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
         script::HostOptions so;
         so.assets_root = db_->assets_dir();
         so.watch_files = seed == 0; // captures need the scripts they were recorded with
+        so.trace_graphs = true;     // the Graph Editor highlights running nodes (ADR-0060)
         so.random_seed = seed;
         if (project_) {
             so.input_map = project_->settings().input;

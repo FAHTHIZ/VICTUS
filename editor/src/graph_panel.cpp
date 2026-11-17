@@ -220,6 +220,10 @@ Status Editor::open_graph_editor(const Uuid& asset) {
     graph_palette_link_.reset();
     graph_node_drag_ = false;
     graph_diags_ = script::validate_graph(graph_);
+    graph_heat_.clear();
+    graph_hits_seen_.clear();
+    graph_error_.reset();
+    graph_live_ = false;
     // Frame the graph: its top-left node near the canvas corner.
     if (!graph_.nodes.empty()) {
         float min_x = graph_.nodes.front().x, min_y = graph_.nodes.front().y;
@@ -274,6 +278,38 @@ bool Editor::assign_graph_to(Entity e) {
     w.get<script::ScriptComponent>(e)->script = graph_path_;
     record_edit("Assign visual script", std::move(before));
     return true;
+}
+
+// ---- debugging ----------------------------------------------------------------------------------
+
+void Editor::update_graph_debug(float dt) {
+    for (auto& [id, heat] : graph_heat_) heat = std::max(0.0f, heat - dt * 1.5f);
+    if (!play_scripts_ || graph_path_.empty()) {
+        graph_live_ = false;
+        return;
+    }
+    if (!graph_live_) { // a new play session: counts start over
+        graph_live_ = true;
+        graph_hits_seen_.clear();
+        graph_heat_.clear();
+    }
+    auto hits = play_scripts_->graph_node_hits(graph_path_);
+    for (const auto& [id, runs] : hits) {
+        const auto it = graph_hits_seen_.find(id);
+        if (it == graph_hits_seen_.end() || it->second != runs) graph_heat_[id] = 1.0f;
+    }
+    graph_hits_seen_ = std::move(hits);
+    graph_error_ = play_scripts_->last_graph_error(graph_path_);
+}
+
+float Editor::graph_node_heat(std::uint32_t node) const {
+    const auto it = graph_heat_.find(node);
+    return it == graph_heat_.end() ? 0.0f : it->second;
+}
+
+std::uint64_t Editor::graph_node_runs(std::uint32_t node) const {
+    const auto it = graph_hits_seen_.find(node);
+    return it == graph_hits_seen_.end() ? 0 : it->second;
 }
 
 // ---- edits ----------------------------------------------------------------------------------------
@@ -466,6 +502,23 @@ void Editor::draw_graph_editor() {
     if (warnings) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "%zu warning%s", warnings, warnings == 1 ? "" : "s");
+    }
+    if (graph_live_) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1, 0.67f, 0.16f, 1), "Live");
+        ImGui::SetItemTooltip("Playing: nodes light up as they run");
+    }
+    if (graph_error_) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
+        ImGui::PushTextWrapPos(0);
+        const std::string label = graph_error_->node ? std::format("Runtime error in node #{}: {}", graph_error_->node, graph_error_->message)
+                                                     : "Runtime error: " + graph_error_->message;
+        if (ImGui::Selectable(label.c_str()) && graph_error_->node) {
+            graph_selected_ = graph_error_->node;
+            if (const auto* target = graph_.node(graph_error_->node)) graph_scroll_ = {120.0f - target->x, 80.0f - target->y};
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
     }
 
     ImGui::BeginChild("##graph_side", ImVec2(260, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
@@ -677,6 +730,11 @@ void Editor::draw_graph_canvas() {
         const PinPos* pb = b ? find_pin(b->ins, link.to_pin) : nullptr;
         if (!pa || !pb) continue;
         bezier(pa->pos, pb->pos, pin_color(pa->type), pa->type == PinType::Exec ? 3.0f : 2.0f);
+        // Exec links between nodes that just ran glow with the flow of execution.
+        if (pa->type == PinType::Exec) {
+            const float heat = std::min(graph_node_heat(link.from_node), graph_node_heat(link.to_node));
+            if (heat > 0.01f) bezier(pa->pos, pb->pos, IM_COL32(255, 170, 40, static_cast<int>(heat * 230)), 4.0f);
+        }
     }
 
     // Diagnostics per node (worst severity).
@@ -696,6 +754,9 @@ void Editor::draw_graph_canvas() {
     for (const auto& l : layouts) {
         const script::GraphNode* n = graph_.node(l.id);
         const script::NodeDesc* d = script::find_node_desc(n->type);
+        if (const float heat = graph_node_heat(l.id); heat > 0.01f)
+            dl->AddRect(ImVec2(l.min.x - 3, l.min.y - 3), ImVec2(l.max.x + 3, l.max.y + 3),
+                        IM_COL32(255, 170, 40, static_cast<int>(heat * 255)), 8.0f, 3.0f);
         dl->AddRectFilled(l.min, l.max, IM_COL32(48, 50, 56, 240), 6.0f);
         dl->AddRectFilled(l.min, ImVec2(l.max.x, l.min.y + kTitleHeight), d ? category_color(d->category) : IM_COL32(120, 30, 30, 255),
                           6.0f, ImDrawFlags_RoundTop);
@@ -709,6 +770,10 @@ void Editor::draw_graph_canvas() {
         if (l.id == graph_selected_) {
             border = IM_COL32(255, 255, 255, 255);
             border_w = 2.0f;
+        }
+        if (graph_error_ && graph_error_->node == l.id) {
+            border = IM_COL32(255, 60, 50, 255);
+            border_w = 3.0f;
         }
         dl->AddRect(l.min, l.max, border, 6.0f, border_w);
         for (const auto& p : l.ins) {
@@ -751,6 +816,8 @@ void Editor::draw_graph_canvas() {
         const script::NodeDesc* d = script::find_node_desc(n->type);
         std::string tip = d ? d->tooltip : "unknown node type " + n->type;
         if (!n->comment.empty()) tip += "\n" + n->comment;
+        if (graph_live_ || graph_node_runs(hit.node)) tip += std::format("\nRuns: {}", graph_node_runs(hit.node));
+        if (graph_error_ && graph_error_->node == hit.node) tip += "\nRuntime error: " + graph_error_->message;
         for (const auto& diag : graph_diags_)
             if (diag.node == hit.node) tip += "\n- " + diag.message;
         if (!tip.empty()) ImGui::SetTooltip("%s", tip.c_str());

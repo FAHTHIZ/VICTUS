@@ -391,3 +391,71 @@ TEST_CASE("graph: runtime errors name the failing node") {
     CHECK(msg.find(std::format("[node {} Log]", log)) != std::string::npos);
     CHECK((*host)->stats().faulted == 1);
 }
+
+TEST_CASE("graph: traced hosts count node runs and keep the last error per graph") {
+    GraphDir d;
+    d.write("scripts/mover.vgraph", serialize_graph(mover_graph()));
+    ScriptGraph bad;
+    const auto start = bad.add_node("event.start");
+    const auto add = bad.add_node("math.add");
+    bad.node(add)->inputs.set("a", "text");
+    bad.node(add)->inputs.set("b", true);
+    const auto log = bad.add_node("debug.log");
+    bad.connect(start, "out", log, "in");
+    bad.connect(add, "result", log, "message");
+    d.write("scripts/bad.vgraph", serialize_graph(bad));
+    script::register_components();
+    Scene s;
+    const Entity a = s.create("A");
+    s.world().add<ScriptComponent>(a).script = "scripts/mover.vgraph";
+    const Entity b = s.create("B");
+    s.world().add<ScriptComponent>(b).script = "scripts/bad.vgraph";
+    Keys keys;
+    HostOptions o;
+    o.assets_root = d.path;
+    o.trace_graphs = true;
+    auto host = ScriptHost::create(o);
+    REQUIRE(host.ok());
+    gameplay::FrameTime t;
+    t.dt = 0.5f;
+    // Three frames without D, two with: the event runs 5 times, the branch body twice.
+    for (int i = 0; i < 5; ++i) {
+        if (i == 3) keys.down.insert("D");
+        (*host)->update(s, t, &keys);
+    }
+    const ScriptGraph g = mover_graph();
+    const auto id_of = [&](std::string_view type) {
+        for (const auto& n : g.nodes)
+            if (n.type == type) return n.id;
+        return 0u;
+    };
+    const auto hits = (*host)->graph_node_hits("scripts/mover.vgraph");
+    CHECK(hits.at(id_of("event.update")) == 5);
+    CHECK(hits.at(id_of("flow.branch")) == 5);
+    CHECK(hits.at(id_of("entity.translate")) == 2);
+    CHECK(hits.at(id_of("variable.set")) == 2);
+    CHECK_FALSE(hits.contains(id_of("math.multiply"))); // pure nodes are inlined, not traced
+    CHECK((*host)->last_graph_error("scripts/mover.vgraph") == std::nullopt);
+
+    const auto err = (*host)->last_graph_error("scripts/bad.vgraph");
+    REQUIRE(err);
+    CHECK(err->node == log);
+    CHECK(err->message.find("[node") != std::string::npos);
+    CHECK(err->serial >= 1);
+    CHECK((*host)->graph_node_hits("scripts/bad.vgraph").at(start) == 1);
+
+    // Fixing the graph and reloading clears its error.
+    bad.node(add)->inputs.set("a", 1);
+    bad.node(add)->inputs.set("b", 2);
+    d.write("scripts/bad.vgraph", serialize_graph(bad));
+    (void)(*host)->reload_changed();
+    CHECK((*host)->last_graph_error("scripts/bad.vgraph") == std::nullopt);
+
+    // Untraced hosts record nothing.
+    HostOptions plain;
+    plain.assets_root = d.path;
+    auto quiet = ScriptHost::create(plain);
+    REQUIRE(quiet.ok());
+    (*quiet)->update(s, t, &keys);
+    CHECK((*quiet)->graph_node_hits("scripts/mover.vgraph").empty());
+}
