@@ -555,6 +555,13 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - Cube-face seams are possible at grazing angles because PCF clamps to each tile. Translucent and alpha-tested casters are not supported in local shadows yet (same as the sun pass).
   - Budget changes switch lights between shadowed and unshadowed without a fade.
 
+### ADR-0053: Flipbook frames and stretched billboards for particles
+- Status: Accepted (Slice 56)
+- Context: games feed `submit_particles` from their own particle logic (AURORIA evaluates its stateless smoke, fire, spark, rain and snow formulas on the CPU). Smoke and flame textures are 4x4 flipbooks, and sparks and rain read as streaks along their motion; billboards could only show a whole texture as a rotated square.
+- Options: (a) one texture per flipbook frame (a batch per frame); (b) per-material flipbook settings; (c) per-instance frame, grid and height/width in the reserved `ParticleInstance::params` fields.
+- Decision: (c). `params.y` is the frame (left to right, top to bottom), `params.z` the grid (columns x 16 + rows; 0 = whole texture) and `params.w` the height/width ratio along the rotated up axis (0 or 1 = square). The particle vertex shader applies them; the instance layout (48 bytes) is unchanged.
+- Consequences: one batch per effect regardless of frame; zeroed reserved fields keep existing emitters exactly as before. No frame blending (frames switch); grids up to 15 x 15.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 
