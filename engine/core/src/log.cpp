@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/core/log.hpp"
 
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
+
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
@@ -51,6 +55,20 @@ std::string format_line(const Record& r) {
 } // namespace
 
 void ConsoleSink::write(const Record& record) {
+#if defined(__ANDROID__)
+    // stdout/stderr go nowhere on Android; the console is logcat (`adb logcat -s VICTUS`).
+    int prio = ANDROID_LOG_INFO;
+    switch (record.level) {
+    case Level::Trace: prio = ANDROID_LOG_VERBOSE; break;
+    case Level::Debug: prio = ANDROID_LOG_DEBUG; break;
+    case Level::Warn: prio = ANDROID_LOG_WARN; break;
+    case Level::Error: prio = ANDROID_LOG_ERROR; break;
+    case Level::Fatal: prio = ANDROID_LOG_FATAL; break;
+    default: break;
+    }
+    __android_log_write(prio, "VICTUS", format_line(record).c_str());
+    return;
+#endif
     std::FILE* out = record.level >= Level::Error ? stderr : stdout;
     const std::string line = format_line(record);
     if (color_) {

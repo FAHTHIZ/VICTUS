@@ -174,6 +174,44 @@ const char* Platform::video_driver() const noexcept {
 
 double Platform::seconds() noexcept { return static_cast<double>(SDL_GetTicksNS()) * 1e-9; }
 
+std::string Platform::user_data_dir(const std::string& org, const std::string& app) {
+#if defined(__ANDROID__)
+    (void)org;
+    (void)app;
+    const char* internal = SDL_GetAndroidInternalStoragePath();
+    return internal ? std::string(internal) + "/" : std::string();
+#else
+    char* p = SDL_GetPrefPath(org.c_str(), app.c_str());
+    if (!p) return {};
+    std::string out(p);
+    SDL_free(p);
+    return out;
+#endif
+}
+
+Result<std::vector<std::uint8_t>> Platform::read_bundled(const std::string& path) {
+    std::string full = path;
+#if !defined(__ANDROID__)
+    const bool absolute = !path.empty() && (path[0] == '/' || path[0] == '\\' || (path.size() > 1 && path[1] == ':'));
+    if (!absolute)
+        if (const char* base = SDL_GetBasePath()) full = std::string(base) + path;
+#endif
+    std::size_t size = 0;
+    void* data = SDL_LoadFile(full.c_str(), &size);
+    if (!data) return make_error(ErrorCode::NotFound, std::format("bundled file '{}': {}", path, SDL_GetError()));
+    std::vector<std::uint8_t> out(static_cast<const std::uint8_t*>(data), static_cast<const std::uint8_t*>(data) + size);
+    SDL_free(data);
+    return out;
+}
+
+bool Platform::is_mobile() noexcept {
+#if defined(__ANDROID__) || (defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+    return true;
+#else
+    return false;
+#endif
+}
+
 std::string Platform::clipboard() const {
     char* t = SDL_GetClipboardText();
     std::string s = t ? t : "";

@@ -34,6 +34,9 @@ victus_add_module(core
         src/profiler.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/build_info.cpp
     DEPS Threads::Threads)
+if(ANDROID)
+    target_link_libraries(victus_core PUBLIC log)
+endif()
 
 # Opt-in global operator new/delete tracking, linked only into executables that want it.
 add_library(victus_alloc_tracking OBJECT src/alloc_tracking.cpp)
