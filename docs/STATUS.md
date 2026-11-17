@@ -1058,6 +1058,8 @@ Known gaps:
 
 ## Slice 78: 2D lights (roadmap item 21 part 2)
 
+- Commit: 80ae225.
+
 - Renderer: `SpriteBatch::set_lighting(ambient)`, `add_light(Light2D)`, `render_lights(cmd, w, h)`; new `light2d.vert`/`light2d.frag`/`sprite_lit.frag` (regenerated `builtin_shaders.cpp`, 39 shaders). Lit sprites sample the light target; `SpriteBatchStats::lights/lit_sprites/lighting`.
 - Runtime/gameplay: `Light2DComponent` ("Light2D" schema), `extract_lights_2d` called by `extract_sprites`; `SpriteComponent::unlit` (serialized, inspector checkbox); `SceneView` renders the light target in 2D frames (`SceneViewStats::lights_2d`, `lighting_2d`).
 - Editor: Create > 2D Light (menus and command palette); selected 2D lights draw their radius circle and spot cone edges in the 2D viewport.
