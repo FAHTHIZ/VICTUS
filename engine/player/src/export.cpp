@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/player/export.hpp"
+#include "victus/animation/sprite.hpp"
 
 #include "victus/assets/database.hpp"
 #include "victus/audio/audio.hpp"
@@ -180,6 +181,12 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         if (auto c = runtime::compile_surface_shader(*code, path, true); !c) errors.push_back(c.error().message);
     }
 
+    // Sprite sheets: every one must parse and point at an existing texture.
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::SpriteSheet) continue;
+        if (auto sheet = (*db)->load_sprite_sheet(r.uuid); !sheet) errors.push_back(sheet.error().message);
+    }
+
     // Scenes: every scene must load; references to scripts and audio clips must resolve.
     std::vector<std::string> scenes = proj->scenes();
     if (std::find(scenes.begin(), scenes.end(), proj->settings().startup_scene) == scenes.end())
@@ -211,6 +218,13 @@ Result<ExportReport> export_game(const ExportOptions& o) {
             if (!m || m->kind != assets::AssetKind::Material)
                 errors.push_back(std::format("{}: entity '{}' uses missing material {}", rel, entity_label(scene, e),
                                              c.material_asset.to_string()));
+        });
+        scene.world().each<animation::SpriteAnimatorComponent>([&](scene::Entity e, animation::SpriteAnimatorComponent& c) {
+            if (c.sheet.is_nil()) return;
+            const assets::AssetRecord* s = (*db)->find(c.sheet);
+            if (!s || s->kind != assets::AssetKind::SpriteSheet)
+                errors.push_back(std::format("{}: entity '{}' uses missing sprite sheet {}", rel, entity_label(scene, e),
+                                             c.sheet.to_string()));
         });
         scene.world().each<audio::AudioSourceComponent>([&](scene::Entity e, audio::AudioSourceComponent& c) {
             if (!c.clip.empty() && !asset_paths.contains(c.clip))

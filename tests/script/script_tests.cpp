@@ -711,6 +711,60 @@ return { valid = st.valid, clip = st.clip, playing = st.playing, looping = st.lo
     CHECK(std::abs(t->rotation.y) > 0.01f);
 }
 
+TEST_CASE("script: sprite animation API") {
+    TempDir d("victus_script_sprites");
+    d.write("scripts/hero.luau", R"lua(
+local Hero = {}
+function Hero:start()
+    local clips = self.entity:sprite_clips()
+    self.entity.name = "Hero:" .. #clips .. ":" .. clips[1]
+    self.bad = self.entity:play_sprite("fly")
+end
+function Hero:update(dt)
+    self.t = (self.t or 0) + dt
+    if self.t > 0.2 and not self.jumped then self.jumped = self.entity:play_sprite("jump") end
+end
+return Hero
+)lua");
+    auto host = make_host(d);
+    auto sheet = std::make_shared<animation::SpriteSheet>();
+    sheet->texture = Uuid::generate();
+    sheet->columns = 4;
+    sheet->rows = 1;
+    sheet->clips.push_back({.name = "walk", .frames = {0, 1}, .fps = 8, .loop = true});
+    sheet->clips.push_back({.name = "jump", .frames = {2, 3}, .fps = 4, .loop = false});
+    const Uuid sheet_id = Uuid::generate();
+    animation::AnimationSystem anim;
+    anim.add_sheet(sheet_id, sheet);
+    gameplay::Simulation sim;
+    animation::add_animation_systems(sim, anim); // binds the system before scripts start
+    script::add_script_systems(sim, *host);
+    Scene s;
+    const Entity hero = scripted(s, "Hero", "scripts/hero.luau");
+    s.world().add<scene::SpriteComponent>(hero);
+    auto& a = s.world().add<animation::SpriteAnimatorComponent>(hero);
+    a.sheet = sheet_id;
+    a.clip = "walk";
+    for (int i = 0; i < 30; ++i) sim.tick(s, 1.0f / 60);
+    CHECK(s.world().get<scene::Name>(hero)->value == "Hero:2:walk");
+    CHECK(s.world().get<animation::SpriteAnimatorComponent>(hero)->clip == "jump");
+    auto q = host->eval(R"lua(
+local h = scene.find("Hero:2:walk")
+local st = h:sprite_animation()
+return { valid = st.valid, clip = st.clip, frame = st.frame, looping = st.looping, finished = st.finished,
+         duration = st.duration, other = scene.spawn("Plain"):sprite_animation().valid }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["valid"].as_bool());
+    CHECK(q.value()["clip"].as_string() == "jump");
+    CHECK(q.value()["frame"].as_number() >= 2);
+    CHECK_FALSE(q.value()["looping"].as_bool());
+    CHECK(q.value()["duration"].as_number() == doctest::Approx(0.5));
+    CHECK_FALSE(q.value()["other"].as_bool());
+    // The jump frames sit in the right half of the sheet.
+    CHECK(s.world().get<scene::SpriteComponent>(hero)->uv.x >= 0.5f);
+}
+
 TEST_CASE("script: particle emitter API") {
     TempDir d("victus_script_particles");
     d.write("scripts/fx.luau", R"lua(

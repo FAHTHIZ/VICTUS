@@ -181,6 +181,13 @@ public:
     // Writes a material that inherits every field from `parent` (default "<parent>_instance.vmat"
     // next to it, made unique). Returns its UUID.
     Result<Uuid> create_material_instance(const Uuid& parent, std::string_view relative_path = {});
+    // ---- sprite sheets (.vsheet) ----
+    // Writes a sheet slicing `texture` into columns x rows frames with a looping "default" clip of
+    // every frame at `fps` (default "<texture>.vsheet" next to it, made unique). Returns its UUID.
+    Result<Uuid> create_sprite_sheet(const Uuid& texture, std::uint32_t columns, std::uint32_t rows, float fps = 10.0f,
+                                     std::string_view relative_path = {});
+    // Gives `e` a SpriteAnimator playing `sheet`'s first clip (adding a Sprite when missing). Undoable.
+    bool assign_sprite_sheet(scene::Entity e, const Uuid& sheet);
     // Writes a new surface shader from the template (default "shaders/Surface.vshader", made
     // unique). Returns its UUID.
     Result<Uuid> create_surface_shader(std::string_view relative_path = {});
@@ -327,6 +334,11 @@ private:
     std::unique_ptr<script::ScriptHost> play_scripts_; // fresh per play session, hot reloads files
     std::unique_ptr<physics::PhysicsWorld> play_physics_; // fresh per play session
     std::unique_ptr<animation::AnimationSystem> play_animation_; // fresh per play session
+    std::unique_ptr<animation::AnimationSystem> edit_sprites_;   // previews SpriteAnimator frames while editing
+    // "Create Sprite Sheet" popup of the asset table.
+    Uuid sheet_texture_;
+    int sheet_columns_{4}, sheet_rows_{1};
+    float sheet_fps_{10.0f};
     std::unique_ptr<particles::ParticleSystem> play_particles_;  // fresh per play session
     std::unique_ptr<navigation::NavigationSystem> play_navigation_; // fresh per play session
     std::unique_ptr<audio::AudioEngine> audio_;           // opened on first use, kept across sessions

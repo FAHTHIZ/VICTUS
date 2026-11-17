@@ -506,6 +506,7 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
         sp.layer = s.layer;
         sp.flip_x = s.flip_x;
         sp.flip_y = s.flip_y;
+        sp.uv = s.uv;
         batch.draw(sp);
         ++count;
     });

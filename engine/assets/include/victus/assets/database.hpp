@@ -87,6 +87,8 @@ public:
     [[nodiscard]] Result<MaterialAsset> resolve_material(const Uuid& uuid) const;
     // Source text of a surface shader asset (.vshader).
     [[nodiscard]] Result<std::string> load_shader_source(const Uuid& uuid) const;
+    // A sprite sheet asset (.vsheet), validated (its texture must be a texture asset).
+    [[nodiscard]] Result<animation::SpriteSheet> load_sprite_sheet(const Uuid& uuid) const;
 
     // Changes import settings (writes the .meta); the next import re-cooks.
     [[nodiscard]] Status set_settings(const Uuid& uuid, json::Value settings);
@@ -113,5 +115,7 @@ private:
 // Animation sets for the animation system, loaded from cooked models in `db` (which must outlive
 // the provider). Returns null for unknown assets, non-models and models without nodes.
 [[nodiscard]] animation::SetProvider animation_provider(AssetDatabase& db);
+// Sheets for SpriteAnimator (AnimationSettings::sheets); invalid sheets resolve to null (logged).
+[[nodiscard]] animation::SheetProvider sprite_sheet_provider(AssetDatabase& db);
 
 } // namespace victus::assets

@@ -217,6 +217,11 @@ SerializerRegistry::SerializerRegistry() {
             v.set("layer", static_cast<std::int64_t>(s.layer));
             v.set("flip_x", s.flip_x);
             v.set("flip_y", s.flip_y);
+            if (!(s.uv.x == 0 && s.uv.y == 0 && s.uv.z == 1 && s.uv.w == 1)) {
+                Value uv = Value::array();
+                for (const float c : {s.uv.x, s.uv.y, s.uv.z, s.uv.w}) uv.push(c);
+                v.set("uv", std::move(uv));
+            }
             return v;
         },
         [](SpriteComponent& s, const Value& v) -> Status {
@@ -227,6 +232,16 @@ SerializerRegistry::SerializerRegistry() {
             s.layer = static_cast<std::int32_t>(v["layer"].as_int(0));
             s.flip_x = v["flip_x"].as_bool(false);
             s.flip_y = v["flip_y"].as_bool(false);
+            s.uv = {0, 0, 1, 1};
+            if (const Value* p = v.find("uv"); p && !p->is_null()) {
+                if (!p->is_array() || p->size() != 4) return bad("Sprite.uv");
+                float c[4];
+                for (std::size_t i = 0; i < 4; ++i) {
+                    if (!(*p)[i].is_number()) return bad("Sprite.uv");
+                    c[i] = (*p)[i].as_float();
+                }
+                s.uv = {c[0], c[1], c[2], c[3]};
+            }
             return {};
         });
 

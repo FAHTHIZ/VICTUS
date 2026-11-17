@@ -57,6 +57,18 @@ bool vec2_edit(const char* label, math::Vec2& v, float speed = 0.05f) {
 }
 
 
+std::string asset_label(assets::AssetDatabase* db, const Uuid& id);
+
+// Asset kind accepted by a reflected UUID field's hint ("model", "texture", ...).
+assets::AssetKind asset_kind_for_hint(std::string_view hint) {
+    if (hint == "model") return assets::AssetKind::Model;
+    if (hint == "texture") return assets::AssetKind::Texture;
+    if (hint == "material") return assets::AssetKind::Material;
+    if (hint == "prefab") return assets::AssetKind::Prefab;
+    if (hint == "spritesheet") return assets::AssetKind::SpriteSheet;
+    return assets::AssetKind::Unknown;
+}
+
 // Editor widgets for one reflected field. Returns true when the value changed.
 bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db, const scene::Scene* scene) {
     const char* label = f.label.c_str();
@@ -154,6 +166,27 @@ bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db
                 }
                 ImGui::EndDragDropTarget();
             }
+        } else if (const auto kind = asset_kind_for_hint(f.hint); kind != assets::AssetKind::Unknown) {
+            // Asset reference: drop an asset of the hinted kind from Assets; the button clears it.
+            ImGui::PushID(label);
+            if (ImGui::SmallButton("x") && !id.is_nil()) {
+                id = {};
+                changed = true;
+            }
+            ImGui::PopID();
+            ImGui::SameLine();
+            ImGui::Text("%s: %s", label, asset_label(db, id).c_str());
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
+                    Uuid dropped;
+                    std::memcpy(&dropped, p->Data, sizeof(Uuid));
+                    if (const auto* rec = db ? db->find(dropped) : nullptr; rec && rec->kind == kind) {
+                        id = dropped;
+                        changed = true;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
         } else {
             ImGui::Text("%s: %s", label, id.to_string().c_str());
         }
@@ -181,6 +214,7 @@ const char* kind_icon(assets::AssetKind k) {
     case assets::AssetKind::Prefab: return "[pfb]";
     case assets::AssetKind::Material: return "[mat]";
     case assets::AssetKind::Shader: return "[shd]";
+    case assets::AssetKind::SpriteSheet: return "[sht]";
     default: return "[file]";
     }
 }
@@ -198,6 +232,7 @@ void Editor::frame(float dt) {
     }
     if (input_) input_->set_enabled(play_state_ == PlayState::Playing && viewport_focused_);
     if (play_state_ == PlayState::Playing && play_scene_) tick_play(dt);
+    else if (!play_scene_ && edit_sprites_) edit_sprites_->update_sprites(active_scene(), 0); // frame preview
     // Inspector property discovery follows script edits made in an external editor.
     if ((script_poll_ += dt) >= 1.0f) {
         script_poll_ = 0;
@@ -956,6 +991,16 @@ bool Editor::inspect_components(Entity e) {
         changed |= ImGui::Checkbox("Flip X", &sp->flip_x);
         ImGui::SameLine();
         changed |= ImGui::Checkbox("Flip Y", &sp->flip_y);
+        if (w.has<animation::SpriteAnimatorComponent>(e)) {
+            ImGui::TextDisabled("UV region set by the Sprite Animator");
+        } else {
+            float uv[4] = {sp->uv.x, sp->uv.y, sp->uv.z, sp->uv.w};
+            if (ImGui::DragFloat4("UV Region", uv, 0.001f, 0.0f, 1.0f, "%.3f")) {
+                sp->uv = {uv[0], uv[1], uv[2], uv[3]};
+                changed = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Part of the texture drawn: u0, v0 (top), u1, v1 (bottom)");
+        }
     }
     if (auto* r = w.get<gameplay::RotatorComponent>(e); r && removable("Rotator", remove_rot)) {
         changed |= vec3_edit("Axis", r->axis, 0.01f);
@@ -1256,6 +1301,10 @@ void Editor::draw_assets() {
             ImGui::TableNextColumn();
             ImGui::PushID(r.path.c_str());
             ImGui::Selectable(r.path.c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
+            if (r.kind == assets::AssetKind::Texture && ImGui::BeginPopupContextItem("##texctx")) {
+                if (ImGui::MenuItem("Create Sprite Sheet...")) sheet_texture_ = r.uuid;
+                ImGui::EndPopup();
+            }
             if (ImGui::BeginDragDropSource()) {
                 ImGui::SetDragDropPayload(kAssetPayload, &r.uuid, sizeof(Uuid));
                 ImGui::Text("%s %s", kind_icon(r.kind), r.path.c_str());
@@ -1279,6 +1328,8 @@ void Editor::draw_assets() {
                     }
                 } else if (r.kind == assets::AssetKind::Material) {
                     open_material_editor(r.uuid);
+                } else if (r.kind == assets::AssetKind::SpriteSheet) {
+                    (void)assign_sprite_sheet(selected(), r.uuid);
                 } else if (r.kind == assets::AssetKind::Shader) {
                     if (show_material_editor_) (void)set_editing_material_shader(r.uuid);
                 } else if (r.kind == assets::AssetKind::Texture) {
@@ -1298,6 +1349,7 @@ void Editor::draw_assets() {
                                                           : r.kind == assets::AssetKind::Audio  ? "preview"
                                                           : r.kind == assets::AssetKind::Material ? "edit"
                                                           : r.kind == assets::AssetKind::Shader ? "use in the open material"
+                                                          : r.kind == assets::AssetKind::SpriteSheet ? "animate the selected entity"
                                                                                                  : "-");
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", assets::to_string(r.kind));
@@ -1311,6 +1363,29 @@ void Editor::draw_assets() {
             ImGui::PopID();
         }
         ImGui::EndTable();
+    }
+    if (!sheet_texture_.is_nil()) ImGui::OpenPopup("Create Sprite Sheet");
+    if (ImGui::BeginPopupModal("Create Sprite Sheet", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const auto* tex = db_ ? db_->find(sheet_texture_) : nullptr;
+        ImGui::Text("Slice %s into a grid of frames", tex ? tex->path.c_str() : "?");
+        ImGui::InputInt("Columns", &sheet_columns_);
+        ImGui::InputInt("Rows", &sheet_rows_);
+        ImGui::DragFloat("FPS", &sheet_fps_, 0.5f, 0.5f, 120.0f);
+        sheet_columns_ = std::clamp(sheet_columns_, 1, 256);
+        sheet_rows_ = std::clamp(sheet_rows_, 1, 256);
+        if (ImGui::Button("Create")) {
+            auto made = create_sprite_sheet(sheet_texture_, static_cast<std::uint32_t>(sheet_columns_),
+                                            static_cast<std::uint32_t>(sheet_rows_), sheet_fps_);
+            if (!made) notify(made.error().message, true);
+            sheet_texture_ = {};
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            sheet_texture_ = {};
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
     ImGui::End();
 }

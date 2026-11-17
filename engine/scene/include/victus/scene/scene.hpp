@@ -88,6 +88,9 @@ struct SpriteComponent {
     std::int32_t layer{0};
     bool flip_x{false};
     bool flip_y{false};
+    // Region of the texture drawn: u0, v0 (top), u1, v1 (bottom). SpriteAnimator sets it to the
+    // current sheet frame; set it by hand to draw one cell of an atlas.
+    math::Vec4 uv{0, 0, 1, 1};
 };
 // Components present in a scene file whose type is not registered in this build are kept
 // verbatim so saving never destroys data authored with plugins or newer engine versions.
