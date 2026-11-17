@@ -123,6 +123,11 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-17 (Slice 38, scene transitions)
+- Godot `SceneTree.change_scene_to_file` — https://docs.godotengine.org/en/stable/classes/class_scenetree.html (accessed 2026-11-17): the outgoing scene is removed immediately and the new scene is added at the end of the frame. VICTUS also defers the switch, but keeps the outgoing scene fully alive until the end of the update so the rest of the frame's scripts see a consistent world.
+- Unity `SceneManager.LoadScene` — https://docs.unity3d.com/ScriptReference/SceneManagement.SceneManager.LoadScene.html (accessed 2026-11-17): a single-mode load completes in the next frame, not immediately, and unloads unused assets. VICTUS applies the switch at the end of the calling update and validates the target before accepting the request, so a bad path fails at the call site instead of a frame later.
+- Open questions: additive/streamed scenes, asynchronous loading with progress, persistent entities across scenes, built-in fade transitions.
+
 ## Research conclusions added 2026-11-17 (Slice 37, material instances)
 - Unreal Engine, "Instanced Materials" — https://dev.epicgames.com/documentation/en-us/unreal-engine/instanced-materials-in-unreal-engine (accessed 2026-11-17): instances inherit all attributes from a parent and look identical until edited; only parameterised attributes are editable; constant instances are fixed before run time, dynamic instances are created from scripts. VICTUS adopts constant instances with every field overridable; run-time instances remain open (scripts use `MaterialOverrides` or swap materials).
 - Open questions: parent-locked fields, run-time instances from scripts, caching resolved parents for deep chains.
