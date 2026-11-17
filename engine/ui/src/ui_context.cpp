@@ -52,7 +52,14 @@ Result<std::unique_ptr<UiContext>> UiContext::create(render::GpuContext& gpu, rh
     style.FontScaleDpi = scale;
     ImFontConfig font;
     font.SizePixels = options.font_size;
-    io.Fonts->AddFontDefaultVector(&font);
+    ImFont* custom = nullptr;
+    if (!options.font_data.empty()) {
+        // The atlas owns (and frees) its copy of the font bytes.
+        void* bytes = IM_ALLOC(options.font_data.size());
+        std::memcpy(bytes, options.font_data.data(), options.font_data.size());
+        custom = io.Fonts->AddFontFromMemoryTTF(bytes, static_cast<int>(options.font_data.size()), options.font_size, &font);
+    }
+    if (!custom) io.Fonts->AddFontDefaultVector(&font);
 
     if (window) {
         if (!ImGui_ImplSDL3_InitForOther(static_cast<SDL_Window*>(window->native()))) {
