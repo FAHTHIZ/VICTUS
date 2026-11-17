@@ -36,6 +36,7 @@ victus_add_test(victus_scene_tests
 victus_add_test(victus_script_tests
     SOURCES
         script/script_tests.cpp
+        script/procedural_bridge_tests.cpp
         script/input_map_tests.cpp
         script/save_tests.cpp
         script/capture_tests.cpp
@@ -84,6 +85,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_surface_shader_tests.cpp
         render/gpu_sprite_sheet_tests.cpp
         render/gpu_vertex_color_tests.cpp
+        render/gpu_procedural_mesh_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")

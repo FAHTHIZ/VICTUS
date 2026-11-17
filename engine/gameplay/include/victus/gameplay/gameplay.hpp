@@ -51,6 +51,8 @@ public:
     [[nodiscard]] virtual math::Vec2 mouse_position() const = 0;
     [[nodiscard]] virtual math::Vec2 mouse_delta() const = 0;
     [[nodiscard]] virtual bool mouse_released(int /*button*/) const { return false; }
+    // Wheel notches scrolled this frame (positive away from the user).
+    [[nodiscard]] virtual float mouse_wheel() const { return 0; }
     [[nodiscard]] virtual bool gamepad_connected(int /*pad*/) const { return false; }
     [[nodiscard]] virtual bool gamepad_button(int /*pad*/, int /*button*/, bool /*previous*/ = false) const {
         return false;
@@ -92,7 +94,11 @@ public:
         prev_mouse_ = mouse_;
         prev_pos_ = mouse_pos_;
         prev_pads_ = pads_;
+        wheel_ = 0;
     }
+    // Wheel notches for this frame (cleared by end_frame).
+    void add_mouse_wheel(float notches) noexcept { wheel_ += notches; }
+    [[nodiscard]] float mouse_wheel() const override { return wheel_; }
     [[nodiscard]] bool key_down(std::string_view k) const override { return has(down_, k); }
     [[nodiscard]] bool key_pressed(std::string_view k) const override { return has(down_, k) && !has(prev_, k); }
     [[nodiscard]] bool key_released(std::string_view k) const override { return !has(down_, k) && has(prev_, k); }
@@ -127,6 +133,7 @@ private:
     std::vector<std::string> down_, prev_;
     std::array<bool, 8> mouse_{}, prev_mouse_{};
     math::Vec2 mouse_pos_{}, prev_pos_{};
+    float wheel_{0};
     std::array<Pad, kMaxGamepads> pads_{}, prev_pads_{};
 };
 

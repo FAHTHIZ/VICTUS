@@ -92,6 +92,7 @@
 // error logged (channel "script") until the module is reloaded.
 #pragma once
 #include "victus/core/json.hpp"
+#include "victus/core/process.hpp"
 #include "victus/core/result.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/gameplay/input_map.hpp"
@@ -160,6 +161,9 @@ struct HostOptions {
     std::function<Result<json::Value>(std::string_view path)> scene_loader;
     // Called right after a transition replaced the scene (players reset physics, audio, ...).
     std::function<void(scene::Scene& scene, std::string_view path)> on_scene_loaded;
+    // Resolves `bridge.open(name)` to a helper process (players read the project's "bridges"
+    // section, see project::bridge_launch). Empty: bridges are unavailable to scripts.
+    std::function<Result<process::LaunchOptions>(std::string_view name)> bridge_launcher;
 };
 
 struct HostStats {

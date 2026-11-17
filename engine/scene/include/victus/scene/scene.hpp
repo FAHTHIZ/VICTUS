@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -81,6 +82,29 @@ struct MeshRendererComponent {
     float roughness{0.5f};
     bool cast_shadows{true};
     bool visible{true};
+};
+// Geometry built at run time (scripts, simulation bridges, tools) instead of loaded from an
+// asset. Shared and immutable once published: replace the pointer to change it. `id` is unique
+// per process (never reused), so renderers cache GPU copies by it. Colours are packed RGBA8 with
+// red in the lowest byte, sRGB RGB and linear alpha (render::Vertex3D::color); empty normals are
+// computed (smooth) and empty colours are white.
+struct ProceduralMesh {
+    std::uint64_t id{0};
+    std::vector<math::Vec3> positions;
+    std::vector<math::Vec3> normals;  // empty or one per position
+    std::vector<math::Vec2> uvs;      // empty or one per position
+    std::vector<std::uint32_t> colors; // empty or one per position
+    std::vector<std::uint32_t> indices; // triangle list
+    math::Aabb bounds;
+};
+// Assigns a fresh id and computes bounds (and smooth normals when none were given), then
+// shares the mesh. Fails on out-of-range indices, mismatched attribute counts or an index count
+// that is not a multiple of three.
+[[nodiscard]] Result<std::shared_ptr<const ProceduralMesh>> publish_mesh(ProceduralMesh mesh);
+// Drawn through the entity's MeshRenderer (material, tint, shadows, visibility) in place of
+// its mesh asset or primitive. Runtime-only: not saved with the scene.
+struct ProceduralMeshComponent {
+    std::shared_ptr<const ProceduralMesh> mesh;
 };
 struct SpriteComponent {
     Uuid texture_asset;

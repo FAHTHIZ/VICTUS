@@ -4,6 +4,7 @@
 #pragma once
 #include "victus/core/fs.hpp"
 #include "victus/core/json.hpp"
+#include "victus/core/process.hpp"
 #include "victus/gameplay/input_map.hpp"
 #include "victus/scene/scene.hpp"
 
@@ -92,6 +93,17 @@ private:
     fs::Path root_;
     ProjectSettings settings_;
 };
+
+// The project's "bridges" section: helper processes scripts start with `bridge.open(name)`,
+//   "bridges": {"sim": {"command": ["dotnet", "${env:SIM_DLL:-tools/sim.dll}", "serve", "--saves", "${saves}/sim"],
+//                       "working_directory": "${project}", "discard_stderr": false}}
+// Variables: ${project} (project root), ${saves} (the run's save folder), ${env:NAME} and
+// ${env:NAME:-fallback}. A relative program path containing '/' is resolved against the project.
+[[nodiscard]] Result<process::LaunchOptions> bridge_launch(const Project& project, std::string_view name,
+                                                           const fs::Path& save_directory);
+// Expands the variables above in one string.
+[[nodiscard]] Result<std::string> expand_bridge_variables(std::string_view text, const fs::Path& project_root,
+                                                          const fs::Path& save_directory);
 
 // Recently opened projects (most recent first), persisted in the user data directory.
 class RecentProjects {
