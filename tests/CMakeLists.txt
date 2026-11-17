@@ -38,6 +38,7 @@ victus_add_test(victus_script_tests
         script/input_map_tests.cpp
         script/save_tests.cpp
         script/capture_tests.cpp
+        script/scene_transition_tests.cpp
     DEPS VICTUS::Script VICTUS::Animation
     LABELS script)
 

@@ -55,6 +55,8 @@ struct PlayerReport {
     std::size_t assets_reloaded{0}; // textures/models/audio hot-reloaded while running
     std::uint64_t digests_checked{0}; // replay: state digests compared
     std::string replay_mismatch;    // replay: first divergence ("frame N: expected X, got Y")
+    std::uint64_t scene_loads{0};   // scene transitions scripts made (scene.load/reload)
+    std::string final_scene;        // the scene running when the player stopped
 };
 
 [[nodiscard]] Result<PlayerReport> run(const PlayerOptions& options);

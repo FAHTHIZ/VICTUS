@@ -974,9 +974,18 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
             so.input_map = project_->settings().input;
             so.save_version = project_->settings().save_version;
             so.save_directory = project_->dev_save_directory();
+            so.project_root = project_->root();
         }
+        // Scene transitions while playing replace only the play copy; the authored scene and
+        // its path stay as they are, and Stop returns to it.
+        so.on_scene_loaded = [this](scene::Scene&, std::string_view path) {
+            if (play_physics_) play_physics_->clear();
+            if (auto* a = audio()) a->stop_all();
+            notify("Play: scene changed to " + std::string(path));
+        };
         if (auto host = script::ScriptHost::create(so)) {
             play_scripts_ = std::move(host).value();
+            play_scripts_->set_current_scene(scene_path_);
             script::add_script_systems(sim_, *play_scripts_);
         } else {
             notify("scripts disabled: " + host.error().message, true);

@@ -204,6 +204,8 @@ int cmd_run(const std::vector<std::string>& a) {
                 static_cast<unsigned long long>(r->script_errors));
     if (!r->net_status.empty()) std::printf("net: %s\n", r->net_status.c_str());
     if (r->assets_reloaded) std::printf("hot reload: %zu assets reloaded\n", r->assets_reloaded);
+    if (r->scene_loads)
+        std::printf("scenes: %llu transitions, ended in %s\n", static_cast<unsigned long long>(r->scene_loads), r->final_scene.c_str());
     if (!o.record.empty()) std::printf("recorded capture: %s\n", o.record.string().c_str());
     if (!o.replay.empty()) {
         if (!r->replay_mismatch.empty()) return (void)error("replay diverged at " + r->replay_mismatch), 5;
@@ -262,9 +264,16 @@ struct Headless {
         so.save_version = proj->settings().save_version;
         so.save_directory = saves.empty() ? proj->dev_save_directory() : fs::Path(saves);
         so.random_seed = random_seed;
+        so.project_root = proj->root();
+        so.on_scene_loaded = [this](scene::Scene&, std::string_view loaded) {
+            scene_rel = std::string(loaded);
+            if (physics_world) physics_world->clear();
+            if (audio_engine) audio_engine->stop_all();
+        };
         auto h = script::ScriptHost::create(so);
         if (!h) return h.error();
         host = std::move(*h);
+        host->set_current_scene(scene_rel);
         auto pw = physics::PhysicsWorld::create(); // single-threaded: reproducible output
         if (!pw) return pw.error();
         physics_world = std::move(*pw);
@@ -582,6 +591,7 @@ int cmd_check(const std::vector<std::string>& a) {
     if (!proj) return error(proj.error().message);
     const fs::Path assets = proj->root() / "assets";
     std::size_t problems = 0, scripts = 0, scenes = 0, prefabs = 0;
+    const std::vector<std::string> project_scenes = proj->scenes(); // targets of scene.load
     for (const auto& msg : proj->settings().input.validate(
              [](std::string_view k) { return platform::key_from_name(k) != platform::Key::Unknown; })) {
         std::printf("error: victus.project: %s\n", msg.c_str());
@@ -608,6 +618,12 @@ int cmd_check(const std::vector<std::string>& a) {
         } else if (auto st = script::check_syntax(*text, rel); !st) {
             std::printf("error: %s\n", st.error().message.c_str());
             ++problems;
+        } else {
+            for (const std::string& target : script::scene_references(*text))
+                if (std::find(project_scenes.begin(), project_scenes.end(), target) == project_scenes.end()) {
+                    std::printf("error: %s: scene.load(\"%s\") names a scene that does not exist\n", rel.c_str(), target.c_str());
+                    ++problems;
+                }
         }
     }
     // Materials: each must parse and reference existing textures (resolved through the database).
