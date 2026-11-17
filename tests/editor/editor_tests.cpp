@@ -1526,8 +1526,14 @@ TEST_CASE("editor: asset thumbnails render models, materials and prefabs and ref
     auto mat = db.load_material(energy_id);
     REQUIRE(mat.ok());
     assets::MaterialAsset red = *mat;
+    // Plain rough red PBR: without the energy shader's orange glow (or a specular highlight at
+    // the centre) the result does not depend on how a driver saturates bright colours.
     red.base_color = {1, 0, 0, 1};
     red.emissive = {0, 0, 0, 1};
+    red.metallic = 0;
+    red.roughness = 1;
+    red.shader = Uuid{};
+    red.shader_params = {};
     REQUIRE(ed.save_material(energy_id, red).ok());
     CHECK_FALSE(ed.asset_thumbnail(energy_id).has_value()); // queued again
     h.frames(3);
