@@ -6,6 +6,8 @@
 #include "victus/core/fs.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <format>
 
 namespace victus::scene {
 
@@ -649,6 +651,37 @@ Status Scene::load_file(const std::filesystem::path& path) {
     auto doc = json::parse(*text);
     if (!doc) return make_error(ErrorCode::ParseError, path.string() + ": " + doc.error().message);
     return load(*doc);
+}
+
+Result<std::shared_ptr<const ProceduralMesh>> publish_mesh(ProceduralMesh mesh) {
+    static std::atomic<std::uint64_t> next_id{1};
+    const std::size_t n = mesh.positions.size();
+    const auto bad = [](std::string message) { return Error{ErrorCode::InvalidArgument, std::move(message)}; };
+    if (n > 0xFFFFFFFFu) return bad("procedural mesh: too many vertices");
+    if (!mesh.normals.empty() && mesh.normals.size() != n) return bad("procedural mesh: normal count differs from position count");
+    if (!mesh.uvs.empty() && mesh.uvs.size() != n) return bad("procedural mesh: uv count differs from position count");
+    if (!mesh.colors.empty() && mesh.colors.size() != n) return bad("procedural mesh: colour count differs from position count");
+    if (mesh.indices.size() % 3 != 0) return bad("procedural mesh: index count is not a multiple of 3");
+    for (const std::uint32_t i : mesh.indices)
+        if (i >= n) return bad(std::format("procedural mesh: index {} out of range ({} vertices)", i, n));
+    mesh.bounds = {};
+    for (const math::Vec3& p : mesh.positions) mesh.bounds.expand(p);
+    if (mesh.normals.empty() && n > 0) {
+        mesh.normals.assign(n, math::Vec3{0, 0, 0});
+        for (std::size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
+            const std::uint32_t a = mesh.indices[t], b = mesh.indices[t + 1], c = mesh.indices[t + 2];
+            const math::Vec3 face = math::cross(mesh.positions[b] - mesh.positions[a], mesh.positions[c] - mesh.positions[a]);
+            mesh.normals[a] = mesh.normals[a] + face; // area-weighted
+            mesh.normals[b] = mesh.normals[b] + face;
+            mesh.normals[c] = mesh.normals[c] + face;
+        }
+        for (math::Vec3& v : mesh.normals) {
+            const float l = math::length(v);
+            v = l > 1e-12f ? v * (1.0f / l) : math::Vec3{0, 1, 0};
+        }
+    }
+    mesh.id = next_id.fetch_add(1, std::memory_order_relaxed);
+    return std::shared_ptr<const ProceduralMesh>(std::make_shared<ProceduralMesh>(std::move(mesh)));
 }
 
 } // namespace victus::scene

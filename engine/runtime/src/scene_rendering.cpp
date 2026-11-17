@@ -26,6 +26,9 @@ void GpuAssetCache::clear() {
     models_.clear();
     for (auto& [name, mesh] : primitives_) ctx_.destroy(mesh);
     primitives_.clear();
+    for (auto& [id, entry] : procedural_)
+        if (entry.mesh.valid()) ctx_.destroy(entry.mesh);
+    procedural_.clear();
     evict_shaders();
 }
 
@@ -225,6 +228,48 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
     return raw;
 }
 
+const render::GpuMesh* GpuAssetCache::procedural(const scene::ProceduralMesh& mesh) {
+    auto [it, inserted] = procedural_.try_emplace(mesh.id);
+    ProceduralEntry& entry = it->second;
+    entry.last_used = procedural_clock_;
+    if (!inserted) return entry.failed ? nullptr : &entry.mesh;
+    if (mesh.positions.empty() || mesh.indices.empty()) {
+        entry.failed = true;
+        return nullptr;
+    }
+    render::MeshData data;
+    data.vertices.resize(mesh.positions.size());
+    for (std::size_t i = 0; i < mesh.positions.size(); ++i) {
+        render::Vertex3D& v = data.vertices[i];
+        v.position = mesh.positions[i];
+        if (i < mesh.normals.size()) v.normal = mesh.normals[i];
+        if (i < mesh.uvs.size()) v.uv = mesh.uvs[i];
+        if (i < mesh.colors.size()) v.color = mesh.colors[i];
+    }
+    data.indices = mesh.indices;
+    if (!mesh.uvs.empty()) render::compute_tangents(data);
+    auto g = ctx_.create_mesh(data, "procedural");
+    if (!g) {
+        VICTUS_LOG_ERROR("runtime", "procedural mesh {}: {}", mesh.id, g.error().message);
+        entry.failed = true;
+        return nullptr;
+    }
+    entry.mesh = *g;
+    return &entry.mesh;
+}
+
+void GpuAssetCache::collect_procedural(std::uint32_t keep_frames) {
+    ++procedural_clock_;
+    for (auto it = procedural_.begin(); it != procedural_.end();) {
+        if (it->second.last_used + keep_frames < procedural_clock_) {
+            if (it->second.mesh.valid()) ctx_.destroy(it->second.mesh);
+            it = procedural_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 const render::GpuMesh* GpuAssetCache::primitive(std::string_view name) {
     const std::string key(name);
     if (const auto it = primitives_.find(key); it != primitives_.end()) return &it->second;
@@ -357,6 +402,7 @@ const std::vector<Entity>& skeleton_nodes(Scene& scene, Entity root, const Uuid&
 ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRenderer& renderer,
                            const SceneViewSettings& settings, const render::Camera3D* camera_override) {
     ExtractStats stats;
+    assets.collect_procedural();
     ecs::World& w = scene.world();
     render::Camera3D camera = settings.fallback_camera;
     if (camera_override) {
@@ -420,6 +466,29 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     };
     w.each<MeshRendererComponent, WorldTransform>([&](Entity entity, const MeshRendererComponent& mr, const WorldTransform& wt) {
         if (!mr.visible) return;
+        const auto* pm = w.get<scene::ProceduralMeshComponent>(entity);
+        if (pm && pm->mesh) {
+            const render::GpuMesh* mesh = assets.procedural(*pm->mesh);
+            if (!mesh) return; // empty geometry draws nothing
+            render::Material m;
+            m.base_color = mr.base_color;
+            m.metallic = mr.metallic;
+            m.roughness = mr.roughness;
+            if (!mr.material_asset.is_nil()) {
+                if (auto mat = assets.material(mr.material_asset); mat) {
+                    m = *mat;
+                    m.base_color = {m.base_color.r * mr.base_color.r, m.base_color.g * mr.base_color.g,
+                                    m.base_color.b * mr.base_color.b, m.base_color.a * mr.base_color.a};
+                } else {
+                    ++stats.missing_assets;
+                }
+            }
+            m.cast_shadows = mr.cast_shadows;
+            apply_overrides(entity, m);
+            renderer.submit(*mesh, m, wt.matrix);
+            ++stats.meshes;
+            return;
+        }
         if (!mr.mesh_asset.is_nil()) {
             auto model = assets.model(mr.mesh_asset);
             if (!model || mr.mesh_index >= (*model)->meshes.size()) {

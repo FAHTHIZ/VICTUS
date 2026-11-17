@@ -973,3 +973,40 @@ TEST_CASE("captures: script random seeds make coin hops repeatable") {
     CHECK(math::length(a - b) < 1e-5f);
     CHECK(math::length(a - c) > 0.1f);
 }
+
+TEST_CASE("project: bridges section resolves helper process launches") {
+    const auto dir = temp_dir("bridges");
+    auto p = project::Project::create(dir, "Bridges", "3d");
+    REQUIRE(p.ok());
+    auto doc = json::parse(R"({"sim": {"command": ["${env:VICTUS_TEST_BRIDGE_PROGRAM:-tools/sim}", "serve", "--saves", "${saves}/sim",
+                                                  "${project}", "${env:VICTUS_TEST_UNSET_VAR:-fallback}"],
+                                      "working_directory": "data", "discard_stderr": true},
+                              "bare": {"command": ["dotnet", "x.dll"]},
+                              "broken": {"command": ["${nope}"]},
+                              "unset": {"command": ["${env:VICTUS_TEST_UNSET_VAR}"]},
+                              "empty": {"command": []}})");
+    REQUIRE(doc.ok());
+    p->settings().extra.set("bridges", std::move(*doc));
+    const sfs::path saves = dir / ".victus" / "saves";
+    auto sim = project::bridge_launch(*p, "sim", saves);
+    REQUIRE(sim.ok());
+    REQUIRE(sim->args.size() == 6);
+    CHECK(sfs::path(sim->args[0]) == (p->root() / "tools" / "sim").lexically_normal());
+    CHECK(sim->args[3] == saves.generic_string() + "/sim");
+    CHECK(sim->args[4] == p->root().generic_string());
+    CHECK(sim->args[5] == "fallback");
+    CHECK(sfs::path(sim->working_directory) == (p->root() / "data").lexically_normal());
+    CHECK(sim->discard_stderr);
+    CHECK(sfs::is_directory(saves)); // created for the helper
+    auto bare = project::bridge_launch(*p, "bare", saves);
+    REQUIRE(bare.ok());
+    CHECK(bare->args[0] == "dotnet"); // looked up on PATH
+    CHECK(sfs::path(bare->working_directory) == p->root());
+    CHECK_FALSE(project::bridge_launch(*p, "broken", saves));
+    CHECK_FALSE(project::bridge_launch(*p, "unset", saves));
+    CHECK_FALSE(project::bridge_launch(*p, "empty", saves));
+    auto missing = project::bridge_launch(*p, "other", saves);
+    REQUIRE_FALSE(missing);
+    CHECK(missing.error().message.find("no bridge named 'other'") != std::string::npos);
+    sfs::remove_all(dir);
+}

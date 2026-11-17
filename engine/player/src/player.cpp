@@ -135,6 +135,9 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         return make_error(ErrorCode::NotFound, std::format("no asset at '{}'", asset_path));
     };
     so.project_root = proj->root();
+    so.bridge_launcher = [project = &*proj, saves = so.save_directory](std::string_view name) {
+        return project::bridge_launch(*project, name, saves);
+    };
     // Scene transitions start the next scene with a fresh physics world and silence.
     physics::PhysicsWorld* physics_for_scenes = nullptr;
     audio::AudioEngine* audio_for_scenes = nullptr;

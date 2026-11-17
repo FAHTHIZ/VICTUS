@@ -979,6 +979,9 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
             so.save_version = project_->settings().save_version;
             so.save_directory = project_->dev_save_directory();
             so.project_root = project_->root();
+            so.bridge_launcher = [project = &*project_, saves = so.save_directory](std::string_view name) {
+                return project::bridge_launch(*project, name, saves);
+            };
         }
         // Scene transitions while playing replace only the play copy; the authored scene and
         // its path stay as they are, and Stop returns to it.

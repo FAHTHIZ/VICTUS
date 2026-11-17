@@ -56,6 +56,13 @@ public:
     void evict_shaders();
     // Built-in primitive mesh: "cube", "sphere", "plane", "cylinder". nullptr when unknown.
     [[nodiscard]] const render::GpuMesh* primitive(std::string_view name);
+    // GPU copy of a procedural mesh (scene::ProceduralMeshComponent), uploaded on first use and
+    // cached by the mesh's id. nullptr for an empty mesh or a failed upload (logged once).
+    [[nodiscard]] const render::GpuMesh* procedural(const scene::ProceduralMesh& mesh);
+    // Advances the procedural-mesh clock and destroys GPU copies not drawn during the last
+    // `keep_frames` frames (meshes replaced or removed by their entities). extract_scene() calls it.
+    void collect_procedural(std::uint32_t keep_frames = 8);
+    [[nodiscard]] std::size_t procedural_count() const noexcept { return procedural_.size(); }
     // Drops one asset (e.g. after re-import) so the next request reloads it.
     void evict(const Uuid& uuid);
     void clear();
@@ -71,6 +78,13 @@ private:
     std::unordered_map<std::string, render::GpuMesh> primitives_;
     std::unordered_map<Uuid, Result<render::Material>, UuidHash> materials_;
     std::unordered_map<Uuid, Result<rhi::ShaderHandle>, UuidHash> shaders_;
+    struct ProceduralEntry {
+        render::GpuMesh mesh;
+        std::uint64_t last_used{0};
+        bool failed{false};
+    };
+    std::unordered_map<std::uint64_t, ProceduralEntry> procedural_;
+    std::uint64_t procedural_clock_{0};
 };
 
 // Creates one entity per model node under `parent` (a new root named `name` when parent is

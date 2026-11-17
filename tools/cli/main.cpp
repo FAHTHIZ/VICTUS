@@ -265,6 +265,9 @@ struct Headless {
         so.save_directory = saves.empty() ? proj->dev_save_directory() : fs::Path(saves);
         so.random_seed = random_seed;
         so.project_root = proj->root();
+        so.bridge_launcher = [project = &*proj, save_dir = so.save_directory](std::string_view name) {
+            return project::bridge_launch(*project, name, save_dir);
+        };
         so.on_scene_loaded = [this](scene::Scene&, std::string_view loaded) {
             scene_rel = std::string(loaded);
             if (physics_world) physics_world->clear();

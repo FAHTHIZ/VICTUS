@@ -28,6 +28,7 @@ public:
     }
     math::Vec2 mouse_position() const override { return state_->mouse_position() - origin_; }
     math::Vec2 mouse_delta() const override { return enabled_ ? state_->mouse_delta() : math::Vec2{}; }
+    float mouse_wheel() const override { return enabled_ ? state_->wheel() : 0.0f; }
     bool mouse_released(int button) const override {
         return enabled_ && valid(button) && state_->mouse_released(button_of(button));
     }

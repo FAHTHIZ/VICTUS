@@ -7,6 +7,7 @@
 #include "victus/script/script.hpp"
 
 #include "victus/core/fs.hpp"
+#include "victus/core/hash.hpp"
 #include "victus/core/log.hpp"
 #include "victus/core/profiler.hpp"
 #include "victus/gameplay/capture.hpp"
@@ -101,6 +102,18 @@ struct ScriptHost::Impl {
     std::optional<SceneRequest> pending_scene;
     lua_State* active{nullptr};                            // thread running save.read (migrations)
 
+    // Helper processes opened with bridge.open (kept across scene transitions, closed with the host).
+    struct Bridge {
+        std::string name;
+        std::unique_ptr<process::ChildProcess> child;
+        std::vector<Value> inbox; // messages read while waiting for a request's reply
+        std::uint64_t next_id{1};
+        std::uint64_t requests{0};
+        double wait_seconds{0};
+    };
+    std::unordered_map<int, Bridge> bridges;
+    int next_bridge{1};
+
     gameplay::SaveStore* store() {
         if (!save_store && !options.save_directory.empty())
             save_store = std::make_unique<gameplay::SaveStore>(options.save_directory, options.save_version);
@@ -185,9 +198,17 @@ struct ScriptHost::Impl {
         return true;
     }
 
+    std::vector<std::string> loading; // modules being loaded (require cycles)
+
     Module* module(std::string_view path) {
         auto it = modules.find(std::string(path));
         if (it != modules.end()) return it->second.ok ? &it->second : nullptr;
+        if (std::find(loading.begin(), loading.end(), path) != loading.end()) return nullptr;
+        loading.emplace_back(path);
+        struct Pop {
+            std::vector<std::string>& v;
+            ~Pop() { v.pop_back(); }
+        } pop{loading};
         Module m;
         m.path = std::string(path);
         load_module(m);
@@ -793,6 +814,12 @@ int input_mouse_delta(lua_State* L) {
     lua_pushvector(L, p.x, p.y, 0);
     return 1;
 }
+// input.mouse_wheel() -> wheel notches this frame (positive away from the user)
+int input_mouse_wheel(lua_State* L) {
+    const auto* in = host_of(L).input;
+    lua_pushnumber(L, in ? in->mouse_wheel() : 0.0);
+    return 1;
+}
 // input.axis("A", "D") -> -1, 0 or 1; extra pairs are alternatives: axis("A","D","Left","Right")
 int input_axis(lua_State* L) {
     const auto* in = host_of(L).input;
@@ -1252,6 +1279,360 @@ int entity_material(lua_State* L) {
     else push_asset(L, m->material_asset);
     return 1;
 }
+// ---- procedural meshes ---------------------------------------------------------------------------
+
+// One attribute of a packed vertex layout ("position:f32x3,normal:s8x4,color:u8x4,uv:f32x2,skip:4").
+struct PackedAttribute {
+    enum class Kind : std::uint8_t { Position, Normal, Uv, Color, Skip } kind{Kind::Skip};
+    enum class Type : std::uint8_t { F32, S8, U8, S16, U16, Bytes } type{Type::Bytes};
+    std::uint32_t count{0};  // components
+    std::uint32_t offset{0}; // bytes from the vertex start
+};
+
+std::uint32_t component_bytes(PackedAttribute::Type t) {
+    switch (t) {
+    case PackedAttribute::Type::F32: return 4;
+    case PackedAttribute::Type::S16:
+    case PackedAttribute::Type::U16: return 2;
+    default: return 1;
+    }
+}
+
+// Parses a layout string; returns the stride or 0 with `error` set.
+std::uint32_t parse_layout(std::string_view text, std::vector<PackedAttribute>& out, std::string& error) {
+    out.clear();
+    std::uint32_t offset = 0;
+    bool position = false;
+    while (!text.empty()) {
+        const std::size_t comma = text.find(',');
+        std::string_view item = text.substr(0, comma);
+        text = comma == std::string_view::npos ? std::string_view{} : text.substr(comma + 1);
+        while (!item.empty() && item.front() == ' ') item.remove_prefix(1);
+        while (!item.empty() && item.back() == ' ') item.remove_suffix(1);
+        const std::size_t colon = item.find(':');
+        if (colon == std::string_view::npos) {
+            error = std::format("layout item '{}' is not name:type", item);
+            return 0;
+        }
+        const std::string_view name = item.substr(0, colon), type = item.substr(colon + 1);
+        PackedAttribute a;
+        a.offset = offset;
+        if (name == "skip") {
+            int n = 0;
+            for (const char c : type) {
+                if (c < '0' || c > '9' || n > 4096) {
+                    error = std::format("layout: skip needs a byte count, got '{}'", type);
+                    return 0;
+                }
+                n = n * 10 + (c - '0');
+            }
+            a.kind = PackedAttribute::Kind::Skip;
+            a.count = static_cast<std::uint32_t>(n);
+            offset += a.count;
+            out.push_back(a);
+            continue;
+        }
+        if (name == "position") a.kind = PackedAttribute::Kind::Position;
+        else if (name == "normal") a.kind = PackedAttribute::Kind::Normal;
+        else if (name == "uv") a.kind = PackedAttribute::Kind::Uv;
+        else if (name == "color") a.kind = PackedAttribute::Kind::Color;
+        else {
+            error = std::format("layout: unknown attribute '{}' (position, normal, uv, color, skip)", name);
+            return 0;
+        }
+        const std::size_t x = type.find('x');
+        const std::string_view base = type.substr(0, x);
+        const int count = x == std::string_view::npos || x + 2 != type.size() ? 0 : type[x + 1] - '0';
+        if (base == "f32") a.type = PackedAttribute::Type::F32;
+        else if (base == "s8") a.type = PackedAttribute::Type::S8;
+        else if (base == "u8") a.type = PackedAttribute::Type::U8;
+        else if (base == "s16") a.type = PackedAttribute::Type::S16;
+        else if (base == "u16") a.type = PackedAttribute::Type::U16;
+        const int need = a.kind == PackedAttribute::Kind::Uv ? 2 : 3;
+        if (a.type == PackedAttribute::Type::Bytes || count < need || count > 4) {
+            error = std::format("layout: '{}' needs a type like f32x{} / s8x4 / u8x4, got '{}'", name, need, type);
+            return 0;
+        }
+        if (a.kind == PackedAttribute::Kind::Color && a.type != PackedAttribute::Type::U8 && a.type != PackedAttribute::Type::F32) {
+            error = "layout: color must be u8x3, u8x4, f32x3 or f32x4";
+            return 0;
+        }
+        if (a.kind == PackedAttribute::Kind::Position && a.type != PackedAttribute::Type::F32) {
+            error = "layout: position must be f32x3";
+            return 0;
+        }
+        position = position || a.kind == PackedAttribute::Kind::Position;
+        a.count = static_cast<std::uint32_t>(count);
+        offset += a.count * component_bytes(a.type);
+        out.push_back(a);
+    }
+    if (!position) {
+        error = "layout has no position";
+        return 0;
+    }
+    return offset;
+}
+
+float read_component(const std::uint8_t* p, PackedAttribute::Type t, std::uint32_t i) {
+    switch (t) {
+    case PackedAttribute::Type::F32: {
+        float f;
+        std::memcpy(&f, p + i * 4, 4);
+        return std::isfinite(f) ? f : 0.0f;
+    }
+    case PackedAttribute::Type::S8: return std::max(-1.0f, static_cast<float>(static_cast<std::int8_t>(p[i])) / 127.0f);
+    case PackedAttribute::Type::U8: return static_cast<float>(p[i]) / 255.0f;
+    case PackedAttribute::Type::S16: {
+        std::int16_t v;
+        std::memcpy(&v, p + i * 2, 2);
+        return std::max(-1.0f, static_cast<float>(v) / 32767.0f);
+    }
+    case PackedAttribute::Type::U16: {
+        std::uint16_t v;
+        std::memcpy(&v, p + i * 2, 2);
+        return static_cast<float>(v) / 65535.0f;
+    }
+    default: return 0.0f;
+    }
+}
+
+std::uint32_t pack_linear_color(float r, float g, float b, float a) {
+    const auto enc = [](float c, bool srgb) {
+        c = std::clamp(c, 0.0f, 1.0f);
+        if (srgb) c = math::linear_to_srgb(c);
+        return static_cast<std::uint32_t>(std::lround(c * 255.0f));
+    };
+    return enc(r, true) | (enc(g, true) << 8) | (enc(b, true) << 16) | (enc(a, false) << 24);
+}
+
+// Bytes of a vertices/indices field: a base64 string (encoding "base64", the default) or raw bytes.
+std::vector<std::uint8_t> field_bytes(lua_State* L, int spec, const char* field, bool base64) {
+    lua_getfield(L, spec, field);
+    std::size_t n = 0;
+    const char* text = lua_tolstring(L, -1, &n);
+    if (!text) luaL_error(L, "set_mesh_data: '%s' must be a string", field);
+    std::vector<std::uint8_t> out;
+    if (base64) {
+        if (!base64_decode(std::string_view(text, n), out)) luaL_error(L, "set_mesh_data: '%s' is not valid base64", field);
+    } else {
+        out.assign(reinterpret_cast<const std::uint8_t*>(text), reinterpret_cast<const std::uint8_t*>(text) + n);
+    }
+    lua_pop(L, 1);
+    return out;
+}
+
+constexpr std::size_t kMaxProceduralVertices = 4u << 20;
+
+// Packed form: {vertices = string, indices = string, layout = "position:f32x3,...",
+// index = "u32" | "u16", encoding = "base64" | "binary"}.
+scene::ProceduralMesh mesh_from_packed(lua_State* L, int spec) {
+    lua_getfield(L, spec, "encoding");
+    const std::string encoding = luaL_optstring(L, -1, "base64");
+    lua_pop(L, 1);
+    if (encoding != "base64" && encoding != "binary") luaL_error(L, "set_mesh_data: encoding must be 'base64' or 'binary'");
+    lua_getfield(L, spec, "layout");
+    const std::string layout_text = luaL_optstring(L, -1, "position:f32x3,normal:f32x3");
+    lua_pop(L, 1);
+    lua_getfield(L, spec, "index");
+    const std::string index_type = luaL_optstring(L, -1, "u32");
+    lua_pop(L, 1);
+    if (index_type != "u32" && index_type != "u16") luaL_error(L, "set_mesh_data: index must be 'u32' or 'u16'");
+    std::vector<PackedAttribute> layout;
+    std::string error;
+    const std::uint32_t stride = parse_layout(layout_text, layout, error);
+    if (stride == 0) luaL_error(L, "set_mesh_data: %s", error.c_str());
+    const bool b64 = encoding == "base64";
+    const std::vector<std::uint8_t> vb = field_bytes(L, spec, "vertices", b64);
+    const std::vector<std::uint8_t> ib = field_bytes(L, spec, "indices", b64);
+    if (vb.size() % stride != 0)
+        luaL_error(L, "set_mesh_data: %d vertex bytes is not a multiple of the %d-byte layout", static_cast<int>(vb.size()), static_cast<int>(stride));
+    const std::size_t n = vb.size() / stride;
+    if (n > kMaxProceduralVertices) luaL_error(L, "set_mesh_data: too many vertices (%d)", static_cast<int>(n));
+    const std::size_t isize = index_type == "u32" ? 4 : 2;
+    if (ib.size() % isize != 0) luaL_error(L, "set_mesh_data: index bytes are not a multiple of %d", static_cast<int>(isize));
+    scene::ProceduralMesh m;
+    bool has_normal = false, has_uv = false, has_color = false;
+    for (const auto& a : layout) {
+        has_normal = has_normal || a.kind == PackedAttribute::Kind::Normal;
+        has_uv = has_uv || a.kind == PackedAttribute::Kind::Uv;
+        has_color = has_color || a.kind == PackedAttribute::Kind::Color;
+    }
+    m.positions.resize(n);
+    if (has_normal) m.normals.resize(n);
+    if (has_uv) m.uvs.resize(n);
+    if (has_color) m.colors.resize(n);
+    for (std::size_t v = 0; v < n; ++v) {
+        const std::uint8_t* base = vb.data() + v * stride;
+        for (const auto& a : layout) {
+            const std::uint8_t* p = base + a.offset;
+            switch (a.kind) {
+            case PackedAttribute::Kind::Position:
+                m.positions[v] = {read_component(p, a.type, 0), read_component(p, a.type, 1), read_component(p, a.type, 2)};
+                break;
+            case PackedAttribute::Kind::Normal:
+                m.normals[v] = {read_component(p, a.type, 0), read_component(p, a.type, 1), read_component(p, a.type, 2)};
+                break;
+            case PackedAttribute::Kind::Uv: m.uvs[v] = {read_component(p, a.type, 0), read_component(p, a.type, 1)}; break;
+            case PackedAttribute::Kind::Color:
+                if (a.type == PackedAttribute::Type::U8) // bytes are taken as sRGB-encoded, alpha linear
+                    m.colors[v] = std::uint32_t{p[0]} | (std::uint32_t{p[1]} << 8) | (std::uint32_t{p[2]} << 16) |
+                                  (std::uint32_t{a.count == 4 ? p[3] : std::uint8_t{255}} << 24);
+                else
+                    m.colors[v] = pack_linear_color(read_component(p, a.type, 0), read_component(p, a.type, 1),
+                                                    read_component(p, a.type, 2), a.count == 4 ? read_component(p, a.type, 3) : 1.0f);
+                break;
+            case PackedAttribute::Kind::Skip: break;
+            }
+        }
+    }
+    m.indices.resize(ib.size() / isize);
+    for (std::size_t i = 0; i < m.indices.size(); ++i) {
+        if (isize == 4) std::memcpy(&m.indices[i], ib.data() + i * 4, 4);
+        else {
+            std::uint16_t x;
+            std::memcpy(&x, ib.data() + i * 2, 2);
+            m.indices[i] = x;
+        }
+    }
+    return m;
+}
+
+// Table form: {positions = {vector...}, indices = {integer...} (1-based), normals = {vector...}?,
+// colors = {vector...}? (linear RGB), uvs = {{u, v}...}?}.
+scene::ProceduralMesh mesh_from_tables(lua_State* L, int spec) {
+    scene::ProceduralMesh m;
+    lua_getfield(L, spec, "positions");
+    luaL_checktype(L, -1, LUA_TTABLE);
+    const int n = lua_objlen(L, -1);
+    if (static_cast<std::size_t>(n) > kMaxProceduralVertices) luaL_error(L, "set_mesh_data: too many vertices");
+    m.positions.reserve(static_cast<std::size_t>(n));
+    for (int i = 1; i <= n; ++i) {
+        lua_rawgeti(L, -1, i);
+        m.positions.push_back(check_vec3(L, -1));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, spec, "indices");
+    luaL_checktype(L, -1, LUA_TTABLE);
+    const int ni = lua_objlen(L, -1);
+    for (int i = 1; i <= ni; ++i) {
+        lua_rawgeti(L, -1, i);
+        const auto idx = luaL_checkinteger(L, -1);
+        if (idx < 1) luaL_error(L, "set_mesh_data: indices are 1-based (got %d)", static_cast<int>(idx));
+        m.indices.push_back(static_cast<std::uint32_t>(idx - 1));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, spec, "normals");
+    if (lua_istable(L, -1)) {
+        const int nn = lua_objlen(L, -1);
+        for (int i = 1; i <= nn; ++i) {
+            lua_rawgeti(L, -1, i);
+            m.normals.push_back(check_vec3(L, -1));
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, spec, "colors");
+    if (lua_istable(L, -1)) {
+        const int nc = lua_objlen(L, -1);
+        for (int i = 1; i <= nc; ++i) {
+            lua_rawgeti(L, -1, i);
+            const math::Vec3 c = check_vec3(L, -1);
+            m.colors.push_back(pack_linear_color(c.x, c.y, c.z, 1.0f));
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, spec, "uvs");
+    if (lua_istable(L, -1)) {
+        const int nu = lua_objlen(L, -1);
+        for (int i = 1; i <= nu; ++i) {
+            lua_rawgeti(L, -1, i);
+            luaL_checktype(L, -1, LUA_TTABLE);
+            lua_rawgeti(L, -1, 1);
+            lua_rawgeti(L, -2, 2);
+            m.uvs.push_back({static_cast<float>(luaL_checknumber(L, -2)), static_cast<float>(luaL_checknumber(L, -1))});
+            lua_pop(L, 3);
+        }
+    }
+    lua_pop(L, 1);
+    return m;
+}
+
+// entity:set_mesh_data(spec) -> vertex count, triangle count. Builds a procedural mesh drawn by
+// the entity's MeshRenderer (added when missing). Optional spec fields: scale (vector applied to
+// positions; a mirroring scale also flips the winding), flip_winding (bool).
+int entity_set_mesh_data(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    lua_getfield(L, 2, "vertices");
+    const bool packed = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    scene::ProceduralMesh m = packed ? mesh_from_packed(L, 2) : mesh_from_tables(L, 2);
+    lua_getfield(L, 2, "scale");
+    const math::Vec3 scale = lua_isnil(L, -1) ? math::Vec3{1, 1, 1} : check_vec3(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, 2, "flip_winding");
+    bool flip = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    if (scale.x != 1 || scale.y != 1 || scale.z != 1) {
+        if (scale.x == 0 || scale.y == 0 || scale.z == 0) luaL_error(L, "set_mesh_data: scale components must be nonzero");
+        for (auto& p : m.positions) p = {p.x * scale.x, p.y * scale.y, p.z * scale.z};
+        for (auto& nrm : m.normals) {
+            const math::Vec3 t{nrm.x / scale.x, nrm.y / scale.y, nrm.z / scale.z};
+            const float l = math::length(t);
+            nrm = l > 1e-12f ? t * (1.0f / l) : math::Vec3{0, 1, 0};
+        }
+        if (scale.x * scale.y * scale.z < 0) flip = !flip;
+    }
+    if (flip)
+        for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) std::swap(m.indices[t + 1], m.indices[t + 2]);
+    const auto verts = m.positions.size();
+    const auto tris = m.indices.size() / 3;
+    auto published = scene::publish_mesh(std::move(m));
+    if (!published) luaL_error(L, "set_mesh_data: %s", published.error().message.c_str());
+    auto& w = s.world();
+    if (!w.get<scene::MeshRendererComponent>(e)) w.add<scene::MeshRendererComponent>(e);
+    if (auto* pm = w.get<scene::ProceduralMeshComponent>(e)) pm->mesh = std::move(*published);
+    else w.add<scene::ProceduralMeshComponent>(e).mesh = std::move(*published);
+    lua_pushinteger(L, static_cast<int>(verts));
+    lua_pushinteger(L, static_cast<int>(tris));
+    return 2;
+}
+
+// entity:clear_mesh_data(): drops the procedural mesh (the MeshRenderer draws its asset again).
+int entity_clear_mesh_data(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    if (s.world().get<scene::ProceduralMeshComponent>(e)) s.world().remove<scene::ProceduralMeshComponent>(e);
+    return 0;
+}
+
+// entity:mesh_data() -> {vertices, triangles, min, max} | nil
+int entity_mesh_data(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* pm = s.world().get<scene::ProceduralMeshComponent>(e);
+    if (!pm || !pm->mesh) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 4);
+    lua_pushinteger(L, static_cast<int>(pm->mesh->positions.size()));
+    lua_setfield(L, -2, "vertices");
+    lua_pushinteger(L, static_cast<int>(pm->mesh->indices.size() / 3));
+    lua_setfield(L, -2, "triangles");
+    if (pm->mesh->bounds.valid()) {
+        lua_pushvector(L, pm->mesh->bounds.min.x, pm->mesh->bounds.min.y, pm->mesh->bounds.min.z);
+        lua_setfield(L, -2, "min");
+        lua_pushvector(L, pm->mesh->bounds.max.x, pm->mesh->bounds.max.y, pm->mesh->bounds.max.z);
+        lua_setfield(L, -2, "max");
+    }
+    return 1;
+}
+
 // entity:set_mesh(primitive | model_path, mesh_index?)
 int entity_set_mesh(lua_State* L) {
     auto& s = scene_of(L);
@@ -2350,6 +2731,242 @@ Status apply_checkpoint(ScriptHost::Impl& h, scene::Scene& s, const Value& data)
     return {};
 }
 
+// ---- bridges: helper processes speaking JSON lines ------------------------------------------------
+
+constexpr int kBridgeTag = 2;
+
+struct BridgeRef {
+    int id;
+};
+
+ScriptHost::Impl::Bridge& check_bridge(lua_State* L, int idx) {
+    auto* ref = static_cast<BridgeRef*>(lua_touserdatatagged(L, idx, kBridgeTag));
+    if (!ref) luaL_typeerror(L, idx, "Bridge");
+    auto& h = host_of(L);
+    const auto it = h.bridges.find(ref->id);
+    if (it == h.bridges.end() || !it->second.child) luaL_error(L, "bridge is closed");
+    return it->second;
+}
+
+void push_bridge(lua_State* L, int id) {
+    auto* ref = static_cast<BridgeRef*>(lua_newuserdatatagged(L, sizeof(BridgeRef), kBridgeTag));
+    ref->id = id;
+    lua_getuserdatametatable(L, kBridgeTag);
+    lua_setmetatable(L, -2);
+}
+
+// Waiting for the helper does not count against the script's time budget.
+struct BudgetPause {
+    ScriptHost::Impl& h;
+    ScriptHost::Impl::Bridge& b;
+    double start{now_seconds()};
+    ~BudgetPause() {
+        const double waited = now_seconds() - start;
+        b.wait_seconds += waited;
+        if (h.deadline > 0) h.deadline += waited;
+    }
+};
+
+// Reads one message; nullopt on timeout. Raises a Luau error when the helper exits or sends
+// something that is not a JSON object.
+std::optional<Value> bridge_read(lua_State* L, ScriptHost::Impl::Bridge& b, int timeout_ms) {
+    auto line = b.child->read_line(timeout_ms);
+    if (!line) {
+        const std::string msg = line.error().message;
+        const auto code = b.child->wait(200);
+        luaL_error(L, "bridge '%s' stopped (exit code %d): %s", b.name.c_str(), code ? *code : -1, msg.c_str());
+    }
+    if (!*line) return std::nullopt;
+    auto doc = json::parse(**line);
+    if (!doc || !doc->is_object()) {
+        std::string head = (*line)->substr(0, 120);
+        luaL_error(L, "bridge '%s' sent a line that is not a JSON object: %s", b.name.c_str(), head.c_str());
+    }
+    return std::move(*doc);
+}
+
+int timeout_ms_arg(lua_State* L, int idx, double fallback_seconds) {
+    const double seconds = luaL_optnumber(L, idx, fallback_seconds);
+    if (seconds < 0) return -1;
+    return static_cast<int>(std::min(seconds, 86400.0) * 1000.0);
+}
+
+std::uint64_t bridge_write(lua_State* L, ScriptHost::Impl::Bridge& b, int idx, bool assign_id) {
+    luaL_checktype(L, idx, LUA_TTABLE);
+    Value msg = to_json(L, idx);
+    if (!msg.is_object()) luaL_error(L, "bridge messages are tables with named fields");
+    std::uint64_t id = 0;
+    if (assign_id) {
+        if (const Value* given = msg.find("id"); given && given->is_number()) id = static_cast<std::uint64_t>(given->as_number());
+        else {
+            id = b.next_id++;
+            msg.set("id", Value(static_cast<double>(id)));
+        }
+    }
+    if (auto st = b.child->write_line(json::stringify(msg, false)); !st.ok())
+        luaL_error(L, "bridge '%s': %s", b.name.c_str(), st.error().message.c_str());
+    return id;
+}
+
+// bridge.open(name) -> Bridge | nil, error. The same name returns the running helper.
+int bridge_open(lua_State* L) {
+    auto& h = host_of(L);
+    const std::string name = luaL_checkstring(L, 1);
+    for (auto& [id, b] : h.bridges)
+        if (b.name == name && b.child && b.child->running()) {
+            push_bridge(L, id);
+            return 1;
+        }
+    if (!h.options.bridge_launcher) {
+        lua_pushnil(L);
+        lua_pushstring(L, "bridges are not available here (no project bridges)");
+        return 2;
+    }
+    auto launch = h.options.bridge_launcher(name);
+    if (!launch) {
+        lua_pushnil(L);
+        lua_pushstring(L, launch.error().message.c_str());
+        return 2;
+    }
+    auto child = process::ChildProcess::spawn(*launch);
+    if (!child) {
+        lua_pushnil(L);
+        lua_pushstring(L, std::format("bridge '{}': {}", name, child.error().message).c_str());
+        return 2;
+    }
+    VICTUS_LOG_INFO("script", "bridge '{}' started (pid {})", name, (*child)->pid());
+    const int id = h.next_bridge++;
+    auto& b = h.bridges[id];
+    b.name = name;
+    b.child = std::move(*child);
+    push_bridge(L, id);
+    return 1;
+}
+
+// b:request(message, timeout_seconds = 60) -> reply. Sends one JSON line (with an "id" added
+// when missing) and waits for the reply echoing it; other messages are queued for receive().
+int bridge_request(lua_State* L) {
+    auto& h = host_of(L);
+    auto& b = check_bridge(L, 1);
+    const int timeout = timeout_ms_arg(L, 3, 60.0);
+    const std::uint64_t id = bridge_write(L, b, 2, true);
+    ++b.requests;
+    std::optional<Value> reply;
+    {
+        BudgetPause pause{h, b};
+        const double give_up = timeout < 0 ? 0 : now_seconds() + timeout / 1000.0;
+        while (!reply) {
+            const int left = timeout < 0 ? -1 : std::max(0, static_cast<int>((give_up - now_seconds()) * 1000.0));
+            auto msg = bridge_read(L, b, left);
+            if (!msg) luaL_error(L, "bridge '%s': no reply within %.1f s", b.name.c_str(), timeout / 1000.0);
+            const Value* rid = msg->find("id");
+            if (rid && rid->is_number() && static_cast<std::uint64_t>(rid->as_number()) == id) reply = std::move(msg);
+            else if (b.inbox.size() < 4096) b.inbox.push_back(std::move(*msg));
+        }
+    }
+    push_json(L, *reply);
+    return 1;
+}
+
+// b:send(message) -> id (no wait; the reply arrives through receive()).
+int bridge_send(lua_State* L) {
+    auto& b = check_bridge(L, 1);
+    lua_pushnumber(L, static_cast<double>(bridge_write(L, b, 2, true)));
+    return 1;
+}
+
+// b:receive(timeout_seconds = 0) -> message | nil
+int bridge_receive(lua_State* L) {
+    auto& h = host_of(L);
+    auto& b = check_bridge(L, 1);
+    if (!b.inbox.empty()) {
+        push_json(L, b.inbox.front());
+        b.inbox.erase(b.inbox.begin());
+        return 1;
+    }
+    const int timeout = timeout_ms_arg(L, 2, 0.0);
+    std::optional<Value> msg;
+    {
+        BudgetPause pause{h, b};
+        msg = bridge_read(L, b, timeout);
+    }
+    if (msg) push_json(L, *msg);
+    else lua_pushnil(L);
+    return 1;
+}
+
+int bridge_running(lua_State* L) {
+    auto* ref = static_cast<BridgeRef*>(lua_touserdatatagged(L, 1, kBridgeTag));
+    if (!ref) luaL_typeerror(L, 1, "Bridge");
+    auto& h = host_of(L);
+    const auto it = h.bridges.find(ref->id);
+    lua_pushboolean(L, it != h.bridges.end() && it->second.child && it->second.child->running());
+    return 1;
+}
+
+// b:close(timeout_seconds = 2): closes the helper's input, waits, then stops it.
+int bridge_close(lua_State* L) {
+    auto* ref = static_cast<BridgeRef*>(lua_touserdatatagged(L, 1, kBridgeTag));
+    if (!ref) luaL_typeerror(L, 1, "Bridge");
+    auto& h = host_of(L);
+    const auto it = h.bridges.find(ref->id);
+    if (it == h.bridges.end()) return 0;
+    const int timeout = timeout_ms_arg(L, 2, 2.0);
+    if (it->second.child) {
+        it->second.child->close_stdin();
+        if (!it->second.child->wait(timeout)) it->second.child->kill();
+    }
+    h.bridges.erase(it);
+    return 0;
+}
+
+// b:stats() -> {name, requests, wait_seconds, queued, pid}
+int bridge_stats(lua_State* L) {
+    auto& b = check_bridge(L, 1);
+    lua_createtable(L, 0, 5);
+    lua_pushstring(L, b.name.c_str());
+    lua_setfield(L, -2, "name");
+    lua_pushnumber(L, static_cast<double>(b.requests));
+    lua_setfield(L, -2, "requests");
+    lua_pushnumber(L, b.wait_seconds);
+    lua_setfield(L, -2, "wait_seconds");
+    lua_pushinteger(L, static_cast<int>(b.inbox.size()));
+    lua_setfield(L, -2, "queued");
+    lua_pushnumber(L, static_cast<double>(b.child->pid()));
+    lua_setfield(L, -2, "pid");
+    return 1;
+}
+
+// json.encode(value, pretty = false) -> string; json.decode(string) -> value
+int json_encode(lua_State* L) {
+    luaL_checkany(L, 1);
+    const std::string text = json::stringify(to_json(L, 1), lua_toboolean(L, 2) != 0);
+    lua_pushlstring(L, text.data(), text.size());
+    return 1;
+}
+int json_decode(lua_State* L) {
+    std::size_t n = 0;
+    const char* text = luaL_checklstring(L, 1, &n);
+    auto doc = json::parse(std::string_view(text, n));
+    if (!doc) luaL_error(L, "json.decode: %s", doc.error().message.c_str());
+    push_json(L, *doc);
+    return 1;
+}
+
+// require(path) -> the table a library script returns, shared by every script that requires it
+// (loaded once per host). `path` is relative to the assets folder; ".luau" may be left out.
+int script_require(lua_State* L) {
+    auto& h = host_of(L);
+    std::string path = luaL_checkstring(L, 1);
+    if (!path.ends_with(".luau")) path += ".luau";
+    if (std::find(h.loading.begin(), h.loading.end(), path) != h.loading.end())
+        luaL_error(L, "require: '%s' is already being loaded (circular require)", path.c_str());
+    auto* m = h.module(path);
+    if (!m) luaL_error(L, "require: cannot load '%s' (see the script errors above)", path.c_str());
+    lua_getref(L, m->ref);
+    return 1;
+}
+
 void open_victus_libs(lua_State* L) {
     // Entity metatable.
     lua_newtable(L); // metatable
@@ -2398,6 +3015,9 @@ void open_victus_libs(lua_State* L) {
                                 {"material", entity_material},
                                 {"set_mesh", entity_set_mesh},
                                 {"mesh", entity_mesh},
+                                {"set_mesh_data", entity_set_mesh_data},
+                                {"clear_mesh_data", entity_clear_mesh_data},
+                                {"mesh_data", entity_mesh_data},
                                 {"set_color", entity_set_color},
                                 {"color", entity_color},
                                 {"set_sprite", entity_set_sprite},
@@ -2441,13 +3061,37 @@ void open_victus_libs(lua_State* L) {
                                   {"reload", scene_reload},   {"current", scene_current},
                                   {"params", scene_params},   {nullptr, nullptr}};
     register_lib(L, "scene", scene_fns);
+    {
+        lua_newtable(L); // Bridge metatable
+        lua_newtable(L); // methods
+        const luaL_Reg bridge_methods[] = {{"request", bridge_request}, {"send", bridge_send},
+                                           {"receive", bridge_receive}, {"running", bridge_running},
+                                           {"close", bridge_close},     {"stats", bridge_stats},
+                                           {nullptr, nullptr}};
+        for (const luaL_Reg* f = bridge_methods; f->name; ++f) {
+            lua_pushcfunction(L, f->func, f->name);
+            lua_setfield(L, -2, f->name);
+        }
+        lua_setreadonly(L, -1, 1);
+        lua_setfield(L, -2, "__index");
+        lua_pushstring(L, "Bridge");
+        lua_setfield(L, -2, "__type");
+        lua_pushstring(L, "locked");
+        lua_setfield(L, -2, "__metatable");
+        lua_setreadonly(L, -1, 1);
+        lua_setuserdatametatable(L, kBridgeTag);
+        const luaL_Reg bridge_fns[] = {{"open", bridge_open}, {nullptr, nullptr}};
+        register_lib(L, "bridge", bridge_fns);
+        const luaL_Reg json_fns[] = {{"encode", json_encode}, {"decode", json_decode}, {nullptr, nullptr}};
+        register_lib(L, "json", json_fns);
+    }
     const luaL_Reg input_fns[] = {{"down", input_down},
                                   {"pressed", input_pressed},
                                   {"released", input_released},
                                   {"mouse_down", input_mouse_down},
                                   {"mouse_pressed", input_mouse_pressed},
                                   {"mouse_position", input_mouse_position},
-                                  {"mouse_delta", input_mouse_delta},
+                                  {"mouse_wheel", input_mouse_wheel}, {"mouse_delta", input_mouse_delta},
                                   {"axis", input_axis},
                                   {"action", input_action},
                                   {"action_pressed", input_action_pressed},
@@ -2518,6 +3162,8 @@ void open_victus_libs(lua_State* L) {
     register_lib(L, "save", save_fns);
     lua_pushcfunction(L, log_info, "print");
     lua_setglobal(L, "print");
+    lua_pushcfunction(L, script_require, "require");
+    lua_setglobal(L, "require");
 }
 
 bool editable(lua_State* L, int idx) {

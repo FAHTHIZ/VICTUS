@@ -5,6 +5,8 @@
 #include "victus/gameplay/gameplay.hpp"
 
 #include <algorithm>
+#include <cstdlib>
+#include <format>
 #include <filesystem>
 #include <system_error>
 
@@ -225,6 +227,73 @@ Status RecentProjects::save() const {
     }
     doc.set("projects", std::move(arr));
     return fs::write_text_atomic(file_, json::stringify(doc) + "\n");
+}
+
+Result<std::string> expand_bridge_variables(std::string_view text, const fs::Path& project_root,
+                                            const fs::Path& save_directory) {
+    std::string out;
+    std::size_t pos = 0;
+    while (pos < text.size()) {
+        const std::size_t open = text.find("${", pos);
+        if (open == std::string_view::npos) {
+            out.append(text.substr(pos));
+            break;
+        }
+        out.append(text.substr(pos, open - pos));
+        const std::size_t close = text.find('}', open);
+        if (close == std::string_view::npos) return make_error(ErrorCode::ParseError, std::format("unclosed '${{' in '{}'", text));
+        const std::string_view var = text.substr(open + 2, close - open - 2);
+        if (var == "project") out += project_root.generic_string();
+        else if (var == "saves") out += save_directory.generic_string();
+        else if (var.starts_with("env:")) {
+            std::string_view env = var.substr(4), fallback;
+            bool has_fallback = false;
+            if (const std::size_t d = env.find(":-"); d != std::string_view::npos) {
+                fallback = env.substr(d + 2);
+                env = env.substr(0, d);
+                has_fallback = true;
+            }
+            const char* value = std::getenv(std::string(env).c_str());
+            if (value && *value) out += value;
+            else if (has_fallback) out += fallback;
+            else return make_error(ErrorCode::NotFound, std::format("environment variable {} is not set", env));
+        } else {
+            return make_error(ErrorCode::InvalidArgument, std::format("unknown variable '${{{}}}' (project, saves, env:NAME)", var));
+        }
+        pos = close + 1;
+    }
+    return out;
+}
+
+Result<process::LaunchOptions> bridge_launch(const Project& project, std::string_view name, const fs::Path& save_directory) {
+    const Value* bridges = project.settings().extra.find("bridges");
+    const Value* entry = bridges && bridges->is_object() ? bridges->find(name) : nullptr;
+    if (!entry || !entry->is_object())
+        return make_error(ErrorCode::NotFound, std::format("the project has no bridge named '{}' (\"bridges\" in victus.project)", name));
+    const Value* command = entry->find("command");
+    if (!command || !command->is_array() || command->as_array().empty())
+        return make_error(ErrorCode::InvalidArgument, std::format("bridge '{}': \"command\" must be a non-empty array of strings", name));
+    process::LaunchOptions o;
+    for (const Value& part : command->as_array()) {
+        if (!part.is_string()) return make_error(ErrorCode::InvalidArgument, std::format("bridge '{}': command parts must be strings", name));
+        auto expanded = expand_bridge_variables(part.as_string(), project.root(), save_directory);
+        if (!expanded) return make_error(expanded.error().code, std::format("bridge '{}': {}", name, expanded.error().message));
+        o.args.push_back(std::move(*expanded));
+    }
+    // Relative program paths with a directory are project-relative; bare names use PATH.
+    if (fs::Path program(o.args.front()); program.is_relative() && o.args.front().find('/') != std::string::npos)
+        o.args.front() = (project.root() / program).lexically_normal().string();
+    o.working_directory = project.root().string();
+    if (const Value* wd = entry->find("working_directory"); wd && wd->is_string()) {
+        auto expanded = expand_bridge_variables(wd->as_string(), project.root(), save_directory);
+        if (!expanded) return make_error(expanded.error().code, std::format("bridge '{}': {}", name, expanded.error().message));
+        fs::Path dir(*expanded);
+        o.working_directory = (dir.is_relative() ? project.root() / dir : dir).lexically_normal().string();
+    }
+    if (const Value* d = entry->find("discard_stderr"); d && d->is_bool()) o.discard_stderr = d->as_bool();
+    std::error_code ec;
+    if (!save_directory.empty()) std::filesystem::create_directories(save_directory, ec);
+    return o;
 }
 
 } // namespace victus::project
