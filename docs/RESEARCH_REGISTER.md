@@ -123,6 +123,11 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-17 (Slice 39, sprite sheets and sprite animation)
+- Godot `Sprite2D` — https://docs.godotengine.org/en/stable/classes/class_sprite2d.html (accessed 2026-11-17): `hframes`/`vframes` are the columns and rows of a sprite sheet and `frame` the cell shown; `region_rect` draws a region of an atlas texture. VICTUS adopts the same grid model (`columns`, `rows`, frames numbered row by row) and exposes the region as `Sprite.uv`.
+- Godot `SpriteFrames` — https://docs.godotengine.org/en/stable/classes/class_spriteframes.html (accessed 2026-11-17): a resource of named animations, each with frames, a playback speed in frames per second and a loop mode (none, linear, ping-pong). VICTUS sheets hold named clips with frame lists, fps and a loop flag; ping-pong is expressed by listing frames (`[0,1,2,1]`) and per-frame durations by repeating frames.
+- Open questions: packed (non-grid) atlases with per-frame rectangles, per-frame events, half-texel insets or nearest filtering for pixel art, Aseprite import.
+
 ## Research conclusions added 2026-11-17 (Slice 38, scene transitions)
 - Godot `SceneTree.change_scene_to_file` — https://docs.godotengine.org/en/stable/classes/class_scenetree.html (accessed 2026-11-17): the outgoing scene is removed immediately and the new scene is added at the end of the frame. VICTUS also defers the switch, but keeps the outgoing scene fully alive until the end of the update so the rest of the frame's scripts see a consistent world.
 - Unity `SceneManager.LoadScene` — https://docs.unity3d.com/ScriptReference/SceneManagement.SceneManager.LoadScene.html (accessed 2026-11-17): a single-mode load completes in the next frame, not immediately, and unloads unused assets. VICTUS applies the switch at the end of the calling update and validates the target before accepting the request, so a bad path fails at the call site instead of a frame later.
