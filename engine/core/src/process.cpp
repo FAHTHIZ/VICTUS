@@ -309,6 +309,13 @@ Result<std::unique_ptr<ChildProcess>> ChildProcess::spawn(const LaunchOptions& o
     posix_spawn_file_actions_addclose(&fa, out_pipe[1]);
 #if defined(__GLIBC__) && ((__GLIBC__ > 2) || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 29))
     if (!o.working_directory.empty()) posix_spawn_file_actions_addchdir_np(&fa, o.working_directory.c_str());
+#elif defined(__APPLE__)
+    // Available since macOS 10.15; newer SDKs mark the _np name deprecated in favour of
+    // posix_spawn_file_actions_addchdir, which older deployment targets do not have.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    if (!o.working_directory.empty()) posix_spawn_file_actions_addchdir_np(&fa, o.working_directory.c_str());
+#pragma clang diagnostic pop
 #else
     if (!o.working_directory.empty()) {
         posix_spawn_file_actions_destroy(&fa);
