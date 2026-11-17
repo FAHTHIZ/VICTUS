@@ -412,8 +412,8 @@ struct AiSystem::Impl {
 
     // ---- perception -----------------------------------------------------------------------
 
-    void perceive(Scene& scene, float step, AiStats& stats) {
-        auto& w = scene.world();
+    void perceive(Scene& sc, float step, AiStats& stats) {
+        auto& w = sc.world();
         struct Target {
             Entity e;
             std::uint32_t team;
@@ -421,17 +421,17 @@ struct AiSystem::Impl {
         };
         std::vector<Target> targets;
         w.each<PerceptibleComponent>([&](Entity t, PerceptibleComponent& p) {
-            if (p.enabled && p.team) targets.push_back({t, p.team, world_position(scene, t) + math::Vec3{0, p.height, 0}});
+            if (p.enabled && p.team) targets.push_back({t, p.team, world_position(sc, t) + math::Vec3{0, p.height, 0}});
         });
         std::vector<std::pair<Entity, PerceptionComponent>> perceivers;
         w.each<PerceptionComponent>([&](Entity e2, PerceptionComponent& p) { perceivers.emplace_back(e2, p); });
         stats.perceivers = static_cast<std::uint32_t>(perceivers.size());
-        const physics::PhysicsWorld* phys = physics::world_of(scene);
+        const physics::PhysicsWorld* phys = physics::world_of(sc);
         std::unordered_set<Entity, ecs::EntityHash> live;
         for (const auto& [pe, pc] : perceivers) {
             live.insert(pe);
             PerceptionState& ps = perception[pe];
-            const math::Mat4 m = scene.world_matrix(pe);
+            const math::Mat4 m = sc.world_matrix(pe);
             const math::Vec3 pos = m.transform_point({});
             const math::Vec3 eye = pos + math::Vec3{0, pc.eye_height, 0};
             math::Vec3 fwd = m.transform_vector({0, 0, 1});
@@ -441,14 +441,14 @@ struct AiSystem::Impl {
             const float range = std::isfinite(pc.sight_range) ? std::max(pc.sight_range, 0.0f) : 0.0f;
             std::vector<std::pair<float, Entity>> seen;
             for (const Target& t : targets) {
-                if (t.e == pe || !(t.team & pc.target_mask) || scene.is_descendant(t.e, pe)) continue;
+                if (t.e == pe || !(t.team & pc.target_mask) || sc.is_descendant(t.e, pe)) continue;
                 const math::Vec3 d = t.aim - eye;
                 const float dist = math::length(d);
                 if (dist > range) continue;
                 if (dist > 1e-4f && half < 180.0f && math::dot(d / dist, fwd) < cos_half) continue;
                 if (pc.line_of_sight && phys && dist > 1e-4f) {
                     const auto hit = phys->raycast(eye, d / dist, dist, pc.occlusion_mask, pe);
-                    if (hit && hit->entity != t.e && !scene.is_descendant(hit->entity, t.e) && hit->distance < dist - 0.05f) continue;
+                    if (hit && hit->entity != t.e && !sc.is_descendant(hit->entity, t.e) && hit->distance < dist - 0.05f) continue;
                 }
                 seen.emplace_back(dist, t.e);
             }
@@ -461,7 +461,7 @@ struct AiSystem::Impl {
             if (!keep && !ps.seen.empty()) ps.target = ps.seen.front();
             ps.visible = !ps.target.is_null() && std::find(ps.seen.begin(), ps.seen.end(), ps.target) != ps.seen.end();
             if (ps.visible) {
-                ps.last_position = world_position(scene, ps.target);
+                ps.last_position = world_position(sc, ps.target);
                 ps.since_seen = 0;
             } else if (!ps.target.is_null()) {
                 ps.since_seen += step;
