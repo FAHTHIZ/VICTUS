@@ -5,7 +5,10 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <atomic>
+#include <filesystem>
+#include <memory>
 #include <mutex>
 
 #include <cstring>
@@ -189,13 +192,80 @@ std::string Platform::user_data_dir(const std::string& org, const std::string& a
 #endif
 }
 
-Result<std::vector<std::uint8_t>> Platform::read_bundled(const std::string& path) {
+namespace {
+// Relative bundled paths resolve against the APK assets on Android (SDL's file IO does that) and the executable folder elsewhere.
+std::string bundled_path(const std::string& path) {
     std::string full = path;
 #if !defined(__ANDROID__)
     const bool absolute = !path.empty() && (path[0] == '/' || path[0] == '\\' || (path.size() > 1 && path[1] == ':'));
     if (!absolute)
         if (const char* base = SDL_GetBasePath()) full = std::string(base) + path;
 #endif
+    return full;
+}
+struct IoCloser {
+    void operator()(SDL_IOStream* io) const noexcept { SDL_CloseIO(io); }
+};
+using IoPtr = std::unique_ptr<SDL_IOStream, IoCloser>;
+} // namespace
+
+Result<std::vector<std::uint8_t>> Platform::read_bundled_prefix(const std::string& path, std::size_t max_bytes,
+                                                                std::uint64_t* total_size) {
+    IoPtr io(SDL_IOFromFile(bundled_path(path).c_str(), "rb"));
+    if (!io) return make_error(ErrorCode::NotFound, std::format("bundled file '{}': {}", path, SDL_GetError()));
+    const Sint64 size = SDL_GetIOSize(io.get());
+    if (size < 0) return make_error(ErrorCode::IoError, std::format("bundled file '{}': {}", path, SDL_GetError()));
+    if (total_size) *total_size = static_cast<std::uint64_t>(size);
+    std::vector<std::uint8_t> out(std::min<std::uint64_t>(max_bytes, static_cast<std::uint64_t>(size)));
+    std::size_t got = 0;
+    while (got < out.size()) {
+        const std::size_t n = SDL_ReadIO(io.get(), out.data() + got, out.size() - got);
+        if (n == 0) break;
+        got += n;
+    }
+    out.resize(got);
+    return out;
+}
+
+Result<std::uint64_t> Platform::copy_bundled(const std::string& path, const std::string& dest) {
+    IoPtr in(SDL_IOFromFile(bundled_path(path).c_str(), "rb"));
+    if (!in) return make_error(ErrorCode::NotFound, std::format("bundled file '{}': {}", path, SDL_GetError()));
+    std::error_code ec;
+    const std::filesystem::path target = std::filesystem::path(dest);
+    if (target.has_parent_path()) std::filesystem::create_directories(target.parent_path(), ec);
+    const std::string tmp = dest + ".tmp";
+    std::uint64_t total = 0;
+    {
+        IoPtr out(SDL_IOFromFile(tmp.c_str(), "wb"));
+        if (!out) return make_error(ErrorCode::IoError, std::format("cannot write '{}': {}", tmp, SDL_GetError()));
+        std::vector<std::uint8_t> buf(1u << 20);
+        for (;;) {
+            const std::size_t n = SDL_ReadIO(in.get(), buf.data(), buf.size());
+            if (n == 0) {
+                if (SDL_GetIOStatus(in.get()) != SDL_IO_STATUS_EOF)
+                    return make_error(ErrorCode::IoError, std::format("reading bundled '{}': {}", path, SDL_GetError()));
+                break;
+            }
+            if (SDL_WriteIO(out.get(), buf.data(), n) != n) {
+                const std::string why = SDL_GetError();
+                out.reset();
+                std::filesystem::remove(tmp, ec);
+                return make_error(ErrorCode::IoError, std::format("writing '{}': {}", tmp, why));
+            }
+            total += n;
+        }
+        if (!SDL_FlushIO(out.get())) return make_error(ErrorCode::IoError, std::format("flushing '{}': {}", tmp, SDL_GetError()));
+    }
+    std::filesystem::rename(tmp, target, ec);
+    if (ec) {
+        std::filesystem::remove(tmp, ec);
+        return make_error(ErrorCode::IoError, std::format("cannot move '{}' into place", dest));
+    }
+    return total;
+}
+
+Result<std::vector<std::uint8_t>> Platform::read_bundled(const std::string& path) {
+    const std::string full = bundled_path(path);
     std::size_t size = 0;
     void* data = SDL_LoadFile(full.c_str(), &size);
     if (!data) return make_error(ErrorCode::NotFound, std::format("bundled file '{}': {}", path, SDL_GetError()));

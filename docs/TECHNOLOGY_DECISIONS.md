@@ -476,6 +476,26 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - Revisit (a) if download size dominates over load time.
   - HDR textures stay uncompressed until BC6H/ASTC HDR are added.
 
+### ADR-0048: Android app as an SDLActivity shell around the native player
+- Status: Accepted (Slice 50)
+- Context: VICTUS must run on entry-level Android phones. The engine is C++ on SDL3 and SDL_GPU, and exported games are `game.vpak` packs opened by file path. SDL_GPU on Android has only a Vulkan backend (no OpenGL ES).
+- Options:
+  - App shell: (a) SDL's `SDLActivity` Java glue, with the engine in `libmain.so`; (b) `GameActivity` (AGDK) with our own window, input and audio glue; (c) `NativeActivity` with no Java.
+  - Build: (a) Gradle with AGP `externalNativeBuild` driving the root CMake project; (b) a standalone CMake + `aapt2`/`d8`/`apksigner` script.
+  - Pack access: read the pack straight from the APK through `AAssetManager`, or install it once to internal storage.
+- Decision: SDLActivity with Gradle/AGP 9.5.1, and install-once to internal storage.
+  - SDLActivity already implements the window, touch, gamepads, audio, IME and lifecycle events the platform layer consumes, and it ships with the SDL release we pin.
+  - The Java glue is extracted from that same hash-checked tarball, so desktop and Android cannot drift. SDL is built shared on Android so its JNI exports survive linking.
+  - AGP is the supported path for signing, Play bundles and Android Studio, and it builds the unchanged root CMake project.
+  - Installing the pack keeps `pack::Pack` path-based, with one code path on every platform. The copy is streamed, atomic and skipped when the size and header (TOC hash) match.
+  - Vulkan 1.1 is declared as a required manifest feature, so stores filter out devices SDL_GPU cannot drive.
+  - The player picks `mobile_quality` (default medium) and `mobile_target_fps` (default 30, dynamic resolution) on phones.
+- Consequences:
+  - The pack takes its size twice on disk, and the first launch pays one copy. Revisit with `AAsset_openFileDescriptor`-based reads of the stored (uncompressed) asset if download size or first-launch time matters.
+  - Only arm64-v8a is built. Devices without Vulkan 1.1 are unsupported until SDL_GPU gains a GLES backend.
+  - No device or emulator run is verified yet. CI verifies the APK structure, exports and 16 KB alignment, and host tests cover the install and lifecycle logic.
+  - GameActivity remains an option if SDL's Java layer becomes limiting (Game Mode, Performance Hint, predictive back).
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

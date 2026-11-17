@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -40,6 +41,14 @@ inline constexpr int kMaxGamepads = 4;
 // "LeftShift", "F1".., see platform::key_name). Mouse buttons:
 // 0 left, 1 middle, 2 right. Gamepads 0..kMaxGamepads-1; `previous` asks for last frame's state
 // (used for action edges). Headless runs and servers have no input source.
+// One finger on a touch screen. `position` is normalized to the window ([0,1], origin top-left) so
+// scripts work at any resolution; `id` stays the same while the finger is down.
+struct Touch {
+    std::uint64_t id{0};
+    math::Vec2 position{};
+    float pressure{0};
+};
+
 class InputSource {
 public:
     virtual ~InputSource() = default;
@@ -58,6 +67,9 @@ public:
         return false;
     }
     [[nodiscard]] virtual float gamepad_axis(int /*pad*/, int /*axis*/, bool /*previous*/ = false) const { return 0; }
+    // Fingers currently down, in the order they touched. Taps also arrive as left mouse clicks.
+    [[nodiscard]] virtual int touch_count() const { return 0; }
+    [[nodiscard]] virtual Touch touch(int /*index*/) const { return {}; }
 };
 
 // Programmatic input for tests, headless runs, bots and replays. `pressed`/`released` edges are
@@ -73,6 +85,11 @@ public:
         if (button >= 0 && button < 8) mouse_[button] = down;
     }
     void set_mouse_position(math::Vec2 p) noexcept { mouse_pos_ = p; }
+    void set_touches(std::vector<Touch> touches) { touches_ = std::move(touches); }
+    [[nodiscard]] int touch_count() const override { return static_cast<int>(touches_.size()); }
+    [[nodiscard]] Touch touch(int i) const override {
+        return i >= 0 && i < touch_count() ? touches_[static_cast<std::size_t>(i)] : Touch{};
+    }
     void set_gamepad_connected(int pad, bool connected) {
         if (pad >= 0 && pad < kMaxGamepads) pads_[static_cast<std::size_t>(pad)].connected = connected;
     }
@@ -135,6 +152,7 @@ private:
     math::Vec2 mouse_pos_{}, prev_pos_{};
     float wheel_{0};
     std::array<Pad, kMaxGamepads> pads_{}, prev_pads_{};
+    std::vector<Touch> touches_;
 };
 
 // Per-entity input routing, published as a scene world resource by network sessions: scripts

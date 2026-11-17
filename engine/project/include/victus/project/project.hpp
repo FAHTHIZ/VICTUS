@@ -34,6 +34,11 @@ struct ProjectSettings {
     // (down to `dynamic_resolution_min`); 0 disables it.
     int target_fps{0};
     float dynamic_resolution_min{0.5f};
+    // Phones and tablets (rendering.mobile_quality / rendering.mobile_target_fps): the tier and
+    // frame-rate target the player uses there instead of the desktop ones. Mobile GPUs share
+    // power and heat with the CPU, so the defaults hold 30 fps at the medium tier.
+    std::string mobile_quality{"medium"};
+    int mobile_target_fps{30};
     // Input actions ("input" section); projects without one use the engine defaults.
     gameplay::InputMap input = gameplay::default_input_map();
     // Version of the game's save data ("save_version"); raise it when the shape of saved data

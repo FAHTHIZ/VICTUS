@@ -188,6 +188,12 @@ public:
     // Reads a file shipped with the application. Relative paths resolve against the APK `assets/` on Android and
     // against the executable's folder elsewhere; absolute paths are read as-is.
     [[nodiscard]] static Result<std::vector<std::uint8_t>> read_bundled(const std::string& path);
+    // Reads at most `max_bytes` from the start of a bundled file and reports its total size in `total_size`.
+    [[nodiscard]] static Result<std::vector<std::uint8_t>> read_bundled_prefix(const std::string& path, std::size_t max_bytes,
+                                                                               std::uint64_t* total_size = nullptr);
+    // Streams a bundled file to `dest` in 1 MiB chunks (no full copy in memory), writing `dest`.tmp first and renaming it
+    // into place so an interrupted copy never leaves a truncated file. Creates missing parent folders. Returns the size.
+    [[nodiscard]] static Result<std::uint64_t> copy_bundled(const std::string& path, const std::string& dest);
     // True on phones and tablets (touch-first input, small screens, battery and thermal limits).
     [[nodiscard]] static bool is_mobile() noexcept;
     [[nodiscard]] std::string clipboard() const;

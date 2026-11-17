@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+// VICTUS Android app: packages an exported game (game.vpak) with the engine's native player.
+// Build: gradle -p platforms/android assembleDebug -Pvictus.game=<exported game folder> (docs/ANDROID.md)
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = 'victus-android'
+include ':app'

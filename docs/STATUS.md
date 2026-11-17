@@ -468,5 +468,41 @@ This file records only verified state. Every entry lists what was built, how it 
   - ASTC sampling was verified only by the CPU decoder here, because lavapipe lacks ASTC. A real device check comes with the Android slice.
   - The encoder library is linked into the player even though shipped games never encode.
 
+## Slice 50: Android arm64 build
+- Why: the product goal is top visual quality that scales to entry-level Android phones. Until now nothing built for Android beyond groundwork (entry-point rename, storage paths, logcat).
+- Built:
+  - `platforms/android`, a Gradle project (AGP 9.5.1, compileSdk/targetSdk 36, minSdk 28, NDK r29, arm64-v8a, `c++_shared`). It builds the root CMake project through `externalNativeBuild`. `app/build.gradle` takes `victus.game`, `victus.applicationId`, `victus.appName`, `victus.versionCode`/`versionName`, `victus.orientation` and `victus.sdlSource`.
+  - The `victusSdlJava` task (configuration-cache-safe injected services) reads the SDL URL and SHA-256 from `cmake/VictusDependencies.cmake`, downloads and verifies the tarball, and extracts `org.libsdl.app`. `victusGameAssets` copies `game.vpak` and the notices into the APK assets; the pack is stored uncompressed.
+  - The manifest requires Vulkan 1.1 (`android.hardware.vulkan.version` 0x401000), makes touch, gamepad and similar features optional, and asks for INTERNET and VIBRATE.
+  - `VictusActivity` extends `SDLActivity` and loads `SDL3`, then `main`. SDL is shared on Android (its JNI registration lives in `JNI_OnLoad`) and static elsewhere.
+  - `apps/android`: `libmain.so` (exported `SDL_main`, 16 KB `max-page-size`). It installs the bundled pack to internal storage and runs the player fullscreen; failures show an error dialog.
+  - `Platform::read_bundled_prefix` and `Platform::copy_bundled` stream in 1 MiB chunks through SDL IO, using `.tmp` + rename. `player::install_bundled_pack` copies only when the size or the 40-byte pack header (TOC hash) differs and rejects files that are not packs.
+  - `player::LifecycleGate` and the player loop handle the background: no rendering, master bus muted, and the simulation paused unless networked. Resume has no time jump; low memory is logged.
+  - Touch: `gameplay::Touch` with `InputSource::touch_count/touch` (platform and `ManualInput::set_touches`), and Luau `input.touch_count()` / `input.touch(i)` (vector x, y, pressure normalized to the window, plus the finger id). Taps still arrive as left clicks.
+  - Project `rendering.mobile_quality` (default medium) and `rendering.mobile_target_fps` (default 30) replace the desktop tier and target on phones.
+  - On Android the embedded notices add libc++.
+  - `tools/android/check_apk.sh` checks: the required entries; that the libraries and pack are stored; `SDL_main` and `JNI_OnLoad` exports; AArch64 ELF; LOAD alignment >= 16 KB; and `zipalign -c -P 16`.
+  - CI `android` job: Temurin 17, Gradle 9.9.1, SDK packages, host `victus` CLI, export of the 3D template, `assembleDebug`, `check_apk.sh`, and upload of the APK artifact.
+  - Docs: `docs/ANDROID.md`.
+- Verification: local run (Ubuntu 26.04, 2 cores).
+  - Native cross-compile of the whole engine with NDK r29 (`android-28`, Release, `-Werror`) succeeds. The only warning is inside SDL.
+  - `gradle -p platforms/android assembleDebug -Pvictus.game=<exported 3D template>` succeeds with Gradle 9.9.1 / JDK 17. `check_apk.sh` reports OK: a 21 MB APK with libmain.so, libSDL3.so, libc++_shared.so, classes.dex, game.vpak and the notices.
+  - `aapt2 dump badging` shows the launchable `dev.victus.player.VictusActivity`, the required Vulkan features and native-code arm64-v8a.
+  - Host tests: new `victus_export_tests` cases (4):
+    - install, keep, reinstall on a same-size content change, and repair of a truncated install, using a pack larger than 3 MiB;
+    - rejection of missing and foreign files;
+    - prefix reads;
+    - the lifecycle gate.
+  - Also new: a script touch test and project mobile settings round-trip.
+  - Full suite: 20/20 CTest targets pass (`VICTUS_REQUIRE_GPU=1`, lavapipe); shader check passes.
+- Known gaps:
+  - Not run on a phone or emulator (no device and no KVM here). Launch, Vulkan device creation on real drivers, touch, suspend/resume and performance are unverified.
+  - arm64-v8a only.
+  - No on-screen virtual controls; touches are not part of regression captures.
+  - No thermal, memory or battery profiling and no Game Mode / Performance Hint.
+  - Release signing is left to the developer.
+  - The installed pack doubles the on-disk size.
+  - The exported pack still carries all texture variants (BC and ASTC).
+
 ## Next task
-Slice 50: Android arm64 build (NDK + Gradle APK, touch, lifecycle, Vulkan device capability checks) and CI job. See ROADMAP.md "Next slices".
+Slice 51: editor transform gizmos and snapping; asset thumbnails. See ROADMAP.md "Next slices".

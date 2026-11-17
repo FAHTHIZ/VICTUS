@@ -45,6 +45,13 @@ public:
         return previous ? state_->gamepad_axis_prev(idx(pad), a) : state_->gamepad(idx(pad)).axes[static_cast<std::size_t>(axis)];
     }
 
+    int touch_count() const override { return enabled_ ? static_cast<int>(state_->touches().size()) : 0; }
+    gameplay::Touch touch(int i) const override {
+        if (i < 0 || i >= touch_count()) return {};
+        const auto& t = state_->touches()[static_cast<std::size_t>(i)];
+        return {t.id, t.position, t.pressure};
+    }
+
 private:
     // Unknown names map to Key::Unknown, which is never down.
     static platform::Key lookup(std::string_view key) noexcept { return platform::key_from_name(key); }

@@ -114,6 +114,7 @@ if(VICTUS_WITH_GRAPHICS)
 victus_add_test(victus_export_tests
     SOURCES
         export/export_tests.cpp
+        export/mobile_tests.cpp
     DEPS VICTUS::Player
     LABELS export)
 
