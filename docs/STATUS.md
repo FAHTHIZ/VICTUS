@@ -1035,6 +1035,8 @@ Known gaps:
 
 ## Slice 76: Timeline sequencer part 2, editor Sequencer panel (roadmap item 20)
 
+- Commit: b978f47.
+
 - `editor/src/sequencer_panel.cpp`: Window > Sequencer panel with toolbar (save, undo/redo, close, play, scrub, duration, zoom), track creation for all track types, timeline ruler scrubbing, lanes with draggable key diamonds, double-click add, Record Key from the target transform (offsets for relative tracks), per-type key inspector, `.vseq`/audio asset drops.
 - Editor API: `create_sequence/open_sequence/assign_sequence/save_sequence/close_sequence`, track/key editing with a dedicated undo stack, `sequence_seek/sequence_preview_play/end_sequence_preview`. Preview restores transforms, primary camera and animators; ends before save, scene switch and play; autosave skips previews; hot reload refreshes a clean open sequence.
 - Verification: `victus_editor_tests -tc="*sequencer panel*"` (132 assertions) passes; full `ctest --preset dev -j2`: 24/24 passed; new file clean under `-Wshadow -Wconversion`.
