@@ -1045,6 +1045,8 @@ Known gaps:
 
 ## Slice 77: Projected decals (roadmap item 21 part 1)
 
+- Commit: a2a2ef3.
+
 - Renderer: `render::Decal` / `SceneRenderer::add_decal`, new `decal.vert`/`decal.frag` (regenerated `builtin_shaders.cpp`, 36 shaders). With decals the forward pass splits into `forward` (opaque), `decals` and `forward_blended`; scene depth becomes sampleable. Multiply, Alpha and Additive pipelines; `SceneStats::decals`.
 - Runtime/gameplay: `DecalComponent` ("Decal" schema: texture, size, colour, blend, UV region, angle/depth fade, sort order, visible) extracted by `extract_scene` (`ExtractStats::decals`).
 - Editor: Create > Decal (projects downward), command palette entry, decal box shown as the selection outline (not pickable).
