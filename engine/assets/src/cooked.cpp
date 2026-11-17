@@ -187,6 +187,11 @@ std::vector<std::uint8_t> serialize(const CookedHeader& header, const CookedMode
         w.array(m.data.vertices);
         w.array(m.data.indices);
         w.array(m.data.skin);
+        w.u32(static_cast<std::uint32_t>(m.data.lods.size()));
+        for (const auto& lod : m.data.lods) {
+            w.f32(lod.error);
+            w.array(lod.indices);
+        }
     }
     w.u32(static_cast<std::uint32_t>(model.nodes.size()));
     for (const auto& n : model.nodes) {
@@ -310,6 +315,16 @@ Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) {
         if (mesh.material >= m.materials.size()) return corrupt("mesh material index");
         for (const std::uint32_t i : mesh.data.indices)
             if (i >= mesh.data.vertices.size()) return corrupt("mesh index out of range");
+        std::uint32_t lods = 0;
+        if (!r.u32(lods) || lods >= render::kMaxMeshLods) return corrupt("mesh lod count");
+        mesh.data.lods.resize(lods);
+        for (auto& lod : mesh.data.lods) {
+            if (!r.f32(lod.error) || !std::isfinite(lod.error) || lod.error < 0 || !r.array(lod.indices) ||
+                lod.indices.size() % 3 != 0)
+                return corrupt("mesh lod");
+            for (const std::uint32_t i : lod.indices)
+                if (i >= mesh.data.vertices.size()) return corrupt("mesh lod index out of range");
+        }
     }
     if (!r.u32(n) || n > kMaxItems) return corrupt("node count");
     m.nodes.resize(n);

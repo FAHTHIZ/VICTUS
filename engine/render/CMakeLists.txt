@@ -24,6 +24,7 @@ victus_add_module(render
         src/gpu_context.cpp
         src/image.cpp
         src/mesh.cpp
+        src/mesh_optimize.cpp
         src/render_graph.cpp
         src/scene_renderer.cpp
         src/sprite_batch.cpp
@@ -34,4 +35,4 @@ victus_add_module(render
 # stb implementations are third-party code: compiled without VICTUS warning flags.
 add_library(victus_stb STATIC src/stb_impl.cpp)
 target_include_directories(victus_stb PUBLIC ${PROJECT_SOURCE_DIR}/third_party/stb)
-target_link_libraries(victus_render PUBLIC victus_stb)
+target_link_libraries(victus_render PUBLIC victus_stb PRIVATE victus_meshoptimizer)

@@ -48,6 +48,10 @@ json::Value ModelImportSettings::to_json() const {
     v.set("import_textures", import_textures);
     v.set("max_texture_size", max_texture_size);
     if (texture_compression != "none") v.set("texture_compression", texture_compression);
+    // Written only when changed, so existing .meta files stay as they are.
+    if (!optimize_meshes) v.set("optimize_meshes", false);
+    if (lods != ModelImportSettings{}.lods) v.set("lods", lods);
+    if (lod_error != ModelImportSettings{}.lod_error) v.set("lod_error", lod_error);
     return v;
 }
 
@@ -60,6 +64,12 @@ ModelImportSettings ModelImportSettings::from_json(const json::Value& v) {
     s.max_texture_size =
         static_cast<std::uint32_t>(std::clamp<std::int64_t>(v["max_texture_size"].as_int(s.max_texture_size), 1, 16384));
     if (v["texture_compression"].is_string()) s.texture_compression = v["texture_compression"].as_string();
+    s.optimize_meshes = v["optimize_meshes"].as_bool(s.optimize_meshes);
+    s.lods = static_cast<std::uint32_t>(
+        std::clamp<std::int64_t>(v["lods"].as_int(s.lods), 0, static_cast<std::int64_t>(render::kMaxMeshLods) - 1));
+    s.lod_error = v["lod_error"].as_float(s.lod_error);
+    if (!(s.lod_error > 0.0f)) s.lod_error = 0.05f;
+    s.lod_error = std::min(s.lod_error, 1.0f);
     return s;
 }
 
@@ -263,6 +273,13 @@ public:
                 auto r = import_primitive(mesh, pi);
                 if (!r) return std::move(r).error();
                 if (r->data.vertices.empty()) continue;
+                if (settings_.optimize_meshes) {
+                    render::LodSettings lod;
+                    lod.max_lods = settings_.lods;
+                    lod.max_error = settings_.lod_error;
+                    render::generate_lods(r->data, lod);
+                    render::optimize_mesh(r->data);
+                }
                 mesh_map_[mi].push_back(static_cast<std::uint32_t>(model_.meshes.size()));
                 model_.meshes.push_back(std::move(r).value());
             }

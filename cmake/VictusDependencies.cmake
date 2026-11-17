@@ -333,3 +333,24 @@ function(victus_fetch_astcenc)
     target_compile_options(victus_astcenc PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
     victus_third_party_tsan(victus_astcenc)
 endfunction()
+
+# meshoptimizer 1.3 (MIT). https://github.com/zeux/meshoptimizer/releases/tag/v1.3
+# Vertex cache / overdraw / vertex fetch optimisation and LOD simplification for meshes
+# (engine/render mesh_optimize.cpp, ADR-0049). The library sources are built directly.
+function(victus_fetch_meshoptimizer)
+    if(TARGET victus_meshoptimizer)
+        return()
+    endif()
+    FetchContent_Declare(meshoptimizer
+        URL https://github.com/zeux/meshoptimizer/archive/refs/tags/v1.3.tar.gz
+        URL_HASH SHA256=ca4f47d451201593904b9e3067fa54b65db94bc34ab5173864950862b748a145
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        SOURCE_SUBDIR victus_no_cmake)
+    FetchContent_MakeAvailable(meshoptimizer)
+    file(GLOB _meshopt_sources ${meshoptimizer_SOURCE_DIR}/src/*.cpp)
+    add_library(victus_meshoptimizer STATIC ${_meshopt_sources})
+    target_include_directories(victus_meshoptimizer SYSTEM PUBLIC ${meshoptimizer_SOURCE_DIR}/src)
+    set_target_properties(victus_meshoptimizer PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_options(victus_meshoptimizer PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
+    victus_third_party_tsan(victus_meshoptimizer)
+endfunction()

@@ -660,10 +660,11 @@ void Editor::draw_viewport() {
         ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 6));
         const bool two_d = runtime::scene_view_mode(active_scene()) == runtime::ViewMode::TwoD;
         const std::string tier(render::quality_tier_name(quality_));
-        ImGui::TextDisabled("%s  %s  |  %s quality  |  %u meshes (%u draws)  %u sprites  %u lights", two_d ? "2D" : "3D",
-                            play_state_ == PlayState::Editing ? "editor camera" : "game camera", tier.c_str(),
-                            last_view_stats_.extract.meshes, render_stats().main_batches, last_view_stats_.sprites,
-                            last_view_stats_.extract.lights);
+        ImGui::TextDisabled("%s  %s  |  %s quality  |  %u meshes (%u draws, %.1fk tris, %u at LOD)  %u sprites  %u lights",
+                            two_d ? "2D" : "3D", play_state_ == PlayState::Editing ? "editor camera" : "game camera",
+                            tier.c_str(), last_view_stats_.extract.meshes, render_stats().main_batches,
+                            static_cast<double>(render_stats().triangles) / 1000.0, render_stats().lod_draws,
+                            last_view_stats_.sprites, last_view_stats_.extract.lights);
         // The tile tool owns plain left clicks while a tilemap is selected in a 2D scene.
         const bool painting = tile_tool_ && two_d && !tile_target().is_null() && !ImGui::GetIO().KeyAlt;
         // The transform gizmo takes clicks on its handles before camera navigation and picking.

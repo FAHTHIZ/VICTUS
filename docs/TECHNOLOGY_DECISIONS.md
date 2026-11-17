@@ -496,6 +496,22 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - No device or emulator run is verified yet. CI verifies the APK structure, exports and 16 KB alignment, and host tests cover the install and lifecycle logic.
   - GameActivity remains an option if SDL's Java layer becomes limiting (Game Mode, Performance Hint, predictive back).
 
+### ADR-0049: Mesh optimisation and discrete LODs with meshoptimizer
+- Status: Accepted (Slice 54)
+- Context: imported meshes keep the glTF exporter's triangle and vertex order, and distant objects draw every triangle. Phones are vertex-bound well before desktop GPUs are.
+- Options:
+  - Library: (a) meshoptimizer (MIT, small portable C++, vertex cache/overdraw/fetch optimisers and an attribute-aware quadric simplifier); (b) our own quadric edge collapse; (c) offline DCC-authored LODs only.
+  - Representation: (a) discrete LOD index lists sharing one vertex buffer; (b) per-LOD vertex buffers; (c) clustered (meshlet/Nanite-style) continuous LOD.
+- Decision: library (a), representation (a).
+  - The importer runs `generate_lods` (default 3 levels, each half the previous triangle budget, error at most 5% of the mesh extent; positions, normals, UVs and, for skinned meshes, the dominant joint are weighted) and then `optimize_mesh` (vertex cache, overdraw within 5% extra misses, fetch remap). Settings live in the model `.meta` (`optimize_meshes`, `lods`, `lod_error`) and are only written when changed.
+  - Every level is simplified from the full mesh, so errors do not accumulate, and stores its geometric error in mesh units. The renderer projects that error with the camera's vertical pixel scale, the object's largest axis scale and the distance to its bounds, and picks the coarsest level within `lod_error_pixels` (1 px by default, 2 Low, 1.5 Medium, 0.5 Ultra).
+  - All levels share the vertex (and skin) buffers and are concatenated into one index buffer, so a LOD switch is a different `first_index`/`index_count` and instancing still works (batches split by level).
+  - Collision, navigation and CPU readers keep using LOD 0 (`MeshData::indices`).
+- Consequences:
+  - Index memory grows by about the sum of the level sizes (under 1x); the cooked format moves to v6 and the model importer to v5, so caches re-import once.
+  - Switches pop (no cross-fade or dithering yet); the 1 px default keeps this below visibility on tests.
+  - GPU-driven culling and indirect draws are a separate step (SDL_GPU has indirect draws, but no draw count buffer), as are occlusion culling and clustered LOD.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

@@ -17,7 +17,7 @@ function(victus_add_notice title file)
         file(APPEND ${_notices_txt} "\n------------------------------------------------------------\n${title}\n------------------------------------------------------------\n(license file not available in this build: ${file})\n")
     endif()
 endfunction()
-foreach(dep sdl3 luau joltphysics box2d recastnavigation enet monocypher miniaudio glslang spirv_cross bc7enc_rdo astcenc)
+foreach(dep sdl3 luau joltphysics box2d recastnavigation enet monocypher miniaudio glslang spirv_cross bc7enc_rdo astcenc meshoptimizer)
     FetchContent_GetProperties(${dep})
 endforeach()
 victus_add_notice("VICTUS (Apache-2.0)" "${PROJECT_SOURCE_DIR}/LICENSE")
@@ -38,6 +38,7 @@ victus_add_notice("glslang 16.6.0 (BSD-3-Clause, BSD-2-Clause, MIT, Apache-2.0)"
 victus_add_notice("SPIRV-Cross vulkan-sdk-1.4.363.0 (Apache-2.0)" "${spirv_cross_SOURCE_DIR}/LICENSE")
 victus_add_notice("bc7enc_rdo b9438627 (MIT, alternatively public domain)" "${bc7enc_rdo_SOURCE_DIR}/LICENSE")
 victus_add_notice("Arm ASTC Encoder 5.7.1 (Apache-2.0)" "${astcenc_SOURCE_DIR}/LICENSE.txt")
+victus_add_notice("meshoptimizer 1.3 (MIT)" "${meshoptimizer_SOURCE_DIR}/LICENSE.md")
 if(ANDROID)
     # Android apps also ship SDL's Java glue (compiled into classes.dex, zlib like the rest of SDL,
     # covered above) and the NDK's libc++_shared.so.

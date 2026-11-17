@@ -363,6 +363,9 @@ const render::GpuMesh* GpuAssetCache::primitive(std::string_view name) {
     else if (key == "plane") data = render::make_plane({1, 1});
     else if (key == "cylinder") data = render::make_cylinder();
     else return nullptr;
+    // Curved primitives get LODs like imported models (the cube and plane are already minimal).
+    if (key == "sphere" || key == "cylinder") render::generate_lods(data);
+    render::optimize_mesh(data);
     auto g = ctx_.create_mesh(data, key);
     if (!g) {
         VICTUS_LOG_ERROR("runtime", "primitive '{}': {}", key, g.error().message);

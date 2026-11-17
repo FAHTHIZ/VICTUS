@@ -178,6 +178,30 @@ rhi::TextureDesc color_desc(rhi::Format f, std::uint32_t w, std::uint32_t h) {
     d.usage = rhi::TextureUsageColorTarget | rhi::TextureUsageSampled;
     return d;
 }
+
+// Coarsest level whose error, scaled to world units and projected at the distance from the eye
+// to the nearest point of the draw's bounds, stays within the pixel budget.
+std::uint8_t select_lod(const GpuMesh& mesh, const Mat4& model, const Aabb& world, Vec3 eye, float pixels_per_unit,
+                        const RenderSettings& s) {
+    if (mesh.lod_count <= 1 || (!s.lods && s.force_lod < 0)) return 0;
+    const auto last = static_cast<int>(mesh.lod_count) - 1;
+    if (s.force_lod >= 0) return static_cast<std::uint8_t>(std::min(s.force_lod, last));
+    const Vec3 nearest{std::clamp(eye.x, world.min.x, world.max.x), std::clamp(eye.y, world.min.y, world.max.y),
+                       std::clamp(eye.z, world.min.z, world.max.z)};
+    const float distance = length(nearest - eye);
+    if (!(distance > 1e-4f)) return 0;
+    const float scale = std::max({length(model.c[0].xyz()), length(model.c[1].xyz()), length(model.c[2].xyz())});
+    const float k = scale * pixels_per_unit / distance; // pixels per unit of mesh error
+    int lod = 0;
+    while (lod < last && mesh.lods[static_cast<std::size_t>(lod) + 1].error * k <= s.lod_error_pixels) ++lod;
+    return static_cast<std::uint8_t>(lod);
+}
+
+void draw_mesh_lod(rhi::RenderPass& pass, const GpuMesh& mesh, std::uint32_t lod, std::uint32_t instances) {
+    const GpuMeshLod& l = mesh.lods[std::min(lod, mesh.lod_count - 1)];
+    pass.draw_indexed(l.index_count, instances, l.first_index);
+}
+
 } // namespace
 
 std::string_view tonemapper_name(Tonemapper t) noexcept {
@@ -258,6 +282,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.fxaa = true;
         s.taa = false;
         s.max_point_lights = 64;
+        s.lod_error_pixels = 2.0f;
         break;
     case QualityTier::Medium:
         s.render_scale = 1.0f;
@@ -270,6 +295,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.fxaa = true;
         s.taa = false;
         s.max_point_lights = 256;
+        s.lod_error_pixels = 1.5f;
         break;
     case QualityTier::High: break; // struct defaults
     case QualityTier::Ultra:
@@ -279,6 +305,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.ssao_samples = 16;
         s.bloom_levels = 6;
         s.max_point_lights = 1024;
+        s.lod_error_pixels = 0.5f;
         break;
     }
     return s;
@@ -294,6 +321,8 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.bloom_levels = std::clamp(s.bloom_levels, 1u, 8u);
     s.taa_blend = std::isfinite(s.taa_blend) ? std::clamp(s.taa_blend, 0.04f, 1.0f) : 0.1f;
     s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxLights);
+    s.lod_error_pixels = std::isfinite(s.lod_error_pixels) ? std::clamp(s.lod_error_pixels, 0.25f, 16.0f) : 1.0f;
+    s.force_lod = std::clamp(s.force_lod, -1, static_cast<int>(kMaxMeshLods) - 1);
     return s;
 }
 
@@ -816,9 +845,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     std::vector<const Draw*> visible, transparent;
     std::array<std::vector<const Draw*>, 4> casters;
     visible.reserve(draws_.size());
+    // Pixels per unit of geometric error at distance 1 (perspective, render resolution).
+    const float lod_pixels_per_unit = static_cast<float>(rh) / (2.0f * std::tan(std::max(camera_.fov_y, 1e-3f) * 0.5f));
     for (Draw& d : draws_) {
         const Aabb world = d.skinned ? d.world_bounds : d.mesh->bounds.transformed(d.model);
         const bool blended = d.material.blend != MaterialBlend::Opaque;
+        d.lod = select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S);
         if (d.material.cast_shadows && !blended) {
             bool any = false;
             for (std::uint32_t c = 0; c < cascade_count_; ++c)
@@ -847,6 +879,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             }
         }
         if (d.probe >= 0) ++stats_.probe_draws;
+        if (d.lod > 0) ++stats_.lod_draws;
+        stats_.triangles += d.mesh->lods[d.lod].index_count / 3;
         (blended ? transparent : visible).push_back(&d);
     }
     std::stable_sort(transparent.begin(), transparent.end(), [](const Draw* a, const Draw* b) { return a->distance > b->distance; });
@@ -857,6 +891,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         if (a->material.base_color_texture.index != b->material.base_color_texture.index)
             return a->material.base_color_texture.index < b->material.base_color_texture.index;
         if (a->batch_key != b->batch_key) return a->batch_key < b->batch_key;
+        if (a->lod != b->lod) return a->lod < b->lod;
         if (a->probe != b->probe) return a->probe < b->probe;
         return a->distance < b->distance;
     });
@@ -873,7 +908,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             instances.push_back(make_instance(d->model, d->palette));
             if (S.instancing && !out.empty()) {
                 const Draw* f = out.back().first;
-                if (f->mesh == d->mesh && f->skinned == d->skinned &&
+                if (f->mesh == d->mesh && f->lod == d->lod && f->skinned == d->skinned &&
                     (!match_material || (same_material(f->material, d->material) && f->probe == d->probe))) {
                     ++out.back().instance_count;
                     continue;
@@ -890,7 +925,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     for (std::uint32_t c = 0; c < cascade_count_; ++c) {
         std::sort(casters[c].begin(), casters[c].end(), [](const Draw* a, const Draw* b) {
             if (a->skinned != b->skinned) return !a->skinned;
-            return a->mesh < b->mesh;
+            if (a->mesh != b->mesh) return a->mesh < b->mesh;
+            return a->lod < b->lod;
         });
         shadow_batches[c] = build_batches(casters[c], false);
         stats_.shadow_batches += static_cast<std::uint32_t>(shadow_batches[c].size());
@@ -1150,7 +1186,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
                         ctx.pass->bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                         ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
-                        ctx.pass->draw_indexed(b.first->mesh->index_count, b.instance_count);
+                        draw_mesh_lod(*ctx.pass, *b.first->mesh, b.first->lod, b.instance_count);
                     }
                 }
             });
@@ -1186,7 +1222,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     pass.bind_vertex_buffer(0, d->mesh->vertices);
                     pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                     pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
-                    pass.draw_indexed(d->mesh->index_count, b.instance_count);
+                    draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
                     stats_.prepass_draws += b.instance_count;
                     ++stats_.prepass_batches;
                 }
@@ -1317,7 +1353,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_vertex_buffer(0, d->mesh->vertices);
                 pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                 pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
-                pass.draw_indexed(d->mesh->index_count, b.instance_count);
+                draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
             };
             for (const Batch& b : main_batches) {
                 const Draw* d = b.first;

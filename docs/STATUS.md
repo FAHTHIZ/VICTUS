@@ -636,6 +636,30 @@ Known gaps:
 - Melee is a distance and angle test, not physics hit boxes; there is no hit-stop or knock-back.
 - `victus run` at high quality on lavapipe manages about 4.5 frames per second, so long rendered runs are not part of CI.
 
+## Slice 54: Mesh optimisation and LODs (meshoptimizer)
+
+Why: roadmap item 10. Imported meshes kept their exporter's triangle order, and distant objects drew every triangle, which costs most on vertex-bound phones.
+
+Built (ADR-0049):
+- meshoptimizer v1.3 (MIT), fetched by CMake with a pinned SHA-256 and linked privately into `victus_render`; its notice ships with exported games.
+- `render::optimize_mesh`: vertex cache order, overdraw order (at most 5% more cache misses) and vertex fetch remap (skin stream and LODs follow; unused vertices are dropped).
+- `render::generate_lods`: up to 7 coarser levels per mesh (default 3, each half the previous budget, error at most 5% of the extent). Positions, normals, UVs and, for skinned meshes, the dominant joint are weighted; every level is simplified from the full mesh and stores its error in mesh units. Levels that save under 10% or fall below 24 triangles are skipped.
+- glTF importer (model importer v5): optimises and builds LODs per mesh. New `.meta` settings `optimize_meshes`, `lods`, `lod_error`, written only when changed. Cooked format v6 stores LODs and validates them on load (count, finite error, triangle lists, index range). The runtime sphere and cylinder primitives also get LODs.
+- `GpuMesh`: all levels share the vertex/skin buffers and one concatenated index buffer.
+- `SceneRenderer` picks the coarsest level whose error, projected at the distance to the object's bounds, stays within `RenderSettings::lod_error_pixels` (2 Low, 1.5 Medium, 1 High, 0.5 Ultra). The same level is used in the shadow, pre-pass and main passes; instancing batches split by level. `lods` and `force_lod` exist for debugging. `SceneStats` has `lod_draws` and `triangles`, and the editor viewport overlay shows both.
+- Collision, navigation and other CPU readers still use LOD 0.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Release, lavapipe):
+- `victus_render_tests` `mesh*`: optimisation keeps the exact triangle set and skin alignment and drops vertex cache misses from 3.0 to 0.69 per triangle on a shuffled 48x24 sphere. The 64x32 unit sphere gets LODs of 1983 / 992 / 495 / 248 triangles (from 3968) with errors 0.0066 / 0.0098 / 0.028 / 0.096, and every LOD triangle stays within twice its error of the surface. Cubes get no LODs, and `append` drops them. Locked borders keep a grid's outline.
+- `victus_asset_tests`: cooked v6 round trip, truncated and corrupt LODs rejected, v5 files reported as version mismatch. glTF import builds 3 LODs by default, 1 with `lods: 1`, none with `optimize_meshes: false`; settings clamp.
+- `victus_gpu_tests` "gpu lods": full mesh up close at a 0.25 px budget, coarsest level 40 m away with a mean image difference under 0.5/255 against LODs off, `force_lod` (clamped), looser budgets choose coarser levels, near and far instances in separate batches, and two far copies in one batch.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- LOD switches pop (no cross-fade or dithered transition).
+- No GPU-driven culling or indirect draws yet (next slice), and no occlusion culling or clustered (meshlet) LOD.
+- LOD selection uses each object's bounds and largest scale axis; skinned meshes use their submitted bounds.
+
 ## Next task
-Slice 54: mesh LODs and vertex/index optimisation via meshoptimizer, then GPU-driven culling where SDL_GPU allows. See ROADMAP.md "Next slices".
+Slice 55: GPU-driven culling and indirect draws where SDL_GPU allows (compute frustum culling into indirect argument buffers, per-instance LOD), then occlusion culling. See ROADMAP.md "Next slices".
 
