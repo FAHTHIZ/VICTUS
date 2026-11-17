@@ -786,5 +786,23 @@ Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror, lavapipe):
 Known gaps:
 - No probe visibility data (leaking through thin walls), one volume bound per frame, no editor probe visualisation; cost scales with the probe budget on the probe renderer (not measured on real GPUs yet).
 
+## Slice 61: Visual scripting graphs (model, compiler, runtime)
+
+Why: roadmap item 14. Designers had only hand-written Luau.
+
+Built (ADR-0058):
+- `victus/script/graph.hpp`: typed pins (exec, any, number, bool, string, vector, entity), `ScriptGraph` (variables, nodes, links, editing helpers that keep one link per data input and per exec output), and a library of 85 nodes: 7 events, 4 flow nodes, variable get/set, 16 statements (log, transforms, visibility, colour, physics impulses/forces, navigation, destroy, spawn, instantiate prefab, load scene, audio) and 56 pure math/logic/compare/vector/text/input/entity nodes.
+- Deterministic `.vgraph` JSON serialization (sorted nodes, links and literal keys; version checked).
+- Validation with node/pin diagnostics: unknown types, variables and pins, type mismatches, multiple links, duplicate events, exec loops, data loops, outputs used from another event, invalid/reserved variable names; unreachable statements warn.
+- `compile_graph`: Luau module output (events as methods, structured flow, inlined pure expressions, exposed variables as module fields, private as hidden `_v_` fields), a line-to-node map, optional `__vg_trace` instrumentation.
+- `ScriptHost` loads `.vgraph` scripts through the compiler (hot reload, budgets, per-entity properties unchanged) and annotates runtime errors with `[node N Title]`. `script::luau_source` is used by `victus check` and `victus export`; the asset database treats `.vgraph` as a script.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Debug -Werror):
+- `victus_script_tests` "graph: every library node compiles to valid Luau" (each node wired into a minimal graph, compiled and syntax-checked); serialization round trip and order independence; editing link rules; validation cases on the right nodes; line map, escaping and trace output; a mover graph moving two entities 4 and 20 units (per-entity speed override) with only the exposed variable listed by `describe`; a runtime error reported as `[node 3 Log]` and the instance faulted. 7 cases, 718 assertions.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- No editor graph panel yet (graphs are authored as JSON or through the C++ API); no debugger UI (trace mode exists in the compiler only); no user functions, custom events or comments boxes.
+
 ## Next task
-Roadmap item 14: visual scripting graph over the Luau runtime (graph model and serialization, compile to Luau, editor graph panel, debugging). See ROADMAP.md "Next slices".
+Roadmap item 14 (continued): the VICTUS Studio graph panel (open/create `.vgraph`, node palette, drag links, literal editing, validation markers, save) and graph debugging (trace highlighting while playing).

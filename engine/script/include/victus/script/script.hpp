@@ -253,6 +253,9 @@ void add_script_systems(gameplay::Simulation& sim, ScriptHost& host);
 // failure (used by import validation and tests).
 [[nodiscard]] Status check_syntax(std::string_view source, std::string_view chunk_name);
 
+// The Luau source behind a script asset: `text` itself for `.luau`, the compiled graph for
+// `.vgraph` visual scripts (ADR-0058; graph errors become the error message).
+[[nodiscard]] Result<std::string> luau_source(std::string_view path, std::string text);
 // Scene paths a script passes as string literals to `scene.load("...")` (export and check
 // verify they exist). Computed paths are not found; they are checked when the call runs.
 [[nodiscard]] std::vector<std::string> scene_references(std::string_view source);

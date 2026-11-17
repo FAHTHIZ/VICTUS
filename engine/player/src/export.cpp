@@ -110,9 +110,14 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         }
         const fs::Path src = (*db)->source_path(r);
         if (r.kind == assets::AssetKind::Script) {
-            auto text = fs::read_text(src);
+            auto raw = fs::read_text(src);
+            if (!raw) {
+                errors.push_back(std::format("{}: {}", r.path, raw.error().message));
+                continue;
+            }
+            auto text = script::luau_source(r.path, std::move(*raw));
             if (!text) {
-                errors.push_back(std::format("{}: {}", r.path, text.error().message));
+                errors.push_back(text.error().message);
                 continue;
             }
             if (auto st = script::check_syntax(*text, r.path); !st) {

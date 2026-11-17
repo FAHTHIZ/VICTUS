@@ -617,9 +617,10 @@ int cmd_check(const std::vector<std::string>& a) {
             if (auto src = script::read_prefab(assets, rel); src && !src->asset.is_nil()) prefab_uuids.insert(src->asset);
             continue;
         }
-        if (it->path().extension() != ".luau") continue;
+        if (it->path().extension() != ".luau" && it->path().extension() != ".vgraph") continue;
         ++scripts;
-        auto text = fs::read_text(it->path());
+        auto raw = fs::read_text(it->path());
+        auto text = raw ? script::luau_source(rel, std::move(*raw)) : Result<std::string>(std::move(raw).error());
         if (!text) {
             std::printf("error: %s: %s\n", rel.c_str(), text.error().message.c_str());
             ++problems;
