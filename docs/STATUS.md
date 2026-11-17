@@ -706,6 +706,26 @@ Known gaps:
 - No caching for static lights or per-light resolution: every shadowed light renders every frame at the tile size.
 - PCF clamps per tile, so cube-face seams can appear at grazing angles. Tiles switch on and off without a fade when the budget changes.
 
+## Slice 57: Object motion vectors
+
+Why: roadmap item 12 (first half). TAA reprojected history by camera motion only, so detail on moving and animated objects smeared.
+
+Built (ADR-0054):
+- `SceneRenderer::submit(..., motion_id)` and `submit_skinned(..., motion_id)`. Scenes pass the entity id, so every mesh entity is tracked.
+- The renderer keeps the previous model matrix and joint palette per id. On TAA frames with a history, a `motion_vectors` render-graph pass redraws visible opaque draws that moved or were re-posed (instanced, depth-tested against the scene depth, no depth writes) into an RG16F texture of object motion. Previous joints go into the same palette buffer.
+- New shaders `motion.vert`, `motion_skinned.vert`, `motion.frag`. `taa.frag` adds object motion to its camera reprojection at the closest-depth texel.
+- `RenderSettings::motion_vectors` (default on). `SceneStats::motion_draws`, `motion_batches`. The pass is skipped on frames where nothing moved.
+
+Verification (local, Ubuntu 26.04, GCC 15.2, Release, lavapipe):
+- `victus_gpu_tests` "gpu motion vectors: a moving object keeps a sharp TAA history": a comb of nine thin bars slides 0.11 m per frame for 14 frames. Compared with TAA converged on the comb held still, mean error falls from 5.26 (camera-only) to 2.71, and horizontal detail (sum of neighbour differences) rises from 33266 to 68838 (reference 86944). Stats report 9 motion draws in 1 batch from the second frame. Unmoved, untracked (id 0), alpha-tested draws and the frame after `reset_history()` produce no motion draws, and the pass is absent from the graph when nothing moved.
+- "skinned motion matches the same motion through the model matrix": the same column moved by its model matrix and by both joints gives identical final frames (mean difference 0). The skinned case uploads current plus previous joints (4), and an unchanged pose uploads 2.
+- "scene entities are tracked by entity id": through `runtime::extract_scene`, only the entity that moved gets a motion draw.
+- Full ctest 21/21 with `VICTUS_REQUIRE_GPU=1`.
+
+Known gaps:
+- Alpha-tested, blended and particle draws keep camera-only reprojection.
+- Temporal upscaling (rendering below output resolution and resolving with TAA) is the second half of item 12 (Slice 58).
+
 ## Next task
-Slice 57: per-object motion vectors for moving and skinned meshes (TAA ghosting), then temporal upscaling. See ROADMAP.md "Next slices".
+Slice 58: temporal upscaling. Render at reduced resolution with jitter and resolve to output resolution through the TAA history, using the motion vectors. See ROADMAP.md "Next slices".
 

@@ -562,6 +562,20 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 - Decision: (c). `params.y` is the frame (left to right, top to bottom), `params.z` the grid (columns x 16 + rows; 0 = whole texture) and `params.w` the height/width ratio along the rotated up axis (0 or 1 = square). The particle vertex shader applies them; the instance layout (48 bytes) is unchanged.
 - Consequences: one batch per effect regardless of frame; zeroed reserved fields keep existing emitters exactly as before. No frame blending (frames switch); grids up to 15 x 15.
 
+### ADR-0054: Object motion vectors as a sparse pass after the forward pass
+- Status: Accepted (Slice 57)
+- Context: TAA reprojected history from scene depth with the camera matrices only, so moving and animated objects relied on neighbourhood clipping alone. Fine detail on them (stripes, text, foliage-like edges) smeared. Most scene pixels are static, mobile tiers do not run TAA, and every forward pipeline (PBR, surface shaders, blended variants) would need a second colour target for a full G-buffer-style velocity output.
+- Options: (a) a second colour target on the forward pass for every draw; (b) a separate motion pass that redraws only the instances that moved, depth-tested against the finished scene depth; (c) per-pixel velocity reconstructed from depth plus an object-ID buffer.
+- Decision: (b).
+  - Draws carry an optional `motion_id` (`SceneRenderer::submit` / `submit_skinned`; scenes pass the entity id). The renderer keeps each id's previous model matrix and joint palette and, on TAA frames with a valid history, redraws visible opaque draws whose matrix or joints changed (bitwise compare). Previous joints are appended to the frame's joint palette, so skinned motion uses the same storage buffer.
+  - `motion.vert` / `motion_skinned.vert` repeat the position math of the main pass (invariant `gl_Position`), test LessEqual against the scene depth without writing it, and `motion.frag` writes into an RG16F target the previous-camera texture-space position of the surface's current point minus that of its previous position. Untouched pixels stay 0.
+  - `taa.frag` subtracts that offset from its camera reprojection, read at the same closest-depth texel of the 3x3 neighbourhood (so silhouettes are dilated with the foreground's motion).
+  - The pass and its texture exist only on frames where something moved (`SceneStats::motion_draws`, `motion_batches`). `RenderSettings::motion_vectors` (default on) turns it off.
+- Consequences:
+  - Alpha-tested draws are skipped (the motion pass does not discard), so they keep camera-only reprojection. Blended draws and particles have no motion vectors.
+  - Vertex animation in surface shaders is not seen (they only change fragments today). Ids must be unique per object; the first submission of an id in a frame wins.
+  - Rejected (a): it doubles colour bandwidth for every opaque pixel on every frame. Rejected (c): it needs an extra ID target and per-object matrices in a buffer, for the same result.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

@@ -668,6 +668,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     };
     w.each<MeshRendererComponent, WorldTransform>([&](Entity entity, const MeshRendererComponent& mr, const WorldTransform& wt) {
         if (!mr.visible) return;
+        const std::uint64_t motion_id = entity.bits() + 1; // stable per entity; never 0 for live entities
         const auto* pm = w.get<scene::ProceduralMeshComponent>(entity);
         if (pm && pm->mesh) {
             const render::GpuMesh* mesh = assets.procedural(*pm->mesh);
@@ -687,7 +688,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             }
             m.cast_shadows = mr.cast_shadows;
             apply_overrides(entity, m);
-            renderer.submit(*mesh, m, wt.matrix);
+            renderer.submit(*mesh, m, wt.matrix, motion_id);
             ++stats.meshes;
             return;
         }
@@ -729,13 +730,13 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                             bounds.expand(b.max);
                         }
                     }
-                    renderer.submit_skinned(gm.meshes[mr.mesh_index], m, wt.matrix, palette, bounds);
+                    renderer.submit_skinned(gm.meshes[mr.mesh_index], m, wt.matrix, palette, bounds, motion_id);
                     ++stats.meshes;
                     ++stats.skinned;
                     return;
                 }
             }
-            renderer.submit(gm.meshes[mr.mesh_index], m, wt.matrix);
+            renderer.submit(gm.meshes[mr.mesh_index], m, wt.matrix, motion_id);
             ++stats.meshes;
             return;
         }
@@ -759,7 +760,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         }
         m.cast_shadows = mr.cast_shadows;
         apply_overrides(entity, m);
-        renderer.submit(*mesh, m, wt.matrix);
+        renderer.submit(*mesh, m, wt.matrix, motion_id);
         ++stats.meshes;
     });
 
