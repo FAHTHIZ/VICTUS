@@ -411,5 +411,12 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 - Decision: (1), with the sprite batch splitting batches by filter and materials using nearest when either the material or its base colour texture asks for it. The setting is not baked into the pixels; changing it re-imports (settings are part of the import key) and evicts the cache.
 - Consequences: one switch per texture fixes pixel art and sheet bleeding everywhere it is used. Wrap mode stays fixed (sprites clamp, materials repeat).
 
+### ADR-0040: External simulations run as project-declared helper processes; scripts build procedural meshes by id
+- Status: Accepted (2026-11-17, Slice 41).
+- Context: AURORIA's simulation is a .NET program that speaks JSON lines and streams packed mesh buffers; VICTUS scripts are sandboxed and had no process, mesh-building or module APIs.
+- Candidates: (1) projects declare named helpers in `victus.project` `bridges`; scripts can only open those names, so a script cannot run arbitrary commands; (2) a generic `os.execute`-style API — breaks the sandbox; (3) embed the .NET runtime — heavy and specific to one game. For meshes: (a) a runtime `ProceduralMeshComponent` holding an immutable shared mesh with a unique id that the GPU cache uploads once and collects when unused (Unity `Mesh.SetVertexBufferData` copies packed vertex data in a declared layout, https://docs.unity3d.com/ScriptReference/Mesh.SetVertexBufferData.html; Godot `ArrayMesh.add_surface_from_arrays`, https://docs.godotengine.org/en/stable/classes/class_arraymesh.html); (b) write temporary glTF assets — slow and pollutes the project.
+- Decision: (1) and (a). Script layouts describe packed vertices (`f32x2/3`, `s8x4`, `u8x4`, `skip:N`) so bridge buffers decode without per-vertex Luau work; mirroring `scale` converts left-handed data and flips winding. `require` shares module tables across scripts. Time spent waiting on a bridge does not count towards the script time budget.
+- Consequences: games with external simulations ship the helper next to the game and declare it; procedural meshes are runtime-only (not saved, no colliders yet).
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.

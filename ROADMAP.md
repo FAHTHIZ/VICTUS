@@ -70,6 +70,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 
 ## Phase 7 — Complete 2D development
 - [~] 2D camera, sprites, atlases, batching, sorting/layers and pixel-art controls. Done: camera, sprites, batching, layers, grid atlases with `Sprite.uv` (Slice 39). Done (Slice 40): per-texture nearest filtering for sprites/particles/materials and 2D camera pixel snap.
+- [x] Script-driven procedural meshes, helper-process bridges (`bridge.open`), `json`, `require` and mouse wheel input (Slice 41).
 - [ ] Tilemaps, tile sets, autotiling, grid and 2D world editing.
 - [x] 2D physics, collision shapes, queries and debug visualization: Box2D 3.2.0 bodies, box/circle/capsule colliders, triggers, raycast/overlap queries, editor collider overlay (Slice 6); 2D character mover, one-way platforms and 2D joints (Slice 14).
 - [~] 2D animation, skeletal/rigged workflows where justified, particles and parallax. Done: particles (Slice 13), sprite sheets and `SpriteAnimator` clips (Slice 39). Remaining: parallax, rigged 2D.

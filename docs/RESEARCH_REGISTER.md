@@ -123,6 +123,11 @@ No third-party code was added.
 - Inter 4 (Rasmus Andersson, SIL OFL 1.1) — https://github.com/rsms/inter ; latin 500/700 TTFs from Fontsource 5.2.8 embedded (THIRD_PARTY_AND_LICENSES).
 - Open questions: text shaping and bidi for localization, SDF text for world-space UI, and a visual UI editor.
 
+## Research conclusions added 2026-11-17 (Slice 41, procedural meshes and helper processes)
+- Unity `Mesh.SetVertexBufferData` (https://docs.unity3d.com/ScriptReference/Mesh.SetVertexBufferData.html, accessed 2026-11-17): copies packed vertex data directly into a vertex buffer whose layout was declared first with `SetVertexBufferParams`, with minimal validation for speed. Adopted: VICTUS `set_mesh_data` takes a declared `layout` string and decodes packed buffers in C++.
+- Godot `ArrayMesh` (https://docs.godotengine.org/en/stable/classes/class_arraymesh.html, accessed 2026-11-17): `add_surface_from_arrays` builds a surface from vertex, normal, colour, UV and optional index arrays; front faces wind clockwise. Adopted as the table form of `set_mesh_data`; winding is explicit (`flip_winding`, mirrored `scale`) because source engines differ.
+- Open questions: mesh colliders from procedural data, saving procedural meshes into scenes, bridges in multiplayer editor clients.
+
 ## Research conclusions added 2026-11-17 (Slice 40, pixel-art texture filtering)
 - Unity, "Default texture Import Settings window reference" (https://docs.unity3d.com/Manual/texture-type-default.html, accessed 2026-11-17): Filter Mode is a per-texture import setting; Point (no filter) "appears blocky up close", Bilinear "appears blurry up close". Adopted: the filter lives in VICTUS texture import settings (ADR-0039).
 - Godot, CanvasItem (https://docs.godotengine.org/en/stable/classes/class_canvasitem.html, accessed 2026-11-17): `texture_filter` is "the filtering mode used to render this CanvasItem's texture(s)"; nearest "reads from the nearest pixel only". Considered and rejected as the primary switch (per-sprite setting repeats across every sprite of a sheet); VICTUS keeps a per-sprite `nearest` flag only at the render level.
