@@ -26,6 +26,7 @@ Shot shoot(SceneRenderer& r, bool instancing, F&& content, const char* save = nu
     RenderSettings s = RenderSettings::preset(QualityTier::High);
     s.ssao = true; // exercises the depth pre-pass with instances too
     s.instancing = instancing;
+    s.taa = false; // compares exact frames; jitter would differ per frame
     r.set_settings(s);
     Camera3D cam = Camera3D::look_at({0, 9, 14}, {0, 0, 0});
     DirectionalLight sun;

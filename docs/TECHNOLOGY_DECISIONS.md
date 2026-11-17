@@ -446,6 +446,13 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 - Decision: (b), because it reuses the verified prefilter/SH path with no new GPU resource types; the stall is bounded by a capture budget (default 1 per frame) and captures only happen on change. Each draw uses the smallest containing axis-aligned box (one probe binding, keeps batching), with Lagarde and Zanuttini 2012 box projection for specular and the probe SH9 for diffuse.
 - Consequences: no seams between probes are hidden yet (no blending/fade); a GPU-only capture path can replace (b) later without changing the component or shader interface.
 
+### ADR-0045: TAA reprojects from depth; dynamic resolution uses CPU frame time
+- Status: Accepted (Slice 47)
+- Context: TAA needs per-pixel history positions. Full motion vectors need an extra render target written by every opaque pipeline (built-in, skinned, surface shaders) plus previous-frame model matrices and skin palettes.
+- Options: (a) per-object motion vector MRT; (b) camera-only reprojection from depth with neighbourhood variance clipping (Karis 2014, Salvi 2016) bounding errors on moving objects; (c) FXAA/SMAA only.
+- Decision: (b) now. It adds one fullscreen pass and two history textures, changes no material pipeline, and is correct for the dominant case (camera motion over static geometry); clipping removes ghosts from moving objects at the cost of some softening. The shader interface (reprojection per pixel) lets (a) be added later by replacing the depth-derived position with a velocity sample. TAA is enabled at High/Ultra; Low/Medium keep FXAA because the extra full-resolution RGBA16F read/write is a large share of bandwidth on entry-level phones.
+- Dynamic resolution measures CPU frame time (SDL_GPU exposes no GPU timestamps), scales by sqrt(target/measured) with a cooldown, and recovers in small steps after sustained headroom to avoid oscillation. Fixed-step, recorded and replayed runs keep a constant scale so captures stay deterministic.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

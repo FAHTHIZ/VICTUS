@@ -131,11 +131,16 @@ TEST_CASE("project: rendering quality settings round-trip and validate") {
     CHECK(p->settings().render_scale == 0.0f);
     p->settings().render_quality = "low";
     p->settings().render_scale = 0.5f;
+    CHECK(p->settings().target_fps == 0);
+    p->settings().target_fps = 30;
+    p->settings().dynamic_resolution_min = 0.6f;
     REQUIRE(p->save().ok());
     auto q = project::Project::open(dir);
     REQUIRE(q.ok());
     CHECK(q->settings().render_quality == "low");
     CHECK(q->settings().render_scale == 0.5f);
+    CHECK(q->settings().target_fps == 30);
+    CHECK(q->settings().dynamic_resolution_min == doctest::Approx(0.6f));
     CHECK_FALSE(q->settings().extra.find("rendering")); // a known key, not preserved as "extra"
 
     auto text = fs::read_text(dir / "victus.project");
@@ -149,6 +154,11 @@ TEST_CASE("project: rendering quality settings round-trip and validate") {
     CHECK_FALSE(project::Project::open(dir).ok());
     bad.set("quality", "medium");
     bad.set("render_scale", 9.0);
+    doc->set("rendering", bad);
+    REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(*doc)).ok());
+    CHECK_FALSE(project::Project::open(dir).ok());
+    bad.set("render_scale", 1.0);
+    bad.set("target_fps", -5);
     doc->set("rendering", bad);
     REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(*doc)).ok());
     CHECK_FALSE(project::Project::open(dir).ok());

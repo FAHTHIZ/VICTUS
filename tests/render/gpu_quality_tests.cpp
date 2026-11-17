@@ -57,7 +57,7 @@ struct Meshes {
 // Everything off: the baseline each feature test compares against.
 RenderSettings bare() {
     RenderSettings s = RenderSettings::preset(QualityTier::High);
-    s.ssao = s.bloom = s.fxaa = s.auto_exposure = false;
+    s.ssao = s.bloom = s.fxaa = s.auto_exposure = s.taa = false;
     s.shadow_cascades = 1;
     return s;
 }

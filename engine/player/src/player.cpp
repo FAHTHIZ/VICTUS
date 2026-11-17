@@ -22,6 +22,7 @@
 #include "victus/player/platform_input.hpp"
 #include "victus/project/project.hpp"
 #include "victus/render/image.hpp"
+#include "victus/render/temporal.hpp"
 #include "victus/runtime/scene_view.hpp"
 #include "victus/script/script.hpp"
 
@@ -101,6 +102,16 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     render::RenderSettings quality = render::RenderSettings::preset(*tier);
     if (proj->settings().render_scale > 0.0f) quality.render_scale = proj->settings().render_scale;
     (*view)->renderer().set_settings(quality);
+    // Dynamic resolution holds the project's target frame rate in interactive runs (fixed-step,
+    // recorded and replayed runs keep a constant scale so captures stay deterministic).
+    std::optional<render::DynamicResolution> dynamic_resolution;
+    if (proj->settings().target_fps > 0 && o.max_frames == 0 && o.replay.empty() && o.record.empty()) {
+        render::DynamicResolutionSettings ds;
+        ds.target_frame_ms = 1000.0f / static_cast<float>(proj->settings().target_fps);
+        ds.min_scale = std::min(proj->settings().dynamic_resolution_min, quality.render_scale);
+        ds.max_scale = quality.render_scale;
+        dynamic_resolution.emplace(ds, quality.render_scale);
+    }
     if (*tier == render::QualityTier::Low) cache.set_environment_bake(render::EnvironmentBakeSettings::low());
 
     // Regression captures: the replayed capture fixes the script seed; a recording picks one.
@@ -300,6 +311,15 @@ Result<PlayerReport> run(const PlayerOptions& o) {
                     for (const auto& clip : changes.audio) (void)(*audio_engine)->reload_clip(clip);
                 if (!changes.prefabs.empty()) (*scripts)->forget_prefabs(); // new instances use the new version
                 report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size();
+            }
+        }
+        if (dynamic_resolution) {
+            const float before = dynamic_resolution->scale();
+            const float scale = dynamic_resolution->update(static_cast<float>(now - last) * 1000.0f);
+            if (scale != before) {
+                render::RenderSettings rs = (*view)->renderer().settings();
+                rs.render_scale = scale;
+                (*view)->renderer().set_settings(rs);
             }
         }
         float dt = o.max_frames ? 1.0f / 60.0f : std::clamp(static_cast<float>(now - last), 1e-4f, 0.25f);

@@ -34,6 +34,10 @@ Value settings_to_json(const ProjectSettings& s) {
     Value rendering = Value::object();
     rendering.set("quality", s.render_quality);
     if (s.render_scale > 0.0f) rendering.set("render_scale", s.render_scale);
+    if (s.target_fps > 0) {
+        rendering.set("target_fps", s.target_fps);
+        rendering.set("dynamic_resolution_min", s.dynamic_resolution_min);
+    }
     v.set("rendering", std::move(rendering));
     v.set("input", s.input.to_json());
     if (s.save_version != 1) v.set("save_version", s.save_version);
@@ -61,6 +65,12 @@ Status settings_from_json(const Value& v, ProjectSettings& s) {
     s.render_scale = r["render_scale"].as_float(0.0f);
     if (!(s.render_scale == 0.0f || (s.render_scale >= 0.25f && s.render_scale <= 2.0f)))
         return bad("rendering.render_scale must be 0 (tier default) or between 0.25 and 2");
+    const auto fps = r["target_fps"].as_int(0);
+    if (fps < 0 || fps > 1000) return bad("rendering.target_fps must be 0 (off) or between 1 and 1000");
+    s.target_fps = static_cast<int>(fps);
+    s.dynamic_resolution_min = r["dynamic_resolution_min"].as_float(0.5f);
+    if (!(s.dynamic_resolution_min >= 0.25f && s.dynamic_resolution_min <= 1.0f))
+        return bad("rendering.dynamic_resolution_min must be between 0.25 and 1");
     if (const Value* in = v.find("input")) {
         auto map = gameplay::InputMap::from_json(*in);
         if (!map) return bad(map.error().message);
