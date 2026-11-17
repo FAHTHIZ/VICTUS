@@ -3,6 +3,7 @@
 #include "gltf_writer.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/core/hash.hpp"
+#include "victus/render/environment_map.hpp"
 
 #include <filesystem>
 #include <format>
@@ -396,4 +397,52 @@ TEST_CASE("material blend and coverage fields round trip and inherit") {
     CHECK(merged.blend == MaterialBlendMode::Additive); // inherited
     CHECK(merged.coverage_response == doctest::Approx(0.25f));
     CHECK_FALSE(MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "blend": "glass"})")).ok());
+}
+
+TEST_CASE("assets: HDR textures cook to half floats with SH irradiance and an LDR preview") {
+    TempDir dir("victus_hdr_cook");
+    render::ImageF env;
+    env.width = 64;
+    env.height = 32;
+    env.pixels.resize(64 * 32 * 4);
+    for (std::uint32_t y = 0; y < 32; ++y)
+        for (std::uint32_t x = 0; x < 64; ++x) {
+            float* p = &env.pixels[(y * 64 + x) * 4];
+            p[0] = y < 16 ? 4.0f : 0.1f;
+            p[1] = p[2] = y < 16 ? 2.0f : 0.1f;
+            p[3] = 1;
+        }
+    auto bytes = render::encode_hdr(env);
+    REQUIRE(bytes.ok());
+    const fs::Path file = dir.path / "sky.hdr";
+    write_bytes(file, *bytes);
+    TextureImportSettings settings;
+    settings.max_size = 32; // forces a 32x16 downsample
+    auto tex = import_texture(file, settings);
+    REQUIRE(tex.ok());
+    CHECK(tex->hdr);
+    CHECK(tex->hdr_width == 32);
+    CHECK(tex->hdr_height == 16);
+    REQUIRE(tex->hdr_pixels.size() == 32 * 16 * 4);
+    CHECK(render::half_to_float(tex->hdr_pixels[0]) == doctest::Approx(4.0f).epsilon(0.02));
+    REQUIRE_FALSE(tex->mips.empty());
+    CHECK(tex->mips[0].pixels[0] > tex->mips[0].pixels[(tex->mips[0].pixels.size() / 4 - 1) * 4]); // tonemapped preview
+    render::SphericalHarmonics9 sh;
+    sh.coefficients = tex->sh;
+    CHECK(sh.diffuse({0, 1, 0}).x > sh.diffuse({0, -1, 0}).x * 5.0f);
+
+    CookedHeader header;
+    header.kind = AssetKind::Texture;
+    const auto blob = serialize(header, *tex);
+    auto back = deserialize_texture(blob);
+    REQUIRE(back.ok());
+    CHECK(back->hdr);
+    CHECK(back->hdr_pixels == tex->hdr_pixels);
+    CHECK(back->sh[0].x == doctest::Approx(tex->sh[0].x));
+    const auto img = back->hdr_image();
+    CHECK(img.width == 32);
+    CHECK(img.at(0, 0).x == doctest::Approx(4.0f).epsilon(0.02));
+    // Truncated HDR payloads are rejected.
+    std::vector<std::uint8_t> cut(blob.begin(), blob.end() - 40);
+    CHECK_FALSE(deserialize_texture(cut).ok());
 }

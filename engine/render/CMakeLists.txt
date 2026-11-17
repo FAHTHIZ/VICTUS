@@ -16,6 +16,7 @@ file(COPY_FILE ${_pbr_cpp}.tmp ${_pbr_cpp} ONLY_IF_DIFFERENT)
 victus_add_module(render
     SOURCES
         src/builtin_shaders_lookup.cpp
+        src/environment_map.cpp
         src/gpu_context.cpp
         src/image.cpp
         src/mesh.cpp

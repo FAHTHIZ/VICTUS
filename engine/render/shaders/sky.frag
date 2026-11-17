@@ -1,7 +1,9 @@
 #version 450
 // SPDX-License-Identifier: Apache-2.0
-// Procedural sky: zenith/horizon/ground gradient plus sun disc, evaluated per view ray.
+// Sky background per view ray: the scene's environment cubemap (optionally blurred by sampling a
+// prefiltered mip) or the procedural zenith/horizon/ground gradient plus sun disc.
 layout(location = 0) in vec2 v_uv;
+layout(set = 2, binding = 0) uniform samplerCube u_env;
 layout(set = 3, binding = 0) uniform Sky {
     mat4 inv_view_proj;
     vec4 zenith;
@@ -9,6 +11,7 @@ layout(set = 3, binding = 0) uniform Sky {
     vec4 ground;
     vec4 sun_dir;   // direction towards the sun
     vec4 sun_color; // rgb * intensity, w: disc size (cos)
+    vec4 env;       // x: environment map present, y: mip (blur), z: intensity, w: rotation (radians about +Y)
 } sky;
 layout(location = 0) out vec4 out_color;
 void main() {
@@ -16,6 +19,12 @@ void main() {
     vec4 far_p = sky.inv_view_proj * vec4(ndc, 1.0, 1.0);
     vec4 near_p = sky.inv_view_proj * vec4(ndc, 0.0, 1.0);
     vec3 dir = normalize(far_p.xyz / far_p.w - near_p.xyz / near_p.w);
+    if (sky.env.x > 0.5) {
+        float c = cos(sky.env.w), s = sin(sky.env.w);
+        vec3 d = vec3(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
+        out_color = vec4(textureLod(u_env, d, sky.env.y).rgb * sky.env.z, 1.0);
+        return;
+    }
     float h = dir.y;
     vec3 c = h > 0.0 ? mix(sky.horizon.rgb, sky.zenith.rgb, pow(h, 0.5)) : mix(sky.horizon.rgb, sky.ground.rgb, pow(-h, 0.4));
     float s = dot(dir, normalize(sky.sun_dir.xyz));

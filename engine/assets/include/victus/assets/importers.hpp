@@ -37,10 +37,13 @@ struct ImportResult {
     std::vector<std::string> warnings;
 };
 
-inline constexpr std::uint32_t kTextureImporterVersion = 1;
+inline constexpr std::uint32_t kTextureImporterVersion = 2; // v2: HDR (.hdr) sources keep linear float data
 inline constexpr std::uint32_t kModelImporterVersion = 3; // v2: skins and animations; v3: COLOR_0 vertex colours
 
 [[nodiscard]] Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSettings& settings);
+// HDR (.hdr) sources: half-float pixels (limited to max_size x max_size/2), SH9 irradiance and a
+// Reinhard-tonemapped sRGB preview in `mips`.
+[[nodiscard]] CookedTexture cook_hdr_texture(const render::ImageF& image, std::string name, std::uint32_t max_size);
 [[nodiscard]] CookedTexture cook_texture(const render::Image& image, std::string name, bool srgb, bool mipmaps,
                                          std::uint32_t max_size);
 

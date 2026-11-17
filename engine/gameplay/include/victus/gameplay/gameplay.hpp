@@ -250,6 +250,11 @@ struct EnvironmentComponent {
     math::Color coverage_color{0.86f, 0.89f, 0.95f, 1};
     float coverage_roughness{0.8f};
     float coverage_slope{0.55f};
+    // Image-based lighting from an HDR (.hdr, equirectangular) texture asset; nil = analytic sky.
+    Uuid environment_map;
+    float environment_intensity{1.0f};
+    float environment_rotation{0.0f}; // degrees about +Y
+    float sky_blur{0.0f};             // 0 sharp background .. 1 fully blurred
 };
 
 // Registers serializers ("Rotator", "Oscillator", "Environment"). Idempotent; call once at startup before

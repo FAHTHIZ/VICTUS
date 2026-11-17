@@ -40,6 +40,11 @@ public:
     [[nodiscard]] Result<rhi::TextureHandle> texture(const Uuid& uuid);
     // True when the texture's import settings ask for nearest ("filter": "nearest") sampling.
     [[nodiscard]] bool texture_nearest(const Uuid& uuid);
+    // HDR texture asset baked into an image-based-lighting environment map (created on first
+    // use and cached; failures are cached and logged once until the asset is evicted).
+    [[nodiscard]] Result<const render::EnvironmentMap*> environment(const Uuid& uuid);
+    void set_environment_bake(const render::EnvironmentBakeSettings& s) noexcept { env_bake_ = s; }
+    [[nodiscard]] const render::EnvironmentBakeSettings& environment_bake() const noexcept { return env_bake_; }
     [[nodiscard]] Result<const GpuModel*> model(const Uuid& uuid);
     // Registers an already-cooked model under a UUID (tools, tests, procedural content).
     [[nodiscard]] Result<const GpuModel*> add_model(const Uuid& uuid, assets::CookedModel model);
@@ -74,6 +79,9 @@ private:
     assets::AssetDatabase* db_;
     std::unordered_map<Uuid, rhi::TextureHandle, UuidHash> textures_;
     std::unordered_map<Uuid, bool, UuidHash> nearest_;
+    std::unordered_map<Uuid, std::unique_ptr<render::EnvironmentMap>, UuidHash> environments_;
+    std::unordered_map<Uuid, Error, UuidHash> environment_errors_;
+    render::EnvironmentBakeSettings env_bake_;
     std::unordered_map<Uuid, std::unique_ptr<GpuModel>, UuidHash> models_;
     std::unordered_map<std::string, render::GpuMesh> primitives_;
     std::unordered_map<Uuid, Result<render::Material>, UuidHash> materials_;

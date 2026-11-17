@@ -4,6 +4,7 @@
 // debug lines, dual-filter bloom, auto exposure, tonemapping/grading and FXAA. Every feature
 // scales through RenderSettings / QualityTier so the same content runs on phones and desktops.
 #pragma once
+#include "victus/render/environment_map.hpp"
 #include "victus/render/gpu_context.hpp"
 #include "victus/render/render_graph.hpp"
 
@@ -155,6 +156,15 @@ struct Environment {
     float coverage_roughness{0.8f};
     float coverage_slope{0.55f};     // surface normal.y where coverage starts
     float coverage_sharpness{3.0f};  // ramp steepness above the slope threshold
+    // Image-based lighting. With an environment map, ambient diffuse comes from its SH9
+    // irradiance and reflections from its prefiltered cubemap (both scaled by
+    // environment_intensity and ambient_intensity's role is taken over); the sky background
+    // shows the map. Without one, the analytic zenith/horizon/ground gradient is used. The map
+    // must outlive the frames that use it.
+    const EnvironmentMap* environment_map{nullptr};
+    float environment_intensity{1.0f};
+    float environment_rotation{0.0f}; // radians about +Y
+    float sky_blur{0.0f};             // background blur 0 (sharp) .. 1 (fully rough mip)
 };
 
 // Scalability tiers. Low targets entry-level phones, Medium mid-range phones/tablets, High

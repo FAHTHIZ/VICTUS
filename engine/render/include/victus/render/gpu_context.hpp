@@ -43,6 +43,8 @@ public:
     [[nodiscard]] rhi::TextureHandle white() const noexcept { return white_; }
     [[nodiscard]] rhi::TextureHandle black() const noexcept { return black_; }
     [[nodiscard]] rhi::TextureHandle flat_normal() const noexcept { return flat_normal_; }
+    // 1x1 black cubemap (no environment map).
+    [[nodiscard]] rhi::TextureHandle black_cube() const noexcept { return black_cube_; }
     // 64x64 white disc with a smooth radial alpha falloff: the default particle texture.
     [[nodiscard]] rhi::TextureHandle soft_particle() const noexcept { return soft_particle_; }
     [[nodiscard]] rhi::SamplerHandle linear_repeat() const noexcept { return linear_repeat_; }
@@ -67,7 +69,7 @@ public:
 private:
     explicit GpuContext(rhi::Device& d) : device_(d) {}
     rhi::Device& device_;
-    rhi::TextureHandle white_, black_, flat_normal_, soft_particle_;
+    rhi::TextureHandle white_, black_, flat_normal_, soft_particle_, black_cube_;
     rhi::SamplerHandle linear_repeat_, linear_clamp_, nearest_clamp_, nearest_repeat_, shadow_;
     rhi::Format sampled_depth_{rhi::Format::D32_FLOAT};
     std::unordered_map<std::string, rhi::ShaderHandle> shaders_;
