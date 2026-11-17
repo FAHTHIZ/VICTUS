@@ -344,10 +344,13 @@ Mat4 Camera3D::projection(float aspect) const noexcept { return Mat4::perspectiv
 
 Vec3 Camera3D::forward() const noexcept { return normalize(inverse(view).transform_vector({0, 0, -1})); }
 
-Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
+Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, const SceneRendererOptions& options) {
     std::unique_ptr<SceneRenderer> r(new SceneRenderer(ctx));
     auto& dev = ctx.device();
     r->depth_format_ = ctx.sampled_depth_format();
+    // Packed HDR (ADR-0050): half the colour bandwidth of RGBA16F where the GPU can render and blend into it.
+    constexpr std::uint32_t kHdrUsage = rhi::TextureUsageSampled | rhi::TextureUsageColorTarget;
+    if (options.compact_hdr && dev.supports_format(rhi::Format::R11G11B10_FLOAT, kHdrUsage)) r->hdr_format_ = rhi::Format::R11G11B10_FLOAT;
     auto get = [&](const char* n) { return ctx.shader(n); };
     auto mesh_vs = get("mesh.vert");
     auto pbr_fs = get("pbr.frag");
@@ -394,7 +397,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
                              normal_attrs);
     opaque.depth_test = opaque.depth_write = true;
     opaque.depth_compare = rhi::CompareOp::LessEqual; // also accepts depth pre-pass values
-    opaque.color_targets = {{rhi::Format::RGBA16_FLOAT, rhi::BlendMode::Opaque}};
+    opaque.color_targets = {{r->hdr_format_, rhi::BlendMode::Opaque}};
     opaque.depth_format = r->depth_format_;
     auto p = dev.create_pipeline(opaque);
     if (!p) return std::move(p).error();
@@ -486,7 +489,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     sky.vertex = full_vs.value();
     sky.fragment = sky_fs.value();
     sky.cull = rhi::CullMode::None;
-    sky.color_targets = {{rhi::Format::RGBA16_FLOAT, rhi::BlendMode::Opaque}};
+    sky.color_targets = {{r->hdr_format_, rhi::BlendMode::Opaque}};
     sky.depth_format = r->depth_format_;
     p = dev.create_pipeline(sky);
     if (!p) return std::move(p).error();
@@ -502,7 +505,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
     lines.cull = rhi::CullMode::None;
     lines.depth_test = true;
     lines.depth_compare = rhi::CompareOp::LessEqual;
-    lines.color_targets = {{rhi::Format::RGBA16_FLOAT, rhi::BlendMode::Alpha}};
+    lines.color_targets = {{r->hdr_format_, rhi::BlendMode::Alpha}};
     lines.depth_format = r->depth_format_;
     p = dev.create_pipeline(lines);
     if (!p) return std::move(p).error();
@@ -517,7 +520,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx) {
         pd.vertex_buffers = {{0, sizeof(ParticleInstance), true}};
         pd.attributes = {{0, 0, rhi::VertexFormat::Float4, 0}, {1, 0, rhi::VertexFormat::Float4, 16}, {2, 0, rhi::VertexFormat::Float4, 32}};
         pd.cull = rhi::CullMode::None;
-        pd.color_targets = {{rhi::Format::RGBA16_FLOAT, additive ? rhi::BlendMode::Additive : rhi::BlendMode::Alpha}};
+        pd.color_targets = {{r->hdr_format_, additive ? rhi::BlendMode::Additive : rhi::BlendMode::Alpha}};
         p = dev.create_pipeline(pd);
         if (!p) return std::move(p).error();
         (additive ? r->particle_additive_ : r->particle_alpha_) = p.value();
@@ -549,7 +552,7 @@ rhi::PipelineHandle SceneRenderer::blend_pipeline(MaterialBlend blend, bool skin
         d.name = std::format("pbr_{}{}{}", material_blend_name(blend), skinned ? "_skinned" : "", double_sided ? "_double_sided" : "");
         d.cull = double_sided ? rhi::CullMode::None : rhi::CullMode::Back;
         d.depth_write = false;
-        d.color_targets = {{rhi::Format::RGBA16_FLOAT, blend == MaterialBlend::Additive ? rhi::BlendMode::Additive : rhi::BlendMode::Alpha}};
+        d.color_targets = {{hdr_format_, blend == MaterialBlend::Additive ? rhi::BlendMode::Additive : rhi::BlendMode::Alpha}};
         auto p = ctx_.device().create_pipeline(d);
         if (!p) {
             VICTUS_LOG_ERROR("render", "blend pipeline: {}", p.error().message);
@@ -584,7 +587,7 @@ rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, 
         d.cull = double_sided ? rhi::CullMode::None : rhi::CullMode::Back;
         if (blend != MaterialBlend::Opaque) {
             d.depth_write = false;
-            d.color_targets = {{rhi::Format::RGBA16_FLOAT, blend == MaterialBlend::Additive ? rhi::BlendMode::Additive : rhi::BlendMode::Alpha}};
+            d.color_targets = {{hdr_format_, blend == MaterialBlend::Additive ? rhi::BlendMode::Additive : rhi::BlendMode::Alpha}};
         }
         auto p = ctx_.device().create_pipeline(d);
         if (!p) {
@@ -659,7 +662,7 @@ Status SceneRenderer::ensure_history(std::uint32_t index, std::uint32_t width, s
     if (history_[index] && history_w_[index] == width && history_h_[index] == height) return {};
     if (history_[index]) ctx_.device().destroy(history_[index]);
     history_[index] = {};
-    rhi::TextureDesc d = color_desc(rhi::Format::RGBA16_FLOAT, width, height);
+    rhi::TextureDesc d = color_desc(hdr_format_, width, height);
     d.name = index == 0 ? "taa_history_a" : "taa_history_b";
     auto t = ctx_.device().create_texture(d);
     if (!t) return std::move(t).error();
@@ -1192,7 +1195,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             });
     }
 
-    rhi::TextureDesc hdr_desc = color_desc(rhi::Format::RGBA16_FLOAT, rw, rh);
+    rhi::TextureDesc hdr_desc = color_desc(hdr_format_, rw, rh);
     const RGTexture hdr = graph.create_texture("hdr_color", hdr_desc);
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
@@ -1426,7 +1429,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         VICTUS_TRY_STATUS(ensure_history(cur, rw, rh));
         if (!history_[prev]) VICTUS_TRY_STATUS(ensure_history(prev, rw, rh)); // steady texture count from frame one
         const bool have_prev = history_valid_ && history_[prev];
-        auto taa_pl = post_pipeline("taa.frag", rhi::Format::RGBA16_FLOAT);
+        auto taa_pl = post_pipeline("taa.frag", hdr_format_);
         if (!taa_pl) return std::move(taa_pl).error();
         TaaUniforms tu{};
         tu.reproject = prev_view_proj_ * inverse(view_proj_unjittered);
@@ -1434,11 +1437,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         tu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh),
                      1.0f / static_cast<float>(have_prev ? history_w_[prev] : rw),
                      1.0f / static_cast<float>(have_prev ? history_h_[prev] : rh)};
-        const RGTexture resolved = graph.import_texture("taa_resolved", history_[cur], color_desc(rhi::Format::RGBA16_FLOAT, rw, rh));
+        const RGTexture resolved = graph.import_texture("taa_resolved", history_[cur], color_desc(hdr_format_, rw, rh));
         RGTexture previous;
         if (have_prev)
             previous = graph.import_texture("taa_history", history_[prev],
-                                            color_desc(rhi::Format::RGBA16_FLOAT, history_w_[prev], history_h_[prev]));
+                                            color_desc(hdr_format_, history_w_[prev], history_h_[prev]));
         graph.add_pass(
             "taa",
             [&](PassBuilder& b) {
@@ -1469,14 +1472,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         while (levels < S.bloom_levels && bw >= 4 && bh >= 4) {
             bw /= 2;
             bh /= 2;
-            chain.push_back(graph.create_texture(std::format("bloom_{}", levels), color_desc(rhi::Format::RGBA16_FLOAT, bw, bh)));
+            chain.push_back(graph.create_texture(std::format("bloom_{}", levels), color_desc(hdr_format_, bw, bh)));
             sizes.emplace_back(bw, bh);
             ++levels;
         }
         if (levels > 0) {
-            auto down_pl = post_pipeline("bloom_down.frag", rhi::Format::RGBA16_FLOAT);
+            auto down_pl = post_pipeline("bloom_down.frag", hdr_format_);
             if (!down_pl) return std::move(down_pl).error();
-            auto up_pl = post_pipeline("bloom_up.frag", rhi::Format::RGBA16_FLOAT, rhi::BlendMode::Additive);
+            auto up_pl = post_pipeline("bloom_up.frag", hdr_format_, rhi::BlendMode::Additive);
             if (!up_pl) return std::move(up_pl).error();
             for (std::uint32_t i = 0; i < levels; ++i) {
                 const RGTexture src = i == 0 ? scene_color : chain[i - 1];

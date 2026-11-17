@@ -253,11 +253,19 @@ struct SceneStats {
     std::uint64_t triangles{0};        // triangles in the main and transparent passes (all instances)
 };
 
+struct SceneRendererOptions {
+    // Store the HDR scene colour, bloom chain and TAA history as R11G11B10_FLOAT (4 bytes/pixel) instead of
+    // RGBA16_FLOAT (8): half the framebuffer bandwidth on tile-based mobile GPUs. No alpha and no negative
+    // values, neither of which the HDR chain uses. Falls back to RGBA16_FLOAT when unsupported.
+    bool compact_hdr{false};
+};
+
 class SceneRenderer {
 public:
     static constexpr std::uint32_t kMaxLights = 4096;
     static constexpr std::uint32_t kMaxPointLights = kMaxLights; // former name
-    [[nodiscard]] static Result<std::unique_ptr<SceneRenderer>> create(GpuContext& ctx);
+    [[nodiscard]] static Result<std::unique_ptr<SceneRenderer>> create(GpuContext& ctx, const SceneRendererOptions& options = {});
+    [[nodiscard]] rhi::Format hdr_format() const noexcept { return hdr_format_; }
     ~SceneRenderer();
     SceneRenderer(const SceneRenderer&) = delete;
     SceneRenderer& operator=(const SceneRenderer&) = delete;
@@ -384,6 +392,7 @@ private:
     std::uint32_t palette_capacity_{0}; // in matrices
     std::vector<math::Mat4> palette_;
     rhi::Format depth_format_{rhi::Format::D32_FLOAT};
+    rhi::Format hdr_format_{rhi::Format::RGBA16_FLOAT};
 
     Camera3D camera_;
     DirectionalLight sun_;
