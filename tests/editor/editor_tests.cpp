@@ -7,6 +7,8 @@
 #include "victus/animation/animation.hpp"
 #include "victus/gameplay/capture.hpp"
 #include "victus/editor/undo.hpp"
+#include "victus/core/fs.hpp"
+#include "victus/core/json.hpp"
 
 #include "victus/render/image.hpp"
 #include "victus/gameplay/gameplay.hpp"
@@ -1774,5 +1776,49 @@ TEST_CASE("editor: graph debugging highlights running nodes and the failing node
     CHECK_FALSE(ed.graph_runtime_error());
     CHECK(ed.graph_node_runs(log) >= 1);
     ed.stop();
+    h.frames(1);
+}
+
+TEST_CASE("editor: profiler window reports frame percentiles, scopes and records a trace") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Prof", "Prof", "3d").ok());
+    h.ed->set_show_profiler(true);
+    CHECK(h.ed->show_profiler());
+    h.ed->play();
+    h.frames(12);
+    auto r = h.ed->profiler_report();
+    CHECK(r.frames >= 10);
+    CHECK(r.p99_ms >= r.p50_ms);
+    auto has = [&](std::string_view name) {
+        return std::any_of(r.scopes.begin(), r.scopes.end(), [&](const auto& s) { return s.name == name; });
+    };
+    CHECK(has("simulation.tick"));
+    CHECK(std::any_of(r.scopes.begin(), r.scopes.end(), [](const auto& s) { return s.name.starts_with("system."); }));
+    CHECK(std::any_of(r.scopes.begin(), r.scopes.end(), [](const auto& s) { return s.name.starts_with("pass."); }));
+
+    // Paused: the window keeps its numbers.
+    h.ed->set_profiler_paused(true);
+    CHECK(h.ed->profiler_paused());
+    const auto frozen = h.ed->profiler_report().frames;
+    h.frames(3);
+    CHECK(h.ed->profiler_report().frames == frozen);
+    h.ed->set_profiler_paused(false);
+
+    // Trace recording writes a Chrome trace into the project.
+    h.ed->record_profile_trace(4);
+    CHECK(h.ed->recording_profile_trace());
+    h.frames(6);
+    CHECK_FALSE(h.ed->recording_profile_trace());
+    const auto trace = h.ed->last_profile_trace();
+    REQUIRE_FALSE(trace.empty());
+    CHECK(trace.parent_path() == h.ed->project()->root() / ".victus" / "profiles");
+    auto text = fs::read_text(trace);
+    REQUIRE(text);
+    auto parsed = json::parse(*text);
+    REQUIRE(parsed);
+    CHECK((*parsed)["traceEvents"].size() > 10);
+    h.ed->stop();
     h.frames(1);
 }

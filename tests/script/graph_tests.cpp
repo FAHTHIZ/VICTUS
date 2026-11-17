@@ -9,6 +9,7 @@
 #include "doctest.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <format>
 #include <set>
@@ -30,7 +31,14 @@ struct GraphDir {
         std::error_code ec;
         std::filesystem::remove_all(path, ec);
     }
-    void write(const std::string& rel, const std::string& text) const { REQUIRE(fs::write_text_atomic(path / rel, text).ok()); }
+    // Every write gets a later mtime, so reload_changed sees rewrites even within one timestamp
+    // tick on a loaded machine.
+    void write(const std::string& rel, const std::string& text) {
+        REQUIRE(fs::write_text_atomic(path / rel, text).ok());
+        std::filesystem::last_write_time(path / rel,
+                                         std::filesystem::file_time_type::clock::now() + std::chrono::seconds(++writes));
+    }
+    int writes{0};
 };
 
 struct Keys final : gameplay::InputSource {

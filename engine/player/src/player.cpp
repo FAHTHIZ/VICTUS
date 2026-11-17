@@ -8,6 +8,7 @@
 #include "victus/core/jobs.hpp"
 #include "victus/core/pack.hpp"
 #include "victus/core/log.hpp"
+#include "victus/core/memory.hpp"
 #include "victus/gameplay/capture.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/audio/audio.hpp"
@@ -307,6 +308,11 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     double last = start;
     Status result;
     LifecycleGate lifecycle;
+    std::optional<profiler::FrameProfiler> frame_profiler;
+    if (!o.profile.empty() || !o.trace.empty()) {
+        frame_profiler.emplace(600);
+        if (!o.trace.empty()) frame_profiler->record(600);
+    }
     bool master_was_muted = false;
     for (;;) {
         for (const auto& ev : (*plat)->poll_events()) {
@@ -323,6 +329,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             VICTUS_LOG_INFO("player", "{}", lifecycle.suspended() ? "suspended: app in the background" : "resumed");
             if (!lifecycle.suspended()) last = platform::Platform::seconds(); // no time jump on resume
         }
+        if (frame_profiler) frame_profiler->frame();
         if ((*plat)->quit_requested()) break;
         if (lifecycle.suspended()) {
             // The surface may be gone: render nothing. Networked sessions keep simulating so the
@@ -395,6 +402,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             }
             frame = *t;
         }
+        VICTUS_PROFILE_SCOPE("frame.render");
         if (auto st = (*view)->render(cmd, scene, cache, frame, fw, fh); !st) {
             result = std::move(st).error();
             cmd.submit();
@@ -436,6 +444,31 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     if (!o.record.empty() && !recording.frames.empty()) {
         recording.finish(scene);
         if (auto st = recording.save(o.record); !st && result.ok()) result = std::move(st).error();
+    }
+    if (frame_profiler) {
+        frame_profiler->frame();
+        report.profile = frame_profiler->report();
+        const rhi::DeviceStats ds = dev.stats();
+        auto& c = report.profile.counters;
+        c.emplace_back("gpu.texture_bytes", static_cast<double>(ds.texture_bytes));
+        c.emplace_back("gpu.buffer_bytes", static_cast<double>(ds.buffer_bytes));
+        c.emplace_back("gpu.live_textures", static_cast<double>(ds.live_textures));
+        c.emplace_back("gpu.live_buffers", static_cast<double>(ds.live_buffers));
+        if (ds.frames_submitted > 0)
+            c.emplace_back("gpu.draw_calls_per_frame", static_cast<double>(ds.draw_calls) / static_cast<double>(ds.frames_submitted));
+        if (memory::allocation_tracking_enabled()) {
+            const auto ms = memory::allocation_stats();
+            c.emplace_back("cpu.live_bytes", static_cast<double>(ms.live_bytes));
+            c.emplace_back("cpu.peak_live_bytes", static_cast<double>(ms.peak_live_bytes));
+            c.emplace_back("cpu.allocations", static_cast<double>(ms.allocations));
+        }
+        if (!o.profile.empty())
+            if (auto st = fs::write_text_atomic(o.profile, profiler::report_json(report.profile)); !st && result.ok()) result = std::move(st).error();
+        if (!o.trace.empty()) {
+            frame_profiler->stop_recording(); // a shorter session keeps what was recorded
+            auto zones = frame_profiler->take_recording();
+            if (auto st = profiler::write_chrome_trace(o.trace, zones); !st && result.ok()) result = std::move(st).error();
+        }
     }
     dev.wait_idle();
     if (frame) dev.destroy(frame);

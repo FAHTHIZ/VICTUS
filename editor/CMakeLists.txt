@@ -5,6 +5,7 @@ add_library(victus_editor_core STATIC
     src/editor.cpp
     src/panels.cpp
     src/network_panel.cpp
+    src/profiler_panel.cpp
     src/material_panel.cpp
     src/graph_panel.cpp
     src/sprite_sheets.cpp

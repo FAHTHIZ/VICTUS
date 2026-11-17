@@ -170,6 +170,7 @@ struct SystemInfo {
     Phase phase{Phase::Update};
     SystemFn fn;
     bool enabled{true};
+    const char* zone{nullptr}; // profiler scope "system.<name>"
 };
 
 // Runs registered systems over a scene. Fixed-update systems run 0..max_steps times per tick

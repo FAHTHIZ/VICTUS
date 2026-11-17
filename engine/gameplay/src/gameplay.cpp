@@ -13,7 +13,8 @@ namespace victus::gameplay {
 using json::Value;
 
 void Simulation::add_system(std::string name, Phase phase, SystemFn fn) {
-    systems_.push_back({std::move(name), phase, std::move(fn), true});
+    const char* zone = profiler::intern("system." + name);
+    systems_.push_back({std::move(name), phase, std::move(fn), true, zone});
 }
 
 SystemInfo* Simulation::find(std::string_view name) {
@@ -30,11 +31,14 @@ void Simulation::reset() noexcept {
 
 void Simulation::run_phase(scene::Scene& scene, Phase phase, const FrameTime& t) {
     for (auto& s : systems_) {
-        if (s.enabled && s.phase == phase && s.fn) s.fn(scene, t);
+        if (!s.enabled || s.phase != phase || !s.fn) continue;
+        profiler::ScopedZone zone(s.zone ? s.zone : "system");
+        s.fn(scene, t);
     }
 }
 
 void Simulation::tick(scene::Scene& scene, float dt) {
+    VICTUS_PROFILE_SCOPE("simulation.tick");
     dt = std::clamp(dt, 0.0f, max_frame_dt);
     FrameTime t = time_;
     t.dt = dt;

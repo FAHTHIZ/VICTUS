@@ -3,6 +3,7 @@
 #include "victus/rhi/rhi.hpp"
 
 #include "victus/core/log.hpp"
+#include "victus/core/profiler.hpp"
 #include "victus/platform/platform.hpp"
 
 #include <SDL3/SDL.h>
@@ -804,7 +805,8 @@ void CommandBuffer::generate_mipmaps(TextureHandle texture) {
 TextureHandle CommandBuffer::acquire_swapchain(platform::Window& window, std::uint32_t& width, std::uint32_t& height) {
     SDL_GPUTexture* tex = nullptr;
     width = height = 0;
-    if (!SDL_WaitAndAcquireGPUSwapchainTexture(static_cast<SDL_GPUCommandBuffer*>(cmd_), static_cast<SDL_Window*>(window.native()), &tex, &width, &height) || !tex)
+    VICTUS_PROFILE_SCOPE("gpu.acquire_swapchain"); // waits while the GPU is behind (GPU-bound frames)
+        if (!SDL_WaitAndAcquireGPUSwapchainTexture(static_cast<SDL_GPUCommandBuffer*>(cmd_), static_cast<SDL_Window*>(window.native()), &tex, &width, &height) || !tex)
         return {};
     return device_->wrap_transient_texture(tex, width, height, device_->swapchain_format(window));
 }
@@ -898,6 +900,7 @@ void CommandBuffer::submit() {
 
 void CommandBuffer::submit_and_wait() {
     if (!cmd_) return;
+    VICTUS_PROFILE_SCOPE("gpu.submit_and_wait");
     auto* dev = static_cast<SDL_GPUDevice*>(device_->device_);
     SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(static_cast<SDL_GPUCommandBuffer*>(cmd_));
     cmd_ = nullptr;

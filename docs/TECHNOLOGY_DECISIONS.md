@@ -652,6 +652,15 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - Only editor play mode pays the cost (one C call per traced node); exported games compile without trace.
   - Breakpoints and stepping need pausing inside a Luau call (debug interrupt + resumable coroutine); left for script debugging (Phase 5 item). Rejected (a): hooks slow every script and the line table does not mark entry points cleanly; rejected (c): a second runtime.
 
+### ADR-0061: Continuous frame profiler over the zone capture
+- Status: Accepted (Slice 64)
+- Context: the core profiler (ADR-era Slice 1) recorded zones only for one-off traces. Users need live frame-time percentiles and per-system/per-pass costs in the editor and a machine-readable report from `victus run`. SDL_GPU (ADR-0003) has no timestamp queries, so true per-pass GPU durations are not available on any backend.
+- Options: (a) per-frame drain of the existing lock-free-per-thread zone capture, aggregated into rolling windows; (b) a separate counter API per subsystem; (c) Tracy/Optick integration.
+- Decision: (a). `profiler::FrameProfiler` keeps a capture running, drains it at each frame boundary and aggregates per-name totals (nested same-name zones counted once per thread) into `SampleWindow`s, giving frame p50/p95/p99 and per-scope mean/p95/max/calls. Runtime names (systems, render passes) use `profiler::intern` for stable pointers. It can keep all zones of the next N frames for a Chrome/Perfetto trace. GPU cost is shown as CPU encode time per pass (`pass.<name>`) plus the time the CPU waits on the GPU (`gpu.acquire_swapchain`, `gpu.submit_and_wait`); memory comes from `rhi::DeviceStats` and the opt-in allocation tracker.
+- Consequences:
+  - One profiler per process; zone cost is two timestamps and a vector push, drained every frame, so it stays on in the editor.
+  - No per-pass GPU durations until SDL_GPU exposes timestamp queries (or a native backend is added); the report names this explicitly. Rejected (b): duplicate instrumentation; rejected (c): external dependency and network listener for what the existing capture already provides.
+
 ## ADR template
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 

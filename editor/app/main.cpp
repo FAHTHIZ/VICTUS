@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
         .option("select", "select the entity with this name after opening")
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
         .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
-        .option("show", "open a window after opening: input-actions, network, material-editor (selected entity's material)")
+        .option("show", "open a window after opening: input-actions, network, profiler, material-editor (selected entity's material)")
         .option("graph", "open this visual script (path relative to assets/) in the Graph Editor")
         .option("port", "UDP port for --host", "27960")
         .flag("host", "enter play mode as a listen server after opening")
@@ -118,6 +118,7 @@ int main(int argc, char** argv) {
     if (args.has("show")) {
         if (args.get("show") == "input-actions") ed.set_show_input_actions(true);
         else if (args.get("show") == "network") ed.set_show_network(true);
+        else if (args.get("show") == "profiler") ed.set_show_profiler(true);
         else if (args.get("show") == "material-editor") {
             const auto* mr = ed.selection().empty() ? nullptr
                                                     : ed.edit_scene().world().get<scene::MeshRendererComponent>(
