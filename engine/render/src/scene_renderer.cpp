@@ -958,16 +958,17 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             return g.color_intensity.w <= 0.0f ||
                    !frustum.intersects(Aabb{{b.x - b.w, b.y - b.w, b.z - b.w}, {b.x + b.w, b.y + b.w, b.z + b.w}});
         });
-        const std::size_t budget = S.max_point_lights;
-        if (local_lights.size() > budget) {
-            const auto key = [&](const GpuLight& g) {
-                const Vec4 b = light_bounding_sphere(g);
-                return length(Vec3{b.x, b.y, b.z} - camera_.position) - b.w;
-            };
-            std::partial_sort(local_lights.begin(), local_lights.begin() + static_cast<std::ptrdiff_t>(budget), local_lights.end(),
-                              [&](const GpuLight& a, const GpuLight& b) { return key(a) < key(b); });
-            local_lights.resize(budget);
+        // Nearest first: the budget and the per-cluster cap then drop the farthest lights.
+        const std::size_t budget = std::min<std::size_t>(S.max_point_lights, local_lights.size());
+        std::vector<std::pair<float, std::uint32_t>> order(local_lights.size());
+        for (std::uint32_t i = 0; i < order.size(); ++i) {
+            const Vec4 b = light_bounding_sphere(local_lights[i]);
+            order[i] = {length(Vec3{b.x, b.y, b.z} - camera_.position) - b.w, i};
         }
+        std::partial_sort(order.begin(), order.begin() + static_cast<std::ptrdiff_t>(budget), order.end());
+        std::vector<GpuLight> kept(budget);
+        for (std::size_t i = 0; i < budget; ++i) kept[i] = local_lights[order[i].second];
+        local_lights = std::move(kept);
         for (const GpuLight& g : local_lights) spot_count += g.spot.y > 0.5f ? 1u : 0u;
     }
     const LightClusters clusters =
