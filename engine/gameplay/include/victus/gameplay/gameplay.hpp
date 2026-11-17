@@ -195,6 +195,19 @@ struct OscillatorComponent {
     bool has_origin{false};
 };
 
+// Per-entity adjustments applied on top of the entity's MeshRenderer material (its .vmat asset,
+// the model's material or the built-in one), so one material can be shared by entities that
+// scroll, pulse or glow differently. Serialized as "MaterialOverrides".
+struct MaterialOverridesComponent {
+    math::Vec2 uv_offset{0, 0};   // added to the material's UV offset
+    math::Vec2 uv_scroll{0, 0};   // UV units per second (conveyor belts, water, lava)
+    bool override_emissive{false};
+    math::Color emissive{0, 0, 0, 1}; // linear; replaces the material's emissive colour when overridden
+    float emissive_strength{1.0f};
+    // Runtime state (not serialized): accumulated scroll in [0, 1).
+    math::Vec2 scrolled{0, 0};
+};
+
 // Scene-wide look: sky/ambient lighting and post-processing controls. The first entity with
 // this component drives the scene's environment; quality tiers decide which effects run.
 struct EnvironmentComponent {

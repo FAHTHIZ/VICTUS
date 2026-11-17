@@ -63,7 +63,8 @@
 // `.vmat` material asset; `set_mesh("cube"|"sphere"|"plane"|"cylinder"|model_path, index?)`
 // / `mesh()`; `set_color(vector, alpha?)` / `color() -> vector, alpha` (MeshRenderer tint or
 // Sprite tint); `set_sprite(texture_path|nil)`; `set_visible(bool)` / `visible()` also cover
-// MeshRenderers; `set_cast_shadows(bool)`.
+// MeshRenderers; `set_cast_shadows(bool)`; `set_uv_offset(v)`, `set_uv_scroll(v)` (UV units per
+// second) and `set_emissive(v|nil, strength?)` edit the entity's MaterialOverrides.
 //
 // Save API (when HostOptions::save_directory is set; otherwise `save.available()` is false and the
 // other calls return nil plus an error): `save.write(slot, data, label?)`, `save.read(slot) ->

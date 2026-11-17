@@ -3,6 +3,7 @@
 // GPU asset cache, tiling changes what reaches the screen, broken/missing materials degrade to the
 // component's own look, and hot reload picks up edited material files.
 #include "gpu_fixture.hpp"
+#include "victus/gameplay/gameplay.hpp"
 #include "victus/render/image.hpp"
 #include "victus/runtime/hot_reload.hpp"
 #include "victus/runtime/scene_rendering.hpp"
@@ -195,4 +196,91 @@ TEST_CASE("scene: MeshRenderer material reference survives save/load") {
     const Entity be = b.find_by_name("Box");
     REQUIRE(b.world().get<MeshRendererComponent>(be));
     CHECK(b.world().get<MeshRendererComponent>(be)->material_asset == mr.material_asset);
+}
+
+namespace {
+// Renders the scene and returns the middle scanline (RGBA8 pixels).
+std::vector<std::uint32_t> scanline(MaterialScene& s, runtime::GpuAssetCache& cache, std::uint32_t& centre) {
+    auto& dev = gpu().ctx->device();
+    auto sr = render::SceneRenderer::create(*gpu().ctx);
+    REQUIRE(sr.ok());
+    constexpr std::uint32_t W = 160, H = 96;
+    auto target = test::make_target(W, H);
+    s.scene.update_transforms();
+    (void)runtime::extract_scene(s.scene, cache, **sr, {});
+    auto cmd = dev.begin_commands();
+    REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+    cmd.submit_and_wait();
+    auto px = dev.read_texture(target);
+    REQUIRE(px.ok());
+    test::save_output("material_overrides", W, H, *px);
+    std::vector<std::uint32_t> line;
+    for (std::uint32_t x = 0; x < W; ++x) line.push_back(pixel(*px, W, x, H / 2));
+    centre = pixel(*px, W, W / 2, H / 2);
+    dev.destroy(target);
+    return line;
+}
+int red_or_green(std::uint32_t p) {
+    return channel(p, 0) > channel(p, 1) + 60 ? 0 : channel(p, 1) > channel(p, 0) + 60 ? 1 : -1;
+}
+} // namespace
+
+TEST_CASE("gpu: MaterialOverrides offset, scroll and emissive adjust one entity's material") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    gameplay::register_components();
+    MaterialScene s;
+    runtime::GpuAssetCache cache(*gpu().ctx, s.db.get());
+    std::uint32_t centre = 0;
+    const auto before = scanline(s, cache, centre);
+
+    // Half a UV unit along U swaps the 2x2 checker's columns: every coloured pixel flips.
+    auto& o = s.scene.world().add<gameplay::MaterialOverridesComponent>(s.plane);
+    o.uv_offset = {0.5f, 0};
+    const auto shifted = scanline(s, cache, centre);
+    int compared = 0, flipped = 0;
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        const int a = red_or_green(before[i]), b = red_or_green(shifted[i]);
+        if (a < 0 || b < 0) continue;
+        ++compared;
+        flipped += a != b;
+    }
+    CHECK(compared > 100);
+    CHECK(flipped >= compared * 9 / 10);
+
+    // Scrolling by 0.5 UV/s for one second ends up at the same image as the 0.5 offset, via the
+    // built-in system (wrapped into [0, 1)).
+    o.uv_offset = {0, 0};
+    o.uv_scroll = {0.25f, 0};
+    gameplay::Simulation sim(1.0f / 50.0f);
+    gameplay::add_builtin_systems(sim);
+    for (int i = 0; i < 10; ++i) sim.tick(s.scene, 0.2f); // 2 s * 0.25 = 0.5
+    CHECK(o.scrolled.x == doctest::Approx(0.5f).epsilon(0.01));
+    const auto scrolled = scanline(s, cache, centre);
+    int same = 0;
+    compared = 0;
+    for (std::size_t i = 0; i < shifted.size(); ++i) {
+        const int a = red_or_green(shifted[i]), b = red_or_green(scrolled[i]);
+        if (a < 0 || b < 0) continue;
+        ++compared;
+        same += a == b;
+    }
+    CHECK(same >= compared * 9 / 10);
+    for (int i = 0; i < 25; ++i) sim.tick(s.scene, 0.2f);
+    CHECK(o.scrolled.x >= 0.0f);
+    CHECK(o.scrolled.x < 1.0f);
+
+    // Emissive override on a black, lit, untextured floor: it glows blue.
+    auto& mr = *s.scene.world().get<MeshRendererComponent>(s.plane);
+    mr.material_asset = {};
+    mr.base_color = {0, 0, 0, 1};
+    o.uv_scroll = {0, 0};
+    (void)scanline(s, cache, centre);
+    const int dark_blue = channel(centre, 2);
+    o.override_emissive = true;
+    o.emissive = {0, 0.2f, 1, 1};
+    o.emissive_strength = 2;
+    (void)scanline(s, cache, centre);
+    CHECK(channel(centre, 2) > dark_blue + 100);
+    CHECK(channel(centre, 2) > channel(centre, 0) + 100);
+    cache.clear();
 }

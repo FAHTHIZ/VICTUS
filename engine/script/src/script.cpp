@@ -1326,6 +1326,45 @@ int entity_set_cast_shadows(lua_State* L) {
     return 0;
 }
 
+gameplay::MaterialOverridesComponent& overrides_of(scene::Scene& s, Entity e) {
+    if (auto* o = s.world().get<gameplay::MaterialOverridesComponent>(e)) return *o;
+    return s.world().add<gameplay::MaterialOverridesComponent>(e);
+}
+
+// entity:set_uv_offset(vector): per-entity texture offset (x, y) on top of the material's,
+// stored in MaterialOverrides (added when missing).
+int entity_set_uv_offset(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const math::Vec3 v = check_vec3(L, 2);
+    overrides_of(s, e).uv_offset = {v.x, v.y};
+    return 0;
+}
+// entity:set_uv_scroll(vector): UV units per second.
+int entity_set_uv_scroll(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const math::Vec3 v = check_vec3(L, 2);
+    overrides_of(s, e).uv_scroll = {v.x, v.y};
+    return 0;
+}
+// entity:set_emissive(vector | nil, strength?): overrides the material's emissive colour (nil
+// restores the material's).
+int entity_set_emissive(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    if (lua_isnoneornil(L, 2)) {
+        if (auto* o = s.world().get<gameplay::MaterialOverridesComponent>(e)) o->override_emissive = false;
+        return 0;
+    }
+    const math::Vec3 c = check_vec3(L, 2);
+    auto& o = overrides_of(s, e);
+    o.override_emissive = true;
+    o.emissive = {c.x, c.y, c.z, 1};
+    if (!lua_isnoneornil(L, 3)) o.emissive_strength = std::max(0.0f, static_cast<float>(luaL_checknumber(L, 3)));
+    return 0;
+}
+
 // entity:ui_state() -> {visible, hovered, pressed, focused, x, y, width, height, clicks}
 // (pixels, from the last layout) or nil before the first layout.
 int entity_ui_state(lua_State* L) {
@@ -2192,6 +2231,9 @@ void open_victus_libs(lua_State* L) {
                                 {"set_sprite", entity_set_sprite},
                                 {"sprite", entity_sprite},
                                 {"set_cast_shadows", entity_set_cast_shadows},
+                                {"set_uv_offset", entity_set_uv_offset},
+                                {"set_uv_scroll", entity_set_uv_scroll},
+                                {"set_emissive", entity_set_emissive},
                                 {"set_destination", entity_set_destination},
                                 {"stop", entity_stop},
                                 {"nav_state", entity_nav_state},
