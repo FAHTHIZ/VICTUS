@@ -1,0 +1,136 @@
+name: VICTUS release
+# Builds, tests and packages a tagged release (docs/RELEASE_PROCESS.md). Pushing a tag vX.Y.Z
+# creates a DRAFT GitHub release with per-platform archives, separate debug-symbol archives, an
+# SBOM and SHA256SUMS.txt; the owner reviews and publishes it. workflow_dispatch runs the same
+# build and packaging without creating a release (dry run; artifacts only).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to check against CMakeLists.txt and CHANGELOG.md (dry run, no release)'
+        required: true
+        default: 'v0.2.0'
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  LINUX_DEPS: >-
+    ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev
+    libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libegl1-mesa-dev
+    libdecor-0-dev libasound2-dev libpulse-dev libdrm-dev libgbm-dev libudev-dev
+    mesa-vulkan-drivers libvulkan1 xvfb binutils
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag, CMake version and changelog agree
+        id: v
+        run: |
+          # A dry run of an unreleased version only warns, so the pipeline can be exercised early.
+          if python3 tools/release/release.py check --tag "$TAG"; then :
+          elif [ "${{ github.event_name }}" = "push" ]; then exit 1
+          else echo "::warning::dry run: $TAG is not a releasable version yet"; fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Release tooling tests
+        run: python3 tests/tools/release_tests.py
+      - name: Generated shaders match sources
+        run: python3 tools/shaders/compile_shaders.py --check
+      - name: Dependency pins and advisories
+        run: |
+          python3 tools/deps/victus_deps.py check
+          python3 tools/deps/victus_deps.py osv
+
+  build:
+    needs: check
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+          - os: windows-latest
+            platform: windows-x86_64
+          - os: macos-latest
+            platform: macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+      - name: Configure (RelWithDebInfo, optimised with debug info to split off)
+        shell: bash
+        run: |
+          gen=(); if [ "$RUNNER_OS" = "Linux" ]; then gen=(-G Ninja); fi
+          cmake -S . -B build "${gen[@]}" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVICTUS_BUILD_TESTS=ON \
+            -DVICTUS_WARNINGS_AS_ERRORS=ON -DVICTUS_BUILD_BENCHMARKS=OFF
+      - name: Build
+        run: cmake --build build --config RelWithDebInfo --parallel
+      - name: Test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then export VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen; fi
+          ctest --test-dir build -C RelWithDebInfo --output-on-failure
+      - name: Package with separate symbols
+        shell: bash
+        run: |
+          python tools/release/release.py package --build build --config RelWithDebInfo \
+            --version "${{ needs.check.outputs.version }}" --platform ${{ matrix.platform }} --out dist
+          mv dist/SHA256SUMS.txt dist/SHA256SUMS-${{ matrix.platform }}.txt
+      - name: Packaged CLI runs
+        shell: bash
+        run: |
+          v="${{ needs.check.outputs.version }}"; p=${{ matrix.platform }}
+          dir="dist/victus-$v-$p/bin"
+          "$dir/victus" version
+          "$dir/victus" new dist/smoke --template 2d
+          "$dir/victus" check dist/smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS-*.txt
+          if-no-files-found: error
+
+  publish:
+    needs: [check, build]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: SBOM and checksums
+        run: |
+          python3 tools/deps/victus_deps.py sbom --out dist/victus-${{ needs.check.outputs.version }}-sbom.cdx.json
+          cat dist/SHA256SUMS-*.txt > dist/SHA256SUMS.txt
+          rm dist/SHA256SUMS-*.txt
+          (cd dist && sha256sum victus-*-sbom.cdx.json >> SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)
+      - name: Draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ needs.check.outputs.version }}"
+          python3 tools/release/release.py notes "$v" > notes.md
+          pre=(); case "$v" in *-*) pre=(--prerelease);; esac
+          gh release create "$TAG" dist/* --draft "${pre[@]}" --title "VICTUS $v" --notes-file notes.md --verify-tag
