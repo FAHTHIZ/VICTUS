@@ -1644,7 +1644,11 @@ void Editor::draw_assets() {
     // ---- toolbar: search, type, view, reimport, help ----
     {
         namespace tk = ui::tokens;
-        const float tools_w = ImGui::GetFrameHeight() * 4 + tk::kSpace2 * 4 + (asset_grid_ ? 110 + tk::kSpace2 : 0);
+        const char* import_label = "Import";
+        const float import_w =
+            ImGui::CalcTextSize(import_label).x + ImGui::GetTextLineHeight() + ImGui::GetStyle().FramePadding.x * 2 + tk::kSpace2;
+        const float tools_w =
+            ImGui::GetFrameHeight() * 4 + tk::kSpace2 * 5 + import_w + (asset_grid_ ? 110 + tk::kSpace2 : 0);
         const float avail = ImGui::GetContentRegionAvail().x;
         const float type_w = std::clamp(avail * 0.22f, 110.0f, 170.0f);
         (void)kit::search_input("##asset_search", "Search assets", asset_search_,
@@ -1668,6 +1672,9 @@ void Editor::draw_assets() {
         ImGui::SameLine();
         const float x = ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - tools_w);
         ImGui::SetCursorPosX(x);
+        if (kit::icon_text_button(import_label, kit::Icon::Plus, true)) open_import_dialog();
+        kit::tooltip("Copy images, 3D models, sounds or scripts into the project. You can also drop files on this window.");
+        ImGui::SameLine(0, tk::kSpace2);
         if (asset_grid_) {
             ImGui::SetNextItemWidth(110);
             ImGui::SliderFloat("##tile", &asset_tile_size_, 32.0f, 256.0f, "%.0f px");
@@ -1683,8 +1690,8 @@ void Editor::draw_assets() {
             (void)reimport_assets();
         ImGui::SameLine(0, tk::kSpace2);
         (void)kit::icon_button("##assets_help", kit::Icon::Help,
-                               "To add assets, copy images, 3D models (.gltf, .glb), sounds or scripts into the "
-                               "project's assets folder; they appear here automatically.\n\n"
+                               "To add assets, click Import or drop files on the Studio window. Files copied into "
+                               "the project's assets folder show up too (click to copy its path).\n\n"
                                "Double-click an asset to use it: models and prefabs are added to the scene, "
                                "materials open in the editor, sounds play.");
         if (ImGui::IsItemClicked() && platform_) platform_->set_clipboard(project_->assets_dir().string());
@@ -1693,7 +1700,8 @@ void Editor::draw_assets() {
 
     if (all.empty()) {
         (void)kit::empty_state(kit::Icon::Folder, "No assets yet",
-                               std::format("Copy images, 3D models, sounds or scripts into {} and they show up here.",
+                               std::format("Drop images, 3D models (.glb, .gltf), sounds or scripts on this window, or click "
+                                           "Import. They are copied into {}.",
                                            project_->assets_dir().string()));
         ImGui::End();
         return;
