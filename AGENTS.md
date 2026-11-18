@@ -93,4 +93,6 @@ An irreversible product-direction, licensing/business, privacy/security or brand
 ## Completion
 A README, roadmap, design doc or demo screenshot is not a finished engine. VICTUS requires a working runtime, 2D/3D renderers, gameplay framework, capable editor, asset pipeline, physics/animation/AI/audio/UI/VFX, networking, profiler/diagnostics, cross-platform packaging, reference games, tests and reproducible performance evidence.
 
+**Handoff queue:** Before selecting work, inspect docs/handoff/ for owner-approved implementation briefs. Treat each brief as an actionable task, audit its stated repository assumptions against current main, then implement and validate it in roadmap dependency order. Update the brief only if scope or constraints materially change; never stop at the handoff document itself.
+
 **After every verified commit, continue to the next highest-priority unblocked task.**
