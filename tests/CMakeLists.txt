@@ -122,6 +122,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_texture_compression_tests.cpp
         render/gpu_lod_tests.cpp
         render/gpu_texture_mip_tests.cpp
+        render/gpu_character_lod_tests.cpp
         render/gpu_occlusion_tests.cpp
         render/gpu_local_shadow_tests.cpp
         render/gpu_motion_tests.cpp
@@ -129,7 +130,8 @@ victus_add_test(victus_gpu_tests
         render/gpu_light2d_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
-target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")
+target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output"
+    VICTUS_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 victus_add_test(victus_editor_tests
     SOURCES

@@ -33,6 +33,7 @@ geometric error, projected to render pixels, stays within `RenderSettings::lod_e
 | 9. Rapid zoom | six alternating 2/120 degree frames, then back to 45: same level as before | pass |
 | Shadow LOD bias | `shadow_lod_bias` 2 vs 0: same main triangles, fewer `shadow_triangles`, image within 1.5/255 | pass |
 | 6. Texture close-up after a distant view | per-level coloured 64x64 chain on a tiled plane (tests/render/gpu_texture_mip_tests.cpp): close-up samples mip 0, 8 m away samples about level 3, returning or zooming to 1.5 degrees samples mip 0 again; nearest filtering minifies through mips too | pass |
+| 7. Character over poses and distances | Vanguard V-01 through the real pipeline (GLB, asset database, scene, AnimationSystem, extraction, skinned draws) in Idle, Run, Jump and Interact at 2.5, 8 and 20 m (tests/render/gpu_character_lod_tests.cpp): LODs draw 10 054, 5 028 and 2 578 of 20 632 triangles; at most 3 pixels per 256x256 frame differ by more than 48/255 from every pixel within one pixel of the LOD 0 image; changed pixels are silhouette edges (visor, insignia and hands survive) | pass |
 | 4. Off-screen shadow contribution | a caster outside the main frustum still darkens the visible ground (`visible == 1`, `shadow_casters == 2`) | pass |
 
 All checks run on Mesa lavapipe (llvmpipe) in CI. They are CPU-side selection and image checks, not
@@ -68,7 +69,7 @@ GPU timing.
 
 ## Not covered yet
 
-- H3 items 7 (character face/hands over poses), 8 (thin
+- H3 items 8 (thin
   railings, foliage, alpha cutout and terrain chunk seams during zoom) and 10 (physical Android devices,
   hardware-blocked).
 - Terrain chunk LODs (ADR-0063) use their own selection and are not part of these checks.
