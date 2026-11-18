@@ -602,3 +602,53 @@ TEST_CASE("studio inspector: Add Component lists plain names by category and add
     h.ed->open_add_component();
     h.frames(8);
 }
+
+TEST_CASE("studio console: severity toggles, search, merged repeats and copy text") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    REQUIRE(h.ed->create_project(h.dir / "Console Game", "Console Game", "3d").ok());
+    h.ed->focus_console();
+    h.frames(2);
+    h.ed->clear_console();
+    h.frames(2);
+    // Other systems may log at any time; every line here carries "zq" and the checks search for it.
+    h.ed->set_console_filter("zq");
+
+    VICTUS_LOG_INFO("zqgame", "coin collected");
+    VICTUS_LOG_INFO("zqgame", "coin collected");
+    VICTUS_LOG_INFO("zqgame", "coin collected");
+    VICTUS_LOG_WARN("zqaudio", "sound missing: jump.wav");
+    VICTUS_LOG_ERROR("zqgame", "player.luau:12: attempt to index nil");
+    h.frames(2);
+    CHECK(h.ed->console_rows() == 3); // the three repeats are one row
+    const std::string all = h.ed->console_text();
+    CHECK(all.find("coin collected (x3)") != std::string::npos);
+    CHECK(all.find("sound missing") != std::string::npos);
+
+    h.ed->set_console_collapse(false);
+    CHECK(h.ed->console_rows() == 5);
+    h.ed->set_console_collapse(true);
+
+    h.ed->set_console_levels(false, false, true); // errors only
+    h.frames(1);
+    CHECK(h.ed->console_rows() == 1);
+    CHECK(h.ed->console_text().find("attempt to index nil") != std::string::npos);
+    h.ed->set_console_levels(true, true, true);
+
+    h.ed->set_console_filter("ZQAUDIO"); // category, any case
+    h.frames(1);
+    CHECK(h.ed->console_rows() == 1);
+    h.ed->set_console_filter("nothing like this");
+    h.frames(2); // the "Nothing to show" state draws
+    CHECK(h.ed->console_rows() == 0);
+    h.ed->set_console_filter("zq");
+    CHECK(h.ed->console_rows() == 3);
+    h.ed->set_console_filter("");
+    CHECK(h.ed->console_rows() >= 3);
+    h.ed->clear_console();
+    h.frames(1);
+    h.ed->set_console_filter("zq");
+    CHECK(h.ed->console_rows() == 0);
+}
