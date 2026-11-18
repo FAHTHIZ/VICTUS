@@ -342,3 +342,48 @@ These are public technical references, not instructions to copy proprietary impl
 - Add source-linked tests, diagnostics, docs, and a real sample consumer with every implementation slice.
 - Update \`ROADMAP.md\` and \`docs/STATUS.md\` only with facts supported by completed and verified work. Keep hardware blockers explicit.
 - Commit coherent verified changes directly to \`main\`, with no branch or PR, and continue to the next unblocked task under \`AGENTS.md\`.
+
+
+## 11. Camera zoom, optics and projection edge cases
+
+This section is a required extension of Vectors, not an optional future polish task. The shared contract is documented in [VICTUS Camera-Responsive Visual Fidelity and Per-View Budgets](VICTUS_CAMERA_RESPONSIVE_VISUAL_FIDELITY.md); follow it alongside this handoff.
+
+### 11.1 What the current renderer already does
+
+The current main-view path calculates its LOD pixel scale from render height and the active camera vertical FOV, then projects simplification error against distance to the closest point of world bounds and model scale. A narrower FOV increases pixels per world unit. If the game updates Camera3D FOV before the current frame's SceneRenderer begin/render sequence, the next LOD calculation should move toward a finer level without physically moving the camera.
+
+This is an existing source-level property. Do not tell the owner it is missing, and do not tell the owner it is fully validated: gpu_lod_tests.cpp currently exercises near/far distance, forced LOD, batch grouping and one far-view comparison, but does not explicitly vary FOV, viewport size or zoom rapidly.
+
+### 11.2 Required camera cases
+
+- FOV zoom in/out at a fixed camera position.
+- Physical camera dolly in/out with constant FOV.
+- A magnified crop or secondary render target with its own dimensions and projection.
+- Dynamic-resolution changes and temporal upscaling, distinguishing internal render pixels from final output pixels.
+- Different simultaneous views with different FOVs, dimensions or quality priorities.
+- Camera cut, rapid zoom ramp, camera shake, camera-inside-bounds and near-plane cases.
+- Shadow maps and reflection/probe captures, which require their own projection/texel-footprint decisions.
+
+Never apply an extra manual zoom multiplier on top of a FOV that already changed the projection; that double-counts zoom. Use the actual render-target dimensions and projection. Validate finite values, aspect ratio and conservative handling of non-uniform world scale.
+
+### 11.3 Geometry and texture must cooperate
+
+- A zoomed view must recover the appropriate finer geometry. Since current mesh LOD levels share resident GPU vertex/skin streams and index ranges, the baseline should be able to change the selected index range without first streaming a new mesh. Discrete level changes can still pop; solve that with measured hysteresis and optional transition methods.
+- The renderer already has mip-chain construction/upload and mip-aware samplers. Verify which imported/cooked textures receive complete mip chains and confirm actual sampling at different screen footprints.
+- Do not call current mip sampling “texture streaming.” A separate system is needed to request, prioritize, load, upload and evict mip levels under a bounded memory budget. Keep a safe coarse mip resident if/when such streaming is implemented.
+- A wall that is geometrically flat can still require sharp albedo/normal detail when zoomed. Conversely, texture detail must not be converted into needless triangles. Treat geometry, texture sampling/residency, material shading and aliasing as coordinated but separately measured systems.
+
+### 11.4 Mandatory tests before declaring zoom support robust
+
+1. Render the same fixed scene with wide, default and narrow vertical FOV values. Verify selected LOD indices and triangle counts move in the expected direction while image quality stays inside the asset-class acceptance budget.
+2. Sweep zoom continuously in and out. Record LOD changes, projected error, frame-time counters and image captures; check for threshold oscillation and popping.
+3. Repeat at multiple viewport sizes/aspect ratios and with dynamic resolution enabled/disabled.
+4. Compare a camera dolly with an FOV change that produces approximately the same object screen size.
+5. Use two views with deliberately different projections and prove decisions do not leak between them.
+6. Validate shadow/probe views, thin geometry, alpha-tested materials, terrain seams and animated characters.
+7. Repeat on physical mobile devices before making mobile performance or sustained-quality claims.
+
+### 11.5 Required sample
+
+Add a deterministic Vectors zoom test scene containing a broad flat wall with high-frequency surface material, a detailed silhouette object, a thin/alpha-tested asset, foliage, terrain and a deforming character. Provide an automated camera sweep and a Studio preview. This one scene should expose geometry, mip, transition, per-view and frame-budget regressions.
+

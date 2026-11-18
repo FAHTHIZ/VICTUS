@@ -186,3 +186,44 @@ VICTUS is materially more mature when:
 - External users can successfully finish representative tasks and provide evidence of usability.
 
 **Do not promise that this program will make VICTUS universally "better than" mature commercial engines.** The goal is to become demonstrably excellent in chosen areas while closing the gaps that prevent developers from trusting it with real projects.
+
+
+## Additional Workstream H — camera-responsive visual fidelity and cross-system budgets
+
+Coordinate this workstream with [VICTUS Camera-Responsive Visual Fidelity and Per-View Budgets](VICTUS_CAMERA_RESPONSIVE_VISUAL_FIDELITY.md) and Vectors. The central risk is not simply that a distant object receives too few triangles; it is that one subsystem makes a locally reasonable decision that becomes wrong when the projection, viewport, render target or secondary view changes.
+
+### H1. Audit and close the camera-zoom edge case
+
+The current main-view LOD calculation already includes render height and camera vertical FOV. That is a useful base, but current gpu_lod_tests do not establish a dedicated FOV/zoom regression. Require a fixed-camera FOV sweep, dolly comparison, rapid zoom cycle, dynamic-resolution sweep and different viewport dimensions.
+
+Audit whether every render view has independent geometry selection and visibility. A main-camera LOD should not be reused blindly for an editor viewport, secondary camera, reflection/probe capture or light-space shadow view. A second view must have an explicit cost in the total frame budget.
+
+### H2. Treat geometry, texture and shading as different cost/quality systems
+
+- Geometry LOD controls triangles and silhouette error.
+- Mip filtering selects a texture level from the rendered texture footprint; mip residency/streaming is a separate asset and memory-management feature.
+- Material/shader complexity, anisotropic sampling, transparency/overdraw and shadow maps need separate counters and controls.
+- Verify texture mips in every imported/cooked path. Do not claim view-prioritized mip streaming until requests, uploads, eviction, fallbacks and memory accounting exist.
+- Evaluate whether the workload is CPU submission, vertex/geometry, pixel/fill, bandwidth, shadows, animation, memory or thermals before attributing a frame-time improvement to Vectors.
+
+### H3. Robustness and validation gates
+
+Add the following cross-system tests to the subsystem matrix:
+
+1. Static scene at wide/default/narrow FOV with the same camera position.
+2. Camera dolly and FOV zoom that result in approximately equal object screen coverage.
+3. Main and secondary views with different FOVs and render-target sizes.
+4. Shadow and reflection/probe captures where off-screen main-view objects still contribute.
+5. Dynamic resolution plus TAA/temporal upscaling, including quality recovery when render scale increases.
+6. Texture close-up after a low-detail distant view, verifying mip correctness separately from streaming claims.
+7. Character face/hands/silhouette over multiple animation poses and camera distances.
+8. Thin railings, foliage, alpha-cutout surfaces and terrain chunk boundaries during zoom and transitions.
+9. Rapid zoom/camera cuts and memory pressure, including fallback and lifecycle behaviour.
+10. Sustained physical Android runs on named low/mid/high device classes when available.
+
+Record CPU time, actual GPU time where available, draw/triangle counts, memory, image comparisons and frame-time percentiles. The current profiler's GPU wait time must not be reported as GPU execution time. Physical-device/thermal evidence is a separate gate from desktop software-renderer tests.
+
+### H4. Definition of success
+
+The engine is not accepted because it draws fewer triangles. It is accepted when the same representative scene preserves the required visible detail across camera and resolution changes, uses a measured lower or better-allocated workload when geometry is limiting, has no unacceptable popping or missing shadow/probe contributions, and stays inside memory and sustained-device budgets. If another subsystem is the bottleneck, the report must say so.
+

@@ -137,3 +137,32 @@ Research references:
 All meshes, textures, insignia and animation must be original or explicitly redistributable. Record exact third-party licenses in the repository register before including any external asset.
 
 **Important:** This brief is based on inspected source/status evidence, not a complete line-by-line audit of every file in VICTUS. The implementing agent must complete the targeted audit in step 1 before changing code.
+
+
+## 9. Character fidelity under zoom and view changes
+
+Coordinate with [VICTUS Camera-Responsive Visual Fidelity and Per-View Budgets](VICTUS_CAMERA_RESPONSIVE_VISUAL_FIDELITY.md) and the Vectors handoff. Starter characters are a key stress case because the player can inspect them in the editor, move them close to the camera and view them through different camera projections.
+
+### Character-specific detail policy
+
+- Use the shared projected-error system; do not create a character-only renderer or a second mesh LOD model.
+- Preserve face/helmet shape, eye/visor features, hands, fingers where they affect silhouette, clothing/armor contour, insignia and attachment silhouettes while they occupy enough pixels to be perceptually important.
+- Give the face and other visually important regions suitable simplification weights or validated authored LODs. Do not force every character part to LOD0 at all distances.
+- Test the same character at wide/default/narrow FOV and under camera dolly. A narrow FOV at the same physical distance must recover detail if its projected error requires it.
+- Verify texture mip quality on face/visor markings and small material details separately from mesh geometry. Mip streaming is not currently an established VICTUS feature; do not depend on it or claim it.
+- Validate every generated LOD over representative idle, walk, run, turn, jump, fall and interact poses. Measure the deformation and silhouette changes, not only the neutral bind pose.
+- Keep mesh LOD, animation evaluation/update rate, physics, collision, root motion and gameplay state as separate policies. Reducing visual detail must never change movement, collision, hitboxes, attachment transforms or authoritative network state.
+- If a character is reduced to a crowd representation later, make the transition explicit and test identity/pose readability. Do not let a crowd impostor silently become the player character's close-up representation.
+
+### Additional acceptance checks
+
+1. Record front, side, three-quarter and back captures at multiple FOVs and viewport sizes.
+2. Sweep FOV continuously while the character remains stationary; verify no coarse-LOD lock-in, popping loop or delayed recovery.
+3. Repeat while moving and while each supported animation clip is active.
+4. Inspect face/visor, hands, attachment points and clothing/armor silhouettes at close-up and gameplay distances.
+5. Compare high-detail and simplified meshes using image/contour review and automated deformation tests.
+6. Run two characters and a small crowd to measure mesh triangles, draw batches, skinning/animation CPU cost and memory separately.
+7. Confirm visual LOD changes do not alter CharacterController state, save/load, root motion, collision or network replication.
+8. Record physical-device measurements only when a real Android device is available; desktop results are not mobile evidence.
+
+Do not promise that every close-up is pixel-identical to the source mesh. Define a perceptual quality budget for each region, then demonstrate that the correct representation is selected as the final projected image changes.

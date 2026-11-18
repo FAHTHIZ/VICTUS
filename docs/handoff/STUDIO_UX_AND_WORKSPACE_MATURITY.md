@@ -307,3 +307,33 @@ Add explicit usability tests for:
 10. A multiplayer creator launches and inspects a local session, then follows a documented path to test a remote session.
 
 Record which tasks are currently impossible because a runtime/editor subsystem is missing. Those become explicit engine roadmap dependencies, not reasons to fake the UI.
+
+
+## Additional creator workflow — View Fidelity Lab
+
+Coordinate with [VICTUS Camera-Responsive Visual Fidelity and Per-View Budgets](VICTUS_CAMERA_RESPONSIVE_VISUAL_FIDELITY.md). Vectors is not complete as a creator-facing system if the editor cannot show why an object changed detail or reproduce a zoom-related defect.
+
+### Required view and asset inspection
+
+Add a View Fidelity Lab to the real renderer/editor workflow, reusing the existing viewport and profiler rather than creating a disconnected demo:
+
+- Display the active view's projection/FOV, target pixel dimensions, render scale and quality tier.
+- Preview a repeatable wide-to-narrow-to-wide camera sweep at a fixed position, plus a camera-dolly sweep.
+- Show per-object selected LOD, triangle count, source geometric error and projected pixel error where those values are actually available.
+- Visualize selected LODs with colour/wireframe overlays and allow a debug force-LOD override that never changes cooked/gameplay data.
+- Show per-view results for supported secondary views and make the cost of each view visible.
+- Show texture format, mip count and current mip/residency only when the renderer can provide truthful values. Until mip streaming exists, label the asset as fully resident or report that residency granularity is unavailable; do not invent a streaming UI.
+- Show shadow/probe contributions independently from main-view visibility.
+- Expose the active geometry/view budget, quality floor and any unmet budget as actionable diagnostics.
+
+### Creator acceptance
+
+1. An artist can select a wall or character and scrub camera FOV while watching LOD/error change.
+2. The same asset can be previewed at several target resolutions and aspect ratios.
+3. The artist can compare an asset's full-detail source with its selected runtime LOD and inspect silhouette/alpha coverage.
+4. A character can be previewed through several animation poses while the camera zooms.
+5. A developer can distinguish geometry error from texture/mip softness and from render-scale/upscaler softness.
+6. A creator can save a reproducible camera sweep or regression capture with the asset/scene.
+7. All displayed values come from the live renderer or are clearly marked unavailable. No inert toggles, pretend texture-streaming controls or false GPU-utilization numbers.
+
+The preview must use the production renderer path and actual view dimensions. A special editor-only LOD formula that differs from play mode is not acceptable.
