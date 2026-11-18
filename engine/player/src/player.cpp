@@ -500,6 +500,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         c.emplace_back("frame.draw_calls", static_cast<double>(last_view_draws));
         c.emplace_back("frame.render_passes", static_cast<double>(last_view_passes));
         c.emplace_back("frame.triangles", static_cast<double>(ss.triangles));
+        c.emplace_back("frame.shadow_triangles", static_cast<double>(ss.shadow_triangles));
         c.emplace_back("frame.visible", static_cast<double>(ss.visible));
         c.emplace_back("frame.main_batches", static_cast<double>(ss.main_batches));
         c.emplace_back("frame.shadow_batches", static_cast<double>(ss.shadow_batches + ss.local_shadow_draws));

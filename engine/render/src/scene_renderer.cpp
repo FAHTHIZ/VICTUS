@@ -377,6 +377,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.taa = false;
         s.max_point_lights = 64;
         s.lod_error_pixels = 2.0f;
+        s.shadow_lod_bias = 1;
         s.local_shadows = false;
         s.irradiance_volumes = false;
         s.dynamic_gi = false;
@@ -425,6 +426,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxLights);
     s.lod_error_pixels = std::isfinite(s.lod_error_pixels) ? std::clamp(s.lod_error_pixels, 0.25f, 16.0f) : 1.0f;
     s.force_lod = std::clamp(s.force_lod, -1, static_cast<int>(kMaxMeshLods) - 1);
+    s.shadow_lod_bias = std::min(s.shadow_lod_bias, 3u);
     s.local_shadow_atlas = std::clamp(s.local_shadow_atlas, 256u, 8192u);
     s.local_shadow_tile = std::clamp(s.local_shadow_tile, std::max(64u, s.local_shadow_atlas / 8u), s.local_shadow_atlas);
     return s;
@@ -1199,6 +1201,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         const Aabb world = d.skinned ? d.world_bounds : d.mesh->bounds.transformed(d.model);
         const bool blended = d.material.blend != MaterialBlend::Opaque;
         d.lod = select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S);
+        d.shadow_lod = d.lod;
+        if (S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
+            d.shadow_lod = static_cast<std::uint8_t>(std::min<std::uint32_t>(d.lod + S.shadow_lod_bias, d.mesh->lod_count - 1u));
         if (d.material.cast_shadows && !blended) {
             bool any = false;
             for (std::uint32_t c = 0; c < cascade_count_; ++c)
@@ -1348,20 +1353,22 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     // Every pass reads its own contiguous range of the per-frame instance buffer.
     auto& instances = F.instances;
     instances.reserve(visible.size() + stats_.shadow_casters);
+    // Main and transparent passes draw `lod`; shadow passes (match_material false) draw `shadow_lod`.
     auto build_batches = [&](const std::vector<const Draw*>& list, bool match_material, std::vector<Batch>& out) {
         for (const Draw* d : list) {
             const auto offset = static_cast<std::uint32_t>(instances.size());
+            const std::uint8_t lod = match_material ? d->lod : d->shadow_lod;
             instances.push_back(make_instance(d->model, d->palette));
             if (S.instancing && !out.empty()) {
                 const Draw* f = out.back().first;
-                if (f->mesh == d->mesh && f->lod == d->lod && f->skinned == d->skinned &&
+                if (f->mesh == d->mesh && out.back().lod == lod && f->skinned == d->skinned &&
                     (!match_material || (same_material(f->material, d->material) && f->probe == d->probe)) &&
                     (match_material || same_alpha_test(f->material, d->material))) {
                     ++out.back().instance_count;
                     continue;
                 }
             }
-            out.push_back({d, offset, 1});
+            out.push_back({d, offset, 1, lod});
         }
     };
     const std::vector<Batch>& main_batches = F.main_batches;
@@ -1375,11 +1382,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (a->skinned != b->skinned) return !a->skinned;
             if (shadow_alpha_tested(a->material) != shadow_alpha_tested(b->material)) return !shadow_alpha_tested(a->material);
             if (a->mesh != b->mesh) return a->mesh < b->mesh;
-            if (a->lod != b->lod) return a->lod < b->lod;
+            if (a->shadow_lod != b->shadow_lod) return a->shadow_lod < b->shadow_lod;
             return a->material.base_color_texture.index < b->material.base_color_texture.index;
         });
         build_batches(casters[c], false, shadow_batches[c]);
         stats_.shadow_batches += static_cast<std::uint32_t>(shadow_batches[c].size());
+        for (const Batch& b : shadow_batches[c]) stats_.shadow_triangles += std::uint64_t{b.first->mesh->lods[b.lod].index_count / 3} * b.instance_count;
     }
     auto& local_batches = F.local_batches; // at least local_views.size() lists, all empty
     for (std::size_t v = 0; v < local_views.size(); ++v) {
@@ -1387,10 +1395,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (a->skinned != b->skinned) return !a->skinned;
             if (shadow_alpha_tested(a->material) != shadow_alpha_tested(b->material)) return !shadow_alpha_tested(a->material);
             if (a->mesh != b->mesh) return a->mesh < b->mesh;
-            if (a->lod != b->lod) return a->lod < b->lod;
+            if (a->shadow_lod != b->shadow_lod) return a->shadow_lod < b->shadow_lod;
             return a->material.base_color_texture.index < b->material.base_color_texture.index;
         });
         build_batches(local_casters[v], false, local_batches[v]);
+        for (const Batch& b : local_batches[v]) stats_.shadow_triangles += std::uint64_t{b.first->mesh->lods[b.lod].index_count / 3} * b.instance_count;
         stats_.local_shadow_draws += static_cast<std::uint32_t>(local_casters[v].size());
     }
     stats_.main_batches = static_cast<std::uint32_t>(main_batches.size());
@@ -1454,7 +1463,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         args.reserve(main_batches.size());
         for (std::size_t bi = 0; bi < main_batches.size(); ++bi) {
             const Batch& b = main_batches[bi];
-            const GpuMeshLod& l = b.first->mesh->lods[std::min<std::uint32_t>(b.first->lod, b.first->mesh->lod_count - 1)];
+            const GpuMeshLod& l = b.first->mesh->lods[std::min<std::uint32_t>(b.lod, b.first->mesh->lod_count - 1)];
             args.push_back({l.index_count, 0, l.first_index, 0, 0});
             for (std::uint32_t k = 0; k < b.instance_count; ++k) {
                 const Draw* d = visible[b.instance_offset + k];
@@ -1764,7 +1773,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
                         ctx.pass->bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                         ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
-                        draw_mesh_lod(*ctx.pass, *b.first->mesh, b.first->lod, b.instance_count);
+                        draw_mesh_lod(*ctx.pass, *b.first->mesh, b.lod, b.instance_count);
                     }
                 }
             });
@@ -1799,7 +1808,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
                         ctx.pass->bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
                         ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
-                        draw_mesh_lod(*ctx.pass, *b.first->mesh, b.first->lod, b.instance_count);
+                        draw_mesh_lod(*ctx.pass, *b.first->mesh, b.lod, b.instance_count);
                     }
                 }
             });
