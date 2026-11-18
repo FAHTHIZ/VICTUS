@@ -134,6 +134,35 @@ end
 
 Visual scripts have matching nodes in the Animation category: Play Animation, Set Anim Parameter, Fire Anim Trigger, Anim State and Get Anim Parameter.
 
+## Inverse kinematics
+
+An `IKConstraint` component on the end of a chain (a hand, foot or head) bends its ancestors toward a target after the clips and controller have been sampled, every frame, before transforms propagate (ADR-0073).
+
+| Field | Meaning |
+| --- | --- |
+| `solver` | `two_bone` (parent and grandparent, analytic: arms, legs), `chain` (`chain_length` ancestors, FABRIK: tails, spines, tentacles) or `look_at` (rotates this entity so `aim_axis` points at the target, at most `max_angle`) |
+| `enabled`, `weight` | Off, or a 0..1 blend with the animated pose |
+| `target` / `target_position` | An entity to follow, otherwise a world position |
+| `pole` | Optional entity the middle joint bends toward (two_bone) |
+| `match_rotation` | Also copy the target entity's rotation to the end |
+| `iterations`, `tolerance` | FABRIK limits |
+| `max_extension` | Two-bone reach fraction (0.999 avoids a locked straight knee) |
+
+Unreachable targets stretch the chain straight toward them. Chains are solved parents first, so a spine chain can feed an arm's two-bone constraint.
+
+Luau: `entity:set_ik_target(vector | entity | nil, weight?)` (nil disables) and `entity:ik_state()` → `{enabled, weight, solver, target, reached}`. The fields are also settable through `entity:set("IKConstraint", field, value)`.
+
+```lua
+-- Foot placement: plant each foot on the ground under it.
+function Feet:update(dt)
+    for _, foot in self.feet do
+        local p = foot.world_position
+        local hit = physics.raycast(p + vector.create(0, 0.5, 0), vector.create(0, -1, 0), 1.2)
+        foot:set_ik_target(hit and hit.point or nil)
+    end
+end
+```
+
 ## Editor
 
 Window > Animation opens the Animation window for the selected entity's Animator. It shows the controller path, the states (the current one highlighted with its normalized time; click one to enter it), the previous state and fade progress during a cross-fade, the current clip weights as bars (missing clips flagged) and a control per parameter: float sliders spanning the blend thresholds, int drags, bool checkboxes and trigger buttons. Preview runs the controller on the edit scene through `AnimationSystem::update_entity`; Pause and Restart control it, End Preview restores the Animator and the skeleton transforms. A preview is ended (and restored) before saving, autosave skips while one runs, and play mode, scene switches and closing the project end it. Root-motion states are tagged `[root motion]`, and the window shows the root node and how far it moves per frame. Controller edits hot reload into the preview. `victus_editor <project> --select <entity> --show animation-preview` opens it from the command line.

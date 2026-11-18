@@ -46,6 +46,7 @@ void register_components() {
             .field(&SkinnedMeshComponent::skin, "skin", {.min = 0, .max = 1024})
             .commit();
     });
+    register_ik_components();
 }
 
 namespace {
@@ -855,6 +856,8 @@ void AnimationSystem::update(Scene& scene, float dt) {
         if (w.s->ctl.ctrl) ++stats_.controlled;
         else if (!w.a->controller.empty()) ++stats_.controller_errors;
     }
+    // IK post-processes the pose every animator just wrote (and procedural rigs without one).
+    stats_.ik = apply_ik(scene);
 }
 
 bool AnimationSystem::update_entity(Scene& scene, Entity e, float dt) {
@@ -871,6 +874,7 @@ bool AnimationSystem::update_entity(Scene& scene, Entity e, float dt) {
     stats_.transitions = w.transitions;
     if (s->ctl.ctrl) stats_.controlled = 1;
     else if (!a->controller.empty()) stats_.controller_errors = 1;
+    stats_.ik = apply_ik(scene);
     return true;
 }
 

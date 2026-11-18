@@ -44,6 +44,8 @@ void open_victus_libs(lua_State* L) {
                                 {"anim_state", entity_anim_state},
                                 {"anim_controller", entity_anim_controller},
                                 {"root_motion", entity_root_motion},
+                                {"set_ik_target", entity_set_ik_target},
+                                {"ik_state", entity_ik_state},
                                 {"emit_particles", entity_emit_particles},
                                 {"set_emitting", entity_set_emitting},
                                 {"reset_particles", entity_reset_particles},

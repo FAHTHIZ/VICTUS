@@ -288,6 +288,11 @@ No third-party code was added.
 - efsw — https://github.com/SpartanJ/efsw (MIT): file watcher over inotify, FSEvents/kqueue, Windows I/O completion ports (ReadDirectoryChangesExW/W) with a generic polling fallback. Not adopted for now (ADR-0022); the candidate if polling becomes too slow.
 - Open questions: debounce for editors that write via temporary files, font atlas rebuilds for font reload, scene reload policy (merge vs restart).
 
+## Research conclusions added 2026-11-18 (inverse kinematics, ADR-0073)
+- FABRIK — Aristidou & Lasenby, Graphical Models 73(5) 243–260, 2011, https://doi.org/10.1016/j.gmod.2011.05.003 (paper: http://www.andreasaristidou.com/publications/papers/FABRIK.pdf): forward/backward passes place each joint on a line at its bone length; root fixed; unreachable targets give a straight chain toward the target. Used for `chain`.
+- Godot FABRIK3D — https://docs.godotengine.org/en/stable/classes/class_fabrik3d.html: position-based, keeps the previous pose's twist, zig-zags when the target is near the root. Godot TwoBoneIK3D — https://docs.godotengine.org/en/stable/classes/class_twoboneik3d.html: plane from joints and pole, intersection of two circles. VICTUS two-bone follows the same plane construction and falls back to the current bend when there is no pole.
+- Open questions: joint limits (cone/hinge) for chains, CCD as a third chain solver, full-body IK, foot locking with root adjustment.
+
 ## Research conclusions added 2026-11-16 (Slice 18, input)
 - SDL3 gamepad API — https://wiki.libsdl.org/SDL3/CategoryGamepad (zlib). `SDL_OpenGamepad`, `SDL_GetGamepadButton/Axis` and `SDL_EVENT_GAMEPAD_ADDED/REMOVED` over a standard layout (`SDL_GAMEPAD_BUTTON_SOUTH/EAST/WEST/NORTH`, shoulders, sticks, D-pad; axes `LEFTX/LEFTY/RIGHTX/RIGHTY/LEFT_TRIGGER/RIGHT_TRIGGER`, sticks −32768..32767, triggers 0..32767). VICTUS binding names mirror these positional names so one map fits Xbox, PlayStation and Switch pads.
 - gainput — https://github.com/jkuhlmann/gainput (MIT). Action mapping with its own device layer; archived and unmaintained since 2021-09-07; considered and not adopted (ADR-0021).
