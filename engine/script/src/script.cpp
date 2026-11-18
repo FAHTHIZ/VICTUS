@@ -7,7 +7,7 @@
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/script/script.hpp"
-#include "victus/script/graph.hpp"
+#include "victus/graph/graph.hpp"
 
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
@@ -38,6 +38,12 @@ namespace victus::script {
 using json::Value;
 using scene::Entity;
 namespace sfs = std::filesystem;
+using graph::annotate_graph_error;
+using graph::compile_graph;
+using graph::CompiledGraph;
+using graph::GraphCompileOptions;
+using graph::parse_graph;
+using graph::ScriptGraph;
 
 namespace {
 

@@ -24,4 +24,4 @@ victus_add_module(runtime
         src/hot_reload.cpp
         src/surface_shader.cpp
         ${_fonts_cpp}
-    DEPS VICTUS::Assets VICTUS::Scene VICTUS::Gameplay VICTUS::Animation VICTUS::Particles VICTUS::Gameui VICTUS::Ui VICTUS::Shadercompiler VICTUS::Tilemap VICTUS::Terrain VICTUS::Script)
+    DEPS VICTUS::Assets VICTUS::Scene VICTUS::Gameplay VICTUS::Animation VICTUS::Particles VICTUS::Gameui VICTUS::Ui VICTUS::Shadercompiler VICTUS::Tilemap VICTUS::Terrain VICTUS::Graph)

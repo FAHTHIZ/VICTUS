@@ -36,6 +36,7 @@ endif()
 
 add_subdirectory(engine/core)
 add_subdirectory(engine/ecs)
+add_subdirectory(engine/graph)
 add_subdirectory(engine/scene)
 add_subdirectory(engine/gameplay)
 add_subdirectory(engine/animation)

@@ -9,7 +9,7 @@
 
 #include "victus/runtime/scene_rendering.hpp"
 #include "victus/runtime/surface_shader.hpp"
-#include "victus/script/material_graph.hpp"
+#include "victus/graph/material_graph.hpp"
 
 #include <imgui.h>
 
@@ -345,7 +345,7 @@ void Editor::draw_material_editor() {
             }
         }
         ImGui::SetItemTooltip("New node-based material graph as this material's shader");
-        if (sh && sh->path.ends_with(script::kMaterialGraphExtension)) {
+        if (sh && sh->path.ends_with(graph::kMaterialGraphExtension)) {
             ImGui::SameLine();
             if (ImGui::SmallButton("Edit Graph"))
                 if (auto st = open_graph_editor(m.shader); !st.ok()) notify(st.error().message, true);

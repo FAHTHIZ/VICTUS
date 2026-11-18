@@ -27,7 +27,7 @@
 #include "victus/runtime/hot_reload.hpp"
 #include "victus/runtime/scene_view.hpp"
 #include "victus/scene/prefab.hpp"
-#include "victus/script/graph.hpp"
+#include "victus/graph/graph.hpp"
 #include "victus/script/script.hpp"
 #include "victus/ui/ui.hpp"
 
@@ -364,9 +364,9 @@ public:
     Status open_graph_editor(const Uuid& asset);
     [[nodiscard]] bool graph_editor_open() const noexcept { return show_graph_editor_; }
     [[nodiscard]] const Uuid& editing_graph_asset() const noexcept { return graph_asset_; }
-    [[nodiscard]] const script::ScriptGraph& editing_graph() const noexcept { return graph_; }
+    [[nodiscard]] const graph::ScriptGraph& editing_graph() const noexcept { return graph_; }
     // Validation of the open graph, refreshed after every edit.
-    [[nodiscard]] const std::vector<script::GraphDiagnostic>& graph_diagnostics() const noexcept { return graph_diags_; }
+    [[nodiscard]] const std::vector<graph::GraphDiagnostic>& graph_diagnostics() const noexcept { return graph_diags_; }
     [[nodiscard]] bool graph_dirty() const noexcept { return graph_dirty_; }
     // Edits of the open graph; each is one undo step. 0 / false when rejected (unknown node type,
     // missing node or pin, incompatible pin types, duplicate variable name).
@@ -377,9 +377,9 @@ public:
     bool graph_disconnect(std::uint32_t node, std::string_view input_pin);
     bool graph_set_literal(std::uint32_t node, std::string_view input_pin, json::Value value);
     bool graph_set_config(std::uint32_t node, std::string_view key, json::Value value);
-    bool graph_add_variable(script::GraphVariable variable);
+    bool graph_add_variable(graph::GraphVariable variable);
     // Replaces a variable; a rename also retargets every Get/Set node that used the old name.
-    bool graph_update_variable(std::string_view name, script::GraphVariable variable);
+    bool graph_update_variable(std::string_view name, graph::GraphVariable variable);
     bool graph_remove_variable(std::string_view name);
     bool graph_undo();
     bool graph_redo();
@@ -863,7 +863,7 @@ private:
     std::optional<script::GraphRuntimeError> graph_error_;
     bool graph_live_{false};
     bool graph_show_code_{false}; // material graphs: show the generated GLSL
-    Result<Uuid> create_graph_file(std::string_view relative_path, script::GraphDomain domain);
+    Result<Uuid> create_graph_file(std::string_view relative_path, graph::GraphDomain domain);
     // Pushes an undo snapshot; consecutive edits with the same non-empty key share one step.
     void graph_begin_edit(std::string_view coalesce_key = {});
     void graph_end_edit();
@@ -873,8 +873,8 @@ private:
     Uuid graph_asset_;
     std::string graph_path_;
     std::uint64_t graph_disk_hash_{0};
-    script::ScriptGraph graph_;
-    std::vector<script::GraphDiagnostic> graph_diags_;
+    graph::ScriptGraph graph_;
+    std::vector<graph::GraphDiagnostic> graph_diags_;
     std::vector<std::string> graph_undo_, graph_redo_;
     std::string graph_edit_key_;
     std::uint32_t graph_selected_{0};

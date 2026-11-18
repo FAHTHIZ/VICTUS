@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Visual scripting graphs: node library, deterministic serialization, validation and the
 // compiler to Luau (ADR-0058).
-#include "victus/script/graph.hpp"
-#include "victus/script/material_graph.hpp"
+#include "victus/graph/graph.hpp"
+#include "victus/graph/material_graph.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -12,7 +12,7 @@
 #include <set>
 #include <tuple>
 
-namespace victus::script {
+namespace victus::graph {
 
 using json::Value;
 
@@ -911,4 +911,4 @@ std::string annotate_graph_error(std::string_view message, const CompiledGraph& 
     return std::string(message);
 }
 
-} // namespace victus::script
+} // namespace victus::graph

@@ -3,7 +3,8 @@
 // compilation to Luau and running compiled graphs in the ScriptHost.
 #include "victus/core/fs.hpp"
 #include "victus/gameplay/gameplay.hpp"
-#include "victus/script/graph.hpp"
+#include "victus/graph/graph.hpp"
+#include "victus/script/graph.hpp" // deprecated forwarding header, kept for source compatibility
 #include "victus/script/script.hpp"
 
 #include "doctest.h"
@@ -13,9 +14,11 @@
 #include <filesystem>
 #include <format>
 #include <set>
+#include <type_traits>
 
 using namespace victus;
 using namespace victus::script;
+using namespace victus::graph;
 using scene::Entity;
 using scene::Scene;
 
@@ -93,6 +96,10 @@ ScriptGraph mover_graph() {
 }
 
 } // namespace
+
+// The graph model moved from victus::script to victus::graph; the old names must keep compiling.
+static_assert(std::is_same_v<victus::script::ScriptGraph, victus::graph::ScriptGraph>);
+static_assert(std::is_same_v<victus::script::CompiledGraph, victus::graph::CompiledGraph>);
 
 TEST_CASE("graph: every library node compiles to valid Luau") {
     std::set<std::string> types;

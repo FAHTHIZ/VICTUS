@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Material graphs: node library and the compiler to surface-shader GLSL (ADR-0062).
-#include "victus/script/material_graph.hpp"
+#include "victus/graph/material_graph.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -8,7 +8,7 @@
 #include <map>
 #include <set>
 
-namespace victus::script {
+namespace victus::graph {
 
 using json::Value;
 
@@ -517,4 +517,4 @@ ScriptGraph starter_material_graph() {
     return g;
 }
 
-} // namespace victus::script
+} // namespace victus::graph
