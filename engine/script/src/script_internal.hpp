@@ -524,6 +524,7 @@ int entity_anim_trigger(lua_State* L);
 int entity_reset_anim_trigger(lua_State* L);
 int entity_anim_state(lua_State* L);
 int entity_anim_controller(lua_State* L);
+int entity_root_motion(lua_State* L);
 int entity_play_sprite(lua_State* L);
 int entity_sprite_animation(lua_State* L);
 int entity_sprite_clips(lua_State* L);

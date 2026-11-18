@@ -152,6 +152,17 @@ execute_process(COMMAND "${VICTUS_CLI}" simulate "${WORK}/game_2d" --frames 5 RE
 if(NOT rc EQUAL 3 OR NOT err MATCHES "boom")
     message(FATAL_ERROR "simulate did not fail on a runtime script error (${rc}): ${err}")
 endif()
+# Controller problems that only show against the model are warnings: a root-motion node it lacks.
+set(vanim "${WORK}/game_3d/assets/anim/robot.vanim")
+file(READ "${vanim}" vanim_text)
+string(REPLACE "\"name\": \"Air\"" "\"name\": \"Air\", \"root_motion\": true" bad_vanim "${vanim_text}")
+string(REPLACE "\"default_state\"" "\"root_node\": \"Pelvis\", \"default_state\"" bad_vanim "${bad_vanim}")
+file(WRITE "${vanim}" "${bad_vanim}")
+execute_process(COMMAND "${VICTUS_CLI}" check "${WORK}/game_3d" RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_QUIET)
+if(NOT rc EQUAL 0 OR NOT out MATCHES "root motion from node 'Pelvis' that its model lacks")
+    message(FATAL_ERROR "check did not warn about the missing root-motion node (${rc}): ${out}")
+endif()
+file(WRITE "${vanim}" "${vanim_text}")
 run_ok("${VICTUS_CLI}" new "${WORK}/game_2d_clean" --template 2d)
 
 if(run_gpu)

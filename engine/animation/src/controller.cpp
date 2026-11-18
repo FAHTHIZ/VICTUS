@@ -235,12 +235,22 @@ Result<std::shared_ptr<const Controller>> Controller::from_json(const json::Valu
             if (!l->is_bool()) return fail(where, "\"loop\" must be true or false");
             s.loop = l->as_bool();
         }
+        if (const json::Value* rm = sv.find("root_motion")) {
+            if (!rm->is_bool()) return fail(where, "\"root_motion\" must be true or false");
+            s.root_motion = rm->as_bool();
+        }
         c->states.push_back(std::move(s));
     }
     if (const json::Value* d = doc.find("default_state")) {
         if (!d->is_string()) return fail("document", "\"default_state\" must be a string");
         c->default_state = c->find_state(d->as_string());
         if (c->default_state < 0) return fail("document", "unknown default_state \"" + d->as_string() + "\"");
+    }
+
+    if (const json::Value* rn = doc.find("root_node")) {
+        if (!rn->is_string() || rn->as_string().empty() || rn->as_string().size() > 256)
+            return fail("document", "\"root_node\" must be a non-empty node name");
+        c->root_node = rn->as_string();
     }
 
     // Transitions.
@@ -375,9 +385,11 @@ json::Value Controller::to_json() const {
         if (s.speed != 1.0f) o.set("speed", s.speed);
         if (!s.speed_parameter.empty()) o.set("speed_parameter", s.speed_parameter);
         if (!s.loop) o.set("loop", false);
+        if (s.root_motion) o.set("root_motion", true);
         ss.push(std::move(o));
     }
     doc.set("states", std::move(ss));
+    if (!root_node.empty()) doc.set("root_node", root_node);
     json::Value ts = json::Value::array();
     for (const ControllerTransition& t : transitions) {
         json::Value o = json::Value::object();

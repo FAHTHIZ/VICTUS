@@ -103,6 +103,18 @@ struct AnimatorComponent {
     float speed{1.0f};       // playback rate (negative plays backwards)
     float crossfade{0.2f};   // seconds used when `clip` changes
     float time{0.0f};        // current playback time in seconds
+    // Controller states with "root_motion" move this entity by the root node's travel. Off: the
+    // motion is only reported (AnimationSystem::root_motion, Luau entity:root_motion()) for a
+    // script to apply, e.g. through a CharacterController.
+    bool apply_root_motion{true};
+};
+
+// Root motion extracted by the latest update of one Animator.
+struct RootMotion {
+    bool active{false};    // a root-motion state contributed this update
+    math::Vec3 position{}; // travel in the Animator entity's parent space (world space for root entities)
+    float yaw{0};          // turn about +Y in radians
+    bool applied{false};   // moved the entity (AnimatorComponent::apply_root_motion)
 };
 
 // Marks a MeshRenderer as GPU-skinned by `skin` of its model, with joints bound by name under
@@ -164,6 +176,8 @@ struct ControllerStatus {
     };
     std::vector<Weight> weights; // blend weights of the current state's clips
     std::vector<std::string> states;
+    std::vector<std::uint8_t> root_motion_states; // per state: 1 = extracts root motion
+    std::string root_node;      // node root motion is taken from ("" when unresolved)
 };
 
 struct AnimationSettings {
@@ -192,6 +206,8 @@ public:
     // Advances and applies only `e`'s Animator (editor previews of one character). False when the
     // entity has no Animator.
     bool update_entity(scene::Scene& scene, scene::Entity e, float dt);
+    // Root motion of the entity's latest update (zero when none).
+    [[nodiscard]] RootMotion root_motion(scene::Scene& scene, scene::Entity e);
     // Starts `clip` on the entity's Animator. fade < 0 uses the component's crossfade.
     // Returns false when the entity has no Animator or the clip does not exist.
     bool play(scene::Scene& scene, scene::Entity e, std::string_view clip, float fade = -1.0f, bool restart = true);
