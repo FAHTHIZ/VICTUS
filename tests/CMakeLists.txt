@@ -72,9 +72,10 @@ victus_add_test(victus_robustness_tests
     SOURCES
         robustness/parser_fuzz_tests.cpp
     DEPS VICTUS::Project VICTUS::Assets VICTUS::Net VICTUS::Terrain VICTUS::Sequencer VICTUS::Ai
-         VICTUS::Tilemap VICTUS::Animation VICTUS::Gameplay VICTUS::Graph VICTUS::Render
+         VICTUS::Tilemap VICTUS::Animation VICTUS::Gameplay VICTUS::Graph VICTUS::Render VICTUS::Audio
     LABELS robustness)
-target_compile_definitions(victus_robustness_tests PRIVATE VICTUS_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_compile_definitions(victus_robustness_tests PRIVATE VICTUS_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    VICTUS_MINIAUDIO_DATA_DIR="${VICTUS_MINIAUDIO_DIR}/data")
 
 victus_add_test(victus_render_tests
     SOURCES

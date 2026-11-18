@@ -129,6 +129,113 @@ function(victus_fetch_box2d)
     victus_third_party_tsan(box2d)
 endfunction()
 
+# stb_vorbis v1.22 (the latest release, shipped in miniaudio's extras) frees uninitialised
+# pointers and overflows allocation sizes on a malformed comment header, and leaks temporary
+# codebook buffers when setup fails on a malformed codebook: both found by the
+# `fuzz: audio clip decoding` robustness target (the leak under LeakSanitizer). VICTUS compiles a copy patched at configure time;
+# configuration fails if an anchor no longer matches, so a miniaudio update cannot silently drop
+# the fix. Output: ${out_dir}/victus_stb_vorbis.c.
+# Replaces `from` with `to` in the variable `text_var`; fails configuration when `from` is absent.
+function(victus_patch_text text_var file from to)
+    string(FIND "${${text_var}}" "${from}" at)
+    if(at EQUAL -1)
+        message(FATAL_ERROR "VICTUS patch: anchor not found in ${file}; review the patch in cmake/VictusDependencies.cmake")
+    endif()
+    string(REPLACE "${from}" "${to}" patched "${${text_var}}")
+    set(${text_var} "${patched}" PARENT_SCOPE)
+endfunction()
+
+function(victus_patch_stb_vorbis src out_dir)
+    file(READ ${src} text)
+    victus_patch_text(text ${src}
+        [=[   len = get32_packet(f);
+   f->vendor = (char*)setup_malloc(f, sizeof(char) * (len+1));]=]
+        [=[   len = get32_packet(f);
+   if (len < 0 || len > (1 << 24))                  return error(f, VORBIS_invalid_setup); /* VICTUS patch */
+   f->vendor = (char*)setup_malloc(f, sizeof(char) * (len+1));]=])
+    victus_patch_text(text ${src}
+        [=[   f->comment_list_length = get32_packet(f);
+   f->comment_list = NULL;
+   if (f->comment_list_length > 0)
+   {
+      f->comment_list = (char**) setup_malloc(f, sizeof(char*) * (f->comment_list_length));
+      if (f->comment_list == NULL)                  return error(f, VORBIS_outofmem);
+   }]=]
+        [=[   f->comment_list_length = get32_packet(f);
+   f->comment_list = NULL;
+   if (f->comment_list_length < 0 || f->comment_list_length > (1 << 16)) { /* VICTUS patch */
+      f->comment_list_length = 0;
+      return error(f, VORBIS_invalid_setup);
+   }
+   if (f->comment_list_length > 0)
+   {
+      f->comment_list = (char**) setup_malloc(f, sizeof(char*) * (f->comment_list_length));
+      if (f->comment_list == NULL) { f->comment_list_length = 0; return error(f, VORBIS_outofmem); }
+      memset(f->comment_list, 0, sizeof(char*) * f->comment_list_length); /* VICTUS patch */
+   }]=])
+    victus_patch_text(text ${src}
+        [=[      len = get32_packet(f);
+      f->comment_list[i] = (char*)setup_malloc(f, sizeof(char) * (len+1));]=]
+        [=[      len = get32_packet(f);
+      if (len < 0 || len > (1 << 24))               return error(f, VORBIS_invalid_setup); /* VICTUS patch */
+      f->comment_list[i] = (char*)setup_malloc(f, sizeof(char) * (len+1));]=])
+    victus_patch_text(text ${src}
+        [=[   int setup_offset;
+   int temp_offset;
+]=]
+        [=[   int setup_offset;
+   int temp_offset;
+   void *victus_temp[8]; /* VICTUS patch: heap temp blocks still owned if setup fails */
+]=])
+    victus_patch_text(text ${src}
+        [=[   return malloc(sz);
+}
+
+static void setup_temp_free(vorb *f, void *p, int sz)
+{
+   if (f->alloc.alloc_buffer) {
+      f->temp_offset += (sz+7)&~7;
+      return;
+   }
+   free(p);
+}]=]
+        [=[   { /* VICTUS patch: remember heap temp blocks so an early error return cannot leak them */
+      void *p = malloc(sz);
+      int i;
+      for (i=0; p && i < 8; ++i) if (!f->victus_temp[i]) { f->victus_temp[i] = p; break; }
+      return p;
+   }
+}
+
+static void setup_temp_free(vorb *f, void *p, int sz)
+{
+   int i;
+   if (f->alloc.alloc_buffer) {
+      f->temp_offset += (sz+7)&~7;
+      return;
+   }
+   for (i=0; p && i < 8; ++i) if (f->victus_temp[i] == p) { f->victus_temp[i] = NULL; break; }
+   free(p);
+}]=])
+    victus_patch_text(text ${src}
+        [=[   setup_free(p, p->vendor);
+]=]
+        [=[   for (i=0; i < 8; ++i) { /* VICTUS patch: free leftover temp blocks a codebook does not own */
+      int k, owned = 0;
+      if (!p->victus_temp[i]) continue;
+      for (k=0; p->codebooks && k < p->codebook_count; ++k)
+         if (p->codebooks[k].codewords == p->victus_temp[i]) owned = 1;
+      if (!owned) free(p->victus_temp[i]);
+      p->victus_temp[i] = NULL;
+   }
+   setup_free(p, p->vendor);
+]=])
+    file(WRITE ${out_dir}/victus_stb_vorbis.c.tmp "${text}")
+    # Only touch the output when it changes, so reconfiguring does not rebuild miniaudio.
+    file(COPY_FILE ${out_dir}/victus_stb_vorbis.c.tmp ${out_dir}/victus_stb_vorbis.c ONLY_IF_DIFFERENT)
+    file(REMOVE ${out_dir}/victus_stb_vorbis.c.tmp)
+endfunction()
+
 # miniaudio 0.11.26 (public domain / MIT-0). Single-file library: VICTUS compiles the
 # implementation in its own translation unit (engine/audio/third_party/miniaudio_impl.c) with
 # third-party warning settings; stb_vorbis from miniaudio's extras provides Ogg Vorbis.
@@ -143,8 +250,11 @@ function(victus_fetch_miniaudio)
         SOURCE_SUBDIR victus_no_cmake) # use the sources only, not miniaudio's CMake project
     FetchContent_MakeAvailable(miniaudio)
     set(VICTUS_MINIAUDIO_DIR ${miniaudio_SOURCE_DIR} CACHE INTERNAL "miniaudio source directory")
+    set(patched ${CMAKE_BINARY_DIR}/victus_patched/miniaudio)
+    victus_patch_stb_vorbis(${miniaudio_SOURCE_DIR}/extras/stb_vorbis.c ${patched})
     add_library(victus_miniaudio STATIC ${PROJECT_SOURCE_DIR}/engine/audio/third_party/miniaudio_impl.c)
     target_include_directories(victus_miniaudio SYSTEM PUBLIC ${miniaudio_SOURCE_DIR})
+    target_include_directories(victus_miniaudio PRIVATE ${patched})
     target_compile_definitions(victus_miniaudio PUBLIC MA_NO_ENCODING)
     set_target_properties(victus_miniaudio PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 99)
     target_compile_options(victus_miniaudio PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w,-w>)
