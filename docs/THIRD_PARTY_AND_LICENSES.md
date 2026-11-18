@@ -41,21 +41,18 @@ Mandatory for code, libraries, SDKs, tools, datasets, fonts, models, textures, a
 | Mesa lavapipe | CI/test environment only | MIT | Software Vulkan for headless GPU tests | Not shipped |
 
 ## Candidate list — not adopted
+Evaluated alternatives that are not dependencies today. Adopted components (Jolt, Box2D, meshoptimizer, cgltf for glTF, miniaudio and the rest) are listed only in the table above.
+
 | Component | Candidate use | License expectation (verify exact version) |
 |---|---|---|
 | Flecs / EnTT | ECS | MIT |
 | Taskflow | Task graphs | MIT |
 | enkiTS | Scheduler | zlib |
-| Jolt | 3D physics (v5.7.0, 2026-11-14) | MIT |
-| Box2D | 2D physics (v3.2.0, 2026-10-19) | MIT |
 | ozz-animation | Animation | MIT |
 | bgfx/bx/bimg | Graphics abstraction | BSD-2 family |
 | Diligent | Graphics abstraction | Apache-2.0 |
 | Filament | Renderer/reference | Apache-2.0 |
-| meshoptimizer | Geometry | MIT |
-| glTF loaders | Import | Verify exact release |
 | KTX/Basis | Texture/transcoding | Verify release and codecs |
-| miniaudio | Audio | MIT-0/public-domain option |
 | ImGuizmo | Editor gizmos | MIT |
 | Tracy | Profiling | BSD-3-Clause |
 | Blender | External authoring | GPL-3.0-or-later; keep external |
