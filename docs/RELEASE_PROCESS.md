@@ -22,7 +22,7 @@ Per platform (linux-x86_64, windows-x86_64, macos-arm64), built as RelWithDebInf
 
 | Archive | Contents |
 |---|---|
-| `victus-X.Y.Z-<platform>.tar.gz` (Windows: `.zip`) | `bin/victus`, `bin/victus_editor`, `bin/victus_player` without debug information; `samples/arena`, `samples/dungeon_crawler`; README, LICENSE, THIRD_PARTY_NOTICES.txt, CHANGELOG, SECURITY, RELEASE_NOTES.md; `docs/` (getting started, user guide, diagnostics, known limitations, platform support) |
+| `victus-X.Y.Z-<platform>.tar.gz` (Windows: `.zip`) | `bin/victus`, `bin/victus_editor`, `bin/victus_player` without debug information; `samples/arena`, `samples/dungeon_crawler`, `samples/platformer`; README, LICENSE, THIRD_PARTY_NOTICES.txt, CHANGELOG, SECURITY, RELEASE_NOTES.md; `docs/` (getting started, user guide, diagnostics, known limitations, platform support) |
 | `victus-X.Y.Z-<platform>-symbols.tar.gz` (Windows: `.zip`) | Linux: `.build-id/aa/rest.debug` (objcopy `--only-keep-debug`; the stripped binaries carry a `.gnu_debuglink`); macOS: `<exe>.dSYM`; Windows: `<exe>.pdb` |
 
 Plus `victus-X.Y.Z-sbom.cdx.json` (CycloneDX SBOM from `tools/deps/victus_deps.py sbom`) and `SHA256SUMS.txt` covering every file.

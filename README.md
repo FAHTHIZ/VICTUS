@@ -63,6 +63,7 @@ Template controls (a gamepad works too: left stick moves, A/South jumps, View/Ba
 Complete games made only with engine features; each is a normal project you can open in the editor or run with `victus run`, and each is played to the end headlessly by a CTest (`ctest -L samples`).
 
 - [`samples/dungeon_crawler`](samples/dungeon_crawler/README.md) — top-down 2D maze game: procedurally generated tilemap floors, autotiled walls with colliders, top-down character controller, gems, slimes and a HUD.
+- [`samples/platformer`](samples/platformer/README.md) — Ruin Runner, a side-view 2D platformer: three levels authored as ASCII maps, one-way planks, spikes, stompable beetles, checkpoints, lives and a HUD.
 - [`samples/arena`](samples/arena/README.md) — Robot Arena, a third-person 3D arena fight: five waves of robots chase you over the navmesh, melee combat, health pickups and a HUD.
 - `samples/render_showcase` — a C++ program that renders the 3D feature set for visual inspection.
 

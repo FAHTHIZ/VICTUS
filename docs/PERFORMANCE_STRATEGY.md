@@ -33,7 +33,7 @@ Use stable workloads, warm/cold cache cases, repeated runs and machine-readable 
 
 ## Performance budgets (CI gate)
 
-`victus_perf_budgets` (CTest labels `perf;gpu`, script `tests/perf/perf_budgets.cmake`, budgets `tests/perf/budgets.json`) runs every template (3d, 2d, simulation, multiplayer) and the arena and dungeon_crawler samples (`scenes/autoplay.vscene`) with `victus run --frames 120 --width 640 --height 360 --quality medium --no-hot-reload --profile`. It checks the last frame's counters from the `--profile` JSON against `[min, max]` ranges and fails on any regression:
+`victus_perf_budgets` (CTest labels `perf;gpu`, script `tests/perf/perf_budgets.cmake`, budgets `tests/perf/budgets.json`) runs every template (3d, 2d, simulation, multiplayer) and the arena, dungeon_crawler and platformer samples (`scenes/autoplay.vscene`) with `victus run --frames 120 --width 640 --height 360 --quality medium --no-hot-reload --profile`. It checks the last frame's counters from the `--profile` JSON against `[min, max]` ranges and fails on any regression:
 
 | Counter | Meaning |
 |---|---|

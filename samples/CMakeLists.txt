@@ -31,4 +31,17 @@ if(VICTUS_BUILD_TESTS)
             "-DEXPECT=Arena cleared!;Wave 5 / 5    Robots 0"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_sample_test.cmake)
     set_tests_properties(victus_sample_arena PROPERTIES LABELS samples TIMEOUT 300)
+
+    # Ruin Runner: the autoplay scene's hero runs and jumps through all three platformer levels.
+    add_test(NAME victus_sample_platformer
+        COMMAND ${CMAKE_COMMAND}
+            -DVICTUS=$<TARGET_FILE:victus_cli>
+            -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/platformer
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/sample_platformer
+            -DSCENE=scenes/autoplay.vscene
+            -DFRAMES=6000
+            -DSEED=1
+            "-DEXPECT=Ruins cleared!;Level 3 / 3    Coins [0-9]+    Lives 9[0-9]"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_sample_test.cmake)
+    set_tests_properties(victus_sample_platformer PROPERTIES LABELS samples TIMEOUT 300)
 endif()

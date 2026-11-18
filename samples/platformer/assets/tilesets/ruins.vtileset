@@ -1,0 +1,22 @@
+{
+  "format": "victus.tileset",
+  "version": 1,
+  "texture": "f857649e-aebc-4980-94b6-238dc921515b",
+  "columns": 4,
+  "rows": 4,
+  "collision": "none",
+  "tiles": {
+    "0": {
+      "collision": "solid"
+    },
+    "1": {
+      "collision": "solid"
+    },
+    "2": {
+      "collision": "solid"
+    },
+    "3": {
+      "collision": "one_way"
+    }
+  }
+}

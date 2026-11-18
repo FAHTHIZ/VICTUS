@@ -1,0 +1,63 @@
+{
+  "format": "victus.project",
+  "version": 1,
+  "name": "Ruin Runner",
+  "startup_scene": "scenes/main.vscene",
+  "engine_version": "0.2.0",
+  "window": {
+    "width": 1280,
+    "height": 720,
+    "vsync": true
+  },
+  "rendering": {
+    "quality": "medium"
+  },
+  "input": {
+    "actions": [
+      {
+        "name": "move_x",
+        "positive": [
+          "D",
+          "Right",
+          "Pad.LeftX+",
+          "Pad.DpadRight"
+        ],
+        "negative": [
+          "A",
+          "Left",
+          "Pad.LeftX-",
+          "Pad.DpadLeft"
+        ]
+      },
+      {
+        "name": "move_y",
+        "positive": [
+          "W",
+          "Up",
+          "Pad.LeftY-",
+          "Pad.DpadUp"
+        ],
+        "negative": [
+          "S",
+          "Down",
+          "Pad.LeftY+",
+          "Pad.DpadDown"
+        ]
+      },
+      {
+        "name": "jump",
+        "bindings": [
+          "Space",
+          "Pad.South"
+        ]
+      },
+      {
+        "name": "restart",
+        "bindings": [
+          "R",
+          "Pad.Start"
+        ]
+      }
+    ]
+  }
+}

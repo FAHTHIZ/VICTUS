@@ -133,7 +133,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 - [x] 2D physics, collision shapes, queries and debug visualization: Box2D 3.2.0 bodies, box/circle/capsule colliders, triggers, raycast/overlap queries, editor collider overlay (Slice 6); 2D character mover, one-way platforms and 2D joints (Slice 14).
 - [~] 2D animation, skeletal/rigged workflows where justified, particles and parallax. Done: particles (Slice 13), sprite sheets and `SpriteAnimator` clips (Slice 39). Remaining: parallax, rigged 2D.
 - [~] 2D UI, input, audio, scene transitions and 2D lighting/effects. Done: input, audio (Slice 7), in-game UI (Slice 15), scene transitions (`scene.load/reload`, Slice 38), 2D point/spot/ambient lights (Slice 78). Remaining: 2D shadows and normal-mapped sprites.
-- [~] 2D templates, profiling, export and playable reference game. Done: 2D template, `victus export`; Slice 43: `samples/dungeon_crawler` top-down maze game (procedural tilemap floors, top-down `CharacterController2D`, autopilot CTest). Remaining: 2D platformer sample, profiling tooling.
+- [~] 2D templates, profiling, export and playable reference game. Done: 2D template, `victus export`; Slice 43: `samples/dungeon_crawler` top-down maze game (procedural tilemap floors, top-down `CharacterController2D`, autopilot CTest); `samples/platformer` (Ruin Runner) side-view platformer with three ASCII-authored levels, one-way planks, spikes, stompable beetles, checkpoints and an autopilot CTest. Remaining: profiling tooling.
 **Exit:** build and ship a complete 2D game using only supported VICTUS workflows.
 
 ## Phase 8 — Complete 3D renderer and world systems
@@ -211,7 +211,7 @@ Legend: [x] verified · [~] in progress/partial · [ ] not started · [!] blocke
 **Exit:** documented, reproducible platform matrix with actual build, launch, input, rendering and package tests.
 
 ## Phase 15 — Reference projects and production readiness
-- [~] Complete 2D game demonstrating the 2D workflow. (`samples/dungeon_crawler`, Slice 43; no title flow, audio mix or external playtest yet.)
+- [~] Complete 2D game demonstrating the 2D workflow. (`samples/dungeon_crawler`, Slice 43; `samples/platformer`, 2026-11-18; no title flow, audio mix or external playtest yet.)
 - [~] Complete 3D gameplay game demonstrating rendering, gameplay, AI, audio, UI, saves and packaging. (`samples/arena`, Slice 53; enemies are script-driven, not behaviour trees; no title menu.)
 - [ ] Complete simulation project demonstrating large populations, simulation LOD, persistence and headless mode.
 - [~] Optional multiplayer sample demonstrating dedicated server and network diagnostics. (Multiplayer template, Slices 17-31; loopback only.)
