@@ -34,6 +34,10 @@ On a headless Linux machine use `SDL_VIDEO_DRIVER=offscreen` and install Mesa's 
 
 Suppress a clang-tidy finding only with `// NOLINT(check-name): reason` on the line, and only when the code is correct; prefer fixing it. Disabling a check globally needs a comment in `.clang-tidy`.
 
+## Updating GitHub Actions
+
+The owner takes changes directly on `main`, so automated update pull requests (Dependabot) are not used. Review the action versions in `.github/workflows/` by hand when GitHub announces a runtime deprecation, and verify the bump in a CI run.
+
 ## Adding a dependency
 
 Follow [THIRD_PARTY_AND_LICENSES.md](docs/THIRD_PARTY_AND_LICENSES.md): justify it against writing the code, check the licence, pin a release archive by SHA-256 in `cmake/`, record it in `tools/deps/dependencies.json` and the licence register, and run `victus_deps.py check`. Never copy proprietary engine code or assets.

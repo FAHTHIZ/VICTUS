@@ -1,8 +1,0 @@
-# Keeps the GitHub Actions used by CI current. C/C++ dependencies are pinned in
-# cmake/VictusDependencies.cmake and checked by tools/deps/victus_deps.py (CI job "dependencies").
-version: 2
-updates:
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
