@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
     if (!r) {
         std::fprintf(stderr, "victus_player: %s\n", r.error().message.c_str());
         // Exported games usually have no console: show fatal device errors in a dialog too.
-        if (r.error().code == victus::ErrorCode::DeviceError) victus::platform::show_error_dialog("VICTUS", r.error().message);
+        if (r.error().code == victus::ErrorCode::DeviceError) (void)victus::platform::Platform::show_error_box("VICTUS", r.error().message);
         return r.error().code == victus::ErrorCode::DeviceError ? 3 : 1;
     }
     return 0;
