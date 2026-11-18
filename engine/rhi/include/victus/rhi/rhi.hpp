@@ -252,6 +252,23 @@ struct DeviceStats {
     std::uint32_t live_compute_pipelines{0};
 };
 
+// GPU failure tracking. SDL_GPU 3.4 has no device-lost notification, so the device counts
+// failed command-buffer acquisitions, swapchain acquisitions and submissions. A run of
+// kDeviceLostAfterFailures consecutive failures of one kind marks the device lost: the driver
+// was reset, the GPU removed or the swapchain is permanently gone. Callers check lost() once per
+// frame and shut down cleanly (the editor autosaves first) instead of spinning or crashing.
+enum class GpuFailure : std::uint8_t { None, CommandBuffer, Swapchain, Submit };
+[[nodiscard]] const char* to_string(GpuFailure f) noexcept;
+inline constexpr std::uint32_t kDeviceLostAfterFailures = 30; // about half a second at 60 Hz
+
+struct DeviceHealth {
+    std::uint64_t failures{0};              // every failed operation this session
+    std::uint32_t consecutive[4]{};         // per GpuFailure kind, reset by that kind's next success
+    GpuFailure last_failure{GpuFailure::None};
+    std::string last_error;                 // SDL's message for the last failure
+    bool lost{false};
+};
+
 class Device;
 class CommandBuffer;
 
@@ -355,6 +372,14 @@ public:
 
     [[nodiscard]] const DeviceCapabilities& capabilities() const noexcept { return caps_; }
     [[nodiscard]] const DeviceStats& stats() const noexcept { return stats_; }
+    [[nodiscard]] const DeviceHealth& health() const noexcept { return health_; }
+    [[nodiscard]] bool lost() const noexcept { return health_.lost; }
+    // "GPU device lost: <operation> failed N times in a row (<SDL error>)"; empty while healthy.
+    [[nodiscard]] std::string lost_reason() const;
+    // Fault injection for tests: from frame `after_frames` on (frames_submitted), every operation
+    // of kind `kind` fails as a driver error would. GpuFailure::None turns injection off. Device
+    // creation also reads VICTUS_GPU_FAIL=<commandbuffer|swapchain|submit>[@frames].
+    void inject_failure(GpuFailure kind, std::uint64_t after_frames = 0) noexcept;
 
     [[nodiscard]] Status attach_window(platform::Window& window, PresentMode mode = PresentMode::VSync);
     void detach_window(platform::Window& window);
@@ -401,8 +426,15 @@ private:
     friend class ComputePass;
     void* device_{nullptr};
     std::unique_ptr<Impl> impl_;
+    // Returns true when an injected failure of `kind` applies now.
+    [[nodiscard]] bool injected(GpuFailure kind) const noexcept;
+    void record_failure(GpuFailure kind, const char* error);
+    void record_success(GpuFailure kind) noexcept;
     DeviceCapabilities caps_;
     DeviceStats stats_;
+    DeviceHealth health_;
+    GpuFailure inject_kind_{GpuFailure::None};
+    std::uint64_t inject_after_{0};
 };
 
 } // namespace victus::rhi

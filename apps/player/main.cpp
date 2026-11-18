@@ -3,6 +3,7 @@
 // the command line, or the `game/` folder next to the executable when none is given.
 #include "victus/core/cli.hpp"
 #include "victus/core/fs.hpp"
+#include "victus/platform/platform.hpp"
 #include "victus/player/player.hpp"
 
 #include <cstdio>
@@ -48,6 +49,11 @@ int main(int argc, char** argv) {
     o.host_key = p.get("key");
     o.saves = p.get("saves");
     auto r = victus::player::run(o);
-    if (!r) return std::fprintf(stderr, "victus_player: %s\n", r.error().message.c_str()), 1;
+    if (!r) {
+        std::fprintf(stderr, "victus_player: %s\n", r.error().message.c_str());
+        // Exported games usually have no console: show fatal device errors in a dialog too.
+        if (r.error().code == victus::ErrorCode::DeviceError) victus::platform::show_error_dialog("VICTUS", r.error().message);
+        return r.error().code == victus::ErrorCode::DeviceError ? 3 : 1;
+    }
     return 0;
 }

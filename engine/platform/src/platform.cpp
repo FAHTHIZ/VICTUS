@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <string_view>
 
 #include <cstring>
 #include <format>
@@ -177,6 +178,14 @@ Platform::~Platform() {
 const char* Platform::video_driver() const noexcept {
     const char* d = desc_.video ? SDL_GetCurrentVideoDriver() : nullptr;
     return d ? d : "none";
+}
+
+void show_error_dialog(const std::string& title, const std::string& message) {
+    if (const char* off = SDL_getenv("VICTUS_NO_DIALOGS"); off && *off && std::string_view(off) != "0") return;
+    for (const char* driver : {SDL_GetCurrentVideoDriver(), static_cast<const char*>(SDL_getenv("SDL_VIDEO_DRIVER"))})
+        if (driver && (std::string_view(driver) == "offscreen" || std::string_view(driver) == "dummy")) return;
+    if (!SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), message.c_str(), nullptr))
+        VICTUS_LOG_WARN("platform", "error dialog unavailable: {}", SDL_GetError());
 }
 
 double Platform::seconds() noexcept { return static_cast<double>(SDL_GetTicksNS()) * 1e-9; }

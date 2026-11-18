@@ -30,6 +30,16 @@ int fail(const char* what, const Error& e) {
     std::fprintf(stderr, "victus_editor: %s: %s\n", what, e.message.c_str());
     return 1;
 }
+
+// The GPU device stopped working (see rhi::DeviceHealth): keep the user's unsaved edits in the
+// autosave slot, which the next session offers to recover, and exit instead of spinning.
+int device_lost(editor::Editor& ed, const rhi::Device& dev) {
+    const std::string reason = dev.lost_reason();
+    const std::string saved = ed.save_for_fatal_error(reason);
+    std::fprintf(stderr, "victus_editor: %s; %s\n", reason.c_str(), saved.c_str());
+    platform::show_error_dialog("VICTUS Editor", reason + "\n\n" + saved + ".");
+    return 3;
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -171,6 +181,10 @@ int main(int argc, char** argv) {
             // Minimised: still finish the UI frame so ImGui state stays consistent.
             (void)ui.value()->prepare(cmd);
             cmd.submit();
+            if (dev.lost()) {
+                exit_code = device_lost(ed, dev);
+                break;
+            }
             continue;
         }
         if (!frame || fw != sw || fh != sh) {
@@ -191,6 +205,10 @@ int main(int argc, char** argv) {
         const bool last_frame = max_frames && n + 1 >= max_frames;
         if (last_frame) cmd.submit_and_wait();
         else cmd.submit();
+        if (dev.lost()) {
+            exit_code = device_lost(ed, dev);
+            break;
+        }
         if (last_frame) {
             if (const std::string path = args.get("screenshot"); !path.empty()) {
                 auto px = dev.read_texture(frame);
