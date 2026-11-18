@@ -135,6 +135,9 @@ std::vector<NodeDesc> build_library() {
     stmt("anim.set_layer_weight", "Animation", "Set Anim Layer Weight",
          {self_entity, make_pin("layer", T::String, "UpperBody"), make_pin("weight", T::Number, 1)}, {},
          "{entity}:set_anim_layer_weight({layer}, {weight})", "Sets a controller layer's weight (0..1)");
+    stmt("anim.set_morph_weight", "Animation", "Set Morph Weight",
+         {self_entity, make_pin("target", T::String, "Smile"), make_pin("weight", T::Number, 1)}, {},
+         "{entity}:set_morph_weight({target}, {weight})", "Sets a morph target (blend shape) weight on the entity's mesh");
     stmt("anim.set_ik_target", "Animation", "Set IK Target", {self_entity, make_pin("target", T::Vector, vec(0, 0, 0)), make_pin("weight", T::Number, 1)},
          {}, "{entity}:set_ik_target({target}, {weight})", "Points the entity's IKConstraint at a world position");
 

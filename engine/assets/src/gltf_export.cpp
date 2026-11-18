@@ -19,6 +19,12 @@ namespace {
 constexpr int kFloat = 5126, kUShort = 5123, kUInt = 5125;
 constexpr int kArrayBuffer = 34962, kElementArrayBuffer = 34963;
 
+json::Value floats(const std::vector<float>& v) {
+    json::Value a = json::Value::array();
+    for (const float f : v) a.push(f);
+    return a;
+}
+
 json::Value floats(std::initializer_list<float> v) {
     json::Value a = json::Value::array();
     for (const float f : v) a.push(f);
@@ -57,13 +63,17 @@ public:
     std::uint32_t float_accessor(const std::vector<float>& values, const char* type, bool with_range = false) {
         const std::uint32_t v = view(values.data(), values.size() * sizeof(float), 0);
         json::Value mn, mx;
-        if (with_range && !values.empty()) {
-            float lo = values[0], hi = values[0];
-            for (const float f : values) lo = std::min(lo, f), hi = std::max(hi, f);
-            mn = floats({lo});
-            mx = floats({hi});
-        }
         const std::size_t comps = std::strcmp(type, "SCALAR") == 0 ? 1 : std::strcmp(type, "VEC3") == 0 ? 3 : std::strcmp(type, "VEC4") == 0 ? 4 : 16;
+        if (with_range && values.size() >= comps) {
+            // Per-component bounds (glTF requires them on POSITION, including morph targets).
+            std::vector<float> lo(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(comps)), hi = lo;
+            for (std::size_t i = 0; i < values.size(); ++i) {
+                lo[i % comps] = std::min(lo[i % comps], values[i]);
+                hi[i % comps] = std::max(hi[i % comps], values[i]);
+            }
+            mn = floats(lo);
+            mx = floats(hi);
+        }
         return accessor(v, 0, kFloat, values.size() / comps, type, std::move(mn), std::move(mx));
     }
     json::Value finish(json::Value doc) {
@@ -128,6 +138,24 @@ json::Value primitive(Writer& w, const ModelMesh& mesh) {
     const std::uint32_t iv = w.view(idx.data(), idx.size() * sizeof(std::uint32_t), kElementArrayBuffer);
     json::Value p = json::Value::object();
     p.set("attributes", std::move(attrs));
+    if (!mesh.data.morphs.empty()) {
+        // Dense deltas (glTF targets index every vertex); sparse storage is ours only.
+        json::Value targets = json::Value::array();
+        for (const render::MorphTarget& t : mesh.data.morphs) {
+            std::vector<float> dp(verts.size() * 3, 0.0f), dn;
+            if (!t.normals.empty()) dn.assign(verts.size() * 3, 0.0f);
+            for (std::size_t k = 0; k < t.vertices.size(); ++k) {
+                const std::size_t v = t.vertices[k];
+                dp[v * 3] = t.positions[k].x, dp[v * 3 + 1] = t.positions[k].y, dp[v * 3 + 2] = t.positions[k].z;
+                if (!dn.empty()) dn[v * 3] = t.normals[k].x, dn[v * 3 + 1] = t.normals[k].y, dn[v * 3 + 2] = t.normals[k].z;
+            }
+            json::Value target = json::Value::object();
+            target.set("POSITION", w.float_accessor(dp, "VEC3", true));
+            if (!dn.empty()) target.set("NORMAL", w.float_accessor(dn, "VEC3"));
+            targets.push(std::move(target));
+        }
+        p.set("targets", std::move(targets));
+    }
     p.set("indices", w.accessor(iv, 0, kUInt, idx.size(), "SCALAR"));
     p.set("material", mesh.material);
     return p;
@@ -137,6 +165,7 @@ const char* path_name(animation::Path p) {
     switch (p) {
     case animation::Path::Translation: return "translation";
     case animation::Path::Rotation: return "rotation";
+    case animation::Path::Weights: return "weights";
     default: return "scale";
     }
 }
@@ -191,6 +220,19 @@ Result<std::string> export_gltf_json(const CookedModel& model) {
         json::Value list = json::Value::array();
         for (const std::uint32_t mi : n.meshes) list.push(prims[mi]);
         mesh.set("primitives", std::move(list));
+        for (const std::uint32_t mi : n.meshes) {
+            const render::MeshData& d = model.meshes[mi].data;
+            if (d.morphs.empty()) continue;
+            std::vector<float> weights = d.morph_weights;
+            weights.resize(d.morphs.size(), 0.0f);
+            mesh.set("weights", floats(weights));
+            json::Value names = json::Value::array();
+            for (const auto& t : d.morphs) names.push(t.name);
+            json::Value extras = json::Value::object();
+            extras.set("targetNames", std::move(names)); // de facto convention read by cgltf and Blender
+            mesh.set("extras", std::move(extras));
+            break;
+        }
         mesh_of[n.meshes] = static_cast<std::uint32_t>(meshes.size());
         meshes.push(std::move(mesh));
     }
@@ -213,6 +255,7 @@ Result<std::string> export_gltf_json(const CookedModel& model) {
         node.set("scale", floats({n.scale.x, n.scale.y, n.scale.z}));
         if (!n.meshes.empty()) node.set("mesh", mesh_of[n.meshes]);
         if (n.skin >= 0) node.set("skin", n.skin);
+        if (!n.morph_weights.empty()) node.set("weights", floats(n.morph_weights));
         if (children[i].size()) node.set("children", std::move(children[i]));
         nodes.push(std::move(node));
     }
@@ -247,7 +290,9 @@ Result<std::string> export_gltf_json(const CookedModel& model) {
             for (const animation::Channel& ch : clip.channels) {
                 json::Value sampler = json::Value::object();
                 sampler.set("input", w.float_accessor(ch.times, "SCALAR", true));
-                sampler.set("output", w.float_accessor(ch.values, ch.path == animation::Path::Rotation ? "VEC4" : "VEC3"));
+                sampler.set("output", w.float_accessor(ch.values, ch.path == animation::Path::Rotation  ? "VEC4"
+                                                                    : ch.path == animation::Path::Weights ? "SCALAR"
+                                                                                                          : "VEC3"));
                 sampler.set("interpolation", interpolation_name(ch.interpolation));
                 json::Value target = json::Value::object();
                 target.set("node", ch.node);

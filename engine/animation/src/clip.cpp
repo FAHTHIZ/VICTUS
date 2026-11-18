@@ -21,6 +21,9 @@ Status validate(const Clip& clip, std::size_t node_count) {
         const auto where = [&] { return std::format("clip '{}' channel {}", clip.name, ci); };
         if (ch.node >= node_count) return make_error(ErrorCode::InvalidArgument, where() + ": node index out of range");
         if (ch.times.empty()) return make_error(ErrorCode::InvalidArgument, where() + ": no keys");
+        if (ch.path > Path::Weights) return make_error(ErrorCode::InvalidArgument, where() + ": unknown path");
+        if (ch.path == Path::Weights && (ch.width == 0 || ch.width > 256))
+            return make_error(ErrorCode::InvalidArgument, where() + ": morph weight channel needs 1..256 targets");
         const std::size_t per_key = ch.components() * (ch.interpolation == Interpolation::CubicSpline ? 3u : 1u);
         if (ch.values.size() != ch.times.size() * per_key)
             return make_error(ErrorCode::InvalidArgument, where() + ": value count does not match key count");
@@ -34,6 +37,49 @@ Status validate(const Clip& clip, std::size_t node_count) {
     if (!std::isfinite(clip.duration) || clip.duration < 0.0f)
         return make_error(ErrorCode::InvalidArgument, std::format("clip '{}': invalid duration", clip.name));
     return {};
+}
+
+void expand_morph_weights(AnimationSet& set, std::span<const MorphNode> morphs) {
+    // First weight node of each morphing node, and its target count.
+    std::vector<std::int32_t> first(set.nodes.size(), -1);
+    std::vector<std::uint32_t> count(set.nodes.size(), 0);
+    for (const MorphNode& m : morphs) {
+        if (m.node >= first.size() || first[m.node] >= 0 || m.names.empty()) continue;
+        first[m.node] = static_cast<std::int32_t>(set.nodes.size());
+        count[m.node] = static_cast<std::uint32_t>(m.names.size());
+        const std::string base = set.nodes[m.node].name;
+        for (std::size_t t = 0; t < m.names.size(); ++t) {
+            AnimationSet::Node n;
+            n.name = base + "/" + m.names[t];
+            n.parent = static_cast<std::int32_t>(m.node);
+            n.rest.translation = {t < m.defaults.size() ? m.defaults[t] : 0.0f, 0, 0};
+            n.morph_node = static_cast<std::int32_t>(m.node);
+            n.morph_index = static_cast<std::uint32_t>(t);
+            set.nodes.push_back(std::move(n));
+        }
+    }
+    for (Clip& clip : set.clips) {
+        std::vector<Channel> out;
+        out.reserve(clip.channels.size());
+        for (Channel& ch : clip.channels) {
+            if (ch.path != Path::Weights) {
+                out.push_back(std::move(ch));
+                continue;
+            }
+            if (ch.node >= first.size() || first[ch.node] < 0 || ch.width == 0 || ch.width > count[ch.node]) continue;
+            const std::size_t per = ch.interpolation == Interpolation::CubicSpline ? 3 : 1;
+            const std::size_t keys = ch.times.size();
+            if (ch.values.size() != keys * per * ch.width) continue;
+            for (std::uint32_t t = 0; t < ch.width; ++t) {
+                Channel w{.node = static_cast<std::uint32_t>(first[ch.node]) + t, .path = Path::Translation,
+                          .interpolation = ch.interpolation, .times = ch.times, .values = {}, .width = 0};
+                w.values.reserve(keys * per * 3);
+                for (std::size_t k = 0; k < keys * per; ++k) w.values.insert(w.values.end(), {ch.values[k * ch.width + t], 0.0f, 0.0f});
+                out.push_back(std::move(w));
+            }
+        }
+        clip.channels = std::move(out);
+    }
 }
 
 float wrap_time(float time, float duration, bool loop) noexcept {
@@ -124,6 +170,7 @@ void sample(const Clip& clip, float time, std::span<NodePose> pose) noexcept {
         case Path::Translation: p.translation = sample_vec3(ch, t); break;
         case Path::Rotation: p.rotation = sample_quat(ch, t); break;
         case Path::Scale: p.scale = sample_vec3(ch, t); break;
+        case Path::Weights: break; // expanded into weight nodes by expand_morph_weights
         }
     }
 }

@@ -294,6 +294,34 @@ Status GpuContext::update_mesh(GpuMesh& mesh, const MeshData& data, std::string_
     return {};
 }
 
+Result<GpuMesh> GpuContext::create_vertex_variant(const GpuMesh& base, std::span<const Vertex3D> vertices, std::string_view name) {
+    if (!base.valid() || vertices.size() != base.vertex_count)
+        return make_error(ErrorCode::InvalidArgument, std::format("vertex variant '{}' does not match its base mesh", name));
+    auto vb = device_.create_buffer({std::format("{}_vb", name), static_cast<std::uint32_t>(vertices.size_bytes()), rhi::BufferUsageVertex});
+    if (!vb) return std::move(vb).error();
+    GpuMesh g = base;
+    g.vertices = vb.value();
+    g.vertex_capacity = base.vertex_count;
+    auto cmd = device_.begin_commands();
+    cmd.upload_buffer(g.vertices, 0, {reinterpret_cast<const std::uint8_t*>(vertices.data()), vertices.size_bytes()});
+    cmd.submit();
+    return g;
+}
+
+Status GpuContext::update_vertex_variant(GpuMesh& variant, std::span<const Vertex3D> vertices) {
+    if (!variant.valid() || vertices.size() != variant.vertex_count)
+        return make_error(ErrorCode::InvalidArgument, "vertex variant size mismatch");
+    auto cmd = device_.begin_commands();
+    cmd.upload_buffer(variant.vertices, 0, {reinterpret_cast<const std::uint8_t*>(vertices.data()), vertices.size_bytes()}, true);
+    cmd.submit();
+    return {};
+}
+
+void GpuContext::destroy_vertex_variant(GpuMesh& variant) {
+    if (variant.vertices) device_.destroy(variant.vertices);
+    variant = {};
+}
+
 void GpuContext::destroy(GpuMesh& mesh) {
     if (mesh.vertices) device_.destroy(mesh.vertices);
     if (mesh.indices) device_.destroy(mesh.indices);

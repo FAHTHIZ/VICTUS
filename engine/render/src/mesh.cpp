@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <utility>
 
 namespace victus::render {
@@ -75,6 +76,60 @@ void MeshData::append(const MeshData& other, const Mat4& transform) {
     }
     for (auto i : other.indices) indices.push_back(base + i);
     lods.clear();
+    morphs.clear();
+    morph_weights.clear();
+}
+
+std::string validate_morphs(const MeshData& mesh) {
+    if (mesh.morphs.size() > kMaxMorphTargets) return std::format("{} morph targets (at most {})", mesh.morphs.size(), kMaxMorphTargets);
+    if (!mesh.morph_weights.empty() && mesh.morph_weights.size() != mesh.morphs.size())
+        return std::format("{} default morph weights for {} targets", mesh.morph_weights.size(), mesh.morphs.size());
+    for (const float w : mesh.morph_weights)
+        if (!std::isfinite(w)) return "non-finite default morph weight";
+    for (const MorphTarget& t : mesh.morphs) {
+        if (t.positions.size() != t.vertices.size() || (!t.normals.empty() && t.normals.size() != t.vertices.size()))
+            return std::format("morph target '{}' delta count mismatch", t.name);
+        for (std::size_t i = 0; i < t.vertices.size(); ++i) {
+            if (t.vertices[i] >= mesh.vertices.size()) return std::format("morph target '{}' vertex out of range", t.name);
+            if (i > 0 && t.vertices[i] <= t.vertices[i - 1]) return std::format("morph target '{}' vertices not ascending", t.name);
+            const Vec3 p = t.positions[i];
+            if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) return std::format("morph target '{}' non-finite delta", t.name);
+            if (!t.normals.empty()) {
+                const Vec3 n = t.normals[i];
+                if (!std::isfinite(n.x) || !std::isfinite(n.y) || !std::isfinite(n.z))
+                    return std::format("morph target '{}' non-finite normal delta", t.name);
+            }
+        }
+    }
+    return {};
+}
+
+bool apply_morphs(const MeshData& mesh, std::span<const float> weights, std::vector<Vertex3D>& out) {
+    out.assign(mesh.vertices.begin(), mesh.vertices.end());
+    bool any = false, normals = false;
+    const std::size_t n = std::min(weights.size(), mesh.morphs.size());
+    for (std::size_t t = 0; t < n; ++t) {
+        const float w = weights[t];
+        if (w == 0.0f || !std::isfinite(w)) continue;
+        const MorphTarget& m = mesh.morphs[t];
+        any = true;
+        for (std::size_t i = 0; i < m.vertices.size(); ++i) {
+            const std::uint32_t v = m.vertices[i];
+            if (v >= out.size()) continue;
+            out[v].position += m.positions[i] * w;
+            if (!m.normals.empty()) out[v].normal += m.normals[i] * w;
+        }
+        normals = normals || !m.normals.empty();
+    }
+    if (!any || !normals) return any;
+    for (Vertex3D& v : out) {
+        const float len = length(v.normal);
+        v.normal = len > 1e-8f ? v.normal / len : Vec3{0, 1, 0};
+        const Vec3 t = v.tangent.xyz() - v.normal * dot(v.normal, v.tangent.xyz());
+        const float tl = length(t);
+        if (tl > 1e-8f) v.tangent = Vec4(t / tl, v.tangent.w);
+    }
+    return true;
 }
 
 void compute_normals(MeshData& mesh) {

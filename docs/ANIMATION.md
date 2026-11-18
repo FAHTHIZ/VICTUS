@@ -203,6 +203,24 @@ Bones are matched by name: exact names first, then names compared without a name
 
 Rest poses should be similar (both T-pose or both A-pose); there is no automatic pose correction, no IK for foot contact (add an `IKConstraint`) and no bone-map editor yet. `victus check` warns when no bone of the clip source matches the model. C++: `victus/animation/retarget.hpp` (`map_bones`, `retarget_clip`, `retarget_set`, `RetargetOptions::bone_map` for explicit mappings).
 
+## Morph targets
+
+glTF morph targets (blend shapes) import with their names (`mesh.extras.targetNames`, else `target0`, `target1`, …), default weights (`mesh.weights`, overridden per node by `node.weights`) and `weights` animation channels (ADR-0076). Position and normal deltas are applied; tangent deltas are ignored.
+
+Animated weights blend like bones: each target becomes a weight node named `<node>/<target>` under its mesh node, so cross-fades, blend spaces, override and additive layers, and masks that include the mesh node all mix morph weights too. The Animator writes them into a `MorphWeights` component on the mesh node's entity. Weights are not clamped (glTF allows negative and above-1 values).
+
+Set weights from code by name or index — they persist until an animation that animates that target overwrites them:
+
+```lua
+local face = scene.find("Head")
+print(table.concat(face:morph_targets(), ", "))  -- "Smile, Blink, JawOpen"
+face:set_morph_weight("Smile", 0.8)
+face:set_morph_weight(2, 1.0)                    -- 1-based index: Blink
+local open = face:morph_weight("JawOpen")         -- number, or nil for an unknown target
+```
+
+Visual scripts: Set Morph Weight. C++: `AnimationSystem::morph_targets`, `set_morph_weight`, `morph_weight` (0-based index or name), `render::apply_morphs`. Morphing runs on the CPU for each entity whose weights are not all zero and uploads a new vertex copy only when the weights change; keep morphing to faces and hero props rather than crowds (see KNOWN_LIMITATIONS).
+
 ## Editor
 
 Window > Animation opens the Animation window for the selected entity's Animator. It shows the controller path, the states (the current one highlighted with its normalized time; click one to enter it), the previous state and fade progress during a cross-fade, the current clip weights as bars (missing clips flagged) and a control per parameter: float sliders spanning the blend thresholds, int drags, bool checkboxes and trigger buttons. Preview runs the controller on the edit scene through `AnimationSystem::update_entity`; Pause and Restart control it, End Preview restores the Animator and the skeleton transforms. A preview is ended (and restored) before saving, autosave skips while one runs, and play mode, scene switches and closing the project end it. Root-motion states are tagged `[root motion]`, and the window shows the root node and how far it moves per frame. Controller edits hot reload into the preview. `victus_editor <project> --select <entity> --show animation-preview` opens it from the command line.

@@ -288,6 +288,12 @@ No third-party code was added.
 - efsw — https://github.com/SpartanJ/efsw (MIT): file watcher over inotify, FSEvents/kqueue, Windows I/O completion ports (ReadDirectoryChangesExW/W) with a generic polling fallback. Not adopted for now (ADR-0022); the candidate if polling becomes too slow.
 - Open questions: debounce for editors that write via temporary files, font atlas rebuilds for font reload, scene reload policy (merge vs restart).
 
+## Research conclusions added 2026-11-18 (morph targets, ADR-0076)
+- Khronos glTF 2.0 specification, 3.7.2.2 Morph Targets — https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html: attributes are the base plus the weighted sum of target deltas; `mesh.weights` are defaults that `node.weights` overrides; all primitives of a mesh share the weights; names are not specified, most tools use `mesh.extras.targetNames`. VICTUS follows all of these (names fall back to `target<N>`).
+- Unity SkinnedMeshRenderer.SetBlendShapeWeight — https://docs.unity3d.com/6/Documentation/ScriptReference/SkinnedMeshRenderer.SetBlendShapeWeight.html: weights set per renderer by index. VICTUS offers index and name, per entity.
+- Godot MeshInstance3D — https://docs.godotengine.org/en/4.1/classes/class_meshinstance3d.html: blend shape values set per instance by index, with a name lookup. Same model as VICTUS.
+- Open questions: GPU morphing (compute pre-pass or vertex-shader target buffers) for crowds, tangent deltas, motion vectors from the previous morphed shape, saving script-set weights.
+
 ## Research conclusions added 2026-11-18 (retargeting, ADR-0075)
 - Unity, Retarget Humanoid animations — https://docs.unity3d.com/6/Documentation/Manual/Retargeting.html: retargeting is only possible for humanoid models with a configured Avatar, which gives the correspondence between bone structures. VICTUS maps bones by name for any rig instead, without an avatar step.
 - Unreal Engine, IK Rig Retargeting — https://dev.epicgames.com/documentation/en-us/unreal-engine/ik-rig-animation-retargeting-in-unreal-engine?application_version=5.2: transfers animation between skeletons with different bone counts, names and orientations, optionally keeping hand and foot contacts with IK. VICTUS handles different names and orientations; contact preservation is left to IKConstraint.

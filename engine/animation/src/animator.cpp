@@ -148,8 +148,8 @@ void bind_state(Scene& scene, AnimatorState& s, Entity owner) {
     s.scene_size = scene.size();
     s.bindings = s.set ? bind_nodes(scene, owner, s.set->nodes) : std::vector<Entity>{};
     s.bound = 0;
-    for (const Entity e : s.bindings)
-        if (e != Entity{}) ++s.bound;
+    for (std::size_t i = 0; i < s.bindings.size(); ++i)
+        if (s.bindings[i] != Entity{} || s.set->nodes[i].is_morph()) ++s.bound; // weight nodes never bind
 }
 
 void mark_animated(AnimatorState& s) {
@@ -635,7 +635,19 @@ void write_pose(Scene& scene, Work& w) {
     AnimatorState& s = *w.s;
     const std::size_t n = std::min({s.pose.size(), s.animated.size(), s.bindings.size()});
     for (std::size_t i = 0; i < n; ++i) {
-        if (!s.animated[i] || s.bindings[i] == Entity{}) continue;
+        if (!s.animated[i]) continue;
+        if (s.bindings[i] == Entity{}) {
+            // Weight nodes write the morph weight of the entity bound to their mesh node.
+            const AnimationSet::Node& node = s.set->nodes[i];
+            if (!node.is_morph() || static_cast<std::size_t>(node.morph_node) >= s.bindings.size()) continue;
+            const Entity me = s.bindings[static_cast<std::size_t>(node.morph_node)];
+            auto* mw = me != Entity{} ? scene.world().get<MorphWeightsComponent>(me) : nullptr;
+            if (!mw) continue;
+            if (mw->weights.size() <= node.morph_index) mw->weights.resize(node.morph_index + 1u, 0.0f);
+            mw->weights[node.morph_index] = s.pose[i].translation.x;
+            ++w.written;
+            continue;
+        }
         auto* t = scene.world().get<scene::Transform>(s.bindings[i]);
         if (!t) continue;
         t->position = s.pose[i].translation;
@@ -842,12 +854,35 @@ void evaluate(Scene& scene, Work& w, float dt) {
     write_pose(scene, w);
 }
 
+// Adds MorphWeights (rest weights) to bound mesh entities of weight nodes that lack it. True
+// when anything was added.
+bool add_morph_components(Scene& scene, std::span<const Work> work) {
+    std::vector<std::pair<Entity, std::vector<float>>> add;
+    for (const Work& w : work) {
+        const AnimatorState& s = *w.s;
+        if (!s.set) continue;
+        for (std::size_t i = 0; i < s.set->nodes.size(); ++i) {
+            const AnimationSet::Node& n = s.set->nodes[i];
+            if (!n.is_morph() || static_cast<std::size_t>(n.morph_node) >= s.bindings.size()) continue;
+            const Entity me = s.bindings[static_cast<std::size_t>(n.morph_node)];
+            if (me == Entity{} || scene.world().has<MorphWeightsComponent>(me)) continue;
+            auto it = std::find_if(add.begin(), add.end(), [&](const auto& p) { return p.first == me; });
+            if (it == add.end()) it = add.insert(add.end(), {me, {}});
+            if (it->second.size() <= n.morph_index) it->second.resize(n.morph_index + 1u, 0.0f);
+            it->second[n.morph_index] = n.rest.translation.x;
+        }
+    }
+    for (auto& [e, weights] : add) scene.world().add<MorphWeightsComponent>(e).weights = std::move(weights);
+    return !add.empty();
+}
+
 } // namespace
 
 std::vector<Entity> bind_nodes(Scene& scene, Entity root, std::span<const AnimationSet::Node> nodes) {
     std::vector<Entity> out(nodes.size());
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         const auto& node = nodes[i];
+        if (node.is_morph()) continue; // weight nodes have no entity
         Entity e;
         const bool parent_known = node.parent >= 0 && static_cast<std::size_t>(node.parent) < i;
         const Entity parent = node.parent < 0 ? root : (parent_known ? out[static_cast<std::size_t>(node.parent)] : Entity{});
@@ -1038,6 +1073,68 @@ void AnimationSystem::clear_cache() {
 }
 std::shared_ptr<const AnimationSet> AnimationSystem::set(const Uuid& model) { return impl_->resolve(model); }
 
+namespace {
+// Morph targets of the mesh `e` addresses (own MeshRenderer, else the first child's with targets).
+const AnimationSet::MeshMorphs* morphs_of(Scene& scene, Entity e, const std::function<std::shared_ptr<const AnimationSet>(const Uuid&)>& resolve,
+                                          std::shared_ptr<const AnimationSet>& keep) {
+    const auto lookup = [&](Entity x) -> const AnimationSet::MeshMorphs* {
+        const auto* mr = scene.world().get<scene::MeshRendererComponent>(x);
+        if (!mr || mr->mesh_asset.is_nil()) return nullptr;
+        auto set = resolve(mr->mesh_asset);
+        if (!set || mr->mesh_index >= set->mesh_morphs.size() || set->mesh_morphs[mr->mesh_index].names.empty()) return nullptr;
+        keep = std::move(set);
+        return &keep->mesh_morphs[mr->mesh_index];
+    };
+    if (!scene.world().alive(e)) return nullptr;
+    if (const auto* m = lookup(e)) return m;
+    for (const Entity c : scene.children(e))
+        if (const auto* m = lookup(c)) return m;
+    return nullptr;
+}
+} // namespace
+
+std::vector<std::string> AnimationSystem::morph_targets(Scene& scene, Entity e) {
+    std::shared_ptr<const AnimationSet> keep;
+    const auto* m = morphs_of(scene, e, [&](const Uuid& u) { return impl_->resolve(u); }, keep);
+    return m ? m->names : std::vector<std::string>{};
+}
+
+bool AnimationSystem::set_morph_weight(Scene& scene, Entity e, std::size_t target, float weight) {
+    std::shared_ptr<const AnimationSet> keep;
+    const auto* m = morphs_of(scene, e, [&](const Uuid& u) { return impl_->resolve(u); }, keep);
+    if (!m || target >= m->names.size() || !std::isfinite(weight)) return false;
+    auto* mw = scene.world().get<MorphWeightsComponent>(e);
+    if (!mw) {
+        mw = &scene.world().add<MorphWeightsComponent>(e);
+        mw->weights = m->defaults;
+    }
+    if (mw->weights.size() < m->names.size()) mw->weights.resize(m->names.size(), 0.0f);
+    mw->weights[target] = weight;
+    return true;
+}
+
+bool AnimationSystem::set_morph_weight(Scene& scene, Entity e, std::string_view target, float weight) {
+    const std::vector<std::string> names = morph_targets(scene, e);
+    const auto it = std::find(names.begin(), names.end(), target);
+    return it != names.end() && set_morph_weight(scene, e, static_cast<std::size_t>(it - names.begin()), weight);
+}
+
+std::optional<float> AnimationSystem::morph_weight(Scene& scene, Entity e, std::size_t target) {
+    std::shared_ptr<const AnimationSet> keep;
+    const auto* m = morphs_of(scene, e, [&](const Uuid& u) { return impl_->resolve(u); }, keep);
+    if (!m || target >= m->names.size()) return std::nullopt;
+    const auto* mw = scene.world().get<MorphWeightsComponent>(e);
+    if (mw && target < mw->weights.size()) return mw->weights[target];
+    return target < m->defaults.size() ? m->defaults[target] : 0.0f;
+}
+
+std::optional<float> AnimationSystem::morph_weight(Scene& scene, Entity e, std::string_view target) {
+    const std::vector<std::string> names = morph_targets(scene, e);
+    const auto it = std::find(names.begin(), names.end(), target);
+    if (it == names.end()) return std::nullopt;
+    return morph_weight(scene, e, static_cast<std::size_t>(it - names.begin()));
+}
+
 void AnimationSystem::update(Scene& scene, float dt) {
     update_sprites(scene, dt);
     ecs::World& world = scene.world();
@@ -1060,6 +1157,13 @@ void AnimationSystem::update(Scene& scene, float dt) {
         impl_->prepare(scene, w.entity, *w.a, *w.s);
         if (!w.s->set) ++stats_.missing_models;
     }
+    // Mesh entities whose weights the clips animate need a MorphWeights component; adding it is
+    // a structural change, so pointers into the animator columns are refreshed afterwards.
+    if (add_morph_components(scene, work))
+        for (Work& w : work) {
+            w.a = world.get<AnimatorComponent>(w.entity);
+            w.s = world.get<AnimatorState>(w.entity);
+        }
     jobs::JobSystem* js = impl_->settings.jobs;
     if (js && work.size() >= impl_->settings.parallel_threshold) {
         js->parallel_for(0, work.size(), 8, [&](std::size_t b, std::size_t end) {
@@ -1084,6 +1188,10 @@ bool AnimationSystem::update_entity(Scene& scene, Entity e, float dt) {
     AnimatorState* s = impl_->ensure(scene, e, a);
     if (!s) return false;
     Work w{e, a, s};
+    if (std::vector<Work> one{w}; add_morph_components(scene, one)) {
+        w.a = a = scene.world().get<AnimatorComponent>(e);
+        w.s = s = scene.world().get<AnimatorState>(e);
+    }
     evaluate(scene, w, dt);
     stats_ = {};
     stats_.animators = 1;

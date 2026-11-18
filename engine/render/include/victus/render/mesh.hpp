@@ -4,6 +4,8 @@
 #include "victus/core/math.hpp"
 
 #include <cstdint>
+#include <span>
+#include <string>
 #include <vector>
 
 namespace victus::render {
@@ -53,6 +55,19 @@ struct MeshLod {
 // Most levels a mesh carries (LOD 0, the full mesh, plus kMaxMeshLods - 1 coarser ones).
 inline constexpr std::uint32_t kMaxMeshLods = 8;
 
+// A morph target (blend shape, glTF 2.0 "targets"): sparse per-vertex offsets added to the base
+// mesh scaled by the target's weight. `vertices` are ascending vertex indices; `positions` and
+// (when present) `normals` hold one delta per entry.
+struct MorphTarget {
+    std::string name;
+    std::vector<std::uint32_t> vertices;
+    std::vector<math::Vec3> positions;
+    std::vector<math::Vec3> normals; // empty, or one per entry of `vertices`
+};
+
+// Most morph targets per mesh (ARKit faces use 52; glTF has no limit).
+inline constexpr std::uint32_t kMaxMorphTargets = 256;
+
 struct MeshData {
     std::vector<Vertex3D> vertices;
     std::vector<std::uint32_t> indices; // triangle list, counter-clockwise front faces (LOD 0)
@@ -60,14 +75,29 @@ struct MeshData {
     // LOD 1..n, coarsest last, sharing `vertices` (and `skin`); errors never decrease. Collision,
     // navigation and anything else that reads `indices` always sees the full mesh.
     std::vector<MeshLod> lods;
+    // Morph targets over `vertices` and their default weights (one per target; glTF mesh
+    // "weights", zeros when absent).
+    std::vector<MorphTarget> morphs;
+    std::vector<float> morph_weights;
     [[nodiscard]] math::Aabb bounds() const noexcept;
     [[nodiscard]] std::size_t triangle_count() const noexcept { return indices.size() / 3; }
     // Appends transformed geometry. Skin data is kept only when both meshes are skinned (or this
-    // one is empty); otherwise it is dropped so vertex and skin counts always match. LODs are
-    // dropped (they no longer describe the merged mesh).
+    // one is empty); otherwise it is dropped so vertex and skin counts always match. LODs and
+    // morph targets are dropped (they no longer describe the merged mesh).
     void append(const MeshData& other, const math::Mat4& transform);
     [[nodiscard]] bool skinned() const noexcept { return !skin.empty() && skin.size() == vertices.size(); }
 };
+
+// Validates morph targets: ascending in-range vertex indices, matching delta counts, finite
+// values, at most kMaxMorphTargets, and one default weight per target (or none). Empty string
+// when valid, otherwise what is wrong.
+[[nodiscard]] std::string validate_morphs(const MeshData& mesh);
+
+// Writes `mesh.vertices` deformed by its morph targets at `weights` (one per target; missing
+// entries count as 0) into `out`: positions and normals get the weighted deltas, normals are
+// renormalized and tangents re-orthogonalized against them. Returns false (and copies the base
+// vertices) when every weight is 0. Weights are not clamped (glTF allows negative and >1).
+bool apply_morphs(const MeshData& mesh, std::span<const float> weights, std::vector<Vertex3D>& out);
 
 // Recomputes per-vertex tangents from positions/uvs (Lengyel's method) with Gram-Schmidt.
 void compute_tangents(MeshData& mesh);

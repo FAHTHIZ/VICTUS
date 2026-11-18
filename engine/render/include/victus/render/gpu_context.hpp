@@ -91,6 +91,14 @@ public:
     // On failure `mesh` is left unchanged.
     [[nodiscard]] Status update_mesh(GpuMesh& mesh, const MeshData& data, std::string_view name = "mesh");
     void destroy(GpuMesh& mesh);
+    // Vertex variants: a mesh with its own vertex buffer (e.g. CPU-morphed shapes) sharing
+    // `base`'s index, LOD and skin buffers. `vertices` must hold base.vertex_count entries.
+    // update_vertex_variant rewrites them with a `discard` upload; destroy_vertex_variant frees
+    // only the variant's vertex buffer (destroy `base` separately, after its variants).
+    [[nodiscard]] Result<GpuMesh> create_vertex_variant(const GpuMesh& base, std::span<const Vertex3D> vertices,
+                                                        std::string_view name = "variant");
+    [[nodiscard]] Status update_vertex_variant(GpuMesh& variant, std::span<const Vertex3D> vertices);
+    void destroy_vertex_variant(GpuMesh& variant);
     // Best available depth format that can also be sampled (shadow maps).
     [[nodiscard]] rhi::Format sampled_depth_format() const noexcept { return sampled_depth_; }
 
