@@ -177,10 +177,12 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("record", "record input, frame times and state digests to this .vcapture file")
         .option("replay", "replay a .vcapture file (exit 5 if the game state diverges)")
         .option("profile", "write frame-time percentiles and per-scope timings (JSON) to this file at exit")
-        .option("trace", "write a Chrome/Perfetto trace of the first 600 frames to this file");
+        .option("trace", "write a Chrome/Perfetto trace of the first 600 frames to this file")
+        .option("seed", "script random seed (math.random); default: fixed with --frames, time-based otherwise", "0");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
     player::PlayerOptions o;
+    o.random_seed = static_cast<std::uint64_t>(p.get_number("seed", 0));
     o.profile = p.get("profile");
     o.trace = p.get("trace");
     o.record = p.get("record");
@@ -405,7 +407,7 @@ int cmd_simulate(const std::vector<std::string>& a) {
         .option("expect-players", "with --connect: exit 4 unless at least N players were seen", "0")
         .option("record", "record input, frame times and state digests to this .vcapture file")
         .option("replay", "replay a .vcapture file headless; exit 5 at the first diverging state digest")
-        .option("seed", "script random seed (math.random) for this run; recordings store it", "0");
+        .option("seed", "script random seed (math.random) for this run (default: fixed, so runs repeat; time-based with --connect); recordings store it", "0");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
     const bool recording = p.has("record"), replaying = p.has("replay");
@@ -424,6 +426,8 @@ int cmd_simulate(const std::vector<std::string>& a) {
         capture.emplace();
         if (!seed) seed = Random(static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count())).next_u64() | 1;
         capture->seed = seed;
+    } else if (!seed && !p.has("connect")) {
+        seed = player::kFixedRunSeed; // fixed-step headless runs repeat exactly
     }
     auto hs = std::make_unique<Headless>();
     if (auto st = hs->open(p.get("project"), p.get("scene"), p.get("saves"), seed); !st) return error(st.error().message);

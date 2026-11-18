@@ -152,6 +152,27 @@ add_test(NAME victus_cli_smoke
         -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_smoke
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/cli_smoke.cmake)
 set_tests_properties(victus_cli_smoke PROPERTIES LABELS "cli;gpu")
+
+# Fixed-step determinism of a full sample (headless; no GPU needed).
+add_test(NAME victus_cli_determinism
+    COMMAND ${CMAKE_COMMAND}
+        -DVICTUS_CLI=$<TARGET_FILE:victus_cli>
+        -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+        -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_determinism
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/determinism.cmake)
+set_tests_properties(victus_cli_determinism PROPERTIES LABELS "cli" TIMEOUT 300)
+
+# Performance regression gate: deterministic per-frame counters of every template and sample
+# against tests/perf/budgets.json (skipped without a GPU; see docs/PERFORMANCE_STRATEGY.md).
+add_test(NAME victus_perf_budgets
+    COMMAND ${CMAKE_COMMAND}
+        -DVICTUS_CLI=$<TARGET_FILE:victus_cli>
+        -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+        -DBUDGETS=${CMAKE_CURRENT_SOURCE_DIR}/perf/budgets.json
+        -DWORK=${CMAKE_BINARY_DIR}/test_output/perf_budgets
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/perf/perf_budgets.cmake)
+set_tests_properties(victus_perf_budgets PROPERTIES LABELS "perf;gpu" SKIP_REGULAR_EXPRESSION "VICTUS_PERF_SKIPPED"
+    TIMEOUT 900)
 endif()
 
 victus_add_test(victus_physics_tests

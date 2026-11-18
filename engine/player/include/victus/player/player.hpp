@@ -12,6 +12,10 @@
 
 namespace victus::player {
 
+// Script random seed of fixed-frame runs (`victus run --frames`, `victus simulate`) that do not
+// choose one, so the same project, scene and frame count always produce the same game.
+inline constexpr std::uint64_t kFixedRunSeed = 1;
+
 struct PlayerOptions {
     fs::Path project;            // project folder or victus.project
     std::string scene;           // project-relative; empty = startup scene
@@ -42,6 +46,10 @@ struct PlayerOptions {
     // random seed and state digests to a .vcapture file, or replay one (keyboard ignored; the run
     // ends with the capture and reports the first frame whose state digest differs).
     fs::Path record;
+    // Script random seed (math.random). 0 = kFixedRunSeed when max_frames is set (fixed-step
+    // runs repeat exactly) and Luau's time-based seed in interactive sessions. Recordings store
+    // the seed they used; replays take it from the capture.
+    std::uint64_t random_seed{0};
     // Profiling (ADR-0061): write a frame-time/scope summary (JSON) and/or a Chrome/Perfetto
     // trace of the session (the first 600 frames) when it ends.
     fs::Path profile;
