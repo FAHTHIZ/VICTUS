@@ -121,6 +121,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_light_tests.cpp
         render/gpu_texture_compression_tests.cpp
         render/gpu_lod_tests.cpp
+        render/gpu_texture_mip_tests.cpp
         render/gpu_occlusion_tests.cpp
         render/gpu_local_shadow_tests.cpp
         render/gpu_motion_tests.cpp

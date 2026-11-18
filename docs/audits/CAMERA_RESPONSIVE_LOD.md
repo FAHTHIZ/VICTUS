@@ -32,6 +32,7 @@ geometric error, projected to render pixels, stays within `RenderSettings::lod_e
 | 5. Dynamic resolution / render scale | `render_scale` 0.25 picks a coarser level; restoring 1.0 recovers the original level exactly | pass |
 | 9. Rapid zoom | six alternating 2/120 degree frames, then back to 45: same level as before | pass |
 | Shadow LOD bias | `shadow_lod_bias` 2 vs 0: same main triangles, fewer `shadow_triangles`, image within 1.5/255 | pass |
+| 6. Texture close-up after a distant view | per-level coloured 64x64 chain on a tiled plane (tests/render/gpu_texture_mip_tests.cpp): close-up samples mip 0, 8 m away samples about level 3, returning or zooming to 1.5 degrees samples mip 0 again; nearest filtering minifies through mips too | pass |
 | 4. Off-screen shadow contribution | a caster outside the main frustum still darkens the visible ground (`visible == 1`, `shadow_casters == 2`) | pass |
 
 All checks run on Mesa lavapipe (llvmpipe) in CI. They are CPU-side selection and image checks, not
@@ -55,14 +56,19 @@ GPU timing.
 4. **No per-view budget.** `lod_error_pixels` is global to the renderer settings. A secondary view such
    as a minimap or split screen cannot ask for a looser budget than the main view except through a
    separate `SceneRenderer` or settings change.
-5. **Texture mips are separate.** Mip selection is the GPU's footprint-based sampling and is not driven
-   by the LOD rule. There is no view-prioritised mip streaming (H2); do not claim it.
+5. **Texture mips are separate from mesh LOD.** The GPU picks the mip from the texel footprint, so
+   FOV zoom and render scale change the sampled level the same way they change mesh levels. Mip chains
+   exist on every cooked path: standalone textures (`TextureImportSettings::mipmaps`, default on), model
+   textures (always), and compressed variants (used only when their level count equals the RGBA8 chain;
+   otherwise the RGBA8 chain uploads). `GpuContext::create_texture` builds a chain by default; built-in
+   1x1 defaults, UI atlases and sprite-batch internals have none by design. All textures stay resident:
+   there is no mip streaming, eviction or view-prioritised residency, so do not claim it (H2).
 6. **Profiler GPU time.** Frame-time numbers from the profiler's GPU wait are not GPU execution time
    (H3). These tests report triangle counts and images only.
 
 ## Not covered yet
 
-- H3 items 6 (texture close-up after a distant view), 7 (character face/hands over poses), 8 (thin
+- H3 items 7 (character face/hands over poses), 8 (thin
   railings, foliage, alpha cutout and terrain chunk seams during zoom) and 10 (physical Android devices,
   hardware-blocked).
 - Terrain chunk LODs (ADR-0063) use their own selection and are not part of these checks.
