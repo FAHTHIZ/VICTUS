@@ -427,6 +427,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.lod_error_pixels = std::isfinite(s.lod_error_pixels) ? std::clamp(s.lod_error_pixels, 0.25f, 16.0f) : 1.0f;
     s.force_lod = std::clamp(s.force_lod, -1, static_cast<int>(kMaxMeshLods) - 1);
     s.shadow_lod_bias = std::min(s.shadow_lod_bias, 3u);
+    if (s.debug_view != DebugView::Overdraw) s.debug_view = DebugView::None;
     s.local_shadow_atlas = std::clamp(s.local_shadow_atlas, 256u, 8192u);
     s.local_shadow_tile = std::clamp(s.local_shadow_tile, std::max(64u, s.local_shadow_atlas / 8u), s.local_shadow_atlas);
     return s;
@@ -568,6 +569,23 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     p = dev.create_pipeline(skin_prepass);
     if (!p) return std::move(p).error();
     r->skin_prepass_double_ = p.value();
+    // DebugView::Overdraw: the pre-pass geometry path, counting into an RGBA8 target additively
+    // with depth testing off.
+    auto overdraw_fs = get("overdraw.frag");
+    if (!overdraw_fs) return std::move(overdraw_fs).error();
+    for (int skin = 0; skin < 2; ++skin)
+        for (int dbl = 0; dbl < 2; ++dbl) {
+            rhi::PipelineDesc od = skin ? skin_prepass : prepass;
+            od.name = std::format("overdraw{}{}", skin ? "_skinned" : "", dbl ? "_double_sided" : "");
+            od.fragment = overdraw_fs.value();
+            od.cull = dbl ? rhi::CullMode::None : rhi::CullMode::Back;
+            od.depth_test = od.depth_write = false;
+            od.depth_format = rhi::Format::Invalid;
+            od.color_targets = {{rhi::Format::RGBA8_UNORM, rhi::BlendMode::Additive}};
+            p = dev.create_pipeline(od);
+            if (!p) return std::move(p).error();
+            r->overdraw_[skin][dbl] = p.value();
+        }
 
     rhi::PipelineDesc shadow;
     shadow.name = "shadow_depth";
@@ -748,6 +766,10 @@ SceneRenderer::~SceneRenderer() {
         if (pl) d.destroy(pl);
     for (auto pl : decal_pipelines_)
         if (pl) d.destroy(pl);
+    for (const auto& row : overdraw_)
+        for (auto pl : row)
+            if (pl) d.destroy(pl);
+    if (overdraw_tex_) d.destroy(overdraw_tex_);
     if (motion_buffer_) d.destroy(motion_buffer_);
     if (palette_buffer_) d.destroy(palette_buffer_);
     if (light_buffer_) d.destroy(light_buffer_);
@@ -874,6 +896,24 @@ Result<std::uint32_t> SceneRenderer::read_occlusion_survivors() {
         total += c.instance_count;
     }
     return total;
+}
+
+Result<OverdrawStats> SceneRenderer::read_overdraw() {
+    OverdrawStats s;
+    if (!overdraw_valid_ || !overdraw_tex_) return s;
+    auto px = ctx_.device().read_texture(overdraw_tex_);
+    if (!px) return std::move(px).error();
+    s.width = overdraw_w_;
+    s.height = overdraw_h_;
+    const auto& bytes = px.value();
+    for (std::size_t i = 0; i + 3 < bytes.size(); i += 4) {
+        const std::uint32_t n = bytes[i];
+        if (n == 0) continue;
+        ++s.covered_pixels;
+        s.layers += n;
+        s.max_layers = std::max(s.max_layers, n);
+    }
+    return s;
 }
 
 Result<rhi::PipelineHandle> SceneRenderer::post_pipeline(const char* fragment, rhi::Format format, rhi::BlendMode blend) {
@@ -2372,6 +2412,72 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const bool scaled_down = rw < width || rh < height;
     const bool spatial = S.spatial_upscale && scaled_down && !upscale && !linear_out;
     const bool sharpen_pass = !linear_out && (spatial || S.sharpen > 0.0f);
+    if (S.debug_view == DebugView::Overdraw) {
+        // Overdraw debug view: the visible opaque, alpha-tested and blended batches are drawn again
+        // without depth testing into a persistent RGBA8 counter (one step per fragment), which a
+        // fullscreen pass maps to a heat ramp in `out`. The lit passes have no consumer and are culled
+        // by the graph, so their stats stay at zero this frame.
+        if (!overdraw_tex_ || overdraw_w_ != rw || overdraw_h_ != rh) {
+            if (overdraw_tex_) dev.destroy(overdraw_tex_);
+            overdraw_tex_ = {};
+            rhi::TextureDesc od = color_desc(rhi::Format::RGBA8_UNORM, rw, rh);
+            od.name = "overdraw_count";
+            auto made = dev.create_texture(od);
+            if (!made) return std::move(made).error();
+            overdraw_tex_ = made.value();
+            overdraw_w_ = rw;
+            overdraw_h_ = rh;
+        }
+        const RGTexture counts = graph.import_texture("overdraw_count", overdraw_tex_, color_desc(rhi::Format::RGBA8_UNORM, rw, rh));
+        graph.add_pass(
+            "overdraw_count", [&](PassBuilder& b) { b.write_color(counts, rhi::LoadOp::Clear, math::Color{0, 0, 0, 0}); },
+            [&](PassContext& ctx) {
+                rhi::RenderPass& pass = *ctx.pass;
+                FrameUniforms frame{view_proj};
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame);
+                rhi::PipelineHandle bound{};
+                for (const std::vector<Batch>* list : {&main_batches, &transparent_batches})
+                    for (const Batch& b : *list) {
+                        const Draw* d = b.first;
+                        const rhi::PipelineHandle want = overdraw_[d->skinned ? 1 : 0][d->material.double_sided ? 1 : 0];
+                        if (!(bound == want)) {
+                            pass.bind_pipeline(want);
+                            if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                            bound = want;
+                        }
+                        if (d->skinned) pass.bind_vertex_buffer(2, d->mesh->skin);
+                        pass.bind_vertex_buffer(0, d->mesh->vertices);
+                        pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
+                        pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
+                        draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
+                    }
+            });
+        auto heat = post_pipeline("overdraw_heat.frag", target_format);
+        if (!heat) return std::move(heat).error();
+        const Vec4 heat_params{is_srgb(target_format) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+        graph.add_pass(
+            "overdraw_heat",
+            [&](PassBuilder& b) {
+                b.read(counts);
+                b.write_color(out, rhi::LoadOp::DontCare);
+            },
+            [this, counts, heat_params, pl = heat.value()](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, heat_params);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(counts), ctx_.nearest_clamp());
+                ctx.pass->draw(3);
+            });
+        VICTUS_TRY_STATUS(graph.compile());
+        VICTUS_TRY_STATUS(graph.execute(dev, cmd, pool_));
+        graph_info_ = graph.info();
+        overdraw_valid_ = true;
+        // Temporal state was not advanced; start TAA and eye adaptation fresh when the view returns.
+        history_valid_ = false;
+        adaptation_valid_ = false;
+        return {};
+    }
+    overdraw_valid_ = false;
+
     const std::uint32_t pw = spatial ? rw : width, ph = spatial ? rh : height; // tonemap / FXAA size
     const bool ldr_buffer = fxaa || sharpen_pass;
     // The upscale pass reads an sRGB texture so its filtering and sharpening run in linear light (filtering

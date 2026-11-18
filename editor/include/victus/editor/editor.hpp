@@ -144,6 +144,11 @@ public:
     // saves the project file, so `victus run` and exported games use the same tier.
     [[nodiscard]] render::QualityTier quality() const noexcept { return quality_; }
     [[nodiscard]] Status set_quality(render::QualityTier tier);
+    // Viewport debug view (View > Overdraw): editor-only, never saved to the project.
+    [[nodiscard]] render::DebugView debug_view() const noexcept { return debug_view_; }
+    void set_debug_view(render::DebugView view);
+    // Layer counts of the last viewport frame drawn with the overdraw view (waits for the GPU).
+    [[nodiscard]] Result<render::OverdrawStats> read_overdraw();
     [[nodiscard]] const render::SceneStats& render_stats() const;
     // Project input actions (Edit > Input Actions). set_input_map validates the map (syntax,
     // duplicate names, unknown keys), saves `victus.project` and applies it to a running play
@@ -678,6 +683,7 @@ private:
     std::unique_ptr<navigation::NavigationSystem> edit_navigation_; // navmesh preview while editing
     std::vector<navigation::DebugLine> nav_scratch_;
     render::QualityTier quality_{render::QualityTier::High};
+    render::DebugView debug_view_{render::DebugView::None};
     void apply_quality();
     std::vector<physics::DebugLine> collider_scratch_;
     bool focus_viewport_{false};

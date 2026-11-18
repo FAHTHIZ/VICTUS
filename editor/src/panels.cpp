@@ -569,6 +569,8 @@ void Editor::draw_menu_bar() {
             }
             ImGui::EndMenu();
         }
+        if (ImGui::MenuItem("Overdraw View", nullptr, debug_view_ == render::DebugView::Overdraw))
+            set_debug_view(debug_view_ == render::DebugView::Overdraw ? render::DebugView::None : render::DebugView::Overdraw);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Play")) {
@@ -748,6 +750,11 @@ void Editor::draw_viewport() {
             ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 6 + overlay_line * ImGui::GetTextLineHeightWithSpacing()));
             ImGui::TextDisabled("shading: %u alpha-tested, %u surface-shader, %u blended (%.1fk tris)", rs.alpha_tested_draws,
                                 rs.surface_shader_draws, rs.transparent_draws, static_cast<double>(rs.transparent_triangles) / 1000.0);
+            overlay_line += 1.0f;
+        }
+        if (!two_d && debug_view_ == render::DebugView::Overdraw) {
+            ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 6 + overlay_line * ImGui::GetTextLineHeightWithSpacing()));
+            ImGui::TextDisabled("overdraw view: layers per pixel, black 0  blue 1  green 2  yellow 3  orange 4  red 5-7  white 8+");
         }
         // The tile tool owns plain left clicks while a tilemap is selected in a 2D scene.
         // The terrain tool does the same while a terrain is selected in a 3D scene.
