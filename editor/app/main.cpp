@@ -14,6 +14,7 @@
 //   --data-dir DIR    use DIR instead of the user data directory (recent list, layout)
 #include "victus/core/build_info.hpp"
 #include "victus/core/cli.hpp"
+#include "victus/core/crash.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/editor.hpp"
 #include "victus/platform/platform.hpp"
@@ -60,7 +61,8 @@ int main(int argc, char** argv) {
         .option("select", "select the entity with this name after opening")
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
         .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
-        .option("show", "open a window after opening: input-actions, network, profiler, problems, export, command-palette, animation, "
+        .option("show", "open a window after opening: input-actions, network, profiler, problems, export, report-problem, about, "
+                        "crash-notice, command-palette, animation, "
                         "animation-preview (selected entity), material-editor (selected entity's material)")
         .option("graph", "open this visual script (path relative to assets/) in the Graph Editor")
         .option("port", "UDP port for --host", "27960")
@@ -76,6 +78,15 @@ int main(int argc, char** argv) {
     const fs::Path data_dir = args.has("data-dir") ? fs::Path(args.get("data-dir")) : fs::user_data_dir();
     std::error_code ec;
     std::filesystem::create_directories(data_dir, ec);
+    // Crash reports and a session log (ADR-0072). --data-dir keeps them beside the other data so
+    // automated runs never touch the user's folder; VICTUS_DIAGNOSTICS_DIR overrides both.
+    crash::Options crash_options;
+    crash_options.app = "victus_editor";
+    if (const char* env = std::getenv("VICTUS_DIAGNOSTICS_DIR"); !(env && *env) && args.has("data-dir"))
+        crash_options.directory = data_dir / "diagnostics";
+    auto crash_session = crash::Session::start(crash_options);
+    if (!crash_session)
+        std::fprintf(stderr, "victus_editor: warning: crash reporting is off: %s\n", crash_session.error().message.c_str());
 
     auto plat = platform::Platform::create({});
     if (!plat) return fail("platform", plat.error());
@@ -103,6 +114,10 @@ int main(int argc, char** argv) {
 
     editor::EditorOptions eo;
     eo.recent_file = data_dir / "recent_projects.json";
+    if (crash_session) {
+        eo.diagnostics_dir = crash_session.value()->directory();
+        eo.previous_session_crashed = crash_session.value()->previous_session_ended_unexpectedly();
+    }
     if (const char* env = std::getenv("VICTUS_SAMPLES_DIR"); env && *env) eo.samples_dir = env;
 #ifdef VICTUS_SOURCE_SAMPLES_DIR
     else if (std::error_code samples_ec; std::filesystem::is_directory(VICTUS_SOURCE_SAMPLES_DIR, samples_ec))
@@ -177,6 +192,12 @@ int main(int argc, char** argv) {
             ed.wait_for_project_check(); // so a screenshot shows the result
             ed.show_panel(editor::Panel::Problems);
         }
+        else if (args.get("show") == "report-problem")
+            ed.open_diagnostics_dialog();
+        else if (args.get("show") == "about")
+            ed.open_about_dialog();
+        else if (args.get("show") == "crash-notice")
+            ed.set_crash_notice(true);
         else if (args.get("show") == "animation")
             ed.set_show_animation(true);
         else if (args.get("show") == "animation-preview") {

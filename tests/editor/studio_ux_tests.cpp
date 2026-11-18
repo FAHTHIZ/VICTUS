@@ -5,6 +5,7 @@
 #include "victus/core/log.hpp"
 #include "victus/editor/editor.hpp"
 #include "victus/core/fs.hpp"
+#include "victus/core/zip.hpp"
 #include "victus/project/project.hpp"
 #include "victus/ui/style.hpp"
 #include "victus/ui/ui.hpp"
@@ -29,7 +30,7 @@ struct Studio {
     sfs::path dir;
     static constexpr std::uint32_t W = 1280, H = 720;
 
-    bool init(const sfs::path& samples_dir = {}) {
+    bool init(const sfs::path& samples_dir = {}, bool previous_crash = false) {
         auto& ctx = *gpu().ctx;
         dir = sfs::temp_directory_path() / ("victus_ux_" + Uuid::generate().to_string().substr(0, 8));
         sfs::create_directories(dir);
@@ -40,6 +41,8 @@ struct Studio {
         o.recent_file = dir / "recent.json";
         o.default_project_dir = dir;
         o.samples_dir = samples_dir;
+        o.diagnostics_dir = dir / "diagnostics";
+        o.previous_session_crashed = previous_crash;
         auto e = editor::Editor::create(ctx, *ui, nullptr, nullptr, o);
         if (!e) return false;
         ed = std::move(e).value();
@@ -417,7 +420,7 @@ TEST_CASE("studio export: Export Game builds a runnable folder off the UI thread
     REQUIRE(h.ed->start_export(out, "Tiny").ok());
     CHECK(h.ed->exporting());
     CHECK_FALSE(h.ed->start_export(out, "Tiny").ok()); // one at a time
-    h.frames(1);                                        // the editor keeps drawing meanwhile
+    h.frames(1);                                       // the editor keeps drawing meanwhile
     h.ed->wait_for_export();
     CHECK_FALSE(h.ed->exporting());
     REQUIRE_MESSAGE(h.ed->last_export().has_value(), h.ed->export_error());
@@ -436,4 +439,73 @@ TEST_CASE("studio export: Export Game builds a runnable folder off the UI thread
     CHECK(h.ed->export_error().empty());
     h.ed->close_project();
     CHECK_FALSE(h.ed->last_export().has_value());
+}
+
+TEST_CASE("studio diagnostics: Report a Problem bundles crash reports, logs and Studio facts") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init({}, true));
+    ImGui::SetCurrentContext(h.ui->imgui());
+    // The previous session crashed: the notice shows on the start screen without blocking it.
+    CHECK(h.ed->crash_notice_visible());
+    h.frames(2);
+    CHECK(ImGui::FindWindowByName("##crash_notice") != nullptr);
+    h.ed->set_crash_notice(false);
+
+    const sfs::path diag = h.dir / "diagnostics";
+    CHECK(h.ed->diagnostics_dir() == diag);
+    CHECK(h.ed->default_bundle_path().extension() == ".zip");
+    CHECK(h.ed->default_bundle_path().filename().string().starts_with("victus-diagnostics-"));
+    sfs::create_directories(diag / "crashes");
+    sfs::create_directories(diag / "logs");
+    { std::ofstream(diag / "crashes" / "crash-1700000000-42-victus_editor.txt") << "reason: SIGSEGV\n"; }
+    {
+        std::ofstream(diag / "logs" / "victus_editor-1700000000-42.log")
+            << "[info] opened " << (h.dir / "Bug Game").string() << "\n";
+    }
+
+    CHECK_FALSE(h.ed->start_diagnostics_bundle({}).ok());
+    CHECK_FALSE(h.ed->start_diagnostics_bundle(h.dir / "bundle.txt").ok());
+    CHECK_FALSE(h.ed->start_diagnostics_bundle(h.dir).ok()); // a folder
+
+    REQUIRE(h.ed->create_project(h.dir / "Bug Game", "Bug Game", "2d").ok());
+    h.ed->wait_for_project_check();
+    h.ed->open_diagnostics_dialog();
+    h.frames(2);
+    CHECK(ImGui::FindWindowByName("Create Diagnostics Bundle") != nullptr);
+
+    const sfs::path out = h.dir / "reports" / "bug.zip";
+    REQUIRE(h.ed->start_diagnostics_bundle(out).ok());
+    CHECK(h.ed->creating_bundle());
+    CHECK_FALSE(h.ed->start_diagnostics_bundle(out).ok()); // one at a time
+    h.frames(1);                                           // the editor keeps drawing meanwhile
+    h.ed->wait_for_bundle();
+    CHECK_FALSE(h.ed->creating_bundle());
+    REQUIRE_MESSAGE(h.ed->last_bundle().has_value(), h.ed->bundle_error());
+    const auto& r = *h.ed->last_bundle();
+    CHECK(r.crash_reports == 1);
+    CHECK(r.logs == 1);
+    REQUIRE(sfs::exists(out));
+    const auto bytes = fs::read_binary(out);
+    REQUIRE(bytes.ok());
+    const auto entries = zip::read(bytes.value());
+    REQUIRE(entries.ok());
+    std::string studio, gpu_txt, all;
+    for (const auto& e : entries.value()) {
+        const std::string text(e.data.begin(), e.data.end());
+        all += text;
+        if (e.name == "extra/studio.txt") studio = text;
+        if (e.name == "extra/gpu.txt") gpu_txt = text;
+    }
+    CHECK(studio.find("project: Bug Game") != std::string::npos);
+    CHECK(studio.find("open panels:") != std::string::npos);
+    CHECK(gpu_txt.find("backend:") != std::string::npos);
+    // Redacted by default: the project folder never appears, not even in the log.
+    CHECK(all.find((h.dir / "Bug Game").string()) == std::string::npos);
+    h.frames(2); // the dialog shows the result
+
+    // About renders.
+    h.ed->open_about_dialog();
+    h.frames(2);
+    CHECK(ImGui::FindWindowByName("About VICTUS Studio") != nullptr);
 }

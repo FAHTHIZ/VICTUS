@@ -287,8 +287,10 @@ void Editor::draw_launcher() {
                  sample_count.empty() ? nullptr : sample_count.c_str()))
         set_launcher_page(LauncherPage::Samples);
     if (nav_item("Learn", kit::Icon::Help, page == LauncherPage::Learn)) set_launcher_page(LauncherPage::Learn);
-    const float foot = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
+    const float foot = ImGui::GetTextLineHeightWithSpacing() * 2.0f + ImGui::GetFrameHeightWithSpacing() + tk::kSpace3;
     ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - foot - tk::kSpace6));
+    if (nav_item("Report a problem", kit::Icon::Help, false)) open_diagnostics_dialog();
+    ImGui::Dummy(ImVec2(0, tk::kSpace3));
     ImGui::PushStyleColor(ImGuiCol_Text, tk::kTextDisabled);
     ImGui::TextUnformatted("Free and offline.");
     ImGui::TextUnformatted("No account needed.");

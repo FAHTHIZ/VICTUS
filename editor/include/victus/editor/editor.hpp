@@ -19,6 +19,7 @@
 #include "victus/editor/undo.hpp"
 #include "victus/player/export.hpp"
 #include "victus/player/validate.hpp"
+#include "victus/player/diagnostics.hpp"
 #include "victus/core/jobs.hpp"
 #include "victus/gameplay/capture.hpp"
 #include "victus/gameplay/gameplay.hpp"
@@ -58,6 +59,8 @@ struct EditorOptions {
     float autosave_seconds{30.0f}; // unsaved scene edits are autosaved this often; 0 disables
     fs::Path samples_dir;          // sample projects for the launcher's Samples page; empty = none
     fs::Path player_executable;    // what Export Game ships; empty = victus_player next to the editor
+    fs::Path diagnostics_dir;      // crash reports and session logs; empty = crash::default_directory()
+    bool previous_session_crashed{false}; // show "closed unexpectedly last time" (crash::Session)
 };
 
 // A sample project the launcher offers (a folder under EditorOptions::samples_dir).
@@ -598,6 +601,24 @@ public:
     [[nodiscard]] const std::optional<player::ExportReport>& last_export() const noexcept { return export_report_; }
     [[nodiscard]] const std::string& export_error() const noexcept { return export_error_; }
 
+    // ---- diagnostics (Help > Create Diagnostics Bundle, the same as `victus diagnose`) ----
+    void open_diagnostics_dialog();
+    // A new .zip on the Desktop (else the home folder) named victus-diagnostics-<time>.zip.
+    [[nodiscard]] fs::Path default_bundle_path() const;
+    [[nodiscard]] fs::Path diagnostics_dir() const;
+    // Builds the bundle on a worker thread: crash reports, recent logs, system facts, the open
+    // project's settings and check, plus Studio and GPU facts. Paths are redacted unless
+    // `keep_paths`. The result lands in last_bundle()/bundle_error().
+    Status start_diagnostics_bundle(const fs::Path& output, bool keep_paths = false);
+    [[nodiscard]] bool creating_bundle() const noexcept { return bundle_future_.valid(); }
+    void wait_for_bundle();
+    [[nodiscard]] const std::optional<player::BundleResult>& last_bundle() const noexcept { return bundle_result_; }
+    [[nodiscard]] const std::string& bundle_error() const noexcept { return bundle_error_; }
+    // The "closed unexpectedly last time" card; dismissed once per run.
+    [[nodiscard]] bool crash_notice_visible() const noexcept { return crash_notice_; }
+    void set_crash_notice(bool visible) noexcept { crash_notice_ = visible; }
+    void open_about_dialog() noexcept { show_about_ = true; }
+
     // ---- console ----
     // Records currently held by the Console (the newest 4096), by severity.
     struct ConsoleCounts {
@@ -916,6 +937,14 @@ private:
     std::string export_error_, export_output_, export_name_;
     double export_started_at_{0};
     bool show_export_{false};
+    std::future<Result<player::BundleResult>> bundle_future_;
+    std::optional<player::BundleResult> bundle_result_;
+    std::string bundle_error_, bundle_output_;
+    bool bundle_keep_paths_{false}, show_bundle_{false}, crash_notice_{false}, show_about_{false};
+    void poll_bundle();
+    void draw_diagnostics_dialog();
+    void draw_crash_notice();
+    void draw_about_dialog();
     void poll_export();
     void draw_export_dialog();
     void draw_problems();
