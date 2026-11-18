@@ -75,6 +75,7 @@ void Editor::start_editor_clients() {
             so.watch_files = false; // the host's script host follows file edits
             so.input_map = project_->settings().input;
             so.save_version = project_->settings().save_version;
+            so.default_locale = project_->settings().default_locale;
             so.save_directory = project_->dev_save_directory();
             if (auto host = script::ScriptHost::create(so)) {
                 c->scripts = std::move(host).value();

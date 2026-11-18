@@ -73,6 +73,9 @@ struct UiImageComponent {
 
 struct UiTextComponent {
     std::string text{"Text"};
+    // Localization key (e.g. "menu.start"): when set and the scene's string tables have it, the
+    // translation is shown instead of `text`, which stays the fallback shown in the editor.
+    std::string key;
     float font_size{28};             // canvas units
     math::Color color{1, 1, 1, 1};
     TextAlign align{TextAlign::Center};

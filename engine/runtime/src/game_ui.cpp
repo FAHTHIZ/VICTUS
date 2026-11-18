@@ -15,6 +15,12 @@ namespace victus::runtime {
 namespace detail {
 std::span<const unsigned char> inter_Medium() noexcept;
 std::span<const unsigned char> inter_Bold() noexcept;
+std::span<const unsigned char> inter_Medium_latin_ext() noexcept;
+std::span<const unsigned char> inter_Bold_latin_ext() noexcept;
+std::span<const unsigned char> inter_Medium_cyrillic() noexcept;
+std::span<const unsigned char> inter_Bold_cyrillic() noexcept;
+std::span<const unsigned char> inter_Medium_greek() noexcept;
+std::span<const unsigned char> inter_Bold_greek() noexcept;
 } // namespace detail
 
 namespace {
@@ -26,8 +32,9 @@ ImU32 to_imgui(math::Color c) {
     return IM_COL32(u8(c.r), u8(c.g), u8(c.b), u8(c.a));
 }
 
-ImFont* add_font(ImGuiIO& io, std::span<const unsigned char> data, const char* name) {
+ImFont* add_font(ImGuiIO& io, std::span<const unsigned char> data, const char* name, bool merge = false) {
     ImFontConfig cfg;
+    cfg.MergeMode = merge; // merged sources extend the previous font's glyph coverage
     cfg.FontDataOwnedByAtlas = false; // static or owned by the renderer
     cfg.OversampleH = 2;
     cfg.OversampleV = 1;
@@ -82,8 +89,17 @@ Result<std::unique_ptr<GameUiRenderer>> GameUiRenderer::create(render::GpuContex
     ImGui::SetCurrentContext(r->ui_->imgui());
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
+    // Each weight: the Latin subset, then Latin Extended, Cyrillic and Greek merged into it so
+    // localized text in those scripts renders without a project font.
     r->medium_ = add_font(io, detail::inter_Medium(), "Inter Medium");
+    const bool medium_ext = r->medium_ && add_font(io, detail::inter_Medium_latin_ext(), "Inter Medium", true) &&
+                            add_font(io, detail::inter_Medium_cyrillic(), "Inter Medium", true) &&
+                            add_font(io, detail::inter_Medium_greek(), "Inter Medium", true);
     r->bold_ = add_font(io, detail::inter_Bold(), "Inter Bold");
+    const bool bold_ext = r->bold_ && add_font(io, detail::inter_Bold_latin_ext(), "Inter Bold", true) &&
+                          add_font(io, detail::inter_Bold_cyrillic(), "Inter Bold", true) &&
+                          add_font(io, detail::inter_Bold_greek(), "Inter Bold", true);
+    if (!medium_ext || !bold_ext) VICTUS_LOG_WARN("ui", "extended UI glyph sets failed to load; only Latin-1 text renders");
     ImGui::SetCurrentContext(previous);
     if (!r->medium_ || !r->bold_) return make_error(ErrorCode::DeviceError, "embedded UI fonts failed to load");
     return r;

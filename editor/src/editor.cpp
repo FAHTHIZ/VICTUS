@@ -231,6 +231,10 @@ std::size_t Editor::check_asset_changes() {
         if (play_ai_) play_ai_->reload(t);
         notify("Reloaded behaviour tree " + t);
     }
+    if (!changes.string_tables.empty()) {
+        if (play_scripts_) (void)play_scripts_->reload_localization();
+        for (const auto& t : changes.string_tables) notify("Reloaded string table " + t);
+    }
     for (const auto& q : changes.sequences) {
         if (play_sequencer_) play_sequencer_->reload(q);
         sequence_changed_on_disk(q);
@@ -1090,6 +1094,7 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
         if (project_) {
             so.input_map = project_->settings().input;
             so.save_version = project_->settings().save_version;
+            so.default_locale = project_->settings().default_locale;
             so.save_directory = project_->dev_save_directory();
             so.project_root = project_->root();
             so.bridge_launcher = [project = &*project_, saves = so.save_directory](std::string_view name) {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/gameui/gameui.hpp"
+#include "victus/gameui/localization.hpp"
 
 #include "victus/core/profiler.hpp"
 #include "victus/scene/reflect.hpp"
@@ -196,6 +197,7 @@ void register_components() {
             .commit();
         scene::Schema<UiTextComponent>("UiText", "UI")
             .field(&UiTextComponent::text, "text")
+            .field(&UiTextComponent::key, "key", {.tooltip = "Localization key (assets/localization/<locale>.vstrings); empty = show text"})
             .field(&UiTextComponent::font_size, "font_size", {.min = 1, .max = 1000, .speed = 0.5f})
             .field(&UiTextComponent::color, "color")
             .enumeration(&UiTextComponent::align, "align", {"left", "center", "right"})
@@ -405,6 +407,7 @@ void build_draw_list(Scene& scene, std::vector<DrawItem>& out) {
     out.clear();
     ecs::World& w = scene.world();
     const UiFrame& f = frame_of(scene);
+    const Localization* loc = localization_of(scene);
     for (const Entity e : f.order) {
         const auto* st = w.get<UiStateComponent>(e);
         if (!st || !st->visible || st->opacity <= 0.0f || w.has<UiCanvasComponent>(e)) continue;
@@ -444,14 +447,18 @@ void build_draw_list(Scene& scene, std::vector<DrawItem>& out) {
             d.corner_radius = img->corner_radius * st->scale;
             if (d.color.a > 0) out.push_back(std::move(d));
         }
-        if (const auto* txt = w.get<UiTextComponent>(e); txt && !txt->text.empty()) {
+        const UiTextComponent* txt = w.get<UiTextComponent>(e);
+        const std::string* shown = txt ? &txt->text : nullptr;
+        if (txt && !txt->key.empty() && loc)
+            if (const std::string* translated = loc->find(txt->key)) shown = translated;
+        if (txt && !shown->empty()) {
             DrawItem d;
             d.kind = DrawItem::Kind::Text;
             d.entity = e;
             d.rect = st->rect;
             d.clip = st->clip;
             d.color = with_opacity(txt->color, st->opacity);
-            d.text = txt->text;
+            d.text = *shown;
             d.font = txt->font;
             d.font_size = std::max(1.0f, txt->font_size * st->scale);
             d.align = txt->align;

@@ -14,6 +14,7 @@
 //   VICTUS_FUZZ_TRACE=1     write every input to <temp>/victus_fuzz_failures/last-<target>.bin
 //                           before running it (to recover the input behind a crash)
 // A failing input is written to <temp>/victus_fuzz_failures/<target>-<iteration>.bin.
+#include "victus/gameui/localization.hpp"
 #include "victus/ai/ai.hpp"
 #include "victus/animation/sprite.hpp"
 #include "victus/assets/cooked.hpp"
@@ -536,6 +537,23 @@ TEST_CASE("fuzz: graphs, behaviour trees and sequences") {
         auto s = sequencer::Sequence::parse(as_text(b), "fuzz");
         ok = s.ok();
         return verdict(s);
+    });
+}
+
+TEST_CASE("fuzz: localization string tables") {
+    std::vector<Bytes> seeds;
+    for (const auto& f : project::template_files("3d"))
+        if (f.path.ends_with(".vstrings")) seeds.push_back(to_bytes(f.content));
+    REQUIRE(seeds.size() == 1);
+    seeds.push_back(to_bytes(R"({"name":"Ελληνικά","strings":{"a":{"b":{"c":"{x} {{y}} Ж"}},"d.e":"f"}})"));
+    for (const Bytes& b : seeds) REQUIRE(gameui::StringTable::parse(as_text(b)).ok());
+    fuzz_bytes("string_table", seeds, [](const Bytes& b, bool& ok) {
+        auto t = gameui::StringTable::parse(as_text(b));
+        ok = t.ok();
+        if (ok)
+            if (const std::string* v = t->find("d.e"))
+                (void)gameui::format_text(*v, [](std::string_view n) { return std::optional<std::string>(std::string(n)); });
+        return verdict(t);
     });
 }
 

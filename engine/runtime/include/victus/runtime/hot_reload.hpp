@@ -14,6 +14,8 @@
 //   - behaviour trees (.vbt)                       reported in `behavior_trees`; AiSystem::reload
 //   - sequences (.vseq)                            reported in `sequences`; SequencerSystem::reload
 //                                                  drops the cached tree and restarts its users
+//   - string tables (.vstrings)                    reported in `string_tables`; hosts call
+//                                                  ScriptHost::reload_localization
 //   - sprite sheets (.vsheet)                      reported in `sprite_sheets`; apply() re-reads them
 //                                                  (a compile error is logged, built-in PBR used)
 //   - scenes, fonts, other files                   `restart_needed`: picked up on the next start
@@ -45,6 +47,7 @@ struct HotReloadReport {
     std::vector<std::string> sprite_sheets;  // changed sprite sheets (paths relative to assets/)
     std::vector<std::string> tilesets;       // changed tile sets (paths relative to assets/)
     std::vector<std::string> terrains;       // changed .vterrain heightfields (clear TerrainSystem caches)
+    std::vector<std::string> string_tables;  // changed .vstrings tables (ScriptHost::reload_localization)
     std::vector<std::string> behavior_trees; // changed .vbt trees (AiSystem::reload restarts their users)
     std::vector<std::string> sequences;      // changed .vseq timelines (SequencerSystem::reload keeps the playhead)
     std::vector<std::string> restart_needed; // files whose changes appear on the next start

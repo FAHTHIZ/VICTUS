@@ -48,6 +48,7 @@ void open_victus_libs(lua_State* L) {
                                 {"pause_audio", entity_pause_audio},
                                 {"audio_playing", entity_audio_playing},
                                 {"set_text", entity_set_text},
+                                {"set_text_key", entity_set_text_key},
                                 {"text", entity_text},
                                 {"set_visible", entity_set_visible},
                                 {"visible", entity_visible},
@@ -195,6 +196,10 @@ void open_victus_libs(lua_State* L) {
                                {"focus", ui_focus},             {"focused", ui_focused},
                                {"click", ui_click},             {nullptr, nullptr}};
     register_lib(L, "ui", ui_fns);
+    const luaL_Reg loc_fns[] = {{"text", loc_text},           {"has", loc_has},         {"locale", loc_locale},
+                                {"set_locale", loc_set_locale}, {"locales", loc_locales}, {"name", loc_name},
+                                {nullptr, nullptr}};
+    register_lib(L, "loc", loc_fns);
     const luaL_Reg nav_fns[] = {{"available", nav_available},       {"find_path", nav_find_path},
                                 {"nearest", nav_nearest},           {"raycast", nav_raycast},
                                 {"random_point", nav_random_point}, {"rebuild", nav_rebuild},
@@ -270,9 +275,11 @@ struct HostBinding {
 void bind_host(scene::Scene& s, ScriptHost::Impl& h) {
     auto* b = s.world().resource<HostBinding>();
     if (!b) b = &s.world().set_resource<HostBinding>();
-    if (b->host == &h && !b->alive.expired()) return;
+    if (b->host == &h && !b->alive.expired() && gameui::localization_of(s) == h.localization.get()) return;
     b->host = &h;
     b->alive = h.alive;
+    (void)h.loc();
+    gameui::bind_localization(s, h.localization);
 }
 
 constexpr std::size_t kProbeStringLimit = 64;
@@ -616,6 +623,16 @@ void ScriptHost::dispatch_sequence_events(scene::Scene& scene) {
             });
         }
     }
+}
+
+std::size_t ScriptHost::reload_localization() {
+    Impl& h = *impl_;
+    const std::string keep = h.localization ? h.localization->locale() : std::string();
+    h.localization.reset();
+    gameui::Localization& l = h.loc();
+    if (!keep.empty()) (void)l.set_locale(keep);
+    if (h.scene) gameui::bind_localization(*h.scene, h.localization);
+    return l.locales().size();
 }
 
 void ScriptHost::fixed_update(scene::Scene& scene, const gameplay::FrameTime& time,

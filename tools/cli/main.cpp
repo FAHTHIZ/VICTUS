@@ -285,6 +285,7 @@ struct Headless {
         so.assets_root = proj->root() / "assets";
         so.input_map = proj->settings().input;
         so.save_version = proj->settings().save_version;
+        so.default_locale = proj->settings().default_locale;
         so.save_directory = saves.empty() ? proj->dev_save_directory() : fs::Path(saves);
         so.random_seed = random_seed;
         so.project_root = proj->root();

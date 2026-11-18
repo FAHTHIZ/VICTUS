@@ -4,6 +4,7 @@
 #pragma once
 #include "victus/animation/animation.hpp"
 #include "victus/gameui/gameui.hpp"
+#include "victus/gameui/localization.hpp"
 #include "victus/ai/ai.hpp"
 #include "victus/sequencer/sequencer.hpp"
 #include "victus/navigation/navigation.hpp"
@@ -132,6 +133,19 @@ struct ScriptHost::Impl {
     int next_bridge{1};
     // The AI system whose unregistered action leaves run script methods (see run_script_task).
     ai::AiSystem* bound_ai{nullptr};
+
+    // String tables behind `loc` and keyed UiText: read on first use, kept across scene loads
+    // so loc.set_locale lasts for the session.
+    std::shared_ptr<gameui::Localization> localization;
+    gameui::Localization& loc() {
+        if (!localization) {
+            localization = options.assets_root.empty()
+                               ? std::make_shared<gameui::Localization>(options.default_locale)
+                               : gameui::Localization::load(options.assets_root, options.default_locale);
+            for (const auto& e : localization->errors()) VICTUS_LOG_WARN("script", "{}", e);
+        }
+        return *localization;
+    }
 
     gameplay::SaveStore* store() {
         if (!save_store && !options.save_directory.empty())
@@ -467,6 +481,7 @@ int entity_set_motor(lua_State* L);
 
 // bind_render.cpp
 int entity_set_text(lua_State* L);
+int entity_set_text_key(lua_State* L);
 int entity_text(lua_State* L);
 int entity_set_visible(lua_State* L);
 int entity_visible(lua_State* L);
@@ -492,6 +507,12 @@ int ui_pointer_over(lua_State* L);
 int ui_focus(lua_State* L);
 int ui_focused(lua_State* L);
 int ui_click(lua_State* L);
+int loc_text(lua_State* L);
+int loc_has(lua_State* L);
+int loc_locale(lua_State* L);
+int loc_set_locale(lua_State* L);
+int loc_locales(lua_State* L);
+int loc_name(lua_State* L);
 int entity_play_animation(lua_State* L);
 int entity_animation(lua_State* L);
 int entity_animation_clips(lua_State* L);
