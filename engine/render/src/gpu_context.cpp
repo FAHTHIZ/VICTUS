@@ -101,6 +101,30 @@ GpuContext::~GpuContext() {
         if (t) device_.destroy(t);
     for (auto s : {linear_repeat_, linear_clamp_, nearest_clamp_, nearest_repeat_, shadow_})
         if (s) device_.destroy(s);
+    for (auto s : material_samplers_)
+        if (s) device_.destroy(s);
+}
+
+std::uint32_t GpuContext::effective_anisotropy(std::uint32_t max_anisotropy) const noexcept {
+    if (!device_.capabilities().anisotropy) return 1;
+    std::uint32_t level = 1;
+    while (level < 16 && level * 2 <= max_anisotropy) level *= 2;
+    return level;
+}
+
+Result<rhi::SamplerHandle> GpuContext::material_sampler(std::uint32_t max_anisotropy) {
+    const std::uint32_t level = effective_anisotropy(max_anisotropy);
+    std::size_t index = 0;
+    while ((1u << index) < level) ++index;
+    if (material_samplers_[index]) return material_samplers_[index];
+    rhi::SamplerDesc s;
+    s.min_filter = s.mag_filter = s.mip_filter = rhi::Filter::Linear;
+    s.address_u = s.address_v = s.address_w = rhi::AddressMode::Repeat;
+    s.max_anisotropy = level > 1 ? static_cast<float>(level) : 0.0f;
+    auto made = device_.create_sampler(s);
+    if (!made) return std::move(made).error();
+    material_samplers_[index] = made.value();
+    return made.value();
 }
 
 Result<rhi::ShaderHandle> GpuContext::shader(std::string_view name) {

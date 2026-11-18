@@ -63,6 +63,12 @@ public:
     [[nodiscard]] rhi::SamplerHandle nearest_clamp() const noexcept { return nearest_clamp_; }
     [[nodiscard]] rhi::SamplerHandle nearest_repeat() const noexcept { return nearest_repeat_; }
     [[nodiscard]] rhi::SamplerHandle shadow_compare() const noexcept { return shadow_; }
+    // Trilinear repeat sampler for material textures with up to `max_anisotropy` anisotropic taps
+    // (rounded down to 1, 2, 4, 8 or 16; 1 = off). Created on first use and cached per level.
+    // Devices without anisotropic filtering get the plain trilinear sampler.
+    [[nodiscard]] Result<rhi::SamplerHandle> material_sampler(std::uint32_t max_anisotropy);
+    // The level material_sampler(max_anisotropy) actually applies on this device.
+    [[nodiscard]] std::uint32_t effective_anisotropy(std::uint32_t max_anisotropy) const noexcept;
 
     // Built-in shader by source file name (e.g. "pbr.frag"); created once per context.
     [[nodiscard]] Result<rhi::ShaderHandle> shader(std::string_view name);
@@ -93,6 +99,7 @@ private:
     rhi::Device& device_;
     rhi::TextureHandle white_, black_, flat_normal_, soft_particle_, black_cube_;
     rhi::SamplerHandle linear_repeat_, linear_clamp_, nearest_clamp_, nearest_repeat_, shadow_;
+    std::array<rhi::SamplerHandle, 5> material_samplers_{}; // 1x, 2x, 4x, 8x, 16x
     rhi::Format sampled_depth_{rhi::Format::D32_FLOAT};
     std::unordered_map<std::string, rhi::ShaderHandle> shaders_;
 };
