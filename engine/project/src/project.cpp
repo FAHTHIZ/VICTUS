@@ -125,7 +125,8 @@ std::string path_to_utf8(const fs::Path& p) {
     return out;
 }
 
-constexpr std::string_view kGitIgnore = "# VICTUS: derived data, safe to delete\n/.victus/\n/build/\n";
+constexpr std::string_view kGitIgnore =
+    "# VICTUS: derived data, safe to delete\n/.victus/\n/build/\n# previous save generations and damaged copies\n.*.vbak*\n.*.damaged\n.*.tmp*\n";
 
 std::string readme(std::string_view name, std::string_view template_name) {
     return std::string("# ") + std::string(name) +
@@ -189,9 +190,10 @@ Result<Project> Project::open(const fs::Path& path) {
     fs::Path root = path;
     if (path.filename() == kProjectFileName && fs::exists(path)) root = path.parent_path();
     if (!is_project_dir(root)) return make_error(ErrorCode::NotFound, "no victus.project in " + root.string());
-    auto text = fs::read_text(root / kProjectFileName, 1u << 20);
+    auto text = fs::read_with_recovery(root / kProjectFileName, json::document_validator("victus.project"),
+                                       fs::kDefaultHistory, 1u << 20);
     if (!text) return std::move(text).error();
-    auto doc = json::parse(*text);
+    auto doc = json::parse(text->bytes);
     if (!doc) return make_error(ErrorCode::ParseError, "victus.project: " + doc.error().message);
     Project p;
     p.root_ = sfs::absolute(root, ec).lexically_normal();
@@ -199,7 +201,10 @@ Result<Project> Project::open(const fs::Path& path) {
     return p;
 }
 
-Status Project::save() const { return fs::write_text_atomic(file(), json::stringify(settings_to_json(settings_)) + "\n"); }
+Status Project::save() const {
+    return fs::write_safely(file(), json::stringify(settings_to_json(settings_)) + "\n",
+                            {.validate = json::document_validator("victus.project")});
+}
 
 Result<fs::Path> Project::resolve(std::string_view rel) const { return fs::resolve_under(root_, rel); }
 

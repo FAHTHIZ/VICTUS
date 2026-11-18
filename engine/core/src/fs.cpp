@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/core/fs.hpp"
 
+#include "victus/core/log.hpp"
 #include "victus/core/pack.hpp"
 
+#include <atomic>
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <format>
 #include <fstream>
@@ -24,6 +28,11 @@
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>
 #else
+#include <unistd.h>
+#endif
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -168,33 +177,238 @@ Result<std::string> read_text(const Path& path, std::uint64_t max_bytes) {
     return std::string(bytes->begin(), bytes->end());
 }
 
-Status write_atomic(const Path& path, std::span<const std::uint8_t> bytes) {
-    std::error_code ec;
-    if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
+namespace {
+
+std::atomic<testing::WriteFault> g_fault{testing::WriteFault::None};
+
+testing::WriteFault take_fault(testing::WriteFault only) noexcept {
+    testing::WriteFault expected = only;
+    return g_fault.compare_exchange_strong(expected, testing::WriteFault::None) ? only : testing::WriteFault::None;
+}
+
+Path hidden_sibling(const Path& path, std::string_view suffix) {
+    Path out = path.parent_path();
+    out /= "." + path.filename().string() + std::string(suffix);
+    return out;
+}
+
+Path temp_sibling(const Path& path) {
     std::random_device rd;
-    Path tmp = path;
-    tmp += std::format(".tmp{:08x}", rd());
-    {
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        if (!out) return make_error(ErrorCode::IoError, std::format("cannot create '{}'", tmp.string()));
-        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-        out.flush();
-        if (!out) {
-            out.close();
-            std::filesystem::remove(tmp, ec);
-            return make_error(ErrorCode::IoError, std::format("write failed for '{}'", tmp.string()));
-        }
+    return hidden_sibling(path, std::format(".tmp{:08x}", rd()));
+}
+
+// Writes and flushes `bytes` to a new file; reports the OS reason (e.g. "No space left on device").
+Status write_durable(const Path& file, std::span<const std::uint8_t> bytes) {
+    if (take_fault(testing::WriteFault::NoSpace) == testing::WriteFault::NoSpace)
+        return make_error(ErrorCode::IoError, std::format("write failed for '{}': No space left on device (injected)", file.string()));
+#if defined(_WIN32)
+    HANDLE h = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+        return make_error(ErrorCode::IoError, std::format("cannot create '{}' (error {})", file.string(), GetLastError()));
+    std::size_t done = 0;
+    bool ok = true;
+    while (ok && done < bytes.size()) {
+        const DWORD chunk = static_cast<DWORD>(std::min<std::size_t>(bytes.size() - done, 1u << 30));
+        DWORD wrote = 0;
+        ok = WriteFile(h, bytes.data() + done, chunk, &wrote, nullptr) && wrote == chunk;
+        done += wrote;
     }
-    std::filesystem::rename(tmp, path, ec);
-    if (ec) {
-        std::filesystem::remove(tmp, ec);
-        return make_error(ErrorCode::IoError, std::format("cannot replace '{}'", path.string()));
+    const DWORD err = ok ? 0 : GetLastError();
+    ok = ok && FlushFileBuffers(h);
+    CloseHandle(h);
+    if (!ok) return make_error(ErrorCode::IoError, std::format("write failed for '{}' (error {})", file.string(), err ? err : GetLastError()));
+#else
+    const int fd = ::open(file.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) return make_error(ErrorCode::IoError, std::format("cannot create '{}': {}", file.string(), std::strerror(errno)));
+    std::size_t done = 0;
+    while (done < bytes.size()) {
+        const ssize_t n = ::write(fd, bytes.data() + done, bytes.size() - done);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) {
+            const int err = n < 0 ? errno : ENOSPC;
+            ::close(fd);
+            return make_error(ErrorCode::IoError, std::format("write failed for '{}': {}", file.string(), std::strerror(err)));
+        }
+        done += static_cast<std::size_t>(n);
+    }
+#if defined(__APPLE__)
+    const bool synced = ::fcntl(fd, F_FULLFSYNC) == 0 || ::fsync(fd) == 0; // F_FULLFSYNC reaches the platter
+#else
+    const bool synced = ::fsync(fd) == 0;
+#endif
+    const int err = errno;
+    if (::close(fd) != 0 || !synced)
+        return make_error(ErrorCode::IoError, std::format("cannot flush '{}': {}", file.string(), std::strerror(synced ? errno : err)));
+#endif
+    if (take_fault(testing::WriteFault::CorruptTemp) == testing::WriteFault::CorruptTemp && !bytes.empty()) {
+        std::fstream f(file, std::ios::in | std::ios::out | std::ios::binary);
+        char c = 0;
+        f.read(&c, 1);
+        c = static_cast<char>(c ^ 0x5a);
+        f.seekp(0);
+        f.write(&c, 1);
     }
     return {};
 }
 
-Status write_text_atomic(const Path& path, std::string_view text) {
-    return write_atomic(path, std::span(reinterpret_cast<const std::uint8_t*>(text.data()), text.size()));
+// Makes a rename durable: on POSIX the directory entry must be flushed too.
+void sync_directory(const Path& dir) {
+#if !defined(_WIN32)
+    const int fd = ::open(dir.empty() ? "." : dir.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        (void)::fsync(fd); // not supported on every file system; the rename is still atomic
+        ::close(fd);
+    }
+#else
+    (void)dir;
+#endif
+}
+
+Status verify_file(const Path& file, std::span<const std::uint8_t> bytes) {
+    auto back = read_binary(file, bytes.size() + 1);
+    if (!back || back->size() != bytes.size() || !std::equal(bytes.begin(), bytes.end(), back->begin()))
+        return make_error(ErrorCode::IoError, std::format("verification failed: '{}' does not read back as written", file.string()));
+    return {};
+}
+
+// Writes a verified temporary next to `path` and returns its name.
+Result<Path> stage(const Path& path, std::span<const std::uint8_t> bytes) {
+    std::error_code ec;
+    if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
+    const Path tmp = temp_sibling(path);
+    Status st = write_durable(tmp, bytes);
+    if (st) st = verify_file(tmp, bytes);
+    if (!st) {
+        std::filesystem::remove(tmp, ec);
+        return std::move(st).error();
+    }
+    return tmp;
+}
+
+Status swap_in(const Path& tmp, const Path& path) {
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
+        const std::string why = ec.message();
+        std::filesystem::remove(tmp, ec);
+        return make_error(ErrorCode::IoError, std::format("cannot replace '{}': {}", path.string(), why));
+    }
+    sync_directory(path.parent_path());
+    return {};
+}
+
+std::span<const std::uint8_t> as_bytes(std::string_view s) {
+    return {reinterpret_cast<const std::uint8_t*>(s.data()), s.size()};
+}
+
+} // namespace
+
+void testing::inject_write_fault(WriteFault fault) noexcept { g_fault.store(fault); }
+
+Status write_atomic(const Path& path, std::span<const std::uint8_t> bytes) {
+    auto tmp = stage(path, bytes);
+    if (!tmp) return std::move(tmp).error();
+    if (take_fault(testing::WriteFault::CrashBeforeSwap) == testing::WriteFault::CrashBeforeSwap)
+        return make_error(ErrorCode::IoError, "interrupted before replacing (injected)");
+    return swap_in(*tmp, path);
+}
+
+Status write_text_atomic(const Path& path, std::string_view text) { return write_atomic(path, as_bytes(text)); }
+
+Path history_path(const Path& path, std::uint32_t generation) {
+    return hidden_sibling(path, std::format(".vbak{}", generation));
+}
+
+Path damaged_path(const Path& path) { return hidden_sibling(path, ".damaged"); }
+
+Status write_safely(const Path& path, std::string_view bytes, const SafeWriteOptions& options) {
+    if (options.validate)
+        if (Status st = options.validate(bytes); !st)
+            return make_error(st.error().code, std::format("refusing to save '{}': {}", path.filename().string(), st.error().message));
+    const std::uint32_t keep = std::min(options.history, kMaxHistory);
+    auto tmp = stage(path, as_bytes(bytes));
+    if (!tmp) return std::move(tmp).error();
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(path, ec)) {
+        auto current = read_text(path);
+        Status ok = current ? Status{} : Status{std::move(current).error()};
+        if (ok && options.validate) {
+            ok = options.validate(*current);
+            if (!ok && ok.error().code == ErrorCode::VersionMismatch) ok = {}; // newer, not damaged
+        }
+        if (!ok) {
+            // Never overwrite or rotate a file we could not verify: keep it for inspection.
+            std::filesystem::rename(path, damaged_path(path), ec);
+            VICTUS_LOG_WARN("fs", "'{}' failed validation ({}); kept as '{}'", path.string(), ok.error().message,
+                            damaged_path(path).filename().string());
+        } else if (keep > 0) {
+            std::filesystem::remove(history_path(path, keep), ec);
+            for (std::uint32_t g = keep; g > 1; --g)
+                if (std::filesystem::exists(history_path(path, g - 1), ec))
+                    std::filesystem::rename(history_path(path, g - 1), history_path(path, g), ec);
+            // Copy (not move) so `path` stays complete until the final rename.
+            auto copy = stage(history_path(path, 1), as_bytes(*current));
+            if (!copy) {
+                std::filesystem::remove(*tmp, ec);
+                return make_error(copy.error().code, std::format("cannot keep the previous '{}': {}", path.filename().string(),
+                                                                 copy.error().message));
+            }
+            if (Status st = swap_in(*copy, history_path(path, 1)); !st) {
+                std::filesystem::remove(*tmp, ec);
+                return st;
+            }
+        }
+    }
+    if (take_fault(testing::WriteFault::CrashBeforeSwap) == testing::WriteFault::CrashBeforeSwap)
+        return make_error(ErrorCode::IoError, "interrupted before replacing (injected)");
+    return swap_in(*tmp, path);
+}
+
+Result<Recovered> read_with_recovery(const Path& path, const Validator& validate, std::uint32_t history,
+                                     std::uint64_t max_bytes) {
+    Recovered out;
+    bool any = false;
+    history = std::min(history, kMaxHistory);
+    for (std::uint32_t g = 0; g <= history; ++g) {
+        const Path file = g == 0 ? path : history_path(path, g);
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(file, ec) && !(g == 0 && is_virtual(file))) continue;
+        any = true;
+        auto text = read_text(file, max_bytes);
+        Status ok = text ? Status{} : Status{std::move(text).error()};
+        if (ok && validate) ok = validate(*text);
+        if (ok) {
+            out.bytes = std::move(text).value();
+            out.generation = g;
+            if (g > 0)
+                VICTUS_LOG_WARN("fs", "'{}' recovered from generation {} ({})", path.string(), g,
+                                out.rejected.empty() ? std::string("current file missing") : out.rejected.front());
+            return out;
+        }
+        if (ok.error().code == ErrorCode::VersionMismatch)
+            return make_error(ErrorCode::VersionMismatch, std::format("{}: {}", file.filename().string(), ok.error().message));
+        out.rejected.push_back(std::format("{}: {}", file.filename().string(), ok.error().message));
+    }
+    if (!any) return make_error(ErrorCode::NotFound, std::format("'{}' does not exist", path.string()));
+    std::string why;
+    for (const auto& r : out.rejected) why += (why.empty() ? "" : "; ") + r;
+    return make_error(ErrorCode::ParseError, std::format("no valid copy of '{}': {}", path.string(), why));
+}
+
+std::vector<std::uint32_t> generations(const Path& path, std::uint32_t history) {
+    std::vector<std::uint32_t> out;
+    std::error_code ec;
+    for (std::uint32_t g = 1; g <= std::min(history, kMaxHistory); ++g)
+        if (std::filesystem::is_regular_file(history_path(path, g), ec)) out.push_back(g);
+    return out;
+}
+
+Status restore_generation(const Path& path, std::uint32_t generation, const SafeWriteOptions& options) {
+    if (generation == 0 || generation > kMaxHistory)
+        return make_error(ErrorCode::InvalidArgument, std::format("no generation {}", generation));
+    auto text = read_text(history_path(path, generation));
+    if (!text) return make_error(ErrorCode::NotFound, std::format("'{}' has no generation {}", path.filename().string(), generation));
+    return write_safely(path, *text, options);
 }
 
 Result<std::string> sanitize_relative(std::string_view relative) {

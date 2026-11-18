@@ -652,13 +652,14 @@ Status Scene::load(const Value& doc) {
 }
 
 Status Scene::save_file(const std::filesystem::path& path) const {
-    return fs::write_text_atomic(path, json::stringify(save(), true) + "\n");
+    return fs::write_safely(path, json::stringify(save(), true) + "\n", {.validate = json::document_validator("victus.scene")});
 }
 
 Status Scene::load_file(const std::filesystem::path& path) {
-    auto text = fs::read_text(path);
+    // A torn or damaged scene falls back to its newest valid generation (logged by fs).
+    auto text = fs::read_with_recovery(path, json::document_validator("victus.scene"));
     if (!text) return std::move(text).error();
-    auto doc = json::parse(*text);
+    auto doc = json::parse(text->bytes);
     if (!doc) return make_error(ErrorCode::ParseError, path.string() + ": " + doc.error().message);
     return load(*doc);
 }
