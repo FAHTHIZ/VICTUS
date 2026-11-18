@@ -10,6 +10,7 @@
 #include "victus/render/render_graph.hpp"
 
 #include <array>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -424,7 +425,7 @@ public:
     [[nodiscard]] const std::array<float, 4>& cascade_splits() const noexcept { return cascade_splits_; }
 
 private:
-    explicit SceneRenderer(GpuContext& ctx) : ctx_(ctx), pool_(ctx.device()) {}
+    explicit SceneRenderer(GpuContext& ctx); // defined in the .cpp, where FrameScratch is complete
     struct Draw {
         const GpuMesh* mesh;
         Material material;
@@ -539,6 +540,10 @@ private:
     std::vector<LineVertex> lines_;
     std::vector<ParticleInstance> particles_, particle_upload_;
     std::vector<ParticleBatch> particle_batches_;
+    // Per-frame draw lists, batches and upload staging, kept between frames so render() reuses their
+    // capacity instead of allocating (and, for the large ones, mapping fresh pages) every frame.
+    struct FrameScratch;
+    std::unique_ptr<FrameScratch> scratch_;
     rhi::BufferHandle particle_buffer_;
     std::uint32_t particle_capacity_{0}; // in particles
     std::array<math::Mat4, 4> cascade_vp_{math::Mat4::identity(), math::Mat4::identity(), math::Mat4::identity(),
