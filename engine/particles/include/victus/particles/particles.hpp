@@ -6,6 +6,8 @@
 // bit-identical particles whether emitters are updated serially or on the job system.
 // Each update also produces camera-independent billboards (world position, size, colour,
 // rotation) that the runtime hands to the renderer (3D: depth-aware soft particles; 2D: sprites).
+// Textures can be flipbooks (a grid of frames played over each particle's life or at a fixed
+// rate), and particles can stretch along their velocity (sparks, rain, streaks).
 #pragma once
 #include "victus/core/hash.hpp"
 #include "victus/core/math.hpp"
@@ -55,15 +57,30 @@ struct ParticleEmitterComponent {
     float softness{0.25f};     // metres over which particles fade into geometry
     std::int32_t layer{0};     // 2D sprite layer
     std::uint32_t seed{0};     // 0 = derived from the entity UUID
+    // Flipbook: the texture is a grid of frames, left to right then top to bottom.
+    std::uint32_t flipbook_columns{1}, flipbook_rows{1}; // 1 x 1 = whole texture; at most 15 x 15
+    std::uint32_t flipbook_frames{0}; // frames used (0 = columns x rows)
+    float flipbook_fps{0};            // 0: frames span each particle's life once; > 0: loop at this rate
+    bool flipbook_random_start{false}; // each particle starts on a random frame
+    // Velocity stretch: a moving particle's length becomes size + speed x velocity_stretch
+    // (seconds), aligned with its on-screen motion. 0 = square billboards that keep their spin.
+    float velocity_stretch{0};
 };
+
+// Frame shown at `age` of `life` seconds, given the particle's start frame (exposed for tests).
+[[nodiscard]] std::uint32_t flipbook_frame(const ParticleEmitterComponent& e, float age, float life, std::uint32_t start);
+// Usable frame count (columns x rows, clamped by flipbook_frames); 1 when the flipbook is off.
+[[nodiscard]] std::uint32_t flipbook_frame_count(const ParticleEmitterComponent& e);
 
 // One particle ready for drawing. Layout matches render::ParticleInstance (48 bytes).
 struct Billboard {
     math::Vec3 position;
     float size{0};
     math::Color color;
-    float rotation{0}; // radians
-    float reserved[3]{};
+    float rotation{0}; // radians (screen plane; stretched particles point along their velocity)
+    float frame{0};    // flipbook frame
+    float grid{0};     // flipbook grid = columns * 16 + rows (0 = whole texture)
+    float aspect{0};   // height / width along the rotated up axis (0 = square)
 };
 static_assert(sizeof(Billboard) == 48);
 
@@ -71,6 +88,7 @@ struct EmitterView {
     scene::Entity entity;
     const ParticleEmitterComponent* emitter{nullptr};
     std::span<const Billboard> billboards;
+    std::span<const math::Vec3> velocities; // world space, parallel to billboards; empty unless stretched
     math::Aabb bounds; // world space; invalid when empty
 };
 
@@ -116,6 +134,11 @@ bool emit(scene::Scene& scene, scene::Entity e, std::uint32_t count);
 // Kills every live particle and restarts the cycle.
 bool reset(scene::Scene& scene, scene::Entity e);
 [[nodiscard]] EmitterStatus status(scene::Scene& scene, scene::Entity e);
+// Re-aims a stretched billboard (aspect > 1) along its velocity's on-screen direction for a camera
+// with view matrix `view`, shortening the streak as the motion turns toward the view axis.
+void aim_stretched(Billboard& b, const math::Vec3& velocity, const math::Mat4& view);
+// Texture rectangle (u0, v0 top, u1, v1 bottom) of a billboard's flipbook frame; whole texture when off.
+[[nodiscard]] math::Vec4 flipbook_uv(const Billboard& b);
 // Every emitter with its billboards from the last update.
 void gather(scene::Scene& scene, std::vector<EmitterView>& out);
 

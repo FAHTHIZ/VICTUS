@@ -30,12 +30,14 @@ struct Particle {
     float rotation{0};
     float spin{0};
     float size_scale{1};
+    std::uint32_t start_frame{0};
 };
 
 // Runtime state, not serialized: rebuilt (empty) after loading.
 struct EmitterState {
     std::vector<Particle> particles;
     std::vector<Billboard> billboards;
+    std::vector<Vec3> velocities;
     Aabb bounds;
     Random rng{1, 1};
     bool seeded{false};
@@ -89,6 +91,62 @@ void sample_shape(const ParticleEmitterComponent& e, Random& rng, Vec3& pos, Vec
         break;
     }
 }
+
+std::uint32_t grid_axis(std::uint32_t n) { return std::clamp<std::uint32_t>(n, 1, 15); }
+
+} // namespace
+
+std::uint32_t flipbook_frame_count(const ParticleEmitterComponent& e) {
+    const std::uint32_t all = grid_axis(e.flipbook_columns) * grid_axis(e.flipbook_rows);
+    return e.flipbook_frames > 0 ? std::min(e.flipbook_frames, all) : all;
+}
+
+std::uint32_t flipbook_frame(const ParticleEmitterComponent& e, float age, float life, std::uint32_t start) {
+    const std::uint32_t n = flipbook_frame_count(e);
+    if (n <= 1) return 0;
+    std::uint64_t f = 0;
+    if (e.flipbook_fps > 0 && std::isfinite(e.flipbook_fps)) {
+        f = static_cast<std::uint64_t>(std::max(0.0f, age) * e.flipbook_fps);
+    } else {
+        const float t = life > 0 ? std::clamp(age / life, 0.0f, 1.0f) : 0.0f;
+        f = std::min<std::uint64_t>(n - 1, static_cast<std::uint64_t>(t * static_cast<float>(n)));
+    }
+    return static_cast<std::uint32_t>((f + start) % n);
+}
+
+void aim_stretched(Billboard& b, const Vec3& velocity, const Mat4& view) {
+    if (b.aspect <= 1.0f) return;
+    // Screen-space direction of motion: the derivative of the perspective projection of the
+    // view-space position p moving with view-space velocity d is proportional to
+    // (d.xy * -p.z + p.xy * d.z).
+    const Vec3 p = view.transform_point(b.position);
+    const Vec3 d = view.transform_vector(velocity);
+    float sx = d.x * -p.z + p.x * d.z, sy = d.y * -p.z + p.y * d.z;
+    if (sx * sx + sy * sy < 1e-12f) {
+        sx = d.x;
+        sy = d.y;
+    }
+    const float speed = math::length(d);
+    const float across = std::sqrt(d.x * d.x + d.y * d.y);
+    if (speed <= 0.0f || across <= 1e-6f * speed) {
+        b.aspect = 1.0f; // moving straight along the view axis: no visible streak
+        return;
+    }
+    b.rotation = std::atan2(-sx, sy);
+    b.aspect = 1.0f + (b.aspect - 1.0f) * (across / speed); // foreshortened streak length
+}
+
+math::Vec4 flipbook_uv(const Billboard& b) {
+    if (b.grid < 17.0f) return {0, 0, 1, 1};
+    const auto g = static_cast<std::uint32_t>(b.grid);
+    const std::uint32_t cols = std::max<std::uint32_t>(1, g / 16), rows = std::max<std::uint32_t>(1, g % 16);
+    const auto f = static_cast<std::uint32_t>(std::max(0.0f, b.frame) + 0.5f) % (cols * rows);
+    const float c = static_cast<float>(f % cols), r = static_cast<float>(f / cols);
+    const float fc = static_cast<float>(cols), fr = static_cast<float>(rows);
+    return {c / fc, r / fr, (c + 1.0f) / fc, (r + 1.0f) / fr};
+}
+
+namespace {
 
 struct Counts {
     std::uint32_t spawned{0}, died{0};
@@ -164,6 +222,11 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
         p.rotation = s.rng.next_float() * 2.0f * kPi;
         p.spin = s.rng.range_float(e.spin_min, e.spin_max) * spin_to_rad;
         p.size_scale = 1.0f - clamp01(e.size_variation) * s.rng.next_float();
+        // Drawn only when used, so emitters without the option keep their exact random sequence.
+        if (e.flipbook_random_start) {
+            const std::uint32_t n = flipbook_frame_count(e);
+            if (n > 1) p.start_frame = std::min(n - 1, static_cast<std::uint32_t>(s.rng.next_float() * static_cast<float>(n)));
+        }
         if (e.world_space) {
             p.position = world.transform_point(pos);
             p.velocity = math::normalize(world.transform_vector(dir)) * speed;
@@ -178,8 +241,13 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
 
     // Billboards in world space.
     s.billboards.resize(s.particles.size());
+    const bool stretched = e.velocity_stretch > 0 && std::isfinite(e.velocity_stretch);
+    s.velocities.resize(stretched ? s.particles.size() : 0);
     s.bounds = {};
     const float intensity = std::max(0.0f, e.intensity);
+    const std::uint32_t cols = grid_axis(e.flipbook_columns), rows = grid_axis(e.flipbook_rows);
+    const bool flipbook = cols * rows > 1;
+    const float grid = flipbook ? static_cast<float>(cols * 16 + rows) : 0.0f;
     for (std::size_t i = 0; i < s.particles.size(); ++i) {
         const Particle& p = s.particles[i];
         const float t = clamp01(p.age / p.life);
@@ -189,7 +257,23 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
         b.color = Color(math::lerp(e.color_start.r, e.color_end.r, t) * intensity, math::lerp(e.color_start.g, e.color_end.g, t) * intensity,
                         math::lerp(e.color_start.b, e.color_end.b, t) * intensity, clamp01(math::lerp(e.color_start.a, e.color_end.a, t)));
         b.rotation = p.rotation;
-        const Vec3 half{b.size * 0.5f};
+        b.frame = flipbook ? static_cast<float>(flipbook_frame(e, p.age, p.life, p.start_frame)) : 0.0f;
+        b.grid = grid;
+        b.aspect = 0;
+        float extent = b.size;
+        if (stretched) {
+            const Vec3 v = e.world_space ? p.velocity : world.transform_vector(p.velocity);
+            s.velocities[i] = v;
+            const float speed = math::length(v);
+            if (b.size > 0 && speed > 1e-6f) {
+                b.aspect = 1.0f + speed * e.velocity_stretch / b.size;
+                // Up axis along the velocity's XY direction: right for 2D and for a camera looking
+                // down -Z; 3D views re-aim it at the camera with velocities.
+                b.rotation = std::atan2(-v.x, v.y);
+                extent = b.size * b.aspect;
+            }
+        }
+        const Vec3 half{extent * 0.5f};
         s.bounds.expand(b.position - half);
         s.bounds.expand(b.position + half);
     }
@@ -246,6 +330,12 @@ void register_components() {
             .field(&ParticleEmitterComponent::softness, "softness", {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "metres"})
             .field(&ParticleEmitterComponent::layer, "layer", {.min = -1000, .max = 1000, .tooltip = "2D sprite layer"})
             .field(&ParticleEmitterComponent::seed, "seed", {.tooltip = "0 = derived from the entity"})
+            .field(&ParticleEmitterComponent::flipbook_columns, "flipbook_columns", {.min = 1, .max = 15, .tooltip = "Texture frame grid columns"})
+            .field(&ParticleEmitterComponent::flipbook_rows, "flipbook_rows", {.min = 1, .max = 15, .tooltip = "Texture frame grid rows"})
+            .field(&ParticleEmitterComponent::flipbook_frames, "flipbook_frames", {.min = 0, .max = 225, .tooltip = "Frames used; 0 = columns x rows"})
+            .field(&ParticleEmitterComponent::flipbook_fps, "flipbook_fps", {.min = 0, .max = 240, .speed = 0.5f, .tooltip = "0 = frames span each particle's life"})
+            .field(&ParticleEmitterComponent::flipbook_random_start, "flipbook_random_start")
+            .field(&ParticleEmitterComponent::velocity_stretch, "velocity_stretch", {.min = 0, .max = 10, .speed = 0.005f, .tooltip = "Seconds of motion added to the length; 0 = off"})
             .commit();
     });
 }
@@ -306,6 +396,7 @@ bool reset(Scene& scene, Entity e) {
     if (auto* s = world.get<EmitterState>(e)) {
         s->particles.clear();
         s->billboards.clear();
+        s->velocities.clear();
         s->bounds = {};
         s->started = false;
         s->finished = false;
@@ -333,7 +424,7 @@ EmitterStatus status(Scene& scene, Entity e) {
 void gather(Scene& scene, std::vector<EmitterView>& out) {
     scene.world().each<ParticleEmitterComponent, EmitterState>([&](Entity e, ParticleEmitterComponent& c, EmitterState& s) {
         if (s.billboards.empty()) return;
-        out.push_back({e, &c, std::span<const Billboard>(s.billboards), s.bounds});
+        out.push_back({e, &c, std::span<const Billboard>(s.billboards), std::span<const Vec3>(s.velocities), s.bounds});
     });
 }
 
