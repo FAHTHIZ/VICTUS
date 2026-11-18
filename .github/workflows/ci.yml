@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Generated shader library matches sources
         run: python3 tools/shaders/compile_shaders.py --check
 
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Pins, hashes and license table match cmake/VictusDependencies.cmake
         run: python3 tools/deps/victus_deps.py check
       - name: Known vulnerabilities (OSV)
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS clang clang-tidy
       - name: Configure (compile database only)
@@ -69,7 +69,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
@@ -114,7 +114,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
       - uses: actions/setup-java@v4
@@ -155,7 +155,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
       - name: Configure
