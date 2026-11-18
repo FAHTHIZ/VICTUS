@@ -7,6 +7,15 @@ Living, evidence-driven plan. Work directly on `main` in small, buildable commit
 ## Direction
 VICTUS is a general-purpose engine, not an Auroria-specific one. Auroria remains a demanding showcase only. The defining product goal is **high-end visual quality that scales down to entry-level Android phones**: every rendering feature must have a cheap mobile path (or a documented Low-tier fallback), favour bandwidth-light techniques on tile-based GPUs, and be measured rather than assumed.
 
+## Parallel sessions (coordination, 2026-11-18)
+
+Two agent sessions push to `main` at the same time. To avoid duplicate work (crash reports were implemented twice on 2026-11-18; the copy in 2f83f85 was kept), each session claims areas here before starting and fetches `main` before every slice:
+
+- **Studio / front-end session:** `editor/`, roadmap 6c, Workstream D release process (follows its crash/diagnostics work in 2f83f85).
+- **Backend engine session:** animation depth in `engine/animation` (IK, layers and bone masks, additive, retargeting, morph targets), then the plugin/module SDK research, ADR and `engine/plugin`, then 6d Workstream G runtime gaps. It does not edit `editor/` beyond one-line integration hooks.
+
+Claim an area by editing this list in the same commit as the first change to it.
+
 ## Next priorities (updated 2026-11-18)
 
 Ordered by what most limits making and shipping a complete game with VICTUS today, foundations first. Each item lists measurable acceptance criteria; it is checked only when all criteria are met and recorded in docs/STATUS.md.
