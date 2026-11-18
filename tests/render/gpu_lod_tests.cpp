@@ -342,3 +342,73 @@ TEST_CASE("gpu lods: shadow_lod_bias draws coarser casters without changing the 
     ctx.destroy(ground);
     ctx.destroy(sphere);
 }
+
+// H3 item 3: a main view and a secondary view (a zoomed scope or picture-in-picture camera) with
+// different FOVs and render-target sizes, drawn by one renderer in the same frame. Each view picks
+// its own levels from its own projection and resolution; neither inherits the other's choice, and
+// each frame's SceneStats report that view's cost so callers can add them to the frame budget.
+TEST_CASE("gpu lods: main and secondary views select levels independently") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    MeshData data = make_uv_sphere(0.5f, 64, 32);
+    REQUIRE(generate_lods(data) == 3);
+    optimize_mesh(data);
+    auto sphere = ctx.create_mesh(data, "view_lod_sphere").value();
+    Material mat;
+    mat.base_color = {0.8f, 0.5f, 0.2f, 1};
+    RenderSettings s = RenderSettings::preset(QualityTier::High);
+    s.taa = false; // no history between views
+    s.auto_exposure = false;
+    sr.value()->set_settings(s);
+
+    struct View {
+        std::uint32_t w, h;
+        float fov;
+    };
+    const View main_view{320, 180, 60.0f}, scope{96, 96, 6.0f};
+    auto draw = [&](const View& v, const char* save = nullptr) {
+        auto target = test::make_target(v.w, v.h);
+        Camera3D cam = Camera3D::look_at({0, 1.5f, 12}, {0, 0.5f, -30});
+        cam.fov_y = math::radians(v.fov);
+        DirectionalLight sun;
+        sun.shadow_distance = 60;
+        sr.value()->begin(cam, sun, {});
+        for (int i = 0; i < 9; ++i) // a row receding from 4 m to 44 m
+            sr.value()->submit(sphere, mat, math::Mat4::translation({(i % 3 - 1) * 1.5f, 0.5f, 8.0f - 5.0f * i}));
+        auto cmd = dev.begin_commands();
+        REQUIRE(sr.value()->render(cmd, target, v.w, v.h, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        Shot out{dev.read_texture(target).value(), sr.value()->stats()};
+        if (save) test::save_output(save, v.w, v.h, out.px);
+        dev.destroy(target);
+        return out;
+    };
+
+    const Shot main_alone = draw(main_view, "lod_view_main");
+    const Shot scope_alone = draw(scope, "lod_view_scope");
+    // The narrow, small scope magnifies the far spheres: fewer of them, at finer levels.
+    INFO("main: " << main_alone.stats.visible << " visible, " << main_alone.stats.lod_draws << " coarser, "
+                  << main_alone.stats.triangles << " tris; scope: " << scope_alone.stats.visible << " visible, "
+                  << scope_alone.stats.lod_draws << " coarser, " << scope_alone.stats.triangles << " tris");
+    CHECK(main_alone.stats.lod_draws > 0);
+    CHECK(scope_alone.stats.visible < main_alone.stats.visible);
+    CHECK(scope_alone.stats.triangles / std::max<std::uint64_t>(1, scope_alone.stats.visible) >
+          main_alone.stats.triangles / std::max<std::uint64_t>(1, main_alone.stats.visible));
+
+    // Interleaved in one frame, in both orders: each view matches its standalone render.
+    for (int round = 0; round < 2; ++round) {
+        const Shot a = draw(main_view);
+        const Shot b = draw(scope);
+        const Shot c = draw(main_view);
+        for (const auto& [got, want] : {std::pair{&a, &main_alone}, std::pair{&b, &scope_alone}, std::pair{&c, &main_alone}}) {
+            CHECK(got->stats.triangles == want->stats.triangles);
+            CHECK(got->stats.lod_draws == want->stats.lod_draws);
+            CHECK(got->stats.shadow_triangles == want->stats.shadow_triangles);
+            CHECK(mean_diff(got->px, want->px) < 0.25);
+        }
+    }
+    ctx.destroy(sphere);
+}
