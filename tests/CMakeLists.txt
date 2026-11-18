@@ -272,3 +272,11 @@ victus_add_test(victus_sequencer_tests
     SOURCES sequencer/sequencer_tests.cpp
     DEPS VICTUS::Sequencer VICTUS::Animation VICTUS::Audio VICTUS::Core
     LABELS sequencer)
+
+# Release tooling (tools/release/release.py, tools/crash/symbolize.py): version/changelog checks,
+# packaging with split debug symbols (Linux only part), build-id-checked symbol lookup.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME victus_release_tools COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/release_tests.py)
+    set_tests_properties(victus_release_tools PROPERTIES LABELS "tools")
+endif()

@@ -74,7 +74,7 @@ Frames are module path + offset. With the matching debug information:
 python3 tools/crash/symbolize.py crash-....txt [--symbols DIR ...]
 ```
 
-It uses `llvm-symbolizer` or `addr2line`, looks for `DIR/.build-id/aa/rest.debug`, `DIR/<module>.debug`, `DIR/<module>` and the module path from the report, and only uses a file whose GNU build-id matches the report, so a rebuilt binary never gives wrong names. Release builds keep debug information in a separate symbol archive (release process: docs/RELEASE_PROCESS.md, in progress); keep it for every build you ship.
+It uses `llvm-symbolizer` or `addr2line`, looks for `DIR/.build-id/aa/rest.debug`, `DIR/<module>.debug`, `DIR/<module>` and the module path from the report, and only uses a file whose GNU build-id matches the report, so a rebuilt binary never gives wrong names. Release builds keep debug information in a separate symbol archive (see [RELEASE_PROCESS.md](RELEASE_PROCESS.md)); keep it for every build you ship.
 
 Windows frames have no build-id; resolve them with the matching `.pdb` (WinDbg, or `llvm-symbolizer --obj=game.exe`). Android reports have no frames.
 
