@@ -75,6 +75,21 @@ GPU timing.
    distances under bilinear alpha testing (both mip chains render 0.11 at 6 m); hashed alpha testing
    is the recorded follow-up.
 
+## Separate cost counters (H2)
+
+Geometry, shadows and shading are reported apart, in `SceneStats`, the `--profile` JSON (gated by
+tests/perf/budgets.json) and the editor viewport overlay:
+
+| Cost | Counters |
+|---|---|
+| Geometry | `triangles`, `lod_draws`, `visible`, `main_batches` |
+| Shadow maps | `shadow_triangles`, `shadow_batches`, `local_shadow_draws` |
+| Shading and transparency | `alpha_tested_draws`, `surface_shader_draws`, `transparent_draws`, `transparent_triangles` |
+| Texture memory | `gpu.texture_bytes`, `gpu.live_textures` |
+
+These are submission counts, not measured fill. Measured per-pixel overdraw (an overdraw debug
+view) is the next H2 item; anisotropic filtering has no setting yet.
+
 ## Not covered yet
 
 - H3 item 8: thin opaque geometry (railings modelled as meshes) below one pixel wide; mesh LOD keeps

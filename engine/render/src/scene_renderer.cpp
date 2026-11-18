@@ -1234,7 +1234,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         }
         if (d.probe >= 0) ++stats_.probe_draws;
         if (d.lod > 0) ++stats_.lod_draws;
-        stats_.triangles += d.mesh->lods[d.lod].index_count / 3;
+        const std::uint32_t tris = d.mesh->lods[d.lod].index_count / 3;
+        stats_.triangles += tris;
+        // Shading-cost counters (H2): kept apart from geometry so a fill/shading bottleneck is
+        // visible as such.
+        if (blended) stats_.transparent_triangles += tris;
+        else if (d.material.alpha_cutoff > 0.0f) ++stats_.alpha_tested_draws;
+        if (d.material.surface_shader) ++stats_.surface_shader_draws;
         (blended ? transparent : visible).push_back(&d);
     }
     std::stable_sort(transparent.begin(), transparent.end(), [](const Draw* a, const Draw* b) { return a->distance > b->distance; });

@@ -505,6 +505,9 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         c.emplace_back("frame.main_batches", static_cast<double>(ss.main_batches));
         c.emplace_back("frame.shadow_batches", static_cast<double>(ss.shadow_batches + ss.local_shadow_draws));
         c.emplace_back("frame.transparent_draws", static_cast<double>(ss.transparent_draws));
+        c.emplace_back("frame.transparent_triangles", static_cast<double>(ss.transparent_triangles));
+        c.emplace_back("frame.alpha_tested_draws", static_cast<double>(ss.alpha_tested_draws));
+        c.emplace_back("frame.surface_shader_draws", static_cast<double>(ss.surface_shader_draws));
         c.emplace_back("frame.sprites", static_cast<double>(last_view.sprites));
         c.emplace_back("frame.ui_items", static_cast<double>(last_view.ui.items));
         c.emplace_back("scene.entities", static_cast<double>(scene.size()));

@@ -40,6 +40,8 @@ Use stable workloads, warm/cold cache cases, repeated runs and machine-readable 
 | `frame.draw_calls`, `frame.render_passes` | GPU draws and executed render-graph passes in the last frame |
 | `frame.triangles`, `frame.visible` | submitted triangles; meshes that passed culling |
 | `frame.main_batches`, `frame.shadow_batches`, `frame.transparent_draws` | instanced batches per pass |
+| `frame.shadow_triangles` | triangles drawn into directional cascades and local shadow tiles |
+| `frame.transparent_triangles`, `frame.alpha_tested_draws`, `frame.surface_shader_draws` | shading cost apart from geometry: blended-layer triangles (each layer shades its pixels again), visible alpha-tested opaque draws, visible draws running a project surface shader |
 | `frame.sprites`, `frame.ui_items` | 2D sprites and UI quads |
 | `scene.entities`, `sim.systems` | live entities; registered simulation systems |
 | `gpu.texture_bytes`, `gpu.buffer_bytes`, `gpu.live_textures`, `gpu.live_buffers` | GPU memory held by the renderer |

@@ -1161,6 +1161,9 @@ Full-repository audit against the code (not the checkboxes), then foundation fix
 - `test(render)` main and secondary views (roadmap 6b, Workstream H3 item 3): "gpu lods: main and secondary views select levels independently" draws a 320x180 FOV 60 view and a 96x96 FOV 6 scope view with one renderer, standalone and interleaved. Main view: 9 visible spheres, 4455 triangles. Scope: 7 visible, 3962 triangles, at finer levels per object. Interleaved frames match the standalone triangles, coarser-draw count, shadow triangles and image. There is no secondary-camera component, so per-view budgets stay with the caller, who sums per-render SceneStats.
   - Verified locally (Debug, lavapipe): `victus_gpu_tests -tc="gpu lods*"` passes.
 
+- `feat(render)` shading-cost counters (roadmap 6b, Workstream H2): `SceneStats::alpha_tested_draws`, `surface_shader_draws` and `transparent_triangles` count separately from geometry. Profile counters `frame.alpha_tested_draws`, `frame.surface_shader_draws` and `frame.transparent_triangles` are budgeted for all six perf cases (arena 4 and template-3d 1 surface-shader draws; no alpha-tested or blended draws in any case). The editor viewport shows a "shading:" line when any are non-zero. Tests: alpha-coverage (1 alpha-tested draw), surface shader (1 draw, 0 after a compile-error fallback), transparency (blended triangles = blended quads x 2).
+  - Verified locally (Debug, lavapipe): `victus_gpu_tests -tc="gpu alpha coverage*,*surface shader*,*blend*"` 1475/1475 assertions; `ctest -R victus_perf_budgets` passes.
+
 ## Next task
 Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): audit its workstreams against main and implement them in dependency order. Then 6c (Studio UX handoff, Phase 0 audit first), 6d (Workstream G audit, docs/audits/ENGINE_CAPABILITY_AND_ROBUSTNESS_AUDIT.md), priority 1 (full clang-tidy gate), priority 8 (GPU-instanced foliage), the 2D platformer sample.
 
