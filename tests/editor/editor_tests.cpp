@@ -18,7 +18,7 @@
 #include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
 #include "victus/runtime/surface_shader.hpp"
-#include "victus/script/material_graph.hpp"
+#include "victus/graph/material_graph.hpp"
 #include "victus/script/script.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include <thread>
@@ -1623,8 +1623,8 @@ TEST_CASE("editor: visual script graphs are created, edited with undo, saved and
     REQUIRE(set_pos != 0);
     REQUIRE(make != 0);
     CHECK(ed.graph_dirty());
-    CHECK(ed.graph_add_variable({"speed", script::PinType::Number, json::Value(3.0), true}));
-    CHECK_FALSE(ed.graph_add_variable({"speed", script::PinType::Number, {}, true})); // duplicate
+    CHECK(ed.graph_add_variable({"speed", graph::PinType::Number, json::Value(3.0), true}));
+    CHECK_FALSE(ed.graph_add_variable({"speed", graph::PinType::Number, {}, true})); // duplicate
     const auto get = ed.graph_add_node("variable.get", 0, 120);
     REQUIRE(ed.graph_set_config(get, "variable", json::Value("speed")));
     CHECK(ed.graph_connect(2, "out", set_pos, "in")); // after the log
@@ -1638,14 +1638,14 @@ TEST_CASE("editor: visual script graphs are created, edited with undo, saved and
     h.frames(2);
 
     // Undo steps back one edit at a time; redo restores it.
-    const std::string built = script::serialize_graph(ed.editing_graph());
+    const std::string built = graph::serialize_graph(ed.editing_graph());
     REQUIRE(ed.graph_undo()); // literal z
     CHECK(ed.editing_graph().node(make)->inputs.find("z") == nullptr);
     REQUIRE(ed.graph_undo()); // vector -> position link
     CHECK(ed.editing_graph().links.size() == 3);
     REQUIRE(ed.graph_redo());
     REQUIRE(ed.graph_redo());
-    CHECK(script::serialize_graph(ed.editing_graph()) == built);
+    CHECK(graph::serialize_graph(ed.editing_graph()) == built);
     CHECK_FALSE(ed.graph_redo());
 
     // Consecutive literal edits of one pin are one undo step.
@@ -1655,7 +1655,7 @@ TEST_CASE("editor: visual script graphs are created, edited with undo, saved and
     CHECK(ed.editing_graph().node(make)->inputs.find("x") == nullptr);
 
     // Renaming a variable retargets its nodes; removing one leaves an error on them.
-    CHECK(ed.graph_update_variable("speed", {"height", script::PinType::Number, json::Value(3.0), true}));
+    CHECK(ed.graph_update_variable("speed", {"height", graph::PinType::Number, json::Value(3.0), true}));
     CHECK(ed.editing_graph().node(get)->config["variable"].as_string_or("") == "height");
     CHECK(ed.graph_diagnostics().empty());
     CHECK(ed.graph_remove_variable("height"));
@@ -1679,7 +1679,7 @@ TEST_CASE("editor: visual script graphs are created, edited with undo, saved and
     CHECK_FALSE(ed.graph_dirty());
     auto text = fs::read_text(assets_dir / "scripts" / "Graph.vgraph");
     REQUIRE(text.ok());
-    CHECK(*text == script::serialize_graph(ed.editing_graph()));
+    CHECK(*text == graph::serialize_graph(ed.editing_graph()));
 
     // Assign to an entity with a per-entity override and run it.
     Scene& s = ed.edit_scene();
@@ -1709,10 +1709,10 @@ TEST_CASE("editor: visual script graphs are created, edited with undo, saved and
     CHECK_FALSE(s.world().has<script::ScriptComponent>(s.find_by_name("GraphBox")));
 
     // A file changed on disk reloads into the editor when there are no unsaved edits.
-    auto changed = script::parse_graph(*text);
+    auto changed = graph::parse_graph(*text);
     REQUIRE(changed.ok());
     changed->nodes.front().x = 400;
-    REQUIRE(fs::write_text_atomic(assets_dir / "scripts" / "Graph.vgraph", script::serialize_graph(*changed)).ok());
+    REQUIRE(fs::write_text_atomic(assets_dir / "scripts" / "Graph.vgraph", graph::serialize_graph(*changed)).ok());
     h.frames(70); // the editor polls once a second
     CHECK(ed.editing_graph().nodes.front().x == 400.0f);
     CHECK_FALSE(ed.graph_dirty());
@@ -2070,18 +2070,18 @@ TEST_CASE("editor: material graphs are created, edited on the canvas and shade t
     CHECK(rec->path == "shaders/MaterialGraph.vmatgraph");
     CHECK(rec->kind == assets::AssetKind::Shader);
     REQUIRE(ed.open_graph_editor(graph).ok());
-    CHECK(ed.editing_graph().domain == script::GraphDomain::Material);
+    CHECK(ed.editing_graph().domain == graph::GraphDomain::Material);
     CHECK(ed.graph_diagnostics().empty());
     h.frames(2);
 
     // Script nodes and variables do not belong in material graphs.
     CHECK(ed.graph_add_node("debug.log") == 0);
-    CHECK_FALSE(ed.graph_add_variable({"speed", script::PinType::Number, json::Value(1.0), true}));
+    CHECK_FALSE(ed.graph_add_variable({"speed", graph::PinType::Number, json::Value(1.0), true}));
 
     // Fresnel rim * Parameter 0 colour -> emission.
     std::uint32_t out = 0;
     for (const auto& n : ed.editing_graph().nodes)
-        if (n.type == script::kMaterialOutputNode) out = n.id;
+        if (n.type == graph::kMaterialOutputNode) out = n.id;
     REQUIRE(out != 0);
     const auto fres = ed.graph_add_node("mat.fresnel", 0, 300);
     const auto param = ed.graph_add_node("mat.param0", 0, 420);
@@ -2099,9 +2099,9 @@ TEST_CASE("editor: material graphs are created, edited on the canvas and shade t
 
     // Undo/redo keep the material domain.
     REQUIRE(ed.graph_undo());
-    CHECK(ed.editing_graph().domain == script::GraphDomain::Material);
+    CHECK(ed.editing_graph().domain == graph::GraphDomain::Material);
     REQUIRE(ed.graph_redo());
-    CHECK(ed.editing_graph().domain == script::GraphDomain::Material);
+    CHECK(ed.editing_graph().domain == graph::GraphDomain::Material);
 
     // Assigned to the open material and saved: the renderer compiles the graph.
     ed.open_material_editor(mat);

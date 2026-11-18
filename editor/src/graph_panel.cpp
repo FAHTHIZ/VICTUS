@@ -8,7 +8,7 @@
 // runs the graph. The edit API is public so tests drive it without a window.
 #include "victus/editor/editor.hpp"
 #include "victus/runtime/surface_shader.hpp"
-#include "victus/script/material_graph.hpp"
+#include "victus/graph/material_graph.hpp"
 
 #include <imgui.h>
 #include <imgui_stdlib.h>
@@ -26,9 +26,9 @@ namespace victus::editor {
 
 using namespace scene;
 namespace sfs = std::filesystem;
-using script::GraphDiagnostic;
-using script::NodeKind;
-using script::PinType;
+using graph::GraphDiagnostic;
+using graph::NodeKind;
+using graph::PinType;
 
 namespace {
 
@@ -98,15 +98,15 @@ std::string short_literal(const json::Value& v) {
     return {};
 }
 
-bool pin_linked_in(const script::ScriptGraph& g, std::uint32_t node, std::string_view pin) {
-    return std::ranges::any_of(g.links, [&](const script::GraphLink& l) { return l.to_node == node && l.to_pin == pin; });
+bool pin_linked_in(const graph::ScriptGraph& g, std::uint32_t node, std::string_view pin) {
+    return std::ranges::any_of(g.links, [&](const graph::GraphLink& l) { return l.to_node == node && l.to_pin == pin; });
 }
-bool pin_linked_out(const script::ScriptGraph& g, std::uint32_t node, std::string_view pin) {
-    return std::ranges::any_of(g.links, [&](const script::GraphLink& l) { return l.from_node == node && l.from_pin == pin; });
+bool pin_linked_out(const graph::ScriptGraph& g, std::uint32_t node, std::string_view pin) {
+    return std::ranges::any_of(g.links, [&](const graph::GraphLink& l) { return l.from_node == node && l.from_pin == pin; });
 }
 
-std::string node_title(const script::GraphNode& n) {
-    const script::NodeDesc* d = script::find_node_desc(n.type);
+std::string node_title(const graph::GraphNode& n) {
+    const graph::NodeDesc* d = graph::find_node_desc(n.type);
     std::string title = d ? d->title : n.type;
     if (d && (d->kind == NodeKind::GetVariable || d->kind == NodeKind::SetVariable)) {
         const std::string var = n.config["variable"].as_string_or("");
@@ -210,8 +210,8 @@ constexpr PinType kVariableTypes[] = {PinType::Number, PinType::Bool, PinType::S
                                       PinType::Any};
 
 // On Start -> Log, the graph a new visual script begins with.
-script::ScriptGraph starter_graph() {
-    script::ScriptGraph g;
+graph::ScriptGraph starter_graph() {
+    graph::ScriptGraph g;
     const auto start = g.add_node("event.start", 0, 0);
     const auto log = g.add_node("debug.log", 260, 0);
     g.node(log)->inputs.set("message", json::Value("Hello from a visual script"));
@@ -224,17 +224,17 @@ script::ScriptGraph starter_graph() {
 // ---- assets ---------------------------------------------------------------------------------------
 
 Result<Uuid> Editor::create_graph(std::string_view relative_path) {
-    return create_graph_file(relative_path, script::GraphDomain::Script);
+    return create_graph_file(relative_path, graph::GraphDomain::Script);
 }
 
 Result<Uuid> Editor::create_material_graph(std::string_view relative_path) {
-    return create_graph_file(relative_path, script::GraphDomain::Material);
+    return create_graph_file(relative_path, graph::GraphDomain::Material);
 }
 
-Result<Uuid> Editor::create_graph_file(std::string_view relative_path, script::GraphDomain domain) {
+Result<Uuid> Editor::create_graph_file(std::string_view relative_path, graph::GraphDomain domain) {
     if (!db_) return make_error(ErrorCode::InvalidArgument, "no project open");
-    const bool material = domain == script::GraphDomain::Material;
-    const std::string ext = material ? std::string(script::kMaterialGraphExtension) : ".vgraph";
+    const bool material = domain == graph::GraphDomain::Material;
+    const std::string ext = material ? std::string(graph::kMaterialGraphExtension) : ".vgraph";
     const std::string stem = material ? "shaders/MaterialGraph" : "scripts/Graph";
     std::string rel(relative_path);
     if (rel.empty()) {
@@ -249,7 +249,7 @@ Result<Uuid> Editor::create_graph_file(std::string_view relative_path, script::G
     std::error_code ec;
     sfs::create_directories((db_->assets_dir() / *clean).parent_path(), ec);
     VICTUS_TRY_STATUS(fs::write_text_atomic(db_->assets_dir() / *clean,
-                                            script::serialize_graph(material ? script::starter_material_graph() : starter_graph())));
+                                            graph::serialize_graph(material ? graph::starter_material_graph() : starter_graph())));
     (void)db_->refresh();
     const assets::AssetRecord* rec = db_->find_path(*clean);
     if (!rec) return make_error(ErrorCode::IoError, "graph was written but not registered: " + *clean);
@@ -260,14 +260,14 @@ Result<Uuid> Editor::create_graph_file(std::string_view relative_path, script::G
 Status Editor::open_graph_editor(const Uuid& asset) {
     if (!db_) return make_error(ErrorCode::InvalidArgument, "no project open");
     const assets::AssetRecord* rec = db_->find(asset);
-    if (!rec || !(rec->path.ends_with(".vgraph") || rec->path.ends_with(script::kMaterialGraphExtension)))
+    if (!rec || !(rec->path.ends_with(".vgraph") || rec->path.ends_with(graph::kMaterialGraphExtension)))
         return make_error(ErrorCode::NotFound, "graph asset " + asset.to_string() + " not found");
     auto text = fs::read_text(db_->source_path(*rec));
     if (!text) return std::move(text).error();
-    auto g = script::parse_graph(*text);
+    auto g = graph::parse_graph(*text);
     if (!g) return make_error(g.error().code, rec->path + ": " + g.error().message);
     // The extension decides what the graph compiles to.
-    g->domain = rec->path.ends_with(script::kMaterialGraphExtension) ? script::GraphDomain::Material : script::GraphDomain::Script;
+    g->domain = rec->path.ends_with(graph::kMaterialGraphExtension) ? graph::GraphDomain::Material : graph::GraphDomain::Script;
     graph_ = std::move(*g);
     graph_asset_ = asset;
     graph_show_code_ = false;
@@ -281,7 +281,7 @@ Status Editor::open_graph_editor(const Uuid& asset) {
     graph_link_drag_.reset();
     graph_palette_link_.reset();
     graph_node_drag_ = false;
-    graph_diags_ = script::validate_graph(graph_);
+    graph_diags_ = graph::validate_graph(graph_);
     graph_heat_.clear();
     graph_hits_seen_.clear();
     graph_error_.reset();
@@ -304,16 +304,16 @@ Status Editor::save_graph() {
     const assets::AssetRecord* rec = graph_asset_.is_nil() ? nullptr : db_->find(graph_asset_);
     if (!rec) return make_error(ErrorCode::NotFound, "no graph open");
     const std::string path = rec->path; // records move when the hot reloader refreshes the database
-    const std::string text = script::serialize_graph(graph_);
+    const std::string text = graph::serialize_graph(graph_);
     VICTUS_TRY_STATUS(fs::write_text_atomic(db_->source_path(*rec), text));
     graph_disk_hash_ = fnv1a64(std::string_view(text));
     graph_dirty_ = false;
     std::size_t errors = 0;
     for (const auto& d : graph_diags_) errors += d.severity == GraphDiagnostic::Severity::Error;
-    if (graph_.domain == script::GraphDomain::Material) {
+    if (graph_.domain == graph::GraphDomain::Material) {
         // The asset hot reloader recompiles the shader for the viewport; report GLSL errors now.
         if (!errors) {
-            const auto compiled = script::compile_material_graph(graph_, path);
+            const auto compiled = graph::compile_material_graph(graph_, path);
             if (auto c = runtime::compile_surface_shader(compiled.source, path, false); !c) {
                 notify("Saved " + path + ", but the shader does not compile: " + c.error().message, true);
                 return {};
@@ -336,13 +336,13 @@ void Editor::sync_graph_from_disk() {
     if (!rec) return;
     auto text = fs::read_text(db_->source_path(*rec));
     if (!text || fnv1a64(std::string_view(*text)) == graph_disk_hash_) return;
-    auto g = script::parse_graph(*text);
+    auto g = graph::parse_graph(*text);
     if (!g) return; // keep the last good graph while the file is being written or is broken
     g->domain = graph_.domain;
     graph_begin_edit();
     graph_ = std::move(*g);
     graph_disk_hash_ = fnv1a64(std::string_view(*text));
-    graph_diags_ = script::validate_graph(graph_);
+    graph_diags_ = graph::validate_graph(graph_);
     graph_dirty_ = false;
 }
 
@@ -393,18 +393,18 @@ std::uint64_t Editor::graph_node_runs(std::uint32_t node) const {
 void Editor::graph_begin_edit(std::string_view coalesce_key) {
     if (!coalesce_key.empty() && coalesce_key == graph_edit_key_) return;
     graph_edit_key_ = std::string(coalesce_key);
-    graph_undo_.push_back(script::serialize_graph(graph_));
+    graph_undo_.push_back(graph::serialize_graph(graph_));
     if (graph_undo_.size() > kMaxGraphUndo) graph_undo_.erase(graph_undo_.begin());
     graph_redo_.clear();
 }
 
 void Editor::graph_end_edit() {
     graph_dirty_ = true;
-    graph_diags_ = script::validate_graph(graph_);
+    graph_diags_ = graph::validate_graph(graph_);
 }
 
 std::uint32_t Editor::graph_add_node(std::string_view type, float x, float y) {
-    if (graph_asset_.is_nil() || !script::find_node_desc(type, graph_.domain)) return 0;
+    if (graph_asset_.is_nil() || !graph::find_node_desc(type, graph_.domain)) return 0;
     graph_begin_edit();
     const std::uint32_t id = graph_.add_node(std::string(type), x, y);
     graph_end_edit();
@@ -432,7 +432,7 @@ bool Editor::graph_move_node(std::uint32_t id, float x, float y) {
 
 bool Editor::graph_connect(std::uint32_t from, std::string_view from_pin, std::uint32_t to, std::string_view to_pin) {
     if (from == to) return false;
-    script::ScriptGraph trial = graph_;
+    graph::ScriptGraph trial = graph_;
     if (!trial.connect(from, from_pin, to, to_pin)) return false;
     graph_begin_edit();
     graph_ = std::move(trial);
@@ -449,10 +449,10 @@ bool Editor::graph_disconnect(std::uint32_t node, std::string_view input_pin) {
 }
 
 bool Editor::graph_set_literal(std::uint32_t node, std::string_view input_pin, json::Value value) {
-    script::GraphNode* n = graph_.node(node);
+    graph::GraphNode* n = graph_.node(node);
     if (!n) return false;
     const auto pins = graph_.input_pins(*n);
-    const auto it = std::ranges::find_if(pins, [&](const script::PinDesc& p) { return p.name == input_pin; });
+    const auto it = std::ranges::find_if(pins, [&](const graph::PinDesc& p) { return p.name == input_pin; });
     if (it == pins.end() || it->type == PinType::Exec) return false;
     graph_begin_edit(std::format("literal:{}:{}", node, input_pin));
     graph_.node(node)->inputs.set(input_pin, std::move(value));
@@ -468,9 +468,9 @@ bool Editor::graph_set_config(std::uint32_t node, std::string_view key, json::Va
     return true;
 }
 
-bool Editor::graph_add_variable(script::GraphVariable variable) {
+bool Editor::graph_add_variable(graph::GraphVariable variable) {
     if (graph_asset_.is_nil() || variable.name.empty() || graph_.variable(variable.name)) return false;
-    if (graph_.domain == script::GraphDomain::Material) return false; // material graphs use Parameter nodes
+    if (graph_.domain == graph::GraphDomain::Material) return false; // material graphs use Parameter nodes
     if (variable.default_value.is_null()) variable.default_value = type_default(variable.type);
     graph_begin_edit();
     graph_.variables.push_back(std::move(variable));
@@ -478,8 +478,8 @@ bool Editor::graph_add_variable(script::GraphVariable variable) {
     return true;
 }
 
-bool Editor::graph_update_variable(std::string_view name, script::GraphVariable variable) {
-    const auto it = std::ranges::find_if(graph_.variables, [&](const script::GraphVariable& v) { return v.name == name; });
+bool Editor::graph_update_variable(std::string_view name, graph::GraphVariable variable) {
+    const auto it = std::ranges::find_if(graph_.variables, [&](const graph::GraphVariable& v) { return v.name == name; });
     if (it == graph_.variables.end() || variable.name.empty()) return false;
     if (variable.name != name && graph_.variable(variable.name)) return false;
     const auto index = static_cast<std::size_t>(it - graph_.variables.begin());
@@ -494,7 +494,7 @@ bool Editor::graph_update_variable(std::string_view name, script::GraphVariable 
 }
 
 bool Editor::graph_remove_variable(std::string_view name) {
-    const auto it = std::ranges::find_if(graph_.variables, [&](const script::GraphVariable& v) { return v.name == name; });
+    const auto it = std::ranges::find_if(graph_.variables, [&](const graph::GraphVariable& v) { return v.name == name; });
     if (it == graph_.variables.end()) return false;
     graph_begin_edit();
     graph_.variables.erase(it);
@@ -504,9 +504,9 @@ bool Editor::graph_remove_variable(std::string_view name) {
 
 bool Editor::graph_undo() {
     if (graph_undo_.empty()) return false;
-    auto prev = script::parse_graph(graph_undo_.back());
+    auto prev = graph::parse_graph(graph_undo_.back());
     if (!prev) return false;
-    graph_redo_.push_back(script::serialize_graph(graph_));
+    graph_redo_.push_back(graph::serialize_graph(graph_));
     graph_undo_.pop_back();
     prev->domain = graph_.domain;
     graph_ = std::move(*prev);
@@ -518,9 +518,9 @@ bool Editor::graph_undo() {
 
 bool Editor::graph_redo() {
     if (graph_redo_.empty()) return false;
-    auto next = script::parse_graph(graph_redo_.back());
+    auto next = graph::parse_graph(graph_redo_.back());
     if (!next) return false;
-    graph_undo_.push_back(script::serialize_graph(graph_));
+    graph_undo_.push_back(graph::serialize_graph(graph_));
     graph_redo_.pop_back();
     next->domain = graph_.domain;
     graph_ = std::move(*next);
@@ -575,7 +575,7 @@ void Editor::draw_graph_editor() {
     if (ImGui::Button("Redo")) (void)graph_redo();
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (graph_.domain == script::GraphDomain::Material) {
+    if (graph_.domain == graph::GraphDomain::Material) {
         ImGui::BeginDisabled(!show_material_editor_ || material_editing_.is_nil());
         if (ImGui::Button("Use in Material")) (void)set_editing_material_shader(graph_asset_);
         ImGui::EndDisabled();
@@ -638,10 +638,10 @@ void Editor::draw_graph_editor() {
 }
 
 void Editor::draw_graph_side_panel() {
-    const bool material = graph_.domain == script::GraphDomain::Material;
+    const bool material = graph_.domain == graph::GraphDomain::Material;
     if (material && graph_show_code_) {
         ImGui::SeparatorText("Generated GLSL");
-        const auto compiled = script::compile_material_graph(graph_, graph_path_);
+        const auto compiled = graph::compile_material_graph(graph_, graph_path_);
         std::string code = compiled.ok() ? compiled.source : "// fix the graph's errors first\n";
         ImGui::InputTextMultiline("##glsl", &code, ImVec2(-1, 220), ImGuiInputTextFlags_ReadOnly);
     }
@@ -657,18 +657,18 @@ void Editor::draw_graph_side_panel() {
     if (!material) {
         std::optional<std::string> remove;
         for (std::size_t i = 0; i < graph_.variables.size(); ++i) {
-            const script::GraphVariable var = graph_.variables[i];
+            const graph::GraphVariable var = graph_.variables[i];
             ImGui::PushID(static_cast<int>(i));
-            script::GraphVariable next = var;
+            graph::GraphVariable next = var;
             bool edited = false;
             ImGui::SetNextItemWidth(110);
             if (ImGui::InputText("##name", &next.name)) edited = true;
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80);
-            const std::string type_name(script::pin_type_name(var.type));
+            const std::string type_name(graph::pin_type_name(var.type));
             if (ImGui::BeginCombo("##type", type_name.c_str())) {
                 for (PinType t : kVariableTypes) {
-                    const std::string n(script::pin_type_name(t));
+                    const std::string n(graph::pin_type_name(t));
                     if (ImGui::Selectable(n.c_str(), t == var.type) && t != var.type) {
                         next.type = t;
                         next.default_value = type_default(t);
@@ -708,9 +708,9 @@ void Editor::draw_graph_side_panel() {
     }
 
     // Selected node.
-    if (script::GraphNode* n = graph_selected_ ? graph_.node(graph_selected_) : nullptr) {
+    if (graph::GraphNode* n = graph_selected_ ? graph_.node(graph_selected_) : nullptr) {
         ImGui::SeparatorText("Node");
-        const script::NodeDesc* d = script::find_node_desc(n->type);
+        const graph::NodeDesc* d = graph::find_node_desc(n->type);
         ImGui::Text("%s  #%u", node_title(*n).c_str(), n->id);
         ImGui::TextDisabled("%s", n->type.c_str());
         if (d && !d->tooltip.empty()) {
@@ -862,8 +862,8 @@ void Editor::draw_graph_canvas() {
         bool output{false};
     } hit;
     for (const auto& l : layouts) {
-        const script::GraphNode* n = graph_.node(l.id);
-        const script::NodeDesc* d = script::find_node_desc(n->type);
+        const graph::GraphNode* n = graph_.node(l.id);
+        const graph::NodeDesc* d = graph::find_node_desc(n->type);
         if (const float heat = graph_node_heat(l.id); heat > 0.01f)
             dl->AddRect(ImVec2(l.min.x - 3, l.min.y - 3), ImVec2(l.max.x + 3, l.max.y + 3),
                         IM_COL32(255, 170, 40, static_cast<int>(heat * 255)), 8.0f, 3.0f);
@@ -943,8 +943,8 @@ void Editor::draw_graph_canvas() {
 
     // Tooltip: node description and its problems.
     if (hovered && !graph_link_drag_ && !graph_node_drag_ && hit.node && !hit.pin) {
-        const script::GraphNode* n = graph_.node(hit.node);
-        const script::NodeDesc* d = script::find_node_desc(n->type);
+        const graph::GraphNode* n = graph_.node(hit.node);
+        const graph::NodeDesc* d = graph::find_node_desc(n->type);
         std::string tip = d ? d->tooltip : "unknown node type " + n->type;
         if (!n->comment.empty()) tip += "\n" + n->comment;
         if (graph_live_ || graph_node_runs(hit.node)) tip += std::format("\nRuns: {}", graph_node_runs(hit.node));
@@ -953,7 +953,7 @@ void Editor::draw_graph_canvas() {
             if (diag.node == hit.node) tip += "\n- " + diag.message;
         if (!tip.empty()) ImGui::SetTooltip("%s", tip.c_str());
     } else if (hovered && hit.pin) {
-        ImGui::SetTooltip("%s : %s", hit.pin->name.c_str(), std::string(script::pin_type_name(hit.pin->type)).c_str());
+        ImGui::SetTooltip("%s : %s", hit.pin->name.c_str(), std::string(graph::pin_type_name(hit.pin->type)).c_str());
     }
 
     // Interaction.
@@ -970,7 +970,7 @@ void Editor::draw_graph_canvas() {
         }
     }
     if (graph_node_drag_ && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        if (script::GraphNode* n = graph_.node(graph_selected_); n && (io.MouseDelta.x != 0 || io.MouseDelta.y != 0)) {
+        if (graph::GraphNode* n = graph_.node(graph_selected_); n && (io.MouseDelta.x != 0 || io.MouseDelta.y != 0)) {
             n->x += io.MouseDelta.x;
             n->y += io.MouseDelta.y;
             graph_node_moved_ = true;
@@ -981,7 +981,7 @@ void Editor::draw_graph_canvas() {
             graph_node_drag_ = false;
             if (graph_node_moved_) {
                 // Snap to the grid's quarter cells so layouts stay tidy.
-                if (script::GraphNode* n = graph_.node(graph_selected_)) {
+                if (graph::GraphNode* n = graph_.node(graph_selected_)) {
                     n->x = std::round(n->x / 8.0f) * 8.0f;
                     n->y = std::round(n->y / 8.0f) * 8.0f;
                 }
@@ -1031,8 +1031,8 @@ void Editor::draw_graph_canvas() {
     if (ImGui::BeginPopup("##graph_node_menu")) {
         if (ImGui::MenuItem("Delete", "Del")) (void)graph_remove_node(graph_selected_);
         if (ImGui::MenuItem("Duplicate")) {
-            if (const script::GraphNode* n = graph_.node(graph_selected_)) {
-                const script::GraphNode copy = *n;
+            if (const graph::GraphNode* n = graph_.node(graph_selected_)) {
+                const graph::GraphNode copy = *n;
                 if (const auto id = graph_add_node(copy.type, copy.x + 24, copy.y + 24)) {
                     graph_.node(id)->inputs = copy.inputs;
                     graph_.node(id)->config = copy.config;
@@ -1044,7 +1044,7 @@ void Editor::draw_graph_canvas() {
         if (ImGui::MenuItem("Disconnect All")) {
             const std::uint32_t id = graph_selected_;
             graph_begin_edit();
-            std::erase_if(graph_.links, [&](const script::GraphLink& l) { return l.from_node == id || l.to_node == id; });
+            std::erase_if(graph_.links, [&](const graph::GraphLink& l) { return l.from_node == id || l.to_node == id; });
             graph_end_edit();
         }
         ImGui::EndPopup();
@@ -1059,18 +1059,18 @@ void Editor::draw_graph_canvas() {
         // With a pending link, only nodes with a compatible pin are offered.
         PinType link_type = PinType::Any;
         if (graph_palette_link_) {
-            if (const script::GraphNode* src = graph_.node(graph_palette_link_->node)) {
+            if (const graph::GraphNode* src = graph_.node(graph_palette_link_->node)) {
                 const auto pins = graph_palette_link_->output ? graph_.output_pins(*src) : graph_.input_pins(*src);
                 for (const auto& p : pins)
                     if (p.name == graph_palette_link_->pin) link_type = p.type;
             }
         }
-        const auto compatible_pin = [&](const script::NodeDesc& d) -> std::string {
+        const auto compatible_pin = [&](const graph::NodeDesc& d) -> std::string {
             if (!graph_palette_link_) return {};
             const auto& pins = graph_palette_link_->output ? d.inputs : d.outputs;
             for (const auto& p : pins) {
-                const bool ok = graph_palette_link_->output ? script::pin_types_compatible(link_type, p.type, graph_.domain)
-                                                            : script::pin_types_compatible(p.type, link_type, graph_.domain);
+                const bool ok = graph_palette_link_->output ? graph::pin_types_compatible(link_type, p.type, graph_.domain)
+                                                            : graph::pin_types_compatible(p.type, link_type, graph_.domain);
                 if (ok) return p.name;
             }
             return {};
@@ -1079,7 +1079,7 @@ void Editor::draw_graph_canvas() {
         std::string current_category;
         bool category_open = false;
         int shown = 0;
-        for (const auto& d : script::node_library(graph_.domain)) {
+        for (const auto& d : graph::node_library(graph_.domain)) {
             if (graph_palette_link_ && compatible_pin(d).empty()) continue;
             if (!needle.empty()) {
                 std::string hay = d.title + " " + d.type + " " + d.category;
@@ -1104,7 +1104,7 @@ void Editor::draw_graph_canvas() {
         if (category_open) ImGui::EndMenu();
         if (!shown) ImGui::TextDisabled("no matching nodes");
         if (!picked.empty()) {
-            const script::NodeDesc* d = script::find_node_desc(picked);
+            const graph::NodeDesc* d = graph::find_node_desc(picked);
             if (const auto id = graph_add_node(picked, std::round(graph_palette_pos_.x / 8.0f) * 8.0f,
                                                std::round(graph_palette_pos_.y / 8.0f) * 8.0f)) {
                 if (graph_palette_link_ && d) {

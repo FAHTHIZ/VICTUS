@@ -6,15 +6,15 @@
 #include "victus/runtime/hot_reload.hpp"
 #include "victus/runtime/scene_rendering.hpp"
 #include "victus/runtime/surface_shader.hpp"
-#include "victus/script/material_graph.hpp"
+#include "victus/graph/material_graph.hpp"
 
 #include <chrono>
 #include <filesystem>
 
 using namespace victus;
 using namespace victus::scene;
-using script::GraphDomain;
-using script::ScriptGraph;
+using graph::GraphDomain;
+using graph::ScriptGraph;
 using victus::test::channel;
 using victus::test::gpu;
 using victus::test::pixel;
@@ -28,9 +28,9 @@ ScriptGraph material_graph() {
     return g;
 }
 
-bool has_error(const std::vector<script::GraphDiagnostic>& d, std::string_view text) {
+bool has_error(const std::vector<graph::GraphDiagnostic>& d, std::string_view text) {
     for (const auto& x : d)
-        if (x.severity == script::GraphDiagnostic::Severity::Error && x.message.find(text) != std::string::npos) return true;
+        if (x.severity == graph::GraphDiagnostic::Severity::Error && x.message.find(text) != std::string::npos) return true;
     return false;
 }
 
@@ -39,8 +39,8 @@ bool has_error(const std::vector<script::GraphDiagnostic>& d, std::string_view t
 TEST_CASE("material graphs: every node compiles to a valid surface shader") {
     CHECK(assets::kind_for_extension(".vmatgraph") == assets::AssetKind::Shader);
     std::size_t nodes = 0;
-    for (const auto& d : script::material_node_library()) {
-        if (d.type == script::kMaterialOutputNode) continue;
+    for (const auto& d : graph::material_node_library()) {
+        if (d.type == graph::kMaterialOutputNode) continue;
         ++nodes;
         CAPTURE(d.type);
         REQUIRE_FALSE(d.outputs.empty());
@@ -49,9 +49,9 @@ TEST_CASE("material graphs: every node compiles to a valid surface shader") {
             for (const char* field : {"base_color", "roughness", "emissive", "normal"}) {
                 ScriptGraph g = material_graph();
                 const auto n = g.add_node(d.type, 0, 0);
-                const auto out = g.add_node(std::string(script::kMaterialOutputNode), 300, 0);
+                const auto out = g.add_node(std::string(graph::kMaterialOutputNode), 300, 0);
                 REQUIRE(g.connect(n, out_pin.name, out, field));
-                const auto compiled = script::compile_material_graph(g, "test.vmatgraph");
+                const auto compiled = graph::compile_material_graph(g, "test.vmatgraph");
                 CAPTURE(out_pin.name);
                 CAPTURE(field);
                 INFO(compiled.error_text());
@@ -65,19 +65,19 @@ TEST_CASE("material graphs: every node compiles to a valid surface shader") {
     }
     CHECK(nodes > 40);
     // The starter graph compiles and round-trips through its file format with the domain intact.
-    const ScriptGraph starter = script::starter_material_graph();
-    const std::string text = script::serialize_graph(starter);
+    const ScriptGraph starter = graph::starter_material_graph();
+    const std::string text = graph::serialize_graph(starter);
     CHECK(text.find("\"domain\": \"material\"") != std::string::npos);
-    auto back = script::parse_graph(text);
+    auto back = graph::parse_graph(text);
     REQUIRE(back.ok());
     CHECK(back->domain == GraphDomain::Material);
-    CHECK(script::serialize_graph(*back) == text);
-    auto glsl = script::material_graph_to_glsl(text, "shaders/Starter.vmatgraph");
+    CHECK(graph::serialize_graph(*back) == text);
+    auto glsl = graph::material_graph_to_glsl(text, "shaders/Starter.vmatgraph");
     REQUIRE(glsl.ok());
     CHECK(glsl->find("Generated from shaders/Starter.vmatgraph") != std::string::npos);
     CHECK(runtime::compile_surface_shader(*glsl, "starter", true).ok());
     // Script graphs keep their exact file format.
-    CHECK(script::serialize_graph(ScriptGraph{}).find("domain") == std::string::npos);
+    CHECK(graph::serialize_graph(ScriptGraph{}).find("domain") == std::string::npos);
 }
 
 TEST_CASE("material graphs: generic types, constants on the output and unused nodes") {
@@ -86,7 +86,7 @@ TEST_CASE("material graphs: generic types, constants on the output and unused no
     const auto pos = g.add_node("mat.world_position");
     const auto mul = g.add_node("mat.multiply");
     const auto sin = g.add_node("mat.sin");
-    const auto out = g.add_node(std::string(script::kMaterialOutputNode));
+    const auto out = g.add_node(std::string(graph::kMaterialOutputNode));
     const auto unused = g.add_node("mat.noise");
     REQUIRE(g.connect(t, "seconds", mul, "a"));
     REQUIRE(g.connect(pos, "position", mul, "b"));
@@ -94,7 +94,7 @@ TEST_CASE("material graphs: generic types, constants on the output and unused no
     REQUIRE(g.connect(sin, "result", out, "emissive"));
     g.node(out)->inputs.set("roughness", json::Value(0.25));
     g.node(out)->inputs.set("unlit", json::Value(true));
-    const auto c = script::compile_material_graph(g);
+    const auto c = graph::compile_material_graph(g);
     INFO(c.error_text());
     REQUIRE(c.ok());
     // float * vec3 widens to vec3; sin follows.
@@ -106,49 +106,49 @@ TEST_CASE("material graphs: generic types, constants on the output and unused no
     CHECK(c.source.find("s.base_color") == std::string::npos); // unlinked, no constant: material value kept
     CHECK(c.source.find("victus_mg_noise") == std::string::npos); // the unused noise node adds nothing
     bool warned = false;
-    for (const auto& d : c.diagnostics) warned |= d.node == unused && d.severity == script::GraphDiagnostic::Severity::Warning;
+    for (const auto& d : c.diagnostics) warned |= d.node == unused && d.severity == graph::GraphDiagnostic::Severity::Warning;
     CHECK(warned);
     CHECK(runtime::compile_surface_shader(c.source, "generic", false).ok());
     // Deterministic output.
-    CHECK(script::compile_material_graph(g).source == c.source);
+    CHECK(graph::compile_material_graph(g).source == c.source);
 }
 
 TEST_CASE("material graphs: diagnostics") {
     // No output.
     ScriptGraph g = material_graph();
     (void)g.add_node("mat.time");
-    CHECK(has_error(script::validate_material_graph(g), "Surface Output"));
+    CHECK(has_error(graph::validate_material_graph(g), "Surface Output"));
     // Two outputs.
-    (void)g.add_node(std::string(script::kMaterialOutputNode));
-    (void)g.add_node(std::string(script::kMaterialOutputNode));
-    CHECK(has_error(script::validate_material_graph(g), "exactly one"));
+    (void)g.add_node(std::string(graph::kMaterialOutputNode));
+    (void)g.add_node(std::string(graph::kMaterialOutputNode));
+    CHECK(has_error(graph::validate_material_graph(g), "exactly one"));
     // A script node, a cycle.
     ScriptGraph h = material_graph();
-    const auto out = h.add_node(std::string(script::kMaterialOutputNode));
+    const auto out = h.add_node(std::string(graph::kMaterialOutputNode));
     const auto log = h.add_node("debug.log");
     const auto a = h.add_node("mat.add");
     const auto b = h.add_node("mat.add");
     h.links.push_back({a, "result", b, "a"});
     h.links.push_back({b, "result", a, "a"});
     h.links.push_back({b, "result", out, "alpha"});
-    auto d = script::validate_material_graph(h);
+    auto d = graph::validate_material_graph(h);
     CHECK(has_error(d, "unknown material node type 'debug.log'"));
     h.remove_node(log);
-    d = script::validate_material_graph(h);
+    d = graph::validate_material_graph(h);
     CHECK(has_error(d, "feeds back into itself"));
     // validate_graph dispatches on the domain; the script compiler refuses material graphs.
-    CHECK(has_error(script::validate_graph(h), "feeds back"));
-    CHECK_FALSE(script::compile_graph(h).ok());
+    CHECK(has_error(graph::validate_graph(h), "feeds back"));
+    CHECK_FALSE(graph::compile_graph(h).ok());
     // Bool pins only take bools; numeric types convert.
     ScriptGraph k = material_graph();
-    const auto o = k.add_node(std::string(script::kMaterialOutputNode));
+    const auto o = k.add_node(std::string(graph::kMaterialOutputNode));
     const auto col = k.add_node("mat.color");
     CHECK_FALSE(k.connect(col, "alpha", o, "unlit"));
     CHECK(k.connect(col, "color", o, "base_color"));
-    CHECK(script::pin_types_compatible(script::PinType::Vec4, script::PinType::Number, GraphDomain::Material));
-    CHECK_FALSE(script::pin_types_compatible(script::PinType::Vec4, script::PinType::Number));
+    CHECK(graph::pin_types_compatible(graph::PinType::Vec4, graph::PinType::Number, GraphDomain::Material));
+    CHECK_FALSE(graph::pin_types_compatible(graph::PinType::Vec4, graph::PinType::Number));
     // Errors name the file and node.
-    auto bad = script::material_graph_to_glsl(script::serialize_graph(h), "shaders/bad.vmatgraph");
+    auto bad = graph::material_graph_to_glsl(graph::serialize_graph(h), "shaders/bad.vmatgraph");
     REQUIRE_FALSE(bad.ok());
     CHECK(bad.error().message.find("shaders/bad.vmatgraph: node") != std::string::npos);
     CHECK(bad.error().message.find("(Add)") != std::string::npos);
@@ -164,7 +164,7 @@ TEST_CASE("gpu: a material graph shades a mesh and hot reloads") {
     int bump = 0;
     const fs::Path file = project / "assets" / "shaders" / "tint.vmatgraph";
     auto write = [&](const ScriptGraph& g) {
-        const std::string text = script::serialize_graph(g);
+        const std::string text = graph::serialize_graph(g);
         REQUIRE(fs::write_text_atomic(file, text).ok());
         sfs::last_write_time(file, sfs::file_time_type::clock::now() + std::chrono::seconds(++bump * 5));
         (void)db->refresh();
@@ -172,7 +172,7 @@ TEST_CASE("gpu: a material graph shades a mesh and hot reloads") {
     // Parameter 0 (blue) -> base colour.
     ScriptGraph g = material_graph();
     const auto param = g.add_node("mat.param0");
-    const auto out = g.add_node(std::string(script::kMaterialOutputNode));
+    const auto out = g.add_node(std::string(graph::kMaterialOutputNode));
     REQUIRE(g.connect(param, "rgb", out, "base_color"));
     write(g);
     const Uuid shader = db->find_path("shaders/tint.vmatgraph")->uuid;

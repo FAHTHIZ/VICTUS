@@ -15,6 +15,33 @@ Windows | Linux | macOS | Android | iOS | optional XR/Web/console targets
 
 Dependencies point inward toward VICTUS-owned contracts. Public APIs should not expose third-party types without a documented architectural decision.
 
+## Module map
+
+Every engine module is a static library `victus_<name>` (alias `VICTUS::<Name>`) under `engine/<name>/`, with public headers in `include/victus/<name>/`. Layers are enforced by `cmake/VictusTargets.cmake` (`VICTUS_MODULE_LAYERS`): a module may link only modules on a strictly lower layer, so the configure fails on an upward dependency or a cycle. Third-party libraries are linked privately unless a public header needs them (SDL3, Luau, Jolt, Box2D, miniaudio, Recast, ENet and cgltf are all private).
+
+| Layer | Modules | Owns |
+|---|---|---|
+| 0 | `core` | Result/errors, logging, JSON, filesystem and packs, jobs, memory, profiler, math, hashing |
+| 1 | `platform` | SDL3 windows, input, lifecycle, clipboard |
+| 1 | `ecs` | Archetype world, queries, command buffers |
+| 1 | `shadercompiler` | GLSL to SPIR-V/MSL at run time (glslang, SPIRV-Cross) |
+| 1 | `graph` | Typed node-graph documents, validation, serialization, compilers to Luau source and GLSL surface functions (no Luau or GPU dependency) |
+| 2 | `rhi` | Device, resources, pipelines, swapchain on SDL_GPU |
+| 2 | `scene` | Entities with UUIDs, hierarchy, transforms, reflection and serialization |
+| 3 | `render` | Render graph, SceneRenderer (3D), SpriteBatch (2D), built-in shaders |
+| 3 | `gameplay` | Fixed-step Simulation, systems, input sources, gameplay components |
+| 4 | `ui` | Dear ImGui on the RHI (editor and debug UI) |
+| 4 | `physics`, `animation`, `particles`, `audio`, `gameui` | Jolt/Box2D bodies and characters; clips and skinning; CPU emitters; miniaudio; in-game UI components |
+| 5 | `navigation`, `tilemap`, `terrain`, `sequencer`, `net` | Navmesh and agents; tile sets and colliders; heightfields and foliage; timeline playback; transport, replication, sessions |
+| 6 | `ai` | Behaviour trees, blackboard, perception |
+| 6 | `assets` | Asset database, importers, cooker, GPU-ready model/texture data |
+| 7 | `script` | Luau ScriptHost and the scripting API over every gameplay system; loads `.vgraph` through `graph` |
+| 8 | `runtime` | Scene to renderer extraction, SceneView, GPU asset cache, surface shaders (material graphs through `graph`), hot reload |
+| 8 | `project` | Project manifest, templates, component registration for every module |
+| 9 | `player` | Game loop for `victus run`, the exported player and Android |
+
+Above the engine: `editor/` (VICTUS Studio, links `player`-level modules and `ui`), `tools/cli` (`victus`), `apps/player`. Rule of thumb: put code in the lowest module that has everything it needs; integration code that wires several systems together belongs in `script`, `runtime`, `project` or `player`, not in a system module.
+
 ## Runtime modes and lifetimes
 Separate editor, game runtime, headless simulation, dedicated server, asset cooker, test runner and benchmark targets. Headless/server builds must not initialize graphics, windowing or audio devices. Editor dependencies and authoring metadata must not leak into shipped game binaries. Define startup/shutdown order and ownership explicitly.
 
