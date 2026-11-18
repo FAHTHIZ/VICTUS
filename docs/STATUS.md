@@ -1231,3 +1231,8 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 - `RenderSettings::spatial_upscale` / `sharpen` (ADR-0066): tonemap at render resolution into an sRGB texture, Catmull-Rom resample clamped to source texels, RCAS sharpening, FXAA afterwards at output resolution.
 - Shadow pass honours `alpha_cutoff` (`shadow_alpha.vert/frag`), new `fast_soft_shadows` 4-tap tent PCF (ADR-0067).
 - Verified: `victus_gpu_tests` 103/103 on lavapipe, including three new quality tests. Not verified on phone hardware.
+
+### 2026-11-18 — Foundation tooling: complete clang-tidy coverage gate
+- Built: `tools/lint/run_clang_tidy.py --require-complete` compares `git ls-files` for engine/, editor/, tools/ and apps/ against the compile database and fails when a tracked source would go unanalysed; the runner writes `<build>/clang-tidy-db/compile_commands.json` with host proxies for sources no desktop build compiles (`apps/android/main.cpp` uses `apps/player/main.cpp`'s command plus `engine/platform`'s SDL include paths). CI's clang-tidy job passes the flag. `bugprone-crtp-constructor-accessibility` (disabled without a reason) is re-enabled; every remaining disabled check has a reason in `.clang-tidy`.
+- Verified: locally (clang-tidy 21.1.8, lean build) `apps/` analyses both files with zero diagnostics including the Android entry point; the full-tree result is the CI clang-tidy job on this commit (previous green run 44302765349: 123 files, 0 diagnostics).
+- Not done (owner-only): making the clang-tidy job a required status check on `main` is a branch-protection setting. Test sources remain unlinted.

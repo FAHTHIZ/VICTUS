@@ -29,7 +29,7 @@ On a headless Linux machine use `SDL_VIDEO_DRIVER=offscreen` and install Mesa's 
 | Shader library up to date | `python3 tools/shaders/compile_shaders.py --check` | After editing `engine/render/shaders/*`, regenerate with `python3 tools/shaders/compile_shaders.py` (needs glslang and SPIRV-Cross). |
 | Dependency manifest | `python3 tools/deps/victus_deps.py check` | Every `FetchContent` pin in `cmake/VictusDependencies.cmake` is pinned by URL + SHA-256 and listed with its exact version in the licence register; `sbom` writes a CycloneDX SBOM. |
 | Known vulnerabilities | `python3 tools/deps/victus_deps.py osv` | Queries [OSV](https://osv.dev) for every pinned component; an ignored advisory needs a written mitigation in the manifest. CI also runs it weekly. |
-| Static analysis | `python3 tools/lint/run_clang_tidy.py -p build/dev -j2` | Uses `.clang-tidy` (bugprone, clang-analyzer, selected performance/misc checks; warnings are errors). Pass file filters to lint a subset, e.g. `... engine/physics`. |
+| Static analysis | `python3 tools/lint/run_clang_tidy.py -p build/dev -j2` | Uses `.clang-tidy` (bugprone, clang-analyzer, selected performance/misc checks; warnings are errors). Pass file filters to lint a subset, e.g. `... engine/physics`. `--require-complete` (used by CI) also fails if a tracked source is missing from the compile database. |
 | Parser robustness | `VICTUS_FUZZ_ITERATIONS=1000 ./build/dev/bin/victus_robustness_tests` | Deterministic mutation fuzzing of every untrusted-input loader (see below). CI's ASan+UBSan lane runs 1 000 mutations per target. |
 | Warnings | build with `-Werror` / `/WX` | GCC `-Wshadow=local` and MSVC C4458 differ; shadowing a member breaks the Windows build. |
 

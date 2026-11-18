@@ -16,7 +16,6 @@ Checks: >
   -bugprone-switch-missing-default-case,
   -bugprone-unchecked-optional-access,
   -bugprone-empty-catch,
-  -bugprone-crtp-constructor-accessibility,
   -bugprone-reserved-identifier,
   -bugprone-macro-parentheses,
   -bugprone-signed-char-misuse,
