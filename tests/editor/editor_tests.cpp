@@ -2341,6 +2341,81 @@ TEST_CASE("editor: play sessions run behaviour trees and expose them to the AI d
     CHECK(ed.play_ai() == nullptr);
 }
 
+TEST_CASE("editor: the Animation window previews and drives animation controllers") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Anim", "Anim", "3d").ok());
+    h.frames(2);
+    auto& ed = *h.ed;
+    Scene& s = ed.edit_scene();
+    const Entity robot = s.find_by_name("Robot");
+    REQUIRE_FALSE(robot.is_null());
+    const auto same_rotation = [](math::Quat a, math::Quat b) {
+        return std::abs(std::abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w) - 1.0f) <= 1e-4f;
+    };
+    const Entity leg = s.find_by_name("UpperLeg.L");
+    const Transform authored = *s.world().get<Transform>(leg);
+    const std::string clip_before = s.world().get<animation::AnimatorComponent>(robot)->clip;
+    ed.set_show_animation(true);
+    ed.select(robot, false);
+    h.frames(2); // window with the Preview button
+    CHECK(ed.animation_inspected() == nullptr);
+    CHECK(ed.animation_debug_lines(robot).empty());
+
+    // Edit-mode preview: the controller runs on the selected robot only.
+    REQUIRE(ed.begin_animation_preview(robot));
+    CHECK(ed.animation_previewing());
+    CHECK(ed.animation_preview_target() == robot);
+    auto lines = ed.animation_debug_lines(robot);
+    REQUIRE_FALSE(lines.empty());
+    CHECK(lines[0] == "controller anim/robot.vanim state Locomotion time 0.00");
+    CHECK(std::find(lines.begin(), lines.end(), "weight Idle 1.00") != lines.end());
+    CHECK(std::find(lines.begin(), lines.end(), "param speed float = 0.00") != lines.end());
+    REQUIRE(ed.set_animation_parameter(robot, "speed", 5.0f));
+    CHECK_FALSE(ed.set_animation_parameter(robot, "nope", 1.0f));
+    h.frames(10);
+    lines = ed.animation_debug_lines(robot);
+    CHECK(std::find(lines.begin(), lines.end(), "weight Run 1.00") != lines.end());
+    CHECK(std::find(lines.begin(), lines.end(), "param speed float = 5.00") != lines.end());
+    CHECK_FALSE(same_rotation(s.world().get<Transform>(leg)->rotation, authored.rotation)); // striding
+    CHECK_FALSE(ed.dirty()); // previews are not edits
+    REQUIRE(ed.fire_animation_trigger(robot, "jump"));
+    h.frames(2);
+    CHECK(ed.animation_debug_lines(robot)[0].find("state Air") != std::string::npos);
+    REQUIRE(ed.enter_animation_state(robot, "Locomotion"));
+    CHECK_FALSE(ed.enter_animation_state(robot, "NoSuchState"));
+    ed.set_animation_preview_paused(true);
+    h.frames(3); // paused preview still draws
+    // Saving ends the preview and restores the authored pose first.
+    REQUIRE(ed.save_scene().ok());
+    CHECK_FALSE(ed.animation_previewing());
+    CHECK(same_rotation(s.world().get<Transform>(leg)->rotation, authored.rotation));
+    CHECK(math::length(s.world().get<Transform>(leg)->position - authored.position) < 1e-6f);
+    CHECK(s.world().get<animation::AnimatorComponent>(robot)->clip == clip_before);
+
+    // Play: the window reads and drives the live session (starting play ends a preview).
+    REQUIRE(ed.begin_animation_preview(robot));
+    ed.play();
+    CHECK_FALSE(ed.animation_previewing());
+    h.frames(5);
+    Scene& play = ed.active_scene();
+    const Entity probot = play.find(s.uuid(robot));
+    REQUIRE_FALSE(probot.is_null());
+    REQUIRE(ed.animation_inspected() != nullptr);
+    CHECK_FALSE(ed.begin_animation_preview(probot)); // no edit previews while playing
+    ed.select(probot, false);
+    h.frames(2);
+    lines = ed.animation_debug_lines(probot);
+    REQUIRE_FALSE(lines.empty());
+    CHECK(lines[0].find("state Locomotion") != std::string::npos);
+    CHECK(ed.fire_animation_trigger(probot, "jump"));
+    h.frames(2);
+    CHECK(ed.animation_debug_lines(probot)[0].find("state Air") != std::string::npos);
+    ed.stop();
+    CHECK(ed.animation_inspected() == nullptr);
+}
+
 TEST_CASE("editor: the sequencer panel edits, previews, records and saves sequences") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Harness h;
