@@ -1200,7 +1200,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             const auto it = motion_prev_.find(d->motion_id);
             if (it == motion_prev_.end()) continue;
             const MotionState& prev = it->second;
-            const bool moved = std::memcmp(&prev.model, &d->model, sizeof(Mat4)) != 0;
+            // Bitwise on purpose: any change, including -0/+0, counts as motion (Mat4 has no padding).
+            const bool moved = std::memcmp(&prev.model, &d->model, sizeof(Mat4)) != 0; // NOLINT(bugprone-suspicious-memory-comparison)
             const bool same_skeleton = d->skinned && prev.joint_count == d->joint_count;
             const bool posed = same_skeleton && std::memcmp(motion_joints_.data() + prev.joint_offset, palette_.data() + d->palette,
                                                             d->joint_count * sizeof(Mat4)) != 0;

@@ -323,7 +323,7 @@ private:
     void derive(Peer& p, const Key& ec, const Key& es, const Key& ss, const std::uint8_t dh1[32], const std::uint8_t dh2[32],
                 bool server) {
         std::uint8_t transcript[15 + 96];
-        std::memcpy(transcript, "VICTUS-SECURE-1", 15);
+        std::memcpy(transcript, "VICTUS-SECURE-1", 15); // NOLINT(bugprone-not-null-terminated-result): binary label, no terminator
         std::memcpy(transcript + 15, ec.data(), 32);
         std::memcpy(transcript + 47, es.data(), 32);
         std::memcpy(transcript + 79, ss.data(), 32);
@@ -333,9 +333,9 @@ private:
         std::memcpy(ikm, dh1, 32);
         std::memcpy(ikm + 32, dh2, 32);
         Key c2s{}, s2c{};
-        std::memcpy(ikm + 64, "c2s", 3);
+        std::memcpy(ikm + 64, "c2s", 3); // NOLINT(bugprone-not-null-terminated-result): binary label
         crypto_blake2b_keyed(c2s.data(), 32, h, 32, ikm, sizeof ikm);
-        std::memcpy(ikm + 64, "s2c", 3);
+        std::memcpy(ikm + 64, "s2c", 3); // NOLINT(bugprone-not-null-terminated-result): binary label
         crypto_blake2b_keyed(s2c.data(), 32, h, 32, ikm, sizeof ikm);
         crypto_wipe(ikm, sizeof ikm);
         p.k_send = server ? s2c : c2s;
