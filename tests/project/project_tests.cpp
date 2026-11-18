@@ -905,6 +905,18 @@ TEST_CASE("templates: multiplayer arena plays offline and over a network session
         r->frames(20);
         CHECK(net::get_var(r->scene, player, "score").as_number() >= 1.0); // Coin 1 is on the way
         CHECK(r->text("Scoreboard Text").find("You") != std::string::npos);
+        // The scoreboard is a scroll view; its text is sized to the rows (title + "You").
+        const auto board = r->scene.find_by_name("Scoreboard");
+        REQUIRE(r->scene.world().has<gameui::UiScrollComponent>(board));
+        const auto* text_rect = r->scene.world().get<gameui::UiRectComponent>(r->scene.find_by_name("Scoreboard Text"));
+        CHECK(text_rect->size.y == doctest::Approx(2 * 28 + 12));
+        // Forty rows overflow the 220-high board: the range follows the content.
+        REQUIRE(r->host->eval("scene.find('Scoreboard Text'):set('UiRect', { size = { -32, 41 * 28 + 12 } })", &r->scene).ok());
+        gameui::layout(r->scene);
+        const auto* bs = r->scene.world().get<gameui::UiStateComponent>(board);
+        CHECK(bs->scroll_max.y == doctest::Approx(12 + 41 * 28 + 12 - 220));
+        REQUIRE(gameui::scroll_to(r->scene, board, {0, 100000}));
+        CHECK(r->scene.world().get<gameui::UiScrollComponent>(board)->offset.y == doctest::Approx(bs->scroll_max.y));
         CHECK(r->host->stats().errors == 0);
     }
     {

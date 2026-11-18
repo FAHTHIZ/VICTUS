@@ -20,6 +20,30 @@ int entity_set_text(lua_State* L) {
     return 0;
 }
 
+// entity:scroll_to(x, y) scrolls a UiScroll view (canvas units, clamped to its content).
+int entity_scroll_to(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto x = static_cast<float>(luaL_checknumber(L, 2));
+    const auto y = static_cast<float>(luaL_checknumber(L, 3));
+    if (!gameui::scroll_to(s, e, {x, y})) luaL_error(L, "entity has no UiScroll component");
+    return 0;
+}
+
+// entity:scroll() -> x, y, max_x, max_y (canvas units; max is 0 on an axis that cannot scroll).
+int entity_scroll(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* sc = s.world().get<gameui::UiScrollComponent>(e);
+    if (!sc) luaL_error(L, "entity has no UiScroll component");
+    const auto* st = s.world().get<gameui::UiStateComponent>(e);
+    lua_pushnumber(L, sc->offset.x);
+    lua_pushnumber(L, sc->offset.y);
+    lua_pushnumber(L, st ? st->scroll_max.x : 0.0);
+    lua_pushnumber(L, st ? st->scroll_max.y : 0.0);
+    return 4;
+}
+
 // entity:set_text_key(key?) -> shows the key's translation (loc) and follows locale changes;
 // nil or "" goes back to the literal text.
 int entity_set_text_key(lua_State* L) {
