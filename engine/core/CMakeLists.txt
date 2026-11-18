@@ -20,6 +20,7 @@ find_package(Threads REQUIRED)
 victus_add_module(core
     SOURCES
         src/cli.cpp
+        src/crash.cpp
         src/diagnostics.cpp
         src/engine_clock.cpp
         src/fs.cpp
@@ -29,11 +30,12 @@ victus_add_module(core
         src/log.cpp
         src/math.cpp
         src/pack.cpp
+        src/zip.cpp
         src/memory.cpp
         src/process.cpp
         src/profiler.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/build_info.cpp
-    DEPS Threads::Threads)
+    DEPS Threads::Threads ${CMAKE_DL_LIBS})
 if(ANDROID)
     target_link_libraries(victus_core PUBLIC log)
 endif()

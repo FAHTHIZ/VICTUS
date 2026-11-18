@@ -2,6 +2,7 @@
 // Standalone game player shipped with exported games. Runs the project in the folder given on
 // the command line, or the `game/` folder next to the executable when none is given.
 #include "victus/core/cli.hpp"
+#include "victus/core/crash.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/platform/platform.hpp"
 #include "victus/player/player.hpp"
@@ -27,6 +28,11 @@ int main(int argc, char** argv) {
         .flag("insecure", "no encryption: join a server started with --insecure, or host one")
         .option("saves", "save games folder (default: the per-user VICTUS saves folder)");
     if (auto st = p.parse(argc, argv); !st) return std::fprintf(stderr, "%s\n%s", st.error().message.c_str(), p.help().c_str()), 2;
+    // Crash reports and a session log in the per-user diagnostics folder (ADR-0072).
+    victus::crash::Options crash_options;
+    crash_options.app = "victus_player";
+    auto crash_session = victus::crash::Session::start(crash_options);
+    if (!crash_session) std::fprintf(stderr, "victus_player: warning: crash reporting is off: %s\n", crash_session.error().message.c_str());
     victus::player::PlayerOptions o;
     o.project = p.get("project");
     if (o.project.empty()) {

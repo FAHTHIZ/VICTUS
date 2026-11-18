@@ -184,5 +184,9 @@ Before shipping, `victus check <project>` validates every scene, prefab, materia
 
 Ship a game with `victus export` (see [Getting started](GETTING_STARTED.md#export-a-game)); the result runs anywhere the player runs, with no editor or SDK installed. Your project files are plain JSON and assets you own; Apache-2.0 allows commercial use.
 
+### Crash reports and diagnostics
+
+If the editor, the player or `victus` crashes, it writes a plain-text crash report (reason, stack frames, the last log lines) to the per-user diagnostics folder and prints where it is; each run also keeps a session log there. `victus diagnose [project] --out bug.zip` collects the newest reports and logs, system facts and, with a project, `victus.project` and the `victus check` results into one zip for a bug report. Home folder, user name and project path are replaced by `<home>`, `<user>` and `<project>`; `--keep-paths` turns that off and `--no-logs`, `--no-crashes`, `--no-system`, `--no-project`, `--no-validation` leave sections out. Nothing is uploaded. See [Diagnostics](DIAGNOSTICS.md).
+
 For Visual Studio/Xcode generators, binaries are under `build/bin/<Config>/`. See [CMake presets](CMakePresets.json).
 

@@ -6,6 +6,7 @@ target_compile_features(victus_doctest_main PUBLIC cxx_std_20)
 victus_add_test(victus_core_tests
     SOURCES
         core/cli_tests.cpp
+        core/crash_tests.cpp
         core/engine_clock_tests.cpp
         core/fs_tests.cpp
         core/hash_tests.cpp
@@ -17,6 +18,7 @@ victus_add_test(victus_core_tests
         core/pack_tests.cpp
         core/process_tests.cpp
         core/profiler_tests.cpp
+        core/zip_tests.cpp
     DEPS VICTUS::Core
     LABELS core)
 
@@ -151,6 +153,7 @@ endif()
 if(VICTUS_WITH_GRAPHICS)
 victus_add_test(victus_export_tests
     SOURCES
+        export/diagnostics_tests.cpp
         export/export_tests.cpp
         export/mobile_tests.cpp
         export/validate_tests.cpp
@@ -164,6 +167,15 @@ add_test(NAME victus_cli_smoke
         -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_smoke
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/cli_smoke.cmake)
 set_tests_properties(victus_cli_smoke PROPERTIES LABELS "cli;gpu")
+
+# Crash handlers end to end (real SIGSEGV / std::terminate in a child process) and
+# `victus diagnose` bundling the reports (ADR-0072). No GPU needed.
+add_test(NAME victus_cli_diagnostics
+    COMMAND ${CMAKE_COMMAND}
+        -DVICTUS_CLI=$<TARGET_FILE:victus_cli>
+        -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_diagnostics
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/diagnostics_smoke.cmake)
+set_tests_properties(victus_cli_diagnostics PROPERTIES LABELS "cli")
 
 # Fixed-step determinism of a full sample (headless; no GPU needed).
 add_test(NAME victus_cli_determinism

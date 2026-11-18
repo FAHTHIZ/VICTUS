@@ -38,7 +38,7 @@ Every engine module is a static library `victus_<name>` (alias `VICTUS::<Name>`)
 | 7 | `script` | Luau ScriptHost and the scripting API over every gameplay system; loads `.vgraph` through `graph` |
 | 8 | `runtime` | Scene to renderer extraction, SceneView, GPU asset cache, surface shaders (material graphs through `graph`), hot reload |
 | 8 | `project` | Project manifest, templates, component registration for every module |
-| 9 | `player` | Game loop for `victus run`, the exported player and Android; export; project validation (`victus check`, editor Problems panel) |
+| 9 | `player` | Game loop for `victus run`, the exported player and Android; export; project validation (`victus check`, editor Problems panel); diagnostics bundles (`victus diagnose`) |
 
 Above the engine: `editor/` (VICTUS Studio, links `player`-level modules and `ui`), `tools/cli` (`victus`), `apps/player`. Rule of thumb: put code in the lowest module that has everything it needs; integration code that wires several systems together belongs in `script`, `runtime`, `project` or `player`, not in a system module.
 
