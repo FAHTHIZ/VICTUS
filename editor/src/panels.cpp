@@ -33,7 +33,6 @@ constexpr const char* kViewportWindow = "Viewport";
 constexpr const char* kHierarchyWindow = "Hierarchy";
 constexpr const char* kInspectorWindow = "Inspector";
 constexpr const char* kAssetsWindow = "Assets";
-constexpr const char* kConsoleWindow = "Console";
 
 
 bool color_edit(const char* label, math::Color& c, bool alpha = true) {
@@ -487,7 +486,7 @@ void Editor::draw_menu_bar() {
         ImGui::Separator();
         if (ImGui::MenuItem("Report a Problem (Diagnostics Bundle)...", nullptr, false, !creating_bundle()))
             open_diagnostics_dialog();
-        if (ImGui::MenuItem("Copy Diagnostics Folder Path", nullptr, false, platform_ != nullptr))
+        if (ImGui::MenuItem("Copy Diagnostics Folder Path", nullptr, false, platform_ != nullptr) && platform_)
             platform_->set_clipboard(diagnostics_dir().string());
         ImGui::Separator();
         if (ImGui::MenuItem("About VICTUS Studio")) open_about_dialog();
@@ -1065,8 +1064,9 @@ void Editor::draw_hierarchy() {
     }
     Scene& s = active_scene();
     namespace tk = ui::tokens;
-    if (kit::icon_text_button("Add", kit::Icon::Plus, true, true) || (hierarchy_open_add_ > 0 && --hierarchy_open_add_ == 0))
-        ImGui::OpenPopup("##add");
+    bool auto_open = false; // open_add_menu(): after the workspace settles
+    if (hierarchy_open_add_ > 0) auto_open = --hierarchy_open_add_ == 0;
+    if (kit::icon_text_button("Add", kit::Icon::Plus, true, true) || auto_open) ImGui::OpenPopup("##add");
     kit::tooltip("Add something to the scene: a shape, light, camera, sprite or terrain");
     if (ImGui::BeginPopup("##add")) {
         draw_create_entity_items(kNullEntity);

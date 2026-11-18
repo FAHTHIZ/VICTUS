@@ -192,7 +192,7 @@ void Editor::draw_console() {
         for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
             const ConsoleRow& row = rows[static_cast<std::size_t>(i)];
             const log::Record& r = records[row.record];
-            const long long global = static_cast<long long>(first_global + row.record);
+            const long long global = static_cast<long long>(first_global) + static_cast<long long>(row.record);
             const int slot = severity_slot(r.level);
             const ImVec4 col = slot == 2 ? tk::kDanger : slot == 1 ? tk::kWarning : tk::kText;
             ImGui::PushID(static_cast<int>(global));
@@ -228,7 +228,7 @@ void Editor::draw_console() {
     }
     if (ImGui::IsWindowFocused() && console_selected_ >= 0 && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_C)) {
         for (const ConsoleRow& row : rows)
-            if (static_cast<long long>(first_global + row.record) == console_selected_)
+            if (static_cast<long long>(first_global) + static_cast<long long>(row.record) == console_selected_)
                 copy_line = line_text(records[row.record], row.repeats);
     }
     if (!copy_line.empty() && platform_) platform_->set_clipboard(copy_line);

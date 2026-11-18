@@ -155,9 +155,11 @@ bool Editor::add_component(Entity e, std::string_view id) {
 bool Editor::draw_add_component(Entity e) {
     bool changed = false;
     ImGui::Dummy(ImVec2(0, tk::kSpace3));
+    bool auto_open = false; // open_add_component(): after the workspace settles
+    if (add_component_open_ > 0) auto_open = --add_component_open_ == 0;
     if (kit::icon_text_button("Add Component", kit::Icon::Plus, false, true,
                               ImVec2(-1, ImGui::GetFrameHeight() + tk::kSpace2)) ||
-        (add_component_open_ > 0 && --add_component_open_ == 0)) {
+        auto_open) {
         add_component_filter_.clear();
         ImGui::OpenPopup("##addcomp");
     }

@@ -119,11 +119,9 @@ bool card(const char* id, kit::Icon icon, const char* title, const char* body, c
     const ImVec4 clip(p.x, p.y, q.x - pad * 0.5f, q.y - tk::kSpace2);
     dl->AddText(bold, fs * tk::kTypeHeading, ImVec2(x, t0.y), ImGui::GetColorU32(tk::kText), title, nullptr, 0.0f,
                 &clip);
-    float y = t0.y + fs * tk::kTypeHeading + tk::kSpace2;
-    if (body && *body) {
+    const float y = t0.y + fs * tk::kTypeHeading + tk::kSpace2;
+    if (body && *body)
         dl->AddText(ImGui::GetFont(), fs, ImVec2(x, y), ImGui::GetColorU32(tk::kTextMuted), body, nullptr, wrap, &clip);
-        y += ImGui::CalcTextSize(body, nullptr, false, wrap).y;
-    }
     if (footer && *footer)
         dl->AddText(ImGui::GetFont(), fs * tk::kTypeCaption, ImVec2(x, q.y - pad - fs * tk::kTypeCaption),
                     ImGui::GetColorU32(selected ? tk::kAccent : tk::kTextDisabled), footer, nullptr, 0.0f, &clip);
