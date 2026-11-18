@@ -5,6 +5,7 @@
 #include "victus/core/hash.hpp"
 #include "victus/render/environment_map.hpp"
 
+#include <cmath>
 #include <filesystem>
 #include <format>
 
@@ -155,6 +156,75 @@ TEST_CASE("assets: glTF import from .gltf (external buffer+image), data URIs and
     REQUIRE_MESSAGE(m3.ok(), (m3.ok() ? "" : m3.error().message));
     CHECK(m3->nodes[0].translation.x == doctest::Approx(1.0f));
     CHECK(m3->nodes[0].scale.x == doctest::Approx(0.5f));
+}
+
+TEST_CASE("assets: alpha-tested textures get coverage-preserving mips") {
+    TempDir dir("victus_alpha_coverage");
+    render::Image speckles;
+    speckles.width = speckles.height = 64;
+    speckles.pixels.assign(64 * 64 * 4, 255);
+    for (std::uint32_t i = 0; i < 64 * 64; ++i) {
+        std::uint32_t h = i; // lowbias32 integer hash
+        h ^= h >> 16;
+        h *= 0x7feb352du;
+        h ^= h >> 15;
+        h *= 0x846ca68bu;
+        h ^= h >> 16;
+        speckles.pixels[i * 4 + 3] = h % 4 == 0 ? 255 : 0;
+    }
+    const float source = render::alpha_coverage(speckles, 0.5f);
+    auto png_bytes = render::encode_png(speckles);
+    REQUIRE(png_bytes.ok());
+    write_bytes(dir.path / "leaves.png", *png_bytes);
+
+    // Texture importer: opt-in setting, persisted in the .meta JSON.
+    TextureImportSettings ts;
+    CHECK(ts.alpha_coverage_cutoff == 0.0f);
+    CHECK(ts.to_json().find("alpha_coverage_cutoff") == nullptr);
+    ts.alpha_coverage_cutoff = 0.4f;
+    const auto back = TextureImportSettings::from_json(ts.to_json());
+    CHECK(back.alpha_coverage_cutoff == doctest::Approx(0.4f));
+    json::Value bad = ts.to_json();
+    bad.set("alpha_coverage_cutoff", 3.0);
+    CHECK(TextureImportSettings::from_json(bad).alpha_coverage_cutoff == 0.0f);
+    TextureImportSettings plain_settings, kept_settings;
+    kept_settings.alpha_coverage_cutoff = 0.5f;
+    auto plain = import_texture(dir.path / "leaves.png", plain_settings);
+    auto kept = import_texture(dir.path / "leaves.png", kept_settings);
+    REQUIRE(plain.ok());
+    REQUIRE(kept.ok());
+    CHECK(render::alpha_coverage(plain->mips[3], 0.5f) < 0.05f);
+    CHECK(std::abs(render::alpha_coverage(kept->mips[3], 0.5f) - source) < 0.1f);
+    // Oversized sources drop whole levels; coverage still matches the full-resolution source.
+    kept_settings.max_size = 16;
+    auto small = import_texture(dir.path / "leaves.png", kept_settings);
+    REQUIRE(small.ok());
+    CHECK(small->mips[0].width == 16);
+    CHECK(std::abs(render::alpha_coverage(small->mips[0], 0.5f) - source) < 0.1f);
+
+    // glTF importer: a MASK material's base colour texture is processed at its alphaCutoff; the
+    // same image on an OPAQUE material keeps box-filtered alpha.
+    for (const bool mask : {true, false}) {
+        test::GltfFixture fx;
+        fx.add_texture("leaves.png");
+        if (mask) {
+            json::Value mat = fx.doc["materials"][0];
+            mat.set("alphaMode", "MASK");
+            mat.set("alphaCutoff", 0.5);
+            fx.doc.set("materials", json::Value(json::Array{mat}));
+        }
+        fx.set_buffer_uri("quad.bin");
+        write_bytes(dir.path / "quad.bin", fx.bin);
+        write_text(dir.path / "leaves.gltf", json::stringify(fx.doc));
+        auto m = import_gltf(dir.path / "leaves.gltf", {}, dir.path);
+        REQUIRE_MESSAGE(m.ok(), (m.ok() ? "" : m.error().message));
+        REQUIRE(m->textures.size() == 1);
+        INFO("mask " << mask);
+        CHECK(m->materials[0].alpha_cutoff == doctest::Approx(mask ? 0.5f : 0.0f));
+        const float c = render::alpha_coverage(m->textures[0].mips[3], 0.5f);
+        if (mask) CHECK(std::abs(c - source) < 0.1f);
+        else CHECK(c < 0.05f);
+    }
 }
 
 TEST_CASE("assets: glTF importer rejects escapes, missing files and garbage") {

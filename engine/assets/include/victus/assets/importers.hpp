@@ -24,6 +24,10 @@ struct TextureImportSettings {
     // 4x4), "small" (BC1 + ASTC 6x6) or a '+'-separated codec list (see texture_compression.hpp).
     std::string compression{"none"};
     bool compression_thorough{false}; // slower, higher-quality encoder searches
+    // > 0 (and < 1): the texture is used with an alpha test at this cutoff, so mips rescale alpha to
+    // keep the source's alpha-test coverage (render::preserve_alpha_coverage; Unity's "Mip Maps
+    // Preserve Coverage"). Without it, cutout foliage and fences fade away with distance.
+    float alpha_coverage_cutoff{0.0f};
     [[nodiscard]] json::Value to_json() const;
     static TextureImportSettings from_json(const json::Value& v);
 };
@@ -47,15 +51,15 @@ struct ImportResult {
     std::vector<std::string> warnings;
 };
 
-inline constexpr std::uint32_t kTextureImporterVersion = 3; // v2: HDR (.hdr) sources keep linear float data; v3: BC/ASTC variants
-inline constexpr std::uint32_t kModelImporterVersion = 5; // v2: skins and animations; v3: COLOR_0 vertex colours; v4: BC/ASTC textures; v5: mesh optimisation + LODs
+inline constexpr std::uint32_t kTextureImporterVersion = 4; // v2: HDR (.hdr) sources keep linear float data; v3: BC/ASTC variants; v4: alpha_coverage_cutoff
+inline constexpr std::uint32_t kModelImporterVersion = 6; // v2: skins and animations; v3: COLOR_0 vertex colours; v4: BC/ASTC textures; v5: mesh optimisation + LODs; v6: coverage-preserving base colour mips for MASK materials
 
 [[nodiscard]] Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSettings& settings);
 // HDR (.hdr) sources: half-float pixels (limited to max_size x max_size/2), SH9 irradiance and a
 // Reinhard-tonemapped sRGB preview in `mips`.
 [[nodiscard]] CookedTexture cook_hdr_texture(const render::ImageF& image, std::string name, std::uint32_t max_size);
 [[nodiscard]] CookedTexture cook_texture(const render::Image& image, std::string name, bool srgb, bool mipmaps,
-                                         std::uint32_t max_size);
+                                         std::uint32_t max_size, float alpha_coverage_cutoff = 0.0f);
 // Adds block-compressed variants of `texture.mips` for every codec in `setting`. HDR textures
 // keep only their RGBA8 preview uncompressed (their float data is what lighting uses).
 [[nodiscard]] Result<void> compress_cooked_texture(CookedTexture& texture, std::string_view setting,

@@ -1155,6 +1155,9 @@ Full-repository audit against the code (not the checkboxes), then foundation fix
   - Verified locally (Debug, lavapipe): `victus_gpu_tests -tc="gpu: terrain*"` 2/2.
   - Not covered: thin railings, foliage and alpha-cutout surfaces during zoom.
 
+- `feat(assets)` coverage-preserving alpha mips (roadmap 6b, Workstream H3 item 8, alpha cutout; ADR-0070): `render::preserve_alpha_coverage` rescales mip alpha so alpha-test coverage matches the source (Castaño 2010). `TextureImportSettings::alpha_coverage_cutoff` with an editor toggle and slider; glTF `MASK` base colour textures get it automatically; importer versions texture v4, model v6. GPU evidence: a 30% speckle cutout seen at 0.5/6/15/40 m covers 0.28/0.11/0.002/0 of the frame with plain mips and 0.28/0.11/0.15/0.18 with preserved mips. Known limit: one-texel erosion at mid distance (6 m) is the same for both chains; hashed alpha is the follow-up.
+  - Verified locally (Debug, lavapipe): `ctest --preset dev -j1` 29/29 passed in 326 s (includes the character and terrain cases); clang-tidy clean on image.cpp and importers.cpp. CI for a3b301c was green on all jobs, and d4d59b7 and fc36ed9 were pushed after it.
+
 ## Next task
 Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): audit its workstreams against main and implement them in dependency order. Then 6c (Studio UX handoff, Phase 0 audit first), 6d (Workstream G audit, docs/audits/ENGINE_CAPABILITY_AND_ROBUSTNESS_AUDIT.md), priority 1 (full clang-tidy gate), priority 8 (GPU-instanced foliage), the 2D platformer sample.
 
