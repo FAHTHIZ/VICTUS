@@ -82,7 +82,22 @@ void lathe(Geometry& g, const math::Mat4& m, math::Vec3 offset, const std::vecto
     }
 }
 
-void add_collider(Geometry& g, const math::Mat4& m, const physics::ColliderComponent& c) {
+// Convex and mesh colliders contribute their source triangles with the authored winding (glTF:
+// counter-clockwise front faces, so floors face up); a mirroring transform flips them back.
+void add_mesh(Geometry& g, const math::Mat4& m, math::Vec3 offset, const physics::CollisionMesh& mesh) {
+    const math::Vec3 x = (m * math::Vec4(1, 0, 0, 0)).xyz(), y = (m * math::Vec4(0, 1, 0, 0)).xyz(), z = (m * math::Vec4(0, 0, 1, 0)).xyz();
+    const bool mirrored = math::dot(math::cross(x, y), z) < 0;
+    const int first = static_cast<int>(g.verts.size() / 3);
+    for (const math::Vec3& p : mesh.positions) (void)g.vertex(m.transform_point(p + offset));
+    for (std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const int a = first + static_cast<int>(mesh.indices[i]);
+        int b = first + static_cast<int>(mesh.indices[i + 1]), c = first + static_cast<int>(mesh.indices[i + 2]);
+        if (mirrored) std::swap(b, c);
+        g.tris.insert(g.tris.end(), {a, b, c});
+    }
+}
+
+void add_collider(Geometry& g, const math::Mat4& m, const physics::ColliderComponent& c, const physics::CollisionMesh* mesh) {
     using Shape = physics::ColliderComponent::Shape;
     switch (c.shape) {
     case Shape::Box: {
@@ -126,7 +141,15 @@ void add_collider(Geometry& g, const math::Mat4& m, const physics::ColliderCompo
         lathe(g, m, c.offset, {{0, -h}, {c.radius, -h}, {c.radius, h}, {0, h}}, 16);
         break;
     }
+    case Shape::Convex:
+    case Shape::Mesh:
+        if (mesh) add_mesh(g, m, c.offset, *mesh);
+        break;
     }
+}
+
+[[nodiscard]] bool uses_mesh(const physics::ColliderComponent& c) {
+    return c.shape == physics::ColliderComponent::Shape::Convex || c.shape == physics::ColliderComponent::Shape::Mesh;
 }
 
 const NavMeshSurfaceComponent* surface_of(Scene& scene) {
@@ -139,10 +162,13 @@ const NavMeshSurfaceComponent* surface_of(Scene& scene) {
 
 // Visits every collider that contributes navmesh geometry: static ones as their shape, kinematic
 // ones (moving platforms, spinning obstacles) as an upright bounding cylinder so rotating about Y
-// does not change the navmesh. Dynamic bodies, triggers and agents are ignored.
+// does not change the navmesh. Dynamic bodies, triggers and agents are ignored. Convex/mesh
+// colliders get their geometry from the bound physics world's mesh cache; without a world (or
+// geometry) they are skipped.
 template <typename Fn>
 void each_static_collider(Scene& scene, std::uint32_t layer_mask, Fn&& fn) {
     ecs::World& w = scene.world();
+    physics::PhysicsWorld* pw = physics::world_of(scene);
     w.each<physics::ColliderComponent>([&](Entity e, physics::ColliderComponent& c) {
         if (c.is_trigger) return;
         if (c.layer < 32 && !(layer_mask & (1u << c.layer))) return;
@@ -152,7 +178,12 @@ void each_static_collider(Scene& scene, std::uint32_t layer_mask, Fn&& fn) {
             kinematic = rb->type == physics::BodyType::Kinematic;
         }
         if (w.has<NavAgentComponent>(e) || w.has<physics::CharacterControllerComponent>(e)) return;
-        fn(e, c, kinematic);
+        std::shared_ptr<const physics::CollisionMesh> mesh;
+        if (uses_mesh(c)) {
+            mesh = pw ? pw->mesh_cache().resolve(scene, e, c) : nullptr;
+            if (!mesh || !mesh->bounds.valid()) return;
+        }
+        fn(e, c, kinematic, mesh.get());
     });
 }
 
@@ -217,16 +248,21 @@ struct Bound {
 };
 
 // Rotation-about-Y invariant bound of a collider: vertical cylinder around the shape's center.
-Bound upright_bound(const math::Mat4& m, const physics::ColliderComponent& c) {
+Bound upright_bound(const math::Mat4& m, const physics::ColliderComponent& c, const physics::CollisionMesh* mesh) {
     using Shape = physics::ColliderComponent::Shape;
-    const math::Vec3 h = c.shape == Shape::Box      ? c.size * 0.5f
-                         : c.shape == Shape::Sphere ? math::Vec3{c.radius, c.radius, c.radius}
-                                                    : math::Vec3{c.radius, std::max(c.height * 0.5f, c.radius), c.radius};
+    math::Vec3 h = c.shape == Shape::Box      ? c.size * 0.5f
+                   : c.shape == Shape::Sphere ? math::Vec3{c.radius, c.radius, c.radius}
+                                              : math::Vec3{c.radius, std::max(c.height * 0.5f, c.radius), c.radius};
+    math::Vec3 centre = c.offset;
+    if (mesh && uses_mesh(c)) {
+        h = mesh->bounds.extents();
+        centre = c.offset + mesh->bounds.center();
+    }
     Bound b;
-    b.center = m.transform_point(c.offset);
+    b.center = m.transform_point(centre);
     b.y_min = FLT_MAX, b.y_max = -FLT_MAX;
     for (int i = 0; i < 8; ++i) {
-        const math::Vec3 p = m.transform_point(c.offset + math::Vec3{(i & 1) ? h.x : -h.x, (i & 2) ? h.y : -h.y, (i & 4) ? h.z : -h.z});
+        const math::Vec3 p = m.transform_point(centre + math::Vec3{(i & 1) ? h.x : -h.x, (i & 2) ? h.y : -h.y, (i & 4) ? h.z : -h.z});
         b.radius = std::max(b.radius, std::hypot(p.x - b.center.x, p.z - b.center.z));
         b.y_min = std::min(b.y_min, p.y), b.y_max = std::max(b.y_max, p.y);
     }
@@ -258,16 +294,18 @@ std::uint64_t geometry_signature(Scene& scene, const NavMeshSurfaceComponent& s)
     Hasher hs;
     hs.value(s.agent_radius), hs.value(s.agent_height), hs.value(s.max_climb), hs.value(s.max_slope);
     hs.value(s.cell_size), hs.value(s.cell_height), hs.value(s.layer_mask);
-    each_static_collider(scene, s.layer_mask, [&](Entity e, const physics::ColliderComponent& c, bool kinematic) {
+    each_static_collider(scene, s.layer_mask,
+                         [&](Entity e, const physics::ColliderComponent& c, bool kinematic, const physics::CollisionMesh* mesh) {
         hs.value(e.bits());
         hs.value(kinematic);
         const math::Mat4 m = scene.world_matrix(e);
         if (kinematic) {
-            const Bound b = upright_bound(m, c);
+            const Bound b = upright_bound(m, c, mesh);
             hs.value(b.center), hs.value(b.radius), hs.value(b.y_min), hs.value(b.y_max);
             return;
         }
         hs.value(c.shape), hs.value(c.size), hs.value(c.radius), hs.value(c.height), hs.value(c.offset);
+        hs.value(mesh); // cached geometry: a reloaded mesh is a new object
         hs.bytes(&m, sizeof(m));
     });
     each_static_heightfield(scene, s.layer_mask, [&](Entity e, const physics::StaticHeightfieldComponent& c) {
@@ -407,9 +445,10 @@ Status NavigationSystem::build(Scene& scene) {
     stats_.polygons = stats_.vertices = 0;
 
     Geometry geo;
-    each_static_collider(scene, s.layer_mask, [&](Entity e, const physics::ColliderComponent& c, bool kinematic) {
-        if (kinematic) add_bound(geo, upright_bound(scene.world_matrix(e), c));
-        else add_collider(geo, scene.world_matrix(e), c);
+    each_static_collider(scene, s.layer_mask,
+                         [&](Entity e, const physics::ColliderComponent& c, bool kinematic, const physics::CollisionMesh* mesh) {
+        if (kinematic) add_bound(geo, upright_bound(scene.world_matrix(e), c, mesh));
+        else add_collider(geo, scene.world_matrix(e), c, mesh);
     });
     each_static_heightfield(scene, s.layer_mask, [&](Entity e, const physics::StaticHeightfieldComponent& c) {
         add_heightfield(geo, rigid(scene.world_matrix(e)), c);

@@ -883,6 +883,9 @@ private:
     render::DebugView debug_view_{render::DebugView::None};
     void apply_quality();
     std::vector<physics::DebugLine> collider_scratch_;
+    physics::CollisionMeshCache collider_meshes_; // edit-mode overlay of convex/mesh colliders
+    const void* collider_meshes_db_{nullptr};     // database the cache's provider reads
+    [[nodiscard]] physics::CollisionMeshCache* collider_meshes();
     bool focus_viewport_{false};
     PlayState play_state_{PlayState::Editing};
     void start_play(std::uint64_t seed, bool networked = false);

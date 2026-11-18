@@ -4,6 +4,7 @@
 #include "doctest.h"
 #include "victus/core/json.hpp"
 #include "victus/player/validate.hpp"
+#include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
 #include "victus/scene/scene.hpp"
 
@@ -152,4 +153,49 @@ TEST_CASE("validate: projects that cannot be opened are an error, not a report")
     auto r = player::validate_project(dir);
     REQUIRE_FALSE(r.ok());
     CHECK(r.error().message.find("Pad.Soth") != std::string::npos);
+}
+
+TEST_CASE("validate: convex and mesh colliders need geometry") {
+    TempDir tmp("victus_validate_mesh_colliders");
+    const fs::Path dir = tmp.path / "game";
+    auto created = project::Project::create(dir, "Colliders", "3d");
+    REQUIRE(created.ok());
+    const Uuid missing_model = Uuid::generate();
+    {
+        using physics::ColliderComponent;
+        scene::Scene s;
+        auto path = created->startup_scene_path();
+        REQUIRE(path.ok());
+        REQUIRE(s.load_file(*path).ok());
+        const auto collider = [&](const char* name, ColliderComponent::Shape shape) {
+            const scene::Entity e = s.create(name);
+            s.world().add<ColliderComponent>(e).shape = shape;
+            return e;
+        };
+        collider("Rock", ColliderComponent::Shape::Convex); // nothing to build from
+        s.world().get<ColliderComponent>(collider("Statue", ColliderComponent::Shape::Mesh))->mesh_asset = missing_model;
+        const scene::Entity ball = collider("Ball", ColliderComponent::Shape::Convex);
+        s.world().add<scene::MeshRendererComponent>(ball).primitive = "sphere"; // fine
+        const scene::Entity barrel = collider("Barrel", ColliderComponent::Shape::Mesh);
+        s.world().add<scene::MeshRendererComponent>(barrel).primitive = "cylinder";
+        s.world().add<physics::RigidBodyComponent>(barrel); // dynamic: simulates the hull
+        REQUIRE(s.save_file(*path).ok());
+    }
+    auto r = player::validate_project(*created);
+    REQUIRE(r.ok());
+    for (const auto& d : r->diagnostics) MESSAGE(d.line());
+    CHECK(r->errors() == 2);
+    CHECK(r->warnings() == 1);
+    const auto* rock = find(*r, "'Rock' has a convex collider without geometry");
+    REQUIRE(rock);
+    CHECK(rock->severity == player::Severity::Error);
+    const auto* statue = find(*r, "collider uses missing model");
+    REQUIRE(statue);
+    CHECK(statue->entity_name == "Statue");
+    CHECK(statue->asset == missing_model);
+    const auto* barrel = find(*r, "dynamic body with a mesh collider");
+    REQUIRE(barrel);
+    CHECK(barrel->severity == player::Severity::Warning);
+    CHECK(barrel->entity_name == "Barrel");
+    CHECK_FALSE(find(*r, "'Ball'"));
 }

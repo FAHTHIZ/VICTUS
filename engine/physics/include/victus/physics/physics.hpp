@@ -28,6 +28,8 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace victus::jobs {
@@ -59,8 +61,14 @@ struct RigidBodyComponent {
     friend bool operator==(const RigidBodyComponent&, const RigidBodyComponent&) = default;
 };
 
+// Convex and mesh shapes are built from triangle geometry: the model mesh named by `mesh_asset` /
+// `mesh_index`, or, when `mesh_asset` is nil, the entity's own ProceduralMesh, MeshRenderer model
+// or MeshRenderer primitive (see CollisionMeshCache). `convex` wraps the points in a convex hull
+// and works for every body type; `mesh` collides against the exact triangles and is meant for
+// static and kinematic level geometry: a dynamic body with a `mesh` collider uses its convex hull
+// instead (logged once). Both follow the entity's (non-uniform) scale.
 struct ColliderComponent {
-    enum class Shape : std::uint8_t { Box, Sphere, Capsule, Cylinder };
+    enum class Shape : std::uint8_t { Box, Sphere, Capsule, Cylinder, Convex, Mesh };
     Shape shape{Shape::Box};
     math::Vec3 size{1, 1, 1};    // box: full extents
     float radius{0.5f};          // sphere, capsule, cylinder
@@ -71,7 +79,59 @@ struct ColliderComponent {
     bool is_trigger{false};      // reports overlaps, no collision response
     std::uint32_t layer{0};      // 0..15
     std::uint32_t mask{kAllLayers}; // layers this collider collides with
+    Uuid mesh_asset;             // convex/mesh: model asset; nil = the entity's own mesh
+    std::uint32_t mesh_index{0}; // convex/mesh: mesh within the model
     friend bool operator==(const ColliderComponent&, const ColliderComponent&) = default;
+};
+
+// Geometry of a convex or mesh collider in the mesh's local space (before the entity transform).
+struct CollisionMesh {
+    std::vector<math::Vec3> positions;
+    std::vector<std::uint32_t> indices; // triangle list
+    math::Aabb bounds;
+};
+// Builds a CollisionMesh, validating indices (out of range or not a multiple of three fail) and
+// computing bounds. Degenerate triangles are kept; the backends drop them.
+[[nodiscard]] Result<std::shared_ptr<const CollisionMesh>> make_collision_mesh(std::vector<math::Vec3> positions,
+                                                                               std::vector<std::uint32_t> indices);
+
+// Where convex/mesh collider geometry comes from: a model asset's mesh or a built-in primitive.
+struct CollisionMeshSource {
+    Uuid model;                  // nil = `primitive`
+    std::uint32_t mesh_index{0};
+    std::string primitive;       // cube|sphere|plane|cylinder (MeshRenderer primitives)
+};
+// Loads geometry for a source; returns null when it does not exist or cannot be loaded (log why).
+// The asset layer provides one over the project's cooked models (assets::collision_mesh_provider).
+using CollisionMeshProvider = std::function<std::shared_ptr<const CollisionMesh>(const CollisionMeshSource&)>;
+
+// Resolves the geometry of convex/mesh colliders and caches it, so a model used by many colliders
+// is loaded once. Shared by the physics world (bodies), navigation (navmesh input) and the editor
+// collider overlay. Not thread-safe.
+class CollisionMeshCache {
+public:
+    CollisionMeshCache() = default;
+    explicit CollisionMeshCache(CollisionMeshProvider provider) : provider_(std::move(provider)) {}
+    void set_provider(CollisionMeshProvider provider);
+    [[nodiscard]] bool has_provider() const noexcept { return static_cast<bool>(provider_); }
+    // Geometry for the entity's collider: `col.mesh_asset` when set, else the entity's
+    // ProceduralMesh, else its MeshRenderer model mesh or primitive. Null when there is none or the
+    // provider cannot load it (a failed source is not retried until invalidate()).
+    [[nodiscard]] std::shared_ptr<const CollisionMesh> resolve(scene::Scene& scene, Entity e, const ColliderComponent& col);
+    [[nodiscard]] std::shared_ptr<const CollisionMesh> load(const CollisionMeshSource& source);
+    // Forgets cached geometry of one model (hot reload) or everything.
+    void invalidate(const Uuid& model);
+    void invalidate();
+    [[nodiscard]] std::size_t size() const noexcept { return models_.size() + procedural_.size(); }
+
+private:
+    CollisionMeshProvider provider_;
+    std::unordered_map<std::string, std::shared_ptr<const CollisionMesh>> models_;
+    struct Procedural {
+        std::weak_ptr<const scene::ProceduralMesh> source;
+        std::shared_ptr<const CollisionMesh> mesh;
+    };
+    std::unordered_map<std::uint64_t, Procedural> procedural_;
 };
 
 // Kinematic walking capsule (Jolt CharacterVirtual). Entities with a CharacterController do not
@@ -312,6 +372,7 @@ struct PhysicsStats {
     double last_step_ms{0};
     std::uint64_t heightfield_builds{0};  // height-field shapes created (first sight or `revision` bumps)
     std::uint64_t heightfield_updates{0}; // in-place `dirty` rectangle updates
+    std::uint64_t mesh_shapes_built{0};   // convex hulls and triangle meshes built (shared by bodies using one mesh)
 };
 
 // Line segments for debug visualization (editor overlays, `victus run --physics-debug`).
@@ -390,6 +451,13 @@ public:
 
     [[nodiscard]] PhysicsStats stats() const;
 
+    // Geometry for convex/mesh colliders. Without a provider those colliders only work with a
+    // ProceduralMesh on the entity; others create no body (logged once per entity).
+    void set_mesh_provider(CollisionMeshProvider provider);
+    [[nodiscard]] CollisionMeshCache& mesh_cache() noexcept;
+    // Drops cached geometry of a reimported model and rebuilds the bodies that use it.
+    void invalidate_mesh(const Uuid& model);
+
     struct Impl;
 
 private:
@@ -409,6 +477,8 @@ void bind(scene::Scene& scene, PhysicsWorld* world);
 
 // Collider wireframes (including character capsules and joint anchors/axes) computed from components only (no simulation needed): used by the editor
 // to visualize colliders while authoring.
-void collider_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity only = {});
+// Convex and mesh colliders are drawn as their source triangles' edges (up to 4096 triangles per
+// collider) when `meshes` can resolve them, else as nothing.
+void collider_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity only = {}, CollisionMeshCache* meshes = nullptr);
 
 } // namespace victus::physics

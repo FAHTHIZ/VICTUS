@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <numbers>
 
 namespace victus::physics {
@@ -54,7 +55,88 @@ void sort_events(std::vector<ContactEvent>& events) {
 
 } // namespace detail
 
+// ---- collision meshes ----------------------------------------------------------------------
+
+Result<std::shared_ptr<const CollisionMesh>> make_collision_mesh(std::vector<math::Vec3> positions,
+                                                                 std::vector<std::uint32_t> indices) {
+    if (indices.size() % 3 != 0) return Error{ErrorCode::InvalidArgument, "collision mesh: index count is not a multiple of 3"};
+    for (const std::uint32_t i : indices)
+        if (i >= positions.size()) return Error{ErrorCode::InvalidArgument, "collision mesh: index out of range"};
+    auto mesh = std::make_shared<CollisionMesh>();
+    for (const math::Vec3& p : positions) {
+        if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+            return Error{ErrorCode::InvalidArgument, "collision mesh: non-finite vertex position"};
+        mesh->bounds.expand(p);
+    }
+    mesh->positions = std::move(positions);
+    mesh->indices = std::move(indices);
+    return std::shared_ptr<const CollisionMesh>(std::move(mesh));
+}
+
+namespace {
+std::string source_key(const CollisionMeshSource& s) {
+    std::string key(sizeof(std::uint64_t) * 2 + sizeof(std::uint32_t), '\0');
+    std::memcpy(key.data(), &s.model.hi, sizeof(std::uint64_t));
+    std::memcpy(key.data() + 8, &s.model.lo, sizeof(std::uint64_t));
+    std::memcpy(key.data() + 16, &s.mesh_index, sizeof(std::uint32_t));
+    key += s.primitive;
+    return key;
+}
+} // namespace
+
+void CollisionMeshCache::set_provider(CollisionMeshProvider provider) {
+    provider_ = std::move(provider);
+    models_.clear();
+}
+
+std::shared_ptr<const CollisionMesh> CollisionMeshCache::load(const CollisionMeshSource& source) {
+    if (source.model.is_nil() && source.primitive.empty()) return nullptr;
+    std::string key = source_key(source);
+    if (const auto it = models_.find(key); it != models_.end()) return it->second;
+    std::shared_ptr<const CollisionMesh> mesh = provider_ ? provider_(source) : nullptr;
+    if (!provider_) return nullptr; // nothing cached: a provider set later may still load it
+    models_.emplace(std::move(key), mesh);
+    return mesh;
+}
+
+std::shared_ptr<const CollisionMesh> CollisionMeshCache::resolve(scene::Scene& scene, Entity e, const ColliderComponent& col) {
+    ecs::World& w = scene.world();
+    if (!col.mesh_asset.is_nil()) return load({col.mesh_asset, col.mesh_index, {}});
+    if (const auto* pm = w.get<scene::ProceduralMeshComponent>(e); pm && pm->mesh) {
+        auto& slot = procedural_[pm->mesh->id];
+        if (!slot.mesh || slot.source.expired()) {
+            auto made = make_collision_mesh(pm->mesh->positions, pm->mesh->indices);
+            slot.source = pm->mesh;
+            slot.mesh = made ? *made : nullptr;
+        }
+        // Forget meshes whose procedural source is gone (scripts rebuilding geometry every frame).
+        if (procedural_.size() > 256)
+            std::erase_if(procedural_, [](const auto& kv) { return kv.second.source.expired(); });
+        return slot.mesh;
+    }
+    if (const auto* mr = w.get<scene::MeshRendererComponent>(e)) {
+        if (!mr->mesh_asset.is_nil()) return load({mr->mesh_asset, mr->mesh_index, {}});
+        if (!mr->primitive.empty()) return load({Uuid{}, 0, mr->primitive});
+    }
+    return nullptr;
+}
+
+void CollisionMeshCache::invalidate(const Uuid& model) {
+    std::erase_if(models_, [&](const auto& kv) {
+        Uuid u;
+        std::memcpy(&u.hi, kv.first.data(), sizeof(std::uint64_t));
+        std::memcpy(&u.lo, kv.first.data() + 8, sizeof(std::uint64_t));
+        return u == model;
+    });
+}
+
+void CollisionMeshCache::invalidate() {
+    models_.clear();
+    procedural_.clear();
+}
+
 struct PhysicsWorld::Impl {
+    CollisionMeshCache meshes; // before w3, which keeps a pointer to it
     PhysicsSettings settings;
     std::unique_ptr<detail::World3D> w3;
     std::unique_ptr<detail::World2D> w2;
@@ -71,7 +153,7 @@ Result<std::unique_ptr<PhysicsWorld>> PhysicsWorld::create(const PhysicsSettings
     register_components();
     auto impl = std::make_unique<Impl>();
     impl->settings = settings;
-    impl->w3 = detail::World3D::create(settings);
+    impl->w3 = detail::World3D::create(settings, &impl->meshes);
     impl->w2 = detail::World2D::create(settings);
     return std::unique_ptr<PhysicsWorld>(new PhysicsWorld(std::move(impl)));
 }
@@ -168,6 +250,16 @@ void PhysicsWorld::set_gravity(math::Vec3 g) { impl_->w3->set_gravity(g); }
 void PhysicsWorld::set_gravity_2d(math::Vec2 g) { impl_->w2->set_gravity(g); }
 math::Vec3 PhysicsWorld::gravity() const { return impl_->w3->gravity(); }
 math::Vec2 PhysicsWorld::gravity_2d() const { return impl_->w2->gravity(); }
+
+void PhysicsWorld::set_mesh_provider(CollisionMeshProvider provider) {
+    impl_->meshes.set_provider(std::move(provider));
+    impl_->w3->invalidate_meshes();
+}
+CollisionMeshCache& PhysicsWorld::mesh_cache() noexcept { return impl_->meshes; }
+void PhysicsWorld::invalidate_mesh(const Uuid& model) {
+    impl_->meshes.invalidate(model);
+    impl_->w3->invalidate_meshes();
+}
 
 PhysicsStats PhysicsWorld::stats() const {
     PhysicsStats s;
@@ -306,7 +398,7 @@ bool nearly_equal_points(math::Vec3 a, math::Vec3 b) { return math::length(a - b
 
 } // namespace
 
-void collider_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity only) {
+void collider_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity only, CollisionMeshCache* meshes) {
     constexpr float pi = std::numbers::pi_v<float>;
     const math::Vec3 X{1, 0, 0}, Y{0, 1, 0}, Z{0, 0, 1};
     scene.world().each<CharacterControllerComponent>([&](Entity e, CharacterControllerComponent& c) {
@@ -362,6 +454,22 @@ void collider_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity onl
             em.circle(top, X, Z, c.radius);
             em.circle(bottom, X, Z, c.radius);
             for (math::Vec3 d : {X, X * -1.0f, Z, Z * -1.0f}) em.line(top + d * c.radius, bottom + d * c.radius);
+            break;
+        }
+        case ColliderComponent::Shape::Convex:
+        case ColliderComponent::Shape::Mesh: {
+            const auto mesh = meshes ? meshes->resolve(scene, e, c) : nullptr;
+            if (!mesh) break;
+            constexpr std::size_t kMaxTriangles = 4096;
+            const std::size_t n = std::min(mesh->indices.size() / 3, kMaxTriangles);
+            for (std::size_t t = 0; t < n; ++t) {
+                const math::Vec3 a = o + mesh->positions[mesh->indices[t * 3]];
+                const math::Vec3 b = o + mesh->positions[mesh->indices[t * 3 + 1]];
+                const math::Vec3 d = o + mesh->positions[mesh->indices[t * 3 + 2]];
+                em.line(a, b);
+                em.line(b, d);
+                em.line(d, a);
+            }
             break;
         }
         }

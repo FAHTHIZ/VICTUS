@@ -70,10 +70,11 @@ public:
     // changed, refreshes metadata and re-imports every stale texture/model.
     [[nodiscard]] HotReloadReport check();
 
-    // Evicts re-imported assets from the GPU cache, animation, tile set and terrain caches (any
-    // may be null).
+    // Evicts re-imported assets from the GPU cache, animation, tile set, terrain and collision
+    // mesh caches (any may be null); bodies with convex/mesh colliders of a re-imported model are rebuilt.
     static void apply(const HotReloadReport& report, GpuAssetCache* cache, animation::AnimationSystem* animations,
-                      tilemap::TilemapSystem* tilemaps = nullptr, terrain::TerrainSystem* terrains = nullptr);
+                      tilemap::TilemapSystem* tilemaps = nullptr, terrain::TerrainSystem* terrains = nullptr,
+                      physics::PhysicsWorld* physics = nullptr);
 
     [[nodiscard]] std::uint64_t scans() const noexcept { return scans_; }
 

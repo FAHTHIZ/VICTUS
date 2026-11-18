@@ -23,7 +23,7 @@ void register_components() {
             .field(&RigidBodyComponent::angular_velocity, "angular_velocity", {.speed = 0.05f})
             .commit();
         scene::Schema<ColliderComponent>("Collider", "Physics 3D")
-            .enumeration(&ColliderComponent::shape, "shape", {"box", "sphere", "capsule", "cylinder"})
+            .enumeration(&ColliderComponent::shape, "shape", {"box", "sphere", "capsule", "cylinder", "convex", "mesh"})
             .field(&ColliderComponent::size, "size", {.min = 0.001f, .max = 1e5f, .speed = 0.01f})
             .field(&ColliderComponent::radius, "radius", {.min = 0.001f, .max = 1e5f, .speed = 0.01f})
             .field(&ColliderComponent::height, "height", {.min = 0.001f, .max = 1e5f, .speed = 0.01f})
@@ -33,6 +33,9 @@ void register_components() {
             .field(&ColliderComponent::is_trigger, "is_trigger")
             .field(&ColliderComponent::layer, "layer", {.min = 0, .max = 15})
             .field(&ColliderComponent::mask, "mask", {.hint = "bitmask16"})
+            .field(&ColliderComponent::mesh_asset, "mesh_asset",
+                   {.tooltip = "convex/mesh: model to collide with; empty = this entity's own mesh", .hint = "model"})
+            .field(&ColliderComponent::mesh_index, "mesh_index", {.min = 0, .max = 4096, .tooltip = "convex/mesh: mesh within the model"})
             .commit();
         scene::Schema<CharacterControllerComponent>("CharacterController", "Physics 3D")
             .field(&CharacterControllerComponent::radius, "radius", {.min = 0.05f, .max = 100, .speed = 0.01f})

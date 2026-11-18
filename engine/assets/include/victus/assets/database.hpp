@@ -15,6 +15,7 @@
 #include "victus/assets/importers.hpp"
 #include "victus/core/hash.hpp"
 #include "victus/core/jobs.hpp"
+#include "victus/physics/physics.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/terrain/terrain.hpp"
 
@@ -126,5 +127,13 @@ private:
 // Tile sets for tilemap::TilemapSystem; invalid tile sets resolve to null (logged).
 [[nodiscard]] tilemap::TilesetProvider tileset_provider(AssetDatabase& db);
 [[nodiscard]] terrain::TerrainProvider terrain_provider(AssetDatabase& db);
+// Convex/mesh collider geometry (physics::PhysicsWorld::set_mesh_provider): LOD 0 positions and
+// indices of a cooked model mesh, or a MeshRenderer primitive generated exactly as the renderer
+// draws it. Unknown assets, non-models and out-of-range mesh indices resolve to null (logged).
+[[nodiscard]] physics::CollisionMeshProvider collision_mesh_provider(AssetDatabase& db);
+// Collision geometry of a CPU mesh (LOD 0, no morph or skin deformation).
+[[nodiscard]] std::shared_ptr<const physics::CollisionMesh> collision_mesh(const render::MeshData& mesh);
+// The geometry of a MeshRenderer primitive (cube|sphere|plane|cylinder), or null for other names.
+[[nodiscard]] std::shared_ptr<const physics::CollisionMesh> primitive_collision_mesh(std::string_view name);
 
 } // namespace victus::assets

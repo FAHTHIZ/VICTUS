@@ -398,3 +398,44 @@ TEST_CASE("navigation: static height fields (terrain) are walkable and steep rid
     REQUIRE(nav3.build(masked).ok());
     CHECK_FALSE(nav3.valid());
 }
+
+TEST_CASE("navigation: static triangle-mesh colliders are walkable with their concave shape") {
+    // Two 10 x 10 slabs at y = 0 separated by a 2 m gap along x, as one triangle-mesh collider.
+    scene::ProceduralMesh pm;
+    for (const float x0 : {-11.0f, 1.0f}) {
+        const auto b = static_cast<std::uint32_t>(pm.positions.size());
+        const float x1 = x0 + 10;
+        pm.positions.insert(pm.positions.end(), {{x0, 0, -5}, {x1, 0, -5}, {x1, 0, 5}, {x0, 0, 5}});
+        pm.indices.insert(pm.indices.end(), {b, b + 2, b + 1, b, b + 3, b + 2});
+    }
+    auto mesh = scene::publish_mesh(std::move(pm));
+    REQUIRE(mesh.ok());
+    Scene s;
+    const Entity floor = s.create("Floor");
+    s.world().add<scene::ProceduralMeshComponent>(floor, scene::ProceduralMeshComponent{*mesh});
+    ColliderComponent c;
+    c.shape = ColliderComponent::Shape::Mesh;
+    s.world().add<ColliderComponent>(floor, c);
+
+    // Without a physics world bound to the scene, mesh geometry is not resolved and is skipped.
+    {
+        NavigationSystem nav;
+        (void)nav.build(s);
+        CHECK(nav.stats().source_triangles == 0);
+    }
+    auto world = physics::PhysicsWorld::create({});
+    REQUIRE(world.ok());
+    physics::bind(s, world.value().get());
+    NavigationSystem nav;
+    REQUIRE(nav.build(s).ok());
+    CHECK(nav.stats().source_triangles == 4);
+    const auto left = nav.nearest({-6, 1, 0}, {1, 2, 1});
+    REQUIRE(left.has_value());
+    CHECK(std::fabs(left->y) < 0.25f);
+    CHECK_FALSE(nav.nearest({0, 1, 0}, {0.3f, 2, 0.3f}).has_value()); // the gap is not walkable
+    std::vector<math::Vec3> path;
+    bool partial = false;
+    (void)nav.find_path({-6, 0, 0}, {6, 0, 0}, path, &partial);
+    CHECK(partial); // the slabs are not connected
+    physics::bind(s, nullptr);
+}

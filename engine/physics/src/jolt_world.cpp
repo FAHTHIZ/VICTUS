@@ -24,9 +24,12 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/ScaledShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
@@ -306,7 +309,7 @@ math::Quat from_jolt(JPH::QuatArg q) { return {q.GetX(), q.GetY(), q.GetZ(), q.G
 
 class JoltWorld final : public World3D {
 public:
-    explicit JoltWorld(const PhysicsSettings& s) : settings_(s), pairs_(s.layer_matrix) {
+    JoltWorld(const PhysicsSettings& s, CollisionMeshCache* meshes) : settings_(s), pairs_(s.layer_matrix), meshes_(meshes) {
         acquire_jolt();
         temp_ = std::make_unique<JPH::TempAllocatorImpl>(16u << 20);
         if (s.jobs)
@@ -338,12 +341,24 @@ public:
             if (scene.world().get<CharacterControllerComponent>(e)) return; // the character owns the shape
             const RigidBodyComponent* rb = scene.world().get<RigidBodyComponent>(e);
             const Pose pose = world_pose(scene, e);
-            const math::Vec3 scale = abs(pose.scale);
+            // Mesh and convex shapes keep the sign so mirrored instances collide mirrored.
+            const math::Vec3 scale = uses_mesh(col) ? pose.scale : abs(pose.scale);
+            std::shared_ptr<const CollisionMesh> mesh;
+            if (uses_mesh(col)) {
+                mesh = meshes_ ? meshes_->resolve(scene, e, col) : nullptr;
+                if (!mesh) {
+                    if (warned_mesh_.insert(e.bits()).second)
+                        VICTUS_LOG_WARN("physics", "entity {}: {} collider has no geometry (set mesh_asset, add a MeshRenderer "
+                                                   "with a model or primitive, or a procedural mesh); no body created",
+                                        e.index, col.shape == ColliderComponent::Shape::Mesh ? "mesh" : "convex");
+                    return; // a body built before (geometry removed) is destroyed below as unseen
+                }
+            }
             auto it = bodies_.find(e.bits());
             if (it != bodies_.end()) {
                 Entry& b = it->second;
                 const bool same = b.collider == col && b.has_rb == (rb != nullptr) && (!rb || b.rb == *rb) &&
-                                  nearly_equal(b.scale, scale, 1e-4f);
+                                  nearly_equal(b.scale, scale, 1e-4f) && b.mesh == mesh;
                 if (!same) {
                     destroy(b);
                     bodies_.erase(it);
@@ -352,6 +367,7 @@ public:
             }
             if (it == bodies_.end()) {
                 Entry b;
+                b.mesh = mesh;
                 if (!create(e, col, rb, pose, scale, b)) return;
                 ++added;
                 it = bodies_.emplace(e.bits(), b).first;
@@ -381,6 +397,7 @@ public:
                 ++it;
             }
         }
+        if (shape_cache_.size() > 64) prune_shape_cache();
         sync_heightfields(scene);
         if (added > 64) system_->OptimizeBroadPhase();
         sync_characters(scene);
@@ -438,6 +455,15 @@ public:
         for (auto& [k, f] : fields_) destroy_field(f);
         fields_.clear();
         if (contacts_) contacts_->reset();
+        shape_cache_.clear();
+        warned_mesh_.clear();
+    }
+
+    void invalidate_meshes() override {
+        // Bodies compare their geometry pointer every sync: a reloaded mesh is a new pointer and
+        // rebuilds them. Built shapes of geometry nobody holds any more are released here.
+        prune_shape_cache();
+        warned_mesh_.clear();
     }
 
     bool has_body(Entity e) const override { return bodies_.contains(e.bits()) || fields_.contains(e.bits()) || chars_.contains(e.bits()); }
@@ -587,6 +613,7 @@ public:
         out.last_step_ms += last_ms_;
         out.heightfield_builds += field_builds_;
         out.heightfield_updates += field_updates_;
+        out.mesh_shapes_built += mesh_shapes_built_;
     }
 
 private:
@@ -602,6 +629,14 @@ private:
         std::uint64_t seen{0};
         bool moving{false};
         JPH::CollisionGroup::GroupID group{JPH::CollisionGroup::cInvalidGroup};
+        std::shared_ptr<const CollisionMesh> mesh; // convex/mesh colliders
+    };
+
+    // Unscaled Jolt shapes built from one CollisionMesh, shared by every body using it.
+    struct MeshShapes {
+        std::weak_ptr<const CollisionMesh> source;
+        JPH::ShapeRefC convex, triangles;
+        bool convex_failed{false}, triangles_failed{false};
     };
 
     struct Character {
@@ -634,7 +669,59 @@ private:
         return it == bodies_.end() || it->second.motion != JPH::EMotionType::Dynamic ? JPH::BodyID() : it->second.id;
     }
 
-    static JPH::ShapeRefC make_shape(const ColliderComponent& c, math::Vec3 s) {
+    static bool uses_mesh(const ColliderComponent& c) {
+        return c.shape == ColliderComponent::Shape::Convex || c.shape == ColliderComponent::Shape::Mesh;
+    }
+
+    void prune_shape_cache() {
+        std::erase_if(shape_cache_, [](const auto& kv) { return kv.second.source.expired(); });
+    }
+
+    // Convex hull (`triangles` false) or triangle mesh of `mesh`, built once and cached.
+    JPH::ShapeRefC mesh_shape(const std::shared_ptr<const CollisionMesh>& mesh, bool triangles) {
+        MeshShapes& m = shape_cache_[mesh.get()];
+        if (m.source.lock() != mesh) m = MeshShapes{mesh, {}, {}, false, false}; // address reused by a new mesh
+        JPH::ShapeRefC& slot = triangles ? m.triangles : m.convex;
+        bool& failed = triangles ? m.triangles_failed : m.convex_failed;
+        if (slot || failed) return slot;
+        JPH::Shape::ShapeResult res;
+        if (triangles) {
+            JPH::VertexList verts;
+            verts.reserve(mesh->positions.size());
+            for (const math::Vec3& p : mesh->positions) verts.push_back(JPH::Float3(p.x, p.y, p.z));
+            JPH::IndexedTriangleList tris;
+            tris.reserve(mesh->indices.size() / 3);
+            for (std::size_t i = 0; i + 2 < mesh->indices.size(); i += 3)
+                tris.push_back(JPH::IndexedTriangle(mesh->indices[i], mesh->indices[i + 1], mesh->indices[i + 2]));
+            JPH::MeshShapeSettings ms(std::move(verts), std::move(tris));
+            res = ms.Create();
+        } else {
+            // Duplicate positions (UV/normal seams) make the hull builder slower without changing it.
+            std::vector<math::Vec3> pts(mesh->positions);
+            std::sort(pts.begin(), pts.end(), [](math::Vec3 a, math::Vec3 b) {
+                return a.x != b.x ? a.x < b.x : a.y != b.y ? a.y < b.y : a.z < b.z;
+            });
+            pts.erase(std::unique(pts.begin(), pts.end(), [](math::Vec3 a, math::Vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }),
+                      pts.end());
+            JPH::Array<JPH::Vec3> jp;
+            jp.reserve(pts.size());
+            for (const math::Vec3& p : pts) jp.push_back(to_jolt(p));
+            JPH::ConvexHullShapeSettings hs(jp);
+            res = hs.Create();
+        }
+        if (!res.IsValid()) {
+            failed = true;
+            VICTUS_LOG_WARN("physics", "cannot build a {} collision shape from {} vertices / {} triangles: {}",
+                            triangles ? "mesh" : "convex", mesh->positions.size(), mesh->indices.size() / 3,
+                            res.HasError() ? res.GetError().c_str() : "unknown error");
+            return {};
+        }
+        slot = res.Get();
+        ++mesh_shapes_built_;
+        return slot;
+    }
+
+    JPH::ShapeRefC make_shape(const ColliderComponent& c, math::Vec3 s, const Entry& entry, bool dynamic) {
         JPH::ShapeRefC shape;
         const float rs = std::max(s.x, s.z);
         switch (c.shape) {
@@ -661,6 +748,28 @@ private:
             shape = new JPH::CylinderShape(half, r, std::min({0.05f, half * 0.5f, r * 0.5f}));
             break;
         }
+        case ColliderComponent::Shape::Convex:
+        case ColliderComponent::Shape::Mesh: {
+            if (!entry.mesh) return {};
+            bool triangles = c.shape == ColliderComponent::Shape::Mesh;
+            if (triangles && dynamic) {
+                // Jolt triangle meshes have no volume (no mass properties) and do not collide
+                // with other meshes: dynamic bodies use the hull instead.
+                if (warned_dynamic_mesh_.insert(entry.mesh.get()).second)
+                    VICTUS_LOG_WARN("physics", "a dynamic body uses a mesh collider; simulating its convex hull instead");
+                triangles = false;
+            }
+            JPH::ShapeRefC base = mesh_shape(entry.mesh, triangles);
+            if (!base) return {};
+            shape = base;
+            if (!nearly_equal(s, math::Vec3{1, 1, 1}, 1e-6f)) {
+                // Keep mirroring (negative scale flips mesh winding in Jolt); avoid degenerate axes.
+                const auto axis = [](float v) { return std::fabs(v) < 1e-4f ? std::copysign(1e-4f, v) : v; };
+                const JPH::Vec3 js = base->MakeScaleValid(to_jolt(math::Vec3{axis(s.x), axis(s.y), axis(s.z)}));
+                shape = new JPH::ScaledShape(base, js);
+            }
+            break;
+        }
         }
         const math::Vec3 off{c.offset.x * s.x, c.offset.y * s.y, c.offset.z * s.z};
         if (math::length(off) > 1e-6f) {
@@ -673,11 +782,11 @@ private:
 
     bool create(Entity e, const ColliderComponent& col, const RigidBodyComponent* rb, const Pose& pose, math::Vec3 scale,
                 Entry& out) {
-        JPH::ShapeRefC shape = make_shape(col, scale);
-        if (!shape) return false;
         JPH::EMotionType motion = JPH::EMotionType::Static;
         if (rb && rb->type == BodyType::Dynamic) motion = JPH::EMotionType::Dynamic;
         else if (rb && rb->type == BodyType::Kinematic) motion = JPH::EMotionType::Kinematic;
+        JPH::ShapeRefC shape = make_shape(col, scale, out, motion == JPH::EMotionType::Dynamic);
+        if (!shape) return false;
         // Triggers without a dynamic body are kinematic so they can detect static/kinematic bodies.
         if (col.is_trigger && motion == JPH::EMotionType::Static) motion = JPH::EMotionType::Kinematic;
         const bool moving = motion != JPH::EMotionType::Static;
@@ -1246,12 +1355,17 @@ private:
     std::uint32_t contacts_last_{0};
     double last_ms_{0};
     bool warned_{false};
+    CollisionMeshCache* meshes_{nullptr};
+    std::unordered_map<const CollisionMesh*, MeshShapes> shape_cache_;
+    std::unordered_set<std::uint64_t> warned_mesh_;
+    std::unordered_set<const CollisionMesh*> warned_dynamic_mesh_;
+    std::uint64_t mesh_shapes_built_{0};
 };
 
 } // namespace
 
-std::unique_ptr<World3D> World3D::create(const PhysicsSettings& settings) {
-    return std::make_unique<JoltWorld>(settings);
+std::unique_ptr<World3D> World3D::create(const PhysicsSettings& settings, CollisionMeshCache* meshes) {
+    return std::make_unique<JoltWorld>(settings, meshes);
 }
 
 } // namespace victus::physics::detail

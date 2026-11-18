@@ -35,7 +35,7 @@ Every engine module is a static library `victus_<name>` (alias `VICTUS::<Name>`)
 | 4 | `plugin` | Native plugin host: `.vplugin` manifests, dependency resolution, versioned C ABI (`victus_plugin.h`), lifecycle (ADR-0078) |
 | 5 | `navigation`, `tilemap`, `terrain`, `sequencer`, `net` | Navmesh and agents; tile sets and colliders; heightfields and foliage; timeline playback; transport, replication, sessions |
 | 6 | `ai` | Behaviour trees, blackboard, perception |
-| 6 | `assets` | Asset database, importers, cooker, GPU-ready model/texture data |
+| 6 | `assets` | Asset database, importers, cooker, GPU-ready model/texture data; providers that hand cooked data to lower layers (animation sets, tilesets, height fields, collision meshes for physics) |
 | 7 | `script` | Luau ScriptHost and the scripting API over every gameplay system; loads `.vgraph` through `graph` |
 | 8 | `runtime` | Scene to renderer extraction, SceneView, GPU asset cache, surface shaders (material graphs through `graph`), hot reload |
 | 8 | `project` | Project manifest, templates, component registration for every module |

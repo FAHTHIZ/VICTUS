@@ -248,7 +248,9 @@ std::size_t Editor::check_asset_changes() {
         for (const auto& p : changes.prefabs)
             if (const auto* rec = db_ ? db_->find_path(p) : nullptr) thumbnails_->invalidate(rec->uuid);
     }
-    runtime::AssetHotReloader::apply(changes, cache_.get(), play_animation_.get(), tilemaps_.get(), terrains_.get());
+    runtime::AssetHotReloader::apply(changes, cache_.get(), play_animation_.get(), tilemaps_.get(), terrains_.get(),
+                                     play_physics_.get());
+    for (const auto& uuid : changes.reimported) collider_meshes_.invalidate(uuid);
     if (edit_sprites_) edit_sprites_->clear_sheets();
     if (edit_animation_) { // the edit-mode preview follows model and controller edits
         edit_animation_->clear_cache();
@@ -1123,6 +1125,7 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
         ps.jobs = &workers();
         if (auto pw = physics::PhysicsWorld::create(ps)) play_physics_ = std::move(pw).value();
         else notify("physics disabled: " + pw.error().message, true);
+        if (play_physics_ && db_) play_physics_->set_mesh_provider(assets::collision_mesh_provider(*db_));
     }
     if (db_) {
         script::HostOptions so;
@@ -1339,7 +1342,7 @@ void Editor::draw_overlays_3d(render::SceneRenderer& r) {
     draw_terrain_overlay(r);
     if (show_colliders_) {
         collider_scratch_.clear();
-        physics::collider_lines(s, collider_scratch_);
+        physics::collider_lines(s, collider_scratch_, {}, collider_meshes());
         for (const auto& l : collider_scratch_) r.line(l.a, l.b, l.color);
     }
     if (show_navmesh_) {
@@ -1402,7 +1405,7 @@ void Editor::draw_overlays_2d(render::SpriteBatch& b) {
     draw_tile_overlay(b, px);
     if (show_colliders_) {
         collider_scratch_.clear();
-        physics::collider_lines(s, collider_scratch_);
+        physics::collider_lines(s, collider_scratch_, {}, collider_meshes());
         for (const auto& l : collider_scratch_) b.draw_line({l.a.x, l.a.y}, {l.b.x, l.b.y}, 1.5f * px, l.color, 999);
     }
 }
@@ -1532,6 +1535,17 @@ std::optional<Thumbnail> Editor::asset_thumbnail(const Uuid& asset) {
 void Editor::set_asset_view(bool grid, float size) noexcept {
     asset_grid_ = grid;
     asset_tile_size_ = std::clamp(size, 32.0f, 256.0f);
+}
+
+physics::CollisionMeshCache* Editor::collider_meshes() {
+    // Play mode uses the session's cache (its bodies were built from it); edit mode keeps its own.
+    if (play_physics_ && play_scene_) return &play_physics_->mesh_cache();
+    if (collider_meshes_db_ != db_.get()) {
+        collider_meshes_.invalidate();
+        collider_meshes_.set_provider(db_ ? assets::collision_mesh_provider(*db_) : physics::CollisionMeshProvider{});
+        collider_meshes_db_ = db_.get();
+    }
+    return &collider_meshes_;
 }
 
 } // namespace victus::editor
