@@ -51,3 +51,4 @@ Evidence for every item is in [STATUS.md](STATUS.md); platform coverage is in [P
 - **Static analysis:** clang-tidy runs on engine, editor, tools and apps sources (see CONTRIBUTING.md); test sources are not linted.
 - **Third-party advisories:** cgltf 1.15 has four open advisories with no upstream fix. VICTUS validates accessors and unpacks sparse data itself before handing glTF data to cgltf (see THIRD_PARTY_AND_LICENSES.md); untrusted glTF files should still be treated with care.
 - **Studio samples page:** the editor finds sample projects in the source tree it was built from or in `VICTUS_SAMPLES_DIR`; installed or moved builds show an empty Samples page until that variable is set.
+- **Studio panels:** which panels are open and the chosen layout preset are not saved between sessions; dock positions are (editor_layout.ini).

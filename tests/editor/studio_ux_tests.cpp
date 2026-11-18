@@ -222,3 +222,90 @@ TEST_CASE("studio launcher: pages, samples list and opening a sample copy") {
     std::error_code ec;
     sfs::remove_all(samples, ec);
 }
+
+TEST_CASE("studio workspace: every panel reopens from the Window menu, layout presets dock them") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Proj", "Proj", "3d").ok());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    h.frames(3);
+    const auto docked = [](const char* name) {
+        ImGuiWindow* w = ImGui::FindWindowByName(name);
+        return w && w->DockNode != nullptr && w->Active;
+    };
+    for (const char* name : {"Viewport", "Hierarchy", "Inspector", "Assets", "Console"})
+        CHECK(docked(name));
+
+    // The viewport cannot be closed; core panels close and come back.
+    h.ed->set_panel_open(editor::Panel::Viewport, false);
+    CHECK(h.ed->panel_open(editor::Panel::Viewport));
+    h.ed->set_panel_open(editor::Panel::Hierarchy, false);
+    h.ed->set_panel_open(editor::Panel::Console, false);
+    h.frames(2);
+    CHECK_FALSE(h.ed->panel_open(editor::Panel::Hierarchy));
+    CHECK_FALSE(ImGui::FindWindowByName("Hierarchy")->Active);
+    h.ed->show_panel(editor::Panel::Hierarchy);
+    h.ed->focus_console(); // the status bar's error count reopens a closed Console too
+    h.frames(3);
+    CHECK(docked("Hierarchy"));
+    CHECK(h.ed->panel_open(editor::Panel::Console));
+    CHECK(docked("Console"));
+
+    // show_panel brings a docked tab to the front.
+    h.ed->show_panel(editor::Panel::Assets);
+    h.frames(3);
+    ImGuiWindow* assets = ImGui::FindWindowByName("Assets");
+    REQUIRE(assets);
+    REQUIRE(assets->DockNode);
+    CHECK(assets->DockNode->SelectedTabId == assets->TabId);
+
+    // Every panel has a title and a palette command; every layout docks its tools.
+    for (int i = 0; i < static_cast<int>(editor::Panel::Count); ++i)
+        CHECK(std::strlen(editor::panel_title(static_cast<editor::Panel>(i))) > 0);
+    std::size_t window_cmds = 0;
+    for (const auto& c : h.ed->commands())
+        if (c.name.starts_with("Window: ")) ++window_cmds;
+    CHECK(window_cmds ==
+          static_cast<std::size_t>(editor::Panel::Count) + static_cast<std::size_t>(editor::Layout::Count) + 1);
+
+    h.ed->apply_layout(editor::Layout::Animation);
+    h.frames(4);
+    CHECK(h.ed->layout() == editor::Layout::Animation);
+    CHECK(h.ed->panel_open(editor::Panel::Animation));
+    CHECK(h.ed->panel_open(editor::Panel::Sequencer));
+    CHECK(docked("Animation"));
+    CHECK(docked("Sequencer"));
+
+    h.ed->apply_layout(editor::Layout::Scripting);
+    h.frames(4);
+    CHECK_FALSE(h.ed->panel_open(editor::Panel::Animation)); // presets close tools they do not use
+    CHECK(h.ed->panel_open(editor::Panel::GraphEditor));
+    ImGuiWindow* graph = ImGui::FindWindowByName("###GraphEditor");
+    REQUIRE(graph);
+    REQUIRE(graph->DockNode);
+    CHECK(graph->DockNode->SelectedTabId == graph->TabId); // in front of the Viewport
+    CHECK(graph->DockNode == ImGui::FindWindowByName("Viewport")->DockNode);
+
+    h.ed->apply_layout(editor::Layout::Debugging);
+    h.frames(4);
+    CHECK(h.ed->show_profiler());
+    CHECK(docked("Profiler"));
+    CHECK(docked("Network"));
+
+    // Reset Layout puts an undocked panel back.
+    ImGui::DockContextQueueUndockWindow(ImGui::GetCurrentContext(), ImGui::FindWindowByName("Inspector"));
+    h.frames(2);
+    CHECK(ImGui::FindWindowByName("Inspector")->DockNode == nullptr);
+    h.ed->apply_layout(h.ed->layout());
+    h.frames(3);
+    CHECK(docked("Inspector"));
+    for (int i = 0; i < static_cast<int>(editor::Layout::Count); ++i) {
+        h.ed->apply_layout(static_cast<editor::Layout>(i));
+        h.frames(2);
+        for (const char* name : {"Viewport", "Hierarchy", "Inspector", "Assets", "Console"})
+            CHECK(docked(name));
+    }
+    h.ed->apply_layout(editor::Layout::Default);
+    h.frames(2);
+}

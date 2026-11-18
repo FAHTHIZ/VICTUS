@@ -46,9 +46,9 @@ int fuzzy_match_score(std::string_view query, std::string_view text) noexcept {
             const bool hit = lower(text[ti]) == lq;
             if (hit) {
                 score += 1;
-                if (prev_match) score += 5;       // consecutive run
+                if (prev_match) score += 5;           // consecutive run
                 if (word_start(text, ti)) score += 8; // start of a word
-                if (text[ti] == q) score += 1;    // exact case
+                if (text[ti] == q) score += 1;        // exact case
                 prev_match = true;
                 found = true;
                 ++ti;
@@ -82,8 +82,10 @@ std::vector<EditorCommand> Editor::commands() {
     // File
     add("File: New Scene", {}, editing && project_.has_value(), [this] { new_scene(); });
     add("File: Save Scene", "Ctrl+S", editing && project_.has_value(), [this] {
-        if (scene_path_.empty()) show_save_as_ = true;
-        else if (auto st = save_scene(); !st.ok()) notify(st.error().message, true);
+        if (scene_path_.empty())
+            show_save_as_ = true;
+        else if (auto st = save_scene(); !st.ok())
+            notify(st.error().message, true);
     });
     add("File: Save Scene As...", {}, editing && project_.has_value(), [this] { show_save_as_ = true; });
     add("File: Close Project", {}, editing && project_.has_value(), [this] { close_project(); });
@@ -103,15 +105,21 @@ std::vector<EditorCommand> Editor::commands() {
     add("Edit: Input Actions...", {}, project_.has_value(), [this] { show_input_actions_ = true; });
 
     // Entity
-    const std::pair<const char*, Primitive> prims[] = {
-        {"Empty", Primitive::Empty},         {"Cube", Primitive::Cube},
-        {"Sphere", Primitive::Sphere},       {"Plane", Primitive::Plane},
-        {"Cylinder", Primitive::Cylinder},   {"Sprite", Primitive::Sprite},
-        {"Camera", Primitive::Camera},       {"Directional Light", Primitive::DirectionalLight},
-        {"Point Light", Primitive::PointLight}, {"Spot Light", Primitive::SpotLight},
-        {"Decal", Primitive::Decal},         {"2D Light", Primitive::Light2D}};
+    const std::pair<const char*, Primitive> prims[] = {{"Empty", Primitive::Empty},
+                                                       {"Cube", Primitive::Cube},
+                                                       {"Sphere", Primitive::Sphere},
+                                                       {"Plane", Primitive::Plane},
+                                                       {"Cylinder", Primitive::Cylinder},
+                                                       {"Sprite", Primitive::Sprite},
+                                                       {"Camera", Primitive::Camera},
+                                                       {"Directional Light", Primitive::DirectionalLight},
+                                                       {"Point Light", Primitive::PointLight},
+                                                       {"Spot Light", Primitive::SpotLight},
+                                                       {"Decal", Primitive::Decal},
+                                                       {"2D Light", Primitive::Light2D}};
     for (const auto& [label, p] : prims)
-        add(std::string("Entity: Create ") + label, {}, project_.has_value(), [this, kind = p] { (void)create_entity(kind); });
+        add(std::string("Entity: Create ") + label, {}, project_.has_value(),
+            [this, kind = p] { (void)create_entity(kind); });
 
     add("Entity: Create Terrain", {}, has_db, [this] {
         if (auto t = create_terrain(); !t) notify("cannot create terrain: " + t.error().message, true);
@@ -121,12 +129,16 @@ std::vector<EditorCommand> Editor::commands() {
     add("Assets: Reimport All", {}, has_db, [this] { (void)reimport_assets(); });
     add("Assets: New Material", {}, has_db, [this] { new_material_for_selection(); });
     add("Assets: New Visual Script", {}, has_db, [this] {
-        if (auto id = create_graph(); !id) notify("cannot create visual script: " + id.error().message, true);
-        else if (auto st = open_graph_editor(*id); !st.ok()) notify(st.error().message, true);
+        if (auto id = create_graph(); !id)
+            notify("cannot create visual script: " + id.error().message, true);
+        else if (auto st = open_graph_editor(*id); !st.ok())
+            notify(st.error().message, true);
     });
     add("Assets: New Material Graph", {}, has_db, [this] {
-        if (auto id = create_material_graph(); !id) notify("cannot create material graph: " + id.error().message, true);
-        else if (auto st = open_graph_editor(*id); !st.ok()) notify(st.error().message, true);
+        if (auto id = create_material_graph(); !id)
+            notify("cannot create material graph: " + id.error().message, true);
+        else if (auto st = open_graph_editor(*id); !st.ok())
+            notify(st.error().message, true);
     });
     add("Assets: New Surface Shader", {}, has_db, [this] {
         if (auto id = create_surface_shader(); !id) notify("cannot create shader: " + id.error().message, true);
@@ -151,25 +163,30 @@ std::vector<EditorCommand> Editor::commands() {
     }
 
     // View
-    add("View: Reset Layout", {}, true, [this] { layout_built_ = false; });
     toggle("Physics Colliders", &show_colliders_);
     toggle("Navigation Mesh", &show_navmesh_);
-    toggle("AI Debug", &show_ai_);
-    toggle("Animation", &show_animation_);
-    toggle("Network", &show_network_);
-    toggle("Tile Palette", &show_tile_palette_);
-    toggle("Terrain Tools", &show_terrain_tools_);
-    toggle("Material Editor", &show_material_editor_);
-    toggle("Graph Editor", &show_graph_editor_);
-    toggle("Sequencer", &show_sequencer_);
     add("View: Toggle Profiler", {}, true, [this] { set_show_profiler(!show_profiler_); });
-    for (auto tier : {render::QualityTier::Low, render::QualityTier::Medium, render::QualityTier::High, render::QualityTier::Ultra})
-        add("View: Rendering Quality " + std::string(render::quality_tier_name(tier)), {}, quality_ != tier, [this, tier] {
-            if (auto st = set_quality(tier); !st.ok()) notify("could not save quality: " + st.error().message, true);
-        });
+    // Window
+    for (int i = 0; i < static_cast<int>(Panel::Count); ++i) {
+        const auto p = static_cast<Panel>(i);
+        add(std::string("Window: Show ") + panel_title(p), {}, true, [this, p] { show_panel(p); });
+    }
+    for (int i = 0; i < static_cast<int>(Layout::Count); ++i) {
+        const auto l = static_cast<Layout>(i);
+        add(std::string("Window: Layout ") + layout_name(l), {}, true, [this, l] { apply_layout(l); });
+    }
+    add("Window: Reset Layout", {}, true, [this] { apply_layout(layout_); });
+    for (auto tier :
+         {render::QualityTier::Low, render::QualityTier::Medium, render::QualityTier::High, render::QualityTier::Ultra})
+        add("View: Rendering Quality " + std::string(render::quality_tier_name(tier)), {}, quality_ != tier,
+            [this, tier] {
+                if (auto st = set_quality(tier); !st.ok())
+                    notify("could not save quality: " + st.error().message, true);
+            });
 
     add("View: Toggle Overdraw View", {}, true, [this] {
-        set_debug_view(debug_view_ == render::DebugView::Overdraw ? render::DebugView::None : render::DebugView::Overdraw);
+        set_debug_view(debug_view_ == render::DebugView::Overdraw ? render::DebugView::None
+                                                                  : render::DebugView::Overdraw);
     });
 
     // Play
@@ -204,7 +221,8 @@ std::vector<EditorCommand> Editor::find_commands(std::string_view query, std::si
         if (!all[i].enabled) continue;
         if (empty) {
             // Without a query list actions, not every asset and entity.
-            if (all[i].name.starts_with("Select: ") || all[i].name.starts_with("Open ") || all[i].name.starts_with("Instantiate "))
+            if (all[i].name.starts_with("Select: ") || all[i].name.starts_with("Open ") ||
+                all[i].name.starts_with("Instantiate "))
                 continue;
             scored.emplace_back(0, i);
             continue;
@@ -217,14 +235,16 @@ std::vector<EditorCommand> Editor::find_commands(std::string_view query, std::si
         return all[a.second].name < all[b.second].name;
     });
     std::vector<EditorCommand> out;
-    for (std::size_t k = 0; k < scored.size() && out.size() < limit; ++k) out.push_back(std::move(all[scored[k].second]));
+    for (std::size_t k = 0; k < scored.size() && out.size() < limit; ++k)
+        out.push_back(std::move(all[scored[k].second]));
     return out;
 }
 
 bool Editor::run_command(std::string_view name) {
     for (auto& c : commands()) {
         if (!c.enabled || c.name.size() != name.size()) continue;
-        if (!std::equal(c.name.begin(), c.name.end(), name.begin(), [](char a, char b) { return lower(a) == lower(b); }))
+        if (!std::equal(c.name.begin(), c.name.end(), name.begin(),
+                        [](char a, char b) { return lower(a) == lower(b); }))
             continue;
         if (c.run) c.run();
         return true;
@@ -236,12 +256,13 @@ void Editor::draw_command_palette() {
     if (!palette_open_) return;
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     const float width = std::min(640.0f, vp->WorkSize.x - 40.0f);
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + (vp->WorkSize.x - width) * 0.5f, vp->WorkPos.y + 40), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + (vp->WorkSize.x - width) * 0.5f, vp->WorkPos.y + 40),
+                            ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(width, 0), ImGuiCond_Always);
     if (palette_focus_) ImGui::SetNextWindowFocus();
-    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
-                                       ImGuiWindowFlags_AlwaysAutoResize;
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                       ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
     if (!ImGui::Begin("##CommandPalette", nullptr, flags)) {
         ImGui::End();
         return;
@@ -275,8 +296,10 @@ void Editor::draw_command_palette() {
     }
     // The palette keeps keyboard focus while open (it is modal for the keyboard); clicking
     // outside closes it.
-    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-    if (!hovered && (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) close = true;
+    const bool hovered =
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    if (!hovered && (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)))
+        close = true;
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) palette_focus_ = true;
     ImGui::End();
     if (run >= 0 && run < count) {
