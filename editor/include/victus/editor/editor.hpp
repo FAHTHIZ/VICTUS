@@ -129,7 +129,8 @@ public:
 
     // ---- projects ----
     [[nodiscard]] Status open_project(const fs::Path& path);
-    [[nodiscard]] Status create_project(const fs::Path& directory, std::string_view name, std::string_view template_id);
+    [[nodiscard]] Status create_project(const fs::Path& directory, std::string_view name, std::string_view template_id,
+                                        const project::TemplateOptions& options = {});
     void close_project();
     [[nodiscard]] bool has_project() const noexcept { return project_.has_value(); }
     [[nodiscard]] project::Project* project() noexcept { return project_ ? &*project_ : nullptr; }
@@ -763,6 +764,7 @@ private:
     std::string new_name_{"My Game"};
     std::string new_location_;
     std::string new_template_{"3d"};
+    std::string new_character_{project::kDefaultCharacter}; // starter character for templates with one
     std::string open_path_;
     std::string launcher_error_;
 

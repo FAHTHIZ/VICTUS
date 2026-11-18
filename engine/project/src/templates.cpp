@@ -15,11 +15,11 @@
 #include "victus/audio/audio.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/physics/physics.hpp"
+#include "victus/project/characters.hpp"
 #include "victus/project/project.hpp"
+#include "victus/core/log.hpp"
 #include "victus/scene/prefab.hpp"
 #include "victus/script/script.hpp"
-
-#include "robot.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -322,7 +322,43 @@ Entity hud(Scene& s, std::string_view controls, math::Vec2 panel_size, bool save
     return canvas;
 }
 
-void build_3d(Scene& s) {
+// Starter characters (victus/project/characters.hpp). Projects with a character get both
+// Vanguards and the shared controller, so swapping one for the other is a reference change.
+void add_character_files(std::vector<TemplateFile>& files, const TemplateOptions& options) {
+    if (options.character == kNoCharacter) return;
+    for (const StarterCharacter& c : starter_characters()) {
+        const auto glb = starter_character_glb(c);
+        files.push_back({std::string(c.model_path), std::string(reinterpret_cast<const char*>(glb.data()), glb.size())});
+        files.push_back({std::string(c.model_path) + ".meta", starter_character_meta(c)});
+    }
+    files.push_back({kCharacterControllerPath, starter_character_controller()});
+}
+
+// The other Vanguard (the 3D template's companion is the player's counterpart).
+std::string companion_character(const std::string& player) {
+    if (player == kNoCharacter) return player;
+    return player == "v02" ? "v01" : "v02";
+}
+
+// The visible body under a gameplay root (origin at the feet), scaled so the 1.70 m character is
+// `height` tall: the chosen starter character named "Robot" (scripts find it by that name), or
+// a plain capsule body for "none".
+void character_visual(Scene& s, Entity parent, const std::string& character, float height) {
+    if (const StarterCharacter* c = find_starter_character(character)) {
+        auto robot = instantiate_starter_character(s, *c, "Robot", parent);
+        if (robot) {
+            const float k = height / kCharacterHeight;
+            s.world().get<Transform>(*robot)->scale = {k, k, k};
+            return;
+        }
+        VICTUS_LOG_ERROR("project", "starter character {}: {}", c->id, robot.error().message);
+    }
+    const Entity body = add(s, "Body", {0, height * 0.5f, 0}, parent);
+    s.world().get<Transform>(body)->scale = {height * 0.36f, height * 0.5f, height * 0.36f};
+    mesh(s, body, "cylinder", {0.85f, 0.84f, 0.8f, 1}, 0.0f, 0.4f);
+}
+
+void build_3d(Scene& s, const TemplateOptions& options) {
     attach(s, camera_3d(s, {0, 4.5f, 9}, {0, 0.6f, 0}), "scripts/follow_camera.luau");
     sun(s);
     {
@@ -360,11 +396,10 @@ void build_3d(Scene& s) {
         cc.height = 1.4f;
         cc.push_force = 400.0f;
     }
-    // The visible character is the skinned template robot (assets/models/robot.gltf), scaled to
-    // the 1.4 m capsule; the player script feeds its animation controller (speed, grounded, jump)
-    // and turns it to face the direction of travel.
-    const Entity robot = robot::instantiate(s, "Robot", player);
-    s.world().get<Transform>(robot)->scale = {0.85f, 0.85f, 0.85f};
+    // The visible character is the chosen starter character (assets/models/characters/, 1.70 m)
+    // scaled to the 1.4 m capsule; the player script feeds its animation controller (speed,
+    // grounded, jump, interact) and turns it to face the direction of travel.
+    character_visual(s, player, options.character, 1.45f);
     {
         // Dust kicked up on jumps and landings: bursts emitted by player.luau.
         auto& d = emitter(s, add(s, "Dust", {0, 0.05f, 0}, player));
@@ -402,8 +437,8 @@ void build_3d(Scene& s) {
         agent.radius = 0.35f;
         agent.height = 0.8f;
         agent.stopping_distance = 0.3f;
-        const Entity small = robot::instantiate(s, "Robot", buddy);
-        s.world().get<Transform>(small)->scale = {0.48f, 0.48f, 0.48f};
+        // The companion is the other Vanguard at half size, so the pair reads as a family.
+        character_visual(s, buddy, companion_character(options.character), 0.82f);
     }
 
     // A sentry turret run by a behaviour tree (assets/ai/sentry.vbt): it sweeps its head while
@@ -572,7 +607,7 @@ void build_3d(Scene& s) {
 
 // ---- Multiplayer arena ------------------------------------------------------------------------
 
-void build_multiplayer(Scene& s) {
+void build_multiplayer(Scene& s, const TemplateOptions& options) {
     attach(s, camera_3d(s, {0, 9.0f, 11.0f}, {0, 0.6f, 0}), "scripts/net_camera.luau", [] {
         json::Value p = json::Value::object();
         p.set("offset", json::Array{0.0, 7.0, 9.0});
@@ -637,8 +672,7 @@ void build_multiplayer(Scene& s) {
         cc.height = 1.4f;
         cc.push_force = 200.0f;
     }
-    const Entity robot = robot::instantiate(s, "Robot", player);
-    s.world().get<Transform>(robot)->scale = {0.85f, 0.85f, 0.85f};
+    character_visual(s, player, options.character, 1.45f);
     {
         const Entity badge = add(s, "Badge", {0, 2.05f, 0}, player);
         s.world().get<Transform>(badge)->scale = {0.32f, 0.32f, 0.32f};
@@ -855,9 +889,11 @@ void build_simulation(Scene& s) {
 constexpr const char* kPlayer3d = R"lua(-- Walks the character with the "move_x"/"move_y" actions (WASD, arrows, left stick) and jumps
 -- with "jump" (Space, gamepad A). The entity has a
 -- CharacterController (it slides along walls, climbs steps and pushes physics bodies); the
--- child "Robot" model faces the direction of travel; its animation controller
--- (assets/anim/robot.vanim) blends Idle/Walk/Run from the "speed" parameter and plays Jump from
--- the "jump" trigger. Its child "Dust" particle emitter puffs on jumps and landings.
+-- child "Robot" (a Vanguard starter character) faces the direction of travel; its animation
+-- controller (assets/anim/characters/vanguard_locomotion.vanim) blends Idle/Walk/Run from the
+-- "speed" parameter, plays Jump, Fall and Land from the "jump" trigger and "grounded", and
+-- Interact from the "interact" trigger. Its child "Dust" particle emitter puffs on jumps and
+-- landings.
 -- Fields below are defaults; override them per entity in the editor inspector.
 local Player = {}
 Player.speed = 5
@@ -898,7 +934,8 @@ function Player:load_state(state)
 end
 
 function Player:update(dt)
-    if input.action_pressed("interact") then self:drop_crate() end
+    local interacted = input.action_pressed("interact")
+    if interacted then self:drop_crate() end
     -- Actions work with WASD/arrows and a gamepad's left stick (partial tilt walks slower).
     local stick = input.vector("move_x", "move_y")
     local move = vector.create(stick.x, 0, -stick.y) * self.speed
@@ -934,6 +971,7 @@ function Player:update(dt)
     self.robot:set_anim_param("speed", speed)
     self.robot:set_anim_param("grounded", self.air_time < 0.15)
     if jumped then self.robot:anim_trigger("jump") end
+    if interacted then self.robot:anim_trigger("interact") end
 end
 
 return Player
@@ -972,7 +1010,7 @@ function Buddy:update(dt)
     end
     if not self.robot then return end
     local v = self.entity.velocity
-    -- The small robot is about half size: its legs cover half the ground per step.
+    -- The companion is about half size: its legs cover half the ground per step.
     self.robot:set_anim_param("speed", vector.magnitude(vector.create(v.x, 0, v.z)) * 1.8)
 end
 
@@ -1346,7 +1384,7 @@ function Player:update(dt)
     local speed = dt > 0 and vector.magnitude(d) / dt or 0
     if self.robot then
         if speed > 0.3 then self.robot.rotation = vector.create(0, math.deg(math.atan2(d.x, d.z)), 0) end
-        self.robot:set_anim_param("speed", speed) -- assets/anim/robot.vanim blends Idle/Walk/Run
+        self.robot:set_anim_param("speed", speed) -- assets/anim/characters/vanguard_locomotion.vanim blends Idle/Walk/Run
     end
     local color = e:get_net("color")
     if self.badge and color and color ~= self.color then
@@ -1493,22 +1531,19 @@ return Board
 
 const std::vector<TemplateInfo>& templates() {
     static const std::vector<TemplateInfo> list = {
-        {"3d", "3D Scene", "An animated robot character you walk with WASD/arrow keys and jump with Space (Luau + CharacterController) that climbs steps, swings a hinged gate and shoves a stack of physics crates with positional impact sounds, a companion robot that follows you over an automatic navmesh, a follow camera, sun shadows, PBR primitives and a point light."},
+        {"3d", "3D Scene", "A Vanguard starter robot you walk with WASD/arrow keys, jump with Space and interact with E (Luau + CharacterController) that climbs steps, swings a hinged gate and shoves a stack of physics crates with positional impact sounds, its Vanguard counterpart as a companion that follows you over an automatic navmesh, a follow camera, sun shadows, PBR primitives and a point light.", true},
         {"2d", "2D Game", "A playable platformer on Box2D physics with music and sound effects: a CharacterController2D you run with A/D or arrows and jump with Space, a one-way ledge you jump through and drop off with S/Down, a lantern swinging on a joint and coins to collect. Gameplay is in Luau scripts."},
         {"simulation", "Simulation",
          "576 entities animated by native systems, with a scripted orbiting camera: a starting point for simulation work."},
         {"multiplayer", "Multiplayer Arena",
-         "A networked coin-collecting arena: host it with `victus serve` and join with `victus run --connect` (or play it offline). Each client gets its own predicted robot from the player template, coins and scores are replicated server state, and the HUD shows the session status and scoreboard."},
+         "A networked coin-collecting arena: host it with `victus serve` and join with `victus run --connect` (or play it offline). Each client gets its own predicted Vanguard robot from the player template, coins and scores are replicated server state, and the HUD shows the session status and scoreboard.", true},
     };
     return list;
 }
 
-std::vector<TemplateFile> template_files(std::string_view id) {
-    if (id == "3d")
-        return {{"assets/scripts/player.luau", kPlayer3d},
-                {robot::kModelPath, robot::gltf()},
-                {std::string(robot::kModelPath) + ".meta", robot::meta()},
-                {robot::kControllerPath, robot::controller()},
+std::vector<TemplateFile> template_files(std::string_view id, const TemplateOptions& options) {
+    if (id == "3d") {
+        std::vector<TemplateFile> files = {{"assets/scripts/player.luau", kPlayer3d},
                 {"assets/scripts/follow_camera.luau", kFollowCamera},
                 {"assets/scripts/companion.luau", kCompanion},
                 {"assets/scripts/sentry.luau", kSentry},
@@ -1527,6 +1562,9 @@ std::vector<TemplateFile> template_files(std::string_view id) {
                 {std::string(kEnergyMaterialPath) + ".meta", asset_meta(kEnergyMaterialUuid, "")},
                 {"assets/scripts/hud.luau", kHud},
                 {"assets/localization/en.vstrings", kHudStrings}};
+        add_character_files(files, options);
+        return files;
+    }
     if (id == "2d")
         return {{"assets/scripts/platformer.luau", kPlatformer},
                 {"assets/scripts/coin.luau", kCoin},
@@ -1536,16 +1574,16 @@ std::vector<TemplateFile> template_files(std::string_view id) {
                 {"assets/scripts/hud.luau", kHud},
                 {"assets/localization/en.vstrings", kHudStrings}};
     if (id == "simulation") return {{"assets/scripts/orbit_camera.luau", kOrbitCamera}};
-    if (id == "multiplayer")
-        return {{"assets/scripts/net_player.luau", kNetPlayer},
-                {robot::kModelPath, robot::gltf()},
-                {std::string(robot::kModelPath) + ".meta", robot::meta()},
-                {robot::kControllerPath, robot::controller()},
-                {"assets/scripts/net_coin.luau", kNetCoin},
-                {"assets/scripts/net_camera.luau", kNetCamera},
-                {"assets/scripts/net_hud.luau", kNetHud},
-                {"assets/scripts/hud.luau", kHud},
-                {"assets/localization/en.vstrings", kHudStrings}};
+    if (id == "multiplayer") {
+        std::vector<TemplateFile> files = {{"assets/scripts/net_player.luau", kNetPlayer},
+                                           {"assets/scripts/net_coin.luau", kNetCoin},
+                                           {"assets/scripts/net_camera.luau", kNetCamera},
+                                           {"assets/scripts/net_hud.luau", kNetHud},
+                                           {"assets/scripts/hud.luau", kHud},
+                                           {"assets/localization/en.vstrings", kHudStrings}};
+        add_character_files(files, options);
+        return files;
+    }
     return {};
 }
 
@@ -1565,12 +1603,12 @@ void register_components() {
     tilemap::register_components();
 }
 
-Status build_template_scene(std::string_view id, Scene& s) {
+Status build_template_scene(std::string_view id, Scene& s, const TemplateOptions& options) {
     s.clear();
-    if (id == "3d") build_3d(s);
+    if (id == "3d") build_3d(s, options);
     else if (id == "2d") build_2d(s);
     else if (id == "simulation") build_simulation(s);
-    else if (id == "multiplayer") build_multiplayer(s);
+    else if (id == "multiplayer") build_multiplayer(s, options);
     else return make_error(ErrorCode::InvalidArgument, "unknown template '" + std::string(id) + "'");
     s.update_transforms();
     return {};

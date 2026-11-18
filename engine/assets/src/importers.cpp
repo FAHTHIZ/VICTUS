@@ -191,6 +191,7 @@ struct ReadContext {
     fs::Path sandbox;
     std::vector<fs::Path>* dependencies;
     std::string error;
+    bool memory_only{false}; // import_gltf_memory: every external reference fails
 };
 
 bool inside(const fs::Path& root, const fs::Path& p) {
@@ -211,6 +212,10 @@ cgltf_result sandboxed_read(const cgltf_memory_options*, const cgltf_file_option
                             cgltf_size* size, void** data) {
     auto* ctx = static_cast<ReadContext*>(options->user_data);
     const std::string_view sv(path);
+    if (ctx->memory_only) {
+        ctx->error = std::format("external reference in an in-memory glTF: {}", sv);
+        return cgltf_result_file_not_found;
+    }
     if (sv.find("://") != std::string_view::npos) {
         ctx->error = std::format("remote URI not allowed: {}", sv);
         return cgltf_result_file_not_found;
@@ -829,21 +834,16 @@ private:
 
 } // namespace
 
-Result<CookedModel> import_gltf(const fs::Path& path, const ModelImportSettings& settings, const fs::Path& sandbox_root,
-                                ImportResult* result) {
-    ImportResult local;
-    ImportResult& res = result ? *result : local;
-    std::vector<fs::Path> deps;
-    ReadContext ctx{sandbox_root, &deps, {}};
+namespace {
+
+Result<CookedModel> import_gltf_bytes(std::span<const std::uint8_t> bytes, const fs::Path& path,
+                                      const ModelImportSettings& settings, ReadContext& ctx, ImportResult& res) {
     cgltf_options options{};
     options.file.read = sandboxed_read;
     options.file.release = sandboxed_release;
     options.file.user_data = &ctx;
-
-    auto bytes = fs::read_binary(path, 1ull << 31);
-    if (!bytes) return std::move(bytes).error();
     DataGuard guard;
-    cgltf_result r = cgltf_parse(&options, bytes->data(), bytes->size(), &guard.data);
+    cgltf_result r = cgltf_parse(&options, bytes.data(), bytes.size(), &guard.data);
     if (r != cgltf_result_success)
         return make_error(ErrorCode::ParseError, std::format("{}: {}", path.filename().string(), result_name(r)));
     const std::string path_s = path.string();
@@ -863,11 +863,32 @@ Result<CookedModel> import_gltf(const fs::Path& path, const ModelImportSettings&
             res.warnings.push_back(std::format("required extension {} is not supported", ext));
     }
     GltfImporter importer(path, settings, options, ctx, res);
-    auto model = importer.run(guard.data);
+    return importer.run(guard.data);
+}
+
+} // namespace
+
+Result<CookedModel> import_gltf(const fs::Path& path, const ModelImportSettings& settings, const fs::Path& sandbox_root,
+                                ImportResult* result) {
+    ImportResult local;
+    ImportResult& res = result ? *result : local;
+    std::vector<fs::Path> deps;
+    ReadContext ctx{sandbox_root, &deps, {}};
+    auto bytes = fs::read_binary(path, 1ull << 31);
+    if (!bytes) return std::move(bytes).error();
+    auto model = import_gltf_bytes(*bytes, path, settings, ctx, res);
     std::sort(deps.begin(), deps.end());
     deps.erase(std::unique(deps.begin(), deps.end()), deps.end());
     res.dependencies = std::move(deps);
     return model;
+}
+
+Result<CookedModel> import_gltf_memory(std::span<const std::uint8_t> bytes, std::string_view name,
+                                       const ModelImportSettings& settings, ImportResult* result) {
+    ImportResult local;
+    ImportResult& res = result ? *result : local;
+    ReadContext ctx{{}, nullptr, {}, true};
+    return import_gltf_bytes(bytes, utf8_path(name), settings, ctx, res);
 }
 
 } // namespace victus::assets

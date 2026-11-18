@@ -305,6 +305,23 @@ void Editor::draw_launcher() {
         ImGui::PopID();
     }
     ImGui::Spacing();
+    // Starter character (V-01 / V-02 / None) for templates that have a player character.
+    const auto& tpls = project::templates();
+    const auto tpl = std::find_if(tpls.begin(), tpls.end(), [&](const project::TemplateInfo& t) { return t.id == new_template_; });
+    const bool has_character = tpl != tpls.end() && tpl->characters;
+    if (has_character) {
+        const project::StarterCharacter* current = project::find_starter_character(new_character_);
+        const std::string label = current ? std::string(current->display_name) : std::string("None (capsule body)");
+        if (ImGui::BeginCombo("Character", label.c_str())) {
+            for (const auto& c : project::starter_characters()) {
+                const std::string name(c.display_name);
+                if (ImGui::Selectable(name.c_str(), current == &c)) new_character_ = std::string(c.id);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%.*s", static_cast<int>(c.description.size()), c.description.data());
+            }
+            if (ImGui::Selectable("None (capsule body)", current == nullptr)) new_character_ = std::string(project::kNoCharacter);
+            ImGui::EndCombo();
+        }
+    }
     ImGui::InputText("Name", &new_name_);
     ImGui::InputText("Location", &new_location_);
     ImGui::SameLine();
@@ -319,7 +336,11 @@ void Editor::draw_launcher() {
     if (ImGui::Button("Create Project", ImVec2(180, 0))) {
         launcher_error_.clear();
         if (new_name_.empty()) launcher_error_ = "Enter a project name.";
-        else if (auto st = create_project(target, new_name_, new_template_); !st.ok()) launcher_error_ = st.error().message;
+        else {
+            project::TemplateOptions options;
+            options.character = has_character ? new_character_ : std::string(project::kDefaultCharacter);
+            if (auto st = create_project(target, new_name_, new_template_, options); !st.ok()) launcher_error_ = st.error().message;
+        }
     }
     if (!launcher_error_.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.35f, 1), "%s", launcher_error_.c_str());
     ImGui::EndChild();

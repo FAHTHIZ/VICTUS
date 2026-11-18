@@ -20,7 +20,7 @@ add_executable(victus_bench_audio audio_bench.cpp bench_harness.cpp)
 target_link_libraries(victus_bench_audio PRIVATE VICTUS::Audio)
 victus_configure_target(victus_bench_audio)
 add_executable(victus_bench_animation animation_bench.cpp bench_harness.cpp)
-target_link_libraries(victus_bench_animation PRIVATE VICTUS::Animation)
+target_link_libraries(victus_bench_animation PRIVATE VICTUS::Animation VICTUS::Assets VICTUS::Project)
 victus_configure_target(victus_bench_animation)
 
 add_executable(victus_bench_particles particles_bench.cpp bench_harness.cpp)

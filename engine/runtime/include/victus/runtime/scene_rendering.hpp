@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Runtime glue between scenes, cooked assets and the renderer:
 // - GpuAssetCache uploads cooked textures/models (and built-in primitives) once per device.
-// - instantiate_model() turns a cooked model's node graph into scene entities.
+// - instantiate_model() (from victus/assets/instantiate.hpp) turns a cooked model into entities.
 // - extract_scene() feeds a scene's cameras, lights, meshes and sprites to the renderers.
 #pragma once
 #include "victus/animation/animation.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/assets/database.hpp"
+#include "victus/assets/instantiate.hpp"
 #include "victus/render/atmosphere.hpp"
 #include "victus/render/irradiance_bake.hpp"
 #include "victus/render/irradiance_volume.hpp"
@@ -161,12 +162,8 @@ private:
     std::uint64_t procedural_clock_{0};
 };
 
-// Creates one entity per model node under `parent` (a new root named `name` when parent is
-// null) with MeshRenderer components referencing (model_uuid, mesh index). Meshes of skinned
-// nodes get a SkinnedMesh bound to the root; models with animations get an Animator on the root
-// playing the first clip. Returns the root.
-scene::Entity instantiate_model(scene::Scene& scene, const Uuid& model_uuid, const assets::CookedModel& model,
-                                std::string_view name, scene::Entity parent = scene::kNullEntity);
+// instantiate_model() moved to victus/assets/instantiate.hpp; runtime:: keeps the name.
+using assets::instantiate_model;
 
 struct ExtractStats {
     std::uint32_t meshes{0}, sprites{0}, lights{0}, missing_assets{0};

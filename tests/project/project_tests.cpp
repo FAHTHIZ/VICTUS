@@ -17,6 +17,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <set>
 
 using namespace victus;
 namespace sfs = std::filesystem;
@@ -463,14 +464,19 @@ TEST_CASE("templates: 3D character climbs the steps, jumps and swings the gate")
     CHECK(particles::status(r->scene, dust).emitted == 14); // take-off puff
     const scene::Entity robot = r->scene.find_by_name("Robot");
     r->frames(1);
-    CHECK(r->animation->controller_status(r->scene, robot).state == "Air"); // the "jump" trigger fired
+    CHECK(r->animation->controller_status(r->scene, robot).state == "Jump"); // the "jump" trigger fired
+    // The Vanguard controller: the one-shot Jump hands over to the Fall loop while airborne, Land
+    // plays on touch-down and Locomotion resumes.
     float apex = 0;
-    for (int i = 0; i < 40; ++i) {
+    std::set<std::string> states;
+    for (int i = 0; i < 90; ++i) {
         r->frames(1);
         apex = std::max(apex, r->pos("Player").y);
+        states.insert(r->animation->controller_status(r->scene, robot).state);
     }
     CHECK(apex > 1.5f); // 6 m/s -> 1.83 m
-    r->frames(50);
+    CHECK(states.count("Fall") == 1);
+    CHECK(states.count("Land") == 1);
     CHECK(r->physics->character_state(player).grounded);
     CHECK(particles::status(r->scene, dust).emitted == 24); // + landing puff
     CHECK(r->animation->controller_status(r->scene, robot).state == "Locomotion"); // landed
@@ -520,7 +526,8 @@ TEST_CASE("templates: 3D player moves with WASD and the camera follows") {
     CHECK(c1.z < c0.z - 2.0f); // smoothed follow
     // The robot walks while moving and faces the direction of travel (-Z: yaw 180 degrees).
     const scene::Entity robot = r->scene.find_by_name("Robot");
-    // Its controller (assets/anim/robot.vanim) blends Locomotion by ground speed: 5 m/s is a run.
+    // Its controller (assets/anim/characters/vanguard_locomotion.vanim) blends Locomotion by
+    // ground speed: 5 m/s is a run.
     const auto walking = r->animation->status(r->scene, robot);
     CHECK(walking.valid);
     CHECK(walking.controlled);

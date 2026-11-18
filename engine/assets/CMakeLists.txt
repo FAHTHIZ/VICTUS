@@ -9,6 +9,7 @@ victus_add_module(assets
         src/cooked.cpp
         src/database.cpp
         src/importers.cpp
+        src/instantiate.cpp
         src/gltf_export.cpp
         src/material.cpp
         src/texture_compression.cpp

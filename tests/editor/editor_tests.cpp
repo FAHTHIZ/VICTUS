@@ -198,8 +198,9 @@ TEST_CASE("editor: 3D project workflow end to end") {
         if (!e.is_null()) picked.insert(s.world().get<Name>(e)->value);
     }
     CHECK(picked.count("Spinning Cube") == 1);
-    // The player's skinned robot (its body primitives are the Body[0]/Body[1] parts).
-    CHECK((picked.count("Body[0]") + picked.count("Body[1]")) >= 1);
+    // The player's skinned Vanguard (its body primitives are the V01_Body[0..3] parts).
+    CHECK((picked.count("V01_Body[0]") + picked.count("V01_Body[1]") + picked.count("V01_Body[2]") +
+           picked.count("V01_Body[3]")) >= 1);
 
     // Create, undo, redo.
     const Entity cube = h.ed->create_entity(editor::Primitive::Cube);
@@ -1465,7 +1466,7 @@ TEST_CASE("editor: asset thumbnails render models, materials and prefabs and ref
     editor::Editor& ed = *h.ed;
     REQUIRE(ed.thumbnails() != nullptr);
     auto& db = *ed.assets();
-    const auto* robot = db.find_path("models/robot.gltf");
+    const auto* robot = db.find_path("models/characters/victus_vanguard_01.glb");
     const auto* ground = db.find_path("materials/ground.vmat");
     const auto* energy = db.find_path("materials/energy_cube.vmat");
     const auto* crate = db.find_path("prefabs/crate.vprefab");
@@ -2369,7 +2370,7 @@ TEST_CASE("editor: the Animation window previews and drives animation controller
     CHECK(ed.animation_preview_target() == robot);
     auto lines = ed.animation_debug_lines(robot);
     REQUIRE_FALSE(lines.empty());
-    CHECK(lines[0] == "controller anim/robot.vanim state Locomotion time 0.00");
+    CHECK(lines[0] == "controller anim/characters/vanguard_locomotion.vanim state Locomotion time 0.00");
     CHECK(std::find(lines.begin(), lines.end(), "weight Idle 1.00") != lines.end());
     CHECK(std::find(lines.begin(), lines.end(), "param speed float = 0.00") != lines.end());
     REQUIRE(ed.set_animation_parameter(robot, "speed", 5.0f));
@@ -2382,7 +2383,7 @@ TEST_CASE("editor: the Animation window previews and drives animation controller
     CHECK_FALSE(ed.dirty()); // previews are not edits
     REQUIRE(ed.fire_animation_trigger(robot, "jump"));
     h.frames(2);
-    CHECK(ed.animation_debug_lines(robot)[0].find("state Air") != std::string::npos);
+    CHECK(ed.animation_debug_lines(robot)[0].find("state Jump") != std::string::npos);
     REQUIRE(ed.enter_animation_state(robot, "Locomotion"));
     CHECK_FALSE(ed.enter_animation_state(robot, "NoSuchState"));
     ed.set_animation_preview_paused(true);
@@ -2411,7 +2412,7 @@ TEST_CASE("editor: the Animation window previews and drives animation controller
     CHECK(lines[0].find("state Locomotion") != std::string::npos);
     CHECK(ed.fire_animation_trigger(probot, "jump"));
     h.frames(2);
-    CHECK(ed.animation_debug_lines(probot)[0].find("state Air") != std::string::npos);
+    CHECK(ed.animation_debug_lines(probot)[0].find("state Jump") != std::string::npos);
     ed.stop();
     CHECK(ed.animation_inspected() == nullptr);
 }
