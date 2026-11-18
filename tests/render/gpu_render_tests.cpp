@@ -3,6 +3,8 @@
 #include "victus/render/scene_renderer.hpp"
 #include "victus/render/sprite_batch.hpp"
 
+#include <cstring>
+
 using namespace victus;
 using namespace victus::render;
 using victus::test::channel;
@@ -165,4 +167,52 @@ TEST_CASE("gpu: 3D PBR scene with shadows, sky and culling") {
     ctx.destroy(cube.value());
     ctx.destroy(plane.value());
     dev.destroy(target);
+}
+
+TEST_CASE("gpu: update_mesh rewrites in place while the data fits and regrows when it does not") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto made = ctx.create_mesh(make_cube(), "dyn");
+    REQUIRE(made.ok());
+    GpuMesh m = made.value();
+    const auto vb0 = m.vertices, ib0 = m.indices;
+    const auto live0 = dev.stats().live_buffers;
+    CHECK(m.vertex_capacity == 24);
+    CHECK(m.index_capacity == 36);
+
+    // Smaller: same buffers, new counts, contents and bounds.
+    const MeshData quad = make_plane({4, 2});
+    REQUIRE(ctx.update_mesh(m, quad, "dyn").ok());
+    CHECK(m.vertices == vb0);
+    CHECK(m.indices == ib0);
+    CHECK(m.vertex_count == quad.vertices.size());
+    CHECK(m.index_count == quad.indices.size());
+    CHECK(m.lods[0].index_count == quad.indices.size());
+    CHECK(m.bounds.max.x == doctest::Approx(2.0f));
+    CHECK(dev.stats().live_buffers == live0);
+    auto vbytes = dev.read_buffer(m.vertices, 0, static_cast<std::uint32_t>(quad.vertices.size() * sizeof(Vertex3D)));
+    REQUIRE(vbytes.ok());
+    CHECK(std::memcmp(vbytes->data(), quad.vertices.data(), vbytes->size()) == 0);
+    auto ibytes = dev.read_buffer(m.indices, 0, static_cast<std::uint32_t>(quad.indices.size() * sizeof(std::uint32_t)));
+    REQUIRE(ibytes.ok());
+    CHECK(std::memcmp(ibytes->data(), quad.indices.data(), ibytes->size()) == 0);
+
+    // Larger than the buffers: regrown with headroom, then rewritten in place again.
+    const MeshData big = make_plane({4, 4}, 8); // 81 vertices, 384 indices
+    REQUIRE(ctx.update_mesh(m, big, "dyn").ok());
+    CHECK(m.vertex_capacity >= big.vertices.size() + big.vertices.size() / 2);
+    CHECK(m.index_capacity >= big.indices.size() + big.indices.size() / 2);
+    CHECK(dev.stats().live_buffers == live0);
+    const auto vb1 = m.vertices;
+    REQUIRE(ctx.update_mesh(m, make_cube(), "dyn").ok());
+    CHECK(m.vertices == vb1);
+    CHECK(m.index_count == 36);
+
+    // Empty data is refused and leaves the mesh drawable.
+    CHECK_FALSE(ctx.update_mesh(m, MeshData{}, "dyn").ok());
+    CHECK(m.valid());
+    CHECK(m.index_count == 36);
+    ctx.destroy(m);
+    CHECK(dev.stats().live_buffers == live0 - 2);
 }

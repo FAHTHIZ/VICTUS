@@ -30,6 +30,8 @@ struct GpuMesh {
     math::Aabb bounds;
     std::array<GpuMeshLod, kMaxMeshLods> lods{}; // lods[0] is the full mesh
     std::uint32_t lod_count{1};
+    // Elements the buffers can hold (>= the counts above after update_mesh grew them with headroom).
+    std::uint32_t vertex_capacity{0}, index_capacity{0};
     [[nodiscard]] bool valid() const noexcept { return vertices.valid() && indices.valid(); }
     [[nodiscard]] bool skinned() const noexcept { return skin.valid(); }
 };
@@ -76,6 +78,12 @@ public:
                                                                        std::span<const std::vector<std::uint8_t>> levels,
                                                                        const TextureOptions& options = {});
     [[nodiscard]] Result<GpuMesh> create_mesh(const MeshData& mesh, std::string_view name = "mesh");
+    // Replaces the contents of a mesh that changes often (animated crowds, rebuilt chunks) without
+    // recreating its GPU buffers each time: unskinned meshes without LODs are rewritten in place
+    // (`discard` uploads, so a frame still in flight keeps the old data) while they fit, and regrown
+    // with 50% headroom when they do not. Skinned or LOD meshes, and invalid `mesh`, are recreated.
+    // On failure `mesh` is left unchanged.
+    [[nodiscard]] Status update_mesh(GpuMesh& mesh, const MeshData& data, std::string_view name = "mesh");
     void destroy(GpuMesh& mesh);
     // Best available depth format that can also be sampled (shadow maps).
     [[nodiscard]] rhi::Format sampled_depth_format() const noexcept { return sampled_depth_; }
