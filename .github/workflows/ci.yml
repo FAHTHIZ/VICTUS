@@ -166,4 +166,8 @@ jobs:
         run: |
           # The Mesa driver itself is not sanitizer-instrumented; GPU tests run in the main matrix.
           export VICTUS_NO_GPU=1
+          # UBSan only prints by default; make every report fail the test that triggered it.
+          export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+          # The parser fuzz suite (victus_robustness_tests) runs 1 000 mutations per target here.
+          if [ "${{ matrix.sanitize }}" = "address,undefined" ]; then export VICTUS_FUZZ_ITERATIONS=1000; fi
           ctest --test-dir build --output-on-failure

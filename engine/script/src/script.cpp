@@ -3278,7 +3278,7 @@ std::uint64_t bridge_write(lua_State* L, ScriptHost::Impl::Bridge& b, int idx, b
     if (!msg.is_object()) luaL_error(L, "bridge messages are tables with named fields");
     std::uint64_t id = 0;
     if (assign_id) {
-        if (const Value* given = msg.find("id"); given && given->is_number()) id = static_cast<std::uint64_t>(given->as_number());
+        if (const Value* given = msg.find("id"); given && given->is_number()) id = static_cast<std::uint64_t>(given->as_int());
         else {
             id = b.next_id++;
             msg.set("id", Value(static_cast<double>(id)));
@@ -3341,7 +3341,7 @@ int bridge_request(lua_State* L) {
             auto msg = bridge_read(L, b, left);
             if (!msg) luaL_error(L, "bridge '%s': no reply within %.1f s", b.name.c_str(), timeout / 1000.0);
             const Value* rid = msg->find("id");
-            if (rid && rid->is_number() && static_cast<std::uint64_t>(rid->as_number()) == id) reply = std::move(msg);
+            if (rid && rid->is_number() && static_cast<std::uint64_t>(rid->as_int()) == id) reply = std::move(msg);
             else if (b.inbox.size() < 4096) b.inbox.push_back(std::move(*msg));
         }
     }

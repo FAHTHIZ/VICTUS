@@ -30,7 +30,12 @@ On a headless Linux machine use `SDL_VIDEO_DRIVER=offscreen` and install Mesa's 
 | Dependency manifest | `python3 tools/deps/victus_deps.py check` | Every `FetchContent` pin in `cmake/VictusDependencies.cmake` is pinned by URL + SHA-256 and listed with its exact version in the licence register; `sbom` writes a CycloneDX SBOM. |
 | Known vulnerabilities | `python3 tools/deps/victus_deps.py osv` | Queries [OSV](https://osv.dev) for every pinned component; an ignored advisory needs a written mitigation in the manifest. CI also runs it weekly. |
 | Static analysis | `python3 tools/lint/run_clang_tidy.py -p build/dev -j2` | Uses `.clang-tidy` (bugprone, clang-analyzer, selected performance/misc checks; warnings are errors). Pass file filters to lint a subset, e.g. `... engine/physics`. |
+| Parser robustness | `VICTUS_FUZZ_ITERATIONS=1000 ./build/dev/bin/victus_robustness_tests` | Deterministic mutation fuzzing of every untrusted-input loader (see below). CI's ASan+UBSan lane runs 1 000 mutations per target. |
 | Warnings | build with `-Werror` / `/WX` | GCC `-Wshadow=local` and MSVC C4458 differ; shadowing a member breaks the Windows build. |
+
+### Parser fuzz suite
+
+`tests/robustness/parser_fuzz_tests.cpp` starts from valid documents written by the engine (template scenes, sample prefabs/materials/tilesets, the sample glTF robot, cooked caches, packs, saves, captures, images, terrain) and applies byte-level and JSON-structure mutations. Every input must either load or fail with a non-empty error; crashes and sanitizer reports fail the suite. `VICTUS_FUZZ_SEED` changes the mutation stream, and `VICTUS_FUZZ_TRACE=1` writes each input to `<temp>/victus_fuzz_failures/last-<target>.bin` before running it so a crashing input can be recovered. Corrupted network packets are covered by the `session fuzz:` cases in `victus_net_tests`. When you add a loader for untrusted data, add a target with a valid seed.
 
 Suppress a clang-tidy finding only with `// NOLINT(check-name): reason` on the line, and only when the code is correct; prefer fixing it. Disabling a check globally needs a comment in `.clang-tidy`.
 

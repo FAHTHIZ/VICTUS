@@ -57,8 +57,13 @@ public:
     [[nodiscard]] float as_float(float fallback = 0.0f) const noexcept {
         return is_number() ? static_cast<float>(number_) : fallback;
     }
+    // Truncates toward zero and saturates to the int64 range (documents can hold 1e300); NaN
+    // and non-numbers give `fallback`.
     [[nodiscard]] std::int64_t as_int(std::int64_t fallback = 0) const noexcept {
-        return is_number() ? static_cast<std::int64_t>(number_) : fallback;
+        if (!is_number() || number_ != number_) return fallback;
+        if (number_ >= 9223372036854775807.0) return INT64_MAX;
+        if (number_ <= -9223372036854775808.0) return INT64_MIN;
+        return static_cast<std::int64_t>(number_);
     }
     [[nodiscard]] const std::string& as_string() const noexcept;
     [[nodiscard]] std::string as_string_or(std::string_view fallback) const {
