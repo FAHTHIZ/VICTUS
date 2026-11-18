@@ -71,6 +71,7 @@ victus_add_module(player
     SOURCES
         src/player.cpp
         src/export.cpp
+        src/validate.cpp
         src/mobile.cpp
         ${_notices_cpp}
     DEPS VICTUS::Runtime VICTUS::Project VICTUS::Gameplay VICTUS::Script VICTUS::Platform VICTUS::Audio VICTUS::Net)

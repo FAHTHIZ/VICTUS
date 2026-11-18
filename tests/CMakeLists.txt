@@ -153,6 +153,7 @@ victus_add_test(victus_export_tests
     SOURCES
         export/export_tests.cpp
         export/mobile_tests.cpp
+        export/validate_tests.cpp
     DEPS VICTUS::Player
     LABELS export)
 
