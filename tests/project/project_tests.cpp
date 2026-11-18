@@ -405,6 +405,9 @@ TEST_CASE("templates: HUD controls panel toggles with its button and H; the 2D b
         auto r = start_template(id, dir);
         r->frames(2);
         CHECK(r->ui_visible("Controls Panel"));
+        // Audio effects: the 3D yard sends its Sfx to the reverb; the 2D level starts dry.
+        CHECK(r->audio->bus_reverb_send(audio::Bus::Sfx) == doctest::Approx(id[0] == '3' ? 0.18f : 0.0f));
+        CHECK(r->audio->bus_lowpass(audio::Bus::Music) == 0.0f);
         // The button: anchored top-right, 164x52 at 24 px from the edges of the 1280x720 screen.
         const scene::Entity help = r->scene.find_by_name("Help Button");
         const auto* st = r->scene.world().get<gameui::UiStateComponent>(help);
@@ -433,6 +436,7 @@ TEST_CASE("templates: HUD controls panel toggles with its button and H; the 2D b
             }
             CHECK(r->text("Coin Counter") == "Coins 3 / 3");
             CHECK(r->ui_visible("Win Banner"));
+            CHECK(r->audio->bus_lowpass(audio::Bus::Music) == doctest::Approx(900.0f)); // muffled under the banner
         }
         CHECK(r->host->stats().errors == 0);
         for (const auto& e : r->host->recent_errors()) MESSAGE(e);

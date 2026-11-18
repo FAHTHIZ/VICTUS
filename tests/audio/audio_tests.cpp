@@ -324,3 +324,87 @@ TEST_CASE("audio: inspect_clip decodes from memory and rejects bad data") {
     CHECK(junk.error().code == ErrorCode::ParseError);
     CHECK_FALSE(junk.error().message.empty());
 }
+
+TEST_CASE("audio: bus low-pass filters and the reverb send") {
+    const auto dir = temp_dir("fx");
+    write_tone(dir / "high.wav", 1.0f, 0.5f, 8000.0f);
+    write_tone(dir / "low.wav", 1.0f, 0.5f, 200.0f);
+    write_tone(dir / "blip.wav", 0.05f, 0.5f, 440.0f);
+    auto a = make_engine(dir);
+    CHECK(a->bus_lowpass(audio::Bus::Sfx) == 0.0f);
+    CHECK(a->bus_reverb_send(audio::Bus::Sfx) == 0.0f);
+
+    // An 8 kHz tone through a 500 Hz low-pass on its bus loses almost all of its energy; a
+    // 200 Hz tone passes nearly unchanged; 0 bypasses the filter again.
+    REQUIRE(a->play_one_shot("high.wav").ok());
+    (void)mix(*a, 960);
+    const float high_dry = mix(*a, 4800).rms();
+    CHECK(high_dry > 0.2f);
+    a->set_bus_lowpass(audio::Bus::Sfx, 500.0f);
+    CHECK(a->bus_lowpass(audio::Bus::Sfx) == 500.0f);
+    (void)mix(*a, 960);
+    const float high_wet = mix(*a, 4800).rms();
+    MESSAGE("8 kHz tone RMS: " << high_dry << " dry, " << high_wet << " through a 500 Hz low-pass");
+    CHECK(high_wet < high_dry * 0.02f);
+    a->set_bus_lowpass(audio::Bus::Sfx, 0.0f);
+    CHECK(mix(*a, 4800).rms() == doctest::Approx(high_dry).epsilon(0.05));
+    a->stop_all();
+
+    // A filter on another bus does not touch Sfx; Master filters everything.
+    a->set_bus_lowpass(audio::Bus::Music, 500.0f);
+    REQUIRE(a->play_one_shot("low.wav").ok());
+    (void)mix(*a, 960);
+    const float low_dry = mix(*a, 4800).rms();
+    a->set_bus_lowpass(audio::Bus::Master, 500.0f);
+    (void)mix(*a, 960);
+    CHECK(mix(*a, 4800).rms() == doctest::Approx(low_dry).epsilon(0.1));
+    a->set_bus_lowpass(audio::Bus::Master, 0.0f);
+    a->set_bus_lowpass(audio::Bus::Music, 0.0f);
+    a->stop_all();
+    REQUIRE(a->play_one_shot("high.wav").ok());
+    (void)mix(*a, 960);
+    a->set_bus_lowpass(audio::Bus::Master, 500.0f);
+    (void)mix(*a, 960);
+    CHECK(mix(*a, 4800).rms() < 0.02f);
+    a->set_bus_lowpass(audio::Bus::Master, 1e9f); // at or above Nyquist: bypassed
+    a->stop_all();
+    (void)mix(*a, 4800);
+
+    // Without a send a 50 ms blip leaves silence behind; with one the reverb rings on and dies
+    // away faster with a lower decay.
+    auto tail_after_blip = [&](float send, float decay) {
+        a->set_bus_reverb_send(audio::Bus::Sfx, send);
+        a->set_reverb_decay(decay);
+        (void)mix(*a, 48000); // let any previous tail die out
+        REQUIRE(a->play_one_shot("blip.wav").ok());
+        (void)mix(*a, 4800);  // the blip itself (100 ms)
+        return mix(*a, 9600).rms(); // the 200 ms after it
+    };
+    CHECK(tail_after_blip(0.0f, 0.7f) < 1e-4f);
+    const float ring = tail_after_blip(1.0f, 0.9f);
+    CHECK(ring > 0.01f);
+    const float short_ring = tail_after_blip(1.0f, 0.3f);
+    MESSAGE("reverb tail RMS: " << ring << " at decay 0.9, " << short_ring << " at 0.3");
+    CHECK(short_ring < ring * 0.5f);
+    CHECK(a->reverb_decay() == doctest::Approx(0.3f));
+    // Clamping and Master's missing send.
+    a->set_bus_reverb_send(audio::Bus::Sfx, 7.0f);
+    CHECK(a->bus_reverb_send(audio::Bus::Sfx) == 1.0f);
+    a->set_bus_reverb_send(audio::Bus::Master, 1.0f);
+    CHECK(a->bus_reverb_send(audio::Bus::Master) == 0.0f);
+    a->set_reverb_decay(5.0f);
+    CHECK(a->reverb_decay() == doctest::Approx(0.95f));
+    a->set_bus_lowpass(audio::Bus::Ui, -3.0f);
+    CHECK(a->bus_lowpass(audio::Bus::Ui) == 0.0f);
+    a->set_bus_lowpass(audio::Bus::Music, 900.0f);
+    a->set_bus_reverb_send(audio::Bus::Sfx, 0.5f);
+    a->set_bus_volume(audio::Bus::Sfx, 0.5f);
+    a->stop_all(); // scene change: effects off, volumes kept
+    CHECK(a->bus_lowpass(audio::Bus::Music) == 0.0f);
+    CHECK(a->bus_reverb_send(audio::Bus::Sfx) == 0.0f);
+    CHECK(a->reverb_decay() == doctest::Approx(0.7f));
+    CHECK(a->bus_volume(audio::Bus::Sfx) == doctest::Approx(0.5f));
+    a.reset(); // tears the effect graph down before the engine
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}

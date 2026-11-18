@@ -4,6 +4,11 @@
 //   clips are decoded once and cached; `stream` sources decode on the fly (music, ambience).
 // - Every sound plays through one of the fixed buses below; each bus has its own volume and mute
 //   and all of them feed Master. Bus volumes are per AudioEngine (game settings), not per scene.
+// - Bus effects: each bus has an optional low-pass filter (2nd-order Butterworth, e.g. muffled
+//   sound under water or behind a pause menu), and every bus except Master has a reverb send into
+//   one shared reverb (four parallel feedback comb filters, Freeverb tunings) that returns into
+//   Master. Both are off by default (a bypassed filter is not in the signal path; an unused
+//   reverb still runs its four combs on silence).
 // - Spatial sources follow their entity's world transform and are attenuated/panned relative to
 //   the active listener: the first enabled AudioListener, else the primary camera, else the origin.
 // - The engine can run without an output device (`null_device`, or automatically when no device
@@ -97,7 +102,9 @@ public:
     // Matches sounds to the scene's AudioSource components (start/stop/update/destroy), moves
     // spatial sounds and the listener, and reaps finished one-shots. Call once per frame.
     void update(scene::Scene& scene);
-    // Stops and releases every sound (e.g. when a play session ends). Clip caches are kept.
+    // Stops and releases every sound (e.g. when a play session ends or the scene changes) and
+    // turns the bus effects off (low-pass, reverb sends, decay back to 0.7): they belong to the
+    // scene being left. Bus volumes and mutes (game settings) and clip caches are kept.
     void stop_all();
 
     // ---- entity sources ----
@@ -119,6 +126,15 @@ public:
     [[nodiscard]] float bus_volume(Bus b) const;
     void set_bus_muted(Bus b, bool muted);
     [[nodiscard]] bool bus_muted(Bus b) const;
+    // Low-pass cutoff in Hz; 0 (or anything at or above half the sample rate) bypasses the filter.
+    void set_bus_lowpass(Bus b, float cutoff_hz);
+    [[nodiscard]] float bus_lowpass(Bus b) const;
+    // Fraction of the bus sent to the shared reverb, clamped to [0, 1]; ignored for Master.
+    void set_bus_reverb_send(Bus b, float send);
+    [[nodiscard]] float bus_reverb_send(Bus b) const;
+    // Feedback of the reverb's comb filters, clamped to [0, 0.95]: higher rings longer.
+    void set_reverb_decay(float decay);
+    [[nodiscard]] float reverb_decay() const;
 
     // Pulls mixed interleaved float frames (only without a device). Returns frames written.
     std::size_t render(float* out, std::size_t frames);
