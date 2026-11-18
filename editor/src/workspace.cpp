@@ -26,6 +26,8 @@ const char* window_id(Panel p) noexcept {
         return "Assets";
     case Panel::Console:
         return "Console";
+    case Panel::Problems:
+        return "###Problems";
     case Panel::Animation:
         return "Animation";
     case Panel::Sequencer:
@@ -64,6 +66,8 @@ const char* panel_hint(Panel p) noexcept {
         return "Models, images, sounds, scripts and scenes in this project";
     case Panel::Console:
         return "Messages, warnings and errors";
+    case Panel::Problems:
+        return "Mistakes found in scenes, scripts and assets, with a way to jump to each";
     case Panel::Animation:
         return "Clips and state machine of the selected animated object";
     case Panel::Sequencer:
@@ -108,7 +112,7 @@ const char* layout_hint(Layout l) noexcept {
     return "";
 }
 
-constexpr int kCoreCount = 5;
+constexpr int kCoreCount = 6; // Viewport .. Problems: the panels every layout shows
 
 } // namespace
 
@@ -116,6 +120,8 @@ const char* panel_title(Panel p) noexcept {
     switch (p) {
     case Panel::GraphEditor:
         return "Graph Editor";
+    case Panel::Problems:
+        return "Problems";
     default:
         return window_id(p);
     }
@@ -238,7 +244,8 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::Inspector, Panel::TerrainTools, Panel::TilePalette, Panel::MaterialEditor, Panel::AiDebugger,
                   Panel::InputActions},
                  right);
-        dock_all({Panel::Assets, Panel::Console, Panel::Animation, Panel::Sequencer, Panel::Profiler, Panel::Network},
+        dock_all({Panel::Assets, Panel::Console, Panel::Problems, Panel::Animation, Panel::Sequencer, Panel::Profiler,
+                  Panel::Network},
                  bottom);
         dock_all({Panel::Viewport, Panel::GraphEditor}, center);
         break;
@@ -248,7 +255,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.22f, nullptr, &center);
         ImGuiID left_bottom = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.45f, nullptr, &left);
         dock(Panel::Hierarchy, left);
-        dock_all({Panel::Assets, Panel::Console}, left_bottom);
+        dock_all({Panel::Assets, Panel::Console, Panel::Problems}, left_bottom);
         dock_all(
             {Panel::Inspector, Panel::TerrainTools, Panel::TilePalette, Panel::MaterialEditor, Panel::InputActions},
             right);
@@ -265,7 +272,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all(
             {Panel::Inspector, Panel::MaterialEditor, Panel::TerrainTools, Panel::TilePalette, Panel::InputActions},
             right);
-        dock_all({Panel::Animation, Panel::Assets, Panel::Console}, bottom);
+        dock_all({Panel::Animation, Panel::Assets, Panel::Console, Panel::Problems}, bottom);
         dock_all({Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger}, bottom_right);
         dock_all({Panel::Viewport, Panel::GraphEditor}, center);
         break;
@@ -280,9 +287,9 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all(
             {Panel::Inspector, Panel::MaterialEditor, Panel::InputActions, Panel::TerrainTools, Panel::TilePalette},
             right);
-        dock_all(
-            {Panel::Console, Panel::Profiler, Panel::Animation, Panel::Sequencer, Panel::Network, Panel::AiDebugger},
-            bottom);
+        dock_all({Panel::Console, Panel::Problems, Panel::Profiler, Panel::Animation, Panel::Sequencer, Panel::Network,
+                  Panel::AiDebugger},
+                 bottom);
         dock_all({Panel::GraphEditor, Panel::Viewport}, center);
         break;
     }
@@ -295,7 +302,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::Inspector, Panel::AiDebugger, Panel::Network, Panel::MaterialEditor, Panel::InputActions,
                   Panel::TerrainTools, Panel::TilePalette},
                  right);
-        dock_all({Panel::Console, Panel::Assets, Panel::Animation, Panel::Sequencer}, bottom);
+        dock_all({Panel::Console, Panel::Problems, Panel::Assets, Panel::Animation, Panel::Sequencer}, bottom);
         dock(Panel::Profiler, bottom_right);
         dock_all({Panel::Viewport, Panel::GraphEditor}, center);
         break;
@@ -314,7 +321,8 @@ void Editor::draw_window_menu() {
         kit::tooltip(panel_hint(p));
     };
     ImGui::TextDisabled("Panels");
-    for (Panel p : {Panel::Viewport, Panel::Hierarchy, Panel::Inspector, Panel::Assets, Panel::Console})
+    for (Panel p :
+         {Panel::Viewport, Panel::Hierarchy, Panel::Inspector, Panel::Assets, Panel::Console, Panel::Problems})
         item(p);
     ImGui::Separator();
     ImGui::TextDisabled("Tools");

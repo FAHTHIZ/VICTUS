@@ -4,6 +4,7 @@
 #include "../render/gpu_fixture.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/editor.hpp"
+#include "victus/core/fs.hpp"
 #include "victus/project/project.hpp"
 #include "victus/ui/style.hpp"
 #include "victus/ui/ui.hpp"
@@ -308,4 +309,79 @@ TEST_CASE("studio workspace: every panel reopens from the Window menu, layout pr
     }
     h.ed->apply_layout(editor::Layout::Default);
     h.frames(2);
+}
+
+TEST_CASE("studio problems: project checks run in the background and jump to the problem") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    CHECK_FALSE(h.ed->problems().has_value());
+    h.ed->check_project(); // no project: nothing happens
+    CHECK_FALSE(h.ed->checking_project());
+
+    REQUIRE(h.ed->create_project(h.dir / "Proj", "Proj", "3d").ok());
+    // Opening a project starts a check by itself.
+    h.ed->wait_for_project_check();
+    REQUIRE(h.ed->problems().has_value());
+    CHECK(h.ed->problems()->diagnostics.empty());
+    CHECK(h.ed->problems()->scenes >= 1);
+    CHECK(h.ed->problems_error().empty());
+    h.ed->show_panel(editor::Panel::Problems);
+    h.frames(3);
+    ImGuiWindow* panel = ImGui::FindWindowByName("###Problems");
+    REQUIRE(panel);
+    CHECK(panel->DockNode != nullptr);
+    CHECK(panel->DockNode == ImGui::FindWindowByName("Console")->DockNode); // tabbed with the Console
+    CHECK(panel->DockNode->SelectedTabId == panel->TabId);
+
+    // Break a script used by scene entities and save: the save re-checks.
+    const sfs::path script = h.dir / "Proj" / "assets" / "scripts" / "crate.luau";
+    REQUIRE(sfs::exists(script));
+    { std::ofstream(script, std::ios::app) << "\nlocal x = = 1\n"; }
+    REQUIRE(h.ed->save_scene().ok());
+    CHECK(h.ed->checking_project());
+    h.frames(1); // drawing while the check runs is fine
+    h.ed->wait_for_project_check();
+    REQUIRE(h.ed->problems().has_value());
+    const auto& report = *h.ed->problems();
+    CHECK(report.errors() >= 2);
+    const player::Diagnostic* entity_problem = nullptr;
+    for (const auto& d : report.diagnostics)
+        if (d.path == h.ed->scene_path() && !d.entity_name.empty()) entity_problem = &d;
+    REQUIRE(entity_problem);
+    const std::string entity_name = entity_problem->entity_name;
+    h.frames(3); // the list renders with problems in it
+    CHECK(std::string(panel->Name).starts_with("Problems ("));
+
+    // Going to an entity problem selects that entity.
+    h.ed->clear_selection();
+    REQUIRE(h.ed->go_to_problem(*entity_problem));
+    const scene::Entity picked = h.ed->selected();
+    REQUIRE_FALSE(picked.is_null());
+    CHECK(h.ed->edit_scene().world().get<scene::Name>(picked)->value == entity_name);
+
+    // Two quick requests while one runs collapse into one more check, not a pile of threads.
+    h.ed->check_project();
+    h.ed->check_project();
+    h.ed->check_project();
+    h.ed->wait_for_project_check();
+    CHECK_FALSE(h.ed->checking_project());
+
+    // Fixing the script and checking again clears the list.
+    {
+        std::string text = *fs::read_text(script);
+        text.erase(text.find("\nlocal x = = 1\n"));
+        std::ofstream(script, std::ios::trunc) << text;
+    }
+    h.ed->check_project();
+    h.ed->wait_for_project_check();
+    CHECK(h.ed->problems()->diagnostics.empty());
+    h.frames(2);
+
+    // Closing the project waits for a running check and forgets the result.
+    h.ed->check_project();
+    h.ed->close_project();
+    CHECK_FALSE(h.ed->checking_project());
+    CHECK_FALSE(h.ed->problems().has_value());
 }
