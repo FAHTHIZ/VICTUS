@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
         .option("select", "select the entity with this name after opening")
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
         .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
-        .option("show", "open a window after opening: input-actions, network, profiler, problems, command-palette, animation, "
+        .option("show", "open a window after opening: input-actions, network, profiler, problems, export, command-palette, animation, "
                         "animation-preview (selected entity), material-editor (selected entity's material)")
         .option("graph", "open this visual script (path relative to assets/) in the Graph Editor")
         .option("port", "UDP port for --host", "27960")
@@ -169,7 +169,11 @@ int main(int argc, char** argv) {
             ed.set_show_network(true);
         else if (args.get("show") == "profiler")
             ed.set_show_profiler(true);
-        else if (args.get("show") == "problems") {
+        else if (args.get("show") == "export") {
+            ed.wait_for_project_check();
+            ed.open_export_dialog();
+            ed.wait_for_project_check();
+        } else if (args.get("show") == "problems") {
             ed.wait_for_project_check(); // so a screenshot shows the result
             ed.show_panel(editor::Panel::Problems);
         }

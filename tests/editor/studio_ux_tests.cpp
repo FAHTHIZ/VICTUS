@@ -385,3 +385,55 @@ TEST_CASE("studio problems: project checks run in the background and jump to the
     CHECK_FALSE(h.ed->checking_project());
     CHECK_FALSE(h.ed->problems().has_value());
 }
+
+TEST_CASE("studio export: Export Game builds a runnable folder off the UI thread") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    CHECK_FALSE(h.ed->start_export(h.dir / "out", "Game").ok()); // no project
+    REQUIRE(h.ed->create_project(h.dir / "Tiny Game", "Tiny Game", "2d").ok());
+    CHECK(h.ed->default_export_dir() == h.dir / "Tiny Game" / "build" / "Tiny_Game");
+
+    // The dialog opens with defaults and renders while the project check runs.
+    h.ed->open_export_dialog();
+    h.frames(2);
+    CHECK(ImGui::FindWindowByName("Export Game") != nullptr);
+    h.ed->wait_for_project_check();
+    h.frames(2);
+
+    // Wrong folders are refused before any work starts.
+    { std::ofstream(h.dir / "a_file") << "x"; }
+    CHECK_FALSE(h.ed->start_export(h.dir / "a_file", "Game").ok());
+    sfs::create_directories(h.dir / "busy");
+    { std::ofstream(h.dir / "busy" / "notes.txt") << "x"; }
+    const Status busy = h.ed->start_export(h.dir / "busy", "Game");
+    REQUIRE_FALSE(busy.ok());
+    CHECK(busy.error().message.find("other files") != std::string::npos);
+    CHECK_FALSE(h.ed->start_export({}, "Game").ok());
+    CHECK_FALSE(h.ed->exporting());
+
+    const sfs::path out = h.dir / "export";
+    REQUIRE(h.ed->start_export(out, "Tiny").ok());
+    CHECK(h.ed->exporting());
+    CHECK_FALSE(h.ed->start_export(out, "Tiny").ok()); // one at a time
+    h.frames(1);                                        // the editor keeps drawing meanwhile
+    h.ed->wait_for_export();
+    CHECK_FALSE(h.ed->exporting());
+    REQUIRE_MESSAGE(h.ed->last_export().has_value(), h.ed->export_error());
+    const auto& r = *h.ed->last_export();
+    CHECK(r.files > 0);
+    CHECK(sfs::exists(out / "game" / "game.vpak"));
+    CHECK(sfs::exists(out / "export.json"));
+    CHECK(sfs::exists(r.executable));
+    CHECK(r.executable.filename().string().starts_with("Tiny"));
+    h.frames(2); // the dialog shows the result
+
+    // Exporting again into a previous export is allowed (it replaces it).
+    REQUIRE(h.ed->start_export(out, "Tiny").ok());
+    h.ed->wait_for_export();
+    CHECK(h.ed->last_export().has_value());
+    CHECK(h.ed->export_error().empty());
+    h.ed->close_project();
+    CHECK_FALSE(h.ed->last_export().has_value());
+}

@@ -278,6 +278,7 @@ void Editor::frame(float dt) {
     if (!project_) draw_launcher();
     else draw_workspace(dt);
     draw_modals();
+    draw_export_dialog();
     if (show_demo_) ImGui::ShowDemoWindow(&show_demo_);
 }
 
@@ -369,6 +370,9 @@ void Editor::draw_menu_bar() {
             if (auto st = project_->save(); !st.ok()) notify(st.error().message, true);
             else notify("Startup scene: " + scene_path_);
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Export Game...", nullptr, false, editing && project_.has_value() && !exporting()))
+            open_export_dialog();
         ImGui::Separator();
         if (ImGui::MenuItem("Close Project")) {
             if (dirty()) pending_action_ = Pending::CloseProject;
@@ -526,6 +530,11 @@ void Editor::draw_toolbar() {
         if (kit::icon_button("undo", kit::Icon::Undo, undo_tip.c_str(), false, editing && nu != nullptr)) undo();
         ImGui::SameLine();
         if (kit::icon_button("redo", kit::Icon::Redo, redo_tip.c_str(), false, editing && nr != nullptr)) redo();
+        ImGui::SameLine(0, tk::kSpace4);
+        if (kit::icon_button("export", kit::Icon::Export,
+                             exporting() ? "Exporting the game..." : "Export Game: build a folder with your game that runs without VICTUS",
+                             false, editing && project_.has_value() && !exporting()))
+            open_export_dialog();
 
         // Centre: play, pause, stop, record.
         const float group_w = side * 4.0f + gap * 3.0f;
