@@ -59,9 +59,10 @@ int main(int argc, char** argv) {
         .option("layout", "workspace layout: default, level-design, animation, scripting, debugging")
         .option("page", "launcher page to show when no project opens: new, recent, samples, learn")
         .option("select", "select the entity with this name after opening")
+        .option("search", "type this into the Hierarchy search after opening")
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
         .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
-        .option("show", "open a window after opening: input-actions, network, profiler, problems, export, report-problem, about, "
+        .option("show", "open a window after opening: input-actions, network, profiler, problems, export, report-problem, about, add-menu, "
                         "crash-notice, command-palette, animation, "
                         "animation-preview (selected entity), material-editor (selected entity's material)")
         .option("graph", "open this visual script (path relative to assets/) in the Graph Editor")
@@ -155,6 +156,7 @@ int main(int argc, char** argv) {
             if (id == want) ed.apply_layout(static_cast<editor::Layout>(i));
         }
     }
+    if (args.has("search")) ed.set_hierarchy_filter(args.get("search"));
     if (args.has("select") && ed.has_project()) {
         const auto e = ed.edit_scene().find_by_name(args.get("select"));
         if (!e.is_null()) ed.select(e);
@@ -194,6 +196,8 @@ int main(int argc, char** argv) {
         }
         else if (args.get("show") == "report-problem")
             ed.open_diagnostics_dialog();
+        else if (args.get("show") == "add-menu")
+            ed.open_add_menu();
         else if (args.get("show") == "about")
             ed.open_about_dialog();
         else if (args.get("show") == "crash-notice")

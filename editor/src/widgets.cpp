@@ -5,6 +5,7 @@
 #include "victus/runtime/builtin_fonts.hpp"
 
 #include <imgui_internal.h>
+#include <imgui_stdlib.h>
 
 #include <algorithm>
 #include <cmath>
@@ -637,6 +638,48 @@ ImVec4 tint_for(assets::AssetKind kind) noexcept {
     default:
         return tk::kTextMuted;
     }
+}
+
+bool contains_icase(std::string_view hay, std::string_view needle) noexcept {
+    if (needle.empty()) return true;
+    if (needle.size() > hay.size()) return false;
+    const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };
+    for (std::size_t i = 0; i + needle.size() <= hay.size(); ++i) {
+        std::size_t k = 0;
+        while (k < needle.size() && lower(hay[i + k]) == lower(needle[k])) ++k;
+        if (k == needle.size()) return true;
+    }
+    return false;
+}
+
+bool search_input(const char* id, const char* hint, std::string& text, float width) {
+    ImGui::PushID(id);
+    const float icon_size = ImGui::GetTextLineHeight();
+    const ImVec2 pad = ImGui::GetStyle().FramePadding;
+    const float clear_w = text.empty() ? 0.0f : ImGui::GetFrameHeight();
+    const float w = width > 0 ? width : ImGui::GetContentRegionAvail().x;
+    ImGui::SetNextItemWidth(std::max(40.0f, w - clear_w - (clear_w > 0 ? ImGui::GetStyle().ItemSpacing.x : 0.0f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(pad.x + icon_size + tk::kSpace2, pad.y));
+    bool changed = ImGui::InputTextWithHint("##search", hint, &text);
+    ImGui::PopStyleVar();
+    const bool active = ImGui::IsItemActive();
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const float y = min.y + (ImGui::GetItemRectSize().y - icon_size) * 0.5f;
+    draw_icon(ImGui::GetWindowDrawList(), Icon::Search, ImVec2(min.x + pad.x, y), icon_size,
+              ImGui::GetColorU32(active ? tk::kText : tk::kTextMuted));
+    if (active && !text.empty() && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        text.clear();
+        changed = true;
+    }
+    if (!text.empty()) {
+        ImGui::SameLine();
+        if (icon_button("##clear", Icon::Close, "Clear the search (Esc)")) {
+            text.clear();
+            changed = true;
+        }
+    }
+    ImGui::PopID();
+    return changed;
 }
 
 } // namespace victus::editor::kit

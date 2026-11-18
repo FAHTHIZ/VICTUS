@@ -9,6 +9,7 @@
 
 #include <imgui.h>
 
+#include <string>
 #include <string_view>
 
 namespace victus::editor::kit {
@@ -98,6 +99,13 @@ void pill(std::string_view text, ui::Tone tone);
 /// Centered empty-state block for panels with nothing to show: icon, title, body, and an
 /// optional action button. Returns true when the action was clicked.
 bool empty_state(Icon icon, std::string_view title, std::string_view body, const char* action = nullptr);
+
+/// A search field with a magnifier inside it and a clear button while it holds text; Escape
+/// clears it too. `width` <= 0 fills the remaining width. Returns true when the text changed.
+bool search_input(const char* id, const char* hint, std::string& text, float width = -1.0f);
+
+/// True if `needle` (empty matches) is in `hay`, ignoring ASCII case.
+[[nodiscard]] bool contains_icase(std::string_view hay, std::string_view needle) noexcept;
 
 /// Tooltip shown on hover (also when the item is disabled).
 void tooltip(const char* text);
