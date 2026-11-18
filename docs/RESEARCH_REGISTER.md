@@ -321,3 +321,37 @@ No third-party code was added.
 - yojimbo v1.15.2 — https://github.com/mas-bandwidth/yojimbo (BSD-3). Connect tokens and encrypted packets; bundles libsodium, netcode and reliable.
 - Snapshot interpolation and client-side prediction follow the common model of rendering remote entities a fixed delay (here 100 ms ≈ 3 snapshots at 30 Hz) in the past and predicting only the locally owned entity, correcting when the server state diverges.
 - Open questions: delta compression against acknowledged snapshots, physics rollback for full input-replay reconciliation, lag compensation, encryption/authentication, NAT traversal.
+
+## Research conclusions added 2026-11-18 (A.R.C. — physics-driven character behaviour)
+
+### Public references and findings
+
+- **Rockstar / NaturalMotion — separate engine and behaviour layers.** Rockstar's 2011 *Asked & Answered* says the updated RAGE version included Rockstar's updated physics and graphics engines, while Euphoria was its character-behaviour system; Rockstar describes the two as working closely together. Take-Two's 2009 *Red Dead Redemption* announcement likewise names RAGE and NaturalMotion's Euphoria as distinct technologies used together. This is the important architectural lesson: character behaviour is a specialised system integrated with the engine's physics, animation and gameplay—not simply the name of the physics solver. Public material describes capabilities, not Euphoria's complete implementation. References: https://www.rockstargames.com/newswire/article/ak14o88381o725/asked-answered-max-payne-3-la-noire-red-dead-and-more.html ; https://ir.take2games.com/static-files/53773798-9091-42f8-bb65-6bda2b26b4a3 .
+
+- **Jolt Physics 5.7.0 — the current VICTUS backend already contains a useful ragdoll foundation.** The exact pinned v5.7.0 source has RagdollSettings and Ragdoll, skeleton/pose support, GetPose/SetPose, DriveToPoseUsingKinematics and DriveToPoseUsingMotors. The version-pinned sample guide demonstrates a humanoid ragdoll whose constraint motors track a sprint animation in local space, maps a high-detail animation skeleton to a lower-detail ragdoll skeleton and maps the simulated pose back; it also demonstrates many ragdolls sleeping when inactive. References: https://github.com/jrouwe/JoltPhysics/blob/v5.7.0/Jolt/Physics/Ragdoll/Ragdoll.h ; https://github.com/jrouwe/JoltPhysics/blob/v5.7.0/Docs/Samples.md ; https://jrouwe.github.io/JoltPhysics/class_ragdoll.html . The public Jolt API reference may track upstream master, so implementation work must use the repository's pinned v5.7.0 source as the contract.
+
+- **Unreal Engine — physics-driven animation as a practical authoring reference.** Epic documents blending physical simulation with keyframed skeletal animation, including activating simulation for a bone subtree and controlling the blend weight between animation and physics. This is a useful baseline for partial-body blending and editor-facing physics assets, but it is not by itself a complete balance/recovery controller. Reference: https://dev.epicgames.com/documentation/unreal-engine/physics-driven-animation-in-unreal-engine .
+
+- **NVIDIA PhysX 5.7 — reduced-coordinate articulations as a comparison candidate.** PhysX documents articulations for ragdolls and other linked mechanisms. The reduced-coordinate representation uses a root pose plus joint coordinates and is designed to avoid joint error by construction and handle larger link mass ratios; it has tree/loop constraints and stability-tuning considerations, including damping and velocity limits. This merits a controlled benchmark, not an automatic backend replacement. Reference: https://nvidia-omniverse.github.io/PhysX/physx/5.7.0/docs/Articulations.html .
+
+- **Physics-based character animation review (2023).** Llobera and Charbonnier survey motor-control principles and physics-based character-animation controllers, describing control of simulated articulated bodies through forces and torques. The review identifies interactive adaptation to perception and rich environmental contacts as continuing challenges. Reference: https://doi.org/10.1016/j.plrev.2023.06.012 .
+
+- **DeepMimic (2018).** Peng et al. combine reference-motion imitation and task objectives to train physically simulated characters that adapt to disturbances and learn recovery behaviours. This is a research direction for a later optional controller-training pipeline, not a prerequisite for the initial engine implementation. Reference: https://arxiv.org/abs/1804.02717 .
+
+- **AMP — Adversarial Motion Priors (2021).** Peng et al. use unstructured motion clips to learn a style prior for physically simulated characters, allowing a reinforcement-learning controller to select and combine behaviours without hand-authoring a clip-selection objective for every motion. This is a candidate for later offline training and must be evaluated against simpler controllers, runtime cost and motion-data rights. Reference: https://arxiv.org/abs/2104.02180 .
+
+### VICTUS-specific conclusion
+
+VICTUS currently pins Jolt 5.7.0 and exposes rigid bodies, character capsules, fixed/point/hinge/slider/distance joints and velocity motors through its own physics API. Its public physics wrapper does not yet expose Jolt ragdolls, skeletal ragdoll mapping, pose-driven joint motors or active balance/recovery. The roadmap's physics phase also still lists ragdolls as unfinished. Therefore A.R.C. should first wrap and test the pinned Jolt ragdoll capability behind VICTUS-owned types, then build the character controller and authoring workflow above it. A solver alone will not make a character behave intelligently: physical animation, posture/balance control, contact-aware response, environment interaction and recovery are separate layers.
+
+Do not replace Jolt with PhysX merely to obtain articulation terminology or assume that reduced-coordinate simulation automatically provides lifelike behaviour. Benchmark actual VICTUS rigs and game workloads first. Keep the first runtime deterministic where practical, budgeted for mobile, and useful without machine-learning inference; evaluate learned motion policies only after a stable baseline exists. Treat Euphoria as a capability and integration reference, not a source-code target or a claim of equivalent results.
+
+### Open research and validation questions
+
+- Which Jolt 5.7.0 constraints and drive modes produce stable character rigs across the intended mass and scale ranges?
+- What body proxies, joint limits and collision filters are robust for soft-bodied humanoids as well as the current hard-surface Vanguard starter characters?
+- Which balance controller provides a good trade-off between believable stepping/bracing, controllability, determinism and CPU cost?
+- How should high-detail render skeletons map to compact simulation rigs without visible foot, hand or root drift?
+- How should character simulation tiers behave in headless/server and multiplayer sessions, where authoritative simulation must not depend on client camera visibility?
+- What are the acceptable per-character CPU, memory and update-rate budgets on desktop and physical Android hardware?
+- Which original or appropriately licensed motion datasets are available if offline policy training is later justified?
