@@ -35,7 +35,7 @@ On a headless Linux machine use `SDL_VIDEO_DRIVER=offscreen` and install Mesa's 
 
 ### Parser fuzz suite
 
-`tests/robustness/parser_fuzz_tests.cpp` starts from valid documents written by the engine (template scenes, sample prefabs/materials/tilesets, the sample glTF robot, cooked caches, packs, saves, captures, images, terrain) and applies byte-level and JSON-structure mutations. Every input must either load or fail with a non-empty error; crashes and sanitizer reports fail the suite. `VICTUS_FUZZ_SEED` changes the mutation stream, and `VICTUS_FUZZ_TRACE=1` writes each input to `<temp>/victus_fuzz_failures/last-<target>.bin` before running it so a crashing input can be recovered. Corrupted network packets are covered by the `session fuzz:` cases in `victus_net_tests`. When you add a loader for untrusted data, add a target with a valid seed.
+`tests/robustness/parser_fuzz_tests.cpp` starts from valid documents written by the engine (template scenes, sample prefabs/materials/tilesets, the sample glTF robot, cooked caches, packs, saves, captures, images, terrain, WAV clips and truncated copies of miniaudio's Ogg Vorbis and FLAC test files) and applies byte-level and JSON-structure mutations. Every input must either load or fail with a non-empty error; crashes and sanitizer reports fail the suite. `VICTUS_FUZZ_SEED` changes the mutation stream, and `VICTUS_FUZZ_TRACE=1` writes each input to `<temp>/victus_fuzz_failures/last-<target>.bin` before running it so a crashing input can be recovered. Corrupted network packets are covered by the `session fuzz:` cases in `victus_net_tests`. When you add a loader for untrusted data, add a target with a valid seed.
 
 ### GPU failure injection
 
