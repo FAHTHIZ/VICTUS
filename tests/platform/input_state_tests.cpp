@@ -66,3 +66,11 @@ TEST_CASE("input state: unmapped keys never register") {
     CHECK_FALSE(in.key_down(Key::Unknown));
     CHECK_FALSE(in.key_pressed(Key::Unknown));
 }
+
+TEST_CASE("external_data_dir is the Android external files folder, empty on desktop") {
+#if defined(__ANDROID__)
+    CHECK_FALSE(victus::platform::Platform::external_data_dir().empty());
+#else
+    CHECK(victus::platform::Platform::external_data_dir().empty());
+#endif
+}

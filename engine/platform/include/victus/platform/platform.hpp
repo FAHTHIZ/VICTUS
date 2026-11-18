@@ -199,6 +199,13 @@ public:
     // Writable per-user folder for saves, caches and unpacked content (ends with a separator). On Android this is
     // the app's internal storage; on desktop the OS preference folder for `org`/`app`. Empty on failure.
     [[nodiscard]] static std::string user_data_dir(const std::string& org, const std::string& app);
+    // Folder the player can reach from outside the app (ends with a separator): on Android the app's external
+    // files folder (Android/data/<package>/files, readable over USB), for logs a player can send. Empty elsewhere
+    // or on failure.
+    [[nodiscard]] static std::string external_data_dir();
+    // Modal error box for failures before (or instead of) any rendering, so a game does not just vanish. Works
+    // without a Platform instance or window. False when no dialog could be shown (e.g. headless).
+    static bool show_error_box(const std::string& title, const std::string& message);
     // Reads a file shipped with the application. Relative paths resolve against the APK `assets/` on Android and
     // against the executable's folder elsewhere; absolute paths are read as-is.
     [[nodiscard]] static Result<std::vector<std::uint8_t>> read_bundled(const std::string& path);
