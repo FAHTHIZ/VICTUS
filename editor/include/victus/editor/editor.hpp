@@ -70,6 +70,15 @@ struct SampleInfo {
     std::string summary; // first paragraph of its README.md
 };
 
+// One entry of Inspector > Add Component.
+struct ComponentChoice {
+    std::string id;          // serialized name, e.g. "RigidBody"
+    std::string name;        // shown, e.g. "Rigid Body"
+    std::string category;    // e.g. "Physics 3D"
+    std::string description; // one plain-language line; may be empty
+    bool present{false};     // the entity already has it
+};
+
 enum class LauncherPage : std::uint8_t { New, Recent, Samples, Learn };
 
 // Every dockable Studio panel. The Window menu lists them all, so a closed panel is never lost.
@@ -484,6 +493,11 @@ public:
     void clear_selection() { selection_.clear(); }
     [[nodiscard]] scene::Entity selected() noexcept;
     [[nodiscard]] const std::vector<Uuid>& selection() const noexcept { return selection_; }
+    // Inspector > Add Component: every component in display order, and adding one by id (one
+    // undo step). False if the entity already has it or the id is unknown.
+    [[nodiscard]] std::vector<ComponentChoice> component_choices(scene::Entity e) const;
+    bool add_component(scene::Entity e, std::string_view id);
+    void open_add_component() noexcept { add_component_open_ = 4; } // after the workspace settles
     // Hierarchy search (case-insensitive, by name): matches stay visible with their parents.
     void set_hierarchy_filter(std::string text) { hierarchy_filter_ = std::move(text); }
     // Opens the Hierarchy's "Add" menu once the workspace has settled (a few frames).
@@ -745,11 +759,13 @@ private:
     void draw_create_entity_items(scene::Entity parent);
     // Entities to draw while filtering: matches plus their ancestors.
     void collect_hierarchy_matches(scene::Entity e, std::unordered_set<Uuid, UuidHash>& keep, bool& any);
-    std::string hierarchy_filter_;
+    std::string hierarchy_filter_, add_component_filter_;
+    bool draw_add_component(scene::Entity e);       // the Inspector button and its picker
+    bool add_component_raw(scene::Entity e, std::string_view id); // no undo (inside an inspector edit)
     std::unordered_set<Uuid, UuidHash> hierarchy_keep_, hierarchy_reveal_;
     Uuid hierarchy_revealed_for_{};
     bool hierarchy_scroll_{false};
-    int hierarchy_open_add_{0};
+    int hierarchy_open_add_{0}, add_component_open_{0};
     std::size_t hierarchy_rows_{0}, hierarchy_matches_{0};
     void draw_inspector();
     void draw_assets();

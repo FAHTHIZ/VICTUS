@@ -26,7 +26,8 @@ add_library(victus_editor_core STATIC
     src/workspace.cpp
     src/problems.cpp
     src/export_dialog.cpp
-    src/diagnostics_dialog.cpp)
+    src/diagnostics_dialog.cpp
+    src/add_component.cpp)
 add_library(VICTUS::EditorCore ALIAS victus_editor_core)
 target_include_directories(victus_editor_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(victus_editor_core PUBLIC VICTUS::Scene VICTUS::Project VICTUS::Runtime VICTUS::Ui VICTUS::Gameplay VICTUS::Player VICTUS::Script VICTUS::Physics VICTUS::Audio VICTUS::Net VICTUS::Tilemap)

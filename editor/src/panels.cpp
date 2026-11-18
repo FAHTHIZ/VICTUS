@@ -106,7 +106,9 @@ assets::AssetKind asset_kind_for_hint(std::string_view hint) {
 
 // Editor widgets for one reflected field. Returns true when the value changed.
 bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db, const scene::Scene* scene) {
-    const char* label = f.label.c_str();
+    // Readable label, stable ID: "linear_damping" shows as "Linear Damping".
+    const std::string shown_label = kit::humanize(f.label.empty() ? f.name : f.label) + "##" + f.name;
+    const char* label = shown_label.c_str();
     const float speed = f.speed > 0 ? f.speed : 0.05f;
     const float lo = f.bounded() ? f.min : 0.0f, hi = f.bounded() ? f.max : 0.0f;
     bool changed = false;
@@ -169,10 +171,12 @@ bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db
     }
     case scene::FieldKind::Enum: {
         int cur = static_cast<int>(f.get_int(comp));
-        const char* preview = cur >= 0 && cur < static_cast<int>(f.enum_names.size()) ? f.enum_names[cur].c_str() : "?";
-        if (ImGui::BeginCombo(label, preview)) {
+        const std::string preview =
+            cur >= 0 && cur < static_cast<int>(f.enum_names.size()) ? kit::humanize(f.enum_names[cur]) : "?";
+        if (ImGui::BeginCombo(label, preview.c_str())) {
             for (int i = 0; i < static_cast<int>(f.enum_names.size()); ++i) {
-                if (ImGui::Selectable(f.enum_names[i].c_str(), i == cur) && i != cur) {
+                const std::string item = kit::humanize(f.enum_names[i]) + "##" + f.enum_names[i];
+                if (ImGui::Selectable(item.c_str(), i == cur) && i != cur) {
                     f.set_int(comp, i);
                     changed = true;
                 }
@@ -1334,7 +1338,8 @@ bool Editor::inspect_components(Entity e) {
         if (!comp) continue;
         ImGui::PushID(schema->name.c_str());
         bool remove = false;
-        if (removable(schema->name.c_str(), remove))
+        const std::string comp_header = kit::humanize(schema->name) + "###" + schema->name;
+        if (removable(comp_header.c_str(), remove))
             for (const auto& f : schema->fields) changed |= field_edit(f, comp, db_.get(), &s);
         if (remove) remove_schema = schema;
         ImGui::PopID();
@@ -1377,57 +1382,7 @@ bool Editor::inspect_components(Entity e) {
         changed = true;
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    if (ImGui::Button("Add Component", ImVec2(-1, 0))) ImGui::OpenPopup("##addcomp");
-    if (ImGui::BeginPopup("##addcomp")) {
-        if (!w.has<CameraComponent>(e) && ImGui::MenuItem("Camera")) {
-            w.add<CameraComponent>(e).primary = false;
-            changed = true;
-        }
-        if (!w.has<LightComponent>(e) && ImGui::MenuItem("Light")) {
-            w.add<LightComponent>(e);
-            changed = true;
-        }
-        if (!w.has<MeshRendererComponent>(e) && ImGui::MenuItem("Mesh Renderer")) {
-            w.add<MeshRendererComponent>(e).primitive = "cube";
-            changed = true;
-        }
-        if (!w.has<SpriteComponent>(e) && ImGui::MenuItem("Sprite")) {
-            w.add<SpriteComponent>(e);
-            changed = true;
-        }
-        if (!w.has<gameplay::RotatorComponent>(e) && ImGui::MenuItem("Rotator")) {
-            w.add<gameplay::RotatorComponent>(e);
-            changed = true;
-        }
-        if (!w.has<gameplay::OscillatorComponent>(e) && ImGui::MenuItem("Oscillator")) {
-            w.add<gameplay::OscillatorComponent>(e);
-            changed = true;
-        }
-        if (!w.has<script::ScriptComponent>(e) && ImGui::MenuItem("Script")) {
-            w.add<script::ScriptComponent>(e);
-            changed = true;
-        }
-        // Reflected components grouped by category.
-        std::vector<std::string> categories;
-        for (const auto* schema : scene::schemas())
-            if (std::find(categories.begin(), categories.end(), schema->category) == categories.end())
-                categories.push_back(schema->category);
-        for (const auto& cat : categories) {
-            if (!ImGui::BeginMenu(cat.c_str())) continue;
-            for (const auto* schema : scene::schemas()) {
-                if (schema->category != cat) continue;
-                const bool present = w.get_raw(e, schema->id) != nullptr;
-                if (ImGui::MenuItem(schema->name.c_str(), nullptr, false, !present)) {
-                    (void)w.add_raw(e, schema->id);
-                    changed = true;
-                }
-            }
-            ImGui::EndMenu();
-        }
-        ImGui::EndPopup();
-    }
+    changed |= draw_add_component(e);
     return changed;
 }
 
@@ -1463,23 +1418,24 @@ bool Editor::inspect_script(script::ScriptComponent& c) {
     if (props->empty()) ImGui::TextDisabled("No public fields (declare e.g. `MyScript.speed = 5`).");
     for (const auto& info : *props) {
         ImGui::PushID(info.name.c_str());
+        const std::string prop_label = kit::humanize(info.name) + "##" + info.name;
         const json::Value* over = c.properties.find(info.name);
         const json::Value& cur = over ? *over : info.default_value;
         bool edited = false;
         json::Value next;
         if (cur.is_number()) {
             float f = static_cast<float>(cur.as_number());
-            if ((edited = ImGui::DragFloat(info.name.c_str(), &f, 0.05f))) next = json::Value(static_cast<double>(f));
+            if ((edited = ImGui::DragFloat(prop_label.c_str(), &f, 0.05f))) next = json::Value(static_cast<double>(f));
         } else if (cur.is_bool()) {
             bool b = cur.as_bool();
-            if ((edited = ImGui::Checkbox(info.name.c_str(), &b))) next = json::Value(b);
+            if ((edited = ImGui::Checkbox(prop_label.c_str(), &b))) next = json::Value(b);
         } else if (cur.is_string()) {
             std::string str = cur.as_string();
-            if ((edited = ImGui::InputText(info.name.c_str(), &str))) next = json::Value(str);
+            if ((edited = ImGui::InputText(prop_label.c_str(), &str))) next = json::Value(str);
         } else if (cur.is_array() && cur.size() == 3) {
             float v[3];
             for (std::size_t i = 0; i < 3; ++i) v[i] = static_cast<float>(cur[i].as_number());
-            if ((edited = ImGui::DragFloat3(info.name.c_str(), v, 0.05f))) {
+            if ((edited = ImGui::DragFloat3(prop_label.c_str(), v, 0.05f))) {
                 next = json::Value::array();
                 for (float x : v) next.push(json::Value(static_cast<double>(x)));
             }
@@ -1573,7 +1529,8 @@ void Editor::draw_inspector() {
     prune_selection();
     const Entity e = selected();
     if (e.is_null()) {
-        ImGui::TextDisabled("Select an entity in the Hierarchy or Viewport.");
+        kit::empty_state(kit::Icon::Entity, "Nothing selected",
+                         "Click something in the Viewport or the Hierarchy to see and change its settings here.");
         if (pending_dirty_) {
             record_edit("Edit", std::move(pending_before_));
             pending_dirty_ = false;

@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
         .option("search", "type this into the Hierarchy search after opening")
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
         .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
-        .option("show", "open a window after opening: input-actions, network, profiler, problems, export, report-problem, about, add-menu, "
+        .option("show", "open a window after opening: input-actions, network, profiler, problems, export, report-problem, about, add-menu, add-component, "
                         "crash-notice, command-palette, animation, "
                         "animation-preview (selected entity), material-editor (selected entity's material)")
         .option("graph", "open this visual script (path relative to assets/) in the Graph Editor")
@@ -196,6 +196,8 @@ int main(int argc, char** argv) {
         }
         else if (args.get("show") == "report-problem")
             ed.open_diagnostics_dialog();
+        else if (args.get("show") == "add-component")
+            ed.open_add_component();
         else if (args.get("show") == "add-menu")
             ed.open_add_menu();
         else if (args.get("show") == "about")

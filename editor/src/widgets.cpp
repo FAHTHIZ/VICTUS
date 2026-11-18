@@ -640,6 +640,50 @@ ImVec4 tint_for(assets::AssetKind kind) noexcept {
     }
 }
 
+std::string humanize(std::string_view code) {
+    const auto is_upper = [](char c) { return c >= 'A' && c <= 'Z'; };
+    const auto is_lower = [](char c) { return c >= 'a' && c <= 'z'; };
+    const auto is_digit = [](char c) { return c >= '0' && c <= '9'; };
+    if (code.empty() || code.find(' ') != std::string_view::npos) return std::string(code);
+    const bool snake = code.find('_') != std::string_view::npos;
+    bool camel_break = false;
+    for (std::size_t i = 1; i < code.size(); ++i)
+        if ((is_upper(code[i]) && is_lower(code[i - 1])) || (is_digit(code[i]) && !is_digit(code[i - 1])) ||
+            (is_upper(code[i]) && is_upper(code[i - 1]) && i + 1 < code.size() && is_lower(code[i + 1])))
+            camel_break = true;
+    if (!snake && !camel_break && is_upper(code[0])) return std::string(code);
+    std::string out;
+    bool start = true;
+    for (std::size_t i = 0; i < code.size(); ++i) {
+        const char c = code[i];
+        if (c == '_') {
+            if (!out.empty() && out.back() != ' ') out += ' ';
+            start = true;
+            continue;
+        }
+        if (i && !out.empty() && out.back() != ' ' &&
+            ((is_upper(c) && is_lower(code[i - 1])) || (is_digit(c) && !is_digit(code[i - 1]) && code[i - 1] != '_') ||
+             (is_upper(c) && is_upper(code[i - 1]) && i + 1 < code.size() && is_lower(code[i + 1]))))
+            out += ' ', start = true;
+        out += start && is_lower(c) ? static_cast<char>(c - 'a' + 'A') : c;
+        start = false;
+    }
+    // Common abbreviations read better in capitals.
+    for (std::string_view abbr : {"Ui", "Ik", "Ai", "Uv", "Id", "Fov", "Lod", "Hdr"}) {
+        std::size_t p = 0;
+        while ((p = out.find(abbr, p)) != std::string::npos) {
+            const bool left = p == 0 || out[p - 1] == ' ';
+            const std::size_t end = p + abbr.size();
+            const bool right = end == out.size() || out[end] == ' ';
+            if (left && right)
+                for (std::size_t k = p; k < end; ++k)
+                    out[k] = is_lower(out[k]) ? static_cast<char>(out[k] - 'a' + 'A') : out[k];
+            p = end;
+        }
+    }
+    return out;
+}
+
 bool contains_icase(std::string_view hay, std::string_view needle) noexcept {
     if (needle.empty()) return true;
     if (needle.size() > hay.size()) return false;
