@@ -180,14 +180,6 @@ const char* Platform::video_driver() const noexcept {
     return d ? d : "none";
 }
 
-void show_error_dialog(const std::string& title, const std::string& message) {
-    if (const char* off = SDL_getenv("VICTUS_NO_DIALOGS"); off && *off && std::string_view(off) != "0") return;
-    for (const char* driver : {SDL_GetCurrentVideoDriver(), static_cast<const char*>(SDL_getenv("SDL_VIDEO_DRIVER"))})
-        if (driver && (std::string_view(driver) == "offscreen" || std::string_view(driver) == "dummy")) return;
-    if (!SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), message.c_str(), nullptr))
-        VICTUS_LOG_WARN("platform", "error dialog unavailable: {}", SDL_GetError());
-}
-
 double Platform::seconds() noexcept { return static_cast<double>(SDL_GetTicksNS()) * 1e-9; }
 
 std::string Platform::user_data_dir(const std::string& org, const std::string& app) {
@@ -215,6 +207,9 @@ std::string Platform::external_data_dir() {
 }
 
 bool Platform::show_error_box(const std::string& title, const std::string& message) {
+    if (const char* off = SDL_getenv("VICTUS_NO_DIALOGS"); off && *off && std::string_view(off) != "0") return false;
+    for (const char* driver : {SDL_GetCurrentVideoDriver(), static_cast<const char*>(SDL_getenv("SDL_VIDEO_DRIVER"))})
+        if (driver && (std::string_view(driver) == "offscreen" || std::string_view(driver) == "dummy")) return false;
     return SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), message.c_str(), nullptr);
 }
 

@@ -173,10 +173,6 @@ struct PlatformDesc {
     std::string app_name{"VICTUS"};
 };
 
-// Blocking native error message box for fatal errors (e.g. GPU device lost) in windowed apps.
-// Does nothing under the offscreen/dummy video drivers or when VICTUS_NO_DIALOGS is set (CI).
-void show_error_dialog(const std::string& title, const std::string& message);
-
 // Owns platform subsystem lifetime. Exactly one instance per process.
 class Platform {
 public:
@@ -208,7 +204,8 @@ public:
     // or on failure.
     [[nodiscard]] static std::string external_data_dir();
     // Modal error box for failures before (or instead of) any rendering, so a game does not just vanish. Works
-    // without a Platform instance or window. False when no dialog could be shown (e.g. headless).
+    // without a Platform instance or window. False when no dialog could be shown (e.g. headless). Skipped
+    // (false) under the offscreen/dummy video drivers or when VICTUS_NO_DIALOGS is set, so tests never block.
     static bool show_error_box(const std::string& title, const std::string& message);
     // Reads a file shipped with the application. Relative paths resolve against the APK `assets/` on Android and
     // against the executable's folder elsewhere; absolute paths are read as-is.

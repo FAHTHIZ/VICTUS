@@ -37,7 +37,7 @@ int device_lost(editor::Editor& ed, const rhi::Device& dev) {
     const std::string reason = dev.lost_reason();
     const std::string saved = ed.save_for_fatal_error(reason);
     std::fprintf(stderr, "victus_editor: %s; %s\n", reason.c_str(), saved.c_str());
-    platform::show_error_dialog("VICTUS Editor", reason + "\n\n" + saved + ".");
+    (void)platform::Platform::show_error_box("VICTUS Editor", reason + "\n\n" + saved + ".");
     return 3;
 }
 } // namespace
