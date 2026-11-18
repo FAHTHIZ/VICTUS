@@ -739,6 +739,15 @@ public:
     void set_asset_view(bool grid, float size) noexcept;
     [[nodiscard]] bool asset_grid() const noexcept { return asset_grid_; }
     [[nodiscard]] float asset_tile_size() const noexcept { return asset_tile_size_; }
+    // Assets panel filters: search text (file name or folder, any case), one asset kind (nullopt: all)
+    // and a folder ("" = every folder, "models" = models/ and below).
+    void set_asset_filter(std::string text) { asset_search_ = std::move(text); }
+    void set_asset_kind_filter(std::optional<assets::AssetKind> kind) noexcept { asset_kind_filter_ = kind; }
+    void set_asset_folder(std::string folder) { asset_folder_ = std::move(folder); }
+    [[nodiscard]] std::size_t asset_rows() const;              // assets shown with the current filters
+    [[nodiscard]] std::vector<std::string> asset_folders() const; // every folder holding assets, sorted
+    // Plain name for an asset kind: Texture -> "Image", Model -> "3D Model", SpriteSheet -> "Sprite Sheet".
+    [[nodiscard]] static const char* asset_kind_label(assets::AssetKind kind) noexcept;
     // Preview renders allowed per editor frame (0 pauses thumbnail rendering).
     void set_thumbnail_budget(std::uint32_t per_frame) noexcept { thumbnail_budget_ = per_frame; }
     // Frame of the gizmo for the current selection (nullopt: nothing selected or not editing).
@@ -817,6 +826,10 @@ private:
     std::unique_ptr<runtime::GpuAssetCache> cache_;
     std::unique_ptr<ThumbnailCache> thumbnails_; // destroyed before cache_ (borrows its textures)
     bool asset_grid_{false};
+    std::string asset_search_, asset_folder_;
+    std::optional<assets::AssetKind> asset_kind_filter_;
+    [[nodiscard]] bool asset_visible(const assets::AssetRecord& r) const;
+    void draw_asset_folders(const std::vector<std::string>& folders);
     float asset_tile_size_{72.0f};
     std::uint32_t thumbnail_budget_{2};
     void draw_asset_item(const assets::AssetRecord& r); // context menu, drag source, double-click, tooltip

@@ -28,6 +28,7 @@ add_library(victus_editor_core STATIC
     src/export_dialog.cpp
     src/diagnostics_dialog.cpp
     src/console.cpp
+    src/assets_panel.cpp
     src/add_component.cpp)
 add_library(VICTUS::EditorCore ALIAS victus_editor_core)
 target_include_directories(victus_editor_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

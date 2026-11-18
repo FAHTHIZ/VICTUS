@@ -61,6 +61,7 @@ int main(int argc, char** argv) {
         .option("select", "select the entity with this name after opening")
         .option("search", "type this into the Hierarchy search after opening")
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
+        .option("asset-search", "type this into the Assets search after opening")
         .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
         .option("show", "open a window after opening: input-actions, network, profiler, problems, export, report-problem, about, add-menu, add-component, "
                         "console, crash-notice, command-palette, animation, "
@@ -177,6 +178,7 @@ int main(int argc, char** argv) {
         else
             std::fprintf(stderr, "victus_editor: unknown tool '%s' (move, rotate, scale)\n", tool.c_str());
     }
+    if (args.has("asset-search")) ed.set_asset_filter(args.get("asset-search"));
     if (const double tile = args.get_number("asset-grid", 0); tile > 0)
         ed.set_asset_view(true, static_cast<float>(tile));
     if (args.has("show")) {

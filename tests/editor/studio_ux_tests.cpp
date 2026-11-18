@@ -13,6 +13,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include <algorithm>
 #include <cstring>
 #include <optional>
 #include <fstream>
@@ -651,4 +652,56 @@ TEST_CASE("studio console: severity toggles, search, merged repeats and copy tex
     h.frames(1);
     h.ed->set_console_filter("zq");
     CHECK(h.ed->console_rows() == 0);
+}
+
+TEST_CASE("studio assets: search, type and folder filters, plain type names, empty states") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    CHECK(std::string(editor::Editor::asset_kind_label(assets::AssetKind::Texture)) == "Image");
+    CHECK(std::string(editor::Editor::asset_kind_label(assets::AssetKind::Model)) == "3D Model");
+    CHECK(std::string(editor::Editor::asset_kind_label(assets::AssetKind::SpriteSheet)) == "Sprite Sheet");
+
+    REQUIRE(h.ed->create_project(h.dir / "Asset Game", "Asset Game", "3d").ok());
+    h.frames(2);
+    const std::size_t total = h.ed->asset_rows();
+    REQUIRE(total > 0);
+    const auto folders = h.ed->asset_folders();
+    REQUIRE_FALSE(folders.empty());
+    CHECK(std::is_sorted(folders.begin(), folders.end()));
+
+    // A folder narrows the list (to it and below) and every folder holds something.
+    std::size_t in_folders = 0;
+    for (const auto& f : folders) {
+        h.ed->set_asset_folder(f);
+        CHECK(h.ed->asset_rows() > 0);
+        CHECK(h.ed->asset_rows() <= total);
+        if (f.find('/') == std::string::npos) in_folders += h.ed->asset_rows();
+    }
+    h.ed->set_asset_folder("");
+    CHECK(in_folders <= total);
+
+    // One type, or a search by name or by type name.
+    h.ed->set_asset_kind_filter(assets::AssetKind::Model);
+    const std::size_t models = h.ed->asset_rows();
+    CHECK(models > 0);
+    CHECK(models < total);
+    h.ed->set_asset_kind_filter(std::nullopt);
+    h.ed->set_asset_filter("3D MODEL");
+    CHECK(h.ed->asset_rows() == models);
+    h.ed->set_asset_filter(".GLB");
+    const std::size_t glb = h.ed->asset_rows();
+    h.ed->set_asset_filter(".glb");
+    CHECK(h.ed->asset_rows() == glb);
+    h.frames(2); // list view with results
+
+    h.ed->set_asset_filter("no asset is called this");
+    CHECK(h.ed->asset_rows() == 0);
+    h.frames(2); // "Nothing matches" state
+    h.ed->set_asset_view(true, 64);
+    h.frames(2);
+    h.ed->set_asset_filter("");
+    CHECK(h.ed->asset_rows() == total);
+    h.frames(2); // grid view with the folder list
 }
