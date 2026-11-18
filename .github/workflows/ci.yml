@@ -187,8 +187,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .ccache
-          key: ccache-sanitize-${{ matrix.sanitize }}-${{ github.sha }}
-          restore-keys: ccache-sanitize-${{ matrix.sanitize }}-
+          # Cache keys cannot contain commas, so "address,undefined" is spelled asan-ubsan.
+          key: ccache-sanitize-${{ matrix.sanitize == 'thread' && 'tsan' || 'asan-ubsan' }}-${{ github.sha }}
+          restore-keys: ccache-sanitize-${{ matrix.sanitize == 'thread' && 'tsan' || 'asan-ubsan' }}-
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVICTUS_SANITIZE=${{ matrix.sanitize }} -DVICTUS_BUILD_BENCHMARKS=OFF -DVICTUS_BUILD_SAMPLES=OFF \
