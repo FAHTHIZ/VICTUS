@@ -253,7 +253,6 @@ float state_weights(ControllerRun& r, const AnimationSet* set, std::int32_t stat
 float yaw_of(Quat q) noexcept { return 2.0f * std::atan2(q.y, q.w); }
 
 float wrap_angle(float a) noexcept {
-    constexpr float kPi = 3.14159265358979f;
     a = std::fmod(a + kPi, 2.0f * kPi);
     if (a < 0) a += 2.0f * kPi;
     return a - kPi;

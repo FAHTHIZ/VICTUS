@@ -134,7 +134,7 @@ Result<std::shared_ptr<const Controller>> Controller::from_json(const json::Valu
         if (c->find_parameter(p.name) >= 0) return fail(where, "duplicate parameter \"" + p.name + "\"");
         std::string type = "float";
         if (st = read_string(pv, "type", where, type, false); !st) return std::move(st).error();
-        const auto* tn = std::find_if(kParamTypes.begin(), kParamTypes.end(),
+        const auto tn = std::find_if(kParamTypes.begin(), kParamTypes.end(),
                                       [&](const ParamTypeName& t) { return t.name == type; });
         if (tn == kParamTypes.end())
             return fail(where, "unknown parameter type \"" + type + "\" (float, int, bool or trigger)");
@@ -302,7 +302,7 @@ Result<std::shared_ptr<const Controller>> Controller::from_json(const json::Valu
                 else if (pt == ParamType::Bool) op = "true";
                 else return fail(cw, "numeric conditions need an \"op\" (>, >=, <, <=, == or !=)");
             }
-            const auto* on =
+            const auto on =
                 std::find_if(kOps.begin(), kOps.end(), [&](const OpName& o) { return o.name == op; });
             if (on == kOps.end()) return fail(cw, "unknown op \"" + op + "\"");
             cond.op = on->op;
