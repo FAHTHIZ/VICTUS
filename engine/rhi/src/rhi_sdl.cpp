@@ -303,19 +303,36 @@ struct Device::Impl {
 
 Result<std::unique_ptr<Device>> Device::create(const DeviceDesc& desc) {
     const SDL_GPUShaderFormat formats = SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL;
-    SDL_PropertiesID props = SDL_CreateProperties();
-    SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, desc.debug);
-    SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_PREFERLOWPOWER_BOOLEAN, desc.low_power);
-    SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
-    SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN, true);
-    // Relax optional Vulkan features for broader Android coverage; VICTUS shaders do not require them.
-    SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_CLIP_DISTANCE_BOOLEAN, false);
-    SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_INDIRECT_DRAW_FIRST_INSTANCE_BOOLEAN, false);
-    if (!desc.preferred_driver.empty())
-        SDL_SetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING, desc.preferred_driver.c_str());
-    SDL_GPUDevice* dev = SDL_CreateGPUDeviceWithProperties(props);
-    SDL_DestroyProperties(props);
-    if (!dev) return make_error(ErrorCode::DeviceError, std::format("no compatible GPU device: {}", SDL_GetError()));
+    // Optional Vulkan features are relaxed for Android coverage. VICTUS shaders never write
+    // gl_ClipDistance or draw indirect with a first instance, and no pipeline uses depth clamping by
+    // default, so those are always off: Mali-G52-class drivers lack depthClamp and shaderClipDistance,
+    // and SDL refuses such devices outright while the features are requested. Anisotropic filtering
+    // is wanted when present, so creation is retried without it before giving up.
+    const auto try_create = [&](bool anisotropy) {
+        SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, desc.debug);
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_PREFERLOWPOWER_BOOLEAN, desc.low_power);
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN, true);
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_CLIP_DISTANCE_BOOLEAN, false);
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_INDIRECT_DRAW_FIRST_INSTANCE_BOOLEAN, false);
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_DEPTH_CLAMPING_BOOLEAN, false);
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_ANISOTROPY_BOOLEAN, anisotropy);
+        if (!desc.preferred_driver.empty())
+            SDL_SetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING, desc.preferred_driver.c_str());
+        SDL_GPUDevice* d = SDL_CreateGPUDeviceWithProperties(props);
+        SDL_DestroyProperties(props);
+        return d;
+    };
+    bool anisotropy = true;
+    SDL_GPUDevice* dev = try_create(true);
+    if (!dev) {
+        const std::string first = SDL_GetError();
+        anisotropy = false;
+        dev = try_create(false);
+        if (!dev) return make_error(ErrorCode::DeviceError, std::format("no compatible GPU device: {}", first));
+        VICTUS_LOG_WARN("rhi", "GPU device created without anisotropic filtering ({})", first);
+    }
 
     auto device = std::unique_ptr<Device>(new Device());
     device->device_ = dev;
@@ -327,8 +344,8 @@ Result<std::unique_ptr<Device>> Device::create(const DeviceDesc& desc) {
     caps.backend = driver == "vulkan" ? Backend::Vulkan : driver == "metal" ? Backend::Metal : driver == "direct3d12" ? Backend::D3D12 : Backend::Unknown;
     caps.bc_compression = SDL_GPUTextureSupportsFormat(dev, SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM_SRGB, SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
     caps.astc_compression = SDL_GPUTextureSupportsFormat(dev, SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM_SRGB, SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
-    caps.anisotropy = true;
-    caps.depth_clamp = true;
+    caps.anisotropy = anisotropy;
+    caps.depth_clamp = false; // never requested (see above): pipelines asking for it clip instead
     caps.compute = true; // every SDL_GPU backend has compute and indirect draws
     caps.max_texture_size = 8192; // SDL_GPU guaranteed minimum on supported devices
     for (std::uint32_t s : {8u, 4u, 2u}) {
@@ -542,7 +559,7 @@ Result<PipelineHandle> Device::create_pipeline(const PipelineDesc& desc) {
         ci.rasterizer_state.depth_bias_constant_factor = desc.depth_bias_constant;
         ci.rasterizer_state.depth_bias_slope_factor = desc.depth_bias_slope;
     }
-    ci.rasterizer_state.enable_depth_clip = !desc.depth_clamp;
+    ci.rasterizer_state.enable_depth_clip = !(desc.depth_clamp && caps_.depth_clamp);
     ci.multisample_state.sample_count = to_sdl_samples(desc.sample_count);
     ci.depth_stencil_state.enable_depth_test = desc.depth_test;
     ci.depth_stencil_state.enable_depth_write = desc.depth_write;

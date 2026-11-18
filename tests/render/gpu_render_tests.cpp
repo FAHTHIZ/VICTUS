@@ -216,3 +216,11 @@ TEST_CASE("gpu: update_mesh rewrites in place while the data fits and regrows wh
     ctx.destroy(m);
     CHECK(dev.stats().live_buffers == live0 - 2);
 }
+
+TEST_CASE("gpu: the device asks only for features Mali-G52-class phones have") {
+    // SDL refuses a Vulkan device outright when a requested optional feature is missing; Mali-G52
+    // drivers (e.g. Infinix Hot 10S) lack depthClamp and shaderClipDistance, so neither is requested.
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    const auto& caps = gpu().ctx->device().capabilities();
+    CHECK_FALSE(caps.depth_clamp);
+}
