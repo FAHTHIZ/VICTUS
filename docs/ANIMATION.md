@@ -83,3 +83,26 @@ Poses blend as weighted sums of translation and scale and a sign-aligned, renorm
 ## Runtime API
 
 C++ (`victus/animation/animation.hpp`): `AnimationSystem::set_parameter`, `set_trigger`, `reset_trigger`, `parameter`, `controller_status` (state, previous state, fade progress, parameter values, current clip weights), `play` (enters a state by name), `status` (`controlled`, `state`, `normalized_time`), `add_controller` and `reload_controllers`. Hosts give `AnimationSettings::controllers` a loader; `animation::directory_loader(assets_root)` reads from the project's assets folder.
+
+Luau (on an entity with an `Animator`; all return `false`/`nil` until the animation system has run on the scene and the controller loaded):
+
+| Call | Result |
+| --- | --- |
+| `entity:set_anim_param(name, value)` | `true` when set. `value` is a number or boolean; `int` parameters round, `bool` and `trigger` treat non-zero as true. |
+| `entity:anim_param(name)` | The value: a number for `float`/`int`, a boolean for `bool`/`trigger`, `nil` when there is no such parameter. |
+| `entity:anim_trigger(name)` / `entity:reset_anim_trigger(name)` | Sets or clears a trigger (`false` for non-trigger parameters). The transition that fires on it consumes it. |
+| `entity:anim_state()` | The current state's name, or `nil`. |
+| `entity:anim_controller()` | `{valid, controller, error, state, previous_state, normalized_time, blend, states, parameters = {name = value}, types = {name = "float"\|"int"\|"bool"\|"trigger"}, weights = {{clip, weight, missing}}}` |
+| `entity:play_animation(state, fade?)` | With a controller, jumps to a state by name. |
+| `entity:animation()` | Also reports `controlled`, `state` and `normalized_time`. |
+
+```lua
+function Player:update(dt)
+    local speed = vector.magnitude(self.entity:character_state().velocity * vector.create(1, 0, 1))
+    self.entity:set_anim_param("speed", speed)
+    self.entity:set_anim_param("grounded", self.entity:character_state().grounded)
+    if input.action_pressed("jump") then self.entity:anim_trigger("jump") end
+end
+```
+
+Visual scripts have matching nodes in the Animation category: Play Animation, Set Anim Parameter, Fire Anim Trigger, Anim State and Get Anim Parameter.

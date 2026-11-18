@@ -715,6 +715,96 @@ return { valid = st.valid, clip = st.clip, playing = st.playing, looping = st.lo
     CHECK(std::abs(t->rotation.y) > 0.01f);
 }
 
+TEST_CASE("script: animation controller API") {
+    TempDir d("victus_script_anim_controller");
+    d.write("scripts/hero.luau", R"lua(
+local Hero = {}
+function Hero:update(dt)
+    self.frames = (self.frames or 0) + 1
+    if self.frames == 2 then
+        self.ok_speed = self.entity:set_anim_param("speed", 4)
+        self.ok_bool = self.entity:set_anim_param("grounded", false)
+        self.bad = self.entity:set_anim_param("nope", 1)
+    elseif self.frames == 4 then
+        self.ok_trigger = self.entity:anim_trigger("jump")
+        self.bad_trigger = self.entity:anim_trigger("speed") -- not a trigger
+        scene.find("Hips").name = "Result:" .. tostring(self.ok_speed) .. tostring(self.ok_bool) .. tostring(self.bad) ..
+                                  tostring(self.ok_trigger) .. tostring(self.bad_trigger)
+    end
+end
+return Hero
+)lua");
+    auto host = make_host(d);
+    auto set = std::make_shared<animation::AnimationSet>();
+    set->nodes.push_back({.name = "Hips", .parent = -1, .rest = {}});
+    for (const char* n : {"Idle", "Run", "Jump"}) {
+        animation::Clip c{.name = n, .duration = 1.0f};
+        c.channels.push_back({.node = 0, .path = animation::Path::Translation, .interpolation = animation::Interpolation::Linear,
+                              .times = {0, 1}, .values = {0, 0, 0, 0, 0, 0}});
+        set->clips.push_back(std::move(c));
+    }
+    const Uuid model = Uuid::generate();
+    animation::AnimationSystem anim;
+    anim.add_set(model, set);
+    auto ctrl = animation::Controller::parse(R"({
+      "version": 1,
+      "parameters": [ { "name": "speed", "type": "float" }, { "name": "grounded", "type": "bool", "default": true },
+                      { "name": "jump", "type": "trigger" } ],
+      "default_state": "Move",
+      "states": [ { "name": "Move", "blend1d": { "parameter": "speed",
+                      "points": [ { "clip": "Idle", "at": 0 }, { "clip": "Run", "at": 4 } ] } },
+                  { "name": "Jump", "clip": "Jump", "loop": false } ],
+      "transitions": [ { "from": "Move", "to": "Jump", "duration": 0, "conditions": [ { "parameter": "jump" } ] } ]
+    })");
+    REQUIRE(ctrl.ok());
+    anim.add_controller("anim/hero.vanim", ctrl.value());
+
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    animation::add_animation_systems(sim, anim);
+    Scene s;
+    const Entity hero = scripted(s, "Hero", "scripts/hero.luau");
+    const Entity hips = s.create("Hips", hero);
+    auto& a = s.world().add<animation::AnimatorComponent>(hero);
+    a.model = model;
+    a.controller = "anim/hero.vanim";
+    for (int i = 0; i < 3; ++i) sim.tick(s, 1.0f / 60);
+    auto q = host->eval(R"lua(
+local h = scene.find("Hero")
+local c = h:anim_controller()
+local st = h:animation()
+return { state = h:anim_state(), speed = h:anim_param("speed"), grounded = h:anim_param("grounded"),
+         missing = h:anim_param("nope") == nil, valid = c.valid, path = c.controller, nstates = #c.states,
+         speed_type = c.types.speed, w_run = c.weights[2] and c.weights[2].weight or -1, run_clip = c.weights[2] and c.weights[2].clip or "",
+         controlled = st.controlled, st_state = st.state, none = scene.find("Hips"):anim_state() == nil,
+         none_set = scene.find("Hips"):set_anim_param("speed", 1) }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["state"].as_string() == "Move");
+    CHECK(q.value()["speed"].as_number() == doctest::Approx(4.0));
+    CHECK_FALSE(q.value()["grounded"].as_bool());
+    CHECK(q.value()["missing"].as_bool());
+    CHECK(q.value()["valid"].as_bool());
+    CHECK(q.value()["path"].as_string() == "anim/hero.vanim");
+    CHECK(q.value()["nstates"].as_number() == doctest::Approx(2));
+    CHECK(q.value()["speed_type"].as_string() == "float");
+    CHECK(q.value()["run_clip"].as_string() == "Run");
+    CHECK(q.value()["w_run"].as_number() == doctest::Approx(1.0));
+    CHECK(q.value()["controlled"].as_bool());
+    CHECK(q.value()["st_state"].as_string() == "Move");
+    CHECK(q.value()["none"].as_bool());
+    CHECK_FALSE(q.value()["none_set"].as_bool());
+    for (int i = 0; i < 3; ++i) sim.tick(s, 1.0f / 60);
+    auto r = host->eval(R"lua(
+local h = scene.find("Hero")
+return { state = h:anim_state(), jump = h:anim_param("jump") }
+)lua", &s);
+    REQUIRE(r.ok());
+    CHECK(r.value()["state"].as_string() == "Jump");
+    CHECK_FALSE(r.value()["jump"].as_bool()); // consumed by the transition
+    CHECK(s.world().get<scene::Name>(hips)->value == "Result:truetruefalsetruefalse");
+}
+
 TEST_CASE("script: sprite animation API") {
     TempDir d("victus_script_sprites");
     d.write("scripts/hero.luau", R"lua(
