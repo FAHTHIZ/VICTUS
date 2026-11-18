@@ -218,7 +218,7 @@ victus_add_test(victus_audio_tests
 target_compile_definitions(victus_audio_tests PRIVATE VICTUS_MINIAUDIO_DATA_DIR="${VICTUS_MINIAUDIO_DIR}/data")
 
 victus_add_test(victus_animation_tests
-    SOURCES animation/animation_tests.cpp animation/sprite_animation_tests.cpp
+    SOURCES animation/animation_tests.cpp animation/sprite_animation_tests.cpp animation/controller_tests.cpp
     DEPS VICTUS::Animation VICTUS::Core
     LABELS animation)
 

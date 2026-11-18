@@ -218,6 +218,8 @@ TEST_CASE("assets: database metas, stable UUIDs, incremental cooking and depende
     CHECK(std::string(to_string(AssetKind::Sequence)) == "sequence");
     CHECK(kind_for_extension(".vstrings") == AssetKind::StringTable);
     CHECK(std::string(to_string(AssetKind::StringTable)) == "string_table");
+    CHECK(kind_for_extension(".vanim") == AssetKind::AnimController);
+    CHECK(std::string(to_string(AssetKind::AnimController)) == "anim_controller");
     const Uuid wall_id = wall->uuid, model_id = model->uuid;
 
     jobs::JobSystem js(2);

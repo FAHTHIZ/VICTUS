@@ -191,7 +191,9 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     script::add_script_systems(sim, **scripts);
     physics::add_physics_systems(sim, **physics_world);
     animation::AnimationSystem animations(
-        {.provider = assets::animation_provider(**db), .sheets = assets::sprite_sheet_provider(**db), .jobs = &workers});
+        {.provider = assets::animation_provider(**db),
+         .controllers = animation::directory_loader((*db)->assets_dir()),
+         .sheets = assets::sprite_sheet_provider(**db), .jobs = &workers});
     animation::add_animation_systems(sim, animations);
     tilemap::TilemapSystem tilemaps(assets::tileset_provider(**db));
     tilemap::add_tilemap_systems(sim, tilemaps);
@@ -369,7 +371,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
                 for (const auto& t : changes.behavior_trees) ai_system.reload(t);
                 for (const auto& q : changes.sequences) sequencer_system.reload(q);
                 if (!changes.string_tables.empty()) (void)(*scripts)->reload_localization();
-                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size() + changes.terrains.size() + changes.behavior_trees.size() + changes.sequences.size() + changes.string_tables.size();
+                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size() + changes.terrains.size() + changes.behavior_trees.size() + changes.sequences.size() + changes.string_tables.size() + changes.anim_controllers.size();
             }
         }
         if (dynamic_resolution) {

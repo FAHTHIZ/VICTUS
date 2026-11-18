@@ -141,6 +141,7 @@ const char* to_string(AssetKind kind) noexcept {
     case AssetKind::BehaviorTree: return "behavior_tree";
     case AssetKind::Sequence: return "sequence";
     case AssetKind::StringTable: return "string_table";
+    case AssetKind::AnimController: return "anim_controller";
     default: return "unknown";
     }
 }

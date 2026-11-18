@@ -90,6 +90,7 @@ void Editor::start_editor_clients() {
         }
         c->animation = std::make_unique<animation::AnimationSystem>(
             animation::AnimationSettings{.provider = db_ ? assets::animation_provider(*db_) : animation::SetProvider{},
+                                         .controllers = db_ ? animation::directory_loader(db_->assets_dir()) : animation::ControllerLoader{},
                                          .sheets = db_ ? assets::sprite_sheet_provider(*db_) : animation::SheetProvider{},
                                          .jobs = &workers()});
         animation::add_animation_systems(c->sim, *c->animation);

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/animation/animation.hpp"
+#include "victus/core/fs.hpp"
 #include "victus/core/jobs.hpp"
 #include "victus/core/log.hpp"
 #include "victus/scene/reflect.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <mutex>
 #include <unordered_map>
 
@@ -20,7 +22,9 @@ void register_components() {
     std::call_once(once, [] {
         scene::Schema<AnimatorComponent>("Animator", "Animation")
             .field(&AnimatorComponent::model, "model", {.tooltip = "Model asset providing clips", .hint = "model"})
-            .field(&AnimatorComponent::clip, "clip", {.tooltip = "Clip to play; changing it cross-fades"})
+            .field(&AnimatorComponent::clip, "clip", {.tooltip = "Clip to play (state with a controller); changing it cross-fades"})
+            .field(&AnimatorComponent::controller, "controller",
+                   {.tooltip = "Animation controller (.vanim) relative to the assets folder", .hint = "anim_controller"})
             .field(&AnimatorComponent::playing, "playing")
             .field(&AnimatorComponent::loop, "loop")
             .field(&AnimatorComponent::speed, "speed", {.min = -10, .max = 10, .speed = 0.01f})
@@ -44,6 +48,31 @@ void register_components() {
 
 namespace {
 
+// Playback of one controller state: accumulated normalized time (1 = one cycle).
+struct Playback {
+    std::int32_t state{-1};
+    float norm{0};
+    bool finished{false};
+    float last{0}; // norm before the latest advance (exit-time crossings of looping states)
+};
+
+// Controller runtime (ADR-0068). Parameters live here, not in the component: they are game
+// state the scripts drive every frame, and a saved scene restarts in the default state.
+struct ControllerRun {
+    std::shared_ptr<const Controller> ctrl;
+    std::string path, error;
+    std::vector<float> params;
+    const AnimationSet* resolved_for{nullptr};
+    std::vector<std::vector<std::int32_t>> clips; // state -> point -> set clip index (-1 missing)
+    std::vector<std::vector<float>> thresholds;   // Blend1D states
+    std::vector<std::vector<Vec2>> points;        // Blend2D states
+    Playback cur, prev;
+    bool fading{false}, frozen{false};
+    float fade_duration{0}, fade_elapsed{0};
+    std::vector<NodePose> frozen_pose, scratch;
+    std::vector<float> weights;
+};
+
 // Runtime playback state, not serialized: rebuilt from AnimatorComponent after loading.
 struct AnimatorState {
     Entity owner;
@@ -61,6 +90,7 @@ struct AnimatorState {
     std::vector<NodePose> pose, pose_b;
     std::uint32_t bound{0};
     std::size_t scene_size{0}; // entity count when bound: retry missing nodes after it changes
+    ControllerRun ctl;
 };
 
 struct SystemBinding {
@@ -139,8 +169,251 @@ struct Work {
     Entity entity;
     AnimatorComponent* a;
     AnimatorState* s;
-    std::uint32_t channels{0}, written{0};
+    std::uint32_t channels{0}, written{0}, transitions{0};
 };
+
+// ---- controller runtime ----
+
+float frac(float v) noexcept { return v - std::floor(v); }
+
+void init_controller(AnimatorState& s, std::shared_ptr<const Controller> c, const std::string& path, std::string error) {
+    ControllerRun old = std::move(s.ctl);
+    s.ctl = ControllerRun{};
+    s.ctl.path = path;
+    s.ctl.error = std::move(error);
+    s.ctl.ctrl = std::move(c);
+    if (!s.ctl.ctrl) return;
+    const Controller& ctrl = *s.ctl.ctrl;
+    s.ctl.params.resize(ctrl.parameters.size());
+    for (std::size_t i = 0; i < ctrl.parameters.size(); ++i) {
+        s.ctl.params[i] = ctrl.parameters[i].default_value;
+        if (old.ctrl) // hot reload keeps the values the game set, by name and type
+            if (const std::int32_t o = old.ctrl->find_parameter(ctrl.parameters[i].name);
+                o >= 0 && old.ctrl->parameters[static_cast<std::size_t>(o)].type == ctrl.parameters[i].type)
+                s.ctl.params[i] = old.params[static_cast<std::size_t>(o)];
+    }
+    s.ctl.thresholds.assign(ctrl.states.size(), {});
+    s.ctl.points.assign(ctrl.states.size(), {});
+    for (std::size_t i = 0; i < ctrl.states.size(); ++i) {
+        for (const BlendPoint& bp : ctrl.states[i].points) {
+            s.ctl.thresholds[i].push_back(bp.at.x);
+            s.ctl.points[i].push_back(bp.at);
+        }
+    }
+    s.ctl.cur = {ctrl.default_state, 0, false};
+}
+
+// Resolves clip names against the model (serial: logs each missing clip once per binding).
+void resolve_controller_clips(AnimatorState& s) {
+    ControllerRun& r = s.ctl;
+    if (!r.ctrl || r.resolved_for == s.set.get()) return;
+    r.resolved_for = s.set.get();
+    const Controller& c = *r.ctrl;
+    r.clips.assign(c.states.size(), {});
+    s.animated.assign(s.set ? s.set->nodes.size() : 0, 0);
+    for (std::size_t i = 0; i < c.states.size(); ++i) {
+        const ControllerState& st = c.states[i];
+        auto add = [&](const std::string& name) {
+            const std::int32_t ci = s.set ? s.set->find_clip(name) : -1;
+            if (ci < 0 && s.set)
+                VICTUS_LOG_WARN("animation", "controller {}: state '{}': model has no clip '{}' (rest pose used)",
+                                r.path, st.name, name);
+            if (ci >= 0)
+                for (const Channel& ch : s.set->clips[static_cast<std::size_t>(ci)].channels)
+                    if (ch.node < s.animated.size()) s.animated[ch.node] = 1;
+            r.clips[i].push_back(ci);
+        };
+        if (st.motion == MotionType::Clip) add(st.clip);
+        for (const BlendPoint& bp : st.points) add(bp.clip);
+    }
+}
+
+float param_or(const ControllerRun& r, std::string_view name, float fallback) {
+    const std::int32_t i = r.ctrl->find_parameter(name);
+    return i >= 0 ? r.params[static_cast<std::size_t>(i)] : fallback;
+}
+
+float clip_duration(const AnimationSet* set, std::int32_t ci) {
+    return set && ci >= 0 ? set->clips[static_cast<std::size_t>(ci)].duration : 0.0f;
+}
+
+// Blend weights of `state` (into r.weights) and its effective cycle duration in seconds:
+// sum of weight * clip duration / clip speed, so a blended cycle stays phase-synced.
+float state_weights(ControllerRun& r, const AnimationSet* set, std::int32_t state) {
+    const ControllerState& st = r.ctrl->states[static_cast<std::size_t>(state)];
+    const auto si = static_cast<std::size_t>(state);
+    const auto& clips = r.clips[si];
+    r.weights.assign(clips.size(), 0.0f);
+    switch (st.motion) {
+    case MotionType::Clip: r.weights.assign(1, 1.0f); break;
+    case MotionType::Blend1D: blend_weights_1d(r.thresholds[si], param_or(r, st.param_x, 0), r.weights); break;
+    case MotionType::Blend2D:
+        blend_weights_2d(r.points[si], {param_or(r, st.param_x, 0), param_or(r, st.param_y, 0)}, r.weights);
+        break;
+    }
+    float d = 0;
+    for (std::size_t i = 0; i < clips.size() && i < r.weights.size(); ++i) {
+        const float speed = st.points.empty() ? 1.0f : st.points[i].speed;
+        const float cd = clip_duration(set, clips[i]);
+        d += r.weights[i] * (speed > 0 ? cd / speed : cd);
+    }
+    return d;
+}
+
+void advance_playback(ControllerRun& r, const AnimationSet* set, const AnimatorComponent& a, Playback& pb, float dt) {
+    if (pb.state < 0) return;
+    pb.last = pb.norm;
+    const ControllerState& st = r.ctrl->states[static_cast<std::size_t>(pb.state)];
+    const float d = state_weights(r, set, pb.state);
+    float rate = st.speed * a.speed;
+    if (!st.speed_parameter.empty()) rate *= param_or(r, st.speed_parameter, 1.0f);
+    if (!std::isfinite(rate)) rate = 0;
+    const float delta = d > 0 ? dt * rate / d : 0.0f;
+    if (st.loop) {
+        pb.norm += delta;
+        if (std::fabs(pb.norm) > 1024.0f) { // keep float precision
+            pb.norm = frac(pb.norm);
+            pb.last = pb.norm;
+        }
+        return;
+    }
+    if (d <= 0) {
+        pb.finished = true;
+        pb.norm = 1;
+        return;
+    }
+    pb.norm = std::clamp(pb.norm + delta, 0.0f, 1.0f);
+    if ((delta > 0 && pb.norm >= 1.0f) || (delta < 0 && pb.norm <= 0.0f)) pb.finished = true;
+}
+
+// Samples a state's (blended) pose into `out` (sized to the node count).
+void sample_state(ControllerRun& r, const AnimationSet& set, const Playback& pb, std::vector<NodePose>& out,
+                  std::uint32_t& channels) {
+    const std::size_t n = set.nodes.size();
+    out.resize(n);
+    for (std::size_t i = 0; i < n; ++i) out[i] = set.nodes[i].rest;
+    if (pb.state < 0) return;
+    const ControllerState& st = r.ctrl->states[static_cast<std::size_t>(pb.state)];
+    (void)state_weights(r, &set, pb.state);
+    const auto& clips = r.clips[static_cast<std::size_t>(pb.state)];
+    const float phase = st.loop ? frac(pb.norm) : std::clamp(pb.norm, 0.0f, 1.0f);
+    std::size_t contributors = 0, only = 0;
+    for (std::size_t i = 0; i < r.weights.size(); ++i)
+        if (r.weights[i] > 0) {
+            ++contributors;
+            only = i;
+        }
+    if (contributors == 1) {
+        if (const std::int32_t ci = clips[only]; ci >= 0) {
+            const Clip& clip = set.clips[static_cast<std::size_t>(ci)];
+            sample(clip, phase * clip.duration, out);
+            channels += static_cast<std::uint32_t>(clip.channels.size());
+        }
+        return;
+    }
+    // N-way: weighted sum of translation/scale, sign-aligned quaternion sum, renormalized.
+    std::vector<NodePose>& tmp = r.scratch;
+    tmp.resize(n);
+    bool first = true;
+    for (std::size_t k = 0; k < r.weights.size(); ++k) {
+        const float w = r.weights[k];
+        if (w <= 0) continue;
+        for (std::size_t i = 0; i < n; ++i) tmp[i] = set.nodes[i].rest;
+        if (const std::int32_t ci = clips[k]; ci >= 0) {
+            const Clip& clip = set.clips[static_cast<std::size_t>(ci)];
+            sample(clip, phase * clip.duration, tmp);
+            channels += static_cast<std::uint32_t>(clip.channels.size());
+        }
+        for (std::size_t i = 0; i < n; ++i) {
+            NodePose& o = out[i];
+            const NodePose& p = tmp[i];
+            Quat q = p.rotation;
+            if (first) {
+                o.translation = p.translation * w;
+                o.scale = p.scale * w;
+                o.rotation = {q.x * w, q.y * w, q.z * w, q.w * w};
+                continue;
+            }
+            if (o.rotation.x * q.x + o.rotation.y * q.y + o.rotation.z * q.z + o.rotation.w * q.w < 0.0f)
+                q = {-q.x, -q.y, -q.z, -q.w};
+            o.translation = o.translation + p.translation * w;
+            o.scale = o.scale + p.scale * w;
+            o.rotation = {o.rotation.x + q.x * w, o.rotation.y + q.y * w, o.rotation.z + q.z * w, o.rotation.w + q.w * w};
+        }
+        first = false;
+    }
+    for (std::size_t i = 0; i < n; ++i) out[i].rotation = normalize(out[i].rotation);
+}
+
+// Enters `to` with a cross-fade. A transition fired mid-fade freezes the last output pose as the
+// fade source (so the blend never pops), then fades from that snapshot.
+void enter_state(AnimatorState& s, AnimatorComponent& a, std::int32_t to, float fade, float offset) {
+    ControllerRun& r = s.ctl;
+    const std::size_t n = s.set ? s.set->nodes.size() : 0;
+    if (fade > 0 && r.cur.state >= 0) {
+        if (r.fading) {
+            r.frozen = s.pose.size() == n && n > 0;
+            if (r.frozen) r.frozen_pose = s.pose;
+            r.fading = r.frozen;
+        } else {
+            r.prev = r.cur;
+            r.frozen = false;
+            r.fading = true;
+        }
+        r.fade_duration = fade;
+        r.fade_elapsed = 0;
+    } else {
+        r.fading = r.frozen = false;
+    }
+    r.cur = {to, offset, false, offset};
+    a.clip = r.ctrl->states[static_cast<std::size_t>(to)].name;
+    s.clip_name = a.clip;
+    s.finished = false;
+}
+
+bool condition_holds(const ControllerRun& r, const Condition& c) {
+    const float v = r.params[static_cast<std::size_t>(c.index)];
+    switch (c.op) {
+    case ConditionOp::True:
+    case ConditionOp::Trigger: return v != 0.0f;
+    case ConditionOp::False: return v == 0.0f;
+    case ConditionOp::Greater: return v > c.value;
+    case ConditionOp::GreaterEqual: return v >= c.value;
+    case ConditionOp::Less: return v < c.value;
+    case ConditionOp::LessEqual: return v <= c.value;
+    case ConditionOp::Equal: return v == c.value;
+    case ConditionOp::NotEqual: return v != c.value;
+    }
+    return false;
+}
+
+// First transition that can fire: any-state ones, then the current state's, in authored order.
+const ControllerTransition* pick_transition(const ControllerRun& r) {
+    const Controller& c = *r.ctrl;
+    for (int pass = 0; pass < 2; ++pass) {
+        for (const ControllerTransition& t : c.transitions) {
+            if (pass == 0 ? t.from >= 0 : t.from != r.cur.state) continue;
+            if (t.from < 0 && t.to == r.cur.state && !t.allow_self) continue;
+            if (t.exit_time >= 0) {
+                const bool loop = c.states[static_cast<std::size_t>(r.cur.state)].loop;
+                if (loop && t.exit_time < 1.0f) {
+                    // Evaluated every cycle, on the frame its point in the cycle is crossed (as Unity).
+                    if (std::floor(r.cur.norm - t.exit_time) == std::floor(r.cur.last - t.exit_time)) continue;
+                } else if (r.cur.norm < t.exit_time) {
+                    continue; // reached once; stays satisfied while the conditions are pending
+                }
+            }
+            bool ok = true;
+            for (const Condition& cond : t.conditions)
+                if (!condition_holds(r, cond)) {
+                    ok = false;
+                    break;
+                }
+            if (ok) return &t;
+        }
+    }
+    return nullptr;
+}
 
 float advance(float time, float delta, float duration, bool loop, bool& finished) {
     const float t = time + delta;
@@ -154,9 +427,65 @@ float advance(float time, float delta, float duration, bool loop, bool& finished
     return std::clamp(t, 0.0f, duration);
 }
 
+void write_pose(Scene& scene, Work& w) {
+    AnimatorState& s = *w.s;
+    const std::size_t n = std::min({s.pose.size(), s.animated.size(), s.bindings.size()});
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!s.animated[i] || s.bindings[i] == Entity{}) continue;
+        auto* t = scene.world().get<scene::Transform>(s.bindings[i]);
+        if (!t) continue;
+        t->position = s.pose[i].translation;
+        t->rotation = s.pose[i].rotation;
+        t->scale = s.pose[i].scale;
+        ++w.written;
+    }
+}
+
+void evaluate_controller(Scene& scene, Work& w, float dt) {
+    AnimatorState& s = *w.s;
+    AnimatorComponent& a = *w.a;
+    ControllerRun& r = s.ctl;
+    const AnimationSet& set = *s.set;
+    const float step = a.playing ? dt : 0.0f;
+    advance_playback(r, &set, a, r.cur, step);
+    if (r.fading && !r.frozen) advance_playback(r, &set, a, r.prev, step);
+    if (a.playing) {
+        if (const ControllerTransition* t = pick_transition(r)) {
+            for (const Condition& cond : t->conditions)
+                if (cond.op == ConditionOp::Trigger) r.params[static_cast<std::size_t>(cond.index)] = 0;
+            enter_state(s, a, t->to, t->duration, t->offset);
+            ++w.transitions;
+        }
+    }
+    sample_state(r, set, r.cur, s.pose, w.channels);
+    if (r.fading) {
+        const std::vector<NodePose>* src = &r.frozen_pose;
+        if (!r.frozen) {
+            sample_state(r, set, r.prev, s.pose_b, w.channels);
+            src = &s.pose_b;
+        }
+        r.fade_elapsed += std::abs(dt);
+        const float weight = r.fade_duration > 0.0f ? std::clamp(r.fade_elapsed / r.fade_duration, 0.0f, 1.0f) : 1.0f;
+        for (std::size_t i = 0; i < s.pose.size() && i < src->size(); ++i)
+            s.pose[i] = blend((*src)[i], s.pose[i], weight);
+        if (weight >= 1.0f) {
+            r.fading = r.frozen = false;
+            r.frozen_pose.clear();
+        }
+    }
+    s.finished = r.cur.finished;
+    a.time = (r.ctrl->states[static_cast<std::size_t>(r.cur.state)].loop ? frac(r.cur.norm) : r.cur.norm) *
+             state_weights(r, &set, r.cur.state);
+    write_pose(scene, w);
+}
+
 void evaluate(Scene& scene, Work& w, float dt) {
     AnimatorState& s = *w.s;
     AnimatorComponent& a = *w.a;
+    if (s.set && s.ctl.ctrl && s.ctl.cur.state >= 0) {
+        evaluate_controller(scene, w, dt);
+        return;
+    }
     if (!s.set || s.current < 0) return;
     const Clip& clip = s.set->clips[static_cast<std::size_t>(s.current)];
     const float delta = a.playing ? dt * a.speed : 0.0f;
@@ -191,15 +520,7 @@ void evaluate(Scene& scene, Work& w, float dt) {
         }
     }
 
-    for (std::size_t i = 0; i < n; ++i) {
-        if (!s.animated[i] || s.bindings[i] == Entity{}) continue;
-        auto* t = scene.world().get<scene::Transform>(s.bindings[i]);
-        if (!t) continue;
-        t->position = s.pose[i].translation;
-        t->rotation = s.pose[i].rotation;
-        t->scale = s.pose[i].scale;
-        ++w.written;
-    }
+    write_pose(scene, w);
 }
 
 } // namespace
@@ -225,6 +546,35 @@ struct AnimationSystem::Impl {
     std::vector<Work> work;
     std::unordered_map<Uuid, std::shared_ptr<const SpriteSheet>, UuidHash> explicit_sheets;
     std::unordered_map<Uuid, std::shared_ptr<const SpriteSheet>, UuidHash> sheet_cache;
+    struct CachedController {
+        std::shared_ptr<const Controller> ctrl;
+        std::string error;
+    };
+    std::unordered_map<std::string, std::shared_ptr<const Controller>> explicit_controllers;
+    std::unordered_map<std::string, CachedController> controller_cache;
+
+    std::shared_ptr<const Controller> resolve_controller(const std::string& path, std::string& error) {
+        error.clear();
+        if (path.empty()) return nullptr;
+        if (const auto it = explicit_controllers.find(path); it != explicit_controllers.end()) return it->second;
+        auto it = controller_cache.find(path);
+        if (it == controller_cache.end()) {
+            CachedController c;
+            if (!settings.controllers) {
+                c.error = std::format("{}: no animation controller loader", path);
+            } else if (auto text = settings.controllers(path); !text) {
+                c.error = std::format("{}: {}", path, text.error().message);
+            } else if (auto ctrl = Controller::parse(*text, path); !ctrl) {
+                c.error = std::format("{}: {}", path, ctrl.error().message);
+            } else {
+                c.ctrl = std::move(*ctrl);
+            }
+            if (!c.error.empty()) VICTUS_LOG_ERROR("animation", "{}", c.error);
+            it = controller_cache.emplace(path, std::move(c)).first;
+        }
+        error = it->second.error;
+        return it->second.ctrl;
+    }
 
     std::shared_ptr<const SpriteSheet> resolve_sheet(const Uuid& id) {
         if (id.is_nil()) return nullptr;
@@ -263,7 +613,56 @@ struct AnimationSystem::Impl {
             }
         }
         if (!bindings_valid(scene, s, e)) bind_state(scene, s, e);
+        if (!a.controller.empty()) {
+            std::string error;
+            auto ctrl = resolve_controller(a.controller, error);
+            if (ctrl != s.ctl.ctrl || s.ctl.path != a.controller) {
+                init_controller(s, ctrl, a.controller, std::move(error));
+                if (s.ctl.ctrl) {
+                    // Start in the state the clip field names (saved scenes, hot reload), else the default.
+                    if (const std::int32_t st = s.ctl.ctrl->find_state(a.clip); st >= 0) s.ctl.cur.state = st;
+                    a.clip = s.ctl.ctrl->states[static_cast<std::size_t>(s.ctl.cur.state)].name;
+                    s.previous = -1;
+                    s.current = -1;
+                    s.clip_name = a.clip;
+                    a.time = 0;
+                }
+            }
+        } else if (!s.ctl.path.empty()) {
+            s.ctl = ControllerRun{}; // controller removed: back to plain clip playback
+            s.clip_name.clear();
+            s.current = -1;
+            mark_animated(s);
+        }
+        if (s.ctl.ctrl && s.set) {
+            resolve_controller_clips(s);
+            ControllerRun& r = s.ctl;
+            const std::string& cur = r.ctrl->states[static_cast<std::size_t>(r.cur.state)].name;
+            if (a.clip != cur) { // the clip field names the state to enter
+                const std::int32_t to = r.ctrl->find_state(a.clip);
+                const float fade = s.pending_fade >= 0 ? s.pending_fade : a.crossfade;
+                if (to >= 0 && !a.clip.empty() && s.clip_name == cur) enter_state(s, a, to, fade, 0.0f);
+                else a.clip = cur;
+            }
+            s.clip_name = a.clip;
+            s.pending_fade = -1;
+            return;
+        }
         sync_clip(s, a);
+    }
+
+    // Ensures the entity has an Animator state prepared this frame; null without an Animator.
+    AnimatorState* ensure(Scene& scene, Entity e, AnimatorComponent*& a) {
+        a = scene.world().alive(e) ? scene.world().get<AnimatorComponent>(e) : nullptr;
+        if (!a) return nullptr;
+        auto* s = scene.world().get<AnimatorState>(e);
+        if (!s) {
+            scene.world().add<AnimatorState>(e);
+            a = scene.world().get<AnimatorComponent>(e);
+            s = scene.world().get<AnimatorState>(e);
+        }
+        prepare(scene, e, *a, *s);
+        return s;
     }
 };
 
@@ -313,12 +712,25 @@ void AnimationSystem::update(Scene& scene, float dt) {
     for (const Work& w : work) {
         stats_.channels_sampled += w.channels;
         stats_.nodes_written += w.written;
+        stats_.transitions += w.transitions;
+        if (w.s->ctl.ctrl) ++stats_.controlled;
+        else if (!w.a->controller.empty()) ++stats_.controller_errors;
     }
 }
 
 bool AnimationSystem::play(Scene& scene, Entity e, std::string_view clip, float fade, bool restart) {
-    auto* a = scene.world().get<AnimatorComponent>(e);
+    auto* a = scene.world().alive(e) ? scene.world().get<AnimatorComponent>(e) : nullptr;
     if (!a) return false;
+    if (!a->controller.empty()) {
+        AnimatorState* s = impl_->ensure(scene, e, a);
+        if (!s || !s->ctl.ctrl) return false;
+        const std::int32_t to = s->ctl.ctrl->find_state(clip);
+        if (to < 0 || !s->set) return false;
+        a->playing = true;
+        if (to == s->ctl.cur.state && !restart) return true;
+        enter_state(*s, *a, to, fade < 0 ? a->crossfade : fade, 0.0f);
+        return true;
+    }
     auto set = impl_->resolve(a->model);
     if (!set || set->find_clip(clip) < 0) return false;
     auto* s = scene.world().get<AnimatorState>(e);
@@ -344,8 +756,25 @@ bool AnimationSystem::play(Scene& scene, Entity e, std::string_view clip, float 
 
 AnimatorStatus AnimationSystem::status(Scene& scene, Entity e) {
     AnimatorStatus st;
-    auto* a = scene.world().get<AnimatorComponent>(e);
+    auto* a = scene.world().alive(e) ? scene.world().get<AnimatorComponent>(e) : nullptr;
     if (!a) return st;
+    if (auto* s = scene.world().get<AnimatorState>(e); s && s->ctl.ctrl && s->set && s->ctl.cur.state >= 0) {
+        ControllerRun& r = s->ctl;
+        st.valid = true;
+        st.controlled = true;
+        st.state = r.ctrl->states[static_cast<std::size_t>(r.cur.state)].name;
+        st.clip = st.state;
+        st.normalized_time = r.cur.norm;
+        st.time = a->time;
+        st.duration = state_weights(r, s->set.get(), r.cur.state);
+        st.playing = a->playing;
+        st.looping = r.ctrl->states[static_cast<std::size_t>(r.cur.state)].loop;
+        st.finished = r.cur.finished;
+        st.bound_nodes = s->bound;
+        for (const auto v : s->animated) st.animated_nodes += v;
+        if (r.fading && r.fade_duration > 0.0f) st.blend = std::clamp(r.fade_elapsed / r.fade_duration, 0.0f, 1.0f);
+        return st;
+    }
     st.clip = a->clip;
     st.time = a->time;
     st.playing = a->playing;
@@ -371,6 +800,106 @@ std::vector<std::string> AnimationSystem::clips(Scene& scene, Entity e) {
     if (auto set = impl_->resolve(a->model))
         for (const Clip& c : set->clips) out.push_back(c.name);
     return out;
+}
+
+void AnimationSystem::add_controller(std::string path, std::shared_ptr<const Controller> controller) {
+    impl_->explicit_controllers[std::move(path)] = std::move(controller);
+}
+void AnimationSystem::reload_controllers() { impl_->controller_cache.clear(); }
+std::shared_ptr<const Controller> AnimationSystem::controller(std::string_view path, std::string* error) {
+    std::string err;
+    auto c = impl_->resolve_controller(std::string(path), err);
+    if (error) *error = std::move(err);
+    return c;
+}
+
+namespace {
+ControllerRun* run_of(AnimatorState* s) { return s && s->ctl.ctrl ? &s->ctl : nullptr; }
+} // namespace
+
+bool AnimationSystem::set_parameter(Scene& scene, Entity e, std::string_view name, float value) {
+    AnimatorComponent* a = nullptr;
+    ControllerRun* r = run_of(impl_->ensure(scene, e, a));
+    if (!r) return false;
+    const std::int32_t i = r->ctrl->find_parameter(name);
+    if (i < 0) return false;
+    if (!std::isfinite(value)) value = 0;
+    switch (r->ctrl->parameters[static_cast<std::size_t>(i)].type) {
+    case ParamType::Float: break;
+    case ParamType::Int: value = std::round(value); break;
+    case ParamType::Bool:
+    case ParamType::Trigger: value = value != 0.0f ? 1.0f : 0.0f; break;
+    }
+    r->params[static_cast<std::size_t>(i)] = value;
+    return true;
+}
+
+bool AnimationSystem::set_trigger(Scene& scene, Entity e, std::string_view name) {
+    AnimatorComponent* a = nullptr;
+    ControllerRun* r = run_of(impl_->ensure(scene, e, a));
+    if (!r) return false;
+    const std::int32_t i = r->ctrl->find_parameter(name);
+    if (i < 0 || r->ctrl->parameters[static_cast<std::size_t>(i)].type != ParamType::Trigger) return false;
+    r->params[static_cast<std::size_t>(i)] = 1;
+    return true;
+}
+
+bool AnimationSystem::reset_trigger(Scene& scene, Entity e, std::string_view name) {
+    AnimatorComponent* a = nullptr;
+    ControllerRun* r = run_of(impl_->ensure(scene, e, a));
+    if (!r) return false;
+    const std::int32_t i = r->ctrl->find_parameter(name);
+    if (i < 0 || r->ctrl->parameters[static_cast<std::size_t>(i)].type != ParamType::Trigger) return false;
+    r->params[static_cast<std::size_t>(i)] = 0;
+    return true;
+}
+
+std::optional<float> AnimationSystem::parameter(Scene& scene, Entity e, std::string_view name) {
+    AnimatorComponent* a = nullptr;
+    ControllerRun* r = run_of(impl_->ensure(scene, e, a));
+    if (!r) return std::nullopt;
+    const std::int32_t i = r->ctrl->find_parameter(name);
+    if (i < 0) return std::nullopt;
+    return r->params[static_cast<std::size_t>(i)];
+}
+
+ControllerStatus AnimationSystem::controller_status(Scene& scene, Entity e) {
+    ControllerStatus out;
+    AnimatorComponent* a = nullptr;
+    AnimatorState* s = impl_->ensure(scene, e, a);
+    if (!s) return out;
+    out.controller = a->controller;
+    out.error = s->ctl.error;
+    ControllerRun* r = run_of(s);
+    if (!r) return out;
+    const Controller& c = *r->ctrl;
+    out.valid = true;
+    for (const ControllerState& st : c.states) out.states.push_back(st.name);
+    for (std::size_t i = 0; i < c.parameters.size(); ++i)
+        out.parameters.push_back({c.parameters[i].name, c.parameters[i].type, r->params[i]});
+    if (r->cur.state < 0) return out;
+    out.state = c.states[static_cast<std::size_t>(r->cur.state)].name;
+    out.normalized_time = r->cur.norm;
+    if (r->fading) {
+        out.blend = r->fade_duration > 0 ? std::clamp(r->fade_elapsed / r->fade_duration, 0.0f, 1.0f) : 1.0f;
+        out.previous_state = r->frozen ? std::string("(blend)") : c.states[static_cast<std::size_t>(r->prev.state)].name;
+    }
+    if (!s->set) return out;
+    resolve_controller_clips(*s);
+    (void)state_weights(*r, s->set.get(), r->cur.state);
+    const ControllerState& st = c.states[static_cast<std::size_t>(r->cur.state)];
+    const auto& clips = r->clips[static_cast<std::size_t>(r->cur.state)];
+    for (std::size_t i = 0; i < clips.size() && i < r->weights.size(); ++i)
+        out.weights.push_back({st.motion == MotionType::Clip ? st.clip : st.points[i].clip, r->weights[i], clips[i] < 0});
+    return out;
+}
+
+ControllerLoader directory_loader(std::filesystem::path assets_root) {
+    return [root = std::move(assets_root)](std::string_view path) -> Result<std::string> {
+        auto clean = fs::sanitize_relative(path);
+        if (!clean) return std::move(clean).error();
+        return fs::read_text(root / *clean, 16u * 1024u * 1024u);
+    };
 }
 
 void bind(Scene& scene, AnimationSystem* system) {

@@ -14,6 +14,8 @@
 //   - behaviour trees (.vbt)                       reported in `behavior_trees`; AiSystem::reload
 //   - sequences (.vseq)                            reported in `sequences`; SequencerSystem::reload
 //                                                  drops the cached tree and restarts its users
+//   - animation controllers (.vanim)               reported in `anim_controllers`; apply() calls
+//                                                  AnimationSystem::reload_controllers
 //   - string tables (.vstrings)                    reported in `string_tables`; hosts call
 //                                                  ScriptHost::reload_localization
 //   - sprite sheets (.vsheet)                      reported in `sprite_sheets`; apply() re-reads them
@@ -50,6 +52,7 @@ struct HotReloadReport {
     std::vector<std::string> string_tables;  // changed .vstrings tables (ScriptHost::reload_localization)
     std::vector<std::string> behavior_trees; // changed .vbt trees (AiSystem::reload restarts their users)
     std::vector<std::string> sequences;      // changed .vseq timelines (SequencerSystem::reload keeps the playhead)
+    std::vector<std::string> anim_controllers; // changed .vanim state machines (apply() reloads them)
     std::vector<std::string> restart_needed; // files whose changes appear on the next start
     [[nodiscard]] bool empty() const noexcept { return changed.empty(); }
     // One human-readable line per event, for logs and editor notifications.
