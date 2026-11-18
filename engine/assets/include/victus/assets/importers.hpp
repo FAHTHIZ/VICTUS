@@ -2,6 +2,7 @@
 // Source-asset importers. Importers are pure functions from source files + settings to cooked
 // data, so they can run on any worker thread and be unit tested without a GPU.
 #pragma once
+#include <span>
 #include "victus/assets/cooked.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/core/json.hpp"
@@ -64,6 +65,12 @@ inline constexpr std::uint32_t kModelImporterVersion = 5; // v2: skins and anima
 // resolve inside `sandbox_root`; remote URIs and absolute paths are rejected.
 [[nodiscard]] Result<CookedModel> import_gltf(const fs::Path& path, const ModelImportSettings& settings,
                                               const fs::Path& sandbox_root, ImportResult* result = nullptr);
+// Imports a self-contained glTF from memory: a .glb, or .gltf JSON whose buffers and images are
+// embedded (data URIs or the GLB binary chunk). External file references fail. `name` labels
+// errors and warnings. Used for engine-embedded content such as the starter characters.
+[[nodiscard]] Result<CookedModel> import_gltf_memory(std::span<const std::uint8_t> bytes, std::string_view name,
+                                                     const ModelImportSettings& settings,
+                                                     ImportResult* result = nullptr);
 
 // Writes a cooked model as glTF 2.0 JSON with an embedded base64 buffer: geometry, skin
 // streams, material factors (no textures), nodes, skins and animations. Round-trips through

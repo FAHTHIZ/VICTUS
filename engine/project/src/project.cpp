@@ -141,10 +141,13 @@ bool Project::is_project_dir(const fs::Path& directory) {
     return fs::exists(directory / kProjectFileName);
 }
 
-Result<Project> Project::create(const fs::Path& directory, std::string_view name, std::string_view template_id) {
+Result<Project> Project::create(const fs::Path& directory, std::string_view name, std::string_view template_id,
+                                const TemplateOptions& options) {
     const auto& list = templates();
     const auto it = std::find_if(list.begin(), list.end(), [&](const TemplateInfo& t) { return t.id == template_id; });
     if (it == list.end()) return make_error(ErrorCode::InvalidArgument, "unknown template '" + std::string(template_id) + "'");
+    if (options.character != kNoCharacter && !find_starter_character(options.character))
+        return make_error(ErrorCode::InvalidArgument, "unknown starter character '" + options.character + "' (v01, v02 or none)");
     if (name.empty()) return make_error(ErrorCode::InvalidArgument, "project name must not be empty");
     std::error_code ec;
     if (sfs::exists(directory, ec)) {
@@ -163,8 +166,8 @@ Result<Project> Project::create(const fs::Path& directory, std::string_view name
 
     register_components();
     scene::Scene starter;
-    VICTUS_TRY_STATUS(build_template_scene(template_id, starter));
-    for (const TemplateFile& f : template_files(template_id)) {
+    VICTUS_TRY_STATUS(build_template_scene(template_id, starter, options));
+    for (const TemplateFile& f : template_files(template_id, options)) {
         auto path = p.resolve(f.path);
         if (!path) return std::move(path).error();
         sfs::create_directories(path->parent_path(), ec);

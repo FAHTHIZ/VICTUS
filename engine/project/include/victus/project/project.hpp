@@ -6,6 +6,7 @@
 #include "victus/core/json.hpp"
 #include "victus/core/process.hpp"
 #include "victus/gameplay/input_map.hpp"
+#include "victus/project/characters.hpp"
 #include "victus/scene/scene.hpp"
 
 #include <string>
@@ -57,18 +58,28 @@ struct TemplateInfo {
     std::string id;           // "3d", "2d", "simulation"
     std::string display_name;
     std::string description;
+    bool characters{false}; // has a player character: TemplateOptions::character applies
+};
+
+// Choices made when creating a project from a template.
+struct TemplateOptions {
+    // Starter character (victus/project/characters.hpp) for templates with `characters`: "v01"
+    // (default), "v02", or "none" for a plain capsule body without a skinned character.
+    std::string character{kDefaultCharacter};
 };
 
 [[nodiscard]] const std::vector<TemplateInfo>& templates();
 // Fills `scene` with the template's starter content (cleared first).
-[[nodiscard]] Status build_template_scene(std::string_view template_id, scene::Scene& scene);
+[[nodiscard]] Status build_template_scene(std::string_view template_id, scene::Scene& scene,
+                                          const TemplateOptions& options = {});
 
 struct TemplateFile {
     std::string path; // project-relative, e.g. "assets/scripts/player.luau"
     std::string content;
 };
 // Extra files (scripts) a template writes next to its scene.
-[[nodiscard]] std::vector<TemplateFile> template_files(std::string_view template_id);
+[[nodiscard]] std::vector<TemplateFile> template_files(std::string_view template_id,
+                                                      const TemplateOptions& options = {});
 
 // Registers the serializers of every engine component a project scene may contain (gameplay
 // behaviours, scripts). Idempotent; call before loading scenes.
@@ -78,7 +89,7 @@ class Project {
 public:
     // Creates a new project in `directory` (must not exist or be empty).
     [[nodiscard]] static Result<Project> create(const fs::Path& directory, std::string_view name,
-                                                std::string_view template_id);
+                                                std::string_view template_id, const TemplateOptions& options = {});
     // Opens a project folder or its `victus.project` file.
     [[nodiscard]] static Result<Project> open(const fs::Path& path);
     [[nodiscard]] static bool is_project_dir(const fs::Path& directory);

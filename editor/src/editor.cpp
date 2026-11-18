@@ -144,8 +144,9 @@ Status Editor::open_project(const fs::Path& path) {
     return {};
 }
 
-Status Editor::create_project(const fs::Path& directory, std::string_view name, std::string_view template_id) {
-    auto p = project::Project::create(directory, name, template_id);
+Status Editor::create_project(const fs::Path& directory, std::string_view name, std::string_view template_id,
+                              const project::TemplateOptions& options) {
+    auto p = project::Project::create(directory, name, template_id, options);
     if (!p) return std::move(p).error();
     return open_project(directory);
 }
@@ -352,7 +353,9 @@ Status Editor::save_scene_as(std::string_view rel) {
 
 void Editor::new_scene() {
     auto s = std::make_unique<Scene>();
-    (void)project::build_template_scene("3d", *s);
+    project::TemplateOptions bare;
+    bare.character = std::string(project::kNoCharacter); // stripped below anyway
+    (void)project::build_template_scene("3d", *s, bare);
     // A new scene starts with camera + light only.
     std::vector<Entity> remove;
     for (const Entity e : s->roots()) {

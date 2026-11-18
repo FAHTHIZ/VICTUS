@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "victus/project/characters.hpp"
+
+#include "victus/animation/animation.hpp"
+#include "victus/assets/importers.hpp"
+#include "victus/assets/instantiate.hpp"
+#include "victus/core/json.hpp"
+
+#include <array>
+#include <mutex>
+#include <optional>
+
+namespace victus::project {
+
+namespace embedded {
+extern const std::uint8_t kVanguard01Glb[];
+extern const std::size_t kVanguard01GlbSize;
+extern const std::uint8_t kVanguard02Glb[];
+extern const std::size_t kVanguard02GlbSize;
+} // namespace embedded
+
+const std::vector<StarterCharacter>& starter_characters() {
+    static const std::vector<StarterCharacter> list = {
+        {"v01", "Vanguard V-01",
+         "Masculine-presenting Vanguard: broader shoulders, two-piece chest shell, squared crown with a rear fin.",
+         "assets/models/characters/victus_vanguard_01.glb", "cc97cbb6-893b-451a-b791-e919b55c4417"},
+        {"v02", "Vanguard V-02",
+         "Feminine-presenting Vanguard: narrower swept shoulders, continuous chest shell, paired rear fins and status lights.",
+         "assets/models/characters/victus_vanguard_02.glb", "634fec79-3d18-4749-b5ce-9c74265f931e"},
+    };
+    return list;
+}
+
+const StarterCharacter* find_starter_character(std::string_view id) {
+    for (const auto& c : starter_characters())
+        if (c.id == id) return &c;
+    return nullptr;
+}
+
+namespace {
+
+std::size_t index_of(const StarterCharacter& c) {
+    const auto& list = starter_characters();
+    return static_cast<std::size_t>(&c - list.data());
+}
+
+} // namespace
+
+std::span<const std::uint8_t> starter_character_glb(const StarterCharacter& c) {
+    if (index_of(c) == 0) return {embedded::kVanguard01Glb, embedded::kVanguard01GlbSize};
+    return {embedded::kVanguard02Glb, embedded::kVanguard02GlbSize};
+}
+
+std::string starter_character_meta(const StarterCharacter& c) {
+    json::Value m = json::Value::object();
+    m.set("victus_meta", 1);
+    m.set("uuid", std::string(c.uuid));
+    m.set("importer", "gltf");
+    return json::stringify(m, true) + "\n";
+}
+
+std::string starter_character_controller() {
+    // Locomotion blends Idle/Walk/Run by ground speed (m/s), phase-synced. A jump plays the
+    // one-shot Jump, then Fall loops until "grounded"; walking off a ledge goes straight to Fall.
+    // Land absorbs the impact and hands back to Locomotion. Interact is a short hand reach.
+    return R"({
+  "version": 1,
+  "parameters": [
+    { "name": "speed", "type": "float" },
+    { "name": "grounded", "type": "bool", "default": true },
+    { "name": "jump", "type": "trigger" },
+    { "name": "interact", "type": "trigger" }
+  ],
+  "default_state": "Locomotion",
+  "states": [
+    { "name": "Locomotion", "blend1d": { "parameter": "speed", "points": [
+        { "clip": "Idle", "at": 0 }, { "clip": "Walk", "at": 2.5 }, { "clip": "Run", "at": 5 } ] } },
+    { "name": "Jump", "clip": "Jump", "loop": false },
+    { "name": "Fall", "clip": "Fall" },
+    { "name": "Land", "clip": "Land", "loop": false },
+    { "name": "Interact", "clip": "Interact", "loop": false }
+  ],
+  "transitions": [
+    { "from": "Locomotion", "to": "Jump", "duration": 0.08, "conditions": [ { "parameter": "jump" } ] },
+    { "from": "Land", "to": "Jump", "duration": 0.08, "conditions": [ { "parameter": "jump" } ] },
+    { "from": "Interact", "to": "Jump", "duration": 0.08, "conditions": [ { "parameter": "jump" } ] },
+    { "from": "Locomotion", "to": "Fall", "duration": 0.25, "conditions": [ { "parameter": "grounded", "op": "false" } ] },
+    { "from": "Interact", "to": "Fall", "duration": 0.25, "conditions": [ { "parameter": "grounded", "op": "false" } ] },
+    { "from": "Jump", "to": "Land", "duration": 0.08, "exit_time": 0.35,
+      "conditions": [ { "parameter": "grounded", "op": "true" } ] },
+    { "from": "Jump", "to": "Fall", "duration": 0.3, "exit_time": 1.0,
+      "conditions": [ { "parameter": "grounded", "op": "false" } ] },
+    { "from": "Fall", "to": "Land", "duration": 0.06, "conditions": [ { "parameter": "grounded", "op": "true" } ] },
+    { "from": "Land", "to": "Locomotion", "duration": 0.2, "exit_time": 0.6 },
+    { "from": "Locomotion", "to": "Interact", "duration": 0.15, "conditions": [ { "parameter": "interact" } ] },
+    { "from": "Interact", "to": "Locomotion", "duration": 0.25, "exit_time": 0.92 }
+  ]
+}
+)";
+}
+
+Result<scene::Entity> instantiate_starter_character(scene::Scene& s, const StarterCharacter& c, std::string_view name,
+                                                    scene::Entity parent) {
+    static std::mutex mutex;
+    static std::array<std::optional<assets::CookedModel>, 2> cache;
+    const std::size_t i = index_of(c);
+    std::lock_guard lock(mutex);
+    if (!cache[i]) {
+        // Only the node graph matters here: skip mesh optimisation, LODs and tangents.
+        assets::ModelImportSettings settings;
+        settings.optimize_meshes = false;
+        settings.generate_tangents = false;
+        settings.import_textures = false;
+        auto model = assets::import_gltf_memory(starter_character_glb(c), c.model_path, settings);
+        if (!model) return std::move(model).error();
+        cache[i] = std::move(model).value();
+    }
+    Uuid uuid;
+    if (!Uuid::parse(c.uuid, uuid)) return make_error(ErrorCode::InvalidArgument, "bad starter character uuid");
+    const scene::Entity root = assets::instantiate_model(s, uuid, *cache[i], name, parent);
+    if (auto* a = s.world().get<animation::AnimatorComponent>(root)) {
+        a->clip = "Idle";
+        a->controller = kCharacterControllerAsset;
+    }
+    return root;
+}
+
+} // namespace victus::project

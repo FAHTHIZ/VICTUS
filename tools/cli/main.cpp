@@ -48,7 +48,7 @@ constexpr const char* kUsage =
     "usage: victus <command> [options]\n"
     "\n"
     "commands:\n"
-    "  new <folder> [--template 3d|2d|simulation|multiplayer] [--name NAME]\n"
+    "  new <folder> [--template 3d|2d|simulation|multiplayer] [--name NAME] [--character v01|v02|none]\n"
     "  templates                                                  list project templates\n"
     "  info <project>                                             show project settings, scenes, assets\n"
     "  import <project>                                           import changed assets (exit 1 on failure)\n"
@@ -89,12 +89,15 @@ int cmd_new(const std::vector<std::string>& a) {
     cli::Parser p("victus new", "Create a project from a template");
     p.positional("folder", "new project folder", true)
         .option("template", "3d, 2d, simulation or multiplayer", "3d")
-        .option("name", "project name (default: folder name)");
+        .option("name", "project name (default: folder name)")
+        .option("character", "starter character for 3d/multiplayer: v01, v02 or none", "v01");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message + "\n" + p.help());
     const fs::Path dir = p.get("folder");
     const std::string name = p.has("name") ? p.get("name") : dir.filename().string();
-    auto proj = project::Project::create(dir, name, p.get("template"));
+    project::TemplateOptions options;
+    options.character = p.get("character");
+    auto proj = project::Project::create(dir, name, p.get("template"), options);
     if (!proj) return error(proj.error().message);
     std::printf("Created %s project '%s' in %s\n", p.get("template").c_str(), name.c_str(), proj->root().string().c_str());
     std::printf("Open it with: victus_editor \"%s\"   or run it with: victus run \"%s\"\n", proj->root().string().c_str(),

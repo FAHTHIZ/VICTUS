@@ -63,7 +63,7 @@ victus_add_test(victus_asset_tests
     SOURCES
         assets/asset_tests.cpp
         assets/animation_asset_tests.cpp
-        assets/template_robot_tests.cpp
+        assets/template_character_tests.cpp
         assets/texture_compression_tests.cpp
         assets/mesh_lod_asset_tests.cpp
     DEPS VICTUS::Assets VICTUS::Project
