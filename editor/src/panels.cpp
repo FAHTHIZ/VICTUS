@@ -15,6 +15,8 @@
 #include <imgui_stdlib.h>
 
 #include <algorithm>
+#include <format>
+#include <map>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -1633,21 +1635,89 @@ void Editor::draw_assets() {
         ImGui::End();
         return;
     }
-    if (ImGui::Button("Reimport")) (void)reimport_assets();
-    ImGui::SameLine();
-    if (ImGui::RadioButton("List", !asset_grid_)) asset_grid_ = false;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Grid", asset_grid_)) asset_grid_ = true;
-    if (asset_grid_) {
+    std::vector<assets::AssetRecord> all = db_ ? db_->records() : std::vector<assets::AssetRecord>{};
+    std::sort(all.begin(), all.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+    std::vector<assets::AssetRecord> recs;
+    for (const auto& r : all)
+        if (asset_visible(r)) recs.push_back(r);
+
+    // ---- toolbar: search, type, view, reimport, help ----
+    {
+        namespace tk = ui::tokens;
+        const float tools_w = ImGui::GetFrameHeight() * 4 + tk::kSpace2 * 4 + (asset_grid_ ? 110 + tk::kSpace2 : 0);
+        const float avail = ImGui::GetContentRegionAvail().x;
+        const float type_w = std::clamp(avail * 0.22f, 110.0f, 170.0f);
+        (void)kit::search_input("##asset_search", "Search assets", asset_search_,
+                                std::max(120.0f, avail - type_w - tools_w - tk::kSpace4 * 2));
+        ImGui::SameLine(0, tk::kSpace4);
+        // Type filter: only kinds the project has, with how many of each.
+        std::map<assets::AssetKind, std::size_t> kinds;
+        for (const auto& r : all) ++kinds[r.kind];
+        const std::string preview =
+            asset_kind_filter_ ? std::string(asset_kind_label(*asset_kind_filter_)) : std::string("All types");
+        ImGui::SetNextItemWidth(type_w);
+        if (ImGui::BeginCombo("##asset_kind", preview.c_str())) {
+            if (ImGui::Selectable("All types", !asset_kind_filter_)) asset_kind_filter_.reset();
+            for (const auto& [k, n] : kinds) {
+                const std::string item = std::format("{}  ({})##{}", asset_kind_label(k), n, static_cast<int>(k));
+                if (ImGui::Selectable(item.c_str(), asset_kind_filter_ == k)) asset_kind_filter_ = k;
+            }
+            ImGui::EndCombo();
+        }
+        kit::tooltip("Show one type of asset");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(110);
-        ImGui::SliderFloat("##tile", &asset_tile_size_, 32.0f, 256.0f, "%.0f px");
+        const float x = ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - tools_w);
+        ImGui::SetCursorPosX(x);
+        if (asset_grid_) {
+            ImGui::SetNextItemWidth(110);
+            ImGui::SliderFloat("##tile", &asset_tile_size_, 32.0f, 256.0f, "%.0f px");
+            kit::tooltip("Thumbnail size");
+            ImGui::SameLine(0, tk::kSpace2);
+        }
+        if (kit::icon_button("##list", kit::Icon::Layout, "List: names, types and import status", !asset_grid_))
+            asset_grid_ = false;
+        ImGui::SameLine(0, tk::kSpace2);
+        if (kit::icon_button("##grid", kit::Icon::Texture, "Grid: large thumbnails", asset_grid_)) asset_grid_ = true;
+        ImGui::SameLine(0, tk::kSpace2);
+        if (kit::icon_button("##reimport", kit::Icon::Rotate, "Reimport every asset (after changing files outside VICTUS)"))
+            (void)reimport_assets();
+        ImGui::SameLine(0, tk::kSpace2);
+        (void)kit::icon_button("##assets_help", kit::Icon::Help,
+                               "To add assets, copy images, 3D models (.gltf, .glb), sounds or scripts into the "
+                               "project's assets folder; they appear here automatically.\n\n"
+                               "Double-click an asset to use it: models and prefabs are added to the scene, "
+                               "materials open in the editor, sounds play.");
+        if (ImGui::IsItemClicked() && platform_) platform_->set_clipboard(project_->assets_dir().string());
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Drop files into %s", project_->assets_dir().string().c_str());
     ImGui::Separator();
-    std::vector<assets::AssetRecord> recs = db_ ? db_->records() : std::vector<assets::AssetRecord>{};
-    std::sort(recs.begin(), recs.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+
+    if (all.empty()) {
+        (void)kit::empty_state(kit::Icon::Folder, "No assets yet",
+                               std::format("Copy images, 3D models, sounds or scripts into {} and they show up here.",
+                                           project_->assets_dir().string()));
+        ImGui::End();
+        return;
+    }
+    // Folder list on the left when there is room for it.
+    const std::vector<std::string> folders = asset_folders();
+    const bool sidebar = !folders.empty() && ImGui::GetContentRegionAvail().x > 520;
+    if (sidebar) {
+        ImGui::BeginChild("##asset_folders", ImVec2(170, 0), ImGuiChildFlags_ResizeX | ImGuiChildFlags_Borders);
+        draw_asset_folders(folders);
+        ImGui::EndChild();
+        ImGui::SameLine();
+    }
+    ImGui::BeginChild("##asset_body");
+    if (recs.empty()) {
+        if (kit::empty_state(kit::Icon::Search, "Nothing matches",
+                             std::format("{} asset{} hidden by the search, type or folder.", all.size(),
+                                         all.size() == 1 ? " is" : "s are"),
+                             "Show all assets")) {
+            asset_search_.clear();
+            asset_kind_filter_.reset();
+            asset_folder_.clear();
+        }
+    }
     // Draws an asset's thumbnail aspect-fitted into a square cell (or its text icon).
     const auto draw_thumb = [this](const assets::AssetRecord& r, float cell) {
         const ImVec2 p0 = ImGui::GetCursorScreenPos();
@@ -1698,10 +1768,11 @@ void Editor::draw_assets() {
             }
         }
         ImGui::EndChild();
-    } else if (ImGui::BeginTable("##assets", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable)) {
-        ImGui::TableSetupColumn("Asset", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 70);
-        ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, 90);
+    } else if (!recs.empty() &&
+               ImGui::BeginTable("##assets", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 120);
+        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 100);
         ImGui::TableHeadersRow();
         const float row = ImGui::GetTextLineHeight() * 1.6f;
         for (const auto& r : recs) {
@@ -1716,21 +1787,38 @@ void Editor::draw_assets() {
             draw_thumb(r, row);
             ImGui::SameLine();
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (row - ImGui::GetTextLineHeight()) * 0.5f);
-            ImGui::TextUnformatted(r.path.c_str());
+            {
+                const fs::Path path(r.path);
+                const float text_y = ImGui::GetCursorPosY();
+                ImGui::TextUnformatted(path.filename().string().c_str());
+                if (const std::string folder = path.parent_path().generic_string(); !folder.empty()) {
+                    ImGui::SameLine(0, ui::tokens::kSpace3);
+                    ImGui::SetCursorPosY(text_y);
+                    ImGui::TextColored(ui::tokens::kTextDisabled, "%s", folder.c_str());
+                }
+            }
             ImGui::TableNextColumn();
             ImGui::AlignTextToFramePadding();
-            ImGui::TextDisabled("%s", assets::to_string(r.kind));
+            ImGui::TextColored(ui::tokens::kTextMuted, "%s", asset_kind_label(r.kind));
             ImGui::TableNextColumn();
-            if (r.importer.empty()) ImGui::TextDisabled("-");
+            ImGui::AlignTextToFramePadding();
+            if (r.importer.empty()) ImGui::TextColored(ui::tokens::kTextMuted, "Ready");
             else {
                 auto up = db_->is_up_to_date(r.uuid);
-                if (up && *up) ImGui::TextDisabled("imported");
-                else ImGui::TextColored(ui::tokens::kWarning, "%s", up ? "stale" : "error");
+                if (up && *up) ImGui::TextColored(ui::tokens::kTextMuted, "Ready");
+                else if (up) {
+                    ImGui::TextColored(ui::tokens::kWarning, "Needs reimport");
+                    kit::tooltip("The file changed since it was imported. Click the reimport button above.");
+                } else {
+                    ImGui::TextColored(ui::tokens::kDanger, "Import failed");
+                    kit::tooltip("This file could not be imported. Check the Console and the Problems panel.");
+                }
             }
             ImGui::PopID();
         }
         ImGui::EndTable();
     }
+    ImGui::EndChild(); // ##asset_body
     if (!import_texture_.is_nil()) ImGui::OpenPopup("Texture Import Settings");
     if (ImGui::BeginPopupModal("Texture Import Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         const auto* tex = db_ ? db_->find(import_texture_) : nullptr;
