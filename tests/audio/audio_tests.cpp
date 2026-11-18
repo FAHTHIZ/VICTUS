@@ -408,3 +408,184 @@ TEST_CASE("audio: bus low-pass filters and the reverb send") {
     std::error_code ec;
     sfs::remove_all(dir, ec);
 }
+
+namespace {
+
+std::unique_ptr<audio::AudioEngine> make_budget_engine(const sfs::path& root, std::uint32_t voices,
+                                                       std::uint32_t one_shots = 64) {
+    audio::EngineOptions o;
+    o.assets_root = root;
+    o.null_device = true;
+    o.max_voices = voices;
+    o.max_one_shots = one_shots;
+    auto a = audio::AudioEngine::create(o);
+    REQUIRE(a.ok());
+    return std::move(a).value();
+}
+
+// Largest jump between consecutive samples of either channel: a hard cut of a 0.5 amplitude
+// sine shows up as a step of up to 0.5; a 440 Hz tone itself never steps more than ~0.03.
+float max_step(const std::vector<float>& buf) {
+    float m = 0.0f;
+    for (std::size_t i = 2; i < buf.size(); ++i) m = std::max(m, std::abs(buf[i] - buf[i - 2]));
+    return m;
+}
+
+} // namespace
+
+TEST_CASE("audio: voice budget virtualises the lowest priority and resumes it") {
+    const auto dir = temp_dir("budget");
+    write_tone(dir / "loop.wav", 1.0f);
+    auto a = make_budget_engine(dir, 2);
+    scene::Scene s;
+    const auto hi = add_source(s, "loop.wav", false);
+    const auto mid = add_source(s, "loop.wav", false);
+    const auto lo = add_source(s, "loop.wav", false);
+    auto& w = s.world();
+    for (const auto e : {hi, mid, lo}) w.get<audio::AudioSourceComponent>(e)->loop = true;
+    w.get<audio::AudioSourceComponent>(hi)->priority = 200;
+    w.get<audio::AudioSourceComponent>(mid)->priority = 150;
+    w.get<audio::AudioSourceComponent>(lo)->priority = 10;
+    a->update(s);
+    CHECK(a->stats().playing == 3);
+    CHECK(a->stats().real == 2);
+    CHECK(a->stats().virtual_voices == 1);
+    CHECK(a->is_virtual(lo));
+    CHECK(a->is_playing(lo)); // virtual voices are still logically playing
+    CHECK_FALSE(a->is_virtual(hi));
+    CHECK_FALSE(a->is_virtual(mid));
+    CHECK(a->stats().virtualised == 1);
+    (void)mix(*a, 4800);
+
+    // Raising its priority above `mid` swaps them on the next update.
+    w.get<audio::AudioSourceComponent>(lo)->priority = 180;
+    a->update(s);
+    CHECK_FALSE(a->is_virtual(lo));
+    CHECK(a->is_virtual(mid));
+    CHECK(a->stats().virtualised == 2);
+
+    // Stopping a real voice frees a slot: `mid` resumes.
+    a->stop(hi);
+    a->update(s);
+    CHECK_FALSE(a->is_virtual(mid));
+    CHECK(a->is_playing(mid));
+    CHECK(a->stats().virtual_voices == 0);
+    CHECK(mix(*a, 4800).rms() > 0.2f);
+
+    // set_paused on a virtual voice keeps it paused; resuming it rejoins arbitration.
+    w.get<audio::AudioSourceComponent>(hi)->priority = 255;
+    REQUIRE(a->play(s, hi).ok());
+    a->update(s);
+    CHECK(a->stats().virtual_voices == 1);
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("audio: a virtual voice keeps its playhead and ends while virtual") {
+    const auto dir = temp_dir("virtual_end");
+    write_tone(dir / "short.wav", 0.25f);
+    write_tone(dir / "loop.wav", 1.0f);
+    auto a = make_budget_engine(dir, 1);
+    scene::Scene s;
+    const auto keeper = add_source(s, "loop.wav", false);
+    auto& w = s.world();
+    w.get<audio::AudioSourceComponent>(keeper)->loop = true;
+    w.get<audio::AudioSourceComponent>(keeper)->priority = 200;
+    const auto shorty = add_source(s, "short.wav", false);
+    a->update(s);
+    CHECK(a->is_virtual(shorty));
+    CHECK(a->is_playing(shorty));
+    // Its 0.25 s clip runs out while it is virtual; when the slot frees up it stops instead of
+    // replaying from the start.
+    (void)mix(*a, 24000);
+    a->stop(keeper);
+    a->update(s);
+    CHECK_FALSE(a->is_playing(shorty));
+    CHECK_FALSE(a->is_virtual(shorty));
+    (void)mix(*a, 960); // the stopped keeper's 10 ms fade-out
+    CHECK(mix(*a, 4800).rms() < 1e-4f);
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("audio: inaudible sources go virtual and come back") {
+    const auto dir = temp_dir("inaudible");
+    write_tone(dir / "loop.wav", 1.0f);
+    auto a = make_budget_engine(dir, 8);
+    scene::Scene s;
+    const auto music = add_source(s, "loop.wav", false);
+    auto& w = s.world();
+    w.get<audio::AudioSourceComponent>(music)->loop = true;
+    w.get<audio::AudioSourceComponent>(music)->bus = audio::Bus::Music;
+    a->update(s);
+    CHECK_FALSE(a->is_virtual(music));
+    a->set_bus_muted(audio::Bus::Music, true);
+    a->update(s);
+    CHECK(a->is_virtual(music));
+    CHECK(a->is_playing(music));
+    (void)mix(*a, 4800);
+    a->set_bus_muted(audio::Bus::Music, false);
+    a->update(s);
+    CHECK_FALSE(a->is_virtual(music));
+    (void)mix(*a, 960); // past the 10 ms fade-in
+    CHECK(mix(*a, 4800).rms() > 0.2f);
+    // Volume zero is inaudible too.
+    w.get<audio::AudioSourceComponent>(music)->volume = 0.0f;
+    a->update(s);
+    CHECK(a->is_virtual(music));
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("audio: one-shot instance limits and budget steal with a fade, not a click") {
+    const auto dir = temp_dir("steal");
+    write_tone(dir / "tone.wav", 1.0f);
+    write_tone(dir / "other.wav", 1.0f);
+    SUBCASE("max_instances fades out the oldest instance of the same clip") {
+        auto a = make_budget_engine(dir, 16);
+        for (int i = 0; i < 3; ++i) REQUIRE(a->play_one_shot("tone.wav", {.max_instances = 2}).ok());
+        REQUIRE(a->play_one_shot("other.wav", {.max_instances = 2}).ok());
+        CHECK(a->stats().one_shots == 3);
+        CHECK(a->stats().stolen == 1);
+    }
+    SUBCASE("one-shots over the voice budget are stolen, lowest priority first") {
+        auto a = make_budget_engine(dir, 2);
+        REQUIRE(a->play_one_shot("tone.wav", {.priority = 10}).ok());
+        REQUIRE(a->play_one_shot("tone.wav", {.priority = 200}).ok());
+        REQUIRE(a->play_one_shot("tone.wav", {.priority = 100}).ok());
+        CHECK(a->stats().one_shots == 2);
+        CHECK(a->stats().real == 2);
+        CHECK(a->stats().stolen == 1);
+    }
+    SUBCASE("the cap fades out the oldest one-shot without a discontinuity") {
+        auto a = make_budget_engine(dir, 16, 1);
+        REQUIRE(a->play_one_shot("tone.wav").ok());
+        std::vector<float> buf(1013 * 2); // stop mid-cycle so a hard cut would jump
+        REQUIRE(a->render(buf.data(), 1013) == 1013);
+        REQUIRE(a->play_one_shot("tone.wav").ok());
+        CHECK(a->stats().stolen == 1);
+        CHECK(a->stats().one_shots == 1);
+        std::vector<float> after(4800 * 2);
+        REQUIRE(a->render(after.data(), 4800) == 4800);
+        std::vector<float> joined(buf.end() - 2, buf.end());
+        joined.insert(joined.end(), after.begin(), after.end());
+        CHECK(max_step(joined) < 0.08f);
+        // Once the fade completes the stolen sound is released.
+        scene::Scene s;
+        a->update(s);
+        CHECK(a->stats().one_shots == 1);
+    }
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("audio: priority serializes and is clamped") {
+    audio::register_components();
+    const auto* schema = scene::find_schema("AudioSource");
+    REQUIRE(schema != nullptr);
+    audio::AudioSourceComponent c;
+    c.priority = 42;
+    audio::AudioSourceComponent back;
+    REQUIRE(schema->load(&back, schema->save(&c)).ok());
+    CHECK(back.priority == 42);
+}
