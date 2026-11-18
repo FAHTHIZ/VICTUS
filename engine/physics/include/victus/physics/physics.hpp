@@ -207,6 +207,29 @@ struct StaticShapes2DComponent {
 // heights[z * resolution + x], z * spacing.y) in the entity's local space (translation and
 // rotation of its world transform; scale ignored). Not saved or reflected; bump `revision`
 // after changing it. Raycasts, contacts and characters report this entity.
+//
+// Incremental edits: after changing heights only inside a rectangle (same resolution, offset and
+// spacing), include the rectangle in `dirty` and bump `height_revision` instead of `revision`.
+// The physics world then rewrites just those samples of the existing shape (rounded out to
+// Jolt's block size), wakes bodies above them and clears `dirty`. Heights outside the shape's
+// encodable range fall back to a full rebuild, so producers that know their range (terrain:
+// 0..size.y) set `height_range` to reserve it when the shape is first built.
+struct HeightfieldRect {
+    std::uint32_t x0{1}, z0{1}, x1{0}, z1{0}; // inclusive sample coordinates; empty when x1 < x0
+    [[nodiscard]] bool empty() const noexcept { return x1 < x0 || z1 < z0; }
+    void include(const HeightfieldRect& r) noexcept {
+        if (r.empty()) return;
+        if (empty()) {
+            *this = r;
+            return;
+        }
+        x0 = x0 < r.x0 ? x0 : r.x0;
+        z0 = z0 < r.z0 ? z0 : r.z0;
+        x1 = x1 > r.x1 ? x1 : r.x1;
+        z1 = z1 > r.z1 ? z1 : r.z1;
+    }
+};
+
 struct StaticHeightfieldComponent {
     std::uint32_t resolution{0};
     std::shared_ptr<const std::vector<float>> heights;
@@ -217,6 +240,9 @@ struct StaticHeightfieldComponent {
     std::uint32_t layer{0};
     std::uint32_t mask{kAllLayers};
     std::uint64_t revision{0};
+    math::Vec2 height_range{0, 0};   // min, max local height the shape must encode (ignored unless max > min)
+    std::uint64_t height_revision{0};
+    HeightfieldRect dirty;
 };
 
 // Registers the reflected component schemas ("RigidBody", "Collider", "CharacterController",
@@ -284,6 +310,8 @@ struct PhysicsStats {
     std::uint64_t steps{0};
     std::uint32_t contacts_last_step{0};
     double last_step_ms{0};
+    std::uint64_t heightfield_builds{0};  // height-field shapes created (first sight or `revision` bumps)
+    std::uint64_t heightfield_updates{0}; // in-place `dirty` rectangle updates
 };
 
 // Line segments for debug visualization (editor overlays, `victus run --physics-debug`).

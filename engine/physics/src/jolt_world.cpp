@@ -585,6 +585,8 @@ public:
         out.steps += steps_;
         out.contacts_last_step += contacts_last_;
         out.last_step_ms += last_ms_;
+        out.heightfield_builds += field_builds_;
+        out.heightfield_updates += field_updates_;
     }
 
 private:
@@ -739,7 +741,9 @@ private:
 
     struct Field {
         JPH::BodyID id;
+        JPH::Ref<JPH::HeightFieldShape> shape;
         std::uint64_t revision{0};
+        std::uint64_t height_revision{0};
         math::Vec3 position;
         math::Quat rotation;
         std::uint64_t seen{0};
@@ -761,6 +765,10 @@ private:
         hs.mBlockSize = n >= 1025 ? 4 : 2;
         // Quantize to about a millimetre per sample relative to each block's range.
         hs.mBitsPerSample = std::max<std::uint32_t>(8, hs.CalculateBitsPerSampleForError(0.001f));
+        if (c.height_range.y > c.height_range.x) { // reserve the range later in-place edits need
+            hs.mMinHeightValue = c.height_range.x;
+            hs.mMaxHeightValue = c.height_range.y;
+        }
         auto res = hs.Create();
         if (res.HasError()) {
             VICTUS_LOG_WARN("physics", "height field: {}", res.GetError().c_str());
@@ -773,9 +781,50 @@ private:
         bcs.mRestitution = std::clamp(c.restitution, 0.0f, 1.0f);
         out.id = system_->GetBodyInterface().CreateAndAddBody(bcs, JPH::EActivation::DontActivate);
         if (out.id.IsInvalid()) return false;
+        out.shape = static_cast<JPH::HeightFieldShape*>(const_cast<JPH::Shape*>(res.Get().GetPtr()));
         out.revision = c.revision;
+        out.height_revision = c.height_revision;
+        ++field_builds_;
         out.position = pose.position;
         out.rotation = pose.rotation;
+        return true;
+    }
+
+    // Rewrites the samples in `c.dirty` (rounded out to the shape's blocks) in place. False when
+    // the rectangle is invalid or a height lies outside what the shape can encode: the caller
+    // then rebuilds the shape.
+    bool update_field(const StaticHeightfieldComponent& c, const Pose& pose, Field& f) {
+        const std::uint32_t n = c.resolution;
+        if (!f.shape || !c.heights || c.heights->size() != static_cast<std::size_t>(n) * n) return false;
+        if (c.dirty.empty()) return true;
+        if (c.dirty.x1 >= n || c.dirty.z1 >= n) return false;
+        const float lo = f.shape->GetMinHeightValue(), hi = f.shape->GetMaxHeightValue();
+        const std::uint32_t bs = f.shape->GetBlockSize(), count = f.shape->GetSampleCount();
+        const std::uint32_t x0 = c.dirty.x0 / bs * bs, z0 = c.dirty.z0 / bs * bs;
+        const std::uint32_t x1 = std::min(count, (c.dirty.x1 / bs + 1) * bs), z1 = std::min(count, (c.dirty.z1 / bs + 1) * bs);
+        const std::uint32_t sx = x1 - x0, sz = z1 - z0;
+        std::vector<float> block(static_cast<std::size_t>(sx) * sz, JPH::HeightFieldShapeConstants::cNoCollisionValue);
+        float ymin = hi, ymax = lo;
+        for (std::uint32_t z = z0; z < z1; ++z)
+            for (std::uint32_t x = x0; x < x1; ++x) {
+                if (x >= n || z >= n) continue; // padding beyond the field has no collision
+                const float y = c.offset.y + (*c.heights)[static_cast<std::size_t>(z) * n + x];
+                if (!(y >= lo && y <= hi)) return false;
+                block[static_cast<std::size_t>(z - z0) * sx + (x - x0)] = y;
+                ymin = std::min(ymin, y);
+                ymax = std::max(ymax, y);
+            }
+        const JPH::Vec3 com = f.shape->GetCenterOfMass();
+        f.shape->SetHeights(x0, z0, sx, sz, block.data(), static_cast<std::intptr_t>(sx), *temp_);
+        auto& bi = system_->GetBodyInterface();
+        bi.NotifyShapeChanged(f.id, com, false, JPH::EActivation::DontActivate);
+        // Wake bodies resting on the edited area so they fall into a dug hole or ride up a bump.
+        const math::Vec3 a{c.offset.x + static_cast<float>(x0) * c.spacing.x, ymin - 0.5f, c.offset.z + static_cast<float>(z0) * c.spacing.y};
+        const math::Vec3 b{c.offset.x + static_cast<float>(x1) * c.spacing.x, ymax + 2.0f, c.offset.z + static_cast<float>(z1) * c.spacing.y};
+        const JPH::AABox local(JPH::Vec3(a.x, a.y, a.z), JPH::Vec3(b.x, b.y, b.z));
+        const JPH::Mat44 m = JPH::Mat44::sRotationTranslation(to_jolt(pose.rotation), JPH::Vec3(pose.position.x, pose.position.y, pose.position.z));
+        bi.ActivateBodiesInAABox(local.Transformed(m), {}, {});
+        ++field_updates_;
         return true;
     }
 
@@ -794,6 +843,18 @@ private:
                 if (!create_field(e, c, pose, f)) return;
                 it = fields_.emplace(e.bits(), f).first;
             }
+            if (it->second.height_revision != c.height_revision) {
+                if (update_field(c, pose, it->second)) {
+                    it->second.height_revision = c.height_revision;
+                } else {
+                    destroy_field(it->second);
+                    fields_.erase(it);
+                    Field f;
+                    if (!create_field(e, c, pose, f)) return;
+                    it = fields_.emplace(e.bits(), f).first;
+                }
+            }
+            c.dirty = {};
             Field& f = it->second;
             f.seen = generation_;
             if (!nearly_equal(pose.position, f.position) || !nearly_equal(pose.rotation, f.rotation)) {
@@ -1175,6 +1236,7 @@ private:
     std::unique_ptr<Contacts> contacts_;
     std::unordered_map<std::uint64_t, Entry> bodies_;
     std::unordered_map<std::uint64_t, Field> fields_;
+    std::uint64_t field_builds_{0}, field_updates_{0};
     std::unordered_map<std::uint64_t, Character> chars_;
     std::unordered_map<std::uint64_t, Joint> joints_;
     JPH::Ref<JointPairFilter> group_filter_;

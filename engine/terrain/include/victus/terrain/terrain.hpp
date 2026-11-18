@@ -169,6 +169,7 @@ struct TerrainRuntime {
     math::Vec3 built_size{0, 0, 0};
     const Heightfield* built_data{nullptr};
     std::uint64_t collision_revision{~0ull};
+    std::shared_ptr<std::vector<float>> collision_heights; // shared with the collider; edited in place
     std::uint32_t chunks_per_side{0};
     std::vector<std::shared_ptr<const scene::ProceduralMesh>> chunks; // row-major (z rows)
     std::vector<std::uint64_t> chunk_built;                           // chunk revision each was built at
@@ -176,6 +177,7 @@ struct TerrainRuntime {
 
 struct TerrainStats {
     std::uint32_t terrains{0}, missing_data{0}, chunk_rebuilds{0}, collision_rebuilds{0}, chunks{0};
+    std::uint32_t collision_updates{0}; // edits passed to the collider as a dirty rectangle (no rebuild)
     std::uint32_t foliage{0}, foliage_instances{0}, foliage_rebuilds{0}; // foliage entities, live instances, chunk scatters
 };
 
