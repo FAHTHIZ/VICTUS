@@ -58,15 +58,17 @@ public:
     static constexpr std::size_t kMaxGamepads = 4;
 
     [[nodiscard]] bool key_down(Key k) const noexcept { return keys_[idx(k)]; }
-    [[nodiscard]] bool key_pressed(Key k) const noexcept { return keys_[idx(k)] && !prev_keys_[idx(k)]; }
-    [[nodiscard]] bool key_released(Key k) const noexcept { return !keys_[idx(k)] && prev_keys_[idx(k)]; }
-    [[nodiscard]] bool mouse_down(MouseButton b) const noexcept { return mouse_[static_cast<std::size_t>(b)]; }
-    [[nodiscard]] bool mouse_pressed(MouseButton b) const noexcept {
-        return mouse_[static_cast<std::size_t>(b)] && !prev_mouse_[static_cast<std::size_t>(b)];
-    }
-    [[nodiscard]] bool mouse_released(MouseButton b) const noexcept {
-        return !mouse_[static_cast<std::size_t>(b)] && prev_mouse_[static_cast<std::size_t>(b)];
-    }
+    // Edges are latched as events arrive, so a key or button that goes down and back up between two
+    // begin_frame() calls (a quick tap at a low frame rate) still reports pressed and released for that
+    // frame even though key_down() is already false again.
+    [[nodiscard]] bool key_pressed(Key k) const noexcept { return key_pressed_[idx(k)]; }
+    [[nodiscard]] bool key_released(Key k) const noexcept { return key_released_[idx(k)]; }
+    // Whether the key was held when this frame began (before this frame's events).
+    [[nodiscard]] bool key_was_down(Key k) const noexcept { return prev_keys_[idx(k)]; }
+    [[nodiscard]] bool mouse_down(MouseButton b) const noexcept { return mouse_[midx(b)]; }
+    [[nodiscard]] bool mouse_pressed(MouseButton b) const noexcept { return mouse_pressed_[midx(b)]; }
+    [[nodiscard]] bool mouse_released(MouseButton b) const noexcept { return mouse_released_[midx(b)]; }
+    [[nodiscard]] bool mouse_was_down(MouseButton b) const noexcept { return prev_mouse_[midx(b)]; }
     [[nodiscard]] math::Vec2 mouse_position() const noexcept { return mouse_pos_; }
     [[nodiscard]] math::Vec2 mouse_delta() const noexcept { return mouse_delta_; }
     [[nodiscard]] float wheel() const noexcept { return wheel_; }
@@ -84,9 +86,18 @@ public:
     // Mutation API used by the platform backend, input playback and tests.
     void begin_frame() noexcept;
     void set_key(Key k, bool down) noexcept {
-        if (k != Key::Unknown) keys_[idx(k)] = down; // unmapped keys are never reported as held
+        if (k == Key::Unknown) return; // unmapped keys are never reported as held
+        const std::size_t i = idx(k);
+        if (down && !keys_[i]) key_pressed_[i] = true;
+        if (!down && keys_[i]) key_released_[i] = true;
+        keys_[i] = down;
     }
-    void set_mouse_button(MouseButton b, bool down) noexcept { mouse_[static_cast<std::size_t>(b)] = down; }
+    void set_mouse_button(MouseButton b, bool down) noexcept {
+        const std::size_t i = midx(b);
+        if (down && !mouse_[i]) mouse_pressed_[i] = true;
+        if (!down && mouse_[i]) mouse_released_[i] = true;
+        mouse_[i] = down;
+    }
     void set_mouse_position(math::Vec2 p) noexcept {
         mouse_delta_ += p - mouse_pos_;
         mouse_pos_ = p;
@@ -99,8 +110,11 @@ public:
 
 private:
     static std::size_t idx(Key k) noexcept { return static_cast<std::size_t>(k) < kKeyCount ? static_cast<std::size_t>(k) : 0; }
-    std::array<bool, kKeyCount> keys_{}, prev_keys_{};
-    std::array<bool, kMouseCount> mouse_{}, prev_mouse_{};
+    static std::size_t midx(MouseButton b) noexcept {
+        return static_cast<std::size_t>(b) < kMouseCount ? static_cast<std::size_t>(b) : 0;
+    }
+    std::array<bool, kKeyCount> keys_{}, prev_keys_{}, key_pressed_{}, key_released_{};
+    std::array<bool, kMouseCount> mouse_{}, prev_mouse_{}, mouse_pressed_{}, mouse_released_{};
     math::Vec2 mouse_pos_{}, mouse_delta_{};
     float wheel_{0};
     std::string text_;

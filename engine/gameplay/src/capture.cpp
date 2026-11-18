@@ -28,9 +28,9 @@ const std::vector<std::string_view>& key_names() {
 InputState sample_input(const InputSource& in) {
     InputState s;
     for (const auto k : key_names())
-        if (in.key_down(k)) s.keys.emplace_back(k);
+        if (in.key_down(k) || in.key_pressed(k)) s.keys.emplace_back(k);
     for (int b = 0; b < 8; ++b)
-        if (in.mouse_down(b)) s.mouse |= static_cast<std::uint8_t>(1u << b);
+        if (in.mouse_down(b) || in.mouse_pressed(b)) s.mouse |= static_cast<std::uint8_t>(1u << b);
     s.mouse_position = in.mouse_position();
     s.mouse_delta = in.mouse_delta();
     for (int p = 0; p < kMaxGamepads; ++p) {

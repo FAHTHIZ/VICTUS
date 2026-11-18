@@ -20,6 +20,12 @@ victus_add_test(victus_core_tests
     DEPS VICTUS::Core
     LABELS core)
 
+victus_add_test(victus_platform_tests
+    SOURCES
+        platform/input_state_tests.cpp
+    DEPS VICTUS::Platform
+    LABELS platform)
+
 victus_add_test(victus_ecs_tests
     SOURCES
         ecs/world_tests.cpp

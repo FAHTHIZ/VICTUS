@@ -117,11 +117,15 @@ Key key_from_name(std::string_view name) noexcept {
 
 void InputState::begin_frame() noexcept {
     prev_keys_ = keys_;
+    key_pressed_ = {};
+    key_released_ = {};
     for (std::size_t i = 0; i < kMaxGamepads; ++i) {
         prev_pad_buttons_[i] = pads_[i].buttons;
         prev_pad_axes_[i] = pads_[i].axes;
     }
     prev_mouse_ = mouse_;
+    mouse_pressed_ = {};
+    mouse_released_ = {};
     mouse_delta_ = {};
     wheel_ = 0;
     text_.clear();
