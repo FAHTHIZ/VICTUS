@@ -21,7 +21,8 @@ add_library(victus_editor_core STATIC
     src/gizmo.cpp
     src/gizmo_tool.cpp
     src/thumbnails.cpp
-    src/widgets.cpp)
+    src/widgets.cpp
+    src/launcher.cpp)
 add_library(VICTUS::EditorCore ALIAS victus_editor_core)
 target_include_directories(victus_editor_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(victus_editor_core PUBLIC VICTUS::Scene VICTUS::Project VICTUS::Runtime VICTUS::Ui VICTUS::Gameplay VICTUS::Player VICTUS::Script VICTUS::Physics VICTUS::Audio VICTUS::Net VICTUS::Tilemap)
@@ -29,4 +30,6 @@ victus_configure_target(victus_editor_core)
 
 add_executable(victus_editor app/main.cpp)
 target_link_libraries(victus_editor PRIVATE victus_editor_core VICTUS::Platform)
+# Development builds find the bundled samples in the source tree (VICTUS_SAMPLES_DIR overrides).
+target_compile_definitions(victus_editor PRIVATE VICTUS_SOURCE_SAMPLES_DIR="${PROJECT_SOURCE_DIR}/samples")
 victus_configure_target(victus_editor)

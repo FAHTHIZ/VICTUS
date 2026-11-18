@@ -53,7 +53,17 @@ struct EditorOptions {
     fs::Path recent_file = project::RecentProjects::default_file();
     fs::Path default_project_dir;  // launcher default location; empty = <home>/VICTUS Projects
     float autosave_seconds{30.0f}; // unsaved scene edits are autosaved this often; 0 disables
+    fs::Path samples_dir;          // sample projects for the launcher's Samples page; empty = none
 };
+
+// A sample project the launcher offers (a folder under EditorOptions::samples_dir).
+struct SampleInfo {
+    fs::Path dir;
+    std::string name;    // from victus.project
+    std::string summary; // first paragraph of its README.md
+};
+
+enum class LauncherPage : std::uint8_t { New, Recent, Samples, Learn };
 
 enum class PlayState : std::uint8_t { Editing, Playing, Paused };
 
@@ -505,6 +515,22 @@ public:
     // of what was kept for the error message.
     [[nodiscard]] std::string save_for_fatal_error(std::string_view reason);
 
+    // ---- launcher ----
+    // Why a project named `name` cannot be created in `location` (empty when it can): empty or
+    // unsafe names, names reserved on Windows, a target folder that is not empty or is already a project.
+    [[nodiscard]] static std::string new_project_problem(const fs::Path& location, std::string_view name);
+    // Sample projects in EditorOptions::samples_dir, sorted by name (read once).
+    [[nodiscard]] const std::vector<SampleInfo>& samples() const;
+    // Copies a sample into `location` (folder named after it, made unique) and opens the copy,
+    // so the original stays untouched.
+    Status open_sample_copy(const fs::Path& sample, const fs::Path& location);
+    // Which launcher page shows: Recent when there are recent projects, else New, until set.
+    [[nodiscard]] LauncherPage launcher_page() const;
+    void set_launcher_page(LauncherPage page) noexcept {
+        launcher_page_ = page;
+        launcher_page_set_ = true;
+    }
+
     // ---- console ----
     // Records currently held by the Console (the newest 4096), by severity.
     struct ConsoleCounts {
@@ -786,6 +812,13 @@ private:
     std::string new_character_{project::kDefaultCharacter}; // starter character for templates with one
     std::string open_path_;
     std::string launcher_error_;
+    LauncherPage launcher_page_{LauncherPage::New};
+    bool launcher_page_set_{false};
+    mutable std::optional<std::vector<SampleInfo>> samples_;
+    void draw_launcher_new();
+    void draw_launcher_recent();
+    void draw_launcher_samples();
+    void draw_launcher_learn();
 
     // modals
     enum class Pending : std::uint8_t { None, Quit, CloseProject, OpenRecent };
