@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parents[2]
 EXECUTABLES = ["victus", "victus_editor", "victus_player"]
 DOCS = ["README.md", "LICENSE", "CHANGELOG.md", "SECURITY.md"]
 GUIDES = ["GETTING_STARTED.md", "USER_GUIDE.md", "DIAGNOSTICS.md", "KNOWN_LIMITATIONS.md", "PLATFORM_SUPPORT.md"]
-SAMPLES = ["arena", "dungeon_crawler"]
+SAMPLES = ["arena", "dungeon_crawler", "platformer"]
 SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?$")
 
 

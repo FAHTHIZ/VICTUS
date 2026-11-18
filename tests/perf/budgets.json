@@ -164,6 +164,33 @@
         "gpu.live_buffers": [0, 6],
         "sim.systems": [11, 24]
       }
+    },
+    "sample-platformer": {
+      "kind": "sample",
+      "source": "samples/platformer",
+      "scene": "scenes/autoplay.vscene",
+      "frame_p95_ms_max": 100,
+      "counters": {
+        "frame.draw_calls": [1, 5],
+        "frame.render_passes": [0, 2],
+        "frame.triangles": [0, 2],
+        "frame.visible": [0, 2],
+        "frame.main_batches": [0, 2],
+        "frame.shadow_batches": [0, 2],
+        "frame.shadow_triangles": [0, 2],
+        "frame.transparent_draws": [0, 2],
+        "frame.transparent_triangles": [0, 2],
+        "frame.alpha_tested_draws": [0, 2],
+        "frame.surface_shader_draws": [0, 2],
+        "frame.sprites": [126, 279],
+        "frame.ui_items": [0, 5],
+        "scene.entities": [9, 21],
+        "gpu.texture_bytes": [0, 1344412],
+        "gpu.buffer_bytes": [0, 225281],
+        "gpu.live_textures": [0, 11],
+        "gpu.live_buffers": [0, 6],
+        "sim.systems": [11, 25]
+      }
     }
   }
 }
