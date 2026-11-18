@@ -505,6 +505,16 @@ public:
     // of what was kept for the error message.
     [[nodiscard]] std::string save_for_fatal_error(std::string_view reason);
 
+    // ---- console ----
+    // Records currently held by the Console (the newest 4096), by severity.
+    struct ConsoleCounts {
+        std::size_t info{0}, warnings{0}, errors{0};
+    };
+    [[nodiscard]] ConsoleCounts console_counts() const;
+    void clear_console();
+    // Brings the Console panel to the front (the status bar's error/warning counts call this).
+    void focus_console() noexcept { focus_console_ = true; }
+
     // ---- command palette ----
     [[nodiscard]] std::vector<EditorCommand> commands();
     // Enabled commands matching `query`, best first (all of them, alphabetically, for an empty query).
@@ -748,6 +758,9 @@ private:
     render::Camera2D last_cam2d_;
     std::unique_ptr<project::RecentProjects> recent_;
     std::shared_ptr<log::RingSink> log_sink_;
+    mutable ConsoleCounts console_counts_;
+    mutable std::uint64_t console_counted_{~std::uint64_t{0}}; // RingSink::total_written() the counts match
+    bool focus_console_{false};
 
     // viewport
     rhi::TextureHandle viewport_tex_;
@@ -835,7 +848,9 @@ private:
     TileBrush tile_brush_;
     TileStroke tile_stroke_;
     bool tile_tool_{false};
-    bool show_tile_palette_{true};
+    // Opens by itself when a tilemap becomes selected (and from Window > Tile Palette).
+    bool show_tile_palette_{false};
+    bool tile_palette_had_target_{false};
     std::optional<std::array<std::int32_t, 2>> tile_hover_;
     Uuid tileset_texture_; // "Create Tileset" popup target
     int tileset_columns_{8}, tileset_rows_{8}, tileset_collision_{1};

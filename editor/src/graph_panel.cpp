@@ -7,6 +7,7 @@
 // snapshots of the graph) and are written to disk by Save, which hot-reloads every ScriptHost that
 // runs the graph. The edit API is public so tests drive it without a window.
 #include "victus/editor/editor.hpp"
+#include "widgets.hpp"
 #include "victus/runtime/surface_shader.hpp"
 #include "victus/graph/material_graph.hpp"
 
@@ -591,19 +592,19 @@ void Editor::draw_graph_editor() {
     ImGui::SameLine();
     std::size_t errors = 0, warnings = 0;
     for (const auto& d : graph_diags_) (d.severity == GraphDiagnostic::Severity::Error ? errors : warnings)++;
-    if (errors) ImGui::TextColored(ImVec4(1, 0.4f, 0.35f, 1), "%zu error%s", errors, errors == 1 ? "" : "s");
-    else ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1), "Compiles");
+    if (errors) ImGui::TextColored(ui::tokens::kDanger, "%zu error%s", errors, errors == 1 ? "" : "s");
+    else ImGui::TextColored(ui::tokens::kSuccess, "Compiles");
     if (warnings) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "%zu warning%s", warnings, warnings == 1 ? "" : "s");
+        ImGui::TextColored(ui::tokens::kWarning, "%zu warning%s", warnings, warnings == 1 ? "" : "s");
     }
     if (graph_live_) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1, 0.67f, 0.16f, 1), "Live");
+        ImGui::TextColored(ui::tokens::kWarning, "Live");
         ImGui::SetItemTooltip("Playing: nodes light up as they run");
     }
     if (graph_error_) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::tokens::kDanger);
         ImGui::PushTextWrapPos(0);
         const std::string label = graph_error_->node ? std::format("Runtime error in node #{}: {}", graph_error_->node, graph_error_->message)
                                                      : "Runtime error: " + graph_error_->message;
@@ -749,7 +750,7 @@ void Editor::draw_graph_side_panel() {
         ImGui::SeparatorText("Problems");
         for (std::size_t i = 0; i < graph_diags_.size(); ++i) {
             const GraphDiagnostic& d = graph_diags_[i];
-            const ImVec4 col = d.severity == GraphDiagnostic::Severity::Error ? ImVec4(1, 0.45f, 0.4f, 1) : ImVec4(1, 0.8f, 0.3f, 1);
+            const ImVec4 col = d.severity == GraphDiagnostic::Severity::Error ? ui::tokens::kDanger : ui::tokens::kWarning;
             ImGui::PushID(static_cast<int>(i));
             ImGui::PushStyleColor(ImGuiCol_Text, col);
             const std::string where = d.node ? std::format("#{} ", d.node) : std::string();

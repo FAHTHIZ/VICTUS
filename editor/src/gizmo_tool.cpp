@@ -2,6 +2,7 @@
 // The viewport transform tool: connects gizmo math (gizmo.cpp) to the selection, undo,
 // prefab overrides, the viewport pointer and its tool strip.
 #include "victus/editor/editor.hpp"
+#include "widgets.hpp"
 
 #include "victus/scene/prefab.hpp"
 
@@ -238,37 +239,45 @@ void Editor::gizmo_viewport(math::Vec2 origin, math::Vec2 size, bool hovered, bo
 
 void Editor::draw_gizmo_toolbar(math::Vec2 origin, math::Vec2 size) {
     if (play_state_ != PlayState::Editing) return;
-    // A compact strip under the viewport's stats line: tool, space and snapping.
+    // A floating icon strip in the viewport's top-left corner: tool, space, snapping, options.
+    namespace tk = ui::tokens;
     (void)size;
-    ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 6 + ImGui::GetTextLineHeightWithSpacing()));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 2));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(3, 3));
-    const auto tool = [&](const char* label, gizmo::Mode m, const char* tip) {
-        const bool on = gizmo_.mode == m;
-        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.1f, 0.95f));
-        if (ImGui::SmallButton(label)) gizmo_.mode = m;
-        if (on) ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    const float side = ImGui::GetFrameHeight();
+    const float pad = tk::kSpace2;
+    const float gap = tk::kSpace2;
+    const float group_gap = tk::kSpace4;
+    const float w = side * 6.0f + gap * 4.0f + group_gap + pad * 2.0f;
+    const ImVec2 p0(origin.x + tk::kSpace3, origin.y + tk::kSpace3);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + side + pad * 2.0f), ImGui::GetColorU32(ui::with_alpha(tk::kSurfaceBase, 0.88f)),
+                      tk::kRadiusLarge);
+    dl->AddRect(p0, ImVec2(p0.x + w, p0.y + side + pad * 2.0f), ImGui::GetColorU32(tk::kBorder), tk::kRadiusLarge);
+    ImGui::SetCursorScreenPos(ImVec2(p0.x + pad, p0.y + pad));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
+    const auto tool = [&](const char* id, kit::Icon icon, gizmo::Mode m, const char* tip) {
+        if (kit::icon_button(id, icon, tip, gizmo_.mode == m)) gizmo_.mode = m;
         ImGui::SameLine();
     };
-    tool("Move", gizmo::Mode::Translate, "Move tool (W): drag an arrow, a plane square or the centre");
-    tool("Rotate", gizmo::Mode::Rotate, "Rotate tool (E): drag a ring, or the outer ring to turn about the view");
-    tool("Scale", gizmo::Mode::Scale, "Scale tool (R): drag an axis box, or the centre for uniform scale");
+    tool("move", kit::Icon::Move, gizmo::Mode::Translate, "Move (W): drag an arrow, a plane square or the centre");
+    tool("rotate", kit::Icon::Rotate, gizmo::Mode::Rotate, "Rotate (E): drag a ring, or the outer ring to turn about the view");
+    tool("scale", kit::Icon::Scale, gizmo::Mode::Scale, "Scale (R): drag an axis box, or the centre for uniform scale");
+    ImGui::SameLine(0, group_gap - gap);
     const bool local = gizmo_.space == gizmo::Space::Local || gizmo_.mode == gizmo::Mode::Scale;
-    if (ImGui::SmallButton(local ? "Local" : "World"))
+    if (kit::icon_button("space", local ? kit::Icon::Cube : kit::Icon::Globe,
+                         local ? "Local axes (T toggles): handles follow the active entity (scale is always local)"
+                               : "World axes (T toggles): handles align to the world",
+                         false, gizmo_.mode != gizmo::Mode::Scale))
         gizmo_.space = gizmo_.space == gizmo::Space::World ? gizmo::Space::Local : gizmo::Space::World;
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Handle orientation (T): world axes or the active entity's axes (scale is always local)");
     ImGui::SameLine();
-    if (gizmo_.snap) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.55f, 0.9f, 0.95f));
-    const bool toggled = ImGui::SmallButton("Snap");
-    if (gizmo_.snap) ImGui::PopStyleColor();
-    if (toggled) gizmo_.snap = !gizmo_.snap;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap drags to steps (hold Ctrl while dragging to invert)");
+    if (kit::icon_button("snap", kit::Icon::Magnet, gizmo_.snap ? "Snapping on (hold Ctrl while dragging to invert)"
+                                                                : "Snapping off (hold Ctrl while dragging to snap)",
+                         gizmo_.snap))
+        gizmo_.snap = !gizmo_.snap;
     ImGui::SameLine();
-    if (ImGui::SmallButton("...")) ImGui::OpenPopup("##snapsteps");
+    if (kit::icon_button("steps", kit::Icon::Gear, "Snap steps and gizmo visibility")) ImGui::OpenPopup("##snapsteps");
+    ImGui::PopStyleVar();
     if (ImGui::BeginPopup("##snapsteps")) {
-        ImGui::TextDisabled("Snap steps");
+        kit::heading("Snap steps", tk::kTypeBody);
         ImGui::SetNextItemWidth(120);
         ImGui::DragFloat("Move", &gizmo_.steps.translate, 0.01f, 0.001f, 1000.0f, "%.3f");
         ImGui::SetNextItemWidth(120);
@@ -278,10 +287,10 @@ void Editor::draw_gizmo_toolbar(math::Vec2 origin, math::Vec2 size) {
         gizmo_.steps.translate = std::max(gizmo_.steps.translate, 0.001f);
         gizmo_.steps.rotate_degrees = std::max(gizmo_.steps.rotate_degrees, 0.1f);
         gizmo_.steps.scale = std::max(gizmo_.steps.scale, 0.001f);
+        ImGui::Separator();
         ImGui::Checkbox("Show gizmo", &gizmo_.visible);
         ImGui::EndPopup();
     }
-    ImGui::PopStyleVar(2);
 }
 
 } // namespace victus::editor

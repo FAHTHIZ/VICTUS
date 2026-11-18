@@ -1185,6 +1185,13 @@ Full-repository audit against the code (not the checkboxes), then foundation fix
 - Owner direction (2026-11-18): front-end usability is the current emphasis, so 6c slices run now, ahead of Workstream D.
 - Verified: docs-only change.
 
+### 2026-11-18 — Studio design system, toolbar, status bar (roadmap 6c, slice 1)
+- `victus/ui/style.hpp`: design tokens (surfaces, text, accent, success/warning/danger/info, spacing, radii, type scale) and WCAG `contrast_ratio`; `apply_victus_theme` now uses only tokens. Every literal `ImVec4` colour in editor sources (38) replaced by tokens; the conflicting second accent is gone.
+- Typography: the Studio uses the embedded Inter Medium (body) and Inter Bold (headings) with Latin Extended, Cyrillic and Greek merged (`victus/runtime/builtin_fonts.hpp` makes the runtime's embedded fonts public).
+- `editor/src/widgets.*`: vector icon set drawn with ImDrawList (about 60 icons, no icon font or textures), icon buttons with tooltips that also show on disabled items, headings, pills, empty states.
+- Toolbar: icon Save/Undo/Redo (tooltips name the step), Play/Pause/Stop/Record, state badge, command search button. Status bar: project, scene, saved state, entity count, error/warning counts that focus the Console (`Editor::console_counts`, `clear_console`, `focus_console`). Viewport: icon gizmo strip; stats on a translucent backdrop below it (they overlapped before). Hierarchy and Assets show type icons. Tile Palette no longer floats open in every project; it opens when a tilemap is selected.
+- Verified: `victus_editor_tests` 41/41 on lavapipe, including new `studio_ux_tests.cpp` (token contrast >= 4.5:1 for all text and tones on every surface, fonts installed, toolbar/status bar present, console counts and focus). Screenshots of the arena sample reviewed. Not verified: HiDPI displays, Windows/macOS.
+
 ## Next task
 Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): next is Workstream D (crash/diagnostics bundle, then release process), then the plugin SDK research + ADR, then animation IK, then the optional H items, per docs/audits/COMPETITOR_BENCHMARK.md. Then 6c (Studio UX handoff, Phase 0 audit first), 6d (Workstream G audit, docs/audits/ENGINE_CAPABILITY_AND_ROBUSTNESS_AUDIT.md), priority 1 (full clang-tidy gate), priority 8 (GPU-instanced foliage), the 2D platformer sample.
 

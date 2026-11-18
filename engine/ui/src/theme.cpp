@@ -1,63 +1,94 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "victus/ui/style.hpp"
 #include "victus/ui/ui.hpp"
 
 namespace victus::ui {
 
 void apply_victus_theme(ImGuiStyle& style) {
+    using namespace tokens;
     ImGui::StyleColorsDark(&style);
-    style.WindowRounding = 4.0f;
-    style.FrameRounding = 3.0f;
-    style.GrabRounding = 3.0f;
-    style.TabRounding = 3.0f;
-    style.PopupRounding = 3.0f;
-    style.ScrollbarRounding = 6.0f;
+    style.WindowRounding = kRadius;
+    style.ChildRounding = kRadius;
+    style.FrameRounding = kRadius;
+    style.GrabRounding = kRadiusSmall;
+    style.TabRounding = kRadius;
+    style.PopupRounding = kRadius;
+    style.ScrollbarRounding = kRadiusLarge;
     style.WindowBorderSize = 1.0f;
+    style.ChildBorderSize = 1.0f;
+    style.PopupBorderSize = 1.0f;
     style.FrameBorderSize = 0.0f;
-    style.WindowPadding = ImVec2(8, 8);
-    style.FramePadding = ImVec2(6, 4);
-    style.ItemSpacing = ImVec2(8, 5);
-    style.IndentSpacing = 14.0f;
+    style.TabBarBorderSize = 1.0f;
+    style.WindowPadding = ImVec2(kSpace3, kSpace3);
+    style.FramePadding = ImVec2(kSpace3, kSpace2 + 1.0f);
+    style.CellPadding = ImVec2(kSpace3 - 2.0f, kSpace2 - 1.0f);
+    style.ItemSpacing = ImVec2(kSpace3, kSpace3 - 2.0f);
+    style.ItemInnerSpacing = ImVec2(kSpace3 - 2.0f, kSpace2);
+    style.IndentSpacing = kSpace5;
+    style.ScrollbarSize = kSpace4 + 1.0f;
+    style.GrabMinSize = kSpace4;
+    style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
+    style.SeparatorTextBorderSize = 1.0f;
+    style.SeparatorTextPadding = ImVec2(kSpace3, kSpace1);
+    style.DockingSeparatorSize = 2.0f;
 
     ImVec4* c = style.Colors;
-    const ImVec4 bg{0.105f, 0.11f, 0.125f, 1.0f};
-    const ImVec4 panel{0.135f, 0.14f, 0.16f, 1.0f};
-    const ImVec4 frame{0.18f, 0.19f, 0.215f, 1.0f};
-    const ImVec4 accent{0.95f, 0.45f, 0.16f, 1.0f}; // VICTUS orange
-    const ImVec4 accent_soft{0.95f, 0.45f, 0.16f, 0.55f};
-    c[ImGuiCol_Text] = ImVec4(0.90f, 0.91f, 0.93f, 1.0f);
-    c[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.52f, 0.56f, 1.0f);
-    c[ImGuiCol_WindowBg] = panel;
-    c[ImGuiCol_ChildBg] = panel;
-    c[ImGuiCol_PopupBg] = ImVec4(0.12f, 0.125f, 0.145f, 0.98f);
-    c[ImGuiCol_Border] = ImVec4(0.24f, 0.25f, 0.28f, 1.0f);
-    c[ImGuiCol_FrameBg] = frame;
-    c[ImGuiCol_FrameBgHovered] = ImVec4(0.23f, 0.24f, 0.27f, 1.0f);
-    c[ImGuiCol_FrameBgActive] = ImVec4(0.26f, 0.27f, 0.31f, 1.0f);
-    c[ImGuiCol_TitleBg] = bg;
-    c[ImGuiCol_TitleBgActive] = bg;
-    c[ImGuiCol_TitleBgCollapsed] = bg;
-    c[ImGuiCol_MenuBarBg] = bg;
-    c[ImGuiCol_ScrollbarBg] = bg;
-    c[ImGuiCol_CheckMark] = accent;
-    c[ImGuiCol_SliderGrab] = accent_soft;
-    c[ImGuiCol_SliderGrabActive] = accent;
-    c[ImGuiCol_Button] = frame;
-    c[ImGuiCol_ButtonHovered] = ImVec4(0.26f, 0.27f, 0.31f, 1.0f);
-    c[ImGuiCol_ButtonActive] = accent_soft;
-    c[ImGuiCol_Header] = ImVec4(0.22f, 0.23f, 0.26f, 1.0f);
-    c[ImGuiCol_HeaderHovered] = ImVec4(0.27f, 0.28f, 0.32f, 1.0f);
-    c[ImGuiCol_HeaderActive] = accent_soft;
-    c[ImGuiCol_Separator] = c[ImGuiCol_Border];
-    c[ImGuiCol_Tab] = bg;
-    c[ImGuiCol_TabHovered] = ImVec4(0.27f, 0.28f, 0.32f, 1.0f);
-    c[ImGuiCol_TabSelected] = panel;
-    c[ImGuiCol_TabSelectedOverline] = accent;
-    c[ImGuiCol_TabDimmed] = bg;
-    c[ImGuiCol_TabDimmedSelected] = panel;
-    c[ImGuiCol_DockingPreview] = accent_soft;
-    c[ImGuiCol_DockingEmptyBg] = bg;
-    c[ImGuiCol_TextSelectedBg] = ImVec4(0.95f, 0.45f, 0.16f, 0.35f);
-    c[ImGuiCol_NavCursor] = accent;
+    c[ImGuiCol_Text] = kText;
+    c[ImGuiCol_TextDisabled] = kTextDisabled;
+    c[ImGuiCol_WindowBg] = kSurfacePanel;
+    c[ImGuiCol_ChildBg] = with_alpha(kSurfacePanel, 0.0f);
+    c[ImGuiCol_PopupBg] = kSurfacePopup;
+    c[ImGuiCol_Border] = kBorder;
+    c[ImGuiCol_BorderShadow] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_FrameBg] = kSurfaceRaised;
+    c[ImGuiCol_FrameBgHovered] = kSurfaceHover;
+    c[ImGuiCol_FrameBgActive] = kSurfaceActive;
+    c[ImGuiCol_TitleBg] = kSurfaceBase;
+    c[ImGuiCol_TitleBgActive] = kSurfaceBase;
+    c[ImGuiCol_TitleBgCollapsed] = kSurfaceBase;
+    c[ImGuiCol_MenuBarBg] = kSurfaceBase;
+    c[ImGuiCol_ScrollbarBg] = with_alpha(kSurfaceBase, 0.0f);
+    c[ImGuiCol_ScrollbarGrab] = kSurfaceHover;
+    c[ImGuiCol_ScrollbarGrabHovered] = kSurfaceActive;
+    c[ImGuiCol_ScrollbarGrabActive] = kTextDisabled;
+    c[ImGuiCol_CheckMark] = kAccent;
+    c[ImGuiCol_SliderGrab] = kAccentSoft;
+    c[ImGuiCol_SliderGrabActive] = kAccent;
+    c[ImGuiCol_Button] = kSurfaceRaised;
+    c[ImGuiCol_ButtonHovered] = kSurfaceHover;
+    c[ImGuiCol_ButtonActive] = kSurfaceActive;
+    // Neutral section headers; lists that show a selection push kAccentSubtle themselves.
+    c[ImGuiCol_Header] = kSurfaceRaised;
+    c[ImGuiCol_HeaderHovered] = kSurfaceHover;
+    c[ImGuiCol_HeaderActive] = kAccentSoft;
+    c[ImGuiCol_Separator] = kBorder;
+    c[ImGuiCol_SeparatorHovered] = kAccentSoft;
+    c[ImGuiCol_SeparatorActive] = kAccent;
+    c[ImGuiCol_ResizeGrip] = with_alpha(kTextDisabled, 0.2f);
+    c[ImGuiCol_ResizeGripHovered] = kAccentSoft;
+    c[ImGuiCol_ResizeGripActive] = kAccent;
+    c[ImGuiCol_InputTextCursor] = kText;
+    c[ImGuiCol_Tab] = kSurfaceBase;
+    c[ImGuiCol_TabHovered] = kSurfaceHover;
+    c[ImGuiCol_TabSelected] = kSurfacePanel;
+    c[ImGuiCol_TabSelectedOverline] = kAccent;
+    c[ImGuiCol_TabDimmed] = kSurfaceBase;
+    c[ImGuiCol_TabDimmedSelected] = kSurfacePanel;
+    c[ImGuiCol_TabDimmedSelectedOverline] = with_alpha(kAccent, 0.0f);
+    c[ImGuiCol_DockingPreview] = kAccentSoft;
+    c[ImGuiCol_DockingEmptyBg] = kSurfaceBase;
+    c[ImGuiCol_PlotLines] = kInfo;
+    c[ImGuiCol_PlotHistogram] = kAccent;
+    c[ImGuiCol_TableHeaderBg] = kSurfaceRaised;
+    c[ImGuiCol_TableBorderStrong] = kBorder;
+    c[ImGuiCol_TableBorderLight] = with_alpha(kBorder, 0.6f);
+    c[ImGuiCol_TableRowBg] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_TableRowBgAlt] = ImVec4(1, 1, 1, 0.025f);
+    c[ImGuiCol_TextLink] = kInfo;
+    c[ImGuiCol_TextSelectedBg] = with_alpha(kAccent, 0.35f);
+    c[ImGuiCol_DragDropTarget] = kAccent;
+    c[ImGuiCol_NavCursor] = kAccent;
+    c[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, 0.55f);
 }
 
 } // namespace victus::ui

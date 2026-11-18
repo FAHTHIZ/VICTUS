@@ -4,6 +4,7 @@
 #include "victus/editor/editor.hpp"
 
 #include "editor_client.hpp"
+#include "widgets.hpp"
 
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
@@ -61,6 +62,13 @@ Result<std::unique_ptr<Editor>> Editor::create(render::GpuContext& gpu, ui::UiCo
     ed->recent_ = std::make_unique<project::RecentProjects>(options.recent_file);
     ed->log_sink_ = std::make_shared<log::RingSink>(4096);
     log::logger().add_sink(ed->log_sink_);
+    {
+        // Studio typography: Inter Medium body text, Inter Bold headings (falls back to the built-in font).
+        ImGuiContext* previous = ImGui::GetCurrentContext();
+        ImGui::SetCurrentContext(ui.imgui());
+        kit::install_fonts();
+        ImGui::SetCurrentContext(previous);
+    }
     auto view = runtime::SceneView::create(gpu, rhi::Format::RGBA8_UNORM);
     if (!view) return std::move(view).error();
     ed->view_ = std::move(view).value();

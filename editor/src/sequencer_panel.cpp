@@ -3,6 +3,7 @@
 // undo history, previews it on a SequencePlayer entity of the edit scene by scrubbing or playing,
 // records transform keys from the scene and saves the file.
 #include "victus/editor/editor.hpp"
+#include "widgets.hpp"
 
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
@@ -647,7 +648,7 @@ void Editor::draw_sequencer() {
 
     // Preview player.
     if (player.is_null()) {
-        ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), "No preview player.");
+        ImGui::TextColored(ui::tokens::kWarning, "No preview player.");
         ImGui::SameLine();
         ImGui::BeginDisabled(selected.is_null() || !editing);
         if (ImGui::Button("Assign to Selection")) assign_sequence(selected);
