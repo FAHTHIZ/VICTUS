@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/animation/animation.hpp"
+#include "victus/animation/retarget.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/core/jobs.hpp"
 #include "victus/core/log.hpp"
@@ -22,6 +23,8 @@ void register_components() {
     std::call_once(once, [] {
         scene::Schema<AnimatorComponent>("Animator", "Animation")
             .field(&AnimatorComponent::model, "model", {.tooltip = "Model asset providing clips", .hint = "model"})
+            .field(&AnimatorComponent::clip_source, "clip_source",
+                   {.tooltip = "Optional model whose clips are retargeted onto this one by bone name", .hint = "model"})
             .field(&AnimatorComponent::clip, "clip", {.tooltip = "Clip to play (state with a controller); changing it cross-fades"})
             .field(&AnimatorComponent::controller, "controller",
                    {.tooltip = "Animation controller (.vanim) relative to the assets folder", .hint = "anim_controller"})
@@ -88,7 +91,7 @@ struct LayerRun {
 // Runtime playback state, not serialized: rebuilt from AnimatorComponent after loading.
 struct AnimatorState {
     Entity owner;
-    Uuid model;
+    Uuid model, source; // source: AnimatorComponent::clip_source the set was retargeted from
     std::shared_ptr<const AnimationSet> set;
     std::string clip_name;      // clip name last applied (compared with the component)
     std::int32_t current{-1};
@@ -859,6 +862,11 @@ struct AnimationSystem::Impl {
     AnimationSettings settings;
     std::unordered_map<Uuid, std::shared_ptr<const AnimationSet>, UuidHash> sets;     // explicit
     std::unordered_map<Uuid, std::shared_ptr<const AnimationSet>, UuidHash> cache;    // from provider
+    struct Retargeted {
+        Uuid model, source;
+        std::shared_ptr<const AnimationSet> set;
+    };
+    std::vector<Retargeted> retargeted; // model + clip_source -> merged set (ADR-0075)
     std::vector<Work> work;
     std::unordered_map<Uuid, std::shared_ptr<const SpriteSheet>, UuidHash> explicit_sheets;
     std::unordered_map<Uuid, std::shared_ptr<const SpriteSheet>, UuidHash> sheet_cache;
@@ -918,13 +926,43 @@ struct AnimationSystem::Impl {
         return set;
     }
 
+    // The model's set, with `clip_source`'s clips retargeted onto it when set (cached per pair).
+    std::shared_ptr<const AnimationSet> resolve_for(const AnimatorComponent& a) {
+        auto target = resolve(a.model);
+        if (a.clip_source.is_nil() || a.clip_source == a.model || !target) return target;
+        for (const Retargeted& r : retargeted)
+            if (r.model == a.model && r.source == a.clip_source) return r.set;
+        std::shared_ptr<const AnimationSet> result = target;
+        if (auto src = resolve(a.clip_source); !src) {
+            VICTUS_LOG_WARN("animation", "model {}: clip source {} has no animation data (own clips only)",
+                            a.model.to_string(), a.clip_source.to_string());
+        } else {
+            RetargetReport rep;
+            if (auto merged = retarget_set(*src, *target, {}, &rep)) {
+                VICTUS_LOG_INFO("animation", "retargeted {} clips from {} onto {} ({}/{} bones mapped)", rep.clips,
+                                a.clip_source.to_string(), a.model.to_string(), rep.mapped_bones, rep.target_bones);
+                result = std::move(merged);
+            } else {
+                VICTUS_LOG_WARN("animation", "model {}: no bone of clip source {} matches by name (own clips only)",
+                                a.model.to_string(), a.clip_source.to_string());
+            }
+        }
+        retargeted.push_back({a.model, a.clip_source, result});
+        return result;
+    }
+
+    void forget_retargets(const Uuid& model) {
+        std::erase_if(retargeted, [&](const Retargeted& r) { return r.model == model || r.source == model; });
+    }
+
     // Ensures `s` reflects the component (model, bindings, clip). Serial: may read the hierarchy.
     void prepare(Scene& scene, Entity e, AnimatorComponent& a, AnimatorState& s) {
-        if (s.model != a.model || !s.set) {
-            auto set = resolve(a.model);
-            if (set != s.set || s.model != a.model) {
+        if (s.model != a.model || s.source != a.clip_source || !s.set) {
+            auto set = resolve_for(a);
+            if (set != s.set || s.model != a.model || s.source != a.clip_source) {
                 s = AnimatorState{};
                 s.model = a.model;
+                s.source = a.clip_source;
                 s.set = std::move(set);
             }
         }
@@ -992,8 +1030,12 @@ AnimationSystem::~AnimationSystem() = default;
 void AnimationSystem::add_set(const Uuid& model, std::shared_ptr<const AnimationSet> set) { impl_->sets[model] = std::move(set); }
 void AnimationSystem::invalidate(const Uuid& model) {
     impl_->cache.erase(model);
+    impl_->forget_retargets(model);
 }
-void AnimationSystem::clear_cache() { impl_->cache.clear(); }
+void AnimationSystem::clear_cache() {
+    impl_->cache.clear();
+    impl_->retargeted.clear();
+}
 std::shared_ptr<const AnimationSet> AnimationSystem::set(const Uuid& model) { return impl_->resolve(model); }
 
 void AnimationSystem::update(Scene& scene, float dt) {
@@ -1074,7 +1116,7 @@ bool AnimationSystem::play(Scene& scene, Entity e, std::string_view clip, float 
         enter_state(*s, *a, to, fade < 0 ? a->crossfade : fade, 0.0f);
         return true;
     }
-    auto set = impl_->resolve(a->model);
+    auto set = impl_->resolve_for(*a);
     if (!set || set->find_clip(clip) < 0) return false;
     auto* s = scene.world().get<AnimatorState>(e);
     if (!s) {
@@ -1122,7 +1164,7 @@ AnimatorStatus AnimationSystem::status(Scene& scene, Entity e) {
     st.time = a->time;
     st.playing = a->playing;
     st.looping = a->loop;
-    auto set = impl_->resolve(a->model);
+    auto set = impl_->resolve_for(*a);
     st.valid = set != nullptr;
     if (set) {
         if (const std::int32_t ci = set->find_clip(a->clip); ci >= 0) st.duration = set->clips[static_cast<std::size_t>(ci)].duration;
@@ -1140,7 +1182,7 @@ std::vector<std::string> AnimationSystem::clips(Scene& scene, Entity e) {
     std::vector<std::string> out;
     const auto* a = scene.world().get<AnimatorComponent>(e);
     if (!a) return out;
-    if (auto set = impl_->resolve(a->model))
+    if (auto set = impl_->resolve_for(*a))
         for (const Clip& c : set->clips) out.push_back(c.name);
     return out;
 }

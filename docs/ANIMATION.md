@@ -195,6 +195,14 @@ function Feet:update(dt)
 end
 ```
 
+## Retargeting
+
+Set an Animator's `clip_source` to another model to play that model's clips on this one (ADR-0075). The clips are converted once, the first time they are needed, and merged with the model's own clips; a clip the model already has keeps the model's version. Controllers, `play_animation` and the Animation window use the merged list.
+
+Bones are matched by name: exact names first, then names compared without a namespace prefix (`mixamorig:`, `Armature|`), case, underscores, dots, dashes or spaces, so `mixamorig:Left_Arm` drives `LeftArm`. For every matched bone the clip's change of world-space rotation from the rest pose is applied to the target bone's own rest, so rigs whose bones point along different axes, or that sit under an extra rotated `Armature` node, still move the same way. Only the root bone (the first matched bone whose source moves) is translated, with its travel scaled by the ratio of the two rigs' root heights; every other bone keeps the target's own lengths. Bones with no match keep their rest pose.
+
+Rest poses should be similar (both T-pose or both A-pose); there is no automatic pose correction, no IK for foot contact (add an `IKConstraint`) and no bone-map editor yet. `victus check` warns when no bone of the clip source matches the model. C++: `victus/animation/retarget.hpp` (`map_bones`, `retarget_clip`, `retarget_set`, `RetargetOptions::bone_map` for explicit mappings).
+
 ## Editor
 
 Window > Animation opens the Animation window for the selected entity's Animator. It shows the controller path, the states (the current one highlighted with its normalized time; click one to enter it), the previous state and fade progress during a cross-fade, the current clip weights as bars (missing clips flagged) and a control per parameter: float sliders spanning the blend thresholds, int drags, bool checkboxes and trigger buttons. Preview runs the controller on the edit scene through `AnimationSystem::update_entity`; Pause and Restart control it, End Preview restores the Animator and the skeleton transforms. A preview is ended (and restored) before saving, autosave skips while one runs, and play mode, scene switches and closing the project end it. Root-motion states are tagged `[root motion]`, and the window shows the root node and how far it moves per frame. Controller edits hot reload into the preview. `victus_editor <project> --select <entity> --show animation-preview` opens it from the command line.

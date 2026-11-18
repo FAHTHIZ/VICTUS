@@ -288,6 +288,12 @@ No third-party code was added.
 - efsw — https://github.com/SpartanJ/efsw (MIT): file watcher over inotify, FSEvents/kqueue, Windows I/O completion ports (ReadDirectoryChangesExW/W) with a generic polling fallback. Not adopted for now (ADR-0022); the candidate if polling becomes too slow.
 - Open questions: debounce for editors that write via temporary files, font atlas rebuilds for font reload, scene reload policy (merge vs restart).
 
+## Research conclusions added 2026-11-18 (retargeting, ADR-0075)
+- Unity, Retarget Humanoid animations — https://docs.unity3d.com/6/Documentation/Manual/Retargeting.html: retargeting is only possible for humanoid models with a configured Avatar, which gives the correspondence between bone structures. VICTUS maps bones by name for any rig instead, without an avatar step.
+- Unreal Engine, IK Rig Retargeting — https://dev.epicgames.com/documentation/en-us/unreal-engine/ik-rig-animation-retargeting-in-unreal-engine?application_version=5.2: transfers animation between skeletons with different bone counts, names and orientations, optionally keeping hand and foot contacts with IK. VICTUS handles different names and orientations; contact preservation is left to IKConstraint.
+- Godot, Retargeting 3D Skeletons — https://docs.godotengine.org/en/stable/tutorials/assets_pipeline/retargeting_3d_skeletons.html: BoneMap onto SkeletonProfileHumanoid with pattern-matched auto-mapping; position tracks other than the root and Hips removed; position tracks normalized by the Hips height ("motion_scale"). VICTUS matches the same rules: rotation-only below the root, root travel scaled by rest height.
+- Open questions: humanoid profile with A/T-pose correction, chain-based mapping with IK for contacts, an editor bone-map panel.
+
 ## Research conclusions added 2026-11-18 (controller layers, ADR-0074)
 - Unity AnimatorLayerBlendingMode.Additive — https://docs.unity3d.com/6000.2/Documentation/ScriptReference/Animations.AnimatorLayerBlendingMode.Additive.html: "based on the offset from the 1st frame of the animation to its current frame". VICTUS `reference: first_frame` matches; `rest` is offered for clips authored against the bind pose.
 - Unity Learn, Animator Layers — https://learn.unity.com/tutorial/3-7-creating-and-configuring-animator-layers: layers evaluate in index order, each blended with the result so far; additive layers leave lower layers at effective weight 1.

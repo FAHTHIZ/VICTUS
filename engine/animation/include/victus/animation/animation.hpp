@@ -97,6 +97,9 @@ void sample(const Clip& clip, float time, std::span<NodePose> pose) noexcept;
 // clips; `clip` then mirrors the current state's name and writing it enters that state.
 struct AnimatorComponent {
     Uuid model;              // model asset providing the clips and rest pose
+    // Optional model whose clips are retargeted onto `model` by bone name (retarget.hpp,
+    // ADR-0075); `model`'s own clips win on name clashes. Nil: only `model`'s clips.
+    Uuid clip_source;
     std::string clip;        // clip to play; changing it cross-fades from the current clip
     std::string controller;  // optional .vanim asset path (relative to the assets folder)
     bool playing{true};
