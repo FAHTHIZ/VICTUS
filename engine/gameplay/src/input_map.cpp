@@ -26,13 +26,16 @@ float shape(float v, float dead_zone) {
     return v < 0 ? -out : out;
 }
 
+// A press this frame counts as held this frame even if the key was already released again (a tap
+// shorter than one frame), so the action still sees its press edge. Before this frame the key was
+// held exactly when it is held or was released now without a fresh press.
 bool key_state(const InputSource& in, std::string_view key, bool previous) {
-    if (!previous) return in.key_down(key);
-    return in.key_released(key) || (in.key_down(key) && !in.key_pressed(key));
+    if (!previous) return in.key_down(key) || in.key_pressed(key);
+    return !in.key_pressed(key) && (in.key_down(key) || in.key_released(key));
 }
 bool mouse_state(const InputSource& in, int b, bool previous) {
-    if (!previous) return in.mouse_down(b);
-    return in.mouse_released(b) || (in.mouse_down(b) && !in.mouse_pressed(b));
+    if (!previous) return in.mouse_down(b) || in.mouse_pressed(b);
+    return !in.mouse_pressed(b) && (in.mouse_down(b) || in.mouse_released(b));
 }
 
 // Signed contribution of one binding, before the positive/negative split.

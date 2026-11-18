@@ -153,3 +153,36 @@ TEST_CASE("input map: capture_binding reports the first new control") {
     in.set_gamepad_axis(0, gamepad_axis_index("RightTrigger"), 1.0f);
     CHECK(binding_to_string(*capture_binding(in, keys)) == "Pad.RightTrigger");
 }
+
+namespace {
+// An input source whose key went down and up again within the frame (a tap at a low frame rate).
+class TapInput final : public gameplay::InputSource {
+public:
+    bool key_down(std::string_view) const override { return false; }
+    bool key_pressed(std::string_view k) const override { return k == key; }
+    bool key_released(std::string_view k) const override { return k == key; }
+    bool mouse_down(int) const override { return false; }
+    bool mouse_pressed(int b) const override { return b == button; }
+    bool mouse_released(int b) const override { return b == button; }
+    math::Vec2 mouse_position() const override { return {}; }
+    math::Vec2 mouse_delta() const override { return {}; }
+    std::string_view key;
+    int button{-1};
+};
+} // namespace
+
+TEST_CASE("input map: an action tapped within one frame still fires") {
+    const InputMap m = gameplay::default_input_map();
+    const auto* jump = m.find("jump");
+    const auto* fire = m.find("fire");
+    REQUIRE(jump);
+    REQUIRE(fire);
+    TapInput in;
+    in.key = "Space";
+    CHECK(InputMap::pressed(&in, *jump));
+    CHECK(InputMap::down(&in, *jump));
+    CHECK_FALSE(InputMap::down(&in, *jump, true));
+    in.key = {};
+    in.button = 0;
+    CHECK(InputMap::pressed(&in, *fire));
+}
