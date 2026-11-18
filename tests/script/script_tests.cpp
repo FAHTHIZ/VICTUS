@@ -1780,3 +1780,59 @@ return { enabled = st.enabled, solver = foot:ik_state().solver, none = scene.fin
     CHECK(off.value()["solver"].as_string() == "look_at");
     CHECK(off.value()["none"].as_bool());
 }
+
+TEST_CASE("script: animation layer weights (set_anim_layer_weight, anim_layer_weight, anim_controller().layers)") {
+    TempDir d("victus_script_anim_layers");
+    auto host = make_host(d);
+    auto set = std::make_shared<animation::AnimationSet>();
+    set->nodes.push_back({.name = "Hips", .parent = -1, .rest = {}});
+    set->nodes.push_back({.name = "Spine", .parent = 0, .rest = {}});
+    for (const auto& [n, x] : {std::pair{"Idle", 1.0f}, std::pair{"Aim", 5.0f}}) {
+        animation::Clip c{.name = n, .duration = 1.0f};
+        for (std::uint32_t node : {0u, 1u})
+            c.channels.push_back({.node = node, .path = animation::Path::Translation,
+                                  .interpolation = animation::Interpolation::Linear, .times = {0, 1},
+                                  .values = {x, 0, 0, x, 0, 0}});
+        set->clips.push_back(std::move(c));
+    }
+    const Uuid model = Uuid::generate();
+    animation::AnimationSystem anim;
+    anim.add_set(model, set);
+    auto ctrl = animation::Controller::parse(R"({
+      "states": [ { "name": "Idle", "clip": "Idle" } ],
+      "layers": [ { "name": "Upper", "mask": ["Spine"], "states": [ { "name": "Aim", "clip": "Aim" } ] } ]
+    })");
+    REQUIRE(ctrl.ok());
+    anim.add_controller("anim/hero.vanim", ctrl.value());
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    animation::add_animation_systems(sim, anim);
+    Scene s;
+    const Entity hero = s.create("Hero");
+    s.create("Hips", hero);
+    const Entity spine = s.create("Spine", s.children(hero).front());
+    auto& a = s.world().add<animation::AnimatorComponent>(hero);
+    a.model = model;
+    a.controller = "anim/hero.vanim";
+    sim.tick(s, 1.0f / 60);
+    CHECK(s.world().get<scene::Transform>(spine)->position.x == doctest::Approx(5.0f));
+    auto q = host->eval(R"lua(
+local h = scene.find("Hero")
+local ok = h:set_anim_layer_weight("Upper", 0.5)
+local bad = h:set_anim_layer_weight("Nope", 1)
+local c = h:anim_controller()
+return { ok = ok, bad = bad, w = h:anim_layer_weight("Upper"), none = h:anim_layer_weight("Nope") == nil,
+         n = #c.layers, name = c.layers[1].name, state = c.layers[1].state, blend = c.layers[1].blend }
+)lua", &s);
+    if (!q.ok()) FAIL(q.error().message);
+    CHECK(q.value()["ok"].as_bool());
+    CHECK_FALSE(q.value()["bad"].as_bool());
+    CHECK(q.value()["w"].as_number() == doctest::Approx(0.5));
+    CHECK(q.value()["none"].as_bool());
+    CHECK(q.value()["n"].as_number() == doctest::Approx(1));
+    CHECK(q.value()["name"].as_string() == "Upper");
+    CHECK(q.value()["state"].as_string() == "Aim");
+    CHECK(q.value()["blend"].as_string() == "override");
+    sim.tick(s, 1.0f / 60);
+    CHECK(s.world().get<scene::Transform>(spine)->position.x == doctest::Approx(3.0f));
+}

@@ -70,6 +70,29 @@ Status read_array(const json::Value& obj, std::string_view key, std::string_view
 
 bool is_numeric(ParamType t) noexcept { return t == ParamType::Float || t == ParamType::Int; }
 
+// Re-anchors a nested layer error: "animation controller: states[0]: x" -> "...: layers[1].states[0]: x".
+Error nest_error(Error e, std::string_view where) {
+    constexpr std::string_view kPrefix = "animation controller: ";
+    if (e.message.starts_with(kPrefix))
+        e.message = std::string(kPrefix) + std::string(where) + "." + e.message.substr(kPrefix.size());
+    return e;
+}
+
+Status read_names(const json::Value& obj, std::string_view key, std::string_view where, std::vector<std::string>& out) {
+    const json::Value* arr = nullptr;
+    if (Status st = read_array(obj, key, where, Controller::kMaxMaskNodes, arr); !st) return st;
+    for (std::size_t i = 0; arr && i < arr->size(); ++i) {
+        const json::Value& v = (*arr)[i];
+        if (!v.is_string() || v.as_string().empty() || v.as_string().size() > 256)
+            return fail(where, std::format("\"{}\"[{}] must be a non-empty node name", key, i));
+        out.push_back(v.as_string());
+    }
+    return {};
+}
+
+Result<std::shared_ptr<const Controller>> parse_machine(const json::Value& doc, std::string asset_name,
+                                                        const std::vector<ControllerParam>* inherited);
+
 } // namespace
 
 std::string_view param_type_name(ParamType t) noexcept {
@@ -96,6 +119,14 @@ std::int32_t Controller::find_parameter(std::string_view n) const noexcept {
     return -1;
 }
 
+std::int32_t Controller::find_layer(std::string_view n) const noexcept {
+    for (std::size_t i = 0; i < layers.size(); ++i)
+        if (layers[i].name == n) return static_cast<std::int32_t>(i);
+    return -1;
+}
+
+std::string_view layer_blend_name(LayerBlend b) noexcept { return b == LayerBlend::Additive ? "additive" : "override"; }
+
 std::vector<std::string> Controller::clip_names() const {
     std::vector<std::string> out;
     auto add = [&](const std::string& c) {
@@ -105,10 +136,20 @@ std::vector<std::string> Controller::clip_names() const {
         add(s.clip);
         for (const BlendPoint& p : s.points) add(p.clip);
     }
+    for (const ControllerLayer& l : layers)
+        if (l.machine)
+            for (const std::string& n : l.machine->clip_names()) add(n);
     return out;
 }
 
 Result<std::shared_ptr<const Controller>> Controller::from_json(const json::Value& doc, std::string asset_name) {
+    return parse_machine(doc, std::move(asset_name), nullptr);
+}
+
+namespace {
+Result<std::shared_ptr<const Controller>> parse_machine(const json::Value& doc, std::string asset_name,
+                                                        const std::vector<ControllerParam>* inherited) {
+    const bool in_layer = inherited != nullptr;
     if (!doc.is_object()) return make_error(ErrorCode::ParseError, "animation controller: expected an object");
     if (const json::Value* v = doc.find("version")) {
         if (!v->is_number() || v->as_int(0) < 1)
@@ -124,7 +165,14 @@ Result<std::shared_ptr<const Controller>> Controller::from_json(const json::Valu
 
     // Parameters.
     const json::Value* params = nullptr;
-    if (st = read_array(doc, "parameters", "document", kMaxParameters, params); !st) return std::move(st).error();
+    if (in_layer) {
+        for (const std::string_view key : {"parameters", "layers", "root_node", "version"})
+            if (doc.find(key))
+                return fail("document", std::format("\"{}\" is not allowed in a layer (layers share the controller's)", key));
+        c->parameters = *inherited;
+    }
+    if (st = read_array(doc, "parameters", "document", Controller::kMaxParameters, params); !st)
+        return std::move(st).error();
     for (std::size_t i = 0; params && i < params->size(); ++i) {
         const json::Value& pv = (*params)[i];
         const std::string where = std::format("parameters[{}]", i);
@@ -161,7 +209,7 @@ Result<std::shared_ptr<const Controller>> Controller::from_json(const json::Valu
 
     // States.
     const json::Value* states = nullptr;
-    if (st = read_array(doc, "states", "document", kMaxStates, states); !st) return std::move(st).error();
+    if (st = read_array(doc, "states", "document", Controller::kMaxStates, states); !st) return std::move(st).error();
     if (!states || states->size() == 0) return fail("document", "a controller needs at least one state");
     for (std::size_t i = 0; i < states->size(); ++i) {
         const json::Value& sv = (*states)[i];
@@ -174,9 +222,12 @@ Result<std::shared_ptr<const Controller>> Controller::from_json(const json::Valu
         const json::Value* clip = sv.find("clip");
         const json::Value* b1 = sv.find("blend1d");
         const json::Value* b2 = sv.find("blend2d");
-        if ((clip ? 1 : 0) + (b1 ? 1 : 0) + (b2 ? 1 : 0) != 1)
+        const int motions = (clip ? 1 : 0) + (b1 ? 1 : 0) + (b2 ? 1 : 0);
+        if (motions > 1 || (motions == 0 && !in_layer))
             return fail(where, "a state needs exactly one of \"clip\", \"blend1d\" or \"blend2d\"");
-        if (clip) {
+        if (motions == 0) {
+            s.motion = MotionType::Clip; // empty layer state: no clip, no influence
+        } else if (clip) {
             s.motion = MotionType::Clip;
             if (st = read_string(sv, "clip", where, s.clip, true); !st) return std::move(st).error();
         } else {
@@ -194,7 +245,7 @@ Result<std::shared_ptr<const Controller>> Controller::from_json(const json::Valu
             }
             if (st = numeric_param(s.param_x, bw); !st) return std::move(st).error();
             const json::Value* pts = nullptr;
-            if (st = read_array(bv, "points", bw, kMaxPointsPerState, pts); !st) return std::move(st).error();
+            if (st = read_array(bv, "points", bw, Controller::kMaxPointsPerState, pts); !st) return std::move(st).error();
             if (!pts || pts->size() == 0) return fail(bw, "a blend space needs at least one point");
             for (std::size_t k = 0; k < pts->size(); ++k) {
                 const json::Value& kv = (*pts)[k];
@@ -238,6 +289,7 @@ Result<std::shared_ptr<const Controller>> Controller::from_json(const json::Valu
         if (const json::Value* rm = sv.find("root_motion")) {
             if (!rm->is_bool()) return fail(where, "\"root_motion\" must be true or false");
             s.root_motion = rm->as_bool();
+            if (s.root_motion && in_layer) return fail(where, "root motion is only taken from the base layer");
         }
         c->states.push_back(std::move(s));
     }
@@ -255,7 +307,7 @@ Result<std::shared_ptr<const Controller>> Controller::from_json(const json::Valu
 
     // Transitions.
     const json::Value* trans = nullptr;
-    if (st = read_array(doc, "transitions", "document", kMaxTransitions, trans); !st) return std::move(st).error();
+    if (st = read_array(doc, "transitions", "document", Controller::kMaxTransitions, trans); !st) return std::move(st).error();
     for (std::size_t i = 0; trans && i < trans->size(); ++i) {
         const json::Value& tv = (*trans)[i];
         const std::string where = std::format("transitions[{}]", i);
@@ -285,7 +337,7 @@ Result<std::shared_ptr<const Controller>> Controller::from_json(const json::Valu
             t.allow_self = a->as_bool();
         }
         const json::Value* conds = nullptr;
-        if (st = read_array(tv, "conditions", where, kMaxConditions, conds); !st) return std::move(st).error();
+        if (st = read_array(tv, "conditions", where, Controller::kMaxConditions, conds); !st) return std::move(st).error();
         for (std::size_t k = 0; conds && k < conds->size(); ++k) {
             const json::Value& cv = (*conds)[k];
             const std::string cw = std::format("{}.conditions[{}]", where, k);
@@ -326,8 +378,47 @@ Result<std::shared_ptr<const Controller>> Controller::from_json(const json::Valu
         if (t.allow_self && t.from >= 0) return fail(where, "\"allow_self\" only applies to \"*\" transitions");
         c->transitions.push_back(std::move(t));
     }
+
+    // Layers.
+    const json::Value* layers = nullptr;
+    if (st = read_array(doc, "layers", "document", Controller::kMaxLayers, layers); !st) return std::move(st).error();
+    for (std::size_t i = 0; layers && i < layers->size(); ++i) {
+        const json::Value& lv = (*layers)[i];
+        const std::string where = std::format("layers[{}]", i);
+        if (!lv.is_object()) return fail(where, "a layer must be an object");
+        ControllerLayer l;
+        if (st = read_string(lv, "name", where, l.name, true); !st) return std::move(st).error();
+        if (c->find_layer(l.name) >= 0) return fail(where, "duplicate layer \"" + l.name + "\"");
+        if (st = read_number(lv, "weight", where, l.weight); !st) return std::move(st).error();
+        if (l.weight < 0 || l.weight > 1) return fail(where, "\"weight\" must be in [0, 1]");
+        if (st = read_string(lv, "weight_parameter", where, l.weight_parameter, false); !st) return std::move(st).error();
+        if (!l.weight_parameter.empty())
+            if (st = numeric_param(l.weight_parameter, where); !st) return std::move(st).error();
+        std::string blend = "override";
+        if (st = read_string(lv, "blend", where, blend, false); !st) return std::move(st).error();
+        if (blend == "additive") l.blend = LayerBlend::Additive;
+        else if (blend != "override") return fail(where, "unknown blend \"" + blend + "\" (override or additive)");
+        std::string ref = "first_frame";
+        if (st = read_string(lv, "reference", where, ref, false); !st) return std::move(st).error();
+        if (ref == "rest") l.reference = AdditiveReference::Rest;
+        else if (ref != "first_frame") return fail(where, "unknown reference \"" + ref + "\" (first_frame or rest)");
+        if (lv.find("reference") && l.blend != LayerBlend::Additive)
+            return fail(where, "\"reference\" only applies to additive layers");
+        if (st = read_names(lv, "mask", where, l.mask); !st) return std::move(st).error();
+        if (st = read_names(lv, "exclude", where, l.exclude); !st) return std::move(st).error();
+        json::Value machine = json::Value::object();
+        for (const std::string_view key : {"default_state", "states", "transitions"})
+            if (const json::Value* v = lv.find(key)) machine.set(std::string(key), *v);
+        for (const std::string_view key : {"parameters", "layers", "root_node"})
+            if (lv.find(key)) return fail(where, std::format("\"{}\" is not allowed in a layer", key));
+        auto m = parse_machine(machine, c->name, &c->parameters);
+        if (!m) return nest_error(std::move(m).error(), where);
+        l.machine = std::move(*m);
+        c->layers.push_back(std::move(l));
+    }
     return std::shared_ptr<const Controller>(std::move(c));
 }
+} // namespace
 
 Result<std::shared_ptr<const Controller>> Controller::parse(std::string_view text, std::string asset_name) {
     auto doc = json::parse(text, {.max_depth = 16, .max_bytes = 16u * 1024u * 1024u, .max_string_bytes = 1u << 16});
@@ -354,7 +445,7 @@ json::Value Controller::to_json() const {
         json::Value o = json::Value::object();
         o.set("name", s.name);
         if (s.motion == MotionType::Clip) {
-            o.set("clip", s.clip);
+            if (!s.clip.empty()) o.set("clip", s.clip); // empty: an empty layer state
         } else {
             json::Value b = json::Value::object();
             const bool two_d = s.motion == MotionType::Blend2D;
@@ -412,6 +503,31 @@ json::Value Controller::to_json() const {
         ts.push(std::move(o));
     }
     doc.set("transitions", std::move(ts));
+    if (!layers.empty()) {
+        json::Value ls = json::Value::array();
+        for (const ControllerLayer& l : layers) {
+            json::Value o = json::Value::object();
+            o.set("name", l.name);
+            if (l.weight != 1.0f) o.set("weight", l.weight);
+            if (!l.weight_parameter.empty()) o.set("weight_parameter", l.weight_parameter);
+            o.set("blend", std::string(layer_blend_name(l.blend)));
+            if (l.blend == LayerBlend::Additive && l.reference == AdditiveReference::Rest) o.set("reference", "rest");
+            auto names = [](const std::vector<std::string>& v) {
+                json::Value a = json::Value::array();
+                for (const std::string& n : v) a.push(n);
+                return a;
+            };
+            if (!l.mask.empty()) o.set("mask", names(l.mask));
+            if (!l.exclude.empty()) o.set("exclude", names(l.exclude));
+            if (l.machine) {
+                const json::Value m = l.machine->to_json();
+                for (const char* key : {"default_state", "states", "transitions"})
+                    if (const json::Value* v = m.find(key)) o.set(key, *v);
+            }
+            ls.push(std::move(o));
+        }
+        doc.set("layers", std::move(ls));
+    }
     return doc;
 }
 

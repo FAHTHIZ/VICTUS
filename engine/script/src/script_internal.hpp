@@ -524,6 +524,8 @@ int entity_anim_trigger(lua_State* L);
 int entity_reset_anim_trigger(lua_State* L);
 int entity_anim_state(lua_State* L);
 int entity_anim_controller(lua_State* L);
+int entity_set_anim_layer_weight(lua_State* L);
+int entity_anim_layer_weight(lua_State* L);
 int entity_root_motion(lua_State* L);
 int entity_set_ik_target(lua_State* L);
 int entity_ik_state(lua_State* L);

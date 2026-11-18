@@ -180,6 +180,18 @@ struct ControllerStatus {
     std::vector<std::string> states;
     std::vector<std::uint8_t> root_motion_states; // per state: 1 = extracts root motion
     std::string root_node;      // node root motion is taken from ("" when unresolved)
+    struct Layer {
+        std::string name;
+        LayerBlend blend{LayerBlend::Override};
+        float weight{1};           // runtime weight (set_layer_weight)
+        float effective_weight{1}; // times the weight parameter, if any
+        std::string state, previous_state;
+        float normalized_time{0};
+        float blend_progress{1};   // cross-fade progress inside the layer
+        std::uint32_t affected_nodes{0}; // nodes inside the mask that a layer clip animates
+        std::vector<std::string> states;
+    };
+    std::vector<Layer> layers;  // controller layers above the base, in application order
 };
 
 struct AnimationSettings {
@@ -230,6 +242,10 @@ public:
     bool set_trigger(scene::Scene& scene, scene::Entity e, std::string_view name);
     bool reset_trigger(scene::Scene& scene, scene::Entity e, std::string_view name);
     [[nodiscard]] std::optional<float> parameter(scene::Scene& scene, scene::Entity e, std::string_view name);
+    // Runtime weight (0..1) of a controller layer by name; false/nullopt without such a layer.
+    // Starts at the authored weight; kept across controller hot reloads.
+    bool set_layer_weight(scene::Scene& scene, scene::Entity e, std::string_view layer, float weight);
+    [[nodiscard]] std::optional<float> layer_weight(scene::Scene& scene, scene::Entity e, std::string_view layer);
     [[nodiscard]] ControllerStatus controller_status(scene::Scene& scene, scene::Entity e);
     [[nodiscard]] std::vector<std::string> clips(scene::Scene& scene, scene::Entity e);
     [[nodiscard]] std::shared_ptr<const AnimationSet> set(const Uuid& model);

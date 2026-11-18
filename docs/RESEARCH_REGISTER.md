@@ -288,6 +288,11 @@ No third-party code was added.
 - efsw — https://github.com/SpartanJ/efsw (MIT): file watcher over inotify, FSEvents/kqueue, Windows I/O completion ports (ReadDirectoryChangesExW/W) with a generic polling fallback. Not adopted for now (ADR-0022); the candidate if polling becomes too slow.
 - Open questions: debounce for editors that write via temporary files, font atlas rebuilds for font reload, scene reload policy (merge vs restart).
 
+## Research conclusions added 2026-11-18 (controller layers, ADR-0074)
+- Unity AnimatorLayerBlendingMode.Additive — https://docs.unity3d.com/6000.2/Documentation/ScriptReference/Animations.AnimatorLayerBlendingMode.Additive.html: "based on the offset from the 1st frame of the animation to its current frame". VICTUS `reference: first_frame` matches; `rest` is offered for clips authored against the bind pose.
+- Unity Learn, Animator Layers — https://learn.unity.com/tutorial/3-7-creating-and-configuring-animator-layers: layers evaluate in index order, each blended with the result so far; additive layers leave lower layers at effective weight 1.
+- Open questions: per-bone mask weights, layer timing sync, a general blend graph.
+
 ## Research conclusions added 2026-11-18 (inverse kinematics, ADR-0073)
 - FABRIK — Aristidou & Lasenby, Graphical Models 73(5) 243–260, 2011, https://doi.org/10.1016/j.gmod.2011.05.003 (paper: http://www.andreasaristidou.com/publications/papers/FABRIK.pdf): forward/backward passes place each joint on a line at its bone length; root fixed; unreachable targets give a straight chain toward the target. Used for `chain`.
 - Godot FABRIK3D — https://docs.godotengine.org/en/stable/classes/class_fabrik3d.html: position-based, keeps the previous pose's twist, zig-zags when the target is near the root. Godot TwoBoneIK3D — https://docs.godotengine.org/en/stable/classes/class_twoboneik3d.html: plane from joints and pole, intersection of two circles. VICTUS two-bone follows the same plane construction and falls back to the current bend when there is no pole.

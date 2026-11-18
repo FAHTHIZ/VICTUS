@@ -134,6 +134,38 @@ end
 
 Visual scripts have matching nodes in the Animation category: Play Animation, Set Anim Parameter, Fire Anim Trigger, Anim State and Get Anim Parameter.
 
+## Layers
+
+`"layers"` adds state machines on top of the controller's own (the base layer). Each layer shares the controller's parameters and is applied in order after the base, before inverse kinematics (ADR-0074).
+
+```json
+"layers": [
+  { "name": "UpperBody", "mask": ["Spine"], "weight_parameter": "aiming",
+    "default_state": "None",
+    "states": [ { "name": "None" }, { "name": "Shoot", "clip": "Shoot", "loop": false } ],
+    "transitions": [
+      { "from": "None", "to": "Shoot", "duration": 0.1, "conditions": [ { "parameter": "fire" } ] },
+      { "from": "Shoot", "to": "None", "duration": 0.2, "exit_time": 1 } ] },
+  { "name": "Breathing", "blend": "additive", "weight": 0.6,
+    "states": [ { "name": "Breathe", "clip": "Breathe" } ] }
+]
+```
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Unique layer name (scripts set weights by it) |
+| `weight` | 0..1, default 1; `entity:set_anim_layer_weight(name, w)` changes it at run time |
+| `weight_parameter` | Optional float/int parameter, clamped to 0..1, multiplied into the weight |
+| `blend` | `override` (default): replaces the masked nodes the layer's clips animate. `additive`: adds the layer clip's change from its reference pose |
+| `reference` | Additive only: `first_frame` (default; each state's pose at normalized time 0, as in Unity) or `rest` (the model's rest pose) |
+| `mask` | Node names; each includes its descendants. Empty or absent: every node |
+| `exclude` | Node names whose subtrees the layer never touches. The nearest listed ancestor decides, so `"mask": ["Spine"], "exclude": ["LeftArm"]` covers the spine and right arm |
+| `default_state`, `states`, `transitions` | As at the top level. A layer state with no `clip` or blend space is empty: the layer has no influence while it is there, and fades out of and into it blend with the base pose |
+
+Layers cannot declare parameters, nested layers, `root_node` or root-motion states; errors name the element (`layers[0].transitions[1]: unknown state "Shot"`). A trigger consumed by any layer's transition is consumed for all. Nodes outside the mask, and nodes the layer's clips do not animate, keep the pose from the layers below. `victus check` checks layer clips like the base layer's. Unknown mask node names are logged once and ignored.
+
+Luau: `entity:set_anim_layer_weight(name, weight)` → `true` when the layer exists, `entity:anim_layer_weight(name)` → number or `nil`, and `entity:anim_controller().layers` → `{{name, blend, weight, effective_weight, state, previous_state, normalized_time, blend_progress}}`. Visual scripts: Set Anim Layer Weight. C++: `AnimationSystem::set_layer_weight`, `layer_weight`, `ControllerStatus::layers`.
+
 ## Inverse kinematics
 
 An `IKConstraint` component on the end of a chain (a hand, foot or head) bends its ancestors toward a target after the clips and controller have been sampled, every frame, before transforms propagate (ADR-0073).
@@ -150,7 +182,7 @@ An `IKConstraint` component on the end of a chain (a hand, foot or head) bends i
 
 Unreachable targets stretch the chain straight toward them. Chains are solved parents first, so a spine chain can feed an arm's two-bone constraint.
 
-Luau: `entity:set_ik_target(vector | entity | nil, weight?)` (nil disables) and `entity:ik_state()` → `{enabled, weight, solver, target, reached}`. The fields are also settable through `entity:set("IKConstraint", field, value)`.
+Visual scripts: Set IK Target. Luau: `entity:set_ik_target(vector | entity | nil, weight?)` (nil disables) and `entity:ik_state()` → `{enabled, weight, solver, target, reached}`. The fields are also settable through `entity:set("IKConstraint", field, value)`.
 
 ```lua
 -- Foot placement: plant each foot on the ground under it.

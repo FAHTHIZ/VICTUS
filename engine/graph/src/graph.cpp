@@ -132,6 +132,11 @@ std::vector<NodeDesc> build_library() {
          {}, "{entity}:set_anim_param({name}, {value})", "Sets a float, int or bool parameter of the Animator's controller");
     stmt("anim.trigger", "Animation", "Fire Anim Trigger", {self_entity, make_pin("name", T::String, "jump")}, {},
          "{entity}:anim_trigger({name})", "Sets a controller trigger; the transition using it consumes it");
+    stmt("anim.set_layer_weight", "Animation", "Set Anim Layer Weight",
+         {self_entity, make_pin("layer", T::String, "UpperBody"), make_pin("weight", T::Number, 1)}, {},
+         "{entity}:set_anim_layer_weight({layer}, {weight})", "Sets a controller layer's weight (0..1)");
+    stmt("anim.set_ik_target", "Animation", "Set IK Target", {self_entity, make_pin("target", T::Vector, vec(0, 0, 0)), make_pin("weight", T::Number, 1)},
+         {}, "{entity}:set_ik_target({target}, {weight})", "Points the entity's IKConstraint at a world position");
 
     auto pure = [&](std::string type, std::string category, std::string title, std::vector<PinDesc> ins, std::vector<PinDesc> outs,
                     std::vector<std::string> code, std::string tip = {}) {

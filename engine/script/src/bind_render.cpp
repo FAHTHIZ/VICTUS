@@ -732,6 +732,53 @@ int entity_anim_controller(lua_State* L) {
         lua_rawseti(L, -2, static_cast<int>(i + 1));
     }
     lua_setfield(L, -2, "weights");
+    lua_createtable(L, static_cast<int>(st.layers.size()), 0);
+    for (std::size_t i = 0; i < st.layers.size(); ++i) {
+        const auto& l = st.layers[i];
+        lua_createtable(L, 0, 8);
+        lua_pushlstring(L, l.name.data(), l.name.size());
+        lua_setfield(L, -2, "name");
+        const std::string_view bn = animation::layer_blend_name(l.blend);
+        lua_pushlstring(L, bn.data(), bn.size());
+        lua_setfield(L, -2, "blend");
+        lua_pushnumber(L, l.weight);
+        lua_setfield(L, -2, "weight");
+        lua_pushnumber(L, l.effective_weight);
+        lua_setfield(L, -2, "effective_weight");
+        lua_pushlstring(L, l.state.data(), l.state.size());
+        lua_setfield(L, -2, "state");
+        lua_pushlstring(L, l.previous_state.data(), l.previous_state.size());
+        lua_setfield(L, -2, "previous_state");
+        lua_pushnumber(L, l.normalized_time);
+        lua_setfield(L, -2, "normalized_time");
+        lua_pushnumber(L, l.blend_progress);
+        lua_setfield(L, -2, "blend_progress");
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    lua_setfield(L, -2, "layers");
+    return 1;
+}
+
+// entity:set_anim_layer_weight(layer, weight) -> bool (weight clamped to 0..1)
+int entity_set_anim_layer_weight(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const char* name = luaL_checkstring(L, 2);
+    const auto w = static_cast<float>(luaL_checknumber(L, 3));
+    auto* sys = animation::system_of(s);
+    lua_pushboolean(L, sys != nullptr && sys->set_layer_weight(s, e, name, w));
+    return 1;
+}
+
+// entity:anim_layer_weight(layer) -> number | nil
+int entity_anim_layer_weight(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const char* name = luaL_checkstring(L, 2);
+    auto* sys = animation::system_of(s);
+    const std::optional<float> w = sys ? sys->layer_weight(s, e, name) : std::nullopt;
+    if (w) lua_pushnumber(L, *w);
+    else lua_pushnil(L);
     return 1;
 }
 

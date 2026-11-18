@@ -77,6 +77,14 @@ struct ControllerRun {
     std::int32_t root{-1}; // root-motion node index in the set (-1 = none)
 };
 
+// One extra controller layer (ADR-0074): its own state machine over the shared parameters.
+struct LayerRun {
+    ControllerRun run;            // run.ctrl = the layer's machine; params copied from the base each step
+    float weight{1};              // runtime weight (starts at the authored weight)
+    std::vector<float> influence; // node -> mask (1 = affected) times "a layer clip animates it"
+    std::vector<NodePose> out, ref, out_b, ref_b; // layer pose (additive: delta), references
+};
+
 // Runtime playback state, not serialized: rebuilt from AnimatorComponent after loading.
 struct AnimatorState {
     Entity owner;
@@ -95,6 +103,8 @@ struct AnimatorState {
     std::uint32_t bound{0};
     std::size_t scene_size{0}; // entity count when bound: retry missing nodes after it changes
     ControllerRun ctl;
+    std::vector<LayerRun> layers;
+    std::vector<NodePose> base_out; // base layer output before layers (frozen-fade source)
     RootMotion motion; // latest update
 };
 
@@ -181,14 +191,40 @@ struct Work {
 
 float frac(float v) noexcept { return v - std::floor(v); }
 
+// Blend-space tables and the default state of one state machine.
+void init_run(ControllerRun& r) {
+    const Controller& ctrl = *r.ctrl;
+    r.thresholds.assign(ctrl.states.size(), {});
+    r.points.assign(ctrl.states.size(), {});
+    for (std::size_t i = 0; i < ctrl.states.size(); ++i) {
+        for (const BlendPoint& bp : ctrl.states[i].points) {
+            r.thresholds[i].push_back(bp.at.x);
+            r.points[i].push_back(bp.at);
+        }
+    }
+    r.cur = {ctrl.default_state, 0, false};
+}
+
 void init_controller(AnimatorState& s, std::shared_ptr<const Controller> c, const std::string& path, std::string error) {
     ControllerRun old = std::move(s.ctl);
+    std::vector<LayerRun> old_layers = std::move(s.layers);
     s.ctl = ControllerRun{};
+    s.layers.clear();
     s.ctl.path = path;
     s.ctl.error = std::move(error);
     s.ctl.ctrl = std::move(c);
     if (!s.ctl.ctrl) return;
     const Controller& ctrl = *s.ctl.ctrl;
+    for (const ControllerLayer& l : ctrl.layers) {
+        LayerRun& lr = s.layers.emplace_back();
+        lr.run.ctrl = l.machine;
+        lr.run.path = path;
+        lr.weight = l.weight;
+        if (old.ctrl) // hot reload keeps weights scripts set, by layer name
+            if (const std::int32_t o = old.ctrl->find_layer(l.name); o >= 0 && static_cast<std::size_t>(o) < old_layers.size())
+                lr.weight = old_layers[static_cast<std::size_t>(o)].weight;
+        init_run(lr.run);
+    }
     s.ctl.params.resize(ctrl.parameters.size());
     for (std::size_t i = 0; i < ctrl.parameters.size(); ++i) {
         s.ctl.params[i] = ctrl.parameters[i].default_value;
@@ -197,40 +233,81 @@ void init_controller(AnimatorState& s, std::shared_ptr<const Controller> c, cons
                 o >= 0 && old.ctrl->parameters[static_cast<std::size_t>(o)].type == ctrl.parameters[i].type)
                 s.ctl.params[i] = old.params[static_cast<std::size_t>(o)];
     }
-    s.ctl.thresholds.assign(ctrl.states.size(), {});
-    s.ctl.points.assign(ctrl.states.size(), {});
-    for (std::size_t i = 0; i < ctrl.states.size(); ++i) {
-        for (const BlendPoint& bp : ctrl.states[i].points) {
-            s.ctl.thresholds[i].push_back(bp.at.x);
-            s.ctl.points[i].push_back(bp.at);
-        }
-    }
-    s.ctl.cur = {ctrl.default_state, 0, false};
+    init_run(s.ctl);
 }
 
 // Resolves clip names against the model (serial: logs each missing clip once per binding).
+// Resolves one machine's clip names; marks the nodes its clips animate in `animated`.
+void resolve_run_clips(ControllerRun& r, const AnimationSet* set, std::vector<std::uint8_t>& animated) {
+    const Controller& c = *r.ctrl;
+    r.clips.assign(c.states.size(), {});
+    for (std::size_t i = 0; i < c.states.size(); ++i) {
+        const ControllerState& st = c.states[i];
+        auto add = [&](const std::string& name) {
+            const std::int32_t ci = set ? set->find_clip(name) : -1;
+            if (ci < 0 && set)
+                VICTUS_LOG_WARN("animation", "controller {}: state '{}': model has no clip '{}' (rest pose used)",
+                                r.path, st.name, name);
+            if (ci >= 0)
+                for (const Channel& ch : set->clips[static_cast<std::size_t>(ci)].channels)
+                    if (ch.node < animated.size()) animated[ch.node] = 1;
+            r.clips[i].push_back(ci);
+        };
+        if (st.motion == MotionType::Clip && !st.clip.empty()) add(st.clip);
+        for (const BlendPoint& bp : st.points) add(bp.clip);
+    }
+}
+
+// Layer influence per node: inside the mask (a listed node or its descendants; empty mask = all),
+// outside `exclude` subtrees (the nearest listed ancestor decides), and animated by a layer clip.
+void resolve_layer(LayerRun& lr, const ControllerLayer& def, const AnimationSet& set, std::vector<std::uint8_t>& animated,
+                   const std::string& path) {
+    const std::size_t n = set.nodes.size();
+    std::vector<std::uint8_t> mine(n, 0);
+    resolve_run_clips(lr.run, &set, mine);
+    lr.run.resolved_for = &set;
+    auto listed = [&](const std::vector<std::string>& names, std::size_t node) {
+        return std::find(names.begin(), names.end(), set.nodes[node].name) != names.end();
+    };
+    for (const auto* names : {&def.mask, &def.exclude})
+        for (const std::string& nm : *names)
+            if (std::none_of(set.nodes.begin(), set.nodes.end(), [&](const AnimationSet::Node& nd) { return nd.name == nm; }))
+                VICTUS_LOG_WARN("animation", "controller {}: layer '{}': model has no node '{}' (ignored)", path,
+                                def.name, nm);
+    lr.influence.assign(n, 0.0f);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!mine[i]) continue;
+        bool in = def.mask.empty(); // the nearest listed ancestor (or the node itself) decides
+        for (std::int32_t k = static_cast<std::int32_t>(i), hops = 0; k >= 0 && hops <= static_cast<std::int32_t>(n);
+             k = set.nodes[static_cast<std::size_t>(k)].parent, ++hops) {
+            const auto ku = static_cast<std::size_t>(k);
+            if (ku >= n) break;
+            if (listed(def.exclude, ku)) {
+                in = false;
+                break;
+            }
+            if (listed(def.mask, ku)) {
+                in = true;
+                break;
+            }
+        }
+        if (in) {
+            lr.influence[i] = 1.0f;
+            animated[i] = 1;
+        }
+    }
+}
+
 void resolve_controller_clips(AnimatorState& s) {
     ControllerRun& r = s.ctl;
     if (!r.ctrl || r.resolved_for == s.set.get()) return;
     r.resolved_for = s.set.get();
     const Controller& c = *r.ctrl;
-    r.clips.assign(c.states.size(), {});
     s.animated.assign(s.set ? s.set->nodes.size() : 0, 0);
-    for (std::size_t i = 0; i < c.states.size(); ++i) {
-        const ControllerState& st = c.states[i];
-        auto add = [&](const std::string& name) {
-            const std::int32_t ci = s.set ? s.set->find_clip(name) : -1;
-            if (ci < 0 && s.set)
-                VICTUS_LOG_WARN("animation", "controller {}: state '{}': model has no clip '{}' (rest pose used)",
-                                r.path, st.name, name);
-            if (ci >= 0)
-                for (const Channel& ch : s.set->clips[static_cast<std::size_t>(ci)].channels)
-                    if (ch.node < s.animated.size()) s.animated[ch.node] = 1;
-            r.clips[i].push_back(ci);
-        };
-        if (st.motion == MotionType::Clip) add(st.clip);
-        for (const BlendPoint& bp : st.points) add(bp.clip);
-    }
+    resolve_run_clips(r, s.set.get(), s.animated);
+    if (s.set)
+        for (std::size_t i = 0; i < s.layers.size() && i < c.layers.size(); ++i)
+            resolve_layer(s.layers[i], c.layers[i], *s.set, s.animated, r.path);
     r.root = -1;
     const bool wants_root = std::any_of(c.states.begin(), c.states.end(), [](const ControllerState& st) { return st.root_motion; });
     if (s.set && wants_root) {
@@ -399,16 +476,23 @@ void advance_playback(ControllerRun& r, const AnimationSet* set, const AnimatorC
 }
 
 // Samples a state's (blended) pose into `out` (sized to the node count).
+// Nodes no clip animates keep `init` (the base pose for override layers), else the rest pose.
+// `phase_override` >= 0 samples that normalized time instead (additive references).
 void sample_state(ControllerRun& r, const AnimationSet& set, const Playback& pb, std::vector<NodePose>& out,
-                  std::uint32_t& channels) {
+                  std::uint32_t& channels, const std::vector<NodePose>* init = nullptr, float phase_override = -1.0f) {
     const std::size_t n = set.nodes.size();
     out.resize(n);
-    for (std::size_t i = 0; i < n; ++i) out[i] = set.nodes[i].rest;
+    auto base = [&](std::size_t i) -> const NodePose& {
+        return init && i < init->size() ? (*init)[i] : set.nodes[i].rest;
+    };
+    for (std::size_t i = 0; i < n; ++i) out[i] = base(i);
     if (pb.state < 0) return;
     const ControllerState& st = r.ctrl->states[static_cast<std::size_t>(pb.state)];
     (void)state_weights(r, &set, pb.state);
     const auto& clips = r.clips[static_cast<std::size_t>(pb.state)];
-    const float phase = st.loop ? frac(pb.norm) : std::clamp(pb.norm, 0.0f, 1.0f);
+    if (clips.empty()) return; // empty layer state
+    const float phase =
+        phase_override >= 0 ? phase_override : (st.loop ? frac(pb.norm) : std::clamp(pb.norm, 0.0f, 1.0f));
     std::size_t contributors = 0, only = 0;
     for (std::size_t i = 0; i < r.weights.size(); ++i)
         if (r.weights[i] > 0) {
@@ -430,7 +514,7 @@ void sample_state(ControllerRun& r, const AnimationSet& set, const Playback& pb,
     for (std::size_t k = 0; k < r.weights.size(); ++k) {
         const float w = r.weights[k];
         if (w <= 0) continue;
-        for (std::size_t i = 0; i < n; ++i) tmp[i] = set.nodes[i].rest;
+        for (std::size_t i = 0; i < n; ++i) tmp[i] = base(i);
         if (const std::int32_t ci = clips[k]; ci >= 0) {
             const Clip& clip = set.clips[static_cast<std::size_t>(ci)];
             sample(clip, phase * clip.duration, tmp);
@@ -459,13 +543,12 @@ void sample_state(ControllerRun& r, const AnimationSet& set, const Playback& pb,
 
 // Enters `to` with a cross-fade. A transition fired mid-fade freezes the last output pose as the
 // fade source (so the blend never pops), then fades from that snapshot.
-void enter_state(AnimatorState& s, AnimatorComponent& a, std::int32_t to, float fade, float offset) {
-    ControllerRun& r = s.ctl;
-    const std::size_t n = s.set ? s.set->nodes.size() : 0;
+void enter_run(ControllerRun& r, const std::vector<NodePose>& last_out, std::size_t n, std::int32_t to, float fade,
+               float offset) {
     if (fade > 0 && r.cur.state >= 0) {
         if (r.fading) {
-            r.frozen = s.pose.size() == n && n > 0;
-            if (r.frozen) r.frozen_pose = s.pose;
+            r.frozen = last_out.size() == n && n > 0;
+            if (r.frozen) r.frozen_pose = last_out;
             r.fading = r.frozen;
         } else {
             r.prev = r.cur;
@@ -478,6 +561,12 @@ void enter_state(AnimatorState& s, AnimatorComponent& a, std::int32_t to, float 
         r.fading = r.frozen = false;
     }
     r.cur = {to, offset, false, offset};
+}
+
+void enter_state(AnimatorState& s, AnimatorComponent& a, std::int32_t to, float fade, float offset) {
+    ControllerRun& r = s.ctl;
+    const std::size_t n = s.set ? s.set->nodes.size() : 0;
+    enter_run(r, s.layers.empty() ? s.pose : s.base_out, n, to, fade, offset);
     a.clip = r.ctrl->states[static_cast<std::size_t>(to)].name;
     s.clip_name = a.clip;
     s.finished = false;
@@ -553,6 +642,88 @@ void write_pose(Scene& scene, Work& w) {
     }
 }
 
+// Additive delta of `pose` against `ref`, in place: translation difference, local rotation
+// ref^-1 * pose, scale ratio. Identity is {0, identity, 1}.
+void to_delta(std::vector<NodePose>& pose, const std::vector<NodePose>& ref) {
+    for (std::size_t i = 0; i < pose.size() && i < ref.size(); ++i) {
+        NodePose& p = pose[i];
+        const NodePose& r = ref[i];
+        p.translation = p.translation - r.translation;
+        p.rotation = normalize(r.rotation.conjugate() * p.rotation);
+        auto ratio = [](float a, float b) { return std::fabs(b) > 1e-8f ? a / b : 1.0f; };
+        p.scale = {ratio(p.scale.x, r.scale.x), ratio(p.scale.y, r.scale.y), ratio(p.scale.z, r.scale.z)};
+    }
+}
+
+// Samples a layer state, as a delta for additive layers.
+void sample_layer_state(LayerRun& lr, const ControllerLayer& def, const AnimationSet& set, const Playback& pb,
+                        const std::vector<NodePose>& base, std::vector<NodePose>& out, std::vector<NodePose>& ref,
+                        std::uint32_t& channels) {
+    if (def.blend == LayerBlend::Override) {
+        sample_state(lr.run, set, pb, out, channels, &base);
+        return;
+    }
+    sample_state(lr.run, set, pb, out, channels);
+    if (def.reference == AdditiveReference::FirstFrame) sample_state(lr.run, set, pb, ref, channels, nullptr, 0.0f);
+    else sample_state(lr.run, set, Playback{}, ref, channels); // state -1: the rest pose
+    to_delta(out, ref);
+}
+
+void evaluate_layer(AnimatorState& s, LayerRun& lr, const ControllerLayer& def, AnimatorComponent& a, float dt, Work& w) {
+    ControllerRun& r = lr.run;
+    ControllerRun& base = s.ctl;
+    const AnimationSet& set = *s.set;
+    const std::size_t n = set.nodes.size();
+    if (!r.ctrl || r.cur.state < 0) return;
+    r.params = base.params; // shared parameters
+    const float step = a.playing ? dt : 0.0f;
+    advance_playback(r, &set, a, r.cur, step);
+    if (r.fading && !r.frozen) advance_playback(r, &set, a, r.prev, step);
+    if (a.playing) {
+        if (const ControllerTransition* t = pick_transition(r)) {
+            for (const Condition& cond : t->conditions)
+                if (cond.op == ConditionOp::Trigger) {
+                    r.params[static_cast<std::size_t>(cond.index)] = 0;
+                    base.params[static_cast<std::size_t>(cond.index)] = 0; // consumed for every layer
+                }
+            enter_run(r, lr.out, n, t->to, t->duration, t->offset);
+            ++w.transitions;
+        }
+    }
+    sample_layer_state(lr, def, set, r.cur, s.base_out, lr.out, lr.ref, w.channels);
+    if (r.fading) {
+        const std::vector<NodePose>* src = &r.frozen_pose;
+        if (!r.frozen) {
+            sample_layer_state(lr, def, set, r.prev, s.base_out, lr.out_b, lr.ref_b, w.channels);
+            src = &lr.out_b;
+        }
+        r.fade_elapsed += std::abs(dt);
+        const float fw = r.fade_duration > 0.0f ? std::clamp(r.fade_elapsed / r.fade_duration, 0.0f, 1.0f) : 1.0f;
+        for (std::size_t i = 0; i < lr.out.size() && i < src->size(); ++i) lr.out[i] = blend((*src)[i], lr.out[i], fw);
+        if (fw >= 1.0f) {
+            r.fading = r.frozen = false;
+            r.frozen_pose.clear();
+        }
+    }
+    float weight = std::clamp(lr.weight, 0.0f, 1.0f);
+    if (!def.weight_parameter.empty()) weight *= std::clamp(param_or(base, def.weight_parameter, 1.0f), 0.0f, 1.0f);
+    if (!(weight > 0.0f)) return;
+    const NodePose identity{{0, 0, 0}, {}, {1, 1, 1}};
+    for (std::size_t i = 0; i < n && i < s.pose.size() && i < lr.out.size() && i < lr.influence.size(); ++i) {
+        const float k = weight * lr.influence[i];
+        if (k <= 0.0f) continue;
+        if (def.blend == LayerBlend::Override) {
+            s.pose[i] = blend(s.pose[i], lr.out[i], k);
+            continue;
+        }
+        const NodePose d = k >= 1.0f ? lr.out[i] : blend(identity, lr.out[i], k);
+        NodePose& p = s.pose[i];
+        p.translation = p.translation + d.translation;
+        p.rotation = normalize(p.rotation * d.rotation);
+        p.scale = {p.scale.x * d.scale.x, p.scale.y * d.scale.y, p.scale.z * d.scale.z};
+    }
+}
+
 void evaluate_controller(Scene& scene, Work& w, float dt) {
     AnimatorState& s = *w.s;
     AnimatorComponent& a = *w.a;
@@ -615,6 +786,11 @@ void evaluate_controller(Scene& scene, Work& w, float dt) {
     s.finished = r.cur.finished;
     a.time = (r.ctrl->states[static_cast<std::size_t>(r.cur.state)].loop ? frac(r.cur.norm) : r.cur.norm) *
              state_weights(r, &set, r.cur.state);
+    if (!s.layers.empty()) {
+        s.base_out = s.pose;
+        for (std::size_t i = 0; i < s.layers.size() && i < r.ctrl->layers.size(); ++i)
+            evaluate_layer(s, s.layers[i], r.ctrl->layers[i], a, dt, w);
+    }
     write_pose(scene, w);
 }
 
@@ -770,6 +946,7 @@ struct AnimationSystem::Impl {
             }
         } else if (!s.ctl.path.empty()) {
             s.ctl = ControllerRun{}; // controller removed: back to plain clip playback
+            s.layers.clear();
             s.clip_name.clear();
             s.current = -1;
             mark_animated(s);
@@ -1020,6 +1197,27 @@ bool AnimationSystem::reset_trigger(Scene& scene, Entity e, std::string_view nam
     return true;
 }
 
+bool AnimationSystem::set_layer_weight(Scene& scene, Entity e, std::string_view layer, float weight) {
+    AnimatorComponent* a = nullptr;
+    AnimatorState* s = impl_->ensure(scene, e, a);
+    ControllerRun* r = run_of(s);
+    if (!r) return false;
+    const std::int32_t i = r->ctrl->find_layer(layer);
+    if (i < 0 || static_cast<std::size_t>(i) >= s->layers.size()) return false;
+    s->layers[static_cast<std::size_t>(i)].weight = std::isfinite(weight) ? std::clamp(weight, 0.0f, 1.0f) : 0.0f;
+    return true;
+}
+
+std::optional<float> AnimationSystem::layer_weight(Scene& scene, Entity e, std::string_view layer) {
+    AnimatorComponent* a = nullptr;
+    AnimatorState* s = impl_->ensure(scene, e, a);
+    ControllerRun* r = run_of(s);
+    if (!r) return std::nullopt;
+    const std::int32_t i = r->ctrl->find_layer(layer);
+    if (i < 0 || static_cast<std::size_t>(i) >= s->layers.size()) return std::nullopt;
+    return s->layers[static_cast<std::size_t>(i)].weight;
+}
+
 std::optional<float> AnimationSystem::parameter(Scene& scene, Entity e, std::string_view name) {
     AnimatorComponent* a = nullptr;
     ControllerRun* r = run_of(impl_->ensure(scene, e, a));
@@ -1054,6 +1252,28 @@ ControllerStatus AnimationSystem::controller_status(Scene& scene, Entity e) {
     if (r->fading) {
         out.blend = r->fade_duration > 0 ? std::clamp(r->fade_elapsed / r->fade_duration, 0.0f, 1.0f) : 1.0f;
         out.previous_state = r->frozen ? std::string("(blend)") : c.states[static_cast<std::size_t>(r->prev.state)].name;
+    }
+    for (std::size_t i = 0; i < c.layers.size() && i < s->layers.size(); ++i) {
+        const LayerRun& lr = s->layers[i];
+        ControllerStatus::Layer l;
+        l.name = c.layers[i].name;
+        l.blend = c.layers[i].blend;
+        l.weight = lr.weight;
+        l.effective_weight = std::clamp(lr.weight, 0.0f, 1.0f);
+        if (!c.layers[i].weight_parameter.empty())
+            l.effective_weight *= std::clamp(r->params[static_cast<std::size_t>(c.find_parameter(c.layers[i].weight_parameter))], 0.0f, 1.0f);
+        if (lr.run.ctrl && lr.run.cur.state >= 0) {
+            const Controller& m = *lr.run.ctrl;
+            l.state = m.states[static_cast<std::size_t>(lr.run.cur.state)].name;
+            l.normalized_time = lr.run.cur.norm;
+            if (lr.run.fading) {
+                l.blend_progress = lr.run.fade_duration > 0 ? std::clamp(lr.run.fade_elapsed / lr.run.fade_duration, 0.0f, 1.0f) : 1.0f;
+                l.previous_state = lr.run.frozen ? std::string("(blend)") : m.states[static_cast<std::size_t>(lr.run.prev.state)].name;
+            }
+            for (const ControllerState& st : m.states) l.states.push_back(st.name);
+        }
+        for (const float v : lr.influence) l.affected_nodes += v > 0 ? 1u : 0u;
+        out.layers.push_back(std::move(l));
     }
     if (!s->set) return out;
     resolve_controller_clips(*s);
