@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
         .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
         .option("show", "open a window after opening: input-actions, network, profiler, problems, export, report-problem, about, add-menu, add-component, "
-                        "crash-notice, command-palette, animation, "
+                        "console, crash-notice, command-palette, animation, "
                         "animation-preview (selected entity), material-editor (selected entity's material)")
         .option("graph", "open this visual script (path relative to assets/) in the Graph Editor")
         .option("port", "UDP port for --host", "27960")
@@ -198,6 +198,8 @@ int main(int argc, char** argv) {
             ed.open_diagnostics_dialog();
         else if (args.get("show") == "add-component")
             ed.open_add_component();
+        else if (args.get("show") == "console")
+            ed.focus_console();
         else if (args.get("show") == "add-menu")
             ed.open_add_menu();
         else if (args.get("show") == "about")

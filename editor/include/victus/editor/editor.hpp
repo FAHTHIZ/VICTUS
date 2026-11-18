@@ -649,7 +649,20 @@ public:
     [[nodiscard]] ConsoleCounts console_counts() const;
     void clear_console();
     // Brings the Console panel to the front (the status bar's error/warning counts call this).
-    void focus_console() noexcept { focus_console_ = true; }
+    void focus_console() noexcept { focus_console_ = 3; }
+    // What the Console shows: severity toggles (messages = info and below), a case-insensitive
+    // search over category and message, and repeats of the same line merged into one row.
+    void set_console_filter(std::string text) { console_search_ = std::move(text); }
+    void set_console_levels(bool messages, bool warnings, bool errors) noexcept {
+        console_show_[0] = messages;
+        console_show_[1] = warnings;
+        console_show_[2] = errors;
+    }
+    void set_console_collapse(bool on) noexcept { console_collapse_ = on; }
+    // Rows the Console draws with the current filters (after merging repeats).
+    [[nodiscard]] std::size_t console_rows() const;
+    // The visible rows as plain text, one per line (what Copy puts on the clipboard).
+    [[nodiscard]] std::string console_text() const;
 
     // ---- command palette ----
     [[nodiscard]] std::vector<EditorCommand> commands();
@@ -910,7 +923,17 @@ private:
     std::shared_ptr<log::RingSink> log_sink_;
     mutable ConsoleCounts console_counts_;
     mutable std::uint64_t console_counted_{~std::uint64_t{0}}; // RingSink::total_written() the counts match
-    bool focus_console_{false};
+    int focus_console_{0};
+    std::string console_search_;
+    bool console_show_[3]{true, true, true}; // messages, warnings, errors
+    bool console_collapse_{true}, console_follow_{true};
+    std::size_t console_last_rows_{0};
+    long long console_selected_{-1}; // RingSink total index of the selected row's first record
+    struct ConsoleRow {
+        std::size_t record;  // index into the snapshot
+        std::size_t repeats; // 1 when the line did not repeat
+    };
+    [[nodiscard]] std::vector<ConsoleRow> console_filtered(const std::vector<log::Record>& records) const;
 
     // viewport
     rhi::TextureHandle viewport_tex_;

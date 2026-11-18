@@ -1834,60 +1834,6 @@ void Editor::draw_assets() {
     ImGui::End();
 }
 
-Editor::ConsoleCounts Editor::console_counts() const {
-    if (!log_sink_) return {};
-    const std::uint64_t total = log_sink_->total_written();
-    if (total != console_counted_) {
-        ConsoleCounts c;
-        for (const auto& r : log_sink_->snapshot()) {
-            if (r.level >= log::Level::Error) ++c.errors;
-            else if (r.level == log::Level::Warn) ++c.warnings;
-            else ++c.info;
-        }
-        console_counts_ = c;
-        console_counted_ = total;
-    }
-    return console_counts_;
-}
-
-void Editor::clear_console() {
-    if (!log_sink_) return;
-    log_sink_->clear();
-    console_counts_ = {};
-    console_counted_ = log_sink_->total_written();
-}
-
-void Editor::draw_console() {
-    if (focus_console_) core_open_[4] = true;
-    if (!core_open_[4]) return;
-    if (focus_console_) {
-        ImGui::SetNextWindowFocus();
-        focus_console_ = false;
-    }
-    if (!ImGui::Begin(kConsoleWindow, &core_open_[4])) {
-        ImGui::End();
-        return;
-    }
-    if (ImGui::Button("Clear")) clear_console();
-    ImGui::Separator();
-    ImGui::BeginChild("##log", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
-    const auto records = log_sink_->snapshot();
-    ImGuiListClipper clip;
-    clip.Begin(static_cast<int>(records.size()));
-    while (clip.Step()) {
-        for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
-            const auto& r = records[static_cast<std::size_t>(i)];
-            const ImVec4 col = r.level >= log::Level::Error  ? ui::tokens::kDanger
-                               : r.level == log::Level::Warn ? ui::tokens::kWarning
-                                                             : ui::tokens::kText;
-            ImGui::TextColored(col, "[%s] %s: %s", log::to_string(r.level), r.category.c_str(), r.message.c_str());
-        }
-    }
-    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4) ImGui::SetScrollHereY(1.0f);
-    ImGui::EndChild();
-    ImGui::End();
-}
-
 // ---- input actions -------------------------------------------------------------------------------
 
 void Editor::draw_input_actions() {
