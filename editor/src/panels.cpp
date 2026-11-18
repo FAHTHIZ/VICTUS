@@ -736,9 +736,18 @@ void Editor::draw_viewport() {
                             static_cast<double>(render_stats().triangles) / 1000.0, render_stats().lod_draws,
                             static_cast<double>(render_stats().shadow_triangles) / 1000.0,
                             last_view_stats_.sprites, last_view_stats_.extract.lights);
+        float overlay_line = 1.0f;
         if (!two_d && render_stats().temporal_upscale) {
             ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 6 + ImGui::GetTextLineHeightWithSpacing()));
             ImGui::TextDisabled("temporal upscale from %ux%u", render_stats().render_width, render_stats().render_height);
+            overlay_line += 1.0f;
+        }
+        // Shading cost apart from geometry: alpha tests, project shaders and blended layers.
+        if (const auto& rs = render_stats();
+            !two_d && (rs.alpha_tested_draws > 0 || rs.surface_shader_draws > 0 || rs.transparent_draws > 0)) {
+            ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 6 + overlay_line * ImGui::GetTextLineHeightWithSpacing()));
+            ImGui::TextDisabled("shading: %u alpha-tested, %u surface-shader, %u blended (%.1fk tris)", rs.alpha_tested_draws,
+                                rs.surface_shader_draws, rs.transparent_draws, static_cast<double>(rs.transparent_triangles) / 1000.0);
         }
         // The tile tool owns plain left clicks while a tilemap is selected in a 2D scene.
         // The terrain tool does the same while a terrain is selected in a 3D scene.

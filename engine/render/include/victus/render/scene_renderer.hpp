@@ -329,6 +329,11 @@ struct SceneStats {
     // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
     std::uint32_t main_batches{0}, shadow_batches{0}, prepass_batches{0};
     std::uint32_t transparent_draws{0};
+    // Shading cost, separate from geometry (H2): visible opaque draws with an alpha test (they
+    // cannot use early depth rejection as well), visible draws running a project surface shader,
+    // and the triangles of blended draws (each blended layer shades every covered pixel again).
+    std::uint32_t alpha_tested_draws{0}, surface_shader_draws{0};
+    std::uint64_t transparent_triangles{0};
     std::uint32_t decals{0};           // decals drawn (after frustum culling)
     std::uint32_t reflection_probes{0}, probe_draws{0}; // probes used / visible draws lit by a probe
     std::uint32_t instances_uploaded{0};

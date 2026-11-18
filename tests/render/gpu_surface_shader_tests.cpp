@@ -68,6 +68,8 @@ struct ShaderScene {
     }
 };
 
+std::uint32_t g_surface_draws = 0; // SceneStats::surface_shader_draws of the last centre() frame
+
 // Centre pixel of the rendered scene (RGBA8).
 std::uint32_t centre(ShaderScene& s, runtime::GpuAssetCache& cache, std::optional<double> time = {}) {
     auto& dev = gpu().ctx->device();
@@ -81,6 +83,7 @@ std::uint32_t centre(ShaderScene& s, runtime::GpuAssetCache& cache, std::optiona
     auto cmd = dev.begin_commands();
     REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
     cmd.submit_and_wait();
+    g_surface_draws = (*sr)->stats().surface_shader_draws;
     auto px = dev.read_texture(target);
     REQUIRE(px.ok());
     test::save_output("surface_shader", W, H, *px);
@@ -139,6 +142,7 @@ TEST_CASE("gpu: surface shaders recolour meshes, read params and time, fall back
     CHECK(mat->surface_shader);
     CHECK(mat->shader_params[0] == math::Vec4{0, 0, 1, 0});
     CHECK(is_blue(centre(s, cache)));
+    CHECK(g_surface_draws == 1);
 
     // Time reaches the shader: brightness follows fract(time / 10).
     runtime::AssetHotReloader reloader(*s.db);
@@ -162,6 +166,7 @@ TEST_CASE("gpu: surface shaders recolour meshes, read params and time, fall back
     REQUIRE(mat.ok());
     CHECK_FALSE(mat->surface_shader);
     CHECK(is_white(centre(s, cache)));
+    CHECK(g_surface_draws == 0); // the fallback is counted as built-in shading
 
     // Fixed again: the custom look returns.
     s.write_shader("void surface(SurfaceInput i, inout Surface s) {\n    s.base_color = i.params[0].rgb;\n}\n");

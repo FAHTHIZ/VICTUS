@@ -45,6 +45,10 @@ std::vector<std::uint8_t> draw(const std::vector<Quad>& quads) {
     REQUIRE(px.ok());
     CHECK((*sr)->stats().transparent_draws == static_cast<std::uint32_t>(std::count_if(
               quads.begin(), quads.end(), [](const Quad& q) { return q.mat.blend != MaterialBlend::Opaque; })));
+    const auto blended = static_cast<std::uint64_t>(
+        std::count_if(quads.begin(), quads.end(), [](const Quad& q) { return q.mat.blend != MaterialBlend::Opaque; }));
+    CHECK((*sr)->stats().transparent_triangles == blended * (mesh->lods[0].index_count / 3));
+    CHECK((*sr)->stats().triangles >= (*sr)->stats().transparent_triangles);
     ctx.destroy(*mesh);
     dev.destroy(target);
     return std::move(*px);

@@ -81,6 +81,8 @@ TEST_CASE("gpu alpha coverage: cutout surfaces keep their coverage when zoomed o
         auto cmd = dev.begin_commands();
         REQUIRE(sr.value()->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
         cmd.submit_and_wait();
+        CHECK(sr.value()->stats().alpha_tested_draws == (m ? 1u : 0u));
+        CHECK(sr.value()->stats().transparent_triangles == 0);
         auto px = dev.read_texture(target).value();
         if (save) test::save_output(save, W, H, px);
         dev.destroy(target);
