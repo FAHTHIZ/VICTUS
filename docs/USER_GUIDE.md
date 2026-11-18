@@ -176,6 +176,8 @@ Surface shaders: a `.vshader` file holds one GLSL function, `void surface(Surfac
 
 ## Shipping
 
+Before shipping, `victus check <project>` validates every scene, prefab, material, shader, sprite sheet, tile set, terrain, behaviour tree, sequence, animation controller and script and exits 1 on errors (warnings, such as unknown components or clips a model lacks, do not fail it). Tools and the editor get the same checks as structured diagnostics (severity, category, file, entity, suggested fix) from `player::validate_project` in `victus/player/validate.hpp`.
+
 Ship a game with `victus export` (see [Getting started](GETTING_STARTED.md#export-a-game)); the result runs anywhere the player runs, with no editor or SDK installed. Your project files are plain JSON and assets you own; Apache-2.0 allows commercial use.
 
 For Visual Studio/Xcode generators, binaries are under `build/bin/<Config>/`. See [CMake presets](CMakePresets.json).

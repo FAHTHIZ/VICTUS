@@ -21,6 +21,7 @@
 #include "victus/physics/physics.hpp"
 #include "victus/player/export.hpp"
 #include "victus/player/player.hpp"
+#include "victus/player/validate.hpp"
 #include "victus/project/project.hpp"
 #include "victus/runtime/surface_shader.hpp"
 #include "victus/platform/platform.hpp"
@@ -234,11 +235,6 @@ int cmd_run(const std::vector<std::string>& a) {
         std::printf("replay: %llu state digests match\n", static_cast<unsigned long long>(r->digests_checked));
     }
     return p.has("strict") && r->script_errors ? 3 : 0;
-}
-
-std::string entity_name(const scene::Scene& s, scene::Entity e) {
-    const auto* n = s.world().get<scene::Name>(e);
-    return n ? n->value : std::string("<unnamed>");
 }
 
 std::vector<std::string> split_list(const std::string& s) {
@@ -622,7 +618,7 @@ int cmd_serve(const std::vector<std::string>& a) {
 }
 
 // Validates every scene (loads, no unknown components) and every script (syntax, module loads,
-// referenced files exist). Exit 1 if anything is wrong.
+// referenced files exist); see victus/player/validate.hpp. Exit 1 if anything is wrong.
 int cmd_check(const std::vector<std::string>& a) {
     cli::Parser p("victus check", "Validate scenes, prefabs, materials, shaders, sprite sheets, tile sets, animation controllers and scripts");
     p.positional("project", "project folder", true);
@@ -631,295 +627,11 @@ int cmd_check(const std::vector<std::string>& a) {
     project::register_components();
     auto proj = project::Project::open(p.get("project"));
     if (!proj) return error(proj.error().message);
-    const fs::Path assets = proj->root() / "assets";
-    std::size_t problems = 0, scripts = 0, scenes = 0, prefabs = 0;
-    const std::vector<std::string> project_scenes = proj->scenes(); // targets of scene.load
-    for (const auto& msg : proj->settings().input.validate(
-             [](std::string_view k) { return platform::key_from_name(k) != platform::Key::Unknown; })) {
-        std::printf("error: victus.project: %s\n", msg.c_str());
-        ++problems;
-    }
-    std::vector<std::string> prefab_files;
-    std::set<Uuid> prefab_uuids;
-    std::error_code ec;
-    for (auto it = std::filesystem::recursive_directory_iterator(assets, ec);
-         !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
-        if (!it->is_regular_file()) continue;
-        const std::string rel = std::filesystem::relative(it->path(), assets).generic_string();
-        if (it->path().extension() == scene::kPrefabExtension) {
-            prefab_files.push_back(rel);
-            if (auto src = script::read_prefab(assets, rel); src && !src->asset.is_nil()) prefab_uuids.insert(src->asset);
-            continue;
-        }
-        if (it->path().extension() != ".luau" && it->path().extension() != ".vgraph") continue;
-        ++scripts;
-        auto raw = fs::read_text(it->path());
-        auto text = raw ? script::luau_source(rel, std::move(*raw)) : Result<std::string>(std::move(raw).error());
-        if (!text) {
-            std::printf("error: %s: %s\n", rel.c_str(), text.error().message.c_str());
-            ++problems;
-        } else if (auto st = script::check_syntax(*text, rel); !st) {
-            std::printf("error: %s\n", st.error().message.c_str());
-            ++problems;
-        } else {
-            for (const std::string& target : script::scene_references(*text))
-                if (std::find(project_scenes.begin(), project_scenes.end(), target) == project_scenes.end()) {
-                    std::printf("error: %s: scene.load(\"%s\") names a scene that does not exist\n", rel.c_str(), target.c_str());
-                    ++problems;
-                }
-        }
-    }
-    // Materials: each must parse and reference existing textures (resolved through the database).
-    std::size_t materials = 0;
-    auto db = assets::AssetDatabase::open(proj->root());
-    if (!db) return error(db.error().message);
-    for (const assets::AssetRecord& r : (*db)->records()) {
-        if (r.kind != assets::AssetKind::Material) continue;
-        ++materials;
-        auto m = (*db)->resolve_material(r.uuid); // also checks the parent chain
-        if (!m) {
-            std::printf("error: %s\n", m.error().message.c_str());
-            ++problems;
-            continue;
-        }
-        const auto refs = m->textures();
-        for (std::size_t i = 0; i < refs.size(); ++i) {
-            if (refs[i]->is_nil()) continue;
-            const assets::AssetRecord* t = (*db)->find(*refs[i]);
-            if (!t || t->kind != assets::AssetKind::Texture) {
-                std::printf("error: %s: %s texture %s does not exist\n", r.path.c_str(), assets::kMaterialTextureSlotNames[i],
-                            refs[i]->to_string().c_str());
-                ++problems;
-            }
-        }
-        if (!m->shader.is_nil()) {
-            const assets::AssetRecord* sh = (*db)->find(m->shader);
-            if (!sh || sh->kind != assets::AssetKind::Shader) {
-                std::printf("error: %s: surface shader %s does not exist\n", r.path.c_str(), m->shader.to_string().c_str());
-                ++problems;
-            }
-        }
-    }
-    // Surface shaders: each must compile; errors name the file and line.
-    std::size_t shaders = 0;
-    for (const assets::AssetRecord& r : (*db)->records()) {
-        if (r.kind != assets::AssetKind::Shader) continue;
-        ++shaders;
-        const std::string path = r.path;
-        auto code = runtime::load_surface_shader_code(**db, r.uuid);
-        if (!code) {
-            const std::string& msg = code.error().message;
-            std::printf("error: %s\n", msg.starts_with(path) ? msg.c_str() : (path + ": " + msg).c_str());
-            ++problems;
-        } else if (auto c = runtime::compile_surface_shader(*code, path, false); !c) {
-            std::printf("error: %s\n", c.error().message.c_str());
-            ++problems;
-        }
-    }
-    // Sprite sheets: each must parse and point at an existing texture.
-    std::size_t sheets = 0;
-    for (const assets::AssetRecord& r : (*db)->records()) {
-        if (r.kind != assets::AssetKind::SpriteSheet) continue;
-        ++sheets;
-        if (auto sheet = (*db)->load_sprite_sheet(r.uuid); !sheet) {
-            std::printf("error: %s\n", sheet.error().message.c_str());
-            ++problems;
-        }
-    }
-    // Tile sets: each must parse and point at an existing texture.
-    std::size_t tilesets = 0;
-    for (const assets::AssetRecord& r : (*db)->records()) {
-        if (r.kind != assets::AssetKind::Tileset) continue;
-        ++tilesets;
-        if (auto ts = (*db)->load_tileset(r.uuid); !ts) {
-            std::printf("error: %s\n", ts.error().message.c_str());
-            ++problems;
-        }
-    }
-    // Terrains: each heightfield must load.
-    for (const assets::AssetRecord& r : (*db)->records()) {
-        if (r.kind != assets::AssetKind::Terrain) continue;
-        if (auto t = (*db)->load_terrain(r.uuid); !t) {
-            std::printf("error: %s\n", t.error().message.c_str());
-            ++problems;
-        }
-    }
-    // Behaviour trees: each must parse.
-    for (const assets::AssetRecord& r : (*db)->records()) {
-        if (r.kind != assets::AssetKind::BehaviorTree) continue;
-        auto text = fs::read_text((*db)->source_path(r));
-        auto t = text ? ai::BehaviorTree::parse(*text, r.path) : Result<std::shared_ptr<const ai::BehaviorTree>>(std::move(text).error());
-        if (!t) {
-            std::printf("error: %s: %s\n", r.path.c_str(), t.error().message.c_str());
-            ++problems;
-        }
-    }
-    // Sequences: each must parse.
-    for (const assets::AssetRecord& r : (*db)->records()) {
-        if (r.kind != assets::AssetKind::Sequence) continue;
-        auto text = fs::read_text((*db)->source_path(r));
-        auto q = text ? sequencer::Sequence::parse(*text, r.path) : Result<std::shared_ptr<const sequencer::Sequence>>(std::move(text).error());
-        if (!q) {
-            std::printf("error: %s: %s\n", r.path.c_str(), q.error().message.c_str());
-            ++problems;
-        }
-    }
-    // Animation controllers: each must parse (states, clips, parameters and transitions).
-    std::size_t controllers = 0;
-    for (const assets::AssetRecord& r : (*db)->records()) {
-        if (r.kind != assets::AssetKind::AnimController) continue;
-        ++controllers;
-        auto text = fs::read_text((*db)->source_path(r));
-        auto c = text ? animation::Controller::parse(*text, r.path) : Result<std::shared_ptr<const animation::Controller>>(std::move(text).error());
-        if (!c) {
-            std::printf("error: %s: %s\n", r.path.c_str(), c.error().message.c_str());
-            ++problems;
-        }
-    }
-    const animation::SetProvider anim_sets = assets::animation_provider(**db);
-    const animation::ControllerLoader anim_loader = animation::directory_loader(assets);
-    script::HostOptions so;
-    so.assets_root = assets;
-    so.input_map = proj->settings().input;
-    auto host = script::ScriptHost::create(so);
-    if (!host) return error(host.error().message);
-    // Unknown components (warning), scripts that do not load and links to missing prefabs.
-    const auto check_entities = [&](const std::string& rel, scene::Scene& scene) {
-        scene.world().each<scene::UnknownComponents>([&](scene::Entity e, scene::UnknownComponents& u) {
-            for (const auto& [name, value] : u.components) {
-                std::printf("warning: %s: entity '%s' has unknown component '%s'\n", rel.c_str(),
-                            entity_name(scene, e).c_str(), name.c_str());
-                (void)value;
-            }
-        });
-        scene.world().each<script::ScriptComponent>([&](scene::Entity e, script::ScriptComponent& c) {
-            if (c.script.empty()) return;
-            if (auto d = (*host)->describe(c.script); !d) {
-                std::printf("error: %s: entity '%s': %s\n", rel.c_str(), entity_name(scene, e).c_str(),
-                            d.error().message.c_str());
-                ++problems;
-            }
-        });
-        scene.world().each<scene::MeshRendererComponent>([&](scene::Entity e, scene::MeshRendererComponent& c) {
-            if (c.material_asset.is_nil()) return;
-            const assets::AssetRecord* m = (*db)->find(c.material_asset);
-            if (!m || m->kind != assets::AssetKind::Material) {
-                std::printf("error: %s: entity '%s' uses missing material %s\n", rel.c_str(), entity_name(scene, e).c_str(),
-                            c.material_asset.to_string().c_str());
-                ++problems;
-            }
-        });
-        // Animator controllers must load; clips they name should exist in the Animator's model.
-        scene.world().each<animation::AnimatorComponent>([&](scene::Entity e, animation::AnimatorComponent& c) {
-            if (c.controller.empty()) return;
-            auto text = anim_loader(c.controller);
-            auto ctrl = text ? animation::Controller::parse(*text, c.controller)
-                             : Result<std::shared_ptr<const animation::Controller>>(std::move(text).error());
-            if (!ctrl) {
-                std::printf("error: %s: entity '%s': controller %s: %s\n", rel.c_str(), entity_name(scene, e).c_str(),
-                            c.controller.c_str(), ctrl.error().message.c_str());
-                ++problems;
-                return;
-            }
-            const auto set = c.model.is_nil() ? nullptr : anim_sets(c.model);
-            if (!set) return;
-            for (const std::string& clip : (*ctrl)->clip_names())
-                if (set->find_clip(clip) < 0)
-                    std::printf("warning: %s: entity '%s': controller %s uses clip '%s' that its model lacks\n",
-                                rel.c_str(), entity_name(scene, e).c_str(), c.controller.c_str(), clip.c_str());
-            const auto& states = (*ctrl)->states;
-            const std::string& root = (*ctrl)->root_node;
-            if (!root.empty() && std::any_of(states.begin(), states.end(), [](const auto& st) { return st.root_motion; }) &&
-                std::none_of(set->nodes.begin(), set->nodes.end(), [&](const auto& n) { return n.name == root; }))
-                std::printf("warning: %s: entity '%s': controller %s takes root motion from node '%s' that its model lacks\n",
-                            rel.c_str(), entity_name(scene, e).c_str(), c.controller.c_str(), root.c_str());
-        });
-        scene.world().each<animation::SpriteAnimatorComponent>([&](scene::Entity e, animation::SpriteAnimatorComponent& c) {
-            if (c.sheet.is_nil()) return;
-            const assets::AssetRecord* s = (*db)->find(c.sheet);
-            if (!s || s->kind != assets::AssetKind::SpriteSheet) {
-                std::printf("error: %s: entity '%s' uses missing sprite sheet %s\n", rel.c_str(), entity_name(scene, e).c_str(),
-                            c.sheet.to_string().c_str());
-                ++problems;
-            }
-        });
-        scene.world().each<tilemap::TilemapComponent>([&](scene::Entity e, tilemap::TilemapComponent& c) {
-            if (c.tileset.is_nil()) return;
-            const assets::AssetRecord* t = (*db)->find(c.tileset);
-            if (!t || t->kind != assets::AssetKind::Tileset) {
-                std::printf("error: %s: entity '%s' uses missing tile set %s\n", rel.c_str(), entity_name(scene, e).c_str(),
-                            c.tileset.to_string().c_str());
-                ++problems;
-            }
-        });
-        scene.world().each<terrain::TerrainComponent>([&](scene::Entity e, terrain::TerrainComponent& c) {
-            const assets::AssetRecord* t = c.data.is_nil() ? nullptr : (*db)->find(c.data);
-            if (!t || t->kind != assets::AssetKind::Terrain) {
-                std::printf("error: %s: entity '%s' uses missing terrain data %s\n", rel.c_str(), entity_name(scene, e).c_str(),
-                            c.data.to_string().c_str());
-                ++problems;
-            }
-        });
-        scene.world().each<ai::BehaviorTreeComponent>([&](scene::Entity e, ai::BehaviorTreeComponent& c) {
-            const assets::AssetRecord* t = (*db)->find_path(c.tree);
-            if (!t || t->kind != assets::AssetKind::BehaviorTree) {
-                std::printf("error: %s: entity '%s' uses missing behaviour tree '%s'\n", rel.c_str(), entity_name(scene, e).c_str(),
-                            c.tree.c_str());
-                ++problems;
-            }
-        });
-        scene.world().each<sequencer::SequencePlayerComponent>([&](scene::Entity e, sequencer::SequencePlayerComponent& c) {
-            if (c.sequence.empty()) return; // assigned at runtime (Luau play_sequence)
-            const assets::AssetRecord* t = (*db)->find_path(c.sequence);
-            if (!t || t->kind != assets::AssetKind::Sequence) {
-                std::printf("error: %s: entity '%s' uses missing sequence '%s'\n", rel.c_str(), entity_name(scene, e).c_str(),
-                            c.sequence.c_str());
-                ++problems;
-            }
-        });
-        scene.world().each<scene::PrefabInstance>([&](scene::Entity e, scene::PrefabInstance& pi) {
-            if (!prefab_uuids.contains(pi.prefab))
-                std::printf("warning: %s: entity '%s' is an instance of a prefab that no longer exists (%s); it keeps "
-                            "its saved content\n",
-                            rel.c_str(), entity_name(scene, e).c_str(), pi.prefab.to_string().c_str());
-        });
-    };
-    for (const auto& rel : prefab_files) {
-        ++prefabs;
-        auto src = script::read_prefab(assets, rel);
-        if (!src) {
-            std::printf("error: %s\n", src.error().message.c_str());
-            ++problems;
-            continue;
-        }
-        scene::Scene scene;
-        if (auto e = scene::instantiate(scene, src->prefab, src->asset); !e) {
-            std::printf("error: %s: %s\n", rel.c_str(), e.error().message.c_str());
-            ++problems;
-            continue;
-        }
-        check_entities(rel, scene);
-    }
-    for (const auto& rel : proj->scenes()) {
-        ++scenes;
-        auto path = proj->resolve(rel);
-        scene::Scene scene;
-        if (!path) {
-            std::printf("error: %s: %s\n", rel.c_str(), path.error().message.c_str());
-            ++problems;
-            continue;
-        }
-        if (auto st = scene.load_file(*path); !st) {
-            std::printf("error: %s: %s\n", rel.c_str(), st.error().message.c_str());
-            ++problems;
-            continue;
-        }
-        check_entities(rel, scene);
-    }
-    std::printf("checked %zu scenes, %zu prefabs, %zu materials, %zu shaders, %zu sprite sheets, %zu tile sets, "
-                "%zu animation controllers and %zu scripts: %zu problems\n",
-                scenes, prefabs, materials, shaders, sheets, tilesets, controllers, scripts, problems);
-    return problems ? 1 : 0;
+    auto report = player::validate_project(*proj);
+    if (!report) return error(report.error().message);
+    for (const player::Diagnostic& d : report->diagnostics) std::printf("%s\n", d.line().c_str());
+    std::printf("%s\n", report->summary().c_str());
+    return report->ok() ? 0 : 1;
 }
 
 int cmd_export(const std::vector<std::string>& a) {
