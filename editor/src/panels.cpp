@@ -225,6 +225,7 @@ const char* kind_icon(assets::AssetKind k) {
     case assets::AssetKind::Terrain: return "[ter]";
     case assets::AssetKind::BehaviorTree: return "[bt]";
     case assets::AssetKind::Sequence: return "[seq]";
+    case assets::AssetKind::StringTable: return "[str]";
     default: return "[file]";
     }
 }

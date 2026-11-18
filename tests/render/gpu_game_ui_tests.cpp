@@ -130,3 +130,53 @@ TEST_CASE("gpu ui: SceneView draws canvases over 2D and 3D frames") {
     CHECK(channel(test::pixel(px4, W, 50, 30), 0) < 20);
     dev.destroy(target);
 }
+
+// Localized strings arrive as UTF-8: glyphs outside ASCII (accented Latin, Cyrillic, Greek) must
+// come from the embedded Inter font, not its fallback glyph. "????" draws ImGui's fallback, so
+// a missing glyph would produce the same pixels.
+TEST_CASE("gpu ui: non-ASCII UTF-8 text draws real glyphs") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    gameui::register_components();
+    runtime::GpuAssetCache assets(ctx, nullptr);
+    auto view = runtime::SceneView::create(ctx, rhi::Format::RGBA8_UNORM);
+    REQUIRE(view.ok());
+    auto target = test::make_target(W, H);
+    const auto render_text = [&](const char* text) {
+        scene::Scene s;
+        const scene::Entity cam = s.create("Camera");
+        s.world().add<scene::CameraComponent>(cam).projection = scene::CameraComponent::Projection::Orthographic;
+        const scene::Entity canvas = s.create("HUD");
+        s.world().add<gameui::UiCanvasComponent>(canvas).reference_size = {static_cast<float>(W), static_cast<float>(H)};
+        const scene::Entity label = rect(s, canvas, "Label", {0, 0}, {static_cast<float>(W), static_cast<float>(H)});
+        auto& t = s.world().add<gameui::UiTextComponent>(label);
+        t.text = text;
+        t.font_size = 48;
+        t.color = {1, 1, 1, 1};
+        t.shadow_color = {0, 0, 0, 0};
+        s.update_transforms();
+        runtime::SceneViewOptions o;
+        o.clear_2d = {0, 0, 0, 1};
+        auto cmd = dev.begin_commands();
+        auto st = (*view)->render(cmd, s, assets, target, W, H, o);
+        REQUIRE(st.ok());
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target).value();
+        return std::pair{bright_pixels(px, 0, 0, W, H), px};
+    };
+    const auto [fallback, fpx] = render_text("????");
+    const auto [cyrillic, cpx] = render_text("ЖЖЖЖ");
+    const auto [greek, gpx] = render_text("ΩΩΩΩ");
+    const auto [latin, lpx] = render_text("ÉÉÉÉ");
+    test::save_output("game_ui_utf8", W, H, cpx);
+    MESSAGE("bright pixels: ???? " << fallback << ", ЖЖЖЖ " << cyrillic << ", ΩΩΩΩ " << greek << ", ÉÉÉÉ " << latin);
+    CHECK(fallback > 0);
+    CHECK(cyrillic != fallback);
+    CHECK(greek != fallback);
+    CHECK(latin != fallback);
+    CHECK(cpx != fpx);
+    CHECK(gpx != fpx);
+    CHECK(lpx != fpx);
+    dev.destroy(target);
+}

@@ -1,5 +1,12 @@
 # Inter (vendored font)
 - Upstream: https://github.com/rsms/inter (The Inter Project Authors), distributed via Fontsource `@fontsource/inter` 5.2.8 (https://fontsource.org/fonts/inter)
 - Files: `Inter-Medium.ttf` (weight 500, Latin subset, SHA-256 3073f87cb6eac0ac47fee30af580ba12f4bedeb62d1e1254c07dca7b2ad607e7) and `Inter-Bold.ttf` (weight 700, Latin subset, SHA-256 286fd42c6364594401ef80f2d1791fff4f77c00f9231895dcf336d76cd4e4650), fetched from `https://cdn.jsdelivr.net/fontsource/fonts/inter@5.2.8/latin-{500,700}-normal.ttf`.
+- Extra glyph sets (same release, unmodified), merged into each weight at load time so localized text renders: `Inter-{Medium,Bold}-latin-ext.ttf`, `-cyrillic.ttf`, `-greek.ttf`, fetched from `https://cdn.jsdelivr.net/fontsource/fonts/inter@5.2.8/{latin-ext,cyrillic,greek}-{500,700}-normal.ttf` (2026-11-18). SHA-256:
+  - Inter-Medium-latin-ext.ttf 227d565361afc8b7cde8cd4ed5111d368e932be8ab00c4f4d33752ad5a7d66aa
+  - Inter-Bold-latin-ext.ttf 78369d6615391cecfdd198ba59c6643e573734704b8bb8e1660e271be5016f3b
+  - Inter-Medium-cyrillic.ttf 92819eea0e7397d40b2a9aee980772bcc54439a2c456c34e9290daab9c6fbc31
+  - Inter-Bold-cyrillic.ttf bebd695bf9bec0ddb89ff40a235737d2c86ef0d2447834c73ae5a219d7249341
+  - Inter-Medium-greek.ttf 439f946befce7f3a94a86e86dfa7f53a5c0c903aee029b65b1cfe60b6ff9bf2b
+  - Inter-Bold-greek.ttf d6ee846b05000d59224da8fa47717ba0f35f0400467bb7328ed37f321ae78348
 - License: SIL Open Font License 1.1 (`LICENSE.txt`). The fonts are embedded unmodified in the runtime as the default game UI fonts; the OFL permits bundling and embedding with software, including commercial software, as long as the fonts are not sold on their own and the license ships with them.
-- Coverage: Basic Latin and Latin-1 Supplement (the Fontsource "latin" subset). Projects can use any other font through `UiText.font`.
+- Coverage: Basic Latin, Latin-1 Supplement, Latin Extended-A/B (Central European, Turkish, Romanian, Baltic, ...; Vietnamese is in a separate Fontsource subset and not included), Cyrillic and Greek (1,156 code points, ~250 KB added to the runtime for both weights). No CJK, Arabic, Hebrew, Devanagari or other scripts: projects use their own font through `UiText.font`, and scripts that need shaping or right-to-left layout do not render correctly (no text shaping).

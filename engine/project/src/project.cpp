@@ -5,6 +5,7 @@
 #include "victus/gameplay/gameplay.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <format>
 #include <filesystem>
@@ -44,6 +45,7 @@ Value settings_to_json(const ProjectSettings& s) {
     v.set("rendering", std::move(rendering));
     v.set("input", s.input.to_json());
     if (s.save_version != 1) v.set("save_version", s.save_version);
+    if (s.default_locale != "en") v.set("default_locale", s.default_locale);
     return v;
 }
 
@@ -92,11 +94,15 @@ Status settings_from_json(const Value& v, ProjectSettings& s) {
     const auto save_version = v["save_version"].as_int(1);
     if (save_version < 1 || save_version > 1000000) return bad("save_version must be between 1 and 1000000");
     s.save_version = static_cast<std::uint32_t>(save_version);
+    s.default_locale = v["default_locale"].as_string_or("en");
+    if (s.default_locale.empty() || s.default_locale.size() > 32 ||
+        !std::ranges::all_of(s.default_locale, [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_'; }))
+        return bad("default_locale must be a locale code such as \"en\" or \"pt-BR\"");
     s.extra = Value::object();
     for (const auto& [key, value] : v.as_object()) {
         if (key == "format" || key == "version" || key == "name" || key == "startup_scene" || key == "template" ||
             key == "engine_version" || key == "window" || key == "rendering" || key == "input" ||
-            key == "save_version")
+            key == "save_version" || key == "default_locale")
             continue;
         s.extra.set(key, value);
     }

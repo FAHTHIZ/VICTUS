@@ -148,6 +148,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     so.watch_files = o.hot_reload && !packaged;
     so.input_map = proj->settings().input;
     so.save_version = proj->settings().save_version;
+    so.default_locale = proj->settings().default_locale;
     so.save_directory = !o.saves.empty() ? o.saves
                         : packaged      ? gameplay::default_save_directory(proj->settings().name)
                                         : proj->dev_save_directory();
@@ -367,7 +368,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
                 if (!changes.prefabs.empty()) (*scripts)->forget_prefabs(); // new instances use the new version
                 for (const auto& t : changes.behavior_trees) ai_system.reload(t);
                 for (const auto& q : changes.sequences) sequencer_system.reload(q);
-                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size() + changes.terrains.size() + changes.behavior_trees.size() + changes.sequences.size();
+                if (!changes.string_tables.empty()) (void)(*scripts)->reload_localization();
+                report.assets_reloaded += changes.reimported.size() + changes.audio.size() + changes.prefabs.size() + changes.materials.size() + changes.shaders.size() + changes.sprite_sheets.size() + changes.tilesets.size() + changes.terrains.size() + changes.behavior_trees.size() + changes.sequences.size() + changes.string_tables.size();
             }
         }
         if (dynamic_resolution) {

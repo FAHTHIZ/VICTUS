@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // In-game UI tests (Slice 15): layout, scaling, visibility, interaction, navigation, draw lists.
 #include "victus/gameui/gameui.hpp"
+#include "victus/gameui/localization.hpp"
 #include "victus/core/json.hpp"
 #include "victus/scene/reflect.hpp"
 
@@ -382,4 +383,89 @@ TEST_CASE("ui: the simulation system updates UI before scripts run") {
     CHECK(s.world().get<UiStateComponent>(b)->clicks == 1);
     REQUIRE(sim.find("ui.update"));
     CHECK(sim.find("ui.update")->phase == gameplay::Phase::PreUpdate);
+}
+
+TEST_CASE("localization: string tables parse, flatten and reject bad documents") {
+    auto t = StringTable::parse(R"({"name":"Français","strings":{"menu":{"start":"Commencer","quit":"Quitter"},"hud.score":"Score : {score}"}})");
+    REQUIRE(t.ok());
+    CHECK(t->display_name() == "Français");
+    CHECK(t->size() == 3);
+    REQUIRE(t->find("menu.start"));
+    CHECK(*t->find("menu.start") == "Commencer");
+    CHECK(*t->find("hud.score") == "Score : {score}");
+    CHECK_FALSE(t->find("menu"));
+    CHECK_FALSE(StringTable::parse("[]").ok());
+    CHECK_FALSE(StringTable::parse(R"({"name":"x"})").ok());
+    CHECK_FALSE(StringTable::parse(R"({"strings":{"a":1}})").ok());
+    CHECK_FALSE(StringTable::parse(R"({"strings":{"":"x"}})").ok());
+    CHECK_FALSE(StringTable::parse(R"({"strings":{"a":"x")").ok());
+    std::string deep = R"({"strings":)";
+    for (int i = 0; i < 40; ++i) deep += R"({"k":)";
+    deep += "\"v\"";
+    for (int i = 0; i < 40; ++i) deep += "}";
+    deep += "}";
+    CHECK_FALSE(StringTable::parse(deep).ok());
+}
+
+TEST_CASE("localization: placeholders, locale fallback and keyed UI text") {
+    const auto param = [](std::string_view n) -> std::optional<std::string> {
+        if (n == "score") return std::string("42");
+        return std::nullopt;
+    };
+    CHECK(format_text("Score: {score}", param) == "Score: 42");
+    CHECK(format_text("{missing} {score}", param) == "{missing} 42");
+    CHECK(format_text("{{score}} {", param) == "{score} {");
+    CHECK(format_text("plain", nullptr) == "plain");
+
+    auto loc = std::make_shared<Localization>("en");
+    StringTable en, fr;
+    en.set("menu.start", "Start");
+    en.set("menu.quit", "Quit");
+    fr.set("menu.start", "Commencer");
+    loc->add("en", std::move(en));
+    loc->add("fr", std::move(fr));
+    CHECK(loc->locale() == "en");
+    CHECK(loc->locales() == std::vector<std::string>{"en", "fr"});
+    CHECK_FALSE(loc->set_locale("de"));
+    CHECK(loc->locale() == "en");
+    const auto rev = loc->revision();
+    CHECK(loc->set_locale("fr"));
+    CHECK(loc->revision() > rev);
+    CHECK(*loc->find("menu.start") == "Commencer");
+    CHECK(*loc->find("menu.quit") == "Quit"); // falls back to "en"
+    CHECK_FALSE(loc->find("menu.none"));
+
+    register_components();
+    Scene s;
+    const Entity c = canvas(s);
+    const Entity keyed = element(s, c, "Start", corner({0, 0}, {0, 0}, {0, 0}, {100, 20}));
+    auto& t1 = s.world().add<UiTextComponent>(keyed);
+    t1.text = "Start (fallback)";
+    t1.key = "menu.start";
+    const Entity unknown = element(s, c, "Other", corner({0, 0}, {0, 0}, {0, 30}, {100, 20}));
+    auto& t2 = s.world().add<UiTextComponent>(unknown);
+    t2.text = "Literal";
+    t2.key = "menu.none";
+    layout(s);
+    std::vector<DrawItem> items;
+    build_draw_list(s, items);
+    REQUIRE(items.size() == 2);
+    CHECK(items[0].text == "Start (fallback)"); // no localization bound yet
+    bind_localization(s, loc);
+    CHECK(localization_of(s) == loc.get());
+    build_draw_list(s, items);
+    REQUIRE(items.size() == 2);
+    CHECK(items[0].text == "Commencer");
+    CHECK(items[1].text == "Literal");
+    loc->set_locale("en");
+    build_draw_list(s, items);
+    CHECK(items[0].text == "Start");
+    // The key round-trips through the component schema (scene files).
+    const auto* schema = scene::find_schema("UiText");
+    REQUIRE(schema);
+    bool has_key = false;
+    for (const auto& f : schema->fields) has_key = has_key || f.name == "key";
+    CHECK(has_key);
+    bind_localization(s, nullptr);
+    CHECK_FALSE(localization_of(s));
 }

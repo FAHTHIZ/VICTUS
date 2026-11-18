@@ -723,6 +723,27 @@ TEST_CASE("project: save_version is saved and validated") {
     sfs::remove_all(dir, ec);
 }
 
+TEST_CASE("project: default_locale is saved and validated") {
+    const auto dir = temp_dir("locale");
+    auto p = project::Project::create(dir, "Locale", "simulation");
+    REQUIRE(p.ok());
+    CHECK(p->settings().default_locale == "en");
+    CHECK(fs::read_text(dir / "victus.project")->find("default_locale") == std::string::npos);
+    p->settings().default_locale = "pt-BR";
+    REQUIRE(p->save().ok());
+    auto q = project::Project::open(dir);
+    REQUIRE(q.ok());
+    CHECK(q->settings().default_locale == "pt-BR");
+    CHECK_FALSE(q->settings().extra.find("default_locale"));
+    auto doc = json::parse(*fs::read_text(dir / "victus.project"));
+    REQUIRE(doc.ok());
+    doc->set("default_locale", "../en");
+    REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(*doc)).ok());
+    CHECK_FALSE(project::Project::open(dir).ok());
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
 TEST_CASE("project: input actions are saved, rebindable in the file and validated") {
     const auto dir = temp_dir("input");
     auto p = project::Project::create(dir, "Input", "2d");

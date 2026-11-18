@@ -40,6 +40,18 @@ Audio: add `AudioSource` (clip, bus, volume, pitch, loop, play on start, stream,
 
 UI: put a `UiCanvas` on an entity and give its children `UiRect` (anchors, pivot, position, size) plus `UiPanel`, `UiImage`, `UiText` (built-in Inter or a project `.ttf`), `UiButton` (with an `action` string) or `UiLayout`. The canvas is authored at 1280x720 and scales with the window; it draws over 2D and 3D scenes in the player, editor viewport and screenshots. Scripts get `on_click(button, action)` on the button or any ancestor, entity `set_text/text`, `set_visible/visible`, `ui_state()`, and `ui.screen_size/pointer_over_ui/focus/focused/click`. Both templates ship a HUD (Controls button, H toggles the panel); the 2D one counts coins and shows a banner when all are collected.
 
+### Localization
+
+Localization: put one string table per language in `assets/localization/<locale>.vstrings` (for example `en.vstrings`, `fr.vstrings`, `pt-BR.vstrings`):
+
+```json
+{ "name": "Français", "strings": { "hud": { "controls": "Commandes", "score": "Score : {score}" } } }
+```
+
+Nested objects become dotted keys (`hud.score`). Set a `UiText`'s `key` field to show that key's translation; its `text` stays the fallback and is what the editor viewport shows outside play mode. Scripts use `loc.text(key, params?)` (fills `{name}` placeholders from `params`; an unknown key returns the key itself so it is visible), `loc.has(key)`, `loc.locale()`, `loc.set_locale(code)` (false when there is no table; it lasts for the session, across scene loads), `loc.locales()` and `loc.name(code?)` (the table's `name`). `entity:set_text(...)` shows literal text and clears the key; `entity:set_text_key(key)` switches back to a translated key. Lookups try the current locale, then the project's `default_locale` (`"default_locale"` in `victus.project`, default `"en"`); when that locale has no table the first one in name order is used. Edited tables hot-reload in editor play mode and `victus run` (unless `--no-hot-reload`; exported games do not watch files). The 3D, 2D and multiplayer templates ship `localization/en.vstrings` for their HUD.
+
+The built-in Inter fonts cover Latin (including Latin Extended-A/B), Cyrillic and Greek. Other scripts (CJK, Arabic, Hebrew, Devanagari, Thai, Vietnamese stacked accents) need a project font in `UiText.font`, and there is no text shaping or right-to-left layout, so Arabic and Indic scripts do not render correctly yet. There is no plural or gender selection beyond what a script does with `loc.text` and its own keys.
+
 ### Rendering from scripts
 
 Rendering from scripts: `entity:set_material("materials/gold.vmat")` / `material()` swap a MeshRenderer's material asset (nil restores the mesh's own), `set_mesh("sphere")` or `set_mesh("models/ship.glb", index)` / `mesh()`, `set_color(vector, alpha?)` / `color()` tint a MeshRenderer or Sprite, `set_sprite("textures/coin.png")` / `sprite()`, `set_cast_shadows(bool)`, and `set_visible/visible` also hide meshes. Paths resolve through the asset database, so they work in exported games too. Add `MaterialOverrides` (Rendering menu) to scroll or offset one entity's textures and override its emissive glow while sharing a material; scripts use `set_uv_offset(v)`, `set_uv_scroll(v)` and `set_emissive(v|nil, strength?)`.

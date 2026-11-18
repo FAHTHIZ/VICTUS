@@ -47,6 +47,9 @@ struct ProjectSettings {
     // Version of the game's save data ("save_version"); raise it when the shape of saved data
     // changes and register a migration (save.migrate) from the previous version.
     std::uint32_t save_version{1};
+    // Locale whose string table (assets/localization/<locale>.vstrings) is used first and fills
+    // in keys other locales lack ("default_locale").
+    std::string default_locale{"en"};
     json::Value extra = json::Value::object(); // unknown keys preserved verbatim
 };
 

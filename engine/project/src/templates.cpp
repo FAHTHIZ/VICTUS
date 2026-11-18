@@ -296,7 +296,7 @@ Entity hud(Scene& s, std::string_view controls, math::Vec2 panel_size, bool save
     const Entity help = ui_rect(s, canvas, "Help Button", {1, 0}, {1, 0}, {-24, 24}, {164, 52});
     s.world().add<gameui::UiPanelComponent>(help).border_width = 1.5f;
     s.world().add<gameui::UiButtonComponent>(help).action = "toggle_help";
-    ui_text(s, help, "Controls", 22, true);
+    ui_text(s, help, "Controls", 22, true).key = "hud.controls";
 
     const Entity panel = ui_rect(s, canvas, "Controls Panel", {1, 0}, {1, 0}, {-24, 88}, panel_size); // under the button
     auto& pp = s.world().add<gameui::UiPanelComponent>(panel);
@@ -1196,8 +1196,15 @@ constexpr const char* kHud = R"lua(-- HUD canvas: clicks on its buttons bubble u
 -- "Controls" button (or H) shows and hides the controls panel. When the HUD has a "Save Status"
 -- toast, "quick_save" (F5, LB) writes a checkpoint of the whole scene to the "quick" slot and
 -- "quick_load" (F9, RB) restores it; every script's save_state/load_state carries its own data.
+-- Messages come from assets/localization/<locale>.vstrings (loc.text); tr() keeps the English
+-- text when a key is missing.
 local Hud = {}
 Hud.slot = "quick"
+
+local function tr(key, fallback, params)
+    if loc.has(key) then return loc.text(key, params) end
+    return fallback
+end
 Hud.toast_seconds = 2
 
 function Hud:start()
@@ -1214,16 +1221,16 @@ end
 
 function Hud:quick_save()
     local ok, err = save.checkpoint(self.slot, "Quick save")
-    self:notify(if ok then "Game saved" else "Save failed: " .. tostring(err))
+    self:notify(if ok then tr("hud.saved", "Game saved") else tr("hud.save_failed", "Save failed: " .. tostring(err), { error = tostring(err) }))
 end
 
 function Hud:quick_load()
     if not save.exists(self.slot) then
-        self:notify("No quick save yet (F5 saves)")
+        self:notify(tr("hud.no_save", "No quick save yet (F5 saves)"))
         return
     end
     local ok, err = save.restore(self.slot) -- the scene is replaced at the end of this frame
-    if not ok then self:notify("Load failed: " .. tostring(err)) end
+    if not ok then self:notify(tr("hud.load_failed", "Load failed: " .. tostring(err), { error = tostring(err) })) end
 end
 
 -- Checkpoint hooks: the restored HUD confirms the load.
@@ -1232,7 +1239,7 @@ function Hud:save_state()
 end
 
 function Hud:load_state(state)
-    self:notify("Game loaded")
+    self:notify(tr("hud.loaded", "Game loaded"))
 end
 
 function Hud:toggle_help()
@@ -1261,6 +1268,23 @@ end
 
 return Hud
 )lua";
+
+// English strings of the HUD (assets/localization/en.vstrings); copy the file to fr.vstrings,
+// translate it and call loc.set_locale("fr") to switch.
+constexpr const char* kHudStrings = R"json({
+  "name": "English",
+  "strings": {
+    "hud": {
+      "controls": "Controls",
+      "saved": "Game saved",
+      "save_failed": "Save failed: {error}",
+      "no_save": "No quick save yet (F5 saves)",
+      "load_failed": "Load failed: {error}",
+      "loaded": "Game loaded"
+    }
+  }
+}
+)json";
 
 constexpr const char* kNetPlayer = R"lua(-- Multiplayer player. On a server every joined client gets a copy of this entity; the server
 -- runs it with that client's input and replicates the result, while the owning client predicts
@@ -1481,14 +1505,16 @@ std::vector<TemplateFile> template_files(std::string_view id) {
                 {std::string(kEnergyShaderPath) + ".meta", asset_meta(kEnergyShaderUuid, "")},
                 {kEnergyMaterialPath, energy_material()},
                 {std::string(kEnergyMaterialPath) + ".meta", asset_meta(kEnergyMaterialUuid, "")},
-                {"assets/scripts/hud.luau", kHud}};
+                {"assets/scripts/hud.luau", kHud},
+                {"assets/localization/en.vstrings", kHudStrings}};
     if (id == "2d")
         return {{"assets/scripts/platformer.luau", kPlatformer},
                 {"assets/scripts/coin.luau", kCoin},
                 {"assets/audio/jump.wav", synth_jump()},
                 {"assets/audio/coin.wav", synth_coin()},
                 {"assets/audio/music.wav", synth_music()},
-                {"assets/scripts/hud.luau", kHud}};
+                {"assets/scripts/hud.luau", kHud},
+                {"assets/localization/en.vstrings", kHudStrings}};
     if (id == "simulation") return {{"assets/scripts/orbit_camera.luau", kOrbitCamera}};
     if (id == "multiplayer")
         return {{"assets/scripts/net_player.luau", kNetPlayer},
@@ -1497,7 +1523,8 @@ std::vector<TemplateFile> template_files(std::string_view id) {
                 {"assets/scripts/net_coin.luau", kNetCoin},
                 {"assets/scripts/net_camera.luau", kNetCamera},
                 {"assets/scripts/net_hud.luau", kNetHud},
-                {"assets/scripts/hud.luau", kHud}};
+                {"assets/scripts/hud.luau", kHud},
+                {"assets/localization/en.vstrings", kHudStrings}};
     return {};
 }
 

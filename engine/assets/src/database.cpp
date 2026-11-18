@@ -88,6 +88,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     if (e == terrain::kTerrainExtension) return AssetKind::Terrain;
     if (e == ".vbt") return AssetKind::BehaviorTree;
     if (e == ".vseq") return AssetKind::Sequence;
+    if (e == ".vstrings") return AssetKind::StringTable;
     if (e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac") return AssetKind::Audio;
     return AssetKind::Unknown;
 }

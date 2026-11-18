@@ -172,6 +172,9 @@ struct HostOptions {
     // (the project's "save_version").
     std::filesystem::path save_directory;
     std::uint32_t save_version{1};
+    // Fallback locale of the `loc` API and keyed UiText (the project's "default_locale"); string
+    // tables are read from <assets_root>/localization/*.vstrings.
+    std::string default_locale{"en"};
     // Nonzero: math.random starts from this seed, so runs with the same input repeat exactly
     // (regression captures). Zero: Luau's default per-VM seed.
     std::uint64_t random_seed{0};
@@ -233,6 +236,10 @@ public:
     // converted to JSON (null when it returns nothing).
     [[nodiscard]] Result<json::Value> eval(std::string_view source, scene::Scene* scene = nullptr,
                                            std::string_view chunk_name = "eval");
+
+    // Re-reads the string tables (hot reload of .vstrings files); the current locale is kept when
+    // it still has a table. Returns the number of locales loaded.
+    std::size_t reload_localization();
 
     // Drops all instances (start runs again on the next update). Modules stay cached.
     void reset_instances();

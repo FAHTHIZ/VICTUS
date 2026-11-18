@@ -90,7 +90,13 @@
       "files": [
         "LICENSE.txt",
         "Inter-Medium.ttf",
-        "Inter-Bold.ttf"
+        "Inter-Bold.ttf",
+        "Inter-Medium-latin-ext.ttf",
+        "Inter-Bold-latin-ext.ttf",
+        "Inter-Medium-cyrillic.ttf",
+        "Inter-Bold-cyrillic.ttf",
+        "Inter-Medium-greek.ttf",
+        "Inter-Bold-greek.ttf"
       ]
     }
   ],

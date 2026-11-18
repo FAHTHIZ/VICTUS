@@ -26,8 +26,8 @@ Evidence for every item is in [STATUS.md](STATUS.md); platform coverage is in [P
 | Navigation (Recast/Detour) | Usable | Auto navmesh from colliders and terrain, agents with avoidance | Single tile, so very large levels need coarser voxels; rebuilds are whole-mesh; no authored off-mesh links |
 | Gameplay AI | Usable | Behaviour trees, blackboard, perception, Luau tasks, debugger | No visual tree editor; no environment queries |
 | Audio (miniaudio) | Usable | Buses, 3D spatialization, streaming, script API | No effects (reverb, filters), no audio profiling; never listened to on Android |
-| In-game UI | Usable | Canvases, anchors, text, images, buttons, layout, navigation | No UI editor canvas, rich text, localization or scroll views |
-| Scripting (Luau) | Usable | Sandboxed VM, budgets, hot reload, broad engine API | API is not versioned; binding layer is one large file |
+| In-game UI | Usable | Canvases, anchors, text, images, buttons, layout, navigation | No UI editor canvas, rich text or scroll views |
+| Scripting (Luau) | Usable | Sandboxed VM, budgets, hot reload, broad engine API | API is not versioned |
 | Visual scripting | Experimental | Graph model, compiler to Luau, editor, trace debugger | No breakpoints/watches; no user functions or comments |
 | Particles / VFX | Experimental | Deterministic CPU emitters, soft HDR billboards | CPU only; no GPU particles, ribbons, mesh particles or collision |
 | Terrain and foliage | Experimental | Heightfield LOD chunks, sculpt/paint tools, collision, navmesh, scatter | One draw per foliage instance (no instancing), no holes, scripts cannot deform terrain |
@@ -39,7 +39,7 @@ Evidence for every item is in [STATUS.md](STATUS.md); platform coverage is in [P
 | Debugging and profiling | Usable for CPU | Profiler window, Chrome trace export, capture/replay with divergence reports | No GPU timings; no memory history graph |
 | Save games | Usable | Slots, checkpoints, script data | No compression, cloud saves or editor browser |
 | Plugins / modding SDK | Missing | Unknown components survive load/save | No plugin loading, versioned public API or mod sandbox |
-| Localization | Missing | — | — |
+| Localization | Usable | Per-locale `.vstrings` string tables, keyed `UiText`, `loc` script API with placeholders and fallback locale, hot reload; built-in fonts cover Latin, Cyrillic and Greek | No text shaping or right-to-left layout; no plural rules; no translation editor or string extraction; CJK and other scripts need a project font |
 | iOS, Web, XR, consoles | Missing | — | — |
 
 ## Cross-cutting limitations

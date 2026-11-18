@@ -16,6 +16,18 @@ int entity_set_text(lua_State* L) {
     auto* t = s.world().get<gameui::UiTextComponent>(e);
     if (!t) luaL_error(L, "entity has no UiText component");
     t->text.assign(text, len);
+    t->key.clear(); // literal text from a script replaces any localization key
+    return 0;
+}
+
+// entity:set_text_key(key?) -> shows the key's translation (loc) and follows locale changes;
+// nil or "" goes back to the literal text.
+int entity_set_text_key(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* t = s.world().get<gameui::UiTextComponent>(e);
+    if (!t) luaL_error(L, "entity has no UiText component");
+    t->key = lua_isnoneornil(L, 2) ? std::string() : std::string(luaL_checkstring(L, 2));
     return 0;
 }
 
@@ -351,6 +363,75 @@ int ui_click(lua_State* L) {
     return 1;
 }
 
+
+// loc.text(key, params?) -> string: the key's text in the current locale (then the fallback
+// locale) with `{name}` placeholders filled from `params`. Unknown keys return the key itself,
+// so a missing translation is visible on screen.
+int loc_text(lua_State* L) {
+    const std::string_view key = luaL_checkstring(L, 1);
+    const std::string* s = host_of(L).loc().find(key);
+    const std::string_view pattern = s ? std::string_view(*s) : key;
+    if (lua_isnoneornil(L, 2)) {
+        lua_pushlstring(L, pattern.data(), pattern.size());
+        return 1;
+    }
+    luaL_checktype(L, 2, LUA_TTABLE);
+    const std::string out = gameui::format_text(pattern, [L](std::string_view name) -> std::optional<std::string> {
+        lua_pushlstring(L, name.data(), name.size());
+        lua_rawget(L, 2);
+        std::optional<std::string> v;
+        if (lua_type(L, -1) == LUA_TSTRING || lua_type(L, -1) == LUA_TNUMBER) {
+            size_t len = 0;
+            const char* str = luaL_tolstring(L, -1, &len);
+            v.emplace(str, len);
+            lua_pop(L, 1);
+        } else if (lua_isboolean(L, -1)) {
+            v.emplace(lua_toboolean(L, -1) ? "true" : "false");
+        }
+        lua_pop(L, 1);
+        return v;
+    });
+    lua_pushlstring(L, out.data(), out.size());
+    return 1;
+}
+
+int loc_has(lua_State* L) {
+    lua_pushboolean(L, host_of(L).loc().find(luaL_checkstring(L, 1)) != nullptr);
+    return 1;
+}
+
+int loc_locale(lua_State* L) {
+    const std::string& code = host_of(L).loc().locale();
+    lua_pushlstring(L, code.data(), code.size());
+    return 1;
+}
+
+// loc.set_locale(code) -> bool: switches every keyed UiText and later loc.text calls for the rest
+// of the session (scene loads keep it). False when there is no table for `code`.
+int loc_set_locale(lua_State* L) {
+    lua_pushboolean(L, host_of(L).loc().set_locale(luaL_checkstring(L, 1)));
+    return 1;
+}
+
+int loc_locales(lua_State* L) {
+    const auto codes = host_of(L).loc().locales();
+    lua_createtable(L, static_cast<int>(codes.size()), 0);
+    for (std::size_t i = 0; i < codes.size(); ++i) {
+        lua_pushlstring(L, codes[i].data(), codes[i].size());
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    return 1;
+}
+
+// loc.name(code?) -> the table's display name ("name" in the file), else the code.
+int loc_name(lua_State* L) {
+    gameui::Localization& l = host_of(L).loc();
+    const std::string code = lua_isnoneornil(L, 1) ? l.locale() : std::string(luaL_checkstring(L, 1));
+    const gameui::StringTable* t = l.table(code);
+    const std::string& name = t && !t->display_name().empty() ? t->display_name() : code;
+    lua_pushlstring(L, name.data(), name.size());
+    return 1;
+}
 
 // entity:play_animation(clip, fade?, restart?) -> bool. Cross-fades the entity's Animator to
 // `clip` over `fade` seconds (default: the Animator's crossfade). Before the animation system
