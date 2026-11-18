@@ -265,6 +265,46 @@ Result<ValidationReport> validate_project(const project::Project& proj) {
                 entity(Severity::Error, e, who(e) + " uses missing material " + c.material_asset.to_string(),
                        "Assign an existing material in the Inspector.", c.material_asset);
         });
+        // Convex/mesh colliders need geometry: a model mesh that exists, or a mesh on the entity.
+        scene.world().each<physics::ColliderComponent>([&](scene::Entity e, physics::ColliderComponent& c) {
+            if (c.shape != physics::ColliderComponent::Shape::Convex && c.shape != physics::ColliderComponent::Shape::Mesh) return;
+            if (scene.world().has<physics::CharacterControllerComponent>(e)) return;
+            const char* kind = c.shape == physics::ColliderComponent::Shape::Mesh ? "mesh" : "convex";
+            const auto* rb = scene.world().get<physics::RigidBodyComponent>(e);
+            if (c.shape == physics::ColliderComponent::Shape::Mesh && rb && rb->type == physics::BodyType::Dynamic)
+                entity(Severity::Warning, e, who(e) + " is a dynamic body with a mesh collider; it simulates the convex hull",
+                       "Use shape 'convex' for dynamic bodies, or make the body static or kinematic.");
+            Uuid model = c.mesh_asset;
+            std::uint32_t index = c.mesh_index;
+            if (model.is_nil()) {
+                const auto* mr = scene.world().get<scene::MeshRendererComponent>(e);
+                if (scene.world().has<scene::ProceduralMeshComponent>(e)) return; // runtime-only, built by scripts
+                if (!mr || (mr->mesh_asset.is_nil() && mr->primitive.empty())) {
+                    entity(Severity::Error, e, who(e) + " has a " + kind + " collider without geometry",
+                           "Set the collider's mesh_asset, or add a MeshRenderer with a model or primitive.");
+                    return;
+                }
+                if (mr->mesh_asset.is_nil()) {
+                    if (!assets::primitive_collision_mesh(mr->primitive))
+                        entity(Severity::Error, e, who(e) + ": " + kind + " collider uses unknown primitive '" + mr->primitive + "'",
+                               "Use cube, sphere, plane or cylinder, or set the collider's mesh_asset.");
+                    return;
+                }
+                model = mr->mesh_asset;
+                index = mr->mesh_index;
+            }
+            const assets::AssetRecord* m = (*db)->find(model);
+            if (!m || m->kind != assets::AssetKind::Model) {
+                entity(Severity::Error, e, who(e) + ": " + kind + " collider uses missing model " + model.to_string(),
+                       "Assign an existing model to the collider's mesh_asset.", model);
+                return;
+            }
+            if (auto cooked = (*db)->load_model(model); cooked && index >= cooked->meshes.size())
+                entity(Severity::Error, e,
+                       who(e) + ": " + kind + " collider uses mesh " + std::to_string(index) + " of a model with " +
+                           std::to_string(cooked->meshes.size()) + " meshes",
+                       "Lower mesh_index to an existing mesh.", model);
+        });
         // Animator controllers must load; clips they name should exist in the Animator's model.
         scene.world().each<animation::AnimatorComponent>([&](scene::Entity e, animation::AnimatorComponent& c) {
             std::shared_ptr<const animation::AnimationSet> retargeted;

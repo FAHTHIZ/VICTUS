@@ -142,7 +142,7 @@ HotReloadReport AssetHotReloader::check() {
 }
 
 void AssetHotReloader::apply(const HotReloadReport& report, GpuAssetCache* cache, animation::AnimationSystem* animations,
-                             tilemap::TilemapSystem* tilemaps, terrain::TerrainSystem* terrains) {
+                             tilemap::TilemapSystem* tilemaps, terrain::TerrainSystem* terrains, physics::PhysicsWorld* physics) {
     if (tilemaps && !report.tilesets.empty()) tilemaps->clear_cache();
     if (terrains && !report.terrains.empty()) terrains->clear_cache();
     if (cache && !report.shaders.empty()) cache->evict_shaders();
@@ -152,6 +152,7 @@ void AssetHotReloader::apply(const HotReloadReport& report, GpuAssetCache* cache
     for (const auto& uuid : report.reimported) {
         if (cache) cache->evict(uuid);
         if (animations) animations->invalidate(uuid);
+        if (physics) physics->invalidate_mesh(uuid);
     }
 }
 

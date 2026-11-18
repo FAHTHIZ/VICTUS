@@ -327,6 +327,7 @@ struct Headless {
         physics::add_physics_systems(sim, *physics_world);
         // Animation needs cooked models: open the asset database when the project has one.
         if (auto d = assets::AssetDatabase::open(proj->root())) db = std::move(*d);
+        if (db) physics_world->set_mesh_provider(assets::collision_mesh_provider(*db));
         animations = std::make_unique<animation::AnimationSystem>(
             animation::AnimationSettings{.provider = db ? assets::animation_provider(*db) : animation::SetProvider{},
                                          .controllers = db ? animation::directory_loader(db->assets_dir()) : animation::ControllerLoader{},

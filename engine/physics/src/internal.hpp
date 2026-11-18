@@ -51,8 +51,11 @@ void sort_events(std::vector<ContactEvent>& events);
 // ---- 3D backend (Jolt) ----
 class World3D {
 public:
-    static std::unique_ptr<World3D> create(const PhysicsSettings& settings);
+    // `meshes` resolves convex/mesh collider geometry and must outlive the world.
+    static std::unique_ptr<World3D> create(const PhysicsSettings& settings, CollisionMeshCache* meshes);
     virtual ~World3D() = default;
+    // Rebuilds every convex/mesh body on the next sync (provider changed, model reimported).
+    virtual void invalidate_meshes() = 0;
     virtual void sync(scene::Scene& scene, float dt) = 0;
     virtual void step(scene::Scene& scene, float dt, std::vector<ContactEvent>& events) = 0;
     virtual void clear() = 0;

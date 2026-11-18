@@ -509,6 +509,61 @@ terrain::TerrainProvider terrain_provider(AssetDatabase& db) {
     };
 }
 
+std::shared_ptr<const physics::CollisionMesh> collision_mesh(const render::MeshData& mesh) {
+    std::vector<math::Vec3> positions;
+    positions.reserve(mesh.vertices.size());
+    for (const render::Vertex3D& v : mesh.vertices) positions.push_back(v.position);
+    auto made = physics::make_collision_mesh(std::move(positions), mesh.indices);
+    if (!made) {
+        VICTUS_LOG_WARN("assets", "collision mesh: {}", made.error().message);
+        return nullptr;
+    }
+    return *made;
+}
+
+std::shared_ptr<const physics::CollisionMesh> primitive_collision_mesh(std::string_view name) {
+    // Same parameters as runtime::GpuAssetCache::primitive. Built once and shared by every cache
+    // (immutable; function-local statics are thread-safe).
+    if (name == "cube") {
+        static const auto mesh = collision_mesh(render::make_cube());
+        return mesh;
+    }
+    if (name == "sphere") {
+        static const auto mesh = collision_mesh(render::make_uv_sphere());
+        return mesh;
+    }
+    if (name == "plane") {
+        static const auto mesh = collision_mesh(render::make_plane({1, 1}));
+        return mesh;
+    }
+    if (name == "cylinder") {
+        static const auto mesh = collision_mesh(render::make_cylinder());
+        return mesh;
+    }
+    return nullptr;
+}
+
+physics::CollisionMeshProvider collision_mesh_provider(AssetDatabase& db) {
+    return [&db](const physics::CollisionMeshSource& src) -> std::shared_ptr<const physics::CollisionMesh> {
+        if (src.model.is_nil()) {
+            auto mesh = primitive_collision_mesh(src.primitive);
+            if (!mesh) VICTUS_LOG_WARN("assets", "collision mesh: unknown primitive '{}'", src.primitive);
+            return mesh;
+        }
+        auto model = db.load_model(src.model);
+        if (!model) {
+            VICTUS_LOG_WARN("assets", "collision mesh: {}", model.error().message);
+            return nullptr;
+        }
+        if (src.mesh_index >= model->meshes.size()) {
+            VICTUS_LOG_WARN("assets", "collision mesh: model {} has {} meshes, mesh_index {} is out of range",
+                            src.model.to_string(), model->meshes.size(), src.mesh_index);
+            return nullptr;
+        }
+        return collision_mesh(model->meshes[src.mesh_index].data);
+    };
+}
+
 tilemap::TilesetProvider tileset_provider(AssetDatabase& db) {
     return [&db](const Uuid& uuid) -> std::shared_ptr<const tilemap::Tileset> {
         auto tileset = db.load_tileset(uuid);

@@ -86,6 +86,7 @@ void Editor::start_editor_clients() {
         ps.jobs = &workers();
         if (auto pw = physics::PhysicsWorld::create(ps)) {
             c->physics = std::move(pw).value();
+            if (db_) c->physics->set_mesh_provider(assets::collision_mesh_provider(*db_));
             physics::add_physics_systems(c->sim, *c->physics);
         }
         c->animation = std::make_unique<animation::AnimationSystem>(

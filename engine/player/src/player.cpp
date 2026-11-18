@@ -193,6 +193,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     auto physics_world = physics::PhysicsWorld::create(ps);
     if (!physics_world) return std::move(physics_world).error();
     physics_for_scenes = physics_world->get();
+    (*physics_world)->set_mesh_provider(assets::collision_mesh_provider(**db));
     PlatformInput input((*plat)->input());
     gameplay::Simulation sim;
     gameplay::add_builtin_systems(sim);
@@ -375,7 +376,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         if (reloader) {
             const auto changes = reloader->poll(now);
             if (!changes.empty()) {
-                runtime::AssetHotReloader::apply(changes, &cache, &animations, &tilemaps, &terrains);
+                runtime::AssetHotReloader::apply(changes, &cache, &animations, &tilemaps, &terrains, physics_world->get());
                 if (audio_engine)
                     for (const auto& clip : changes.audio) (void)(*audio_engine)->reload_clip(clip);
                 if (!changes.prefabs.empty()) (*scripts)->forget_prefabs(); // new instances use the new version

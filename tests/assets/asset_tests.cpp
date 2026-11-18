@@ -657,3 +657,35 @@ TEST_CASE("assets: glTF importer hardening against crafted accessors (cgltf advi
         CHECK(v[3].position.z == doctest::Approx(0.5f));
     }
 }
+
+TEST_CASE("assets: collision meshes come from primitives and cooked models") {
+    for (const char* name : {"cube", "sphere", "plane", "cylinder"}) {
+        CAPTURE(name);
+        const auto m = primitive_collision_mesh(name);
+        REQUIRE(m);
+        CHECK(m->indices.size() % 3 == 0);
+        CHECK(m->bounds.max.x == doctest::Approx(0.5f).epsilon(0.01));
+    }
+    CHECK_FALSE(primitive_collision_mesh("teapot"));
+    CHECK(primitive_collision_mesh("cube") == primitive_collision_mesh("cube")); // shared
+
+    TempDir project("victus_collision");
+    test::GltfFixture fx;
+    write_bytes(project.path / "assets" / "models" / "quad.bin", fx.bin);
+    fx.set_buffer_uri("quad.bin");
+    write_text(project.path / "assets" / "models" / "quad.gltf", json::stringify(fx.doc));
+    auto opened = AssetDatabase::open(project.path);
+    REQUIRE(opened.ok());
+    auto& db = **opened;
+    REQUIRE(db.import_all().failed == 0);
+    const AssetRecord* model = db.find_path("models/quad.gltf");
+    REQUIRE(model);
+    const physics::CollisionMeshProvider provider = collision_mesh_provider(db);
+    const auto quad = provider({model->uuid, 0, {}});
+    REQUIRE(quad);
+    CHECK(quad->positions.size() == 4);
+    CHECK(quad->indices.size() == 6);
+    CHECK_FALSE(provider({model->uuid, 1, {}}));          // no such mesh
+    CHECK_FALSE(provider({Uuid::generate(), 0, {}}));     // no such asset
+    CHECK(provider({{}, 0, "sphere"}) == primitive_collision_mesh("sphere"));
+}
