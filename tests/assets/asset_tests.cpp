@@ -284,6 +284,24 @@ TEST_CASE("assets: database metas, stable UUIDs, incremental cooking and depende
     CHECK(db.find_path("broken.png") == nullptr);
 }
 
+TEST_CASE("assets: material emissive accepts 3 or 4 numbers") {
+    // Regression (ASan, parser fuzzing): a 4-element emissive array overflowed a 3-float buffer.
+    for (const char* text : {R"({"victus_material": 1, "emissive": [0.5, 0.25, 1]})",
+                             R"({"victus_material": 1, "emissive": [0.5, 0.25, 1, 7]})"}) {
+        auto doc = json::parse(text);
+        REQUIRE(doc.ok());
+        auto m = MaterialAsset::from_json(*doc);
+        REQUIRE(m.ok());
+        CHECK(m->emissive.r == doctest::Approx(0.5f));
+        CHECK(m->emissive.g == doctest::Approx(0.25f));
+        CHECK(m->emissive.b == doctest::Approx(1.0f));
+        CHECK(m->emissive.a == doctest::Approx(1.0f));
+    }
+    auto bad = json::parse(R"({"victus_material": 1, "emissive": [1, 2, 3, 4, 5]})");
+    REQUIRE(bad.ok());
+    CHECK_FALSE(MaterialAsset::from_json(*bad).ok());
+}
+
 TEST_CASE("assets: material instances inherit, override, round trip and reject broken chains") {
     // JSON: an instance records exactly the keys it sets and writes only those back.
     auto doc = json::parse(R"({"victus_material": 1, "parent": "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f003",
