@@ -3031,6 +3031,38 @@ int save_migrate(lua_State* L) {
 bool multiplayer(scene::Scene& s) { return net::role_of(s) != net::Role::Offline; }
 
 // save.checkpoint(slot, label?) -> true | nil, error. Also used by ScriptHost::checkpoint.
+// A checkpoint's scene copy stores each simulated rigid body's live velocity as its initial
+// velocity (RigidBody / RigidBody2D `linear_velocity`, `angular_velocity`), so restored bodies
+// continue moving instead of restarting at rest. Characters keep only their position.
+void stamp_body_velocities(scene::Scene& s, Value& doc) {
+    physics::PhysicsWorld* w = physics::world_of(s);
+    if (!w || !doc.is_object()) return;
+    for (auto& [key, entities] : doc.as_object()) {
+        if (key != "entities" || !entities.is_array()) continue;
+        for (Value& ent : entities.as_array()) {
+            if (!ent.is_object()) continue;
+            Uuid id;
+            if (!Uuid::parse(ent["uuid"].as_string_or(""), id)) continue;
+            const Entity e = s.find(id);
+            if (e.is_null() || !w->has_body(e)) continue;
+            for (auto& [ckey, comps] : ent.as_object()) {
+                if (ckey != "components" || !comps.is_object()) continue;
+                for (auto& [name, comp] : comps.as_object()) {
+                    if (!comp.is_object()) continue;
+                    const math::Vec3 v = w->linear_velocity(e), a = w->angular_velocity(e);
+                    if (name == "RigidBody") {
+                        comp.set("linear_velocity", Value(json::Array{Value(v.x), Value(v.y), Value(v.z)}));
+                        comp.set("angular_velocity", Value(json::Array{Value(a.x), Value(a.y), Value(a.z)}));
+                    } else if (name == "RigidBody2D") {
+                        comp.set("linear_velocity", Value(json::Array{Value(v.x), Value(v.y)}));
+                        comp.set("angular_velocity", Value(a.z));
+                    }
+                }
+            }
+        }
+    }
+}
+
 int save_checkpoint(lua_State* L) {
     auto& h = host_of(L);
     auto& s = scene_of(L);
@@ -3066,7 +3098,9 @@ int save_checkpoint(lua_State* L) {
     }
     Value data = Value::object();
     data.set("victus_checkpoint", 1);
-    data.set("scene", s.save());
+    Value scene_doc = s.save();
+    stamp_body_velocities(s, scene_doc);
+    data.set("scene", std::move(scene_doc));
     data.set("scripts", std::move(scripts));
     if (!h.current_scene.empty()) data.set("scene_path", h.current_scene);
     if (!h.scene_params.is_null()) data.set("scene_params", h.scene_params);
