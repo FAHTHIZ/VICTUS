@@ -1165,7 +1165,7 @@ TEST_CASE("editor: tile sets are created from textures and painted in the viewpo
     {
         const auto* shapes = s.world().get<physics::StaticShapes2DComponent>(s.find_by_name("TileLayer"));
         REQUIRE(shapes);
-        CHECK_FALSE(shapes->boxes.empty());
+        CHECK_FALSE((shapes->boxes.empty() && shapes->loops.empty()));
     }
     ed.undo();
     CHECK(tile(0, 0) == -1);

@@ -272,7 +272,8 @@ TEST_CASE("tilemap system: tile colliders follow edits and stop characters") {
     for (int i = 0; i < 90; ++i) sim.tick(scene, 1.0f / 60);
     CHECK(provided == 1); // cached
     CHECK(system.stats().maps == 1);
-    CHECK(system.stats().boxes == 1);
+    CHECK(system.stats().boxes == 0); // solid tiles become edge outlines
+    CHECK(system.stats().outlines == 1);
     REQUIRE(scene.world().get<TilemapRuntime>(map));
     CHECK(scene.world().get<TilemapRuntime>(map)->tileset == ts);
     CHECK(w->has_body(map));
@@ -292,7 +293,7 @@ TEST_CASE("tilemap system: tile colliders follow edits and stop characters") {
     const std::uint32_t rebuilds = system.stats().collision_rebuilds;
     for (int i = 0; i < 120; ++i) sim.tick(scene, 1.0f / 60);
     CHECK(system.stats().collision_rebuilds == rebuilds + 1);
-    CHECK(system.stats().boxes == 3);
+    CHECK(system.stats().outlines == 3);
     CHECK(scene.world().get<Transform>(player)->position.y == doctest::Approx(-2.5f).epsilon(0.03));
 
     // One-way tiles: the character jumps up through and lands on top.
@@ -346,4 +347,157 @@ TEST_CASE("tilemap system: moving and scaling the map moves its colliders") {
     CHECK(hit->entity == map);
     CHECK(hit->point.y == doctest::Approx(5.0f).epsilon(0.01));
     CHECK_FALSE(w->raycast_2d({9, 10}, {0, -1}, 20)); // the map ends at x = 8
+}
+
+namespace {
+
+float loop_area(const std::vector<math::Vec2>& p) {
+    double a = 0; // relative to the first point: far-away loops keep their precision
+    for (std::size_t i = 0; i < p.size(); ++i) {
+        const math::Vec2 u = p[i], v = p[(i + 1) % p.size()];
+        const double ux = double(u.x) - p[0].x, uy = double(u.y) - p[0].y;
+        const double vx = double(v.x) - p[0].x, vy = double(v.y) - p[0].y;
+        a += ux * vy - vx * uy;
+    }
+    return static_cast<float>(a * 0.5);
+}
+
+} // namespace
+
+TEST_CASE("tilemap: solid tiles trace into simple outlines with the solid on the left") {
+    const auto ts = blocks();
+    TilemapComponent m;
+    m.cell_size = {0.5f, 0.5f};
+    CHECK(collision_outlines(m, *ts).empty());
+    fill_tiles(m, 0, 0, 9, 2, 1); // 10x3 block -> one counter-clockwise rectangle
+    set_tile(m, 14, 0, 18);       // decoration
+    fill_tiles(m, 0, 5, 3, 6, 17); // one-way: never outlined
+    auto loops = collision_outlines(m, *ts);
+    REQUIRE(loops.size() == 1);
+    CHECK(loops[0].size() == 4); // collinear lattice points merged
+    CHECK(loop_area(loops[0]) == doctest::Approx(7.5f));
+    // collision_boxes without solids keeps only the one-way rows.
+    const auto one_way = collision_boxes(m, *ts, false);
+    REQUIRE(one_way.size() == 2);
+    for (const auto& b : one_way) CHECK(b.type == TileCollision::OneWay);
+
+    // An L shape: one loop with six corners.
+    TilemapComponent l;
+    fill_tiles(l, 0, 0, 2, 0, 1);
+    fill_tiles(l, 0, 1, 0, 2, 1);
+    loops = collision_outlines(l, *ts);
+    REQUIRE(loops.size() == 1);
+    CHECK(loops[0].size() == 6);
+    CHECK(loop_area(loops[0]) == doctest::Approx(5.0f));
+
+    // A ring: the outer boundary is counter-clockwise, the hole clockwise; areas add up.
+    TilemapComponent ring;
+    fill_tiles(ring, 0, 0, 4, 4, 1);
+    fill_tiles(ring, 1, 1, 3, 3, -1);
+    loops = collision_outlines(ring, *ts);
+    REQUIRE(loops.size() == 2);
+    float total = 0;
+    int clockwise = 0;
+    for (const auto& lp : loops) {
+        CHECK(lp.size() == 4);
+        total += loop_area(lp);
+        clockwise += loop_area(lp) < 0;
+    }
+    CHECK(clockwise == 1);
+    CHECK(total == doctest::Approx(25.0f - 9.0f));
+
+    // Cells touching only at a corner get separate loops (no vertex is visited twice).
+    TilemapComponent diag;
+    set_tile(diag, 0, 0, 1);
+    set_tile(diag, 1, 1, 1);
+    set_tile(diag, 2, 0, 1);
+    loops = collision_outlines(diag, *ts);
+    CHECK(loops.size() == 3);
+    for (const auto& lp : loops) CHECK(loop_area(lp) == doctest::Approx(1.0f));
+
+    // A hole that touches the outside at a corner: every emitted loop is simple.
+    TilemapComponent pinch;
+    fill_tiles(pinch, 0, 0, 3, 3, 1);
+    set_tile(pinch, 1, 1, -1);
+    set_tile(pinch, 0, 0, -1); // diagonal to the hole
+    loops = collision_outlines(pinch, *ts);
+    total = 0;
+    for (const auto& lp : loops) {
+        total += loop_area(lp);
+        for (std::size_t i = 0; i < lp.size(); ++i)
+            for (std::size_t j = i + 1; j < lp.size(); ++j) CHECK_FALSE((lp[i].x == lp[j].x && lp[i].y == lp[j].y));
+    }
+    CHECK(total == doctest::Approx(16.0f - 2.0f));
+
+    // Far coordinates do not overflow.
+    TilemapComponent far;
+    set_tile(far, kMaxCoordinate, kMaxCoordinate, 1);
+    loops = collision_outlines(far, *ts);
+    REQUIRE(loops.size() == 1);
+    CHECK(loop_area(loops[0]) > 0);
+}
+
+TEST_CASE("tilemap system: edge outlines collide outside solids and inside rooms") {
+    const auto ts = blocks();
+    const Uuid tsid = Uuid::generate();
+    Scene scene;
+    const Entity map = make_map(scene, tsid);
+    auto* m = scene.world().get<TilemapComponent>(map);
+    fill_tiles(*m, 0, 0, 9, 6, 1);  // a 10x7 block ...
+    fill_tiles(*m, 1, 1, 8, 5, -1); // ... hollowed into a room with 1-tile walls
+    TilemapSystem system;
+    system.add_tileset(tsid, ts);
+    auto w = make_world();
+    gameplay::Simulation sim;
+    add_tilemap_systems(sim, system);
+    physics::add_physics_systems(sim, *w);
+    const auto crate = [&](const char* name, math::Vec2 p) {
+        const Entity e = scene.create(name);
+        scene.world().get<Transform>(e)->position = {p.x, p.y, 0};
+        scene.world().add<physics::RigidBody2DComponent>(e, physics::RigidBody2DComponent{});
+        physics::Collider2DComponent c;
+        c.size = {0.5f, 0.5f};
+        scene.world().add<physics::Collider2DComponent>(e, c);
+        return e;
+    };
+    const Entity inside = crate("Inside", {5, 4});
+    const Entity roof = crate("Roof", {3, 9});
+    for (int i = 0; i < 180; ++i) sim.tick(scene, 1.0f / 60);
+    CHECK(system.stats().outlines == 2);
+    CHECK(system.stats().boxes == 0);
+    CHECK(scene.world().get<Transform>(inside)->position.y == doctest::Approx(1.25f).epsilon(0.02)); // room floor y = 1
+    CHECK(scene.world().get<Transform>(roof)->position.y == doctest::Approx(7.25f).epsilon(0.02));   // roof y = 7
+    // Rays from inside the room hit the walls from the cavity side.
+    auto hit = w->raycast_2d({5, 3}, {1, 0}, 20, physics::kAllLayers, inside);
+    REQUIRE(hit);
+    CHECK(hit->entity == map);
+    CHECK(hit->point.x == doctest::Approx(9.0f).epsilon(0.01));
+
+    // Sliding along an 81-tile floor with a lumpy underside: the walkable top is one chain
+    // edge, and the crate never gets an upward kick while crossing tile boundaries.
+    m = scene.world().get<TilemapComponent>(map);
+    clear_tiles(*m);
+    fill_tiles(*m, -40, -1, 40, -1, 1);
+    for (int x = -40; x <= 40; x += 2) set_tile(*m, x, -2, 1); // lumpy underside, flat top
+    scene.world().get<Transform>(roof)->position = {-30, 0.25f, 0};
+    sim.tick(scene, 1.0f / 60);
+    sim.tick(scene, 1.0f / 60);
+    CHECK(system.stats().outlines >= 1);
+    w->set_linear_velocity(roof, {8, 0, 0});
+    float min_vy = 0, max_vy = 0;
+    for (int i = 0; i < 120; ++i) {
+        sim.tick(scene, 1.0f / 60);
+        const float vy = w->linear_velocity(roof).y;
+        min_vy = std::min(min_vy, vy);
+        max_vy = std::max(max_vy, vy);
+    }
+    CHECK(max_vy < 0.05f); // never popped up by an internal edge
+    CHECK(scene.world().get<Transform>(roof)->position.y == doctest::Approx(0.25f).epsilon(0.02));
+
+    // Turning edge collision off rebuilds filled boxes, which also cover the interior.
+    scene.world().get<TilemapComponent>(map)->edge_collision = false;
+    sim.tick(scene, 1.0f / 60);
+    CHECK(system.stats().outlines == 0);
+    CHECK(system.stats().boxes >= 1);
+    CHECK(w->overlap_circle_2d({0, -1.5f}, 0.1f).size() == 1);
 }
