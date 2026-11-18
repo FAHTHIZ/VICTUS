@@ -620,6 +620,62 @@ int entity_root_motion(lua_State* L) {
     return 1;
 }
 
+// entity:set_ik_target(target, weight?) -> bool. `target` is a world position (vector), an
+// entity to follow, or nil to switch the IKConstraint off. False without an IKConstraint.
+int entity_set_ik_target(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* c = s.world().get<animation::IkConstraintComponent>(e);
+    if (!c) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    if (lua_isnil(L, 2) || lua_isnone(L, 2)) {
+        c->enabled = false;
+    } else if (const Entity t = opt_entity(L, 2); t != Entity{}) {
+        if (!s.world().alive(t)) luaL_argerror(L, 2, "entity was destroyed");
+        c->target = s.uuid(t);
+        c->enabled = true;
+    } else {
+        c->target = {};
+        c->target_position = check_vec3(L, 2);
+        c->enabled = true;
+    }
+    if (!lua_isnoneornil(L, 3)) c->weight = std::clamp(static_cast<float>(luaL_checknumber(L, 3)), 0.0f, 1.0f);
+    lua_pushboolean(L, true);
+    return 1;
+}
+
+// entity:ik_state() -> {enabled, weight, solver, target = vector (world), reached = bool} or nil.
+// `reached` compares the end joint with the target after the latest animation update.
+int entity_ik_state(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* c = s.world().get<animation::IkConstraintComponent>(e);
+    if (!c) {
+        lua_pushnil(L);
+        return 1;
+    }
+    math::Vec3 target = c->target_position;
+    if (c->target != Uuid{}) {
+        if (const Entity t = s.find(c->target); t != Entity{}) target = s.world_matrix(t).transform_point({});
+    }
+    const math::Vec3 end = s.world_matrix(e).transform_point({});
+    static constexpr const char* kSolvers[] = {"two_bone", "chain", "look_at"};
+    lua_createtable(L, 0, 5);
+    lua_pushboolean(L, c->enabled);
+    lua_setfield(L, -2, "enabled");
+    lua_pushnumber(L, c->weight);
+    lua_setfield(L, -2, "weight");
+    lua_pushstring(L, kSolvers[static_cast<int>(c->solver) % 3]);
+    lua_setfield(L, -2, "solver");
+    push_vec3(L, target);
+    lua_setfield(L, -2, "target");
+    lua_pushboolean(L, c->solver != animation::IkSolver::LookAt && math::length(end - target) <= std::max(0.01f, c->tolerance));
+    lua_setfield(L, -2, "reached");
+    return 1;
+}
+
 // entity:anim_controller() -> {valid, controller, error, state, previous_state, normalized_time,
 // blend, states = {...}, parameters = {name = value}, types = {name = "float"|...},
 // weights = {{clip, weight, missing}}}

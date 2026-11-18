@@ -8,6 +8,7 @@
 // Transforms of the bound entities; GPU skinning (runtime) then reads their world transforms.
 #pragma once
 #include "victus/animation/controller.hpp"
+#include "victus/animation/ik.hpp"
 #include "victus/animation/sprite.hpp"
 #include "victus/core/math.hpp"
 #include "victus/core/result.hpp"
@@ -148,6 +149,7 @@ struct AnimatorStatus {
 struct AnimationStats {
     std::uint32_t animators{0}, channels_sampled{0}, nodes_written{0}, missing_models{0};
     std::uint32_t controlled{0}, transitions{0}, controller_errors{0};
+    IkStats ik; // inverse kinematics applied after the animated pose (ik.hpp)
 };
 
 // Reads a .vanim asset's text by its path (relative to the assets folder).

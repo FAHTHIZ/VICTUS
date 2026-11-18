@@ -1724,3 +1724,59 @@ return Player
     CHECK(s.world().get<Transform>(player)->position.z == doctest::Approx(6.0f).epsilon(0.05));
     CHECK(s.world().get<Transform>(model_e)->position.z == doctest::Approx(0.0f));
 }
+
+TEST_CASE("script: IK targets from Luau (set_ik_target, ik_state, generic set)") {
+    TempDir d("victus_script_ik");
+    animation::register_components();
+    auto host = make_host(d);
+    animation::AnimationSystem anim;
+    gameplay::Simulation sim;
+    animation::add_animation_systems(sim, anim);
+    Scene s;
+    const Entity hip = s.create("Hip");
+    const Entity knee = s.create("Knee", hip);
+    const Entity foot = s.create("Foot", knee);
+    s.world().get<Transform>(hip)->position = {0, 2, 0};
+    s.world().get<Transform>(hip)->rotation = math::Quat::axis_angle({1, 0, 0}, -0.2f);
+    s.world().get<Transform>(knee)->position = {0, -1, 0};
+    s.world().get<Transform>(knee)->rotation = math::Quat::axis_angle({1, 0, 0}, 0.4f);
+    s.world().get<Transform>(foot)->position = {0, -1, 0};
+    const Entity ball = s.create("Ball");
+    s.world().get<Transform>(ball)->position = {-0.3f, 0.6f, 0.1f};
+    s.world().add<animation::IkConstraintComponent>(foot);
+
+    auto q = host->eval(R"lua(
+local foot = scene.find("Foot")
+assert(not scene.find("Hip"):set_ik_target(vector.create(0, 0, 0))) -- no IKConstraint there
+assert(foot:set_ik_target(vector.create(0.3, 0.5, 0.1), 1))
+return foot:ik_state().solver
+)lua", &s);
+    if (!q.ok()) FAIL(q.error().message);
+    CHECK(q->as_string() == "two_bone");
+    sim.tick(s, 0.02f);
+    const math::Vec3 p = s.world_matrix(foot).transform_point({});
+    CHECK(math::length(p - math::Vec3{0.3f, 0.5f, 0.1f}) < 1e-3f);
+
+    auto r = host->eval(R"lua(
+local foot = scene.find("Foot")
+local st = foot:ik_state()
+assert(st.reached and st.enabled and st.weight == 1)
+foot:set_ik_target(scene.find("Ball"))
+return true
+)lua", &s);
+    REQUIRE(r.ok());
+    sim.tick(s, 0.02f);
+    CHECK(math::length(s.world_matrix(foot).transform_point({}) - math::Vec3{-0.3f, 0.6f, 0.1f}) < 1e-3f);
+
+    auto off = host->eval(R"lua(
+local foot = scene.find("Foot")
+foot:set_ik_target(nil)
+local st = foot:ik_state()
+foot:set("IKConstraint", { solver = "look_at", enabled = true, max_angle = 45 })
+return { enabled = st.enabled, solver = foot:ik_state().solver, none = scene.find("Ball"):ik_state() == nil }
+)lua", &s);
+    REQUIRE(off.ok());
+    CHECK_FALSE(off.value()["enabled"].as_bool());
+    CHECK(off.value()["solver"].as_string() == "look_at");
+    CHECK(off.value()["none"].as_bool());
+}
