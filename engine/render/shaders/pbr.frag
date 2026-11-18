@@ -232,6 +232,14 @@ float sample_cascade(int c, vec3 N, vec3 L) {
     vec2 auv = clamp(origin + uv * tile, lo, hi);
     float z = p.z - lighting.shadow_params.y;
     if (lighting.cascade_params.x < 0.5) return texture(u_shadow, vec3(auv, z));
+    if (lighting.cascade_params.x > 1.5) {
+        // Fast soft shadows: four hardware 2x2 PCF taps half a texel apart, a 3x3 tent filter for 4 fetches.
+        vec2 h = vec2(texel * 0.5);
+        return 0.25 * (texture(u_shadow, vec3(clamp(auv + vec2(-h.x, -h.y), lo, hi), z))
+                     + texture(u_shadow, vec3(clamp(auv + vec2(h.x, -h.y), lo, hi), z))
+                     + texture(u_shadow, vec3(clamp(auv + vec2(-h.x, h.y), lo, hi), z))
+                     + texture(u_shadow, vec3(clamp(auv + vec2(h.x, h.y), lo, hi), z)));
+    }
     float sum = 0.0;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)

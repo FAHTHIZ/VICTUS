@@ -176,6 +176,19 @@ struct ExposureUniforms {
 struct PostUniforms {
     Vec4 params, params2, params3;
 };
+struct AlphaTestUniforms {
+    Vec4 uv, params;
+};
+// ADR-0067: casters drawn with the alpha-tested shadow pipeline.
+bool shadow_alpha_tested(const Material& m) noexcept { return m.alpha_cutoff > 0.0f && static_cast<bool>(m.base_color_texture); }
+bool same_alpha_test(const Material& a, const Material& b) noexcept {
+    const bool ta = shadow_alpha_tested(a), tb = shadow_alpha_tested(b);
+    if (ta != tb) return false;
+    if (!ta) return true;
+    return a.base_color_texture == b.base_color_texture && a.alpha_cutoff == b.alpha_cutoff && a.base_color.a == b.base_color.a &&
+           a.uv_scale.x == b.uv_scale.x && a.uv_scale.y == b.uv_scale.y && a.uv_offset.x == b.uv_offset.x &&
+           a.uv_offset.y == b.uv_offset.y && a.nearest_filter == b.nearest_filter;
+}
 struct TaaUniforms {
     Mat4 reproject;
     Vec4 params, screen;
@@ -368,6 +381,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.cascade_split_lambda = std::isfinite(s.cascade_split_lambda) ? std::clamp(s.cascade_split_lambda, 0.0f, 1.0f) : 0.8f;
     s.ssao_samples = std::clamp(s.ssao_samples, 4u, 32u);
     s.bloom_levels = std::clamp(s.bloom_levels, 1u, 8u);
+    s.sharpen = std::isfinite(s.sharpen) ? std::clamp(s.sharpen, 0.0f, 1.0f) : 0.0f;
     s.taa_blend = std::isfinite(s.taa_blend) ? std::clamp(s.taa_blend, 0.04f, 1.0f) : 0.1f;
     s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxLights);
     s.lod_error_pixels = std::isfinite(s.lod_error_pixels) ? std::clamp(s.lod_error_pixels, 0.25f, 16.0f) : 1.0f;
@@ -407,6 +421,8 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     auto pbr_fs = get("pbr.frag");
     auto shadow_vs = get("shadow.vert");
     auto shadow_fs = get("shadow.frag");
+    auto shadow_alpha_vs = get("shadow_alpha.vert");
+    auto shadow_alpha_fs = get("shadow_alpha.frag");
     auto full_vs = get("fullscreen.vert");
     auto sky_fs = get("sky.frag");
     auto line_vs = get("line.vert");
@@ -419,7 +435,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     auto particle_fs = get("particle.frag");
     auto decal_vs = get("decal.vert");
     auto decal_fs = get("decal.frag");
-    for (auto* s : {&mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &full_vs, &sky_fs, &line_vs, &line_fs, &depth_vs, &skin_vs,
+    for (auto* s : {&mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &shadow_alpha_vs, &shadow_alpha_fs, &full_vs, &sky_fs, &line_vs, &line_fs, &depth_vs, &skin_vs,
                     &skin_depth_vs, &skin_shadow_vs, &particle_vs, &particle_fs, &decal_vs, &decal_fs})
         if (!*s) return std::move(*s).error();
     const rhi::VertexBufferLayout skin_layout{2, sizeof(SkinVertex), false};
@@ -536,6 +552,16 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     p = dev.create_pipeline(shadow);
     if (!p) return std::move(p).error();
     r->skin_shadow_ = p.value();
+    // ADR-0067: alpha-tested casters cut their holes into the shadow map too.
+    rhi::PipelineDesc shadow_alpha = shadow;
+    shadow_alpha.name = "shadow_depth_alpha_test";
+    shadow_alpha.vertex = shadow_alpha_vs.value();
+    shadow_alpha.fragment = shadow_alpha_fs.value();
+    shadow_alpha.vertex_buffers = {mesh_layout, instance_layout};
+    shadow_alpha.attributes = with({{0, 0, rhi::VertexFormat::Float3, 0}, {2, 0, rhi::VertexFormat::Float2, 24}}, model_attrs);
+    p = dev.create_pipeline(shadow_alpha);
+    if (!p) return std::move(p).error();
+    r->shadow_alpha_ = p.value();
 
     rhi::PipelineDesc sky;
     sky.name = "sky";
@@ -673,7 +699,7 @@ SceneRenderer::~SceneRenderer() {
     auto& d = ctx_.device();
     for (auto pl : blend_pipelines_)
         if (pl) d.destroy(pl);
-    for (auto pl : {opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_, prepass_cull_,
+    for (auto pl : {opaque_cull_, opaque_double_, shadow_pipeline_, shadow_alpha_, sky_pipeline_, line_pipeline_, prepass_cull_,
                     prepass_double_, skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_,
                     particle_alpha_, particle_additive_, motion_cull_, motion_double_, skin_motion_cull_, skin_motion_double_})
         if (pl) d.destroy(pl);
@@ -1289,7 +1315,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (S.instancing && !out.empty()) {
                 const Draw* f = out.back().first;
                 if (f->mesh == d->mesh && f->lod == d->lod && f->skinned == d->skinned &&
-                    (!match_material || (same_material(f->material, d->material) && f->probe == d->probe))) {
+                    (!match_material || (same_material(f->material, d->material) && f->probe == d->probe)) &&
+                    (match_material || same_alpha_test(f->material, d->material))) {
                     ++out.back().instance_count;
                     continue;
                 }
@@ -1305,8 +1332,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     for (std::uint32_t c = 0; c < cascade_count_; ++c) {
         std::sort(casters[c].begin(), casters[c].end(), [](const Draw* a, const Draw* b) {
             if (a->skinned != b->skinned) return !a->skinned;
+            if (shadow_alpha_tested(a->material) != shadow_alpha_tested(b->material)) return !shadow_alpha_tested(a->material);
             if (a->mesh != b->mesh) return a->mesh < b->mesh;
-            return a->lod < b->lod;
+            if (a->lod != b->lod) return a->lod < b->lod;
+            return a->material.base_color_texture.index < b->material.base_color_texture.index;
         });
         shadow_batches[c] = build_batches(casters[c], false);
         stats_.shadow_batches += static_cast<std::uint32_t>(shadow_batches[c].size());
@@ -1315,8 +1344,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     for (std::size_t v = 0; v < local_views.size(); ++v) {
         std::sort(local_casters[v].begin(), local_casters[v].end(), [](const Draw* a, const Draw* b) {
             if (a->skinned != b->skinned) return !a->skinned;
+            if (shadow_alpha_tested(a->material) != shadow_alpha_tested(b->material)) return !shadow_alpha_tested(a->material);
             if (a->mesh != b->mesh) return a->mesh < b->mesh;
-            return a->lod < b->lod;
+            if (a->lod != b->lod) return a->lod < b->lod;
+            return a->material.base_color_texture.index < b->material.base_color_texture.index;
         });
         local_batches[v] = build_batches(local_casters[v], false);
         stats_.local_shadow_draws += static_cast<std::uint32_t>(local_casters[v].size());
@@ -1602,7 +1633,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                              static_cast<float>(clusters.grid.slices), static_cast<float>(clusters.grid.max_lights_per_cluster)};
     lighting.cluster_depth = {clusters.z_near, static_cast<float>(clusters.grid.slices) / std::log(clusters.z_far / clusters.z_near), 0, 0};
     lighting.shadow_params = {1.0f / static_cast<float>(atlas_size), 0.0004f, 1.0f, static_cast<float>(cascade_count_)};
-    lighting.cascade_params = {S.soft_shadows ? 1.0f : 0.0f, 1.0f / static_cast<float>(atlas_tiles), 0.1f, 0.0f};
+    lighting.cascade_params = {S.soft_shadows ? (S.fast_soft_shadows ? 2.0f : 1.0f) : 0.0f, 1.0f / static_cast<float>(atlas_tiles), 0.1f, 0.0f};
     lighting.cascade_splits = {cascade_splits_[0], cascade_splits_[1], cascade_splits_[2], cascade_splits_[3]};
     lighting.cascade_texel = {cascade_texel_[0], cascade_texel_[1], cascade_texel_[2], cascade_texel_[3]};
     {
@@ -1653,6 +1684,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const RGTexture out = graph.import_texture("target", target, target_desc);
     graph.mark_output(out);
 
+    // ADR-0067: texture and cutoff of an alpha-tested caster (shadow_alpha.frag).
+    const auto bind_alpha_test = [this](rhi::RenderPass& pass, rhi::CommandBuffer& cb, const Material& m) {
+        const AlphaTestUniforms au{Vec4(m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y),
+                                   Vec4(m.alpha_cutoff, m.base_color.a, 0.0f, 0.0f)};
+        cb.push_uniforms(rhi::ShaderStage::Fragment, 0, au);
+        pass.bind_texture(rhi::ShaderStage::Fragment, 0, m.base_color_texture,
+                          m.nearest_filter ? ctx_.nearest_repeat() : ctx_.linear_repeat());
+    };
     RGTexture local_shadow_map;
     if (local_shadows) {
         rhi::TextureDesc sd;
@@ -1672,12 +1711,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, su);
                     rhi::PipelineHandle bound{};
                     for (const Batch& b : local_batches[v]) {
-                        const rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : shadow_pipeline_;
+                        const bool cut = !b.first->skinned && shadow_alpha_tested(b.first->material);
+                        const rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : cut ? shadow_alpha_ : shadow_pipeline_;
                         if (!(bound == want)) {
                             ctx.pass->bind_pipeline(want);
                             if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
                             bound = want;
                         }
+                        if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
                         if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
                         ctx.pass->bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
@@ -1705,12 +1746,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, su);
                     rhi::PipelineHandle bound{};
                     for (const Batch& b : shadow_batches[c]) {
-                        const rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : shadow_pipeline_;
+                        const bool cut = !b.first->skinned && shadow_alpha_tested(b.first->material);
+                        const rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : cut ? shadow_alpha_ : shadow_pipeline_;
                         if (!(bound == want)) {
                             ctx.pass->bind_pipeline(want);
                             if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
                             bound = want;
                         }
+                        if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
                         if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
                         ctx.pass->bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
@@ -2267,17 +2310,28 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             });
     }
 
-    // Tonemap (+ grading) into the target, or into an LDR buffer that FXAA resolves.
-    const rhi::Format tonemap_format = fxaa ? rhi::Format::RGBA8_UNORM : target_format;
+    // Tonemap (+ grading) into the target, or into an LDR buffer that FXAA resolves. ADR-0066: with spatial
+    // upscaling (or sharpening) both run at render resolution into sRGB-encoded 8-bit buffers and a final pass
+    // resamples and sharpens into the target.
+    const bool scaled_down = rw < width || rh < height;
+    const bool spatial = S.spatial_upscale && scaled_down && !upscale && !linear_out;
+    const bool sharpen_pass = !linear_out && (spatial || S.sharpen > 0.0f);
+    const std::uint32_t pw = spatial ? rw : width, ph = spatial ? rh : height; // tonemap / FXAA size
+    const bool ldr_buffer = fxaa || sharpen_pass;
+    // The upscale pass reads an sRGB texture so its filtering and sharpening run in linear light (filtering
+    // sRGB-encoded values darkens fine detail). FXAA still reads sRGB-encoded colour with luma in alpha.
+    const rhi::Format ldr_format = sharpen_pass ? rhi::Format::RGBA8_SRGB : rhi::Format::RGBA8_UNORM;
+    const rhi::Format tonemap_format = ldr_buffer ? ldr_format : target_format;
     auto tonemap = post_pipeline("tonemap.frag", tonemap_format);
     if (!tonemap) return std::move(tonemap).error();
-    const RGTexture ldr = fxaa ? graph.create_texture("ldr_color", color_desc(rhi::Format::RGBA8_UNORM, width, height)) : out;
+    const RGTexture ldr = ldr_buffer ? graph.create_texture("ldr_color", color_desc(ldr_format, pw, ph)) : out;
     PostUniforms post{};
     const Tonemapper op = env_.tonemap ? env_.tonemapper : Tonemapper::None;
-    post.params = {env_.exposure, env_.vignette, is_srgb(target_format) ? 0.0f : 1.0f, static_cast<float>(op)};
+    post.params = {env_.exposure, env_.vignette, is_srgb(tonemap_format) ? 0.0f : 1.0f, static_cast<float>(op)};
     post.params2 = {bloom_result.valid() ? env_.bloom_intensity : 0.0f, exposure_now.valid() ? 1.0f : 0.0f,
                     std::exp2(env_.exposure_compensation), env_.saturation};
-    post.params3 = {env_.contrast, fxaa ? 1.0f : 0.0f, linear_out ? 1.0f : 0.0f, 0.0f};
+    // The luma-in-alpha path always writes sRGB-encoded colour, which is what FXAA and the sharpen pass read.
+    post.params3 = {env_.contrast, (fxaa && !sharpen_pass) ? 1.0f : 0.0f, linear_out ? 1.0f : 0.0f, 0.0f};
     if (capture_mode_) { // scene-referred radiance: the viewer's exposure applies later
         post.params.x = 1.0f;
         post.params2.y = 0.0f;
@@ -2301,6 +2355,33 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                                    exposure_now.valid() ? ctx.texture(exposure_now) : ctx_.white(), ctx_.nearest_clamp());
             ctx.pass->draw(3);
         });
+    // ADR-0066 order: tonemap (render res) -> upscale + sharpen (output res) -> FXAA (output res), so FXAA
+    // smooths the final edges and never blurs texture detail before it is resampled.
+    RGTexture aa_src = ldr;
+    if (sharpen_pass) {
+        const rhi::Format up_format = fxaa ? rhi::Format::RGBA8_UNORM : target_format;
+        auto up = post_pipeline("upscale_sharpen.frag", up_format);
+        if (!up) return std::move(up).error();
+        const RGTexture up_out = fxaa ? graph.create_texture("upscaled_color", color_desc(up_format, width, height)) : out;
+        // z: 0 linear out (sRGB target), 1 encode to sRGB, 2 encode with luma in alpha (FXAA input).
+        struct {
+            Vec4 params, size;
+        } uu{inv_size(pw, ph, fxaa ? 2.0f : (is_srgb(target_format) ? 0.0f : 1.0f), S.sharpen),
+             Vec4(static_cast<float>(pw), static_cast<float>(ph), spatial ? 0.0f : 1.0f, 0.0f)};
+        graph.add_pass(
+            "upscale_sharpen",
+            [&](PassBuilder& b) {
+                b.read(ldr);
+                b.write_color(up_out, rhi::LoadOp::DontCare);
+            },
+            [this, ldr, uu, pl = up.value()](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, uu);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(ldr), ctx_.linear_clamp());
+                ctx.pass->draw(3);
+            });
+        aa_src = up_out;
+    }
     if (fxaa) {
         auto fx = post_pipeline("fxaa.frag", target_format);
         if (!fx) return std::move(fx).error();
@@ -2308,16 +2389,18 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         graph.add_pass(
             "fxaa",
             [&](PassBuilder& b) {
-                b.read(ldr);
+                b.read(aa_src);
                 b.write_color(out, rhi::LoadOp::DontCare);
             },
-            [this, ldr, fu, pl = fx.value()](PassContext& ctx) {
+            [this, aa_src, fu, pl = fx.value()](PassContext& ctx) {
                 ctx.pass->bind_pipeline(pl);
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, fu.params);
-                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(ldr), ctx_.linear_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(aa_src), ctx_.linear_clamp());
                 ctx.pass->draw(3);
             });
     }
+    stats_.spatial_upscale = spatial;
+    stats_.sharpened = sharpen_pass;
 
     VICTUS_TRY_STATUS(graph.compile());
     VICTUS_TRY_STATUS(graph.execute(dev, cmd, pool_));

@@ -179,6 +179,115 @@ TEST_CASE("gpu quality: cascaded shadows reach distant casters") {
     CHECK(std::abs(one.lum_at({0, 0, -40}) - one.lum_at({12, 0, -40})) < 20);
 }
 
+TEST_CASE("gpu quality: fast soft shadows widen the penumbra with four taps") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto sr = SceneRenderer::create(*gpu().ctx);
+    REQUIRE(sr.ok());
+    Meshes m;
+    const Camera3D cam = Camera3D::look_at({0, 12, 0.01f}, {0, 0, 0});
+    DirectionalLight sun;
+    sun.direction = math::normalize(math::Vec3{0.3f, -1.0f, 0.2f});
+    sun.shadow_distance = 30.0f;
+    Environment env;
+    env.vignette = 0.0f;
+    Material ground;
+    ground.base_color = {0.7f, 0.7f, 0.7f, 1};
+    auto content = [&](SceneRenderer& r) {
+        r.submit(m.plane, ground, math::Mat4::identity());
+        r.submit(m.cube, {}, math::Mat4::trs({0, 2.0f, 0}, math::Quat::axis_angle({0, 1, 0}, 0.4f), {3, 0.2f, 3}));
+    };
+    RenderSettings s = bare();
+    s.shadow_resolution = 256; // coarse, so the filter width shows
+    s.soft_shadows = false;
+    const Frame hard = render_frame(*sr.value(), s, cam, sun, env, content, 192, 128, 1, "quality_shadow_hard");
+    s.soft_shadows = true;
+    s.fast_soft_shadows = true;
+    const Frame fast = render_frame(*sr.value(), s, cam, sun, env, content, 192, 128, 1, "quality_shadow_fast");
+    s.fast_soft_shadows = false;
+    const Frame soft = render_frame(*sr.value(), s, cam, sun, env, content, 192, 128, 1, "quality_shadow_soft");
+    // Penumbra: ground pixels between the umbra and full light.
+    const int lit = hard.lum(4, 4);
+    int umbra = 765;
+    for (std::uint32_t y = 0; y < hard.h; ++y)
+        for (std::uint32_t x = 0; x < hard.w; ++x) umbra = std::min(umbra, hard.lum(x, y));
+    auto penumbra = [&](const Frame& f) {
+        int n = 0;
+        for (std::uint32_t y = 0; y < f.h; ++y)
+            for (std::uint32_t x = 0; x < f.w; ++x) {
+                const int l = f.lum(x, y);
+                n += (l > umbra + (lit - umbra) / 5 && l < lit - (lit - umbra) / 5) ? 1 : 0;
+            }
+        return n;
+    };
+    MESSAGE("lit " << lit << " umbra " << umbra << "; penumbra hard " << penumbra(hard) << " fast " << penumbra(fast)
+                   << " soft " << penumbra(soft));
+    CHECK(lit > umbra + 60);
+    CHECK(penumbra(fast) > penumbra(hard));
+    CHECK(fast.lum(4, 4) == doctest::Approx(lit).epsilon(0.02)); // open ground unchanged
+}
+
+TEST_CASE("gpu quality: alpha-tested casters cut holes into their shadow (ADR-0067)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    Meshes m;
+    // A 4x4 checker of opaque and fully transparent texels.
+    Image img{4, 4, std::vector<std::uint8_t>(64)};
+    for (std::uint32_t y = 0; y < 4; ++y)
+        for (std::uint32_t x = 0; x < 4; ++x) {
+            const std::size_t i = (y * 4 + x) * 4;
+            img.pixels[i] = img.pixels[i + 1] = img.pixels[i + 2] = 200;
+            img.pixels[i + 3] = ((x + y) & 1) ? 255 : 0;
+        }
+    TextureOptions to;
+    to.srgb = true;
+    to.mipmaps = false;
+    auto tex = ctx.create_texture(img, to);
+    REQUIRE(tex.ok());
+    const Camera3D cam = Camera3D::look_at({0, 14, 0.01f}, {0, 0, 0});
+    DirectionalLight sun;
+    sun.direction = {0.0f, -1.0f, 0.0f};
+    sun.shadow_distance = 30.0f;
+    Environment env;
+    env.vignette = 0.0f;
+    Material ground;
+    ground.base_color = {0.7f, 0.7f, 0.7f, 1};
+    Material leaves;
+    leaves.base_color_texture = tex.value();
+    leaves.alpha_cutoff = 0.5f;
+    leaves.nearest_filter = true;
+    leaves.double_sided = true;
+    leaves.shadow_only = true; // only the shadow is under test
+    auto content = [&](SceneRenderer& r, const Material& mat) {
+        r.submit(m.plane, ground, math::Mat4::identity());
+        r.submit(m.plane, mat, math::Mat4::trs({0, 3.0f, 0}, {}, {0.04f, 1, 0.04f})); // 8 m square, 2 m checks
+    };
+    RenderSettings s = bare();
+    s.shadow_resolution = 1024;
+    Material solid = leaves;
+    solid.alpha_cutoff = 0.0f;
+    const Frame blocked = render_frame(*sr.value(), s, cam, sun, env, [&](SceneRenderer& r) { content(r, solid); }, 192, 128);
+    const Frame cut = render_frame(*sr.value(), s, cam, sun, env, [&](SceneRenderer& r) { content(r, leaves); }, 192, 128, 1,
+                                   "quality_alpha_shadow");
+    // Check centres: (+-1, +-1) and (+-3, +-1)... sample the middle of four neighbouring checks.
+    int lit_cut = 0, dark_cut = 0;
+    for (float x : {-3.0f, -1.0f, 1.0f, 3.0f})
+        for (float z : {-3.0f, -1.0f, 1.0f, 3.0f}) {
+            const int solid_l = blocked.lum_at({x, 0, z}), cut_l = cut.lum_at({x, 0, z});
+            if (cut_l > solid_l + 60) ++lit_cut;
+            else ++dark_cut;
+        }
+    const int open = cut.lum_at({7, 0, 7});
+    MESSAGE("checks lit through holes " << lit_cut << ", still shaded " << dark_cut << "; open ground " << open
+                                        << ", solid caster shade " << blocked.lum_at({1, 0, 1}));
+    CHECK(blocked.lum_at({1, 0, 1}) + 60 < open); // the untextured-cutoff caster shades the whole square
+    CHECK(lit_cut >= 6);                          // half of the 16 checks are holes
+    CHECK(dark_cut >= 6);
+    CHECK(sr.value()->stats().shadow_batches >= 1);
+    ctx.device().destroy(tex.value());
+}
+
 TEST_CASE("gpu quality: SSAO darkens creases but not open ground") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     auto sr = SceneRenderer::create(*gpu().ctx);
@@ -401,6 +510,99 @@ TEST_CASE("gpu quality: render scale upsamples a lower internal resolution") {
     CHECK(half.stats.render_height == 64);
     // Same picture, slightly softer: mean brightness within a few percent.
     CHECK(half.mean_lum() == doctest::Approx(full.mean_lum()).epsilon(0.05));
+}
+
+TEST_CASE("gpu quality: spatial upscale resamples sharper than bilinear without halos (ADR-0066)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto sr = SceneRenderer::create(*gpu().ctx);
+    REQUIRE(sr.ok());
+    Meshes m;
+    const Camera3D cam = Camera3D::look_at({0, 0, 5}, {0, 0, 0});
+    DirectionalLight sun;
+    sun.intensity = 0.0f;
+    Environment env;
+    env.draw_sky = false;
+    env.clear_color = {0, 0, 0, 1};
+    env.vignette = 0.0f;
+    env.tonemapper = Tonemapper::None;
+    Material grey;
+    grey.unlit = true;
+    grey.base_color = {0.5f, 0.5f, 0.5f, 1};
+    auto content = [&](SceneRenderer& r) {
+        r.submit(m.cube, grey, math::Mat4::trs({}, math::Quat::axis_angle({0, 0, 1}, 0.35f), {2, 2, 2}));
+    };
+    RenderSettings s = bare();
+    s.fxaa = true;
+    const Frame full = render_frame(*sr.value(), s, cam, sun, env, content, 192, 128, 1, "quality_upscale_ref");
+    s.render_scale = 0.5f;
+    const Frame bilinear = render_frame(*sr.value(), s, cam, sun, env, content, 192, 128, 1, "quality_upscale_bilinear");
+    CHECK_FALSE(has_pass(bilinear, "upscale_sharpen"));
+    CHECK_FALSE(bilinear.stats.spatial_upscale);
+    s.spatial_upscale = true;
+    s.sharpen = 0.6f;
+    const Frame sharp = render_frame(*sr.value(), s, cam, sun, env, content, 192, 128, 1, "quality_upscale_sharp");
+    CHECK(sharp.stats.render_width == 96);
+    CHECK(sharp.stats.spatial_upscale);
+    CHECK(sharp.stats.sharpened);
+    CHECK(has_pass(sharp, "fxaa"));
+    CHECK(has_pass(sharp, "upscale_sharpen"));
+    // No halos past the grey face: the resampled edge is clamped to its neighbourhood.
+    const int face = full.lum(96, 64);
+    int brightest = 0;
+    for (std::uint32_t y = 0; y < sharp.h; ++y)
+        for (std::uint32_t x = 0; x < sharp.w; ++x) brightest = std::max(brightest, sharp.lum(x, y));
+    MESSAGE("face " << face << ", brightest after resampling and sharpening " << brightest);
+    CHECK(brightest <= face + 6);
+    CHECK(sharp.lum(96, 64) == doctest::Approx(face).epsilon(0.02)); // flat interior unchanged
+    CHECK(sharp.lum(2, 2) <= 3);                                     // background stays black
+    CHECK(sharp.mean_lum() == doctest::Approx(full.mean_lum()).epsilon(0.05));
+
+    // Texture detail: fine stripes keep more of their contrast than with the bilinear stretch.
+    {
+        auto& ctx = *gpu().ctx;
+        Image img{64, 64, std::vector<std::uint8_t>(64 * 64 * 4)};
+        for (std::uint32_t y = 0; y < 64; ++y)
+            for (std::uint32_t x = 0; x < 64; ++x) {
+                const std::size_t i = (y * 64 + x) * 4;
+                const auto v = static_cast<std::uint8_t>(((x / 4 + y / 4) & 1) ? 210 : 60);
+                img.pixels[i] = img.pixels[i + 1] = img.pixels[i + 2] = v;
+                img.pixels[i + 3] = 255;
+            }
+        TextureOptions to;
+        to.mipmaps = false;
+        auto tex = ctx.create_texture(img, to);
+        REQUIRE(tex.ok());
+        Material stripes;
+        stripes.unlit = true;
+        stripes.base_color_texture = tex.value();
+        const Camera3D top = Camera3D::look_at({0, 3.2f, 0.01f}, {0, 0, 0});
+        auto quad = [&](SceneRenderer& r) { r.submit(m.plane, stripes, math::Mat4::scale({0.01f, 1, 0.01f})); };
+        auto detail = [](const Frame& f) {
+            double g = 0;
+            for (std::uint32_t y = 24; y < f.h - 24; ++y)
+                for (std::uint32_t x = 48; x < f.w - 48; ++x) g += std::abs(f.lum(x + 1, y) - f.lum(x, y)) + std::abs(f.lum(x, y + 1) - f.lum(x, y));
+            return g;
+        };
+        RenderSettings d = bare();
+        d.fxaa = true;
+        const Frame ref = render_frame(*sr.value(), d, top, sun, env, quad, 192, 128, 1, "quality_detail_ref");
+        d.render_scale = 0.5f;
+        const Frame lin = render_frame(*sr.value(), d, top, sun, env, quad, 192, 128, 1, "quality_detail_bilinear");
+        d.spatial_upscale = true;
+        d.sharpen = 0.6f;
+        const Frame up = render_frame(*sr.value(), d, top, sun, env, quad, 192, 128, 1, "quality_detail_sharp");
+        MESSAGE("detail: full " << detail(ref) << ", bilinear " << detail(lin) << ", spatial " << detail(up));
+        CHECK(detail(up) > detail(lin) * 1.03);
+        CHECK(up.mean_lum() == doctest::Approx(ref.mean_lum()).epsilon(0.05));
+        ctx.device().destroy(tex.value());
+    }
+
+    // Sharpening alone at full resolution: same pass, no resampling.
+    s.render_scale = 1.0f;
+    const Frame full_sharp = render_frame(*sr.value(), s, cam, sun, env, content);
+    CHECK_FALSE(full_sharp.stats.spatial_upscale);
+    CHECK(full_sharp.stats.sharpened);
+    CHECK(full_sharp.lum(96, 64) == doctest::Approx(face).epsilon(0.02));
 }
 
 #include "victus/runtime/scene_rendering.hpp"
