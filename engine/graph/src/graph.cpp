@@ -126,6 +126,12 @@ std::vector<NodeDesc> build_library() {
          "Switches to another scene at the end of the update");
     stmt("audio.play", "Audio", "Play Sound", {make_pin("clip", T::String, "")}, {}, "audio.play({clip})", "Plays a one-shot sound");
     stmt("entity.play_audio", "Audio", "Play Audio Source", {self_entity}, {}, "{entity}:play_audio()", "Plays the entity's AudioSource");
+    stmt("anim.play", "Animation", "Play Animation", {self_entity, make_pin("clip", T::String, "Idle"), make_pin("fade", T::Number, 0.2)}, {},
+         "{entity}:play_animation({clip}, {fade})", "Cross-fades the Animator to a clip (without a controller)");
+    stmt("anim.set_param", "Animation", "Set Anim Parameter", {self_entity, make_pin("name", T::String, "speed"), make_pin("value", T::Any, 0)},
+         {}, "{entity}:set_anim_param({name}, {value})", "Sets a float, int or bool parameter of the Animator's controller");
+    stmt("anim.trigger", "Animation", "Fire Anim Trigger", {self_entity, make_pin("name", T::String, "jump")}, {},
+         "{entity}:anim_trigger({name})", "Sets a controller trigger; the transition using it consumes it");
 
     auto pure = [&](std::string type, std::string category, std::string title, std::vector<PinDesc> ins, std::vector<PinDesc> outs,
                     std::vector<std::string> code, std::string tip = {}) {
@@ -146,6 +152,10 @@ std::vector<NodeDesc> build_library() {
     pure("entity.name", "Entity", "Get Name", {self_entity}, {make_pin("name", T::String)}, {"{entity}.name"});
     pure("entity.valid", "Entity", "Is Valid", {self_entity}, {make_pin("valid", T::Bool)}, {"({entity} ~= nil and {entity}.valid)"},
          "False for nil or destroyed entities");
+    pure("anim.state", "Animation", "Anim State", {self_entity}, {make_pin("state", T::String)}, {"({entity}:anim_state() or \"\")"},
+         "The controller's current state (empty without a controller)");
+    pure("anim.param", "Animation", "Get Anim Parameter", {self_entity, make_pin("name", T::String, "speed")}, {make_pin("value", T::Any)},
+         {"{entity}:anim_param({name})"}, "A controller parameter (number, or boolean for bool/trigger; nil when missing)");
     pure("input.action", "Input", "Action Held", {make_pin("action", T::String, "jump")}, {make_pin("held", T::Bool)}, {"input.action({action})"});
     pure("input.action_pressed", "Input", "Action Pressed", {make_pin("action", T::String, "jump")}, {make_pin("pressed", T::Bool)},
          {"input.action_pressed({action})"}, "True on the frame the action started");

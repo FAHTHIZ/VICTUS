@@ -480,7 +480,8 @@ int entity_play_animation(lua_State* L) {
 }
 
 
-// entity:animation() -> {valid, clip, time, duration, playing, looping, finished, blend}
+// entity:animation() -> {valid, clip, time, duration, playing, looping, finished, blend,
+// controlled, state, normalized_time}
 int entity_animation(lua_State* L) {
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
@@ -492,7 +493,7 @@ int entity_animation(lua_State* L) {
         st.playing = a->playing;
         st.looping = a->loop;
     }
-    lua_createtable(L, 0, 8);
+    lua_createtable(L, 0, 11);
     lua_pushboolean(L, st.valid);
     lua_setfield(L, -2, "valid");
     lua_pushstring(L, st.clip.c_str());
@@ -509,6 +510,151 @@ int entity_animation(lua_State* L) {
     lua_setfield(L, -2, "finished");
     lua_pushnumber(L, st.blend);
     lua_setfield(L, -2, "blend");
+    lua_pushboolean(L, st.controlled);
+    lua_setfield(L, -2, "controlled");
+    lua_pushlstring(L, st.state.data(), st.state.size());
+    lua_setfield(L, -2, "state");
+    lua_pushnumber(L, st.normalized_time);
+    lua_setfield(L, -2, "normalized_time");
+    return 1;
+}
+
+
+// --- Animation controllers (.vanim, ADR-0068) ------------------------------------------------
+// All of these need the animation system (they return false/nil before it runs on the scene) and an
+// Animator whose `controller` loaded. Bool and trigger parameters read back as booleans.
+
+namespace {
+void push_param_value(lua_State* L, animation::ParamType t, float v) {
+    if (t == animation::ParamType::Bool || t == animation::ParamType::Trigger) lua_pushboolean(L, v != 0.0f);
+    else lua_pushnumber(L, v);
+}
+} // namespace
+
+// entity:set_anim_param(name, value) -> bool. `value` is a number or boolean; ints round, bools
+// and triggers treat non-zero as true. False when there is no such parameter.
+int entity_set_anim_param(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const char* name = luaL_checkstring(L, 2);
+    float value = 0;
+    if (lua_isboolean(L, 3)) value = lua_toboolean(L, 3) != 0 ? 1.0f : 0.0f;
+    else value = static_cast<float>(luaL_checknumber(L, 3));
+    auto* sys = animation::system_of(s);
+    lua_pushboolean(L, sys != nullptr && sys->set_parameter(s, e, name, value));
+    return 1;
+}
+
+// entity:anim_param(name) -> number | boolean | nil
+int entity_anim_param(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const char* name = luaL_checkstring(L, 2);
+    auto* sys = animation::system_of(s);
+    const auto* a = s.world().get<animation::AnimatorComponent>(e);
+    const std::optional<float> v = sys ? sys->parameter(s, e, name) : std::nullopt;
+    if (!v || !a) {
+        lua_pushnil(L);
+        return 1;
+    }
+    animation::ParamType t = animation::ParamType::Float;
+    if (auto c = sys->controller(a->controller)) {
+        const std::int32_t i = c->find_parameter(name);
+        if (i >= 0) t = c->parameters[static_cast<std::size_t>(i)].type;
+    }
+    push_param_value(L, t, *v);
+    return 1;
+}
+
+// entity:anim_trigger(name) -> bool. Sets a trigger; the transition that uses it consumes it.
+int entity_anim_trigger(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* sys = animation::system_of(s);
+    lua_pushboolean(L, sys != nullptr && sys->set_trigger(s, e, luaL_checkstring(L, 2)));
+    return 1;
+}
+
+// entity:reset_anim_trigger(name) -> bool. Clears a trigger that has not fired yet.
+int entity_reset_anim_trigger(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* sys = animation::system_of(s);
+    lua_pushboolean(L, sys != nullptr && sys->reset_trigger(s, e, luaL_checkstring(L, 2)));
+    return 1;
+}
+
+// entity:anim_state() -> current controller state name, or nil without a running controller.
+int entity_anim_state(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* sys = animation::system_of(s);
+    if (!sys) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const animation::ControllerStatus st = sys->controller_status(s, e);
+    if (!st.valid || st.state.empty()) lua_pushnil(L);
+    else lua_pushlstring(L, st.state.data(), st.state.size());
+    return 1;
+}
+
+// entity:anim_controller() -> {valid, controller, error, state, previous_state, normalized_time,
+// blend, states = {...}, parameters = {name = value}, types = {name = "float"|...},
+// weights = {{clip, weight, missing}}}
+int entity_anim_controller(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    animation::ControllerStatus st;
+    if (auto* sys = animation::system_of(s)) st = sys->controller_status(s, e);
+    else if (const auto* a = s.world().get<animation::AnimatorComponent>(e)) st.controller = a->controller;
+    lua_createtable(L, 0, 11);
+    lua_pushboolean(L, st.valid);
+    lua_setfield(L, -2, "valid");
+    lua_pushlstring(L, st.controller.data(), st.controller.size());
+    lua_setfield(L, -2, "controller");
+    lua_pushlstring(L, st.error.data(), st.error.size());
+    lua_setfield(L, -2, "error");
+    lua_pushlstring(L, st.state.data(), st.state.size());
+    lua_setfield(L, -2, "state");
+    lua_pushlstring(L, st.previous_state.data(), st.previous_state.size());
+    lua_setfield(L, -2, "previous_state");
+    lua_pushnumber(L, st.normalized_time);
+    lua_setfield(L, -2, "normalized_time");
+    lua_pushnumber(L, st.blend);
+    lua_setfield(L, -2, "blend");
+    lua_createtable(L, static_cast<int>(st.states.size()), 0);
+    for (std::size_t i = 0; i < st.states.size(); ++i) {
+        lua_pushlstring(L, st.states[i].data(), st.states[i].size());
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    lua_setfield(L, -2, "states");
+    lua_createtable(L, 0, static_cast<int>(st.parameters.size()));
+    for (const auto& p : st.parameters) {
+        push_param_value(L, p.type, p.value);
+        lua_setfield(L, -2, p.name.c_str());
+    }
+    lua_setfield(L, -2, "parameters");
+    lua_createtable(L, 0, static_cast<int>(st.parameters.size()));
+    for (const auto& p : st.parameters) {
+        const std::string_view tn = animation::param_type_name(p.type);
+        lua_pushlstring(L, tn.data(), tn.size());
+        lua_setfield(L, -2, p.name.c_str());
+    }
+    lua_setfield(L, -2, "types");
+    lua_createtable(L, static_cast<int>(st.weights.size()), 0);
+    for (std::size_t i = 0; i < st.weights.size(); ++i) {
+        const auto& w = st.weights[i];
+        lua_createtable(L, 0, 3);
+        lua_pushlstring(L, w.clip.data(), w.clip.size());
+        lua_setfield(L, -2, "clip");
+        lua_pushnumber(L, w.weight);
+        lua_setfield(L, -2, "weight");
+        lua_pushboolean(L, w.missing);
+        lua_setfield(L, -2, "missing");
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    lua_setfield(L, -2, "weights");
     return 1;
 }
 
