@@ -412,3 +412,80 @@ TEST_CASE("gpu lods: main and secondary views select levels independently") {
     }
     ctx.destroy(sphere);
 }
+
+TEST_CASE("gpu lods: hysteresis keeps a level at a threshold without exceeding the budget") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    MeshData data = make_uv_sphere(0.5f, 64, 32);
+    REQUIRE(generate_lods(data) == 3);
+    optimize_mesh(data);
+    auto sphere = ctx.create_mesh(data, "lod_hysteresis_sphere").value();
+    Material mat;
+    auto tracked = [&](SceneRenderer& r) { r.submit(sphere, mat, math::Mat4::identity(), 7); };
+    RenderSettings stateless = RenderSettings::preset(QualityTier::High);
+    stateless.lod_error_pixels = 0.25f;
+    stateless.lod_hysteresis = 0.0f;
+    RenderSettings held = stateless;
+    held.lod_hysteresis = 0.25f;
+    SceneRenderer& r = *sr.value();
+    const auto at = [&](const RenderSettings& s, float z) { return view_stats(r, s, {0, 0, z}, 60.0f, 160, 96, tracked); };
+
+    // Find the distance where the stateless rule switches LOD 0 -> LOD 1 (0.5 mm resolution).
+    const std::uint64_t lod0 = at(stateless, 1.0f).triangles;
+    float lo = 1.0f, hi = 60.0f;
+    REQUIRE(at(stateless, hi).triangles < lod0);
+    while (hi - lo > 5e-4f) {
+        const float mid = 0.5f * (lo + hi);
+        (at(stateless, mid).triangles == lod0 ? lo : hi) = mid;
+    }
+    const float threshold = 0.5f * (lo + hi);
+    INFO("threshold distance " << threshold);
+
+    // An object breathing 1% around the threshold: stateless selection switches every frame,
+    // hysteresis switches at most once.
+    const std::uint64_t ref_near = at(stateless, threshold * 0.99f).triangles;
+    const std::uint64_t ref_far = at(stateless, threshold * 1.01f).triangles;
+    REQUIRE(ref_near == lod0);
+    REQUIRE(ref_far < lod0);
+    const auto switches = [&](const RenderSettings& s) {
+        r.reset_history();
+        int n = 0;
+        std::uint64_t prev = 0;
+        for (int i = 0; i < 16; ++i) {
+            const SceneStats st = at(s, threshold * (i % 2 ? 1.01f : 0.99f));
+            if (i > 0 && st.triangles != prev) ++n;
+            prev = st.triangles;
+            CHECK(st.triangles >= (i % 2 ? ref_far : ref_near)); // never coarser: the budget holds
+        }
+        return n;
+    };
+    CHECK(switches(stateless) == 15);
+    CHECK(switches(held) <= 1);
+
+    // Receding: the level is held until the distance passes the shrunk budget, then coarsens.
+    r.reset_history();
+    (void)at(held, threshold * 0.9f);
+    const SceneStats hold = at(held, threshold * 1.05f);
+    CHECK(hold.triangles == lod0);
+    CHECK(hold.lod_held == 1);
+    const SceneStats far = at(held, threshold * 2.0f);
+    CHECK(far.triangles < lod0);
+    // Approaching past the threshold refines at once.
+    CHECK(at(held, threshold * 0.95f).triangles == lod0);
+
+    // reset_history() and a different output size (another view) fall back to the stateless rule.
+    (void)at(held, threshold * 0.9f);
+    r.reset_history();
+    CHECK(at(held, threshold * 1.05f).triangles < lod0);
+    (void)at(held, threshold * 0.9f);
+    const SceneStats other_view = view_stats(r, held, {0, 0, threshold * 1.05f}, 60.0f, 160, 97, tracked);
+    CHECK(other_view.lod_held == 0);
+
+    // Draws without a motion id stay stateless.
+    auto untracked = [&](SceneRenderer& rr) { rr.submit(sphere, mat, math::Mat4::identity()); };
+    (void)view_stats(r, held, {0, 0, threshold * 0.9f}, 60.0f, 160, 96, untracked);
+    CHECK(view_stats(r, held, {0, 0, threshold * 1.05f}, 60.0f, 160, 96, untracked).triangles < lod0);
+    ctx.destroy(sphere);
+}

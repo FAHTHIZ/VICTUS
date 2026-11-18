@@ -221,8 +221,10 @@ rhi::TextureDesc color_desc(rhi::Format f, std::uint32_t w, std::uint32_t h) {
 
 // Coarsest level whose error, scaled to world units and projected at the distance from the eye
 // to the nearest point of the draw's bounds, stays within the pixel budget.
+// With `previous` >= 0 (the level drawn last frame), that level is kept while it lies between this
+// pick and the pick for the budget shrunk by `lod_hysteresis` (ADR-0077).
 std::uint8_t select_lod(const GpuMesh& mesh, const Mat4& model, const Aabb& world, Vec3 eye, float pixels_per_unit,
-                        const RenderSettings& s) {
+                        const RenderSettings& s, int previous = -1) {
     if (mesh.lod_count <= 1 || (!s.lods && s.force_lod < 0)) return 0;
     const auto last = static_cast<int>(mesh.lod_count) - 1;
     if (s.force_lod >= 0) return static_cast<std::uint8_t>(std::min(s.force_lod, last));
@@ -232,9 +234,15 @@ std::uint8_t select_lod(const GpuMesh& mesh, const Mat4& model, const Aabb& worl
     if (!(distance > 1e-4f)) return 0;
     const float scale = std::max({length(model.c[0].xyz()), length(model.c[1].xyz()), length(model.c[2].xyz())});
     const float k = scale * pixels_per_unit / distance; // pixels per unit of mesh error
-    int lod = 0;
-    while (lod < last && mesh.lods[static_cast<std::size_t>(lod) + 1].error * k <= s.lod_error_pixels) ++lod;
-    return static_cast<std::uint8_t>(lod);
+    const auto pick = [&](float budget) {
+        int lod = 0;
+        while (lod < last && mesh.lods[static_cast<std::size_t>(lod) + 1].error * k <= budget) ++lod;
+        return lod;
+    };
+    const int coarsest = pick(s.lod_error_pixels);
+    if (previous < 0 || s.lod_hysteresis <= 0.0f) return static_cast<std::uint8_t>(coarsest);
+    const int finest = pick(s.lod_error_pixels * (1.0f - s.lod_hysteresis));
+    return static_cast<std::uint8_t>(std::clamp(previous, finest, coarsest));
 }
 
 void draw_mesh_lod(rhi::RenderPass& pass, const GpuMesh& mesh, std::uint32_t lod, std::uint32_t instances) {
@@ -428,6 +436,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.taa_blend = std::isfinite(s.taa_blend) ? std::clamp(s.taa_blend, 0.04f, 1.0f) : 0.1f;
     s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxLights);
     s.lod_error_pixels = std::isfinite(s.lod_error_pixels) ? std::clamp(s.lod_error_pixels, 0.25f, 16.0f) : 1.0f;
+    s.lod_hysteresis = std::isfinite(s.lod_hysteresis) ? std::clamp(s.lod_hysteresis, 0.0f, 0.9f) : 0.0f;
     s.force_lod = std::clamp(s.force_lod, -1, static_cast<int>(kMaxMeshLods) - 1);
     s.shadow_lod_bias = std::min(s.shadow_lod_bias, 3u);
     if (s.debug_view != DebugView::Overdraw) s.debug_view = DebugView::None;
@@ -1256,10 +1265,22 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     visible.reserve(draws_.size());
     // Pixels per unit of geometric error at distance 1 (perspective, render resolution).
     const float lod_pixels_per_unit = static_cast<float>(rh) / (2.0f * std::tan(std::max(camera_.fov_y, 1e-3f) * 0.5f));
+    // LOD hysteresis history only carries over between consecutive frames of the same output size.
+    // Frames with LODs off or forced record nothing, so they do not pin the next frame's levels.
+    const bool lod_record = S.lod_hysteresis > 0.0f && S.lods && S.force_lod < 0;
+    const bool lod_history = lod_record && lod_history_valid_ && lod_history_w_ == width && lod_history_h_ == height;
+    lod_next_.clear();
+    const auto lod_key = [](const Draw& d) { return mix(d.motion_id, reinterpret_cast<std::uintptr_t>(d.mesh)); };
     for (Draw& d : draws_) {
         const Aabb world = d.skinned ? d.world_bounds : d.mesh->bounds.transformed(d.model);
         const bool blended = d.material.blend != MaterialBlend::Opaque;
-        d.lod = select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S);
+        int previous = -1;
+        if (lod_history && d.motion_id != 0)
+            if (const auto it = lod_prev_.find(lod_key(d)); it != lod_prev_.end()) previous = it->second;
+        d.lod = select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S, previous);
+        if (previous >= 0 && d.lod != select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S))
+            ++stats_.lod_held;
+        if (lod_record && d.motion_id != 0) lod_next_.emplace(lod_key(d), d.lod);
         d.shadow_lod = d.lod;
         if (S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
             d.shadow_lod = static_cast<std::uint8_t>(std::min<std::uint32_t>(d.lod + S.shadow_lod_bias, d.mesh->lod_count - 1u));
@@ -1302,6 +1323,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         if (d.material.surface_shader) ++stats_.surface_shader_draws;
         (blended ? transparent : visible).push_back(&d);
     }
+    lod_prev_.swap(lod_next_);
+    lod_history_w_ = width;
+    lod_history_h_ = height;
+    lod_history_valid_ = true;
     std::stable_sort(transparent.begin(), transparent.end(), [](const Draw* a, const Draw* b) { return a->distance > b->distance; });
     auto& local_casters = F.local_casters; // at least local_views.size() lists, all empty
     if (!local_views.empty())
