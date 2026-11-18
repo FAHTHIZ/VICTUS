@@ -184,7 +184,7 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
                           std::format("not a VICTUS material (victus_material = {}, expected {})", version, kMaterialVersion));
     MaterialAsset m;
     Reader r{v, {}};
-    float emissive[3] = {m.emissive.r, m.emissive.g, m.emissive.b};
+    float emissive[4] = {m.emissive.r, m.emissive.g, m.emissive.b, 1.0f}; // files may give 3 or 4 values
     const bool ok = r.vec("base_color", &m.base_color.r, 3, 4) && r.uuid("base_color_texture", m.base_color_texture) &&
                     r.number("metallic", m.metallic) && r.number("roughness", m.roughness) &&
                     r.uuid("metallic_roughness_texture", m.metallic_roughness_texture) &&
