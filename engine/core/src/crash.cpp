@@ -609,11 +609,20 @@ Result<fs::Path> write_report(std::string_view reason) {
 
 namespace {
 int* volatile g_null_target = nullptr;
+
+// The crash test needs a real access violation. UBSan (halt_on_error in the sanitizer CI lane)
+// would report the null store and exit before the signal handler could write its report.
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((no_sanitize("undefined")))
+#endif
+void store_through_null() {
+    *g_null_target = 42;
 }
+} // namespace
 
 bool trigger(std::string_view kind) {
     if (kind == "segv") {
-        *g_null_target = 42;
+        store_through_null();
         return true;
     }
     if (kind == "abort") std::abort();
