@@ -5,6 +5,7 @@
 #include "victus/assets/database.hpp"
 #include "victus/core/build_info.hpp"
 #include "victus/core/cli.hpp"
+#include "victus/core/crash.hpp"
 #include "victus/core/log.hpp"
 #include "victus/gameplay/capture.hpp"
 #include "victus/core/hash.hpp"
@@ -19,6 +20,7 @@
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/physics/physics.hpp"
+#include "victus/player/diagnostics.hpp"
 #include "victus/player/export.hpp"
 #include "victus/player/player.hpp"
 #include "victus/player/validate.hpp"
@@ -33,6 +35,7 @@
 #include <chrono>
 #include <csignal>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <thread>
 
@@ -65,6 +68,7 @@ constexpr const char* kUsage =
     "        [--password P] [--key FILE] [--insecure]              ...encrypted by default; prints its public key\n"
     "  check <project>                                            validate scenes and script syntax\n"
     "  export <project> --out DIR [--name EXE] [--player PATH]    package a runnable game folder\n"
+    "  diagnose [project] --out FILE.zip [--no-logs] [--keep-paths] ...  bundle crash reports, logs and checks\n"
     "  version                                                    print the engine version\n"
     "\n"
     "Run `victus <command> --help` for command options. The editor is `victus_editor`.\n";
@@ -659,6 +663,58 @@ int cmd_export(const std::vector<std::string>& a) {
     return 0;
 }
 
+// Collects crash reports, recent session logs, system facts and (with a project) its settings
+// and `victus check` results into one zip for a bug report. Nothing is uploaded; see
+// docs/DIAGNOSTICS.md and victus/player/diagnostics.hpp.
+int cmd_diagnose(const std::vector<std::string>& a) {
+    cli::Parser p("victus diagnose", "Bundle crash reports, logs and project checks into a zip for a bug report (nothing is uploaded)");
+    p.positional("project", "project folder (optional; adds victus.project and validation results)")
+        .option("out", "zip file to write", "")
+        .option("diagnostics", "diagnostics folder to read (default: VICTUS_DIAGNOSTICS_DIR or the user data folder)", "")
+        .flag("list", "only list crash reports and logs that would be bundled")
+        .flag("no-system", "leave out OS, CPU and memory facts")
+        .flag("no-crashes", "leave out crash reports")
+        .flag("no-logs", "leave out session logs")
+        .flag("no-project", "leave out victus.project")
+        .flag("no-validation", "leave out `victus check` results")
+        .flag("keep-paths", "do not replace home folder, user name and project path");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message);
+    const fs::Path dir = p.get("diagnostics").empty() ? crash::default_directory() : fs::Path(p.get("diagnostics"));
+    if (p.has("list")) {
+        std::printf("diagnostics folder: %s\n", dir.string().c_str());
+        const auto reports = crash::list_reports(dir);
+        std::printf("crash reports: %zu\n", reports.size());
+        for (const auto& r : reports)
+            std::printf("  %s  %s  %s\n", r.path.filename().string().c_str(), r.app.c_str(), r.reason.c_str());
+        return 0;
+    }
+    if (p.get("out").empty()) return error("diagnose needs --out FILE.zip (or --list)");
+    player::BundleOptions o;
+    o.output = p.get("out");
+    o.diagnostics_dir = dir;
+    o.project = p.get("project");
+    o.requested_by = "victus diagnose";
+    o.include_system = !p.has("no-system");
+    o.include_crash_reports = !p.has("no-crashes");
+    o.include_logs = !p.has("no-logs");
+    o.include_project_settings = !p.has("no-project");
+    o.include_validation = !p.has("no-validation");
+    o.redact_paths = !p.has("keep-paths");
+    auto r = player::create_diagnostics_bundle(o);
+    if (!r) return error(r.error().message);
+    std::printf("wrote %s: %zu files, %zu bytes (%zu crash reports, %zu logs, %zu redactions)\n", r->path.string().c_str(),
+                r->files.size(), r->bytes, r->crash_reports, r->logs, r->redactions);
+    std::printf("nothing was uploaded; review the bundle before attaching it to a bug report\n");
+    return 0;
+}
+
+// Hidden: crashes on purpose so tests can check the crash handlers end to end.
+int cmd_crash_test(const std::vector<std::string>& a) {
+    if (a.empty() || !crash::trigger(a[0])) return error("crash-test needs segv, abort, terminate or assert");
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -670,6 +726,15 @@ int main(int argc, char** argv) {
     if (argc < 2) return std::fprintf(stderr, "%s", kUsage), 2;
     const std::string cmd = argv[1];
     const auto args = rest(argc, argv);
+    // Crash reports and session logs (ADR-0072). Only long-running commands keep a log file.
+    std::unique_ptr<crash::Session> session;
+    if (cmd != "version" && cmd != "--version" && cmd != "help" && cmd != "--help" && cmd != "-h" && cmd != "templates") {
+        crash::Options co;
+        co.app = "victus";
+        co.log_file = cmd == "run" || cmd == "serve" || cmd == "simulate" || cmd == "crash-test";
+        if (auto s = crash::Session::start(co)) session = std::move(*s);
+        else std::fprintf(stderr, "victus: warning: crash reporting is off: %s\n", s.error().message.c_str());
+    }
     if (cmd == "new") return cmd_new(args);
     if (cmd == "templates") return cmd_templates();
     if (cmd == "info") return cmd_info(args);
@@ -679,6 +744,8 @@ int main(int argc, char** argv) {
     if (cmd == "serve") return cmd_serve(args);
     if (cmd == "check") return cmd_check(args);
     if (cmd == "export") return cmd_export(args);
+    if (cmd == "diagnose") return cmd_diagnose(args);
+    if (cmd == "crash-test") return cmd_crash_test(args);
     if (cmd == "version" || cmd == "--version") return std::printf("VICTUS %s\n", build::version()), 0;
     if (cmd == "help" || cmd == "--help" || cmd == "-h") return std::printf("%s", kUsage), 0;
     std::fprintf(stderr, "victus: unknown command '%s'\n\n%s", cmd.c_str(), kUsage);

@@ -4,8 +4,8 @@
 namespace victus {
 // Logs the failure with source location, flushes logs, then aborts.
 [[noreturn]] void assertion_failed(const char* expr, const char* message, const char* file, int line) noexcept;
-// Installs handlers for fatal signals / unhandled exceptions that flush diagnostics and
-// write a crash context file (crash_context.txt) into `diagnostics_dir`.
+// Installs handlers for fatal signals / unhandled exceptions that write a crash report into
+// `diagnostics_dir`/crashes (see victus/core/crash.hpp; crash::Session also adds session logs).
 void install_crash_handlers(const char* diagnostics_dir);
 } // namespace victus
 
