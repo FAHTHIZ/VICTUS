@@ -93,6 +93,12 @@ Value ComponentSchema::save(const void* c) const {
             v.set(f.name, u.is_nil() ? Value() : Value(u.to_string()));
             break;
         }
+        case FieldKind::Vec2List: {
+            Value list = Value::array();
+            for (const math::Vec2& p : f.ref<std::vector<math::Vec2>>(c)) list.push(to_json(p));
+            v.set(f.name, std::move(list));
+            break;
+        }
         case FieldKind::Enum: {
             const auto i = static_cast<std::size_t>(f.get_int(c));
             v.set(f.name, i < f.enum_names.size() ? Value(f.enum_names[i]) : Value(static_cast<std::int64_t>(i)));
@@ -149,6 +155,16 @@ Status ComponentSchema::load(void* c, const Value& v) const {
             Uuid u;
             if (!x->is_string() || !Uuid::parse(x->as_string(), u)) return field_error(*this, f, "expected a UUID string");
             f.ref<Uuid>(c) = u;
+            break;
+        }
+        case FieldKind::Vec2List: {
+            if (!x->is_array()) return field_error(*this, f, "expected [[x, y], ...]");
+            if (x->size() > kMaxListLength)
+                return field_error(*this, f, "more than " + std::to_string(kMaxListLength) + " entries");
+            std::vector<math::Vec2> list(x->size());
+            for (std::size_t i = 0; i < list.size(); ++i)
+                if (!from_json((*x)[i], list[i])) return field_error(*this, f, "expected [[x, y], ...]");
+            f.ref<std::vector<math::Vec2>>(c) = std::move(list);
             break;
         }
         case FieldKind::Enum: {

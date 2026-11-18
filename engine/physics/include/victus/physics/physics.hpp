@@ -187,13 +187,23 @@ struct RigidBody2DComponent {
     friend bool operator==(const RigidBody2DComponent&, const RigidBody2DComponent&) = default;
 };
 
+// polygon: any simple outline in `points` (either winding, concave allowed, at most
+// kMaxPolygonPoints), split into convex pieces. chain: a line through `points` (`loop` closes it)
+// that collides on one side only: an open chain on the left of its direction (ground drawn left to
+// right is solid from above), a loop on its outside, or its inside when `inside` is set (cave and
+// arena walls). Chains have no mass: dynamic bodies fill a loop as a polygon instead, and chains
+// cannot be triggers. Points are in the entity's local space (scaled like the other shapes, plus
+// `offset`).
 struct Collider2DComponent {
-    enum class Shape : std::uint8_t { Box, Circle, Capsule };
+    enum class Shape : std::uint8_t { Box, Circle, Capsule, Polygon, Chain };
     Shape shape{Shape::Box};
     math::Vec2 size{1, 1};       // box: full extents; capsule: width x total height
     float radius{0.5f};          // circle
     math::Vec2 offset;
     float rounding{0.0f};        // box corner radius
+    std::vector<math::Vec2> points; // polygon / chain outline
+    bool loop{true};             // chain: connect the last point to the first
+    bool inside{false};          // chain loop: collide on the inside instead of the outside
     float friction{0.6f};
     float restitution{0.0f};
     bool is_trigger{false};
@@ -204,6 +214,20 @@ struct Collider2DComponent {
     std::uint32_t mask{kAllLayers};
     friend bool operator==(const Collider2DComponent&, const Collider2DComponent&) = default;
 };
+
+inline constexpr std::size_t kMaxPolygonPoints = 256;
+
+// Splits a simple polygon (either winding, concave allowed, no self-intersections, at most
+// kMaxPolygonPoints points) into convex counter-clockwise pieces of at most `max_vertices` points:
+// ear clipping, then Hertel-Mehlhorn merging of triangles across diagonals. Duplicate and collinear
+// points are dropped. Fails with a message on fewer than 3 distinct points, zero area,
+// non-finite values or self-intersection.
+[[nodiscard]] Result<std::vector<std::vector<math::Vec2>>> decompose_polygon(const std::vector<math::Vec2>& points,
+                                                                            std::size_t max_vertices = 8);
+// Twice the signed area (positive = counter-clockwise).
+[[nodiscard]] float signed_area2(const std::vector<math::Vec2>& points) noexcept;
+// True when two non-adjacent edges of the outline cross (closed: the last point joins the first).
+[[nodiscard]] bool self_intersects(const std::vector<math::Vec2>& points, bool closed) noexcept;
 
 // Kinematic 2D walker (a capsule centred on the entity origin, moved with Box2D's plane solver).
 // It slides along walls, follows slopes up to max_slope, snaps down onto ground within

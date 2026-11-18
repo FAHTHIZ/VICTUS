@@ -147,6 +147,31 @@ bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db
     }
     case scene::FieldKind::Vec2: changed = vec2_edit(label, f.ref<math::Vec2>(comp), speed); break;
     case scene::FieldKind::Vec3: changed = vec3_edit(label, f.ref<math::Vec3>(comp), speed); break;
+    case scene::FieldKind::Vec2List: {
+        // Outline points: one row per point, "+" appends a copy of the last point, "x" removes.
+        auto& list = f.ref<std::vector<math::Vec2>>(comp);
+        const std::string head = shown_label.substr(0, shown_label.find("##")) + " (" + std::to_string(list.size()) + ")##" + f.name;
+        if (ImGui::TreeNode(head.c_str())) {
+            for (std::size_t i = 0; i < list.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::SmallButton("x")) {
+                    list.erase(list.begin() + static_cast<std::ptrdiff_t>(i));
+                    changed = true;
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::SameLine();
+                changed |= vec2_edit(std::to_string(i).c_str(), list[i], speed);
+                ImGui::PopID();
+            }
+            if (list.size() < scene::kMaxListLength && ImGui::SmallButton("+ point")) {
+                list.push_back(list.empty() ? math::Vec2{} : list.back() + math::Vec2{0.5f, 0});
+                changed = true;
+            }
+            ImGui::TreePop();
+        }
+        break;
+    }
     case scene::FieldKind::Color: changed = color_edit(label, f.ref<math::Color>(comp)); break;
     case scene::FieldKind::String: {
         auto& str = f.ref<std::string>(comp);

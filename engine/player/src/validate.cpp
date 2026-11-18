@@ -305,6 +305,27 @@ Result<ValidationReport> validate_project(const project::Project& proj) {
                            std::to_string(cooked->meshes.size()) + " meshes",
                        "Lower mesh_index to an existing mesh.", model);
         });
+        // Polygon and chain Collider2D outlines must be buildable.
+        scene.world().each<physics::Collider2DComponent>([&](scene::Entity e, physics::Collider2DComponent& c) {
+            using S = physics::Collider2DComponent::Shape;
+            if ((c.shape != S::Polygon && c.shape != S::Chain) || scene.world().has<physics::CharacterController2DComponent>(e)) return;
+            const auto* rb = scene.world().get<physics::RigidBody2DComponent>(e);
+            const bool filled = c.shape == S::Polygon || c.is_trigger || (rb && rb->type == physics::BodyType::Dynamic);
+            if (filled) {
+                if (auto pieces = physics::decompose_polygon(c.points); !pieces)
+                    entity(Severity::Error, e, who(e) + ": Collider2D " + pieces.error().message,
+                           "Fix the outline: at least 3 points in order around the shape, edges must not cross.");
+                else if (c.shape == S::Chain)
+                    entity(Severity::Warning, e, who(e) + ": chain Collider2D on a " + (c.is_trigger ? "trigger" : "dynamic body") +
+                                                     " is filled as a polygon",
+                           "Use shape 'polygon', or make the body static or kinematic.");
+                return;
+            }
+            if (c.points.size() < (c.loop ? 3u : 2u) || physics::self_intersects(c.points, c.loop))
+                entity(Severity::Error, e,
+                       who(e) + ": Collider2D chain needs at least " + (c.loop ? "3" : "2") + " points whose segments do not cross",
+                       "Add points or reorder them.");
+        });
         // Animator controllers must load; clips they name should exist in the Animator's model.
         scene.world().each<animation::AnimatorComponent>([&](scene::Entity e, animation::AnimatorComponent& c) {
             std::shared_ptr<const animation::AnimationSet> retargeted;

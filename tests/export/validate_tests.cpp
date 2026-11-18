@@ -179,13 +179,30 @@ TEST_CASE("validate: convex and mesh colliders need geometry") {
         const scene::Entity barrel = collider("Barrel", ColliderComponent::Shape::Mesh);
         s.world().add<scene::MeshRendererComponent>(barrel).primitive = "cylinder";
         s.world().add<physics::RigidBodyComponent>(barrel); // dynamic: simulates the hull
+        // 2D outlines: a crossing polygon and a one-point chain are errors; a dynamic chain warns.
+        const auto outline = [&](const char* name, physics::Collider2DComponent::Shape shape, std::vector<math::Vec2> pts) {
+            const scene::Entity e = s.create(name);
+            auto& c = s.world().add<physics::Collider2DComponent>(e);
+            c.shape = shape;
+            c.points = std::move(pts);
+            return e;
+        };
+        outline("Bowtie", physics::Collider2DComponent::Shape::Polygon, {{0, 0}, {1, 1}, {1, 0}, {0, 1}});
+        outline("Dot", physics::Collider2DComponent::Shape::Chain, {{0, 0}});
+        s.world().add<physics::RigidBody2DComponent>(
+            outline("Crate2D", physics::Collider2DComponent::Shape::Chain, {{0, 0}, {1, 0}, {1, 1}, {0, 1}}));
+        outline("Hill", physics::Collider2DComponent::Shape::Chain, {{0, 0}, {1, 0.5f}, {2, 0}}); // fine
         REQUIRE(s.save_file(*path).ok());
     }
     auto r = player::validate_project(*created);
     REQUIRE(r.ok());
     for (const auto& d : r->diagnostics) MESSAGE(d.line());
-    CHECK(r->errors() == 2);
-    CHECK(r->warnings() == 1);
+    CHECK(r->errors() == 4);
+    CHECK(r->warnings() == 2);
+    CHECK(find(*r, "'Bowtie': Collider2D polygon: edges cross each other"));
+    CHECK(find(*r, "'Dot': Collider2D chain needs at least 3 points"));
+    CHECK(find(*r, "'Crate2D': chain Collider2D on a dynamic body is filled as a polygon"));
+    CHECK_FALSE(find(*r, "'Hill'"));
     const auto* rock = find(*r, "'Rock' has a convex collider without geometry");
     REQUIRE(rock);
     CHECK(rock->severity == player::Severity::Error);
