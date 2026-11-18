@@ -56,6 +56,7 @@ Result<std::unique_ptr<Editor>> Editor::create(render::GpuContext& gpu, ui::UiCo
     std::unique_ptr<Editor> ed(new Editor(gpu, ui, platform, window));
     ed->options_ = options;
     ed->autosave_seconds_ = std::max(options.autosave_seconds, 0.0f);
+    ed->crash_notice_ = options.previous_session_crashed;
     project::register_components();
     if (platform) ed->input_ = std::make_unique<player::PlatformInput>(platform->input());
     ed->reset_simulation();
@@ -84,6 +85,7 @@ Editor::Editor(render::GpuContext& gpu, ui::UiContext& ui, platform::Platform* p
 Editor::~Editor() {
     if (check_future_.valid()) check_future_.wait();
     if (export_future_.valid()) export_future_.wait();
+    if (bundle_future_.valid()) bundle_future_.wait();
     stop_editor_clients();
     if (play_server_) play_server_->shutdown(sim_.time().time); // tell joined players we are gone
     play_server_.reset();

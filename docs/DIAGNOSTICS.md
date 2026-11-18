@@ -66,6 +66,8 @@ Privacy defaults:
 
 Code (the editor, tools) creates the same bundle with `player::create_diagnostics_bundle` in `victus/player/diagnostics.hpp` (target `VICTUS::Player`); `BundleOptions::extra` adds caller-specific files such as a GPU report under `extra/`.
 
+VICTUS Studio starts a session as `victus_editor` (with `--data-dir DIR` its reports and logs go to `DIR/diagnostics` unless `VICTUS_DIAGNOSTICS_DIR` is set). Help > Report a Problem, the start screen's "Report a problem" and the command "Help: Report a Problem" build a bundle on a worker thread with two extra files: `extra/gpu.txt` (backend, driver, limits) and `extra/studio.txt` (version, layout, play state, project name, scene, entity count, problem counts, open panels). When the previous Studio session ended without removing its marker, a dismissible card offers the same dialog.
+
 ## Turning stack frames into function names
 
 Frames are module path + offset. With the matching debug information:

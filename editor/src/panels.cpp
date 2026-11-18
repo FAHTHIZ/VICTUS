@@ -279,6 +279,9 @@ void Editor::frame(float dt) {
     else draw_workspace(dt);
     draw_modals();
     draw_export_dialog();
+    draw_diagnostics_dialog();
+    draw_about_dialog();
+    draw_crash_notice();
     if (show_demo_) ImGui::ShowDemoWindow(&show_demo_);
 }
 
@@ -490,6 +493,17 @@ void Editor::draw_menu_bar() {
         }
         if (ImGui::MenuItem("Copy Captures Folder Path", nullptr, false, project_.has_value() && platform_ != nullptr))
             platform_->set_clipboard((project_->root() / ".victus" / "captures").string());
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("Command Palette", "Ctrl+Shift+P")) open_command_palette();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Report a Problem (Diagnostics Bundle)...", nullptr, false, !creating_bundle()))
+            open_diagnostics_dialog();
+        if (ImGui::MenuItem("Copy Diagnostics Folder Path", nullptr, false, platform_ != nullptr))
+            platform_->set_clipboard(diagnostics_dir().string());
+        ImGui::Separator();
+        if (ImGui::MenuItem("About VICTUS Studio")) open_about_dialog();
         ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();

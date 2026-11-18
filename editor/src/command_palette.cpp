@@ -89,6 +89,8 @@ std::vector<EditorCommand> Editor::commands() {
     });
     add("File: Save Scene As...", {}, editing && project_.has_value(), [this] { show_save_as_ = true; });
     add("File: Export Game...", {}, editing && project_.has_value() && !exporting(), [this] { open_export_dialog(); });
+    add("Help: Report a Problem (Diagnostics Bundle)...", {}, !creating_bundle(), [this] { open_diagnostics_dialog(); });
+    add("Help: About VICTUS Studio", {}, true, [this] { open_about_dialog(); });
     add("File: Close Project", {}, editing && project_.has_value(), [this] { close_project(); });
     if (project_ && editing)
         for (const std::string& s : project_->scenes())
