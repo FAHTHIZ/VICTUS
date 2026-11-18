@@ -862,6 +862,20 @@ return Speaker
     CHECK(s.world().get<scene::Name>(e)->value == "true|true|false|true|0.25|true");
     CHECK((*a)->stats().one_shots == 1);
     CHECK((*a)->bus_volume(audio::Bus::Music) == doctest::Approx(0.25f));
+    // Bus effects.
+    auto fx = host->eval(R"lua(
+audio.set_lowpass("Sfx", 800)
+audio.set_reverb_send("Ambient", 0.4)
+audio.set_reverb_decay(0.5)
+audio.set_reverb_send("Master", 1)
+return { audio.lowpass("Sfx"), audio.reverb_send("Ambient"), audio.reverb_decay(), audio.reverb_send("Master") }
+)lua", &s);
+    REQUIRE(fx.ok());
+    CHECK((*a)->bus_lowpass(audio::Bus::Sfx) == doctest::Approx(800.0f));
+    CHECK((*a)->bus_reverb_send(audio::Bus::Ambient) == doctest::Approx(0.4f));
+    CHECK((*a)->reverb_decay() == doctest::Approx(0.5f));
+    CHECK(fx.value()[std::size_t{0}].as_number() == doctest::Approx(800.0));
+    CHECK(fx.value()[std::size_t{3}].as_number() == doctest::Approx(0.0));
     auto bad = host->eval("audio.set_volume('Nope', 1)", &s);
     REQUIRE_FALSE(bad.ok());
     CHECK(bad.error().message.find("unknown audio bus") != std::string::npos);

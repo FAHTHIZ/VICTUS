@@ -288,10 +288,12 @@ gameui::UiTextComponent& ui_text(Scene& s, Entity e, std::string_view text, floa
 // A HUD canvas (authored at 1280x720, scaled with the window height) driven by hud.luau. Its
 // "Controls" button (top-right) toggles the panel below it listing the controls (also H). With
 // `saves`, a hidden "Save Status" toast (bottom centre) reports quick saves and loads.
-Entity hud(Scene& s, std::string_view controls, math::Vec2 panel_size, bool saves = false) {
+// `properties` are hud.luau script fields (e.g. reverb_send).
+Entity hud(Scene& s, std::string_view controls, math::Vec2 panel_size, bool saves = false,
+           json::Value properties = json::Value::object()) {
     const Entity canvas = s.create("HUD");
     s.world().add<gameui::UiCanvasComponent>(canvas);
-    attach(s, canvas, "scripts/hud.luau");
+    attach(s, canvas, "scripts/hud.luau", std::move(properties));
 
     const Entity help = ui_rect(s, canvas, "Help Button", {1, 0}, {1, 0}, {-24, 24}, {164, 52});
     s.world().add<gameui::UiPanelComponent>(help).border_width = 1.5f;
@@ -561,7 +563,11 @@ void build_3d(Scene& s) {
     l.intensity = 12.0f;
     l.range = 7.0f;
 
-    (void)hud(s, "WASD, arrows or left stick   walk\nSpace or A button   jump\nE or X button   drop a crate (prefab)\nF5 / F9 or LB / RB   quick save / load\nWalk into the crates and the gate\nH or View button   show / hide this panel", {470, 178}, true);
+    (void)hud(s, "WASD, arrows or left stick   walk\nSpace or A button   jump\nE or X button   drop a crate (prefab)\nF5 / F9 or LB / RB   quick save / load\nWalk into the crates and the gate\nH or View button   show / hide this panel", {470, 178}, true, [] {
+        json::Value p = json::Value::object(); // crate and gate impacts ring in the yard
+        p.set("reverb_send", 0.18);
+        return p;
+    }());
 }
 
 // ---- Multiplayer arena ------------------------------------------------------------------------
@@ -1121,6 +1127,7 @@ function Player:on_trigger_enter(other)
             log.info("All coins collected!")
             local banner = scene.find("Win Banner")
             if banner then banner:set_visible(true) end
+            audio.set_lowpass("Music", 900) -- the level is done: muffle the music under the banner
         end
     end
 end
@@ -1211,9 +1218,16 @@ local function tr(key, fallback, params)
     return fallback
 end
 Hud.toast_seconds = 2
+-- Room sound: the share of Sfx sent to the engine's reverb (0 = dry) and how long it rings.
+Hud.reverb_send = 0
+Hud.reverb_decay = 0.6
 
 function Hud:start()
     self.toast = 0
+    if self.reverb_send > 0 then
+        audio.set_reverb_send("Sfx", self.reverb_send)
+        audio.set_reverb_decay(self.reverb_decay)
+    end
 end
 
 function Hud:notify(text)

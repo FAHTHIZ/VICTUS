@@ -192,6 +192,9 @@ void open_victus_libs(lua_State* L) {
     const luaL_Reg audio_fns[] = {{"available", audio_available}, {"play", audio_play},
                                   {"set_volume", audio_set_volume}, {"volume", audio_volume},
                                   {"set_muted", audio_set_muted}, {"muted", audio_muted},
+                                  {"set_lowpass", audio_set_lowpass}, {"lowpass", audio_lowpass},
+                                  {"set_reverb_send", audio_set_reverb_send}, {"reverb_send", audio_reverb_send},
+                                  {"set_reverb_decay", audio_set_reverb_decay}, {"reverb_decay", audio_reverb_decay},
                                   {nullptr, nullptr}};
     register_lib(L, "audio", audio_fns);
     const luaL_Reg ui_fns[] = {{"screen_size", ui_screen_size}, {"pointer_over_ui", ui_pointer_over},

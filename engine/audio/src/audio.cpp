@@ -193,6 +193,19 @@ struct AudioEngine::Impl {
     std::array<bool, kBusCount> group_ok{};
     std::array<float, kBusCount> volume{};
     std::array<bool, kBusCount> muted{};
+    // Effect graph per bus: group -> splitter; splitter out 0 -> (lpf ->) parent, out 1 ->
+    // reverb input (Master has no send: the reverb returns into Master).
+    std::array<ma_splitter_node, kBusCount> splitters{};
+    std::array<ma_lpf_node, kBusCount> lpfs{};
+    std::array<bool, kBusCount> fx_ok{};
+    std::array<float, kBusCount> lowpass{};
+    std::array<float, kBusCount> send{};
+    static constexpr std::size_t kCombs = 4;
+    ma_splitter_node reverb_in{};
+    bool reverb_in_ok{false};
+    std::array<ma_delay_node, kCombs> combs{};
+    std::array<bool, kCombs> comb_ok{};
+    float decay{0.7f};
     std::unordered_map<Entity, Voice, ecs::EntityHash> voices;
     std::unordered_set<Entity, ecs::EntityHash> autostarted;
     std::deque<std::unique_ptr<ma_sound>> one_shots;
@@ -214,6 +227,84 @@ struct AudioEngine::Impl {
     void apply_bus(Bus b) {
         const auto i = static_cast<std::size_t>(b);
         if (group_ok[i]) ma_sound_group_set_volume(&groups[i], muted[i] ? 0.0f : volume[i]);
+    }
+
+    ma_node* bus_parent(std::size_t i) {
+        return i == 0 ? ma_engine_get_endpoint(&engine) : static_cast<ma_node*>(&groups[0]);
+    }
+
+    // Routes the bus's dry path through its low-pass filter when one is set.
+    void apply_lowpass(std::size_t i) {
+        if (!fx_ok[i]) return;
+        const auto rate = ma_engine_get_sample_rate(&engine);
+        const float hz = lowpass[i];
+        if (hz > 0.0f && hz < 0.5f * static_cast<float>(rate)) {
+            const ma_lpf_config c = ma_lpf_config_init(ma_format_f32, ma_engine_get_channels(&engine), rate, hz, 2);
+            ma_lpf_node_reinit(&c, &lpfs[i]);
+            ma_node_attach_output_bus(&splitters[i], 0, &lpfs[i], 0);
+        } else {
+            ma_node_attach_output_bus(&splitters[i], 0, bus_parent(i), 0);
+        }
+    }
+
+    void apply_send(std::size_t i) {
+        if (!fx_ok[i] || i == 0 || !reverb_in_ok) return;
+        ma_node_set_output_bus_volume(&splitters[i], 1, send[i]);
+        if (send[i] > 0.0f) ma_node_attach_output_bus(&splitters[i], 1, &reverb_in, 0);
+        else ma_node_detach_output_bus(&splitters[i], 1);
+    }
+
+    // Builds the per-bus splitters/filters and the shared reverb. Failure leaves effects off
+    // (sound still plays through the groups' default routing).
+    void init_effects() {
+        ma_node_graph* graph = ma_engine_get_node_graph(&engine);
+        const ma_uint32 ch = ma_engine_get_channels(&engine);
+        const ma_uint32 rate = ma_engine_get_sample_rate(&engine);
+        ma_splitter_node_config rc = ma_splitter_node_config_init(ch);
+        rc.outputBusCount = kCombs;
+        reverb_in_ok = ma_splitter_node_init(graph, &rc, nullptr, &reverb_in) == MA_SUCCESS;
+        // Freeverb comb lengths at 44.1 kHz, scaled to the engine rate.
+        constexpr std::array<double, kCombs> tuning{1557, 1617, 1491, 1422};
+        for (std::size_t c = 0; reverb_in_ok && c < kCombs; ++c) {
+            const auto frames = static_cast<ma_uint32>(tuning[c] * rate / 44100.0);
+            ma_delay_node_config dc = ma_delay_node_config_init(ch, rate, frames, decay);
+            dc.delay.wet = 1.0f; // ma_delay outputs only the delayed signal; `dry` scales the input
+            dc.delay.dry = 1.0f;
+            comb_ok[c] = ma_delay_node_init(graph, &dc, nullptr, &combs[c]) == MA_SUCCESS;
+            if (!comb_ok[c]) continue;
+            ma_node_attach_output_bus(&reverb_in, static_cast<ma_uint32>(c), &combs[c], 0);
+            ma_node_set_output_bus_volume(&combs[c], 0, 1.0f / static_cast<float>(kCombs));
+            ma_node_attach_output_bus(&combs[c], 0, &groups[0], 0);
+        }
+        for (std::size_t i = 0; i < kBusCount; ++i) {
+            const ma_splitter_node_config sc = ma_splitter_node_config_init(ch);
+            if (ma_splitter_node_init(graph, &sc, nullptr, &splitters[i]) != MA_SUCCESS) continue;
+            const ma_lpf_node_config lc = ma_lpf_node_config_init(ch, rate, 0.25 * rate, 2);
+            if (ma_lpf_node_init(graph, &lc, nullptr, &lpfs[i]) != MA_SUCCESS) {
+                ma_splitter_node_uninit(&splitters[i], nullptr);
+                continue;
+            }
+            fx_ok[i] = true;
+            ma_node_attach_output_bus(&lpfs[i], 0, bus_parent(i), 0);
+            ma_node_detach_output_bus(&splitters[i], 1);
+            apply_lowpass(i);
+            ma_node_attach_output_bus(&groups[i], 0, &splitters[i], 0);
+        }
+    }
+
+    void uninit_effects() {
+        for (std::size_t i = kBusCount; i-- > 0;) {
+            if (!fx_ok[i]) continue;
+            if (group_ok[i]) ma_node_detach_output_bus(&groups[i], 0);
+            ma_splitter_node_uninit(&splitters[i], nullptr);
+            ma_lpf_node_uninit(&lpfs[i], nullptr);
+            fx_ok[i] = false;
+        }
+        if (reverb_in_ok) ma_splitter_node_uninit(&reverb_in, nullptr);
+        reverb_in_ok = false;
+        for (std::size_t c = 0; c < kCombs; ++c)
+            if (comb_ok[c]) ma_delay_node_uninit(&combs[c], nullptr);
+        comb_ok.fill(false);
     }
 
     Result<fs::Path> resolve(std::string_view clip) const {
@@ -383,6 +474,7 @@ AudioEngine::~AudioEngine() {
     impl_->release_all();
     for (auto& [k, snd] : impl_->preloaded) ma_sound_uninit(snd.get());
     impl_->preloaded.clear();
+    impl_->uninit_effects();
     for (std::size_t i = kBusCount; i-- > 0;)
         if (impl_->group_ok[i]) ma_sound_group_uninit(&impl_->groups[i]);
     if (impl_->engine_ok) ma_engine_uninit(&impl_->engine);
@@ -414,6 +506,7 @@ Result<std::unique_ptr<AudioEngine>> AudioEngine::create(const EngineOptions& op
         impl->group_ok[i] = ma_sound_group_init(&impl->engine, 0, parent, &impl->groups[i]) == MA_SUCCESS;
         if (!impl->group_ok[i]) return make_error(ErrorCode::DeviceError, "audio bus creation failed");
     }
+    impl->init_effects();
     return std::unique_ptr<AudioEngine>(new AudioEngine(std::move(impl)));
 }
 
@@ -426,6 +519,11 @@ void AudioEngine::update(scene::Scene& scene) { impl_->update(scene); }
 void AudioEngine::stop_all() {
     impl_->release_all();
     impl_->autostarted.clear();
+    for (std::size_t i = 0; i < kBusCount; ++i) {
+        set_bus_lowpass(static_cast<Bus>(i), 0.0f);
+        set_bus_reverb_send(static_cast<Bus>(i), 0.0f);
+    }
+    set_reverb_decay(0.7f);
 }
 
 Status AudioEngine::play(scene::Scene& scene, Entity e) {
@@ -566,6 +664,33 @@ bool AudioEngine::bus_muted(Bus b) const {
     const auto i = static_cast<std::size_t>(b);
     return i < kBusCount && impl_->muted[i];
 }
+
+void AudioEngine::set_bus_lowpass(Bus b, float cutoff_hz) {
+    const auto i = static_cast<std::size_t>(b);
+    if (i >= kBusCount) return;
+    impl_->lowpass[i] = std::isfinite(cutoff_hz) ? std::max(0.0f, cutoff_hz) : 0.0f;
+    impl_->apply_lowpass(i);
+}
+float AudioEngine::bus_lowpass(Bus b) const {
+    const auto i = static_cast<std::size_t>(b);
+    return i < kBusCount ? impl_->lowpass[i] : 0.0f;
+}
+void AudioEngine::set_bus_reverb_send(Bus b, float send) {
+    const auto i = static_cast<std::size_t>(b);
+    if (i == 0 || i >= kBusCount) return;
+    impl_->send[i] = std::isfinite(send) ? std::clamp(send, 0.0f, 1.0f) : 0.0f;
+    impl_->apply_send(i);
+}
+float AudioEngine::bus_reverb_send(Bus b) const {
+    const auto i = static_cast<std::size_t>(b);
+    return i < kBusCount ? impl_->send[i] : 0.0f;
+}
+void AudioEngine::set_reverb_decay(float decay) {
+    impl_->decay = std::isfinite(decay) ? std::clamp(decay, 0.0f, 0.95f) : 0.7f;
+    for (std::size_t c = 0; c < Impl::kCombs; ++c)
+        if (impl_->comb_ok[c]) ma_delay_node_set_decay(&impl_->combs[c], impl_->decay);
+}
+float AudioEngine::reverb_decay() const { return impl_->decay; }
 
 std::size_t AudioEngine::render(float* out, std::size_t frames) {
     if (impl_->device || !out || frames == 0) return 0;

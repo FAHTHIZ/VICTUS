@@ -74,6 +74,48 @@ int audio_muted(lua_State* L) {
     return 1;
 }
 
+// audio.set_lowpass(bus, hz): 0 turns the bus's low-pass filter off.
+int audio_set_lowpass(lua_State* L) {
+    const audio::Bus b = check_bus(L, 1, audio::Bus::Master);
+    const float hz = static_cast<float>(luaL_checknumber(L, 2));
+    if (auto* a = audio_of(L)) a->set_bus_lowpass(b, hz);
+    return 0;
+}
+
+int audio_lowpass(lua_State* L) {
+    const audio::Bus b = check_bus(L, 1, audio::Bus::Master);
+    auto* a = audio_of(L);
+    lua_pushnumber(L, a ? a->bus_lowpass(b) : 0.0);
+    return 1;
+}
+
+// audio.set_reverb_send(bus, amount 0..1); Master has no send.
+int audio_set_reverb_send(lua_State* L) {
+    const audio::Bus b = check_bus(L, 1, audio::Bus::Sfx);
+    const float v = static_cast<float>(luaL_checknumber(L, 2));
+    if (auto* a = audio_of(L)) a->set_bus_reverb_send(b, v);
+    return 0;
+}
+
+int audio_reverb_send(lua_State* L) {
+    const audio::Bus b = check_bus(L, 1, audio::Bus::Sfx);
+    auto* a = audio_of(L);
+    lua_pushnumber(L, a ? a->bus_reverb_send(b) : 0.0);
+    return 1;
+}
+
+int audio_set_reverb_decay(lua_State* L) {
+    const float v = static_cast<float>(luaL_checknumber(L, 1));
+    if (auto* a = audio_of(L)) a->set_reverb_decay(v);
+    return 0;
+}
+
+int audio_reverb_decay(lua_State* L) {
+    auto* a = audio_of(L);
+    lua_pushnumber(L, a ? a->reverb_decay() : 0.0);
+    return 1;
+}
+
 int audio_available(lua_State* L) {
     lua_pushboolean(L, audio_of(L) != nullptr);
     return 1;
