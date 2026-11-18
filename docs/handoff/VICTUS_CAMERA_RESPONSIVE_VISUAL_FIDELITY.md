@@ -4,7 +4,7 @@
 
 **Status:** Approved design and audit brief. This is not an implementation claim. Execute in dependency order on main, rechecking all source assumptions before changing code.
 
-**Coordinates with:** VICTUS Adaptive Geometry System (V / Vectors), Competitive Maturity and Production-Readiness, VICTUS Studio, and Signature Starter Characters.
+**Coordinates with:** VICTUS A.E.G.I.S. (Adaptive Engine Geometry and Image System), Competitive Maturity and Production-Readiness, VICTUS Studio, and Signature Starter Characters.
 
 ## Mission
 
@@ -62,7 +62,7 @@ Use the active projection matrix and actual render target dimensions as the sour
 
 ## 3. Coordinated fidelity systems
 
-Each subsystem owns its own representation and data. Vectors coordinates geometry decisions; it must not grow a duplicate renderer or absorb the texture, animation, material or shadow systems.
+Each subsystem owns its own representation and data. A.E.G.I.S. coordinates geometry decisions; it must not grow a duplicate renderer or absorb the texture, animation, material or shadow systems.
 
 ### Geometry
 
