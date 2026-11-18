@@ -196,6 +196,19 @@ std::string Platform::user_data_dir(const std::string& org, const std::string& a
 #endif
 }
 
+std::string Platform::external_data_dir() {
+#if defined(__ANDROID__)
+    const char* ext = SDL_GetAndroidExternalStoragePath();
+    return ext && *ext ? std::string(ext) + "/" : std::string();
+#else
+    return {};
+#endif
+}
+
+bool Platform::show_error_box(const std::string& title, const std::string& message) {
+    return SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), message.c_str(), nullptr);
+}
+
 namespace {
 // Relative bundled paths resolve against the APK assets on Android (SDL's file IO does that) and the executable folder elsewhere.
 std::string bundled_path(const std::string& path) {
