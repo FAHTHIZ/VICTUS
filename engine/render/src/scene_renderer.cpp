@@ -244,6 +244,45 @@ void draw_mesh_lod(rhi::RenderPass& pass, const GpuMesh& mesh, std::uint32_t lod
 
 } // namespace
 
+struct SceneRenderer::FrameScratch {
+    struct MotionBatch {
+        const Draw* first;
+        std::uint32_t instance_offset, instance_count;
+    };
+    std::vector<const Draw*> visible, transparent;
+    std::array<std::vector<const Draw*>, 4> casters;
+    std::vector<std::vector<const Draw*>> local_casters;
+    std::vector<MotionInstance> motion_instances;
+    std::vector<MotionBatch> motion_batches;
+    std::vector<std::pair<const Draw*, MotionInstance>> moving;
+    std::vector<InstanceData> instances;
+    std::vector<Batch> main_batches, transparent_batches;
+    std::array<std::vector<Batch>, 4> shadow_batches;
+    std::vector<std::vector<Batch>> local_batches;
+    std::vector<Vec4> occl_bounds;
+    std::vector<rhi::IndexedIndirectCommand> occl_args;
+
+    // Empties every list but keeps its storage; nested lists keep their own storage too.
+    void begin(std::size_t local_views) {
+        visible.clear();
+        transparent.clear();
+        for (auto& c : casters) c.clear();
+        if (local_casters.size() < local_views) local_casters.resize(local_views);
+        for (auto& c : local_casters) c.clear();
+        motion_instances.clear();
+        motion_batches.clear();
+        moving.clear();
+        instances.clear();
+        main_batches.clear();
+        transparent_batches.clear();
+        for (auto& b : shadow_batches) b.clear();
+        if (local_batches.size() < local_views) local_batches.resize(local_views);
+        for (auto& b : local_batches) b.clear();
+        occl_bounds.clear();
+        occl_args.clear();
+    }
+};
+
 std::string_view tonemapper_name(Tonemapper t) noexcept {
     switch (t) {
     case Tonemapper::None: return "none";
@@ -695,6 +734,8 @@ rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, 
     return it->second[i];
 }
 
+SceneRenderer::SceneRenderer(GpuContext& ctx) : ctx_(ctx), pool_(ctx.device()) {}
+
 SceneRenderer::~SceneRenderer() {
     auto& d = ctx_.device();
     for (auto pl : blend_pipelines_)
@@ -1145,8 +1186,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     }
 
     // Visibility + sorting (front-to-back within pipeline and base texture runs).
-    std::vector<const Draw*> visible, transparent;
-    std::array<std::vector<const Draw*>, 4> casters;
+    if (!scratch_) scratch_ = std::make_unique<FrameScratch>();
+    FrameScratch& F = *scratch_;
+    F.begin(local_views.size());
+    auto& visible = F.visible;
+    auto& transparent = F.transparent;
+    auto& casters = F.casters;
     visible.reserve(draws_.size());
     // Pixels per unit of geometric error at distance 1 (perspective, render resolution).
     const float lod_pixels_per_unit = static_cast<float>(rh) / (2.0f * std::tan(std::max(camera_.fov_y, 1e-3f) * 0.5f));
@@ -1188,7 +1233,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         (blended ? transparent : visible).push_back(&d);
     }
     std::stable_sort(transparent.begin(), transparent.end(), [](const Draw* a, const Draw* b) { return a->distance > b->distance; });
-    std::vector<std::vector<const Draw*>> local_casters(local_views.size());
+    auto& local_casters = F.local_casters; // at least local_views.size() lists, all empty
     if (!local_views.empty())
         for (const Draw& d : draws_) {
             if (!d.material.cast_shadows || d.material.blend != MaterialBlend::Opaque) continue;
@@ -1211,15 +1256,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
 
     // Object motion vectors: visible opaque draws whose transform or joints changed since the last
     // frame. Previous joints are appended to this frame's palette so one storage buffer serves both.
-    struct MotionBatch {
-        const Draw* first;
-        std::uint32_t instance_offset, instance_count;
-    };
-    std::vector<MotionInstance> motion_instances;
-    std::vector<MotionBatch> motion_batches;
+    auto& motion_instances = F.motion_instances;
+    auto& motion_batches = F.motion_batches;
     const bool track_motion = taa && S.motion_vectors;
     if (track_motion && history_valid_ && !motion_prev_.empty()) {
-        std::vector<std::pair<const Draw*, MotionInstance>> moving;
+        auto& moving = F.moving;
         for (const Draw* d : visible) {
             // Alpha-tested draws would write motion through their holes (no discard here).
             if (d->motion_id == 0 || d->material.alpha_cutoff > 0.0f) continue;
@@ -1305,10 +1346,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
 
     // Instancing: consecutive draws with the same mesh and identical material become one batch.
     // Every pass reads its own contiguous range of the per-frame instance buffer.
-    std::vector<InstanceData> instances;
+    auto& instances = F.instances;
     instances.reserve(visible.size() + stats_.shadow_casters);
-    auto build_batches = [&](const std::vector<const Draw*>& list, bool match_material) {
-        std::vector<Batch> out;
+    auto build_batches = [&](const std::vector<const Draw*>& list, bool match_material, std::vector<Batch>& out) {
         for (const Draw* d : list) {
             const auto offset = static_cast<std::uint32_t>(instances.size());
             instances.push_back(make_instance(d->model, d->palette));
@@ -1323,12 +1363,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             }
             out.push_back({d, offset, 1});
         }
-        return out;
     };
-    const std::vector<Batch> main_batches = build_batches(visible, true);
-    const std::vector<Batch> transparent_batches = build_batches(transparent, true);
+    const std::vector<Batch>& main_batches = F.main_batches;
+    const std::vector<Batch>& transparent_batches = F.transparent_batches;
+    build_batches(visible, true, F.main_batches);
+    build_batches(transparent, true, F.transparent_batches);
     stats_.transparent_draws = static_cast<std::uint32_t>(transparent.size());
-    std::array<std::vector<Batch>, 4> shadow_batches;
+    auto& shadow_batches = F.shadow_batches;
     for (std::uint32_t c = 0; c < cascade_count_; ++c) {
         std::sort(casters[c].begin(), casters[c].end(), [](const Draw* a, const Draw* b) {
             if (a->skinned != b->skinned) return !a->skinned;
@@ -1337,10 +1378,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (a->lod != b->lod) return a->lod < b->lod;
             return a->material.base_color_texture.index < b->material.base_color_texture.index;
         });
-        shadow_batches[c] = build_batches(casters[c], false);
+        build_batches(casters[c], false, shadow_batches[c]);
         stats_.shadow_batches += static_cast<std::uint32_t>(shadow_batches[c].size());
     }
-    std::vector<std::vector<Batch>> local_batches(local_views.size());
+    auto& local_batches = F.local_batches; // at least local_views.size() lists, all empty
     for (std::size_t v = 0; v < local_views.size(); ++v) {
         std::sort(local_casters[v].begin(), local_casters[v].end(), [](const Draw* a, const Draw* b) {
             if (a->skinned != b->skinned) return !a->skinned;
@@ -1349,7 +1390,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (a->lod != b->lod) return a->lod < b->lod;
             return a->material.base_color_texture.index < b->material.base_color_texture.index;
         });
-        local_batches[v] = build_batches(local_casters[v], false);
+        build_batches(local_casters[v], false, local_batches[v]);
         stats_.local_shadow_draws += static_cast<std::uint32_t>(local_casters[v].size());
     }
     stats_.main_batches = static_cast<std::uint32_t>(main_batches.size());
@@ -1407,9 +1448,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             h = (h + 1) / 2;
         }
         occl_instance_count = static_cast<std::uint32_t>(visible.size());
-        std::vector<Vec4> bounds;
+        auto& bounds = F.occl_bounds;
         bounds.reserve(occl_instance_count * 2u);
-        std::vector<rhi::IndexedIndirectCommand> args;
+        auto& args = F.occl_args;
         args.reserve(main_batches.size());
         for (std::size_t bi = 0; bi < main_batches.size(); ++bi) {
             const Batch& b = main_batches[bi];
@@ -2159,7 +2200,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     const MotionUniforms mu{view_proj, prev_view_proj_};
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, mu);
                     rhi::PipelineHandle bound{};
-                    for (const MotionBatch& b : motion_batches) {
+                    for (const auto& b : motion_batches) {
                         const Draw* d = b.first;
                         const rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_motion_double_ : skin_motion_cull_)
                                                                     : (d->material.double_sided ? motion_double_ : motion_cull_);

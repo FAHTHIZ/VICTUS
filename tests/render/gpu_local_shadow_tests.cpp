@@ -199,3 +199,49 @@ TEST_CASE("gpu local shadows: the tile budget goes to the lights that cover the 
     ctx.destroy(sc.floor);
     ctx.destroy(sc.cube);
 }
+
+// render() keeps its draw lists and batches between frames (SceneRenderer::FrameScratch). A frame after
+// frames with fewer (or no) local shadow views must not see stale casters or batches from earlier frames.
+TEST_CASE("gpu local shadows: frames reuse their lists without stale entries") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    Scene sc{ctx.create_mesh(make_plane({12, 12}), "lsr_floor").value(), ctx.create_mesh(make_cube(), "lsr_cube").value(), {}};
+    sc.grey.base_color = {0.8f, 0.8f, 0.8f, 1};
+    sc.grey.roughness = 0.9f;
+    const RenderSettings s = plain_settings();
+    const auto point = [](SceneRenderer& rr) {
+        PointLight l;
+        l.position = {0, 5, 0};
+        l.intensity = 120;
+        l.range = 12;
+        l.cast_shadows = true;
+        rr.add_point_light(l);
+    };
+    const auto spot = [](SceneRenderer& rr) {
+        SpotLight l;
+        l.position = {1, 5, 0};
+        l.direction = {0, -1, 0};
+        l.intensity = 120;
+        l.range = 12;
+        l.outer_angle = 0.75f;
+        l.cast_shadows = true;
+        rr.add_spot_light(l);
+    };
+    const Shot first = shoot(r, sc, s, point);
+    REQUIRE(first.stats.local_shadow_tiles == 6u);
+    const Shot fewer = shoot(r, sc, s, spot);
+    CHECK(fewer.stats.local_shadow_tiles == 1u);
+    const Shot none = shoot(r, sc, s, [](SceneRenderer&) {});
+    CHECK(none.stats.local_shadow_tiles == 0u);
+    CHECK(none.stats.local_shadow_draws == 0u);
+    const Shot again = shoot(r, sc, s, point);
+    CHECK(again.stats.local_shadow_tiles == first.stats.local_shadow_tiles);
+    CHECK(again.stats.local_shadow_draws == first.stats.local_shadow_draws);
+    CHECK(again.stats.shadow_batches == first.stats.shadow_batches);
+    CHECK(again.stats.main_batches == first.stats.main_batches);
+    CHECK(again.stats.instances_uploaded == first.stats.instances_uploaded);
+    CHECK(again.px == first.px);
+}
