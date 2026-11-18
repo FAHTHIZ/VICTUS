@@ -482,6 +482,8 @@ int entity_set_motor(lua_State* L);
 // bind_render.cpp
 int entity_set_text(lua_State* L);
 int entity_set_text_key(lua_State* L);
+int entity_scroll_to(lua_State* L);
+int entity_scroll(lua_State* L);
 int entity_text(lua_State* L);
 int entity_set_visible(lua_State* L);
 int entity_visible(lua_State* L);

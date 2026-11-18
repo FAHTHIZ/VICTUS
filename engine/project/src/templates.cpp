@@ -665,10 +665,15 @@ void build_multiplayer(Scene& s) {
         const Entity board = ui_rect(s, canvas, "Scoreboard", {0, 0}, {0, 0}, {24, 72}, {360, 220});
         auto& bp = s.world().add<gameui::UiPanelComponent>(board);
         bp.border_width = 1.5f;
+        // Scroll view: net_hud.luau sizes the text to its rows, so a long player list scrolls
+        // (mouse wheel or drag over the board).
+        s.world().add<gameui::UiScrollComponent>(board).wheel_step = 28;
         gameui::UiRectComponent inner;
         inner.anchor_min = {0, 0};
-        inner.anchor_max = {1, 1};
-        inner.size = {-32, -24};
+        inner.anchor_max = {1, 0};
+        inner.pivot = {0.5f, 0};
+        inner.position = {0, 12};
+        inner.size = {-32, 196};
         const Entity body = s.create("Scoreboard Text", board);
         s.world().add<gameui::UiRectComponent>(body, inner);
         auto& bt = ui_text(s, body, "", 22, false);
@@ -1421,8 +1426,10 @@ return Cam
 
 constexpr const char* kNetHud = R"lua(-- Session status (role, connection, round trip) and the scoreboard, refreshed a few times
 -- per second from net.stats(), net.clients() and each player's "score" network variable.
+-- The scoreboard is a UiScroll view: the text grows with the rows and scrolls past the board.
 local Board = {}
 Board.interval = 0.25
+Board.line_height = 28 -- canvas units per row at the board's 22 px font
 
 function Board:start()
     self.status = scene.find("Net Status")
@@ -1464,7 +1471,10 @@ function Board:update(dt)
             table.insert(rows, string.format("%s   %d%s", c.name, score, me))
         end
     end
-    if self.text then self.text:set_text("Scores\n" .. table.concat(rows, "\n")) end
+    if self.text then
+        self.text:set_text("Scores\n" .. table.concat(rows, "\n"))
+        self.text:set("UiRect", { size = { -32, (#rows + 1) * self.line_height + 12 } })
+    end
 end
 
 return Board

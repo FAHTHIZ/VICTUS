@@ -26,7 +26,7 @@ Evidence for every item is in [STATUS.md](STATUS.md); platform coverage is in [P
 | Navigation (Recast/Detour) | Usable | Auto navmesh from colliders and terrain, agents with avoidance | Single tile, so very large levels need coarser voxels; rebuilds are whole-mesh; no authored off-mesh links |
 | Gameplay AI | Usable | Behaviour trees, blackboard, perception, Luau tasks, debugger | No visual tree editor; no environment queries |
 | Audio (miniaudio) | Usable | Buses, 3D spatialization, streaming, script API | No effects (reverb, filters), no audio profiling; never listened to on Android |
-| In-game UI | Usable | Canvases, anchors, text, images, buttons, layout, navigation | No UI editor canvas, rich text or scroll views |
+| In-game UI | Usable | Canvases, anchors, text, images, buttons, layout, navigation, scroll views | No UI editor canvas, rich text, sliders or text input |
 | Scripting (Luau) | Usable | Sandboxed VM, budgets, hot reload, broad engine API | API is not versioned |
 | Visual scripting | Experimental | Graph model, compiler to Luau, editor, trace debugger | No breakpoints/watches; no user functions or comments |
 | Particles / VFX | Experimental | Deterministic CPU emitters, soft HDR billboards | CPU only; no GPU particles, ribbons, mesh particles or collision |

@@ -107,6 +107,19 @@ struct UiLayoutComponent {
     LayoutAlign align{LayoutAlign::Stretch}; // cross-axis placement
 };
 
+// Scroll view: the element's children are laid out in a content area that moves inside the
+// element's rect, which always clips them. The content extent is the bounding box of the visible
+// descendants (plus UiLayout padding), so the scroll range follows the content. The mouse wheel
+// over the view, a drag that starts on it (touch or mouse) and keyboard focus moving to a button
+// inside it scroll it; a drag past a few pixels cancels the button press it started on.
+struct UiScrollComponent {
+    bool vertical{true};
+    bool horizontal{false};
+    math::Vec2 offset{0, 0};   // canvas units scrolled from the top-left; layout clamps it to the range
+    float wheel_step{60};      // canvas units per wheel notch
+    bool drag_to_scroll{true};
+};
+
 struct Rect {
     float x{0}, y{0}, w{0}, h{0};
     [[nodiscard]] bool contains(math::Vec2 p) const noexcept { return p.x >= x && p.y >= y && p.x < x + w && p.y < y + h; }
@@ -126,6 +139,7 @@ struct UiStateComponent {
     std::uint32_t order{0}; // draw order (higher on top)
     scene::Entity canvas;   // owning canvas
     std::uint64_t clicks{0};
+    math::Vec2 scroll_max{0, 0}; // scroll views: largest offset per axis (canvas units)
 };
 
 struct ClickEvent {
@@ -195,5 +209,9 @@ bool click(scene::Scene& scene, scene::Entity button);
 
 // Draw items for every visible element in draw order (requires a current layout()).
 void build_draw_list(scene::Scene& scene, std::vector<DrawItem>& out);
+
+// Sets a scroll view's offset (canvas units, clamped at the next layout) and lays out again.
+// False when `view` has no UiScroll.
+bool scroll_to(scene::Scene& scene, scene::Entity view, math::Vec2 offset);
 
 } // namespace victus::gameui

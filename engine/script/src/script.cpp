@@ -49,6 +49,8 @@ void open_victus_libs(lua_State* L) {
                                 {"audio_playing", entity_audio_playing},
                                 {"set_text", entity_set_text},
                                 {"set_text_key", entity_set_text_key},
+                                {"scroll_to", entity_scroll_to},
+                                {"scroll", entity_scroll},
                                 {"text", entity_text},
                                 {"set_visible", entity_set_visible},
                                 {"visible", entity_visible},

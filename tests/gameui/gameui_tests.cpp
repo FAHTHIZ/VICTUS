@@ -314,7 +314,7 @@ TEST_CASE("ui: keyboard navigation cycles focus and activates buttons") {
 
 TEST_CASE("ui: components serialize through their schemas and draw items carry styles") {
     register_components();
-    for (const char* name : {"UiCanvas", "UiRect", "UiPanel", "UiImage", "UiText", "UiButton", "UiLayout"}) {
+    for (const char* name : {"UiCanvas", "UiRect", "UiPanel", "UiImage", "UiText", "UiButton", "UiLayout", "UiScroll"}) {
         CAPTURE(name);
         const auto* schema = scene::find_schema(name);
         REQUIRE(schema);
@@ -468,4 +468,98 @@ TEST_CASE("localization: placeholders, locale fallback and keyed UI text") {
     CHECK(has_key);
     bind_localization(s, nullptr);
     CHECK_FALSE(localization_of(s));
+}
+
+TEST_CASE("ui: scroll views clamp to their content and scroll by wheel, drag, focus and API") {
+    register_components();
+    Scene s;
+    set_screen_size(s, {1280, 720});
+    const Entity c = canvas(s);
+    s.world().get<UiCanvasComponent>(c)->keyboard_navigation = true;
+    // 300 x 200 view at (100, 100) with a vertical list of ten 50-high buttons (8 spacing, 12 padding).
+    const Entity view = element(s, c, "List", corner({0, 0}, {0, 0}, {100, 100}, {300, 200}));
+    s.world().add<UiScrollComponent>(view);
+    s.world().add<UiLayoutComponent>(view);
+    std::vector<Entity> items;
+    for (int i = 0; i < 10; ++i) {
+        const std::string name = "Item " + std::to_string(i);
+        items.push_back(button(s, view, name.c_str(), corner({0, 0}, {0, 0}, {0, 0}, {100, 50}), "pick"));
+    }
+    layout(s);
+    // Content: 12 + 10*50 + 9*8 + 12 = 596; range 596 - 200 = 396.
+    const auto* vs = s.world().get<UiStateComponent>(view);
+    CHECK(vs->scroll_max.x == doctest::Approx(0));
+    CHECK(vs->scroll_max.y == doctest::Approx(396));
+    check_rect(rect(s, items[0]), 112, 112, 276, 50);
+    // Children are clipped to the view even without clip_children.
+    check_rect(s.world().get<UiStateComponent>(items[9])->clip, 100, 100, 300, 200);
+    // Overshooting offsets clamp in the same layout.
+    s.world().get<UiScrollComponent>(view)->offset = {50, 10000};
+    layout(s);
+    CHECK(s.world().get<UiScrollComponent>(view)->offset.y == doctest::Approx(396));
+    CHECK(s.world().get<UiScrollComponent>(view)->offset.x == doctest::Approx(50)); // horizontal off: kept, unused
+    CHECK(rect(s, items[9]).y + rect(s, items[9]).h == doctest::Approx(300 - 12));    // last item at the bottom
+    REQUIRE(scroll_to(s, view, {0, 0}));
+    check_rect(rect(s, items[0]), 112, 112, 276, 50);
+    CHECK_FALSE(scroll_to(s, c, {0, 10}));
+
+    // Wheel: one notch down scrolls by wheel_step (60) when the pointer is over the view.
+    gameplay::ManualInput in;
+    in.set_mouse_position({200, 150});
+    in.add_mouse_wheel(-1);
+    update(s, &in);
+    CHECK(s.world().get<UiScrollComponent>(view)->offset.y == doctest::Approx(60));
+    CHECK(rect(s, items[0]).y == doctest::Approx(52)); // moved in the same update
+    in.end_frame();
+    in.set_mouse_position({600, 150}); // outside: no scroll
+    in.add_mouse_wheel(-1);
+    update(s, &in);
+    CHECK(s.world().get<UiScrollComponent>(view)->offset.y == doctest::Approx(60));
+
+    // Drag: press on a button, move 100 px up: scrolls by 100 and does not click.
+    in.end_frame();
+    in.set_mouse_position({200, 250});
+    in.set_mouse(0, true);
+    update(s, &in);
+    in.end_frame();
+    in.set_mouse_position({200, 150});
+    update(s, &in);
+    CHECK(s.world().get<UiScrollComponent>(view)->offset.y == doctest::Approx(160));
+    in.end_frame();
+    in.set_mouse(0, false);
+    update(s, &in);
+    CHECK(events(s).empty());
+    // A press without movement still clicks.
+    in.end_frame();
+    in.set_mouse(0, true);
+    update(s, &in);
+    in.end_frame();
+    in.set_mouse(0, false);
+    update(s, &in);
+    REQUIRE(events(s).size() == 1);
+
+    // Keyboard focus scrolls the focused button into view.
+    REQUIRE(scroll_to(s, view, {0, 0}));
+    in.end_frame();
+    in.set_mouse_position({900, 600}); // away from the list so hover does not move focus
+    focus(s, items[0]);
+    for (int i = 0; i < 9; ++i) {
+        in.end_frame();
+        in.set_key("Down", true);
+        update(s, &in);
+        in.end_frame();
+        in.set_key("Down", false);
+        update(s, &in);
+    }
+    CHECK(focused(s) == items[9]);
+    const Rect last = rect(s, items[9]);
+    CHECK(last.y >= 100 - 0.01f);
+    CHECK(last.y + last.h <= 300 + 0.01f);
+    CHECK(s.world().get<UiScrollComponent>(view)->offset.y > 300);
+    // Content that shrinks clamps the offset back on the next layout.
+    for (int i = 3; i < 10; ++i) s.world().get<UiRectComponent>(items[static_cast<std::size_t>(i)])->visible = false;
+    layout(s);
+    CHECK(s.world().get<UiStateComponent>(view)->scroll_max.y == doctest::Approx(0));
+    CHECK(s.world().get<UiScrollComponent>(view)->offset.y == doctest::Approx(0));
+    check_rect(rect(s, items[0]), 112, 112, 276, 50);
 }

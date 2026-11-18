@@ -29,6 +29,10 @@ struct UiFrame {
     std::size_t delivered{0};  // events handed to scripts since the last update
     std::vector<Entity> order; // visible elements (and canvases) in draw order
     Entity focus, capture, hovered;
+    // Drag-to-scroll in progress: the view, where the pointer went down and the offset then.
+    Entity drag_view;
+    math::Vec2 drag_start, drag_offset;
+    bool dragging{false};
     bool pointer_over{false};
     std::uint32_t modal_order{0}; // elements at or below this order ignore the pointer
     UiStats stats;
@@ -126,8 +130,57 @@ struct Walker {
             } else {
                 st.order = 0;
             }
+            if (auto* sc = w.get<UiScrollComponent>(c)) {
+                scroll_view(c, *sc, st, rect, clip);
+                return;
+            }
             const Rect child_clip = r->clip_children ? clip.intersect(rect) : clip;
             children(c, rect, child_clip, st.visible, st.opacity);
+        });
+    }
+
+    void scroll_view(Entity view, UiScrollComponent& sc, UiStateComponent& st, const Rect& rect, const Rect& clip) {
+        ecs::World& w = scene.world();
+        const Rect child_clip = clip.intersect(rect);
+        const math::Vec2 used{sc.horizontal ? std::max(0.0f, sc.offset.x) : 0.0f, sc.vertical ? std::max(0.0f, sc.offset.y) : 0.0f};
+        const Rect content{rect.x - used.x * scale, rect.y - used.y * scale, rect.w, rect.h};
+        const std::size_t first = frame.order.size();
+        children(view, content, child_clip, st.visible, st.opacity);
+        // Content extent: the visible descendants' bounding box from the content origin.
+        float extent_r = content.x, extent_b = content.y;
+        for (std::size_t i = first; i < frame.order.size(); ++i) {
+            const auto* ds = w.get<UiStateComponent>(frame.order[i]);
+            extent_r = std::max(extent_r, ds->rect.x + ds->rect.w);
+            extent_b = std::max(extent_b, ds->rect.y + ds->rect.h);
+        }
+        if (const auto* lay = w.get<UiLayoutComponent>(view)) {
+            extent_r += lay->padding * scale;
+            extent_b += lay->padding * scale;
+        }
+        const float s = std::max(scale, 1e-6f);
+        st.scroll_max = {sc.horizontal ? std::max(0.0f, (extent_r - content.x) - rect.w) / s : 0.0f,
+                         sc.vertical ? std::max(0.0f, (extent_b - content.y) - rect.h) / s : 0.0f};
+        const math::Vec2 clamped{std::clamp(used.x, 0.0f, st.scroll_max.x), std::clamp(used.y, 0.0f, st.scroll_max.y)};
+        if (sc.horizontal) sc.offset.x = clamped.x;
+        if (sc.vertical) sc.offset.y = clamped.y;
+        if (clamped.x != used.x || clamped.y != used.y) // content shrank or offset overshot: move it back now
+            shift(view, (used.x - clamped.x) * scale, (used.y - clamped.y) * scale, child_clip);
+    }
+
+    // Moves the laid-out descendants of `e` by (dx, dy) pixels; clips inside them follow.
+    void shift(Entity e, float dx, float dy, const Rect& view_clip) {
+        for_children(e, [&](Entity c) {
+            if (scene.world().has<UiCanvasComponent>(c)) return;
+            if (auto* ds = scene.world().get<UiStateComponent>(c)) {
+                ds->rect.x += dx;
+                ds->rect.y += dy;
+                if (ds->clip.x != view_clip.x || ds->clip.y != view_clip.y || ds->clip.w != view_clip.w || ds->clip.h != view_clip.h) {
+                    ds->clip.x += dx;
+                    ds->clip.y += dy;
+                    ds->clip = ds->clip.intersect(view_clip);
+                }
+            }
+            shift(c, dx, dy, view_clip);
         });
     }
 };
@@ -152,6 +205,93 @@ Entity pick_where(Scene& scene, const UiFrame& f, math::Vec2 p, Pred&& pred) {
 bool blocks_pointer(Scene& scene, Entity e) {
     const ecs::World& w = scene.world();
     return w.has<UiPanelComponent>(e) || w.has<UiImageComponent>(e) || w.has<UiButtonComponent>(e);
+}
+
+bool scrollable(Scene& scene, Entity e) {
+    const auto* sc = scene.world().get<UiScrollComponent>(e);
+    const auto* st = scene.world().get<UiStateComponent>(e);
+    return sc && st && (st->scroll_max.x > 0 || st->scroll_max.y > 0);
+}
+
+bool set_offset(Scene& scene, Entity view, math::Vec2 offset) {
+    auto* sc = scene.world().get<UiScrollComponent>(view);
+    const auto* st = scene.world().get<UiStateComponent>(view);
+    if (!sc || !st) return false;
+    const math::Vec2 o{sc->horizontal ? std::clamp(offset.x, 0.0f, st->scroll_max.x) : sc->offset.x,
+                       sc->vertical ? std::clamp(offset.y, 0.0f, st->scroll_max.y) : sc->offset.y};
+    if (o.x == sc->offset.x && o.y == sc->offset.y) return false;
+    sc->offset = o;
+    return true;
+}
+
+// Mouse wheel over a scroll view and drag-to-scroll. Returns true when an offset changed.
+bool scroll_input(Scene& scene, UiFrame& f, const gameplay::InputSource& in, math::Vec2 p) {
+    ecs::World& w = scene.world();
+    bool changed = false;
+    if (const float wheel = in.mouse_wheel(); wheel != 0) {
+        const Entity v = pick_where(scene, f, p, [&](Entity e) { return scrollable(scene, e); });
+        if (const auto* sc = v.is_null() ? nullptr : w.get<UiScrollComponent>(v)) {
+            const math::Vec2 o = sc->offset;
+            const bool vertical = sc->vertical && w.get<UiStateComponent>(v)->scroll_max.y > 0;
+            changed = set_offset(scene, v, vertical ? math::Vec2{o.x, o.y - wheel * sc->wheel_step}
+                                                    : math::Vec2{o.x - wheel * sc->wheel_step, o.y});
+        }
+    }
+    if (in.mouse_pressed(0)) {
+        f.drag_view = pick_where(scene, f, p, [&](Entity e) {
+            const auto* sc = w.get<UiScrollComponent>(e);
+            return sc && sc->drag_to_scroll && scrollable(scene, e);
+        });
+        f.dragging = false;
+        f.drag_start = p;
+        if (const auto* sc = f.drag_view.is_null() ? nullptr : w.get<UiScrollComponent>(f.drag_view)) f.drag_offset = sc->offset;
+    }
+    if (!f.drag_view.is_null()) {
+        const auto* st = w.get<UiStateComponent>(f.drag_view);
+        if (!in.mouse_down(0) || !st || !w.has<UiScrollComponent>(f.drag_view)) {
+            f.drag_view = {};
+            f.dragging = false;
+        } else {
+            const math::Vec2 d{p.x - f.drag_start.x, p.y - f.drag_start.y};
+            constexpr float kDragThreshold = 8.0f; // pixels before a press becomes a drag
+            if (!f.dragging && d.x * d.x + d.y * d.y > kDragThreshold * kDragThreshold) {
+                f.dragging = true;
+                f.capture = {}; // the press started a drag, not a click
+            }
+            if (f.dragging) {
+                const float s = std::max(st->scale, 1e-6f);
+                changed = set_offset(scene, f.drag_view, {f.drag_offset.x - d.x / s, f.drag_offset.y - d.y / s}) || changed;
+            }
+        }
+    }
+    return changed;
+}
+
+// Scrolls the innermost scroll view around `e` so `e` is fully visible (when it fits).
+bool scroll_into_view(Scene& scene, Entity e) {
+    ecs::World& w = scene.world();
+    const auto* target = w.get<UiStateComponent>(e);
+    if (!target) return false;
+    for (Entity a = scene.parent(e); !a.is_null(); a = scene.parent(a)) {
+        if (w.has<UiCanvasComponent>(a)) return false;
+        const auto* sc = w.get<UiScrollComponent>(a);
+        const auto* st = w.get<UiStateComponent>(a);
+        if (!sc || !st) continue;
+        const float s = std::max(st->scale, 1e-6f);
+        math::Vec2 o = sc->offset;
+        const Rect& v = st->rect;
+        const Rect& t = target->rect;
+        if (sc->vertical) {
+            if (t.y < v.y) o.y -= (v.y - t.y) / s;
+            else if (t.y + t.h > v.y + v.h) o.y += std::min(t.y + t.h - (v.y + v.h), t.y - v.y) / s;
+        }
+        if (sc->horizontal) {
+            if (t.x < v.x) o.x -= (v.x - t.x) / s;
+            else if (t.x + t.w > v.x + v.w) o.x += std::min(t.x + t.w - (v.x + v.w), t.x - v.x) / s;
+        }
+        return set_offset(scene, a, o);
+    }
+    return false;
 }
 
 math::Color with_opacity(math::Color c, float opacity) {
@@ -215,6 +355,13 @@ void register_components() {
             .field(&UiButtonComponent::hovered, "hovered")
             .field(&UiButtonComponent::pressed, "pressed")
             .field(&UiButtonComponent::disabled, "disabled")
+            .commit();
+        scene::Schema<UiScrollComponent>("UiScroll", "UI")
+            .field(&UiScrollComponent::vertical, "vertical")
+            .field(&UiScrollComponent::horizontal, "horizontal")
+            .field(&UiScrollComponent::offset, "offset", {.min = 0, .speed = 1, .tooltip = "Canvas units scrolled; clamped to the content"})
+            .field(&UiScrollComponent::wheel_step, "wheel_step", {.min = 0, .max = 10000, .speed = 1, .tooltip = "Canvas units per wheel notch"})
+            .field(&UiScrollComponent::drag_to_scroll, "drag_to_scroll", {.tooltip = "Dragging the content (touch or mouse) scrolls it"})
             .commit();
         scene::Schema<UiLayoutComponent>("UiLayout", "UI")
             .enumeration(&UiLayoutComponent::direction, "direction", {"vertical", "horizontal"})
@@ -308,6 +455,8 @@ void update(Scene& scene, const gameplay::InputSource* input) {
     if (!f.capture.is_null() && !is_interactable(scene, f.capture)) f.capture = {};
 
     Entity hovered;
+    const Entity focus_before = f.focus;
+    bool scrolled = false;
     f.pointer_over = f.modal_order > 0;
     if (input) {
         const math::Vec2 p = input->mouse_position();
@@ -319,6 +468,7 @@ void update(Scene& scene, const gameplay::InputSource* input) {
             if (c && c->keyboard_navigation) f.focus = hovered;
         }
         if (input->mouse_pressed(0) && !hovered.is_null()) f.capture = hovered;
+        scrolled = scroll_input(scene, f, *input, p);
         if (!f.capture.is_null()) {
             if (!input->mouse_down(0)) {
                 if (f.capture == hovered) (void)click(scene, f.capture);
@@ -360,6 +510,11 @@ void update(Scene& scene, const gameplay::InputSource* input) {
             }
         }
     }
+    if (f.focus != focus_before && !f.focus.is_null()) scrolled = scroll_into_view(scene, f.focus) || scrolled;
+    if (scrolled) {
+        layout(scene); // draw this frame's positions; hover follows the moved content next update
+        if (!hovered.is_null() && !is_interactable(scene, hovered)) hovered = {};
+    }
     f.hovered = hovered;
     if (!hovered.is_null()) w.get<UiStateComponent>(hovered)->hovered = true;
     if (!f.focus.is_null()) w.get<UiStateComponent>(f.focus)->focused = true;
@@ -379,6 +534,14 @@ void mark_events_delivered(Scene& scene) {
 }
 const UiStats& stats(Scene& scene) { return frame_of(scene).stats; }
 bool pointer_over_ui(Scene& scene) { return frame_of(scene).pointer_over; }
+
+bool scroll_to(Scene& scene, Entity view, math::Vec2 offset) {
+    auto* sc = scene.world().get<UiScrollComponent>(view);
+    if (!sc) return false;
+    sc->offset = {std::max(0.0f, offset.x), std::max(0.0f, offset.y)};
+    layout(scene); // clamps to the range and moves the content
+    return true;
+}
 
 Entity pick(Scene& scene, math::Vec2 point, bool buttons_only) {
     const UiFrame& f = frame_of(scene);
