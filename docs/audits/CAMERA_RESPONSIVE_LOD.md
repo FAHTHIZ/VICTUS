@@ -20,7 +20,10 @@ geometric error, projected to render pixels, stays within `RenderSettings::lod_e
   error and keeps finer levels.
 - \(d\) is the distance from the eye to the nearest point of the draw's world bounds, and \(s\) the
   largest axis scale of the model matrix.
-- The rule is stateless: no hysteresis and no cross-fade. The same camera always gives the same level.
+- Draws without a motion id are stateless: the same camera always gives the same level. Draws with
+  one get one-sided hysteresis (ADR-0077, `lod_hysteresis` 0.25): last frame's level is kept while
+  it is between the stateless pick and the pick for a 25% tighter budget, so the budget always
+  holds. There is no cross-fade.
 
 ## Verified behaviour (tests/render/gpu_lod_tests.cpp)
 
@@ -54,9 +57,11 @@ GPU timing.
 2. **Reflection probe captures already select per view.** Each capture face renders through the same
    `SceneRenderer::render` with its own 90-degree camera and face resolution, so its level follows that
    view.
-3. **No transition smoothing.** Levels switch instantly when the projected error crosses the budget.
-   There is no hysteresis band, dithered cross-fade or geomorph. Popping is bounded by the pixel budget
-   (1 px by default) but not hidden. Follow-up together with A.E.G.I.S. (6e).
+3. **Transition smoothing: hysteresis, no cross-fade.** ADR-0077 adds a one-sided hysteresis band
+   for tracked draws: an object breathing 1% around a threshold switches at most once instead of
+   every frame (`gpu lods: hysteresis ...`), and the drawn level is never coarser than the
+   stateless pick. Pops when a level does change are bounded by the pixel budget but not hidden;
+   dithered cross-fade or geomorphing remains open (6e).
 4. **No per-view budget.** `lod_error_pixels` is global to the renderer settings. A secondary view such
    as a minimap or split screen cannot ask for a looser budget than the main view except through a
    separate `SceneRenderer` or settings change.

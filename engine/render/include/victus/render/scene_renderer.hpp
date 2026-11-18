@@ -283,6 +283,13 @@ struct RenderSettings {
     bool lods{true};
     float lod_error_pixels{1.0f};
     int force_lod{-1};                    // debugging: >= 0 draws that level (clamped per mesh)
+    // LOD hysteresis (ADR-0077): a draw submitted with a motion id keeps last frame's level while
+    // that level is between the stateless pick for `lod_error_pixels` and the pick for
+    // `lod_error_pixels * (1 - lod_hysteresis)`, so an object resting on a threshold does not
+    // switch every frame. Never coarser than the stateless pick: the pixel budget always holds.
+    // History is per renderer and per output size; reset_history() and a different output size
+    // (another view) fall back to the stateless rule. 0 disables (0..0.9).
+    float lod_hysteresis{0.25f};
     // Shadow casters (directional cascades and local shadow tiles) draw this many levels coarser
     // than the level picked for the main camera (0..3, clamped per mesh). Selection stays
     // main-camera based, as in Godot and Unreal, so shadows and the lit surface keep the same
@@ -367,6 +374,7 @@ struct SceneStats {
     std::uint32_t particle_batches{0}; // visible particle batches (one draw each)
     std::uint32_t particles{0};        // particles drawn
     std::uint32_t lod_draws{0};        // visible draws using a coarser level than LOD 0
+    std::uint32_t lod_held{0};         // draws kept finer than the stateless pick by lod_hysteresis
     std::uint64_t triangles{0};        // triangles in the main and transparent passes (all instances)
     std::uint64_t shadow_triangles{0}; // triangles drawn into directional cascades and local shadow tiles
     // GPU occlusion culling this frame: instances tested on the GPU / main batches drawn
@@ -410,7 +418,11 @@ public:
     void reset_adaptation() noexcept { adaptation_valid_ = false; }
     // Discards the TAA history (camera cuts, teleports, scene loads) so the next frame does not
     // blend with unrelated content.
-    void reset_history() noexcept { history_valid_ = false; }
+    // Also discards the LOD hysteresis history.
+    void reset_history() noexcept {
+        history_valid_ = false;
+        lod_history_valid_ = false;
+    }
 
     void begin(const Camera3D& camera, const DirectionalLight& sun, const Environment& env);
     void add_point_light(const PointLight& light);
@@ -571,6 +583,10 @@ private:
     rhi::BufferHandle motion_buffer_;
     std::uint32_t motion_capacity_{0}; // in instances
     std::unordered_map<std::uint64_t, MotionState> motion_prev_, motion_next_;
+    // LOD hysteresis: level drawn last frame per (motion id, mesh), for the output size below.
+    std::unordered_map<std::uint64_t, std::uint8_t> lod_prev_, lod_next_;
+    std::uint32_t lod_history_w_{0}, lod_history_h_{0};
+    bool lod_history_valid_{false};
     std::vector<math::Mat4> motion_joints_, motion_joints_next_;
     rhi::Format depth_format_{rhi::Format::D32_FLOAT};
     rhi::Format hdr_format_{rhi::Format::RGBA16_FLOAT};
