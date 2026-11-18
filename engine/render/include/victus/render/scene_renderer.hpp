@@ -237,6 +237,7 @@ struct Environment {
 // Scalability tiers. Low targets entry-level phones, Medium mid-range phones/tablets, High
 // desktops/consoles/flagship phones, Ultra high-end desktops.
 enum class QualityTier : std::uint8_t { Low, Medium, High, Ultra };
+enum class DebugView : std::uint8_t { None, Overdraw };
 [[nodiscard]] std::string_view quality_tier_name(QualityTier t) noexcept;
 [[nodiscard]] std::optional<QualityTier> parse_quality_tier(std::string_view name) noexcept;
 
@@ -305,10 +306,28 @@ struct RenderSettings {
     std::uint32_t local_shadow_atlas{2048}; // 256..8192
     std::uint32_t local_shadow_tile{512};   // 64..atlas
     std::uint32_t max_point_lights{512};  // local (point + spot) lights per frame, <= SceneRenderer::kMaxLights
+    // Debug views replace the final image. Overdraw: every visible opaque, alpha-tested and blended
+    // draw is rasterised again without depth testing and counted per pixel, shown as a heat ramp
+    // (black 0, blue 1, green 2, yellow 3, orange 4, red 5-7, white 8+); read_overdraw() returns the
+    // counts. Depth complexity, not shaded fragments: the depth pre-pass and early-z reject many of
+    // these layers in the normal image.
+    DebugView debug_view{DebugView::None};
 
     [[nodiscard]] static RenderSettings preset(QualityTier tier) noexcept;
     // Clamps every field into its supported range.
     [[nodiscard]] RenderSettings sanitized() const noexcept;
+};
+
+// Per-pixel layer counts of the last frame rendered with DebugView::Overdraw (render resolution).
+struct OverdrawStats {
+    std::uint32_t width{0}, height{0};
+    std::uint32_t covered_pixels{0}; // pixels with at least one layer
+    std::uint64_t layers{0};         // rasterised fragments over all pixels (saturates at 255 per pixel)
+    std::uint32_t max_layers{0};
+    // Mean layers per covered pixel (1.0 = no overdraw); 0 when nothing was drawn.
+    [[nodiscard]] double average() const noexcept {
+        return covered_pixels ? static_cast<double>(layers) / static_cast<double>(covered_pixels) : 0.0;
+    }
 };
 
 struct SceneStats {
@@ -429,6 +448,9 @@ public:
     // Debug/test readback (waits for the GPU): instances that passed the last frame's occlusion
     // test, summed over its culled batches. 0 when the last frame did not cull.
     [[nodiscard]] Result<std::uint32_t> read_occlusion_survivors();
+    // Debug/test readback (waits for the GPU) of the last DebugView::Overdraw frame; zeros when no
+    // frame used it.
+    [[nodiscard]] Result<OverdrawStats> read_overdraw();
     [[nodiscard]] const CompiledGraphInfo& graph_info() const noexcept { return graph_info_; }
     // Cascade 0 matrix (identity when shadows are off).
     [[nodiscard]] const math::Mat4& light_view_projection() const noexcept { return cascade_vp_[0]; }
@@ -495,6 +517,11 @@ private:
     rhi::PipelineHandle particle_alpha_, particle_additive_;
     std::array<rhi::PipelineHandle, 3> decal_pipelines_{}; // by DecalBlend
     rhi::PipelineHandle skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_;
+    // DebugView::Overdraw: [skinned][double_sided] counters and the persistent RGBA8 count target.
+    rhi::PipelineHandle overdraw_[2][2]{};
+    rhi::TextureHandle overdraw_tex_{};
+    std::uint32_t overdraw_w_{0}, overdraw_h_{0};
+    bool overdraw_valid_{false};
     std::unordered_map<std::string, rhi::PipelineHandle> post_; // "<shader>/<format>/<blend>"
     // Built-in PBR pipeline descriptions, reused for surface shader variants.
     rhi::PipelineDesc opaque_desc_, skinned_desc_;

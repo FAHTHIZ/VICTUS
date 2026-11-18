@@ -87,8 +87,15 @@ tests/perf/budgets.json) and the editor viewport overlay:
 | Shading and transparency | `alpha_tested_draws`, `surface_shader_draws`, `transparent_draws`, `transparent_triangles` |
 | Texture memory | `gpu.texture_bytes`, `gpu.live_textures` |
 
-These are submission counts, not measured fill. Measured per-pixel overdraw (an overdraw debug
-view) is the next H2 item; anisotropic filtering has no setting yet.
+These are submission counts, not measured fill. Measured per-pixel overdraw comes from the
+overdraw debug view (ADR-0071): `RenderSettings::debug_view = DebugView::Overdraw` redraws the
+visible opaque, alpha-tested and blended batches without depth testing into a per-pixel counter,
+shows it as a heat ramp (editor: View > Overdraw View) and `SceneRenderer::read_overdraw()` returns
+covered pixels, total layers, maximum and mean. Evidence (`gpu_overdraw_tests.cpp`, 128x96): three
+stacked 4 m planes seen from 8-10 m give a maximum of 3, 1764 covered pixels and a mean of 2.39
+layers; back faces count only on double-sided materials. It is depth complexity, not shaded
+fragments (the pre-pass rejects most hidden opaque layers), and particles and decals are not
+counted. Anisotropic filtering has no setting yet.
 
 ## Not covered yet
 

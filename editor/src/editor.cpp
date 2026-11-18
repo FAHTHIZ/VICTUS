@@ -1383,9 +1383,18 @@ void Editor::draw_overlays_2d(render::SpriteBatch& b) {
 void Editor::apply_quality() {
     render::RenderSettings settings = render::RenderSettings::preset(quality_);
     if (project_ && project_->settings().render_scale > 0.0f) settings.render_scale = project_->settings().render_scale;
+    settings.debug_view = debug_view_;
     view_->renderer().set_settings(settings);
     view_->renderer().reset_adaptation();
 }
+
+void Editor::set_debug_view(render::DebugView view) {
+    if (debug_view_ == view) return;
+    debug_view_ = view;
+    apply_quality();
+}
+
+Result<render::OverdrawStats> Editor::read_overdraw() { return view_->renderer().read_overdraw(); }
 
 Status Editor::set_quality(render::QualityTier tier) {
     quality_ = tier;

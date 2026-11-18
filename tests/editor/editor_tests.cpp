@@ -415,6 +415,29 @@ TEST_CASE("editor: rendering quality selector applies, persists and reopens") {
     CHECK(h.ed->render_stats().shadow_cascades == 1);
 }
 
+TEST_CASE("editor: overdraw view toggles the viewport debug view without touching the project") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Overdraw", "Overdraw", "3d").ok());
+    CHECK(h.ed->debug_view() == render::DebugView::None);
+    h.ed->set_debug_view(render::DebugView::Overdraw);
+    h.frames(2);
+    auto st = h.ed->read_overdraw();
+    REQUIRE(st.ok());
+    CHECK(st->covered_pixels > 0); // the 3D template's ground and cube
+    CHECK(st->max_layers >= 1);
+    // Switching quality keeps the debug view; it is never written to the project.
+    REQUIRE(h.ed->set_quality(render::QualityTier::Low).ok());
+    CHECK(h.ed->debug_view() == render::DebugView::Overdraw);
+    h.ed->set_debug_view(render::DebugView::None);
+    h.frames(2);
+    st = h.ed->read_overdraw();
+    REQUIRE(st.ok());
+    CHECK(st->covered_pixels == 0);
+    CHECK(h.ed->render_stats().main_batches > 0);
+}
+
 TEST_CASE("editor: input actions panel edits, captures bindings and saves the project") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Harness h;

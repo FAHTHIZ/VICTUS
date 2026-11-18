@@ -168,6 +168,10 @@ std::vector<EditorCommand> Editor::commands() {
             if (auto st = set_quality(tier); !st.ok()) notify("could not save quality: " + st.error().message, true);
         });
 
+    add("View: Toggle Overdraw View", {}, true, [this] {
+        set_debug_view(debug_view_ == render::DebugView::Overdraw ? render::DebugView::None : render::DebugView::Overdraw);
+    });
+
     // Play
     add("Play: Play", "Ctrl+P", project_.has_value() && play_state_ != PlayState::Playing, [this] { play(); });
     add("Play: Pause", {}, play_state_ == PlayState::Playing, [this] { pause(); });
