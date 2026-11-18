@@ -105,7 +105,13 @@ magnified near rows are unchanged.
 
 ## Not covered yet
 
-- H3 item 8: thin opaque geometry (railings modelled as meshes) below one pixel wide; mesh LOD keeps
-  them up to the 1 px budget, but no sub-pixel coverage test exists. Item 10 (physical Android
-  devices) is hardware-blocked.
+- H3 item 8, thin opaque geometry: measured, not solved. `gpu_thin_geometry_tests.cpp` draws a 2 cm
+  pole tilted 8 degrees at distances where it is 2, 0.5 and 0.25 px wide (160x120). The LOD picked
+  for the distance keeps the LOD 0 coverage exactly (2.41/0.67/0.34 px per row). At 2 px every row
+  is covered with or without TAA. Below a pixel the pole breaks into dashes without TAA (52% and
+  27% of rows); TAA fills more rows (73% and 48%) but its neighbourhood clamp removes part of the
+  energy (0.36 and 0.14 px per row against 0.5 and 0.25 expected). The standard fix for wires,
+  railings and antennas is Persson's phone-wire AA (clamp the radius to one pixel and fade alpha by
+  the reduction), which needs a wire mesh format and a blended or dithered material; open. Item 10
+  (physical Android devices) is hardware-blocked.
 - Terrain chunk LODs (ADR-0063) go through the same `select_lod` rule as other meshes, so the FOV, viewport and render-scale checks apply to them as well.
