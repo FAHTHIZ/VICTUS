@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 
 using namespace victus;
@@ -53,10 +54,12 @@ int main(int argc, char** argv) {
         .option("width", "window width", "1600")
         .option("height", "window height", "900")
         .option("data-dir", "override the user data directory")
+        .option("page", "launcher page to show when no project opens: new, recent, samples, learn")
         .option("select", "select the entity with this name after opening")
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
         .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
-        .option("show", "open a window after opening: input-actions, network, profiler, command-palette, animation, animation-preview (selected entity), material-editor (selected entity's material)")
+        .option("show", "open a window after opening: input-actions, network, profiler, command-palette, animation, "
+                        "animation-preview (selected entity), material-editor (selected entity's material)")
         .option("graph", "open this visual script (path relative to assets/) in the Graph Editor")
         .option("port", "UDP port for --host", "27960")
         .flag("host", "enter play mode as a listen server after opening")
@@ -92,19 +95,37 @@ int main(int argc, char** argv) {
 
     ui::UiOptions uo;
     uo.ini_path = (data_dir / "editor_layout.ini").string();
-    auto ui = ui::UiContext::create(*gpu.value(), rhi::Format::RGBA8_UNORM, plat.value().get(), window.value().get(), uo);
+    auto ui =
+        ui::UiContext::create(*gpu.value(), rhi::Format::RGBA8_UNORM, plat.value().get(), window.value().get(), uo);
     if (!ui) return fail("ui", ui.error());
 
     editor::EditorOptions eo;
     eo.recent_file = data_dir / "recent_projects.json";
+    if (const char* env = std::getenv("VICTUS_SAMPLES_DIR"); env && *env) eo.samples_dir = env;
+#ifdef VICTUS_SOURCE_SAMPLES_DIR
+    else if (std::error_code samples_ec; std::filesystem::is_directory(VICTUS_SOURCE_SAMPLES_DIR, samples_ec))
+        eo.samples_dir = VICTUS_SOURCE_SAMPLES_DIR;
+#endif
     auto ed_r = editor::Editor::create(*gpu.value(), *ui.value(), plat.value().get(), window.value().get(), eo);
     if (!ed_r) return fail("editor", ed_r.error());
     auto& ed = *ed_r.value();
+    if (args.has("page")) {
+        const std::string page = args.get("page");
+        if (page == "new")
+            ed.set_launcher_page(editor::LauncherPage::New);
+        else if (page == "recent")
+            ed.set_launcher_page(editor::LauncherPage::Recent);
+        else if (page == "samples")
+            ed.set_launcher_page(editor::LauncherPage::Samples);
+        else if (page == "learn")
+            ed.set_launcher_page(editor::LauncherPage::Learn);
+    }
 
     if (args.has("new")) {
         const fs::Path dir = args.get("new");
         const std::string name = args.has("name") ? args.get("name") : dir.filename().string();
-        if (auto st = ed.create_project(dir, name, args.get("template")); !st.ok()) return fail("create project", st.error());
+        if (auto st = ed.create_project(dir, name, args.get("template")); !st.ok())
+            return fail("create project", st.error());
     } else if (const std::string p = args.get("project"); !p.empty()) {
         if (auto st = ed.open_project(p); !st.ok()) return fail("open project", st.error());
     }
@@ -119,38 +140,52 @@ int main(int argc, char** argv) {
             g.space = editor::gizmo::Space::Local;
             tool.resize(tool.size() - 6);
         }
-        if (tool == "move") g.mode = editor::gizmo::Mode::Translate;
-        else if (tool == "rotate") g.mode = editor::gizmo::Mode::Rotate;
-        else if (tool == "scale") g.mode = editor::gizmo::Mode::Scale;
-        else std::fprintf(stderr, "victus_editor: unknown tool '%s' (move, rotate, scale)\n", tool.c_str());
+        if (tool == "move")
+            g.mode = editor::gizmo::Mode::Translate;
+        else if (tool == "rotate")
+            g.mode = editor::gizmo::Mode::Rotate;
+        else if (tool == "scale")
+            g.mode = editor::gizmo::Mode::Scale;
+        else
+            std::fprintf(stderr, "victus_editor: unknown tool '%s' (move, rotate, scale)\n", tool.c_str());
     }
-    if (const double tile = args.get_number("asset-grid", 0); tile > 0) ed.set_asset_view(true, static_cast<float>(tile));
+    if (const double tile = args.get_number("asset-grid", 0); tile > 0)
+        ed.set_asset_view(true, static_cast<float>(tile));
     if (args.has("show")) {
-        if (args.get("show") == "input-actions") ed.set_show_input_actions(true);
-        else if (args.get("show") == "network") ed.set_show_network(true);
-        else if (args.get("show") == "profiler") ed.set_show_profiler(true);
-        else if (args.get("show") == "animation") ed.set_show_animation(true);
+        if (args.get("show") == "input-actions")
+            ed.set_show_input_actions(true);
+        else if (args.get("show") == "network")
+            ed.set_show_network(true);
+        else if (args.get("show") == "profiler")
+            ed.set_show_profiler(true);
+        else if (args.get("show") == "animation")
+            ed.set_show_animation(true);
         else if (args.get("show") == "animation-preview") {
             // The Animation window previewing the selected entity's controller in the edit scene.
             ed.set_show_animation(true);
             const auto e = ed.selection().empty() ? scene::kNullEntity : ed.edit_scene().find(ed.selection().back());
             if (!ed.begin_animation_preview(e))
-                std::fprintf(stderr, "victus_editor: --show animation-preview needs --select <entity with an Animator>\n");
-        }
-        else if (args.get("show") == "command-palette") ed.open_command_palette();
+                std::fprintf(stderr,
+                             "victus_editor: --show animation-preview needs --select <entity with an Animator>\n");
+        } else if (args.get("show") == "command-palette")
+            ed.open_command_palette();
         else if (args.get("show") == "material-editor") {
             const auto* mr = ed.selection().empty() ? nullptr
                                                     : ed.edit_scene().world().get<scene::MeshRendererComponent>(
                                                           ed.edit_scene().find(ed.selection().back()));
-            if (mr && !mr->material_asset.is_nil()) ed.open_material_editor(mr->material_asset);
-            else std::fprintf(stderr, "victus_editor: --show material-editor needs --select <entity with a material>\n");
-        }
-        else std::fprintf(stderr, "victus_editor: unknown window '%s' for --show\n", args.get("show").c_str());
+            if (mr && !mr->material_asset.is_nil())
+                ed.open_material_editor(mr->material_asset);
+            else
+                std::fprintf(stderr, "victus_editor: --show material-editor needs --select <entity with a material>\n");
+        } else
+            std::fprintf(stderr, "victus_editor: unknown window '%s' for --show\n", args.get("show").c_str());
     }
     if (args.has("graph") && ed.has_project()) {
         const auto* rec = ed.assets() ? ed.assets()->find_path(args.get("graph")) : nullptr;
-        if (!rec) std::fprintf(stderr, "victus_editor: no asset '%s' for --graph\n", args.get("graph").c_str());
-        else if (auto st = ed.open_graph_editor(rec->uuid); !st.ok()) return fail("graph", st.error());
+        if (!rec)
+            std::fprintf(stderr, "victus_editor: no asset '%s' for --graph\n", args.get("graph").c_str());
+        else if (auto st = ed.open_graph_editor(rec->uuid); !st.ok())
+            return fail("graph", st.error());
     }
     if (args.has("host") && ed.has_project()) {
         editor::NetPlaySettings ns = ed.net_settings();
@@ -211,8 +246,10 @@ int main(int argc, char** argv) {
             VICTUS_LOG_ERROR("editor", "ui: {}", st.error().message);
         cmd.blit(frame, swap);
         const bool last_frame = max_frames && n + 1 >= max_frames;
-        if (last_frame) cmd.submit_and_wait();
-        else cmd.submit();
+        if (last_frame)
+            cmd.submit_and_wait();
+        else
+            cmd.submit();
         if (dev.lost()) {
             exit_code = device_lost(ed, dev);
             break;
@@ -224,9 +261,12 @@ int main(int argc, char** argv) {
                     exit_code = fail("screenshot", px.error());
                 } else {
                     render::Image img{fw, fh, std::move(px).value()};
-                    for (std::size_t i = 3; i < img.pixels.size(); i += 4) img.pixels[i] = 255;
-                    if (auto st = render::save_png(path, img); !st) exit_code = fail("screenshot", st.error());
-                    else VICTUS_LOG_INFO("editor", "wrote {}", path);
+                    for (std::size_t i = 3; i < img.pixels.size(); i += 4)
+                        img.pixels[i] = 255;
+                    if (auto st = render::save_png(path, img); !st)
+                        exit_code = fail("screenshot", st.error());
+                    else
+                        VICTUS_LOG_INFO("editor", "wrote {}", path);
                 }
             }
             break;

@@ -4,6 +4,7 @@
 #include "../render/gpu_fixture.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/editor.hpp"
+#include "victus/project/project.hpp"
 #include "victus/ui/style.hpp"
 #include "victus/ui/ui.hpp"
 
@@ -11,6 +12,7 @@
 #include <imgui_internal.h>
 
 #include <cstring>
+#include <fstream>
 #include <filesystem>
 
 using namespace victus;
@@ -26,7 +28,7 @@ struct Studio {
     sfs::path dir;
     static constexpr std::uint32_t W = 1280, H = 720;
 
-    bool init() {
+    bool init(const sfs::path& samples_dir = {}) {
         auto& ctx = *gpu().ctx;
         dir = sfs::temp_directory_path() / ("victus_ux_" + Uuid::generate().to_string().substr(0, 8));
         sfs::create_directories(dir);
@@ -36,6 +38,7 @@ struct Studio {
         editor::EditorOptions o;
         o.recent_file = dir / "recent.json";
         o.default_project_dir = dir;
+        o.samples_dir = samples_dir;
         auto e = editor::Editor::create(ctx, *ui, nullptr, nullptr, o);
         if (!e) return false;
         ed = std::move(e).value();
@@ -127,4 +130,95 @@ TEST_CASE("studio: Inter typography, toolbar and status bar, console counts") {
     ImGuiContext& g = *ImGui::GetCurrentContext();
     REQUIRE(g.NavWindow != nullptr);
     CHECK(std::strcmp(g.NavWindow->Name, "Console") == 0);
+}
+
+TEST_CASE("studio launcher: new-project validation explains every problem in plain words") {
+    const sfs::path root = sfs::temp_directory_path() / ("victus_np_" + Uuid::generate().to_string().substr(0, 8));
+    sfs::create_directories(root / "Busy");
+    { std::ofstream(root / "Busy" / "notes.txt") << "x"; }
+    sfs::create_directories(root / "Empty");
+    { std::ofstream(root / "Taken.txt") << "x"; }
+    using editor::Editor;
+    CHECK(Editor::new_project_problem(root, "").find("name") != std::string::npos);
+    CHECK(Editor::new_project_problem(root, "   ").find("name") != std::string::npos);
+    CHECK(Editor::new_project_problem(root, " Lead").find("space") != std::string::npos);
+    CHECK(Editor::new_project_problem(root, "Dot.").find("dot") != std::string::npos);
+    CHECK(Editor::new_project_problem(root, "a/b").find("'/'") != std::string::npos);
+    CHECK(Editor::new_project_problem(root, "What?").find("'?'") != std::string::npos);
+    CHECK(Editor::new_project_problem(root, "CON").find("reserved") != std::string::npos);
+    CHECK(Editor::new_project_problem(root, "lpt1").find("reserved") != std::string::npos);
+    CHECK(Editor::new_project_problem(root, std::string(101, 'a')).find("long") != std::string::npos);
+    CHECK(Editor::new_project_problem({}, "Game").find("where") != std::string::npos);
+    CHECK(Editor::new_project_problem(root / "Taken.txt", "Game").find("file") != std::string::npos);
+    CHECK(Editor::new_project_problem(root, "Busy").find("not empty") != std::string::npos);
+    CHECK(Editor::new_project_problem(root, "Taken.txt").find("file") != std::string::npos);
+    CHECK(Editor::new_project_problem(root, "Empty").empty());
+    CHECK(Editor::new_project_problem(root, "My Game").empty());
+    CHECK(Editor::new_project_problem(root / "not-yet-created", "My Game").empty());
+    REQUIRE(project::Project::create(root / "Existing", "Existing", "2d").ok());
+    CHECK(Editor::new_project_problem(root, "Existing").find("already exists") != std::string::npos);
+    std::error_code ec;
+    sfs::remove_all(root, ec);
+}
+
+TEST_CASE("studio launcher: pages, samples list and opening a sample copy") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    const sfs::path samples =
+        sfs::temp_directory_path() / ("victus_samples_" + Uuid::generate().to_string().substr(0, 8));
+    REQUIRE(project::Project::create(samples / "zeta_demo", "Zeta Demo", "2d").ok());
+    REQUIRE(project::Project::create(samples / "alpha_demo", "Alpha Demo", "2d").ok());
+    {
+        std::ofstream(samples / "alpha_demo" / "README.md")
+            << "# Alpha Demo\n\nA tiny test sample.\nIt has two lines.\n\n## Controls\nNone.\n";
+    }
+    sfs::create_directories(samples / "not_a_project");
+    sfs::create_directories(samples / "alpha_demo" / ".victus" / "cache");
+    { std::ofstream(samples / "alpha_demo" / ".victus" / "cache" / "stale.bin") << "x"; }
+
+    Studio s;
+    REQUIRE(s.init(samples));
+    // No recent projects yet: the launcher starts on New Project.
+    CHECK(s.ed->launcher_page() == editor::LauncherPage::New);
+    const auto& list = s.ed->samples();
+    REQUIRE(list.size() == 2); // the plain folder is skipped
+    CHECK(list[0].name == "Alpha Demo");
+    CHECK(list[1].name == "Zeta Demo");
+    CHECK(list[0].summary == "A tiny test sample. It has two lines.");
+
+    for (const auto page : {editor::LauncherPage::New, editor::LauncherPage::Recent, editor::LauncherPage::Samples,
+                            editor::LauncherPage::Learn}) {
+        s.ed->set_launcher_page(page);
+        CHECK(s.ed->launcher_page() == page);
+        s.frames(2);
+        CHECK_FALSE(s.ed->has_project());
+    }
+
+    const sfs::path projects = s.dir / "Projects";
+    REQUIRE(s.ed->open_sample_copy(list[0].dir, projects).ok());
+    REQUIRE(s.ed->has_project());
+    CHECK(s.ed->project()->root().string() == (projects / "alpha_demo").string());
+    CHECK(sfs::exists(projects / "alpha_demo" / "README.md"));
+    CHECK_FALSE(sfs::exists(projects / "alpha_demo" / ".victus" / "cache" / "stale.bin")); // caches are not copied
+    s.frames(2);
+    s.ed->close_project();
+    // A second copy never overwrites the first one.
+    REQUIRE(s.ed->open_sample_copy(list[0].dir, projects).ok());
+    CHECK(s.ed->project()->root().string() == (projects / "alpha_demo 2").string());
+    s.ed->close_project();
+    CHECK_FALSE(s.ed->open_sample_copy(samples / "not_a_project", projects).ok());
+    // The original sample is untouched.
+    CHECK(project::Project::is_project_dir(samples / "alpha_demo"));
+    CHECK(sfs::exists(samples / "alpha_demo" / ".victus" / "cache" / "stale.bin"));
+
+    // With recent projects the launcher opens on Recent (unless a page was picked).
+    editor::EditorOptions o;
+    o.recent_file = s.dir / "recent.json";
+    o.default_project_dir = s.dir;
+    auto e2 = editor::Editor::create(*gpu().ctx, *s.ui, nullptr, nullptr, o);
+    REQUIRE(e2);
+    CHECK(e2.value()->launcher_page() == editor::LauncherPage::Recent);
+    CHECK(e2.value()->samples().empty()); // no samples folder configured
+    e2.value().reset();
+    std::error_code ec;
+    sfs::remove_all(samples, ec);
 }
