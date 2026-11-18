@@ -98,6 +98,81 @@ Create a dated comparison against current stable releases of Godot, Unity and Un
 
 For each row classify VICTUS as **verified competitive**, **competitive in a narrow area**, **behind**, **not yet implemented**, or **unknown/unmeasured**. Cite sources, versions and dates. Do not use a single synthetic score to hide weaknesses. Identify the 3–5 highest-impact gaps and update roadmap ordering based on evidence.
 
+## Workstream G — whole-engine capability and subsystem robustness audit
+
+This workstream applies the same engineering standard to **every major VICTUS system**, not only character animation, the editor or whichever feature is currently visible. The goal is a coherent engine whose systems are dependable together under real game workloads, across supported hardware and failure conditions.
+
+### G1. Audit before adding more systems
+
+Create `docs/audits/ENGINE_CAPABILITY_AND_ROBUSTNESS_AUDIT.md` from the actual current `main` source, tests, CI configuration, sample projects and documentation. Do not infer implementation from a roadmap checkbox, panel name, public API declaration or demo.
+
+For every subsystem:
+- Identify the real implementation files, public interfaces, owners/dependencies, runtime consumers, editor surfaces, sample-project usage and existing tests.
+- Trace at least one complete creator-to-runtime workflow, including import/configuration, authoring, execution, debugging, save/reload and export where relevant.
+- Classify every capability **implemented / partial / experimental / missing / blocked / needs validation**. Separate code existence from usable authoring, integration, platform validation and production maturity.
+- Record concrete limitations, failure modes, duplicate/overlapping implementations, architectural coupling, undocumented contracts and workarounds.
+- Link each finding to source paths, tests, reproducible steps and the relevant status/limitation entry. Never claim a whole subsystem has been audited unless its implementation and consumers have actually been traced.
+- Rank findings by developer impact, severity, frequency, dependency leverage, performance cost and evidence confidence. Do not turn every conceivable feature into a priority.
+
+### G2. Required subsystem coverage
+
+The audit must explicitly cover all of the following, including systems that appear mature:
+
+1. **Core runtime and architecture:** frame lifecycle, fixed/variable timestep boundaries, ECS queries and structural changes, job scheduling, thread safety, synchronization, memory ownership/allocation, handles and resource lifetime, module boundaries, shutdown/restart and failure propagation.
+2. **Platform layer and RHI:** window/input/audio lifecycle, graphics backend contracts, GPU resource lifetime, swapchain recreation, device-loss detection/recovery strategy, shader compilation/cache, render graph correctness, validation layers, backend fallbacks and platform-specific behaviour.
+3. **Rendering and visual quality:** 2D and 3D pipelines, materials/shaders, lighting/shadows, GI/reflections, transparency, post-processing, temporal stability, particles integration, LOD/occlusion/instancing, texture formats/streaming, resolution scaling, quality tiers, bandwidth and memory pressure on tile-based/mobile GPUs.
+4. **Physics and character simulation:** Jolt and Box2D parity where appropriate, collision filtering/layers, continuous collision detection, queries, constraints/joints, character controllers, fixed-step stability, sleeping, scale extremes, tunnelling, contact events, determinism limits and performance under dense scenes.
+5. **Animation and physical character behaviour:** import/skeleton correctness, controller/state-machine authoring, blend spaces, events, root motion, retargeting, IK, additive layers, morph targets, procedural animation, animation/physics blending and debugging. Explicitly research a VICTUS-owned **physics-driven character animation** path: passive ragdolls, active ragdolls, joint motors, balance/posture control, impact response, bracing, recovery/get-up behaviour, environmental interaction and transitions between authored animation and physical simulation. Treat NaturalMotion Euphoria as a reference for capability and integration lessons, not code to copy or a promise of equivalence. Evaluate licensing and open alternatives before adopting dependencies.
+6. **Gameplay AI and navigation:** behaviour-tree runtime and authoring/debugging, perception, pathfinding, steering, crowd avoidance, dynamic obstacles, navigation rebuilds, agent scale, deterministic/replay implications and graceful failure when paths become invalid.
+7. **Audio:** device lifecycle, mixing and buses, spatialisation, attenuation, doppler, occlusion/obstruction, effects/reverb, streaming, voice limits, latency, mobile resource use, authoring and audible validation on physical devices.
+8. **In-game UI and input:** layout/anchors/scaling, resolution and aspect-ratio changes, focus/navigation, controller and touch flows, text shaping, accessibility, localization/RTL, animation, data binding, UI performance and visual authoring.
+9. **Assets and content pipeline:** import validation, stable IDs, metadata, dependency graphs, reimport safety, hot reload, cooking/cache invalidation, compression/variants, streaming, missing-reference recovery, large-file handling, cancellation and corrupted-input behaviour.
+10. **Scenes, prefabs, persistence and capture:** serialization/version migrations, references and overrides, transactional save, crash recovery, checkpoints/save games, deterministic capture coverage, compatibility and recovery from partial/corrupt data.
+11. **Scripting and visual scripting:** Luau API coverage and consistency, lifetime safety, error isolation, sandbox/permissions, hot reload, garbage-collection pressure, execution budgets, debugging, graph validation/compiler diagnostics and API compatibility.
+12. **Networking and multiplayer:** authority boundaries, authentication/encryption, validation of untrusted packets, replication cost, prediction/interpolation, bandwidth/latency/loss/jitter, reconnects, session lifecycle, server scale, abuse resistance, soak tests and real-network validation beyond loopback.
+13. **2D, terrain, particles, sequencer and world systems:** each must be evaluated as a complete authoring/runtime workflow, not merely a renderer or runtime data structure. Include collision, culling, batching, streaming, memory, editing, undo, large scenes and platform fallbacks.
+14. **Editor and developer tools:** project creation, scene/asset authoring, undo/redo, autosave/recovery, diagnostics, debugging, profiling, test workflows, build/export, accessibility, discoverability, keyboard operation, responsiveness and external beginner usability.
+15. **Build, packaging and distribution:** clean-checkout reproducibility, dependency/licence notices, platform-specific packaging, signing, installers, patch/update strategy, content validation, release automation and rollback.
+16. **Security, extensibility and ecosystem:** third-party dependency risk, untrusted project/assets/scripts, plugin API/versioning, extension lifecycle, mod sandbox and permissions, supply-chain controls, crash reports and privacy-preserving diagnostics.
+17. **Documentation, samples and supportability:** API reference, tutorials, migration guides, known limitations, error messages, sample completeness, docs-to-code consistency and whether a new developer can diagnose common failures without maintainer help.
+
+### G3. A common robustness contract for every subsystem
+
+For each subsystem, define and verify the relevant parts of this contract. Do not force irrelevant requirements onto a system; document why an item does not apply.
+
+- **Correctness:** explicit invariants, edge cases, invalid-state handling and compatibility rules.
+- **Lifecycle:** initialization, repeated use, cancellation, hot reload, suspend/resume, shutdown and recovery.
+- **Failure behaviour:** actionable errors, no silent corruption, safe fallback or clearly bounded failure, and recoverability where technically possible.
+- **Integration:** at least one real consumer in a sample/game/editor workflow; verify boundaries with adjacent systems.
+- **Performance and scale:** representative workloads, profiling, memory/CPU/GPU budgets, stress tests and measured low-end fallback paths. Establish baselines before setting numeric targets.
+- **Concurrency:** thread ownership, race/deadlock review, stress/sanitizer coverage and deterministic hand-off where relevant.
+- **Security and data safety:** validate untrusted inputs, enforce trust boundaries, avoid unsafe deserialization and protect project/user data.
+- **Platform behaviour:** explicit support matrix, platform-specific tests and physical-device evidence where required. A successful compile is not a runtime validation.
+- **Diagnostics:** useful logs, actionable error context, counters/traces and a reproducible way to investigate failures.
+- **Tests:** unit tests for invariants; integration tests across boundaries; end-to-end workflow tests; regression tests for fixed defects; fuzz/property/mutation tests for parsers and untrusted inputs; soak/stress tests for long-running systems; performance tests where relevant.
+- **Creator experience:** discoverable authoring and configuration, validation before runtime, clear feedback, undo/recovery for destructive edits and documentation for ordinary workflows.
+- **Documentation:** supported/unsupported behaviour, limits, examples, version/compatibility notes and tested commands must match the code.
+
+### G4. Evidence and completion gates
+
+Maintain a subsystem matrix in the audit with columns for capability, implementation, authoring, integration, tests, performance evidence, platform evidence, known limits, severity, owner/next slice and acceptance criteria.
+
+A subsystem must not be labelled **robust** merely because it compiles or has unit tests. Its completion gate is:
+1. The implementation and all relevant consumers have been inspected.
+2. Its public contract and failure modes are documented.
+3. A representative workflow works end-to-end in a real sample or game.
+4. Relevant unit, integration, regression and stress/fuzz tests pass.
+5. Performance and memory are measured against representative workloads; budgets are based on evidence.
+6. Supported platform claims match actual test evidence.
+7. Diagnostics and recovery/fallback behaviour are verified.
+8. Documentation and editor workflows are usable by someone other than the subsystem author.
+9. The diff contains no duplicate replacement system, dead scaffolding or disconnected UI.
+10. Status and roadmap entries link to the commit, test commands/results and remaining limitations.
+
+Use a dependency-ordered sequence of small vertical slices. Fix correctness and architectural foundations before adding advanced parity features. Keep the engine usable between slices. If hardware or an external service is unavailable, mark only the affected validation blocked and continue independent work.
+
+**Do not interpret this audit as an instruction to implement every advanced feature immediately.** First establish what VICTUS already does, what real projects need, what is missing, and what can be delivered reliably. The objective is depth, integration and dependable behaviour—not an ever-growing checklist or superficial feature count.
+
 ## Definition of success
 
 VICTUS is materially more mature when:
