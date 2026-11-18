@@ -138,9 +138,12 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         replay_capture = std::move(*c);
     }
     gameplay::Capture recording;
-    if (!o.record.empty()) recording.seed = Random(static_cast<std::uint64_t>(platform::Platform::seconds() * 1e9)).next_u64() | 1;
+    if (!o.record.empty())
+        recording.seed = o.random_seed ? o.random_seed : Random(static_cast<std::uint64_t>(platform::Platform::seconds() * 1e9)).next_u64() | 1;
     script::HostOptions so;
-    so.random_seed = replay_capture ? replay_capture->seed : recording.seed;
+    if (replay_capture) so.random_seed = replay_capture->seed;
+    else if (!o.record.empty()) so.random_seed = recording.seed;
+    else so.random_seed = o.random_seed ? o.random_seed : (o.max_frames ? kFixedRunSeed : 0);
     so.assets_root = (*db)->assets_dir();
     so.watch_files = o.hot_reload && !packaged;
     so.input_map = proj->settings().input;
@@ -318,6 +321,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     Status result;
     LifecycleGate lifecycle;
     std::optional<profiler::FrameProfiler> frame_profiler;
+    // Last rendered frame, for the deterministic counters in the --profile report.
+    runtime::SceneViewStats last_view;
+    std::uint64_t last_view_draws = 0;
+    std::uint32_t last_view_passes = 0;
     if (!o.profile.empty() || !o.trace.empty()) {
         frame_profiler.emplace(600);
         if (!o.trace.empty()) frame_profiler->record(600);
@@ -414,11 +421,18 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             frame = *t;
         }
         VICTUS_PROFILE_SCOPE("frame.render");
-        if (auto st = (*view)->render(cmd, scene, cache, frame, fw, fh); !st) {
-            result = std::move(st).error();
+        const std::uint64_t draws_before = dev.stats().draw_calls;
+        auto rendered = (*view)->render(cmd, scene, cache, frame, fw, fh);
+        if (!rendered) {
+            result = std::move(rendered).error();
             cmd.submit();
             break;
         }
+        last_view = *rendered;
+        last_view_draws = dev.stats().draw_calls - draws_before;
+        last_view_passes = rendered->mode == runtime::ViewMode::ThreeD
+                               ? static_cast<std::uint32_t>((*view)->renderer().graph_info().executed_passes.size())
+                               : 0;
         cmd.blit(frame, swap);
         ++report.frames;
         const bool last_frame = o.max_frames && report.frames >= o.max_frames;
@@ -467,6 +481,20 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         c.emplace_back("gpu.live_buffers", static_cast<double>(ds.live_buffers));
         if (ds.frames_submitted > 0)
             c.emplace_back("gpu.draw_calls_per_frame", static_cast<double>(ds.draw_calls) / static_cast<double>(ds.frames_submitted));
+        // Deterministic counters of the last frame (same scene, frame count and size give the
+        // same values on every machine); tests/perf/budgets.json gates them.
+        const auto& ss = last_view.scene;
+        c.emplace_back("frame.draw_calls", static_cast<double>(last_view_draws));
+        c.emplace_back("frame.render_passes", static_cast<double>(last_view_passes));
+        c.emplace_back("frame.triangles", static_cast<double>(ss.triangles));
+        c.emplace_back("frame.visible", static_cast<double>(ss.visible));
+        c.emplace_back("frame.main_batches", static_cast<double>(ss.main_batches));
+        c.emplace_back("frame.shadow_batches", static_cast<double>(ss.shadow_batches + ss.local_shadow_draws));
+        c.emplace_back("frame.transparent_draws", static_cast<double>(ss.transparent_draws));
+        c.emplace_back("frame.sprites", static_cast<double>(last_view.sprites));
+        c.emplace_back("frame.ui_items", static_cast<double>(last_view.ui.items));
+        c.emplace_back("scene.entities", static_cast<double>(scene.size()));
+        c.emplace_back("sim.systems", static_cast<double>(sim.systems().size()));
         if (memory::allocation_tracking_enabled()) {
             const auto ms = memory::allocation_stats();
             c.emplace_back("cpu.live_bytes", static_cast<double>(ms.live_bytes));

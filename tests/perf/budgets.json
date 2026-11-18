@@ -1,0 +1,145 @@
+{
+  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe. See docs/PERFORMANCE_STRATEGY.md.",
+  "settings": {
+    "frames": 120,
+    "width": 640,
+    "height": 360,
+    "quality": "medium"
+  },
+  "cases": {
+    "template-3d": {
+      "kind": "template",
+      "source": "3d",
+      "frame_p95_ms_max": 400,
+      "counters": {
+        "frame.draw_calls": [26, 59],
+        "frame.render_passes": [0, 15],
+        "frame.triangles": [323, 711],
+        "frame.visible": [9, 21],
+        "frame.main_batches": [6, 15],
+        "frame.shadow_batches": [0, 41],
+        "frame.transparent_draws": [0, 2],
+        "frame.sprites": [0, 2],
+        "frame.ui_items": [0, 6],
+        "scene.entities": [30, 68],
+        "gpu.texture_bytes": [0, 29147154],
+        "gpu.buffer_bytes": [0, 370903],
+        "gpu.live_textures": [0, 20],
+        "gpu.live_buffers": [0, 24],
+        "sim.systems": [11, 24]
+      }
+    },
+    "template-2d": {
+      "kind": "template",
+      "source": "2d",
+      "frame_p95_ms_max": 100,
+      "counters": {
+        "frame.draw_calls": [1, 5],
+        "frame.render_passes": [0, 2],
+        "frame.triangles": [0, 2],
+        "frame.visible": [0, 2],
+        "frame.main_batches": [0, 2],
+        "frame.shadow_batches": [0, 2],
+        "frame.transparent_draws": [0, 2],
+        "frame.sprites": [17, 38],
+        "frame.ui_items": [0, 8],
+        "scene.entities": [14, 31],
+        "gpu.texture_bytes": [0, 1326389],
+        "gpu.buffer_bytes": [0, 225281],
+        "gpu.live_textures": [0, 11],
+        "gpu.live_buffers": [0, 6],
+        "sim.systems": [11, 24]
+      }
+    },
+    "template-simulation": {
+      "kind": "template",
+      "source": "simulation",
+      "frame_p95_ms_max": 350,
+      "counters": {
+        "frame.draw_calls": [49, 108],
+        "frame.render_passes": [0, 13],
+        "frame.triangles": [3457, 7606],
+        "frame.visible": [288, 635],
+        "frame.main_batches": [42, 94],
+        "frame.shadow_batches": [0, 5],
+        "frame.transparent_draws": [0, 2],
+        "frame.sprites": [0, 2],
+        "frame.ui_items": [0, 2],
+        "scene.entities": [290, 638],
+        "gpu.texture_bytes": [0, 24221033],
+        "gpu.buffer_bytes": [0, 296147],
+        "gpu.live_textures": [0, 17],
+        "gpu.live_buffers": [0, 11],
+        "sim.systems": [11, 24]
+      }
+    },
+    "template-multiplayer": {
+      "kind": "template",
+      "source": "multiplayer",
+      "frame_p95_ms_max": 350,
+      "counters": {
+        "frame.draw_calls": [33, 73],
+        "frame.render_passes": [0, 14],
+        "frame.triangles": [355, 782],
+        "frame.visible": [8, 19],
+        "frame.main_batches": [3, 8],
+        "frame.shadow_batches": [0, 58],
+        "frame.transparent_draws": [0, 2],
+        "frame.sprites": [0, 2],
+        "frame.ui_items": [0, 9],
+        "scene.entities": [24, 53],
+        "gpu.texture_bytes": [0, 29123125],
+        "gpu.buffer_bytes": [0, 397602],
+        "gpu.live_textures": [0, 19],
+        "gpu.live_buffers": [0, 22],
+        "sim.systems": [11, 24]
+      }
+    },
+    "sample-arena": {
+      "kind": "sample",
+      "source": "samples/arena",
+      "scene": "scenes/autoplay.vscene",
+      "frame_p95_ms_max": 400,
+      "counters": {
+        "frame.draw_calls": [26, 58],
+        "frame.render_passes": [0, 14],
+        "frame.triangles": [419, 922],
+        "frame.visible": [10, 22],
+        "frame.main_batches": [5, 12],
+        "frame.shadow_batches": [0, 48],
+        "frame.transparent_draws": [0, 2],
+        "frame.sprites": [0, 2],
+        "frame.ui_items": [0, 8],
+        "scene.entities": [44, 97],
+        "gpu.texture_bytes": [0, 29147154],
+        "gpu.buffer_bytes": [0, 406965],
+        "gpu.live_textures": [0, 20],
+        "gpu.live_buffers": [0, 22],
+        "sim.systems": [11, 24]
+      }
+    },
+    "sample-dungeon_crawler": {
+      "kind": "sample",
+      "source": "samples/dungeon_crawler",
+      "scene": "scenes/autoplay.vscene",
+      "frame_p95_ms_max": 100,
+      "counters": {
+        "frame.draw_calls": [1, 4],
+        "frame.render_passes": [0, 2],
+        "frame.triangles": [0, 2],
+        "frame.visible": [0, 2],
+        "frame.main_batches": [0, 2],
+        "frame.shadow_batches": [0, 2],
+        "frame.transparent_draws": [0, 2],
+        "frame.sprites": [176, 388],
+        "frame.ui_items": [0, 5],
+        "scene.entities": [8, 19],
+        "gpu.texture_bytes": [0, 1357928],
+        "gpu.buffer_bytes": [0, 225281],
+        "gpu.live_textures": [0, 11],
+        "gpu.live_buffers": [0, 6],
+        "sim.systems": [11, 24]
+      }
+    }
+  }
+}

@@ -30,3 +30,20 @@ Measure server tick budget, entity count, replication bandwidth, serialization c
 
 ## Benchmark quality
 Use stable workloads, warm/cold cache cases, repeated runs and machine-readable results. Never compare unequal scenes, quality settings, drivers or thermal conditions. Keep raw data and commands so another developer can reproduce every published claim.
+
+## Performance budgets (CI gate)
+
+`victus_perf_budgets` (CTest labels `perf;gpu`, script `tests/perf/perf_budgets.cmake`, budgets `tests/perf/budgets.json`) runs every template (3d, 2d, simulation, multiplayer) and the arena and dungeon_crawler samples (`scenes/autoplay.vscene`) with `victus run --frames 120 --width 640 --height 360 --quality medium --no-hot-reload --profile`. It checks the last frame's counters from the `--profile` JSON against `[min, max]` ranges and fails on any regression:
+
+| Counter | Meaning |
+|---|---|
+| `frame.draw_calls`, `frame.render_passes` | GPU draws and executed render-graph passes in the last frame |
+| `frame.triangles`, `frame.visible` | submitted triangles; meshes that passed culling |
+| `frame.main_batches`, `frame.shadow_batches`, `frame.transparent_draws` | instanced batches per pass |
+| `frame.sprites`, `frame.ui_items` | 2D sprites and UI quads |
+| `scene.entities`, `sim.systems` | live entities; registered simulation systems |
+| `gpu.texture_bytes`, `gpu.buffer_bytes`, `gpu.live_textures`, `gpu.live_buffers` | GPU memory held by the renderer |
+
+Fixed-frame runs use a fixed script seed (`kFixedRunSeed`, overridable with `--seed`), so these counters are identical from run to run on one machine; `victus_cli_determinism` guards that. Maxima are the measured value + 10 % (at least +2); minima are half the measured value for counters that prove the frame drew something. `frame_p95_ms_max` is a coarse ceiling (about 5x the Debug lavapipe time) that only catches catastrophic slowdowns, because CI runners are shared and timing cannot be gated tightly.
+
+The gate runs only where a GPU is required (`VICTUS_REQUIRE_GPU=1`, i.e. the Linux CI lanes on Mesa lavapipe) and reports skipped elsewhere. To update budgets after an intended change, run `ctest --preset dev -R perf_budgets`, read `build/dev/test_output/perf_budgets/measured.json` and edit `budgets.json` in the same commit, explaining why. Frame-time budgets per real device class are not established yet.
