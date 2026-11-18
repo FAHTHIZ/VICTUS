@@ -217,7 +217,17 @@ TEST_CASE("terrain: TerrainSystem builds chunks, rebuilds only dirty ones and ke
     shared->touch(5, 5, 5, 5);
     system.update(scene);
     CHECK(system.stats().chunk_rebuilds == 17);
-    CHECK(system.stats().collision_rebuilds == 2);
+    // The collider is updated in place: only the touched chunk's samples, as a dirty rectangle.
+    CHECK(system.stats().collision_rebuilds == 1);
+    CHECK(system.stats().collision_updates == 1);
+    shape = scene.world().get<physics::StaticHeightfieldComponent>(t);
+    REQUIRE(shape);
+    CHECK(shape->height_revision == 1);
+    CHECK(shape->dirty.x0 == 0);
+    CHECK(shape->dirty.x1 == 32); // chunk 0 spans samples 0..32
+    CHECK(shape->dirty.z1 == 32);
+    CHECK((*shape->heights)[shared->index(5, 5)] == doctest::Approx(20.0f));
+    CHECK(shape->height_range.y == doctest::Approx(20.0f));
 
     // Changing the size rebuilds everything; disabling collision drops the collider.
     scene.world().get<TerrainComponent>(t)->size = {64, 20, 64};
@@ -283,6 +293,38 @@ TEST_CASE("terrain: height queries, raycasts and resting bodies follow the trans
     auto hit2 = w->raycast({12, 50, -3}, {0, -1, 0}, 100, physics::kAllLayers, box);
     REQUIRE(hit2);
     CHECK(hit2->point.y == doctest::Approx(*ground + 5.0f).epsilon(0.02));
+
+    // Editing the heightfield updates the existing collider in place (no rebuild): a raised
+    // patch under (12, -3) (local (2, 2) = sample (66, 66)) is what rays and bodies now meet.
+    const auto builds = w->stats().heightfield_builds;
+    CHECK(builds == 1);
+    for (std::uint32_t z = 63; z <= 69; ++z)
+        for (std::uint32_t x = 63; x <= 69; ++x) shared->heights[shared->index(x, z)] = 0.9f;
+    shared->touch(63, 63, 69, 69);
+    const float raised = 3.0f + 0.9f * 20.0f; // terrain at y = 3, 0.9 of 20 m
+    const Entity crate = scene.create("Crate"); // dropped onto the patch after the edit
+    scene.world().get<Transform>(crate)->position = {12, raised + 3.0f, -3};
+    scene.world().add<physics::RigidBodyComponent>(crate);
+    scene.world().add<physics::ColliderComponent>(crate).size = {1, 1, 1};
+    for (int i = 0; i < 120; ++i) sim.tick(scene, 1.0f / 60);
+    CHECK(w->stats().heightfield_builds == builds);
+    CHECK(w->stats().heightfield_updates == 1);
+    CHECK(system.stats().collision_rebuilds == 1);
+    CHECK(system.stats().collision_updates == 1);
+    CHECK(scene.world().get<physics::StaticHeightfieldComponent>(t)->dirty.empty()); // consumed
+    auto hit3 = w->raycast({12, 50, -3}, {0, -1, 0}, 100, physics::kAllLayers, crate);
+    REQUIRE(hit3);
+    CHECK(hit3->point.y == doctest::Approx(raised).epsilon(0.01));
+    const float box_y = scene.world().get<Transform>(crate)->position.y;
+    MESSAGE("crate y on the raised patch " << box_y << ", surface " << raised);
+    CHECK(box_y > raised - 0.1f);
+    CHECK(box_y < raised + 1.5f);
+    // Away from the edit the old surface is unchanged.
+    auto far = w->raycast({60, 50, 40}, {0, -1, 0}, 100, physics::kAllLayers, box);
+    REQUIRE(far);
+    const auto far_local = local_height(*shared, comp.size, 50, 45);
+    REQUIRE(far_local);
+    CHECK(far->point.y == doctest::Approx(*far_local + 3.0f).epsilon(0.02));
 }
 
 TEST_CASE("terrain: brushes raise, lower, smooth, flatten and paint inside their radius") {

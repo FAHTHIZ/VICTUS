@@ -30,7 +30,7 @@ Evidence for every item is in [STATUS.md](STATUS.md); platform coverage is in [P
 | Scripting (Luau) | Usable | Sandboxed VM, budgets, hot reload, broad engine API | API is not versioned |
 | Visual scripting | Experimental | Graph model, compiler to Luau, editor, trace debugger | No breakpoints/watches; no user functions or comments |
 | Particles / VFX | Experimental | Deterministic CPU emitters, soft HDR billboards | CPU only; no GPU particles, ribbons, mesh particles or collision |
-| Terrain and foliage | Experimental | Heightfield LOD chunks, sculpt/paint tools, collision, navmesh, scatter | One draw per foliage instance (no instancing), no holes, scripts cannot deform terrain |
+| Terrain and foliage | Experimental | Heightfield LOD chunks, sculpt/paint tools, collision, navmesh, scatter | One draw per foliage instance (no instancing), no holes, scripts cannot deform terrain, no template uses terrain |
 | Sequencer | Experimental | `.vseq` tracks, events, editor timeline with record key | No curve editor, multi-key select or video export |
 | Networking (ENet) | Experimental | Authoritative server, prediction, interpolation, delta snapshots, encryption, reconnect, listen server | Tested on loopback only; no NAT traversal, host migration, or lag-compensated hits |
 | Editor | Usable on Linux | Docked workspace, gizmos, undo/redo, multi-select, command palette, autosave/recovery, asset browser with thumbnails, material/graph/sequencer/terrain tools, profiler, AI and script debuggers, play-in-editor incl. multiplayer | Never run on Windows/macOS by a person; no layout presets; viewport input tested through APIs rather than synthetic mouse events |

@@ -335,11 +335,36 @@ void TerrainSystem::update(Scene& scene) {
         const bool settings_same = shape && shape->friction == comp.friction && shape->layer == comp.collision_layer &&
                                    shape->mask == comp.collision_mask;
         if (shape && settings_same && rt->collision_revision == hf->revision) continue;
+        // An edit (same data, size and resolution): copy only the samples of the chunks touched
+        // since the collider was last brought up to date and hand physics that rectangle.
+        if (shape && settings_same && !full && rt->collision_revision != ~0ull && rt->collision_heights &&
+            shape->heights == rt->collision_heights && shape->resolution == hf->resolution &&
+            hf->chunk_revisions.size() == static_cast<std::size_t>(cps) * cps) {
+            physics::HeightfieldRect rect;
+            const std::uint32_t last = hf->resolution - 1;
+            for (std::uint32_t cz = 0; cz < cps; ++cz)
+                for (std::uint32_t cx = 0; cx < cps; ++cx) {
+                    if (hf->chunk_revisions[static_cast<std::size_t>(cz) * cps + cx] <= rt->collision_revision) continue;
+                    rect.include({cx * kChunkQuads, cz * kChunkQuads, std::min(last, (cx + 1) * kChunkQuads),
+                                  std::min(last, (cz + 1) * kChunkQuads)});
+                }
+            if (rect.empty()) rect = {0, 0, last, last}; // revision moved without a chunk: be safe
+            auto& heights = *rt->collision_heights;
+            for (std::uint32_t z = rect.z0; z <= rect.z1; ++z)
+                for (std::uint32_t x = rect.x0; x <= rect.x1; ++x) heights[hf->index(x, z)] = hf->heights[hf->index(x, z)] * size.y;
+            shape->dirty.include(rect);
+            ++shape->height_revision;
+            rt->collision_revision = hf->revision;
+            ++stats_.collision_updates;
+            continue;
+        }
         physics::StaticHeightfieldComponent out;
         out.resolution = hf->resolution;
         auto heights = std::make_shared<std::vector<float>>(hf->heights.size());
         for (std::size_t i = 0; i < hf->heights.size(); ++i) (*heights)[i] = hf->heights[i] * size.y;
+        rt->collision_heights = heights;
         out.heights = std::move(heights);
+        out.height_range = {0.0f, size.y}; // normalized heights 0..1 scaled by size.y
         const auto last = static_cast<float>(hf->resolution - 1);
         out.offset = {-size.x * 0.5f, 0.0f, -size.z * 0.5f};
         out.spacing = {size.x / last, size.z / last};
