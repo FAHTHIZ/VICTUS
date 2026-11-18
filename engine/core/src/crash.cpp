@@ -28,6 +28,7 @@
 #endif
 #include <windows.h>
 #include <process.h>
+#include <share.h>
 #else
 #include <fcntl.h>
 #include <sys/types.h>
@@ -317,10 +318,69 @@ extern "C" void victus_fatal_signal(int sig) {
     std::raise(sig);
 }
 
+// An uncaught C++ exception reaches the unhandled-exception filter as SEH code 0xE06D7363 (the
+// filter replaces the CRT's, which would only call std::terminate without the exception). The
+// record carries the thrown object and the compiler's ThrowInfo; if one of its catchable types is
+// std::exception, its what() goes into the report. Layout of the MSVC EH structures (RVAs from
+// the image base in ExceptionInformation[3] on 64-bit; absolute pointers on 32-bit).
+constexpr DWORD kMsvcCppException = 0xE06D7363;
+struct EhThrowInfo {
+    std::uint32_t attributes;
+    std::int32_t unwind, forward_compat, catchable_types;
+};
+struct EhCatchableType {
+    std::uint32_t properties;
+    std::int32_t type;
+    std::int32_t mdisp, pdisp, vdisp;
+    std::int32_t size_or_offset, copy;
+};
+struct EhTypeDescriptor {
+    const void* vftable;
+    void* spare;
+    char name[1];
+};
+char g_cpp_reason[512];
+
+const char* cpp_exception_reason(const EXCEPTION_RECORD& r) {
+    const auto n = r.NumberParameters;
+    if (n < 3 || (r.ExceptionInformation[0] & ~std::uintptr_t{3}) != 0x19930520u) return nullptr;
+    const auto object = static_cast<std::uintptr_t>(r.ExceptionInformation[1]);
+    const auto* info = reinterpret_cast<const EhThrowInfo*>(r.ExceptionInformation[2]);
+    const std::uintptr_t base = n >= 4 ? static_cast<std::uintptr_t>(r.ExceptionInformation[3]) : 0;
+    if (!object || !info) return nullptr;
+    const auto at = [base](std::int32_t rva) { return base + static_cast<std::uintptr_t>(static_cast<std::uint32_t>(rva)); };
+    const auto* array = reinterpret_cast<const std::int32_t*>(at(info->catchable_types));
+    const std::int32_t count = array[0];
+    for (std::int32_t i = 0; i < count && i < 64; ++i) {
+        const auto* ct = reinterpret_cast<const EhCatchableType*>(at(array[1 + i]));
+        const auto* td = reinterpret_cast<const EhTypeDescriptor*>(at(ct->type));
+        if (std::strcmp(td->name, ".?AVexception@std@@") != 0 || ct->pdisp != -1) continue;
+        const auto* e = reinterpret_cast<const std::exception*>(object + static_cast<std::uintptr_t>(static_cast<std::intptr_t>(ct->mdisp)));
+        std::snprintf(g_cpp_reason, sizeof g_cpp_reason, "unhandled exception: %s", e->what());
+        return g_cpp_reason;
+    }
+    return "unhandled exception (not a std::exception)";
+}
+
+const char* safe_cpp_exception_reason(const EXCEPTION_RECORD& r) {
+#if defined(_MSC_VER)
+    __try {
+        return cpp_exception_reason(r);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+#else
+    return cpp_exception_reason(r);
+#endif
+}
+
 LONG WINAPI victus_unhandled_exception(EXCEPTION_POINTERS* ep) {
     if (g_in_fatal.exchange(true)) return EXCEPTION_EXECUTE_HANDLER;
     const DWORD code = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0;
-    const char* reason = code == EXCEPTION_ACCESS_VIOLATION       ? "EXCEPTION_ACCESS_VIOLATION (invalid memory access)"
+    const char* cpp = code == kMsvcCppException ? safe_cpp_exception_reason(*ep->ExceptionRecord) : nullptr;
+    const char* reason = cpp                                       ? cpp
+                         : code == kMsvcCppException               ? "unhandled exception"
+                         : code == EXCEPTION_ACCESS_VIOLATION       ? "EXCEPTION_ACCESS_VIOLATION (invalid memory access)"
                          : code == EXCEPTION_STACK_OVERFLOW       ? "EXCEPTION_STACK_OVERFLOW"
                          : code == EXCEPTION_ILLEGAL_INSTRUCTION  ? "EXCEPTION_ILLEGAL_INSTRUCTION"
                          : code == EXCEPTION_INT_DIVIDE_BY_ZERO   ? "EXCEPTION_INT_DIVIDE_BY_ZERO"
@@ -400,7 +460,8 @@ class LineFileSink final : public log::Sink {
 public:
     explicit LineFileSink(const fs::Path& path) {
 #if defined(_WIN32)
-        if (_wfopen_s(&f_, path.wstring().c_str(), L"wb") != 0) f_ = nullptr;
+        // _wfopen_s denies sharing; the log must stay readable (diagnostics bundles, tests) while open.
+        f_ = _wfsopen(path.wstring().c_str(), L"wb", _SH_DENYWR);
 #else
         f_ = std::fopen(path.string().c_str(), "wb");
 #endif
