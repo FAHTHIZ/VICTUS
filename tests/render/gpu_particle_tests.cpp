@@ -232,3 +232,98 @@ TEST_CASE("gpu particles: emitter components render through runtime extraction i
     CHECK(channel(test::pixel(px2, W, 2, 2), 0) == 0);
     dev.destroy(target);
 }
+
+TEST_CASE("gpu particles: velocity-stretched emitters draw streaks along their motion in 3D and 2D") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    particles::register_components();
+    scene::Scene s;
+    const scene::Entity cam = s.create("Camera");
+    s.world().add<scene::CameraComponent>(cam);
+    s.world().get<scene::Transform>(cam)->position = {0, 0, 5};
+    const scene::Entity fx = s.create("Streak");
+    auto& c = s.world().add<particles::ParticleEmitterComponent>(fx);
+    c.rate = 0;
+    c.burst = 1;
+    c.shape = particles::Shape::Point;
+    c.angle = 0;
+    c.speed_min = c.speed_max = 4;
+    c.size_start = c.size_end = 0.3f;
+    c.lifetime_min = c.lifetime_max = 10;
+    c.color_start = c.color_end = {1, 1, 1, 1};
+    c.blend = particles::Blend::Additive;
+    c.velocity_stretch = 0.5f; // 0.3 m wide, 0.3 + 4 x 0.5 = 2.3 m long
+    s.world().get<scene::Transform>(fx)->rotation = math::Quat::axis_angle({0, 0, 1}, -1.5707963f); // emit along +X
+    particles::ParticleSystem ps;
+    ps.update(s, 0.0f);
+    s.update_transforms();
+
+    // Pixels on the centre row and centre column that the particle brightened over `base`.
+    const auto extent = [](const std::vector<std::uint8_t>& px, const std::vector<std::uint8_t>& base) {
+        const auto lit = [&](std::uint32_t x, std::uint32_t y) {
+            // The default sky is bright (~223), so tone-mapped white adds only ~20 over it.
+            return channel(test::pixel(px, W, x, y), 1) > channel(test::pixel(base, W, x, y), 1) + 8;
+        };
+        std::uint32_t across = 0, down = 0;
+        for (std::uint32_t x = 0; x < W; ++x) across += lit(x, H / 2);
+        for (std::uint32_t y = 0; y < H; ++y) down += lit(W / 2, y);
+        return std::pair{across, down};
+    };
+
+    runtime::GpuAssetCache assets(ctx, nullptr);
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    RenderSettings rs = RenderSettings::preset(QualityTier::Medium);
+    rs.bloom = false;
+    r.set_settings(rs);
+    auto target = test::make_target(W, H);
+    const auto draw3d = [&] {
+        (void)runtime::extract_scene(s, assets, r, {}, nullptr);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        return dev.read_texture(target).value();
+    };
+    s.world().get<particles::ParticleEmitterComponent>(fx)->size_start = 0; // invisible baseline
+    s.world().get<particles::ParticleEmitterComponent>(fx)->size_end = 0;
+    ps.update(s, 0.0f);
+    const auto sky = draw3d();
+    s.world().get<particles::ParticleEmitterComponent>(fx)->size_start = 0.3f;
+    s.world().get<particles::ParticleEmitterComponent>(fx)->size_end = 0.3f;
+    particles::reset(s, fx);
+    ps.update(s, 0.0f);
+    CHECK(ps.stats().alive == 1);
+    const auto px = draw3d();
+    test::save_output("particles_stretched", W, H, px);
+    const auto [across, down] = extent(px, sky);
+    MESSAGE("3D streak: " << across << " px across, " << down << " px down");
+    CHECK(across > 3 * down); // long along X on screen, thin across
+    CHECK(down > 0);
+
+    // 2D: the same particle as a stretched sprite.
+    auto batch = SpriteBatch::create(ctx, rhi::Format::RGBA8_UNORM);
+    REQUIRE(batch.ok());
+    SpriteBatch& sb = *batch.value();
+    sb.begin(math::Mat4::orthographic(-4, 4, -2.4f, 2.4f, -1, 1));
+    CHECK(runtime::extract_sprites(s, assets, sb) == 1);
+    auto cmd2 = dev.begin_commands();
+    REQUIRE(sb.prepare(cmd2).ok());
+    {
+        rhi::RenderPassDesc rp;
+        rp.colors.push_back({target, 0, 0, rhi::LoadOp::Clear, rhi::StoreOp::Store, {0, 0, 0, 1}, {}});
+        auto pass = cmd2.begin_render_pass(rp);
+        sb.render(pass, cmd2);
+        pass.end();
+    }
+    cmd2.submit_and_wait();
+    const auto px2 = dev.read_texture(target).value();
+    test::save_output("particles_stretched_2d", W, H, px2);
+    const std::vector<std::uint8_t> black(px2.size(), 0);
+    const auto [across2, down2] = extent(px2, black);
+    MESSAGE("2D streak: " << across2 << " px across, " << down2 << " px down");
+    CHECK(across2 > 3 * down2);
+    CHECK(down2 > 0);
+    dev.destroy(target);
+}

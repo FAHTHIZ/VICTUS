@@ -29,7 +29,7 @@ Evidence for every item is in [STATUS.md](STATUS.md); platform coverage is in [P
 | In-game UI | Usable | Canvases, anchors, text, images, buttons, layout, navigation, scroll views | No UI editor canvas, rich text, sliders or text input |
 | Scripting (Luau) | Usable | Sandboxed VM, budgets, hot reload, broad engine API | API is not versioned |
 | Visual scripting | Experimental | Graph model, compiler to Luau, editor, trace debugger | No breakpoints/watches; no user functions or comments |
-| Particles / VFX | Experimental | Deterministic CPU emitters, soft HDR billboards | CPU only; no GPU particles, ribbons, mesh particles or collision |
+| Particles / VFX | Experimental | Deterministic CPU emitters, soft HDR billboards, flipbooks, velocity-stretched streaks | CPU only; no GPU particles, ribbons, mesh particles, collision or flipbook frame blending |
 | Terrain and foliage | Experimental | Heightfield LOD chunks, sculpt/paint tools, collision, navmesh, scatter | Foliage is GPU-instanced but still culled and LOD-selected per instance on the CPU every frame (no persistent GPU instance buffers, impostors or wind), no holes, scripts cannot deform terrain, no template uses terrain |
 | Sequencer | Experimental | `.vseq` tracks, events, editor timeline with record key | No curve editor, multi-key select or video export |
 | Networking (ENet) | Experimental | Authoritative server, prediction, interpolation, delta snapshots, encryption, reconnect, listen server | Tested on loopback only; no NAT traversal, host migration, or lag-compensated hits |

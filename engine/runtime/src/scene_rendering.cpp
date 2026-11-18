@@ -736,6 +736,7 @@ void apply_irradiance_volumes(Scene& scene, GpuAssetCache& assets, render::Scene
 }
 } // namespace
 
+
 ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRenderer& renderer,
                            const SceneViewSettings& settings, const render::Camera3D* camera_override) {
     ExtractStats stats;
@@ -1065,6 +1066,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     });
 
     std::vector<particles::EmitterView> emitters;
+    std::vector<particles::Billboard> stretched;
     particles::gather(scene, emitters);
     for (const particles::EmitterView& v : emitters) {
         render::ParticleMaterial pm;
@@ -1077,8 +1079,14 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         }
         // Billboard and ParticleInstance share one 48-byte layout (position+size, colour, rotation).
         static_assert(sizeof(particles::Billboard) == sizeof(render::ParticleInstance));
-        const std::span<const render::ParticleInstance> instances(reinterpret_cast<const render::ParticleInstance*>(v.billboards.data()),
-                                                                  v.billboards.size());
+        std::span<const render::ParticleInstance> instances(reinterpret_cast<const render::ParticleInstance*>(v.billboards.data()),
+                                                            v.billboards.size());
+        if (!v.velocities.empty()) {
+            // Stretched particles: aim each one along its on-screen motion for this camera.
+            stretched.assign(v.billboards.begin(), v.billboards.end());
+            for (std::size_t i = 0; i < stretched.size(); ++i) particles::aim_stretched(stretched[i], v.velocities[i], camera.view);
+            instances = {reinterpret_cast<const render::ParticleInstance*>(stretched.data()), stretched.size()};
+        }
         renderer.submit_particles(instances, pm, v.bounds);
         ++stats.particle_emitters;
         stats.particles += static_cast<std::uint32_t>(v.billboards.size());
@@ -1202,8 +1210,9 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
             sp.texture = texture;
             sp.nearest = nearest;
             sp.position = {b.position.x, b.position.y};
-            sp.size = {b.size, b.size};
+            sp.size = {b.size, b.aspect > 0.0f ? b.size * b.aspect : b.size};
             sp.rotation = b.rotation;
+            sp.uv = particles::flipbook_uv(b);
             sp.color = {std::min(b.color.r, 1.0f), std::min(b.color.g, 1.0f), std::min(b.color.b, 1.0f), b.color.a};
             sp.layer = v.emitter->layer;
             sp.additive = v.emitter->blend == particles::Blend::Additive;

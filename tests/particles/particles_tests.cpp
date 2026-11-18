@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <set>
 
 using namespace victus;
 using namespace victus::particles;
@@ -308,6 +309,12 @@ TEST_CASE("emitter components serialize; runtime state is rebuilt") {
     c.color_start = {4, 2, 0.5f, 1};
     c.texture = Uuid::generate();
     c.layer = 3;
+    c.flipbook_columns = 4;
+    c.flipbook_rows = 2;
+    c.flipbook_frames = 6;
+    c.flipbook_fps = 12;
+    c.flipbook_random_start = true;
+    c.velocity_stretch = 0.05f;
     ParticleSystem sys;
     sys.update(s, 0.5f);
     const std::string text = json::stringify(s.save());
@@ -323,6 +330,12 @@ TEST_CASE("emitter components serialize; runtime state is rebuilt") {
     CHECK(near(lc->color_start.r, 4));
     CHECK(lc->texture == c.texture);
     CHECK(lc->layer == 3);
+    CHECK(lc->flipbook_columns == 4);
+    CHECK(lc->flipbook_rows == 2);
+    CHECK(lc->flipbook_frames == 6);
+    CHECK(near(lc->flipbook_fps, 12));
+    CHECK(lc->flipbook_random_start);
+    CHECK(near(lc->velocity_stretch, 0.05f));
     CHECK(status(loaded, le).alive == 0);
 
     // Removing the component drops its state; the system installs into a Simulation.
@@ -333,4 +346,149 @@ TEST_CASE("emitter components serialize; runtime state is rebuilt") {
     loaded.world().remove<ParticleEmitterComponent>(le);
     sim.tick(loaded, 1.0f / 60.0f);
     CHECK(sys.stats().emitters == 0);
+}
+
+TEST_CASE("flipbook frames span the life once or loop at a fixed rate") {
+    ParticleEmitterComponent c;
+    CHECK(flipbook_frame_count(c) == 1);
+    CHECK(flipbook_frame(c, 0.7f, 1.0f, 0) == 0);
+    c.flipbook_columns = 4;
+    c.flipbook_rows = 2;
+    CHECK(flipbook_frame_count(c) == 8);
+    CHECK(flipbook_frame(c, 0.0f, 1.0f, 0) == 0);
+    CHECK(flipbook_frame(c, 0.5f, 1.0f, 0) == 4);
+    CHECK(flipbook_frame(c, 0.999f, 1.0f, 0) == 7);
+    CHECK(flipbook_frame(c, 1.0f, 1.0f, 0) == 7); // the last frame holds at the end of life
+    CHECK(flipbook_frame(c, 0.5f, 1.0f, 6) == 2);  // start offset wraps
+    c.flipbook_frames = 5;
+    CHECK(flipbook_frame_count(c) == 5);
+    CHECK(flipbook_frame(c, 0.999f, 1.0f, 0) == 4);
+    c.flipbook_frames = 0;
+    c.flipbook_fps = 10;
+    CHECK(flipbook_frame(c, 0.25f, 1.0f, 0) == 2);
+    CHECK(flipbook_frame(c, 0.85f, 1.0f, 0) == 0); // frame 8 wraps to 0
+    c.flipbook_columns = 99;                         // clamped to 15
+    CHECK(flipbook_frame_count(c) == 30);
+
+    Billboard b;
+    CHECK(flipbook_uv(b) == math::Vec4{0, 0, 1, 1});
+    b.grid = 4 * 16 + 2;
+    b.frame = 5; // column 1, row 1
+    const math::Vec4 uv = flipbook_uv(b);
+    CHECK(near(uv.x, 0.25f));
+    CHECK(near(uv.y, 0.5f));
+    CHECK(near(uv.z, 0.5f));
+    CHECK(near(uv.w, 1.0f));
+}
+
+TEST_CASE("emitted billboards carry flipbook frames; the option keeps other randomness") {
+    const auto run = [](bool flipbook, bool random_start) {
+        Scene s;
+        const Entity e = s.create("Smoke");
+        auto& c = s.world().add<ParticleEmitterComponent>(e);
+        c.rate = 0;
+        c.burst = 32;
+        c.lifetime_min = c.lifetime_max = 1.0f;
+        c.seed = 7;
+        if (flipbook) {
+            c.flipbook_columns = 4;
+            c.flipbook_rows = 4;
+        }
+        c.flipbook_random_start = random_start;
+        ParticleSystem sys;
+        sys.update(s, 0.0f);
+        sys.update(s, 0.3f);
+        return billboards_of(s, e);
+    };
+    const auto plain = run(false, false), book = run(true, false), random = run(true, true);
+    REQUIRE(plain.size() == 32);
+    REQUIRE(book.size() == 32);
+    REQUIRE(random.size() == 32);
+    std::set<int> starts;
+    for (std::size_t i = 0; i < plain.size(); ++i) {
+        CHECK(plain[i].grid == 0);
+        CHECK(plain[i].frame == 0);
+        CHECK(book[i].grid == 4 * 16 + 4);
+        CHECK(book[i].frame == 4); // 0.3 of the life into 16 frames
+        CHECK(near(book[i].position.x, plain[i].position.x)); // flipbooks do not change the motion
+        CHECK(near(book[i].size, plain[i].size));
+        starts.insert(static_cast<int>(random[i].frame));
+    }
+    CHECK(starts.size() > 4); // random start frames vary per particle
+}
+
+TEST_CASE("velocity stretch lengthens moving particles along their motion") {
+    Scene s;
+    const Entity e = s.create("Sparks");
+    auto& c = s.world().add<ParticleEmitterComponent>(e);
+    c.rate = 0;
+    c.burst = 8;
+    c.shape = Shape::Point;
+    c.angle = 0;
+    c.speed_min = c.speed_max = 2;
+    c.size_start = c.size_end = 0.2f;
+    c.lifetime_min = c.lifetime_max = 10;
+    c.velocity_stretch = 0.1f;
+    // Emit along +X: rotate the entity's +Y axis onto +X.
+    s.world().get<scene::Transform>(e)->rotation = math::Quat::axis_angle({0, 0, 1}, -1.5707963f);
+    ParticleSystem sys;
+    sys.update(s, 0.0f);
+    std::vector<EmitterView> views;
+    gather(s, views);
+    REQUIRE(views.size() == 1);
+    REQUIRE(views[0].velocities.size() == 8);
+    for (std::size_t i = 0; i < 8; ++i) {
+        const Billboard& b = views[0].billboards[i];
+        CHECK(near(b.aspect, 1.0f + 2.0f * 0.1f / 0.2f, 1e-3f)); // length 0.2 + 2 m/s x 0.1 s
+        CHECK(near(b.rotation, -1.5707963f, 1e-3f));              // up axis turned to +X
+        CHECK(near(views[0].velocities[i].x, 2.0f, 1e-3f));
+        CHECK(views[0].bounds.max.x - views[0].bounds.min.x >= 0.39f); // bounds cover the streak
+    }
+    // Without stretch there are no velocities and billboards stay square (`c` moved when the
+    // system added its runtime state).
+    s.world().get<ParticleEmitterComponent>(e)->velocity_stretch = 0;
+    reset(s, e);
+    sys.update(s, 0.0f);
+    views.clear();
+    gather(s, views);
+    REQUIRE(views.size() == 1);
+    CHECK(views[0].velocities.empty());
+    CHECK(views[0].billboards[0].aspect == 0);
+}
+
+TEST_CASE("stretched billboards aim along their on-screen motion for a camera") {
+    const math::Mat4 front = math::Mat4::look_at({0, 0, 5}, {0, 0, 0}, {0, 1, 0});
+    Billboard b;
+    b.size = 0.2f;
+    b.aspect = 3;
+    aim_stretched(b, {1, 0, 0}, front);
+    CHECK(near(b.rotation, -1.5707963f, 1e-3f)); // screen right
+    CHECK(near(b.aspect, 3.0f, 1e-3f));
+    b.aspect = 3;
+    aim_stretched(b, {0, -1, 0}, front);
+    CHECK(near(std::abs(b.rotation), 3.1415926f, 1e-3f)); // screen down
+    b.aspect = 3;
+    aim_stretched(b, {0, 0, 1}, front); // straight at the camera: no streak
+    CHECK(near(b.aspect, 1.0f));
+    b.aspect = 3;
+    aim_stretched(b, math::normalize(Vec3{1, 0, 1}), front); // half across the view: shorter streak
+    CHECK(near(b.aspect, 1.0f + 2.0f * 0.70710678f, 1e-3f));
+    // Seen from above (looking down -Y, screen up = -Z), motion along +X is still screen right
+    // and motion along -Z is screen up.
+    const math::Mat4 top = math::Mat4::look_at({0, 5, 0}, {0, 0, 0}, {0, 0, -1});
+    b.aspect = 3;
+    aim_stretched(b, {1, 0, 0}, top);
+    CHECK(near(b.rotation, -1.5707963f, 1e-3f));
+    b.aspect = 3;
+    aim_stretched(b, {0, 0, -1}, top);
+    CHECK(near(b.rotation, 0.0f, 1e-3f));
+    // Off-centre particles follow the perspective: left of centre, moving up and away from the
+    // camera, a particle also drifts toward the centre (view p = (-2, 0, -5), d = (0, 1, -1):
+    // screen direction (2, 5)).
+    Billboard off;
+    off.position = {-2, 0, 0};
+    off.size = 0.2f;
+    off.aspect = 3;
+    aim_stretched(off, math::normalize(Vec3{0, 1, -1}), front);
+    CHECK(near(off.rotation, std::atan2(-2.0f, 5.0f), 1e-3f));
 }
