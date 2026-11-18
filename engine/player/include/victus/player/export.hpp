@@ -35,6 +35,7 @@ struct ExportReport {
     std::uint64_t pack_bytes{0};      // size of game.vpak on disk
     fs::Path pack;
     fs::Path executable;              // empty when include_player is false
+    std::size_t plugins{0};           // native plugins copied to game/plugins (ADR-0078)
     std::vector<std::string> warnings;
 };
 

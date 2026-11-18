@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/player/export.hpp"
+#include "victus/plugin/plugin.hpp"
 #include "victus/animation/sprite.hpp"
 
 #include "victus/assets/database.hpp"
@@ -345,6 +346,33 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         sfs::permissions(report.executable, sfs::perms::owner_exec | sfs::perms::group_exec | sfs::perms::others_exec,
                          sfs::perm_options::add, ec);
     }
+    // Native plugins (ADR-0078) ship as loose files next to the pack: shared libraries cannot be
+    // loaded from inside an archive. Only plugins the player loads, with a library for this
+    // platform, are copied.
+    json::Value plugin_names = json::Value::array();
+    {
+        std::vector<plugin::DiscoveryIssue> issues;
+        const auto manifests = plugin::discover(proj->root() / "plugins", &issues);
+        for (const auto& i : issues) report.warnings.push_back(std::format("plugin {}: {}", i.path.string(), i.message));
+        const fs::Path plugins_out = game_dir / "plugins";
+        sfs::remove_all(plugins_out, ec);
+        for (const auto& m : manifests) {
+            if (!m.enabled || std::find(m.targets.begin(), m.targets.end(), "player") == m.targets.end()) continue;
+            const auto lib = m.libraries.find(std::string(plugin::platform_key()));
+            if (lib == m.libraries.end() || !sfs::is_regular_file(m.dir / lib->second, ec)) {
+                report.warnings.push_back(std::format("plugin '{}' has no built library for {}; not exported", m.name,
+                                                      plugin::platform_key()));
+                continue;
+            }
+            const fs::Path dst = plugins_out / m.name;
+            sfs::create_directories((dst / lib->second).parent_path(), ec);
+            sfs::copy_file(m.manifest_path, dst / m.manifest_path.filename(), sfs::copy_options::overwrite_existing, ec);
+            if (!ec) sfs::copy_file(m.dir / lib->second, dst / lib->second, sfs::copy_options::overwrite_existing, ec);
+            if (ec) return make_error(ErrorCode::IoError, std::format("cannot export plugin '{}': {}", m.name, ec.message()));
+            plugin_names.push(m.name);
+            ++report.plugins;
+        }
+    }
     VICTUS_TRY_STATUS(fs::write_text_atomic(out / "THIRD_PARTY_NOTICES.txt", third_party_notices()));
 
     json::Value files = json::Value::array();
@@ -366,6 +394,7 @@ Result<ExportReport> export_game(const ExportOptions& o) {
     manifest.set("pack", std::format("{}/{}", kGameFolder, kPackFile));
     manifest.set("pack_bytes", static_cast<double>(report.pack_bytes));
     manifest.set("files", std::move(files));
+    manifest.set("plugins", std::move(plugin_names));
     VICTUS_TRY_STATUS(fs::write_text_atomic(out / "export.json", json::stringify(manifest, true) + "\n"));
     VICTUS_LOG_INFO("export", "exported '{}' to {} ({} files, {} bytes)", proj->settings().name, out.string(), report.files,
                     report.pack_bytes);

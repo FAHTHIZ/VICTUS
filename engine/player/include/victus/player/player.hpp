@@ -63,6 +63,7 @@ struct PlayerReport {
     std::string backend;
     std::uint64_t script_errors{0};
     bool packaged{false};        // ran from an exported game.vpak
+    std::size_t plugins_loaded{0}; // native plugins initialized from <project>/plugins (ADR-0078)
     std::string quality;         // quality tier used
     std::string net_status;      // last multiplayer status when --connect was used
     std::size_t assets_reloaded{0}; // textures/models/audio hot-reloaded while running

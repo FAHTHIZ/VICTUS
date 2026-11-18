@@ -35,7 +35,7 @@ set(VICTUS_MODULE_LAYERS
     platform=1 ecs=1 shadercompiler=1 graph=1
     rhi=2 scene=2
     render=3 gameplay=3
-    ui=4 physics=4 animation=4 particles=4 audio=4 gameui=4
+    ui=4 physics=4 plugin=4 animation=4 particles=4 audio=4 gameui=4
     navigation=5 tilemap=5 terrain=5 sequencer=5 net=5
     ai=6 assets=6
     script=7

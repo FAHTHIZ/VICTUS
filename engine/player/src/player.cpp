@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/gameui/gameui.hpp"
 #include "victus/player/player.hpp"
+#include "victus/plugin/plugin.hpp"
 #include "victus/runtime/hot_reload.hpp"
 
 #include "victus/assets/database.hpp"
@@ -174,6 +175,14 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         if (physics_for_scenes) physics_for_scenes->clear();
         if (audio_for_scenes) audio_for_scenes->stop_all();
     };
+    // Native plugins (ADR-0078) load before scripts so Luau can call their functions from the
+    // first frame; their systems join the simulation after the engine's own.
+    plugin::PluginManager plugins({.target = "player"});
+    plugins.load_directory(proj->root() / "plugins");
+    if (!plugins.function_names().empty()) {
+        so.plugin_call = [&plugins](std::string_view name, std::string_view args) { return plugins.call(name, args); };
+        so.plugin_has = [&plugins](std::string_view name) { return plugins.has_function(name); };
+    }
     auto scripts = script::ScriptHost::create(so);
     if (!scripts) return std::move(scripts).error();
     (*scripts)->set_current_scene(rel);
@@ -207,6 +216,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     ai::add_ai_systems(sim, ai_system);
     sequencer::SequencerSystem sequencer_system(sequencer::directory_loader((*db)->assets_dir()));
     sequencer::add_sequencer_systems(sim, sequencer_system);
+    plugins.attach(sim);
     // Audio is optional: without a device (or with VICTUS_NO_AUDIO=1) the game runs silently.
     audio::EngineOptions ao;
     ao.assets_root = (*db)->assets_dir();
@@ -314,6 +324,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     PlayerReport report;
     report.backend = dev.capabilities().driver_name;
     report.packaged = packaged;
+    report.plugins_loaded = plugins.loaded_count();
     report.quality = std::string(render::quality_tier_name(*tier));
     VICTUS_LOG_INFO("player", "{}: {} on {}", proj->settings().name, rel, report.backend);
 

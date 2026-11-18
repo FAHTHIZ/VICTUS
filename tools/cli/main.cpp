@@ -24,6 +24,7 @@
 #include "victus/player/export.hpp"
 #include "victus/player/player.hpp"
 #include "victus/player/validate.hpp"
+#include "victus/plugin/plugin.hpp"
 #include "victus/project/project.hpp"
 #include "victus/runtime/surface_shader.hpp"
 #include "victus/platform/platform.hpp"
@@ -46,6 +47,10 @@
 
 using namespace victus;
 
+namespace victus_cli {
+extern const std::string_view kPluginSdkHeader; // generated from victus_plugin.h (CMakeLists.txt)
+}
+
 namespace {
 
 constexpr const char* kUsage =
@@ -67,6 +72,7 @@ constexpr const char* kUsage =
     "  serve <project> [--port P] [--max-clients N] [--frames N]  host a multiplayer session (dedicated server)\n"
     "        [--password P] [--key FILE] [--insecure]              ...encrypted by default; prints its public key\n"
     "  check <project>                                            validate scenes and script syntax\n"
+    "  plugins <project> [--load] [--new NAME]                    list, load or create native plugins\n"
     "  export <project> --out DIR [--name EXE] [--player PATH]    package a runnable game folder\n"
     "  diagnose [project] --out FILE.zip [--no-logs] [--keep-paths] ...  bundle crash reports, logs and checks\n"
     "  version                                                    print the engine version\n"
@@ -260,6 +266,8 @@ struct Headless {
     std::optional<project::Project> proj;
     std::string scene_rel;
     scene::Scene scene;
+    // Declared before the script host so plugins outlive the scripts that call them.
+    std::unique_ptr<plugin::PluginManager> plugins;
     std::unique_ptr<script::ScriptHost> host;
     std::unique_ptr<physics::PhysicsWorld> physics_world;
     std::unique_ptr<assets::AssetDatabase> db;
@@ -300,6 +308,12 @@ struct Headless {
             if (physics_world) physics_world->clear();
             if (audio_engine) audio_engine->stop_all();
         };
+        plugins = std::make_unique<plugin::PluginManager>(plugin::HostOptions{.target = "player"});
+        plugins->load_directory(proj->root() / "plugins");
+        if (!plugins->function_names().empty()) {
+            so.plugin_call = [pm = plugins.get()](std::string_view name, std::string_view args) { return pm->call(name, args); };
+            so.plugin_has = [pm = plugins.get()](std::string_view name) { return pm->has_function(name); };
+        }
         auto h = script::ScriptHost::create(so);
         if (!h) return h.error();
         host = std::move(*h);
@@ -328,6 +342,7 @@ struct Headless {
         ai::add_ai_systems(sim, *ai_system);
         sequencer_system = std::make_unique<sequencer::SequencerSystem>(db ? sequencer::directory_loader(db->assets_dir()) : sequencer::SequenceLoader{});
         sequencer::add_sequencer_systems(sim, *sequencer_system);
+        plugins->attach(sim);
         audio::EngineOptions ao; // mixed without a device so audio calls behave as in the game
         ao.assets_root = proj->root() / "assets";
         ao.null_device = true;
@@ -509,6 +524,13 @@ int cmd_simulate(const std::vector<std::string>& a) {
                 static_cast<unsigned long long>(f), hs->sim.time().time, hs->scene.world().alive_count(), st.instances,
                 static_cast<unsigned long long>(st.errors));
     for (const auto& e : hs->host->recent_errors()) std::fprintf(stderr, "script error: %s\n", e.c_str());
+    if (!hs->plugins->statuses().empty()) {
+        std::printf("plugins: %zu loaded\n", hs->plugins->loaded_count());
+        for (const auto& ps : hs->plugins->statuses())
+            if (ps.state != plugin::State::Loaded)
+                std::fprintf(stderr, "plugin %s %s: %s\n", ps.name.c_str(), std::string(plugin::to_string(ps.state)).c_str(),
+                             ps.error.c_str());
+    }
     if (client) {
         print_net(*client);
         std::printf("net: client id %u, most players seen %zu\n", client->local_id(), most_players);
@@ -659,6 +681,7 @@ int cmd_export(const std::vector<std::string>& a) {
     for (const auto& w : r->warnings) std::printf("warning: %s\n", w.c_str());
     std::printf("exported %zu files (%zu cooked assets), pack %llu bytes: %s\n", r->files, r->cooked_assets,
                 static_cast<unsigned long long>(r->pack_bytes), r->pack.string().c_str());
+    if (r->plugins) std::printf("exported %zu native plugin(s) to game/plugins\n", r->plugins);
     if (!r->executable.empty()) std::printf("run: %s\n", r->executable.string().c_str());
     return 0;
 }
@@ -709,6 +732,192 @@ int cmd_diagnose(const std::vector<std::string>& a) {
     return 0;
 }
 
+// Native plugins (ADR-0078, docs/PLUGINS.md): list and check `<project>/plugins`, load them for
+// real with --load, or scaffold a new C plugin with --new NAME.
+constexpr std::string_view kPluginTemplateC = R"C(/* NAME: a VICTUS native plugin (docs/PLUGINS.md). */
+#include "victus/plugin/victus_plugin.h"
+
+static const VictusHostApi* g_host;
+static const VictusLogV1* g_log;
+static const VictusSystemsV1* g_systems;
+static const VictusSceneV1* g_scene;
+static const VictusFunctionsV1* g_functions;
+
+/* Runs every frame: spins the entity named "Spinner" around Y, if the scene has one. */
+static void spin(void* user, VictusScene* scene, float dt) {
+    static float angle;
+    float q[4];
+    VictusEntity e = g_scene->find_by_name(scene, "Spinner");
+    (void)user;
+    if (e == VICTUS_NULL_ENTITY) return;
+    angle += dt;
+    /* Quaternion for `angle` radians about +Y (small-angle-safe without libm). */
+    q[0] = 0.0f;
+    q[1] = angle / 2.0f - (angle * angle * angle) / 48.0f;
+    q[2] = 0.0f;
+    q[3] = 1.0f - (angle * angle) / 8.0f;
+    if (angle > 1.0f) angle = 0.0f;
+    g_scene->set_rotation(scene, e, q);
+}
+
+/* Luau: plugins.call("NAME.greet", "world") --> "hello from NAME" */
+static int greet(void* user, const char* args_json, VictusCallResult* result) {
+    (void)user;
+    (void)args_json;
+    g_functions->set_result(result, "\"hello from NAME\"");
+    return VICTUS_PLUGIN_OK;
+}
+
+static int init(void* user) {
+    (void)user;
+    if (g_systems->add_system(g_host->host, "spin", VICTUS_PHASE_UPDATE, spin, 0) != VICTUS_PLUGIN_OK) return VICTUS_PLUGIN_ERROR;
+    if (g_functions->register_function(g_host->host, "greet", greet, 0) != VICTUS_PLUGIN_OK) return VICTUS_PLUGIN_ERROR;
+    g_log->write(g_host->host, VICTUS_LOG_INFO, "NAME plugin initialized");
+    return VICTUS_PLUGIN_OK;
+}
+
+static void shutdown(void* user) {
+    (void)user;
+    g_log->write(g_host->host, VICTUS_LOG_INFO, "NAME plugin shut down");
+}
+
+VICTUS_PLUGIN_EXPORT int victus_plugin_entry(const VictusHostApi* host, VictusPluginDesc* out) {
+    if (host->api_major != VICTUS_PLUGIN_API_MAJOR) return VICTUS_PLUGIN_ERROR;
+    g_host = host;
+    g_log = (const VictusLogV1*)host->get_interface(host->host, VICTUS_LOG_INTERFACE_1);
+    g_systems = (const VictusSystemsV1*)host->get_interface(host->host, VICTUS_SYSTEMS_INTERFACE_1);
+    g_scene = (const VictusSceneV1*)host->get_interface(host->host, VICTUS_SCENE_INTERFACE_1);
+    g_functions = (const VictusFunctionsV1*)host->get_interface(host->host, VICTUS_FUNCTIONS_INTERFACE_1);
+    if (!g_log || !g_systems || !g_scene || !g_functions) return VICTUS_PLUGIN_ERROR;
+    out->struct_size = sizeof *out;
+    out->api_major = VICTUS_PLUGIN_API_MAJOR;
+    out->api_minor = VICTUS_PLUGIN_API_MINOR;
+    out->user = 0;
+    out->init = init;
+    out->shutdown = shutdown;
+    return VICTUS_PLUGIN_OK;
+}
+)C";
+
+constexpr std::string_view kPluginTemplateCMake = R"CM(# Builds the NAME plugin library into bin/ next to NAME.vplugin:
+#   cmake -S . -B build && cmake --build build --config Release
+cmake_minimum_required(VERSION 3.20)
+project(NAME C)
+add_library(NAME MODULE src/NAME.c)
+target_include_directories(NAME PRIVATE include)
+# "$<1:...>" keeps multi-config generators from adding a Debug/Release subfolder.
+set_target_properties(NAME PROPERTIES PREFIX "" C_VISIBILITY_PRESET hidden
+    LIBRARY_OUTPUT_DIRECTORY "$<1:${CMAKE_CURRENT_SOURCE_DIR}/bin>")
+if(APPLE)
+    set_target_properties(NAME PROPERTIES SUFFIX ".dylib")
+endif()
+)CM";
+
+constexpr std::string_view kPluginTemplateManifest = R"J({
+  "name": "NAME",
+  "version": "0.1.0",
+  "api": "API",
+  "description": "A native VICTUS plugin.",
+  "libraries": {
+    "linux": "bin/NAME.so",
+    "windows": "bin/NAME.dll",
+    "macos": "bin/NAME.dylib"
+  },
+  "dependencies": {},
+  "targets": ["player", "editor"],
+  "enabled": true
+}
+)J";
+
+std::string fill_template(std::string_view text, std::string_view name) {
+    std::string out(text);
+    auto replace_all = [&out](std::string_view key, const std::string& value) {
+        for (std::size_t at = out.find(key); at != std::string::npos; at = out.find(key, at + value.size()))
+            out.replace(at, key.size(), value);
+    };
+    replace_all("NAME", std::string(name));
+    replace_all("\"API\"", std::format("\"{}.{}\"", VICTUS_PLUGIN_API_MAJOR, VICTUS_PLUGIN_API_MINOR));
+    return out;
+}
+
+int plugins_new(const fs::Path& root, const std::string& name) {
+    const fs::Path dir = root / "plugins" / name;
+    std::error_code ec;
+    if (std::filesystem::exists(dir, ec)) return error(dir.string() + " already exists");
+    std::filesystem::create_directories(dir / "src", ec);
+    std::filesystem::create_directories(dir / "include" / "victus" / "plugin", ec);
+    if (ec) return error("cannot create " + dir.string() + ": " + ec.message());
+    const std::pair<fs::Path, std::string> files[] = {
+        {dir / (name + std::string(plugin::kManifestExtension)), fill_template(kPluginTemplateManifest, name)},
+        {dir / "src" / (name + ".c"), fill_template(kPluginTemplateC, name)},
+        {dir / "CMakeLists.txt", fill_template(kPluginTemplateCMake, name)},
+        {dir / "include" / "victus" / "plugin" / "victus_plugin.h", std::string(victus_cli::kPluginSdkHeader)},
+        {dir / ".gitignore", "build/\nbin/\n"},
+    };
+    for (const auto& [path, text] : files)
+        if (auto st = fs::write_text_atomic(path, text); !st) return error(st.error().message);
+    std::printf("created plugin '%s' in %s\n", name.c_str(), dir.string().c_str());
+    std::printf("build it: cmake -S %s -B %s && cmake --build %s --config Release\n", dir.string().c_str(),
+                (dir / "build").string().c_str(), (dir / "build").string().c_str());
+    return 0;
+}
+
+int cmd_plugins(const std::vector<std::string>& a) {
+    cli::Parser p("victus plugins", "List, check, load or create native plugins in <project>/plugins");
+    p.positional("project", "project folder", true)
+        .flag("load", "load and initialize every plugin (as the player does), then shut them down")
+        .option("new", "create plugins/NAME with a C template, CMake file and the SDK header", "");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message);
+    auto proj = project::Project::open(p.get("project"));
+    if (!proj) return error(proj.error().message);
+    if (!p.get("new").empty()) {
+        if (auto m = plugin::parse_manifest(std::format(R"({{"name":"{}","version":"0.1.0","api":"1.0"}})", p.get("new")), {}); !m)
+            return error("plugin names are 1-64 characters of [a-z0-9_]");
+        return plugins_new(proj->root(), p.get("new"));
+    }
+    const fs::Path dir = proj->root() / "plugins";
+    std::printf("plugin API %u.%u, platform %s\n", VICTUS_PLUGIN_API_MAJOR, VICTUS_PLUGIN_API_MINOR,
+                std::string(plugin::platform_key()).c_str());
+    int problems = 0;
+    if (p.has("load")) {
+        plugin::PluginManager pm({.target = "player"});
+        pm.load_directory(dir);
+        for (const auto& st : pm.statuses()) {
+            std::printf("%-24s %-10s %s%s%s\n", st.name.c_str(), plugin::to_string(st.version).c_str(),
+                        std::string(plugin::to_string(st.state)).c_str(), st.error.empty() ? "" : ": ", st.error.c_str());
+            for (const auto& s : st.systems) std::printf("    system   %s\n", s.c_str());
+            for (const auto& f : st.functions) std::printf("    function %s\n", f.c_str());
+            if (st.state == plugin::State::Failed || st.state == plugin::State::Rejected || st.state == plugin::State::Skipped)
+                ++problems;
+        }
+        std::printf("%zu loaded, %d problems\n", pm.loaded_count(), problems);
+        return problems ? 1 : 0;
+    }
+    std::vector<plugin::DiscoveryIssue> issues;
+    const auto manifests = plugin::discover(dir, &issues);
+    for (const auto& i : issues) {
+        std::printf("error: %s: %s\n", i.path.string().c_str(), i.message.c_str());
+        ++problems;
+    }
+    const auto resolved = plugin::resolve(manifests);
+    for (const auto& m : manifests) {
+        std::string state = m.enabled ? "ready" : "disabled";
+        if (auto it = resolved.rejected.find(m.name); it != resolved.rejected.end()) {
+            state = "error: " + it->second;
+            ++problems;
+        } else if (m.enabled) {
+            const auto lib = m.libraries.find(std::string(plugin::platform_key()));
+            if (lib == m.libraries.end()) state = "warning: no library for this platform";
+            else if (std::error_code ec; !std::filesystem::is_regular_file(m.dir / lib->second, ec))
+                state = "warning: " + lib->second + " is not built";
+        }
+        std::printf("%-24s %-10s %s\n", m.name.c_str(), plugin::to_string(m.version).c_str(), state.c_str());
+    }
+    std::printf("%zu plugins, %d problems\n", manifests.size(), problems);
+    return problems ? 1 : 0;
+}
+
 // Hidden: crashes on purpose so tests can check the crash handlers end to end.
 int cmd_crash_test(const std::vector<std::string>& a) {
     if (a.empty() || !crash::trigger(a[0])) return error("crash-test needs segv, abort, terminate or assert");
@@ -743,6 +952,7 @@ int main(int argc, char** argv) {
     if (cmd == "simulate") return cmd_simulate(args);
     if (cmd == "serve") return cmd_serve(args);
     if (cmd == "check") return cmd_check(args);
+    if (cmd == "plugins") return cmd_plugins(args);
     if (cmd == "export") return cmd_export(args);
     if (cmd == "diagnose") return cmd_diagnose(args);
     if (cmd == "crash-test") return cmd_crash_test(args);

@@ -159,6 +159,8 @@ void open_victus_libs(lua_State* L) {
         register_lib(L, "bridge", bridge_fns);
         const luaL_Reg json_fns[] = {{"encode", json_encode}, {"decode", json_decode}, {nullptr, nullptr}};
         register_lib(L, "json", json_fns);
+        const luaL_Reg plugin_fns[] = {{"call", plugins_call}, {"has", plugins_has}, {nullptr, nullptr}};
+        register_lib(L, "plugins", plugin_fns);
     }
     const luaL_Reg input_fns[] = {{"down", input_down},
                                   {"pressed", input_pressed},

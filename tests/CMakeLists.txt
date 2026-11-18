@@ -179,6 +179,15 @@ add_test(NAME victus_cli_diagnostics
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/diagnostics_smoke.cmake)
 set_tests_properties(victus_cli_diagnostics PROPERTIES LABELS "cli")
 
+# Native plugins end to end (ADR-0078): scaffold, build, check, load, Luau call, export.
+add_test(NAME victus_cli_plugins
+    COMMAND ${CMAKE_COMMAND}
+        -DVICTUS_CLI=$<TARGET_FILE:victus_cli>
+        -DC_COMPILER=${CMAKE_C_COMPILER}
+        -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_plugins
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/plugins_smoke.cmake)
+set_tests_properties(victus_cli_plugins PROPERTIES LABELS "cli" TIMEOUT 300)
+
 # Fixed-step determinism of a full sample (headless; no GPU needed).
 add_test(NAME victus_cli_determinism
     COMMAND ${CMAKE_COMMAND}
@@ -282,3 +291,23 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME victus_release_tools COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/release_tests.py)
     set_tests_properties(victus_release_tools PROPERTIES LABELS "tools")
 endif()
+
+# Native plugin SDK (ADR-0078): one C source built as several plugin libraries.
+foreach(mode IN ITEMS OK FAIL_INIT NEWER_API NO_ENTRY)
+    string(TOLOWER ${mode} mode_lower)
+    add_library(victus_test_plugin_${mode_lower} MODULE plugin/test_plugin.c)
+    target_link_libraries(victus_test_plugin_${mode_lower} PRIVATE VICTUS::PluginSdk)
+    target_compile_definitions(victus_test_plugin_${mode_lower} PRIVATE TEST_PLUGIN_MODE=MODE_${mode})
+    set_target_properties(victus_test_plugin_${mode_lower} PROPERTIES C_VISIBILITY_PRESET hidden PREFIX "")
+endforeach()
+victus_add_test(victus_plugin_tests
+    SOURCES
+        plugin/plugin_tests.cpp
+    DEPS VICTUS::Plugin
+    LABELS plugin)
+foreach(mode IN ITEMS OK FAIL_INIT NEWER_API NO_ENTRY)
+    string(TOLOWER ${mode} mode_lower)
+    add_dependencies(victus_plugin_tests victus_test_plugin_${mode_lower})
+    target_compile_definitions(victus_plugin_tests PRIVATE
+        VICTUS_TEST_PLUGIN_${mode}="$<TARGET_FILE:victus_test_plugin_${mode_lower}>")
+endforeach()

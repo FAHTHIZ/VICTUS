@@ -80,6 +80,10 @@ Input: scripts read named actions instead of hard-coded keys, so keyboards, mice
 
 Procedural meshes and helper processes: `entity:set_mesh_data{positions=, indices=, normals=, colors=, uvs=}` builds a mesh from Luau tables, or from packed buffers with `{vertices=, indices=, layout="position:f32x3,normal:s8x4,color:u8x4", index="u32", encoding="base64"}`; `clear_mesh_data()` and `mesh_data()` complete it. A project can declare helper programs under `"bridges"` in `victus.project` (`{"sim": {"command": ["dotnet", "sim.dll", "serve"], "working_directory": "${project}"}}`); scripts call `local b = bridge.open("sim")` and `b:request({op = "frame"})` to exchange JSON lines. `json.encode/decode`, `require("scripts/lib/util")` and `input.mouse_wheel()` are also available.
 
+### Native plugins
+
+Native plugins add C/C++ (or any C-ABI language) systems and functions without rebuilding the engine: `victus plugins MyGame --new hello` creates `plugins/hello/` with a manifest, a C template, a CMake file and the SDK header; build it with CMake, then `victus plugins MyGame --load` shows what it registers. Scripts call plugin functions with `plugins.call("hello.greet", { who = "world" })` (JSON-compatible arguments and results) and check for them with `plugins.has(name)`. The player, `simulate` and `serve` load plugins at startup, `victus check` reports manifest and dependency problems, and `victus export` ships the libraries next to the pack. Plugins are trusted native code; see docs/PLUGINS.md.
+
 ## Regression captures
 
 ~~~bash
