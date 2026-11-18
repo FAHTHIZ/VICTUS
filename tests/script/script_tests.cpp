@@ -914,7 +914,7 @@ function Speaker:update(dt)
     if not self.started then
         self.started = true
         self.ok_entity = self.entity:play_audio()
-        self.ok_shot = audio.play("tone.wav", { volume = 0.5, bus = "Ui", position = vector.create(1, 0, 0) })
+        self.ok_shot = audio.play("tone.wav", { volume = 0.5, bus = "Ui", position = vector.create(1, 0, 0), priority = 200, max_instances = 2 })
         self.ok_missing = audio.play("missing.wav")
         audio.set_volume("Music", 0.25)
         audio.set_muted("Voice", true)

@@ -14,6 +14,7 @@
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -55,6 +56,8 @@ void register_components() {
             .field(&AudioSourceComponent::min_distance, "min_distance", {.min = 0.01f, .max = 1e5f, .speed = 0.05f})
             .field(&AudioSourceComponent::max_distance, "max_distance", {.min = 0.01f, .max = 1e6f, .speed = 0.1f})
             .field(&AudioSourceComponent::rolloff, "rolloff", {.min = 0, .max = 20, .speed = 0.01f})
+            .field(&AudioSourceComponent::priority, "priority",
+                   {.min = 0, .max = 255, .tooltip = "0-255; higher keeps a real voice when more sounds play than the voice budget"})
             .commit();
         scene::Schema<AudioListenerComponent>("AudioListener", "Audio").field(&AudioListenerComponent::enabled, "enabled").commit();
     });
@@ -68,7 +71,47 @@ struct Voice {
     bool stream{false};
     Bus bus{Bus::Sfx};
     std::uint64_t seen{0};
+    std::int32_t priority{128};
+    bool virt{false};             // logically playing, not mixed
+    ma_uint64 virt_cursor{0};     // sound frames at the moment it went virtual
+    ma_uint64 virt_since{0};      // engine time (frames) at that moment
 };
+
+struct OneShotVoice {
+    std::unique_ptr<ma_sound> sound;
+    std::string clip;
+    Bus bus{Bus::Sfx};
+    std::int32_t priority{128};
+    std::uint64_t order{0};
+    bool dying{false};            // fading out; reaped once silent
+};
+
+// Restarts a sound that may have a fade-out stop scheduled (miniaudio keeps it otherwise).
+void start_sound(ma_sound* s, bool fade_in) {
+    ma_sound_reset_stop_time_and_fade(s);
+    if (fade_in) ma_sound_set_fade_in_milliseconds(s, 0.0f, 1.0f, static_cast<ma_uint64>(kVoiceFadeMs));
+    ma_sound_start(s);
+}
+
+void fade_out(ma_sound* s) { ma_sound_stop_with_fade_in_milliseconds(s, static_cast<ma_uint64>(kVoiceFadeMs)); }
+
+// miniaudio's distance models, evaluated on the CPU for voice ranking.
+float distance_gain(const ma_sound* s, const ma_vec3f& listener) {
+    if (!ma_sound_is_spatialization_enabled(s)) return 1.0f;
+    const ma_vec3f p = ma_sound_get_position(s);
+    const float d = std::sqrt((p.x - listener.x) * (p.x - listener.x) + (p.y - listener.y) * (p.y - listener.y) +
+                              (p.z - listener.z) * (p.z - listener.z));
+    const float lo = std::max(1e-4f, ma_sound_get_min_distance(s));
+    const float hi = std::max(lo, ma_sound_get_max_distance(s));
+    const float r = ma_sound_get_rolloff(s);
+    const float x = std::clamp(d, lo, hi);
+    switch (ma_sound_get_attenuation_model(s)) {
+    case ma_attenuation_model_none: return 1.0f;
+    case ma_attenuation_model_linear: return hi > lo ? std::clamp(1.0f - r * (x - lo) / (hi - lo), 0.0f, 1.0f) : 1.0f;
+    case ma_attenuation_model_exponential: return std::pow(x / lo, -r);
+    default: return lo / (lo + r * (x - lo));
+    }
+}
 
 ma_attenuation_model to_ma(Attenuation a) {
     switch (a) {
@@ -208,7 +251,9 @@ struct AudioEngine::Impl {
     float decay{0.7f};
     std::unordered_map<Entity, Voice, ecs::EntityHash> voices;
     std::unordered_set<Entity, ecs::EntityHash> autostarted;
-    std::deque<std::unique_ptr<ma_sound>> one_shots;
+    std::deque<OneShotVoice> one_shots;
+    std::uint64_t one_shot_order{0};
+    std::uint64_t stolen{0}, virtualised{0};
     std::unordered_set<std::string> loaded, failed;
     std::uint32_t load_errors{0};
     std::uint64_t frame{0};
@@ -220,8 +265,113 @@ struct AudioEngine::Impl {
         for (auto& [e, v] : voices)
             if (v.sound) ma_sound_uninit(v.sound.get());
         voices.clear();
-        for (auto& s : one_shots) ma_sound_uninit(s.get());
+        for (auto& s : one_shots) ma_sound_uninit(s.sound.get());
         one_shots.clear();
+    }
+
+    float bus_gain(Bus b) const {
+        const auto i = static_cast<std::size_t>(b);
+        float g = muted[i] ? 0.0f : volume[i];
+        if (i != 0) g *= muted[0] ? 0.0f : volume[0];
+        return g;
+    }
+
+    float audibility(const ma_sound* s, Bus b, const ma_vec3f& listener) const {
+        return ma_sound_get_volume(s) * bus_gain(b) * distance_gain(s, listener);
+    }
+
+    // Where a virtual voice's playhead is now, or nullopt once a non-looping clip has ended.
+    std::optional<ma_uint64> virtual_cursor(const Voice& v) {
+        ma_sound* s = v.sound.get();
+        ma_uint32 rate = 0;
+        ma_sound_get_data_format(s, nullptr, nullptr, &rate, nullptr, 0);
+        const double engine_rate = ma_engine_get_sample_rate(&engine);
+        const double elapsed = static_cast<double>(ma_engine_get_time_in_pcm_frames(&engine) - v.virt_since);
+        const double scale = rate && engine_rate > 0 ? rate / engine_rate : 1.0;
+        ma_uint64 cursor = v.virt_cursor + static_cast<ma_uint64>(elapsed * ma_sound_get_pitch(s) * scale);
+        ma_uint64 length = 0;
+        if (ma_sound_get_length_in_pcm_frames(s, &length) == MA_SUCCESS && length > 0 && cursor >= length) {
+            if (!ma_sound_is_looping(s)) return std::nullopt;
+            cursor %= length;
+        }
+        return cursor;
+    }
+
+    void make_virtual(Voice& v) {
+        ma_sound* s = v.sound.get();
+        ma_sound_get_cursor_in_pcm_frames(s, &v.virt_cursor);
+        v.virt_since = ma_engine_get_time_in_pcm_frames(&engine);
+        fade_out(s);
+        v.virt = true;
+        ++virtualised;
+    }
+
+    // Leaves the virtual state: resumes in place (fading in) or, when the clip ended meanwhile, stops.
+    void make_real(Voice& v, bool resume) {
+        if (!v.virt) return;
+        v.virt = false;
+        const auto cursor = virtual_cursor(v);
+        ma_sound* s = v.sound.get();
+        if (!cursor) {
+            ma_sound_stop(s);
+            ma_sound_seek_to_pcm_frame(s, 0);
+            return;
+        }
+        ma_sound_seek_to_pcm_frame(s, *cursor);
+        if (resume) start_sound(s, true);
+        else ma_sound_stop(s);
+    }
+
+    [[nodiscard]] static bool live(const Voice& v) {
+        return v.sound && (v.virt || (ma_sound_is_playing(v.sound.get()) && !ma_sound_at_end(v.sound.get())));
+    }
+
+    // Ranks every playing voice and decides which ones are mixed (see the header).
+    void arbitrate() {
+        const ma_vec3f listener = ma_engine_listener_get_position(&engine, 0);
+        struct Candidate {
+            std::int32_t priority;
+            float gain;
+            std::uint64_t order;
+            Voice* voice;
+            OneShotVoice* shot;
+        };
+        std::vector<Candidate> c;
+        c.reserve(voices.size() + one_shots.size());
+        for (auto& [e, v] : voices) {
+            if (!live(v)) continue;
+            c.push_back({v.priority, audibility(v.sound.get(), v.bus, listener), e.bits(), &v, nullptr});
+        }
+        for (auto& o : one_shots) {
+            if (o.dying || !ma_sound_is_playing(o.sound.get()) || ma_sound_at_end(o.sound.get())) continue;
+            c.push_back({o.priority, audibility(o.sound.get(), o.bus, listener), o.order, nullptr, &o});
+        }
+        std::sort(c.begin(), c.end(), [](const Candidate& a, const Candidate& b) {
+            if (a.priority != b.priority) return a.priority > b.priority;
+            const bool ha = a.gain >= kInaudibleGain, hb = b.gain >= kInaudibleGain;
+            if (ha != hb) return ha;
+            if (a.gain != b.gain) return a.gain > b.gain;
+            return a.order < b.order;
+        });
+        const std::size_t budget = std::max<std::uint32_t>(1, options.max_voices);
+        std::size_t real = 0;
+        for (Candidate& k : c) {
+            if (k.voice) {
+                const bool win = real < budget && k.gain >= kInaudibleGain;
+                if (win) {
+                    ++real;
+                    make_real(*k.voice, true);
+                } else if (!k.voice->virt) {
+                    make_virtual(*k.voice);
+                }
+            } else if (real < budget) {
+                ++real; // one-shots are short: they play while they win, even when quiet
+            } else {
+                fade_out(k.shot->sound.get());
+                k.shot->dying = true;
+                ++stolen;
+            }
+        }
     }
 
     void apply_bus(Bus b) {
@@ -378,10 +528,12 @@ struct AudioEngine::Impl {
             v.seen = frame;
             it = voices.emplace(e, std::move(v)).first;
         }
+        it->second.priority = std::clamp(c.priority, 0, 255);
+        it->second.virt = false;
         ma_sound* snd = it->second.sound.get();
         configure(snd, c, &world);
         ma_sound_seek_to_pcm_frame(snd, 0);
-        ma_sound_start(snd);
+        start_sound(snd, false);
         return {};
     }
 
@@ -432,6 +584,7 @@ struct AudioEngine::Impl {
                     return;
                 }
                 v.seen = frame;
+                v.priority = std::clamp(c.priority, 0, 255);
                 configure(v.sound.get(), c, &world);
                 return;
             }
@@ -452,11 +605,12 @@ struct AudioEngine::Impl {
             else ++it;
         }
         reap_one_shots();
+        arbitrate();
     }
 
     void reap_one_shots() {
         for (auto it = one_shots.begin(); it != one_shots.end();) {
-            ma_sound* snd = it->get();
+            ma_sound* snd = it->sound.get();
             if (ma_sound_at_end(snd) || !ma_sound_is_playing(snd)) {
                 ma_sound_uninit(snd);
                 it = one_shots.erase(it);
@@ -464,6 +618,24 @@ struct AudioEngine::Impl {
                 ++it;
             }
         }
+        // Fades only progress while audio is mixed; without a device or render() calls, dying
+        // one-shots would pile up, so the oldest are released outright past a hard limit.
+        const std::size_t hard = 2 * static_cast<std::size_t>(std::max<std::uint32_t>(1, options.max_one_shots)) +
+                                 std::max<std::uint32_t>(1, options.max_voices);
+        for (auto it = one_shots.begin(); one_shots.size() > hard && it != one_shots.end();) {
+            if (it->dying) {
+                ma_sound_uninit(it->sound.get());
+                it = one_shots.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    void steal(OneShotVoice& o) {
+        fade_out(o.sound.get());
+        o.dying = true;
+        ++stolen;
     }
 };
 
@@ -538,20 +710,32 @@ Status AudioEngine::play(scene::Scene& scene, Entity e) {
 }
 
 void AudioEngine::stop(Entity e) {
-    if (auto it = impl_->voices.find(e); it != impl_->voices.end() && it->second.sound) ma_sound_stop(it->second.sound.get());
+    if (auto it = impl_->voices.find(e); it != impl_->voices.end() && it->second.sound) {
+        it->second.virt = false;
+        ma_sound_stop(it->second.sound.get());
+    }
 }
 
 void AudioEngine::set_paused(Entity e, bool paused) {
     auto it = impl_->voices.find(e);
     if (it == impl_->voices.end() || !it->second.sound) return;
-    if (paused) ma_sound_stop(it->second.sound.get());
-    else if (!ma_sound_at_end(it->second.sound.get())) ma_sound_start(it->second.sound.get());
+    Voice& v = it->second;
+    if (paused) {
+        if (v.virt) impl_->make_real(v, false); // keep the virtual playhead
+        else ma_sound_stop(v.sound.get());
+    } else if (!v.virt && !ma_sound_at_end(v.sound.get())) {
+        start_sound(v.sound.get(), false); // the next update decides whether it stays real
+    }
 }
 
 bool AudioEngine::is_playing(Entity e) const {
     const auto it = impl_->voices.find(e);
-    return it != impl_->voices.end() && it->second.sound && ma_sound_is_playing(it->second.sound.get()) &&
-           !ma_sound_at_end(it->second.sound.get());
+    return it != impl_->voices.end() && Impl::live(it->second);
+}
+
+bool AudioEngine::is_virtual(Entity e) const {
+    const auto it = impl_->voices.find(e);
+    return it != impl_->voices.end() && it->second.sound && it->second.virt;
 }
 
 Status AudioEngine::play_one_shot(std::string_view clip, const OneShot& o) {
@@ -563,13 +747,37 @@ Status AudioEngine::play_one_shot(std::string_view clip, const OneShot& o) {
     ma_sound_set_pitch(snd, std::max(0.01f, o.pitch));
     ma_sound_set_spatialization_enabled(snd, o.position ? MA_TRUE : MA_FALSE);
     if (o.position) ma_sound_set_position(snd, o.position->x, o.position->y, o.position->z);
-    ma_sound_start(snd);
-    impl_->one_shots.push_back(std::move(s).value());
-    const std::size_t cap = std::max<std::uint32_t>(1, impl_->options.max_one_shots);
-    while (impl_->one_shots.size() > cap) {
-        ma_sound_uninit(impl_->one_shots.front().get());
-        impl_->one_shots.pop_front();
+    const std::string key(clip);
+    if (o.max_instances > 0) {
+        // Same-clip limit: the oldest live instances fade out to make room.
+        std::size_t same = 0;
+        for (const auto& x : impl_->one_shots) same += !x.dying && x.clip == key;
+        for (auto& x : impl_->one_shots) {
+            if (same < o.max_instances) break;
+            if (x.dying || x.clip != key) continue;
+            impl_->steal(x);
+            --same;
+        }
     }
+    ma_sound_start(snd);
+    OneShotVoice v;
+    v.sound = std::move(s).value();
+    v.clip = key;
+    v.bus = o.bus;
+    v.priority = std::clamp(o.priority, 0, 255);
+    v.order = impl_->one_shot_order++;
+    impl_->one_shots.push_back(std::move(v));
+    const std::size_t cap = std::max<std::uint32_t>(1, impl_->options.max_one_shots);
+    std::size_t alive = 0;
+    for (const auto& x : impl_->one_shots) alive += !x.dying;
+    for (auto& x : impl_->one_shots) {
+        if (alive <= cap) break;
+        if (x.dying) continue;
+        impl_->steal(x);
+        --alive;
+    }
+    impl_->reap_one_shots();
+    impl_->arbitrate();
     return {};
 }
 
@@ -703,9 +911,19 @@ AudioStats AudioEngine::stats() const {
     AudioStats st;
     st.device = impl_->device;
     st.voices = static_cast<std::uint32_t>(impl_->voices.size());
-    for (const auto& [e, v] : impl_->voices)
-        if (v.sound && ma_sound_is_playing(v.sound.get()) && !ma_sound_at_end(v.sound.get())) ++st.playing;
-    st.one_shots = static_cast<std::uint32_t>(impl_->one_shots.size());
+    for (const auto& [e, v] : impl_->voices) {
+        if (!Impl::live(v)) continue;
+        ++st.playing;
+        if (v.virt) ++st.virtual_voices;
+        else ++st.real;
+    }
+    for (const auto& o : impl_->one_shots) {
+        if (o.dying) continue;
+        ++st.one_shots;
+        if (ma_sound_is_playing(o.sound.get()) && !ma_sound_at_end(o.sound.get())) ++st.real;
+    }
+    st.stolen = impl_->stolen;
+    st.virtualised = impl_->virtualised;
     st.clips_loaded = static_cast<std::uint32_t>(impl_->loaded.size());
     st.load_errors = impl_->load_errors;
     return st;

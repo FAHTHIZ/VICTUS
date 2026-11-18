@@ -21,7 +21,7 @@ audio::Bus check_bus(lua_State* L, int idx, audio::Bus fallback) {
 }
 
 
-// audio.play(clip, { volume=, pitch=, bus=, position= }) -> boolean
+// audio.play(clip, { volume=, pitch=, bus=, position=, priority=, max_instances= }) -> boolean
 int audio_play(lua_State* L) {
     const char* clip = luaL_checkstring(L, 1);
     audio::OneShot o;
@@ -37,6 +37,12 @@ int audio_play(lua_State* L) {
         lua_pop(L, 1);
         lua_getfield(L, 2, "position");
         if (!lua_isnil(L, -1)) o.position = check_vec3(L, -1);
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "priority");
+        if (!lua_isnil(L, -1)) o.priority = static_cast<std::int32_t>(std::clamp(luaL_checknumber(L, -1), 0.0, 255.0));
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "max_instances");
+        if (!lua_isnil(L, -1)) o.max_instances = static_cast<std::uint32_t>(std::clamp(luaL_checknumber(L, -1), 0.0, 1024.0));
         lua_pop(L, 1);
     } else if (!lua_isnoneornil(L, 2)) {
         luaL_typeerror(L, 2, "table");

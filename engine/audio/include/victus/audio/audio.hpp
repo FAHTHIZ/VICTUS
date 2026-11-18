@@ -14,6 +14,12 @@
 // - The engine can run without an output device (`null_device`, or automatically when no device
 //   opens): sounds still advance and `render()` pulls mixed frames, which is how tests and servers
 //   run audio deterministically.
+// - Voice management: entity sources and one-shots share a budget of `max_voices` real voices,
+//   ranked by priority, then audibility (volume x bus gain x distance attenuation). Entity sources
+//   that lose, or that are inaudible (below -60 dB), become virtual: silent and not mixed, but
+//   their playhead keeps advancing, so they resume in place with a short fade-in when they win
+//   again. One-shots that lose are faded out (stolen). Every stop caused by the voice manager or
+//   an instance limit fades over a few milliseconds instead of cutting (no clicks).
 #pragma once
 #include "victus/core/fs.hpp"
 #include "victus/core/result.hpp"
@@ -53,6 +59,7 @@ struct AudioSourceComponent {
     float min_distance{1.0f};      // full volume inside this distance
     float max_distance{50.0f};     // no further attenuation beyond this distance
     float rolloff{1.0f};
+    std::int32_t priority{128};    // 0..255, higher keeps a real voice when over the budget
     friend bool operator==(const AudioSourceComponent&, const AudioSourceComponent&) = default;
 };
 
@@ -69,19 +76,29 @@ struct EngineOptions {
     bool null_device{false};       // never open an output device
     std::uint32_t sample_rate{48000};
     std::uint32_t channels{2};
-    std::uint32_t max_one_shots{64}; // oldest one-shot is stopped when exceeded
+    std::uint32_t max_one_shots{64}; // oldest one-shot is faded out when exceeded
+    std::uint32_t max_voices{96};    // real (mixed) voices; the rest are virtual or stolen
 };
+
+inline constexpr float kVoiceFadeMs = 10.0f;        // fade used when virtualising/stealing/resuming
+inline constexpr float kInaudibleGain = 0.001f;     // -60 dB: entity sources below this go virtual
 
 struct OneShot {
     Bus bus{Bus::Sfx};
     float volume{1.0f};
     float pitch{1.0f};
     std::optional<math::Vec3> position; // spatial when set
+    std::int32_t priority{128};         // 0..255, see AudioSourceComponent::priority
+    std::uint32_t max_instances{0};     // > 0: at most this many of this clip; the oldest fades out
 };
 
 struct AudioStats {
     std::uint32_t voices{0};       // entity sources with a live sound
-    std::uint32_t playing{0};      // of which currently playing
+    std::uint32_t playing{0};      // of which currently playing (real or virtual)
+    std::uint32_t real{0};         // voices being mixed (entity sources + one-shots)
+    std::uint32_t virtual_voices{0}; // entity sources playing silently, waiting for a voice
+    std::uint64_t stolen{0};       // one-shots faded out by the budget or instance limits (total)
+    std::uint64_t virtualised{0};  // real -> virtual transitions (total)
     std::uint32_t one_shots{0};
     std::uint32_t clips_loaded{0}; // distinct clips opened so far
     std::uint32_t load_errors{0};
@@ -111,7 +128,8 @@ public:
     Status play(scene::Scene& scene, Entity e); // (re)starts the entity's source from the beginning
     void stop(Entity e);
     void set_paused(Entity e, bool paused);
-    [[nodiscard]] bool is_playing(Entity e) const;
+    [[nodiscard]] bool is_playing(Entity e) const;   // real or virtual
+    [[nodiscard]] bool is_virtual(Entity e) const;
     // ---- one-shots ----
     Status play_one_shot(std::string_view clip, const OneShot& options = {});
     // Decodes and caches a clip ahead of first use.
