@@ -718,6 +718,23 @@ void AnimationSystem::update(Scene& scene, float dt) {
     }
 }
 
+bool AnimationSystem::update_entity(Scene& scene, Entity e, float dt) {
+    AnimatorComponent* a = nullptr;
+    AnimatorState* s = impl_->ensure(scene, e, a);
+    if (!s) return false;
+    Work w{e, a, s};
+    evaluate(scene, w, dt);
+    stats_ = {};
+    stats_.animators = 1;
+    stats_.missing_models = s->set ? 0 : 1;
+    stats_.channels_sampled = w.channels;
+    stats_.nodes_written = w.written;
+    stats_.transitions = w.transitions;
+    if (s->ctl.ctrl) stats_.controlled = 1;
+    else if (!a->controller.empty()) stats_.controller_errors = 1;
+    return true;
+}
+
 bool AnimationSystem::play(Scene& scene, Entity e, std::string_view clip, float fade, bool restart) {
     auto* a = scene.world().alive(e) ? scene.world().get<AnimatorComponent>(e) : nullptr;
     if (!a) return false;

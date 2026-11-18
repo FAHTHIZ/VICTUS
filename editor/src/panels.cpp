@@ -254,6 +254,7 @@ void Editor::frame(float dt) {
     }
     update_graph_debug(dt);
     update_sequence_preview(dt);
+    update_animation_preview(dt);
     // Inspector property discovery follows script edits made in an external editor.
     if ((script_poll_ += dt) >= 1.0f) {
         script_poll_ = 0;
@@ -426,6 +427,7 @@ void Editor::draw_workspace(float) {
     draw_tile_palette();
     draw_terrain_tools();
     draw_ai_debugger();
+    draw_animation_panel();
     draw_sequencer();
     draw_status_bar();
     handle_shortcuts();
@@ -531,6 +533,7 @@ void Editor::draw_menu_bar() {
         ImGui::MenuItem("Physics Colliders", nullptr, &show_colliders_);
         ImGui::MenuItem("Navigation Mesh", nullptr, &show_navmesh_);
         ImGui::MenuItem("AI Debug", nullptr, &show_ai_);
+        ImGui::MenuItem("Animation", nullptr, &show_animation_);
         ImGui::MenuItem("Network", nullptr, &show_network_);
         if (ImGui::MenuItem("Profiler", nullptr, show_profiler_)) set_show_profiler(!show_profiler_);
         ImGui::MenuItem("Tile Palette", nullptr, &show_tile_palette_);

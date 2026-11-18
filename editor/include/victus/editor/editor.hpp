@@ -181,6 +181,25 @@ public:
     // Text form of the AI Debugger for an entity of the play scene (tree header, one line per node
     // with its last status, then "bb key = value" lines); empty while editing.
     [[nodiscard]] std::vector<std::string> ai_debug_lines(scene::Entity e);
+    // View > Animation: the selected Animator's controller — state, cross-fade, clip weights and
+    // parameter controls. In play it reads and drives the live session; while editing, a preview
+    // runs the controller on one character in place and restores its pose when it ends (also on
+    // save, play, autosave skip and scene change).
+    void set_show_animation(bool show) noexcept { show_animation_ = show; }
+    [[nodiscard]] bool show_animation() const noexcept { return show_animation_; }
+    bool begin_animation_preview(scene::Entity e); // false without an Animator or while playing
+    void end_animation_preview();
+    [[nodiscard]] bool animation_previewing() const noexcept { return anim_backup_.has_value(); }
+    [[nodiscard]] scene::Entity animation_preview_target();
+    void set_animation_preview_paused(bool paused) noexcept { anim_preview_paused_ = paused; }
+    // The system the Animation window reads: the play session's, else the edit preview's (or null).
+    [[nodiscard]] animation::AnimationSystem* animation_inspected();
+    bool set_animation_parameter(scene::Entity e, std::string_view name, float value);
+    bool fire_animation_trigger(scene::Entity e, std::string_view name);
+    bool enter_animation_state(scene::Entity e, std::string_view state);
+    // Text form of the Animation window: "controller <path> state <S> time <t>", "fade from ...",
+    // "weight <clip> <w>" and "param <name> <type> = <value>" lines; empty when nothing is inspected.
+    [[nodiscard]] std::vector<std::string> animation_debug_lines(scene::Entity e);
     // View > Navigation Mesh: draws the navmesh (built from static colliders) in the viewport.
     void set_show_navmesh(bool show) noexcept { show_navmesh_ = show; }
     [[nodiscard]] const navigation::NavigationSystem* navmesh_preview() const noexcept { return edit_navigation_.get(); }
@@ -853,6 +872,18 @@ private:
         std::vector<Item> items;
     };
     std::optional<SeqBackup> seq_backup_;
+    // animation window (animation_panel.cpp)
+    void draw_animation_panel();
+    void update_animation_preview(float dt);
+    struct AnimBackup {
+        Uuid target;
+        animation::AnimatorComponent animator;
+        std::vector<std::pair<Uuid, scene::Transform>> transforms; // target and its descendants
+    };
+    std::optional<AnimBackup> anim_backup_;
+    std::unique_ptr<animation::AnimationSystem> edit_animation_; // edit-mode preview of one Animator
+    bool anim_preview_paused_{false};
+    bool show_animation_{false};
     std::unordered_map<std::string, std::uint64_t> written_sequences_; // path -> hash of our last write
     // visual script graph editor (graph_panel.cpp)
     void draw_graph_editor();

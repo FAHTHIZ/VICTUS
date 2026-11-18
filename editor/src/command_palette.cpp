@@ -155,6 +155,7 @@ std::vector<EditorCommand> Editor::commands() {
     toggle("Physics Colliders", &show_colliders_);
     toggle("Navigation Mesh", &show_navmesh_);
     toggle("AI Debug", &show_ai_);
+    toggle("Animation", &show_animation_);
     toggle("Network", &show_network_);
     toggle("Tile Palette", &show_tile_palette_);
     toggle("Terrain Tools", &show_terrain_tools_);

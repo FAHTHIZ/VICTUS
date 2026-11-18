@@ -82,7 +82,7 @@ Poses blend as weighted sums of translation and scale and a sign-aligned, renorm
 
 ## Runtime API
 
-C++ (`victus/animation/animation.hpp`): `AnimationSystem::set_parameter`, `set_trigger`, `reset_trigger`, `parameter`, `controller_status` (state, previous state, fade progress, parameter values, current clip weights), `play` (enters a state by name), `status` (`controlled`, `state`, `normalized_time`), `add_controller` and `reload_controllers`. Hosts give `AnimationSettings::controllers` a loader; `animation::directory_loader(assets_root)` reads from the project's assets folder.
+C++ (`victus/animation/animation.hpp`): `AnimationSystem::set_parameter`, `set_trigger`, `reset_trigger`, `parameter`, `controller_status` (state, previous state, fade progress, parameter values, current clip weights), `play` (enters a state by name), `status` (`controlled`, `state`, `normalized_time`), `add_controller`, `reload_controllers` and `update_entity(scene, entity, dt)` (advances one Animator only; the editor preview uses it). Hosts give `AnimationSettings::controllers` a loader; `animation::directory_loader(assets_root)` reads from the project's assets folder.
 
 Luau (on an entity with an `Animator`; all return `false`/`nil` until the animation system has run on the scene and the controller loaded):
 
@@ -106,3 +106,7 @@ end
 ```
 
 Visual scripts have matching nodes in the Animation category: Play Animation, Set Anim Parameter, Fire Anim Trigger, Anim State and Get Anim Parameter.
+
+## Editor
+
+View > Animation opens the Animation window for the selected entity's Animator. It shows the controller path, the states (the current one highlighted with its normalized time; click one to enter it), the previous state and fade progress during a cross-fade, the current clip weights as bars (missing clips flagged) and a control per parameter: float sliders spanning the blend thresholds, int drags, bool checkboxes and trigger buttons. Preview runs the controller on the edit scene through `AnimationSystem::update_entity`; Pause and Restart control it, End Preview restores the Animator and the skeleton transforms. A preview is ended (and restored) before saving, autosave skips while one runs, and play mode, scene switches and closing the project end it. Controller edits hot reload into the preview. `victus_editor <project> --select <entity> --show animation-preview` opens it from the command line.

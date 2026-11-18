@@ -401,3 +401,20 @@ TEST_CASE("controller directory loader stays inside the assets folder") {
     CHECK_FALSE(load("/abs/path.vanim"));
     CHECK_FALSE(load("missing.vanim"));
 }
+
+TEST_CASE("update_entity advances one Animator and leaves the others alone") {
+    Rig r;
+    const Entity other = r.scene.create("Other");
+    const Entity other_hips = r.scene.create("Hips", other);
+    auto& oa = r.scene.world().add<AnimatorComponent>(other);
+    oa.model = r.model;
+    oa.clip = "Run";
+    REQUIRE(r.system.set_parameter(r.scene, r.root, "speed", 9.0f));
+    CHECK(r.system.update_entity(r.scene, r.root, 0.25f));
+    CHECK(near(r.x(), 3.0f)); // the previewed character ran
+    CHECK(near(r.system.status(r.scene, r.root).normalized_time, 0.25f));
+    CHECK(near(r.scene.world().get<scene::Transform>(other_hips)->position.x, 0.0f)); // untouched
+    CHECK(r.system.stats().animators == 1);
+    CHECK(r.system.stats().controlled == 1);
+    CHECK_FALSE(r.system.update_entity(r.scene, r.hips, 0.1f)); // no Animator
+}

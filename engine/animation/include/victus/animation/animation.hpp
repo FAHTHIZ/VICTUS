@@ -189,6 +189,9 @@ public:
 
     // Advances and applies every Animator by dt seconds.
     void update(scene::Scene& scene, float dt);
+    // Advances and applies only `e`'s Animator (editor previews of one character). False when the
+    // entity has no Animator.
+    bool update_entity(scene::Scene& scene, scene::Entity e, float dt);
     // Starts `clip` on the entity's Animator. fade < 0 uses the component's crossfade.
     // Returns false when the entity has no Animator or the clip does not exist.
     bool play(scene::Scene& scene, scene::Entity e, std::string_view clip, float fade = -1.0f, bool restart = true);

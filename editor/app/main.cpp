@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
         .option("select", "select the entity with this name after opening")
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
         .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
-        .option("show", "open a window after opening: input-actions, network, profiler, command-palette, material-editor (selected entity's material)")
+        .option("show", "open a window after opening: input-actions, network, profiler, command-palette, animation, animation-preview (selected entity), material-editor (selected entity's material)")
         .option("graph", "open this visual script (path relative to assets/) in the Graph Editor")
         .option("port", "UDP port for --host", "27960")
         .flag("host", "enter play mode as a listen server after opening")
@@ -129,6 +129,14 @@ int main(int argc, char** argv) {
         if (args.get("show") == "input-actions") ed.set_show_input_actions(true);
         else if (args.get("show") == "network") ed.set_show_network(true);
         else if (args.get("show") == "profiler") ed.set_show_profiler(true);
+        else if (args.get("show") == "animation") ed.set_show_animation(true);
+        else if (args.get("show") == "animation-preview") {
+            // The Animation window previewing the selected entity's controller in the edit scene.
+            ed.set_show_animation(true);
+            const auto e = ed.selection().empty() ? scene::kNullEntity : ed.edit_scene().find(ed.selection().back());
+            if (!ed.begin_animation_preview(e))
+                std::fprintf(stderr, "victus_editor: --show animation-preview needs --select <entity with an Animator>\n");
+        }
         else if (args.get("show") == "command-palette") ed.open_command_palette();
         else if (args.get("show") == "material-editor") {
             const auto* mr = ed.selection().empty() ? nullptr

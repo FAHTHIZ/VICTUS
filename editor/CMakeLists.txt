@@ -15,6 +15,7 @@ add_library(victus_editor_core STATIC
     src/tilemaps.cpp
     src/terrain_tools.cpp
     src/ai_debugger.cpp
+    src/animation_panel.cpp
     src/sequencer_panel.cpp
     src/editor_clients.cpp
     src/gizmo.cpp
