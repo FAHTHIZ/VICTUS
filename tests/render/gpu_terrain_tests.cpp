@@ -5,6 +5,7 @@
 #include "victus/runtime/scene_rendering.hpp"
 #include "victus/terrain/terrain.hpp"
 
+#include <chrono>
 #include <cmath>
 
 using namespace victus;
@@ -19,6 +20,8 @@ constexpr std::uint32_t W = 96, H = 64;
 struct Frame {
     std::vector<std::uint8_t> px;
     runtime::ExtractStats stats;
+    render::SceneStats render;
+    double extract_ms{0}, render_ms{0}; // CPU time of extract_scene and render() recording+submit
 };
 
 Frame draw(Scene& s, runtime::GpuAssetCache& cache) {
@@ -28,10 +31,16 @@ Frame draw(Scene& s, runtime::GpuAssetCache& cache) {
     auto target = test::make_target(W, H);
     s.update_transforms();
     Frame f;
+    const auto t0 = std::chrono::steady_clock::now();
     f.stats = runtime::extract_scene(s, cache, **sr, {});
+    const auto t1 = std::chrono::steady_clock::now();
     auto cmd = dev.begin_commands();
     REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+    const auto t2 = std::chrono::steady_clock::now();
     cmd.submit_and_wait();
+    f.render = (*sr)->stats();
+    f.extract_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    f.render_ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
     auto px = dev.read_texture(target);
     REQUIRE(px.ok());
     test::save_output("terrain", W, H, *px);
@@ -145,6 +154,15 @@ TEST_CASE("gpu: foliage draws its mesh renderer on the painted layer within the 
     Frame a = draw(s, cache);
     CHECK(a.stats.foliage_instances == rt->instances);
     CHECK(a.stats.meshes == 1);
+    // GPU instancing: the hundreds of visible cubes are a handful of instanced draws (split only by LOD level
+    // and reflection probe), not one draw per instance; shadows likewise per cascade.
+    MESSAGE("foliage " << rt->instances << " instances: visible " << a.render.visible << ", main batches "
+                       << a.render.main_batches << ", shadow batches " << a.render.shadow_batches << " ("
+                       << a.render.shadow_cascades << " cascades), extract " << a.extract_ms << " ms, render "
+                       << a.render_ms << " ms");
+    CHECK(a.render.visible > 200u); // the rest is outside the top-down frustum
+    CHECK(a.render.main_batches <= a.stats.terrain_chunks + 2u);
+    CHECK(a.render.shadow_batches <= (a.stats.terrain_chunks + 2u) * std::max(a.render.shadow_cascades, 1u));
     const auto l = pixel(a.px, W, 20, 32), r = pixel(a.px, W, 76, 32);
     MESSAGE("left " << channel(l, 0) << "," << channel(l, 2) << " right " << channel(r, 0) << "," << channel(r, 2));
     // Bare (lit grey) ground on the left; the right is mostly covered by blue cubes.
@@ -158,6 +176,21 @@ TEST_CASE("gpu: foliage draws its mesh renderer on the painted layer within the 
     a = draw(s, cache);
     CHECK(a.stats.foliage_instances > 0u);
     CHECK(a.stats.foliage_instances < rt->instances / 2);
+
+    // Dense scatter (tens of thousands of instances): still a handful of instanced draws. The
+    // CPU times are reported for the record (lavapipe host, not a gate).
+    auto* fc = s.world().get<terrain::FoliageComponent>(bushes);
+    fc->draw_distance = 1000.0f;
+    fc->density = 32.0f;
+    system.update(s);
+    REQUIRE(rt->instances > 20000u);
+    a = draw(s, cache);
+    MESSAGE("dense foliage " << rt->instances << " instances: visible " << a.render.visible << ", main batches "
+                             << a.render.main_batches << ", shadow batches " << a.render.shadow_batches
+                             << ", extract " << a.extract_ms << " ms, render " << a.render_ms << " ms");
+    CHECK(a.stats.foliage_instances == rt->instances);
+    CHECK(a.render.main_batches <= a.stats.terrain_chunks + 2u);
+    CHECK(a.render.shadow_batches <= (a.stats.terrain_chunks + 2u) * std::max(a.render.shadow_cascades, 1u));
     cache.clear();
 }
 

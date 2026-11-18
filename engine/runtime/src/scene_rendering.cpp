@@ -831,7 +831,8 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 ++stats.terrain_chunks;
             }
         });
-    // Foliage entities draw their MeshRenderer once per scattered instance near the camera.
+    // Foliage entities draw their MeshRenderer once per scattered instance near the camera; the
+    // renderer merges the copies into instanced batches (one draw per LOD/probe/pass).
     std::vector<math::Mat4> foliage;
     const auto foliage_instances = [&](Entity entity) -> bool {
         const auto* fr = w.get<terrain::FoliageRuntime>(entity);
@@ -870,7 +871,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 renderer.submit(mesh, m, wt.matrix, motion_id);
                 return;
             }
-            for (const math::Mat4& world : foliage) renderer.submit(mesh, m, world, 0); // static: no motion id
+            renderer.submit_instances(mesh, m, foliage); // static: no motion id
         };
         const auto* pm = w.get<scene::ProceduralMeshComponent>(entity);
         if (pm && pm->mesh) {

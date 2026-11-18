@@ -93,6 +93,35 @@ TEST_CASE("gpu instancing: identical objects become one batch per pass with an u
     ctx.destroy(plane);
 }
 
+TEST_CASE("gpu instancing: submit_instances matches one submit per copy") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    auto cube = ctx.create_mesh(make_cube(), "inst_cube_span").value();
+    Material green;
+    green.base_color = {0.1f, 0.8f, 0.2f, 1};
+    std::vector<math::Mat4> models;
+    for (int z = 0; z < 10; ++z)
+        for (int x = 0; x < 10; ++x)
+            models.push_back(math::Mat4::translation({(static_cast<float>(x) - 4.5f) * 1.1f, 0.3f, (static_cast<float>(z) - 4.5f) * 1.1f}) *
+                             math::Mat4::scale({0.5f, 0.5f, 0.5f}));
+    const Shot each = shoot(*sr.value(), true, [&](SceneRenderer& r) {
+        for (const auto& m : models) r.submit(cube, green, m);
+    });
+    const Shot span = shoot(*sr.value(), true, [&](SceneRenderer& r) { r.submit_instances(cube, green, models); });
+    CHECK(span.stats.submitted == 100);
+    CHECK(span.stats.visible == each.stats.visible);
+    CHECK(span.stats.main_batches == each.stats.main_batches);
+    CHECK(span.stats.main_batches == 1);
+    CHECK(span.stats.shadow_batches == each.stats.shadow_batches);
+    CHECK(max_diff(span.px, each.px) == 0);
+    // An empty span or invalid mesh submits nothing.
+    const Shot none = shoot(*sr.value(), true, [&](SceneRenderer& r) { r.submit_instances(cube, green, {}); });
+    CHECK(none.stats.submitted == 0);
+    ctx.destroy(cube);
+}
+
 TEST_CASE("gpu instancing: different materials or meshes never share a batch") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     auto& ctx = *gpu().ctx;

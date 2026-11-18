@@ -158,7 +158,7 @@ Also distinguish **simplification** from **compression**. VICTUS currently uses 
 ### Layer E — Visibility, batching, terrain, and distant-world representation
 
 - Reuse existing frustum and Hi-Z occlusion culling; profile their CPU/GPU cost and benefits at each quality tier.
-- Preserve per-LOD instancing. Fix and benchmark the existing foliage limitation: many scattered instances currently cause one draw per instance.
+- Preserve per-LOD instancing. Fix and benchmark the existing foliage limitation: many scattered instances currently cause one draw per instance. (Update 2026-11-18: foliage draws merge into instanced batches via `submit_instances`; see docs/STATUS.md. Per-instance CPU culling/LOD remains.)
 - Consider HLOD for distant static groups: combine or represent groups of small static objects with simplified meshes/material atlases or another appropriate representation. Preserve occlusion boundaries, material correctness, and useful culling granularity.
 - Keep terrain’s chunk LOD and seam/skirt logic terrain-aware. Evaluate neighbor-level constraints and cracks under camera movement, streaming, and terrain edits.
 - Consider impostors/billboards only for suitable very distant assets, with lighting/view-angle limitations tested.
