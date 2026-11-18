@@ -65,8 +65,10 @@ Checks: >
 #  performance-inefficient-vector-operation (not enabled): its first full run flagged 12 cold
 #    setup loops (pipeline creation, editor commands) and no hot path; hot paths are measured
 #    by the benchmarks instead.
+# HeaderFilterRegex is anchored at a path separator so a checkout directory such as
+#   ~/VICTUS-engine/ does not make third_party/ headers match "engine/".
 WarningsAsErrors: '*'
-HeaderFilterRegex: '(engine|editor|tools|apps)/.*\.(hpp|h)$'
+HeaderFilterRegex: '(^|/)(engine|editor|tools|apps)/.*\.(hpp|h)$'
 FormatStyle: none
 CheckOptions:
   - key: bugprone-suspicious-string-compare.WarnOnImplicitComparison
