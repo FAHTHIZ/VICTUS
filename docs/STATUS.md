@@ -1180,6 +1180,11 @@ Full-repository audit against the code (not the checkboxes), then foundation fix
 - Roadmap reordered: Workstream D moves ahead of optional H render items. A plugin SDK research/ADR is queued after D, then animation IK.
 - Verified: docs-only change; no build needed. Competitor cells without a specific page are marked lower-confidence in the document.
 
+### 2026-11-18 — Studio UX Phase 0 audit (roadmap 6c)
+- `docs/audits/STUDIO_UX_AUDIT.md`: source-backed audit of every editor source at `9c65fd2` against the Studio UX handoff, with an implemented/partial/missing/blocked matrix, severities and ten proposed slices. S1 gaps: no build/export or project validation inside the editor (both CLI-only), no first-session guidance. S2: no editor typography or icons, hard-coded colours (38 literals, two accents), core panels cannot be reopened, no layout presets, no hierarchy/asset search, Add Component without search, console without filters, launcher without samples/learn or pre-create validation.
+- Owner direction (2026-11-18): front-end usability is the current emphasis, so 6c slices run now, ahead of Workstream D.
+- Verified: docs-only change.
+
 ## Next task
 Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): next is Workstream D (crash/diagnostics bundle, then release process), then the plugin SDK research + ADR, then animation IK, then the optional H items, per docs/audits/COMPETITOR_BENCHMARK.md. Then 6c (Studio UX handoff, Phase 0 audit first), 6d (Workstream G audit, docs/audits/ENGINE_CAPABILITY_AND_ROBUSTNESS_AUDIT.md), priority 1 (full clang-tidy gate), priority 8 (GPU-instanced foliage), the 2D platformer sample.
 
