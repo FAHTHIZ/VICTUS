@@ -317,6 +317,7 @@ void Editor::draw_workspace(float) {
     draw_inspector();
     draw_assets();
     draw_console();
+    draw_problems();
     draw_input_actions();
     draw_network();
     draw_profiler();
@@ -333,6 +334,7 @@ void Editor::draw_workspace(float) {
         // The window exists from the frame after it opens; try until it does (a few frames at most).
         const char* id = panel_title(static_cast<Panel>(focus_panel_));
         if (static_cast<Panel>(focus_panel_) == Panel::GraphEditor) id = "###GraphEditor";
+        if (static_cast<Panel>(focus_panel_) == Panel::Problems) id = "###Problems";
         if (ImGui::FindWindowByName(id)) {
             ImGui::SetWindowFocus(id);
             focus_panel_ = -1;
@@ -657,12 +659,20 @@ void Editor::draw_status_bar() {
         const std::string errs = std::format("{}", cc.errors);
         const std::string warns = std::format("{}", cc.warnings);
         const std::string perf = std::format("{:.0f} fps", static_cast<double>(fps_));
-        const float right = line * 2 + ImGui::CalcTextSize(errs.c_str()).x + ImGui::CalcTextSize(warns.c_str()).x +
-                            ImGui::CalcTextSize(perf.c_str()).x + tk::kSpace4 * 4 + tk::kSpace2 * 2;
+        const std::size_t problem_errors = problems_ ? problems_->errors() : 0;
+        const std::size_t problem_count = problems_ ? problems_->diagnostics.size() : 0;
+        std::string probs = "Not checked";
+        if (!problems_ && checking_project()) probs = "Checking...";
+        else if (problems_ && problem_count == 0) probs = "No problems";
+        else if (problems_) probs = std::format("{} problem{}", problem_count, problem_count == 1 ? "" : "s");
+        const float right = line * 3 + ImGui::CalcTextSize(errs.c_str()).x + ImGui::CalcTextSize(warns.c_str()).x +
+                            ImGui::CalcTextSize(probs.c_str()).x + ImGui::CalcTextSize(perf.c_str()).x + tk::kSpace4 * 5 +
+                            tk::kSpace2 * 3;
         const float x = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - right;
         ImGui::SameLine();
         if (ImGui::GetCursorPosX() < x) ImGui::SetCursorPosX(x);
-        const auto counter = [&](const char* id, kit::Icon ic, const std::string& n, ImVec4 col, const char* tip) {
+        const auto counter = [&](const char* id, kit::Icon ic, const std::string& n, ImVec4 col, const char* tip,
+                                 Panel target = Panel::Console) {
             ImGui::PushID(id);
             const ImVec2 p0 = ImGui::GetCursorScreenPos();
             ImGui::BeginGroup();
@@ -672,11 +682,21 @@ void Editor::draw_status_bar() {
             ImGui::EndGroup();
             const ImVec2 sz = ImGui::GetItemRectSize();
             ImGui::SetCursorScreenPos(p0);
-            if (ImGui::InvisibleButton("##hit", sz)) focus_console();
+            if (ImGui::InvisibleButton("##hit", sz)) {
+                if (target == Panel::Console) focus_console();
+                else show_panel(target);
+            }
             if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             kit::tooltip(tip);
             ImGui::PopID();
         };
+        ImVec4 prob_col = tk::kTextMuted;
+        if (problem_errors) prob_col = tk::kDanger;
+        else if (problem_count) prob_col = tk::kWarning;
+        else if (problems_) prob_col = tk::kSuccess;
+        counter("problems", problems_ && problem_count == 0 ? kit::Icon::Check : kit::Icon::Problems, probs, prob_col,
+                "Problems found in the project's scenes, scripts and assets - click to see them", Panel::Problems);
+        ImGui::SameLine(0, tk::kSpace4);
         counter("errors", kit::Icon::Error, errs, cc.errors ? tk::kDanger : tk::kTextMuted, "Errors in the Console - click to open it");
         ImGui::SameLine(0, tk::kSpace4);
         counter("warnings", kit::Icon::Warning, warns, cc.warnings ? tk::kWarning : tk::kTextMuted,

@@ -17,6 +17,7 @@
 #include "victus/editor/gizmo.hpp"
 #include "victus/editor/thumbnails.hpp"
 #include "victus/editor/undo.hpp"
+#include "victus/player/validate.hpp"
 #include "victus/core/jobs.hpp"
 #include "victus/gameplay/capture.hpp"
 #include "victus/gameplay/gameplay.hpp"
@@ -36,6 +37,7 @@
 #include <functional>
 #include <memory>
 #include <array>
+#include <future>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -72,6 +74,7 @@ enum class Panel : std::uint8_t {
     Inspector,
     Assets,
     Console,
+    Problems,
     Animation,
     Sequencer,
     GraphEditor,
@@ -565,6 +568,22 @@ public:
     void apply_layout(Layout layout) noexcept;
     [[nodiscard]] Layout layout() const noexcept { return layout_; }
 
+    // ---- problems (project validation, the same checks as `victus check`) ----
+    // Starts checking the saved project files on a worker thread (again after the current check
+    // if one is running). Runs by itself when a project opens and after each scene save.
+    void check_project();
+    [[nodiscard]] bool checking_project() const noexcept { return check_future_.valid(); }
+    // Blocks until a running check is done and its result is applied (tests, tools).
+    void wait_for_project_check();
+    // The latest finished check; empty before the first one.
+    [[nodiscard]] const std::optional<player::ValidationReport>& problems() const noexcept { return problems_; }
+    // Why the latest check could not run (the project failed to open), else empty.
+    [[nodiscard]] const std::string& problems_error() const noexcept { return problems_error_; }
+    // Jumps to what a problem is about: selects the entity (opening its scene if the current
+    // one is saved), opens a material, graph or sequence, or copies the path. False if nothing
+    // could be shown.
+    bool go_to_problem(const player::Diagnostic& d);
+
     // ---- console ----
     // Records currently held by the Console (the newest 4096), by severity.
     struct ConsoleCounts {
@@ -866,8 +885,18 @@ private:
     bool layout_built_{false};
     bool layout_rebuild_{false}; // force re-docking (Reset Layout, presets)
     Layout layout_{Layout::Default};
-    bool core_open_[5]{true, true, true, true, true}; // Viewport, Hierarchy, Inspector, Assets, Console
+    bool core_open_[6]{true, true, true, true, true, true}; // Viewport, Hierarchy, Inspector, Assets, Console, Problems
     int focus_panel_{-1};
+    // Problems panel
+    std::future<Result<player::ValidationReport>> check_future_;
+    bool check_again_{false};
+    std::optional<player::ValidationReport> problems_;
+    std::string problems_error_;
+    double problems_checked_at_{0}; // steady-clock seconds of the last result
+    bool problems_show_errors_{true}, problems_show_warnings_{true};
+    std::string problems_filter_;
+    void poll_project_check();
+    void draw_problems();
     int focus_attempts_{0};
     bool show_demo_{false};
     bool show_input_actions_{false};

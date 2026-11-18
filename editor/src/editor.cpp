@@ -82,6 +82,7 @@ Editor::Editor(render::GpuContext& gpu, ui::UiContext& ui, platform::Platform* p
     : gpu_(gpu), ui_(ui), platform_(platform), window_(window) {}
 
 Editor::~Editor() {
+    if (check_future_.valid()) check_future_.wait();
     stop_editor_clients();
     if (play_server_) play_server_->shutdown(sim_.time().time); // tell joined players we are gone
     play_server_.reset();
@@ -149,6 +150,9 @@ Status Editor::open_project(const fs::Path& path) {
     quality_ = render::parse_quality_tier(project_->settings().render_quality).value_or(render::QualityTier::High);
     apply_quality();
     notify("Opened project " + project_->settings().name);
+    problems_.reset();
+    problems_error_.clear();
+    check_project();
     return {};
 }
 
@@ -160,6 +164,11 @@ Status Editor::create_project(const fs::Path& directory, std::string_view name, 
 }
 
 void Editor::close_project() {
+    check_again_ = false;
+    if (check_future_.valid()) check_future_.wait(); // the check reads this project's files
+    check_future_ = {};
+    problems_.reset();
+    problems_error_.clear();
     stop();
     close_sequence();
     gizmo_cancel();
@@ -347,6 +356,7 @@ Status Editor::save_scene() {
     autosave_written_ = false;
     update_title();
     notify("Saved " + scene_path_);
+    check_project();
     return {};
 }
 
