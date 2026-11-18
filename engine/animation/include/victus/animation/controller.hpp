@@ -72,6 +72,9 @@ struct ControllerState {
     float speed{1.0f};               // playback rate of the state
     std::string speed_parameter;     // optional float parameter multiplied into the rate
     bool loop{true};
+    // Root motion: the root node's horizontal (XZ) travel and yaw are taken out of the pose and
+    // moved onto the Animator's entity instead (or reported to scripts), see docs/ANIMATION.md.
+    bool root_motion{false};
     friend bool operator==(const ControllerState&, const ControllerState&) = default;
 };
 
@@ -135,6 +138,8 @@ class Controller {
     std::vector<ControllerState> states;
     std::vector<ControllerTransition> transitions;
     std::int32_t default_state{0};
+    // Node whose motion root-motion states extract; empty = the model's first root node.
+    std::string root_node;
 };
 
 // 1D blend weights: linear between the two thresholds around x, clamped at the ends.

@@ -49,6 +49,7 @@ Parameter values are runtime state: they are not saved with the scene, and a loa
 | `speed` | Playback rate of the state (default 1, must be ≥ 0). The Animator's `speed` multiplies it. |
 | `speed_parameter` | Optional float/int parameter multiplied into the rate (for example a walk cycle that speeds up with movement). |
 | `loop` | `true` (default) loops; `false` holds the last frame and marks the state finished. |
+| `root_motion` | `true` makes the state move the character instead of animating its root node in place (see Root motion). Default `false`. |
 
 A state needs exactly one of `clip`, `blend1d` or `blend2d`. Blend spaces are phase-synced: every clip in the space plays at the same normalized time, and one cycle lasts the weighted sum of the clips' durations (each divided by its point `speed`), so a walk and a run blended together keep their footfalls aligned.
 
@@ -76,13 +77,36 @@ Each point gets the full weight at its own position, weights change smoothly, an
 
 Poses blend as weighted sums of translation and scale and a sign-aligned, renormalized sum of rotations.
 
+### Root motion
+
+Clips that travel (a lunge, a dodge roll, a walk authored moving forward) can move the character by exactly the distance the animation covers instead of sliding by script. Mark the state `"root_motion": true` and, if the moving node is not the model's first root node, name it with a top-level `"root_node": "Hips"`.
+
+While a root-motion state plays, that node's horizontal (X/Z) travel and its turn about the vertical axis are removed from the pose (it stays at its position and heading at the start of the clip) and applied to the Animator's own entity instead, in its parent's space and scaled by its transform. Vertical motion (bobbing, a jump arc) stays in the pose. Loops keep moving forward across the wrap, blend spaces blend the travel with their weights, and a cross-fade blends the travel of both states. States without `root_motion` keep animating the root in place.
+
+When the Animator sits on a child of a physics character (the 3D template's `Robot` under `Player`), moving the child would separate it from its collider. Untick `apply_root_motion` on the Animator and let the player script apply the motion through the character controller:
+
+```lua
+-- Animation runs once per frame, character moves in fixed updates: turn the frame's travel into
+-- a velocity and keep using it until the next frame.
+function Player:update(dt)
+    local m = self.robot:root_motion()          -- world-space travel of the latest animation update
+    self.root_velocity = (m.active and dt > 0) and m.position / dt or nil
+end
+
+function Player:fixed_update(dt)
+    if self.root_velocity then self.entity:move_character(self.root_velocity) end
+end
+```
+
+`entity:root_motion()` returns `{active, applied, position, yaw}`; `active` is false when no root-motion state contributed. A full 360° turn inside one clip cannot be represented (each cycle's turn is taken as the shortest angle).
+
 ## Errors
 
-`victus check` and `victus export` parse every `.vanim` and fail on the first problem in each, naming its element (`transitions[2].conditions[0]: unknown parameter "speeed"`). `victus check` also warns when a controller names a clip the Animator's model lacks. At run time a controller that fails to load is logged once and the Animator falls back to playing its `clip` directly; a missing clip is logged once and contributes the rest pose.
+`victus check` and `victus export` parse every `.vanim` and fail on the first problem in each, naming its element (`transitions[2].conditions[0]: unknown parameter "speeed"`). `victus check` also warns when a controller names a clip the Animator's model lacks, or takes root motion from a node it lacks. At run time a controller that fails to load is logged once and the Animator falls back to playing its `clip` directly; a missing clip is logged once and contributes the rest pose.
 
 ## Runtime API
 
-C++ (`victus/animation/animation.hpp`): `AnimationSystem::set_parameter`, `set_trigger`, `reset_trigger`, `parameter`, `controller_status` (state, previous state, fade progress, parameter values, current clip weights), `play` (enters a state by name), `status` (`controlled`, `state`, `normalized_time`), `add_controller`, `reload_controllers` and `update_entity(scene, entity, dt)` (advances one Animator only; the editor preview uses it). Hosts give `AnimationSettings::controllers` a loader; `animation::directory_loader(assets_root)` reads from the project's assets folder.
+C++ (`victus/animation/animation.hpp`): `AnimationSystem::set_parameter`, `set_trigger`, `reset_trigger`, `parameter`, `controller_status` (state, previous state, fade progress, parameter values, current clip weights), `play` (enters a state by name), `status` (`controlled`, `state`, `normalized_time`), `add_controller`, `reload_controllers` `update_entity(scene, entity, dt)` (advances one Animator only; the editor preview uses it) and `root_motion(scene, entity)` (`RootMotion{active, position, yaw, applied}` of the latest update). `ControllerStatus` lists `root_motion_states` and the resolved `root_node`. Hosts give `AnimationSettings::controllers` a loader; `animation::directory_loader(assets_root)` reads from the project's assets folder.
 
 Luau (on an entity with an `Animator`; all return `false`/`nil` until the animation system has run on the scene and the controller loaded):
 
@@ -93,6 +117,7 @@ Luau (on an entity with an `Animator`; all return `false`/`nil` until the animat
 | `entity:anim_trigger(name)` / `entity:reset_anim_trigger(name)` | Sets or clears a trigger (`false` for non-trigger parameters). The transition that fires on it consumes it. |
 | `entity:anim_state()` | The current state's name, or `nil`. |
 | `entity:anim_controller()` | `{valid, controller, error, state, previous_state, normalized_time, blend, states, parameters = {name = value}, types = {name = "float"\|"int"\|"bool"\|"trigger"}, weights = {{clip, weight, missing}}}` |
+| `entity:root_motion()` | `{active, applied, position, yaw}`: world-space travel and turn of the latest update of a root-motion state (see Root motion). |
 | `entity:play_animation(state, fade?)` | With a controller, jumps to a state by name. |
 | `entity:animation()` | Also reports `controlled`, `state` and `normalized_time`. |
 
@@ -109,4 +134,4 @@ Visual scripts have matching nodes in the Animation category: Play Animation, Se
 
 ## Editor
 
-View > Animation opens the Animation window for the selected entity's Animator. It shows the controller path, the states (the current one highlighted with its normalized time; click one to enter it), the previous state and fade progress during a cross-fade, the current clip weights as bars (missing clips flagged) and a control per parameter: float sliders spanning the blend thresholds, int drags, bool checkboxes and trigger buttons. Preview runs the controller on the edit scene through `AnimationSystem::update_entity`; Pause and Restart control it, End Preview restores the Animator and the skeleton transforms. A preview is ended (and restored) before saving, autosave skips while one runs, and play mode, scene switches and closing the project end it. Controller edits hot reload into the preview. `victus_editor <project> --select <entity> --show animation-preview` opens it from the command line.
+View > Animation opens the Animation window for the selected entity's Animator. It shows the controller path, the states (the current one highlighted with its normalized time; click one to enter it), the previous state and fade progress during a cross-fade, the current clip weights as bars (missing clips flagged) and a control per parameter: float sliders spanning the blend thresholds, int drags, bool checkboxes and trigger buttons. Preview runs the controller on the edit scene through `AnimationSystem::update_entity`; Pause and Restart control it, End Preview restores the Animator and the skeleton transforms. A preview is ended (and restored) before saving, autosave skips while one runs, and play mode, scene switches and closing the project end it. Root-motion states are tagged `[root motion]`, and the window shows the root node and how far it moves per frame. Controller edits hot reload into the preview. `victus_editor <project> --select <entity> --show animation-preview` opens it from the command line.

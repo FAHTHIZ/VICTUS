@@ -203,10 +203,20 @@ void Editor::draw_animation_panel() {
     }
     const auto ctrl = sys->controller(a->controller);
     if (ImGui::CollapsingHeader("States", ImGuiTreeNodeFlags_DefaultOpen)) {
-        for (const std::string& name : st.states) {
+        for (std::size_t i = 0; i < st.states.size(); ++i) {
+            const std::string& name = st.states[i];
             const bool current = name == st.state;
-            if (ImGui::Selectable(std::format("{}{}", name, current ? std::format("  {:.2f}", st.normalized_time) : "").c_str(), current))
+            const bool root = i < st.root_motion_states.size() && st.root_motion_states[i] != 0;
+            if (ImGui::Selectable(std::format("{}{}{}", name, root ? "  [root motion]" : "",
+                                              current ? std::format("  {:.2f}", st.normalized_time) : "")
+                                      .c_str(),
+                                  current))
                 (void)enter_animation_state(e, name);
+        }
+        if (!st.root_node.empty()) {
+            const animation::RootMotion rm = sys->root_motion(s, e);
+            ImGui::TextDisabled("root node %s%s", st.root_node.c_str(),
+                                rm.active ? std::format("  moving {:.3f} m/frame", length(rm.position)).c_str() : "");
         }
         if (!st.previous_state.empty()) {
             ImGui::TextDisabled("fading from %s", st.previous_state.c_str());

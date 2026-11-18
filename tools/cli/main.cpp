@@ -824,6 +824,12 @@ int cmd_check(const std::vector<std::string>& a) {
                 if (set->find_clip(clip) < 0)
                     std::printf("warning: %s: entity '%s': controller %s uses clip '%s' that its model lacks\n",
                                 rel.c_str(), entity_name(scene, e).c_str(), c.controller.c_str(), clip.c_str());
+            const auto& states = (*ctrl)->states;
+            const std::string& root = (*ctrl)->root_node;
+            if (!root.empty() && std::any_of(states.begin(), states.end(), [](const auto& st) { return st.root_motion; }) &&
+                std::none_of(set->nodes.begin(), set->nodes.end(), [&](const auto& n) { return n.name == root; }))
+                std::printf("warning: %s: entity '%s': controller %s takes root motion from node '%s' that its model lacks\n",
+                            rel.c_str(), entity_name(scene, e).c_str(), c.controller.c_str(), root.c_str());
         });
         scene.world().each<animation::SpriteAnimatorComponent>([&](scene::Entity e, animation::SpriteAnimatorComponent& c) {
             if (c.sheet.is_nil()) return;

@@ -418,3 +418,154 @@ TEST_CASE("update_entity advances one Animator and leaves the others alone") {
     CHECK(r.system.stats().controlled == 1);
     CHECK_FALSE(r.system.update_entity(r.scene, r.hips, 0.1f)); // no Animator
 }
+
+namespace {
+
+// A root clip that walks +Z at `speed` m/s for `duration` seconds (and bobs in Y), optionally
+// turning `turn` radians about Y over the clip.
+Clip walk_clip(std::string name, float duration, float speed, float turn = 0) {
+    Clip c{.name = std::move(name), .duration = duration};
+    Channel t{.node = 0, .path = Path::Translation, .interpolation = Interpolation::Linear,
+              .times = {0, duration * 0.5f, duration}};
+    t.values = {0, 1, 0, 0, 1.2f, speed * duration * 0.5f, 0, 1, speed * duration};
+    c.channels.push_back(std::move(t));
+    if (turn != 0) {
+        Channel r{.node = 0, .path = Path::Rotation, .interpolation = Interpolation::Linear, .times = {0, duration}};
+        const math::Quat q = math::Quat::axis_angle({0, 1, 0}, turn);
+        r.values = {0, 0, 0, 1, q.x, q.y, q.z, q.w};
+        c.channels.push_back(std::move(r));
+    }
+    return c;
+}
+
+constexpr const char* kRootController = R"({
+  "version": 1,
+  "parameters": [ { "name": "speed", "type": "float" }, { "name": "turn", "type": "trigger" } ],
+  "default_state": "Move",
+  "root_node": "Hips",
+  "states": [
+    { "name": "Move", "root_motion": true, "blend1d": { "parameter": "speed",
+        "points": [ { "clip": "Idle", "at": 0 }, { "clip": "Walk", "at": 2 } ] } },
+    { "name": "InPlace", "clip": "Walk" },
+    { "name": "Turn", "clip": "Turn", "root_motion": true, "loop": false }
+  ],
+  "transitions": [ { "from": "*", "to": "Turn", "duration": 0, "conditions": [ { "parameter": "turn" } ] } ]
+})";
+
+struct RootRig {
+    Scene scene;
+    Entity root, hips;
+    Uuid model = Uuid::generate();
+    AnimationSystem system{AnimationSettings{.controllers = [](std::string_view) -> Result<std::string> {
+        return std::string(kRootController);
+    }}};
+    RootRig() {
+        auto set = std::make_shared<AnimationSet>();
+        set->nodes.push_back({.name = "Hips", .parent = -1, .rest = {.translation = {0, 1, 0}}});
+        set->clips.push_back(constant_clip("Idle", 1.0f, 0.0f));
+        set->clips.push_back(walk_clip("Walk", 1.0f, 2.0f));
+        set->clips.push_back(walk_clip("Turn", 1.0f, 0.0f, 1.5707963f));
+        // Idle holds Hips at x = 0 but lacks y; give it the rest height via the constant clip.
+        set->clips[0].channels[0].values = {0, 1, 0, 0, 1, 0};
+        system.add_set(model, set);
+        root = scene.create("Character");
+        hips = scene.create("Hips", root);
+        auto& a = scene.world().add<AnimatorComponent>(root);
+        a.model = model;
+        a.controller = "anim/root.vanim";
+        a.crossfade = 0;
+    }
+    scene::Transform& tf(Entity e) { return *scene.world().get<scene::Transform>(e); }
+    void run(float seconds, float dt = 0.05f) {
+        for (float t = 0; t < seconds - 1e-4f; t += dt) system.update(scene, dt);
+    }
+};
+
+} // namespace
+
+TEST_CASE("controller root_motion and root_node parse, validate and round-trip") {
+    auto c = Controller::parse(kRootController);
+    REQUIRE(c);
+    CHECK((*c)->root_node == "Hips");
+    CHECK((*c)->states[0].root_motion);
+    CHECK_FALSE((*c)->states[1].root_motion);
+    auto again = Controller::from_json((*c)->to_json());
+    REQUIRE(again);
+    CHECK((*again)->root_node == "Hips");
+    CHECK((*again)->states == (*c)->states);
+    std::string bad = kRootController;
+    bad.replace(bad.find("\"root_motion\": true"), 19, "\"root_motion\": 1   ");
+    auto e = Controller::parse(bad);
+    REQUIRE_FALSE(e);
+    CHECK(e.error().message.find("root_motion") != std::string::npos);
+    std::string bad_node = kRootController;
+    bad_node.replace(bad_node.find("\"Hips\""), 6, "\"\"    ");
+    CHECK_FALSE(Controller::parse(bad_node));
+}
+
+TEST_CASE("root motion moves the Animator entity and keeps the root node in place") {
+    RootRig rig;
+    REQUIRE(rig.system.set_parameter(rig.scene, rig.root, "speed", 2.0f)); // pure Walk: 2 m/s
+    rig.system.update(rig.scene, 0.0f);
+    rig.run(1.5f);
+    // 1.5 s at 2 m/s across a loop boundary, with no pop at the wrap.
+    CHECK(near(rig.tf(rig.root).position.z, 3.0f, 1e-3f));
+    CHECK(near(rig.tf(rig.root).position.x, 0.0f));
+    CHECK(near(rig.tf(rig.root).position.y, 0.0f)); // vertical motion stays in the pose
+    CHECK(near(rig.tf(rig.hips).position.z, 0.0f));  // pinned horizontally
+    CHECK(near(rig.tf(rig.hips).position.y, 1.2f, 1e-3f)); // the bob at mid-cycle stays
+    const RootMotion m = rig.system.root_motion(rig.scene, rig.root);
+    CHECK(m.active);
+    CHECK(m.applied);
+    CHECK(near(m.position.z, 0.1f, 1e-3f));
+    const auto st = rig.system.controller_status(rig.scene, rig.root);
+    CHECK(st.root_node == "Hips");
+    REQUIRE(st.root_motion_states.size() == 3);
+    CHECK(st.root_motion_states[0] == 1);
+
+    SUBCASE("half speed blends the travel with the idle clip") {
+        REQUIRE(rig.system.set_parameter(rig.scene, rig.root, "speed", 1.0f));
+        const float z0 = rig.tf(rig.root).position.z;
+        rig.run(1.0f);
+        // Weights 0.5/0.5; the phase-synced cycle lasts 1 s, so Walk contributes half of 2 m.
+        CHECK(near(rig.tf(rig.root).position.z - z0, 1.0f, 1e-3f));
+    }
+    SUBCASE("states without root_motion animate the root in place of the entity") {
+        REQUIRE(rig.system.play(rig.scene, rig.root, "InPlace", 0.0f));
+        const float z0 = rig.tf(rig.root).position.z;
+        rig.run(0.25f);
+        CHECK(near(rig.tf(rig.root).position.z, z0));
+        CHECK(rig.tf(rig.hips).position.z > 0.4f);
+        CHECK_FALSE(rig.system.root_motion(rig.scene, rig.root).active);
+    }
+    SUBCASE("the entity's rotation and scale orient the travel") {
+        rig.tf(rig.root).rotation = math::Quat::axis_angle({0, 1, 0}, 1.5707963f); // facing +X
+        rig.tf(rig.root).scale = {2, 2, 2};
+        const math::Vec3 p0 = rig.tf(rig.root).position;
+        rig.run(0.5f);
+        CHECK(near(rig.tf(rig.root).position.x - p0.x, 2.0f, 2e-3f)); // 0.5 s * 2 m/s * scale 2
+        CHECK(near(rig.tf(rig.root).position.z - p0.z, 0.0f, 2e-3f));
+    }
+    SUBCASE("apply_root_motion off only reports the motion") {
+        rig.scene.world().get<AnimatorComponent>(rig.root)->apply_root_motion = false;
+        const float z0 = rig.tf(rig.root).position.z;
+        rig.run(0.5f);
+        CHECK(near(rig.tf(rig.root).position.z, z0));
+        const RootMotion r = rig.system.root_motion(rig.scene, rig.root);
+        CHECK(r.active);
+        CHECK_FALSE(r.applied);
+        CHECK(near(r.position.z, 0.1f, 1e-3f));
+        CHECK(near(rig.tf(rig.hips).position.z, 0.0f));
+    }
+    SUBCASE("a turning clip yaws the entity and the hips keep their start heading") {
+        REQUIRE(rig.system.set_trigger(rig.scene, rig.root, "turn"));
+        rig.run(1.2f); // one-shot: stops turning at the end
+        const math::Vec3 fwd = rig.tf(rig.root).rotation.rotate({0, 0, 1});
+        CHECK(near(fwd.x, 1.0f, 2e-3f));
+        CHECK(near(fwd.z, 0.0f, 2e-3f));
+        const math::Vec3 hips_fwd = rig.tf(rig.hips).rotation.rotate({0, 0, 1});
+        CHECK(near(hips_fwd.z, 1.0f, 2e-3f));
+        CHECK(rig.system.root_motion(rig.scene, rig.root).active); // still in Turn
+        CHECK(near(rig.system.root_motion(rig.scene, rig.root).yaw, 0.0f));      // finished: no more turn
+    }
+}

@@ -1623,3 +1623,104 @@ return not e:play_sequence() and not e:seek_sequence(1) and e:sequence_state() =
     REQUIRE(q.ok());
     CHECK(q->as_bool());
 }
+
+TEST_CASE("script: root motion API reports world-space travel") {
+    TempDir d("victus_script_root_motion");
+    auto host = make_host(d);
+    auto set = std::make_shared<animation::AnimationSet>();
+    set->nodes.push_back({.name = "Hips", .parent = -1, .rest = {}});
+    animation::Clip walk{.name = "Walk", .duration = 1.0f};
+    walk.channels.push_back({.node = 0, .path = animation::Path::Translation, .interpolation = animation::Interpolation::Linear,
+                             .times = {0, 1}, .values = {0, 0, 0, 0, 0, 3}});
+    set->clips.push_back(std::move(walk));
+    const Uuid model = Uuid::generate();
+    animation::AnimationSystem anim;
+    anim.add_set(model, set);
+    auto ctrl = animation::Controller::parse(R"({ "version": 1, "default_state": "Walk",
+      "states": [ { "name": "Walk", "clip": "Walk", "root_motion": true } ] })");
+    REQUIRE(ctrl.ok());
+    anim.add_controller("anim/walker.vanim", ctrl.value());
+    gameplay::Simulation sim;
+    animation::add_animation_systems(sim, anim);
+    Scene s;
+    // The player turned to face +X; its child model reports motion for the player to apply.
+    const Entity player = s.create("Player");
+    s.world().get<Transform>(player)->rotation = math::Quat::axis_angle({0, 1, 0}, 1.5707963f);
+    const Entity model_e = s.create("Model", player);
+    s.create("Hips", model_e);
+    auto& a = s.world().add<animation::AnimatorComponent>(model_e);
+    a.model = model;
+    a.controller = "anim/walker.vanim";
+    a.apply_root_motion = false;
+    auto before = host->eval(R"lua(local m = scene.find("Model"):root_motion() return { active = m.active })lua", &s);
+    REQUIRE(before.ok());
+    CHECK_FALSE(before.value()["active"].as_bool());
+    for (int i = 0; i < 6; ++i) sim.tick(s, 0.1f);
+    auto q = host->eval(R"lua(
+local m = scene.find("Model"):root_motion()
+return { active = m.active, applied = m.applied, x = m.position.x, z = m.position.z, yaw = m.yaw,
+         none = scene.find("Player"):root_motion().active }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["active"].as_bool());
+    CHECK_FALSE(q.value()["applied"].as_bool());
+    CHECK(q.value()["x"].as_number() == doctest::Approx(0.3).epsilon(0.01)); // 3 m/s * 0.1 s, turned to +X
+    CHECK(q.value()["z"].as_number() == doctest::Approx(0.0).epsilon(0.01));
+    CHECK(q.value()["yaw"].as_number() == doctest::Approx(0.0));
+    CHECK_FALSE(q.value()["none"].as_bool());
+    CHECK(s.world().get<Transform>(model_e)->position.z == doctest::Approx(0.0));
+}
+
+TEST_CASE("script: root motion drives a character controller (docs/ANIMATION.md pattern)") {
+    TempDir d("victus_script_root_motion_cc");
+    d.write("scripts/player.luau", R"lua(
+local Player = {}
+function Player:start() self.robot = scene.find("Model") end
+function Player:update(dt)
+    local m = self.robot:root_motion()
+    self.root_velocity = (m.active and dt > 0) and m.position / dt or nil
+end
+function Player:fixed_update(dt)
+    if self.root_velocity then self.entity:move_character(self.root_velocity) end
+end
+return Player
+)lua");
+    auto host = make_host(d);
+    auto set = std::make_shared<animation::AnimationSet>();
+    set->nodes.push_back({.name = "Hips", .parent = -1, .rest = {}});
+    animation::Clip walk{.name = "Walk", .duration = 1.0f};
+    walk.channels.push_back({.node = 0, .path = animation::Path::Translation, .interpolation = animation::Interpolation::Linear,
+                             .times = {0, 1}, .values = {0, 0, 0, 0, 0, 3}});
+    set->clips.push_back(std::move(walk));
+    const Uuid model = Uuid::generate();
+    animation::AnimationSystem anim;
+    anim.add_set(model, set);
+    auto ctrl = animation::Controller::parse(R"({ "version": 1, "default_state": "Walk",
+      "states": [ { "name": "Walk", "clip": "Walk", "root_motion": true } ] })");
+    REQUIRE(ctrl.ok());
+    anim.add_controller("anim/walker.vanim", ctrl.value());
+    auto pw = physics::PhysicsWorld::create();
+    REQUIRE(pw.ok());
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    animation::add_animation_systems(sim, anim);
+    physics::add_physics_systems(sim, *pw.value());
+    Scene s;
+    const Entity ground = s.create("Ground");
+    s.world().get<Transform>(ground)->position = {0, -0.5f, 0};
+    physics::ColliderComponent gc;
+    gc.size = {40, 1, 40};
+    s.world().add<physics::ColliderComponent>(ground, gc);
+    const Entity player = scripted(s, "Player", "scripts/player.luau");
+    s.world().add<physics::CharacterControllerComponent>(player, physics::CharacterControllerComponent{});
+    const Entity model_e = s.create("Model", player);
+    s.create("Hips", model_e);
+    auto& a = s.world().add<animation::AnimatorComponent>(model_e);
+    a.model = model;
+    a.controller = "anim/walker.vanim";
+    a.apply_root_motion = false;
+    for (int i = 0; i < 120; ++i) sim.tick(s, 1.0f / 60);
+    // 2 s of a 3 m/s root-motion walk (one frame of latency); the model stays on its collider.
+    CHECK(s.world().get<Transform>(player)->position.z == doctest::Approx(6.0f).epsilon(0.05));
+    CHECK(s.world().get<Transform>(model_e)->position.z == doctest::Approx(0.0f));
+}

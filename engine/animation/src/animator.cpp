@@ -30,6 +30,8 @@ void register_components() {
             .field(&AnimatorComponent::speed, "speed", {.min = -10, .max = 10, .speed = 0.01f})
             .field(&AnimatorComponent::crossfade, "crossfade", {.min = 0, .max = 10, .speed = 0.01f, .tooltip = "seconds"})
             .field(&AnimatorComponent::time, "time", {.min = 0, .max = 1e6f, .speed = 0.01f, .tooltip = "seconds"})
+            .field(&AnimatorComponent::apply_root_motion, "apply_root_motion",
+                   {.tooltip = "Root-motion states move this entity (off: scripts read entity:root_motion())"})
             .commit();
         scene::Schema<SpriteAnimatorComponent>("SpriteAnimator", "Animation")
             .field(&SpriteAnimatorComponent::sheet, "sheet", {.tooltip = "Sprite sheet (.vsheet) asset", .hint = "spritesheet"})
@@ -71,6 +73,7 @@ struct ControllerRun {
     float fade_duration{0}, fade_elapsed{0};
     std::vector<NodePose> frozen_pose, scratch;
     std::vector<float> weights;
+    std::int32_t root{-1}; // root-motion node index in the set (-1 = none)
 };
 
 // Runtime playback state, not serialized: rebuilt from AnimatorComponent after loading.
@@ -91,6 +94,7 @@ struct AnimatorState {
     std::uint32_t bound{0};
     std::size_t scene_size{0}; // entity count when bound: retry missing nodes after it changes
     ControllerRun ctl;
+    RootMotion motion; // latest update
 };
 
 struct SystemBinding {
@@ -226,6 +230,114 @@ void resolve_controller_clips(AnimatorState& s) {
         if (st.motion == MotionType::Clip) add(st.clip);
         for (const BlendPoint& bp : st.points) add(bp.clip);
     }
+    r.root = -1;
+    const bool wants_root = std::any_of(c.states.begin(), c.states.end(), [](const ControllerState& st) { return st.root_motion; });
+    if (s.set && wants_root) {
+        for (std::size_t i = 0; i < s.set->nodes.size() && r.root < 0; ++i)
+            if (c.root_node.empty() ? s.set->nodes[i].parent < 0 : s.set->nodes[i].name == c.root_node)
+                r.root = static_cast<std::int32_t>(i);
+        if (r.root < 0)
+            VICTUS_LOG_WARN("animation", "controller {}: model has no root node '{}' (root motion disabled)", r.path,
+                            c.root_node);
+    }
+}
+
+float state_weights(ControllerRun& r, const AnimationSet* set, std::int32_t state);
+
+// ---- root motion ----
+// A root-motion state keeps the root node's horizontal position and yaw at their clip-start
+// values in the pose and reports how far they travelled instead. Travel is measured on the
+// unwrapped cycle: P(n) = floor(n) * (end - start) + value(frac(n)), so looping clips move on
+// forever and blends that share a normalized time stay consistent.
+
+float yaw_of(Quat q) noexcept { return 2.0f * std::atan2(q.y, q.w); }
+
+float wrap_angle(float a) noexcept {
+    constexpr float kPi = 3.14159265358979f;
+    a = std::fmod(a + kPi, 2.0f * kPi);
+    if (a < 0) a += 2.0f * kPi;
+    return a - kPi;
+}
+
+struct RootSample {
+    Vec3 pos;
+    float yaw{0};
+};
+
+RootSample root_at(const Clip& clip, const NodePose& rest, std::uint32_t root, float time) noexcept {
+    RootSample out{rest.translation, yaw_of(rest.rotation)};
+    for (const Channel& ch : clip.channels) {
+        if (ch.node != root) continue;
+        if (ch.path == Path::Translation) out.pos = sample_vec3(ch, time);
+        else if (ch.path == Path::Rotation) out.yaw = yaw_of(sample_quat(ch, time));
+    }
+    return out;
+}
+
+// Unwrapped root travel of a clip at normalized time `n` (cycles).
+RootSample root_cycle(const Clip& clip, const NodePose& rest, std::uint32_t root, float n, bool loop) noexcept {
+    if (!loop || clip.duration <= 0) return root_at(clip, rest, root, std::clamp(n, 0.0f, 1.0f) * clip.duration);
+    const float cycles = std::floor(n);
+    const RootSample a = root_at(clip, rest, root, 0), b = root_at(clip, rest, root, clip.duration);
+    const RootSample v = root_at(clip, rest, root, (n - cycles) * clip.duration);
+    const float per_yaw = wrap_angle(b.yaw - a.yaw);
+    return {v.pos + (b.pos - a.pos) * cycles, a.yaw + wrap_angle(v.yaw - a.yaw) + per_yaw * cycles};
+}
+
+// Adds `scale` x the state's root travel between pb.last and pb.norm (in the frame the
+// character faced at pb.last) to `delta`/`yaw`, and returns whether the state extracts motion.
+bool accumulate_root(ControllerRun& r, const AnimationSet& set, const Playback& pb, float scale, Vec3& delta,
+                     float& yaw) {
+    if (pb.state < 0 || r.root < 0 || scale <= 0) return false;
+    const ControllerState& st = r.ctrl->states[static_cast<std::size_t>(pb.state)];
+    if (!st.root_motion) return false;
+    (void)state_weights(r, &set, pb.state);
+    const auto& clips = r.clips[static_cast<std::size_t>(pb.state)];
+    const auto root = static_cast<std::uint32_t>(r.root);
+    const NodePose& rest = set.nodes[root].rest;
+    for (std::size_t k = 0; k < r.weights.size() && k < clips.size(); ++k) {
+        const float w = r.weights[k] * scale;
+        if (w <= 0 || clips[k] < 0) continue;
+        const Clip& clip = set.clips[static_cast<std::size_t>(clips[k])];
+        const RootSample start = root_at(clip, rest, root, 0);
+        const RootSample p0 = root_cycle(clip, rest, root, pb.last, st.loop);
+        const RootSample p1 = root_cycle(clip, rest, root, pb.norm, st.loop);
+        Vec3 d = p1.pos - p0.pos;
+        d.y = 0; // vertical motion stays in the pose
+        // Express the travel relative to where the character faced at p0 (its yaw so far has
+        // already turned the entity).
+        d = Quat::axis_angle({0, 1, 0}, -(p0.yaw - start.yaw)).rotate(d);
+        delta = delta + d * w;
+        yaw += (p1.yaw - p0.yaw) * w;
+    }
+    return true;
+}
+
+// Pins a root-motion state's root node to its clip-start horizontal position and yaw.
+void pin_root(ControllerRun& r, const AnimationSet& set, const Playback& pb, std::vector<NodePose>& pose) {
+    if (pb.state < 0 || r.root < 0 || static_cast<std::size_t>(r.root) >= pose.size()) return;
+    const ControllerState& st = r.ctrl->states[static_cast<std::size_t>(pb.state)];
+    if (!st.root_motion) return;
+    (void)state_weights(r, &set, pb.state);
+    const auto& clips = r.clips[static_cast<std::size_t>(pb.state)];
+    const auto root = static_cast<std::uint32_t>(r.root);
+    const NodePose& rest = set.nodes[root].rest;
+    float x = 0, z = 0, start_yaw = 0, total = 0;
+    for (std::size_t k = 0; k < r.weights.size() && k < clips.size(); ++k) {
+        const float w = r.weights[k];
+        if (w <= 0) continue;
+        const RootSample s0 = clips[k] >= 0 ? root_at(set.clips[static_cast<std::size_t>(clips[k])], rest, root, 0)
+                                            : RootSample{rest.translation, yaw_of(rest.rotation)};
+        x += s0.pos.x * w;
+        z += s0.pos.z * w;
+        start_yaw += s0.yaw * w;
+        total += w;
+    }
+    if (total <= 0) return;
+    NodePose& p = pose[root];
+    p.translation.x = x / total;
+    p.translation.z = z / total;
+    p.rotation = normalize(Quat::axis_angle({0, 1, 0}, wrap_angle(start_yaw / total - yaw_of(p.rotation))) * p.rotation);
 }
 
 float param_or(const ControllerRun& r, std::string_view name, float fallback) {
@@ -458,14 +570,41 @@ void evaluate_controller(Scene& scene, Work& w, float dt) {
         }
     }
     sample_state(r, set, r.cur, s.pose, w.channels);
+    pin_root(r, set, r.cur, s.pose);
+    float fade_weight = 1.0f;
+    if (r.fading)
+        fade_weight = r.fade_duration > 0.0f ? std::clamp((r.fade_elapsed + std::abs(dt)) / r.fade_duration, 0.0f, 1.0f) : 1.0f;
+    // Root motion of this step: the current state (and the fading-out one, unless frozen), weighted
+    // by the cross-fade. A state entered by a transition this step starts at its offset (no travel).
+    {
+        Vec3 delta{};
+        float yaw = 0;
+        bool active = !w.transitions && accumulate_root(r, set, r.cur, fade_weight, delta, yaw);
+        if (r.fading && !r.frozen) active = accumulate_root(r, set, r.prev, 1.0f - fade_weight, delta, yaw) || active;
+        s.motion = {};
+        s.motion.active = active;
+        if (active) {
+            auto* t = scene.world().get<scene::Transform>(w.entity);
+            const Quat rot = t ? t->rotation : Quat{};
+            const Vec3 scl = t ? t->scale : Vec3{1, 1, 1};
+            s.motion.position = rot.rotate(Vec3{delta.x * scl.x, delta.y * scl.y, delta.z * scl.z});
+            s.motion.yaw = yaw;
+            if (a.apply_root_motion && t) {
+                t->position = t->position + s.motion.position;
+                t->rotation = normalize(t->rotation * Quat::axis_angle({0, 1, 0}, yaw));
+                s.motion.applied = true;
+            }
+        }
+    }
     if (r.fading) {
         const std::vector<NodePose>* src = &r.frozen_pose;
         if (!r.frozen) {
             sample_state(r, set, r.prev, s.pose_b, w.channels);
+            pin_root(r, set, r.prev, s.pose_b);
             src = &s.pose_b;
         }
         r.fade_elapsed += std::abs(dt);
-        const float weight = r.fade_duration > 0.0f ? std::clamp(r.fade_elapsed / r.fade_duration, 0.0f, 1.0f) : 1.0f;
+        const float weight = fade_weight;
         for (std::size_t i = 0; i < s.pose.size() && i < src->size(); ++i)
             s.pose[i] = blend((*src)[i], s.pose[i], weight);
         if (weight >= 1.0f) {
@@ -486,6 +625,7 @@ void evaluate(Scene& scene, Work& w, float dt) {
         evaluate_controller(scene, w, dt);
         return;
     }
+    s.motion = {};
     if (!s.set || s.current < 0) return;
     const Clip& clip = s.set->clips[static_cast<std::size_t>(s.current)];
     const float delta = a.playing ? dt * a.speed : 0.0f;
@@ -735,6 +875,12 @@ bool AnimationSystem::update_entity(Scene& scene, Entity e, float dt) {
     return true;
 }
 
+RootMotion AnimationSystem::root_motion(Scene& scene, Entity e) {
+    if (!scene.world().alive(e)) return {};
+    const auto* s = scene.world().get<AnimatorState>(e);
+    return s ? s->motion : RootMotion{};
+}
+
 bool AnimationSystem::play(Scene& scene, Entity e, std::string_view clip, float fade, bool restart) {
     auto* a = scene.world().alive(e) ? scene.world().get<AnimatorComponent>(e) : nullptr;
     if (!a) return false;
@@ -891,7 +1037,12 @@ ControllerStatus AnimationSystem::controller_status(Scene& scene, Entity e) {
     if (!r) return out;
     const Controller& c = *r->ctrl;
     out.valid = true;
-    for (const ControllerState& st : c.states) out.states.push_back(st.name);
+    for (const ControllerState& st : c.states) {
+        out.states.push_back(st.name);
+        out.root_motion_states.push_back(st.root_motion ? 1 : 0);
+    }
+    if (s->set && r->root >= 0 && static_cast<std::size_t>(r->root) < s->set->nodes.size())
+        out.root_node = s->set->nodes[static_cast<std::size_t>(r->root)].name;
     for (std::size_t i = 0; i < c.parameters.size(); ++i)
         out.parameters.push_back({c.parameters[i].name, c.parameters[i].type, r->params[i]});
     if (r->cur.state < 0) return out;

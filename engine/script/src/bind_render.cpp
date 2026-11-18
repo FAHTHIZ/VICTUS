@@ -599,6 +599,27 @@ int entity_anim_state(lua_State* L) {
     return 1;
 }
 
+// entity:root_motion() -> {active, applied, position = world-space travel of the latest animation
+// update (vector), yaw = radians}. Zero/false until a root-motion state runs.
+int entity_root_motion(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    animation::RootMotion m;
+    if (auto* sys = animation::system_of(s)) m = sys->root_motion(s, e);
+    math::Vec3 world = m.position;
+    if (const Entity p = s.parent(e); p != Entity{}) world = s.world_matrix(p).transform_vector(m.position);
+    lua_createtable(L, 0, 4);
+    lua_pushboolean(L, m.active);
+    lua_setfield(L, -2, "active");
+    lua_pushboolean(L, m.applied);
+    lua_setfield(L, -2, "applied");
+    push_vec3(L, world);
+    lua_setfield(L, -2, "position");
+    lua_pushnumber(L, m.yaw);
+    lua_setfield(L, -2, "yaw");
+    return 1;
+}
+
 // entity:anim_controller() -> {valid, controller, error, state, previous_state, normalized_time,
 // blend, states = {...}, parameters = {name = value}, types = {name = "float"|...},
 // weights = {{clip, weight, missing}}}
