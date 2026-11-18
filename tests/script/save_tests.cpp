@@ -359,3 +359,65 @@ TEST_CASE("script: restoring a checkpoint rebuilds physics bodies") {
     CHECK(s.world().get<Transform>(restored)->position.y == doctest::Approx(y_landed).epsilon(0.05));
     CHECK(host->stats().errors == 0);
 }
+
+TEST_CASE("script: checkpoints keep rigid body velocities (3D and 2D)") {
+    TempDir d("victus_save_velocity");
+    script::register_components();
+    d.write("scripts/noop.luau", "local M = {}\nreturn M\n");
+    Scene s;
+    const Entity box = s.create("Box");
+    s.world().get<Transform>(box)->position = {0, 5, 0};
+    auto& rb = s.world().add<physics::RigidBodyComponent>(box);
+    rb.gravity_scale = 0;
+    rb.linear_damping = 0;
+    rb.angular_damping = 0;
+    rb.linear_velocity = {3, 0, 0};
+    rb.angular_velocity = {0, 1.5f, 0};
+    s.world().add<physics::ColliderComponent>(box);
+    const Entity disc = s.create("Disc");
+    s.world().get<Transform>(disc)->position = {10, 5, 0};
+    auto& rb2 = s.world().add<physics::RigidBody2DComponent>(disc);
+    rb2.gravity_scale = 0;
+    rb2.linear_damping = 0;
+    rb2.angular_damping = 0;
+    rb2.linear_velocity = {-2, 1};
+    auto& col2 = s.world().add<physics::Collider2DComponent>(disc);
+    col2.shape = physics::Collider2DComponent::Shape::Circle;
+    scripted(s, "Logic", "scripts/noop.luau");
+    auto host = make_host(d);
+    auto world = physics::PhysicsWorld::create();
+    REQUIRE(world.ok());
+    gameplay::Simulation sim(1.0f / 60.0f);
+    script::add_script_systems(sim, *host);
+    physics::add_physics_systems(sim, **world);
+    for (int i = 0; i < 10; ++i) sim.tick(s, 1.0f / 60.0f);
+
+    // Change the velocities at run time; the checkpoint must store these, not the authored ones.
+    physics::PhysicsWorld& w = **world;
+    w.set_linear_velocity(s.find_by_name("Box"), {0, 0, -4});
+    w.set_linear_velocity(s.find_by_name("Disc"), {1, 2, 0});
+    sim.tick(s, 1.0f / 60.0f);
+    REQUIRE(host->checkpoint(s, "moving").ok());
+    // The live components keep their authored initial velocity.
+    CHECK(s.world().get<physics::RigidBodyComponent>(s.find_by_name("Box"))->linear_velocity.x == doctest::Approx(3));
+
+    w.set_linear_velocity(s.find_by_name("Box"), {0, 0, 0});
+    w.set_linear_velocity(s.find_by_name("Disc"), {0, 0, 0});
+    for (int i = 0; i < 30; ++i) sim.tick(s, 1.0f / 60.0f);
+    REQUIRE(host->restore(s, "moving").ok());
+    const Entity rbox = s.find_by_name("Box");
+    const Entity rdisc = s.find_by_name("Disc");
+    const float z0 = s.world().get<Transform>(rbox)->position.z;
+    const float y0 = s.world().get<Transform>(rdisc)->position.y;
+    for (int i = 0; i < 30; ++i) sim.tick(s, 1.0f / 60.0f);
+    const math::Vec3 v = w.linear_velocity(rbox);
+    CHECK(v.x == doctest::Approx(0).epsilon(0.01));
+    CHECK(v.z == doctest::Approx(-4).epsilon(0.01));
+    CHECK(w.angular_velocity(rbox).y == doctest::Approx(1.5f).epsilon(0.02));
+    CHECK(s.world().get<Transform>(rbox)->position.z == doctest::Approx(z0 - 2.0f).epsilon(0.02));
+    const math::Vec3 v2 = w.linear_velocity(rdisc);
+    CHECK(v2.x == doctest::Approx(1).epsilon(0.01));
+    CHECK(v2.y == doctest::Approx(2).epsilon(0.01));
+    CHECK(s.world().get<Transform>(rdisc)->position.y == doctest::Approx(y0 + 1.0f).epsilon(0.02));
+    CHECK(host->stats().errors == 0);
+}
