@@ -361,8 +361,8 @@ void build_3d(Scene& s) {
         cc.push_force = 400.0f;
     }
     // The visible character is the skinned template robot (assets/models/robot.gltf), scaled to
-    // the 1.4 m capsule; the player script plays its "Idle"/"Walk" clips and turns it to face
-    // the direction of travel.
+    // the 1.4 m capsule; the player script feeds its animation controller (speed, grounded, jump)
+    // and turns it to face the direction of travel.
     const Entity robot = robot::instantiate(s, "Robot", player);
     s.world().get<Transform>(robot)->scale = {0.85f, 0.85f, 0.85f};
     {
@@ -855,8 +855,9 @@ void build_simulation(Scene& s) {
 constexpr const char* kPlayer3d = R"lua(-- Walks the character with the "move_x"/"move_y" actions (WASD, arrows, left stick) and jumps
 -- with "jump" (Space, gamepad A). The entity has a
 -- CharacterController (it slides along walls, climbs steps and pushes physics bodies); the
--- child "Robot" model faces the direction of travel and cross-fades between its "Idle" and
--- "Walk" animation clips. Its child "Dust" particle emitter puffs on jumps and landings.
+-- child "Robot" model faces the direction of travel; its animation controller
+-- (assets/anim/robot.vanim) blends Idle/Walk/Run from the "speed" parameter and plays Jump from
+-- the "jump" trigger. Its child "Dust" particle emitter puffs on jumps and landings.
 -- Fields below are defaults; override them per entity in the editor inspector.
 local Player = {}
 Player.speed = 5
@@ -868,7 +869,7 @@ Player.max_crates = 8                  -- the oldest dropped crate is removed be
 function Player:start()
     self.robot = self.entity:find_child("Robot")
     self.dust = self.entity:find_child("Dust")
-    self.clip = "Idle"
+    self.air_time = 0
     self.dropped = {}
     self.facing = vector.create(0, 0, 1)
 end
@@ -911,7 +912,8 @@ function Player:update(dt)
     end
     self.entity:move_character(move)
     local grounded = self.entity.grounded
-    if input.action_pressed("jump") and grounded then
+    local jumped = input.action_pressed("jump") and grounded
+    if jumped then
         self.entity:jump(self.jump_speed)
         if self.dust then self.dust:emit_particles(14) end
     end
@@ -919,18 +921,19 @@ function Player:update(dt)
     if grounded and self.was_grounded == false and self.dust then self.dust:emit_particles(10) end
     self.was_grounded = grounded
     if not self.robot then return end
-    -- Face the direction actually travelled (the robot model looks down +Z) and pick the clip.
+    -- Face the direction actually travelled (the robot model looks down +Z) and feed the
+    -- animation controller: ground speed picks the Idle/Walk/Run blend, "jump" plays the take-off.
     local v = self.entity.velocity
     local speed = vector.magnitude(vector.create(v.x, 0, v.z))
     if speed > 0.3 then
         self.facing = vector.normalize(vector.create(v.x, 0, v.z))
         self.robot.rotation = vector.create(0, math.deg(math.atan2(v.x, v.z)), 0)
     end
-    local clip = (speed > 0.3 and self.entity.grounded) and "Walk" or "Idle"
-    if clip ~= self.clip then
-        self.clip = clip
-        self.robot:play_animation(clip, 0.2)
-    end
+    -- Short hops off step edges are not falls: report airborne only after 0.15 s off the ground.
+    self.air_time = grounded and 0 or self.air_time + dt
+    self.robot:set_anim_param("speed", speed)
+    self.robot:set_anim_param("grounded", self.air_time < 0.15)
+    if jumped then self.robot:anim_trigger("jump") end
 end
 
 return Player
@@ -938,7 +941,8 @@ return Player
 
 constexpr const char* kCompanion = R"lua(-- A companion that follows `target` over the navmesh. The entity has a NavAgent and a
 -- CharacterController: set_destination() plans a path around the steps, crates and pillars and
--- the character mover walks it. Its child "Robot" model cross-fades between "Idle" and "Walk".
+-- the character mover walks it. Its child "Robot" model's animation controller blends Idle, Walk
+-- and Run by the "speed" parameter.
 local Buddy = {}
 Buddy.target = "Player"
 Buddy.follow_distance = 2.0 -- stays about this far from the target
@@ -947,7 +951,6 @@ Buddy.repath_distance = 0.75 -- re-plans when the target moved this far
 function Buddy:start()
     self.subject = scene.find(self.target)
     self.robot = self.entity:find_child("Robot")
-    self.clip = "Idle"
 end
 
 function Buddy:update(dt)
@@ -969,11 +972,8 @@ function Buddy:update(dt)
     end
     if not self.robot then return end
     local v = self.entity.velocity
-    local clip = vector.magnitude(vector.create(v.x, 0, v.z)) > 0.3 and "Walk" or "Idle"
-    if clip ~= self.clip then
-        self.clip = clip
-        self.robot:play_animation(clip, 0.2)
-    end
+    -- The small robot is about half size: its legs cover half the ground per step.
+    self.robot:set_anim_param("speed", vector.magnitude(vector.create(v.x, 0, v.z)) * 1.8)
 end
 
 return Buddy
@@ -1322,7 +1322,6 @@ local COLORS = {
 function Player:start()
     self.robot = self.entity:find_child("Robot")
     self.badge = self.entity:find_child("Badge")
-    self.clip = "Idle"
     self.last = self.entity.position
     self.spawn = self.entity.position
     if net.authority() then
@@ -1347,11 +1346,7 @@ function Player:update(dt)
     local speed = dt > 0 and vector.magnitude(d) / dt or 0
     if self.robot then
         if speed > 0.3 then self.robot.rotation = vector.create(0, math.deg(math.atan2(d.x, d.z)), 0) end
-        local clip = speed > 0.3 and "Walk" or "Idle"
-        if clip ~= self.clip then
-            self.clip = clip
-            self.robot:play_animation(clip, 0.2)
-        end
+        self.robot:set_anim_param("speed", speed) -- assets/anim/robot.vanim blends Idle/Walk/Run
     end
     local color = e:get_net("color")
     if self.badge and color and color ~= self.color then
@@ -1513,6 +1508,7 @@ std::vector<TemplateFile> template_files(std::string_view id) {
         return {{"assets/scripts/player.luau", kPlayer3d},
                 {robot::kModelPath, robot::gltf()},
                 {std::string(robot::kModelPath) + ".meta", robot::meta()},
+                {robot::kControllerPath, robot::controller()},
                 {"assets/scripts/follow_camera.luau", kFollowCamera},
                 {"assets/scripts/companion.luau", kCompanion},
                 {"assets/scripts/sentry.luau", kSentry},
@@ -1544,6 +1540,7 @@ std::vector<TemplateFile> template_files(std::string_view id) {
         return {{"assets/scripts/net_player.luau", kNetPlayer},
                 {robot::kModelPath, robot::gltf()},
                 {std::string(robot::kModelPath) + ".meta", robot::meta()},
+                {robot::kControllerPath, robot::controller()},
                 {"assets/scripts/net_coin.luau", kNetCoin},
                 {"assets/scripts/net_camera.luau", kNetCamera},
                 {"assets/scripts/net_hud.luau", kNetHud},
