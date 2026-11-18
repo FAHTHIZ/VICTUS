@@ -122,6 +122,12 @@ TEST_CASE("hot reload: textures swap in place, broken saves keep the old version
     r = reloader.check();
     CHECK(contains(r.sequences, "intro.vseq"));
     CHECK(r.restart_needed.empty());
+    // Animation controllers are reported and apply() drops the cached state machines.
+    write_text(project / "assets" / "player.vanim", R"({"states": [{"name": "Idle", "clip": "Idle"}]})", 9);
+    r = reloader.check();
+    CHECK(contains(r.anim_controllers, "player.vanim"));
+    CHECK(r.restart_needed.empty());
+    CHECK(contains(r.lines(), "reloaded animation controller player.vanim"));
 
     // New files get metadata and are imported; poll() rate-limits scans.
     const auto scans = reloader.scans();

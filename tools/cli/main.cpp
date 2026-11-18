@@ -312,6 +312,7 @@ struct Headless {
         if (auto d = assets::AssetDatabase::open(proj->root())) db = std::move(*d);
         animations = std::make_unique<animation::AnimationSystem>(
             animation::AnimationSettings{.provider = db ? assets::animation_provider(*db) : animation::SetProvider{},
+                                         .controllers = db ? animation::directory_loader(db->assets_dir()) : animation::ControllerLoader{},
                                          .sheets = db ? assets::sprite_sheet_provider(*db) : animation::SheetProvider{}});
         animation::add_animation_systems(sim, *animations);
         tilemaps = std::make_unique<tilemap::TilemapSystem>(db ? assets::tileset_provider(*db) : tilemap::TilesetProvider{});
@@ -760,6 +761,18 @@ int cmd_check(const std::vector<std::string>& a) {
             ++problems;
         }
     }
+    // Animation controllers: each must parse (states, clips, parameters and transitions).
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::AnimController) continue;
+        auto text = fs::read_text((*db)->source_path(r));
+        auto c = text ? animation::Controller::parse(*text, r.path) : Result<std::shared_ptr<const animation::Controller>>(std::move(text).error());
+        if (!c) {
+            std::printf("error: %s: %s\n", r.path.c_str(), c.error().message.c_str());
+            ++problems;
+        }
+    }
+    const animation::SetProvider anim_sets = assets::animation_provider(**db);
+    const animation::ControllerLoader anim_loader = animation::directory_loader(assets);
     script::HostOptions so;
     so.assets_root = assets;
     so.input_map = proj->settings().input;
@@ -790,6 +803,25 @@ int cmd_check(const std::vector<std::string>& a) {
                             c.material_asset.to_string().c_str());
                 ++problems;
             }
+        });
+        // Animator controllers must load; clips they name should exist in the Animator's model.
+        scene.world().each<animation::AnimatorComponent>([&](scene::Entity e, animation::AnimatorComponent& c) {
+            if (c.controller.empty()) return;
+            auto text = anim_loader(c.controller);
+            auto ctrl = text ? animation::Controller::parse(*text, c.controller)
+                             : Result<std::shared_ptr<const animation::Controller>>(std::move(text).error());
+            if (!ctrl) {
+                std::printf("error: %s: entity '%s': controller %s: %s\n", rel.c_str(), entity_name(scene, e).c_str(),
+                            c.controller.c_str(), ctrl.error().message.c_str());
+                ++problems;
+                return;
+            }
+            const auto set = c.model.is_nil() ? nullptr : anim_sets(c.model);
+            if (!set) return;
+            for (const std::string& clip : (*ctrl)->clip_names())
+                if (set->find_clip(clip) < 0)
+                    std::printf("warning: %s: entity '%s': controller %s uses clip '%s' that its model lacks\n",
+                                rel.c_str(), entity_name(scene, e).c_str(), c.controller.c_str(), clip.c_str());
         });
         scene.world().each<animation::SpriteAnimatorComponent>([&](scene::Entity e, animation::SpriteAnimatorComponent& c) {
             if (c.sheet.is_nil()) return;

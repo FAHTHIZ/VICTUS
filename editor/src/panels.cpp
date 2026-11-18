@@ -119,6 +119,7 @@ bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db
         const assets::AssetKind want = f.hint == "audio"           ? assets::AssetKind::Audio
                                        : f.hint == "sequence"      ? assets::AssetKind::Sequence
                                        : f.hint == "behavior_tree" ? assets::AssetKind::BehaviorTree
+                                       : f.hint == "anim_controller" ? assets::AssetKind::AnimController
                                                                    : assets::AssetKind::Unknown;
         if (want != assets::AssetKind::Unknown && ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
@@ -226,6 +227,7 @@ const char* kind_icon(assets::AssetKind k) {
     case assets::AssetKind::BehaviorTree: return "[bt]";
     case assets::AssetKind::Sequence: return "[seq]";
     case assets::AssetKind::StringTable: return "[str]";
+    case assets::AssetKind::AnimController: return "[anim]";
     default: return "[file]";
     }
 }

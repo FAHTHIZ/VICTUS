@@ -224,6 +224,14 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         else if (auto q = sequencer::Sequence::parse(*text, r.path); !q) errors.push_back(std::format("{}: {}", r.path, q.error().message));
     }
 
+    // Animation controllers: every one must parse.
+    for (const assets::AssetRecord& r : (*db)->records()) {
+        if (r.kind != assets::AssetKind::AnimController) continue;
+        auto text = fs::read_text((*db)->source_path(r));
+        if (!text) errors.push_back(std::format("{}: {}", r.path, text.error().message));
+        else if (auto c = animation::Controller::parse(*text, r.path); !c) errors.push_back(std::format("{}: {}", r.path, c.error().message));
+    }
+
     // Scenes: every scene must load; references to scripts and audio clips must resolve.
     std::vector<std::string> scenes = proj->scenes();
     if (std::find(scenes.begin(), scenes.end(), proj->settings().startup_scene) == scenes.end())
@@ -255,6 +263,13 @@ Result<ExportReport> export_game(const ExportOptions& o) {
             if (!m || m->kind != assets::AssetKind::Material)
                 errors.push_back(std::format("{}: entity '{}' uses missing material {}", rel, entity_label(scene, e),
                                              c.material_asset.to_string()));
+        });
+        scene.world().each<animation::AnimatorComponent>([&](scene::Entity e, animation::AnimatorComponent& c) {
+            if (c.controller.empty()) return;
+            const assets::AssetRecord* r = (*db)->find_path(c.controller);
+            if (!r || r->kind != assets::AssetKind::AnimController)
+                errors.push_back(std::format("{}: entity '{}' uses missing animation controller '{}'", rel,
+                                             entity_label(scene, e), c.controller));
         });
         scene.world().each<animation::SpriteAnimatorComponent>([&](scene::Entity e, animation::SpriteAnimatorComponent& c) {
             if (c.sheet.is_nil()) return;

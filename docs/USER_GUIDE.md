@@ -122,6 +122,10 @@ Prefabs: select an entity in the editor and choose Create Prefab (hierarchy cont
 
 Scene transitions: `scene.load("scenes/level2.vscene", { lives = 3 })` switches to another project scene at the end of the update (it returns `nil, error` for a missing or broken scene), `scene.reload()` restarts the current one, `scene.current()` returns its path and `scene.params()` the table passed to the load. Scripts restart in the new scene; module-level Luau variables carry over. `victus check` and `victus export` report `scene.load` calls that name scenes which do not exist.
 
+### Animation controllers
+
+Animation controllers: a `.vanim` file is a state machine for a character's clips — states play a clip or blend several by a parameter (`blend1d`: Idle at 0, Walk at 1.6, Run at 5; `blend2d` for strafing), and transitions switch states when conditions on parameters hold (`grounded` is true, `speed > 0.1`, the `jump` trigger was set), with a cross-fade. Set the Animator's `controller` field to the file (for example `anim/player.vanim`), then drive it from code by setting parameters; the controller picks and blends the clips. `victus check` reports mistakes with the element that has them, controllers hot reload while the game runs, and a broken controller falls back to the Animator's plain clip. The full format is in [Animation controllers](ANIMATION.md).
+
 ### Sprite animation
 
 Sprite animation: a `.vsheet` sprite sheet slices one texture into a grid (`columns`, `rows`) and names clips — `{"frames": [0, 1, 2, 1], "fps": 6}` or `{"from": 4, "to": 7, "fps": 12, "loop": false}`. Right-click a texture in the editor's Assets panel and choose "Create Sprite Sheet...", then double-click the sheet to animate the selected entity (a `SpriteAnimator` plays the clip on its Sprite; frames preview while editing). Scripts call `entity:play_sprite("run")`, `entity:sprite_animation()` (clip, frame, finished, ...) and `entity:sprite_clips()`. A Sprite's `uv` field draws one region of a texture by hand.

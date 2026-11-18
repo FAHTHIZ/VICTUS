@@ -239,6 +239,7 @@ std::size_t Editor::check_asset_changes() {
         if (play_sequencer_) play_sequencer_->reload(q);
         sequence_changed_on_disk(q);
     }
+    for (const auto& c : changes.anim_controllers) notify("Reloaded animation controller " + c);
     for (const auto& m : changes.materials) {
         if (const auto it = written_materials_.find(m); it != written_materials_.end() && db_)
             if (const auto* rec = db_->find_path(m))
@@ -1119,6 +1120,7 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
     if (play_physics_) physics::add_physics_systems(sim_, *play_physics_);
     play_animation_ = std::make_unique<animation::AnimationSystem>(
         animation::AnimationSettings{.provider = db_ ? assets::animation_provider(*db_) : animation::SetProvider{},
+                                     .controllers = db_ ? animation::directory_loader(db_->assets_dir()) : animation::ControllerLoader{},
                                      .sheets = db_ ? assets::sprite_sheet_provider(*db_) : animation::SheetProvider{},
                                      .jobs = &workers()});
     animation::add_animation_systems(sim_, *play_animation_);

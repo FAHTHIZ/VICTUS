@@ -7,6 +7,7 @@
 // so servers and `victus simulate` animate exactly like the player. Animators write local
 // Transforms of the bound entities; GPU skinning (runtime) then reads their world transforms.
 #pragma once
+#include "victus/animation/controller.hpp"
 #include "victus/animation/sprite.hpp"
 #include "victus/core/math.hpp"
 #include "victus/core/result.hpp"
@@ -15,8 +16,10 @@
 #include "victus/scene/scene.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -89,9 +92,12 @@ void sample(const Clip& clip, float time, std::span<NodePose> pose) noexcept;
 // ---- components ------------------------------------------------------------------------------
 
 // Plays clips of a model's AnimationSet on this entity's descendants (bound by node name).
+// With a `controller` (.vanim state machine, controller.hpp) the controller picks and blends the
+// clips; `clip` then mirrors the current state's name and writing it enters that state.
 struct AnimatorComponent {
     Uuid model;              // model asset providing the clips and rest pose
     std::string clip;        // clip to play; changing it cross-fades from the current clip
+    std::string controller;  // optional .vanim asset path (relative to the assets folder)
     bool playing{true};
     bool loop{true};
     float speed{1.0f};       // playback rate (negative plays backwards)
@@ -117,7 +123,10 @@ using SetProvider = std::function<std::shared_ptr<const AnimationSet>(const Uuid
 
 struct AnimatorStatus {
     bool valid{false};       // entity has an Animator whose model resolved
-    std::string clip;
+    std::string clip;        // clip name, or the current state in controller mode
+    bool controlled{false};  // a controller drives the Animator
+    std::string state;       // current controller state ("" without a controller)
+    float normalized_time{0}; // controller mode: cycles of the current state (1 = one cycle)
     float time{0}, duration{0};
     bool playing{false}, looping{false}, finished{false};
     float blend{1};          // cross-fade progress (1 = settled on the current clip)
@@ -126,10 +135,40 @@ struct AnimatorStatus {
 
 struct AnimationStats {
     std::uint32_t animators{0}, channels_sampled{0}, nodes_written{0}, missing_models{0};
+    std::uint32_t controlled{0}, transitions{0}, controller_errors{0};
+};
+
+// Reads a .vanim asset's text by its path (relative to the assets folder).
+using ControllerLoader = std::function<Result<std::string>(std::string_view path)>;
+// Loads controllers from `assets_root` (paths are sanitized; no escaping the folder).
+[[nodiscard]] ControllerLoader directory_loader(std::filesystem::path assets_root);
+
+// Live view of an Animator's controller (inspector, preview panel, `victus` tooling).
+struct ControllerStatus {
+    bool valid{false};          // the Animator has a controller that loaded
+    std::string controller;     // asset path
+    std::string error;          // load/parse error when !valid and a path is set
+    std::string state, previous_state; // previous_state is set while a cross-fade runs
+    float normalized_time{0};
+    float blend{1};             // cross-fade progress (1 = settled)
+    struct Param {
+        std::string name;
+        ParamType type{ParamType::Float};
+        float value{0};
+    };
+    std::vector<Param> parameters;
+    struct Weight {
+        std::string clip;
+        float weight{0};
+        bool missing{false}; // the model has no clip of this name (rest pose is used)
+    };
+    std::vector<Weight> weights; // blend weights of the current state's clips
+    std::vector<std::string> states;
 };
 
 struct AnimationSettings {
     SetProvider provider;
+    ControllerLoader controllers; // resolves AnimatorComponent::controller paths
     SheetProvider sheets; // sprite sheets for SpriteAnimator (assets::sprite_sheet_provider)
     jobs::JobSystem* jobs{nullptr}; // evaluates animators in parallel when set
     std::uint32_t parallel_threshold{32};
@@ -153,7 +192,24 @@ public:
     // Starts `clip` on the entity's Animator. fade < 0 uses the component's crossfade.
     // Returns false when the entity has no Animator or the clip does not exist.
     bool play(scene::Scene& scene, scene::Entity e, std::string_view clip, float fade = -1.0f, bool restart = true);
+    // In controller mode `clip` names a state (entered with the fade; restart re-enters it).
     [[nodiscard]] AnimatorStatus status(scene::Scene& scene, scene::Entity e);
+
+    // ---- controllers ----
+    // Registers a controller under `path` directly (tests, editor preview); precedes the loader.
+    void add_controller(std::string path, std::shared_ptr<const Controller> controller);
+    // Forgets loaded controllers (after a .vanim changed). Animators using a changed controller
+    // restart in its default state, keeping parameter values whose names still exist.
+    void reload_controllers();
+    // The controller at `path` (cached), or null with `error` set.
+    [[nodiscard]] std::shared_ptr<const Controller> controller(std::string_view path, std::string* error = nullptr);
+    // Sets a parameter (bool: value != 0, int: rounded, trigger: value != 0 sets it). False when
+    // the entity has no controller or no such parameter.
+    bool set_parameter(scene::Scene& scene, scene::Entity e, std::string_view name, float value);
+    bool set_trigger(scene::Scene& scene, scene::Entity e, std::string_view name);
+    bool reset_trigger(scene::Scene& scene, scene::Entity e, std::string_view name);
+    [[nodiscard]] std::optional<float> parameter(scene::Scene& scene, scene::Entity e, std::string_view name);
+    [[nodiscard]] ControllerStatus controller_status(scene::Scene& scene, scene::Entity e);
     [[nodiscard]] std::vector<std::string> clips(scene::Scene& scene, scene::Entity e);
     [[nodiscard]] std::shared_ptr<const AnimationSet> set(const Uuid& model);
     [[nodiscard]] const AnimationStats& stats() const noexcept { return stats_; }

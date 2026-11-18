@@ -16,6 +16,7 @@
 // A failing input is written to <temp>/victus_fuzz_failures/<target>-<iteration>.bin.
 #include "victus/gameui/localization.hpp"
 #include "victus/ai/ai.hpp"
+#include "victus/animation/controller.hpp"
 #include "victus/animation/sprite.hpp"
 #include "victus/assets/cooked.hpp"
 #include "victus/assets/importers.hpp"
@@ -537,6 +538,37 @@ TEST_CASE("fuzz: graphs, behaviour trees and sequences") {
         auto s = sequencer::Sequence::parse(as_text(b), "fuzz");
         ok = s.ok();
         return verdict(s);
+    });
+}
+
+TEST_CASE("fuzz: animation controllers") {
+    constexpr const char* kController = R"({"version": 1,
+      "parameters": [{"name": "speed"}, {"name": "x"}, {"name": "jump", "type": "trigger"}, {"name": "g", "type": "bool"}],
+      "default_state": "Move",
+      "states": [
+        {"name": "Move", "blend1d": {"parameter": "speed", "points": [{"clip": "Idle", "at": 0}, {"clip": "Run", "at": 4, "speed": 1.2}]}},
+        {"name": "Strafe", "blend2d": {"x": "x", "y": "speed", "points": [{"clip": "Idle", "at": [0, 0]}, {"clip": "Left", "at": [-1, 0]}, {"clip": "Run", "at": [0, 1]}]},
+         "speed_parameter": "speed"},
+        {"name": "Jump", "clip": "Jump", "loop": false}],
+      "transitions": [
+        {"from": "*", "to": "Jump", "duration": 0.1, "conditions": [{"parameter": "jump"}]},
+        {"from": "Jump", "to": "Move", "exit_time": 0.9, "conditions": [{"parameter": "g", "op": "true"}]},
+        {"from": "Move", "to": "Strafe", "conditions": [{"parameter": "x", "op": "!=", "value": 0}]}]})";
+    const std::vector<json::Value> docs = {parse_or_fail(kController)};
+    fuzz_json("anim_controller", docs, [](const json::Value& doc, bool& ok) {
+        auto c = animation::Controller::from_json(doc, "fuzz");
+        ok = c.ok();
+        if (ok) { // accepted documents must round-trip
+            auto again = animation::Controller::from_json((*c)->to_json(), "fuzz");
+            REQUIRE(again.ok());
+            CHECK((*again)->states == (*c)->states);
+        }
+        return verdict(c);
+    });
+    fuzz_bytes("anim_controller", {to_bytes(kController)}, [](const Bytes& b, bool& ok) {
+        auto c = animation::Controller::parse(as_text(b), "fuzz");
+        ok = c.ok();
+        return verdict(c);
     });
 }
 

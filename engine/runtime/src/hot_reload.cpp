@@ -33,6 +33,7 @@ std::vector<std::string> HotReloadReport::lines() const {
     for (const auto& m : behavior_trees) out.push_back("reloaded behaviour tree " + m);
     for (const auto& m : string_tables) out.push_back("reloaded string table " + m);
     for (const auto& m : sequences) out.push_back("reloaded sequence " + m);
+    for (const auto& m : anim_controllers) out.push_back("reloaded animation controller " + m);
     for (const auto& r : restart_needed) out.push_back(r + " changed; restart to see it");
     return out;
 }
@@ -126,6 +127,8 @@ HotReloadReport AssetHotReloader::check() {
             report.string_tables.push_back(path);
         } else if (kind == assets::AssetKind::Sequence) {
             report.sequences.push_back(path);
+        } else if (kind == assets::AssetKind::AnimController) {
+            report.anim_controllers.push_back(path);
         } else if (kind == assets::AssetKind::Texture || kind == assets::AssetKind::Model) {
             continue; // handled above (or a dependency of a model that was re-imported)
         } else if (ext == ".bin") {
@@ -144,6 +147,7 @@ void AssetHotReloader::apply(const HotReloadReport& report, GpuAssetCache* cache
     if (terrains && !report.terrains.empty()) terrains->clear_cache();
     if (cache && !report.shaders.empty()) cache->evict_shaders();
     if (animations && !report.sprite_sheets.empty()) animations->clear_sheets();
+    if (animations && !report.anim_controllers.empty()) animations->reload_controllers();
     if (cache && !report.materials.empty()) cache->evict_materials();
     for (const auto& uuid : report.reimported) {
         if (cache) cache->evict(uuid);
