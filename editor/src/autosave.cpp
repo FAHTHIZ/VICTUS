@@ -38,6 +38,20 @@ Status Editor::autosave_now() {
     return {};
 }
 
+std::string Editor::save_for_fatal_error(std::string_view reason) {
+    VICTUS_LOG_ERROR("editor", "{}", reason);
+    std::string summary = "no unsaved edits";
+    if (project_ && scene_ && dirty()) {
+        if (auto st = autosave_now(); st.ok())
+            summary = std::format("unsaved edits were autosaved to {}; reopen the scene to recover them",
+                                  autosave_path(scene_path_).string());
+        else
+            summary = "autosave failed: " + st.error().message;
+    }
+    VICTUS_LOG_ERROR("editor", "{}", summary);
+    return summary;
+}
+
 void Editor::remove_autosave(std::string_view scene_path) {
     if (!project_) return;
     std::error_code ec;

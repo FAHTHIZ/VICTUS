@@ -1891,6 +1891,34 @@ TEST_CASE("editor: command palette finds and runs actions, scenes, assets and en
     CHECK(h.ed->command_palette_open());
 }
 
+TEST_CASE("editor: a fatal error (GPU device lost) autosaves unsaved edits for recovery") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Fatal", "Fatal", "3d").ok());
+    h.ed->set_autosave_interval(0); // periodic autosave off: only the fatal path writes
+    h.frames(1);
+    const std::string scene = h.ed->scene_path();
+    const auto copy = h.ed->autosave_path(scene);
+    CHECK(h.ed->save_for_fatal_error("GPU device lost: test") == "no unsaved edits");
+    CHECK_FALSE(std::filesystem::exists(copy));
+
+    const std::size_t base = h.ed->edit_scene().world().alive_count();
+    (void)h.ed->create_entity(editor::Primitive::Cube);
+    REQUIRE(h.ed->dirty());
+    const std::string summary = h.ed->save_for_fatal_error("GPU device lost: test");
+    CHECK(summary.find("autosaved") != std::string::npos);
+    REQUIRE(std::filesystem::exists(copy));
+
+    // The next session recovers the edit.
+    h.ed->close_project();
+    std::filesystem::last_write_time(copy, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(5));
+    REQUIRE(h.ed->open_project(h.dir / "Fatal").ok());
+    REQUIRE(h.ed->recovery_available());
+    REQUIRE(h.ed->recover_autosave().ok());
+    CHECK(h.ed->edit_scene().world().alive_count() == base + 1);
+}
+
 TEST_CASE("editor: unsaved edits are autosaved and recovered after a crash") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Harness h;

@@ -14,7 +14,7 @@ Evidence for every item is in [STATUS.md](STATUS.md); platform coverage is in [P
 |---|---|---|---|
 | Core (jobs, memory, JSON, logging, fs, profiler zones) | Usable | Tested under ASan/UBSan/TSan; benchmarks | No allocation call stacks; one profiler per process |
 | Platform (SDL3 windows, input, lifecycle) | Usable on desktop Linux | Keyboard, mouse, gamepad, touch, clipboard, suspend/resume events | Windows/macOS windows never used interactively; Android not run on a device |
-| RHI on SDL_GPU | Usable on Vulkan, Experimental on Metal | Resources, pipelines, readback, compute, indirect draws | D3D12 unusable (no DXIL); no device-loss recovery; no GPU timestamps |
+| RHI on SDL_GPU | Usable on Vulkan, Experimental on Metal | Resources, pipelines, readback, compute, indirect draws | D3D12 unusable (no DXIL); device loss is detected and ends the session cleanly, but the device is not recreated; no GPU timestamps |
 | 3D rendering | Usable (desktop, software rasteriser) | Forward+ clustered PBR, CSM + local light shadows, SSAO, IBL, sky, reflection probes, irradiance volumes, bloom, TAA/upscaling, motion vectors, occlusion culling, LODs, decals, fog, quality tiers | Performance never measured on a real GPU; no area lights, light cookies, volumetrics, dynamic GI beyond probe volumes, water |
 | 2D rendering | Usable | Sprite batching, sprite sheets, tilemaps with autotiling, pixel-art sampling, 2D lights | No 2D shadows/normal maps; tiles not camera-culled; grid sprite sheets only |
 | Materials and shaders | Usable | `.vmat` with instances, `.vshader` surface shaders, material graphs | Fragment stage only; four parameters, no custom textures/uniforms |
@@ -46,6 +46,6 @@ Evidence for every item is in [STATUS.md](STATUS.md); platform coverage is in [P
 
 - **Hardware:** every rendering result was produced on Mesa lavapipe (software Vulkan) or CI's virtualised Apple GPU. Frame-time numbers in STATUS.md are for that setup and do not predict real GPU performance.
 - **Determinism:** capture/replay is verified on one compiler and machine; cross-platform floating-point determinism is not.
-- **Device loss:** the engine does not recover from a GPU reset (SDL_GPU 3.4 has no device-lost signal).
+- **Device loss:** SDL_GPU 3.4 has no device-lost signal. VICTUS infers loss from repeated failed GPU operations and exits cleanly (exit code 3; the editor autosaves first), but cannot recover and keep running. Only injected failures have been tested, not a real driver reset or GPU removal.
 - **Static analysis:** clang-tidy runs on engine, editor, tools and apps sources (see CONTRIBUTING.md); test sources are not linted.
 - **Third-party advisories:** cgltf 1.15 has four open advisories with no upstream fix. VICTUS validates accessors and unpacks sparse data itself before handing glTF data to cgltf (see THIRD_PARTY_AND_LICENSES.md); untrusted glTF files should still be treated with care.

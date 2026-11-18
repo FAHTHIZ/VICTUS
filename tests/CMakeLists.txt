@@ -94,6 +94,7 @@ victus_add_test(victus_gpu_tests
     SOURCES
         render/gpu_fixture.cpp
         render/gpu_render_tests.cpp
+        render/gpu_device_loss_tests.cpp
         render/gpu_quality_tests.cpp
         render/gpu_instancing_tests.cpp
         render/gpu_skinning_tests.cpp
@@ -161,6 +162,18 @@ add_test(NAME victus_cli_determinism
         -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_determinism
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/determinism.cmake)
 set_tests_properties(victus_cli_determinism PROPERTIES LABELS "cli" TIMEOUT 300)
+
+# Device loss: the player and editor exit cleanly with a clear message when GPU operations keep
+# failing (injected with VICTUS_GPU_FAIL); the editor autosaves unsaved edits first.
+add_test(NAME victus_device_loss
+    COMMAND ${CMAKE_COMMAND}
+        -DVICTUS_CLI=$<TARGET_FILE:victus_cli>
+        -DVICTUS_PLAYER=$<TARGET_FILE:victus_player_app>
+        -DVICTUS_EDITOR=$<TARGET_FILE:victus_editor>
+        -DWORK=${CMAKE_BINARY_DIR}/test_output/device_loss
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/device_loss.cmake)
+set_tests_properties(victus_device_loss PROPERTIES LABELS "cli;gpu" SKIP_REGULAR_EXPRESSION "VICTUS_DEVICE_LOSS_SKIPPED"
+    TIMEOUT 300)
 
 # Performance regression gate: deterministic per-frame counters of every template and sample
 # against tests/perf/budgets.json (skipped without a GPU; see docs/PERFORMANCE_STRATEGY.md).

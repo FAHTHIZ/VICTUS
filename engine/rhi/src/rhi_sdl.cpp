@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <format>
 
@@ -359,6 +360,21 @@ Result<std::unique_ptr<Device>> Device::create(const DeviceDesc& desc) {
     const char* drv = SDL_GetStringProperty(info, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, nullptr);
     if (name) caps.driver_name = std::format("{} ({}{}{})", driver, name, drv ? ", " : "", drv ? drv : "");
     VICTUS_LOG_INFO("rhi", "GPU device: {} msaa<={} bc={} astc={}", caps.driver_name, caps.max_msaa, caps.bc_compression, caps.astc_compression);
+    if (const char* fail = SDL_getenv("VICTUS_GPU_FAIL"); fail && *fail) {
+        // Fault injection for device-loss tests: <commandbuffer|swapchain|submit>[@frames].
+        const std::string_view spec(fail);
+        const auto at = spec.find('@');
+        const std::string_view kind = spec.substr(0, at);
+        const GpuFailure k = kind == "commandbuffer" ? GpuFailure::CommandBuffer
+                             : kind == "swapchain"   ? GpuFailure::Swapchain
+                             : kind == "submit"      ? GpuFailure::Submit
+                                                     : GpuFailure::None;
+        std::uint64_t after = 0;
+        if (at != std::string_view::npos) after = std::strtoull(std::string(spec.substr(at + 1)).c_str(), nullptr, 10);
+        if (k == GpuFailure::None) VICTUS_LOG_WARN("rhi", "VICTUS_GPU_FAIL='{}' ignored (commandbuffer|swapchain|submit[@frames])", spec);
+        else VICTUS_LOG_WARN("rhi", "fault injection: {} fails from frame {}", to_string(k), after);
+        device->inject_failure(k, after);
+    }
     return device;
 }
 
@@ -669,9 +685,54 @@ void* Device::native_pipeline(PipelineHandle h) const {
     return e ? e->pipe : nullptr;
 }
 
+const char* to_string(GpuFailure f) noexcept {
+    switch (f) {
+    case GpuFailure::None: return "none";
+    case GpuFailure::CommandBuffer: return "command buffer acquisition";
+    case GpuFailure::Swapchain: return "swapchain acquisition";
+    case GpuFailure::Submit: return "command submission";
+    }
+    return "unknown";
+}
+
+std::string Device::lost_reason() const {
+    if (!health_.lost) return {};
+    return std::format("GPU device lost: {} failed {} times in a row ({})", to_string(health_.last_failure),
+                       health_.consecutive[static_cast<int>(health_.last_failure)],
+                       health_.last_error.empty() ? "no driver message" : health_.last_error);
+}
+
+void Device::inject_failure(GpuFailure kind, std::uint64_t after_frames) noexcept {
+    inject_kind_ = kind;
+    inject_after_ = after_frames;
+}
+
+bool Device::injected(GpuFailure kind) const noexcept {
+    return inject_kind_ != GpuFailure::None && inject_kind_ == kind && stats_.frames_submitted >= inject_after_;
+}
+
+void Device::record_failure(GpuFailure kind, const char* error) {
+    auto& n = health_.consecutive[static_cast<int>(kind)];
+    ++n;
+    ++health_.failures;
+    health_.last_failure = kind;
+    health_.last_error = error ? error : "";
+    // Log the first failure of a run and the moment it becomes a lost device, not every frame.
+    if (n == 1) VICTUS_LOG_ERROR("rhi", "{} failed: {}", to_string(kind), health_.last_error);
+    if (n >= kDeviceLostAfterFailures && !health_.lost) {
+        health_.lost = true;
+        VICTUS_LOG_ERROR("rhi", "{}", lost_reason());
+    }
+}
+
+void Device::record_success(GpuFailure kind) noexcept { health_.consecutive[static_cast<int>(kind)] = 0; }
+
 CommandBuffer Device::begin_commands() {
-    SDL_GPUCommandBuffer* cb = SDL_AcquireGPUCommandBuffer(static_cast<SDL_GPUDevice*>(device_));
-    if (!cb) VICTUS_LOG_ERROR("rhi", "acquire command buffer failed: {}", SDL_GetError());
+    SDL_GPUCommandBuffer* cb = injected(GpuFailure::CommandBuffer)
+                                   ? nullptr
+                                   : SDL_AcquireGPUCommandBuffer(static_cast<SDL_GPUDevice*>(device_));
+    if (!cb) record_failure(GpuFailure::CommandBuffer, injected(GpuFailure::CommandBuffer) ? "injected failure" : SDL_GetError());
+    else record_success(GpuFailure::CommandBuffer);
     return CommandBuffer(this, cb);
 }
 
@@ -823,8 +884,17 @@ TextureHandle CommandBuffer::acquire_swapchain(platform::Window& window, std::ui
     SDL_GPUTexture* tex = nullptr;
     width = height = 0;
     VICTUS_PROFILE_SCOPE("gpu.acquire_swapchain"); // waits while the GPU is behind (GPU-bound frames)
-        if (!SDL_WaitAndAcquireGPUSwapchainTexture(static_cast<SDL_GPUCommandBuffer*>(cmd_), static_cast<SDL_Window*>(window.native()), &tex, &width, &height) || !tex)
+    if (!cmd_) return {}; // command buffer acquisition already failed (and was recorded)
+    if (device_->injected(GpuFailure::Swapchain)) {
+        device_->record_failure(GpuFailure::Swapchain, "injected failure");
         return {};
+    }
+    if (!SDL_WaitAndAcquireGPUSwapchainTexture(static_cast<SDL_GPUCommandBuffer*>(cmd_), static_cast<SDL_Window*>(window.native()), &tex, &width, &height)) {
+        device_->record_failure(GpuFailure::Swapchain, SDL_GetError());
+        return {};
+    }
+    if (!tex) return {}; // minimized or occluded: not a failure
+    device_->record_success(GpuFailure::Swapchain);
     return device_->wrap_transient_texture(tex, width, height, device_->swapchain_format(window));
 }
 
@@ -904,7 +974,16 @@ void CommandBuffer::blit(TextureHandle src, TextureHandle dst, Filter filter) {
 
 void CommandBuffer::submit() {
     if (!cmd_) return;
-    SDL_SubmitGPUCommandBuffer(static_cast<SDL_GPUCommandBuffer*>(cmd_));
+    if (device_->injected(GpuFailure::Submit)) {
+        // The work still runs (a cancelled buffer cannot hold a swapchain image); only the
+        // outcome is reported as a driver failure.
+        (void)SDL_SubmitGPUCommandBuffer(static_cast<SDL_GPUCommandBuffer*>(cmd_));
+        device_->record_failure(GpuFailure::Submit, "injected failure");
+    } else if (!SDL_SubmitGPUCommandBuffer(static_cast<SDL_GPUCommandBuffer*>(cmd_))) {
+        device_->record_failure(GpuFailure::Submit, SDL_GetError());
+    } else {
+        device_->record_success(GpuFailure::Submit);
+    }
     cmd_ = nullptr;
     device_->stats_.frames_submitted++;
     auto& impl = *device_->impl_;
@@ -922,8 +1001,12 @@ void CommandBuffer::submit_and_wait() {
     SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(static_cast<SDL_GPUCommandBuffer*>(cmd_));
     cmd_ = nullptr;
     if (fence) {
-        SDL_WaitForGPUFences(dev, true, &fence, 1);
+        if (!SDL_WaitForGPUFences(dev, true, &fence, 1)) device_->record_failure(GpuFailure::Submit, SDL_GetError());
         SDL_ReleaseGPUFence(dev, fence);
+        if (device_->injected(GpuFailure::Submit)) device_->record_failure(GpuFailure::Submit, "injected failure");
+        else device_->record_success(GpuFailure::Submit);
+    } else {
+        device_->record_failure(GpuFailure::Submit, SDL_GetError());
     }
     device_->stats_.frames_submitted++;
     auto& impl = *device_->impl_;

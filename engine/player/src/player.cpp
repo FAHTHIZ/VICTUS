@@ -403,6 +403,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         const rhi::TextureHandle swap = cmd.acquire_swapchain(**window, sw, sh);
         if (!swap) {
             cmd.submit();
+            if (dev.lost()) {
+                result = make_error(ErrorCode::DeviceError, dev.lost_reason());
+                break;
+            }
             continue;
         }
         if (!frame || fw != sw || fh != sh) {
@@ -426,6 +430,11 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         if (!rendered) {
             result = std::move(rendered).error();
             cmd.submit();
+            break;
+        }
+        if (dev.lost()) { // submissions kept failing while the swapchain still worked
+            cmd.submit();
+            result = make_error(ErrorCode::DeviceError, dev.lost_reason());
             break;
         }
         last_view = *rendered;

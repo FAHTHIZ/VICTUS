@@ -173,6 +173,10 @@ struct PlatformDesc {
     std::string app_name{"VICTUS"};
 };
 
+// Blocking native error message box for fatal errors (e.g. GPU device lost) in windowed apps.
+// Does nothing under the offscreen/dummy video drivers or when VICTUS_NO_DIALOGS is set (CI).
+void show_error_dialog(const std::string& title, const std::string& message);
+
 // Owns platform subsystem lifetime. Exactly one instance per process.
 class Platform {
 public:

@@ -475,6 +475,10 @@ public:
     // Replaces the open scene with the autosaved copy (left unsaved so the user can review it).
     [[nodiscard]] Status recover_autosave();
     void discard_autosave();
+    // Fatal error (e.g. the GPU device was lost): writes unsaved scene edits to the autosave slot
+    // so the next session offers to recover them, logs `reason`, and returns a one-line summary
+    // of what was kept for the error message.
+    [[nodiscard]] std::string save_for_fatal_error(std::string_view reason);
 
     // ---- command palette ----
     [[nodiscard]] std::vector<EditorCommand> commands();
