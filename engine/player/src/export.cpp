@@ -265,6 +265,12 @@ Result<ExportReport> export_game(const ExportOptions& o) {
                                              c.material_asset.to_string()));
         });
         scene.world().each<animation::AnimatorComponent>([&](scene::Entity e, animation::AnimatorComponent& c) {
+            if (!c.clip_source.is_nil()) {
+                const assets::AssetRecord* m = (*db)->find(c.clip_source);
+                if (!m || m->kind != assets::AssetKind::Model)
+                    errors.push_back(std::format("{}: entity '{}' retargets clips from missing model {}", rel,
+                                                 entity_label(scene, e), c.clip_source.to_string()));
+            }
             if (c.controller.empty()) return;
             const assets::AssetRecord* r = (*db)->find_path(c.controller);
             if (!r || r->kind != assets::AssetKind::AnimController)

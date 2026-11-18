@@ -4,6 +4,7 @@
 #include "victus/player/validate.hpp"
 #include "victus/ai/ai.hpp"
 #include "victus/animation/animation.hpp"
+#include "victus/animation/retarget.hpp"
 #include "victus/animation/sprite.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/platform/platform.hpp"
@@ -264,6 +265,21 @@ Result<ValidationReport> validate_project(const project::Project& proj) {
         });
         // Animator controllers must load; clips they name should exist in the Animator's model.
         scene.world().each<animation::AnimatorComponent>([&](scene::Entity e, animation::AnimatorComponent& c) {
+            std::shared_ptr<const animation::AnimationSet> retargeted;
+            if (!c.clip_source.is_nil() && c.clip_source != c.model) {
+                const assets::AssetRecord* m = (*db)->find(c.clip_source);
+                if (!m || m->kind != assets::AssetKind::Model) {
+                    entity(Severity::Error, e, who(e) + " retargets clips from missing model " + c.clip_source.to_string(),
+                           "Assign an existing model to the Animator's clip_source, or clear it.", c.clip_source);
+                } else if (const auto src = anim_sets(c.clip_source), tgt = c.model.is_nil() ? nullptr : anim_sets(c.model);
+                           src && tgt) {
+                    retargeted = animation::retarget_set(*src, *tgt);
+                    if (!retargeted)
+                        entity(Severity::Warning, e,
+                               who(e) + ": no bone of clip_source " + c.clip_source.to_string() + " matches the model's bones",
+                               "Use a clip source whose skeleton has the same bone names.", c.clip_source);
+                }
+            }
             if (c.controller.empty()) return;
             auto text = anim_loader(c.controller);
             auto ctrl = text ? animation::Controller::parse(*text, c.controller)
@@ -273,7 +289,7 @@ Result<ValidationReport> validate_project(const project::Project& proj) {
                        "Fix the controller or assign an existing one in the Animator.");
                 return;
             }
-            const auto set = c.model.is_nil() ? nullptr : anim_sets(c.model);
+            const auto set = retargeted ? retargeted : c.model.is_nil() ? nullptr : anim_sets(c.model);
             if (!set) return;
             for (const std::string& clip : (*ctrl)->clip_names())
                 if (set->find_clip(clip) < 0)

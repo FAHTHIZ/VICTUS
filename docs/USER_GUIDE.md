@@ -152,7 +152,7 @@ Animation controllers: a `.vanim` file is a state machine for a character's clip
 
 Layers: add `"layers"` to a `.vanim` to play a second state machine on part of the body — an upper-body "Shoot" layer masked to `["Spine"]` while the legs keep running, or an `additive` breathing layer on top of everything. Change a layer's strength with its `weight_parameter` or `entity:set_anim_layer_weight("UpperBody", 0.5)`. See [Layers](ANIMATION.md#layers).
 
-Inverse kinematics: add `IKConstraint` to a hand, foot or head to bend its bones toward a target after the animation plays — `two_bone` for arms and legs (with an optional pole entity for the elbow or knee), `chain` for tails and spines, `look_at` for heads and turrets. Point it at an entity or call `entity:set_ik_target(position)` from a script (`nil` turns it off; `entity:ik_state()` reports whether it reached). See [Inverse kinematics](ANIMATION.md#inverse-kinematics).
+Inverse kinematics: add `IKConstraint` to a hand, foot or head to bend its bones toward a target after the animation plays — `two_bone` for arms and legs (with an optional pole entity for the elbow or knee), `chain` for tails and spines, `look_at` for heads and turrets. Point it at an entity or call `entity:set_ik_target(position)` from a script (`nil` turns it off; `entity:ik_state()` reports whether it reached). See [Inverse kinematics](ANIMATION.md#inverse-kinematics). Retargeting: set an Animator's `clip_source` to another model (for example a Mixamo clip pack) to play its clips on this character; bones are matched by name, ignoring prefixes like `mixamorig:` and case. See [Retargeting](ANIMATION.md#retargeting).
 
 ### Sprite animation
 
