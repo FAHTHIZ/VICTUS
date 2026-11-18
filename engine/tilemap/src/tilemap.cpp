@@ -8,7 +8,9 @@
 
 #include <algorithm>
 #include <charconv>
+#include <bit>
 #include <tuple>
+#include <unordered_set>
 #include <cmath>
 #include <format>
 #include <map>
@@ -260,6 +262,9 @@ void register_components() {
                 .field(&TilemapComponent::tint, "tint")
                 .field(&TilemapComponent::layer, "layer", {.min = -1000, .max = 1000})
                 .field(&TilemapComponent::collision, "collision", {.tooltip = "Solid and one-way tiles collide (2D physics)"})
+                .field(&TilemapComponent::edge_collision, "edge_collision",
+                       {.tooltip = "Merge solid tiles into one-sided edge outlines (smooth sliding across tile seams); "
+                                   "off = filled boxes"})
                 .field(&TilemapComponent::friction, "friction", {.min = 0, .max = 10, .speed = 0.01f})
                 .field(&TilemapComponent::collision_layer, "collision_layer", {.min = 0, .max = 15})
                 .field(&TilemapComponent::collision_mask, "collision_mask", {.hint = "bitmask16"});
@@ -397,12 +402,12 @@ TileBounds bounds(const TilemapComponent& map) noexcept {
     return b;
 }
 
-std::vector<TileBox> collision_boxes(const TilemapComponent& map, const Tileset& tileset) {
+std::vector<TileBox> collision_boxes(const TilemapComponent& map, const Tileset& tileset, bool solid) {
     // Row runs: y -> sorted (x, type) of colliding cells.
     std::map<std::int32_t, std::vector<std::pair<std::int32_t, TileCollision>>> rows;
     for (const auto& [k, c] : map.cells) {
         const TileCollision t = tileset.collision_of(c.tile);
-        if (t != TileCollision::None) rows[key_y(k)].emplace_back(key_x(k), t);
+        if (t != TileCollision::None && (solid || t != TileCollision::Solid)) rows[key_y(k)].emplace_back(key_x(k), t);
     }
     struct Run {
         std::int32_t x0, x1, y0, y1;
@@ -449,6 +454,89 @@ std::vector<TileBox> collision_boxes(const TilemapComponent& map, const Tileset&
     return out;
 }
 
+std::vector<std::vector<math::Vec2>> collision_outlines(const TilemapComponent& map, const Tileset& tileset) {
+    std::unordered_set<std::uint64_t> solid;
+    solid.reserve(map.cells.size());
+    for (const auto& [k, c] : map.cells)
+        if (tileset.collision_of(c.tile) == TileCollision::Solid) solid.insert(k);
+    // Directed boundary edges on the cell lattice, solid on the left: vertex -> bit mask of
+    // outgoing directions (0 = +x, 1 = +y, 2 = -x, 3 = -y). 64-bit coordinates: cells reach
+    // kMaxCoordinate, so their far corners need one more.
+    constexpr std::int64_t dx[4] = {1, 0, -1, 0}, dy[4] = {0, 1, 0, -1};
+    using V = std::pair<std::int64_t, std::int64_t>;
+    std::map<V, std::uint8_t> out;
+    const auto is_solid = [&](std::int64_t x, std::int64_t y) {
+        if (x < INT32_MIN || x > INT32_MAX || y < INT32_MIN || y > INT32_MAX) return false;
+        return solid.contains(cell_key(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y)));
+    };
+    for (const std::uint64_t k : solid) {
+        const std::int64_t x = key_x(k), y = key_y(k);
+        if (!is_solid(x, y - 1)) out[{x, y}] |= 1u << 0;         // bottom, +x
+        if (!is_solid(x + 1, y)) out[{x + 1, y}] |= 1u << 1;     // right, +y
+        if (!is_solid(x, y + 1)) out[{x + 1, y + 1}] |= 1u << 2; // top, -x
+        if (!is_solid(x - 1, y)) out[{x, y + 1}] |= 1u << 3;     // left, -y
+    }
+    std::vector<std::vector<math::Vec2>> loops;
+    const float cw = map.cell_size.x, ch = map.cell_size.y;
+    const auto emit = [&](const std::vector<V>& ring) {
+        // Keep only corners (drop points between two collinear edges).
+        std::vector<math::Vec2> loop;
+        const std::size_t n = ring.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            const V& a = ring[(i + n - 1) % n];
+            const V& b = ring[i];
+            const V& c = ring[(i + 1) % n];
+            if ((b.first - a.first) * (c.second - b.second) - (b.second - a.second) * (c.first - b.first) == 0) continue;
+            loop.push_back({static_cast<float>(b.first) * cw, static_cast<float>(b.second) * ch});
+        }
+        if (loop.size() >= 3) loops.push_back(std::move(loop));
+    };
+    std::vector<V> path, stack;
+    std::map<V, std::size_t> on_stack;
+    while (!out.empty()) {
+        // Trace one closed walk. Turning left first keeps solids that touch only at a corner apart.
+        auto it = out.begin();
+        const V start = it->first;
+        int d = std::countr_zero(it->second);
+        path.assign(1, start);
+        V v = start;
+        for (;;) {
+            auto at = out.find(v);
+            at->second &= static_cast<std::uint8_t>(~(1u << d));
+            if (at->second == 0) out.erase(at);
+            v = {v.first + dx[d], v.second + dy[d]};
+            path.push_back(v);
+            at = out.find(v);
+            if (at == out.end()) break;
+            int next = -1;
+            for (const int turn : {1, 0, 3})
+                if (at->second & (1u << ((d + turn) & 3))) {
+                    next = (d + turn) & 3;
+                    break;
+                }
+            if (next < 0) next = std::countr_zero(at->second); // reversal: unreachable on a lattice boundary
+            d = next;
+        }
+        // The walk ends where it started; split it at repeated vertices into simple loops.
+        stack.clear();
+        on_stack.clear();
+        for (std::size_t i = 0; i + 1 < path.size(); ++i) {
+            const V& p = path[i];
+            if (const auto seen = on_stack.find(p); seen != on_stack.end()) {
+                std::vector<V> ring(stack.begin() + static_cast<std::ptrdiff_t>(seen->second), stack.end());
+                for (std::size_t r = 1; r < ring.size(); ++r) on_stack.erase(ring[r]);
+                stack.resize(seen->second + 1);
+                emit(ring);
+            } else {
+                on_stack[p] = stack.size();
+                stack.push_back(p);
+            }
+        }
+        if (stack.size() >= 3) emit(stack);
+    }
+    return loops;
+}
+
 // ---- system ---------------------------------------------------------------------------------
 
 TilemapSystem::TilemapSystem(TilesetProvider provider) : provider_(std::move(provider)) { register_components(); }
@@ -476,6 +564,7 @@ void TilemapSystem::update(Scene& scene) {
     stats_.maps = 0;
     stats_.missing_tilesets = 0;
     stats_.boxes = 0;
+    stats_.outlines = 0;
     auto& world = scene.world();
     std::vector<Entity> maps;
     world.each<TilemapComponent>([&](Entity e, TilemapComponent&) { maps.push_back(e); });
@@ -490,7 +579,9 @@ void TilemapSystem::update(Scene& scene) {
         rt->tileset = ts;
         rt->resolved = map->tileset;
         const bool want = map->collision && ts;
-        const bool stale = rt->built_revision != map->revision || rt->built_tileset != ts.get() || rt->built_collision != want;
+        const bool edges = map->edge_collision;
+        const bool stale = rt->built_revision != map->revision || rt->built_tileset != ts.get() ||
+                           rt->built_collision != want || (want && rt->built_edges != edges);
         const auto* shapes = world.get<physics::StaticShapes2DComponent>(e);
         bool settings_changed = false;
         if (want && shapes) {
@@ -499,6 +590,7 @@ void TilemapSystem::update(Scene& scene) {
         }
         if (!stale && !settings_changed && (want == (shapes != nullptr))) {
             stats_.boxes += rt->boxes;
+            stats_.outlines += rt->outlines;
             continue;
         }
         if (!want) {
@@ -509,10 +601,13 @@ void TilemapSystem::update(Scene& scene) {
             rt->built_tileset = ts.get();
             rt->built_collision = false;
             rt->boxes = 0;
+            rt->outlines = 0;
             continue;
         }
-        const std::vector<TileBox> boxes = collision_boxes(*map, *ts);
+        const std::vector<TileBox> boxes = collision_boxes(*map, *ts, !edges);
         physics::StaticShapes2DComponent out;
+        if (edges) out.loops = collision_outlines(*map, *ts);
+        const auto loops = static_cast<std::uint32_t>(out.loops.size());
         out.boxes.reserve(boxes.size());
         for (const TileBox& b : boxes) out.boxes.push_back({b.min, b.max, b.type == TileCollision::OneWay});
         out.friction = map->friction;
@@ -528,8 +623,11 @@ void TilemapSystem::update(Scene& scene) {
         rt->built_revision = revision;
         rt->built_tileset = built;
         rt->built_collision = true;
+        rt->built_edges = edges;
         rt->boxes = count;
+        rt->outlines = loops;
         stats_.boxes += count;
+        stats_.outlines += loops;
         ++stats_.collision_rebuilds;
     }
 }

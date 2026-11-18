@@ -93,6 +93,9 @@ struct TilemapComponent {
     math::Color tint{1, 1, 1, 1};
     std::int32_t layer{0};           // sprite sorting layer
     bool collision{true};            // build static 2D colliders from solid/one-way tiles
+    // Solid tiles collide through merged one-sided edge loops (no ghost bumps where tiles meet);
+    // off = filled boxes, which also push out bodies that start inside solid tiles.
+    bool edge_collision{true};
     float friction{0.6f};
     std::uint32_t collision_layer{0};
     std::uint32_t collision_mask{0xFFFFu};
@@ -135,7 +138,15 @@ struct TileBox {
     math::Vec2 min, max;
     TileCollision type{TileCollision::Solid};
 };
-[[nodiscard]] std::vector<TileBox> collision_boxes(const TilemapComponent& map, const Tileset& tileset);
+// `solid` = false skips solid tiles (edge collision builds them as outlines instead).
+[[nodiscard]] std::vector<TileBox> collision_boxes(const TilemapComponent& map, const Tileset& tileset,
+                                                   bool solid = true);
+
+// Local-space outlines of the solid tiles: one closed loop per boundary with the solid on its
+// left (counter-clockwise around solid regions, clockwise around holes), collinear points
+// merged. Regions touching only at a corner get separate loops, and every loop is simple.
+[[nodiscard]] std::vector<std::vector<math::Vec2>> collision_outlines(const TilemapComponent& map,
+                                                                      const Tileset& tileset);
 
 // ---- runtime --------------------------------------------------------------------------------
 
@@ -148,11 +159,12 @@ struct TilemapRuntime {
     std::uint64_t built_revision{~0ull};
     const void* built_tileset{nullptr};
     bool built_collision{false};
-    std::uint32_t boxes{0};
+    bool built_edges{false};
+    std::uint32_t boxes{0}, outlines{0};
 };
 
 struct TilemapStats {
-    std::uint32_t maps{0}, missing_tilesets{0}, collision_rebuilds{0}, boxes{0};
+    std::uint32_t maps{0}, missing_tilesets{0}, collision_rebuilds{0}, boxes{0}, outlines{0};
 };
 
 // Resolves tilesets and keeps each map's static colliders (physics::StaticShapes2DComponent)

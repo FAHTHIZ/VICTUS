@@ -604,7 +604,7 @@ private:
         out.scale = scale;
         out.position = p;
         out.angle = angle;
-        if (c.boxes.empty()) return;
+        if (c.boxes.empty() && c.loops.empty()) return;
         b2BodyDef bd = b2DefaultBodyDef();
         bd.type = b2_staticBody;
         bd.position = v2(p);
@@ -629,6 +629,42 @@ private:
             const b2ShapeId id = b2CreatePolygonShape(out.body, &sd, &poly);
             out.shapes.push_back(id);
             shapes_[b2StoreShapeId(id)] = e;
+        }
+        constexpr float kMinGap = 0.0075f; // Box2D needs chain points further apart than its slop
+        std::vector<b2Vec2> v;
+        std::vector<b2ShapeId> segments;
+        for (const auto& loop : c.loops) {
+            v.clear();
+            for (const math::Vec2 q : loop) {
+                const b2Vec2 s{q.x * scale.x, q.y * scale.y};
+                if (!std::isfinite(s.x) || !std::isfinite(s.y)) {
+                    v.clear();
+                    break;
+                }
+                if (!v.empty() && std::hypot(s.x - v.back().x, s.y - v.back().y) < kMinGap) continue;
+                v.push_back(s);
+            }
+            while (v.size() > 1 && std::hypot(v.front().x - v.back().x, v.front().y - v.back().y) < kMinGap) v.pop_back();
+            if (v.size() < 3) continue;
+            b2SurfaceMaterial material = b2DefaultSurfaceMaterial();
+            material.friction = std::max(0.0f, c.friction);
+            material.restitution = std::clamp(c.restitution, 0.0f, 1.0f);
+            b2ChainDef cd = b2DefaultChainDef();
+            cd.points = v.data();
+            cd.pointCount = static_cast<int>(v.size());
+            cd.isLoop = true; // solid on the left = Box2D's collision side (right) faces away from it
+            cd.materials = &material;
+            cd.materialCount = 1;
+            cd.filter.categoryBits = 1ull << layer;
+            cd.filter.maskBits = static_cast<std::uint64_t>(c.mask & matrix_[layer] & 0xFFFFu);
+            cd.enableSensorEvents = true;
+            const b2ChainId chain = b2CreateChain(out.body, &cd);
+            segments.resize(static_cast<std::size_t>(b2Chain_GetSegmentCount(chain)));
+            const int n = b2Chain_GetSegments(chain, segments.data(), static_cast<int>(segments.size()));
+            for (int i = 0; i < n; ++i) {
+                out.shapes.push_back(segments[static_cast<std::size_t>(i)]);
+                shapes_[b2StoreShapeId(segments[static_cast<std::size_t>(i)])] = e;
+            }
         }
     }
 
