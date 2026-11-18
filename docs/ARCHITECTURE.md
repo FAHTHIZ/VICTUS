@@ -32,6 +32,7 @@ Every engine module is a static library `victus_<name>` (alias `VICTUS::<Name>`)
 | 3 | `gameplay` | Fixed-step Simulation, systems, input sources, gameplay components |
 | 4 | `ui` | Dear ImGui on the RHI (editor and debug UI) |
 | 4 | `physics`, `animation`, `particles`, `audio`, `gameui` | Jolt/Box2D bodies and characters; clips and skinning; CPU emitters; miniaudio; in-game UI components |
+| 4 | `plugin` | Native plugin host: `.vplugin` manifests, dependency resolution, versioned C ABI (`victus_plugin.h`), lifecycle (ADR-0078) |
 | 5 | `navigation`, `tilemap`, `terrain`, `sequencer`, `net` | Navmesh and agents; tile sets and colliders; heightfields and foliage; timeline playback; transport, replication, sessions |
 | 6 | `ai` | Behaviour trees, blackboard, perception |
 | 6 | `assets` | Asset database, importers, cooker, GPU-ready model/texture data |
@@ -79,7 +80,7 @@ Source assets are immutable inputs. Importers validate and convert to versioned 
 Studio is a client of project, asset and runtime services—not the owner of game state. Scene edits are undoable commands. Specialized tools share serialization, validation, graph execution, undo, diagnostics and preview infrastructure. Asset import and preview run asynchronously and report errors. Build/package tools provide actionable diagnostics.
 
 ## Extensibility and safety
-Version plugin APIs; define module lifetime, capability permissions, ABI compatibility and failure isolation before promising binary compatibility. Mod content is untrusted. Validate paths, sizes, references, decompression limits, script execution and package signatures. Keep project, scene, asset, network and save schemas versioned and migratable.
+Version plugin APIs; define module lifetime, capability permissions, ABI compatibility and failure isolation before promising binary compatibility. Native plugins (implemented, `engine/plugin`, ADR-0078, docs/PLUGINS.md) follow this: a C ABI of frozen, named interface structs under one major.minor API version, manifests with dependencies, init in dependency order, per-plugin failure isolation and reverse-order shutdown; capability permissions do not exist yet, so native plugins are trusted code. Mod content is untrusted. Validate paths, sizes, references, decompression limits, script execution and package signatures. Keep project, scene, asset, network and save schemas versioned and migratable.
 
 ## Validation
 Every subsystem needs unit tests, integration tests, reference-project use, performance evidence where relevant, platform/fallback documentation, dependency/license review and migration strategy.

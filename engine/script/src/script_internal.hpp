@@ -645,6 +645,8 @@ int bridge_running(lua_State* L);
 int bridge_close(lua_State* L);
 int bridge_stats(lua_State* L);
 int script_require(lua_State* L);
+int plugins_call(lua_State* L);
+int plugins_has(lua_State* L);
 
 // script.cpp
 void open_victus_libs(lua_State* L);

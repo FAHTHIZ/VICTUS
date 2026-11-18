@@ -235,4 +235,26 @@ int script_require(lua_State* L) {
     return 1;
 }
 
+// plugins.call(name, args?) -> value: calls a native plugin function (ADR-0078). Arguments and
+// results cross as JSON, so tables, strings, numbers, booleans and nil round-trip.
+int plugins_call(lua_State* L) {
+    auto& h = host_of(L);
+    const char* name = luaL_checkstring(L, 1);
+    if (!h.options.plugin_call) luaL_error(L, "plugins.call('%s'): no native plugins are loaded", name);
+    const std::string args = lua_isnoneornil(L, 2) ? std::string("null") : json::stringify(to_json(L, 2), false);
+    auto result = h.options.plugin_call(name, args);
+    if (!result) luaL_error(L, "plugins.call('%s'): %s", name, result.error().message.c_str());
+    auto doc = json::parse(*result);
+    if (!doc) luaL_error(L, "plugins.call('%s'): plugin returned invalid JSON", name);
+    push_json(L, *doc);
+    return 1;
+}
+
+int plugins_has(lua_State* L) {
+    auto& h = host_of(L);
+    const char* name = luaL_checkstring(L, 1);
+    lua_pushboolean(L, h.options.plugin_has && h.options.plugin_has(name));
+    return 1;
+}
+
 } // namespace victus::script::detail

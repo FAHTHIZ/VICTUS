@@ -38,7 +38,7 @@ Evidence for every item is in [STATUS.md](STATUS.md); platform coverage is in [P
 | Android | Incomplete | APK builds in CI; touch API; lifecycle | Never installed on a device or emulator; no GLES fallback; no profiling |
 | Debugging and profiling | Usable for CPU | Profiler window, Chrome trace export, capture/replay with divergence reports | No GPU timings; no memory history graph |
 | Save games | Usable | Slots, checkpoints, script data | No compression, cloud saves or editor browser |
-| Plugins / modding SDK | Missing | Unknown components survive load/save | No plugin loading, versioned public API or mod sandbox |
+| Plugins / modding SDK | Usable for trusted native code | Versioned C ABI (`victus_plugin.h`, API 1.0) with JSON `.vplugin` manifests, dependency ordering, per-plugin failure isolation, systems, entity/transform access, JSON functions callable from Luau (`plugins.call`), `victus plugins` list/load/scaffold, `victus check` validation, export of host-platform libraries (ADR-0078, docs/PLUGINS.md); unknown components survive load/save | No sandbox or capability permissions (not for untrusted mods), no hot reload, the editor does not load plugins and has no plugin panel, no custom component/render/asset/physics interfaces, no signing, host-platform export only, Android packaging untested |
 | Localization | Usable | Per-locale `.vstrings` string tables, keyed `UiText`, `loc` script API with placeholders and fallback locale, hot reload; built-in fonts cover Latin, Cyrillic and Greek | No text shaping or right-to-left layout; no plural rules; no translation editor or string extraction; CJK and other scripts need a project font |
 | iOS, Web, XR, consoles | Missing | — | — |
 

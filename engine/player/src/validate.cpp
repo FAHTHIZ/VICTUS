@@ -2,6 +2,7 @@
 // Project validation (`victus check`, the editor's Problems panel). Moved from tools/cli so the
 // messages, order and counts stay exactly what `victus check` has always printed.
 #include "victus/player/validate.hpp"
+#include "victus/plugin/plugin.hpp"
 #include "victus/ai/ai.hpp"
 #include "victus/animation/animation.hpp"
 #include "victus/animation/retarget.hpp"
@@ -18,6 +19,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <format>
 #include <set>
 
 namespace victus::player {
@@ -373,6 +375,35 @@ Result<ValidationReport> validate_project(const project::Project& proj) {
             continue;
         }
         check_entities(rel, scene);
+    }
+    // Native plugins (ADR-0078): manifests, dependencies, API versions and built libraries.
+    {
+        const fs::Path plugins_dir = proj.root() / "plugins";
+        auto rel_of = [&](const fs::Path& p) { return std::filesystem::relative(p, proj.root(), ec).generic_string(); };
+        std::vector<plugin::DiscoveryIssue> issues;
+        const auto manifests = plugin::discover(plugins_dir, &issues);
+        for (const auto& i : issues)
+            sink.error(Category::Project, rel_of(i.path), rel_of(i.path) + ": " + i.message,
+                       "Fix the plugin manifest; the format is described in docs/PLUGINS.md.");
+        const auto resolved = plugin::resolve(manifests);
+        for (const auto& m : manifests) {
+            const std::string rel = rel_of(m.manifest_path);
+            if (auto it = resolved.rejected.find(m.name); it != resolved.rejected.end()) {
+                sink.error(Category::Project, rel, std::format("{}: plugin '{}' cannot load: {}", rel, m.name, it->second),
+                           "Add or update the dependency, or raise the plugin's \"api\" to the engine's plugin API.");
+                continue;
+            }
+            if (!m.enabled) continue;
+            const auto lib = m.libraries.find(std::string(plugin::platform_key()));
+            if (lib == m.libraries.end())
+                sink.add(Severity::Warning, Category::Project, rel,
+                         std::format("{}: plugin '{}' has no library for {}", rel, m.name, plugin::platform_key()),
+                         "Build the plugin for this platform and list it under \"libraries\".");
+            else if (!std::filesystem::is_regular_file(m.dir / lib->second, ec))
+                sink.add(Severity::Warning, Category::Project, rel,
+                         std::format("{}: plugin '{}' library {} is not built", rel, m.name, lib->second),
+                         "Build the plugin library (see docs/PLUGINS.md).");
+        }
     }
     return report;
 }

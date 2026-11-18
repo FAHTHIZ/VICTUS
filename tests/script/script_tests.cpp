@@ -1878,3 +1878,44 @@ return { n = #names, first = names[1], a = a, b = b, bad = bad, zero = zero,
     REQUIRE(mw);
     CHECK(mw->weights == std::vector<float>{0.75f, 0.5f});
 }
+
+TEST_CASE("script: plugins.call crosses to native plugin functions as JSON") {
+    script::HostOptions o;
+    std::string last_args;
+    o.plugin_call = [&last_args](std::string_view name, std::string_view args) -> Result<std::string> {
+        last_args = std::string(args);
+        if (name == "demo.echo") return std::string(args);
+        if (name == "demo.answer") return std::string(R"({"value":42,"tags":["a","b"]})");
+        return make_error(ErrorCode::NotFound, "no plugin function '" + std::string(name) + "'");
+    };
+    o.plugin_has = [](std::string_view name) { return name == "demo.echo" || name == "demo.answer"; };
+    auto host = script::ScriptHost::create(o);
+    REQUIRE(host);
+    auto r = (*host)->eval(R"(
+        local e = plugins.call("demo.echo", { n = 3, list = { 1, 2 } })
+        local a = plugins.call("demo.answer")
+        return { n = e.n, second = e.list[2], value = a.value, tag = a.tags[2],
+                 has = plugins.has("demo.echo"), missing = plugins.has("demo.nope") }
+    )");
+    REQUIRE(r.ok());
+    CHECK(r->find("n")->as_number() == 3);
+    CHECK(r->find("second")->as_number() == 2);
+    CHECK(r->find("value")->as_number() == 42);
+    CHECK(r->find("tag")->as_string() == "b");
+    CHECK(r->find("has")->as_bool());
+    CHECK_FALSE(r->find("missing")->as_bool());
+    CHECK(last_args == "null"); // no argument -> JSON null
+    auto missing = (*host)->eval(R"(return plugins.call("demo.nope"))");
+    REQUIRE_FALSE(missing.ok());
+    CHECK(missing.error().message.find("no plugin function 'demo.nope'") != std::string::npos);
+
+    // Without a plugin host, calls fail with a clear message and has() is false.
+    auto bare = script::ScriptHost::create({});
+    REQUIRE(bare);
+    auto none = (*bare)->eval(R"(return plugins.has("demo.echo"))");
+    REQUIRE(none.ok());
+    CHECK_FALSE(none->as_bool());
+    auto fails = (*bare)->eval(R"(return plugins.call("demo.echo"))");
+    REQUIRE_FALSE(fails.ok());
+    CHECK(fails.error().message.find("no native plugins are loaded") != std::string::npos);
+}

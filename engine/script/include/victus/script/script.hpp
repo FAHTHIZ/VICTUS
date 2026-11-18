@@ -189,6 +189,11 @@ struct HostOptions {
     // Resolves `bridge.open(name)` to a helper process (players read the project's "bridges"
     // section, see project::bridge_launch). Empty: bridges are unavailable to scripts.
     std::function<Result<process::LaunchOptions>(std::string_view name)> bridge_launcher;
+    // Native plugin functions for `plugins.call(name, args)` / `plugins.has(name)` (ADR-0078):
+    // JSON text in, JSON text out. Players wire these to plugin::PluginManager. Empty: scripts
+    // see no plugin functions.
+    std::function<Result<std::string>(std::string_view name, std::string_view args_json)> plugin_call;
+    std::function<bool(std::string_view name)> plugin_has;
     // Compiles visual script graphs with trace instrumentation and records which nodes run
     // (graph_node_hits). The editor turns it on for play mode (ADR-0060).
     bool trace_graphs{false};
