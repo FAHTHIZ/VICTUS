@@ -702,6 +702,22 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
 
 Date/status; problem/constraints; candidates; exact versions and primary sources; license/platform matrix; prototype/benchmark method/results; decision/rejected options; risks/rollback/revisit trigger.
 
+### ADR-0066: Spatial upscale and contrast-adaptive sharpening for scaled-down rendering
+
+- Status: Accepted (2026-11-18)
+- Context: phones render the 3D view at 0.6-0.7 render scale without TAA; the tonemap pass stretched the low-resolution frame with one bilinear fetch, which reads as a soft, smeared image on a 400+ dpi screen.
+- Decision: `RenderSettings::spatial_upscale` (default off) and `RenderSettings::sharpen` (0..1, default 0). When the view is scaled down and no temporal upscaler runs, tonemap runs at render resolution into an RGBA8 sRGB texture; `upscale_sharpen.frag` resamples it to output size with a 9-tap Catmull-Rom filter clamped to the 2x2 source texels (no ringing) and applies RCAS-style sharpening limited by the local min/max (no halos). Filtering happens in linear light (sRGB texture). FXAA, if enabled, runs after it at output resolution. `sharpen` alone at full resolution runs the same pass without resampling. `SceneStats::spatial_upscale` / `sharpened` report the path.
+- Evidence: `gpu quality: spatial upscale resamples sharper than bilinear without halos` (lavapipe): texture detail energy 697k vs 660k for bilinear (full resolution 894k), brightest edge pixel 561 vs face 564 (no overshoot), mean brightness preserved.
+- Consequences: one extra full-screen pass (13-17 bilinear fetches) at output resolution; tonemap becomes cheaper (render resolution). Not measured on a real Mali/Adreno device yet.
+
+### ADR-0067: Alpha-tested shadow casters and a four-tap soft-shadow mode
+
+- Status: Accepted (2026-11-18)
+- Context: the shadow pass ignored `alpha_cutoff`, so foliage cards cast solid rectangles; phones could only choose hard 1-tap or 9-tap PCF.
+- Decision: casters with `alpha_cutoff > 0` and a base colour texture draw with `shadow_alpha.vert/frag` (discard below cutoff); casters are sorted opaque first, then by texture, and only batch with matching alpha-test state. `RenderSettings::fast_soft_shadows` selects a 4-tap tent PCF (half-texel offsets) between hard and the 9-tap soft path.
+- Evidence: `gpu quality: alpha-tested casters cut holes into their shadow` (8 lit / 8 shaded checker cells under a cut-out caster), `fast soft shadows widen the penumbra with four taps` (penumbra 85 hard / 101 fast / 105 soft pixels).
+- Consequences: one extra pipeline and texture bind per alpha-tested caster group in the shadow pass.
+
 ## ADR-0038 — Blended materials as a sorted sub-pass of the forward pass (accepted 2026-11-17)
 - Context: water, glass, decals and glows need alpha and additive blending; the forward renderer only had opaque meshes and separate particle passes.
 - Decision: `Material::blend` (`.vmat` `"blend": "opaque" | "alpha" | "additive"`, inheritable by instances). Blended draws skip the depth pre-pass and shadow casting, are sorted far to near by bounds centre, and are drawn at the end of the forward pass (same lighting, fog and coverage uniforms) with depth test on and depth write off. Pipelines are created on first use per blend × skinned × double-sided, and surface shaders get the same variants. Surface shaders also read the interpolated vertex colour (`SurfaceInput::vertex_color`), so meshes can carry per-vertex data for them.

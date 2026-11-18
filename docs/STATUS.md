@@ -1110,3 +1110,8 @@ Full-repository audit against the code (not the checkboxes), then foundation fix
 
 ## Next task
 Confirm on hosted CI: the clang-tidy job, the 1 000-iteration ASan+UBSan fuzz run and `victus_perf_budgets` on the Linux lanes (budgets may need widening if runner counters differ from local lavapipe). Confirm `victus_device_loss` on the Linux lanes. Then roadmap next priority 7 (CI build caching) and the remaining priority 2 split of `engine/script/src/script.cpp`.
+
+### 2026-11-18 — Mobile image quality: spatial upscale, sharpening, alpha-tested shadows
+- `RenderSettings::spatial_upscale` / `sharpen` (ADR-0066): tonemap at render resolution into an sRGB texture, Catmull-Rom resample clamped to source texels, RCAS sharpening, FXAA afterwards at output resolution.
+- Shadow pass honours `alpha_cutoff` (`shadow_alpha.vert/frag`), new `fast_soft_shadows` 4-tap tent PCF (ADR-0067).
+- Verified: `victus_gpu_tests` 103/103 on lavapipe, including three new quality tests. Not verified on phone hardware.

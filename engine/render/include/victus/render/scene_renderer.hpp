@@ -246,6 +246,7 @@ struct RenderSettings {
     std::uint32_t shadow_resolution{2048}; // per cascade; also capped by DirectionalLight
     float cascade_split_lambda{0.8f};     // 0 uniform .. 1 logarithmic splits
     bool soft_shadows{true};              // 3x3 PCF (else one hardware 2x2 PCF tap)
+    bool fast_soft_shadows{false};        // with soft_shadows: a 4-tap tent (four 2x2 PCF taps) instead of 9 taps
     bool depth_prepass{false};            // forced on by SSAO
     bool ssao{true};
     bool ssao_half_resolution{true};
@@ -253,6 +254,14 @@ struct RenderSettings {
     bool bloom{true};
     std::uint32_t bloom_levels{5};        // 1..8 mip levels
     bool fxaa{true};                      // ignored while TAA is active
+    // Spatial upscale (ADR-0066): below output resolution without temporal upscaling, tonemap and FXAA
+    // run at render resolution and a final pass resamples to the output with a Catmull-Rom filter and
+    // contrast-adaptive sharpening (RCAS), instead of stretching the HDR image bilinearly and running
+    // FXAA on the blurred result. Off: the previous bilinear path.
+    bool spatial_upscale{false};
+    // Contrast-adaptive sharpening strength (0 off .. 1 strongest) of that final pass. Above 0 the pass
+    // also runs at full resolution (and after TAA) as plain sharpening.
+    float sharpen{0.0f};
     // Temporal anti-aliasing: sub-pixel jitter + reprojected history (camera motion from depth,
     // moving objects bounded by neighbourhood clipping). Also stabilises SSAO and shadows.
     bool taa{true};                       // High/Ultra; Low/Medium use FXAA
@@ -307,6 +316,8 @@ struct SceneStats {
     bool taa{false};                   // TAA resolved this frame
     bool taa_history{false};           // ... with a valid history (false on the first frame / after a reset)
     bool temporal_upscale{false};      // ... reconstructed at output resolution from a lower render resolution
+    bool spatial_upscale{false};       // ADR-0066: resampled to the output by the Catmull-Rom + RCAS pass
+    bool sharpened{false};             // the upscale/sharpen pass ran this frame
     std::uint32_t irradiance_probes{0}; // baked probes of the irradiance volume used this frame (0 = none)
     math::Vec2 jitter{};               // sub-pixel jitter in render pixels
     // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
@@ -465,7 +476,7 @@ private:
 
     GpuContext& ctx_;
     TransientTexturePool pool_;
-    rhi::PipelineHandle opaque_cull_, opaque_double_, shadow_pipeline_, sky_pipeline_, line_pipeline_;
+    rhi::PipelineHandle opaque_cull_, opaque_double_, shadow_pipeline_, shadow_alpha_, sky_pipeline_, line_pipeline_;
     rhi::PipelineHandle prepass_cull_, prepass_double_;
     rhi::PipelineHandle particle_alpha_, particle_additive_;
     std::array<rhi::PipelineHandle, 3> decal_pipelines_{}; // by DecalBlend
