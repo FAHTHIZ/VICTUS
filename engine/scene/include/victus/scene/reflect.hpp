@@ -24,7 +24,10 @@
 
 namespace victus::scene {
 
-enum class FieldKind : std::uint8_t { Bool, Int, UInt, Float, Vec2, Vec3, Color, String, Enum, Uuid };
+// Vec2List: std::vector<math::Vec2> (outline points), serialized as [[x, y], ...], at most
+// kMaxListLength entries.
+enum class FieldKind : std::uint8_t { Bool, Int, UInt, Float, Vec2, Vec3, Color, String, Enum, Uuid, Vec2List };
+inline constexpr std::size_t kMaxListLength = 4096;
 
 // Optional presentation/validation hints. min == max means unbounded.
 struct FieldOptions {
@@ -99,6 +102,7 @@ constexpr FieldKind kind_of() {
     else if constexpr (std::is_same_v<M, math::Color>) return FieldKind::Color;
     else if constexpr (std::is_same_v<M, std::string>) return FieldKind::String;
     else if constexpr (std::is_same_v<M, Uuid>) return FieldKind::Uuid;
+    else if constexpr (std::is_same_v<M, std::vector<math::Vec2>>) return FieldKind::Vec2List;
     else if constexpr (std::is_integral_v<M> && std::is_signed_v<M>) return FieldKind::Int;
     else if constexpr (std::is_integral_v<M> && std::is_unsigned_v<M>) return FieldKind::UInt;
     else static_assert(sizeof(M) == 0, "unsupported reflected field type");

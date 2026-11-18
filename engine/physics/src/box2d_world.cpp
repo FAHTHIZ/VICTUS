@@ -15,6 +15,7 @@
 #include <deque>
 #include <numbers>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace victus::physics::detail {
 
@@ -94,7 +95,9 @@ public:
             if (scene.world().get<CharacterController2DComponent>(e)) return; // the character owns its shape
             const RigidBody2DComponent* rb = scene.world().get<RigidBody2DComponent>(e);
             const Pose pose = world_pose(scene, e);
-            const math::Vec3 scale = abs(pose.scale);
+            // Outline shapes keep the sign so mirrored copies stay mirrored.
+            const bool outline = col.shape == Collider2DComponent::Shape::Polygon || col.shape == Collider2DComponent::Shape::Chain;
+            const math::Vec3 scale = outline ? pose.scale : abs(pose.scale);
             const math::Vec2 p{pose.position.x, pose.position.y};
             const float angle = z_angle(pose.rotation);
             auto it = bodies_.find(e.bits());
@@ -109,10 +112,24 @@ public:
                 }
             }
             if (it == bodies_.end()) {
+                if (auto f = failed_.find(e.bits()); f != failed_.end()) {
+                    const Failed& x = f->second;
+                    if (x.collider == col && x.has_rb == (rb != nullptr) && (!rb || x.rb == *rb) &&
+                        std::abs(x.scale.x - scale.x) < 1e-4f && std::abs(x.scale.y - scale.y) < 1e-4f) {
+                        f->second.seen = generation_;
+                        return;
+                    }
+                    failed_.erase(f);
+                    warned_.erase(e.bits());
+                }
                 Entry b;
                 create(e, col, rb, p, angle, {scale.x, scale.y}, b);
+                if (!b2Body_IsValid(b.body)) {
+                    failed_[e.bits()] = Failed{col, rb != nullptr, rb ? *rb : RigidBody2DComponent{}, {scale.x, scale.y}, generation_};
+                    return;
+                }
                 it = bodies_.emplace(e.bits(), b).first;
-                shapes_[b2StoreShapeId(b.shape)] = e;
+                for (const b2ShapeId s : b.shapes) shapes_[b2StoreShapeId(s)] = e;
             }
             Entry& b = it->second;
             b.seen = generation_;
@@ -140,6 +157,7 @@ public:
                 ++it;
             }
         }
+        std::erase_if(failed_, [&](const auto& kv) { return kv.second.seen != generation_; });
         sync_compounds(scene);
         sync_characters(scene);
         sync_joints(scene);
@@ -183,6 +201,8 @@ public:
         for (auto& [k, c] : compounds_) destroy_compound(c);
         compounds_.clear();
         shapes_.clear();
+        failed_.clear();
+        warned_.clear();
         // Flush end events produced by the destruction so the next session starts clean.
         b2World_Step(world_, 0.0f, 1);
     }
@@ -364,7 +384,7 @@ public:
 private:
     struct Entry {
         b2BodyId body{};
-        b2ShapeId shape{};
+        std::vector<b2ShapeId> shapes; // polygons split into convex pieces and chains have several
         b2BodyType type{b2_staticBody};
         Collider2DComponent collider;
         RigidBody2DComponent rb;
@@ -434,12 +454,12 @@ private:
             const float hy = std::max(1e-3f, col.size.y * scale.y * 0.5f);
             const float r = std::clamp(col.rounding, 0.0f, std::min(hx, hy) * 0.99f);
             const b2Polygon poly = b2MakeOffsetRoundedBox(hx - r, hy - r, off, b2MakeRot(0), r);
-            out.shape = b2CreatePolygonShape(out.body, &sd, &poly);
+            out.shapes.push_back(b2CreatePolygonShape(out.body, &sd, &poly));
             break;
         }
         case Collider2DComponent::Shape::Circle: {
             const b2Circle circle{off, std::max(1e-3f, col.radius * std::max(scale.x, scale.y))};
-            out.shape = b2CreateCircleShape(out.body, &sd, &circle);
+            out.shapes.push_back(b2CreateCircleShape(out.body, &sd, &circle));
             break;
         }
         case Collider2DComponent::Shape::Capsule: {
@@ -447,15 +467,36 @@ private:
             const float half = std::max(0.0f, col.size.y * scale.y * 0.5f - r);
             if (half <= 1e-4f) {
                 const b2Circle circle{off, r};
-                out.shape = b2CreateCircleShape(out.body, &sd, &circle);
+                out.shapes.push_back(b2CreateCircleShape(out.body, &sd, &circle));
             } else {
                 const b2Capsule cap{{off.x, off.y - half}, {off.x, off.y + half}, r};
-                out.shape = b2CreateCapsuleShape(out.body, &sd, &cap);
+                out.shapes.push_back(b2CreateCapsuleShape(out.body, &sd, &cap));
             }
             break;
         }
+        case Collider2DComponent::Shape::Polygon:
+        case Collider2DComponent::Shape::Chain: {
+            std::vector<math::Vec2> pts;
+            pts.reserve(col.points.size());
+            for (const math::Vec2 q : col.points) pts.push_back({q.x * scale.x + off.x, q.y * scale.y + off.y});
+            const bool dynamic = bd.type == b2_dynamicBody;
+            if (col.shape == Collider2DComponent::Shape::Chain && !dynamic && !col.is_trigger) {
+                create_chain(e, col, sd, std::move(pts), scale.x * scale.y < 0, out);
+                break;
+            }
+            if (col.shape == Collider2DComponent::Shape::Chain && warned_.insert(e.bits()).second)
+                VICTUS_LOG_WARN("physics", "entity {}: a chain Collider2D on a {} has no mass or sensor; filling its outline "
+                                           "as a polygon", e.index, col.is_trigger ? "trigger" : "dynamic body");
+            create_polygon(e, sd, pts, out);
+            break;
         }
-        if (bd.type == b2_dynamicBody && rb) {
+        }
+        if (out.shapes.empty()) {
+            // Invalid outline: nothing to collide with, and no body (queries, mass) either.
+            b2DestroyBody(out.body);
+            out.body = {};
+        }
+        if (bd.type == b2_dynamicBody && rb && b2Body_IsValid(out.body)) {
             b2MassData md = b2Body_GetMassData(out.body);
             if (md.mass > 0) {
                 const float k = std::max(1e-4f, rb->mass) / md.mass;
@@ -471,6 +512,80 @@ private:
         out.position = p;
         out.angle = angle;
         (void)e;
+    }
+
+    void create_polygon(Entity e, const b2ShapeDef& sd, const std::vector<math::Vec2>& pts, Entry& out) {
+        auto pieces = decompose_polygon(pts, B2_MAX_POLYGON_VERTICES);
+        if (!pieces) {
+            if (warned_.insert(e.bits()).second)
+                VICTUS_LOG_WARN("physics", "entity {}: Collider2D {}; no body created", e.index, pieces.error().message);
+            return;
+        }
+        for (const auto& piece : *pieces) {
+            b2Vec2 v[B2_MAX_POLYGON_VERTICES];
+            for (std::size_t i = 0; i < piece.size(); ++i) v[i] = {piece[i].x, piece[i].y};
+            const b2Hull hull = b2ComputeHull(v, static_cast<int>(piece.size()));
+            if (hull.count == 0) continue; // a sliver below Box2D's linear slop: its neighbours cover it
+            const b2Polygon poly = b2MakePolygon(&hull, 0.0f);
+            out.shapes.push_back(b2CreatePolygonShape(out.body, &sd, &poly));
+        }
+        if (out.shapes.empty() && warned_.insert(e.bits()).second)
+            VICTUS_LOG_WARN("physics", "entity {}: Collider2D polygon is too small to collide; no body created", e.index);
+    }
+
+    // Box2D chains collide on the right of their direction. VICTUS faces open chains to the left of
+    // the authored direction (local "up" for ground drawn left to right, kept under mirroring) and
+    // loops outward, or inward with `inside`.
+    void create_chain(Entity e, const Collider2DComponent& col, const b2ShapeDef& sd, std::vector<math::Vec2> pts,
+                      bool mirrored, Entry& out) {
+        // Box2D needs points further apart than its linear slop (5 mm).
+        constexpr float kMinGap = 0.0075f;
+        std::vector<b2Vec2> v;
+        v.reserve(pts.size());
+        for (const math::Vec2 q : pts) {
+            if (!std::isfinite(q.x) || !std::isfinite(q.y)) {
+                v.clear();
+                break;
+            }
+            if (!v.empty() && std::hypot(q.x - v.back().x, q.y - v.back().y) < kMinGap) continue;
+            v.push_back({q.x, q.y});
+        }
+        if (col.loop && v.size() > 1 && std::hypot(v.front().x - v.back().x, v.front().y - v.back().y) < kMinGap) v.pop_back();
+        const std::size_t need = col.loop ? 3 : 2;
+        if (v.size() < need || self_intersects(pts, col.loop)) {
+            if (warned_.insert(e.bits()).second)
+                VICTUS_LOG_WARN("physics", "entity {}: Collider2D chain needs at least {} distinct points that do not cross; "
+                                           "no body created", e.index, need);
+            return;
+        }
+        bool reverse = false;
+        if (col.loop) {
+            float area = 0;
+            for (std::size_t i = 0; i < v.size(); ++i) area += b2Cross(v[i], v[(i + 1) % v.size()]);
+            reverse = col.inside ? area > 0 : area < 0; // outward = counter-clockwise
+        } else {
+            reverse = !mirrored;
+        }
+        if (reverse) std::reverse(v.begin(), v.end());
+        b2SurfaceMaterial material = sd.material;
+        b2ChainDef cd = b2DefaultChainDef();
+        cd.points = v.data();
+        cd.pointCount = static_cast<int>(v.size());
+        cd.isLoop = col.loop;
+        cd.materials = &material;
+        cd.materialCount = 1;
+        cd.filter = sd.filter;
+        cd.enableSensorEvents = true;
+        if (!col.loop) {
+            // Ghost points continue the end segments straight, so bodies slide off the ends smoothly.
+            const b2Vec2 a = v[0], b = v[1], y = v[v.size() - 2], z = v.back();
+            cd.ghost1 = b2Sub(a, b2Sub(b, a));
+            cd.ghost2 = b2Add(z, b2Sub(z, y));
+        }
+        const b2ChainId chain = b2CreateChain(out.body, &cd);
+        out.shapes.resize(static_cast<std::size_t>(b2Chain_GetSegmentCount(chain)));
+        const int n = b2Chain_GetSegments(chain, out.shapes.data(), static_cast<int>(out.shapes.size()));
+        out.shapes.resize(static_cast<std::size_t>(std::max(0, n)));
     }
 
     struct Compound {
@@ -566,7 +681,8 @@ private:
     void destroy(Entry& b) {
         if (!b2Body_IsValid(b.body)) return;
         // Keep the shape -> entity mapping until the next event pass so end events still resolve.
-        retired_.push_back(b2StoreShapeId(b.shape));
+        for (const b2ShapeId s : b.shapes) retired_.push_back(b2StoreShapeId(s));
+        b.shapes.clear();
         b2DestroyBody(b.body);
         b.body = {};
     }
@@ -1194,6 +1310,17 @@ private:
     TaskPool pool_;
     b2WorldId world_{};
     std::unordered_map<std::uint64_t, Entry> bodies_;
+    // Colliders whose outline cannot be built: remembered so they are not rebuilt (and re-logged)
+    // every step until they change.
+    struct Failed {
+        Collider2DComponent collider;
+        bool has_rb{false};
+        RigidBody2DComponent rb;
+        math::Vec2 scale{1, 1};
+        std::uint64_t seen{0};
+    };
+    std::unordered_map<std::uint64_t, Failed> failed_;
+    std::unordered_set<std::uint64_t> warned_;
     std::unordered_map<std::uint64_t, Compound> compounds_;
     std::unordered_map<std::uint64_t, Entity> shapes_;
     std::unordered_map<std::uint64_t, Character> chars_;

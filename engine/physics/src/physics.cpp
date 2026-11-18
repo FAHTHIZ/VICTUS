@@ -547,6 +547,28 @@ void collider_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity onl
             em.line(top - X * r, bottom - X * r);
             break;
         }
+        case Collider2DComponent::Shape::Polygon:
+        case Collider2DComponent::Shape::Chain: {
+            const std::size_t n = c.points.size();
+            const bool closed = c.shape == Collider2DComponent::Shape::Polygon || c.loop;
+            const auto at = [&](std::size_t i) { return o + math::Vec3{c.points[i].x, c.points[i].y, 0}; };
+            for (std::size_t i = 0; i + 1 < n || (closed && n > 2 && i < n); ++i) em.line(at(i), at((i + 1) % n));
+            if (c.shape == Collider2DComponent::Shape::Chain && n >= 2) {
+                // Ticks on the solid side: left of the direction for open chains, out (or in) for loops.
+                float area = 0;
+                for (std::size_t i = 0; i < n; ++i) area += c.points[i].x * c.points[(i + 1) % n].y - c.points[(i + 1) % n].x * c.points[i].y;
+                const float side = c.loop ? ((area > 0) != c.inside ? -1.0f : 1.0f) : 1.0f; // +1 = left
+                for (std::size_t i = 0; i + 1 < n || (c.loop && n > 2 && i < n); ++i) {
+                    const math::Vec3 a = at(i), b = at((i + 1) % n), d = b - a;
+                    const float len = math::length(d);
+                    if (len <= 1e-6f) continue;
+                    const math::Vec3 left{-d.y / len, d.x / len, 0};
+                    const math::Vec3 mid = (a + b) * 0.5f;
+                    em.line(mid, mid + left * (side * std::min(0.25f, len * 0.25f)));
+                }
+            }
+            break;
+        }
         }
     });
 }

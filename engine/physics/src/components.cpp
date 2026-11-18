@@ -79,11 +79,16 @@ void register_components() {
             .field(&RigidBody2DComponent::angular_velocity, "angular_velocity", {.speed = 0.05f})
             .commit();
         scene::Schema<Collider2DComponent>("Collider2D", "Physics 2D")
-            .enumeration(&Collider2DComponent::shape, "shape", {"box", "circle", "capsule"})
+            .enumeration(&Collider2DComponent::shape, "shape", {"box", "circle", "capsule", "polygon", "chain"})
             .field(&Collider2DComponent::size, "size", {.min = 0.001f, .max = 1e5f, .speed = 0.01f})
             .field(&Collider2DComponent::radius, "radius", {.min = 0.001f, .max = 1e5f, .speed = 0.01f})
             .field(&Collider2DComponent::offset, "offset", {.speed = 0.01f})
-            .field(&Collider2DComponent::rounding, "rounding", {.min = 0, .max = 1e4f, .speed = 0.01f})
+            .field(&Collider2DComponent::rounding, "rounding", {.min = 0, .max = 1e4f, .speed = 0.01f, .tooltip = "Box corner radius"})
+            .field(&Collider2DComponent::points, "points",
+                   {.speed = 0.01f, .tooltip = "Polygon or chain outline in local space (polygon: at most 256 points)"})
+            .field(&Collider2DComponent::loop, "loop", {.tooltip = "Chain: connect the last point back to the first"})
+            .field(&Collider2DComponent::inside, "inside",
+                   {.tooltip = "Chain loop: collide on the inside (cave and arena walls) instead of the outside"})
             .field(&Collider2DComponent::friction, "friction", {.min = 0, .max = 10, .speed = 0.01f})
             .field(&Collider2DComponent::restitution, "restitution", {.min = 0, .max = 1, .speed = 0.01f})
             .field(&Collider2DComponent::is_trigger, "is_trigger")
