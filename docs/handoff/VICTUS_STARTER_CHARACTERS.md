@@ -141,7 +141,7 @@ All meshes, textures, insignia and animation must be original or explicitly redi
 
 ## 9. Character fidelity under zoom and view changes
 
-Coordinate with [VICTUS Camera-Responsive Visual Fidelity and Per-View Budgets](VICTUS_CAMERA_RESPONSIVE_VISUAL_FIDELITY.md) and the Vectors handoff. Starter characters are a key stress case because the player can inspect them in the editor, move them close to the camera and view them through different camera projections.
+Coordinate with [VICTUS Camera-Responsive Visual Fidelity and Per-View Budgets](VICTUS_CAMERA_RESPONSIVE_VISUAL_FIDELITY.md) and the A.E.G.I.S. handoff. Starter characters are a key stress case because the player can inspect them in the editor, move them close to the camera and view them through different camera projections.
 
 ### Character-specific detail policy
 
