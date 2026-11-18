@@ -122,7 +122,7 @@ The audit must explicitly cover all of the following, including systems that app
 2. **Platform layer and RHI:** window/input/audio lifecycle, graphics backend contracts, GPU resource lifetime, swapchain recreation, device-loss detection/recovery strategy, shader compilation/cache, render graph correctness, validation layers, backend fallbacks and platform-specific behaviour.
 3. **Rendering and visual quality:** 2D and 3D pipelines, materials/shaders, lighting/shadows, GI/reflections, transparency, post-processing, temporal stability, particles integration, LOD/occlusion/instancing, texture formats/streaming, resolution scaling, quality tiers, bandwidth and memory pressure on tile-based/mobile GPUs.
 4. **Physics and character simulation:** Jolt and Box2D parity where appropriate, collision filtering/layers, continuous collision detection, queries, constraints/joints, character controllers, fixed-step stability, sleeping, scale extremes, tunnelling, contact events, determinism limits and performance under dense scenes.
-5. **Animation and physical character behaviour:** import/skeleton correctness, controller/state-machine authoring, blend spaces, events, root motion, retargeting, IK, additive layers, morph targets, procedural animation, animation/physics blending and debugging. Explicitly research a VICTUS-owned **physics-driven character animation** path: passive ragdolls, active ragdolls, joint motors, balance/posture control, impact response, bracing, recovery/get-up behaviour, environmental interaction and transitions between authored animation and physical simulation. Treat NaturalMotion Euphoria as a reference for capability and integration lessons, not code to copy or a promise of equivalence. Evaluate licensing and open alternatives before adopting dependencies.
+5. **Animation and physical character behaviour:** import/skeleton correctness, controller/state-machine authoring, blend spaces, events, root motion, retargeting, IK, additive layers, morph targets, procedural animation, animation/physics blending and debugging. Explicitly research a VICTUS-owned **A.R.C. (Adaptive Reactive Character System)** — a physics-driven character animation path: passive ragdolls, active ragdolls, joint motors, balance/posture control, impact response, bracing, recovery/get-up behaviour, environmental interaction and transitions between authored animation and physical simulation. Treat NaturalMotion Euphoria as a reference for capability and integration lessons, not code to copy or a promise of equivalence. Evaluate licensing and open alternatives before adopting dependencies.
 6. **Gameplay AI and navigation:** behaviour-tree runtime and authoring/debugging, perception, pathfinding, steering, crowd avoidance, dynamic obstacles, navigation rebuilds, agent scale, deterministic/replay implications and graceful failure when paths become invalid.
 7. **Audio:** device lifecycle, mixing and buses, spatialisation, attenuation, doppler, occlusion/obstruction, effects/reverb, streaming, voice limits, latency, mobile resource use, authoring and audible validation on physical devices.
 8. **In-game UI and input:** layout/anchors/scaling, resolution and aspect-ratio changes, focus/navigation, controller and touch flows, text shaping, accessibility, localization/RTL, animation, data binding, UI performance and visual authoring.
@@ -190,7 +190,7 @@ VICTUS is materially more mature when:
 
 ## Additional Workstream H — camera-responsive visual fidelity and cross-system budgets
 
-Coordinate this workstream with [VICTUS Camera-Responsive Visual Fidelity and Per-View Budgets](VICTUS_CAMERA_RESPONSIVE_VISUAL_FIDELITY.md) and Vectors. The central risk is not simply that a distant object receives too few triangles; it is that one subsystem makes a locally reasonable decision that becomes wrong when the projection, viewport, render target or secondary view changes.
+Coordinate this workstream with [VICTUS Camera-Responsive Visual Fidelity and Per-View Budgets](VICTUS_CAMERA_RESPONSIVE_VISUAL_FIDELITY.md) and A.E.G.I.S. The central risk is not simply that a distant object receives too few triangles; it is that one subsystem makes a locally reasonable decision that becomes wrong when the projection, viewport, render target or secondary view changes.
 
 ### H1. Audit and close the camera-zoom edge case
 
@@ -204,7 +204,7 @@ Audit whether every render view has independent geometry selection and visibilit
 - Mip filtering selects a texture level from the rendered texture footprint; mip residency/streaming is a separate asset and memory-management feature.
 - Material/shader complexity, anisotropic sampling, transparency/overdraw and shadow maps need separate counters and controls.
 - Verify texture mips in every imported/cooked path. Do not claim view-prioritized mip streaming until requests, uploads, eviction, fallbacks and memory accounting exist.
-- Evaluate whether the workload is CPU submission, vertex/geometry, pixel/fill, bandwidth, shadows, animation, memory or thermals before attributing a frame-time improvement to Vectors.
+- Evaluate whether the workload is CPU submission, vertex/geometry, pixel/fill, bandwidth, shadows, animation, memory or thermals before attributing a frame-time improvement to A.E.G.I.S.
 
 ### H3. Robustness and validation gates
 
