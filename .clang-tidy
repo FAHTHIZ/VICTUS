@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+# Static analysis profile for VICTUS-owned code (engine/, editor/, tools/, apps/). Run with
+# tools/lint/run_clang_tidy.py; CI runs the same script on every push (job "clang-tidy").
+#
+# The set is deliberately high-signal: real bug classes (use-after-move, dangling handles,
+# suspicious arithmetic, analyzer path checks) and cheap performance mistakes. Purely stylistic
+# checks are not enabled; .clang-format owns layout. Every disabled check below has a reason.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-branch-clone,
+  -bugprone-exception-escape,
+  -bugprone-switch-missing-default-case,
+  -bugprone-unchecked-optional-access,
+  -bugprone-empty-catch,
+  -bugprone-crtp-constructor-accessibility,
+  -bugprone-reserved-identifier,
+  -bugprone-macro-parentheses,
+  -bugprone-signed-char-misuse,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-integer-division,
+  -bugprone-multi-level-implicit-pointer-conversion,
+  -bugprone-casting-through-void,
+  -bugprone-return-const-ref-from-parameter,
+  -bugprone-tagged-union-member-count,
+  -bugprone-incorrect-roundings,
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  clang-analyzer-deadcode.DeadStores,
+  clang-analyzer-unix.Malloc,
+  clang-analyzer-unix.MismatchedDeallocator,
+  performance-move-const-arg,
+  performance-unnecessary-copy-initialization,
+  performance-for-range-copy,
+  performance-noexcept-move-constructor,
+  performance-trivially-destructible,
+  misc-redundant-expression,
+  misc-misplaced-const,
+  misc-throw-by-value-catch-by-reference,
+  misc-unconventional-assign-operator,
+  misc-new-delete-overloads,
+  misc-definitions-in-headers
+# Disabled with reasons:
+#  easily-swappable-parameters: math/geometry APIs take many same-typed parameters by design.
+#  narrowing-conversions / implicit-widening: the compilers' -Wconversion family covers these with
+#    project-specific suppressions; duplicating them here is noise.
+#  branch-clone: switch statements over enums intentionally share bodies.
+#  exception-escape: VICTUS reports errors through Result<T>; std allocation failures terminate.
+#  switch-missing-default-case: -Wswitch must see unhandled enumerators, a default would hide them.
+#  unchecked-optional-access: very slow on the large translation units and false-positive prone
+#    with Result<T>.
+#  empty-catch: used deliberately around best-effort cleanup.
+#  reserved-identifier / macro-parentheses / signed-char-misuse: false positives against
+#    third-party headers and C APIs (SDL, Luau, cgltf).
+#  assignment-in-if-condition: `if (auto r = f(); !r)` style is idiomatic here.
+#  integer-division: integer pixel/tile math is intentional.
+#  multi-level-implicit-pointer-conversion / casting-through-void: C API callbacks (miniaudio,
+#    cgltf, ENet) require them.
+#  return-const-ref-from-parameter: flags min/max-like helpers that are only used on lvalues.
+#  tagged-union-member-count: JSON/Value variants carry the tag implicitly.
+#  incorrect-roundings: `x * 255 + 0.5` truncation is only applied to values clamped to [0, 1]
+#    (colour quantisation), where it rounds correctly; lround would change bit-exact outputs.
+#  performance-inefficient-vector-operation (not enabled): its first full run flagged 12 cold
+#    setup loops (pipeline creation, editor commands) and no hot path; hot paths are measured
+#    by the benchmarks instead.
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(engine|editor|tools|apps)/.*\.(hpp|h)$'
+FormatStyle: none
+CheckOptions:
+  - key: bugprone-suspicious-string-compare.WarnOnImplicitComparison
+    value: false
+  - key: performance-unnecessary-copy-initialization.AllowedTypes
+    value: 'Handle;.*Handle;Entity;Uuid'

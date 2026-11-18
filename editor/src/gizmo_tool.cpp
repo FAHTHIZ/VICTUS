@@ -86,7 +86,7 @@ bool Editor::gizmo_press(math::Vec2 pixel, math::Vec2 size) {
     }
     if (gizmo_targets_.empty()) return false;
     gizmo_before_ = capture(s, ids);
-    gizmo_active_ = std::move(drag);
+    gizmo_active_ = drag;
     gizmo_hot_ = h;
     return true;
 }

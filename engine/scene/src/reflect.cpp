@@ -174,14 +174,12 @@ const ComponentSchema& register_schema(ComponentSchema schema) {
     const ComponentSchema* stored = nullptr;
     {
         std::lock_guard lock(store.mutex);
-        for (auto& existing : store.list) {
-            if (existing->name == schema.name) {
-                *existing = std::move(schema);
-                stored = existing.get();
-                break;
-            }
-        }
-        if (!stored) {
+        const auto existing = std::find_if(store.list.begin(), store.list.end(),
+                                           [&](const auto& e) { return e->name == schema.name; });
+        if (existing != store.list.end()) {
+            **existing = std::move(schema); // re-registration replaces the schema in place
+            stored = existing->get();
+        } else {
             store.list.push_back(std::make_unique<ComponentSchema>(std::move(schema)));
             stored = store.list.back().get();
         }
