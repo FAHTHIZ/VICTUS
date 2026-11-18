@@ -4,6 +4,7 @@
 #include "gpu_fixture.hpp"
 #include "victus/render/scene_renderer.hpp"
 
+#include <cmath>
 #include <cstdlib>
 
 using namespace victus;
@@ -134,4 +135,151 @@ TEST_CASE("gpu lods: coarser levels at a distance, unchanged image, per-level ba
     CHECK(c.stats.triangles == 12);
     ctx.destroy(sphere);
     ctx.destroy(cube);
+}
+
+namespace {
+
+// One frame of `content` with an explicit vertical FOV and target size (Workstream H1/H3:
+// camera-responsive LOD). Returns the frame's stats only.
+template <typename F>
+SceneStats view_stats(SceneRenderer& r, RenderSettings s, math::Vec3 eye, float fov_deg, std::uint32_t w,
+                      std::uint32_t h, F&& content) {
+    auto& dev = gpu().ctx->device();
+    auto target = test::make_target(w, h);
+    s.taa = false;
+    r.set_settings(s);
+    Camera3D cam = Camera3D::look_at(eye, {0, 0, 0});
+    cam.fov_y = math::radians(fov_deg);
+    r.begin(cam, DirectionalLight{}, {});
+    content(r);
+    auto cmd = dev.begin_commands();
+    REQUIRE(r.render(cmd, target, w, h, rhi::Format::RGBA8_UNORM).ok());
+    cmd.submit_and_wait();
+    const SceneStats out = r.stats();
+    dev.destroy(target);
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("gpu lods: selection follows field of view, viewport height and render scale") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    MeshData data = make_uv_sphere(0.5f, 64, 32);
+    REQUIRE(generate_lods(data) == 3);
+    optimize_mesh(data);
+    const std::size_t full = data.triangle_count();
+    auto sphere = ctx.create_mesh(data, "lod_fov_sphere").value();
+    Material mat;
+    auto one = [&](SceneRenderer& r) { r.submit(sphere, mat, math::Mat4::identity()); };
+    RenderSettings s = RenderSettings::preset(QualityTier::High);
+    s.lod_error_pixels = 0.25f; // strict, so a 3-level span is reachable at 96 px
+    SceneRenderer& r = *sr.value();
+
+    // Same camera position, narrowing FOV (zoom in): never coarser, and a strong zoom is finer.
+    const math::Vec3 eye{0, 0, 12};
+    std::uint64_t prev = 0;
+    std::uint64_t wide = 0, narrow = 0;
+    for (float fov : {100.0f, 60.0f, 30.0f, 10.0f, 3.0f}) {
+        const SceneStats st = view_stats(r, s, eye, fov, 160, 96, one);
+        CHECK(st.visible == 1);
+        CHECK(st.triangles >= prev);
+        prev = st.triangles;
+        if (fov == 100.0f) wide = st.triangles;
+        if (fov == 3.0f) narrow = st.triangles;
+    }
+    CHECK(wide < narrow);
+    CHECK(narrow == full);
+
+    // Dolly vs zoom: equal projected size (distance to the bounds / tan(fov/2) held constant)
+    // selects the same level, so zooming is not penalised relative to walking closer.
+    const float d1 = 6.0f, fov1 = 60.0f;
+    const float d2 = 18.0f;
+    const float fov2 = math::degrees(2.0f * std::atan(std::tan(math::radians(fov1) * 0.5f) * d1 / d2));
+    const SceneStats dolly = view_stats(r, s, {0, 0, d1 + 0.5f}, fov1, 160, 96, one);
+    const SceneStats zoom = view_stats(r, s, {0, 0, d2 + 0.5f}, fov2, 160, 96, one);
+    CHECK(dolly.triangles == zoom.triangles);
+
+    // Taller targets resolve more detail at the same camera; the budget is in render pixels.
+    const SceneStats small = view_stats(r, s, {0, 0, 8}, 60.0f, 160, 96, one);
+    const SceneStats large = view_stats(r, s, {0, 0, 8}, 60.0f, 640, 384, one);
+    CHECK(small.triangles <= large.triangles);
+    CHECK(small.triangles < large.triangles);
+
+    // Render scale (dynamic resolution) lowers the level, and restoring it recovers the detail.
+    RenderSettings half = s;
+    half.render_scale = 0.25f;
+    const SceneStats full_scale = view_stats(r, s, {0, 0, 8}, 60.0f, 640, 384, one);
+    const SceneStats quarter = view_stats(r, half, {0, 0, 8}, 60.0f, 640, 384, one);
+    const SceneStats restored = view_stats(r, s, {0, 0, 8}, 60.0f, 640, 384, one);
+    CHECK(quarter.triangles < full_scale.triangles);
+    CHECK(restored.triangles == full_scale.triangles);
+
+    // Rapid zoom cycles are stateless: returning to the original FOV gives the original level.
+    const SceneStats before = view_stats(r, s, eye, 45.0f, 160, 96, one);
+    for (int i = 0; i < 6; ++i) (void)view_stats(r, s, eye, i % 2 ? 2.0f : 120.0f, 160, 96, one);
+    const SceneStats after = view_stats(r, s, eye, 45.0f, 160, 96, one);
+    CHECK(before.triangles == after.triangles);
+    ctx.destroy(sphere);
+}
+
+TEST_CASE("gpu lods: casters outside the main view still shadow it (H3 off-screen contribution)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    auto ground = ctx.create_mesh(make_plane({20, 20}), "h3_ground").value();
+    MeshData box_data = make_uv_sphere(1.0f, 48, 24);
+    REQUIRE(generate_lods(box_data) == 3);
+    auto blocker = ctx.create_mesh(box_data, "h3_blocker").value();
+    Material mat;
+    mat.base_color = {0.8f, 0.8f, 0.8f, 1};
+    mat.cast_shadows = true;
+    RenderSettings s = RenderSettings::preset(QualityTier::High);
+    s.taa = false;
+    s.ssao = false;
+    s.bloom = false;
+    s.auto_exposure = false;
+    sr.value()->set_settings(s);
+
+    constexpr std::uint32_t W = 160, H = 96;
+    // The camera looks at the origin with a narrow FOV; the blocker floats far to its right,
+    // outside the frustum, and the low sun throws its shadow onto the middle of the view.
+    auto frame = [&](bool with_blocker, SceneStats* st) {
+        auto target = test::make_target(W, H);
+        Camera3D cam = Camera3D::look_at({0, 2, 6}, {0, 0, 0});
+        cam.fov_y = math::radians(30.0f);
+        DirectionalLight sun;
+        sun.direction = {-2.0f, -1.0f, 0.0f};
+        sun.shadow_distance = 30;
+        sr.value()->begin(cam, sun, {});
+        sr.value()->submit(ground, mat, math::Mat4::identity());
+        if (with_blocker) sr.value()->submit(blocker, mat, math::Mat4::translation({6, 3, 0}));
+        auto cmd = dev.begin_commands();
+        REQUIRE(sr.value()->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target).value();
+        if (st) *st = sr.value()->stats();
+        dev.destroy(target);
+        return px;
+    };
+    SceneStats st;
+    const auto lit = frame(false, nullptr);
+    const auto shadowed = frame(true, &st);
+    test::save_output("h3_offscreen_caster", W, H, shadowed);
+    CHECK(st.visible == 1); // only the ground is in the main view
+    CHECK(st.shadow_casters == 2);
+    // Mean luminance of the centre 32x16 pixels drops with the off-screen caster present.
+    auto centre = [&](const std::vector<std::uint8_t>& px) {
+        double sum = 0;
+        for (std::uint32_t y = H / 2 - 8; y < H / 2 + 8; ++y)
+            for (std::uint32_t x = W / 2 - 16; x < W / 2 + 16; ++x) sum += px[(y * W + x) * 4 + 1];
+        return sum / (32.0 * 16.0);
+    };
+    CHECK(centre(shadowed) < centre(lit) * 0.8);
+    ctx.destroy(ground);
+    ctx.destroy(blocker);
 }
