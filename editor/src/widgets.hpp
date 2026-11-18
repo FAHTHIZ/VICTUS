@@ -104,6 +104,11 @@ bool empty_state(Icon icon, std::string_view title, std::string_view body, const
 /// clears it too. `width` <= 0 fills the remaining width. Returns true when the text changed.
 bool search_input(const char* id, const char* hint, std::string& text, float width = -1.0f);
 
+/// Turns code names into words for labels: "linear_damping" -> "Linear Damping",
+/// "RigidBody2D" -> "Rigid Body 2D", "UiButton" -> "UI Button". Text that already has spaces or
+/// starts with a capital and has no '_' is returned unchanged (authored labels win).
+[[nodiscard]] std::string humanize(std::string_view code);
+
 /// True if `needle` (empty matches) is in `hay`, ignoring ASCII case.
 [[nodiscard]] bool contains_icase(std::string_view hay, std::string_view needle) noexcept;
 

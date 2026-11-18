@@ -14,6 +14,7 @@
 #include <imgui_internal.h>
 
 #include <cstring>
+#include <optional>
 #include <fstream>
 #include <filesystem>
 
@@ -554,4 +555,50 @@ TEST_CASE("studio hierarchy: deep trees start collapsed, search keeps parents, s
     CHECK(h.ed->edit_scene().parent(cube) == hand);
     CHECK(h.ed->edit_scene().size() == before + 1);
     h.frames(2);
+}
+
+TEST_CASE("studio inspector: Add Component lists plain names by category and adds in one undo step") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    REQUIRE(h.ed->create_project(h.dir / "Inspect Game", "Inspect Game", "3d").ok());
+    h.frames(2);
+
+    // Nothing selected: the Inspector explains what to do instead of showing a blank panel.
+    h.ed->clear_selection();
+    h.frames(2);
+
+    const auto cube = h.ed->create_entity(editor::Primitive::Cube, {});
+    REQUIRE_FALSE(cube.is_null());
+    const auto find = [&](std::string_view id) -> std::optional<editor::ComponentChoice> {
+        for (const auto& c : h.ed->component_choices(cube))
+            if (c.id == id) return c;
+        return std::nullopt;
+    };
+    const auto body = find("RigidBody");
+    REQUIRE(body.has_value());
+    CHECK(body->category == "Physics 3D");
+    CHECK(body->name == "Rigid Body");
+    CHECK_FALSE(body->description.empty());
+    CHECK_FALSE(body->present);
+    const auto body2d = find("RigidBody2D");
+    REQUIRE(body2d.has_value());
+    CHECK(body2d->name == "Rigid Body 2D");
+    for (const auto& c : h.ed->component_choices(cube)) {
+        CHECK_FALSE(c.name.empty());
+        CHECK_FALSE(c.category.empty());
+    }
+
+    CHECK(h.ed->add_component(cube, "RigidBody"));
+    CHECK(find("RigidBody")->present);
+    CHECK_FALSE(h.ed->add_component(cube, "RigidBody")); // already there
+    CHECK_FALSE(h.ed->add_component(cube, "NoSuchComponent"));
+    h.ed->undo();
+    CHECK_FALSE(find("RigidBody")->present);
+
+    // The picker opens and draws with the cube selected; readable labels everywhere.
+    h.ed->select(cube);
+    h.ed->open_add_component();
+    h.frames(8);
 }
