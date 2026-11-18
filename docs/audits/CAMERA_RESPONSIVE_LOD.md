@@ -34,6 +34,7 @@ geometric error, projected to render pixels, stays within `RenderSettings::lod_e
 | Shadow LOD bias | `shadow_lod_bias` 2 vs 0: same main triangles, fewer `shadow_triangles`, image within 1.5/255 | pass |
 | 6. Texture close-up after a distant view | per-level coloured 64x64 chain on a tiled plane (tests/render/gpu_texture_mip_tests.cpp): close-up samples mip 0, 8 m away samples about level 3, returning or zooming to 1.5 degrees samples mip 0 again; nearest filtering minifies through mips too | pass |
 | 7. Character over poses and distances | Vanguard V-01 through the real pipeline (GLB, asset database, scene, AnimationSystem, extraction, skinned draws) in Idle, Run, Jump and Interact at 2.5, 8 and 20 m (tests/render/gpu_character_lod_tests.cpp): LODs draw 10 054, 5 028 and 2 578 of 20 632 triangles; at most 3 pixels per 256x256 frame differ by more than 48/255 from every pixel within one pixel of the LOD 0 image; changed pixels are silhouette edges (visor, insignia and hands survive) | pass |
+| 8. Terrain chunk boundaries during zoom | 129-sample rolling heightfield, 16 chunks, grazing camera at FOV 75/35/12/4 with 1 px and a stress 8 px budget (tests/render/gpu_terrain_tests.cpp): no cracks (sky pixels with LOD-frame ground above and below where LOD 0 shows ground); 1 px silhouette notches on the horizon stay within 0.1% of ground pixels at the default budget. Mutation check: removing the skirts makes the 8 px pass report 8 and 31 cracks | pass |
 | 4. Off-screen shadow contribution | a caster outside the main frustum still darkens the visible ground (`visible == 1`, `shadow_casters == 2`) | pass |
 
 All checks run on Mesa lavapipe (llvmpipe) in CI. They are CPU-side selection and image checks, not
@@ -69,7 +70,7 @@ GPU timing.
 
 ## Not covered yet
 
-- H3 items 8 (thin
-  railings, foliage, alpha cutout and terrain chunk seams during zoom) and 10 (physical Android devices,
+- H3 item 8 for thin
+  railings, foliage and alpha cutout (terrain seams are covered), and item 10 (physical Android devices,
   hardware-blocked).
-- Terrain chunk LODs (ADR-0063) use their own selection and are not part of these checks.
+- Terrain chunk LODs (ADR-0063) go through the same `select_lod` rule as other meshes, so the FOV, viewport and render-scale checks apply to them as well.
