@@ -1330,3 +1330,9 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 - Verified (Debug, -Werror, lavapipe + Xvfb): `victus_tilemap_tests` 9/9 (2 new cases, 204 assertions); full `VICTUS_REQUIRE_GPU=1 xvfb-run -a ctest --preset dev -j2 -E perf_budgets` 33/33, including the dungeon-crawler and platformer samples.
 - Limits: no push-out from inside solid tiles with outlines; whole-map retrace per edit.
 - Next: 6l save reliability (transactional generations/journal), then 6k audio items.
+
+### 2026-11-18 — 6l: durable verified writes and save generations (ADR-0082)
+- Built: `fs::write_atomic` now writes natively with `fsync` (`F_FULLFSYNC` on Apple, `FlushFileBuffers` on Windows), reads the temporary back, renames and flushes the directory; hidden temporaries; OS error text (e.g. "No space left on device"). New `fs::write_safely`, `read_with_recovery`, `generations`, `restore_generation`, `history_path`, `damaged_path`, `fs::testing::inject_write_fault`, `json::document_validator`. Scenes, prefabs and `victus.project` save/load through them (2 generations); `SaveStore` backups written with the durable path instead of a non-atomic `copy_file`; project `.gitignore` template ignores `.*.vbak*`, `.*.damaged`, `.*.tmp*`.
+- Verified (Debug, -Werror, lavapipe + Xvfb): `victus_core_tests` 66/66 (2 new `fs:` cases), `victus_scene_tests` 11/11 (1 new); full `VICTUS_REQUIRE_GPU=1 xvfb-run -a ctest --preset dev -j2 -E perf_budgets` 33/33. The read-only-directory case ran (non-root user).
+- Limits: no history UI; editor layout/materials/tile sets/cooked assets use durable writes without history; Windows directory entries are not flushed; migrations and safe mode remain.
+- Next: 6l explicit versioned migrators for scene/prefab/project, then editor safe mode after repeated startup failures.

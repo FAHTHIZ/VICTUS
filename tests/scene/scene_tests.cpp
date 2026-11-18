@@ -4,6 +4,7 @@
 #include "victus/scene/scene.hpp"
 
 #include <filesystem>
+#include <vector>
 
 using namespace victus;
 using namespace victus::scene;
@@ -122,6 +123,36 @@ TEST_CASE("scene: save/load round trip is lossless and stable") {
     REQUIRE(from_file.load_file(path).ok());
     CHECK(json::stringify(from_file.save()) == text);
     std::filesystem::remove(path);
+    for (const auto g : fs::generations(path)) std::filesystem::remove(fs::history_path(path, g));
+}
+
+TEST_CASE("scene: saves keep a previous generation and a torn file loads from it") {
+    const auto dir = std::filesystem::temp_directory_path() / "victus_scene_history_test";
+    std::filesystem::remove_all(dir);
+    const auto path = dir / "level.vscene";
+    Scene a;
+    a.create("First");
+    REQUIRE(a.save_file(path).ok());
+    a.create("Second");
+    REQUIRE(a.save_file(path).ok());
+    CHECK(fs::generations(path) == std::vector<std::uint32_t>{1});
+    // Simulate a torn write of the current file (power loss without the safe path).
+    std::filesystem::resize_file(path, std::filesystem::file_size(path) / 2);
+    Scene b;
+    REQUIRE(b.load_file(path).ok()); // generation 1 holds the one-entity save
+    CHECK(b.size() == 1);
+    CHECK_FALSE(b.find_by_name("First").is_null());
+    // Saving again keeps the torn file for inspection rather than rotating it into the history.
+    REQUIRE(b.save_file(path).ok());
+    CHECK(std::filesystem::exists(fs::damaged_path(path)));
+    // Nothing valid: a clear error.
+    std::filesystem::resize_file(path, 3);
+    std::filesystem::resize_file(fs::history_path(path, 1), 3);
+    Scene c;
+    const auto st = c.load_file(path);
+    REQUIRE_FALSE(st.ok());
+    CHECK(st.error().message.find("no valid copy") != std::string::npos);
+    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("scene: unknown components survive load/save; invalid files are rejected") {

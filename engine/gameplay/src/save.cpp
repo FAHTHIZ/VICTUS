@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <format>
+#include <optional>
 #include <system_error>
 
 namespace victus::gameplay {
@@ -96,11 +97,17 @@ Status SaveStore::write(std::string_view slot, const json::Value& data, std::str
     backup += ".bak";
     // Keep the previous file as the backup, but only when it is itself a good save: a damaged
     // main file must never replace the last good backup.
-    if (std::filesystem::exists(path, ec) && read_file(path).ok()) {
-        std::filesystem::copy_file(path, backup, std::filesystem::copy_options::overwrite_existing, ec);
-        if (ec) return make_error(ErrorCode::IoError, std::format("cannot back up {}: {}", path.string(), ec.message()));
+    // Both writes are atomic, flushed and read back; the backup is only ever replaced by a
+    // previous file that verifies.
+    const std::string text = json::stringify(make_save_document(data, data_version_, now_seconds(), label)) + "\n";
+    std::optional<std::string> previous;
+    if (std::filesystem::exists(path, ec))
+        if (auto t = fs::read_text(path, 256ull << 20); t && parse_save_document(*t).ok()) previous = std::move(t).value();
+    if (previous) {
+        if (Status st = fs::write_text_atomic(backup, *previous); !st)
+            return make_error(ErrorCode::IoError, std::format("cannot back up {}: {}", path.string(), st.error().message));
     }
-    return fs::write_text_atomic(path, json::stringify(make_save_document(data, data_version_, now_seconds(), label)) + "\n");
+    return fs::write_text_atomic(path, text);
 }
 
 Result<SaveFile> SaveStore::migrate(SaveFile file) const {

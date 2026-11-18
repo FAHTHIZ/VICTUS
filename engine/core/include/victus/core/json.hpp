@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <map>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -105,5 +106,9 @@ struct ParseLimits {
 
 [[nodiscard]] Result<Value> parse(std::string_view text, const ParseLimits& limits = {});
 [[nodiscard]] std::string stringify(const Value& value, bool pretty = true);
+
+// For fs::write_safely / fs::read_with_recovery: accepts text that parses as a JSON object whose
+// "format" is `format` (any object when `format` is empty), so torn or foreign files are rejected.
+[[nodiscard]] std::function<Status(std::string_view)> document_validator(std::string format = {});
 
 } // namespace victus::json

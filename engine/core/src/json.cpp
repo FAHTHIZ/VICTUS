@@ -487,4 +487,15 @@ std::string stringify(const Value& value, bool pretty) {
     return out;
 }
 
+std::function<Status(std::string_view)> document_validator(std::string format) {
+    return [format = std::move(format)](std::string_view text) -> Status {
+        auto doc = parse(text);
+        if (!doc) return std::move(doc).error();
+        if (!doc->is_object()) return make_error(ErrorCode::ParseError, "not a JSON object");
+        if (!format.empty() && (*doc)["format"].as_string_or("") != format)
+            return make_error(ErrorCode::ParseError, "not a " + format + " document");
+        return {};
+    };
+}
+
 } // namespace victus::json

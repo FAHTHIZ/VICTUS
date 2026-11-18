@@ -194,9 +194,9 @@ Result<Prefab> parse_prefab(const Value& doc) {
 }
 
 Result<Prefab> load_prefab_file(const std::filesystem::path& path) {
-    auto text = fs::read_text(path, 64u << 20);
+    auto text = fs::read_with_recovery(path, json::document_validator("victus.prefab"), fs::kDefaultHistory, 64u << 20);
     if (!text) return std::move(text).error();
-    auto doc = json::parse(*text);
+    auto doc = json::parse(text->bytes);
     if (!doc) return make_error(ErrorCode::ParseError, std::format("{}: {}", path.string(), doc.error().message));
     auto p = parse_prefab(*doc);
     if (!p) return make_error(ErrorCode::ParseError, std::format("{}: {}", path.string(), p.error().message));
@@ -215,7 +215,8 @@ Value prefab_to_json(const Prefab& prefab) {
 Status save_prefab_file(const Prefab& prefab, const std::filesystem::path& path) {
     std::error_code ec;
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
-    return fs::write_text_atomic(path, json::stringify(prefab_to_json(prefab)) + "\n");
+    return fs::write_safely(path, json::stringify(prefab_to_json(prefab)) + "\n",
+                            {.validate = json::document_validator("victus.prefab")});
 }
 
 // ---- instances ---------------------------------------------------------------------------------
