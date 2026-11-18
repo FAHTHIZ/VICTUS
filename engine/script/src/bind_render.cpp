@@ -782,6 +782,53 @@ int entity_anim_layer_weight(lua_State* L) {
     return 1;
 }
 
+// entity:morph_targets() -> {names...} in target order (empty without targets / before the model resolves)
+int entity_morph_targets(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* sys = animation::system_of(s);
+    const std::vector<std::string> names = sys ? sys->morph_targets(s, e) : std::vector<std::string>{};
+    lua_createtable(L, static_cast<int>(names.size()), 0);
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        lua_pushlstring(L, names[i].data(), names[i].size());
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    return 1;
+}
+
+// entity:set_morph_weight(target, weight) -> bool; target is a name or a 1-based index
+int entity_set_morph_weight(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto w = static_cast<float>(luaL_checknumber(L, 3));
+    auto* sys = animation::system_of(s);
+    bool ok = false;
+    if (sys && lua_type(L, 2) == LUA_TNUMBER) {
+        const lua_Integer i = luaL_checkinteger(L, 2);
+        ok = i >= 1 && sys->set_morph_weight(s, e, static_cast<std::size_t>(i - 1), w);
+    } else if (sys) {
+        ok = sys->set_morph_weight(s, e, std::string_view{luaL_checkstring(L, 2)}, w);
+    }
+    lua_pushboolean(L, ok);
+    return 1;
+}
+
+// entity:morph_weight(target) -> number | nil; target is a name or a 1-based index
+int entity_morph_weight(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* sys = animation::system_of(s);
+    std::optional<float> w;
+    if (sys && lua_type(L, 2) == LUA_TNUMBER) {
+        const lua_Integer i = luaL_checkinteger(L, 2);
+        if (i >= 1) w = sys->morph_weight(s, e, static_cast<std::size_t>(i - 1));
+    } else if (sys) {
+        w = sys->morph_weight(s, e, std::string_view{luaL_checkstring(L, 2)});
+    }
+    if (w) lua_pushnumber(L, *w);
+    else lua_pushnil(L);
+    return 1;
+}
 
 // entity:animation_clips() -> {names...} (empty until the model resolves)
 int entity_animation_clips(lua_State* L) {

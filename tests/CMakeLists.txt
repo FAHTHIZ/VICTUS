@@ -68,6 +68,7 @@ victus_add_test(victus_asset_tests
         assets/template_character_tests.cpp
         assets/texture_compression_tests.cpp
         assets/mesh_lod_asset_tests.cpp
+        assets/morph_asset_tests.cpp
     DEPS VICTUS::Assets VICTUS::Project
     LABELS assets)
 
@@ -116,6 +117,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_transparency_tests.cpp
         render/gpu_vertex_color_tests.cpp
         render/gpu_procedural_mesh_tests.cpp
+        render/gpu_morph_tests.cpp
         render/gpu_environment_tests.cpp
         render/gpu_reflection_probe_tests.cpp
         render/gpu_irradiance_tests.cpp
@@ -239,7 +241,7 @@ victus_add_test(victus_audio_tests
 target_compile_definitions(victus_audio_tests PRIVATE VICTUS_MINIAUDIO_DATA_DIR="${VICTUS_MINIAUDIO_DIR}/data")
 
 victus_add_test(victus_animation_tests
-    SOURCES animation/animation_tests.cpp animation/sprite_animation_tests.cpp animation/controller_tests.cpp animation/ik_tests.cpp animation/layer_tests.cpp animation/retarget_tests.cpp
+    SOURCES animation/animation_tests.cpp animation/sprite_animation_tests.cpp animation/controller_tests.cpp animation/ik_tests.cpp animation/layer_tests.cpp animation/retarget_tests.cpp animation/morph_tests.cpp
     DEPS VICTUS::Animation VICTUS::Core
     LABELS animation)
 

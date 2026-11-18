@@ -32,19 +32,24 @@ class JobSystem;
 
 namespace victus::animation {
 
-enum class Path : std::uint8_t { Translation, Rotation, Scale };
+// Weights: glTF morph target weights of the node's mesh (`Channel::width` per key). Sets expand
+// them into per-target weight nodes (expand_morph_weights), so poses only carry transforms.
+enum class Path : std::uint8_t { Translation, Rotation, Scale, Weights };
 enum class Interpolation : std::uint8_t { Step, Linear, CubicSpline };
 
 // One animated property of one node. `values` holds `components()` floats per key (3 for
-// translation/scale, 4 for rotation xyzw); cubic-spline keys store in-tangent, value,
-// out-tangent (3 * components floats per key), as in glTF.
+// translation/scale, 4 for rotation xyzw, `width` morph weights); cubic-spline keys store
+// in-tangent, value, out-tangent (3 * components floats per key), as in glTF.
 struct Channel {
     std::uint32_t node{0};
     Path path{Path::Translation};
     Interpolation interpolation{Interpolation::Linear};
     std::vector<float> times; // seconds, non-decreasing
     std::vector<float> values;
-    [[nodiscard]] std::uint32_t components() const noexcept { return path == Path::Rotation ? 4u : 3u; }
+    std::uint32_t width{0}; // Path::Weights: morph targets per key
+    [[nodiscard]] std::uint32_t components() const noexcept {
+        return path == Path::Rotation ? 4u : path == Path::Weights ? width : 3u;
+    }
 };
 
 struct Clip {
@@ -65,11 +70,34 @@ struct AnimationSet {
         std::string name;
         std::int32_t parent{-1};
         NodePose rest;
+        // Weight node (expand_morph_weights): carries morph target `morph_index` of node
+        // `morph_node` (also its parent) in translation.x. Never bound to an entity.
+        std::int32_t morph_node{-1};
+        std::uint32_t morph_index{0};
+        [[nodiscard]] bool is_morph() const noexcept { return morph_node >= 0; }
+    };
+    // Morph target names and default weights of one model mesh (empty for meshes without).
+    struct MeshMorphs {
+        std::vector<std::string> names;
+        std::vector<float> defaults;
     };
     std::vector<Node> nodes;
     std::vector<Clip> clips;
+    std::vector<MeshMorphs> mesh_morphs; // by model mesh index
     [[nodiscard]] std::int32_t find_clip(std::string_view name) const noexcept;
 };
+
+// A node whose mesh has morph targets (names and default weights, one per target).
+struct MorphNode {
+    std::uint32_t node{0};
+    std::vector<std::string> names;
+    std::vector<float> defaults;
+};
+// Appends one weight node per target of each MorphNode (named "<node>/<target>", rest weight in
+// translation.x) and rewrites Path::Weights channels into translation channels of those nodes, so
+// cross-fades, blend spaces, layers and masks (through the parent) blend weights like transforms.
+// Weights channels of nodes without targets, or wider than the node's target count, are dropped.
+void expand_morph_weights(AnimationSet& set, std::span<const MorphNode> morphs);
 
 // Validates node indices, key ordering, finite values and value counts.
 [[nodiscard]] Status validate(const Clip& clip, std::size_t node_count);
@@ -119,6 +147,14 @@ struct RootMotion {
     math::Vec3 position{}; // travel in the Animator entity's parent space (world space for root entities)
     float yaw{0};          // turn about +Y in radians
     bool applied{false};   // moved the entity (AnimatorComponent::apply_root_motion)
+};
+
+// Current morph target weights of a mesh entity, one per target of its mesh (the node entity
+// above a multi-primitive mesh also drives its primitive children). Written by Animators whose
+// clips animate weights and by scripts (AnimationSystem::set_morph_weight); the renderer deforms
+// the mesh with them. Runtime state, not serialized: without it the mesh's default weights apply.
+struct MorphWeightsComponent {
+    std::vector<float> weights;
 };
 
 // Marks a MeshRenderer as GPU-skinned by `skin` of its model, with joints bound by name under
@@ -251,6 +287,15 @@ public:
     [[nodiscard]] std::optional<float> layer_weight(scene::Scene& scene, scene::Entity e, std::string_view layer);
     [[nodiscard]] ControllerStatus controller_status(scene::Scene& scene, scene::Entity e);
     [[nodiscard]] std::vector<std::string> clips(scene::Scene& scene, scene::Entity e);
+    // Morph targets of the mesh on `e` (its MeshRenderer, else the first child MeshRenderer whose
+    // mesh has targets): names in target order, empty when there are none or the model is not
+    // resolved. set_morph_weight adds a MorphWeightsComponent to `e` (mesh defaults) on first use;
+    // `target` is a name or a 0-based index. Weights are not clamped.
+    [[nodiscard]] std::vector<std::string> morph_targets(scene::Scene& scene, scene::Entity e);
+    bool set_morph_weight(scene::Scene& scene, scene::Entity e, std::string_view target, float weight);
+    bool set_morph_weight(scene::Scene& scene, scene::Entity e, std::size_t target, float weight);
+    [[nodiscard]] std::optional<float> morph_weight(scene::Scene& scene, scene::Entity e, std::string_view target);
+    [[nodiscard]] std::optional<float> morph_weight(scene::Scene& scene, scene::Entity e, std::size_t target);
     [[nodiscard]] std::shared_ptr<const AnimationSet> set(const Uuid& model);
     [[nodiscard]] const AnimationStats& stats() const noexcept { return stats_; }
 

@@ -72,17 +72,18 @@ std::vector<std::int32_t> map_bones(const AnimationSet& source, const AnimationS
     std::vector<std::int32_t> map(target.nodes.size(), -1);
     auto find_exact = [&](std::string_view n) -> std::int32_t {
         for (std::size_t i = 0; i < source.nodes.size(); ++i)
-            if (source.nodes[i].name == n) return static_cast<std::int32_t>(i);
+            if (!source.nodes[i].is_morph() && source.nodes[i].name == n) return static_cast<std::int32_t>(i);
         return -1;
     };
     std::vector<std::string> norm(source.nodes.size());
-    for (std::size_t i = 0; i < source.nodes.size(); ++i) norm[i] = normalize_bone_name(source.nodes[i].name);
+    for (std::size_t i = 0; i < source.nodes.size(); ++i)
+        if (!source.nodes[i].is_morph()) norm[i] = normalize_bone_name(source.nodes[i].name); // weight nodes do not map
     // Explicit mappings claim their source bones first; automatic matches fill in the rest, and a
     // source bone drives at most one target bone (the first in hierarchy order).
     std::vector<std::uint8_t> used(source.nodes.size(), 0), fixed(target.nodes.size(), 0);
     for (std::size_t t = 0; t < target.nodes.size(); ++t)
         for (const auto& [to, from] : options.bone_map)
-            if (to == target.nodes[t].name) {
+            if (to == target.nodes[t].name && !target.nodes[t].is_morph()) {
                 const std::int32_t s = find_exact(from);
                 fixed[t] = 1;
                 if (s >= 0 && !used[static_cast<std::size_t>(s)]) {
@@ -98,7 +99,7 @@ std::vector<std::int32_t> map_bones(const AnimationSet& source, const AnimationS
         return true;
     };
     for (std::size_t t = 0; t < target.nodes.size(); ++t) {
-        if (fixed[t]) continue;
+        if (fixed[t] || target.nodes[t].is_morph()) continue;
         const std::string& tn = target.nodes[t].name;
         if (claim(t, find_exact(tn))) continue;
         const std::string n = normalize_bone_name(tn);
@@ -235,8 +236,9 @@ std::shared_ptr<AnimationSet> retarget_set(const AnimationSet& source, const Ani
                                            const RetargetOptions& options, RetargetReport* report) {
     const std::vector<std::int32_t> map = map_bones(source, target, options);
     RetargetReport rep;
-    rep.target_bones = static_cast<std::uint32_t>(target.nodes.size());
     for (std::size_t t = 0; t < map.size(); ++t) {
+        if (target.nodes[t].is_morph()) continue; // weight nodes are not bones
+        ++rep.target_bones;
         if (map[t] >= 0) ++rep.mapped_bones;
         else if (rep.unmapped.size() < 32) rep.unmapped.push_back(target.nodes[t].name);
     }
@@ -248,6 +250,7 @@ std::shared_ptr<AnimationSet> retarget_set(const AnimationSet& source, const Ani
     auto out = std::make_shared<AnimationSet>();
     out->nodes = target.nodes;
     out->clips = target.clips;
+    out->mesh_morphs = target.mesh_morphs;
     for (const Clip& c : source.clips) {
         if (out->find_clip(c.name) >= 0) {
             ++rep.skipped_clips; // the target's own clip of that name wins

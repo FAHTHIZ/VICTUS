@@ -30,6 +30,7 @@ void GpuAssetCache::clear() {
     probes_.clear();
     irradiance_.clear();
     probe_renderer_.reset();
+    drop_morphed(nullptr);
     for (auto& [id, model] : models_) {
         for (auto& m : model->meshes) ctx_.destroy(m);
         for (auto& t : model->textures) ctx_.device().destroy(t);
@@ -55,6 +56,7 @@ void GpuAssetCache::evict(const Uuid& uuid) {
         ctx_.device().destroy(it->second);
         textures_.erase(it);
     }
+    drop_morphed(&uuid);
     if (const auto it = models_.find(uuid); it != models_.end()) {
         for (auto& m : it->second->meshes) ctx_.destroy(m);
         for (auto& t : it->second->textures) ctx_.device().destroy(t);
@@ -316,13 +318,18 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
         m.normal_texture = tex_or(src.normal_texture);
         m.emissive_texture = tex_or(src.emissive_texture);
         gpu->mesh_materials.push_back(m);
-        // GPU owns the geometry now; keep only counts/bounds-relevant metadata on the CPU side.
-        mesh.data.vertices.clear();
-        mesh.data.vertices.shrink_to_fit();
+        // GPU owns the geometry now; keep only counts/bounds-relevant metadata on the CPU side
+        // (and base vertices of meshes with morph targets, which are morphed on the CPU).
+        if (mesh.data.morphs.empty()) {
+            mesh.data.vertices.clear();
+            mesh.data.vertices.shrink_to_fit();
+        }
         mesh.data.indices.clear();
         mesh.data.indices.shrink_to_fit();
     }
     model.textures.clear();
+    for (const auto& n : model.nodes)
+        if (!n.morph_weights.empty()) gpu->node_morph_weights.emplace_back(n.name, n.morph_weights);
     for (const auto& n : model.nodes) gpu->skeleton.push_back({.name = n.name, .parent = n.parent, .rest = {n.translation, n.rotation, n.scale}});
     gpu->cpu = std::move(model);
     const GpuModel* raw = gpu.get();
@@ -361,8 +368,71 @@ const render::GpuMesh* GpuAssetCache::procedural(const scene::ProceduralMesh& me
     return &entry.mesh;
 }
 
+void GpuAssetCache::drop_morphed(const Uuid* model) {
+    for (auto it = morphed_.begin(); it != morphed_.end();) {
+        if (model && it->second.model != *model) {
+            ++it;
+            continue;
+        }
+        if (it->second.gpu.valid()) ctx_.destroy_vertex_variant(it->second.gpu);
+        it = morphed_.erase(it);
+    }
+}
+
+const render::GpuMesh* GpuAssetCache::morphed(std::uint64_t key, const Uuid& model_id, const GpuModel& model, std::uint32_t mesh,
+                                              std::span<const float> weights) {
+    if (mesh >= model.meshes.size() || mesh >= model.cpu.meshes.size()) return nullptr;
+    const render::MeshData& base = model.cpu.meshes[mesh].data;
+    if (base.morphs.empty() || base.vertices.size() != model.meshes[mesh].vertex_count) return nullptr;
+    auto [it, inserted] = morphed_.try_emplace(key);
+    MorphEntry& e = it->second;
+    e.last_used = procedural_clock_;
+    if (!inserted && (e.model != model_id || e.mesh != mesh)) {
+        if (e.gpu.valid()) ctx_.destroy_vertex_variant(e.gpu);
+        e = MorphEntry{.last_used = procedural_clock_};
+    }
+    const std::size_t n = std::min(weights.size(), base.morphs.size());
+    const bool same = e.gpu.valid() && e.weights.size() == n && std::equal(e.weights.begin(), e.weights.end(), weights.begin());
+    if (same) return &e.gpu;
+    if (!render::apply_morphs(base, weights.first(n), morph_scratch_)) {
+        if (e.gpu.valid()) ctx_.destroy_vertex_variant(e.gpu); // all zero: the base mesh is exact
+        morphed_.erase(it);
+        return nullptr;
+    }
+    math::Aabb bounds;
+    for (const render::Vertex3D& v : morph_scratch_) bounds.expand(v.position);
+    if (e.gpu.valid()) {
+        if (auto st = ctx_.update_vertex_variant(e.gpu, morph_scratch_); !st) {
+            VICTUS_LOG_ERROR("runtime", "morph upload: {}", st.error().message);
+            return nullptr;
+        }
+    } else {
+        auto g = ctx_.create_vertex_variant(model.meshes[mesh], morph_scratch_, "morphed");
+        if (!g) {
+            VICTUS_LOG_ERROR("runtime", "morph upload: {}", g.error().message);
+            morphed_.erase(it);
+            return nullptr;
+        }
+        e.gpu = *g;
+        e.model = model_id;
+        e.mesh = mesh;
+    }
+    e.gpu.bounds = bounds;
+    e.weights.assign(weights.begin(), weights.begin() + static_cast<std::ptrdiff_t>(n));
+    ++morph_uploads_;
+    return &e.gpu;
+}
+
 void GpuAssetCache::collect_procedural(std::uint32_t keep_frames) {
     ++procedural_clock_;
+    for (auto it = morphed_.begin(); it != morphed_.end();) {
+        if (it->second.last_used + keep_frames < procedural_clock_) {
+            if (it->second.gpu.valid()) ctx_.destroy_vertex_variant(it->second.gpu);
+            it = morphed_.erase(it);
+        } else {
+            ++it;
+        }
+    }
     for (auto it = procedural_.begin(); it != procedural_.end();) {
         if (it->second.last_used + keep_frames < procedural_clock_) {
             if (it->second.mesh.valid()) ctx_.destroy(it->second.mesh);
@@ -912,6 +982,32 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             m.cast_shadows = mr.cast_shadows;
             apply_overrides(entity, m);
             const GpuModel& gm = **model;
+            // Morph targets: the entity's own weights, else its node's (the Animator writes the
+            // node entity; multi-primitive nodes draw from child entities), else the mesh defaults.
+            const render::GpuMesh* drawn = &gm.meshes[mr.mesh_index];
+            if (mr.mesh_index < gm.cpu.meshes.size() && !gm.cpu.meshes[mr.mesh_index].data.morphs.empty()) {
+                const auto* h = w.get<scene::Hierarchy>(entity);
+                const Entity parent = h ? h->parent : Entity{};
+                const auto* mw = w.get<animation::MorphWeightsComponent>(entity);
+                if (!mw && parent != Entity{}) mw = w.get<animation::MorphWeightsComponent>(parent);
+                std::span<const float> weights = gm.cpu.meshes[mr.mesh_index].data.morph_weights;
+                if (mw) {
+                    weights = mw->weights;
+                } else if (!gm.node_morph_weights.empty()) {
+                    // Static glTF node.weights: the node entity is the mesh entity or its parent.
+                    const auto* own = w.get<scene::Name>(entity);
+                    const auto* up = parent != Entity{} ? w.get<scene::Name>(parent) : nullptr;
+                    for (const auto& [node, nw] : gm.node_morph_weights)
+                        if ((own && own->value == node) || (up && up->value == node)) {
+                            weights = nw;
+                            break;
+                        }
+                }
+                if (const render::GpuMesh* mm = assets.morphed(entity.bits(), mr.mesh_asset, gm, mr.mesh_index, weights)) {
+                    drawn = mm;
+                    ++stats.morphed;
+                }
+            }
             const auto* skinned = w.get<animation::SkinnedMeshComponent>(entity);
             if (!scattered && skinned && gm.max_joint[mr.mesh_index] >= 0 && skinned->skin < gm.cpu.skins.size()) {
                 const assets::ModelSkin& skin = gm.cpu.skins[skinned->skin];
@@ -934,13 +1030,13 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                             bounds.expand(b.max);
                         }
                     }
-                    renderer.submit_skinned(gm.meshes[mr.mesh_index], m, wt.matrix, palette, bounds, motion_id);
+                    renderer.submit_skinned(*drawn, m, wt.matrix, palette, bounds, motion_id);
                     ++stats.meshes;
                     ++stats.skinned;
                     return;
                 }
             }
-            emit(gm.meshes[mr.mesh_index], m);
+            emit(*drawn, m);
             ++stats.meshes;
             return;
         }

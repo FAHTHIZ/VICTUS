@@ -1836,3 +1836,45 @@ return { ok = ok, bad = bad, w = h:anim_layer_weight("Upper"), none = h:anim_lay
     sim.tick(s, 1.0f / 60);
     CHECK(s.world().get<scene::Transform>(spine)->position.x == doctest::Approx(3.0f));
 }
+
+TEST_CASE("script: morph target weights (morph_targets, set_morph_weight, morph_weight)") {
+    TempDir d("victus_script_morphs");
+    auto host = make_host(d);
+    auto set = std::make_shared<animation::AnimationSet>();
+    set->nodes.push_back({.name = "Face", .parent = -1, .rest = {}});
+    set->mesh_morphs.push_back({.names = {"Smile", "Blink"}, .defaults = {0.0f, 0.25f}});
+    const Uuid model = Uuid::generate();
+    animation::AnimationSystem anim;
+    anim.add_set(model, set);
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    animation::add_animation_systems(sim, anim);
+    Scene s;
+    const Entity face = s.create("Face");
+    auto& mr = s.world().add<scene::MeshRendererComponent>(face);
+    mr.mesh_asset = model;
+    sim.tick(s, 1.0f / 60); // attaches the animation system to the scene
+    auto q = host->eval(R"lua(
+local f = scene.find("Face")
+local names = f:morph_targets()
+local a = f:set_morph_weight("Smile", 0.75)
+local b = f:set_morph_weight(2, 0.5)
+local bad = f:set_morph_weight("Frown", 1)
+local zero = f:set_morph_weight(0, 1)
+return { n = #names, first = names[1], a = a, b = b, bad = bad, zero = zero,
+         smile = f:morph_weight(1), blink = f:morph_weight("Blink"), none = f:morph_weight("Frown") == nil }
+)lua", &s);
+    if (!q.ok()) FAIL(q.error().message);
+    CHECK(q.value()["n"].as_number() == doctest::Approx(2));
+    CHECK(q.value()["first"].as_string() == "Smile");
+    CHECK(q.value()["a"].as_bool());
+    CHECK(q.value()["b"].as_bool());
+    CHECK_FALSE(q.value()["bad"].as_bool());
+    CHECK_FALSE(q.value()["zero"].as_bool()); // indices are 1-based
+    CHECK(q.value()["smile"].as_number() == doctest::Approx(0.75));
+    CHECK(q.value()["blink"].as_number() == doctest::Approx(0.5));
+    CHECK(q.value()["none"].as_bool());
+    const auto* mw = s.world().get<animation::MorphWeightsComponent>(face);
+    REQUIRE(mw);
+    CHECK(mw->weights == std::vector<float>{0.75f, 0.5f});
+}

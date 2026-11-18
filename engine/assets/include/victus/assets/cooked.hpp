@@ -23,7 +23,7 @@ namespace victus::assets {
 // v2 (Slice 12): mesh skin streams, node skins, skins and animation clips.
 // v3: Vertex3D gained an RGBA8 colour (52 bytes); v4: HDR textures (half-float equirect + SH9);
 // v5: block-compressed texture variants (BC/ASTC, ADR-0047); v6: mesh LODs (ADR-0049).
-inline constexpr std::uint32_t kCookedFormatVersion = 6;
+inline constexpr std::uint32_t kCookedFormatVersion = 7; // 7: morph targets, weight channels
 
 enum class AssetKind : std::uint8_t { Unknown = 0, Texture = 1, Model = 2, Scene = 3, Script = 4, Audio = 5, Prefab = 6, Material = 7, Shader = 8, SpriteSheet = 9, Tileset = 10, Terrain = 11, BehaviorTree = 12, Sequence = 13, StringTable = 14, AnimController = 15 };
 [[nodiscard]] const char* to_string(AssetKind kind) noexcept;
@@ -74,6 +74,7 @@ struct ModelNode {
     math::Vec3 scale{1, 1, 1};
     std::vector<std::uint32_t> meshes; // indices into CookedModel::meshes
     std::int32_t skin{-1};             // index into CookedModel::skins for skinned meshes
+    std::vector<float> morph_weights;  // glTF node.weights: per-node default morph weights (else the mesh's)
 };
 
 // A glTF skin: joint nodes and their inverse bind matrices (model space -> joint space at bind).

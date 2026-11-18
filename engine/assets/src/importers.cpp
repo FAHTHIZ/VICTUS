@@ -671,6 +671,42 @@ private:
         } else if (joints[0] || weights[0]) {
             warn(out.name + ": JOINTS_0 without WEIGHTS_0 (or the reverse); skin ignored");
         }
+        // Morph targets: POSITION/NORMAL deltas, stored sparsely (only vertices that move).
+        if (prim.targets_count > render::kMaxMorphTargets)
+            return make_error(ErrorCode::LimitExceeded, out.name + ": too many morph targets");
+        for (cgltf_size t = 0; t < prim.targets_count; ++t) {
+            const cgltf_morph_target& mt = prim.targets[t];
+            const cgltf_accessor *dp = nullptr, *dn = nullptr;
+            for (cgltf_size a = 0; a < mt.attributes_count; ++a) {
+                const cgltf_attribute& attr = mt.attributes[a];
+                if (attr.type == cgltf_attribute_type_position) dp = attr.data;
+                else if (attr.type == cgltf_attribute_type_normal) dn = attr.data;
+            }
+            if (dp && (dp->type != cgltf_type_vec3 || dp->count != count)) dp = nullptr;
+            if (dn && (dn->type != cgltf_type_vec3 || dn->count != count)) dn = nullptr;
+            render::MorphTarget target;
+            target.name = t < mesh.target_names_count && mesh.target_names[t] ? mesh.target_names[t]
+                                                                               : std::format("target{}", t);
+            const std::vector<float> pd = dp ? unpack(dp) : std::vector<float>{};
+            const std::vector<float> nd = dn ? unpack(dn) : std::vector<float>{};
+            for (cgltf_size i = 0; i < count; ++i) {
+                const math::Vec3 dpos = dp ? math::Vec3{pd[i * 3], pd[i * 3 + 1], pd[i * 3 + 2]} : math::Vec3{};
+                const math::Vec3 dnrm = dn ? math::Vec3{nd[i * 3], nd[i * 3 + 1], nd[i * 3 + 2]} : math::Vec3{};
+                const bool finite = std::isfinite(dpos.x) && std::isfinite(dpos.y) && std::isfinite(dpos.z) &&
+                                    std::isfinite(dnrm.x) && std::isfinite(dnrm.y) && std::isfinite(dnrm.z);
+                if (!finite) return make_error(ErrorCode::ParseError, out.name + ": non-finite morph target delta");
+                if (dpos.x == 0 && dpos.y == 0 && dpos.z == 0 && dnrm.x == 0 && dnrm.y == 0 && dnrm.z == 0) continue;
+                target.vertices.push_back(static_cast<std::uint32_t>(i));
+                target.positions.push_back(dpos);
+                if (dn) target.normals.push_back(dnrm);
+            }
+            out.data.morphs.push_back(std::move(target));
+        }
+        if (!out.data.morphs.empty()) {
+            out.data.morph_weights.assign(out.data.morphs.size(), 0.0f);
+            for (cgltf_size t = 0; t < mesh.weights_count && t < out.data.morph_weights.size(); ++t)
+                out.data.morph_weights[t] = std::isfinite(mesh.weights[t]) ? mesh.weights[t] : 0.0f;
+        }
         // Indices, converting strips/fans to lists.
         std::vector<std::uint32_t> raw;
         if (prim.indices) {
@@ -720,8 +756,8 @@ private:
         }
         if (node->mesh) n.meshes = mesh_map_[static_cast<std::size_t>(node->mesh - data_->meshes)];
         if (node->skin) n.skin = static_cast<std::int32_t>(node->skin - data_->skins); // remapped in import_skins
-        if (node->weights_count > 0 || (node->mesh && node->mesh->weights_count > 0))
-            warn(n.name + ": morph target weights are not supported; base shape used");
+        for (cgltf_size t = 0; t < node->weights_count && t < render::kMaxMorphTargets; ++t)
+            n.morph_weights.push_back(std::isfinite(node->weights[t]) ? node->weights[t] : 0.0f);
         const auto index = static_cast<std::int32_t>(model_.nodes.size());
         node_map_[node] = static_cast<std::uint32_t>(index);
         model_.nodes.push_back(std::move(n));
@@ -787,8 +823,9 @@ private:
                 case cgltf_animation_path_type_translation: out.path = animation::Path::Translation; break;
                 case cgltf_animation_path_type_rotation: out.path = animation::Path::Rotation; break;
                 case cgltf_animation_path_type_scale: out.path = animation::Path::Scale; break;
+                case cgltf_animation_path_type_weights: out.path = animation::Path::Weights; break;
                 default:
-                    if (!warned_weights) warn(clip.name + ": morph weight channels are not supported; skipped");
+                    if (!warned_weights) warn(clip.name + ": unsupported animation channel path; skipped");
                     warned_weights = true;
                     continue;
                 }
@@ -799,12 +836,25 @@ private:
                 }
                 out.times = unpack(ch.sampler->input);
                 out.values = unpack(ch.sampler->output);
-                if (out.times.empty() || cgltf_num_components(ch.sampler->output->type) != out.components()) {
+                if (out.path == animation::Path::Weights && !out.times.empty()) {
+                    // One scalar per morph target per key (x3 for cubic tangents).
+                    const std::size_t per = out.times.size() * (out.interpolation == animation::Interpolation::CubicSpline ? 3 : 1);
+                    const cgltf_mesh* m = ch.target_node->mesh;
+                    const std::size_t targets = m && m->primitives_count ? m->primitives[0].targets_count : 0;
+                    if (targets == 0 || ch.sampler->output->type != cgltf_type_scalar || out.values.size() != per * targets) {
+                        warn(std::format("{}: channel {} morph weights do not match the node's targets; skipped", clip.name, ci));
+                        continue;
+                    }
+                    out.width = static_cast<std::uint32_t>(targets);
+                }
+                if (out.times.empty() || (out.path != animation::Path::Weights &&
+                                          cgltf_num_components(ch.sampler->output->type) != out.components())) {
                     warn(std::format("{}: channel {} has invalid sampler data; skipped", clip.name, ci));
                     continue;
                 }
                 const ModelNode& node = model_.nodes[out.node];
-                if (node.parent < 0 && out.path != animation::Path::Rotation && settings_.scale != 1.0f)
+                if (node.parent < 0 && (out.path == animation::Path::Translation || out.path == animation::Path::Scale) &&
+                    settings_.scale != 1.0f)
                     for (float& v : out.values) v *= settings_.scale; // root nodes carry the import scale
                 if (out.path == animation::Path::Rotation && out.interpolation != animation::Interpolation::CubicSpline) {
                     for (std::size_t k = 0; k + 3 < out.values.size(); k += 4) {

@@ -197,6 +197,14 @@ std::vector<std::uint8_t> serialize(const CookedHeader& header, const CookedMode
             w.f32(lod.error);
             w.array(lod.indices);
         }
+        w.u32(static_cast<std::uint32_t>(m.data.morphs.size()));
+        for (const auto& t : m.data.morphs) {
+            w.str(t.name);
+            w.array(t.vertices);
+            w.array(t.positions);
+            w.array(t.normals);
+        }
+        w.array(m.data.morph_weights);
     }
     w.u32(static_cast<std::uint32_t>(model.nodes.size()));
     for (const auto& n : model.nodes) {
@@ -207,6 +215,7 @@ std::vector<std::uint8_t> serialize(const CookedHeader& header, const CookedMode
         w.pod(n.scale);
         w.array(n.meshes);
         w.i32(n.skin);
+        w.array(n.morph_weights);
     }
     w.u32(static_cast<std::uint32_t>(model.skins.size()));
     for (const auto& skin : model.skins) {
@@ -223,6 +232,7 @@ std::vector<std::uint8_t> serialize(const CookedHeader& header, const CookedMode
             w.u32(ch.node);
             w.u8(static_cast<std::uint8_t>(ch.path));
             w.u8(static_cast<std::uint8_t>(ch.interpolation));
+            w.u32(ch.width);
             w.array(ch.times);
             w.array(ch.values);
         }
@@ -240,9 +250,11 @@ Status validate_model(const CookedModel& model) {
         for (const std::uint32_t j : skin.joints)
             if (j >= model.nodes.size()) return bad(std::format("skin {} joint node out of range", si));
     }
-    for (const ModelMesh& mesh : model.meshes)
+    for (const ModelMesh& mesh : model.meshes) {
         if (!mesh.data.skin.empty() && mesh.data.skin.size() != mesh.data.vertices.size())
             return bad(std::format("mesh '{}' skin stream size mismatch", mesh.name));
+        if (const std::string e = render::validate_morphs(mesh.data); !e.empty()) return bad(std::format("mesh '{}': {}", mesh.name, e));
+    }
     for (const ModelNode& node : model.nodes) {
         if (node.skin < -1 || node.skin >= static_cast<std::int32_t>(model.skins.size())) return bad("node skin index out of range");
         if (node.skin < 0) continue;
@@ -264,6 +276,28 @@ animation::AnimationSet make_animation_set(const CookedModel& model) {
     for (const ModelNode& n : model.nodes)
         set.nodes.push_back({.name = n.name, .parent = n.parent, .rest = {n.translation, n.rotation, n.scale}});
     set.clips = model.animations;
+    set.mesh_morphs.resize(model.meshes.size());
+    for (std::size_t mi = 0; mi < model.meshes.size(); ++mi) {
+        const render::MeshData& d = model.meshes[mi].data;
+        auto& mm = set.mesh_morphs[mi];
+        for (const auto& t : d.morphs) mm.names.push_back(t.name);
+        mm.defaults = d.morph_weights;
+        mm.defaults.resize(mm.names.size(), 0.0f);
+    }
+    // Nodes whose meshes have targets get weight nodes (their first such mesh names them; glTF
+    // gives every primitive of a mesh the same targets).
+    std::vector<animation::MorphNode> morphs;
+    for (std::size_t ni = 0; ni < model.nodes.size(); ++ni)
+        for (const std::uint32_t mi : model.nodes[ni].meshes)
+            if (mi < set.mesh_morphs.size() && !set.mesh_morphs[mi].names.empty()) {
+                animation::MorphNode mn{.node = static_cast<std::uint32_t>(ni), .names = set.mesh_morphs[mi].names,
+                                        .defaults = set.mesh_morphs[mi].defaults};
+                const auto& own = model.nodes[ni].morph_weights; // glTF node.weights override the mesh's
+                for (std::size_t t = 0; t < own.size() && t < mn.defaults.size(); ++t) mn.defaults[t] = own[t];
+                morphs.push_back(std::move(mn));
+                break;
+            }
+    animation::expand_morph_weights(set, morphs);
     return set;
 }
 
@@ -330,13 +364,23 @@ Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) {
             for (const std::uint32_t i : lod.indices)
                 if (i >= mesh.data.vertices.size()) return corrupt("mesh lod index out of range");
         }
+        std::uint32_t morphs = 0;
+        if (!r.u32(morphs) || morphs > render::kMaxMorphTargets) return corrupt("mesh morph count");
+        mesh.data.morphs.resize(morphs);
+        for (auto& t : mesh.data.morphs)
+            if (!r.str(t.name) || !r.array(t.vertices, kMaxItems * 64) || !r.array(t.positions, kMaxItems * 64) ||
+                !r.array(t.normals, kMaxItems * 64))
+                return corrupt("mesh morph target");
+        if (!r.array(mesh.data.morph_weights, render::kMaxMorphTargets)) return corrupt("mesh morph weights");
+        if (const std::string e = render::validate_morphs(mesh.data); !e.empty()) return corrupt(std::format("mesh '{}': {}", mesh.name, e));
     }
     if (!r.u32(n) || n > kMaxItems) return corrupt("node count");
     m.nodes.resize(n);
     for (std::size_t i = 0; i < m.nodes.size(); ++i) {
         auto& node = m.nodes[i];
         if (!r.str(node.name) || !r.i32(node.parent) || !r.pod(node.translation) || !r.pod(node.rotation) ||
-            !r.pod(node.scale) || !r.array(node.meshes) || !r.i32(node.skin))
+            !r.pod(node.scale) || !r.array(node.meshes) || !r.i32(node.skin) ||
+            !r.array(node.morph_weights, render::kMaxMorphTargets))
             return corrupt("node");
         if (node.parent < -1 || node.parent >= static_cast<std::int32_t>(i)) return corrupt("node parent order");
         for (const std::uint32_t mi : node.meshes)
@@ -354,8 +398,8 @@ Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) {
         clip.channels.resize(channels);
         for (auto& ch : clip.channels) {
             std::uint8_t path = 0, interp = 0;
-            if (!r.u32(ch.node) || !r.u8(path) || !r.u8(interp) || path > 2 || interp > 2 || !r.array(ch.times) ||
-                !r.array(ch.values))
+            if (!r.u32(ch.node) || !r.u8(path) || !r.u8(interp) || path > 3 || interp > 2 || !r.u32(ch.width) ||
+                !r.array(ch.times) || !r.array(ch.values))
                 return corrupt("animation channel");
             ch.path = static_cast<animation::Path>(path);
             ch.interpolation = static_cast<animation::Interpolation>(interp);

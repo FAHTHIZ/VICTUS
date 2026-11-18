@@ -50,6 +50,21 @@ void optimize_mesh(MeshData& mesh) {
     for (std::uint32_t& i : mesh.indices) i = remap[i];
     for (MeshLod& lod : mesh.lods)
         for (std::uint32_t& i : lod.indices) i = remap[i];
+    // Morph targets follow the renumbering (entries of dropped vertices go away) and stay sorted.
+    for (MorphTarget& t : mesh.morphs) {
+        std::vector<std::size_t> order;
+        order.reserve(t.vertices.size());
+        for (std::size_t k = 0; k < t.vertices.size(); ++k)
+            if (t.vertices[k] < vc && remap[t.vertices[k]] != ~0u) order.push_back(k);
+        std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return remap[t.vertices[a]] < remap[t.vertices[b]]; });
+        MorphTarget out{.name = std::move(t.name), .vertices = {}, .positions = {}, .normals = {}};
+        for (const std::size_t k : order) {
+            out.vertices.push_back(remap[t.vertices[k]]);
+            out.positions.push_back(t.positions[k]);
+            if (!t.normals.empty()) out.normals.push_back(t.normals[k]);
+        }
+        t = std::move(out);
+    }
 }
 
 std::uint32_t generate_lods(MeshData& mesh, const LodSettings& settings) {

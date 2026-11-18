@@ -33,6 +33,8 @@ struct GpuModel {
     std::vector<std::vector<math::Aabb>> joint_bounds;
     std::vector<std::int32_t> max_joint;
     std::vector<animation::AnimationSet::Node> skeleton; // node names/parents for joint binding
+    // glTF node.weights by node name (nodes overriding their mesh's default morph weights).
+    std::vector<std::pair<std::string, std::vector<float>>> node_morph_weights;
 };
 
 // Uploads a cooked texture: the first block-compressed variant the device can sample (in the
@@ -123,6 +125,15 @@ public:
     // `keep_frames` frames (meshes replaced or removed by their entities). extract_scene() calls it.
     void collect_procedural(std::uint32_t keep_frames = 8);
     [[nodiscard]] std::size_t procedural_count() const noexcept { return procedural_.size(); }
+    // Per-drawer morphed copy of model mesh `mesh` (morph targets applied on the CPU with
+    // `weights`), keyed by `key` (the drawing entity). Re-uploaded only when the weights change;
+    // shares the base mesh's index, LOD and skin buffers. nullptr when the mesh has no targets,
+    // every weight is 0, or the upload failed (draw the base mesh). Copies unused for a few
+    // frames are destroyed by collect_procedural().
+    [[nodiscard]] const render::GpuMesh* morphed(std::uint64_t key, const Uuid& model_id, const GpuModel& model,
+                                                 std::uint32_t mesh, std::span<const float> weights);
+    [[nodiscard]] std::size_t morphed_count() const noexcept { return morphed_.size(); }
+    [[nodiscard]] std::uint64_t morph_uploads() const noexcept { return morph_uploads_; }
     // Drops one asset (e.g. after re-import) so the next request reloads it.
     void evict(const Uuid& uuid);
     void clear();
@@ -159,6 +170,17 @@ private:
         bool failed{false};
     };
     std::unordered_map<std::uint64_t, ProceduralEntry> procedural_;
+    struct MorphEntry {
+        Uuid model;
+        std::uint32_t mesh{0};
+        std::vector<float> weights;
+        render::GpuMesh gpu;
+        std::uint64_t last_used{0};
+    };
+    std::unordered_map<std::uint64_t, MorphEntry> morphed_;
+    std::vector<render::Vertex3D> morph_scratch_;
+    std::uint64_t morph_uploads_{0};
+    void drop_morphed(const Uuid* model); // all copies, or those of one model
     std::uint64_t procedural_clock_{0};
 };
 
@@ -172,6 +194,7 @@ struct ExtractStats {
     std::uint32_t irradiance_probes_baked{0}; // probes baked during this call
     std::uint32_t irradiance_probes_refreshed{0}; // dynamic-volume probes re-captured during this call
     std::uint32_t skinned{0}; // meshes drawn with GPU skinning
+    std::uint32_t morphed{0}; // meshes drawn with morph targets applied
     std::uint32_t terrain_chunks{0}; // terrain chunk meshes submitted (before culling)
     std::uint32_t foliage_instances{0}; // foliage instances submitted (within draw distance, before culling)
     std::uint32_t particle_emitters{0}, particles{0}; // submitted (before camera culling)
