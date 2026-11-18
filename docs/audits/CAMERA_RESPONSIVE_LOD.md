@@ -95,7 +95,13 @@ covered pixels, total layers, maximum and mean. Evidence (`gpu_overdraw_tests.cp
 stacked 4 m planes seen from 8-10 m give a maximum of 3, 1764 covered pixels and a mean of 2.39
 layers; back faces count only on double-sided materials. It is depth complexity, not shaded
 fragments (the pre-pass rejects most hidden opaque layers), and particles and decals are not
-counted. Anisotropic filtering has no setting yet.
+counted.
+
+Anisotropic filtering is a quality-tier setting, `RenderSettings::max_anisotropy` (Low 2x,
+Medium 4x, High 8x, Ultra 16x; 1 disables it), applied to linear material textures and reported
+as `SceneStats::anisotropy`. Evidence (`gpu_anisotropy_tests.cpp`): on a checkerboard floor at a
+grazing angle the contrast left near the horizon is 0.28 at 1x, 3.78 at 4x and 7.29 at 16x, while
+magnified near rows are unchanged.
 
 ## Not covered yet
 

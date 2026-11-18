@@ -288,6 +288,11 @@ struct RenderSettings {
     // main-camera based, as in Godot and Unreal, so shadows and the lit surface keep the same
     // reference; the bias only trades shadow-pass triangles for silhouette error. Low: 1.
     std::uint32_t shadow_lod_bias{0};
+    // Anisotropic filtering for material textures: at most this many taps along the texture's
+    // stretched axis on surfaces seen at grazing angles (floors, roads, terrain). 1 (off), 2, 4, 8
+    // or 16; other values round down. Low 2, Medium 4, High 8, Ultra 16. Nearest-filtered (pixel
+    // art) materials are never anisotropic; devices without the feature fall back to trilinear.
+    std::uint32_t max_anisotropy{8};
     // GPU occlusion culling: when the depth pre-pass runs, a compute pass builds a Hi-Z pyramid
     // from it and tests every opaque main-pass instance; survivors are drawn with indirect draws.
     // Conservative: the image is identical with it off. Needs compute (RenderCaps::compute).
@@ -332,6 +337,7 @@ struct OverdrawStats {
 
 struct SceneStats {
     std::uint32_t submitted{0}, visible{0}, culled{0}, shadow_casters{0}, lines{0};
+    std::uint32_t anisotropy{1}; // anisotropic filtering level applied to material textures this frame
     std::uint32_t point_lights{0};      // local lights used (point + spot)
     std::uint32_t spot_lights{0};
     std::uint32_t light_indices{0};     // clustered light index list length

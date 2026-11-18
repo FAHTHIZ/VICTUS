@@ -378,6 +378,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.max_point_lights = 64;
         s.lod_error_pixels = 2.0f;
         s.shadow_lod_bias = 1;
+        s.max_anisotropy = 2;
         s.local_shadows = false;
         s.irradiance_volumes = false;
         s.dynamic_gi = false;
@@ -394,6 +395,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.taa = false;
         s.max_point_lights = 256;
         s.lod_error_pixels = 1.5f;
+        s.max_anisotropy = 4;
         s.local_shadow_atlas = 1024;
         s.local_shadow_tile = 256;
         s.dynamic_gi = false;
@@ -407,6 +409,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.bloom_levels = 6;
         s.max_point_lights = 1024;
         s.lod_error_pixels = 0.5f;
+        s.max_anisotropy = 16;
         s.local_shadow_atlas = 4096;
         break;
     }
@@ -428,6 +431,11 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.force_lod = std::clamp(s.force_lod, -1, static_cast<int>(kMaxMeshLods) - 1);
     s.shadow_lod_bias = std::min(s.shadow_lod_bias, 3u);
     if (s.debug_view != DebugView::Overdraw) s.debug_view = DebugView::None;
+    {
+        std::uint32_t level = 1;
+        while (level < 16 && level * 2 <= s.max_anisotropy) level *= 2;
+        s.max_anisotropy = level;
+    }
     s.local_shadow_atlas = std::clamp(s.local_shadow_atlas, 256u, 8192u);
     s.local_shadow_tile = std::clamp(s.local_shadow_tile, std::max(64u, s.local_shadow_atlas / 8u), s.local_shadow_atlas);
     return s;
@@ -1119,6 +1127,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     if (width == 0 || height == 0) return {};
     auto& dev = ctx_.device();
     const RenderSettings& S = settings_;
+    auto material_linear = ctx_.material_sampler(S.max_anisotropy);
+    if (!material_linear) return std::move(material_linear).error();
+    stats_.anisotropy = ctx_.effective_anisotropy(S.max_anisotropy);
 
     // Internal 3D resolution (dynamic resolution / render scale).
     const auto scaled = [&](std::uint32_t v) {
@@ -1781,12 +1792,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     graph.mark_output(out);
 
     // ADR-0067: texture and cutoff of an alpha-tested caster (shadow_alpha.frag).
-    const auto bind_alpha_test = [this](rhi::RenderPass& pass, rhi::CommandBuffer& cb, const Material& m) {
+    const auto bind_alpha_test = [this, linear = material_linear.value()](rhi::RenderPass& pass, rhi::CommandBuffer& cb,
+                                                                          const Material& m) {
         const AlphaTestUniforms au{Vec4(m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y),
                                    Vec4(m.alpha_cutoff, m.base_color.a, 0.0f, 0.0f)};
         cb.push_uniforms(rhi::ShaderStage::Fragment, 0, au);
         pass.bind_texture(rhi::ShaderStage::Fragment, 0, m.base_color_texture,
-                          m.nearest_filter ? ctx_.nearest_repeat() : ctx_.linear_repeat());
+                          m.nearest_filter ? ctx_.nearest_repeat() : linear);
     };
     RGTexture local_shadow_map;
     if (local_shadows) {
@@ -2053,7 +2065,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 for (std::size_t i = 0; i < 4; ++i) mat.custom[i] = m.shader_params[i];
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
                 auto pick = [](rhi::TextureHandle t, rhi::TextureHandle fallback) { return t ? t : fallback; };
-                const rhi::SamplerHandle tex_sampler = m.nearest_filter ? ctx_.nearest_repeat() : ctx_.linear_repeat();
+                const rhi::SamplerHandle tex_sampler = m.nearest_filter ? ctx_.nearest_repeat() : material_linear.value();
                 pass.bind_texture(rhi::ShaderStage::Fragment, 0, pick(m.base_color_texture, ctx_.white()), tex_sampler);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 1, pick(m.metallic_roughness_texture, ctx_.white()), tex_sampler);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 2, pick(m.normal_texture, ctx_.flat_normal()), tex_sampler);

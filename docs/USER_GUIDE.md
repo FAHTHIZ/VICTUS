@@ -144,6 +144,8 @@ Pixel art: right-click a texture and choose "Import Settings..." → Filter "nea
 
 Cutout foliage and fences: for a texture used by an alpha-tested material (`alpha_cutoff` > 0), tick "Preserve alpha coverage" in its Import Settings and set the same cutoff (`.meta` `"alpha_coverage_cutoff": 0.5`). The importer rescales the alpha of each mip so the same share of texels passes the alpha test as in the full-size image, and leaves and railings no longer fade away as the camera moves back or zooms out. glTF models do this automatically for the base colour texture of `MASK` materials. Very thin (one-texel) features can still erode at a distance; that is a limit of alpha testing itself.
 
+Texture sharpness at grazing angles: floors, roads and terrain seen at a shallow angle use anisotropic filtering, set by the rendering quality: Low 2x, Medium 4x, High 8x, Ultra 16x. Higher levels keep distant ground textures sharp instead of blurring them to a flat colour, at a small texture-bandwidth cost. Materials with nearest filtering (pixel art) are never filtered this way.
+
 Overdraw view: View > Overdraw View (or "View: Toggle Overdraw View" in the command palette) replaces the 3D viewport with a heat map of how many surfaces are drawn into each pixel: black none, blue one, green two, yellow three, orange four, red five to seven, white eight or more. Opaque, cutout and transparent meshes are all counted, so dense foliage, stacked glass and overlapping walls show up as hot areas. It counts layers before depth testing, so it shows where geometry piles up rather than the exact shading cost; particles and decals are not counted. The setting stays in the editor and is not saved with the project.
 
 ### Save games
