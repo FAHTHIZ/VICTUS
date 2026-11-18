@@ -194,6 +194,10 @@ public:
     // poll_events() with the chosen folder, or an empty string when cancelled/unavailable.
     void show_folder_dialog(Window* parent, const std::string& default_location,
                             std::function<void(std::string)> done);
+    // Native "open files" picker allowing several files. Asynchronous like show_folder_dialog:
+    // `done` runs inside a later poll_events() with the chosen paths (empty when cancelled).
+    void show_open_files_dialog(Window* parent, const std::string& default_location,
+                                std::function<void(std::vector<std::string>)> done);
     [[nodiscard]] const char* video_driver() const noexcept;
     [[nodiscard]] static double seconds() noexcept;
     // Writable per-user folder for saves, caches and unpacked content (ends with a separator). On Android this is

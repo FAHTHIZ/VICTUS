@@ -254,7 +254,13 @@ int main(int argc, char** argv) {
     double last = platform::Platform::seconds();
     int exit_code = 0;
     for (std::uint64_t n = 0;; ++n) {
-        plat.value()->poll_events();
+        {
+            // Files dropped on the window in one gesture arrive together; import them as a batch.
+            std::vector<std::filesystem::path> dropped;
+            for (const auto& ev : plat.value()->poll_events())
+                if (ev.type == platform::EventType::FileDropped && !ev.path.empty()) dropped.emplace_back(ev.path);
+            if (!dropped.empty()) (void)ed.import_files(dropped);
+        }
         if (plat.value()->quit_requested() && !ed.quit_confirmed()) {
             if (!ed.request_quit()) plat.value()->cancel_quit();
         }

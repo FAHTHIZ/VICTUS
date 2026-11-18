@@ -705,3 +705,63 @@ TEST_CASE("studio assets: search, type and folder filters, plain type names, emp
     CHECK(h.ed->asset_rows() == total);
     h.frames(2); // grid view with the folder list
 }
+
+TEST_CASE("studio import: dropped files are copied into the right folders and imported") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    REQUIRE(h.ed->create_project(h.dir / "Drop Game", "Drop Game", "2d").ok());
+    h.frames(2);
+    const sfs::path outside = h.dir / "Downloads";
+    sfs::create_directories(outside / "pack" / "more");
+    std::ofstream(outside / "hello.luau") << "print('hello')\n";
+    std::ofstream(outside / "hero.fbx") << "not really";
+    std::ofstream(outside / "pack" / "a.luau") << "return 1\n";
+    std::ofstream(outside / "pack" / "more" / "b.luau") << "return 2\n";
+    // A .gltf with an outside buffer and texture, plus a data: URI and an escaping path that are ignored.
+    std::ofstream(outside / "ship.gltf")
+        << R"({"asset":{"version":"2.0"},"buffers":[{"uri":"ship%20data.bin","byteLength":4},)"
+        << R"({"uri":"data:application/octet-stream;base64,AAAA","byteLength":3}],)"
+        << R"("images":[{"uri":"tex/hull.png"},{"uri":"../secret.png"}]})";
+    std::ofstream(outside / "ship data.bin") << "abcd";
+    sfs::create_directories(outside / "tex");
+    std::ofstream(outside / "tex" / "hull.png") << "png?";
+
+    const auto r = h.ed->import_files({outside / "hello.luau", outside / "hero.fbx", outside / "pack",
+                                       outside / "ship.gltf", outside / "missing.png"});
+    const sfs::path assets = h.dir / "Drop Game" / "assets";
+    CHECK(sfs::exists(assets / "scripts" / "hello.luau"));
+    CHECK(sfs::exists(assets / "pack" / "more" / "b.luau"));
+    CHECK(sfs::exists(assets / "models" / "ship" / "ship.gltf"));
+    CHECK(sfs::exists(assets / "models" / "ship" / "ship data.bin"));
+    CHECK(sfs::exists(assets / "models" / "ship" / "tex" / "hull.png"));
+    CHECK_FALSE(sfs::exists(assets / "models" / "secret.png"));
+    const auto added = [&](std::string_view p) {
+        return std::find(r.added.begin(), r.added.end(), p) != r.added.end();
+    };
+    CHECK(added("scripts/hello.luau"));
+    CHECK(added("pack/a.luau"));
+    CHECK(added("pack/more/b.luau"));
+    CHECK(added("models/ship/ship.gltf"));
+    // Unsupported and missing files are explained, not silently dropped.
+    const auto said = [&](std::string_view needle) {
+        return std::any_of(r.skipped.begin(), r.skipped.end(),
+                           [&](const std::string& s) { return s.find(needle) != std::string::npos; });
+    };
+    CHECK(said("hero.fbx"));
+    CHECK(said("glTF"));
+    CHECK(said("missing.png"));
+
+    // Same name again: a second copy, not an overwrite. Files already in the project are left alone.
+    const auto again = h.ed->import_files({outside / "hello.luau", assets / "scripts" / "hello.luau"});
+    CHECK(again.added == std::vector<std::string>{"scripts/hello 2.luau"});
+    REQUIRE(again.skipped.size() == 1);
+    CHECK(again.skipped[0].find("already in this project") != std::string::npos);
+
+    // With a folder picked in the Assets panel, files go there.
+    h.ed->set_asset_folder("pack");
+    const auto into = h.ed->import_files({outside / "pack" / "a.luau"});
+    CHECK(into.added == std::vector<std::string>{"pack/a 2.luau"});
+    h.frames(2);
+}

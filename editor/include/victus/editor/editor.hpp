@@ -188,6 +188,17 @@ public:
     [[nodiscard]] project::Project* project() noexcept { return project_ ? &*project_ : nullptr; }
     [[nodiscard]] assets::AssetDatabase* assets() noexcept { return db_.get(); }
     [[nodiscard]] Status reimport_assets();
+    // Copies files (or whole folders) from anywhere on disk into the project's assets and imports
+    // them: what dropping files on the Studio window and Assets > Import do. Files go to the folder
+    // selected in the Assets panel, else to a folder for their type (images -> textures/, models ->
+    // models/, sounds -> audio/, scripts -> scripts/ ...); a glTF's .bin and textures come along;
+    // names that exist get " 2", " 3"... Unknown types are skipped with a reason.
+    struct ImportedFiles {
+        std::vector<std::string> added;   // asset paths, e.g. "models/robot.glb"
+        std::vector<std::string> skipped; // plain-language reasons, one per skipped item
+    };
+    ImportedFiles import_files(const std::vector<std::filesystem::path>& sources);
+    void open_import_dialog(); // native multi-file picker, then import_files
     // Hot reload: re-imports textures/models changed on disk and swaps them in the viewport and
     // a running play session, reloads changed audio clips, and notifies about files that need a
     // restart. Polled about once a second from frame(); returns the number of assets reloaded.
