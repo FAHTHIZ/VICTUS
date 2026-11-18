@@ -285,22 +285,6 @@ void Editor::frame(float dt) {
 
 // ---- workspace ----------------------------------------------------------------------------------
 
-void Editor::build_default_layout(unsigned int dockspace_id) {
-    ImGui::DockBuilderRemoveNode(dockspace_id);
-    ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->WorkSize);
-    ImGuiID center = dockspace_id;
-    ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.18f, nullptr, &center);
-    ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, nullptr, &center);
-    ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, nullptr, &center);
-    ImGui::DockBuilderDockWindow(kHierarchyWindow, left);
-    ImGui::DockBuilderDockWindow(kInspectorWindow, right);
-    ImGui::DockBuilderDockWindow(kAssetsWindow, bottom);
-    ImGui::DockBuilderDockWindow(kConsoleWindow, bottom);
-    ImGui::DockBuilderDockWindow(kViewportWindow, center);
-    ImGui::DockBuilderFinish(dockspace_id);
-}
-
 void Editor::draw_workspace(float) {
     draw_menu_bar();
     draw_toolbar();
@@ -317,10 +301,13 @@ void Editor::draw_workspace(float) {
                      ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings);
     ImGui::PopStyleVar(3);
     const ImGuiID dock_id = ImGui::GetID("VictusDockSpace");
-    if (!layout_built_) {
+    if (!layout_built_ || layout_rebuild_) {
+        // First frame: build the default layout unless the saved one (editor_layout.ini) has
+        // docked panels. Reset Layout and the presets always rebuild.
+        if (layout_rebuild_ || !ImGui::DockBuilderGetNode(dock_id) || ImGui::DockBuilderGetNode(dock_id)->IsLeafNode())
+            build_layout(dock_id, layout_);
         layout_built_ = true;
-        if (!ImGui::DockBuilderGetNode(dock_id) || ImGui::DockBuilderGetNode(dock_id)->IsLeafNode())
-            build_default_layout(dock_id);
+        layout_rebuild_ = false;
     }
     ImGui::DockSpace(dock_id, ImVec2(0, 0), ImGuiDockNodeFlags_None);
     ImGui::End();
@@ -342,6 +329,18 @@ void Editor::draw_workspace(float) {
     draw_animation_panel();
     draw_sequencer();
     draw_status_bar();
+    if (focus_panel_ >= 0) {
+        // The window exists from the frame after it opens; try until it does (a few frames at most).
+        const char* id = panel_title(static_cast<Panel>(focus_panel_));
+        if (static_cast<Panel>(focus_panel_) == Panel::GraphEditor) id = "###GraphEditor";
+        if (ImGui::FindWindowByName(id)) {
+            ImGui::SetWindowFocus(id);
+            focus_panel_ = -1;
+        } else if (++focus_attempts_ > 3) {
+            focus_panel_ = -1;
+        }
+        if (focus_panel_ < 0) focus_attempts_ = 0;
+    }
     handle_shortcuts();
 }
 
@@ -441,15 +440,8 @@ void Editor::draw_menu_bar() {
     }
     if (ImGui::BeginMenu("View")) {
         if (ImGui::MenuItem("Command Palette...", "Ctrl+Shift+P")) open_command_palette();
-        if (ImGui::MenuItem("Reset Layout")) layout_built_ = false;
         ImGui::MenuItem("Physics Colliders", nullptr, &show_colliders_);
         ImGui::MenuItem("Navigation Mesh", nullptr, &show_navmesh_);
-        ImGui::MenuItem("AI Debug", nullptr, &show_ai_);
-        ImGui::MenuItem("Animation", nullptr, &show_animation_);
-        ImGui::MenuItem("Network", nullptr, &show_network_);
-        if (ImGui::MenuItem("Profiler", nullptr, show_profiler_)) set_show_profiler(!show_profiler_);
-        ImGui::MenuItem("Tile Palette", nullptr, &show_tile_palette_);
-        ImGui::MenuItem("Terrain Tools", nullptr, &show_terrain_tools_);
         ImGui::MenuItem("UI Demo Window", nullptr, &show_demo_);
         if (ImGui::BeginMenu("Rendering Quality")) {
             for (auto tier : {render::QualityTier::Low, render::QualityTier::Medium, render::QualityTier::High,
@@ -464,6 +456,7 @@ void Editor::draw_menu_bar() {
             set_debug_view(debug_view_ == render::DebugView::Overdraw ? render::DebugView::None : render::DebugView::Overdraw);
         ImGui::EndMenu();
     }
+    draw_window_menu();
     if (ImGui::BeginMenu("Play")) {
         if (ImGui::MenuItem(editing ? "Play" : "Resume", editing ? "Ctrl+P" : nullptr, false, play_state_ != PlayState::Playing)) play();
         if (ImGui::MenuItem("Pause", nullptr, false, play_state_ == PlayState::Playing)) pause();
@@ -960,7 +953,8 @@ void Editor::draw_hierarchy_node(Entity e) {
 }
 
 void Editor::draw_hierarchy() {
-    if (!ImGui::Begin(kHierarchyWindow)) {
+    if (!core_open_[1]) return;
+    if (!ImGui::Begin(kHierarchyWindow, &core_open_[1])) {
         ImGui::End();
         return;
     }
@@ -1439,7 +1433,8 @@ void Editor::draw_prefab_section(Entity e) {
 }
 
 void Editor::draw_inspector() {
-    if (!ImGui::Begin(kInspectorWindow)) {
+    if (!core_open_[2]) return;
+    if (!ImGui::Begin(kInspectorWindow, &core_open_[2])) {
         ImGui::End();
         return;
     }
@@ -1544,7 +1539,8 @@ void Editor::draw_asset_item(const assets::AssetRecord& r) {
 }
 
 void Editor::draw_assets() {
-    if (!ImGui::Begin(kAssetsWindow)) {
+    if (!core_open_[3]) return;
+    if (!ImGui::Begin(kAssetsWindow, &core_open_[3])) {
         ImGui::End();
         return;
     }
@@ -1773,11 +1769,13 @@ void Editor::clear_console() {
 }
 
 void Editor::draw_console() {
+    if (focus_console_) core_open_[4] = true;
+    if (!core_open_[4]) return;
     if (focus_console_) {
         ImGui::SetNextWindowFocus();
         focus_console_ = false;
     }
-    if (!ImGui::Begin(kConsoleWindow)) {
+    if (!ImGui::Begin(kConsoleWindow, &core_open_[4])) {
         ImGui::End();
         return;
     }

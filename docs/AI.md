@@ -58,7 +58,7 @@ Blackboard keys written: `<target_key>` (entity, removed when forgotten),
 
 ## Debugging
 
-View > AI Debug draws sight cones (yellow), lines to visible (red) or remembered (orange)
+Window > AI Debugger draws sight cones (yellow), lines to visible (red) or remembered (orange)
 targets and heard noises (blue) during play, and opens the AI Debugger window with the selected
 entity's tree (last status per node), blackboard and perception state.
 

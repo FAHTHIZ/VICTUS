@@ -65,6 +65,31 @@ struct SampleInfo {
 
 enum class LauncherPage : std::uint8_t { New, Recent, Samples, Learn };
 
+// Every dockable Studio panel. The Window menu lists them all, so a closed panel is never lost.
+enum class Panel : std::uint8_t {
+    Viewport,
+    Hierarchy,
+    Inspector,
+    Assets,
+    Console,
+    Animation,
+    Sequencer,
+    GraphEditor,
+    MaterialEditor,
+    TilePalette,
+    TerrainTools,
+    AiDebugger,
+    Network,
+    Profiler,
+    InputActions,
+    Count
+};
+[[nodiscard]] const char* panel_title(Panel panel) noexcept;
+
+// Workspace presets: which panels are open and where they dock.
+enum class Layout : std::uint8_t { Default, LevelDesign, Animation, Scripting, Debugging, Count };
+[[nodiscard]] const char* layout_name(Layout layout) noexcept;
+
 enum class PlayState : std::uint8_t { Editing, Playing, Paused };
 
 // How Play runs the scene. Host: the editor is a listen server on UDP `port` and plays the
@@ -531,6 +556,15 @@ public:
         launcher_page_set_ = true;
     }
 
+    // ---- workspace ----
+    [[nodiscard]] bool panel_open(Panel panel) const noexcept;
+    void set_panel_open(Panel panel, bool open) noexcept;
+    // Opens the panel and brings it to the front.
+    void show_panel(Panel panel) noexcept;
+    // Opens the preset's panels and re-docks every panel on the next frame.
+    void apply_layout(Layout layout) noexcept;
+    [[nodiscard]] Layout layout() const noexcept { return layout_; }
+
     // ---- console ----
     // Records currently held by the Console (the newest 4096), by severity.
     struct ConsoleCounts {
@@ -653,7 +687,9 @@ private:
     void draw_modals();
     void handle_shortcuts();
     void viewport_input(math::Vec2 size, bool hovered);
-    void build_default_layout(unsigned int dockspace_id);
+    void build_layout(unsigned int dockspace_id, Layout layout);
+    void draw_window_menu();
+    bool* panel_flag(Panel panel) noexcept;
     // Inspector helpers
     bool inspect_components(scene::Entity e);
     void begin_inspector_frame(scene::Entity e);
@@ -828,6 +864,11 @@ private:
     bool show_save_as_{false};
     std::string save_as_path_;
     bool layout_built_{false};
+    bool layout_rebuild_{false}; // force re-docking (Reset Layout, presets)
+    Layout layout_{Layout::Default};
+    bool core_open_[5]{true, true, true, true, true}; // Viewport, Hierarchy, Inspector, Assets, Console
+    int focus_panel_{-1};
+    int focus_attempts_{0};
     bool show_demo_{false};
     bool show_input_actions_{false};
     std::string capture_action_;

@@ -31,6 +31,7 @@ void apply_victus_theme(ImGuiStyle& style) {
     style.SeparatorTextBorderSize = 1.0f;
     style.SeparatorTextPadding = ImVec2(kSpace3, kSpace1);
     style.DockingSeparatorSize = 2.0f;
+    style.DockingNodeHasCloseButton = false; // each tab has its own x; one per node was redundant
 
     ImVec4* c = style.Colors;
     c[ImGuiCol_Text] = kText;

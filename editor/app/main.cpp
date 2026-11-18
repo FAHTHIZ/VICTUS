@@ -20,6 +20,7 @@
 #include "victus/render/image.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -54,6 +55,7 @@ int main(int argc, char** argv) {
         .option("width", "window width", "1600")
         .option("height", "window height", "900")
         .option("data-dir", "override the user data directory")
+        .option("layout", "workspace layout: default, level-design, animation, scripting, debugging")
         .option("page", "launcher page to show when no project opens: new, recent, samples, learn")
         .option("select", "select the entity with this name after opening")
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
@@ -128,6 +130,15 @@ int main(int argc, char** argv) {
             return fail("create project", st.error());
     } else if (const std::string p = args.get("project"); !p.empty()) {
         if (auto st = ed.open_project(p); !st.ok()) return fail("open project", st.error());
+    }
+    if (args.has("layout")) {
+        const std::string want = args.get("layout");
+        for (int i = 0; i < static_cast<int>(editor::Layout::Count); ++i) {
+            std::string id = editor::layout_name(static_cast<editor::Layout>(i));
+            std::ranges::transform(id, id.begin(),
+                                   [](char c) { return c == ' ' ? '-' : static_cast<char>(std::tolower(c)); });
+            if (id == want) ed.apply_layout(static_cast<editor::Layout>(i));
+        }
     }
     if (args.has("select") && ed.has_project()) {
         const auto e = ed.edit_scene().find_by_name(args.get("select"));
