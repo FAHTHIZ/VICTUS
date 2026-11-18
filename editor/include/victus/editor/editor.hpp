@@ -484,6 +484,14 @@ public:
     void clear_selection() { selection_.clear(); }
     [[nodiscard]] scene::Entity selected() noexcept;
     [[nodiscard]] const std::vector<Uuid>& selection() const noexcept { return selection_; }
+    // Hierarchy search (case-insensitive, by name): matches stay visible with their parents.
+    void set_hierarchy_filter(std::string text) { hierarchy_filter_ = std::move(text); }
+    // Opens the Hierarchy's "Add" menu once the workspace has settled (a few frames).
+    void open_add_menu() noexcept { hierarchy_open_add_ = 4; }
+    [[nodiscard]] const std::string& hierarchy_filter() const noexcept { return hierarchy_filter_; }
+    // Rows the Hierarchy drew last frame and, while filtering, how many entities matched.
+    [[nodiscard]] std::size_t hierarchy_rows() const noexcept { return hierarchy_rows_; }
+    [[nodiscard]] std::size_t hierarchy_matches() const noexcept { return hierarchy_matches_; }
     [[nodiscard]] bool is_selected(scene::Entity e) const;
     void frame_selected();
     // Selects from the primary selection to `to` in hierarchy order (Shift+click); `to` becomes primary.
@@ -732,7 +740,17 @@ private:
     void draw_menu_bar();
     void draw_toolbar();
     void draw_hierarchy();
-    void draw_hierarchy_node(scene::Entity e);
+    void draw_hierarchy_node(scene::Entity e, int depth = 0);
+    // The categorised "+ Add" / Entity menu / Create Child items; `parent` null = scene root.
+    void draw_create_entity_items(scene::Entity parent);
+    // Entities to draw while filtering: matches plus their ancestors.
+    void collect_hierarchy_matches(scene::Entity e, std::unordered_set<Uuid, UuidHash>& keep, bool& any);
+    std::string hierarchy_filter_;
+    std::unordered_set<Uuid, UuidHash> hierarchy_keep_, hierarchy_reveal_;
+    Uuid hierarchy_revealed_for_{};
+    bool hierarchy_scroll_{false};
+    int hierarchy_open_add_{0};
+    std::size_t hierarchy_rows_{0}, hierarchy_matches_{0};
     void draw_inspector();
     void draw_assets();
     void draw_console();

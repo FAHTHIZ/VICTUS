@@ -400,26 +400,7 @@ void Editor::draw_menu_bar() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Entity")) {
-        const auto item = [&](const char* label, Primitive p) {
-            if (ImGui::MenuItem(label)) create_entity(p);
-        };
-        item("Empty", Primitive::Empty);
-        ImGui::Separator();
-        item("Cube", Primitive::Cube);
-        item("Sphere", Primitive::Sphere);
-        item("Plane", Primitive::Plane);
-        item("Cylinder", Primitive::Cylinder);
-        item("Sprite", Primitive::Sprite);
-        item("2D Light", Primitive::Light2D);
-        ImGui::Separator();
-        item("Camera", Primitive::Camera);
-        item("Directional Light", Primitive::DirectionalLight);
-        item("Point Light", Primitive::PointLight);
-        item("Spot Light", Primitive::SpotLight);
-        item("Decal", Primitive::Decal);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Terrain", nullptr, false, db_ != nullptr && play_state_ == PlayState::Editing))
-            if (auto t = create_terrain(); !t) notify("cannot create terrain: " + t.error().message, true);
+        draw_create_entity_items(kNullEntity);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Assets")) {
@@ -913,14 +894,23 @@ void Editor::viewport_input(math::Vec2 size, bool hovered) {
 
 // ---- hierarchy ----------------------------------------------------------------------------------
 
-void Editor::draw_hierarchy_node(Entity e) {
+void Editor::draw_hierarchy_node(Entity e, int depth) {
     Scene& s = active_scene();
     const Uuid id = s.uuid(e);
+    const bool filtering = !hierarchy_filter_.empty();
+    if (filtering && !hierarchy_keep_.contains(id)) return;
     const std::vector<Entity> kids = s.children(e);
     const Name* n = s.world().get<Name>(e);
-    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
-                               ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
+    ++hierarchy_rows_;
+    // Only top-level entities start expanded, so deep trees (a character's bones) stay tidy;
+    // a search, or selecting something inside a collapsed branch, opens the way to it.
+    ImGuiTreeNodeFlags flags =
+        ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (depth == 0) flags |= ImGuiTreeNodeFlags_DefaultOpen;
     if (kids.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
+    else if (filtering || hierarchy_reveal_.contains(id)) ImGui::SetNextItemOpen(true);
+    const bool dim = filtering && !kit::contains_icase(n ? std::string_view(n->value) : std::string_view("Entity"),
+                                                       hierarchy_filter_);
     if (is_selected(e)) flags |= ImGuiTreeNodeFlags_Selected;
     ImGui::PushID(static_cast<int>(e.index));
     const bool prefab_root = s.world().has<scene::PrefabInstance>(e);
@@ -931,10 +921,17 @@ void Editor::draw_hierarchy_node(Entity e) {
     const float icon_size = ImGui::GetTextLineHeight();
     const float blank = std::max(1.0f, ImGui::CalcTextSize(" ").x);
     const int pad = static_cast<int>(std::ceil((icon_size + ui::tokens::kSpace2) / blank));
-    if (prefab_root || prefab_part)
-        ImGui::PushStyleColor(ImGuiCol_Text, prefab_root ? ui::tokens::kInfo : ui::with_alpha(ui::tokens::kInfo, 0.78f));
+    const bool tinted = prefab_root || prefab_part || dim;
+    if (tinted)
+        ImGui::PushStyleColor(ImGuiCol_Text, dim           ? ui::tokens::kTextMuted
+                                             : prefab_root ? ui::tokens::kInfo
+                                                           : ui::with_alpha(ui::tokens::kInfo, 0.78f));
     const bool open = ImGui::TreeNodeEx("##node", flags, "%*s%s", pad, "", n ? n->value.c_str() : "Entity");
-    if (prefab_root || prefab_part) ImGui::PopStyleColor();
+    if (tinted) ImGui::PopStyleColor();
+    if (hierarchy_scroll_ && !selection_.empty() && selection_.back() == id) {
+        ImGui::SetScrollHereY(0.4f);
+        hierarchy_scroll_ = false;
+    }
     {
         const ImVec2 r0 = ImGui::GetItemRectMin();
         const float x = r0.x + ImGui::GetTreeNodeToLabelSpacing();
@@ -969,7 +966,10 @@ void Editor::draw_hierarchy_node(Entity e) {
     }
     if (ImGui::BeginPopupContextItem()) {
         if (!is_selected(e)) select(e);
-        if (ImGui::MenuItem("Create Child")) create_entity(Primitive::Empty, e);
+        if (ImGui::BeginMenu("Create Child")) {
+            draw_create_entity_items(e);
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Duplicate", "Ctrl+D")) duplicate_selected();
         if (ImGui::MenuItem("Delete", "Del")) delete_selected();
         if (ImGui::MenuItem("Unparent", nullptr, false, !s.parent(e).is_null())) reparent(e, kNullEntity);
@@ -989,10 +989,66 @@ void Editor::draw_hierarchy_node(Entity e) {
     }
     if (open) {
         for (const Entity c : kids)
-            if (!s.find(id).is_null()) draw_hierarchy_node(c);
+            if (!s.find(id).is_null()) draw_hierarchy_node(c, depth + 1);
         ImGui::TreePop();
     }
     ImGui::PopID();
+}
+
+void Editor::collect_hierarchy_matches(Entity e, std::unordered_set<Uuid, UuidHash>& keep, bool& any) {
+    Scene& s = active_scene();
+    const Name* n = s.world().get<Name>(e);
+    const bool self = kit::contains_icase(n ? std::string_view(n->value) : std::string_view("Entity"), hierarchy_filter_);
+    bool below = false;
+    for (const Entity c : s.children(e)) collect_hierarchy_matches(c, keep, below);
+    if (self) ++hierarchy_matches_;
+    if (self || below) {
+        keep.insert(s.uuid(e));
+        any = true;
+    }
+}
+
+void Editor::draw_create_entity_items(Entity parent) {
+    namespace tk = ui::tokens;
+    const bool editing = play_state_ == PlayState::Editing;
+    const auto item = [&](const char* label, kit::Icon ic, const char* help, Primitive p) {
+        const float h = ImGui::GetTextLineHeight();
+        const ImVec2 pos = ImGui::GetCursorScreenPos();
+        const std::string text = std::string("      ") + label;
+        if (ImGui::MenuItem(text.c_str())) create_entity(p, parent); // selects the new entity
+        kit::draw_icon(ImGui::GetWindowDrawList(), ic, ImVec2(pos.x, pos.y + (ImGui::GetItemRectSize().y - h) * 0.5f), h,
+                       ImGui::GetColorU32(tk::kTextMuted));
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", help);
+    };
+    ImGui::SeparatorText("Basic");
+    item("Empty", kit::Icon::Entity, "An empty entity: a folder for grouping, or a spot to attach components", Primitive::Empty);
+    ImGui::SeparatorText("3D Shapes");
+    item("Cube", kit::Icon::Cube, "A 1 m box with physics-ready size", Primitive::Cube);
+    item("Sphere", kit::Icon::Mesh, "A 1 m ball", Primitive::Sphere);
+    item("Plane", kit::Icon::Mesh, "A flat 10 m floor", Primitive::Plane);
+    item("Cylinder", kit::Icon::Mesh, "A 1 m pillar", Primitive::Cylinder);
+    ImGui::SeparatorText("Lights and Camera");
+    item("Sun (Directional Light)", kit::Icon::Light, "Light from far away that lights the whole scene and casts shadows",
+         Primitive::DirectionalLight);
+    item("Point Light", kit::Icon::Light, "A bulb that lights everything around it", Primitive::PointLight);
+    item("Spot Light", kit::Icon::Light, "A cone of light, like a torch or stage light", Primitive::SpotLight);
+    item("Camera", kit::Icon::Camera, "What the player sees when the game runs", Primitive::Camera);
+    ImGui::SeparatorText("2D");
+    item("Sprite", kit::Icon::Sprite, "A 2D image; drop a texture on it in the Inspector", Primitive::Sprite);
+    item("2D Light", kit::Icon::Light, "Lights sprites in a 2D scene", Primitive::Light2D);
+    ImGui::SeparatorText("World and Effects");
+    item("Decal", kit::Icon::Texture, "Projects a texture onto surfaces, like a sticker or a stain", Primitive::Decal);
+    if (parent.is_null()) {
+        const float h = ImGui::GetTextLineHeight();
+        const ImVec2 pos = ImGui::GetCursorScreenPos();
+        if (ImGui::MenuItem("      Terrain", nullptr, false, db_ != nullptr && editing))
+            if (auto t = create_terrain(); !t) notify("cannot create terrain: " + t.error().message, true);
+        kit::draw_icon(ImGui::GetWindowDrawList(), kit::Icon::Terrain,
+                       ImVec2(pos.x, pos.y + (ImGui::GetItemRectSize().y - h) * 0.5f), h,
+                       ImGui::GetColorU32(tk::kTextMuted));
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("A large ground you sculpt and paint with Window > Terrain Tools");
+    }
 }
 
 void Editor::draw_hierarchy() {
@@ -1002,32 +1058,65 @@ void Editor::draw_hierarchy() {
         return;
     }
     Scene& s = active_scene();
-    if (ImGui::Button("+ Add")) ImGui::OpenPopup("##add");
+    namespace tk = ui::tokens;
+    if (kit::icon_text_button("Add", kit::Icon::Plus, true, true) || (hierarchy_open_add_ > 0 && --hierarchy_open_add_ == 0))
+        ImGui::OpenPopup("##add");
+    kit::tooltip("Add something to the scene: a shape, light, camera, sprite or terrain");
     if (ImGui::BeginPopup("##add")) {
-        if (ImGui::MenuItem("Empty")) create_entity(Primitive::Empty);
-        if (ImGui::MenuItem("Cube")) create_entity(Primitive::Cube);
-        if (ImGui::MenuItem("Sphere")) create_entity(Primitive::Sphere);
-        if (ImGui::MenuItem("Plane")) create_entity(Primitive::Plane);
-        if (ImGui::MenuItem("Cylinder")) create_entity(Primitive::Cylinder);
-        if (ImGui::MenuItem("Sprite")) create_entity(Primitive::Sprite);
-        if (ImGui::MenuItem("Camera")) create_entity(Primitive::Camera);
-        if (ImGui::MenuItem("Directional Light")) create_entity(Primitive::DirectionalLight);
-        if (ImGui::MenuItem("Point Light")) create_entity(Primitive::PointLight);
-        if (ImGui::MenuItem("Spot Light")) create_entity(Primitive::SpotLight);
-        if (ImGui::MenuItem("Decal")) create_entity(Primitive::Decal);
-        if (ImGui::MenuItem("2D Light")) create_entity(Primitive::Light2D);
+        draw_create_entity_items(kNullEntity);
         ImGui::EndPopup();
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", s.name.c_str());
-    ImGui::Separator();
+    kit::search_input("hierarchy_search", "Search", hierarchy_filter_);
+
+    // Reveal the selection: when it changes (e.g. a click in the viewport), open every parent
+    // and scroll it into view.
+    const Uuid sel = selection_.empty() ? Uuid{} : selection_.back();
+    hierarchy_reveal_.clear();
+    if (sel != hierarchy_revealed_for_) {
+        hierarchy_revealed_for_ = sel;
+        if (const Entity se = s.find(sel); !se.is_null()) {
+            for (Entity p = s.parent(se); !p.is_null(); p = s.parent(p)) hierarchy_reveal_.insert(s.uuid(p));
+            hierarchy_scroll_ = true;
+        }
+    }
+    hierarchy_keep_.clear();
+    hierarchy_matches_ = 0;
+    if (!hierarchy_filter_.empty()) {
+        bool any = false;
+        for (const Entity e : s.roots()) collect_hierarchy_matches(e, hierarchy_keep_, any);
+    }
+    hierarchy_rows_ = 0;
+    ImGui::Dummy(ImVec2(0, tk::kSpace1));
     ImGui::BeginChild("##tree");
-    ImGui::PushStyleColor(ImGuiCol_Header, ui::tokens::kAccentSubtle);
-    for (const Entity e : s.roots()) draw_hierarchy_node(e);
+    const std::vector<Entity> roots = s.roots();
+    if (roots.empty()) {
+        if (kit::empty_state(kit::Icon::Scene, "This scene is empty",
+                             "Add a shape, light or camera to start building. Drag files from Assets into the "
+                             "viewport to place models and sprites.",
+                             "Add a Cube"))
+            create_entity(Primitive::Cube);
+    } else if (!hierarchy_filter_.empty() && hierarchy_matches_ == 0) {
+        ImGui::Dummy(ImVec2(0, tk::kSpace3));
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextColored(tk::kTextMuted, "Nothing named \"%s\" in this scene.", hierarchy_filter_.c_str());
+        ImGui::PopTextWrapPos();
+        if (ImGui::SmallButton("Clear search")) hierarchy_filter_.clear();
+    }
+    ImGui::PushStyleColor(ImGuiCol_Header, tk::kAccentSubtle);
+    // Search results open their own copy of the tree, so clearing the search brings back
+    // exactly what was open before.
+    if (!hierarchy_filter_.empty()) ImGui::PushID("##search_results");
+    for (const Entity e : roots) draw_hierarchy_node(e);
+    if (!hierarchy_filter_.empty()) ImGui::PopID();
     ImGui::PopStyleColor();
     // Empty space: drop to unparent, click to deselect.
     ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x, std::max(40.0f, ImGui::GetContentRegionAvail().y)));
     if (ImGui::IsItemClicked()) clear_selection();
+    if (ImGui::BeginPopupContextItem("##tree_ctx")) {
+        draw_create_entity_items(kNullEntity);
+        ImGui::EndPopup();
+    }
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kEntityPayload)) {
             Uuid dragged;

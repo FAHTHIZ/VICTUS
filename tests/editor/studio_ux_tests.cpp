@@ -509,3 +509,49 @@ TEST_CASE("studio diagnostics: Report a Problem bundles crash reports, logs and 
     h.frames(2);
     CHECK(ImGui::FindWindowByName("About VICTUS Studio") != nullptr);
 }
+
+TEST_CASE("studio hierarchy: deep trees start collapsed, search keeps parents, selection is revealed") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    REQUIRE(h.ed->create_project(h.dir / "Tree Game", "Tree Game", "3d").ok());
+    h.frames(2);
+    const std::size_t total = h.ed->edit_scene().size();
+    const std::size_t collapsed = h.ed->hierarchy_rows();
+    CHECK(collapsed > 0);
+    CHECK(collapsed < total / 2); // the characters' bones are not listed until opened
+
+    // Search: matches plus the parents that lead to them, nothing else.
+    h.ed->set_hierarchy_filter("hand.l");
+    h.frames(2);
+    CHECK(h.ed->hierarchy_matches() >= 2); // Hand.L and Socket.Hand.L on each character
+    CHECK(h.ed->hierarchy_rows() > h.ed->hierarchy_matches());
+    CHECK(h.ed->hierarchy_rows() < collapsed + 40);
+    h.ed->set_hierarchy_filter("HAND.L"); // case does not matter
+    h.frames(1);
+    const std::size_t upper = h.ed->hierarchy_matches();
+    CHECK(upper >= 2);
+    h.ed->set_hierarchy_filter("no such entity");
+    h.frames(2);
+    CHECK(h.ed->hierarchy_matches() == 0);
+    CHECK(h.ed->hierarchy_rows() == 0);
+    h.ed->set_hierarchy_filter("");
+    h.frames(2);
+    CHECK(h.ed->hierarchy_rows() == collapsed);
+
+    // Selecting a bone (as a viewport click does) opens its parents.
+    const auto hand = h.ed->edit_scene().find_by_name("Hand.L");
+    REQUIRE_FALSE(hand.is_null());
+    h.ed->select(hand);
+    h.frames(3);
+    CHECK(h.ed->hierarchy_rows() > collapsed);
+
+    // The create menu adds with the new entity selected, also as a child.
+    const std::size_t before = h.ed->edit_scene().size();
+    const auto cube = h.ed->create_entity(editor::Primitive::Cube, hand);
+    REQUIRE_FALSE(cube.is_null());
+    CHECK(h.ed->edit_scene().parent(cube) == hand);
+    CHECK(h.ed->edit_scene().size() == before + 1);
+    h.frames(2);
+}
