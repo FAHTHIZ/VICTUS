@@ -1533,13 +1533,17 @@ TEST_CASE("session fuzz: the server survives corrupted client packets") {
     Peer client_peer;
     NetClient client(network.endpoint(), client_options(7777, "noisy"));
     client.install(client_peer.sim);
-    const std::size_t frames = fuzz_frames();
-    for (std::size_t i = 0; i < frames; ++i) {
+    // Run until the server has parsed at least fuzz_frames() corrupted packets (the roadmap
+    // asks for 1 000 mutated inputs per parser under the sanitizers), with a frame cap so a
+    // regression that stops packets flowing fails instead of hanging.
+    const std::size_t target = fuzz_frames();
+    const std::size_t cap = target * 50;
+    for (std::size_t i = 0; mutator->mutated < target && i < cap; ++i) {
         client_peer.input.set_key("D", (i / 30) % 2 == 0);
         server_peer.tick();
         client_peer.tick();
     }
-    CHECK(mutator->mutated > 0);
+    CHECK(mutator->mutated >= target);
     MESSAGE("server: " << mutator->mutated << " corrupted packets, " << server.diagnostics().rejected_messages
                        << " rejected");
 }
@@ -1557,10 +1561,12 @@ TEST_CASE("session fuzz: clients survive corrupted server snapshots") {
     clean.install(clean_peer.sim);
     // A client gives up on a server that sends garbage, so a fresh victim joins every 40
     // frames: each one sees a corrupted handshake or corrupted snapshots after it joined.
-    const std::size_t frames = fuzz_frames();
+    // As above: keep adding victims until fuzz_frames() corrupted packets reached clients.
+    const std::size_t target = fuzz_frames();
+    const std::size_t max_rounds = target * 4;
     std::size_t mutated = 0;
     std::size_t dropped = 0;
-    for (std::size_t round = 0; round * 40 < frames; ++round) {
+    for (std::size_t round = 0; mutated < target && round < max_rounds; ++round) {
         Peer victim_peer;
         auto link = std::make_unique<MutatingTransport>(network.endpoint(), 0x5EED0002 + round, round % 2 == 0 ? 5 : 40);
         MutatingTransport* mutator = link.get();
@@ -1576,7 +1582,7 @@ TEST_CASE("session fuzz: clients survive corrupted server snapshots") {
             dropped += victim.connected() ? 0 : 1;
         }
     }
-    CHECK(mutated > 0);
+    CHECK(mutated >= target);
     CHECK(clean.connected());
     MESSAGE("clients: " << mutated << " corrupted packets, " << dropped << " victims disconnected");
 }
