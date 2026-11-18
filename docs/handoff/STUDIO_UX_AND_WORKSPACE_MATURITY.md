@@ -255,3 +255,55 @@ For each capability classify VICTUS as **verified competitive / competitive in a
 A beginner can open VICTUS, understand where to start, create and edit a real 2D or 3D game, use the asset library, add gameplay without C++, debug problems, save/reopen and export a working build through a coherent editor. An experienced creator can customize layouts, use shortcuts and advanced tools without fighting the interface. Independent testers can complete the core tasks without maintainer intervention.
 
 **This handoff does not declare VICTUS mature or competitive today.** It defines the work and evidence required to make the creator experience trustworthy. A beautiful screenshot is not enough; the editor must be beautiful, understandable, responsive and genuinely functional.
+
+
+## Additional gaps surfaced by the 2026-11-18 cross-document review
+
+These are explicit audit targets because the current `KNOWN_LIMITATIONS.md`, `ROADMAP.md` and `STATUS.md` identify them as incomplete, experimental or not yet validated. Recheck each against current code before changing status.
+
+### Creator-facing editors that must not be forgotten
+
+- **In-game UI authoring:** current limitations say there is no visual UI canvas editor, rich text, slider or text input. A complete UI workflow needs a canvas/layout editor, anchors/constraints, responsive preview sizes, hierarchy, style/theme editing, fonts, navigation/focus preview, localization preview and working widgets. Implement missing runtime widgets as prerequisites; do not expose nonfunctional controls.
+- **Visual AI authoring:** behaviour trees currently have runtime/debugger support but no visual tree editor. Add a real authoring canvas with node palette, typed pins/conditions, blackboard inspection, validation, breakpoints/step controls if supported, and live play-mode debug. Reuse visual graph infrastructure where sensible without forcing unrelated graph semantics into one generic editor.
+- **Particles/VFX:** current system is experimental and CPU-based. Add creator workflows for emitter preview, curves/gradients, bursts, shape controls, deterministic seed, performance budgets and diagnostics. GPU particles, trails, flipbooks, collision and lit particles are engine/runtime capabilities to evaluate separately; don't claim they exist because a panel exists.
+- **Audio authoring:** a mixer/bus editor, asset audition, routing/volume/mute/effects preview and clear device/output diagnostics. Advanced spatial/HRTF/ducking features remain runtime gaps, not UI polish tasks.
+- **Animation authoring versus inspection:** the new Animation window is a controller inspector/preview/debugger. It is not yet a complete animation authoring suite. Evaluate clip timeline editing, keyframe/curve editing, blend-space visual authoring, transition graph editing, skeleton/rig inspection, retargeting and IK only with explicit runtime capability and acceptance tests.
+- **Terrain/foliage authoring:** improve brush discoverability, brush presets, layer painting feedback, foliage preview/instancing diagnostics and undo/recovery for large edits.
+- **2D workflow:** dedicated 2D scene ergonomics, camera/zoom/pixel snapping, tile palette, sprite atlas workflow, collision editing, animation and 2D UI should be tested as an end-to-end first-class path.
+
+### Product workflow gaps outside the visible editor
+
+- **Asset dependency graph and import queue:** explicitly listed as pending in ROADMAP Phase 5/6 and KNOWN_LIMITATIONS. Treat background import, progress, cancellation, retry, validation reports, dependency impact and reference-safe rename/move/delete as a single dependable pipeline.
+- **Packaging/distribution:** current limitations list no cross-export, code signing, installers or patching. Design clear platform export targets, prerequisite detection, reproducible outputs, installer/signing integration where legally and technically supported, patch/update strategy and release validation. Do not imply every platform can be exported from every host.
+- **Plugin/mod ecosystem:** currently missing a plugin loader, versioned public API and mod sandbox. Design extension discovery, compatibility/versioning, permissions, trust boundaries, crash isolation, documentation and sample extensions before advertising a marketplace or binary compatibility.
+- **Source control/collaboration:** evaluate project diffs, asset metadata stability, scene/graph mergeability, lock/conflict handling, collaboration and team workflows. Do not bolt on a shallow Git status panel and call collaboration complete.
+- **Networking workflow:** networking is currently experimental and tested on loopback according to known limitations. Add multiplayer project setup, local server/client launch, session diagnostics, latency/loss simulation, replication inspection and deployable dedicated-server workflow; separately validate real network conditions, NAT traversal and host migration if those are product goals.
+- **Save-game authoring:** a beginner-facing save/checkpoint browser, schema migration diagnostics and reproducible test/reset tools.
+- **Project health:** a single project validation/health dashboard for missing assets, invalid references, unsupported platform features, oversized assets, script errors, import failures and export blockers.
+- **Learning ecosystem:** searchable API reference generated from the actual public scripting surface, contextual examples, template walkthroughs, migration guides and sample projects kept buildable in CI.
+
+### Audit findings: documentation drift to resolve
+
+The 2026-11-18 documents are not perfectly synchronized:
+- `ROADMAP.md` says terrain collision edits update Jolt heightfields in place via dirty rectangles and `HeightFieldShape::SetHeights`; `KNOWN_LIMITATIONS.md` still says the whole heightfield is rebuilt on every edit. Verify implementation/tests, then correct the stale statement.
+- `ROADMAP.md` describes the clang-tidy CI gate as pending; `KNOWN_LIMITATIONS.md` says clang-tidy runs on engine/editor/tools/apps sources. Clarify the difference between a configured/running analysis job and a required merge gate, and state whether test sources are included.
+- The latest animation editor commit adds controller preview/inspection and parameter controls. Keep the status precise: it does not establish a full clip/curve/rig authoring suite, IK, retargeting, additive layers or root motion.
+- Platform docs distinguish CI builds, software Vulkan, virtualized Apple GPU and physical-device validation. Preserve those distinctions in every UI/export claim.
+
+The audit must scan all status/spec/roadmap/user-guide/ADR documents for stale claims, contradictory acceptance criteria, orphaned roadmap items and features marked complete without end-to-end user workflows. Add a consistency check or a lightweight structured capability registry if it materially reduces future drift; do not create a second manually maintained source of truth without a clear owner.
+
+### Expanded acceptance matrix
+
+Add explicit usability tests for:
+1. A non-programmer creates and edits a UI canvas and uses it in a packaged game.
+2. A creator builds and debugs a behaviour tree visually.
+3. A creator authors, previews and tunes a particle effect.
+4. A creator previews and routes audio assets through buses.
+5. A creator edits an animation controller and can distinguish preview/debug from authoring.
+6. A creator imports a large asset set, cancels/retries work and resolves dependency/missing-reference problems.
+7. A creator exports for a supported target, receives accurate prerequisite warnings and launches the package.
+8. A team member can understand source-control status and conflict limitations without risking project data.
+9. A developer installs/enables a sample extension only if the versioned plugin boundary and safety model have actually shipped.
+10. A multiplayer creator launches and inspects a local session, then follows a documented path to test a remote session.
+
+Record which tasks are currently impossible because a runtime/editor subsystem is missing. Those become explicit engine roadmap dependencies, not reasons to fake the UI.
