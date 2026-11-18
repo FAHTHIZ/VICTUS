@@ -419,6 +419,11 @@ public:
     // the renderer compare the draw with the previous frame and write object motion vectors for
     // TAA; 0 = no tracking (the object is treated as static, camera motion only).
     void submit(const GpuMesh& mesh, const Material& material, const math::Mat4& model, std::uint64_t motion_id = 0);
+    // Many static copies of one mesh+material (foliage, scattered props): equivalent to calling
+    // submit() once per model with motion_id 0, but the material is hashed once and the draw list
+    // grows once. The copies are still culled, LOD-selected and shadowed per instance and merge
+    // into instanced batches like any other identical draws.
+    void submit_instances(const GpuMesh& mesh, const Material& material, std::span<const math::Mat4> models);
     // Skinned draw (GPU skinning). `joints` are skin matrices in the mesh's model space
     // (inverse(model) * joint_world * inverse_bind); `world_bounds` must contain the posed mesh.
     // Falls back to submit() when the mesh has no skin stream or no joints are given. Skinned

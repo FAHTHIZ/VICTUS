@@ -1017,6 +1017,14 @@ void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const 
     draws_.push_back(d);
 }
 
+void SceneRenderer::submit_instances(const GpuMesh& mesh, const Material& material, std::span<const Mat4> models) {
+    if (!mesh.valid() || models.empty()) return;
+    stats_.submitted += static_cast<std::uint32_t>(models.size());
+    const std::uint64_t key = mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh));
+    draws_.reserve(draws_.size() + models.size());
+    for (const Mat4& model : models) draws_.push_back(Draw{&mesh, material, model, 0.0f, key});
+}
+
 void SceneRenderer::submit_skinned(const GpuMesh& mesh, const Material& material, const Mat4& model,
                                    std::span<const Mat4> joints, const Aabb& world_bounds, std::uint64_t motion_id) {
     if (!mesh.skinned() || joints.empty()) {
