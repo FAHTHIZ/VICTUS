@@ -83,6 +83,7 @@ Editor::Editor(render::GpuContext& gpu, ui::UiContext& ui, platform::Platform* p
 
 Editor::~Editor() {
     if (check_future_.valid()) check_future_.wait();
+    if (export_future_.valid()) export_future_.wait();
     stop_editor_clients();
     if (play_server_) play_server_->shutdown(sim_.time().time); // tell joined players we are gone
     play_server_.reset();
@@ -166,6 +167,12 @@ Status Editor::create_project(const fs::Path& directory, std::string_view name, 
 void Editor::close_project() {
     check_again_ = false;
     if (check_future_.valid()) check_future_.wait(); // the check reads this project's files
+    if (export_future_.valid()) export_future_.wait();
+    export_future_ = {};
+    export_report_.reset();
+    export_error_.clear();
+    export_output_.clear();
+    export_name_.clear();
     check_future_ = {};
     problems_.reset();
     problems_error_.clear();

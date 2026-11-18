@@ -17,6 +17,7 @@
 #include "victus/editor/gizmo.hpp"
 #include "victus/editor/thumbnails.hpp"
 #include "victus/editor/undo.hpp"
+#include "victus/player/export.hpp"
 #include "victus/player/validate.hpp"
 #include "victus/core/jobs.hpp"
 #include "victus/gameplay/capture.hpp"
@@ -56,6 +57,7 @@ struct EditorOptions {
     fs::Path default_project_dir;  // launcher default location; empty = <home>/VICTUS Projects
     float autosave_seconds{30.0f}; // unsaved scene edits are autosaved this often; 0 disables
     fs::Path samples_dir;          // sample projects for the launcher's Samples page; empty = none
+    fs::Path player_executable;    // what Export Game ships; empty = victus_player next to the editor
 };
 
 // A sample project the launcher offers (a folder under EditorOptions::samples_dir).
@@ -584,6 +586,18 @@ public:
     // could be shown.
     bool go_to_problem(const player::Diagnostic& d);
 
+    // ---- export (File > Export Game, the same as `victus export`) ----
+    void open_export_dialog();
+    // <project>/build/<GameName>: where Export Game writes unless the user picks a folder.
+    [[nodiscard]] fs::Path default_export_dir() const;
+    // Starts exporting on a worker thread; fails at once on an obviously wrong folder or while
+    // playing. The result lands in last_export()/export_error().
+    Status start_export(const fs::Path& output, std::string executable_name);
+    [[nodiscard]] bool exporting() const noexcept { return export_future_.valid(); }
+    void wait_for_export();
+    [[nodiscard]] const std::optional<player::ExportReport>& last_export() const noexcept { return export_report_; }
+    [[nodiscard]] const std::string& export_error() const noexcept { return export_error_; }
+
     // ---- console ----
     // Records currently held by the Console (the newest 4096), by severity.
     struct ConsoleCounts {
@@ -896,6 +910,14 @@ private:
     bool problems_show_errors_{true}, problems_show_warnings_{true};
     std::string problems_filter_;
     void poll_project_check();
+    // Export Game
+    std::future<Result<player::ExportReport>> export_future_;
+    std::optional<player::ExportReport> export_report_;
+    std::string export_error_, export_output_, export_name_;
+    double export_started_at_{0};
+    bool show_export_{false};
+    void poll_export();
+    void draw_export_dialog();
     void draw_problems();
     int focus_attempts_{0};
     bool show_demo_{false};

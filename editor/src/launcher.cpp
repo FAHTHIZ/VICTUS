@@ -561,7 +561,7 @@ void Editor::draw_launcher_learn() {
          "Use + Add in the Hierarchy for cubes, lights and cameras. Drop images, models and sounds into the project's "
          "assets folder.");
     step(6, "Save and share",
-         "Ctrl+S saves the scene. The victus export command builds a standalone game folder you can give to anyone.");
+         "Ctrl+S saves the scene. File > Export Game builds a folder with your game that you can give to anyone.");
     ImGui::Dummy(ImVec2(0, tk::kSpace4));
     ImGui::SeparatorText("Handy shortcuts");
     if (ImGui::BeginTable("##keys", 2, ImGuiTableFlags_SizingFixedFit)) {
