@@ -200,8 +200,9 @@ Result<GpuMesh> GpuContext::create_mesh(const MeshData& mesh, std::string_view n
     }
     g.vertices = vb.value();
     g.indices = ib.value();
-    g.vertex_count = static_cast<std::uint32_t>(mesh.vertices.size());
+    g.vertex_count = g.vertex_capacity = static_cast<std::uint32_t>(mesh.vertices.size());
     g.index_count = static_cast<std::uint32_t>(mesh.indices.size());
+    g.index_capacity = static_cast<std::uint32_t>(indices->size());
     g.bounds = mesh.bounds();
     const auto sb_size = static_cast<std::uint32_t>(mesh.skin.size() * sizeof(SkinVertex));
     if (mesh.skinned()) {
@@ -219,6 +220,54 @@ Result<GpuMesh> GpuContext::create_mesh(const MeshData& mesh, std::string_view n
     if (g.skin) cmd.upload_buffer(g.skin, 0, {reinterpret_cast<const std::uint8_t*>(mesh.skin.data()), sb_size});
     cmd.submit();
     return g;
+}
+
+Status GpuContext::update_mesh(GpuMesh& mesh, const MeshData& data, std::string_view name) {
+    if (data.vertices.empty() || data.indices.empty())
+        return make_error(ErrorCode::InvalidArgument, std::format("mesh '{}' is empty", name));
+    const auto nv = static_cast<std::uint32_t>(data.vertices.size());
+    const auto ni = static_cast<std::uint32_t>(data.indices.size());
+    if (data.skinned() || !data.lods.empty() || !mesh.valid() || mesh.skinned()) {
+        auto g = create_mesh(data, name);
+        if (!g) return std::move(g).error();
+        destroy(mesh);
+        mesh = g.value();
+        return {};
+    }
+    GpuMesh next = mesh;
+    rhi::BufferHandle new_vb, new_ib;
+    if (nv > mesh.vertex_capacity) {
+        next.vertex_capacity = nv + nv / 2;
+        auto vb = device_.create_buffer({std::format("{}_vb", name), next.vertex_capacity * static_cast<std::uint32_t>(sizeof(Vertex3D)),
+                                         rhi::BufferUsageVertex});
+        if (!vb) return std::move(vb).error();
+        new_vb = next.vertices = vb.value();
+    }
+    if (ni > mesh.index_capacity) {
+        next.index_capacity = ni + ni / 2;
+        auto ib = device_.create_buffer({std::format("{}_ib", name), next.index_capacity * static_cast<std::uint32_t>(sizeof(std::uint32_t)),
+                                         rhi::BufferUsageIndex});
+        if (!ib) {
+            if (new_vb) device_.destroy(new_vb);
+            return std::move(ib).error();
+        }
+        new_ib = next.indices = ib.value();
+    }
+    auto cmd = device_.begin_commands();
+    cmd.upload_buffer(next.vertices, 0, {reinterpret_cast<const std::uint8_t*>(data.vertices.data()), nv * sizeof(Vertex3D)}, true);
+    cmd.upload_buffer(next.indices, 0, {reinterpret_cast<const std::uint8_t*>(data.indices.data()), ni * sizeof(std::uint32_t)}, true);
+    cmd.submit();
+    // Old buffers that were outgrown: the device defers their release until the GPU is done with them.
+    if (new_vb) device_.destroy(mesh.vertices);
+    if (new_ib) device_.destroy(mesh.indices);
+    next.vertex_count = nv;
+    next.index_count = ni;
+    next.lods = {};
+    next.lods[0] = {0, ni, 0.0f};
+    next.lod_count = 1;
+    next.bounds = data.bounds();
+    mesh = next;
+    return {};
 }
 
 void GpuContext::destroy(GpuMesh& mesh) {
