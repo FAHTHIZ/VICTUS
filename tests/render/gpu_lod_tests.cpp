@@ -283,3 +283,62 @@ TEST_CASE("gpu lods: casters outside the main view still shadow it (H3 off-scree
     ctx.destroy(ground);
     ctx.destroy(blocker);
 }
+
+TEST_CASE("gpu lods: shadow_lod_bias draws coarser casters without changing the main view") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    auto ground = ctx.create_mesh(make_plane({20, 20}), "bias_ground").value();
+    MeshData data = make_uv_sphere(0.6f, 64, 32);
+    REQUIRE(generate_lods(data) == 3);
+    optimize_mesh(data);
+    auto sphere = ctx.create_mesh(data, "bias_sphere").value();
+    Material mat;
+    mat.cast_shadows = true;
+    constexpr std::uint32_t W = 160, H = 96;
+    auto frame = [&](RenderSettings s, SceneStats& st) {
+        s.taa = false;
+        s.ssao = false;
+        s.lod_error_pixels = 0.25f;
+        sr.value()->set_settings(s);
+        auto target = test::make_target(W, H);
+        DirectionalLight sun;
+        sun.direction = {-1.0f, -1.0f, -0.3f};
+        sr.value()->begin(Camera3D::look_at({0, 1.5f, 3}, {0, 0.3f, 0}), sun, {});
+        sr.value()->submit(ground, mat, math::Mat4::identity());
+        for (float x : {-1.0f, 1.0f}) sr.value()->submit(sphere, mat, math::Mat4::translation({x, 0.6f, 0}));
+        auto cmd = dev.begin_commands();
+        REQUIRE(sr.value()->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target).value();
+        st = sr.value()->stats();
+        dev.destroy(target);
+        return px;
+    };
+    RenderSettings s = RenderSettings::preset(QualityTier::High);
+    CHECK(s.shadow_lod_bias == 0);
+    CHECK(RenderSettings::preset(QualityTier::Low).shadow_lod_bias == 1);
+    s.shadow_lod_bias = 9;
+    CHECK(s.sanitized().shadow_lod_bias == 3);
+
+    SceneStats base{}, biased{}, forced{};
+    s.shadow_lod_bias = 0;
+    const auto a = frame(s, base);
+    s.shadow_lod_bias = 2;
+    const auto b = frame(s, biased);
+    test::save_output("shadow_lod_bias2", W, H, b);
+    CHECK(base.triangles == biased.triangles);       // main view unchanged
+    CHECK(base.shadow_triangles > 0);
+    CHECK(biased.shadow_triangles < base.shadow_triangles);
+    CHECK(biased.shadow_batches == base.shadow_batches); // the two spheres still instance together
+    CHECK(mean_diff(a, b) < 1.5);
+    // force_lod (debugging) draws the forced level in every pass and ignores the bias.
+    s.force_lod = 0;
+    (void)frame(s, forced);
+    CHECK(forced.lod_draws == 0);
+    CHECK(forced.shadow_triangles > base.shadow_triangles);
+    ctx.destroy(ground);
+    ctx.destroy(sphere);
+}

@@ -31,6 +31,7 @@ geometric error, projected to render pixels, stays within `RenderSettings::lod_e
 | 3. Different render-target sizes | 160x96 vs 640x384 at the same camera: the taller target keeps a finer level | pass |
 | 5. Dynamic resolution / render scale | `render_scale` 0.25 picks a coarser level; restoring 1.0 recovers the original level exactly | pass |
 | 9. Rapid zoom | six alternating 2/120 degree frames, then back to 45: same level as before | pass |
+| Shadow LOD bias | `shadow_lod_bias` 2 vs 0: same main triangles, fewer `shadow_triangles`, image within 1.5/255 | pass |
 | 4. Off-screen shadow contribution | a caster outside the main frustum still darkens the visible ground (`visible == 1`, `shadow_casters == 2`) | pass |
 
 All checks run on Mesa lavapipe (llvmpipe) in CI. They are CPU-side selection and image checks, not
@@ -38,12 +39,13 @@ GPU timing.
 
 ## Findings and gaps
 
-1. **One level per draw per frame, chosen from the main camera.** Directional cascades, local
-   (spot/point) shadow tiles, the depth pre-pass and the main pass all use the level picked for the main
-   view. A caster far from the main camera therefore draws a coarse level into a shadow map whose
-   texels may cover it at a much higher density. This is cheap and avoids extra selection work but is
-   not per-view. Follow-up: per-view selection for shadow views from the shadow map's texel density
-   (H1 "shadow cascades must use their own projection").
+1. **Shadow views use the main camera's level, with an optional bias.** Directional cascades, local
+   (spot/point) shadow tiles and the depth pre-pass use the level picked for the main view; this matches
+   Godot and Unreal defaults and keeps the shadow silhouette consistent with the lit surface.
+   `RenderSettings::shadow_lod_bias` (0..3, Low 1) draws casters that many levels coarser
+   (ADR-0049 addendum). Tested in "gpu lods: shadow_lod_bias draws coarser casters without changing the
+   main view": main-view triangles unchanged, shadow triangles lower, mean image difference under 1.5/255,
+   instancing kept. Independent per-cascade selection from shadow texel density is not implemented.
 2. **Reflection probe captures already select per view.** Each capture face renders through the same
    `SceneRenderer::render` with its own 90-degree camera and face resolution, so its level follows that
    view.

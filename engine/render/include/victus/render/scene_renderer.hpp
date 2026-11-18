@@ -282,6 +282,11 @@ struct RenderSettings {
     bool lods{true};
     float lod_error_pixels{1.0f};
     int force_lod{-1};                    // debugging: >= 0 draws that level (clamped per mesh)
+    // Shadow casters (directional cascades and local shadow tiles) draw this many levels coarser
+    // than the level picked for the main camera (0..3, clamped per mesh). Selection stays
+    // main-camera based, as in Godot and Unreal, so shadows and the lit surface keep the same
+    // reference; the bias only trades shadow-pass triangles for silhouette error. Low: 1.
+    std::uint32_t shadow_lod_bias{0};
     // GPU occlusion culling: when the depth pre-pass runs, a compute pass builds a Hi-Z pyramid
     // from it and tests every opaque main-pass instance; survivors are drawn with indirect draws.
     // Conservative: the image is identical with it off. Needs compute (RenderCaps::compute).
@@ -333,6 +338,7 @@ struct SceneStats {
     std::uint32_t particles{0};        // particles drawn
     std::uint32_t lod_draws{0};        // visible draws using a coarser level than LOD 0
     std::uint64_t triangles{0};        // triangles in the main and transparent passes (all instances)
+    std::uint64_t shadow_triangles{0}; // triangles drawn into directional cascades and local shadow tiles
     // GPU occlusion culling this frame: instances tested on the GPU / main batches drawn
     // indirectly (survivor counts stay on the GPU; see SceneRenderer::read_occlusion_survivors).
     bool occlusion{false};
@@ -435,6 +441,7 @@ private:
         std::uint32_t palette{0}; // first joint matrix in palette_ (skinned only)
         bool skinned{false};
         std::uint8_t lod{0};      // level of detail picked for this frame
+        std::uint8_t shadow_lod{0}; // level used by the shadow passes (lod + shadow_lod_bias)
         math::Aabb world_bounds;  // skinned only (static draws use mesh bounds * model)
         int probe{-1};            // reflection probe index (-1: scene environment)
         std::uint64_t motion_id{0};
@@ -449,6 +456,7 @@ private:
     struct Batch {
         const Draw* first;
         std::uint32_t instance_offset, instance_count;
+        std::uint8_t lod{0}; // level drawn by every instance of the batch
     };
     struct ParticleBatch {
         ParticleMaterial material;

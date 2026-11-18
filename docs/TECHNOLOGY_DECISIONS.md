@@ -511,6 +511,7 @@ Selected: Apache-2.0 for original VICTUS code. Third-party components retain the
   - Index memory grows by about the sum of the level sizes (under 1x); the cooked format moves to v6 and the model importer to v5, so caches re-import once.
   - Switches pop (no cross-fade or dithering yet); the 1 px default keeps this below visibility on tests.
   - GPU-driven culling and indirect draws are a separate step (SDL_GPU has indirect draws, but no draw count buffer), as are occlusion culling and clustered LOD.
+- Addendum (2026-11-18, roadmap 6b H1): shadow passes keep the main-camera level (as Godot and Unreal do by default) and add `RenderSettings::shadow_lod_bias` (0..3; Low 1, other tiers 0): directional cascades and local shadow tiles draw `lod + bias`, clamped per mesh, batched by that level; `force_lod` ignores the bias. Independent per-cascade selection from shadow texel density was rejected for now because the shadow silhouette could diverge from the lit surface. `SceneStats::shadow_triangles` and the `frame.shadow_triangles` profile counter report the shadow-pass cost. Evidence: docs/audits/CAMERA_RESPONSIVE_LOD.md.
 
 ### ADR-0050: Optional packed HDR colour (R11G11B10F) for bandwidth-bound GPUs
 - Status: Accepted (Slice 55)
