@@ -114,6 +114,34 @@ struct ControllerTransition {
     friend bool operator==(const ControllerTransition&, const ControllerTransition&) = default;
 };
 
+class Controller;
+
+// How a layer combines with the layers below it (ADR-0074).
+enum class LayerBlend : std::uint8_t {
+    Override, // replaces the masked nodes the layer's clips animate, by the layer weight
+    Additive, // adds the difference between the layer pose and its reference pose
+};
+enum class AdditiveReference : std::uint8_t {
+    FirstFrame, // each state's pose at normalized time 0 (Unity's additive layers)
+    Rest,       // the model's rest pose
+};
+[[nodiscard]] std::string_view layer_blend_name(LayerBlend b) noexcept;
+
+// An extra state machine on top of the base one (the controller's own states). Layers share the
+// controller's parameters and are applied in order after the base layer, before IK.
+struct ControllerLayer {
+    std::string name;
+    float weight{1.0f};             // 0..1; scripts can change it at run time
+    std::string weight_parameter;   // optional float parameter (clamped 0..1) multiplied in
+    LayerBlend blend{LayerBlend::Override};
+    AdditiveReference reference{AdditiveReference::FirstFrame};
+    std::vector<std::string> mask;    // node names whose subtrees the layer affects (empty: all)
+    std::vector<std::string> exclude; // node names whose subtrees it never affects
+    // States, transitions and default state. Its `parameters` mirror the controller's; it has no
+    // layers or root motion. A state with no clip and no blend space is empty (no influence).
+    std::shared_ptr<const Controller> machine;
+};
+
 class Controller {
   public:
     static constexpr std::size_t kMaxStates = 256;
@@ -121,6 +149,8 @@ class Controller {
     static constexpr std::size_t kMaxTransitions = 4096;
     static constexpr std::size_t kMaxPointsPerState = 64;
     static constexpr std::size_t kMaxConditions = 32;
+    static constexpr std::size_t kMaxLayers = 16;
+    static constexpr std::size_t kMaxMaskNodes = 256;
 
     // Validates names, references and values. Errors name the offending element.
     [[nodiscard]] static Result<std::shared_ptr<const Controller>> parse(std::string_view text, std::string name = {});
@@ -130,7 +160,8 @@ class Controller {
 
     [[nodiscard]] std::int32_t find_state(std::string_view name) const noexcept;
     [[nodiscard]] std::int32_t find_parameter(std::string_view name) const noexcept;
-    // Every distinct clip name the controller references, in first-use order.
+    [[nodiscard]] std::int32_t find_layer(std::string_view name) const noexcept;
+    // Every distinct clip name the controller (and its layers) references, in first-use order.
     [[nodiscard]] std::vector<std::string> clip_names() const;
 
     std::string name; // asset path (diagnostics)
@@ -140,6 +171,7 @@ class Controller {
     std::int32_t default_state{0};
     // Node whose motion root-motion states extract; empty = the model's first root node.
     std::string root_node;
+    std::vector<ControllerLayer> layers; // applied in order after the base layer
 };
 
 // 1D blend weights: linear between the two thresholds around x, clamped at the ends.
