@@ -721,9 +721,9 @@ void AnimationSystem::update(Scene& scene, float dt) {
 bool AnimationSystem::play(Scene& scene, Entity e, std::string_view clip, float fade, bool restart) {
     auto* a = scene.world().alive(e) ? scene.world().get<AnimatorComponent>(e) : nullptr;
     if (!a) return false;
-    if (!a->controller.empty()) {
-        AnimatorState* s = impl_->ensure(scene, e, a);
-        if (!s || !s->ctl.ctrl) return false;
+    // Controller mode: `clip` names a state. A controller that failed to load falls back to
+    // plain clip playback below, as evaluation does.
+    if (AnimatorState* s = a->controller.empty() ? nullptr : impl_->ensure(scene, e, a); s && s->ctl.ctrl) {
         const std::int32_t to = s->ctl.ctrl->find_state(clip);
         if (to < 0 || !s->set) return false;
         a->playing = true;

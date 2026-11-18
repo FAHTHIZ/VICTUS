@@ -61,11 +61,15 @@ TEST_CASE("template robot: imports with a skin and clips, matches the scene and 
     REQUIRE(model->meshes.size() == 2);
     REQUIRE(model->skins.size() == 1);
     CHECK(model->skins[0].joints.size() == 11);
-    REQUIRE(model->animations.size() == 2);
+    REQUIRE(model->animations.size() == 4);
     CHECK(model->animations[0].name == "Idle");
     CHECK(model->animations[0].duration == doctest::Approx(2.4f));
     CHECK(model->animations[1].name == "Walk");
     CHECK(model->animations[1].duration == doctest::Approx(0.8f));
+    CHECK(model->animations[2].name == "Run");
+    CHECK(model->animations[2].duration == doctest::Approx(0.55f));
+    CHECK(model->animations[3].name == "Jump");
+    CHECK(model->animations[3].duration == doctest::Approx(0.6f));
     math::Aabb bounds;
     for (const auto& m : model->meshes) {
         CHECK(m.data.skinned());
@@ -128,4 +132,40 @@ TEST_CASE("template robot: imports with a skin and clips, matches the scene and 
     anim.update(s, 0.4f); // half a stride
     CHECK(same_rotation(s.world().get<scene::Transform>(leg)->rotation, rx(28.0f)));
     CHECK(anim.status(s, robot).looping);
+
+    // With the project's controller loader the template's anim/robot.vanim drives the robot:
+    // Idle/Walk/Run blend by "speed" (phase-synced, left leg forward at phase 0) and the "jump"
+    // trigger enters Air, which returns to Locomotion once grounded after its exit time.
+    scene::Scene s2;
+    REQUIRE(s2.load_file(*scene_path).ok());
+    const scene::Entity robot2 = s2.find_by_name("Robot");
+    CHECK(s2.world().get<animation::AnimatorComponent>(robot2)->controller == "anim/robot.vanim");
+    animation::AnimationSettings cs;
+    cs.provider = assets::animation_provider(**db);
+    cs.controllers = animation::directory_loader(dir.path / "assets");
+    animation::AnimationSystem ctl(cs);
+    ctl.update(s2, 0.0f);
+    auto cst = ctl.controller_status(s2, robot2);
+    REQUIRE(cst.valid);
+    CHECK(cst.error.empty());
+    CHECK(cst.state == "Locomotion");
+    REQUIRE(cst.weights.size() == 3);
+    CHECK(cst.weights[0].weight == doctest::Approx(1.0f)); // Idle at speed 0
+    for (const auto& w : cst.weights) CHECK_FALSE(w.missing);
+    REQUIRE(ctl.set_parameter(s2, robot2, "speed", 5.0f));
+    ctl.update(s2, 0.0f);
+    const scene::Entity leg2 = s2.find_by_name("UpperLeg.L");
+    CHECK(same_rotation(s2.world().get<scene::Transform>(leg2)->rotation, rx(-55.0f))); // full Run stride
+    REQUIRE(ctl.set_parameter(s2, robot2, "speed", 2.5f));
+    ctl.update(s2, 0.0f);
+    CHECK(same_rotation(s2.world().get<scene::Transform>(leg2)->rotation, rx(-28.0f))); // pure Walk
+    REQUIRE(ctl.set_trigger(s2, robot2, "jump"));
+    ctl.update(s2, 1.0f / 60);
+    CHECK(ctl.controller_status(s2, robot2).state == "Air");
+    for (int i = 0; i < 30; ++i) ctl.update(s2, 1.0f / 60); // past the exit time, still grounded
+    CHECK(ctl.controller_status(s2, robot2).state == "Locomotion");
+    // Walking off a ledge (not grounded) also enters Air.
+    REQUIRE(ctl.set_parameter(s2, robot2, "grounded", 0.0f));
+    for (int i = 0; i < 20; ++i) ctl.update(s2, 1.0f / 60);
+    CHECK(ctl.controller_status(s2, robot2).state == "Air");
 }

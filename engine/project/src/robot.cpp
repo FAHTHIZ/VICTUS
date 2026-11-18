@@ -216,6 +216,49 @@ std::vector<Track> walk_tracks() {
     };
 }
 
+// Same footfall phase as Walk (left leg forward at phase 0) so the two blend in sync: longer
+// strides, a forward lean, a higher bob and pumping arms.
+std::vector<Track> run_tracks() {
+    return {
+        {"Hips", Track::Translation, {}, [](float p) { return Vec3{0, 0.72f - 0.05f * std::cos(2 * p), 0}; }},
+        {"Hips", Track::Rotation, [](float p) { return ry(-9.0f * std::cos(p)); }, {}},
+        {"Spine", Track::Rotation, [](float p) { return ry(12.0f * std::cos(p)) * rx(14.0f); }, {}},
+        {"Head", Track::Rotation, [](float) { return rx(-10.0f); }, {}},
+        {"UpperLeg.L", Track::Rotation, [](float p) { return rx(-10.0f - 45.0f * std::cos(p)); }, {}},
+        {"UpperLeg.R", Track::Rotation, [](float p) { return rx(-10.0f + 45.0f * std::cos(p)); }, {}},
+        {"LowerLeg.L", Track::Rotation, [](float p) { return rx(15.0f + 75.0f * std::max(0.0f, -std::sin(p))); }, {}},
+        {"LowerLeg.R", Track::Rotation, [](float p) { return rx(15.0f + 75.0f * std::max(0.0f, std::sin(p))); }, {}},
+        {"UpperArm.L", Track::Rotation, [](float p) { return rx(45.0f * std::cos(p)) * rz(8.0f); }, {}},
+        {"UpperArm.R", Track::Rotation, [](float p) { return rx(-45.0f * std::cos(p)) * rz(-8.0f); }, {}},
+        {"LowerArm.L", Track::Rotation, [](float) { return rx(-80.0f); }, {}},
+        {"LowerArm.R", Track::Rotation, [](float) { return rx(-80.0f); }, {}},
+    };
+}
+
+// One-shot take-off (played without looping, it holds the last, tucked frame while airborne):
+// a quick crouch, then legs tuck and arms rise over the first 40% of the clip.
+std::vector<Track> jump_tracks() {
+    // Phase 0..2pi maps to clip time 0..1; k eases 0 -> 1 over t in [0.1, 0.4].
+    const auto k = [](float p) {
+        const float t = std::clamp((p / (2 * kPi) - 0.1f) / 0.3f, 0.0f, 1.0f);
+        return t * t * (3 - 2 * t);
+    };
+    const auto crouch = [](float p) { return std::max(0.0f, std::sin(std::min(p / (2 * kPi) / 0.2f, 1.0f) * kPi)); };
+    return {
+        {"Hips", Track::Translation, {}, [=](float p) { return Vec3{0, 0.78f - 0.08f * crouch(p) + 0.02f * k(p), 0}; }},
+        {"Spine", Track::Rotation, [=](float p) { return rx(10.0f * crouch(p) - 6.0f * k(p)); }, {}},
+        {"Head", Track::Rotation, [=](float p) { return rx(-8.0f * k(p)); }, {}},
+        {"UpperLeg.L", Track::Rotation, [=](float p) { return rx(-25.0f * crouch(p) - 40.0f * k(p)); }, {}},
+        {"UpperLeg.R", Track::Rotation, [=](float p) { return rx(-25.0f * crouch(p) - 20.0f * k(p)); }, {}},
+        {"LowerLeg.L", Track::Rotation, [=](float p) { return rx(40.0f * crouch(p) + 70.0f * k(p)); }, {}},
+        {"LowerLeg.R", Track::Rotation, [=](float p) { return rx(40.0f * crouch(p) + 45.0f * k(p)); }, {}},
+        {"UpperArm.L", Track::Rotation, [=](float p) { return rx(20.0f * crouch(p) - 30.0f * k(p)) * rz(5.0f + 55.0f * k(p)); }, {}},
+        {"UpperArm.R", Track::Rotation, [=](float p) { return rx(20.0f * crouch(p) - 30.0f * k(p)) * rz(-5.0f - 55.0f * k(p)); }, {}},
+        {"LowerArm.L", Track::Rotation, [=](float p) { return rx(-12.0f - 30.0f * k(p)); }, {}},
+        {"LowerArm.R", Track::Rotation, [=](float p) { return rx(-12.0f - 30.0f * k(p)); }, {}},
+    };
+}
+
 json::Value clip(Writer& w, const char* name, float duration, const std::vector<Track>& tracks) {
     constexpr int kKeys = 25;
     std::vector<float> times;
@@ -321,6 +364,8 @@ std::string gltf() {
     json::Value animations = json::Value::array();
     animations.push(clip(w, "Idle", 2.4f, idle_tracks()));
     animations.push(clip(w, "Walk", 0.8f, walk_tracks()));
+    animations.push(clip(w, "Run", 0.55f, run_tracks()));
+    animations.push(clip(w, "Jump", 0.6f, jump_tracks()));
 
     json::Value doc = json::Value::object();
     json::Value asset = json::Value::object();
@@ -356,6 +401,33 @@ std::string gltf() {
     return json::stringify(doc, false) + "\n";
 }
 
+std::string controller() {
+    // Locomotion blends Idle/Walk/Run by ground speed (m/s); Air plays the one-shot Jump and holds
+    // its tucked last frame until the character lands.
+    return R"({
+  "version": 1,
+  "parameters": [
+    { "name": "speed", "type": "float" },
+    { "name": "grounded", "type": "bool", "default": true },
+    { "name": "jump", "type": "trigger" }
+  ],
+  "default_state": "Locomotion",
+  "states": [
+    { "name": "Locomotion", "blend1d": { "parameter": "speed", "points": [
+        { "clip": "Idle", "at": 0 }, { "clip": "Walk", "at": 2.5 }, { "clip": "Run", "at": 5 } ] } },
+    { "name": "Air", "clip": "Jump", "loop": false }
+  ],
+  "transitions": [
+    { "from": "Locomotion", "to": "Air", "duration": 0.08, "conditions": [ { "parameter": "jump" } ] },
+    { "from": "Locomotion", "to": "Air", "duration": 0.2, "offset": 0.4,
+      "conditions": [ { "parameter": "grounded", "op": "false" } ] },
+    { "from": "Air", "to": "Locomotion", "duration": 0.15, "exit_time": 0.3,
+      "conditions": [ { "parameter": "grounded", "op": "true" } ] }
+  ]
+}
+)";
+}
+
 std::string meta() {
     json::Value m = json::Value::object();
     m.set("victus_meta", 1);
@@ -385,6 +457,7 @@ scene::Entity instantiate(scene::Scene& s, std::string_view name, scene::Entity 
     auto& a = s.world().add<animation::AnimatorComponent>(root);
     a.model = model;
     a.clip = "Idle";
+    a.controller = kControllerAsset;
     return root;
 }
 

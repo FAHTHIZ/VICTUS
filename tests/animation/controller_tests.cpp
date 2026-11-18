@@ -365,6 +365,11 @@ TEST_CASE("missing clips use the rest pose; load errors fall back to clip playba
     CHECK(bs.error.find("at least one state") != std::string::npos);
     bad.system.update(bad.scene, 0);
     CHECK(bad.loads == 1); // the failure is cached, not re-read every frame
+    // play() also falls back to clips (not states) when the controller did not load.
+    CHECK(bad.system.play(bad.scene, bad.root, "Idle", 0.0f));
+    bad.system.update(bad.scene, 0);
+    CHECK(near(bad.x(), 0.0f));
+    CHECK_FALSE(bad.system.play(bad.scene, bad.root, "NoSuchClip"));
 }
 
 TEST_CASE("reload_controllers re-reads the asset and keeps state and parameter values") {

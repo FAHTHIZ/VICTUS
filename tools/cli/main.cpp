@@ -621,7 +621,7 @@ int cmd_serve(const std::vector<std::string>& a) {
 // Validates every scene (loads, no unknown components) and every script (syntax, module loads,
 // referenced files exist). Exit 1 if anything is wrong.
 int cmd_check(const std::vector<std::string>& a) {
-    cli::Parser p("victus check", "Validate scenes, prefabs, materials, shaders, sprite sheets, tile sets and scripts");
+    cli::Parser p("victus check", "Validate scenes, prefabs, materials, shaders, sprite sheets, tile sets, animation controllers and scripts");
     p.positional("project", "project folder", true);
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
@@ -762,8 +762,10 @@ int cmd_check(const std::vector<std::string>& a) {
         }
     }
     // Animation controllers: each must parse (states, clips, parameters and transitions).
+    std::size_t controllers = 0;
     for (const assets::AssetRecord& r : (*db)->records()) {
         if (r.kind != assets::AssetKind::AnimController) continue;
+        ++controllers;
         auto text = fs::read_text((*db)->source_path(r));
         auto c = text ? animation::Controller::parse(*text, r.path) : Result<std::shared_ptr<const animation::Controller>>(std::move(text).error());
         if (!c) {
@@ -905,9 +907,9 @@ int cmd_check(const std::vector<std::string>& a) {
         }
         check_entities(rel, scene);
     }
-    std::printf("checked %zu scenes, %zu prefabs, %zu materials, %zu shaders, %zu sprite sheets, %zu tile sets and %zu scripts: "
-                "%zu problems\n",
-                scenes, prefabs, materials, shaders, sheets, tilesets, scripts, problems);
+    std::printf("checked %zu scenes, %zu prefabs, %zu materials, %zu shaders, %zu sprite sheets, %zu tile sets, "
+                "%zu animation controllers and %zu scripts: %zu problems\n",
+                scenes, prefabs, materials, shaders, sheets, tilesets, controllers, scripts, problems);
     return problems ? 1 : 0;
 }
 

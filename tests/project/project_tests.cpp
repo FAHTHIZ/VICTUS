@@ -299,6 +299,7 @@ std::unique_ptr<TemplateRun> start_template(const char* id, const sfs::path& dir
     r->db = std::move(db).value();
     animation::AnimationSettings anim;
     anim.provider = assets::animation_provider(*r->db);
+    anim.controllers = animation::directory_loader(r->db->assets_dir());
     r->animation = std::make_unique<animation::AnimationSystem>(anim);
     animation::add_animation_systems(r->sim, *r->animation);
     r->particles = std::make_unique<particles::ParticleSystem>();
@@ -460,6 +461,9 @@ TEST_CASE("templates: 3D character climbs the steps, jumps and swings the gate")
     r->frames(1);
     r->input.set_key("Space", false);
     CHECK(particles::status(r->scene, dust).emitted == 14); // take-off puff
+    const scene::Entity robot = r->scene.find_by_name("Robot");
+    r->frames(1);
+    CHECK(r->animation->controller_status(r->scene, robot).state == "Air"); // the "jump" trigger fired
     float apex = 0;
     for (int i = 0; i < 40; ++i) {
         r->frames(1);
@@ -469,6 +473,7 @@ TEST_CASE("templates: 3D character climbs the steps, jumps and swings the gate")
     r->frames(50);
     CHECK(r->physics->character_state(player).grounded);
     CHECK(particles::status(r->scene, dust).emitted == 24); // + landing puff
+    CHECK(r->animation->controller_status(r->scene, robot).state == "Locomotion"); // landed
     // The brazier burns: fire, sparks and smoke are all alive.
     for (const char* fx : {"Fire", "Sparks", "Smoke"}) {
         CAPTURE(fx);
@@ -515,15 +520,23 @@ TEST_CASE("templates: 3D player moves with WASD and the camera follows") {
     CHECK(c1.z < c0.z - 2.0f); // smoothed follow
     // The robot walks while moving and faces the direction of travel (-Z: yaw 180 degrees).
     const scene::Entity robot = r->scene.find_by_name("Robot");
+    // Its controller (assets/anim/robot.vanim) blends Locomotion by ground speed: 5 m/s is a run.
     const auto walking = r->animation->status(r->scene, robot);
     CHECK(walking.valid);
-    CHECK(walking.clip == "Walk");
+    CHECK(walking.controlled);
+    CHECK(walking.state == "Locomotion");
     CHECK(walking.animated_nodes > 0);
+    const auto moving = r->animation->controller_status(r->scene, robot);
+    REQUIRE(moving.weights.size() == 3);
+    CHECK(moving.weights[2].clip == "Run");
+    CHECK(moving.weights[2].weight > 0.9f);
+    CHECK(r->animation->parameter(r->scene, robot, "speed").value_or(0) == doctest::Approx(5.0f).epsilon(0.05));
     const math::Vec3 facing = r->scene.world().get<scene::Transform>(robot)->rotation.rotate({0, 0, 1});
     CHECK(facing.z == doctest::Approx(-1.0f).epsilon(0.01));
     r->frames(240);
     CHECK(r->pos("Player").z == doctest::Approx(-9.0f).epsilon(0.02)); // stops at the bounds
-    CHECK(r->animation->status(r->scene, robot).clip == "Idle"); // blocked at the bounds: idles
+    // Blocked at the bounds: idles.
+    CHECK(r->animation->controller_status(r->scene, robot).weights[0].weight == doctest::Approx(1.0f));
     CHECK(r->pos("Player").y == doctest::Approx(0.0f).epsilon(0.05)); // standing on the ground
     // The crate stack fell onto the ground collider and came to rest stacked.
     CHECK(r->pos("Crate 1").y == doctest::Approx(0.3f).epsilon(0.03));
@@ -829,8 +842,11 @@ TEST_CASE("templates: 3D companion follows the player over the navmesh") {
     CHECK(std::fabs(b1.y) < 0.1f); // walked on the ground (character mover)
     CHECK(r->navigation->stats().moving == 0); // arrived and idles
     for (const scene::Entity c : r->scene.children(buddy)) {
-        const auto anim = r->animation->status(r->scene, c);
-        if (anim.valid) CHECK(anim.clip == "Idle");
+        const auto anim = r->animation->controller_status(r->scene, c);
+        if (anim.valid) {
+            REQUIRE(anim.weights.size() == 3);
+            CHECK(anim.weights[0].weight == doctest::Approx(1.0f)); // Idle
+        }
     }
     CHECK(r->host->stats().errors == 0);
     for (const auto& e : r->host->recent_errors()) MESSAGE(e);
