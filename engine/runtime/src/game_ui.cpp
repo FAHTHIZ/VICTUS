@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/runtime/game_ui.hpp"
+#include "victus/runtime/builtin_fonts.hpp"
 
 #include "victus/core/fs.hpp"
 #include "victus/core/log.hpp"
@@ -11,17 +12,6 @@
 #include <span>
 
 namespace victus::runtime {
-
-namespace detail {
-std::span<const unsigned char> inter_Medium() noexcept;
-std::span<const unsigned char> inter_Bold() noexcept;
-std::span<const unsigned char> inter_Medium_latin_ext() noexcept;
-std::span<const unsigned char> inter_Bold_latin_ext() noexcept;
-std::span<const unsigned char> inter_Medium_cyrillic() noexcept;
-std::span<const unsigned char> inter_Bold_cyrillic() noexcept;
-std::span<const unsigned char> inter_Medium_greek() noexcept;
-std::span<const unsigned char> inter_Bold_greek() noexcept;
-} // namespace detail
 
 namespace {
 

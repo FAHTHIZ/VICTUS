@@ -114,6 +114,14 @@ In the editor, Play > Play as Host (or the toolbar's Play button with Play > Net
 
 The 3D and Multiplayer templates give the player a Vanguard robot: V-01 by default, V-02 with `victus new MyGame --template 3d --character v02`, or the plain capsule body with `--character none`. The launcher's New Project form has the same Character choice. Both robots share one skeleton, the clips Idle, Walk, Run, Jump, Fall, Land and Interact, the controller `assets/anim/characters/vanguard_locomotion.vanim` and the player script, so switching changes only the look; the companion uses the other one. Attachment nodes `Socket.Head`, `Socket.Hand.L/R`, `Socket.Back` and `Socket.Root` hold items. Details, swapping in an existing project and regenerating the models from Blender source: [CHARACTERS.md](CHARACTERS.md).
 
+### The Studio window
+
+The toolbar under the menu has Save (orange while the scene has unsaved changes), Undo and Redo on the left (their tooltips name the step they will undo), Play, Pause, Stop and Record in the middle, a coloured badge for what is running (Playing, Paused, Recording, Host, replay result) and, on the right, Search commands: click it or press Ctrl+Shift+P (or F1) to find and run any editor action by name. Every icon has a tooltip with its shortcut, including disabled ones, which say why they are disabled.
+
+The status bar at the bottom shows the project, the open scene and whether it is saved, the entity count, the latest notification, and the number of errors and warnings in the Console; click a count to bring the Console forward.
+
+In the viewport the floating strip in the top-left corner picks the transform tool (Move W, Rotate E, Scale R), world or local axes (T), snapping (hold Ctrl while dragging to invert it) and, behind the gear, snap steps and gizmo visibility. Render stats sit under it. The Hierarchy shows an icon for each entity's kind (camera, light, mesh, sprite, script, prefab, terrain and so on) and the Assets panel shows type icons until a thumbnail is ready. The Tile Palette opens by itself when you select a tilemap.
+
 ### Basics
 
 In the editor: Play/Stop runs the scene in place on a copy (edits made during play are discarded), Ctrl+S saves, Ctrl+Z/Ctrl+Y undo/redo, F frames the selection, right-drag orbits, middle-drag pans, the wheel zooms. Drop `.gltf`/`.glb`/`.png`/`.jpg` files into the project's `assets/` folder and press Reimport; drag a model from the asset table into the viewport to instantiate it, or a `.luau` script onto an entity's Script component (double-click attaches it to the selection).

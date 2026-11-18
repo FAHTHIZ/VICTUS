@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Editor UI: launcher, dockspace workspace and panels (Dear ImGui).
 #include "victus/editor/editor.hpp"
+#include "widgets.hpp"
 
 #include "editor_client.hpp"
 
@@ -32,7 +33,6 @@ constexpr const char* kInspectorWindow = "Inspector";
 constexpr const char* kAssetsWindow = "Assets";
 constexpr const char* kConsoleWindow = "Console";
 
-ImVec4 accent() { return ImVec4(1.0f, 0.55f, 0.1f, 1.0f); }
 
 bool color_edit(const char* label, math::Color& c, bool alpha = true) {
     float v[4] = {c.r, c.g, c.b, c.a};
@@ -58,6 +58,39 @@ bool vec2_edit(const char* label, math::Vec2& v, float speed = 0.05f) {
 
 
 std::string asset_label(assets::AssetDatabase* db, const Uuid& id);
+
+// The icon and tint the Hierarchy shows for an entity, from its most telling component.
+kit::Icon entity_icon(Scene& s, Entity e, ImVec4& tint) {
+    namespace tk = ui::tokens;
+    const ecs::World& w = s.world();
+    tint = tk::kTextMuted;
+    if (w.has<scene::PrefabInstance>(e)) {
+        tint = tk::kInfo;
+        return kit::Icon::Prefab;
+    }
+    if (w.has<CameraComponent>(e)) return kit::Icon::Camera;
+    if (w.has<LightComponent>(e) || w.has<gameplay::Light2DComponent>(e)) {
+        tint = tk::kWarning;
+        return kit::Icon::Light;
+    }
+    if (w.has<terrain::TerrainComponent>(e)) {
+        tint = tk::kSuccess;
+        return kit::Icon::Terrain;
+    }
+    if (w.has<tilemap::TilemapComponent>(e)) return kit::Icon::Tileset;
+    if (w.has<particles::ParticleEmitterComponent>(e)) return kit::Icon::Particles;
+    if (w.has<audio::AudioSourceComponent>(e)) return kit::Icon::Audio;
+    if (w.has<gameui::UiCanvasComponent>(e)) return kit::Icon::Ui;
+    if (w.has<gameplay::DecalComponent>(e)) return kit::Icon::Texture;
+    if (w.has<SpriteComponent>(e)) return kit::Icon::Sprite;
+    if (w.has<MeshRendererComponent>(e) || w.has<ProceduralMeshComponent>(e)) return kit::Icon::Mesh;
+    if (w.has<script::ScriptComponent>(e)) {
+        tint = tk::kSuccess;
+        return kit::Icon::Script;
+    }
+    if (!s.children(e).empty()) return kit::Icon::Folder;
+    return kit::Icon::Entity;
+}
 
 // Asset kind accepted by a reflected UUID field's hint ("model", "texture", ...).
 assets::AssetKind asset_kind_for_hint(std::string_view hint) {
@@ -211,26 +244,6 @@ std::string asset_label(assets::AssetDatabase* db, const Uuid& id) {
     return "(missing) " + id.to_string();
 }
 
-const char* kind_icon(assets::AssetKind k) {
-    switch (k) {
-    case assets::AssetKind::Texture: return "[tex]";
-    case assets::AssetKind::Model: return "[mdl]";
-    case assets::AssetKind::Scene: return "[scn]";
-    case assets::AssetKind::Script: return "[lua]";
-    case assets::AssetKind::Audio: return "[snd]";
-    case assets::AssetKind::Prefab: return "[pfb]";
-    case assets::AssetKind::Material: return "[mat]";
-    case assets::AssetKind::Shader: return "[shd]";
-    case assets::AssetKind::SpriteSheet: return "[sht]";
-    case assets::AssetKind::Tileset: return "[tls]";
-    case assets::AssetKind::Terrain: return "[ter]";
-    case assets::AssetKind::BehaviorTree: return "[bt]";
-    case assets::AssetKind::Sequence: return "[seq]";
-    case assets::AssetKind::StringTable: return "[str]";
-    case assets::AssetKind::AnimController: return "[anim]";
-    default: return "[file]";
-    }
-}
 } // namespace
 
 // ---- frame --------------------------------------------------------------------------------------
@@ -280,7 +293,7 @@ void Editor::draw_launcher() {
     ImGui::Begin("##launcher", nullptr, flags);
     ImGui::PopStyleVar();
     ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.8f);
-    ImGui::TextColored(accent(), "VICTUS");
+    ImGui::TextColored(ui::tokens::kAccent, "VICTUS");
     ImGui::PopFont();
     ImGui::SameLine();
     ImGui::TextDisabled("Engine %s  -  offline, no account required", build::version());
@@ -299,7 +312,7 @@ void Editor::draw_launcher() {
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) new_template_ = t.id;
         ImGui::SameLine(12);
         ImGui::BeginGroup();
-        ImGui::TextColored(sel ? accent() : ImVec4(1, 1, 1, 1), "%s", t.display_name.c_str());
+        ImGui::TextColored(sel ? ui::tokens::kAccent : ui::tokens::kText, "%s", t.display_name.c_str());
         ImGui::TextDisabled("%s", t.description.c_str());
         ImGui::EndGroup();
         ImGui::PopID();
@@ -342,7 +355,7 @@ void Editor::draw_launcher() {
             if (auto st = create_project(target, new_name_, new_template_, options); !st.ok()) launcher_error_ = st.error().message;
         }
     }
-    if (!launcher_error_.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.35f, 1), "%s", launcher_error_.c_str());
+    if (!launcher_error_.empty()) ImGui::TextColored(ui::tokens::kDanger, "%s", launcher_error_.c_str());
     ImGui::EndChild();
 
     ImGui::SameLine();
@@ -574,9 +587,9 @@ void Editor::draw_menu_bar() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Play")) {
-        if (ImGui::MenuItem(editing ? "Play" : "Resume", nullptr, false, play_state_ != PlayState::Playing)) play();
+        if (ImGui::MenuItem(editing ? "Play" : "Resume", editing ? "Ctrl+P" : nullptr, false, play_state_ != PlayState::Playing)) play();
         if (ImGui::MenuItem("Pause", nullptr, false, play_state_ == PlayState::Playing)) pause();
-        if (ImGui::MenuItem("Stop", nullptr, false, !editing)) stop();
+        if (ImGui::MenuItem("Stop", "Ctrl+P", false, !editing)) stop();
         ImGui::Separator();
         if (ImGui::MenuItem("Play as Host", nullptr, false, editing && project_.has_value())) play_host();
         if (ImGui::BeginMenu("Network Mode", editing)) {
@@ -606,86 +619,203 @@ void Editor::draw_menu_bar() {
 }
 
 void Editor::draw_toolbar() {
-    // A thin bar under the menu holding play controls, centred.
+    // Under the menu: file actions on the left, play controls centred, play state and the
+    // command search on the right. Every control is an icon button with a tooltip naming its
+    // shortcut, so the bar stays compact without hiding what anything does.
+    namespace tk = ui::tokens;
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
-    const float h = ImGui::GetFrameHeight();
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse;
+    const float pad = tk::kSpace2;
+    const float h = ImGui::GetFrameHeight() + pad * 2.0f;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(tk::kSpace3, pad));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(tk::kSpace2, tk::kSpace2));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, tk::kSurfaceBase);
     if (ImGui::BeginViewportSideBar("##toolbar", vp, ImGuiDir_Up, h, flags)) {
-        if (ImGui::BeginMenuBar()) {
-            const float w = 300.0f;
-            ImGui::SetCursorPosX(std::max(0.0f, (ImGui::GetWindowWidth() - w) * 0.5f));
-            const bool editing = play_state_ == PlayState::Editing;
-            if (editing) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.95f, 0.45f, 1));
-                if (ImGui::MenuItem(net_settings_.mode == NetPlaySettings::Mode::Host ? "> Play (Host)" : "> Play")) play();
-                ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip(net_settings_.mode == NetPlaySettings::Mode::Host ? "Play as a listen server (Play > Network Mode)"
-                                                                                         : "Play offline (Play > Network Mode)");
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1));
-                if (ImGui::MenuItem("(o) Record", nullptr, false, project_.has_value())) record();
-                ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip("Play while recording input for a deterministic replay (Play > Replay Capture)");
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.4f, 1));
-                if (ImGui::MenuItem("[] Stop")) stop();
-                ImGui::PopStyleColor();
-                if (play_state_ == PlayState::Playing) {
-                    if (ImGui::MenuItem("|| Pause")) pause();
-                } else if (ImGui::MenuItem("> Resume")) {
-                    play();
+        const bool editing = play_state_ == PlayState::Editing;
+        const float side = ImGui::GetFrameHeight();
+        const float gap = ImGui::GetStyle().ItemSpacing.x;
+
+        // Left: save, undo, redo.
+        const std::string save_tip = !project_ ? std::string("Save Scene (Ctrl+S) - open a project first")
+                                     : !editing ? std::string("Save Scene (Ctrl+S) - stop play mode first")
+                                     : dirty()  ? std::format("Save {} (Ctrl+S) - unsaved changes", scene_path_.empty() ? "scene" : scene_path_)
+                                                : std::string("Save Scene (Ctrl+S) - no unsaved changes");
+        if (kit::icon_button("save", kit::Icon::Save, save_tip.c_str(), false, project_.has_value() && editing,
+                             dirty() ? tk::kAccent : tk::kText)) {
+            if (scene_path_.empty()) show_save_as_ = true;
+            else if (auto st = save_scene(); !st.ok()) notify(st.error().message, true);
+        }
+        ImGui::SameLine();
+        const auto* nu = undo_.next_undo();
+        const auto* nr = undo_.next_redo();
+        const std::string undo_tip = nu ? std::format("Undo {} (Ctrl+Z)", nu->label) : std::string("Nothing to undo (Ctrl+Z)");
+        const std::string redo_tip = nr ? std::format("Redo {} (Ctrl+Y)", nr->label) : std::string("Nothing to redo (Ctrl+Y)");
+        if (kit::icon_button("undo", kit::Icon::Undo, undo_tip.c_str(), false, editing && nu != nullptr)) undo();
+        ImGui::SameLine();
+        if (kit::icon_button("redo", kit::Icon::Redo, redo_tip.c_str(), false, editing && nr != nullptr)) redo();
+
+        // Centre: play, pause, stop, record.
+        const float group_w = side * 4.0f + gap * 3.0f;
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + tk::kSpace6, (ImGui::GetWindowWidth() - group_w) * 0.5f));
+        const bool host = net_settings_.mode == NetPlaySettings::Mode::Host;
+        if (editing) {
+            if (kit::icon_button("play", kit::Icon::Play, host ? "Play as a listen server (Ctrl+P) - Play > Network Mode" : "Play (Ctrl+P)",
+                                 false, true, tk::kSuccess))
+                play();
+        } else if (play_state_ == PlayState::Paused) {
+            if (kit::icon_button("resume", kit::Icon::Play, "Resume", false, true, tk::kSuccess)) play();
+        } else {
+            kit::icon_button("playing", kit::Icon::Play, "Playing - edits made now are temporary", true, true);
+        }
+        ImGui::SameLine();
+        if (kit::icon_button("pause", kit::Icon::Pause, "Pause", play_state_ == PlayState::Paused, play_state_ == PlayState::Playing))
+            pause();
+        ImGui::SameLine();
+        if (kit::icon_button("stop", kit::Icon::Stop, "Stop and restore the edited scene (Ctrl+P)", false, !editing,
+                             tk::kDanger))
+            stop();
+        ImGui::SameLine();
+        if (kit::icon_button("record", kit::Icon::Record,
+                             recording() ? "Recording input for a deterministic replay"
+                                         : "Play while recording input for a deterministic replay (Play > Replay Capture)",
+                             recording(), editing && project_.has_value(), tk::kDanger))
+            record();
+
+        // Right of the play group: what the session is doing.
+        ImGui::SameLine(0, tk::kSpace4);
+        if (play_server_) {
+            const auto d = play_server_->diagnostics();
+            kit::pill(std::format("Host - {} players", d.clients + 1), ui::Tone::Info);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%u players, %.1f kbps out - click for Window > Network", d.clients + 1, static_cast<double>(d.send_kbps));
+            if (ImGui::IsItemClicked()) show_network_ = true;
+            if (!play_clients_.empty()) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(130);
+                if (ImGui::BeginCombo("##viewpeer", peer_label(view_peer_).c_str())) {
+                    for (std::size_t i = 0; i <= play_clients_.size(); ++i)
+                        if (ImGui::Selectable(std::format("{}  (Ctrl+{})", peer_label(i), i + 1).c_str(), view_peer_ == i)) set_view_peer(i);
+                    ImGui::EndCombo();
                 }
+                kit::tooltip("Which player the viewport shows and the keyboard drives");
             }
-            if (play_server_) {
-                const auto d = play_server_->diagnostics();
-                ImGui::TextColored(ImVec4(0.45f, 0.8f, 1.0f, 1), "HOST %u", d.clients + 1);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%u players, %.1f kbps out - View > Network", d.clients + 1, static_cast<double>(d.send_kbps));
-                if (ImGui::IsItemClicked()) show_network_ = true;
-                if (!play_clients_.empty()) {
-                    // Which player the viewport shows and the keyboard drives (Ctrl+1..4 too).
-                    if (ImGui::BeginMenu(std::format("View: {}###viewpeer", peer_label(view_peer_)).c_str())) {
-                        for (std::size_t i = 0; i <= play_clients_.size(); ++i)
-                            if (ImGui::MenuItem(peer_label(i).c_str(), std::format("Ctrl+{}", i + 1).c_str(), view_peer_ == i)) set_view_peer(i);
-                        ImGui::EndMenu();
-                    }
-                }
-            } else if (recording()) {
-                ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1), "REC");
-            } else if (replay_ && !replay_result_.empty()) {
-                ImGui::TextColored(replay_diverged_ ? ImVec4(1.0f, 0.5f, 0.3f, 1) : ImVec4(0.45f, 0.95f, 0.45f, 1), "%s",
-                                   replay_diverged_ ? "Diverged" : "Matched");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", replay_result_.c_str());
-            } else if (replay_) {
-                ImGui::TextDisabled("Replaying %llu/%zu", static_cast<unsigned long long>(replay_->frame()),
-                                    replay_capture_ ? replay_capture_->frames.size() : std::size_t{0});
-            } else {
-                ImGui::TextDisabled(editing ? "Editing" : play_state_ == PlayState::Playing ? "Playing" : "Paused");
-            }
-            ImGui::EndMenuBar();
+        } else if (recording()) {
+            kit::pill("Recording", ui::Tone::Danger);
+        } else if (replay_ && !replay_result_.empty()) {
+            kit::pill(replay_diverged_ ? "Replay diverged" : "Replay matched", replay_diverged_ ? ui::Tone::Warning : ui::Tone::Success);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", replay_result_.c_str());
+        } else if (replay_) {
+            kit::pill(std::format("Replaying {}/{}", replay_->frame(), replay_capture_ ? replay_capture_->frames.size() : std::size_t{0}),
+                      ui::Tone::Info);
+        } else if (play_state_ == PlayState::Playing) {
+            kit::pill("Playing", ui::Tone::Success);
+        } else if (play_state_ == PlayState::Paused) {
+            kit::pill("Paused", ui::Tone::Warning);
+        }
+
+        // Far right: the command search, so every action is one search away.
+        const char* hint = "Search commands";
+        const char* keys = "Ctrl+Shift+P";
+        const float sw = std::min(300.0f, std::max(170.0f, ImGui::GetWindowWidth() * 0.18f));
+        const float sx = ImGui::GetWindowWidth() - sw - ImGui::GetStyle().WindowPadding.x;
+        ImGui::SameLine();
+        if (ImGui::GetCursorPosX() + tk::kSpace4 < sx) {
+            ImGui::SetCursorPosX(sx);
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            if (ImGui::InvisibleButton("##cmdsearch", ImVec2(sw, side))) open_command_palette();
+            const bool hov = ImGui::IsItemHovered();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(p, ImVec2(p.x + sw, p.y + side), ImGui::GetColorU32(hov ? tk::kSurfaceHover : tk::kSurfaceRaised), tk::kRadius);
+            dl->AddRect(p, ImVec2(p.x + sw, p.y + side), ImGui::GetColorU32(tk::kBorder), tk::kRadius);
+            const float ih = ImGui::GetTextLineHeight();
+            const float ty = p.y + (side - ih) * 0.5f;
+            kit::draw_icon(dl, kit::Icon::Search, ImVec2(p.x + tk::kSpace3, ty + 1), ih - 2, ImGui::GetColorU32(tk::kTextMuted));
+            dl->AddText(ImVec2(p.x + tk::kSpace3 + ih + tk::kSpace2, ty), ImGui::GetColorU32(tk::kTextMuted), hint);
+            const float kw = ImGui::CalcTextSize(keys).x;
+            if (ImGui::CalcTextSize(hint).x + kw + ih + tk::kSpace6 * 2 < sw)
+                dl->AddText(ImVec2(p.x + sw - kw - tk::kSpace3, ty), ImGui::GetColorU32(tk::kTextDisabled), keys);
+            kit::tooltip("Find and run any editor command by name");
         }
     }
     ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
 }
 
 void Editor::draw_status_bar() {
+    // Project and scene on the left (with an unsaved-changes marker), the latest notification in
+    // the middle, problem counts (click: Console) and performance on the right.
+    namespace tk = ui::tokens;
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
-    if (ImGui::BeginViewportSideBar("##statusbar", vp, ImGuiDir_Down, ImGui::GetFrameHeight(), flags)) {
-        if (ImGui::BeginMenuBar()) {
-            ImGui::TextDisabled("%s%s", scene_path_.empty() ? "untitled scene" : scene_path_.c_str(), dirty() ? " *" : "");
-            ImGui::Separator();
-            ImGui::TextDisabled("%zu entities", active_scene().size());
-            ImGui::Separator();
-            ImGui::TextDisabled("%.0f fps", static_cast<double>(fps_));
-            if (status_time_ > 0 && !status_line_.empty()) {
-                ImGui::Separator();
-                ImGui::TextUnformatted(status_line_.c_str());
-            }
-            ImGui::EndMenuBar();
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse;
+    const float line = ImGui::GetTextLineHeight();
+    const float h = line + tk::kSpace2 * 2.0f;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(tk::kSpace3, tk::kSpace2));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(tk::kSpace2, 0));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, tk::kSurfaceBase);
+    if (ImGui::BeginViewportSideBar("##statusbar", vp, ImGuiDir_Down, h, flags)) {
+        const auto sep = [] {
+            ImGui::SameLine(0, tk::kSpace4);
+            ImGui::TextColored(tk::kBorder, "|");
+            ImGui::SameLine(0, tk::kSpace4);
+        };
+        if (project_) {
+            kit::icon(kit::Icon::Folder);
+            ImGui::SameLine();
+            ImGui::TextUnformatted(project_->settings().name.c_str());
+            sep();
         }
+        kit::icon(kit::Icon::Scene, tk::kAccent);
+        ImGui::SameLine();
+        ImGui::TextUnformatted(scene_path_.empty() ? "Untitled scene" : scene_path_.c_str());
+        ImGui::SameLine();
+        if (dirty()) {
+            ImGui::TextColored(tk::kWarning, "  Unsaved");
+            kit::tooltip("This scene has unsaved changes (Ctrl+S saves)");
+        } else if (!scene_path_.empty()) {
+            ImGui::TextColored(tk::kTextMuted, "  Saved");
+        }
+        sep();
+        ImGui::TextColored(tk::kTextMuted, "%zu entities", active_scene().size());
+        if (status_time_ > 0 && !status_line_.empty()) {
+            sep();
+            ImGui::TextUnformatted(status_line_.c_str());
+        }
+
+        // Right-aligned: errors, warnings, fps.
+        const ConsoleCounts cc = console_counts();
+        const std::string errs = std::format("{}", cc.errors);
+        const std::string warns = std::format("{}", cc.warnings);
+        const std::string perf = std::format("{:.0f} fps", static_cast<double>(fps_));
+        const float right = line * 2 + ImGui::CalcTextSize(errs.c_str()).x + ImGui::CalcTextSize(warns.c_str()).x +
+                            ImGui::CalcTextSize(perf.c_str()).x + tk::kSpace4 * 4 + tk::kSpace2 * 2;
+        const float x = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - right;
+        ImGui::SameLine();
+        if (ImGui::GetCursorPosX() < x) ImGui::SetCursorPosX(x);
+        const auto counter = [&](const char* id, kit::Icon ic, const std::string& n, ImVec4 col, const char* tip) {
+            ImGui::PushID(id);
+            const ImVec2 p0 = ImGui::GetCursorScreenPos();
+            ImGui::BeginGroup();
+            kit::icon(ic, col);
+            ImGui::SameLine();
+            ImGui::TextColored(col, "%s", n.c_str());
+            ImGui::EndGroup();
+            const ImVec2 sz = ImGui::GetItemRectSize();
+            ImGui::SetCursorScreenPos(p0);
+            if (ImGui::InvisibleButton("##hit", sz)) focus_console();
+            if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            kit::tooltip(tip);
+            ImGui::PopID();
+        };
+        counter("errors", kit::Icon::Error, errs, cc.errors ? tk::kDanger : tk::kTextMuted, "Errors in the Console - click to open it");
+        ImGui::SameLine(0, tk::kSpace4);
+        counter("warnings", kit::Icon::Warning, warns, cc.warnings ? tk::kWarning : tk::kTextMuted,
+                "Warnings in the Console - click to open it");
+        ImGui::SameLine(0, tk::kSpace4);
+        ImGui::TextColored(tk::kTextMuted, "%s", perf.c_str());
     }
     ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
 }
 
 // ---- viewport -----------------------------------------------------------------------------------
@@ -728,34 +858,44 @@ void Editor::draw_viewport() {
             }
             ImGui::EndDragDropTarget();
         }
-        // Overlay: mode + stats.
-        ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 6));
+        // Overlay: view mode and render stats on a translucent backdrop, below the gizmo strip.
+        {
+            namespace tk = ui::tokens;
+            const bool two_d = runtime::scene_view_mode(active_scene()) == runtime::ViewMode::TwoD;
+            const std::string tier(render::quality_tier_name(quality_));
+            const auto& rs = render_stats();
+            std::vector<std::string> lines;
+            lines.push_back(std::format("{} {}  |  {} quality  |  {} meshes ({} draws, {:.1f}k tris, {} at LOD, {:.1f}k shadow tris)  {} sprites  {} lights",
+                                        two_d ? "2D" : "3D", play_state_ == PlayState::Editing ? "editor camera" : "game camera", tier,
+                                        last_view_stats_.extract.meshes, rs.main_batches, static_cast<double>(rs.triangles) / 1000.0,
+                                        rs.lod_draws, static_cast<double>(rs.shadow_triangles) / 1000.0, last_view_stats_.sprites,
+                                        last_view_stats_.extract.lights));
+            if (!two_d && rs.temporal_upscale)
+                lines.push_back(std::format("temporal upscale from {}x{}", rs.render_width, rs.render_height));
+            // Shading cost apart from geometry: alpha tests, project shaders and blended layers.
+            if (!two_d && (rs.alpha_tested_draws > 0 || rs.surface_shader_draws > 0 || rs.transparent_draws > 0))
+                lines.push_back(std::format("shading: {} alpha-tested, {} surface-shader, {} blended ({:.1f}k tris)", rs.alpha_tested_draws,
+                                            rs.surface_shader_draws, rs.transparent_draws,
+                                            static_cast<double>(rs.transparent_triangles) / 1000.0));
+            if (!two_d && debug_view_ == render::DebugView::Overdraw)
+                lines.push_back("overdraw view: layers per pixel, black 0  blue 1  green 2  yellow 3  orange 4  red 5-7  white 8+");
+            const float top = play_state_ == PlayState::Editing ? ImGui::GetFrameHeight() + tk::kSpace2 * 2.0f + tk::kSpace3 * 2.0f
+                                                                : tk::kSpace3;
+            const float lh = ImGui::GetTextLineHeight();
+            float tw = 0;
+            for (const auto& l : lines) tw = std::max(tw, ImGui::CalcTextSize(l.c_str()).x);
+            const ImVec2 b0(origin.x + tk::kSpace3, origin.y + top);
+            const ImVec2 b1(b0.x + std::min(tw, avail.x - tk::kSpace5 * 2.0f) + tk::kSpace3 * 2.0f,
+                            b0.y + lh * static_cast<float>(lines.size()) + tk::kSpace2 * 2.0f);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->PushClipRect(origin, ImVec2(origin.x + avail.x, origin.y + avail.y), true);
+            dl->AddRectFilled(b0, b1, ImGui::GetColorU32(ui::with_alpha(tk::kSurfaceBase, 0.62f)), tk::kRadius);
+            for (std::size_t i = 0; i < lines.size(); ++i)
+                dl->AddText(ImVec2(b0.x + tk::kSpace3, b0.y + tk::kSpace2 + lh * static_cast<float>(i)), ImGui::GetColorU32(tk::kTextMuted),
+                            lines[i].c_str());
+            dl->PopClipRect();
+        }
         const bool two_d = runtime::scene_view_mode(active_scene()) == runtime::ViewMode::TwoD;
-        const std::string tier(render::quality_tier_name(quality_));
-        ImGui::TextDisabled("%s  %s  |  %s quality  |  %u meshes (%u draws, %.1fk tris, %u at LOD, %.1fk shadow tris)  %u sprites  %u lights",
-                            two_d ? "2D" : "3D", play_state_ == PlayState::Editing ? "editor camera" : "game camera",
-                            tier.c_str(), last_view_stats_.extract.meshes, render_stats().main_batches,
-                            static_cast<double>(render_stats().triangles) / 1000.0, render_stats().lod_draws,
-                            static_cast<double>(render_stats().shadow_triangles) / 1000.0,
-                            last_view_stats_.sprites, last_view_stats_.extract.lights);
-        float overlay_line = 1.0f;
-        if (!two_d && render_stats().temporal_upscale) {
-            ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 6 + ImGui::GetTextLineHeightWithSpacing()));
-            ImGui::TextDisabled("temporal upscale from %ux%u", render_stats().render_width, render_stats().render_height);
-            overlay_line += 1.0f;
-        }
-        // Shading cost apart from geometry: alpha tests, project shaders and blended layers.
-        if (const auto& rs = render_stats();
-            !two_d && (rs.alpha_tested_draws > 0 || rs.surface_shader_draws > 0 || rs.transparent_draws > 0)) {
-            ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 6 + overlay_line * ImGui::GetTextLineHeightWithSpacing()));
-            ImGui::TextDisabled("shading: %u alpha-tested, %u surface-shader, %u blended (%.1fk tris)", rs.alpha_tested_draws,
-                                rs.surface_shader_draws, rs.transparent_draws, static_cast<double>(rs.transparent_triangles) / 1000.0);
-            overlay_line += 1.0f;
-        }
-        if (!two_d && debug_view_ == render::DebugView::Overdraw) {
-            ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 6 + overlay_line * ImGui::GetTextLineHeightWithSpacing()));
-            ImGui::TextDisabled("overdraw view: layers per pixel, black 0  blue 1  green 2  yellow 3  orange 4  red 5-7  white 8+");
-        }
         // The tile tool owns plain left clicks while a tilemap is selected in a 2D scene.
         // The terrain tool does the same while a terrain is selected in a 3D scene.
         const bool painting = ((tile_tool_ && two_d && !tile_target().is_null()) ||
@@ -869,13 +1009,26 @@ void Editor::draw_hierarchy_node(Entity e) {
     if (kids.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
     if (is_selected(e)) flags |= ImGuiTreeNodeFlags_Selected;
     ImGui::PushID(static_cast<int>(e.index));
-    const char* tag = s.world().has<CameraComponent>(e) ? "(cam) " : s.world().has<LightComponent>(e) ? "(light) " : "";
     const bool prefab_root = s.world().has<scene::PrefabInstance>(e);
     const bool prefab_part = !prefab_root && s.world().has<scene::PrefabPart>(e);
+    ImVec4 icon_tint;
+    const kit::Icon icon = entity_icon(s, e, icon_tint);
+    // The label is indented by blanks wide enough for the type icon, drawn over them below.
+    const float icon_size = ImGui::GetTextLineHeight();
+    const float blank = std::max(1.0f, ImGui::CalcTextSize(" ").x);
+    const int pad = static_cast<int>(std::ceil((icon_size + ui::tokens::kSpace2) / blank));
     if (prefab_root || prefab_part)
-        ImGui::PushStyleColor(ImGuiCol_Text, prefab_root ? ImVec4(0.45f, 0.75f, 1.0f, 1.0f) : ImVec4(0.62f, 0.8f, 0.98f, 1.0f));
-    const bool open = ImGui::TreeNodeEx("##node", flags, "%s%s", tag, n ? n->value.c_str() : "Entity");
+        ImGui::PushStyleColor(ImGuiCol_Text, prefab_root ? ui::tokens::kInfo : ui::with_alpha(ui::tokens::kInfo, 0.78f));
+    const bool open = ImGui::TreeNodeEx("##node", flags, "%*s%s", pad, "", n ? n->value.c_str() : "Entity");
     if (prefab_root || prefab_part) ImGui::PopStyleColor();
+    {
+        const ImVec2 r0 = ImGui::GetItemRectMin();
+        const float x = r0.x + ImGui::GetTreeNodeToLabelSpacing();
+        const float y = r0.y + (ImGui::GetItemRectSize().y - icon_size) * 0.5f;
+        const float inset = std::round(icon_size * 0.08f);
+        kit::draw_icon(ImGui::GetWindowDrawList(), icon, ImVec2(x + inset, y + inset), icon_size - 2 * inset,
+                       ImGui::GetColorU32(icon_tint));
+    }
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) {
         if (ImGui::GetIO().KeyShift) select_range(e);
         else select(e, ImGui::GetIO().KeyCtrl);
@@ -954,7 +1107,9 @@ void Editor::draw_hierarchy() {
     ImGui::TextDisabled("%s", s.name.c_str());
     ImGui::Separator();
     ImGui::BeginChild("##tree");
+    ImGui::PushStyleColor(ImGuiCol_Header, ui::tokens::kAccentSubtle);
     for (const Entity e : s.roots()) draw_hierarchy_node(e);
+    ImGui::PopStyleColor();
     // Empty space: drop to unparent, click to deselect.
     ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x, std::max(40.0f, ImGui::GetContentRegionAvail().y)));
     if (ImGui::IsItemClicked()) clear_selection();
@@ -1296,7 +1451,7 @@ bool Editor::inspect_script(script::ScriptComponent& c) {
     auto props = edit_scripts_->describe(c.script);
     if (!props) {
         ImGui::PushTextWrapPos(0);
-        ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", props.error().message.c_str());
+        ImGui::TextColored(ui::tokens::kDanger, "%s", props.error().message.c_str());
         ImGui::PopTextWrapPos();
         return changed;
     }
@@ -1352,7 +1507,7 @@ void Editor::draw_prefab_section(Entity e) {
     if (root.is_null()) return;
     const auto* inst = s.world().get<scene::PrefabInstance>(root);
     const assets::AssetRecord* rec = db_ ? db_->find(inst->prefab) : nullptr;
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.75f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::tokens::kInfo);
     ImGui::TextWrapped("Prefab: %s%s", rec ? rec->path.c_str() : "(missing prefab asset)", root == e ? "" : "  (part)");
     ImGui::PopStyleColor();
     const bool editing = play_state_ == PlayState::Editing;
@@ -1420,7 +1575,7 @@ void Editor::draw_inspector() {
         }
     } else {
         const bool multi = selection_.size() > 1;
-        if (multi) ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "%zu selected: changes apply to all", selection_.size());
+        if (multi) ImGui::TextColored(ui::tokens::kInfo, "%zu selected: changes apply to all", selection_.size());
         draw_prefab_section(e);
         begin_inspector_frame(e);
         const json::Value before_frame = multi ? active_scene().save_entity(e) : json::Value();
@@ -1432,7 +1587,7 @@ void Editor::draw_inspector() {
     }
     if (play_state_ != PlayState::Editing) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "Play mode: edits are temporary.");
+        ImGui::TextColored(ui::tokens::kWarning, "Play mode: edits are temporary.");
     }
     ImGui::End();
 }
@@ -1451,7 +1606,9 @@ void Editor::draw_asset_item(const assets::AssetRecord& r) {
     }
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload(kAssetPayload, &r.uuid, sizeof(Uuid));
-        ImGui::Text("%s %s", kind_icon(r.kind), r.path.c_str());
+        kit::icon(kit::icon_for(r.kind), kit::tint_for(r.kind));
+        ImGui::SameLine();
+        ImGui::TextUnformatted(r.path.c_str());
         ImGui::EndDragDropSource();
     }
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -1532,7 +1689,7 @@ void Editor::draw_assets() {
     const auto draw_thumb = [this](const assets::AssetRecord& r, float cell) {
         const ImVec2 p0 = ImGui::GetCursorScreenPos();
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(p0, ImVec2(p0.x + cell, p0.y + cell), IM_COL32(40, 42, 48, 255), 3.0f);
+        dl->AddRectFilled(p0, ImVec2(p0.x + cell, p0.y + cell), ImGui::GetColorU32(ui::tokens::kSurfaceRaised), ui::tokens::kRadiusSmall);
         if (auto t = asset_thumbnail(r.uuid)) {
             float w = cell, h = cell;
             if (t->aspect > 1.0f) h = cell / t->aspect;
@@ -1541,10 +1698,13 @@ void Editor::draw_assets() {
             dl->AddImage(ImTextureRef(ui::UiContext::texture_id(t->texture)), a, ImVec2(a.x + w, a.y + h), ImVec2(t->uv.x, t->uv.y),
                          ImVec2(t->uv.z, t->uv.w));
         } else {
-            const char* icon = ThumbnailCache::supports(r.kind) && ThumbnailCache::renders(r.kind) ? "..." : kind_icon(r.kind);
-            const ImVec2 ts = ImGui::CalcTextSize(icon);
-            if (ts.x <= cell - 4.0f) // list rows are too small for the text icons (the Kind column says it)
-                dl->AddText(ImVec2(p0.x + (cell - ts.x) * 0.5f, p0.y + (cell - ts.y) * 0.5f), IM_COL32(170, 175, 185, 255), icon);
+            // Vector type icon until (or instead of) a rendered thumbnail; dimmed while one is pending.
+            const bool pending = ThumbnailCache::supports(r.kind) && ThumbnailCache::renders(r.kind);
+            const float isz = std::round(cell * 0.5f);
+            ImVec4 tint = kit::tint_for(r.kind);
+            if (pending) tint = ui::with_alpha(tint, 0.45f);
+            kit::draw_icon(dl, kit::icon_for(r.kind), ImVec2(p0.x + (cell - isz) * 0.5f, p0.y + (cell - isz) * 0.5f), isz,
+                           ImGui::GetColorU32(tint));
         }
         ImGui::Dummy(ImVec2(cell, cell));
     };
@@ -1602,7 +1762,7 @@ void Editor::draw_assets() {
             else {
                 auto up = db_->is_up_to_date(r.uuid);
                 if (up && *up) ImGui::TextDisabled("imported");
-                else ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "%s", up ? "stale" : "error");
+                else ImGui::TextColored(ui::tokens::kWarning, "%s", up ? "stale" : "error");
             }
             ImGui::PopID();
         }
@@ -1711,12 +1871,39 @@ void Editor::draw_assets() {
     ImGui::End();
 }
 
+Editor::ConsoleCounts Editor::console_counts() const {
+    if (!log_sink_) return {};
+    const std::uint64_t total = log_sink_->total_written();
+    if (total != console_counted_) {
+        ConsoleCounts c;
+        for (const auto& r : log_sink_->snapshot()) {
+            if (r.level >= log::Level::Error) ++c.errors;
+            else if (r.level == log::Level::Warn) ++c.warnings;
+            else ++c.info;
+        }
+        console_counts_ = c;
+        console_counted_ = total;
+    }
+    return console_counts_;
+}
+
+void Editor::clear_console() {
+    if (!log_sink_) return;
+    log_sink_->clear();
+    console_counts_ = {};
+    console_counted_ = log_sink_->total_written();
+}
+
 void Editor::draw_console() {
+    if (focus_console_) {
+        ImGui::SetNextWindowFocus();
+        focus_console_ = false;
+    }
     if (!ImGui::Begin(kConsoleWindow)) {
         ImGui::End();
         return;
     }
-    if (ImGui::Button("Clear")) log_sink_->clear();
+    if (ImGui::Button("Clear")) clear_console();
     ImGui::Separator();
     ImGui::BeginChild("##log", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
     const auto records = log_sink_->snapshot();
@@ -1725,9 +1912,9 @@ void Editor::draw_console() {
     while (clip.Step()) {
         for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
             const auto& r = records[static_cast<std::size_t>(i)];
-            const ImVec4 col = r.level >= log::Level::Error  ? ImVec4(1, 0.4f, 0.35f, 1)
-                               : r.level == log::Level::Warn ? ImVec4(1, 0.8f, 0.3f, 1)
-                                                             : ImVec4(0.8f, 0.8f, 0.82f, 1);
+            const ImVec4 col = r.level >= log::Level::Error  ? ui::tokens::kDanger
+                               : r.level == log::Level::Warn ? ui::tokens::kWarning
+                                                             : ui::tokens::kText;
             ImGui::TextColored(col, "[%s] %s: %s", log::to_string(r.level), r.category.c_str(), r.message.c_str());
         }
     }
@@ -1747,7 +1934,7 @@ void Editor::draw_input_actions() {
     }
     ImGui::TextWrapped("Scripts read these with input.action(\"jump\"), input.value(\"move_x\") and "
                        "input.vector(\"move_x\", \"move_y\"). Changes are saved to victus.project.");
-    if (!input_error_.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", input_error_.c_str());
+    if (!input_error_.empty()) ImGui::TextColored(ui::tokens::kDanger, "%s", input_error_.c_str());
     ImGui::Separator();
 
     gameplay::InputMap map = project_->settings().input;

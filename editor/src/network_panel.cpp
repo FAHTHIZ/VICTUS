@@ -3,6 +3,7 @@
 // state, joined clients, bandwidth and a per-entity replication table) and the inspector's
 // Network section for networked entities in play mode.
 #include "victus/editor/editor.hpp"
+#include "widgets.hpp"
 
 #include "editor_client.hpp"
 
@@ -94,7 +95,7 @@ void Editor::draw_network() {
             if (auto st = set_net_settings(s); !st.ok()) net_error_ = st.error().message;
             else net_error_.clear();
         }
-        if (!net_error_.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", net_error_.c_str());
+        if (!net_error_.empty()) ImGui::TextColored(ui::tokens::kDanger, "%s", net_error_.c_str());
         if (ImGui::Button("Play as Host")) play_host();
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -114,7 +115,7 @@ void Editor::draw_network() {
 
     // ---- session summary ----
     ImGui::Separator();
-    ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.45f, 1), "Hosting");
+    ImGui::TextColored(ui::tokens::kSuccess, "Hosting");
     ImGui::SameLine();
     ImGui::Text("UDP %u, %s, tick %u, %u/%u clients%s", static_cast<unsigned>(net_settings_.port),
                 d.encrypted ? "encrypted" : "insecure", d.tick, d.clients, static_cast<unsigned>(net_settings_.max_clients),
@@ -164,7 +165,7 @@ void Editor::draw_network() {
                 const auto cd = play_clients_[i - 1]->client->diagnostics();
                 ImGui::TableNextColumn();
                 if (cd.connected) ImGui::TextUnformatted(cd.status.c_str());
-                else ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), "%s", cd.status.c_str());
+                else ImGui::TextColored(ui::tokens::kWarning, "%s", cd.status.c_str());
                 ImGui::TableNextColumn();
                 if (cd.connected) ImGui::Text("%.1f ms", static_cast<double>(cd.rtt_ms));
                 ImGui::TableNextColumn();
@@ -198,7 +199,7 @@ void Editor::draw_network() {
                 }
                 ImGui::PopID();
                 ImGui::TableNextColumn();
-                if (c.held) ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), "held (reconnecting)");
+                if (c.held) ImGui::TextColored(ui::tokens::kWarning, "held (reconnecting)");
                 else ImGui::TextUnformatted(c.encrypted ? "connected (encrypted)" : "connected");
                 ImGui::TableNextColumn();
                 if (!c.held) ImGui::Text("%.1f ms", static_cast<double>(c.rtt_ms));
@@ -257,7 +258,7 @@ void Editor::draw_network() {
                 ImGui::TableNextColumn();
                 ImGui::Text("%u/%u", r.relevant_clients, d.clients);
                 ImGui::TableNextColumn();
-                if (r.deferred) ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), "%llu", static_cast<unsigned long long>(r.deferred));
+                if (r.deferred) ImGui::TextColored(ui::tokens::kWarning, "%llu", static_cast<unsigned long long>(r.deferred));
                 else ImGui::TextDisabled("0");
                 ImGui::TableNextColumn();
                 if (r.last_update < 0) ImGui::TextDisabled("never");
@@ -287,7 +288,7 @@ void Editor::draw_network_section(Entity e) {
             if (r.entity != e) continue;
             ImGui::Text("Snapshot updates %llu (%s), variable updates %llu (%s)", static_cast<unsigned long long>(r.updates),
                         format_bytes(r.bytes).c_str(), static_cast<unsigned long long>(r.var_updates), format_bytes(r.var_bytes).c_str());
-            if (r.deferred) ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), "Deferred by the snapshot budget %llu times",
+            if (r.deferred) ImGui::TextColored(ui::tokens::kWarning, "Deferred by the snapshot budget %llu times",
                                                static_cast<unsigned long long>(r.deferred));
         }
     }

@@ -4,6 +4,7 @@
 // Material files are project assets, not scene data: their edits are saved to disk directly and are
 // not part of scene undo (like prefab files).
 #include "victus/editor/editor.hpp"
+#include "widgets.hpp"
 
 #include "editor_client.hpp"
 
@@ -268,7 +269,7 @@ void Editor::draw_material_editor() {
         inherit_button(field);
         // Data textures must be imported as linear; sRGB decoding would skew normals and roughness.
         if (t && slot != 0 && slot != 3 && t->settings["srgb"].as_bool(true))
-            ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "  imported as sRGB; set srgb = false in its .meta");
+            ImGui::TextColored(ui::tokens::kWarning, "  imported as sRGB; set srgb = false in its .meta");
         ImGui::PopID();
     };
 
@@ -359,7 +360,7 @@ void Editor::draw_material_editor() {
         if (sh && cache_) {
             // Compile status as the renderer sees it (the cache recompiles after hot reload).
             if (auto compiled = cache_->surface_shader(m.shader); !compiled)
-                ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", compiled.error().message.c_str());
+                ImGui::TextColored(ui::tokens::kDanger, "%s", compiled.error().message.c_str());
             else
                 ImGui::TextDisabled("compiled; saved edits reload live");
         }

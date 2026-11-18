@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Tilemaps in the editor: creating .vtileset assets, the tile palette and viewport painting.
 #include "victus/editor/editor.hpp"
+#include "widgets.hpp"
 
 #include "victus/runtime/scene_rendering.hpp"
 #include "victus/tilemap/tilemap.hpp"
@@ -279,6 +280,9 @@ void Editor::draw_tile_overlay(render::SpriteBatch& b, float px) {
 }
 
 void Editor::draw_tile_palette() {
+    const bool has_target = !tile_target().is_null();
+    if (has_target && !tile_palette_had_target_) show_tile_palette_ = true;
+    tile_palette_had_target_ = has_target;
     if (!show_tile_palette_) return;
     if (!ImGui::Begin("Tile Palette", &show_tile_palette_)) {
         ImGui::End();
@@ -313,7 +317,7 @@ void Editor::draw_tile_palette() {
     ImGui::Checkbox("Flip Y", &tile_brush_.flip_y);
     const auto ts = tilemaps_ ? tilemaps_->tileset(tm->tileset) : nullptr;
     if (!ts) {
-        ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "Tile set not assigned or not loaded.");
+        ImGui::TextColored(ui::tokens::kDanger, "Tile set not assigned or not loaded.");
         ImGui::End();
         return;
     }
@@ -340,7 +344,7 @@ void Editor::draw_tile_palette() {
         if (i % static_cast<std::uint32_t>(per_row) != 0) ImGui::SameLine();
         const bool on = tile_brush_.tile == static_cast<std::int32_t>(i) &&
                         (tile_brush_.mode == TileMode::Paint || tile_brush_.mode == TileMode::Rectangle);
-        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.55f, 0.1f, 1.0f));
+        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ui::tokens::kAccent);
         bool clicked = false;
         const std::string id = std::format("##tile{}", i);
         if (tex.valid()) {
