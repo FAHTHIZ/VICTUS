@@ -35,6 +35,7 @@ geometric error, projected to render pixels, stays within `RenderSettings::lod_e
 | 6. Texture close-up after a distant view | per-level coloured 64x64 chain on a tiled plane (tests/render/gpu_texture_mip_tests.cpp): close-up samples mip 0, 8 m away samples about level 3, returning or zooming to 1.5 degrees samples mip 0 again; nearest filtering minifies through mips too | pass |
 | 7. Character over poses and distances | Vanguard V-01 through the real pipeline (GLB, asset database, scene, AnimationSystem, extraction, skinned draws) in Idle, Run, Jump and Interact at 2.5, 8 and 20 m (tests/render/gpu_character_lod_tests.cpp): LODs draw 10 054, 5 028 and 2 578 of 20 632 triangles; at most 3 pixels per 256x256 frame differ by more than 48/255 from every pixel within one pixel of the LOD 0 image; changed pixels are silhouette edges (visor, insignia and hands survive) | pass |
 | 8. Terrain chunk boundaries during zoom | 129-sample rolling heightfield, 16 chunks, grazing camera at FOV 75/35/12/4 with 1 px and a stress 8 px budget (tests/render/gpu_terrain_tests.cpp): no cracks (sky pixels with LOD-frame ground above and below where LOD 0 shows ground); 1 px silhouette notches on the horizon stay within 0.1% of ground pixels at the default budget. Mutation check: removing the skirts makes the 8 px pass report 8 and 31 cracks | pass |
+| 8. Alpha-cutout surfaces during zoom | 30% speckle cutout texture on a plane, top-down at 0.5/6/15/40 m (tests/render/gpu_alpha_coverage_tests.cpp). Before: box-filtered alpha mips render 0.28/0.11/0.002/0 coverage, so the surface vanishes. After ADR-0070 (coverage-preserving mips): 0.28/0.11/0.15/0.18 | fixed (ADR-0070); see finding 7 |
 | 4. Off-screen shadow contribution | a caster outside the main frustum still darkens the visible ground (`visible == 1`, `shadow_casters == 2`) | pass |
 
 All checks run on Mesa lavapipe (llvmpipe) in CI. They are CPU-side selection and image checks, not
@@ -67,10 +68,15 @@ GPU timing.
    there is no mip streaming, eviction or view-prioritised residency, so do not claim it (H2).
 6. **Profiler GPU time.** Frame-time numbers from the profiler's GPU wait are not GPU execution time
    (H3). These tests report triangle counts and images only.
+7. **Alpha-tested foliage vanished with distance (fixed).** Box-filtered alpha mips averaged sparse
+   cutout texels below the cutoff. Coverage-preserving mips (ADR-0070) fix this for imported
+   textures and glTF `MASK` materials. One-texel features still erode by about 60% at mid
+   distances under bilinear alpha testing (both mip chains render 0.11 at 6 m); hashed alpha testing
+   is the recorded follow-up.
 
 ## Not covered yet
 
-- H3 item 8 for thin
-  railings, foliage and alpha cutout (terrain seams are covered), and item 10 (physical Android devices,
-  hardware-blocked).
+- H3 item 8: thin opaque geometry (railings modelled as meshes) below one pixel wide; mesh LOD keeps
+  them up to the 1 px budget, but no sub-pixel coverage test exists. Item 10 (physical Android
+  devices) is hardware-blocked.
 - Terrain chunk LODs (ADR-0063) go through the same `select_lod` rule as other meshes, so the FOV, viewport and render-scale checks apply to them as well.

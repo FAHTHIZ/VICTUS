@@ -25,6 +25,13 @@ struct Image {
 [[nodiscard]] Status save_png(const fs::Path& path, const Image& image);
 // Box-filtered mip chain (mip 0 = source). `srgb` filters in linear space.
 [[nodiscard]] std::vector<Image> build_mip_chain(const Image& base, bool srgb);
+// Fraction of texels whose alpha passes an alpha test at `cutoff` (alpha >= cutoff, 0..1).
+[[nodiscard]] float alpha_coverage(const Image& image, float cutoff) noexcept;
+// Coverage-preserving alpha mips (Castano 2010): rescales the alpha of chain[1..] so the fraction of
+// texels passing an alpha test at `cutoff` matches chain[0]. Box-filtered alpha otherwise thins out
+// with each level, so alpha-tested foliage and fences fade away as the camera zooms out. No-op
+// when cutoff is outside (0, 1) or the chain has one level.
+void preserve_alpha_coverage(std::span<Image> chain, float cutoff) noexcept;
 [[nodiscard]] std::uint32_t mip_count(std::uint32_t width, std::uint32_t height) noexcept;
 // High dynamic range images (linear RGBA float), e.g. Radiance .hdr environment maps.
 struct ImageF {

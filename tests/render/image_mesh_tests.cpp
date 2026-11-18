@@ -44,6 +44,47 @@ TEST_CASE("mip chain sizes and box filtering") {
     CHECK(srgb[1].pixels[3] == 255);
 }
 
+TEST_CASE("coverage-preserving alpha mips keep the alpha-test coverage") {
+    // 1-texel opaque speckles on a transparent background (~25% coverage): box filtering drives
+    // every coarser texel below the 0.5 cutoff.
+    Image img;
+    img.width = img.height = 64;
+    img.pixels.assign(64 * 64 * 4, 255);
+    for (std::uint32_t i = 0; i < 64 * 64; ++i) {
+        std::uint32_t h = i; // lowbias32 integer hash
+        h ^= h >> 16;
+        h *= 0x7feb352du;
+        h ^= h >> 15;
+        h *= 0x846ca68bu;
+        h ^= h >> 16;
+        img.pixels[i * 4 + 3] = h % 4 == 0 ? 255 : 0;
+    }
+    const float target = alpha_coverage(img, 0.5f);
+    CHECK(target > 0.2f);
+    CHECK(target < 0.3f);
+    auto plain = build_mip_chain(img, false);
+    auto kept = plain;
+    preserve_alpha_coverage(kept, 0.5f);
+    REQUIRE(kept.size() == 7);
+    CHECK(kept[0].pixels == plain[0].pixels); // the source level is untouched
+    CHECK(alpha_coverage(plain[2], 0.5f) < 0.05f);
+    for (std::size_t m = 1; m < 5; ++m) { // levels with at least 16 texels
+        INFO("mip " << m);
+        CHECK(std::abs(alpha_coverage(kept[m], 0.5f) - target) < 0.1f);
+        for (std::size_t i = 0; i < kept[m].pixels.size(); i += 4) // colour is not touched
+            CHECK(kept[m].pixels[i] == plain[m].pixels[i]);
+    }
+    // Disabled cutoffs and single-level chains are no-ops.
+    auto same = plain;
+    preserve_alpha_coverage(same, 0.0f);
+    preserve_alpha_coverage(same, 1.0f);
+    CHECK(same[3].pixels == plain[3].pixels);
+    std::vector<Image> one{img};
+    preserve_alpha_coverage(one, 0.5f);
+    CHECK(one[0].pixels == img.pixels);
+    CHECK(alpha_coverage(Image{}, 0.5f) == 0.0f);
+}
+
 TEST_CASE("procedural meshes are well formed") {
     for (const MeshData& m : {make_cube(), make_uv_sphere(1.0f, 24, 12), make_plane({4, 4}, 4), make_cylinder()}) {
         REQUIRE(!m.vertices.empty());

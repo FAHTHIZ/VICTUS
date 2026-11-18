@@ -1602,6 +1602,15 @@ void Editor::draw_assets() {
         ImGui::Checkbox("sRGB colour", &import_edit_.srgb);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off for data textures (normal, metallic-roughness maps)");
         ImGui::Checkbox("Mipmaps", &import_edit_.mipmaps);
+        {
+            bool cutout = import_edit_.alpha_coverage_cutoff > 0.0f;
+            ImGui::BeginDisabled(!import_edit_.mipmaps);
+            if (ImGui::Checkbox("Preserve alpha coverage", &cutout)) import_edit_.alpha_coverage_cutoff = cutout ? 0.5f : 0.0f;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("For alpha-tested (cutout) foliage and fences: keeps them from fading away with distance");
+            if (cutout) ImGui::SliderFloat("Alpha cutoff", &import_edit_.alpha_coverage_cutoff, 0.01f, 0.99f, "%.2f");
+            ImGui::EndDisabled();
+        }
         ImGui::Checkbox("Flip Y", &import_edit_.flip_y);
         int max_size = static_cast<int>(import_edit_.max_size);
         if (ImGui::InputInt("Max Size", &max_size, 256)) import_edit_.max_size = static_cast<std::uint32_t>(std::clamp(max_size, 1, 16384));

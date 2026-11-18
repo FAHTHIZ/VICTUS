@@ -108,6 +108,40 @@ std::vector<Image> build_mip_chain(const Image& base, bool srgb) {
     return chain;
 }
 
+float alpha_coverage(const Image& image, float cutoff) noexcept {
+    const std::size_t n = std::size_t{image.width} * image.height;
+    if (n == 0 || image.pixels.size() < n * 4) return 0.0f;
+    // Compare in 8-bit units: alpha a passes when a / 255 >= cutoff.
+    const float ref = cutoff * 255.0f;
+    std::size_t pass = 0;
+    for (std::size_t i = 0; i < n; ++i) pass += static_cast<float>(image.pixels[i * 4 + 3]) >= ref ? 1u : 0u;
+    return static_cast<float>(pass) / static_cast<float>(n);
+}
+
+void preserve_alpha_coverage(std::span<Image> chain, float cutoff) noexcept {
+    if (chain.size() < 2 || !(cutoff > 0.0f && cutoff < 1.0f)) return;
+    const float target = alpha_coverage(chain[0], cutoff);
+    for (std::size_t m = 1; m < chain.size(); ++m) {
+        Image& img = chain[m];
+        // Bisect for the reference value r whose coverage on this level matches the base level
+        // (coverage falls as r rises), then scale alpha by cutoff / r so r maps onto the cutoff.
+        float lo = 0.0f, hi = 1.0f;
+        for (int i = 0; i < 16; ++i) {
+            const float mid = 0.5f * (lo + hi);
+            if (alpha_coverage(img, mid) > target) lo = mid;
+            else hi = mid;
+        }
+        const float r = std::max(0.5f * (lo + hi), 1.0f / 255.0f);
+        const float scale = cutoff / r;
+        if (std::abs(scale - 1.0f) < 1e-4f) continue;
+        const std::size_t n = std::size_t{img.width} * img.height;
+        for (std::size_t i = 0; i < n && i * 4 + 3 < img.pixels.size(); ++i) {
+            const float a = static_cast<float>(img.pixels[i * 4 + 3]) * scale;
+            img.pixels[i * 4 + 3] = static_cast<std::uint8_t>(std::lround(std::clamp(a, 0.0f, 255.0f)));
+        }
+    }
+}
+
 Image make_checker(std::uint32_t size, std::uint32_t cells, std::uint32_t a, std::uint32_t b) {
     Image img;
     img.width = img.height = size;

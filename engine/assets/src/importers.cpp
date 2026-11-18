@@ -11,6 +11,7 @@
 #include <cstring>
 #include <format>
 #include <map>
+#include <tuple>
 #include <set>
 #include <utility>
 
@@ -27,6 +28,7 @@ json::Value TextureImportSettings::to_json() const {
     v.set("filter", nearest ? "nearest" : "linear");
     if (compression != "none") v.set("compression", compression);
     if (compression_thorough) v.set("compression_thorough", true);
+    if (alpha_coverage_cutoff > 0.0f) v.set("alpha_coverage_cutoff", alpha_coverage_cutoff);
     return v;
 }
 
@@ -39,6 +41,8 @@ TextureImportSettings TextureImportSettings::from_json(const json::Value& v) {
     s.nearest = v["filter"].as_string() == "nearest";
     if (v["compression"].is_string()) s.compression = v["compression"].as_string();
     s.compression_thorough = v["compression_thorough"].as_bool(false);
+    s.alpha_coverage_cutoff = v["alpha_coverage_cutoff"].as_float(0.0f);
+    if (!(s.alpha_coverage_cutoff > 0.0f && s.alpha_coverage_cutoff < 1.0f)) s.alpha_coverage_cutoff = 0.0f;
     return s;
 }
 
@@ -76,13 +80,16 @@ ModelImportSettings ModelImportSettings::from_json(const json::Value& v) {
 
 // ---- textures ----------------------------------------------------------------------------------
 
-CookedTexture cook_texture(const render::Image& image, std::string name, bool srgb, bool mipmaps, std::uint32_t max_size) {
+CookedTexture cook_texture(const render::Image& image, std::string name, bool srgb, bool mipmaps, std::uint32_t max_size,
+                           float alpha_coverage_cutoff) {
     CookedTexture t;
     t.name = std::move(name);
     t.srgb = srgb;
     const bool oversized = image.width > max_size || image.height > max_size;
     if (mipmaps || oversized) {
         t.mips = render::build_mip_chain(image, srgb);
+        // Coverage is matched to the full-resolution source, before oversized levels are dropped.
+        if (mipmaps) render::preserve_alpha_coverage(t.mips, alpha_coverage_cutoff);
         std::size_t drop = 0;
         while (drop + 1 < t.mips.size() && (t.mips[drop].width > max_size || t.mips[drop].height > max_size)) ++drop;
         t.mips.erase(t.mips.begin(), t.mips.begin() + static_cast<std::ptrdiff_t>(drop));
@@ -167,7 +174,8 @@ Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSe
                              image.pixels.begin() + static_cast<std::ptrdiff_t>((y + 1) * row),
                              image.pixels.begin() + static_cast<std::ptrdiff_t>((image.height - 1 - y) * row));
     }
-    CookedTexture t = cook_texture(image, path.filename().string(), settings.srgb, settings.mipmaps, settings.max_size);
+    CookedTexture t = cook_texture(image, path.filename().string(), settings.srgb, settings.mipmaps, settings.max_size,
+                                   settings.alpha_coverage_cutoff);
     if (auto r = compress_cooked_texture(t, settings.compression,
                                          settings.compression_thorough ? CompressionEffort::Thorough : CompressionEffort::Fast);
         !r)
@@ -455,7 +463,9 @@ private:
         return render::decode_image(bytes);
     }
 
-    std::int32_t texture(const cgltf_texture_view& view, bool srgb, const char* slot) {
+    // `alpha_cutoff` > 0: the texture feeds an alpha-tested (MASK) material, so its mips keep the
+    // alpha-test coverage of the source (render::preserve_alpha_coverage).
+    std::int32_t texture(const cgltf_texture_view& view, bool srgb, const char* slot, float alpha_cutoff = 0.0f) {
         if (!view.texture || !settings_.import_textures) return -1;
         const cgltf_image* image = view.texture->image;
         if (!image) {
@@ -463,7 +473,7 @@ private:
             return -1;
         }
         if (view.texcoord != 0) warn(std::format("{} texture uses TEXCOORD_{}; only TEXCOORD_0 is supported", slot, view.texcoord));
-        const auto key = std::make_pair(image, srgb);
+        const auto key = std::make_tuple(image, srgb, alpha_cutoff);
         if (const auto it = textures_.find(key); it != textures_.end()) return it->second;
         auto img = load_image(*image);
         std::int32_t index = -1;
@@ -473,7 +483,7 @@ private:
         } else {
             std::string name = image->name ? image->name : std::format("image{}", image - data_->images);
             index = static_cast<std::int32_t>(model_.textures.size());
-            CookedTexture t = cook_texture(*img, std::move(name), srgb, true, settings_.max_texture_size);
+            CookedTexture t = cook_texture(*img, std::move(name), srgb, true, settings_.max_texture_size, alpha_cutoff);
             if (auto r = compress_cooked_texture(t, settings_.texture_compression); !r)
                 warn(std::format("{} texture '{}': {}", slot, t.name, r.error().message));
             model_.textures.push_back(std::move(t));
@@ -487,12 +497,20 @@ private:
         if (const auto it = materials_.find(m); it != materials_.end()) return it->second;
         ModelMaterial out;
         out.name = m->name ? m->name : std::format("material{}", m - data_->materials);
+        switch (m->alpha_mode) {
+        case cgltf_alpha_mode_mask: out.alpha_cutoff = m->alpha_cutoff; break;
+        case cgltf_alpha_mode_blend:
+            out.alpha_cutoff = 0.5f;
+            warn(out.name + ": alpha blending is rendered as alpha-tested (cutoff 0.5) until the transparency pass lands");
+            break;
+        default: out.alpha_cutoff = 0.0f; break;
+        }
         if (m->has_pbr_metallic_roughness) {
             const auto& pbr = m->pbr_metallic_roughness;
             out.base_color = {pbr.base_color_factor[0], pbr.base_color_factor[1], pbr.base_color_factor[2], pbr.base_color_factor[3]};
             out.metallic = pbr.metallic_factor;
             out.roughness = pbr.roughness_factor;
-            out.base_color_texture = texture(pbr.base_color_texture, true, "baseColor");
+            out.base_color_texture = texture(pbr.base_color_texture, true, "baseColor", out.alpha_cutoff);
             out.metallic_roughness_texture = texture(pbr.metallic_roughness_texture, false, "metallicRoughness");
         } else {
             out.metallic = 0.0f;
@@ -508,14 +526,6 @@ private:
         out.emissive_strength = m->has_emissive_strength ? m->emissive_strength.emissive_strength : 1.0f;
         out.double_sided = m->double_sided;
         out.unlit = m->unlit;
-        switch (m->alpha_mode) {
-        case cgltf_alpha_mode_mask: out.alpha_cutoff = m->alpha_cutoff; break;
-        case cgltf_alpha_mode_blend:
-            out.alpha_cutoff = 0.5f;
-            warn(out.name + ": alpha blending is rendered as alpha-tested (cutoff 0.5) until the transparency pass lands");
-            break;
-        default: out.alpha_cutoff = 0.0f; break;
-        }
         const auto index = static_cast<std::uint32_t>(model_.materials.size());
         model_.materials.push_back(std::move(out));
         materials_.emplace(m, index);
@@ -826,7 +836,7 @@ private:
     cgltf_data* data_{nullptr};
     CookedModel model_;
     std::vector<std::vector<std::uint32_t>> mesh_map_;
-    std::map<std::pair<const cgltf_image*, bool>, std::int32_t> textures_;
+    std::map<std::tuple<const cgltf_image*, bool, float>, std::int32_t> textures_;
     std::map<const cgltf_material*, std::uint32_t> materials_;
     std::map<const cgltf_node*, std::uint32_t> node_map_;
     std::int32_t default_material_{-1};
