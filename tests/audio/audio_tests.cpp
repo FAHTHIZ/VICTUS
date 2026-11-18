@@ -7,6 +7,8 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <numbers>
 #include <vector>
 
@@ -295,4 +297,30 @@ TEST_CASE("audio: reload_clip picks up a changed file and restarts its sources")
     CHECK(mix(*a, 4800).rms() < 1e-4f);
     std::error_code ec;
     sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("audio: inspect_clip decodes from memory and rejects bad data") {
+    std::vector<float> pcm(4800 * 2, 0.25f);
+    auto wav = audio::inspect_clip(audio::encode_wav(pcm.data(), 4800, 2, 22050));
+    REQUIRE(wav.ok());
+    CHECK(wav->channels == 2);
+    CHECK(wav->sample_rate == 22050);
+    CHECK(wav->frames == 4800);
+    for (const char* name : {"48000-stereo.ogg", "16-44100-stereo.flac"}) {
+        std::ifstream in(sfs::path(VICTUS_MINIAUDIO_DATA_DIR) / name, std::ios::binary);
+        const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE_FALSE(bytes.empty());
+        auto info = audio::inspect_clip(bytes);
+        REQUIRE_MESSAGE(info.ok(), name);
+        CHECK(info->channels == 2);
+        CHECK(info->frames > 44100);
+        auto capped = audio::inspect_clip(bytes, 1000);
+        REQUIRE_FALSE(capped.ok());
+        CHECK(capped.error().code == ErrorCode::LimitExceeded);
+    }
+    CHECK(audio::inspect_clip(std::vector<std::uint8_t>{}).error().code == ErrorCode::ParseError);
+    auto junk = audio::inspect_clip(std::vector<std::uint8_t>{'n', 'o', 'p', 'e', 0, 1, 2, 3});
+    REQUIRE_FALSE(junk.ok());
+    CHECK(junk.error().code == ErrorCode::ParseError);
+    CHECK_FALSE(junk.error().message.empty());
 }

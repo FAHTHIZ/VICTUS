@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Deterministic mutation fuzzing of every loader that reads untrusted bytes (project files a
-// user downloads, cooked caches, packs, saves, captures, network configuration).
+// user downloads, cooked caches, packs, saves, captures, audio clips, network configuration).
 //
 // Each target starts from valid documents produced by the engine's own writers (or shipped
 // sample assets), applies random byte-level and JSON-structure mutations and feeds the result
@@ -19,6 +19,7 @@
 #include "victus/assets/cooked.hpp"
 #include "victus/assets/importers.hpp"
 #include "victus/assets/material.hpp"
+#include "victus/audio/audio.hpp"
 #include "victus/core/hash.hpp"
 #include "victus/core/json.hpp"
 #include "victus/core/pack.hpp"
@@ -39,6 +40,7 @@
 
 #include <doctest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -689,6 +691,38 @@ TEST_CASE("fuzz: image decoding") {
         if (ok && img->pixels.size() != static_cast<std::size_t>(img->width) * img->height * 4)
             return std::string("decoded pixel buffer does not match its size");
         return verdict(img);
+    });
+}
+
+TEST_CASE("fuzz: audio clip decoding") {
+    // Seeds: engine-written WAVs (mono and stereo), the shipped sample WAVs, and the first bytes of
+    // miniaudio's Ogg Vorbis and FLAC test files (truncated so each iteration stays fast; a
+    // truncated stream must still decode what it has).
+    std::vector<Bytes> seeds;
+    std::vector<float> tone(480 * 2);
+    for (std::size_t i = 0; i < tone.size(); ++i) tone[i] = 0.5f * std::sin(static_cast<float>(i) * 0.05f);
+    seeds.push_back(audio::encode_wav(tone.data(), 960, 1, 48000));
+    seeds.push_back(audio::encode_wav(tone.data(), 480, 2, 22050));
+    for (const char* sample : {"samples/arena/assets/audio/impact.wav", "samples/dungeon_crawler/assets/audio/coin.wav"}) {
+        Bytes b = read_file(source_path(sample));
+        if (!b.empty()) seeds.push_back(std::move(b));
+    }
+    const stdfs::path data = VICTUS_MINIAUDIO_DATA_DIR;
+    for (const auto& [name, keep] : {std::pair{"48000-stereo.ogg", 24u * 1024u}, std::pair{"16-44100-stereo.flac", 48u * 1024u}}) {
+        Bytes b = read_file(data / name);
+        if (b.empty()) continue;
+        if (b.size() > keep) b.resize(keep);
+        seeds.push_back(std::move(b));
+    }
+    constexpr std::uint64_t kMaxFrames = 48000ull * 20;
+    fuzz_bytes("audio_clip", seeds, [](const Bytes& b, bool& ok) {
+        auto info = audio::inspect_clip(b, kMaxFrames);
+        ok = info.ok();
+        if (ok && (info->channels == 0 || info->sample_rate == 0 || info->frames == 0))
+            return std::string("accepted a clip with no channels, rate or samples");
+        if (!ok && info.error().code != ErrorCode::ParseError && info.error().code != ErrorCode::LimitExceeded)
+            return std::string("unexpected error code");
+        return verdict(info);
     });
 }
 

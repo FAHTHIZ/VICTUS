@@ -662,4 +662,42 @@ Status write_wav(const fs::Path& path, const float* data, std::size_t frames, st
     return fs::write_atomic(path, encode_wav(data, frames, channels, rate));
 }
 
+Result<ClipInfo> inspect_clip(std::span<const std::uint8_t> bytes, std::uint64_t max_frames) {
+    if (bytes.empty()) return make_error(ErrorCode::ParseError, "audio clip is empty");
+    // f32 output so every decoder goes through the same conversion path the engine uses.
+    const ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    ma_decoder decoder;
+    const ma_result r = ma_decoder_init_memory(bytes.data(), bytes.size(), &config, &decoder);
+    if (r != MA_SUCCESS)
+        return make_error(ErrorCode::ParseError, std::string("unrecognised audio data: ") + ma_result_description(r));
+    ClipInfo info;
+    info.channels = decoder.outputChannels;
+    info.sample_rate = decoder.outputSampleRate;
+    Status status{};
+    if (info.channels == 0 || info.channels > MA_MAX_CHANNELS || info.sample_rate == 0) {
+        status = make_error(ErrorCode::ParseError, "audio clip has no channels or no sample rate");
+    } else {
+        constexpr ma_uint64 kChunk = 4096;
+        std::vector<float> scratch(static_cast<std::size_t>(kChunk) * info.channels);
+        for (;;) {
+            ma_uint64 got = 0;
+            const ma_result rr = ma_decoder_read_pcm_frames(&decoder, scratch.data(), kChunk, &got);
+            info.frames += got;
+            if (info.frames > max_frames) {
+                status = make_error(ErrorCode::LimitExceeded, "audio clip is longer than the allowed length");
+                break;
+            }
+            if (rr == MA_AT_END || got == 0) break;
+            if (rr != MA_SUCCESS) {
+                status = make_error(ErrorCode::ParseError, std::string("audio decode failed: ") + ma_result_description(rr));
+                break;
+            }
+        }
+        if (status.ok() && info.frames == 0) status = make_error(ErrorCode::ParseError, "audio clip contains no samples");
+    }
+    ma_decoder_uninit(&decoder);
+    if (!status.ok()) return std::move(status).error();
+    return info;
+}
+
 } // namespace victus::audio

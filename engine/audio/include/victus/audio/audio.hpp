@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -147,5 +148,19 @@ void bind(scene::Scene& scene, AudioEngine* engine);
                                                    std::uint32_t sample_rate);
 Status write_wav(const fs::Path& path, const float* interleaved, std::size_t frames, std::uint32_t channels,
                  std::uint32_t sample_rate);
+
+// Format of a decoded clip.
+struct ClipInfo {
+    std::uint32_t channels{0};
+    std::uint32_t sample_rate{0};
+    std::uint64_t frames{0};  // PCM frames actually decoded
+};
+
+// Decodes a clip file image (WAV, Ogg Vorbis, MP3, FLAC) from memory with the same decoders the
+// engine plays it with, without an AudioEngine or output device. Fails with ParseError for data no
+// decoder accepts or that decodes to nothing, and with LimitExceeded once more than `max_frames`
+// frames come out. Used to validate clips before shipping and by the robustness fuzz suite.
+[[nodiscard]] Result<ClipInfo> inspect_clip(std::span<const std::uint8_t> bytes,
+                                            std::uint64_t max_frames = 48000ull * 60 * 30);
 
 } // namespace victus::audio
