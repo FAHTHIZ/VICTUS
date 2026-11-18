@@ -2,6 +2,9 @@
 #include "doctest.h"
 #include "victus/core/json.hpp"
 
+#include <cstdint>
+#include <limits>
+
 using namespace victus;
 
 TEST_CASE("json: parse and access nested values") {
@@ -73,4 +76,20 @@ TEST_CASE("json: line comments tolerated") {
     auto r = json::parse("{\n // comment\n \"a\": 1 // trailing\n}");
     REQUIRE(r.ok());
     CHECK((*r)["a"].as_int() == 1);
+}
+
+TEST_CASE("json: as_int saturates out-of-range numbers instead of overflowing") {
+    using victus::json::Value;
+    CHECK(Value(1e300).as_int() == INT64_MAX);
+    CHECK(Value(-1e300).as_int() == INT64_MIN);
+    CHECK(Value(9.3e18).as_int() == INT64_MAX);
+    CHECK(Value(-2.9).as_int() == -2);
+    CHECK(Value(42.0).as_int(7) == 42);
+    CHECK(Value(std::numeric_limits<double>::quiet_NaN()).as_int(7) == 7);
+    CHECK(Value("12").as_int(7) == 7);
+    auto parsed = victus::json::parse("[1e400, -1e400]");
+    if (parsed.ok()) { // whatever the parser does with overflowing literals, as_int stays defined
+        (void)(*parsed)[0].as_int();
+        (void)(*parsed)[1].as_int();
+    }
 }

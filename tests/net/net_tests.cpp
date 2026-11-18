@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -218,6 +219,68 @@ private:
     std::unique_ptr<Transport> inner_;
     std::vector<PeerId> peers_;
 };
+// Corrupts a share of the packets it receives (bit flips, random bytes, truncation, appended
+// junk), deterministically, so the session code sees malformed traffic from a peer that
+// otherwise follows the protocol.
+class MutatingTransport final : public Transport {
+public:
+    MutatingTransport(std::unique_ptr<Transport> inner, std::uint64_t seed, unsigned percent)
+        : inner_(std::move(inner)), state_(seed), percent_(percent) {}
+    std::size_t mutated{0};
+    Result<PeerId> connect(std::string_view host, std::uint16_t port) override { return inner_->connect(host, port); }
+    void send(PeerId peer, Channel channel, std::span<const std::uint8_t> data) override { inner_->send(peer, channel, data); }
+    void disconnect(PeerId peer) override { inner_->disconnect(peer); }
+    void poll(double now, std::vector<TransportEvent>& out) override {
+        const std::size_t first = out.size();
+        inner_->poll(now, out);
+        for (std::size_t i = first; i < out.size(); ++i) {
+            TransportEvent& e = out[i];
+            if (e.type != TransportEvent::Type::Received || next() % 100 >= percent_) continue;
+            mutate(e.data);
+            ++mutated;
+        }
+    }
+    PeerStats stats(PeerId peer) const override { return inner_->stats(peer); }
+    std::string_view name() const override { return "mutating"; }
+
+private:
+    std::uint64_t next() { // splitmix64
+        std::uint64_t z = (state_ += 0x9E3779B97F4A7C15ull);
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return z ^ (z >> 31);
+    }
+    void mutate(std::vector<std::uint8_t>& d) {
+        const auto ops = 1 + next() % 3;
+        for (std::uint64_t op = 0; op < ops; ++op) {
+            switch (next() % 5) {
+            case 0:
+                if (!d.empty()) d[next() % d.size()] ^= static_cast<std::uint8_t>(1u << (next() % 8));
+                break;
+            case 1:
+                if (!d.empty()) d[next() % d.size()] = static_cast<std::uint8_t>(next());
+                break;
+            case 2: d.resize(d.empty() ? 0 : next() % d.size()); break;
+            case 3: d.insert(d.begin() + static_cast<std::ptrdiff_t>(d.empty() ? 0 : next() % d.size()), 1 + next() % 16, 0xFF); break;
+            default: // varint-sized lengths and counts at a random position
+                if (d.size() >= 4) {
+                    const std::size_t p = next() % (d.size() - 3);
+                    for (std::size_t k = 0; k < 4; ++k) d[p + k] = 0xFF;
+                }
+                break;
+            }
+        }
+    }
+    std::unique_ptr<Transport> inner_;
+    std::uint64_t state_;
+    unsigned percent_;
+};
+
+std::size_t fuzz_frames() {
+    const char* v = std::getenv("VICTUS_FUZZ_ITERATIONS"); // NOLINT(concurrency-mt-unsafe)
+    return v != nullptr && *v != '\0' ? static_cast<std::size_t>(std::strtoull(v, nullptr, 10)) : 300;
+}
+
 // A server and clients on one in-memory network, stepped in lock-step at 60 Hz.
 struct Session {
     MemoryNetwork network;
@@ -1451,4 +1514,69 @@ TEST_CASE("secure: encrypted UDP loopback over ENet") {
     CHECK(got);
     CHECK(client->stats(sp).encrypted);
     CHECK(client->stats(sp).remote_key == key_to_hex(kp.public_key));
+}
+
+// ---- malformed traffic (roadmap priority 4) --------------------------------------------------
+
+TEST_CASE("session fuzz: the server survives corrupted client packets") {
+    MemoryNetwork network;
+    Peer server_peer;
+    auto listen = network.listen(7777);
+    REQUIRE(listen.ok());
+    auto server_link = std::make_unique<MutatingTransport>(std::move(*listen), 0x5EED0001, 30);
+    MutatingTransport* mutator = server_link.get();
+    ServerOptions so;
+    so.game_id = "arena";
+    so.max_violations = 1u << 30; // keep the corrupting client connected so every frame is exercised
+    NetServer server(std::move(server_link), so);
+    server.install(server_peer.sim);
+    Peer client_peer;
+    NetClient client(network.endpoint(), client_options(7777, "noisy"));
+    client.install(client_peer.sim);
+    const std::size_t frames = fuzz_frames();
+    for (std::size_t i = 0; i < frames; ++i) {
+        client_peer.input.set_key("D", (i / 30) % 2 == 0);
+        server_peer.tick();
+        client_peer.tick();
+    }
+    CHECK(mutator->mutated > 0);
+    MESSAGE("server: " << mutator->mutated << " corrupted packets, " << server.diagnostics().rejected_messages
+                       << " rejected");
+}
+
+TEST_CASE("session fuzz: clients survive corrupted server snapshots") {
+    MemoryNetwork network;
+    Peer server_peer;
+    ServerOptions so;
+    so.game_id = "arena";
+    NetServer server(std::move(network.listen(7777)).value(), so);
+    server.install(server_peer.sim);
+    // A clean client must keep working whatever happens to the corrupted ones.
+    Peer clean_peer;
+    NetClient clean(network.endpoint(), client_options(7777, "clean"));
+    clean.install(clean_peer.sim);
+    // A client gives up on a server that sends garbage, so a fresh victim joins every 40
+    // frames: each one sees a corrupted handshake or corrupted snapshots after it joined.
+    const std::size_t frames = fuzz_frames();
+    std::size_t mutated = 0;
+    std::size_t dropped = 0;
+    for (std::size_t round = 0; round * 40 < frames; ++round) {
+        Peer victim_peer;
+        auto link = std::make_unique<MutatingTransport>(network.endpoint(), 0x5EED0002 + round, round % 2 == 0 ? 5 : 40);
+        MutatingTransport* mutator = link.get();
+        {
+            NetClient victim(std::move(link), client_options(7777, "victim"));
+            victim.install(victim_peer.sim);
+            for (int i = 0; i < 40; ++i) {
+                server_peer.tick();
+                victim_peer.tick();
+                clean_peer.tick();
+            }
+            mutated += mutator->mutated;
+            dropped += victim.connected() ? 0 : 1;
+        }
+    }
+    CHECK(mutated > 0);
+    CHECK(clean.connected());
+    MESSAGE("clients: " << mutated << " corrupted packets, " << dropped << " victims disconnected");
 }

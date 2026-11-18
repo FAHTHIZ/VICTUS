@@ -68,6 +68,14 @@ victus_add_test(victus_asset_tests
     DEPS VICTUS::Assets VICTUS::Project
     LABELS assets)
 
+victus_add_test(victus_robustness_tests
+    SOURCES
+        robustness/parser_fuzz_tests.cpp
+    DEPS VICTUS::Project VICTUS::Assets VICTUS::Net VICTUS::Terrain VICTUS::Sequencer VICTUS::Ai
+         VICTUS::Tilemap VICTUS::Animation VICTUS::Gameplay VICTUS::Graph VICTUS::Render
+    LABELS robustness)
+target_compile_definitions(victus_robustness_tests PRIVATE VICTUS_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
 victus_add_test(victus_render_tests
     SOURCES
         render/render_graph_tests.cpp
