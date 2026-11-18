@@ -331,7 +331,7 @@ Status write_safely(const Path& path, std::string_view bytes, const SafeWriteOpt
     std::error_code ec;
     if (std::filesystem::is_regular_file(path, ec)) {
         auto current = read_text(path);
-        Status ok = current ? Status{} : Status{std::move(current).error()};
+        Status ok = current ? Status{} : Status{current.error()};
         if (ok && options.validate) {
             ok = options.validate(*current);
             if (!ok && ok.error().code == ErrorCode::VersionMismatch) ok = {}; // newer, not damaged
@@ -375,7 +375,7 @@ Result<Recovered> read_with_recovery(const Path& path, const Validator& validate
         if (!std::filesystem::is_regular_file(file, ec) && !(g == 0 && is_virtual(file))) continue;
         any = true;
         auto text = read_text(file, max_bytes);
-        Status ok = text ? Status{} : Status{std::move(text).error()};
+        Status ok = text ? Status{} : Status{text.error()};
         if (ok && validate) ok = validate(*text);
         if (ok) {
             out.bytes = std::move(text).value();
