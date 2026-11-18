@@ -65,7 +65,7 @@ jobs:
         # No build step: every header the analysed sources include (SDL_revision.h, build info,
         # embedded fonts and notices) is generated at configure time.
       - name: clang-tidy
-        run: python3 tools/lint/run_clang_tidy.py -p build -j $(nproc)
+        run: python3 tools/lint/run_clang_tidy.py -p build -j $(nproc) --require-complete
 
   build-and-test:
     strategy:
