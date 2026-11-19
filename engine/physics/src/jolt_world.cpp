@@ -324,6 +324,7 @@ public:
         group_filter_ = new JointPairFilter();
     }
     ~JoltWorld() override {
+        wait_for_shape_builds();
         clear();
         system_.reset();
         contacts_.reset();
@@ -614,6 +615,7 @@ public:
         out.heightfield_builds += field_builds_;
         out.heightfield_updates += field_updates_;
         out.mesh_shapes_built += mesh_shapes_built_;
+        for (const auto& kv : shape_cache_) out.mesh_shapes_pending += (kv.second.convex_build != nullptr) + (kv.second.triangles_build != nullptr);
     }
 
 private:
@@ -632,11 +634,17 @@ private:
         std::shared_ptr<const CollisionMesh> mesh; // convex/mesh colliders
     };
 
+    // A hull or triangle mesh being built on the job system; the job owns a reference.
+    struct ShapeBuild {
+        jobs::Counter counter;
+        JPH::Shape::ShapeResult result;
+    };
     // Unscaled Jolt shapes built from one CollisionMesh, shared by every body using it.
     struct MeshShapes {
         std::weak_ptr<const CollisionMesh> source;
         JPH::ShapeRefC convex, triangles;
         bool convex_failed{false}, triangles_failed{false};
+        std::shared_ptr<ShapeBuild> convex_build, triangles_build; // in flight
     };
 
     struct Character {
@@ -674,30 +682,36 @@ private:
     }
 
     void prune_shape_cache() {
-        std::erase_if(shape_cache_, [](const auto& kv) { return kv.second.source.expired(); });
+        // Entries with a build in flight stay until it finishes (the job holds the mesh alive).
+        std::erase_if(shape_cache_, [](const auto& kv) {
+            return kv.second.source.expired() && !kv.second.convex_build && !kv.second.triangles_build;
+        });
     }
 
-    // Convex hull (`triangles` false) or triangle mesh of `mesh`, built once and cached.
-    JPH::ShapeRefC mesh_shape(const std::shared_ptr<const CollisionMesh>& mesh, bool triangles) {
-        MeshShapes& m = shape_cache_[mesh.get()];
-        if (m.source.lock() != mesh) m = MeshShapes{mesh, {}, {}, false, false}; // address reused by a new mesh
-        JPH::ShapeRefC& slot = triangles ? m.triangles : m.convex;
-        bool& failed = triangles ? m.triangles_failed : m.convex_failed;
-        if (slot || failed) return slot;
+    // Every build ever submitted and not yet seen finished, including ones whose cache entry was
+    // replaced or cleared: Jolt must stay initialised until they return.
+    void wait_for_shape_builds() {
+        if (!settings_.jobs) return;
+        for (const auto& b : in_flight_) settings_.jobs->wait(b->counter);
+        in_flight_.clear();
+    }
+
+    // Builds a convex hull (`triangles` false) or triangle mesh; thread-safe (reads only `mesh`).
+    static JPH::Shape::ShapeResult build_mesh_shape(const CollisionMesh& mesh, bool triangles) {
         JPH::Shape::ShapeResult res;
         if (triangles) {
             JPH::VertexList verts;
-            verts.reserve(mesh->positions.size());
-            for (const math::Vec3& p : mesh->positions) verts.push_back(JPH::Float3(p.x, p.y, p.z));
+            verts.reserve(mesh.positions.size());
+            for (const math::Vec3& p : mesh.positions) verts.push_back(JPH::Float3(p.x, p.y, p.z));
             JPH::IndexedTriangleList tris;
-            tris.reserve(mesh->indices.size() / 3);
-            for (std::size_t i = 0; i + 2 < mesh->indices.size(); i += 3)
-                tris.push_back(JPH::IndexedTriangle(mesh->indices[i], mesh->indices[i + 1], mesh->indices[i + 2]));
+            tris.reserve(mesh.indices.size() / 3);
+            for (std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
+                tris.push_back(JPH::IndexedTriangle(mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]));
             JPH::MeshShapeSettings ms(std::move(verts), std::move(tris));
             res = ms.Create();
         } else {
             // Duplicate positions (UV/normal seams) make the hull builder slower without changing it.
-            std::vector<math::Vec3> pts(mesh->positions);
+            std::vector<math::Vec3> pts(mesh.positions);
             std::sort(pts.begin(), pts.end(), [](math::Vec3 a, math::Vec3 b) {
                 return a.x != b.x ? a.x < b.x : a.y != b.y ? a.y < b.y : a.z < b.z;
             });
@@ -708,6 +722,38 @@ private:
             for (const math::Vec3& p : pts) jp.push_back(to_jolt(p));
             JPH::ConvexHullShapeSettings hs(jp);
             res = hs.Create();
+        }
+        return res;
+    }
+
+    // Convex hull (`triangles` false) or triangle mesh of `mesh`, built once and cached. Large
+    // meshes build on the job system: null is returned (no body yet) until a later sync finds the
+    // build finished, so the body appears without stalling the frame that first saw the mesh.
+    JPH::ShapeRefC mesh_shape(const std::shared_ptr<const CollisionMesh>& mesh, bool triangles) {
+        MeshShapes& m = shape_cache_[mesh.get()];
+        if (m.source.lock() != mesh) {
+            // Address reused by a new mesh: an old in-flight build keeps its own mesh alive and
+            // finishes into a result nobody reads.
+            m = MeshShapes{mesh, {}, {}, false, false, {}, {}};
+        }
+        JPH::ShapeRefC& slot = triangles ? m.triangles : m.convex;
+        bool& failed = triangles ? m.triangles_failed : m.convex_failed;
+        std::shared_ptr<ShapeBuild>& build = triangles ? m.triangles_build : m.convex_build;
+        if (slot || failed) return slot;
+        JPH::Shape::ShapeResult res;
+        if (build) {
+            if (!build->counter.done()) return {};
+            res = build->result;
+            build.reset();
+        } else if (settings_.jobs && settings_.async_mesh_triangles > 0 && mesh->indices.size() / 3 > settings_.async_mesh_triangles) {
+            std::erase_if(in_flight_, [](const auto& b) { return b->counter.done(); });
+            build = std::make_shared<ShapeBuild>();
+            in_flight_.push_back(build);
+            settings_.jobs->submit([b = build, mesh, triangles] { b->result = build_mesh_shape(*mesh, triangles); }, &build->counter,
+                                   jobs::Priority::Background);
+            return {};
+        } else {
+            res = build_mesh_shape(*mesh, triangles);
         }
         if (!res.IsValid()) {
             failed = true;
@@ -1360,6 +1406,7 @@ private:
     std::unordered_set<std::uint64_t> warned_mesh_;
     std::unordered_set<const CollisionMesh*> warned_dynamic_mesh_;
     std::uint64_t mesh_shapes_built_{0};
+    std::vector<std::shared_ptr<ShapeBuild>> in_flight_; // background shape builds (see wait_for_shape_builds)
 };
 
 } // namespace

@@ -388,6 +388,11 @@ struct PhysicsSettings {
     int substeps_2d{4};          // 2D: solver sub-steps per fixed step
     // Worker threads shared with the engine. Null runs the solvers on the calling thread.
     jobs::JobSystem* jobs{nullptr};
+    // With `jobs`: convex and mesh colliders whose mesh has more triangles than this build their
+    // Jolt shape in the background; the body is created on the first step after the build
+    // finishes (`PhysicsStats::mesh_shapes_pending` counts builds in flight). 0 = always build
+    // during the step that first sees the mesh.
+    std::uint32_t async_mesh_triangles{4096};
     // Optional layer collision matrix: bit j of layer_matrix[i] lets layer i collide with j.
     // Applied in addition to per-collider masks. Default: all layers collide.
     std::uint32_t layer_matrix[kMaxLayers]{kAllLayers, kAllLayers, kAllLayers, kAllLayers, kAllLayers, kAllLayers,
@@ -405,6 +410,7 @@ struct PhysicsStats {
     std::uint64_t heightfield_builds{0};  // height-field shapes created (first sight or `revision` bumps)
     std::uint64_t heightfield_updates{0}; // in-place `dirty` rectangle updates
     std::uint64_t mesh_shapes_built{0};   // convex hulls and triangle meshes built (shared by bodies using one mesh)
+    std::uint32_t mesh_shapes_pending{0}; // background shape builds in flight (bodies not created yet)
 };
 
 // Line segments for debug visualization (editor overlays, `victus run --physics-debug`).
