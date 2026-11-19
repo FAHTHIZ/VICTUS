@@ -231,6 +231,7 @@ victus_add_test(victus_physics_tests
         physics/character_joint_2d_tests.cpp
         physics/mesh_collider_tests.cpp
         physics/polygon_chain_2d_tests.cpp
+        physics/ragdoll_tests.cpp
     DEPS VICTUS::Physics VICTUS::Core
     LABELS physics)
 

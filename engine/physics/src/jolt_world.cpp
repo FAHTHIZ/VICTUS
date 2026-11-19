@@ -15,6 +15,7 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Body/MassProperties.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/GroupFilter.h>
 #include <Jolt/Physics/Collision/CastResult.h>
@@ -36,6 +37,11 @@
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
+#include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
+#include <Jolt/Physics/Collision/GroupFilterTable.h>
+#include <Jolt/Physics/Ragdoll/Ragdoll.h>
+#include <Jolt/Skeleton/Skeleton.h>
+#include <Jolt/Skeleton/SkeletonPose.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
@@ -45,6 +51,7 @@
 #include <cstdio>
 #include <deque>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -149,12 +156,16 @@ private:
 };
 class QueryBodyFilter final : public JPH::BodyFilter {
 public:
-    explicit QueryBodyFilter(JPH::BodyID ignore) : ignore_(ignore) {}
-    bool ShouldCollide(const JPH::BodyID& id) const override { return id != ignore_; }
+    // `also` (optional): further ignored bodies, e.g. the ragdoll of the ignored entity.
+    explicit QueryBodyFilter(JPH::BodyID ignore, const JPH::Array<JPH::BodyID>* also = nullptr) : ignore_(ignore), also_(also) {}
+    bool ShouldCollide(const JPH::BodyID& id) const override {
+        return id != ignore_ && (!also_ || std::find(also_->begin(), also_->end(), id) == also_->end());
+    }
     bool ShouldCollideLocked(const JPH::Body& b) const override { return !b.IsSensor(); }
 
 private:
     JPH::BodyID ignore_;
+    const JPH::Array<JPH::BodyID>* also_;
 };
 
 // Disables collision between pairs of bodies joined by a Joint with collide_connected = false.
@@ -403,6 +414,7 @@ public:
         if (added > 64) system_->OptimizeBroadPhase();
         sync_characters(scene);
         sync_joints(scene);
+        sync_ragdolls(scene, dt);
     }
 
     void step(scene::Scene& scene, float dt, std::vector<ContactEvent>& events) override {
@@ -439,6 +451,7 @@ public:
             c.position = from_jolt(c.ch->GetPosition());
             write_world_pose(scene, e, c.position, world_pose(scene, e).rotation);
         }
+        read_ragdolls();
         check_joints(dt);
         const std::size_t before = events.size();
         contacts_->drain(events);
@@ -446,6 +459,10 @@ public:
     }
 
     void clear() override {
+        for (auto& [k, r] : ragdolls_) destroy_ragdoll(r);
+        ragdolls_.clear();
+        ragdoll_bones_.clear();
+        warned_ragdoll_.clear();
         for (auto& [k, j] : joints_) destroy_joint(j);
         joints_.clear();
         group_filter_->clear();
@@ -467,7 +484,9 @@ public:
         warned_mesh_.clear();
     }
 
-    bool has_body(Entity e) const override { return bodies_.contains(e.bits()) || fields_.contains(e.bits()) || chars_.contains(e.bits()); }
+    bool has_body(Entity e) const override {
+        return bodies_.contains(e.bits()) || fields_.contains(e.bits()) || chars_.contains(e.bits()) || ragdoll_bones_.contains(e.bits());
+    }
 
     std::optional<RaycastHit> raycast(math::Vec3 o, math::Vec3 d, float max, std::uint32_t mask,
                                       Entity ignore) const override {
@@ -477,7 +496,7 @@ public:
         const JPH::RRayCast ray{to_jolt_r(o), to_jolt(d * max)};
         JPH::RayCastResult hit;
         const QueryLayerFilter lf(mask);
-        const QueryBodyFilter bf(body_of(ignore));
+        const QueryBodyFilter bf(body_of(ignore), ragdoll_ids(ignore));
         if (!system_->GetNarrowPhaseQuery().CastRay(ray, hit, {}, lf, bf)) return std::nullopt;
         RaycastHit out;
         const JPH::RVec3 p = ray.GetPointOnRay(hit.mFraction);
@@ -618,6 +637,80 @@ public:
         for (const auto& kv : shape_cache_) out.mesh_shapes_pending += (kv.second.convex_build != nullptr) + (kv.second.triangles_build != nullptr);
     }
 
+    void write_ragdolls(scene::Scene& scene) override {
+        using Mode = RagdollComponent::Mode;
+        for (auto& [key, r] : ragdolls_) {
+            const Entity root{static_cast<std::uint32_t>(key), static_cast<std::uint32_t>(key >> 32)};
+            if (!scene.world().alive(root)) continue;
+            const std::size_t n = r.bones.size();
+            // Capture the animated pose: a Transform that differs from what we wrote last was set by
+            // animation (or gameplay) this frame; unchanged ones keep their previous target.
+            for (RagdollBody& b : r.bones) {
+                const auto* t = scene.world().get<scene::Transform>(b.entity);
+                if (!t) continue;
+                if (!r.wrote || !nearly_equal(t->position, b.written_pos, 1e-6f) || !nearly_equal(t->rotation, b.written_rot, 1e-7f)) {
+                    b.target_pos = t->position;
+                    b.target_rot = t->rotation;
+                }
+            }
+            r.has_target = true;
+            const bool show = (r.comp.mode == Mode::Powered || r.comp.mode == Mode::Passive) && r.has_sim;
+            if (!show) {
+                r.wrote = false;
+                continue;
+            }
+            const float blend = std::clamp(r.comp.blend, 0.0f, 1.0f);
+            std::vector<math::Mat4> sim(n);
+            for (std::size_t i = 0; i < n; ++i) sim[i] = math::Mat4::trs(r.bones[i].sim_pos, r.bones[i].sim_rot, r.bones[i].world_scale);
+            for (std::size_t i = 0; i < n; ++i) {
+                RagdollBody& b = r.bones[i];
+                auto* t = scene.world().get<scene::Transform>(b.entity);
+                if (!t) continue;
+                const math::Mat4 local = math::inverse(parent_world(scene, r, i, sim)) * sim[i];
+                math::Vec3 lp, ls;
+                math::Quat lq;
+                math::decompose(local, lp, lq, ls);
+                lq = math::normalize(lq);
+                t->position = math::lerp(b.target_pos, lp, blend);
+                t->rotation = math::normalize(math::slerp(b.target_rot, lq, blend));
+                b.written_pos = t->position;
+                b.written_rot = t->rotation;
+            }
+            r.wrote = true;
+        }
+    }
+
+    RagdollState ragdoll_state(Entity root) const override {
+        RagdollState s;
+        const auto it = ragdolls_.find(root.bits());
+        if (it == ragdolls_.end() || !it->second.ragdoll) return s;
+        const RagdollEntry& r = it->second;
+        const auto& bi = system_->GetBodyInterface();
+        s.valid = true;
+        s.mode = r.comp.mode;
+        s.bodies = static_cast<std::uint32_t>(r.bones.size());
+        s.pose_error = r.pose_error;
+        float mass = 0;
+        for (const RagdollBody& b : r.bones) {
+            s.awake = s.awake || bi.IsActive(b.id);
+            s.center_of_mass = s.center_of_mass + b.sim_pos * b.mass;
+            s.velocity = s.velocity + from_jolt(bi.GetLinearVelocity(b.id)) * b.mass;
+            mass += b.mass;
+        }
+        if (mass > 0) {
+            s.center_of_mass = s.center_of_mass * (1.0f / mass);
+            s.velocity = s.velocity * (1.0f / mass);
+        }
+        return s;
+    }
+
+    Entity ragdoll_of(Entity bone) const override {
+        const auto it = ragdoll_bones_.find(bone.bits());
+        if (it == ragdoll_bones_.end()) return {};
+        const std::uint64_t k = it->second.first;
+        return Entity{static_cast<std::uint32_t>(k), static_cast<std::uint32_t>(k >> 32)};
+    }
+
 private:
     struct Entry {
         JPH::BodyID id;
@@ -670,11 +763,26 @@ private:
     JPH::BodyID body_of(Entity e) const {
         if (const auto c = chars_.find(e.bits()); c != chars_.end()) return c->second.ch->GetInnerBodyID();
         const auto it = bodies_.find(e.bits());
-        return it == bodies_.end() ? JPH::BodyID() : it->second.id;
+        if (it != bodies_.end()) return it->second.id;
+        return ragdoll_body(e);
+    }
+    const JPH::Array<JPH::BodyID>* ragdoll_ids(Entity root) const {
+        const auto r = ragdolls_.find(root.bits());
+        return r == ragdolls_.end() || !r->second.ragdoll ? nullptr : &r->second.ragdoll->GetBodyIDs();
+    }
+    JPH::BodyID ragdoll_body(Entity e) const {
+        const auto b = ragdoll_bones_.find(e.bits());
+        if (b == ragdoll_bones_.end()) return {};
+        const auto r = ragdolls_.find(b->second.first);
+        return r == ragdolls_.end() ? JPH::BodyID() : r->second.bones[b->second.second].id;
     }
     JPH::BodyID dynamic_body(Entity e) const {
         const auto it = bodies_.find(e.bits());
-        return it == bodies_.end() || it->second.motion != JPH::EMotionType::Dynamic ? JPH::BodyID() : it->second.id;
+        if (it == bodies_.end()) {
+            const JPH::BodyID id = ragdoll_body(e);
+            return !id.IsInvalid() && system_->GetBodyInterface().GetMotionType(id) == JPH::EMotionType::Dynamic ? id : JPH::BodyID();
+        }
+        return it->second.motion != JPH::EMotionType::Dynamic ? JPH::BodyID() : it->second.id;
     }
 
     static bool uses_mesh(const ColliderComponent& c) {
@@ -1136,9 +1244,460 @@ private:
             us.mStickToFloorStepDown = JPH::Vec3(0, -step, 0);
             us.mWalkStairsStepUp = JPH::Vec3(0, step, 0);
             const JPH::ObjectLayer layer = make_layer(std::min<std::uint32_t>(comp.layer, 15u), comp.mask, true);
-            const QueryBodyFilter bf(ch.GetInnerBodyID());
+            const Entity owner{static_cast<std::uint32_t>(key), static_cast<std::uint32_t>(key >> 32)};
+            const QueryBodyFilter bf(ch.GetInnerBodyID(), ragdoll_ids(owner)); // never collide with its own ragdoll
             ch.ExtendedUpdate(dt, gravity, us, system_->GetDefaultBroadPhaseLayerFilter(layer),
                               system_->GetDefaultLayerFilter(layer), bf, {}, *temp_);
+        }
+    }
+
+    // ---- ragdolls (ADR-0091) ----
+
+    struct RagdollBody {
+        Entity entity;
+        int anchor{-1};              // nearest bone ancestor (skeleton parent), -1 for root bones
+        std::vector<Entity> between; // scene ancestors between this bone and `anchor`, nearest first
+        RagdollBoneComponent comp;
+        math::Vec3 target_pos;       // animated local pose, captured after animation each frame
+        math::Quat target_rot;
+        math::Vec3 written_pos;      // local pose last written by update_ragdoll_poses
+        math::Quat written_rot;
+        math::Vec3 sim_pos;          // world pose after the last step
+        math::Quat sim_rot;
+        math::Vec3 target_world;     // world position of the target pose (pose_error)
+        math::Vec3 world_scale{1, 1, 1};
+        float mass{1};
+        float drive_inertia{0}; // rest-pose inertia of the bone's subtree about its joint (kg m^2)
+        JPH::BodyID id;
+    };
+    struct RagdollEntry {
+        RagdollComponent comp;
+        std::vector<RagdollBody> bones;
+        JPH::Ref<JPH::RagdollSettings> settings;
+        JPH::Ref<JPH::Ragdoll> ragdoll;
+        JPH::Ref<JPH::GroupFilterTable> table; // bone subgroups 0..n-1, the owner's character capsule n
+        JPH::CollisionGroup::GroupID group{0};
+        RagdollComponent::Mode applied{RagdollComponent::Mode::Off};
+        bool applied_pin{false};
+        bool wrote{false};   // the bones currently show the simulation
+        bool has_sim{false}; // sim poses are valid
+        bool has_target{false};
+        JPH::BodyID character; // inner body of a CharacterController on the root
+        std::uint64_t seen{0};
+        float pose_error{0};
+    };
+
+    static constexpr std::size_t kMaxRagdollBones = 256;
+
+    static void gather_bones(const scene::Scene& scene, Entity e, int anchor, std::vector<Entity> path,
+                             std::vector<RagdollBody>& out, int depth) {
+        if (depth > 128 || out.size() >= kMaxRagdollBones) return;
+        if (const auto* bc = scene.world().get<RagdollBoneComponent>(e)) {
+            RagdollBody b;
+            b.entity = e;
+            b.anchor = anchor;
+            b.between.assign(path.rbegin(), path.rend());
+            b.comp = *bc;
+            anchor = static_cast<int>(out.size());
+            out.push_back(std::move(b));
+            path.clear();
+        } else if (anchor >= 0) {
+            path.push_back(e);
+        }
+        for (const Entity c : scene.children(e)) gather_bones(scene, c, anchor, path, out, depth + 1);
+    }
+
+    static math::Mat4 local_matrix(const scene::Scene& scene, Entity e) {
+        const auto* t = scene.world().get<scene::Transform>(e);
+        return t ? math::Mat4::trs(t->position, t->rotation, t->scale) : math::Mat4::identity();
+    }
+
+    // World matrix of bone i's scene parent, given world matrices of the bones before it.
+    static math::Mat4 parent_world(const scene::Scene& scene, const RagdollEntry& r, std::size_t i,
+                                   const std::vector<math::Mat4>& worlds) {
+        const RagdollBody& b = r.bones[i];
+        if (b.anchor < 0) {
+            const Entity p = scene.parent(b.entity);
+            return p.is_null() ? math::Mat4::identity() : scene.world_matrix(p);
+        }
+        math::Mat4 m = worlds[static_cast<std::size_t>(b.anchor)];
+        for (auto it = b.between.rbegin(); it != b.between.rend(); ++it) m = m * local_matrix(scene, *it);
+        return m;
+    }
+
+    static bool same_build(const RagdollEntry& r, const RagdollComponent& c, const std::vector<RagdollBody>& bones) {
+        const RagdollComponent& a = r.comp;
+        if (a.total_mass != c.total_mass || a.friction != c.friction || a.linear_damping != c.linear_damping ||
+            a.angular_damping != c.angular_damping || a.layer != c.layer || a.mask != c.mask)
+            return false; // motors, blend, mode and pinning apply live
+        if (r.bones.size() != bones.size()) return false;
+        for (std::size_t i = 0; i < bones.size(); ++i)
+            if (r.bones[i].entity != bones[i].entity || r.bones[i].anchor != bones[i].anchor ||
+                !(r.bones[i].comp == bones[i].comp) || r.bones[i].between != bones[i].between)
+                return false;
+        return true;
+    }
+
+    // Jolt's frequency mode tunes a joint spring against the two bodies it connects, so a shoulder
+    // motor "at 8 Hz" really moves the whole arm far slower and underdamped. Converting to stiffness
+    // and damping from the inertia of everything the joint carries makes motor_frequency and
+    // motor_damping hold for the limb as a whole.
+    static JPH::MotorSettings motor_for(const RagdollComponent& c, const RagdollBody& b) {
+        const float torque = std::max(0.0f, c.max_motor_torque * std::max(0.0f, b.comp.strength));
+        const float f = std::max(0.01f, c.motor_frequency), zeta = std::max(0.0f, c.motor_damping);
+        if (b.drive_inertia <= 0) return {f, zeta, 0.0f, torque};
+        const float w = 2.0f * 3.14159265358979f * f;
+        return {JPH::ESpringMode::StiffnessAndDamping, b.drive_inertia * w * w, 2.0f * zeta * b.drive_inertia * w, 0.0f, torque};
+    }
+
+    bool build_ragdoll(const scene::Scene& scene, Entity root, RagdollEntry& r) {
+        const std::size_t n = r.bones.size();
+        std::vector<Pose> poses(n);
+        for (std::size_t i = 0; i < n; ++i) poses[i] = world_pose(scene, r.bones[i].entity);
+        JPH::Ref<JPH::Skeleton> skeleton = new JPH::Skeleton();
+        r.settings = new JPH::RagdollSettings();
+        r.settings->mSkeleton = skeleton;
+        r.settings->mParts.resize(n);
+        std::vector<float> volume(n, 0.0f);
+        constexpr float pi = 3.14159265358979f;
+        const JPH::ObjectLayer layer = make_layer(std::min<std::uint32_t>(r.comp.layer, 15u), r.comp.mask, true);
+        std::vector<JPH::Mat44> mats(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            RagdollBody& b = r.bones[i];
+            const Pose& pose = poses[i];
+            skeleton->AddJoint("bone" + std::to_string(i), b.anchor);
+            const float radius = std::max(0.005f, b.comp.radius);
+            int child = -1;
+            for (std::size_t j = i + 1; j < n && child < 0; ++j)
+                if (r.bones[j].anchor == static_cast<int>(i)) child = static_cast<int>(j);
+            math::Vec3 dir;
+            float len = 0;
+            ragdoll_bone_axis(pose, child >= 0 ? &poses[static_cast<std::size_t>(child)] : nullptr,
+                              b.anchor >= 0 ? &poses[static_cast<std::size_t>(b.anchor)] : nullptr, b.comp, dir, len);
+            const math::Vec3 local_dir = math::normalize(pose.rotation.conjugate().rotate(dir));
+            JPH::Ref<JPH::Shape> inner;
+            switch (b.comp.shape) {
+            case RagdollBoneComponent::Shape::Capsule: {
+                const float half = std::max(len * 0.5f - radius, 0.005f);
+                inner = new JPH::CapsuleShape(half, radius);
+                volume[i] = pi * radius * radius * 2.0f * half + 4.0f / 3.0f * pi * radius * radius * radius;
+                break;
+            }
+            case RagdollBoneComponent::Shape::Box: {
+                const float half = len * 0.5f;
+                inner = new JPH::BoxShape(JPH::Vec3(radius, half, radius), std::min({0.02f, radius * 0.5f, half * 0.5f}));
+                volume[i] = 8.0f * radius * radius * half;
+                break;
+            }
+            case RagdollBoneComponent::Shape::Sphere:
+                inner = new JPH::SphereShape(radius);
+                volume[i] = 4.0f / 3.0f * pi * radius * radius * radius;
+                break;
+            }
+            JPH::RotatedTranslatedShapeSettings rts(to_jolt(local_dir * (len * 0.5f)),
+                                                    JPH::Quat::sFromTo(JPH::Vec3::sAxisY(), to_jolt(local_dir)), inner);
+            const JPH::ShapeSettings::ShapeResult shape = rts.Create();
+            if (shape.HasError()) {
+                VICTUS_LOG_WARN("physics", "ragdoll {}: bone {} shape failed: {}", root.index, b.entity.index,
+                                shape.GetError().c_str());
+                r.settings = nullptr;
+                return false;
+            }
+            JPH::RagdollSettings::Part& part = r.settings->mParts[i];
+            part.SetShape(shape.Get());
+            part.mPosition = to_jolt_r(pose.position);
+            part.mRotation = to_jolt(pose.rotation);
+            part.mMotionType = JPH::EMotionType::Dynamic;
+            part.mAllowDynamicOrKinematic = true;
+            part.mObjectLayer = layer;
+            part.mFriction = std::max(0.0f, r.comp.friction);
+            part.mLinearDamping = std::max(0.0f, r.comp.linear_damping);
+            part.mAngularDamping = std::max(0.0f, r.comp.angular_damping);
+            part.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+            mats[i] = JPH::Mat44::sRotationTranslation(to_jolt(pose.rotation), to_jolt(pose.position));
+            b.world_scale = pose.scale;
+            if (b.anchor >= 0) {
+                JPH::Ref<JPH::SwingTwistConstraintSettings> c = new JPH::SwingTwistConstraintSettings();
+                c->mSpace = JPH::EConstraintSpace::WorldSpace;
+                c->mPosition1 = c->mPosition2 = to_jolt_r(pose.position);
+                const math::Vec3 twist = dir;
+                // Constraint space is (twist, plane, normal = twist x plane); Jolt limits swing about the
+                // plane axis by mPlaneHalfConeAngle and about the normal by mNormalHalfConeAngle. `swing`
+                // is about the bone's local Z, so the normal is local Z made perpendicular to the bone
+                // (local X when the bone itself runs along Z).
+                math::Vec3 normal = pose.rotation.rotate({0, 0, 1});
+                normal = normal - twist * math::dot(normal, twist);
+                if (math::length(normal) < 1e-3f) {
+                    normal = pose.rotation.rotate({1, 0, 0});
+                    normal = normal - twist * math::dot(normal, twist);
+                }
+                const JPH::Vec3 normal_j = math::length(normal) < 1e-3f ? to_jolt(twist).GetNormalizedPerpendicular()
+                                                                         : to_jolt(math::normalize(normal));
+                const JPH::Vec3 plane_j = normal_j.Cross(to_jolt(twist)).Normalized();
+                c->mTwistAxis1 = c->mTwistAxis2 = to_jolt(twist);
+                c->mPlaneAxis1 = c->mPlaneAxis2 = plane_j;
+                c->mNormalHalfConeAngle = JPH::DegreesToRadians(std::clamp(b.comp.swing, 0.0f, 180.0f));
+                c->mPlaneHalfConeAngle = JPH::DegreesToRadians(std::clamp(b.comp.swing_plane, 0.0f, 180.0f));
+                float lo = std::clamp(b.comp.twist_min, -180.0f, 180.0f), hi = std::clamp(b.comp.twist_max, -180.0f, 180.0f);
+                if (lo > hi) std::swap(lo, hi);
+                c->mTwistMinAngle = JPH::DegreesToRadians(lo);
+                c->mTwistMaxAngle = JPH::DegreesToRadians(hi);
+                c->mSwingMotorSettings = c->mTwistMotorSettings = motor_for(r.comp, b);
+                part.mToParent = c;
+            }
+        }
+        float shared_volume = 0;
+        for (std::size_t i = 0; i < n; ++i)
+            if (r.bones[i].comp.mass <= 0) shared_volume += volume[i];
+        for (std::size_t i = 0; i < n; ++i) {
+            RagdollBody& b = r.bones[i];
+            b.mass = b.comp.mass > 0 ? b.comp.mass
+                                     : std::max(0.05f, std::max(0.1f, r.comp.total_mass) * volume[i] / std::max(shared_volume, 1e-9f));
+            r.settings->mParts[i].mMassPropertiesOverride.mMass = b.mass;
+        }
+        r.settings->Stabilize();
+        // Parent/child pairs and bones overlapping in the authored pose never collide; the owner's
+        // character capsule (subgroup n) collides with none of them.
+        r.settings->DisableParentChildCollisions(mats.data(), 0.0f);
+        const auto* src = static_cast<const JPH::GroupFilterTable*>(r.settings->mParts[0].mCollisionGroup.GetGroupFilter());
+        r.table = new JPH::GroupFilterTable(static_cast<JPH::uint>(n + 1));
+        for (std::size_t a = 0; a < n; ++a) {
+            r.table->DisableCollision(static_cast<JPH::CollisionGroup::SubGroupID>(a), static_cast<JPH::CollisionGroup::SubGroupID>(n));
+            for (std::size_t b = a + 1; b < n; ++b)
+                if (src && !src->IsCollisionEnabled(static_cast<JPH::CollisionGroup::SubGroupID>(a),
+                                                    static_cast<JPH::CollisionGroup::SubGroupID>(b)))
+                    r.table->DisableCollision(static_cast<JPH::CollisionGroup::SubGroupID>(a),
+                                              static_cast<JPH::CollisionGroup::SubGroupID>(b));
+        }
+        for (std::size_t i = 0; i < n; ++i)
+            r.settings->mParts[i].mCollisionGroup = JPH::CollisionGroup(r.table, 0, static_cast<JPH::CollisionGroup::SubGroupID>(i));
+        r.settings->CalculateBodyIndexToConstraintIndex();
+        r.settings->CalculateConstraintIndexToBodyIdxPair();
+        r.group = next_group_++;
+        r.ragdoll = r.settings->CreateRagdoll(r.group, encode(root), system_.get());
+        if (!r.ragdoll) {
+            VICTUS_LOG_WARN("physics", "ragdoll {}: out of bodies (raise PhysicsSettings::max_bodies)", root.index);
+            r.settings = nullptr;
+            return false;
+        }
+        auto& bi = system_->GetBodyInterface();
+        std::vector<float> own_inertia(n, 0.0f);
+        std::vector<math::Vec3> com(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            RagdollBody& b = r.bones[i];
+            b.id = r.ragdoll->GetBodyID(static_cast<int>(i));
+            bi.SetUserData(b.id, encode(b.entity));
+            { // Stabilize() may have redistributed mass: keep what Jolt simulates.
+                JPH::BodyLockRead lock(system_->GetBodyLockInterface(), b.id);
+                if (lock.Succeeded() && lock.GetBody().GetMotionPropertiesUnchecked())
+                    if (const float inv = lock.GetBody().GetMotionPropertiesUnchecked()->GetInverseMassUnchecked(); inv > 0)
+                        b.mass = 1.0f / inv;
+            }
+            {
+                JPH::BodyLockRead lock(system_->GetBodyLockInterface(), b.id);
+                if (lock.Succeeded()) {
+                    JPH::MassProperties mp = lock.GetBody().GetShape()->GetMassProperties();
+                    mp.ScaleToMass(b.mass);
+                    own_inertia[i] = (mp.mInertia(0, 0) + mp.mInertia(1, 1) + mp.mInertia(2, 2)) / 3.0f;
+                    com[i] = from_jolt(JPH::Vec3(lock.GetBody().GetCenterOfMassPosition()));
+                }
+            }
+            if (const auto* t = scene.world().get<scene::Transform>(b.entity)) {
+                b.target_pos = b.written_pos = t->position;
+                b.target_rot = b.written_rot = t->rotation;
+            }
+            b.sim_pos = b.target_world = poses[i].position;
+            b.sim_rot = poses[i].rotation;
+            ragdoll_bones_[b.entity.bits()] = {root.bits(), i};
+        }
+        // Each joint carries its bone and every bone below it (parallel-axis about the joint pivot).
+        for (std::size_t j = 0; j < n; ++j)
+            for (int i = static_cast<int>(j); i >= 0 && r.bones[static_cast<std::size_t>(i)].anchor >= 0;
+                 i = r.bones[static_cast<std::size_t>(i)].anchor) {
+                RagdollBody& joint = r.bones[static_cast<std::size_t>(i)];
+                const math::Vec3 d = com[j] - poses[static_cast<std::size_t>(i)].position;
+                joint.drive_inertia += own_inertia[j] + r.bones[j].mass * math::dot(d, d);
+            }
+        for (std::size_t i = 0; i < n; ++i)
+            if (auto* st = swing_twist(r, i)) st->GetSwingMotorSettings() = st->GetTwistMotorSettings() = motor_for(r.comp, r.bones[i]);
+        r.has_sim = true;
+        r.has_target = true;
+        r.ragdoll->AddToPhysicsSystem(JPH::EActivation::Activate);
+        return true;
+    }
+
+    void destroy_ragdoll(RagdollEntry& r) {
+        if (!r.character.IsInvalid()) system_->GetBodyInterface().SetCollisionGroup(r.character, JPH::CollisionGroup());
+        for (const RagdollBody& b : r.bones) ragdoll_bones_.erase(b.entity.bits());
+        if (r.ragdoll) r.ragdoll->RemoveFromPhysicsSystem();
+        r.ragdoll = nullptr; // destroys the bodies and constraints
+        r.settings = nullptr;
+    }
+
+    void sync_ragdolls(scene::Scene& scene, float dt) {
+        scene.world().each<RagdollComponent>([&](Entity e, RagdollComponent& comp) {
+            if (comp.mode == RagdollComponent::Mode::Off) return; // destroyed below as unseen
+            std::vector<RagdollBody> bones;
+            gather_bones(scene, e, -1, {}, bones, 0);
+            if (bones.empty()) {
+                if (warned_ragdoll_.insert(e.bits()).second)
+                    VICTUS_LOG_WARN("physics", "entity {}: Ragdoll has no RagdollBone descendants; nothing simulated", e.index);
+                return;
+            }
+            auto it = ragdolls_.find(e.bits());
+            if (it != ragdolls_.end() && !same_build(it->second, comp, bones)) {
+                destroy_ragdoll(it->second);
+                ragdolls_.erase(it);
+                it = ragdolls_.end();
+            }
+            if (it == ragdolls_.end()) {
+                RagdollEntry r;
+                r.comp = comp;
+                r.bones = std::move(bones);
+                if (!build_ragdoll(scene, e, r)) return;
+                // A ragdoll switched on under a moving character keeps its momentum.
+                if (const auto c = chars_.find(e.bits()); c != chars_.end() && comp.mode != RagdollComponent::Mode::Kinematic)
+                    r.ragdoll->SetLinearVelocity(c->second.ch->GetLinearVelocity());
+                it = ragdolls_.emplace(e.bits(), std::move(r)).first;
+            }
+            RagdollEntry& r = it->second;
+            r.comp = comp;
+            r.seen = generation_;
+            if (const auto c = chars_.find(e.bits()); c != chars_.end()) {
+                r.character = c->second.ch->GetInnerBodyID();
+                if (!r.character.IsInvalid())
+                    system_->GetBodyInterface().SetCollisionGroup(
+                        r.character, JPH::CollisionGroup(r.table, r.group, static_cast<JPH::CollisionGroup::SubGroupID>(r.bones.size())));
+            } else {
+                r.character = JPH::BodyID();
+            }
+            drive_ragdoll(scene, r, dt);
+        });
+        for (auto it = ragdolls_.begin(); it != ragdolls_.end();) {
+            if (it->second.seen != generation_) {
+                destroy_ragdoll(it->second);
+                it = ragdolls_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    void drive_ragdoll(const scene::Scene& scene, RagdollEntry& r, float dt) {
+        using Mode = RagdollComponent::Mode;
+        auto& bi = system_->GetBodyInterface();
+        const Mode mode = r.comp.mode;
+        const std::size_t n = r.bones.size();
+        const bool pin = mode == Mode::Powered && r.comp.pin_root;
+        if (mode != r.applied || pin != r.applied_pin) {
+            for (const RagdollBody& b : r.bones) {
+                const bool kinematic = mode == Mode::Kinematic || (pin && b.anchor < 0);
+                bi.SetMotionType(b.id, kinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic,
+                                 JPH::EActivation::Activate);
+            }
+            if (mode != Mode::Powered)
+                for (std::size_t i = 0; i < n; ++i)
+                    if (auto* st = swing_twist(r, i)) {
+                        st->SetSwingMotorState(JPH::EMotorState::Off);
+                        st->SetTwistMotorState(JPH::EMotorState::Off);
+                    }
+            r.applied = mode;
+            r.applied_pin = pin;
+        }
+        if (mode == Mode::Passive || !r.has_target) return;
+        // Target pose: the animated local transforms captured after the last animation update.
+        std::vector<math::Mat4> worlds(n);
+        std::vector<JPH::Mat44> mats(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            RagdollBody& b = r.bones[i];
+            const auto* t = scene.world().get<scene::Transform>(b.entity);
+            const math::Vec3 scale = t ? t->scale : math::Vec3{1, 1, 1};
+            worlds[i] = parent_world(scene, r, i, worlds) * math::Mat4::trs(b.target_pos, b.target_rot, scale);
+            math::Vec3 p, s;
+            math::Quat q;
+            math::decompose(worlds[i], p, q, s);
+            b.target_world = p;
+            mats[i] = JPH::Mat44::sRotationTranslation(to_jolt(math::normalize(q)), to_jolt(p));
+        }
+        const float step = std::max(dt, 1e-4f);
+        if (mode == Mode::Kinematic) {
+            r.ragdoll->DriveToPoseUsingKinematics(JPH::RVec3::sZero(), mats.data(), step);
+            return;
+        }
+        JPH::SkeletonPose pose;
+        pose.SetSkeleton(r.settings->mSkeleton);
+        pose.SetRootOffset(JPH::RVec3::sZero());
+        for (std::size_t i = 0; i < n; ++i) pose.GetJointMatrices()[i] = mats[i];
+        pose.CalculateJointStates();
+        for (std::size_t i = 0; i < n; ++i)
+            if (auto* st = swing_twist(r, i)) st->GetSwingMotorSettings() = st->GetTwistMotorSettings() = motor_for(r.comp, r.bones[i]);
+        r.ragdoll->DriveToPoseUsingMotors(pose);
+        compensate_gravity(r);
+        for (std::size_t i = 0; i < n; ++i) {
+            const RagdollBody& b = r.bones[i];
+            if (b.comp.strength <= 0)
+                if (auto* st = swing_twist(r, i)) {
+                    st->SetSwingMotorState(JPH::EMotorState::Off);
+                    st->SetTwistMotorState(JPH::EMotorState::Off);
+                }
+            if (pin && b.anchor < 0) bi.MoveKinematic(b.id, JPH::RVec3(mats[i].GetTranslation()), mats[i].GetQuaternion(), step);
+        }
+        r.ragdoll->Activate();
+    }
+
+    // Joint torques cancelling the weight each joint carries (its bone and everything below it):
+    // tau = (subtree COM - pivot) x (subtree mass * g), applied as -tau to the child and +tau to the
+    // parent. Internal, so momentum is unchanged; motors then only correct the remaining error.
+    void compensate_gravity(RagdollEntry& r) {
+        const float k = std::clamp(r.comp.gravity_compensation, 0.0f, 1.0f);
+        if (k <= 0) return;
+        auto& bi = system_->GetBodyInterface();
+        const std::size_t n = r.bones.size();
+        std::vector<float> mass(n);
+        std::vector<math::Vec3> moment(n); // sum of mass * COM over the subtree
+        for (std::size_t i = 0; i < n; ++i) {
+            mass[i] = r.bones[i].mass;
+            moment[i] = from_jolt(JPH::Vec3(bi.GetCenterOfMassPosition(r.bones[i].id))) * mass[i];
+        }
+        for (std::size_t i = n; i-- > 0;)
+            if (const int a = r.bones[i].anchor; a >= 0) {
+                mass[static_cast<std::size_t>(a)] += mass[i];
+                moment[static_cast<std::size_t>(a)] = moment[static_cast<std::size_t>(a)] + moment[i];
+            }
+        const math::Vec3 g = from_jolt(system_->GetGravity());
+        for (std::size_t i = 0; i < n; ++i) {
+            const RagdollBody& b = r.bones[i];
+            if (b.anchor < 0 || b.comp.strength <= 0) continue;
+            const math::Vec3 com = moment[i] * (1.0f / mass[i]);
+            math::Vec3 tau = math::cross(com - b.sim_pos, g * mass[i]) * (-k);
+            const float limit = std::max(0.0f, r.comp.max_motor_torque * b.comp.strength);
+            if (const float len = math::length(tau); len > limit) tau = tau * (limit / len);
+            bi.AddTorque(b.id, to_jolt(tau));
+            bi.AddTorque(r.bones[static_cast<std::size_t>(b.anchor)].id, to_jolt(tau * -1.0f));
+        }
+    }
+
+    JPH::SwingTwistConstraint* swing_twist(RagdollEntry& r, std::size_t bone) {
+        const int ci = r.settings->GetConstraintIndexForBodyIndex(static_cast<int>(bone));
+        if (ci < 0) return nullptr;
+        JPH::TwoBodyConstraint* c = r.ragdoll->GetConstraint(ci);
+        return c && c->GetSubType() == JPH::EConstraintSubType::SwingTwist ? static_cast<JPH::SwingTwistConstraint*>(c) : nullptr;
+    }
+
+    void read_ragdolls() {
+        const auto& bi = system_->GetBodyInterface();
+        for (auto& [key, r] : ragdolls_) {
+            float err = 0;
+            for (RagdollBody& b : r.bones) {
+                JPH::RVec3 p;
+                JPH::Quat q;
+                bi.GetPositionAndRotation(b.id, p, q);
+                b.sim_pos = {static_cast<float>(p.GetX()), static_cast<float>(p.GetY()), static_cast<float>(p.GetZ())};
+                b.sim_rot = math::normalize(from_jolt(q));
+                err += math::length(b.sim_pos - b.target_world);
+            }
+            r.has_sim = true;
+            r.pose_error = r.comp.mode == RagdollComponent::Mode::Passive ? 0.0f : err / static_cast<float>(r.bones.size());
         }
     }
 
@@ -1394,6 +1953,9 @@ private:
     std::uint64_t field_builds_{0}, field_updates_{0};
     std::unordered_map<std::uint64_t, Character> chars_;
     std::unordered_map<std::uint64_t, Joint> joints_;
+    std::unordered_map<std::uint64_t, RagdollEntry> ragdolls_;
+    std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::size_t>> ragdoll_bones_; // bone -> (root, index)
+    std::unordered_set<std::uint64_t> warned_ragdoll_;
     JPH::Ref<JointPairFilter> group_filter_;
     JPH::CollisionGroup::GroupID next_group_{0};
     std::uint64_t generation_{0};

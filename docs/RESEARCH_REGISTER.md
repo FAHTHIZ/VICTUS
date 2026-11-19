@@ -94,7 +94,7 @@ Techniques are implemented from the published descriptions below; no third-party
 No third-party code was added; Jolt 5.7.0 was already a dependency.
 - Jolt `CharacterVirtual` class reference — https://jrouwe.github.io/JoltPhysics/class_character_virtual.html . It has no rigid body and moves by collision checks only, it is updated by the application, `ExtendedUpdate` combines `Update`, `StickToFloor` and `WalkStairs`, and `mInnerBodyShape` makes the character visible to the simulation. VICTUS uses all of these; velocity handling follows Jolt's `CharacterVirtualTest` sample in the 5.7.0 source.
 - Jolt architecture documentation, constraints section — https://jrouwe.github.io/JoltPhysics/index.html . Constraint types (fixed, point, distance, hinge, slider), motors with force/torque limits, breakable constraints by checking total lambda after each step and calling `SetEnabled(false)`, the fact that bodies do not track their constraints (VICTUS removes constraints before bodies), and `GroupFilter` for skipping collisions between connected bodies.
-- Open questions: ragdolls (swing-twist + `GroupFilterTable`), Box2D 3.2 joints and a 2D character mover, and parallel character updates.
+- Open questions: ~~ragdolls (swing-twist + `GroupFilterTable`)~~ (done, ADR-0091), Box2D 3.2 joints and a 2D character mover, and parallel character updates.
 
 ## Research conclusions added 2026-11-16 (Slice 12, skeletal animation)
 No third-party code was added; cgltf 1.15 was already a dependency.
@@ -418,3 +418,10 @@ The research below informs roadmap priorities 6e and 6g–6l. These are architec
 - **Godot Project Manager Recovery Mode** — https://docs.godotengine.org/en/stable/tutorials/editor/project_manager.html (accessed 2026-11-18): recovery mode can bypass risky project startup behavior so a project can be opened and repaired. Lesson: safe mode matters when normal editor/project startup itself is the failure.
 - **LLVM libFuzzer** — https://llvm.org/docs/LibFuzzer.html (accessed 2026-11-18): coverage-guided fuzzing mutates seeded corpora and can be combined with AddressSanitizer and UndefinedBehaviorSanitizer. Lesson: continue targeted parser/file-format fuzzing; do not replace existing mutation/sanitizer tests with a generic tool without a gap analysis.
 - **Conclusion:** prioritise transactional save generations, explicit schema migrators, validation/repair diagnostics, editor safe mode and fault-injection/recovery tests. Treat device recreation as backend-capability research; until a backend genuinely supports it, preserve graceful exit and autosave.
+
+## Research conclusions added 2026-11-19 (A.R.C. stage 1 — ragdoll implementation)
+
+- **Jolt Samples PoweredRigTest** — https://github.com/jrouwe/JoltPhysics/blob/master/Samples/Tests/Rig/PoweredRigTest.cpp (accessed 2026-11-19): drives a ragdoll toward a sampled animation pose with `DriveToPoseUsingMotors`. Adopted as the Powered-mode path. Lesson from VICTUS tests: the default frequency-mode motor springs see only the two bodies of each constraint, so long chains respond far slower than the configured frequency; VICTUS converts to stiffness/damping from the carried subtree inertia (ADR-0091).
+- **Jolt SwingTwistConstraintSettings reference** — https://jrouwe.github.io/JoltPhysics/class_swing_twist_constraint_settings.html (accessed 2026-11-19), read alongside the pinned 5.7.0 source: constraint space is (twist, plane, normal = twist x plane); `mPlaneHalfConeAngle` limits rotation about the plane axis and `mNormalHalfConeAngle` about the normal. VICTUS derives the normal from the bone's local Z so the axes stay meaningful for bones along X (arms) as well as Y (spine, legs).
+- **Conclusion:** maximal-coordinate Jolt ragdolls with inertia-aware motors and internal gravity compensation track animation within 2 cm on a pinned humanoid; reduced-coordinate articulations remain a comparison candidate for stiff, long chains.
+
