@@ -28,6 +28,7 @@ namespace victus::particles {
 
 enum class Shape : std::uint8_t { Point, Sphere, Cone, Box };
 enum class Blend : std::uint8_t { Alpha, Additive };
+enum class SubEmitterTrigger : std::uint8_t { Death, Birth };
 
 // Emits along the entity's local +Y axis (Sphere emits outward in all directions).
 struct ParticleEmitterComponent {
@@ -92,10 +93,22 @@ struct ParticleEmitterComponent {
     float bounce{0.4f};               // 0 = stop, 1 = perfectly elastic (normal component)
     float friction{0.2f};             // fraction of tangential speed removed per contact
     float collision_thickness{0.5f};  // metres behind the visible surface still treated as solid
+    // Sub-emitter (ADR-0108, CPU source emitters): when one of this emitter's particles dies (or
+    // is born), the `sub_emitter` entity's emitter spawns `sub_emitter_count` particles from its
+    // own shape, placed at that particle's position and oriented like the target entity, adding
+    // `sub_emitter_inherit_velocity` x the particle's velocity. Delivered on the target's next
+    // update (one step later), in a fixed order, so runs stay deterministic. The target may be a
+    // CPU or GPU emitter, and may have its own sub-emitter; an emitter cannot target itself.
+    Uuid sub_emitter;
+    SubEmitterTrigger sub_emitter_trigger{SubEmitterTrigger::Death};
+    std::uint32_t sub_emitter_count{8};
+    float sub_emitter_inherit_velocity{0};
 };
 
 constexpr std::uint32_t kMaxCpuParticles = 65536;
 constexpr std::uint32_t kMaxGpuParticles = 1u << 20;
+// Sub-emitter events one emitter can queue per update (further events are dropped).
+constexpr std::uint32_t kMaxSubEmitterEvents = 4096;
 
 // Curl-noise acceleration of `e` at `position` (simulation space) and emitter time `time`
 // (seconds). Exactly divergence-free. Mirrored by engine/render/shaders/particle_sim.comp.
@@ -186,6 +199,8 @@ struct EmitterStatus {
 struct ParticleStats {
     std::uint32_t emitters{0}, alive{0}, spawned{0}, died{0};
     std::uint32_t gpu_emitters{0}, gpu_alive{0}; // subset simulated on the GPU
+    std::uint32_t sub_emitter_events{0};  // source particle births/deaths delivered to a target this update
+    std::uint32_t sub_emitter_dropped{0}; // events with no valid target (missing, self, not an emitter) or over the target's queue
 };
 
 struct ParticleSettings {

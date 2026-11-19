@@ -972,6 +972,13 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0108 — Particle sub-emitters (birth and death events)
+
+- Status: accepted (2026-11-19)
+- Context: fireworks, impact sparks and smoke puffs left by embers need one emitter to spawn particles where another emitter's particles end. Unity's Sub Emitters module (Birth, Collision, Death, Trigger, Manual) and Godot's `sub_emitter` with `SUB_EMITTER_AT_END` / `AT_COLLISION` both reference a second emitter and spawn at the parent particle's position.
+- Decision: `ParticleEmitterComponent` gains `sub_emitter` (entity reference, remapped by prefabs like every UUID field), `sub_emitter_trigger` (death, birth), `sub_emitter_count` and `sub_emitter_inherit_velocity`. During a CPU emitter's update each death (at the position the particle would reach in its last step) or birth queues an event with its world position and scaled velocity, at most 4096 per update. After the parallel update the system delivers events serially in work order to the target's queue (also at most 4096), so results are bit-identical with or without jobs. On its next update the target spawns `count` particles per event after its own spawns, within its `max_particles`: its own shape sample is moved to the event position and oriented by the target transform, its own speed is added to the inherited velocity, and local-space targets store the result relative to themselves. GPU targets turn the events into spawn records at the start of the step. Targets spawn whether or not they are emitting, like `emit()`, so a target with rate 0 acts only as a sub-emitter. Chains work; a self-reference, a missing entity or an entity without an emitter drops the events, counted in `ParticleStats::sub_emitter_dropped`. GPU emitters cannot be sources, because their particle positions live only on the GPU.
+- Consequences: two-stage effects need no script. The target spawns one update after the source event, and collision events are not available (CPU emitters do not collide, GPU emitters cannot be sources).
+
 ## ADR-0107 — GPU depth sorting of alpha-blended GPU particle emitters
 
 - Status: accepted (2026-11-19)
