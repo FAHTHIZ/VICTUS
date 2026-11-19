@@ -39,6 +39,21 @@ struct AsyncLoadingStats {
     std::uint64_t uploaded{0}, failed{0}; // totals
 };
 
+// V.A.U.L.T. residency (GpuAssetCache::set_residency, ADR-0088).
+struct ResidencySettings {
+    std::size_t budget_bytes{0};       // resident texture + model bytes allowed; 0 = unlimited
+    std::uint32_t min_idle_frames{60}; // pumps an asset must go unused before it may be evicted
+};
+
+struct ResidencyStats {
+    std::size_t resident_bytes{0};
+    std::uint32_t resident_assets{0};
+    std::uint64_t evicted{0};       // total assets evicted for the budget
+    std::size_t evicted_bytes{0};   // total bytes evicted for the budget
+    bool over_budget{false};        // every asset over the budget was in recent use
+    std::uint64_t frame{0};         // pump() count, the residency clock
+};
+
 struct GpuModel {
     std::vector<render::GpuMesh> meshes;
     std::vector<render::Material> mesh_materials; // one per mesh, textures resolved
@@ -86,6 +101,14 @@ public:
     // Blocks until no decode is running (before AssetDatabase::refresh()).
     void wait_loads();
     [[nodiscard]] AsyncLoadingStats async_stats() const;
+    // Residency: every resident texture/model is accounted (uploaded bytes) and stamped when used
+    // (texture()/model() hits, and cached materials touching their textures). Over the budget,
+    // pump() evicts assets unused for `min_idle_frames` pumps, least recently used first; assets
+    // in recent use are never evicted (over_budget reports it). Evicted assets reload on their
+    // next use. GPU memory is released by the RHI once in-flight frames are done with it.
+    void set_residency(const ResidencySettings& settings) noexcept { residency_settings_ = settings; }
+    [[nodiscard]] const ResidencySettings& residency_settings() const noexcept { return residency_settings_; }
+    [[nodiscard]] ResidencyStats residency() const;
     // Starts loading without using the result (scene preloading); no-op when synchronous.
     void prefetch(const Uuid& uuid, assets::LoadType type, assets::LoadPriority priority = assets::LoadPriority::Low);
     // True when the texture's import settings ask for nearest ("filter": "nearest") sampling.
@@ -218,6 +241,17 @@ private:
     std::uint64_t morph_uploads_{0};
     void drop_morphed(const Uuid* model); // all copies, or those of one model
     std::uint64_t procedural_clock_{0};
+    struct Resident {
+        std::size_t bytes{0};
+        std::uint64_t last_used{0};
+    };
+    std::unordered_map<Uuid, Resident, UuidHash> resident_;
+    std::unordered_map<Uuid, std::vector<Uuid>, UuidHash> material_textures_; // texture refs per material
+    ResidencySettings residency_settings_;
+    ResidencyStats residency_stats_;
+    void touch(const Uuid& uuid) noexcept;
+    void make_resident(const Uuid& uuid, std::size_t bytes);
+    void enforce_residency();
     std::unique_ptr<assets::AsyncLoader> loader_;
     AsyncLoadingSettings async_settings_;
     AsyncLoadingStats async_stats_;

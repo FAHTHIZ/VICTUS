@@ -20,7 +20,10 @@ std::size_t upload_bytes(const CookedTexture& texture) noexcept {
 
 std::size_t upload_bytes(const LoadPayload& payload) noexcept {
     if (const auto* t = std::get_if<CookedTexture>(&payload)) return upload_bytes(*t);
-    const auto& m = std::get<CookedModel>(payload);
+    return upload_bytes(std::get<CookedModel>(payload));
+}
+
+std::size_t upload_bytes(const CookedModel& m) noexcept {
     std::size_t bytes = 0;
     for (const auto& mesh : m.meshes) {
         const render::MeshData& d = mesh.data;

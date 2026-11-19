@@ -152,11 +152,14 @@ TEST_CASE("project: rendering quality settings round-trip and validate") {
     CHECK(q->settings().mobile_target_fps == 30);
     q->settings().mobile_quality = "low";
     q->settings().mobile_target_fps = 0;
+    CHECK(q->settings().asset_budget_mb == 0);
+    q->settings().asset_budget_mb = 512;
     REQUIRE(q->save().ok());
     auto m = project::Project::open(dir);
     REQUIRE(m.ok());
     CHECK(m->settings().mobile_quality == "low");
     CHECK(m->settings().mobile_target_fps == 0);
+    CHECK(m->settings().asset_budget_mb == 512);
 
     auto text = fs::read_text(dir / "victus.project");
     REQUIRE(text.ok());
@@ -174,6 +177,11 @@ TEST_CASE("project: rendering quality settings round-trip and validate") {
     CHECK_FALSE(project::Project::open(dir).ok());
     bad.set("render_scale", 1.0);
     bad.set("target_fps", -5);
+    doc->set("rendering", bad);
+    REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(*doc)).ok());
+    CHECK_FALSE(project::Project::open(dir).ok());
+    bad.set("target_fps", 0);
+    bad.set("asset_budget_mb", -1);
     doc->set("rendering", bad);
     REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(*doc)).ok());
     CHECK_FALSE(project::Project::open(dir).ok());

@@ -42,6 +42,7 @@ Value settings_to_json(const ProjectSettings& s) {
     if (!s.temporal_upscale) rendering.set("temporal_upscale", false);
     if (s.mobile_quality != "medium") rendering.set("mobile_quality", s.mobile_quality);
     if (s.mobile_target_fps != 30) rendering.set("mobile_target_fps", s.mobile_target_fps);
+    if (s.asset_budget_mb > 0) rendering.set("asset_budget_mb", s.asset_budget_mb);
     v.set("rendering", std::move(rendering));
     v.set("input", s.input.to_json());
     if (s.save_version != 1) v.set("save_version", s.save_version);
@@ -74,6 +75,9 @@ Status settings_from_json(const Value& v, ProjectSettings& s) {
     const auto mfps = r["mobile_target_fps"].as_int(30);
     if (mfps < 0 || mfps > 1000) return bad("rendering.mobile_target_fps must be 0 (off) or between 1 and 1000");
     s.mobile_target_fps = static_cast<int>(mfps);
+    const auto budget = r["asset_budget_mb"].as_int(0);
+    if (budget < 0 || budget > 1048576) return bad("rendering.asset_budget_mb must be 0 (unlimited) or between 1 and 1048576");
+    s.asset_budget_mb = static_cast<int>(budget);
     s.render_scale = r["render_scale"].as_float(0.0f);
     if (!(s.render_scale == 0.0f || (s.render_scale >= 0.25f && s.render_scale <= 2.0f)))
         return bad("rendering.render_scale must be 0 (tier default) or between 0.25 and 2");
