@@ -219,6 +219,28 @@ void Editor::set_panel_open(Panel p, bool open) noexcept {
     if (bool* flag = panel_flag(p)) *flag = open;
 }
 
+std::uint32_t Editor::open_panels() const noexcept {
+    std::uint32_t mask = 0;
+    for (int i = 0; i < static_cast<int>(Panel::Count); ++i)
+        if (panel_open(static_cast<Panel>(i))) mask |= 1u << i;
+    return mask;
+}
+
+void Editor::set_open_panels(std::uint32_t mask) noexcept {
+    for (int i = 0; i < static_cast<int>(Panel::Count); ++i)
+        set_panel_open(static_cast<Panel>(i), (mask >> i) & 1u);
+}
+
+// Panel visibility and the layout preset survive restarts; the dock positions themselves are in
+// editor_layout.ini. Only a project workspace counts: the start screen shows no panels.
+void Editor::save_workspace_if_changed() {
+    if (!project_) return;
+    const std::uint32_t mask = open_panels();
+    if (mask == saved_panels_) return;
+    saved_panels_ = mask;
+    save_preferences();
+}
+
 void Editor::show_panel(Panel p) noexcept {
     set_panel_open(p, true);
     focus_panel_ = static_cast<int>(p);

@@ -1653,3 +1653,8 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 
 - Built: Getting Started offers "2D platformer" and "3D adventure" lessons (`Editor::start_lesson`). A lesson saves the current scene, starts a new one (2D: orthographic camera and sky backdrop), and runs seven steps (floor, player, coin, enemy, goal, play to the goal, save); steps advance when the scene or play session shows them done, and each has a "Do it for me" button. `victus_editor --lesson 2d|3d`. Fix: New Scene no longer keeps template scripts on the kept camera and light (the 3D template's follow-camera script errored in other projects).
 - Verified (Debug, -Werror, lavapipe): new `victus_editor_tests` case builds the 2D lesson by hand, plays it to the goal and saves, then completes the 3D lesson; visual check of both lesson panels.
+
+## 2026-11-19 — Studio remembers open panels and layout preset
+
+- Built: the open panels and layout preset are saved in `studio_preferences.json` (`workspace.layout`, `workspace.panels`) whenever they change in a project and restored at start-up; dock positions stay in `editor_layout.ini`.
+- Verified (Debug, -Werror, lavapipe): new `victus_editor_tests` case picks the Animation preset, closes the Console, opens the Profiler, starts a second Studio on the same preferences and checks the preset and panels survive, including after opening the project.

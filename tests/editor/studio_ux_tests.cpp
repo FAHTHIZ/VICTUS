@@ -1322,3 +1322,43 @@ TEST_CASE("studio: the Script Debugger stops play mode at a breakpoint, inspects
     CHECK(h.ed->play_state() == editor::PlayState::Playing);
     h.ed->stop();
 }
+
+TEST_CASE("studio workspace: open panels and the layout preset are remembered between sessions") {
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Remember", "Remember", "2d").ok());
+    h.frames(2);
+    h.ed->apply_layout(editor::Layout::Animation);
+    h.frames(1);
+    h.ed->set_panel_open(editor::Panel::Console, false);
+    h.ed->set_panel_open(editor::Panel::Profiler, true);
+    h.frames(2);
+    const auto prefs = h.ed->preferences_file();
+    {
+        auto text = fs::read_text(prefs);
+        REQUIRE(text);
+        auto doc = json::parse(text.value());
+        REQUIRE(doc);
+        CHECK(doc.value()["workspace"]["layout"].as_string_or("") == "Animation");
+    }
+
+    // A second session reading the same preferences restores both.
+    editor::EditorOptions o;
+    o.recent_file = h.dir / "recent.json";
+    o.default_project_dir = h.dir;
+    o.diagnostics_dir = h.dir / "diagnostics";
+    h.ed.reset();
+    auto e = editor::Editor::create(*gpu().ctx, *h.ui, nullptr, nullptr, o);
+    REQUIRE(e);
+    h.ed = std::move(e).value();
+    h.ed->set_viewport_size_override(320, 180);
+    CHECK(h.ed->layout() == editor::Layout::Animation);
+    CHECK_FALSE(h.ed->panel_open(editor::Panel::Console));
+    CHECK(h.ed->panel_open(editor::Panel::Profiler));
+    CHECK(h.ed->panel_open(editor::Panel::Sequencer));
+    CHECK(h.ed->panel_open(editor::Panel::Viewport));
+    REQUIRE(h.ed->open_project(h.dir / "Remember").ok());
+    h.frames(2);
+    CHECK_FALSE(h.ed->panel_open(editor::Panel::Console));
+    CHECK(h.ed->panel_open(editor::Panel::Profiler));
+}
