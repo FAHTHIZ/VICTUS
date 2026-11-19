@@ -227,6 +227,16 @@ add_test(NAME victus_cli_render_compare
 set_tests_properties(victus_cli_render_compare PROPERTIES LABELS "cli;gpu" SKIP_REGULAR_EXPRESSION "VICTUS_COMPARE_SKIPPED"
     TIMEOUT 600)
 
+# Perceptual reference scenes vs committed software-renderer goldens (ADR-0104; skipped without a GPU).
+add_test(NAME victus_reference_scenes
+    COMMAND ${CMAKE_COMMAND}
+        -DVICTUS_CLI=$<TARGET_FILE:victus_cli>
+        -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+        -DWORK=${CMAKE_BINARY_DIR}/test_output/reference_scenes
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/reference_scenes.cmake)
+set_tests_properties(victus_reference_scenes PROPERTIES LABELS "cli;gpu" SKIP_REGULAR_EXPRESSION "VICTUS_REFERENCE_SKIPPED"
+    TIMEOUT 600)
+
 # Device loss: the player and editor exit cleanly with a clear message when GPU operations keep
 # failing (injected with VICTUS_GPU_FAIL); the editor autosaves unsaved edits first.
 add_test(NAME victus_device_loss
