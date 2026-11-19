@@ -817,3 +817,41 @@ TEST_CASE("behaviours: the HUD lists the items the player carries") {
     CHECK(g.scene.world().get<gameui::UiTextComponent>(items)->text == "Gem x2");
     CHECK(g.scene.world().get<gameui::UiRectComponent>(items)->visible);
 }
+
+TEST_CASE("behaviours: press-to-use triggers wait for the interact key") {
+    Game g;
+    g.ground_2d({0, -0.5f}, {40, 1});
+    const Entity p = g.player_2d({0, 0.6f});
+    const Entity lever = g.sprite("Lever", {6, 0.5f});
+    auto& tc = g.scene.world().add<TriggerComponent>(lever);
+    tc.press_to_use = true;
+    tc.message = "Click";
+    tc.message_time = 0;
+    int fired = 0;
+    gameplay::listen(g.scene, "triggered", [&](Scene&, const gameplay::GameplayEvent&) { ++fired; });
+    const auto message = [&]() -> std::string {
+        const Entity m = g.scene.find_by_name("Message (Trigger)");
+        if (m.is_null() || g.scene.children(m).empty()) return {};
+        const Entity box = g.scene.children(m).front();
+        if (!g.scene.world().get<gameui::UiRectComponent>(box)->visible) return {};
+        for (const Entity c : g.scene.children(box)) return g.scene.world().get<gameui::UiTextComponent>(c)->text;
+        return {};
+    };
+    g.run(10);
+    g.scene.world().get<Transform>(p)->position = {6, 0.6f, 0};
+    g.run(10);
+    CHECK(fired == 0);
+    CHECK(message() == "Press E");
+    g.hold("E", 5);
+    CHECK(fired == 1);
+    CHECK(message() == "Click");
+    g.hold("E", 5); // once per visit
+    CHECK(fired == 1);
+    g.scene.world().get<Transform>(p)->position = {0, 0.6f, 0};
+    g.run(10);
+    CHECK(message().empty());
+    g.scene.world().get<Transform>(p)->position = {6, 0.6f, 0};
+    g.run(5);
+    g.hold("E", 5);
+    CHECK(fired == 2);
+}

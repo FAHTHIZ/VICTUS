@@ -1685,3 +1685,9 @@ Verified: `behaviours: jump pads launch the player in 2D and 3D`, and the roles 
 Built: `Collectible.message` (items default to "You found a <item>"), shown for 2.5 s in the same bottom message box as Trigger signs; message display moved out of the trigger pass so pickups work without any Trigger. The GameRules HUD has an "Items" line under the score listing the Player's inventory ("Key", "Gem x2"), hidden when empty.
 
 Verified: `behaviours: triggers show signs...` (now checks "You found a Key") and `behaviours: the HUD lists the items the player carries`.
+
+## 2026-11-19 — Press-to-use triggers and the Switch role
+
+Built: `Trigger.press_to_use` and `prompt`: while the player touches it the message box shows the prompt (default "Press " plus the first key bound to `interact`), and the trigger fires once per visit when Interact is pressed. Inspector role "Switch" (press to start the Moving Platform named "Platform").
+
+Verified: `behaviours: press-to-use triggers wait for the interact key`, roles test in `victus_editor_tests`.

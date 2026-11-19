@@ -31,7 +31,7 @@ Broad and tested, **not production-ready**: no game has shipped with VICTUS, ren
 - [~] **Destruction.** Done: Voronoi fracture, impulse breaking and support graphs (ADR-0093). Remaining: cooked fracture assets, clustered breakup, debris budgets and pooling, save/restore and replicated break events, Studio fracture preview.
 - [~] **Audio depth.** Done: voice budgets and virtual voices (ADR-0083), geometry occlusion, reverb zones and underwater filtering (ADR-0096). Remaining: per-source effects, ducking, HRTF evaluation, streaming through V.A.U.L.T., a Studio voice profiler.
 - [ ] **Rendering gaps.** Area lights and light cookies, LOD cross-fade, planar/screen-space reflections of scene objects on water, an FFT ocean, 2D normal maps and shadows, impostors and wind for foliage, GPU timestamps once SDL_GPU exposes them.
-- [ ] **Gameplay framework gaps.** Game session and level lifecycle, interaction prompts, replicated attributes/inventories, Studio inspectors for runtime timers, attributes and inventories.
+- [ ] **Gameplay framework gaps.** Game session and level lifecycle, replicated attributes/inventories, Studio inspectors for runtime timers, attributes and inventories.
 
 ### 3. Reliability and production
 

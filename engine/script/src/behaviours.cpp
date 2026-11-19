@@ -193,6 +193,8 @@ void register_behaviour_components() {
             .field(&TR::target, "target", {.tooltip = "Name of the object to start or remove; empty = this object"})
             .field(&TR::sound, "sound", {.tooltip = "Audio clip played when it fires", .hint = "audio"})
             .field(&TR::once, "once", {.tooltip = "Only the first time"})
+            .field(&TR::press_to_use, "press_to_use", {.tooltip = "Wait for the Interact control (E) while the player touches it"})
+            .field(&TR::prompt, "prompt", {.tooltip = "Shown while waiting for the press; empty = \"Press E\""})
             .commit();
         using GR = GameRulesComponent;
         scene::Schema<GR>("GameRules", cat)
@@ -1261,6 +1263,14 @@ void show_message(Scene& s, const std::string& text) {
         if (auto* t = s.world().get<gameui::UiTextComponent>(c); t && t->text != text) t->text = text;
 }
 
+// The first key bound to "interact", for prompts ("Press E").
+std::string interact_key(ScriptHost::Impl& h) {
+    if (const auto* a = h.options.input_map.find("interact"))
+        for (const auto& bnd : a->positive)
+            if (bnd.kind == gameplay::InputBinding::Kind::Key) return gameplay::binding_to_string(bnd);
+    return "Interact";
+}
+
 void triggers(ScriptHost::Impl& h, Scene& s, TagCache& tags, std::vector<Entity>& doomed) {
     std::vector<Entity> list;
     s.world().each<TriggerComponent>([&](Entity e, TriggerComponent&) { list.push_back(e); });
@@ -1285,7 +1295,23 @@ void triggers(ScriptHost::Impl& h, Scene& s, TagCache& tags, std::vector<Entity>
         auto* c = s.world().get<TriggerComponent>(tr);
         const bool entered = !who.is_null() && !c->inside;
         c->inside = !who.is_null();
-        if (!entered || (cfg.once && c->fired)) continue;
+        if (who.is_null()) {
+            c->used = false;
+            continue;
+        }
+        if (cfg.once && c->fired) continue;
+        if (cfg.press_to_use) {
+            if (c->used) continue;
+            if (!action_pressed(h, input_for(h, who), "interact")) {
+                if (entered || b.message_left <= 0) say(tr, 0, cfg.prompt.empty() ? "Press " + interact_key(h) : cfg.prompt);
+                continue;
+            }
+            c = s.world().get<TriggerComponent>(tr);
+            c->used = true;
+            if (b.message_owner == s.uuid(tr)) b.message_left = 0; // the prompt goes away
+        } else if (!entered) {
+            continue;
+        }
         if (!cfg.required_item.empty()) {
             if (gameplay::item_count(s, who, cfg.required_item) == 0) {
                 say(tr, cfg.message_time, cfg.locked_message.empty() ? "You need a " + cfg.required_item : cfg.locked_message);

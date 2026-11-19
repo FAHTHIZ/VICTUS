@@ -976,6 +976,10 @@ TEST_CASE("studio roles: Make it a Player, Enemy, Coin or Goal in one undoable c
     const scene::Entity pad = h.ed->create_entity(editor::Primitive::Cube);
     CHECK(h.ed->make_role(pad, editor::Role::JumpPad));
     CHECK(w.get<script::JumpPadComponent>(pad));
+    const scene::Entity lever = h.ed->create_entity(editor::Primitive::Cube);
+    CHECK(h.ed->make_role(lever, editor::Role::Switch));
+    CHECK(w.get<script::TriggerComponent>(lever)->press_to_use);
+    CHECK(w.get<script::TriggerComponent>(lever)->target == "Platform");
     h.ed->select(goal);
     h.frames(2);
 }
