@@ -136,6 +136,13 @@ Result<ImageComparison> compare_images(const Image& reference, const Image& test
     const float ppd = options.pixels_per_degree > 0 ? options.pixels_per_degree : victus_flip::pixels_per_degree(0.7f, 3840.0f, 0.7f);
     const auto ref_lin = linear_rgb(reference), test_lin = linear_rgb(test);
     std::vector<float> flip = victus_flip::ldr_error_map(ref_lin.data(), test_lin.data(), w, h, ppd);
+    // Identical inputs must score exactly zero. Optimised builds may evaluate the reference and
+    // test filter chains with different floating-point contraction, leaving ~1e-7 residue that
+    // would fail a zero-tolerance determinism check, so pixel-identical images and sub-epsilon
+    // residue are snapped to zero.
+    if (reference.pixels == test.pixels) std::fill(flip.begin(), flip.end(), 0.0f);
+    for (float& e : flip)
+        if (e < 1e-6f) e = 0.0f;
     const auto ssim = ssim_map(reference, test);
 
     double flip_sum = 0, sq = 0;

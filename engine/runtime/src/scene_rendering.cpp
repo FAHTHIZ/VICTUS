@@ -1078,6 +1078,7 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     env.puddles = std::clamp(fin(e.puddles, 0.0f), 0.0f, 1.0f);
     env.puddle_size = std::clamp(fin(e.puddle_size, 3.0f), 0.25f, 100.0f);
     pr.ripples = std::clamp(fin(e.precipitation_ripples, 1.0f), 0.0f, 1.0f);
+    pr.splashes = std::clamp(fin(e.precipitation_splashes, 1.0f), 0.0f, 1.0f);
 }
 static_assert(static_cast<int>(gameplay::EnvironmentComponent::Precipitation::Snow) == static_cast<int>(render::PrecipitationType::Snow));
 static_assert(static_cast<int>(gameplay::EnvironmentComponent::Fog::ExponentialSquared) ==
@@ -1930,7 +1931,7 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
         }
         // Trails: one sprite per segment, its up axis along the segment (x across, y along the trail).
         const bool textured = !v.emitter->texture.is_nil();
-        std::size_t at = 0;
+        std::uint32_t at = 0;
         for (const std::uint32_t n : v.ribbon_strips) {
             for (std::uint32_t k = at; k + 1 < at + n; ++k) {
                 const particles::RibbonPoint& a = v.ribbon_points[k];

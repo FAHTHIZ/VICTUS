@@ -420,6 +420,48 @@ TEST_CASE("gpu weather: puddles collect on flat ground and rain ripples them") {
     CHECK_FALSE(shoot(r, rain, scene, nullptr, no_rain, close, 1.0, glint).stats.rain_ripples);
 }
 
+TEST_CASE("gpu weather: rain splashes where drops land") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    GpuMesh cube = ctx.create_mesh(make_cube(), "splash_ground").value();
+    Material black;
+    black.base_color = {0, 0, 0, 1};
+    black.roughness = 1.0f;
+    black.metallic = 1.0f; // no specular from the white sky either: only splashes and drops show
+    auto ground = [&](SceneRenderer& rr) { rr.submit(cube, black, math::Mat4::trs({0, -0.5f, 0}, {}, {100, 1, 100})); };
+    Environment rain = weather_env();
+    Environment dry_ground = rain;
+    dry_ground.precipitation.splashes = 0.0f;
+    const auto brighter = [&](const Shot& a, const Shot& b, std::uint32_t y0, std::uint32_t y1) {
+        int n = 0;
+        for (std::uint32_t y = y0; y < y1; ++y)
+            for (std::uint32_t x = 0; x < W; ++x) n += channel(a.at(x, y), 1) > channel(b.at(x, y), 1) + 2 ? 1 : 0;
+        return n;
+    };
+    const Shot with = shoot(r, rain, ground, "weather_splashes", weather_settings(), kAhead);
+    const Shot without = shoot(r, dry_ground, ground, nullptr, weather_settings(), kAhead);
+    CHECK(with.stats.precipitation_splashes == 4096); // a quarter of the High drop count
+    CHECK(without.stats.precipitation_splashes == 0);
+    // Splashes sit on the ground (below the horizon at mid height), never in the sky.
+    CHECK(brighter(with, without, H / 2 + 2, H) > 30);
+    CHECK(brighter(with, without, 0, H / 2 - 4) == 0);
+    // With nothing below (no ground in the occlusion map) splashes are dropped.
+    const Shot open_with = shoot(r, rain, nothing);
+    const Shot open_without = shoot(r, dry_ground, nothing);
+    CHECK(open_with.diff(open_without) == 0);
+    // Splashes come and go.
+    const Shot later = shoot(r, rain, ground, nullptr, weather_settings(), kAhead, 1.15);
+    CHECK(brighter(later, with, H / 2 + 2, H) > 10);
+    // Snow, no occlusion map, or splashes 0: none.
+    CHECK(shoot(r, weather_env(PrecipitationType::Snow), ground).stats.precipitation_splashes == 0);
+    RenderSettings no_occ = weather_settings();
+    no_occ.precipitation_occlusion = 0;
+    CHECK(shoot(r, rain, ground, nullptr, no_occ).stats.precipitation_splashes == 0);
+}
+
 TEST_CASE("weather: presets, sanitising and Environment component mapping") {
     CHECK(RenderSettings::preset(QualityTier::Low).max_precipitation == 2048);
     CHECK(RenderSettings::preset(QualityTier::Medium).max_precipitation == 8192);
@@ -467,7 +509,9 @@ TEST_CASE("weather: presets, sanitising and Environment component mapping") {
     ec.puddles = 0.3f;
     ec.puddle_size = 0.01f;            // at least 0.25 m
     ec.precipitation_ripples = 2.0f;   // clamped
+    ec.precipitation_splashes = -1.0f; // clamped
     runtime::apply_environment(ec, env, sun);
+    CHECK(env.precipitation.splashes == 0.0f);
     CHECK(env.puddles == doctest::Approx(0.3f));
     CHECK(env.puddle_size == 0.25f);
     CHECK(env.precipitation.ripples == 1.0f);

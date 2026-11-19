@@ -393,8 +393,9 @@ TEST_CASE("large mesh colliders build their shapes in the background") {
     CHECK(w.has_body(twin));
     CHECK(w.stats().mesh_shapes_built == 2);
     // A box dropped once the floor exists lands on it (the first box fell meanwhile: bodies
-    // over a still-building mesh have nothing to stand on).
-    const Entity lander = dynamic_box(scene, {5, 3, 0});
+    // over a still-building mesh have nothing to stand on). It drops away from the first box,
+    // which may still be above the floor when a fast build finishes and would catch it.
+    const Entity lander = dynamic_box(scene, {-5, 3, 3});
     run(w, scene, 180);
     CHECK(scene.world().get<Transform>(lander)->position.y == doctest::Approx(0.5f).epsilon(0.03));
 }

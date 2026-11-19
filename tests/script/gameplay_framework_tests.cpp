@@ -212,7 +212,7 @@ TEST_CASE("gameplay effects: modifiers, stacking, periodic damage, granted tags 
 TEST_CASE("gameplay abilities: tags, costs and cooldowns gate activation") {
     Scene s;
     const Entity e = actor(s, "hero", "stamina = 30 [0..100]");
-    AbilitySpec dash{.name = "dash", .cooldown = 1, .costs = {{"stamina", 20}}, .required_tags = "", .blocked_tags = "Status.Stunned"};
+    AbilitySpec dash{.name = "dash", .cooldown = 1, .costs = {{"stamina", 20.0f}}, .required_tags = "", .blocked_tags = "Status.Stunned"};
     CHECK(activate_ability(s, e, dash) == AbilityResult::Activated);
     CHECK(attr(s, e, "stamina") == doctest::Approx(10));
     CHECK(ability_cooldown(s, e, "dash") == doctest::Approx(1));
