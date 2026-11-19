@@ -212,6 +212,7 @@ void register_behaviour_components() {
             .field(&GR::pause_message, "pause_message")
             .field(&GR::title, "title", {.tooltip = "A title screen shown before the game starts; empty = start straight away"})
             .field(&GR::start_prompt, "start_prompt", {.tooltip = "Under the title; empty = \"Press Space to start\""})
+            .field(&GR::health_bar, "health_bar", {.tooltip = "Show the player's health as a bar under the lives"})
             .field(&GR::keep_best_score, "keep_best_score", {.tooltip = "Save the best score on the player's computer and show it next to the score"})
             .commit();
     });
@@ -1606,7 +1607,39 @@ void build_hud(Scene& s, Entity rules) {
                                    gameui::TextAlign::Center);
     if (auto* r = s.world().get<gameui::UiRectComponent>(banner)) r->visible = false;
     const Entity items = hud_text(s, hud, "Items", {0, 0}, {0, 0}, {28, 70}, {640, 40}, 26, gameui::TextAlign::Left);
+    // Health bar: a dark track with a fill whose width follows the player's health.
+    const Entity back = s.create("Health Bar", hud);
+    {
+        gameui::UiRectComponent r;
+        r.anchor_min = r.anchor_max = {1, 0};
+        r.pivot = {1, 0};
+        r.position = {-28, 74};
+        r.size = {240, 22};
+        r.visible = false;
+        s.world().add<gameui::UiRectComponent>(back, r);
+        gameui::UiPanelComponent p;
+        p.color = {0.05f, 0.05f, 0.07f, 0.7f};
+        p.corner_radius = 11;
+        p.border_color = {1, 1, 1, 0.6f};
+        p.border_width = 2;
+        s.world().add<gameui::UiPanelComponent>(back, p);
+    }
+    const Entity fill = s.create("Health", back);
+    {
+        gameui::UiRectComponent r;
+        r.anchor_min = r.anchor_max = {0, 0.5f};
+        r.pivot = {0, 0.5f};
+        r.position = {3, 0};
+        r.size = {234, 16};
+        s.world().add<gameui::UiRectComponent>(fill, r);
+        gameui::UiPanelComponent p;
+        p.color = {0.36f, 0.85f, 0.42f, 1};
+        p.corner_radius = 8;
+        s.world().add<gameui::UiPanelComponent>(fill, p);
+    }
     auto* g = s.world().get<GameRulesComponent>(rules);
+    g->health_back = back;
+    g->health_fill = fill;
     g->hud = hud;
     g->score_text = score;
     g->lives_text = lives;
@@ -1738,6 +1771,21 @@ void rules_tick(ScriptHost::Impl& h, Scene& s, float dt) {
                 }
             }
         set_text(s, v.items_text, carried, !carried.empty());
+        // The player's health, when it can take more than one hit.
+        const HealthComponent* hp = players.empty() ? nullptr : s.world().get<HealthComponent>(players.front());
+        const bool bar = v.health_bar && hp && hp->max > 1 && s.world().alive(v.health_back);
+        if (auto* br = s.world().get<gameui::UiRectComponent>(v.health_back)) br->visible = bar;
+        if (bar) {
+            const float t = std::clamp(hp->current / hp->max, 0.0f, 1.0f);
+            if (auto* fr = s.world().get<gameui::UiRectComponent>(v.health_fill)) {
+                fr->size.x = 234 * t;
+                fr->visible = t > 0;
+            }
+            if (auto* fp = s.world().get<gameui::UiPanelComponent>(v.health_fill))
+                fp->color = t > 0.5f ? math::Color{0.36f, 0.85f, 0.42f, 1}
+                          : t > 0.25f ? math::Color{0.98f, 0.76f, 0.2f, 1}
+                                      : math::Color{0.94f, 0.3f, 0.26f, 1};
+        }
     }
     set_text(s, v.banner_text, v.state == GameState::Won ? v.win_message : v.lose_message, v.state != GameState::Playing);
 }

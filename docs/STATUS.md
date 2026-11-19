@@ -1745,3 +1745,9 @@ Verified: both no-code template play tests start from the title and check that s
 Built: Game Rules Keep Best Score. The best is read once from the `best_score` save slot, shown in the HUD and written when a round ends above it.
 
 Verified: `behaviours: Game Rules keeps the best score between sessions` (four rounds against one save folder); all script tests.
+
+## 2026-11-19 — HUD health bar
+
+Built: Game Rules Health Bar, a track and fill under the lives sized and coloured by the player's Health; hidden for one-hit players.
+
+Verified: `behaviours: the HUD shows the player's health as a bar`; template play tests; a No-Code Platformer screenshot.

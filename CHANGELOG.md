@@ -25,6 +25,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 - Press-to-use Triggers: wait for the Interact control (E) with a "Press E" prompt; a "Switch" role that starts the lift named Platform.
 - The No-Code Platformer has a welcome Sign at the start and a spring Jump Pad before the first gap, with drawn spring and sign sprites.
 - Inspector sections for Inventory (edit the items an object starts with, e.g. a Key), Timers and Attributes (live values in play mode); Inventory in Add Component.
+- HUD health bar: Game Rules `health_bar` shows the player's Health under the lives, green to yellow to red.
 - Best score: Game Rules `keep_best_score` saves the best score in the game's save folder, shows "Best N" in the HUD and announces a new best with a message and a `new_best_score` event.
 - The No-Code Platformer ("Slime Hills") and No-Code 3D Adventure ("Robot Islands") open on a title screen; the start press no longer doubles as a jump because the game starts on the next frame.
 - Talker role: Make it a... Talker gives an object a press-to-use conversation Trigger with sample lines.

@@ -13,6 +13,9 @@
 //   checkpoint {}                broadcast                 score_changed {score}
 //   game_won {score}             broadcast                 game_lost {score}  broadcast
 //   life_lost {lives}            broadcast                 spawned {entity}   to the spawner
+//   bounced {}                   from a Jump Pad           triggered / talked from a Trigger
+//   paused / resumed             broadcast                 game_started       after the title
+//   new_best_score {score, previous} broadcast
 //
 // Touching is decided by overlapping bounds (collider, character, sprite or scale), so pickups
 // and hazards work with or without colliders and in both 2D (XY) and 3D. "Player" in a target
@@ -304,6 +307,7 @@ struct GameRulesComponent {
     std::string start_prompt;     // empty = "Press Space to start"
     // The best score is saved on the player's computer and shown next to the score.
     bool keep_best_score{true};
+    bool health_bar{true};        // a bar under the lives for a player with more than 1 health
     // runtime
     bool showing_title{false};
     float best_score{0};
@@ -316,6 +320,7 @@ struct GameRulesComponent {
     bool initialised{false};
     scene::Entity hud;
     scene::Entity score_text, lives_text, time_text, banner_text, items_text;
+    scene::Entity health_back, health_fill;
 };
 
 // Registers the components above (called by script::register_components).
