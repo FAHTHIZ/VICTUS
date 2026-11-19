@@ -404,6 +404,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.irradiance_volumes = false;
         s.dynamic_gi = false;
         s.volumetric_fog = false;
+        s.volumetric_clouds = false;
         s.max_decals = 128;
         s.max_water_surfaces = 4;
         s.max_particles = 16384;
@@ -425,6 +426,9 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.local_shadow_tile = 256;
         s.dynamic_gi = false;
         s.volumetric_fog_slices = 48;
+        s.cloud_downsample = 4;
+        s.cloud_steps = 32;
+        s.cloud_light_steps = 4;
         s.max_decals = 256;
         s.max_water_surfaces = 8;
         s.max_particles = 65536;
@@ -442,6 +446,8 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.local_shadow_atlas = 4096;
         s.volumetric_fog_tile = 8;
         s.volumetric_fog_slices = 96;
+        s.cloud_steps = 64;
+        s.cloud_light_steps = 8;
         s.max_decals = SceneRenderer::kMaxDecals;
         s.max_particles = 1u << 20;
         break;
@@ -474,6 +480,9 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.local_shadow_tile = std::clamp(s.local_shadow_tile, std::max(64u, s.local_shadow_atlas / 8u), s.local_shadow_atlas);
     s.volumetric_fog_tile = std::clamp(s.volumetric_fog_tile, 4u, 64u);
     s.volumetric_fog_slices = std::clamp(s.volumetric_fog_slices, 16u, 128u);
+    s.cloud_downsample = std::clamp(s.cloud_downsample, 1u, 8u);
+    s.cloud_steps = std::clamp(s.cloud_steps, 8u, 128u);
+    s.cloud_light_steps = std::clamp(s.cloud_light_steps, 1u, 16u);
     s.max_decals = std::min(s.max_decals, SceneRenderer::kMaxDecals);
     s.max_water_surfaces = std::min(s.max_water_surfaces, static_cast<std::uint32_t>(kMaxWaterSurfaces));
     s.max_particles = std::min(s.max_particles, 1u << 24);
@@ -2480,6 +2489,86 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         stats_.fog_volumes = nvol;
     }
 
+    // Volumetric clouds (ADR-0111): layer setup; the passes run after the blended geometry,
+    // before the volumetric fog is composited over everything.
+    struct CloudUniforms {
+        Mat4 inv_view_proj;
+        Vec4 camera, sun_dir, sun_color, ambient, layer, noise, wind, screen;
+    };
+    struct CloudApplyUniforms {
+        Mat4 inv_view_proj;
+        Vec4 camera, layer, screen;
+    };
+    const VolumetricClouds& vc = env_.clouds;
+    const bool clouds_valid = vc.enabled && std::isfinite(vc.coverage) && vc.coverage > 0.0f && std::isfinite(vc.density) &&
+                              vc.density > 0.0f && std::isfinite(vc.bottom) && std::isfinite(vc.top) && vc.top > vc.bottom;
+    facts_.clouds_requested = clouds_valid;
+    CloudUniforms cloud_u{};
+    CloudApplyUniforms cloud_apply_u{};
+    std::uint32_t cloud_w = 0, cloud_h = 0;
+    rhi::PipelineHandle cloud_march_pl{}, cloud_apply_pl{};
+    if (clouds_valid && S.volumetric_clouds && !capture_mode_ && !clouds_failed_) {
+        auto march = post_pipeline("clouds.frag", rhi::Format::RGBA16_FLOAT);
+        auto apply = march ? post_pipeline("clouds_apply.frag", hdr_format_, rhi::BlendMode::PremultipliedAlpha)
+                           : Result<rhi::PipelineHandle>(march.error());
+        if (!apply) {
+            VICTUS_LOG_WARN("render", "volumetric clouds disabled: {}", apply.error().message);
+            clouds_failed_ = true;
+        } else {
+            cloud_march_pl = march.value();
+            cloud_apply_pl = apply.value();
+        }
+    }
+    const bool clouds = cloud_apply_pl.valid();
+    facts_.clouds = clouds;
+    if (clouds) {
+        const auto finite_or = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+        cloud_w = std::max(1u, (rw + S.cloud_downsample - 1) / S.cloud_downsample);
+        cloud_h = std::max(1u, (rh + S.cloud_downsample - 1) / S.cloud_downsample);
+        const Mat4 inv_vp = inverse(view_proj);
+        const float max_dist = std::clamp(finite_or(vc.distance, 30000.0f), 100.0f, 200000.0f);
+        cloud_u.inv_view_proj = inv_vp;
+        cloud_u.camera = Vec4(camera_.position, max_dist);
+        cloud_u.sun_dir = Vec4(-normalize(sun_.direction), std::clamp(finite_or(vc.anisotropy, 0.6f), 0.0f, 0.95f));
+        const float sun_mul = std::max(finite_or(vc.sun_intensity, 1.0f), 0.0f);
+        cloud_u.sun_color = sun_.intensity > 0.0f ? rgb(sun_.color, sun_.intensity * sun_mul, static_cast<float>(S.cloud_light_steps))
+                                                  : Vec4{0, 0, 0, static_cast<float>(S.cloud_light_steps)};
+        Vec3 ambient{};
+        if (env_map && env_map->cube()) ambient = env_map->sh().coefficients[0] * (env_intensity * 0.2820948f);
+        else {
+            const Color& z = env_.sky_zenith;
+            const Color& h = env_.sky_horizon;
+            const Color& g = env_.ground;
+            ambient = Vec3{z.r + 2.0f * h.r + g.r, z.g + 2.0f * h.g + g.g, z.b + 2.0f * h.b + g.b} * (0.25f * env_.ambient_intensity);
+        }
+        ambient = ambient * std::max(finite_or(vc.ambient_intensity, 1.0f), 0.0f);
+        cloud_u.ambient = Vec4(ambient, static_cast<float>(S.cloud_steps));
+        cloud_u.layer = {vc.bottom, vc.top, std::clamp(vc.coverage, 0.0f, 1.0f), std::min(vc.density, 10.0f)};
+        const float shape = std::clamp(finite_or(vc.shape_size, 4000.0f), 10.0f, 1e6f);
+        const float detail = std::clamp(finite_or(vc.detail_size, 600.0f), 1.0f, 1e6f);
+        cloud_u.noise = {1.0f / shape, 1.0f / detail, std::clamp(finite_or(vc.detail, 0.35f), 0.0f, 1.0f),
+                         S.taa ? static_cast<float>(cloud_frame_ % 64u) : 0.0f};
+        // Wind drift; wrapped every 200 km so the offset keeps float precision.
+        const double t = time_ ? *time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - render_epoch()).count();
+        const auto drift = [&](float w) {
+            return static_cast<float>(std::fmod(static_cast<double>(std::isfinite(w) ? w : 0.0f) * std::max(t, 0.0), 200000.0));
+        };
+        cloud_u.wind = {-drift(vc.wind.x), -drift(vc.wind.y), -drift(vc.wind.z), 0.0f};
+        cloud_u.screen = {1.0f / static_cast<float>(cloud_w), 1.0f / static_cast<float>(cloud_h),
+                          0.25f / static_cast<float>(cloud_w), 0.25f / static_cast<float>(cloud_h)};
+        cloud_apply_u.inv_view_proj = inv_vp;
+        cloud_apply_u.camera = Vec4(camera_.position, 0.0f);
+        cloud_apply_u.layer = {vc.bottom, vc.top, 0.0f, 0.0f};
+        cloud_apply_u.screen = inv_size(rw, rh);
+        stats_.volumetric_clouds = true;
+        stats_.cloud_width = cloud_w;
+        stats_.cloud_height = cloud_h;
+        stats_.cloud_steps = S.cloud_steps;
+        facts_.cloud_width = cloud_w;
+        facts_.cloud_height = cloud_h;
+        facts_.cloud_steps = S.cloud_steps;
+    }
+
     RenderGraph graph;
     rhi::TextureDesc target_desc;
     target_desc.name = "scene_target";
@@ -2576,7 +2665,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
     depth_desc.usage = rhi::TextureUsageDepthTarget |
-                       ((ssao || taa || occlusion || fog || !particle_draws.empty() || !gpu_jobs.empty() || !decal_draws.empty() || !water_draws.empty())
+                       ((ssao || taa || occlusion || fog || clouds || !particle_draws.empty() || !gpu_jobs.empty() || !decal_draws.empty() || !water_draws.empty())
                             ? rhi::TextureUsageSampled
                             : 0u);
     const RGTexture depth = graph.create_texture("scene_depth", depth_desc);
@@ -2972,6 +3061,36 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 b.write_depth(depth, rhi::LoadOp::Load, 1.0f);
             },
             [&](PassContext& ctx) { forward_body(ctx, false, true); });
+    }
+
+    if (clouds) {
+        const RGTexture cloud_tex = graph.create_texture("clouds", color_desc(rhi::Format::RGBA16_FLOAT, cloud_w, cloud_h));
+        graph.add_pass(
+            "clouds",
+            [&](PassBuilder& b) {
+                b.read(depth);
+                b.write_color(cloud_tex, rhi::LoadOp::DontCare);
+            },
+            [&, pl = cloud_march_pl](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, cloud_u);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(depth), ctx_.nearest_clamp());
+                ctx.pass->draw(3);
+            });
+        graph.add_pass(
+            "clouds_apply",
+            [&](PassBuilder& b) {
+                b.read(cloud_tex);
+                b.read(depth);
+                b.write_color(hdr, rhi::LoadOp::Load);
+            },
+            [&, pl = cloud_apply_pl, cloud_tex](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, cloud_apply_u);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(cloud_tex), ctx_.linear_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(depth), ctx_.nearest_clamp());
+                ctx.pass->draw(3);
+            });
     }
 
     if (fog) {
@@ -3490,6 +3609,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         prev_view_proj_ = view_proj_unjittered;
         ++frame_index_;
     }
+    if (clouds) ++cloud_frame_;
     if (fog) {
         fog_index_ ^= 1u;
         fog_history_valid_ = true;

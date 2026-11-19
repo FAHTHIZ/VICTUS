@@ -282,6 +282,26 @@ struct FogVolume {
 };
 inline constexpr std::size_t kMaxFogVolumes = 8;
 
+// Volumetric clouds (ADR-0111): a horizontal layer between `bottom` and `top` (world heights,
+// metres; flat, no planet curvature) with procedural density, ray marched at reduced resolution
+// and composited over the sky and any geometry behind the layer. Lit by the directional light
+// and the sky ambient. Needs RenderSettings::volumetric_clouds (off on Low).
+struct VolumetricClouds {
+    bool enabled{false};
+    float coverage{0.5f};          // 0 clear .. 1 overcast
+    float density{0.03f};          // extinction per metre inside a fully dense cloud
+    float bottom{1500.0f};         // layer base height (m)
+    float top{3500.0f};            // layer top height (m), > bottom
+    float shape_size{4000.0f};     // feature size of the cloud shapes (m)
+    float detail_size{600.0f};     // feature size of the eroding detail noise (m)
+    float detail{0.35f};           // edge erosion strength 0..1
+    math::Vec3 wind{10.0f, 0.0f, 4.0f}; // m/s; shapes drift by wind * SceneRenderer time
+    float anisotropy{0.6f};        // forward scattering (silver lining towards the sun) 0..0.95
+    float sun_intensity{1.0f};     // light multipliers
+    float ambient_intensity{1.0f};
+    float distance{30000.0f};      // metres marched along a view ray (fades out over the last 40%)
+};
+
 struct Environment {
     math::Color sky_zenith{0.18f, 0.36f, 0.75f, 1};
     math::Color sky_horizon{0.62f, 0.72f, 0.85f, 1};
@@ -345,6 +365,7 @@ struct Environment {
     float environment_rotation{0.0f}; // radians about +Y
     float sky_blur{0.0f};             // background blur 0 (sharp) .. 1 (fully rough mip)
     VolumetricFog volumetric_fog{};
+    VolumetricClouds clouds{};
 };
 
 // Scalability tiers. Low targets entry-level phones, Medium mid-range phones/tablets, High
@@ -443,6 +464,14 @@ struct RenderSettings {
     bool volumetric_fog{true};
     std::uint32_t volumetric_fog_tile{16};
     std::uint32_t volumetric_fog_slices{64};
+    // Volumetric clouds (ADR-0111; scenes enable them through Environment::clouds): the cloud
+    // target is the render resolution divided by `cloud_downsample` (1..8), marched with
+    // `cloud_steps` samples per ray (8..128) and `cloud_light_steps` towards the sun (1..16).
+    // Low: off. Medium 4 / 32 / 4, High 2 / 48 / 6, Ultra 2 / 64 / 8.
+    bool volumetric_clouds{true};
+    std::uint32_t cloud_downsample{2};
+    std::uint32_t cloud_steps{48};
+    std::uint32_t cloud_light_steps{6};
     // Effect budgets per frame (ADR-0109), nearest first. Decals: Low 128, Medium 256, High 512,
     // Ultra 1024 (SceneRenderer::kMaxDecals). Water surfaces: Low 4, Medium 8, High and Ultra 16
     // (kMaxWaterSurfaces). CPU particles (billboards plus ribbon vertices): Low 16384, Medium
@@ -524,6 +553,9 @@ struct SceneStats {
     // Volumetric fog this frame: grid size (0 when off) and fog volumes used.
     bool volumetric_fog{false};
     std::uint32_t fog_froxels_x{0}, fog_froxels_y{0}, fog_slices{0}, fog_volumes{0};
+    // Volumetric clouds this frame (ADR-0111): cloud target size and samples per ray (0 when off).
+    bool volumetric_clouds{false};
+    std::uint32_t cloud_width{0}, cloud_height{0}, cloud_steps{0};
 };
 
 struct SceneRendererOptions {
@@ -832,6 +864,8 @@ private:
     math::Mat4 fog_prev_view_proj_{math::Mat4::identity()};
     math::Vec3 fog_prev_position_{}, fog_prev_forward_{0, 0, -1};
     std::uint64_t fog_frame_{0};
+    bool clouds_failed_{false};      // cloud pipelines failed to build: clouds stay off (logged once)
+    std::uint64_t cloud_frame_{0};   // jitter sequence of the cloud march
     std::array<math::Mat4, 4> cascade_vp_{math::Mat4::identity(), math::Mat4::identity(), math::Mat4::identity(),
                                           math::Mat4::identity()};
     std::array<float, 4> cascade_splits_{};

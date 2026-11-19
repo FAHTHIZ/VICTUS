@@ -203,6 +203,18 @@ void register_components() {
             .field(&E::volumetric_ambient, "volumetric_ambient", {.min = 0, .max = 16, .speed = 0.01f, .tooltip = "Sky light scattered by the fog"})
             .field(&E::volumetric_local_lights, "volumetric_local_lights", {.min = 0, .max = 16, .speed = 0.01f, .tooltip = "Point and spot light scattered by the fog"})
             .field(&E::volumetric_temporal, "volumetric_temporal", {.min = 0, .max = 0.98f, .speed = 0.01f, .tooltip = "Blend with previous frames: smoother but slower to react"})
+            .field(&E::clouds, "clouds", {.label = "Volumetric Clouds", .tooltip = "Ray-marched cloud layer lit by the sun (off on the Low quality tier)"})
+            .field(&E::cloud_coverage, "cloud_coverage", {.min = 0, .max = 1, .speed = 0.005f, .tooltip = "0 clear sky .. 1 overcast"})
+            .field(&E::cloud_density, "cloud_density", {.min = 0, .max = 1, .speed = 0.001f, .tooltip = "Extinction per metre inside dense cloud (thicker, darker clouds)"})
+            .field(&E::cloud_bottom, "cloud_bottom", {.min = -10000, .max = 20000, .speed = 10.0f, .tooltip = "World height of the cloud base (m)"})
+            .field(&E::cloud_thickness, "cloud_thickness", {.min = 10, .max = 20000, .speed = 10.0f, .tooltip = "Depth of the cloud layer (m)"})
+            .field(&E::cloud_size, "cloud_size", {.min = 10, .max = 100000, .speed = 10.0f, .tooltip = "Size of the cloud shapes (m)"})
+            .field(&E::cloud_detail, "cloud_detail", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Erodes cloud edges into wisps"})
+            .field(&E::cloud_wind, "cloud_wind", {.tooltip = "Cloud drift in metres per second"})
+            .field(&E::cloud_anisotropy, "cloud_anisotropy", {.min = 0, .max = 0.95f, .speed = 0.01f, .tooltip = "Bright silver lining when looking towards the sun"})
+            .field(&E::cloud_sun, "cloud_sun", {.min = 0, .max = 16, .speed = 0.01f, .tooltip = "Sun light scattered by the clouds"})
+            .field(&E::cloud_ambient, "cloud_ambient", {.min = 0, .max = 16, .speed = 0.01f, .tooltip = "Sky light scattered by the clouds"})
+            .field(&E::cloud_distance, "cloud_distance", {.min = 100, .max = 200000, .speed = 100.0f, .tooltip = "Metres of view ray covered; the layer fades out towards it"})
             .commit();
         using FV = FogVolumeComponent;
         scene::Schema<FV>("FogVolume", "Rendering")
