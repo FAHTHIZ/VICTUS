@@ -35,6 +35,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <filesystem>
 #include <format>
 #include <optional>
 #include <thread>
@@ -470,6 +472,9 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         }
         stream_world();
         (*view)->renderer().set_frame_time(dt);
+        // Surface-shader time follows game time, not the wall clock: animated materials pause
+        // with the game and fixed-frame runs render the same pixels every time (ADR-0102).
+        (*view)->renderer().set_time(sim.time().time);
 
         auto cmd = dev.begin_commands();
         std::uint32_t sw = 0, sh = 0;
@@ -518,21 +523,34 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         cmd.blit(frame, swap);
         ++report.frames;
         const bool last_frame = o.max_frames && report.frames >= o.max_frames;
-        if (!last_frame) {
+        // Frame sequence for perceptual comparison (ADR-0102): every capture_every-th frame of a
+        // fixed-step run, so two runs of the same project write comparable sequences.
+        const bool capture = !o.capture_dir.empty() && o.max_frames && report.frames % std::max<std::uint32_t>(o.capture_every, 1) == 0;
+        if (!last_frame && !capture) {
             cmd.submit();
             continue;
         }
         cmd.submit_and_wait();
-        if (!o.screenshot.empty()) {
+        const auto save_frame = [&](const fs::Path& png) -> Status {
             auto px = dev.read_texture(frame);
-            if (!px) {
-                result = std::move(px).error();
-            } else {
-                render::Image img{fw, fh, std::move(px).value()};
-                for (std::size_t i = 3; i < img.pixels.size(); i += 4) img.pixels[i] = 255;
-                result = render::save_png(o.screenshot, img);
+            if (!px) return std::move(px).error();
+            render::Image img{fw, fh, std::move(px).value()};
+            for (std::size_t i = 3; i < img.pixels.size(); i += 4) img.pixels[i] = 255;
+            return render::save_png(png, img);
+        };
+        if (capture) {
+            std::error_code dir_ec;
+            std::filesystem::create_directories(o.capture_dir, dir_ec);
+            char name[32];
+            std::snprintf(name, sizeof name, "frame_%05llu.png", static_cast<unsigned long long>(report.frames));
+            if (auto st = save_frame(o.capture_dir / name); !st) {
+                result = std::move(st);
+                break;
             }
+            ++report.frames_captured;
         }
+        if (!last_frame) continue;
+        if (!o.screenshot.empty()) result = save_frame(o.screenshot);
         break;
     }
     report.assets_streamed = cache.async_stats().uploaded;

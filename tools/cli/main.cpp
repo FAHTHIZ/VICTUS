@@ -7,6 +7,10 @@
 #include "victus/core/cli.hpp"
 #include "victus/core/crash.hpp"
 #include "victus/core/log.hpp"
+#include "victus/core/json.hpp"
+#include "victus/core/fs.hpp"
+#include "victus/render/image.hpp"
+#include "victus/render/image_compare.hpp"
 #include "victus/gameplay/capture.hpp"
 #include "victus/core/hash.hpp"
 #include "victus/gameplay/gameplay.hpp"
@@ -40,6 +44,8 @@
 #include <deque>
 #include <mutex>
 #include <chrono>
+#include <cmath>
+#include <format>
 #include <csignal>
 #include <filesystem>
 #include <memory>
@@ -86,6 +92,7 @@ constexpr const char* kUsage =
     "        [--password P] [--key FILE] [--insecure]              ...encrypted by default; prints its public key\n"
     "  debug-adapter                                              Debug Adapter Protocol server on stdio (script debugging)\n"
     "  migrate <project> [--write]                                upgrade files written by an older VICTUS (keeps originals)\n"
+    "  compare <reference> <test> [--heatmap PNG] [--json F] [--max-flip X] ...  perceptual image/sequence diff (FLIP, SSIM)\n"
     "  check <project>                                            validate scenes and script syntax\n"
     "  plugins <project> [--load] [--new NAME]                    list, load or create native plugins\n"
     "  export <project> --out DIR [--name EXE] [--player PATH]    package a runnable game folder\n"
@@ -187,6 +194,8 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("scene", "project-relative scene (default: startup scene)")
         .option("frames", "exit after N frames (deterministic 1/60 s steps)", "0")
         .option("screenshot", "write the last frame to this PNG (with --frames)")
+        .option("capture-dir", "write frames to DIR/frame_NNNNN.png for `victus compare` (with --frames)")
+        .option("capture-every", "with --capture-dir: write every Nth frame", "1")
         .option("width", "window width (default: project setting)", "0")
         .option("height", "window height (default: project setting)", "0")
         .option("quality", "rendering quality: low, medium, high or ultra (default: project setting)")
@@ -232,6 +241,9 @@ int cmd_run(const std::vector<std::string>& a) {
     o.scene = p.get("scene");
     o.max_frames = static_cast<std::uint64_t>(p.get_number("frames", 0));
     o.screenshot = p.get("screenshot");
+    o.capture_dir = p.get("capture-dir");
+    o.capture_every = static_cast<std::uint32_t>(std::max(1.0, p.get_number("capture-every", 1)));
+    if (!o.capture_dir.empty() && !o.max_frames) return error("--capture-dir needs --frames");
     o.width = static_cast<int>(p.get_number("width", 0));
     o.height = static_cast<int>(p.get_number("height", 0));
     o.fullscreen = p.has("fullscreen");
@@ -245,6 +257,8 @@ int cmd_run(const std::vector<std::string>& a) {
                 static_cast<unsigned long long>(r->frames), r->seconds, r->backend.c_str(), r->quality.c_str(),
                 static_cast<unsigned long long>(r->script_errors));
     if (!r->net_status.empty()) std::printf("net: %s\n", r->net_status.c_str());
+    if (r->frames_captured)
+        std::printf("captured %llu frames to %s\n", static_cast<unsigned long long>(r->frames_captured), o.capture_dir.string().c_str());
     if (r->assets_streamed) std::printf("assets: %llu streamed in the background\n", static_cast<unsigned long long>(r->assets_streamed));
     if (r->assets_reloaded) std::printf("hot reload: %zu assets reloaded\n", r->assets_reloaded);
     if (r->world_cell_loads)
@@ -708,6 +722,123 @@ int cmd_migrate(const std::vector<std::string>& a) {
                 scan->failures());
     if (scan->failures()) return 1;
     return scan->pending() ? 3 : 0;
+}
+
+// Loads one PNG, or every *.png of a folder in name order (a captured frame sequence).
+Result<std::vector<std::pair<std::string, render::Image>>> load_frames(const fs::Path& path) {
+    std::vector<fs::Path> files;
+    std::error_code ec;
+    if (std::filesystem::is_directory(path, ec)) {
+        for (const auto& e : std::filesystem::directory_iterator(path, ec))
+            if (e.is_regular_file() && e.path().extension() == ".png") files.push_back(e.path());
+        std::sort(files.begin(), files.end());
+        if (files.empty()) return make_error(ErrorCode::NotFound, "no .png files in " + path.string());
+    } else {
+        files.push_back(path);
+    }
+    std::vector<std::pair<std::string, render::Image>> out;
+    for (const auto& f : files) {
+        auto img = render::load_image(f);
+        if (!img) return make_error(img.error().code, f.string() + ": " + img.error().message);
+        out.emplace_back(f.filename().string(), std::move(img).value());
+    }
+    return out;
+}
+
+int cmd_compare(const std::vector<std::string>& a) {
+    cli::Parser p("victus compare",
+                  "Compare a rendered image or frame sequence with a reference (FLIP, SSIM, worst tile, temporal)");
+    p.positional("reference", "reference PNG, or folder of frame PNGs", true)
+        .positional("test", "test PNG, or folder with the same frame names", true)
+        .option("heatmap", "write the FLIP error map (magma) of the worst frame to this PNG")
+        .option("json", "write all metrics as JSON to this file")
+        .option("ppd", "viewing condition in pixels per degree (default: FLIP's 67, 0.7 m from a 4K 0.7 m monitor)", "0")
+        .option("tile", "pooling tile size in pixels", "64")
+        .option("max-flip", "fail (exit 4) if a frame's mean FLIP is above this")
+        .option("max-tile-flip", "fail if any tile's mean FLIP is above this")
+        .option("min-ssim", "fail if a frame's SSIM is below this")
+        .option("min-tile-ssim", "fail if any tile's SSIM is below this")
+        .option("max-temporal", "fail if the frame-to-frame change differs from the reference's by more than this");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message + "\n" + p.help());
+    auto ref = load_frames(p.get("reference"));
+    if (!ref) return error(ref.error().message);
+    auto test = load_frames(p.get("test"));
+    if (!test) return error(test.error().message);
+    if (ref->size() != test->size()) return error(std::format("reference has {} frames, test has {}", ref->size(), test->size()));
+    std::vector<render::Image> ri, ti;
+    for (std::size_t i = 0; i < ref->size(); ++i) {
+        if (ref->size() > 1 && (*ref)[i].first != (*test)[i].first)
+            return error("frame names differ: " + (*ref)[i].first + " vs " + (*test)[i].first);
+        ri.push_back(std::move((*ref)[i].second));
+        ti.push_back(std::move((*test)[i].second));
+    }
+    render::CompareOptions co;
+    co.pixels_per_degree = static_cast<float>(p.get_number("ppd", 0));
+    co.tile = static_cast<std::uint32_t>(std::max(8.0, p.get_number("tile", 64)));
+    co.keep_maps = p.has("heatmap");
+    auto r = render::compare_sequences(ri, ti, co);
+    if (!r) return error(r.error().message);
+    for (std::size_t i = 0; i < r->frames.size(); ++i) {
+        const auto& f = r->frames[i];
+        std::printf("%s: FLIP mean %.4f p95 %.4f max %.4f worst tile %.4f at %u,%u %ux%u | SSIM %.4f worst tile %.4f | PSNR %.2f dB | visible %.2f%%\n",
+                    (*ref)[i].first.c_str(), f.flip_mean, f.flip_p95, f.flip_max, f.flip_worst_tile, f.worst_tile_x, f.worst_tile_y,
+                    f.worst_tile_w, f.worst_tile_h, f.ssim, f.ssim_worst_tile, f.psnr, 100.0 * f.visible_fraction);
+    }
+    if (r->frames.size() > 1)
+        std::printf("sequence: %zu frames, FLIP mean %.4f, worst frame %s (%.4f), worst tile %.4f, temporal error %.5f (at %s)\n",
+                    r->frames.size(), r->flip_mean, (*ref)[r->worst_frame].first.c_str(), r->flip_worst_frame, r->flip_worst_tile,
+                    r->temporal_error, (*ref)[r->temporal_worst_frame].first.c_str());
+    if (p.has("heatmap")) {
+        if (auto st = render::save_png(p.get("heatmap"), render::flip_heatmap(r->frames[r->worst_frame])); !st)
+            return error(st.error().message);
+    }
+    render::CompareLimits lim;
+    const auto limit = [&](const char* name, double& out) {
+        if (p.has(name)) out = p.get_number(name, -1);
+    };
+    limit("max-flip", lim.max_flip_mean);
+    limit("max-tile-flip", lim.max_flip_tile);
+    limit("min-ssim", lim.min_ssim);
+    limit("min-tile-ssim", lim.min_ssim_tile);
+    limit("max-temporal", lim.max_temporal);
+    const auto failures = render::check_limits(*r, lim);
+    if (p.has("json")) {
+        auto root = json::Value::object();
+        auto frames = json::Value::array();
+        for (std::size_t i = 0; i < r->frames.size(); ++i) {
+            const auto& f = r->frames[i];
+            auto o = json::Value::object();
+            o.set("name", (*ref)[i].first);
+            o.set("flip_mean", f.flip_mean);
+            o.set("flip_p95", f.flip_p95);
+            o.set("flip_max", f.flip_max);
+            o.set("flip_worst_tile", f.flip_worst_tile);
+            auto rect = json::Value::array();
+            for (const auto v : {f.worst_tile_x, f.worst_tile_y, f.worst_tile_w, f.worst_tile_h}) rect.push(static_cast<double>(v));
+            o.set("worst_tile_rect", std::move(rect));
+            o.set("ssim", f.ssim);
+            o.set("ssim_worst_tile", f.ssim_worst_tile);
+            o.set("psnr", std::isinf(f.psnr) ? 999.0 : f.psnr);
+            o.set("visible_fraction", f.visible_fraction);
+            frames.push(std::move(o));
+        }
+        root.set("frames", std::move(frames));
+        root.set("flip_mean", r->flip_mean);
+        root.set("flip_worst_frame", r->flip_worst_frame);
+        root.set("flip_worst_tile", r->flip_worst_tile);
+        root.set("ssim_worst_tile", r->ssim_worst_tile);
+        root.set("temporal_error", r->temporal_error);
+        root.set("pixels_per_degree", static_cast<double>(co.pixels_per_degree > 0 ? co.pixels_per_degree
+                                                                                       : render::pixels_per_degree(0.7f, 3840.0f, 0.7f)));
+        auto fails = json::Value::array();
+        for (const auto& f : failures) fails.push(f);
+        root.set("failures", std::move(fails));
+        root.set("pass", failures.empty());
+        if (auto st = fs::write_text_atomic(p.get("json"), json::stringify(root, true)); !st) return error(st.error().message);
+    }
+    for (const auto& f : failures) std::fprintf(stderr, "victus compare: outside tolerance: %s\n", f.c_str());
+    return failures.empty() ? 0 : 4;
 }
 
 int cmd_export(const std::vector<std::string>& a) {
@@ -1258,6 +1389,7 @@ int main(int argc, char** argv) {
     if (cmd == "debug-adapter") return cmd_debug_adapter(args);
     if (cmd == "check") return cmd_check(args);
     if (cmd == "migrate") return cmd_migrate(args);
+    if (cmd == "compare") return cmd_compare(args);
     if (cmd == "plugins") return cmd_plugins(args);
     if (cmd == "export") return cmd_export(args);
     if (cmd == "diagnose") return cmd_diagnose(args);

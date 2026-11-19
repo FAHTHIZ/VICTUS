@@ -39,6 +39,7 @@ victus_add_notice("SPIRV-Cross vulkan-sdk-1.4.363.0 (Apache-2.0)" "${spirv_cross
 victus_add_notice("bc7enc_rdo b9438627 (MIT, alternatively public domain)" "${bc7enc_rdo_SOURCE_DIR}/LICENSE")
 victus_add_notice("Arm ASTC Encoder 5.7.1 (Apache-2.0)" "${astcenc_SOURCE_DIR}/LICENSE.txt")
 victus_add_notice("meshoptimizer 1.3 (MIT)" "${meshoptimizer_SOURCE_DIR}/LICENSE.md")
+victus_add_notice("NVIDIA FLIP d3ab02a (BSD-3-Clause)" "${PROJECT_SOURCE_DIR}/third_party/flip/LICENSE")
 if(ANDROID)
     # Android apps also ship SDL's Java glue (compiled into classes.dex, zlib like the rest of SDL,
     # covered above) and the NDK's libc++_shared.so.
