@@ -302,8 +302,12 @@ struct GameRulesComponent {
     // Interact. Only once per play session (not after a restart or on the next level).
     std::string title;
     std::string start_prompt;     // empty = "Press Space to start"
+    // The best score is saved on the player's computer and shown next to the score.
+    bool keep_best_score{true};
     // runtime
     bool showing_title{false};
+    float best_score{0};
+    bool best_recorded{false};    // this round's score was compared with the best
     float score{0};
     std::uint32_t lives_left{0};
     float elapsed{0};
