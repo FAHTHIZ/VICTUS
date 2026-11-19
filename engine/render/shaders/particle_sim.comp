@@ -5,6 +5,10 @@
 //                    pre-age (the part of the frame after its birth); marks it born this frame.
 //   mode 1 (update): thread i integrates slot i over the frame (unless born this frame), bounces
 //                    it off the scene depth when collision is on, and writes its billboard.
+// Trails (ADR-0110, trail_meta.x = points per slot > 0): both modes record the particle's position
+// into its ring of trail points once it moved trail.y metres and expire points older than trail.x
+// seconds (particles.cpp record_trail); mode 1 also writes the slot's ribbon strip, two edge
+// vertices per point from tail to head plus the live head, in ribbon.vert's vertex layout.
 // Integration, turbulence and billboard rules mirror particles::gpu_integrate/gpu_billboard.
 // Bindings follow SDL_GPU compute conventions (Vulkan: set 0 sampled textures then read-only
 // storage, set 1 read-write storage, set 2 uniforms; Metal: [[buffer]] uniforms first, then
@@ -28,10 +32,14 @@ layout(set = 0, binding = 0) uniform sampler2D u_depth;
 layout(std430, set = 0, binding = 1) readonly buffer Spawns { Particle spawns[]; };
 layout(std430, set = 1, binding = 2) buffer State { Particle state[]; };
 layout(std430, set = 1, binding = 3) buffer Instances { Instance instances[]; };
+layout(std430, set = 1, binding = 4) buffer Trail { vec4 trail[]; };
+layout(std430, set = 1, binding = 5) buffer Ribbon { Instance ribbon[]; };
 #else
 layout(std430, set = 0, binding = 1) readonly buffer Spawns { Particle spawns[]; };
 layout(std430, set = 1, binding = 0) buffer State { Particle state[]; };
 layout(std430, set = 1, binding = 1) buffer Instances { Instance instances[]; };
+layout(std430, set = 1, binding = 2) buffer Trail { vec4 trail[]; };   // xyz simulation-space position, w age
+layout(std430, set = 1, binding = 3) buffer Ribbon { Instance ribbon[]; }; // (points + 1) * 2 vertices per slot
 #endif
 layout(std140, set = 2, binding = 0) uniform Params {
     mat4 view_proj;     // jittered camera view-projection (collision)
@@ -44,10 +52,12 @@ layout(std140, set = 2, binding = 0) uniform Params {
     vec4 color_start;
     vec4 color_end;
     vec4 flip;          // x columns, y rows, z frames used, w fps
-    vec4 collide;       // x bounce, y friction, z thickness (m)
+    vec4 collide;       // x bounce, y friction, z thickness (m), w trail alpha at the tail (fraction)
     vec4 eye_dt;        // xyz camera position, w frame dt
     vec4 screen;        // xy depth size, z/w linear depth = z / (depth + w)
-    uvec4 meta;         // x mode, y count, z frame serial, w flags (1 world space, 2 collision, 4 flipbook, 8 stretch)
+    uvec4 meta;         // x mode, y count, z frame serial, w flags (1 world space, 2 collision, 4 flipbook, 8 stretch, 16 textured)
+    vec4 trail;         // x lifetime (s), y min distance (m), z width at the head (x size), w width at the tail (fraction)
+    uvec4 trail_meta;   // x points per slot (0 = no trails)
 } u;
 
 const float kPi = 3.14159265358979;
@@ -185,6 +195,76 @@ Instance billboard(Particle p) {
     return o;
 }
 
+// Ring of trail points per slot: meta.y = recorded count, meta.z = index of the oldest, meta.w =
+// points per slot it was recorded with (a different value restarts the history, like the CPU path).
+void record_trail(inout Particle p, uint slot) {
+    uint cap = u.trail_meta.x;
+    if (cap == 0u) return;
+    if (p.meta.w != cap) p.meta.yzw = uvec3(0u, 0u, cap);
+    uint base = slot * cap, count = p.meta.y, start = p.meta.z;
+    if (count == 0u || length(p.pos_age.xyz - trail[base + (start + count - 1u) % cap].xyz) >= u.trail.y) {
+        if (count == cap) {
+            start = (start + 1u) % cap;
+            --count;
+        }
+        trail[base + (start + count) % cap] = p.pos_age;
+        ++count;
+    }
+    while (count > 0u && p.pos_age.w - trail[base + start].w > u.trail.x) {
+        start = (start + 1u) % cap;
+        --count;
+    }
+    p.meta.y = count;
+    p.meta.z = start;
+}
+
+// Point k of the strip (0 = tail), simulation space with its age; k == count is the live head.
+vec4 strip_point(Particle p, uint base, uint k) {
+    if (k >= p.meta.y) return p.pos_age;
+    return trail[base + (p.meta.z + k) % u.trail_meta.x];
+}
+
+void write_ribbon(Particle p, uint slot, Instance head) {
+    uint cap = u.trail_meta.x;
+    uint base = slot * cap, out_base = slot * (cap + 1u) * 2u;
+    bool alive = p.pos_age.w < p.vel_life.w && head.pos_size.w > 0.0;
+    uint count = alive && p.meta.w == cap ? p.meta.y : 0u;
+    // The newest recorded point may be the current position (just recorded); skip duplicates.
+    uint n = count;
+    if (alive && (count == 0u || length(p.pos_age.xyz - strip_point(p, base, count - 1u).xyz) > 1e-6)) ++n;
+    if (n < 2u) n = 0u;
+    bool world_space = (u.meta.w & 1u) != 0u;
+    bool textured = (u.meta.w & 16u) != 0u;
+    vec3 last = vec3(0.0);
+    for (uint k = 0u; k <= cap; ++k) {
+        Instance a, b;
+        if (k < n) {
+            vec4 q = strip_point(p, base, k);
+            vec3 pos = world_space ? q.xyz : (u.world * vec4(q.xyz, 1.0)).xyz;
+            vec3 prev = strip_point(p, base, k > 0u ? k - 1u : 0u).xyz, next = strip_point(p, base, min(k + 1u, n - 1u)).xyz;
+            vec3 d = world_space ? next - prev : (u.world * vec4(next - prev, 0.0)).xyz;
+            float len = length(d);
+            vec3 tangent = len > 1e-8 ? d / len : vec3(0.0, 1.0, 0.0);
+            float v = clamp((p.pos_age.w - q.w) / u.trail.x, 0.0, 1.0);
+            float half_width = 0.5 * max(0.0, head.pos_size.w * max(0.0, u.trail.z) * mix(1.0, max(0.0, u.trail.w), v));
+            vec4 col = vec4(head.color.rgb, head.color.a * mix(1.0, clamp(u.collide.w, 0.0, 1.0), v));
+            float tv = textured ? v : 0.5;
+            a.pos_size = vec4(pos, -half_width);
+            b.pos_size = vec4(pos, half_width);
+            a.color = b.color = col;
+            a.params = b.params = vec4(tangent, tv);
+            last = pos;
+        } else {
+            // Unused points collapse onto the last one with zero width: zero-area triangles.
+            a.pos_size = b.pos_size = vec4(last, 0.0);
+            a.color = b.color = vec4(0.0);
+            a.params = b.params = vec4(0.0, 1.0, 0.0, 0.0);
+        }
+        ribbon[out_base + k * 2u] = a;
+        ribbon[out_base + k * 2u + 1u] = b;
+    }
+}
+
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= u.meta.y) return;
@@ -196,7 +276,9 @@ void main() {
         Particle p = s;
         p.pos_age.w = 0.0;
         p.meta = uvec4(u.meta.z, 0u, 0u, 0u);
+        record_trail(p, slot); // birth point, as the CPU path records it
         integrate(p, pre_age, u.turb.w - u.turb.z * pre_age);
+        if (pre_age > 0.0) record_trail(p, slot);
         state[slot] = p;
         return;
     }
@@ -204,7 +286,10 @@ void main() {
     if (dt > 0.0 && p.pos_age.w < p.vel_life.w && p.meta.x != u.meta.z) {
         integrate(p, dt, u.turb.w - u.turb.z * dt);
         if ((u.meta.w & 2u) != 0u && p.pos_age.w < p.vel_life.w) collide(p);
+        if (p.pos_age.w < p.vel_life.w) record_trail(p, i);
         state[i] = p;
     }
-    instances[i] = billboard(p);
+    Instance head = billboard(p);
+    instances[i] = head;
+    if (u.trail_meta.x > 0u) write_ribbon(p, i, head);
 }

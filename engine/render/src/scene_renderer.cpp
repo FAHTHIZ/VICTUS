@@ -938,13 +938,37 @@ bool SceneRenderer::ensure_gpu_particle_pipeline() {
 
 void SceneRenderer::destroy_gpu_particle_state(GpuParticleState& s) {
     auto& d = ctx_.device();
-    for (rhi::BufferHandle* b : {&s.state, &s.instances, &s.spawns, &s.pairs, &s.sorted})
+    for (rhi::BufferHandle* b : {&s.state, &s.instances, &s.spawns, &s.pairs, &s.sorted, &s.trail, &s.ribbon, &s.ribbon_index})
         if (*b) {
             d.destroy(*b);
             *b = {};
         }
-    s.capacity = s.spawn_capacity = s.sort_size = 0;
+    s.capacity = s.spawn_capacity = s.sort_size = s.trail_points = 0;
     s.sorted_last = false;
+}
+
+std::uint32_t SceneRenderer::gpu_trail_points(std::uint32_t capacity, std::uint32_t requested) noexcept {
+    if (requested == 0 || capacity == 0) return 0;
+    const std::uint32_t fit = kMaxGpuTrailSegments / capacity;
+    const std::uint32_t points = std::min(std::clamp<std::uint32_t>(requested, 2, 64), fit);
+    return points >= 2 ? points : 0;
+}
+
+std::uint32_t SceneRenderer::gpu_particle_trail_points(std::uint64_t key) const {
+    const auto it = gpu_particle_states_.find(key);
+    return it == gpu_particle_states_.end() ? 0 : it->second.trail_points;
+}
+
+Result<std::vector<ParticleInstance>> SceneRenderer::read_gpu_particle_trails(std::uint64_t key) {
+    std::vector<ParticleInstance> out;
+    const auto it = gpu_particle_states_.find(key);
+    if (it == gpu_particle_states_.end() || !it->second.ribbon || it->second.trail_points == 0) return out;
+    const GpuParticleState& st = it->second;
+    auto bytes = ctx_.device().read_buffer(st.ribbon, 0, st.capacity * (st.trail_points + 1) * 2 * static_cast<std::uint32_t>(sizeof(ParticleInstance)));
+    if (!bytes) return std::move(bytes).error();
+    out.resize(bytes.value().size() / sizeof(ParticleInstance));
+    std::memcpy(out.data(), bytes.value().data(), out.size() * sizeof(ParticleInstance));
+    return out;
 }
 
 void SceneRenderer::submit_gpu_particles(const GpuParticleEmitter& emitter) {
@@ -1929,8 +1953,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         Mat4 view_proj, inv_view_proj, world, view;
         Vec4 gravity_drag, turb, size, color_start, color_end, flip, collide, eye_dt, screen;
         std::array<std::uint32_t, 4> meta;
+        Vec4 trail;
+        std::array<std::uint32_t, 4> trail_meta;
     };
-    static_assert(sizeof(ParticleSimUniforms) == 416);
+    static_assert(sizeof(ParticleSimUniforms) == 448);
     struct GpuParticleJob {
         const GpuParticleState* state;
         std::uint32_t spawns;
@@ -1967,11 +1993,54 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 st.capacity = e.capacity;
                 st.instance = e.instance + 1; // force the reset below
             }
+            // Trails (ADR-0110): point rings and ribbon vertices sized for this capacity; emitters
+            // without trails bind one-element buffers (the shader declares them either way).
+            const std::uint32_t trail_points = gpu_trail_points(e.capacity, e.params.trail_points);
+            if (e.params.trail_points > 0) {
+                ++stats_.gpu_particle_trail_emitters;
+                if (trail_points < std::clamp<std::uint32_t>(e.params.trail_points, 2, 64)) ++stats_.gpu_particle_trails_reduced;
+            }
+            if (!st.trail || st.trail_points != trail_points) {
+                for (rhi::BufferHandle* h : {&st.trail, &st.ribbon, &st.ribbon_index})
+                    if (*h) {
+                        dev.destroy(*h);
+                        *h = {};
+                    }
+                st.trail_points = trail_points;
+                const std::uint32_t slots = trail_points > 0 ? e.capacity : 1;
+                auto tb = dev.create_buffer({"gpu_particle_trail", slots * std::max(trail_points, 1u) * 16u, rhi::BufferUsageStorageWrite});
+                if (!tb) return std::move(tb).error();
+                st.trail = tb.value();
+                const std::uint32_t ribbon_bytes = slots * (trail_points + 1) * 2 * static_cast<std::uint32_t>(sizeof(ParticleInstance));
+                auto rb = dev.create_buffer({"gpu_particle_ribbon", ribbon_bytes, rhi::BufferUsageStorageWrite | rhi::BufferUsageVertex});
+                if (!rb) return std::move(rb).error();
+                st.ribbon = rb.value();
+                const std::vector<std::uint8_t> zeros(ribbon_bytes, 0);
+                cmd.upload_buffer(st.ribbon, 0, zeros, false);
+                if (trail_points > 0) {
+                    // Two triangles per segment between the edge pairs of consecutive points.
+                    std::vector<std::uint32_t> idx;
+                    idx.reserve(static_cast<std::size_t>(e.capacity) * trail_points * 6);
+                    for (std::uint32_t slot = 0; slot < e.capacity; ++slot)
+                        for (std::uint32_t k = 0; k < trail_points; ++k) {
+                            const std::uint32_t a0 = (slot * (trail_points + 1) + k) * 2, a1 = a0 + 1, b0 = a0 + 2, b1 = a0 + 3;
+                            idx.insert(idx.end(), {a0, a1, b1, a0, b1, b0});
+                        }
+                    auto ix = dev.create_buffer({"gpu_particle_ribbon_index", static_cast<std::uint32_t>(idx.size() * 4), rhi::BufferUsageIndex});
+                    if (!ix) return std::move(ix).error();
+                    st.ribbon_index = ix.value();
+                    cmd.upload_buffer(st.ribbon_index, 0, {reinterpret_cast<const std::uint8_t*>(idx.data()), idx.size() * 4}, false);
+                }
+            }
             const bool fresh = st.instance != e.instance || st.generation != e.generation || e.time < st.time;
             if (fresh && !capture_mode_) {
                 const std::vector<std::uint8_t> zeros(bytes, 0);
                 cmd.upload_buffer(st.state, 0, zeros, false);
                 cmd.upload_buffer(st.instances, 0, {zeros.data(), e.capacity * sizeof(ParticleInstance)}, false);
+                if (st.trail_points > 0) {
+                    const std::vector<std::uint8_t> ribbon_zeros(static_cast<std::size_t>(e.capacity) * (st.trail_points + 1) * 2 * sizeof(ParticleInstance), 0);
+                    cmd.upload_buffer(st.ribbon, 0, ribbon_zeros, false);
+                }
                 st.instance = e.instance;
                 st.generation = e.generation;
                 st.time = e.time;
@@ -2030,12 +2099,30 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 if (g.collide && g.world_space) flags |= 2u;
                 if (g.flipbook.x * g.flipbook.y > 1.0f) flags |= 4u;
                 if (g.size.w > 0.0f) flags |= 8u;
+                if (e.material.texture) flags |= 16u;
                 u.meta = {0u, 0u, st.serial, flags};
+                const auto fin = [](float x) { return std::isfinite(x) ? x : 0.0f; };
+                u.collide.w = std::clamp(fin(g.trail_alpha_end), 0.0f, 1.0f);
+                u.trail = {std::max(1e-4f, fin(g.trail.x)), std::max(0.0f, fin(g.trail.y)), std::max(0.0f, fin(g.trail.z)), std::max(0.0f, fin(g.trail.w))};
+                u.trail_meta = {st.trail_points, 0u, 0u, 0u};
                 gpu_jobs.push_back(job);
             }
             ++stats_.gpu_particle_emitters;
             st.sorted_last = false;
             if (e.alive > 0 && st.state && st.generation == e.generation && st.instance == e.instance && e.bounds.valid() && frustum.intersects(e.bounds)) {
+                if (st.trail_points > 0) {
+                    // Trails first, so alpha heads blend over the ribbons they lead.
+                    ParticleBatch t{e.material, 0, e.capacity * st.trail_points * 6, e.bounds, 0.0f};
+                    t.ribbon = true;
+                    t.buffer = st.ribbon;
+                    t.index = st.ribbon_index;
+                    gpu_batches.push_back(t);
+                    stats_.gpu_particle_trail_vertices += e.capacity * (st.trail_points + 1) * 2;
+                }
+                if (st.trail_points > 0 && !e.params.trail_billboards) {
+                    stats_.gpu_particles += e.alive;
+                    continue; // trails only
+                }
                 ParticleBatch b{e.material, 0, e.capacity, e.bounds, 0.0f};
                 b.buffer = st.instances;
                 // Alpha blending depends on order: sort the drawn slots back to front on the GPU
@@ -2955,7 +3042,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             [&](PassContext& ctx) {
                 for (const GpuParticleJob& job : gpu_jobs) {
                     const GpuParticleState& st = *job.state;
-                    const rhi::BufferHandle rw_buffers[] = {st.state, st.instances};
+                    const rhi::BufferHandle rw_buffers[] = {st.state, st.instances, st.trail, st.ribbon};
                     // Spawn, then update in a second compute pass so it sees the spawned slots.
                     for (std::uint32_t mode = job.spawns > 0 ? 0u : 1u; mode < 2; ++mode) {
                         rhi::ComputePass cp = ctx.cmd.begin_compute_pass(rw_buffers);
@@ -3034,7 +3121,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     pass.bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(depth), ctx_.nearest_clamp());
                     if (b.buffer) pass.bind_vertex_buffer(0, b.buffer);
                     else pass.bind_vertex_buffer(0, particle_buffer_, b.offset * static_cast<std::uint32_t>(sizeof(ParticleInstance)));
-                    if (b.ribbon) pass.draw(b.count, 1);
+                    if (b.index) {
+                        pass.bind_index_buffer(b.index, rhi::IndexType::U32);
+                        pass.draw_indexed(b.count, 1);
+                    } else if (b.ribbon) pass.draw(b.count, 1);
                     else pass.draw(6, b.count);
                 }
             });
@@ -3448,6 +3538,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     facts_.gpu_emitters_simulated = stats_.gpu_particle_emitters;
     facts_.gpu_particles = stats_.gpu_particles;
     facts_.gpu_emitters_sorted = stats_.gpu_particle_sorted_emitters;
+    facts_.gpu_emitters_trailed = stats_.gpu_particle_trail_emitters;
+    facts_.gpu_trails_reduced = stats_.gpu_particle_trails_reduced;
     facts_.probes_requested = probe_requests_;
     facts_.probes_unbaked = probe_unbaked_;
     facts_.probes_over_budget = probe_over_budget_;

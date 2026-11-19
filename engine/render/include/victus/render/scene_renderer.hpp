@@ -170,6 +170,12 @@ struct GpuParticleParams {
     math::Vec4 collision;                     // x bounce, y friction, z thickness (m)
     bool world_space{true};
     bool collide{false};                      // bounce off the scene depth (world-space emitters only)
+    // Trails (ADR-0110): each slot keeps a ring of `trail_points` positions recorded on the GPU and
+    // is drawn as a camera-facing ribbon (ribbon.vert) behind its particle. 0 = no trails.
+    std::uint32_t trail_points{0};            // 2..64 requested; reduced to fit kMaxGpuTrailSegments
+    math::Vec4 trail;                         // x lifetime (s), y min distance (m), z head width (x size), w tail width (fraction)
+    float trail_alpha_end{0};                 // tail alpha as a fraction of the particle's
+    bool trail_billboards{true};              // also draw the particles themselves
 };
 struct GpuParticleEmitter {
     std::uint64_t key{0};        // stable per emitter; selects the renderer's GPU state
@@ -500,6 +506,9 @@ struct SceneStats {
     std::uint32_t gpu_particle_emitters{0}, gpu_particles{0}, gpu_particle_spawns{0};
     // Alpha-blended GPU emitters drawn back to front this frame, and the compute passes it took.
     std::uint32_t gpu_particle_sorted_emitters{0}, gpu_particle_sort_passes{0};
+    // GPU emitters drawn with trails (ADR-0110), their ribbon vertices (two per trail point slot,
+    // including collapsed unused ones) and trailed emitters whose points were reduced to fit.
+    std::uint32_t gpu_particle_trail_emitters{0}, gpu_particle_trail_vertices{0}, gpu_particle_trails_reduced{0};
     std::uint32_t lod_draws{0};        // visible draws using a coarser level than LOD 0
     std::uint32_t lod_held{0};         // draws kept finer than the stateless pick by lod_hysteresis
     std::uint64_t triangles{0};        // triangles in the main and transparent passes (all instances)
@@ -582,12 +591,23 @@ public:
     // simulated (also when off screen, so its state keeps up with the CPU schedule); visible ones
     // are drawn with the other particle batches. Not simulated in capture mode.
     static constexpr std::uint32_t kMaxGpuParticles = 1u << 20;
+    // Trail segments one GPU emitter may keep (slots x points per slot); larger emitters get fewer
+    // points per particle, and none when fewer than two fit (ADR-0110).
+    static constexpr std::uint32_t kMaxGpuTrailSegments = 1u << 18;
+    // Trail points per slot the renderer uses for `capacity` slots asking for `requested` (0 = off).
+    [[nodiscard]] static std::uint32_t gpu_trail_points(std::uint32_t capacity, std::uint32_t requested) noexcept;
     void submit_gpu_particles(const GpuParticleEmitter& emitter);
     // GPU state of an emitter after the last render (synchronous readback; tests and tooling).
     [[nodiscard]] Result<std::vector<GpuParticleSpawn>> read_gpu_particles(std::uint64_t key);
     // The instances of an emitter in the order the last render drew them: back to front for
     // alpha-blended emitters (ADR-0107), slot order otherwise (synchronous readback; tests).
     [[nodiscard]] Result<std::vector<ParticleInstance>> read_gpu_particle_draw(std::uint64_t key);
+    // The ribbon vertices of a trailed GPU emitter after the last render: per slot, (points + 1)
+    // pairs of edge vertices from tail to head (position + signed half width, colour, tangent + v);
+    // unused pairs collapse to zero width (synchronous readback; tests). Empty without trails.
+    [[nodiscard]] Result<std::vector<ParticleInstance>> read_gpu_particle_trails(std::uint64_t key);
+    // Trail points per slot of an emitter's GPU state (0 = none).
+    [[nodiscard]] std::uint32_t gpu_particle_trail_points(std::uint64_t key) const;
     // Ribbon strips sharing a material (e.g. one emitter's trails): `strips` holds the point count
     // of each consecutive strip in `points`; strips with fewer than two points are skipped.
     // Drawn in the particle pass (soft depth fade), ordered back to front with particle batches.
@@ -669,12 +689,15 @@ private:
         float distance{0};
         bool ribbon{false}; // triangle-list ribbon vertices rather than billboard instances
         rhi::BufferHandle buffer{}; // GPU particles: their instance buffer (offset 0, count slots)
+        rhi::BufferHandle index{};  // GPU trails: index buffer of the ribbon (count indices)
     };
     struct GpuParticleState {
         rhi::BufferHandle state, instances, spawns;
         rhi::BufferHandle pairs, sorted; // depth sort (alpha emitters): (key, slot) pairs, draw order
         std::uint32_t sort_size{0};      // pairs allocated (power of two >= 256)
         bool sorted_last{false};         // the last render drew `sorted`
+        rhi::BufferHandle trail, ribbon, ribbon_index; // trails (ADR-0110): point rings, edge vertices, indices
+        std::uint32_t trail_points{0};   // points per slot of the allocated trail buffers
         std::uint32_t capacity{0}, spawn_capacity{0};
         std::uint64_t instance{0}, next_index{0};
         std::uint32_t generation{0}, serial{0};

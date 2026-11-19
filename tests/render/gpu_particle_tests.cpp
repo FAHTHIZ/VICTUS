@@ -892,3 +892,185 @@ TEST_CASE("gpu particles: effect budgets keep the nearest particle batches, deca
     CHECK(r.stats().particles == 300);
     CHECK(r.path_report().find("particles")->state == PathState::Active);
 }
+
+TEST_CASE("gpu particles: GPU trails record ring histories on the GPU and draw camera-facing ribbons") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    GpuFx fx;
+    auto& c = fx.emitter();
+    c.rate = 0;
+    c.max_particles = 64;
+    c.shape = particles::Shape::Point;
+    c.angle = 25;
+    c.lifetime_min = c.lifetime_max = 3.0f;
+    c.speed_min = c.speed_max = 2.0f;
+    c.gravity = {0, 0, 0};
+    c.color_start = c.color_end = {0.6f, 0.8f, 1.0f, 1.0f};
+    c.size_start = c.size_end = 0.2f;
+    c.trail_lifetime = 0.5f;
+    c.trail_min_distance = 0.05f;
+    c.trail_max_points = 16;
+    c.trail_width = 1.0f;
+    c.trail_width_end = 0.0f;
+    c.trail_alpha_end = 0.0f;
+    runtime::GpuAssetCache assets(ctx, nullptr);
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    RenderSettings rs = RenderSettings::preset(QualityTier::Medium);
+    rs.bloom = false;
+    r.set_settings(rs);
+    auto target = test::make_target(W, H);
+    const auto frame = [&] {
+        fx.ps.update(fx.s, 1.0f / 60.0f);
+        fx.s.update_transforms();
+        (void)runtime::extract_scene(fx.s, assets, r, {}, nullptr);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+    };
+    fx.ps.update(fx.s, 0.0f);
+    frame(); // nothing alive yet: the baseline image
+    const std::vector<std::uint8_t> empty = dev.read_texture(target).value();
+    REQUIRE(particles::emit(fx.s, fx.fx, 6));
+    for (int f = 0; f < 40; ++f) {
+        if (f == 15) REQUIRE(particles::emit(fx.s, fx.fx, 6)); // younger particles: shorter trails
+        frame();
+    }
+    const particles::GpuEmitterView v = fx.view();
+    REQUIRE(v.alive == 12);
+    REQUIRE(r.gpu_particle_trail_points(v.key) == 16);
+    CHECK(r.stats().gpu_particle_trail_emitters == 1);
+    CHECK(r.stats().gpu_particle_trails_reduced == 0);
+    CHECK(r.stats().gpu_particle_trail_vertices == 64 * 17 * 2);
+    CHECK(r.stats().particle_batches == 2); // ribbons + heads
+    {
+        const PathFeature* gp = r.path_report().find("gpu_particles");
+        REQUIRE(gp != nullptr);
+        CHECK(gp->state == PathState::Active);
+        CHECK(gp->detail.find("1 with trails") != std::string::npos);
+    }
+    const auto state = read_state(r, v.key);
+    auto got = r.read_gpu_particle_trails(v.key);
+    REQUIRE(got.ok());
+    const std::vector<ParticleInstance>& rib = got.value();
+    REQUIRE(rib.size() == 64u * 17u * 2u);
+    const auto center = [](const ParticleInstance& p) { return math::Vec3{p.position_size.x, p.position_size.y, p.position_size.z}; };
+    std::uint32_t live = 0, strips = 0, old_strips = 0, young_strips = 0, bad_dead = 0;
+    float worst_line = 0, worst_head = 0, worst_spacing = 1;
+    for (std::uint32_t slot = 0; slot < 64; ++slot) {
+        const particles::GpuParticle& p = state[slot];
+        const ParticleInstance* pairs = rib.data() + static_cast<std::size_t>(slot) * 17 * 2;
+        std::uint32_t n = 0;
+        // Untextured trails carry v = 0.5 (the soft disc's middle row); unused pairs carry 0.
+        while (n < 17 && pairs[n * 2 + 1].params.w == 0.5f) ++n;
+        for (std::uint32_t k = n; k < 17; ++k) // unused pairs collapse to zero width
+            bad_dead += pairs[k * 2].position_size.w != 0 || pairs[k * 2 + 1].position_size.w != 0;
+        if (!(p.age < p.life)) {
+            CHECK(n == 0);
+            continue;
+        }
+        ++live;
+        CHECK(p.meta[3] == 16);
+        CHECK(p.meta[1] <= 16);
+        REQUIRE(n >= 2);
+        ++strips;
+        const math::Vec3 tail = center(pairs[0]);
+        if (p.age > c.trail_lifetime + 0.05f) {
+            // Older than the trail lifetime: the ring is full or expiring, about 0.5 s x 2 m/s long.
+            const float len = math::length(p.position - tail);
+            old_strips += pairs[0].color.w <= 0.15f && len > 0.85f && len < 1.05f && p.meta[1] >= 14;
+        } else {
+            // Younger: the trail still starts at the birth point, as old as the particle.
+            young_strips += math::length(tail) < 1e-3f && std::abs((1.0f - pairs[0].color.w) - p.age / c.trail_lifetime) < 0.02f;
+        }
+        const math::Vec3 dir = math::normalize(p.velocity);
+        float prev_v = 2, prev_w = 0;
+        for (std::uint32_t k = 0; k < n; ++k) {
+            const ParticleInstance& a = pairs[k * 2];
+            const ParticleInstance& b = pairs[k * 2 + 1];
+            CHECK(math::length(center(a) - center(b)) < 1e-6f);
+            CHECK(a.position_size.w == doctest::Approx(-b.position_size.w));
+            // Every point lies on the particle's straight path from the emitter.
+            const math::Vec3 q = center(a);
+            worst_line = std::max(worst_line, math::length(q - dir * math::dot(q, dir)));
+            const float vv = 1.0f - a.color.w; // alpha fades to 0 at the end of the trail lifetime
+            CHECK(vv >= -1e-6f);
+            CHECK(vv <= prev_v + 1e-6f); // age along the trail falls from the tail to the head
+            CHECK(b.position_size.w >= prev_w - 1e-6f); // and the ribbon widens toward the head
+            CHECK(b.position_size.w == doctest::Approx(0.1f * (1.0f - vv)).epsilon(1e-3));
+            CHECK(std::abs(math::dot(math::Vec3{a.params.x, a.params.y, a.params.z}, dir)) > 0.999f);
+            if (k + 2 < n) worst_spacing = std::min(worst_spacing, math::length(center(pairs[(k + 1) * 2]) - q));
+            prev_v = vv;
+            prev_w = b.position_size.w;
+        }
+        const ParticleInstance& head = pairs[(n - 1) * 2 + 1];
+        worst_head = std::max(worst_head, math::length(center(head) - p.position));
+        CHECK(head.color.w == doctest::Approx(1.0f));
+        CHECK(head.position_size.w == doctest::Approx(0.1f).epsilon(1e-3)); // half of size x trail_width
+    }
+    MESSAGE("GPU trails: " << strips << " strips, worst off-path " << worst_line << " m, head " << worst_head << " m, min spacing " << worst_spacing);
+    CHECK(live == 12);
+    CHECK(strips == 12);
+    CHECK(old_strips == 6);   // the first six keep 0.5 s of trail
+    CHECK(young_strips == 6); // the later ones are still growing from their birth point
+    CHECK(bad_dead == 0);
+    CHECK(worst_line < 1e-3f);
+    CHECK(worst_head < 1e-4f);
+    CHECK(worst_spacing >= 0.05f - 1e-4f);
+    std::vector<std::uint8_t> with_heads = dev.read_texture(target).value();
+    test::save_output("particles_gpu_trails", W, H, with_heads);
+
+    // Trails only: the heads are not drawn but the ribbons are, and they light pixels behind the heads.
+    fx.emitter().trail_billboards = false;
+    frame();
+    CHECK(r.stats().particle_batches == 1);
+    CHECK(r.stats().gpu_particles == 12);
+    const std::vector<std::uint8_t> trails_only = dev.read_texture(target).value();
+    test::save_output("particles_gpu_trails_only", W, H, trails_only);
+    std::uint32_t lit = 0, lit_below = 0, lit_edges = 0;
+    for (std::uint32_t y = 0; y < H; ++y)
+        for (std::uint32_t x = 0; x < W; ++x) {
+            const bool on = channel(test::pixel(trails_only, W, x, y), 0) > channel(test::pixel(empty, W, x, y), 0) + 12;
+            lit += on;
+            lit_below += on && y > H / 2 + 4; // trails rise from the emitter at the centre
+            lit_edges += on && (x < W / 4 || x > W * 3 / 4);
+        }
+    MESSAGE("trails only light " << lit << " pixels");
+    CHECK(lit > 40);
+    CHECK(lit_below == 0);
+    CHECK(lit_edges == 0);
+
+    // A new point count restarts every history (like the CPU path) without dropping particles.
+    fx.emitter().trail_max_points = 4;
+    frame();
+    CHECK(r.gpu_particle_trail_points(v.key) == 4);
+    {
+        const auto st = read_state(r, v.key);
+        std::uint32_t restarted = 0;
+        for (const auto& p : st)
+            if (p.age < p.life) restarted += p.meta[3] == 4 && p.meta[1] <= 1;
+        CHECK(restarted == 12);
+    }
+
+    // Large emitters get fewer points per particle (kMaxGpuTrailSegments), then none.
+    CHECK(SceneRenderer::gpu_trail_points(64, 16) == 16);
+    CHECK(SceneRenderer::gpu_trail_points(32768, 16) == 8);
+    CHECK(SceneRenderer::gpu_trail_points(1u << 18, 16) == 0);
+    CHECK(SceneRenderer::gpu_trail_points(64, 0) == 0);
+    CHECK(SceneRenderer::gpu_trail_points(64, 200) == 64);
+    fx.emitter().trail_max_points = 16;
+    fx.emitter().max_particles = 32768;
+    frame();
+    const particles::GpuEmitterView big = fx.view();
+    CHECK(r.gpu_particle_trail_points(big.key) == 8);
+    CHECK(r.stats().gpu_particle_trails_reduced == 1);
+    {
+        const PathFeature* gp = r.path_report().find("gpu_particles");
+        REQUIRE(gp != nullptr);
+        CHECK(gp->state == PathState::Reduced);
+        CHECK(gp->reason == PathReason::Budget);
+    }
+    dev.destroy(target);
+}

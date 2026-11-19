@@ -84,8 +84,9 @@ struct ParticleEmitterComponent {
     float turbulence_speed{1};
     // GPU simulation (ADR-0097, 3D views only): the CPU keeps the emission schedule and the exact
     // slot/lifetime bookkeeping, the renderer integrates and draws every particle in compute
-    // shaders. Up to kMaxGpuParticles per emitter; trails and per-particle CPU readback are not
-    // available. Alpha-blended GPU emitters are depth sorted on the GPU every frame (ADR-0107).
+    // shaders. Up to kMaxGpuParticles per emitter; per-particle CPU readback is not available.
+    // Alpha-blended GPU emitters are depth sorted on the GPU every frame (ADR-0107). Trails are
+    // recorded and built on the GPU (ADR-0110), up to 2^18 segments per emitter.
     bool gpu{false};
     // Depth-buffer collision (GPU emitters in world space): particles bounce off what the camera
     // sees, using the scene depth of the frame. Off-screen or hidden particles do not collide.

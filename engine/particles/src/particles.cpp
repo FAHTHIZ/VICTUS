@@ -573,6 +573,9 @@ Aabb gpu_bounds(const ParticleEmitterComponent& e, const GpuBook& g, const Mat4&
     const float travel = speed * life_hi + 0.5f * accel * life_hi * life_hi;
     float extent = std::max(e.size_start, e.size_end) * 0.5f;
     if (e.velocity_stretch > 0 && std::isfinite(e.velocity_stretch)) extent += (speed + accel * life_hi) * e.velocity_stretch;
+    // Trails (ADR-0110) lie on positions the particles already passed, inside the travel box; only
+    // their width can reach further out.
+    if (trail_capacity(e) > 0) extent = std::max(extent, std::max(e.size_start, e.size_end) * 0.5f * std::max(0.0f, e.trail_width));
     const Vec3 grow{travel + extent};
     box.min = box.min - grow;
     box.max = box.max + grow;
@@ -777,7 +780,7 @@ void register_components() {
             .field(&ParticleEmitterComponent::turbulence, "turbulence", {.min = 0, .max = 1000, .speed = 0.05f, .tooltip = "Swirling curl-noise acceleration (m/s^2); 0 = off"})
             .field(&ParticleEmitterComponent::turbulence_frequency, "turbulence_frequency", {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "Swirls per metre"})
             .field(&ParticleEmitterComponent::turbulence_speed, "turbulence_speed", {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "How fast the swirls change"})
-            .field(&ParticleEmitterComponent::gpu, "gpu", {.tooltip = "Simulate on the GPU (3D): up to a million particles, depth collision and sorting; no trails"})
+            .field(&ParticleEmitterComponent::gpu, "gpu", {.tooltip = "Simulate on the GPU (3D): up to a million particles, depth collision, sorting and trails"})
             .field(&ParticleEmitterComponent::collision, "collision", {.tooltip = "GPU, world space: bounce off what the camera sees"})
             .field(&ParticleEmitterComponent::bounce, "bounce", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "0 = stop, 1 = elastic"})
             .field(&ParticleEmitterComponent::friction, "friction", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Tangential speed lost per contact"})
