@@ -427,6 +427,13 @@ TEST_CASE("templates: the No-Code Platformer plays with behaviours alone") {
     };
     CHECK(rules().lives_left == 3);
     CHECK_FALSE(r->scene.find_by_name("HUD (GameRules)").is_null());
+    CHECK(r->scene.world().count<script::JumpPadComponent>() == 1);
+    {
+        // The welcome sign next to the start says hello straight away.
+        const scene::Entity m = r->scene.find_by_name("Message (Trigger)");
+        REQUIRE_FALSE(m.is_null());
+        CHECK(r->scene.world().get<gameui::UiRectComponent>(r->scene.children(m).front())->visible);
+    }
     // Run right: the first coin sits on the ground in the way.
     r->input.set_key("D", true);
     r->frames(90);
