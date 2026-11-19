@@ -120,6 +120,7 @@ struct LightingUniforms {
     Vec4 cluster_depth;
     Vec4 local_shadow; // x atlas texel size, y tiles per row, z first shadow matrix index, w enabled
     Vec4 gi_min, gi_max, gi_counts; // irradiance volume (ADR-0056)
+    Vec4 cloud_layer, cloud_shadow, cloud_wind; // cloud shadows (ADR-0112)
 };
 struct MaterialUniforms {
     Vec4 base_color;
@@ -210,7 +211,7 @@ struct TaaUpscaleUniforms {
     Mat4 reproject;
     Vec4 params, screen, jitter, output;
 };
-static_assert(sizeof(LightingUniforms) == 32 * 16 + 64 * 4);
+static_assert(sizeof(LightingUniforms) == 35 * 16 + 64 * 4);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 
@@ -2556,6 +2557,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         cloud_u.wind = {-drift(vc.wind.x), -drift(vc.wind.y), -drift(vc.wind.z), 0.0f};
         cloud_u.screen = {1.0f / static_cast<float>(cloud_w), 1.0f / static_cast<float>(cloud_h),
                           0.25f / static_cast<float>(cloud_w), 0.25f / static_cast<float>(cloud_h)};
+        const float shadow = std::clamp(finite_or(vc.shadow_strength, 1.0f), 0.0f, 1.0f);
+        if (shadow > 0.0f) {
+            lighting.cloud_layer = cloud_u.layer;
+            lighting.cloud_shadow = {cloud_u.noise.x, shadow, 1.0f, 0.0f};
+            lighting.cloud_wind = cloud_u.wind;
+            stats_.cloud_shadows = true;
+        }
         cloud_apply_u.inv_view_proj = inv_vp;
         cloud_apply_u.camera = Vec4(camera_.position, 0.0f);
         cloud_apply_u.layer = {vc.bottom, vc.top, 0.0f, 0.0f};

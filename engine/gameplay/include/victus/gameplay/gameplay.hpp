@@ -306,6 +306,7 @@ struct EnvironmentComponent {
     float cloud_sun{1.0f};                 // light multipliers
     float cloud_ambient{1.0f};
     float cloud_distance{30000.0f};        // metres of view ray covered
+    float cloud_shadows{1.0f};             // shadow strength on the ground 0..1 (ADR-0112)
 };
 
 // Box of extra volumetric fog centred on the entity (ADR-0098), size scaled by the entity's

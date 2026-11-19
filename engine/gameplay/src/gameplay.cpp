@@ -215,6 +215,7 @@ void register_components() {
             .field(&E::cloud_sun, "cloud_sun", {.min = 0, .max = 16, .speed = 0.01f, .tooltip = "Sun light scattered by the clouds"})
             .field(&E::cloud_ambient, "cloud_ambient", {.min = 0, .max = 16, .speed = 0.01f, .tooltip = "Sky light scattered by the clouds"})
             .field(&E::cloud_distance, "cloud_distance", {.min = 100, .max = 200000, .speed = 100.0f, .tooltip = "Metres of view ray covered; the layer fades out towards it"})
+            .field(&E::cloud_shadows, "cloud_shadows", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "How strongly the clouds shade the sun light on the ground (0 = no cloud shadows)"})
             .commit();
         using FV = FogVolumeComponent;
         scene::Schema<FV>("FogVolume", "Rendering")

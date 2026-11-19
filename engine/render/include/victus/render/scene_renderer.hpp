@@ -300,6 +300,9 @@ struct VolumetricClouds {
     float sun_intensity{1.0f};     // light multipliers
     float ambient_intensity{1.0f};
     float distance{30000.0f};      // metres marched along a view ray (fades out over the last 40%)
+    // Cloud shadows on lit opaque and blended surfaces below the layer (ADR-0112): 0 none .. 1
+    // full transmittance of the sun through the clouds. Drawn whenever the clouds are.
+    float shadow_strength{1.0f};
 };
 
 struct Environment {
@@ -556,6 +559,7 @@ struct SceneStats {
     // Volumetric clouds this frame (ADR-0111): cloud target size and samples per ray (0 when off).
     bool volumetric_clouds{false};
     std::uint32_t cloud_width{0}, cloud_height{0}, cloud_steps{0};
+    bool cloud_shadows{false};         // the sun light of lit surfaces is shadowed by the clouds (ADR-0112)
 };
 
 struct SceneRendererOptions {

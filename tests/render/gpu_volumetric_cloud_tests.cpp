@@ -261,4 +261,61 @@ TEST_CASE("gpu volumetric clouds: Environment component mapping") {
     CHECK(env.clouds.anisotropy == doctest::Approx(0.6f));
     CHECK(env.clouds.wind.z == 3.0f);
     CHECK(env.clouds.detail_size == doctest::Approx(env.clouds.shape_size * 0.15f));
+    CHECK(env.clouds.shadow_strength == 1.0f);
+    ec.cloud_shadows = -2.0f;
+    runtime::apply_environment(ec, env, sun);
+    CHECK(env.clouds.shadow_strength == 0.0f);
+}
+
+TEST_CASE("gpu volumetric clouds: cloud shadows shade the sun light on the ground and drift with the wind (ADR-0112)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    GpuMesh cube = ctx.create_mesh(make_cube(), "cloud_ground").value();
+    Material lit;
+    lit.base_color = {0.6f, 0.6f, 0.6f, 1};
+    lit.roughness = 1.0f;
+    auto ground = [&](SceneRenderer& rr) { rr.submit(cube, lit, math::Mat4::trs({0, -1, 0}, {}, {40000, 1, 40000})); };
+    // 300 m above the ground looking down: the view never crosses the layer, so only shadows change the image.
+    Camera3D down = Camera3D::look_at({0, 300, 0}, {0, 0, -400});
+    down.z_far = 5000.0f;
+    Environment env = cloud_env(0.5f);
+    env.clouds.shape_size = 800.0f;
+    Environment none = env;
+    none.clouds.enabled = false;
+    const Shot clear = shoot(r, none, ground, nullptr, cloud_settings(), sun_light(), down);
+    CHECK_FALSE(clear.stats.cloud_shadows);
+    const Shot shaded = shoot(r, env, ground, "clouds_shadows", cloud_settings(), sun_light(), down);
+    CHECK(shaded.stats.cloud_shadows);
+    // Never brighter, and some ground is clearly in shadow while some stays in sun.
+    int darker = 0, same = 0;
+    for (std::uint32_t y = 0; y < H; ++y)
+        for (std::uint32_t x = 0; x < W; ++x) {
+            const int a = channel(shaded.at(x, y), 0), b = channel(clear.at(x, y), 0);
+            CHECK(a <= b + 1);
+            if (a + 20 < b) ++darker;
+            else if (std::abs(a - b) <= 1) ++same;
+        }
+    CHECK(darker > static_cast<int>(W * H / 20));
+    CHECK(same > static_cast<int>(W * H / 20));
+    // Strength 0: identical to no clouds.
+    Environment soft = env;
+    soft.clouds.shadow_strength = 0.0f;
+    const Shot unshaded = shoot(r, soft, ground, nullptr, cloud_settings(), sun_light(), down);
+    CHECK_FALSE(unshaded.stats.cloud_shadows);
+    CHECK(unshaded.diff(clear, 0, 0, W, H) == 0);
+    // Overcast: the whole ground loses the sun.
+    const Shot overcast = shoot(r, cloud_env(1.0f), ground, nullptr, cloud_settings(), sun_light(), down);
+    CHECK(overcast.mean(0, 0, W, H) + 30.0 < clear.mean(0, 0, W, H));
+    // Wind moves the shadows.
+    env.clouds.wind = {40, 0, 0};
+    const Shot t0 = shoot(r, env, ground, nullptr, cloud_settings(), sun_light(), down, 0.0);
+    const Shot t1 = shoot(r, env, ground, nullptr, cloud_settings(), sun_light(), down, 10.0);
+    CHECK(t0.diff(t1, 0, 0, W, H) > 20);
+    // Low tier: no clouds, no shadows.
+    RenderSettings low = RenderSettings::preset(QualityTier::Low);
+    const Shot low_shot = shoot(r, env, ground, nullptr, low, sun_light(), down);
+    CHECK_FALSE(low_shot.stats.cloud_shadows);
 }

@@ -972,6 +972,14 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0112 — Cloud shadows on lit surfaces
+
+- Status: Accepted (2026-11-19)
+- Context: ADR-0111 added a ray-marched cloud layer but the ground stayed fully sunlit under overcast skies. Production engines darken the sun on surfaces under clouds: Unreal's volumetric cloud component renders a cloud shadow map ([Unreal Engine docs](https://dev.epicgames.com/documentation/en-us/unreal-engine/volumetric-cloud-component-properties-in-unreal-engine)), Frostbite projects a cloud transmittance texture ([Frostbite](https://www.ea.com/frostbite/news/physically-based-sky-atmosphere-and-cloud-rendering)), and Horizon Zero Dawn reuses its density field for shadowing ([Guerrilla](https://www.guerrilla-games.com/read/the-real-time-volumetric-cloudscapes-of-horizon-zero-dawn)).
+- Decision: evaluate cloud shadow analytically in `pbr.frag`: intersect the sun ray from the shaded point with one height inside the layer (30% up), sample the same value-noise shape (two octaves, same wind offset, coverage threshold and scale as `clouds.frag`), turn density into optical depth over half the layer thickness divided by the sun's elevation (clamped at 0.2), and multiply the sun term by `mix(1, exp(-od), shadow_strength)`. Parameters ride in three new `LightingUniforms` vectors; `VolumetricClouds::shadow_strength` (default 1) and `EnvironmentComponent::cloud_shadows` (0..1) control it; `SceneStats::cloud_shadows` reports it.
+- Alternatives: a cloud shadow map rendered per frame (extra pass, texture, more correct; deferred until a shadow-texture budget exists); applying it through CSM (would not reach beyond cascade range).
+- Consequences: no new pass or texture; the shape matches the visible clouds at one height, not the full integrated column; water, 2D lit sprites, fog sun shafts and probe captures are not cloud-shadowed yet.
+
 ## ADR-0111 — Volumetric clouds: reduced-resolution ray-marched cloud layer
 
 - Status: accepted (2026-11-19)

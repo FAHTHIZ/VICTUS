@@ -67,6 +67,9 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 gi_min;         // irradiance volume: xyz box min, w: active
     vec4 gi_max;         // xyz box max, w: intensity
     vec4 gi_counts;      // xyz probes per axis, w: normal offset (metres)
+    vec4 cloud_layer;    // volumetric clouds (ADR-0112): x bottom, y top, z coverage, w extinction per metre
+    vec4 cloud_shadow;   // x 1 / shape size, y shadow strength, z enabled
+    vec4 cloud_wind;     // xyz shape offset (metres)
 } lighting;
 layout(set = 3, binding = 1) uniform Material {
     vec4 base_color;
@@ -267,6 +270,36 @@ float shadow_factor(vec3 N, vec3 L) {
     return mix(1.0, sample_cascade(c, N, L), fade); // last cascade fades out at shadow distance
 }
 
+// Cloud shadow (ADR-0112): transmittance of the sun ray through the cloud layer at its middle,
+// from the first two octaves of the shape noise clouds.frag marches (same hash, lattice and
+// octave rotation), so shadows sit under the clouds and drift with them.
+float cloud_hash(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+}
+float cloud_noise(vec3 x) {
+    vec3 i = floor(x);
+    vec3 f = x - i;
+    f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    return mix(mix(mix(cloud_hash(i), cloud_hash(i + vec3(1, 0, 0)), f.x), mix(cloud_hash(i + vec3(0, 1, 0)), cloud_hash(i + vec3(1, 1, 0)), f.x), f.y),
+               mix(mix(cloud_hash(i + vec3(0, 0, 1)), cloud_hash(i + vec3(1, 0, 1)), f.x), mix(cloud_hash(i + vec3(0, 1, 1)), cloud_hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+float cloud_shadow(vec3 L) {
+    if (lighting.cloud_shadow.z < 0.5 || L.y < 0.02) return 1.0;
+    float bottom = lighting.cloud_layer.x, top = lighting.cloud_layer.y;
+    float mid = mix(bottom, top, 0.3); // where the height profile lets the most cloud through
+    if (v_world_pos.y >= mid) return 1.0;
+    vec3 q = (v_world_pos + L * ((mid - v_world_pos.y) / L.y) + lighting.cloud_wind.xyz) * lighting.cloud_shadow.x;
+    const mat3 kOctave = mat3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64) * 2.03;
+    float base = (0.5 * cloud_noise(q) + 0.25 * cloud_noise(kOctave * q)) / 0.75;
+    float thr = 1.0 - lighting.cloud_layer.z;
+    float d = clamp((base - thr) / max(1.0 - thr, 0.05), 0.0, 1.0);
+    // Optical depth of a vertical path through half the layer (the light march's view of a cloud).
+    float od = d * lighting.cloud_layer.w * (top - bottom) * 0.5 / max(L.y, 0.2);
+    return mix(1.0, exp(-od), lighting.cloud_shadow.y);
+}
+
 // Shadow of a local light: spot lights use one atlas tile, point lights six (one per cube face,
 // +X -X +Y -Y +Z -Z, picked by the major axis of the light-to-surface vector).
 float local_shadow(LocalLight l, vec3 Ld, float dist, vec3 N) {
@@ -363,7 +396,7 @@ void main() {
     }
 
     vec3 L = normalize(-lighting.sun_dir.xyz);
-    vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * shadow_factor(N, L);
+    vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * (shadow_factor(N, L) * cloud_shadow(L));
 
     if (lighting.ground_color.w > 0.5) {
         vec3 grid = lighting.cluster_grid.xyz;
