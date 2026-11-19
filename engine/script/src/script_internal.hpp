@@ -173,7 +173,8 @@ struct ScriptHost::Impl {
         float message_left{0};
         Uuid message_owner;
         bool message_shown{false};
-        bool title_shown{false};
+    bool start_pending{false};
+    bool title_shown{false};
     } behaviours;
     lua_State* active{nullptr};                            // thread running save.read (migrations)
 

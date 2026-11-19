@@ -25,6 +25,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 - Press-to-use Triggers: wait for the Interact control (E) with a "Press E" prompt; a "Switch" role that starts the lift named Platform.
 - The No-Code Platformer has a welcome Sign at the start and a spring Jump Pad before the first gap, with drawn spring and sign sprites.
 - Inspector sections for Inventory (edit the items an object starts with, e.g. a Key), Timers and Attributes (live values in play mode); Inventory in Add Component.
+- The No-Code Platformer ("Slime Hills") and No-Code 3D Adventure ("Robot Islands") open on a title screen; the start press no longer doubles as a jump because the game starts on the next frame.
 - Talker role: Make it a... Talker gives an object a press-to-use conversation Trigger with sample lines.
 - Conversations: a press-to-use Trigger whose Message has `|`-separated lines steps through them one press of E at a time, runs its Action on the last line and emits `talked`.
 - Title screen: Game Rules `title` and `start_prompt` open the game on a held title banner until the player presses jump, fire or interact; emits `game_started`; shown once per session.

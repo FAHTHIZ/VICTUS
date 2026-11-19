@@ -1752,7 +1752,7 @@ void behaviours_fixed_update(ScriptHost::Impl& h, Scene& s, float dt) {
     physics::PhysicsWorld* pw = physics::world_of(s);
     ensure_controllers(s);
     ensure_platform_bodies(s);
-    const bool active = playing(s);
+    const bool active = playing(s) && !gameplay::game_paused(s); // the title screen pauses inside rules_tick
     std::vector<Entity> movers;
     s.world().each<PlatformerMovementComponent>([&](Entity e, PlatformerMovementComponent&) { movers.push_back(e); });
     for (const Entity e : movers) {
@@ -1776,6 +1776,13 @@ void behaviours_pause(ScriptHost::Impl& h, Scene& s) {
     if (!paused && !any_behaviour(s)) return;
     const Entity r = rules_entity(s);
     auto* g = r.is_null() ? nullptr : s.world().get<GameRulesComponent>(r);
+    if (g && h.behaviours.start_pending) {
+        // The game starts the frame after the start press, so that press does not also jump or shoot.
+        h.behaviours.start_pending = false;
+        gameplay::set_game_paused(s, false);
+        gameplay::emit_event(s, "game_started", Value::object(), r);
+        return;
+    }
     if (g && g->showing_title) {
         if (!action_pressed(h, h.default_input, "jump") && !action_pressed(h, h.default_input, "fire") &&
             !action_pressed(h, h.default_input, "interact"))
@@ -1783,8 +1790,7 @@ void behaviours_pause(ScriptHost::Impl& h, Scene& s) {
         g->showing_title = false;
         set_text(s, g->banner_text, std::string{}, false);
         h.behaviours.message_left = 0;
-        gameplay::set_game_paused(s, false);
-        gameplay::emit_event(s, "game_started", Value::object(), r);
+        h.behaviours.start_pending = true;
         return;
     }
     if (!g || !g->initialised || !g->allow_pause || g->state != GameState::Playing) {
@@ -1810,7 +1816,7 @@ void behaviours_update(ScriptHost::Impl& h, Scene& s, float dt) {
     movement_input(h, s);
     health_tick(s, dt);
     rules_tick(h, s, dt);
-    const bool active = playing(s);
+    const bool active = playing(s) && !gameplay::game_paused(s); // the title screen pauses inside rules_tick
     std::vector<Entity> doomed;
     {
         TagCache tags{s, {}};

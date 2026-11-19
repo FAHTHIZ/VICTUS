@@ -429,6 +429,19 @@ TEST_CASE("templates: the No-Code Platformer plays with behaviours alone") {
     CHECK_FALSE(r->scene.find_by_name("HUD (GameRules)").is_null());
     CHECK(r->scene.world().count<script::JumpPadComponent>() == 1);
     {
+        // The game opens on its title and waits for Space.
+        CHECK(gameplay::game_paused(r->scene));
+        const scene::Entity banner = r->scene.find_by_name("Banner");
+        REQUIRE_FALSE(banner.is_null());
+        CHECK(r->scene.world().get<gameui::UiTextComponent>(banner)->text == "Slime Hills");
+        r->input.set_key("Space", true);
+        r->frames(3);
+        r->input.set_key("Space", false);
+        r->frames(5);
+        CHECK_FALSE(gameplay::game_paused(r->scene));
+        CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(2e-2)); // starting did not jump
+    }
+    {
         // The welcome sign next to the start says hello straight away.
         const scene::Entity m = r->scene.find_by_name("Message (Trigger)");
         REQUIRE_FALSE(m.is_null());
@@ -501,6 +514,12 @@ TEST_CASE("templates: the No-Code 3D Adventure plays with behaviours alone") {
         return *g;
     };
     CHECK(rules().lives_left == 3);
+    CHECK(gameplay::game_paused(r->scene)); // on the title screen
+    r->input.set_key("Space", true);
+    r->frames(3);
+    r->input.set_key("Space", false);
+    r->frames(5);
+    CHECK_FALSE(gameplay::game_paused(r->scene));
     // W walks away from the camera; the robot's animation controller gets the ground speed.
     r->input.set_key("W", true);
     r->frames(40);

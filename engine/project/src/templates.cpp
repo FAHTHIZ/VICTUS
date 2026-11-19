@@ -1043,6 +1043,7 @@ void build_nocode(Scene& s) {
     auto& gr = s.world().add<GameRulesComponent>(rules);
     gr.lives = 3;
     gr.win_message = "Level complete!";
+    gr.title = "Slime Hills";
 
     const Entity music = add(s, "Music", {0, 0, 0});
     auto& ms = s.world().add<audio::AudioSourceComponent>(music);
@@ -1902,6 +1903,7 @@ void build_nocode3d(Scene& s, const TemplateOptions& options) {
     auto& gr = s.world().add<GameRulesComponent>(rules);
     gr.lives = 3;
     gr.win_message = "You made it!";
+    gr.title = "Robot Islands";
 
     const Entity music = add(s, "Music", {0, 0, 0});
     auto& ms = s.world().add<audio::AudioSourceComponent>(music);
