@@ -48,6 +48,14 @@ const char* window_id(Panel p) noexcept {
         return "Profiler";
     case Panel::InputActions:
         return "Input Actions";
+    case Panel::GettingStarted:
+        return "Getting Started";
+    case Panel::Help:
+        return "Help";
+    case Panel::ProjectSettings:
+        return "Project Settings";
+    case Panel::History:
+        return "Undo History";
     case Panel::Count:
         break;
     }
@@ -88,6 +96,14 @@ const char* panel_hint(Panel p) noexcept {
         return "Frame time, slowest systems and memory";
     case Panel::InputActions:
         return "Keys and buttons mapped to game actions";
+    case Panel::GettingStarted:
+        return "Six steps from an empty scene to an exported game";
+    case Panel::Help:
+        return "How-tos in plain words, with search";
+    case Panel::ProjectSettings:
+        return "Game name, first scene, window size and quality";
+    case Panel::History:
+        return "Every change to the scene; click one to go back to it";
     case Panel::Count:
         break;
     }
@@ -169,6 +185,14 @@ bool* Editor::panel_flag(Panel p) noexcept {
         return &show_profiler_;
     case Panel::InputActions:
         return &show_input_actions_;
+    case Panel::GettingStarted:
+        return &show_getting_started_;
+    case Panel::Help:
+        return &show_help_;
+    case Panel::ProjectSettings:
+        return &show_project_settings_;
+    case Panel::History:
+        return &show_history_;
     default:
         return nullptr;
     }
@@ -202,6 +226,9 @@ void Editor::apply_layout(Layout l) noexcept {
         b = true;
     for (int i = kCoreCount; i < static_cast<int>(Panel::Count); ++i)
         set_panel_open(static_cast<Panel>(i), false);
+    // Beginners keep their checklist until they finish or hide it.
+    if (l == Layout::Default && !guide_dismissed_ && guide_done_count() < static_cast<std::size_t>(GuideStep::Count))
+        show_getting_started_ = true;
     switch (l) {
     case Layout::Default:
     case Layout::LevelDesign:
@@ -237,9 +264,12 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
     switch (l) {
     case Layout::Default:
     case Layout::Count: {
-        ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.18f, nullptr, &center);
+        ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
         ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, nullptr, &center);
         ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, nullptr, &center);
+        // Getting Started sits under the Hierarchy so the Inspector stays visible beside it.
+        ImGuiID left_bottom = show_getting_started_ ? ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, nullptr, &left) : right;
+        dock(Panel::GettingStarted, left_bottom);
         dock(Panel::Hierarchy, left);
         dock_all({Panel::Inspector, Panel::TerrainTools, Panel::TilePalette, Panel::MaterialEditor, Panel::AiDebugger,
                   Panel::InputActions},
@@ -247,6 +277,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::Assets, Panel::Console, Panel::Problems, Panel::Animation, Panel::Sequencer, Panel::Profiler,
                   Panel::Network},
                  bottom);
+        dock_all({Panel::ProjectSettings, Panel::History}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor}, center);
         break;
     }
@@ -259,6 +290,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all(
             {Panel::Inspector, Panel::TerrainTools, Panel::TilePalette, Panel::MaterialEditor, Panel::InputActions},
             right);
+        dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor}, center);
         dock_all({Panel::Animation, Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger}, left_bottom);
         break;
@@ -274,6 +306,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
             right);
         dock_all({Panel::Animation, Panel::Assets, Panel::Console, Panel::Problems}, bottom);
         dock_all({Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger}, bottom_right);
+        dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor}, center);
         break;
     }
@@ -290,6 +323,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::Console, Panel::Problems, Panel::Profiler, Panel::Animation, Panel::Sequencer, Panel::Network,
                   Panel::AiDebugger},
                  bottom);
+        dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
         dock_all({Panel::GraphEditor, Panel::Viewport}, center);
         break;
     }
@@ -304,6 +338,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
                  right);
         dock_all({Panel::Console, Panel::Problems, Panel::Assets, Panel::Animation, Panel::Sequencer}, bottom);
         dock(Panel::Profiler, bottom_right);
+        dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor}, center);
         break;
     }
@@ -327,11 +362,15 @@ void Editor::draw_window_menu() {
     ImGui::Separator();
     ImGui::TextDisabled("Tools");
     for (Panel p : {Panel::Animation, Panel::Sequencer, Panel::GraphEditor, Panel::MaterialEditor, Panel::TilePalette,
-                    Panel::TerrainTools, Panel::InputActions})
+                    Panel::TerrainTools, Panel::InputActions, Panel::ProjectSettings, Panel::History})
         item(p);
     ImGui::Separator();
     ImGui::TextDisabled("Debug");
     for (Panel p : {Panel::Profiler, Panel::Network, Panel::AiDebugger})
+        item(p);
+    ImGui::Separator();
+    ImGui::TextDisabled("Learn");
+    for (Panel p : {Panel::GettingStarted, Panel::Help})
         item(p);
     ImGui::Separator();
     if (ImGui::BeginMenu("Layout")) {

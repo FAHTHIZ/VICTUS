@@ -105,6 +105,85 @@ assets::AssetKind asset_kind_for_hint(std::string_view hint) {
     return assets::AssetKind::Unknown;
 }
 
+// A reference to an object or asset: a wide button showing the current choice that opens a
+// searchable list, a clear button and the label. Also accepts drag and drop of `payload`.
+template <class Accept>
+bool reference_field(const char* id_label, const std::string& display, const std::string& shown, kit::Icon icon,
+                     Uuid& id, const std::vector<std::pair<Uuid, std::string>>& options, const char* payload,
+                     Accept accept, const std::string& help) {
+    namespace tk = ui::tokens;
+    bool changed = false;
+    ImGui::PushID(id_label);
+    const ImGuiStyle& st = ImGui::GetStyle();
+    const float full = ImGui::CalcItemWidth();
+    const float h = ImGui::GetFrameHeight();
+    const float main_w = std::max(h, full - h - st.ItemInnerSpacing.x);
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_FrameBgHovered));
+    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+    const std::string text = std::string("      ") + shown + "##pick";
+    if (ImGui::Button(text.c_str(), ImVec2(main_w, h))) ImGui::OpenPopup("##refpick");
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+    const float isz = ImGui::GetTextLineHeight();
+    kit::draw_icon(ImGui::GetWindowDrawList(), icon, ImVec2(p0.x + st.FramePadding.x, p0.y + (h - isz) * 0.5f), isz,
+                   ImGui::GetColorU32(id.is_nil() ? tk::kTextDisabled : tk::kAccent));
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", help.c_str());
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload(payload)) {
+            Uuid dropped;
+            std::memcpy(&dropped, pl->Data, sizeof(Uuid));
+            bool ok = true;
+            if constexpr (!std::is_same_v<Accept, std::nullptr_t>) ok = accept(dropped);
+            if (ok && dropped != id) {
+                id = dropped;
+                changed = true;
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    ImGui::SameLine(0, st.ItemInnerSpacing.x);
+    ImGui::BeginDisabled(id.is_nil());
+    if (kit::icon_button("##clear", kit::Icon::Close, "Clear (set to None)")) {
+        id = {};
+        changed = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine(0, st.ItemInnerSpacing.x);
+    ImGui::TextUnformatted(display.c_str());
+    ImGui::SetNextWindowSizeConstraints(ImVec2(std::max(main_w, 280.0f), 0), ImVec2(FLT_MAX, h * 14));
+    if (ImGui::BeginPopup("##refpick")) {
+        static std::string query;
+        if (ImGui::IsWindowAppearing()) {
+            query.clear();
+            ImGui::SetKeyboardFocusHere();
+        }
+        (void)kit::search_input("##refq", "Search", query, -1);
+        ImGui::Separator();
+        if (ImGui::Selectable("None", id.is_nil())) {
+            if (!id.is_nil()) changed = true;
+            id = {};
+        }
+        std::size_t shown_count = 0;
+        for (const auto& [uuid, name] : options) {
+            if (!query.empty() && !kit::contains_icase(name, query)) continue;
+            ++shown_count;
+            ImGui::PushID(&uuid);
+            if (ImGui::Selectable(name.c_str(), uuid == id) && uuid != id) {
+                id = uuid;
+                changed = true;
+            }
+            ImGui::PopID();
+        }
+        if (shown_count == 0)
+            ImGui::TextDisabled(options.empty() ? "Nothing of this type in the project yet" : "Nothing matches");
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 // Editor widgets for one reflected field. Returns true when the value changed.
 bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db, const scene::Scene* scene) {
     // Readable label, stable ID: "linear_damping" shows as "Linear Damping".
@@ -213,50 +292,45 @@ bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db
     }
     case scene::FieldKind::Uuid: {
         Uuid& id = f.ref<Uuid>(comp);
+        const std::string display = kit::humanize(f.label.empty() ? f.name : f.label);
         if (f.hint == "entity") {
-            // Entity reference: drop an entity from the hierarchy; the button clears it.
-            std::string shown = "(none)";
+            // Entity reference: click to pick from the scene, or drop an entity from the Hierarchy.
+            std::string shown = "None";
             if (!id.is_nil()) {
                 const Entity target = scene ? scene->find(id) : Entity{};
                 const auto* n = target.is_null() ? nullptr : scene->world().get<scene::Name>(target);
-                shown = n ? n->value : "(missing) " + id.to_string();
+                shown = n ? n->value : "Missing object";
             }
-            ImGui::PushID(label);
-            if (ImGui::SmallButton("x") && !id.is_nil()) {
-                id = {};
-                changed = true;
-            }
-            ImGui::PopID();
-            ImGui::SameLine();
-            ImGui::Text("%s: %s", label, shown.c_str());
-            if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kEntityPayload)) {
-                    std::memcpy(&id, p->Data, sizeof(Uuid));
-                    changed = true;
+            std::vector<std::pair<Uuid, std::string>> options;
+            if (scene) {
+                std::vector<Entity> stack = scene->roots();
+                while (!stack.empty() && options.size() < 2000) {
+                    const Entity e = stack.back();
+                    stack.pop_back();
+                    const auto* n = scene->world().get<scene::Name>(e);
+                    options.emplace_back(scene->uuid(e), n ? n->value : std::string("Entity"));
+                    for (const Entity c : scene->children(e)) stack.push_back(c);
                 }
-                ImGui::EndDragDropTarget();
+                std::ranges::sort(options, {}, &std::pair<Uuid, std::string>::second);
             }
+            changed = reference_field(label, display, shown, kit::Icon::Entity, id, options, kEntityPayload, nullptr,
+                                      "Click to choose an object, or drag one here from the Hierarchy");
         } else if (const auto kind = asset_kind_for_hint(f.hint); kind != assets::AssetKind::Unknown) {
-            // Asset reference: drop an asset of the hinted kind from Assets; the button clears it.
-            ImGui::PushID(label);
-            if (ImGui::SmallButton("x") && !id.is_nil()) {
-                id = {};
-                changed = true;
-            }
-            ImGui::PopID();
-            ImGui::SameLine();
-            ImGui::Text("%s: %s", label, asset_label(db, id).c_str());
-            if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
-                    Uuid dropped;
-                    std::memcpy(&dropped, p->Data, sizeof(Uuid));
-                    if (const auto* rec = db ? db->find(dropped) : nullptr; rec && rec->kind == kind) {
-                        id = dropped;
-                        changed = true;
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
+            // Asset reference: click to pick an asset of the right type, or drop one from Assets.
+            const std::string path = id.is_nil() ? std::string() : asset_label(db, id);
+            const std::string shown = id.is_nil() ? std::string("None") : std::filesystem::path(path).filename().string();
+            std::vector<std::pair<Uuid, std::string>> options;
+            if (db)
+                for (const auto& r : db->records())
+                    if (r.kind == kind) options.emplace_back(r.uuid, r.path);
+            std::ranges::sort(options, {}, &std::pair<Uuid, std::string>::second);
+            const auto accept = [db, kind](const Uuid& dropped) {
+                const auto* rec = db ? db->find(dropped) : nullptr;
+                return rec && rec->kind == kind;
+            };
+            changed = reference_field(label, display, shown, kit::icon_for(kind), id, options, kAssetPayload, accept,
+                                      std::format("{}{}Click to choose: {}. You can also drag one here from Assets.", path,
+                                                  path.empty() ? "" : "\n\n", Editor::asset_kind_label(kind)));
         } else {
             ImGui::Text("%s: %s", label, id.to_string().c_str());
         }
@@ -313,6 +387,8 @@ void Editor::frame(float dt) {
     draw_about_dialog();
     draw_crash_notice();
     if (show_demo_) ImGui::ShowDemoWindow(&show_demo_);
+    observe_guide();
+    apply_ui_scale(); // takes effect from the next frame
 }
 
 // ---- launcher -----------------------------------------------------------------------------------
@@ -363,6 +439,10 @@ void Editor::draw_workspace(float) {
     draw_ai_debugger();
     draw_animation_panel();
     draw_sequencer();
+    draw_getting_started();
+    draw_help();
+    draw_history();
+    draw_project_settings();
     draw_status_bar();
     if (focus_panel_ >= 0) {
         // The window exists from the frame after it opens; try until it does (a few frames at most).
@@ -426,6 +506,9 @@ void Editor::draw_menu_bar() {
         if (ImGui::MenuItem("Delete", "Del", false, !selection_.empty())) delete_selected();
         if (ImGui::MenuItem("Frame Selected", "F", false, !selection_.empty())) frame_selected();
         ImGui::Separator();
+        if (ImGui::MenuItem("Undo History", nullptr, show_history_)) show_panel(Panel::History);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Project Settings...", nullptr, show_project_settings_)) show_panel(Panel::ProjectSettings);
         ImGui::MenuItem("Input Actions...", nullptr, &show_input_actions_);
         ImGui::EndMenu();
     }
@@ -460,6 +543,19 @@ void Editor::draw_menu_bar() {
     }
     if (ImGui::BeginMenu("View")) {
         if (ImGui::MenuItem("Command Palette...", "Ctrl+Shift+P")) open_command_palette();
+        if (ImGui::BeginMenu("Interface Size")) {
+            for (const UiScaleChoice& c : kUiScales) {
+                const std::string label = std::format("{}  ({:.0f} %)", c.name, static_cast<double>(c.scale) * 100.0);
+                if (ImGui::MenuItem(label.c_str(), nullptr, std::abs(ui_scale_ - c.scale) < 1e-3f)) set_ui_scale(c.scale);
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Bigger", "Ctrl+=")) step_ui_scale(1);
+            if (ImGui::MenuItem("Smaller", "Ctrl+-")) step_ui_scale(-1);
+            if (ImGui::MenuItem("Default Size", "Ctrl+0")) step_ui_scale(0);
+            ImGui::EndMenu();
+        }
+        kit::tooltip("Make all text and buttons bigger or smaller");
+        ImGui::Separator();
         ImGui::MenuItem("Physics Colliders", nullptr, &show_colliders_);
         ImGui::MenuItem("Navigation Mesh", nullptr, &show_navmesh_);
         ImGui::MenuItem("UI Demo Window", nullptr, &show_demo_);
@@ -507,6 +603,8 @@ void Editor::draw_menu_bar() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
+        draw_help_menu_items();
+        ImGui::Separator();
         if (ImGui::MenuItem("Command Palette", "Ctrl+Shift+P")) open_command_palette();
         ImGui::Separator();
         if (ImGui::MenuItem("Report a Problem (Diagnostics Bundle)...", nullptr, false, !creating_bundle()))
@@ -1063,6 +1161,25 @@ void Editor::draw_create_entity_items(Entity parent) {
     item("Point Light", kit::Icon::Light, "A bulb that lights everything around it", Primitive::PointLight);
     item("Spot Light", kit::Icon::Light, "A cone of light, like a torch or stage light", Primitive::SpotLight);
     item("Camera", kit::Icon::Camera, "What the player sees when the game runs", Primitive::Camera);
+    if (project_) {
+        ImGui::SeparatorText("Characters");
+        const auto character = [&](const char* label, const char* help, auto&& fn) {
+            const float h = ImGui::GetTextLineHeight();
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            if (ImGui::MenuItem((std::string("      ") + label).c_str(), nullptr, false, editing)) fn();
+            kit::draw_icon(ImGui::GetWindowDrawList(), kit::Icon::Model,
+                           ImVec2(pos.x, pos.y + (ImGui::GetItemRectSize().y - h) * 0.5f), h, ImGui::GetColorU32(tk::kTextMuted));
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", help);
+        };
+        const math::Vec3 at = parent.is_null() ? camera_.target : math::Vec3{};
+        character("Vanguard V-01", "The starter robot with broad shoulders: animated, ready for a script or a ragdoll",
+                  [&] { (void)add_character("v01", parent, at); });
+        character("Vanguard V-02", "The starter robot with swept shoulders: animated, ready for a script or a ragdoll",
+                  [&] { (void)add_character("v02", parent, at); });
+        character("Ragdoll Lab", "Both Vanguards as ragdolls on a floor: press Play to watch V-01 go limp and V-02 stumble",
+                  [&] { (void)add_ragdoll_lab(); });
+    }
     ImGui::SeparatorText("2D");
     item("Sprite", kit::Icon::Sprite, "A 2D image; drop a texture on it in the Inspector", Primitive::Sprite);
     item("2D Light", kit::Icon::Light, "Lights sprites in a 2D scene", Primitive::Light2D);
@@ -1566,6 +1683,7 @@ void Editor::draw_inspector() {
         const bool multi = selection_.size() > 1;
         if (multi) ImGui::TextColored(ui::tokens::kInfo, "%zu selected: changes apply to all", selection_.size());
         draw_prefab_section(e);
+        if (!multi) draw_ragdoll_section(e);
         begin_inspector_frame(e);
         const json::Value before_frame = multi ? active_scene().save_entity(e) : json::Value();
         const bool changed = inspect_components(e);
@@ -2144,6 +2262,12 @@ void Editor::handle_shortcuts() {
         open_command_palette();
         return;
     }
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Equal) || ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadAdd))
+        step_ui_scale(1);
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Minus) || ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadSubtract))
+        step_ui_scale(-1);
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_0)) step_ui_scale(0);
+    if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) open_help();
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_P)) {
         if (editing) play();
         else stop();
