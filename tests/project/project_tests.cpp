@@ -154,12 +154,15 @@ TEST_CASE("project: rendering quality settings round-trip and validate") {
     q->settings().mobile_target_fps = 0;
     CHECK(q->settings().asset_budget_mb == 0);
     q->settings().asset_budget_mb = 512;
+    CHECK_FALSE(q->settings().texture_streaming);
+    q->settings().texture_streaming = true;
     REQUIRE(q->save().ok());
     auto m = project::Project::open(dir);
     REQUIRE(m.ok());
     CHECK(m->settings().mobile_quality == "low");
     CHECK(m->settings().mobile_target_fps == 0);
     CHECK(m->settings().asset_budget_mb == 512);
+    CHECK(m->settings().texture_streaming);
 
     auto text = fs::read_text(dir / "victus.project");
     REQUIRE(text.ok());

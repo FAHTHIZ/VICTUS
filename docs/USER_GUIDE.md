@@ -204,6 +204,8 @@ Background loading: `victus run` (and exported games) load textures and models o
 
 Memory budget: set `"asset_budget_mb": 512` in the `rendering` section of `victus.project` to cap the GPU memory used by loaded textures and models. When the cap is exceeded, assets not used for about a second (60 frames) are released, oldest first, and load again the next time something needs them. Assets in use are never released, so a scene that needs more than the cap still draws everything. 0 (the default) means no cap.
 
+Texture streaming: set `"texture_streaming": true` in the `rendering` section to keep distant material and decal textures at a lower resolution. Each texture keeps only the detail its on-screen size needs (never below 64 pixels), sharpens as soon as you get closer and lowers half a second after you move away. With `asset_budget_mb` set, streaming also lowers the largest textures in view instead of going over the cap. Textures inside glTF models are not streamed yet.
+
 ### Material instances
 
 Material instances: in the Material Editor, Create Instance makes a material that inherits everything from the open one; change only what differs (the `x` next to an overridden field goes back to the parent's value, Detach makes it standalone). In the file this is `"parent": "<uuid>"` plus just the overridden keys, and parents can themselves be instances.
