@@ -173,6 +173,7 @@ struct ScriptHost::Impl {
         float message_left{0};
         Uuid message_owner;
         bool message_shown{false};
+        bool title_shown{false};
     } behaviours;
     lua_State* active{nullptr};                            // thread running save.read (migrations)
 
@@ -755,6 +756,7 @@ Status apply_scene(ScriptHost::Impl& h, scene::Scene& s, ScriptHost::Impl::Scene
 // Behaviours (behaviours.cpp): movement before the physics step, everything else each frame.
 void behaviours_fixed_update(ScriptHost::Impl& h, scene::Scene& s, float dt);
 void behaviours_update(ScriptHost::Impl& h, scene::Scene& s, float dt);
+void behaviours_pause(ScriptHost::Impl& h, scene::Scene& s);
 int scene_load(lua_State* L);
 int scene_reload(lua_State* L);
 int scene_current(lua_State* L);

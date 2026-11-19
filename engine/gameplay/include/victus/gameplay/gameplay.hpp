@@ -163,6 +163,15 @@ struct InputRouting {
     std::function<const InputSource*(scene::Entity entity, const InputSource* fallback)> route;
 };
 
+// Pauses the game: while a scene's world has this resource with `paused` set, Simulation::tick
+// runs only PreUpdate (input, UI, networking) and PostUpdate with a zero delta, so physics,
+// scripts, behaviours, animation and particles stand still and game time does not advance.
+struct GamePause {
+    bool paused{false};
+};
+[[nodiscard]] bool game_paused(scene::Scene& scene) noexcept;
+void set_game_paused(scene::Scene& scene, bool paused);
+
 using SystemFn = std::function<void(scene::Scene&, const FrameTime&)>;
 
 struct SystemInfo {

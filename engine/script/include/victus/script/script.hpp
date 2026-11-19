@@ -235,6 +235,8 @@ public:
     // (Phase::FixedUpdate). Called by the systems that add_script_systems() installs.
     void update(scene::Scene& scene, const gameplay::FrameTime& time, const gameplay::InputSource* input);
     void fixed_update(scene::Scene& scene, const gameplay::FrameTime& time, const gameplay::InputSource* input);
+    // Phase::PreUpdate: Game Rules' pause control, which must work while the game is paused.
+    void pre_update(scene::Scene& scene, const gameplay::InputSource* input);
 
     // Re-reads changed script files now (also done periodically when watch_files is set).
     // Returns the number of modules that were reloaded successfully.

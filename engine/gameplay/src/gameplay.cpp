@@ -39,12 +39,30 @@ void Simulation::run_phase(scene::Scene& scene, Phase phase, const FrameTime& t)
     }
 }
 
+bool game_paused(scene::Scene& scene) noexcept {
+    const auto* p = scene.world().resource<GamePause>();
+    return p && p->paused;
+}
+
+void set_game_paused(scene::Scene& scene, bool paused) {
+    if (auto* p = scene.world().resource<GamePause>()) p->paused = paused;
+    else if (paused) scene.world().set_resource<GamePause>().paused = true;
+}
+
 void Simulation::tick(scene::Scene& scene, float dt) {
     VICTUS_PROFILE_SCOPE("simulation.tick");
     dt = std::clamp(dt, 0.0f, max_frame_dt);
     FrameTime t = time_;
     t.dt = dt;
     run_phase(scene, Phase::PreUpdate, t);
+    if (game_paused(scene)) {
+        FrameTime still = t;
+        still.dt = 0;
+        run_phase(scene, Phase::PostUpdate, still);
+        scene.update_transforms();
+        ++time_.frame;
+        return;
+    }
     accumulator_ += dt;
     std::uint32_t steps = 0;
     while (accumulator_ >= fixed_dt_ && steps < max_fixed_steps) {
