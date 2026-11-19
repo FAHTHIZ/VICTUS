@@ -40,6 +40,9 @@ public:
     // `timeout_ms` (0 = poll, <0 = forever); returns nullopt on timeout. End of stream before a
     // complete line is an error (IoError) carrying any partial text in the message.
     [[nodiscard]] Result<std::optional<std::string>> read_line(int timeout_ms = -1);
+    // Exactly `count` bytes of stdout (binary protocols after a header line), same timeout and
+    // end-of-stream rules as read_line.
+    [[nodiscard]] Result<std::optional<std::string>> read_bytes(std::size_t count, int timeout_ms = -1);
 
     // True until the child has exited (non-blocking check).
     [[nodiscard]] bool running();

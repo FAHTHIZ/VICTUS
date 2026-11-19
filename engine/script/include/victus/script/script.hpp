@@ -116,6 +116,7 @@
 #include "victus/core/json.hpp"
 #include "victus/core/process.hpp"
 #include "victus/core/result.hpp"
+#include "victus/script/debugger.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/gameplay/input_map.hpp"
 #include "victus/gameplay/save.hpp"
@@ -199,6 +200,9 @@ struct HostOptions {
     // Compiles visual script graphs with trace instrumentation and records which nodes run
     // (graph_node_hits). The editor turns it on for play mode (ADR-0060).
     bool trace_graphs{false};
+    // Compiles scripts with full debug information (local names) and enables the source
+    // debugger (set_debug_handler, ADR-0099). Off: breakpoints are never hit.
+    bool debugger{false};
 };
 
 // The most recent runtime error of a visual script graph.
@@ -277,6 +281,20 @@ public:
     // Switches to the scene at `path` now (not from inside update), as `scene.load` would at the
     // end of an update: validates it first and leaves `scene` untouched on failure.
     [[nodiscard]] Status load_scene(scene::Scene& scene, std::string_view path, json::Value params = {});
+
+    // ---- source debugger (needs HostOptions::debugger; ADR-0099) ----
+    // Installs the stop handler (empty: detach; breakpoints stay but are not hit) and the
+    // logpoint output (empty: the engine log).
+    void set_debug_handler(DebugHandler handler, DebugOutput output = {});
+    // Replaces the breakpoints of the script at `path` (assets-relative, as scripts are named).
+    std::vector<BreakpointState> set_breakpoints(std::string_view path, std::vector<SourceBreakpoint> breakpoints);
+    // The current state of the breakpoints of `path` (lines move once the script loads).
+    [[nodiscard]] std::vector<BreakpointState> breakpoints(std::string_view path) const;
+    // Stops when an error escapes a script call (before the error is reported).
+    void set_break_on_error(bool enabled);
+    // Stops at the next line any script runs. Safe to call from another thread.
+    void request_pause();
+    [[nodiscard]] DebugStats debug_stats() const;
 
     struct Impl;
 

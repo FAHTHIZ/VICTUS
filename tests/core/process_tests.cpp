@@ -35,6 +35,26 @@ TEST_CASE("process: line round trip through a child") {
     CHECK_FALSE(c.running());
 }
 
+TEST_CASE("process: exact byte reads mix with line reads") {
+    auto child = process::ChildProcess::spawn({{"cat"}});
+    REQUIRE(child);
+    auto& c = *child.value();
+    REQUIRE(c.write("Content-Length: 5\r\n\r\nab"));
+    CHECK(c.read_line(5000)->value() == "Content-Length: 5");
+    CHECK(c.read_line(5000)->value().empty());
+    auto none = c.read_bytes(5, 0); // only 2 of 5 bytes so far
+    REQUIRE(none);
+    CHECK_FALSE(none->has_value());
+    REQUIRE(c.write("c\nde"));
+    auto body = c.read_bytes(5, 5000);
+    REQUIRE(body);
+    CHECK(body->value() == "abc\nd");
+    c.close_stdin();
+    CHECK(c.read_bytes(1, 5000)->value() == "e");
+    CHECK_FALSE(c.read_bytes(1, 5000)); // EOF
+    CHECK(c.wait(5000) == 0);
+}
+
 TEST_CASE("process: large lines are reassembled") {
     auto child = process::ChildProcess::spawn({{"cat"}});
     REQUIRE(child);

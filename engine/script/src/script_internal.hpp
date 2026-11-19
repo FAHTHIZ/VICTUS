@@ -28,6 +28,7 @@
 #include <lualib.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <chrono>
@@ -80,6 +81,8 @@ struct ScriptHost::Impl {
         sfs::file_time_type mtime{};
         std::uint64_t version{0};
         bool ok{false};
+        int chunk{LUA_NOREF}; // the compiled main function (breakpoints are set through it)
+        int lines{0};         // source lines
     };
     struct Instance {
         int ref{LUA_NOREF};
@@ -97,6 +100,36 @@ struct ScriptHost::Impl {
     std::unordered_map<std::uint64_t, Instance> instances;
     std::vector<std::string> recent_errors;
     std::unordered_map<std::string, PrefabSource> prefabs;
+
+    // Source debugger state (ADR-0099; debugger.cpp).
+    struct DebugBreakpoint {
+        SourceBreakpoint request;
+        int line{0};
+        bool verified{false};
+        std::string message;
+        std::uint64_t hits{0};
+    };
+    struct Debugger {
+        DebugHandler handler;
+        DebugOutput output;
+        std::unordered_map<std::string, std::vector<DebugBreakpoint>> breakpoints;
+        bool break_on_error{false};
+        std::atomic<bool> pause{false};
+        // Stepping: the action, the thread, stack depth and line it started from (line -1: stop
+        // at the next line anywhere).
+        StepAction step{StepAction::Continue};
+        lua_State* step_thread{nullptr};
+        int step_depth{0};
+        int step_line{0};
+        bool singlestep{false}; // the running top-level call executes in single-step mode
+        bool flooded{false};    // every line of every module has a breakpoint (step from a breakpoint)
+        bool in_handler{false};
+        int call_depth{0};
+        lua_State* lines_thread{nullptr};
+        std::vector<std::pair<int, int>> lines; // (proto id, line) per stack depth (single step)
+        DebugStats stats;
+    };
+    Debugger dbg;
     // Asset paths resolved by the rendering API, both ways (material() reports the path).
     std::unordered_map<std::string, Uuid> asset_uuids;
     std::unordered_map<Uuid, std::string, UuidHash> asset_paths;
@@ -218,7 +251,21 @@ struct ScriptHost::Impl {
             deadline = options.call_budget_seconds > 0 ? now_seconds() + options.call_budget_seconds : 0;
             interrupt_counter = 0;
         }
-        const int st = lua_pcall(T, nargs, nresults, 0);
+        const bool top = dbg.call_depth == 0;
+        int errfunc = 0;
+        if (options.debugger) {
+            if (top) debug_begin_call(T);
+            if (dbg.break_on_error && dbg.handler) { // stop with the failing frames still on the stack
+                lua_pushcfunction(T, &debug_error_handler, "debug_error_handler");
+                lua_insert(T, -(nargs + 2));
+                errfunc = lua_gettop(T) - nargs - 1;
+            }
+        }
+        ++dbg.call_depth;
+        const int st = lua_pcall(T, nargs, nresults, errfunc);
+        --dbg.call_depth;
+        if (errfunc) lua_remove(T, errfunc);
+        if (options.debugger && top) debug_end_call(T);
         deadline = outer;
         ++counters.calls;
         if (st == LUA_OK) return true;
@@ -228,6 +275,13 @@ struct ScriptHost::Impl {
         return false;
     }
 
+    // Source debugger (debugger.cpp).
+    void debug_begin_call(lua_State* T);
+    void debug_end_call(lua_State* T);
+    // Resolves and installs the breakpoints of a freshly compiled module (`chunk` is a ref).
+    void debug_module_loaded(const std::string& path, int chunk, int lines);
+    static int debug_error_handler(lua_State* L);
+
     std::string chunk_name(std::string_view path) const { return "@" + std::string(path); }
 
     // Compiles `source` and leaves the loaded function on L's stack inside a fresh sandboxed
@@ -235,7 +289,7 @@ struct ScriptHost::Impl {
     bool load_chunk(std::string_view source, const std::string& name, std::string& error) {
         lua_CompileOptions opts{};
         opts.optimizationLevel = 1;
-        opts.debugLevel = 1;
+        opts.debugLevel = options.debugger ? 2 : 1; // 2: local names for the debugger
         std::size_t size = 0;
         char* bytecode = luau_compile(source.data(), source.size(), &opts, &size);
         if (!bytecode) {
@@ -314,10 +368,17 @@ struct ScriptHost::Impl {
             lua_settop(L, top);
             return false;
         }
+        const int chunk = (lua_pushvalue(L, -1), lua_ref(L, -1));
+        lua_pop(L, 1);
+        if (options.debugger) debug_module_loaded(m.path, chunk, 1 + static_cast<int>(std::count(text->begin(), text->end(), '\n')));
         if (!pcall(0, 1, m.path)) {
+            lua_unref(L, chunk);
             lua_settop(L, top);
             return false;
         }
+        if (m.chunk != LUA_NOREF) lua_unref(L, m.chunk);
+        m.chunk = chunk;
+        m.lines = 1 + static_cast<int>(std::count(text->begin(), text->end(), '\n'));
         if (!lua_istable(L, -1)) {
             report(std::format("{}: a script must return a table (got {})", m.path, luaL_typename(L, -1)));
             lua_settop(L, top);

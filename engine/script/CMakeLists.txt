@@ -3,6 +3,8 @@ victus_add_module(script
     SOURCES
         src/script.cpp
         src/script_lua.cpp
+        src/debugger.cpp
+        src/dap.cpp
         src/bind_scene.cpp
         src/bind_physics.cpp
         src/bind_render.cpp

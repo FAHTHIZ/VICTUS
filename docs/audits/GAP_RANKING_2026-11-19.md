@@ -19,7 +19,7 @@ Score = Impact x Gap + 2 x Fan-out. Items owned by another session (ROADMAP "Par
 | 7 | **Acoustic occlusion, rooms and zones (6k)** | Voices/budget done (ADR-0083); no occlusion, transmission, zones or early reflections | 3 | 4 | 1 | 14 | this session |
 | 8 | **GPU particle simulation** | CPU emitters only (ADR-0084/0085 extended them) | 3 | 4 | 0 | 12 | this session |
 | 9 | **Volumetric fog / clouds / weather** | Height fog only | 3 | 4 | 0 | 12 | fog done (ADR-0098); clouds/weather open |
-| 10 | **Script debugging (breakpoints, stepping)** | Trace debugger for graphs only | 3 | 4 | 0 | 12 | unclaimed |
+| 10 | **Script debugging (breakpoints, stepping)** | Trace debugger for graphs only | 3 | 4 | 0 | 12 | done (ADR-0099): breakpoints, stepping, inspection, DAP adapter; Studio integration open |
 | 11 | **Versioned format migrators and editor safe mode (6l)** | Every format still at v1; no safe mode | 3 | 3 | 1 | 11 | this session |
 | — | Studio UX, A.E.G.I.S., animation depth, plugin SDK | see owners | | | | | other sessions |
 | — | Hardware validation (priority 9) | blocked on physical Windows/macOS/Android devices | | | | | blocked |
