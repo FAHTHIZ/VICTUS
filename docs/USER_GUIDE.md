@@ -12,6 +12,10 @@ Movement behaviours also drive character animation. When the entity or one of it
 
 The fastest way in is the Inspector's **Make it a...** row. Select any object and press Player, Enemy, Coin, Hazard, Checkpoint or Goal: the Studio adds the Behaviours for that role (for example Player gets movement, health that respawns, and a camera that follows it; Enemy gets a stompable hazard, a patrol that turns at ledges and one hit point), creates Game Rules if the scene has none, and names default-named objects after the role. It is one undo step.
 
+### Lessons: your first game, step by step
+
+New to making games? The Getting Started panel offers two lessons, **2D platformer** and **3D adventure**. A lesson starts a fresh scene (saving your current one first) and walks you through seven steps: add a floor, a player, a coin, an enemy and a goal, press Play and reach the goal, then save. Each step ticks itself off as soon as the Studio sees it done, whichever way you did it, and every step has a "Do it for me" button. From the command line: `victus_editor --lesson 2d` or `--lesson 3d`.
+
 | Behaviour | Add it to | What it does |
 |---|---|---|
 | Platformer Movement | the player (2D or 3D) | Run with A/D or the arrows, jump with Space; double jumps, coyote time, jump buffering and an optional jump sound. Adds a character controller if there is none. |

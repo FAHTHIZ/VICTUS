@@ -468,6 +468,11 @@ void Editor::draw_getting_started() {
         ImGui::End();
         return;
     }
+    if (lesson_ != Lesson::None) {
+        draw_lesson();
+        ImGui::End();
+        return;
+    }
     const std::size_t total = static_cast<std::size_t>(GuideStep::Count);
     const std::size_t done = guide_done_count();
     kit::heading("Your first game", tk::kTypeTitle);
@@ -479,6 +484,7 @@ void Editor::draw_getting_started() {
                        std::format("{} of {} done", done, total).c_str());
     ImGui::PopStyleColor();
     ImGui::Dummy(ImVec2(0, tk::kSpace3));
+    draw_lesson_picker();
 
     bool next_marked = false;
     for (std::size_t i = 0; i < total; ++i) {

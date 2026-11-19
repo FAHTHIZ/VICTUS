@@ -20,7 +20,6 @@ Broad and tested, **not production-ready**: no game has shipped with VICTUS, ren
 ### 1. Creator experience (no-code game making)
 
 - [~] **VICTUS Studio maturity** (brief: [docs/handoff/STUDIO_UX_AND_WORKSPACE_MATURITY.md](docs/handoff/STUDIO_UX_AND_WORKSPACE_MATURITY.md)). Done so far: design tokens, typography and icons, start screen with validation and samples, layouts, Problems panel, Export Game, diagnostics, Hierarchy/Inspector/Console/Assets polish, drag-and-drop import, interface size, Getting Started checklist, Help panel, undo history. Remaining: saved panel visibility and presets between sessions, a dependency inspector and import queue, a visual UI editor canvas, a visual behaviour-tree editor, a curve editor for the sequencer, plugin loading in the editor. **Accept when:** a first-time user completes the Getting Started path, builds and exports a game in a moderated test without help.
-- [ ] **Interactive tutorials.** Step-by-step lessons inside Studio that watch what the user does (select, add component, press Play) and advance on success, for a first 2D game and a first 3D game.
 
 ### 2. Engine depth
 

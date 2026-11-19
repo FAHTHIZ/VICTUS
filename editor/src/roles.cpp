@@ -92,10 +92,12 @@ bool Editor::make_role(Entity e, Role role) {
             auto& f = w.add<script::CameraFollowComponent>(camera);
             const math::Vec3 cam = w.get<Transform>(camera)->position, at = w.get<Transform>(e)->position;
             f.target = w.get<Name>(e)->value;
-            f.offset = cam - at; // keep the current framing
             if (two_d) {
+                f.offset = {0, cam.y - at.y, cam.z - at.z}; // centred on the player, same depth
                 f.look_at = false;
                 f.follow_y = false; // side view: the camera tracks left and right
+            } else {
+                f.offset = {0, 4, 8}; // behind and above, looking at the player
             }
             changed = true;
         }

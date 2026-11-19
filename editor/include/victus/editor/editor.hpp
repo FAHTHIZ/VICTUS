@@ -183,6 +183,11 @@ struct NetPlaySettings {
 
 enum class Primitive : std::uint8_t { Empty, Cube, Sphere, Plane, Cylinder, Camera, DirectionalLight, PointLight, SpotLight, Sprite, Decal, Light2D, FogVolume };
 
+// Lessons: build a small game step by step in a new scene; steps watch the scene and tick off.
+enum class Lesson : std::uint8_t { None, First2D, First3D };
+[[nodiscard]] std::size_t lesson_step_count() noexcept;
+[[nodiscard]] const char* lesson_step_title(std::size_t i) noexcept;
+
 // Inspector > "Make it a...": ready-made roles built from Behaviours (Editor::make_role).
 enum class Role : std::uint8_t { Player, Enemy, Coin, Hazard, Checkpoint, Goal };
 [[nodiscard]] const char* role_label(Role r) noexcept;
@@ -605,6 +610,15 @@ public:
     // Adds the Behaviours for a role (and Game Rules / camera follow when the scene lacks them)
     // as one undoable edit; renames default-named objects. False when nothing had to change.
     bool make_role(scene::Entity e, Role role);
+    // Lessons (Getting Started panel). start_lesson saves the current scene when it can (refuses
+    // when an unsaved, never-saved scene would be lost) and opens a new scene file for the lesson.
+    bool start_lesson(Lesson l);
+    void stop_lesson() noexcept;
+    [[nodiscard]] Lesson lesson() const noexcept { return lesson_; }
+    [[nodiscard]] std::size_t lesson_step() const noexcept { return lesson_step_; }
+    [[nodiscard]] bool lesson_step_done(std::size_t i);
+    void run_lesson_step(); // the current step's "do it for me"
+    void update_lesson();   // every frame: advance past steps that are satisfied
     void open_add_component() noexcept { add_component_open_ = 4; } // after the workspace settles
     // Hierarchy search (case-insensitive, by name): matches stay visible with their parents.
     void set_hierarchy_filter(std::string text) { hierarchy_filter_ = std::move(text); }
@@ -946,6 +960,11 @@ private:
     bool draw_add_component(scene::Entity e);       // the Inspector button and its picker
     void draw_roles(scene::Entity e);               // the Inspector "Make it a..." buttons
     std::optional<Role> pending_role_;
+    void draw_lesson();
+    void draw_lesson_picker();
+    Lesson lesson_{Lesson::None};
+    std::size_t lesson_step_{0};
+    bool lesson_won_{false};
     bool add_component_raw(scene::Entity e, std::string_view id); // no undo (inside an inspector edit)
     std::unordered_set<Uuid, UuidHash> hierarchy_keep_, hierarchy_reveal_;
     Uuid hierarchy_revealed_for_{};

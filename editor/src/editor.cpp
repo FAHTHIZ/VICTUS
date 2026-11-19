@@ -419,6 +419,12 @@ void Editor::new_scene() {
             remove.push_back(e);
     }
     for (const Entity e : remove) s->destroy(e);
+    // Only the camera and sun themselves: the template's camera script and behaviours belong to
+    // the template's files, which this project may not have.
+    for (const Entity e : s->roots()) {
+        s->world().remove<script::ScriptComponent>(e);
+        for (const Entity c : s->children(e)) s->destroy(c);
+    }
     s->name = "New Scene";
     set_scene(std::move(s), "");
     check_recovery();

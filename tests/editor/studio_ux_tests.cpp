@@ -9,6 +9,7 @@
 #include "victus/core/json.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
+#include "victus/runtime/scene_view.hpp"
 #include "victus/script/behaviours.hpp"
 #include "victus/ui/style.hpp"
 #include "victus/ui/ui.hpp"
@@ -960,6 +961,88 @@ TEST_CASE("studio roles: Make it a Player, Enemy, Coin or Goal in one undoable c
     CHECK(w.count<script::GameRulesComponent>() == 1); // reused, not duplicated
     h.ed->select(goal);
     h.frames(2);
+}
+
+TEST_CASE("studio lessons: a first 2D game built step by step, played to the goal and saved") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Lesson", "Lesson", "2d").ok());
+    h.frames(2);
+    REQUIRE(h.ed->start_lesson(editor::Lesson::First2D));
+    CHECK(h.ed->lesson() == editor::Lesson::First2D);
+    CHECK(h.ed->scene_path() == "scenes/lesson_2d.vscene");
+    CHECK(runtime::scene_view_mode(h.ed->edit_scene()) == runtime::ViewMode::TwoD);
+    CHECK(h.ed->lesson_step() == 0);
+    h.frames(2); // the lesson draws in the Getting Started panel
+    // Steps 1-5 with their "do it for me" buttons.
+    for (std::size_t i = 0; i < 5; ++i) {
+        CAPTURE(i);
+        h.ed->run_lesson_step();
+        h.frames(1);
+        CHECK(h.ed->lesson_step() == i + 1);
+    }
+    auto& w = h.ed->edit_scene().world();
+    CHECK(w.count<script::PlatformerMovementComponent>() == 1);
+    CHECK(w.count<script::CollectibleComponent>() == 1);
+    CHECK(w.count<script::GoalComponent>() == 1);
+    CHECK(w.count<script::GameRulesComponent>() == 1);
+    // Play: walk the player to the goal.
+    h.ed->run_lesson_step();
+    REQUIRE(h.ed->play_state() == editor::PlayState::Playing);
+    h.frames(30); // the player lands on the floor
+    auto& ps = h.ed->active_scene();
+    const scene::Entity player = ps.find_by_name("Player");
+    REQUIRE_FALSE(player.is_null());
+    CHECK(ps.world().get<scene::Transform>(player)->position.y > -3.0f); // standing on the floor
+    ps.world().get<scene::Transform>(player)->position = {7.2f, -2.5f, 0};
+    for (int i = 0; i < 120 && h.ed->lesson_step() < 6; ++i) h.frames(1);
+    CHECK(h.ed->lesson_step() == 6);
+    h.ed->stop();
+    h.ed->run_lesson_step(); // save
+    h.frames(1);
+    CHECK(h.ed->lesson_step() == editor::lesson_step_count());
+    CHECK(std::filesystem::exists(h.dir / "Lesson" / "scenes" / "lesson_2d.vscene"));
+    h.frames(2);
+    h.ed->stop_lesson();
+    CHECK(h.ed->lesson() == editor::Lesson::None);
+
+    // A second lesson gets its own scene file; steps also tick off from the user's own edits.
+    REQUIRE(h.ed->start_lesson(editor::Lesson::First3D));
+    CHECK(h.ed->scene_path() == "scenes/lesson_3d.vscene");
+    const scene::Entity floor = h.ed->create_entity(editor::Primitive::Cube);
+    REQUIRE(h.ed->add_component(floor, "Collider"));
+    h.ed->edit_scene().world().get<scene::Transform>(floor)->position = {0, -0.5f, 0};
+    h.ed->edit_scene().world().get<scene::Transform>(floor)->scale = {22, 1, 6};
+    h.frames(1);
+    CHECK(h.ed->lesson_step() == 1);
+    const scene::Entity hero = h.ed->create_entity(editor::Primitive::Cube);
+    REQUIRE(h.ed->make_role(hero, editor::Role::Player));
+    h.ed->edit_scene().world().get<scene::Transform>(hero)->position = {-8, 1, 0};
+    h.frames(1);
+    CHECK(h.ed->lesson_step() == 2);
+    for (int i = 0; i < 3; ++i) h.ed->run_lesson_step(); // coin, enemy, goal
+    h.frames(1);
+    CHECK(h.ed->lesson_step() == 5);
+    h.ed->run_lesson_step();
+    REQUIRE(h.ed->play_state() == editor::PlayState::Playing);
+    h.frames(40);
+    {
+        auto& s3 = h.ed->active_scene();
+        const scene::Entity p = s3.find_by_name("Player");
+        REQUIRE_FALSE(p.is_null());
+        CHECK(s3.world().get<scene::Transform>(p)->position.y > -0.2f); // stands on the floor
+        s3.world().get<scene::Transform>(p)->position = {8.2f, 0.6f, 0};
+    }
+    for (int i = 0; i < 120 && h.ed->lesson_step() < 6; ++i) h.frames(1);
+    CHECK(h.ed->lesson_step() == 6);
+    h.ed->stop();
+    // An unsaved, never-saved scene is not thrown away for a lesson.
+    h.ed->stop_lesson();
+    h.ed->new_scene();
+    (void)h.ed->create_entity(editor::Primitive::Cube);
+    CHECK(h.ed->dirty());
+    CHECK_FALSE(h.ed->start_lesson(editor::Lesson::First2D));
 }
 
 TEST_CASE("studio ragdolls: Make Ragdoll on a Vanguard, behaviour buttons, undo, and the Ragdoll Lab") {

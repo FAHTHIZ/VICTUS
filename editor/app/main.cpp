@@ -70,6 +70,8 @@ int main(int argc, char** argv) {
         .option("show", "open a window after opening: input-actions, network, profiler, problems, export, report-problem, about, add-menu, add-component, "
                         "console, crash-notice, command-palette, animation, getting-started, help, history, project-settings, "
                         "animation-preview (selected entity), material-editor (selected entity's material)")
+        .option("lesson", "start a lesson after opening: 2d or 3d (Getting Started > lessons)")
+        .option("lesson-steps", "with --lesson: do this many steps with their buttons first", "0")
         .option("graph", "open this visual script (path relative to assets/) in the Graph Editor")
         .option("port", "UDP port for --host", "27960")
         .flag("host", "enter play mode as a listen server after opening")
@@ -187,6 +189,12 @@ int main(int argc, char** argv) {
             g.mode = editor::gizmo::Mode::Scale;
         else
             std::fprintf(stderr, "victus_editor: unknown tool '%s' (move, rotate, scale)\n", tool.c_str());
+    }
+    if (args.has("lesson")) {
+        const std::string l = args.get("lesson");
+        if (l != "2d" && l != "3d") std::fprintf(stderr, "victus_editor: unknown lesson '%s' (2d, 3d)\n", l.c_str());
+        else if (ed.start_lesson(l == "2d" ? editor::Lesson::First2D : editor::Lesson::First3D))
+            for (int i = 0, n = static_cast<int>(args.get_number("lesson-steps", 0)); i < n && i < 5; ++i) ed.run_lesson_step();
     }
     if (args.has("asset-search")) ed.set_asset_filter(args.get("asset-search"));
     if (const double tile = args.get_number("asset-grid", 0); tile > 0)
