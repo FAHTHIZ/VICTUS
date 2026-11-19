@@ -1673,3 +1673,9 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 
 - Built: `TriggerComponent` (message and message_time, required_item and consume_item, locked_message, action none/start/remove/win, target by name, sound, once). Messages show in a panel near the bottom of the screen ("Message (Trigger)" canvas); the newest one wins and stays up even after its trigger is removed. Touch range grows by 15 cm so solid doors are touched from the side. `MovingPlatform.wait_for_trigger` keeps a lift still until a switch starts it. Inspector roles Key (Item collectible "Key"), Door (Trigger requiring Key that removes itself, made solid) and Sign.
 - Verified (Debug, -Werror): new `victus_script_tests` case walks past a sign (message while touching), is stopped by a locked door ("You need a Key"), picks up the key, opens the door (key used up, message survives the door), starts a lift with a switch and wins at a finish line; studio roles test covers the three roles; visual check of the message panel in `victus run`.
+
+## 2026-11-19 — Jump Pad behaviour
+
+Built: `JumpPadComponent` (strength, direction, target tag, sound) runs with the other gameplay behaviours, launches tagged characters on touch with a short cooldown, refunds air jumps and emits `bounced`. Inspector role "Jump Pad".
+
+Verified: `behaviours: jump pads launch the player in 2D and 3D`, and the roles test in `victus_editor_tests`.

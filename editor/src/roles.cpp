@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Inspector > "Make it a...": one click turns the selected object into a player, enemy, coin,
-// hazard, checkpoint, goal, moving platform, key, door or sign by adding the Behaviours that role needs (ADR-0120), plus the scene
+// hazard, checkpoint, goal, moving platform, key, door, sign or jump pad by adding the Behaviours that role needs (ADR-0120), plus the scene
 // pieces it depends on (Game Rules, a camera that follows the player). One undo step.
 #include "victus/editor/editor.hpp"
 #include "widgets.hpp"
@@ -29,7 +29,7 @@ struct RoleInfo {
     const char* tooltip;
 };
 
-constexpr std::array<RoleInfo, 10> kRoles = {{
+constexpr std::array<RoleInfo, 11> kRoles = {{
     {Role::Player, "Player", "Player", "Moves with the keyboard or a gamepad, has health and respawns. The camera follows it."},
     {Role::Enemy, "Enemy", "Enemy", "Walks back and forth and hurts the player; jump on it to defeat it."},
     {Role::Coin, "Coin", "Coin", "Adds 1 to the score when the player touches it."},
@@ -41,6 +41,7 @@ constexpr std::array<RoleInfo, 10> kRoles = {{
     {Role::Key, "Key", "Key", "The player picks it up and carries it; a Door needs one to open."},
     {Role::Door, "Door", "Door", "A solid door that opens when the player touches it carrying a Key."},
     {Role::Sign, "Sign", "Sign", "Shows a message while the player stands next to it. Edit the text in Trigger > Message."},
+    {Role::JumpPad, "Jump Pad", "Jump Pad", "A spring: the player bounces high when landing on it."},
 }};
 
 bool default_name(std::string_view n) {
@@ -73,7 +74,8 @@ bool Editor::make_role(Entity e, Role role) {
     });
     w.each<script::CameraFollowComponent>([&](Entity c, script::CameraFollowComponent&) { follow = c; });
     const bool wants_rules = role != Role::Hazard && role != Role::Checkpoint && role != Role::MovingPlatform &&
-                            role != Role::Key && role != Role::Door && role != Role::Sign;
+                            role != Role::Key && role != Role::Door && role != Role::Sign &&
+                            role != Role::JumpPad;
     const bool wants_follow = role == Role::Player && follow.is_null() && !camera.is_null() && camera != e;
     if (wants_follow) touched.push_back(s.uuid(camera));
     auto before = capture(s, touched);
@@ -187,6 +189,12 @@ bool Editor::make_role(Entity e, Role role) {
             changed = true;
         } else if (!two_d && !w.has<physics::ColliderComponent>(e)) {
             w.add<physics::ColliderComponent>(e);
+            changed = true;
+        }
+        break;
+    case Role::JumpPad:
+        if (!w.has<script::JumpPadComponent>(e)) {
+            w.add<script::JumpPadComponent>(e);
             changed = true;
         }
         break;

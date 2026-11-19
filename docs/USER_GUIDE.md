@@ -30,6 +30,7 @@ New to making games? The Getting Started panel offers two lessons, **2D platform
 | Spawner | anywhere | Creates copies of a prefab on a timer, up to a limit. |
 | Lifetime | effects, bullets | Removes the entity after a time. |
 | Checkpoint / Goal | flags | A checkpoint moves the respawn point; a goal wins, loads the next scene or a chosen one. |
+| Jump Pad | springs, trampolines | Launches the player at Strength m/s when it lands on or touches the pad. Direction (0, 1, 0) is straight up and keeps the player's run speed; tilt it to fling sideways. Plays Sound if set and sends a `bounced` event; air jumps are given back. |
 | Trigger | signs, switches, doors, finish lines | Does something when the player touches it: shows a Message at the bottom of the screen (for a few seconds or while touching), and runs an Action on itself or a named Target: Start a Moving Platform that has Wait For Trigger, Remove (a door), or Win. With Required Item it only works when the player carries that item (for example "Key" from an Item Collectible) and otherwise says "You need a Key". |
 | Game Rules | one per scene | Score, lives, an optional time limit and score to win, and the on-screen HUD with win and game-over messages. With Carry Over on (the default), a Goal that loads the next level hands it the score, lives and time; game over restarts the level with the score it began with and fresh lives. |
 

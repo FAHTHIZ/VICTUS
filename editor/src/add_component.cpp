@@ -48,6 +48,7 @@ constexpr Blurb kBlurbs[] = {
     {"Lifetime", "Removes the entity after a few seconds"},
     {"Checkpoint", "Touch it to respawn here instead of at the start"},
     {"Goal", "The end of the level: win or go to the next scene"},
+    {"JumpPad", "A spring that launches the player high into the air"},
     {"Trigger", "Does something when the player touches it: signs, switches, locked doors, finish lines"},
     {"GameRules", "Score, lives, a timer, win and game over, with an on-screen HUD"},
     {"Script", "Runs a Luau or visual script on this entity"},
