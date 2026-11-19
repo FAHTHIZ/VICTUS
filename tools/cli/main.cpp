@@ -81,6 +81,7 @@ constexpr const char* kUsage =
     "  info <project>                                             show project settings, scenes, assets\n"
     "  import <project>                                           import changed assets (exit 1 on failure)\n"
     "  run <project> [--scene S] [--frames N] [--screenshot PNG] [--quality TIER] [--profile F] [--trace F]  play a scene\n"
+    "      [--capture-dir DIR] [--capture-every N] [--render-report F.json]  ...capture frames, report the rendering path\n"
     "      [--connect HOST[:PORT]] [--name NAME]                  ...as a client of a `victus serve` server\n"
     "      [--host] [--port P] [--max-clients N]                  ...host a session and play in it (listen server)\n"
     "      [--server-key HEX] [--password P] [--insecure]         ...pin the server key / join a protected server\n"
@@ -196,6 +197,7 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("screenshot", "write the last frame to this PNG (with --frames)")
         .option("capture-dir", "write frames to DIR/frame_NNNNN.png for `victus compare` (with --frames)")
         .option("capture-every", "with --capture-dir: write every Nth frame", "1")
+        .option("render-report", "write the rendering path of the last frame (features, reason codes) as JSON; prints it too")
         .option("width", "window width (default: project setting)", "0")
         .option("height", "window height (default: project setting)", "0")
         .option("quality", "rendering quality: low, medium, high or ultra (default: project setting)")
@@ -257,6 +259,15 @@ int cmd_run(const std::vector<std::string>& a) {
                 static_cast<unsigned long long>(r->frames), r->seconds, r->backend.c_str(), r->quality.c_str(),
                 static_cast<unsigned long long>(r->script_errors));
     if (!r->net_status.empty()) std::printf("net: %s\n", r->net_status.c_str());
+    if (p.has("render-report")) {
+        if (r->render_path.features.empty()) {
+            std::printf("render path: the last frame was not a 3D view\n");
+        } else {
+            std::printf("%s", r->render_path.to_text().c_str());
+            if (auto st = fs::write_text_atomic(p.get("render-report"), json::stringify(r->render_path.to_json(), true)); !st)
+                return error(st.error().message);
+        }
+    }
     if (r->frames_captured)
         std::printf("captured %llu frames to %s\n", static_cast<unsigned long long>(r->frames_captured), o.capture_dir.string().c_str());
     if (r->assets_streamed) std::printf("assets: %llu streamed in the background\n", static_cast<unsigned long long>(r->assets_streamed));

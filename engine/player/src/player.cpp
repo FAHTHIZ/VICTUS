@@ -554,6 +554,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         break;
     }
     report.assets_streamed = cache.async_stats().uploaded;
+    if (last_view.mode == runtime::ViewMode::ThreeD) report.render_path = (*view)->renderer().path_report();
     if (server) {
         const auto joined = server->diagnostics().clients;
         report.net_status = "hosted the session; " + std::to_string(joined) + (joined == 1 ? " client" : " clients") + " connected at exit";

@@ -972,6 +972,22 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0103 — Rendering-path diagnostics with reason codes (accepted 2026-11-19)
+
+**Context.** Slice 1 of the perceptual-equivalence handoff asks for reason codes and output-quality metadata for the existing LOD, culling, render scale, shadows and effects, with honest unavailable states for costs the platform does not expose. `SceneStats` counted work but did not say why a feature was missing: SSAO off because of the tier, a setting override, AO intensity 0 in the environment, or a missing depth pre-pass all looked the same. Once `victus compare` (ADR-0102) reports a difference, the next question is which decision caused it.
+
+**Decision.**
+- `victus/render/render_path.hpp`: `RenderPathFacts` (what the renderer saw and decided, filled in `SceneRenderer::render` at the existing decision points, no new policy) and the pure `describe_render_path(settings, facts)` producing a `RenderPathReport`: 18 features (render scale, TAA, temporal/spatial upscale, FXAA, sun shadows, local lights, local shadows, irradiance volume, SSAO, bloom, auto exposure, volumetric fog, LODs, occlusion culling, instancing, motion vectors), each `active`, `reduced` or `off` with a reason (`quality_tier`, `setting`, `scene`, `not_needed`, `replaced`, `requires`, `capture_mode`, `unsupported`, `budget`, `no_history`) and a detail with the output quality (cascades and resolution, SSAO samples and resolution, froxel grid, LOD error, lights kept of visible, atlas tiles).
+- The reference is the Ultra preset: cheaper parameters are `reduced`. The reason is `quality_tier` when the value matches the active tier's preset, else `setting`, so user overrides are visible.
+- GPU execution cost is reported as unavailable: SDL_GPU exposes no timestamp queries (libsdl-org/SDL#11696, open, milestone 3.6). CPU per-pass cost stays with the profiler (`--profile`, `--trace`).
+- Surfaces: `SceneRenderer::path_report()`, `PlayerReport::render_path`, `victus run --render-report F.json` (prints a table and writes JSON), and a "below ultra: ..." line in the editor viewport overlay that names non-tier reasons.
+
+**Alternatives.** A global quality manager deciding features (rejected by the handoff: extend owning systems); free-text log lines (rejected: not machine-readable for CI); estimating GPU time from draw/triangle counts (rejected: not a measurement; the handoff asks for honest unavailable states); Vulkan timestamp queries behind SDL_GPU's back (rejected: SDL_GPU does not expose the VkDevice or command buffers).
+
+**Consequences.** CI and users can see exactly why a frame differs from the Ultra path; the CLI compare test checks low reports SSAO `off/quality_tier` and ultra `active/none` on a real frame. New decision points in the renderer must also fill `RenderPathFacts`, or the report goes stale for that feature.
+
+**Sources.** Perceptual-equivalence handoff Slice 1 (docs/handoff/VICTUS_PERCEPTUAL_EQUIVALENCE_RENDERING.md); SDL GPU query API issue (https://github.com/libsdl-org/SDL/issues/11696); the SDL3 GPU chapter of the Linux graphics stack book (https://github.com/turbofish-pk/linux-graphics-stack-book/blob/main/chapters/part-18-rendering-abstractions/ch81-sdl3-gpu.md).
+
 ## ADR-0102 — Perceptual capture/compare harness: FLIP, SSIM, worst tile, temporal error (accepted 2026-11-19)
 
 **Context.** The perceptual-equivalence goal (docs/handoff/VICTUS_PERCEPTUAL_EQUIVALENCE_RENDERING.md, Slice 1) needs a reproducible way to tell whether a cheaper rendering path still looks like the reference. VICTUS only had `assets::image_psnr`, and PSNR tracks pixel error, not visibility. A single average can also hide one broken object in an otherwise correct frame, and a per-frame score cannot see flicker. While building the harness, the first comparison of two identical fixed-frame runs showed they were not pixel-identical: the player never set `SceneRenderer::set_time`, so surface-shader time followed the wall clock.

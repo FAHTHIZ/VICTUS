@@ -6,6 +6,7 @@
 #include "victus/core/profiler.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/core/result.hpp"
+#include "victus/render/render_path.hpp"
 
 #include <cstdint>
 #include <string>
@@ -68,6 +69,8 @@ struct PlayerOptions {
 struct PlayerReport {
     std::uint64_t frames{0};
     std::uint64_t frames_captured{0}; // PNGs written to PlayerOptions::capture_dir
+    // Rendering path of the last 3D frame (ADR-0103); no features when the last frame was 2D.
+    render::RenderPathReport render_path;
     double seconds{0};
     std::string backend;
     std::uint64_t script_errors{0};

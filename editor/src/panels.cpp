@@ -911,6 +911,23 @@ void Editor::draw_viewport() {
                 lines.push_back(std::format("shading: {} alpha-tested, {} surface-shader, {} blended ({:.1f}k tris)", rs.alpha_tested_draws,
                                             rs.surface_shader_draws, rs.transparent_draws,
                                             static_cast<double>(rs.transparent_triangles) / 1000.0));
+            // Rendering-path diagnostics (ADR-0103): what runs below the Ultra reference and why.
+            if (!two_d) {
+                // Compact: the quality tier is already on the first line, so only other reasons are named.
+                std::string reduced;
+                for (const auto& f : view_->renderer().path_report().features) {
+                    using render::PathReason, render::PathState;
+                    const bool lowered = f.state == PathState::Reduced ||
+                                         (f.state == PathState::Off && (f.reason == PathReason::QualityTier || f.reason == PathReason::Setting ||
+                                                                        f.reason == PathReason::Budget || f.reason == PathReason::Unsupported));
+                    if (!lowered) continue;
+                    if (!reduced.empty()) reduced += ", ";
+                    reduced += f.name;
+                    if (f.state == PathState::Off) reduced += " off";
+                    if (f.reason != PathReason::QualityTier) reduced += std::format(" ({})", render::path_reason_name(f.reason));
+                }
+                if (!reduced.empty()) lines.push_back("below ultra: " + reduced);
+            }
             if (!two_d && debug_view_ == render::DebugView::Overdraw)
                 lines.push_back("overdraw view: layers per pixel, black 0  blue 1  green 2  yellow 3  orange 4  red 5-7  white 8+");
             const float top = play_state_ == PlayState::Editing ? ImGui::GetFrameHeight() + tk::kSpace2 * 2.0f + tk::kSpace3 * 2.0f

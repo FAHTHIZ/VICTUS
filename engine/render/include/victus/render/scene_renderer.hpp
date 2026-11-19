@@ -8,6 +8,7 @@
 #include "victus/render/gpu_context.hpp"
 #include "victus/render/irradiance_volume.hpp"
 #include "victus/render/render_graph.hpp"
+#include "victus/render/render_path.hpp"
 
 #include <array>
 #include <memory>
@@ -605,6 +606,9 @@ public:
                                 std::uint32_t height, rhi::Format target_format);
 
     [[nodiscard]] const SceneStats& stats() const noexcept { return stats_; }
+    // Which rendering features ran in the last render(), their output quality and why the others
+    // did not (ADR-0103).
+    [[nodiscard]] const RenderPathReport& path_report() const noexcept { return path_; }
     // Debug/test readback (waits for the GPU): instances that passed the last frame's occlusion
     // test, summed over its culled batches. 0 when the last frame did not cull.
     [[nodiscard]] Result<std::uint32_t> read_occlusion_survivors();
@@ -705,6 +709,8 @@ private:
     std::unordered_set<std::uint64_t> surface_failed_; // shaders whose pipeline failed (logged once)
     std::array<rhi::PipelineHandle, 8> blend_pipelines_{}; // [blend-1][skinned][double_sided], created on first use
     std::optional<double> time_;
+    RenderPathFacts facts_;
+    RenderPathReport path_;
     rhi::TextureHandle no_shadow_;
     rhi::TextureHandle exposure_[2];
     std::uint32_t exposure_index_{0};

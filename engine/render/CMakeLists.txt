@@ -26,6 +26,7 @@ victus_add_module(render
         src/gpu_context.cpp
         src/image.cpp
         src/image_compare.cpp
+        src/render_path.cpp
         src/mesh.cpp
         src/mesh_optimize.cpp
         src/render_graph.cpp
