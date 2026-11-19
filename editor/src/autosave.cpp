@@ -60,7 +60,7 @@ void Editor::remove_autosave(std::string_view scene_path) {
 }
 
 void Editor::update_autosave(float dt) {
-    if (!project_ || !scene_) return;
+    if (!project_ || !scene_ || safe_mode_) return; // never overwrite the copy a normal start offers
     if (!dirty()) {
         // Saved, or every edit undone: the copy is stale.
         if (autosave_written_) {
@@ -85,7 +85,7 @@ void Editor::check_recovery() {
     recovery_.reset();
     autosave_written_ = false;
     autosave_timer_ = 0;
-    if (!project_) return;
+    if (!project_ || safe_mode_) return; // autosaves stay on disk for a normal start
     const fs::Path copy = autosave_path(scene_path_);
     std::error_code ec;
     if (!sfs::is_regular_file(copy, ec)) return;

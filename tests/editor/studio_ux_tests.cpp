@@ -20,6 +20,7 @@
 #include <optional>
 #include <fstream>
 #include <filesystem>
+#include <functional>
 
 using namespace victus;
 using victus::test::gpu;
@@ -34,7 +35,8 @@ struct Studio {
     sfs::path dir;
     static constexpr std::uint32_t W = 1280, H = 720;
 
-    bool init(const sfs::path& samples_dir = {}, bool previous_crash = false) {
+    bool init(const sfs::path& samples_dir = {}, bool previous_crash = false,
+              const std::function<void(editor::EditorOptions&)>& tweak = {}) {
         auto& ctx = *gpu().ctx;
         dir = sfs::temp_directory_path() / ("victus_ux_" + Uuid::generate().to_string().substr(0, 8));
         sfs::create_directories(dir);
@@ -47,6 +49,7 @@ struct Studio {
         o.samples_dir = samples_dir;
         o.diagnostics_dir = dir / "diagnostics";
         o.previous_session_crashed = previous_crash;
+        if (tweak) tweak(o);
         auto e = editor::Editor::create(ctx, *ui, nullptr, nullptr, o);
         if (!e) return false;
         ed = std::move(e).value();
@@ -958,4 +961,99 @@ TEST_CASE("studio ragdolls: Make Ragdoll on a Vanguard, behaviour buttons, undo,
     const float y1 = play.world_matrix(head).transform_point({}).y;
     CHECK(y1 < y0 - 0.3f);
     h.ed->stop();
+}
+
+TEST_CASE("studio safe mode: unfinished openings switch it on, it skips project content and restarts normally") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init({}, false, [](editor::EditorOptions& o) { o.startup_frames = 4; }));
+    ImGui::SetCurrentContext(h.ui->imgui());
+    const sfs::path root = h.dir / "game";
+    REQUIRE(h.ed->create_project(root, "Safe", "3d").ok());
+    const std::string startup = h.ed->scene_path();
+    CHECK_FALSE(startup.empty());
+    CHECK_FALSE(h.ed->safe_mode());
+    // The opening is recorded until startup_frames frames have run.
+    CHECK(h.ed->startup_pending());
+    CHECK(editor::unfinished_startups(root) == 1);
+    h.frames(4);
+    CHECK_FALSE(h.ed->startup_pending());
+    CHECK_FALSE(sfs::exists(editor::startup_marker_path(root)));
+    CHECK(editor::unfinished_startups(root) == 0);
+
+    // Two openings that never finished (crashed, hung or killed) and an autosave they left behind.
+    h.ed->close_project();
+    REQUIRE(fs::write_text_atomic(editor::startup_marker_path(root), "{\"unfinished\": 2}").ok());
+    const sfs::path autosave = root / ".victus" / "autosave" / "untitled.vscene";
+    sfs::create_directories(autosave.parent_path());
+    REQUIRE(fs::write_text_atomic(autosave, R"({"format":"victus.scene","version":1,"entities":[]})").ok());
+    REQUIRE(h.ed->open_project(root).ok());
+    CHECK(h.ed->safe_mode());
+    CHECK(h.ed->safe_mode_reason().find("last 2 attempts") != std::string::npos);
+    CHECK(editor::unfinished_startups(root) == 3); // this opening is recorded too
+    CHECK(h.ed->scene_path().empty());            // the startup scene was not opened
+    CHECK_FALSE(h.ed->recovery_available());      // autosaves are not offered...
+    h.ed->play();
+    CHECK(h.ed->play_state() == editor::PlayState::Editing); // play mode is off
+    h.frames(2);
+    CHECK(sfs::exists(autosave)); // ...and not deleted or overwritten
+    CHECK(h.ed->safe_mode_card_visible());
+    CHECK(ImGui::FindWindowByName("##safe_mode") != nullptr);
+    CHECK(editor::safe_mode_skipped().size() == 6);
+    // Opening a scene by hand works in safe mode.
+    REQUIRE(h.ed->open_scene(startup).ok());
+    CHECK_FALSE(h.ed->recovery_available());
+    h.frames(2); // startup finished: the marker is gone, so the next start is normal
+    CHECK(editor::unfinished_startups(root) == 0);
+
+    // Restart Normally: everything is back on, including the startup scene.
+    REQUIRE(h.ed->reopen_normally().ok());
+    CHECK_FALSE(h.ed->safe_mode());
+    CHECK(h.ed->scene_path() == startup);
+    CHECK_FALSE(h.ed->safe_mode_card_visible());
+    h.ed->play();
+    CHECK(h.ed->play_state() == editor::PlayState::Playing);
+    h.ed->stop();
+
+    // Asking for it (launcher "Open in Safe Mode"); closing ends it.
+    REQUIRE(h.ed->open_project_safe(root).ok());
+    CHECK(h.ed->safe_mode());
+    CHECK(h.ed->safe_mode_reason().find("you asked") != std::string::npos);
+    h.ed->close_project();
+    CHECK_FALSE(h.ed->safe_mode());
+    CHECK_FALSE(sfs::exists(editor::startup_marker_path(root))); // closing is a finished start
+    REQUIRE(h.ed->open_project(root).ok());
+    CHECK_FALSE(h.ed->safe_mode());
+
+    // A torn marker still counts as one unfinished opening; a missing project is not touched.
+    h.ed->close_project();
+    REQUIRE(fs::write_text_atomic(editor::startup_marker_path(root), "{").ok());
+    CHECK(editor::unfinished_startups(root) == 1);
+    CHECK(editor::unfinished_startups(h.dir / "missing") == 0);
+    CHECK_FALSE(h.ed->open_project_safe(h.dir / "missing").ok());
+    REQUIRE(h.ed->open_project(root).ok());
+    CHECK_FALSE(h.ed->safe_mode()); // one unfinished opening is below the default of 2
+}
+
+TEST_CASE("studio safe mode: --safe-mode covers every project; safe_mode_after 0 never switches it on") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    {
+        Studio h;
+        REQUIRE(h.init({}, false, [](editor::EditorOptions& o) { o.safe_mode = true; }));
+        const sfs::path root = h.dir / "game";
+        REQUIRE(h.ed->create_project(root, "Forced", "2d").ok());
+        CHECK(h.ed->safe_mode());
+        CHECK(h.ed->safe_mode_reason().find("you asked") != std::string::npos);
+        REQUIRE(h.ed->reopen_normally().ok());
+        CHECK_FALSE(h.ed->safe_mode());
+        h.ed.reset(); // a normal quit removes the record
+        CHECK_FALSE(sfs::exists(editor::startup_marker_path(root)));
+    }
+    Studio h;
+    REQUIRE(h.init({}, false, [](editor::EditorOptions& o) { o.safe_mode_after = 0; }));
+    const sfs::path root = h.dir / "game";
+    REQUIRE(project::Project::create(root, "Never", "3d").ok());
+    REQUIRE(fs::write_text_atomic(editor::startup_marker_path(root), "{\"unfinished\": 9}").ok());
+    REQUIRE(h.ed->open_project(root).ok());
+    CHECK_FALSE(h.ed->safe_mode());
 }

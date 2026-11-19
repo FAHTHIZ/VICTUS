@@ -354,6 +354,7 @@ std::string asset_label(assets::AssetDatabase* db, const Uuid& id) {
 // ---- frame --------------------------------------------------------------------------------------
 
 void Editor::frame(float dt) {
+    update_startup();
     update_profiler();
     if (play_state_ == PlayState::Editing) update_autosave(dt);
     if (dt > 0) fps_ = fps_ <= 0 ? 1.0f / dt : fps_ * 0.95f + 0.05f / dt;
@@ -387,6 +388,7 @@ void Editor::frame(float dt) {
     draw_diagnostics_dialog();
     draw_about_dialog();
     draw_crash_notice();
+    draw_safe_mode_card();
     if (show_demo_) ImGui::ShowDemoWindow(&show_demo_);
     observe_guide();
     apply_ui_scale(); // takes effect from the next frame
@@ -612,6 +614,14 @@ void Editor::draw_menu_bar() {
             open_diagnostics_dialog();
         if (ImGui::MenuItem("Copy Diagnostics Folder Path", nullptr, false, platform_ != nullptr) && platform_)
             platform_->set_clipboard(diagnostics_dir().string());
+        if (safe_mode_) {
+            if (ImGui::MenuItem("Restart Normally", nullptr, false, !dirty()))
+                if (auto st = reopen_normally(); !st.ok()) notify("cannot restart normally: " + st.error().message, true);
+        } else if (ImGui::MenuItem("Reopen in Safe Mode", nullptr, false, !dirty() && play_state_ == PlayState::Editing)) {
+            const fs::Path root = project_->root();
+            close_project();
+            if (auto st = open_project_safe(root); !st.ok()) notify("cannot reopen in safe mode: " + st.error().message, true);
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("About VICTUS Studio")) open_about_dialog();
         ImGui::EndMenu();

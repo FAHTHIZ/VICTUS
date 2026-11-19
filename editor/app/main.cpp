@@ -12,6 +12,7 @@
 //   --view N          with --clients: show player N (0 = host, 1..N = in-editor clients)
 //   --select NAME     select an entity by name after opening
 //   --data-dir DIR    use DIR instead of the user data directory (recent list, layout)
+//   --safe-mode       open projects in safe mode (ADR-0101)
 #include "victus/core/build_info.hpp"
 #include "victus/core/cli.hpp"
 #include "victus/core/crash.hpp"
@@ -72,7 +73,9 @@ int main(int argc, char** argv) {
         .flag("host", "enter play mode as a listen server after opening")
         .option("clients", "with --host: players simulated inside the editor (0-3)", "0")
         .option("view", "with --clients: viewed player (0 = host)", "0")
-        .flag("play", "enter play mode after opening");
+        .flag("play", "enter play mode after opening")
+        .flag("safe-mode", "open projects in safe mode: no startup scene, editor scripts, asset import, thumbnails, "
+                           "automatic check, autosave restore or play mode");
     if (auto st = args.parse(argc, argv); !st) {
         std::fprintf(stderr, "%s\n%s", st.error().message.c_str(), args.help().c_str());
         return 2;
@@ -119,6 +122,7 @@ int main(int argc, char** argv) {
     eo.recent_file = data_dir / "recent_projects.json";
     // Large by default: comfortable to read and easy to click for people new to the Studio.
     eo.default_ui_scale = 1.15f;
+    eo.safe_mode = args.has("safe-mode");
     if (crash_session) {
         eo.diagnostics_dir = crash_session.value()->directory();
         eo.previous_session_crashed = crash_session.value()->previous_session_ended_unexpectedly();
