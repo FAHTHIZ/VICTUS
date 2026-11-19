@@ -1,94 +1,138 @@
+<div align="center">
+
 # VICTUS
 
-**An independent, cross-platform engine for complete games, real-time rendering, and large-scale simulation.**
+**Make a whole game, 2D or 3D, without writing code. You can still drop down to scripts and C++ when you need them.**
 
-VICTUS aims to give developers an end-to-end path from an empty project to a finished, playable, distributable game. It is intended for 2D and 3D games, high-fidelity visuals, simulation-heavy worlds, mobile experiences, multiplayer projects, and dedicated servers. It must provide real gameplay and real rendering—not just technical demos.
+[![VICTUS CI](https://github.com/FAHTHIZ/VICTUS/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/FAHTHIZ/VICTUS/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg)
+![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20Android-555.svg)
 
-**Status:** early; not production-ready. The list below describes product goals, not current features; see [Development status](#development-status) for what works today. A feature counts as delivered only when implementation, integration, tests and a usable workflow prove it.
+[Getting started](docs/GETTING_STARTED.md) · [User guide](docs/USER_GUIDE.md) · [Samples](#samples) · [Status](#status) · [Roadmap](ROADMAP.md)
 
-## What VICTUS is being built to provide
+<img src="docs/images/studio.jpg" alt="VICTUS Studio editing the No-Code Platformer: hierarchy, viewport, inspector with Platformer Movement, and the Getting Started guide" width="100%">
 
-- **Complete gameplay framework:** worlds, scenes, entities, components, game modes/states, player controllers, cameras, input mapping, interaction, physics, navigation, gameplay AI, scripting, visual scripting, events, timers, save/load, and reusable prefabs.
-- **Real 2D and 3D development:** dedicated 2D and 3D workflows, sprites, tilemaps, UI, physics, 3D meshes, skeletal animation, materials, terrain, large worlds, and spatial audio.
-- **Actual rendering:** a production-oriented graphics architecture with PBR materials, lighting, shadows, reflections, post-processing, GPU profiling, particles, visual effects, atmosphere, water, scalable quality tiers, and researched advanced rendering paths.
-- **Complete creator tools:** VICTUS Studio, scene/world editing, visual graphs, material/shader tools, animation tools, terrain and procedural tools, cinematic sequencing, asset inspection, debugging, profiling, and play-in-editor.
-- **Production pipeline:** asset import and validation, stable asset IDs, dependency tracking, incremental cooking, caching, build automation, packaging, platform presets, crash diagnostics, and reproducible releases.
-- **Multiplayer and online foundations:** authoritative server architecture, replication, prediction/reconciliation, interpolation, dedicated/headless servers, network simulation, and replaceable online-service integrations.
-- **Large-scale simulation:** deterministic and controlled simulation where feasible, populations, economies, ecosystems, crowds, autonomous agents, world streaming, and validated simulation LOD.
-- **Extensibility:** documented VICTUS APIs, plugin/module boundaries, safe modding architecture, versioning, migration tools, and an ecosystem that does not require another complete engine.
-- **Cross-platform delivery:** Windows, Linux, macOS, Android, and iOS as researched and validated targets; web, XR, and console support only when technically and legally viable. Console development depends on platform-holder access and approval.
-- **Three complete reference projects:** a 2D game, a 3D gameplay-focused game, and a simulation project, all built with VICTUS systems rather than hidden custom workarounds.
+</div>
 
-## Product principles
+VICTUS is an independent, open engine for complete games, real-time rendering and simulation. It comes with **VICTUS Studio**, an editor built so a first-time creator can finish a game. Ready-made **Behaviours** cover movement, enemies, pickups, health, checkpoints and score. Behind them is a full engine: physically based rendering, Jolt and Box2D physics, navigation, AI, animation, audio, multiplayer, Luau scripting, visual scripting and one-command export.
 
-1. **Independent core:** VICTUS owns its architecture, runtime, editor experience, project model, and public APIs. Specialist libraries may be used behind replaceable interfaces after research and license review.
-2. **Complete, not cosmetic:** no placeholder, mock, or screenshot-only feature counts as implemented.
-3. **Finish vertical slices:** implement, integrate, test, profile, document, and demonstrate each subsystem before marking it complete.
-4. **Measure performance:** publish reproducible results with hardware, OS, driver, build, quality settings, and test methodology.
-5. **Mobile is a first-class constraint:** account for memory, bandwidth, battery, sustained thermals, startup, and device capability.
-6. **Separate concerns:** gameplay, authoritative simulation, presentation, rendering, editor, and server execution have clear boundaries.
-7. **Build for creators:** usability, undo/redo, recovery, import feedback, debugging, tutorials, and packaging are engine requirements.
-8. **Keep main buildable:** use small verified commits, remove obsolete implementations, and never claim unverified support.
-9. **Respect rights and safety:** audit code, assets, licenses, patents, trademarks, plugin boundaries, and untrusted project content.
+## Your first game in five minutes
 
-## Development status
+No programming. Every step happens in VICTUS Studio.
 
-VICTUS is early and **not production-ready**: no game has shipped with it, rendering has only been validated on software Vulkan and CI's virtual Apple GPU, and no phone has run it. What does exist is a broad, tested engine through Slice 78: SDL3 platform layer and an RHI on SDL_GPU; a render graph with clustered forward PBR, shadows, SSAO, IBL and sky, reflection probes, irradiance volumes, TAA and temporal upscaling, occlusion culling, LODs, decals and quality tiers; 2D sprites, tilemaps and 2D lights; an archetype ECS and versioned scenes with prefabs; an asset pipeline with stable IDs and a cooked cache; Jolt (3D) and Box2D (2D) physics with character controllers; skeletal animation; particles; miniaudio audio; Recast/Detour navigation; behaviour-tree AI with perception; terrain with sculpting and foliage; a timeline sequencer; in-game UI; Luau scripting and visual scripting; encrypted server-authoritative multiplayer; the VICTUS editor; and `victus export` packaging.
+1. **Create a project.** Open `victus_editor`, choose **New Project**, pick **No-Code Platformer** and press **Create**. From a terminal: `victus new MyGame --template nocode`.
+2. **Press Play.** The level is already a game: run with A/D, jump with Space (press it again in the air to double jump), stomp slimes, collect coins and reach the flag.
+3. **Change how it feels.** Stop, select **Player**, and edit **Platformer Movement** in the Inspector. Raise Jump Speed or set Max Jumps to 3. Every field has a tooltip.
+4. **Add something new.** Select any object, choose **Add Component > Behaviours** and pick one, such as **Patrol**, **Chase**, **Hazard**, **Collectible** or **Spawner**. It works as soon as you press Play.
+5. **Ship it.** **File > Export Game** writes a standalone build you can send to friends.
 
-- [Subsystem maturity and known limitations](docs/KNOWN_LIMITATIONS.md) — what is usable, experimental, incomplete or missing
-- [Platform support matrix](docs/PLATFORM_SUPPORT.md) — what was actually executed on each platform
-- [STATUS.md](docs/STATUS.md) — verified state, slice by slice, with commands and results
-- [ROADMAP.md](ROADMAP.md) — prioritised plan with acceptance criteria
+The **Getting Started** panel walks you through these steps and ticks each one off. It can also do a step for you.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/nocode_platformer.png" alt="The No-Code Platformer template running: player, slime, heart, coins, spikes and a HUD"><br><sub>No-Code Platformer: built only from Behaviours, with no scripts</sub></td>
+<td width="50%"><img src="docs/images/template_3d.jpg" alt="The 3D template: a robot character, a fire, physics crates and a controls panel"><br><sub>3D template: character controller, physics, particles, prefabs and save games</sub></td>
+</tr>
+</table>
+
+## Behaviours
+
+Behaviours are ready-made gameplay components, similar to GDevelop behaviors and Construct behaviors. Add one to an entity and it starts acting that way.
+
+| Make it move | Make it a threat | Make it reward | Run the game |
+|---|---|---|---|
+| Platformer Movement | Hazard (damage, knockback, stomp) | Collectible (score, health, lives) | Game Rules (score, lives, timer, HUD) |
+| Top-Down Movement | Patrol | Checkpoint | Goal |
+| Camera Follow | Chase | Health | Spawner |
+| Projectile | Shooter | Lifetime | Events for scripts and graphs |
+
+Every behaviour sends events (`collected`, `died`, `game_won` and others), so scripts and visual graphs can react to them later without replacing them. Reference: [Make a game without code](docs/USER_GUIDE.md).
+
+## What is inside
+
+| Area | What you get |
+|---|---|
+| **Studio** | Start screen with templates and samples, docked layouts, gizmos, undo and redo, searchable Add Component, asset browser with drag-and-drop import, play-in-editor, Problems panel, command palette, Getting Started guide, one-click export |
+| **Rendering** | SDL_GPU (Vulkan, Metal, D3D12) render graph, clustered forward PBR, cascaded shadows, SSAO, IBL and sky, reflection probes, TAA and temporal upscaling, bloom, auto exposure, volumetric fog and clouds, water, decals, terrain and foliage, GPU particles, LODs, occlusion culling, quality tiers |
+| **2D** | Sprite batching, sprite animation, tilemaps with autotiling, 2D lights, Box2D physics, one-way platforms |
+| **Gameplay** | Archetype ECS, prefabs, scenes with stable IDs, input actions with gamepad support, character controllers, Jolt physics and joints, Recast/Detour navigation, behaviour-tree AI with perception, save games, localisation, in-game UI |
+| **Animation and audio** | Skeletal animation with GPU skinning, animation controllers, timeline sequencer, miniaudio with spatial sound |
+| **Code, when you want it** | Luau scripting with sandboxing and hot reload, node-based visual scripting, a C++ API and plugins |
+| **Multiplayer** | Server-authoritative sessions over ENet with encryption by default, listen servers and dedicated `victus serve` |
+| **Shipping** | `victus export` to `.vpak` packs and a standalone player, Android packaging, crash reports and diagnostics bundles, `victus check` validation |
+
+## Templates
+
+| Template | Command | You get |
+|---|---|---|
+| No-Code Platformer | `victus new MyGame --template nocode` | A complete 2D level made only from Behaviours |
+| 2D platformer | `victus new MyGame --template 2d` | Box2D platformer in Luau: one-way ledge, swinging lantern, coins, music |
+| 3D | `victus new MyGame --template 3d` | Third-person robot, physics crates, fire, prefabs, save and load |
+| Simulation | `victus new MyGame --template simulation` | 576 entities animated by native systems, with a scripted orbiting camera |
+| Multiplayer | `victus new MyGame --template multiplayer` | Networked coin arena: host with `victus serve`, join with `victus run --connect` |
+
+## Samples
+
+Each sample is a finished game made with engine features alone. Open it in Studio or run `victus run samples/<name>`. CTest plays every sample to the end headlessly (`ctest -L samples`).
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/sample_arena.jpg" alt="Robot Arena: a third-person arena with pillars and a wave HUD"><br><sub><a href="samples/arena/README.md">Robot Arena</a>: five waves of robots that chase you over the navmesh</sub></td>
+<td width="50%"><img src="docs/images/sample_dungeon.png" alt="Dungeon crawler: a pixel-art hero and slime in a stone maze"><br><sub><a href="samples/dungeon_crawler/README.md">Dungeon Crawler</a>: generated tilemap floors, gems and slimes</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/render_showcase.jpg" alt="Render showcase: PBR spheres, lit cubes and cylinders on a checker floor"><br><sub>Render Showcase: the 3D material and lighting feature set</sub></td>
+<td width="50%"><sub><a href="samples/platformer/README.md">Ruin Runner</a>: a three-level 2D platformer with one-way planks, spikes, stompable beetles, checkpoints and lives</sub></td>
+</tr>
+</table>
 
 ## Quick start
 
 ~~~bash
-tools/setup/install_deps.sh          # Linux/macOS toolchain and SDL3 system headers (Windows: see the guide)
+tools/setup/install_deps.sh          # Linux/macOS toolchain (Windows: see the guide)
 python3 tools/setup/check_env.py     # verify the toolchain
 cmake --preset dev && cmake --build --preset dev && ctest --preset dev
 
 B=build/dev/bin
-$B/victus new MyGame --template 3d   # templates: 3d, 2d, nocode, simulation, multiplayer
-$B/victus_editor MyGame              # open it in the editor
-$B/victus run MyGame                 # or play it directly
+$B/victus new MyGame --template nocode   # or 3d, 2d, simulation, multiplayer
+$B/victus_editor MyGame                  # open it in VICTUS Studio
+$B/victus run MyGame                     # or play it directly
 $B/victus export MyGame --out MyGame-export && ./MyGame-export/MyGame
 ~~~
 
-Dependencies are fetched by CMake from pinned, hash-verified archives; no account or sign-in is needed. Full instructions, presets, Windows notes and troubleshooting: [Getting started](docs/GETTING_STARTED.md). How to use scripting, physics, AI, multiplayer, the editor and the other systems: [User guide](docs/USER_GUIDE.md).
+CMake fetches dependencies from pinned, hash-verified archives. You do not need an account or a sign-in. Presets, Windows notes and troubleshooting are in [Getting started](docs/GETTING_STARTED.md).
 
-Template controls (a gamepad works too: left stick moves, A/South jumps, View/Back toggles the help panel): 2D platformer — A/D or arrows to run, Space/W/Up to jump, S/Down to drop through the one-way ledge; 3D — WASD/arrows walk the robot, Space jumps; simulation — the camera orbits the wave field; multiplayer — WASD/arrows walk, Space jumps, coins are scored by the server. In the editor, click the viewport after pressing Play so the game receives the keyboard.
+Template controls: 2D, A/D or arrows to run, Space to jump; 3D, WASD to walk, Space to jump; multiplayer, WASD and Space, with coins scored by the server. A gamepad works too. In Studio, click the viewport after pressing Play so the game receives the keyboard.
 
-## Sample games
+## Status
 
-Complete games made only with engine features; each is a normal project you can open in the editor or run with `victus run`, and each is played to the end headlessly by a CTest (`ctest -L samples`).
+VICTUS is under active development and is **not yet production-ready**. No game has shipped with it yet. Rendering has been validated on software Vulkan and CI's virtual Apple GPU, and it has not been run on a phone. Each feature listed above has automated tests, and the evidence is public:
 
-- [`samples/dungeon_crawler`](samples/dungeon_crawler/README.md) — top-down 2D maze game: procedurally generated tilemap floors, autotiled walls with colliders, top-down character controller, gems, slimes and a HUD.
-- [`samples/platformer`](samples/platformer/README.md) — Ruin Runner, a side-view 2D platformer: three levels authored as ASCII maps, one-way planks, spikes, stompable beetles, checkpoints, lives and a HUD.
-- [`samples/arena`](samples/arena/README.md) — Robot Arena, a third-person 3D arena fight: five waves of robots chase you over the navmesh, melee combat, health pickups and a HUD.
-- `samples/render_showcase` — a C++ program that renders the 3D feature set for visual inspection.
-
-## Repository map
-
-- `engine/<module>/` — engine modules, each with `include/victus/<module>/` and `src/`; module ownership and the dependency graph are in [ARCHITECTURE.md](docs/ARCHITECTURE.md):
-  - foundation: `core`, `platform`, `rhi`, `shadercompiler`
-  - world: `ecs`, `scene`, `assets`, `project`
-  - systems: `render`, `physics`, `animation`, `particles`, `audio`, `navigation`, `ai`, `terrain`, `tilemap`, `sequencer`, `gameui`, `net`, `gameplay`
-  - integration: `script` (Luau bindings and visual scripting), `runtime` (scene to renderer), `ui` (Dear ImGui), `player`
-- `editor/` — the VICTUS editor (library + executable)
-- `apps/player/` — standalone game player; `platforms/android/` — Gradle project for APKs
-- `tools/` — `victus` CLI (`cli`), shader compiler (`shaders`), dependency manifest and OSV scanner (`deps`), clang-tidy runner (`lint`), setup scripts (`setup`), APK checks (`android`)
-- `samples/`, `benchmarks/`, `tests/` — sample games, benchmark harness, automated tests (CTest)
-- `docs/` — guides, architecture, specifications, decisions and status
-- `AGENTS.md` — engineering contract for autonomous contributors
+- [Known limitations](docs/KNOWN_LIMITATIONS.md): the maturity of each subsystem and what is still missing
+- [Platform support](docs/PLATFORM_SUPPORT.md): what has been executed on each platform
+- [Engineering status](docs/STATUS.md): every slice, with the commands that verified it
+- [Roadmap](ROADMAP.md) and [Changelog](CHANGELOG.md)
 
 ## Documentation
 
-Using VICTUS: [Getting started](docs/GETTING_STARTED.md) · [User guide](docs/USER_GUIDE.md) · [Known limitations](docs/KNOWN_LIMITATIONS.md) · [Platform support](docs/PLATFORM_SUPPORT.md) · [Gameplay AI](docs/AI.md) · [Sequencer](docs/SEQUENCER.md) · [Android](docs/ANDROID.md)
+**Using VICTUS:** [Getting started](docs/GETTING_STARTED.md) · [User guide](docs/USER_GUIDE.md) · [Gameplay AI](docs/AI.md) · [Animation](docs/ANIMATION.md) · [Sequencer](docs/SEQUENCER.md) · [Characters](docs/CHARACTERS.md) · [Plugins](docs/PLUGINS.md) · [Android](docs/ANDROID.md) · [Diagnostics](docs/DIAGNOSTICS.md)
 
-Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](ROADMAP.md) · [Engineering status](docs/STATUS.md) · [Technology decisions](docs/TECHNOLOGY_DECISIONS.md) · [Third-party and license policy](docs/THIRD_PARTY_AND_LICENSES.md) · [Autonomous engineering contract](AGENTS.md)
+**Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) · [Architecture](docs/ARCHITECTURE.md) · [Technology decisions](docs/TECHNOLOGY_DECISIONS.md) · [Release process](docs/RELEASE_PROCESS.md) · [Third-party licenses](docs/THIRD_PARTY_AND_LICENSES.md) · [Security](SECURITY.md) · [Engineering contract](AGENTS.md)
 
-Specifications: [Gameplay](docs/GAMEPLAY_SPEC.md) · [Rendering](docs/RENDERING_SPEC.md) · [Networking](docs/NETWORKING_SPEC.md) · [Production pipeline](docs/PRODUCTION_PIPELINE_SPEC.md) · [Editor](docs/EDITOR_SPEC.md) · [Performance](docs/PERFORMANCE_STRATEGY.md) · [Platforms](docs/PLATFORM_STRATEGY.md) · [Reference projects](docs/REFERENCE_PROJECTS.md) · [Research register](docs/RESEARCH_REGISTER.md)
+**Specifications:** [Gameplay](docs/GAMEPLAY_SPEC.md) · [Rendering](docs/RENDERING_SPEC.md) · [Networking](docs/NETWORKING_SPEC.md) · [Production pipeline](docs/PRODUCTION_PIPELINE_SPEC.md) · [Editor](docs/EDITOR_SPEC.md) · [Performance](docs/PERFORMANCE_STRATEGY.md) · [Platforms](docs/PLATFORM_STRATEGY.md) · [Reference projects](docs/REFERENCE_PROJECTS.md) · [Research register](docs/RESEARCH_REGISTER.md)
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `engine/<module>/` | Engine modules (`core`, `platform`, `rhi`, `render`, `ecs`, `scene`, `assets`, `physics`, `script`, `net` and more), each with `include/victus/<module>/` and `src/`. See [Architecture](docs/ARCHITECTURE.md) |
+| `editor/` | VICTUS Studio |
+| `apps/player/`, `platforms/android/` | Standalone game player and the Android Gradle project |
+| `tools/` | The `victus` CLI, shader compiler, dependency scanner, lint, setup and release scripts |
+| `samples/`, `tests/`, `benchmarks/` | Sample games, automated tests (CTest) and benchmarks |
+| `docs/` | Guides, specifications, decisions and status |
 
 ## License
 
-Original VICTUS code: Apache-2.0. Third-party components retain their own licenses and notices.
+Original VICTUS code is licensed under [Apache-2.0](LICENSE). Third-party components keep their own licenses and notices; see [docs/THIRD_PARTY_AND_LICENSES.md](docs/THIRD_PARTY_AND_LICENSES.md).
