@@ -6,6 +6,7 @@
 
 #include <doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <set>
@@ -618,4 +619,195 @@ TEST_CASE("trails follow local-space emitters, survive swap-removal and can draw
     CHECK(near(v.ribbon_points.back().position.x, 0.5f, 1e-3f));
     CHECK(v.bounds.valid());
     CHECK(v.bounds.min.y > 9.8f);
+}
+
+// ---- GPU particles (ADR-0097): CPU bookkeeping, turbulence and the reference kernel ----
+
+namespace {
+
+const GpuEmitterView* gpu_view(Scene& s, Entity e, std::vector<EmitterView>& views) {
+    gather(s, views);
+    for (const EmitterView& v : views)
+        if (v.entity == e) return v.gpu;
+    return nullptr;
+}
+
+ParticleEmitterComponent& gpu_emitter(Scene& s, Entity e) {
+    auto& c = s.world().add<ParticleEmitterComponent>(e);
+    c.gpu = true;
+    c.rate = 200;
+    c.burst = 0;
+    c.max_particles = 64;
+    c.lifetime_min = 0.2f;
+    c.lifetime_max = 0.6f;
+    c.seed = 1234;
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("gpu emitters keep exact slot bookkeeping and deterministic spawn records") {
+    const auto run = [](std::vector<GpuSpawnRecord>& all, std::vector<std::uint32_t>& alive) {
+        Scene s;
+        const Entity e = s.create("Gpu");
+        gpu_emitter(s, e);
+        ParticleSystem sys;
+        sys.update(s, 0.0f);
+        std::uint64_t seen = 0;
+        double now = 0;
+        for (int f = 0; f < 120; ++f) {
+            sys.update(s, 1.0f / 60.0f);
+            now += 1.0 / 60.0;
+            std::vector<EmitterView> views;
+            const GpuEmitterView* v = gpu_view(s, e, views);
+            REQUIRE(v != nullptr);
+            CHECK(views.front().billboards.empty());
+            CHECK(v->capacity == 64);
+            CHECK(std::abs(v->time - now) < 1e-5); // float steps summed in double
+            // Records are ascending, every live record owns a distinct slot.
+            std::set<std::uint32_t> slots;
+            std::uint32_t live = 0;
+            for (std::size_t i = 0; i < v->records.size(); ++i) {
+                const GpuSpawnRecord& r = v->records[i];
+                if (i > 0) CHECK(r.index == v->records[i - 1].index + 1);
+                CHECK(r.particle.meta[0] < 64);
+                CHECK(r.time <= v->time + 1e-12);
+                if (r.time + r.particle.life > v->time) {
+                    ++live;
+                    CHECK(slots.insert(r.particle.meta[0]).second);
+                }
+                if (r.index >= seen) all.push_back(r);
+            }
+            CHECK(live == v->alive);
+            CHECK(status(s, e).alive == v->alive);
+            alive.push_back(v->alive);
+            seen = v->spawned;
+            CHECK(sys.stats().gpu_emitters == 1);
+            CHECK(sys.stats().gpu_alive == v->alive);
+        }
+    };
+    std::vector<GpuSpawnRecord> a, b;
+    std::vector<std::uint32_t> alive_a, alive_b;
+    run(a, alive_a);
+    run(b, alive_b);
+    REQUIRE(a.size() == b.size());
+    CHECK(a.size() > 100);
+    CHECK(std::memcmp(a.data(), b.data(), a.size() * sizeof(GpuSpawnRecord)) == 0);
+    CHECK(alive_a == alive_b);
+    // 200/s with a mean life of 0.4 s wants ~80 live particles: the 64-slot cap holds.
+    CHECK(*std::max_element(alive_a.begin(), alive_a.end()) == 64);
+}
+
+TEST_CASE("gpu emitters reset, resize, finish and switch back to the CPU") {
+    Scene s;
+    const Entity e = s.create("Gpu");
+    auto& c = gpu_emitter(s, e);
+    ParticleSystem sys;
+    sys.update(s, 0.0f);
+    for (int i = 0; i < 10; ++i) sys.update(s, 0.05f);
+    std::vector<EmitterView> views;
+    const GpuEmitterView* v = gpu_view(s, e, views);
+    REQUIRE(v != nullptr);
+    const std::uint32_t gen = v->generation;
+    const std::uint64_t instance = v->instance;
+    CHECK(v->alive > 0);
+    CHECK(views.front().bounds.valid());
+    // reset() drops every particle: a new generation the renderer clears on.
+    CHECK(reset(s, e));
+    sys.update(s, 0.0f);
+    v = gpu_view(s, e, views);
+    CHECK(v->generation != gen);
+    CHECK(v->instance == instance);
+    CHECK(status(s, e).alive == 0);
+    // A capacity change is also a new generation.
+    const std::uint32_t gen2 = v->generation;
+    s.world().get<ParticleEmitterComponent>(e)->max_particles = 16;
+    sys.update(s, 0.05f);
+    v = gpu_view(s, e, views);
+    CHECK(v->generation != gen2);
+    CHECK(v->capacity == 16);
+    CHECK(v->alive <= 16);
+    // A non-looping cycle finishes once its last particle has died.
+    auto* cc = s.world().get<ParticleEmitterComponent>(e);
+    cc->loop = false;
+    cc->duration = 0.1f;
+    CHECK(reset(s, e));
+    for (int i = 0; i < 40 && !status(s, e).finished; ++i) sys.update(s, 0.05f);
+    CHECK(status(s, e).finished);
+    CHECK(status(s, e).alive == 0);
+    // Back on the CPU path the emitter simulates billboards again.
+    cc->gpu = false;
+    cc->loop = true;
+    CHECK(reset(s, e));
+    for (int i = 0; i < 5; ++i) sys.update(s, 0.05f);
+    views.clear();
+    gather(s, views);
+    CHECK(views.front().gpu == nullptr);
+    CHECK(!views.front().billboards.empty());
+    (void)c;
+}
+
+TEST_CASE("turbulence is a divergence-free swirling field") {
+    ParticleEmitterComponent e;
+    e.turbulence = 3;
+    e.turbulence_frequency = 0.7f;
+    float max_div = 0, mean_mag = 0;
+    const float h = 1e-3f;
+    int n = 0;
+    for (float x = -2; x <= 2; x += 0.9f)
+        for (float y = -2; y <= 2; y += 0.8f)
+            for (float z = -2; z <= 2; z += 1.1f) {
+                const Vec3 p{x, y, z};
+                const float ph = 0.37f;
+                const float div = (turbulence_at(e, p + Vec3{h, 0, 0}, ph).x - turbulence_at(e, p - Vec3{h, 0, 0}, ph).x +
+                                   turbulence_at(e, p + Vec3{0, h, 0}, ph).y - turbulence_at(e, p - Vec3{0, h, 0}, ph).y +
+                                   turbulence_at(e, p + Vec3{0, 0, h}, ph).z - turbulence_at(e, p - Vec3{0, 0, h}, ph).z) /
+                                  (2 * h);
+                max_div = std::max(max_div, std::abs(div));
+                mean_mag += math::length(turbulence_at(e, p, ph));
+                ++n;
+            }
+    mean_mag /= static_cast<float>(n);
+    MESSAGE("turbulence: mean |a| " << mean_mag << ", max |div| " << max_div);
+    CHECK(mean_mag > 0.5f);
+    CHECK(max_div < 0.05f); // finite-difference noise only (an exact field has zero divergence)
+    // The field evolves with time and is off at zero amplitude.
+    CHECK(math::length(turbulence_at(e, {0.3f, 0.2f, 0.1f}, 0.0f) - turbulence_at(e, {0.3f, 0.2f, 0.1f}, 1.0f)) > 0.1f);
+    e.turbulence = 0;
+    CHECK(math::length(turbulence_at(e, {1, 2, 3}, 0.5f)) == 0.0f);
+    // Phase wraps so it stays precise for long-running emitters.
+    e.turbulence_speed = 2;
+    CHECK(turbulence_phase(e, 1e6) < 6.2832f);
+    CHECK(turbulence_phase(e, 1e6) >= 0.0f);
+}
+
+TEST_CASE("gpu reference kernel integrates ballistic motion and writes billboards") {
+    ParticleEmitterComponent e;
+    e.gravity = {0, -10, 0};
+    e.drag = 0;
+    e.size_start = 1;
+    e.size_end = 0;
+    e.color_start = {1, 0, 0, 1};
+    e.color_end = {0, 0, 1, 0};
+    e.intensity = 2;
+    GpuParticle p;
+    p.velocity = {2, 5, 0};
+    p.life = 2;
+    p.spin = 1;
+    // Integrated in frame-sized pieces, as the GPU does across frames.
+    for (int i = 0; i < 60; ++i) gpu_integrate(e, p, 1.0f / 60.0f, i / 60.0);
+    CHECK(near(p.age, 1.0f, 1e-4f));
+    CHECK(near(p.position.x, 2.0f, 1e-3f));
+    CHECK(near(p.velocity.y, -5.0f, 1e-3f));
+    CHECK(std::abs(p.position.y - (5.0f - 5.0f)) < 0.2f); // semi-implicit Euler, h = 1/60 s
+    CHECK(near(p.rotation, 1.0f, 1e-4f));
+    const Billboard b = gpu_billboard(e, p, math::Mat4::identity(), math::Mat4::identity());
+    CHECK(near(b.size, 0.5f, 1e-3f));
+    CHECK(near(b.color.r, 1.0f, 1e-3f)); // halfway, times intensity 2
+    CHECK(near(b.color.b, 1.0f, 1e-3f));
+    CHECK(near(b.color.a, 0.5f, 1e-3f));
+    gpu_integrate(e, p, 1.5f, 1.0);
+    CHECK(gpu_billboard(e, p, math::Mat4::identity(), math::Mat4::identity()).size == 0.0f); // dead
+    // Turbulence off leaves the CPU path untouched: the field adds nothing.
+    CHECK(math::length(turbulence_at(e, p.position, 0.3f)) == 0.0f);
 }

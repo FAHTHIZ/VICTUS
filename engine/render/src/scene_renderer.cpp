@@ -852,6 +852,9 @@ SceneRenderer::~SceneRenderer() {
     if (line_buffer_) d.destroy(line_buffer_);
     if (instance_buffer_) d.destroy(instance_buffer_);
     if (particle_buffer_) d.destroy(particle_buffer_);
+    for (auto& [key, st] : gpu_particle_states_) destroy_gpu_particle_state(st);
+    gpu_particle_states_.clear();
+    if (particle_sim_) d.destroy(particle_sim_);
     for (auto pl : {hiz_depth_, hiz_reduce_, occlusion_cull_})
         if (pl) d.destroy(pl);
     for (auto b : {hiz_buffer_, occl_bounds_, occl_args_, occl_instances_})
@@ -877,6 +880,47 @@ bool SceneRenderer::ensure_occlusion_pipelines() {
     hiz_reduce_ = reduce.value();
     occlusion_cull_ = cull.value();
     return true;
+}
+
+bool SceneRenderer::ensure_gpu_particle_pipeline() {
+    if (particle_sim_) return true;
+    if (particle_sim_failed_) return false;
+    auto pl = create_builtin_compute_pipeline(ctx_.device(), "particle_sim.comp");
+    if (!pl) {
+        VICTUS_LOG_WARN("render", "GPU particles disabled: {}", pl.error().message);
+        particle_sim_failed_ = true;
+        return false;
+    }
+    particle_sim_ = pl.value();
+    return true;
+}
+
+void SceneRenderer::destroy_gpu_particle_state(GpuParticleState& s) {
+    auto& d = ctx_.device();
+    for (rhi::BufferHandle* b : {&s.state, &s.instances, &s.spawns})
+        if (*b) {
+            d.destroy(*b);
+            *b = {};
+        }
+    s.capacity = s.spawn_capacity = 0;
+}
+
+void SceneRenderer::submit_gpu_particles(const GpuParticleEmitter& emitter) {
+    if (emitter.capacity == 0 || emitter.key == 0) return;
+    GpuParticleEmitter e = emitter;
+    e.capacity = std::min(e.capacity, kMaxGpuParticles);
+    gpu_emitters_.push_back(e);
+}
+
+Result<std::vector<GpuParticleSpawn>> SceneRenderer::read_gpu_particles(std::uint64_t key) {
+    std::vector<GpuParticleSpawn> out;
+    const auto it = gpu_particle_states_.find(key);
+    if (it == gpu_particle_states_.end() || !it->second.state) return out;
+    auto bytes = ctx_.device().read_buffer(it->second.state, 0, it->second.capacity * static_cast<std::uint32_t>(sizeof(GpuParticleSpawn)));
+    if (!bytes) return std::move(bytes).error();
+    out.resize(bytes.value().size() / sizeof(GpuParticleSpawn));
+    std::memcpy(out.data(), bytes.value().data(), out.size() * sizeof(GpuParticleSpawn));
+    return out;
 }
 
 bool SceneRenderer::ensure_motion_pipelines() {
@@ -1041,6 +1085,7 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     palette_.clear();
     particles_.clear();
     particle_batches_.clear();
+    gpu_emitters_.clear();
     decals_.clear();
     waters_.clear();
     stats_ = {};
@@ -1785,6 +1830,126 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                           {reinterpret_cast<const std::uint8_t*>(lines_.data()), lines_.size() * sizeof(LineVertex)}, true);
     }
 
+    // GPU particles (ADR-0097): bring every submitted emitter's GPU state up to its clock. New
+    // or reset emitters start from zeroed (dead) slots; spawn records the GPU has not seen yet
+    // (and whose particle is still alive) are written into their slots, pre-aged to the clock.
+    struct ParticleSimUniforms {
+        Mat4 view_proj, inv_view_proj, world, view;
+        Vec4 gravity_drag, turb, size, color_start, color_end, flip, collide, eye_dt, screen;
+        std::array<std::uint32_t, 4> meta;
+    };
+    static_assert(sizeof(ParticleSimUniforms) == 416);
+    struct GpuParticleJob {
+        const GpuParticleState* state;
+        std::uint32_t spawns;
+        ParticleSimUniforms u;
+    };
+    std::vector<GpuParticleJob> gpu_jobs;
+    std::vector<ParticleBatch> gpu_batches;
+    ++gpu_particle_frame_;
+    if (!gpu_emitters_.empty() && dev.capabilities().compute && ensure_gpu_particle_pipeline()) {
+        std::vector<GpuParticleSpawn> spawns;
+        for (const GpuParticleEmitter& e : gpu_emitters_) {
+            GpuParticleState& st = gpu_particle_states_[e.key];
+            st.last_frame = gpu_particle_frame_;
+            const auto bytes = e.capacity * static_cast<std::uint32_t>(sizeof(GpuParticleSpawn));
+            if (st.capacity != e.capacity) {
+                destroy_gpu_particle_state(st);
+                auto sb = dev.create_buffer({"gpu_particle_state", bytes, rhi::BufferUsageStorageWrite});
+                if (!sb) return std::move(sb).error();
+                st.state = sb.value();
+                auto ib = dev.create_buffer({"gpu_particle_instances", e.capacity * static_cast<std::uint32_t>(sizeof(ParticleInstance)),
+                                             rhi::BufferUsageStorageWrite | rhi::BufferUsageVertex});
+                if (!ib) return std::move(ib).error();
+                st.instances = ib.value();
+                st.capacity = e.capacity;
+                st.instance = e.instance + 1; // force the reset below
+            }
+            const bool fresh = st.instance != e.instance || st.generation != e.generation || e.time < st.time;
+            if (fresh && !capture_mode_) {
+                const std::vector<std::uint8_t> zeros(bytes, 0);
+                cmd.upload_buffer(st.state, 0, zeros, false);
+                cmd.upload_buffer(st.instances, 0, {zeros.data(), e.capacity * sizeof(ParticleInstance)}, false);
+                st.instance = e.instance;
+                st.generation = e.generation;
+                st.time = e.time;
+                st.next_index = e.records.empty() ? e.spawned : e.records.front().index;
+            }
+            if (!capture_mode_ && e.alive == 0 && !fresh) {
+                // Nothing alive (on the CPU's books): skip the dispatches but keep the clock.
+                st.time = std::max(st.time, e.time);
+                st.next_index = e.spawned;
+            } else if (!capture_mode_ && (e.time > st.time || st.next_index < e.spawned)) {
+                spawns.clear();
+                for (const GpuParticleSpawnRecord& r : e.records) {
+                    if (r.index < st.next_index) continue;
+                    if (r.time + static_cast<double>(r.particle.velocity_life.w) <= e.time) continue; // already dead
+                    if (r.particle.meta[0] >= e.capacity) continue;
+                    GpuParticleSpawn p = r.particle;
+                    p.position_age.w = static_cast<float>(std::max(0.0, e.time - r.time));
+                    spawns.push_back(p);
+                }
+                st.next_index = e.spawned;
+                const float dt = static_cast<float>(e.time - st.time);
+                st.time = e.time;
+                ++st.serial;
+                {
+                    const auto need = std::max(1u, static_cast<std::uint32_t>(spawns.size()));
+                    if (need > st.spawn_capacity || !st.spawns) {
+                        if (st.spawns) dev.destroy(st.spawns);
+                        st.spawn_capacity = std::max(need, std::min(e.capacity, std::max(64u, st.spawn_capacity * 2)));
+                        auto b = dev.create_buffer({"gpu_particle_spawns", st.spawn_capacity * static_cast<std::uint32_t>(sizeof(GpuParticleSpawn)),
+                                                    rhi::BufferUsageComputeRead});
+                        if (!b) return std::move(b).error();
+                        st.spawns = b.value();
+                    }
+                    if (!spawns.empty())
+                        cmd.upload_buffer(st.spawns, 0,
+                                          {reinterpret_cast<const std::uint8_t*>(spawns.data()), spawns.size() * sizeof(GpuParticleSpawn)}, true);
+                    stats_.gpu_particle_spawns += static_cast<std::uint32_t>(spawns.size());
+                }
+                const GpuParticleParams& g = e.params;
+                GpuParticleJob job{&st, static_cast<std::uint32_t>(spawns.size()), {}};
+                ParticleSimUniforms& u = job.u;
+                u.view_proj = view_proj;
+                u.inv_view_proj = inverse(view_proj);
+                u.world = g.world;
+                u.view = camera_.view;
+                u.gravity_drag = g.gravity_drag;
+                u.turb = g.turbulence;
+                u.size = g.size;
+                u.color_start = g.color_start;
+                u.color_end = g.color_end;
+                u.flip = g.flipbook;
+                u.collide = g.collision;
+                u.eye_dt = Vec4(camera_.position, dt);
+                u.screen = {static_cast<float>(rw), static_cast<float>(rh), proj[3].z, proj[2].z};
+                std::uint32_t flags = g.world_space ? 1u : 0u;
+                if (g.collide && g.world_space) flags |= 2u;
+                if (g.flipbook.x * g.flipbook.y > 1.0f) flags |= 4u;
+                if (g.size.w > 0.0f) flags |= 8u;
+                u.meta = {0u, 0u, st.serial, flags};
+                gpu_jobs.push_back(job);
+            }
+            ++stats_.gpu_particle_emitters;
+            if (e.alive > 0 && st.state && st.generation == e.generation && st.instance == e.instance && e.bounds.valid() && frustum.intersects(e.bounds)) {
+                ParticleBatch b{e.material, 0, e.capacity, e.bounds, 0.0f};
+                b.buffer = st.instances;
+                gpu_batches.push_back(b);
+                stats_.gpu_particles += e.alive;
+            }
+        }
+    }
+    // Drop the GPU state of emitters that stopped being submitted.
+    for (auto it = gpu_particle_states_.begin(); it != gpu_particle_states_.end();) {
+        if (gpu_particle_frame_ - it->second.last_frame > 300) {
+            destroy_gpu_particle_state(it->second);
+            it = gpu_particle_states_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
     // Particles: cull batches, order them back to front, sort alpha batches' particles back to
     // front, then upload everything as one instance stream.
     std::vector<ParticleBatch> particle_draws;
@@ -1794,12 +1959,17 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         b.distance = length(b.bounds.center() - camera_.position);
         particle_draws.push_back(b);
     }
+    for (ParticleBatch b : gpu_batches) {
+        b.distance = length(b.bounds.center() - camera_.position);
+        particle_draws.push_back(b);
+    }
     std::stable_sort(particle_draws.begin(), particle_draws.end(),
                      [](const ParticleBatch& a, const ParticleBatch& b) { return a.distance > b.distance; });
     {
         const Vec3 fwd = camera_.forward();
         std::vector<std::pair<float, std::uint32_t>> order;
         for (ParticleBatch& b : particle_draws) {
+            if (b.buffer) continue; // GPU particles: drawn straight from their instance buffer
             const auto first = static_cast<std::uint32_t>(particle_upload_.size());
             if (b.ribbon) {
                 // Strip order is the triangle order; batches are still ordered back to front.
@@ -1863,7 +2033,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     stats_.water_surfaces = static_cast<std::uint32_t>(water_draws.size());
     stats_.particles = 0;
     stats_.ribbon_vertices = 0;
-    for (const ParticleBatch& b : particle_draws) (b.ribbon ? stats_.ribbon_vertices : stats_.particles) += b.count;
+    for (const ParticleBatch& b : particle_draws)
+        if (!b.buffer) (b.ribbon ? stats_.ribbon_vertices : stats_.particles) += b.count;
+    stats_.particles += stats_.gpu_particles;
     if (!particle_upload_.empty()) {
         const auto needed = static_cast<std::uint32_t>(particle_upload_.size());
         if (needed > particle_capacity_) {
@@ -2040,7 +2212,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
     depth_desc.usage = rhi::TextureUsageDepthTarget |
-                       ((ssao || taa || occlusion || !particle_draws.empty() || !decal_draws.empty() || !water_draws.empty())
+                       ((ssao || taa || occlusion || !particle_draws.empty() || !gpu_jobs.empty() || !decal_draws.empty() || !water_draws.empty())
                             ? rhi::TextureUsageSampled
                             : 0u);
     const RGTexture depth = graph.create_texture("scene_depth", depth_desc);
@@ -2438,6 +2610,36 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             [&](PassContext& ctx) { forward_body(ctx, false, true); });
     }
 
+    if (!gpu_jobs.empty()) {
+        graph.add_pass(
+            "gpu_particles",
+            [&](PassBuilder& b) {
+                b.read(depth);
+                b.no_raster();
+                b.side_effect();
+            },
+            [&](PassContext& ctx) {
+                for (const GpuParticleJob& job : gpu_jobs) {
+                    const GpuParticleState& st = *job.state;
+                    const rhi::BufferHandle rw_buffers[] = {st.state, st.instances};
+                    // Spawn, then update in a second compute pass so it sees the spawned slots.
+                    for (std::uint32_t mode = job.spawns > 0 ? 0u : 1u; mode < 2; ++mode) {
+                        rhi::ComputePass cp = ctx.cmd.begin_compute_pass(rw_buffers);
+                        if (!cp.active()) return;
+                        ParticleSimUniforms u = job.u;
+                        u.meta[0] = mode;
+                        u.meta[1] = mode == 0 ? job.spawns : st.capacity;
+                        cp.bind_pipeline(particle_sim_);
+                        cp.bind_texture(0, ctx.texture(depth), ctx_.nearest_clamp());
+                        cp.bind_storage_buffer(0, st.spawns);
+                        ctx.cmd.push_uniforms(rhi::ShaderStage::Compute, 0, u);
+                        cp.dispatch((u.meta[1] + 63) / 64);
+                        cp.end();
+                    }
+                }
+            });
+    }
+
     if (!particle_draws.empty()) {
         ParticleFrameUniforms pf{};
         pf.view_proj = view_proj;
@@ -2454,7 +2656,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             [&, pf, proj, rw, rh](PassContext& ctx) {
                 rhi::RenderPass& pass = *ctx.pass;
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, pf);
-                pass.bind_vertex_buffer(0, particle_buffer_);
+                if (particle_buffer_) pass.bind_vertex_buffer(0, particle_buffer_);
                 rhi::PipelineHandle bound{};
                 for (const ParticleBatch& b : particle_draws) {
                     const bool add = b.material.blend == ParticleBlend::Additive;
@@ -2470,7 +2672,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     pass.bind_texture(rhi::ShaderStage::Fragment, 0, b.material.texture ? b.material.texture : ctx_.soft_particle(),
                                       ctx_.linear_clamp());
                     pass.bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(depth), ctx_.nearest_clamp());
-                    pass.bind_vertex_buffer(0, particle_buffer_, b.offset * static_cast<std::uint32_t>(sizeof(ParticleInstance)));
+                    if (b.buffer) pass.bind_vertex_buffer(0, b.buffer);
+                    else pass.bind_vertex_buffer(0, particle_buffer_, b.offset * static_cast<std::uint32_t>(sizeof(ParticleInstance)));
                     if (b.ribbon) pass.draw(b.count, 1);
                     else pass.draw(6, b.count);
                 }

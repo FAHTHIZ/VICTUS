@@ -9,6 +9,7 @@
 #include "victus/runtime/scene_rendering.hpp"
 
 #include <cstdlib>
+#include <cstring>
 
 using namespace victus;
 using namespace victus::render;
@@ -502,4 +503,233 @@ TEST_CASE("gpu particles: emitter trails render through runtime extraction in 3D
     CHECK(down2 > 0);
     CHECK(across2 > 4 * down2);
     dev.destroy(target);
+}
+
+// ---- GPU-simulated particles (ADR-0097) ----
+
+namespace {
+
+struct GpuFx {
+    scene::Scene s;
+    scene::Entity fx, cam;
+    particles::ParticleSystem ps;
+    GpuFx() {
+        particles::register_components();
+        cam = s.create("Camera");
+        s.world().add<scene::CameraComponent>(cam);
+        s.world().get<scene::Transform>(cam)->position = {0, 0, 6};
+        fx = s.create("GpuFx");
+        auto& c = s.world().add<particles::ParticleEmitterComponent>(fx);
+        c.gpu = true;
+        c.blend = particles::Blend::Additive;
+        c.color_start = c.color_end = {1, 1, 1, 1};
+        c.size_start = c.size_end = 0.2f;
+    }
+    particles::ParticleEmitterComponent& emitter() { return *s.world().get<particles::ParticleEmitterComponent>(fx); }
+    particles::GpuEmitterView view() {
+        std::vector<particles::EmitterView> views;
+        particles::gather(s, views);
+        for (const auto& v : views)
+            if (v.entity == fx && v.gpu) return *v.gpu;
+        FAIL("no GPU emitter view");
+        return {};
+    }
+};
+
+std::vector<particles::GpuParticle> read_state(SceneRenderer& r, std::uint64_t key) {
+    auto got = r.read_gpu_particles(key);
+    REQUIRE(got.ok());
+    std::vector<particles::GpuParticle> out(got.value().size());
+    std::memcpy(static_cast<void*>(out.data()), got.value().data(), out.size() * sizeof(particles::GpuParticle));
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("gpu particles: compute simulation matches the CPU reference kernel and draws") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    GpuFx fx;
+    auto& c = fx.emitter();
+    c.rate = 300;
+    c.max_particles = 256;
+    c.lifetime_min = 0.3f;
+    c.lifetime_max = 1.2f;
+    c.speed_min = 1;
+    c.speed_max = 3;
+    c.angle = 40;
+    c.gravity = {0, -2, 0};
+    c.drag = 0.3f;
+    c.turbulence = 2;
+    c.turbulence_frequency = 0.6f;
+    c.turbulence_speed = 1.5f;
+    c.spin_min = -90;
+    c.spin_max = 90;
+    runtime::GpuAssetCache assets(ctx, nullptr);
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    RenderSettings rs = RenderSettings::preset(QualityTier::Medium);
+    rs.bloom = false;
+    r.set_settings(rs);
+    auto target = test::make_target(W, H);
+    std::vector<particles::GpuParticle> ref(256);
+    std::uint64_t seen = 0;
+    double last = 0;
+    fx.ps.update(fx.s, 0.0f);
+    std::vector<std::uint8_t> px;
+    for (int f = 0; f < 40; ++f) {
+        fx.ps.update(fx.s, 1.0f / 60.0f);
+        fx.s.update_transforms();
+        const particles::GpuEmitterView v = fx.view();
+        // Reference: advance the live slots, then write this frame's spawns pre-aged to the clock.
+        for (auto& p : ref)
+            if (p.age < p.life) particles::gpu_integrate(c, p, static_cast<float>(v.time - last), last);
+        for (const auto& rec : v.records) {
+            if (rec.index < seen || rec.time + rec.particle.life <= v.time) continue;
+            particles::GpuParticle p = rec.particle;
+            particles::gpu_integrate(c, p, static_cast<float>(v.time - rec.time), rec.time);
+            ref[rec.particle.meta[0]] = p;
+        }
+        seen = v.spawned;
+        last = v.time;
+        const runtime::ExtractStats st = runtime::extract_scene(fx.s, assets, r, {}, nullptr);
+        CHECK(st.particle_emitters == 1);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        if (f == 39) px = dev.read_texture(target).value();
+    }
+    const particles::GpuEmitterView v = fx.view();
+    const auto state = read_state(r, v.key);
+    REQUIRE(state.size() == 256);
+    std::uint32_t gpu_alive = 0, compared = 0;
+    float worst = 0;
+    for (std::size_t i = 0; i < state.size(); ++i) {
+        const bool live = state[i].age < state[i].life;
+        gpu_alive += live;
+        if (!live || !(ref[i].age < ref[i].life)) continue;
+        worst = std::max(worst, math::length(state[i].position - ref[i].position));
+        CHECK(std::abs(state[i].rotation - ref[i].rotation) < 1e-3f);
+        ++compared;
+    }
+    MESSAGE("GPU particles: " << gpu_alive << " alive (CPU says " << v.alive << "), worst position error " << worst << " m");
+    CHECK(std::abs(static_cast<int>(gpu_alive) - static_cast<int>(v.alive)) <= 2);
+    CHECK(compared + 2 >= v.alive);
+    CHECK(v.alive > 100);
+    CHECK(worst < 5e-3f);
+    CHECK(r.stats().gpu_particle_emitters == 1);
+    CHECK(r.stats().gpu_particles == v.alive);
+    CHECK(r.stats().particle_batches == 1);
+    test::save_output("particles_gpu", W, H, px);
+    // Baseline: the same camera and sky without the emitter.
+    std::vector<std::uint8_t> sky;
+    {
+        scene::Scene empty;
+        const scene::Entity cam = empty.create("Camera");
+        empty.world().add<scene::CameraComponent>(cam);
+        empty.world().get<scene::Transform>(cam)->position = {0, 0, 6};
+        empty.update_transforms();
+        auto sr2 = SceneRenderer::create(ctx);
+        REQUIRE(sr2.ok());
+        sr2.value()->set_settings(rs);
+        (void)runtime::extract_scene(empty, assets, *sr2.value(), {}, nullptr);
+        auto cmd = dev.begin_commands();
+        REQUIRE(sr2.value()->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        sky = dev.read_texture(target).value();
+    }
+    std::uint32_t lit = 0, far_changed = 0;
+    for (std::uint32_t y = 0; y < H; ++y)
+        for (std::uint32_t x = 0; x < W; ++x) {
+            const bool brighter = channel(test::pixel(px, W, x, y), 2) > channel(test::pixel(sky, W, x, y), 2) + 10;
+            lit += brighter;
+            far_changed += brighter && (x < W / 6 || x > W * 5 / 6); // nothing reaches the frame edges
+        }
+    MESSAGE("GPU particles brighten " << lit << " pixels");
+    CHECK(lit > 50);
+    CHECK(far_changed == 0);
+    // The 2D sprite path skips GPU emitters.
+    auto batch = SpriteBatch::create(ctx, rhi::Format::RGBA8_UNORM);
+    REQUIRE(batch.ok());
+    batch.value()->begin(math::Mat4::orthographic(-4, 4, -2.4f, 2.4f, -1, 1));
+    CHECK(runtime::extract_sprites(fx.s, assets, *batch.value()) == 0);
+    dev.destroy(target);
+}
+
+TEST_CASE("gpu particles: depth-buffer collision bounces particles off the floor; reset clears the GPU state") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto cube = ctx.create_mesh(make_cube(), "gpu_particle_floor").value();
+    Material grey;
+    grey.base_color = {0.3f, 0.3f, 0.3f, 1};
+    const math::Mat4 floor = math::Mat4::trs({0, -1.1f, 0}, {}, {8, 0.4f, 8}); // top at y = -0.9
+    const auto run = [&](bool collide, std::vector<particles::GpuParticle>& out, std::uint32_t& alive) {
+        GpuFx fx;
+        auto& c = fx.emitter();
+        c.rate = 0;
+        c.burst = 200;
+        c.max_particles = 200;
+        c.lifetime_min = c.lifetime_max = 10;
+        c.speed_min = 0.3f;
+        c.speed_max = 0.8f;
+        c.angle = 30;
+        c.gravity = {0, -9.8f, 0};
+        c.collision = collide;
+        c.bounce = 0.3f;
+        c.friction = 0.3f;
+        fx.s.world().get<scene::Transform>(fx.fx)->position = {0, 1, 0};
+        auto* cam = fx.s.world().get<scene::Transform>(fx.cam);
+        cam->position = {0, 1.5f, 5};
+        cam->rotation = math::Quat::axis_angle({1, 0, 0}, -0.35f);
+        runtime::GpuAssetCache assets(ctx, nullptr);
+        auto sr = SceneRenderer::create(ctx);
+        REQUIRE(sr.ok());
+        SceneRenderer& r = *sr.value();
+        auto target = test::make_target(W, H);
+        fx.ps.update(fx.s, 0.0f);
+        const auto frame = [&](float dt) {
+            fx.ps.update(fx.s, dt);
+            fx.s.update_transforms();
+            (void)runtime::extract_scene(fx.s, assets, r, {}, nullptr);
+            r.submit(cube, grey, floor);
+            auto cmd = dev.begin_commands();
+            REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+            cmd.submit_and_wait();
+        };
+        for (int f = 0; f < 90; ++f) frame(1.0f / 60.0f);
+        test::save_output(collide ? "particles_gpu_collision" : "particles_gpu_no_collision", W, H, dev.read_texture(target).value());
+        const std::uint64_t key = fx.view().key;
+        out = read_state(r, key);
+        alive = fx.view().alive;
+        // reset(): the next frame starts from cleared (dead) slots.
+        CHECK(particles::reset(fx.s, fx.fx));
+        fx.emitter().burst = 0;
+        frame(1.0f / 60.0f);
+        const auto cleared = read_state(r, key);
+        std::uint32_t live = 0;
+        for (const auto& p : cleared) live += p.age < p.life;
+        CHECK(live == 0);
+        CHECK(fx.view().alive == 0);
+        dev.destroy(target);
+    };
+    std::vector<particles::GpuParticle> with, without;
+    std::uint32_t alive_with = 0, alive_without = 0;
+    run(true, with, alive_with);
+    run(false, without, alive_without);
+    CHECK(alive_with == 200);
+    CHECK(alive_without == 200);
+    float lowest_with = 1e9f, lowest_without = 1e9f;
+    std::uint32_t resting = 0;
+    for (const auto& p : with) {
+        lowest_with = std::min(lowest_with, p.position.y);
+        resting += p.position.y < -0.7f && std::abs(p.velocity.y) < 1.5f;
+    }
+    for (const auto& p : without) lowest_without = std::min(lowest_without, p.position.y);
+    MESSAGE("collision: lowest y " << lowest_with << " (without: " << lowest_without << "), " << resting << " resting on the floor");
+    CHECK(lowest_without < -5.0f);   // falls through the floor without collision
+    CHECK(lowest_with > -0.9f - 0.1f); // never more than a frame's fall below the surface
+    CHECK(resting > 150);
 }

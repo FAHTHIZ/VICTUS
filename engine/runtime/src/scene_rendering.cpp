@@ -1673,6 +1673,44 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 continue;
             } else ++stats.missing_assets;
         }
+        if (v.gpu != nullptr) {
+            // GPU emitter (ADR-0097): the renderer simulates and draws it from the spawn records.
+            static_assert(sizeof(particles::GpuSpawnRecord) == sizeof(render::GpuParticleSpawnRecord));
+            static_assert(sizeof(particles::GpuParticle) == sizeof(render::GpuParticleSpawn));
+            const particles::ParticleEmitterComponent& e = *v.emitter;
+            const particles::GpuEmitterView& gv = *v.gpu;
+            const auto finite = [](float x) { return std::isfinite(x) ? x : 0.0f; };
+            render::GpuParticleEmitter g;
+            g.key = gv.key;
+            g.instance = gv.instance;
+            g.generation = gv.generation;
+            g.capacity = gv.capacity;
+            g.alive = gv.alive;
+            g.time = gv.time;
+            g.spawned = gv.spawned;
+            g.records = {reinterpret_cast<const render::GpuParticleSpawnRecord*>(gv.records.data()), gv.records.size()};
+            render::GpuParticleParams& p = g.params;
+            p.world = gv.world;
+            p.gravity_drag = {e.gravity.x, e.gravity.y, e.gravity.z, std::max(0.0f, finite(e.drag))};
+            p.turbulence = {finite(e.turbulence), 2.0f * math::kPi * std::max(0.0f, finite(e.turbulence_frequency)), finite(e.turbulence_speed),
+                            particles::turbulence_phase(e, gv.time)};
+            p.size = {e.size_start, e.size_end, std::max(0.0f, e.intensity), e.velocity_stretch > 0 ? finite(e.velocity_stretch) : 0.0f};
+            p.color_start = {e.color_start.r, e.color_start.g, e.color_start.b, e.color_start.a};
+            p.color_end = {e.color_end.r, e.color_end.g, e.color_end.b, e.color_end.a};
+            p.flipbook = {static_cast<float>(std::clamp<std::uint32_t>(e.flipbook_columns, 1, 15)),
+                          static_cast<float>(std::clamp<std::uint32_t>(e.flipbook_rows, 1, 15)),
+                          static_cast<float>(particles::flipbook_frame_count(e)), e.flipbook_fps > 0 ? finite(e.flipbook_fps) : 0.0f};
+            p.collision = {std::clamp(finite(e.bounce), 0.0f, 1.0f), std::clamp(finite(e.friction), 0.0f, 1.0f),
+                           std::max(0.0f, finite(e.collision_thickness)), 0.0f};
+            p.world_space = e.world_space;
+            p.collide = e.collision;
+            g.material = pm;
+            g.bounds = v.bounds;
+            renderer.submit_gpu_particles(g);
+            if (gv.alive > 0) ++stats.particle_emitters;
+            stats.particles += gv.alive;
+            continue;
+        }
         // Billboard and ParticleInstance share one 48-byte layout (position+size, colour, rotation).
         static_assert(sizeof(particles::Billboard) == sizeof(render::ParticleInstance));
         std::span<const render::ParticleInstance> instances(reinterpret_cast<const render::ParticleInstance*>(v.billboards.data()),
@@ -1802,6 +1840,7 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
     std::vector<particles::EmitterView> emitters;
     particles::gather(scene, emitters);
     for (const particles::EmitterView& v : emitters) {
+        if (v.gpu != nullptr) continue; // GPU particles are 3D only (ADR-0097)
         rhi::TextureHandle texture = assets.context().soft_particle();
         bool nearest = false;
         if (!v.emitter->texture.is_nil()) {

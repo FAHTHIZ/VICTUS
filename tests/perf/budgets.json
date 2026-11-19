@@ -1,5 +1,5 @@
 {
-  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe. See docs/PERFORMANCE_STRATEGY.md.",
+  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095). See docs/PERFORMANCE_STRATEGY.md.",
   "settings": {
     "frames": 120,
     "width": 640,
@@ -30,7 +30,7 @@
         "gpu.buffer_bytes": [0, 3921061],
         "gpu.live_textures": [0, 20],
         "gpu.live_buffers": [0, 43],
-        "sim.systems": [11, 24]
+        "sim.systems": [11, 30]
       }
     },
     "template-2d": {
@@ -56,7 +56,7 @@
         "gpu.buffer_bytes": [0, 225281],
         "gpu.live_textures": [0, 11],
         "gpu.live_buffers": [0, 6],
-        "sim.systems": [11, 24]
+        "sim.systems": [11, 30]
       }
     },
     "template-simulation": {
@@ -82,7 +82,7 @@
         "gpu.buffer_bytes": [0, 296147],
         "gpu.live_textures": [0, 17],
         "gpu.live_buffers": [0, 11],
-        "sim.systems": [11, 24]
+        "sim.systems": [11, 30]
       }
     },
     "template-multiplayer": {
@@ -108,7 +108,7 @@
         "gpu.buffer_bytes": [0, 2158834],
         "gpu.live_textures": [0, 19],
         "gpu.live_buffers": [0, 29],
-        "sim.systems": [11, 24]
+        "sim.systems": [11, 30]
       }
     },
     "sample-arena": {
@@ -135,7 +135,7 @@
         "gpu.buffer_bytes": [0, 406965],
         "gpu.live_textures": [0, 20],
         "gpu.live_buffers": [0, 22],
-        "sim.systems": [11, 24]
+        "sim.systems": [11, 30]
       }
     },
     "sample-dungeon_crawler": {
@@ -162,7 +162,7 @@
         "gpu.buffer_bytes": [0, 225281],
         "gpu.live_textures": [0, 11],
         "gpu.live_buffers": [0, 6],
-        "sim.systems": [11, 24]
+        "sim.systems": [11, 30]
       }
     },
     "sample-platformer": {
@@ -189,7 +189,7 @@
         "gpu.buffer_bytes": [0, 225281],
         "gpu.live_textures": [0, 11],
         "gpu.live_buffers": [0, 6],
-        "sim.systems": [11, 25]
+        "sim.systems": [11, 30]
       }
     }
   }

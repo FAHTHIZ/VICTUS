@@ -5,7 +5,10 @@
 #include "victus/scene/reflect.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <deque>
+#include <functional>
 #include <mutex>
 
 namespace victus::particles {
@@ -19,8 +22,11 @@ using scene::Scene;
 
 namespace {
 
-constexpr std::uint32_t kHardCap = 65536;
+constexpr std::uint32_t kHardCap = kMaxCpuParticles;
 constexpr float kPi = 3.14159265358979f;
+// Spawn records kept for renderers that join late or skip frames (live particles only).
+constexpr std::size_t kMaxRetainedRecords = 65536;
+std::atomic<std::uint64_t> g_instances{1};
 
 struct Particle {
     Vec3 position;
@@ -37,6 +43,23 @@ struct Particle {
 struct TrailPoint {
     Vec3 position; // simulation space (world or emitter-local)
     float age{0};  // particle age when recorded
+};
+
+// CPU bookkeeping of a GPU emitter: which slots are live until when, and recent spawns.
+struct GpuBook {
+    std::uint32_t capacity{0};
+    std::uint32_t generation{0};
+    std::uint64_t instance{0};
+    double time{0};
+    std::uint64_t spawned{0};
+    std::vector<std::pair<double, std::uint32_t>> live; // min-heap on death time
+    std::vector<std::uint32_t> free;                    // stack, lowest slot on top initially
+    std::vector<GpuSpawnRecord> records;                // ascending index from `head`
+    std::size_t head{0};
+    std::deque<std::pair<double, Aabb>> boxes; // spawn-position boxes until their last particle dies
+    Mat4 prev_world{Mat4::identity()};
+    bool has_prev{false};
+    GpuEmitterView view;
 };
 
 // Runtime state, not serialized: rebuilt (empty) after loading.
@@ -57,6 +80,9 @@ struct EmitterState {
     float accumulator{0};
     std::uint32_t pending{0};
     std::uint64_t emitted{0};
+    double clock{0}; // seconds since the emitter started (turbulence phase)
+    bool gpu{false}; // simulated by the last update on the GPU path
+    GpuBook book;
 };
 
 float clamp01(float v) { return std::clamp(v, 0.0f, 1.0f); }
@@ -158,6 +184,82 @@ math::Vec4 flipbook_uv(const Billboard& b) {
 
 namespace {
 
+// One octave of the curl of psi = (sin(k y + 2ph + 4.1), sin(k z + ph), sin(k x + 3ph + 1.7)):
+// every component depends on one other axis only, so the divergence is exactly zero.
+Vec3 curl_octave(Vec3 x, float k, float ph) {
+    return {-std::cos(k * x.z + ph), -std::cos(k * x.x + 3.0f * ph + 1.7f), -std::cos(k * x.y + 2.0f * ph + 4.1f)};
+}
+
+// Orthonormal rotation for the second octave (rows), so the field is not axis aligned.
+constexpr float kRot[3][3] = {{0.36f, 0.48f, -0.8f}, {-0.8f, 0.6f, 0.0f}, {0.48f, 0.64f, 0.6f}};
+
+} // namespace
+
+float turbulence_phase(const ParticleEmitterComponent& e, double time) {
+    if (!std::isfinite(e.turbulence_speed) || !std::isfinite(time)) return 0.0f;
+    return static_cast<float>(std::fmod(time * static_cast<double>(e.turbulence_speed), 2.0 * 3.14159265358979323846));
+}
+
+Vec3 turbulence_at(const ParticleEmitterComponent& e, const Vec3& position, float phase) {
+    if (e.turbulence == 0.0f || !std::isfinite(e.turbulence)) return {};
+    const float k = 2.0f * kPi * std::max(0.0f, e.turbulence_frequency);
+    const Vec3 a = curl_octave(position, k, phase);
+    const Vec3 r{kRot[0][0] * position.x + kRot[0][1] * position.y + kRot[0][2] * position.z,
+                 kRot[1][0] * position.x + kRot[1][1] * position.y + kRot[1][2] * position.z,
+                 kRot[2][0] * position.x + kRot[2][1] * position.y + kRot[2][2] * position.z};
+    const Vec3 b = curl_octave(r, 2.13f * k, -phase);
+    // Back to the original frame with the transpose (the field stays divergence-free).
+    const Vec3 bb{kRot[0][0] * b.x + kRot[1][0] * b.y + kRot[2][0] * b.z, kRot[0][1] * b.x + kRot[1][1] * b.y + kRot[2][1] * b.z,
+                  kRot[0][2] * b.x + kRot[1][2] * b.y + kRot[2][2] * b.z};
+    return (a + bb * 0.5f) * (e.turbulence / 1.5f);
+}
+
+void gpu_integrate(const ParticleEmitterComponent& e, GpuParticle& p, float dt, double time) {
+    if (!(dt > 0.0f)) return;
+    const int steps = std::clamp(static_cast<int>(std::ceil(dt * 30.0f)), 1, 8);
+    const float h = dt / static_cast<float>(steps);
+    const float damping = e.drag > 0 ? std::exp(-e.drag * h) : 1.0f;
+    float phase = turbulence_phase(e, time);
+    const float dphase = std::isfinite(e.turbulence_speed) ? e.turbulence_speed * h : 0.0f;
+    for (int i = 0; i < steps; ++i) {
+        const Vec3 a = e.gravity + turbulence_at(e, p.position, phase);
+        p.velocity = (p.velocity + a * h) * damping;
+        p.position = p.position + p.velocity * h;
+        p.rotation += p.spin * h;
+        p.age += h;
+        phase += dphase;
+    }
+}
+
+Billboard gpu_billboard(const ParticleEmitterComponent& e, const GpuParticle& p, const Mat4& world, const Mat4& view) {
+    Billboard b;
+    if (!(p.age < p.life)) return b;
+    const float t = std::clamp(p.age / p.life, 0.0f, 1.0f);
+    const float intensity = std::max(0.0f, e.intensity);
+    b.position = e.world_space ? p.position : world.transform_point(p.position);
+    b.size = std::max(0.0f, math::lerp(e.size_start, e.size_end, t) * p.size_scale);
+    b.color = Color(math::lerp(e.color_start.r, e.color_end.r, t) * intensity, math::lerp(e.color_start.g, e.color_end.g, t) * intensity,
+                    math::lerp(e.color_start.b, e.color_end.b, t) * intensity, std::clamp(math::lerp(e.color_start.a, e.color_end.a, t), 0.0f, 1.0f));
+    b.rotation = p.rotation;
+    const std::uint32_t cols = std::clamp<std::uint32_t>(e.flipbook_columns, 1, 15), rows = std::clamp<std::uint32_t>(e.flipbook_rows, 1, 15);
+    if (cols * rows > 1) {
+        b.grid = static_cast<float>(cols * 16 + rows);
+        b.frame = static_cast<float>(flipbook_frame(e, p.age, p.life, static_cast<std::uint32_t>(p.start_frame)));
+    }
+    if (e.velocity_stretch > 0 && std::isfinite(e.velocity_stretch)) {
+        const Vec3 v = e.world_space ? p.velocity : world.transform_vector(p.velocity);
+        const float speed = math::length(v);
+        if (b.size > 0 && speed > 1e-6f) {
+            b.aspect = 1.0f + speed * e.velocity_stretch / b.size;
+            b.rotation = std::atan2(-v.x, v.y);
+            aim_stretched(b, v, view);
+        }
+    }
+    return b;
+}
+
+namespace {
+
 struct Counts {
     std::uint32_t spawned{0}, died{0};
 };
@@ -165,6 +267,39 @@ struct Counts {
 std::uint32_t trail_capacity(const ParticleEmitterComponent& e) {
     if (!(e.trail_lifetime > 0) || !std::isfinite(e.trail_lifetime)) return 0;
     return std::clamp<std::uint32_t>(e.trail_max_points, 2, 64);
+}
+
+// Particles due this update (pending + bursts + rate); advances the cycle clock. `active` is
+// false once a non-looping cycle has ended.
+std::uint32_t schedule(const ParticleEmitterComponent& e, EmitterState& s, float dt, bool& active, std::uint32_t limit) {
+    std::uint32_t spawn = s.pending;
+    s.pending = 0;
+    active = true;
+    if (!e.emitting) return spawn;
+    if (!s.started) {
+        s.started = true;
+        s.time = 0;
+        spawn += e.burst;
+    } else {
+        s.time += dt;
+    }
+    if (e.duration > 0 && s.time >= e.duration) {
+        if (e.loop) {
+            s.time = std::fmod(s.time, e.duration);
+            spawn += e.burst;
+        } else {
+            active = false;
+        }
+    }
+    if (active && e.rate > 0) {
+        s.accumulator += e.rate * dt;
+        const float whole = std::floor(s.accumulator);
+        s.accumulator -= whole;
+        spawn += static_cast<std::uint32_t>(std::min(whole, static_cast<float>(limit)));
+    } else {
+        s.accumulator = 0;
+    }
+    return std::min(spawn, limit);
 }
 
 // Appends the particle's position when it moved far enough (dropping the oldest point when the
@@ -196,6 +331,9 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
     dt = std::max(0.0f, dt);
     // Integrate and retire existing particles (swap-remove: order is irrelevant, the renderer sorts).
     const float damping = e.drag > 0 ? std::exp(-e.drag * dt) : 1.0f;
+    const bool turbulent = e.turbulence != 0.0f && std::isfinite(e.turbulence);
+    const float phase = turbulent ? turbulence_phase(e, s.clock) : 0.0f;
+    s.clock += dt;
     const std::uint32_t cap = trail_capacity(e);
     if (cap != s.trail_cap) { // trails switched on/off or resized: restart every history
         s.trail_cap = cap;
@@ -213,7 +351,8 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
             ++counts.died;
             continue;
         }
-        p.velocity = (p.velocity + e.gravity * dt) * damping;
+        const Vec3 accel = turbulent ? e.gravity + turbulence_at(e, p.position, phase) : e.gravity;
+        p.velocity = (p.velocity + accel * dt) * damping;
         p.position = p.position + p.velocity * dt;
         p.rotation += p.spin * dt;
         if (cap > 0) record_trail(e, p, s.trail.data() + i * cap, cap);
@@ -221,35 +360,9 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
     }
 
     // Emission.
-    std::uint32_t spawn = s.pending;
-    s.pending = 0;
-    if (e.emitting) {
-        if (!s.started) {
-            s.started = true;
-            s.time = 0;
-            spawn += e.burst;
-        } else {
-            s.time += dt;
-        }
-        bool active = true;
-        if (e.duration > 0 && s.time >= e.duration) {
-            if (e.loop) {
-                s.time = std::fmod(s.time, e.duration);
-                spawn += e.burst;
-            } else {
-                active = false;
-            }
-        }
-        if (active && e.rate > 0) {
-            s.accumulator += e.rate * dt;
-            const float whole = std::floor(s.accumulator);
-            s.accumulator -= whole;
-            spawn += static_cast<std::uint32_t>(std::min(whole, static_cast<float>(kHardCap)));
-        } else {
-            s.accumulator = 0;
-        }
-        s.finished = !active && s.particles.empty() && spawn == 0;
-    }
+    bool active = true;
+    std::uint32_t spawn = schedule(e, s, dt, active, kHardCap);
+    if (e.emitting) s.finished = !active && s.particles.empty() && spawn == 0;
     const std::uint32_t max_alive = std::min(e.max_particles, kHardCap);
     const std::uint32_t room = max_alive > s.particles.size() ? max_alive - static_cast<std::uint32_t>(s.particles.size()) : 0;
     spawn = std::min(spawn, room);
@@ -372,6 +485,150 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
     return counts;
 }
 
+void reset_book(GpuBook& g, std::uint32_t capacity) {
+    g.capacity = capacity;
+    ++g.generation;
+    g.live.clear();
+    g.free.resize(capacity);
+    for (std::uint32_t i = 0; i < capacity; ++i) g.free[i] = capacity - 1 - i; // slot 0 on top
+    g.records.clear();
+    g.head = 0;
+    g.boxes.clear();
+}
+
+using DeathHeap = std::greater<std::pair<double, std::uint32_t>>;
+
+// Conservative world bounds of everything a GPU emitter can have alive: the boxes of spawn
+// positions still referenced, grown by the farthest a particle can travel in its longest life
+// (speed plus constant acceleration, ignoring drag) and its largest drawn extent.
+Aabb gpu_bounds(const ParticleEmitterComponent& e, const GpuBook& g, const Mat4& world, float life_hi) {
+    Aabb box;
+    for (const auto& b : g.boxes) {
+        box.expand(b.second.min);
+        box.expand(b.second.max);
+    }
+    if (!box.valid()) return box;
+    const float speed = std::max(std::fabs(e.speed_min), std::fabs(e.speed_max));
+    const float accel = math::length(e.gravity) + (std::isfinite(e.turbulence) ? std::fabs(e.turbulence) : 0.0f);
+    const float travel = speed * life_hi + 0.5f * accel * life_hi * life_hi;
+    float extent = std::max(e.size_start, e.size_end) * 0.5f;
+    if (e.velocity_stretch > 0 && std::isfinite(e.velocity_stretch)) extent += (speed + accel * life_hi) * e.velocity_stretch;
+    const Vec3 grow{travel + extent};
+    box.min = box.min - grow;
+    box.max = box.max + grow;
+    return e.world_space ? box : box.transformed(world);
+}
+
+Counts simulate_gpu(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& world, float dt, std::uint64_t uuid_seed) {
+    Counts counts;
+    GpuBook& g = s.book;
+    if (!s.seeded) {
+        const std::uint64_t seed = e.seed != 0 ? e.seed : uuid_seed;
+        s.rng = Random(seed, 0x9e3779b97f4a7c15ull ^ seed);
+        s.seeded = true;
+    }
+    if (g.instance == 0) g.instance = g_instances.fetch_add(1, std::memory_order_relaxed);
+    dt = std::max(0.0f, std::isfinite(dt) ? dt : 0.0f);
+    const std::uint32_t capacity = std::clamp<std::uint32_t>(e.max_particles, 1, kMaxGpuParticles);
+    if (capacity != g.capacity) reset_book(g, capacity);
+    const double t0 = g.time, t1 = t0 + static_cast<double>(dt);
+    g.time = t1;
+    s.clock = t1;
+    // Retire every particle whose life ends by the end of this step.
+    while (!g.live.empty() && g.live.front().first <= t1) {
+        std::pop_heap(g.live.begin(), g.live.end(), DeathHeap{});
+        g.free.push_back(g.live.back().second);
+        g.live.pop_back();
+        ++counts.died;
+    }
+    bool active = true;
+    std::uint32_t spawn = schedule(e, s, dt, active, kMaxGpuParticles);
+    spawn = std::min<std::uint32_t>(spawn, static_cast<std::uint32_t>(g.free.size()));
+    const float life_lo = std::max(0.001f, std::min(e.lifetime_min, e.lifetime_max));
+    const float life_hi = std::max(life_lo, std::max(e.lifetime_min, e.lifetime_max));
+    const float spin_to_rad = kPi / 180.0f;
+    const Mat4 prev = g.has_prev ? g.prev_world : world;
+    Aabb spawn_box;
+    double last_death = t1;
+    for (std::uint32_t i = 0; i < spawn; ++i) {
+        // Spread the step's spawns over its duration; a moving emitter leaves an even stream.
+        const float frac = static_cast<float>(i + 1) / static_cast<float>(spawn);
+        const double ts = t0 + static_cast<double>(dt) * static_cast<double>(frac);
+        Mat4 w = world;
+        w[3] = math::Vec4(math::lerp(prev[3].x, world[3].x, frac), math::lerp(prev[3].y, world[3].y, frac),
+                          math::lerp(prev[3].z, world[3].z, frac), 1.0f);
+        Vec3 pos, dir;
+        sample_shape(e, s.rng, pos, dir);
+        const float speed = s.rng.range_float(std::min(e.speed_min, e.speed_max), std::max(e.speed_min, e.speed_max));
+        GpuParticle p;
+        p.life = s.rng.range_float(life_lo, life_hi);
+        p.rotation = s.rng.next_float() * 2.0f * kPi;
+        p.spin = s.rng.range_float(e.spin_min, e.spin_max) * spin_to_rad;
+        p.size_scale = 1.0f - clamp01(e.size_variation) * s.rng.next_float();
+        if (e.flipbook_random_start) {
+            const std::uint32_t n = flipbook_frame_count(e);
+            if (n > 1) p.start_frame = static_cast<float>(std::min(n - 1, static_cast<std::uint32_t>(s.rng.next_float() * static_cast<float>(n))));
+        }
+        if (e.world_space) {
+            p.position = w.transform_point(pos);
+            p.velocity = math::normalize(w.transform_vector(dir)) * speed;
+        } else {
+            p.position = pos;
+            p.velocity = dir * speed;
+        }
+        const std::uint32_t slot = g.free.back();
+        g.free.pop_back();
+        p.meta[0] = slot;
+        const double death = ts + static_cast<double>(p.life);
+        last_death = std::max(last_death, death);
+        g.live.emplace_back(death, slot);
+        std::push_heap(g.live.begin(), g.live.end(), DeathHeap{});
+        g.records.push_back({p, g.spawned++, ts});
+        spawn_box.expand(p.position);
+    }
+    if (spawn > 0) g.boxes.emplace_back(last_death, spawn_box);
+    while (!g.boxes.empty() && g.boxes.front().first <= t1) g.boxes.pop_front();
+    // Keep records of particles that may still be alive, bounded; compact the vector lazily.
+    while (g.head < g.records.size() &&
+           (g.records[g.head].time + static_cast<double>(g.records[g.head].particle.life) <= t1 || g.records.size() - g.head > kMaxRetainedRecords))
+        ++g.head;
+    if (g.head > 0 && g.head * 2 >= g.records.size()) {
+        g.records.erase(g.records.begin(), g.records.begin() + static_cast<std::ptrdiff_t>(g.head));
+        g.head = 0;
+    }
+    g.prev_world = world;
+    g.has_prev = true;
+    counts.spawned = spawn;
+    s.emitted += spawn;
+    if (e.emitting) s.finished = !active && g.live.empty() && spawn == 0;
+    s.bounds = gpu_bounds(e, g, world, life_hi);
+    GpuEmitterView& v = g.view;
+    v.key = uuid_seed;
+    v.instance = g.instance;
+    v.generation = g.generation;
+    v.capacity = g.capacity;
+    v.alive = static_cast<std::uint32_t>(g.live.size());
+    v.time = g.time;
+    v.spawned = g.spawned;
+    v.records = std::span<const GpuSpawnRecord>(g.records).subspan(g.head);
+    v.world = world;
+    return counts;
+}
+
+// Switching paths drops the other path's particles.
+void switch_path(EmitterState& s, bool gpu) {
+    if (s.gpu == gpu) return;
+    s.gpu = gpu;
+    s.particles.clear();
+    s.billboards.clear();
+    s.velocities.clear();
+    s.trail.clear();
+    s.ribbon_points.clear();
+    s.ribbon_strips.clear();
+    s.bounds = {};
+    if (s.book.capacity > 0) reset_book(s.book, s.book.capacity);
+}
+
 std::uint64_t seed_of(const Uuid& u, Entity e) {
     const std::uint64_t base = u.is_nil() ? (static_cast<std::uint64_t>(e.index) + 1) * 0x2545f4914f6cdd1dull : u.hi ^ (u.lo * 0x9e3779b97f4a7c15ull);
     return base == 0 ? 1 : base;
@@ -398,7 +655,7 @@ void register_components() {
             .field(&ParticleEmitterComponent::duration, "duration", {.min = 0, .max = 1e4f, .speed = 0.05f, .tooltip = "Cycle length in seconds; 0 = forever"})
             .field(&ParticleEmitterComponent::rate, "rate", {.min = 0, .max = 1e5f, .speed = 0.5f, .tooltip = "particles per second"})
             .field(&ParticleEmitterComponent::burst, "burst", {.min = 0, .max = 65536, .tooltip = "Particles at the start of each cycle"})
-            .field(&ParticleEmitterComponent::max_particles, "max_particles", {.min = 1, .max = 65536})
+            .field(&ParticleEmitterComponent::max_particles, "max_particles", {.min = 1, .max = static_cast<float>(kMaxGpuParticles), .tooltip = "CPU emitters stop at 65536"})
             .field(&ParticleEmitterComponent::lifetime_min, "lifetime_min", {.min = 0.001f, .max = 1e3f, .speed = 0.01f, .tooltip = "seconds"})
             .field(&ParticleEmitterComponent::lifetime_max, "lifetime_max", {.min = 0.001f, .max = 1e3f, .speed = 0.01f, .tooltip = "seconds"})
             .enumeration(&ParticleEmitterComponent::shape, "shape", {"point", "sphere", "cone", "box"})
@@ -435,6 +692,14 @@ void register_components() {
             .field(&ParticleEmitterComponent::trail_width_end, "trail_width_end", {.min = 0, .max = 10, .speed = 0.01f, .tooltip = "Tail width as a fraction of the head"})
             .field(&ParticleEmitterComponent::trail_alpha_end, "trail_alpha_end", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Tail alpha as a fraction of the head"})
             .field(&ParticleEmitterComponent::trail_billboards, "trail_billboards", {.tooltip = "Also draw the particles"})
+            .field(&ParticleEmitterComponent::turbulence, "turbulence", {.min = 0, .max = 1000, .speed = 0.05f, .tooltip = "Swirling curl-noise acceleration (m/s^2); 0 = off"})
+            .field(&ParticleEmitterComponent::turbulence_frequency, "turbulence_frequency", {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "Swirls per metre"})
+            .field(&ParticleEmitterComponent::turbulence_speed, "turbulence_speed", {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "How fast the swirls change"})
+            .field(&ParticleEmitterComponent::gpu, "gpu", {.tooltip = "Simulate on the GPU (3D): up to a million particles, depth collision; no trails or sorting"})
+            .field(&ParticleEmitterComponent::collision, "collision", {.tooltip = "GPU, world space: bounce off what the camera sees"})
+            .field(&ParticleEmitterComponent::bounce, "bounce", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "0 = stop, 1 = elastic"})
+            .field(&ParticleEmitterComponent::friction, "friction", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Tangential speed lost per contact"})
+            .field(&ParticleEmitterComponent::collision_thickness, "collision_thickness", {.min = 0.01f, .max = 100, .speed = 0.01f, .tooltip = "Metres behind a visible surface treated as solid"})
             .commit();
     });
 }
@@ -459,7 +724,9 @@ void ParticleSystem::update(Scene& scene, float dt) {
     const auto run = [&](std::size_t begin, std::size_t end) {
         for (std::size_t i = begin; i < end; ++i) {
             Work& w = work_[i];
-            w.counts = simulate(*w.emitter, *w.state, w.world, dt, w.seed);
+            switch_path(*w.state, w.emitter->gpu);
+            w.counts = w.emitter->gpu ? simulate_gpu(*w.emitter, *w.state, w.world, dt, w.seed)
+                                      : simulate(*w.emitter, *w.state, w.world, dt, w.seed);
         }
     };
     if (settings_.jobs && work_.size() >= std::max<std::uint32_t>(2, settings_.parallel_threshold)) settings_.jobs->parallel_for(0, work_.size(), 1, run);
@@ -468,7 +735,13 @@ void ParticleSystem::update(Scene& scene, float dt) {
     stats_ = {};
     stats_.emitters = static_cast<std::uint32_t>(work_.size());
     for (const Work& w : work_) {
-        stats_.alive += static_cast<std::uint32_t>(w.state->particles.size());
+        const auto alive = w.state->gpu ? static_cast<std::uint32_t>(w.state->book.live.size())
+                                        : static_cast<std::uint32_t>(w.state->particles.size());
+        stats_.alive += alive;
+        if (w.state->gpu) {
+            ++stats_.gpu_emitters;
+            stats_.gpu_alive += alive;
+        }
         stats_.spawned += w.counts.spawned;
         stats_.died += w.counts.died;
     }
@@ -505,6 +778,10 @@ bool reset(Scene& scene, Entity e) {
         s->time = 0;
         s->accumulator = 0;
         s->pending = 0;
+        if (s->book.capacity > 0) reset_book(s->book, s->book.capacity);
+        s->book.view.generation = s->book.generation;
+        s->book.view.alive = 0;
+        s->book.view.records = {};
     }
     return true;
 }
@@ -515,7 +792,7 @@ EmitterStatus status(Scene& scene, Entity e) {
     if (!world.has<ParticleEmitterComponent>(e)) return out;
     out.valid = true;
     if (const auto* s = world.get<EmitterState>(e)) {
-        out.alive = static_cast<std::uint32_t>(s->particles.size());
+        out.alive = s->gpu ? static_cast<std::uint32_t>(s->book.live.size()) : static_cast<std::uint32_t>(s->particles.size());
         out.emitted = s->emitted;
         out.time = s->time;
         out.finished = s->finished;
@@ -525,6 +802,14 @@ EmitterStatus status(Scene& scene, Entity e) {
 
 void gather(Scene& scene, std::vector<EmitterView>& out) {
     scene.world().each<ParticleEmitterComponent, EmitterState>([&](Entity e, ParticleEmitterComponent& c, EmitterState& s) {
+        if (s.gpu) {
+            // Listed even when empty so a renderer sees resets and can drop its GPU particles.
+            if (s.book.capacity == 0) return;
+            EmitterView v{e, &c, {}, {}, s.bounds, {}, {}};
+            v.gpu = &s.book.view;
+            out.push_back(v);
+            return;
+        }
         if (s.billboards.empty() && s.ribbon_strips.empty()) return;
         out.push_back({e, &c, std::span<const Billboard>(s.billboards), std::span<const Vec3>(s.velocities), s.bounds,
                        std::span<const RibbonPoint>(s.ribbon_points), std::span<const std::uint32_t>(s.ribbon_strips)});
