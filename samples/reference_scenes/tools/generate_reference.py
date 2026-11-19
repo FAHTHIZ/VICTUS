@@ -15,6 +15,10 @@ gives the sequence a temporal signal (flicker, ghosting, TAA trails).
 - interior.vscene: closed room lit only by local lights: a shadowed point lamp, a shadowed spot,
   an emissive panel, a fog volume (light shafts), glossy floor, dark corners (AO, noise), a
   rotating metal cylinder.
+- effects.vscene: the surface and effect passes the render-path report covers (ADR-0105): a
+  water pool with refraction, projected decals (multiply and alpha), a seeded CPU spark
+  fountain with trails, a GPU particle emitter and a captured reflection probe around a chrome
+  sphere.
 
 UUIDs are derived from names (uuid5), so regenerating produces identical files.
 """
@@ -157,6 +161,42 @@ def interior(mats):
     return scene("Reference Interior", e)
 
 
+def effects(mats):
+    e = [camera((0, 2.2, 7.5), -12, 0),
+         light("Sun", "directional", (0, 10, 0), (1, 0.95, 0.88), 3.0, rot=quat_euler(-40, -30)),
+         environment(physical_sky=True, shadow_distance=30),
+         solid("Ground", "plane", (0, 0, 0), (30, 1, 30), color=(0.5, 0.48, 0.45), roughness=0.85),
+         solid("Pool Floor", "cube", (1.5, 0.01, 0.5), (4, 0.02, 3), color=(0.15, 0.4, 0.45)),
+         solid("Pool Rim N", "cube", (1.5, 0.25, -1.05), (4.2, 0.5, 0.1), color=(0.8, 0.78, 0.72)),
+         solid("Pool Rim S", "cube", (1.5, 0.25, 2.05), (4.2, 0.5, 0.1), color=(0.8, 0.78, 0.72)),
+         solid("Pool Rim W", "cube", (-0.55, 0.25, 0.5), (0.1, 0.5, 3.2), color=(0.8, 0.78, 0.72)),
+         solid("Pool Rim E", "cube", (3.55, 0.25, 0.5), (0.1, 0.5, 3.2), color=(0.8, 0.78, 0.72)),
+         solid("Pool Pillar", "cube", (1.0, 0.4, 0.0), (0.3, 0.8, 0.3), color=(0.85, 0.6, 0.3)),
+         entity("Pool Water", Water={"size": [4, 3], "wave_height": 0.04, "wavelength": 1.5, "clarity": 0.6, "refraction": 0.04,
+                                     "roughness": 0.05, "resolution": 64},
+                Transform=transform((1.5, 0.35, 0.5))),
+         entity("Stain Decal", Decal={"size": [1.6, 1.6, 0.5], "color": [0.25, 0.18, 0.12, 0.8], "blend": "multiply", "visible": True},
+                Transform=transform((-2.0, 0, 1.5), rot=quat_euler(-90, 0))),
+         entity("Paint Decal", Decal={"size": [0.8, 2.0, 0.5], "color": [0.9, 0.85, 0.2, 1], "blend": "alpha", "visible": True},
+                Transform=transform((-3.2, 0, 0.0), rot=quat_euler(-90, 20))),
+         solid("Chrome Sphere", "sphere", (-2.0, 0.8, -1.2), (1.4, 1.4, 1.4), color=(0.95, 0.95, 0.95), metallic=1.0, roughness=0.05),
+         solid("Probe Wall", "cube", (-2.0, 1.0, -3.0), (3, 2, 0.2), color=(0.7, 0.2, 0.15)),
+         entity("Reflection Probe", ReflectionProbe={"size": [5, 3, 5], "intensity": 1, "resolution": 64},
+                Transform=transform((-2.0, 1.2, -1.2))),
+         entity("Sparks", ParticleEmitter={"emitting": True, "loop": True, "rate": 60, "max_particles": 200, "lifetime_min": 0.8,
+                                           "lifetime_max": 1.2, "shape": "cone", "angle": 15, "speed_min": 3, "speed_max": 4,
+                                           "gravity": [0, -6, 0], "size_start": 0.06, "size_end": 0.02, "color_start": [1, 0.7, 0.3, 1],
+                                           "color_end": [1, 0.2, 0.05, 0], "intensity": 6, "blend": "additive", "seed": 7,
+                                           "trail_lifetime": 0.15},
+                Transform=transform((3.6, 0.2, -1.8))),
+         entity("GPU Mist", ParticleEmitter={"emitting": True, "loop": True, "rate": 400, "max_particles": 2000, "lifetime_min": 1.5,
+                                             "lifetime_max": 2.0, "shape": "box", "box": [2, 0.2, 1], "speed_min": 0.2, "speed_max": 0.5,
+                                             "gravity": [0, 0.3, 0], "size_start": 0.08, "size_end": 0.2, "color_start": [0.8, 0.9, 1, 0.4],
+                                             "color_end": [0.8, 0.9, 1, 0], "intensity": 1, "blend": "alpha", "seed": 11, "gpu": True},
+                Transform=transform((1.5, 0.45, 0.5)))]
+    return scene("Reference Effects", e)
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
@@ -168,6 +208,7 @@ def main():
         write_json(out / f"assets/materials/{file}.meta", {"victus_meta": 1, "uuid": mats[key], "importer": ""})
     write_json(out / "scenes/exterior.vscene", exterior(mats))
     write_json(out / "scenes/interior.vscene", interior(mats))
+    write_json(out / "scenes/effects.vscene", effects(mats))
     write_json(out / "victus.project", {"format": "victus.project", "version": 1, "name": "Reference Scenes",
                                          "startup_scene": "scenes/exterior.vscene", "engine_version": "0.2.0",
                                          "window": {"width": 1280, "height": 720, "vsync": True},

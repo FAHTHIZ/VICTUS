@@ -972,6 +972,14 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0105 — Render-path report for decals, water, particles and probes; water pass lifetime fix
+
+- Status: accepted (2026-11-19)
+- Context: the rendering-path report (ADR-0103) did not cover decals, water, particles or reflection probes. These are the passes most likely to be silently missing from a frame: culled, over a fixed budget, never captured, or needing compute.
+- Decision: `RenderPathFacts` gains submitted / in-view / drawn counts and budgets for decals (max 1024 nearest) and water (max 16 nearest), CPU particle batches, particles and ribbon vertices, GPU emitters submitted versus simulated, and reflection probes requested / not captured / over budget (max 64) / used, plus draws inside a probe box. `SceneRenderer::add_reflection_probe` now counts rejected probes instead of dropping them silently. `describe_render_path` adds five features: decals, water, particles, gpu_particles and reflection_probes. Their reasons are `scene`, `not_needed` (outside the view), `budget`, and `unsupported` (GPU emitters without compute are not drawn). No tier reason is used, because no tier preset scales these passes today. A third reference scene `effects.vscene` (water pool, two decals, seeded CPU sparks with trails, GPU mist, a probe around a chrome sphere) is added to `victus_reference_scenes`, which requires all five features to be active.
+- Bug fixed: the `water_scene_copy` and `water` execute lambdas captured the block-local `water_scene` render-graph handle by reference. The graph runs them after that block ends, so the handle was read from a dead stack slot. In Debug the `std::vector::at` range check threw on the first frame with water (index 2771602000 of 14). Both lambdas now capture the handle by value. A scan of the other block-local `RGTexture`s in `render()` found no other by-reference use.
+- Consequences: a missing effect can now be traced to a reason. The effects scene is pixel-identical across runs on lavapipe (FLIP 0), including GPU particles. Per-tier scaling of these passes, and its reporting, is still open.
+
 ## ADR-0104 — Deterministic perceptual reference scenes
 
 - Status: accepted (2026-11-19)

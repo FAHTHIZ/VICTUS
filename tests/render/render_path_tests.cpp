@@ -132,3 +132,66 @@ TEST_CASE("render path report serialises every feature") {
     CHECK(path_reason_name(PathReason::Budget) == "budget");
     CHECK(path_state_name(PathState::Reduced) == "reduced");
 }
+
+TEST_CASE("render path: decals, water, particles and reflection probes") {
+    const RenderSettings ultra = RenderSettings::preset(QualityTier::Ultra);
+    RenderPathFacts f = full_frame();
+    auto r = describe_render_path(ultra, f);
+    for (const char* n : {"decals", "water", "particles", "gpu_particles", "reflection_probes"}) {
+        CHECK_MESSAGE(get(r, n).state == PathState::Off, n);
+        CHECK_MESSAGE(get(r, n).reason == PathReason::Scene, n);
+    }
+    CHECK(r.reduced_summary().empty());
+
+    // Everything in view and within budget.
+    f.decals_submitted = f.decals_in_view = f.decals_drawn = 5;
+    f.decal_budget = 1024;
+    f.water_submitted = f.water_in_view = f.water_drawn = 1;
+    f.water_budget = 16;
+    f.particle_batches_submitted = 2;
+    f.particle_batches_drawn = 3;
+    f.particles_drawn = 900;
+    f.gpu_emitters_submitted = f.gpu_emitters_simulated = 1;
+    f.gpu_particles = 600;
+    f.probes_requested = f.probes_used = 2;
+    f.probe_budget = 64;
+    f.probe_draws = 12;
+    r = describe_render_path(ultra, f);
+    for (const char* n : {"decals", "water", "particles", "gpu_particles", "reflection_probes"})
+        CHECK_MESSAGE(get(r, n).state == PathState::Active, n);
+    CHECK(get(r, "decals").detail == "5 of 5 in view");
+    CHECK(get(r, "particles").detail == "900 particles in 3 batches");
+    CHECK(get(r, "gpu_particles").detail == "600 alive in 1 emitter");
+    CHECK(get(r, "reflection_probes").detail == "2 probes, 12 of 50 draws inside a probe box");
+    CHECK(r.reduced_summary().empty());
+
+    // Budgets and culling.
+    f.decals_in_view = 1500;
+    f.decals_submitted = 2000;
+    f.decals_drawn = 1024;
+    f.water_submitted = 3;
+    f.water_in_view = 0;
+    f.water_drawn = 0;
+    f.probes_over_budget = 4;
+    r = describe_render_path(ultra, f);
+    CHECK(get(r, "decals").state == PathState::Reduced);
+    CHECK(get(r, "decals").reason == PathReason::Budget);
+    CHECK(get(r, "decals").detail == "nearest 1024 of 1500 decals in view (max 1024)");
+    CHECK(get(r, "water").reason == PathReason::NotNeeded);
+    CHECK(get(r, "water").detail == "3 surfaces outside the view");
+    CHECK(get(r, "reflection_probes").reason == PathReason::Budget);
+    CHECK(r.reduced_summary() == "decals (budget), reflection_probes (budget)");
+
+    // Unbaked probes and no compute.
+    f.probes_over_budget = 0;
+    f.probes_used = 0;
+    f.probes_unbaked = 2;
+    f.compute = false;
+    f.gpu_emitters_simulated = 0;
+    f.gpu_particles = 0;
+    r = describe_render_path(ultra, f);
+    CHECK(get(r, "reflection_probes").state == PathState::Off);
+    CHECK(get(r, "reflection_probes").detail == "2 probes not captured yet (bake the probes)");
+    CHECK(get(r, "gpu_particles").reason == PathReason::Unsupported);
+    CHECK(r.reduced_summary().find("gpu_particles off (unsupported)") != std::string::npos);
+}

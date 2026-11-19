@@ -198,6 +198,51 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
             std::format("{}x{}x{} froxels", f.fog_x, f.fog_y, f.fog_slices));
     }
 
+    // Surface and effect passes. None of them is scaled by the quality tier today, so the reasons
+    // are scene content, view culling and the fixed per-frame budgets.
+    if (f.decals_submitted == 0) add("decals", PathState::Off, PathReason::Scene, "no decals in the scene");
+    else if (f.decals_in_view == 0) add("decals", PathState::Off, PathReason::NotNeeded, std::format("{} outside the view", count(f.decals_submitted, "decal", "decals")));
+    else if (f.decals_drawn < f.decals_in_view)
+        add("decals", PathState::Reduced, PathReason::Budget,
+            std::format("nearest {} of {} decals in view (max {})", f.decals_drawn, f.decals_in_view, f.decal_budget));
+    else add("decals", PathState::Active, PathReason::None, std::format("{} of {} in view", f.decals_drawn, f.decals_submitted));
+
+    if (f.water_submitted == 0) add("water", PathState::Off, PathReason::Scene, "no water surfaces in the scene");
+    else if (f.water_in_view == 0) add("water", PathState::Off, PathReason::NotNeeded, std::format("{} outside the view", count(f.water_submitted, "surface", "surfaces")));
+    else if (f.water_drawn < f.water_in_view)
+        add("water", PathState::Reduced, PathReason::Budget,
+            std::format("nearest {} of {} surfaces in view (max {})", f.water_drawn, f.water_in_view, f.water_budget));
+    else add("water", PathState::Active, PathReason::None, std::format("{}, refraction from the opaque scene", count(f.water_drawn, "surface", "surfaces")));
+
+    const std::uint32_t emitters = f.particle_batches_submitted + f.gpu_emitters_submitted;
+    if (emitters == 0) add("particles", PathState::Off, PathReason::Scene, "no particle emitters in the scene");
+    else if (f.particle_batches_drawn == 0 && f.gpu_emitters_submitted == 0)
+        add("particles", PathState::Off, PathReason::NotNeeded, std::format("{} outside the view", count(f.particle_batches_submitted, "batch", "batches")));
+    else
+        add("particles", PathState::Active, PathReason::None,
+            std::format("{} in {}{}", count(f.particles_drawn, "particle", "particles"), count(f.particle_batches_drawn, "batch", "batches"),
+                        f.ribbon_vertices > 0 ? std::format(", {} ribbon vertices", f.ribbon_vertices) : std::string{}));
+    if (f.gpu_emitters_submitted == 0) add("gpu_particles", PathState::Off, PathReason::Scene, "no GPU emitters");
+    else if (!f.compute) add("gpu_particles", PathState::Off, PathReason::Unsupported, "needs compute shaders; GPU emitters are not drawn");
+    else if (f.gpu_emitters_simulated < f.gpu_emitters_submitted)
+        add("gpu_particles", PathState::Reduced, PathReason::Unsupported,
+            std::format("{} of {} emitters simulated (pipeline unavailable)", f.gpu_emitters_simulated, f.gpu_emitters_submitted));
+    else
+        add("gpu_particles", PathState::Active, PathReason::None,
+            std::format("{} alive in {}", f.gpu_particles, count(f.gpu_emitters_simulated, "emitter", "emitters")));
+
+    if (f.probes_requested == 0) add("reflection_probes", PathState::Off, PathReason::Scene, "no reflection probes; reflections use the environment map");
+    else if (f.probes_used == 0) add("reflection_probes", PathState::Off, PathReason::Scene, std::format("{} not captured yet (bake the probes)", count(f.probes_unbaked, "probe", "probes")));
+    else if (f.probes_over_budget > 0)
+        add("reflection_probes", PathState::Reduced, PathReason::Budget,
+            std::format("{} of {} probes used (max {})", f.probes_used, f.probes_used + f.probes_over_budget, f.probe_budget));
+    else if (f.probes_unbaked > 0)
+        add("reflection_probes", PathState::Reduced, PathReason::Scene,
+            std::format("{} not captured; {} of {} draws inside a probe box", count(f.probes_unbaked, "probe", "probes"), f.probe_draws, f.visible_draws));
+    else
+        add("reflection_probes", PathState::Active, PathReason::None,
+            std::format("{}, {} of {} draws inside a probe box", count(f.probes_used, "probe", "probes"), f.probe_draws, f.visible_draws));
+
     // Geometry cost reduction (invisible by design; reported so differences can be traced).
     if (!S.lods) add("lods", PathState::Off, by(S.lods == tier.lods), "full-detail meshes everywhere");
     else if (S.force_lod >= 0) add("lods", PathState::Reduced, PathReason::Setting, std::format("forced to LOD {}", S.force_lod));
