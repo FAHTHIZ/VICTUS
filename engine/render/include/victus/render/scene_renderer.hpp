@@ -125,6 +125,16 @@ struct ParticleInstance {
                               // rows); w height / width (0 or 1: square; > 1 stretches along the rotated up axis,
                               // e.g. sparks and rain along their screen velocity)
 };
+// One point of a camera-facing ribbon (a particle trail), in strip order. The strip is expanded
+// toward the camera on the GPU: across it the texture's x runs 0..1, along it y = `v`.
+struct RibbonPoint {
+    math::Vec3 position; // world space, trail centre
+    float width{0};      // full width in metres
+    math::Color color;   // linear RGBA, rgb may exceed 1
+    float v{0};          // texture y along the trail (unused without a texture)
+    float reserved[3]{};
+};
+static_assert(sizeof(RibbonPoint) == 48);
 struct ParticleMaterial {
     rhi::TextureHandle texture; // invalid => built-in soft disc
     ParticleBlend blend{ParticleBlend::Alpha};
@@ -373,6 +383,7 @@ struct SceneStats {
     std::uint32_t joints_uploaded{0};  // joint matrices in the per-frame palette
     std::uint32_t particle_batches{0}; // visible particle batches (one draw each)
     std::uint32_t particles{0};        // particles drawn
+    std::uint32_t ribbon_vertices{0};  // trail triangle-list vertices drawn (six per segment)
     std::uint32_t lod_draws{0};        // visible draws using a coarser level than LOD 0
     std::uint32_t lod_held{0};         // draws kept finer than the stateless pick by lod_hysteresis
     std::uint64_t triangles{0};        // triangles in the main and transparent passes (all instances)
@@ -447,6 +458,11 @@ public:
     // including particle sizes) is used for frustum culling and batch ordering.
     void submit_particles(std::span<const ParticleInstance> particles, const ParticleMaterial& material,
                           const math::Aabb& bounds);
+    // Ribbon strips sharing a material (e.g. one emitter's trails): `strips` holds the point count
+    // of each consecutive strip in `points`; strips with fewer than two points are skipped.
+    // Drawn in the particle pass (soft depth fade), ordered back to front with particle batches.
+    void submit_ribbons(std::span<const RibbonPoint> points, std::span<const std::uint32_t> strips,
+                        const ParticleMaterial& material, const math::Aabb& bounds);
     // Local reflection probe: draws whose bounds centre lies inside `box` use the probe's cube
     // (box-projected) for reflections and its SH for diffuse light instead of the scene
     // environment; the smallest containing box wins. The map must outlive the frame.
@@ -513,6 +529,7 @@ private:
         std::uint32_t offset, count;
         math::Aabb bounds;
         float distance{0};
+        bool ribbon{false}; // triangle-list ribbon vertices rather than billboard instances
     };
     struct LineVertex {
         math::Vec3 pos;
@@ -537,7 +554,7 @@ private:
     TransientTexturePool pool_;
     rhi::PipelineHandle opaque_cull_, opaque_double_, shadow_pipeline_, shadow_alpha_, sky_pipeline_, line_pipeline_;
     rhi::PipelineHandle prepass_cull_, prepass_double_;
-    rhi::PipelineHandle particle_alpha_, particle_additive_;
+    rhi::PipelineHandle particle_alpha_, particle_additive_, ribbon_alpha_, ribbon_additive_;
     std::array<rhi::PipelineHandle, 3> decal_pipelines_{}; // by DecalBlend
     rhi::PipelineHandle skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_;
     // DebugView::Overdraw: [skinned][double_sided] counters and the persistent RGBA8 count target.

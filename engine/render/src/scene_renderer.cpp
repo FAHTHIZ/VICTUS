@@ -152,6 +152,7 @@ struct BlurUniforms {
 struct ParticleFrameUniforms {
     Mat4 view_proj;
     Vec4 right, up;
+    Vec4 eye; // ribbon.vert only (particle.vert declares the first three members)
 };
 struct ParticleUniforms {
     Vec4 proj;   // view depth = proj.x / (depth + proj.y)
@@ -492,10 +493,11 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     auto skin_shadow_vs = get("shadow_skinned.vert");
     auto particle_vs = get("particle.vert");
     auto particle_fs = get("particle.frag");
+    auto ribbon_vs = get("ribbon.vert");
     auto decal_vs = get("decal.vert");
     auto decal_fs = get("decal.frag");
     for (auto* s : {&mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &shadow_alpha_vs, &shadow_alpha_fs, &full_vs, &sky_fs, &line_vs, &line_fs, &depth_vs, &skin_vs,
-                    &skin_depth_vs, &skin_shadow_vs, &particle_vs, &particle_fs, &decal_vs, &decal_fs})
+                    &skin_depth_vs, &skin_shadow_vs, &particle_vs, &particle_fs, &ribbon_vs, &decal_vs, &decal_fs})
         if (!*s) return std::move(*s).error();
     const rhi::VertexBufferLayout skin_layout{2, sizeof(SkinVertex), false};
     const std::vector<rhi::VertexAttribute> skin_attrs{{11, 2, rhi::VertexFormat::UShort4, 0},
@@ -679,6 +681,13 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
         p = dev.create_pipeline(pd);
         if (!p) return std::move(p).error();
         (additive ? r->particle_additive_ : r->particle_alpha_) = p.value();
+        // Ribbons (trails): the same 48-byte layout read per vertex as a triangle list.
+        pd.name = additive ? "ribbons_additive" : "ribbons_alpha";
+        pd.vertex = ribbon_vs.value();
+        pd.vertex_buffers = {{0, sizeof(ParticleInstance), false}};
+        p = dev.create_pipeline(pd);
+        if (!p) return std::move(p).error();
+        (additive ? r->ribbon_additive_ : r->ribbon_alpha_) = p.value();
     }
 
     // Decals: unit boxes from gl_VertexIndex, no depth attachment (the shader samples scene depth);
@@ -779,7 +788,7 @@ SceneRenderer::~SceneRenderer() {
         if (pl) d.destroy(pl);
     for (auto pl : {opaque_cull_, opaque_double_, shadow_pipeline_, shadow_alpha_, sky_pipeline_, line_pipeline_, prepass_cull_,
                     prepass_double_, skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_,
-                    particle_alpha_, particle_additive_, motion_cull_, motion_double_, skin_motion_cull_, skin_motion_double_})
+                    particle_alpha_, particle_additive_, ribbon_alpha_, ribbon_additive_, motion_cull_, motion_double_, skin_motion_cull_, skin_motion_double_})
         if (pl) d.destroy(pl);
     for (auto pl : decal_pipelines_)
         if (pl) d.destroy(pl);
@@ -1051,6 +1060,42 @@ void SceneRenderer::submit_skinned(const GpuMesh& mesh, const Material& material
     d.joint_count = static_cast<std::uint32_t>(joints.size());
     palette_.insert(palette_.end(), joints.begin(), joints.end());
     draws_.push_back(d);
+}
+
+void SceneRenderer::submit_ribbons(std::span<const RibbonPoint> points, std::span<const std::uint32_t> strips,
+                                   const ParticleMaterial& material, const math::Aabb& bounds) {
+    if (points.empty() || strips.empty() || !bounds.valid()) return;
+    const auto first = static_cast<std::uint32_t>(particles_.size());
+    // Without a texture the soft disc is sampled along its middle row: a soft edge across the
+    // trail and no fade along it (colour and width carry that).
+    const bool textured = static_cast<bool>(material.texture);
+    std::size_t at = 0;
+    for (const std::uint32_t n : strips) {
+        if (at + n > points.size()) break;
+        const RibbonPoint* s = points.data() + at;
+        at += n;
+        if (n < 2) continue;
+        const auto tangent = [&](std::uint32_t k) {
+            const Vec3 d = s[std::min(k + 1, n - 1)].position - s[k > 0 ? k - 1 : 0].position;
+            const float len = length(d);
+            return len > 1e-8f ? d / len : Vec3{0, 1, 0};
+        };
+        const auto edge = [&](std::uint32_t k, float sign) {
+            const RibbonPoint& p = s[k];
+            const float v = textured ? p.v : 0.5f;
+            return ParticleInstance{Vec4(p.position, sign * 0.5f * std::max(0.0f, p.width)),
+                                    Vec4(p.color.r, p.color.g, p.color.b, p.color.a), Vec4(tangent(k), v)};
+        };
+        for (std::uint32_t k = 0; k + 1 < n; ++k) {
+            const ParticleInstance a0 = edge(k, -1), a1 = edge(k, 1), b0 = edge(k + 1, -1), b1 = edge(k + 1, 1);
+            particles_.insert(particles_.end(), {a0, a1, b1, a0, b1, b0});
+        }
+    }
+    const auto count = static_cast<std::uint32_t>(particles_.size()) - first;
+    if (count == 0) return;
+    ParticleBatch batch{material, first, count, bounds, 0.0f};
+    batch.ribbon = true;
+    particle_batches_.push_back(batch);
 }
 
 void SceneRenderer::submit_particles(std::span<const ParticleInstance> particles, const ParticleMaterial& material,
@@ -1696,7 +1741,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         std::vector<std::pair<float, std::uint32_t>> order;
         for (ParticleBatch& b : particle_draws) {
             const auto first = static_cast<std::uint32_t>(particle_upload_.size());
-            if (b.material.blend == ParticleBlend::Alpha) {
+            if (b.ribbon) {
+                // Strip order is the triangle order; batches are still ordered back to front.
+                particle_upload_.insert(particle_upload_.end(), particles_.begin() + b.offset, particles_.begin() + b.offset + b.count);
+            } else if (b.material.blend == ParticleBlend::Alpha) {
                 order.clear();
                 for (std::uint32_t i = 0; i < b.count; ++i) {
                     const Vec4& p = particles_[b.offset + i].position_size;
@@ -1733,7 +1781,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         for (const auto& c : candidates) decal_draws.push_back(c.second);
     }
     stats_.decals = static_cast<std::uint32_t>(decal_draws.size());
-    stats_.particles = static_cast<std::uint32_t>(particle_upload_.size());
+    stats_.particles = 0;
+    stats_.ribbon_vertices = 0;
+    for (const ParticleBatch& b : particle_draws) (b.ribbon ? stats_.ribbon_vertices : stats_.particles) += b.count;
     if (!particle_upload_.empty()) {
         const auto needed = static_cast<std::uint32_t>(particle_upload_.size());
         if (needed > particle_capacity_) {
@@ -2229,6 +2279,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         const Mat4 cam_world = inverse(camera_.view);
         pf.right = Vec4(normalize(cam_world.transform_vector({1, 0, 0})), 0);
         pf.up = Vec4(normalize(cam_world.transform_vector({0, 1, 0})), 0);
+        pf.eye = Vec4(camera_.position, 1);
         graph.add_pass(
             "particles",
             [&](PassBuilder& b) {
@@ -2241,7 +2292,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_vertex_buffer(0, particle_buffer_);
                 rhi::PipelineHandle bound{};
                 for (const ParticleBatch& b : particle_draws) {
-                    const rhi::PipelineHandle want = b.material.blend == ParticleBlend::Additive ? particle_additive_ : particle_alpha_;
+                    const bool add = b.material.blend == ParticleBlend::Additive;
+                    const rhi::PipelineHandle want = b.ribbon ? (add ? ribbon_additive_ : ribbon_alpha_) : (add ? particle_additive_ : particle_alpha_);
                     if (!(bound == want)) {
                         pass.bind_pipeline(want);
                         bound = want;
@@ -2254,7 +2306,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                                       ctx_.linear_clamp());
                     pass.bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(depth), ctx_.nearest_clamp());
                     pass.bind_vertex_buffer(0, particle_buffer_, b.offset * static_cast<std::uint32_t>(sizeof(ParticleInstance)));
-                    pass.draw(6, b.count);
+                    if (b.ribbon) pass.draw(b.count, 1);
+                    else pass.draw(6, b.count);
                 }
             });
     }

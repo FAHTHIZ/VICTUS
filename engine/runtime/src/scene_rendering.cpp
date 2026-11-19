@@ -1088,6 +1088,12 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             instances = {reinterpret_cast<const render::ParticleInstance*>(stretched.data()), stretched.size()};
         }
         renderer.submit_particles(instances, pm, v.bounds);
+        if (!v.ribbon_strips.empty()) {
+            static_assert(sizeof(particles::RibbonPoint) == sizeof(render::RibbonPoint));
+            renderer.submit_ribbons({reinterpret_cast<const render::RibbonPoint*>(v.ribbon_points.data()), v.ribbon_points.size()},
+                                    v.ribbon_strips, pm, v.bounds);
+            stats.particle_trails += static_cast<std::uint32_t>(v.ribbon_strips.size());
+        }
         ++stats.particle_emitters;
         stats.particles += static_cast<std::uint32_t>(v.billboards.size());
     }
@@ -1219,6 +1225,36 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
             sp.lit = true; // additive particles stay emissive (never lit)
             batch.draw(sp);
             ++count;
+        }
+        // Trails: one sprite per segment, its up axis along the segment (x across, y along the trail).
+        const bool textured = !v.emitter->texture.is_nil();
+        std::size_t at = 0;
+        for (const std::uint32_t n : v.ribbon_strips) {
+            for (std::uint32_t k = at; k + 1 < at + n; ++k) {
+                const particles::RibbonPoint& a = v.ribbon_points[k];
+                const particles::RibbonPoint& b = v.ribbon_points[k + 1];
+                const math::Vec2 d{b.position.x - a.position.x, b.position.y - a.position.y};
+                const float len = std::sqrt(d.x * d.x + d.y * d.y);
+                const float w = 0.5f * (a.width + b.width);
+                if (len <= 1e-6f || w <= 0.0f) continue;
+                render::Sprite sp;
+                sp.texture = texture;
+                sp.nearest = nearest;
+                sp.position = {0.5f * (a.position.x + b.position.x), 0.5f * (a.position.y + b.position.y)};
+                // Segments meet end to end (no overlap, which would double up under additive
+                // blending); sharp bends leave small wedge gaps.
+                sp.size = {w, len};
+                sp.rotation = std::atan2(-d.x, d.y);
+                sp.uv = textured ? math::Vec4{0, b.v, 1, a.v} : math::Vec4{0, 0.5f, 1, 0.5f};
+                const auto ch = [](float x, float y) { return std::min(0.5f * (x + y), 1.0f); };
+                sp.color = {ch(a.color.r, b.color.r), ch(a.color.g, b.color.g), ch(a.color.b, b.color.b), 0.5f * (a.color.a + b.color.a)};
+                sp.layer = v.emitter->layer;
+                sp.additive = v.emitter->blend == particles::Blend::Additive;
+                sp.lit = true;
+                batch.draw(sp);
+                ++count;
+            }
+            at += n;
         }
     }
     return count;

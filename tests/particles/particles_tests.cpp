@@ -315,6 +315,9 @@ TEST_CASE("emitter components serialize; runtime state is rebuilt") {
     c.flipbook_fps = 12;
     c.flipbook_random_start = true;
     c.velocity_stretch = 0.05f;
+    c.trail_lifetime = 0.4f;
+    c.trail_max_points = 9;
+    c.trail_billboards = false;
     ParticleSystem sys;
     sys.update(s, 0.5f);
     const std::string text = json::stringify(s.save());
@@ -336,6 +339,9 @@ TEST_CASE("emitter components serialize; runtime state is rebuilt") {
     CHECK(near(lc->flipbook_fps, 12));
     CHECK(lc->flipbook_random_start);
     CHECK(near(lc->velocity_stretch, 0.05f));
+    CHECK(near(lc->trail_lifetime, 0.4f));
+    CHECK(lc->trail_max_points == 9);
+    CHECK_FALSE(lc->trail_billboards);
     CHECK(status(loaded, le).alive == 0);
 
     // Removing the component drops its state; the system installs into a Simulation.
@@ -491,4 +497,125 @@ TEST_CASE("stretched billboards aim along their on-screen motion for a camera") 
     off.aspect = 3;
     aim_stretched(off, math::normalize(Vec3{0, 1, -1}), front);
     CHECK(near(off.rotation, std::atan2(-2.0f, 5.0f), 1e-3f));
+}
+
+namespace {
+
+// One particle flying along +X at 1 m/s (gravity off), emitted at the origin.
+Entity trail_emitter(Scene& s) {
+    const Entity e = s.create("Trail");
+    auto& c = s.world().add<ParticleEmitterComponent>(e);
+    c.rate = 0;
+    c.burst = 1;
+    c.shape = Shape::Point;
+    c.angle = 0;
+    c.speed_min = c.speed_max = 1;
+    c.size_start = c.size_end = 0.2f;
+    c.color_start = c.color_end = {1, 0.5f, 0.25f, 0.8f};
+    c.lifetime_min = c.lifetime_max = 100;
+    c.trail_lifetime = 0.5f;
+    c.trail_min_distance = 0.1f;
+    c.trail_max_points = 64;
+    s.world().get<scene::Transform>(e)->rotation = math::Quat::axis_angle({0, 0, 1}, -1.5707963f);
+    return e;
+}
+
+EmitterView view_of(Scene& s, std::vector<EmitterView>& views) {
+    views.clear();
+    gather(s, views);
+    REQUIRE(views.size() == 1);
+    return views[0];
+}
+
+} // namespace
+
+TEST_CASE("trails record points by distance, expire by age and taper toward the tail") {
+    Scene s;
+    const Entity e = trail_emitter(s);
+    ParticleSystem sys;
+    std::vector<EmitterView> views;
+    sys.update(s, 0.0f); // spawn at the origin: a single point, no strip yet
+    CHECK(view_of(s, views).ribbon_strips.empty());
+    for (int i = 0; i < 20; ++i) sys.update(s, 0.05f); // 1 s at 1 m/s, a point every 0.1 m
+    const EmitterView v = view_of(s, views);
+    REQUIRE(v.ribbon_strips.size() == 1);
+    const std::uint32_t n = v.ribbon_strips[0];
+    REQUIRE(v.ribbon_points.size() == n);
+    // Points older than 0.5 s expired: the trail spans about the last half metre.
+    CHECK(n >= 5);
+    CHECK(n <= 7);
+    const RibbonPoint& tail = v.ribbon_points.front();
+    const RibbonPoint& head = v.ribbon_points.back();
+    CHECK(near(head.position.x, 1.0f, 1e-3f));
+    CHECK(head.position.x - tail.position.x <= 0.5f + 1e-3f);
+    CHECK(head.position.x - tail.position.x >= 0.35f);
+    // Head: full width and alpha, v = 0; tail: tapered by its age.
+    CHECK(near(head.v, 0));
+    CHECK(near(head.width, 0.2f));
+    CHECK(near(head.color.a, 0.8f));
+    CHECK(near(head.color.r, 1.0f));
+    CHECK(tail.v > 0.6f);
+    CHECK(tail.width < head.width * 0.4f);
+    CHECK(tail.color.a < 0.8f * 0.4f);
+    for (std::uint32_t k = 1; k < n; ++k) {
+        CHECK(v.ribbon_points[k].position.x > v.ribbon_points[k - 1].position.x); // tail to head
+        CHECK(v.ribbon_points[k].v <= v.ribbon_points[k - 1].v);
+    }
+    CHECK(v.bounds.min.x <= tail.position.x);
+    CHECK(v.bounds.max.x >= head.position.x);
+    REQUIRE(v.billboards.size() == 1); // heads drawn by default
+
+    // A full block drops its oldest points; a resize restarts the history.
+    s.world().get<ParticleEmitterComponent>(e)->trail_max_points = 3;
+    for (int i = 0; i < 10; ++i) sys.update(s, 0.05f);
+    const EmitterView w = view_of(s, views);
+    REQUIRE(w.ribbon_strips.size() == 1);
+    CHECK(w.ribbon_strips[0] <= 4); // three recorded points + the live head
+    CHECK(w.ribbon_points.back().position.x - w.ribbon_points.front().position.x <= 0.3f + 1e-3f);
+
+    // Trails switched off: no ribbons.
+    s.world().get<ParticleEmitterComponent>(e)->trail_lifetime = 0;
+    sys.update(s, 0.05f);
+    CHECK(view_of(s, views).ribbon_strips.empty());
+}
+
+TEST_CASE("trails follow local-space emitters, survive swap-removal and can draw alone") {
+    Scene s;
+    const Entity e = trail_emitter(s);
+    {
+        auto* c = s.world().get<ParticleEmitterComponent>(e);
+        c->world_space = false;
+        c->trail_billboards = false;
+        c->burst = 0;
+    }
+    ParticleSystem sys;
+    std::vector<EmitterView> views;
+    sys.update(s, 0.0f);
+    // Two particles with different lives: the first dies and the second is swapped into its slot,
+    // carrying its own history.
+    auto set_life = [&](float life, float speed) {
+        auto* c = s.world().get<ParticleEmitterComponent>(e);
+        c->lifetime_min = c->lifetime_max = life;
+        c->speed_min = c->speed_max = speed;
+    };
+    set_life(0.3f, 3);
+    emit(s, e, 1); // slot 0: fast, dies first
+    sys.update(s, 0.0f);
+    set_life(100, 1);
+    emit(s, e, 1); // slot 1: moved into slot 0 with its history
+    sys.update(s, 0.0f);
+    for (int i = 0; i < 4; ++i) sys.update(s, 0.1f);
+    CHECK(status(s, e).alive == 1);
+    s.world().get<scene::Transform>(e)->position = {0, 10, 0}; // the emitter moved: its trails follow
+    sys.update(s, 0.1f);
+    const EmitterView v = view_of(s, views);
+    CHECK(v.billboards.empty()); // trails only
+    REQUIRE(v.ribbon_strips.size() == 1);
+    for (const RibbonPoint& r : v.ribbon_points) {
+        CHECK(near(r.position.y, 10.0f, 1e-3f));
+        CHECK(r.position.x <= 0.5f + 1e-3f); // none of the dead fast particle's points
+    }
+    CHECK(near(v.ribbon_points.back().position.x, 0.5f, 1e-3f));
+    CHECK(v.bounds.valid());
+    CHECK(v.bounds.min.y > 9.8f);
 }
