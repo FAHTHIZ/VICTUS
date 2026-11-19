@@ -61,6 +61,7 @@ Result<std::unique_ptr<Editor>> Editor::create(render::GpuContext& gpu, ui::UiCo
     if (platform) ed->input_ = std::make_unique<player::PlatformInput>(platform->input());
     ed->reset_simulation();
     ed->recent_ = std::make_unique<project::RecentProjects>(options.recent_file);
+    ed->load_preferences();
     ed->log_sink_ = std::make_shared<log::RingSink>(4096);
     log::logger().add_sink(ed->log_sink_);
     {
@@ -68,6 +69,7 @@ Result<std::unique_ptr<Editor>> Editor::create(render::GpuContext& gpu, ui::UiCo
         ImGuiContext* previous = ImGui::GetCurrentContext();
         ImGui::SetCurrentContext(ui.imgui());
         kit::install_fonts();
+        ed->base_style_ = ImGui::GetStyle(); // the theme at 100 %; set_ui_scale() rescales from it
         ImGui::SetCurrentContext(previous);
     }
     auto view = runtime::SceneView::create(gpu, rhi::Format::RGBA8_UNORM);
@@ -153,6 +155,9 @@ Status Editor::open_project(const fs::Path& path) {
     quality_ = render::parse_quality_tier(project_->settings().render_quality).value_or(render::QualityTier::High);
     apply_quality();
     notify("Opened project " + project_->settings().name);
+    // First projects open with the Getting Started checklist until it is finished or hidden.
+    if (!guide_dismissed_ && guide_done_count() < static_cast<std::size_t>(GuideStep::Count)) show_getting_started_ = true;
+    guide_seen_revision_ = undo_.revision();
     problems_.reset();
     problems_error_.clear();
     check_project();
@@ -367,6 +372,7 @@ Status Editor::save_scene() {
     autosave_written_ = false;
     update_title();
     notify("Saved " + scene_path_);
+    complete_guide_step(GuideStep::Save);
     check_project();
     return {};
 }

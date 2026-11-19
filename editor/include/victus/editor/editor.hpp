@@ -41,6 +41,7 @@
 #include <array>
 #include <future>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -61,7 +62,39 @@ struct EditorOptions {
     fs::Path player_executable;    // what Export Game ships; empty = victus_player next to the editor
     fs::Path diagnostics_dir;      // crash reports and session logs; empty = crash::default_directory()
     bool previous_session_crashed{false}; // show "closed unexpectedly last time" (crash::Session)
+    // Studio preferences (interface size, Getting Started progress). Empty: studio_preferences.json
+    // next to recent_file.
+    fs::Path preferences_file;
+    // Interface size used until the user picks one (View > Interface Size). The editor app passes
+    // a larger size than the 100 % the tests use, so text and buttons are easy to read and hit.
+    float default_ui_scale{1.0f};
 };
+
+// Interface sizes offered in View > Interface Size (the scale is clamped to this range).
+inline constexpr float kMinUiScale = 0.8f;
+inline constexpr float kMaxUiScale = 2.0f;
+struct UiScaleChoice {
+    const char* name;
+    float scale;
+};
+inline constexpr UiScaleChoice kUiScales[] = {{"Compact", 0.9f},     {"Normal", 1.0f}, {"Large", 1.15f},
+                                              {"Extra Large", 1.3f}, {"Huge", 1.5f},   {"Presentation", 1.75f}};
+
+// Getting Started checklist steps (Help > Getting Started). Each completes from real editor
+// actions, never from opening the panel.
+enum class GuideStep : std::uint8_t { AddObject, MoveObject, EditSetting, Play, Save, Export, Count };
+[[nodiscard]] const char* guide_step_title(GuideStep step) noexcept;
+
+// One built-in Help topic (Help > Help Topics): a plain-language how-to.
+struct HelpTopic {
+    const char* category;
+    const char* title;
+    const char* body;     // paragraphs separated by blank lines; lines starting with "- " are bullets
+    const char* keywords; // extra search words
+};
+[[nodiscard]] std::span<const HelpTopic> help_topics() noexcept;
+// Topics whose title, body or keywords contain every word of `query` (any case), title matches first.
+[[nodiscard]] std::vector<const HelpTopic*> find_help_topics(std::string_view query);
 
 // A sample project the launcher offers (a folder under EditorOptions::samples_dir).
 struct SampleInfo {
@@ -99,6 +132,10 @@ enum class Panel : std::uint8_t {
     Network,
     Profiler,
     InputActions,
+    GettingStarted,
+    Help,
+    ProjectSettings,
+    History,
     Count
 };
 [[nodiscard]] const char* panel_title(Panel panel) noexcept;
@@ -581,6 +618,47 @@ public:
     // of what was kept for the error message.
     [[nodiscard]] std::string save_for_fatal_error(std::string_view reason);
 
+    // ---- Studio preferences, interface size and guidance (guide.cpp) ----
+    // Interface size as a multiple of 100 % (on top of the display scale). Applied from the next
+    // frame and saved to the preferences file. Ctrl+= / Ctrl+- / Ctrl+0 step through kUiScales.
+    void set_ui_scale(float scale);
+    // Ragdolls (Inspector card): one undoable step each. make_ragdoll returns the body parts
+    // configured (0 when no humanoid skeleton is found under `root`).
+    [[nodiscard]] bool can_make_ragdoll(scene::Entity root) const;
+    [[nodiscard]] std::size_t ragdoll_bone_count(scene::Entity root) const;
+    std::size_t make_ragdoll(scene::Entity root);
+    bool set_ragdoll_mode(scene::Entity root, physics::RagdollComponent::Mode mode);
+    std::size_t remove_ragdoll(scene::Entity root);
+    // Starter characters (Vanguard V-01 "v01", V-02 "v02"): copies the model into the project
+    // when missing and adds it, optionally as a ragdoll in `mode`. One undo step when `record`.
+    Result<Uuid> ensure_starter_character(std::string_view id);
+    scene::Entity add_character(std::string_view id, scene::Entity parent, math::Vec3 position, bool ragdoll = false,
+                                physics::RagdollComponent::Mode mode = physics::RagdollComponent::Mode::Passive,
+                                bool record = true);
+    // Both Vanguards on a floor at the camera focus: V-01 floppy, V-02 powered. One undo step.
+    scene::Entity add_ragdoll_lab();
+
+    [[nodiscard]] float ui_scale() const noexcept { return ui_scale_; }
+    void step_ui_scale(int direction); // +1 larger, -1 smaller, 0 back to the default size
+    [[nodiscard]] fs::Path preferences_file() const;
+    // Getting Started: which steps are done (kept across sessions and projects).
+    [[nodiscard]] bool guide_done(GuideStep step) const noexcept {
+        return (guide_done_ >> static_cast<unsigned>(step)) & 1u;
+    }
+    [[nodiscard]] std::size_t guide_done_count() const noexcept;
+    void complete_guide_step(GuideStep step);
+    // Runs a step's "Do it for me" action (adds a cube, nudges it, plays, saves, opens Export...).
+    void run_guide_step(GuideStep step);
+    void reset_guide(); // Help > Restart Getting Started: clears progress and shows the checklist
+    [[nodiscard]] bool guide_dismissed() const noexcept { return guide_dismissed_; }
+    void dismiss_guide();
+    // Help panel: shows `topic` (by title; empty: the topic list) with the search text `query`.
+    void open_help(std::string_view topic = {}, std::string_view query = {});
+    [[nodiscard]] const std::string& help_topic() const noexcept { return help_topic_; }
+    // Undo History panel: jumps the scene to just after command `index` (0-based; -1 = before
+    // every recorded edit) by undoing or redoing. False while playing or out of range.
+    bool undo_to(std::ptrdiff_t index);
+
     // ---- launcher ----
     // Why a project named `name` cannot be created in `location` (empty when it can): empty or
     // unsafe names, names reserved on Windows, a target folder that is not empty or is already a project.
@@ -1005,6 +1083,24 @@ private:
     bool layout_rebuild_{false}; // force re-docking (Reset Layout, presets)
     Layout layout_{Layout::Default};
     bool core_open_[6]{true, true, true, true, true, true}; // Viewport, Hierarchy, Inspector, Assets, Console, Problems
+    // guide.cpp: preferences, interface size, Getting Started, Help, Undo History.
+    void load_preferences();
+    void save_preferences() const;
+    void apply_ui_scale();
+    void draw_getting_started();
+    void draw_help();
+    void draw_history();
+    void draw_project_settings();
+    void draw_help_menu_items();
+    void observe_guide(); // ticks Getting Started steps off from undo entries, play and export
+    std::uint64_t guide_seen_revision_{0};
+    float ui_scale_{1.0f}, applied_ui_scale_{0.0f};
+    ImGuiStyle base_style_{};
+    std::uint32_t guide_done_{0};
+    bool guide_dismissed_{false}, guide_auto_opened_{false};
+    bool show_getting_started_{false}, show_help_{false}, show_project_settings_{false}, show_history_{false};
+    std::string help_topic_, help_query_;
+    int help_focus_{0};
     int focus_panel_{-1};
     // Problems panel
     std::future<Result<player::ValidationReport>> check_future_;
@@ -1041,6 +1137,9 @@ private:
     std::unordered_map<std::string, std::string> binding_text_; // typed bindings per action side
     void draw_input_actions();
     void draw_prefab_section(scene::Entity e);
+    void draw_ragdoll_section(scene::Entity e);
+    int help_place_{0};
+    bool help_was_open_{false};
     // Marks components of `e` that differ from `before` as prefab overrides (instance parts only).
     void mark_prefab_overrides(scene::Entity e, const std::vector<EntityState>& before);
     std::unordered_map<std::string, std::uint64_t> written_prefabs_; // path -> hash of our last write

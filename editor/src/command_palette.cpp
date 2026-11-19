@@ -128,6 +128,22 @@ std::vector<EditorCommand> Editor::commands() {
         if (auto t = create_terrain(); !t) notify("cannot create terrain: " + t.error().message, true);
     });
 
+    add("Entity: Add Vanguard V-01 (character)", {}, has_db && editing, [this] { (void)add_character("v01", {}, camera_.target); });
+    add("Entity: Add Vanguard V-02 (character)", {}, has_db && editing, [this] { (void)add_character("v02", {}, camera_.target); });
+    add("Entity: Add Ragdoll Lab", {}, has_db && editing, [this] { (void)add_ragdoll_lab(); });
+    add("Entity: Make Ragdoll", {}, !selection_.empty() && can_make_ragdoll(selected()),
+        [this] { (void)make_ragdoll(selected()); });
+
+    // Help
+    add("Help: Getting Started", {}, project_.has_value(), [this] { show_panel(Panel::GettingStarted); });
+    add("Help: Search Help", "F2", true, [this] { open_help(); });
+    add("Help: Keyboard Shortcuts", {}, true, [this] { open_help("Keyboard shortcuts"); });
+    add("View: Bigger Interface", "Ctrl+=", true, [this] { step_ui_scale(1); });
+    add("View: Smaller Interface", "Ctrl+-", true, [this] { step_ui_scale(-1); });
+    add("View: Normal Interface Size", "Ctrl+0", true, [this] { step_ui_scale(0); });
+    add("Edit: Undo History", {}, project_.has_value(), [this] { show_panel(Panel::History); });
+    add("Edit: Project Settings", {}, project_.has_value(), [this] { show_panel(Panel::ProjectSettings); });
+
     // Assets
     add("Assets: Reimport All", {}, has_db, [this] { (void)reimport_assets(); });
     add("Assets: New Material", {}, has_db, [this] { new_material_for_selection(); });

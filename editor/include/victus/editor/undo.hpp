@@ -55,6 +55,9 @@ public:
     // A monotonically increasing id per command position so undo-then-new-edit is dirty.
     [[nodiscard]] std::uint64_t revision() const noexcept { return position_ ? ids_[position_ - 1] : 0; }
     [[nodiscard]] std::size_t size() const noexcept { return commands_.size(); }
+    // Commands oldest first; the first position() of them are applied (the rest can be redone).
+    [[nodiscard]] const std::vector<SceneCommand>& commands() const noexcept { return commands_; }
+    [[nodiscard]] std::size_t position() const noexcept { return position_; }
 
 private:
     std::vector<SceneCommand> commands_;

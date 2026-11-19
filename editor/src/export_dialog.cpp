@@ -79,6 +79,7 @@ void Editor::poll_export() {
     auto r = export_future_.get();
     if (r) {
         export_report_ = std::move(r).value();
+        complete_guide_step(GuideStep::Export);
         notify(std::format("Exported the game to {}", export_report_->executable.empty()
                                                            ? export_report_->pack.parent_path().string()
                                                            : export_report_->executable.parent_path().string()));

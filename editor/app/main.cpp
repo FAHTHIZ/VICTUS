@@ -60,11 +60,12 @@ int main(int argc, char** argv) {
         .option("page", "launcher page to show when no project opens: new, recent, samples, learn")
         .option("select", "select the entity with this name after opening")
         .option("search", "type this into the Hierarchy search after opening")
+        .option("ui-scale", "interface size for this run, e.g. 1.3 (default: the saved size, else 115 %)")
         .option("tool", "transform gizmo tool: move, rotate or scale (append -local for local space)", "move")
         .option("asset-search", "type this into the Assets search after opening")
         .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
         .option("show", "open a window after opening: input-actions, network, profiler, problems, export, report-problem, about, add-menu, add-component, "
-                        "console, crash-notice, command-palette, animation, "
+                        "console, crash-notice, command-palette, animation, getting-started, help, history, project-settings, "
                         "animation-preview (selected entity), material-editor (selected entity's material)")
         .option("graph", "open this visual script (path relative to assets/) in the Graph Editor")
         .option("port", "UDP port for --host", "27960")
@@ -116,6 +117,8 @@ int main(int argc, char** argv) {
 
     editor::EditorOptions eo;
     eo.recent_file = data_dir / "recent_projects.json";
+    // Large by default: comfortable to read and easy to click for people new to the Studio.
+    eo.default_ui_scale = 1.15f;
     if (crash_session) {
         eo.diagnostics_dir = crash_session.value()->directory();
         eo.previous_session_crashed = crash_session.value()->previous_session_ended_unexpectedly();
@@ -128,6 +131,7 @@ int main(int argc, char** argv) {
     auto ed_r = editor::Editor::create(*gpu.value(), *ui.value(), plat.value().get(), window.value().get(), eo);
     if (!ed_r) return fail("editor", ed_r.error());
     auto& ed = *ed_r.value();
+    if (args.has("ui-scale")) ed.set_ui_scale(static_cast<float>(args.get_number("ui-scale", 1.15)));
     if (args.has("page")) {
         const std::string page = args.get("page");
         if (page == "new")
@@ -210,6 +214,14 @@ int main(int argc, char** argv) {
             ed.set_crash_notice(true);
         else if (args.get("show") == "animation")
             ed.set_show_animation(true);
+        else if (args.get("show") == "getting-started")
+            ed.show_panel(editor::Panel::GettingStarted);
+        else if (args.get("show") == "help")
+            ed.open_help();
+        else if (args.get("show") == "history")
+            ed.show_panel(editor::Panel::History);
+        else if (args.get("show") == "project-settings")
+            ed.show_panel(editor::Panel::ProjectSettings);
         else if (args.get("show") == "animation-preview") {
             // The Animation window previewing the selected entity's controller in the edit scene.
             ed.set_show_animation(true);

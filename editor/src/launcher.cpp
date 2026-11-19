@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <cmath>
 #include <format>
 #include <system_error>
 
@@ -252,6 +253,11 @@ LauncherPage Editor::launcher_page() const {
 // ---- UI -----------------------------------------------------------------------------------------
 
 void Editor::draw_launcher() {
+    if (!ImGui::GetIO().WantTextInput) {
+        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Equal)) step_ui_scale(1);
+        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Minus)) step_ui_scale(-1);
+        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_0)) step_ui_scale(0);
+    }
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
     ImGui::SetNextWindowSize(vp->WorkSize);
@@ -264,10 +270,10 @@ void Editor::draw_launcher() {
     ImGui::PopStyleVar();
 
     // Sidebar.
-    const float side_w = 240.0f;
+    const float side_w = 250.0f * ui_scale_;
     ImGui::PushStyleColor(ImGuiCol_ChildBg, tk::kSurfaceBase);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(tk::kSpace5, tk::kSpace6));
-    ImGui::BeginChild("##side", ImVec2(side_w, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::BeginChild("##side", ImVec2(side_w, 0), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
     ImGui::PushFont(kit::bold_font(), ImGui::GetStyle().FontSizeBase * tk::kTypeTitle);
     ImGui::TextColored(tk::kAccent, "VICTUS");
     ImGui::PopFont();
@@ -285,8 +291,25 @@ void Editor::draw_launcher() {
                  sample_count.empty() ? nullptr : sample_count.c_str()))
         set_launcher_page(LauncherPage::Samples);
     if (nav_item("Learn", kit::Icon::Help, page == LauncherPage::Learn)) set_launcher_page(LauncherPage::Learn);
-    const float foot = ImGui::GetTextLineHeightWithSpacing() * 2.0f + ImGui::GetFrameHeightWithSpacing() + tk::kSpace3;
+    const float foot = ImGui::GetTextLineHeightWithSpacing() * 3.0f + ImGui::GetFrameHeightWithSpacing() * 2.0f + tk::kSpace3 * 2.0f;
     ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - foot - tk::kSpace6));
+    // Interface size is on the start screen so it can be fixed before anything else is read.
+    ImGui::TextColored(tk::kTextMuted, "Interface size");
+    ImGui::SetNextItemWidth(-1);
+    {
+        const char* current = "Custom";
+        for (const UiScaleChoice& c : kUiScales)
+            if (std::abs(c.scale - ui_scale_) < 1e-3f) current = c.name;
+        if (ImGui::BeginCombo("##uiscale", current)) {
+            for (const UiScaleChoice& c : kUiScales)
+                if (ImGui::Selectable(std::format("{}  ({:.0f} %)", c.name, static_cast<double>(c.scale) * 100.0).c_str(),
+                                      std::abs(c.scale - ui_scale_) < 1e-3f))
+                    set_ui_scale(c.scale);
+            ImGui::EndCombo();
+        }
+        kit::tooltip("Bigger text and buttons (Ctrl+= / Ctrl+-)");
+    }
+    ImGui::Dummy(ImVec2(0, tk::kSpace3));
     if (nav_item("Report a problem", kit::Icon::Help, false)) open_diagnostics_dialog();
     ImGui::Dummy(ImVec2(0, tk::kSpace3));
     ImGui::PushStyleColor(ImGuiCol_Text, tk::kTextDisabled);
@@ -302,7 +325,7 @@ void Editor::draw_launcher() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(tk::kSpace7 + tk::kSpace3, tk::kSpace6));
     ImGui::BeginChild("##page", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     // Keep line lengths readable on wide screens.
-    const float max_w = 980.0f;
+    const float max_w = 980.0f * ui_scale_;
     const float avail = ImGui::GetContentRegionAvail().x;
     if (avail > max_w) ImGui::Indent((avail - max_w) * 0.5f);
     ImGui::PushItemWidth(std::min(avail, max_w) * 0.5f);

@@ -6,6 +6,8 @@
 #include "victus/editor/editor.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/core/zip.hpp"
+#include "victus/core/json.hpp"
+#include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
 #include "victus/ui/style.hpp"
 #include "victus/ui/ui.hpp"
@@ -764,4 +766,196 @@ TEST_CASE("studio import: dropped files are copied into the right folders and im
     const auto into = h.ed->import_files({outside / "pack" / "a.luau"});
     CHECK(into.added == std::vector<std::string>{"pack/a 2.luau"});
     h.frames(2);
+}
+
+TEST_CASE("studio guide: interface size, Getting Started steps, help search, undo history") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    CHECK(h.ed->ui_scale() == doctest::Approx(1.0f));
+    REQUIRE(h.ed->create_project(h.dir / "Guide", "Guide", "3d").ok());
+    h.frames(2);
+    ImGui::SetCurrentContext(h.ui->imgui());
+    const float pad = ImGui::GetStyle().FramePadding.y;
+
+    // Interface size: rescales fonts and spacing from the unscaled theme, steps through the
+    // presets, clamps, and is saved for the next session.
+    h.ed->set_ui_scale(1.3f);
+    h.frames(2);
+    ImGui::SetCurrentContext(h.ui->imgui());
+    CHECK(ImGui::GetStyle().FontScaleMain == doctest::Approx(1.3f));
+    CHECK(ImGui::GetStyle().FramePadding.y > pad); // ImGui rounds scaled sizes down to whole pixels
+    h.ed->step_ui_scale(1);
+    CHECK(h.ed->ui_scale() == doctest::Approx(1.5f));
+    h.ed->step_ui_scale(-1);
+    CHECK(h.ed->ui_scale() == doctest::Approx(1.3f));
+    h.ed->set_ui_scale(10.0f);
+    CHECK(h.ed->ui_scale() == doctest::Approx(editor::kMaxUiScale));
+    h.ed->set_ui_scale(1.15f);
+    {
+        auto text = fs::read_text(h.ed->preferences_file());
+        REQUIRE(text);
+        auto doc = json::parse(text.value());
+        REQUIRE(doc);
+        CHECK(doc.value()["ui_scale"].as_float() == doctest::Approx(1.15f));
+    }
+    h.ed->step_ui_scale(0);
+    CHECK(h.ed->ui_scale() == doctest::Approx(1.0f));
+    h.frames(2);
+    ImGui::SetCurrentContext(h.ui->imgui());
+    CHECK(ImGui::GetStyle().FramePadding.y == doctest::Approx(pad)); // no compounding
+
+    // Getting Started opens with a new user's first project; steps tick off from real actions.
+    CHECK(h.ed->panel_open(editor::Panel::GettingStarted));
+    CHECK(h.ed->guide_done_count() == 0);
+    h.ed->run_guide_step(editor::GuideStep::AddObject);
+    h.frames(1);
+    CHECK(h.ed->guide_done(editor::GuideStep::AddObject));
+    CHECK_FALSE(h.ed->guide_done(editor::GuideStep::MoveObject));
+    h.ed->run_guide_step(editor::GuideStep::MoveObject);
+    h.frames(1);
+    CHECK(h.ed->guide_done(editor::GuideStep::MoveObject));
+    h.ed->run_guide_step(editor::GuideStep::EditSetting);
+    h.frames(1);
+    CHECK(h.ed->guide_done(editor::GuideStep::EditSetting));
+    const scene::Entity cube = h.ed->selected();
+    REQUIRE_FALSE(cube.is_null());
+    const Uuid cube_id = h.ed->edit_scene().uuid(cube);
+    CHECK(h.ed->edit_scene().world().get<physics::RigidBodyComponent>(cube) != nullptr);
+    h.ed->run_guide_step(editor::GuideStep::Play);
+    h.frames(2);
+    CHECK(h.ed->guide_done(editor::GuideStep::Play));
+    h.ed->stop();
+    h.ed->run_guide_step(editor::GuideStep::Save);
+    CHECK(h.ed->guide_done(editor::GuideStep::Save));
+    CHECK_FALSE(h.ed->guide_done(editor::GuideStep::Export));
+    CHECK(h.ed->guide_done_count() == 5);
+    h.frames(2); // the checklist draws with progress
+
+    // Undo History: jump back to before every edit and forward again.
+    const std::size_t edits = h.ed->undo_stack().size();
+    REQUIRE(edits >= 3);
+    CHECK(h.ed->undo_to(-1));
+    CHECK(h.ed->undo_stack().position() == 0);
+    CHECK(h.ed->edit_scene().find(cube_id).is_null());
+    CHECK(h.ed->undo_to(static_cast<std::ptrdiff_t>(edits) - 1));
+    CHECK(h.ed->undo_stack().position() == edits);
+    CHECK_FALSE(h.ed->undo_to(static_cast<std::ptrdiff_t>(edits)));
+    h.ed->show_panel(editor::Panel::History);
+    h.frames(2);
+    ImGui::SetCurrentContext(h.ui->imgui());
+    CHECK(ImGui::FindWindowByName("Undo History") != nullptr);
+
+    // Hiding keeps progress; restarting clears it and shows the checklist again.
+    h.ed->dismiss_guide();
+    CHECK_FALSE(h.ed->panel_open(editor::Panel::GettingStarted));
+    CHECK(h.ed->guide_dismissed());
+    h.ed->reset_guide();
+    CHECK(h.ed->guide_done_count() == 0);
+    CHECK(h.ed->panel_open(editor::Panel::GettingStarted));
+
+    // Help: every topic for an empty search, word search over titles, bodies and keywords.
+    CHECK(editor::find_help_topics("").size() == editor::help_topics().size());
+    const auto ragdoll = editor::find_help_topics("ragdoll");
+    REQUIRE_FALSE(ragdoll.empty());
+    CHECK(std::string_view(ragdoll.front()->title) == "Physics and ragdolls");
+    CHECK(std::string_view(editor::find_help_topics("bigger text")[0]->title) == "Make the Studio bigger or smaller");
+    CHECK(editor::find_help_topics("qqqzzz").empty());
+    h.ed->open_help("Keyboard shortcuts");
+    h.ed->show_panel(editor::Panel::ProjectSettings);
+    h.frames(3);
+    ImGui::SetCurrentContext(h.ui->imgui());
+    CHECK(h.ed->panel_open(editor::Panel::Help));
+    CHECK(ImGui::FindWindowByName("Help") != nullptr);
+    CHECK(ImGui::FindWindowByName("Project Settings") != nullptr);
+}
+
+TEST_CASE("studio ragdolls: Make Ragdoll on a Vanguard, behaviour buttons, undo, and the Ragdoll Lab") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Rag", "Rag", "3d").ok());
+    h.frames(2);
+    scene::Scene& s = h.ed->edit_scene();
+    const scene::Entity robot = s.find_by_name("Robot");
+    REQUIRE_FALSE(robot.is_null());
+    CHECK(h.ed->can_make_ragdoll(robot));
+    CHECK_FALSE(h.ed->can_make_ragdoll(s.find_by_name("Sentry")));
+    h.ed->select(robot);
+    h.frames(2); // Inspector offers the Make Ragdoll card
+
+    // The 21-joint Vanguard rig maps to 16 ragdoll body parts (Neck, Shoulders and Toes ride along).
+    const std::size_t undo_before = h.ed->undo_stack().size();
+    CHECK(h.ed->make_ragdoll(robot) == 16);
+    CHECK(h.ed->ragdoll_bone_count(robot) == 16);
+    CHECK(h.ed->undo_stack().size() == undo_before + 1);
+    for (const char* bone : {"Hips", "Spine", "Chest", "Head", "UpperArm.L", "LowerArm.R", "Hand.L", "UpperLeg.R",
+                             "LowerLeg.L", "Foot.R"}) {
+        const scene::Entity b = s.find_by_name(bone);
+        REQUIRE_FALSE(b.is_null());
+        CHECK_MESSAGE(s.world().get<physics::RagdollBoneComponent>(b) != nullptr, bone);
+    }
+    CHECK(s.world().get<physics::RagdollBoneComponent>(s.find_by_name("Toe.L")) == nullptr);
+    CHECK(h.ed->set_ragdoll_mode(robot, physics::RagdollComponent::Mode::Passive));
+    CHECK(s.world().get<physics::RagdollComponent>(robot)->mode == physics::RagdollComponent::Mode::Passive);
+    h.frames(2); // the behaviour buttons draw
+
+    // Undo the behaviour change, then the ragdoll itself; redo brings both back.
+    h.ed->undo();
+    CHECK(s.world().get<physics::RagdollComponent>(robot)->mode == physics::RagdollComponent::Mode::Off);
+    h.ed->undo();
+    CHECK(s.world().get<physics::RagdollComponent>(robot) == nullptr);
+    CHECK(h.ed->ragdoll_bone_count(robot) == 0);
+    h.ed->redo();
+    h.ed->redo();
+    CHECK(h.ed->ragdoll_bone_count(robot) == 16);
+    CHECK(s.world().get<physics::RagdollComponent>(robot)->mode == physics::RagdollComponent::Mode::Passive);
+    CHECK(h.ed->remove_ragdoll(robot) == 17);
+    CHECK(h.ed->ragdoll_bone_count(robot) == 0);
+    h.ed->undo();
+    CHECK(h.ed->ragdoll_bone_count(robot) == 16);
+
+    // Ragdoll Lab: both Vanguards on a floor, one undo step; V-01 falls when played.
+    const std::size_t entities = s.size();
+    const scene::Entity lab = h.ed->add_ragdoll_lab();
+    REQUIRE_FALSE(lab.is_null());
+    const scene::Entity v01 = s.find_by_name("Vanguard V-01");
+    const scene::Entity v02 = s.find_by_name("Vanguard V-02");
+    REQUIRE_FALSE(v01.is_null());
+    REQUIRE_FALSE(v02.is_null());
+    CHECK(s.parent(v01) == lab);
+    CHECK(h.ed->ragdoll_bone_count(v01) == 16);
+    CHECK(h.ed->ragdoll_bone_count(v02) == 16);
+    CHECK(s.world().get<physics::RagdollComponent>(v01)->mode == physics::RagdollComponent::Mode::Passive);
+    CHECK(s.world().get<physics::RagdollComponent>(v02)->mode == physics::RagdollComponent::Mode::Powered);
+    REQUIRE_FALSE(s.find_by_name("Lab Floor").is_null());
+    h.ed->undo();
+    CHECK(s.size() == entities);
+    h.ed->redo();
+    CHECK(s.size() > entities);
+
+    // In play the limp V-01's head drops towards the floor.
+    const scene::Entity lab_v01 = h.ed->edit_scene().find_by_name("Vanguard V-01");
+    REQUIRE_FALSE(lab_v01.is_null());
+    h.ed->play();
+    h.frames(2);
+    scene::Scene& play = h.ed->active_scene();
+    scene::Entity head;
+    for (const scene::Entity c : [&] {
+             std::vector<scene::Entity> all, stack{play.find_by_name("Vanguard V-01")};
+             while (!stack.empty()) {
+                 const scene::Entity e = stack.back();
+                 stack.pop_back();
+                 all.push_back(e);
+                 for (const scene::Entity k : play.children(e)) stack.push_back(k);
+             }
+             return all;
+         }())
+        if (const auto* n = play.world().get<scene::Name>(c); n && n->value == "Head") head = c;
+    REQUIRE_FALSE(head.is_null());
+    const float y0 = play.world_matrix(head).transform_point({}).y;
+    h.frames(90);
+    const float y1 = play.world_matrix(head).transform_point({}).y;
+    CHECK(y1 < y0 - 0.3f);
+    h.ed->stop();
 }
