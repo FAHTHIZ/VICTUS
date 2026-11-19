@@ -72,6 +72,7 @@ struct RenderPathFacts {
     std::uint32_t particle_batches_in_view{0}, particles_in_view{0}, particle_budget{0};
     std::uint32_t gpu_emitters_submitted{0}, gpu_emitters_simulated{0}, gpu_particles{0};
     std::uint32_t gpu_emitters_sorted{0}; // alpha-blended GPU emitters drawn back to front (ADR-0107)
+    std::uint32_t gpu_emitters_trailed{0}, gpu_trails_reduced{0}; // GPU emitters with trails / with fewer points than asked (ADR-0110)
     std::uint32_t probes_requested{0}, probes_unbaked{0}, probes_over_budget{0}, probes_used{0}, probe_budget{0};
     std::uint32_t probe_draws{0};
 };

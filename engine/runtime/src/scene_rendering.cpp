@@ -1731,6 +1731,13 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                            std::max(0.0f, finite(e.collision_thickness)), 0.0f};
             p.world_space = e.world_space;
             p.collide = e.collision;
+            if (e.trail_lifetime > 0 && std::isfinite(e.trail_lifetime)) { // trails (ADR-0110)
+                p.trail_points = std::clamp<std::uint32_t>(e.trail_max_points, 2, 64);
+                p.trail = {e.trail_lifetime, std::max(0.0f, finite(e.trail_min_distance)), std::max(0.0f, finite(e.trail_width)),
+                           std::max(0.0f, finite(e.trail_width_end))};
+                p.trail_alpha_end = std::clamp(finite(e.trail_alpha_end), 0.0f, 1.0f);
+                p.trail_billboards = e.trail_billboards;
+            }
             g.material = pm;
             g.bounds = v.bounds;
             renderer.submit_gpu_particles(g);

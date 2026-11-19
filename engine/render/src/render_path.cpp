@@ -237,10 +237,17 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
     else if (f.gpu_emitters_simulated < f.gpu_emitters_submitted)
         add("gpu_particles", PathState::Reduced, PathReason::Unsupported,
             std::format("{} of {} emitters simulated (pipeline unavailable)", f.gpu_emitters_simulated, f.gpu_emitters_submitted));
-    else
-        add("gpu_particles", PathState::Active, PathReason::None,
-            std::format("{} alive in {}{}", f.gpu_particles, count(f.gpu_emitters_simulated, "emitter", "emitters"),
-                        f.gpu_emitters_sorted > 0 ? std::format(", {} depth-sorted", f.gpu_emitters_sorted) : std::string()));
+    else {
+        const std::string detail =
+            std::format("{} alive in {}{}{}", f.gpu_particles, count(f.gpu_emitters_simulated, "emitter", "emitters"),
+                        f.gpu_emitters_sorted > 0 ? std::format(", {} depth-sorted", f.gpu_emitters_sorted) : std::string(),
+                        f.gpu_emitters_trailed > 0 ? std::format(", {} with trails", f.gpu_emitters_trailed) : std::string());
+        if (f.gpu_trails_reduced > 0)
+            add("gpu_particles", PathState::Reduced, PathReason::Budget,
+                std::format("{}; {} with fewer trail points than asked (max {} segments per emitter)", detail, f.gpu_trails_reduced,
+                            SceneRenderer::kMaxGpuTrailSegments));
+        else add("gpu_particles", PathState::Active, PathReason::None, detail);
+    }
 
     if (f.probes_requested == 0) add("reflection_probes", PathState::Off, PathReason::Scene, "no reflection probes; reflections use the environment map");
     else if (f.probes_used == 0) add("reflection_probes", PathState::Off, PathReason::Scene, std::format("{} not captured yet (bake the probes)", count(f.probes_unbaked, "probe", "probes")));
