@@ -354,9 +354,12 @@ std::string asset_label(assets::AssetDatabase* db, const Uuid& id) {
 // ---- frame --------------------------------------------------------------------------------------
 
 void Editor::frame(float dt) {
+    // While a script is stopped in the debugger this runs as a nested frame inside that script
+    // call (ADR-0106): draw the Studio, but advance nothing that the stopped game uses.
+    const bool stopped = debug_stopped();
     update_startup();
     update_profiler();
-    if (play_state_ == PlayState::Editing) update_autosave(dt);
+    if (play_state_ == PlayState::Editing && !stopped) update_autosave(dt);
     if (dt > 0) fps_ = fps_ <= 0 ? 1.0f / dt : fps_ * 0.95f + 0.05f / dt;
     view_->renderer().set_frame_time(dt); // auto exposure adapts in real time
     if (status_time_ > 0) status_time_ -= dt;
@@ -364,18 +367,27 @@ void Editor::frame(float dt) {
         input_->set_enabled(true); // "press a control to bind" listens to every device
         (void)capture_from(*input_);
     }
-    if (input_) input_->set_enabled(play_state_ == PlayState::Playing && viewport_focused_);
-    if (play_state_ == PlayState::Playing && play_scene_) tick_play(dt);
-    else if (!play_scene_) {
+    if (input_) input_->set_enabled(play_state_ == PlayState::Playing && viewport_focused_ && !stopped);
+    if (stopped) {
+        // the game is stopped in the debugger
+    } else if (play_state_ == PlayState::Playing && play_scene_) {
+        tick_play(dt);
+        if (debug_stop_after_resume_) { // Stop was pressed while a script was stopped
+            debug_stop_after_resume_ = false;
+            stop();
+        }
+    } else if (!play_scene_) {
         if (edit_sprites_) edit_sprites_->update_sprites(active_scene(), 0); // frame preview
         if (terrains_) terrains_->update(active_scene());                   // terrain chunks in edit mode
         if (tilemaps_) tilemaps_->update(active_scene());                   // tile sets for drawing
     }
-    update_graph_debug(dt);
-    update_sequence_preview(dt);
-    update_animation_preview(dt);
+    if (!stopped) {
+        update_graph_debug(dt);
+        update_sequence_preview(dt);
+        update_animation_preview(dt);
+    }
     // Inspector property discovery follows script edits made in an external editor.
-    if ((script_poll_ += dt) >= 1.0f) {
+    if (!stopped && (script_poll_ += dt) >= 1.0f) {
         script_poll_ = 0;
         if (edit_scripts_) (void)edit_scripts_->reload_changed();
         (void)check_asset_changes(); // textures, models and audio edited outside the editor
@@ -399,8 +411,12 @@ void Editor::frame(float dt) {
 // ---- workspace ----------------------------------------------------------------------------------
 
 void Editor::draw_workspace(float) {
+    // A stopped script keeps the Studio read-only except for the Script Debugger (ADR-0106).
+    const bool stopped = debug_stopped();
+    ImGui::BeginDisabled(stopped);
     draw_menu_bar();
     draw_toolbar();
+    ImGui::EndDisabled();
     const float status_h = ImGui::GetFrameHeight();
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
@@ -425,6 +441,7 @@ void Editor::draw_workspace(float) {
     ImGui::DockSpace(dock_id, ImVec2(0, 0), ImGuiDockNodeFlags_None);
     ImGui::End();
 
+    ImGui::BeginDisabled(stopped);
     draw_viewport();
     draw_hierarchy();
     draw_inspector();
@@ -446,6 +463,8 @@ void Editor::draw_workspace(float) {
     draw_help();
     draw_history();
     draw_project_settings();
+    ImGui::EndDisabled();
+    draw_script_debugger();
     draw_status_bar();
     if (focus_panel_ >= 0) {
         // The window exists from the frame after it opens; try until it does (a few frames at most).
@@ -460,7 +479,7 @@ void Editor::draw_workspace(float) {
         }
         if (focus_panel_ < 0) focus_attempts_ = 0;
     }
-    handle_shortcuts();
+    if (!stopped) handle_shortcuts(); // the Script Debugger handles its own keys while stopped
 }
 
 void Editor::draw_menu_bar() {

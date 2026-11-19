@@ -26,6 +26,8 @@ return Spin
 
 ### Debugging scripts
 
+In the Studio, open Window > Script Debugger (it is part of the Scripting and Debugging layouts). Pick a script, click a line number to set a breakpoint, and press Play. When a script reaches it, the game stops and the panel shows the line, the call stack, locals and upvalues (expand tables), watches and an evaluate box for the selected frame. Continue with F5, Step Over with F10, Step Into with F11 and Step Out with Shift+F11; Stop Game ends play once the stopped call returns. The Breakpoints tab adds conditions and log messages. "Break on errors" stops on script errors before they unwind. The rest of the Studio is read-only while stopped. Breakpoints are saved in the project's `.victus/breakpoints.json`.
+
 `victus debug-adapter` is a Debug Adapter Protocol server: editors start it and debug the project's scripts in the headless game (the same simulation as `victus simulate`). In VS Code, install `tools/vscode-victus` (see its README) and add a launch configuration:
 
 ~~~json

@@ -1057,3 +1057,96 @@ TEST_CASE("studio safe mode: --safe-mode covers every project; safe_mode_after 0
     REQUIRE(h.ed->open_project(root).ok());
     CHECK_FALSE(h.ed->safe_mode());
 }
+
+TEST_CASE("studio: the Script Debugger stops play mode at a breakpoint, inspects, steps and stops") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    const sfs::path root = h.dir / "Dbg";
+    REQUIRE(h.ed->create_project(root, "Dbg", "3d").ok());
+    h.frames(2);
+    const std::string script = "scripts/crate.luau";
+    // Line 14 is `self.speed = vector.magnitude(self.entity.velocity)` in Crate:update.
+    REQUIRE(h.ed->toggle_breakpoint(script, 14));
+    REQUIRE(h.ed->breakpoints().count(script) == 1);
+    auto saved = fs::read_text(root / ".victus" / "breakpoints.json");
+    REQUIRE(saved);
+    CHECK(saved->find("scripts/crate.luau") != std::string::npos);
+    CHECK(h.ed->toggle_breakpoint(script, 99)); // a second line adds a breakpoint
+    CHECK(h.ed->breakpoints().at(script).size() == 2);
+    CHECK_FALSE(h.ed->toggle_breakpoint(script, 99)); // toggling again removes it
+    CHECK(h.ed->breakpoints().at(script).size() == 1);
+
+    struct Seen {
+        script::StopReason reason;
+        int line;
+        std::string source, min_speed;
+        bool has_self_local;
+    };
+    std::vector<Seen> seen;
+    std::vector<script::StepAction> plan{script::StepAction::StepOver, script::StepAction::Continue};
+    bool stop_game_on_next = false;
+    int nested = 0;
+    h.ed->set_frame_pump({.suspend = [] { ImGui::EndFrame(); },
+                          .frame =
+                              [&] {
+                                  ++nested;
+                                  h.frames(1); // a whole Studio frame while the script is stopped
+                                  script::DebugStop* s = h.ed->debug_stop();
+                                  REQUIRE(s != nullptr);
+                                  REQUIRE_FALSE(s->frames().empty());
+                                  Seen v{s->reason(), s->frames().front().line, s->frames().front().source, {}, false};
+                                  if (auto r = s->evaluate("self.min_speed", 0)) v.min_speed = r->value;
+                                  for (const auto& l : s->locals(0))
+                                      v.has_self_local = v.has_self_local || l.name == "self";
+                                  seen.push_back(v);
+                                  if (stop_game_on_next) {
+                                      h.ed->stop(); // deferred: the script finishes, then play stops
+                                  } else {
+                                      h.ed->debug_resume(plan.empty() ? script::StepAction::Continue : plan.front());
+                                      if (!plan.empty()) plan.erase(plan.begin());
+                                  }
+                                  return true;
+                              },
+                          .resume = [&] { h.ui->new_frame(1.0f / 60.0f, {static_cast<float>(Studio::W), static_cast<float>(Studio::H)}); }});
+    h.ed->play();
+    REQUIRE(h.ed->play_state() == editor::PlayState::Playing);
+    h.frames(1);
+    REQUIRE(seen.size() >= 2);
+    CHECK(seen[0].reason == script::StopReason::Breakpoint);
+    CHECK(seen[0].line == 14);
+    CHECK(seen[0].source == script);
+    CHECK(seen[0].min_speed == "1.5");
+    CHECK(seen[0].has_self_local);
+    CHECK(seen[1].reason == script::StopReason::Step);
+    CHECK(seen[1].line > 14);
+    CHECK(h.ed->debug_stops() == seen.size());
+    CHECK_FALSE(h.ed->debug_stopped());
+    CHECK(nested == static_cast<int>(seen.size()));
+    // The source view follows the stop and the breakpoint verifies in the running game.
+    const auto states = h.ed->breakpoint_states(script);
+    REQUIRE(states.size() == 1);
+    CHECK(states[0].verified);
+    CHECK(states[0].line == 14);
+
+    // Stop while stopped: the call finishes without stopping again and play mode ends.
+    stop_game_on_next = true;
+    const std::size_t before = seen.size();
+    h.frames(1);
+    CHECK(seen.size() == before + 1);
+    CHECK(h.ed->play_state() == editor::PlayState::Editing);
+    CHECK_FALSE(h.ed->debug_stopped());
+
+    // Breakpoints and the break-on-error choice persist with the project.
+    h.ed->set_break_on_error(false);
+    h.ed->set_frame_pump({});
+    REQUIRE(h.ed->open_project(root).ok());
+    CHECK(h.ed->breakpoints().count(script) == 1);
+    CHECK_FALSE(h.ed->break_on_error());
+    // Without a frame pump (headless) a breakpoint is counted but never blocks.
+    h.ed->play();
+    h.frames(2);
+    CHECK(h.ed->debug_stops() > 0);
+    CHECK(h.ed->play_state() == editor::PlayState::Playing);
+    h.ed->stop();
+}

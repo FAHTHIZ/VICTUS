@@ -56,6 +56,8 @@ const char* window_id(Panel p) noexcept {
         return "Project Settings";
     case Panel::History:
         return "Undo History";
+    case Panel::ScriptDebugger:
+        return "Script Debugger";
     case Panel::Count:
         break;
     }
@@ -104,6 +106,8 @@ const char* panel_hint(Panel p) noexcept {
         return "Game name, first scene, window size and quality";
     case Panel::History:
         return "Every change to the scene; click one to go back to it";
+    case Panel::ScriptDebugger:
+        return "Breakpoints, stepping, call stack and variables of running scripts";
     case Panel::Count:
         break;
     }
@@ -193,6 +197,8 @@ bool* Editor::panel_flag(Panel p) noexcept {
         return &show_project_settings_;
     case Panel::History:
         return &show_history_;
+    case Panel::ScriptDebugger:
+        return &show_script_debugger_;
     default:
         return nullptr;
     }
@@ -240,11 +246,16 @@ void Editor::apply_layout(Layout l) noexcept {
         break;
     case Layout::Scripting:
         set_panel_open(Panel::GraphEditor, true);
+        set_panel_open(Panel::ScriptDebugger, true);
+        // Both panels appear in the same frame; the last to appear would take focus, so put
+        // the Graph Editor in front of the Viewport explicitly.
+        focus_panel_ = static_cast<int>(Panel::GraphEditor);
         break;
     case Layout::Debugging:
         set_panel_open(Panel::Profiler, true);
         set_panel_open(Panel::Network, true);
         set_panel_open(Panel::AiDebugger, true);
+        set_panel_open(Panel::ScriptDebugger, true);
         break;
     case Layout::Count:
         break;
@@ -275,7 +286,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
                   Panel::InputActions},
                  right);
         dock_all({Panel::Assets, Panel::Console, Panel::Problems, Panel::Animation, Panel::Sequencer, Panel::Profiler,
-                  Panel::Network},
+                  Panel::Network, Panel::ScriptDebugger},
                  bottom);
         dock_all({Panel::ProjectSettings, Panel::History}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor}, center);
@@ -292,7 +303,8 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
             right);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor}, center);
-        dock_all({Panel::Animation, Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger}, left_bottom);
+        dock_all({Panel::Animation, Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger, Panel::ScriptDebugger},
+                 left_bottom);
         break;
     }
     case Layout::Animation: {
@@ -305,7 +317,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
             {Panel::Inspector, Panel::MaterialEditor, Panel::TerrainTools, Panel::TilePalette, Panel::InputActions},
             right);
         dock_all({Panel::Animation, Panel::Assets, Panel::Console, Panel::Problems}, bottom);
-        dock_all({Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger}, bottom_right);
+        dock_all({Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger, Panel::ScriptDebugger}, bottom_right);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor}, center);
         break;
@@ -320,8 +332,8 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all(
             {Panel::Inspector, Panel::MaterialEditor, Panel::InputActions, Panel::TerrainTools, Panel::TilePalette},
             right);
-        dock_all({Panel::Console, Panel::Problems, Panel::Profiler, Panel::Animation, Panel::Sequencer, Panel::Network,
-                  Panel::AiDebugger},
+        dock_all({Panel::ScriptDebugger, Panel::Console, Panel::Problems, Panel::Profiler, Panel::Animation, Panel::Sequencer,
+                  Panel::Network, Panel::AiDebugger},
                  bottom);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
         dock_all({Panel::GraphEditor, Panel::Viewport}, center);
@@ -336,7 +348,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::Inspector, Panel::AiDebugger, Panel::Network, Panel::MaterialEditor, Panel::InputActions,
                   Panel::TerrainTools, Panel::TilePalette},
                  right);
-        dock_all({Panel::Console, Panel::Problems, Panel::Assets, Panel::Animation, Panel::Sequencer}, bottom);
+        dock_all({Panel::ScriptDebugger, Panel::Console, Panel::Problems, Panel::Assets, Panel::Animation, Panel::Sequencer}, bottom);
         dock(Panel::Profiler, bottom_right);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor}, center);

@@ -120,6 +120,7 @@ void Editor::update_title() {
 // ---- projects ------------------------------------------------------------------------------------
 
 Status Editor::open_project(const fs::Path& path) {
+    if (debug_stopped()) return Error{ErrorCode::Unsupported, "a script is stopped in the debugger"};
     auto p = project::Project::open(path);
     if (!p) return std::move(p).error();
     close_project();
@@ -173,6 +174,7 @@ Status Editor::open_project(const fs::Path& path) {
     problems_error_.clear();
     if (safe_mode_) notify("Safe mode: " + safe_mode_reason_, true);
     else check_project();
+    load_breakpoints();
     update_title();
     return {};
 }
@@ -185,6 +187,7 @@ Status Editor::create_project(const fs::Path& directory, std::string_view name, 
 }
 
 void Editor::close_project() {
+    if (debug_stopped()) return; // the stopped script still uses the project; Stop the game first
     finish_startup();
     safe_mode_ = false;
     safe_mode_card_hidden_ = false;
@@ -1164,6 +1167,7 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
         so.watch_files = seed == 0; // captures need the scripts they were recorded with
         so.trace_graphs = true;     // the Graph Editor highlights running nodes (ADR-0060)
         so.random_seed = seed;
+        so.debugger = true; // breakpoints and stepping in the Script Debugger panel (ADR-0106)
         if (project_) {
             so.input_map = project_->settings().input;
             so.save_version = project_->settings().save_version;
@@ -1184,6 +1188,7 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
         if (auto host = script::ScriptHost::create(so)) {
             play_scripts_ = std::move(host).value();
             play_scripts_->set_current_scene(scene_path_);
+            apply_debugger_to_play();
             script::add_script_systems(sim_, *play_scripts_);
         } else {
             notify("scripts disabled: " + host.error().message, true);
@@ -1281,6 +1286,12 @@ void Editor::pause() {
 
 void Editor::stop() {
     if (play_state_ == PlayState::Editing) return;
+    if (debug_stopped()) {
+        // A script is stopped mid-call on this stack: let it finish, then stop (Editor::frame).
+        debug_stop_after_resume_ = true;
+        debug_resume(script::StepAction::Continue);
+        return;
+    }
     if (recording_ && play_scene_ && !recording_->frames.empty()) {
         recording_->finish(*play_scene_);
         if (project_) {
