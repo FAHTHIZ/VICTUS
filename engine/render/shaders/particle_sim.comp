@@ -1,0 +1,210 @@
+#version 450
+// SPDX-License-Identifier: Apache-2.0
+// GPU particle simulation (ADR-0097). One shader, two modes:
+//   mode 0 (spawn):  thread i writes spawn record i into its slot and integrates it over its
+//                    pre-age (the part of the frame after its birth); marks it born this frame.
+//   mode 1 (update): thread i integrates slot i over the frame (unless born this frame), bounces
+//                    it off the scene depth when collision is on, and writes its billboard.
+// Integration, turbulence and billboard rules mirror particles::gpu_integrate/gpu_billboard.
+// Bindings follow SDL_GPU compute conventions (Vulkan: set 0 sampled textures then read-only
+// storage, set 1 read-write storage, set 2 uniforms; Metal: [[buffer]] uniforms first, then
+// read-only storage, then read-write storage).
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct Particle {
+    vec4 pos_age;  // xyz position (simulation space), w age
+    vec4 vel_life; // xyz velocity, w life (dead when age >= life)
+    vec4 misc;     // x rotation, y spin, z size scale, w start frame
+    uvec4 meta;    // spawn: x slot; state: x birth serial
+};
+struct Instance {
+    vec4 pos_size;
+    vec4 color;
+    vec4 params; // rotation, frame, grid, aspect
+};
+
+layout(set = 0, binding = 0) uniform sampler2D u_depth;
+#ifdef VICTUS_MSL
+layout(std430, set = 0, binding = 1) readonly buffer Spawns { Particle spawns[]; };
+layout(std430, set = 1, binding = 2) buffer State { Particle state[]; };
+layout(std430, set = 1, binding = 3) buffer Instances { Instance instances[]; };
+#else
+layout(std430, set = 0, binding = 1) readonly buffer Spawns { Particle spawns[]; };
+layout(std430, set = 1, binding = 0) buffer State { Particle state[]; };
+layout(std430, set = 1, binding = 1) buffer Instances { Instance instances[]; };
+#endif
+layout(std140, set = 2, binding = 0) uniform Params {
+    mat4 view_proj;     // jittered camera view-projection (collision)
+    mat4 inv_view_proj; // its inverse
+    mat4 world;         // emitter to world (local-space emitters)
+    mat4 view;          // camera view (velocity stretch)
+    vec4 gravity_drag;  // xyz gravity, w drag
+    vec4 turb;          // x amplitude, y wave number (rad/m), z speed (rad/s), w field phase at the end of the frame
+    vec4 size;          // x size start, y size end, z intensity, w velocity stretch (s)
+    vec4 color_start;
+    vec4 color_end;
+    vec4 flip;          // x columns, y rows, z frames used, w fps
+    vec4 collide;       // x bounce, y friction, z thickness (m)
+    vec4 eye_dt;        // xyz camera position, w frame dt
+    vec4 screen;        // xy depth size, z/w linear depth = z / (depth + w)
+    uvec4 meta;         // x mode, y count, z frame serial, w flags (1 world space, 2 collision, 4 flipbook, 8 stretch)
+} u;
+
+const float kPi = 3.14159265358979;
+
+vec3 curl_octave(vec3 x, float k, float ph) {
+    return vec3(-cos(k * x.z + ph), -cos(k * x.x + 3.0 * ph + 1.7), -cos(k * x.y + 2.0 * ph + 4.1));
+}
+
+vec3 turbulence_at(vec3 p, float ph) {
+    if (u.turb.x == 0.0) return vec3(0.0);
+    // Rows of the orthonormal rotation used for the second octave (see particles.cpp).
+    const vec3 r0 = vec3(0.36, 0.48, -0.8), r1 = vec3(-0.8, 0.6, 0.0), r2 = vec3(0.48, 0.64, 0.6);
+    vec3 a = curl_octave(p, u.turb.y, ph);
+    vec3 r = vec3(dot(r0, p), dot(r1, p), dot(r2, p));
+    vec3 b = curl_octave(r, 2.13 * u.turb.y, -ph);
+    vec3 bb = r0 * b.x + r1 * b.y + r2 * b.z; // transpose
+    return (a + bb * 0.5) * (u.turb.x / 1.5);
+}
+
+void integrate(inout Particle p, float dt, float phase) {
+    if (!(dt > 0.0)) return;
+    int steps = clamp(int(ceil(dt * 30.0)), 1, 8);
+    float h = dt / float(steps);
+    float damping = u.gravity_drag.w > 0.0 ? exp(-u.gravity_drag.w * h) : 1.0;
+    for (int i = 0; i < steps; ++i) {
+        vec3 a = u.gravity_drag.xyz + turbulence_at(p.pos_age.xyz, phase);
+        p.vel_life.xyz = (p.vel_life.xyz + a * h) * damping;
+        p.pos_age.xyz += p.vel_life.xyz * h;
+        p.misc.x += p.misc.y * h;
+        p.pos_age.w += h;
+        phase += u.turb.z * h;
+    }
+}
+
+vec3 world_at(ivec2 px, float d) {
+    vec2 ndc = vec2((float(px.x) + 0.5) / u.screen.x * 2.0 - 1.0, 1.0 - (float(px.y) + 0.5) / u.screen.y * 2.0);
+    vec4 w = u.inv_view_proj * vec4(ndc, d, 1.0);
+    return w.xyz / w.w;
+}
+
+float linear_depth(float d) { return u.screen.z / (d + u.screen.w); }
+
+// Bounces a world-space particle off the visible surface it has just passed behind.
+void collide(inout Particle p) {
+    vec4 c = u.view_proj * vec4(p.pos_age.xyz, 1.0);
+    if (c.w <= 0.05) return;
+    vec2 ndc = c.xy / c.w;
+    if (abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0) return;
+    ivec2 size = ivec2(u.screen.xy);
+    ivec2 ip = clamp(ivec2(vec2((ndc.x * 0.5 + 0.5) * u.screen.x, (0.5 - ndc.y * 0.5) * u.screen.y)), ivec2(0), size - 1);
+    float d = texelFetch(u_depth, ip, 0).r;
+    if (d >= 1.0) return; // sky
+    float scene = linear_depth(d);
+    float gap = c.w - scene;
+    if (gap < 0.0 || gap > u.collide.z) return;
+    vec3 p0 = world_at(ip, d);
+    // Normal from the neighbours on the same surface (the side whose depth is closer).
+    ivec2 xl = clamp(ip - ivec2(1, 0), ivec2(0), size - 1), xr = clamp(ip + ivec2(1, 0), ivec2(0), size - 1);
+    ivec2 yu = clamp(ip - ivec2(0, 1), ivec2(0), size - 1), yd = clamp(ip + ivec2(0, 1), ivec2(0), size - 1);
+    float dl = texelFetch(u_depth, xl, 0).r, dr = texelFetch(u_depth, xr, 0).r;
+    float du = texelFetch(u_depth, yu, 0).r, dd = texelFetch(u_depth, yd, 0).r;
+    vec3 dx = abs(dr - d) < abs(dl - d) ? world_at(xr, dr) - p0 : p0 - world_at(xl, dl);
+    vec3 dy = abs(dd - d) < abs(du - d) ? world_at(yd, dd) - p0 : p0 - world_at(yu, du);
+    vec3 n = cross(dx, dy);
+    if (dot(n, n) < 1e-20) return;
+    n = normalize(n);
+    vec3 eye = u.eye_dt.xyz;
+    if (dot(n, eye - p0) < 0.0) n = -n;
+    // Back onto the surface along the view ray, a hair in front of it.
+    p.pos_age.xyz = eye + (p.pos_age.xyz - eye) * (scene / c.w) + n * 0.01;
+    vec3 v = p.vel_life.xyz;
+    float vn = dot(v, n);
+    if (vn < 0.0) {
+        vec3 vt = v - vn * n;
+        p.vel_life.xyz = vt * (1.0 - u.collide.y) - n * (vn * u.collide.x);
+    }
+}
+
+uint flipbook_frame(Particle p) {
+    uint n = uint(u.flip.z);
+    if (n <= 1u) return 0u;
+    uint f;
+    if (u.flip.w > 0.0) {
+        f = uint(max(0.0, p.pos_age.w) * u.flip.w);
+    } else {
+        float t = p.vel_life.w > 0.0 ? clamp(p.pos_age.w / p.vel_life.w, 0.0, 1.0) : 0.0;
+        f = min(n - 1u, uint(t * float(n)));
+    }
+    return (f + uint(p.misc.w)) % n;
+}
+
+Instance billboard(Particle p) {
+    Instance o;
+    o.pos_size = vec4(0.0);
+    o.color = vec4(0.0);
+    o.params = vec4(0.0);
+    if (!(p.pos_age.w < p.vel_life.w)) return o;
+    bool world_space = (u.meta.w & 1u) != 0u;
+    float t = clamp(p.pos_age.w / p.vel_life.w, 0.0, 1.0);
+    vec3 pos = world_space ? p.pos_age.xyz : (u.world * vec4(p.pos_age.xyz, 1.0)).xyz;
+    float size = max(0.0, mix(u.size.x, u.size.y, t) * p.misc.z);
+    vec4 col = mix(u.color_start, u.color_end, t);
+    o.pos_size = vec4(pos, size);
+    o.color = vec4(col.rgb * max(0.0, u.size.z), clamp(col.a, 0.0, 1.0));
+    float rotation = p.misc.x, aspect = 0.0;
+    if ((u.meta.w & 4u) != 0u) {
+        o.params.y = float(flipbook_frame(p));
+        o.params.z = u.flip.x * 16.0 + u.flip.y;
+    }
+    if ((u.meta.w & 8u) != 0u) {
+        vec3 v = world_space ? p.vel_life.xyz : (u.world * vec4(p.vel_life.xyz, 0.0)).xyz;
+        float speed = length(v);
+        if (size > 0.0 && speed > 1e-6) {
+            aspect = 1.0 + speed * u.size.w / size;
+            rotation = atan(-v.x, v.y);
+            // Aim along the on-screen motion (particles::aim_stretched).
+            vec3 pv = (u.view * vec4(pos, 1.0)).xyz;
+            vec3 dv = (u.view * vec4(v, 0.0)).xyz;
+            float sx = dv.x * -pv.z + pv.x * dv.z, sy = dv.y * -pv.z + pv.y * dv.z;
+            if (sx * sx + sy * sy < 1e-12) {
+                sx = dv.x;
+                sy = dv.y;
+            }
+            float vs = length(dv), across = sqrt(dv.x * dv.x + dv.y * dv.y);
+            if (vs <= 0.0 || across <= 1e-6 * vs) {
+                aspect = 1.0;
+            } else {
+                rotation = atan(-sx, sy);
+                aspect = 1.0 + (aspect - 1.0) * (across / vs);
+            }
+        }
+    }
+    o.params.x = rotation;
+    o.params.w = aspect;
+    return o;
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= u.meta.y) return;
+    float dt = u.eye_dt.w;
+    if (u.meta.x == 0u) {
+        Particle s = spawns[i];
+        uint slot = s.meta.x;
+        float pre_age = s.pos_age.w;
+        Particle p = s;
+        p.pos_age.w = 0.0;
+        p.meta = uvec4(u.meta.z, 0u, 0u, 0u);
+        integrate(p, pre_age, u.turb.w - u.turb.z * pre_age);
+        state[slot] = p;
+        return;
+    }
+    Particle p = state[i];
+    if (dt > 0.0 && p.pos_age.w < p.vel_life.w && p.meta.x != u.meta.z) {
+        integrate(p, dt, u.turb.w - u.turb.z * dt);
+        if ((u.meta.w & 2u) != 0u && p.pos_age.w < p.vel_life.w) collide(p);
+        state[i] = p;
+    }
+    instances[i] = billboard(p);
+}

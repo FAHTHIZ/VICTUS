@@ -75,7 +75,33 @@ struct ParticleEmitterComponent {
     float trail_width_end{0};         // width at the tail as a fraction of the head width
     float trail_alpha_end{0};         // alpha at the tail as a fraction of the particle's alpha
     bool trail_billboards{true};      // also draw the particles themselves
+    // Turbulence (both paths): a divergence-free curl-noise acceleration field (Bridson et al. 2007)
+    // that swirls particles without bunching them. Units: m/s^2 at peak; frequency in cycles per
+    // metre; speed = how fast the field evolves (radians per second of field phase).
+    float turbulence{0};
+    float turbulence_frequency{0.5f};
+    float turbulence_speed{1};
+    // GPU simulation (ADR-0097, 3D views only): the CPU keeps the emission schedule and the exact
+    // slot/lifetime bookkeeping, the renderer integrates and draws every particle in compute
+    // shaders. Up to kMaxGpuParticles per emitter; trails and per-particle CPU readback are not
+    // available, alpha particles are not depth sorted.
+    bool gpu{false};
+    // Depth-buffer collision (GPU emitters in world space): particles bounce off what the camera
+    // sees, using the scene depth of the frame. Off-screen or hidden particles do not collide.
+    bool collision{false};
+    float bounce{0.4f};               // 0 = stop, 1 = perfectly elastic (normal component)
+    float friction{0.2f};             // fraction of tangential speed removed per contact
+    float collision_thickness{0.5f};  // metres behind the visible surface still treated as solid
 };
+
+constexpr std::uint32_t kMaxCpuParticles = 65536;
+constexpr std::uint32_t kMaxGpuParticles = 1u << 20;
+
+// Curl-noise acceleration of `e` at `position` (simulation space) and emitter time `time`
+// (seconds). Exactly divergence-free. Mirrored by engine/render/shaders/particle_sim.comp.
+[[nodiscard]] math::Vec3 turbulence_at(const ParticleEmitterComponent& e, const math::Vec3& position, float time);
+// Phase used by the field for emitter time `time` (wrapped so float precision holds for days).
+[[nodiscard]] float turbulence_phase(const ParticleEmitterComponent& e, double time);
 
 // Frame shown at `age` of `life` seconds, given the particle's start frame (exposed for tests).
 [[nodiscard]] std::uint32_t flipbook_frame(const ParticleEmitterComponent& e, float age, float life, std::uint32_t start);
@@ -104,6 +130,40 @@ struct RibbonPoint {
 };
 static_assert(sizeof(RibbonPoint) == 48);
 
+// GPU particle state, one per slot (64 bytes, std430). Layout matches the `Particle` struct in
+// particle_sim.comp and render::GpuParticleSpawn (slot in meta.x for spawns).
+struct GpuParticle {
+    math::Vec3 position; // simulation space (world, or emitter-local without world_space)
+    float age{0};        // seconds; dead when age >= life
+    math::Vec3 velocity;
+    float life{0};
+    float rotation{0}, spin{0}, size_scale{1}, start_frame{0};
+    std::uint32_t meta[4]{}; // x: slot (spawn records) / birth serial (GPU state)
+};
+static_assert(sizeof(GpuParticle) == 64);
+
+// A particle the CPU spawned for the GPU: initial state at `time` (emitter clock), in slot
+// `particle.meta[0]`. Layout matches render::GpuParticleSpawnRecord (80 bytes).
+struct GpuSpawnRecord {
+    GpuParticle particle;
+    std::uint64_t index{0}; // spawn sequence number (0, 1, 2, ...)
+    double time{0};         // emitter clock at birth
+};
+static_assert(sizeof(GpuSpawnRecord) == 80);
+
+// What a renderer needs to keep its GPU copy of an emitter in step with the CPU schedule.
+struct GpuEmitterView {
+    std::uint64_t key{0};        // stable per entity (from its UUID)
+    std::uint64_t instance{0};   // changes when the emitter state is recreated (scene reload, play)
+    std::uint32_t generation{0}; // bumped by reset() or a capacity change: drop every particle
+    std::uint32_t capacity{0};   // slots
+    std::uint32_t alive{0};      // exact live count (CPU bookkeeping)
+    double time{0};              // emitter clock after the last update
+    std::uint64_t spawned{0};    // spawn records issued so far (next index)
+    std::span<const GpuSpawnRecord> records; // recent spawns, ascending index (oldest may be trimmed)
+    math::Mat4 world{math::Mat4::identity()}; // emitter transform (local-space emitters)
+};
+
 struct EmitterView {
     scene::Entity entity;
     const ParticleEmitterComponent* emitter{nullptr};
@@ -112,6 +172,7 @@ struct EmitterView {
     math::Aabb bounds; // world space (billboards and trails); invalid when empty
     std::span<const RibbonPoint> ribbon_points; // every trail, tail to head
     std::span<const std::uint32_t> ribbon_strips; // point count of each trail (>= 2)
+    const GpuEmitterView* gpu{nullptr}; // GPU emitters: simulated by the renderer (billboards empty)
 };
 
 struct EmitterStatus {
@@ -124,6 +185,7 @@ struct EmitterStatus {
 
 struct ParticleStats {
     std::uint32_t emitters{0}, alive{0}, spawned{0}, died{0};
+    std::uint32_t gpu_emitters{0}, gpu_alive{0}; // subset simulated on the GPU
 };
 
 struct ParticleSettings {
@@ -161,6 +223,13 @@ bool reset(scene::Scene& scene, scene::Entity e);
 void aim_stretched(Billboard& b, const math::Vec3& velocity, const math::Mat4& view);
 // Texture rectangle (u0, v0 top, u1, v1 bottom) of a billboard's flipbook frame; whole texture when off.
 [[nodiscard]] math::Vec4 flipbook_uv(const Billboard& b);
+// Reference integration of one GPU particle over `dt` seconds starting at emitter time `time`
+// (exactly what particle_sim.comp does, minus depth collision); used by tests and tooling.
+void gpu_integrate(const ParticleEmitterComponent& e, GpuParticle& p, float dt, double time);
+// Billboard the GPU writes for a particle (world = emitter transform, view = camera view for
+// stretched particles). Dead particles give size 0.
+[[nodiscard]] Billboard gpu_billboard(const ParticleEmitterComponent& e, const GpuParticle& p, const math::Mat4& world,
+                                      const math::Mat4& view);
 // Every emitter with its billboards from the last update. Billboards are empty when
 // trail_billboards is off; trails only appear in ribbon_points.
 void gather(scene::Scene& scene, std::vector<EmitterView>& out);

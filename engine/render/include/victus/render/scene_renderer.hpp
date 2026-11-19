@@ -141,6 +141,49 @@ struct ParticleMaterial {
     float softness{0.25f};      // metres over which particles fade into geometry
 };
 
+// GPU-simulated particles (ADR-0097). The caller (the particle system) owns the emission schedule
+// and slot bookkeeping and hands the renderer the particles it spawned; the renderer keeps each
+// emitter's state on the GPU (one 64-byte GpuParticleSpawn per slot), integrates it in compute
+// shaders right before the particle pass (optionally bouncing particles off the scene depth) and
+// draws every slot as a billboard (dead slots collapse to nothing). Layouts match particle_sim.comp.
+struct GpuParticleSpawn {
+    math::Vec4 position_age; // xyz simulation-space position, w age (spawns: seconds already lived this frame)
+    math::Vec4 velocity_life;
+    math::Vec4 misc; // rotation, spin (rad/s), size scale, flipbook start frame
+    std::uint32_t meta[4]{}; // spawns: x = slot; GPU state: x = frame serial it was born on
+};
+static_assert(sizeof(GpuParticleSpawn) == 64);
+struct GpuParticleSpawnRecord {
+    GpuParticleSpawn particle;
+    std::uint64_t index{0}; // spawn sequence number of the emitter (0, 1, 2, ...)
+    double time{0};         // emitter clock at birth
+};
+static_assert(sizeof(GpuParticleSpawnRecord) == 80);
+struct GpuParticleParams {
+    math::Mat4 world{math::Mat4::identity()}; // emitter -> world (used unless world_space)
+    math::Vec4 gravity_drag;                  // xyz gravity (m/s^2), w drag (1/s)
+    math::Vec4 turbulence;                    // x amplitude (m/s^2), y wave number (rad/m), z field speed (rad/s), w field phase at `time`
+    math::Vec4 size;                          // x size start, y size end, z intensity, w velocity stretch (s)
+    math::Vec4 color_start{1, 1, 1, 1}, color_end{1, 1, 1, 0};
+    math::Vec4 flipbook;                      // x columns, y rows, z frames used, w fps (0: once over the life)
+    math::Vec4 collision;                     // x bounce, y friction, z thickness (m)
+    bool world_space{true};
+    bool collide{false};                      // bounce off the scene depth (world-space emitters only)
+};
+struct GpuParticleEmitter {
+    std::uint64_t key{0};        // stable per emitter; selects the renderer's GPU state
+    std::uint64_t instance{0};   // a new value drops the GPU state (emitter recreated)
+    std::uint32_t generation{0}; // a new value drops every particle (reset, capacity change)
+    std::uint32_t capacity{0};   // slots (<= SceneRenderer::kMaxGpuParticles)
+    std::uint32_t alive{0};      // live particles (for stats)
+    double time{0};              // emitter clock the state should be advanced to
+    std::uint64_t spawned{0};    // total spawn records issued
+    std::span<const GpuParticleSpawnRecord> records; // recent spawns, ascending index (must outlive render())
+    GpuParticleParams params;
+    ParticleMaterial material;
+    math::Aabb bounds;           // conservative world bounds of every live particle (culling, ordering)
+};
+
 // Projected decals (ADR-0064): a box (the unit cube [-0.5, 0.5]^3 through `transform`) projects a
 // texture along its local -Z axis onto the opaque surfaces inside it. They are drawn after opaque
 // geometry and before blended geometry by reconstructing positions from scene depth, so in the
@@ -408,6 +451,8 @@ struct SceneStats {
     std::uint32_t particle_batches{0}; // visible particle batches (one draw each)
     std::uint32_t particles{0};        // particles drawn
     std::uint32_t ribbon_vertices{0};  // trail triangle-list vertices drawn (six per segment)
+    // GPU particles: emitters simulated / live particles of the drawn ones / spawns uploaded.
+    std::uint32_t gpu_particle_emitters{0}, gpu_particles{0}, gpu_particle_spawns{0};
     std::uint32_t lod_draws{0};        // visible draws using a coarser level than LOD 0
     std::uint32_t lod_held{0};         // draws kept finer than the stateless pick by lod_hysteresis
     std::uint64_t triangles{0};        // triangles in the main and transparent passes (all instances)
@@ -482,6 +527,13 @@ public:
     // including particle sizes) is used for frustum culling and batch ordering.
     void submit_particles(std::span<const ParticleInstance> particles, const ParticleMaterial& material,
                           const math::Aabb& bounds);
+    // A GPU-simulated emitter for this frame (see GpuParticleEmitter). Every submitted emitter is
+    // simulated (also when off screen, so its state keeps up with the CPU schedule); visible ones
+    // are drawn with the other particle batches. Not simulated in capture mode.
+    static constexpr std::uint32_t kMaxGpuParticles = 1u << 20;
+    void submit_gpu_particles(const GpuParticleEmitter& emitter);
+    // GPU state of an emitter after the last render (synchronous readback; tests and tooling).
+    [[nodiscard]] Result<std::vector<GpuParticleSpawn>> read_gpu_particles(std::uint64_t key);
     // Ribbon strips sharing a material (e.g. one emitter's trails): `strips` holds the point count
     // of each consecutive strip in `points`; strips with fewer than two points are skipped.
     // Drawn in the particle pass (soft depth fade), ordered back to front with particle batches.
@@ -556,7 +608,19 @@ private:
         math::Aabb bounds;
         float distance{0};
         bool ribbon{false}; // triangle-list ribbon vertices rather than billboard instances
+        rhi::BufferHandle buffer{}; // GPU particles: their instance buffer (offset 0, count slots)
     };
+    struct GpuParticleState {
+        rhi::BufferHandle state, instances, spawns;
+        std::uint32_t capacity{0}, spawn_capacity{0};
+        std::uint64_t instance{0}, next_index{0};
+        std::uint32_t generation{0}, serial{0};
+        double time{0};
+        std::uint64_t last_frame{0};
+    };
+    // GPU particle compute pipeline, created on first use; false (logged once) when unavailable.
+    [[nodiscard]] bool ensure_gpu_particle_pipeline();
+    void destroy_gpu_particle_state(GpuParticleState& s);
     struct LineVertex {
         math::Vec3 pos;
         std::uint32_t color;
@@ -658,6 +722,11 @@ private:
     std::unique_ptr<FrameScratch> scratch_;
     rhi::BufferHandle particle_buffer_;
     std::uint32_t particle_capacity_{0}; // in particles
+    std::vector<GpuParticleEmitter> gpu_emitters_; // this frame's submissions
+    std::unordered_map<std::uint64_t, GpuParticleState> gpu_particle_states_;
+    rhi::ComputePipelineHandle particle_sim_{};
+    bool particle_sim_failed_{false};
+    std::uint64_t gpu_particle_frame_{0}; // render() calls (state garbage collection)
     std::array<math::Mat4, 4> cascade_vp_{math::Mat4::identity(), math::Mat4::identity(), math::Mat4::identity(),
                                           math::Mat4::identity()};
     std::array<float, 4> cascade_splits_{};
