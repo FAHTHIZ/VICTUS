@@ -197,7 +197,8 @@ enum class TriggerAction : std::uint8_t { None, Start, Remove, Win };
 // Platform, doors open (Remove) once the player carries the required item, and finish lines win.
 struct TriggerComponent {
     std::string player_tag{"Player"};
-    std::string message;          // shown at the bottom of the screen
+    std::string message;          // shown at the bottom of the screen; with Press To Use, "Hi!|Bye" is a
+                                  // conversation: each press of E shows the next line
     float message_time{3.0f};     // seconds; 0 = while the player is touching it
     std::string required_item;    // Inventory item needed, e.g. "Key" (picked up with a Collectible)
     bool consume_item{true};      // uses the item up
@@ -212,6 +213,7 @@ struct TriggerComponent {
     bool inside{false};
     bool fired{false};
     bool used{false};             // pressed during this visit
+    int line{0};                  // next conversation line
 };
 
 // Moves towards a target in range (and stops chasing once it gets far enough away).

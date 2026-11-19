@@ -184,7 +184,7 @@ void register_behaviour_components() {
         using TR = TriggerComponent;
         scene::Schema<TR>("Trigger", cat)
             .field(&TR::player_tag, "player_tag")
-            .field(&TR::message, "message", {.tooltip = "Text shown at the bottom of the screen when the player touches it"})
+            .field(&TR::message, "message", {.tooltip = "Text shown at the bottom of the screen when the player touches it. With Press To Use, separate lines with | to make a conversation"})
             .field(&TR::message_time, "message_time", {.min = 0, .max = 600, .speed = 0.1f, .tooltip = "Seconds; 0 = while touching"})
             .field(&TR::required_item, "required_item", {.tooltip = "Item the player must carry, e.g. Key (from an Item collectible)"})
             .field(&TR::consume_item, "consume_item", {.tooltip = "Use the item up"})
@@ -1276,6 +1276,20 @@ std::string key_for(ScriptHost::Impl& h, std::string_view action, const char* fa
 }
 std::string interact_key(ScriptHost::Impl& h) { return key_for(h, "interact", "Interact"); }
 
+std::vector<std::string> dialogue_lines(std::string_view text) {
+    std::vector<std::string> out;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t bar = std::min(text.find('|', start), text.size());
+        std::string_view part = text.substr(start, bar - start);
+        while (!part.empty() && part.front() == ' ') part.remove_prefix(1);
+        while (!part.empty() && part.back() == ' ') part.remove_suffix(1);
+        if (!part.empty()) out.emplace_back(part);
+        start = bar + 1;
+    }
+    return out;
+}
+
 void triggers(ScriptHost::Impl& h, Scene& s, TagCache& tags, std::vector<Entity>& doomed) {
     std::vector<Entity> list;
     s.world().each<TriggerComponent>([&](Entity e, TriggerComponent&) { list.push_back(e); });
@@ -1302,9 +1316,11 @@ void triggers(ScriptHost::Impl& h, Scene& s, TagCache& tags, std::vector<Entity>
         c->inside = !who.is_null();
         if (who.is_null()) {
             c->used = false;
+            c->line = 0;
             continue;
         }
         if (cfg.once && c->fired) continue;
+        const std::vector<std::string> lines = dialogue_lines(cfg.message);
         if (cfg.press_to_use) {
             if (c->used) continue;
             if (!action_pressed(h, input_for(h, who), "interact")) {
@@ -1317,7 +1333,7 @@ void triggers(ScriptHost::Impl& h, Scene& s, TagCache& tags, std::vector<Entity>
         } else if (!entered) {
             continue;
         }
-        if (!cfg.required_item.empty()) {
+        if (!cfg.required_item.empty() && cfg.line == 0) {
             if (gameplay::item_count(s, who, cfg.required_item) == 0) {
                 say(tr, cfg.message_time, cfg.locked_message.empty() ? "You need a " + cfg.required_item : cfg.locked_message);
                 continue;
@@ -1325,8 +1341,23 @@ void triggers(ScriptHost::Impl& h, Scene& s, TagCache& tags, std::vector<Entity>
             if (cfg.consume_item) (void)gameplay::remove_item(s, who, cfg.required_item, 1);
             c = s.world().get<TriggerComponent>(tr);
         }
+        if (cfg.press_to_use && lines.size() > 1) {
+            const std::size_t at = static_cast<std::size_t>(std::max(cfg.line, 0));
+            const bool last = at + 1 >= lines.size();
+            say(tr, last ? cfg.message_time : 0.0f, lines[std::min(at, lines.size() - 1)]);
+            if (at == 0) gameplay::emit_event(s, "talked", Value::object(), tr);
+            if (!last) {
+                c->line = static_cast<int>(at + 1);
+                c->used = false; // the next press shows the next line
+                continue;
+            }
+            c->line = 0;
+        } else {
+            std::string text = cfg.message;
+            std::replace(text.begin(), text.end(), '|', ' ');
+            say(tr, cfg.message_time, text);
+        }
         c->fired = true;
-        say(tr, cfg.message_time, cfg.message);
         const Entity target = cfg.target.empty() ? tr : s.find_by_name(cfg.target);
         if (cfg.action != TriggerAction::None && cfg.action != TriggerAction::Win && target.is_null()) {
             warn_once(h, tr, std::format("Trigger '{}': no object named '{}'", name_of(s, tr), cfg.target));

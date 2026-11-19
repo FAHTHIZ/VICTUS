@@ -1727,3 +1727,9 @@ Verified: `gameplay: a paused game runs only PreUpdate and PostUpdate, with no t
 Built: Game Rules Title and Start Prompt. The game opens paused on the title banner with the prompt in the message box; jump, fire or interact starts it and emits `game_started`. Pause is ignored while the title shows.
 
 Verified: `behaviours: a title screen holds the game until the player presses Space`; all script, project and export tests; full ctest before this change passed.
+
+## 2026-11-19 — Conversations
+
+Built: press-to-use Triggers split their Message on `|` into lines shown one per press; the Action fires on the last line; `talked` event; leaving resets the conversation.
+
+Verified: `behaviours: a press-to-use trigger with | lines is a conversation`; all behaviour tests.
