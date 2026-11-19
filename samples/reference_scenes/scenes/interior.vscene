@@ -1,0 +1,620 @@
+{
+  "format": "victus.scene",
+  "version": 1,
+  "name": "Reference Interior",
+  "entities": [
+    {
+      "uuid": "bcbca0e7-f4ca-5d0c-9610-5d14e5331be8",
+      "name": "Reference Camera",
+      "components": {
+        "Camera": {
+          "projection": "perspective",
+          "fov_y": 65,
+          "ortho_height": 10,
+          "near": 0.1,
+          "far": 300,
+          "primary": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            1.6,
+            4.2
+          ],
+          "rotation": [
+            -0.052336,
+            0.0,
+            0.0,
+            0.9986295
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "3459513f-d6de-5dca-b179-5e4baa88b782",
+      "name": "Environment",
+      "components": {
+        "Environment": {
+          "sky_zenith": [
+            0.18,
+            0.36,
+            0.75,
+            1
+          ],
+          "sky_horizon": [
+            0.62,
+            0.72,
+            0.85,
+            1
+          ],
+          "ground": [
+            0.22,
+            0.2,
+            0.18,
+            1
+          ],
+          "ambient_intensity": 0.05,
+          "draw_sky": false,
+          "clear_color": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "tonemapper": "aces",
+          "exposure": 1,
+          "exposure_compensation": 0,
+          "auto_exposure": false,
+          "saturation": 1,
+          "contrast": 1,
+          "vignette": 0.0,
+          "bloom_intensity": 0.08,
+          "bloom_threshold": 1,
+          "ao_intensity": 1,
+          "ao_radius": 0.5,
+          "shadow_distance": 20,
+          "fog": "none",
+          "volumetric_fog": true,
+          "volumetric_density": 0.0,
+          "volumetric_distance": 20,
+          "volumetric_anisotropy": 0.5
+        }
+      }
+    },
+    {
+      "uuid": "d9546662-4f51-5405-95e9-f29c736b967c",
+      "name": "Floor",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.35,
+            0.32,
+            0.3,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.25,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            -0.05,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            8,
+            0.1,
+            10
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "4f0288dc-cae3-5a7c-b23c-2c8a61f18b74",
+      "name": "Ceiling",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.8,
+            0.8,
+            0.78,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            3.05,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            8,
+            0.1,
+            10
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "52cb49ec-d77f-5aac-ad37-cf4dbe9ca0bb",
+      "name": "Back Wall",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.75,
+            0.72,
+            0.65,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            1.5,
+            -5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            8,
+            3,
+            0.1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "e1ef98b2-d693-57e3-81b2-06c0c4af01f2",
+      "name": "Left Wall",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.6,
+            0.18,
+            0.15,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -4,
+            1.5,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.1,
+            3,
+            10
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "883b7636-f1f1-5413-a1d1-218855d84652",
+      "name": "Right Wall",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.15,
+            0.35,
+            0.6,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            4,
+            1.5,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.1,
+            3,
+            10
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "9705fe4b-e56b-50d7-b600-ef883fc182f6",
+      "name": "Front Wall",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.75,
+            0.72,
+            0.65,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            1.5,
+            5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            8,
+            3,
+            0.1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "8c7f9105-6d5e-5a1c-8908-addfad5e74cf",
+      "name": "Table",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.45,
+            0.3,
+            0.18,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.6,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -1.2,
+            0.4,
+            -1.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1.6,
+            0.8,
+            0.9
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "3cce2d56-e3df-5b83-8e9e-a873788d436d",
+      "name": "Box",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.8,
+            0.78,
+            0.7,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            1.6,
+            0.35,
+            -2.8
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.7,
+            0.7,
+            0.7
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "381fe825-0e0b-5802-979a-852a5c6c3cfa",
+      "name": "Ball",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.9,
+            0.9,
+            0.9,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.15,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -1.2,
+            1.1,
+            -1.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "18e468df-e35f-55a6-853b-f1d3031239b3",
+      "name": "Emissive Panel",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": false,
+          "visible": true,
+          "material": "99cfc368-39d3-5fc1-b3f9-4e037f43d41b"
+        },
+        "Transform": {
+          "position": [
+            0,
+            2.2,
+            -4.93
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1.6,
+            0.4,
+            0.04
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "3bfea774-3c10-56be-97a8-ecaaeba8950f",
+      "name": "Lamp",
+      "components": {
+        "Light": {
+          "type": "point",
+          "color": [
+            1,
+            0.7,
+            0.45,
+            1
+          ],
+          "intensity": 14,
+          "range": 7,
+          "shadows": true
+        },
+        "Transform": {
+          "position": [
+            -1.0,
+            2.3,
+            -0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "fb39864a-2418-5736-bef0-1d83ada657db",
+      "name": "Spot",
+      "components": {
+        "Light": {
+          "type": "spot",
+          "color": [
+            0.8,
+            0.9,
+            1,
+            1
+          ],
+          "intensity": 40,
+          "range": 9,
+          "shadows": true,
+          "inner_angle": 14,
+          "outer_angle": 24
+        },
+        "Transform": {
+          "position": [
+            2.4,
+            2.8,
+            0.5
+          ],
+          "rotation": [
+            -0.3067136,
+            0.1159046,
+            0.0376597,
+            0.9439675
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "ba3cfad6-1995-5f73-903f-0fab33dc8abc",
+      "name": "Dust",
+      "components": {
+        "FogVolume": {
+          "size": [
+            7.8,
+            2.9,
+            9.8
+          ],
+          "density": 0.08,
+          "albedo": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "edge_fade": 0.05,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            1.5,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "683fd0c0-15f6-5b3a-81f0-329e2ce38065",
+      "name": "Rotating Cylinder",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cylinder",
+          "base_color": [
+            0.9,
+            0.9,
+            0.92,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            1.6,
+            1.15,
+            -2.8
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.25,
+            0.9,
+            0.25
+          ]
+        },
+        "Rotator": {
+          "axis": [
+            1,
+            0,
+            0
+          ],
+          "degrees_per_second": 25
+        }
+      }
+    }
+  ]
+}

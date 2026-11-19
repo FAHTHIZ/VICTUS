@@ -1,0 +1,1477 @@
+{
+  "format": "victus.scene",
+  "version": 1,
+  "name": "Reference Exterior",
+  "entities": [
+    {
+      "uuid": "bcbca0e7-f4ca-5d0c-9610-5d14e5331be8",
+      "name": "Reference Camera",
+      "components": {
+        "Camera": {
+          "projection": "perspective",
+          "fov_y": 55,
+          "ortho_height": 10,
+          "near": 0.1,
+          "far": 300,
+          "primary": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            2.4,
+            9.5
+          ],
+          "rotation": [
+            -0.0784591,
+            0.0,
+            0.0,
+            0.9969173
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "6a76c290-f067-5ad8-b19b-bb05b34b18da",
+      "name": "Sun",
+      "components": {
+        "Light": {
+          "type": "directional",
+          "color": [
+            1,
+            0.93,
+            0.82,
+            1
+          ],
+          "intensity": 3.2,
+          "range": 10.0,
+          "shadows": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            10,
+            0
+          ],
+          "rotation": [
+            -0.230725,
+            0.2917736,
+            0.0727473,
+            0.9253875
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "3459513f-d6de-5dca-b179-5e4baa88b782",
+      "name": "Environment",
+      "components": {
+        "Environment": {
+          "sky_zenith": [
+            0.18,
+            0.36,
+            0.75,
+            1
+          ],
+          "sky_horizon": [
+            0.62,
+            0.72,
+            0.85,
+            1
+          ],
+          "ground": [
+            0.22,
+            0.2,
+            0.18,
+            1
+          ],
+          "ambient_intensity": 0.6,
+          "draw_sky": true,
+          "clear_color": [
+            0.02,
+            0.02,
+            0.025,
+            1
+          ],
+          "tonemapper": "aces",
+          "exposure": 1,
+          "exposure_compensation": 0,
+          "auto_exposure": false,
+          "saturation": 1,
+          "contrast": 1,
+          "vignette": 0.0,
+          "bloom_intensity": 0.06,
+          "bloom_threshold": 1,
+          "ao_intensity": 1,
+          "ao_radius": 0.6,
+          "shadow_distance": 40,
+          "fog": "exponential",
+          "physical_sky": true,
+          "fog_density": 0.004,
+          "fog_color": [
+            0.62,
+            0.72,
+            0.85,
+            1
+          ],
+          "volumetric_fog": true,
+          "volumetric_density": 0.015,
+          "volumetric_height": 0,
+          "volumetric_falloff": 0.25,
+          "volumetric_anisotropy": 0.6,
+          "volumetric_distance": 60
+        }
+      }
+    },
+    {
+      "uuid": "74a01cf6-5f5e-54eb-85c5-81702d5e7bd7",
+      "name": "Ground",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "plane",
+          "base_color": [
+            0.55,
+            0.53,
+            0.5,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.9,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            40,
+            1,
+            40
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "bbcebf91-4895-548e-ac0e-8578f077fcf1",
+      "name": "Sphere Dielectric 0",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.8,
+            0.2,
+            0.15,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.05,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -3.75,
+            0.55,
+            2.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "5d50b8b8-32a4-50f6-980c-8dd00ac0065a",
+      "name": "Sphere Metal 0",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.95,
+            0.75,
+            0.4,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.05,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -3.75,
+            0.55,
+            0.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "3246e4d7-22a6-5ee2-b1f1-0f887c29bf27",
+      "name": "Sphere Dielectric 1",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.8,
+            0.2,
+            0.15,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.23,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -2.25,
+            0.55,
+            2.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "dcab1572-47c8-5a2c-8deb-9b93f495988d",
+      "name": "Sphere Metal 1",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.95,
+            0.75,
+            0.4,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.23,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -2.25,
+            0.55,
+            0.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "c72b3635-a927-5e83-9fb7-39c5f75b7223",
+      "name": "Sphere Dielectric 2",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.8,
+            0.2,
+            0.15,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.41,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -0.75,
+            0.55,
+            2.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "ddd0cb21-329e-5dbf-bd4c-13d85d15ff27",
+      "name": "Sphere Metal 2",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.95,
+            0.75,
+            0.4,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.41,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -0.75,
+            0.55,
+            0.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "021cebd3-8efa-5100-86e8-f3e02d95c5b3",
+      "name": "Sphere Dielectric 3",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.8,
+            0.2,
+            0.15,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.59,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0.75,
+            0.55,
+            2.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "4959d1ca-dbd4-5728-9827-46e5ecbab26a",
+      "name": "Sphere Metal 3",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.95,
+            0.75,
+            0.4,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.59,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0.75,
+            0.55,
+            0.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "e23e8ad2-cf64-53fa-997a-193dd3673cc4",
+      "name": "Sphere Dielectric 4",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.8,
+            0.2,
+            0.15,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.77,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            2.25,
+            0.55,
+            2.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "c38844ab-ce83-5afb-8a1b-31916879607f",
+      "name": "Sphere Metal 4",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.95,
+            0.75,
+            0.4,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.77,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            2.25,
+            0.55,
+            0.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "8d78fe57-d873-5562-bc2c-45ff034509e4",
+      "name": "Sphere Dielectric 5",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.8,
+            0.2,
+            0.15,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.95,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            3.75,
+            0.55,
+            2.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "78edca78-d109-59a5-b0f6-b5be49604b08",
+      "name": "Sphere Metal 5",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.95,
+            0.75,
+            0.4,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.95,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            3.75,
+            0.55,
+            0.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "e4c8106f-fdc3-581f-9843-33277c58c948",
+      "name": "Post 0",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -6,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "e6f6d294-df72-52fe-8b6a-827b5e79c4bf",
+      "name": "Post 1",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -5,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "6521192c-e4c0-558b-913c-b91b53b6c1ed",
+      "name": "Post 2",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -4,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "fce40a2e-b74c-50b2-b6b7-27bde1f4fe7f",
+      "name": "Post 3",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -3,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "fd3e1642-2a5f-5852-97d6-956d61befd06",
+      "name": "Post 4",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -2,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "0eb54aae-9716-541e-80ac-bb4d29580537",
+      "name": "Post 5",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -1,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "7aead5bd-0149-5ee5-9a8c-a87979f86ed3",
+      "name": "Post 6",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "267983e9-78b9-5198-95c8-3e40637cd550",
+      "name": "Post 7",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            1,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "2004c181-a3c1-53a5-bafd-b0847196df8a",
+      "name": "Post 8",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            2,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "1460d969-1f86-504c-ac60-304e9405c2db",
+      "name": "Post 9",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            3,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "e3252481-0b1f-5760-a5a2-e301722e6b58",
+      "name": "Post 10",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            4,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "98119049-c0c3-5718-aaec-968eb70d12be",
+      "name": "Post 11",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            5,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "7c112127-33f3-508c-82a4-f6f75b0af454",
+      "name": "Post 12",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            6,
+            0.6,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.05,
+            1.2,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "e5c30bfc-2787-5be1-a05c-11d9f0fa2865",
+      "name": "Rail 0",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            0.45,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            12.2,
+            0.04,
+            0.04
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "468f63d9-1fc9-5218-9496-3f8cf141eff0",
+      "name": "Rail 1",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.3,
+            0.25,
+            0.2,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            0.95,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            12.2,
+            0.04,
+            0.04
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "fcc56c46-adff-525a-8a01-68f57a46c2c1",
+      "name": "Step 0",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.75,
+            0.75,
+            0.72,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            5.5,
+            0.15,
+            -0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            2,
+            0.3,
+            0.4
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "c5ef2b2f-763b-56e1-9e63-dad06c56d07c",
+      "name": "Step 1",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.75,
+            0.75,
+            0.72,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            5.5,
+            0.44999999999999996,
+            -0.9
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            2,
+            0.8999999999999999,
+            0.4
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "c4cc3edc-e599-56aa-a969-ba7744e5ec20",
+      "name": "Step 2",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.75,
+            0.75,
+            0.72,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            5.5,
+            0.75,
+            -1.3
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            2,
+            1.5,
+            0.4
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "08391680-ad7c-53c8-8e0b-eedea61bcdc3",
+      "name": "Step 3",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.75,
+            0.75,
+            0.72,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            5.5,
+            1.0499999999999998,
+            -1.7000000000000002
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            2,
+            2.0999999999999996,
+            0.4
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "2e7da397-a1fc-5a36-a1cf-97bb957735db",
+      "name": "Step 4",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.75,
+            0.75,
+            0.72,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            5.5,
+            1.3499999999999999,
+            -2.1
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            2,
+            2.6999999999999997,
+            0.4
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "d7362549-8755-5327-8ff1-821e35c9ccc4",
+      "name": "Wall",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.7,
+            0.68,
+            0.62,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -5.5,
+            1.25,
+            -1.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.4,
+            2.5,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "857e716d-56b6-5adb-9e8d-25200e928543",
+      "name": "Emissive Bar",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": false,
+          "visible": true,
+          "material": "72458976-fd40-5dec-ad88-61108897811d"
+        },
+        "Transform": {
+          "position": [
+            -5.25,
+            2.0,
+            -1.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.1,
+            0.12,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "7ddb46b2-e5dd-5416-8d7e-30dae611ccb2",
+      "name": "Rotating Cube",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.2,
+            0.45,
+            0.85,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.35,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            4.2,
+            0.6,
+            3.6
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ]
+        },
+        "Rotator": {
+          "axis": [
+            0.3,
+            1,
+            0.2
+          ],
+          "degrees_per_second": 30
+        }
+      }
+    }
+  ]
+}
