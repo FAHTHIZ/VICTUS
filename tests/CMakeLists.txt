@@ -13,6 +13,7 @@ victus_add_test(victus_core_tests
         core/jobs_tests.cpp
         core/json_tests.cpp
         core/log_tests.cpp
+        core/migration_tests.cpp
         core/math_tests.cpp
         core/memory_tests.cpp
         core/pack_tests.cpp
@@ -36,6 +37,7 @@ victus_add_test(victus_ecs_tests
 
 victus_add_test(victus_scene_tests
     SOURCES
+        scene/migration_tests.cpp
         scene/prefab_tests.cpp
         scene/scene_tests.cpp
     DEPS VICTUS::Scene
@@ -164,6 +166,7 @@ victus_add_test(victus_export_tests
     SOURCES
         export/diagnostics_tests.cpp
         export/export_tests.cpp
+        export/migrate_tests.cpp
         export/mobile_tests.cpp
         export/validate_tests.cpp
     DEPS VICTUS::Player

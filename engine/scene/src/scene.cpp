@@ -103,7 +103,34 @@ void SerializerRegistry::add(ComponentSerializer serializer) {
 const ComponentSerializer* SerializerRegistry::by_name(std::string_view n) const {
     for (const auto& s : serializers_)
         if (s.name == n) return &s;
+    for (const auto& s : serializers_)
+        for (const auto& former : s.former_names)
+            if (former == n) return &s;
     return nullptr;
+}
+
+bool SerializerRegistry::set_version(std::string_view name, std::uint32_t version, std::vector<migration::Step> migrations) {
+    if (version < 1 || migrations.size() != version - 1) return false;
+    std::sort(migrations.begin(), migrations.end(), [](const auto& a, const auto& b) { return a.from < b.from; });
+    for (std::size_t i = 0; i < migrations.size(); ++i)
+        if (migrations[i].from != i + 1 || !migrations[i].apply) return false;
+    for (auto& s : serializers_) {
+        if (s.name != name) continue;
+        s.version = version;
+        s.migrations = std::move(migrations);
+        return true;
+    }
+    return false;
+}
+
+bool SerializerRegistry::add_former_name(std::string_view name, std::string former_name) {
+    for (auto& s : serializers_) {
+        if (s.name != name) continue;
+        if (std::find(s.former_names.begin(), s.former_names.end(), former_name) == s.former_names.end())
+            s.former_names.push_back(std::move(former_name));
+        return true;
+    }
+    return false;
 }
 
 const ComponentSerializer* SerializerRegistry::by_id(ecs::ComponentId id) const {
@@ -503,7 +530,11 @@ Value Scene::save_entity(Entity e) const {
     const auto& registry = SerializerRegistry::instance();
     std::vector<std::pair<std::string, Value>> comps;
     for (const ecs::ComponentId id : world_.components_of(e)) {
-        if (const ComponentSerializer* s = registry.by_id(id)) comps.emplace_back(s->name, s->save(world_.get_raw(e, id)));
+        if (const ComponentSerializer* s = registry.by_id(id)) {
+            Value data = s->save(world_.get_raw(e, id));
+            if (s->version > 1 && data.is_object()) data.set(migration::kComponentVersionKey, s->version);
+            comps.emplace_back(s->name, std::move(data));
+        }
     }
     if (const UnknownComponents* u = world_.get<UnknownComponents>(e)) {
         for (const auto& [k, v] : u->components) comps.emplace_back(k, v);
@@ -541,14 +572,73 @@ Value Scene::save() const {
     return doc;
 }
 
+Status migrate_components(Value& comps, std::vector<std::string>& notes) {
+    if (!comps.is_object()) return {};
+    const auto& registry = SerializerRegistry::instance();
+    auto note = [&notes](std::string text) {
+        if (notes.size() < 256) notes.push_back(std::move(text));
+    };
+    bool needed = false; // common case: everything current, nothing to rebuild
+    for (const auto& [key, value] : comps.as_object()) {
+        const ComponentSerializer* s = registry.by_name(key);
+        if (s && (s->name != key || migration::component_version(value) != s->version)) needed = true;
+    }
+    if (!needed) return {};
+    bool changed = false;
+    Value out = Value::object();
+    for (const auto& [key, value] : comps.as_object()) {
+        const ComponentSerializer* s = registry.by_name(key);
+        if (!s) {
+            out.set(key, value);
+            continue;
+        }
+        const std::uint32_t version = migration::component_version(value);
+        if (version > s->version) {
+            note(std::format("{}: version {} is newer than this build reads ({}); kept unchanged", key, version, s->version));
+            out.set(key, value);
+            continue;
+        }
+        Value data = value;
+        if (s->name != key) {
+            note(std::format("{}: renamed to {}", key, s->name));
+            changed = true;
+        }
+        for (std::uint32_t v = version; v < s->version; ++v) {
+            const migration::Step& step = s->migrations[v - 1];
+            if (auto st = step.apply(data); !st.ok())
+                return make_error(ErrorCode::ParseError,
+                                  std::format("{} migration from version {} ({}) failed: {}", s->name, v, step.summary, st.error().message));
+            if (!data.is_object()) return make_error(ErrorCode::ParseError, std::format("{} migration from version {} broke the component", s->name, v));
+            note(std::format("{} {} -> {}: {}", s->name, v, v + 1, step.summary));
+            changed = true;
+        }
+        if (version < s->version) data.set(migration::kComponentVersionKey, s->version);
+        // A renamed component that also exists under its new name: the new name wins.
+        if (!out.find(s->name) || s->name == key) out.set(s->name, std::move(data));
+    }
+    if (changed) comps = std::move(out);
+    return {};
+}
+
 Status Scene::load_components(Entity e, const Value& comps) {
     if (comps.is_null()) return {};
     if (!comps.is_object()) return bad("entity components must be an object");
     const auto& registry = SerializerRegistry::instance();
-    for (const auto& [key, value] : comps.as_object()) {
-        if (const ComponentSerializer* s = registry.by_name(key)) {
+    Value migrated = comps;
+    VICTUS_TRY_STATUS(migrate_components(migrated, migrations_));
+    for (const auto& [key, value] : migrated.as_object()) {
+        const ComponentSerializer* s = registry.by_name(key);
+        if (s && migration::component_version(value) > s->version) s = nullptr; // newer build's data: keep unread
+        if (s) {
+            Value data = value;
+            if (data.is_object() && data.find(migration::kComponentVersionKey)) {
+                Value stripped = Value::object();
+                for (const auto& [k, v] : data.as_object())
+                    if (k != migration::kComponentVersionKey) stripped.set(k, v);
+                data = std::move(stripped);
+            }
             void* p = world_.add_raw(e, s->id);
-            if (auto st = s->load(p, value); !st.ok())
+            if (auto st = s->load(p, data); !st.ok())
                 return make_error(ErrorCode::ParseError, "entity " + uuid(e).to_string() + ": " + st.error().message);
         } else {
             auto* u = world_.get<UnknownComponents>(e);
@@ -603,15 +693,22 @@ Status Scene::restore_subtree(const Value& snapshots) {
     return {};
 }
 
-Status Scene::load(const Value& doc) {
-    if (doc["format"].as_string_or("") != "victus.scene") return bad("not a victus.scene document");
-    const std::int64_t version = doc["version"].as_int(0);
-    if (version < 1 || version > kSceneFormatVersion)
-        return make_error(ErrorCode::VersionMismatch, "unsupported scene version " + std::to_string(version));
+const migration::Format& scene_format() {
+    // Add a Step here when the document layout changes and raise kSceneFormatVersion.
+    static const migration::Format format("victus.scene", kSceneFormatVersion);
+    return format;
+}
+
+Status Scene::load(const Value& source) {
+    if (source["format"].as_string_or("") != "victus.scene") return bad("not a victus.scene document");
+    Value doc = source;
+    auto report = scene_format().upgrade(doc);
+    if (!report) return std::move(report).error();
     const Value& entities = doc["entities"];
     if (!entities.is_array()) return bad("scene.entities must be an array");
 
     clear();
+    migrations_ = report->applied;
     name = doc["name"].as_string_or("Untitled");
     std::vector<Entity> created;
     if (auto st = load_entities(entities, created); !st.ok()) {
@@ -622,11 +719,12 @@ Status Scene::load(const Value& doc) {
     return {};
 }
 
-Status Scene::load_additive(const Value& doc, std::vector<Entity>* created_out) {
-    if (doc["format"].as_string_or("") != "victus.scene") return bad("not a victus.scene document");
-    const std::int64_t version = doc["version"].as_int(0);
-    if (version < 1 || version > kSceneFormatVersion)
-        return make_error(ErrorCode::VersionMismatch, "unsupported scene version " + std::to_string(version));
+Status Scene::load_additive(const Value& source, std::vector<Entity>* created_out) {
+    if (source["format"].as_string_or("") != "victus.scene") return bad("not a victus.scene document");
+    Value doc = source;
+    auto report = scene_format().upgrade(doc);
+    if (!report) return std::move(report).error();
+    migrations_ = report->applied;
     const Value& entities = doc["entities"];
     if (!entities.is_array()) return bad("scene.entities must be an array");
     std::vector<Entity> created;
@@ -670,6 +768,7 @@ Status Scene::load_entities(const Value& entities, std::vector<Entity>& created)
 }
 
 Status Scene::save_file(const std::filesystem::path& path) const {
+    if (!migrations_.empty()) VICTUS_TRY_STATUS(fs::keep_premigration_copy(path));
     return fs::write_safely(path, json::stringify(save(), true) + "\n", {.validate = json::document_validator("victus.scene")});
 }
 

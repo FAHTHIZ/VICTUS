@@ -162,11 +162,16 @@ Uuid Prefab::root() const {
     return u;
 }
 
-Result<Prefab> parse_prefab(const Value& doc) {
-    if (!doc.is_object() || doc["format"].as_string_or("") != "victus.prefab") return bad("not a VICTUS prefab (format must be \"victus.prefab\")");
-    const auto version = doc["version"].as_int(0);
-    if (version < 1 || version > kPrefabFormatVersion)
-        return bad(std::format("unsupported prefab version {} (this build reads up to {})", version, kPrefabFormatVersion));
+const migration::Format& prefab_format() {
+    static const migration::Format format("victus.prefab", kPrefabFormatVersion);
+    return format;
+}
+
+Result<Prefab> parse_prefab(const Value& source) {
+    if (!source.is_object() || source["format"].as_string_or("") != "victus.prefab") return bad("not a VICTUS prefab (format must be \"victus.prefab\")");
+    Value doc = source;
+    auto report = prefab_format().upgrade(doc);
+    if (!report) return std::move(report).error();
     const Value& entities = doc["entities"];
     if (!entities.is_array() || entities.size() == 0) return bad("prefab has no entities");
     std::unordered_set<Uuid, UuidHash> seen;
@@ -190,6 +195,16 @@ Result<Prefab> parse_prefab(const Value& doc) {
     Prefab p;
     p.name = doc["name"].as_string_or(entities[0]["name"].as_string_or("Prefab"));
     p.entities = entities;
+    p.migrations = report->applied;
+    for (std::size_t i = 0; i < p.entities.size(); ++i) {
+        const Value& e = p.entities[i];
+        Value c = e["components"];
+        if (!c.is_object()) continue;
+        const std::size_t before = p.migrations.size();
+        if (auto st = migrate_components(c, p.migrations); !st)
+            return bad(std::format("prefab entity '{}': {}", e["name"].as_string_or(""), st.error().message));
+        if (p.migrations.size() != before) p.entities.as_array()[i].set("components", std::move(c));
+    }
     return p;
 }
 
@@ -215,6 +230,7 @@ Value prefab_to_json(const Prefab& prefab) {
 Status save_prefab_file(const Prefab& prefab, const std::filesystem::path& path) {
     std::error_code ec;
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
+    if (!prefab.migrations.empty()) VICTUS_TRY_STATUS(fs::keep_premigration_copy(path));
     return fs::write_safely(path, json::stringify(prefab_to_json(prefab)) + "\n",
                             {.validate = json::document_validator("victus.prefab")});
 }

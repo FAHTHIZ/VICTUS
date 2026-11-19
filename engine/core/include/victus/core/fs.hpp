@@ -74,6 +74,12 @@ struct Recovered {
 // generation 1 and the restore itself can be undone.
 [[nodiscard]] Status restore_generation(const Path& path, std::uint32_t generation, const SafeWriteOptions& options = {});
 
+// Before a migrated document is saved over its older original (ADR-0100): copies `path` to
+// premigration_path(path) unless that copy already exists, so the oldest original is kept for
+// rollback. No-op when `path` does not exist.
+[[nodiscard]] Path premigration_path(const Path& path);
+[[nodiscard]] Status keep_premigration_copy(const Path& path);
+
 namespace testing {
 // One-shot fault injection for the next atomic/safe write in this process (tests only).
 enum class WriteFault : std::uint8_t {

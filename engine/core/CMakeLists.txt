@@ -28,6 +28,7 @@ victus_add_module(core
         src/jobs.cpp
         src/json.cpp
         src/log.cpp
+        src/migration.cpp
         src/math.cpp
         src/pack.cpp
         src/zip.cpp

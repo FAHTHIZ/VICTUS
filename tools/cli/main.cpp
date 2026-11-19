@@ -22,6 +22,7 @@
 #include "victus/physics/physics.hpp"
 #include "victus/player/diagnostics.hpp"
 #include "victus/player/export.hpp"
+#include "victus/player/migrate.hpp"
 #include "victus/player/player.hpp"
 #include "victus/player/validate.hpp"
 #include "victus/plugin/plugin.hpp"
@@ -84,6 +85,7 @@ constexpr const char* kUsage =
     "  serve <project> [--port P] [--max-clients N] [--frames N]  host a multiplayer session (dedicated server)\n"
     "        [--password P] [--key FILE] [--insecure]              ...encrypted by default; prints its public key\n"
     "  debug-adapter                                              Debug Adapter Protocol server on stdio (script debugging)\n"
+    "  migrate <project> [--write]                                upgrade files written by an older VICTUS (keeps originals)\n"
     "  check <project>                                            validate scenes and script syntax\n"
     "  plugins <project> [--load] [--new NAME]                    list, load or create native plugins\n"
     "  export <project> --out DIR [--name EXE] [--player PATH]    package a runnable game folder\n"
@@ -682,6 +684,32 @@ int cmd_check(const std::vector<std::string>& a) {
     return report->ok() ? 0 : 1;
 }
 
+int cmd_migrate(const std::vector<std::string>& a) {
+    cli::Parser p("victus migrate",
+                  "Report project files written by an older VICTUS (project, scenes, prefabs, worlds) and, with --write, "
+                  "save them in the current format; each original is kept once as <file>.premigration. Exit 3 when "
+                  "files need migrating (without --write), 1 when a file cannot be read or is from a newer VICTUS");
+    p.positional("project", "project folder", true).flag("write", "save upgraded files (default: report only)");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message);
+    const bool write = p.has("write");
+    auto scan = player::migrate_project(p.get("project"), write);
+    if (!scan) return error(scan.error().message);
+    for (const auto& e : scan->entries) {
+        if (!e.error.empty()) {
+            std::printf("error: %s (%s): %s\n", e.file.c_str(), e.format.c_str(), e.error.c_str());
+            continue;
+        }
+        std::printf("%s: %s %s v%u -> v%u\n", e.written ? "migrated" : "needs migration", e.file.c_str(), e.format.c_str(), e.from, e.to);
+        for (const auto& n : e.notes) std::printf("    %s\n", n.c_str());
+    }
+    std::printf("%zu files scanned, %zu to migrate, %zu migrated, %zu errors\n", scan->scanned, scan->pending(),
+                static_cast<std::size_t>(std::count_if(scan->entries.begin(), scan->entries.end(), [](const auto& e) { return e.written; })),
+                scan->failures());
+    if (scan->failures()) return 1;
+    return scan->pending() ? 3 : 0;
+}
+
 int cmd_export(const std::vector<std::string>& a) {
     cli::Parser p("victus export", "Package a project into a runnable game folder (player + game/game.vpak)");
     p.positional("project", "project folder", true)
@@ -1229,6 +1257,7 @@ int main(int argc, char** argv) {
     if (cmd == "serve") return cmd_serve(args);
     if (cmd == "debug-adapter") return cmd_debug_adapter(args);
     if (cmd == "check") return cmd_check(args);
+    if (cmd == "migrate") return cmd_migrate(args);
     if (cmd == "plugins") return cmd_plugins(args);
     if (cmd == "export") return cmd_export(args);
     if (cmd == "diagnose") return cmd_diagnose(args);

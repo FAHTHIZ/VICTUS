@@ -26,6 +26,8 @@
 namespace victus::scene {
 
 inline constexpr int kPrefabFormatVersion = 1;
+// The versioned victus.prefab format and its migration chain (ADR-0100).
+[[nodiscard]] const migration::Format& prefab_format();
 inline constexpr std::string_view kPrefabExtension = ".vprefab";
 
 struct PrefabOverride {
@@ -46,6 +48,7 @@ struct PrefabPart {
 struct Prefab {
     std::string name{"Prefab"};
     json::Value entities = json::Value::array(); // snapshots, root first, parents before children
+    std::vector<std::string> migrations;         // what parse_prefab upgraded (ADR-0100); empty when current
 
     [[nodiscard]] Uuid root() const;
     [[nodiscard]] std::size_t size() const noexcept { return entities.size(); }
