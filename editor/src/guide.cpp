@@ -386,10 +386,13 @@ void Editor::dismiss_guide() {
 void Editor::run_guide_step(GuideStep step) {
     if (!project_) return;
     const bool editing = play_state_ == PlayState::Editing;
+    // 2D scenes get a sprite, 3D scenes a cube: something the user can see in the current view.
+    const Primitive starter =
+        runtime::scene_view_mode(*scene_) == runtime::ViewMode::TwoD ? Primitive::Sprite : Primitive::Cube;
     switch (step) {
     case GuideStep::AddObject: {
         if (!editing) stop();
-        const Entity e = create_entity(Primitive::Cube);
+        const Entity e = create_entity(starter);
         if (!e.is_null()) {
             select(e);
             frame_selected();
@@ -401,7 +404,7 @@ void Editor::run_guide_step(GuideStep step) {
         if (!editing) stop();
         Entity e = selected();
         if (e.is_null() || !scene_->world().get<Transform>(e)) {
-            e = create_entity(Primitive::Cube);
+            e = create_entity(starter);
             if (e.is_null()) return;
             select(e);
         }
@@ -437,7 +440,7 @@ void Editor::run_guide_step(GuideStep step) {
         if (!editing) stop();
         Entity e = selected();
         if (e.is_null() || !scene_->world().get<Transform>(e)) {
-            e = create_entity(Primitive::Cube);
+            e = create_entity(starter);
             if (e.is_null()) return;
             select(e);
         }
@@ -510,10 +513,17 @@ void Editor::draw_getting_started() {
         ImGui::PopFont();
         if (!ok) {
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w - line * 2.4f - tk::kSpace5);
-            ImGui::TextColored(tk::kTextMuted, "%s", kStepHow[idx]);
+            const bool two_d = scene_ && runtime::scene_view_mode(*scene_) == runtime::ViewMode::TwoD;
+            const char* how = kStepHow[idx];
+            const char* action = kStepAction[idx];
+            if (two_d && step == GuideStep::AddObject) {
+                how = "Use Entity > Sprite, the + Add button in the Hierarchy, or drag an image from Assets into the viewport.";
+                action = "Add a sprite for me";
+            }
+            ImGui::TextColored(tk::kTextMuted, "%s", how);
             ImGui::PopTextWrapPos();
             ImGui::Dummy(ImVec2(0, tk::kSpace1));
-            if (kit::icon_text_button(kStepAction[idx], kit::Icon::Rocket, next, project_.has_value())) run_guide_step(step);
+            if (kit::icon_text_button(action, kit::Icon::Rocket, next, project_.has_value())) run_guide_step(step);
         } else {
             ImGui::TextColored(tk::kSuccess, "Done");
         }

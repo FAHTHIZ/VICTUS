@@ -1638,3 +1638,8 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 
 - Built: `GameRules.carry_over` (default on). A Goal that loads another scene hands the score, lives left and elapsed time to that scene's Game Rules (time only when the new level has no time limit). Game over restarts the level with the score it was entered with and a full set of lives. Off: each level starts fresh.
 - Verified (Debug, -Werror): new behaviour test walks a player into a NextScene goal with score 7 and 2 lives, checks level 2 starts with 7, loses every life in lava, checks the restart brings back 7 with fresh lives, and checks carry_over off starts at 0; `victus_script_tests` and `victus_project_tests` pass.
+
+## 2026-11-19 — Getting Started makes sprites in 2D scenes
+
+- Built: in a 2D scene the first Getting Started step reads "Use Entity > Sprite..." and its button is "Add a sprite for me"; the step buttons that need an object create a sprite instead of a cube, so the new object is visible in the 2D view and "Add physics to it" gives it a 2D rigid body.
+- Verified (Debug, -Werror, lavapipe): new `victus_editor_tests` case on the 2d template (sprite, no mesh, RigidBody2D); visual check of the checklist wording.

@@ -893,6 +893,24 @@ TEST_CASE("studio guide: interface size, Getting Started steps, help search, und
     CHECK(ImGui::FindWindowByName("Project Settings") != nullptr);
 }
 
+TEST_CASE("studio guide: in a 2D scene the steps make a sprite with 2D physics") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Guide2D", "Guide2D", "2d").ok());
+    h.frames(2);
+    h.ed->run_guide_step(editor::GuideStep::AddObject);
+    h.frames(2); // the checklist draws its 2D wording
+    CHECK(h.ed->guide_done(editor::GuideStep::AddObject));
+    const scene::Entity e = h.ed->selected();
+    REQUIRE_FALSE(e.is_null());
+    CHECK(h.ed->edit_scene().world().get<scene::SpriteComponent>(e) != nullptr);
+    CHECK(h.ed->edit_scene().world().get<scene::MeshRendererComponent>(e) == nullptr);
+    h.ed->run_guide_step(editor::GuideStep::EditSetting);
+    h.frames(1);
+    CHECK(h.ed->edit_scene().world().get<physics::RigidBody2DComponent>(e) != nullptr);
+}
+
 TEST_CASE("studio ragdolls: Make Ragdoll on a Vanguard, behaviour buttons, undo, and the Ragdoll Lab") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;
