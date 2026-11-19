@@ -744,7 +744,9 @@ Result<std::vector<std::uint8_t>> Device::read_texture(TextureHandle h) {
     const std::uint32_t bpp = bytes_per_pixel(e->desc.format);
     if (bpp == 0) return make_error(ErrorCode::Unsupported, "readback of compressed formats is unsupported");
     auto* dev = static_cast<SDL_GPUDevice*>(device_);
-    const std::uint32_t size = e->desc.width * e->desc.height * bpp;
+    // 3D textures read back every slice (x fastest, then y, then z); other types read layer 0.
+    const std::uint32_t slices = e->desc.type == TextureType::Tex3D ? std::max(1u, e->desc.depth_or_layers) : 1u;
+    const std::uint32_t size = e->desc.width * e->desc.height * slices * bpp;
     SDL_GPUTransferBufferCreateInfo ti{SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD, size, 0};
     SDL_GPUTransferBuffer* tb = SDL_CreateGPUTransferBuffer(dev, &ti);
     if (!tb) return make_error(ErrorCode::DeviceError, SDL_GetError());
@@ -754,7 +756,7 @@ Result<std::vector<std::uint8_t>> Device::read_texture(TextureHandle h) {
     region.texture = e->tex;
     region.w = e->desc.width;
     region.h = e->desc.height;
-    region.d = 1;
+    region.d = slices;
     SDL_GPUTextureTransferInfo dst{};
     dst.transfer_buffer = tb;
     SDL_DownloadFromGPUTexture(cp, &region, &dst);
@@ -851,11 +853,42 @@ void CommandBuffer::upload_texture(TextureHandle texture, std::span<const std::u
         VICTUS_LOG_ERROR("rhi", "upload_texture: invalid handle");
         return;
     }
+    const TextureDesc& desc = entry->desc;
+    if (mip >= std::max(1u, desc.mip_levels)) {
+        VICTUS_LOG_ERROR("rhi", "upload_texture '{}': mip {} out of range", desc.name, mip);
+        return;
+    }
+    // 3D textures take the whole volume of the mip (x fastest, then y, then z) and have no layers.
+    const bool volume = desc.type == TextureType::Tex3D;
+    const std::uint32_t layers = desc.type == TextureType::Cube ? 6u : volume ? 1u : std::max(1u, desc.depth_or_layers);
+    if (layer >= layers) {
+        VICTUS_LOG_ERROR("rhi", "upload_texture '{}': layer {} out of range", desc.name, layer);
+        return;
+    }
+    const std::uint32_t w = std::max(1u, desc.width >> mip), h = std::max(1u, desc.height >> mip);
+    const std::uint32_t d = volume ? std::max(1u, std::max(1u, desc.depth_or_layers) >> mip) : 1u;
+    // Too little data would make the GPU read past the staging buffer; compressed formats are
+    // checked by their uploaders.
+    if (const std::uint32_t bpp = bytes_per_pixel(desc.format);
+        bpp > 0 && pixels.size() < static_cast<std::size_t>(w) * h * d * bpp) {
+        VICTUS_LOG_ERROR("rhi", "upload_texture '{}': {} bytes for a {}x{}x{} region", desc.name, pixels.size(), w, h, d);
+        return;
+    }
     auto* dev = static_cast<SDL_GPUDevice*>(device_->device_);
     const auto size = static_cast<std::uint32_t>(pixels.size());
+    if (size == 0) return;
     SDL_GPUTransferBufferCreateInfo ti{SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, size, 0};
     SDL_GPUTransferBuffer* tb = SDL_CreateGPUTransferBuffer(dev, &ti);
+    if (!tb) {
+        VICTUS_LOG_ERROR("rhi", "upload_texture '{}': {}", desc.name, SDL_GetError());
+        return;
+    }
     void* mapped = SDL_MapGPUTransferBuffer(dev, tb, false);
+    if (!mapped) {
+        VICTUS_LOG_ERROR("rhi", "upload_texture '{}': map failed: {}", desc.name, SDL_GetError());
+        SDL_ReleaseGPUTransferBuffer(dev, tb);
+        return;
+    }
     std::memcpy(mapped, pixels.data(), size);
     SDL_UnmapGPUTransferBuffer(dev, tb);
     SDL_GPUCopyPass* cp = SDL_BeginGPUCopyPass(static_cast<SDL_GPUCommandBuffer*>(cmd_));
@@ -865,9 +898,9 @@ void CommandBuffer::upload_texture(TextureHandle texture, std::span<const std::u
     dst.texture = entry->tex;
     dst.mip_level = mip;
     dst.layer = layer;
-    dst.w = std::max(1u, entry->desc.width >> mip);
-    dst.h = std::max(1u, entry->desc.height >> mip);
-    dst.d = 1;
+    dst.w = w;
+    dst.h = h;
+    dst.d = d;
     SDL_UploadToGPUTexture(cp, &src, &dst, false);
     SDL_EndGPUCopyPass(cp);
     SDL_ReleaseGPUTransferBuffer(dev, tb); // deferred by SDL until the command buffer completes
