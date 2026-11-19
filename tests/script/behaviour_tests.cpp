@@ -996,3 +996,31 @@ TEST_CASE("behaviours: Game Rules keeps the best score between sessions") {
     CHECK(play(0, fourth) == "Score 0 / 100   Best 9");
     std::filesystem::remove_all(saves);
 }
+
+TEST_CASE("behaviours: the HUD shows the player's health as a bar") {
+    Game g;
+    g.ground_2d({0, -0.5f}, {40, 1});
+    const Entity p = g.player_2d({0, 0.6f});
+    auto& hp = g.scene.world().add<HealthComponent>(p);
+    hp.max = hp.current = 4;
+    const Entity rules = g.scene.create("Rules");
+    g.scene.world().add<GameRulesComponent>(rules);
+    g.run(3);
+    const Entity back = g.scene.find_by_name("Health Bar");
+    REQUIRE_FALSE(back.is_null());
+    const Entity fill = g.scene.children(back).front();
+    CHECK(g.scene.world().get<gameui::UiRectComponent>(back)->visible);
+    CHECK(g.scene.world().get<gameui::UiRectComponent>(fill)->size.x == doctest::Approx(234));
+    g.scene.world().get<HealthComponent>(p)->current = 1;
+    g.run(1);
+    CHECK(g.scene.world().get<gameui::UiRectComponent>(fill)->size.x == doctest::Approx(58.5f));
+    CHECK(g.scene.world().get<gameui::UiPanelComponent>(fill)->color.r > 0.9f); // low health turns red
+    // One-hit players (the default Health of 1 is not worth a bar) and Health Bar off hide it.
+    g.scene.world().get<HealthComponent>(p)->max = 1;
+    g.run(1);
+    CHECK_FALSE(g.scene.world().get<gameui::UiRectComponent>(back)->visible);
+    g.scene.world().get<HealthComponent>(p)->max = 4;
+    g.scene.world().get<GameRulesComponent>(rules)->health_bar = false;
+    g.run(1);
+    CHECK_FALSE(g.scene.world().get<gameui::UiRectComponent>(back)->visible);
+}
