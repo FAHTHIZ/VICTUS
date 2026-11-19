@@ -53,7 +53,7 @@ Run one suite or one case: `./build/dev/bin/victus_physics_tests -tc="*character
 
 ~~~bash
 B=build/dev/bin
-$B/victus templates                          # 3d, 2d, simulation, multiplayer
+$B/victus templates                          # 3d, 2d, nocode, simulation, multiplayer
 $B/victus new MyGame --template 3d           # MyGame/victus.project, scenes/, assets/
 $B/victus run MyGame                         # play it in a window
 $B/victus check MyGame                       # validate scenes, scripts, shaders, trees, sequences

@@ -123,7 +123,7 @@ bool wants_help(const std::vector<std::string>& a) {
 int cmd_new(const std::vector<std::string>& a) {
     cli::Parser p("victus new", "Create a project from a template");
     p.positional("folder", "new project folder", true)
-        .option("template", "3d, 2d, simulation or multiplayer", "3d")
+        .option("template", "3d, 2d, nocode, simulation or multiplayer", "3d")
         .option("name", "project name (default: folder name)")
         .option("character", "starter character for 3d/multiplayer: v01, v02 or none", "v01");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;

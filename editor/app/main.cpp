@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // VICTUS Editor executable.
 //   victus_editor [project-folder]
-//   victus_editor --new <folder> [--template 3d|2d|simulation|multiplayer] [--name "My Game"]
+//   victus_editor --new <folder> [--template 3d|2d|nocode|simulation|multiplayer] [--name "My Game"]
 // Automation (CI, screenshots, docs):
 //   --frames N        exit after N frames
 //   --screenshot PNG  write the final frame
@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
     cli::Parser args("victus_editor", "VICTUS Editor");
     args.positional("project", "project folder to open")
         .option("new", "create a project in this folder, then open it")
-        .option("template", "template for --new (3d, 2d, simulation)", "3d")
+        .option("template", "template for --new (3d, 2d, nocode, simulation, multiplayer)", "3d")
         .option("name", "project name for --new (default: folder name)")
         .option("frames", "exit after N frames (0 = run until closed)", "0")
         .option("screenshot", "write the last frame to this PNG")
