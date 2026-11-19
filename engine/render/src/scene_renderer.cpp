@@ -404,6 +404,9 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.irradiance_volumes = false;
         s.dynamic_gi = false;
         s.volumetric_fog = false;
+        s.max_decals = 128;
+        s.max_water_surfaces = 4;
+        s.max_particles = 16384;
         break;
     case QualityTier::Medium:
         s.render_scale = 1.0f;
@@ -422,6 +425,9 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.local_shadow_tile = 256;
         s.dynamic_gi = false;
         s.volumetric_fog_slices = 48;
+        s.max_decals = 256;
+        s.max_water_surfaces = 8;
+        s.max_particles = 65536;
         break;
     case QualityTier::High: break; // struct defaults
     case QualityTier::Ultra:
@@ -436,6 +442,8 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.local_shadow_atlas = 4096;
         s.volumetric_fog_tile = 8;
         s.volumetric_fog_slices = 96;
+        s.max_decals = SceneRenderer::kMaxDecals;
+        s.max_particles = 1u << 20;
         break;
     }
     return s;
@@ -466,6 +474,9 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.local_shadow_tile = std::clamp(s.local_shadow_tile, std::max(64u, s.local_shadow_atlas / 8u), s.local_shadow_atlas);
     s.volumetric_fog_tile = std::clamp(s.volumetric_fog_tile, 4u, 64u);
     s.volumetric_fog_slices = std::clamp(s.volumetric_fog_slices, 16u, 128u);
+    s.max_decals = std::min(s.max_decals, SceneRenderer::kMaxDecals);
+    s.max_water_surfaces = std::min(s.max_water_surfaces, static_cast<std::uint32_t>(kMaxWaterSurfaces));
+    s.max_particles = std::min(s.max_particles, 1u << 24);
     return s;
 }
 
@@ -2081,6 +2092,31 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     }
     std::stable_sort(particle_draws.begin(), particle_draws.end(),
                      [](const ParticleBatch& a, const ParticleBatch& b) { return a.distance > b.distance; });
+    // CPU particle budget (ADR-0109): keep whole batches from the nearest; cut the nearest batch of
+    // billboards when it alone is over. GPU batches are budgeted by their emitter's capacity.
+    facts_.particle_batches_in_view = 0;
+    facts_.particles_in_view = 0;
+    {
+        std::uint64_t used = 0;
+        bool kept_any = false;
+        std::vector<ParticleBatch> kept;
+        kept.reserve(particle_draws.size());
+        for (auto it = particle_draws.rbegin(); it != particle_draws.rend(); ++it) {
+            ParticleBatch b = *it;
+            if (!b.buffer) {
+                ++facts_.particle_batches_in_view;
+                facts_.particles_in_view += b.count;
+                if (used + b.count > settings_.max_particles) {
+                    if (kept_any || b.ribbon || settings_.max_particles == 0) continue;
+                    b.count = settings_.max_particles; // nearest batch alone is over: draw part of it
+                }
+                used += b.count;
+                kept_any = true;
+            }
+            kept.push_back(b);
+        }
+        particle_draws.assign(kept.rbegin(), kept.rend());
+    }
     {
         const Vec3 fwd = camera_.forward();
         std::vector<std::pair<float, std::uint32_t>> order;
@@ -2116,10 +2152,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             candidates.emplace_back(length(world.center() - camera_.position), &d);
         }
         facts_.decals_in_view = static_cast<std::uint32_t>(candidates.size());
-        if (candidates.size() > kMaxDecals) {
-            std::nth_element(candidates.begin(), candidates.begin() + kMaxDecals, candidates.end(),
+        const std::size_t max_decals = settings_.max_decals;
+        if (candidates.size() > max_decals) {
+            std::nth_element(candidates.begin(), candidates.begin() + static_cast<std::ptrdiff_t>(max_decals), candidates.end(),
                              [](const auto& a, const auto& b) { return a.first < b.first; });
-            candidates.resize(kMaxDecals);
+            candidates.resize(max_decals);
         }
         std::stable_sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
             if (a.second->sort_order != b.second->sort_order) return a.second->sort_order < b.second->sort_order;
@@ -2145,7 +2182,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         }
         std::stable_sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
         facts_.water_in_view = static_cast<std::uint32_t>(candidates.size());
-        if (candidates.size() > kMaxWaterSurfaces) candidates.resize(kMaxWaterSurfaces);
+        if (candidates.size() > settings_.max_water_surfaces) candidates.resize(settings_.max_water_surfaces);
         for (auto it = candidates.rbegin(); it != candidates.rend(); ++it) water_draws.push_back(it->second);
     }
     stats_.water_surfaces = static_cast<std::uint32_t>(water_draws.size());
@@ -3398,10 +3435,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     facts_.instanced_draws = stats_.visible;
     facts_.decals_submitted = static_cast<std::uint32_t>(decals_.size());
     facts_.decals_drawn = stats_.decals;
-    facts_.decal_budget = kMaxDecals;
+    facts_.decal_budget = settings_.max_decals;
     facts_.water_submitted = static_cast<std::uint32_t>(waters_.size());
     facts_.water_drawn = stats_.water_surfaces;
-    facts_.water_budget = static_cast<std::uint32_t>(kMaxWaterSurfaces);
+    facts_.water_budget = settings_.max_water_surfaces;
+    facts_.particle_budget = settings_.max_particles;
     facts_.particle_batches_submitted = static_cast<std::uint32_t>(particle_batches_.size());
     facts_.particle_batches_drawn = stats_.particle_batches;
     facts_.particles_drawn = stats_.particles;

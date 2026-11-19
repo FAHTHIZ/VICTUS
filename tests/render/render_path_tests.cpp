@@ -198,3 +198,51 @@ TEST_CASE("render path: decals, water, particles and reflection probes") {
     CHECK(get(r, "gpu_particles").reason == PathReason::Unsupported);
     CHECK(r.reduced_summary().find("gpu_particles off (unsupported)") != std::string::npos);
 }
+
+TEST_CASE("render path: effect budgets scale with the tier and name the tier, a setting or the budget") {
+    const RenderSettings low = RenderSettings::preset(QualityTier::Low);
+    CHECK(low.max_decals == 128);
+    CHECK(low.max_water_surfaces == 4);
+    CHECK(low.max_particles == 16384);
+    CHECK(RenderSettings::preset(QualityTier::Medium).max_decals == 256);
+    CHECK(RenderSettings::preset(QualityTier::High).max_particles == 262144);
+    const RenderSettings ultra = RenderSettings::preset(QualityTier::Ultra);
+    CHECK(ultra.max_decals == SceneRenderer::kMaxDecals);
+    CHECK(ultra.max_water_surfaces == kMaxWaterSurfaces);
+    RenderSettings over = ultra;
+    over.max_decals = 5000;
+    over.max_water_surfaces = 99;
+    CHECK(over.sanitized().max_decals == SceneRenderer::kMaxDecals);
+    CHECK(over.sanitized().max_water_surfaces == kMaxWaterSurfaces);
+
+    RenderPathFacts f = full_frame();
+    f.decals_submitted = f.decals_in_view = 300;
+    f.decals_drawn = 128;
+    f.decal_budget = 128;
+    f.water_submitted = f.water_in_view = 6;
+    f.water_drawn = f.water_budget = 4;
+    f.particle_batches_submitted = f.particle_batches_in_view = 3;
+    f.particles_in_view = 30000;
+    f.particle_batches_drawn = 2;
+    f.particles_drawn = 12000;
+    f.particle_budget = 16384;
+    auto r = describe_render_path(low, f);
+    CHECK(get(r, "decals").reason == PathReason::QualityTier);
+    CHECK(get(r, "decals").detail == "nearest 128 of 300 decals in view (max 128)");
+    CHECK(get(r, "water").reason == PathReason::QualityTier);
+    CHECK(get(r, "particles").state == PathState::Reduced);
+    CHECK(get(r, "particles").reason == PathReason::QualityTier);
+    CHECK(get(r, "particles").detail == "12000 particles in 2 batches; nearest 12000 of 30000 CPU particles in view (max_particles 16384)");
+    CHECK(r.reduced_summary().find("decals (quality_tier), water (quality_tier), particles (quality_tier)") != std::string::npos);
+
+    // Lowered by hand on High: a setting. Ultra cannot hold them all: the budget.
+    RenderSettings high = RenderSettings::preset(QualityTier::High);
+    high.max_decals = 128;
+    CHECK(get(describe_render_path(high, f), "decals").reason == PathReason::Setting);
+    f.decals_in_view = 1500;
+    f.decals_drawn = f.decal_budget = 1024;
+    CHECK(get(describe_render_path(ultra, f), "decals").reason == PathReason::Budget);
+    // Everything fits: active, whatever the tier.
+    f.particles_in_view = 12000;
+    CHECK(get(describe_render_path(low, f), "particles").state == PathState::Active);
+}

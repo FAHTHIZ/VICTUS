@@ -822,3 +822,73 @@ TEST_CASE("gpu particles: alpha-blended GPU emitters are depth sorted on the GPU
     CHECK(r.stats().gpu_particles > 0);
     dev.destroy(target);
 }
+
+TEST_CASE("gpu particles: effect budgets keep the nearest particle batches, decals and water surfaces") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    const auto cloud = [](float z) {
+        std::vector<ParticleInstance> ps;
+        for (int i = 0; i < 100; ++i) ps.push_back(particle({static_cast<float>(i % 10) * 0.1f - 0.5f, static_cast<float>(i / 10) * 0.1f - 0.5f, z}, 0.1f, {1, 1, 1, 0.5f}));
+        return ps;
+    };
+    const auto near_c = cloud(2), mid_c = cloud(0), far_c = cloud(-3);
+    const auto frame = [&](RenderSettings s) {
+        r.set_settings(s);
+        DirectionalLight sun;
+        sun.intensity = 0;
+        r.begin(Camera3D::look_at({0, 0, 5}, {0, 0, 0}), sun, Environment{});
+        for (const auto* c : {&far_c, &near_c, &mid_c}) submit(r, *c, ParticleBlend::Alpha);
+        for (int i = 0; i < 6; ++i) {
+            Decal d;
+            d.transform = math::Mat4::trs({0, 0, static_cast<float>(-i)}, {}, {1, 1, 1});
+            r.add_decal(d);
+        }
+        for (int i = 0; i < 3; ++i) {
+            WaterSurface w;
+            w.center = {0, -1, static_cast<float>(-4 * i)};
+            w.half_extent = {1, 1};
+            w.resolution = 8;
+            r.add_water(w);
+        }
+        auto target = test::make_target(W, H);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        dev.destroy(target);
+    };
+    RenderSettings s = RenderSettings::preset(QualityTier::Medium);
+    frame(s);
+    CHECK(r.stats().particles == 300);
+    CHECK(r.stats().decals == 6);
+    CHECK(r.stats().water_surfaces == 3);
+    for (const char* n : {"particles", "decals", "water"}) CHECK_MESSAGE(r.path_report().find(n)->state == PathState::Active, n);
+
+    s.max_particles = 150; // the nearest batch fits, the next one would not: whole batches only
+    s.max_decals = 2;
+    s.max_water_surfaces = 1;
+    frame(s);
+    CHECK(r.stats().particle_batches == 1);
+    CHECK(r.stats().particles == 100);
+    CHECK(r.stats().decals == 2);
+    CHECK(r.stats().water_surfaces == 1);
+    const RenderPathReport rep = r.path_report();
+    for (const char* n : {"particles", "decals", "water"}) {
+        CHECK_MESSAGE(rep.find(n)->state == PathState::Reduced, n);
+        CHECK_MESSAGE(rep.find(n)->reason == PathReason::Setting, n);
+    }
+    CHECK(rep.find("particles")->detail == "100 particles in 1 batch; nearest 100 of 300 CPU particles in view (max_particles 150)");
+
+    s.max_particles = 40; // the nearest batch alone is over: it is cut
+    frame(s);
+    CHECK(r.stats().particle_batches == 1);
+    CHECK(r.stats().particles == 40);
+
+    // The Low preset: everything here fits its budgets, so nothing is reported as cut.
+    frame(RenderSettings::preset(QualityTier::Low));
+    CHECK(r.stats().particles == 300);
+    CHECK(r.path_report().find("particles")->state == PathState::Active);
+}

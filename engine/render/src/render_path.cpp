@@ -198,19 +198,23 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
             std::format("{}x{}x{} froxels", f.fog_x, f.fog_y, f.fog_slices));
     }
 
-    // Surface and effect passes. None of them is scaled by the quality tier today, so the reasons
-    // are scene content, view culling and the fixed per-frame budgets.
+    // Surface and effect passes. Their per-frame budgets come from the tier (ADR-0109): a cut is
+    // attributed to the tier when the budget matches its preset, to a setting when it was lowered
+    // by hand, and to the budget itself when even the Ultra reference cannot hold everything.
+    const auto cut = [&](std::uint32_t value, std::uint32_t preset, std::uint32_t reference) {
+        return value >= reference ? PathReason::Budget : by(value == preset);
+    };
     if (f.decals_submitted == 0) add("decals", PathState::Off, PathReason::Scene, "no decals in the scene");
     else if (f.decals_in_view == 0) add("decals", PathState::Off, PathReason::NotNeeded, std::format("{} outside the view", count(f.decals_submitted, "decal", "decals")));
     else if (f.decals_drawn < f.decals_in_view)
-        add("decals", PathState::Reduced, PathReason::Budget,
+        add("decals", PathState::Reduced, cut(S.max_decals, tier.max_decals, ref.max_decals),
             std::format("nearest {} of {} decals in view (max {})", f.decals_drawn, f.decals_in_view, f.decal_budget));
     else add("decals", PathState::Active, PathReason::None, std::format("{} of {} in view", f.decals_drawn, f.decals_submitted));
 
     if (f.water_submitted == 0) add("water", PathState::Off, PathReason::Scene, "no water surfaces in the scene");
     else if (f.water_in_view == 0) add("water", PathState::Off, PathReason::NotNeeded, std::format("{} outside the view", count(f.water_submitted, "surface", "surfaces")));
     else if (f.water_drawn < f.water_in_view)
-        add("water", PathState::Reduced, PathReason::Budget,
+        add("water", PathState::Reduced, cut(S.max_water_surfaces, tier.max_water_surfaces, ref.max_water_surfaces),
             std::format("nearest {} of {} surfaces in view (max {})", f.water_drawn, f.water_in_view, f.water_budget));
     else add("water", PathState::Active, PathReason::None, std::format("{}, refraction from the opaque scene", count(f.water_drawn, "surface", "surfaces")));
 
@@ -218,10 +222,16 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
     if (emitters == 0) add("particles", PathState::Off, PathReason::Scene, "no particle emitters in the scene");
     else if (f.particle_batches_drawn == 0 && f.gpu_emitters_submitted == 0)
         add("particles", PathState::Off, PathReason::NotNeeded, std::format("{} outside the view", count(f.particle_batches_submitted, "batch", "batches")));
-    else
-        add("particles", PathState::Active, PathReason::None,
+    else {
+        const std::uint32_t cpu_drawn = f.particles_drawn - std::min(f.particles_drawn, f.gpu_particles) + f.ribbon_vertices;
+        const std::string d =
             std::format("{} in {}{}", count(f.particles_drawn, "particle", "particles"), count(f.particle_batches_drawn, "batch", "batches"),
-                        f.ribbon_vertices > 0 ? std::format(", {} ribbon vertices", f.ribbon_vertices) : std::string{}));
+                        f.ribbon_vertices > 0 ? std::format(", {} ribbon vertices", f.ribbon_vertices) : std::string{});
+        if (cpu_drawn < f.particles_in_view)
+            add("particles", PathState::Reduced, cut(S.max_particles, tier.max_particles, ref.max_particles),
+                std::format("{}; nearest {} of {} CPU particles in view (max_particles {})", d, cpu_drawn, f.particles_in_view, f.particle_budget));
+        else add("particles", PathState::Active, PathReason::None, d);
+    }
     if (f.gpu_emitters_submitted == 0) add("gpu_particles", PathState::Off, PathReason::Scene, "no GPU emitters");
     else if (!f.compute) add("gpu_particles", PathState::Off, PathReason::Unsupported, "needs compute shaders; GPU emitters are not drawn");
     else if (f.gpu_emitters_simulated < f.gpu_emitters_submitted)
