@@ -418,8 +418,9 @@ void Editor::record_edit(std::string label, std::vector<EntityState> before) {
 Entity Editor::create_entity(Primitive kind, Entity parent) {
     Scene& s = active_scene();
     static constexpr const char* kNames[] = {"Entity", "Cube", "Sphere", "Plane", "Cylinder", "Camera",
-                                             "Directional Light", "Point Light", "Spot Light", "Sprite", "Decal", "2D Light"};
-    static_assert(std::size(kNames) == static_cast<std::size_t>(Primitive::Light2D) + 1, "one name per Primitive");
+                                             "Directional Light", "Point Light", "Spot Light", "Sprite", "Decal", "2D Light",
+                                             "Fog Volume"};
+    static_assert(std::size(kNames) == static_cast<std::size_t>(Primitive::FogVolume) + 1, "one name per Primitive");
     const Entity e = s.create(kNames[static_cast<int>(kind)], parent);
     auto& w = s.world();
     // Place new objects in front of the editor camera focus.
@@ -466,6 +467,7 @@ Entity Editor::create_entity(Primitive kind, Entity parent) {
         break;
     }
     case Primitive::Light2D: w.add<gameplay::Light2DComponent>(e); break;
+    case Primitive::FogVolume: w.add<gameplay::FogVolumeComponent>(e); break;
     }
     s.update_transforms();
     const Uuid id = s.uuid(e);
@@ -841,6 +843,8 @@ math::Aabb Editor::entity_bounds(Entity e, bool* has_mesh) {
     } else if (const auto* dc = s.world().get<gameplay::DecalComponent>(e)) {
         // The projection box (outlined when selected); not pickable, it would cover the surfaces it decorates.
         local = {dc->size * -0.5f, dc->size * 0.5f};
+    } else if (const auto* fv = s.world().get<gameplay::FogVolumeComponent>(e)) {
+        local = {fv->size * -0.5f, fv->size * 0.5f}; // the fog box (outlined when selected)
     } else {
         local = {{-0.25f, -0.25f, -0.25f}, {0.25f, 0.25f, 0.25f}};
     }

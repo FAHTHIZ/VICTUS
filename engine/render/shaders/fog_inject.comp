@@ -1,0 +1,209 @@
+#version 450
+// SPDX-License-Identifier: Apache-2.0
+// Volumetric fog, pass 1 of 3 (ADR-0098): density and in-scattered light per froxel.
+// The grid is aligned with the camera: x/y follow the render target (y down), z is view depth with
+// a quadratic distribution (depth = far * t^2) so near slices are thin. Each froxel is evaluated at
+// a per-frame jittered depth inside its slice, then blended with its reprojected previous value.
+// Output: vec4(sigma_s * L_in, sigma_t) per froxel (in-scattered radiance per metre, extinction).
+// Bindings follow SDL_GPU compute conventions (see particle_sim.comp).
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+struct LocalLight { vec4 position_range; vec4 color_intensity; vec4 direction_cos_outer; vec4 spot; };
+
+layout(set = 0, binding = 0) uniform sampler2DShadow u_shadow;
+layout(set = 0, binding = 1) uniform sampler2DShadow u_local_shadow;
+#ifdef VICTUS_MSL
+layout(std430, set = 0, binding = 1) readonly buffer Lights { LocalLight local_lights[]; };
+layout(std430, set = 0, binding = 2) readonly buffer Clusters { uint cluster_data[]; };
+layout(std430, set = 0, binding = 3) readonly buffer History { vec4 history[]; };
+layout(std430, set = 1, binding = 4) buffer Froxels { vec4 froxels[]; };
+#else
+layout(std430, set = 0, binding = 2) readonly buffer Lights { LocalLight local_lights[]; };
+layout(std430, set = 0, binding = 3) readonly buffer Clusters { uint cluster_data[]; };
+layout(std430, set = 0, binding = 4) readonly buffer History { vec4 history[]; };
+layout(std430, set = 1, binding = 0) buffer Froxels { vec4 froxels[]; };
+#endif
+
+#define MAX_VOLUMES 8
+layout(std140, set = 2, binding = 0) uniform Params {
+    mat4 inv_view_proj;    // unjittered camera clip -> world
+    mat4 prev_view_proj;   // last fog frame's unjittered view-projection
+    mat4 cascade_vp[4];
+    vec4 camera_pos;       // xyz, w: grid far distance (view depth)
+    vec4 camera_forward;   // xyz, w: depth jitter inside the slice (0..1)
+    vec4 prev_camera_pos;  // xyz, w: history valid
+    vec4 prev_camera_forward; // xyz, w: history weight
+    vec4 grid;             // xyz froxels, w: fog volume count
+    vec4 sun_dir;          // xyz direction light travels, w: shadows enabled
+    vec4 sun_color;        // rgb irradiance * fog sun scale
+    vec4 ambient;          // rgb ambient radiance * fog ambient scale, w: local light scale
+    vec4 albedo;           // rgb, w: anisotropy g
+    vec4 height_fog;       // x density, y falloff, z base height, w: local light count
+    vec4 shadow_params;    // as in pbr.frag
+    vec4 cascade_params;
+    vec4 cascade_splits;
+    vec4 cluster_grid;
+    vec4 cluster_depth;
+    vec4 local_shadow;
+    vec4 volumes[MAX_VOLUMES * 5]; // per volume: 3 rows world -> unit box, (albedo, density), (edge fade)
+} u;
+
+const float kPi = 3.14159265358979;
+
+float hg_phase(float cos_theta, float g) {
+    float g2 = g * g;
+    float d = max(1.0 + g2 - 2.0 * g * cos_theta, 1e-4);
+    return (1.0 - g2) / (4.0 * kPi * d * sqrt(d));
+}
+
+vec3 world_at(vec2 uv, float depth, out vec3 dir) {
+    vec4 f = u.inv_view_proj * vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 1.0, 1.0);
+    dir = normalize(f.xyz / f.w - u.camera_pos.xyz);
+    return u.camera_pos.xyz + dir * (depth / max(dot(dir, u.camera_forward.xyz), 1e-4));
+}
+
+float sun_shadow(vec3 p, float depth) {
+    if (u.sun_dir.w < 0.5) return 1.0;
+    int count = int(u.shadow_params.w);
+    int c = 0;
+    while (c < count - 1 && depth > u.cascade_splits[c]) ++c;
+    float far_d = u.cascade_splits[c];
+    if (depth > far_d) return 1.0;
+    vec4 p4 = u.cascade_vp[c] * vec4(p, 1.0);
+    vec3 q = p4.xyz / p4.w;
+    if (q.z > 1.0) return 1.0;
+    vec2 uv = q.xy * vec2(0.5, -0.5) + 0.5;
+    float tile = u.cascade_params.y;
+    vec2 origin = vec2(float(c & 1), float(c >> 1)) * tile;
+    float texel = u.shadow_params.x;
+    vec2 auv = clamp(origin + uv * tile, origin + vec2(texel), origin + vec2(tile - texel));
+    float s = texture(u_shadow, vec3(auv, q.z - u.shadow_params.y));
+    if (c == count - 1) {
+        float near_d = c == 0 ? 0.0 : u.cascade_splits[c - 1];
+        float t = (depth - near_d) / max(far_d - near_d, 1e-4);
+        s = mix(1.0, s, clamp((1.0 - t) / max(u.cascade_params.z, 1e-4), 0.0, 1.0));
+    }
+    return s;
+}
+
+float local_shadow(LocalLight l, vec3 Ld, vec3 p) {
+    if (u.local_shadow.w < 0.5 || l.spot.z < 0.5) return 1.0;
+    int tile = int(l.spot.z + 0.5) - 1;
+    if (l.spot.y < 0.5) {
+        vec3 d = -Ld;
+        vec3 a = abs(d);
+        tile += (a.x >= a.y && a.x >= a.z) ? (d.x >= 0.0 ? 0 : 1) : (a.y >= a.z ? (d.y >= 0.0 ? 2 : 3) : (d.z >= 0.0 ? 4 : 5));
+    }
+    LocalLight m = local_lights[uint(u.local_shadow.z) + uint(tile)];
+    mat4 M = mat4(m.position_range, m.color_intensity, m.direction_cos_outer, m.spot);
+    vec4 p4 = M * vec4(p, 1.0);
+    if (p4.w <= 1e-5) return 1.0;
+    vec3 q = p4.xyz / p4.w;
+    if (q.z >= 1.0) return 1.0;
+    float n = u.local_shadow.y;
+    float scale = 1.0 / n;
+    vec2 origin = vec2(mod(float(tile), n), floor(float(tile) / n)) * scale;
+    float texel = u.local_shadow.x;
+    vec2 auv = clamp(q.xy, origin + vec2(texel), origin + vec2(scale - texel));
+    return texture(u_local_shadow, vec3(auv, q.z));
+}
+
+uint index_of(uvec3 c) {
+    uvec3 g = uvec3(u.grid.xyz);
+    return (c.z * g.y + c.y) * g.x + c.x;
+}
+
+// Trilinear history fetch at continuous froxel coordinate f (centres at integer + 0.5).
+vec4 fetch_history(vec3 f) {
+    vec3 g = u.grid.xyz;
+    vec3 x = clamp(f - 0.5, vec3(0.0), g - 1.0);
+    uvec3 a = uvec3(floor(x));
+    uvec3 b = min(a + 1u, uvec3(g) - 1u);
+    vec3 w = x - vec3(a);
+    vec4 c00 = mix(history[index_of(uvec3(a.x, a.y, a.z))], history[index_of(uvec3(b.x, a.y, a.z))], w.x);
+    vec4 c10 = mix(history[index_of(uvec3(a.x, b.y, a.z))], history[index_of(uvec3(b.x, b.y, a.z))], w.x);
+    vec4 c01 = mix(history[index_of(uvec3(a.x, a.y, b.z))], history[index_of(uvec3(b.x, a.y, b.z))], w.x);
+    vec4 c11 = mix(history[index_of(uvec3(a.x, b.y, b.z))], history[index_of(uvec3(b.x, b.y, b.z))], w.x);
+    return mix(mix(c00, c10, w.y), mix(c01, c11, w.y), w.z);
+}
+
+void main() {
+    uvec3 id = gl_GlobalInvocationID;
+    uvec3 g = uvec3(u.grid.xyz);
+    if (any(greaterThanEqual(id, g))) return;
+    float far_d = u.camera_pos.w;
+    vec2 uv = (vec2(id.xy) + 0.5) / vec2(g.xy);
+    float t = (float(id.z) + u.camera_forward.w) / float(g.z);
+    float depth = far_d * t * t;
+    vec3 dir;
+    vec3 p = world_at(uv, depth, dir);
+
+    // Density: exponential height fog (uniform below its base height) plus fog volumes.
+    float ext = u.height_fog.x;
+    if (u.height_fog.y > 0.0) ext *= exp(-u.height_fog.y * max(p.y - u.height_fog.z, 0.0));
+    vec3 scat = u.albedo.rgb * ext;
+    int volumes = int(u.grid.w);
+    for (int i = 0; i < volumes; ++i) {
+        vec4 hp = vec4(p, 1.0);
+        vec3 l = vec3(dot(u.volumes[i * 5], hp), dot(u.volumes[i * 5 + 1], hp), dot(u.volumes[i * 5 + 2], hp));
+        vec3 a = 0.5 - abs(l);
+        float inside = min(a.x, min(a.y, a.z));
+        if (inside <= 0.0) continue;
+        float w = clamp(inside / max(u.volumes[i * 5 + 4].x, 1e-4), 0.0, 1.0);
+        float dv = u.volumes[i * 5 + 3].w * w;
+        ext += dv;
+        scat += u.volumes[i * 5 + 3].rgb * dv;
+    }
+
+    vec4 result = vec4(0.0);
+    if (ext > 0.0) {
+        float g_aniso = u.albedo.w;
+        vec3 light = u.ambient.rgb; // isotropic phase over a uniform sky gives its radiance
+        if (dot(u.sun_color.rgb, vec3(1.0)) > 0.0)
+            light += u.sun_color.rgb * hg_phase(dot(u.sun_dir.xyz, -dir), g_aniso) * sun_shadow(p, depth);
+        if (u.height_fog.w > 0.5 && u.ambient.w > 0.0) {
+            vec3 cg = u.cluster_grid.xyz;
+            vec2 tile = clamp(floor(uv * cg.xy), vec2(0.0), cg.xy - 1.0);
+            float vd = max(depth, u.cluster_depth.x);
+            float slice = clamp(floor(log(vd / u.cluster_depth.x) * u.cluster_depth.y), 0.0, cg.z - 1.0);
+            uint cluster = uint((slice * cg.y + tile.y) * cg.x + tile.x);
+            uint first = cluster_data[2u * cluster], count = min(cluster_data[2u * cluster + 1u], uint(u.cluster_grid.w));
+            vec3 local = vec3(0.0);
+            for (uint i = 0u; i < count; ++i) {
+                LocalLight l = local_lights[cluster_data[first + i]];
+                vec3 to_light = l.position_range.xyz - p;
+                float dist = length(to_light);
+                float falloff = clamp(1.0 - pow(dist / l.position_range.w, 4.0), 0.0, 1.0);
+                float atten = falloff * falloff / (dist * dist + 1.0);
+                vec3 Ld = to_light / max(dist, 1e-4);
+                if (l.spot.y > 0.5) {
+                    float cd = dot(-Ld, l.direction_cos_outer.xyz);
+                    float s = clamp((cd - l.direction_cos_outer.w) / max(l.spot.x - l.direction_cos_outer.w, 1e-4), 0.0, 1.0);
+                    atten *= s * s;
+                }
+                if (atten <= 0.0) continue;
+                atten *= local_shadow(l, Ld, p);
+                if (atten <= 0.0) continue;
+                local += l.color_intensity.rgb * (l.color_intensity.w * atten * hg_phase(dot(Ld, dir), g_aniso));
+            }
+            light += local * u.ambient.w;
+        }
+        result = vec4(scat * light, ext);
+    }
+
+    // Temporal reprojection of the froxel centre into last frame's grid.
+    if (u.prev_camera_pos.w > 0.5) {
+        float tc = (float(id.z) + 0.5) / float(g.z);
+        vec3 unused;
+        vec3 pc = world_at(uv, far_d * tc * tc, unused);
+        vec4 clip = u.prev_view_proj * vec4(pc, 1.0);
+        float pd = dot(pc - u.prev_camera_pos.xyz, u.prev_camera_forward.xyz);
+        if (clip.w > 1e-4 && pd > 0.0) {
+            vec2 puv = clip.xy / clip.w * vec2(0.5, -0.5) + 0.5;
+            float pt = sqrt(pd / far_d);
+            if (all(greaterThanEqual(puv, vec2(0.0))) && all(lessThanEqual(puv, vec2(1.0))) && pt <= 1.0)
+                result = mix(result, fetch_history(vec3(puv * vec2(g.xy), pt * float(g.z))), u.prev_camera_forward.w);
+        }
+    }
+    froxels[index_of(id)] = result;
+}

@@ -192,6 +192,25 @@ void register_components() {
             .field(&E::atmosphere_haze, "atmosphere_haze", {.min = 0, .max = 50, .speed = 0.05f, .tooltip = "Aerosol density (1 = clear): whiter sky, larger sun halo"})
             .field(&E::atmosphere_intensity, "atmosphere_intensity", {.min = 0, .max = 64, .speed = 0.01f, .tooltip = "Sky and ambient brightness relative to the sun"})
             .field(&E::atmosphere_tints_sun, "atmosphere_tints_sun", {.tooltip = "Colour the sun light by the atmosphere (warm, dim sunsets)"})
+            .field(&E::volumetric_fog, "volumetric_fog", {.label = "Volumetric Fog", .tooltip = "Lit, shadowed fog with light shafts (off on the Low quality tier)"})
+            .field(&E::volumetric_density, "volumetric_density", {.min = 0, .max = 2, .speed = 0.001f, .tooltip = "Extinction per metre at and below the fog height"})
+            .field(&E::volumetric_height, "volumetric_height", {.min = -10000, .max = 10000, .speed = 0.1f, .tooltip = "World height where the fog starts thinning"})
+            .field(&E::volumetric_falloff, "volumetric_falloff", {.min = 0, .max = 10, .speed = 0.005f, .tooltip = "Thinning per metre above the fog height (0 = uniform)"})
+            .field(&E::volumetric_albedo, "volumetric_albedo", {.tooltip = "Scattered fraction of the light the fog absorbs (colour of lit fog)"})
+            .field(&E::volumetric_anisotropy, "volumetric_anisotropy", {.min = -0.95f, .max = 0.95f, .speed = 0.01f, .tooltip = "0 scatters evenly, towards 1 glows around lights seen through the fog"})
+            .field(&E::volumetric_distance, "volumetric_distance", {.min = 8, .max = 1000, .speed = 0.5f, .tooltip = "Metres of view depth the fog covers"})
+            .field(&E::volumetric_sun, "volumetric_sun", {.min = 0, .max = 16, .speed = 0.01f, .tooltip = "Sun light scattered by the fog"})
+            .field(&E::volumetric_ambient, "volumetric_ambient", {.min = 0, .max = 16, .speed = 0.01f, .tooltip = "Sky light scattered by the fog"})
+            .field(&E::volumetric_local_lights, "volumetric_local_lights", {.min = 0, .max = 16, .speed = 0.01f, .tooltip = "Point and spot light scattered by the fog"})
+            .field(&E::volumetric_temporal, "volumetric_temporal", {.min = 0, .max = 0.98f, .speed = 0.01f, .tooltip = "Blend with previous frames: smoother but slower to react"})
+            .commit();
+        using FV = FogVolumeComponent;
+        scene::Schema<FV>("FogVolume", "Rendering")
+            .field(&FV::size, "size", {.min = 0.01f, .max = 10000, .speed = 0.05f, .tooltip = "Box size in metres (scaled by the entity)"})
+            .field(&FV::density, "density", {.min = 0, .max = 10, .speed = 0.005f, .tooltip = "Extinction per metre added inside the box"})
+            .field(&FV::albedo, "albedo", {.tooltip = "Colour of the light the box scatters"})
+            .field(&FV::edge_fade, "edge_fade", {.min = 0, .max = 0.5f, .speed = 0.005f, .tooltip = "Soft edge width as a fraction of the box size"})
+            .field(&FV::visible, "visible")
             .commit();
     });
 }

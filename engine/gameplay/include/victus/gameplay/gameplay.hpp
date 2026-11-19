@@ -281,6 +281,28 @@ struct EnvironmentComponent {
     float atmosphere_haze{1.0f};      // Mie (aerosol) density, 1 = clear day
     float atmosphere_intensity{1.0f}; // brightness of sky and IBL relative to the sun
     bool atmosphere_tints_sun{true};  // sun light colour = atmospheric transmittance (red sunsets)
+    // Volumetric fog (ADR-0098): lit, shadowed height fog in a froxel grid (render::VolumetricFog).
+    bool volumetric_fog{false};
+    float volumetric_density{0.02f};       // extinction per metre at and below volumetric_height
+    float volumetric_height{0.0f};         // world height where the falloff starts
+    float volumetric_falloff{0.1f};        // per metre above it (0 = uniform)
+    math::Color volumetric_albedo{1, 1, 1, 1};
+    float volumetric_anisotropy{0.6f};     // forward scattering (glow towards lights)
+    float volumetric_distance{80.0f};      // metres covered
+    float volumetric_sun{1.0f};            // light source multipliers
+    float volumetric_ambient{1.0f};
+    float volumetric_local_lights{1.0f};
+    float volumetric_temporal{0.9f};       // history weight (0 = no temporal filtering)
+};
+
+// Box of extra volumetric fog centred on the entity (ADR-0098), size scaled by the entity's
+// transform; only visible while the scene's Environment has volumetric_fog on.
+struct FogVolumeComponent {
+    math::Vec3 size{4.0f, 4.0f, 4.0f}; // metres
+    float density{0.1f};               // extinction per metre added inside
+    math::Color albedo{1, 1, 1, 1};
+    float edge_fade{0.1f};             // fade width as a fraction of the size (0 hard .. 0.5)
+    bool visible{true};
 };
 
 // Local reflection probe: captures the scene around the entity once (and again when moved or

@@ -348,6 +348,7 @@ struct ExtractStats {
     std::uint32_t particle_trails{0};                 // ribbon strips submitted
     std::uint32_t decals{0}; // visible decal components submitted (before camera culling)
     std::uint32_t water_surfaces{0}; // visible water volumes submitted (before camera culling)
+    std::uint32_t fog_volumes{0};    // visible fog volumes submitted (ADR-0098; before camera culling)
     std::uint32_t loading_assets{0}; // references skipped because their asset is still loading (async)
     bool camera_found{false};
 };
