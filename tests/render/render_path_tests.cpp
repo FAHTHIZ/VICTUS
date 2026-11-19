@@ -246,3 +246,40 @@ TEST_CASE("render path: effect budgets scale with the tier and name the tier, a 
     f.particles_in_view = 12000;
     CHECK(get(describe_render_path(low, f), "particles").state == PathState::Active);
 }
+
+TEST_CASE("render path: volumetric clouds follow the scene, tier and settings (ADR-0111)") {
+    RenderPathFacts f = full_frame();
+    auto r = describe_render_path(RenderSettings::preset(QualityTier::Ultra), f);
+    CHECK(get(r, "volumetric_clouds").reason == PathReason::Scene);
+    f.clouds_requested = f.clouds = true;
+    f.cloud_width = 640;
+    f.cloud_height = 360;
+    f.cloud_steps = 64;
+    r = describe_render_path(RenderSettings::preset(QualityTier::Ultra), f);
+    CHECK(get(r, "volumetric_clouds").state == PathState::Active);
+    CHECK(get(r, "volumetric_clouds").detail == "640x360, 64 steps");
+    r = describe_render_path(RenderSettings::preset(QualityTier::Medium), f);
+    CHECK(get(r, "volumetric_clouds").state == PathState::Reduced);
+    CHECK(get(r, "volumetric_clouds").reason == PathReason::QualityTier);
+    RenderSettings fewer = RenderSettings::preset(QualityTier::High);
+    fewer.cloud_steps = 16;
+    r = describe_render_path(fewer, f);
+    CHECK(get(r, "volumetric_clouds").reason == PathReason::Setting);
+    f.clouds = false;
+    r = describe_render_path(RenderSettings::preset(QualityTier::Low), f);
+    CHECK(get(r, "volumetric_clouds").state == PathState::Off);
+    CHECK(get(r, "volumetric_clouds").reason == PathReason::QualityTier);
+    f.capture_mode = true;
+    r = describe_render_path(RenderSettings::preset(QualityTier::Ultra), f);
+    CHECK(get(r, "volumetric_clouds").reason == PathReason::CaptureMode);
+    const RenderSettings wild = [] {
+        RenderSettings s;
+        s.cloud_downsample = 0;
+        s.cloud_steps = 1000;
+        s.cloud_light_steps = 0;
+        return s.sanitized();
+    }();
+    CHECK(wild.cloud_downsample == 1);
+    CHECK(wild.cloud_steps == 128);
+    CHECK(wild.cloud_light_steps == 1);
+}

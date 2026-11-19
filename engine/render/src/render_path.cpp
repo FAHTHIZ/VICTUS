@@ -198,6 +198,19 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
             std::format("{}x{}x{} froxels", f.fog_x, f.fog_y, f.fog_slices));
     }
 
+    if (!f.clouds_requested) add("volumetric_clouds", PathState::Off, PathReason::Scene, "no cloud layer");
+    else if (f.capture_mode) add("volumetric_clouds", PathState::Off, PathReason::CaptureMode, "");
+    else if (!S.volumetric_clouds) add("volumetric_clouds", PathState::Off, by(S.volumetric_clouds == tier.volumetric_clouds), "");
+    else if (!f.clouds) add("volumetric_clouds", PathState::Off, PathReason::Unsupported, "cloud pipelines unavailable");
+    else {
+        const bool reduced = S.cloud_downsample > ref.cloud_downsample || S.cloud_steps < ref.cloud_steps ||
+                             S.cloud_light_steps < ref.cloud_light_steps;
+        const bool matches = S.cloud_downsample == tier.cloud_downsample && S.cloud_steps == tier.cloud_steps &&
+                             S.cloud_light_steps == tier.cloud_light_steps;
+        add("volumetric_clouds", reduced ? PathState::Reduced : PathState::Active, reduced ? by(matches) : PathReason::None,
+            std::format("{}x{}, {} steps", f.cloud_width, f.cloud_height, f.cloud_steps));
+    }
+
     // Surface and effect passes. Their per-frame budgets come from the tier (ADR-0109): a cut is
     // attributed to the tier when the budget matches its preset, to a setting when it was lowered
     // by hand, and to the budget itself when even the Ultra reference cannot hold everything.

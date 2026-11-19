@@ -293,6 +293,19 @@ struct EnvironmentComponent {
     float volumetric_ambient{1.0f};
     float volumetric_local_lights{1.0f};
     float volumetric_temporal{0.9f};       // history weight (0 = no temporal filtering)
+    // Volumetric clouds (ADR-0111): a ray-marched cloud layer lit by the directional light.
+    bool clouds{false};
+    float cloud_coverage{0.5f};            // 0 clear .. 1 overcast
+    float cloud_density{0.03f};            // extinction per metre inside dense cloud
+    float cloud_bottom{1500.0f};           // layer base height (m)
+    float cloud_thickness{2000.0f};        // layer depth (m)
+    float cloud_size{4000.0f};             // cloud shape size (m)
+    float cloud_detail{0.35f};             // edge erosion 0..1
+    math::Vec3 cloud_wind{10.0f, 0.0f, 4.0f}; // drift, m/s
+    float cloud_anisotropy{0.6f};          // silver lining towards the sun
+    float cloud_sun{1.0f};                 // light multipliers
+    float cloud_ambient{1.0f};
+    float cloud_distance{30000.0f};        // metres of view ray covered
 };
 
 // Box of extra volumetric fog centred on the entity (ADR-0098), size scaled by the entity's

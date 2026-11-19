@@ -1049,6 +1049,20 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     vf.ambient_intensity = std::max(fin(e.volumetric_ambient, 1.0f), 0.0f);
     vf.local_light_intensity = std::max(fin(e.volumetric_local_lights, 1.0f), 0.0f);
     vf.temporal = std::clamp(fin(e.volumetric_temporal, 0.9f), 0.0f, 0.98f);
+    render::VolumetricClouds& vc = env.clouds;
+    vc.enabled = e.clouds;
+    vc.coverage = std::clamp(fin(e.cloud_coverage, 0.5f), 0.0f, 1.0f);
+    vc.density = std::max(fin(e.cloud_density, 0.03f), 0.0f);
+    vc.bottom = fin(e.cloud_bottom, 1500.0f);
+    vc.top = vc.bottom + std::max(fin(e.cloud_thickness, 2000.0f), 10.0f);
+    vc.shape_size = std::max(fin(e.cloud_size, 4000.0f), 10.0f);
+    vc.detail_size = vc.shape_size * 0.15f;
+    vc.detail = std::clamp(fin(e.cloud_detail, 0.35f), 0.0f, 1.0f);
+    vc.wind = {fin(e.cloud_wind.x, 0.0f), fin(e.cloud_wind.y, 0.0f), fin(e.cloud_wind.z, 0.0f)};
+    vc.anisotropy = std::clamp(fin(e.cloud_anisotropy, 0.6f), 0.0f, 0.95f);
+    vc.sun_intensity = std::max(fin(e.cloud_sun, 1.0f), 0.0f);
+    vc.ambient_intensity = std::max(fin(e.cloud_ambient, 1.0f), 0.0f);
+    vc.distance = std::clamp(fin(e.cloud_distance, 30000.0f), 100.0f, 200000.0f);
 }
 static_assert(static_cast<int>(gameplay::EnvironmentComponent::Fog::ExponentialSquared) ==
               static_cast<int>(render::FogMode::ExponentialSquared));
