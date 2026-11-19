@@ -288,6 +288,29 @@ std::vector<physics::DebugLine> Editor::behaviour_guides(Entity e, bool flat) {
             out.push_back({c[i0], c[i1], ghost});
         }
     }
+    if (const auto* jp = w.get<script::JumpPadComponent>(e); jp && jp->strength > 0) {
+        // The launch arc of whatever it throws, using the first player's gravity scale.
+        float scale = 1;
+        w.each<script::PlatformerMovementComponent>([&](Entity pe, script::PlatformerMovementComponent&) {
+            if (const auto* c2 = w.get<physics::CharacterController2DComponent>(pe)) scale = c2->gravity_scale;
+            else if (const auto* c3 = w.get<physics::CharacterControllerComponent>(pe)) scale = c3->gravity_scale;
+        });
+        const float g = 9.81f * std::max(scale, 0.05f);
+        const math::Vec3 dir = math::length(jp->direction) > 1e-4f ? math::normalize(jp->direction) : math::Vec3{0, 1, 0};
+        const math::Vec3 v = dir * jp->strength;
+        const float top = entity_bounds(e, nullptr).max.y * m.transform_vector({0, 1, 0}).y;
+        const math::Vec3 start{p.x, p.y + top, p.z};
+        const float t_end = std::max(v.y, 0.0f) / g * 2.0f; // back to the launch height
+        constexpr int kSteps = 32;
+        math::Vec3 prev = start;
+        for (int i = 1; i <= kSteps; ++i) {
+            const float t = t_end * static_cast<float>(i) / kSteps;
+            const math::Vec3 at = start + v * t - math::Vec3{0, 0.5f * g * t * t, 0};
+            out.push_back({prev, at, i <= kSteps / 2 ? path : ghost});
+            prev = at;
+        }
+        cross(start + math::Vec3{v.x, 0, v.z} * (t_end * 0.5f) + math::Vec3{0, v.y * v.y / (2 * g), 0}, 0.2f); // the peak
+    }
     if (const auto* ch = w.get<script::ChaseComponent>(e)) {
         if (ch->detect_radius > 0) circle(p, ch->detect_radius, {1.0f, 0.4f, 0.3f, 0.9f});
         if (ch->lose_radius > ch->detect_radius) circle(p, ch->lose_radius, {1.0f, 0.4f, 0.3f, 0.35f});

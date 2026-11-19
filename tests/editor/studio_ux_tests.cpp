@@ -1384,7 +1384,7 @@ TEST_CASE("studio workspace: open panels and the layout preset are remembered be
     CHECK(h.ed->panel_open(editor::Panel::Profiler));
 }
 
-TEST_CASE("studio behaviour guides: patrol and platform routes and chase ranges show for the selection") {
+TEST_CASE("studio behaviour guides: patrol and platform routes, chase ranges and jump arcs show for the selection") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;
     REQUIRE(h.init());
@@ -1402,6 +1402,12 @@ TEST_CASE("studio behaviour guides: patrol and platform routes and chase ranges 
     const scene::Entity chaser = h.ed->create_entity(editor::Primitive::Sprite);
     w.add<script::ChaseComponent>(chaser);
     CHECK(h.ed->behaviour_guides(chaser, true).size() == 96); // detect and lose circles
+    const scene::Entity pad = h.ed->create_entity(editor::Primitive::Sprite);
+    w.add<script::JumpPadComponent>(pad).strength = 9.81f;
+    const auto arc = h.ed->behaviour_guides(pad, true);
+    REQUIRE(arc.size() == 34); // 32 arc segments and the peak cross
+    CHECK(arc[15].b.y - arc[0].a.y == doctest::Approx(4.905f).epsilon(0.01)); // v^2 / 2g with g = 9.81
+    CHECK(arc[31].b.y == doctest::Approx(arc[0].a.y).epsilon(0.01));
     const scene::Entity plain = h.ed->create_entity(editor::Primitive::Sprite);
     CHECK(h.ed->behaviour_guides(plain, true).empty());
     h.ed->select(lift);

@@ -1697,3 +1697,9 @@ Verified: `behaviours: press-to-use triggers wait for the interact key`, roles t
 Built: a welcome Sign (Trigger, shown while touching) next to the player's start and a Jump Pad at x 12.2 before the first gap, with new drawn `spring` and `sign` sprites (sprite_art.cpp).
 
 Verified: `templates: the No-Code Platformer plays with behaviours alone` (checks the pad and the welcome message), `export: the no-code templates ship...`, screenshots of the game and the Studio.
+
+## 2026-11-19 — Jump Pad launch arc guide
+
+Built: selecting a Jump Pad draws the launch arc (using the player's gravity scale) and marks its peak, so the strength can be tuned against the level without playing.
+
+Verified: `studio behaviour guides: patrol and platform routes, chase ranges and jump arcs show` (peak height v²/2g).
