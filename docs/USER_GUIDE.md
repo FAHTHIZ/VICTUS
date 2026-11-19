@@ -16,8 +16,8 @@ Behaviours are ready-made gameplay components. Add one to an entity in the Inspe
 | Health | anything that can be hurt | Hit points, a blink after a hit, and what happens at zero: destroy, respawn at the last checkpoint, restart the scene or nothing. |
 | Hazard | spikes, enemies, kill zones | Hurts what it touches, with knockback. "Stompable" lets the player defeat it by landing on it; "Instant kill" takes all health. |
 | Collectible | coins, hearts, keys | Picked up on touch: adds score, heals or counts as an item, with an optional sound. |
-| Patrol / Chase | enemies | Walks back and forth, or follows the player within a range. |
-| Shooter / Projectile | the player, turrets | Fires on the fire action (left mouse) or automatically; bullets damage what they hit. |
+| Patrol / Chase | enemies | Walks back and forth, turning at walls (and, with Turn At Ledges, at platform edges), or follows the player within a range. |
+| Shooter / Projectile | the player, turrets | Fires on the fire action (left mouse) or automatically; bullets damage what they hit and stop at walls. |
 | Spawner | anywhere | Creates copies of a prefab on a timer, up to a limit. |
 | Lifetime | effects, bullets | Removes the entity after a time. |
 | Checkpoint / Goal | flags | A checkpoint moves the respawn point; a goal wins, loads the next scene or a chosen one. |
@@ -25,7 +25,7 @@ Behaviours are ready-made gameplay components. Add one to an entity in the Inspe
 
 The player is found by the tag "Player" or, if nothing has that tag, by its movement behaviour. Behaviours send events that scripts and graphs can react to with `on_event`: `damaged`, `healed`, `died`, `collected`, `checkpoint`, `score_changed`, `game_won`, `game_lost`, `life_lost`, `spawned`, `fired`, `stomped` and `goal_reached`.
 
-Touch is checked with bounding boxes, not exact shapes; bullets do not stop at walls; score resets when a new scene loads; and Patrol does not turn at walls (see [Known limitations](KNOWN_LIMITATIONS.md)).
+Touch is checked with bounding boxes, not exact shapes, and score resets when a new scene loads (see [Known limitations](KNOWN_LIMITATIONS.md)).
 
 ## Scripting
 

@@ -971,6 +971,7 @@ void build_nocode(Scene& s) {
         auto& patrol = s.world().add<PatrolComponent>(slime);
         patrol.offset = {sl.offset, 0, 0};
         patrol.speed = 1.6f;
+        patrol.turn_at_ledges = true; // never walks into a pit
         auto& life = s.world().add<HealthComponent>(slime);
         life.max = life.current = 1;
         life.invulnerable_time = 0;

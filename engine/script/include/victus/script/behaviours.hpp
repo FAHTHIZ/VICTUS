@@ -145,6 +145,8 @@ struct PatrolComponent {
     float speed{2.0f};
     float wait{0.5f};             // seconds at each end
     bool flip_sprite{true};
+    bool turn_at_walls{true};     // turns around when something solid is in the way
+    bool turn_at_ledges{false};   // side-view 2D and 3D: turns around instead of walking off an edge
     // runtime
     math::Vec3 origin;
     bool has_origin{false};
@@ -170,6 +172,7 @@ struct ProjectileComponent {
     float damage{1};
     std::string target_tag{"Enemy"};
     bool destroy_on_hit{true};
+    bool stop_at_walls{true};     // destroyed when it hits something solid
     // runtime
     float age{0};
 };
