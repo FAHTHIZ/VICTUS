@@ -1,0 +1,725 @@
+{
+  "format": "victus.scene",
+  "version": 1,
+  "name": "Reference Effects",
+  "entities": [
+    {
+      "uuid": "bcbca0e7-f4ca-5d0c-9610-5d14e5331be8",
+      "name": "Reference Camera",
+      "components": {
+        "Camera": {
+          "projection": "perspective",
+          "fov_y": 55,
+          "ortho_height": 10,
+          "near": 0.1,
+          "far": 300,
+          "primary": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            2.2,
+            7.5
+          ],
+          "rotation": [
+            -0.1045285,
+            0.0,
+            0.0,
+            0.9945219
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "6a76c290-f067-5ad8-b19b-bb05b34b18da",
+      "name": "Sun",
+      "components": {
+        "Light": {
+          "type": "directional",
+          "color": [
+            1,
+            0.95,
+            0.88,
+            1
+          ],
+          "intensity": 3.0,
+          "range": 10.0,
+          "shadows": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            10,
+            0
+          ],
+          "rotation": [
+            -0.3303661,
+            -0.2432103,
+            -0.0885213,
+            0.9076734
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "3459513f-d6de-5dca-b179-5e4baa88b782",
+      "name": "Environment",
+      "components": {
+        "Environment": {
+          "sky_zenith": [
+            0.18,
+            0.36,
+            0.75,
+            1
+          ],
+          "sky_horizon": [
+            0.62,
+            0.72,
+            0.85,
+            1
+          ],
+          "ground": [
+            0.22,
+            0.2,
+            0.18,
+            1
+          ],
+          "ambient_intensity": 0.6,
+          "draw_sky": true,
+          "clear_color": [
+            0.02,
+            0.02,
+            0.025,
+            1
+          ],
+          "tonemapper": "aces",
+          "exposure": 1,
+          "exposure_compensation": 0,
+          "auto_exposure": false,
+          "saturation": 1,
+          "contrast": 1,
+          "vignette": 0.0,
+          "bloom_intensity": 0.06,
+          "bloom_threshold": 1,
+          "ao_intensity": 1,
+          "ao_radius": 0.6,
+          "shadow_distance": 30,
+          "fog": "none",
+          "physical_sky": true
+        }
+      }
+    },
+    {
+      "uuid": "74a01cf6-5f5e-54eb-85c5-81702d5e7bd7",
+      "name": "Ground",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "plane",
+          "base_color": [
+            0.5,
+            0.48,
+            0.45,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.85,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            30,
+            1,
+            30
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "98e2a759-667b-5f34-998b-ecef4a6bc3b3",
+      "name": "Pool Floor",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.15,
+            0.4,
+            0.45,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            1.5,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            4,
+            0.02,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "fc063fcf-3ea9-5f20-bc65-0e3b77e4c3a0",
+      "name": "Pool Rim N",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.8,
+            0.78,
+            0.72,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            1.5,
+            0.25,
+            -1.05
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            4.2,
+            0.5,
+            0.1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "7c08fa35-b4f0-5509-9cd2-1f3a6c7124bc",
+      "name": "Pool Rim S",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.8,
+            0.78,
+            0.72,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            1.5,
+            0.25,
+            2.05
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            4.2,
+            0.5,
+            0.1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "527e5af7-a18e-5569-9a1f-43abfb3e4e10",
+      "name": "Pool Rim W",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.8,
+            0.78,
+            0.72,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -0.55,
+            0.25,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.1,
+            0.5,
+            3.2
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "67be0134-df68-55d2-bbf8-3ab33250df8d",
+      "name": "Pool Rim E",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.8,
+            0.78,
+            0.72,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            3.55,
+            0.25,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.1,
+            0.5,
+            3.2
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "16988a6a-a5f9-5ab7-9b89-2d83930210f6",
+      "name": "Pool Pillar",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.85,
+            0.6,
+            0.3,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            1.0,
+            0.4,
+            0.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.3,
+            0.8,
+            0.3
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "8d5af4f2-a060-5f3f-a3ad-0738c97b1f67",
+      "name": "Pool Water",
+      "components": {
+        "Water": {
+          "size": [
+            4,
+            3
+          ],
+          "wave_height": 0.04,
+          "wavelength": 1.5,
+          "clarity": 0.6,
+          "refraction": 0.04,
+          "roughness": 0.05,
+          "resolution": 64
+        },
+        "Transform": {
+          "position": [
+            1.5,
+            0.35,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "892b65e2-03bb-5306-aaeb-b534d2f3b0c6",
+      "name": "Stain Decal",
+      "components": {
+        "Decal": {
+          "size": [
+            1.6,
+            1.6,
+            0.5
+          ],
+          "color": [
+            0.25,
+            0.18,
+            0.12,
+            0.8
+          ],
+          "blend": "multiply",
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -2.0,
+            0,
+            1.5
+          ],
+          "rotation": [
+            -0.7071068,
+            0.0,
+            0.0,
+            0.7071068
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "1791bd4d-30cf-542c-887d-f41a58760f58",
+      "name": "Paint Decal",
+      "components": {
+        "Decal": {
+          "size": [
+            0.8,
+            2.0,
+            0.5
+          ],
+          "color": [
+            0.9,
+            0.85,
+            0.2,
+            1
+          ],
+          "blend": "alpha",
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -3.2,
+            0,
+            0.0
+          ],
+          "rotation": [
+            -0.6963642,
+            0.1227878,
+            0.1227878,
+            0.6963642
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "6a688b19-e7b4-5447-8384-808fbbb8b750",
+      "name": "Chrome Sphere",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            0.95,
+            0.95,
+            0.95,
+            1
+          ],
+          "metallic": 1.0,
+          "roughness": 0.05,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -2.0,
+            0.8,
+            -1.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "fca0d876-6e99-5110-a0d7-15a79c4955e8",
+      "name": "Probe Wall",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            0.7,
+            0.2,
+            0.15,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            -2.0,
+            1.0,
+            -3.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            3,
+            2,
+            0.2
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "ccb643a3-926f-5690-b2e4-d5c1271267cf",
+      "name": "Reflection Probe",
+      "components": {
+        "ReflectionProbe": {
+          "size": [
+            5,
+            3,
+            5
+          ],
+          "intensity": 1,
+          "resolution": 64
+        },
+        "Transform": {
+          "position": [
+            -2.0,
+            1.2,
+            -1.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "be73b115-25dc-52cc-9b6f-9add77428b91",
+      "name": "Sparks",
+      "components": {
+        "ParticleEmitter": {
+          "emitting": true,
+          "loop": true,
+          "rate": 60,
+          "max_particles": 200,
+          "lifetime_min": 0.8,
+          "lifetime_max": 1.2,
+          "shape": "cone",
+          "angle": 15,
+          "speed_min": 3,
+          "speed_max": 4,
+          "gravity": [
+            0,
+            -6,
+            0
+          ],
+          "size_start": 0.06,
+          "size_end": 0.02,
+          "color_start": [
+            1,
+            0.7,
+            0.3,
+            1
+          ],
+          "color_end": [
+            1,
+            0.2,
+            0.05,
+            0
+          ],
+          "intensity": 6,
+          "blend": "additive",
+          "seed": 7,
+          "trail_lifetime": 0.15
+        },
+        "Transform": {
+          "position": [
+            3.6,
+            0.2,
+            -1.8
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "e3d4b56d-a77c-5fab-bb6c-6a8cc8edb768",
+      "name": "GPU Mist",
+      "components": {
+        "ParticleEmitter": {
+          "emitting": true,
+          "loop": true,
+          "rate": 400,
+          "max_particles": 2000,
+          "lifetime_min": 1.5,
+          "lifetime_max": 2.0,
+          "shape": "box",
+          "box": [
+            2,
+            0.2,
+            1
+          ],
+          "speed_min": 0.2,
+          "speed_max": 0.5,
+          "gravity": [
+            0,
+            0.3,
+            0
+          ],
+          "size_start": 0.08,
+          "size_end": 0.2,
+          "color_start": [
+            0.8,
+            0.9,
+            1,
+            0.4
+          ],
+          "color_end": [
+            0.8,
+            0.9,
+            1,
+            0
+          ],
+          "intensity": 1,
+          "blend": "alpha",
+          "seed": 11,
+          "gpu": true
+        },
+        "Transform": {
+          "position": [
+            1.5,
+            0.45,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1107,6 +1107,7 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     spots_.clear();
     draws_.clear();
     probes_.clear();
+    probe_requests_ = probe_unbaked_ = probe_over_budget_ = 0;
     volume_ = nullptr;
     lines_.clear();
     palette_.clear();
@@ -1129,7 +1130,15 @@ void SceneRenderer::set_irradiance_volume(const IrradianceVolume* volume, float 
 }
 
 void SceneRenderer::add_reflection_probe(const ReflectionProbe& probe) {
-    if (!probe.map || !probe.map->cube() || !probe.box.valid() || probes_.size() >= kMaxReflectionProbes) return;
+    ++probe_requests_;
+    if (!probe.map || !probe.map->cube() || !probe.box.valid()) {
+        ++probe_unbaked_;
+        return;
+    }
+    if (probes_.size() >= kMaxReflectionProbes) {
+        ++probe_over_budget_;
+        return;
+    }
     probes_.push_back(probe);
 }
 
@@ -2054,6 +2063,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (!world.valid() || !frustum.intersects(world)) continue;
             candidates.emplace_back(length(world.center() - camera_.position), &d);
         }
+        facts_.decals_in_view = static_cast<std::uint32_t>(candidates.size());
         if (candidates.size() > kMaxDecals) {
             std::nth_element(candidates.begin(), candidates.begin() + kMaxDecals, candidates.end(),
                              [](const auto& a, const auto& b) { return a.first < b.first; });
@@ -2082,6 +2092,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             candidates.emplace_back(length(nearest - c), &w);
         }
         std::stable_sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        facts_.water_in_view = static_cast<std::uint32_t>(candidates.size());
         if (candidates.size() > kMaxWaterSurfaces) candidates.resize(kMaxWaterSurfaces);
         for (auto it = candidates.rbegin(); it != candidates.rend(); ++it) water_draws.push_back(it->second);
     }
@@ -2703,7 +2714,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 b.write_color(water_scene, rhi::LoadOp::Clear);
                 b.no_raster();
             },
-            [&](PassContext& ctx) { ctx.cmd.blit(ctx.texture(hdr), ctx.texture(water_scene), rhi::Filter::Nearest); });
+            [&, water_scene](PassContext& ctx) { ctx.cmd.blit(ctx.texture(hdr), ctx.texture(water_scene), rhi::Filter::Nearest); });
         const EnvironmentMap* wenv = env_.environment_map && env_.environment_map->cube() ? env_.environment_map : nullptr;
         WaterUniforms base{};
         base.inv_view_proj = inverse(view_proj);
@@ -2738,7 +2749,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 b.read(depth);
                 b.write_color(hdr, rhi::LoadOp::Load);
             },
-            [&, base, frame_of, wenv](PassContext& ctx) {
+            [&, base, frame_of, wenv, water_scene](PassContext& ctx) {
                 rhi::RenderPass& pass = *ctx.pass;
                 pass.bind_pipeline(water_pipeline_);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(water_scene), ctx_.linear_clamp());
@@ -3299,6 +3310,25 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     facts_.moving_draws = stats_.motion_draws;
     facts_.main_batches = stats_.main_batches;
     facts_.instanced_draws = stats_.visible;
+    facts_.decals_submitted = static_cast<std::uint32_t>(decals_.size());
+    facts_.decals_drawn = stats_.decals;
+    facts_.decal_budget = kMaxDecals;
+    facts_.water_submitted = static_cast<std::uint32_t>(waters_.size());
+    facts_.water_drawn = stats_.water_surfaces;
+    facts_.water_budget = static_cast<std::uint32_t>(kMaxWaterSurfaces);
+    facts_.particle_batches_submitted = static_cast<std::uint32_t>(particle_batches_.size());
+    facts_.particle_batches_drawn = stats_.particle_batches;
+    facts_.particles_drawn = stats_.particles;
+    facts_.ribbon_vertices = stats_.ribbon_vertices;
+    facts_.gpu_emitters_submitted = static_cast<std::uint32_t>(gpu_emitters_.size());
+    facts_.gpu_emitters_simulated = stats_.gpu_particle_emitters;
+    facts_.gpu_particles = stats_.gpu_particles;
+    facts_.probes_requested = probe_requests_;
+    facts_.probes_unbaked = probe_unbaked_;
+    facts_.probes_over_budget = probe_over_budget_;
+    facts_.probes_used = static_cast<std::uint32_t>(probes_.size());
+    facts_.probe_budget = static_cast<std::uint32_t>(kMaxReflectionProbes);
+    facts_.probe_draws = stats_.probe_draws;
     path_ = describe_render_path(S, facts_);
     return {};
 }

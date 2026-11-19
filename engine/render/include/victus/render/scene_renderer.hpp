@@ -757,6 +757,7 @@ private:
     std::uint32_t light_capacity_{0}, cluster_capacity_{0}; // bytes
     std::vector<Draw> draws_;
     std::vector<ReflectionProbe> probes_;
+    std::uint32_t probe_requests_{0}, probe_unbaked_{0}, probe_over_budget_{0}; // render-path report (ADR-0105)
     std::vector<Decal> decals_;
     std::vector<WaterSurface> waters_;
     const IrradianceVolume* volume_{nullptr};

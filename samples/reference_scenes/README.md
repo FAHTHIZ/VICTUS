@@ -1,12 +1,13 @@
 # Reference scenes (VICTUS sample)
 
-Two deterministic scenes for perceptual rendering checks (ADR-0104): fixed camera, no scripts,
+Three deterministic scenes for perceptual rendering checks (ADR-0104): fixed camera, no scripts,
 no physics, no particles. A fixed-frame run renders the same pixels every time on the same
 driver; one slowly rotating object per scene gives frame sequences a temporal signal.
 
 | Scene | What it exercises |
 | --- | --- |
 | `scenes/exterior.vscene` | Shadowed low sun, physical sky, height + volumetric fog, a dielectric and a metal sphere row with a roughness ramp (0.05 to 0.95), thin posts and rails (aliasing, shadow detail), stairs and a wall (AO, contact shadows), an emissive bar (bloom), a rotating cube |
+| `scenes/effects.vscene` | The surface and effect passes: a raised pool of water with refraction and waves, a multiply and an alpha decal, a seeded CPU spark fountain with trails, a GPU mist emitter, a reflection probe around a chrome sphere |
 | `scenes/interior.vscene` | A closed room lit only by local lights: a shadowed point lamp, a shadowed spot casting the box and cylinder onto the back wall, an emissive panel, a fog volume (light shafts), glossy floor, dark corners, a rotating metal cylinder |
 
 ```sh
