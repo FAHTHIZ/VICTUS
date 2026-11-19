@@ -7,6 +7,7 @@
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/gameplay/framework.hpp"
 #include "victus/gameui/gameui.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/physics/physics.hpp"
@@ -2009,4 +2010,69 @@ TEST_CASE("script: plugins.call crosses to native plugin functions as JSON") {
     auto fails = (*bare)->eval(R"(return plugins.call("demo.echo"))");
     REQUIRE_FALSE(fails.ok());
     CHECK(fails.error().message.find("no native plugins are loaded") != std::string::npos);
+}
+
+TEST_CASE("script: gameplay events, tags, timers, attributes, abilities and items") {
+    TempDir d("victus_script_gameplay");
+    d.write("scripts/sender.luau", R"lua(
+local S = {}
+function S:start()
+    self.entity:add_tag("Team.Red")
+    self.entity:start_timer("ping", 0.05)
+end
+function S:on_event(name, payload, sender)
+    if name == "ping" then
+        local r = scene.find("Receiver")
+        events.emit("hit", { damage = 15 }, r)
+        events.emit("announce", { text = "hello" })
+    end
+end
+return S
+)lua");
+    d.write("scripts/receiver.luau", R"lua(
+local R = {}
+function R:on_event(name, payload, sender)
+    local e = self.entity
+    if name == "hit" then
+        assert(sender ~= nil and sender:has_tag("Team"), "sender is tagged")
+        e:modify_attribute("health", -payload.damage)
+        e:apply_effect{ name = "burn", attribute = "health", magnitude = -1, duration = 0.5, period = 0.1, tag = "Status.Burning" }
+    elseif name == "announce" then
+        e:add_tag("Heard." .. payload.text)
+        local ok, why = e:activate_ability{ name = "shout", cooldown = 2, cost = { stamina = 5 } }
+        assert(ok and why == "activated")
+        local again, why2 = e:activate_ability{ name = "shout", cooldown = 2 }
+        assert(not again and why2 == "cooldown")
+        e:add_item("coin", 3)
+        assert(e:item_count("coin") == 3)
+        assert(#scene.tagged("Team") == 1)
+    end
+end
+return R
+)lua");
+    auto host = make_host(d);
+    gameplay::Simulation sim;
+    gameplay::add_builtin_systems(sim);
+    script::add_script_systems(sim, *host);
+    Scene s;
+    (void)scripted(s, "Sender", "scripts/sender.luau");
+    const Entity r = scripted(s, "Receiver", "scripts/receiver.luau");
+    s.world().add<gameplay::AttributeSetComponent>(r).definition = "health = 100 [0..100]; stamina = 10";
+    for (int i = 0; i < 30; ++i) sim.tick(s, 1.0f / 60);
+    CHECK(gameplay::has_tag(s, r, "Heard.hello"));
+    CHECK(gameplay::item_count(s, r, "coin") == 3);
+    CHECK(*gameplay::attribute(s, r, "stamina") == doctest::Approx(5));
+    CHECK(gameplay::ability_cooldown(s, r, "shout") > 1.0f);
+    const float health = *gameplay::attribute(s, r, "health");
+    CHECK(health < 85.0f); // hit plus burn ticks
+    CHECK(health > 75.0f);
+    for (int i = 0; i < 60; ++i) sim.tick(s, 1.0f / 60);
+    CHECK_FALSE(gameplay::has_tag(s, r, "Status.Burning"));
+    auto q = host->eval(R"lua(
+local r = scene.find("Receiver")
+return { left = r:timer_left("ping"), tags = #r:tags(), fx = r:effect("burn") == nil, hp = r:attribute("health") }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["fx"].as_bool());
+    CHECK(q.value()["tags"].as_number() >= 2); // Heard.hello + Cooldown.shout
 }

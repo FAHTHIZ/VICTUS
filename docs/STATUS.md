@@ -1408,3 +1408,10 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 - Verified (Debug, -Werror): 8 new `victus_physics_tests` cases (box fracture determinism, volume conservation and symmetric adjacency; exact tetrahedron hull and sphere polytope; a 20 kg crate breaking on landing with a 100-400 N*s impulse estimate, mass conserved, fragments settling; under-strength damage ignored; wall hit freeing a minority of pieces with the rest staying static and no cascade from settling debris, then the bottom row knocked out dropping everything; a 5 kg ball at 20 m/s breaking a wall through its contact; lifetime and cap retirement; save/load regenerating identical fragment geometry and bodies) and the script test "damaging a destructible breaks it into fragments"; full ctest green.
 - Limits: convex-hull fracture only; fragments lose model textures; no clusters, strain, replication or Studio preview yet.
 - Next: gameplay framework primitives, then water rendering and buoyancy.
+
+## 2026-11-19 — Gameplay framework primitives (ADR-0094)
+
+- New `engine/gameplay/framework.{hpp,cpp}`: hierarchical tags, a per-scene event bus (C++ listeners, scripts get `on_event`), timers, attribute sets with effects (instant/timed/infinite, periodic, stacking, granted tags), tag/cost/cooldown abilities and slot inventories. FixedUpdate systems `gameplay.timers`/`gameplay.attributes`; everything serializes with the scene.
+- Luau: `events.emit`, `scene.tagged`, and entity methods for tags, timers, attributes, effects, abilities and items (new `bind_gameplay.cpp`).
+- Tests: `tests/script/gameplay_framework_tests.cpp` (8 cases) and "script: gameplay events, tags, timers, attributes, abilities and items".
+- Limits: no Studio inspector for runtime timers/effects/inventory, no replication, no interactables yet.

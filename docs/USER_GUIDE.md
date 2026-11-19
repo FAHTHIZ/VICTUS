@@ -26,7 +26,9 @@ return Spin
 
 ### Available globals
 
-Available globals: `scene.find/spawn/destroy/query/count`, `input.down/pressed/released/axis/mouse_*`, `time.delta/now/frame`, `log.info/warn/error`. Entities expose `position`, `rotation` (Euler degrees), `scale`, `name`, `parent`, `forward/right/up`, and `get/set/has/remove` for any component as JSON-like tables. Scripts run sandboxed with time and memory limits, so a bad loop reports an error instead of freezing the editor.
+Available globals: `scene.find/spawn/destroy/query/count`, `input.down/pressed/released/axis/mouse_*`, `time.delta/now/frame`, `log.info/warn/error`, `events.emit(name, payload?, target?)` and `scene.tagged(query)`. Entities expose `position`, `rotation` (Euler degrees), `scale`, `name`, `parent`, `forward/right/up`, and `get/set/has/remove` for any component as JSON-like tables. Scripts run sandboxed with time and memory limits, so a bad loop reports an error instead of freezing the editor.
+
+Gameplay primitives: add a `Tags` component (`Enemy.Orc, Status.Burning`; `has_tag("Enemy")` matches children) and an `AttributeSet` (`health = 100 [0..max_health]; max_health = 100`). Scripts then use `entity:add_tag/remove_tag/has_tag/tags`, `start_timer(name, seconds, repeat)` (fires `on_event(name, ...)`), `attribute/attribute_base/set_attribute/modify_attribute`, `apply_effect{name, attribute, op = "add"|"multiply"|"override", magnitude, duration, period, tag, stacking, max_stacks}` (duration 0 = instant, -1 = until removed), `remove_effect`, `effect(name)`, `activate_ability{name, cooldown, cost = {stamina = 20}, requires, blocked_by}` (returns ok, reason), `ability_cooldown`, and `add_item/remove_item/item_count/items/give_item`. Implement `on_event(name, payload, sender)` to receive events, timers, `attribute_changed`, `attribute_depleted`, `ability_activated` and `inventory_changed`. All of it is saved with the scene.
 
 ### Physics
 

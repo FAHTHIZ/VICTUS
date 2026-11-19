@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/gameplay/framework.hpp"
 
 #include "victus/core/profiler.hpp"
 #include "victus/scene/reflect.hpp"
@@ -64,6 +65,7 @@ void Simulation::tick(scene::Scene& scene, float dt) {
 }
 
 void register_components() {
+    register_framework_components();
     auto& r = scene::SerializerRegistry::instance();
     r.add<RotatorComponent>(
         "Rotator",
@@ -193,6 +195,10 @@ void register_components() {
 }
 
 void add_builtin_systems(Simulation& sim) {
+    sim.add_system("gameplay.events", Phase::PreUpdate, [](scene::Scene& s, const FrameTime&) { begin_event_tick(s); });
+    sim.add_system("gameplay.timers", Phase::FixedUpdate, [](scene::Scene& s, const FrameTime& t) { update_timers(s, static_cast<float>(t.dt)); });
+    sim.add_system("gameplay.attributes", Phase::FixedUpdate,
+                   [](scene::Scene& s, const FrameTime& t) { update_attributes(s, static_cast<float>(t.dt)); });
     sim.add_system("builtin.rotator", Phase::Update, [](scene::Scene& s, const FrameTime& t) {
         VICTUS_PROFILE_SCOPE("gameplay.rotator");
         s.world().each<RotatorComponent, scene::Transform>([&](const RotatorComponent& r, scene::Transform& tr) {

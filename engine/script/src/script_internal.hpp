@@ -159,10 +159,13 @@ struct ScriptHost::Impl {
     float fixed_dt{1.0f / 60.0f};
     const gameplay::InputSource* input{nullptr};
     const gameplay::InputSource* default_input{nullptr};
+    Entity current; // entity whose script is running (events.emit sender)
+    std::uint64_t events_seen{0}; // last gameplay event delivered to on_event
 
     // Selects the input `e`'s script reads: multiplayer sessions route remote players' inputs to
     // the entities they own (and give proxies no input at all).
     void route(Entity e) {
+        current = e;
         input = default_input;
         if (!scene) return;
         if (const auto* r = scene->world().resource<gameplay::InputRouting>(); r && r->route)
@@ -479,6 +482,31 @@ int entity_character_state(lua_State* L);
 int entity_joint_state(lua_State* L);
 int entity_set_ragdoll(lua_State* L);
 int entity_damage(lua_State* L);
+// bind_gameplay.cpp
+int entity_has_tag(lua_State* L);
+int entity_add_tag(lua_State* L);
+int entity_remove_tag(lua_State* L);
+int entity_tags(lua_State* L);
+int entity_start_timer(lua_State* L);
+int entity_stop_timer(lua_State* L);
+int entity_pause_timer(lua_State* L);
+int entity_timer_left(lua_State* L);
+int entity_attribute(lua_State* L);
+int entity_attribute_base(lua_State* L);
+int entity_set_attribute(lua_State* L);
+int entity_modify_attribute(lua_State* L);
+int entity_apply_effect(lua_State* L);
+int entity_remove_effect(lua_State* L);
+int entity_effect(lua_State* L);
+int entity_activate_ability(lua_State* L);
+int entity_ability_cooldown(lua_State* L);
+int entity_add_item(lua_State* L);
+int entity_remove_item(lua_State* L);
+int entity_item_count(lua_State* L);
+int entity_items(lua_State* L);
+int entity_give_item(lua_State* L);
+int scene_tagged(lua_State* L);
+int events_emit(lua_State* L);
 int entity_destructible_state(lua_State* L);
 int entity_ragdoll_state(lua_State* L);
 int entity_ragdoll_root(lua_State* L);

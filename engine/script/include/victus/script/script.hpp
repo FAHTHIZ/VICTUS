@@ -283,6 +283,7 @@ private:
     void dispatch_physics_events(scene::Scene& scene);
     void dispatch_ui_events(scene::Scene& scene);
     void dispatch_sequence_events(scene::Scene& scene);
+    void dispatch_gameplay_events(scene::Scene& scene);
     void dispatch_net_messages(scene::Scene& scene);
     std::unique_ptr<Impl> impl_;
 };
