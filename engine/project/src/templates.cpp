@@ -232,6 +232,36 @@ void surface(SurfaceInput i, inout Surface s) {
 }
 )";
 
+// Lava for the No-Code 3D Adventure: slow glowing flow patterns, so the pool reads as molten
+// even under bright sun.
+constexpr const char* kLavaShaderPath = "assets/shaders/lava.vshader";
+constexpr const char* kLavaShaderUuid = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f006";
+constexpr const char* kLavaMaterialPath = "assets/materials/lava.vmat";
+constexpr const char* kLavaMaterialUuid = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f007";
+constexpr const char* kLavaShader = R"(// Lava surface shader (used by materials/lava.vmat): glowing bands that drift slowly.
+// params[0] = hot colour (rgb) + glow strength (w), params[1] = cool colour (rgb) + flow speed (w)
+void surface(SurfaceInput i, inout Surface s) {
+    vec2 p = i.world_position.xz * 0.35;
+    float t = i.time * i.params[1].w;
+    float n = sin(p.x * 3.1 + t) * sin(p.y * 2.7 - t * 1.3) + 0.5 * sin((p.x + p.y) * 5.3 + t * 2.0);
+    n = smoothstep(0.45, 0.95, 0.5 + 0.35 * n);
+    vec3 c = mix(i.params[1].rgb, i.params[0].rgb, n);
+    s.base_color = c * 0.25;
+    s.emissive += c * i.params[0].w;
+    s.roughness = 0.7;
+    s.metallic = 0.0;
+}
+)";
+
+std::string lava_material() {
+    assets::MaterialAsset m;
+    m.base_color = {1, 1, 1, 1};
+    (void)Uuid::parse(kLavaShaderUuid, m.shader);
+    m.shader_params[0] = {1.0f, 0.36f, 0.04f, 0.9f};
+    m.shader_params[1] = {0.12f, 0.01f, 0.0f, 0.35f};
+    return json::stringify(m.to_json(), true) + "\n";
+}
+
 std::string energy_material() {
     assets::MaterialAsset m;
     m.base_color = {0.9f, 0.32f, 0.08f, 1};
@@ -1682,12 +1712,205 @@ return Board
 
 } // namespace
 
+// ---- No-Code 3D Adventure ------------------------------------------------------------------------
+
+// A static box of scenery with a collider (centre `at`, full `size`).
+Entity block(Scene& s, std::string_view name, math::Vec3 at, math::Vec3 size, math::Color color, bool ground_material = false) {
+    const Entity e = add(s, name, at);
+    s.world().get<Transform>(e)->scale = size;
+    auto& m = mesh(s, e, "cube", color, 0.0f, 0.85f);
+    if (ground_material) (void)Uuid::parse(kGroundMaterialUuid, m.material_asset);
+    s.world().add<physics::RigidBodyComponent>(e).type = physics::BodyType::Static;
+    s.world().add<physics::ColliderComponent>(e);
+    return e;
+}
+
+// The starter character under `root` turned to look down -Z, the way Top-Down Movement, Patrol
+// and Chase face 3D walkers (the model itself looks down +Z).
+void face_forward(Scene& s, Entity root) {
+    for (const Entity c : s.children(root))
+        if (const auto* n = s.world().get<scene::Name>(c); n && n->value == "Robot")
+            s.world().get<Transform>(c)->rotation = math::Quat::axis_angle({0, 1, 0}, math::kPi);
+}
+
+void build_nocode3d(Scene& s, const TemplateOptions& options) {
+    using namespace script;
+    const Entity cam = camera_3d(s, {0, 5.5f, 10}, {0, 0.8f, 2});
+    auto& follow = s.world().add<CameraFollowComponent>(cam);
+    follow.offset = {0, 5.0f, 8.0f};
+    follow.smoothing = 5;
+    sun(s);
+    {
+        auto& env = s.world().add<gameplay::EnvironmentComponent>(add(s, "Environment", {0, 0, 0}));
+        env.bloom_intensity = 0.05f;
+        env.ao_intensity = 1.0f;
+        env.shadow_distance = 40.0f;
+        env.sky_zenith = {0.16f, 0.36f, 0.8f, 1};
+        env.sky_horizon = {0.7f, 0.8f, 0.92f, 1};
+    }
+
+    // The course runs away from the camera (-Z): a start island, stepping stones over the lava,
+    // a guarded island with a checkpoint, a narrow bridge and the goal island.
+    const math::Color stone{0.55f, 0.53f, 0.5f, 1}, moss{0.3f, 0.5f, 0.26f, 1}, wood{0.5f, 0.32f, 0.18f, 1},
+        grass{0.62f, 0.85f, 0.5f, 1};
+    block(s, "Start Island", {0, -0.5f, 0}, {10, 1, 10}, grass, true);
+    const struct { float x, y, z; } stones[] = {{0, -0.25f, -6.8f}, {1.5f, 0.05f, -9.6f}, {0, 0.35f, -12.4f}};
+    int k = 0;
+    for (const auto& st : stones) block(s, "Stepping Stone " + std::to_string(++k), {st.x, st.y, st.z}, {2.4f, 1, 2.4f}, moss);
+    block(s, "Middle Island", {0, -0.5f, -20}, {12, 1, 10}, grass, true);
+    block(s, "Bridge", {0, -0.2f, -29}, {1.6f, 0.4f, 8}, wood);
+    block(s, "Goal Island", {0, -0.5f, -37}, {8, 1, 8}, grass, true);
+    block(s, "Wall", {-3.5f, 0.75f, -21.5f}, {1, 1.5f, 3}, stone);
+
+    // Lava below everything: falling in costs a life. The glow comes from two warm lights.
+    const Entity lava = add(s, "Lava", {0, -3, -18});
+    s.world().get<Transform>(lava)->scale = {90, 1, 90};
+    auto& lava_mesh = mesh(s, lava, "plane", {1, 1, 1, 1}, 0.0f, 0.7f);
+    lava_mesh.cast_shadows = false;
+    (void)Uuid::parse(kLavaMaterialUuid, lava_mesh.material_asset);
+    auto& lava_shape = s.world().add<physics::ColliderComponent>(lava);
+    lava_shape.size = {1, 2, 1};
+    lava_shape.offset = {0, -0.5f, 0};
+    lava_shape.is_trigger = true;
+    auto& burn = s.world().add<HazardComponent>(lava);
+    burn.instant_kill = true;
+    burn.knockback = 0;
+    for (const float z : {-8.0f, -28.0f}) {
+        auto& glow = s.world().add<LightComponent>(add(s, z > -10 ? "Lava Glow" : "Lava Glow 2", {0, -1.5f, z}));
+        glow.type = LightComponent::Type::Point;
+        glow.color = {1.0f, 0.45f, 0.15f, 1};
+        glow.intensity = 25.0f;
+        glow.range = 14.0f;
+    }
+
+    // The player: Top-Down Movement (walk relative to the camera, jump), Health and a physics
+    // character. The camera's Camera Follow keeps it in view.
+    const Entity player = add(s, "Player", {0, 0, 2});
+    {
+        auto& cc = s.world().add<physics::CharacterControllerComponent>(player);
+        cc.radius = 0.4f;
+        cc.height = 1.6f;
+        cc.push_force = 200.0f;
+    }
+    character_visual(s, player, options.character, 1.7f);
+    face_forward(s, player);
+    auto& move = s.world().add<TopDownMovementComponent>(player);
+    move.speed = 6;
+    move.jump_speed = 7.5f;
+    auto& hp = s.world().add<HealthComponent>(player);
+    hp.on_death = DeathAction::Respawn;
+
+    // Coins spin and bob; collecting them scores. A heart restores health.
+    const math::Vec3 coins[] = {{-2.5f, 0.8f, -1}, {2.5f, 0.8f, -1}, {0, 1.4f, -6.8f},  {1.5f, 1.7f, -9.6f},
+                                {0, 2.0f, -12.4f}, {-3, 0.8f, -18},  {3.5f, 0.8f, -22}, {0, 0.8f, -26.5f},
+                                {0, 0.8f, -29.5f}, {0, 0.8f, -32.5f}};
+    int n = 0;
+    for (const math::Vec3& at : coins) {
+        const Entity coin = add(s, "Coin " + std::to_string(++n), at);
+        s.world().get<Transform>(coin)->scale = {0.5f, 0.5f, 0.12f}; // a gold disc
+        mesh(s, coin, "sphere", {1.0f, 0.78f, 0.2f, 1}, 1.0f, 0.25f);
+        s.world().add<RotatorComponent>(coin) = {{0, 1, 0}, 120.0f};
+        s.world().add<OscillatorComponent>(coin) = {{0, 0.15f, 0}, 0.8f, static_cast<float>(n) * 0.4f, {}, false};
+        s.world().add<CollectibleComponent>(coin).sound = "audio/coin.wav";
+    }
+    const Entity heart = add(s, "Heart", {4, 0.9f, -17});
+    s.world().get<Transform>(heart)->scale = math::Vec3{0.55f};
+    mesh(s, heart, "sphere", {0.95f, 0.2f, 0.32f, 1}, 0.0f, 0.3f);
+    s.world().add<OscillatorComponent>(heart) = {{0, 0.15f, 0}, 0.6f, 0, {}, false};
+    auto& heal = s.world().add<CollectibleComponent>(heart);
+    heal.kind = CollectibleKind::Health;
+    heal.sound = "audio/coin.wav";
+
+    // Spikes hurt and push you back.
+    for (const float x : {-1.5f, 1.5f}) {
+        const Entity spikes = add(s, x < 0 ? "Spikes" : "Spikes 2", {x, 0.2f, -24});
+        s.world().get<Transform>(spikes)->scale = {1.2f, 0.4f, 1.2f};
+        mesh(s, spikes, "cube", {0.75f, 0.12f, 0.12f, 1}, 0.6f, 0.4f);
+        s.world().add<HazardComponent>(spikes);
+    }
+
+    // A patrolling robot guards the middle island: it hurts on touch and is defeated by
+    // jumping on it. It turns at the wall and at the island's edges.
+    const Entity guard = add(s, "Guard Robot", {2, 0, -19});
+    {
+        auto& cc = s.world().add<physics::CharacterControllerComponent>(guard);
+        cc.radius = 0.35f;
+        cc.height = 1.1f;
+    }
+    character_visual(s, guard, companion_character(options.character), 1.15f);
+    face_forward(s, guard);
+    auto& ghz = s.world().add<HazardComponent>(guard);
+    ghz.stompable = true;
+    auto& gpa = s.world().add<PatrolComponent>(guard);
+    gpa.offset = {-8, 0, 0};
+    gpa.speed = 2.0f;
+    gpa.turn_at_ledges = true;
+    auto& glife = s.world().add<HealthComponent>(guard);
+    glife.max = glife.current = 1;
+    glife.invulnerable_time = 0;
+
+    // A turret on the goal island fires slow shots at the player when it is in range.
+    {
+        const Entity base = block(s, "Turret", {2.6f, 0.5f, -38.5f}, {0.8f, 1.0f, 0.8f}, {0.3f, 0.31f, 0.36f, 1});
+        s.world().get<physics::ColliderComponent>(base)->shape = physics::ColliderComponent::Shape::Cylinder;
+        s.world().get<MeshRendererComponent>(base)->primitive = "cylinder";
+        const Entity head = add(s, "Turret Head", {2.6f, 1.3f, -38.5f});
+        s.world().get<Transform>(head)->scale = math::Vec3{0.6f};
+        mesh(s, head, "sphere", {0.85f, 0.25f, 0.2f, 1}, 0.5f, 0.35f);
+        auto& gun = s.world().add<ShooterComponent>(head);
+        gun.automatic = true;
+        gun.target_tag = "Player";
+        gun.speed = 6;
+        gun.cooldown = 1.8f;
+        gun.spawn_distance = 0.6f;
+    }
+
+    // Checkpoint and goal.
+    const Entity checkpoint = add(s, "Checkpoint", {0, 0.75f, -16.5f});
+    s.world().get<Transform>(checkpoint)->scale = {0.3f, 1.5f, 0.3f};
+    mesh(s, checkpoint, "cylinder", {0.35f, 0.6f, 1.0f, 1}, 0.0f, 0.3f);
+    s.world().add<CheckpointComponent>(checkpoint);
+    const Entity goal = add(s, "Goal", {0, 1.2f, -38});
+    s.world().get<Transform>(goal)->scale = {1.4f, 2.4f, 0.3f};
+    mesh(s, goal, "cube", {1.0f, 0.82f, 0.3f, 1}, 1.0f, 0.2f);
+    s.world().add<RotatorComponent>(goal) = {{0, 1, 0}, 45.0f};
+    s.world().add<GoalComponent>(goal);
+    auto& goal_light = s.world().add<LightComponent>(add(s, "Goal Light", {0, 3, -38}));
+    goal_light.type = LightComponent::Type::Point;
+    goal_light.color = {1.0f, 0.85f, 0.45f, 1};
+    goal_light.intensity = 10.0f;
+    goal_light.range = 8.0f;
+
+    const Entity rules = add(s, "Game Rules", {0, 0, 0});
+    auto& gr = s.world().add<GameRulesComponent>(rules);
+    gr.lives = 3;
+    gr.win_message = "You made it!";
+
+    const Entity music = add(s, "Music", {0, 0, 0});
+    auto& ms = s.world().add<audio::AudioSourceComponent>(music);
+    ms.clip = "audio/music.wav";
+    ms.bus = audio::Bus::Music;
+    ms.volume = 0.3f;
+    ms.loop = true;
+    ms.stream = true;
+    ms.spatial = false;
+
+    const Entity canvas = s.create("Help");
+    s.world().add<gameui::UiCanvasComponent>(canvas);
+    const Entity help = ui_rect(s, canvas, "Controls", {0.5f, 1}, {0.5f, 1}, {0, -18}, {980, 44});
+    auto& panel = s.world().add<gameui::UiPanelComponent>(help);
+    panel.corner_radius = 12;
+    ui_text(s, help, "WASD walk     Space jump     collect coins, jump on the robot, avoid lava and shots, reach the gold gate", 22, false);
+}
+
 const std::vector<TemplateInfo>& templates() {
     static const std::vector<TemplateInfo> list = {
         {"3d", "3D Scene", "A Vanguard starter robot you walk with WASD/arrow keys, jump with Space and interact with E (Luau + CharacterController) that climbs steps, swings a hinged gate and shoves a stack of physics crates with positional impact sounds, its Vanguard counterpart as a companion that follows you over an automatic navmesh, a follow camera, sun shadows, PBR primitives and a point light.", true},
         {"2d", "2D Game", "A playable platformer on Box2D physics with music and sound effects: a CharacterController2D you run with A/D or arrows and jump with Space, a one-way ledge you jump through and drop off with S/Down, a lantern swinging on a joint and coins to collect. Gameplay is in Luau scripts."},
         {"nocode", "No-Code Platformer",
          "A complete side-scrolling level made without a single line of code: run, double jump, collect coins, stomp patrolling slimes, dodge spikes and pits, reach a checkpoint and the goal flag, with score, lives and a timer on screen. Every piece is a Behaviour component you can click on and change in the Inspector."},
+        {"nocode3d", "No-Code 3D Adventure",
+         "A third-person obstacle course made without code: walk and jump across stepping stones over lava, collect spinning coins, jump on a patrolling robot, dodge spikes and a turret's shots, touch the checkpoint and reach the gold gate, with score, lives and a timer. Every piece is a Behaviour component you can change in the Inspector.", true},
         {"simulation", "Simulation",
          "576 entities animated by native systems, with a scripted orbiting camera: a starting point for simulation work."},
         {"multiplayer", "Multiplayer Arena",
@@ -1738,6 +1961,20 @@ std::vector<TemplateFile> template_files(std::string_view id, const TemplateOpti
         }
         return files;
     }
+    if (id == "nocode3d") {
+        std::vector<TemplateFile> files{{"assets/audio/coin.wav", synth_coin()},
+                                        {"assets/audio/music.wav", synth_music()},
+                                        {kGroundTexturePath, ground_texture()},
+                                        {std::string(kGroundTexturePath) + ".meta", asset_meta(kGroundTextureUuid, "texture")},
+                                        {kGroundMaterialPath, ground_material()},
+                                        {std::string(kGroundMaterialPath) + ".meta", asset_meta(kGroundMaterialUuid, "")},
+                                        {kLavaShaderPath, kLavaShader},
+                                        {std::string(kLavaShaderPath) + ".meta", asset_meta(kLavaShaderUuid, "")},
+                                        {kLavaMaterialPath, lava_material()},
+                                        {std::string(kLavaMaterialPath) + ".meta", asset_meta(kLavaMaterialUuid, "")}};
+        add_character_files(files, options);
+        return files;
+    }
     if (id == "simulation") return {{"assets/scripts/orbit_camera.luau", kOrbitCamera}};
     if (id == "multiplayer") {
         std::vector<TemplateFile> files = {{"assets/scripts/net_player.luau", kNetPlayer},
@@ -1774,6 +2011,7 @@ Status build_template_scene(std::string_view id, Scene& s, const TemplateOptions
     if (id == "3d") build_3d(s, options);
     else if (id == "2d") build_2d(s);
     else if (id == "nocode") build_nocode(s);
+    else if (id == "nocode3d") build_nocode3d(s, options);
     else if (id == "simulation") build_simulation(s);
     else if (id == "multiplayer") build_multiplayer(s, options);
     else return make_error(ErrorCode::InvalidArgument, "unknown template '" + std::string(id) + "'");

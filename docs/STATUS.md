@@ -1623,3 +1623,8 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 
 - Built: a seventh Getting Started step, "Give it a behaviour" (shown fourth; enum values stay saved-preference bits and `guide_step_order()` sets the display order). It ticks off when any Behaviours component is added, and "Make it patrol" adds Patrol to the selection. A new Help topic, "Behaviours: gameplay without code", and the first-game topic recommends the No-Code Platformer.
 - Verified (Debug, -Werror, lavapipe): `victus_editor_tests` Getting Started case runs the new step, checks the Patrol component and the 6-of-7 count; visual check of the checklist ("0 of 7 done").
+
+## 2026-11-19 — No-Code 3D Adventure; behaviours drive character animation
+
+- Built: the `nocode3d` template (Studio start screen card, `victus new --template nocode3d`). Three grassy islands joined by stepping stones and a bridge over a lava pool (new `lava.vshader` surface shader and material), ten spinning coins, a heart, spikes, a stompable patrolling guard robot that turns at ledges, a turret that shoots at the player, a checkpoint, a gold goal, lives, a timer and music. No scripts. Movement behaviours now feed the nearest Animator (on the entity or a descendant): `speed`, `grounded` and the `jump` trigger; Patrol and Chase also turn 3D characters to face their velocity.
+- Verified (Debug, -Werror, lavapipe): new project test plays the template headlessly with input (walk animates, idle settles, jump height, coin pickup, guard patrol range, lava costs a life and respawns, goal wins); `victus_script_tests` and `victus_project_tests` pass; visual check of a runtime capture (`docs/images/nocode_3d.jpg`).

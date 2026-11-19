@@ -45,6 +45,9 @@ TemplateLook template_look(std::string_view id) {
     if (id == "nocode")
         return {kit::Icon::Sprite, "Build a whole platformer level from ready-made behaviours, with no code at all.",
                 "2D  -  No code  -  Beginner"};
+    if (id == "nocode3d")
+        return {kit::Icon::Cube, "Jump across lava, collect coins and beat a robot in 3D, all from behaviours and no code.",
+                "3D  -  No code  -  Beginner"};
     if (id == "simulation")
         return {kit::Icon::Particles,
                 "Hundreds of animated objects and an orbiting camera: a base for visual or data-heavy work.",

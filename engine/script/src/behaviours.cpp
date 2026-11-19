@@ -6,6 +6,7 @@
 // the entities it works on and re-reads component pointers after any structural change.
 #include "script_internal.hpp"
 
+#include "victus/animation/animation.hpp"
 #include "victus/gameplay/framework.hpp"
 #include "victus/scene/prefab.hpp"
 #include "victus/scene/reflect.hpp"
@@ -543,6 +544,33 @@ void ensure_controllers(Scene& s) {
     for (const Entity e : flat) w.get<physics::CharacterController2DComponent>(e)->top_down = true;
 }
 
+// Animated characters: movement behaviours feed the first Animator on the entity or below it
+// with the parameters the starter characters' controller uses: "speed" (m/s along the ground),
+// "grounded" (true until 0.15 s in the air, so step edges are not falls) and a "jump" trigger.
+// Controllers without those parameters ignore them.
+Entity animator_of(Scene& s, Entity e) {
+    std::vector<Entity> layer{e};
+    for (int depth = 0; depth < 5 && !layer.empty(); ++depth) {
+        std::vector<Entity> next;
+        for (const Entity x : layer) {
+            if (s.world().has<animation::AnimatorComponent>(x)) return x;
+            for (const Entity c : s.children(x)) next.push_back(c);
+        }
+        layer = std::move(next);
+    }
+    return {};
+}
+
+void animate(Scene& s, Entity e, float speed, float air_time, bool jumped) {
+    auto* sys = animation::system_of(s);
+    if (!sys) return;
+    const Entity a = animator_of(s, e);
+    if (a.is_null()) return;
+    (void)sys->set_parameter(s, a, "speed", speed);
+    (void)sys->set_parameter(s, a, "grounded", air_time < 0.15f ? 1.0f : 0.0f);
+    if (jumped) (void)sys->set_trigger(s, a, "jump");
+}
+
 void face_sprite(Scene& s, Entity e, float dir) {
     if (auto* sp = s.world().get<scene::SpriteComponent>(e); sp && dir != 0) sp->flip_x = dir < 0;
 }
@@ -562,8 +590,10 @@ void platformer_step(ScriptHost::Impl& h, Scene& s, physics::PhysicsWorld* pw, E
     const float depth = (!flat && m->depth_movement) ? -action_value(h, in, m->down_action) * m->speed : 0.0f;
     m->buffer = std::max(0.0f, m->buffer - dt);
 
+    bool jumped = false;
     if (has_character(pw, e)) {
         const physics::CharacterState st = pw->character_state(e);
+        m->air_time = st.grounded ? 0.0f : m->air_time + dt;
         if (st.grounded && st.velocity.y <= 0.01f) {
             m->coyote = m->coyote_time;
             m->jumps_used = 0;
@@ -585,6 +615,7 @@ void platformer_step(ScriptHost::Impl& h, Scene& s, physics::PhysicsWorld* pw, E
                     pw->set_linear_velocity(e, vel);
                 }
                 m->jumps_used = ground_jump ? 1 : m->jumps_used + 1;
+                jumped = true;
                 if (!m->jump_sound.empty())
                     if (auto* a = audio::engine_of(s)) {
                         if (auto played = a->play_one_shot(m->jump_sound); !played)
@@ -609,7 +640,10 @@ void platformer_step(ScriptHost::Impl& h, Scene& s, physics::PhysicsWorld* pw, E
         // No physics in this run: slide the transform so the scene still responds to input.
         if (auto* t = s.world().get<Transform>(e)) t->position += Vec3{m->velocity_x * dt, 0, depth * dt};
     }
+    const float ground_speed = std::sqrt(m->velocity_x * m->velocity_x + depth * depth);
+    const float air = m->air_time;
     if (m->flip_sprite) face_sprite(s, e, m->facing);
+    if (!flat) animate(s, e, ground_speed, air, jumped);
 }
 
 Vec3 camera_forward(Scene& s) {
@@ -650,12 +684,18 @@ void top_down_step(ScriptHost::Impl& h, Scene& s, physics::PhysicsWorld* pw, Ent
     const bool face = m->face_movement;
     const float jump_speed = m->jump_speed;
     const bool jump = !flat && jump_speed > 0 && action_pressed(h, in, m->jump_action);
+    bool jumped = false;
+    float air = 0;
     if (has_character(pw, e)) {
+        const bool grounded = pw->character_state(e).grounded;
+        m->air_time = grounded ? 0.0f : m->air_time + dt;
+        air = m->air_time;
         pw->move_character(e, vel);
-        if (jump) (void)pw->jump_character(e, jump_speed);
+        if (jump) jumped = pw->jump_character(e, jump_speed);
     } else if (!pw) {
         if (auto* t = s.world().get<Transform>(e)) t->position += vel * dt;
     }
+    if (!flat) animate(s, e, math::length(Vec3{vel.x, 0, vel.z}), air, jumped);
     if (face && moving) {
         if (flat) {
             face_sprite(s, e, facing.x > 0.01f ? 1.0f : (facing.x < -0.01f ? -1.0f : 0.0f));
@@ -669,6 +709,14 @@ void top_down_step(ScriptHost::Impl& h, Scene& s, physics::PhysicsWorld* pw, Ent
 void drive(Scene& s, physics::PhysicsWorld* pw, Entity e, Vec3 v, float dt) {
     if (has_character(pw, e)) {
         pw->move_character(e, v);
+        if (!is_2d(s, e)) {
+            const Vec3 flat_v{v.x, 0, v.z};
+            const float speed = math::length(flat_v);
+            animate(s, e, speed, 0, false);
+            // 3D walkers face where they go (-Z forward, as Top-Down Movement turns the player).
+            if (auto* t = s.world().get<Transform>(e); t && speed > 0.05f)
+                t->rotation = math::Quat::axis_angle({0, 1, 0}, std::atan2(-v.x, -v.z));
+        }
         return;
     }
     if (auto* t = s.world().get<Transform>(e)) t->position += v * dt;

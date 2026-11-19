@@ -461,6 +461,80 @@ TEST_CASE("templates: the No-Code Platformer plays with behaviours alone") {
     sfs::remove_all(dir, ec);
 }
 
+TEST_CASE("templates: the No-Code 3D Adventure plays with behaviours alone") {
+    const auto dir = temp_dir("tplnocode3d");
+    auto r = start_template("nocode3d", dir);
+    r->frames(30);
+    CHECK(r->host->stats().instances == 0); // not a single script
+    const scene::Entity player = r->scene.find_by_name("Player");
+    const math::Vec3 start = r->pos("Player");
+    CHECK(start.y == doctest::Approx(0).epsilon(0.05));
+    CHECK(r->audio->is_playing(r->scene.find_by_name("Music")));
+    const auto rules = [&] {
+        const auto* g = r->scene.world().get<script::GameRulesComponent>(r->scene.find_by_name("Game Rules"));
+        REQUIRE(g);
+        return *g;
+    };
+    CHECK(rules().lives_left == 3);
+    // W walks away from the camera; the robot's animation controller gets the ground speed.
+    r->input.set_key("W", true);
+    r->frames(40);
+    r->input.set_key("W", false);
+    CHECK(r->pos("Player").z < start.z - 2);
+    scene::Entity robot;
+    for (const scene::Entity c : r->scene.children(player))
+        if (r->scene.world().get<scene::Name>(c)->value == "Robot") robot = c;
+    REQUIRE_FALSE(robot.is_null());
+    auto* anim = animation::system_of(r->scene);
+    REQUIRE(anim);
+    CHECK(anim->parameter(r->scene, robot, "speed").value_or(0) > 3.0f);
+    r->frames(40);
+    CHECK(anim->parameter(r->scene, robot, "speed").value_or(1) < 0.5f);
+    // Space jumps.
+    const float ground_y = r->pos("Player").y;
+    float peak = ground_y;
+    r->input.set_key("Space", true);
+    r->frames(1);
+    r->input.set_key("Space", false);
+    for (int i = 0; i < 30; ++i) {
+        r->frames(1);
+        peak = std::max(peak, r->pos("Player").y);
+    }
+    CHECK(peak > ground_y + 1.0f);
+    // Walking into a coin scores.
+    r->frames(30); // land first
+    r->scene.world().get<scene::Transform>(player)->position = {-2.5f, 0, 0.2f};
+    r->input.set_key("W", true);
+    r->frames(40);
+    r->input.set_key("W", false);
+    CHECK(r->scene.find_by_name("Coin 1").is_null());
+    CHECK(rules().score >= 1);
+    // The guard patrols its island and turns at the edge instead of walking into the lava.
+    float guard_min = 1e9f, guard_max = -1e9f;
+    for (int i = 0; i < 240; ++i) {
+        r->frames(1);
+        guard_min = std::min(guard_min, r->pos("Guard Robot").x);
+        guard_max = std::max(guard_max, r->pos("Guard Robot").x);
+    }
+    CHECK(guard_max - guard_min > 3.0f);
+    CHECK(guard_min > -6.0f); // turned at the island's edge
+    CHECK(r->pos("Guard Robot").y > -0.5f);
+    // Falling into the lava costs a life and respawns at the start.
+    r->scene.world().get<scene::Transform>(player)->position = {6, 0, -8};
+    r->frames(120);
+    CHECK(rules().lives_left == 2);
+    CHECK(r->pos("Player").z > -3);
+    // Reaching the gold gate wins.
+    r->scene.world().get<scene::Transform>(player)->position = {0, 0, -35};
+    r->input.set_key("W", true);
+    r->frames(60);
+    CHECK(rules().state == script::GameState::Won);
+    CHECK(r->host->stats().errors == 0);
+    for (const auto& e : r->host->recent_errors()) MESSAGE(e);
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
 TEST_CASE("templates: HUD controls panel toggles with its button and H; the 2D banner shows on completion") {
     for (const char* id : {"2d", "3d"}) {
         CAPTURE(id);
