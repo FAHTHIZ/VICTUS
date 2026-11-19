@@ -60,6 +60,8 @@ void open_victus_libs(lua_State* L) {
                                 {"set_ragdoll", entity_set_ragdoll},
                                 {"ragdoll_state", entity_ragdoll_state},
                                 {"ragdoll_root", entity_ragdoll_root},
+                                {"damage", entity_damage},
+                                {"destructible_state", entity_destructible_state},
                                 {"play_audio", entity_play_audio},
                                 {"stop_audio", entity_stop_audio},
                                 {"pause_audio", entity_pause_audio},
@@ -581,11 +583,15 @@ void ScriptHost::dispatch_physics_events(scene::Scene& scene) {
         (void)h.call_with(it->second, fn, [&] {
             push_entity(L, scene.world().alive(other) ? other : Entity{});
             if (ev.trigger || !begin) return 1;
-            lua_createtable(L, 0, 2);
+            lua_createtable(L, 0, 4);
             push_vec3(L, ev.point);
             lua_setfield(L, -2, "point");
             push_vec3(L, flip ? ev.normal * -1.0f : ev.normal);
             lua_setfield(L, -2, "normal");
+            lua_pushnumber(L, ev.speed);
+            lua_setfield(L, -2, "speed");
+            lua_pushnumber(L, ev.impulse);
+            lua_setfield(L, -2, "impulse");
             return 2;
         });
     };

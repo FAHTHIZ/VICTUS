@@ -642,6 +642,46 @@ return { valid = rs.valid, mode = rs.mode, bodies = rs.bodies, vy = rs.velocity.
     CHECK(st.value()["none"].as_bool()); // the owner itself is not a bone
 }
 
+TEST_CASE("script: damaging a destructible breaks it into fragments") {
+    TempDir d("victus_script_destruction");
+    auto host = make_host(d);
+    auto pw = physics::PhysicsWorld::create();
+    REQUIRE(pw.ok());
+    auto& world = *pw.value();
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    physics::add_physics_systems(sim, world);
+    Scene s;
+    const Entity crate = s.create("Crate");
+    s.world().add<physics::ColliderComponent>(crate, physics::ColliderComponent{});
+    physics::RigidBodyComponent rb;
+    rb.type = physics::BodyType::Static;
+    s.world().add<physics::RigidBodyComponent>(crate, rb);
+    physics::DestructibleComponent dc;
+    dc.pieces = 6;
+    dc.strength = 5.0f;
+    s.world().add<physics::DestructibleComponent>(crate, dc);
+    for (int i = 0; i < 2; ++i) sim.tick(s, 1.0f / 60);
+    auto q = host->eval(R"lua(
+local c = scene.find("Crate")
+local before = c:destructible_state()
+c:damage(vector.create(0, 0.5, 0), 1)   -- too weak
+c:damage(vector.create(0, 0.5, 0), 50)
+return { before = before.broken }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK_FALSE(q.value()["before"].as_bool());
+    for (int i = 0; i < 2; ++i) sim.tick(s, 1.0f / 60);
+    auto st = host->eval(R"lua(
+local st = scene.find("Crate"):destructible_state()
+return { broken = st.broken, fragments = st.fragments, loose = st.loose }
+)lua", &s);
+    REQUIRE(st.ok());
+    CHECK(st.value()["broken"].as_bool());
+    CHECK(st.value()["fragments"].as_number() == doctest::Approx(6));
+    CHECK(st.value()["loose"].as_number() >= 1);
+}
+
 TEST_CASE("script: 2D character, one-way drop-through and 2D joint motor") {
     TempDir d("victus_script_character2d");
     d.write("scripts/runner.luau", R"lua(

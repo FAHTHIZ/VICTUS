@@ -265,6 +265,43 @@ int entity_ragdoll_state(lua_State* L) {
     return 1;
 }
 
+// entity:damage(point, impulse): damages a Destructible (or the one owning a fragment) at a world
+// point; it breaks, or frees more pieces, on the next physics step when impulse >= strength.
+int entity_damage(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const math::Vec3 point = check_vec3(L, 2);
+    const float impulse = static_cast<float>(luaL_checknumber(L, 3));
+    if (auto* w = physics::world_of(s)) w->damage(e, point, impulse);
+    return 0;
+}
+
+// entity:destructible_state() -> {broken, fragments, loose} for a Destructible, or nil.
+int entity_destructible_state(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* d = s.world().get<physics::DestructibleComponent>(e);
+    if (!d) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const Uuid id = s.uuid(e);
+    int fragments = 0, loose = 0;
+    s.world().each<physics::DestructibleFragmentComponent>([&](Entity f, physics::DestructibleFragmentComponent& c) {
+        if (c.owner != id) return;
+        ++fragments;
+        if (const auto* rb = s.world().get<physics::RigidBodyComponent>(f); rb && rb->type == physics::BodyType::Dynamic) ++loose;
+    });
+    lua_createtable(L, 0, 3);
+    lua_pushboolean(L, d->broken);
+    lua_setfield(L, -2, "broken");
+    lua_pushinteger(L, fragments);
+    lua_setfield(L, -2, "fragments");
+    lua_pushinteger(L, loose);
+    lua_setfield(L, -2, "loose");
+    return 1;
+}
+
 // entity:ragdoll_root() -> the Ragdoll entity whose body this bone is, or nil.
 int entity_ragdoll_root(lua_State* L) {
     auto& s = scene_of(L);

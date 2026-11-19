@@ -393,6 +393,69 @@ struct StaticHeightfieldComponent {
 // "Joint", "Ragdoll", "RagdollBone", "RigidBody2D", "Collider2D", "CharacterController2D", "Joint2D"). Idempotent.
 void register_components();
 
+
+// ---- destruction ---------------------------------------------------------------------------------
+
+// Pre-fractured destructible (Chaos/Blast-style Voronoi fracture). The convex hull of the entity's
+// visible mesh (ProceduralMesh, MeshRenderer model or primitive; else its collider) is cut into
+// `pieces` Voronoi cells seeded deterministically from `seed`, so the same settings always give
+// the same fragments. A contact whose impulse estimate (ContactEvent::impulse) or a
+// PhysicsWorld::damage call reaches `strength` breaks it: the entity is hidden, loses its body and
+// gains one child entity per fragment (ProceduralMesh + copied MeshRenderer + Convex collider +
+// RigidBody + DestructibleFragment). A dynamic original bursts into dynamic pieces that inherit
+// its velocity. A static or kinematic original (walls, pillars) only frees the fragments within
+// `damage_radius` of the impact; with `support`, fragments no longer connected through shared
+// faces to a fragment resting on the original's base fall as well, and the rest stay static
+// until hit again.
+struct DestructibleComponent {
+    std::uint32_t pieces{12};      // 2..256 Voronoi cells
+    std::uint32_t seed{1};
+    float strength{20.0f};         // N*s impulse that breaks it (or frees more pieces once broken)
+    float damage_radius{0.6f};     // m: static originals free fragments this close to the impact
+    float burst{1.5f};             // m/s outward speed given to freed fragments near the impact
+    float density{600.0f};         // kg/m^3 for fragments of a static or kinematic original
+    float debris_lifetime{0.0f};   // s before freed fragments are removed; 0 = keep
+    std::uint32_t max_debris{64};  // freed fragments kept per destructible; the oldest go first
+    bool support{true};            // static originals: unsupported fragments fall
+    bool broken{false};            // saved: the fragments replace this entity
+};
+// One fragment of a broken destructible (a child entity of `owner`). The fragment geometry is not
+// saved: it is regenerated deterministically from the owner's settings on load.
+struct DestructibleFragmentComponent {
+    Uuid owner;
+    std::uint32_t piece{0};
+    float age{0.0f}; // s since the fragment was freed
+};
+
+struct FractureSettings {
+    std::uint32_t pieces{12};
+    std::uint32_t seed{1};
+};
+// One Voronoi cell of a fractured convex volume, in the source's space. Faces are flat shaded
+// (vertices are not shared between faces); `colors` mark interior (cut) faces darker.
+struct FracturePiece {
+    std::vector<math::Vec3> positions;
+    std::vector<math::Vec3> normals;
+    std::vector<math::Vec2> uvs;
+    std::vector<std::uint32_t> colors;
+    std::vector<std::uint32_t> indices;
+    math::Vec3 centroid;
+    float volume{0};
+    math::Aabb bounds;
+    std::vector<std::uint32_t> neighbours; // pieces sharing a face with this one (sorted)
+};
+struct Fracture {
+    std::vector<FracturePiece> pieces;
+    float volume{0}; // of the fractured hull (the pieces' volumes sum to it)
+};
+// Cuts the convex hull of `points` into Voronoi cells. When the points come from a convex triangle
+// mesh (`indices`), its faces bound the hull exactly; otherwise (or when it is concave) the hull
+// is approximated by a 90-direction discrete-orientation polytope. Fails on fewer than four
+// non-coplanar points.
+[[nodiscard]] Result<Fracture> fracture_convex(const std::vector<math::Vec3>& points,
+                                               const std::vector<std::uint32_t>& indices,
+                                               const FractureSettings& settings);
+
 // ---- queries and events ----------------------------------------------------------------------
 
 struct RaycastHit {
@@ -410,6 +473,11 @@ struct ContactEvent {
     bool is_2d{false};
     math::Vec3 point;     // world contact point (Begin only; zero for triggers)
     math::Vec3 normal;    // from a to b (Begin only)
+    // Begin, 3D, non-trigger: closing speed along the normal when the bodies met (m/s) and the
+    // impulse that stops it, speed times the pair's reduced mass (N*s; a static side counts as
+    // infinitely heavy). An estimate taken before the solver runs; zero otherwise.
+    float speed{0};
+    float impulse{0};
 };
 
 struct CharacterState {
@@ -555,6 +623,14 @@ public:
     // Writes simulated ragdoll poses into the bone Transforms (installed in Phase::PostUpdate by
     // add_physics_systems, after animation).
     void update_ragdoll_poses(scene::Scene& scene);
+
+    // ---- destruction (Destructible + DestructibleFragment) ----
+    // Damages a destructible (or the destructible owning a fragment) at a world point; applied in
+    // the next step. Below the destructible's strength nothing happens.
+    void damage(Entity e, math::Vec3 point, float impulse);
+    // Regenerates fragment geometry of loaded broken destructibles (run by step; the editor can
+    // call it to show them outside play). Returns the number of fragments rebuilt.
+    std::size_t restore_fragments(scene::Scene& scene);
 
     void set_gravity(math::Vec3 g);
     void set_gravity_2d(math::Vec2 g);

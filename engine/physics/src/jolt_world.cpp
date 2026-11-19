@@ -263,6 +263,17 @@ public:
             const JPH::RVec3 p = m.GetWorldSpaceContactPointOn1(0);
             ev.point = {static_cast<float>(p.GetX()), static_cast<float>(p.GetY()), static_cast<float>(p.GetZ())};
             ev.normal = {m.mWorldSpaceNormal.GetX(), m.mWorldSpaceNormal.GetY(), m.mWorldSpaceNormal.GetZ()};
+            // Closing speed along the normal (a towards b) and the impulse that cancels it.
+            const JPH::Vec3 rel = a.GetPointVelocity(p) - b.GetPointVelocity(p);
+            const float closing = rel.Dot(m.mWorldSpaceNormal);
+            const auto inv_mass = [](const JPH::Body& body) {
+                return body.IsDynamic() ? body.GetMotionPropertiesUnchecked()->GetInverseMass() : 0.0f;
+            };
+            const float inv = inv_mass(a) + inv_mass(b);
+            if (closing > 0.0f) {
+                ev.speed = closing;
+                ev.impulse = inv > 0.0f ? closing / inv : 0.0f;
+            }
         }
         std::lock_guard lock(mutex_);
         events_.push_back(ev);
@@ -351,6 +362,7 @@ public:
         std::size_t added = 0;
         scene.world().each<ColliderComponent>([&](Entity e, ColliderComponent& col) {
             if (scene.world().get<CharacterControllerComponent>(e)) return; // the character owns the shape
+            if (const auto* dc = scene.world().get<DestructibleComponent>(e); dc && dc->broken) return; // fragments replace it
             const RigidBodyComponent* rb = scene.world().get<RigidBodyComponent>(e);
             const Pose pose = world_pose(scene, e);
             // Mesh and convex shapes keep the sign so mirrored instances collide mirrored.

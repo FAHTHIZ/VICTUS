@@ -6,6 +6,8 @@
 #include <cmath>
 #include <memory>
 #include <optional>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace victus::physics::detail {
@@ -54,6 +56,30 @@ void ragdoll_bone_axis(const Pose& self, const Pose* child, const Pose* parent, 
                        math::Vec3& dir, float& length);
 // Wireframes of every RagdollBone (collider_lines).
 void ragdoll_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity only);
+
+// ---- destruction (destruction.cpp) ----
+struct DestructionState {
+    struct Damage {
+        Entity entity;
+        math::Vec3 point;
+        float impulse{0};
+    };
+    struct Cached {
+        std::uint64_t key{0}; // source geometry + pieces + seed
+        std::shared_ptr<const Fracture> fracture;
+        std::vector<std::shared_ptr<const scene::ProceduralMesh>> meshes; // per piece, centred on its centroid
+    };
+    std::vector<Damage> pending;
+    std::unordered_map<Uuid, Cached, UuidHash> cache;
+    std::unordered_set<Uuid, UuidHash> warned;
+    // The owner's fracture, recomputed when its geometry or settings changed; null on failure.
+    const Cached* fracture_of(scene::Scene& scene, Entity owner, CollisionMeshCache& meshes);
+};
+// Turns this step's contacts and queued damage into breaks, frees fragments, drops unsupported
+// islands and retires debris.
+void destruction_step(scene::Scene& scene, PhysicsWorld& world, DestructionState& state, CollisionMeshCache& meshes,
+                      const std::vector<ContactEvent>& events, float dt);
+std::size_t restore_fragments(scene::Scene& scene, DestructionState& state, CollisionMeshCache& meshes);
 
 // ---- 3D backend (Jolt) ----
 class World3D {
