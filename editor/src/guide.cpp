@@ -291,6 +291,22 @@ void Editor::load_preferences() {
     const json::Value& guide = (*doc)["getting_started"];
     guide_done_ = static_cast<std::uint32_t>(guide["done"].as_int(0)) & ((1u << static_cast<unsigned>(GuideStep::Count)) - 1u);
     guide_dismissed_ = guide["dismissed"].as_bool(false);
+    const json::Value& ws = (*doc)["workspace"];
+    if (ws.is_object()) {
+        const std::string layout = ws["layout"].as_string_or("");
+        for (int i = 0; i < static_cast<int>(Layout::Count); ++i)
+            if (layout == layout_name(static_cast<Layout>(i))) layout_ = static_cast<Layout>(i);
+        const json::Value& open = ws["panels"];
+        if (open.is_array()) {
+            std::uint32_t mask = 0;
+            for (std::size_t k = 0; k < open.size(); ++k)
+                for (int i = 0; i < static_cast<int>(Panel::Count); ++i)
+                    if (open[k].as_string_or("") == panel_title(static_cast<Panel>(i))) mask |= 1u << i;
+            set_open_panels(mask);
+            saved_panels_ = mask;
+            panels_restored_ = true;
+        }
+    }
 }
 
 void Editor::save_preferences() const {
@@ -300,6 +316,13 @@ void Editor::save_preferences() const {
     guide.set("done", static_cast<double>(guide_done_));
     guide.set("dismissed", guide_dismissed_);
     doc.set("getting_started", std::move(guide));
+    json::Value ws = json::Value::object();
+    ws.set("layout", layout_name(layout_));
+    json::Value open = json::Value::array();
+    for (int i = 0; i < static_cast<int>(Panel::Count); ++i)
+        if ((saved_panels_ >> i) & 1u) open.push(json::Value(panel_title(static_cast<Panel>(i))));
+    if (panels_restored_ || saved_panels_ != 0) ws.set("panels", std::move(open));
+    doc.set("workspace", std::move(ws));
     if (auto st = fs::write_text_atomic(preferences_file(), json::stringify(doc) + "\n"); !st.ok())
         VICTUS_LOG_WARN("editor", "could not save Studio preferences: {}", st.error().message);
 }

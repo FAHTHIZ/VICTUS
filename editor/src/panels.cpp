@@ -403,6 +403,7 @@ void Editor::frame(float dt) {
     draw_safe_mode_card();
     if (show_demo_) ImGui::ShowDemoWindow(&show_demo_);
     observe_guide();
+    save_workspace_if_changed();
     apply_ui_scale(); // takes effect from the next frame
 }
 

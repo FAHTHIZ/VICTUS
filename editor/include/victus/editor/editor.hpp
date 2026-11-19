@@ -982,6 +982,12 @@ private:
     void build_layout(unsigned int dockspace_id, Layout layout);
     void draw_window_menu();
     bool* panel_flag(Panel panel) noexcept;
+    // Which panels are open, one bit per Panel; saved with the preferences when it changes.
+    [[nodiscard]] std::uint32_t open_panels() const noexcept;
+    void set_open_panels(std::uint32_t mask) noexcept;
+    void save_workspace_if_changed();
+    std::uint32_t saved_panels_{0};
+    bool panels_restored_{false}; // the preferences named the open panels
     // Inspector helpers
     bool inspect_components(scene::Entity e);
     void begin_inspector_frame(scene::Entity e);
