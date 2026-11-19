@@ -37,7 +37,7 @@ const player::Diagnostic* find(const player::ValidationReport& r, std::string_vi
 
 TEST_CASE("validate: clean templates have no diagnostics") {
     TempDir tmp("victus_validate_clean");
-    for (const char* t : {"2d", "3d", "simulation"}) {
+    for (const char* t : {"2d", "3d", "nocode", "nocode3d", "simulation"}) {
         CAPTURE(t);
         const fs::Path dir = tmp.path / t;
         REQUIRE(project::Project::create(dir, "Clean", t).ok());
@@ -47,7 +47,7 @@ TEST_CASE("validate: clean templates have no diagnostics") {
         CHECK(r->diagnostics.empty());
         CHECK(r->ok());
         CHECK(r->scenes >= 1);
-        CHECK(r->scripts >= 1);
+        if (!std::string_view(t).starts_with("nocode")) CHECK(r->scripts >= 1);
         CHECK(r->summary().starts_with("checked " + std::to_string(r->scenes) + " scenes, "));
         CHECK(r->summary().ends_with(": 0 problems"));
     }

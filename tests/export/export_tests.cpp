@@ -11,6 +11,7 @@
 #include "victus/project/project.hpp"
 #include "victus/render/image.hpp"
 #include "victus/scene/scene.hpp"
+#include "victus/script/behaviours.hpp"
 #include "victus/script/script.hpp"
 
 #include <cmath>
@@ -180,6 +181,68 @@ TEST_CASE("export: pack contains cooked assets and runs in packaged mode") {
     CHECK(player::export_game(o).error().code == ErrorCode::AlreadyExists);
     o.output = src / "build";
     CHECK(player::export_game(o).error().code == ErrorCode::InvalidArgument);
+}
+
+TEST_CASE("export: the no-code templates ship with every behaviour and asset they use") {
+    TempDir tmp("victus_export_nocode");
+    project::register_components();
+    for (const char* id : {"nocode", "nocode3d"}) {
+        CAPTURE(id);
+        const fs::Path src = tmp.path / id / "src";
+        REQUIRE(project::Project::create(src, "No Code", id).ok());
+        player::ExportOptions o;
+        o.project = src;
+        o.output = tmp.path / id / "out";
+        o.include_player = false;
+        auto r = player::export_game(o);
+        REQUIRE_MESSAGE(r.ok(), (r.ok() ? "" : r.error().message));
+        const fs::Path game = tmp.path / id / "shipped";
+        std::filesystem::create_directories(game);
+        std::filesystem::copy_file(r->pack, game / "game.vpak");
+        auto pk = pack::Pack::open(game / "game.vpak");
+        REQUIRE(pk.ok());
+        fs::mount(game, *pk);
+        auto proj = project::Project::open(game);
+        REQUIRE(proj.ok());
+        auto db = assets::AssetDatabase::open_packaged(game);
+        REQUIRE(db.ok());
+        auto path = proj->startup_scene_path();
+        REQUIRE(path.ok());
+        scene::Scene scene;
+        REQUIRE(scene.load_file(*path).ok());
+        // The level is all there, as behaviours rather than scripts.
+        auto& w = scene.world();
+        const scene::Entity player = scene.find_by_name("Player");
+        REQUIRE_FALSE(player.is_null());
+        CHECK(w.get<script::HealthComponent>(player));
+        CHECK((w.get<script::PlatformerMovementComponent>(player) || w.get<script::TopDownMovementComponent>(player)));
+        const scene::Entity rules = scene.find_by_name("Game Rules");
+        REQUIRE_FALSE(rules.is_null());
+        CHECK(w.get<script::GameRulesComponent>(rules));
+        std::size_t coins = 0, goals = 0, patrols = 0, scripts = 0;
+        std::vector<scene::Entity> all = scene.roots();
+        for (std::size_t i = 0; i < all.size(); ++i)
+            for (const scene::Entity c : scene.children(all[i])) all.push_back(c);
+        CHECK(all.size() > 20);
+        for (const scene::Entity e : all) {
+            coins += w.get<script::CollectibleComponent>(e) ? 1 : 0;
+            goals += w.get<script::GoalComponent>(e) ? 1 : 0;
+            patrols += w.get<script::PatrolComponent>(e) ? 1 : 0;
+            scripts += w.get<script::ScriptComponent>(e) ? 1 : 0;
+            // Every material and model the level points at was packed.
+            if (const auto* m = w.get<scene::MeshRendererComponent>(e); m && !m->material_asset.is_nil())
+                CHECK((*db)->find(m->material_asset));
+        }
+        CHECK(coins >= 5);
+        CHECK(goals == 1);
+        CHECK(patrols >= 1);
+        CHECK(scripts == 0);
+        if (std::string_view(id) == "nocode3d") {
+            CHECK((*pk)->contains("assets/shaders/lava.vshader"));
+            CHECK((*pk)->contains("assets/materials/lava.vmat"));
+        }
+        fs::unmount(game);
+    }
 }
 
 TEST_CASE("export: broken scripts and missing references fail the export") {
