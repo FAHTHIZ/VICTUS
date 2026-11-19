@@ -12,6 +12,7 @@
 #include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/physics/physics.hpp"
+#include "victus/script/behaviours.hpp"
 #include "victus/script/script.hpp"
 #include "victus/net/net.hpp"
 
@@ -405,6 +406,55 @@ TEST_CASE("templates: 2D platformer is playable through its scripts") {
     r->input.set_key("S", false);
     r->frames(60);
     CHECK(r->pos("Player").y == doctest::Approx(-2.55f).epsilon(4e-3));
+    CHECK(r->host->stats().errors == 0);
+    for (const auto& e : r->host->recent_errors()) MESSAGE(e);
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("templates: the No-Code Platformer plays with behaviours alone") {
+    const auto dir = temp_dir("tplnocode");
+    auto r = start_template("nocode", dir);
+    r->frames(30);
+    CHECK(r->host->stats().instances == 0); // not a single script
+    const math::Vec3 start = r->pos("Player");
+    CHECK(start.y == doctest::Approx(-2.55f).epsilon(2e-2));
+    CHECK(r->audio->is_playing(r->scene.find_by_name("Music")));
+    const auto rules = [&] {
+        const auto* g = r->scene.world().get<script::GameRulesComponent>(r->scene.find_by_name("Game Rules"));
+        REQUIRE(g);
+        return *g;
+    };
+    CHECK(rules().lives_left == 3);
+    CHECK_FALSE(r->scene.find_by_name("HUD (GameRules)").is_null());
+    // Run right: the first coin sits on the ground in the way.
+    r->input.set_key("D", true);
+    r->frames(90);
+    CHECK(r->pos("Player").x > start.x + 4);
+    CHECK(r->scene.find_by_name("Coin 1").is_null());
+    CHECK(rules().score >= 1);
+    CHECK(r->audio->stats().one_shots >= 1);
+    // A jump plays its sound and leaves the ground.
+    const auto shots = r->audio->stats().one_shots;
+    r->input.set_key("Space", true);
+    r->frames(8);
+    r->input.set_key("Space", false);
+    CHECK(r->pos("Player").y > -2.0f);
+    CHECK(r->audio->stats().one_shots == shots + 1);
+    r->input.set_key("D", false);
+    r->frames(120);
+    CHECK(rules().state == script::GameState::Playing);
+    CHECK_FALSE(r->scene.find_by_name("Player").is_null());
+    // Falling into a pit costs a life and respawns at the start.
+    r->scene.world().get<scene::Transform>(r->scene.find_by_name("Player"))->position = {15.5f, -5, 0};
+    r->frames(90);
+    CHECK(rules().lives_left == 2);
+    CHECK(r->pos("Player").x < 0);
+    // Touching the flag wins the level.
+    r->scene.world().get<scene::Transform>(r->scene.find_by_name("Player"))->position = {54, -2.5f, 0};
+    r->input.set_key("D", true);
+    r->frames(60);
+    CHECK(rules().state == script::GameState::Won);
     CHECK(r->host->stats().errors == 0);
     for (const auto& e : r->host->recent_errors()) MESSAGE(e);
     std::error_code ec;

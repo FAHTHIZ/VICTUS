@@ -56,6 +56,7 @@ victus_add_test(victus_script_tests
         script/scene_transition_tests.cpp
         script/graph_tests.cpp
         script/localization_tests.cpp
+        script/behaviour_tests.cpp
     DEPS VICTUS::Script VICTUS::Animation VICTUS::Tilemap
     LABELS script)
 

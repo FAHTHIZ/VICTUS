@@ -298,6 +298,9 @@ Status apply_scene(ScriptHost::Impl& h, scene::Scene& s, ScriptHost::Impl::Scene
     h.pending_restore.reset();
     if (auto st = s.load(req.doc); !st) return st;
     s.update_transforms();
+    h.behaviours.start_doc = req.doc;
+    h.behaviours.has_start = true;
+    h.behaviours.warned.clear();
     h.current_scene = std::move(req.path);
     h.scene_params = std::move(req.params);
     ++h.counters.scene_loads;

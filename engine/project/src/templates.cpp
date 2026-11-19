@@ -20,6 +20,7 @@
 #include "victus/project/project.hpp"
 #include "victus/core/log.hpp"
 #include "victus/scene/prefab.hpp"
+#include "victus/script/behaviours.hpp"
 #include "victus/script/script.hpp"
 
 #include <algorithm>
@@ -863,6 +864,124 @@ void build_2d(Scene& s) {
     s.world().get<gameui::UiRectComponent>(banner)->visible = false;
 }
 
+// "No-Code Platformer": a complete level built only from Behaviours (ADR-0120): no scripts at
+// all, so every part of the game is a component a beginner can click on and change.
+void build_nocode(Scene& s) {
+    using namespace script;
+    const Entity cam = add(s, "Main Camera", {-6, -1, 10});
+    auto& c = s.world().add<CameraComponent>(cam);
+    c.projection = CameraComponent::Projection::Orthographic;
+    c.ortho_height = 10.0f;
+    auto& follow = s.world().add<CameraFollowComponent>(cam);
+    follow.offset = {2.5f, 1.8f, 10};
+    follow.smoothing = 5;
+    follow.look_at = false;
+    // The sky and sun ride along with the camera so they always fill the view.
+    sprite(s, add(s, "Sky", {0, 0, -11}, cam), {40, 14}, {0.38f, 0.6f, 0.9f, 1}, -10);
+    sprite(s, add(s, "Sun Disc", {5.5f, 3.0f, -10.5f}, cam), {1.6f, 1.6f}, {1.0f, 0.86f, 0.35f, 1}, -9);
+
+    const math::Color grass{0.22f, 0.55f, 0.27f, 1}, dirt{0.62f, 0.44f, 0.26f, 1}, wall{0.3f, 0.22f, 0.16f, 1};
+    solid_2d(s, "Ground", {2, -4.2f, 0}, {24, 2.4f}, grass, 0.6f);
+    solid_2d(s, "Ground 2", {28.5f, -4.2f, 0}, {23, 2.4f}, grass, 0.6f);
+    solid_2d(s, "Ground 3", {51.5f, -4.2f, 0}, {17, 2.4f}, grass, 0.6f);
+    solid_2d(s, "Wall Left", {-10.5f, 2, 0}, {1, 14}, wall, 0.0f);
+    solid_2d(s, "Wall Right", {60.5f, 2, 0}, {1, 14}, wall, 0.0f);
+    const Entity ledge = solid_2d(s, "Platform", {6, -0.6f, 0}, {3, 0.4f}, dirt, 0.6f);
+    s.world().get<physics::Collider2DComponent>(ledge)->one_way = true;
+    solid_2d(s, "Platform 2", {22, -0.4f, 0}, {3, 0.4f}, dirt, 0.6f);
+    solid_2d(s, "Platform 3", {25.5f, 1.6f, 0}, {3, 0.4f}, dirt, 0.6f);
+    solid_2d(s, "Platform 4", {46, -0.6f, 0}, {3, 0.4f}, dirt, 0.6f);
+
+    // The player: four behaviours and a physics character, nothing else.
+    const Entity player = add(s, "Player", {-6, -2.5f, 0});
+    sprite(s, player, {0.9f, 0.9f}, {0.95f, 0.45f, 0.15f, 1}, 2);
+    auto& pc = s.world().add<physics::CharacterController2DComponent>(player);
+    pc.size = {0.86f, 0.9f};
+    pc.gravity_scale = 2.6f;
+    pc.air_control = 0.8f;
+    auto& move = s.world().add<PlatformerMovementComponent>(player);
+    move.speed = 7;
+    move.jump_speed = 12.5f;
+    move.max_jumps = 2;
+    move.jump_sound = "audio/jump.wav";
+    auto& hp = s.world().add<HealthComponent>(player);
+    hp.on_death = DeathAction::Respawn;
+    auto& gun = s.world().add<ShooterComponent>(player);
+    gun.speed = 16;
+    gun.cooldown = 0.25f;
+
+    const math::Vec3 coins[] = {{0, -2.3f, 0},   {6, 0.3f, 0},     {15.5f, -0.6f, 0}, {22, 0.5f, 0},
+                                {25.5f, 2.6f, 0}, {33, -2.3f, 0},   {46, 0.3f, 0},     {52, -2.3f, 0}};
+    int n = 0;
+    for (const math::Vec3& at : coins) {
+        const Entity coin = add(s, "Coin " + std::to_string(++n), at);
+        sprite(s, coin, {0.5f, 0.5f}, {1.0f, 0.78f, 0.12f, 1}, 1).unlit = true;
+        s.world().add<OscillatorComponent>(coin) = {{0, 0.15f, 0}, 0.8f, static_cast<float>(n) * 0.4f, {}, false};
+        s.world().add<CollectibleComponent>(coin).sound = "audio/coin.wav";
+    }
+    const Entity heart = add(s, "Heart", {28, -2.3f, 0});
+    sprite(s, heart, {0.5f, 0.5f}, {0.95f, 0.3f, 0.45f, 1}, 1);
+    auto& heal = s.world().add<CollectibleComponent>(heart);
+    heal.kind = CollectibleKind::Health;
+    heal.sound = "audio/coin.wav";
+
+    for (const float x : {10.0f, 37.0f}) {
+        const Entity spikes = add(s, x < 20 ? "Spikes" : "Spikes 2", {x, -2.75f, 0});
+        sprite(s, spikes, {1.2f, 0.5f}, {0.75f, 0.12f, 0.14f, 1}, 1);
+        s.world().add<HazardComponent>(spikes);
+    }
+    const struct { const char* name; float x, offset; } slimes[] = {{"Slime", 31, -4}, {"Slime 2", 49, 3}};
+    for (const auto& sl : slimes) {
+        const Entity slime = add(s, sl.name, {sl.x, -2.6f, 0});
+        sprite(s, slime, {0.9f, 0.8f}, {0.35f, 0.8f, 0.3f, 1}, 2);
+        auto& hz = s.world().add<HazardComponent>(slime);
+        hz.stompable = true;
+        auto& patrol = s.world().add<PatrolComponent>(slime);
+        patrol.offset = {sl.offset, 0, 0};
+        patrol.speed = 1.6f;
+        auto& life = s.world().add<HealthComponent>(slime);
+        life.max = life.current = 1;
+        life.invulnerable_time = 0;
+    }
+    // Falling into a gap costs a life: a long invisible trigger below the level.
+    const Entity pit = add(s, "Pit", {25, -9, 0});
+    auto& pit_shape = s.world().add<physics::Collider2DComponent>(pit);
+    pit_shape.size = {120, 2};
+    pit_shape.is_trigger = true;
+    auto& pit_hz = s.world().add<HazardComponent>(pit);
+    pit_hz.instant_kill = true;
+    pit_hz.knockback = 0;
+
+    const Entity checkpoint = add(s, "Checkpoint", {19.5f, -2.4f, 0});
+    sprite(s, checkpoint, {0.35f, 1.2f}, {0.3f, 0.55f, 1.0f, 1}, 1);
+    s.world().add<CheckpointComponent>(checkpoint);
+    const Entity goal = add(s, "Goal Flag", {57, -2.0f, 0});
+    sprite(s, goal, {0.8f, 2.0f}, {1.0f, 0.85f, 0.25f, 1}, 1).unlit = true;
+    s.world().add<GoalComponent>(goal);
+
+    const Entity rules = add(s, "Game Rules", {0, 0, 0});
+    auto& gr = s.world().add<GameRulesComponent>(rules);
+    gr.lives = 3;
+    gr.win_message = "Level complete!";
+
+    const Entity music = add(s, "Music", {0, 0, 0});
+    auto& ms = s.world().add<audio::AudioSourceComponent>(music);
+    ms.clip = "audio/music.wav";
+    ms.bus = audio::Bus::Music;
+    ms.volume = 0.3f;
+    ms.loop = true;
+    ms.stream = true;
+    ms.spatial = false;
+
+    // A static line of help along the bottom; GameRules adds score, lives and time at the top.
+    const Entity canvas = s.create("Help");
+    s.world().add<gameui::UiCanvasComponent>(canvas);
+    const Entity help = ui_rect(s, canvas, "Controls", {0.5f, 1}, {0.5f, 1}, {0, -18}, {1180, 44});
+    auto& panel = s.world().add<gameui::UiPanelComponent>(help);
+    panel.corner_radius = 12;
+    ui_text(s, help, "A / D run     Space jump, again in the air to double jump     Click shoot     land on slimes to stomp them", 22, false);
+}
+
 void build_simulation(Scene& s) {
     attach(s, camera_3d(s, {0, 14, 18}, {0, 0, 0}), "scripts/orbit_camera.luau");
     sun(s);
@@ -1534,6 +1653,8 @@ const std::vector<TemplateInfo>& templates() {
     static const std::vector<TemplateInfo> list = {
         {"3d", "3D Scene", "A Vanguard starter robot you walk with WASD/arrow keys, jump with Space and interact with E (Luau + CharacterController) that climbs steps, swings a hinged gate and shoves a stack of physics crates with positional impact sounds, its Vanguard counterpart as a companion that follows you over an automatic navmesh, a follow camera, sun shadows, PBR primitives and a point light.", true},
         {"2d", "2D Game", "A playable platformer on Box2D physics with music and sound effects: a CharacterController2D you run with A/D or arrows and jump with Space, a one-way ledge you jump through and drop off with S/Down, a lantern swinging on a joint and coins to collect. Gameplay is in Luau scripts."},
+        {"nocode", "No-Code Platformer",
+         "A complete side-scrolling level made without a single line of code: run, double jump, collect coins, stomp patrolling slimes, dodge spikes and pits, reach a checkpoint and the goal flag, with score, lives and a timer on screen. Every piece is a Behaviour component you can click on and change in the Inspector."},
         {"simulation", "Simulation",
          "576 entities animated by native systems, with a scripted orbiting camera: a starting point for simulation work."},
         {"multiplayer", "Multiplayer Arena",
@@ -1574,6 +1695,8 @@ std::vector<TemplateFile> template_files(std::string_view id, const TemplateOpti
                 {"assets/audio/music.wav", synth_music()},
                 {"assets/scripts/hud.luau", kHud},
                 {"assets/localization/en.vstrings", kHudStrings}};
+    if (id == "nocode")
+        return {{"assets/audio/jump.wav", synth_jump()}, {"assets/audio/coin.wav", synth_coin()}, {"assets/audio/music.wav", synth_music()}};
     if (id == "simulation") return {{"assets/scripts/orbit_camera.luau", kOrbitCamera}};
     if (id == "multiplayer") {
         std::vector<TemplateFile> files = {{"assets/scripts/net_player.luau", kNetPlayer},
@@ -1609,6 +1732,7 @@ Status build_template_scene(std::string_view id, Scene& s, const TemplateOptions
     s.clear();
     if (id == "3d") build_3d(s, options);
     else if (id == "2d") build_2d(s);
+    else if (id == "nocode") build_nocode(s);
     else if (id == "simulation") build_simulation(s);
     else if (id == "multiplayer") build_multiplayer(s, options);
     else return make_error(ErrorCode::InvalidArgument, "unknown template '" + std::string(id) + "'");

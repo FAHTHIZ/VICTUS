@@ -302,6 +302,7 @@ void open_victus_libs(lua_State* L) {
 // ---- ScriptComponent registration ---------------------------------------------------------------
 
 void register_components() {
+    register_behaviour_components();
     auto& r = scene::SerializerRegistry::instance();
     if (r.by_name("Script")) return;
     r.add<ScriptComponent>(
@@ -574,6 +575,7 @@ void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, co
         }
         (void)h.call(in, "update", &dt);
     }
+    behaviours_update(h, scene, dt);
     dispatch_physics_events(scene);
     dispatch_ui_events(scene);
     dispatch_sequence_events(scene);
@@ -763,6 +765,7 @@ void ScriptHost::fixed_update(scene::Scene& scene, const gameplay::FrameTime& ti
         h.route(e);
         (void)h.call(it->second, "fixed_update", &dt);
     }
+    behaviours_fixed_update(h, scene, dt);
     h.input = h.default_input;
 }
 
