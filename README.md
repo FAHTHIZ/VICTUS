@@ -32,7 +32,11 @@ The **Getting Started** panel walks you through these steps and ticks each one o
 <table>
 <tr>
 <td width="50%"><img src="docs/images/nocode_platformer.png" alt="The No-Code Platformer template running: player, slime, heart, coins, spikes and a HUD"><br><sub>No-Code Platformer: built only from Behaviours, with no scripts</sub></td>
+<td width="50%"><img src="docs/images/nocode_3d.jpg" alt="The No-Code 3D Adventure running: a robot on grassy islands over glowing lava, with coins, a guard robot and a HUD"><br><sub>No-Code 3D Adventure: islands, lava, a guard robot and a turret, still with no scripts</sub></td>
+</tr>
+<tr>
 <td width="50%"><img src="docs/images/template_3d.jpg" alt="The 3D template: a robot character, a fire, physics crates and a controls panel"><br><sub>3D template: character controller, physics, particles, prefabs and save games</sub></td>
+<td width="50%"></td>
 </tr>
 </table>
 
@@ -67,6 +71,7 @@ Every behaviour sends events (`collected`, `died`, `game_won` and others), so sc
 | Template | Command | You get |
 |---|---|---|
 | No-Code Platformer | `victus new MyGame --template nocode` | A complete 2D level made only from Behaviours |
+| No-Code 3D Adventure | `victus new MyGame --template nocode3d` | A 3D island level with an animated character, made only from Behaviours |
 | 2D platformer | `victus new MyGame --template 2d` | Box2D platformer in Luau: one-way ledge, swinging lantern, coins, music |
 | 3D | `victus new MyGame --template 3d` | Third-person robot, physics crates, fire, prefabs, save and load |
 | Simulation | `victus new MyGame --template simulation` | 576 entities animated by native systems, with a scripted orbiting camera |
@@ -95,7 +100,7 @@ python3 tools/setup/check_env.py     # verify the toolchain
 cmake --preset dev && cmake --build --preset dev && ctest --preset dev
 
 B=build/dev/bin
-$B/victus new MyGame --template nocode   # or 3d, 2d, simulation, multiplayer
+$B/victus new MyGame --template nocode   # or nocode3d, 3d, 2d, simulation, multiplayer
 $B/victus_editor MyGame                  # open it in VICTUS Studio
 $B/victus run MyGame                     # or play it directly
 $B/victus export MyGame --out MyGame-export && ./MyGame-export/MyGame

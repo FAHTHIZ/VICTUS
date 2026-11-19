@@ -56,6 +56,7 @@ struct PlatformerMovementComponent {
     float facing{1};
     bool jump_held{false};      // jump still held since the last jump started
     bool jump_cut_ready{false}; // the current jump can still be cut short
+    float air_time{0};          // seconds off the ground (animation)
 };
 
 // Walking in any direction: 2D characters walk in X/Y (the controller is switched to top-down),
@@ -73,6 +74,7 @@ struct TopDownMovementComponent {
     // runtime
     math::Vec3 velocity;
     math::Vec3 facing{1, 0, 0};
+    float air_time{0};
 };
 
 // Keeps a camera (or anything) following a target with smoothing.

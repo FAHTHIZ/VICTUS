@@ -6,7 +6,9 @@ Contents: [Make a game without code](#make-a-game-without-code) · [Scripting an
 
 ## Make a game without code
 
-Behaviours are ready-made gameplay components. Add one to an entity in the Inspector (Add Component > Behaviours) and the entity starts acting that way the moment you press Play, in the Studio, the player, headless runs and exported games. Every setting has a tooltip. The quickest way to see them together is the No-Code Platformer template: `victus new MyGame --template nocode`, or pick it on the Studio start screen. It is a full level (running, double jumping, coins, slimes, spikes, pits, a checkpoint, a goal flag, score, lives and a timer) with no scripts in it.
+Behaviours are ready-made gameplay components. Add one to an entity in the Inspector (Add Component > Behaviours) and the entity starts acting that way the moment you press Play, in the Studio, the player, headless runs and exported games. Every setting has a tooltip. The quickest way to see them together is the No-Code Platformer template: `victus new MyGame --template nocode`, or pick it on the Studio start screen. It is a full level (running, double jumping, coins, slimes, spikes, pits, a checkpoint, a goal flag, score, lives and a timer) with no scripts in it. For 3D, use the No-Code 3D Adventure (`--template nocode3d`): an animated robot crosses grassy islands over lava, collects coins, stomps a patrolling guard, dodges a turret and reaches a gold gate, again with no scripts.
+
+Movement behaviours also drive character animation. When the entity or one of its children has an Animator, Top-Down Movement and Platformer Movement (3D) set its `speed` and `grounded` parameters and fire the `jump` trigger, and Patrol and Chase set `speed` and turn the character to face where it walks. The Vanguard starter characters already use these parameters.
 
 | Behaviour | Add it to | What it does |
 |---|---|---|
