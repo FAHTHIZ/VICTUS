@@ -1574,6 +1574,7 @@ bool Editor::inspect_components(Entity e) {
         changed = true;
     }
 
+    draw_roles(e); // applied after the inspector frame, as its own undo step
     changed |= draw_add_component(e);
     return changed;
 }
@@ -1738,6 +1739,7 @@ void Editor::draw_inspector() {
         if (changed && multi) apply_multi_edit(e, before_frame);
         if (changed) active_scene().update_transforms();
         end_inspector_frame(e, changed);
+        if (auto r = std::exchange(pending_role_, std::nullopt)) make_role(e, *r);
         draw_network_section(e);
     }
     if (play_state_ != PlayState::Editing) {
