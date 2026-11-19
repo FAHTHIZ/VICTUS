@@ -22,6 +22,9 @@ GpuAssetCache::~GpuAssetCache() { clear(); }
 
 void GpuAssetCache::clear() {
     if (loader_) loader_->forget_all();
+    resident_.clear();
+    material_textures_.clear();
+    residency_stats_.resident_bytes = 0;
     for (auto& [id, tex] : textures_) ctx_.device().destroy(tex);
     textures_.clear();
     nearest_.clear();
@@ -51,6 +54,10 @@ void GpuAssetCache::evict(const Uuid& uuid) {
     // Materials hold texture handles: any eviction may invalidate them, and they are cheap to rebuild.
     materials_.clear();
     nearest_.erase(uuid);
+    if (const auto it = resident_.find(uuid); it != resident_.end()) {
+        residency_stats_.resident_bytes -= it->second.bytes;
+        resident_.erase(it);
+    }
     if (loader_) loader_->forget(uuid); // a reload in flight is discarded; the next request re-reads
     environments_.erase(uuid);
     environment_errors_.erase(uuid);
@@ -91,7 +98,46 @@ Result<rhi::TextureHandle> GpuAssetCache::upload_texture(const Uuid& uuid, const
     if (!tex) return tex;
     if (codec) ++compressed_uploads_;
     textures_.emplace(uuid, *tex);
+    make_resident(uuid, assets::upload_bytes(cooked));
     return tex;
+}
+
+void GpuAssetCache::touch(const Uuid& uuid) noexcept {
+    if (const auto it = resident_.find(uuid); it != resident_.end()) it->second.last_used = residency_stats_.frame;
+}
+
+void GpuAssetCache::make_resident(const Uuid& uuid, std::size_t bytes) {
+    Resident& r = resident_[uuid];
+    residency_stats_.resident_bytes += bytes - r.bytes;
+    r.bytes = bytes;
+    r.last_used = residency_stats_.frame;
+}
+
+void GpuAssetCache::enforce_residency() {
+    const std::size_t budget = residency_settings_.budget_bytes;
+    residency_stats_.over_budget = false;
+    if (budget == 0 || residency_stats_.resident_bytes <= budget) return;
+    const std::uint64_t now = residency_stats_.frame;
+    std::vector<std::pair<Uuid, Resident>> idle;
+    for (const auto& [id, r] : resident_)
+        if (now - r.last_used >= residency_settings_.min_idle_frames) idle.emplace_back(id, r);
+    std::sort(idle.begin(), idle.end(), [](const auto& a, const auto& b) {
+        if (a.second.last_used != b.second.last_used) return a.second.last_used < b.second.last_used;
+        return a.second.bytes > b.second.bytes; // equally stale: free more per eviction
+    });
+    for (const auto& [id, r] : idle) {
+        if (residency_stats_.resident_bytes <= budget) break;
+        evict(id);
+        ++residency_stats_.evicted;
+        residency_stats_.evicted_bytes += r.bytes;
+    }
+    residency_stats_.over_budget = residency_stats_.resident_bytes > budget;
+}
+
+ResidencyStats GpuAssetCache::residency() const {
+    ResidencyStats s = residency_stats_;
+    s.resident_assets = static_cast<std::uint32_t>(resident_.size());
+    return s;
 }
 
 namespace {
@@ -107,7 +153,10 @@ Error not_resident(const assets::AsyncLoader& loader, const Uuid& uuid, assets::
 } // namespace
 
 Result<rhi::TextureHandle> GpuAssetCache::texture(const Uuid& uuid) {
-    if (const auto it = textures_.find(uuid); it != textures_.end()) return it->second;
+    if (const auto it = textures_.find(uuid); it != textures_.end()) {
+        touch(uuid);
+        return it->second;
+    }
     if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
     if (loader_) {
         (void)loader_->request(uuid, assets::LoadType::Texture);
@@ -149,8 +198,12 @@ void GpuAssetCache::prefetch(const Uuid& uuid, assets::LoadType type, assets::Lo
 }
 
 std::uint32_t GpuAssetCache::pump() {
-    if (!loader_) return 0;
     VICTUS_PROFILE_SCOPE("GpuAssetCache::pump");
+    ++residency_stats_.frame;
+    // Eviction first: this frame's references have not touched anything yet, so "idle" means
+    // unused during the last min_idle_frames frames, and new uploads below are never candidates.
+    enforce_residency();
+    if (!loader_) return 0;
     async_stats_.uploaded_last_pump = 0;
     async_stats_.uploaded_bytes_last_pump = 0;
     auto ready = loader_->take(async_settings_.upload_budget_bytes);
@@ -273,7 +326,12 @@ bool GpuAssetCache::texture_nearest(const Uuid& uuid) {
 }
 
 Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
-    if (const auto it = materials_.find(uuid); it != materials_.end()) return it->second;
+    if (const auto it = materials_.find(uuid); it != materials_.end()) {
+        // The material holds its textures' handles: keep them resident while it is in use.
+        if (const auto refs = material_textures_.find(uuid); refs != material_textures_.end())
+            for (const Uuid& t : refs->second) touch(t);
+        return it->second;
+    }
     auto build = [&]() -> Result<render::Material> {
         if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
         auto src = db_->resolve_material(uuid); // instances inherit from their parents
@@ -302,8 +360,11 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
         m.blend = static_cast<render::MaterialBlend>(src->blend);
         rhi::TextureHandle* slots[4] = {&m.base_color_texture, &m.metallic_roughness_texture, &m.normal_texture, &m.emissive_texture};
         const auto refs = src->textures();
+        std::vector<Uuid>& used = material_textures_[uuid];
+        used.clear();
         for (std::size_t i = 0; i < 4; ++i) {
             if (refs[i]->is_nil()) continue;
+            used.push_back(*refs[i]);
             const assets::AssetRecord* rec = db_->find(*refs[i]);
             if (!rec || rec->kind != assets::AssetKind::Texture) {
                 VICTUS_LOG_WARN("assets", "material {}: {} texture {} is missing", uuid.to_string(),
@@ -371,7 +432,10 @@ void GpuAssetCache::evict_shaders() {
 }
 
 Result<const GpuModel*> GpuAssetCache::model(const Uuid& uuid) {
-    if (const auto it = models_.find(uuid); it != models_.end()) return static_cast<const GpuModel*>(it->second.get());
+    if (const auto it = models_.find(uuid); it != models_.end()) {
+        touch(uuid);
+        return static_cast<const GpuModel*>(it->second.get());
+    }
     if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
     if (loader_) {
         (void)loader_->request(uuid, assets::LoadType::Model);
@@ -384,6 +448,7 @@ Result<const GpuModel*> GpuAssetCache::model(const Uuid& uuid) {
 
 Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::CookedModel model) {
     evict(uuid);
+    const std::size_t bytes = assets::upload_bytes(model);
     auto gpu = std::make_unique<GpuModel>();
     auto fail = [&](Error e) -> Result<const GpuModel*> {
         for (auto& m : gpu->meshes) ctx_.destroy(m);
@@ -450,6 +515,7 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
     gpu->cpu = std::move(model);
     const GpuModel* raw = gpu.get();
     models_[uuid] = std::move(gpu);
+    make_resident(uuid, bytes);
     return raw;
 }
 

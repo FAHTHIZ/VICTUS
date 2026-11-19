@@ -51,6 +51,7 @@ using LoadFetch = std::function<Result<LoadPayload>(const Uuid&, LoadType)>;
 // has one, else RGBA8 mips; vertex and index data plus embedded textures of a model).
 [[nodiscard]] std::size_t upload_bytes(const LoadPayload& payload) noexcept;
 [[nodiscard]] std::size_t upload_bytes(const CookedTexture& texture) noexcept;
+[[nodiscard]] std::size_t upload_bytes(const CookedModel& model) noexcept;
 
 struct LoaderSettings {
     std::uint32_t max_in_flight{4}; // decodes running at once (0 is treated as 1)

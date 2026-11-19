@@ -137,3 +137,75 @@ TEST_CASE("gpu async loading: failures are cached, sprites wait, synchronous mod
     CHECK(cache.texture(p.texture).ok());
     CHECK(cache.model(p.model).ok());
 }
+
+TEST_CASE("gpu residency: over the budget, idle assets are evicted least recently used first") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    AsyncProject p = make_project();
+    // Two more 8x8 textures: each uploads 8x8 + 4x4 + 2x2 + 1x1 RGBA8 mips (or one compressed chain).
+    for (const char* name : {"b.png", "c.png"})
+        REQUIRE(render::save_png(p.root / "assets" / "textures" / name, render::make_checker(8, 1, 0xff00ff00u, 0xff00ff00u)).ok());
+    (void)p.db->refresh();
+    REQUIRE(p.db->import_all().failed == 0);
+    const Uuid a = p.texture, b = p.db->find_path("textures/b.png")->uuid, c = p.db->find_path("textures/c.png")->uuid;
+    runtime::GpuAssetCache cache(*gpu().ctx, p.db.get()); // synchronous loads: residency works in both modes
+    REQUIRE(cache.texture(a).ok());
+    const std::size_t one = cache.residency().resident_bytes;
+    REQUIRE(one > 0);
+    cache.set_residency({.budget_bytes = one * 2, .min_idle_frames = 3});
+
+    // Frame 1: a and b are used (two textures, at the budget).
+    (void)cache.pump();
+    REQUIRE(cache.texture(a).ok());
+    REQUIRE(cache.texture(b).ok());
+    CHECK(cache.residency().resident_assets == 2);
+    // Then only c and b are used: a goes idle; c pushes residency over the budget.
+    const std::uint64_t gpu_before = gpu().ctx->device().stats().texture_bytes;
+    std::uint64_t evicted_at = 0;
+    for (int frame = 0; frame < 6; ++frame) {
+        (void)cache.pump();
+        REQUIRE(cache.texture(c).ok());
+        REQUIRE(cache.texture(b).ok());
+        if (!evicted_at && cache.residency().evicted == 1) evicted_at = cache.residency().frame;
+    }
+    const runtime::ResidencyStats r = cache.residency();
+    CHECK(r.evicted == 1);
+    CHECK(r.evicted_bytes == one);
+    CHECK(r.resident_assets == 2);
+    CHECK(r.resident_bytes <= one * 2);
+    CHECK_FALSE(r.over_budget);
+    CHECK(evicted_at == 4); // a was last used in frame 1: idle for 3 frames at pump 4
+    CHECK(gpu().ctx->device().stats().texture_bytes < gpu_before + one); // a's memory was released
+
+    // Assets in recent use are never evicted, even far over the budget.
+    cache.set_residency({.budget_bytes = 1, .min_idle_frames = 3});
+    for (int frame = 0; frame < 5; ++frame) {
+        (void)cache.pump();
+        REQUIRE(cache.texture(c).ok());
+        REQUIRE(cache.texture(b).ok());
+    }
+    CHECK(cache.residency().resident_assets == 2);
+    CHECK(cache.residency().over_budget);
+
+    // A material in use keeps its texture resident through the cached material alone.
+    assets::MaterialAsset m;
+    m.base_color_texture = a;
+    sfs::create_directories(p.root / "assets" / "materials");
+    REQUIRE(assets::save_material_file(p.root / "assets" / "materials" / "wall.vmat", m).ok());
+    (void)p.db->refresh();
+    const Uuid mat = p.db->find_path("materials/wall.vmat")->uuid;
+    cache.set_residency({.budget_bytes = one, .min_idle_frames = 2});
+    REQUIRE(cache.material(mat).ok()); // loads a (evicted above) through the material
+    const std::uint64_t evicted_before = cache.residency().evicted;
+    for (int frame = 0; frame < 6; ++frame) {
+        (void)cache.pump();
+        REQUIRE(cache.material(mat).ok());
+    }
+    // b and c went idle and were evicted; a stayed because the material kept touching it.
+    CHECK(cache.residency().evicted == evicted_before + 2);
+    CHECK(cache.residency().resident_assets == 1);
+    CHECK(cache.material(mat)->base_color_texture == *cache.texture(a));
+
+    // An evicted texture reloads on its next use.
+    REQUIRE(cache.texture(b).ok());
+    CHECK(cache.residency().resident_assets == 2);
+}

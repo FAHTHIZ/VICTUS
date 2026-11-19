@@ -42,6 +42,9 @@ struct ProjectSettings {
     // frame-rate target the player uses there instead of the desktop ones. Mobile GPUs share
     // power and heat with the CPU, so the defaults hold 30 fps at the medium tier.
     std::string mobile_quality{"medium"};
+    // Resident texture + model memory the player keeps (rendering.asset_budget_mb, ADR-0088);
+    // assets unused for about a second are evicted least recently used first. 0 = unlimited.
+    int asset_budget_mb{0};
     int mobile_target_fps{30};
     // Input actions ("input" section); projects without one use the engine defaults.
     gameplay::InputMap input = gameplay::default_input_map();
