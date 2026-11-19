@@ -28,7 +28,7 @@ using scene::Transform;
 const std::vector<std::string>& behaviour_names() {
     static const std::vector<std::string> names{"PlatformerMovement", "TopDownMovement", "CameraFollow", "Health",
                                                 "Hazard", "Collectible", "Spawner", "Patrol", "MovingPlatform", "Chase", "Projectile",
-                                                "Shooter", "Lifetime", "Checkpoint", "Goal", "Trigger", "GameRules"};
+                                                "Shooter", "Lifetime", "Checkpoint", "Goal", "Trigger", "JumpPad", "GameRules"};
     return names;
 }
 
@@ -172,6 +172,13 @@ void register_behaviour_components() {
             .field(&GO::scene, "scene", {.tooltip = "Scene to load, e.g. scenes/level2.vscene", .hint = "scene"})
             .field(&GO::require_all_collectibles, "require_all_collectibles", {.tooltip = "Only opens once every coin is collected"})
             .field(&GO::player_tag, "player_tag")
+            .commit();
+        using JP = JumpPadComponent;
+        scene::Schema<JP>("JumpPad", cat)
+            .field(&JP::strength, "strength", {.min = 0, .max = 200, .speed = 0.1f, .tooltip = "Launch speed (m/s)"})
+            .field(&JP::direction, "direction", {.speed = 0.01f, .tooltip = "Which way it launches; (0, 1, 0) is straight up"})
+            .field(&JP::target_tag, "target_tag")
+            .field(&JP::sound, "sound", {.tooltip = "Sound played on every bounce", .hint = "audio"})
             .commit();
         using TR = TriggerComponent;
         scene::Schema<TR>("Trigger", cat)
@@ -1021,6 +1028,39 @@ void bounce(Scene& s, physics::PhysicsWorld* pw, Entity e, Vec3 v, bool keep_x) 
     if (auto* td = s.world().get<TopDownMovementComponent>(e); td && !keep_x) td->velocity = {v.x, td->velocity.y, v.z};
 }
 
+void jump_pads(ScriptHost::Impl& h, Scene& s, physics::PhysicsWorld* pw, TagCache& tags, float dt) {
+    std::vector<Entity> list;
+    s.world().each<JumpPadComponent>([&](Entity e, JumpPadComponent&) { list.push_back(e); });
+    for (const Entity pad : list) {
+        auto* jp = s.world().get<JumpPadComponent>(pad);
+        if (jp->cooldown > 0) jp->cooldown -= dt;
+        if (jp->cooldown > 0) continue;
+        const JumpPadComponent cfg = *jp;
+        Box pb = bounds_of(s, pad);
+        pb.h += Vec3{0.1f}; // standing on a solid pad touches it
+        const Vec3 dir = math::length(cfg.direction) > 1e-4f ? math::normalize(cfg.direction) : Vec3{0, 1, 0};
+        bool launched = false;
+        for (const Entity t : tags.get(cfg.target_tag)) {
+            if (t == pad || !s.world().alive(t)) continue;
+            if (!overlaps(pb, bounds_of(s, t)) || falling_speed(s, pw, t) > cfg.strength * 0.5f) continue;
+            const bool straight_up = std::fabs(dir.x) < 1e-3f && std::fabs(dir.z) < 1e-3f;
+            bounce(s, pw, t, dir * cfg.strength, straight_up);
+            Value p = Value::object();
+            p.set("strength", cfg.strength);
+            gameplay::emit_event(s, "bounced", std::move(p), pad, t);
+            launched = true;
+        }
+        if (!launched) continue;
+        s.world().get<JumpPadComponent>(pad)->cooldown = 0.2f;
+        if (!cfg.sound.empty())
+            if (auto* a = audio::engine_of(s)) {
+                audio::OneShot o;
+                o.position = pb.c;
+                if (auto st = a->play_one_shot(cfg.sound, o); !st) warn_once(h, pad, std::format("Jump pad sound '{}': {}", cfg.sound, st.error().message));
+            }
+    }
+}
+
 void hazards(ScriptHost::Impl& h, Scene& s, physics::PhysicsWorld* pw, TagCache& tags, std::vector<Entity>& doomed) {
     std::vector<Entity> list;
     s.world().each<HazardComponent>([&](Entity e, HazardComponent&) { list.push_back(e); });
@@ -1586,7 +1626,7 @@ bool any_behaviour(Scene& s) {
            w.count<SpawnerComponent>() || w.count<PatrolComponent>() || w.count<ChaseComponent>() ||
            w.count<MovingPlatformComponent>() || w.count<ProjectileComponent>() || w.count<ShooterComponent>() || w.count<LifetimeComponent>() ||
            w.count<CheckpointComponent>() || w.count<GoalComponent>() || w.count<GameRulesComponent>() ||
-           w.count<TriggerComponent>();
+           w.count<TriggerComponent>() || w.count<JumpPadComponent>();
 }
 
 } // namespace
@@ -1636,6 +1676,7 @@ void behaviours_update(ScriptHost::Impl& h, Scene& s, float dt) {
             checkpoints(s, tags);
             goals(h, s, tags);
             triggers(h, s, tags, dt, doomed);
+            jump_pads(h, s, pw, tags, dt);
         }
         projectile_hits(h, s, pw, tags, dt, doomed);
     }

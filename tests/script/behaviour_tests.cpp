@@ -754,3 +754,43 @@ TEST_CASE("behaviours: triggers show signs, open locked doors with a key, start 
     g.run(5);
     CHECK(g.scene.world().get<GameRulesComponent>(rules)->state == GameState::Won);
 }
+
+TEST_CASE("behaviours: jump pads launch the player in 2D and 3D") {
+    SUBCASE("2D") {
+        Game g;
+        g.ground_2d({0, -0.5f}, {40, 1});
+        const Entity pad = g.sprite("Pad", {3, 0.15f}, {1.2f, 0.3f});
+        g.scene.world().add<JumpPadComponent>(pad).strength = 14;
+        const Entity p = g.player_2d({0, 0.6f});
+        g.run(20);
+        float peak = g.pos(p).y;
+        g.input.set_key("D", true);
+        for (int i = 0; i < 70; ++i) {
+            g.run(1);
+            peak = std::max(peak, g.pos(p).y);
+        }
+        g.input.set_key("D", false);
+        CHECK(peak > 3.5f); // far above a normal jump's reach from walking
+        CHECK(g.scene.world().get<PlatformerMovementComponent>(p)->jumps_used == 1);
+    }
+    SUBCASE("3D") {
+        Game g;
+        const Entity ground = g.scene.create("Ground");
+        g.scene.world().get<Transform>(ground)->position = {0, -0.5f, 0};
+        physics::ColliderComponent gc;
+        gc.size = {40, 1, 40};
+        g.scene.world().add<physics::ColliderComponent>(ground, gc);
+        const Entity pad = g.scene.create("Pad");
+        g.scene.world().get<Transform>(pad)->scale = {1.5f, 0.2f, 1.5f};
+        g.scene.world().add<JumpPadComponent>(pad).strength = 12;
+        const Entity hero = g.scene.create("Player");
+        g.scene.world().get<Transform>(hero)->position = {0, 1, 0};
+        g.scene.world().add<TopDownMovementComponent>(hero);
+        float peak = -1;
+        for (int i = 0; i < 90; ++i) {
+            g.run(1);
+            if (i > 30) peak = std::max(peak, g.pos(hero).y);
+        }
+        CHECK(peak > 3.0f);
+    }
+}

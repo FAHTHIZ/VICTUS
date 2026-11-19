@@ -180,6 +180,16 @@ struct MovingPlatformComponent {
     float angle{0};
 };
 
+// A spring: launches the player (or anything with the tag) that lands on or touches it.
+struct JumpPadComponent {
+    float strength{16.0f};          // m/s
+    math::Vec3 direction{0, 1, 0};  // straight up by default; tilt it for side launches
+    std::string target_tag{"Player"};
+    std::string sound;              // audio clip played on every bounce (optional)
+    // runtime
+    float cooldown{0};
+};
+
 enum class TriggerAction : std::uint8_t { None, Start, Remove, Win };
 
 // Something happens when the player walks into it: signs show a message, switches start a Moving
