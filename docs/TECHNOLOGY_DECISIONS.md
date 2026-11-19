@@ -972,6 +972,14 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0120 — Behaviours: no-code gameplay components
+
+- Status: Accepted (2026-11-19)
+- Context: every template's gameplay was a Luau script, so a beginner had to write code before anything moved. The tools beginners pick most attach ready-made behaviours to objects instead: GDevelop's platformer, top-down, health and other behaviours ([GDevelop behaviors](https://wiki.gdevelop.io/gdevelop5/behaviors/all-behaviors/)) and Construct 3's Platform, Bullet and related behaviors ([Construct 3 behavior reference](https://www.construct.net/en/make-games/manuals/construct-3/behavior-reference)). Both make a playable character from one checkbox-like step and expose every tuning value as a property.
+- Decision: fifteen reflected components in `engine/script` (category "Behaviours"): PlatformerMovement, TopDownMovement, CameraFollow, Health, Hazard, Collectible, Spawner, Patrol, Chase, Projectile, Shooter, Lifetime, Checkpoint, Goal and GameRules. They run inside the script host's fixed and variable updates (after scripts in fixed update, before physics events in update), so they work wherever scripts run. Movement drives the existing character controllers (added automatically when missing); touch is a bounds overlap; randomness is a seeded SplitMix generator; restarts reload the scene document captured at start. They emit named events into the same `on_event` channel scripts use. A "nocode" project template builds a complete platformer from them.
+- Alternatives: shipping Luau scripts as a behaviour library (still code to read, slower, and no typed inspector fields); a separate gameplay module (would duplicate the event and scene-restart plumbing that lives in the script host); an event-sheet editor first (a much larger tool; behaviours are what event sheets act on anyway).
+- Consequences: a beginner can make a game from the Add Component menu. Touch uses bounds rather than exact shapes, projectiles ignore walls, score does not survive scene loads and Patrol does not detect walls (KNOWN_LIMITATIONS). No 3D no-code template yet.
+
 ## ADR-0119 — Volumetric fog on blended surfaces, particles and precipitation
 
 - Status: Accepted (2026-11-19)

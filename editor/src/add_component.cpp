@@ -33,6 +33,21 @@ constexpr Blurb kBlurbs[] = {
     {"Sprite", "Draws a 2D image here"},
     {"Rotator", "Spins the entity at a steady speed, no code needed"},
     {"Oscillator", "Moves the entity back and forth, no code needed"},
+    {"PlatformerMovement", "Run and jump like a platformer hero (arrow keys / WASD + Space), no code needed"},
+    {"TopDownMovement", "Walk in any direction, seen from above or in 3D, no code needed"},
+    {"CameraFollow", "Makes a camera follow the player smoothly"},
+    {"Health", "Hit points: take damage, flash, respawn or disappear at zero"},
+    {"Hazard", "Hurts the player on touch: spikes, lava, enemies (stomp them if stompable)"},
+    {"Collectible", "A pickup: coins for score, hearts for health or items for the inventory"},
+    {"Spawner", "Creates copies of a prefab every few seconds"},
+    {"Patrol", "Walks back and forth between two points"},
+    {"Chase", "Follows the player when they come close"},
+    {"Projectile", "Flies straight and damages what it hits"},
+    {"Shooter", "Fires projectiles when you press fire, or by itself like a turret"},
+    {"Lifetime", "Removes the entity after a few seconds"},
+    {"Checkpoint", "Touch it to respawn here instead of at the start"},
+    {"Goal", "The end of the level: win or go to the next scene"},
+    {"GameRules", "Score, lives, a timer, win and game over, with an on-screen HUD"},
     {"Script", "Runs a Luau or visual script on this entity"},
     {"Animator", "Plays animations from an animation controller (.vanim)"},
     {"AudioListener", "The ears of the scene, usually on the camera or player"},
@@ -99,7 +114,7 @@ std::vector<ComponentChoice> Editor::component_choices(Entity e) const {
         out.push_back({schema->name, kit::humanize(schema->name), schema->category, std::string(blurb(schema->name)),
                        w.get_raw(e, schema->id) != nullptr});
     // Categories in a fixed, beginner-first order; anything new goes last, alphabetically.
-    static constexpr std::string_view order[] = {"Rendering", "Scripting",  "Motion",    "Physics 3D", "Physics 2D",
+    static constexpr std::string_view order[] = {"Rendering", "Behaviours", "Scripting",  "Motion",    "Physics 3D", "Physics 2D",
                                                  "Animation", "Audio",      "Effects",   "AI",         "Navigation",
                                                  "UI",        "Cinematics", "Networking"};
     const auto rank = [](const std::string& c) {

@@ -11,6 +11,7 @@
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/script/script.hpp"
+#include "victus/script/behaviours.hpp"
 #include "victus/graph/graph.hpp"
 
 #include "victus/core/fs.hpp"
@@ -151,6 +152,14 @@ struct ScriptHost::Impl {
     std::string current_scene;
     Value scene_params;
     std::optional<SceneRequest> pending_scene;
+    // Behaviours (ADR-0120; behaviours.cpp): the scene as it was when play (or the last scene
+    // load) started, used by RestartScene and game over, and a deterministic random stream.
+    struct Behaviours {
+        Value start_doc;
+        bool has_start{false};
+        std::uint64_t rng{0x9E3779B97F4A7C15ull};
+        std::unordered_map<std::uint64_t, bool> warned; // entity bits -> reported a problem
+    } behaviours;
     lua_State* active{nullptr};                            // thread running save.read (migrations)
 
     // Helper processes opened with bridge.open (kept across scene transitions, closed with the host).
@@ -729,6 +738,9 @@ int save_restore(lua_State* L);
 int scene_find_id(lua_State* L);
 Result<Value> read_scene(ScriptHost::Impl& h, std::string_view path);
 Status apply_scene(ScriptHost::Impl& h, scene::Scene& s, ScriptHost::Impl::SceneRequest req);
+// Behaviours (behaviours.cpp): movement before the physics step, everything else each frame.
+void behaviours_fixed_update(ScriptHost::Impl& h, scene::Scene& s, float dt);
+void behaviours_update(ScriptHost::Impl& h, scene::Scene& s, float dt);
 int scene_load(lua_State* L);
 int scene_reload(lua_State* L);
 int scene_current(lua_State* L);

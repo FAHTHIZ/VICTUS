@@ -591,6 +591,20 @@ TEST_CASE("studio inspector: Add Component lists plain names by category and add
     const auto body2d = find("RigidBody2D");
     REQUIRE(body2d.has_value());
     CHECK(body2d->name == "Rigid Body 2D");
+    // No-code behaviours come straight after rendering, each explained in plain words.
+    const auto platformer = find("PlatformerMovement");
+    REQUIRE(platformer.has_value());
+    CHECK(platformer->category == "Behaviours");
+    CHECK(platformer->name == "Platformer Movement");
+    std::string previous_category;
+    std::vector<std::string> categories;
+    for (const auto& c : h.ed->component_choices(cube)) {
+        if (c.category != previous_category) categories.push_back(previous_category = c.category);
+        if (c.category == "Behaviours") CHECK_MESSAGE(!c.description.empty(), c.id);
+    }
+    REQUIRE(categories.size() > 2);
+    CHECK(categories[0] == "Rendering");
+    CHECK(categories[1] == "Behaviours");
     for (const auto& c : h.ed->component_choices(cube)) {
         CHECK_FALSE(c.name.empty());
         CHECK_FALSE(c.category.empty());

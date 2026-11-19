@@ -2,7 +2,30 @@
 
 How to use what VICTUS ships today. Every feature described here is implemented and covered by automated tests; limitations are stated where they matter. For setup see [Getting started](GETTING_STARTED.md); for what is verified and how, see [STATUS.md](STATUS.md); for subsystem maturity see [Known limitations](KNOWN_LIMITATIONS.md).
 
-Contents: [Scripting and gameplay systems](#scripting) · [Regression captures](#regression-captures) · [Multiplayer](#multiplayer) · [Editor and authoring](#editor) · [Shipping](#shipping)
+Contents: [Make a game without code](#make-a-game-without-code) · [Scripting and gameplay systems](#scripting) · [Regression captures](#regression-captures) · [Multiplayer](#multiplayer) · [Editor and authoring](#editor) · [Shipping](#shipping)
+
+## Make a game without code
+
+Behaviours are ready-made gameplay components. Add one to an entity in the Inspector (Add Component > Behaviours) and the entity starts acting that way the moment you press Play, in the Studio, the player, headless runs and exported games. Every setting has a tooltip. The quickest way to see them together is the No-Code Platformer template: `victus new MyGame --template nocode`, or pick it on the Studio start screen. It is a full level (running, double jumping, coins, slimes, spikes, pits, a checkpoint, a goal flag, score, lives and a timer) with no scripts in it.
+
+| Behaviour | Add it to | What it does |
+|---|---|---|
+| Platformer Movement | the player (2D or 3D) | Run with A/D or the arrows, jump with Space; double jumps, coyote time, jump buffering and an optional jump sound. Adds a character controller if there is none. |
+| Top Down Movement | the player | Moves in four or eight directions with WASD (2D on x/y, 3D on x/z). |
+| Camera Follow | the camera | Follows the player (or any target) smoothly with an offset. |
+| Health | anything that can be hurt | Hit points, a blink after a hit, and what happens at zero: destroy, respawn at the last checkpoint, restart the scene or nothing. |
+| Hazard | spikes, enemies, kill zones | Hurts what it touches, with knockback. "Stompable" lets the player defeat it by landing on it; "Instant kill" takes all health. |
+| Collectible | coins, hearts, keys | Picked up on touch: adds score, heals or counts as an item, with an optional sound. |
+| Patrol / Chase | enemies | Walks back and forth, or follows the player within a range. |
+| Shooter / Projectile | the player, turrets | Fires on the fire action (left mouse) or automatically; bullets damage what they hit. |
+| Spawner | anywhere | Creates copies of a prefab on a timer, up to a limit. |
+| Lifetime | effects, bullets | Removes the entity after a time. |
+| Checkpoint / Goal | flags | A checkpoint moves the respawn point; a goal wins, loads the next scene or a chosen one. |
+| Game Rules | one per scene | Score, lives, an optional time limit and score to win, and the on-screen HUD with win and game-over messages. |
+
+The player is found by the tag "Player" or, if nothing has that tag, by its movement behaviour. Behaviours send events that scripts and graphs can react to with `on_event`: `damaged`, `healed`, `died`, `collected`, `checkpoint`, `score_changed`, `game_won`, `game_lost`, `life_lost`, `spawned`, `fired`, `stomped` and `goal_reached`.
+
+Touch is checked with bounding boxes, not exact shapes; bullets do not stop at walls; score resets when a new scene loads; and Patrol does not turn at walls (see [Known limitations](KNOWN_LIMITATIONS.md)).
 
 ## Scripting
 
@@ -138,7 +161,7 @@ The 3D and Multiplayer templates give the player a Vanguard robot: V-01 by defau
 
 ### The Studio window
 
-When no project is open the Studio shows its start screen. The sidebar has four pages. New Project shows the four templates as cards with a one-line description of what each one plays like; pick one, type a name and the Studio checks the name and folder as you type (empty names, characters that do not work on every system such as `/ : ? *`, Windows reserved names like `CON`, and folders that already hold something are explained in plain words before you can press Create). Recent lists the projects you opened, marks those whose folder has moved, and lets you locate or remove them. Samples lists the bundled sample games; opening one copies it into your projects folder first, so the original stays as it is. Learn walks through the first ten minutes and lists the handy shortcuts. `victus_editor --page samples` (or `new`, `recent`, `learn`) opens a given page; `VICTUS_SAMPLES_DIR` points the Samples page at another folder.
+When no project is open the Studio shows its start screen. The sidebar has four pages. New Project shows the five templates as cards with a one-line description of what each one plays like; pick one, type a name and the Studio checks the name and folder as you type (empty names, characters that do not work on every system such as `/ : ? *`, Windows reserved names like `CON`, and folders that already hold something are explained in plain words before you can press Create). Recent lists the projects you opened, marks those whose folder has moved, and lets you locate or remove them. Samples lists the bundled sample games; opening one copies it into your projects folder first, so the original stays as it is. Learn walks through the first ten minutes and lists the handy shortcuts. `victus_editor --page samples` (or `new`, `recent`, `learn`) opens a given page; `VICTUS_SAMPLES_DIR` points the Samples page at another folder.
 
 The toolbar under the menu has Save (orange while the scene has unsaved changes), Undo and Redo on the left (their tooltips name the step they will undo), Play, Pause, Stop and Record in the middle, a coloured badge for what is running (Playing, Paused, Recording, Host, replay result) and, on the right, Search commands: click it or press Ctrl+Shift+P (or F1) to find and run any editor action by name, including Help, Interface Size, Undo History, Project Settings and adding characters. Every icon has a tooltip with its shortcut, including disabled ones, which say why they are disabled.
 

@@ -42,6 +42,9 @@ TemplateLook template_look(std::string_view id) {
     if (id == "2d")
         return {kit::Icon::Sprite, "Run and jump through a side-scrolling platformer with coins, music and sound.",
                 "2D  -  Platformer  -  Physics"};
+    if (id == "nocode")
+        return {kit::Icon::Sprite, "Build a whole platformer level from ready-made behaviours, with no code at all.",
+                "2D  -  No code  -  Beginner"};
     if (id == "simulation")
         return {kit::Icon::Particles,
                 "Hundreds of animated objects and an orbiting camera: a base for visual or data-heavy work.",
