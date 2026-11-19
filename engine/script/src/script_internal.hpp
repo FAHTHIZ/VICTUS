@@ -174,6 +174,7 @@ struct ScriptHost::Impl {
         Uuid message_owner;
         bool message_shown{false};
     bool start_pending{false};
+    std::optional<float> best_score; // read from the save folder once
     bool title_shown{false};
     } behaviours;
     lua_State* active{nullptr};                            // thread running save.read (migrations)

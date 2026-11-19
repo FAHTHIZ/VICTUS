@@ -212,6 +212,7 @@ void register_behaviour_components() {
             .field(&GR::pause_message, "pause_message")
             .field(&GR::title, "title", {.tooltip = "A title screen shown before the game starts; empty = start straight away"})
             .field(&GR::start_prompt, "start_prompt", {.tooltip = "Under the title; empty = \"Press Space to start\""})
+            .field(&GR::keep_best_score, "keep_best_score", {.tooltip = "Save the best score on the player's computer and show it next to the score"})
             .commit();
     });
 }
@@ -1620,6 +1621,43 @@ void set_text(Scene& s, Entity e, std::string text, bool visible = true) {
     if (auto* r = s.world().get<gameui::UiRectComponent>(e)) r->visible = visible;
 }
 
+constexpr std::string_view kBestScoreSlot = "best_score";
+
+float best_score(ScriptHost::Impl& h) {
+    if (!h.behaviours.best_score) {
+        float best = 0;
+        if (auto* store = h.store(); store && store->exists(kBestScoreSlot))
+            if (auto f = store->read(kBestScoreSlot); f.ok())
+                if (const json::Value* v = f->data.find("score")) best = static_cast<float>(v->as_number(0));
+        h.behaviours.best_score = best;
+    }
+    return *h.behaviours.best_score;
+}
+
+// At the end of a round: a score above the best becomes the new best, is saved and announced.
+void record_best_score(ScriptHost::Impl& h, Scene& s, Entity r) {
+    auto* g = s.world().get<GameRulesComponent>(r);
+    const float best = best_score(h);
+    if (g->score <= best || g->score <= 0) return;
+    const float score = g->score;
+    g->best_score = score;
+    h.behaviours.best_score = score;
+    if (auto* store = h.store()) {
+        json::Value data = json::Value::object();
+        data.set("score", static_cast<double>(score));
+        if (auto st = store->write(kBestScoreSlot, data, "Best score"); !st.ok())
+            warn_once(h, r, "Game Rules: could not save the best score: " + st.error().message);
+    }
+    auto& b = h.behaviours;
+    b.message = "New best score: " + format_number(score);
+    b.message_left = 3.0f;
+    b.message_owner = Uuid{};
+    Value p = Value::object();
+    p.set("score", score);
+    p.set("previous", best);
+    gameplay::emit_event(s, "new_best_score", std::move(p), r);
+}
+
 void rules_tick(ScriptHost::Impl& h, Scene& s, float dt) {
     const Entity r = rules_entity(s);
     if (r.is_null()) return;
@@ -1636,6 +1674,7 @@ void rules_tick(ScriptHost::Impl& h, Scene& s, float dt) {
             if (c->lives_left > 0 && g->lives > 0) g->lives_left = std::min(c->lives_left, g->lives);
         }
         h.behaviours.entry = ScriptHost::Impl::Behaviours::Carry{g->score, g->lives_left, g->elapsed};
+        if (g->keep_best_score) g->best_score = best_score(h);
         if (g->show_hud) build_hud(s, r);
         g = s.world().get<GameRulesComponent>(r);
         if (!g->title.empty() && !h.behaviours.title_shown) {
@@ -1659,6 +1698,11 @@ void rules_tick(ScriptHost::Impl& h, Scene& s, float dt) {
         else if (g->time_limit > 0 && g->elapsed >= g->time_limit) end_game(s, r, false);
         g = s.world().get<GameRulesComponent>(r);
     } else {
+        if (!g->best_recorded) {
+            g->best_recorded = true;
+            if (g->keep_best_score) record_best_score(h, s, r);
+            g = s.world().get<GameRulesComponent>(r);
+        }
         g->end_timer += dt;
         if (g->state == GameState::Lost && g->restart_on_game_over && g->end_timer >= g->restart_delay) {
             g->end_timer = -1e9f; // once
@@ -1670,6 +1714,7 @@ void rules_tick(ScriptHost::Impl& h, Scene& s, float dt) {
     const GameRulesComponent v = *g;
     std::string score = "Score " + format_number(v.score);
     if (v.score_to_win > 0) score += " / " + format_number(v.score_to_win);
+    if (v.keep_best_score && v.best_score > 0) score += "   Best " + format_number(v.best_score);
     set_text(s, v.score_text, score);
     set_text(s, v.lives_text, v.lives > 0 ? std::format("Lives {}", v.lives_left) : std::string{}, v.lives > 0);
     set_text(s, v.time_text, v.time_limit > 0 ? format_time(v.time_limit - v.elapsed) : format_time(v.elapsed));

@@ -48,12 +48,13 @@ struct Game {
     Scene scene;
     std::vector<std::string> loaded;
 
-    explicit Game(bool with_physics = true) {
+    explicit Game(bool with_physics = true, std::filesystem::path saves = {}) {
         script::register_components();
         physics::register_components();
         gameui::register_components();
         HostOptions o;
         o.assets_root = project.root / "assets";
+        o.save_directory = std::move(saves);
         o.on_scene_loaded = [this](Scene&, std::string_view path) {
             loaded.emplace_back(path);
             if (world) world->clear();
@@ -963,4 +964,35 @@ TEST_CASE("behaviours: a press-to-use trigger with | lines is a conversation") {
     CHECK(message() == "Take the cave instead.");
     CHECK(fired == 1); // the action runs on the last line
     CHECK_FALSE(g.scene.world().alive(npc));
+}
+
+TEST_CASE("behaviours: Game Rules keeps the best score between sessions") {
+    const auto saves = std::filesystem::temp_directory_path() / "victus_best_score_test";
+    std::filesystem::remove_all(saves);
+    const auto play = [&](float score, std::vector<std::string>& events) {
+        Game g(false, saves);
+        const Entity rules = g.scene.create("Rules");
+        auto& gr = g.scene.world().add<GameRulesComponent>(rules);
+        gr.score_to_win = 100;
+        gameplay::listen(g.scene, "", [&](Scene&, const gameplay::GameplayEvent& ev) { events.push_back(ev.name); });
+        g.run(2);
+        const Entity st = g.scene.find_by_name("Score");
+        REQUIRE_FALSE(st.is_null());
+        const std::string before = g.scene.world().get<gameui::UiTextComponent>(st)->text;
+        g.scene.world().get<GameRulesComponent>(rules)->score = score;
+        g.scene.world().get<GameRulesComponent>(rules)->time_limit = 0.01f; // ends the round
+        g.run(3);
+        CHECK(g.scene.world().get<GameRulesComponent>(rules)->state == GameState::Lost);
+        return before;
+    };
+    std::vector<std::string> first, second, third;
+    CHECK(play(7, first) == "Score 0 / 100");
+    CHECK(std::count(first.begin(), first.end(), "new_best_score") == 1);
+    CHECK(play(3, second) == "Score 0 / 100   Best 7");
+    CHECK(std::count(second.begin(), second.end(), "new_best_score") == 0);
+    CHECK(play(9, third) == "Score 0 / 100   Best 7");
+    CHECK(std::count(third.begin(), third.end(), "new_best_score") == 1);
+    std::vector<std::string> fourth;
+    CHECK(play(0, fourth) == "Score 0 / 100   Best 9");
+    std::filesystem::remove_all(saves);
 }

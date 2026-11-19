@@ -1739,3 +1739,9 @@ Verified: `behaviours: a press-to-use trigger with | lines is a conversation`; a
 Built: both no-code templates have a Game Rules Title. Starting is deferred one frame so the start press does not jump; behaviours stay inactive while paused even on the frame the title appears.
 
 Verified: both no-code template play tests start from the title and check that starting does not jump; export tests; script tests.
+
+## 2026-11-19 — Best score
+
+Built: Game Rules Keep Best Score. The best is read once from the `best_score` save slot, shown in the HUD and written when a round ends above it.
+
+Verified: `behaviours: Game Rules keeps the best score between sessions` (four rounds against one save folder); all script tests.
