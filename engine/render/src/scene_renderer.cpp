@@ -231,7 +231,6 @@ static_assert(sizeof(LightingUniforms) == 38 * 16 + 64 * 5);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 
-bool is_srgb(rhi::Format f) { return f == rhi::Format::RGBA8_SRGB || f == rhi::Format::BGRA8_SRGB; }
 Vec4 rgb(Color c, float scale = 1.0f, float w = 0.0f) { return {c.r * scale, c.g * scale, c.b * scale, w}; }
 
 float finite_or(float v, float fallback) { return std::isfinite(v) ? v : fallback; }
@@ -3791,7 +3790,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             });
         auto heat = post_pipeline("overdraw_heat.frag", target_format);
         if (!heat) return std::move(heat).error();
-        const Vec4 heat_params{is_srgb(target_format) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+        const Vec4 heat_params{rhi::is_srgb(target_format) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
         graph.add_pass(
             "overdraw_heat",
             [&](PassBuilder& b) {
@@ -3826,7 +3825,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const RGTexture ldr = ldr_buffer ? graph.create_texture("ldr_color", color_desc(ldr_format, pw, ph)) : out;
     PostUniforms post{};
     const Tonemapper op = env_.tonemap ? env_.tonemapper : Tonemapper::None;
-    post.params = {env_.exposure, env_.vignette, is_srgb(tonemap_format) ? 0.0f : 1.0f, static_cast<float>(op)};
+    post.params = {env_.exposure, env_.vignette, rhi::is_srgb(tonemap_format) ? 0.0f : 1.0f, static_cast<float>(op)};
     post.params2 = {bloom_result.valid() ? env_.bloom_intensity : 0.0f, exposure_now.valid() ? 1.0f : 0.0f,
                     std::exp2(env_.exposure_compensation), env_.saturation};
     // The luma-in-alpha path always writes sRGB-encoded colour, which is what FXAA and the sharpen pass read.
@@ -3865,7 +3864,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         // z: 0 linear out (sRGB target), 1 encode to sRGB, 2 encode with luma in alpha (FXAA input).
         struct {
             Vec4 params, size;
-        } uu{inv_size(pw, ph, fxaa ? 2.0f : (is_srgb(target_format) ? 0.0f : 1.0f), S.sharpen),
+        } uu{inv_size(pw, ph, fxaa ? 2.0f : (rhi::is_srgb(target_format) ? 0.0f : 1.0f), S.sharpen),
              Vec4(static_cast<float>(pw), static_cast<float>(ph), spatial ? 0.0f : 1.0f, 0.0f)};
         graph.add_pass(
             "upscale_sharpen",
@@ -3884,7 +3883,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     if (fxaa) {
         auto fx = post_pipeline("fxaa.frag", target_format);
         if (!fx) return std::move(fx).error();
-        PostUniforms fu{inv_size(width, height, is_srgb(target_format) ? 1.0f : 0.0f, 0.75f), {}, {}};
+        PostUniforms fu{inv_size(width, height, rhi::is_srgb(target_format) ? 1.0f : 0.0f, 0.75f), {}, {}};
         graph.add_pass(
             "fxaa",
             [&](PassBuilder& b) {

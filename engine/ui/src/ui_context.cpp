@@ -95,6 +95,7 @@ Result<std::unique_ptr<UiContext>> UiContext::create(render::GpuContext& gpu, rh
     auto pipe = gpu.device().create_pipeline(p);
     if (!pipe) return std::move(pipe).error();
     ui->pipeline_ = pipe.value();
+    ui->target_srgb_ = rhi::is_srgb(target_format);
     return ui;
 }
 
@@ -286,6 +287,11 @@ void UiContext::render(rhi::RenderPass& pass, rhi::CommandBuffer& cmd) {
             if (!gpu_.device().describe(tex)) tex = gpu_.white();
             if (!(tex == bound)) {
                 pass.bind_texture(rhi::ShaderStage::Fragment, 0, tex, gpu_.linear_clamp());
+                // sprite.frag works in display space (see SpriteBatch): encode sRGB textures back
+                // and give an sRGB target linear output.
+                const rhi::TextureDesc* desc = gpu_.device().describe(tex);
+                const math::Vec4 flags{desc && rhi::is_srgb(desc->format) ? 1.0f : 0.0f, target_srgb_ ? 1.0f : 0.0f, 0, 0};
+                cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, flags);
                 bound = tex;
             }
             pass.draw_indexed(c.ElemCount, 1, c.IdxOffset + global_idx,

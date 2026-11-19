@@ -35,6 +35,7 @@ Vec2 Camera2D::world_to_screen(Vec2 world, float w, float h) const noexcept {
 
 Result<std::unique_ptr<SpriteBatch>> SpriteBatch::create(GpuContext& ctx, rhi::Format color_format, rhi::BlendMode blend) {
     std::unique_ptr<SpriteBatch> b(new SpriteBatch(ctx));
+    b->target_srgb_ = rhi::is_srgb(color_format);
     auto vs = ctx.shader("sprite.vert");
     if (!vs) return std::move(vs).error();
     auto fs = ctx.shader("sprite.frag");
@@ -153,9 +154,18 @@ struct Light2DParams {
     Vec4 color, direction, params;
 };
 struct SpriteLitParams {
-    Vec4 screen;
+    Vec4 screen; // xy: 1 / light target size, z: re-encode sRGB texels, w: sRGB target
+};
+struct SpriteParams {
+    Vec4 flags; // x: re-encode sRGB texels, y: sRGB target
 };
 } // namespace
+
+bool SpriteBatch::encodes(rhi::TextureHandle texture) const {
+    if (!texture) return false;
+    const rhi::TextureDesc* d = ctx_.device().describe(texture);
+    return d && rhi::is_srgb(d->format);
+}
 
 Status SpriteBatch::render_lights(rhi::CommandBuffer& cmd, std::uint32_t width, std::uint32_t height) {
     lights_ready_ = false;
@@ -273,7 +283,7 @@ Status SpriteBatch::prepare(rhi::CommandBuffer& cmd) {
         if (lit && lighting_) ++stats_.lit_sprites;
         if (batches_.empty() || !(batches_.back().texture == tex) || batches_.back().additive != s.additive ||
             batches_.back().nearest != nearest || batches_.back().lit != lit)
-            batches_.push_back({tex, i * 6, 0, s.additive, nearest, lit});
+            batches_.push_back({tex, i * 6, 0, s.additive, nearest, lit, encodes(tex)});
         batches_.back().index_count += 6;
         const float c = std::cos(s.rotation), sn = std::sin(s.rotation);
         float u0 = s.uv.x, v0 = s.uv.y, u1 = s.uv.z, v1 = s.uv.w;
@@ -299,19 +309,30 @@ void SpriteBatch::render(rhi::RenderPass& pass, rhi::CommandBuffer& cmd) {
     VICTUS_PROFILE_SCOPE("SpriteBatch::render");
     const bool use_light = lighting_ && lights_ready_ && light_target_;
     rhi::PipelineHandle bound{};
+    int pushed_encode = -1;
     for (const Batch& b : batches_) {
         const bool lit = use_light && b.lit;
         const rhi::PipelineHandle want = b.additive ? additive_pipeline_ : lit ? lit_pipeline_ : pipeline_;
         if (!(bound == want)) {
             pass.bind_pipeline(want);
             cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, view_proj_);
-            if (lit) {
-                const SpriteLitParams sp{{1.0f / static_cast<float>(light_w_), 1.0f / static_cast<float>(light_h_), 0, 0}};
-                cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, sp);
-            }
             pass.bind_vertex_buffer(0, vertex_buffer_);
             pass.bind_index_buffer(index_buffer_, rhi::IndexType::U32);
             bound = want;
+            pushed_encode = -1;
+        }
+        // 2D works in display space (sprite tints and untextured sprites are display colours, as
+        // in an image editor): sRGB textures, decoded to linear when sampled, are encoded back, and
+        // an sRGB target gets linear output so the hardware encode restores the display colour.
+        if (pushed_encode != static_cast<int>(b.encode)) {
+            const float e = b.encode ? 1.0f : 0.0f, t = target_srgb_ ? 1.0f : 0.0f;
+            if (lit) {
+                const SpriteLitParams sp{{1.0f / static_cast<float>(light_w_), 1.0f / static_cast<float>(light_h_), e, t}};
+                cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, sp);
+            } else {
+                cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, SpriteParams{{e, t, 0, 0}});
+            }
+            pushed_encode = static_cast<int>(b.encode);
         }
         if (lit) pass.bind_texture(rhi::ShaderStage::Fragment, 1, light_target_, ctx_.nearest_clamp());
         pass.bind_texture(rhi::ShaderStage::Fragment, 0, b.texture, b.nearest ? ctx_.nearest_clamp() : ctx_.linear_clamp());
