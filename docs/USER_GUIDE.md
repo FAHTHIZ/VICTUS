@@ -248,6 +248,8 @@ Surface shaders: a `.vshader` file holds one GLSL function, `void surface(Surfac
 
 ## Shipping
 
+Safe mode: if VICTUS Studio crashes, hangs or is killed while opening a project twice in a row, the next opening uses safe mode. The project opens with an empty scene and without running anything from it: no editor scripts, asset re-import, thumbnails, automatic project check, autosave restore or play mode. A card explains what was skipped; open the scene that causes trouble from the Assets panel, fix it, then press Restart Normally. You can also choose safe mode yourself: right-click a recent project > Open in Safe Mode, Help > Reopen in Safe Mode, or start `victus_editor --safe-mode`.
+
 Opening an older project: VICTUS upgrades scenes, prefabs, `victus.project` and world files from older versions as it loads them, and renamed components keep loading under their new names. Nothing is rewritten until you save; the first save keeps the original as `<file>.premigration`. `victus migrate <project>` lists the files that need upgrading and what will change (exit code 3), and `victus migrate <project> --write` saves them all. Files written by a newer VICTUS are refused with a clear message instead of being read wrongly, and components from a newer version are kept unchanged.
 
 Before shipping, `victus check <project>` validates every scene, prefab, material, shader, sprite sheet, tile set, terrain, behaviour tree, sequence, animation controller and script and exits 1 on errors (warnings, such as unknown components or clips a model lacks, do not fail it). Tools and the editor get the same checks as structured diagnostics (severity, category, file, entity, suggested fix) from `player::validate_project` in `victus/player/validate.hpp`.

@@ -85,6 +85,7 @@ Editor::Editor(render::GpuContext& gpu, ui::UiContext& ui, platform::Platform* p
     : gpu_(gpu), ui_(ui), platform_(platform), window_(window) {}
 
 Editor::~Editor() {
+    finish_startup(); // a normal quit is a finished start
     if (check_future_.valid()) check_future_.wait();
     if (export_future_.valid()) export_future_.wait();
     if (bundle_future_.valid()) bundle_future_.wait();
@@ -111,7 +112,7 @@ void Editor::update_title() {
     std::string title = "VICTUS Editor";
     if (project_) {
         title = project_->settings().name + " - " + (scene_path_.empty() ? std::string("untitled scene") : scene_path_) +
-                (dirty() ? " *" : "") + " - VICTUS Editor";
+                (dirty() ? " *" : "") + (safe_mode_ ? " - Safe Mode" : "") + " - VICTUS Editor";
     }
     window_->set_title(title);
 }
@@ -122,23 +123,31 @@ Status Editor::open_project(const fs::Path& path) {
     auto p = project::Project::open(path);
     if (!p) return std::move(p).error();
     close_project();
+    begin_startup(p->root());
     assets::RefreshReport report;
     auto db = assets::AssetDatabase::open(p->root(), &report);
     if (!db) return std::move(db).error();
     project_ = std::move(p).value();
     db_ = std::move(db).value();
     for (const auto& e : report.errors) notify("asset metadata: " + e, true);
-    const auto imported = db_->import_all();
-    for (const auto& m : imported.messages) notify(m, imported.failed > 0);
+    if (!safe_mode_) {
+        const auto imported = db_->import_all();
+        for (const auto& m : imported.messages) notify(m, imported.failed > 0);
+    }
     cache_ = std::make_unique<runtime::GpuAssetCache>(gpu_, db_.get());
-    if (auto thumbs = ThumbnailCache::create(gpu_); thumbs) thumbnails_ = std::move(thumbs).value();
-    else notify("asset thumbnails unavailable: " + thumbs.error().message, true);
+    if (safe_mode_) {
+        // no thumbnails: they render every model, material and prefab
+    } else if (auto thumbs = ThumbnailCache::create(gpu_); thumbs) {
+        thumbnails_ = std::move(thumbs).value();
+    } else {
+        notify("asset thumbnails unavailable: " + thumbs.error().message, true);
+    }
     hot_reload_ = std::make_unique<runtime::AssetHotReloader>(*db_);
     edit_sprites_ = std::make_unique<animation::AnimationSystem>(
         animation::AnimationSettings{.sheets = assets::sprite_sheet_provider(*db_)});
     tilemaps_ = std::make_unique<tilemap::TilemapSystem>(assets::tileset_provider(*db_));
     terrains_ = std::make_unique<terrain::TerrainSystem>(assets::terrain_provider(*db_));
-    {
+    if (!safe_mode_) {
         script::HostOptions so;
         so.assets_root = db_->assets_dir();
         if (auto host = script::ScriptHost::create(so)) edit_scripts_ = std::move(host).value();
@@ -147,7 +156,9 @@ Status Editor::open_project(const fs::Path& path) {
     recent_->add(project_->root());
     (void)recent_->save();
     const std::string startup = project_->settings().startup_scene;
-    if (auto st = open_scene(startup); !st.ok()) {
+    if (safe_mode_) {
+        new_scene(); // open scenes from the Assets panel; the startup scene may be what fails
+    } else if (auto st = open_scene(startup); !st.ok()) {
         notify("could not open startup scene '" + startup + "': " + st.error().message, true);
         new_scene();
     }
@@ -160,7 +171,9 @@ Status Editor::open_project(const fs::Path& path) {
     guide_seen_revision_ = undo_.revision();
     problems_.reset();
     problems_error_.clear();
-    check_project();
+    if (safe_mode_) notify("Safe mode: " + safe_mode_reason_, true);
+    else check_project();
+    update_title();
     return {};
 }
 
@@ -172,6 +185,10 @@ Status Editor::create_project(const fs::Path& directory, std::string_view name, 
 }
 
 void Editor::close_project() {
+    finish_startup();
+    safe_mode_ = false;
+    safe_mode_card_hidden_ = false;
+    safe_mode_reason_.clear();
     check_again_ = false;
     if (check_future_.valid()) check_future_.wait(); // the check reads this project's files
     if (export_future_.valid()) export_future_.wait();
@@ -373,7 +390,7 @@ Status Editor::save_scene() {
     update_title();
     notify("Saved " + scene_path_);
     complete_guide_step(GuideStep::Save);
-    check_project();
+    if (!safe_mode_) check_project();
     return {};
 }
 
@@ -1115,6 +1132,10 @@ void Editor::tick_play(float dt) {
 }
 
 void Editor::start_play(std::uint64_t seed, bool networked) {
+    if (safe_mode_) {
+        notify("Play is off in safe mode: it runs the project's scripts and plugins. Use Restart Normally first.", true);
+        return;
+    }
     gizmo_cancel(); // a half-finished drag never leaks into play mode
     end_sequence_preview(); // play the authored scene, not the previewed pose
     end_animation_preview();

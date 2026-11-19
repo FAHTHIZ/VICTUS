@@ -476,6 +476,7 @@ void Editor::draw_launcher_recent() {
         return;
     }
     fs::Path to_open, to_remove, to_locate;
+    bool open_safe = false;
     const float width = std::min(ImGui::GetContentRegionAvail().x, 980.0f);
     const float h = ImGui::GetTextLineHeight() * 2.0f + tk::kSpace4 * 2.0f;
     for (const fs::Path& p : recent_->entries()) {
@@ -486,6 +487,10 @@ void Editor::draw_launcher_recent() {
         const bool hovered = ImGui::IsItemHovered();
         if (ImGui::BeginPopupContextItem()) {
             if (ImGui::MenuItem("Open", nullptr, false, exists)) to_open = p;
+            if (ImGui::MenuItem("Open in Safe Mode", nullptr, false, exists)) {
+                to_open = p;
+                open_safe = true;
+            }
             if (ImGui::MenuItem("Copy Path") && platform_) platform_->set_clipboard(p.string());
             if (ImGui::MenuItem("Remove from List")) to_remove = p;
             ImGui::EndPopup();
@@ -536,7 +541,12 @@ void Editor::draw_launcher_recent() {
             (void)recent_->save();
         });
     }
-    if (!to_open.empty()) open(to_open);
+    if (!to_open.empty() && open_safe) {
+        launcher_error_.clear();
+        if (auto st = open_project_safe(to_open); !st.ok()) launcher_error_ = st.error().message;
+    } else if (!to_open.empty()) {
+        open(to_open);
+    }
 }
 
 void Editor::draw_launcher_samples() {

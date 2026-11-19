@@ -68,7 +68,19 @@ struct EditorOptions {
     // Interface size used until the user picks one (View > Interface Size). The editor app passes
     // a larger size than the 100 % the tests use, so text and buttons are easy to read and hit.
     float default_ui_scale{1.0f};
+    // Safe mode (ADR-0101): projects open without their startup scene, edit-time scripts, asset
+    // import, thumbnails, the background check, autosave restore and play mode.
+    bool safe_mode{false};             // for every project this run (victus_editor --safe-mode)
+    std::uint32_t safe_mode_after{2};  // unfinished openings of a project that switch it on; 0 = never
+    std::uint32_t startup_frames{120}; // frames after opening a project that count as a finished start
 };
+
+// <project>/.victus/editor_startup.json: how many times in a row the Studio started opening the
+// project without reaching startup_frames (a crash, hang or kill). Missing or unreadable = 0.
+[[nodiscard]] fs::Path startup_marker_path(const fs::Path& project_root);
+[[nodiscard]] std::uint32_t unfinished_startups(const fs::Path& project_root);
+// What safe mode skips, one plain sentence each (shown in the safe mode card and the guide).
+[[nodiscard]] const std::vector<std::string>& safe_mode_skipped();
 
 // Interface sizes offered in View > Interface Size (the scale is clamped to this range).
 inline constexpr float kMinUiScale = 0.8f;
@@ -730,6 +742,18 @@ public:
     void set_crash_notice(bool visible) noexcept { crash_notice_ = visible; }
     void open_about_dialog() noexcept { show_about_ = true; }
 
+    // ---- safe mode (ADR-0101) ----
+    // On after EditorOptions::safe_mode_after unfinished openings of the open project, with
+    // EditorOptions::safe_mode, or through open_project_safe(). Ends when the project closes.
+    [[nodiscard]] bool safe_mode() const noexcept { return safe_mode_; }
+    [[nodiscard]] const std::string& safe_mode_reason() const noexcept { return safe_mode_reason_; }
+    Status open_project_safe(const fs::Path& path);
+    // Leaves safe mode: closes the project and opens it again with everything on.
+    Status reopen_normally();
+    // True until startup_frames frames have run since the project opened; the marker is then removed.
+    [[nodiscard]] bool startup_pending() const noexcept { return startup_frames_left_ > 0; }
+    [[nodiscard]] bool safe_mode_card_visible() const noexcept { return safe_mode_ && !safe_mode_card_hidden_; }
+
     // ---- console ----
     // Records currently held by the Console (the newest 4096), by severity.
     struct ConsoleCounts {
@@ -1124,6 +1148,14 @@ private:
     void poll_bundle();
     void draw_diagnostics_dialog();
     void draw_crash_notice();
+    bool safe_mode_{false}, safe_request_{false}, safe_mode_card_hidden_{false};
+    std::string safe_mode_reason_;
+    std::uint32_t startup_frames_left_{0};
+    fs::Path startup_marker_;
+    void begin_startup(const fs::Path& root);
+    void finish_startup();
+    void update_startup();
+    void draw_safe_mode_card();
     void draw_about_dialog();
     void poll_export();
     void draw_export_dialog();
