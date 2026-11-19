@@ -1063,6 +1063,7 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     vc.sun_intensity = std::max(fin(e.cloud_sun, 1.0f), 0.0f);
     vc.ambient_intensity = std::max(fin(e.cloud_ambient, 1.0f), 0.0f);
     vc.distance = std::clamp(fin(e.cloud_distance, 30000.0f), 100.0f, 200000.0f);
+    vc.shadow_strength = std::clamp(fin(e.cloud_shadows, 1.0f), 0.0f, 1.0f);
 }
 static_assert(static_cast<int>(gameplay::EnvironmentComponent::Fog::ExponentialSquared) ==
               static_cast<int>(render::FogMode::ExponentialSquared));
