@@ -327,3 +327,179 @@ TEST_CASE("gpu particles: velocity-stretched emitters draw streaks along their m
     CHECK(down2 > 0);
     dev.destroy(target);
 }
+
+TEST_CASE("gpu particles: ribbon strips face the camera, follow their points and fade into geometry") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    // A horizontal trail from x = -2 to 2, 0.4 m wide, plus a strip pointing straight at the eye
+    // (degenerate side vector: must fall back to the camera right axis without NaNs).
+    std::vector<RibbonPoint> pts;
+    for (int i = 0; i <= 8; ++i) {
+        RibbonPoint p;
+        p.position = {-2.0f + 0.5f * static_cast<float>(i), 0, 0};
+        p.width = 0.4f;
+        p.color = {1, 1, 1, 1};
+        pts.push_back(p);
+    }
+    const std::vector<std::uint32_t> one{9};
+    math::Aabb b;
+    for (const auto& p : pts) {
+        b.expand(p.position - math::Vec3{0.2f});
+        b.expand(p.position + math::Vec3{0.2f});
+    }
+    ParticleMaterial m;
+    m.blend = ParticleBlend::Additive;
+    const Shot base = shoot(r, [](SceneRenderer&) {});
+    const Shot shot = shoot(r, [&](SceneRenderer& rr) { rr.submit_ribbons(pts, one, m, b); }, "particles_ribbon");
+    CHECK(shot.stats.ribbon_vertices == 8 * 6);
+    CHECK(shot.stats.particles == 0);
+    CHECK(shot.stats.particle_batches == 1);
+    const auto lit = [&](const Shot& s, std::uint32_t x, std::uint32_t y) { return channel(s.at(x, y), 1) > channel(base.at(x, y), 1) + 20; };
+    std::uint32_t across = 0, down = 0;
+    for (std::uint32_t x = 0; x < W; ++x) across += lit(shot, x, H / 2);
+    for (std::uint32_t y = 0; y < H; ++y) down += lit(shot, W / 2, y);
+    MESSAGE("ribbon: " << across << " px across, " << down << " px down");
+    CHECK(across > 60); // 4 m at 5 m distance spans most of the view
+    CHECK(down > 2);
+    CHECK(down < 20); // 0.4 m wide
+    CHECK(across > 4 * down);
+
+    // Seen from above (camera on +Y looking down), the same strip still faces the camera.
+    const Camera3D top = Camera3D::look_at({0, 5, 0.001f}, {0, 0, 0});
+    const Shot base_top = shoot(r, [](SceneRenderer&) {}, nullptr, top);
+    const Shot above = shoot(r, [&](SceneRenderer& rr) { rr.submit_ribbons(pts, one, m, b); }, nullptr, top);
+    std::uint32_t lit_above = 0;
+    for (std::uint32_t x = 0; x < W; ++x) lit_above += channel(above.at(x, H / 2), 1) > channel(base_top.at(x, H / 2), 1) + 20;
+    CHECK(lit_above > 60);
+
+    // Strips with fewer than two points are skipped; a strip along the view axis draws nothing
+    // broken (the fallback side axis keeps it finite).
+    std::vector<RibbonPoint> axis(2);
+    axis[0].position = {0, 0, -1};
+    axis[1].position = {0, 0, 1};
+    axis[0].width = axis[1].width = 0.4f;
+    axis[0].color = axis[1].color = {1, 1, 1, 1};
+    const std::vector<std::uint32_t> counts{1, 2};
+    std::vector<RibbonPoint> mixed{pts[0]};
+    mixed.insert(mixed.end(), axis.begin(), axis.end());
+    math::Aabb ab;
+    ab.expand({-0.3f, -0.3f, -1.2f});
+    ab.expand({0.3f, 0.3f, 1.2f});
+    const Shot degenerate = shoot(r, [&](SceneRenderer& rr) { rr.submit_ribbons(mixed, counts, m, ab); });
+    CHECK(degenerate.stats.ribbon_vertices == 6);
+
+    // Behind an opaque wall the ribbon is hidden (soft depth test of the particle pass).
+    auto cube = ctx.create_mesh(make_cube(), "ribbon_cube").value();
+    Material wall;
+    wall.base_color = {0.1f, 0.1f, 0.1f, 1};
+    const Shot hidden = shoot(r, [&](SceneRenderer& rr) {
+        rr.submit(cube, wall, math::Mat4::trs({0, 0, 1.5f}, {}, {1.2f, 1.2f, 0.2f}));
+        rr.submit_ribbons(pts, one, m, b);
+    });
+    const Shot wall_only = shoot(r, [&](SceneRenderer& rr) {
+        rr.submit(cube, wall, math::Mat4::trs({0, 0, 1.5f}, {}, {1.2f, 1.2f, 0.2f}));
+    });
+    CHECK(hidden.center() == wall_only.center());
+    CHECK(channel(hidden.at(W / 2 - 26, H / 2), 1) > channel(wall_only.at(W / 2 - 26, H / 2), 1) + 20); // still visible beside the wall
+}
+
+TEST_CASE("gpu particles: emitter trails render through runtime extraction in 3D and 2D") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    particles::register_components();
+    scene::Scene s;
+    const scene::Entity cam = s.create("Camera");
+    s.world().add<scene::CameraComponent>(cam);
+    s.world().get<scene::Transform>(cam)->position = {0, 0, 5};
+    const scene::Entity fx = s.create("Comet");
+    auto& c = s.world().add<particles::ParticleEmitterComponent>(fx);
+    c.rate = 0;
+    c.burst = 1;
+    c.shape = particles::Shape::Point;
+    c.angle = 0;
+    c.speed_min = c.speed_max = 4;
+    c.size_start = c.size_end = 0.3f;
+    c.lifetime_min = c.lifetime_max = 10;
+    c.color_start = c.color_end = {1, 1, 1, 1};
+    c.blend = particles::Blend::Additive;
+    c.trail_lifetime = 1.0f;
+    c.trail_width_end = 1.0f;
+    c.trail_alpha_end = 1.0f;
+    c.trail_min_distance = 0.1f;
+    c.trail_max_points = 64;
+    c.trail_billboards = false;
+    s.world().get<scene::Transform>(fx)->position = {-2, 0, 0};
+    s.world().get<scene::Transform>(fx)->rotation = math::Quat::axis_angle({0, 0, 1}, -1.5707963f); // emit along +X
+    particles::ParticleSystem ps;
+    ps.update(s, 0.0f);
+    for (int i = 0; i < 20; ++i) ps.update(s, 0.05f); // the head reaches x = 2; the trail covers the last 4 m
+    s.update_transforms();
+
+    runtime::GpuAssetCache assets(ctx, nullptr);
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    RenderSettings rs = RenderSettings::preset(QualityTier::Medium);
+    rs.bloom = false;
+    r.set_settings(rs);
+    auto target = test::make_target(W, H);
+    const auto draw3d = [&] {
+        const runtime::ExtractStats st = runtime::extract_scene(s, assets, r, {}, nullptr);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        return std::pair{dev.read_texture(target).value(), st};
+    };
+    const auto extent = [](const std::vector<std::uint8_t>& px, const std::vector<std::uint8_t>& base) {
+        const auto lit = [&](std::uint32_t x, std::uint32_t y) { return channel(test::pixel(px, W, x, y), 1) > channel(test::pixel(base, W, x, y), 1) + 8; };
+        std::uint32_t across = 0, down = 0;
+        for (std::uint32_t x = 0; x < W; ++x) across += lit(x, H / 2);
+        for (std::uint32_t y = 0; y < H; ++y) down += lit(W / 2, y);
+        return std::pair{across, down};
+    };
+    s.world().get<particles::ParticleEmitterComponent>(fx)->trail_width = 0; // invisible baseline
+    ps.update(s, 0.0f);
+    const auto sky = draw3d().first;
+    s.world().get<particles::ParticleEmitterComponent>(fx)->trail_width = 1;
+    ps.update(s, 0.0f);
+    const auto [px, st] = draw3d();
+    CHECK(st.particle_trails == 1);
+    CHECK(st.particles == 0); // trails only
+    CHECK(r.stats().ribbon_vertices > 0);
+    test::save_output("particles_trail", W, H, px);
+    const auto [across, down] = extent(px, sky);
+    MESSAGE("3D trail: " << across << " px across, " << down << " px down");
+    CHECK(across > 50);
+    CHECK(down > 0);
+    CHECK(across > 4 * down);
+
+    // 2D: one sprite per trail segment.
+    auto batch = SpriteBatch::create(ctx, rhi::Format::RGBA8_UNORM);
+    REQUIRE(batch.ok());
+    SpriteBatch& sb = *batch.value();
+    sb.begin(math::Mat4::orthographic(-4, 4, -2.4f, 2.4f, -1, 1));
+    CHECK(runtime::extract_sprites(s, assets, sb) > 10);
+    auto cmd2 = dev.begin_commands();
+    REQUIRE(sb.prepare(cmd2).ok());
+    {
+        rhi::RenderPassDesc rp;
+        rp.colors.push_back({target, 0, 0, rhi::LoadOp::Clear, rhi::StoreOp::Store, {0, 0, 0, 1}, {}});
+        auto pass = cmd2.begin_render_pass(rp);
+        sb.render(pass, cmd2);
+        pass.end();
+    }
+    cmd2.submit_and_wait();
+    const auto px2 = dev.read_texture(target).value();
+    test::save_output("particles_trail_2d", W, H, px2);
+    const std::vector<std::uint8_t> black(px2.size(), 0);
+    const auto [across2, down2] = extent(px2, black);
+    MESSAGE("2D trail: " << across2 << " px across, " << down2 << " px down");
+    CHECK(across2 > 60);
+    CHECK(down2 > 0);
+    CHECK(across2 > 4 * down2);
+    dev.destroy(target);
+}

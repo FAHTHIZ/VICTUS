@@ -198,6 +198,7 @@ struct ExtractStats {
     std::uint32_t terrain_chunks{0}; // terrain chunk meshes submitted (before culling)
     std::uint32_t foliage_instances{0}; // foliage instances submitted (within draw distance, before culling)
     std::uint32_t particle_emitters{0}, particles{0}; // submitted (before camera culling)
+    std::uint32_t particle_trails{0};                 // ribbon strips submitted
     std::uint32_t decals{0}; // visible decal components submitted (before camera culling)
     bool camera_found{false};
 };

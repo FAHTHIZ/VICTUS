@@ -31,6 +31,12 @@ struct Particle {
     float spin{0};
     float size_scale{1};
     std::uint32_t start_frame{0};
+    std::uint32_t trail_count{0}; // recorded trail points (in EmitterState::trail)
+};
+
+struct TrailPoint {
+    Vec3 position; // simulation space (world or emitter-local)
+    float age{0};  // particle age when recorded
 };
 
 // Runtime state, not serialized: rebuilt (empty) after loading.
@@ -38,6 +44,10 @@ struct EmitterState {
     std::vector<Particle> particles;
     std::vector<Billboard> billboards;
     std::vector<Vec3> velocities;
+    std::vector<TrailPoint> trail; // trail_cap points per particle, parallel to particles
+    std::uint32_t trail_cap{0};
+    std::vector<RibbonPoint> ribbon_points;
+    std::vector<std::uint32_t> ribbon_strips;
     Aabb bounds;
     Random rng{1, 1};
     bool seeded{false};
@@ -152,6 +162,30 @@ struct Counts {
     std::uint32_t spawned{0}, died{0};
 };
 
+std::uint32_t trail_capacity(const ParticleEmitterComponent& e) {
+    if (!(e.trail_lifetime > 0) || !std::isfinite(e.trail_lifetime)) return 0;
+    return std::clamp<std::uint32_t>(e.trail_max_points, 2, 64);
+}
+
+// Appends the particle's position when it moved far enough (dropping the oldest point when the
+// block is full), then expires points older than the trail lifetime.
+void record_trail(const ParticleEmitterComponent& e, Particle& p, TrailPoint* block, std::uint32_t cap) {
+    const float min_d = std::max(0.0f, e.trail_min_distance);
+    if (p.trail_count == 0 || math::length(p.position - block[p.trail_count - 1].position) >= min_d) {
+        if (p.trail_count == cap) {
+            std::copy(block + 1, block + cap, block);
+            --p.trail_count;
+        }
+        block[p.trail_count++] = {p.position, p.age};
+    }
+    std::uint32_t drop = 0;
+    while (drop < p.trail_count && p.age - block[drop].age > e.trail_lifetime) ++drop;
+    if (drop > 0) {
+        std::copy(block + drop, block + p.trail_count, block);
+        p.trail_count -= drop;
+    }
+}
+
 Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& world, float dt, std::uint64_t uuid_seed) {
     Counts counts;
     if (!s.seeded) {
@@ -162,10 +196,18 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
     dt = std::max(0.0f, dt);
     // Integrate and retire existing particles (swap-remove: order is irrelevant, the renderer sorts).
     const float damping = e.drag > 0 ? std::exp(-e.drag * dt) : 1.0f;
+    const std::uint32_t cap = trail_capacity(e);
+    if (cap != s.trail_cap) { // trails switched on/off or resized: restart every history
+        s.trail_cap = cap;
+        for (Particle& p : s.particles) p.trail_count = 0;
+    }
+    s.trail.resize(s.particles.size() * cap);
     for (std::size_t i = 0; i < s.particles.size();) {
         Particle& p = s.particles[i];
         p.age += dt;
         if (p.age >= p.life) {
+            const std::size_t last = s.particles.size() - 1;
+            if (cap > 0 && i != last) std::copy_n(s.trail.begin() + static_cast<std::ptrdiff_t>(last * cap), cap, s.trail.begin() + static_cast<std::ptrdiff_t>(i * cap));
             p = s.particles.back();
             s.particles.pop_back();
             ++counts.died;
@@ -174,6 +216,7 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
         p.velocity = (p.velocity + e.gravity * dt) * damping;
         p.position = p.position + p.velocity * dt;
         p.rotation += p.spin * dt;
+        if (cap > 0) record_trail(e, p, s.trail.data() + i * cap, cap);
         ++i;
     }
 
@@ -207,12 +250,13 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
         }
         s.finished = !active && s.particles.empty() && spawn == 0;
     }
-    const std::uint32_t cap = std::min(e.max_particles, kHardCap);
-    const std::uint32_t room = cap > s.particles.size() ? cap - static_cast<std::uint32_t>(s.particles.size()) : 0;
+    const std::uint32_t max_alive = std::min(e.max_particles, kHardCap);
+    const std::uint32_t room = max_alive > s.particles.size() ? max_alive - static_cast<std::uint32_t>(s.particles.size()) : 0;
     spawn = std::min(spawn, room);
     const float life_lo = std::max(0.001f, std::min(e.lifetime_min, e.lifetime_max));
     const float life_hi = std::max(life_lo, std::max(e.lifetime_min, e.lifetime_max));
     const float spin_to_rad = kPi / 180.0f;
+    s.trail.reserve((s.particles.size() + spawn) * cap);
     for (std::uint32_t i = 0; i < spawn; ++i) {
         Vec3 pos, dir;
         sample_shape(e, s.rng, pos, dir);
@@ -235,7 +279,12 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
             p.velocity = dir * speed;
         }
         s.particles.push_back(p);
+        if (cap > 0) {
+            s.trail.resize(s.particles.size() * cap);
+            record_trail(e, s.particles.back(), s.trail.data() + (s.particles.size() - 1) * cap, cap);
+        }
     }
+    s.trail.resize(s.particles.size() * cap);
     counts.spawned = spawn;
     s.emitted += spawn;
 
@@ -276,6 +325,49 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
         const Vec3 half{extent * 0.5f};
         s.bounds.expand(b.position - half);
         s.bounds.expand(b.position + half);
+    }
+
+    // Trails: recorded points from tail to head, then the particle's current position.
+    s.ribbon_points.clear();
+    s.ribbon_strips.clear();
+    if (cap > 0) {
+        const float head_w = std::max(0.0f, e.trail_width), end_w = std::max(0.0f, e.trail_width_end);
+        const float end_a = clamp01(e.trail_alpha_end);
+        for (std::size_t i = 0; i < s.particles.size(); ++i) {
+            const Particle& p = s.particles[i];
+            const Billboard& b = s.billboards[i];
+            const TrailPoint* block = s.trail.data() + i * cap;
+            const auto first = static_cast<std::uint32_t>(s.ribbon_points.size());
+            const auto add = [&](const Vec3& sim_pos, float point_age) {
+                const float v = clamp01((p.age - point_age) / e.trail_lifetime);
+                RibbonPoint r;
+                r.position = e.world_space ? sim_pos : world.transform_point(sim_pos);
+                r.width = b.size * head_w * math::lerp(1.0f, end_w, v);
+                r.color = Color(b.color.r, b.color.g, b.color.b, b.color.a * math::lerp(1.0f, end_a, v));
+                r.v = v;
+                s.ribbon_points.push_back(r);
+                const Vec3 half{r.width * 0.5f};
+                s.bounds.expand(r.position - half);
+                s.bounds.expand(r.position + half);
+            };
+            for (std::uint32_t k = 0; k < p.trail_count; ++k) add(block[k].position, block[k].age);
+            // The newest recorded point may be the current position (just recorded); skip duplicates.
+            if (p.trail_count == 0 || math::length(p.position - block[p.trail_count - 1].position) > 1e-6f) add(p.position, p.age);
+            const auto n = static_cast<std::uint32_t>(s.ribbon_points.size()) - first;
+            if (n >= 2) s.ribbon_strips.push_back(n);
+            else s.ribbon_points.resize(first);
+        }
+    }
+    if (!e.trail_billboards && cap > 0) {
+        // Trails only: keep the bounds of the trails, drop the heads.
+        s.billboards.clear();
+        s.velocities.clear();
+        s.bounds = {};
+        for (const RibbonPoint& r : s.ribbon_points) {
+            const Vec3 half{r.width * 0.5f};
+            s.bounds.expand(r.position - half);
+            s.bounds.expand(r.position + half);
+        }
     }
     return counts;
 }
@@ -336,6 +428,13 @@ void register_components() {
             .field(&ParticleEmitterComponent::flipbook_fps, "flipbook_fps", {.min = 0, .max = 240, .speed = 0.5f, .tooltip = "0 = frames span each particle's life"})
             .field(&ParticleEmitterComponent::flipbook_random_start, "flipbook_random_start")
             .field(&ParticleEmitterComponent::velocity_stretch, "velocity_stretch", {.min = 0, .max = 10, .speed = 0.005f, .tooltip = "Seconds of motion added to the length; 0 = off"})
+            .field(&ParticleEmitterComponent::trail_lifetime, "trail_lifetime", {.min = 0, .max = 60, .speed = 0.01f, .tooltip = "Seconds a trail point lives; 0 = no trails"})
+            .field(&ParticleEmitterComponent::trail_min_distance, "trail_min_distance", {.min = 0, .max = 100, .speed = 0.005f, .tooltip = "Metres moved before a new trail point"})
+            .field(&ParticleEmitterComponent::trail_max_points, "trail_max_points", {.min = 2, .max = 64, .tooltip = "Recorded points per particle"})
+            .field(&ParticleEmitterComponent::trail_width, "trail_width", {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "Head width x particle size"})
+            .field(&ParticleEmitterComponent::trail_width_end, "trail_width_end", {.min = 0, .max = 10, .speed = 0.01f, .tooltip = "Tail width as a fraction of the head"})
+            .field(&ParticleEmitterComponent::trail_alpha_end, "trail_alpha_end", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Tail alpha as a fraction of the head"})
+            .field(&ParticleEmitterComponent::trail_billboards, "trail_billboards", {.tooltip = "Also draw the particles"})
             .commit();
     });
 }
@@ -397,6 +496,9 @@ bool reset(Scene& scene, Entity e) {
         s->particles.clear();
         s->billboards.clear();
         s->velocities.clear();
+        s->trail.clear();
+        s->ribbon_points.clear();
+        s->ribbon_strips.clear();
         s->bounds = {};
         s->started = false;
         s->finished = false;
@@ -423,8 +525,9 @@ EmitterStatus status(Scene& scene, Entity e) {
 
 void gather(Scene& scene, std::vector<EmitterView>& out) {
     scene.world().each<ParticleEmitterComponent, EmitterState>([&](Entity e, ParticleEmitterComponent& c, EmitterState& s) {
-        if (s.billboards.empty()) return;
-        out.push_back({e, &c, std::span<const Billboard>(s.billboards), std::span<const Vec3>(s.velocities), s.bounds});
+        if (s.billboards.empty() && s.ribbon_strips.empty()) return;
+        out.push_back({e, &c, std::span<const Billboard>(s.billboards), std::span<const Vec3>(s.velocities), s.bounds,
+                       std::span<const RibbonPoint>(s.ribbon_points), std::span<const std::uint32_t>(s.ribbon_strips)});
     });
 }
 

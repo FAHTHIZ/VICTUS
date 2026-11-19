@@ -65,6 +65,16 @@ struct ParticleEmitterComponent {
     // Velocity stretch: a moving particle's length becomes size + speed x velocity_stretch
     // (seconds), aligned with its on-screen motion. 0 = square billboards that keep their spin.
     float velocity_stretch{0};
+    // Trails: each particle leaves a camera-facing ribbon along its path. A new trail point is
+    // recorded once the particle has moved `trail_min_distance` from the last one; points older
+    // than `trail_lifetime` seconds expire, and the trail dies with its particle.
+    float trail_lifetime{0};          // seconds; 0 = no trails
+    float trail_min_distance{0.05f};  // metres between recorded points
+    std::uint32_t trail_max_points{16}; // recorded points per particle (2..64; oldest dropped when full)
+    float trail_width{1};             // trail width at the head, x particle size
+    float trail_width_end{0};         // width at the tail as a fraction of the head width
+    float trail_alpha_end{0};         // alpha at the tail as a fraction of the particle's alpha
+    bool trail_billboards{true};      // also draw the particles themselves
 };
 
 // Frame shown at `age` of `life` seconds, given the particle's start frame (exposed for tests).
@@ -84,12 +94,24 @@ struct Billboard {
 };
 static_assert(sizeof(Billboard) == 48);
 
+// One trail point, tail to head within its strip. Layout matches render::RibbonPoint (48 bytes).
+struct RibbonPoint {
+    math::Vec3 position; // world space
+    float width{0};      // full width in metres
+    math::Color color;
+    float v{0};          // 0 at the head, 1 at the end of the trail lifetime
+    float reserved[3]{};
+};
+static_assert(sizeof(RibbonPoint) == 48);
+
 struct EmitterView {
     scene::Entity entity;
     const ParticleEmitterComponent* emitter{nullptr};
     std::span<const Billboard> billboards;
     std::span<const math::Vec3> velocities; // world space, parallel to billboards; empty unless stretched
-    math::Aabb bounds; // world space; invalid when empty
+    math::Aabb bounds; // world space (billboards and trails); invalid when empty
+    std::span<const RibbonPoint> ribbon_points; // every trail, tail to head
+    std::span<const std::uint32_t> ribbon_strips; // point count of each trail (>= 2)
 };
 
 struct EmitterStatus {
@@ -139,7 +161,8 @@ bool reset(scene::Scene& scene, scene::Entity e);
 void aim_stretched(Billboard& b, const math::Vec3& velocity, const math::Mat4& view);
 // Texture rectangle (u0, v0 top, u1, v1 bottom) of a billboard's flipbook frame; whole texture when off.
 [[nodiscard]] math::Vec4 flipbook_uv(const Billboard& b);
-// Every emitter with its billboards from the last update.
+// Every emitter with its billboards from the last update. Billboards are empty when
+// trail_billboards is off; trails only appear in ribbon_points.
 void gather(scene::Scene& scene, std::vector<EmitterView>& out);
 
 } // namespace victus::particles
