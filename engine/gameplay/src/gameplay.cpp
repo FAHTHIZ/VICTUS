@@ -226,6 +226,9 @@ void register_components() {
             .field(&E::precipitation_opacity, "precipitation_opacity", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Opacity of each drop (0 = automatic)"})
             .field(&E::precipitation_brightness, "precipitation_brightness", {.min = 0, .max = 16, .speed = 0.01f, .tooltip = "Light on the drops or flakes"})
             .field(&E::wetness, "wetness", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Wet surfaces: rough materials darken, everything facing up gets glossier"})
+            .field(&E::puddles, "puddles", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "How much flat ground holds standing water (0 none, 1 all)"})
+            .field(&E::puddle_size, "puddle_size", {.min = 0.25f, .max = 100, .speed = 0.05f, .tooltip = "Typical puddle size in metres"})
+            .field(&E::precipitation_ripples, "precipitation_ripples", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Rain ripples on puddles and wet ground"})
             .commit();
         using FV = FogVolumeComponent;
         scene::Schema<FV>("FogVolume", "Rendering")
