@@ -23,7 +23,7 @@ New to making games? The Getting Started panel offers two lessons, **2D platform
 | Camera Follow | the camera | Follows the player (or any target) smoothly with an offset. |
 | Health | anything that can be hurt | Hit points, a blink after a hit, and what happens at zero: destroy, respawn at the last checkpoint, restart the scene or nothing. |
 | Hazard | spikes, enemies, kill zones | Hurts what it touches, with knockback. "Stompable" lets the player defeat it by landing on it; "Instant kill" takes all health. |
-| Collectible | coins, hearts, keys | Picked up on touch: adds score, heals or counts as an item, with an optional sound and an on-screen Message (items say "You found a Key" by default). Items the player carries are listed on the HUD under the score. |
+| Collectible | coins, hearts, keys | Picked up on touch: adds score, heals or counts as an item, with an optional sound and an on-screen Message (items say "You found a Key" by default). Items the player carries are listed on the HUD under the score; to start with one, add an Inventory to the player (Add Component) and use + Add Item. |
 | Moving Platform | lifts, moving ledges, saws | Travels between where it starts and start + Offset (back and forth, or once), with a pause at each end, optional easing, an optional wait until the player stands on it, and Spin for turning saws and fans. It becomes a kinematic body, so characters standing on it ride along. |
 | Patrol / Chase | enemies | Walks back and forth, turning at walls (and, with Turn At Ledges, at platform edges), or follows the player within a range. |
 | Shooter / Projectile | the player, turrets | Fires on the fire action (left mouse) or automatically; bullets damage what they hit and stop at walls. |

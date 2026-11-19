@@ -4,6 +4,7 @@
 #include "../render/gpu_fixture.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/editor.hpp"
+#include "victus/gameplay/framework.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/core/zip.hpp"
 #include "victus/core/json.hpp"
@@ -1450,4 +1451,27 @@ TEST_CASE("studio behaviour guides: patrol and platform routes, chase ranges and
     CHECK(h.ed->behaviour_guides(plain, true).empty());
     h.ed->select(lift);
     h.frames(2); // drawn without errors
+}
+
+TEST_CASE("studio inspector: inventories, timers and attributes are shown and items can be added") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Inv", "Inv", "2d").ok());
+    h.frames(2);
+    auto& w = h.ed->edit_scene().world();
+    const scene::Entity e = h.ed->create_entity(editor::Primitive::Sprite);
+    bool listed = false;
+    for (const auto& c : h.ed->component_choices(e))
+        if (c.id == "Inventory") listed = true;
+    CHECK(listed);
+    REQUIRE(h.ed->add_component(e, "Inventory"));
+    CHECK_FALSE(h.ed->add_component(e, "Inventory")); // only once
+    REQUIRE(w.get<gameplay::InventoryComponent>(e));
+    CHECK(gameplay::add_item(h.ed->edit_scene(), e, "Key", 2) == 2);
+    gameplay::start_timer(h.ed->edit_scene(), e, "tick", 3, true);
+    h.ed->select(e);
+    h.frames(3); // all three sections draw
+    CHECK(w.get<gameplay::TimersComponent>(e));
+    CHECK(gameplay::item_count(h.ed->edit_scene(), e, "Key") == 2);
 }
