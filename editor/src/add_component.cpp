@@ -41,6 +41,7 @@ constexpr Blurb kBlurbs[] = {
     {"Collectible", "A pickup: coins for score, hearts for health or items for the inventory"},
     {"Spawner", "Creates copies of a prefab every few seconds"},
     {"Patrol", "Walks back and forth between two points"},
+    {"MovingPlatform", "Travels back and forth and carries whoever stands on it: lifts, moving ledges, saws"},
     {"Chase", "Follows the player when they come close"},
     {"Projectile", "Flies straight and damages what it hits"},
     {"Shooter", "Fires projectiles when you press fire, or by itself like a turret"},

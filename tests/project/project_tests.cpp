@@ -450,6 +450,24 @@ TEST_CASE("templates: the No-Code Platformer plays with behaviours alone") {
     r->frames(90);
     CHECK(rules().lives_left == 2);
     CHECK(r->pos("Player").x < 0);
+    // The lift carries the player standing on it.
+    {
+        const scene::Entity lift = r->scene.find_by_name("Moving Platform");
+        REQUIRE_FALSE(lift.is_null());
+        const float x0 = r->pos("Moving Platform").x;
+        r->scene.world().get<scene::Transform>(r->scene.find_by_name("Player"))->position = {x0, 0.1f, 0};
+        r->frames(20); // lands on it
+        float lo = 1e9f, hi = -1e9f;
+        for (int i = 0; i < 12; ++i) {
+            r->frames(10);
+            const float lx = r->pos("Moving Platform").x;
+            lo = std::min(lo, lx);
+            hi = std::max(hi, lx);
+            CHECK(std::abs(r->pos("Player").x - lx) < 0.8f);
+            CHECK(r->pos("Player").y > -0.6f);
+        }
+        CHECK(hi - lo > 1.0f); // it moved
+    }
     // Touching the flag wins the level.
     r->scene.world().get<scene::Transform>(r->scene.find_by_name("Player"))->position = {54, -2.5f, 0};
     r->input.set_key("D", true);

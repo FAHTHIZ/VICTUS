@@ -959,6 +959,10 @@ TEST_CASE("studio roles: Make it a Player, Enemy, Coin or Goal in one undoable c
     CHECK(w.get<script::GoalComponent>(goal));
     CHECK(w.get<scene::Name>(goal)->value == "Goal");
     CHECK(w.count<script::GameRulesComponent>() == 1); // reused, not duplicated
+    const scene::Entity lift = h.ed->create_entity(editor::Primitive::Cube);
+    CHECK(h.ed->make_role(lift, editor::Role::MovingPlatform));
+    CHECK(w.get<script::MovingPlatformComponent>(lift));
+    CHECK(w.get<scene::Name>(lift)->value == "Platform");
     h.ed->select(goal);
     h.frames(2);
 }

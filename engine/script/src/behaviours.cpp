@@ -27,7 +27,7 @@ using scene::Transform;
 
 const std::vector<std::string>& behaviour_names() {
     static const std::vector<std::string> names{"PlatformerMovement", "TopDownMovement", "CameraFollow", "Health",
-                                                "Hazard", "Collectible", "Spawner", "Patrol", "Chase", "Projectile",
+                                                "Hazard", "Collectible", "Spawner", "Patrol", "MovingPlatform", "Chase", "Projectile",
                                                 "Shooter", "Lifetime", "Checkpoint", "Goal", "GameRules"};
     return names;
 }
@@ -118,6 +118,17 @@ void register_behaviour_components() {
             .field(&PA::flip_sprite, "flip_sprite")
             .field(&PA::turn_at_walls, "turn_at_walls", {.tooltip = "Turn around when a wall or other solid object is in the way"})
             .field(&PA::turn_at_ledges, "turn_at_ledges", {.tooltip = "Turn around instead of walking off the edge of a platform"})
+            .commit();
+        using MP = MovingPlatformComponent;
+        scene::Schema<MP>("MovingPlatform", cat)
+            .field(&MP::offset, "offset", {.speed = 0.05f, .tooltip = "Where it travels to, from where it starts"})
+            .field(&MP::speed, "speed", {.min = 0, .max = 100, .speed = 0.05f, .tooltip = "Average speed (m/s)"})
+            .field(&MP::wait, "wait", {.min = 0, .max = 60, .speed = 0.05f, .tooltip = "Pause at each end (s)"})
+            .field(&MP::smooth, "smooth", {.tooltip = "Slow down and speed up gently at the ends"})
+            .field(&MP::once, "once", {.tooltip = "Stop at the far end instead of coming back"})
+            .field(&MP::wait_for_player, "wait_for_player", {.tooltip = "Start moving when the player first stands on it"})
+            .field(&MP::spin, "spin", {.min = -3600, .max = 3600, .speed = 1, .tooltip = "Turning speed in degrees per second (saws, fans)"})
+            .field(&MP::player_tag, "player_tag")
             .commit();
         using CH = ChaseComponent;
         scene::Schema<CH>("Chase", cat)
@@ -315,7 +326,8 @@ bool is_actor(Scene& s, Entity e) {
     return w.has<physics::CharacterController2DComponent>(e) || w.has<physics::CharacterControllerComponent>(e) ||
            w.has<HealthComponent>(e) || w.has<HazardComponent>(e) || w.has<CollectibleComponent>(e) ||
            w.has<ProjectileComponent>(e) || w.has<PatrolComponent>(e) || w.has<ChaseComponent>(e) ||
-           w.has<CheckpointComponent>(e) || w.has<GoalComponent>(e) || player_controlled(s, e);
+           w.has<CheckpointComponent>(e) || w.has<GoalComponent>(e) || player_controlled(s, e) ||
+           (w.has<MovingPlatformComponent>(e) && w.has<HazardComponent>(e));
 }
 
 std::vector<Solid> gather_solids(Scene& s) {
@@ -847,6 +859,95 @@ void ai_movement(Scene& s, physics::PhysicsWorld* pw, float dt, TagCache& tags, 
     }
 }
 
+// Moving platforms are kinematic bodies so the physics step gives them a velocity and characters
+// standing on them are carried. A platform without a collider gets one sized from its sprite or mesh.
+void ensure_platform_bodies(Scene& s) {
+    std::vector<Entity> list;
+    s.world().each<MovingPlatformComponent>([&](Entity e, MovingPlatformComponent&) { list.push_back(e); });
+    auto& w = s.world();
+    for (const Entity e : list) {
+        if (is_2d(s, e)) {
+            if (!w.has<physics::Collider2DComponent>(e) && !w.has<physics::ColliderComponent>(e)) {
+                physics::Collider2DComponent c;
+                if (const auto* sp = w.get<scene::SpriteComponent>(e)) c.size = {sp->size.x, sp->size.y};
+                w.add<physics::Collider2DComponent>(e, c);
+            }
+            if (!w.has<physics::Collider2DComponent>(e)) continue;
+            auto* rb = w.get<physics::RigidBody2DComponent>(e);
+            if (!rb) {
+                physics::RigidBody2DComponent r;
+                r.type = physics::BodyType::Kinematic;
+                w.add<physics::RigidBody2DComponent>(e, r);
+            } else if (rb->type != physics::BodyType::Kinematic) {
+                rb->type = physics::BodyType::Kinematic;
+            }
+        } else {
+            if (!w.has<physics::ColliderComponent>(e)) {
+                if (!w.has<scene::MeshRendererComponent>(e)) continue;
+                w.add<physics::ColliderComponent>(e);
+            }
+            auto* rb = w.get<physics::RigidBodyComponent>(e);
+            if (!rb) {
+                physics::RigidBodyComponent r;
+                r.type = physics::BodyType::Kinematic;
+                w.add<physics::RigidBodyComponent>(e, r);
+            } else if (rb->type != physics::BodyType::Kinematic) {
+                rb->type = physics::BodyType::Kinematic;
+            }
+        }
+    }
+}
+
+void platforms_move(Scene& s, float dt, TagCache& tags, bool active) {
+    std::vector<Entity> list;
+    s.world().each<MovingPlatformComponent>([&](Entity e, MovingPlatformComponent&) { list.push_back(e); });
+    for (const Entity e : list) {
+        auto* mp = s.world().get<MovingPlatformComponent>(e);
+        auto* t = s.world().get<Transform>(e);
+        if (!mp || !t) continue;
+        if (!mp->has_origin) {
+            mp->origin = t->position;
+            mp->base_rotation = t->rotation;
+            mp->has_origin = true;
+        }
+        if (!active) continue;
+        if (mp->wait_for_player && !mp->started) {
+            Box top = bounds_of(s, e);
+            top.c.y += 0.1f; // standing on it, not only touching a side
+            top.h.y += 0.1f;
+            for (const Entity p : tags.get(mp->player_tag))
+                if (p != e && s.world().alive(p) && overlaps(top, bounds_of(s, p))) mp->started = true;
+            if (!mp->started) continue;
+        }
+        mp->started = true;
+        if (mp->spin != 0) {
+            mp->angle = std::fmod(mp->angle + mp->spin * dt, 360.0f);
+            const Vec3 axis = is_2d(s, e) ? Vec3{0, 0, 1} : Vec3{0, 1, 0};
+            t->rotation = mp->base_rotation * math::Quat::axis_angle(axis, math::radians(mp->angle));
+        }
+        const float len = math::length(mp->offset);
+        if (len < 1e-5f || mp->speed <= 0) continue;
+        if (mp->waiting > 0) {
+            mp->waiting -= dt;
+            continue;
+        }
+        const bool at_end = !mp->returning && mp->progress >= 1.0f;
+        if (at_end && mp->once) continue;
+        mp->progress += (mp->returning ? -1.0f : 1.0f) * mp->speed * dt / len;
+        if (mp->progress >= 1.0f) {
+            mp->progress = 1.0f;
+            if (!mp->once) mp->returning = true;
+            mp->waiting = mp->wait;
+        } else if (mp->progress <= 0.0f) {
+            mp->progress = 0.0f;
+            mp->returning = false;
+            mp->waiting = mp->wait;
+        }
+        const float u = mp->smooth ? mp->progress * mp->progress * (3.0f - 2.0f * mp->progress) : mp->progress;
+        t->position = mp->origin + mp->offset * u;
+    }
+}
+
 void projectiles_move(Scene& s, float dt) {
     s.world().each<ProjectileComponent, Transform>([&](ProjectileComponent& p, Transform& t) {
         t.position += p.velocity * dt;
@@ -1352,7 +1453,7 @@ bool any_behaviour(Scene& s) {
     return w.count<PlatformerMovementComponent>() || w.count<TopDownMovementComponent>() || w.count<CameraFollowComponent>() ||
            w.count<HealthComponent>() || w.count<HazardComponent>() || w.count<CollectibleComponent>() ||
            w.count<SpawnerComponent>() || w.count<PatrolComponent>() || w.count<ChaseComponent>() ||
-           w.count<ProjectileComponent>() || w.count<ShooterComponent>() || w.count<LifetimeComponent>() ||
+           w.count<MovingPlatformComponent>() || w.count<ProjectileComponent>() || w.count<ShooterComponent>() || w.count<LifetimeComponent>() ||
            w.count<CheckpointComponent>() || w.count<GoalComponent>() || w.count<GameRulesComponent>();
 }
 
@@ -1364,6 +1465,7 @@ void behaviours_fixed_update(ScriptHost::Impl& h, Scene& s, float dt) {
     ensure_start_snapshot(h, s);
     physics::PhysicsWorld* pw = physics::world_of(s);
     ensure_controllers(s);
+    ensure_platform_bodies(s);
     const bool active = playing(s);
     std::vector<Entity> movers;
     s.world().each<PlatformerMovementComponent>([&](Entity e, PlatformerMovementComponent&) { movers.push_back(e); });
@@ -1378,6 +1480,7 @@ void behaviours_fixed_update(ScriptHost::Impl& h, Scene& s, float dt) {
         top_down_step(h, s, pw, e, dt, active && !(hp && hp->dead));
     }
     TagCache tags{s, {}};
+    platforms_move(s, dt, tags, active);
     ai_movement(s, pw, dt, tags, active);
     projectiles_move(s, dt);
 }

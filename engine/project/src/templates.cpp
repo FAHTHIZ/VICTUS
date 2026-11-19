@@ -946,12 +946,19 @@ void build_nocode(Scene& s) {
     solid_2d(s, "Wall Left", {-10.5f, 2, 0}, {1, 18}, dirt, 0.0f);
     solid_2d(s, "Wall Right", {60.5f, 2, 0}, {1, 18}, dirt, 0.0f);
     const struct { const char* name; float x, y; bool one_way; } platforms[] = {
-        {"Platform", 6, -0.6f, true}, {"Platform 2", 22, -0.4f, false}, {"Platform 3", 25.5f, 1.6f, false}, {"Platform 4", 46, -0.6f, false}};
+        {"Platform", 6, -0.6f, true}, {"Platform 2", 22, -0.4f, false}, {"Platform 3", 25.5f, 1.6f, false}, {"Moving Platform", 41.5f, -0.6f, false}};
     for (const auto& pl : platforms) {
         const Entity e = solid_2d(s, pl.name, {pl.x, pl.y, 0}, {3, 0.4f}, wood, 0.6f);
         sprite(s, add(s, "Grass", {0, 0.17f, 0}, e), {3, 0.12f}, grass, 1);
         if (pl.one_way) s.world().get<physics::Collider2DComponent>(e)->one_way = true;
     }
+    // A lift that carries the player over the last gap and back.
+    const Entity lift_e = s.find_by_name("Moving Platform");
+    s.world().get<physics::RigidBody2DComponent>(lift_e)->type = physics::BodyType::Kinematic;
+    auto& lift = s.world().add<MovingPlatformComponent>(lift_e);
+    lift.offset = {5, 0, 0};
+    lift.speed = 1.6f;
+    lift.wait = 0.8f;
 
     // The player: four behaviours and a physics character, nothing else.
     const Entity player = add(s, "Player", {-6, -2.5f, 0});
@@ -972,7 +979,7 @@ void build_nocode(Scene& s) {
     gun.cooldown = 0.25f;
 
     const math::Vec3 coins[] = {{0, -2.3f, 0},   {6, 0.3f, 0},     {15.5f, -0.6f, 0}, {22, 0.5f, 0},
-                                {25.5f, 2.6f, 0}, {33, -2.3f, 0},   {46, 0.3f, 0},     {52, -2.3f, 0}};
+                                {25.5f, 2.6f, 0}, {33, -2.3f, 0},   {44, 0.4f, 0},     {52, -2.3f, 0}};
     int n = 0;
     for (const math::Vec3& at : coins) {
         const Entity coin = add(s, "Coin " + std::to_string(++n), at);
