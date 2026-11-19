@@ -30,6 +30,7 @@ Every engine module is a static library `victus_<name>` (alias `VICTUS::<Name>`)
 | 2 | `scene` | Entities with UUIDs, hierarchy, transforms, reflection and serialization |
 | 3 | `render` | Render graph, SceneRenderer (3D), SpriteBatch (2D), built-in shaders |
 | 3 | `gameplay` | Fixed-step Simulation, systems, input sources, gameplay components |
+| 3 | `world` | World streaming: `.vworld` descriptors, cells loaded additively around streaming sources on background jobs, cell state persistence, scene partitioning (6h, ADR-0090) |
 | 4 | `ui` | Dear ImGui on the RHI (editor and debug UI) |
 | 4 | `physics`, `animation`, `particles`, `audio`, `gameui` | Jolt/Box2D bodies and characters; clips and skinning; CPU emitters; miniaudio; in-game UI components |
 | 4 | `plugin` | Native plugin host: `.vplugin` manifests, dependency resolution, versioned C ABI (`victus_plugin.h`), lifecycle (ADR-0078) |

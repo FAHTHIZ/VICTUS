@@ -240,6 +240,12 @@ victus_add_test(victus_tilemap_tests
     DEPS VICTUS::Tilemap VICTUS::Physics VICTUS::Core
     LABELS tilemap)
 
+victus_add_test(victus_world_tests
+    SOURCES
+        world/world_tests.cpp
+    DEPS VICTUS::World VICTUS::Core
+    LABELS world)
+
 victus_add_test(victus_terrain_tests
     SOURCES
         terrain/terrain_tests.cpp

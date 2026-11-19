@@ -127,6 +127,9 @@ public:
     [[nodiscard]] ResidencyStats residency() const;
     // Starts loading without using the result (scene preloading); no-op when synchronous.
     void prefetch(const Uuid& uuid, assets::LoadType type, assets::LoadPriority priority = assets::LoadPriority::Low);
+    // True when the asset is resident, failed, or loads synchronously on first use (nothing to
+    // wait for); false while an async load is queued or decoding.
+    [[nodiscard]] bool settled(const Uuid& uuid, assets::LoadType type) const;
     // Mip streaming input: a texture (or every texture of a material, scaled by its UV tiling)
     // covers about `pixels` on screen this frame. The largest footprint per frame wins.
     void note_footprint(const Uuid& texture, float pixels);

@@ -30,6 +30,7 @@
 #include "victus/platform/platform.hpp"
 #include "victus/scene/scene.hpp"
 #include "victus/script/script.hpp"
+#include "victus/world/world.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -74,6 +75,7 @@ constexpr const char* kUsage =
     "  check <project>                                            validate scenes and script syntax\n"
     "  plugins <project> [--load] [--new NAME]                    list, load or create native plugins\n"
     "  export <project> --out DIR [--name EXE] [--player PATH]    package a runnable game folder\n"
+    "  world <project> --scene S --out DIR [--cell-size N]       split a scene into streamed world cells (.vworld)\n"
     "  diagnose [project] --out FILE.zip [--no-logs] [--keep-paths] ...  bundle crash reports, logs and checks\n"
     "  version                                                    print the engine version\n"
     "\n"
@@ -231,6 +233,9 @@ int cmd_run(const std::vector<std::string>& a) {
     if (!r->net_status.empty()) std::printf("net: %s\n", r->net_status.c_str());
     if (r->assets_streamed) std::printf("assets: %llu streamed in the background\n", static_cast<unsigned long long>(r->assets_streamed));
     if (r->assets_reloaded) std::printf("hot reload: %zu assets reloaded\n", r->assets_reloaded);
+    if (r->world_cell_loads)
+        std::printf("world: %llu cells streamed in, up to %u active\n", static_cast<unsigned long long>(r->world_cell_loads),
+                    r->world_cells_peak);
     if (r->scene_loads)
         std::printf("scenes: %llu transitions, ended in %s\n", static_cast<unsigned long long>(r->scene_loads), r->final_scene.c_str());
     if (!o.record.empty()) std::printf("recorded capture: %s\n", o.record.string().c_str());
@@ -922,6 +927,56 @@ int cmd_plugins(const std::vector<std::string>& a) {
     return problems ? 1 : 0;
 }
 
+// World partition (6h, ADR-0090): moves the scene's streamable root subtrees into grid cell
+// scenes under DIR, writes DIR.vworld and rewrites the scene as the persistent part.
+int cmd_world(const std::vector<std::string>& a) {
+    cli::Parser p("victus world", "Split a scene into streamed world cells");
+    p.positional("project", "project folder", true)
+        .option("scene", "scene to partition (project-relative; default: the startup scene)", "")
+        .option("out", "project-relative folder for the cell scenes; the descriptor is <out>.vworld", "")
+        .option("cell-size", "grid cell size in world units (XZ)", "64")
+        .option("load-radius", "distance at which cells load (0 = 1.5 x cell size)", "0")
+        .option("name", "world name", "World")
+        .flag("dry-run", "print the partition without writing files");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message);
+    if (p.get("out").empty()) return error("--out DIR is required");
+    auto proj = project::Project::open(p.get("project"));
+    if (!proj) return error(proj.error().message);
+    const std::string rel = p.get("scene").empty() ? proj->settings().startup_scene : p.get("scene");
+    auto path = proj->resolve(rel);
+    if (!path) return error(path.error().message);
+    scene::Scene s;
+    if (auto st = s.load_file(*path); !st) return error(st.error().message);
+    world::PartitionSettings ps;
+    try {
+        ps.cell_size = std::stof(p.get("cell-size"));
+        ps.load_radius = std::stof(p.get("load-radius"));
+    } catch (const std::exception&) {
+        return error("--cell-size and --load-radius must be numbers");
+    }
+    ps.directory = p.get("out");
+    ps.name = p.get("name");
+    const std::string world_rel = ps.directory + std::string(world::kWorldExtension);
+    auto part = world::partition_scene(s, ps, world_rel);
+    if (!part) return error(part.error().message);
+    for (std::size_t i = 0; i < part->world.cells.size(); ++i) // cells and their documents share one order
+        std::printf("  %-16s %-48s %zu entities\n", part->world.cells[i].name.c_str(), part->world.cells[i].scene.c_str(),
+                    part->cells[i].second["entities"].size());
+    std::printf("%zu cells, %zu entities moved out of %s\n", part->world.cells.size(), part->moved_entities, rel.c_str());
+    if (p.has("dry-run")) return 0;
+    for (const auto& [cell_rel, doc] : part->cells) {
+        const fs::Path out = proj->root() / cell_rel;
+        std::error_code ec;
+        std::filesystem::create_directories(out.parent_path(), ec);
+        if (auto st = fs::write_text_atomic(out, json::stringify(doc)); !st) return error(st.error().message);
+    }
+    if (auto st = world::save_world_file(part->world, proj->root() / world_rel); !st) return error(st.error().message);
+    if (auto st = fs::write_text_atomic(*path, json::stringify(part->persistent)); !st) return error(st.error().message);
+    std::printf("wrote %s and rewrote %s as the persistent scene\n", world_rel.c_str(), rel.c_str());
+    return 0;
+}
+
 // Hidden: crashes on purpose so tests can check the crash handlers end to end.
 int cmd_crash_test(const std::vector<std::string>& a) {
     if (a.empty() || !crash::trigger(a[0])) return error("crash-test needs segv, abort, terminate or assert");
@@ -959,6 +1014,7 @@ int main(int argc, char** argv) {
     if (cmd == "plugins") return cmd_plugins(args);
     if (cmd == "export") return cmd_export(args);
     if (cmd == "diagnose") return cmd_diagnose(args);
+    if (cmd == "world") return cmd_world(args);
     if (cmd == "crash-test") return cmd_crash_test(args);
     if (cmd == "version" || cmd == "--version") return std::printf("VICTUS %s\n", build::version()), 0;
     if (cmd == "help" || cmd == "--help" || cmd == "-h") return std::printf("%s", kUsage), 0;

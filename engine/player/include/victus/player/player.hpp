@@ -76,6 +76,8 @@ struct PlayerReport {
     std::string replay_mismatch;    // replay: first divergence ("frame N: expected X, got Y")
     std::uint64_t scene_loads{0};   // scene transitions scripts made (scene.load/reload)
     std::string final_scene;        // the scene running when the player stopped
+    std::uint32_t world_cells_peak{0}; // world streaming: most cells active at once (ADR-0090)
+    std::uint64_t world_cell_loads{0}; // world streaming: cells activated
     profiler::FrameReport profile;  // with PlayerOptions::profile or trace
 };
 

@@ -229,6 +229,11 @@ public:
     [[nodiscard]] Status load(const json::Value& doc);
     [[nodiscard]] Status save_file(const std::filesystem::path& path) const;
     [[nodiscard]] Status load_file(const std::filesystem::path& path);
+    // Adds the entities of a victus.scene document to this scene without clearing it (world
+    // streaming cells, additive levels). Parents may be in the document or already in the
+    // scene; a uuid that already exists is an error. On failure nothing is added. `created`
+    // receives the new entities in document order.
+    [[nodiscard]] Status load_additive(const json::Value& doc, std::vector<Entity>* created = nullptr);
 
     // Per-entity snapshots (editor undo/redo, prefabs, network baselines). A snapshot holds
     // uuid, name, parent uuid, the uuid of the next sibling (ordering) and all serializable
@@ -250,6 +255,7 @@ private:
     void collect_subtree(Entity e, std::vector<Entity>& out) const;
     void fix_depth(Entity e, std::uint32_t depth);
     [[nodiscard]] Status load_components(Entity e, const json::Value& comps);
+    [[nodiscard]] Status load_entities(const json::Value& entities, std::vector<Entity>& created);
 
     ecs::World world_;
     std::unordered_map<Uuid, Entity, UuidHash> by_uuid_;

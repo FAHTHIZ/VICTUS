@@ -30,6 +30,7 @@
 #include "victus/render/image.hpp"
 #include "victus/render/temporal.hpp"
 #include "victus/runtime/scene_view.hpp"
+#include "victus/runtime/world_streaming.hpp"
 #include "victus/script/script.hpp"
 
 #include <algorithm>
@@ -171,7 +172,9 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     // Scene transitions start the next scene with a fresh physics world and silence.
     physics::PhysicsWorld* physics_for_scenes = nullptr;
     audio::AudioEngine* audio_for_scenes = nullptr;
-    so.on_scene_loaded = [&physics_for_scenes, &audio_for_scenes](scene::Scene&, std::string_view) {
+    bool world_changed = false; // a scene transition replaces the streamed world (6h)
+    so.on_scene_loaded = [&physics_for_scenes, &audio_for_scenes, &world_changed](scene::Scene&, std::string_view) {
+        world_changed = true;
         if (physics_for_scenes) physics_for_scenes->clear();
         if (audio_for_scenes) audio_for_scenes->stop_all();
     };
@@ -198,6 +201,46 @@ Result<PlayerReport> run(const PlayerOptions& o) {
                              .mip_streaming = proj->settings().texture_streaming,
                              .screen_height = static_cast<std::uint32_t>(std::max(wd.height, 1))});
     if (o.async_assets && o.max_frames == 0 && o.replay.empty() && o.record.empty()) cache.set_async_loading(&workers);
+    // World streaming (6h, ADR-0090): a WorldStreaming entity in the scene names the .vworld whose
+    // cells load around streaming sources (the camera by default). Deterministic runs (frame
+    // counts, captures) read cells synchronously so every run streams the same cells each frame.
+    const bool deterministic = o.max_frames != 0 || !o.replay.empty() || !o.record.empty();
+    std::unique_ptr<world::WorldStreamer> streamer;
+    std::uint32_t peak_cells = 0;
+    auto start_world = [&]() -> Status {
+        streamer.reset();
+        std::string world_path;
+        scene.world().each<world::WorldStreamingComponent>([&](const world::WorldStreamingComponent& w) {
+            if (world_path.empty()) world_path = w.world;
+        });
+        if (world_path.empty()) return {};
+        auto file = proj->resolve(world_path);
+        if (!file) return std::move(file).error();
+        auto desc = world::load_world_file(*file);
+        if (!desc) return std::move(desc).error();
+        VICTUS_LOG_INFO("player", "streaming world '{}' ({} cells)", desc->name, desc->cells.size());
+        streamer = std::make_unique<world::WorldStreamer>(std::move(*desc), proj->root(), deterministic ? nullptr : &workers,
+                                                          runtime::world_dependencies(cache));
+        return {};
+    };
+    VICTUS_TRY_STATUS(start_world());
+    auto stream_world = [&] {
+        if (world_changed) {
+            world_changed = false;
+            if (auto st = start_world(); !st) VICTUS_LOG_ERROR("player", "world streaming: {}", st.error().message);
+        }
+        if (!streamer) return;
+        VICTUS_PROFILE_SCOPE("world.stream");
+        scene.update_transforms();
+        std::optional<math::Vec3> camera;
+        scene.world().each<scene::CameraComponent, scene::WorldTransform>(
+            [&](const scene::CameraComponent&, const scene::WorldTransform& t) {
+                if (!camera) camera = t.matrix.transform_point({});
+            });
+        const auto sources = world::gather_sources(scene, camera ? &*camera : nullptr);
+        streamer->update(scene, sources);
+        peak_cells = std::max(peak_cells, streamer->stats().active);
+    };
     physics::PhysicsSettings ps;
     ps.jobs = &workers;
     auto physics_world = physics::PhysicsWorld::create(ps);
@@ -425,6 +468,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             captured_input.end_frame();
             recording.after_tick(scene);
         }
+        stream_world();
         (*view)->renderer().set_frame_time(dt);
 
         auto cmd = dev.begin_commands();
@@ -558,6 +602,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     report.script_errors = (*scripts)->stats().errors;
     report.scene_loads = (*scripts)->stats().scene_loads;
     report.final_scene = (*scripts)->current_scene();
+    if (streamer) {
+        report.world_cells_peak = peak_cells;
+        report.world_cell_loads = streamer->stats().loads;
+    }
     if (!result.ok()) return std::move(result).error();
     return report;
 }
