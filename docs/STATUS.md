@@ -1679,3 +1679,9 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 Built: `JumpPadComponent` (strength, direction, target tag, sound) runs with the other gameplay behaviours, launches tagged characters on touch with a short cooldown, refunds air jumps and emits `bounced`. Inspector role "Jump Pad".
 
 Verified: `behaviours: jump pads launch the player in 2D and 3D`, and the roles test in `victus_editor_tests`.
+
+## 2026-11-19 — Pickup messages and carried items on the HUD
+
+Built: `Collectible.message` (items default to "You found a <item>"), shown for 2.5 s in the same bottom message box as Trigger signs; message display moved out of the trigger pass so pickups work without any Trigger. The GameRules HUD has an "Items" line under the score listing the Player's inventory ("Key", "Gem x2"), hidden when empty.
+
+Verified: `behaviours: triggers show signs...` (now checks "You found a Key") and `behaviours: the HUD lists the items the player carries`.

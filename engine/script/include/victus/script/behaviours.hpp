@@ -125,6 +125,7 @@ struct CollectibleComponent {
     std::string item;             // Item: item name
     std::string collector_tag{"Player"};
     std::string sound;            // audio clip path played when collected (optional)
+    std::string message;          // shown at the bottom of the screen when picked up; items default to "You found a Key"
 };
 
 // Creates copies of a prefab every few seconds, up to a limit alive at once.
@@ -298,7 +299,7 @@ struct GameRulesComponent {
     float end_timer{0};
     bool initialised{false};
     scene::Entity hud;
-    scene::Entity score_text, lives_text, time_text, banner_text;
+    scene::Entity score_text, lives_text, time_text, banner_text, items_text;
 };
 
 // Registers the components above (called by script::register_components).

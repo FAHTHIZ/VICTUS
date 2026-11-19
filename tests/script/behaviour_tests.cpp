@@ -735,6 +735,7 @@ TEST_CASE("behaviours: triggers show signs, open locked doors with a key, start 
     g.run(5);
     CHECK(g.scene.find_by_name("Key").is_null());
     CHECK(gameplay::item_count(g.scene, p, "Key") == 1);
+    CHECK(message() == "You found a Key");
     g.hold("A", 50);
     CHECK(g.scene.find_by_name("Door").is_null()); // opened and the key is used up
     CHECK(gameplay::item_count(g.scene, p, "Key") == 0);
@@ -793,4 +794,26 @@ TEST_CASE("behaviours: jump pads launch the player in 2D and 3D") {
         }
         CHECK(peak > 3.0f);
     }
+}
+
+TEST_CASE("behaviours: the HUD lists the items the player carries") {
+    Game g;
+    g.ground_2d({0, -0.5f}, {40, 1});
+    const Entity p = g.player_2d({0, 0.6f});
+    for (int i = 0; i < 2; ++i) {
+        const Entity gem = g.sprite("Gem", {2.0f + static_cast<float>(i), 0.5f}, {0.4f, 0.4f});
+        auto& c = g.scene.world().add<CollectibleComponent>(gem);
+        c.kind = CollectibleKind::Item;
+        c.item = "Gem";
+        c.message = "Shiny";
+    }
+    g.scene.world().add<GameRulesComponent>(g.scene.create("Rules"));
+    g.run(10);
+    const Entity items = g.scene.find_by_name("Items");
+    REQUIRE(!items.is_null());
+    CHECK_FALSE(g.scene.world().get<gameui::UiRectComponent>(items)->visible); // nothing carried yet
+    g.hold("D", 60);
+    CHECK(gameplay::item_count(g.scene, p, "Gem") == 2);
+    CHECK(g.scene.world().get<gameui::UiTextComponent>(items)->text == "Gem x2");
+    CHECK(g.scene.world().get<gameui::UiRectComponent>(items)->visible);
 }
