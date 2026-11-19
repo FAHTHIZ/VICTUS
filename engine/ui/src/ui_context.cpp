@@ -132,7 +132,22 @@ void UiContext::new_frame(float dt, math::Vec2 display_size, float framebuffer_s
         io.DeltaTime = dt > 0 ? dt : 1.0f / 60.0f;
     }
     prepared_ = false;
+    if (!pending_layout_.empty()) {
+        ImGui::LoadIniSettingsFromMemory(pending_layout_.data(), pending_layout_.size());
+        pending_layout_.clear();
+    }
     ImGui::NewFrame();
+}
+
+std::string UiContext::layout_snapshot() const {
+    if (!context_) return {};
+    ImGuiContext* prev = ImGui::GetCurrentContext();
+    ImGui::SetCurrentContext(context_);
+    std::size_t size = 0;
+    const char* data = ImGui::SaveIniSettingsToMemory(&size);
+    std::string out(data ? data : "", data ? size : 0);
+    ImGui::SetCurrentContext(prev);
+    return out;
 }
 
 bool UiContext::wants_mouse() const noexcept { return context_ && ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse; }

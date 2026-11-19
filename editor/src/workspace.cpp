@@ -7,6 +7,10 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <format>
 #include <initializer_list>
 
 namespace victus::editor {
@@ -241,6 +245,43 @@ void Editor::save_workspace_if_changed() {
     save_preferences();
 }
 
+bool Editor::save_custom_layout(std::string_view name) {
+    std::string n{name};
+    while (!n.empty() && std::isspace(static_cast<unsigned char>(n.back()))) n.pop_back();
+    while (!n.empty() && std::isspace(static_cast<unsigned char>(n.front()))) n.erase(n.begin());
+    if (n.empty()) return false;
+    CustomLayout l{n, open_panels(), ui_.layout_snapshot()};
+    auto it = std::find_if(custom_layouts_.begin(), custom_layouts_.end(), [&](const CustomLayout& c) { return c.name == n; });
+    if (it != custom_layouts_.end()) *it = std::move(l);
+    else custom_layouts_.push_back(std::move(l));
+    active_custom_layout_ = n;
+    save_preferences();
+    notify(std::format("Saved layout \"{}\"", n));
+    return true;
+}
+
+bool Editor::apply_custom_layout(std::string_view name) {
+    auto it = std::find_if(custom_layouts_.begin(), custom_layouts_.end(), [&](const CustomLayout& c) { return c.name == name; });
+    if (it == custom_layouts_.end()) return false;
+    set_open_panels(it->panels);
+    if (!it->ini.empty()) ui_.load_layout(it->ini);
+    layout_rebuild_ = false;
+    layout_built_ = true;
+    focus_panel_ = -1;
+    active_custom_layout_ = it->name;
+    notify(std::format("Layout \"{}\"", it->name));
+    return true;
+}
+
+bool Editor::delete_custom_layout(std::string_view name) {
+    const auto before = custom_layouts_.size();
+    std::erase_if(custom_layouts_, [&](const CustomLayout& c) { return c.name == name; });
+    if (custom_layouts_.size() == before) return false;
+    if (active_custom_layout_ == name) active_custom_layout_.clear();
+    save_preferences();
+    return true;
+}
+
 void Editor::show_panel(Panel p) noexcept {
     set_panel_open(p, true);
     focus_panel_ = static_cast<int>(p);
@@ -248,6 +289,7 @@ void Editor::show_panel(Panel p) noexcept {
 
 void Editor::apply_layout(Layout l) noexcept {
     layout_ = l;
+    active_custom_layout_.clear();
     layout_rebuild_ = true;
     focus_panel_ = -1;
     for (bool& b : core_open_)
@@ -410,8 +452,38 @@ void Editor::draw_window_menu() {
     if (ImGui::BeginMenu("Layout")) {
         for (int i = 0; i < static_cast<int>(Layout::Count); ++i) {
             const auto l = static_cast<Layout>(i);
-            if (ImGui::MenuItem(layout_name(l), nullptr, layout_ == l)) apply_layout(l);
+            if (ImGui::MenuItem(layout_name(l), nullptr, active_custom_layout_.empty() && layout_ == l)) apply_layout(l);
             kit::tooltip(layout_hint(l));
+        }
+        if (!custom_layouts_.empty()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Yours");
+            std::string pick;
+            for (const CustomLayout& c : custom_layouts_)
+                if (ImGui::MenuItem(c.name.c_str(), nullptr, active_custom_layout_ == c.name)) pick = c.name;
+            if (!pick.empty()) apply_custom_layout(pick);
+        }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Save Layout As")) {
+            ImGui::TextDisabled("Keeps the open panels and where they are docked");
+            if (ImGui::IsWindowAppearing()) {
+                const std::string def = active_custom_layout_.empty() ? std::string("My Layout") : active_custom_layout_;
+                std::snprintf(layout_name_buf_, sizeof layout_name_buf_, "%s", def.c_str());
+                ImGui::SetKeyboardFocusHere();
+            }
+            ImGui::SetNextItemWidth(220);
+            const bool enter = ImGui::InputText("##layout_name", layout_name_buf_, sizeof layout_name_buf_,
+                                                ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if ((ImGui::Button("Save") || enter) && save_custom_layout(layout_name_buf_)) ImGui::CloseCurrentPopup();
+            ImGui::EndMenu();
+        }
+        if (!custom_layouts_.empty() && ImGui::BeginMenu("Delete Layout")) {
+            std::string gone;
+            for (const CustomLayout& c : custom_layouts_)
+                if (ImGui::MenuItem(c.name.c_str())) gone = c.name;
+            if (!gone.empty()) delete_custom_layout(gone);
+            ImGui::EndMenu();
         }
         ImGui::EndMenu();
     }

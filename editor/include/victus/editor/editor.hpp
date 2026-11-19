@@ -761,6 +761,18 @@ public:
     // Opens the preset's panels and re-docks every panel on the next frame.
     void apply_layout(Layout layout) noexcept;
     [[nodiscard]] Layout layout() const noexcept { return layout_; }
+    // Named layouts saved by the user: open panels and where every panel is docked.
+    struct CustomLayout {
+        std::string name;
+        std::uint32_t panels{0};
+        std::string ini; // ImGui window and docking settings
+    };
+    [[nodiscard]] const std::vector<CustomLayout>& custom_layouts() const noexcept { return custom_layouts_; }
+    // Saves the current workspace under `name` (replacing a layout with the same name).
+    bool save_custom_layout(std::string_view name);
+    // Restores a saved layout; the dock positions apply from the next frame.
+    bool apply_custom_layout(std::string_view name);
+    bool delete_custom_layout(std::string_view name);
 
     // ---- problems (project validation, the same checks as `victus check`) ----
     // Starts checking the saved project files on a worker thread (again after the current check
@@ -992,6 +1004,9 @@ private:
     void save_workspace_if_changed();
     std::uint32_t saved_panels_{0};
     bool panels_restored_{false}; // the preferences named the open panels
+    std::vector<CustomLayout> custom_layouts_;
+    std::string active_custom_layout_; // shown ticked in Window > Layout
+    char layout_name_buf_[64]{};
     // Inspector helpers
     bool inspect_components(scene::Entity e);
     void begin_inspector_frame(scene::Entity e);

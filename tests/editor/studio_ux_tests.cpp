@@ -1384,6 +1384,44 @@ TEST_CASE("studio workspace: open panels and the layout preset are remembered be
     CHECK(h.ed->panel_open(editor::Panel::Profiler));
 }
 
+TEST_CASE("studio workspace: named layouts keep panels and docking and survive restarts") {
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Named", "Named", "2d").ok());
+    h.frames(2);
+    h.ed->apply_layout(editor::Layout::Debugging);
+    h.frames(3);
+    CHECK_FALSE(h.ed->save_custom_layout("   ")); // needs a name
+    REQUIRE(h.ed->save_custom_layout(" Bug Hunt "));
+    REQUIRE(h.ed->custom_layouts().size() == 1);
+    CHECK(h.ed->custom_layouts()[0].name == "Bug Hunt");
+    CHECK(h.ed->custom_layouts()[0].ini.find("[Docking]") != std::string::npos);
+    h.ed->apply_layout(editor::Layout::Default);
+    h.frames(2);
+    CHECK_FALSE(h.ed->panel_open(editor::Panel::Profiler));
+    REQUIRE(h.ed->apply_custom_layout("Bug Hunt"));
+    h.frames(3); // docking is restored at the start of the next frame
+    CHECK(h.ed->panel_open(editor::Panel::Profiler));
+    CHECK(h.ed->panel_open(editor::Panel::Network));
+    CHECK_FALSE(h.ed->apply_custom_layout("Missing"));
+    REQUIRE(h.ed->save_custom_layout("Bug Hunt")); // same name replaces
+    CHECK(h.ed->custom_layouts().size() == 1);
+
+    editor::EditorOptions o;
+    o.recent_file = h.dir / "recent.json";
+    o.default_project_dir = h.dir;
+    o.diagnostics_dir = h.dir / "diagnostics";
+    h.ed.reset();
+    auto e = editor::Editor::create(*gpu().ctx, *h.ui, nullptr, nullptr, o);
+    REQUIRE(e);
+    h.ed = std::move(e).value();
+    h.ed->set_viewport_size_override(320, 180);
+    REQUIRE(h.ed->custom_layouts().size() == 1);
+    CHECK(((h.ed->custom_layouts()[0].panels >> static_cast<int>(editor::Panel::Profiler)) & 1u) == 1u);
+    CHECK(h.ed->delete_custom_layout("Bug Hunt"));
+    CHECK(h.ed->custom_layouts().empty());
+}
+
 TEST_CASE("studio behaviour guides: patrol and platform routes, chase ranges and jump arcs show for the selection") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;
