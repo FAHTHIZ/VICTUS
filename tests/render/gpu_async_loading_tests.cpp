@@ -2,6 +2,7 @@
 // V.A.U.L.T. asynchronous loading through GpuAssetCache (ADR-0087): assets requested by the
 // renderer decode on background jobs, upload under a per-pump budget, are skipped (not drawn
 // wrong) while loading, and failures are cached until evicted.
+#include "../assets/gltf_writer.hpp"
 #include "gpu_fixture.hpp"
 #include "victus/core/jobs.hpp"
 #include "victus/render/image.hpp"
@@ -341,5 +342,83 @@ TEST_CASE("gpu mip streaming: extraction measures material and decal footprints 
         // 30 m: ~37 px wants the 64 px level (256 / 2^2).
         run(30.0f, 6);
         CHECK(cache.texture_level(big) == 2u);
+    }
+}
+
+TEST_CASE("gpu mip streaming: textures embedded in glTF models follow their mesh footprints") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    AsyncProject p = make_project();
+    REQUIRE(render::save_png(p.root / "assets" / "models" / "albedo.png", render::make_checker(256, 8, 0xff0000ffu, 0xff00ff00u)).ok());
+    test::GltfFixture fx;
+    fx.add_texture("albedo.png");
+    REQUIRE(fs::write_text_atomic(p.root / "assets" / "models" / "quad.gltf", fx.gltf_with_data_uri()).ok());
+    (void)p.db->refresh();
+    REQUIRE(p.db->import_all().failed == 0);
+    const Uuid model = p.db->find_path("models/quad.gltf")->uuid;
+
+    // One texture decodes without the meshes, and matches the full model decode.
+    auto full = p.db->load_model(model);
+    REQUIRE(full.ok());
+    REQUIRE(full->textures.size() == 1);
+    auto only = p.db->load_model_texture(model, 0);
+    REQUIRE(only.ok());
+    CHECK(only->mips.size() == full->textures[0].mips.size());
+    CHECK(only->mips[0].width == 256);
+    CHECK(only->mips.back().pixels == full->textures[0].mips.back().pixels);
+    CHECK(p.db->load_model_texture(model, 1).error().code == ErrorCode::NotFound);
+
+    for (const bool async : {false, true}) {
+        CAPTURE(async);
+        jobs::JobSystem js(1);
+        runtime::GpuAssetCache cache(*gpu().ctx, p.db.get());
+        if (async) cache.set_async_loading(&js);
+        cache.set_residency({.min_idle_frames = 60, .mip_streaming = true, .screen_height = 720, .min_streamed_size = 16,
+                             .mip_drop_frames = 1});
+        scene::Scene s;
+        const scene::Entity e = s.create("Quad");
+        auto& mr = s.world().add<scene::MeshRendererComponent>(e);
+        mr.mesh_asset = model;
+        mr.mesh_index = 0;
+        auto sr = render::SceneRenderer::create(*gpu().ctx);
+        REQUIRE(sr.ok());
+        const auto run = [&](float distance, int frames) {
+            const render::Camera3D cam = render::Camera3D::look_at({0, 0, distance}, {0, 0, 0});
+            s.update_transforms();
+            for (int i = 0; i < frames; ++i) {
+                (void)runtime::extract_scene(s, cache, **sr, {}, &cam);
+                if (async) cache.wait_loads();
+            }
+        };
+        const auto width = [&]() -> std::uint32_t {
+            auto m = cache.model(model);
+            REQUIRE(m.ok());
+            const rhi::TextureDesc* d = gpu().ctx->device().describe((*m)->textures[0]);
+            REQUIRE(d);
+            // The mesh's resolved material samples the live (re-streamed) handle.
+            CHECK((*m)->mesh_materials[0].base_color_texture == (*m)->textures[0]);
+            return d->width;
+        };
+        // Uploaded in full on arrival, then dropped to the 16 px floor ~200 m away.
+        run(200.0f, 8);
+        CHECK(cache.model_texture_level(model, 0) == 4u);
+        CHECK(width() == 16);
+        const std::size_t far_bytes = cache.residency().resident_bytes;
+        run(2.0f, 6);
+        CHECK(cache.model_texture_level(model, 0) == 0u);
+        CHECK(width() == 256);
+        CHECK(cache.residency().resident_bytes > far_bytes + 200000); // the 256 px chain is accounted to the model
+        run(25.0f, 6); // a ~0.7 m-radius quad: ~36 px wants the 64 px level
+        CHECK(cache.model_texture_level(model, 0) == 2u);
+        CHECK(width() == 64);
+        const std::uint64_t restreams = cache.residency().restreams;
+        CHECK(restreams == 3);
+        // Evicted and seen again far away: the reload uploads the far level directly.
+        run(200.0f, 4);
+        cache.evict(model);
+        run(200.0f, 4);
+        CHECK(cache.model_texture_level(model, 0) == 4u);
+        CHECK(width() == 16);
+        CHECK(cache.residency().restreams == restreams + 1); // only the drop before the eviction
+        CHECK_FALSE(cache.model_texture_level(Uuid::generate(), 0).has_value());
     }
 }

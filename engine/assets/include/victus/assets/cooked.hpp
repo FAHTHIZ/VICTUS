@@ -118,5 +118,7 @@ struct CookedHeader {
 [[nodiscard]] Result<CookedHeader> read_header(std::span<const std::uint8_t> bytes);
 [[nodiscard]] Result<CookedTexture> deserialize_texture(std::span<const std::uint8_t> bytes);
 [[nodiscard]] Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes);
+// One embedded texture of a cooked model, without decoding the meshes (mip re-streaming).
+[[nodiscard]] Result<CookedTexture> deserialize_model_texture(std::span<const std::uint8_t> bytes, std::uint32_t index);
 
 } // namespace victus::assets

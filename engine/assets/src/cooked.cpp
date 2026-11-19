@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include <cstring>
+#include <string>
 
 #include "victus/assets/binary.hpp"
 
@@ -318,6 +319,24 @@ Result<CookedTexture> deserialize_texture(std::span<const std::uint8_t> bytes) {
     if (h.kind != AssetKind::Texture) return make_error(ErrorCode::InvalidArgument, "cooked asset is not a texture");
     CookedTexture t;
     if (!read_texture_body(r, t) || !r.at_end()) return corrupt("texture");
+    return t;
+}
+
+Result<CookedTexture> deserialize_model_texture(std::span<const std::uint8_t> bytes, std::uint32_t index) {
+    BinaryReader r(bytes);
+    CookedHeader h;
+    if (!parse_header(r, h)) return corrupt("header");
+    if (h.version != kCookedFormatVersion) return make_error(ErrorCode::VersionMismatch, "cooked model version");
+    if (h.kind != AssetKind::Model) return make_error(ErrorCode::InvalidArgument, "cooked asset is not a model");
+    std::uint32_t n = 0;
+    if (!r.u32(n) || n > kMaxItems) return corrupt("texture count");
+    if (index >= n) return make_error(ErrorCode::NotFound, "model has no texture " + std::to_string(index));
+    // Textures come first in a cooked model: read up to the one wanted and stop.
+    CookedTexture t;
+    for (std::uint32_t i = 0; i <= index; ++i) {
+        t = CookedTexture{};
+        if (!read_texture_body(r, t)) return corrupt("model texture");
+    }
     return t;
 }
 

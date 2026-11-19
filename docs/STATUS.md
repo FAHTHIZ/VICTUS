@@ -1396,3 +1396,9 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 - Limits: no get-up/root follow, no Studio ragdoll wizard, no ragdoll networking, no 2D ragdolls; motor frequencies above ~6 Hz can chatter on long chains.
 - Next: glTF-embedded texture streaming (V.A.U.L.T.), then 6j destruction.
 
+
+### 2026-11-19 — V.A.U.L.T. stage 4: glTF-embedded texture mip streaming (ADR-0092)
+- Built: `assets::deserialize_model_texture`, `AssetDatabase::load_model_texture`; `GpuAssetCache::note_model_footprint/note_reloading_model/model_texture_level/embedded_texture_key`; embedded textures share the ADR-0089 streaming state, budget and restream limits; level swaps patch the model's texture slot, resolved mesh materials and residency bytes; extraction notes model-mesh footprints (static, morphed and skinned); reloads after eviction use bounds kept at eviction.
+- Verified (Debug, -Werror, lavapipe + Xvfb): new `victus_gpu_tests` case "textures embedded in glTF models follow their mesh footprints" in sync and async modes (one-texture decode equals the full decode, 200 m -> 16 px, 2 m -> 256 px with bytes accounted to the model, 25 m -> 64 px, three restreams, reload after eviction uploads the far level directly); full ctest 34/34; clang-tidy clean.
+- Limits: a re-stream reads the cooked model file (decoding stops at the texture); sprites, terrain layers and particles are not streamed.
+- Next: 6j destruction (fracture), then gameplay framework primitives.
