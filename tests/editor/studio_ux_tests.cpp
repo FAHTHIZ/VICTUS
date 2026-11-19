@@ -1366,3 +1366,27 @@ TEST_CASE("studio workspace: open panels and the layout preset are remembered be
     CHECK_FALSE(h.ed->panel_open(editor::Panel::Console));
     CHECK(h.ed->panel_open(editor::Panel::Profiler));
 }
+
+TEST_CASE("studio behaviour guides: patrol and platform routes and chase ranges show for the selection") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Guides", "Guides", "2d").ok());
+    h.frames(2);
+    auto& w = h.ed->edit_scene().world();
+    const scene::Entity lift = h.ed->create_entity(editor::Primitive::Sprite);
+    w.get<scene::Transform>(lift)->position = {1, 2, 0};
+    w.add<script::MovingPlatformComponent>(lift).offset = {4, 0, 0};
+    const auto lines = h.ed->behaviour_guides(lift, true);
+    REQUIRE(lines.size() >= 3);
+    CHECK(lines[0].a.x == doctest::Approx(1));
+    CHECK(lines[0].b.x == doctest::Approx(5)); // the route
+    CHECK(lines[0].b.y == doctest::Approx(2));
+    const scene::Entity chaser = h.ed->create_entity(editor::Primitive::Sprite);
+    w.add<script::ChaseComponent>(chaser);
+    CHECK(h.ed->behaviour_guides(chaser, true).size() == 96); // detect and lose circles
+    const scene::Entity plain = h.ed->create_entity(editor::Primitive::Sprite);
+    CHECK(h.ed->behaviour_guides(plain, true).empty());
+    h.ed->select(lift);
+    h.frames(2); // drawn without errors
+}

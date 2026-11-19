@@ -1386,6 +1386,7 @@ void Editor::draw_overlays_3d(render::SceneRenderer& r) {
         static constexpr int kEdges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3},
                                               {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
         for (const auto& edge : kEdges) r.line(c[edge[0]], c[edge[1]], {1.0f, 0.55f, 0.1f, 1});
+        for (const auto& l : behaviour_guides(e, false)) r.line(l.a, l.b, l.color);
     }
     draw_terrain_overlay(r);
     if (show_colliders_) {
@@ -1431,6 +1432,7 @@ void Editor::draw_overlays_2d(render::SpriteBatch& b) {
         b.draw_line({bq.x, bq.y}, {c.x, c.y}, 2 * px, orange, 1000);
         b.draw_line({c.x, c.y}, {d.x, d.y}, 2 * px, orange, 1000);
         b.draw_line({d.x, d.y}, {a.x, a.y}, 2 * px, orange, 1000);
+        for (const auto& l : behaviour_guides(e, true)) b.draw_line({l.a.x, l.a.y}, {l.b.x, l.b.y}, 1.5f * px, l.color, 1000);
         // 2D light reach (radius circle) and, for spots, the outer cone edges.
         if (const auto* l = s.world().get<gameplay::Light2DComponent>(e); l && l->type != gameplay::Light2DComponent::Type::Global) {
             const math::Vec3 o = m.transform_point({});

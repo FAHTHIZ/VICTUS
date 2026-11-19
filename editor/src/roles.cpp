@@ -13,6 +13,7 @@
 #include <imgui.h>
 
 #include <array>
+#include <cmath>
 
 namespace victus::editor {
 
@@ -173,6 +174,64 @@ bool Editor::make_role(Entity e, Role role) {
     show_panel(Panel::Inspector);
     notify(std::string("Made it a ") + role_label(role) + ". Press Play to try it");
     return true;
+}
+
+std::vector<physics::DebugLine> Editor::behaviour_guides(Entity e, bool flat) {
+    std::vector<physics::DebugLine> out;
+    Scene& s = active_scene();
+    if (e.is_null() || !s.world().alive(e)) return out;
+    auto& w = s.world();
+    const math::Mat4 m = s.world_matrix(e);
+    const math::Vec3 p = m.transform_point({});
+    const bool playing = play_state_ != PlayState::Editing;
+    const math::Color path{0.3f, 0.85f, 1.0f, 1}, ghost{0.3f, 0.85f, 1.0f, 0.55f};
+    const auto cross = [&](math::Vec3 c, float r) {
+        const math::Vec3 u = flat ? math::Vec3{0, r, 0} : math::Vec3{0, 0, r};
+        out.push_back({c - math::Vec3{r, 0, 0}, c + math::Vec3{r, 0, 0}, path});
+        out.push_back({c - u, c + u, path});
+    };
+    const auto circle = [&](math::Vec3 c, float r, math::Color col) {
+        constexpr int kSegments = 48;
+        for (int i = 0; i < kSegments; ++i) {
+            const float a0 = 6.2831853f * static_cast<float>(i) / kSegments, a1 = 6.2831853f * static_cast<float>(i + 1) / kSegments;
+            const auto at = [&](float a) {
+                return flat ? c + math::Vec3{r * std::cos(a), r * std::sin(a), 0} : c + math::Vec3{r * std::cos(a), 0, r * std::sin(a)};
+            };
+            out.push_back({at(a0), at(a1), col});
+        }
+    };
+    if (const auto* pa = w.get<script::PatrolComponent>(e); pa && math::length(pa->offset) > 1e-4f) {
+        const math::Vec3 a = playing && pa->has_origin ? pa->origin : p;
+        out.push_back({a, a + pa->offset, path});
+        cross(a, 0.15f);
+        cross(a + pa->offset, 0.15f);
+    }
+    if (const auto* mp = w.get<script::MovingPlatformComponent>(e); mp && math::length(mp->offset) > 1e-4f) {
+        const float t = mp->progress, u = mp->smooth ? t * t * (3 - 2 * t) : t;
+        const math::Vec3 a = playing && mp->has_origin ? p - mp->offset * u : p;
+        out.push_back({a, a + mp->offset, path});
+        cross(a, 0.15f);
+        // Outline of the platform at the far end.
+        const math::Aabb local = entity_bounds(e, nullptr);
+        math::Vec3 c[8];
+        for (int i = 0; i < 8; ++i)
+            c[i] = m.transform_point({(i & 1) ? local.max.x : local.min.x, (i & 2) ? local.max.y : local.min.y,
+                                      (i & 4) ? local.max.z : local.min.z}) +
+                   (a + mp->offset - p);
+        static constexpr int kEdges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3},
+                                              {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+        for (int k = 0; k < (flat ? 4 : 12); ++k) {
+            // Flat: the four edges of the front face (corners 0,1,3,2).
+            static constexpr int kFace[4][2] = {{0, 1}, {1, 3}, {3, 2}, {2, 0}};
+            const int i0 = flat ? kFace[k][0] : kEdges[k][0], i1 = flat ? kFace[k][1] : kEdges[k][1];
+            out.push_back({c[i0], c[i1], ghost});
+        }
+    }
+    if (const auto* ch = w.get<script::ChaseComponent>(e)) {
+        if (ch->detect_radius > 0) circle(p, ch->detect_radius, {1.0f, 0.4f, 0.3f, 0.9f});
+        if (ch->lose_radius > ch->detect_radius) circle(p, ch->lose_radius, {1.0f, 0.4f, 0.3f, 0.35f});
+    }
+    return out;
 }
 
 void Editor::draw_roles(Entity) {

@@ -172,7 +172,10 @@ int main(int argc, char** argv) {
     if (args.has("search")) ed.set_hierarchy_filter(args.get("search"));
     if (args.has("select") && ed.has_project()) {
         const auto e = ed.edit_scene().find_by_name(args.get("select"));
-        if (!e.is_null()) ed.select(e);
+        if (!e.is_null()) {
+            ed.select(e);
+            ed.frame_selected();
+        }
     }
     {
         std::string tool = args.get("tool");
