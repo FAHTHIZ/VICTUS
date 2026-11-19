@@ -10,7 +10,7 @@ Behaviours are ready-made gameplay components. Add one to an entity in the Inspe
 
 Movement behaviours also drive character animation. When the entity or one of its children has an Animator, Top-Down Movement and Platformer Movement (3D) set its `speed` and `grounded` parameters and fire the `jump` trigger, and Patrol and Chase set `speed` and turn the character to face where it walks. The Vanguard starter characters already use these parameters.
 
-The fastest way in is the Inspector's **Make it a...** row. Select any object and press Player, Enemy, Coin, Hazard, Checkpoint, Goal, Moving Platform, Key, Door or Sign: the Studio adds the Behaviours for that role (for example Player gets movement, health that respawns, and a camera that follows it; Enemy gets a stompable hazard, a patrol that turns at ledges and one hit point), creates Game Rules if the scene has none, and names default-named objects after the role. It is one undo step.
+The fastest way in is the Inspector's **Make it a...** row. Select any object and press Player, Enemy, Coin, Hazard, Checkpoint, Goal, Moving Platform, Key, Door, Sign, Switch, Jump Pad or Talker (a character the player talks to with E): the Studio adds the Behaviours for that role (for example Player gets movement, health that respawns, and a camera that follows it; Enemy gets a stompable hazard, a patrol that turns at ledges and one hit point), creates Game Rules if the scene has none, and names default-named objects after the role. It is one undo step.
 
 ### Lessons: your first game, step by step
 
