@@ -13,7 +13,7 @@ Two agent sessions push to `main` at the same time. To avoid duplicate work (cra
 
 - **Studio / front-end session:** `editor/`, roadmap 6c, Workstream D release process (follows its crash/diagnostics work in 2f83f85).
 - **Studio / front-end session, engine-handoff agent:** priority 1 clang-tidy gate, priority 8 GPU-instanced foliage, a 2D platformer sample, then AEGIS / camera-fidelity items not claimed above.
-- **Engine-features session (2026-11-18, 3rd):** physics breadth in `engine/physics` (convex-hull/triangle-mesh colliders, then 2D polygon/chain colliders), then 6l save reliability and 6k audio items not claimed above, plus particle/VFX depth in `engine/particles` (flipbooks, streaks, trails, collision). Touches `editor/` only for one-line hooks.
+- **Engine-features session (2026-11-18, 3rd):** physics breadth in `engine/physics` (convex-hull/triangle-mesh colliders, then 2D polygon/chain colliders), then 6l save reliability and 6k audio items not claimed above, plus particle/VFX depth in `engine/particles` (flipbooks, streaks, trails, collision); from 2026-11-19, in the order of docs/audits/GAP_RANKING_2026-11-19.md: 6g V.A.U.L.T. (new `engine/runtime` resource manager), 6h world streaming, 6f A.R.C. ragdolls, 6j destruction. Touches `editor/` only for one-line hooks.
 - **Backend engine session:** animation depth in `engine/animation` (IK, layers and bone masks, additive, retargeting, morph targets), then the plugin/module SDK research, ADR and `engine/plugin`, then 6d Workstream G runtime gaps. It does not edit `editor/` beyond one-line integration hooks.
 
 Claim an area by editing this list in the same commit as the first change to it.
