@@ -26,20 +26,21 @@ layout(set = 2, binding = 5) uniform sampler2D u_ao;
 layout(set = 2, binding = 6) uniform samplerCube u_env; // prefiltered environment (black 1x1 when absent)
 layout(set = 2, binding = 7) uniform sampler2DShadow u_local_shadow; // spot/point shadow atlas (ADR-0052)
 layout(set = 2, binding = 8) uniform sampler2D u_irradiance; // irradiance volume probes (ADR-0056)
+layout(set = 2, binding = 9) uniform sampler2DShadow u_rain_occlusion; // depth along the rain (ADR-0114)
 
 // Clustered local lights (see light_clusters.hpp): a light array and, per cluster, an
 // (offset, count) header followed by the flattened light index list.
 // spot: x cos(inner), y 1 = spot, z first shadow tile + 1 (0 = unshadowed), w shadow texel angle.
 // Shadow matrices (world -> atlas uv/depth) follow the lights in the same array, one per tile.
 struct LocalLight { vec4 position_range; vec4 color_intensity; vec4 direction_cos_outer; vec4 spot; };
-// SDL_GPU: SPIR-V fragment storage buffers follow the 9 textures in set 2; MSL buffers are the
+// SDL_GPU: SPIR-V fragment storage buffers follow the 10 textures in set 2; MSL buffers are the
 // 3 uniform buffers first, then storage buffers ([[buffer(3)]], [[buffer(4)]]).
 #ifdef VICTUS_MSL
 layout(std430, set = 2, binding = 3) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 2, binding = 4) readonly buffer Clusters { uint cluster_data[]; };
 #else
-layout(std430, set = 2, binding = 9) readonly buffer Lights { LocalLight local_lights[]; };
-layout(std430, set = 2, binding = 10) readonly buffer Clusters { uint cluster_data[]; };
+layout(std430, set = 2, binding = 10) readonly buffer Lights { LocalLight local_lights[]; };
+layout(std430, set = 2, binding = 11) readonly buffer Clusters { uint cluster_data[]; };
 #endif
 layout(set = 3, binding = 0) uniform Lighting {
     vec4 camera_pos;     // w: ambient occlusion enabled
@@ -70,7 +71,8 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 cloud_layer;    // volumetric clouds (ADR-0112): x bottom, y top, z coverage, w extinction per metre
     vec4 cloud_shadow;   // x 1 / shape size, y shadow strength, z enabled
     vec4 cloud_wind;     // xyz shape offset (metres)
-    vec4 weather;        // x surface wetness 0..1 (ADR-0113)
+    vec4 weather;        // x surface wetness 0..1 (ADR-0113), y rain occlusion on, z its depth bias (ADR-0114)
+    mat4 rain_vp;        // world -> rain occlusion map
 } lighting;
 layout(set = 3, binding = 1) uniform Material {
     vec4 base_color;
@@ -388,6 +390,13 @@ void main() {
     // darken towards 0.2x albedo and get glossier; on faces that point up a water film makes any
     // surface smoother. Applied before the coverage layer, which settles on top.
     float wet = lighting.weather.x;
+    if (wet > 0.0 && lighting.weather.y > 0.5) { // sheltered from the rain: stays dry
+        vec4 r4 = lighting.rain_vp * vec4(v_world_pos + geometric_n * 0.05, 1.0);
+        vec3 r = r4.xyz / r4.w;
+        vec2 ruv = r.xy * vec2(0.5, -0.5) + 0.5;
+        if (all(greaterThanEqual(ruv, vec2(0.0))) && all(lessThanEqual(ruv, vec2(1.0))) && r.z <= 1.0)
+            wet *= texture(u_rain_occlusion, vec3(ruv, r.z - lighting.weather.z));
+    }
     if (wet > 0.0) {
         float porosity = clamp((roughness - 0.2) / 0.6, 0.0, 1.0) * (1.0 - metallic);
         float factor = mix(1.0, 0.2, porosity);

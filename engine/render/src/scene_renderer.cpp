@@ -121,7 +121,8 @@ struct LightingUniforms {
     Vec4 local_shadow; // x atlas texel size, y tiles per row, z first shadow matrix index, w enabled
     Vec4 gi_min, gi_max, gi_counts; // irradiance volume (ADR-0056)
     Vec4 cloud_layer, cloud_shadow, cloud_wind; // cloud shadows (ADR-0112)
-    Vec4 weather; // x surface wetness (ADR-0113)
+    Vec4 weather; // x surface wetness (ADR-0113), y rain occlusion on, z its depth bias (ADR-0114)
+    Mat4 rain_vp; // world -> rain occlusion map (ADR-0114)
 };
 struct MaterialUniforms {
     Vec4 base_color;
@@ -220,12 +221,22 @@ struct TaaUpscaleUniforms {
     Mat4 reproject;
     Vec4 params, screen, jitter, output;
 };
-static_assert(sizeof(LightingUniforms) == 36 * 16 + 64 * 4);
+static_assert(sizeof(LightingUniforms) == 36 * 16 + 64 * 5);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 
 bool is_srgb(rhi::Format f) { return f == rhi::Format::RGBA8_SRGB || f == rhi::Format::BGRA8_SRGB; }
 Vec4 rgb(Color c, float scale = 1.0f, float w = 0.0f) { return {c.r * scale, c.g * scale, c.b * scale, w}; }
+
+float finite_or(float v, float fallback) { return std::isfinite(v) ? v : fallback; }
+
+// Fall velocity (m/s) and box half size of the scene's rain or snow (ADR-0113).
+Vec3 precipitation_velocity(const Precipitation& p) {
+    const bool snow = p.type == PrecipitationType::Snow;
+    const float speed = std::clamp(finite_or(p.fall_speed, 0.0f) > 0.0f ? p.fall_speed : (snow ? 1.2f : 9.0f), 0.05f, 100.0f);
+    return Vec3{finite_or(p.wind.x, 0.0f), finite_or(p.wind.y, 0.0f) - speed, finite_or(p.wind.z, 0.0f)};
+}
+float precipitation_radius(const Precipitation& p) { return std::clamp(finite_or(p.radius, 15.0f), 2.0f, 100.0f); }
 std::chrono::steady_clock::time_point render_epoch() {
     static const auto epoch = std::chrono::steady_clock::now();
     return epoch;
@@ -289,6 +300,8 @@ struct SceneRenderer::FrameScratch {
     std::vector<InstanceData> instances;
     std::vector<Batch> main_batches, transparent_batches;
     std::array<std::vector<Batch>, 4> shadow_batches;
+    std::vector<const Draw*> rain_casters;
+    std::vector<Batch> rain_batches;
     std::vector<std::vector<Batch>> local_batches;
     std::vector<Vec4> occl_bounds;
     std::vector<rhi::IndexedIndirectCommand> occl_args;
@@ -307,6 +320,8 @@ struct SceneRenderer::FrameScratch {
         main_batches.clear();
         transparent_batches.clear();
         for (auto& b : shadow_batches) b.clear();
+        rain_casters.clear();
+        rain_batches.clear();
         if (local_batches.size() < local_views) local_batches.resize(local_views);
         for (auto& b : local_batches) b.clear();
         occl_bounds.clear();
@@ -419,6 +434,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.max_water_surfaces = 4;
         s.max_particles = 16384;
         s.max_precipitation = 2048;
+        s.precipitation_occlusion = 256;
         break;
     case QualityTier::Medium:
         s.render_scale = 1.0f;
@@ -444,6 +460,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.max_water_surfaces = 8;
         s.max_particles = 65536;
         s.max_precipitation = 8192;
+        s.precipitation_occlusion = 512;
         break;
     case QualityTier::High: break; // struct defaults
     case QualityTier::Ultra:
@@ -500,6 +517,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.max_water_surfaces = std::min(s.max_water_surfaces, static_cast<std::uint32_t>(kMaxWaterSurfaces));
     s.max_particles = std::min(s.max_particles, 1u << 24);
     s.max_precipitation = std::min(s.max_precipitation, SceneRenderer::kMaxPrecipitation);
+    if (s.precipitation_occlusion > 0) s.precipitation_occlusion = std::clamp(s.precipitation_occlusion, 64u, 4096u);
     return s;
 }
 
@@ -1488,6 +1506,31 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     std::array<Frustum, 4> cascade_frustum{};
     for (std::uint32_t c = 0; c < cascade_count_; ++c) cascade_frustum[c] = Frustum::from_matrix(cascade_vp_[c]);
 
+    // Rain occlusion (ADR-0114): a depth map of the opaque scene seen along the fall direction,
+    // centred on the camera and snapped to whole texels, so drops and wetness stop under roofs.
+    const Precipitation& weather = env_.precipitation;
+    const std::uint32_t rain_res = S.precipitation_occlusion;
+    const bool rain_occlusion = weather.type != PrecipitationType::None && finite_or(weather.intensity, 0.0f) > 0.0f &&
+                                S.precipitation && S.max_precipitation > 0 && rain_res > 0 && !capture_mode_;
+    Mat4 rain_vp = Mat4::identity();
+    Frustum rain_frustum{};
+    float rain_bias = 0.0f;
+    if (rain_occlusion) {
+        const Vec3 d = normalize(precipitation_velocity(weather));
+        const Vec3 up = std::fabs(d.z) < 0.9f ? Vec3{0, 0, 1} : Vec3{1, 0, 0};
+        const Mat4 rain_view = Mat4::look_at({0, 0, 0}, d, up);
+        const float half = std::ceil(precipitation_radius(weather) * 1.5f);
+        const float texel = 2.0f * half / static_cast<float>(rain_res);
+        Vec3 c = rain_view.transform_point(camera_.position);
+        c.x = std::floor(c.x / texel) * texel;
+        c.y = std::floor(c.y / texel) * texel;
+        const float above = kRainOcclusionHeight, below = 2.0f * half + 10.0f;
+        rain_vp = Mat4::orthographic(c.x - half, c.x + half, c.y - half, c.y + half, -c.z - above, -c.z + below) * rain_view;
+        rain_frustum = Frustum::from_matrix(rain_vp);
+        rain_bias = 0.1f / (above + below); // 10 cm in depth units
+        stats_.precipitation_occlusion = rain_res;
+    }
+
     // Local light shadows: rank shadow-casting lights by how much of the view they can cover and
     // hand out atlas tiles (spot 1, point 6) until the budget runs out.
     struct LocalShadowView {
@@ -1595,6 +1638,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 }
             if (any) ++stats_.shadow_casters;
         }
+        if (rain_occlusion && !blended && rain_frustum.intersects(world)) F.rain_casters.push_back(&d);
         if (d.material.shadow_only) continue; // casts, never drawn
         if (!frustum.intersects(world)) {
             ++stats_.culled;
@@ -1780,6 +1824,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         build_batches(casters[c], false, shadow_batches[c]);
         stats_.shadow_batches += static_cast<std::uint32_t>(shadow_batches[c].size());
         for (const Batch& b : shadow_batches[c]) stats_.shadow_triangles += std::uint64_t{b.first->mesh->lods[b.lod].index_count / 3} * b.instance_count;
+    }
+    if (rain_occlusion) {
+        std::sort(F.rain_casters.begin(), F.rain_casters.end(), [](const Draw* a, const Draw* b) {
+            if (a->skinned != b->skinned) return !a->skinned;
+            if (shadow_alpha_tested(a->material) != shadow_alpha_tested(b->material)) return !shadow_alpha_tested(a->material);
+            if (a->mesh != b->mesh) return a->mesh < b->mesh;
+            return a->shadow_lod < b->shadow_lod;
+        });
+        build_batches(F.rain_casters, false, F.rain_batches);
+        stats_.precipitation_occluders = static_cast<std::uint32_t>(F.rain_casters.size());
     }
     auto& local_batches = F.local_batches; // at least local_views.size() lists, all empty
     for (std::size_t v = 0; v < local_views.size(); ++v) {
@@ -2614,13 +2668,23 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         lighting.weather = {std::min(env_.wetness, 1.0f), 0.0f, 0.0f, 0.0f};
         stats_.surface_wetness = true;
     }
+    if (rain_occlusion) {
+        lighting.weather.y = 1.0f;
+        lighting.weather.z = rain_bias;
+        lighting.rain_vp = rain_vp;
+    }
     const Precipitation& pr = env_.precipitation;
     const auto fin = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
     const float precip_intensity = std::clamp(fin(pr.intensity, 0.0f), 0.0f, 1.0f);
     const bool snow = pr.type == PrecipitationType::Snow;
     facts_.precipitation_requested = pr.type != PrecipitationType::None && precip_intensity > 0.0f;
+    struct PrecipitationFragmentUniforms {
+        Vec4 proj;   // xy view depth = x / (depth + y), z rain occlusion on, w its depth bias
+        Vec4 screen; // xy 1 / render size, z 1 / softness, w type
+        Mat4 rain_vp;
+    };
     PrecipitationUniforms precip_u{};
-    ParticleUniforms precip_fu{};
+    PrecipitationFragmentUniforms precip_fu{};
     std::uint32_t precip_count = 0;
     rhi::PipelineHandle precip_pl{};
     if (facts_.precipitation_requested && S.precipitation && !capture_mode_ && !precipitation_failed_) {
@@ -2636,9 +2700,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     }
     if (precip_count > 0) {
         const double t = time_ ? *time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - render_epoch()).count();
-        const float radius = std::clamp(fin(pr.radius, 15.0f), 2.0f, 100.0f);
-        const float speed = std::clamp(fin(pr.fall_speed, 0.0f) > 0.0f ? pr.fall_speed : (snow ? 1.2f : 9.0f), 0.05f, 100.0f);
-        const Vec3 wind{fin(pr.wind.x, 0.0f), fin(pr.wind.y, 0.0f), fin(pr.wind.z, 0.0f)};
+        const float radius = precipitation_radius(pr);
         const float drop_width = std::clamp(fin(pr.size, 0.0f) > 0.0f ? pr.size : (snow ? 0.025f : 0.006f), 0.0005f, 1.0f);
         const float opacity = std::clamp(fin(pr.opacity, 0.0f) > 0.0f ? pr.opacity : (snow ? 0.9f : 0.35f), 0.0f, 1.0f);
         // Lit like a small diffuse scatterer: sky ambient plus a share of the sun (cloud shadows
@@ -2652,15 +2714,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         precip_u.view_proj = view_proj;
         // Wrapped so drop positions keep float precision (one jump every ~68 minutes).
         precip_u.eye = Vec4(camera_.position, static_cast<float>(std::fmod(std::max(t, 0.0), 4096.0)));
-        precip_u.velocity = Vec4(Vec3{0.0f, -speed, 0.0f} + wind, snow ? 1.0f : 0.0f);
+        precip_u.velocity = Vec4(precipitation_velocity(pr), snow ? 1.0f : 0.0f);
         precip_u.volume = {2.0f * radius, drop_width, std::clamp(fin(pr.streak, 0.03f), 0.0f, 0.5f),
                            2.0f / (std::max(std::abs(proj[1].y), 1e-4f) * static_cast<float>(rh))};
         precip_u.color = {light.x * pr.color.r, light.y * pr.color.g, light.z * pr.color.b, opacity * std::clamp(fin(pr.color.a, 1.0f), 0.0f, 1.0f)};
         const Mat4 cam_world = inverse(camera_.view);
         precip_u.right = Vec4(normalize(cam_world.transform_vector({1, 0, 0})), 0);
         precip_u.up = Vec4(normalize(cam_world.transform_vector({0, 1, 0})), 0);
-        precip_fu.proj = {proj[3].z, proj[2].z, 0, 0};
+        precip_fu.proj = {proj[3].z, proj[2].z, rain_occlusion ? 1.0f : 0.0f, rain_bias};
         precip_fu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), 1.0f / 0.1f, snow ? 1.0f : 0.0f};
+        precip_fu.rain_vp = rain_vp;
         stats_.precipitation_drops = precip_count;
     }
     facts_.precipitation_drops = precip_count;
@@ -2752,6 +2815,37 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
                         draw_mesh_lod(*ctx.pass, *b.first->mesh, b.lod, b.instance_count);
                     }
+                }
+            });
+    }
+
+    RGTexture rain_map;
+    if (rain_occlusion) {
+        rhi::TextureDesc sd;
+        sd.format = depth_format_;
+        sd.width = sd.height = rain_res;
+        sd.usage = rhi::TextureUsageDepthTarget | rhi::TextureUsageSampled;
+        rain_map = graph.create_texture("rain_occlusion", sd);
+        graph.add_pass(
+            "rain_occlusion", [&](PassBuilder& b) { b.write_depth(rain_map, rhi::LoadOp::Clear, 1.0f); },
+            [&](PassContext& ctx) {
+                ShadowUniforms su{rain_vp};
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, su);
+                rhi::PipelineHandle bound{};
+                for (const Batch& b : F.rain_batches) {
+                    const bool cut = !b.first->skinned && shadow_alpha_tested(b.first->material);
+                    const rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : cut ? shadow_alpha_ : shadow_pipeline_;
+                    if (!(bound == want)) {
+                        ctx.pass->bind_pipeline(want);
+                        if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                        bound = want;
+                    }
+                    if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
+                    if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
+                    ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
+                    ctx.pass->bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
+                    ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
+                    draw_mesh_lod(*ctx.pass, *b.first->mesh, b.lod, b.instance_count);
                 }
             });
     }
@@ -2926,6 +3020,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             }
             const rhi::TextureHandle shadow_tex = shadow_map.valid() ? ctx.texture(shadow_map) : no_shadow_;
             const rhi::TextureHandle local_shadow_tex = local_shadow_map.valid() ? ctx.texture(local_shadow_map) : no_shadow_;
+            const rhi::TextureHandle rain_tex = rain_map.valid() ? ctx.texture(rain_map) : no_shadow_;
             const rhi::TextureHandle ao_tex = ao.valid() ? ctx.texture(ao) : ctx_.white();
             FrameUniforms frame{view_proj};
             ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame);
@@ -2959,6 +3054,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 4, shadow_tex, ctx_.shadow_compare());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 7, local_shadow_tex, ctx_.shadow_compare());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 8, gi_tex, ctx_.linear_clamp());
+                pass.bind_texture(rhi::ShaderStage::Fragment, 9, rain_tex, ctx_.shadow_compare());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 5, ao_tex, ctx_.linear_clamp());
                 ProbeUniforms pu{};
                 rhi::TextureHandle env_cube = env_map && env_map->cube() ? env_map->cube() : ctx_.black_cube();
@@ -3024,6 +3120,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         [&](PassBuilder& b) {
             if (shadow_map.valid()) b.read(shadow_map);
             if (local_shadow_map.valid()) b.read(local_shadow_map);
+            if (rain_map.valid()) b.read(rain_map);
             if (ao.valid()) b.read(ao);
             b.write_color(hdr, rhi::LoadOp::Clear, env_.clear_color);
             b.write_depth(depth, prepass ? rhi::LoadOp::Load : rhi::LoadOp::Clear, 1.0f);
@@ -3152,6 +3249,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             [&](PassBuilder& b) {
                 if (shadow_map.valid()) b.read(shadow_map);
                 if (local_shadow_map.valid()) b.read(local_shadow_map);
+                if (rain_map.valid()) b.read(rain_map);
                 if (ao.valid()) b.read(ao);
                 b.write_color(hdr, rhi::LoadOp::Load);
                 b.write_depth(depth, rhi::LoadOp::Load, 1.0f);
@@ -3350,6 +3448,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             "precipitation",
             [&](PassBuilder& b) {
                 b.read(depth);
+                if (rain_map.valid()) b.read(rain_map);
                 b.write_color(hdr, rhi::LoadOp::Load);
             },
             [&, pl = precip_pl, precip_count](PassContext& ctx) {
@@ -3357,6 +3456,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, precip_u);
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, precip_fu);
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(depth), ctx_.nearest_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1, rain_map.valid() ? ctx.texture(rain_map) : no_shadow_, ctx_.shadow_compare());
                 ctx.pass->draw(6, precip_count);
             });
     }

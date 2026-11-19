@@ -18,6 +18,7 @@ layout(set = 1, binding = 0) uniform Frame {
 layout(location = 0) out vec2 v_uv;
 layout(location = 1) out vec4 v_color;
 layout(location = 2) out float v_distance;
+layout(location = 3) out vec3 v_world;
 
 vec3 hash3(uint n) {
     uvec3 v = uvec3(n * 1664525u + 1013904223u, n * 22695477u + 1u, n * 2891336453u + 747796405u);
@@ -69,7 +70,8 @@ void main() {
         float len = max(speed * u.volume.z, width);
         offset = side * (c.x * 0.5 * width) + axis * (c.y * 0.5 * len);
     }
-    gl_Position = u.view_proj * vec4(world + offset, 1.0);
+    v_world = world + offset;
+    gl_Position = u.view_proj * vec4(v_world, 1.0);
     v_uv = c;
     v_color = vec4(u.color.rgb, alpha);
     v_distance = gl_Position.w;
