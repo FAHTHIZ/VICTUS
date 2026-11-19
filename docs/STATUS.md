@@ -1733,3 +1733,9 @@ Verified: `behaviours: a title screen holds the game until the player presses Sp
 Built: press-to-use Triggers split their Message on `|` into lines shown one per press; the Action fires on the last line; `talked` event; leaving resets the conversation.
 
 Verified: `behaviours: a press-to-use trigger with | lines is a conversation`; all behaviour tests.
+
+## 2026-11-19 — Template title screens
+
+Built: both no-code templates have a Game Rules Title. Starting is deferred one frame so the start press does not jump; behaviours stay inactive while paused even on the frame the title appears.
+
+Verified: both no-code template play tests start from the title and check that starting does not jump; export tests; script tests.
