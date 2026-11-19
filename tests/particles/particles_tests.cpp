@@ -811,3 +811,171 @@ TEST_CASE("gpu reference kernel integrates ballistic motion and writes billboard
     // Turbulence off leaves the CPU path untouched: the field adds nothing.
     CHECK(math::length(turbulence_at(e, p.position, 0.3f)) == 0.0f);
 }
+
+TEST_CASE("sub-emitters burst where source particles die or are born, deterministically") {
+    const auto setup = [](Scene& s, Entity& src, Entity& dst) {
+        src = s.create("Firework");
+        dst = s.create("Sparks");
+        s.world().get<scene::Transform>(dst)->position = {5, 0, 0}; // spawns follow the events, not this
+        auto& c = s.world().add<ParticleEmitterComponent>(src);
+        c.rate = 0;
+        c.burst = 10;
+        c.shape = Shape::Point;
+        c.angle = 30;
+        c.speed_min = c.speed_max = 2;
+        c.lifetime_min = c.lifetime_max = 0.5f;
+        c.sub_emitter = s.uuid(dst);
+        c.sub_emitter_count = 3;
+        c.sub_emitter_inherit_velocity = 0.5f;
+        auto& t = s.world().add<ParticleEmitterComponent>(dst);
+        t.rate = 0;
+        t.shape = Shape::Point;
+        t.speed_min = t.speed_max = 0;
+        t.lifetime_min = t.lifetime_max = 10;
+    };
+    Scene s;
+    Entity src, dst;
+    setup(s, src, dst);
+    ParticleSystem sys;
+    sys.update(s, 0.0f);
+    CHECK(status(s, src).alive == 10);
+    sys.update(s, 0.25f);
+    CHECK(sys.stats().sub_emitter_events == 0);
+    sys.update(s, 0.25f); // age 0.5: every source particle dies
+    CHECK(status(s, src).alive == 0);
+    CHECK(sys.stats().sub_emitter_events == 10);
+    CHECK(sys.stats().sub_emitter_dropped == 0);
+    CHECK(status(s, dst).alive == 0); // delivered on the target's next update
+    sys.update(s, 0.0f);
+    CHECK(status(s, dst).alive == 30);
+    CHECK(sys.stats().spawned == 30);
+    // Speed 2 for 0.5 s from the origin: every spark starts 1 m out, within the 30 degree cone.
+    const auto sparks = billboards_of(s, dst);
+    REQUIRE(sparks.size() == 30);
+    for (const Billboard& b : sparks) {
+        CHECK(near(math::length(b.position), 1.0f, 1e-3f));
+        CHECK(b.position.y >= std::cos(30.0f * 3.14159265f / 180.0f) - 1e-3f);
+    }
+    // Inherited velocity (0.5 x 2 m/s outward) moves them a further 0.1 m in 0.1 s.
+    sys.update(s, 0.1f);
+    for (const Billboard& b : billboards_of(s, dst)) CHECK(near(math::length(b.position), 1.1f, 1e-3f));
+
+    // Birth trigger, a chain (sparks -> embers on birth) and a self-reference that is dropped.
+    const auto run = [&](jobs::JobSystem* js) {
+        Scene sc;
+        Entity a, b;
+        setup(sc, a, b);
+        const Entity embers = sc.create("Embers");
+        auto& ec = sc.world().add<ParticleEmitterComponent>(embers);
+        ec.rate = 0;
+        ec.shape = Shape::Sphere;
+        ec.lifetime_min = 0.2f;
+        ec.lifetime_max = 0.6f;
+        auto* bc = sc.world().get<ParticleEmitterComponent>(b);
+        bc->sub_emitter = sc.uuid(embers);
+        bc->sub_emitter_trigger = SubEmitterTrigger::Birth;
+        bc->sub_emitter_count = 2;
+        auto* ac = sc.world().get<ParticleEmitterComponent>(a);
+        ac->rate = 40;
+        ac->loop = true;
+        const Entity self = sc.create("Self");
+        auto& sf = sc.world().add<ParticleEmitterComponent>(self);
+        sf.rate = 30;
+        sf.lifetime_min = sf.lifetime_max = 0.1f;
+        sf.sub_emitter = sc.uuid(self);
+        std::uint32_t seed = 1; // UUIDs differ between runs: fix the streams
+        sc.world().each<ParticleEmitterComponent>([&](Entity, ParticleEmitterComponent& pc) { pc.seed = seed++; });
+        ParticleSystem ps({.jobs = js, .parallel_threshold = 2});
+        std::uint32_t events = 0, dropped = 0;
+        for (int f = 0; f < 90; ++f) {
+            ps.update(sc, 1.0f / 60.0f);
+            events += ps.stats().sub_emitter_events;
+            dropped += ps.stats().sub_emitter_dropped;
+        }
+        CHECK(events > 0);
+        CHECK(dropped > 0); // the self-targeting emitter
+        CHECK(status(sc, embers).alive > 0);
+        CHECK(status(sc, self).alive <= 4);
+        std::vector<Billboard> all = billboards_of(sc, b);
+        const auto e2 = billboards_of(sc, embers);
+        all.insert(all.end(), e2.begin(), e2.end());
+        return all;
+    };
+    const auto x = run(nullptr);
+    jobs::JobSystem js(2);
+    const auto y = run(&js);
+    REQUIRE(!x.empty());
+    REQUIRE(x.size() == y.size());
+    CHECK(std::memcmp(x.data(), y.data(), x.size() * sizeof(Billboard)) == 0);
+}
+
+TEST_CASE("sub-emitters feed GPU and local-space targets; missing targets are counted") {
+    Scene s;
+    const Entity src = s.create("Src");
+    const Entity dst = s.create("GpuDst");
+    const Entity loc = s.create("LocalDst");
+    s.world().get<scene::Transform>(loc)->position = {0, 3, 0};
+    auto& c = s.world().add<ParticleEmitterComponent>(src);
+    c.rate = 0;
+    c.burst = 4;
+    c.shape = Shape::Point;
+    c.speed_min = c.speed_max = 0;
+    c.lifetime_min = c.lifetime_max = 0.1f;
+    c.sub_emitter = s.uuid(dst);
+    c.sub_emitter_count = 5;
+    auto& g = s.world().add<ParticleEmitterComponent>(dst);
+    g.gpu = true;
+    g.shape = Shape::Point;
+    g.rate = 0;
+    g.max_particles = 64;
+    g.speed_min = g.speed_max = 0;
+    g.lifetime_min = g.lifetime_max = 5;
+    auto& l = s.world().add<ParticleEmitterComponent>(loc);
+    l.rate = 0;
+    l.shape = Shape::Point;
+    l.world_space = false;
+    l.speed_min = l.speed_max = 0;
+    l.lifetime_min = l.lifetime_max = 5;
+    s.world().get<scene::Transform>(src)->position = {1, 0, 0};
+    ParticleSystem sys;
+    sys.update(s, 0.0f);
+    sys.update(s, 0.2f); // all four die at (1, 0, 0)
+    CHECK(sys.stats().sub_emitter_events == 4);
+    sys.update(s, 0.0f);
+    std::vector<EmitterView> views;
+    gather(s, views);
+    const GpuEmitterView* v = nullptr;
+    for (const auto& ev : views)
+        if (ev.entity == dst) v = ev.gpu;
+    REQUIRE(v != nullptr);
+    CHECK(v->alive == 20);
+    REQUIRE(v->records.size() == 20);
+    for (const GpuSpawnRecord& r : v->records) {
+        CHECK(near(r.particle.position.x, 1.0f));
+        CHECK(near(r.particle.position.y, 0.0f));
+    }
+
+    // Retarget to the local-space emitter: particles are stored relative to it, drawn in world space.
+    s.world().get<ParticleEmitterComponent>(src)->sub_emitter = s.uuid(loc);
+    reset(s, src);
+    sys.update(s, 0.0f);
+    sys.update(s, 0.2f);
+    sys.update(s, 0.0f);
+    const auto lb = billboards_of(s, loc);
+    REQUIRE(lb.size() == 20);
+    for (const Billboard& b : lb) {
+        CHECK(near(b.position.x, 1.0f));
+        CHECK(near(b.position.y, 0.0f));
+    }
+    s.world().get<scene::Transform>(loc)->position = {0, 4, 0}; // local-space particles follow it
+    sys.update(s, 0.0f);
+    for (const Billboard& b : billboards_of(s, loc)) CHECK(near(b.position.y, 1.0f));
+
+    // A target that no longer exists drops the events.
+    s.world().get<ParticleEmitterComponent>(src)->sub_emitter = Uuid::generate();
+    reset(s, src);
+    sys.update(s, 0.0f);
+    sys.update(s, 0.2f);
+    CHECK(sys.stats().sub_emitter_events == 0);
+    CHECK(sys.stats().sub_emitter_dropped == 4);
+}
