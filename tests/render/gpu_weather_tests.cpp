@@ -128,7 +128,11 @@ TEST_CASE("gpu weather: rain and snow are drawn around the camera and scale with
     const Shot snow = shoot(r, weather_env(PrecipitationType::Snow), nothing, "weather_snow");
     CHECK(snow.stats.precipitation_drops == 16384);
     CHECK(snow.lit(0, 0, W, H) > static_cast<int>(W * H / 50));
-    CHECK(snow.mean(0, 0, W, H) > rain.mean(0, 0, W, H)); // opaque flakes outshine faint streaks
+    // Opaque flakes outshine faint streaks pixel for pixel (total coverage depends on how the
+    // backend rasterises thin streaks, so compare the brightness of covered pixels).
+    const auto per_lit = [](const Shot& s) { return s.mean(0, 0, W, H) * W * H / std::max(1, s.lit(0, 0, W, H)); };
+    MESSAGE("snow " << per_lit(snow) << " rain " << per_lit(rain) << " means " << snow.mean(0, 0, W, H) << " " << rain.mean(0, 0, W, H));
+    CHECK(per_lit(snow) > per_lit(rain) * 1.2);
 
     Environment light = weather_env();
     light.precipitation.intensity = 0.25f;
