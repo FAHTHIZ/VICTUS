@@ -527,6 +527,36 @@ public:
         return out;
     }
 
+    // Every surface the ray enters, nearest first: back faces of triangles are skipped and a ray
+    // starting inside a convex body reports it at distance 0 (Jolt's RayCastSettings defaults).
+    std::vector<RaycastHit> raycast_all(math::Vec3 o, math::Vec3 d, float max, std::uint32_t mask,
+                                        std::size_t max_hits) const override {
+        std::vector<RaycastHit> out;
+        const float len = math::length(d);
+        if (len <= 1e-8f || max <= 0 || max_hits == 0) return out;
+        d = d * (1.0f / len);
+        const JPH::RRayCast ray{to_jolt_r(o), to_jolt(d * max)};
+        JPH::AllHitCollisionCollector<JPH::CastRayCollector> collector;
+        const QueryLayerFilter lf(mask);
+        const QueryBodyFilter bf(JPH::BodyID{}); // skips sensors (triggers)
+        system_->GetNarrowPhaseQuery().CastRay(ray, JPH::RayCastSettings{}, collector, {}, lf, bf);
+        collector.Sort();
+        for (const JPH::RayCastResult& hit : collector.mHits) {
+            if (out.size() >= max_hits) break;
+            RaycastHit h;
+            const JPH::RVec3 p = ray.GetPointOnRay(hit.mFraction);
+            h.point = {static_cast<float>(p.GetX()), static_cast<float>(p.GetY()), static_cast<float>(p.GetZ())};
+            h.distance = hit.mFraction * max;
+            JPH::BodyLockRead lock(system_->GetBodyLockInterface(), hit.mBodyID);
+            if (!lock.Succeeded()) continue;
+            const JPH::Body& body = lock.GetBody();
+            h.entity = decode(body.GetUserData());
+            h.normal = from_jolt(body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, p));
+            out.push_back(h);
+        }
+        return out;
+    }
+
     std::vector<Entity> overlap_sphere(math::Vec3 c, float r, std::uint32_t mask) const override {
         if (r <= 0) return {};
         JPH::SphereShape sphere(r);

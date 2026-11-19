@@ -650,6 +650,8 @@ int entity_play_audio(lua_State* L);
 int entity_stop_audio(lua_State* L);
 int entity_pause_audio(lua_State* L);
 int entity_audio_playing(lua_State* L);
+int entity_audio_occlusion(lua_State* L);
+int audio_acoustics(lua_State* L);
 
 // bind_save.cpp
 int save_available(lua_State* L);

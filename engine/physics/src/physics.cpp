@@ -4,6 +4,7 @@
 #include "internal.hpp"
 #include "victus/core/profiler.hpp"
 #include "victus/gameplay/capture.hpp"
+#include "victus/gameplay/queries.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -198,6 +199,10 @@ std::optional<RaycastHit> PhysicsWorld::raycast(math::Vec3 o, math::Vec3 d, floa
                                                 Entity ignore) const {
     return impl_->w3->raycast(o, d, max, mask, ignore);
 }
+std::vector<RaycastHit> PhysicsWorld::raycast_all(math::Vec3 o, math::Vec3 d, float max, std::uint32_t mask,
+                                                  std::size_t max_hits) const {
+    return impl_->w3->raycast_all(o, d, max, mask, max_hits);
+}
 std::vector<Entity> PhysicsWorld::overlap_sphere(math::Vec3 c, float r, std::uint32_t mask) const {
     return impl_->w3->overlap_sphere(c, r, mask);
 }
@@ -301,6 +306,18 @@ struct Binding {
 void bind(scene::Scene& scene, PhysicsWorld* world) {
     if (auto* b = scene.world().resource<Binding>()) b->world = world;
     else scene.world().set_resource<Binding>().world = world;
+    // Geometry queries for modules that do not link physics (audio occlusion, ADR-0096).
+    if (!world) {
+        gameplay::set_segment_query(scene, {});
+        return;
+    }
+    gameplay::set_segment_query(scene, [world](math::Vec3 from, math::Vec3 to, std::size_t max_hits, std::vector<gameplay::SegmentHit>& out) {
+        const math::Vec3 d = to - from;
+        const float len = math::length(d);
+        if (len <= 1e-6f) return;
+        for (const RaycastHit& h : world->raycast_all(from, d, len, kAllLayers, max_hits))
+            out.push_back({h.entity, h.distance, h.normal});
+    });
 }
 
 PhysicsWorld* world_of(scene::Scene& scene) {

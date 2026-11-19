@@ -158,4 +158,49 @@ int entity_audio_playing(lua_State* L) {
     return 1;
 }
 
+// entity:audio_occlusion() -> { blocked, gain, cutoff } or nil (no voice / occlusion off)
+int entity_audio_occlusion(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* a = audio::engine_of(s);
+    const auto o = a ? a->occlusion(e) : std::nullopt;
+    if (!o) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 3);
+    lua_pushnumber(L, o->blocked);
+    lua_setfield(L, -2, "blocked");
+    lua_pushnumber(L, o->gain);
+    lua_setfield(L, -2, "gain");
+    lua_pushnumber(L, o->cutoff);
+    lua_setfield(L, -2, "cutoff");
+    return 1;
+}
+
+// audio.acoustics() -> { zone = entity|nil, zone_weight, underwater, decay, rays, occluded } or nil
+int audio_acoustics(lua_State* L) {
+    auto* a = audio_of(L);
+    if (!a) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const audio::AcousticState st = a->acoustics();
+    lua_createtable(L, 0, 6);
+    if (st.zone.is_null()) lua_pushnil(L);
+    else push_entity(L, st.zone);
+    lua_setfield(L, -2, "zone");
+    lua_pushnumber(L, st.zone_weight);
+    lua_setfield(L, -2, "zone_weight");
+    lua_pushnumber(L, st.underwater);
+    lua_setfield(L, -2, "underwater");
+    lua_pushnumber(L, st.decay);
+    lua_setfield(L, -2, "decay");
+    lua_pushnumber(L, st.rays);
+    lua_setfield(L, -2, "rays");
+    lua_pushnumber(L, st.occluded);
+    lua_setfield(L, -2, "occluded");
+    return 1;
+}
+
 } // namespace victus::script::detail

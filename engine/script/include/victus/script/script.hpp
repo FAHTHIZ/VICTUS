@@ -51,7 +51,9 @@
 // Audio API (no-ops returning false when no AudioEngine is bound): `audio.play(clip, {volume,
 // pitch, bus, position})` for one-shots, `audio.set_volume(bus, v)/volume(bus)`,
 // `audio.set_muted(bus, m)/muted(bus)`, `audio.available()`; entity methods `play_audio()`,
-// `stop_audio()`, `pause_audio(paused)`, `audio_playing()` for the entity's AudioSource.
+// `stop_audio()`, `pause_audio(paused)`, `audio_playing()` for the entity's AudioSource;
+// acoustics (ADR-0096): `audio.acoustics() -> {zone, zone_weight, underwater, decay, rays,
+// occluded}` and `entity:audio_occlusion() -> {blocked, gain, cutoff}` (nil when not traced).
 //
 // Navigation API (when a NavigationSystem is bound; the navmesh is built on first use from the
 // scene's static colliders): `nav.available()`, `nav.find_path(from, to) -> {points}, partial`,

@@ -260,8 +260,8 @@ victus_add_test(victus_terrain_tests
 
 victus_add_test(victus_audio_tests
     SOURCES
-        audio/audio_tests.cpp
-    DEPS VICTUS::Audio VICTUS::Core
+        audio/audio_tests.cpp audio/acoustics_tests.cpp
+    DEPS VICTUS::Audio VICTUS::Physics VICTUS::Core
     LABELS audio)
 target_compile_definitions(victus_audio_tests PRIVATE VICTUS_MINIAUDIO_DATA_DIR="${VICTUS_MINIAUDIO_DIR}/data")
 

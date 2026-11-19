@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/audio/audio.hpp"
 
+#include "acoustics.hpp"
+#include "victus/gameplay/queries.hpp"
+#include "victus/gameplay/water.hpp"
+
 #include "victus/core/fs.hpp"
 #include "victus/core/log.hpp"
 #include "victus/scene/reflect.hpp"
@@ -58,8 +62,28 @@ void register_components() {
             .field(&AudioSourceComponent::rolloff, "rolloff", {.min = 0, .max = 20, .speed = 0.01f})
             .field(&AudioSourceComponent::priority, "priority",
                    {.min = 0, .max = 255, .tooltip = "0-255; higher keeps a real voice when more sounds play than the voice budget"})
+            .field(&AudioSourceComponent::occlusion, "occlusion", {.tooltip = "Walls between listener and source attenuate and muffle it"})
+            .field(&AudioSourceComponent::occlusion_radius, "occlusion_radius",
+                   {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "> 0: five rays across this radius for partial occlusion"})
             .commit();
         scene::Schema<AudioListenerComponent>("AudioListener", "Audio").field(&AudioListenerComponent::enabled, "enabled").commit();
+        scene::Schema<AcousticMaterialComponent>("AcousticMaterial", "Audio")
+            .enumeration(&AcousticMaterialComponent::preset, "preset",
+                         {"generic", "brick", "concrete", "ceramic", "gravel", "carpet", "glass", "plaster", "wood", "metal", "rock",
+                          "custom"})
+            .field(&AcousticMaterialComponent::transmission, "transmission",
+                   {.min = 0, .max = 1, .speed = 0.001f,
+                    .tooltip = "Custom only: energy transmitted at 400 Hz / 2.5 kHz / 15 kHz (0-1)"})
+            .commit();
+        scene::Schema<ReverbZoneComponent>("ReverbZone", "Audio")
+            .field(&ReverbZoneComponent::enabled, "enabled")
+            .field(&ReverbZoneComponent::size, "size", {.min = 0, .max = 1e5f, .speed = 0.05f, .tooltip = "Box size in local space"})
+            .field(&ReverbZoneComponent::fade, "fade", {.min = 0, .max = 1000, .speed = 0.05f, .tooltip = "Metres outside the box over which the zone fades"})
+            .field(&ReverbZoneComponent::decay, "decay", {.min = 0, .max = 0.95f, .speed = 0.005f})
+            .field(&ReverbZoneComponent::wet, "wet", {.min = 0, .max = 1, .speed = 0.005f, .tooltip = "Reverb send of the Sfx, Ambient and Voice buses"})
+            .field(&ReverbZoneComponent::lowpass, "lowpass", {.min = 0, .max = 24000, .speed = 10, .tooltip = "Hz, 0 = none"})
+            .field(&ReverbZoneComponent::priority, "priority", {.min = -1000, .max = 1000})
+            .commit();
     });
 }
 
@@ -75,6 +99,15 @@ struct Voice {
     bool virt{false};             // logically playing, not mixed
     ma_uint64 virt_cursor{0};     // sound frames at the moment it went virtual
     ma_uint64 virt_since{0};      // engine time (frames) at that moment
+    // Occlusion (ADR-0096): sound -> lpf -> bus group while filtered.
+    float base_volume{1.0f};      // component volume before occlusion
+    bool occl{false};
+    float occl_radius{0.0f};
+    bool occl_traced{false};      // first trace snaps instead of smoothing
+    float occl_blocked{0.0f};
+    float occl_gain_target{1.0f}, occl_gain{1.0f};
+    float occl_cut_target{detail::kNoFilterHz}, occl_cut{detail::kNoFilterHz}; // kNoFilterHz = none
+    std::unique_ptr<ma_lpf_node> lpf;
 };
 
 struct OneShotVoice {
@@ -258,12 +291,26 @@ struct AudioEngine::Impl {
     std::uint32_t load_errors{0};
     std::uint64_t frame{0};
 
+    // Acoustic layer (ADR-0096): user settings above (lowpass/send/decay) plus zones and water
+    // give the effective values below, which are what the graph runs.
+    struct Acoustics {
+        Entity zone;
+        float zone_w{0}, zone_decay{0.7f}, zone_wet{0}, zone_log_lp{0};
+        float underwater{0};
+        std::array<float, kBusCount> send{}, lowpass{};
+        float decay{0.7f};
+        std::array<float, kBusCount> applied_send{}, applied_lowpass{};
+        float applied_decay{0.7f};
+        std::uint32_t rays{0}, occluded{0};
+        std::uint64_t cursor{0}; // round-robin position (entity bits) for the ray budget
+    } ac;
+    std::vector<gameplay::SegmentHit> hits; // scratch
+
     std::unordered_map<std::string, std::unique_ptr<ma_sound>> preloaded; // holds cached clip data
 
     // Releases every playing sound (used by stop_all and the destructor). Preloads are kept.
     void release_all() {
-        for (auto& [e, v] : voices)
-            if (v.sound) ma_sound_uninit(v.sound.get());
+        for (auto& [e, v] : voices) destroy(v);
         voices.clear();
         for (auto& s : one_shots) ma_sound_uninit(s.sound.get());
         one_shots.clear();
@@ -387,7 +434,8 @@ struct AudioEngine::Impl {
     void apply_lowpass(std::size_t i) {
         if (!fx_ok[i]) return;
         const auto rate = ma_engine_get_sample_rate(&engine);
-        const float hz = lowpass[i];
+        const float hz = ac.lowpass[i];
+        ac.applied_lowpass[i] = hz;
         if (hz > 0.0f && hz < 0.5f * static_cast<float>(rate)) {
             const ma_lpf_config c = ma_lpf_config_init(ma_format_f32, ma_engine_get_channels(&engine), rate, hz, 2);
             ma_lpf_node_reinit(&c, &lpfs[i]);
@@ -399,8 +447,9 @@ struct AudioEngine::Impl {
 
     void apply_send(std::size_t i) {
         if (!fx_ok[i] || i == 0 || !reverb_in_ok) return;
-        ma_node_set_output_bus_volume(&splitters[i], 1, send[i]);
-        if (send[i] > 0.0f) ma_node_attach_output_bus(&splitters[i], 1, &reverb_in, 0);
+        ac.applied_send[i] = ac.send[i];
+        ma_node_set_output_bus_volume(&splitters[i], 1, ac.send[i]);
+        if (ac.send[i] > 0.0f) ma_node_attach_output_bus(&splitters[i], 1, &reverb_in, 0);
         else ma_node_detach_output_bus(&splitters[i], 1);
     }
 
@@ -487,16 +536,24 @@ struct AudioEngine::Impl {
         return sound;
     }
 
-    void configure(ma_sound* s, const AudioSourceComponent& c, const math::Mat4* world) {
-        ma_sound_set_volume(s, std::max(0.0f, c.volume));
+    void configure(Voice& v, const AudioSourceComponent& c, const math::Mat4* world) {
+        ma_sound* s = v.sound.get();
+        v.base_volume = std::max(0.0f, c.volume);
+        v.occl = c.occlusion && c.spatial;
+        v.occl_radius = std::isfinite(c.occlusion_radius) ? std::max(0.0f, c.occlusion_radius) : 0.0f;
+        ma_sound_set_volume(s, v.base_volume * (v.occl && v.occl_traced ? v.occl_gain : 1.0f));
         ma_sound_set_pitch(s, std::max(0.01f, c.pitch));
         ma_sound_set_looping(s, c.loop ? MA_TRUE : MA_FALSE);
         ma_sound_set_spatialization_enabled(s, c.spatial ? MA_TRUE : MA_FALSE);
         if (c.spatial) {
-            ma_sound_set_attenuation_model(s, to_ma(c.attenuation));
+            // miniaudio's spatializer bypasses master volume and panning entirely for
+            // ma_attenuation_model_none, so "no attenuation" runs as linear with zero rolloff
+            // (gain 1 at every distance) to keep the source's volume, occlusion and panning.
+            const bool none = c.attenuation == Attenuation::None;
+            ma_sound_set_attenuation_model(s, none ? ma_attenuation_model_linear : to_ma(c.attenuation));
             ma_sound_set_min_distance(s, std::max(0.0f, c.min_distance));
             ma_sound_set_max_distance(s, std::max(c.min_distance, c.max_distance));
-            ma_sound_set_rolloff(s, std::max(0.0f, c.rolloff));
+            ma_sound_set_rolloff(s, none ? 0.0f : std::max(0.0f, c.rolloff));
             if (world) {
                 const ma_vec3f p = world_pos(*world);
                 ma_sound_set_position(s, p.x, p.y, p.z);
@@ -507,6 +564,255 @@ struct AudioEngine::Impl {
     void destroy(Voice& v) {
         if (v.sound) ma_sound_uninit(v.sound.get());
         v.sound.reset();
+        if (v.lpf) ma_lpf_node_uninit(v.lpf.get(), nullptr);
+        v.lpf.reset();
+    }
+
+    // ---- acoustics (ADR-0096) ----
+
+    static bool world_bus(std::size_t i) {
+        const auto b = static_cast<Bus>(i);
+        return b == Bus::Sfx || b == Bus::Ambient || b == Bus::Voice;
+    }
+
+    // Combines the user's bus settings with the smoothed zone/water state and pushes changes to
+    // the graph. With no zone and no water the effective values equal the user's exactly.
+    void refresh_effects() {
+        const float rate = static_cast<float>(ma_engine_get_sample_rate(&engine));
+        const float none = std::log2(detail::kNoFilterHz);
+        for (std::size_t i = 0; i < kBusCount; ++i) {
+            float eff_send = send[i];
+            float eff_lp = lowpass[i];
+            if (world_bus(i) && (ac.zone_w > 0.0f || ac.underwater > 0.0f)) {
+                eff_send = std::max(send[i], ac.zone_w * ac.zone_wet);
+                const float user_log = lowpass[i] > 0.0f && lowpass[i] < 0.5f * rate ? std::log2(lowpass[i]) : none;
+                const float zone_log = none + (ac.zone_log_lp - none) * ac.zone_w;
+                const float uw_log = none + (std::log2(std::max(20.0f, options.underwater_cutoff)) - none) * ac.underwater;
+                const float hz = std::exp2(std::min({user_log, zone_log, uw_log}));
+                eff_lp = hz >= std::min(20000.0f, 0.45f * rate) ? 0.0f : hz;
+            }
+            ac.send[i] = eff_send;
+            ac.lowpass[i] = eff_lp;
+            const auto moved = [](float a, float b) { return (a == 0.0f) != (b == 0.0f) || std::abs(a - b) > 0.005f * std::max(a, b); };
+            // Small drifts are batched; landing exactly on the user's value always applies.
+            if (ac.applied_lowpass[i] != eff_lp && (moved(ac.applied_lowpass[i], eff_lp) || eff_lp == lowpass[i])) apply_lowpass(i);
+            if (ac.applied_send[i] != eff_send && (moved(ac.applied_send[i], eff_send) || eff_send == send[i])) apply_send(i);
+        }
+        ac.decay = decay + (ac.zone_decay - decay) * ac.zone_w;
+        if (ac.decay != ac.applied_decay && (std::abs(ac.decay - ac.applied_decay) > 0.002f || ac.decay == decay)) {
+            ac.applied_decay = ac.decay;
+            for (std::size_t c = 0; c < kCombs; ++c)
+                if (comb_ok[c]) ma_delay_node_set_decay(&combs[c], ac.decay);
+        }
+    }
+
+    void reset_acoustics() {
+        ac.zone = {};
+        ac.zone_w = 0.0f;
+        ac.underwater = 0.0f;
+        refresh_effects();
+    }
+
+    void update_zones(scene::Scene& s, math::Vec3 listener, float dt) {
+        Entity best;
+        float best_w = 0.0f, best_vol = 0.0f;
+        std::int32_t best_pri = 0;
+        const ReverbZoneComponent* best_z = nullptr;
+        s.world().each<ReverbZoneComponent>([&](Entity e, ReverbZoneComponent& z) {
+            if (!z.enabled) return;
+            float vol = 0.0f;
+            const float w = detail::zone_weight(s.world_matrix(e), z, listener, &vol);
+            if (w <= 0.0f) return;
+            const bool better = !best_z || z.priority > best_pri || (z.priority == best_pri && (vol < best_vol || (vol == best_vol && e.bits() < best.bits())));
+            if (!better) return;
+            best = e;
+            best_w = w;
+            best_vol = vol;
+            best_pri = z.priority;
+            best_z = &z;
+        });
+        const float k = detail::smoothing(dt, options.zone_smoothing);
+        if (best_z) {
+            const float zd = std::clamp(std::isfinite(best_z->decay) ? best_z->decay : 0.7f, 0.0f, 0.95f);
+            const float zw = std::clamp(std::isfinite(best_z->wet) ? best_z->wet : 0.0f, 0.0f, 1.0f);
+            const float zl = best_z->lowpass > 0.0f && std::isfinite(best_z->lowpass) ? std::log2(std::max(20.0f, best_z->lowpass))
+                                                                                        : std::log2(detail::kNoFilterHz);
+            if (ac.zone_w <= 1e-3f) { // entering from silence: take the zone's character directly
+                ac.zone_decay = zd;
+                ac.zone_wet = zw;
+                ac.zone_log_lp = zl;
+            } else {
+                ac.zone_decay += (zd - ac.zone_decay) * k;
+                ac.zone_wet += (zw - ac.zone_wet) * k;
+                ac.zone_log_lp += (zl - ac.zone_log_lp) * k;
+            }
+            ac.zone = best;
+        }
+        const float target = best_z ? best_w : 0.0f;
+        ac.zone_w += (target - ac.zone_w) * k;
+        if (target == 0.0f && ac.zone_w < 1e-3f) {
+            ac.zone_w = 0.0f;
+            ac.zone = {};
+        }
+        if (std::abs(target - ac.zone_w) < 1e-4f) ac.zone_w = target;
+
+        float uw_target = 0.0f;
+        if (options.underwater_filter)
+            if (const auto q = gameplay::query_water(s, listener); q && q->depth > 0.0f) {
+                const float t = std::clamp(q->depth / 0.3f, 0.0f, 1.0f);
+                uw_target = t * t * (3.0f - 2.0f * t);
+            }
+        ac.underwater += (uw_target - ac.underwater) * detail::smoothing(dt, 0.4f * options.zone_smoothing);
+        if (std::abs(uw_target - ac.underwater) < 1e-3f) ac.underwater = uw_target;
+    }
+
+    // Routes the voice through its own first-order low-pass (created on first use).
+    void set_voice_filter(Voice& v, float cutoff) {
+        ma_sound* snd = v.sound.get();
+        ma_node* group = group_ok[static_cast<std::size_t>(v.bus)] ? static_cast<ma_node*>(&groups[static_cast<std::size_t>(v.bus)])
+                                                                    : ma_engine_get_endpoint(&engine);
+        const auto rate = ma_engine_get_sample_rate(&engine);
+        const bool want = cutoff > 0.0f && cutoff < 18000.0f && cutoff < 0.45f * static_cast<float>(rate);
+        if (!want) {
+            if (v.lpf) {
+                ma_node_attach_output_bus(snd, 0, group, 0);
+                ma_lpf_node_uninit(v.lpf.get(), nullptr);
+                v.lpf.reset();
+            }
+            return;
+        }
+        const ma_uint32 ch = ma_engine_get_channels(&engine);
+        if (!v.lpf) {
+            auto node = std::make_unique<ma_lpf_node>();
+            const ma_lpf_node_config c = ma_lpf_node_config_init(ch, rate, cutoff, 1);
+            if (ma_lpf_node_init(ma_engine_get_node_graph(&engine), &c, nullptr, node.get()) != MA_SUCCESS) return;
+            ma_node_attach_output_bus(node.get(), 0, group, 0);
+            ma_node_attach_output_bus(snd, 0, node.get(), 0);
+            v.lpf = std::move(node);
+            return;
+        }
+        const ma_lpf_config c = ma_lpf_config_init(ma_format_f32, ch, rate, cutoff, 1);
+        ma_lpf_node_reinit(&c, v.lpf.get());
+    }
+
+    static bool chain_contains(const scene::Scene& s, Entity e, Entity target) {
+        for (int guard = 0; !e.is_null() && guard < 256; ++guard, e = s.parent(e))
+            if (e == target) return true;
+        return false;
+    }
+
+    // Energy transmission (low, mid, high) of the segment listener -> point.
+    math::Vec3 trace(scene::Scene& s, math::Vec3 from, math::Vec3 to, Entity listener, Entity source, bool& blocked) {
+        blocked = false;
+        math::Vec3 t{1, 1, 1};
+        if (!gameplay::segment_hits(s, from, to, 8, hits)) return t;
+        const float len = math::length(to - from);
+        Entity last;
+        float last_d = -1.0f;
+        for (const auto& h : hits) {
+            if (h.distance >= len - 1e-3f) continue;
+            if (!listener.is_null() && (chain_contains(s, h.entity, listener) || chain_contains(s, listener, h.entity))) continue;
+            if (chain_contains(s, h.entity, source) || chain_contains(s, source, h.entity)) continue;
+            if (h.entity == last && std::abs(h.distance - last_d) < 0.01f) continue; // duplicate sub-shape hit
+            last = h.entity;
+            last_d = h.distance;
+            AcousticMaterialComponent m;
+            for (Entity e = h.entity; !e.is_null(); e = s.parent(e))
+                if (const auto* c = s.world().get<AcousticMaterialComponent>(e)) {
+                    m = *c;
+                    break;
+                }
+            const math::Vec3 tr = acoustic_transmission(m);
+            t = {t.x * tr.x, t.y * tr.y, t.z * tr.z};
+            blocked = true;
+        }
+        return t;
+    }
+
+    void update_occlusion(scene::Scene& s, Entity listener_e, math::Vec3 listener, float dt) {
+        ac.rays = 0;
+        ac.occluded = 0;
+        const bool provider = gameplay::has_segment_query(s);
+        std::vector<std::pair<Entity, Voice*>> list;
+        for (auto& [e, v] : voices) {
+            if (!v.sound) continue;
+            const bool on = v.occl && provider && ma_sound_is_spatialization_enabled(v.sound.get()) && live(v);
+            if (!on) {
+                if (v.occl_traced || v.lpf || v.occl_gain != 1.0f) { // turned off: restore at once
+                    v.occl_traced = false;
+                    v.occl_blocked = 0.0f;
+                    v.occl_gain = v.occl_gain_target = 1.0f;
+                    v.occl_cut = v.occl_cut_target = detail::kNoFilterHz;
+                    set_voice_filter(v, 0.0f);
+                    ma_sound_set_volume(v.sound.get(), v.base_volume);
+                }
+                continue;
+            }
+            list.emplace_back(e, &v);
+        }
+        std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) { return a.first.bits() < b.first.bits(); });
+        // Round-robin: never-traced voices first, then from the cursor onwards.
+        std::stable_partition(list.begin(), list.end(), [](const auto& p) { return !p.second->occl_traced; });
+        const auto first_traced = std::find_if(list.begin(), list.end(), [](const auto& p) { return p.second->occl_traced; });
+        const auto pivot = std::find_if(first_traced, list.end(), [&](const auto& p) { return p.first.bits() > ac.cursor; });
+        std::rotate(first_traced, pivot, list.end());
+        std::uint32_t budget = options.max_occlusion_rays;
+        for (auto& [e, vp] : list) {
+            Voice& v = *vp;
+            const std::uint32_t n = v.occl_radius > 0.0f ? 5u : 1u;
+            if (budget < n) break;
+            budget -= n;
+            ac.rays += n;
+            if (v.occl_traced) ac.cursor = e.bits();
+            const ma_vec3f sp = ma_sound_get_position(v.sound.get());
+            const math::Vec3 src{sp.x, sp.y, sp.z};
+            std::array<math::Vec3, 5> pts{src, src, src, src, src};
+            if (n == 5) {
+                math::Vec3 dir = src - listener;
+                dir = math::length(dir) > 1e-6f ? math::normalize(dir) : math::Vec3{0, 0, -1};
+                const math::Vec3 ref = std::abs(dir.y) < 0.9f ? math::Vec3{0, 1, 0} : math::Vec3{1, 0, 0};
+                const math::Vec3 u = math::normalize(math::cross(dir, ref));
+                const math::Vec3 w = math::cross(dir, u);
+                pts[1] = src + u * v.occl_radius;
+                pts[2] = src - u * v.occl_radius;
+                pts[3] = src + w * v.occl_radius;
+                pts[4] = src - w * v.occl_radius;
+            }
+            math::Vec3 energy{0, 0, 0};
+            std::uint32_t blocked = 0;
+            for (std::uint32_t r = 0; r < n; ++r) {
+                bool b = false;
+                const math::Vec3 t = trace(s, listener, pts[r], listener_e, e, b);
+                energy = energy + t;
+                blocked += b ? 1u : 0u;
+            }
+            energy = energy * (1.0f / static_cast<float>(n));
+            const float a_lo = std::sqrt(energy.x), a_mid = std::sqrt(energy.y);
+            const float cut = a_lo > 1e-6f ? detail::tilt_cutoff(a_mid / a_lo) : detail::kMinOcclusionCutoffHz;
+            v.occl_blocked = static_cast<float>(blocked) / static_cast<float>(n);
+            // Gain matches the low band; the filter's own loss at 400 Hz is compensated.
+            v.occl_gain_target = std::min(1.0f, a_lo / detail::lowpass1_gain(detail::kBandLowHz, cut));
+            v.occl_cut_target = cut > 0.0f ? cut : detail::kNoFilterHz;
+            if (!v.occl_traced) {
+                v.occl_gain = v.occl_gain_target;
+                v.occl_cut = v.occl_cut_target;
+                v.occl_traced = true;
+            }
+        }
+        if (!list.empty() && ac.rays > 0 && ac.cursor >= list.back().first.bits()) ac.cursor = 0;
+        const float k = detail::smoothing(dt, options.occlusion_smoothing);
+        for (auto& [e, vp] : list) {
+            Voice& v = *vp;
+            if (!v.occl_traced) continue;
+            v.occl_gain += (v.occl_gain_target - v.occl_gain) * k;
+            const float lc = std::log2(v.occl_cut), lt = std::log2(v.occl_cut_target);
+            v.occl_cut = std::exp2(lc + (lt - lc) * k);
+            if (std::abs(v.occl_gain - v.occl_gain_target) < 1e-4f) v.occl_gain = v.occl_gain_target;
+            if (std::abs(lc - lt) < 1e-3f) v.occl_cut = v.occl_cut_target;
+            set_voice_filter(v, v.occl_cut >= detail::kNoFilterHz * 0.99f ? 0.0f : v.occl_cut);
+            ma_sound_set_volume(v.sound.get(), v.base_volume * v.occl_gain);
+            if (v.occl_gain < 0.99f || v.lpf) ++ac.occluded;
+        }
     }
 
     Status start_voice(Entity e, const AudioSourceComponent& c, const math::Mat4& world) {
@@ -531,18 +837,20 @@ struct AudioEngine::Impl {
         it->second.priority = std::clamp(c.priority, 0, 255);
         it->second.virt = false;
         ma_sound* snd = it->second.sound.get();
-        configure(snd, c, &world);
+        configure(it->second, c, &world);
         ma_sound_seek_to_pcm_frame(snd, 0);
         start_sound(snd, false);
         return {};
     }
 
-    void update_listener(scene::Scene& s) {
+    Entity update_listener(scene::Scene& s) {
+        Entity listener;
         bool found = false;
         math::Mat4 m;
         s.world().each<AudioListenerComponent>([&](Entity e, AudioListenerComponent& l) {
             if (found || !l.enabled) return;
             m = s.world_matrix(e);
+            listener = e;
             found = true;
         });
         if (!found) {
@@ -556,6 +864,7 @@ struct AudioEngine::Impl {
             });
             if (!best.is_null()) {
                 m = s.world_matrix(best);
+                listener = best;
                 found = true;
             }
         }
@@ -565,11 +874,12 @@ struct AudioEngine::Impl {
         ma_engine_listener_set_position(&engine, 0, m[3].x, m[3].y, m[3].z);
         ma_engine_listener_set_direction(&engine, 0, fwd.x, fwd.y, fwd.z);
         ma_engine_listener_set_world_up(&engine, 0, up.x, up.y, up.z);
+        return listener;
     }
 
-    void update(scene::Scene& s) {
+    void update(scene::Scene& s, float dt) {
         ++frame;
-        update_listener(s);
+        const Entity listener_e = update_listener(s);
         s.world().each<AudioSourceComponent>([&](Entity e, AudioSourceComponent& c) {
             const math::Mat4 world = s.world_matrix(e);
             auto it = voices.find(e);
@@ -585,7 +895,7 @@ struct AudioEngine::Impl {
                 }
                 v.seen = frame;
                 v.priority = std::clamp(c.priority, 0, 255);
-                configure(v.sound.get(), c, &world);
+                configure(v, c, &world);
                 return;
             }
             if (c.play_on_start && !c.clip.empty() && autostarted.insert(e).second) {
@@ -605,6 +915,12 @@ struct AudioEngine::Impl {
             else ++it;
         }
         reap_one_shots();
+        const ma_vec3f lp = ma_engine_listener_get_position(&engine, 0);
+        const math::Vec3 listener{lp.x, lp.y, lp.z};
+        dt = std::isfinite(dt) ? std::clamp(dt, 0.0f, 1.0f) : 0.0f;
+        update_occlusion(s, listener_e, listener, dt);
+        update_zones(s, listener, dt);
+        refresh_effects();
         arbitrate();
     }
 
@@ -686,7 +1002,7 @@ bool AudioEngine::has_device() const noexcept { return impl_->device; }
 std::uint32_t AudioEngine::sample_rate() const noexcept { return ma_engine_get_sample_rate(&impl_->engine); }
 std::uint32_t AudioEngine::channels() const noexcept { return ma_engine_get_channels(&impl_->engine); }
 
-void AudioEngine::update(scene::Scene& scene) { impl_->update(scene); }
+void AudioEngine::update(scene::Scene& scene, float dt) { impl_->update(scene, dt); }
 
 void AudioEngine::stop_all() {
     impl_->release_all();
@@ -696,6 +1012,7 @@ void AudioEngine::stop_all() {
         set_bus_reverb_send(static_cast<Bus>(i), 0.0f);
     }
     set_reverb_decay(0.7f);
+    impl_->reset_acoustics();
 }
 
 Status AudioEngine::play(scene::Scene& scene, Entity e) {
@@ -877,7 +1194,7 @@ void AudioEngine::set_bus_lowpass(Bus b, float cutoff_hz) {
     const auto i = static_cast<std::size_t>(b);
     if (i >= kBusCount) return;
     impl_->lowpass[i] = std::isfinite(cutoff_hz) ? std::max(0.0f, cutoff_hz) : 0.0f;
-    impl_->apply_lowpass(i);
+    impl_->refresh_effects();
 }
 float AudioEngine::bus_lowpass(Bus b) const {
     const auto i = static_cast<std::size_t>(b);
@@ -887,7 +1204,7 @@ void AudioEngine::set_bus_reverb_send(Bus b, float send) {
     const auto i = static_cast<std::size_t>(b);
     if (i == 0 || i >= kBusCount) return;
     impl_->send[i] = std::isfinite(send) ? std::clamp(send, 0.0f, 1.0f) : 0.0f;
-    impl_->apply_send(i);
+    impl_->refresh_effects();
 }
 float AudioEngine::bus_reverb_send(Bus b) const {
     const auto i = static_cast<std::size_t>(b);
@@ -895,8 +1212,7 @@ float AudioEngine::bus_reverb_send(Bus b) const {
 }
 void AudioEngine::set_reverb_decay(float decay) {
     impl_->decay = std::isfinite(decay) ? std::clamp(decay, 0.0f, 0.95f) : 0.7f;
-    for (std::size_t c = 0; c < Impl::kCombs; ++c)
-        if (impl_->comb_ok[c]) ma_delay_node_set_decay(&impl_->combs[c], impl_->decay);
+    impl_->refresh_effects();
 }
 float AudioEngine::reverb_decay() const { return impl_->decay; }
 
@@ -929,6 +1245,27 @@ AudioStats AudioEngine::stats() const {
     return st;
 }
 
+AcousticState AudioEngine::acoustics() const {
+    const auto& ac = impl_->ac;
+    AcousticState st;
+    st.zone = ac.zone;
+    st.zone_weight = ac.zone_w;
+    st.underwater = ac.underwater;
+    st.decay = ac.decay;
+    st.send = ac.send;
+    st.lowpass = ac.lowpass;
+    st.rays = ac.rays;
+    st.occluded = ac.occluded;
+    return st;
+}
+
+std::optional<OcclusionState> AudioEngine::occlusion(Entity e) const {
+    const auto it = impl_->voices.find(e);
+    if (it == impl_->voices.end() || !it->second.sound || !it->second.occl_traced) return std::nullopt;
+    const Voice& v = it->second;
+    return OcclusionState{v.occl_blocked, v.occl_gain, v.lpf ? v.occl_cut : 0.0f};
+}
+
 // ---- systems and binding ------------------------------------------------------------------------
 
 namespace {
@@ -952,9 +1289,9 @@ void add_audio_systems(gameplay::Simulation& sim, AudioEngine& engine) {
     sim.add_system("audio.bind", gameplay::Phase::PreUpdate, [a](scene::Scene& scene, const gameplay::FrameTime&) {
         if (engine_of(scene) != a) bind(scene, a);
     });
-    sim.add_system("audio.update", gameplay::Phase::PostUpdate, [a](scene::Scene& scene, const gameplay::FrameTime&) {
+    sim.add_system("audio.update", gameplay::Phase::PostUpdate, [a](scene::Scene& scene, const gameplay::FrameTime& t) {
         if (engine_of(scene) != a) bind(scene, a);
-        a->update(scene);
+        a->update(scene, t.dt);
     });
 }
 

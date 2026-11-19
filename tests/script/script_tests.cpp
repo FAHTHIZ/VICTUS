@@ -1059,6 +1059,19 @@ return { audio.lowpass("Sfx"), audio.reverb_send("Ambient"), audio.reverb_decay(
     CHECK((*a)->reverb_decay() == doctest::Approx(0.5f));
     CHECK(fx.value()[std::size_t{0}].as_number() == doctest::Approx(800.0));
     CHECK(fx.value()[std::size_t{3}].as_number() == doctest::Approx(0.0));
+    // Acoustics: the listener (origin) is inside a reverb zone; an entity without a voice has no occlusion.
+    const Entity hall = s.create("Hall");
+    s.world().add<audio::ReverbZoneComponent>(hall);
+    for (int i = 0; i < 60; ++i) sim.tick(s, 1.0f / 60);
+    auto ac = host->eval(R"lua(
+local st = audio.acoustics()
+return { st.zone ~= nil, st.zone_weight, st.decay, st.zone:audio_occlusion() == nil }
+)lua", &s);
+    REQUIRE(ac.ok());
+    CHECK(ac.value()[std::size_t{0}].as_bool());
+    CHECK(ac.value()[std::size_t{1}].as_number() > 0.9);
+    CHECK(ac.value()[std::size_t{2}].as_number() > 0.6);
+    CHECK(ac.value()[std::size_t{3}].as_bool());
     auto bad = host->eval("audio.set_volume('Nope', 1)", &s);
     REQUIRE_FALSE(bad.ok());
     CHECK(bad.error().message.find("unknown audio bus") != std::string::npos);
