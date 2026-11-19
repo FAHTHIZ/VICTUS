@@ -1563,3 +1563,10 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 - Verified (Debug, -Werror, lavapipe + offscreen SDL): new `victus_gpu_tests` case: a roof 6 m up over the left half removes over 90% of the drops on that side while the right side keeps over 60%; with occlusion off the roof shelters nothing; under rain with wetness 1 the exposed ground darkens by more than 15 levels and the sheltered ground changes by less than 2, and without the map both halves darken; preset and sanitise checks. All 6 weather cases pass. Full ctest 38/38; with `VICTUS_REQUIRE_GPU=1` reference scenes, CLI render compare, device loss and perf budgets pass. clang-tidy clean on scene_renderer.cpp; `compile_shaders.py --check` up to date. Visual check of the roof renders.
 - Limits: hard edges, wetness only masked while it rains, far geometry beyond the map is exposed (see KNOWN_LIMITATIONS).
 - Next: splashes and ripples, fog on transparents and particles, collision-triggered / GPU-source sub-emitters, 3D texture uploads.
+
+## 2026-11-19 — 3D texture uploads (ADR-0115)
+
+- Built: `CommandBuffer::upload_texture` uploads the whole mip volume of `Tex3D` textures and `Device::read_texture` reads every slice back; uploads with a mip or layer the texture lacks, or with fewer bytes than the region needs (uncompressed formats), are logged and skipped; staging-buffer creation and map failures no longer dereference null.
+- Verified (Debug, -Werror, lavapipe + offscreen SDL): new `gpu_texture_3d_tests.cpp` (2 cases): a 4x3x5 RGBA8 volume round-trips byte for byte including the last slice; a one-slice upload, a missing mip and a layer on a volume are refused (no upload counted, contents unchanged); a 2D upload still round-trips. Full ctest 38/38; with `VICTUS_REQUIRE_GPU=1` reference scenes, CLI render compare, device loss and perf budgets pass. clang-tidy clean on rhi_sdl.cpp.
+- Limits: no partial (single-slice) volume uploads.
+- Next: baked noise volumes for clouds, splashes and ripples, fog on transparents and particles.

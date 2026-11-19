@@ -972,6 +972,14 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0115 — Whole-volume 3D texture uploads and checked uploads in the SDL backend
+
+- Status: Accepted (2026-11-19)
+- Context: `CommandBuffer::upload_texture` always uploaded a region of depth 1 and `Device::read_texture` read one slice, so a `Tex3D` texture only received its first slice (ADR-0111 chose procedural value noise over baked Perlin-Worley volumes for this reason). Uploads also trusted the caller: a short pixel span made the GPU copy read past the staging data, and a bad mip or layer went straight to the driver. SDL_GPU describes a 3D copy with `SDL_GPUTextureRegion::d` (depth) and uses `layer` only for arrays and cubes ([SDL_GPUTextureRegion](https://wiki.libsdl.org/SDL3/SDL_GPUTextureRegion)).
+- Decision: for `Tex3D`, uploads cover the whole mip volume (`d = max(1, depth >> mip)`, data x fastest, then y, then z) and readback returns every slice; layers must be 0. Every upload checks the mip and layer against the texture and, for uncompressed formats, that the data covers the region; failures are logged and skipped (no upload counted). Transfer-buffer creation and mapping failures are logged instead of dereferencing null.
+- Alternatives: per-slice uploads through `layer` (does not match SDL's 3D addressing); returning a `Result` from `upload_texture` (an API change across every caller; logging matches `upload_buffer`).
+- Consequences: baked 3D textures (noise volumes, LUTs) now work on the SDL backend; uploading one slice of a volume at a time is not supported.
+
 ## ADR-0114 — Rain occlusion map: no rain and no wetness under roofs
 
 - Status: Accepted (2026-11-19)
