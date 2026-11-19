@@ -27,7 +27,7 @@ No programming. Every step happens in VICTUS Studio.
 4. **Add something new.** Select any object, choose **Add Component > Behaviours** and pick one, such as **Patrol**, **Chase**, **Hazard**, **Collectible** or **Spawner**. It works as soon as you press Play.
 5. **Ship it.** **File > Export Game** writes a standalone build you can send to friends.
 
-In the Inspector, **Make it a...** turns any selected object into a Player, Enemy, Coin, Hazard, Checkpoint, Goal, Moving Platform, Key, Door or Sign with one click. The **Getting Started** panel walks you through these steps and ticks each one off. It can also do a step for you, and its lessons build a whole first 2D or 3D game with you in seven steps.
+In the Inspector, **Make it a...** turns any selected object into a Player, Enemy, Coin, Hazard, Checkpoint, Goal, Moving Platform, Key, Door, Sign, Switch or Jump Pad with one click. Selecting an object draws what it will do right in the viewport: patrol routes, lift paths, chase ranges and jump arcs. The **Getting Started** panel walks you through these steps and ticks each one off. It can also do a step for you, and its lessons build a whole first 2D or 3D game with you in seven steps.
 
 <table>
 <tr>
@@ -50,15 +50,15 @@ Behaviours are ready-made gameplay components, similar to GDevelop behaviors and
 | Top-Down Movement | Patrol | Checkpoint | Goal |
 | Camera Follow | Chase | Health | Spawner |
 | Projectile | Shooter | Lifetime | Events for scripts and graphs |
-| Moving Platform | Jump Pad | Trigger (signs, switches, keys and doors) | |
+| Moving Platform | Jump Pad | Trigger (signs, switches, keys and doors) | Pause (Escape) |
 
-Every behaviour sends events (`collected`, `died`, `game_won` and others), so scripts and visual graphs can react to them later without replacing them. Reference: [Make a game without code](docs/USER_GUIDE.md).
+Every behaviour sends events (`collected`, `died`, `bounced`, `triggered`, `game_won` and others), so scripts and visual graphs can react to them later without replacing them. Reference: [Make a game without code](docs/USER_GUIDE.md).
 
 ## What is inside
 
 | Area | What you get |
 |---|---|
-| **Studio** | Start screen with templates and samples, docked layouts, gizmos, undo and redo, searchable Add Component, asset browser with drag-and-drop import, play-in-editor, Problems panel, command palette, Getting Started guide, one-click export |
+| **Studio** | Start screen with templates and samples, docked layouts you can save under your own names, gizmos, undo and redo, searchable Add Component, asset browser with drag-and-drop import, play-in-editor, Problems panel, command palette, Getting Started guide, one-click export |
 | **Rendering** | SDL_GPU (Vulkan, Metal, D3D12) render graph, clustered forward PBR, cascaded shadows, SSAO, IBL and sky, reflection probes, TAA and temporal upscaling, bloom, auto exposure, volumetric fog and clouds, water, decals, terrain and foliage, GPU particles, LODs, occlusion culling, quality tiers |
 | **2D** | Sprite batching, sprite animation, tilemaps with autotiling, 2D lights, Box2D physics, one-way platforms |
 | **Gameplay** | Archetype ECS, prefabs, scenes with stable IDs, input actions with gamepad support, character controllers, Jolt physics and joints, Recast/Detour navigation, behaviour-tree AI with perception, save games, localisation, in-game UI |

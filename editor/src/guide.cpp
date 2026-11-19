@@ -125,7 +125,7 @@ constexpr HelpTopic kTopics[] = {
      "- Hazard: hurts what touches it. Tick Stompable so the player can jump on it.\n"
      "- Collectible: a coin, heart or extra life that disappears when picked up.\n"
      "- Health, Checkpoint, Goal, Spawner, Shooter, Projectile and Lifetime.\n"
-     "- Game Rules: score, lives, a timer and the win and lose screens.\n\n"
+     "- Game Rules: score, lives, a timer, the win and lose screens, pausing with Escape, and an optional title screen (set Title).\n\n"
      "The No-Code Platformer template is a whole level made only from behaviours. Click any object in it to see "
      "how it works.",
      "behaviour behavior no code platformer movement patrol chase hazard collectible coin enemy health checkpoint "

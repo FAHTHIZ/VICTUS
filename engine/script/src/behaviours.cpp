@@ -208,6 +208,10 @@ void register_behaviour_components() {
             .field(&GR::lose_message, "lose_message")
             .field(&GR::carry_over, "carry_over",
                    {.tooltip = "Keep score, lives and time when a Goal loads the next level"})
+            .field(&GR::allow_pause, "allow_pause", {.tooltip = "Escape or the gamepad's Start button pauses and resumes"})
+            .field(&GR::pause_message, "pause_message")
+            .field(&GR::title, "title", {.tooltip = "A title screen shown before the game starts; empty = start straight away"})
+            .field(&GR::start_prompt, "start_prompt", {.tooltip = "Under the title; empty = \"Press Space to start\""})
             .commit();
     });
 }
@@ -1263,13 +1267,14 @@ void show_message(Scene& s, const std::string& text) {
         if (auto* t = s.world().get<gameui::UiTextComponent>(c); t && t->text != text) t->text = text;
 }
 
-// The first key bound to "interact", for prompts ("Press E").
-std::string interact_key(ScriptHost::Impl& h) {
-    if (const auto* a = h.options.input_map.find("interact"))
+// The first key bound to an action, for prompts ("Press E").
+std::string key_for(ScriptHost::Impl& h, std::string_view action, const char* fallback) {
+    if (const auto* a = h.options.input_map.find(action))
         for (const auto& bnd : a->positive)
             if (bnd.kind == gameplay::InputBinding::Kind::Key) return gameplay::binding_to_string(bnd);
-    return "Interact";
+    return fallback;
 }
+std::string interact_key(ScriptHost::Impl& h) { return key_for(h, "interact", "Interact"); }
 
 void triggers(ScriptHost::Impl& h, Scene& s, TagCache& tags, std::vector<Entity>& doomed) {
     std::vector<Entity> list;
@@ -1602,6 +1607,20 @@ void rules_tick(ScriptHost::Impl& h, Scene& s, float dt) {
         h.behaviours.entry = ScriptHost::Impl::Behaviours::Carry{g->score, g->lives_left, g->elapsed};
         if (g->show_hud) build_hud(s, r);
         g = s.world().get<GameRulesComponent>(r);
+        if (!g->title.empty() && !h.behaviours.title_shown) {
+            h.behaviours.title_shown = true;
+            g->showing_title = true;
+            gameplay::set_game_paused(s, true);
+            g = s.world().get<GameRulesComponent>(r);
+            set_text(s, g->banner_text, g->title, true);
+            auto& b = h.behaviours;
+            b.message = g->start_prompt.empty() ? "Press " + key_for(h, "jump", "Jump") + " to start" : g->start_prompt;
+            b.message_left = 1e9f;
+            b.message_owner = Uuid{};
+            b.message_shown = true;
+            show_message(s, b.message);
+            return;
+        }
     }
     if (g->state == GameState::Playing) {
         g->elapsed += dt;
@@ -1719,6 +1738,36 @@ void behaviours_fixed_update(ScriptHost::Impl& h, Scene& s, float dt) {
     platforms_move(s, dt, tags, active);
     ai_movement(s, pw, dt, tags, active);
     projectiles_move(s, dt);
+}
+
+void behaviours_pause(ScriptHost::Impl& h, Scene& s) {
+    const bool paused = gameplay::game_paused(s);
+    if (!paused && !any_behaviour(s)) return;
+    const Entity r = rules_entity(s);
+    auto* g = r.is_null() ? nullptr : s.world().get<GameRulesComponent>(r);
+    if (g && g->showing_title) {
+        if (!action_pressed(h, h.default_input, "jump") && !action_pressed(h, h.default_input, "fire") &&
+            !action_pressed(h, h.default_input, "interact"))
+            return;
+        g->showing_title = false;
+        set_text(s, g->banner_text, std::string{}, false);
+        h.behaviours.message_left = 0;
+        gameplay::set_game_paused(s, false);
+        gameplay::emit_event(s, "game_started", Value::object(), r);
+        return;
+    }
+    if (!g || !g->initialised || !g->allow_pause || g->state != GameState::Playing) {
+        if (paused) gameplay::set_game_paused(s, false);
+        return;
+    }
+    if (!action_pressed(h, h.default_input, "pause")) return;
+    gameplay::set_game_paused(s, !paused);
+    g = s.world().get<GameRulesComponent>(r);
+    // rules_tick does not run while paused, so the banner is set here; it hides itself again on
+    // the first frame after resuming.
+    if (!paused) set_text(s, g->banner_text, g->pause_message, true);
+    else set_text(s, g->banner_text, std::string{}, false);
+    gameplay::emit_event(s, paused ? "resumed" : "paused", Value::object(), r);
 }
 
 void behaviours_update(ScriptHost::Impl& h, Scene& s, float dt) {

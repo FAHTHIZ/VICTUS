@@ -294,7 +294,14 @@ struct GameRulesComponent {
     // When a Goal loads another scene, that scene's Game Rules start with this score, lives and
     // time instead of fresh ones. Game over restarts the level with the score it was entered with.
     bool carry_over{true};
+    bool allow_pause{true};       // the Pause control (Escape / Start) pauses and resumes
+    std::string pause_message{"Paused"};
+    // A title screen: shown big over the paused game until the player presses Jump, Fire or
+    // Interact. Only once per play session (not after a restart or on the next level).
+    std::string title;
+    std::string start_prompt;     // empty = "Press Space to start"
     // runtime
+    bool showing_title{false};
     float score{0};
     std::uint32_t lives_left{0};
     float elapsed{0};

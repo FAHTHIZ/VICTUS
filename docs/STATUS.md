@@ -1715,3 +1715,15 @@ Verified: `studio workspace: named layouts keep panels and docking and survive r
 Built: the Inspector draws Inventory (slots, stack size, editable item rows, + Add Item), Timers (name, time left, repeat, paused) and Attributes (value, base, active effects) instead of leaving them invisible; Inventory is offered in Add Component under Behaviours.
 
 Verified: `studio inspector: inventories, timers and attributes are shown and items can be added`, a Studio screenshot with a Player carrying items and a timer.
+
+## 2026-11-19 — Pausing
+
+Built: `gameplay::GamePause` world resource with `game_paused` / `set_game_paused`. While paused, `Simulation::tick` runs PreUpdate (input, game UI, networking) and PostUpdate with dt 0 only, and game time stops. A new PreUpdate system `script.pause` lets Game Rules (`allow_pause`, `pause_message`) toggle it with the `pause` action and shows the message in the banner; leaving the Playing state always unpauses.
+
+Verified: `gameplay: a paused game runs only PreUpdate and PostUpdate, with no time passing`, `behaviours: the pause control freezes the game and resumes it`, all 114 script tests.
+
+## 2026-11-19 — Title screen
+
+Built: Game Rules Title and Start Prompt. The game opens paused on the title banner with the prompt in the message box; jump, fire or interact starts it and emits `game_started`. Pause is ignored while the title shows.
+
+Verified: `behaviours: a title screen holds the game until the player presses Space`; all script, project and export tests; full ctest before this change passed.

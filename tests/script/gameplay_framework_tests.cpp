@@ -5,6 +5,7 @@
 
 #include "doctest.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -266,4 +267,35 @@ TEST_CASE("gameplay framework: builtin systems drive timers and effects") {
     for (int i = 0; i < 60; ++i) sim.tick(s, 1.0f / 60.0f);
     CHECK_FALSE(timer_remaining(s, e, "done").has_value());
     CHECK(attr(s, e, "health") == doctest::Approx(20).epsilon(0.02));
+}
+
+TEST_CASE("gameplay: a paused game runs only PreUpdate and PostUpdate, with no time passing") {
+    Scene s;
+    Simulation sim;
+    add_builtin_systems(sim);
+    std::vector<std::string> ran;
+    float post_dt = -1;
+    sim.add_system("probe.pre", Phase::PreUpdate, [&](Scene&, const FrameTime&) { ran.push_back("pre"); });
+    sim.add_system("probe.fixed", Phase::FixedUpdate, [&](Scene&, const FrameTime&) { ran.push_back("fixed"); });
+    sim.add_system("probe.update", Phase::Update, [&](Scene&, const FrameTime&) { ran.push_back("update"); });
+    sim.add_system("probe.post", Phase::PostUpdate, [&](Scene&, const FrameTime& t) {
+        ran.push_back("post");
+        post_dt = static_cast<float>(t.dt);
+    });
+    const Entity e = s.create("Spinner");
+    s.world().add<RotatorComponent>(e);
+    CHECK_FALSE(game_paused(s));
+    set_game_paused(s, true);
+    CHECK(game_paused(s));
+    sim.tick(s, 1.0f / 30);
+    CHECK(ran == std::vector<std::string>{"pre", "post"});
+    CHECK(post_dt == 0);
+    CHECK(sim.time().time == doctest::Approx(0));
+    CHECK(s.world().get<scene::Transform>(e)->rotation.w == doctest::Approx(1)); // did not spin
+    set_game_paused(s, false);
+    ran.clear();
+    sim.tick(s, 1.0f / 30);
+    CHECK(std::count(ran.begin(), ran.end(), "fixed") >= 1);
+    CHECK(std::count(ran.begin(), ran.end(), "update") == 1);
+    CHECK(s.world().get<scene::Transform>(e)->rotation.w < 1);
 }

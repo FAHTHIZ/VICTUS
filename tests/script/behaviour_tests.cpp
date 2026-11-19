@@ -855,3 +855,70 @@ TEST_CASE("behaviours: press-to-use triggers wait for the interact key") {
     g.hold("E", 5);
     CHECK(fired == 2);
 }
+
+TEST_CASE("behaviours: the pause control freezes the game and resumes it") {
+    Game g;
+    g.ground_2d({0, -0.5f}, {60, 1});
+    const Entity p = g.player_2d({0, 3});
+    const Entity rules = g.scene.create("Rules");
+    g.scene.world().add<GameRulesComponent>(rules);
+    std::vector<std::string> events;
+    gameplay::listen(g.scene, "", [&](Scene&, const gameplay::GameplayEvent& ev) { events.push_back(ev.name); });
+    g.run(3);
+    const float y0 = g.pos(p).y;
+    g.hold("Escape", 2);
+    CHECK(gameplay::game_paused(g.scene));
+    const float elapsed = g.scene.world().get<GameRulesComponent>(rules)->elapsed;
+    const Entity banner = g.scene.find_by_name("Banner");
+    REQUIRE_FALSE(banner.is_null());
+    CHECK(g.scene.world().get<gameui::UiTextComponent>(banner)->text == "Paused");
+    CHECK(g.scene.world().get<gameui::UiRectComponent>(banner)->visible);
+    const float y1 = g.pos(p).y;
+    CHECK(y1 == doctest::Approx(y0)); // paused on the press itself
+    g.hold("D", 30);
+    CHECK(g.pos(p).y == doctest::Approx(y1)); // frozen in the air, not moving right either
+    CHECK(g.pos(p).x == doctest::Approx(0).epsilon(0.01));
+    CHECK(g.scene.world().get<GameRulesComponent>(rules)->elapsed == doctest::Approx(elapsed));
+    g.hold("Escape", 2);
+    CHECK_FALSE(gameplay::game_paused(g.scene));
+    g.run(30);
+    CHECK(g.pos(p).y < y1);
+    CHECK_FALSE(g.scene.world().get<gameui::UiRectComponent>(banner)->visible);
+    CHECK(std::count(events.begin(), events.end(), "paused") == 1);
+    CHECK(std::count(events.begin(), events.end(), "resumed") == 1);
+    // Switched off, Escape does nothing.
+    g.scene.world().get<GameRulesComponent>(rules)->allow_pause = false;
+    g.hold("Escape", 2);
+    CHECK_FALSE(gameplay::game_paused(g.scene));
+}
+
+TEST_CASE("behaviours: a title screen holds the game until the player presses Space") {
+    Game g;
+    g.ground_2d({0, -0.5f}, {60, 1});
+    const Entity p = g.player_2d({0, 0.6f});
+    const Entity rules = g.scene.create("Rules");
+    g.scene.world().add<GameRulesComponent>(rules).title = "Slime Quest";
+    std::vector<std::string> events;
+    gameplay::listen(g.scene, "", [&](Scene&, const gameplay::GameplayEvent& ev) { events.push_back(ev.name); });
+    g.run(5);
+    CHECK(gameplay::game_paused(g.scene));
+    const Entity banner = g.scene.find_by_name("Banner");
+    REQUIRE_FALSE(banner.is_null());
+    CHECK(g.scene.world().get<gameui::UiTextComponent>(banner)->text == "Slime Quest");
+    const Entity m = g.scene.find_by_name("Message (Trigger)");
+    REQUIRE_FALSE(m.is_null());
+    const Entity box = g.scene.children(m).front();
+    CHECK(g.scene.world().get<gameui::UiRectComponent>(box)->visible);
+    CHECK(g.scene.world().get<gameui::UiTextComponent>(g.scene.children(box).front())->text == "Press Space to start");
+    g.hold("D", 20);
+    CHECK(g.pos(p).x == doctest::Approx(0).epsilon(0.01)); // nothing moves on the title
+    g.hold("Escape", 2); // pause does nothing on the title either
+    CHECK(gameplay::game_paused(g.scene));
+    g.hold("Space", 2);
+    CHECK_FALSE(gameplay::game_paused(g.scene));
+    CHECK(std::count(events.begin(), events.end(), "game_started") == 1);
+    g.hold("D", 30);
+    CHECK(g.pos(p).x > 1);
+    CHECK_FALSE(g.scene.world().get<gameui::UiRectComponent>(banner)->visible);
+    CHECK_FALSE(g.scene.world().get<gameui::UiRectComponent>(box)->visible);
+}

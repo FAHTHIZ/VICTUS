@@ -486,6 +486,14 @@ void bind_ai_tasks(scene::Scene& scene, ScriptHost::Impl& h) {
 
 } // namespace
 
+void ScriptHost::pre_update(scene::Scene& scene, const gameplay::InputSource* input) {
+    Impl& h = *impl_;
+    h.scene = &scene;
+    h.input = input;
+    h.default_input = input;
+    behaviours_pause(h, scene);
+}
+
 void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, const gameplay::InputSource* input) {
     VICTUS_PROFILE_SCOPE("script.update");
     Impl& h = *impl_;
@@ -950,6 +958,8 @@ Status ScriptHost::load_scene(scene::Scene& scene, std::string_view path, json::
 void add_script_systems(gameplay::Simulation& sim, ScriptHost& host) {
     gameplay::register_state_probe("script", script_probe);
     gameplay::Simulation* simp = &sim;
+    sim.add_system("script.pause", gameplay::Phase::PreUpdate,
+                   [&host, simp](scene::Scene& s, const gameplay::FrameTime&) { host.pre_update(s, simp->input); });
     sim.add_system("script.fixed_update", gameplay::Phase::FixedUpdate,
                    [&host, simp](scene::Scene& s, const gameplay::FrameTime& t) { host.fixed_update(s, t, simp->input); });
     sim.add_system("script.update", gameplay::Phase::Update,
