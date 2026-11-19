@@ -25,6 +25,7 @@ victus_add_module(render
         src/irradiance_bake.cpp
         src/gpu_context.cpp
         src/image.cpp
+        src/image_compare.cpp
         src/mesh.cpp
         src/mesh_optimize.cpp
         src/render_graph.cpp
@@ -37,4 +38,13 @@ victus_add_module(render
 # stb implementations are third-party code: compiled without VICTUS warning flags.
 add_library(victus_stb STATIC src/stb_impl.cpp)
 target_include_directories(victus_stb PUBLIC ${PROJECT_SOURCE_DIR}/third_party/stb)
-target_link_libraries(victus_render PUBLIC victus_stb PRIVATE victus_meshoptimizer)
+# NVIDIA FLIP (BSD-3-Clause, third_party/flip): third-party code, no VICTUS warning flags; always
+# optimised because the per-pixel filters are slow in Debug builds.
+add_library(victus_flip STATIC ${PROJECT_SOURCE_DIR}/third_party/flip/flip_impl.cpp)
+target_compile_features(victus_flip PRIVATE cxx_std_20)
+set_target_properties(victus_flip PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(victus_flip SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/third_party/flip)
+if(NOT MSVC)
+    target_compile_options(victus_flip PRIVATE -O2 -w)
+endif()
+target_link_libraries(victus_render PUBLIC victus_stb PRIVATE victus_meshoptimizer victus_flip)

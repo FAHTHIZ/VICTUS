@@ -97,6 +97,7 @@ victus_add_test(victus_render_tests
         render/atmosphere_tests.cpp
         render/light_clusters_tests.cpp
         render/mesh_lod_tests.cpp
+        render/image_compare_tests.cpp
     DEPS VICTUS::Render VICTUS::Shadercompiler
     LABELS render)
 target_compile_definitions(victus_render_tests PRIVATE VICTUS_SHADER_SOURCE_DIR="${PROJECT_SOURCE_DIR}/engine/render/shaders")
@@ -215,6 +216,15 @@ add_test(NAME victus_cli_determinism
         -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_determinism
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/determinism.cmake)
 set_tests_properties(victus_cli_determinism PROPERTIES LABELS "cli" TIMEOUT 300)
+
+# Perceptual capture/compare harness and render determinism (ADR-0102; skipped without a GPU).
+add_test(NAME victus_cli_render_compare
+    COMMAND ${CMAKE_COMMAND}
+        -DVICTUS_CLI=$<TARGET_FILE:victus_cli>
+        -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_render_compare
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/render_compare.cmake)
+set_tests_properties(victus_cli_render_compare PROPERTIES LABELS "cli;gpu" SKIP_REGULAR_EXPRESSION "VICTUS_COMPARE_SKIPPED"
+    TIMEOUT 600)
 
 # Device loss: the player and editor exit cleanly with a clear message when GPU operations keep
 # failing (injected with VICTUS_GPU_FAIL); the editor autosaves unsaved edits first.

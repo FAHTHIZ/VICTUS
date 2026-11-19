@@ -22,6 +22,10 @@ struct PlayerOptions {
     int width{0}, height{0};     // 0 = project settings
     std::uint64_t max_frames{0}; // 0 = until closed; >0 also makes time deterministic (1/60 s)
     std::string screenshot;      // PNG written after the last frame (requires max_frames)
+    // Frame sequence: with max_frames, every capture_every-th frame is written to
+    // capture_dir/frame_NNNNN.png (frame number from 1) for `victus compare` (ADR-0102).
+    fs::Path capture_dir;
+    std::uint32_t capture_every{1};
     bool fullscreen{false};
     // Interactive runs load textures and models on background jobs and upload them under a
     // per-frame budget (V.A.U.L.T., ADR-0087); fixed-frame, recorded and replayed runs always
@@ -63,6 +67,7 @@ struct PlayerOptions {
 
 struct PlayerReport {
     std::uint64_t frames{0};
+    std::uint64_t frames_captured{0}; // PNGs written to PlayerOptions::capture_dir
     double seconds{0};
     std::string backend;
     std::uint64_t script_errors{0};
