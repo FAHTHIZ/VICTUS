@@ -165,6 +165,8 @@ bool Editor::add_component(Entity e, std::string_view id) {
     auto before = capture(s, {s.uuid(e)});
     if (!add_component_raw(e, id)) return false;
     record_edit("Add " + kit::humanize(id), std::move(before));
+    if (const auto* schema = scene::find_schema(id); schema && schema->category == "Behaviours")
+        complete_guide_step(GuideStep::AddBehaviour);
     return true;
 }
 

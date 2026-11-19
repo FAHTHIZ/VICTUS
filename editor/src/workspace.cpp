@@ -99,7 +99,7 @@ const char* panel_hint(Panel p) noexcept {
     case Panel::InputActions:
         return "Keys and buttons mapped to game actions";
     case Panel::GettingStarted:
-        return "Six steps from an empty scene to an exported game";
+        return "Seven steps from an empty scene to an exported game";
     case Panel::Help:
         return "How-tos in plain words, with search";
     case Panel::ProjectSettings:

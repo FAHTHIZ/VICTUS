@@ -1618,3 +1618,8 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 - Built: `PatrolComponent::turn_at_walls` (default on) and `turn_at_ledges`, `ProjectileComponent::stop_at_walls` (default on). Solids are non-trigger 2D and 3D colliders that belong to no actor (characters, pickups, hazards, projectiles and behaviour-driven entities are skipped); one-way platforms count as ground for ledges but not as walls. The No-Code Platformer's slimes turn at ledges.
 - Verified (Debug, -Werror): new `victus_script_tests` case: a patrol with a 10 m offset stops between 1.3 and 1.6 m in front of a wall at x 2, walks through it with wall checks off, a ledge-aware patrol never passes the platform edge at x -3, a bullet aimed at a target behind the wall is destroyed and deals no damage, and one with `stop_at_walls` off hits the target. `victus_script_tests`, `victus_project_tests` and `victus_editor_tests` pass.
 - Limits: walls and ledges use the bounds test, so slopes and round shapes are treated as boxes.
+
+## 2026-11-19 — Getting Started teaches Behaviours
+
+- Built: a seventh Getting Started step, "Give it a behaviour" (shown fourth; enum values stay saved-preference bits and `guide_step_order()` sets the display order). It ticks off when any Behaviours component is added, and "Make it patrol" adds Patrol to the selection. A new Help topic, "Behaviours: gameplay without code", and the first-game topic recommends the No-Code Platformer.
+- Verified (Debug, -Werror, lavapipe): `victus_editor_tests` Getting Started case runs the new step, checks the Patrol component and the 6-of-7 count; visual check of the checklist ("0 of 7 done").

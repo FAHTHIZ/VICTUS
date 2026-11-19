@@ -95,7 +95,10 @@ inline constexpr UiScaleChoice kUiScales[] = {{"Compact", 0.9f},     {"Normal", 
 
 // Getting Started checklist steps (Help > Getting Started). Each completes from real editor
 // actions, never from opening the panel.
-enum class GuideStep : std::uint8_t { AddObject, MoveObject, EditSetting, Play, Save, Export, Count };
+// Values are bit positions in the saved preferences, so new steps go before Count; the checklist
+// shows them in guide_step_order().
+enum class GuideStep : std::uint8_t { AddObject, MoveObject, EditSetting, Play, Save, Export, AddBehaviour, Count };
+[[nodiscard]] std::span<const GuideStep> guide_step_order() noexcept;
 [[nodiscard]] const char* guide_step_title(GuideStep step) noexcept;
 
 // One built-in Help topic (Help > Help Topics): a plain-language how-to.
