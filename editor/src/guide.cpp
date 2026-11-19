@@ -528,7 +528,10 @@ void Editor::draw_help() {
     const bool stacked = avail.x < 560.0f * ui_scale_;
     const float list_w = stacked ? 0.0f : std::max(220.0f * ui_scale_, avail.x * 0.34f);
     ImGui::BeginChild("##helplist", ImVec2(list_w, stacked ? avail.y * 0.4f : 0.0f), ImGuiChildFlags_Borders);
-    if (help_focus_ > 0 && --help_focus_ == 0) ImGui::SetKeyboardFocusHere();
+    if (help_focus_ > 0) {
+        --help_focus_;
+        if (help_focus_ == 0) ImGui::SetKeyboardFocusHere();
+    }
     kit::search_input("##helpsearch", "Search help", help_query_);
     ImGui::Dummy(ImVec2(0, tk::kSpace2));
     const auto hits = find_help_topics(help_query_);
