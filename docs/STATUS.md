@@ -1663,3 +1663,8 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 
 - Built: `MovingPlatformComponent` (offset, speed, wait, smooth, once, wait_for_player, spin, player_tag), moved in the fixed step before physics. Platforms become kinematic bodies (a collider sized from the sprite or mesh is added if missing), so 2D and 3D characters ride them. Inspector role "Moving Platform"; the No-Code Platformer's fourth platform is now a lift.
 - Verified (Debug, -Werror): new `victus_script_tests` case (2D lift waits for the player, carries them and stays within its ends; 3D one-way trip carries a character; spin turns a quarter in a second); the No-Code Platformer template test rides the lift; studio roles test covers the new role.
+
+## 2026-11-19 — Viewport behaviour guides
+
+- Built: `Editor::behaviour_guides` draws, for selected entities, Patrol and Moving Platform routes (with the platform's outline at the far end; follows the live origin while playing) and Chase detect/lose circles, in the 2D and 3D viewports. `victus_editor --select NAME` now also frames the selection.
+- Verified (Debug, -Werror, lavapipe): new `victus_editor_tests` case (route endpoints, 96 circle segments for Chase, nothing for plain sprites, draws without errors); visual check on the No-Code Platformer lift.

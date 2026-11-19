@@ -610,6 +610,10 @@ public:
     // Adds the Behaviours for a role (and Game Rules / camera follow when the scene lacks them)
     // as one undoable edit; renames default-named objects. False when nothing had to change.
     bool make_role(scene::Entity e, Role role);
+    // World-space lines that show what an entity's Behaviours will do: Patrol and Moving Platform
+    // routes (with an outline where a platform ends up) and Chase ranges. `flat`: 2D (XY) view.
+    // Drawn in the viewport for the selection.
+    [[nodiscard]] std::vector<physics::DebugLine> behaviour_guides(scene::Entity e, bool flat);
     // Lessons (Getting Started panel). start_lesson saves the current scene when it can (refuses
     // when an unsaved, never-saved scene would be lost) and opens a new scene file for the lesson.
     bool start_lesson(Lesson l);

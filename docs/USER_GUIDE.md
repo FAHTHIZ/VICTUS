@@ -34,7 +34,7 @@ New to making games? The Getting Started panel offers two lessons, **2D platform
 
 The player is found by the tag "Player" or, if nothing has that tag, by its movement behaviour. Behaviours send events that scripts and graphs can react to with `on_event`: `damaged`, `healed`, `died`, `collected`, `checkpoint`, `score_changed`, `game_won`, `game_lost`, `life_lost`, `spawned`, `fired`, `stomped` and `goal_reached`.
 
-Touch is checked with bounding boxes, not exact shapes (see [Known limitations](KNOWN_LIMITATIONS.md)).
+Select an object with Patrol or Moving Platform and the viewport draws its route in blue, with an outline where a platform ends up; Chase shows its detect and give-up ranges as red circles. Touch is checked with bounding boxes, not exact shapes (see [Known limitations](KNOWN_LIMITATIONS.md)).
 
 ## Scripting
 
