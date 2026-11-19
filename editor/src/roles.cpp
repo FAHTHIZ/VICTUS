@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Inspector > "Make it a...": one click turns the selected object into a player, enemy, coin,
-// hazard, checkpoint, goal or moving platform by adding the Behaviours that role needs (ADR-0120), plus the scene
+// hazard, checkpoint, goal, moving platform, key, door or sign by adding the Behaviours that role needs (ADR-0120), plus the scene
 // pieces it depends on (Game Rules, a camera that follows the player). One undo step.
 #include "victus/editor/editor.hpp"
 #include "widgets.hpp"
@@ -29,7 +29,7 @@ struct RoleInfo {
     const char* tooltip;
 };
 
-constexpr std::array<RoleInfo, 7> kRoles = {{
+constexpr std::array<RoleInfo, 10> kRoles = {{
     {Role::Player, "Player", "Player", "Moves with the keyboard or a gamepad, has health and respawns. The camera follows it."},
     {Role::Enemy, "Enemy", "Enemy", "Walks back and forth and hurts the player; jump on it to defeat it."},
     {Role::Coin, "Coin", "Coin", "Adds 1 to the score when the player touches it."},
@@ -38,6 +38,9 @@ constexpr std::array<RoleInfo, 7> kRoles = {{
     {Role::Goal, "Goal", "Goal", "Reaching it wins the game."},
     {Role::MovingPlatform, "Moving Platform", "Platform",
      "Travels back and forth; whoever stands on it rides along. Set how far in Moving Platform > Offset."},
+    {Role::Key, "Key", "Key", "The player picks it up and carries it; a Door needs one to open."},
+    {Role::Door, "Door", "Door", "A solid door that opens when the player touches it carrying a Key."},
+    {Role::Sign, "Sign", "Sign", "Shows a message while the player stands next to it. Edit the text in Trigger > Message."},
 }};
 
 bool default_name(std::string_view n) {
@@ -69,7 +72,8 @@ bool Editor::make_role(Entity e, Role role) {
         if (camera.is_null() || cc.primary) camera = c;
     });
     w.each<script::CameraFollowComponent>([&](Entity c, script::CameraFollowComponent&) { follow = c; });
-    const bool wants_rules = role != Role::Hazard && role != Role::Checkpoint && role != Role::MovingPlatform;
+    const bool wants_rules = role != Role::Hazard && role != Role::Checkpoint && role != Role::MovingPlatform &&
+                            role != Role::Key && role != Role::Door && role != Role::Sign;
     const bool wants_follow = role == Role::Player && follow.is_null() && !camera.is_null() && camera != e;
     if (wants_follow) touched.push_back(s.uuid(camera));
     auto before = capture(s, touched);
@@ -155,6 +159,42 @@ bool Editor::make_role(Entity e, Role role) {
     case Role::MovingPlatform:
         if (!w.has<script::MovingPlatformComponent>(e)) {
             w.add<script::MovingPlatformComponent>(e).wait = 1.0f;
+            changed = true;
+        }
+        break;
+    case Role::Key:
+        if (!w.has<script::CollectibleComponent>(e)) {
+            auto& c = w.add<script::CollectibleComponent>(e);
+            c.kind = script::CollectibleKind::Item;
+            c.item = "Key";
+            changed = true;
+        }
+        break;
+    case Role::Door:
+        if (!w.has<script::TriggerComponent>(e)) {
+            auto& t = w.add<script::TriggerComponent>(e);
+            t.required_item = "Key";
+            t.action = script::TriggerAction::Remove;
+            t.message = "The door opens";
+            changed = true;
+        }
+        // Solid, so the player stops at it until it opens.
+        if (two_d && !w.has<physics::Collider2DComponent>(e)) {
+            physics::Collider2DComponent c;
+            if (const auto* sp = w.get<SpriteComponent>(e)) c.size = sp->size;
+            w.add<physics::Collider2DComponent>(e, c);
+            if (!w.has<physics::RigidBody2DComponent>(e)) w.add<physics::RigidBody2DComponent>(e).type = physics::BodyType::Static;
+            changed = true;
+        } else if (!two_d && !w.has<physics::ColliderComponent>(e)) {
+            w.add<physics::ColliderComponent>(e);
+            changed = true;
+        }
+        break;
+    case Role::Sign:
+        if (!w.has<script::TriggerComponent>(e)) {
+            auto& t = w.add<script::TriggerComponent>(e);
+            t.message = "Hello! Change this text in the Inspector (Trigger > Message).";
+            t.message_time = 0;
             changed = true;
         }
         break;

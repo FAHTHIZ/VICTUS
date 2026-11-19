@@ -28,7 +28,7 @@ using scene::Transform;
 const std::vector<std::string>& behaviour_names() {
     static const std::vector<std::string> names{"PlatformerMovement", "TopDownMovement", "CameraFollow", "Health",
                                                 "Hazard", "Collectible", "Spawner", "Patrol", "MovingPlatform", "Chase", "Projectile",
-                                                "Shooter", "Lifetime", "Checkpoint", "Goal", "GameRules"};
+                                                "Shooter", "Lifetime", "Checkpoint", "Goal", "Trigger", "GameRules"};
     return names;
 }
 
@@ -127,6 +127,7 @@ void register_behaviour_components() {
             .field(&MP::smooth, "smooth", {.tooltip = "Slow down and speed up gently at the ends"})
             .field(&MP::once, "once", {.tooltip = "Stop at the far end instead of coming back"})
             .field(&MP::wait_for_player, "wait_for_player", {.tooltip = "Start moving when the player first stands on it"})
+            .field(&MP::wait_for_trigger, "wait_for_trigger", {.tooltip = "Stay put until a Trigger (a switch) starts it"})
             .field(&MP::spin, "spin", {.min = -3600, .max = 3600, .speed = 1, .tooltip = "Turning speed in degrees per second (saws, fans)"})
             .field(&MP::player_tag, "player_tag")
             .commit();
@@ -171,6 +172,19 @@ void register_behaviour_components() {
             .field(&GO::scene, "scene", {.tooltip = "Scene to load, e.g. scenes/level2.vscene", .hint = "scene"})
             .field(&GO::require_all_collectibles, "require_all_collectibles", {.tooltip = "Only opens once every coin is collected"})
             .field(&GO::player_tag, "player_tag")
+            .commit();
+        using TR = TriggerComponent;
+        scene::Schema<TR>("Trigger", cat)
+            .field(&TR::player_tag, "player_tag")
+            .field(&TR::message, "message", {.tooltip = "Text shown at the bottom of the screen when the player touches it"})
+            .field(&TR::message_time, "message_time", {.min = 0, .max = 600, .speed = 0.1f, .tooltip = "Seconds; 0 = while touching"})
+            .field(&TR::required_item, "required_item", {.tooltip = "Item the player must carry, e.g. Key (from an Item collectible)"})
+            .field(&TR::consume_item, "consume_item", {.tooltip = "Use the item up"})
+            .field(&TR::locked_message, "locked_message", {.tooltip = "Shown without the item; empty = \"You need a ...\""})
+            .enumeration(&TR::action, "action", {"none", "start", "remove", "win"})
+            .field(&TR::target, "target", {.tooltip = "Name of the object to start or remove; empty = this object"})
+            .field(&TR::sound, "sound", {.tooltip = "Audio clip played when it fires", .hint = "audio"})
+            .field(&TR::once, "once", {.tooltip = "Only the first time"})
             .commit();
         using GR = GameRulesComponent;
         scene::Schema<GR>("GameRules", cat)
@@ -911,6 +925,7 @@ void platforms_move(Scene& s, float dt, TagCache& tags, bool active) {
             mp->has_origin = true;
         }
         if (!active) continue;
+        if (mp->wait_for_trigger && !mp->triggered) continue;
         if (mp->wait_for_player && !mp->started) {
             Box top = bounds_of(s, e);
             top.c.y += 0.1f; // standing on it, not only touching a side
@@ -1159,6 +1174,122 @@ void goals(ScriptHost::Impl& h, Scene& s, TagCache& tags) {
             else gameplay::emit_event(s, "game_won", Value::object(), g);
         }
     }
+}
+
+Entity hud_text(Scene& s, Entity parent, const char* name, Vec2 anchor, Vec2 pivot, Vec2 pos, Vec2 size, float font,
+                gameui::TextAlign align);
+
+constexpr const char* kMessageName = "Message (Trigger)";
+
+// A panel near the bottom of the screen (above a typical controls bar): canvas > Box > Text.
+void show_message(Scene& s, const std::string& text) {
+    const Entity root = s.find_by_name(kMessageName);
+    Entity box = root.is_null() || s.children(root).empty() ? Entity{} : s.children(root).front();
+    if (text.empty()) {
+        if (!box.is_null())
+            if (auto* r = s.world().get<gameui::UiRectComponent>(box)) r->visible = false;
+        return;
+    }
+    if (box.is_null()) {
+        if (!root.is_null()) s.destroy(root);
+        const Entity canvas_e = s.create(kMessageName);
+        gameui::UiCanvasComponent canvas;
+        canvas.sort_order = 55;
+        s.world().add<gameui::UiCanvasComponent>(canvas_e, canvas);
+        box = s.create("Box", canvas_e);
+        gameui::UiRectComponent r;
+        r.anchor_min = r.anchor_max = {0.5f, 1};
+        r.pivot = {0.5f, 1};
+        r.position = {0, -96};
+        r.size = {1000, 72};
+        s.world().add<gameui::UiRectComponent>(box, r);
+        gameui::UiPanelComponent panel;
+        panel.color = {0.06f, 0.07f, 0.1f, 0.82f};
+        s.world().add<gameui::UiPanelComponent>(box, panel);
+        (void)hud_text(s, box, "Text", {0.5f, 0.5f}, {0.5f, 0.5f}, {0, 0}, {960, 60}, 30, gameui::TextAlign::Center);
+    }
+    if (auto* r = s.world().get<gameui::UiRectComponent>(box)) r->visible = true;
+    for (const Entity c : s.children(box))
+        if (auto* t = s.world().get<gameui::UiTextComponent>(c); t && t->text != text) t->text = text;
+}
+
+void triggers(ScriptHost::Impl& h, Scene& s, TagCache& tags, float dt, std::vector<Entity>& doomed) {
+    std::vector<Entity> list;
+    s.world().each<TriggerComponent>([&](Entity e, TriggerComponent&) { list.push_back(e); });
+    if (list.empty()) return;
+    auto& b = h.behaviours;
+    const auto say = [&](Entity tr, float time, std::string text) {
+        if (text.empty()) return;
+        b.message = std::move(text);
+        b.message_left = time > 0 ? time : 1e9f;
+        b.message_owner = time > 0 ? Uuid{} : s.uuid(tr);
+    };
+    for (const Entity tr : list) {
+        const TriggerComponent cfg = *s.world().get<TriggerComponent>(tr);
+        Box box = bounds_of(s, tr);
+        box.h += Vec3{0.15f}; // a solid door is touched from the side, never overlapped
+        Entity who;
+        for (const Entity t : tags.get(cfg.player_tag)) {
+            if (t == tr || !s.world().alive(t)) continue;
+            if (const auto* hp = s.world().get<HealthComponent>(t); hp && hp->dead) continue;
+            if (overlaps(box, bounds_of(s, t))) who = t;
+        }
+        auto* c = s.world().get<TriggerComponent>(tr);
+        const bool entered = !who.is_null() && !c->inside;
+        c->inside = !who.is_null();
+        if (!entered || (cfg.once && c->fired)) continue;
+        if (!cfg.required_item.empty()) {
+            if (gameplay::item_count(s, who, cfg.required_item) == 0) {
+                say(tr, cfg.message_time, cfg.locked_message.empty() ? "You need a " + cfg.required_item : cfg.locked_message);
+                continue;
+            }
+            if (cfg.consume_item) (void)gameplay::remove_item(s, who, cfg.required_item, 1);
+            c = s.world().get<TriggerComponent>(tr);
+        }
+        c->fired = true;
+        say(tr, cfg.message_time, cfg.message);
+        const Entity target = cfg.target.empty() ? tr : s.find_by_name(cfg.target);
+        if (cfg.action != TriggerAction::None && cfg.action != TriggerAction::Win && target.is_null()) {
+            warn_once(h, tr, std::format("Trigger '{}': no object named '{}'", name_of(s, tr), cfg.target));
+        } else {
+            switch (cfg.action) {
+                case TriggerAction::None: break;
+                case TriggerAction::Start:
+                    if (auto* mp = s.world().get<MovingPlatformComponent>(target)) {
+                        mp->triggered = true;
+                        mp->started = true;
+                    } else {
+                        warn_once(h, tr, std::format("Trigger '{}': '{}' has no Moving Platform to start", name_of(s, tr),
+                                                     name_of(s, target)));
+                    }
+                    break;
+                case TriggerAction::Remove:
+                    if (std::find(doomed.begin(), doomed.end(), target) == doomed.end()) doomed.push_back(target);
+                    break;
+                case TriggerAction::Win: {
+                    const Entity r = rules_entity(s);
+                    if (!r.is_null()) end_game(s, r, true);
+                    else gameplay::emit_event(s, "game_won", Value::object(), tr);
+                    break;
+                }
+            }
+        }
+        if (!cfg.sound.empty())
+            if (auto* a = audio::engine_of(s)) {
+                audio::OneShot o;
+                o.position = box.c;
+                if (auto st = a->play_one_shot(cfg.sound, o); !st) warn_once(h, tr, std::format("Trigger sound '{}': {}", cfg.sound, st.error().message));
+            }
+        gameplay::emit_event(s, "triggered", Value::object(), tr, tr);
+    }
+    // The newest message stays up for its time, or while its trigger is touched.
+    if (!b.message_owner.is_nil()) {
+        const Entity owner = s.find(b.message_owner);
+        const auto* oc = owner.is_null() ? nullptr : s.world().get<TriggerComponent>(owner);
+        if (!oc || !oc->inside) b.message_left = 0;
+    }
+    if (b.message_left > 0) b.message_left -= dt;
+    show_message(s, b.message_left > 0 ? b.message : std::string{});
 }
 
 void projectile_hits(ScriptHost::Impl& h, Scene& s, physics::PhysicsWorld* pw, TagCache& tags, float dt,
@@ -1454,7 +1585,8 @@ bool any_behaviour(Scene& s) {
            w.count<HealthComponent>() || w.count<HazardComponent>() || w.count<CollectibleComponent>() ||
            w.count<SpawnerComponent>() || w.count<PatrolComponent>() || w.count<ChaseComponent>() ||
            w.count<MovingPlatformComponent>() || w.count<ProjectileComponent>() || w.count<ShooterComponent>() || w.count<LifetimeComponent>() ||
-           w.count<CheckpointComponent>() || w.count<GoalComponent>() || w.count<GameRulesComponent>();
+           w.count<CheckpointComponent>() || w.count<GoalComponent>() || w.count<GameRulesComponent>() ||
+           w.count<TriggerComponent>();
 }
 
 } // namespace
@@ -1503,6 +1635,7 @@ void behaviours_update(ScriptHost::Impl& h, Scene& s, float dt) {
             collectibles(h, s, tags, doomed);
             checkpoints(s, tags);
             goals(h, s, tags);
+            triggers(h, s, tags, dt, doomed);
         }
         projectile_hits(h, s, pw, tags, dt, doomed);
     }

@@ -10,7 +10,7 @@ Behaviours are ready-made gameplay components. Add one to an entity in the Inspe
 
 Movement behaviours also drive character animation. When the entity or one of its children has an Animator, Top-Down Movement and Platformer Movement (3D) set its `speed` and `grounded` parameters and fire the `jump` trigger, and Patrol and Chase set `speed` and turn the character to face where it walks. The Vanguard starter characters already use these parameters.
 
-The fastest way in is the Inspector's **Make it a...** row. Select any object and press Player, Enemy, Coin, Hazard, Checkpoint, Goal or Moving Platform: the Studio adds the Behaviours for that role (for example Player gets movement, health that respawns, and a camera that follows it; Enemy gets a stompable hazard, a patrol that turns at ledges and one hit point), creates Game Rules if the scene has none, and names default-named objects after the role. It is one undo step.
+The fastest way in is the Inspector's **Make it a...** row. Select any object and press Player, Enemy, Coin, Hazard, Checkpoint, Goal, Moving Platform, Key, Door or Sign: the Studio adds the Behaviours for that role (for example Player gets movement, health that respawns, and a camera that follows it; Enemy gets a stompable hazard, a patrol that turns at ledges and one hit point), creates Game Rules if the scene has none, and names default-named objects after the role. It is one undo step.
 
 ### Lessons: your first game, step by step
 
@@ -30,6 +30,7 @@ New to making games? The Getting Started panel offers two lessons, **2D platform
 | Spawner | anywhere | Creates copies of a prefab on a timer, up to a limit. |
 | Lifetime | effects, bullets | Removes the entity after a time. |
 | Checkpoint / Goal | flags | A checkpoint moves the respawn point; a goal wins, loads the next scene or a chosen one. |
+| Trigger | signs, switches, doors, finish lines | Does something when the player touches it: shows a Message at the bottom of the screen (for a few seconds or while touching), and runs an Action on itself or a named Target: Start a Moving Platform that has Wait For Trigger, Remove (a door), or Win. With Required Item it only works when the player carries that item (for example "Key" from an Item Collectible) and otherwise says "You need a Key". |
 | Game Rules | one per scene | Score, lives, an optional time limit and score to win, and the on-screen HUD with win and game-over messages. With Carry Over on (the default), a Goal that loads the next level hands it the score, lives and time; game over restarts the level with the score it began with and fresh lives. |
 
 The player is found by the tag "Player" or, if nothing has that tag, by its movement behaviour. Behaviours send events that scripts and graphs can react to with `on_event`: `damaged`, `healed`, `died`, `collected`, `checkpoint`, `score_changed`, `game_won`, `game_lost`, `life_lost`, `spawned`, `fired`, `stomped` and `goal_reached`.
