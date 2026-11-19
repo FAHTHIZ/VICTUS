@@ -8,6 +8,7 @@
 #include "victus/render/temporal.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <array>
 #include <limits>
 #include <chrono>
@@ -919,17 +920,20 @@ bool SceneRenderer::ensure_gpu_particle_pipeline() {
         return false;
     }
     particle_sim_ = pl.value();
+    if (auto sort = create_builtin_compute_pipeline(ctx_.device(), "particle_sort.comp")) particle_sort_ = sort.value();
+    else VICTUS_LOG_WARN("render", "GPU particle sorting disabled: {}", sort.error().message);
     return true;
 }
 
 void SceneRenderer::destroy_gpu_particle_state(GpuParticleState& s) {
     auto& d = ctx_.device();
-    for (rhi::BufferHandle* b : {&s.state, &s.instances, &s.spawns})
+    for (rhi::BufferHandle* b : {&s.state, &s.instances, &s.spawns, &s.pairs, &s.sorted})
         if (*b) {
             d.destroy(*b);
             *b = {};
         }
-    s.capacity = s.spawn_capacity = 0;
+    s.capacity = s.spawn_capacity = s.sort_size = 0;
+    s.sorted_last = false;
 }
 
 void SceneRenderer::submit_gpu_particles(const GpuParticleEmitter& emitter) {
@@ -937,6 +941,19 @@ void SceneRenderer::submit_gpu_particles(const GpuParticleEmitter& emitter) {
     GpuParticleEmitter e = emitter;
     e.capacity = std::min(e.capacity, kMaxGpuParticles);
     gpu_emitters_.push_back(e);
+}
+
+Result<std::vector<ParticleInstance>> SceneRenderer::read_gpu_particle_draw(std::uint64_t key) {
+    std::vector<ParticleInstance> out;
+    const auto it = gpu_particle_states_.find(key);
+    if (it == gpu_particle_states_.end() || !it->second.instances) return out;
+    const GpuParticleState& st = it->second;
+    auto bytes = ctx_.device().read_buffer(st.sorted_last ? st.sorted : st.instances, 0,
+                                           st.capacity * static_cast<std::uint32_t>(sizeof(ParticleInstance)));
+    if (!bytes) return std::move(bytes).error();
+    out.resize(bytes.value().size() / sizeof(ParticleInstance));
+    std::memcpy(out.data(), bytes.value().data(), out.size() * sizeof(ParticleInstance));
+    return out;
 }
 
 Result<std::vector<GpuParticleSpawn>> SceneRenderer::read_gpu_particles(std::uint64_t key) {
@@ -1909,6 +1926,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         ParticleSimUniforms u;
     };
     std::vector<GpuParticleJob> gpu_jobs;
+    struct ParticleSortUniforms {
+        Vec4 eye;
+        std::array<std::uint32_t, 4> meta, step;
+    };
+    static_assert(sizeof(ParticleSortUniforms) == 48);
+    struct GpuSortJob {
+        const GpuParticleState* state;
+        ParticleSortUniforms u;
+    };
+    std::vector<GpuSortJob> sort_jobs;
     std::vector<ParticleBatch> gpu_batches;
     ++gpu_particle_frame_;
     if (!gpu_emitters_.empty() && dev.capabilities().compute && ensure_gpu_particle_pipeline()) {
@@ -1923,7 +1950,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 if (!sb) return std::move(sb).error();
                 st.state = sb.value();
                 auto ib = dev.create_buffer({"gpu_particle_instances", e.capacity * static_cast<std::uint32_t>(sizeof(ParticleInstance)),
-                                             rhi::BufferUsageStorageWrite | rhi::BufferUsageVertex});
+                                             rhi::BufferUsageStorageWrite | rhi::BufferUsageComputeRead | rhi::BufferUsageVertex});
                 if (!ib) return std::move(ib).error();
                 st.instances = ib.value();
                 st.capacity = e.capacity;
@@ -1996,9 +2023,34 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 gpu_jobs.push_back(job);
             }
             ++stats_.gpu_particle_emitters;
+            st.sorted_last = false;
             if (e.alive > 0 && st.state && st.generation == e.generation && st.instance == e.instance && e.bounds.valid() && frustum.intersects(e.bounds)) {
                 ParticleBatch b{e.material, 0, e.capacity, e.bounds, 0.0f};
                 b.buffer = st.instances;
+                // Alpha blending depends on order: sort the drawn slots back to front on the GPU
+                // (additive blending does not). Bitonic sort over a power-of-two pair array.
+                if (e.material.blend == ParticleBlend::Alpha && particle_sort_ && !capture_mode_) {
+                    const std::uint32_t n = std::max(256u, std::bit_ceil(e.capacity));
+                    if (st.sort_size != n || !st.sorted) {
+                        for (rhi::BufferHandle* h : {&st.pairs, &st.sorted})
+                            if (*h) dev.destroy(*h);
+                        auto pb = dev.create_buffer({"gpu_particle_sort_pairs", n * 8u, rhi::BufferUsageStorageWrite});
+                        if (!pb) return std::move(pb).error();
+                        st.pairs = pb.value();
+                        auto sb = dev.create_buffer({"gpu_particle_sorted", e.capacity * static_cast<std::uint32_t>(sizeof(ParticleInstance)),
+                                                     rhi::BufferUsageStorageWrite | rhi::BufferUsageVertex});
+                        if (!sb) return std::move(sb).error();
+                        st.sorted = sb.value();
+                        st.sort_size = n;
+                    }
+                    GpuSortJob job{&st, {}};
+                    job.u.eye = Vec4(camera_.position, 1.0f);
+                    job.u.meta = {0u, e.capacity, n, 0u};
+                    sort_jobs.push_back(job);
+                    b.buffer = st.sorted;
+                    st.sorted_last = true;
+                    ++stats_.gpu_particle_sorted_emitters;
+                }
                 gpu_batches.push_back(b);
                 stats_.gpu_particles += e.alive;
             }
@@ -2847,7 +2899,15 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             });
     }
 
-    if (!gpu_jobs.empty()) {
+    if (!gpu_jobs.empty() || !sort_jobs.empty()) {
+        // Passes per sort: keys, local sort, then for each stage k > 256 the global steps
+        // j = k/2 .. 256 and one shared-memory merge, then the gather.
+        for (const GpuSortJob& job : sort_jobs) {
+            std::uint32_t passes = 3;
+            for (std::uint32_t k = 512; k <= job.u.meta[2]; k <<= 1)
+                passes += static_cast<std::uint32_t>(std::countr_zero(k)) - 8u + 1u;
+            stats_.gpu_particle_sort_passes += passes;
+        }
         graph.add_pass(
             "gpu_particles",
             [&](PassBuilder& b) {
@@ -2873,6 +2933,32 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         cp.dispatch((u.meta[1] + 63) / 64);
                         cp.end();
                     }
+                }
+                // Depth sort after the simulation wrote this frame's instances.
+                for (const GpuSortJob& job : sort_jobs) {
+                    const GpuParticleState& st = *job.state;
+                    const rhi::BufferHandle rw_buffers[] = {st.pairs, st.sorted};
+                    const std::uint32_t n = job.u.meta[2];
+                    const auto run = [&](std::uint32_t mode, std::uint32_t k, std::uint32_t j, std::uint32_t threads) {
+                        rhi::ComputePass cp = ctx.cmd.begin_compute_pass(rw_buffers);
+                        if (!cp.active()) return false;
+                        ParticleSortUniforms u = job.u;
+                        u.meta[0] = mode;
+                        u.step = {k, j, 0u, 0u};
+                        cp.bind_pipeline(particle_sort_);
+                        cp.bind_storage_buffer(0, st.instances);
+                        ctx.cmd.push_uniforms(rhi::ShaderStage::Compute, 0, u);
+                        cp.dispatch((threads + 255) / 256);
+                        cp.end();
+                        return true;
+                    };
+                    if (!run(0, 0, 0, n) || !run(1, 0, 0, n)) return;
+                    for (std::uint32_t k = 512; k <= n; k <<= 1) {
+                        for (std::uint32_t j = k >> 1; j >= 256; j >>= 1)
+                            if (!run(2, k, j, n)) return;
+                        if (!run(3, k, 0, n)) return;
+                    }
+                    if (!run(4, 0, 0, job.u.meta[1])) return;
                 }
             });
     }
@@ -3323,6 +3409,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     facts_.gpu_emitters_submitted = static_cast<std::uint32_t>(gpu_emitters_.size());
     facts_.gpu_emitters_simulated = stats_.gpu_particle_emitters;
     facts_.gpu_particles = stats_.gpu_particles;
+    facts_.gpu_emitters_sorted = stats_.gpu_particle_sorted_emitters;
     facts_.probes_requested = probe_requests_;
     facts_.probes_unbaked = probe_unbaked_;
     facts_.probes_over_budget = probe_over_budget_;

@@ -695,7 +695,7 @@ void register_components() {
             .field(&ParticleEmitterComponent::turbulence, "turbulence", {.min = 0, .max = 1000, .speed = 0.05f, .tooltip = "Swirling curl-noise acceleration (m/s^2); 0 = off"})
             .field(&ParticleEmitterComponent::turbulence_frequency, "turbulence_frequency", {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "Swirls per metre"})
             .field(&ParticleEmitterComponent::turbulence_speed, "turbulence_speed", {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "How fast the swirls change"})
-            .field(&ParticleEmitterComponent::gpu, "gpu", {.tooltip = "Simulate on the GPU (3D): up to a million particles, depth collision; no trails or sorting"})
+            .field(&ParticleEmitterComponent::gpu, "gpu", {.tooltip = "Simulate on the GPU (3D): up to a million particles, depth collision and sorting; no trails"})
             .field(&ParticleEmitterComponent::collision, "collision", {.tooltip = "GPU, world space: bounce off what the camera sees"})
             .field(&ParticleEmitterComponent::bounce, "bounce", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "0 = stop, 1 = elastic"})
             .field(&ParticleEmitterComponent::friction, "friction", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Tangential speed lost per contact"})

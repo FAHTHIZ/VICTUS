@@ -162,6 +162,9 @@ TEST_CASE("render path: decals, water, particles and reflection probes") {
     CHECK(get(r, "decals").detail == "5 of 5 in view");
     CHECK(get(r, "particles").detail == "900 particles in 3 batches");
     CHECK(get(r, "gpu_particles").detail == "600 alive in 1 emitter");
+    f.gpu_emitters_sorted = 1;
+    CHECK(describe_render_path(ultra, f).find("gpu_particles")->detail == "600 alive in 1 emitter, 1 depth-sorted");
+    f.gpu_emitters_sorted = 0;
     CHECK(get(r, "reflection_probes").detail == "2 probes, 12 of 50 draws inside a probe box");
     CHECK(r.reduced_summary().empty());
 
