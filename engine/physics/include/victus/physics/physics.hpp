@@ -498,6 +498,13 @@ struct JointState {
     float force{0};              // magnitude of the reaction force/torque in the last step
 };
 
+struct WaterContact {
+    Entity water;          // null: not in water
+    float submerged{0};    // fraction of the body's volume below the surface
+    float surface{0};      // world height of the surface at the body
+    float speed{0};        // body speed when sampled (m/s)
+};
+
 struct RagdollState {
     bool valid{false};             // the entity has a simulated ragdoll (mode != Off)
     RagdollComponent::Mode mode{RagdollComponent::Mode::Off};
@@ -611,6 +618,11 @@ public:
     [[nodiscard]] JointState joint_state(Entity e) const;
     // Writes the Joint/Joint2D motor fields and applies them to the live constraint without rebuilding it.
     void set_joint_motor(scene::Scene& scene, Entity e, bool enabled, float speed);
+
+    // ---- water (gameplay::WaterComponent volumes, ADR-0095) ----
+    // Dynamic 3D bodies inside a water volume float by Jolt's submerged-volume buoyancy; this is
+    // the state from the last step (water null when the body is not in water).
+    [[nodiscard]] WaterContact water_contact(Entity e) const;
 
     // ---- ragdolls (Ragdoll + RagdollBone) ----
     // Bone entities with a simulated body also accept the body-control calls above (impulses on a

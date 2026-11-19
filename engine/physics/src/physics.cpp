@@ -242,6 +242,7 @@ CharacterState PhysicsWorld::character_state(Entity e) const {
 }
 bool PhysicsWorld::drop_through(Entity e, float seconds) { return impl_->w2->drop_through(e, seconds); }
 RagdollState PhysicsWorld::ragdoll_state(Entity root) const { return impl_->w3->ragdoll_state(root); }
+WaterContact PhysicsWorld::water_contact(Entity e) const { return impl_->w3->water_contact(e); }
 void PhysicsWorld::set_ragdoll_mode(scene::Scene& scene, Entity root, RagdollComponent::Mode mode) {
     if (auto* r = scene.world().get<RagdollComponent>(root)) r->mode = mode;
 }

@@ -49,6 +49,7 @@ victus_add_test(victus_script_tests
         script/save_tests.cpp
         script/capture_tests.cpp
         script/gameplay_framework_tests.cpp
+        script/water_tests.cpp
         script/scene_transition_tests.cpp
         script/graph_tests.cpp
         script/localization_tests.cpp
@@ -138,6 +139,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_local_shadow_tests.cpp
         render/gpu_motion_tests.cpp
         render/gpu_decal_tests.cpp
+        render/gpu_water_tests.cpp
         render/gpu_light2d_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
@@ -234,6 +236,7 @@ victus_add_test(victus_physics_tests
         physics/polygon_chain_2d_tests.cpp
         physics/ragdoll_tests.cpp
         physics/destruction_tests.cpp
+        physics/water_buoyancy_tests.cpp
     DEPS VICTUS::Physics VICTUS::Core
     LABELS physics)
 

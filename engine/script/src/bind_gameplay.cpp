@@ -4,6 +4,7 @@
 #include "script_internal.hpp"
 
 #include "victus/gameplay/framework.hpp"
+#include "victus/gameplay/water.hpp"
 
 #include <algorithm>
 #include <string>
@@ -311,6 +312,66 @@ int entity_give_item(lua_State* L) {
     const Entity to = check_live(L, 2, s);
     const std::string_view item = luaL_checkstring(L, 3);
     lua_pushinteger(L, static_cast<int>(gameplay::transfer_item(s, e, to, item, check_count(L, 4))));
+    return 1;
+}
+
+} // namespace victus::script::detail
+
+
+namespace victus::script::detail {
+
+// ---- water (ADR-0095) ----
+
+// water.query(position) -> {surface, depth, normal, current, water} or nil when outside every volume.
+int water_query(lua_State* L) {
+    auto& s = scene_of(L);
+    const auto q = gameplay::query_water(s, check_vec3(L, 1));
+    if (!q) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 5);
+    lua_pushnumber(L, q->surface);
+    lua_setfield(L, -2, "surface");
+    lua_pushnumber(L, q->depth);
+    lua_setfield(L, -2, "depth");
+    push_vec3(L, q->normal);
+    lua_setfield(L, -2, "normal");
+    push_vec3(L, q->current);
+    lua_setfield(L, -2, "current");
+    push_entity(L, q->water);
+    lua_setfield(L, -2, "water");
+    return 1;
+}
+
+// water.height(x, z) -> surface height or nil.
+int water_height(lua_State* L) {
+    auto& s = scene_of(L);
+    const auto x = static_cast<float>(luaL_checknumber(L, 1));
+    const auto z = static_cast<float>(luaL_checknumber(L, 2));
+    const auto q = gameplay::query_water(s, {x, 1e6f, z});
+    if (q) lua_pushnumber(L, q->surface);
+    else lua_pushnil(L);
+    return 1;
+}
+
+// entity:water_state() -> {water, submerged, surface} while a physics body floats, else nil.
+int entity_water_state(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    auto* w = physics::world_of(s);
+    const physics::WaterContact c = w ? w->water_contact(e) : physics::WaterContact{};
+    if (c.water.is_null()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 3);
+    push_entity(L, c.water);
+    lua_setfield(L, -2, "water");
+    lua_pushnumber(L, c.submerged);
+    lua_setfield(L, -2, "submerged");
+    lua_pushnumber(L, c.surface);
+    lua_setfield(L, -2, "surface");
     return 1;
 }
 

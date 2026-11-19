@@ -5,6 +5,8 @@
 #include "victus/core/jobs.hpp"
 #include "victus/core/log.hpp"
 #include "victus/core/profiler.hpp"
+#include "victus/gameplay/framework.hpp"
+#include "victus/gameplay/water.hpp"
 
 #include <Jolt/Jolt.h>
 
@@ -432,6 +434,7 @@ public:
     void step(scene::Scene& scene, float dt, std::vector<ContactEvent>& events) override {
         sync(scene, dt);
         update_characters(dt);
+        apply_buoyancy(scene, dt);
         {
             VICTUS_PROFILE_SCOPE("physics.step3d");
             const auto t0 = std::chrono::steady_clock::now();
@@ -471,6 +474,7 @@ public:
     }
 
     void clear() override {
+        water_.clear();
         for (auto& [k, r] : ragdolls_) destroy_ragdoll(r);
         ragdolls_.clear();
         ragdoll_bones_.clear();
@@ -723,7 +727,96 @@ public:
         return Entity{static_cast<std::uint32_t>(k), static_cast<std::uint32_t>(k >> 32)};
     }
 
+    WaterContact water_contact(Entity e) const override {
+        const auto it = water_.find(e.bits());
+        return it == water_.end() ? WaterContact{} : it->second;
+    }
+
 private:
+    // Buoyancy (ADR-0095): each dynamic body inside a water volume gets Jolt's exact submerged
+    // volume of its shape against the wave plane at its centre (height and normal from the same
+    // Gerstner sum the renderer draws). Fluid density is physical: Jolt's buoyancy factor is
+    // density_fluid / density_body = density * volume / mass. Entering and leaving the water
+    // emit gameplay events ("water_entered" / "water_exited", target = the body, sender = the water).
+    void apply_buoyancy(scene::Scene& scene, float dt) {
+        std::unordered_map<std::uint64_t, WaterContact> now;
+        const std::vector<gameplay::WaterVolume> volumes = gameplay::water_volumes(scene);
+        if (!volumes.empty() && dt > 0) {
+            auto& bi = system_->GetBodyInterface();
+            const JPH::Vec3 gravity = system_->GetGravity();
+            std::vector<JPH::BodyID> wake;
+            for (auto& [key, b] : bodies_) {
+                if (b.motion != JPH::EMotionType::Dynamic) continue;
+                const JPH::AABox box = bi.GetTransformedShape(b.id).GetWorldSpaceBounds();
+                const JPH::Vec3 c = box.GetCenter();
+                const gameplay::WaterVolume* vol = nullptr;
+                for (const auto& v : volumes)
+                    if (std::abs(c.GetX() - v.center.x) <= v.half_extent.x && std::abs(c.GetZ() - v.center.z) <= v.half_extent.y &&
+                        box.mMin.GetY() < v.center.y + v.max_height) {
+                        vol = &v;
+                        break;
+                    }
+                if (!vol) continue;
+                const gameplay::WaveSample ws = gameplay::sample_waves(vol->waves, {c.GetX(), c.GetZ()});
+                const float surface = vol->center.y + ws.height;
+                if (box.mMin.GetY() >= surface) continue;
+                JPH::BodyLockWrite lock(system_->GetBodyLockInterface(), b.id);
+                if (!lock.Succeeded()) continue;
+                JPH::Body& body = lock.GetBody();
+                const float inv_mass = body.GetMotionProperties()->GetInverseMass();
+                float total = 0, submerged = 0;
+                JPH::Vec3 center_of_buoyancy;
+                body.GetSubmergedVolume(JPH::RVec3(c.GetX(), surface, c.GetZ()), to_jolt(ws.normal), total, submerged, center_of_buoyancy);
+                if (!(submerged > 0) || !(total > 0) || !(inv_mass > 0)) continue;
+                const gameplay::WaterComponent& w = *vol->water;
+                const float buoyancy = std::max(w.density, 0.0f) * total * inv_mass;
+                const JPH::Vec3 flow(w.current.x, 0, w.current.y);
+                body.ApplyBuoyancyImpulse(total, submerged, center_of_buoyancy, buoyancy, std::max(w.linear_drag, 0.0f),
+                                          std::max(w.angular_drag, 0.0f), flow, gravity, dt);
+                // Jolt's drag is quadratic and vanishes for slow bobbing; real floaters lose that
+                // energy by radiating waves, which is linear in velocity relative to the fluid.
+                const float fraction = std::clamp(submerged / total, 0.0f, 1.0f);
+                if (const float damp = (std::isfinite(w.damping) ? std::max(w.damping, 0.0f) : 0.0f) * fraction; damp > 0) {
+                    const float keep = std::exp(-damp * dt);
+                    JPH::MotionProperties* mp = body.GetMotionProperties();
+                    mp->SetLinearVelocityClamped(flow + (mp->GetLinearVelocity() - flow) * keep);
+                    mp->SetAngularVelocityClamped(mp->GetAngularVelocity() * keep);
+                }
+                if (!body.IsActive()) wake.push_back(b.id);
+                WaterContact wc;
+                wc.water = vol->entity;
+                wc.submerged = fraction;
+                wc.surface = surface;
+                wc.speed = body.GetLinearVelocity().Length();
+                now[key] = wc;
+            }
+            for (const JPH::BodyID id : wake) bi.ActivateBody(id);
+        }
+        // Enter/exit events in entity order (deterministic).
+        std::vector<std::uint64_t> entered, exited;
+        for (const auto& [k, wc] : now)
+            if (!water_.contains(k)) entered.push_back(k);
+        for (const auto& [k, wc] : water_)
+            if (!now.contains(k)) exited.push_back(k);
+        auto by_index = [](std::uint64_t a, std::uint64_t b) { return static_cast<std::uint32_t>(a) < static_cast<std::uint32_t>(b); };
+        std::sort(entered.begin(), entered.end(), by_index);
+        std::sort(exited.begin(), exited.end(), by_index);
+        auto emit = [&](const char* name, std::uint64_t k, const WaterContact& wc) {
+            const Entity e{static_cast<std::uint32_t>(k), static_cast<std::uint32_t>(k >> 32)};
+            if (!scene.world().alive(e)) return;
+            json::Value p = json::Value::object();
+            p.set("speed", wc.speed);
+            p.set("surface", wc.surface);
+            gameplay::emit_event(scene, name, std::move(p), wc.water, e);
+        };
+        const auto old = std::move(water_);
+        water_ = std::move(now);
+        for (const std::uint64_t k : entered) emit("water_entered", k, water_.at(k));
+        for (const std::uint64_t k : exited) emit("water_exited", k, old.at(k));
+    }
+
+    std::unordered_map<std::uint64_t, WaterContact> water_;
+
     struct Entry {
         JPH::BodyID id;
         JPH::EMotionType motion{JPH::EMotionType::Static};
