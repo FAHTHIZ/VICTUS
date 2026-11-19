@@ -64,6 +64,7 @@ if(VICTUS_WITH_GRAPHICS)
 victus_add_test(victus_asset_tests
     SOURCES
         assets/asset_tests.cpp
+        assets/async_loader_tests.cpp
         assets/animation_asset_tests.cpp
         assets/template_character_tests.cpp
         assets/texture_compression_tests.cpp
@@ -108,6 +109,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_particle_tests.cpp
         render/gpu_game_ui_tests.cpp
         render/gpu_hot_reload_tests.cpp
+        render/gpu_async_loading_tests.cpp
         render/gpu_material_tests.cpp
         render/gpu_surface_shader_tests.cpp
         render/gpu_material_graph_tests.cpp

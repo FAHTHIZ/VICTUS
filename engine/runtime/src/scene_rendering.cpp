@@ -21,6 +21,7 @@ using namespace victus::scene;
 GpuAssetCache::~GpuAssetCache() { clear(); }
 
 void GpuAssetCache::clear() {
+    if (loader_) loader_->forget_all();
     for (auto& [id, tex] : textures_) ctx_.device().destroy(tex);
     textures_.clear();
     nearest_.clear();
@@ -50,6 +51,7 @@ void GpuAssetCache::evict(const Uuid& uuid) {
     // Materials hold texture handles: any eviction may invalidate them, and they are cheap to rebuild.
     materials_.clear();
     nearest_.erase(uuid);
+    if (loader_) loader_->forget(uuid); // a reload in flight is discarded; the next request re-reads
     environments_.erase(uuid);
     environment_errors_.erase(uuid);
     if (const auto it = textures_.find(uuid); it != textures_.end()) {
@@ -83,17 +85,126 @@ Result<rhi::TextureHandle> upload_cooked_texture(render::GpuContext& ctx, const 
     return ctx.create_texture_mips(texture.mips, opt);
 }
 
-Result<rhi::TextureHandle> GpuAssetCache::texture(const Uuid& uuid) {
-    if (const auto it = textures_.find(uuid); it != textures_.end()) return it->second;
-    if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
-    auto cooked = db_->load_texture(uuid);
-    if (!cooked) return std::move(cooked).error();
+Result<rhi::TextureHandle> GpuAssetCache::upload_texture(const Uuid& uuid, const assets::CookedTexture& cooked) {
     std::optional<assets::TextureCodec> codec;
-    auto tex = upload_cooked_texture(ctx_, *cooked, allow_compressed_, &codec);
+    auto tex = upload_cooked_texture(ctx_, cooked, allow_compressed_, &codec);
     if (!tex) return tex;
     if (codec) ++compressed_uploads_;
     textures_.emplace(uuid, *tex);
     return tex;
+}
+
+namespace {
+// The answer for an asset the loader knows about but the cache has not uploaded.
+Error not_resident(const assets::AsyncLoader& loader, const Uuid& uuid, assets::LoadType type) {
+    switch (loader.state(uuid, type)) {
+    case assets::LoadState::Failed: return *loader.error(uuid, type);
+    case assets::LoadState::Taken: // decoded and handed over, but the upload failed (logged)
+        return make_error(ErrorCode::DeviceError, "upload of " + uuid.to_string() + " failed");
+    default: return make_error(ErrorCode::Pending, uuid.to_string() + " is loading");
+    }
+}
+} // namespace
+
+Result<rhi::TextureHandle> GpuAssetCache::texture(const Uuid& uuid) {
+    if (const auto it = textures_.find(uuid); it != textures_.end()) return it->second;
+    if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
+    if (loader_) {
+        (void)loader_->request(uuid, assets::LoadType::Texture);
+        if (const auto it = textures_.find(uuid); it != textures_.end()) return it->second; // never: uploads happen in pump()
+        return not_resident(*loader_, uuid, assets::LoadType::Texture);
+    }
+    auto cooked = db_->load_texture(uuid);
+    if (!cooked) return std::move(cooked).error();
+    return upload_texture(uuid, *cooked);
+}
+
+void GpuAssetCache::set_async_loading(jobs::JobSystem* jobs, const AsyncLoadingSettings& settings) {
+    if (loader_) {
+        loader_->wait_idle();
+        loader_.reset();
+    }
+    async_settings_ = settings;
+    if (!jobs || !db_) return;
+    assets::AssetDatabase* db = db_;
+    loader_ = std::make_unique<assets::AsyncLoader>(
+        jobs,
+        [db](const Uuid& uuid, assets::LoadType type) -> Result<assets::LoadPayload> {
+            if (type == assets::LoadType::Texture) {
+                auto t = db->load_texture(uuid);
+                if (!t) return std::move(t).error();
+                return assets::LoadPayload{std::move(t).value()};
+            }
+            auto m = db->load_model(uuid);
+            if (!m) return std::move(m).error();
+            return assets::LoadPayload{std::move(m).value()};
+        },
+        assets::LoaderSettings{.max_in_flight = settings.max_in_flight});
+}
+
+void GpuAssetCache::prefetch(const Uuid& uuid, assets::LoadType type, assets::LoadPriority priority) {
+    if (!loader_ || uuid.is_nil()) return;
+    if (type == assets::LoadType::Texture ? textures_.contains(uuid) : models_.contains(uuid)) return;
+    (void)loader_->request(uuid, type, priority);
+}
+
+std::uint32_t GpuAssetCache::pump() {
+    if (!loader_) return 0;
+    VICTUS_PROFILE_SCOPE("GpuAssetCache::pump");
+    async_stats_.uploaded_last_pump = 0;
+    async_stats_.uploaded_bytes_last_pump = 0;
+    auto ready = loader_->take(async_settings_.upload_budget_bytes);
+    bool any_texture = false;
+    for (auto& c : ready) {
+        Status st;
+        if (auto* tex = std::get_if<assets::CookedTexture>(&c.payload)) {
+            if (textures_.contains(c.uuid)) continue;
+            auto r = upload_texture(c.uuid, *tex);
+            if (!r) st = std::move(r).error();
+            any_texture = true;
+        } else {
+            if (models_.contains(c.uuid)) continue;
+            const Uuid id = c.uuid;
+            auto r = add_model(id, std::move(std::get<assets::CookedModel>(c.payload)));
+            if (!r) st = std::move(r).error();
+            // add_model() evicted the id, which forgot the loader slot; the model is resident now.
+        }
+        if (!st.ok()) {
+            ++async_stats_.failed;
+            VICTUS_LOG_ERROR("assets", "upload of {} failed: {}", c.uuid.to_string(), st.error().message);
+            continue;
+        }
+        ++async_stats_.uploaded;
+        ++async_stats_.uploaded_last_pump;
+        async_stats_.uploaded_bytes_last_pump += c.bytes;
+    }
+    // Materials resolved while a texture was loading hold an empty slot: rebuild them.
+    if (any_texture) materials_.clear();
+    return async_stats_.uploaded_last_pump;
+}
+
+void GpuAssetCache::finish_loads() {
+    if (!loader_) return;
+    for (;;) {
+        loader_->wait_idle();
+        (void)pump();
+        const auto s = loader_->stats();
+        if (s.queued == 0 && s.loading == 0 && s.decoded == 0) return;
+    }
+}
+
+void GpuAssetCache::wait_loads() {
+    if (loader_) loader_->wait_idle();
+}
+
+AsyncLoadingStats GpuAssetCache::async_stats() const {
+    AsyncLoadingStats s = async_stats_;
+    if (loader_) {
+        const auto l = loader_->stats();
+        s.pending = l.queued + l.loading + l.decoded;
+        s.failed += l.failed;
+    }
+    return s;
 }
 
 Result<const render::EnvironmentMap*> GpuAssetCache::environment(const Uuid& uuid) {
@@ -200,7 +311,8 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
                 continue;
             }
             if (auto t = texture(*refs[i]); t) *slots[i] = *t;
-            else VICTUS_LOG_WARN("assets", "material {}: {}", uuid.to_string(), t.error().message);
+            else if (t.error().code != ErrorCode::Pending) // pump() rebuilds materials once it arrives
+                VICTUS_LOG_WARN("assets", "material {}: {}", uuid.to_string(), t.error().message);
         }
         return m;
     };
@@ -261,6 +373,10 @@ void GpuAssetCache::evict_shaders() {
 Result<const GpuModel*> GpuAssetCache::model(const Uuid& uuid) {
     if (const auto it = models_.find(uuid); it != models_.end()) return static_cast<const GpuModel*>(it->second.get());
     if (!db_) return make_error(ErrorCode::NotFound, "no asset database");
+    if (loader_) {
+        (void)loader_->request(uuid, assets::LoadType::Model);
+        return not_resident(*loader_, uuid, assets::LoadType::Model);
+    }
     auto cooked = db_->load_model(uuid);
     if (!cooked) return std::move(cooked).error();
     return add_model(uuid, std::move(cooked).value());
@@ -741,6 +857,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                            const SceneViewSettings& settings, const render::Camera3D* camera_override) {
     ExtractStats stats;
     assets.collect_procedural();
+    (void)assets.pump();
     ecs::World& w = scene.world();
     render::Camera3D camera = settings.fallback_camera;
     if (camera_override) {
@@ -844,7 +961,10 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         if (!d.texture.is_nil()) {
             auto tex = assets.texture(d.texture);
             if (tex) decal.texture = *tex;
-            else ++stats.missing_assets;
+            else if (tex.error().code == ErrorCode::Pending) {
+                ++stats.loading_assets; // an untextured decal would flash: wait for it
+                return;
+            } else ++stats.missing_assets;
             decal.nearest_filter = assets.texture_nearest(d.texture);
         }
         decal.color = d.color;
@@ -885,6 +1005,8 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                     if (auto h = assets.texture(tex); h) {
                         *slots[i] = *h;
                         tiling = std::max(t.layer_tiling(i), 1e-3f);
+                    } else if (h.error().code == ErrorCode::Pending) {
+                        ++stats.loading_assets;
                     } else {
                         ++stats.missing_assets;
                     }
@@ -969,6 +1091,10 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         }
         if (!mr.mesh_asset.is_nil()) {
             auto model = assets.model(mr.mesh_asset);
+            if (!model && model.error().code == ErrorCode::Pending) {
+                ++stats.loading_assets; // drawn once resident
+                return;
+            }
             if (!model || mr.mesh_index >= (*model)->meshes.size()) {
                 ++stats.missing_assets;
                 return;
@@ -1075,7 +1201,10 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         if (!v.emitter->texture.is_nil()) {
             auto tex = assets.texture(v.emitter->texture);
             if (tex) pm.texture = *tex;
-            else ++stats.missing_assets;
+            else if (tex.error().code == ErrorCode::Pending) {
+                ++stats.loading_assets;
+                continue;
+            } else ++stats.missing_assets;
         }
         // Billboard and ParticleInstance share one 48-byte layout (position+size, colour, rotation).
         static_assert(sizeof(particles::Billboard) == sizeof(render::ParticleInstance));
@@ -1136,12 +1265,14 @@ std::uint32_t extract_lights_2d(Scene& scene, render::SpriteBatch& batch) {
 
 std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::SpriteBatch& batch) {
     std::uint32_t count = 0;
+    (void)assets.pump();
     (void)extract_lights_2d(scene, batch);
     scene.world().each<SpriteComponent, WorldTransform>([&](const SpriteComponent& s, const WorldTransform& wt) {
         render::Sprite sp;
         if (!s.texture_asset.is_nil()) {
             auto tex = assets.texture(s.texture_asset);
             if (tex) sp.texture = *tex;
+            else if (tex.error().code == ErrorCode::Pending) return; // a white quad would flash
             sp.nearest = assets.texture_nearest(s.texture_asset);
         }
         math::Vec3 pos, scale;
@@ -1209,6 +1340,7 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
         if (!v.emitter->texture.is_nil()) {
             auto tex = assets.texture(v.emitter->texture);
             if (tex) texture = *tex;
+            else if (tex.error().code == ErrorCode::Pending) continue;
             nearest = assets.texture_nearest(v.emitter->texture);
         }
         for (const particles::Billboard& b : v.billboards) {

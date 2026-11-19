@@ -51,7 +51,8 @@ public:
     JobSystem& operator=(const JobSystem&) = delete;
 
     void submit(JobFn fn, Counter* counter = nullptr, Priority priority = Priority::Normal);
-    // Blocks until counter reaches zero, executing other jobs meanwhile.
+    // Blocks until counter reaches zero, executing other jobs meanwhile (on threads outside the
+    // pool, only High/Normal jobs: Background work is left to the workers).
     void wait(Counter& counter);
     // Runs body(i) for i in [begin, end) split into chunks of at least `grain` items.
     void parallel_for(std::size_t begin, std::size_t end, std::size_t grain,
@@ -71,7 +72,7 @@ private:
         std::mutex mutex;
         std::deque<Job> jobs;
     };
-    bool try_run_one(std::uint32_t self);
+    bool try_run_one(std::uint32_t self, bool allow_background = true);
     bool pop_local(std::uint32_t self, Job& out);
     bool steal(std::uint32_t self, Job& out);
     void execute(Job& job);

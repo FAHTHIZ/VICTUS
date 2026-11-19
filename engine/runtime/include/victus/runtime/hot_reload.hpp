@@ -30,6 +30,7 @@
 #include "victus/runtime/scene_rendering.hpp"
 #include "victus/terrain/terrain.hpp"
 
+#include <functional>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -77,6 +78,9 @@ public:
                       physics::PhysicsWorld* physics = nullptr);
 
     [[nodiscard]] std::uint64_t scans() const noexcept { return scans_; }
+    // Runs right before a detected change refreshes the database (e.g.
+    // GpuAssetCache::wait_loads, so no background decode reads records while they change).
+    void set_before_refresh(std::function<void()> fn) { before_refresh_ = std::move(fn); }
 
 private:
     struct Stamp {
@@ -91,6 +95,7 @@ private:
     double next_{0};
     std::uint64_t scans_{0};
     std::unordered_map<std::string, Stamp> stamps_;
+    std::function<void()> before_refresh_;
 };
 
 } // namespace victus::runtime
