@@ -382,6 +382,19 @@ Result<CookedModel> AssetDatabase::load_model(const Uuid& uuid) {
     return deserialize_model(*bytes);
 }
 
+Result<CookedTexture> AssetDatabase::load_model_texture(const Uuid& uuid, std::uint32_t index) {
+    const AssetRecord* rec = find(uuid);
+    if (!rec || rec->importer != "gltf") return make_error(ErrorCode::NotFound, "no model asset " + uuid.to_string());
+    auto imported = import(uuid);
+    if (!imported) {
+        std::error_code ec;
+        if (packaged_ || !std::filesystem::is_regular_file(cooked_path(uuid), ec)) return std::move(imported).error();
+    }
+    auto bytes = fs::read_binary(cooked_path(uuid));
+    if (!bytes) return std::move(bytes).error();
+    return deserialize_model_texture(*bytes, index);
+}
+
 Status AssetDatabase::set_settings(const Uuid& uuid, json::Value settings) {
     if (packaged_) return make_error(ErrorCode::Unsupported, "exported games are read-only");
     AssetRecord copy;

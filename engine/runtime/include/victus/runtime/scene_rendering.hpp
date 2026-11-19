@@ -17,6 +17,7 @@
 #include "victus/scene/scene.hpp"
 
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -134,8 +135,17 @@ public:
     // covers about `pixels` on screen this frame. The largest footprint per frame wins.
     void note_footprint(const Uuid& texture, float pixels);
     void note_material_footprint(const Uuid& material, float pixels);
+    // The textures embedded in a resident model (glTF) used by one of its meshes.
+    void note_model_footprint(const Uuid& model, std::uint32_t mesh, float pixels);
+    // A mesh of a model that is reloading after an eviction: the bounds and texture use kept
+    // from its last residency give the footprint, so the reload uploads only the levels needed.
+    void note_reloading_model(const Uuid& model, std::uint32_t mesh, const math::Mat4& world, const render::Camera3D& camera);
     // Resident top mip level of a texture asset (0 = full resolution); nullopt when not resident.
     [[nodiscard]] std::optional<std::uint32_t> texture_level(const Uuid& uuid) const;
+    // Same for texture `index` embedded in a resident model.
+    [[nodiscard]] std::optional<std::uint32_t> model_texture_level(const Uuid& model, std::uint32_t index) const;
+    // Streaming key of an embedded model texture (stable for a model uuid and texture index).
+    [[nodiscard]] static Uuid embedded_texture_key(const Uuid& model, std::uint32_t index) noexcept;
     // True when the texture's import settings ask for nearest ("filter": "nearest") sampling.
     [[nodiscard]] bool texture_nearest(const Uuid& uuid);
     // HDR texture asset baked into an image-based-lighting environment map (created on first
@@ -291,6 +301,29 @@ private:
     [[nodiscard]] std::uint32_t max_level(const Streamed& s) const noexcept;
     void stream_mips();
     void restream(const Uuid& uuid, std::uint32_t level);
+    // Embedded model textures stream under embedded_texture_key(); the registry maps keys back
+    // to (model, index). Entries are never removed (keys are deterministic), so late loader
+    // results for an evicted model are recognised and dropped. Shared with loader workers.
+    struct EmbeddedRef {
+        Uuid model;
+        std::uint32_t index{0};
+    };
+    struct EmbeddedRegistry {
+        mutable std::mutex mutex;
+        std::unordered_map<Uuid, EmbeddedRef, UuidHash> refs;
+        [[nodiscard]] std::optional<EmbeddedRef> find(const Uuid& key) const;
+    };
+    std::shared_ptr<EmbeddedRegistry> embedded_{std::make_shared<EmbeddedRegistry>()};
+    // The live handle a streamed texture key refers to (texture asset or model texture slot);
+    // `owner` receives the asset whose residency accounts it.
+    [[nodiscard]] rhi::TextureHandle* streamed_handle(const Uuid& key, Uuid* owner = nullptr);
+    void forget_model_streams(const GpuModel& model, const Uuid& uuid);
+    struct ModelHint { // per mesh, kept after eviction
+        std::vector<math::Aabb> bounds;
+        std::vector<std::vector<std::uint32_t>> textures;
+    };
+    std::unordered_map<Uuid, ModelHint, UuidHash> model_hints_;
+    [[nodiscard]] static std::vector<std::uint32_t> mesh_textures(const assets::CookedModel& model, std::uint32_t mesh);
     void replace_texture(const Uuid& uuid, const assets::CookedTexture& cooked, std::uint32_t level);
     std::unique_ptr<assets::AsyncLoader> loader_;
     AsyncLoadingSettings async_settings_;

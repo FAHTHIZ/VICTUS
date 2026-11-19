@@ -83,6 +83,8 @@ public:
     // Loads cooked data, importing first when stale.
     [[nodiscard]] Result<CookedTexture> load_texture(const Uuid& uuid);
     [[nodiscard]] Result<CookedModel> load_model(const Uuid& uuid);
+    // One embedded texture of a model (index into CookedModel::textures) without its meshes.
+    [[nodiscard]] Result<CookedTexture> load_model_texture(const Uuid& uuid, std::uint32_t index);
     // Material assets (.vmat) are read from source; texture references are not resolved here.
     [[nodiscard]] Result<MaterialAsset> load_material(const Uuid& uuid) const;
     // The material with its parent chain applied (instances inherit unset fields). Fails on a

@@ -24,8 +24,10 @@ GpuAssetCache::~GpuAssetCache() { clear(); }
 
 void GpuAssetCache::clear() {
     if (loader_) loader_->forget_all();
+    // The embedded-texture registry stays: its keys are deterministic and late results must be recognised.
     resident_.clear();
     stream_.clear();
+    model_hints_.clear();
     material_textures_.clear();
     residency_stats_.resident_bytes = 0;
     for (auto& [id, tex] : textures_) ctx_.device().destroy(tex);
@@ -76,6 +78,7 @@ void GpuAssetCache::evict(const Uuid& uuid) {
     }
     drop_morphed(&uuid);
     if (const auto it = models_.find(uuid); it != models_.end()) {
+        forget_model_streams(*it->second, uuid);
         for (auto& m : it->second->meshes) ctx_.destroy(m);
         for (auto& t : it->second->textures) ctx_.device().destroy(t);
         models_.erase(it);
@@ -144,6 +147,83 @@ void GpuAssetCache::note_material_footprint(const Uuid& material, float pixels) 
     for (const Uuid& t : refs->second) note_footprint(t, pixels * tiling);
 }
 
+Uuid GpuAssetCache::embedded_texture_key(const Uuid& model, std::uint32_t index) noexcept {
+    return {model.hi ^ 0x6d6f64656c746578ull, model.lo ^ ((static_cast<std::uint64_t>(index) + 1) * 0x9e3779b97f4a7c15ull)};
+}
+
+std::optional<GpuAssetCache::EmbeddedRef> GpuAssetCache::EmbeddedRegistry::find(const Uuid& key) const {
+    std::lock_guard lock(mutex);
+    const auto it = refs.find(key);
+    if (it == refs.end()) return std::nullopt;
+    return it->second;
+}
+
+std::vector<std::uint32_t> GpuAssetCache::mesh_textures(const assets::CookedModel& model, std::uint32_t mesh) {
+    std::vector<std::uint32_t> out;
+    if (mesh >= model.meshes.size() || model.meshes[mesh].material >= model.materials.size()) return out;
+    const assets::ModelMaterial& mat = model.materials[model.meshes[mesh].material];
+    for (const std::int32_t t : {mat.base_color_texture, mat.metallic_roughness_texture, mat.normal_texture, mat.emissive_texture})
+        if (t >= 0) out.push_back(static_cast<std::uint32_t>(t));
+    return out;
+}
+
+void GpuAssetCache::note_model_footprint(const Uuid& model, std::uint32_t mesh, float pixels) {
+    if (!residency_settings_.mip_streaming) return;
+    const auto it = models_.find(model);
+    if (it == models_.end()) return;
+    for (const std::uint32_t t : mesh_textures(it->second->cpu, mesh)) note_footprint(embedded_texture_key(model, t), pixels);
+}
+
+void GpuAssetCache::note_reloading_model(const Uuid& model, std::uint32_t mesh, const math::Mat4& world, const render::Camera3D& camera) {
+    if (!residency_settings_.mip_streaming) return;
+    const auto it = model_hints_.find(model);
+    if (it == model_hints_.end() || mesh >= it->second.bounds.size()) return;
+    const float px = projected_pixels(camera, it->second.bounds[mesh].transformed(world), residency_settings_.screen_height);
+    for (const std::uint32_t t : it->second.textures[mesh]) note_footprint(embedded_texture_key(model, t), px);
+}
+
+std::optional<std::uint32_t> GpuAssetCache::model_texture_level(const Uuid& model, std::uint32_t index) const {
+    const auto m = models_.find(model);
+    if (m == models_.end() || index >= m->second->textures.size()) return std::nullopt;
+    const auto it = stream_.find(embedded_texture_key(model, index));
+    return it == stream_.end() || it->second.levels == 0 ? 0u : it->second.level;
+}
+
+rhi::TextureHandle* GpuAssetCache::streamed_handle(const Uuid& key, Uuid* owner) {
+    if (const auto it = textures_.find(key); it != textures_.end()) {
+        if (owner) *owner = key;
+        return &it->second;
+    }
+    const auto ref = embedded_->find(key);
+    if (!ref) return nullptr;
+    const auto m = models_.find(ref->model);
+    if (m == models_.end() || ref->index >= m->second->textures.size()) return nullptr;
+    if (owner) *owner = ref->model;
+    return &m->second->textures[ref->index];
+}
+
+void GpuAssetCache::forget_model_streams(const GpuModel& model, const Uuid& uuid) {
+    if (!model.textures.empty()) {
+        ModelHint& hint = model_hints_[uuid];
+        hint.bounds.clear();
+        hint.textures.clear();
+        for (std::uint32_t m = 0; m < model.meshes.size(); ++m) {
+            hint.bounds.push_back(model.meshes[m].bounds);
+            hint.textures.push_back(mesh_textures(model.cpu, m));
+        }
+    }
+    for (std::uint32_t i = 0; i < model.textures.size(); ++i) {
+        const Uuid key = embedded_texture_key(uuid, i);
+        if (const auto it = stream_.find(key); it != stream_.end()) {
+            it->second.levels = 0; // footprints stay, like texture assets
+            it->second.level = 0;
+            it->second.pending = -1;
+            it->second.tail_bytes.clear();
+        }
+        if (loader_) loader_->forget(key);
+    }
+}
+
 std::optional<std::uint32_t> GpuAssetCache::texture_level(const Uuid& uuid) const {
     if (!textures_.contains(uuid)) return std::nullopt;
     const auto it = stream_.find(uuid);
@@ -200,9 +280,10 @@ Result<rhi::TextureHandle> GpuAssetCache::upload_texture(const Uuid& uuid, const
 }
 
 void GpuAssetCache::replace_texture(const Uuid& uuid, const assets::CookedTexture& cooked, std::uint32_t level) {
-    const auto it = textures_.find(uuid);
+    Uuid owner;
+    rhi::TextureHandle* handle = streamed_handle(uuid, &owner);
     const auto st = stream_.find(uuid);
-    if (it == textures_.end() || st == stream_.end() || st->second.levels != cooked.mips.size()) return;
+    if (!handle || st == stream_.end() || st->second.levels != cooked.mips.size()) return;
     Streamed& s = st->second;
     s.pending = -1;
     level = std::min(level, max_level(s));
@@ -213,12 +294,22 @@ void GpuAssetCache::replace_texture(const Uuid& uuid, const assets::CookedTextur
         VICTUS_LOG_WARN("assets", "mip streaming: re-upload of {} failed: {}", uuid.to_string(), tex.error().message);
         return; // the old levels stay
     }
+    const rhi::TextureHandle old = *handle;
     // Safe while frames that sample the old texture are in flight: the device frees it once the GPU is done.
-    ctx_.device().destroy(it->second);
-    it->second = *tex;
-    const std::uint64_t last_used = resident_[uuid].last_used;
-    make_resident(uuid, assets::upload_bytes(cooked) + s.tail_bytes[level] - s.tail_bytes[0]);
-    resident_[uuid].last_used = last_used;
+    ctx_.device().destroy(old);
+    *handle = *tex;
+    const Resident before = resident_[owner];
+    if (owner == uuid) {
+        make_resident(uuid, assets::upload_bytes(cooked) + s.tail_bytes[level] - s.tail_bytes[0]);
+    } else {
+        // An embedded model texture: the model's account changes by the levels added or dropped,
+        // and its meshes' resolved materials point at the new handle.
+        make_resident(owner, before.bytes + s.tail_bytes[level] - s.tail_bytes[s.level]);
+        for (render::Material& m : models_[owner]->mesh_materials)
+            for (rhi::TextureHandle* t : {&m.base_color_texture, &m.metallic_roughness_texture, &m.normal_texture, &m.emissive_texture})
+                if (*t == old) *t = *tex;
+    }
+    resident_[owner].last_used = before.last_used;
     s.level = level;
     s.lower_since = 0;
     ++residency_stats_.restreams;
@@ -234,7 +325,8 @@ void GpuAssetCache::restream(const Uuid& uuid, std::uint32_t level) {
         return;
     }
     if (!db_) return;
-    auto cooked = db_->load_texture(uuid);
+    const auto ref = embedded_->find(uuid);
+    auto cooked = ref ? db_->load_model_texture(ref->model, ref->index) : db_->load_texture(uuid);
     if (!cooked) {
         VICTUS_LOG_WARN("assets", "mip streaming: reload of {} failed: {}", uuid.to_string(), cooked.error().message);
         return;
@@ -254,7 +346,7 @@ void GpuAssetCache::stream_mips() {
     std::vector<Change> drops, raises;
     std::vector<std::pair<Uuid, std::size_t>> in_use; // candidates for budget drops: (id, bytes)
     for (auto& [id, s] : stream_) {
-        if (s.levels == 0 || s.pending >= 0 || !textures_.contains(id)) continue;
+        if (s.levels == 0 || s.pending >= 0 || !streamed_handle(id)) continue;
         if (now - s.seen_frame > 1) { // not on screen last frame: idle eviction handles it
             s.lower_since = 0;
             continue;
@@ -388,9 +480,10 @@ void GpuAssetCache::set_async_loading(jobs::JobSystem* jobs, const AsyncLoadingS
     assets::AssetDatabase* db = db_;
     loader_ = std::make_unique<assets::AsyncLoader>(
         jobs,
-        [db](const Uuid& uuid, assets::LoadType type) -> Result<assets::LoadPayload> {
+        [db, embedded = embedded_](const Uuid& uuid, assets::LoadType type) -> Result<assets::LoadPayload> {
             if (type == assets::LoadType::Texture) {
-                auto t = db->load_texture(uuid);
+                const auto ref = embedded->find(uuid); // a model texture re-streaming its mips
+                auto t = ref ? db->load_model_texture(ref->model, ref->index) : db->load_texture(uuid);
                 if (!t) return std::move(t).error();
                 return assets::LoadPayload{std::move(t).value()};
             }
@@ -429,6 +522,11 @@ std::uint32_t GpuAssetCache::pump() {
     for (auto& c : ready) {
         Status st;
         if (auto* tex = std::get_if<assets::CookedTexture>(&c.payload)) {
+            if (embedded_->find(c.uuid)) { // model textures only ever re-stream (or arrive late)
+                if (const auto s = stream_.find(c.uuid); s != stream_.end() && s->second.pending >= 0)
+                    replace_texture(c.uuid, *tex, static_cast<std::uint32_t>(s->second.pending));
+                continue;
+            }
             if (textures_.contains(c.uuid)) {
                 // A mip-streaming re-decode: swap in the requested levels.
                 if (const auto s = stream_.find(c.uuid); s != stream_.end() && s->second.pending >= 0)
@@ -678,11 +776,38 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
         for (auto& t : gpu->textures) ctx_.device().destroy(t);
         return e;
     };
-    for (const auto& t : model.textures) {
+    std::size_t skipped_bytes = 0; // top levels of streamed textures that were not uploaded
+    for (std::uint32_t i = 0; i < model.textures.size(); ++i) {
+        const assets::CookedTexture& t = model.textures[i];
+        std::uint32_t level = 0;
+        Streamed* s = nullptr;
+        if (residency_settings_.mip_streaming && !t.hdr && t.mips.size() > 1) {
+            const Uuid key = embedded_texture_key(uuid, i);
+            {
+                std::lock_guard lock(embedded_->mutex);
+                embedded_->refs[key] = {uuid, i};
+            }
+            s = &stream_[key];
+            s->width = t.mips[0].width;
+            s->height = t.mips[0].height;
+            s->levels = static_cast<std::uint32_t>(t.mips.size());
+            s->tail_bytes = texture_tail_bytes(t);
+            s->pending = -1;
+            s->lower_since = 0;
+            // Re-uploads after an eviction start at the level the last footprint needed.
+            if (residency_stats_.frame - s->seen_frame <= 1) level = wanted_level(*s);
+        }
         std::optional<assets::TextureCodec> codec;
-        auto tex = upload_cooked_texture(ctx_, t, allow_compressed_, &codec);
-        if (!tex) return fail(std::move(tex).error());
+        auto tex = upload_cooked_texture(ctx_, t, allow_compressed_, &codec, level);
+        if (!tex) {
+            if (s) s->levels = 0;
+            return fail(std::move(tex).error());
+        }
         if (codec) ++compressed_uploads_;
+        if (s) {
+            s->level = level;
+            skipped_bytes += s->tail_bytes[0] - s->tail_bytes[level];
+        }
         gpu->textures.push_back(*tex);
     }
     auto tex_or = [&](std::int32_t i) { return i >= 0 ? gpu->textures[static_cast<std::size_t>(i)] : rhi::TextureHandle{}; };
@@ -738,7 +863,7 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
     gpu->cpu = std::move(model);
     const GpuModel* raw = gpu.get();
     models_[uuid] = std::move(gpu);
-    make_resident(uuid, bytes);
+    make_resident(uuid, bytes - std::min(bytes, skipped_bytes));
     return raw;
 }
 
@@ -1388,6 +1513,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         if (!mr.mesh_asset.is_nil()) {
             auto model = assets.model(mr.mesh_asset);
             if (!model && model.error().code == ErrorCode::Pending) {
+                if (streaming && mr.material_asset.is_nil()) assets.note_reloading_model(mr.mesh_asset, mr.mesh_index, wt.matrix, camera);
                 ++stats.loading_assets; // drawn once resident
                 return;
             }
@@ -1453,15 +1579,21 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                             bounds.expand(b.max);
                         }
                     }
-                    if (streaming && !mr.material_asset.is_nil())
-                        assets.note_material_footprint(mr.material_asset,
-                                                       runtime::projected_pixels(camera, bounds, assets.residency_settings().screen_height));
+                    if (streaming) {
+                        const float px = runtime::projected_pixels(camera, bounds, assets.residency_settings().screen_height);
+                        if (!mr.material_asset.is_nil()) assets.note_material_footprint(mr.material_asset, px);
+                        else assets.note_model_footprint(mr.mesh_asset, mr.mesh_index, px);
+                    }
                     renderer.submit_skinned(*drawn, m, wt.matrix, palette, bounds, motion_id);
                     ++stats.meshes;
                     ++stats.skinned;
                     return;
                 }
             }
+            if (streaming && mr.material_asset.is_nil())
+                assets.note_model_footprint(mr.mesh_asset, mr.mesh_index,
+                                            runtime::projected_pixels(camera, drawn->bounds.transformed(wt.matrix),
+                                                                      assets.residency_settings().screen_height));
             emit(*drawn, m);
             ++stats.meshes;
             return;
