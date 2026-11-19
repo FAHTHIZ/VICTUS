@@ -70,6 +70,7 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 cloud_layer;    // volumetric clouds (ADR-0112): x bottom, y top, z coverage, w extinction per metre
     vec4 cloud_shadow;   // x 1 / shape size, y shadow strength, z enabled
     vec4 cloud_wind;     // xyz shape offset (metres)
+    vec4 weather;        // x surface wetness 0..1 (ADR-0113)
 } lighting;
 layout(set = 3, binding = 1) uniform Material {
     vec4 base_color;
@@ -382,6 +383,19 @@ void main() {
     vec3 albedo = s.base_color;
     float metallic = s.metallic;
     float roughness = s.roughness;
+
+    // Wet surfaces (Lagarde, "Water drop 3b", 2013): porous dielectrics (here: rough, non-metal)
+    // darken towards 0.2x albedo and get glossier; on faces that point up a water film makes any
+    // surface smoother. Applied before the coverage layer, which settles on top.
+    float wet = lighting.weather.x;
+    if (wet > 0.0) {
+        float porosity = clamp((roughness - 0.2) / 0.6, 0.0, 1.0) * (1.0 - metallic);
+        float factor = mix(1.0, 0.2, porosity);
+        albedo *= mix(1.0, factor, wet);
+        roughness *= mix(1.0, factor, 0.5 * wet);
+        float up = clamp(N.y, 0.0, 1.0);
+        roughness = clamp(mix(roughness, min(roughness, 0.08), wet * up * up), 0.045, 1.0);
+    }
 
     // Coverage layer: settles on faces that point up, scaled by the scene amount, the material's
     // response and (optionally) the vertex alpha mask.

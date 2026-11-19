@@ -307,6 +307,18 @@ struct EnvironmentComponent {
     float cloud_ambient{1.0f};
     float cloud_distance{30000.0f};        // metres of view ray covered
     float cloud_shadows{1.0f};             // shadow strength on the ground 0..1 (ADR-0112)
+    // Weather (ADR-0113): rain or snow around the camera and wet surfaces.
+    enum class Precipitation : std::uint8_t { None, Rain, Snow };
+    Precipitation precipitation{Precipitation::None};
+    float precipitation_intensity{1.0f};    // 0..1 of the quality tier's drop budget
+    math::Vec3 precipitation_wind{0.0f, 0.0f, 0.0f}; // m/s, slants rain and drifts snow
+    float precipitation_radius{15.0f};      // metres around the camera
+    float precipitation_size{0.0f};         // drop width / flake size (m); 0 = automatic
+    float precipitation_speed{0.0f};        // fall speed (m/s); 0 = automatic
+    math::Color precipitation_color{1, 1, 1, 1};
+    float precipitation_opacity{0.0f};      // 0 = automatic
+    float precipitation_brightness{1.0f};
+    float wetness{0.0f};                    // 0 dry .. 1 soaked surfaces
 };
 
 // Box of extra volumetric fog centred on the entity (ADR-0098), size scaled by the entity's
