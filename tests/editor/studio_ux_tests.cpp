@@ -911,6 +911,57 @@ TEST_CASE("studio guide: in a 2D scene the steps make a sprite with 2D physics")
     CHECK(h.ed->edit_scene().world().get<physics::RigidBody2DComponent>(e) != nullptr);
 }
 
+TEST_CASE("studio roles: Make it a Player, Enemy, Coin or Goal in one undoable click") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Roles", "Roles", "3d").ok());
+    h.frames(2);
+    auto& s = h.ed->edit_scene();
+    auto& w = s.world();
+    // The 3D template has no behaviours yet: making a player adds movement, health, Game Rules
+    // and a camera that follows it.
+    CHECK(w.count<script::GameRulesComponent>() == 0);
+    const scene::Entity cube = h.ed->create_entity(editor::Primitive::Cube);
+    h.ed->select(cube);
+    const std::size_t edits = h.ed->undo_stack().size();
+    CHECK(h.ed->make_role(cube, editor::Role::Player));
+    CHECK(h.ed->undo_stack().size() == edits + 1);
+    CHECK(w.get<scene::Name>(cube)->value == "Player");
+    CHECK(w.get<script::TopDownMovementComponent>(cube));
+    CHECK(w.get<script::HealthComponent>(cube)->on_death == script::DeathAction::Respawn);
+    CHECK(w.count<script::GameRulesComponent>() == 1);
+    CHECK(w.count<script::CameraFollowComponent>() == 1);
+    CHECK(h.ed->guide_done(editor::GuideStep::AddBehaviour));
+    CHECK_FALSE(h.ed->make_role(cube, editor::Role::Player)); // nothing left to add
+    h.frames(2); // the Inspector draws the buttons
+    // One undo takes it all back.
+    h.ed->undo();
+    CHECK_FALSE(w.get<script::TopDownMovementComponent>(cube));
+    CHECK(w.count<script::GameRulesComponent>() == 0);
+    CHECK(w.count<script::CameraFollowComponent>() == 0);
+    CHECK(w.get<scene::Name>(cube)->value == "Cube");
+    h.ed->redo();
+    CHECK(w.get<script::TopDownMovementComponent>(cube));
+    // The other roles.
+    const scene::Entity enemy = h.ed->create_entity(editor::Primitive::Cube);
+    CHECK(h.ed->make_role(enemy, editor::Role::Enemy));
+    CHECK(w.get<script::HazardComponent>(enemy)->stompable);
+    CHECK(w.get<script::PatrolComponent>(enemy));
+    CHECK(w.get<script::HealthComponent>(enemy)->max == doctest::Approx(1));
+    const scene::Entity coin = h.ed->create_entity(editor::Primitive::Sphere);
+    CHECK(h.ed->make_role(coin, editor::Role::Coin));
+    CHECK(w.get<script::CollectibleComponent>(coin));
+    CHECK(w.get<gameplay::RotatorComponent>(coin));
+    const scene::Entity goal = h.ed->create_entity(editor::Primitive::Cube);
+    CHECK(h.ed->make_role(goal, editor::Role::Goal));
+    CHECK(w.get<script::GoalComponent>(goal));
+    CHECK(w.get<scene::Name>(goal)->value == "Goal");
+    CHECK(w.count<script::GameRulesComponent>() == 1); // reused, not duplicated
+    h.ed->select(goal);
+    h.frames(2);
+}
+
 TEST_CASE("studio ragdolls: Make Ragdoll on a Vanguard, behaviour buttons, undo, and the Ragdoll Lab") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;

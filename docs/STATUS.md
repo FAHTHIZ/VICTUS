@@ -1643,3 +1643,8 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 
 - Built: in a 2D scene the first Getting Started step reads "Use Entity > Sprite..." and its button is "Add a sprite for me"; the step buttons that need an object create a sprite instead of a cube, so the new object is visible in the 2D view and "Add physics to it" gives it a 2D rigid body.
 - Verified (Debug, -Werror, lavapipe): new `victus_editor_tests` case on the 2d template (sprite, no mesh, RigidBody2D); visual check of the checklist wording.
+
+## 2026-11-19 — Inspector "Make it a..." roles
+
+- Built: a row of role buttons in the Inspector (Player, Enemy, Coin, Hazard, Checkpoint, Goal; `Editor::make_role`). Each adds the Behaviours that role needs (2D players get Platformer Movement, 3D players Top-Down Movement; enemies a stompable Hazard, a ledge-aware Patrol and 1 health; 3D coins also spin), creates Game Rules when the scene has none and gives the primary camera a Camera Follow that keeps the current framing. Default-named objects take the role's name. One undo step; completes the Getting Started behaviour step. Help topic and User Guide updated.
+- Verified (Debug, -Werror, lavapipe): new `victus_editor_tests` case (components, Game Rules reused not duplicated, camera follow, rename, one undo removes everything including the created Game Rules, redo, re-applying reports nothing to do); visual check of the Inspector row.

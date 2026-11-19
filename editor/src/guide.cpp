@@ -111,6 +111,9 @@ constexpr HelpTopic kTopics[] = {
     {"Logic without code", "Behaviours: gameplay without code",
      "Behaviours are ready-made abilities. Select an object, press Add Component and open the Behaviours group. "
      "Each one starts working the moment you press Play.\n\n"
+     "Quickest start: select an object and press one of the Make it a... buttons in the Inspector (Player, Enemy, "
+     "Coin, Hazard, Checkpoint, Goal). Each adds the right Behaviours in one step, plus Game Rules and a camera "
+     "that follows the player if the scene has none. Ctrl+Z undoes it.\n\n"
      "- Platformer Movement or Top-Down Movement: the player runs and jumps with the keyboard or a gamepad.\n"
      "- Camera Follow: the camera keeps the player in view.\n"
      "- Patrol and Chase: enemies walk back and forth or follow the player. Patrols turn at walls and, with Turn "

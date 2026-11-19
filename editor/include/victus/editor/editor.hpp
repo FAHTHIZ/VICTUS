@@ -183,6 +183,10 @@ struct NetPlaySettings {
 
 enum class Primitive : std::uint8_t { Empty, Cube, Sphere, Plane, Cylinder, Camera, DirectionalLight, PointLight, SpotLight, Sprite, Decal, Light2D, FogVolume };
 
+// Inspector > "Make it a...": ready-made roles built from Behaviours (Editor::make_role).
+enum class Role : std::uint8_t { Player, Enemy, Coin, Hazard, Checkpoint, Goal };
+[[nodiscard]] const char* role_label(Role r) noexcept;
+
 // Command palette entry (Ctrl+Shift+P): every menu action, window toggle, scene, asset and entity.
 struct EditorCommand {
     std::string name;     // "View: Toggle Profiler", "Open Scene: scenes/main.vscene", "Select: Player"
@@ -598,6 +602,9 @@ public:
     // undo step). False if the entity already has it or the id is unknown.
     [[nodiscard]] std::vector<ComponentChoice> component_choices(scene::Entity e) const;
     bool add_component(scene::Entity e, std::string_view id);
+    // Adds the Behaviours for a role (and Game Rules / camera follow when the scene lacks them)
+    // as one undoable edit; renames default-named objects. False when nothing had to change.
+    bool make_role(scene::Entity e, Role role);
     void open_add_component() noexcept { add_component_open_ = 4; } // after the workspace settles
     // Hierarchy search (case-insensitive, by name): matches stay visible with their parents.
     void set_hierarchy_filter(std::string text) { hierarchy_filter_ = std::move(text); }
@@ -937,6 +944,8 @@ private:
     void collect_hierarchy_matches(scene::Entity e, std::unordered_set<Uuid, UuidHash>& keep, bool& any);
     std::string hierarchy_filter_, add_component_filter_;
     bool draw_add_component(scene::Entity e);       // the Inspector button and its picker
+    void draw_roles(scene::Entity e);               // the Inspector "Make it a..." buttons
+    std::optional<Role> pending_role_;
     bool add_component_raw(scene::Entity e, std::string_view id); // no undo (inside an inspector edit)
     std::unordered_set<Uuid, UuidHash> hierarchy_keep_, hierarchy_reveal_;
     Uuid hierarchy_revealed_for_{};
