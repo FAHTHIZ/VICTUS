@@ -175,6 +175,7 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("height", "window height (default: project setting)", "0")
         .option("quality", "rendering quality: low, medium, high or ultra (default: project setting)")
         .flag("fullscreen", "run fullscreen")
+        .flag("sync-assets", "load textures and models on first use instead of in the background")
         .flag("no-hot-reload", "do not reload scripts, textures, models and audio when their files change")
         .flag("strict", "exit with code 3 if any script raised an error")
         .option("connect", "join a `victus serve` server at host[:port]")
@@ -219,6 +220,7 @@ int cmd_run(const std::vector<std::string>& a) {
     o.height = static_cast<int>(p.get_number("height", 0));
     o.fullscreen = p.has("fullscreen");
     o.hot_reload = !p.has("no-hot-reload");
+    o.async_assets = !p.has("sync-assets");
     o.quality = p.get("quality");
     o.saves = p.get("saves");
     auto r = player::run(o);
@@ -227,6 +229,7 @@ int cmd_run(const std::vector<std::string>& a) {
                 static_cast<unsigned long long>(r->frames), r->seconds, r->backend.c_str(), r->quality.c_str(),
                 static_cast<unsigned long long>(r->script_errors));
     if (!r->net_status.empty()) std::printf("net: %s\n", r->net_status.c_str());
+    if (r->assets_streamed) std::printf("assets: %llu streamed in the background\n", static_cast<unsigned long long>(r->assets_streamed));
     if (r->assets_reloaded) std::printf("hot reload: %zu assets reloaded\n", r->assets_reloaded);
     if (r->scene_loads)
         std::printf("scenes: %llu transitions, ended in %s\n", static_cast<unsigned long long>(r->scene_loads), r->final_scene.c_str());

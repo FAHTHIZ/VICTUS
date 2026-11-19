@@ -200,6 +200,8 @@ Save games: scripts store progress and settings with `save.write("profile", { vo
 
 Hot reload: while `victus run` (unless `--no-hot-reload`) or the editor is running, saving a texture, model (or its `.meta` settings, `.bin` or textures) or audio clip under `assets/` swaps it in within about a second, and scripts reload as before. If a file is saved half-way and cannot be imported, the previous version keeps running and the error is shown. Material (`.vmat`) and surface shader (`.vshader`) edits reload too. Scene and font changes appear the next time the game or project starts; the built-in shaders are part of the engine and are not reloaded.
 
+Background loading: `victus run` (and exported games) load textures and models on worker threads and upload a few megabytes of them per frame, so entering an area with new assets does not freeze the game. An object whose model or texture is still loading is not drawn for those frames (it never appears untextured or white). Runs with `--frames`, `--record` or `--replay` load everything synchronously so screenshots and captures are identical every time; `--sync-assets` does the same for an interactive run.
+
 ### Material instances
 
 Material instances: in the Material Editor, Create Instance makes a material that inherits everything from the open one; change only what differs (the `x` next to an overridden field goes back to the parent's value, Detach makes it standalone). In the file this is `"parent": "<uuid>"` plus just the overridden keys, and parents can themselves be instances.

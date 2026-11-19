@@ -6,6 +6,7 @@
 #pragma once
 #include "victus/animation/animation.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/assets/async_loader.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/assets/instantiate.hpp"
 #include "victus/render/atmosphere.hpp"
@@ -22,6 +23,21 @@
 #include <vector>
 
 namespace victus::runtime {
+
+// V.A.U.L.T. asynchronous loading (GpuAssetCache::set_async_loading).
+struct AsyncLoadingSettings {
+    // Decoded bytes uploaded per pump() (per rendered frame). At least one asset is uploaded per
+    // pump even when it alone exceeds the budget.
+    std::size_t upload_budget_bytes{8u << 20};
+    std::uint32_t max_in_flight{4}; // decodes running on workers at once
+};
+
+struct AsyncLoadingStats {
+    std::uint32_t pending{0};         // requested, not uploaded yet (queued + decoding + decoded)
+    std::uint32_t uploaded_last_pump{0};
+    std::size_t uploaded_bytes_last_pump{0};
+    std::uint64_t uploaded{0}, failed{0}; // totals
+};
 
 struct GpuModel {
     std::vector<render::GpuMesh> meshes;
@@ -51,7 +67,27 @@ public:
     GpuAssetCache(const GpuAssetCache&) = delete;
     GpuAssetCache& operator=(const GpuAssetCache&) = delete;
 
+    // With asynchronous loading on, an asset not resident yet returns ErrorCode::Pending (and is
+    // requested); callers skip or draw without it and ask again next frame. Failures are cached
+    // with their message until evict()/clear(). Without it, the first call loads synchronously.
     [[nodiscard]] Result<rhi::TextureHandle> texture(const Uuid& uuid);
+    // V.A.U.L.T.: texture and model loads read and decode on Background jobs of `jobs`, and
+    // pump() uploads finished ones under a byte budget. nullptr returns to synchronous loading
+    // (waiting for decodes in flight). The job system must outlive the cache or be detached
+    // first. Environment maps (HDR bakes) stay synchronous. The database must not be
+    // refresh()ed while loads are in flight: call wait_loads() first.
+    void set_async_loading(jobs::JobSystem* jobs, const AsyncLoadingSettings& settings = {});
+    [[nodiscard]] bool async_loading() const noexcept { return loader_ != nullptr; }
+    // Uploads decoded assets within the budget; returns the uploads made. extract_scene() and
+    // extract_sprites() call it, so the budget applies per rendered view.
+    std::uint32_t pump();
+    // Blocks until every requested asset is resident or failed (loading screens, tests, captures).
+    void finish_loads();
+    // Blocks until no decode is running (before AssetDatabase::refresh()).
+    void wait_loads();
+    [[nodiscard]] AsyncLoadingStats async_stats() const;
+    // Starts loading without using the result (scene preloading); no-op when synchronous.
+    void prefetch(const Uuid& uuid, assets::LoadType type, assets::LoadPriority priority = assets::LoadPriority::Low);
     // True when the texture's import settings ask for nearest ("filter": "nearest") sampling.
     [[nodiscard]] bool texture_nearest(const Uuid& uuid);
     // HDR texture asset baked into an image-based-lighting environment map (created on first
@@ -182,6 +218,10 @@ private:
     std::uint64_t morph_uploads_{0};
     void drop_morphed(const Uuid* model); // all copies, or those of one model
     std::uint64_t procedural_clock_{0};
+    std::unique_ptr<assets::AsyncLoader> loader_;
+    AsyncLoadingSettings async_settings_;
+    AsyncLoadingStats async_stats_;
+    [[nodiscard]] Result<rhi::TextureHandle> upload_texture(const Uuid& uuid, const assets::CookedTexture& cooked);
 };
 
 // instantiate_model() moved to victus/assets/instantiate.hpp; runtime:: keeps the name.
@@ -200,6 +240,7 @@ struct ExtractStats {
     std::uint32_t particle_emitters{0}, particles{0}; // submitted (before camera culling)
     std::uint32_t particle_trails{0};                 // ribbon strips submitted
     std::uint32_t decals{0}; // visible decal components submitted (before camera culling)
+    std::uint32_t loading_assets{0}; // references skipped because their asset is still loading (async)
     bool camera_found{false};
 };
 

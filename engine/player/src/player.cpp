@@ -188,6 +188,12 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     (*scripts)->set_current_scene(rel);
     // Worker threads for physics (and future parallel systems); 0 = hardware_concurrency - 1.
     jobs::JobSystem workers(0);
+    // Declared after `workers`, so the loader detaches (waiting for decodes) before the pool dies.
+    struct DetachLoader {
+        runtime::GpuAssetCache& cache;
+        ~DetachLoader() { cache.set_async_loading(nullptr); }
+    } detach_loader{cache};
+    if (o.async_assets && o.max_frames == 0 && o.replay.empty() && o.record.empty()) cache.set_async_loading(&workers);
     physics::PhysicsSettings ps;
     ps.jobs = &workers;
     auto physics_world = physics::PhysicsWorld::create(ps);
@@ -245,7 +251,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     }
     // Development runs reload changed textures, models and audio while the game runs.
     std::unique_ptr<runtime::AssetHotReloader> reloader;
-    if (o.hot_reload && !packaged) reloader = std::make_unique<runtime::AssetHotReloader>(**db);
+    if (o.hot_reload && !packaged) {
+        reloader = std::make_unique<runtime::AssetHotReloader>(**db);
+        reloader->set_before_refresh([&cache] { cache.wait_loads(); }); // decodes read the records refresh() rewrites
+    }
     // Multiplayer: join a server; it spawns this player's character from the scene's template.
     std::unique_ptr<net::NetClient> client;
     if (!o.connect.empty()) {
@@ -478,6 +487,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         }
         break;
     }
+    report.assets_streamed = cache.async_stats().uploaded;
     if (server) {
         const auto joined = server->diagnostics().clients;
         report.net_status = "hosted the session; " + std::to_string(joined) + (joined == 1 ? " client" : " clients") + " connected at exit";

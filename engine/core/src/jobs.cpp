@@ -78,7 +78,7 @@ bool JobSystem::steal(std::uint32_t self, Job& out) {
     return false;
 }
 
-bool JobSystem::try_run_one(std::uint32_t self) {
+bool JobSystem::try_run_one(std::uint32_t self, bool allow_background) {
     Job job;
     auto take_from = [&](Queue& q) {
         std::lock_guard lock(q.mutex);
@@ -87,7 +87,7 @@ bool JobSystem::try_run_one(std::uint32_t self) {
         q.jobs.pop_front();
         return true;
     };
-    if (take_from(high_) || pop_local(self, job) || steal(self, job) || take_from(background_)) {
+    if (take_from(high_) || pop_local(self, job) || steal(self, job) || (allow_background && take_from(background_))) {
         queued_.fetch_sub(1, std::memory_order_acq_rel);
         execute(job);
         return true;
@@ -116,8 +116,12 @@ void JobSystem::worker_main(std::uint32_t index) {
 void JobSystem::wait(Counter& counter) {
     const std::uint32_t self = current_thread_index();
     std::uint32_t idle_spins = 0;
+    // External threads (the game/render thread) help only with frame work: picking up a
+    // Background job (an asset decode, a mesh-shape build) here would stall the frame for its
+    // whole duration. Workers keep running them; there is always at least one worker.
+    const bool allow_background = self != 0;
     while (!counter.done()) {
-        if (try_run_one(self)) {
+        if (try_run_one(self, allow_background)) {
             idle_spins = 0;
             continue;
         }

@@ -27,6 +27,7 @@ const char* to_string(ErrorCode code) noexcept {
     case ErrorCode::Cancelled: return "cancelled";
     case ErrorCode::ScriptError: return "script_error";
     case ErrorCode::NetworkError: return "network_error";
+    case ErrorCode::Pending: return "pending";
     }
     return "?";
 }

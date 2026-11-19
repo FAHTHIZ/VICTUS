@@ -86,6 +86,7 @@ HotReloadReport AssetHotReloader::check() {
     std::sort(changed.begin(), changed.end());
     report.changed = changed;
 
+    if (before_refresh_) before_refresh_();
     const auto refresh = db_.refresh();
     for (const auto& e : refresh.errors) report.failed.push_back(e);
     for (const auto& rec : db_.records()) {

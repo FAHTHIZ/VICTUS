@@ -6,6 +6,7 @@ set_target_properties(victus_cgltf PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 victus_add_module(assets
     SOURCES
+        src/async_loader.cpp
         src/cooked.cpp
         src/database.cpp
         src/importers.cpp

@@ -23,6 +23,10 @@ struct PlayerOptions {
     std::uint64_t max_frames{0}; // 0 = until closed; >0 also makes time deterministic (1/60 s)
     std::string screenshot;      // PNG written after the last frame (requires max_frames)
     bool fullscreen{false};
+    // Interactive runs load textures and models on background jobs and upload them under a
+    // per-frame budget (V.A.U.L.T., ADR-0087); fixed-frame, recorded and replayed runs always
+    // load synchronously so captures and screenshots stay deterministic.
+    bool async_assets{true};
     bool hot_reload{false};      // reload changed scripts, textures, models and audio while running (development)
     std::string quality;         // low|medium|high|ultra; empty = project rendering.quality
     std::string connect;         // host[:port] of a `victus serve` server; empty = play offline
@@ -66,6 +70,7 @@ struct PlayerReport {
     std::size_t plugins_loaded{0}; // native plugins initialized from <project>/plugins (ADR-0078)
     std::string quality;         // quality tier used
     std::string net_status;      // last multiplayer status when --connect was used
+    std::uint64_t assets_streamed{0}; // textures/models uploaded by the background loader
     std::size_t assets_reloaded{0}; // textures/models/audio hot-reloaded while running
     std::uint64_t digests_checked{0}; // replay: state digests compared
     std::string replay_mismatch;    // replay: first divergence ("frame N: expected X, got Y")

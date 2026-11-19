@@ -23,6 +23,7 @@ enum class ErrorCode : std::uint16_t {
     Cancelled,
     ScriptError,
     NetworkError,
+    Pending, // the resource is loading asynchronously; ask again on a later frame
 };
 
 [[nodiscard]] const char* to_string(ErrorCode code) noexcept;

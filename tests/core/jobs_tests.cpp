@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <numeric>
+#include <thread>
 #include <vector>
 
 using namespace victus::jobs;
@@ -90,4 +91,29 @@ TEST_CASE("task graph: cycles are rejected") {
     g.precede(b, a);
     CHECK(g.has_cycle());
     CHECK_FALSE(g.run(js));
+}
+
+TEST_CASE("jobs: a thread outside the pool does not run Background jobs while it waits") {
+    JobSystem js(1);
+    std::atomic<bool> worker_busy{false}, release{false};
+    Counter blocker;
+    // Occupy the only worker so the Background job below stays queued.
+    js.submit(
+        [&] {
+            worker_busy = true;
+            while (!release) std::this_thread::yield();
+        },
+        &blocker, Priority::High);
+    while (!worker_busy) std::this_thread::yield();
+    std::atomic<std::uint32_t> background_thread{~0u};
+    Counter background, frame;
+    js.submit([&] { background_thread = js.current_thread_index(); }, &background, Priority::Background);
+    js.submit([] {}, &frame, Priority::Normal);
+    js.wait(frame); // runs the Normal job itself, leaves the Background one for a worker
+    CHECK(frame.done());
+    CHECK_FALSE(background.done());
+    release = true;
+    js.wait(background);
+    js.wait(blocker);
+    CHECK(background_thread.load() == 1);
 }
