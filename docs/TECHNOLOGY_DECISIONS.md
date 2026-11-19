@@ -972,6 +972,14 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0116 — Distance fog on particles, trails and precipitation
+
+- Status: Accepted (2026-11-19)
+- Context: `Environment` distance fog (linear, exponential, exponential squared) was applied in `pbr.frag` and `water.frag` only, so billboards, ribbon trails and rain or snow stayed at full colour inside a fog bank and popped out against fogged geometry. Unity's built-in particle shaders apply the same fog as surfaces (`UNITY_APPLY_FOG`), and fade additive particles towards black rather than the fog colour (`UNITY_APPLY_FOG_COLOR(..., fixed4(0,0,0,0))`), because their light is added on top of an already fogged background ([Unity built-in shaders](https://github.com/TwoTailsGames/Unity-Built-in-Shaders/blob/master/DefaultResourcesExtra/Particle%20Add.shader)).
+- Decision: `particle.frag` (CPU and GPU billboards and ribbons) and `precipitation.frag` evaluate the same fog function as `pbr.frag` per fragment. The distance is the range along the pixel's ray, rebuilt from the view depth they already have and `1 / projection scale` (`view depth x |(ndc.x / P00, ndc.y / P11, 1)|`), so no vertex shader changes. Alpha blending mixes the colour towards the fog colour; additive blending scales the colour by `1 - fog`. The fog uniforms ride in the particle and precipitation fragment blocks.
+- Alternatives: per-vertex fog (cheaper, wrong across large billboards); composing volumetric fog before transparents and sampling the froxel grid in every transparent shader (the correct fix for volumetric fog, a larger change; still open).
+- Consequences: effects match fogged surfaces. Volumetric fog is still composited once after all transparents by the opaque depth; 2D sprites are not fogged (2D scenes have no distance fog).
+
 ## ADR-0115 — Whole-volume 3D texture uploads and checked uploads in the SDL backend
 
 - Status: Accepted (2026-11-19)

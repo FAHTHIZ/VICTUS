@@ -149,6 +149,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_volumetric_cloud_tests.cpp
         render/gpu_weather_tests.cpp
         render/gpu_texture_3d_tests.cpp
+        render/gpu_effect_fog_tests.cpp
         render/gpu_light2d_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
     LABELS gpu)
