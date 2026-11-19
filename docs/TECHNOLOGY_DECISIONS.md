@@ -972,6 +972,14 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0118 — Rain splashes from the occlusion map
+
+- Status: Accepted (2026-11-19)
+- Context: after ADR-0113/0114/0117 rain fell, was stopped by roofs and rippled puddles, but nothing showed where drops hit the ground. Lagarde's rain write-up for Remember Me draws splashes as short-lived billboards placed on the first surface below using the same top-down rain depth map that occludes the drops, so no CPU collision is needed ([Water drop 2b, dynamic rain and its effects](https://seblagarde.wordpress.com/2013/01/03/water-drop-2b-dynamic-rain-and-its-effects/)).
+- Decision: a second precipitation pipeline (`splash.vert` + `precipitation.frag` shape 2, alpha-blended, depth-tested, no depth writes) draws `round(drops x 0.25 x Precipitation::splashes)` splash quads after the drops, only for rain and only when the rain occlusion map exists. Each splash hashes its index and its life cycle (0.3 s, phase-offset per splash) into a point on a disc of `precipitation_radius` around the camera, reads the occlusion depth there in the vertex shader (point-sampled) and reconstructs the landing point with the inverse rain matrix; texels with nothing below (cleared depth) and points outside the map collapse the quad. The quad is a camera-facing crown about 0.12 m across (varied per splash), standing on the hit point, growing and fading over its life. `SceneStats::precipitation_splashes`; `EnvironmentComponent::precipitation_splashes` (0..1).
+- Alternatives: GPU particle collision with the depth buffer (only on-screen surfaces, needs the compute path); CPU raycasts per splash (costly, physics-dependent); spawning secondary droplet particles (more convincing; later via sub-emitters).
+- Consequences: splashes land on whatever the occlusion map sees, including roofs, within its range; they follow the map's resolution (a texel can straddle an edge); no droplets, no splash sound hooks, and splashes do not wet or ripple surfaces beyond what ADR-0117 does.
+
 ## ADR-0117 — Puddles and rain ripples
 
 - Status: Accepted (2026-11-19)

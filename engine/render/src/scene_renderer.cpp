@@ -1149,15 +1149,15 @@ Result<OverdrawStats> SceneRenderer::read_overdraw() {
     return s;
 }
 
-Result<rhi::PipelineHandle> SceneRenderer::precipitation_pipeline() {
-    const std::string key = "precipitation";
+Result<rhi::PipelineHandle> SceneRenderer::precipitation_pipeline(bool splash) {
+    const std::string key = splash ? "precipitation_splash" : "precipitation";
     if (auto it = post_.find(key); it != post_.end()) return it->second;
-    auto vs = ctx_.shader("precipitation.vert");
+    auto vs = ctx_.shader(splash ? "splash.vert" : "precipitation.vert");
     if (!vs) return std::move(vs).error();
     auto fs = ctx_.shader("precipitation.frag");
     if (!fs) return std::move(fs).error();
     rhi::PipelineDesc d;
-    d.name = "precipitation";
+    d.name = key;
     d.vertex = vs.value();
     d.fragment = fs.value();
     d.cull = rhi::CullMode::None;
@@ -2698,8 +2698,19 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         Mat4 rain_vp;
         Vec4 fog_color, fog_params, view; // distance fog (ADR-0116)
     };
+    struct SplashUniforms {
+        Mat4 view_proj;
+        Vec4 eye, right, up;
+        Vec4 params; // x radius, y crown size, z 1 / lifetime, w pixel size at 1 m
+        Vec4 color;
+        Mat4 rain_vp, rain_inv;
+    };
     PrecipitationUniforms precip_u{};
     PrecipitationFragmentUniforms precip_fu{};
+    SplashUniforms splash_u{};
+    PrecipitationFragmentUniforms splash_fu{};
+    std::uint32_t splash_count = 0;
+    rhi::PipelineHandle splash_pl{};
     std::uint32_t precip_count = 0;
     rhi::PipelineHandle precip_pl{};
     if (facts_.precipitation_requested && S.precipitation && !capture_mode_ && !precipitation_failed_) {
@@ -2743,6 +2754,34 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         precip_fu.fog_params = lighting.fog_params;
         precip_fu.view = {1.0f / proj[0].x, 1.0f / proj[1].y, 0, 0};
         stats_.precipitation_drops = precip_count;
+        // Rain splashes (ADR-0118) need the occlusion map to find where drops land.
+        const float splashes = std::clamp(fin(pr.splashes, 0.0f), 0.0f, 1.0f);
+        if (!snow && rain_occlusion && splashes > 0.0f && !splash_failed_) {
+            splash_count = static_cast<std::uint32_t>(std::lround(static_cast<float>(precip_count) * 0.25f * splashes));
+            if (splash_count > 0) {
+                auto pl = precipitation_pipeline(true);
+                if (!pl) {
+                    VICTUS_LOG_WARN("render", "rain splashes disabled: {}", pl.error().message);
+                    splash_failed_ = true;
+                    splash_count = 0;
+                } else splash_pl = pl.value();
+            }
+        }
+        if (splash_count > 0) {
+            splash_u.view_proj = view_proj;
+            splash_u.eye = precip_u.eye;
+            splash_u.right = precip_u.right;
+            splash_u.up = precip_u.up;
+            splash_u.params = {radius, 0.12f, 1.0f / 0.3f, precip_u.volume.w};
+            splash_u.color = precip_u.color;
+            splash_u.color.w = std::min(1.0f, precip_u.color.w * 1.6f);
+            splash_u.rain_vp = rain_vp;
+            splash_u.rain_inv = inverse(rain_vp);
+            splash_fu = precip_fu;
+            splash_fu.proj.z = 0.0f; // splashes sit on the occluders: no occlusion test
+            splash_fu.screen.w = 2.0f;
+            stats_.precipitation_splashes = splash_count;
+        }
     }
     facts_.precipitation_drops = precip_count;
 
@@ -3473,13 +3512,22 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 if (rain_map.valid()) b.read(rain_map);
                 b.write_color(hdr, rhi::LoadOp::Load);
             },
-            [&, pl = precip_pl, precip_count](PassContext& ctx) {
+            [&, pl = precip_pl, precip_count, splash_count, splash_pl](PassContext& ctx) {
                 ctx.pass->bind_pipeline(pl);
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, precip_u);
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, precip_fu);
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(depth), ctx_.nearest_clamp());
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1, rain_map.valid() ? ctx.texture(rain_map) : no_shadow_, ctx_.shadow_compare());
                 ctx.pass->draw(6, precip_count);
+                if (splash_count > 0) {
+                    ctx.pass->bind_pipeline(splash_pl);
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, splash_u);
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, splash_fu);
+                    ctx.pass->bind_texture(rhi::ShaderStage::Vertex, 0, ctx.texture(rain_map), ctx_.nearest_clamp());
+                    ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(depth), ctx_.nearest_clamp());
+                    ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(rain_map), ctx_.shadow_compare());
+                    ctx.pass->draw(6, splash_count);
+                }
             });
     }
 

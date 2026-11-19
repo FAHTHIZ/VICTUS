@@ -322,6 +322,7 @@ struct Precipitation {
     float opacity{0.0f};            // 0 = 0.35 rain, 0.9 snow
     float brightness{1.0f};         // light multiplier
     float ripples{1.0f};            // rain ripples on puddles and wet flat ground (ADR-0117), 0..1 x intensity
+    float splashes{1.0f};           // rain splashes where drops land (ADR-0118; needs the occlusion map), 0..1
 };
 
 struct Environment {
@@ -601,6 +602,7 @@ struct SceneStats {
     std::uint32_t precipitation_occluders{0}; // opaque draws rendered into it
     bool surface_puddles{false};       // flat surfaces may hold puddles (ADR-0117)
     bool rain_ripples{false};          // rain ripples animated on wet flat surfaces
+    std::uint32_t precipitation_splashes{0}; // rain splash crowns drawn (ADR-0118)
 };
 
 struct SceneRendererOptions {
@@ -792,7 +794,7 @@ private:
         math::Vec3 pos;
         std::uint32_t color;
     };
-    Result<rhi::PipelineHandle> precipitation_pipeline();
+    Result<rhi::PipelineHandle> precipitation_pipeline(bool splash = false);
     [[nodiscard]] Result<rhi::PipelineHandle> post_pipeline(const char* fragment, rhi::Format format,
                                                             rhi::BlendMode blend = rhi::BlendMode::Opaque);
     void compute_cascades(float aspect, std::uint32_t resolution);
@@ -915,6 +917,7 @@ private:
     math::Vec3 fog_prev_position_{}, fog_prev_forward_{0, 0, -1};
     std::uint64_t fog_frame_{0};
     bool precipitation_failed_{false}; // precipitation pipeline failed to build (logged once)
+    bool splash_failed_{false};        // rain splash pipeline failed to build (logged once)
     bool clouds_failed_{false};      // cloud pipelines failed to build: clouds stay off (logged once)
     std::uint64_t cloud_frame_{0};   // jitter sequence of the cloud march
     std::array<math::Mat4, 4> cascade_vp_{math::Mat4::identity(), math::Mat4::identity(), math::Mat4::identity(),

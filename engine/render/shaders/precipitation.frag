@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Rain streaks and snow flakes (ADR-0113): soft profile, tested against the sampled scene depth
 // (the pass has no depth attachment) and faded where drops meet geometry, hidden where the rain
-// occlusion map has something between the drop and the sky (ADR-0114), alpha blended.
+// occlusion map has something between the drop and the sky (ADR-0114), alpha blended. Also draws
+// rain splashes from splash.vert (ADR-0118).
 layout(location = 0) in vec2 v_uv;
 layout(location = 1) in vec4 v_color;
 layout(location = 2) in float v_distance;
@@ -11,7 +12,7 @@ layout(set = 2, binding = 0) uniform sampler2D u_depth;
 layout(set = 2, binding = 1) uniform sampler2DShadow u_rain_occlusion; // ADR-0114
 layout(set = 3, binding = 0) uniform Params {
     vec4 proj;   // scene view depth = proj.x / (depth + proj.y); z rain occlusion on, w its depth bias
-    vec4 screen; // xy: 1 / render size, z: 1 / softness (metres), w type (0 rain, 1 snow)
+    vec4 screen; // xy: 1 / render size, z: 1 / softness (metres), w type (0 rain, 1 snow, 2 splash)
     mat4 rain_vp; // world -> rain occlusion map
     vec4 fog_color;  // distance fog (ADR-0116): rgb radiance, w mode
     vec4 fog_params; // x start, y end, z density, w max opacity
@@ -35,7 +36,10 @@ float distance_fog(float view_depth) {
 layout(location = 0) out vec4 out_color;
 void main() {
     float shape;
-    if (u.screen.w > 0.5) shape = 1.0 - smoothstep(0.4, 1.0, length(v_uv));
+    if (u.screen.w > 1.5) { // splash crown (ADR-0118): a ring around the landing point at the bottom edge
+        float r = length(vec2(v_uv.x, v_uv.y + 1.0) * vec2(1.0, 0.5));
+        shape = smoothstep(0.45, 0.8, r) * (1.0 - smoothstep(0.85, 1.0, r));
+    } else if (u.screen.w > 0.5) shape = 1.0 - smoothstep(0.4, 1.0, length(v_uv));
     else shape = (1.0 - abs(v_uv.x)) * (1.0 - v_uv.y * v_uv.y);
     float a = v_color.a * shape;
     if (a <= 0.002) discard;
