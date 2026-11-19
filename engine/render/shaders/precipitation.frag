@@ -17,7 +17,49 @@ layout(set = 3, binding = 0) uniform Params {
     vec4 fog_color;  // distance fog (ADR-0116): rgb radiance, w mode
     vec4 fog_params; // x start, y end, z density, w max opacity
     vec4 view;       // xy: 1 / projection x and y scale
+    vec4 volumetric; // volumetric fog grid (ADR-0119): xyz froxels, w far (0 off)
 } u;
+// SPIR-V: after the two samplers in set 2; MSL: after the one uniform buffer.
+#ifdef VICTUS_MSL
+layout(std430, set = 2, binding = 1) readonly buffer FogGrid { vec4 fog_grid[]; };
+#else
+layout(std430, set = 2, binding = 2) readonly buffer FogGrid { vec4 fog_grid[]; };
+#endif
+// Volumetric fog in front of a transparent fragment (ADR-0119): the integrated froxel grid
+// (in-scattered light rgb, transmittance a) fetched trilinearly at the fragment's view depth,
+// the same lookup fog_apply.frag makes for opaque pixels. GRID: xyz froxels, w grid far (0 = off).
+vec4 volumetric_fog(vec2 uv, float view_depth, vec4 grid) {
+    if (grid.w <= 0.0) return vec4(0.0, 0.0, 0.0, 1.0);
+    uvec3 g = uvec3(grid.xyz);
+    vec2 x = clamp(uv * grid.xy - 0.5, vec2(0.0), grid.xy - 1.0);
+    uvec2 a = uvec2(floor(x));
+    uvec2 b = min(a + 1u, g.xy - 1u);
+    vec2 w = x - vec2(a);
+    float s = sqrt(clamp(view_depth / grid.w, 0.0, 1.0)) * grid.z;
+    vec4 v0 = vec4(0.0, 0.0, 0.0, 1.0), v1;
+    float t;
+    uint z0, z1;
+    if (s < 1.0) {
+        z0 = 0u;
+        z1 = 0u;
+        t = s;
+    } else {
+        z0 = min(uint(floor(s - 1.0)), g.z - 1u);
+        z1 = min(z0 + 1u, g.z - 1u);
+        t = s - 1.0 - float(z0);
+    }
+    vec4 c[2];
+    for (int k = 0; k < 2; ++k) {
+        uint base = (k == 0 ? z0 : z1) * g.y * g.x;
+        vec4 r0 = mix(fog_grid[base + a.y * g.x + a.x], fog_grid[base + a.y * g.x + b.x], w.x);
+        vec4 r1 = mix(fog_grid[base + b.y * g.x + a.x], fog_grid[base + b.y * g.x + b.x], w.x);
+        c[k] = mix(r0, r1, w.y);
+    }
+    v1 = s < 1.0 ? mix(v0, c[0], t) : mix(c[0], c[1], t);
+    v1.a = clamp(v1.a, 0.0, 1.0);
+    return v1;
+}
+
 // Distance fog (ADR-0116), matching pbr.frag: range along the pixel's ray from the view depth.
 float distance_fog(float view_depth) {
     int mode = int(u.fog_color.w + 0.5);
@@ -56,5 +98,7 @@ void main() {
     float gap = scene - v_distance;
     if (gap <= 0.0) discard;
     a *= clamp(gap * u.screen.z, 0.0, 1.0);
-    out_color = vec4(mix(v_color.rgb, u.fog_color.rgb, distance_fog(v_distance)), a);
+    vec3 rgb = mix(v_color.rgb, u.fog_color.rgb, distance_fog(v_distance));
+    vec4 vf = volumetric_fog(gl_FragCoord.xy * u.screen.xy, v_distance, u.volumetric); // ADR-0119
+    out_color = vec4(rgb * vf.a + vf.rgb, a);
 }

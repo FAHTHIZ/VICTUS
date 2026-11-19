@@ -15,7 +15,49 @@ layout(set = 3, binding = 0) uniform Params {
     vec4 fog_color;  // rgb fog radiance, w mode (0 off, 1 linear, 2 exp, 3 exp2)
     vec4 fog_params; // x start, y end, z density, w max opacity
     vec4 view;       // xy: 1 / projection x and y scale (view ray per unit depth)
+    vec4 volumetric; // volumetric fog grid (ADR-0119): xyz froxels, w far (0 off)
 } u;
+// SPIR-V: after the two samplers in set 2; MSL: after the one uniform buffer.
+#ifdef VICTUS_MSL
+layout(std430, set = 2, binding = 1) readonly buffer FogGrid { vec4 fog_grid[]; };
+#else
+layout(std430, set = 2, binding = 2) readonly buffer FogGrid { vec4 fog_grid[]; };
+#endif
+// Volumetric fog in front of a transparent fragment (ADR-0119): the integrated froxel grid
+// (in-scattered light rgb, transmittance a) fetched trilinearly at the fragment's view depth,
+// the same lookup fog_apply.frag makes for opaque pixels. GRID: xyz froxels, w grid far (0 = off).
+vec4 volumetric_fog(vec2 uv, float view_depth, vec4 grid) {
+    if (grid.w <= 0.0) return vec4(0.0, 0.0, 0.0, 1.0);
+    uvec3 g = uvec3(grid.xyz);
+    vec2 x = clamp(uv * grid.xy - 0.5, vec2(0.0), grid.xy - 1.0);
+    uvec2 a = uvec2(floor(x));
+    uvec2 b = min(a + 1u, g.xy - 1u);
+    vec2 w = x - vec2(a);
+    float s = sqrt(clamp(view_depth / grid.w, 0.0, 1.0)) * grid.z;
+    vec4 v0 = vec4(0.0, 0.0, 0.0, 1.0), v1;
+    float t;
+    uint z0, z1;
+    if (s < 1.0) {
+        z0 = 0u;
+        z1 = 0u;
+        t = s;
+    } else {
+        z0 = min(uint(floor(s - 1.0)), g.z - 1u);
+        z1 = min(z0 + 1u, g.z - 1u);
+        t = s - 1.0 - float(z0);
+    }
+    vec4 c[2];
+    for (int k = 0; k < 2; ++k) {
+        uint base = (k == 0 ? z0 : z1) * g.y * g.x;
+        vec4 r0 = mix(fog_grid[base + a.y * g.x + a.x], fog_grid[base + a.y * g.x + b.x], w.x);
+        vec4 r1 = mix(fog_grid[base + b.y * g.x + a.x], fog_grid[base + b.y * g.x + b.x], w.x);
+        c[k] = mix(r0, r1, w.y);
+    }
+    v1 = s < 1.0 ? mix(v0, c[0], t) : mix(c[0], c[1], t);
+    v1.a = clamp(v1.a, 0.0, 1.0);
+    return v1;
+}
+
 layout(location = 0) out vec4 out_color;
 
 // Distance fog (ADR-0116), matching pbr.frag: range along the pixel's ray from the view depth.
@@ -43,5 +85,8 @@ void main() {
     // ones (light added on top of an already fogged scene) are dimmed by the same amount.
     float f = distance_fog(v_distance);
     c.rgb = u.screen.w > 0.5 ? c.rgb * (1.0 - f) : mix(c.rgb, u.fog_color.rgb, f);
+    // Volumetric fog in front of the particle (ADR-0119), drawn after the fog composite.
+    vec4 vf = volumetric_fog(gl_FragCoord.xy * u.screen.xy, v_distance, u.volumetric);
+    c.rgb = u.screen.w > 0.5 ? c.rgb * vf.a : c.rgb * vf.a + vf.rgb;
     out_color = c;
 }

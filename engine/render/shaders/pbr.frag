@@ -38,9 +38,11 @@ struct LocalLight { vec4 position_range; vec4 color_intensity; vec4 direction_co
 #ifdef VICTUS_MSL
 layout(std430, set = 2, binding = 3) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 2, binding = 4) readonly buffer Clusters { uint cluster_data[]; };
+layout(std430, set = 2, binding = 5) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
 #else
 layout(std430, set = 2, binding = 10) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 2, binding = 11) readonly buffer Clusters { uint cluster_data[]; };
+layout(std430, set = 2, binding = 12) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
 #endif
 layout(set = 3, binding = 0) uniform Lighting {
     vec4 camera_pos;     // w: ambient occlusion enabled
@@ -74,6 +76,7 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 weather;        // x surface wetness 0..1 (ADR-0113), y rain occlusion on, z its depth bias (ADR-0114), w puddle amount (ADR-0117)
     mat4 rain_vp;        // world -> rain occlusion map
     vec4 puddles;        // x 1 / puddle size (m), y ripple strength, z 1 / ripple cell size (m), w ripples per second
+    vec4 volumetric;     // volumetric fog grid for blended draws (ADR-0119): xyz froxels, w far (0 off)
 } lighting;
 layout(set = 3, binding = 1) uniform Material {
     vec4 base_color;
@@ -82,6 +85,7 @@ layout(set = 3, binding = 1) uniform Material {
     vec4 flags;          // x has normal map, y unlit, z vertex alpha is a coverage mask, w coverage response
     vec4 uv_transform;   // xy scale, zw offset (material tiling)
     vec4 custom[4];      // surface shader parameters (material "shader_params")
+    vec4 blend;          // x: 0 opaque, 1 alpha blended, 2 additive (volumetric fog, ADR-0119)
 } material;
 
 // Local reflection probe for this draw (box-projected cube bound to u_env instead of the scene's
@@ -93,6 +97,50 @@ layout(set = 3, binding = 2) uniform Probe {
     vec4 sh[9];    // SH9 irradiance / pi captured at the probe, pre-multiplied by the intensity
 } probe;
 
+// Volumetric fog in front of a transparent fragment (ADR-0119): the integrated froxel grid
+// (in-scattered light rgb, transmittance a) fetched trilinearly at the fragment's view depth,
+// the same lookup fog_apply.frag makes for opaque pixels. GRID: xyz froxels, w grid far (0 = off).
+vec4 volumetric_fog(vec2 uv, float view_depth, vec4 grid) {
+    if (grid.w <= 0.0) return vec4(0.0, 0.0, 0.0, 1.0);
+    uvec3 g = uvec3(grid.xyz);
+    vec2 x = clamp(uv * grid.xy - 0.5, vec2(0.0), grid.xy - 1.0);
+    uvec2 a = uvec2(floor(x));
+    uvec2 b = min(a + 1u, g.xy - 1u);
+    vec2 w = x - vec2(a);
+    float s = sqrt(clamp(view_depth / grid.w, 0.0, 1.0)) * grid.z;
+    vec4 v0 = vec4(0.0, 0.0, 0.0, 1.0), v1;
+    float t;
+    uint z0, z1;
+    if (s < 1.0) {
+        z0 = 0u;
+        z1 = 0u;
+        t = s;
+    } else {
+        z0 = min(uint(floor(s - 1.0)), g.z - 1u);
+        z1 = min(z0 + 1u, g.z - 1u);
+        t = s - 1.0 - float(z0);
+    }
+    vec4 c[2];
+    for (int k = 0; k < 2; ++k) {
+        uint base = (k == 0 ? z0 : z1) * g.y * g.x;
+        vec4 r0 = mix(fog_grid[base + a.y * g.x + a.x], fog_grid[base + a.y * g.x + b.x], w.x);
+        vec4 r1 = mix(fog_grid[base + b.y * g.x + a.x], fog_grid[base + b.y * g.x + b.x], w.x);
+        c[k] = mix(r0, r1, w.y);
+    }
+    v1 = s < 1.0 ? mix(v0, c[0], t) : mix(c[0], c[1], t);
+    v1.a = clamp(v1.a, 0.0, 1.0);
+    return v1;
+}
+
+// Blended draws are composited after the volumetric fog, so they take their own share of it:
+// alpha surfaces become colour * transmittance + in-scattered light, additive ones are dimmed.
+// Opaque draws are left alone (fog_apply.frag covers them by the depth buffer).
+vec3 blended_fog(vec3 color) {
+    if (material.blend.x < 0.5 || lighting.volumetric.w <= 0.0) return color;
+    float view_depth = dot(v_world_pos - lighting.camera_pos.xyz, lighting.camera_forward.xyz);
+    vec4 f = volumetric_fog(gl_FragCoord.xy * lighting.screen.xy, view_depth, lighting.volumetric);
+    return material.blend.x > 1.5 ? color * f.a : color * f.a + f.rgb;
+}
 layout(location = 0) out vec4 out_color;
 
 const float PI = 3.14159265359;
@@ -411,7 +459,7 @@ void main() {
 #endif
     if (s.alpha < material.params.w) discard;
     if (s.unlit) {
-        out_color = vec4(s.base_color + s.emissive, s.alpha);
+        out_color = vec4(blended_fog(s.base_color + s.emissive), s.alpha);
         return;
     }
     N = s.normal;
@@ -539,5 +587,5 @@ void main() {
         }
         color = mix(color, lighting.fog_color.rgb, f * lighting.fog_params.w);
     }
-    out_color = vec4(color, s.alpha);
+    out_color = vec4(blended_fog(color), s.alpha);
 }
