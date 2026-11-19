@@ -1709,3 +1709,9 @@ Verified: `studio behaviour guides: patrol and platform routes, chase ranges and
 Built: Window > Layout > Save Layout As / Delete Layout and a "Yours" list. A named layout stores the open panels and the ImGui window/docking settings (`UiContext::layout_snapshot`); restoring it queues the settings with `UiContext::load_layout`, applied before the next `ImGui::NewFrame` because docking cannot change mid-frame. Saved in `studio_preferences.json` under `workspace.custom_layouts`.
 
 Verified: `studio workspace: named layouts keep panels and docking and survive restarts`.
+
+## 2026-11-19 — Inventory, Timers and Attributes in the Inspector
+
+Built: the Inspector draws Inventory (slots, stack size, editable item rows, + Add Item), Timers (name, time left, repeat, paused) and Attributes (value, base, active effects) instead of leaving them invisible; Inventory is offered in Add Component under Behaviours.
+
+Verified: `studio inspector: inventories, timers and attributes are shown and items can be added`, a Studio screenshot with a Player carrying items and a timer.

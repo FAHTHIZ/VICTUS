@@ -6,6 +6,7 @@
 #include "editor_client.hpp"
 
 #include "victus/core/build_info.hpp"
+#include "victus/gameplay/framework.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/platform/platform.hpp"
 #include "victus/scene/reflect.hpp"
@@ -1525,6 +1526,78 @@ bool Editor::inspect_components(Entity e) {
         changed |= ImGui::DragFloat("Phase (rad)", &o->phase, 0.01f);
     }
     if (auto* sc = w.get<script::ScriptComponent>(e); sc && removable("Script", remove_script)) changed |= inspect_script(*sc);
+    // Gameplay framework state: items can be edited (a starting Key), timers and attributes are
+    // shown as they run so play mode shows what the game is doing.
+    bool remove_inv = false, remove_timers = false, remove_attrs = false;
+    if (auto* inv = w.get<gameplay::InventoryComponent>(e); inv && removable("Inventory", remove_inv)) {
+        int cap = static_cast<int>(inv->capacity);
+        if (ImGui::DragInt("Slots", &cap, 0.2f, 0, 1 << 16)) {
+            inv->capacity = static_cast<std::uint32_t>(std::max(cap, 0));
+            changed = true;
+        }
+        int stack = static_cast<int>(inv->max_stack);
+        if (ImGui::DragInt("Per Stack", &stack, 0.2f, 1, 1 << 30)) {
+            inv->max_stack = static_cast<std::uint32_t>(std::max(stack, 1));
+            changed = true;
+        }
+        if (inv->slots.empty()) ImGui::TextDisabled("Empty. Items picked up with an Item collectible appear here.");
+        int drop = -1;
+        for (std::size_t i = 0; i < inv->slots.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            auto& st = inv->slots[i];
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+            changed |= ImGui::InputTextWithHint("##item", "Item name", &st.item);
+            ImGui::SameLine();
+            int n = static_cast<int>(st.count);
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::GetFrameHeight() - 8);
+            if (ImGui::DragInt("##count", &n, 0.1f, 1, 1 << 30)) {
+                st.count = static_cast<std::uint32_t>(std::max(n, 1));
+                changed = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) drop = static_cast<int>(i);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove this item");
+            ImGui::PopID();
+        }
+        if (drop >= 0) {
+            inv->slots.erase(inv->slots.begin() + drop);
+            changed = true;
+        }
+        if (inv->slots.size() < inv->capacity && ImGui::SmallButton("+ Add Item")) {
+            inv->slots.push_back({"Key", 1});
+            changed = true;
+        }
+    }
+    if (auto* tm = w.get<gameplay::TimersComponent>(e); tm && removable("Timers", remove_timers)) {
+        if (tm->timers.empty()) ImGui::TextDisabled("No timers running. Scripts start them with timer.start.");
+        for (const auto& t : tm->timers)
+            ImGui::BulletText("%s  %.2f s%s%s", t.name.c_str(), static_cast<double>(t.remaining),
+                              t.repeat ? std::format("  every {:.2f} s", t.interval).c_str() : "", t.paused ? "  (paused)" : "");
+    }
+    if (auto* at = w.get<gameplay::AttributesComponent>(e); at && removable("Attributes", remove_attrs)) {
+        if (at->attributes.empty()) ImGui::TextDisabled("Filled in from the Attribute Set when the game runs.");
+        for (const auto& a : at->attributes) {
+            if (a.value != a.base)
+                ImGui::BulletText("%s  %g  (base %g)", a.name.c_str(), static_cast<double>(a.value), static_cast<double>(a.base));
+            else ImGui::BulletText("%s  %g", a.name.c_str(), static_cast<double>(a.value));
+        }
+        for (const auto& fx : at->effects)
+            ImGui::TextDisabled("  effect %s on %s%s", fx.spec.name.empty() ? "(unnamed)" : fx.spec.name.c_str(),
+                                fx.spec.attribute.c_str(),
+                                fx.spec.duration >= 0 ? std::format(", {:.1f} s left", fx.remaining).c_str() : "");
+    }
+    if (remove_inv) {
+        w.remove<gameplay::InventoryComponent>(e);
+        changed = true;
+    }
+    if (remove_timers) {
+        w.remove<gameplay::TimersComponent>(e);
+        changed = true;
+    }
+    if (remove_attrs) {
+        w.remove<gameplay::AttributesComponent>(e);
+        changed = true;
+    }
     // Reflected components (physics and every future schema-driven component).
     const scene::ComponentSchema* remove_schema = nullptr;
     for (const scene::ComponentSchema* schema : scene::schemas()) {

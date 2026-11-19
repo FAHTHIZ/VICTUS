@@ -4,6 +4,7 @@
 #include "victus/editor/editor.hpp"
 #include "widgets.hpp"
 
+#include "victus/gameplay/framework.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/scene/reflect.hpp"
 #include "victus/ui/style.hpp"
@@ -33,6 +34,7 @@ constexpr Blurb kBlurbs[] = {
     {"Sprite", "Draws a 2D image here"},
     {"Rotator", "Spins the entity at a steady speed, no code needed"},
     {"Oscillator", "Moves the entity back and forth, no code needed"},
+    {"Inventory", "Items this object carries, e.g. a Key it starts with"},
     {"PlatformerMovement", "Run and jump like a platformer hero (arrow keys / WASD + Space), no code needed"},
     {"TopDownMovement", "Walk in any direction, seen from above or in 3D, no code needed"},
     {"CameraFollow", "Makes a camera follow the player smoothly"},
@@ -113,6 +115,7 @@ std::vector<ComponentChoice> Editor::component_choices(Entity e) const {
     builtin("Script", "Script", "Scripting", w.has<script::ScriptComponent>(e));
     builtin("Rotator", "Rotator", "Motion", w.has<gameplay::RotatorComponent>(e));
     builtin("Oscillator", "Oscillator", "Motion", w.has<gameplay::OscillatorComponent>(e));
+    builtin("Inventory", "Inventory", "Behaviours", w.has<gameplay::InventoryComponent>(e));
     for (const auto* schema : scene::schemas())
         out.push_back({schema->name, kit::humanize(schema->name), schema->category, std::string(blurb(schema->name)),
                        w.get_raw(e, schema->id) != nullptr});
@@ -154,6 +157,9 @@ bool Editor::add_component_raw(Entity e, std::string_view id) {
     } else if (id == "Oscillator") {
         if (w.has<gameplay::OscillatorComponent>(e)) return false;
         w.add<gameplay::OscillatorComponent>(e);
+    } else if (id == "Inventory") {
+        if (w.has<gameplay::InventoryComponent>(e)) return false;
+        w.add<gameplay::InventoryComponent>(e);
     } else {
         const auto* schema = scene::find_schema(id);
         if (!schema || w.get_raw(e, schema->id) != nullptr) return false;
