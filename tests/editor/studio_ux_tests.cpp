@@ -981,6 +981,10 @@ TEST_CASE("studio roles: Make it a Player, Enemy, Coin or Goal in one undoable c
     CHECK(h.ed->make_role(lever, editor::Role::Switch));
     CHECK(w.get<script::TriggerComponent>(lever)->press_to_use);
     CHECK(w.get<script::TriggerComponent>(lever)->target == "Platform");
+    const scene::Entity npc = h.ed->create_entity(editor::Primitive::Cube);
+    CHECK(h.ed->make_role(npc, editor::Role::Talker));
+    CHECK(w.get<script::TriggerComponent>(npc)->press_to_use);
+    CHECK(w.get<script::TriggerComponent>(npc)->message.find('|') != std::string::npos);
     h.ed->select(goal);
     h.frames(2);
 }
