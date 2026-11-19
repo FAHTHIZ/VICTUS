@@ -401,6 +401,13 @@ void GpuAssetCache::set_async_loading(jobs::JobSystem* jobs, const AsyncLoadingS
         assets::LoaderSettings{.max_in_flight = settings.max_in_flight});
 }
 
+bool GpuAssetCache::settled(const Uuid& uuid, assets::LoadType type) const {
+    if (type == assets::LoadType::Texture ? textures_.contains(uuid) : models_.contains(uuid)) return true;
+    if (!loader_) return true;
+    const assets::LoadState s = loader_->state(uuid, type);
+    return s == assets::LoadState::None || s == assets::LoadState::Failed || s == assets::LoadState::Taken;
+}
+
 void GpuAssetCache::prefetch(const Uuid& uuid, assets::LoadType type, assets::LoadPriority priority) {
     if (!loader_ || uuid.is_nil()) return;
     if (type == assets::LoadType::Texture ? textures_.contains(uuid) : models_.contains(uuid)) return;

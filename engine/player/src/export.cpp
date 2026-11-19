@@ -17,6 +17,7 @@
 #include "victus/ai/ai.hpp"
 #include "victus/sequencer/sequencer.hpp"
 #include "victus/script/script.hpp"
+#include "victus/world/world.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -237,7 +238,9 @@ Result<ExportReport> export_game(const ExportOptions& o) {
     std::vector<std::string> scenes = proj->scenes();
     if (std::find(scenes.begin(), scenes.end(), proj->settings().startup_scene) == scenes.end())
         scenes.push_back(proj->settings().startup_scene);
-    for (const std::string& rel : scenes) {
+    std::set<std::string> packed_worlds;
+    for (std::size_t scene_index = 0; scene_index < scenes.size(); ++scene_index) {
+        const std::string rel = scenes[scene_index]; // copy: streamed worlds append their cells
         auto path = proj->resolve(rel);
         if (!path) {
             errors.push_back(std::format("{}: {}", rel, path.error().message));
@@ -309,6 +312,25 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         scene.world().each<audio::AudioSourceComponent>([&](scene::Entity e, audio::AudioSourceComponent& c) {
             if (!c.clip.empty() && !asset_paths.contains(c.clip))
                 report.warnings.push_back(std::format("{}: entity '{}' uses missing audio clip '{}'", rel, entity_label(scene, e), c.clip));
+        });
+        // Streamed worlds (ADR-0090): the descriptor ships and every cell is checked like a scene.
+        scene.world().each<world::WorldStreamingComponent>([&](scene::Entity e, world::WorldStreamingComponent& c) {
+            if (c.world.empty() || !packed_worlds.insert(c.world).second) return;
+            auto wpath = proj->resolve(c.world);
+            if (!wpath) {
+                errors.push_back(std::format("{}: entity '{}' streams world '{}': {}", rel, entity_label(scene, e), c.world,
+                                             wpath.error().message));
+                return;
+            }
+            auto desc = world::load_world_file(*wpath);
+            if (!desc) {
+                errors.push_back(std::format("{}: entity '{}' streams world '{}': {}", rel, entity_label(scene, e), c.world,
+                                             desc.error().message));
+                return;
+            }
+            if (auto st = pw.add_file(c.world, *wpath); !st) errors.push_back(std::format("{}: {}", c.world, st.error().message));
+            for (const world::CellDesc& cell : desc->cells)
+                if (std::find(scenes.begin(), scenes.end(), cell.scene) == scenes.end()) scenes.push_back(cell.scene);
         });
         if (!rel.starts_with("assets/")) VICTUS_TRY_STATUS(pw.add_file(rel, *path));
     }

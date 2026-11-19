@@ -9,6 +9,7 @@
 #include "victus/navigation/navigation.hpp"
 #include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
+#include "victus/world/world.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/gameui/gameui.hpp"
@@ -1601,6 +1602,7 @@ void register_components() {
     terrain::register_components();
     net::register_components();
     tilemap::register_components();
+    world::register_components();
 }
 
 Status build_template_scene(std::string_view id, Scene& s, const TemplateOptions& options) {

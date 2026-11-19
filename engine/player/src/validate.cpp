@@ -16,6 +16,7 @@
 #include "victus/sequencer/sequencer.hpp"
 #include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
+#include "victus/world/world.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -423,7 +424,10 @@ Result<ValidationReport> validate_project(const project::Project& proj) {
         }
         check_entities(rel, scene);
     }
-    for (const auto& rel : proj.scenes()) {
+    std::vector<std::string> scenes = proj.scenes();
+    std::set<std::string> checked_worlds;
+    for (std::size_t scene_index = 0; scene_index < scenes.size(); ++scene_index) {
+        const std::string rel = scenes[scene_index]; // copy: streamed worlds append their cells
         ++report.scenes;
         auto path = proj.resolve(rel);
         scene::Scene scene;
@@ -436,6 +440,24 @@ Result<ValidationReport> validate_project(const project::Project& proj) {
             continue;
         }
         check_entities(rel, scene);
+        // Streamed worlds (ADR-0090): the descriptor must parse and every cell is checked as a scene.
+        scene.world().each<world::WorldStreamingComponent>([&](const world::WorldStreamingComponent& c) {
+            if (c.world.empty() || !checked_worlds.insert(c.world).second) return;
+            auto wpath = proj.resolve(c.world);
+            if (!wpath) {
+                sink.error(Category::Scene, rel, std::format("{}: world '{}': {}", rel, c.world, wpath.error().message),
+                           "Point the WorldStreaming component at a .vworld file inside the project.");
+                return;
+            }
+            auto desc = world::load_world_file(*wpath);
+            if (!desc) {
+                sink.error(Category::Scene, c.world, c.world + ": " + desc.error().message,
+                           "Re-run `victus world` or fix the world descriptor.");
+                return;
+            }
+            for (const world::CellDesc& cell : desc->cells)
+                if (std::find(scenes.begin(), scenes.end(), cell.scene) == scenes.end()) scenes.push_back(cell.scene);
+        });
     }
     // Native plugins (ADR-0078): manifests, dependencies, API versions and built libraries.
     {

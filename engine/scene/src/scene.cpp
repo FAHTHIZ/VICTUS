@@ -614,19 +614,45 @@ Status Scene::load(const Value& doc) {
     clear();
     name = doc["name"].as_string_or("Untitled");
     std::vector<Entity> created;
+    if (auto st = load_entities(entities, created); !st.ok()) {
+        clear();
+        return st;
+    }
+    update_transforms();
+    return {};
+}
+
+Status Scene::load_additive(const Value& doc, std::vector<Entity>* created_out) {
+    if (doc["format"].as_string_or("") != "victus.scene") return bad("not a victus.scene document");
+    const std::int64_t version = doc["version"].as_int(0);
+    if (version < 1 || version > kSceneFormatVersion)
+        return make_error(ErrorCode::VersionMismatch, "unsupported scene version " + std::to_string(version));
+    const Value& entities = doc["entities"];
+    if (!entities.is_array()) return bad("scene.entities must be an array");
+    std::vector<Entity> created;
+    if (auto st = load_entities(entities, created); !st.ok()) {
+        // Roll back: destroy what this call created (subtrees may already be gone with a parent).
+        std::vector<Uuid> ids;
+        ids.reserve(created.size());
+        for (const Entity e : created) ids.push_back(uuid(e));
+        for (const Uuid& id : ids)
+            if (const Entity e = find(id); !e.is_null()) destroy(e);
+        return st;
+    }
+    update_transforms();
+    if (created_out) *created_out = std::move(created);
+    return {};
+}
+
+Status Scene::load_entities(const Value& entities, std::vector<Entity>& created) {
     created.reserve(entities.size());
     // Pass 1: identities (so parents may appear after children in hand-edited files).
     for (std::size_t i = 0; i < entities.size(); ++i) {
         const Value& ev = entities[i];
         Uuid id;
-        if (!ev.is_object() || !read_uuid(ev["uuid"], id) || id.is_nil()) {
-            clear();
+        if (!ev.is_object() || !read_uuid(ev["uuid"], id) || id.is_nil())
             return bad("entity " + std::to_string(i) + ": missing or invalid uuid");
-        }
-        if (by_uuid_.contains(id)) {
-            clear();
-            return bad("duplicate entity uuid " + id.to_string());
-        }
+        if (by_uuid_.contains(id)) return bad("duplicate entity uuid " + id.to_string());
         created.push_back(create(ev["name"].as_string_or("Entity"), kNullEntity, id));
     }
     // Pass 2: hierarchy, preserving file order among siblings.
@@ -635,19 +661,11 @@ Status Scene::load(const Value& doc) {
         if (!pv || pv->is_null()) continue;
         Uuid pid;
         const Entity p = read_uuid(*pv, pid) ? find(pid) : kNullEntity;
-        if (p.is_null() || !set_parent(created[i], p)) {
-            clear();
-            return bad("entity " + uuid(created[i]).to_string() + ": invalid parent");
-        }
+        if (p.is_null() || !set_parent(created[i], p)) return bad("entity " + uuid(created[i]).to_string() + ": invalid parent");
     }
     // Pass 3: components.
-    for (std::size_t i = 0; i < entities.size(); ++i) {
-        if (auto st = load_components(created[i], entities[i]["components"]); !st.ok()) {
-            clear();
-            return st;
-        }
-    }
-    update_transforms();
+    for (std::size_t i = 0; i < entities.size(); ++i)
+        VICTUS_TRY_STATUS(load_components(created[i], entities[i]["components"]));
     return {};
 }
 
