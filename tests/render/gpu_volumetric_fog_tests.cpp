@@ -359,3 +359,55 @@ TEST_CASE("gpu volumetric fog: Environment and FogVolume components through runt
     CHECK_FALSE(plain.stats.volumetric_fog);
     CHECK(channel(shot.at(W / 2, H / 2), 1) + 40 < channel(plain.at(W / 2, H / 2), 1));
 }
+
+TEST_CASE("gpu volumetric fog: blended surfaces and particles take the fog in front of them") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    Scene3 sc(ctx, 0.0f); // black wall 10 m away: only the fog lights it
+    // Unlit alpha-blended white pane 2 m from the camera (front face at z = 8), opacity 1.
+    Material pane;
+    pane.base_color = {1, 1, 1, 1};
+    pane.unlit = true;
+    pane.blend = MaterialBlend::Alpha;
+    const auto with_pane = [&](SceneRenderer& rr) {
+        sc.submit_wall(rr);
+        rr.submit(sc.cube, pane, math::Mat4::trs({0, 0, 7.5f}, {}, {2, 2, 1}));
+    };
+    // ADR-0119: the pane gets white * T(2 m) + in-scattering over 2 m, not the 10 m behind it.
+    const float T2 = std::exp(-0.2f), T10 = std::exp(-1.0f);
+    const Shot fogged = shoot(r, fog_env(0.2f, 0.1f), with_pane, "fog_blended_pane", fog_settings(), no_sun());
+    CHECK(std::abs(fogged.red(W / 2, H / 2) - srgb8(T2 + 0.2f * (1.0f - T2))) <= 4);
+    CHECK(fogged.red(W / 2, H / 2) > srgb8(T10 + 0.2f * (1.0f - T10)) + 30); // what compositing by the wall depth gave
+    // The wall around it is fogged over its full 10 m as before.
+    const Shot bare = shoot(r, fog_env(0.2f, 0.1f), [&](SceneRenderer& rr) { sc.submit_wall(rr); }, nullptr, fog_settings(), no_sun());
+    CHECK(fogged.red(4, 4) > 10);
+    CHECK(std::abs(fogged.red(4, 4) - bare.red(4, 4)) <= 1);
+
+    // Additive billboards are dimmed by the transmittance in front of them; alpha ones also
+    // gain the in-scattered light.
+    const auto billboard = [&](ParticleBlend blend) {
+        return [&, blend](SceneRenderer& rr) {
+            sc.submit_wall(rr);
+            ParticleInstance p{{0, 0, 7, 1.5f}, {0.5f, 0.5f, 0.5f, 1}, {0, 0, 0, 0}};
+            ParticleMaterial m;
+            m.blend = blend;
+            m.softness = 0.01f;
+            m.texture = ctx.white();
+            rr.submit_particles(std::span(&p, 1), m, math::Aabb{{-1, -1, 6}, {1, 1, 8}});
+        };
+    };
+    const float T3 = std::exp(-0.3f);
+    const float wall = 0.2f * (1.0f - T10);
+    const Shot add = shoot(r, fog_env(0.2f, 0.1f), billboard(ParticleBlend::Additive), nullptr, fog_settings(), no_sun());
+    CHECK(std::abs(add.red(W / 2, H / 2) - srgb8(wall + 0.5f * T3)) <= 4);
+    const Shot alpha = shoot(r, fog_env(0.2f, 0.1f), billboard(ParticleBlend::Alpha), nullptr, fog_settings(), no_sun());
+    CHECK(std::abs(alpha.red(W / 2, H / 2) - srgb8(0.5f * T3 + 0.2f * (1.0f - T3))) <= 4);
+
+    // Fog off: the pane is plain white again.
+    Environment off = fog_env(0.2f, 0.1f);
+    off.volumetric_fog.enabled = false;
+    CHECK(shoot(r, off, with_pane, nullptr, fog_settings(), no_sun()).red(W / 2, H / 2) >= 254);
+}

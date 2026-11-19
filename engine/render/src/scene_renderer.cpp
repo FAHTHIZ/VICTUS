@@ -124,6 +124,7 @@ struct LightingUniforms {
     Vec4 weather; // x surface wetness (ADR-0113), y rain occlusion on, z its depth bias (ADR-0114)
     Mat4 rain_vp; // world -> rain occlusion map (ADR-0114)
     Vec4 puddles; // x 1 / puddle size, y ripple strength, z 1 / ripple cell, w ripples per second (ADR-0117)
+    Vec4 volumetric; // volumetric fog grid for blended draws: xyz froxels, w far, 0 off (ADR-0119)
 };
 struct MaterialUniforms {
     Vec4 base_color;
@@ -132,6 +133,7 @@ struct MaterialUniforms {
     Vec4 flags;
     Vec4 uv_transform; // xy scale, zw offset
     Vec4 custom[4];    // surface shader parameters
+    Vec4 blend;        // x 0 opaque, 1 alpha, 2 additive (ADR-0119)
 };
 struct ProbeUniforms {
     Vec4 box_min, box_max, position;
@@ -164,6 +166,7 @@ struct ParticleUniforms {
     Vec4 screen; // xy: 1 / render size, z: 1 / softness, w additive
     Vec4 fog_color, fog_params; // distance fog, as LightingUniforms (ADR-0116)
     Vec4 view;   // xy: 1 / projection x and y scale
+    Vec4 volumetric; // volumetric fog grid: xyz froxels, w far, 0 off (ADR-0119)
 };
 struct PrecipitationUniforms {
     Mat4 view_proj;
@@ -224,7 +227,7 @@ struct TaaUpscaleUniforms {
     Mat4 reproject;
     Vec4 params, screen, jitter, output;
 };
-static_assert(sizeof(LightingUniforms) == 37 * 16 + 64 * 5);
+static_assert(sizeof(LightingUniforms) == 38 * 16 + 64 * 5);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 
@@ -2577,7 +2580,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         stats_.fog_froxels_y = fog_dims[1];
         stats_.fog_slices = fog_dims[2];
         stats_.fog_volumes = nvol;
+        // Blended geometry, particles and precipitation are drawn after the fog composite and
+        // fetch the grid at their own depth (ADR-0119).
+        lighting.volumetric = fog_apply_u.grid;
     }
+    // Fragment storage buffer for that lookup; a bound placeholder when fog is off (never read).
+    const auto fog_grid_buffer = [this, fog] { return fog ? fog_integrated_ : light_buffer_; };
 
     // Volumetric clouds (ADR-0111): layer setup; the passes run after the blended geometry,
     // before the volumetric fog is composited over everything.
@@ -2697,6 +2705,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         Vec4 screen; // xy 1 / render size, z 1 / softness, w type
         Mat4 rain_vp;
         Vec4 fog_color, fog_params, view; // distance fog (ADR-0116)
+        Vec4 volumetric;                  // volumetric fog grid (ADR-0119)
     };
     struct SplashUniforms {
         Mat4 view_proj;
@@ -2753,6 +2762,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         precip_fu.fog_color = lighting.fog_color;
         precip_fu.fog_params = lighting.fog_params;
         precip_fu.view = {1.0f / proj[0].x, 1.0f / proj[1].y, 0, 0};
+        precip_fu.volumetric = lighting.volumetric;
         stats_.precipitation_drops = precip_count;
         // Rain splashes (ADR-0118) need the occlusion map to find where drops land.
         const float splashes = std::clamp(fin(pr.splashes, 0.0f), 0.0f, 1.0f);
@@ -3101,6 +3111,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                              std::clamp(m.coverage_response, 0.0f, 1.0f)};
                 mat.uv_transform = {m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y};
                 for (std::size_t i = 0; i < 4; ++i) mat.custom[i] = m.shader_params[i];
+                mat.blend = {static_cast<float>(m.blend), 0, 0, 0};
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
                 auto pick = [](rhi::TextureHandle t, rhi::TextureHandle fallback) { return t ? t : fallback; };
                 const rhi::SamplerHandle tex_sampler = m.nearest_filter ? ctx_.nearest_repeat() : material_linear.value();
@@ -3128,6 +3139,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 6, env_cube, ctx_.linear_clamp());
                 pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 0, light_buffer_);
                 pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 1, cluster_buffer_);
+                pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 2, fog_grid_buffer());
                 pass.bind_vertex_buffer(0, d->mesh->vertices);
                 pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
                 if (indirect >= 0) {
@@ -3171,7 +3183,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.draw(static_cast<std::uint32_t>(lines_.size()));
             }
     };
-    const bool split_forward = !decal_draws.empty() || !water_draws.empty();
+    // Clouds and volumetric fog are composited between the opaque and blended passes (ADR-0119).
+    const bool split_forward = !decal_draws.empty() || !water_draws.empty() || fog || clouds;
     graph.add_pass(
         "forward",
         [&](PassBuilder& b) {
@@ -3300,20 +3313,6 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 }
             });
     }
-    if (split_forward) {
-        graph.add_pass(
-            "forward_blended",
-            [&](PassBuilder& b) {
-                if (shadow_map.valid()) b.read(shadow_map);
-                if (local_shadow_map.valid()) b.read(local_shadow_map);
-                if (rain_map.valid()) b.read(rain_map);
-                if (ao.valid()) b.read(ao);
-                b.write_color(hdr, rhi::LoadOp::Load);
-                b.write_depth(depth, rhi::LoadOp::Load, 1.0f);
-            },
-            [&](PassContext& ctx) { forward_body(ctx, false, true); });
-    }
-
     if (clouds) {
         const RGTexture cloud_tex = graph.create_texture("clouds", color_desc(rhi::Format::RGBA16_FLOAT, cloud_w, cloud_h));
         graph.add_pass(
@@ -3391,6 +3390,22 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 ctx.pass->bind_storage_buffer(rhi::ShaderStage::Fragment, 0, fog_integrated_);
                 ctx.pass->draw(3);
             });
+    }
+
+    // Blended geometry after the cloud and fog composites (ADR-0119): those are resolved by the
+    // opaque depth, and each blended fragment fetches the fog in front of it instead.
+    if (split_forward) {
+        graph.add_pass(
+            "forward_blended",
+            [&](PassBuilder& b) {
+                if (shadow_map.valid()) b.read(shadow_map);
+                if (local_shadow_map.valid()) b.read(local_shadow_map);
+                if (rain_map.valid()) b.read(rain_map);
+                if (ao.valid()) b.read(ao);
+                b.write_color(hdr, rhi::LoadOp::Load);
+                b.write_depth(depth, rhi::LoadOp::Load, 1.0f);
+            },
+            [&](PassContext& ctx) { forward_body(ctx, false, true); });
     }
 
     if (!gpu_jobs.empty() || !sort_jobs.empty()) {
@@ -3489,7 +3504,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     pu.fog_color = lighting.fog_color;
                     pu.fog_params = lighting.fog_params;
                     pu.view = {1.0f / proj[0].x, 1.0f / proj[1].y, 0, 0};
+                    pu.volumetric = lighting.volumetric;
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, pu);
+                    pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 0, fog_grid_buffer());
                     pass.bind_texture(rhi::ShaderStage::Fragment, 0, b.material.texture ? b.material.texture : ctx_.soft_particle(),
                                       ctx_.linear_clamp());
                     pass.bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(depth), ctx_.nearest_clamp());
@@ -3518,6 +3535,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, precip_fu);
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(depth), ctx_.nearest_clamp());
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1, rain_map.valid() ? ctx.texture(rain_map) : no_shadow_, ctx_.shadow_compare());
+                ctx.pass->bind_storage_buffer(rhi::ShaderStage::Fragment, 0, fog_grid_buffer());
                 ctx.pass->draw(6, precip_count);
                 if (splash_count > 0) {
                     ctx.pass->bind_pipeline(splash_pl);
@@ -3526,6 +3544,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     ctx.pass->bind_texture(rhi::ShaderStage::Vertex, 0, ctx.texture(rain_map), ctx_.nearest_clamp());
                     ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(depth), ctx_.nearest_clamp());
                     ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(rain_map), ctx_.shadow_compare());
+                    ctx.pass->bind_storage_buffer(rhi::ShaderStage::Fragment, 0, fog_grid_buffer());
                     ctx.pass->draw(6, splash_count);
                 }
             });
