@@ -1570,3 +1570,10 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 - Verified (Debug, -Werror, lavapipe + offscreen SDL): new `gpu_texture_3d_tests.cpp` (2 cases): a 4x3x5 RGBA8 volume round-trips byte for byte including the last slice; a one-slice upload, a missing mip and a layer on a volume are refused (no upload counted, contents unchanged); a 2D upload still round-trips. Full ctest 38/38; with `VICTUS_REQUIRE_GPU=1` reference scenes, CLI render compare, device loss and perf budgets pass. clang-tidy clean on rhi_sdl.cpp.
 - Limits: no partial (single-slice) volume uploads.
 - Next: baked noise volumes for clouds, splashes and ripples, fog on transparents and particles.
+
+## 2026-11-19 — Distance fog on particles and precipitation (ADR-0116)
+
+- Built: `particle.frag` and `precipitation.frag` apply `Environment` distance fog per fragment with the range along the pixel's ray (rebuilt from view depth and the inverse projection scale): alpha particles, trails and drops fade to the fog colour, additive particles dim. `ParticleUniforms` and the precipitation fragment block carry the fog colour, parameters and view scale.
+- Verified (Debug, -Werror, lavapipe + offscreen SDL): new `gpu_effect_fog_tests.cpp` (2 cases): a white alpha billboard 15 m into 0..20 m red linear fog keeps red above 200 while green drops below 60% of the unfogged value, a 2 m billboard stays more than 60 levels greener, additive billboards dim in every channel, exponential fog works, an off-axis billboard at the same view depth is foggier than one on the axis (range, not depth); snow in red fog has a mean red above 1.5x green while unfogged snow is grey. Existing particle and weather cases pass. Full ctest 38/38; with `VICTUS_REQUIRE_GPU=1` reference scenes, CLI render compare, device loss and perf budgets pass. clang-tidy clean on scene_renderer.cpp; `compile_shaders.py --check` up to date. Visual check of fogged snow.
+- Limits: volumetric fog still composited after transparents by the opaque depth (see KNOWN_LIMITATIONS).
+- Next: volumetric fog before transparents with froxel sampling in transparent shaders, splashes and ripples, sub-emitters.

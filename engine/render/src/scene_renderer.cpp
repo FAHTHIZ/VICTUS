@@ -160,7 +160,9 @@ struct ParticleFrameUniforms {
 };
 struct ParticleUniforms {
     Vec4 proj;   // view depth = proj.x / (depth + proj.y)
-    Vec4 screen; // xy: 1 / render size, z: 1 / softness
+    Vec4 screen; // xy: 1 / render size, z: 1 / softness, w additive
+    Vec4 fog_color, fog_params; // distance fog, as LightingUniforms (ADR-0116)
+    Vec4 view;   // xy: 1 / projection x and y scale
 };
 struct PrecipitationUniforms {
     Mat4 view_proj;
@@ -2682,6 +2684,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         Vec4 proj;   // xy view depth = x / (depth + y), z rain occlusion on, w its depth bias
         Vec4 screen; // xy 1 / render size, z 1 / softness, w type
         Mat4 rain_vp;
+        Vec4 fog_color, fog_params, view; // distance fog (ADR-0116)
     };
     PrecipitationUniforms precip_u{};
     PrecipitationFragmentUniforms precip_fu{};
@@ -2724,6 +2727,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         precip_fu.proj = {proj[3].z, proj[2].z, rain_occlusion ? 1.0f : 0.0f, rain_bias};
         precip_fu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), 1.0f / 0.1f, snow ? 1.0f : 0.0f};
         precip_fu.rain_vp = rain_vp;
+        precip_fu.fog_color = lighting.fog_color;
+        precip_fu.fog_params = lighting.fog_params;
+        precip_fu.view = {1.0f / proj[0].x, 1.0f / proj[1].y, 0, 0};
         stats_.precipitation_drops = precip_count;
     }
     facts_.precipitation_drops = precip_count;
@@ -3427,7 +3433,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     }
                     ParticleUniforms pu{};
                     pu.proj = {proj[3].z, proj[2].z, 0, 0};
-                    pu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), 1.0f / std::max(b.material.softness, 1e-3f), 0};
+                    pu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), 1.0f / std::max(b.material.softness, 1e-3f),
+                                 add ? 1.0f : 0.0f};
+                    pu.fog_color = lighting.fog_color;
+                    pu.fog_params = lighting.fog_params;
+                    pu.view = {1.0f / proj[0].x, 1.0f / proj[1].y, 0, 0};
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, pu);
                     pass.bind_texture(rhi::ShaderStage::Fragment, 0, b.material.texture ? b.material.texture : ctx_.soft_particle(),
                                       ctx_.linear_clamp());

@@ -13,7 +13,25 @@ layout(set = 3, binding = 0) uniform Params {
     vec4 proj;   // scene view depth = proj.x / (depth + proj.y); z rain occlusion on, w its depth bias
     vec4 screen; // xy: 1 / render size, z: 1 / softness (metres), w type (0 rain, 1 snow)
     mat4 rain_vp; // world -> rain occlusion map
+    vec4 fog_color;  // distance fog (ADR-0116): rgb radiance, w mode
+    vec4 fog_params; // x start, y end, z density, w max opacity
+    vec4 view;       // xy: 1 / projection x and y scale
 } u;
+// Distance fog (ADR-0116), matching pbr.frag: range along the pixel's ray from the view depth.
+float distance_fog(float view_depth) {
+    int mode = int(u.fog_color.w + 0.5);
+    if (mode == 0) return 0.0;
+    vec2 ndc = gl_FragCoord.xy * u.screen.xy * 2.0 - 1.0;
+    float d = view_depth * length(vec3(ndc * u.view.xy, 1.0));
+    float f;
+    if (mode == 1) f = clamp((d - u.fog_params.x) / max(u.fog_params.y - u.fog_params.x, 1e-3), 0.0, 1.0);
+    else {
+        float k = max(d - u.fog_params.x, 0.0) * u.fog_params.z;
+        f = mode == 2 ? 1.0 - exp(-k) : 1.0 - exp(-k * k);
+    }
+    return f * u.fog_params.w;
+}
+
 layout(location = 0) out vec4 out_color;
 void main() {
     float shape;
@@ -34,5 +52,5 @@ void main() {
     float gap = scene - v_distance;
     if (gap <= 0.0) discard;
     a *= clamp(gap * u.screen.z, 0.0, 1.0);
-    out_color = vec4(v_color.rgb, a);
+    out_color = vec4(mix(v_color.rgb, u.fog_color.rgb, distance_fog(v_distance)), a);
 }
