@@ -189,7 +189,7 @@ enum class Lesson : std::uint8_t { None, First2D, First3D };
 [[nodiscard]] const char* lesson_step_title(std::size_t i) noexcept;
 
 // Inspector > "Make it a...": ready-made roles built from Behaviours (Editor::make_role).
-enum class Role : std::uint8_t { Player, Enemy, Coin, Hazard, Checkpoint, Goal, MovingPlatform, Key, Door, Sign, JumpPad };
+enum class Role : std::uint8_t { Player, Enemy, Coin, Hazard, Checkpoint, Goal, MovingPlatform, Key, Door, Sign, JumpPad, Switch };
 [[nodiscard]] const char* role_label(Role r) noexcept;
 
 // Command palette entry (Ctrl+Shift+P): every menu action, window toggle, scene, asset and entity.

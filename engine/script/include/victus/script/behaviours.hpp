@@ -206,9 +206,12 @@ struct TriggerComponent {
     std::string target;           // entity name the action applies to; empty = this entity
     std::string sound;            // audio clip played when it fires (optional)
     bool once{false};             // fires only the first time
+    bool press_to_use{false};     // waits for the "interact" action (E) while the player touches it
+    std::string prompt;           // shown while waiting; empty = "Press E"
     // runtime
     bool inside{false};
     bool fired{false};
+    bool used{false};             // pressed during this visit
 };
 
 // Moves towards a target in range (and stops chasing once it gets far enough away).

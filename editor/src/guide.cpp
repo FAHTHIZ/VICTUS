@@ -120,7 +120,7 @@ constexpr HelpTopic kTopics[] = {
      "At Ledges, at the edge of a platform.\n"
      "- Moving Platform: lifts and moving ledges that carry whoever stands on them; Spin turns saws and fans.\n"
      "- Trigger: something happens when the player touches it: a sign shows a message, a switch starts a lift, "
-     "a door opens if the player carries a Key, a finish line wins.\n"
+     "a door opens if the player carries a Key, a finish line wins. Tick Press To Use to wait for E.\n"
      "- Jump Pad: a spring that launches the player high; tilt Direction for a sideways launch.\n"
      "- Hazard: hurts what touches it. Tick Stompable so the player can jump on it.\n"
      "- Collectible: a coin, heart or extra life that disappears when picked up.\n"
