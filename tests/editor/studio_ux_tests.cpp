@@ -9,6 +9,7 @@
 #include "victus/core/json.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
+#include "victus/script/behaviours.hpp"
 #include "victus/ui/style.hpp"
 #include "victus/ui/ui.hpp"
 
@@ -839,6 +840,11 @@ TEST_CASE("studio guide: interface size, Getting Started steps, help search, und
     REQUIRE_FALSE(cube.is_null());
     const Uuid cube_id = h.ed->edit_scene().uuid(cube);
     CHECK(h.ed->edit_scene().world().get<physics::RigidBodyComponent>(cube) != nullptr);
+    CHECK(editor::guide_step_order()[3] == editor::GuideStep::AddBehaviour);
+    h.ed->run_guide_step(editor::GuideStep::AddBehaviour);
+    h.frames(1);
+    CHECK(h.ed->guide_done(editor::GuideStep::AddBehaviour));
+    CHECK(h.ed->edit_scene().world().get<script::PatrolComponent>(cube) != nullptr);
     h.ed->run_guide_step(editor::GuideStep::Play);
     h.frames(2);
     CHECK(h.ed->guide_done(editor::GuideStep::Play));
@@ -846,7 +852,7 @@ TEST_CASE("studio guide: interface size, Getting Started steps, help search, und
     h.ed->run_guide_step(editor::GuideStep::Save);
     CHECK(h.ed->guide_done(editor::GuideStep::Save));
     CHECK_FALSE(h.ed->guide_done(editor::GuideStep::Export));
-    CHECK(h.ed->guide_done_count() == 5);
+    CHECK(h.ed->guide_done_count() == 6);
     h.frames(2); // the checklist draws with progress
 
     // Undo History: jump back to before every edit and forward again.

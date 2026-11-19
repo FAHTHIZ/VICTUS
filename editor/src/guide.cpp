@@ -39,8 +39,8 @@ constexpr HelpTopic kTopics[] = {
      "The toolbar at the top has Save, Undo and Redo on the left and Play, Pause and Stop in the middle.",
      "panels layout screen interface overview tour"},
     {"Start here", "Make your first game in five minutes",
-     "1. On the start screen pick a template (3D Game or 2D Game) and press Create. The template is already "
-     "playable.\n\n"
+     "1. On the start screen pick a template (No-Code Platformer is the easiest, or 3D Game or 2D Game) and press "
+     "Create. The template is already playable.\n\n"
      "2. Press the green Play button (or Ctrl+P). Click inside the viewport so the game gets the keyboard, then use "
      "WASD or the arrow keys to move and Space to jump.\n\n"
      "3. Press Stop. Anything you changed while playing is undone, so experimenting is safe.\n\n"
@@ -108,6 +108,21 @@ constexpr HelpTopic kTopics[] = {
      "View > Rendering Quality picks Low, Medium, High or Ultra. Lower tiers run faster on weak computers and "
      "phones; the choice is saved with the project and used by the exported game too.",
      "quality graphics performance fast slow fps low high ultra"},
+    {"Logic without code", "Behaviours: gameplay without code",
+     "Behaviours are ready-made abilities. Select an object, press Add Component and open the Behaviours group. "
+     "Each one starts working the moment you press Play.\n\n"
+     "- Platformer Movement or Top-Down Movement: the player runs and jumps with the keyboard or a gamepad.\n"
+     "- Camera Follow: the camera keeps the player in view.\n"
+     "- Patrol and Chase: enemies walk back and forth or follow the player. Patrols turn at walls and, with Turn "
+     "At Ledges, at the edge of a platform.\n"
+     "- Hazard: hurts what touches it. Tick Stompable so the player can jump on it.\n"
+     "- Collectible: a coin, heart or extra life that disappears when picked up.\n"
+     "- Health, Checkpoint, Goal, Spawner, Shooter, Projectile and Lifetime.\n"
+     "- Game Rules: score, lives, a timer and the win and lose screens.\n\n"
+     "The No-Code Platformer template is a whole level made only from behaviours. Click any object in it to see "
+     "how it works.",
+     "behaviour behavior no code platformer movement patrol chase hazard collectible coin enemy health checkpoint "
+     "goal spawner shooter game rules score lives"},
     {"Logic without code", "Visual scripts",
      "Assets > New Visual Script creates a graph and opens the Graph Editor. Right-click the canvas to add nodes, "
      "then drag from an output pin to an input pin to connect them. Start from an event node such as On Start or On "
@@ -180,14 +195,22 @@ constexpr std::array<const char*, static_cast<std::size_t>(GuideStep::Count)> kS
     "Press the green Play button (Ctrl+P), click the viewport, try the controls, then press Stop.",
     "Press Ctrl+S or the disk button in the toolbar.",
     "File > Export Game builds a folder anyone can run without VICTUS.",
+    "Behaviours make things act without code. Select an object, press Add Component > Behaviours and pick one, "
+    "e.g. Patrol to make it walk back and forth.",
+};
+constexpr std::array<GuideStep, static_cast<std::size_t>(GuideStep::Count)> kStepOrder = {
+    GuideStep::AddObject, GuideStep::MoveObject, GuideStep::EditSetting, GuideStep::AddBehaviour,
+    GuideStep::Play,      GuideStep::Save,       GuideStep::Export,
 };
 constexpr std::array<const char*, static_cast<std::size_t>(GuideStep::Count)> kStepAction = {
     "Add a cube for me", "Lift it up for me", "Add physics to it", "Play now", "Save now", "Open Export",
+    "Make it patrol",
 };
 
 } // namespace
 
 std::span<const HelpTopic> help_topics() noexcept { return kTopics; }
+std::span<const GuideStep> guide_step_order() noexcept { return kStepOrder; }
 
 std::vector<const HelpTopic*> find_help_topics(std::string_view query) {
     std::vector<std::string> words;
@@ -240,6 +263,8 @@ const char* guide_step_title(GuideStep step) noexcept {
         return "Save the scene";
     case GuideStep::Export:
         return "Export a game anyone can run";
+    case GuideStep::AddBehaviour:
+        return "Give it a behaviour";
     case GuideStep::Count:
         break;
     }
@@ -408,6 +433,23 @@ void Editor::run_guide_step(GuideStep step) {
         if (!editing) stop();
         open_export_dialog();
         break;
+    case GuideStep::AddBehaviour: {
+        if (!editing) stop();
+        Entity e = selected();
+        if (e.is_null() || !scene_->world().get<Transform>(e)) {
+            e = create_entity(Primitive::Cube);
+            if (e.is_null()) return;
+            select(e);
+        }
+        if (add_component(e, "Patrol")) {
+            show_panel(Panel::Inspector);
+            notify("Added Patrol. Press Play and it walks back and forth; change Offset and Speed in the Inspector");
+        } else {
+            notify("It already has Patrol. Try another one from Add Component > Behaviours");
+            complete_guide_step(GuideStep::AddBehaviour);
+        }
+        break;
+    }
     case GuideStep::Count:
         break;
     }
@@ -423,7 +465,7 @@ void Editor::draw_getting_started() {
     const std::size_t total = static_cast<std::size_t>(GuideStep::Count);
     const std::size_t done = guide_done_count();
     kit::heading("Your first game", tk::kTypeTitle);
-    kit::subtitle("Six small steps. Each one ticks itself off when you do it, or press the button to let the "
+    kit::subtitle("Seven small steps. Each one ticks itself off when you do it, or press the button to let the "
                   "Studio do it for you.");
     ImGui::Dummy(ImVec2(0, tk::kSpace2));
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, done == total ? tk::kSuccess : tk::kAccent);
@@ -434,7 +476,8 @@ void Editor::draw_getting_started() {
 
     bool next_marked = false;
     for (std::size_t i = 0; i < total; ++i) {
-        const auto step = static_cast<GuideStep>(i);
+        const GuideStep step = kStepOrder[i];
+        const auto idx = static_cast<std::size_t>(step);
         const bool ok = guide_done(step);
         const bool next = !ok && !next_marked;
         if (next) next_marked = true;
@@ -467,10 +510,10 @@ void Editor::draw_getting_started() {
         ImGui::PopFont();
         if (!ok) {
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w - line * 2.4f - tk::kSpace5);
-            ImGui::TextColored(tk::kTextMuted, "%s", kStepHow[i]);
+            ImGui::TextColored(tk::kTextMuted, "%s", kStepHow[idx]);
             ImGui::PopTextWrapPos();
             ImGui::Dummy(ImVec2(0, tk::kSpace1));
-            if (kit::icon_text_button(kStepAction[i], kit::Icon::Rocket, next, project_.has_value())) run_guide_step(step);
+            if (kit::icon_text_button(kStepAction[idx], kit::Icon::Rocket, next, project_.has_value())) run_guide_step(step);
         } else {
             ImGui::TextColored(tk::kSuccess, "Done");
         }
@@ -590,7 +633,7 @@ void Editor::draw_help() {
 
 void Editor::draw_help_menu_items() {
     if (ImGui::MenuItem("Getting Started", nullptr, show_getting_started_)) show_panel(Panel::GettingStarted);
-    kit::tooltip("A six-step checklist from an empty scene to an exported game");
+    kit::tooltip("A seven-step checklist from an empty scene to an exported game");
     if (ImGui::MenuItem("Help Topics", "F2")) open_help();
     if (ImGui::MenuItem("Keyboard Shortcuts")) open_help("Keyboard shortcuts");
     if (ImGui::MenuItem("Restart Getting Started", nullptr, false, guide_done_ != 0 || guide_dismissed_)) reset_guide();
