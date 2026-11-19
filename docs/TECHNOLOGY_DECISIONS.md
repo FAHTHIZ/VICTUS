@@ -972,6 +972,13 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0107 — GPU depth sorting of alpha-blended GPU particle emitters
+
+- Status: accepted (2026-11-19)
+- Context: GPU emitters (ADR-0097) drew their instance buffer in slot order. With alpha blending the result depends on draw order, so far particles could cover near ones and the order changed as slots were recycled. Only additive emitters looked correct.
+- Decision: a compute shader `particle_sort.comp` runs a bitonic sort of (key, slot) pairs after the simulation, for every visible alpha-material GPU emitter outside capture mode. The key is `0xFFFFFFFF - floatBits(distance² to the eye)` (non-negative floats sort like unsigned integers), so the sort ascends into far-to-near order; dead slots and the padding up to `n = max(256, bit_ceil(capacity))` get the largest key and end up last. Steps with k ≤ 256 run in shared memory in one dispatch, larger merge steps use one global dispatch per j ≥ 256 followed by one shared-memory dispatch for j = 128..1, and a gather pass writes the instances in sorted order into a second buffer that the draw reads. Each step is its own compute pass, because SDL_GPU does not synchronise dispatches inside one compute pass. Pass count is 3 + Σ_{k=512..n}(log2 k − 7); 1024 slots need 8 passes. Additive emitters are not sorted (order-independent). `SceneStats::gpu_particle_sorted_emitters` / `gpu_particle_sort_passes`, `SceneRenderer::read_gpu_particle_draw` and the render-path detail (", N depth-sorted") expose it. Bitonic sorting was chosen over a radix sort because its fixed, data-independent network needs no atomics or prefix sums, and Unity's VFX Graph likewise turns on GPU sorting by default for alpha and premultiplied outputs.
+- Consequences: alpha-blended GPU smoke and mist draw back to front within an emitter; cost is O(n log² n) per emitter per view each frame. Separate emitters are still ordered only by batch distance, and particles do not interleave with other transparent geometry. Sorting uses distance to the eye, not view depth.
+
 ## ADR-0106 — Script Debugger in Studio play mode (nested frame loop)
 
 - Status: accepted (2026-11-19)

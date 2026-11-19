@@ -10,6 +10,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 using namespace victus;
 using namespace victus::render;
@@ -732,4 +733,92 @@ TEST_CASE("gpu particles: depth-buffer collision bounces particles off the floor
     CHECK(lowest_without < -5.0f);   // falls through the floor without collision
     CHECK(lowest_with > -0.9f - 0.1f); // never more than a frame's fall below the surface
     CHECK(resting > 150);
+}
+
+TEST_CASE("gpu particles: alpha-blended GPU emitters are depth sorted on the GPU, additive ones are not") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    GpuFx fx;
+    auto& c = fx.emitter();
+    c.blend = particles::Blend::Alpha;
+    c.color_start = c.color_end = {0.8f, 0.6f, 0.4f, 0.5f};
+    c.rate = 600;
+    c.max_particles = 700; // pads to 1024 pairs: local sort, global steps and merges all run
+    c.lifetime_min = c.lifetime_max = 3.0f;
+    c.speed_min = 1;
+    c.speed_max = 3;
+    c.angle = 60;
+    c.gravity = {0, 0, 0};
+    runtime::GpuAssetCache assets(ctx, nullptr);
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    RenderSettings rs = RenderSettings::preset(QualityTier::Medium);
+    rs.bloom = false;
+    r.set_settings(rs);
+    auto target = test::make_target(W, H);
+    const auto frame = [&] {
+        fx.ps.update(fx.s, 1.0f / 60.0f);
+        fx.s.update_transforms();
+        (void)runtime::extract_scene(fx.s, assets, r, {}, nullptr);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+    };
+    fx.ps.update(fx.s, 0.0f);
+    for (int f = 0; f < 45; ++f)
+        frame();
+    const particles::GpuEmitterView v = fx.view();
+    REQUIRE(v.alive > 300);
+    const auto check_order = [&](math::Vec3 eye) {
+        auto got = r.read_gpu_particle_draw(v.key);
+        REQUIRE(got.ok());
+        const auto& draw = got.value();
+        REQUIRE(draw.size() == 700);
+        std::uint32_t visible = 0, out_of_order = 0, after_dead = 0;
+        float prev = std::numeric_limits<float>::infinity();
+        bool dead_seen = false;
+        for (const ParticleInstance& p : draw) {
+            const bool live = p.position_size.w > 0 && p.color.w > 0;
+            if (!live) {
+                dead_seen = true;
+                continue;
+            }
+            after_dead += dead_seen; // live particles all come before the dead slots
+            ++visible;
+            const math::Vec3 d = math::Vec3{p.position_size.x, p.position_size.y, p.position_size.z} - eye;
+            const float dist = math::dot(d, d);
+            out_of_order += dist > prev;
+            prev = dist;
+        }
+        MESSAGE("sorted " << visible << " live particles (CPU says " << v.alive << ")");
+        CHECK(std::abs(static_cast<int>(visible) - static_cast<int>(v.alive)) <= 2);
+        CHECK(out_of_order == 0);
+        CHECK(after_dead == 0);
+    };
+    check_order({0, 0, 6});
+    CHECK(r.stats().gpu_particle_sorted_emitters == 1);
+    CHECK(r.stats().gpu_particle_sort_passes == 8); // keys, local, k=512 (1 step + merge), k=1024 (2 + merge), gather
+    std::vector<std::uint8_t> px = dev.read_texture(target).value();
+    test::save_output("particles_gpu_sorted", W, H, px);
+
+    // A different eye re-sorts every frame, also while the simulation does not advance.
+    fx.s.world().get<scene::Transform>(fx.cam)->position = {1.5f, 0.5f, 7};
+    fx.s.update_transforms();
+    (void)runtime::extract_scene(fx.s, assets, r, {}, nullptr);
+    {
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+    }
+    check_order({1.5f, 0.5f, 7});
+
+    // Additive blending is order independent: drawn in slot order without the sort passes.
+    fx.emitter().blend = particles::Blend::Additive;
+    frame();
+    CHECK(r.stats().gpu_particle_sorted_emitters == 0);
+    CHECK(r.stats().gpu_particle_sort_passes == 0);
+    CHECK(r.stats().gpu_particles > 0);
+    dev.destroy(target);
 }

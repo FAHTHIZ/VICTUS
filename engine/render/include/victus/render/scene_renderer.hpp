@@ -490,6 +490,8 @@ struct SceneStats {
     std::uint32_t ribbon_vertices{0};  // trail triangle-list vertices drawn (six per segment)
     // GPU particles: emitters simulated / live particles of the drawn ones / spawns uploaded.
     std::uint32_t gpu_particle_emitters{0}, gpu_particles{0}, gpu_particle_spawns{0};
+    // Alpha-blended GPU emitters drawn back to front this frame, and the compute passes it took.
+    std::uint32_t gpu_particle_sorted_emitters{0}, gpu_particle_sort_passes{0};
     std::uint32_t lod_draws{0};        // visible draws using a coarser level than LOD 0
     std::uint32_t lod_held{0};         // draws kept finer than the stateless pick by lod_hysteresis
     std::uint64_t triangles{0};        // triangles in the main and transparent passes (all instances)
@@ -575,6 +577,9 @@ public:
     void submit_gpu_particles(const GpuParticleEmitter& emitter);
     // GPU state of an emitter after the last render (synchronous readback; tests and tooling).
     [[nodiscard]] Result<std::vector<GpuParticleSpawn>> read_gpu_particles(std::uint64_t key);
+    // The instances of an emitter in the order the last render drew them: back to front for
+    // alpha-blended emitters (ADR-0107), slot order otherwise (synchronous readback; tests).
+    [[nodiscard]] Result<std::vector<ParticleInstance>> read_gpu_particle_draw(std::uint64_t key);
     // Ribbon strips sharing a material (e.g. one emitter's trails): `strips` holds the point count
     // of each consecutive strip in `points`; strips with fewer than two points are skipped.
     // Drawn in the particle pass (soft depth fade), ordered back to front with particle batches.
@@ -659,6 +664,9 @@ private:
     };
     struct GpuParticleState {
         rhi::BufferHandle state, instances, spawns;
+        rhi::BufferHandle pairs, sorted; // depth sort (alpha emitters): (key, slot) pairs, draw order
+        std::uint32_t sort_size{0};      // pairs allocated (power of two >= 256)
+        bool sorted_last{false};         // the last render drew `sorted`
         std::uint32_t capacity{0}, spawn_capacity{0};
         std::uint64_t instance{0}, next_index{0};
         std::uint32_t generation{0}, serial{0};
@@ -775,6 +783,7 @@ private:
     std::vector<GpuParticleEmitter> gpu_emitters_; // this frame's submissions
     std::unordered_map<std::uint64_t, GpuParticleState> gpu_particle_states_;
     rhi::ComputePipelineHandle particle_sim_{};
+    rhi::ComputePipelineHandle particle_sort_{}; // optional: without it alpha GPU particles draw unsorted
     bool particle_sim_failed_{false};
     std::uint64_t gpu_particle_frame_{0}; // render() calls (state garbage collection)
     // Volumetric fog: compute pipelines (created on first use), injected froxels (ping-pong:

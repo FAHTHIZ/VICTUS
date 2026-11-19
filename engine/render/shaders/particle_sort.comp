@@ -1,0 +1,99 @@
+#version 450
+// SPDX-License-Identifier: Apache-2.0
+// Back-to-front order for alpha-blended GPU particles (ADR-0107): a bitonic sort of
+// (key, slot) pairs, then a gather of the instances into draw order. Modes:
+//   0 keys:   pair i = (key, i); key orders farther particles first, dead slots and padding last
+//   1 local:  sorts each block of 256 pairs completely in shared memory (k = 2 .. 256)
+//   2 global: one compare-exchange step (k, j) with j >= 256 across the whole array
+//   3 merge:  the j = 128 .. 1 steps of stage k inside each block, in shared memory
+//   4 gather: sorted[i] = instances[pairs[i].slot] for i < count
+// Each mode is its own compute pass: SDL_GPU does not order writes between dispatches of a pass.
+// Ties compare the slot, so the order is deterministic.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+struct Instance {
+    vec4 pos_size;
+    vec4 color;
+    vec4 params;
+};
+
+#ifdef VICTUS_MSL
+layout(std430, set = 0, binding = 1) readonly buffer Instances { Instance instances[]; };
+layout(std430, set = 1, binding = 2) buffer Pairs { uvec2 pairs[]; };
+layout(std430, set = 1, binding = 3) buffer Sorted { Instance sorted[]; };
+#else
+layout(std430, set = 0, binding = 0) readonly buffer Instances { Instance instances[]; };
+layout(std430, set = 1, binding = 0) buffer Pairs { uvec2 pairs[]; };
+layout(std430, set = 1, binding = 1) buffer Sorted { Instance sorted[]; };
+#endif
+layout(std140, set = 2, binding = 0) uniform Params {
+    vec4 eye;    // xyz camera position
+    uvec4 meta;  // x mode, y count (slots), z padded size (power of two, >= 256)
+    uvec4 step;  // x k, y j
+} u;
+
+shared uvec2 s_pairs[256];
+
+bool before(uvec2 a, uvec2 b) { return a.x < b.x || (a.x == b.x && a.y < b.y); }
+
+void shared_step(uint gid, uint lid, uint k, uint j) {
+    uint l = lid ^ j;
+    if (l > lid) {
+        bool ascending = (gid & k) == 0u;
+        uvec2 a = s_pairs[lid], b = s_pairs[l];
+        if (before(b, a) == ascending) {
+            s_pairs[lid] = b;
+            s_pairs[l] = a;
+        }
+    }
+    barrier();
+}
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint lid = gl_LocalInvocationID.x;
+    uint mode = u.meta.x;
+    if (mode == 0u) {
+        if (gid >= u.meta.z) return;
+        uint key = 0xFFFFFFFFu;
+        if (gid < u.meta.y) {
+            Instance p = instances[gid];
+            if (p.pos_size.w > 0.0 && p.color.a > 0.0) {
+                vec3 d = p.pos_size.xyz - u.eye.xyz;
+                key = 0xFFFFFFFFu - floatBitsToUint(max(dot(d, d), 0.0)); // larger distance, smaller key
+            }
+        }
+        pairs[gid] = uvec2(key, gid);
+        return;
+    }
+    if (mode == 1u || mode == 3u) {
+        // Whole workgroups only (the padded size is a multiple of 256), so every barrier is reached.
+        s_pairs[lid] = pairs[gid];
+        barrier();
+        if (mode == 1u) {
+            for (uint k = 2u; k <= 256u; k <<= 1u)
+                for (uint j = k >> 1u; j > 0u; j >>= 1u)
+                    shared_step(gid, lid, k, j);
+        } else {
+            for (uint j = 128u; j > 0u; j >>= 1u)
+                shared_step(gid, lid, u.step.x, j);
+        }
+        pairs[gid] = s_pairs[lid];
+        return;
+    }
+    if (mode == 2u) {
+        if (gid >= u.meta.z) return;
+        uint l = gid ^ u.step.y;
+        if (l > gid) {
+            bool ascending = (gid & u.step.x) == 0u;
+            uvec2 a = pairs[gid], b = pairs[l];
+            if (before(b, a) == ascending) {
+                pairs[gid] = b;
+                pairs[l] = a;
+            }
+        }
+        return;
+    }
+    if (gid >= u.meta.y) return;
+    sorted[gid] = instances[pairs[gid].y];
+}
