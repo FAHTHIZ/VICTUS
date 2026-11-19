@@ -142,6 +142,7 @@ struct PhysicsWorld::Impl {
     std::unique_ptr<detail::World2D> w2;
     std::vector<ContactEvent> events;
     std::vector<ContactEvent> scratch;
+    detail::DestructionState destruction;
 };
 
 PhysicsWorld::PhysicsWorld(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -166,18 +167,28 @@ void PhysicsWorld::sync(scene::Scene& scene, float dt) {
 void PhysicsWorld::step(scene::Scene& scene, float dt) {
     VICTUS_PROFILE_SCOPE("physics.step");
     impl_->scratch.clear();
+    detail::restore_fragments(scene, impl_->destruction, impl_->meshes);
     impl_->w3->step(scene, dt, impl_->scratch);
     const std::size_t n3 = impl_->scratch.size();
     impl_->w2->step(scene, dt, impl_->scratch);
     for (std::size_t i = n3; i < impl_->scratch.size(); ++i) impl_->scratch[i].is_2d = true;
     detail::sort_events(impl_->scratch);
     impl_->events.insert(impl_->events.end(), impl_->scratch.begin(), impl_->scratch.end());
+    detail::destruction_step(scene, *this, impl_->destruction, impl_->meshes, impl_->scratch, dt);
+}
+
+void PhysicsWorld::damage(Entity e, math::Vec3 point, float impulse) {
+    impl_->destruction.pending.push_back({e, point, impulse});
+}
+std::size_t PhysicsWorld::restore_fragments(scene::Scene& scene) {
+    return detail::restore_fragments(scene, impl_->destruction, impl_->meshes);
 }
 
 void PhysicsWorld::clear() {
     impl_->w3->clear();
     impl_->w2->clear();
     impl_->events.clear();
+    impl_->destruction.pending.clear();
 }
 
 void PhysicsWorld::begin_frame() { impl_->events.clear(); }

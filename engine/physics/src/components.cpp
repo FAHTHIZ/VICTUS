@@ -94,6 +94,25 @@ void register_components() {
             .field(&RagdollBoneComponent::twist_max, "twist_max", {.min = -180, .max = 180, .speed = 0.5f, .hint = "degrees"})
             .field(&RagdollBoneComponent::strength, "strength", {.min = 0, .max = 10, .speed = 0.01f, .tooltip = "powered: motor torque scale"})
             .commit();
+        scene::Schema<DestructibleComponent>("Destructible", "Physics 3D")
+            .field(&DestructibleComponent::pieces, "pieces", {.min = 2, .max = 256, .tooltip = "Voronoi fragments"})
+            .field(&DestructibleComponent::seed, "seed", {.tooltip = "Same seed, same fragments"})
+            .field(&DestructibleComponent::strength, "strength", {.min = 0, .max = 1e7f, .speed = 0.5f, .tooltip = "N*s impulse that breaks it"})
+            .field(&DestructibleComponent::damage_radius, "damage_radius",
+                   {.min = 0, .max = 1000, .speed = 0.01f, .tooltip = "m; static: fragments freed around an impact"})
+            .field(&DestructibleComponent::burst, "burst", {.min = 0, .max = 100, .speed = 0.05f, .tooltip = "m/s outward speed of freed fragments"})
+            .field(&DestructibleComponent::density, "density", {.min = 1, .max = 1e5f, .speed = 1, .tooltip = "kg/m^3 (static originals)"})
+            .field(&DestructibleComponent::debris_lifetime, "debris_lifetime",
+                   {.min = 0, .max = 3600, .speed = 0.1f, .tooltip = "s before freed fragments are removed; 0 = keep"})
+            .field(&DestructibleComponent::max_debris, "max_debris", {.min = 0, .max = 4096, .tooltip = "Freed fragments kept; oldest go first"})
+            .field(&DestructibleComponent::support, "support", {.tooltip = "Static: fragments cut off from the base fall"})
+            .field(&DestructibleComponent::broken, "broken")
+            .commit();
+        scene::Schema<DestructibleFragmentComponent>("DestructibleFragment", "Physics 3D")
+            .field(&DestructibleFragmentComponent::owner, "owner", {.hint = "entity"})
+            .field(&DestructibleFragmentComponent::piece, "piece")
+            .field(&DestructibleFragmentComponent::age, "age")
+            .commit();
         scene::Schema<RigidBody2DComponent>("RigidBody2D", "Physics 2D")
             .enumeration(&RigidBody2DComponent::type, "type", {"static", "kinematic", "dynamic"})
             .field(&RigidBody2DComponent::mass, "mass", {.min = 0.001f, .max = 1e6f, .speed = 0.1f})
