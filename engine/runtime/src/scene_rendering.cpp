@@ -1064,7 +1064,19 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     vc.ambient_intensity = std::max(fin(e.cloud_ambient, 1.0f), 0.0f);
     vc.distance = std::clamp(fin(e.cloud_distance, 30000.0f), 100.0f, 200000.0f);
     vc.shadow_strength = std::clamp(fin(e.cloud_shadows, 1.0f), 0.0f, 1.0f);
+    render::Precipitation& pr = env.precipitation;
+    pr.type = static_cast<render::PrecipitationType>(e.precipitation);
+    pr.intensity = std::clamp(fin(e.precipitation_intensity, 1.0f), 0.0f, 1.0f);
+    pr.wind = {fin(e.precipitation_wind.x, 0.0f), fin(e.precipitation_wind.y, 0.0f), fin(e.precipitation_wind.z, 0.0f)};
+    pr.radius = std::clamp(fin(e.precipitation_radius, 15.0f), 2.0f, 100.0f);
+    pr.size = std::clamp(fin(e.precipitation_size, 0.0f), 0.0f, 1.0f);
+    pr.fall_speed = std::clamp(fin(e.precipitation_speed, 0.0f), 0.0f, 100.0f);
+    pr.color = e.precipitation_color;
+    pr.opacity = std::clamp(fin(e.precipitation_opacity, 0.0f), 0.0f, 1.0f);
+    pr.brightness = std::max(fin(e.precipitation_brightness, 1.0f), 0.0f);
+    env.wetness = std::clamp(fin(e.wetness, 0.0f), 0.0f, 1.0f);
 }
+static_assert(static_cast<int>(gameplay::EnvironmentComponent::Precipitation::Snow) == static_cast<int>(render::PrecipitationType::Snow));
 static_assert(static_cast<int>(gameplay::EnvironmentComponent::Fog::ExponentialSquared) ==
               static_cast<int>(render::FogMode::ExponentialSquared));
 

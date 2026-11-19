@@ -211,6 +211,17 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
             std::format("{}x{}, {} steps", f.cloud_width, f.cloud_height, f.cloud_steps));
     }
 
+    if (!f.precipitation_requested) add("precipitation", PathState::Off, PathReason::Scene, "no rain or snow");
+    else if (f.capture_mode) add("precipitation", PathState::Off, PathReason::CaptureMode, "");
+    else if (!S.precipitation || S.max_precipitation == 0)
+        add("precipitation", PathState::Off, by(S.precipitation == tier.precipitation && S.max_precipitation == tier.max_precipitation), "");
+    else if (f.precipitation_drops == 0) add("precipitation", PathState::Off, PathReason::Unsupported, "precipitation pipeline unavailable");
+    else {
+        const bool reduced = S.max_precipitation < ref.max_precipitation;
+        add("precipitation", reduced ? PathState::Reduced : PathState::Active, reduced ? by(S.max_precipitation == tier.max_precipitation) : PathReason::None,
+            std::format("{} (max_precipitation {})", count(f.precipitation_drops, "drop", "drops"), S.max_precipitation));
+    }
+
     // Surface and effect passes. Their per-frame budgets come from the tier (ADR-0109): a cut is
     // attributed to the tier when the budget matches its preset, to a setting when it was lowered
     // by hand, and to the budget itself when even the Ultra reference cannot hold everything.

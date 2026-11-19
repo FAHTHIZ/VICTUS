@@ -305,6 +305,24 @@ struct VolumetricClouds {
     float shadow_strength{1.0f};
 };
 
+// Rain or snow falling in a box that follows the camera (ADR-0113). Drops are placed and moved
+// procedurally on the GPU from their index (no simulation state), stay fixed in the world while
+// the camera moves, are tested against the scene depth and fade towards the box edges and the
+// camera. Drawn after particles; RenderSettings::max_precipitation drops at intensity 1.
+enum class PrecipitationType : std::uint8_t { None, Rain, Snow };
+struct Precipitation {
+    PrecipitationType type{PrecipitationType::None};
+    float intensity{1.0f};          // 0..1, fraction of RenderSettings::max_precipitation drawn
+    math::Vec3 wind{0.0f, 0.0f, 0.0f}; // m/s added to the fall velocity (slanted rain, drifting snow)
+    float radius{15.0f};            // half size of the box around the camera (m), 2..100
+    float fall_speed{0.0f};         // m/s; 0 = 9 for rain, 1.2 for snow
+    float size{0.0f};               // drop width / flake diameter (m); 0 = 0.006 rain, 0.025 snow
+    float streak{0.03f};            // rain streak length in seconds of motion
+    math::Color color{1, 1, 1, 1};  // tint (linear); lit by the sky ambient and the sun
+    float opacity{0.0f};            // 0 = 0.35 rain, 0.9 snow
+    float brightness{1.0f};         // light multiplier
+};
+
 struct Environment {
     math::Color sky_zenith{0.18f, 0.36f, 0.75f, 1};
     math::Color sky_horizon{0.62f, 0.72f, 0.85f, 1};
@@ -369,6 +387,10 @@ struct Environment {
     float sky_blur{0.0f};             // background blur 0 (sharp) .. 1 (fully rough mip)
     VolumetricFog volumetric_fog{};
     VolumetricClouds clouds{};
+    Precipitation precipitation{};
+    // Wet surfaces (ADR-0113): 0 dry .. 1 soaked. Lit opaque and blended surfaces darken where
+    // they are rough and porous and get smoother (Lagarde 2013); metals only get smoother.
+    float wetness{0.0f};
 };
 
 // Scalability tiers. Low targets entry-level phones, Medium mid-range phones/tablets, High
@@ -475,6 +497,11 @@ struct RenderSettings {
     std::uint32_t cloud_downsample{2};
     std::uint32_t cloud_steps{48};
     std::uint32_t cloud_light_steps{6};
+    // Rain and snow (ADR-0113; scenes enable them through Environment::precipitation): drops
+    // drawn at intensity 1 (0..SceneRenderer::kMaxPrecipitation). Low 2048, Medium 8192, High
+    // 16384, Ultra 32768.
+    bool precipitation{true};
+    std::uint32_t max_precipitation{16384};
     // Effect budgets per frame (ADR-0109), nearest first. Decals: Low 128, Medium 256, High 512,
     // Ultra 1024 (SceneRenderer::kMaxDecals). Water surfaces: Low 4, Medium 8, High and Ultra 16
     // (kMaxWaterSurfaces). CPU particles (billboards plus ribbon vertices): Low 16384, Medium
@@ -560,6 +587,8 @@ struct SceneStats {
     bool volumetric_clouds{false};
     std::uint32_t cloud_width{0}, cloud_height{0}, cloud_steps{0};
     bool cloud_shadows{false};         // the sun light of lit surfaces is shadowed by the clouds (ADR-0112)
+    std::uint32_t precipitation_drops{0}; // rain drops / snow flakes drawn (ADR-0113)
+    bool surface_wetness{false};       // lit surfaces were shaded wet
 };
 
 struct SceneRendererOptions {
@@ -655,6 +684,8 @@ public:
     void add_reflection_probe(const ReflectionProbe& probe);
     // Projected decal for this frame (see Decal). At most kMaxDecals per frame (nearest first).
     static constexpr std::uint32_t kMaxDecals = 1024;
+    // Most rain drops / snow flakes drawn per frame (RenderSettings::max_precipitation).
+    static constexpr std::uint32_t kMaxPrecipitation = 65536;
     void add_decal(const Decal& decal);
     // Water surface for this frame (see WaterSurface). At most kMaxWaterSurfaces (nearest first).
     void add_water(const WaterSurface& water);
@@ -747,6 +778,7 @@ private:
         math::Vec3 pos;
         std::uint32_t color;
     };
+    Result<rhi::PipelineHandle> precipitation_pipeline();
     [[nodiscard]] Result<rhi::PipelineHandle> post_pipeline(const char* fragment, rhi::Format format,
                                                             rhi::BlendMode blend = rhi::BlendMode::Opaque);
     void compute_cascades(float aspect, std::uint32_t resolution);
@@ -868,6 +900,7 @@ private:
     math::Mat4 fog_prev_view_proj_{math::Mat4::identity()};
     math::Vec3 fog_prev_position_{}, fog_prev_forward_{0, 0, -1};
     std::uint64_t fog_frame_{0};
+    bool precipitation_failed_{false}; // precipitation pipeline failed to build (logged once)
     bool clouds_failed_{false};      // cloud pipelines failed to build: clouds stay off (logged once)
     std::uint64_t cloud_frame_{0};   // jitter sequence of the cloud march
     std::array<math::Mat4, 4> cascade_vp_{math::Mat4::identity(), math::Mat4::identity(), math::Mat4::identity(),

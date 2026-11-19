@@ -216,6 +216,16 @@ void register_components() {
             .field(&E::cloud_ambient, "cloud_ambient", {.min = 0, .max = 16, .speed = 0.01f, .tooltip = "Sky light scattered by the clouds"})
             .field(&E::cloud_distance, "cloud_distance", {.min = 100, .max = 200000, .speed = 100.0f, .tooltip = "Metres of view ray covered; the layer fades out towards it"})
             .field(&E::cloud_shadows, "cloud_shadows", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "How strongly the clouds shade the sun light on the ground (0 = no cloud shadows)"})
+            .enumeration(&E::precipitation, "precipitation", {"none", "rain", "snow"})
+            .field(&E::precipitation_intensity, "precipitation_intensity", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "0 none .. 1 the quality tier's full drop count"})
+            .field(&E::precipitation_wind, "precipitation_wind", {.tooltip = "Wind in metres per second: slants rain, drifts snow"})
+            .field(&E::precipitation_radius, "precipitation_radius", {.min = 2, .max = 100, .speed = 0.1f, .tooltip = "Metres around the camera that rain or snow fills"})
+            .field(&E::precipitation_size, "precipitation_size", {.min = 0, .max = 1, .speed = 0.001f, .tooltip = "Drop width or flake size in metres (0 = automatic)"})
+            .field(&E::precipitation_speed, "precipitation_speed", {.min = 0, .max = 100, .speed = 0.05f, .tooltip = "Fall speed in metres per second (0 = 9 for rain, 1.2 for snow)"})
+            .field(&E::precipitation_color, "precipitation_color", {.tooltip = "Tint of the drops or flakes"})
+            .field(&E::precipitation_opacity, "precipitation_opacity", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Opacity of each drop (0 = automatic)"})
+            .field(&E::precipitation_brightness, "precipitation_brightness", {.min = 0, .max = 16, .speed = 0.01f, .tooltip = "Light on the drops or flakes"})
+            .field(&E::wetness, "wetness", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Wet surfaces: rough materials darken, everything facing up gets glossier"})
             .commit();
         using FV = FogVolumeComponent;
         scene::Schema<FV>("FogVolume", "Rendering")

@@ -121,6 +121,7 @@ struct LightingUniforms {
     Vec4 local_shadow; // x atlas texel size, y tiles per row, z first shadow matrix index, w enabled
     Vec4 gi_min, gi_max, gi_counts; // irradiance volume (ADR-0056)
     Vec4 cloud_layer, cloud_shadow, cloud_wind; // cloud shadows (ADR-0112)
+    Vec4 weather; // x surface wetness (ADR-0113)
 };
 struct MaterialUniforms {
     Vec4 base_color;
@@ -159,6 +160,14 @@ struct ParticleFrameUniforms {
 struct ParticleUniforms {
     Vec4 proj;   // view depth = proj.x / (depth + proj.y)
     Vec4 screen; // xy: 1 / render size, z: 1 / softness
+};
+struct PrecipitationUniforms {
+    Mat4 view_proj;
+    Vec4 eye;      // xyz camera, w wrapped time
+    Vec4 velocity; // xyz m/s, w type (0 rain, 1 snow)
+    Vec4 volume;   // x box size, y width, z streak seconds, w pixel size at 1 m
+    Vec4 color;    // rgb lit colour, a opacity
+    Vec4 right, up;
 };
 struct DecalFrameUniforms {
     Mat4 mvp;
@@ -211,7 +220,7 @@ struct TaaUpscaleUniforms {
     Mat4 reproject;
     Vec4 params, screen, jitter, output;
 };
-static_assert(sizeof(LightingUniforms) == 35 * 16 + 64 * 4);
+static_assert(sizeof(LightingUniforms) == 36 * 16 + 64 * 4);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 
@@ -409,6 +418,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.max_decals = 128;
         s.max_water_surfaces = 4;
         s.max_particles = 16384;
+        s.max_precipitation = 2048;
         break;
     case QualityTier::Medium:
         s.render_scale = 1.0f;
@@ -433,6 +443,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.max_decals = 256;
         s.max_water_surfaces = 8;
         s.max_particles = 65536;
+        s.max_precipitation = 8192;
         break;
     case QualityTier::High: break; // struct defaults
     case QualityTier::Ultra:
@@ -451,6 +462,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.cloud_light_steps = 8;
         s.max_decals = SceneRenderer::kMaxDecals;
         s.max_particles = 1u << 20;
+        s.max_precipitation = 32768;
         break;
     }
     return s;
@@ -487,6 +499,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.max_decals = std::min(s.max_decals, SceneRenderer::kMaxDecals);
     s.max_water_surfaces = std::min(s.max_water_surfaces, static_cast<std::uint32_t>(kMaxWaterSurfaces));
     s.max_particles = std::min(s.max_particles, 1u << 24);
+    s.max_precipitation = std::min(s.max_precipitation, SceneRenderer::kMaxPrecipitation);
     return s;
 }
 
@@ -1113,6 +1126,25 @@ Result<OverdrawStats> SceneRenderer::read_overdraw() {
         s.max_layers = std::max(s.max_layers, n);
     }
     return s;
+}
+
+Result<rhi::PipelineHandle> SceneRenderer::precipitation_pipeline() {
+    const std::string key = "precipitation";
+    if (auto it = post_.find(key); it != post_.end()) return it->second;
+    auto vs = ctx_.shader("precipitation.vert");
+    if (!vs) return std::move(vs).error();
+    auto fs = ctx_.shader("precipitation.frag");
+    if (!fs) return std::move(fs).error();
+    rhi::PipelineDesc d;
+    d.name = "precipitation";
+    d.vertex = vs.value();
+    d.fragment = fs.value();
+    d.cull = rhi::CullMode::None;
+    d.color_targets = {{hdr_format_, rhi::BlendMode::Alpha}};
+    auto p = ctx_.device().create_pipeline(d);
+    if (!p) return p;
+    post_.emplace(key, p.value());
+    return p;
 }
 
 Result<rhi::PipelineHandle> SceneRenderer::post_pipeline(const char* fragment, rhi::Format format, rhi::BlendMode blend) {
@@ -2500,6 +2532,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         Mat4 inv_view_proj;
         Vec4 camera, layer, screen;
     };
+    // Average sky radiance (DC term of the environment, or the analytic gradient).
+    const auto sky_ambient = [&]() {
+        if (env_map && env_map->cube()) return env_map->sh().coefficients[0] * (env_intensity * 0.2820948f);
+        const Color& z = env_.sky_zenith;
+        const Color& h = env_.sky_horizon;
+        const Color& g = env_.ground;
+        return Vec3{z.r + 2.0f * h.r + g.r, z.g + 2.0f * h.g + g.g, z.b + 2.0f * h.b + g.b} * (0.25f * env_.ambient_intensity);
+    };
     const VolumetricClouds& vc = env_.clouds;
     const bool clouds_valid = vc.enabled && std::isfinite(vc.coverage) && vc.coverage > 0.0f && std::isfinite(vc.density) &&
                               vc.density > 0.0f && std::isfinite(vc.bottom) && std::isfinite(vc.top) && vc.top > vc.bottom;
@@ -2534,15 +2574,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         const float sun_mul = std::max(finite_or(vc.sun_intensity, 1.0f), 0.0f);
         cloud_u.sun_color = sun_.intensity > 0.0f ? rgb(sun_.color, sun_.intensity * sun_mul, static_cast<float>(S.cloud_light_steps))
                                                   : Vec4{0, 0, 0, static_cast<float>(S.cloud_light_steps)};
-        Vec3 ambient{};
-        if (env_map && env_map->cube()) ambient = env_map->sh().coefficients[0] * (env_intensity * 0.2820948f);
-        else {
-            const Color& z = env_.sky_zenith;
-            const Color& h = env_.sky_horizon;
-            const Color& g = env_.ground;
-            ambient = Vec3{z.r + 2.0f * h.r + g.r, z.g + 2.0f * h.g + g.g, z.b + 2.0f * h.b + g.b} * (0.25f * env_.ambient_intensity);
-        }
-        ambient = ambient * std::max(finite_or(vc.ambient_intensity, 1.0f), 0.0f);
+        const Vec3 ambient = sky_ambient() * std::max(finite_or(vc.ambient_intensity, 1.0f), 0.0f);
         cloud_u.ambient = Vec4(ambient, static_cast<float>(S.cloud_steps));
         cloud_u.layer = {vc.bottom, vc.top, std::clamp(vc.coverage, 0.0f, 1.0f), std::min(vc.density, 10.0f)};
         const float shape = std::clamp(finite_or(vc.shape_size, 4000.0f), 10.0f, 1e6f);
@@ -2576,6 +2608,62 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         facts_.cloud_height = cloud_h;
         facts_.cloud_steps = S.cloud_steps;
     }
+
+    // Wet surfaces and precipitation (ADR-0113).
+    if (std::isfinite(env_.wetness) && env_.wetness > 0.0f) {
+        lighting.weather = {std::min(env_.wetness, 1.0f), 0.0f, 0.0f, 0.0f};
+        stats_.surface_wetness = true;
+    }
+    const Precipitation& pr = env_.precipitation;
+    const auto fin = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+    const float precip_intensity = std::clamp(fin(pr.intensity, 0.0f), 0.0f, 1.0f);
+    const bool snow = pr.type == PrecipitationType::Snow;
+    facts_.precipitation_requested = pr.type != PrecipitationType::None && precip_intensity > 0.0f;
+    PrecipitationUniforms precip_u{};
+    ParticleUniforms precip_fu{};
+    std::uint32_t precip_count = 0;
+    rhi::PipelineHandle precip_pl{};
+    if (facts_.precipitation_requested && S.precipitation && !capture_mode_ && !precipitation_failed_) {
+        precip_count = S.max_precipitation == 0 ? 0u : std::max(1u, static_cast<std::uint32_t>(std::lround(precip_intensity * static_cast<float>(S.max_precipitation))));
+        if (precip_count > 0) {
+            auto pl = precipitation_pipeline();
+            if (!pl) {
+                VICTUS_LOG_WARN("render", "precipitation disabled: {}", pl.error().message);
+                precipitation_failed_ = true;
+                precip_count = 0;
+            } else precip_pl = pl.value();
+        }
+    }
+    if (precip_count > 0) {
+        const double t = time_ ? *time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - render_epoch()).count();
+        const float radius = std::clamp(fin(pr.radius, 15.0f), 2.0f, 100.0f);
+        const float speed = std::clamp(fin(pr.fall_speed, 0.0f) > 0.0f ? pr.fall_speed : (snow ? 1.2f : 9.0f), 0.05f, 100.0f);
+        const Vec3 wind{fin(pr.wind.x, 0.0f), fin(pr.wind.y, 0.0f), fin(pr.wind.z, 0.0f)};
+        const float drop_width = std::clamp(fin(pr.size, 0.0f) > 0.0f ? pr.size : (snow ? 0.025f : 0.006f), 0.0005f, 1.0f);
+        const float opacity = std::clamp(fin(pr.opacity, 0.0f) > 0.0f ? pr.opacity : (snow ? 0.9f : 0.35f), 0.0f, 1.0f);
+        // Lit like a small diffuse scatterer: sky ambient plus a share of the sun (cloud shadows
+        // and the shadow map are not applied).
+        Vec3 light = sky_ambient();
+        if (sun_.intensity > 0.0f) {
+            const Vec4 sc = rgb(sun_.color, sun_.intensity, 0.0f);
+            light = light + Vec3{sc.x, sc.y, sc.z} * (snow ? 0.3f : 0.15f);
+        }
+        light = light * std::max(fin(pr.brightness, 1.0f), 0.0f);
+        precip_u.view_proj = view_proj;
+        // Wrapped so drop positions keep float precision (one jump every ~68 minutes).
+        precip_u.eye = Vec4(camera_.position, static_cast<float>(std::fmod(std::max(t, 0.0), 4096.0)));
+        precip_u.velocity = Vec4(Vec3{0.0f, -speed, 0.0f} + wind, snow ? 1.0f : 0.0f);
+        precip_u.volume = {2.0f * radius, drop_width, std::clamp(fin(pr.streak, 0.03f), 0.0f, 0.5f),
+                           2.0f / (std::max(std::abs(proj[1].y), 1e-4f) * static_cast<float>(rh))};
+        precip_u.color = {light.x * pr.color.r, light.y * pr.color.g, light.z * pr.color.b, opacity * std::clamp(fin(pr.color.a, 1.0f), 0.0f, 1.0f)};
+        const Mat4 cam_world = inverse(camera_.view);
+        precip_u.right = Vec4(normalize(cam_world.transform_vector({1, 0, 0})), 0);
+        precip_u.up = Vec4(normalize(cam_world.transform_vector({0, 1, 0})), 0);
+        precip_fu.proj = {proj[3].z, proj[2].z, 0, 0};
+        precip_fu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), 1.0f / 0.1f, snow ? 1.0f : 0.0f};
+        stats_.precipitation_drops = precip_count;
+    }
+    facts_.precipitation_drops = precip_count;
 
     RenderGraph graph;
     rhi::TextureDesc target_desc;
@@ -2673,7 +2761,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
     depth_desc.usage = rhi::TextureUsageDepthTarget |
-                       ((ssao || taa || occlusion || fog || clouds || !particle_draws.empty() || !gpu_jobs.empty() || !decal_draws.empty() || !water_draws.empty())
+                       ((ssao || taa || occlusion || fog || clouds || precip_count > 0 || !particle_draws.empty() || !gpu_jobs.empty() || !decal_draws.empty() || !water_draws.empty())
                             ? rhi::TextureUsageSampled
                             : 0u);
     const RGTexture depth = graph.create_texture("scene_depth", depth_desc);
@@ -3254,6 +3342,22 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     } else if (b.ribbon) pass.draw(b.count, 1);
                     else pass.draw(6, b.count);
                 }
+            });
+    }
+
+    if (precip_count > 0) {
+        graph.add_pass(
+            "precipitation",
+            [&](PassBuilder& b) {
+                b.read(depth);
+                b.write_color(hdr, rhi::LoadOp::Load);
+            },
+            [&, pl = precip_pl, precip_count](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, precip_u);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, precip_fu);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(depth), ctx_.nearest_clamp());
+                ctx.pass->draw(6, precip_count);
             });
     }
 
