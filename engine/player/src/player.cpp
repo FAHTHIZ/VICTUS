@@ -193,8 +193,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         runtime::GpuAssetCache& cache;
         ~DetachLoader() { cache.set_async_loading(nullptr); }
     } detach_loader{cache};
-    if (proj->settings().asset_budget_mb > 0)
-        cache.set_residency({.budget_bytes = static_cast<std::size_t>(proj->settings().asset_budget_mb) << 20});
+    if (proj->settings().asset_budget_mb > 0 || proj->settings().texture_streaming)
+        cache.set_residency({.budget_bytes = static_cast<std::size_t>(proj->settings().asset_budget_mb) << 20,
+                             .mip_streaming = proj->settings().texture_streaming,
+                             .screen_height = static_cast<std::uint32_t>(std::max(wd.height, 1))});
     if (o.async_assets && o.max_frames == 0 && o.replay.empty() && o.record.empty()) cache.set_async_loading(&workers);
     physics::PhysicsSettings ps;
     ps.jobs = &workers;

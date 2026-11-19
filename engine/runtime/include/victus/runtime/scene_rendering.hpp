@@ -43,6 +43,13 @@ struct AsyncLoadingStats {
 struct ResidencySettings {
     std::size_t budget_bytes{0};       // resident texture + model bytes allowed; 0 = unlimited
     std::uint32_t min_idle_frames{60}; // pumps an asset must go unused before it may be evicted
+    // Mip streaming (texture assets used by .vmat materials and decals): each texture keeps only
+    // the mip levels its largest on-screen footprint needs, measured against screen_height.
+    bool mip_streaming{false};
+    std::uint32_t screen_height{1080};
+    std::uint32_t min_streamed_size{64}; // never drop below this edge length (smaller textures never stream)
+    std::uint32_t mip_drop_frames{30};   // pumps a texture must want less detail before it drops levels
+    std::uint32_t restreams_per_pump{4}; // level changes started per pump
 };
 
 struct ResidencyStats {
@@ -52,7 +59,15 @@ struct ResidencyStats {
     std::size_t evicted_bytes{0};   // total bytes evicted for the budget
     bool over_budget{false};        // every asset over the budget was in recent use
     std::uint64_t frame{0};         // pump() count, the residency clock
+    std::uint32_t streamed_textures{0}; // resident textures below their full resolution
+    std::uint64_t restreams{0};         // total mip-level changes applied
+    std::uint64_t budget_drops{0};      // total level drops forced by the budget (in-use textures)
 };
+
+// Approximate on-screen size in pixels of a world-space bounding box seen by `camera` on a
+// screen `screen_height` pixels tall (the diameter of its bounding sphere, nearest point).
+[[nodiscard]] float projected_pixels(const render::Camera3D& camera, const math::Aabb& world_bounds,
+                                     std::uint32_t screen_height) noexcept;
 
 struct GpuModel {
     std::vector<render::GpuMesh> meshes;
@@ -73,7 +88,8 @@ struct GpuModel {
 // receives the uploaded codec, or nullopt for RGBA8.
 [[nodiscard]] Result<rhi::TextureHandle> upload_cooked_texture(render::GpuContext& ctx, const assets::CookedTexture& texture,
                                                                bool allow_compressed = true,
-                                                               std::optional<assets::TextureCodec>* chosen = nullptr);
+                                                               std::optional<assets::TextureCodec>* chosen = nullptr,
+                                                               std::uint32_t base_level = 0);
 
 class GpuAssetCache {
 public:
@@ -111,6 +127,12 @@ public:
     [[nodiscard]] ResidencyStats residency() const;
     // Starts loading without using the result (scene preloading); no-op when synchronous.
     void prefetch(const Uuid& uuid, assets::LoadType type, assets::LoadPriority priority = assets::LoadPriority::Low);
+    // Mip streaming input: a texture (or every texture of a material, scaled by its UV tiling)
+    // covers about `pixels` on screen this frame. The largest footprint per frame wins.
+    void note_footprint(const Uuid& texture, float pixels);
+    void note_material_footprint(const Uuid& material, float pixels);
+    // Resident top mip level of a texture asset (0 = full resolution); nullopt when not resident.
+    [[nodiscard]] std::optional<std::uint32_t> texture_level(const Uuid& uuid) const;
     // True when the texture's import settings ask for nearest ("filter": "nearest") sampling.
     [[nodiscard]] bool texture_nearest(const Uuid& uuid);
     // HDR texture asset baked into an image-based-lighting environment map (created on first
@@ -252,6 +274,21 @@ private:
     void touch(const Uuid& uuid) noexcept;
     void make_resident(const Uuid& uuid, std::size_t bytes);
     void enforce_residency();
+    struct Streamed {
+        std::uint32_t width{0}, height{0}, levels{0}; // full resolution; 0 until resident
+        std::uint32_t level{0};                         // resident top level
+        std::vector<std::size_t> tail_bytes;            // bytes uploaded when starting at level i
+        float seen_pixels{0.0f};
+        std::uint64_t seen_frame{~0ull}; // frame the footprint was noted in
+        std::uint64_t lower_since{0};    // frame the texture started wanting fewer levels (0 = no)
+        std::int32_t pending{-1};        // level requested from the loader (async)
+    };
+    std::unordered_map<Uuid, Streamed, UuidHash> stream_;
+    [[nodiscard]] std::uint32_t wanted_level(const Streamed& s) const noexcept;
+    [[nodiscard]] std::uint32_t max_level(const Streamed& s) const noexcept;
+    void stream_mips();
+    void restream(const Uuid& uuid, std::uint32_t level);
+    void replace_texture(const Uuid& uuid, const assets::CookedTexture& cooked, std::uint32_t level);
     std::unique_ptr<assets::AsyncLoader> loader_;
     AsyncLoadingSettings async_settings_;
     AsyncLoadingStats async_stats_;

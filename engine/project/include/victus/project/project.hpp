@@ -45,6 +45,9 @@ struct ProjectSettings {
     // Resident texture + model memory the player keeps (rendering.asset_budget_mb, ADR-0088);
     // assets unused for about a second are evicted least recently used first. 0 = unlimited.
     int asset_budget_mb{0};
+    // rendering.texture_streaming (ADR-0089): textures keep only the mip levels their on-screen
+    // size needs, and the budget drops top levels of in-use textures before going over.
+    bool texture_streaming{false};
     int mobile_target_fps{30};
     // Input actions ("input" section); projects without one use the engine defaults.
     gameplay::InputMap input = gameplay::default_input_map();

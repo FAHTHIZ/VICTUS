@@ -11,6 +11,8 @@
 #include "victus/gameplay/gameplay.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <span>
 #include <format>
 
 namespace victus::runtime {
@@ -23,6 +25,7 @@ GpuAssetCache::~GpuAssetCache() { clear(); }
 void GpuAssetCache::clear() {
     if (loader_) loader_->forget_all();
     resident_.clear();
+    stream_.clear();
     material_textures_.clear();
     residency_stats_.resident_bytes = 0;
     for (auto& [id, tex] : textures_) ctx_.device().destroy(tex);
@@ -58,6 +61,12 @@ void GpuAssetCache::evict(const Uuid& uuid) {
         residency_stats_.resident_bytes -= it->second.bytes;
         resident_.erase(it);
     }
+    if (const auto it = stream_.find(uuid); it != stream_.end()) {
+        it->second.levels = 0; // footprints stay: the next upload starts at the level they need
+        it->second.level = 0;
+        it->second.pending = -1;
+        it->second.tail_bytes.clear();
+    }
     if (loader_) loader_->forget(uuid); // a reload in flight is discarded; the next request re-reads
     environments_.erase(uuid);
     environment_errors_.erase(uuid);
@@ -74,32 +83,231 @@ void GpuAssetCache::evict(const Uuid& uuid) {
 }
 
 Result<rhi::TextureHandle> upload_cooked_texture(render::GpuContext& ctx, const assets::CookedTexture& texture, bool allow_compressed,
-                                                 std::optional<assets::TextureCodec>* chosen) {
+                                                 std::optional<assets::TextureCodec>* chosen, std::uint32_t base_level) {
     if (chosen) chosen->reset();
     render::TextureOptions opt;
     opt.srgb = texture.srgb;
     opt.name = texture.name;
+    const std::size_t base = texture.mips.empty() ? 0 : std::min<std::size_t>(base_level, texture.mips.size() - 1);
     if (allow_compressed && !texture.mips.empty()) {
         for (const auto& variant : texture.compressed) {
             const rhi::Format format = assets::codec_format(variant.codec, texture.srgb);
             if (variant.levels.size() != texture.mips.size() || !ctx.device().supports_format(format, rhi::TextureUsageSampled)) continue;
-            auto tex = ctx.create_compressed_texture(format, texture.mips[0].width, texture.mips[0].height, variant.levels, opt);
+            const std::span<const std::vector<std::uint8_t>> levels = std::span(variant.levels).subspan(base);
+            auto tex = ctx.create_compressed_texture(format, texture.mips[base].width, texture.mips[base].height, levels, opt);
             if (!tex) continue; // fall through to the next variant / RGBA8
             if (chosen) *chosen = variant.codec;
             return tex;
         }
     }
-    return ctx.create_texture_mips(texture.mips, opt);
+    return ctx.create_texture_mips(std::span(texture.mips).subspan(base), opt);
+}
+
+namespace {
+// Bytes uploaded for each starting level (index levels = 0), matching assets::upload_bytes().
+std::vector<std::size_t> texture_tail_bytes(const assets::CookedTexture& t) {
+    const std::size_t n = t.mips.size();
+    std::vector<std::size_t> tail(n + 1, 0);
+    const bool compressed = !t.compressed.empty() && t.compressed.front().levels.size() == n;
+    for (std::size_t i = n; i-- > 0;)
+        tail[i] = tail[i + 1] + (compressed ? t.compressed.front().levels[i].size() : t.mips[i].pixels.size());
+    return tail;
+}
+} // namespace
+
+float projected_pixels(const render::Camera3D& camera, const math::Aabb& world_bounds, std::uint32_t screen_height) noexcept {
+    if (!world_bounds.valid()) return 0.0f;
+    const float radius = math::length(world_bounds.extents());
+    const float distance = std::max(math::length(world_bounds.center() - camera.position) - radius, std::max(camera.z_near, 1e-3f));
+    const float tan_half = std::tan(std::clamp(camera.fov_y, 1e-3f, 3.1f) * 0.5f);
+    return 2.0f * radius * static_cast<float>(screen_height) / (2.0f * distance * tan_half);
+}
+
+void GpuAssetCache::note_footprint(const Uuid& texture, float pixels) {
+    if (!residency_settings_.mip_streaming || texture.is_nil() || !(pixels > 0.0f)) return;
+    Streamed& s = stream_[texture];
+    if (s.seen_frame != residency_stats_.frame) {
+        s.seen_frame = residency_stats_.frame;
+        s.seen_pixels = pixels;
+    } else {
+        s.seen_pixels = std::max(s.seen_pixels, pixels);
+    }
+}
+
+void GpuAssetCache::note_material_footprint(const Uuid& material, float pixels) {
+    if (!residency_settings_.mip_streaming) return;
+    const auto refs = material_textures_.find(material);
+    if (refs == material_textures_.end()) return;
+    float tiling = 1.0f; // a texture repeated n times across the surface needs n times the texels
+    if (const auto m = materials_.find(material); m != materials_.end() && m->second)
+        tiling = std::max({std::abs(m->second->uv_scale.x), std::abs(m->second->uv_scale.y), 1.0f});
+    for (const Uuid& t : refs->second) note_footprint(t, pixels * tiling);
+}
+
+std::optional<std::uint32_t> GpuAssetCache::texture_level(const Uuid& uuid) const {
+    if (!textures_.contains(uuid)) return std::nullopt;
+    const auto it = stream_.find(uuid);
+    return it == stream_.end() || it->second.levels == 0 ? 0u : it->second.level;
+}
+
+std::uint32_t GpuAssetCache::max_level(const Streamed& s) const noexcept {
+    // The lowest detail allowed: the top level stays at least min_streamed_size on its longer edge.
+    const std::uint32_t edge = std::max(s.width, s.height);
+    const std::uint32_t floor_edge = std::max(residency_settings_.min_streamed_size, 1u);
+    std::uint32_t level = 0;
+    while (level + 1 < s.levels && (edge >> (level + 1)) >= floor_edge) ++level;
+    return level;
+}
+
+std::uint32_t GpuAssetCache::wanted_level(const Streamed& s) const noexcept {
+    // Level L has edge/2^L texels: keep the first level whose resolution still covers the footprint.
+    const float edge = static_cast<float>(std::max(s.width, s.height));
+    std::uint32_t level = 0;
+    if (s.seen_pixels > 0.0f && edge > s.seen_pixels)
+        level = static_cast<std::uint32_t>(std::floor(std::log2(edge / s.seen_pixels)));
+    return std::min(level, max_level(s));
 }
 
 Result<rhi::TextureHandle> GpuAssetCache::upload_texture(const Uuid& uuid, const assets::CookedTexture& cooked) {
+    // Mip streaming: a texture already seen on screen uploads only the levels it needs.
+    std::uint32_t level = 0;
+    Streamed* s = nullptr;
+    if (residency_settings_.mip_streaming && !cooked.hdr && cooked.mips.size() > 1) {
+        s = &stream_[uuid];
+        s->width = cooked.mips[0].width;
+        s->height = cooked.mips[0].height;
+        s->levels = static_cast<std::uint32_t>(cooked.mips.size());
+        s->tail_bytes = texture_tail_bytes(cooked);
+        s->pending = -1;
+        s->lower_since = 0;
+        if (residency_stats_.frame - s->seen_frame <= 1) level = wanted_level(*s);
+    }
     std::optional<assets::TextureCodec> codec;
-    auto tex = upload_cooked_texture(ctx_, cooked, allow_compressed_, &codec);
-    if (!tex) return tex;
+    auto tex = upload_cooked_texture(ctx_, cooked, allow_compressed_, &codec, level);
+    if (!tex) {
+        if (s) s->levels = 0;
+        return tex;
+    }
     if (codec) ++compressed_uploads_;
     textures_.emplace(uuid, *tex);
-    make_resident(uuid, assets::upload_bytes(cooked));
+    std::size_t bytes = assets::upload_bytes(cooked);
+    if (s) {
+        s->level = level;
+        bytes += s->tail_bytes[level] - s->tail_bytes[0]; // the levels above `level` were not uploaded
+    }
+    make_resident(uuid, bytes);
     return tex;
+}
+
+void GpuAssetCache::replace_texture(const Uuid& uuid, const assets::CookedTexture& cooked, std::uint32_t level) {
+    const auto it = textures_.find(uuid);
+    const auto st = stream_.find(uuid);
+    if (it == textures_.end() || st == stream_.end() || st->second.levels != cooked.mips.size()) return;
+    Streamed& s = st->second;
+    s.pending = -1;
+    level = std::min(level, max_level(s));
+    if (level == s.level) return;
+    std::optional<assets::TextureCodec> codec;
+    auto tex = upload_cooked_texture(ctx_, cooked, allow_compressed_, &codec, level);
+    if (!tex) {
+        VICTUS_LOG_WARN("assets", "mip streaming: re-upload of {} failed: {}", uuid.to_string(), tex.error().message);
+        return; // the old levels stay
+    }
+    // Safe while frames that sample the old texture are in flight: the device frees it once the GPU is done.
+    ctx_.device().destroy(it->second);
+    it->second = *tex;
+    const std::uint64_t last_used = resident_[uuid].last_used;
+    make_resident(uuid, assets::upload_bytes(cooked) + s.tail_bytes[level] - s.tail_bytes[0]);
+    resident_[uuid].last_used = last_used;
+    s.level = level;
+    s.lower_since = 0;
+    ++residency_stats_.restreams;
+    materials_.clear(); // they hold the old handle
+}
+
+void GpuAssetCache::restream(const Uuid& uuid, std::uint32_t level) {
+    Streamed& s = stream_[uuid];
+    if (loader_) {
+        s.pending = static_cast<std::int32_t>(level);
+        loader_->forget(uuid); // the slot was taken: request a fresh decode
+        (void)loader_->request(uuid, assets::LoadType::Texture, assets::LoadPriority::Normal);
+        return;
+    }
+    if (!db_) return;
+    auto cooked = db_->load_texture(uuid);
+    if (!cooked) {
+        VICTUS_LOG_WARN("assets", "mip streaming: reload of {} failed: {}", uuid.to_string(), cooked.error().message);
+        return;
+    }
+    replace_texture(uuid, *cooked, level);
+}
+
+void GpuAssetCache::stream_mips() {
+    if (!residency_settings_.mip_streaming) return;
+    const std::uint64_t now = residency_stats_.frame;
+    const std::size_t budget = residency_settings_.budget_bytes;
+    struct Change {
+        Uuid id;
+        std::uint32_t level;
+        float priority;
+    };
+    std::vector<Change> drops, raises;
+    std::vector<std::pair<Uuid, std::size_t>> in_use; // candidates for budget drops: (id, bytes)
+    for (auto& [id, s] : stream_) {
+        if (s.levels == 0 || s.pending >= 0 || !textures_.contains(id)) continue;
+        if (now - s.seen_frame > 1) { // not on screen last frame: idle eviction handles it
+            s.lower_since = 0;
+            continue;
+        }
+        const std::uint32_t want = wanted_level(s);
+        if (want < s.level) {
+            raises.push_back({id, want, s.seen_pixels});
+            in_use.emplace_back(id, s.tail_bytes[s.level]);
+            s.lower_since = 0;
+        } else if (want > s.level) {
+            if (s.lower_since == 0) s.lower_since = now;
+            if (now - s.lower_since >= residency_settings_.mip_drop_frames) drops.push_back({id, want, 0.0f});
+            else in_use.emplace_back(id, s.tail_bytes[s.level]);
+        } else {
+            s.lower_since = 0;
+            in_use.emplace_back(id, s.tail_bytes[s.level]);
+        }
+    }
+    std::uint32_t left = residency_settings_.restreams_per_pump;
+    std::size_t projected = residency_stats_.resident_bytes;
+    for (const Change& c : drops) {
+        if (left == 0) break;
+        const Streamed& s = stream_[c.id];
+        projected -= s.tail_bytes[s.level] - s.tail_bytes[c.level];
+        restream(c.id, c.level);
+        --left;
+    }
+    // Over the budget with nothing idle left: the largest textures in use give up their top level.
+    if (budget > 0 && projected > budget) {
+        std::sort(in_use.begin(), in_use.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        for (const auto& [id, bytes] : in_use) {
+            if (left == 0 || projected <= budget) break;
+            const Streamed& s = stream_[id];
+            if (s.level >= max_level(s)) continue;
+            projected -= s.tail_bytes[s.level] - s.tail_bytes[s.level + 1];
+            restream(id, s.level + 1);
+            ++residency_stats_.budget_drops;
+            --left;
+        }
+        return; // no raises while over the budget
+    }
+    // Raises: the largest footprints first, and only while they fit the budget.
+    std::sort(raises.begin(), raises.end(), [](const Change& a, const Change& b) { return a.priority > b.priority; });
+    for (const Change& c : raises) {
+        if (left == 0) break;
+        const Streamed& s = stream_[c.id];
+        std::uint32_t level = c.level; // the most detail that still fits the budget
+        while (level < s.level && budget > 0 && projected + (s.tail_bytes[level] - s.tail_bytes[s.level]) > budget) ++level;
+        if (level == s.level) continue;
+        projected += s.tail_bytes[level] - s.tail_bytes[s.level];
+        restream(c.id, level);
+        --left;
+    }
 }
 
 void GpuAssetCache::touch(const Uuid& uuid) noexcept {
@@ -137,6 +345,8 @@ void GpuAssetCache::enforce_residency() {
 ResidencyStats GpuAssetCache::residency() const {
     ResidencyStats s = residency_stats_;
     s.resident_assets = static_cast<std::uint32_t>(resident_.size());
+    for (const auto& [id, st] : stream_)
+        if (st.levels > 0 && st.level > 0 && textures_.contains(id)) ++s.streamed_textures;
     return s;
 }
 
@@ -203,6 +413,7 @@ std::uint32_t GpuAssetCache::pump() {
     // Eviction first: this frame's references have not touched anything yet, so "idle" means
     // unused during the last min_idle_frames frames, and new uploads below are never candidates.
     enforce_residency();
+    stream_mips();
     if (!loader_) return 0;
     async_stats_.uploaded_last_pump = 0;
     async_stats_.uploaded_bytes_last_pump = 0;
@@ -211,7 +422,12 @@ std::uint32_t GpuAssetCache::pump() {
     for (auto& c : ready) {
         Status st;
         if (auto* tex = std::get_if<assets::CookedTexture>(&c.payload)) {
-            if (textures_.contains(c.uuid)) continue;
+            if (textures_.contains(c.uuid)) {
+                // A mip-streaming re-decode: swap in the requested levels.
+                if (const auto s = stream_.find(c.uuid); s != stream_.end() && s->second.pending >= 0)
+                    replace_texture(c.uuid, *tex, static_cast<std::uint32_t>(s->second.pending));
+                continue;
+            }
             auto r = upload_texture(c.uuid, *tex);
             if (!r) st = std::move(r).error();
             any_texture = true;
@@ -1019,12 +1235,16 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     }
     static_assert(static_cast<int>(gameplay::DecalComponent::Blend::Additive) == static_cast<int>(render::DecalBlend::Additive));
     static_assert(static_cast<int>(gameplay::DecalComponent::Blend::Alpha) == static_cast<int>(render::DecalBlend::Alpha));
+    const bool streaming = assets.residency_settings().mip_streaming; // footprints feed GpuAssetCache::stream_mips
     w.each<gameplay::DecalComponent, WorldTransform>([&](const gameplay::DecalComponent& d, const WorldTransform& wt) {
         if (!d.visible) return;
         render::Decal decal;
         const math::Vec3 size{std::max(d.size.x, 0.001f), std::max(d.size.y, 0.001f), std::max(d.size.z, 0.001f)};
         decal.transform = wt.matrix * math::Mat4::scale(size);
         if (!d.texture.is_nil()) {
+            if (streaming)
+                assets.note_footprint(d.texture, runtime::projected_pixels(camera, math::Aabb{{-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}}.transformed(decal.transform),
+                                                                       assets.residency_settings().screen_height));
             auto tex = assets.texture(d.texture);
             if (tex) decal.texture = *tex;
             else if (tex.error().code == ErrorCode::Pending) {
@@ -1126,6 +1346,9 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         const std::uint64_t motion_id = entity.bits() + 1; // stable per entity; never 0 for live entities
         const bool scattered = foliage_instances(entity);
         const auto emit = [&](const render::GpuMesh& mesh, const render::Material& m) {
+            if (streaming && !mr.material_asset.is_nil())
+                assets.note_material_footprint(mr.material_asset,
+                                               runtime::projected_pixels(camera, mesh.bounds.transformed(wt.matrix), assets.residency_settings().screen_height));
             if (!scattered) {
                 renderer.submit(mesh, m, wt.matrix, motion_id);
                 return;
@@ -1223,6 +1446,9 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                             bounds.expand(b.max);
                         }
                     }
+                    if (streaming && !mr.material_asset.is_nil())
+                        assets.note_material_footprint(mr.material_asset,
+                                                       runtime::projected_pixels(camera, bounds, assets.residency_settings().screen_height));
                     renderer.submit_skinned(*drawn, m, wt.matrix, palette, bounds, motion_id);
                     ++stats.meshes;
                     ++stats.skinned;

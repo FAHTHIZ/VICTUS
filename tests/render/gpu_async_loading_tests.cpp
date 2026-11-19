@@ -209,3 +209,137 @@ TEST_CASE("gpu residency: over the budget, idle assets are evicted least recentl
     REQUIRE(cache.texture(b).ok());
     CHECK(cache.residency().resident_assets == 2);
 }
+
+namespace {
+Uuid add_texture(AsyncProject& p, const char* name, std::uint32_t size) {
+    REQUIRE(render::save_png(p.root / "assets" / "textures" / name, render::make_checker(size, 8, 0xff0000ffu, 0xff00ff00u)).ok());
+    (void)p.db->refresh();
+    REQUIRE(p.db->import_all().failed == 0);
+    return p.db->find_path(std::string("textures/") + name)->uuid;
+}
+std::uint32_t gpu_width(runtime::GpuAssetCache& cache, const Uuid& id) {
+    auto h = cache.texture(id);
+    REQUIRE(h.ok());
+    const rhi::TextureDesc* d = gpu().ctx->device().describe(*h);
+    REQUIRE(d);
+    return d->width;
+}
+} // namespace
+
+TEST_CASE("gpu mip streaming: texture levels follow the on-screen footprint and the budget") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    AsyncProject p = make_project();
+    const Uuid big = add_texture(p, "big.png", 256);
+    runtime::GpuAssetCache cache(*gpu().ctx, p.db.get());
+    cache.set_residency({.min_idle_frames = 60, .mip_streaming = true, .min_streamed_size = 16, .mip_drop_frames = 2});
+
+    // Seen at 32 px before it loads: only 32x32 and below are uploaded.
+    cache.note_footprint(big, 32.0f);
+    REQUIRE(cache.texture(big).ok());
+    CHECK(cache.texture_level(big) == 3u);
+    CHECK(gpu_width(cache, big) == 32);
+    const std::size_t small_bytes = cache.residency().resident_bytes;
+    CHECK(cache.residency().streamed_textures == 1);
+
+    const auto frame = [&](float px) {
+        (void)cache.pump();
+        (void)cache.texture(big);
+        cache.note_footprint(big, px);
+    };
+    // Close up: full resolution on the next pump (raises are immediate).
+    frame(300.0f);
+    frame(300.0f);
+    CHECK(cache.texture_level(big) == 0u);
+    CHECK(gpu_width(cache, big) == 256);
+    CHECK(cache.residency().resident_bytes > small_bytes * 30);
+    CHECK(cache.residency().streamed_textures == 0);
+    // Far away: drops after mip_drop_frames, never below min_streamed_size (level 4 = 16 px).
+    frame(5.0f);
+    frame(5.0f);
+    CHECK(cache.texture_level(big) == 0u); // hysteresis: not yet
+    frame(5.0f);
+    frame(5.0f);
+    CHECK(cache.texture_level(big) == 4u);
+    CHECK(gpu_width(cache, big) == 16);
+    const std::uint64_t restreams = cache.residency().restreams;
+    CHECK(restreams == 2);
+
+    // A raise that does not fit the budget stops at the most detail that does.
+    const std::size_t level4 = cache.residency().resident_bytes;
+    cache.set_residency({.budget_bytes = level4 * 20, .min_idle_frames = 60, .mip_streaming = true, .min_streamed_size = 16,
+                         .mip_drop_frames = 2});
+    frame(300.0f);
+    frame(300.0f);
+    CHECK(cache.texture_level(big) == 2u); // 64x64 chain ~ 16x the 16x16 one; 128x128 would not fit
+    // Shrinking the budget under a texture in use drops its top level, one per pump.
+    cache.set_residency({.budget_bytes = level4 * 2, .min_idle_frames = 60, .mip_streaming = true, .min_streamed_size = 16,
+                         .mip_drop_frames = 2});
+    for (int i = 0; i < 4; ++i) frame(300.0f);
+    CHECK(cache.texture_level(big) == 4u);
+    CHECK(cache.residency().budget_drops == 2);
+    CHECK(cache.residency().resident_bytes <= level4 * 2);
+
+    // Eviction forgets the levels; footprints noted since make the reload start small again.
+    cache.evict(big);
+    (void)cache.pump();
+    cache.note_footprint(big, 10.0f);
+    CHECK(gpu_width(cache, big) == 16);
+    // Small textures never stream.
+    const Uuid tiny = add_texture(p, "tiny.png", 16);
+    cache.note_footprint(tiny, 1.0f);
+    CHECK(gpu_width(cache, tiny) == 16);
+    CHECK(cache.texture_level(tiny) == 0u);
+}
+
+TEST_CASE("gpu mip streaming: extraction measures material and decal footprints (sync and async)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    AsyncProject p = make_project();
+    const Uuid big = add_texture(p, "big.png", 256);
+    assets::MaterialAsset m;
+    m.base_color_texture = big;
+    sfs::create_directories(p.root / "assets" / "materials");
+    REQUIRE(assets::save_material_file(p.root / "assets" / "materials" / "wall.vmat", m).ok());
+    (void)p.db->refresh();
+    const Uuid mat = p.db->find_path("materials/wall.vmat")->uuid;
+    const Uuid decal_tex = add_texture(p, "decal.png", 256);
+
+    for (const bool async : {false, true}) {
+        CAPTURE(async);
+        jobs::JobSystem js(1);
+        runtime::GpuAssetCache cache(*gpu().ctx, p.db.get());
+        if (async) cache.set_async_loading(&js);
+        cache.set_residency({.min_idle_frames = 60, .mip_streaming = true, .screen_height = 720, .min_streamed_size = 16,
+                             .mip_drop_frames = 1});
+        scene::Scene s;
+        const scene::Entity e = s.create("Wall");
+        auto& mr = s.world().add<scene::MeshRendererComponent>(e);
+        mr.primitive = "cube";
+        mr.material_asset = mat;
+        s.world().add<gameplay::DecalComponent>(s.create("Decal")).texture = decal_tex;
+        auto sr = render::SceneRenderer::create(*gpu().ctx);
+        REQUIRE(sr.ok());
+        const auto run = [&](float distance, int frames) {
+            const render::Camera3D cam = render::Camera3D::look_at({0, 0, distance}, {0, 0, 0});
+            s.update_transforms();
+            for (int i = 0; i < frames; ++i) {
+                (void)runtime::extract_scene(s, cache, **sr, {}, &cam);
+                if (async) cache.wait_loads();
+            }
+        };
+        // A 1 m cube 200 m away covers ~6 px of a 720 px screen: it keeps the 16 px floor.
+        run(200.0f, 8);
+        CHECK(cache.texture_level(big) == 4u);
+        CHECK(cache.texture_level(decal_tex) == 4u); // decals: footprint of the projection box
+        // 2 m away it covers several hundred pixels: full resolution.
+        run(2.0f, 6);
+        CHECK(cache.texture_level(big) == 0u);
+        CHECK(cache.texture_level(decal_tex) == 0u);
+        // The material's texture: synchronous loads upload it in full before the first footprint
+        // and then drop it; async loads decode after it and upload only the far level. The decal
+        // is noted before its first lookup, so it starts small in both modes and is raised once.
+        CHECK(cache.residency().restreams == (async ? 2u : 3u));
+        // 30 m: ~37 px wants the 64 px level (256 / 2^2).
+        run(30.0f, 6);
+        CHECK(cache.texture_level(big) == 2u);
+    }
+}
