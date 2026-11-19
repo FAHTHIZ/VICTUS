@@ -101,6 +101,7 @@ void register_behaviour_components() {
             .field(&CO::item, "item", {.tooltip = "Item kind: name added to the Inventory"})
             .field(&CO::collector_tag, "collector_tag")
             .field(&CO::sound, "sound", {.tooltip = "Sound played when picked up", .hint = "audio"})
+            .field(&CO::message, "message", {.tooltip = "Shown on screen when picked up (items say \"You found a ...\" when empty)"})
             .commit();
         using SP = SpawnerComponent;
         scene::Schema<SP>("Spawner", cat)
@@ -1155,6 +1156,13 @@ void collectibles(ScriptHost::Impl& h, Scene& s, TagCache& tags, std::vector<Ent
             p.set("amount", cfg.amount);
             p.set("item", cfg.item);
             gameplay::emit_event(s, "collected", std::move(p), c, t);
+            std::string text = cfg.message;
+            if (text.empty() && cfg.kind == CollectibleKind::Item && !cfg.item.empty()) text = "You found a " + cfg.item;
+            if (!text.empty()) {
+                h.behaviours.message = std::move(text);
+                h.behaviours.message_left = 2.5f;
+                h.behaviours.message_owner = Uuid{};
+            }
             if (!cfg.sound.empty())
                 if (auto* a = audio::engine_of(s)) {
                     audio::OneShot o;
@@ -1253,7 +1261,7 @@ void show_message(Scene& s, const std::string& text) {
         if (auto* t = s.world().get<gameui::UiTextComponent>(c); t && t->text != text) t->text = text;
 }
 
-void triggers(ScriptHost::Impl& h, Scene& s, TagCache& tags, float dt, std::vector<Entity>& doomed) {
+void triggers(ScriptHost::Impl& h, Scene& s, TagCache& tags, std::vector<Entity>& doomed) {
     std::vector<Entity> list;
     s.world().each<TriggerComponent>([&](Entity e, TriggerComponent&) { list.push_back(e); });
     if (list.empty()) return;
@@ -1322,14 +1330,21 @@ void triggers(ScriptHost::Impl& h, Scene& s, TagCache& tags, float dt, std::vect
             }
         gameplay::emit_event(s, "triggered", Value::object(), tr, tr);
     }
-    // The newest message stays up for its time, or while its trigger is touched.
+}
+
+// The newest message (from a trigger or a pickup) stays up for its time, or while its trigger is touched.
+void messages(ScriptHost::Impl& h, Scene& s, float dt) {
+    auto& b = h.behaviours;
     if (!b.message_owner.is_nil()) {
         const Entity owner = s.find(b.message_owner);
         const auto* oc = owner.is_null() ? nullptr : s.world().get<TriggerComponent>(owner);
         if (!oc || !oc->inside) b.message_left = 0;
     }
     if (b.message_left > 0) b.message_left -= dt;
-    show_message(s, b.message_left > 0 ? b.message : std::string{});
+    const bool show = b.message_left > 0;
+    if (!show && !b.message_shown) return;
+    b.message_shown = show;
+    show_message(s, show ? b.message : std::string{});
 }
 
 void projectile_hits(ScriptHost::Impl& h, Scene& s, physics::PhysicsWorld* pw, TagCache& tags, float dt,
@@ -1527,12 +1542,14 @@ void build_hud(Scene& s, Entity rules) {
     const Entity banner = hud_text(s, hud, "Banner", {0.5f, 0.5f}, {0.5f, 0.5f}, {0, -20}, {1100, 140}, 84,
                                    gameui::TextAlign::Center);
     if (auto* r = s.world().get<gameui::UiRectComponent>(banner)) r->visible = false;
+    const Entity items = hud_text(s, hud, "Items", {0, 0}, {0, 0}, {28, 70}, {640, 40}, 26, gameui::TextAlign::Left);
     auto* g = s.world().get<GameRulesComponent>(rules);
     g->hud = hud;
     g->score_text = score;
     g->lives_text = lives;
     g->time_text = time;
     g->banner_text = banner;
+    g->items_text = items;
 }
 
 void set_text(Scene& s, Entity e, std::string text, bool visible = true) {
@@ -1580,6 +1597,27 @@ void rules_tick(ScriptHost::Impl& h, Scene& s, float dt) {
     set_text(s, v.score_text, score);
     set_text(s, v.lives_text, v.lives > 0 ? std::format("Lives {}", v.lives_left) : std::string{}, v.lives > 0);
     set_text(s, v.time_text, v.time_limit > 0 ? format_time(v.time_limit - v.elapsed) : format_time(v.elapsed));
+    {
+        // What the player carries (keys and other items), so a locked door makes sense.
+        std::string carried;
+        TagCache tags{s, {}};
+        const auto& players = tags.get("Player");
+        if (!players.empty())
+            if (const auto* inv = s.world().get<gameplay::InventoryComponent>(players.front())) {
+                std::vector<std::pair<std::string, std::uint32_t>> totals;
+                for (const auto& st : inv->slots) {
+                    if (st.item.empty() || st.count == 0) continue;
+                    auto it = std::find_if(totals.begin(), totals.end(), [&](const auto& p) { return p.first == st.item; });
+                    if (it == totals.end()) totals.emplace_back(st.item, st.count);
+                    else it->second += st.count;
+                }
+                for (const auto& [item, n] : totals) {
+                    if (!carried.empty()) carried += "   ";
+                    carried += n > 1 ? std::format("{} x{}", item, n) : item;
+                }
+            }
+        set_text(s, v.items_text, carried, !carried.empty());
+    }
     set_text(s, v.banner_text, v.state == GameState::Won ? v.win_message : v.lose_message, v.state != GameState::Playing);
 }
 
@@ -1675,9 +1713,10 @@ void behaviours_update(ScriptHost::Impl& h, Scene& s, float dt) {
             collectibles(h, s, tags, doomed);
             checkpoints(s, tags);
             goals(h, s, tags);
-            triggers(h, s, tags, dt, doomed);
+            triggers(h, s, tags, doomed);
             jump_pads(h, s, pw, tags, dt);
         }
+        messages(h, s, dt);
         projectile_hits(h, s, pw, tags, dt, doomed);
     }
     lifetimes(s, dt, doomed);

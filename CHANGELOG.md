@@ -21,6 +21,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 - Moving Platform behaviour: lifts and moving ledges that carry characters in 2D and 3D, with waits, easing, one-way trips, wait-for-player and spin; a "Moving Platform" role in the Inspector and a lift in the No-Code Platformer.
 - Trigger behaviour: signs with on-screen messages, switches that start Moving Platforms, doors that need a Key item, finish lines; Key, Door and Sign roles in the Inspector.
 - Jump Pad behaviour: springs that launch the player (straight up or along a tilted Direction) with an optional sound and a `bounced` event; a "Jump Pad" role in the Inspector.
+- Pickups can show a message (items say "You found a Key" by default), and the HUD lists the items the player carries.
 - Viewport guides for the selection: Patrol and Moving Platform routes and Chase ranges.
 - Studio remembers which panels are open and the chosen layout preset between sessions.
 - `victus` CLI: `new`, `templates`, `info`, `import`, `run`, `simulate`, `serve`, `check`, `export`, `diagnose`; exported games run with `victus_player`; Android packaging.

@@ -172,6 +172,7 @@ struct ScriptHost::Impl {
         std::string message;
         float message_left{0};
         Uuid message_owner;
+        bool message_shown{false};
     } behaviours;
     lua_State* active{nullptr};                            // thread running save.read (migrations)
 
