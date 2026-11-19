@@ -22,6 +22,7 @@
 #include "victus/scene/prefab.hpp"
 #include "victus/script/behaviours.hpp"
 #include "victus/script/script.hpp"
+#include "sprite_art.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -865,9 +866,16 @@ void build_2d(Scene& s) {
 }
 
 // "No-Code Platformer": a complete level built only from Behaviours (ADR-0120): no scripts at
-// all, so every part of the game is a component a beginner can click on and change.
+// all, so every part of the game is a component a beginner can click on and change. The sprites
+// are drawn in code (sprite_art.cpp) and written into the project as ordinary PNG assets.
+SpriteComponent& art(SpriteComponent& sp, const char* name) {
+    (void)Uuid::parse(detail::nocode_sprite_uuid(name), sp.texture_asset);
+    return sp;
+}
+
 void build_nocode(Scene& s) {
     using namespace script;
+    constexpr math::Color white{1, 1, 1, 1};
     const Entity cam = add(s, "Main Camera", {-6, -1, 10});
     auto& c = s.world().add<CameraComponent>(cam);
     c.projection = CameraComponent::Projection::Orthographic;
@@ -877,24 +885,47 @@ void build_nocode(Scene& s) {
     follow.smoothing = 5;
     follow.look_at = false;
     // The sky and sun ride along with the camera so they always fill the view.
-    sprite(s, add(s, "Sky", {0, 0, -11}, cam), {40, 14}, {0.38f, 0.6f, 0.9f, 1}, -10);
-    sprite(s, add(s, "Sun Disc", {5.5f, 3.0f, -10.5f}, cam), {1.6f, 1.6f}, {1.0f, 0.86f, 0.35f, 1}, -9);
+    art(sprite(s, add(s, "Sky", {0, 0, -11}, cam), {40, 14}, white, -10), "sky");
+    art(sprite(s, add(s, "Sun", {5.8f, 3.0f, -10.5f}, cam), {1.8f, 1.8f}, {1.0f, 0.9f, 0.45f, 1}, -9), "round").unlit = true;
 
-    const math::Color grass{0.22f, 0.55f, 0.27f, 1}, dirt{0.62f, 0.44f, 0.26f, 1}, wall{0.3f, 0.22f, 0.16f, 1};
-    solid_2d(s, "Ground", {2, -4.2f, 0}, {24, 2.4f}, grass, 0.6f);
-    solid_2d(s, "Ground 2", {28.5f, -4.2f, 0}, {23, 2.4f}, grass, 0.6f);
-    solid_2d(s, "Ground 3", {51.5f, -4.2f, 0}, {17, 2.4f}, grass, 0.6f);
-    solid_2d(s, "Wall Left", {-10.5f, 2, 0}, {1, 14}, wall, 0.0f);
-    solid_2d(s, "Wall Right", {60.5f, 2, 0}, {1, 14}, wall, 0.0f);
-    const Entity ledge = solid_2d(s, "Platform", {6, -0.6f, 0}, {3, 0.4f}, dirt, 0.6f);
-    s.world().get<physics::Collider2DComponent>(ledge)->one_way = true;
-    solid_2d(s, "Platform 2", {22, -0.4f, 0}, {3, 0.4f}, dirt, 0.6f);
-    solid_2d(s, "Platform 3", {25.5f, 1.6f, 0}, {3, 0.4f}, dirt, 0.6f);
-    solid_2d(s, "Platform 4", {46, -0.6f, 0}, {3, 0.4f}, dirt, 0.6f);
+    // Scenery: clouds, distant hills and bushes. Sprites only, nothing collides with them.
+    const struct { float x, y, w; } clouds[] = {{-5, 1.4f, 3.2f}, {6, 2.2f, 2.4f}, {16, 1.2f, 3.6f}, {28, 2.4f, 2.6f},
+                                                {39, 1.6f, 3.4f}, {50, 2.3f, 2.8f}, {60, 1.3f, 3.0f}};
+    int k = 0;
+    for (const auto& cl : clouds)
+        art(sprite(s, add(s, "Cloud " + std::to_string(++k), {cl.x, cl.y, -0.9f}), {cl.w, cl.w * 0.5f}, {1, 1, 1, 0.92f}, -8),
+            "cloud");
+    const struct { float x, r; } hills[] = {{-6, 7}, {6, 5}, {16, 8}, {30, 6}, {42, 7.5f}, {55, 6}};
+    k = 0;
+    for (const auto& hl : hills)
+        art(sprite(s, add(s, "Hill " + std::to_string(++k), {hl.x, -3.4f, -0.8f}), {hl.r * 2, hl.r * 1.3f},
+                   {0.4f, 0.66f, 0.42f, 1}, -7),
+            "round");
+    const float bushes[] = {-3, 3, 12.5f, 24, 34, 47, 54};
+    k = 0;
+    for (const float x : bushes)
+        art(sprite(s, add(s, "Bush " + std::to_string(++k), {x, -2.85f, -0.3f}), {1.6f, 0.9f}, {0.2f, 0.5f, 0.24f, 1}, -1),
+            "round");
+
+    const math::Color grass{0.36f, 0.72f, 0.3f, 1}, dirt{0.5f, 0.32f, 0.2f, 1}, wood{0.62f, 0.42f, 0.24f, 1};
+    const struct { const char* name; float x, w; } grounds[] = {{"Ground", 2, 24}, {"Ground 2", 28.5f, 23}, {"Ground 3", 51.5f, 17}};
+    for (const auto& g : grounds) {
+        const Entity e = solid_2d(s, g.name, {g.x, -6, 0}, {g.w, 6}, dirt, 0.6f);
+        sprite(s, add(s, "Grass", {0, 2.85f, 0}, e), {g.w, 0.3f}, grass, 1);
+    }
+    solid_2d(s, "Wall Left", {-10.5f, 2, 0}, {1, 18}, dirt, 0.0f);
+    solid_2d(s, "Wall Right", {60.5f, 2, 0}, {1, 18}, dirt, 0.0f);
+    const struct { const char* name; float x, y; bool one_way; } platforms[] = {
+        {"Platform", 6, -0.6f, true}, {"Platform 2", 22, -0.4f, false}, {"Platform 3", 25.5f, 1.6f, false}, {"Platform 4", 46, -0.6f, false}};
+    for (const auto& pl : platforms) {
+        const Entity e = solid_2d(s, pl.name, {pl.x, pl.y, 0}, {3, 0.4f}, wood, 0.6f);
+        sprite(s, add(s, "Grass", {0, 0.17f, 0}, e), {3, 0.12f}, grass, 1);
+        if (pl.one_way) s.world().get<physics::Collider2DComponent>(e)->one_way = true;
+    }
 
     // The player: four behaviours and a physics character, nothing else.
     const Entity player = add(s, "Player", {-6, -2.5f, 0});
-    sprite(s, player, {0.9f, 0.9f}, {0.95f, 0.45f, 0.15f, 1}, 2);
+    art(sprite(s, player, {0.9f, 0.9f}, white, 3), "player");
     auto& pc = s.world().add<physics::CharacterController2DComponent>(player);
     pc.size = {0.86f, 0.9f};
     pc.gravity_scale = 2.6f;
@@ -915,25 +946,26 @@ void build_nocode(Scene& s) {
     int n = 0;
     for (const math::Vec3& at : coins) {
         const Entity coin = add(s, "Coin " + std::to_string(++n), at);
-        sprite(s, coin, {0.5f, 0.5f}, {1.0f, 0.78f, 0.12f, 1}, 1).unlit = true;
+        art(sprite(s, coin, {0.5f, 0.5f}, white, 2), "coin").unlit = true;
         s.world().add<OscillatorComponent>(coin) = {{0, 0.15f, 0}, 0.8f, static_cast<float>(n) * 0.4f, {}, false};
         s.world().add<CollectibleComponent>(coin).sound = "audio/coin.wav";
     }
     const Entity heart = add(s, "Heart", {28, -2.3f, 0});
-    sprite(s, heart, {0.5f, 0.5f}, {0.95f, 0.3f, 0.45f, 1}, 1);
+    art(sprite(s, heart, {0.55f, 0.55f}, white, 2), "heart");
+    s.world().add<OscillatorComponent>(heart) = {{0, 0.12f, 0}, 0.6f, 0, {}, false};
     auto& heal = s.world().add<CollectibleComponent>(heart);
     heal.kind = CollectibleKind::Health;
     heal.sound = "audio/coin.wav";
 
     for (const float x : {10.0f, 37.0f}) {
         const Entity spikes = add(s, x < 20 ? "Spikes" : "Spikes 2", {x, -2.75f, 0});
-        sprite(s, spikes, {1.2f, 0.5f}, {0.75f, 0.12f, 0.14f, 1}, 1);
+        art(sprite(s, spikes, {1.2f, 0.5f}, white, 2), "spikes");
         s.world().add<HazardComponent>(spikes);
     }
     const struct { const char* name; float x, offset; } slimes[] = {{"Slime", 31, -4}, {"Slime 2", 49, 3}};
     for (const auto& sl : slimes) {
         const Entity slime = add(s, sl.name, {sl.x, -2.6f, 0});
-        sprite(s, slime, {0.9f, 0.8f}, {0.35f, 0.8f, 0.3f, 1}, 2);
+        art(sprite(s, slime, {0.9f, 0.8f}, white, 3), "slime");
         auto& hz = s.world().add<HazardComponent>(slime);
         hz.stompable = true;
         auto& patrol = s.world().add<PatrolComponent>(slime);
@@ -944,7 +976,7 @@ void build_nocode(Scene& s) {
         life.invulnerable_time = 0;
     }
     // Falling into a gap costs a life: a long invisible trigger below the level.
-    const Entity pit = add(s, "Pit", {25, -9, 0});
+    const Entity pit = add(s, "Pit", {25, -11, 0});
     auto& pit_shape = s.world().add<physics::Collider2DComponent>(pit);
     pit_shape.size = {120, 2};
     pit_shape.is_trigger = true;
@@ -952,11 +984,11 @@ void build_nocode(Scene& s) {
     pit_hz.instant_kill = true;
     pit_hz.knockback = 0;
 
-    const Entity checkpoint = add(s, "Checkpoint", {19.5f, -2.4f, 0});
-    sprite(s, checkpoint, {0.35f, 1.2f}, {0.3f, 0.55f, 1.0f, 1}, 1);
+    const Entity checkpoint = add(s, "Checkpoint", {19.5f, -2.3f, 0});
+    art(sprite(s, checkpoint, {0.56f, 1.4f}, {0.45f, 0.7f, 1.0f, 1}, 2), "flag");
     s.world().add<CheckpointComponent>(checkpoint);
     const Entity goal = add(s, "Goal Flag", {57, -2.0f, 0});
-    sprite(s, goal, {0.8f, 2.0f}, {1.0f, 0.85f, 0.25f, 1}, 1).unlit = true;
+    art(sprite(s, goal, {0.8f, 2.0f}, {1.0f, 0.84f, 0.3f, 1}, 2), "flag").unlit = true;
     s.world().add<GoalComponent>(goal);
 
     const Entity rules = add(s, "Game Rules", {0, 0, 0});
@@ -976,7 +1008,7 @@ void build_nocode(Scene& s) {
     // A static line of help along the bottom; GameRules adds score, lives and time at the top.
     const Entity canvas = s.create("Help");
     s.world().add<gameui::UiCanvasComponent>(canvas);
-    const Entity help = ui_rect(s, canvas, "Controls", {0.5f, 1}, {0.5f, 1}, {0, -18}, {1180, 44});
+    const Entity help = ui_rect(s, canvas, "Controls", {0.5f, 1}, {0.5f, 1}, {0, -18}, {980, 44});
     auto& panel = s.world().add<gameui::UiPanelComponent>(help);
     panel.corner_radius = 12;
     ui_text(s, help, "A / D run     Space jump, again in the air to double jump     Click shoot     land on slimes to stomp them", 22, false);
@@ -1695,8 +1727,16 @@ std::vector<TemplateFile> template_files(std::string_view id, const TemplateOpti
                 {"assets/audio/music.wav", synth_music()},
                 {"assets/scripts/hud.luau", kHud},
                 {"assets/localization/en.vstrings", kHudStrings}};
-    if (id == "nocode")
-        return {{"assets/audio/jump.wav", synth_jump()}, {"assets/audio/coin.wav", synth_coin()}, {"assets/audio/music.wav", synth_music()}};
+    if (id == "nocode") {
+        std::vector<TemplateFile> files{
+            {"assets/audio/jump.wav", synth_jump()}, {"assets/audio/coin.wav", synth_coin()}, {"assets/audio/music.wav", synth_music()}};
+        for (auto& a : detail::nocode_sprite_art()) {
+            const std::string path = std::string("assets/textures/nocode/") + a.name + ".png";
+            files.push_back({path + ".meta", asset_meta(a.uuid, "texture")});
+            files.push_back({path, std::move(a.png)});
+        }
+        return files;
+    }
     if (id == "simulation") return {{"assets/scripts/orbit_camera.luau", kOrbitCamera}};
     if (id == "multiplayer") {
         std::vector<TemplateFile> files = {{"assets/scripts/net_player.luau", kNetPlayer},

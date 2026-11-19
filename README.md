@@ -48,7 +48,7 @@ python3 tools/setup/check_env.py     # verify the toolchain
 cmake --preset dev && cmake --build --preset dev && ctest --preset dev
 
 B=build/dev/bin
-$B/victus new MyGame --template 3d   # templates: 3d, 2d, simulation, multiplayer
+$B/victus new MyGame --template 3d   # templates: 3d, 2d, nocode, simulation, multiplayer
 $B/victus_editor MyGame              # open it in the editor
 $B/victus run MyGame                 # or play it directly
 $B/victus export MyGame --out MyGame-export && ./MyGame-export/MyGame
