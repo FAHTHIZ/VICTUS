@@ -1668,3 +1668,8 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 
 - Built: `Editor::behaviour_guides` draws, for selected entities, Patrol and Moving Platform routes (with the platform's outline at the far end; follows the live origin while playing) and Chase detect/lose circles, in the 2D and 3D viewports. `victus_editor --select NAME` now also frames the selection.
 - Verified (Debug, -Werror, lavapipe): new `victus_editor_tests` case (route endpoints, 96 circle segments for Chase, nothing for plain sprites, draws without errors); visual check on the No-Code Platformer lift.
+
+## 2026-11-19 — Trigger behaviour, Key/Door/Sign roles
+
+- Built: `TriggerComponent` (message and message_time, required_item and consume_item, locked_message, action none/start/remove/win, target by name, sound, once). Messages show in a panel near the bottom of the screen ("Message (Trigger)" canvas); the newest one wins and stays up even after its trigger is removed. Touch range grows by 15 cm so solid doors are touched from the side. `MovingPlatform.wait_for_trigger` keeps a lift still until a switch starts it. Inspector roles Key (Item collectible "Key"), Door (Trigger requiring Key that removes itself, made solid) and Sign.
+- Verified (Debug, -Werror): new `victus_script_tests` case walks past a sign (message while touching), is stopped by a locked door ("You need a Key"), picks up the key, opens the door (key used up, message survives the door), starts a lift with a switch and wins at a finish line; studio roles test covers the three roles; visual check of the message panel in `victus run`.

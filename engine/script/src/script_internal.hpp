@@ -167,6 +167,11 @@ struct ScriptHost::Impl {
             float elapsed{0};
         };
         std::optional<Carry> carry, entry;
+        // The Trigger message on screen: its text, seconds left and, for "while touching"
+        // messages, the trigger that keeps it up.
+        std::string message;
+        float message_left{0};
+        Uuid message_owner;
     } behaviours;
     lua_State* active{nullptr};                            // thread running save.read (migrations)
 

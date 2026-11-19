@@ -165,6 +165,7 @@ struct MovingPlatformComponent {
     bool smooth{true};            // eases in and out at the ends
     bool once{false};             // stops at the far end instead of coming back
     bool wait_for_player{false};  // starts moving the first time the player stands on it
+    bool wait_for_trigger{false}; // stays put until a Trigger with action Start names it
     float spin{0.0f};             // degrees per second (around Z in 2D, Y in 3D)
     std::string player_tag{"Player"};
     // runtime
@@ -175,7 +176,28 @@ struct MovingPlatformComponent {
     bool returning{false};
     float waiting{0};
     bool started{false};
+    bool triggered{false};
     float angle{0};
+};
+
+enum class TriggerAction : std::uint8_t { None, Start, Remove, Win };
+
+// Something happens when the player walks into it: signs show a message, switches start a Moving
+// Platform, doors open (Remove) once the player carries the required item, and finish lines win.
+struct TriggerComponent {
+    std::string player_tag{"Player"};
+    std::string message;          // shown at the bottom of the screen
+    float message_time{3.0f};     // seconds; 0 = while the player is touching it
+    std::string required_item;    // Inventory item needed, e.g. "Key" (picked up with a Collectible)
+    bool consume_item{true};      // uses the item up
+    std::string locked_message;   // shown without the item; empty = "You need a <item>"
+    TriggerAction action{TriggerAction::None};
+    std::string target;           // entity name the action applies to; empty = this entity
+    std::string sound;            // audio clip played when it fires (optional)
+    bool once{false};             // fires only the first time
+    // runtime
+    bool inside{false};
+    bool fired{false};
 };
 
 // Moves towards a target in range (and stops chasing once it gets far enough away).

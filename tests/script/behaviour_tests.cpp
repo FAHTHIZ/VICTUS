@@ -683,3 +683,74 @@ TEST_CASE("behaviours: moving platforms carry the player in 2D and 3D, wait for 
         CHECK(x.y == doctest::Approx(1).epsilon(0.05)); // a quarter turn about Z in one second
     }
 }
+
+TEST_CASE("behaviours: triggers show signs, open locked doors with a key, start lifts and win") {
+    Game g;
+    g.ground_2d({0, -0.5f}, {60, 1});
+    const Entity p = g.player_2d({0, 0.6f});
+    // A sign: a message while the player passes.
+    const Entity sign = g.sprite("Sign", {3, 0.5f});
+    auto& st = g.scene.world().add<TriggerComponent>(sign);
+    st.message = "Welcome";
+    st.message_time = 0;
+    // A key and a locked door (a solid wall).
+    const Entity key = g.sprite("Key", {12, 0.5f}, {0.5f, 0.5f});
+    auto& kc = g.scene.world().add<CollectibleComponent>(key);
+    kc.kind = CollectibleKind::Item;
+    kc.item = "Key";
+    const Entity door = g.ground_2d({8, 1.5f}, {1, 3});
+    g.scene.world().get<scene::Name>(door)->value = "Door";
+    auto& dt = g.scene.world().add<TriggerComponent>(door);
+    dt.required_item = "Key";
+    dt.action = TriggerAction::Remove;
+    dt.message = "The door opens";
+    // A switch that starts a lift.
+    const Entity lift = g.sprite("Lift", {20, 3}, {2, 0.4f});
+    auto& mp = g.scene.world().add<MovingPlatformComponent>(lift);
+    mp.offset = {0, 2, 0};
+    mp.wait_for_trigger = true;
+    const Entity sw = g.sprite("Switch", {16, 0.5f});
+    auto& sc = g.scene.world().add<TriggerComponent>(sw);
+    sc.action = TriggerAction::Start;
+    sc.target = "Lift";
+    const auto message = [&]() -> std::string {
+        const Entity m = g.scene.find_by_name("Message (Trigger)");
+        if (m.is_null() || g.scene.children(m).empty()) return {};
+        const Entity box = g.scene.children(m).front();
+        if (!g.scene.world().get<gameui::UiRectComponent>(box)->visible) return {};
+        for (const Entity c : g.scene.children(box)) return g.scene.world().get<gameui::UiTextComponent>(c)->text;
+        return {};
+    };
+
+    g.run(20);
+    g.hold("D", 30); // reaches the sign
+    CHECK(g.pos(p).x > 2.3f);
+    CHECK(message() == "Welcome");
+    g.hold("D", 60); // stopped by the locked door
+    CHECK(g.pos(p).x < 7.6f);
+    CHECK(message() == "You need a Key");
+    CHECK_FALSE(g.scene.find_by_name("Door").is_null());
+    // Fetch the key (teleport past the door), come back to it.
+    g.scene.world().get<Transform>(p)->position = {12, 0.6f, 0};
+    g.run(5);
+    CHECK(g.scene.find_by_name("Key").is_null());
+    CHECK(gameplay::item_count(g.scene, p, "Key") == 1);
+    g.hold("A", 50);
+    CHECK(g.scene.find_by_name("Door").is_null()); // opened and the key is used up
+    CHECK(gameplay::item_count(g.scene, p, "Key") == 0);
+    CHECK(message() == "The door opens");
+    // The lift waits for its switch.
+    CHECK(g.pos("Lift").y == doctest::Approx(3));
+    g.scene.world().get<Transform>(p)->position = {16, 0.6f, 0};
+    g.run(60);
+    CHECK(g.pos("Lift").y > 3.5f);
+    // A finish line wins.
+    const Entity rules = g.scene.create("Rules");
+    g.scene.world().add<GameRulesComponent>(rules).show_hud = false;
+    const Entity finish = g.sprite("Finish", {25, 0.5f});
+    g.scene.world().add<TriggerComponent>(finish).action = TriggerAction::Win;
+    g.run(2);
+    g.scene.world().get<Transform>(p)->position = {25, 0.6f, 0};
+    g.run(5);
+    CHECK(g.scene.world().get<GameRulesComponent>(rules)->state == GameState::Won);
+}

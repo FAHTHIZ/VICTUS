@@ -963,6 +963,16 @@ TEST_CASE("studio roles: Make it a Player, Enemy, Coin or Goal in one undoable c
     CHECK(h.ed->make_role(lift, editor::Role::MovingPlatform));
     CHECK(w.get<script::MovingPlatformComponent>(lift));
     CHECK(w.get<scene::Name>(lift)->value == "Platform");
+    const scene::Entity door = h.ed->create_entity(editor::Primitive::Cube);
+    CHECK(h.ed->make_role(door, editor::Role::Door));
+    CHECK(w.get<script::TriggerComponent>(door)->required_item == "Key");
+    CHECK(w.get<physics::ColliderComponent>(door));
+    const scene::Entity key = h.ed->create_entity(editor::Primitive::Sphere);
+    CHECK(h.ed->make_role(key, editor::Role::Key));
+    CHECK(w.get<script::CollectibleComponent>(key)->item == "Key");
+    const scene::Entity sign = h.ed->create_entity(editor::Primitive::Cube);
+    CHECK(h.ed->make_role(sign, editor::Role::Sign));
+    CHECK_FALSE(w.get<script::TriggerComponent>(sign)->message.empty());
     h.ed->select(goal);
     h.frames(2);
 }
