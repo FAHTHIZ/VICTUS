@@ -48,6 +48,7 @@ victus_add_test(victus_script_tests
         script/input_map_tests.cpp
         script/save_tests.cpp
         script/capture_tests.cpp
+        script/gameplay_framework_tests.cpp
         script/scene_transition_tests.cpp
         script/graph_tests.cpp
         script/localization_tests.cpp

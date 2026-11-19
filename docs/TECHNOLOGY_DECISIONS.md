@@ -939,6 +939,23 @@ Date/status; problem/constraints; candidates; exact versions and primary sources
 - Why not a fracture asset format first: the fracture is a pure function of (source geometry, pieces, seed), so cooked data adds nothing until author-edited fractures, hierarchical clusters or non-convex sources need it; the function is the seam such an asset will cache. Why not runtime boolean cuts at the impact point: unbounded cost and non-deterministic replay. Why not Blast: an extra native dependency for a feature Jolt bodies already cover; reconsider for very large structures.
 - Consequences: the source is fractured as its convex hull (concave meshes lose their concavities); fragments use the MeshRenderer's material asset/tint and box-projected UVs, not the model's own textures; the projectile has already been resolved by the solver when the break happens (it bounces off rather than passing through). Not yet: hierarchical clusters, strain accumulation, Studio fracture preview, network replication, LOD/simplified debris collision, world-cell lifetime.
 
+## ADR-0094 — Gameplay framework primitives: tags, events, timers, attributes/effects, abilities, inventory (accepted 2026-11-19)
+
+**Context.** VICTUS had AI blackboards and sequencer events but no shared vocabulary for gameplay state: scripts could not message each other, there were no timers, statuses, stats, cooldowns or inventories, and every game re-implemented them in Luau. Unreal's Gameplay Ability System (attributes, gameplay effects with instant/duration/infinite policies, periodic execution, stacking, granted tags; abilities gated by tags, cost and cooldown) is the established reference.
+
+**Decision.** `engine/gameplay/framework.hpp` adds small, composable ECS primitives instead of one monolithic ability component:
+- `Tags` (reflected string, hierarchical dot tags: `Status` matches `Status.Burning`); effects can grant tags while active; `find_tagged` queries in entity order.
+- A per-scene `EventBus` resource: `emit_event` runs C++ listeners immediately (re-entrancy depth 16), keeps events for two ticks (`begin_event_tick` in PreUpdate, cap 4096) and scripts receive them as `on_event(name, payload, sender)` next frame — targeted or broadcast in entity-index order.
+- `Timers` (one-shot/repeating/pausable), firing an event named after the timer.
+- `AttributeSet` definitions (`health = 80 [0..max_health]`, bounds may name attributes) instanced into a saved runtime `Attributes` component; effects with Add/Multiply/Override, instant/timed/infinite durations, periods, Refresh/Stack/Independent stacking; `attribute_changed` and `attribute_depleted` events.
+- Abilities as a stateless check: required/blocked tags, all-or-nothing costs, cooldown stored as the effect `cooldown.<name>` granting `Cooldown.<name>` (so it saves and is queryable like any status).
+- `Inventory` slots with per-item stacking, capacity, removal from the last slot and transfers; `inventory_changed` events.
+FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them deterministically. Everything serializes with the scene, so save games and checkpoints keep cooldowns, buffs and items. Luau exposes all of it on entities plus `events.emit` and `scene.tagged`.
+
+**Alternatives.** A full GAS port (prediction keys, ability tasks, execution calculations) was rejected for now: VICTUS has no replication of gameplay state yet and the complexity would dominate. Ability graphs/assets can be layered on these primitives later.
+
+**Consequences.** Hand-written serializers mean Studio's inspector shows the definition components (`Tags`, `AttributeSet`) but not runtime timers/effects/inventory yet. No networking of attributes; no modifier magnitudes computed from other attributes beyond bounds.
+
 ## ADR-0038 — Blended materials as a sorted sub-pass of the forward pass (accepted 2026-11-17)
 - Context: water, glass, decals and glows need alpha and additive blending; the forward renderer only had opaque meshes and separate particle passes.
 - Decision: `Material::blend` (`.vmat` `"blend": "opaque" | "alpha" | "additive"`, inheritable by instances). Blended draws skip the depth pre-pass and shadow casting, are sorted far to near by bounds centre, and are drawn at the end of the forward pass (same lighting, fog and coverage uniforms) with depth test on and depth write off. Pipelines are created on first use per blend × skinned × double-sided, and surface shaders get the same variants. Surface shaders also read the interpolated vertex colour (`SurfaceInput::vertex_color`), so meshes can carry per-vertex data for them.

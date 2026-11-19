@@ -3,6 +3,8 @@
 // whole Lua API (open_victus_libs). The bindings themselves live in bind_*.cpp and script_lua.cpp.
 #include "script_internal.hpp"
 
+#include "victus/gameplay/framework.hpp"
+
 namespace victus::script {
 
 namespace detail {
@@ -62,6 +64,28 @@ void open_victus_libs(lua_State* L) {
                                 {"ragdoll_root", entity_ragdoll_root},
                                 {"damage", entity_damage},
                                 {"destructible_state", entity_destructible_state},
+                                {"has_tag", entity_has_tag},
+                                {"add_tag", entity_add_tag},
+                                {"remove_tag", entity_remove_tag},
+                                {"tags", entity_tags},
+                                {"start_timer", entity_start_timer},
+                                {"stop_timer", entity_stop_timer},
+                                {"pause_timer", entity_pause_timer},
+                                {"timer_left", entity_timer_left},
+                                {"attribute", entity_attribute},
+                                {"attribute_base", entity_attribute_base},
+                                {"set_attribute", entity_set_attribute},
+                                {"modify_attribute", entity_modify_attribute},
+                                {"apply_effect", entity_apply_effect},
+                                {"remove_effect", entity_remove_effect},
+                                {"effect", entity_effect},
+                                {"activate_ability", entity_activate_ability},
+                                {"ability_cooldown", entity_ability_cooldown},
+                                {"add_item", entity_add_item},
+                                {"remove_item", entity_remove_item},
+                                {"item_count", entity_item_count},
+                                {"items", entity_items},
+                                {"give_item", entity_give_item},
                                 {"play_audio", entity_play_audio},
                                 {"stop_audio", entity_stop_audio},
                                 {"pause_audio", entity_pause_audio},
@@ -139,7 +163,8 @@ void open_victus_libs(lua_State* L) {
                                   {"query", scene_query},   {"count", scene_count}, {"instantiate", scene_instantiate},
                                   {"find_id", scene_find_id}, {"load", scene_load},
                                   {"reload", scene_reload},   {"current", scene_current},
-                                  {"params", scene_params},   {nullptr, nullptr}};
+                                  {"params", scene_params},   {"tagged", scene_tagged},
+                                  {nullptr, nullptr}};
     register_lib(L, "scene", scene_fns);
     {
         lua_newtable(L); // Bridge metatable
@@ -195,6 +220,8 @@ void open_victus_libs(lua_State* L) {
                                  {"fixed_delta", time_fixed_delta},
                                  {nullptr, nullptr}};
     register_lib(L, "time", time_fns);
+    const luaL_Reg events_fns[] = {{"emit", events_emit}, {nullptr, nullptr}};
+    register_lib(L, "events", events_fns);
     const luaL_Reg log_fns[] = {{"info", log_info}, {"warn", log_warn}, {"error", log_error}, {nullptr, nullptr}};
     register_lib(L, "log", log_fns);
     const luaL_Reg physics_fns[] = {{"available", physics_available},
@@ -545,6 +572,7 @@ void ScriptHost::update(scene::Scene& scene, const gameplay::FrameTime& time, co
     dispatch_physics_events(scene);
     dispatch_ui_events(scene);
     dispatch_sequence_events(scene);
+    dispatch_gameplay_events(scene);
     dispatch_net_messages(scene);
     h.pending_states.clear(); // states of entities that no longer have a script
     if (h.pending_restore) {
@@ -622,6 +650,46 @@ void ScriptHost::dispatch_ui_events(scene::Scene& scene) {
                 return 2;
             });
         }
+    }
+}
+
+void ScriptHost::dispatch_gameplay_events(scene::Scene& scene) {
+    Impl& h = *impl_;
+    // Snapshot: events emitted by on_event handlers are delivered next frame.
+    std::vector<gameplay::GameplayEvent> pending;
+    for (const auto& ev : gameplay::recent_events(scene))
+        if (ev.id > h.events_seen) pending.push_back(ev);
+    if (pending.empty()) return;
+    h.events_seen = pending.back().id;
+    // Broadcasts reach every running script in entity-index order (deterministic).
+    std::vector<std::uint64_t> keys;
+    for (const auto& [k, in] : h.instances)
+        if (in.started && !in.faulted) keys.push_back(k);
+    std::sort(keys.begin(), keys.end(), [](std::uint64_t a, std::uint64_t b) {
+        return static_cast<std::uint32_t>(a) < static_cast<std::uint32_t>(b);
+    });
+    auto deliver = [&](Entity e, const gameplay::GameplayEvent& ev) {
+        if (!scene.world().alive(e)) return;
+        const auto* sc = scene.world().get<ScriptComponent>(e);
+        if (!sc || !sc->enabled) return;
+        auto it = h.instances.find(e.bits());
+        if (it == h.instances.end() || it->second.faulted || !it->second.started) return;
+        lua_State* L = h.L;
+        h.route(e);
+        (void)h.call_with(it->second, "on_event", [&] {
+            lua_pushlstring(L, ev.name.data(), ev.name.size());
+            push_json(L, ev.payload);
+            if (scene.world().alive(ev.sender)) push_entity(L, ev.sender);
+            else lua_pushnil(L);
+            return 3;
+        });
+    };
+    for (const auto& ev : pending) {
+        if (!ev.target.is_null()) {
+            deliver(ev.target, ev);
+            continue;
+        }
+        for (const std::uint64_t k : keys) deliver(Entity{static_cast<std::uint32_t>(k), static_cast<std::uint32_t>(k >> 32)}, ev);
     }
 }
 
