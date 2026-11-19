@@ -29,11 +29,15 @@
 #include "victus/runtime/surface_shader.hpp"
 #include "victus/platform/platform.hpp"
 #include "victus/scene/scene.hpp"
+#include "victus/script/dap.hpp"
 #include "victus/script/script.hpp"
 #include "victus/world/world.hpp"
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
 #include <chrono>
 #include <csignal>
 #include <filesystem>
@@ -42,9 +46,16 @@
 #include <thread>
 
 #include <cstdio>
+#include <cstdlib>
 #include <set>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 using namespace victus;
 
@@ -72,6 +83,7 @@ constexpr const char* kUsage =
     "           [--connect HOST[:PORT]]                           ...as a headless multiplayer client\n"
     "  serve <project> [--port P] [--max-clients N] [--frames N]  host a multiplayer session (dedicated server)\n"
     "        [--password P] [--key FILE] [--insecure]              ...encrypted by default; prints its public key\n"
+    "  debug-adapter                                              Debug Adapter Protocol server on stdio (script debugging)\n"
     "  check <project>                                            validate scenes and script syntax\n"
     "  plugins <project> [--load] [--new NAME]                    list, load or create native plugins\n"
     "  export <project> --out DIR [--name EXE] [--player PATH]    package a runnable game folder\n"
@@ -291,7 +303,7 @@ struct Headless {
     gameplay::Simulation sim;
 
     Status open(const std::string& project_dir, const std::string& scene_arg, const std::string& saves = {},
-                std::uint64_t random_seed = 0) {
+                std::uint64_t random_seed = 0, bool debugger = false) {
         project::register_components();
         auto pr = project::Project::open(project_dir);
         if (!pr) return pr.error();
@@ -307,6 +319,7 @@ struct Headless {
         so.default_locale = proj->settings().default_locale;
         so.save_directory = saves.empty() ? proj->dev_save_directory() : fs::Path(saves);
         so.random_seed = random_seed;
+        so.debugger = debugger;
         so.project_root = proj->root();
         so.bridge_launcher = [project = &*proj, save_dir = so.save_directory](std::string_view name) {
             return project::bridge_launch(*project, name, save_dir);
@@ -983,6 +996,210 @@ int cmd_crash_test(const std::vector<std::string>& a) {
     return 0;
 }
 
+// ---- victus debug-adapter (ADR-0099) ------------------------------------------------------------
+
+// Messages from the debugger client, read by a background thread from stdin.
+class DapInbox {
+public:
+    void push(json::Value v) {
+        {
+            std::lock_guard lock(mutex_);
+            queue_.push_back(std::move(v));
+        }
+        cv_.notify_one();
+    }
+    void close() {
+        {
+            std::lock_guard lock(mutex_);
+            closed_ = true;
+        }
+        cv_.notify_one();
+    }
+    // Blocks until a message arrives (nullopt: stdin closed).
+    std::optional<json::Value> wait() {
+        std::unique_lock lock(mutex_);
+        cv_.wait(lock, [&] { return closed_ || !queue_.empty(); });
+        return take();
+    }
+    std::optional<json::Value> poll() {
+        std::lock_guard lock(mutex_);
+        return take();
+    }
+    bool closed() {
+        std::lock_guard lock(mutex_);
+        return closed_ && queue_.empty();
+    }
+
+private:
+    std::optional<json::Value> take() {
+        if (queue_.empty()) return std::nullopt;
+        json::Value v = std::move(queue_.front());
+        queue_.pop_front();
+        return v;
+    }
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::deque<json::Value> queue_;
+    bool closed_{false};
+};
+
+// Collects script logs and warnings for the client's debug console (flushed on the main thread).
+class DapLogSink final : public log::Sink {
+public:
+    void write(const log::Record& r) override {
+        if (r.category != "script" && r.level < log::Level::Warn) return;
+        std::lock_guard lock(mutex_);
+        pending_.emplace_back(r.level >= log::Level::Warn ? "stderr" : "stdout", r.message + "\n");
+    }
+    void flush_to(script::DapSession& dap) {
+        std::vector<std::pair<std::string, std::string>> out;
+        {
+            std::lock_guard lock(mutex_);
+            out.swap(pending_);
+        }
+        for (const auto& [category, text] : out) dap.output(category, text);
+    }
+
+private:
+    std::mutex mutex_;
+    std::vector<std::pair<std::string, std::string>> pending_;
+};
+
+int cmd_debug_adapter(const std::vector<std::string>& a) {
+    cli::Parser p("victus debug-adapter",
+                  "Debug Adapter Protocol server on stdin/stdout: breakpoints, stepping and inspection of a "
+                  "project's Luau scripts in a headless game. Started by editors such as VS Code (tools/vscode-victus); "
+                  "the `launch` request takes {project, scene?, frames?, stopOnEntry?, saves?, noDebug?}.");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message);
+
+    // The protocol owns the real stdout; anything else printing to stdout goes to stderr.
+    std::fflush(stdout);
+#ifdef _WIN32
+    const int out_fd = _dup(1);
+    _dup2(2, 1);
+    _setmode(out_fd, _O_BINARY);
+    _setmode(0, _O_BINARY);
+#else
+    const int out_fd = dup(1);
+    dup2(2, 1);
+#endif
+    if (out_fd < 0) return error("cannot duplicate stdout");
+    std::mutex out_mutex;
+    auto send = [&](const json::Value& m) {
+        const std::string bytes = script::dap_encode(m);
+        std::lock_guard lock(out_mutex);
+        std::size_t done = 0;
+        while (done < bytes.size()) {
+#ifdef _WIN32
+            const int n = _write(out_fd, bytes.data() + done, static_cast<unsigned>(bytes.size() - done));
+#else
+            const auto n = ::write(out_fd, bytes.data() + done, bytes.size() - done);
+#endif
+            if (n <= 0) return;
+            done += static_cast<std::size_t>(n);
+        }
+    };
+
+    DapInbox inbox;
+    std::thread([&inbox] {
+        script::DapDecoder decoder;
+        char buf[4096];
+        for (;;) {
+#ifdef _WIN32
+            const int n = _read(0, buf, sizeof buf);
+#else
+            const auto n = ::read(0, buf, sizeof buf);
+#endif
+            if (n <= 0) break;
+            decoder.feed(std::string_view(buf, static_cast<std::size_t>(n)));
+            for (;;) {
+                auto m = decoder.next();
+                if (!m || !*m) {
+                    if (!m) std::fprintf(stderr, "victus debug-adapter: %s\n", m.error().message.c_str());
+                    break;
+                }
+                inbox.push(std::move(**m));
+            }
+        }
+        inbox.close();
+    }).detach(); // blocked in read() until the client closes stdin; the process may exit first
+
+    script::DapSession dap(send, [&inbox] { return inbox.wait(); });
+    auto sink = std::make_shared<DapLogSink>();
+    log::logger().add_sink(sink);
+    std::unique_ptr<Headless> game;
+    std::uint64_t frames = 0;
+    bool running = false;
+
+    auto handle = [&](const json::Value& m) {
+        if (dap.handle(m)) return;
+        const std::string command = m["command"].as_string_or("");
+        if (command != "launch") {
+            dap.respond(m, false, json::Value::object(), "unsupported request: " + command);
+            return;
+        }
+        if (game) {
+            dap.respond(m, false, json::Value::object(), "already launched");
+            return;
+        }
+        const json::Value& args = m["arguments"];
+        const std::string project = args["project"].as_string_or("");
+        if (project.empty()) {
+            dap.respond(m, false, json::Value::object(), "launch needs \"project\": the project folder");
+            return;
+        }
+        const bool no_debug = args["noDebug"].as_bool(false);
+        auto hs = std::make_unique<Headless>();
+        if (auto st = hs->open(project, args["scene"].as_string_or(""), args["saves"].as_string_or(""),
+                               player::kFixedRunSeed, !no_debug);
+            !st) {
+            dap.respond(m, false, json::Value::object(), st.error().message);
+            return;
+        }
+        game = std::move(hs);
+        frames = static_cast<std::uint64_t>(std::max<std::int64_t>(0, args["frames"].as_int(0)));
+        if (!no_debug) dap.attach(*game->host, game->proj->root() / "assets");
+        if (args["stopOnEntry"].as_bool(false)) game->host->request_pause();
+        dap.respond(m, true);
+        dap.event("initialized");
+    };
+
+    std::uint64_t f = 0;
+    std::optional<Pacer> pacer;
+    while (!dap.disconnected()) {
+        if (!running) {
+            auto m = inbox.wait();
+            if (!m) break;
+            handle(*m);
+            running = game && dap.configured();
+            if (running) pacer.emplace(60.0);
+            continue;
+        }
+        while (auto m = inbox.poll()) handle(*m);
+        if (dap.disconnected() || inbox.closed()) break;
+        game->sim.tick(game->scene, 1.0f / 60.0f);
+        game->input.end_frame();
+        sink->flush_to(dap);
+        dap.poll();
+        if (frames && ++f >= frames) {
+            json::Value body = json::Value::object();
+            body.set("exitCode", 0);
+            dap.event("exited", std::move(body));
+            break;
+        }
+        pacer->wait();
+    }
+    sink->flush_to(dap);
+    dap.detach();
+    log::logger().remove_sink(sink);
+    dap.event("terminated");
+    game.reset();
+    std::fflush(stderr);
+    // The stdin reader thread may still be blocked: leave without running its destructors.
+    std::_Exit(0);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1010,6 +1227,7 @@ int main(int argc, char** argv) {
     if (cmd == "run") return cmd_run(args);
     if (cmd == "simulate") return cmd_simulate(args);
     if (cmd == "serve") return cmd_serve(args);
+    if (cmd == "debug-adapter") return cmd_debug_adapter(args);
     if (cmd == "check") return cmd_check(args);
     if (cmd == "plugins") return cmd_plugins(args);
     if (cmd == "export") return cmd_export(args);

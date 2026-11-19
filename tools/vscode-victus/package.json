@@ -1,0 +1,53 @@
+{
+  "name": "victus-debug",
+  "displayName": "VICTUS Script Debugger",
+  "description": "Breakpoints, stepping and inspection for VICTUS Luau scripts through `victus debug-adapter`.",
+  "version": "0.1.0",
+  "publisher": "victus",
+  "license": "Apache-2.0",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Debuggers"],
+  "main": "./extension.js",
+  "activationEvents": ["onDebugResolve:victus", "onDebugDynamicConfigurations:victus"],
+  "contributes": {
+    "breakpoints": [{ "language": "luau" }, { "language": "lua" }],
+    "configuration": {
+      "title": "VICTUS",
+      "properties": {
+        "victus.executable": {
+          "type": "string",
+          "default": "victus",
+          "description": "Path of the `victus` command-line tool (looked up on PATH by default)."
+        }
+      }
+    },
+    "debuggers": [
+      {
+        "type": "victus",
+        "label": "VICTUS Scripts",
+        "languages": ["luau", "lua"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["project"],
+            "properties": {
+              "project": { "type": "string", "description": "Project folder (contains project.vproj).", "default": "${workspaceFolder}" },
+              "scene": { "type": "string", "description": "Project-relative scene; default: the startup scene." },
+              "frames": { "type": "number", "description": "Stop after this many 1/60 s frames (0: run until stopped).", "default": 0 },
+              "stopOnEntry": { "type": "boolean", "description": "Pause at the first script line.", "default": false },
+              "saves": { "type": "string", "description": "Save games folder for the save API." }
+            }
+          }
+        },
+        "initialConfigurations": [
+          { "type": "victus", "request": "launch", "name": "Debug VICTUS scripts", "project": "${workspaceFolder}" }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "VICTUS: Debug scripts",
+            "body": { "type": "victus", "request": "launch", "name": "Debug VICTUS scripts", "project": "^\"\\${workspaceFolder}\"" }
+          }
+        ]
+      }
+    ]
+  }
+}

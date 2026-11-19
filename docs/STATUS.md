@@ -1451,3 +1451,10 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 - Limits: see KNOWN_LIMITATIONS (transparents/particles fogged by opaque depth, no self-shadowing, box volumes only, no clouds/weather). No GPU timing claimed (lavapipe only).
 - Next: script debugging (breakpoints, stepping), then versioned format migrators + editor safe mode.
 
+
+## 2026-11-19 — Luau source debugger and `victus debug-adapter` (ADR-0099)
+
+- Built: `HostOptions::debugger` (debug level 2 plus VM callbacks); `victus/script/debugger.hpp`, which gives breakpoints with line resolution, conditions, hit conditions and logpoints, stop on uncaught errors, step over/in/out, a thread-safe pause, frames, locals, upvalues, table children, evaluate and set_variable, and budget compensation. Single-step mode is on only while stepping or pausing, and breakpoints are flooded onto every line for steps started from a breakpoint. Also built: `victus/script/dap.hpp` (`DapSession`, `DapDecoder`, `dap_encode`); `victus debug-adapter` (DAP on stdio, protocol-only stdout, reader thread, headless launch at 60 Hz, script logs in the debug console); `ChildProcess::read_bytes`; the VS Code extension `tools/vscode-victus`.
+- Verified (Debug, -Werror): `victus_script_tests -tc="script debugger*"` 8/8 cases, 340 assertions. These cover resolution, inspection, stepping, pause across calls, conditions/hit counts/logpoints, exceptions plus set_variable, budget compensation, debugger off, DAP framing byte by byte, and a DAP session stopped at a breakpoint. `victus_cli_debug_adapter` (new) runs over stdio on the 3D template: breakpoint at crate.luau:14 verified on load, stack, locals, `self` expansion, evaluate, setVariable, step to 15, pause, exited/terminated, exit 0. `victus_core_tests -tc="process*"` 7/7. Full ctest 36/36. clang-tidy is clean on process.cpp, dap.cpp, debugger.cpp, script.cpp and tools/cli/main.cpp.
+- Limits: headless game only, with no Studio play or attach; a stop freezes the game; table fields are read-only (see KNOWN_LIMITATIONS).
+- Next: versioned format migrators plus editor safe mode (gap rank 11), then debugger integration into Studio play.

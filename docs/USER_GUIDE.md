@@ -24,6 +24,16 @@ end
 return Spin
 ~~~
 
+### Debugging scripts
+
+`victus debug-adapter` is a Debug Adapter Protocol server: editors start it and debug the project's scripts in the headless game (the same simulation as `victus simulate`). In VS Code, install `tools/vscode-victus` (see its README) and add a launch configuration:
+
+~~~json
+{ "type": "victus", "request": "launch", "name": "Debug VICTUS scripts", "project": "${workspaceFolder}" }
+~~~
+
+Click in the gutter of a `.luau` file under `assets/` to set a breakpoint. Right-click it to add a condition (`self.health < 10`), a hit count (`5`, `>=3`, `%10`) or a log message (`speed is {self.speed}`). Breakpoints turn solid once their script loads. "Uncaught Errors" stops on script errors before they unwind. While stopped, use step over/into/out, read the call stack, expand locals, upvalues and tables, hover over or watch expressions, and edit locals. Launch options: `scene`, `frames` (stop after N frames), `stopOnEntry`, `saves`. Other editors with DAP support can run `victus debug-adapter` directly. Engine programs can call `ScriptHost::set_debug_handler` with `HostOptions::debugger` set.
+
 ### Available globals
 
 Available globals: `scene.find/spawn/destroy/query/count`, `input.down/pressed/released/axis/mouse_*`, `time.delta/now/frame`, `log.info/warn/error`, `events.emit(name, payload?, target?)` and `scene.tagged(query)`. Entities expose `position`, `rotation` (Euler degrees), `scale`, `name`, `parent`, `forward/right/up`, and `get/set/has/remove` for any component as JSON-like tables. Scripts run sandboxed with time and memory limits, so a bad loop reports an error instead of freezing the editor.

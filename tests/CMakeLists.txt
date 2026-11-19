@@ -50,6 +50,7 @@ victus_add_test(victus_script_tests
         script/capture_tests.cpp
         script/gameplay_framework_tests.cpp
         script/water_tests.cpp
+        script/debugger_tests.cpp
         script/scene_transition_tests.cpp
         script/graph_tests.cpp
         script/localization_tests.cpp
@@ -184,6 +185,15 @@ add_test(NAME victus_cli_diagnostics
         -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_diagnostics
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/diagnostics_smoke.cmake)
 set_tests_properties(victus_cli_diagnostics PROPERTIES LABELS "cli")
+
+# Script debugging over the Debug Adapter Protocol end to end (ADR-0099). No GPU needed.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME victus_cli_debug_adapter
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/cli/dap_smoke.py
+            $<TARGET_FILE:victus_cli> ${CMAKE_BINARY_DIR}/test_output/cli_debug_adapter)
+    set_tests_properties(victus_cli_debug_adapter PROPERTIES LABELS "cli" TIMEOUT 300)
+endif()
 
 # Native plugins end to end (ADR-0078): scaffold, build, check, load, Luau call, export.
 add_test(NAME victus_cli_plugins

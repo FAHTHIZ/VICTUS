@@ -129,6 +129,26 @@ Status ChildProcess::write_line(std::string_view line) {
     return write(s);
 }
 
+Result<std::optional<std::string>> ChildProcess::read_bytes(std::size_t count, int timeout_ms) {
+    if (count > max_line_)
+        return make_error(ErrorCode::LimitExceeded, std::format("child output block exceeds {} bytes", max_line_));
+    const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms < 0 ? 0 : timeout_ms);
+    for (;;) {
+        if (buffer_.size() >= count) {
+            std::string out = buffer_.substr(0, count);
+            buffer_.erase(0, count);
+            return std::optional<std::string>(std::move(out));
+        }
+        if (eof_) return make_error(ErrorCode::IoError, std::format("child closed its output after {} of {} bytes", buffer_.size(), count));
+        const int wait = timeout_ms < 0 ? -1 : remaining_ms(deadline);
+        Status err;
+        if (!fill(wait, err)) {
+            if (!err) return std::move(err).error();
+            if (timeout_ms >= 0 && Clock::now() >= deadline) return std::optional<std::string>{};
+        }
+    }
+}
+
 Result<std::optional<std::string>> ChildProcess::read_line(int timeout_ms) {
     const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms < 0 ? 0 : timeout_ms);
     std::size_t scanned = 0;
