@@ -23,7 +23,7 @@ Movement behaviours also drive character animation. When the entity or one of it
 | Spawner | anywhere | Creates copies of a prefab on a timer, up to a limit. |
 | Lifetime | effects, bullets | Removes the entity after a time. |
 | Checkpoint / Goal | flags | A checkpoint moves the respawn point; a goal wins, loads the next scene or a chosen one. |
-| Game Rules | one per scene | Score, lives, an optional time limit and score to win, and the on-screen HUD with win and game-over messages. |
+| Game Rules | one per scene | Score, lives, an optional time limit and score to win, and the on-screen HUD with win and game-over messages. With Carry Over on (the default), a Goal that loads the next level hands it the score, lives and time; game over restarts the level with the score it began with and fresh lives. |
 
 The player is found by the tag "Player" or, if nothing has that tag, by its movement behaviour. Behaviours send events that scripts and graphs can react to with `on_event`: `damaged`, `healed`, `died`, `collected`, `checkpoint`, `score_changed`, `game_won`, `game_lost`, `life_lost`, `spawned`, `fired`, `stomped` and `goal_reached`.
 

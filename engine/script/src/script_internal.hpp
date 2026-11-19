@@ -159,6 +159,14 @@ struct ScriptHost::Impl {
         bool has_start{false};
         std::uint64_t rng{0x9E3779B97F4A7C15ull};
         std::unordered_map<std::uint64_t, bool> warned; // entity bits -> reported a problem
+        // Game Rules values handed from one level to the next (carry_over), and the values the
+        // current level started with (what game over restarts with, lives refilled).
+        struct Carry {
+            float score{0};
+            std::uint32_t lives_left{0}; // 0 = refill to the level's lives
+            float elapsed{0};
+        };
+        std::optional<Carry> carry, entry;
     } behaviours;
     lua_State* active{nullptr};                            // thread running save.read (migrations)
 

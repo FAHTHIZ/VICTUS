@@ -1633,3 +1633,8 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 
 - Built: export coverage for the no-code templates. A new export test packs `nocode` and `nocode3d`, mounts each pack in a fresh folder like a shipped game, loads the startup scene and checks the player's movement and health, game rules, coins, goal and patrols are present with zero scripts and every referenced material is in the pack (lava shader and material for 3D). `validate: clean templates` now covers both no-code templates.
 - Verified (Debug, -Werror, lavapipe): `victus_export_tests` 18/18; `victus export --out /tmp/n3x` of a fresh nocode3d project, then the exported executable run for 60 frames under Xvfb renders the same frame as `victus run`. With the earlier play-to-win tests for both templates, the Behaviours acceptance (complete 2D and 3D games from Add Component alone, played to their win in a test, exported) is met; the item is removed from ROADMAP.md.
+
+## 2026-11-19 — Score and lives carry between levels
+
+- Built: `GameRules.carry_over` (default on). A Goal that loads another scene hands the score, lives left and elapsed time to that scene's Game Rules (time only when the new level has no time limit). Game over restarts the level with the score it was entered with and a full set of lives. Off: each level starts fresh.
+- Verified (Debug, -Werror): new behaviour test walks a player into a NextScene goal with score 7 and 2 lives, checks level 2 starts with 7, loses every life in lava, checks the restart brings back 7 with fresh lives, and checks carry_over off starts at 0; `victus_script_tests` and `victus_project_tests` pass.

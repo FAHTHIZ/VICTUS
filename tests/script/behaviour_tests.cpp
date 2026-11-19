@@ -460,6 +460,81 @@ TEST_CASE("behaviours: goals load the next scene once every coin is collected; c
     CHECK(!g.scene.find_by_name("Level 2 marker").is_null());
 }
 
+TEST_CASE("behaviours: score and lives carry to the next level; game over restarts it with the entry score") {
+    Game g(false);
+    {
+        // Level 2: its own Game Rules, a player standing in lava.
+        Scene next;
+        const Entity rules = next.create("Game Rules");
+        auto& gr = next.world().add<GameRulesComponent>(rules);
+        gr.lives = 3;
+        gr.restart_delay = 0.2f;
+        const Entity hero = next.create("Hero");
+        next.world().add<HealthComponent>(hero).on_death = DeathAction::Respawn;
+        next.world().add<TopDownMovementComponent>(hero).camera_relative = false;
+        const Entity lava = next.create("Lava");
+        auto& hz = next.world().add<HazardComponent>(lava);
+        hz.instant_kill = true;
+        REQUIRE(next.save_file(g.project.root / "scenes" / "level2.vscene").ok());
+    }
+    const Entity rules = g.scene.create("Game Rules");
+    g.scene.world().add<GameRulesComponent>(rules).lives = 3;
+    const Entity hero = g.scene.create("Hero");
+    g.scene.world().add<TopDownMovementComponent>(hero).camera_relative = false;
+    const Entity flag = g.scene.create("Flag");
+    g.scene.world().get<Transform>(flag)->position = {3, 0, 0};
+    auto& goal = g.scene.world().add<GoalComponent>(flag);
+    goal.action = GoalAction::NextScene;
+    goal.scene = "scenes/level2.vscene";
+    g.run(2);
+    auto* r1 = g.scene.world().get<GameRulesComponent>(rules);
+    r1->score = 7;
+    r1->lives_left = 2;
+    g.input.set_key("D", true);
+    for (int i = 0; i < 120 && g.loaded.empty(); ++i) g.run(1);
+    g.input.set_key("D", false);
+    REQUIRE(g.loaded.size() == 1);
+    const auto rules2 = [&] { return g.scene.world().get<GameRulesComponent>(g.scene.find_by_name("Game Rules")); };
+    g.run(1);
+    REQUIRE(rules2());
+    CHECK(rules2()->initialised);
+    CHECK(rules2()->score == doctest::Approx(7)); // carried over
+    CHECK(rules2()->lives_left <= 2);             // the lava may already have taken one
+    // Two lives go in the lava: game over, then the level restarts with the score it began with
+    // and a fresh set of lives.
+    for (int i = 0; i < 400 && g.loaded.size() < 2; ++i) {
+        if (auto* gr = rules2(); gr && gr->state == GameState::Playing) gr->score = 50;
+        g.run(1);
+    }
+    REQUIRE(g.loaded.size() == 2);
+    g.run(1);
+    REQUIRE(rules2());
+    CHECK(rules2()->score == doctest::Approx(7));
+    CHECK(rules2()->lives_left >= 2);
+    // Turning carry_over off starts the next level fresh.
+    Game f(false);
+    {
+        Scene next;
+        next.world().add<GameRulesComponent>(next.create("Game Rules"));
+        REQUIRE(next.save_file(f.project.root / "scenes" / "level2.vscene").ok());
+    }
+    const Entity fr = f.scene.create("Game Rules");
+    f.scene.world().add<GameRulesComponent>(fr).carry_over = false;
+    const Entity fh = f.scene.create("Hero");
+    f.scene.world().add<TopDownMovementComponent>(fh).camera_relative = false;
+    const Entity ff = f.scene.create("Flag");
+    f.scene.world().get<Transform>(ff)->position = {3, 0, 0};
+    auto& fg = f.scene.world().add<GoalComponent>(ff);
+    fg.action = GoalAction::NextScene;
+    fg.scene = "scenes/level2.vscene";
+    f.run(2);
+    f.scene.world().get<GameRulesComponent>(fr)->score = 9;
+    f.hold("D", 60);
+    REQUIRE(f.loaded.size() == 1);
+    f.run(1);
+    CHECK(f.scene.world().get<GameRulesComponent>(f.scene.find_by_name("Game Rules"))->score == 0);
+}
+
 TEST_CASE("behaviours: top-down 3D movement walks a character relative to the camera; camera follows") {
     Game g;
     const Entity ground = g.scene.create("Ground");
