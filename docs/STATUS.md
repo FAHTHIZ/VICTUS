@@ -1703,3 +1703,9 @@ Verified: `templates: the No-Code Platformer plays with behaviours alone` (check
 Built: selecting a Jump Pad draws the launch arc (using the player's gravity scale) and marks its peak, so the strength can be tuned against the level without playing.
 
 Verified: `studio behaviour guides: patrol and platform routes, chase ranges and jump arcs show` (peak height v²/2g).
+
+## 2026-11-19 — Named layouts
+
+Built: Window > Layout > Save Layout As / Delete Layout and a "Yours" list. A named layout stores the open panels and the ImGui window/docking settings (`UiContext::layout_snapshot`); restoring it queues the settings with `UiContext::load_layout`, applied before the next `ImGui::NewFrame` because docking cannot change mid-frame. Saved in `studio_preferences.json` under `workspace.custom_layouts`.
+
+Verified: `studio workspace: named layouts keep panels and docking and survive restarts`.

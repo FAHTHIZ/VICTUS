@@ -287,7 +287,7 @@ fs::Path Editor::preferences_file() const {
 
 void Editor::load_preferences() {
     ui_scale_ = std::clamp(options_.default_ui_scale, kMinUiScale, kMaxUiScale);
-    auto text = fs::read_text(preferences_file(), 1u << 16);
+    auto text = fs::read_text(preferences_file(), 4u << 20);
     if (!text) return;
     auto doc = json::parse(*text);
     if (!doc || !doc->is_object()) return;
@@ -310,6 +310,19 @@ void Editor::load_preferences() {
             saved_panels_ = mask;
             panels_restored_ = true;
         }
+        custom_layouts_.clear();
+        const json::Value& mine = ws["custom_layouts"];
+        for (std::size_t k = 0; mine.is_array() && k < mine.size(); ++k) {
+            const json::Value& c = mine[k];
+            CustomLayout l;
+            l.name = c["name"].as_string_or("");
+            l.ini = c["ini"].as_string_or("");
+            const json::Value& ps = c["panels"];
+            for (std::size_t j = 0; ps.is_array() && j < ps.size(); ++j)
+                for (int i = 0; i < static_cast<int>(Panel::Count); ++i)
+                    if (ps[j].as_string_or("") == panel_title(static_cast<Panel>(i))) l.panels |= 1u << i;
+            if (!l.name.empty()) custom_layouts_.push_back(std::move(l));
+        }
     }
 }
 
@@ -326,6 +339,20 @@ void Editor::save_preferences() const {
     for (int i = 0; i < static_cast<int>(Panel::Count); ++i)
         if ((saved_panels_ >> i) & 1u) open.push(json::Value(panel_title(static_cast<Panel>(i))));
     if (panels_restored_ || saved_panels_ != 0) ws.set("panels", std::move(open));
+    if (!custom_layouts_.empty()) {
+        json::Value mine = json::Value::array();
+        for (const CustomLayout& c : custom_layouts_) {
+            json::Value l = json::Value::object();
+            l.set("name", c.name);
+            json::Value ps = json::Value::array();
+            for (int i = 0; i < static_cast<int>(Panel::Count); ++i)
+                if ((c.panels >> i) & 1u) ps.push(json::Value(panel_title(static_cast<Panel>(i))));
+            l.set("panels", std::move(ps));
+            l.set("ini", c.ini);
+            mine.push(std::move(l));
+        }
+        ws.set("custom_layouts", std::move(mine));
+    }
     doc.set("workspace", std::move(ws));
     if (auto st = fs::write_text_atomic(preferences_file(), json::stringify(doc) + "\n"); !st.ok())
         VICTUS_LOG_WARN("editor", "could not save Studio preferences: {}", st.error().message);

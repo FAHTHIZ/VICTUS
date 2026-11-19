@@ -25,7 +25,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 - Press-to-use Triggers: wait for the Interact control (E) with a "Press E" prompt; a "Switch" role that starts the lift named Platform.
 - The No-Code Platformer has a welcome Sign at the start and a spring Jump Pad before the first gap, with drawn spring and sign sprites.
 - Viewport guides for the selection: Patrol and Moving Platform routes, Chase ranges and Jump Pad launch arcs.
-- Studio remembers which panels are open and the chosen layout preset between sessions.
+- Studio remembers which panels are open and the chosen layout preset between sessions; Window > Layout > Save Layout As keeps your own named layouts (panels and docking).
 - `victus` CLI: `new`, `templates`, `info`, `import`, `run`, `simulate`, `serve`, `check`, `export`, `diagnose`; exported games run with `victus_player`; Android packaging.
 - Project templates (3D, 2D, No-Code Platformer, No-Code 3D Adventure, simulation, multiplayer), Vanguard starter characters, sample projects (arena, dungeon crawler, render showcase).
 - Behaviours (ADR-0120): no-code gameplay components (platformer and top-down movement, camera follow, health, hazards, collectibles, patrol, chase, shooter, projectiles, spawner, lifetime, checkpoints, goals, game rules with a HUD), the No-Code Platformer and No-Code 3D Adventure templates, and behaviour-driven character animation.

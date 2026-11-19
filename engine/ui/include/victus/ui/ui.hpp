@@ -61,6 +61,11 @@ public:
     [[nodiscard]] static ImTextureID texture_id(rhi::TextureHandle texture) noexcept;
     [[nodiscard]] static rhi::TextureHandle texture_handle(ImTextureID id) noexcept;
 
+    // The window and docking layout as ImGui ini text, and replacing it: the new layout takes
+    // effect at the start of the next new_frame (docking cannot change mid-frame).
+    [[nodiscard]] std::string layout_snapshot() const;
+    void load_layout(std::string ini) { pending_layout_ = std::move(ini); }
+
     [[nodiscard]] bool wants_mouse() const noexcept;
     [[nodiscard]] bool wants_keyboard() const noexcept;
     [[nodiscard]] ImGuiContext* imgui() const noexcept { return context_; }
@@ -77,6 +82,7 @@ private:
     platform::Window* window_;
     ImGuiContext* context_{nullptr};
     std::string ini_path_;
+    std::string pending_layout_;
     rhi::PipelineHandle pipeline_;
     bool target_srgb_{false};
     rhi::BufferHandle vertex_buffer_, index_buffer_;
