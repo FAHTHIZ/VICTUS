@@ -91,6 +91,7 @@ void open_victus_libs(lua_State* L) {
                                 {"stop_audio", entity_stop_audio},
                                 {"pause_audio", entity_pause_audio},
                                 {"audio_playing", entity_audio_playing},
+                                {"audio_occlusion", entity_audio_occlusion},
                                 {"set_text", entity_set_text},
                                 {"set_text_key", entity_set_text_key},
                                 {"scroll_to", entity_scroll_to},
@@ -246,6 +247,7 @@ void open_victus_libs(lua_State* L) {
                                   {"set_lowpass", audio_set_lowpass}, {"lowpass", audio_lowpass},
                                   {"set_reverb_send", audio_set_reverb_send}, {"reverb_send", audio_reverb_send},
                                   {"set_reverb_decay", audio_set_reverb_decay}, {"reverb_decay", audio_reverb_decay},
+                                  {"acoustics", audio_acoustics},
                                   {nullptr, nullptr}};
     register_lib(L, "audio", audio_fns);
     const luaL_Reg ui_fns[] = {{"screen_size", ui_screen_size}, {"pointer_over_ui", ui_pointer_over},

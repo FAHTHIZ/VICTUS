@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/core/jobs.hpp"
+#include "victus/gameplay/queries.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/scene/reflect.hpp"
 
@@ -120,6 +121,39 @@ TEST_CASE("3D raycast and overlap queries") {
     REQUIRE(near_box.size() == 1);
     CHECK(near_box[0] == box);
     CHECK(w->overlap_box({0, 1.5f, 0}, {5, 2.1f, 5}).size() == 2);
+}
+
+TEST_CASE("3D raycast_all returns every surface in order; bind installs the segment query") {
+    Scene scene;
+    auto w = make_world();
+    const Entity ground = ground_3d(scene);
+    const Entity low = box_3d(scene, {0, 1, 0}, BodyType::Static);
+    const Entity high = box_3d(scene, {0, 4, 0}, BodyType::Static);
+    const Entity trig = box_3d(scene, {0, 6, 0}, BodyType::Static);
+    scene.world().get<ColliderComponent>(trig)->is_trigger = true;
+    w->sync(scene, 1.0f / 60);
+    const auto hits = w->raycast_all({0, 10, 0}, {0, -2, 0}, 100);
+    REQUIRE(hits.size() == 3); // the trigger is not a surface
+    CHECK(hits[0].entity == high);
+    CHECK(hits[0].distance == doctest::Approx(5.5f).epsilon(0.01));
+    CHECK(hits[1].entity == low);
+    CHECK(hits[1].point.y == doctest::Approx(1.5f).epsilon(0.01));
+    CHECK(hits[2].entity == ground);
+    CHECK(hits[2].normal.y == doctest::Approx(1.0f).epsilon(0.01));
+    CHECK(w->raycast_all({0, 10, 0}, {0, -1, 0}, 100, kAllLayers, 2).size() == 2);
+    CHECK(w->raycast_all({0, 10, 0}, {0, -1, 0}, 7.0f).size() == 1); // max distance
+    CHECK(w->raycast_all({0, 10, 0}, {0, 0, 0}, 7.0f).empty());
+
+    CHECK_FALSE(gameplay::has_segment_query(scene));
+    bind(scene, w.get());
+    std::vector<gameplay::SegmentHit> seg;
+    REQUIRE(gameplay::segment_hits(scene, {0, 10, 0}, {0, 2, 0}, 8, seg));
+    REQUIRE(seg.size() == 1);
+    CHECK(seg[0].entity == high);
+    CHECK(seg[0].distance == doctest::Approx(5.5f).epsilon(0.01));
+    bind(scene, nullptr);
+    CHECK_FALSE(gameplay::segment_hits(scene, {0, 10, 0}, {0, 2, 0}, 8, seg));
+    CHECK(seg.empty());
 }
 
 TEST_CASE("3D layer masks filter collisions and queries") {

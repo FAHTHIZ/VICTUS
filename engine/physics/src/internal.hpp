@@ -95,6 +95,8 @@ public:
     [[nodiscard]] virtual bool has_body(Entity e) const = 0;
     [[nodiscard]] virtual std::optional<RaycastHit> raycast(math::Vec3 o, math::Vec3 d, float max, std::uint32_t mask,
                                                             Entity ignore) const = 0;
+    [[nodiscard]] virtual std::vector<RaycastHit> raycast_all(math::Vec3 o, math::Vec3 d, float max, std::uint32_t mask,
+                                                              std::size_t max_hits) const = 0;
     [[nodiscard]] virtual std::vector<Entity> overlap_sphere(math::Vec3 c, float r, std::uint32_t mask) const = 0;
     [[nodiscard]] virtual std::vector<Entity> overlap_box(math::Vec3 c, math::Vec3 h, math::Quat q,
                                                           std::uint32_t mask) const = 0;

@@ -581,6 +581,10 @@ public:
     // ---- queries (3D) ----
     [[nodiscard]] std::optional<RaycastHit> raycast(math::Vec3 origin, math::Vec3 direction, float max_distance,
                                                     std::uint32_t mask = kAllLayers, Entity ignore = {}) const;
+    // Every hit along the ray (not only the nearest), sorted by distance, at most `max_hits`.
+    // Triggers are excluded as for raycast().
+    [[nodiscard]] std::vector<RaycastHit> raycast_all(math::Vec3 origin, math::Vec3 direction, float max_distance,
+                                                      std::uint32_t mask = kAllLayers, std::size_t max_hits = 16) const;
     [[nodiscard]] std::vector<Entity> overlap_sphere(math::Vec3 center, float radius, std::uint32_t mask = kAllLayers) const;
     [[nodiscard]] std::vector<Entity> overlap_box(math::Vec3 center, math::Vec3 half_extents, math::Quat rotation = {},
                                                   std::uint32_t mask = kAllLayers) const;

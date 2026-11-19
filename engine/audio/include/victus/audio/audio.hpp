@@ -20,12 +20,21 @@
 //   their playhead keeps advancing, so they resume in place with a short fade-in when they win
 //   again. One-shots that lose are faded out (stolen). Every stop caused by the voice manager or
 //   an instance limit fades over a few milliseconds instead of cutting (no clicks).
+// - Acoustics (ADR-0096): sources with `occlusion` are traced against scene geometry (the segment
+//   query physics installs, see gameplay/queries.hpp) from the listener; each surface between
+//   them transmits a fraction of the energy per frequency band taken from its AcousticMaterial
+//   (Steam Audio's material table), so walls attenuate and muffle (a per-voice low-pass). Optional
+//   volumetric occlusion traces five rays across `occlusion_radius` for partial blocking.
+//   ReverbZone boxes drive the reverb (decay, wet send, low-pass) from the listener's position with
+//   a fade margin, and a listener under water (gameplay/water.hpp) muffles the world buses. All
+//   acoustic changes are smoothed over time and layered on top of the user's bus settings.
 #pragma once
 #include "victus/core/fs.hpp"
 #include "victus/core/result.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/scene/scene.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -60,6 +69,8 @@ struct AudioSourceComponent {
     float max_distance{50.0f};     // no further attenuation beyond this distance
     float rolloff{1.0f};
     std::int32_t priority{128};    // 0..255, higher keeps a real voice when over the budget
+    bool occlusion{false};         // trace geometry between listener and source (spatial only)
+    float occlusion_radius{0.0f};  // > 0: five rays across this radius (partial occlusion)
     friend bool operator==(const AudioSourceComponent&, const AudioSourceComponent&) = default;
 };
 
@@ -68,7 +79,34 @@ struct AudioListenerComponent {
     friend bool operator==(const AudioListenerComponent&, const AudioListenerComponent&) = default;
 };
 
-// Registers serializers/schemas for "AudioSource" and "AudioListener". Idempotent.
+// Sound transmission of a surface. Presets carry Steam Audio's per-band energy transmission
+// coefficients (bands centred at 400 Hz, 2.5 kHz and 15 kHz); Custom uses `transmission`.
+// Entities without the component (and without one on an ancestor) occlude as Generic.
+enum class AcousticPreset : std::uint8_t { Generic, Brick, Concrete, Ceramic, Gravel, Carpet, Glass, Plaster, Wood, Metal, Rock, Custom };
+struct AcousticMaterialComponent {
+    AcousticPreset preset{AcousticPreset::Generic};
+    math::Vec3 transmission{0.100f, 0.050f, 0.030f}; // energy fractions low/mid/high (Custom)
+    friend bool operator==(const AcousticMaterialComponent&, const AcousticMaterialComponent&) = default;
+};
+// Energy transmission (low, mid, high) of a material, each in [0, 1].
+[[nodiscard]] math::Vec3 acoustic_transmission(const AcousticMaterialComponent& m) noexcept;
+
+// A box (centred on the entity, `size` in its local space, so rotation and scale apply) that sets
+// the reverb while the listener is inside, fading out over `fade` metres beyond the box. When zones
+// overlap the highest priority wins, then the smallest box.
+struct ReverbZoneComponent {
+    bool enabled{true};
+    math::Vec3 size{10.0f, 4.0f, 10.0f};
+    float fade{2.0f};      // metres
+    float decay{0.8f};     // reverb comb feedback, [0, 0.95]
+    float wet{0.35f};      // reverb send for the Sfx, Ambient and Voice buses, [0, 1]
+    float lowpass{0.0f};   // Hz on the same buses, 0 = none
+    std::int32_t priority{0};
+    friend bool operator==(const ReverbZoneComponent&, const ReverbZoneComponent&) = default;
+};
+
+// Registers serializers/schemas for "AudioSource", "AudioListener", "AcousticMaterial" and
+// "ReverbZone". Idempotent.
 void register_components();
 
 struct EngineOptions {
@@ -78,6 +116,11 @@ struct EngineOptions {
     std::uint32_t channels{2};
     std::uint32_t max_one_shots{64}; // oldest one-shot is faded out when exceeded
     std::uint32_t max_voices{96};    // real (mixed) voices; the rest are virtual or stolen
+    std::uint32_t max_occlusion_rays{64}; // per update, shared round-robin across occluded sources
+    float occlusion_smoothing{0.08f};     // seconds (time constant) for occlusion changes
+    float zone_smoothing{0.25f};          // seconds for reverb zone / underwater transitions
+    bool underwater_filter{true};         // muffle world buses while the listener is under water
+    float underwater_cutoff{600.0f};      // Hz
 };
 
 inline constexpr float kVoiceFadeMs = 10.0f;        // fade used when virtualising/stealing/resuming
@@ -105,6 +148,26 @@ struct AudioStats {
     bool device{false};            // an output device is open
 };
 
+// Result of the latest occlusion trace for one source (smoothed values as applied).
+struct OcclusionState {
+    float blocked{0};   // fraction of rays that hit geometry, [0, 1]
+    float gain{1};      // linear gain applied to the voice
+    float cutoff{0};    // per-voice low-pass in Hz, 0 = unfiltered
+};
+
+// What the acoustic layer currently applies (effective values, user settings combined with zones
+// and water); the bus_* getters keep returning the user's own settings.
+struct AcousticState {
+    Entity zone;                         // dominant reverb zone (invalid when none)
+    float zone_weight{0};                // smoothed, [0, 1]
+    float underwater{0};                 // smoothed weight, [0, 1]
+    float decay{0.7f};
+    std::array<float, kBusCount> send{};
+    std::array<float, kBusCount> lowpass{}; // 0 = bypassed
+    std::uint32_t rays{0};               // occlusion rays traced in the latest update
+    std::uint32_t occluded{0};           // sources currently attenuated by occlusion
+};
+
 class AudioEngine {
 public:
     static Result<std::unique_ptr<AudioEngine>> create(const EngineOptions& options = {});
@@ -118,7 +181,8 @@ public:
 
     // Matches sounds to the scene's AudioSource components (start/stop/update/destroy), moves
     // spatial sounds and the listener, and reaps finished one-shots. Call once per frame.
-    void update(scene::Scene& scene);
+    // `dt` (seconds) drives the acoustic smoothing.
+    void update(scene::Scene& scene, float dt = 1.0f / 60.0f);
     // Stops and releases every sound (e.g. when a play session ends or the scene changes) and
     // turns the bus effects off (low-pass, reverb sends, decay back to 0.7): they belong to the
     // scene being left. Bus volumes and mutes (game settings) and clip caches are kept.
@@ -158,6 +222,9 @@ public:
     std::size_t render(float* out, std::size_t frames);
 
     [[nodiscard]] AudioStats stats() const;
+    [[nodiscard]] AcousticState acoustics() const;
+    // Occlusion of an entity source, or nullopt when it has no live voice or occlusion is off.
+    [[nodiscard]] std::optional<OcclusionState> occlusion(Entity e) const;
 
     struct Impl;
 
