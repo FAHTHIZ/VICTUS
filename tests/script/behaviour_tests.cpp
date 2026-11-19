@@ -494,3 +494,60 @@ TEST_CASE("behaviours: top-down 3D movement walks a character relative to the ca
     g.input.set_key("Space", false);
     CHECK(peak - y0 > 1.0f);
 }
+
+TEST_CASE("behaviours: patrols turn at walls and ledges; projectiles stop at walls") {
+    Game g(false); // plain transforms: the checks use collider bounds, not physics contacts
+    g.ground_2d({0, -0.5f}, {6, 1}); // a platform from x -3 to 3
+    const Entity wall = g.ground_2d({2.5f, 1.5f}, {1, 3});
+    g.scene.world().get<scene::Name>(wall)->value = "Wall";
+
+    const Entity walker = g.sprite("Walker", {0, 0.5f});
+    auto& pa = g.scene.world().add<PatrolComponent>(walker);
+    pa.offset = {10, 0, 0};
+    pa.speed = 3;
+    pa.wait = 0;
+    const Entity edger = g.sprite("Edger", {0, 0.5f});
+    auto& pe = g.scene.world().add<PatrolComponent>(edger);
+    pe.offset = {-10, 0, 0};
+    pe.speed = 3;
+    pe.wait = 0;
+    pe.turn_at_ledges = true;
+
+    float walker_max = -1e9f, edger_min = 1e9f;
+    for (int i = 0; i < 240; ++i) {
+        g.run(1);
+        walker_max = std::max(walker_max, g.pos(walker).x);
+        edger_min = std::min(edger_min, g.pos(edger).x);
+    }
+    CHECK(walker_max < 1.6f);  // the wall starts at x 2; the walker is 1 wide
+    CHECK(walker_max > 1.3f);  // and it got there
+    CHECK(edger_min > -3.2f);  // never walked past the platform's left edge at -3
+    CHECK(edger_min < -2.3f);
+
+    // Turning off wall checks lets the walker go through (no physics here).
+    g.scene.world().get<PatrolComponent>(walker)->turn_at_walls = false;
+    g.scene.world().get<PatrolComponent>(walker)->returning = false;
+    float later_max = -1e9f;
+    for (int i = 0; i < 240; ++i) {
+        g.run(1);
+        later_max = std::max(later_max, g.pos(walker).x);
+    }
+    CHECK(later_max > 3.0f);
+
+    // A bullet fired at a target behind the wall hits the wall instead.
+    const Entity target = g.sprite("Target", {5, 1});
+    g.scene.world().add<HealthComponent>(target).invulnerable_time = 0;
+    g.scene.world().add<gameplay::TagsComponent>(target).tags = "Enemy";
+    const Entity bullet = g.sprite("Shot", {0, 1}, {0.2f, 0.2f});
+    g.scene.world().add<ProjectileComponent>(bullet).velocity = {10, 0, 0};
+    g.run(60);
+    CHECK(g.scene.find_by_name("Shot").is_null());
+    CHECK(g.scene.world().get<HealthComponent>(target)->current == doctest::Approx(3));
+
+    const Entity ghost = g.sprite("Ghost", {0, 1}, {0.2f, 0.2f});
+    auto& gp = g.scene.world().add<ProjectileComponent>(ghost);
+    gp.velocity = {10, 0, 0};
+    gp.stop_at_walls = false;
+    g.run(60);
+    CHECK(g.scene.world().get<HealthComponent>(target)->current == doctest::Approx(2));
+}

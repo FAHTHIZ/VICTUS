@@ -115,6 +115,8 @@ void register_behaviour_components() {
             .field(&PA::speed, "speed", {.min = 0, .max = 100, .speed = 0.05f})
             .field(&PA::wait, "wait", {.min = 0, .max = 60, .speed = 0.05f, .tooltip = "Pause at each end (s)"})
             .field(&PA::flip_sprite, "flip_sprite")
+            .field(&PA::turn_at_walls, "turn_at_walls", {.tooltip = "Turn around when a wall or other solid object is in the way"})
+            .field(&PA::turn_at_ledges, "turn_at_ledges", {.tooltip = "Turn around instead of walking off the edge of a platform"})
             .commit();
         using CH = ChaseComponent;
         scene::Schema<CH>("Chase", cat)
@@ -131,6 +133,7 @@ void register_behaviour_components() {
             .field(&PR::damage, "damage", {.min = 0, .max = 1e6f, .speed = 0.1f})
             .field(&PR::target_tag, "target_tag", {.tooltip = "Enemy also matches anything with a Hazard"})
             .field(&PR::destroy_on_hit, "destroy_on_hit")
+            .field(&PR::stop_at_walls, "stop_at_walls", {.tooltip = "Disappear when it hits a wall or other solid object"})
             .commit();
         using SH = ShooterComponent;
         scene::Schema<SH>("Shooter", cat)
@@ -295,6 +298,41 @@ struct TagCache {
         return by_tag.emplace(tag, std::move(out)).first->second;
     }
 };
+
+// Solid scenery for wall and ledge tests: colliders that block movement and belong to no actor
+// (characters, pickups, hazards, projectiles and other behaviour-driven entities are skipped).
+struct Solid {
+    Entity e;
+    Box box;
+    bool one_way{false}; // stands on it, walks and shoots through it
+};
+
+bool is_actor(Scene& s, Entity e) {
+    auto& w = s.world();
+    return w.has<physics::CharacterController2DComponent>(e) || w.has<physics::CharacterControllerComponent>(e) ||
+           w.has<HealthComponent>(e) || w.has<HazardComponent>(e) || w.has<CollectibleComponent>(e) ||
+           w.has<ProjectileComponent>(e) || w.has<PatrolComponent>(e) || w.has<ChaseComponent>(e) ||
+           w.has<CheckpointComponent>(e) || w.has<GoalComponent>(e) || player_controlled(s, e);
+}
+
+std::vector<Solid> gather_solids(Scene& s) {
+    std::vector<Solid> out;
+    s.world().each<physics::Collider2DComponent>([&](Entity e, physics::Collider2DComponent& c) {
+        if (!c.is_trigger) out.push_back({e, {}, c.one_way});
+    });
+    s.world().each<physics::ColliderComponent>([&](Entity e, physics::ColliderComponent& c) {
+        if (!c.is_trigger) out.push_back({e, {}, false});
+    });
+    std::erase_if(out, [&](const Solid& so) { return is_actor(s, so.e); });
+    for (Solid& so : out) so.box = bounds_of(s, so.e);
+    return out;
+}
+
+bool hits_solid(const std::vector<Solid>& solids, const Box& b, Entity self, bool include_one_way) {
+    for (const Solid& so : solids)
+        if (so.e != self && (include_one_way || !so.one_way) && overlaps(b, so.box)) return true;
+    return false;
+}
 
 float approach(float v, float target, float step) {
     if (v < target) return std::min(v + step, target);
@@ -650,10 +688,34 @@ Vec3 constrain(Scene& s, Entity e, Vec3 d) {
     return d;
 }
 
+// True when a patrol moving with velocity `v` should turn: a solid just ahead, or no ground ahead.
+bool blocked(Scene& s, Entity e, const PatrolComponent& pa, Vec3 v, const std::vector<Solid>& solids) {
+    const Box b = bounds_of(s, e);
+    const Vec3 dir = math::normalize(v);
+    if (pa.turn_at_walls) {
+        Box ahead = b;
+        ahead.h = b.h * 0.9f; // clear of the floor it stands on and the ceiling above
+        ahead.c = b.c + dir * (0.1f * std::max({b.h.x, b.h.y, b.h.z}) + 0.05f);
+        if (hits_solid(solids, ahead, e, false)) return true;
+    }
+    const auto* c2 = s.world().get<physics::CharacterController2DComponent>(e);
+    const bool side_view_2d = (c2 && !c2->top_down) || (!c2 && is_2d(s, e));
+    const bool walker_3d = s.world().has<physics::CharacterControllerComponent>(e);
+    if (pa.turn_at_ledges && (side_view_2d || walker_3d)) {
+        Box foot;
+        foot.flat = b.flat;
+        foot.h = {0.05f, 0.15f, 0.05f};
+        foot.c = b.c + Vec3{dir.x * (b.h.x + 0.05f), -b.h.y - 0.1f, walker_3d ? dir.z * (b.h.z + 0.05f) : 0};
+        if (!hits_solid(solids, foot, e, true)) return true;
+    }
+    return false;
+}
+
 void ai_movement(Scene& s, physics::PhysicsWorld* pw, float dt, TagCache& tags, bool active) {
     std::vector<Entity> chasers, patrols;
     s.world().each<ChaseComponent>([&](Entity e, ChaseComponent&) { chasers.push_back(e); });
     s.world().each<PatrolComponent>([&](Entity e, PatrolComponent&) { patrols.push_back(e); });
+    const std::vector<Solid> solids = patrols.empty() ? std::vector<Solid>{} : gather_solids(s);
 
     std::vector<Entity> chasing;
     for (const Entity e : chasers) {
@@ -717,6 +779,12 @@ void ai_movement(Scene& s, physics::PhysicsWorld* pw, float dt, TagCache& tags, 
         Vec3 v = dist > 1e-5f ? to / dist * pa->speed : Vec3{};
         if (!has_character(pw, e) && dist < step) v = to / std::max(dt, 1e-6f); // land exactly on the end
         v = constrain(s, e, v);
+        if ((pa->turn_at_walls || pa->turn_at_ledges) && math::dot(v, v) > 1e-8f && blocked(s, e, *pa, v, solids)) {
+            pa->returning = !pa->returning;
+            pa->waiting = pa->wait;
+            drive(s, pw, e, {}, dt);
+            continue;
+        }
         if (flip && v.x != 0) face_sprite(s, e, v.x);
         drive(s, pw, e, v, dt);
     }
@@ -939,6 +1007,8 @@ void projectile_hits(ScriptHost::Impl& h, Scene& s, physics::PhysicsWorld* pw, T
                      std::vector<Entity>& doomed) {
     std::vector<Entity> list;
     s.world().each<ProjectileComponent>([&](Entity e, ProjectileComponent&) { list.push_back(e); });
+    std::vector<Solid> solids;
+    bool solids_ready = false;
     for (const Entity p : list) {
         auto* pc = s.world().get<ProjectileComponent>(p);
         pc->age += dt;
@@ -948,6 +1018,13 @@ void projectile_hits(ScriptHost::Impl& h, Scene& s, physics::PhysicsWorld* pw, T
         }
         const ProjectileComponent cfg = *pc;
         const Box pb = bounds_of(s, p);
+        if (cfg.stop_at_walls) {
+            if (!solids_ready) solids = gather_solids(s), solids_ready = true;
+            if (hits_solid(solids, pb, p, false)) {
+                doomed.push_back(p);
+                continue;
+            }
+        }
         for (const Entity t : tags.get(cfg.target_tag)) {
             if (t == p || !s.world().alive(t) || !s.world().has<HealthComponent>(t)) continue;
             if (s.world().get<HealthComponent>(t)->dead || !overlaps(pb, bounds_of(s, t))) continue;
