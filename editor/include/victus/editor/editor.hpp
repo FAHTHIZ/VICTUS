@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <array>
 #include <future>
@@ -148,6 +149,7 @@ enum class Panel : std::uint8_t {
     Help,
     ProjectSettings,
     History,
+    ScriptDebugger,
     Count
 };
 [[nodiscard]] const char* panel_title(Panel panel) noexcept;
@@ -227,6 +229,42 @@ public:
     // save-changes prompt is shown and quit_confirmed() becomes true once resolved.
     bool request_quit();
     [[nodiscard]] bool quit_confirmed() const noexcept { return quit_confirmed_; }
+
+    // ---- script debugger in play mode (ADR-0106) ----
+    // A breakpoint stops the game inside the script call that hit it. The Studio keeps drawing
+    // and presenting frames from inside that stop through the frame pump the application
+    // installs: `suspend` ends the UI frame that was being built, `frame` runs one complete UI
+    // frame (events, UI, render, present; false when the app must quit), and `resume` begins a
+    // new UI frame for the rest of the interrupted one. While stopped, frame() does not advance
+    // play mode. Without a pump (headless), a stop resumes at once.
+    struct FramePump {
+        std::function<void()> suspend;
+        std::function<bool()> frame;
+        std::function<void()> resume;
+    };
+    void set_frame_pump(FramePump pump) { frame_pump_ = std::move(pump); }
+    // Breakpoints by script path (assets-relative, e.g. "scripts/player.luau"); kept in the
+    // project's .victus/breakpoints.json and applied to every play session, also while playing.
+    void set_breakpoints(const std::string& path, std::vector<script::SourceBreakpoint> breakpoints);
+    // Adds or removes the breakpoint at `line`; returns true when one is now set there.
+    bool toggle_breakpoint(const std::string& path, int line);
+    [[nodiscard]] const std::map<std::string, std::vector<script::SourceBreakpoint>>& breakpoints() const noexcept {
+        return breakpoints_;
+    }
+    // Where a play-session breakpoint ended up (moved to a line with code once loaded).
+    [[nodiscard]] std::vector<script::BreakpointState> breakpoint_states(const std::string& path) const;
+    void set_break_on_error(bool enabled);
+    [[nodiscard]] bool break_on_error() const noexcept { return break_on_error_; }
+    // The current stop (null while running). Valid until the stop is resumed.
+    [[nodiscard]] script::DebugStop* debug_stop() noexcept { return debug_stop_; }
+    [[nodiscard]] bool debug_stopped() const noexcept { return debug_stop_ != nullptr; }
+    // Resumes the current stop (the frame pump returns to the game after the frame).
+    void debug_resume(script::StepAction action) noexcept;
+    // Stops at the next script line that runs.
+    void debug_pause();
+    [[nodiscard]] std::uint64_t debug_stops() const noexcept { return debug_stop_count_; }
+    // The source shown in the Script Debugger panel (follows stops).
+    void show_script_source(const std::string& path, int line = 0);
 
     // ---- projects ----
     [[nodiscard]] Status open_project(const fs::Path& path);
@@ -955,6 +993,26 @@ private:
     std::unique_ptr<jobs::JobSystem> jobs_; // created on first use; outlives play_physics_
     gameplay::Simulation sim_;
     std::unique_ptr<script::ScriptHost> play_scripts_; // fresh per play session, hot reloads files
+    // Script debugger (ADR-0106; editor/src/script_debugger.cpp).
+    script::StepAction on_debug_stop(script::DebugStop& stop);
+    void apply_debugger_to_play();
+    void load_breakpoints();
+    void save_breakpoints() const;
+    void draw_script_debugger();
+    FramePump frame_pump_;
+    std::map<std::string, std::vector<script::SourceBreakpoint>> breakpoints_;
+    bool break_on_error_{true};
+    script::DebugStop* debug_stop_{nullptr};
+    std::optional<script::StepAction> debug_action_;
+    bool debug_stop_after_resume_{false}; // Stop pressed while stopped: end play once the call returns
+    std::uint64_t debug_stop_count_{0};
+    std::size_t debug_frame_{0};       // selected call-stack frame
+    std::string debug_source_path_;    // shown in the panel
+    std::vector<std::string> debug_source_lines_;
+    int debug_source_line_{0};         // highlighted (the stop line), 0 = none
+    bool debug_source_scroll_{false};
+    std::vector<std::string> debug_watches_;
+    std::string debug_watch_input_, debug_eval_input_, debug_eval_result_;
     std::unique_ptr<physics::PhysicsWorld> play_physics_; // fresh per play session
     std::unique_ptr<animation::AnimationSystem> play_animation_; // fresh per play session
     std::unique_ptr<animation::AnimationSystem> edit_sprites_;   // previews SpriteAnimator frames while editing
@@ -1123,6 +1181,7 @@ private:
     std::uint32_t guide_done_{0};
     bool guide_dismissed_{false}, guide_auto_opened_{false};
     bool show_getting_started_{false}, show_help_{false}, show_project_settings_{false}, show_history_{false};
+    bool show_script_debugger_{false};
     std::string help_topic_, help_query_;
     int help_focus_{0};
     int focus_panel_{-1};

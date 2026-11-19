@@ -21,6 +21,8 @@
 #include "victus/platform/platform.hpp"
 #include "victus/render/image.hpp"
 
+#include <imgui.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -269,18 +271,21 @@ int main(int argc, char** argv) {
     std::uint32_t fw = 0, fh = 0;
     double last = platform::Platform::seconds();
     int exit_code = 0;
-    for (std::uint64_t n = 0;; ++n) {
+    enum class Step { Drawn, Skipped, Quit, Abort };
+    // One complete Studio frame. It also runs nested inside a script call stopped at a
+    // breakpoint (ADR-0106), so it must not depend on the outer loop's state.
+    const auto run_frame = [&](bool last_frame) -> Step {
         {
             // Files dropped on the window in one gesture arrive together; import them as a batch.
             std::vector<std::filesystem::path> dropped;
             for (const auto& ev : plat.value()->poll_events())
                 if (ev.type == platform::EventType::FileDropped && !ev.path.empty()) dropped.emplace_back(ev.path);
-            if (!dropped.empty()) (void)ed.import_files(dropped);
+            if (!dropped.empty() && !ed.debug_stopped()) (void)ed.import_files(dropped);
         }
         if (plat.value()->quit_requested() && !ed.quit_confirmed()) {
             if (!ed.request_quit()) plat.value()->cancel_quit();
         }
-        if (plat.value()->quit_requested() && ed.quit_confirmed()) break;
+        if (plat.value()->quit_requested() && ed.quit_confirmed()) return Step::Quit;
         const double now = platform::Platform::seconds();
         const float dt = max_frames ? 1.0f / 60.0f : static_cast<float>(now - last);
         last = now;
@@ -298,9 +303,9 @@ int main(int argc, char** argv) {
             cmd.submit();
             if (dev.lost()) {
                 exit_code = device_lost(ed, dev);
-                break;
+                return Step::Abort;
             }
-            continue;
+            return Step::Skipped;
         }
         if (!frame || fw != sw || fh != sh) {
             if (frame) dev.destroy(frame);
@@ -311,21 +316,44 @@ int main(int argc, char** argv) {
             d.height = fh = sh;
             d.usage = rhi::TextureUsageColorTarget | rhi::TextureUsageSampled;
             auto t = dev.create_texture(d);
-            if (!t) return fail("frame", t.error());
+            if (!t) {
+                exit_code = fail("frame", t.error());
+                return Step::Abort;
+            }
             frame = t.value();
         }
         if (auto st = ui.value()->render_to(cmd, frame, true, {0.06f, 0.06f, 0.07f, 1}); !st.ok())
             VICTUS_LOG_ERROR("editor", "ui: {}", st.error().message);
         cmd.blit(frame, swap);
-        const bool last_frame = max_frames && n + 1 >= max_frames;
         if (last_frame)
             cmd.submit_and_wait();
         else
             cmd.submit();
         if (dev.lost()) {
             exit_code = device_lost(ed, dev);
-            break;
+            return Step::Abort;
         }
+        return Step::Drawn;
+    };
+    // Breakpoints: the stop handler ends the interrupted UI frame, runs whole frames until the
+    // user resumes (false ends the stop: the window is closing), then starts a fresh UI frame.
+    bool aborted = false;
+    std::uint64_t nested_frames = 0;
+    ed.set_frame_pump({.suspend = [] { ImGui::EndFrame(); },
+                       .frame =
+                           [&] {
+                               // --frames runs never wait at a breakpoint for longer than the run
+                               if (aborted || (max_frames && ++nested_frames >= max_frames)) return false;
+                               const Step s = run_frame(false);
+                               if (s == Step::Abort) aborted = true;
+                               return s == Step::Drawn || s == Step::Skipped;
+                           },
+                       .resume = [&] { ui.value()->new_frame(0); }});
+    for (std::uint64_t n = 0;; ++n) {
+        const bool last_frame = max_frames && n + 1 >= max_frames;
+        const Step s = run_frame(last_frame);
+        if (s == Step::Quit || s == Step::Abort || aborted) break;
+        if (s == Step::Skipped) continue;
         if (last_frame) {
             if (const std::string path = args.get("screenshot"); !path.empty()) {
                 auto px = dev.read_texture(frame);
@@ -344,6 +372,7 @@ int main(int argc, char** argv) {
             break;
         }
     }
+    ed.set_frame_pump({});
     dev.wait_idle();
     if (frame) dev.destroy(frame);
     return exit_code;
