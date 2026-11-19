@@ -437,6 +437,14 @@ struct RenderSettings {
     bool volumetric_fog{true};
     std::uint32_t volumetric_fog_tile{16};
     std::uint32_t volumetric_fog_slices{64};
+    // Effect budgets per frame (ADR-0109), nearest first. Decals: Low 128, Medium 256, High 512,
+    // Ultra 1024 (SceneRenderer::kMaxDecals). Water surfaces: Low 4, Medium 8, High and Ultra 16
+    // (kMaxWaterSurfaces). CPU particles (billboards plus ribbon vertices): Low 16384, Medium
+    // 65536, High 262144, Ultra 1048576; batches are kept whole from the nearest, and only the
+    // nearest batch is cut when it alone is over. GPU emitters are budgeted by max_particles.
+    std::uint32_t max_decals{512};
+    std::uint32_t max_water_surfaces{16};
+    std::uint32_t max_particles{262144};
 
     [[nodiscard]] static RenderSettings preset(QualityTier tier) noexcept;
     // Clamps every field into its supported range.

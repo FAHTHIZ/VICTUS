@@ -972,6 +972,13 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0109 — Per-tier effect budgets for decals, water and CPU particles
+
+- Status: accepted (2026-11-19)
+- Context: decals, water and particles used fixed per-frame caps (1024 decals, 16 water surfaces, no particle cap) on every tier, so a Low device paid the Ultra cost for effects and the render-path report (ADR-0105) could only say `budget`. Unreal's Niagara scales effects per quality bucket with effect-type scalability (max distance, max instances, spawn count scale), and with a significance handler keeps the N most significant instances and culls the rest.
+- Decision: `RenderSettings` gains `max_decals` (Low 128, Medium 256, High 512, Ultra 1024), `max_water_surfaces` (Low 4, Medium 8, High and Ultra 16) and `max_particles` (CPU billboards plus ribbon vertices drawn per frame: Low 16384, Medium 65536, High 262144, Ultra 1048576), clamped by `sanitized()` to the renderer's hard caps. Distance is the significance: decals and water keep the nearest, as before. Particle batches are kept whole from the nearest until the next batch would go over; when the nearest batch alone is over it is cut to the budget (ribbon batches are never cut), so a budget always draws something. GPU emitters are not counted, since their cost is their capacity. `RenderPathFacts` gains `particle_batches_in_view`, `particles_in_view` and `particle_budget`, and the decals, water and particles features name the cause of a cut: `quality_tier` when the budget equals the tier preset, `setting` when it was lowered by hand, and `budget` when even the Ultra reference could not hold everything.
+- Consequences: Low and Medium devices draw fewer effects in dense scenes, and the report and the viewport's "below ultra" line say why. Dropping a whole far batch can pop when the camera moves; there is no distance fade or per-emitter significance yet, and the simulation still runs for culled emitters (spawn-count scaling would belong in the particle module).
+
 ## ADR-0108 — Particle sub-emitters (birth and death events)
 
 - Status: accepted (2026-11-19)

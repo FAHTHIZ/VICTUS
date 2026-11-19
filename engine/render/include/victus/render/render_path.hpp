@@ -67,6 +67,9 @@ struct RenderPathFacts {
     std::uint32_t decals_submitted{0}, decals_in_view{0}, decals_drawn{0}, decal_budget{0};
     std::uint32_t water_submitted{0}, water_in_view{0}, water_drawn{0}, water_budget{0};
     std::uint32_t particle_batches_submitted{0}, particle_batches_drawn{0}, particles_drawn{0}, ribbon_vertices{0};
+    // CPU batches and their particles (billboards + ribbon vertices) inside the view, before the
+    // max_particles budget (ADR-0109).
+    std::uint32_t particle_batches_in_view{0}, particles_in_view{0}, particle_budget{0};
     std::uint32_t gpu_emitters_submitted{0}, gpu_emitters_simulated{0}, gpu_particles{0};
     std::uint32_t gpu_emitters_sorted{0}; // alpha-blended GPU emitters drawn back to front (ADR-0107)
     std::uint32_t probes_requested{0}, probes_unbaked{0}, probes_over_budget{0}, probes_used{0}, probe_budget{0};
