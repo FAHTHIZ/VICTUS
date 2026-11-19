@@ -321,6 +321,22 @@ Path history_path(const Path& path, std::uint32_t generation) {
 
 Path damaged_path(const Path& path) { return hidden_sibling(path, ".damaged"); }
 
+Path premigration_path(const Path& path) {
+    Path p = path;
+    p += ".premigration";
+    return p;
+}
+
+Status keep_premigration_copy(const Path& path) {
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) return {};
+    const Path copy = premigration_path(path);
+    if (std::filesystem::exists(copy, ec)) return {};
+    auto bytes = read_text(path);
+    if (!bytes) return std::move(bytes).error();
+    return write_text_atomic(copy, *bytes);
+}
+
 Status write_safely(const Path& path, std::string_view bytes, const SafeWriteOptions& options) {
     if (options.validate)
         if (Status st = options.validate(bytes); !st)

@@ -38,11 +38,15 @@ float distance_to(const math::Aabb& b, math::Vec3 p) noexcept {
 
 // --- Descriptor -------------------------------------------------------------------------------
 
-Result<WorldDesc> parse_world(const Value& doc) {
-    if (doc["format"].as_string_or("") != "victus.world") return bad("not a victus.world document");
-    const std::int64_t version = doc["version"].as_int(0);
-    if (version < 1 || version > kWorldFormatVersion)
-        return make_error(ErrorCode::VersionMismatch, "world: unsupported version " + std::to_string(version));
+const migration::Format& world_format() {
+    static const migration::Format format("victus.world", kWorldFormatVersion);
+    return format;
+}
+
+Result<WorldDesc> parse_world(const Value& source) {
+    if (source["format"].as_string_or("") != "victus.world") return bad("not a victus.world document");
+    Value doc = source;
+    if (auto report = world_format().upgrade(doc); !report) return std::move(report).error();
     WorldDesc w;
     w.name = doc["name"].as_string_or("World");
     w.load_radius = doc["load_radius"].as_float(w.load_radius);

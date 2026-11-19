@@ -4,6 +4,7 @@
 #pragma once
 #include "victus/core/fs.hpp"
 #include "victus/core/json.hpp"
+#include "victus/core/migration.hpp"
 #include "victus/core/process.hpp"
 #include "victus/gameplay/input_map.hpp"
 #include "victus/project/characters.hpp"
@@ -17,6 +18,8 @@ namespace victus::project {
 
 inline constexpr std::string_view kProjectFileName = "victus.project";
 inline constexpr int kProjectFormatVersion = 1;
+// The versioned victus.project format and its migration chain (ADR-0100).
+[[nodiscard]] const migration::Format& project_format();
 inline constexpr std::string_view kSceneExtension = ".vscene";
 
 struct ProjectSettings {

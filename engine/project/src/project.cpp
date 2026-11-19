@@ -16,6 +16,11 @@ namespace victus::project {
 using json::Value;
 namespace sfs = std::filesystem;
 
+const migration::Format& project_format() {
+    static const migration::Format format("victus.project", kProjectFormatVersion);
+    return format;
+}
+
 namespace {
 Status bad(std::string message) { return make_error(ErrorCode::ParseError, std::move(message)); }
 
@@ -51,11 +56,10 @@ Value settings_to_json(const ProjectSettings& s) {
     return v;
 }
 
-Status settings_from_json(const Value& v, ProjectSettings& s) {
-    if (v["format"].as_string_or("") != "victus.project") return bad("not a victus.project file");
-    const auto version = v["version"].as_int(0);
-    if (version < 1 || version > kProjectFormatVersion)
-        return make_error(ErrorCode::VersionMismatch, "unsupported project version " + std::to_string(version));
+Status settings_from_json(const Value& source, ProjectSettings& s) {
+    if (source["format"].as_string_or("") != "victus.project") return bad("not a victus.project file");
+    Value v = source;
+    if (auto report = project_format().upgrade(v); !report) return std::move(report).error();
     s.name = v["name"].as_string_or("Untitled");
     s.startup_scene = v["startup_scene"].as_string_or("scenes/main.vscene");
     s.template_id = v["template"].as_string_or("");

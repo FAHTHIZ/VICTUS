@@ -35,6 +35,8 @@
 namespace victus::world {
 
 inline constexpr int kWorldFormatVersion = 1;
+// The versioned victus.world format and its migration chain (ADR-0100).
+[[nodiscard]] const migration::Format& world_format();
 inline constexpr std::string_view kWorldExtension = ".vworld";
 
 struct CellDesc {

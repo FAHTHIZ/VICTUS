@@ -6,6 +6,7 @@
 #include "victus/core/hash.hpp"
 #include "victus/core/json.hpp"
 #include "victus/core/math.hpp"
+#include "victus/core/migration.hpp"
 #include "victus/core/result.hpp"
 #include "victus/ecs/world.hpp"
 
@@ -144,6 +145,11 @@ struct ComponentSerializer {
     ecs::ComponentId id{0};
     std::function<json::Value(const void*)> save;
     std::function<Status(void*, const json::Value&)> load;
+    // Data version of this component (ADR-0100). Above 1 it is written as "$version" and older
+    // data is upgraded by `migrations` (one step per version, as in migration::Format).
+    std::uint32_t version{1};
+    std::vector<migration::Step> migrations;
+    std::vector<std::string> former_names; // earlier type names still read (renamed components)
 };
 
 class SerializerRegistry {
@@ -153,6 +159,12 @@ public:
     [[nodiscard]] const ComponentSerializer* by_name(std::string_view name) const;
     [[nodiscard]] const ComponentSerializer* by_id(ecs::ComponentId id) const;
     [[nodiscard]] const std::vector<ComponentSerializer>& all() const noexcept { return serializers_; }
+    // Versions a registered component's data. `migrations` must hold one step for each version
+    // from 1 to version - 1; each step edits the component's JSON object. False when unknown or
+    // the chain is incomplete.
+    bool set_version(std::string_view name, std::uint32_t version, std::vector<migration::Step> migrations);
+    // Keeps reading data saved under an earlier type name.
+    bool add_former_name(std::string_view name, std::string former_name);
 
     template <typename T>
     void add(std::string name, std::function<json::Value(const T&)> save,
@@ -181,9 +193,16 @@ bool from_json(const json::Value& v, math::Vec3& out);
 bool from_json(const json::Value& v, math::Quat& out);
 bool from_json(const json::Value& v, math::Color& out);
 
+// Upgrades one entity's "components" object in place (ADR-0100): renamed components take their
+// current name and older component data runs its migration steps (and gets "$version"). Data
+// from a newer build and unknown components are left untouched. Appends a note per change.
+[[nodiscard]] Status migrate_components(json::Value& components, std::vector<std::string>& notes);
+
 // ---- scene -------------------------------------------------------------------------------------
 
 inline constexpr int kSceneFormatVersion = 1;
+// The versioned victus.scene format and its migration chain (ADR-0100).
+[[nodiscard]] const migration::Format& scene_format();
 
 class Scene {
 public:
@@ -249,6 +268,13 @@ public:
 
     std::string name{"Untitled"};
 
+    // What the last load/load_file/load_additive upgraded: document steps, component steps and
+    // renamed components, and components kept unread because a newer build wrote them. Empty
+    // when the data was current. Saving writes the current versions; save_file first keeps the
+    // original file as "<file>.premigration" (once) when anything was upgraded.
+    [[nodiscard]] const std::vector<std::string>& migrations() const noexcept { return migrations_; }
+    void clear_migrations() noexcept { migrations_.clear(); }
+
 private:
     void link_child(Entity parent, Entity child);
     void unlink(Entity child);
@@ -261,6 +287,7 @@ private:
     std::unordered_map<Uuid, Entity, UuidHash> by_uuid_;
     Entity first_root_, last_root_;
     std::vector<std::pair<Entity, math::Mat4>> stack_;
+    std::vector<std::string> migrations_;
 };
 
 } // namespace victus::scene
