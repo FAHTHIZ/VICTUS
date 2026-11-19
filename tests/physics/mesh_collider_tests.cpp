@@ -2,11 +2,14 @@
 // Convex-hull and triangle-mesh colliders: geometry sources (procedural meshes, providers),
 // shared shape building, scaling, the dynamic-mesh fallback, invalidation and debug lines.
 #include "victus/physics/physics.hpp"
+#include "victus/core/jobs.hpp"
 #include "victus/scene/reflect.hpp"
 
 #include <doctest.h>
 
+#include <chrono>
 #include <cmath>
+#include <thread>
 
 using namespace victus;
 using namespace victus::physics;
@@ -320,4 +323,123 @@ TEST_CASE("convex and mesh colliders reflect, round-trip and draw their triangle
     CHECK(cache.size() == 1);
     cache.invalidate(c.mesh_asset);
     CHECK(cache.size() == 0);
+}
+
+namespace {
+
+// An n x n grid of quads at y = 0 spanning -10..10 (2 n^2 triangles).
+std::shared_ptr<const scene::ProceduralMesh> grid_floor(int n) {
+    scene::ProceduralMesh pm;
+    std::vector<std::uint32_t> idx;
+    const float step = 20.0f / static_cast<float>(n);
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < n; ++j) {
+            const float x = -10.0f + step * static_cast<float>(i), z = -10.0f + step * static_cast<float>(j);
+            add_quad(pm.positions, idx, x, z, x + step, z + step, 0);
+        }
+    pm.indices = std::move(idx);
+    auto m = scene::publish_mesh(std::move(pm));
+    REQUIRE(m.ok());
+    return *m;
+}
+
+// Steps until `e` has a body (background builds finish on worker threads), at most ~10 s.
+int steps_until_body(PhysicsWorld& w, Scene& scene, Entity e) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    int steps = 0;
+    while (!w.has_body(e) && std::chrono::steady_clock::now() < deadline) {
+        w.step(scene, 1.0f / 60.0f);
+        ++steps;
+        if (!w.has_body(e)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return steps;
+}
+
+} // namespace
+
+TEST_CASE("large mesh colliders build their shapes in the background") {
+    jobs::JobSystem js(2);
+    PhysicsSettings ps;
+    ps.jobs = &js;
+    auto created = PhysicsWorld::create(ps);
+    REQUIRE(created.ok());
+    PhysicsWorld& w = *created.value();
+    Scene scene;
+    const auto big = grid_floor(60); // 7200 triangles > the 4096 default
+    const Entity floor = mesh_entity(scene, big, ColliderComponent::Shape::Mesh);
+    const Entity hull = mesh_entity(scene, big, ColliderComponent::Shape::Convex, {0, -50, 0});
+    const Entity box = dynamic_box(scene, {5, 3, 0});
+    // The first step only starts the builds: no bodies yet, the frame is not stalled.
+    w.step(scene, 1.0f / 60.0f);
+    CHECK_FALSE(w.has_body(floor));
+    CHECK_FALSE(w.has_body(hull));
+    CHECK(w.has_body(box));
+    CHECK(w.stats().mesh_shapes_pending == 2);
+    CHECK(w.stats().mesh_shapes_built == 0);
+    const int steps = steps_until_body(w, scene, floor);
+    CHECK(w.has_body(floor));
+    MESSAGE("background mesh shape ready after " << steps << " steps");
+    (void)steps_until_body(w, scene, hull);
+    CHECK(w.has_body(hull));
+    CHECK(w.stats().mesh_shapes_pending == 0);
+    CHECK(w.stats().mesh_shapes_built == 2);
+    const auto hit = w.raycast({-5, 5, 3}, {0, -1, 0}, 20);
+    REQUIRE(hit.has_value());
+    CHECK(hit->entity == floor);
+    CHECK(hit->point.y == doctest::Approx(0).epsilon(0.01));
+    // A second entity sharing the mesh reuses the finished shape at once.
+    const Entity twin = mesh_entity(scene, big, ColliderComponent::Shape::Mesh, {0, -20, 0});
+    w.step(scene, 1.0f / 60.0f);
+    CHECK(w.has_body(twin));
+    CHECK(w.stats().mesh_shapes_built == 2);
+    // A box dropped once the floor exists lands on it (the first box fell meanwhile: bodies
+    // over a still-building mesh have nothing to stand on).
+    const Entity lander = dynamic_box(scene, {5, 3, 0});
+    run(w, scene, 180);
+    CHECK(scene.world().get<Transform>(lander)->position.y == doctest::Approx(0.5f).epsilon(0.03));
+}
+
+TEST_CASE("background shape builds respect the threshold and outlive their world safely") {
+    jobs::JobSystem js(2);
+    const auto big = grid_floor(60);
+    {
+        // Threshold 0 (or no job system): built during the first step, as before.
+        PhysicsSettings ps;
+        ps.jobs = &js;
+        ps.async_mesh_triangles = 0;
+        auto w = PhysicsWorld::create(ps);
+        REQUIRE(w.ok());
+        Scene scene;
+        const Entity floor = mesh_entity(scene, big, ColliderComponent::Shape::Mesh);
+        w.value()->step(scene, 1.0f / 60.0f);
+        CHECK(w.value()->has_body(floor));
+        CHECK(w.value()->stats().mesh_shapes_pending == 0);
+    }
+    {
+        // Small meshes stay synchronous under the default threshold.
+        PhysicsSettings ps;
+        ps.jobs = &js;
+        auto w = PhysicsWorld::create(ps);
+        REQUIRE(w.ok());
+        Scene scene;
+        const Entity floor = mesh_entity(scene, gapped_floor(), ColliderComponent::Shape::Mesh);
+        w.value()->step(scene, 1.0f / 60.0f);
+        CHECK(w.value()->has_body(floor));
+    }
+    {
+        // Destroying the world (or removing the collider) with builds in flight waits for them.
+        PhysicsSettings ps;
+        ps.jobs = &js;
+        ps.async_mesh_triangles = 1;
+        auto w = PhysicsWorld::create(ps);
+        REQUIRE(w.ok());
+        Scene scene;
+        const Entity a = mesh_entity(scene, grid_floor(80), ColliderComponent::Shape::Convex);
+        (void)mesh_entity(scene, grid_floor(80), ColliderComponent::Shape::Mesh);
+        w.value()->step(scene, 1.0f / 60.0f);
+        CHECK(w.value()->stats().mesh_shapes_pending == 2);
+        scene.world().remove<ColliderComponent>(a);
+        w.value()->step(scene, 1.0f / 60.0f);
+        CHECK_FALSE(w.value()->has_body(a));
+    }
 }
