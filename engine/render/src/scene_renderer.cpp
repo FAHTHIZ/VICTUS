@@ -1361,8 +1361,20 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     stats_.taa_history = taa && history_valid_;
     stats_.temporal_upscale = upscale;
     stats_.jitter = jitter;
+    facts_ = {};
+    facts_.render_width = rw;
+    facts_.render_height = rh;
+    facts_.output_width = width;
+    facts_.output_height = height;
+    facts_.capture_mode = capture_mode_;
+    facts_.compute = dev.capabilities().compute;
+    facts_.taa = taa;
+    facts_.taa_history = stats_.taa_history;
+    facts_.temporal_upscale = upscale;
     const bool shadows = sun_.shadows && sun_.intensity > 0.0f;
     const std::uint32_t shadow_res = std::max(64u, std::min(sun_.shadow_resolution, S.shadow_resolution));
+    facts_.sun_shadows_requested = shadows;
+    facts_.cascade_resolution = shadows ? shadow_res : 0;
     if (shadows) compute_cascades(aspect, shadow_res);
     else {
         cascade_count_ = 0;
@@ -1405,6 +1417,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     consider(spots_[i].position, spots_[i].range, spots_[i].intensity, true, i);
         }
         std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.score > b.score; });
+        facts_.local_shadow_candidates = static_cast<std::uint32_t>(candidates.size());
         const float tile_scale = 1.0f / static_cast<float>(std::max(local_tiles_per_row, 1u));
         const auto add_view = [&](Vec3 eye, Vec3 dir, Vec3 up, float fov, float range) {
             const auto tile = static_cast<std::uint32_t>(local_views.size());
@@ -1722,6 +1735,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const bool will_prepass = S.depth_prepass || (S.ssao && env_.ao_intensity > 0.0f && env_.ao_radius > 0.0f);
     const bool occlusion = S.occlusion_culling && will_prepass && dev.capabilities().compute && !main_batches.empty() &&
                            ensure_occlusion_pipelines();
+    facts_.prepass = will_prepass;
+    facts_.occlusion = occlusion;
+    facts_.nothing_drawn = main_batches.empty();
     occl_batches_ = 0;
     if (occlusion) {
         std::int32_t w = static_cast<std::int32_t>((rw + 7) / 8), h = static_cast<std::int32_t>((rh + 7) / 8), offset = 0;
@@ -1805,6 +1821,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         });
         // Nearest first: the budget and the per-cluster cap then drop the farthest lights.
         const std::size_t budget = std::min<std::size_t>(S.max_point_lights, local_lights.size());
+        facts_.local_lights_visible = static_cast<std::uint32_t>(local_lights.size());
+        facts_.local_lights_kept = static_cast<std::uint32_t>(budget);
         std::vector<std::pair<float, std::uint32_t>> order(local_lights.size());
         for (std::uint32_t i = 0; i < order.size(); ++i) {
             const Vec4 b = light_bounding_sphere(local_lights[i]);
@@ -2095,6 +2113,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const bool auto_exposure = S.auto_exposure && env_.auto_exposure;
     const bool linear_out = env_.linear_output || capture_mode_;
     const bool fxaa = S.fxaa && !linear_out && !taa; // captures keep float precision
+    facts_.ao_requested = env_.ao_intensity > 0.0f && env_.ao_radius > 0.0f;
+    facts_.ssao = ssao;
+    facts_.bloom_requested = env_.bloom_intensity > 0.0f;
+    facts_.bloom = bloom;
+    facts_.auto_exposure_requested = env_.auto_exposure;
+    facts_.auto_exposure = auto_exposure;
+    facts_.linear_output = linear_out;
+    facts_.fxaa = fxaa;
     if (auto_exposure) VICTUS_TRY_STATUS(ensure_exposure_textures());
 
     const std::uint32_t atlas_tiles = cascade_count_ > 1 ? 2u : 1u;
@@ -2140,6 +2166,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     for (std::uint32_t c = 0; c < 4; ++c) lighting.cascade_vp[c] = cascade_vp_[c];
     const IrradianceVolume* gi = S.irradiance_volumes && volume_ && volume_->texture() && volume_->valid_count() > 0 ? volume_ : nullptr;
     stats_.irradiance_probes = gi ? gi->valid_count() : 0;
+    facts_.irradiance_available = volume_ && volume_->texture() && volume_->valid_count() > 0;
+    facts_.irradiance = gi != nullptr;
+    facts_.irradiance_probes = stats_.irradiance_probes;
     if (gi) {
         const IrradianceGrid& g = gi->grid();
         lighting.gi_min = Vec4(g.bounds.min, 1.0f);
@@ -2169,6 +2198,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const VolumetricFog& vf = env_.volumetric_fog;
     const bool fog = S.volumetric_fog && vf.enabled && !capture_mode_ && dev.capabilities().compute && std::isfinite(vf.density) &&
                      (vf.density > 0.0f || !fog_volumes_.empty()) && ensure_fog_pipelines();
+    facts_.fog_requested = vf.enabled && std::isfinite(vf.density) && (vf.density > 0.0f || !fog_volumes_.empty());
+    facts_.fog = fog;
     FogUniforms fog_u{};
     FogApplyUniforms fog_apply_u{};
     std::array<std::uint32_t, 3> fog_dims{};
@@ -3072,6 +3103,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     // resamples and sharpens into the target.
     const bool scaled_down = rw < width || rh < height;
     const bool spatial = S.spatial_upscale && scaled_down && !upscale && !linear_out;
+    facts_.spatial_upscale = spatial;
     const bool sharpen_pass = !linear_out && (spatial || S.sharpen > 0.0f);
     if (S.debug_view == DebugView::Overdraw) {
         // Overdraw debug view: the visible opaque, alpha-tested and blended batches are drawn again
@@ -3254,6 +3286,20 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     } else {
         adaptation_valid_ = false;
     }
+    facts_.cascades = cascade_count_;
+    facts_.fog_x = fog ? fog_dims[0] : 0;
+    facts_.fog_y = fog ? fog_dims[1] : 0;
+    facts_.fog_slices = fog ? fog_dims[2] : 0;
+    facts_.occlusion_tested = stats_.occlusion_tested;
+    facts_.local_shadow_lights = stats_.local_shadow_lights;
+    facts_.local_shadow_tiles = stats_.local_shadow_tiles;
+    facts_.visible_draws = stats_.visible;
+    facts_.lod_draws = stats_.lod_draws;
+    facts_.lod_held = stats_.lod_held;
+    facts_.moving_draws = stats_.motion_draws;
+    facts_.main_batches = stats_.main_batches;
+    facts_.instanced_draws = stats_.visible;
+    path_ = describe_render_path(S, facts_);
     return {};
 }
 
