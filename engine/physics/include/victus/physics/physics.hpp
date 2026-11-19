@@ -24,6 +24,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/scene/scene.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -170,6 +171,57 @@ struct JointComponent {
     bool collide_connected{false};
     friend bool operator==(const JointComponent&, const JointComponent&) = default;
 };
+
+// Articulated ragdoll (A.R.C. stage 1, ADR-0091) on the character root. The skeleton is the set of
+// descendant entities carrying a RagdollBone; each becomes a Jolt body joined to its nearest bone
+// ancestor by a swing-twist constraint whose pivot is the bone's origin. Bodies follow (Kinematic)
+// or track (Powered: joint motors drive towards) the animated pose the bones had at the end of
+// the previous frame, or simulate freely (Passive). In Powered and Passive the simulated pose is
+// written back into the bones' local Transforms after animation (Phase::PostUpdate), mixed with the
+// animated pose by `blend`. A CharacterController on the same entity ignores its own ragdoll.
+struct RagdollComponent {
+    enum class Mode : std::uint8_t { Off, Kinematic, Powered, Passive };
+    Mode mode{Mode::Off};
+    float total_mass{70.0f};      // kg shared by bones with mass 0, in proportion to their volume
+    float motor_frequency{4.0f};  // Powered: joint response (Hz) for the whole limb a joint carries
+    float motor_damping{1.0f};    // Powered: joint motor damping ratio
+    float max_motor_torque{400.0f}; // Powered: N*m per joint, scaled by RagdollBone::strength
+    float blend{1.0f};            // Powered/Passive: 0 = show the animation, 1 = show the simulation
+    bool pin_root{false};         // Powered: the root bone follows the animation kinematically
+    // Powered: fraction of each joint's gravity load cancelled by internal joint torques (equal and
+    // opposite on parent and child, so the ragdoll as a whole still falls), letting soft motors
+    // hold poses without sagging.
+    float gravity_compensation{1.0f};
+    float friction{0.6f};
+    float linear_damping{0.05f};
+    float angular_damping{0.05f};
+    std::uint32_t layer{0};
+    std::uint32_t mask{kAllLayers};
+    friend bool operator==(const RagdollComponent&, const RagdollComponent&) = default;
+};
+
+// One ragdoll body on a skeleton bone entity. The shape runs from the bone's origin towards its
+// first child bone (or continues the parent direction on leaf bones).
+struct RagdollBoneComponent {
+    enum class Shape : std::uint8_t { Capsule, Box, Sphere };
+    Shape shape{Shape::Capsule};
+    float radius{0.08f};      // capsule/sphere radius, box half width (m)
+    float length{0.0f};       // m; 0 = distance to the first child bone (2 * radius on leaves)
+    float mass{0.0f};         // kg; 0 = share of RagdollComponent::total_mass
+    float swing{45.0f};       // swing limit (degrees) about the bone's local Z axis
+    float swing_plane{45.0f}; // swing limit (degrees) about the bone's local X axis
+    float twist_min{-30.0f};  // twist limits around the bone direction (degrees)
+    float twist_max{30.0f};
+    float strength{1.0f};     // Powered: motor torque scale; 0 = limp joint
+    friend bool operator==(const RagdollBoneComponent&, const RagdollBoneComponent&) = default;
+};
+
+// Adds RagdollBone components to the recognised bones of a humanoid skeleton under `root` (hips,
+// spine, chest, head, upper/lower arms, hands, upper/lower legs and feet; names such as
+// "mixamorig:LeftUpLeg", "thigh_l", "UpperArm.R" and the VICTUS starter characters' joints) with
+// limits suited to each joint, and a RagdollComponent on `root` when it has none. Returns the
+// number of bones configured (0 when no hips/pelvis bone was found).
+std::size_t make_humanoid_ragdoll(scene::Scene& scene, Entity root);
 
 // ---- 2D components --------------------------------------------------------------------------
 
@@ -338,7 +390,7 @@ struct StaticHeightfieldComponent {
 };
 
 // Registers the reflected component schemas ("RigidBody", "Collider", "CharacterController",
-// "Joint", "RigidBody2D", "Collider2D", "CharacterController2D", "Joint2D"). Idempotent.
+// "Joint", "Ragdoll", "RagdollBone", "RigidBody2D", "Collider2D", "CharacterController2D", "Joint2D"). Idempotent.
 void register_components();
 
 // ---- queries and events ----------------------------------------------------------------------
@@ -376,6 +428,16 @@ struct JointState {
     float angle{0};              // hinge: degrees
     float position{0};           // slider: metres along the axis; distance: current distance
     float force{0};              // magnitude of the reaction force/torque in the last step
+};
+
+struct RagdollState {
+    bool valid{false};             // the entity has a simulated ragdoll (mode != Off)
+    RagdollComponent::Mode mode{RagdollComponent::Mode::Off};
+    std::uint32_t bodies{0};
+    bool awake{false};             // at least one body is active
+    math::Vec3 center_of_mass;     // world space, after the last step
+    math::Vec3 velocity;           // centre-of-mass velocity (m/s)
+    float pose_error{0};           // mean distance (m) between bodies and their animated targets
 };
 
 struct PhysicsSettings {
@@ -482,6 +544,18 @@ public:
     // Writes the Joint/Joint2D motor fields and applies them to the live constraint without rebuilding it.
     void set_joint_motor(scene::Scene& scene, Entity e, bool enabled, float speed);
 
+    // ---- ragdolls (Ragdoll + RagdollBone) ----
+    // Bone entities with a simulated body also accept the body-control calls above (impulses on a
+    // hit bone, velocities); raycasts and contacts report the bone entity.
+    [[nodiscard]] RagdollState ragdoll_state(Entity root) const;
+    // Writes RagdollComponent::mode; the change applies on the next step.
+    void set_ragdoll_mode(scene::Scene& scene, Entity root, RagdollComponent::Mode mode);
+    // The ragdoll root owning a bone entity's body, or null.
+    [[nodiscard]] Entity ragdoll_of(Entity bone) const;
+    // Writes simulated ragdoll poses into the bone Transforms (installed in Phase::PostUpdate by
+    // add_physics_systems, after animation).
+    void update_ragdoll_poses(scene::Scene& scene);
+
     void set_gravity(math::Vec3 g);
     void set_gravity_2d(math::Vec2 g);
     [[nodiscard]] math::Vec3 gravity() const;
@@ -503,7 +577,7 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// Installs "physics.step" in Phase::FixedUpdate. Install after systems whose fixed_update should
+// Installs "physics.step" in Phase::FixedUpdate and "physics.ragdoll_pose" in Phase::PostUpdate. Install after systems whose fixed_update should
 // run before the step (scripts). The world must outlive the simulation's use of it. The world is
 // also published as an ECS resource (PhysicsWorld*) on the scene when the system first runs, so
 // scripts and gameplay systems can find it with scene.world().resource<PhysicsWorld*>().

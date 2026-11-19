@@ -477,6 +477,9 @@ int entity_jump(lua_State* L);
 int entity_drop_through(lua_State* L);
 int entity_character_state(lua_State* L);
 int entity_joint_state(lua_State* L);
+int entity_set_ragdoll(lua_State* L);
+int entity_ragdoll_state(lua_State* L);
+int entity_ragdoll_root(lua_State* L);
 int entity_set_motor(lua_State* L);
 
 // bind_render.cpp

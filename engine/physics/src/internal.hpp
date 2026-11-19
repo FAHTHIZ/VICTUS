@@ -48,6 +48,13 @@ void write_world_pose(scene::Scene& scene, Entity e, math::Vec3 position, math::
 
 void sort_events(std::vector<ContactEvent>& events);
 
+// Ragdoll bone geometry: the shape runs from the bone origin along `dir` for `length` metres, towards
+// the first child bone, or continuing the direction from the parent bone on leaves.
+void ragdoll_bone_axis(const Pose& self, const Pose* child, const Pose* parent, const RagdollBoneComponent& bone,
+                       math::Vec3& dir, float& length);
+// Wireframes of every RagdollBone (collider_lines).
+void ragdoll_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity only);
+
 // ---- 3D backend (Jolt) ----
 class World3D {
 public:
@@ -78,6 +85,10 @@ public:
     [[nodiscard]] virtual CharacterState character_state(Entity e) const = 0;
     [[nodiscard]] virtual JointState joint_state(Entity e) const = 0;
     virtual void set_joint_motor(Entity e, bool enabled, float speed) = 0;
+    [[nodiscard]] virtual RagdollState ragdoll_state(Entity root) const = 0;
+    [[nodiscard]] virtual Entity ragdoll_of(Entity bone) const = 0;
+    // Captures the animated bone pose and writes the simulated one (Phase::PostUpdate).
+    virtual void write_ragdolls(scene::Scene& scene) = 0;
     virtual void set_gravity(math::Vec3 g) = 0;
     [[nodiscard]] virtual math::Vec3 gravity() const = 0;
     virtual void stats(PhysicsStats& out) const = 0;

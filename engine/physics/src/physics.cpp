@@ -230,6 +230,16 @@ CharacterState PhysicsWorld::character_state(Entity e) const {
     return impl_->w2->has_character(e) ? impl_->w2->character_state(e) : impl_->w3->character_state(e);
 }
 bool PhysicsWorld::drop_through(Entity e, float seconds) { return impl_->w2->drop_through(e, seconds); }
+RagdollState PhysicsWorld::ragdoll_state(Entity root) const { return impl_->w3->ragdoll_state(root); }
+void PhysicsWorld::set_ragdoll_mode(scene::Scene& scene, Entity root, RagdollComponent::Mode mode) {
+    if (auto* r = scene.world().get<RagdollComponent>(root)) r->mode = mode;
+}
+Entity PhysicsWorld::ragdoll_of(Entity bone) const { return impl_->w3->ragdoll_of(bone); }
+void PhysicsWorld::update_ragdoll_poses(scene::Scene& scene) {
+    VICTUS_PROFILE_SCOPE("physics.ragdoll_pose");
+    impl_->w3->write_ragdolls(scene);
+}
+
 JointState PhysicsWorld::joint_state(Entity e) const {
     return impl_->w2->has_joint(e) ? impl_->w2->joint_state(e) : impl_->w3->joint_state(e);
 }
@@ -329,6 +339,10 @@ void add_physics_systems(gameplay::Simulation& sim, PhysicsWorld& world) {
         if (world_of(scene) != w) bind(scene, w);
         w->step(scene, static_cast<float>(t.dt));
     });
+    // After animation (Phase::Update): ragdoll bones show the simulation.
+    sim.add_system("physics.ragdoll_pose", gameplay::Phase::PostUpdate, [w](scene::Scene& scene, const gameplay::FrameTime&) {
+        w->update_ragdoll_poses(scene);
+    });
 }
 
 // ---- collider wireframes ----------------------------------------------------------------------------
@@ -401,6 +415,7 @@ bool nearly_equal_points(math::Vec3 a, math::Vec3 b) { return math::length(a - b
 void collider_lines(scene::Scene& scene, std::vector<DebugLine>& out, Entity only, CollisionMeshCache* meshes) {
     constexpr float pi = std::numbers::pi_v<float>;
     const math::Vec3 X{1, 0, 0}, Y{0, 1, 0}, Z{0, 0, 1};
+    detail::ragdoll_lines(scene, out, only);
     scene.world().each<CharacterControllerComponent>([&](Entity e, CharacterControllerComponent& c) {
         if (!only.is_null() && e != only) return;
         // Characters stay upright: draw at the world position without the entity's rotation/scale.

@@ -1388,3 +1388,11 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 - Verified (Debug, -Werror, lavapipe + Xvfb): `victus_world_tests` 9/9 (105 assertions: descriptor round-trip/validation, load_additive rollback, hysteresis and nearest-first, state kept across unload/reload and through a save, dependency wait and timeout, job-system reads and cancellation, missing-cell failure, partition round-trip, sources); `victus_cli_smoke` partitions the 3D template into cells, checks, runs (`world: N cells streamed in`) and runs the exported game, whose session log shows the world streaming from the pack; full ctest 34/34.
 - Limits: see ROADMAP 6h Remaining; partition cell ids are new uuids on every run (re-partitioning discards saved cell state).
 - Next: glTF-embedded texture streaming (V.A.U.L.T.), then 6f A.R.C. ragdolls.
+
+### 2026-11-19 — A.R.C. stage 1: articulated ragdolls (ADR-0091)
+- Built: `RagdollComponent`/`RagdollBoneComponent` (reflected, saved, inspector-editable), `make_humanoid_ragdoll`, `PhysicsWorld::ragdoll_state/set_ragdoll_mode/ragdoll_of/update_ragdoll_poses`, Jolt backend (`RagdollSettings` + `SwingTwistConstraint`, `GroupFilterTable` self/owner filtering, kinematic/motor/passive drive, inertia-aware motor gains, internal gravity-compensation torques, PostUpdate pose write-back with blend), ragdoll wireframes in collider debug lines, Luau `set_ragdoll`/`ragdoll_state`/`ragdoll_root`.
+- Verified (Debug, -Werror): `victus_physics_tests` 76/76 including 11 ragdoll cases (humanoid mapping and naming schemes, passive fall onto ground without self-explosion, kinematic following and query ownership, powered pinned arm reaching a lowered target within 2 cm, 1 Hz motors sagging > 8 cm without compensation and holding with it, blend 0/1, kinematic-to-passive without snap, character ignoring its own ragdoll, live mode switching, removal cleanup); `victus_script_tests` ragdoll case.
+- Found and fixed: Jolt frequency-mode motors only see the two connected bodies (limb response ~0.6 Hz at "8 Hz"); bones along local X got a random swing-plane axis (elbow limits on the wrong axis).
+- Limits: no get-up/root follow, no Studio ragdoll wizard, no ragdoll networking, no 2D ragdolls; motor frequencies above ~6 Hz can chatter on long chains.
+- Next: glTF-embedded texture streaming (V.A.U.L.T.), then 6j destruction.
+

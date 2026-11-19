@@ -591,6 +591,57 @@ return { valid = cs.valid, grounded = cs.grounded, ny = cs.ground_normal.y, grou
     CHECK(std::abs(q.value()["angle"].as_number()) > 60.0); // ~90 deg/s for ~1.7 s, wraps at 180
 }
 
+TEST_CASE("script: ragdoll mode, state and bone lookup") {
+    TempDir d("victus_script_ragdoll");
+    auto host = make_host(d);
+    auto pw = physics::PhysicsWorld::create();
+    REQUIRE(pw.ok());
+    auto& world = *pw.value();
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    physics::add_physics_systems(sim, world);
+    Scene s;
+    const Entity root = s.create("Dummy");
+    const Entity hips = s.create("Hips", root);
+    s.world().get<Transform>(hips)->position = {0, 1, 0};
+    const Entity spine = s.create("Spine", hips);
+    s.world().get<Transform>(spine)->position = {0, 0.2f, 0};
+    const Entity chest = s.create("Chest", spine);
+    s.world().get<Transform>(chest)->position = {0, 0.25f, 0};
+    const Entity head = s.create("Head", chest);
+    s.world().get<Transform>(head)->position = {0, 0.3f, 0};
+    REQUIRE(physics::make_humanoid_ragdoll(s, root) == 4);
+    for (int i = 0; i < 2; ++i) sim.tick(s, 1.0f / 60);
+    auto q = host->eval(R"lua(
+local d = scene.find("Dummy")
+local before = d:ragdoll_state()
+d:set_ragdoll("passive", 0.5)
+return { before_valid = before.valid, before_mode = before.mode,
+         bad = pcall(function() d:set_ragdoll("floppy") end) }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK_FALSE(q.value()["before_valid"].as_bool()); // mode Off builds no bodies
+    CHECK(q.value()["before_mode"].as_string() == "off");
+    CHECK_FALSE(q.value()["bad"].as_bool());
+    CHECK(s.world().get<physics::RagdollComponent>(root)->mode == physics::RagdollComponent::Mode::Passive);
+    CHECK(s.world().get<physics::RagdollComponent>(root)->blend == doctest::Approx(0.5f));
+    for (int i = 0; i < 60; ++i) sim.tick(s, 1.0f / 60);
+    auto st = host->eval(R"lua(
+local rs = scene.find("Dummy"):ragdoll_state()
+local owner = scene.find("Chest"):ragdoll_root()
+return { valid = rs.valid, mode = rs.mode, bodies = rs.bodies, vy = rs.velocity.y, cy = rs.center_of_mass.y,
+         root = owner and owner.name or "", none = scene.find("Dummy"):ragdoll_root() == nil }
+)lua", &s);
+    REQUIRE(st.ok());
+    CHECK(st.value()["valid"].as_bool());
+    CHECK(st.value()["mode"].as_string() == "passive");
+    CHECK(st.value()["bodies"].as_number() == doctest::Approx(4));
+    CHECK(st.value()["vy"].as_number() < -1.0); // falling freely
+    CHECK(st.value()["cy"].as_number() < 1.2);
+    CHECK(st.value()["root"].as_string() == "Dummy");
+    CHECK(st.value()["none"].as_bool()); // the owner itself is not a bone
+}
+
 TEST_CASE("script: 2D character, one-way drop-through and 2D joint motor") {
     TempDir d("victus_script_character2d");
     d.write("scripts/runner.luau", R"lua(

@@ -2,6 +2,10 @@
 // Script bindings: physics.* and entity physics, character controller and joint methods.
 #include "script_internal.hpp"
 
+#include <algorithm>
+#include <string>
+#include <string_view>
+
 namespace victus::script::detail {
 
 
@@ -215,6 +219,61 @@ int entity_set_motor(lua_State* L) {
         j2->motor_speed = speed;
     }
     return 0;
+}
+
+namespace {
+constexpr const char* kRagdollModes[] = {"off", "kinematic", "powered", "passive"};
+} // namespace
+
+// entity:set_ragdoll(mode [, blend]): "off" | "kinematic" | "powered" | "passive" on a Ragdoll root.
+int entity_set_ragdoll(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const std::string_view mode = luaL_checkstring(L, 2);
+    int index = -1;
+    for (int i = 0; i < 4; ++i)
+        if (mode == kRagdollModes[i]) index = i;
+    if (index < 0) luaL_error(L, "set_ragdoll: unknown mode '%s' (off, kinematic, powered, passive)", std::string(mode).c_str());
+    auto* r = s.world().get<physics::RagdollComponent>(e);
+    if (!r) luaL_error(L, "set_ragdoll: the entity has no Ragdoll component");
+    r->mode = static_cast<physics::RagdollComponent::Mode>(index);
+    if (lua_isnumber(L, 3)) r->blend = std::clamp(static_cast<float>(lua_tonumber(L, 3)), 0.0f, 1.0f);
+    return 0;
+}
+
+// entity:ragdoll_state() -> {valid, mode, bodies, awake, center_of_mass, velocity, pose_error}
+int entity_ragdoll_state(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* w = physics::world_of(s);
+    const physics::RagdollState st = w ? w->ragdoll_state(e) : physics::RagdollState{};
+    lua_createtable(L, 0, 7);
+    lua_pushboolean(L, st.valid);
+    lua_setfield(L, -2, "valid");
+    lua_pushstring(L, kRagdollModes[static_cast<int>(st.mode) & 3]);
+    lua_setfield(L, -2, "mode");
+    lua_pushinteger(L, static_cast<int>(st.bodies));
+    lua_setfield(L, -2, "bodies");
+    lua_pushboolean(L, st.awake);
+    lua_setfield(L, -2, "awake");
+    push_vec3(L, st.center_of_mass);
+    lua_setfield(L, -2, "center_of_mass");
+    push_vec3(L, st.velocity);
+    lua_setfield(L, -2, "velocity");
+    lua_pushnumber(L, st.pose_error);
+    lua_setfield(L, -2, "pose_error");
+    return 1;
+}
+
+// entity:ragdoll_root() -> the Ragdoll entity whose body this bone is, or nil.
+int entity_ragdoll_root(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* w = physics::world_of(s);
+    const Entity root = w ? w->ragdoll_of(e) : Entity{};
+    if (root.is_null()) lua_pushnil(L);
+    else push_entity(L, root);
+    return 1;
 }
 
 } // namespace victus::script::detail
