@@ -56,6 +56,8 @@ struct FormatBlock {
 };
 [[nodiscard]] FormatBlock format_block(Format f) noexcept;
 [[nodiscard]] bool is_compressed(Format f) noexcept;
+// Formats the GPU decodes from / encodes to sRGB when sampling / writing.
+[[nodiscard]] bool is_srgb(Format f) noexcept;
 // Bytes of one mip level of a width x height image (whole blocks for compressed formats).
 [[nodiscard]] std::uint64_t mip_size_bytes(Format f, std::uint32_t width, std::uint32_t height) noexcept;
 

@@ -66,6 +66,19 @@ FormatBlock format_block(Format f) noexcept {
 
 bool is_compressed(Format f) noexcept { return format_block(f).width > 1; }
 
+bool is_srgb(Format f) noexcept {
+    switch (f) {
+    case Format::RGBA8_SRGB:
+    case Format::BGRA8_SRGB:
+    case Format::BC1_RGBA_SRGB:
+    case Format::BC3_RGBA_SRGB:
+    case Format::BC7_RGBA_SRGB:
+    case Format::ASTC_4x4_SRGB:
+    case Format::ASTC_6x6_SRGB: return true;
+    default: return false;
+    }
+}
+
 std::uint64_t mip_size_bytes(Format f, std::uint32_t width, std::uint32_t height) noexcept {
     const FormatBlock b = format_block(f);
     const std::uint64_t bx = (std::uint64_t{width} + b.width - 1) / b.width, by = (std::uint64_t{height} + b.height - 1) / b.height;

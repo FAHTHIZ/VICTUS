@@ -78,6 +78,7 @@ private:
     ImGuiContext* context_{nullptr};
     std::string ini_path_;
     rhi::PipelineHandle pipeline_;
+    bool target_srgb_{false};
     rhi::BufferHandle vertex_buffer_, index_buffer_;
     std::uint32_t vertex_capacity_{0}, index_capacity_{0};
     std::vector<ImDrawVert> vertices_;

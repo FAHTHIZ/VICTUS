@@ -101,8 +101,10 @@ private:
         bool additive{false};
         bool nearest{false};
         bool lit{false};
+        bool encode{false}; // sRGB texture: re-encode its texels to display space
     };
     [[nodiscard]] Status ensure_capacity(std::uint32_t sprites);
+    [[nodiscard]] bool encodes(rhi::TextureHandle texture) const;
 
     GpuContext& ctx_;
     rhi::PipelineHandle pipeline_, additive_pipeline_, lit_pipeline_, light_pipeline_;
@@ -116,6 +118,7 @@ private:
     std::uint32_t capacity_{0};
     math::Mat4 view_proj_;
     bool pixel_art_{false};
+    bool target_srgb_{false};
     std::vector<Sprite> sprites_;
     std::vector<std::uint32_t> order_;
     std::vector<Vertex> vertices_;

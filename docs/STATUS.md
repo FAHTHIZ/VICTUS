@@ -1606,3 +1606,9 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 - Verified (Debug, -Werror): `victus_script_tests -tc='behaviours*'` (10 cases, 140 assertions: movement, double jump, hazards, stomps, respawn, pickups, checkpoints, goals, spawners, shooters, game rules and events); `victus_project_tests` new case plays the template headlessly with no scripts: running collects a coin and scores, a jump plays its sound, falling into a pit costs a life and respawns at the start, touching the flag wins; `victus_editor_tests` checks the Behaviours category order and descriptions. Full `ctest --preset dev` passes.
 - Limits: bounds-overlap touch, projectiles pass through walls, score resets on scene load, Patrol ignores walls (see KNOWN_LIMITATIONS).
 - Next: a 3D no-code template, wall-aware patrols, behaviour quick-add in the Studio.
+
+## 2026-11-19 — 2D sprites and UI show sRGB textures at their authored colours
+
+- Built: `rhi::is_srgb(Format)`; the sprite batch and the UI context push per-batch flags so `sprite.frag` and `sprite_lit.frag` work in display space: sRGB-decoded texture samples are re-encoded before tinting, and output is linearised again only when the target is an sRGB format. Before, an sRGB sky authored as (77,133,230) reached a UNORM swapchain as (28,73,208), and the editor viewport (sRGB target) showed tints brighter than the game.
+- Verified (Debug, -Werror, lavapipe): new `victus_gpu_tests` case draws an sRGB texture with a tint into UNORM and sRGB targets and reads back the authored colours within 2 levels; visual check of the No-Code Platformer in the player and the Studio viewport (identical colours). Full ctest passes; `compile_shaders.py --check` up to date.
+- Limits: 2D lighting is still accumulated in display space, matching most 2D engines.

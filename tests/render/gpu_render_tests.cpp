@@ -3,6 +3,7 @@
 #include "victus/render/scene_renderer.hpp"
 #include "victus/render/sprite_batch.hpp"
 
+#include <cstdlib>
 #include <cstring>
 
 using namespace victus;
@@ -89,6 +90,70 @@ TEST_CASE("gpu: sprite batch draws sorted, batched sprites") {
     CHECK((bg & 0x00FFFFFFu) == 0u);
     dev.destroy(tex.value());
     dev.destroy(target);
+}
+
+TEST_CASE("gpu: sprite batch shows sRGB textures at their authored colours") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    const std::uint32_t W = 96, H = 32;
+    // Authored PNG colour (77, 133, 230): imported as sRGB, sampled as linear by the GPU.
+    const std::uint32_t authored = 0xFFE6854Du;
+    Image img = make_checker(8, 2, authored, authored);
+    auto srgb = ctx.create_texture(img, {true, false, "srgb"});
+    auto unorm = ctx.create_texture(img, {false, false, "unorm"});
+    REQUIRE(srgb.ok());
+    REQUIRE(unorm.ok());
+    for (const bool lit : {false, true}) {
+        CAPTURE(lit);
+        auto batch = SpriteBatch::create(ctx, rhi::Format::RGBA8_UNORM);
+        REQUIRE(batch.ok());
+        auto target = test::make_target(W, H);
+        Camera2D cam;
+        cam.pixels_per_unit = 1.0f;
+        auto& sb = *batch.value();
+        sb.begin(cam.view_projection(static_cast<float>(W), static_cast<float>(H)));
+        if (lit) sb.set_lighting({1, 1, 1, 1});
+        Sprite a;
+        a.texture = srgb.value();
+        a.size = {30, 30};
+        a.position = {-32, 0};
+        a.lit = lit;
+        sb.draw(a);
+        Sprite b = a;
+        b.texture = unorm.value();
+        b.position = {0, 0};
+        sb.draw(b);
+        Sprite c = a; // a half tint halves the display value
+        c.position = {32, 0};
+        c.color = {0.5f, 0.5f, 0.5f, 1};
+        sb.draw(c);
+        auto cmd = dev.begin_commands();
+        REQUIRE(sb.prepare(cmd).ok());
+        REQUIRE(sb.render_lights(cmd, W, H).ok());
+        rhi::RenderPassDesc rp;
+        rp.colors.push_back({target, 0, 0, rhi::LoadOp::Clear, rhi::StoreOp::Store, {0, 0, 0, 1}, {}});
+        auto pass = cmd.begin_render_pass(rp);
+        pass.set_viewport({0, 0, static_cast<float>(W), static_cast<float>(H), 0, 1});
+        sb.render(pass, cmd);
+        pass.end();
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target);
+        REQUIRE(px.ok());
+        const auto near = [](std::uint32_t p, int r, int g, int bl) {
+            return std::abs(int(channel(p, 0)) - r) <= 2 && std::abs(int(channel(p, 1)) - g) <= 2 &&
+                   std::abs(int(channel(p, 2)) - bl) <= 2;
+        };
+        const auto s = pixel(px.value(), W, W / 2 - 32, H / 2);
+        const auto u = pixel(px.value(), W, W / 2, H / 2);
+        const auto h = pixel(px.value(), W, W / 2 + 32, H / 2);
+        CHECK(near(s, 77, 133, 230));
+        CHECK(near(u, 77, 133, 230));
+        CHECK(near(h, 38, 66, 115));
+        dev.destroy(target);
+    }
+    dev.destroy(srgb.value());
+    dev.destroy(unorm.value());
 }
 
 TEST_CASE("gpu: 3D PBR scene with shadows, sky and culling") {
