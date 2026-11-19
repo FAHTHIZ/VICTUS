@@ -1691,3 +1691,9 @@ Verified: `behaviours: triggers show signs...` (now checks "You found a Key") an
 Built: `Trigger.press_to_use` and `prompt`: while the player touches it the message box shows the prompt (default "Press " plus the first key bound to `interact`), and the trigger fires once per visit when Interact is pressed. Inspector role "Switch" (press to start the Moving Platform named "Platform").
 
 Verified: `behaviours: press-to-use triggers wait for the interact key`, roles test in `victus_editor_tests`.
+
+## 2026-11-19 — No-Code Platformer: sign and spring
+
+Built: a welcome Sign (Trigger, shown while touching) next to the player's start and a Jump Pad at x 12.2 before the first gap, with new drawn `spring` and `sign` sprites (sprite_art.cpp).
+
+Verified: `templates: the No-Code Platformer plays with behaviours alone` (checks the pad and the welcome message), `export: the no-code templates ship...`, screenshots of the game and the Studio.

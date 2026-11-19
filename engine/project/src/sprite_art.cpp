@@ -200,6 +200,34 @@ std::string flag() {
     return c.png();
 }
 
+// A red spring pad on a grey coil (jump pads).
+std::string spring() {
+    Canvas c(128, 64, {0.9f, 0.2f, 0.2f, 0});
+    c.paint(rounded(20, 52, 108, 64, 4), {0.25f, 0.25f, 0.3f, 1}); // base
+    for (int i = 0; i < 3; ++i) {
+        const float y = 22.0f + 10.0f * static_cast<float>(i);
+        c.paint(rounded(32, y, 96, y + 6, 3), {0.4f, 0.4f, 0.46f, 1});
+        c.paint(rounded(34, y + 1, 94, y + 3, 1), {0.78f, 0.8f, 0.86f, 1});
+    }
+    c.paint(rounded(4, 2, 124, 22, 8), {0.55f, 0.08f, 0.1f, 1}); // pad
+    c.paint(rounded(8, 4, 120, 18, 6), {0.93f, 0.25f, 0.24f, 1});
+    c.paint(ellipse(36, 9, 16, 3), {1, 0.75f, 0.72f, 0.8f});
+    return c.png();
+}
+
+// A wooden notice board on a post (signs).
+std::string sign_art() {
+    Canvas c(96, 96, {0.62f, 0.42f, 0.24f, 0});
+    c.paint(rounded(42, 40, 54, 96, 2), {0.36f, 0.22f, 0.12f, 1});
+    c.paint(rounded(4, 6, 92, 58, 8), {0.36f, 0.22f, 0.12f, 1});
+    c.paint(rounded(8, 10, 88, 54, 6), {0.74f, 0.52f, 0.3f, 1});
+    for (int i = 0; i < 3; ++i) {
+        const float y = 20.0f + 11.0f * static_cast<float>(i);
+        c.paint(rounded(18, y, i == 2 ? 58.0f : 78.0f, y + 4, 2), {0.45f, 0.29f, 0.16f, 1});
+    }
+    return c.png();
+}
+
 std::string cloud() {
     Canvas c(192, 96, {1, 1, 1, 0});
     const auto shape = any({circle(60, 58, 32), circle(100, 42, 38), circle(140, 60, 30), rounded(28, 56, 168, 92, 26)});
@@ -235,6 +263,8 @@ constexpr Entry kArt[] = {
     {"cloud", "7a1c0de0-2b4e-4f6a-9c1d-000000000007", cloud},
     {"round", "7a1c0de0-2b4e-4f6a-9c1d-000000000008", round_art},
     {"sky", "7a1c0de0-2b4e-4f6a-9c1d-000000000009", sky},
+    {"spring", "7a1c0de0-2b4e-4f6a-9c1d-00000000000a", spring},
+    {"sign", "7a1c0de0-2b4e-4f6a-9c1d-00000000000b", sign_art},
 };
 
 } // namespace

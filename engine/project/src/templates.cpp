@@ -1022,6 +1022,16 @@ void build_nocode(Scene& s) {
     pit_hz.instant_kill = true;
     pit_hz.knockback = 0;
 
+    // A spring before the first gap and a sign that explains the controls.
+    const Entity pad = add(s, "Jump Pad", {12.2f, -2.8f, 0});
+    art(sprite(s, pad, {1.2f, 0.6f}, white, 2), "spring");
+    s.world().add<JumpPadComponent>(pad).strength = 16;
+    const Entity sign = add(s, "Sign", {-7.0f, -2.45f, 0});
+    art(sprite(s, sign, {1.1f, 1.1f}, white, 1), "sign");
+    auto& hello = s.world().add<TriggerComponent>(sign);
+    hello.message = "Welcome! Grab the coins and reach the gold flag. Springs throw you high.";
+    hello.message_time = 0;
+
     const Entity checkpoint = add(s, "Checkpoint", {19.5f, -2.3f, 0});
     art(sprite(s, checkpoint, {0.56f, 1.4f}, {0.45f, 0.7f, 1.0f, 1}, 2), "flag");
     s.world().add<CheckpointComponent>(checkpoint);
