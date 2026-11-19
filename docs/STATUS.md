@@ -1658,3 +1658,8 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 
 - Built: the open panels and layout preset are saved in `studio_preferences.json` (`workspace.layout`, `workspace.panels`) whenever they change in a project and restored at start-up; dock positions stay in `editor_layout.ini`.
 - Verified (Debug, -Werror, lavapipe): new `victus_editor_tests` case picks the Animation preset, closes the Console, opens the Profiler, starts a second Studio on the same preferences and checks the preset and panels survive, including after opening the project.
+
+## 2026-11-19 — Moving Platform behaviour
+
+- Built: `MovingPlatformComponent` (offset, speed, wait, smooth, once, wait_for_player, spin, player_tag), moved in the fixed step before physics. Platforms become kinematic bodies (a collider sized from the sprite or mesh is added if missing), so 2D and 3D characters ride them. Inspector role "Moving Platform"; the No-Code Platformer's fourth platform is now a lift.
+- Verified (Debug, -Werror): new `victus_script_tests` case (2D lift waits for the player, carries them and stays within its ends; 3D one-way trip carries a character; spin turns a quarter in a second); the No-Code Platformer template test rides the lift; studio roles test covers the new role.

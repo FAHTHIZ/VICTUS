@@ -156,6 +156,28 @@ struct PatrolComponent {
     float waiting{0};
 };
 
+// A platform (or saw, door, elevator) that travels between its start and start + offset and
+// carries whatever stands on it. It becomes a kinematic body, so characters ride it.
+struct MovingPlatformComponent {
+    math::Vec3 offset{4, 0, 0};
+    float speed{2.0f};            // m/s on average
+    float wait{0.5f};             // seconds at each end
+    bool smooth{true};            // eases in and out at the ends
+    bool once{false};             // stops at the far end instead of coming back
+    bool wait_for_player{false};  // starts moving the first time the player stands on it
+    float spin{0.0f};             // degrees per second (around Z in 2D, Y in 3D)
+    std::string player_tag{"Player"};
+    // runtime
+    math::Vec3 origin;
+    math::Quat base_rotation;
+    bool has_origin{false};
+    float progress{0};            // 0 at the start, 1 at start + offset
+    bool returning{false};
+    float waiting{0};
+    bool started{false};
+    float angle{0};
+};
+
 // Moves towards a target in range (and stops chasing once it gets far enough away).
 struct ChaseComponent {
     std::string target_tag{"Player"};

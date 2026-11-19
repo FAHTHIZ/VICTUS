@@ -10,7 +10,7 @@ Behaviours are ready-made gameplay components. Add one to an entity in the Inspe
 
 Movement behaviours also drive character animation. When the entity or one of its children has an Animator, Top-Down Movement and Platformer Movement (3D) set its `speed` and `grounded` parameters and fire the `jump` trigger, and Patrol and Chase set `speed` and turn the character to face where it walks. The Vanguard starter characters already use these parameters.
 
-The fastest way in is the Inspector's **Make it a...** row. Select any object and press Player, Enemy, Coin, Hazard, Checkpoint or Goal: the Studio adds the Behaviours for that role (for example Player gets movement, health that respawns, and a camera that follows it; Enemy gets a stompable hazard, a patrol that turns at ledges and one hit point), creates Game Rules if the scene has none, and names default-named objects after the role. It is one undo step.
+The fastest way in is the Inspector's **Make it a...** row. Select any object and press Player, Enemy, Coin, Hazard, Checkpoint, Goal or Moving Platform: the Studio adds the Behaviours for that role (for example Player gets movement, health that respawns, and a camera that follows it; Enemy gets a stompable hazard, a patrol that turns at ledges and one hit point), creates Game Rules if the scene has none, and names default-named objects after the role. It is one undo step.
 
 ### Lessons: your first game, step by step
 
@@ -24,6 +24,7 @@ New to making games? The Getting Started panel offers two lessons, **2D platform
 | Health | anything that can be hurt | Hit points, a blink after a hit, and what happens at zero: destroy, respawn at the last checkpoint, restart the scene or nothing. |
 | Hazard | spikes, enemies, kill zones | Hurts what it touches, with knockback. "Stompable" lets the player defeat it by landing on it; "Instant kill" takes all health. |
 | Collectible | coins, hearts, keys | Picked up on touch: adds score, heals or counts as an item, with an optional sound. |
+| Moving Platform | lifts, moving ledges, saws | Travels between where it starts and start + Offset (back and forth, or once), with a pause at each end, optional easing, an optional wait until the player stands on it, and Spin for turning saws and fans. It becomes a kinematic body, so characters standing on it ride along. |
 | Patrol / Chase | enemies | Walks back and forth, turning at walls (and, with Turn At Ledges, at platform edges), or follows the player within a range. |
 | Shooter / Projectile | the player, turrets | Fires on the fire action (left mouse) or automatically; bullets damage what they hit and stop at walls. |
 | Spawner | anywhere | Creates copies of a prefab on a timer, up to a limit. |
@@ -33,7 +34,7 @@ New to making games? The Getting Started panel offers two lessons, **2D platform
 
 The player is found by the tag "Player" or, if nothing has that tag, by its movement behaviour. Behaviours send events that scripts and graphs can react to with `on_event`: `damaged`, `healed`, `died`, `collected`, `checkpoint`, `score_changed`, `game_won`, `game_lost`, `life_lost`, `spawned`, `fired`, `stomped` and `goal_reached`.
 
-Touch is checked with bounding boxes, not exact shapes, and score resets when a new scene loads (see [Known limitations](KNOWN_LIMITATIONS.md)).
+Touch is checked with bounding boxes, not exact shapes (see [Known limitations](KNOWN_LIMITATIONS.md)).
 
 ## Scripting
 

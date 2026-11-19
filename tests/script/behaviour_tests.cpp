@@ -626,3 +626,60 @@ TEST_CASE("behaviours: patrols turn at walls and ledges; projectiles stop at wal
     g.run(60);
     CHECK(g.scene.world().get<HealthComponent>(target)->current == doctest::Approx(2));
 }
+
+TEST_CASE("behaviours: moving platforms carry the player in 2D and 3D, wait for them and spin") {
+    SUBCASE("2D") {
+        Game g;
+        const Entity lift = g.sprite("Lift", {0, 0}, {3, 0.5f});
+        auto& mp = g.scene.world().add<MovingPlatformComponent>(lift);
+        mp.offset = {6, 0, 0};
+        mp.smooth = false;
+        mp.wait = 0;
+        mp.wait_for_player = true;
+        const Entity p = g.player_2d({0, 3});
+        g.run(5);
+        // Became a kinematic solid sized from its sprite; does not move until stood on.
+        REQUIRE(g.scene.world().has<physics::RigidBody2DComponent>(lift));
+        CHECK(g.scene.world().get<physics::RigidBody2DComponent>(lift)->type == physics::BodyType::Kinematic);
+        CHECK(g.scene.world().get<physics::Collider2DComponent>(lift)->size.x == doctest::Approx(3));
+        CHECK(g.pos(lift).x == doctest::Approx(0));
+        g.run(60); // lands, the lift starts
+        CHECK(g.pos(lift).x > 0.5f);
+        g.run(60);
+        const float lx = g.pos(lift).x;
+        CHECK(lx > 2.5f);
+        CHECK(g.pos(p).x == doctest::Approx(lx).epsilon(0.15));
+        CHECK(g.pos(p).y > 0.2f); // still on top
+        g.run(240); // back and forth, never past its ends
+        CHECK(g.pos(lift).x >= -1e-3f);
+        CHECK(g.pos(lift).x <= 6.001f);
+    }
+    SUBCASE("3D") {
+        Game g;
+        const Entity lift = g.scene.create("Lift");
+        physics::ColliderComponent gc;
+        gc.size = {3, 0.5f, 3};
+        g.scene.world().add<physics::ColliderComponent>(lift, gc);
+        auto& mp = g.scene.world().add<MovingPlatformComponent>(lift);
+        mp.offset = {0, 0, -6};
+        mp.smooth = false;
+        mp.once = true;
+        mp.wait = 0;
+        const Entity hero = g.scene.create("Player");
+        g.scene.world().get<Transform>(hero)->position = {0, 1.5f, 0};
+        g.scene.world().add<TopDownMovementComponent>(hero);
+        g.run(240);
+        CHECK(g.scene.world().get<physics::RigidBodyComponent>(lift)->type == physics::BodyType::Kinematic);
+        CHECK(g.pos(lift).z == doctest::Approx(-6)); // once: stays at the far end
+        CHECK(g.pos(hero).z < -4.5f);
+        CHECK(g.pos(hero).y > 0.2f);
+    }
+    SUBCASE("spin") {
+        Game g(false);
+        const Entity saw = g.sprite("Saw", {0, 0});
+        g.scene.world().add<MovingPlatformComponent>(saw) = MovingPlatformComponent{.offset = {}, .spin = 90};
+        g.run(60);
+        const Vec3 x = g.scene.world().get<Transform>(saw)->rotation.rotate({1, 0, 0});
+        CHECK(x.y == doctest::Approx(1).epsilon(0.05)); // a quarter turn about Z in one second
+    }
+}
