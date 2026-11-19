@@ -1648,3 +1648,8 @@ Roadmap 6b (docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md): (Studio session) 
 
 - Built: a row of role buttons in the Inspector (Player, Enemy, Coin, Hazard, Checkpoint, Goal; `Editor::make_role`). Each adds the Behaviours that role needs (2D players get Platformer Movement, 3D players Top-Down Movement; enemies a stompable Hazard, a ledge-aware Patrol and 1 health; 3D coins also spin), creates Game Rules when the scene has none and gives the primary camera a Camera Follow that keeps the current framing. Default-named objects take the role's name. One undo step; completes the Getting Started behaviour step. Help topic and User Guide updated.
 - Verified (Debug, -Werror, lavapipe): new `victus_editor_tests` case (components, Game Rules reused not duplicated, camera follow, rename, one undo removes everything including the created Game Rules, redo, re-applying reports nothing to do); visual check of the Inspector row.
+
+## 2026-11-19 — Studio lessons for a first 2D and 3D game
+
+- Built: Getting Started offers "2D platformer" and "3D adventure" lessons (`Editor::start_lesson`). A lesson saves the current scene, starts a new one (2D: orthographic camera and sky backdrop), and runs seven steps (floor, player, coin, enemy, goal, play to the goal, save); steps advance when the scene or play session shows them done, and each has a "Do it for me" button. `victus_editor --lesson 2d|3d`. Fix: New Scene no longer keeps template scripts on the kept camera and light (the 3D template's follow-camera script errored in other projects).
+- Verified (Debug, -Werror, lavapipe): new `victus_editor_tests` case builds the 2D lesson by hand, plays it to the goal and saves, then completes the 3D lesson; visual check of both lesson panels.

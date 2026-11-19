@@ -27,7 +27,7 @@ No programming. Every step happens in VICTUS Studio.
 4. **Add something new.** Select any object, choose **Add Component > Behaviours** and pick one, such as **Patrol**, **Chase**, **Hazard**, **Collectible** or **Spawner**. It works as soon as you press Play.
 5. **Ship it.** **File > Export Game** writes a standalone build you can send to friends.
 
-In the Inspector, **Make it a...** turns any selected object into a Player, Enemy, Coin, Hazard, Checkpoint or Goal with one click. The **Getting Started** panel walks you through these steps and ticks each one off. It can also do a step for you.
+In the Inspector, **Make it a...** turns any selected object into a Player, Enemy, Coin, Hazard, Checkpoint or Goal with one click. The **Getting Started** panel walks you through these steps and ticks each one off. It can also do a step for you, and its lessons build a whole first 2D or 3D game with you in seven steps.
 
 <table>
 <tr>

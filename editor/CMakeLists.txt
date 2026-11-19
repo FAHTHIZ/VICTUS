@@ -33,6 +33,7 @@ add_library(victus_editor_core STATIC
     src/import_files.cpp
     src/add_component.cpp
     src/roles.cpp
+    src/lessons.cpp
     src/guide.cpp
     src/ragdoll_tools.cpp
     src/safe_mode.cpp)

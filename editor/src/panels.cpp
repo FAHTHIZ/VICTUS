@@ -459,6 +459,7 @@ void Editor::draw_workspace(float) {
     draw_ai_debugger();
     draw_animation_panel();
     draw_sequencer();
+    update_lesson();
     draw_getting_started();
     draw_help();
     draw_history();
