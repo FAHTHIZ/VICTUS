@@ -171,6 +171,8 @@ void register_behaviour_components() {
             .field(&GR::restart_delay, "restart_delay", {.min = 0, .max = 60, .speed = 0.05f})
             .field(&GR::win_message, "win_message")
             .field(&GR::lose_message, "lose_message")
+            .field(&GR::carry_over, "carry_over",
+                   {.tooltip = "Keep score, lives and time when a Goal loads the next level"})
             .commit();
     });
 }
@@ -412,9 +414,11 @@ void request_restart(ScriptHost::Impl& h) {
     if (h.pending_scene || !h.behaviours.has_start) return;
     h.pending_restore.reset();
     h.pending_scene = ScriptHost::Impl::SceneRequest{h.current_scene, h.behaviours.start_doc, h.scene_params};
+    h.behaviours.carry = h.behaviours.entry;
+    if (h.behaviours.carry) h.behaviours.carry->lives_left = 0; // a fresh set of lives
 }
 
-void request_scene(ScriptHost::Impl& h, Entity from, const std::string& path) {
+void request_scene(ScriptHost::Impl& h, Scene& s, Entity from, const std::string& path) {
     auto doc = read_scene(h, path);
     if (!doc) {
         warn_once(h, from, std::format("Goal: cannot load scene '{}': {}", path, doc.error().message));
@@ -422,6 +426,11 @@ void request_scene(ScriptHost::Impl& h, Entity from, const std::string& path) {
     }
     h.pending_restore.reset();
     h.pending_scene = ScriptHost::Impl::SceneRequest{path, std::move(*doc), Value::object()};
+    h.behaviours.carry.reset();
+    if (const Entity r = rules_entity(s); !r.is_null()) {
+        const auto* g = s.world().get<GameRulesComponent>(r);
+        if (g->carry_over && g->initialised) h.behaviours.carry = ScriptHost::Impl::Behaviours::Carry{g->score, g->lives_left, g->elapsed};
+    }
 }
 
 void end_game(Scene& s, Entity rules, bool won) {
@@ -1042,7 +1051,7 @@ void goals(ScriptHost::Impl& h, Scene& s, TagCache& tags) {
         s.world().get<GoalComponent>(g)->reached = true;
         gameplay::emit_event(s, "goal_reached", Value::object(), g);
         if (cfg.action != GoalAction::Win && !cfg.scene.empty()) {
-            request_scene(h, g, cfg.scene);
+            request_scene(h, s, g, cfg.scene);
         } else {
             const Entity r = rules_entity(s);
             if (!r.is_null()) end_game(s, r, true);
@@ -1270,6 +1279,12 @@ void rules_tick(ScriptHost::Impl& h, Scene& s, float dt) {
         g->score = 0;
         g->elapsed = 0;
         g->state = GameState::Playing;
+        if (auto c = std::exchange(h.behaviours.carry, std::nullopt); c && g->carry_over) {
+            g->score = c->score;
+            if (g->time_limit <= 0) g->elapsed = c->elapsed; // a timed level gets its full time
+            if (c->lives_left > 0 && g->lives > 0) g->lives_left = std::min(c->lives_left, g->lives);
+        }
+        h.behaviours.entry = ScriptHost::Impl::Behaviours::Carry{g->score, g->lives_left, g->elapsed};
         if (g->show_hud) build_hud(s, r);
         g = s.world().get<GameRulesComponent>(r);
     }

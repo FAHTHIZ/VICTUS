@@ -233,6 +233,9 @@ struct GameRulesComponent {
     float restart_delay{2.5f};
     std::string win_message{"You win!"};
     std::string lose_message{"Game over"};
+    // When a Goal loads another scene, that scene's Game Rules start with this score, lives and
+    // time instead of fresh ones. Game over restarts the level with the score it was entered with.
+    bool carry_over{true};
     // runtime
     float score{0};
     std::uint32_t lives_left{0};
