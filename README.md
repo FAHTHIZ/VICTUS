@@ -50,9 +50,9 @@ Behaviours are ready-made gameplay components, similar to GDevelop behaviors and
 | Top-Down Movement | Patrol | Checkpoint | Goal |
 | Camera Follow | Chase | Health | Spawner |
 | Projectile | Shooter | Lifetime | Events for scripts and graphs |
-| Moving Platform | Jump Pad | Trigger (signs, switches, keys and doors) | Pause (Escape) |
+| Moving Platform | Jump Pad | Trigger (signs, switches, keys, doors and conversations) | Pause (Escape) |
 
-Every behaviour sends events (`collected`, `died`, `bounced`, `triggered`, `game_won` and others), so scripts and visual graphs can react to them later without replacing them. Reference: [Make a game without code](docs/USER_GUIDE.md).
+Every behaviour sends events (`collected`, `died`, `bounced`, `triggered`, `talked`, `game_won` and others), so scripts and visual graphs can react to them later without replacing them. Reference: [Make a game without code](docs/USER_GUIDE.md).
 
 ## What is inside
 

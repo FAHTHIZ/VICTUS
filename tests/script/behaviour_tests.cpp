@@ -922,3 +922,45 @@ TEST_CASE("behaviours: a title screen holds the game until the player presses Sp
     CHECK_FALSE(g.scene.world().get<gameui::UiRectComponent>(banner)->visible);
     CHECK_FALSE(g.scene.world().get<gameui::UiRectComponent>(box)->visible);
 }
+
+TEST_CASE("behaviours: a press-to-use trigger with | lines is a conversation") {
+    Game g;
+    g.ground_2d({0, -0.5f}, {40, 1});
+    const Entity p = g.player_2d({0, 0.6f});
+    const Entity npc = g.sprite("Elder", {6, 0.5f});
+    auto& tc = g.scene.world().add<TriggerComponent>(npc);
+    tc.press_to_use = true;
+    tc.message = "Hello, traveller. | The bridge is out.|Take the cave instead.";
+    tc.action = TriggerAction::Remove;
+    int talked = 0, fired = 0;
+    gameplay::listen(g.scene, "talked", [&](Scene&, const gameplay::GameplayEvent&) { ++talked; });
+    gameplay::listen(g.scene, "triggered", [&](Scene&, const gameplay::GameplayEvent&) { ++fired; });
+    const auto message = [&]() -> std::string {
+        const Entity m = g.scene.find_by_name("Message (Trigger)");
+        if (m.is_null() || g.scene.children(m).empty()) return {};
+        const Entity box = g.scene.children(m).front();
+        if (!g.scene.world().get<gameui::UiRectComponent>(box)->visible) return {};
+        for (const Entity c : g.scene.children(box)) return g.scene.world().get<gameui::UiTextComponent>(c)->text;
+        return {};
+    };
+    g.run(10);
+    g.scene.world().get<Transform>(p)->position = {6, 0.6f, 0};
+    g.run(5);
+    CHECK(message() == "Press E");
+    g.hold("E", 3);
+    g.run(2);
+    CHECK(message() == "Hello, traveller.");
+    CHECK(talked == 1);
+    g.run(60); // a conversation line waits for the next press
+    CHECK(message() == "Hello, traveller.");
+    g.hold("E", 3);
+    g.run(2);
+    CHECK(message() == "The bridge is out.");
+    CHECK(fired == 0);
+    CHECK(g.scene.world().alive(npc));
+    g.hold("E", 3);
+    g.run(2);
+    CHECK(message() == "Take the cave instead.");
+    CHECK(fired == 1); // the action runs on the last line
+    CHECK_FALSE(g.scene.world().alive(npc));
+}
