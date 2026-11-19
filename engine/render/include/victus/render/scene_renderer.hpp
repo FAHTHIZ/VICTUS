@@ -502,6 +502,9 @@ struct RenderSettings {
     // 16384, Ultra 32768.
     bool precipitation{true};
     std::uint32_t max_precipitation{16384};
+    // Rain occlusion map size (ADR-0114; 0 = off, else 64..4096): a depth map along the fall
+    // direction that stops drops and wetness under roofs. Low 256, Medium 512, High and Ultra 1024.
+    std::uint32_t precipitation_occlusion{1024};
     // Effect budgets per frame (ADR-0109), nearest first. Decals: Low 128, Medium 256, High 512,
     // Ultra 1024 (SceneRenderer::kMaxDecals). Water surfaces: Low 4, Medium 8, High and Ultra 16
     // (kMaxWaterSurfaces). CPU particles (billboards plus ribbon vertices): Low 16384, Medium
@@ -589,6 +592,8 @@ struct SceneStats {
     bool cloud_shadows{false};         // the sun light of lit surfaces is shadowed by the clouds (ADR-0112)
     std::uint32_t precipitation_drops{0}; // rain drops / snow flakes drawn (ADR-0113)
     bool surface_wetness{false};       // lit surfaces were shaded wet
+    std::uint32_t precipitation_occlusion{0}; // rain occlusion map size (0 when off, ADR-0114)
+    std::uint32_t precipitation_occluders{0}; // opaque draws rendered into it
 };
 
 struct SceneRendererOptions {
@@ -686,6 +691,8 @@ public:
     static constexpr std::uint32_t kMaxDecals = 1024;
     // Most rain drops / snow flakes drawn per frame (RenderSettings::max_precipitation).
     static constexpr std::uint32_t kMaxPrecipitation = 65536;
+    // Highest roof above the camera that the rain occlusion map sees (m).
+    static constexpr float kRainOcclusionHeight = 200.0f;
     void add_decal(const Decal& decal);
     // Water surface for this frame (see WaterSurface). At most kMaxWaterSurfaces (nearest first).
     void add_water(const WaterSurface& water);

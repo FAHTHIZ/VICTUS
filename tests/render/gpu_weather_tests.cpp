@@ -264,6 +264,71 @@ TEST_CASE("gpu weather: wet surfaces darken rough dielectrics and leave smooth m
     CHECK(h.mean(0, H / 2, W / 3, H) > w.mean(0, H / 2, W / 3, H));
 }
 
+TEST_CASE("gpu weather: a roof stops drops and keeps the ground beneath it dry") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    GpuMesh cube = ctx.create_mesh(make_cube(), "weather_roof").value();
+    Material black;
+    black.base_color = {0, 0, 0, 1};
+    black.roughness = 1.0f;
+    // A thin black roof 6 m up over the left half of the world (x < 0), out of view above the
+    // camera, which looks level at 2 m: drops under it (left half of the image) must vanish.
+    auto roof = [&](SceneRenderer& rr) { rr.submit(cube, black, math::Mat4::trs({-30, 6, 0}, {}, {60, 0.2f, 60})); };
+    const Shot open = shoot(r, weather_env(), nothing);
+    const Shot covered = shoot(r, weather_env(), roof, "weather_roof");
+    CHECK(covered.stats.precipitation_occlusion == 1024);
+    CHECK(covered.stats.precipitation_occluders >= 1);
+    CHECK(open.stats.precipitation_occluders == 0);
+    // Pixels a drop brightened over the same scene without rain (the roof's underside is visible).
+    const Shot roof_only = shoot(r, weather_env(PrecipitationType::None), roof);
+    const auto drops = [&](const Shot& s, std::uint32_t x0, std::uint32_t x1) {
+        int n = 0;
+        for (std::uint32_t y = 0; y < H; ++y)
+            for (std::uint32_t x = x0; x < x1; ++x) n += channel(s.at(x, y), 1) > channel(roof_only.at(x, y), 1) + 2 ? 1 : 0;
+        return n;
+    };
+    const int left_open = open.lit(0, 0, W / 2 - 8, H), left_covered = drops(covered, 0, W / 2 - 8);
+    const int right_open = open.lit(W / 2 + 8, 0, W, H), right_covered = drops(covered, W / 2 + 8, W);
+    CHECK(left_open > 200);
+    CHECK(left_covered * 10 < left_open);
+    CHECK(right_covered * 10 > right_open * 6); // the open side still rains
+    // Turned off, the roof no longer shelters anything.
+    RenderSettings no_occ = weather_settings();
+    no_occ.precipitation_occlusion = 0;
+    const Shot leaky = shoot(r, weather_env(), roof, nullptr, no_occ);
+    CHECK(leaky.stats.precipitation_occlusion == 0);
+    CHECK(drops(leaky, 0, W / 2 - 8) * 10 > left_open * 6);
+
+    // Wet ground: rough grey floor, half of it under the roof. Looking down from below the roof.
+    Material grey;
+    grey.base_color = {0.6f, 0.6f, 0.6f, 1};
+    grey.roughness = 0.9f;
+    auto scene = [&](SceneRenderer& rr) {
+        rr.submit(cube, grey, math::Mat4::trs({0, -1, 0}, {}, {100, 1, 100}));
+        roof(rr);
+    };
+    Camera3D down = Camera3D::look_at({0, 4, 3}, {0, 0, -1});
+    down.z_far = 200.0f;
+    Environment wet = weather_env();
+    wet.precipitation.opacity = 1e-4f; // drops are discarded: only the surfaces show
+    wet.ambient_intensity = 0.3f;
+    wet.wetness = 1.0f;
+    Environment dry = wet;
+    dry.wetness = 0.0f;
+    const Shot d = shoot(r, dry, scene, nullptr, weather_settings(), down);
+    const Shot w = shoot(r, wet, scene, "weather_roof_wet", weather_settings(), down);
+    CHECK(w.stats.surface_wetness);
+    // Exposed ground (right) darkens; sheltered ground (left) stays as it was.
+    CHECK(w.mean(W * 3 / 4, H / 2, W, H) + 15.0 < d.mean(W * 3 / 4, H / 2, W, H));
+    CHECK(std::abs(w.mean(0, H / 2, W / 4, H) - d.mean(0, H / 2, W / 4, H)) < 2.0);
+    // Without the occlusion map both halves get wet.
+    const Shot w_leaky = shoot(r, wet, scene, nullptr, no_occ, down);
+    CHECK(w_leaky.mean(0, H / 2, W / 4, H) + 15.0 < d.mean(0, H / 2, W / 4, H));
+}
+
 TEST_CASE("weather: presets, sanitising and Environment component mapping") {
     CHECK(RenderSettings::preset(QualityTier::Low).max_precipitation == 2048);
     CHECK(RenderSettings::preset(QualityTier::Medium).max_precipitation == 8192);
@@ -272,6 +337,16 @@ TEST_CASE("weather: presets, sanitising and Environment component mapping") {
     RenderSettings big;
     big.max_precipitation = 1u << 30;
     CHECK(big.sanitized().max_precipitation == SceneRenderer::kMaxPrecipitation);
+    CHECK(RenderSettings::preset(QualityTier::Low).precipitation_occlusion == 256);
+    CHECK(RenderSettings::preset(QualityTier::Medium).precipitation_occlusion == 512);
+    CHECK(RenderSettings::preset(QualityTier::High).precipitation_occlusion == 1024);
+    CHECK(RenderSettings::preset(QualityTier::Ultra).precipitation_occlusion == 1024);
+    big.precipitation_occlusion = 3;
+    CHECK(big.sanitized().precipitation_occlusion == 64);
+    big.precipitation_occlusion = 1u << 20;
+    CHECK(big.sanitized().precipitation_occlusion == 4096);
+    big.precipitation_occlusion = 0;
+    CHECK(big.sanitized().precipitation_occlusion == 0);
 
     gameplay::EnvironmentComponent ec;
     render::Environment env;

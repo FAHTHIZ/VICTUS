@@ -972,6 +972,14 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0114 — Rain occlusion map: no rain and no wetness under roofs
+
+- Status: Accepted (2026-11-19)
+- Context: ADR-0113 rain fell through roofs and wetness darkened sheltered floors, so indoor areas needed precipitation turned off by hand. The standard fix is a depth map rendered from above along the rain direction: Tatarchuk's ToyShop renders "rain occlusion" from the light's view ([SIGGRAPH 2006 slides](https://www.advances.realtimerendering.com/s2006/Tatarchuk-Rain.pdf)), and Lagarde's wet-surface notes mask wetness with an occlusion test from above ([Water drop 3b](https://seblagarde.wordpress.com/2013/04/14/water-drop-3b-physically-based-wet-surfaces/)).
+- Decision: when precipitation is drawn, `SceneRenderer` renders a `rain_occlusion` depth pass with the shadow pipelines: an orthographic view along the fall velocity (wind included), `ceil(1.5 x radius)` metres either side of the camera, from `kRainOcclusionHeight` (200 m) above to `2 x half + 10` m below, texel-snapped so it does not swim. Casters are the opaque draws that intersect its frustum (`SceneStats::precipitation_occluders`). `precipitation.frag` fades each drop by a comparison sample of the map (10 cm bias), and `pbr.frag` (and surface-shader variants) multiplies `wetness` by the same test offset 5 cm along the geometric normal (`set 2 binding 9`; fragment storage buffers move to 10 and 11). `RenderSettings::precipitation_occlusion` is the map size (Low 256, Medium 512, High and Ultra 1024; 0 off, otherwise clamped to 64..4096); `SceneStats::precipitation_occlusion` reports it.
+- Alternatives: a ray march through the scene (no structure to march), per-volume "indoor" boxes (manual), and reusing the sun's cascades (wrong direction and range).
+- Consequences: one extra depth pass sized by the tier. Points outside the map (far away) count as exposed; wetness under roofs is only masked while precipitation is falling (a scene set wet without rain stays uniformly wet); alpha-tested foliage casts as opaque; edges are hard (one comparison tap).
+
 ## ADR-0113 — Weather: procedural rain and snow around the camera, wet surfaces
 
 - Status: Accepted (2026-11-19)
