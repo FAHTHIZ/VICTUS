@@ -83,6 +83,7 @@ kit::Icon entity_icon(Scene& s, Entity e, ImVec4& tint) {
     if (w.has<audio::AudioSourceComponent>(e)) return kit::Icon::Audio;
     if (w.has<gameui::UiCanvasComponent>(e)) return kit::Icon::Ui;
     if (w.has<gameplay::DecalComponent>(e)) return kit::Icon::Texture;
+    if (w.has<gameplay::FogVolumeComponent>(e)) return kit::Icon::Particles;
     if (w.has<SpriteComponent>(e)) return kit::Icon::Sprite;
     if (w.has<MeshRendererComponent>(e) || w.has<ProceduralMeshComponent>(e)) return kit::Icon::Mesh;
     if (w.has<script::ScriptComponent>(e)) {
@@ -1185,6 +1186,7 @@ void Editor::draw_create_entity_items(Entity parent) {
     item("2D Light", kit::Icon::Light, "Lights sprites in a 2D scene", Primitive::Light2D);
     ImGui::SeparatorText("World and Effects");
     item("Decal", kit::Icon::Texture, "Projects a texture onto surfaces, like a sticker or a stain", Primitive::Decal);
+    item("Fog Volume", kit::Icon::Particles, "A box of extra fog (shows when the Environment has volumetric fog on)", Primitive::FogVolume);
     if (parent.is_null()) {
         const float h = ImGui::GetTextLineHeight();
         const ImVec2 pos = ImGui::GetCursorScreenPos();

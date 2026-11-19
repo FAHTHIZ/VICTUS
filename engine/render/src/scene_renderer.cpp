@@ -402,6 +402,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.local_shadows = false;
         s.irradiance_volumes = false;
         s.dynamic_gi = false;
+        s.volumetric_fog = false;
         break;
     case QualityTier::Medium:
         s.render_scale = 1.0f;
@@ -419,6 +420,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.local_shadow_atlas = 1024;
         s.local_shadow_tile = 256;
         s.dynamic_gi = false;
+        s.volumetric_fog_slices = 48;
         break;
     case QualityTier::High: break; // struct defaults
     case QualityTier::Ultra:
@@ -431,6 +433,8 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.lod_error_pixels = 0.5f;
         s.max_anisotropy = 16;
         s.local_shadow_atlas = 4096;
+        s.volumetric_fog_tile = 8;
+        s.volumetric_fog_slices = 96;
         break;
     }
     return s;
@@ -459,6 +463,8 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     }
     s.local_shadow_atlas = std::clamp(s.local_shadow_atlas, 256u, 8192u);
     s.local_shadow_tile = std::clamp(s.local_shadow_tile, std::max(64u, s.local_shadow_atlas / 8u), s.local_shadow_atlas);
+    s.volumetric_fog_tile = std::clamp(s.volumetric_fog_tile, 4u, 64u);
+    s.volumetric_fog_slices = std::clamp(s.volumetric_fog_slices, 16u, 128u);
     return s;
 }
 
@@ -855,6 +861,10 @@ SceneRenderer::~SceneRenderer() {
     for (auto& [key, st] : gpu_particle_states_) destroy_gpu_particle_state(st);
     gpu_particle_states_.clear();
     if (particle_sim_) d.destroy(particle_sim_);
+    for (auto pl : {fog_inject_, fog_integrate_})
+        if (pl) d.destroy(pl);
+    for (auto b : {fog_froxels_[0], fog_froxels_[1], fog_integrated_})
+        if (b) d.destroy(b);
     for (auto pl : {hiz_depth_, hiz_reduce_, occlusion_cull_})
         if (pl) d.destroy(pl);
     for (auto b : {hiz_buffer_, occl_bounds_, occl_args_, occl_instances_})
@@ -879,6 +889,23 @@ bool SceneRenderer::ensure_occlusion_pipelines() {
     hiz_depth_ = depth.value();
     hiz_reduce_ = reduce.value();
     occlusion_cull_ = cull.value();
+    return true;
+}
+
+bool SceneRenderer::ensure_fog_pipelines() {
+    if (fog_integrate_) return true;
+    if (fog_failed_) return false;
+    auto& d = ctx_.device();
+    auto inject = create_builtin_compute_pipeline(d, "fog_inject.comp");
+    auto integrate = inject ? create_builtin_compute_pipeline(d, "fog_integrate.comp") : Result<rhi::ComputePipelineHandle>(inject.error());
+    if (!integrate) {
+        VICTUS_LOG_WARN("render", "volumetric fog disabled: {}", integrate.error().message);
+        if (inject) d.destroy(inject.value());
+        fog_failed_ = true;
+        return false;
+    }
+    fog_inject_ = inject.value();
+    fog_integrate_ = integrate.value();
     return true;
 }
 
@@ -1088,6 +1115,7 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     gpu_emitters_.clear();
     decals_.clear();
     waters_.clear();
+    fog_volumes_.clear();
     stats_ = {};
 }
 
@@ -1111,6 +1139,14 @@ void SceneRenderer::add_decal(const Decal& decal) {
             if (!std::isfinite(decal.transform[c][r])) return;
     if (decal.color.a <= 0.0f || !std::isfinite(decal.color.a)) return;
     decals_.push_back(decal);
+}
+
+void SceneRenderer::add_fog_volume(const FogVolume& volume) {
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            if (!std::isfinite(volume.transform[c][r])) return;
+    if (!(volume.density > 0.0f) || !std::isfinite(volume.density)) return;
+    fog_volumes_.push_back(volume);
 }
 
 void SceneRenderer::add_water(const WaterSurface& water) {
@@ -1793,7 +1829,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (needed > capacity) {
                 if (buf) dev.destroy(buf);
                 capacity = std::max({needed, capacity * 2, 4096u});
-                auto b = dev.create_buffer({name, capacity, rhi::BufferUsageStorageRead});
+                // Also read by the volumetric fog compute pass (ADR-0098).
+                auto b = dev.create_buffer({name, capacity, rhi::BufferUsageStorageRead | rhi::BufferUsageComputeRead});
                 if (!b) return std::move(b).error();
                 buf = b.value();
             }
@@ -2116,6 +2153,115 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         lighting.local_shadow = {1.0f / static_cast<float>(S.local_shadow_atlas), static_cast<float>(local_tiles_per_row),
                                  static_cast<float>(stats_.point_lights), 1.0f};
 
+    // Volumetric fog (ADR-0098): froxel grid setup; the passes run after the blended geometry.
+    struct FogUniforms {
+        Mat4 inv_view_proj, prev_view_proj;
+        Mat4 cascade_vp[4];
+        Vec4 camera_pos, camera_forward, prev_camera_pos, prev_camera_forward, grid;
+        Vec4 sun_dir, sun_color, ambient, albedo, height_fog;
+        Vec4 shadow_params, cascade_params, cascade_splits, cluster_grid, cluster_depth, local_shadow;
+        Vec4 volumes[kMaxFogVolumes * 5];
+    };
+    static_assert(sizeof(FogUniforms) == 1280);
+    struct FogApplyUniforms {
+        Vec4 proj, screen, grid;
+    };
+    const VolumetricFog& vf = env_.volumetric_fog;
+    const bool fog = S.volumetric_fog && vf.enabled && !capture_mode_ && dev.capabilities().compute && std::isfinite(vf.density) &&
+                     (vf.density > 0.0f || !fog_volumes_.empty()) && ensure_fog_pipelines();
+    FogUniforms fog_u{};
+    FogApplyUniforms fog_apply_u{};
+    std::array<std::uint32_t, 3> fog_dims{};
+    float fog_far = 0.0f;
+    const std::uint32_t fog_cur = fog_index_, fog_prev = fog_index_ ^ 1u;
+    if (fog) {
+        const std::uint32_t tile = S.volumetric_fog_tile;
+        fog_dims = {std::clamp((rw + tile - 1) / tile, 1u, 160u), std::clamp((rh + tile - 1) / tile, 1u, 90u), S.volumetric_fog_slices};
+        fog_far = std::min(std::isfinite(vf.distance) ? std::clamp(vf.distance, 8.0f, 1000.0f) : 80.0f, std::max(camera_.z_far, 1.0f));
+        const std::uint32_t bytes = fog_dims[0] * fog_dims[1] * fog_dims[2] * static_cast<std::uint32_t>(sizeof(Vec4));
+        VICTUS_TRY_STATUS(ensure_buffer(fog_froxels_[0], fog_froxel_capacity_[0], bytes,
+                                        rhi::BufferUsageStorageWrite | rhi::BufferUsageComputeRead, "fog_froxels_a"));
+        VICTUS_TRY_STATUS(ensure_buffer(fog_froxels_[1], fog_froxel_capacity_[1], bytes,
+                                        rhi::BufferUsageStorageWrite | rhi::BufferUsageComputeRead, "fog_froxels_b"));
+        VICTUS_TRY_STATUS(ensure_buffer(fog_integrated_, fog_integrated_capacity_, bytes,
+                                        rhi::BufferUsageStorageWrite | rhi::BufferUsageComputeRead | rhi::BufferUsageStorageRead,
+                                        "fog_integrated"));
+        if (fog_dims != fog_dims_ || fog_far != fog_far_) fog_history_valid_ = false;
+        const float temporal = std::isfinite(vf.temporal) ? std::clamp(vf.temporal, 0.0f, 0.98f) : 0.9f;
+        const bool history = fog_history_valid_ && temporal > 0.0f;
+        // R1 low-discrepancy sequence over the slice depth; the centre without temporal blending.
+        const float jitter_z =
+            temporal > 0.0f ? static_cast<float>(std::fmod(0.5 + static_cast<double>(fog_frame_) * 0.6180339887498949, 1.0)) : 0.5f;
+        fog_u.inv_view_proj = inverse(view_proj_unjittered);
+        fog_u.prev_view_proj = fog_prev_view_proj_;
+        for (std::uint32_t c = 0; c < 4; ++c) fog_u.cascade_vp[c] = cascade_vp_[c];
+        fog_u.camera_pos = Vec4(camera_.position, fog_far);
+        fog_u.camera_forward = Vec4(camera_.forward(), jitter_z);
+        fog_u.prev_camera_pos = Vec4(fog_prev_position_, history ? 1.0f : 0.0f);
+        fog_u.prev_camera_forward = Vec4(fog_prev_forward_, temporal);
+        const auto finite_or = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+        fog_u.sun_dir = lighting.sun_dir;
+        fog_u.sun_color = sun_.intensity > 0.0f ? rgb(sun_.color, sun_.intensity * std::max(finite_or(vf.sun_intensity, 1.0f), 0.0f))
+                                                : Vec4{};
+        // Mean sky radiance (the isotropic phase function integrates a uniform sky to its radiance).
+        Vec3 ambient{};
+        if (env_map && env_map->cube()) ambient = env_map->sh().coefficients[0] * (env_intensity * 0.2820948f);
+        else {
+            const Color& z = env_.sky_zenith;
+            const Color& h = env_.sky_horizon;
+            const Color& g = env_.ground;
+            ambient = Vec3{z.r + 2.0f * h.r + g.r, z.g + 2.0f * h.g + g.g, z.b + 2.0f * h.b + g.b} * (0.25f * env_.ambient_intensity);
+        }
+        ambient = ambient * std::max(finite_or(vf.ambient_intensity, 1.0f), 0.0f);
+        fog_u.ambient = Vec4(ambient, std::max(finite_or(vf.local_light_intensity, 1.0f), 0.0f));
+        fog_u.albedo = {std::clamp(finite_or(vf.albedo.r, 1.0f), 0.0f, 1.0f), std::clamp(finite_or(vf.albedo.g, 1.0f), 0.0f, 1.0f),
+                        std::clamp(finite_or(vf.albedo.b, 1.0f), 0.0f, 1.0f), std::clamp(finite_or(vf.anisotropy, 0.0f), -0.95f, 0.95f)};
+        fog_u.height_fog = {std::max(vf.density, 0.0f), std::max(finite_or(vf.height_falloff, 0.0f), 0.0f), finite_or(vf.height, 0.0f),
+                            static_cast<float>(local_lights.size())};
+        fog_u.shadow_params = lighting.shadow_params;
+        fog_u.cascade_params = lighting.cascade_params;
+        fog_u.cascade_splits = lighting.cascade_splits;
+        fog_u.cluster_grid = lighting.cluster_grid;
+        fog_u.cluster_depth = lighting.cluster_depth;
+        fog_u.local_shadow = lighting.local_shadow;
+        // Fog volumes inside the view frustum, nearest first.
+        std::vector<std::pair<float, const FogVolume*>> vols;
+        {
+            static const Aabb kUnit{{-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}};
+            for (const FogVolume& v : fog_volumes_) {
+                const Aabb world = kUnit.transformed(v.transform);
+                if (!world.valid() || !frustum.intersects(world)) continue;
+                vols.emplace_back(length(world.center() - camera_.position), &v);
+            }
+            std::stable_sort(vols.begin(), vols.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        }
+        std::uint32_t nvol = 0;
+        for (const auto& [dist, v] : vols) {
+            if (nvol == kMaxFogVolumes) break;
+            const Mat4 inv = inverse(v->transform);
+            bool ok = true;
+            for (int c = 0; c < 4; ++c)
+                for (int r = 0; r < 3; ++r) ok = ok && std::isfinite(inv[c][r]);
+            if (!ok) continue;
+            Vec4* out = &fog_u.volumes[nvol * 5];
+            for (int r = 0; r < 3; ++r) out[r] = {inv[0][r], inv[1][r], inv[2][r], inv[3][r]};
+            out[3] = {std::clamp(finite_or(v->albedo.r, 1.0f), 0.0f, 1.0f), std::clamp(finite_or(v->albedo.g, 1.0f), 0.0f, 1.0f),
+                      std::clamp(finite_or(v->albedo.b, 1.0f), 0.0f, 1.0f), v->density};
+            out[4] = {std::clamp(finite_or(v->edge_fade, 0.1f), 0.0f, 0.5f), 0.0f, 0.0f, 0.0f};
+            ++nvol;
+        }
+        fog_u.grid = {static_cast<float>(fog_dims[0]), static_cast<float>(fog_dims[1]), static_cast<float>(fog_dims[2]),
+                      static_cast<float>(nvol)};
+        fog_apply_u.proj = {proj[3].z, proj[2].z, 0.0f, 0.0f};
+        fog_apply_u.screen = inv_size(rw, rh);
+        fog_apply_u.grid = {fog_u.grid.x, fog_u.grid.y, fog_u.grid.z, fog_far};
+        stats_.volumetric_fog = true;
+        stats_.fog_froxels_x = fog_dims[0];
+        stats_.fog_froxels_y = fog_dims[1];
+        stats_.fog_slices = fog_dims[2];
+        stats_.fog_volumes = nvol;
+    }
+
     RenderGraph graph;
     rhi::TextureDesc target_desc;
     target_desc.name = "scene_target";
@@ -2212,7 +2358,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
     depth_desc.usage = rhi::TextureUsageDepthTarget |
-                       ((ssao || taa || occlusion || !particle_draws.empty() || !gpu_jobs.empty() || !decal_draws.empty() || !water_draws.empty())
+                       ((ssao || taa || occlusion || fog || !particle_draws.empty() || !gpu_jobs.empty() || !decal_draws.empty() || !water_draws.empty())
                             ? rhi::TextureUsageSampled
                             : 0u);
     const RGTexture depth = graph.create_texture("scene_depth", depth_desc);
@@ -2608,6 +2754,55 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 b.write_depth(depth, rhi::LoadOp::Load, 1.0f);
             },
             [&](PassContext& ctx) { forward_body(ctx, false, true); });
+    }
+
+    if (fog) {
+        const auto* pfog = &fog_u;
+        graph.add_pass(
+            "fog_inject",
+            [&](PassBuilder& b) {
+                if (shadow_map.valid()) b.read(shadow_map);
+                if (local_shadow_map.valid()) b.read(local_shadow_map);
+                b.no_raster();
+                b.side_effect();
+            },
+            [&, pfog](PassContext& ctx) {
+                const rhi::BufferHandle inject_rw[] = {fog_froxels_[fog_cur]};
+                rhi::ComputePass cp = ctx.cmd.begin_compute_pass(inject_rw);
+                if (!cp.active()) return;
+                cp.bind_pipeline(fog_inject_);
+                cp.bind_texture(0, shadow_map.valid() ? ctx.texture(shadow_map) : no_shadow_, ctx_.shadow_compare());
+                cp.bind_texture(1, local_shadow_map.valid() ? ctx.texture(local_shadow_map) : no_shadow_, ctx_.shadow_compare());
+                cp.bind_storage_buffer(0, light_buffer_);
+                cp.bind_storage_buffer(1, cluster_buffer_);
+                cp.bind_storage_buffer(2, fog_froxels_[fog_prev]);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Compute, 0, *pfog);
+                cp.dispatch((fog_dims[0] + 3) / 4, (fog_dims[1] + 3) / 4, (fog_dims[2] + 3) / 4);
+                cp.end();
+                const rhi::BufferHandle integrate_rw[] = {fog_integrated_};
+                rhi::ComputePass ip = ctx.cmd.begin_compute_pass(integrate_rw);
+                if (!ip.active()) return;
+                ip.bind_pipeline(fog_integrate_);
+                ip.bind_storage_buffer(0, fog_froxels_[fog_cur]);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Compute, 0, *pfog);
+                ip.dispatch((fog_dims[0] + 7) / 8, (fog_dims[1] + 7) / 8);
+                ip.end();
+            });
+        auto apply_pl = post_pipeline("fog_apply.frag", hdr_format_, rhi::BlendMode::PremultipliedAlpha);
+        if (!apply_pl) return std::move(apply_pl).error();
+        graph.add_pass(
+            "fog_apply",
+            [&](PassBuilder& b) {
+                b.read(depth);
+                b.write_color(hdr, rhi::LoadOp::Load);
+            },
+            [&, pl = apply_pl.value()](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, fog_apply_u);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(depth), ctx_.nearest_clamp());
+                ctx.pass->bind_storage_buffer(rhi::ShaderStage::Fragment, 0, fog_integrated_);
+                ctx.pass->draw(3);
+            });
     }
 
     if (!gpu_jobs.empty()) {
@@ -3038,6 +3233,18 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         history_valid_ = true;
         prev_view_proj_ = view_proj_unjittered;
         ++frame_index_;
+    }
+    if (fog) {
+        fog_index_ ^= 1u;
+        fog_history_valid_ = true;
+        fog_prev_view_proj_ = view_proj_unjittered;
+        fog_prev_position_ = camera_.position;
+        fog_prev_forward_ = camera_.forward();
+        fog_dims_ = fog_dims;
+        fog_far_ = fog_far;
+        ++fog_frame_;
+    } else {
+        fog_history_valid_ = false;
     }
     motion_prev_.swap(motion_next_);
     motion_joints_.swap(motion_joints_next_);

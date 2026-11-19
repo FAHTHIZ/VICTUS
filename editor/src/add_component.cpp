@@ -44,6 +44,7 @@ constexpr Blurb kBlurbs[] = {
     {"Collider2D", "A 2D shape that things bump into or pass through as a trigger"},
     {"Decal", "Projects a texture onto surfaces, like a sticker"},
     {"Environment", "Sky, ambient light, fog and screen effects for the scene"},
+    {"FogVolume", "A box of extra volumetric fog, like mist in a valley"},
     {"IKConstraint", "Points a limb or head at a target, e.g. feet on the ground"},
     {"IrradianceVolume", "Soft bounced light for an area"},
     {"Joint", "Links two physics bodies with a hinge, spring or fixed joint"},

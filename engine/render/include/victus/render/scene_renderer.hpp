@@ -246,6 +246,35 @@ struct ReflectionProbe {
 };
 inline constexpr std::size_t kMaxReflectionProbes = 64;
 
+// Volumetric fog (ADR-0098): participating media in a camera-aligned froxel grid (Wronski 2014,
+// Hillaire 2015). Every froxel takes exponential height fog plus the fog volumes covering it, is lit
+// by the sun (with cascade shadows, Henyey-Greenstein phase), the ambient sky and the clustered
+// local lights (with their shadows), is blended with its reprojected previous value, and the grid
+// is integrated front to back; the result scatters light into and attenuates the opaque scene up
+// to `distance` metres. Needs compute and RenderSettings::volumetric_fog (off on Low).
+struct VolumetricFog {
+    bool enabled{false};
+    float density{0.02f};          // extinction per metre at and below `height`
+    float height{0.0f};            // world height where the height falloff starts
+    float height_falloff{0.1f};    // per metre above `height` (0 = uniform fog)
+    math::Color albedo{1, 1, 1, 1}; // scattering / extinction (linear rgb)
+    float anisotropy{0.6f};        // Henyey-Greenstein g: 0 isotropic .. 0.95 strongly forward
+    float distance{80.0f};         // metres of view depth covered by the froxel grid (8..1000)
+    float sun_intensity{1.0f};     // multipliers of the light sources scattered by the fog
+    float ambient_intensity{1.0f};
+    float local_light_intensity{1.0f};
+    float temporal{0.9f};          // weight of the reprojected history (0 = none, deterministic)
+};
+
+// A box of extra fog for this frame: `transform` maps the unit cube [-0.5, 0.5]^3 to the world.
+struct FogVolume {
+    math::Mat4 transform{math::Mat4::identity()};
+    float density{0.1f};            // extinction per metre added inside
+    math::Color albedo{1, 1, 1, 1};
+    float edge_fade{0.1f};          // fade-in width as a fraction of the box size (0 hard .. 0.5)
+};
+inline constexpr std::size_t kMaxFogVolumes = 8;
+
 struct Environment {
     math::Color sky_zenith{0.18f, 0.36f, 0.75f, 1};
     math::Color sky_horizon{0.62f, 0.72f, 0.85f, 1};
@@ -308,6 +337,7 @@ struct Environment {
     float environment_intensity{1.0f};
     float environment_rotation{0.0f}; // radians about +Y
     float sky_blur{0.0f};             // background blur 0 (sharp) .. 1 (fully rough mip)
+    VolumetricFog volumetric_fog{};
 };
 
 // Scalability tiers. Low targets entry-level phones, Medium mid-range phones/tablets, High
@@ -400,6 +430,12 @@ struct RenderSettings {
     // counts. Depth complexity, not shaded fragments: the depth pre-pass and early-z reject many of
     // these layers in the normal image.
     DebugView debug_view{DebugView::None};
+    // Volumetric fog (ADR-0098; scenes enable it through Environment::volumetric_fog): froxel tile
+    // size in render pixels (4..64; the grid is capped at 160x90) and depth slices (16..128).
+    // Low: off. Medium 16 px / 48 slices, High 16 / 64, Ultra 8 / 96.
+    bool volumetric_fog{true};
+    std::uint32_t volumetric_fog_tile{16};
+    std::uint32_t volumetric_fog_slices{64};
 
     [[nodiscard]] static RenderSettings preset(QualityTier tier) noexcept;
     // Clamps every field into its supported range.
@@ -465,6 +501,9 @@ struct SceneStats {
     std::uint32_t occlusion_tested{0}, occlusion_batches{0};
     // Object motion vectors: moving instances drawn into the motion buffer / their batches.
     std::uint32_t motion_draws{0}, motion_batches{0};
+    // Volumetric fog this frame: grid size (0 when off) and fog volumes used.
+    bool volumetric_fog{false};
+    std::uint32_t fog_froxels_x{0}, fog_froxels_y{0}, fog_slices{0}, fog_volumes{0};
 };
 
 struct SceneRendererOptions {
@@ -502,6 +541,7 @@ public:
     void reset_history() noexcept {
         history_valid_ = false;
         lod_history_valid_ = false;
+        fog_history_valid_ = false;
     }
 
     void begin(const Camera3D& camera, const DirectionalLight& sun, const Environment& env);
@@ -548,6 +588,9 @@ public:
     void add_decal(const Decal& decal);
     // Water surface for this frame (see WaterSurface). At most kMaxWaterSurfaces (nearest first).
     void add_water(const WaterSurface& water);
+    // Fog volume for this frame (see FogVolume), used while the environment's volumetric fog is on.
+    // At most kMaxFogVolumes (nearest first).
+    void add_fog_volume(const FogVolume& volume);
     // Irradiance volume (ADR-0056) for this frame: lit surfaces inside its box take diffuse
     // ambient light from its probes (offset `normal_offset` metres along the normal) instead of the
     // environment or reflection probe SH. One volume per frame; cleared by begin(). The volume must
@@ -727,6 +770,21 @@ private:
     rhi::ComputePipelineHandle particle_sim_{};
     bool particle_sim_failed_{false};
     std::uint64_t gpu_particle_frame_{0}; // render() calls (state garbage collection)
+    // Volumetric fog: compute pipelines (created on first use), injected froxels (ping-pong:
+    // this frame / history) and the integrated grid, plus what the history was rendered with.
+    [[nodiscard]] bool ensure_fog_pipelines();
+    std::vector<FogVolume> fog_volumes_;
+    rhi::ComputePipelineHandle fog_inject_{}, fog_integrate_{};
+    bool fog_failed_{false};
+    rhi::BufferHandle fog_froxels_[2]{}, fog_integrated_{};
+    std::uint32_t fog_froxel_capacity_[2]{}, fog_integrated_capacity_{0};
+    std::uint32_t fog_index_{0};
+    std::array<std::uint32_t, 3> fog_dims_{};
+    float fog_far_{0.0f};
+    bool fog_history_valid_{false};
+    math::Mat4 fog_prev_view_proj_{math::Mat4::identity()};
+    math::Vec3 fog_prev_position_{}, fog_prev_forward_{0, 0, -1};
+    std::uint64_t fog_frame_{0};
     std::array<math::Mat4, 4> cascade_vp_{math::Mat4::identity(), math::Mat4::identity(), math::Mat4::identity(),
                                           math::Mat4::identity()};
     std::array<float, 4> cascade_splits_{};

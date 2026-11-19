@@ -1036,6 +1036,19 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     env.environment_intensity = std::isfinite(e.environment_intensity) ? std::max(e.environment_intensity, 0.0f) : 1.0f;
     env.environment_rotation = std::isfinite(e.environment_rotation) ? math::radians(e.environment_rotation) : 0.0f;
     env.sky_blur = std::isfinite(e.sky_blur) ? std::clamp(e.sky_blur, 0.0f, 1.0f) : 0.0f;
+    const auto fin = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+    render::VolumetricFog& vf = env.volumetric_fog;
+    vf.enabled = e.volumetric_fog;
+    vf.density = std::max(fin(e.volumetric_density, 0.0f), 0.0f);
+    vf.height = fin(e.volumetric_height, 0.0f);
+    vf.height_falloff = std::max(fin(e.volumetric_falloff, 0.0f), 0.0f);
+    vf.albedo = e.volumetric_albedo;
+    vf.anisotropy = std::clamp(fin(e.volumetric_anisotropy, 0.0f), -0.95f, 0.95f);
+    vf.distance = std::clamp(fin(e.volumetric_distance, 80.0f), 8.0f, 1000.0f);
+    vf.sun_intensity = std::max(fin(e.volumetric_sun, 1.0f), 0.0f);
+    vf.ambient_intensity = std::max(fin(e.volumetric_ambient, 1.0f), 0.0f);
+    vf.local_light_intensity = std::max(fin(e.volumetric_local_lights, 1.0f), 0.0f);
+    vf.temporal = std::clamp(fin(e.volumetric_temporal, 0.9f), 0.0f, 0.98f);
 }
 static_assert(static_cast<int>(gameplay::EnvironmentComponent::Fog::ExponentialSquared) ==
               static_cast<int>(render::FogMode::ExponentialSquared));
@@ -1396,6 +1409,20 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         renderer.add_decal(decal);
         ++stats.decals;
     });
+
+    // Fog volumes (ADR-0098): only while the environment has volumetric fog on.
+    if (env.volumetric_fog.enabled)
+        w.each<gameplay::FogVolumeComponent, WorldTransform>([&](const gameplay::FogVolumeComponent& f, const WorldTransform& wt) {
+            if (!f.visible || !(f.density > 0.0f)) return;
+            render::FogVolume fv;
+            const math::Vec3 size{std::max(f.size.x, 0.001f), std::max(f.size.y, 0.001f), std::max(f.size.z, 0.001f)};
+            fv.transform = wt.matrix * math::Mat4::scale(size);
+            fv.density = f.density;
+            fv.albedo = f.albedo;
+            fv.edge_fade = f.edge_fade;
+            renderer.add_fog_volume(fv);
+            ++stats.fog_volumes;
+        });
 
     // Water volumes (ADR-0095): the gameplay wave set at the simulated water time, so buoyancy
     // matches; outside play (water time 0) the editor preview animates on wall-clock time.
