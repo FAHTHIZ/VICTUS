@@ -319,6 +319,9 @@ struct EnvironmentComponent {
     float precipitation_opacity{0.0f};      // 0 = automatic
     float precipitation_brightness{1.0f};
     float wetness{0.0f};                    // 0 dry .. 1 soaked surfaces
+    float puddles{0.0f};                    // 0 none .. 1 all flat ground under water (ADR-0117)
+    float puddle_size{3.0f};                // metres across
+    float precipitation_ripples{1.0f};      // rain ripple strength 0..1
 };
 
 // Box of extra volumetric fog centred on the entity (ADR-0098), size scaled by the entity's

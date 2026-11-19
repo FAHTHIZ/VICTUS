@@ -123,6 +123,7 @@ struct LightingUniforms {
     Vec4 cloud_layer, cloud_shadow, cloud_wind; // cloud shadows (ADR-0112)
     Vec4 weather; // x surface wetness (ADR-0113), y rain occlusion on, z its depth bias (ADR-0114)
     Mat4 rain_vp; // world -> rain occlusion map (ADR-0114)
+    Vec4 puddles; // x 1 / puddle size, y ripple strength, z 1 / ripple cell, w ripples per second (ADR-0117)
 };
 struct MaterialUniforms {
     Vec4 base_color;
@@ -223,7 +224,7 @@ struct TaaUpscaleUniforms {
     Mat4 reproject;
     Vec4 params, screen, jitter, output;
 };
-static_assert(sizeof(LightingUniforms) == 36 * 16 + 64 * 5);
+static_assert(sizeof(LightingUniforms) == 37 * 16 + 64 * 5);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 
@@ -2678,6 +2679,17 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const Precipitation& pr = env_.precipitation;
     const auto fin = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
     const float precip_intensity = std::clamp(fin(pr.intensity, 0.0f), 0.0f, 1.0f);
+    // Puddles and rain ripples (ADR-0117). Ripples follow drawn rain (not snow, not probe captures).
+    {
+        const float puddles = std::clamp(fin(env_.puddles, 0.0f), 0.0f, 1.0f);
+        const float ripples = pr.type == PrecipitationType::Rain && S.precipitation && S.max_precipitation > 0 && !capture_mode_
+                                  ? precip_intensity * std::clamp(fin(pr.ripples, 0.0f), 0.0f, 1.0f)
+                                  : 0.0f;
+        lighting.weather.w = puddles;
+        lighting.puddles = {1.0f / std::clamp(fin(env_.puddle_size, 3.0f), 0.25f, 100.0f), ripples, 1.0f / 0.35f, 1.3f};
+        stats_.surface_puddles = puddles > 0.0f;
+        stats_.rain_ripples = ripples > 0.0f;
+    }
     const bool snow = pr.type == PrecipitationType::Snow;
     facts_.precipitation_requested = pr.type != PrecipitationType::None && precip_intensity > 0.0f;
     struct PrecipitationFragmentUniforms {

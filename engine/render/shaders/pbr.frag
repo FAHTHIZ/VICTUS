@@ -71,8 +71,9 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 cloud_layer;    // volumetric clouds (ADR-0112): x bottom, y top, z coverage, w extinction per metre
     vec4 cloud_shadow;   // x 1 / shape size, y shadow strength, z enabled
     vec4 cloud_wind;     // xyz shape offset (metres)
-    vec4 weather;        // x surface wetness 0..1 (ADR-0113), y rain occlusion on, z its depth bias (ADR-0114)
+    vec4 weather;        // x surface wetness 0..1 (ADR-0113), y rain occlusion on, z its depth bias (ADR-0114), w puddle amount (ADR-0117)
     mat4 rain_vp;        // world -> rain occlusion map
+    vec4 puddles;        // x 1 / puddle size (m), y ripple strength, z 1 / ripple cell size (m), w ripples per second
 } lighting;
 layout(set = 3, binding = 1) uniform Material {
     vec4 base_color;
@@ -281,6 +282,38 @@ float cloud_hash(vec3 p) {
     p += dot(p, p.zyx + 31.32);
     return fract((p.x + p.y) * p.z);
 }
+// Puddles and rain ripples (ADR-0117). 2D value noise for where water collects, and the slope of
+// expanding rings dropped at random times in a grid of cells (each cell holds one ring at a time).
+float hash12(vec2 p) {
+    vec3 q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+}
+float puddle_noise(vec2 x) {
+    vec2 i = floor(x), f = x - i;
+    vec2 w = f * f * (3.0 - 2.0 * f);
+    float a = hash12(i), b = hash12(i + vec2(1, 0)), c = hash12(i + vec2(0, 1)), d = hash12(i + vec2(1, 1));
+    return mix(mix(a, b, w.x), mix(c, d, w.x), w.y);
+}
+vec2 ripple_slope(vec2 p, float t) {
+    vec2 cell = floor(p);
+    vec2 slope = vec2(0.0);
+    for (int j = -1; j <= 1; ++j)
+        for (int i = -1; i <= 1; ++i) {
+            vec2 id = cell + vec2(i, j);
+            vec2 centre = id + 0.2 + 0.6 * vec2(hash12(id), hash12(id + 17.31));
+            float phase = fract(t + hash12(id + 5.7));
+            vec2 d = p - centre;
+            float dist = length(d);
+            float x = (dist - phase * 0.9) / 0.12; // ring radius grows to 0.9 cells, 0.12 cells wide
+            if (abs(x) < 1.0 && dist > 1e-4) {
+                float fade = (1.0 - phase) * (1.0 - phase);
+                slope += (d / dist) * (cos(x * 3.14159265) * (1.0 - x * x) * fade);
+            }
+        }
+    return slope;
+}
+
 float cloud_noise(vec3 x) {
     vec3 i = floor(x);
     vec3 f = x - i;
@@ -390,12 +423,41 @@ void main() {
     // darken towards 0.2x albedo and get glossier; on faces that point up a water film makes any
     // surface smoother. Applied before the coverage layer, which settles on top.
     float wet = lighting.weather.x;
-    if (wet > 0.0 && lighting.weather.y > 0.5) { // sheltered from the rain: stays dry
+    float puddle_amount = lighting.weather.w, ripple = lighting.puddles.y;
+    if ((wet > 0.0 || puddle_amount > 0.0 || ripple > 0.0) && lighting.weather.y > 0.5) { // sheltered from the rain: stays dry
         vec4 r4 = lighting.rain_vp * vec4(v_world_pos + geometric_n * 0.05, 1.0);
         vec3 r = r4.xyz / r4.w;
         vec2 ruv = r.xy * vec2(0.5, -0.5) + 0.5;
-        if (all(greaterThanEqual(ruv, vec2(0.0))) && all(lessThanEqual(ruv, vec2(1.0))) && r.z <= 1.0)
-            wet *= texture(u_rain_occlusion, vec3(ruv, r.z - lighting.weather.z));
+        if (all(greaterThanEqual(ruv, vec2(0.0))) && all(lessThanEqual(ruv, vec2(1.0))) && r.z <= 1.0) {
+            float exposed = texture(u_rain_occlusion, vec3(ruv, r.z - lighting.weather.z));
+            wet *= exposed;
+            puddle_amount *= exposed;
+            ripple *= exposed;
+        }
+    }
+    // Puddles collect on flat, upward faces where the noise is above a threshold set by the amount;
+    // inside them the surface is fully wet with a flat, mirror-smooth water top.
+    float flat_up = clamp((geometric_n.y - 0.85) / 0.1, 0.0, 1.0);
+    float puddle = 0.0;
+    if (puddle_amount > 0.0 && flat_up > 0.0) {
+        vec2 q = v_world_pos.xz * lighting.puddles.x;
+        float n = 0.65 * puddle_noise(q) + 0.35 * puddle_noise(q * 2.7 + 13.1);
+        float threshold = 1.0 - puddle_amount;
+        puddle = smoothstep(threshold - 0.04, threshold + 0.04, n) * flat_up;
+        wet = max(wet, puddle);
+    }
+    if (puddle > 0.0) N = normalize(mix(N, geometric_n, puddle));
+    // Rain ripples on puddles (full strength) and, weaker, on the wet film of other flat faces.
+    // They fade out where a pixel covers more than about a third of a ripple cell (no sparkle);
+    // the derivative is taken in uniform control flow.
+    vec2 rp = v_world_pos.xz * lighting.puddles.z;
+    float footprint = length(fwidth(rp));
+    if (ripple > 0.0 && flat_up > 0.0) {
+        float k = ripple * flat_up * mix(0.25 * wet, 1.0, puddle) * clamp(2.0 - footprint * 3.0, 0.0, 1.0);
+        if (k > 0.0) {
+            vec2 g = ripple_slope(rp, lighting.screen.z * lighting.puddles.w);
+            N = normalize(N - vec3(g.x, 0.0, g.y) * (0.6 * k));
+        }
     }
     if (wet > 0.0) {
         float porosity = clamp((roughness - 0.2) / 0.6, 0.0, 1.0) * (1.0 - metallic);
@@ -404,6 +466,7 @@ void main() {
         roughness *= mix(1.0, factor, 0.5 * wet);
         float up = clamp(N.y, 0.0, 1.0);
         roughness = clamp(mix(roughness, min(roughness, 0.08), wet * up * up), 0.045, 1.0);
+        roughness = mix(roughness, 0.045, puddle); // standing water
     }
 
     // Coverage layer: settles on faces that point up, scaled by the scene amount, the material's

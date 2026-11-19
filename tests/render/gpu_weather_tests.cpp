@@ -329,6 +329,97 @@ TEST_CASE("gpu weather: a roof stops drops and keeps the ground beneath it dry")
     CHECK(w_leaky.mean(0, H / 2, W / 4, H) + 15.0 < d.mean(0, H / 2, W / 4, H));
 }
 
+namespace {
+// Rough ground lit by a sun and a sky that is bright above and dark at the horizon, so a smoother
+// or tilted surface reflects visibly different light. A wall stands at the back.
+Environment puddle_env(PrecipitationType type = PrecipitationType::None) {
+    Environment env = weather_env(type);
+    env.sky_zenith = {1, 1, 1, 1};
+    env.sky_horizon = {0.08f, 0.08f, 0.08f, 1};
+    env.ground = {0.02f, 0.02f, 0.02f, 1};
+    env.ambient_intensity = 0.6f;
+    env.precipitation.opacity = 1e-4f; // drops are discarded: only the surfaces show
+    return env;
+}
+} // namespace
+
+TEST_CASE("gpu weather: puddles collect on flat ground and rain ripples them") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    GpuMesh cube = ctx.create_mesh(make_cube(), "puddle_ground").value();
+    Material rough;
+    rough.base_color = {0.5f, 0.45f, 0.4f, 1};
+    rough.roughness = 0.9f;
+    // Ground below, a wall across the top of the view.
+    auto scene = [&](SceneRenderer& rr) {
+        rr.submit(cube, rough, math::Mat4::trs({0, -1, 0}, {}, {100, 1, 100}));
+        rr.submit(cube, rough, math::Mat4::trs({0, 5, -8}, {}, {100, 10, 1}));
+    };
+    Camera3D cam = Camera3D::look_at({0, 3, 4}, {0, 0.5f, -4});
+    cam.z_far = 200.0f;
+    const auto changed = [&](const Shot& a, const Shot& b, std::uint32_t y0, std::uint32_t y1, int by) {
+        int n = 0;
+        for (std::uint32_t y = y0; y < y1; ++y)
+            for (std::uint32_t x = 0; x < W; ++x) n += std::abs(channel(a.at(x, y), 1) - channel(b.at(x, y), 1)) > by ? 1 : 0;
+        return n;
+    };
+    const std::uint32_t ground_y0 = H * 2 / 3, wall_y1 = H / 6;
+    const int ground_px = static_cast<int>(W * (H - ground_y0));
+    const Shot dry = shoot(r, puddle_env(), scene, "weather_puddles_dry", weather_settings(), cam);
+    CHECK_FALSE(dry.stats.surface_puddles);
+    Environment some = puddle_env();
+    some.puddles = 0.5f;
+    const Shot half = shoot(r, some, scene, "weather_puddles", weather_settings(), cam);
+    CHECK(half.stats.surface_puddles);
+    CHECK_FALSE(half.stats.rain_ripples);
+    const int half_changed = changed(dry, half, ground_y0, H, 8);
+    CHECK(half_changed > ground_px / 10);
+    CHECK(half_changed < ground_px * 9 / 10);
+    CHECK(changed(dry, half, 0, wall_y1, 1) == 0); // walls hold no water
+    Environment all = puddle_env();
+    all.puddles = 1.0f;
+    const Shot full = shoot(r, all, scene, nullptr, weather_settings(), cam);
+    CHECK(changed(dry, full, ground_y0, H, 8) > half_changed);
+    // Puddle size changes where they are.
+    Environment small = some;
+    small.puddle_size = 1.0f;
+    CHECK(changed(half, shoot(r, small, scene, nullptr, weather_settings(), cam), ground_y0, H, 8) > ground_px / 20);
+
+    // Rain animates ripples on the water; frames at the same time match. A low sun ahead puts a
+    // glint on the water that the ripples break up.
+    Camera3D close = Camera3D::look_at({0, 1.5f, 1}, {0, 0, -1.5f});
+    close.z_far = 200.0f;
+    DirectionalLight glint = sun_light(6.0f);
+    glint.direction = math::normalize(math::Vec3{0, -0.35f, 1});
+    Environment rain = puddle_env(PrecipitationType::Rain);
+    rain.puddles = 1.0f;
+    const Shot r1 = shoot(r, rain, scene, "weather_ripples", weather_settings(), close, 1.0, glint);
+    const Shot r1b = shoot(r, rain, scene, nullptr, weather_settings(), close, 1.0, glint);
+    const Shot r2 = shoot(r, rain, scene, nullptr, weather_settings(), close, 1.3, glint);
+    CHECK(r1.stats.rain_ripples);
+    CHECK(r1.diff(r1b) == 0);
+    CHECK(changed(r1, r2, 0, H, 4) > static_cast<int>(W * H / 100));
+    Environment still = rain;
+    still.precipitation.ripples = 0.0f;
+    CHECK(changed(r1, shoot(r, still, scene, nullptr, weather_settings(), close, 1.0, glint), 0, H, 4) > static_cast<int>(W * H / 100));
+    // Snow, ripples set to 0 and the precipitation setting off all leave the water still.
+    Environment snow = puddle_env(PrecipitationType::Snow);
+    snow.puddles = 1.0f;
+    const Shot s1 = shoot(r, snow, scene, nullptr, weather_settings(), close, 1.0, glint);
+    CHECK_FALSE(s1.stats.rain_ripples);
+    CHECK(changed(s1, shoot(r, snow, scene, nullptr, weather_settings(), close, 1.3, glint), 0, H, 0) == 0);
+    const Environment& calm = still;
+    const Shot c1 = shoot(r, calm, scene, nullptr, weather_settings(), close, 1.0, glint);
+    CHECK_FALSE(c1.stats.rain_ripples);
+    CHECK(changed(c1, shoot(r, calm, scene, nullptr, weather_settings(), close, 1.3, glint), 0, H, 0) == 0);
+    RenderSettings no_rain = weather_settings();
+    no_rain.precipitation = false;
+    CHECK_FALSE(shoot(r, rain, scene, nullptr, no_rain, close, 1.0, glint).stats.rain_ripples);
+}
+
 TEST_CASE("weather: presets, sanitising and Environment component mapping") {
     CHECK(RenderSettings::preset(QualityTier::Low).max_precipitation == 2048);
     CHECK(RenderSettings::preset(QualityTier::Medium).max_precipitation == 8192);
@@ -370,6 +461,16 @@ TEST_CASE("weather: presets, sanitising and Environment component mapping") {
     CHECK(env.precipitation.fall_speed == 2.5f);
     CHECK(env.precipitation.brightness == 0.0f);
     CHECK(env.wetness == doctest::Approx(0.4f));
+    CHECK(env.puddles == 0.0f);
+    CHECK(env.puddle_size == 3.0f);
+    CHECK(env.precipitation.ripples == 1.0f);
+    ec.puddles = 0.3f;
+    ec.puddle_size = 0.01f;            // at least 0.25 m
+    ec.precipitation_ripples = 2.0f;   // clamped
+    runtime::apply_environment(ec, env, sun);
+    CHECK(env.puddles == doctest::Approx(0.3f));
+    CHECK(env.puddle_size == 0.25f);
+    CHECK(env.precipitation.ripples == 1.0f);
     ec.precipitation = gameplay::EnvironmentComponent::Precipitation::Rain;
     ec.wetness = 7.0f;
     runtime::apply_environment(ec, env, sun);

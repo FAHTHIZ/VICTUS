@@ -1075,6 +1075,9 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     pr.opacity = std::clamp(fin(e.precipitation_opacity, 0.0f), 0.0f, 1.0f);
     pr.brightness = std::max(fin(e.precipitation_brightness, 1.0f), 0.0f);
     env.wetness = std::clamp(fin(e.wetness, 0.0f), 0.0f, 1.0f);
+    env.puddles = std::clamp(fin(e.puddles, 0.0f), 0.0f, 1.0f);
+    env.puddle_size = std::clamp(fin(e.puddle_size, 3.0f), 0.25f, 100.0f);
+    pr.ripples = std::clamp(fin(e.precipitation_ripples, 1.0f), 0.0f, 1.0f);
 }
 static_assert(static_cast<int>(gameplay::EnvironmentComponent::Precipitation::Snow) == static_cast<int>(render::PrecipitationType::Snow));
 static_assert(static_cast<int>(gameplay::EnvironmentComponent::Fog::ExponentialSquared) ==

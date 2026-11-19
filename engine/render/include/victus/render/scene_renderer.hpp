@@ -321,6 +321,7 @@ struct Precipitation {
     math::Color color{1, 1, 1, 1};  // tint (linear); lit by the sky ambient and the sun
     float opacity{0.0f};            // 0 = 0.35 rain, 0.9 snow
     float brightness{1.0f};         // light multiplier
+    float ripples{1.0f};            // rain ripples on puddles and wet flat ground (ADR-0117), 0..1 x intensity
 };
 
 struct Environment {
@@ -391,6 +392,10 @@ struct Environment {
     // Wet surfaces (ADR-0113): 0 dry .. 1 soaked. Lit opaque and blended surfaces darken where
     // they are rough and porous and get smoother (Lagarde 2013); metals only get smoother.
     float wetness{0.0f};
+    // Puddles (ADR-0117): 0 none .. 1 every flat, upward face under water. Patches of standing
+    // water about `puddle_size` metres across, fully wet and mirror smooth; rain ripples them.
+    float puddles{0.0f};
+    float puddle_size{3.0f};
 };
 
 // Scalability tiers. Low targets entry-level phones, Medium mid-range phones/tablets, High
@@ -594,6 +599,8 @@ struct SceneStats {
     bool surface_wetness{false};       // lit surfaces were shaded wet
     std::uint32_t precipitation_occlusion{0}; // rain occlusion map size (0 when off, ADR-0114)
     std::uint32_t precipitation_occluders{0}; // opaque draws rendered into it
+    bool surface_puddles{false};       // flat surfaces may hold puddles (ADR-0117)
+    bool rain_ripples{false};          // rain ripples animated on wet flat surfaces
 };
 
 struct SceneRendererOptions {
