@@ -16,6 +16,8 @@ Two agent sessions push to `main` at the same time. To avoid duplicate work (cra
 - **Engine-features session (2026-11-18, 3rd):** physics breadth in `engine/physics` (convex-hull/triangle-mesh colliders, then 2D polygon/chain colliders), then 6l save reliability and 6k audio items not claimed above, plus particle/VFX depth in `engine/particles` (flipbooks, streaks, trails, collision); from 2026-11-19, in the order of docs/audits/GAP_RANKING_2026-11-19.md: 6g V.A.U.L.T. (new `engine/runtime` resource manager), 6h world streaming, 6f A.R.C. ragdolls, 6j destruction. Touches `editor/` only for one-line hooks.
 - **Backend engine session:** animation depth in `engine/animation` (IK, layers and bone masks, additive, retargeting, morph targets), then the plugin/module SDK research, ADR and `engine/plugin`, then 6d Workstream G runtime gaps. It does not edit `editor/` beyond one-line integration hooks.
 
+- **Studio / front-end session (2026-11-19, resumed):** `editor/` only: 6c remaining slices (Getting Started checklist, UI scale and larger readable defaults, Help panel, project settings, undo history), then an editor ragdoll wizard and a Ragdoll Lab scene that puts A.R.C. ragdolls on the real Vanguard V-01/V-02 bodies (editor/templates side only; `engine/physics` stays with the engine-features session).
+
 Claim an area by editing this list in the same commit as the first change to it.
 
 ## Next priorities (updated 2026-11-18)
