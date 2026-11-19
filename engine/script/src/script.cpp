@@ -86,6 +86,7 @@ void open_victus_libs(lua_State* L) {
                                 {"item_count", entity_item_count},
                                 {"items", entity_items},
                                 {"give_item", entity_give_item},
+                                {"water_state", entity_water_state},
                                 {"play_audio", entity_play_audio},
                                 {"stop_audio", entity_stop_audio},
                                 {"pause_audio", entity_pause_audio},
@@ -222,6 +223,8 @@ void open_victus_libs(lua_State* L) {
     register_lib(L, "time", time_fns);
     const luaL_Reg events_fns[] = {{"emit", events_emit}, {nullptr, nullptr}};
     register_lib(L, "events", events_fns);
+    const luaL_Reg water_fns[] = {{"query", water_query}, {"height", water_height}, {nullptr, nullptr}};
+    register_lib(L, "water", water_fns);
     const luaL_Reg log_fns[] = {{"info", log_info}, {"warn", log_warn}, {"error", log_error}, {nullptr, nullptr}};
     register_lib(L, "log", log_fns);
     const luaL_Reg physics_fns[] = {{"available", physics_available},

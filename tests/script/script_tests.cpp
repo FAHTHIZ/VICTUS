@@ -8,6 +8,7 @@
 #include "victus/core/hash.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/gameplay/framework.hpp"
+#include "victus/gameplay/water.hpp"
 #include "victus/gameui/gameui.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/physics/physics.hpp"
@@ -2075,4 +2076,58 @@ return { left = r:timer_left("ping"), tags = #r:tags(), fx = r:effect("burn") ==
     REQUIRE(q.ok());
     CHECK(q.value()["fx"].as_bool());
     CHECK(q.value()["tags"].as_number() >= 2); // Heard.hello + Cooldown.shout
+}
+
+TEST_CASE("script: water queries and floating body state") {
+    TempDir d("victus_script_water");
+    d.write("scripts/float.luau", R"lua(
+local F = {}
+function F:on_event(name, payload, sender)
+    if name == "water_entered" then
+        self.entity.name = "Float:entered:" .. sender.name
+    end
+end
+return F
+)lua");
+    auto host = make_host(d);
+    auto pw = physics::PhysicsWorld::create();
+    REQUIRE(pw.ok());
+    auto& world = *pw.value();
+    gameplay::Simulation sim;
+    gameplay::add_builtin_systems(sim);
+    script::add_script_systems(sim, *host);
+    physics::add_physics_systems(sim, world);
+    Scene s;
+    const Entity pool = s.create("Pool");
+    auto& w = s.world().add<gameplay::WaterComponent>(pool);
+    w.size = {20, 20};
+    w.wave_height = 0;
+    w.current = {0.5f, 0};
+    const Entity box = scripted(s, "Float", "scripts/float.luau");
+    s.world().get<Transform>(box)->position = {0, 1, 0};
+    physics::ColliderComponent bc;
+    bc.size = {1, 1, 1};
+    s.world().add<physics::ColliderComponent>(box, bc);
+    physics::RigidBodyComponent rb;
+    rb.mass = 500;
+    s.world().add<physics::RigidBodyComponent>(box, rb);
+    for (int i = 0; i < 240; ++i) sim.tick(s, 1.0f / 60);
+    CHECK(s.world().get<scene::Name>(box)->value == "Float:entered:Pool");
+    auto q = host->eval(R"lua(
+local q = water.query(vector.create(1, -2, 1))
+local st = scene.find("Float:entered:Pool"):water_state()
+return { surface = q.surface, depth = q.depth, ny = q.normal.y, cx = q.current.x, name = q.water.name,
+         h = water.height(2, 2), none = water.query(vector.create(50, 0, 0)) == nil and water.height(50, 0) == nil,
+         sub = st.submerged, sw = st.water.name }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["surface"].as_number() == doctest::Approx(0.0).epsilon(1e-6).scale(1));
+    CHECK(q.value()["depth"].as_number() == doctest::Approx(2.0));
+    CHECK(q.value()["ny"].as_number() == doctest::Approx(1.0));
+    CHECK(q.value()["cx"].as_number() == doctest::Approx(0.5));
+    CHECK(q.value()["name"].as_string() == "Pool");
+    CHECK(q.value()["h"].as_number() == doctest::Approx(0.0).epsilon(1e-6).scale(1));
+    CHECK(q.value()["none"].as_bool());
+    CHECK(q.value()["sub"].as_number() == doctest::Approx(0.5).epsilon(0.2));
+    CHECK(q.value()["sw"].as_string() == "Pool");
 }

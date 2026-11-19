@@ -9,8 +9,10 @@
 #include "victus/core/log.hpp"
 #include "victus/core/profiler.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/gameplay/water.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <span>
 #include <format>
@@ -1394,6 +1396,40 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         renderer.add_decal(decal);
         ++stats.decals;
     });
+
+    // Water volumes (ADR-0095): the gameplay wave set at the simulated water time, so buoyancy
+    // matches; outside play (water time 0) the editor preview animates on wall-clock time.
+    {
+        const double sim_time = gameplay::water_time(scene);
+        double wt = sim_time;
+        if (wt <= 0.0)
+            wt = std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(), 86400.0);
+        const auto wave_time = static_cast<float>(std::fmod(wt, 3600.0));
+        bool any = false;
+        w.each<gameplay::WaterComponent>([&](Entity, const gameplay::WaterComponent& c) { any = any || c.visible; });
+        if (any) {
+            for (const gameplay::WaterVolume& v : gameplay::water_volumes(scene)) {
+                if (!v.water->visible) continue;
+                render::WaterSurface ws;
+                ws.center = v.center;
+                ws.half_extent = v.half_extent;
+                const gameplay::WaterWaves waves = sim_time > 0.0 ? v.waves : gameplay::water_waves(*v.water, wt);
+                static_assert(gameplay::kWaterWaves == std::tuple_size_v<decltype(ws.waves)>);
+                for (std::size_t i = 0; i < waves.size(); ++i)
+                    ws.waves[i] = {waves[i].direction, waves[i].k, waves[i].amplitude, waves[i].q, waves[i].phase};
+                ws.shallow_color = v.water->shallow_color;
+                ws.deep_color = v.water->deep_color;
+                ws.clarity = v.water->clarity;
+                ws.foam = v.water->foam;
+                ws.refraction = v.water->refraction;
+                ws.roughness = v.water->roughness;
+                ws.resolution = static_cast<std::uint32_t>(std::clamp(v.water->resolution, 16, 512));
+                ws.time = wave_time;
+                renderer.add_water(ws);
+                ++stats.water_surfaces;
+            }
+        }
+    }
 
     std::vector<math::Mat4> palette;
     const auto apply_overrides = [&](Entity entity, render::Material& m) {

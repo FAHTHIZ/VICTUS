@@ -167,6 +167,29 @@ struct Decal {
     bool nearest_filter{false};
 };
 
+// Water surface (ADR-0095): a horizontal grid displaced by up to four Gerstner waves, shaded with
+// Fresnel reflection, depth-based refraction/absorption, sun glint and foam. Drawn after opaque
+// geometry and decals, before blended draws and particles; writes depth so later passes sort
+// against it. Waves use theta = k * dot(direction, xz) - phase (gameplay::WaterWave).
+struct WaterWave {
+    math::Vec2 direction{1, 0};
+    float k{0}, amplitude{0}, q{0}, phase{0};
+};
+struct WaterSurface {
+    math::Vec3 center{};              // rest surface centre (world)
+    math::Vec2 half_extent{25, 25};   // metres along X and Z
+    std::array<WaterWave, 4> waves{};
+    math::Color shallow_color{0.6f, 0.9f, 0.85f, 1};
+    math::Color deep_color{0.01f, 0.09f, 0.13f, 1};
+    float clarity{4.0f};     // metres of visibility
+    float foam{0.6f};
+    float refraction{0.035f};
+    float roughness{0.06f};
+    std::uint32_t resolution{128}; // grid cells per side (16..512)
+    float time{0};                 // seconds; animates ripples and foam
+};
+inline constexpr std::size_t kMaxWaterSurfaces = 16;
+
 enum class Tonemapper : std::uint8_t { None, Aces, Neutral, Reinhard };
 [[nodiscard]] std::string_view tonemapper_name(Tonemapper t) noexcept;
 [[nodiscard]] std::optional<Tonemapper> parse_tonemapper(std::string_view name) noexcept;
@@ -377,6 +400,7 @@ struct SceneStats {
     std::uint32_t alpha_tested_draws{0}, surface_shader_draws{0};
     std::uint64_t transparent_triangles{0};
     std::uint32_t decals{0};           // decals drawn (after frustum culling)
+    std::uint32_t water_surfaces{0};   // water surfaces drawn (after frustum culling)
     std::uint32_t reflection_probes{0}, probe_draws{0}; // probes used / visible draws lit by a probe
     std::uint32_t instances_uploaded{0};
     std::uint32_t skinned_draws{0};    // skinned submissions this frame
@@ -470,6 +494,8 @@ public:
     // Projected decal for this frame (see Decal). At most kMaxDecals per frame (nearest first).
     static constexpr std::uint32_t kMaxDecals = 1024;
     void add_decal(const Decal& decal);
+    // Water surface for this frame (see WaterSurface). At most kMaxWaterSurfaces (nearest first).
+    void add_water(const WaterSurface& water);
     // Irradiance volume (ADR-0056) for this frame: lit surfaces inside its box take diffuse
     // ambient light from its probes (offset `normal_offset` metres along the normal) instead of the
     // environment or reflection probe SH. One volume per frame; cleared by begin(). The volume must
@@ -556,6 +582,7 @@ private:
     rhi::PipelineHandle prepass_cull_, prepass_double_;
     rhi::PipelineHandle particle_alpha_, particle_additive_, ribbon_alpha_, ribbon_additive_;
     std::array<rhi::PipelineHandle, 3> decal_pipelines_{}; // by DecalBlend
+    rhi::PipelineHandle water_pipeline_, water_depth_pipeline_;
     rhi::PipelineHandle skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_;
     // DebugView::Overdraw: [skinned][double_sided] counters and the persistent RGBA8 count target.
     rhi::PipelineHandle overdraw_[2][2]{};
@@ -618,6 +645,7 @@ private:
     std::vector<Draw> draws_;
     std::vector<ReflectionProbe> probes_;
     std::vector<Decal> decals_;
+    std::vector<WaterSurface> waters_;
     const IrradianceVolume* volume_{nullptr};
     float volume_intensity_{1.0f}, volume_normal_offset_{0.0f};
     bool capture_mode_{false};

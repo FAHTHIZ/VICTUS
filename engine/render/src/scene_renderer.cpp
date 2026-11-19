@@ -166,6 +166,17 @@ struct DecalUniforms {
     Mat4 world_to_decal;
     Vec4 color, uv, screen, axis;
 };
+struct WaterFrameUniforms {
+    Mat4 view_proj;
+    Vec4 center, extent;
+    Vec4 wave_a[4], wave_b[4];
+};
+struct WaterUniforms {
+    Mat4 inv_view_proj;
+    Vec4 camera, sun_dir, sun_color, shallow, deep, params, env, sky, horizon, ground, screen, fog_color, fog_params;
+    Vec4 wave_a[4], wave_b[4];
+};
+static_assert(sizeof(WaterUniforms) == 64 + 21 * 16);
 struct BloomDownUniforms {
     Vec4 params;
     Vec4 threshold;
@@ -496,7 +507,9 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     auto ribbon_vs = get("ribbon.vert");
     auto decal_vs = get("decal.vert");
     auto decal_fs = get("decal.frag");
-    for (auto* s : {&mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &shadow_alpha_vs, &shadow_alpha_fs, &full_vs, &sky_fs, &line_vs, &line_fs, &depth_vs, &skin_vs,
+    auto water_vs = get("water.vert");
+    auto water_fs = get("water.frag");
+    for (auto* s : {&water_vs, &water_fs, &mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &shadow_alpha_vs, &shadow_alpha_fs, &full_vs, &sky_fs, &line_vs, &line_fs, &depth_vs, &skin_vs,
                     &skin_depth_vs, &skin_shadow_vs, &particle_vs, &particle_fs, &ribbon_vs, &decal_vs, &decal_fs})
         if (!*s) return std::move(*s).error();
     const rhi::VertexBufferLayout skin_layout{2, sizeof(SkinVertex), false};
@@ -706,6 +719,31 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
         r->decal_pipelines_[static_cast<std::size_t>(blend)] = p.value();
     }
 
+    // Water (ADR-0095): grid from gl_VertexIndex, both faces (visible from below), alpha-blended
+    // soft edges, manual depth test in the shader; then a depth-only draw of the same surface.
+    {
+        rhi::PipelineDesc pd;
+        pd.name = "water";
+        pd.vertex = water_vs.value();
+        pd.fragment = water_fs.value();
+        pd.cull = rhi::CullMode::None;
+        pd.color_targets = {{r->hdr_format_, rhi::BlendMode::Alpha}};
+        p = dev.create_pipeline(pd);
+        if (!p) return std::move(p).error();
+        r->water_pipeline_ = p.value();
+        rhi::PipelineDesc dd;
+        dd.name = "water_depth";
+        dd.vertex = water_vs.value();
+        dd.fragment = shadow_fs.value();
+        dd.cull = rhi::CullMode::None;
+        dd.depth_test = dd.depth_write = true;
+        dd.depth_compare = rhi::CompareOp::Less;
+        dd.depth_format = r->depth_format_;
+        p = dev.create_pipeline(dd);
+        if (!p) return std::move(p).error();
+        r->water_depth_pipeline_ = p.value();
+    }
+
     // 1x1 cleared depth texture bound when shadows are disabled (compare always passes).
     rhi::TextureDesc ns;
     ns.name = "no_shadow";
@@ -791,6 +829,8 @@ SceneRenderer::~SceneRenderer() {
                     particle_alpha_, particle_additive_, ribbon_alpha_, ribbon_additive_, motion_cull_, motion_double_, skin_motion_cull_, skin_motion_double_})
         if (pl) d.destroy(pl);
     for (auto pl : decal_pipelines_)
+        if (pl) d.destroy(pl);
+    for (auto pl : {water_pipeline_, water_depth_pipeline_})
         if (pl) d.destroy(pl);
     for (const auto& row : overdraw_)
         for (auto pl : row)
@@ -1002,6 +1042,7 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     particles_.clear();
     particle_batches_.clear();
     decals_.clear();
+    waters_.clear();
     stats_ = {};
 }
 
@@ -1025,6 +1066,25 @@ void SceneRenderer::add_decal(const Decal& decal) {
             if (!std::isfinite(decal.transform[c][r])) return;
     if (decal.color.a <= 0.0f || !std::isfinite(decal.color.a)) return;
     decals_.push_back(decal);
+}
+
+void SceneRenderer::add_water(const WaterSurface& water) {
+    auto finite3 = [](Vec3 v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
+    if (!finite3(water.center) || !(water.half_extent.x > 0) || !(water.half_extent.y > 0) ||
+        !std::isfinite(water.half_extent.x * water.half_extent.y))
+        return;
+    WaterSurface w = water;
+    for (WaterWave& wave : w.waves)
+        if (!std::isfinite(wave.k) || !std::isfinite(wave.amplitude) || !std::isfinite(wave.q) || !std::isfinite(wave.phase) ||
+            !std::isfinite(wave.direction.x) || !std::isfinite(wave.direction.y) || wave.k <= 0)
+            wave = WaterWave{{1, 0}, 1, 0, 0, 0};
+    w.resolution = std::clamp(w.resolution, 16u, 512u);
+    w.clarity = std::isfinite(w.clarity) ? std::max(w.clarity, 0.05f) : 4.0f;
+    w.foam = std::isfinite(w.foam) ? std::clamp(w.foam, 0.0f, 1.0f) : 0.0f;
+    w.refraction = std::isfinite(w.refraction) ? std::clamp(w.refraction, 0.0f, 0.2f) : 0.0f;
+    w.roughness = std::isfinite(w.roughness) ? std::clamp(w.roughness, 0.01f, 1.0f) : 0.06f;
+    w.time = std::isfinite(w.time) ? w.time : 0.0f;
+    waters_.push_back(w);
 }
 
 void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const Mat4& model, std::uint64_t motion_id) {
@@ -1781,6 +1841,26 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         for (const auto& c : candidates) decal_draws.push_back(c.second);
     }
     stats_.decals = static_cast<std::uint32_t>(decal_draws.size());
+    // Water: cull by the displaced bounds, keep the nearest kMaxWaterSurfaces, draw far to near.
+    std::vector<const WaterSurface*> water_draws;
+    {
+        std::vector<std::pair<float, const WaterSurface*>> candidates;
+        for (const WaterSurface& w : waters_) {
+            float amp = 0;
+            for (const WaterWave& wave : w.waves) amp += std::abs(wave.amplitude) * (1.0f + std::abs(wave.q));
+            const Aabb box{{w.center.x - w.half_extent.x - amp, w.center.y - amp, w.center.z - w.half_extent.y - amp},
+                           {w.center.x + w.half_extent.x + amp, w.center.y + amp, w.center.z + w.half_extent.y + amp}};
+            if (!frustum.intersects(box)) continue;
+            const Vec3 c = camera_.position;
+            const Vec3 nearest{std::clamp(c.x, box.min.x, box.max.x), std::clamp(c.y, box.min.y, box.max.y),
+                               std::clamp(c.z, box.min.z, box.max.z)};
+            candidates.emplace_back(length(nearest - c), &w);
+        }
+        std::stable_sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        if (candidates.size() > kMaxWaterSurfaces) candidates.resize(kMaxWaterSurfaces);
+        for (auto it = candidates.rbegin(); it != candidates.rend(); ++it) water_draws.push_back(it->second);
+    }
+    stats_.water_surfaces = static_cast<std::uint32_t>(water_draws.size());
     stats_.particles = 0;
     stats_.ribbon_vertices = 0;
     for (const ParticleBatch& b : particle_draws) (b.ribbon ? stats_.ribbon_vertices : stats_.particles) += b.count;
@@ -1960,7 +2040,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
     depth_desc.usage = rhi::TextureUsageDepthTarget |
-                       ((ssao || taa || occlusion || !particle_draws.empty() || !decal_draws.empty()) ? rhi::TextureUsageSampled : 0u);
+                       ((ssao || taa || occlusion || !particle_draws.empty() || !decal_draws.empty() || !water_draws.empty())
+                            ? rhi::TextureUsageSampled
+                            : 0u);
     const RGTexture depth = graph.create_texture("scene_depth", depth_desc);
 
     if (prepass) {
@@ -2215,7 +2297,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.draw(static_cast<std::uint32_t>(lines_.size()));
             }
     };
-    const bool split_forward = !decal_draws.empty();
+    const bool split_forward = !decal_draws.empty() || !water_draws.empty();
     graph.add_pass(
         "forward",
         [&](PassBuilder& b) {
@@ -2226,7 +2308,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             b.write_depth(depth, prepass ? rhi::LoadOp::Load : rhi::LoadOp::Clear, 1.0f);
         },
         [&](PassContext& ctx) { forward_body(ctx, true, !split_forward); });
-    if (split_forward) {
+    if (split_forward && !decal_draws.empty()) {
         const Mat4 inv_view_proj = inverse(view_proj);
         graph.add_pass(
             "decals",
@@ -2261,6 +2343,89 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     pass.draw(36);
                 }
             });
+    }
+    if (!water_draws.empty()) {
+        // Refraction source: the opaque scene before any water is drawn.
+        const RGTexture water_scene = graph.create_texture("water_scene", color_desc(hdr_format_, rw, rh));
+        graph.add_pass(
+            "water_scene_copy",
+            [&](PassBuilder& b) {
+                b.read(hdr);
+                b.write_color(water_scene, rhi::LoadOp::Clear);
+                b.no_raster();
+            },
+            [&](PassContext& ctx) { ctx.cmd.blit(ctx.texture(hdr), ctx.texture(water_scene), rhi::Filter::Nearest); });
+        const EnvironmentMap* wenv = env_.environment_map && env_.environment_map->cube() ? env_.environment_map : nullptr;
+        WaterUniforms base{};
+        base.inv_view_proj = inverse(view_proj);
+        base.sun_dir = lighting.sun_dir;
+        base.sun_color = lighting.sun_color;
+        base.params = {0, 0, wenv ? 1.0f : 0.0f, wenv ? static_cast<float>(wenv->mip_count() - 1) : 0.0f};
+        base.env = {std::isfinite(env_.environment_intensity) ? std::max(env_.environment_intensity, 0.0f) : 1.0f,
+                    std::isfinite(env_.environment_rotation) ? env_.environment_rotation : 0.0f, 0, 0};
+        base.sky = lighting.sky_color;
+        base.horizon = lighting.horizon_color;
+        base.ground = lighting.ground_color;
+        base.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), 0, 0};
+        base.fog_color = lighting.fog_color;
+        base.fog_params = lighting.fog_params;
+        auto frame_of = [&](const WaterSurface& w) {
+            WaterFrameUniforms f{};
+            f.view_proj = view_proj;
+            const float cells = static_cast<float>(w.resolution);
+            f.center = Vec4(w.center, cells);
+            f.extent = {w.half_extent.x, w.half_extent.y, 2.0f * std::max(w.half_extent.x, w.half_extent.y) / cells, 0};
+            for (std::size_t i = 0; i < 4; ++i) {
+                const WaterWave& wave = w.waves[i];
+                f.wave_a[i] = {wave.direction.x, wave.direction.y, wave.k, wave.phase};
+                f.wave_b[i] = {wave.amplitude, wave.q, 0, 0};
+            }
+            return f;
+        };
+        graph.add_pass(
+            "water",
+            [&](PassBuilder& b) {
+                b.read(water_scene);
+                b.read(depth);
+                b.write_color(hdr, rhi::LoadOp::Load);
+            },
+            [&, base, frame_of, wenv](PassContext& ctx) {
+                rhi::RenderPass& pass = *ctx.pass;
+                pass.bind_pipeline(water_pipeline_);
+                pass.bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(water_scene), ctx_.linear_clamp());
+                pass.bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(depth), ctx_.nearest_clamp());
+                pass.bind_texture(rhi::ShaderStage::Fragment, 2, wenv ? wenv->cube() : ctx_.black_cube(), ctx_.linear_clamp());
+                for (const WaterSurface* w : water_draws) {
+                    const WaterFrameUniforms f = frame_of(*w);
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, f);
+                    WaterUniforms u = base;
+                    u.camera = Vec4(camera_.position, w->time);
+                    u.shallow = {w->shallow_color.r, w->shallow_color.g, w->shallow_color.b, w->clarity};
+                    u.deep = {w->deep_color.r, w->deep_color.g, w->deep_color.b, w->foam};
+                    u.params.x = w->refraction;
+                    u.params.y = w->roughness;
+                    u.env.z = w->center.y;
+                    for (std::size_t i = 0; i < 4; ++i) {
+                        u.wave_a[i] = f.wave_a[i];
+                        u.wave_b[i] = f.wave_b[i];
+                    }
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, u);
+                    pass.draw(6u * w->resolution * w->resolution);
+                }
+            });
+        graph.add_pass(
+            "water_depth",
+            [&](PassBuilder& b) { b.write_depth(depth, rhi::LoadOp::Load, 1.0f); },
+            [&, frame_of](PassContext& ctx) {
+                rhi::RenderPass& pass = *ctx.pass;
+                pass.bind_pipeline(water_depth_pipeline_);
+                for (const WaterSurface* w : water_draws) {
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame_of(*w));
+                    pass.draw(6u * w->resolution * w->resolution);
+                }
+            });
+    }
+    if (split_forward) {
         graph.add_pass(
             "forward_blended",
             [&](PassBuilder& b) {
