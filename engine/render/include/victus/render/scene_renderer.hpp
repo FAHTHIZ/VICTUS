@@ -334,6 +334,11 @@ struct Environment {
     float ambient_intensity{0.6f};
     float exposure{1.0f};          // manual exposure multiplier (ignored by auto exposure)
     float vignette{0.25f};
+    // Camera-lens imperfections (ADR-0146), all off by default: barrel distortion (-1..1, > 0 barrel),
+    // lateral chromatic aberration (0..1) and luminance-weighted animated sensor grain (0..1).
+    float lens_distortion{0.0f};
+    float chromatic_aberration{0.0f};
+    float film_grain{0.0f};
     bool tonemap{true};            // false: no tonemapping curve (clamp only)
     Tonemapper tonemapper{Tonemapper::Aces};
     float exposure_compensation{0.0f}; // EV stops applied after manual/auto exposure
@@ -1000,6 +1005,7 @@ private:
     bool splash_failed_{false};        // rain splash pipeline failed to build (logged once)
     bool clouds_failed_{false};      // cloud pipelines failed to build: clouds stay off (logged once)
     std::uint64_t cloud_frame_{0};   // jitter sequence of the cloud march
+    std::uint64_t post_frame_{0};    // film grain seed (ADR-0146), advances every rendered frame
     std::array<math::Mat4, 4> cascade_vp_{math::Mat4::identity(), math::Mat4::identity(), math::Mat4::identity(),
                                           math::Mat4::identity()};
     std::array<float, 4> cascade_splits_{};

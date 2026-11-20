@@ -208,7 +208,7 @@ struct ExposureUniforms {
     Vec4 flags;
 };
 struct PostUniforms {
-    Vec4 params, params2, params3;
+    Vec4 params, params2, params3, params4;
 };
 struct AlphaTestUniforms {
     Vec4 uv, params;
@@ -4114,7 +4114,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     std::exp2(env_.exposure_compensation), env_.saturation};
     // The luma-in-alpha path always writes sRGB-encoded colour, which is what FXAA and the sharpen pass read.
     post.params3 = {env_.contrast, (fxaa && !sharpen_pass) ? 1.0f : 0.0f, linear_out ? 1.0f : 0.0f, 0.0f};
+    post.params4 = {env_.lens_distortion, env_.chromatic_aberration, env_.film_grain,
+                    static_cast<float>(post_frame_ % 4096u)};
     if (capture_mode_) { // scene-referred radiance: the viewer's exposure applies later
+        post.params4 = {};
         post.params.x = 1.0f;
         post.params2.y = 0.0f;
         post.params2.z = 1.0f;
@@ -4193,6 +4196,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         prev_view_proj_ = view_proj_unjittered;
         ++frame_index_;
     }
+    ++post_frame_;
     if (clouds) ++cloud_frame_;
     if (fog) {
         fog_index_ ^= 1u;

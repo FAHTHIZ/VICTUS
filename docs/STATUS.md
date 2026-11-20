@@ -2103,3 +2103,13 @@ Not covered: `.vmat` textures still bake with the constant factor only; no per-t
 
 Next task: per-texel albedo for `.vmat` materials if bakes of textured `.vmat` scenes show it matters.
 
+## 2026-11-20 — Camera-lens imperfections: barrel, chromatic aberration, film grain (ADR-0146)
+
+Built: `Environment::lens_distortion`, `chromatic_aberration`, `film_grain` (and the reflected `EnvironmentComponent` fields, clamped in `apply_environment`), implemented in `tonemap.frag` with a fourth `PostUniforms` vector and a per-render grain seed. Off by default.
+
+Verified (Release, gcc 15.2.0, lavapipe): `compile_shaders.py --check` up to date (62); `victus_gpu_tests` new lens case 22/22 assertions; `gles*`, `gpu quality*`, golden and reference cases 29/29 (814 assertions); `victus_scene_tests` and `victus_render_tests` pass. Viewed in the game's prologue at night (grain first tried in linear light was far too strong; moved to square-root space).
+
+Not covered: no phone measurement of the extra cost; Metal output not run here.
+
+Next task: none queued for this feature.
+

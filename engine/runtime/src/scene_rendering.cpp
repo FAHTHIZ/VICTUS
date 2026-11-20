@@ -1151,6 +1151,9 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     env.saturation = std::max(e.saturation, 0.0f);
     env.contrast = std::max(e.contrast, 0.0f);
     env.vignette = std::clamp(e.vignette, 0.0f, 1.0f);
+    env.lens_distortion = std::clamp(e.lens_distortion, -1.0f, 1.0f);
+    env.chromatic_aberration = std::clamp(e.chromatic_aberration, 0.0f, 1.0f);
+    env.film_grain = std::clamp(e.film_grain, 0.0f, 1.0f);
     env.bloom_intensity = std::max(e.bloom_intensity, 0.0f);
     env.bloom_threshold = std::max(e.bloom_threshold, 0.0f);
     env.ao_intensity = std::max(e.ao_intensity, 0.0f);
