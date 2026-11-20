@@ -541,3 +541,9 @@ The research below informs roadmap priorities 6e and 6g–6l. These are architec
 - Jorge Jimenez, "Next Generation Post Processing in Call of Duty: Advanced Warfare" (SIGGRAPH 2014) — https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare/ (accessed 2026-11-20): interleaved gradient noise `fract(52.9829189 * fract(dot(p, (0.06711056, 0.00583715))))`, offset by `5.588238 * frame` for temporal use.
 - VICTUS choice: stochastic rounding to exactly representable values before the store, unbiased under either rounding mode; measured in the packed-HDR GPU test. See ADR-0129.
 
+
+## Research conclusions added 2026-11-20 (Mali device names)
+- Arm's proprietary Vulkan driver reports flagship parts as "Mali-G715-Immortalis MC11" and "Mali-G720-Immortalis MC12" (Geekbench Vulkan entries, e.g. https://browser.geekbench.com/v6/compute/3065913; accessed 2026-11-20).
+- Mesa PanVK reports upstream names such as "Immortalis-G720", "Immortalis-G925" and "Mali-G1-Ultra"; its device table lists the Dimensity 9500 as "Mali-G1-Ultra MC12" (https://github.com/JimVulkan/mali-panvk/releases, accessed 2026-11-20).
+- Arm markets Mali G1-Premium as flagship and G1-Pro as mainstream (https://www.arm.com/products/silicon-ip-multimedia, accessed 2026-11-20).
+- VICTUS choice: the device classifier recognises all three spellings (ADR-0127, amended).

@@ -27,6 +27,14 @@ TEST_CASE("device class: phone GPU families map to tiers") {
     // Flagship.
     CHECK(phone("vulkan (Mali-G715 Immortalis MC11)").tier == QualityTier::High);
     CHECK(phone("vulkan (Mali-G720)").tier == QualityTier::High);
+    // Names as real drivers report them: Arm's proprietary driver and Mesa PanVK, and Arm's 2025
+    // 5th-generation names (Dimensity 9500: "Mali-G1-Ultra MC12").
+    CHECK(phone("vulkan (Mali-G720-Immortalis MC12, Mali-G720-Immortalis MC12)").tier == QualityTier::High);
+    CHECK(phone("vulkan (Immortalis-G925 MC12, panvk)").tier == QualityTier::High);
+    CHECK(phone("vulkan (Immortalis-G925 MC12, panvk)").family == GpuFamily::Mali);
+    CHECK(phone("vulkan (Mali-G1-Ultra MC12)").tier == QualityTier::High);
+    CHECK(phone("vulkan (Mali-G1-Premium)").tier == QualityTier::High);
+    CHECK(phone("vulkan (Mali-G1-Pro)").tier == QualityTier::Medium);
     CHECK(phone("vulkan (Adreno (TM) 660)").tier == QualityTier::High);
     CHECK(phone("vulkan (Adreno (TM) 750)").tier == QualityTier::High);
     CHECK(phone("vulkan (Adreno (TM) 830)").tier == QualityTier::High);
