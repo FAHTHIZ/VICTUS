@@ -2133,3 +2133,13 @@ Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): `VICTUS_GPU_DRIVER=gles vict
 Not covered: no Android device or emulator run; no GLES timing on phones; GPU particles, occlusion culling and volumetric fog stay off on GLES (no CPU fallback for GPU emitters).
 
 Next task: CI check for the GLES steps; then the TAA upscaler depth-clip disocclusion and thin-feature locks (ROADMAP ASR/FSR2 item).
+
+## 2026-11-20 — Depth-based disocclusion in the TAA resolves (ADR-0147)
+
+Built: `taa.frag` and `taa_upscale.frag` write a second colour target, the pixel's linear view depth, into a ping-ponged R16F (else R32F) depth history; the next frame reprojects its closest depth into the previous view and resets the history weight where the farthest of the 3x3 history depths around the reprojected uv is nearer by more than FSR2's separation tolerance (floored at 0.5 %). Sky depth reprojects to itself (precision), pixels with object motion are left to the colour clip. `RenderSettings::taa_disocclusion` (0..1, default 1) and `SceneRenderStats::taa_disocclusion`. Fragment-only, so it also runs on the GLES backend.
+
+Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): new `gpu: taa depth disocclusion stops occluder-coloured ghosts (ADR-0147)` — error in the analytically disoccluded wall over four frames after a sideways camera jump: native 61.6 vs 169.0 without (0.36x), render scale 0.5 84.9 vs 160.6 (0.53x), static camera unchanged; `victus_reference_scenes` passes against the existing goldens (exterior/effects/photoreal FLIP 0); `VICTUS_GPU_DRIVER=gles victus_gpu_tests` 199/199; full ctest green.
+
+Not covered: no phone timing of the extra R16F target (2 bytes/pixel written and 9 taps read); depth disocclusion for surfaces with object motion (needs FSR2's scattered previous depth, compute); Metal not run here.
+
+Next task: CI check for the GLES steps, then TAA thin-feature locks (ROADMAP ASR/FSR2 item).

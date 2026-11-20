@@ -471,6 +471,11 @@ struct RenderSettings {
     // vectors stop smearing and trailing. TAA only; costs one R8 target while such effects are drawn.
     bool reactive_mask{true};
     float reactive_max{0.5f}; // current-frame weight at a fully reactive pixel (0..1, ADR-0143)
+    // Depth-based disocclusion (ADR-0147, FSR2 "depth clip" in gather form): the resolves keep a
+    // linear depth history and trust the current frame where the reprojected surface was hidden
+    // behind something nearer last frame, so uncovered background whose colours match the occluder
+    // does not ghost. 0 off .. 1 full; costs one R16F target per history.
+    float taa_disocclusion{1.0f};
     bool auto_exposure{true};             // allowed; scenes enable it through Environment
     bool instancing{true};                // merge identical mesh+material draws into instanced batches
     // Mesh levels of detail: each draw uses the coarsest level whose geometric error, projected
@@ -600,6 +605,7 @@ struct SceneStats {
     std::uint32_t render_width{0}, render_height{0};
     bool taa{false};                   // TAA resolved this frame
     bool taa_history{false};           // ... with a valid history (false on the first frame / after a reset)
+    bool taa_disocclusion{false};      // ... with the depth-history disocclusion test (ADR-0147)
     bool temporal_upscale{false};      // ... reconstructed at output resolution from a lower render resolution
     bool spatial_upscale{false};       // ADR-0066: resampled to the output by the Catmull-Rom + RCAS pass
     bool sharpened{false};             // the upscale/sharpen pass ran this frame
@@ -866,7 +872,8 @@ private:
     // created on first use. kind: 0 particles, 1 ribbons, 2 water.
     Result<rhi::PipelineHandle> reactive_pipeline(int kind, bool additive);
     [[nodiscard]] Result<rhi::PipelineHandle> post_pipeline(const char* fragment, rhi::Format format,
-                                                            rhi::BlendMode blend = rhi::BlendMode::Opaque);
+                                                            rhi::BlendMode blend = rhi::BlendMode::Opaque,
+                                                            rhi::Format second = rhi::Format::Invalid);
     void compute_cascades(float aspect, std::uint32_t resolution);
     // Pipeline for a project surface shader (created on first use); the built-in one on failure.
     // Vertex variants of the PBR pipelines: kVertexStatic (mesh.vert), kVertexSkinned
@@ -915,6 +922,9 @@ private:
     std::uint32_t exposure_index_{0};
     rhi::TextureHandle history_[2];
     std::uint32_t history_w_[2]{}, history_h_[2]{};
+    // ADR-0147: linear view depth of each history pixel (same size as history_), written by the resolve.
+    rhi::TextureHandle depth_history_[2];
+    rhi::Format depth_history_format_{rhi::Format::R16_FLOAT};
     // ADR-0143: reactive masks at render resolution, ping-ponged with the TAA history; last frame's
     // mask is reprojected so pixels a particle just left also trust the current frame (no trails).
     rhi::TextureHandle reactive_[2];

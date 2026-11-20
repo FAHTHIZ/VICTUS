@@ -227,11 +227,15 @@ struct TaaUniforms {
     Mat4 reproject;
     Vec4 params, screen;
     Vec4 quant; // x: compact HDR frame + 1 (0 off), ADR-0129
+    // ADR-0147: x: disocclusion strength (0: off or no depth history), y, z: linear depth
+    // 1 / (y * d + z) from window depth d, w: separation tolerance per unit depth.
+    Vec4 depth_clip;
 };
 struct TaaUpscaleUniforms {
     Mat4 reproject;
     Vec4 params, screen, jitter, output;
     Vec4 quant; // x: compact HDR frame + 1 (0 off), ADR-0129
+    Vec4 depth_clip; // as TaaUniforms::depth_clip
 };
 static_assert(sizeof(LightingUniforms) == 38 * 16 + 64 * 5);
 
@@ -528,6 +532,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.upscale_mip_bias = std::isfinite(s.upscale_mip_bias) ? std::clamp(s.upscale_mip_bias, -2.0f, 0.0f) : 0.0f;
     s.taa_blend = std::isfinite(s.taa_blend) ? std::clamp(s.taa_blend, 0.04f, 1.0f) : 0.1f;
     s.reactive_max = std::isfinite(s.reactive_max) ? std::clamp(s.reactive_max, 0.0f, 1.0f) : 0.5f;
+    s.taa_disocclusion = std::isfinite(s.taa_disocclusion) ? std::clamp(s.taa_disocclusion, 0.0f, 1.0f) : 1.0f;
     s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxLights);
     s.lod_error_pixels = std::isfinite(s.lod_error_pixels) ? std::clamp(s.lod_error_pixels, 0.25f, 16.0f) : 1.0f;
     s.lod_hysteresis = std::isfinite(s.lod_hysteresis) ? std::clamp(s.lod_hysteresis, 0.0f, 0.9f) : 0.0f;
@@ -581,6 +586,11 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     constexpr std::uint32_t kHdrUsage = rhi::TextureUsageSampled | rhi::TextureUsageColorTarget;
     r->compact_hdr_requested_ = options.compact_hdr;
     if (options.compact_hdr && dev.supports_format(rhi::Format::R11G11B10_FLOAT, kHdrUsage)) r->hdr_format_ = rhi::Format::R11G11B10_FLOAT;
+    // ADR-0147 depth history: R16F, else R32F; RGBA8 (always renderable) keeps the resolve's second
+    // target valid where neither renders (ES 3.0 without float colour buffers) and turns the test off.
+    r->depth_history_format_ = dev.supports_format(rhi::Format::R16_FLOAT, kHdrUsage)   ? rhi::Format::R16_FLOAT
+                               : dev.supports_format(rhi::Format::R32_FLOAT, kHdrUsage) ? rhi::Format::R32_FLOAT
+                                                                                        : rhi::Format::RGBA8_UNORM;
     auto get = [&](const char* n) { return ctx.shader(n); };
     auto mesh_vs = get("mesh.vert");
     // Half-precision shading (ADR-0137) only where the device enabled shaderFloat16.
@@ -970,6 +980,8 @@ SceneRenderer::~SceneRenderer() {
         if (t) d.destroy(t);
     for (auto t : history_)
         if (t) d.destroy(t);
+    for (auto t : depth_history_)
+        if (t) d.destroy(t);
     for (auto t : reactive_)
         if (t) d.destroy(t);
     if (line_buffer_) d.destroy(line_buffer_);
@@ -1259,8 +1271,9 @@ Result<rhi::PipelineHandle> SceneRenderer::reactive_pipeline(int kind, bool addi
     return p;
 }
 
-Result<rhi::PipelineHandle> SceneRenderer::post_pipeline(const char* fragment, rhi::Format format, rhi::BlendMode blend) {
-    std::string key = std::format("{}/{}/{}", fragment, static_cast<int>(format), static_cast<int>(blend));
+Result<rhi::PipelineHandle> SceneRenderer::post_pipeline(const char* fragment, rhi::Format format, rhi::BlendMode blend,
+                                                         rhi::Format second) {
+    std::string key = std::format("{}/{}/{}/{}", fragment, static_cast<int>(format), static_cast<int>(blend), static_cast<int>(second));
     if (auto it = post_.find(key); it != post_.end()) return it->second;
     auto vs = ctx_.shader("fullscreen.vert");
     if (!vs) return std::move(vs).error();
@@ -1272,6 +1285,7 @@ Result<rhi::PipelineHandle> SceneRenderer::post_pipeline(const char* fragment, r
     d.fragment = fs.value();
     d.cull = rhi::CullMode::None;
     d.color_targets = {{format, blend}};
+    if (second != rhi::Format::Invalid) d.color_targets.push_back({second, rhi::BlendMode::Opaque});
     auto p = ctx_.device().create_pipeline(d);
     if (!p) return p;
     post_.emplace(std::move(key), p.value());
@@ -1302,6 +1316,13 @@ Status SceneRenderer::ensure_history(std::uint32_t index, std::uint32_t width, s
     history_[index] = t.value();
     history_w_[index] = width;
     history_h_[index] = height;
+    if (depth_history_[index]) ctx_.device().destroy(depth_history_[index]);
+    depth_history_[index] = {};
+    rhi::TextureDesc dd = color_desc(depth_history_format_, width, height);
+    dd.name = index == 0 ? "taa_depth_history_a" : "taa_depth_history_b";
+    auto dt = ctx_.device().create_texture(dd);
+    if (!dt) return std::move(dt).error();
+    depth_history_[index] = dt.value();
     return {};
 }
 
@@ -1616,6 +1637,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     stats_.texture_mip_bias = texture_mip_bias;
     stats_.taa = taa;
     stats_.taa_history = taa && history_valid_;
+    stats_.taa_disocclusion = false;
     stats_.temporal_upscale = upscale;
     stats_.reactive_mask = false;
     stats_.jitter = jitter;
@@ -3828,7 +3850,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         VICTUS_TRY_STATUS(ensure_history(cur, hw, hh));
         if (!history_[prev]) VICTUS_TRY_STATUS(ensure_history(prev, hw, hh)); // steady texture count from frame one
         const bool have_prev = history_valid_ && history_[prev];
-        auto taa_pl = post_pipeline(upscale ? "taa_upscale.frag" : "taa.frag", hdr_format_);
+        auto taa_pl = post_pipeline(upscale ? "taa_upscale.frag" : "taa.frag", hdr_format_, rhi::BlendMode::Opaque, depth_history_format_);
         if (!taa_pl) return std::move(taa_pl).error();
         TaaUpscaleUniforms tu{};
         tu.reproject = prev_view_proj_ * inverse(view_proj_unjittered);
@@ -3847,9 +3869,28 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         // y: reactive mask bound, z: current-frame weight at a fully reactive pixel (ADR-0143).
         // w: last frame's mask bound (reprojected).
         tu.quant = {hdr_quant, reactive ? 1.0f : 0.0f, S.reactive_max, reactive_prev.valid() ? 1.0f : 0.0f};
+        {
+            // ADR-0147: linear depth L = 1 / (a d + b) for the 0..1 perspective depth d, and FSR2's
+            // separation tolerance Ksep * Kfov * half width (per unit depth), floored at 0.5 % for R16F
+            // storage and depth-buffer precision.
+            const float p22 = proj_unjittered[2].z, p23 = proj_unjittered[3].z;
+            const float tx = 1.0f / proj_unjittered[0].x, ty = 1.0f / proj_unjittered[1].y;
+            const float kfov = std::sqrt(1.0f + tx * tx + ty * ty);
+            const float tolerance = std::max(1.37e-5f * kfov * 0.5f * static_cast<float>(hw), 0.005f);
+            // The coefficients are set on every frame, also without a history: this frame's linear
+            // depth is next frame's comparison.
+            const bool linear = depth_history_format_ != rhi::Format::RGBA8_UNORM && std::abs(p23) > 1e-12f &&
+                                proj_unjittered[2].w < 0.0f;
+            const bool usable = linear && have_prev && depth_history_[prev];
+            const float strength = usable ? S.taa_disocclusion : 0.0f;
+            tu.depth_clip = {strength, linear ? 1.0f / p23 : 0.0f, linear ? p22 / p23 : 1.0f, tolerance};
+            stats_.taa_disocclusion = strength > 0.0f;
+        }
         scene_w = hw;
         scene_h = hh;
         const RGTexture resolved = graph.import_texture("taa_resolved", history_[cur], color_desc(hdr_format_, hw, hh));
+        const RGTexture depth_resolved =
+            graph.import_texture("taa_depth_history", depth_history_[cur], color_desc(depth_history_format_, hw, hh));
         RGTexture motion;
         if (object_motion) {
             rhi::TextureDesc md = color_desc(rhi::Format::RG16_FLOAT, rw, rh);
@@ -3883,10 +3924,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     }
                 });
         }
-        RGTexture previous;
+        RGTexture previous, depth_previous;
         if (have_prev)
             previous = graph.import_texture("taa_history", history_[prev],
                                             color_desc(hdr_format_, history_w_[prev], history_h_[prev]));
+        if (tu.depth_clip.x > 0.0f)
+            depth_previous = graph.import_texture("taa_depth_history_prev", depth_history_[prev],
+                                                  color_desc(depth_history_format_, history_w_[prev], history_h_[prev]));
         graph.add_pass(
             "taa",
             [&](PassBuilder& b) {
@@ -3896,14 +3940,17 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 if (motion.valid()) b.read(motion);
                 if (reactive_tex.valid()) b.read(reactive_tex);
                 if (reactive_prev.valid()) b.read(reactive_prev);
+                if (depth_previous.valid()) b.read(depth_previous);
                 b.write_color(resolved, rhi::LoadOp::DontCare);
+                b.write_color(depth_resolved, rhi::LoadOp::DontCare);
             },
-            [this, hdr, depth, previous, motion, reactive_tex, reactive_prev, tu, upscale, pl = taa_pl.value()](PassContext& ctx) {
+            [this, hdr, depth, previous, motion, reactive_tex, reactive_prev, depth_previous, tu, upscale,
+             pl = taa_pl.value()](PassContext& ctx) {
                 ctx.pass->bind_pipeline(pl);
                 if (upscale) ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, tu);
                 else
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0,
-                                          TaaUniforms{tu.reproject, tu.params, tu.screen, tu.quant});
+                                          TaaUniforms{tu.reproject, tu.params, tu.screen, tu.quant, tu.depth_clip});
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(hdr), ctx_.nearest_clamp());
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1,
                                        previous.valid() ? ctx.texture(previous) : ctx.texture(hdr), ctx_.linear_clamp());
@@ -3914,6 +3961,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                                        ctx_.linear_clamp());
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 5, reactive_prev.valid() ? ctx.texture(reactive_prev) : ctx_.black(),
                                        ctx_.linear_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 6, depth_previous.valid() ? ctx.texture(depth_previous) : ctx_.black(),
+                                       ctx_.nearest_clamp());
                 ctx.pass->draw(3);
             });
         scene_color = resolved;
