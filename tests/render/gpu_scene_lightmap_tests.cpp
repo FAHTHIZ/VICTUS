@@ -62,6 +62,37 @@ TEST_CASE("scene lightmap: default path next to the scene") {
     CHECK(runtime::default_lightmap_path("a.b/level") == "a.b/level.vlightmap");
 }
 
+TEST_CASE("scene lightmap: albedo texture mean for bounce colour (ADR-0145)") {
+    assets::CookedTexture t;
+    const math::Vec3 white = runtime::texture_mean_color(t); // no mips: white (factor only)
+    CHECK(white.x == doctest::Approx(1.0f));
+    CHECK(white.z == doctest::Approx(1.0f));
+    render::Image img;
+    img.width = 2;
+    img.height = 1;
+    img.pixels = {255, 0, 0, 255, 0, 0, 255, 255};
+    t.srgb = false;
+    t.mips = {img};
+    const math::Vec3 m = runtime::texture_mean_color(t);
+    CHECK(m.x == doctest::Approx(0.5f));
+    CHECK(m.y == doctest::Approx(0.0f));
+    CHECK(m.z == doctest::Approx(0.5f));
+    // The smallest mip is used and sRGB bytes are decoded: 188 is about 0.5 linear.
+    render::Image big;
+    big.width = big.height = 2;
+    big.pixels.assign(16, 255);
+    render::Image small;
+    small.width = small.height = 1;
+    small.pixels = {188, 188, 188, 255};
+    t.srgb = true;
+    t.mips = {big, small};
+    CHECK(runtime::texture_mean_color(t).y == doctest::Approx(0.5f).epsilon(0.02));
+    // A damaged mip (fewer bytes than its size) counts as white instead of reading past the end.
+    small.pixels.resize(2);
+    t.mips = {small};
+    CHECK(runtime::texture_mean_color(t).x == doctest::Approx(1.0f));
+}
+
 TEST_CASE("gpu: scene lightmap baked, saved with the scene and drawn by extract_scene") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     gameplay::register_components(); // the Environment component must survive the save/load round trip

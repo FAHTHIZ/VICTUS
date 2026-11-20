@@ -2092,3 +2092,14 @@ Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): `compile_shaders.py --check`
 Not covered: the converted PBR/fog/particle paths have not rendered on GLES yet (compile only); the scene renderer has not run on GLES.
 
 Next task: run the scene renderer on the Low tier through GLES and compare against the Vulkan result.
+
+## 2026-11-20 — Lightmap bounce colour from the albedo texture mean (ADR-0145)
+
+Built: `scene_lightmap.cpp` `texture_mean_color()` (smallest mip, sRGB decoded, white fallback); the bake multiplies glTF model material base colour by it.
+
+Verified: `victus_gpu_tests -tc="scene lightmap*"` 2/2 cases, 10/10 assertions (Release, gcc 15.2.0, lavapipe). Used by the game repository to bake three interior chapters.
+
+Not covered: `.vmat` textures still bake with the constant factor only; no per-texel albedo.
+
+Next task: per-texel albedo for `.vmat` materials if bakes of textured `.vmat` scenes show it matters.
+

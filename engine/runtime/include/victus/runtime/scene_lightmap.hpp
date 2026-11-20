@@ -32,6 +32,10 @@ inline constexpr std::string_view kLightmapExtension = ".vlightmap";
 // The CPU geometry a MeshRenderer draws, built exactly as GpuAssetCache builds its GPU copy
 // (primitives, procedural meshes, cooked model meshes), so fingerprints match. Fails for
 // renderers without geometry, missing assets and morphed or skinned meshes.
+// Mean linear colour of a cooked texture (from its smallest mip; sRGB decoded). The baker multiplies
+// a model material's base colour factor by its albedo texture's mean (ADR-0145). White when empty.
+[[nodiscard]] math::Vec3 texture_mean_color(const assets::CookedTexture& texture);
+
 [[nodiscard]] Result<render::MeshData> static_mesh_data(scene::Scene& scene, scene::Entity entity, assets::AssetDatabase* db);
 
 struct SceneLightmapBake {

@@ -21,6 +21,27 @@ float finite_nonneg(float v, float fallback) { return std::isfinite(v) ? std::ma
 
 } // namespace
 
+math::Vec3 texture_mean_color(const assets::CookedTexture& texture) {
+    // The smallest mip is the box-filtered image (filtered in linear space for sRGB sources), so its
+    // mean is the texture's average colour. Empty or damaged textures count as white.
+    if (texture.mips.empty()) return {1, 1, 1};
+    const render::Image& img = texture.mips.back();
+    const std::size_t n = static_cast<std::size_t>(img.width) * img.height;
+    if (n == 0 || img.pixels.size() < n * 4) return {1, 1, 1};
+    double sum[3] = {0, 0, 0};
+    for (std::size_t i = 0; i < n; ++i)
+        for (int c = 0; c < 3; ++c) {
+            const float v = static_cast<float>(img.pixels[i * 4 + static_cast<std::size_t>(c)]) / 255.0f;
+            sum[c] += texture.srgb ? math::srgb_to_linear(v) : v;
+        }
+    const auto inv = 1.0 / static_cast<double>(n);
+    return {static_cast<float>(sum[0] * inv), static_cast<float>(sum[1] * inv), static_cast<float>(sum[2] * inv)};
+}
+
+namespace {
+
+} // namespace
+
 render::MeshData primitive_mesh_data(std::string_view name) {
     render::MeshData data;
     if (name == "cube") data = render::make_cube();
@@ -97,6 +118,14 @@ Result<BakeSource> gather(scene::Scene& scene, scene::Entity entity, assets::Ass
         if (mm.material < model->materials.size()) {
             const assets::ModelMaterial& mat = model->materials[mm.material];
             base = mat.base_color;
+            // Bounce light takes its colour from the albedo texture's mean (ADR-0145), not only the
+            // constant factor, so textured surfaces do not bounce as if they were white.
+            if (mat.base_color_texture >= 0 && static_cast<std::size_t>(mat.base_color_texture) < model->textures.size()) {
+                const math::Vec3 t = texture_mean_color(model->textures[static_cast<std::size_t>(mat.base_color_texture)]);
+                base.r *= t.x;
+                base.g *= t.y;
+                base.b *= t.z;
+            }
             metallic = mat.metallic;
             emissive = rgb(mat.emissive) * finite_nonneg(mat.emissive_strength, 1.0f);
         }
