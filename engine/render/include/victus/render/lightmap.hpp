@@ -124,12 +124,18 @@ struct LightmapProbes {
     std::array<std::uint32_t, 3> counts{}; // probes per axis, 2..32 (y 2..16); all zero = no probes
     std::vector<std::array<math::Vec3, 9>> sh;
     std::vector<std::uint8_t> valid; // 0 = inside geometry and not dilated (sampling skips it)
+    // Probe sun occlusion (ADR-0136): visibility (0..1) of the shadowmask light at each probe;
+    // empty when the bake has no shadowmask light. Dynamic objects take it past the realtime
+    // shadow distance, as lightmapped surfaces take the shadowmask.
+    std::vector<float> sun;
     [[nodiscard]] bool empty() const noexcept { return sh.empty(); }
     [[nodiscard]] std::uint32_t probe_count() const noexcept { return counts[0] * counts[1] * counts[2]; }
     [[nodiscard]] std::uint32_t valid_count() const noexcept;
     // CPU reference of the shader lookup (trilinear over valid probes, coefficients first);
     // `fallback` outside the box or where no surrounding probe is valid.
     [[nodiscard]] math::Vec3 sample(math::Vec3 p, math::Vec3 n, math::Vec3 fallback) const noexcept;
+    // Trilinear sun visibility over valid probes (1 outside the box, without data or valid probes).
+    [[nodiscard]] float sample_sun(math::Vec3 p) const noexcept;
 };
 
 struct LightmapBakeStats {
@@ -219,7 +225,7 @@ struct LightmapFile {
     std::vector<LightmapFileEntry> entries;
     [[nodiscard]] const LightmapFileEntry* find(const Uuid& entity) const noexcept;
 };
-inline constexpr std::uint32_t kLightmapFileVersion = 3;
+inline constexpr std::uint32_t kLightmapFileVersion = 4;
 [[nodiscard]] std::vector<std::uint8_t> encode_lightmap_file(const LightmapFile& file);
 [[nodiscard]] Result<LightmapFile> decode_lightmap_file(std::span<const std::uint8_t> bytes);
 

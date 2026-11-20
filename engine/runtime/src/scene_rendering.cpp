@@ -1026,6 +1026,9 @@ rhi::TextureHandle GpuAssetCache::lightmap(std::string_view path) {
                 render::SphericalHarmonics9 sh;
                 for (std::size_t k = 0; k < 9; ++k) sh.coefficients[k] = file->probes.sh[i][k];
                 (*vol)->set_probe(i, sh);
+                // Probe sun occlusion (ADR-0136); only meaningful with the shadowmask direction.
+                if (file->probes.sun.size() == file->probes.sh.size() && math::length(file->shadowmask_direction) > 0.5f)
+                    (*vol)->set_probe_sun(i, file->probes.sun[i]);
             }
             if (const Status st = (*vol)->upload(); st.ok()) entry.probes = std::move(*vol);
             else VICTUS_LOG_WARN("runtime", "lightmap '{}' probes: {}", key, st.error().message);

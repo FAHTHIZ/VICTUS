@@ -400,3 +400,115 @@ TEST_CASE("gpu: congruent lightmapped copies share one mesh and batch (ADR-0135)
     ctx.destroy(*lm_floor);
     for (auto& g : own) ctx.destroy(g);
 }
+
+TEST_CASE("gpu: probe sun occlusion shadows dynamic objects beyond the shadow distance (ADR-0136)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+
+    // A lightmapped floor and a 4 x 4 m roof slab 2.1..2.3 m up; the sun shines almost straight down.
+    const MeshData floor = make_plane({12, 12}, 4);
+    const MeshData roof = make_cube({2, 0.1f, 2});
+    const math::Mat4 roof_model = math::Mat4::translation({0, 2.2f, 0});
+    LightmapScene scene;
+    scene.instances.push_back({&floor});
+    LightmapInstance occluder{&roof, roof_model};
+    occluder.receives = false;
+    scene.instances.push_back(occluder);
+    scene.sky.sky = scene.sky.horizon = scene.sky.ground = math::Vec3{0.5f};
+    LightmapLight baked_sun;
+    baked_sun.direction = math::normalize(math::Vec3{0.1f, -1.0f, 0.05f});
+    scene.lights.push_back(baked_sun);
+    LightmapSettings ls;
+    ls.samples = 16;
+    ls.probe_samples = 64;
+    auto bake = bake_lightmaps(scene, ls);
+    REQUIRE(bake.ok());
+    REQUIRE(bake->probes.sun.size() == bake->probes.sh.size());
+    CHECK(bake->probes.sample_sun({0, 1, 0}) < 0.05f);
+
+    // Two volumes with the same irradiance: one with the baked sun visibility, one without.
+    IrradianceGrid grid;
+    grid.bounds = bake->probes.bounds;
+    grid.counts = bake->probes.counts;
+    auto with_sun = IrradianceVolume::create(ctx, grid);
+    auto without = IrradianceVolume::create(ctx, grid);
+    REQUIRE(with_sun.ok());
+    REQUIRE(without.ok());
+    REQUIRE((*with_sun)->grid().counts == grid.counts);
+    for (std::uint32_t i = 0; i < bake->probes.probe_count(); ++i) {
+        if (!bake->probes.valid[i]) continue;
+        SphericalHarmonics9 sh;
+        for (std::size_t k = 0; k < 9; ++k) sh.coefficients[k] = bake->probes.sh[i][k];
+        (*with_sun)->set_probe(i, sh);
+        (*without)->set_probe(i, sh);
+        (*with_sun)->set_probe_sun(i, bake->probes.sun[i]);
+    }
+    REQUIRE((*with_sun)->upload().ok());
+    REQUIRE((*without)->upload().ok());
+    CHECK((*with_sun)->sample_sun({0, 1, 0}) == doctest::Approx(bake->probes.sample_sun({0, 1, 0})).epsilon(1e-4).scale(1.0));
+    CHECK((*without)->sample_sun({0, 1, 0}) == 1.0f);
+
+    const MeshData sphere = make_uv_sphere(0.5f);
+    auto gpu_sphere = ctx.create_mesh(sphere, "probe_sun_sphere");
+    auto gpu_roof = ctx.create_mesh(roof, "probe_sun_roof");
+    auto atlas = ctx.create_lightmap_texture(bake->atlas);
+    REQUIRE(gpu_sphere.ok());
+    REQUIRE(gpu_roof.ok());
+    REQUIRE(atlas.ok());
+    constexpr std::uint32_t W = 96, H = 96;
+    Material white;
+    white.base_color = {1, 1, 1, 1};
+    white.roughness = 1.0f;
+    const math::Mat4 sphere_model = math::Mat4::translation({0, 1.0f, 0});
+    auto shoot = [&](const IrradianceVolume* volume, math::Vec3 sun_dir, math::Vec3 mask_dir, float shadow_distance) {
+        DirectionalLight sun;
+        sun.direction = sun_dir;
+        sun.intensity = 3.0f;
+        sun.shadow_distance = shadow_distance;
+        Environment env = grey_sky();
+        env.lightmap = *atlas;
+        env.lightmap_shadowmask_direction = mask_dir;
+        (*sr)->begin(Camera3D::look_at({0, 1.0f, 5.0f}, {0, 1.0f, 0}), sun, env);
+        (*sr)->set_irradiance_volume(volume); // per frame, after begin()
+        (*sr)->submit(*gpu_sphere, white, sphere_model); // dynamic: not lightmapped
+        (*sr)->submit(*gpu_roof, white, roof_model);
+        auto target = test::make_target(W, H);
+        auto cmd = dev.begin_commands();
+        REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target).value();
+        dev.destroy(target);
+        return px;
+    };
+    const math::Vec3 sun_dir = baked_sun.direction;
+    const auto realtime = shoot(without->get(), sun_dir, sun_dir, 40.0f); // cascades cover the sphere
+    const auto no_probe_sun = shoot(without->get(), sun_dir, sun_dir, 0.5f);
+    const auto probe_sun = shoot(with_sun->get(), sun_dir, sun_dir, 0.5f);
+    CHECK((*sr)->stats().irradiance_probes > 0);
+    const math::Vec3 moved = math::normalize(math::Vec3{-0.6f, -1.0f, 0.0f});
+    const auto stale = shoot(with_sun->get(), moved, sun_dir, 0.5f); // the sun moved: ignored
+    const auto stale_ref = shoot(without->get(), moved, sun_dir, 0.5f);
+    test::save_output("probe_sun_realtime", W, H, realtime);
+    test::save_output("probe_sun_masked", W, H, probe_sun);
+
+    // The upper part of the sphere (normals towards the sun), a few rows above the centre.
+    auto top = [&](const std::vector<std::uint8_t>& px) {
+        int sum = 0;
+        for (std::uint32_t r = 3; r <= 5; ++r) sum += int(channel(pixel(px, W, W / 2, H / 2 - r), 1));
+        return sum / 3;
+    };
+    const int rt = top(realtime), nm = top(no_probe_sun), mk = top(probe_sun);
+    MESSAGE("sphere top under the roof: realtime " << rt << ", beyond shadow distance without/with probe sun " << nm << "/" << mk);
+    CHECK(nm > rt + 30);            // without probe sun the roof's shadow disappears past the cascades
+    CHECK(mk < nm - 25);            // probe sun occlusion brings it back (probes interpolate, so
+    CHECK(std::abs(mk - rt) <= 16); // it is a little softer than the realtime map)
+    CHECK(stale == stale_ref);
+
+    dev.destroy(*atlas);
+    ctx.destroy(*gpu_sphere);
+    ctx.destroy(*gpu_roof);
+}

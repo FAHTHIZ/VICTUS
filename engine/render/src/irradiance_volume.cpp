@@ -59,6 +59,7 @@ Result<std::unique_ptr<IrradianceVolume>> IrradianceVolume::create(GpuContext& c
     v->grid_ = grid.sanitized();
     v->probes_.resize(v->grid_.probe_count());
     v->valid_.assign(v->grid_.probe_count(), 0);
+    v->sun_.assign(v->grid_.probe_count(), 1.0f);
     rhi::TextureDesc d;
     d.name = "irradiance_volume";
     d.format = rhi::Format::RGBA16_FLOAT;
@@ -85,6 +86,37 @@ void IrradianceVolume::set_probe(std::uint32_t index, const SphericalHarmonics9&
     probes_[index] = clean;
     valid_[index] = 1;
     dirty_ = true;
+}
+
+void IrradianceVolume::set_probe_sun(std::uint32_t index, float visibility) {
+    if (index >= sun_.size()) return;
+    sun_[index] = std::isfinite(visibility) ? std::clamp(visibility, 0.0f, 1.0f) : 1.0f;
+    dirty_ = true;
+}
+
+float IrradianceVolume::sample_sun(Vec3 p) const noexcept {
+    const auto& g = grid_;
+    const Vec3 s = g.spacing();
+    Vec3 f{};
+    for (int a = 0; a < 3; ++a) {
+        if (!(p[a] >= g.bounds.min[a] && p[a] <= g.bounds.max[a])) return 1.0f;
+        f[a] = std::clamp((p[a] - g.bounds.min[a]) / s[a], 0.0f, static_cast<float>(g.counts[static_cast<std::size_t>(a)] - 1));
+    }
+    const std::uint32_t x0 = std::min(static_cast<std::uint32_t>(f.x), g.counts[0] - 2);
+    const std::uint32_t y0 = std::min(static_cast<std::uint32_t>(f.y), g.counts[1] - 2);
+    const std::uint32_t z0 = std::min(static_cast<std::uint32_t>(f.z), g.counts[2] - 2);
+    const Vec3 t{f.x - static_cast<float>(x0), f.y - static_cast<float>(y0), f.z - static_cast<float>(z0)};
+    float v = 0.0f, weight = 0.0f;
+    for (std::uint32_t c = 0; c < 8; ++c) {
+        const std::uint32_t dx = c & 1u, dy = (c >> 1) & 1u, dz = (c >> 2) & 1u;
+        const float w = (dx ? t.x : 1 - t.x) * (dy ? t.y : 1 - t.y) * (dz ? t.z : 1 - t.z);
+        const std::uint32_t i = g.index(x0 + dx, y0 + dy, z0 + dz);
+        if (!valid_[i] || w <= 0.0f) continue;
+        v += sun_[i] * w;
+        weight += w;
+    }
+    if (weight <= 1e-5f) return 1.0f;
+    return 1.0f + (v / weight - 1.0f) * std::min(weight, 1.0f);
 }
 
 void IrradianceVolume::clear_probe(std::uint32_t index) {
@@ -140,8 +172,10 @@ Status IrradianceVolume::upload() {
             for (std::uint32_t x = 0; x < nx; ++x) {
                 const std::uint32_t i = grid_.index(x, y, z);
                 const float valid = valid_[i] ? 1.0f : 0.0f;
+                // Row 0 alpha: validity (the shader's weight). Row 1 alpha: sun visibility *
+                // validity (ADR-0136). The other rows keep validity.
                 for (std::uint32_t k = 0; k < 9; ++k)
-                    put(y * nx + x, k * nz + z, probes_[i].coefficients[k] * valid, valid);
+                    put(y * nx + x, k * nz + z, probes_[i].coefficients[k] * valid, k == 1 ? sun_[i] * valid : valid);
             }
     auto cmd = ctx_.device().begin_commands();
     cmd.upload_texture(texture_, bytes);

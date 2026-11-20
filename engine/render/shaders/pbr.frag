@@ -228,13 +228,16 @@ vec3 sh9(vec4 c[9], vec3 n) {
 }
 
 // Irradiance volume (ADR-0056): SH9 probes on a grid, trilinear between them. Tile layout: Y
-// layers side by side, coefficients stacked; rgb = coefficient * validity, a = validity.
+// layers side by side, coefficients stacked; rgb = coefficient * validity, a = validity
+// (row 1: sun visibility * validity, the probe sun occlusion of ADR-0136).
 vec4 gi_fetch(int k, float layer, vec2 fxz) {
     vec2 size = vec2(lighting.gi_counts.x * lighting.gi_counts.y, lighting.gi_counts.z * 9.0);
     vec2 t = vec2(layer * lighting.gi_counts.x + fxz.x + 0.5, float(k) * lighting.gi_counts.z + fxz.y + 0.5);
     return textureLod(u_irradiance, t / size, 0.0);
 }
-vec3 volume_irradiance(vec3 p, vec3 n, vec3 fallback) {
+// `sun_vis`: the probes' baked sun visibility, 1 outside the volume (blended like the irradiance).
+vec3 volume_irradiance(vec3 p, vec3 n, vec3 fallback, out float sun_vis) {
+    sun_vis = 1.0;
     if (lighting.gi_min.w < 0.5) return fallback;
     vec3 counts = lighting.gi_counts.xyz;
     vec3 lo = lighting.gi_min.xyz, hi = lighting.gi_max.xyz;
@@ -250,6 +253,7 @@ vec3 volume_irradiance(vec3 p, vec3 n, vec3 fallback) {
     if (valid < 1e-3) return fallback;
     for (int k = 0; k < 9; ++k) c[k].rgb /= valid;
     vec3 v = sh9(c, n) * lighting.gi_max.w;
+    sun_vis = mix(1.0, clamp(c[1].a / valid, 0.0, 1.0), min(valid, 1.0));
     return mix(fallback, v, min(valid, 1.0));
 }
 vec3 env_irradiance(vec3 n) {
@@ -556,7 +560,13 @@ void main() {
 
     vec3 L = normalize(-lighting.sun_dir.xyz);
     vec4 lm_texel = v_lightmap.z > 0.5 ? texture(u_lightmap, v_lightmap.xy) : vec4(0.0, 0.0, 0.0, 1.0);
-    float baked_sun = (v_lightmap.z > 0.5 && lighting.cascade_params.w > 0.5) ? lm_texel.a : 1.0;
+    // Ambient for unlightmapped surfaces comes from the probe volume, which also carries the baked
+    // sun visibility (probe sun occlusion, ADR-0136): dynamic objects past the realtime shadow
+    // distance stay shadowed by static geometry, as lightmapped ones do through the shadowmask.
+    vec3 sky_irradiance = env_irradiance(N);
+    float probe_sun = 1.0;
+    vec3 probe_irradiance = v_lightmap.z > 0.5 ? sky_irradiance : volume_irradiance(v_world_pos, N, sky_irradiance, probe_sun);
+    float baked_sun = lighting.cascade_params.w > 0.5 ? (v_lightmap.z > 0.5 ? lm_texel.a : probe_sun) : 1.0;
     vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * (shadow_factor(N, L, baked_sun) * cloud_shadow(L));
 
     if (lighting.ground_color.w > 0.5) {
@@ -590,7 +600,6 @@ void main() {
     float NdotV = max(dot(N, V), 1e-4);
     vec3 f0 = mix(vec3(0.04), albedo, metallic);
     vec3 kd = (1.0 - fresnel_schlick(NdotV, f0)) * (1.0 - metallic);
-    vec3 sky_irradiance = env_irradiance(N);
     vec3 irradiance;
     float lightmap_occlusion = 1.0;
     if (v_lightmap.z > 0.5) {
@@ -606,7 +615,7 @@ void main() {
         float lm_l = dot(irradiance, vec3(0.2126, 0.7152, 0.0722));
         lightmap_occlusion = sky_l > 1e-4 ? clamp(lm_l / sky_l, 0.0, 1.0) : 1.0;
     } else {
-        irradiance = volume_irradiance(v_world_pos, N, sky_irradiance);
+        irradiance = probe_irradiance;
     }
     vec2 ab = env_brdf(NdotV, roughness);
     vec3 R = reflect(-V, N);
