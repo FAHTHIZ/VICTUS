@@ -28,6 +28,7 @@
 #include "victus/player/platform_input.hpp"
 #include "victus/project/project.hpp"
 #include "victus/runtime/hot_reload.hpp"
+#include "victus/runtime/scene_lightmap.hpp"
 #include "victus/runtime/scene_view.hpp"
 #include "victus/scene/prefab.hpp"
 #include "victus/graph/graph.hpp"
@@ -40,6 +41,7 @@
 #include <map>
 #include <memory>
 #include <array>
+#include <chrono>
 #include <future>
 #include <optional>
 #include <span>
@@ -790,6 +792,15 @@ public:
     // could be shown.
     bool go_to_problem(const player::Diagnostic& d);
 
+    // ---- Assets > Bake Lighting (the same bake as `victus bake-lighting`, ADR-0125) ----
+    // Gathers the Static Lighting meshes now and traces them on a worker thread; the result is
+    // written next to the scene and referenced from its Environment (one undo step).
+    Status start_lighting_bake(const render::LightmapSettings& settings = {});
+    [[nodiscard]] bool baking_lighting() const noexcept { return bake_future_.valid(); }
+    void wait_for_lighting_bake();
+    [[nodiscard]] const std::optional<runtime::SceneLightmapBake>& last_lighting_bake() const noexcept { return last_bake_; }
+    [[nodiscard]] const std::string& lighting_bake_error() const noexcept { return bake_error_; }
+
     // ---- export (File > Export Game, the same as `victus export`) ----
     void open_export_dialog();
     // <project>/build/<GameName>: where Export Game writes unless the user picks a folder.
@@ -1250,6 +1261,13 @@ private:
     bool problems_show_errors_{true}, problems_show_warnings_{true};
     std::string problems_filter_;
     void poll_project_check();
+    // Bake Lighting
+    std::future<Result<runtime::SceneLightmapBake>> bake_future_;
+    std::optional<runtime::SceneLightmapBake> last_bake_;
+    std::string bake_target_, bake_error_, bake_scene_;
+    fs::Path bake_target_path_;
+    std::chrono::steady_clock::time_point bake_started_at_{};
+    void poll_lighting_bake();
     // Export Game
     std::future<Result<player::ExportReport>> export_future_;
     std::optional<player::ExportReport> export_report_;

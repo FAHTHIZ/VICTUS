@@ -13,6 +13,7 @@
 #include "victus/render/atmosphere.hpp"
 #include "victus/render/irradiance_bake.hpp"
 #include "victus/render/irradiance_volume.hpp"
+#include "victus/render/lightmap.hpp"
 #include "victus/render/scene_renderer.hpp"
 #include "victus/render/sprite_batch.hpp"
 #include "victus/scene/scene.hpp"
@@ -229,6 +230,16 @@ public:
                                                  std::uint32_t mesh, std::span<const float> weights);
     [[nodiscard]] std::size_t morphed_count() const noexcept { return morphed_.size(); }
     [[nodiscard]] std::uint64_t morph_uploads() const noexcept { return morph_uploads_; }
+    // Baked lighting (ADR-0125). The lightmap file at a project-relative path, read, validated and
+    // uploaded on first use (invalid texture when missing or damaged; the failure is logged once).
+    [[nodiscard]] rhi::TextureHandle lightmap(std::string_view path);
+    // The lightmapped GPU copy of a MeshRenderer's geometry for the lightmap at `path`; nullptr
+    // when the file has no entry for the entity or its geometry changed since the bake (stale
+    // entries draw unlightmapped; logged once per entity). Built on first use.
+    [[nodiscard]] const render::GpuMesh* lightmapped_mesh(std::string_view path, scene::Scene& scene, scene::Entity entity);
+    // Drops loaded lightmaps (after a re-bake) so the next request reads the file again.
+    void evict_lightmaps();
+    [[nodiscard]] std::size_t lightmap_count() const noexcept { return lightmaps_.size(); }
     // Drops one asset (e.g. after re-import) so the next request reloads it.
     void evict(const Uuid& uuid);
     void clear();
@@ -267,6 +278,12 @@ private:
         bool failed{false};
     };
     std::unordered_map<std::uint64_t, ProceduralEntry> procedural_;
+    struct LightmapEntry {
+        rhi::TextureHandle texture;
+        std::vector<render::LightmapFileEntry> entries; // the file's UV sets (atlas pixels released after upload)
+        std::unordered_map<Uuid, std::optional<render::GpuMesh>, UuidHash> meshes; // nullopt = no entry or stale
+    };
+    std::unordered_map<std::string, LightmapEntry> lightmaps_;
     struct MorphEntry {
         Uuid model;
         std::uint32_t mesh{0};
@@ -345,6 +362,7 @@ struct ExtractStats {
     std::uint32_t irradiance_probes_refreshed{0}; // dynamic-volume probes re-captured during this call
     std::uint32_t skinned{0}; // meshes drawn with GPU skinning
     std::uint32_t morphed{0}; // meshes drawn with morph targets applied
+    std::uint32_t lightmapped{0}; // meshes drawn with baked lighting (ADR-0125)
     std::uint32_t terrain_chunks{0}; // terrain chunk meshes submitted (before culling)
     std::uint32_t foliage_instances{0}; // foliage instances submitted (within draw distance, before culling)
     std::uint32_t particle_emitters{0}, particles{0}; // submitted (before camera culling)

@@ -279,6 +279,9 @@ struct EnvironmentComponent {
     float coverage_roughness{0.8f};
     float coverage_slope{0.55f};
     // Image-based lighting from an HDR (.hdr, equirectangular) texture asset; nil = analytic sky.
+    // Project-relative baked lightmap (.vlightmap, ADR-0125) for this scene's lightmapped mesh
+    // renderers; empty = no baked lighting. `victus bake-lighting` writes it.
+    std::string lightmap;
     Uuid environment_map;
     float environment_intensity{1.0f};
     float environment_rotation{0.0f}; // degrees about +Y

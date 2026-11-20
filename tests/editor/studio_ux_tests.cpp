@@ -10,6 +10,7 @@
 #include "victus/core/json.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
+#include "victus/runtime/scene_lightmap.hpp"
 #include "victus/runtime/scene_view.hpp"
 #include "victus/script/behaviours.hpp"
 #include "victus/ui/style.hpp"
@@ -1480,4 +1481,57 @@ TEST_CASE("studio inspector: inventories, timers and attributes are shown and it
     h.frames(3); // all three sections draw
     CHECK(w.get<gameplay::TimersComponent>(e));
     CHECK(gameplay::item_count(h.ed->edit_scene(), e, "Key") == 2);
+}
+
+TEST_CASE("studio bake lighting: Assets > Bake Lighting bakes off the UI thread and is one undo step") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    CHECK_FALSE(h.ed->start_lighting_bake().ok()); // no project
+    REQUIRE(h.ed->create_project(h.dir / "Lit", "Lit", "3d").ok());
+    REQUIRE_FALSE(h.ed->scene_path().empty());
+
+    // Nothing is marked Static Lighting yet: refused with a hint.
+    const Status none = h.ed->start_lighting_bake();
+    REQUIRE_FALSE(none.ok());
+    CHECK_FALSE(h.ed->baking_lighting());
+
+    scene::Scene& s = h.ed->edit_scene();
+    int marked = 0;
+    s.world().each<scene::MeshRendererComponent>([&](scene::MeshRendererComponent& mr) {
+        if (marked < 2 && !mr.primitive.empty()) {
+            mr.lightmapped = true;
+            ++marked;
+        }
+    });
+    REQUIRE(marked > 0);
+
+    render::LightmapSettings fast;
+    fast.samples = 8;
+    fast.bounces = 1;
+    fast.texels_per_unit = 2;
+    fast.max_atlas_size = 256;
+    REQUIRE(h.ed->start_lighting_bake(fast).ok());
+    CHECK(h.ed->baking_lighting());
+    CHECK_FALSE(h.ed->start_lighting_bake(fast).ok()); // one at a time
+    h.frames(1);                                        // the editor keeps drawing meanwhile
+    h.ed->wait_for_lighting_bake();
+    CHECK_FALSE(h.ed->baking_lighting());
+    REQUIRE_MESSAGE(h.ed->last_lighting_bake().has_value(), h.ed->lighting_bake_error());
+    CHECK(h.ed->last_lighting_bake()->receivers == static_cast<std::uint32_t>(marked));
+
+    const std::string expected = runtime::default_lightmap_path(h.ed->scene_path());
+    CHECK(sfs::exists(h.dir / "Lit" / expected));
+    std::string env_path;
+    s.world().each<gameplay::EnvironmentComponent>([&](const gameplay::EnvironmentComponent& e) { env_path = e.lightmap; });
+    CHECK(env_path == expected);
+    h.frames(2); // renders with the lightmap
+
+    // Undo takes the scene back to realtime-only lighting (the file stays on disk).
+    h.ed->undo();
+    env_path.clear();
+    h.ed->edit_scene().world().each<gameplay::EnvironmentComponent>(
+        [&](const gameplay::EnvironmentComponent& e) { env_path = e.lightmap; });
+    CHECK(env_path.empty());
 }

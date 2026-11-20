@@ -7,6 +7,7 @@
 #include "victus/assets/database.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/core/pack.hpp"
+#include "victus/gameplay/gameplay.hpp"
 #include "victus/player/export.hpp"
 #include "victus/project/project.hpp"
 #include "victus/render/image.hpp"
@@ -314,4 +315,35 @@ TEST_CASE("export: materials ship verbatim and broken material references fail t
     r = player::export_game(o);
     REQUIRE_FALSE(r.ok());
     CHECK(r.error().message.find("metallic") != std::string::npos);
+}
+
+TEST_CASE("export: the scene's baked lightmap ships with it; a missing bake is a warning") {
+    TempDir tmp("victus_export_lightmap");
+    const fs::Path src = make_project(tmp.path);
+    project::register_components();
+    scene::Scene s;
+    REQUIRE(s.load_file(src / "scenes" / "main.vscene").ok());
+    const scene::Entity env = s.create("Baked Environment");
+    s.world().add<gameplay::EnvironmentComponent>(env).lightmap = "scenes/main.vlightmap";
+    REQUIRE(s.save_file(src / "scenes" / "main.vscene").ok());
+
+    player::ExportOptions o;
+    o.project = src;
+    o.include_player = false;
+
+    // Not baked yet: the game still exports (realtime lighting) and says why it looks different.
+    o.output = tmp.path / "out_missing";
+    auto missing = player::export_game(o);
+    REQUIRE_MESSAGE(missing.ok(), (missing.ok() ? "" : missing.error().message));
+    bool warned = false;
+    for (const auto& w : missing->warnings) warned = warned || w.find("main.vlightmap") != std::string::npos;
+    CHECK(warned);
+
+    write_bytes(src / "scenes" / "main.vlightmap", {1, 2, 3, 4});
+    o.output = tmp.path / "out";
+    auto r = player::export_game(o);
+    REQUIRE_MESSAGE(r.ok(), (r.ok() ? "" : r.error().message));
+    auto pk = pack::Pack::open(r->pack);
+    REQUIRE(pk.ok());
+    CHECK((*pk)->contains("scenes/main.vlightmap"));
 }

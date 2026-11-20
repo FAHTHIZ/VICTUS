@@ -21,6 +21,7 @@ file(COPY_FILE ${_fonts_cpp}.tmp ${_fonts_cpp} ONLY_IF_DIFFERENT)
 victus_add_module(runtime
     SOURCES
         src/scene_rendering.cpp
+        src/scene_lightmap.cpp
         src/scene_view.cpp
         src/game_ui.cpp
         src/hot_reload.cpp

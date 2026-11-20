@@ -201,6 +201,7 @@ void register_components() {
             .field(&E::coverage_color, "coverage_color")
             .field(&E::coverage_roughness, "coverage_roughness", {.min = 0.05f, .max = 1, .speed = 0.01f})
             .field(&E::coverage_slope, "coverage_slope", {.min = -1, .max = 1, .speed = 0.01f, .tooltip = "Surface normal Y where coverage starts"})
+            .field(&E::lightmap, "lightmap", {.label = "Lightmap", .tooltip = "Project-relative baked lightmap (.vlightmap) for Lightmapped mesh renderers; written by Bake Lighting", .hint = "file"})
             .field(&E::environment_map, "environment_map", {.label = "Environment Map", .tooltip = "HDR (.hdr) equirectangular image for image-based lighting, reflections and the sky; empty = analytic sky", .hint = "texture"})
             .field(&E::environment_intensity, "environment_intensity", {.min = 0, .max = 64, .speed = 0.01f, .tooltip = "Scales environment lighting, reflections and background"})
             .field(&E::environment_rotation, "environment_rotation", {.min = -360, .max = 360, .speed = 0.5f, .tooltip = "Degrees about the up axis"})

@@ -31,6 +31,7 @@
 #include "victus/player/validate.hpp"
 #include "victus/plugin/plugin.hpp"
 #include "victus/project/project.hpp"
+#include "victus/runtime/scene_lightmap.hpp"
 #include "victus/runtime/surface_shader.hpp"
 #include "victus/platform/platform.hpp"
 #include "victus/scene/scene.hpp"
@@ -98,6 +99,7 @@ constexpr const char* kUsage =
     "  plugins <project> [--load] [--new NAME]                    list, load or create native plugins\n"
     "  export <project> --out DIR [--name EXE] [--player PATH]    package a runnable game folder\n"
     "  world <project> --scene S --out DIR [--cell-size N]       split a scene into streamed world cells (.vworld)\n"
+    "  bake-lighting <project> [--scene S] [--samples N] [--density T] [--mark-static]  bake lightmaps for Static Lighting meshes\n"
     "  diagnose [project] --out FILE.zip [--no-logs] [--keep-paths] ...  bundle crash reports, logs and checks\n"
     "  version                                                    print the engine version\n"
     "\n"
@@ -1112,6 +1114,110 @@ int cmd_plugins(const std::vector<std::string>& a) {
 
 // World partition (6h, ADR-0090): moves the scene's streamable root subtrees into grid cell
 // scenes under DIR, writes DIR.vworld and rewrites the scene as the persistent part.
+int cmd_bake_lighting(const std::vector<std::string>& a) {
+    cli::Parser p("victus bake-lighting", "Bake static lighting (lightmaps, ADR-0125) for a scene's Lightmapped mesh renderers");
+    p.positional("project", "project folder", true)
+        .option("scene", "scene to bake (project-relative; default: the startup scene)", "")
+        .option("out", "project-relative .vlightmap to write (default: the Environment's lightmap, else next to the scene)", "")
+        .option("samples", "rays per texel (more = less noise, slower)", "128")
+        .option("bounces", "indirect bounces", "3")
+        .option("density", "lightmap texels per metre", "8")
+        .option("max-size", "largest atlas side in texels (density is lowered to fit)", "2048")
+        .option("threads", "worker threads (0 = all cores)", "0")
+        .flag("direct", "also bake direct light from the scene's lights (otherwise only sky and bounce light)")
+        .flag("mark-static", "first mark every mesh that cannot move (no dynamic/kinematic body, character, animator or script) as Static Lighting")
+        .flag("dry-run", "bake and report without writing files");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message);
+    auto proj = project::Project::open(p.get("project"));
+    if (!proj) return error(proj.error().message);
+    project::register_components();
+    const std::string rel = p.get("scene").empty() ? proj->settings().startup_scene : p.get("scene");
+    auto path = proj->resolve(rel);
+    if (!path) return error(path.error().message);
+    scene::Scene s;
+    if (auto st = s.load_file(*path); !st) return error(st.error().message);
+    render::LightmapSettings ls;
+    std::uint32_t threads = 0;
+    try {
+        ls.samples = static_cast<std::uint32_t>(std::clamp(std::stoi(p.get("samples")), 1, 65536));
+        ls.bounces = static_cast<std::uint32_t>(std::clamp(std::stoi(p.get("bounces")), 0, 16));
+        ls.texels_per_unit = std::stof(p.get("density"));
+        ls.max_atlas_size = static_cast<std::uint32_t>(std::clamp(std::stoi(p.get("max-size")), 64, 8192));
+        threads = static_cast<std::uint32_t>(std::clamp(std::stoi(p.get("threads")), 0, 256));
+    } catch (const std::exception&) {
+        return error("--samples, --bounces, --density, --max-size and --threads must be numbers");
+    }
+    if (!(ls.texels_per_unit > 0.0f) || !std::isfinite(ls.texels_per_unit)) return error("--density must be positive");
+    ls.include_direct = p.has("direct");
+    auto db = assets::AssetDatabase::open(proj->root());
+    if (!db) return error(db.error().message);
+    const auto imported = (*db)->import_all();
+    for (const auto& m : imported.messages) std::fprintf(stderr, "victus: %s\n", m.c_str());
+    if (p.has("mark-static")) {
+        ecs::World& mw = s.world();
+        std::uint32_t marked = 0;
+        mw.each<scene::MeshRendererComponent>([&](ecs::Entity e, scene::MeshRendererComponent& mr) {
+            if (mr.lightmapped || !mr.visible) return;
+            if (const auto* rb = mw.get<physics::RigidBodyComponent>(e); rb && rb->type != physics::BodyType::Static) return;
+            if (mw.has<physics::CharacterControllerComponent>(e) || mw.has<animation::AnimatorComponent>(e) ||
+                mw.has<script::ScriptComponent>(e))
+                return;
+            // A moving parent (a character's held prop, a vehicle's wheel) moves the child too.
+            for (ecs::Entity up = s.parent(e); !up.is_null(); up = s.parent(up))
+                if (const auto* rb = mw.get<physics::RigidBodyComponent>(up);
+                    (rb && rb->type != physics::BodyType::Static) || mw.has<physics::CharacterControllerComponent>(up) ||
+                    mw.has<animation::AnimatorComponent>(up) || mw.has<script::ScriptComponent>(up))
+                    return;
+            mr.lightmapped = true;
+            ++marked;
+        });
+        std::printf("marked %u mesh renderers as Static Lighting\n", marked);
+    }
+    s.update_transforms();
+    jobs::JobSystem workers(threads);
+    const auto t0 = std::chrono::steady_clock::now();
+    auto bake = runtime::bake_scene_lightmap(s, db->get(), ls, &workers);
+    if (!bake) return error(bake.error().message);
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    for (const auto& w : bake->warnings) std::fprintf(stderr, "victus: warning: %s\n", w.c_str());
+    const auto& st = bake->stats;
+    std::printf("baked %u lightmapped renderers (%u blockers, %u lights): %ux%u atlas at %.2f texels/m, %llu texels "
+                "(%llu inside geometry), %llu rays in %.1f s\n",
+                bake->receivers, bake->blockers, bake->lights, st.width, st.height, st.texels_per_unit,
+                static_cast<unsigned long long>(st.texels), static_cast<unsigned long long>(st.invalid_texels),
+                static_cast<unsigned long long>(st.rays), secs);
+    // Where the bake goes: --out, else the Environment's current lightmap, else next to the scene.
+    ecs::World& w = s.world();
+    gameplay::EnvironmentComponent* env = nullptr;
+    w.each<gameplay::EnvironmentComponent>([&](gameplay::EnvironmentComponent& e) {
+        if (!env) env = &e;
+    });
+    std::string out = p.get("out");
+    if (out.empty()) out = env && !env->lightmap.empty() ? env->lightmap : runtime::default_lightmap_path(rel);
+    if (p.has("dry-run")) return std::printf("dry run: would write %s\n", out.c_str()), 0;
+    auto target = proj->resolve(out);
+    if (!target) return error(target.error().message);
+    std::error_code ec;
+    std::filesystem::create_directories(target->parent_path(), ec);
+    if (auto wr = fs::write_atomic(*target, render::encode_lightmap_file(bake->file)); !wr) return error(wr.error().message);
+    bool rewrite = false;
+    if (!env) {
+        const scene::Entity e = s.create("Environment");
+        env = &w.add<gameplay::EnvironmentComponent>(e);
+        std::printf("added an Environment entity (default sky) to reference the lightmap\n");
+        rewrite = true;
+    }
+    if (env->lightmap != out) {
+        env->lightmap = out;
+        rewrite = true;
+    }
+    if (rewrite)
+        if (auto sv = s.save_file(*path); !sv) return error(sv.error().message);
+    std::printf("wrote %s%s\n", out.c_str(), rewrite ? std::format(" and updated {}", rel).c_str() : "");
+    return 0;
+}
+
 int cmd_world(const std::vector<std::string>& a) {
     cli::Parser p("victus world", "Split a scene into streamed world cells");
     p.positional("project", "project folder", true)
@@ -1405,6 +1511,7 @@ int main(int argc, char** argv) {
     if (cmd == "export") return cmd_export(args);
     if (cmd == "diagnose") return cmd_diagnose(args);
     if (cmd == "world") return cmd_world(args);
+    if (cmd == "bake-lighting") return cmd_bake_lighting(args);
     if (cmd == "crash-test") return cmd_crash_test(args);
     if (cmd == "version" || cmd == "--version") return std::printf("VICTUS %s\n", build::version()), 0;
     if (cmd == "help" || cmd == "--help" || cmd == "-h") return std::printf("%s", kUsage), 0;

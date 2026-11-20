@@ -87,6 +87,9 @@ struct MeshRendererComponent {
     float roughness{0.5f};
     bool cast_shadows{true};
     bool visible{true};
+    // Static lighting (ADR-0125): receives baked lighting from the scene's lightmap (Environment
+    // `lightmap`) once baked. The object must not move after baking.
+    bool lightmapped{false};
 };
 // Geometry built at run time (scripts, simulation bridges, tools) instead of loaded from an
 // asset. Shared and immutable once published: replace the pointer to change it. `id` is unique

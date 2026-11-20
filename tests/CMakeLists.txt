@@ -133,6 +133,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_reflection_probe_tests.cpp
         render/gpu_irradiance_tests.cpp
         render/gpu_lightmap_tests.cpp
+        render/gpu_scene_lightmap_tests.cpp
         render/gpu_taa_tests.cpp
         render/gpu_light_tests.cpp
         render/gpu_texture_compression_tests.cpp
@@ -188,6 +189,14 @@ add_test(NAME victus_cli_smoke
         -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_smoke
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/cli_smoke.cmake)
 set_tests_properties(victus_cli_smoke PROPERTIES LABELS "cli;gpu")
+
+# `victus bake-lighting` on a fresh 3D template (ADR-0125); runs it on every tier with a GPU.
+add_test(NAME victus_cli_bake_lighting
+    COMMAND ${CMAKE_COMMAND}
+        -DVICTUS_CLI=$<TARGET_FILE:victus_cli>
+        -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_bake_lighting
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/bake_lighting.cmake)
+set_tests_properties(victus_cli_bake_lighting PROPERTIES LABELS "cli;gpu")
 
 # Crash handlers end to end (real SIGSEGV / std::terminate in a child process) and
 # `victus diagnose` bundling the reports (ADR-0072). No GPU needed.
