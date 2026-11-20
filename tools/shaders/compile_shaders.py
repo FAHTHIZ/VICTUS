@@ -6,6 +6,8 @@ For every *.vert / *.frag / *.comp in engine/render/shaders this produces:
   * SPIR-V (glslangValidator -V)            -> Vulkan
   * MSL 2.1 (spirv-cross --msl, compiled with -DVICTUS_MSL=1) -> Metal
   * resource counts (spirv-cross --reflect)  -> SDL_GPU shader create info
+  * GLSL ES 3.00 (spirv-cross --es, graphics shaders only) -> OpenGL ES backend (ADR-0144), or
+    an empty string when the shader needs more than ES 3.00 (validated with glslangValidator)
 
 Generated files are committed so engine builds do not require shader tools.
 `--check` verifies (without any shader tools) that the generated file was produced
@@ -109,6 +111,65 @@ def compile_one(unit, tmp):
     return spv.read_bytes(), msl, counts
 
 
+ESSL_PREFIX = {"Vertex": "vs_", "Fragment": "fs_"}
+
+
+def essl_from_spirv(spv, stage, tmp, stem):
+    """GLSL ES 3.00 with GL clip space and "//!" slot comments, or (None, reason).
+
+    Conventions (engine/rhi/src/rhi_gles.hpp): vertex shaders get --fixup-clipspace and
+    --flip-vert-y; vertex outputs and fragment inputs are renamed vx_io_<location> so the stages
+    link by name; uniform blocks get a per-stage prefix so same-named blocks in the two stages do
+    not have to match; SDL_GPU's sets (vertex samplers 0 / uniforms 1, fragment samplers 2 /
+    uniforms 3) become "//! sampler <binding> <name>" and "//! ubo <binding> <block>" lines.
+    """
+    refl = json.loads(run(["spirv-cross", str(spv), "--reflect"]))
+    if refl.get("ssbos") or refl.get("images") or refl.get("separate_images") or refl.get("separate_samplers"):
+        return None, "storage buffers/images or separate samplers"
+    cmd = ["spirv-cross", str(spv), "--es", "--version", "300"]
+    if stage == "Vertex":
+        cmd += ["--fixup-clipspace", "--flip-vert-y"]
+        for o in refl.get("outputs", []):
+            cmd += ["--rename-interface-variable", "out", str(o["location"]), f"vx_io_{o['location']}"]
+    else:
+        for i in refl.get("inputs", []):
+            cmd += ["--rename-interface-variable", "in", str(i["location"]), f"vx_io_{i['location']}"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        return None, "spirv-cross: " + (r.stderr.strip().splitlines() or ["failed"])[0]
+    text = r.stdout
+    prefix = ESSL_PREFIX[stage]
+    header = []
+    for t in refl.get("textures", []):
+        header.append(f"//! sampler {t['binding']} {t['name']}")
+    types = refl.get("types", {})
+    for u in refl.get("ubos", []):
+        block = types.get(u["type"], {}).get("name", u["name"])
+        new = prefix + block
+        text, n = re.subn(rf"(\buniform\s+){re.escape(block)}(\s*\{{)", rf"\g<1>{new}\g<2>", text)
+        if n != 1:
+            return None, f"uniform block {block} not found in output"
+        header.append(f"//! ubo {u['binding']} {new}")
+    first, _, rest = text.partition("\n")
+    text = "\n".join([first, *header, rest])
+    out = tmp / (stem + (".vert" if stage == "Vertex" else ".frag"))
+    out.write_text(text)
+    v = subprocess.run(["glslangValidator", str(out)], capture_output=True, text=True)
+    if v.returncode != 0:
+        errs = [ln for ln in v.stdout.splitlines() if ln.startswith("ERROR")]
+        return None, (errs[0] if errs else "invalid ESSL 3.00")
+    return text, None
+
+
+def spirv_from_block(block):
+    m = re.search(r"k_spirv_\d+\[\] = \{\n(.*?)\n\};", block, re.S)
+    return bytes(int(x, 16) for x in re.findall(r"0x([0-9a-f]{2})", m.group(1)))
+
+
+def essl_decl(i, text):
+    return f"const char k_essl_{i}[] =\n{c_string(text)};" if text else f'const char k_essl_{i}[] = "";'
+
+
 def c_bytes(data):
     lines = []
     for i in range(0, len(data), 20):
@@ -142,7 +203,7 @@ def previous_outputs():
 
 
 def renumber(text, old, new):
-    return re.sub(rf"\bk_(spirv|msl)_{old}\b", lambda m: f"k_{m.group(1)}_{new}", text)
+    return re.sub(rf"\bk_(spirv|msl|essl)_{old}\b", lambda m: f"k_{m.group(1)}_{new}", text)
 
 
 def generate(recompile_all=False):
@@ -152,29 +213,57 @@ def generate(recompile_all=False):
         for tool in ("glslangValidator", "spirv-cross"):
             if not shutil.which(tool):
                 sys.exit(f"{tool} not found (install glslang-tools and spirv-cross)")
+    missing_essl = [s.name for s in units() if s.name in previous and "k_essl_" not in previous[s.name][1]]
+    if missing_essl and not shutil.which("spirv-cross"):
+        sys.exit("spirv-cross not found (needed to add GLSL ES output)")
     entries = []
     body = []
+    no_essl = []
     with tempfile.TemporaryDirectory() as t:
         tmp = pathlib.Path(t)
         for i, src in enumerate(units()):
+            stage = STAGES[src.suffix]
+            stem = src.name.replace("#", "_")
             if src.name not in stale:
                 _, block, entry = previous[src.name]
                 old = re.search(r"\bk_spirv_(\d+)\b", block).group(1)
-                body.append(renumber(block, old, i))
-                entries.append(renumber(entry, old, i))
+                block, entry = renumber(block, old, i), renumber(entry, old, i)
+                if "k_essl_" not in block:
+                    # Older generated file: derive GLSL ES from the embedded SPIR-V, leaving the
+                    # SPIR-V and MSL untouched.
+                    text = None
+                    if stage != "Compute":
+                        spv = tmp / (stem + ".cached.spv")
+                        spv.write_bytes(spirv_from_block(block))
+                        text, why = essl_from_spirv(spv, stage, tmp, stem)
+                        if why:
+                            no_essl.append(f"{src.name}: {why}")
+                    block += "\n" + essl_decl(i, text)
+                    entry = entry.replace(f"sizeof(k_msl_{i}) - 1}}, ",
+                                          f"sizeof(k_msl_{i}) - 1}}, {{k_essl_{i}, sizeof(k_essl_{i}) - 1}}, ", 1)
+                body.append(block)
+                entries.append(entry)
                 continue
             print(f"compiling {src.name}")
             spv, msl, c = compile_one(src, tmp)
+            text = None
+            if stage != "Compute":
+                spv_path = tmp / (stem + ".essl.spv")
+                spv_path.write_bytes(spv)
+                text, why = essl_from_spirv(spv_path, stage, tmp, stem)
+                if why:
+                    no_essl.append(f"{src.name}: {why}")
             body.append(f"// {src.name} sha256={digest(src)}")
             body.append(f"const std::uint8_t k_spirv_{i}[] = {{\n{c_bytes(spv)}\n}};")
             body.append(f"const char k_msl_{i}[] =\n{c_string(msl)};")
+            body.append(essl_decl(i, text))
             extra = ""
             if "threads" in c:
                 tx, ty, tz = c["threads"]
                 extra = f', {c["rw_storage_textures"]}, {c["rw_storage_buffers"]}, {{{tx}, {ty}, {tz}}}'
             entries.append(
                 f'    {{"{src.name}", rhi::ShaderStage::{STAGES[src.suffix]}, {{k_spirv_{i}, sizeof(k_spirv_{i})}}, '
-                f'{{k_msl_{i}, sizeof(k_msl_{i}) - 1}}, {c["samplers"]}, {c["storage_textures"]}, '
+                f'{{k_msl_{i}, sizeof(k_msl_{i}) - 1}}, {{k_essl_{i}, sizeof(k_essl_{i}) - 1}}, {c["samplers"]}, {c["storage_textures"]}, '
                 f'{c["storage_buffers"]}, {c["uniform_buffers"]}{extra}}},')
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     text = "\n".join([
@@ -196,6 +285,8 @@ def generate(recompile_all=False):
     ])
     OUT_CPP.write_text(text, newline="\n")
     print(f"wrote {OUT_CPP.relative_to(ROOT)} ({len(entries)} shaders)")
+    for line in no_essl:
+        print(f"  no GLSL ES 3.00: {line}")
 
 
 def check():

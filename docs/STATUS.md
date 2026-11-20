@@ -2052,3 +2052,13 @@ Verified (Release, clang 21, Mesa 26.0.8 llvmpipe, OpenGL ES 3.2 context): new `
 Not covered: the scene renderer and built-in shaders do not have ESSL yet (phase 2); window presentation, MSAA resolve, cube/3D/array textures and compressed uploads are implemented but untested; no mobile GPU or real Android device. The macOS CI result for the compact-HDR fix (4a37cbb) is still to be confirmed.
 
 Next task: ADR-0144 phase 2 — ESSL output in `compile_shaders.py` (spirv-cross `--es --version 300 --fixup-clipspace --flip-vert-y`, reflection-driven `//!` headers), the 11 shader fixes, and the scene renderer on Low against the Vulkan golden.
+
+## 2026-11-20 — GLSL ES 3.00 for the built-in shaders (ADR-0144 phase 2a)
+
+Built: `compile_shaders.py` generates validated GLSL ES 3.00 for every graphics shader it can (`BuiltinShader::glsl_es`, passed through `create_builtin_shader`), with GL clip space, link-by-location varyings, per-stage uniform block names and `//!` slot comments; files generated before this change get ESSL added from their embedded SPIR-V, so SPIR-V and MSL are byte-identical. The GLES backend sets `SPIRV_Cross_BaseInstance` per draw.
+
+Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): `compile_shaders.py --check` up to date (62); a second generator run is a no-op. `gpu_gles_tests` 9 cases: all 41 built-in GLSL ES shaders compile on the GLES device, and the built-in FXAA pass (`fullscreen.vert` + `fxaa.frag`) is byte-identical to the Vulkan result. `VICTUS_REQUIRE_GPU=1 ctest --test-dir build -j2` 39/39; clang-tidy clean.
+
+Not covered: 14 graphics shaders have no GLSL ES yet (storage buffers in skinning, PBR clustered lights, fog apply, particles, precipitation; `frexp`/`ldexp` in sky and TAA). The scene renderer has not run on GLES.
+
+Next task: a `VICTUS_ESSL` compile define so shaders can choose ES 3.00 code paths, portable exponent extraction for sky/TAA (floatBitsToInt), then the storage-buffer rewrites and the scene renderer on Low against the Vulkan golden.

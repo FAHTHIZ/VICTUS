@@ -13,6 +13,7 @@ struct BuiltinShader {
     rhi::ShaderStage stage;
     std::span<const std::uint8_t> spirv;
     std::string_view msl;
+    std::string_view glsl_es; // empty when the shader needs more than GLSL ES 3.00 (ADR-0144)
     // For compute shaders storage_textures/storage_buffers count the read-only bindings.
     std::uint32_t samplers, storage_textures, storage_buffers, uniform_buffers;
     std::uint32_t readwrite_storage_textures{0}, readwrite_storage_buffers{0}; // compute only

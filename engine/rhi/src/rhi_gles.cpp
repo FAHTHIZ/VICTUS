@@ -360,6 +360,7 @@ struct ShaderEntry {
 };
 struct PipelineEntry {
     GLuint program{0};
+    GLint base_instance{-1}; // SPIRV_Cross_BaseInstance (gl_InstanceIndex emulation), -1 if unused
     PipelineDesc desc;
     std::array<BlendState, 8> blend{};
 };
@@ -764,6 +765,7 @@ Result<PipelineHandle> GlesBackend::create_pipeline(const PipelineDesc& desc) {
                 gl.UniformBlockBinding(p.program, idx, ubo_base + slot);
     };
     bind(*vs, kVertexUnitBase, kVertexUboBase);
+    p.base_instance = gl.GetUniformLocation(p.program, "SPIRV_Cross_BaseInstance");
     bind(*fs, kFragmentUnitBase, kFragmentUboBase);
     for (std::size_t i = 0; i < desc.color_targets.size(); ++i) p.blend[i] = gl_blend(desc.color_targets[i].blend);
     if (s_->pipeline.valid()) {
@@ -1379,6 +1381,7 @@ void GlesBackend::draw(std::uint32_t vertex_count, std::uint32_t instance_count,
     auto* p = s.pipelines.get(s.pipeline);
     if (!p || !s.in_pass || vertex_count == 0 || instance_count == 0) return;
     apply_vertex_state(s.gl, s, p->desc, 0, first_instance, s.enabled_attribs);
+    if (p->base_instance >= 0) s.gl.Uniform1i(p->base_instance, static_cast<GLint>(first_instance));
     s.gl.DrawArraysInstanced(gl_primitive(p->desc.primitive), static_cast<GLint>(first_vertex), static_cast<GLsizei>(vertex_count),
                              static_cast<GLsizei>(instance_count));
     device_.stats_.draw_calls++;
@@ -1390,6 +1393,7 @@ void GlesBackend::draw_indexed(std::uint32_t index_count, std::uint32_t instance
     auto* p = s.pipelines.get(s.pipeline);
     if (!p || !s.in_pass || !s.index_buf || index_count == 0 || instance_count == 0) return;
     apply_vertex_state(s.gl, s, p->desc, vertex_offset, first_instance, s.enabled_attribs);
+    if (p->base_instance >= 0) s.gl.Uniform1i(p->base_instance, static_cast<GLint>(first_instance));
     s.gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, s.index_buf);
     const std::uint32_t isize = s.index_type == IndexType::U16 ? 2 : 4;
     // NOLINTNEXTLINE(performance-no-int-to-ptr): GL takes buffer offsets as pointers
