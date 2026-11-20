@@ -3461,13 +3461,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     (!water_draws.empty() || !particle_draws.empty() || precip_count > 0);
     rhi::PipelineHandle reactive_pl[3][2]{}; // [particles, ribbons, water][alpha, additive]
     if (reactive) {
-        const auto use = [&](Result<rhi::PipelineHandle> pl, rhi::PipelineHandle& out) {
+        const auto use = [&](Result<rhi::PipelineHandle> pl, rhi::PipelineHandle& slot) {
             if (!reactive) return;
             if (!pl) {
                 VICTUS_LOG_WARN("render", "TAA reactive mask disabled: {}", pl.error().message);
                 reactive_failed_ = true;
                 reactive = false;
-            } else out = pl.value();
+            } else slot = pl.value();
         };
         for (const ParticleBatch& b : particle_draws) {
             const int kind = b.ribbon ? 1 : 0, add = b.material.blend == ParticleBlend::Additive ? 1 : 0;
