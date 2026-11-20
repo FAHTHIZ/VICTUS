@@ -19,7 +19,7 @@ struct Rgba {
 // A straight-alpha float canvas painted with 4x4 supersampled shapes and "over" compositing.
 class Canvas {
 public:
-    Canvas(int w, int h, Rgba background) : w_(w), h_(h), px_(static_cast<std::size_t>(w * h), background) {}
+    Canvas(int w, int h, Rgba background) : w_(w), h_(h), px_(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), background) {}
 
     using Shape = std::function<bool(float, float)>;
 
@@ -42,7 +42,7 @@ public:
         for (int y = 0; y < h_; ++y) {
             const float t = static_cast<float>(y) / static_cast<float>(std::max(1, h_ - 1));
             const Rgba c{top.r + (bottom.r - top.r) * t, top.g + (bottom.g - top.g) * t, top.b + (bottom.b - top.b) * t, 1};
-            for (int x = 0; x < w_; ++x) px_[static_cast<std::size_t>(y * w_ + x)] = c;
+            for (int x = 0; x < w_; ++x) px_[index(x, y)] = c;
         }
     }
 
@@ -63,8 +63,11 @@ public:
     }
 
 private:
+    [[nodiscard]] std::size_t index(int x, int y) const noexcept {
+        return static_cast<std::size_t>(y) * static_cast<std::size_t>(w_) + static_cast<std::size_t>(x);
+    }
     void over(int x, int y, Rgba c, float a) {
-        Rgba& d = px_[static_cast<std::size_t>(y * w_ + x)];
+        Rgba& d = px_[index(x, y)];
         const float out = a + d.a * (1.0f - a);
         if (out <= 0.0f) return;
         const float k = d.a * (1.0f - a);

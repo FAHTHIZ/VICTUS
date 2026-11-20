@@ -100,7 +100,10 @@ jobs:
         shell: bash
         run: |
           if command -v ccache > /dev/null; then ccache -z; fi
-          cmake --build build --config ${{ matrix.build_type }} --parallel
+          # Bounded: Makefile generators treat a bare --parallel as an unlimited `make -j`, and
+          # linking every Debug test binary at once ran the Linux runner out of memory (exit 143).
+          jobs=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+          cmake --build build --config ${{ matrix.build_type }} --parallel "$jobs"
           if command -v ccache > /dev/null; then ccache -s; fi
       - name: Test
         shell: bash
