@@ -19,6 +19,7 @@ Result<rhi::ShaderHandle> create_builtin_shader(rhi::Device& device, std::string
     d.stage = s->stage;
     d.spirv = s->spirv;
     d.msl = s->msl;
+    d.glsl_es = s->glsl_es;
     d.samplers = s->samplers;
     d.storage_textures = s->storage_textures;
     d.storage_buffers = s->storage_buffers;

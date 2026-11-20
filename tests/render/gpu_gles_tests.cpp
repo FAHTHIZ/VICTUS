@@ -6,6 +6,8 @@
 // from the equivalent SPIR-V.
 #include "gpu_fixture.hpp"
 
+#include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -419,4 +421,123 @@ TEST_CASE("gles: alpha blending over the clear colour") {
     CHECK(test::channel(p, 0) == doctest::Approx(128).epsilon(0.02));
     CHECK(test::channel(p, 1) == 0);
     CHECK(test::channel(p, 2) == doctest::Approx(128).epsilon(0.02));
+}
+
+// ---- Built-in shaders through the generated GLSL ES (ADR-0144 phase 2) ----------------------
+
+#include "victus/render/builtin_shaders.hpp"
+
+namespace {
+
+// Runs fullscreen.vert + fxaa.frag over a pattern with a diagonal edge on `dev` and reads back.
+std::vector<std::uint8_t> fxaa_on(rhi::Device& dev, std::uint32_t size) {
+    auto vs = render::create_builtin_shader(dev, "fullscreen.vert");
+    auto fs = render::create_builtin_shader(dev, "fxaa.frag");
+    REQUIRE_MESSAGE(vs.ok(), (vs.ok() ? "" : vs.error().message));
+    REQUIRE_MESSAGE(fs.ok(), (fs.ok() ? "" : fs.error().message));
+    rhi::PipelineDesc p;
+    p.name = "gles_fxaa";
+    p.vertex = vs.value();
+    p.fragment = fs.value();
+    p.cull = rhi::CullMode::None;
+    p.color_targets = {{rhi::Format::RGBA8_UNORM}};
+    auto pipe = dev.create_pipeline(p);
+    REQUIRE_MESSAGE(pipe.ok(), (pipe.ok() ? "" : pipe.error().message));
+
+    // Bright above the line y = x / 2 + 3, dark below; luma in alpha. Distinct per-row tint so a
+    // vertical flip anywhere shows up.
+    std::vector<std::uint8_t> src(std::size_t{size} * size * 4);
+    for (std::uint32_t y = 0; y < size; ++y)
+        for (std::uint32_t x = 0; x < size; ++x) {
+            const bool bright = static_cast<float>(y) < static_cast<float>(x) * 0.5f + 3.0f;
+            const auto v = static_cast<std::uint8_t>(bright ? 230 : 20);
+            std::uint8_t* t = src.data() + (std::size_t{y} * size + x) * 4;
+            t[0] = v;
+            t[1] = static_cast<std::uint8_t>(y * 255 / (size - 1));
+            t[2] = static_cast<std::uint8_t>(x * 255 / (size - 1));
+            t[3] = v;
+        }
+    rhi::TextureDesc td;
+    td.name = "gles_fxaa_src";
+    td.width = td.height = size;
+    auto tex = dev.create_texture(td);
+    REQUIRE(tex.ok());
+    rhi::SamplerDesc sd;
+    sd.address_u = sd.address_v = rhi::AddressMode::ClampToEdge;
+    auto sampler = dev.create_sampler(sd);
+    REQUIRE(sampler.ok());
+    rhi::TextureDesc rd;
+    rd.name = "gles_fxaa_dst";
+    rd.width = rd.height = size;
+    rd.usage = rhi::TextureUsageColorTarget | rhi::TextureUsageSampled;
+    auto rt = dev.create_texture(rd);
+    REQUIRE(rt.ok());
+
+    auto cmd = dev.begin_commands();
+    cmd.upload_texture(tex.value(), src);
+    const float params[4] = {1.0f / static_cast<float>(size), 1.0f / static_cast<float>(size), 0.0f, 0.75f};
+    rhi::RenderPassDesc rp;
+    rp.colors = {{rt.value()}};
+    auto pass = cmd.begin_render_pass(rp);
+    REQUIRE(pass.active());
+    pass.bind_pipeline(pipe.value());
+    cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, params, sizeof params);
+    pass.bind_texture(rhi::ShaderStage::Fragment, 0, tex.value(), sampler.value());
+    pass.draw(3);
+    pass.end();
+    cmd.submit_and_wait();
+    auto px = dev.read_texture(rt.value());
+    REQUIRE(px.ok());
+    auto out = std::move(px).value();
+    dev.destroy(pipe.value());
+    dev.destroy(vs.value());
+    dev.destroy(fs.value());
+    dev.destroy(tex.value());
+    dev.destroy(sampler.value());
+    dev.destroy(rt.value());
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("gles: every built-in shader with GLSL ES compiles on the device") {
+    VICTUS_REQUIRE_GLES_OR_SKIP();
+    auto& dev = *gles().device;
+    int compiled = 0, without = 0;
+    for (const auto& s : render::builtin_shaders()) {
+        if (s.stage == rhi::ShaderStage::Compute) continue;
+        if (s.glsl_es.empty()) {
+            ++without;
+            continue;
+        }
+        auto h = render::create_builtin_shader(dev, s.name);
+        CHECK_MESSAGE(h.ok(), s.name << ": " << (h.ok() ? "" : h.error().message));
+        if (h.ok()) {
+            ++compiled;
+            dev.destroy(h.value());
+        }
+    }
+    MESSAGE(compiled << " built-in shaders compiled as GLSL ES 3.00, " << without << " have none yet");
+    CHECK(compiled >= 41); // 55 graphics shaders; the rest need ES 3.00 rewrites (ADR-0144)
+}
+
+TEST_CASE("gles: built-in fullscreen pass matches the SDL_GPU backend") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_GLES_OR_SKIP();
+    constexpr std::uint32_t kSize = 24;
+    const auto ref = fxaa_on(*test::gpu().device, kSize);
+    const auto got = fxaa_on(*gles().device, kSize);
+    REQUIRE(ref.size() == got.size());
+    int worst = 0;
+    double sum = 0;
+    for (std::size_t i = 0; i < ref.size(); ++i) {
+        const int d = std::abs(int(ref[i]) - int(got[i]));
+        worst = std::max(worst, d);
+        sum += d;
+    }
+    MESSAGE("fxaa GLES vs " << test::gpu().device->capabilities().driver_name << ": max diff " << worst << ", mean "
+                            << sum / static_cast<double>(ref.size()));
+    test::save_output("gles_fxaa_ref", kSize, kSize, ref);
+    test::save_output("gles_fxaa_gles", kSize, kSize, got);
+    CHECK(worst <= 2);
 }
