@@ -105,14 +105,19 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     auto gpu = render::GpuContext::create(dev);
     if (!gpu) return std::move(gpu).error();
     runtime::GpuAssetCache cache(**gpu, db->get());
-    auto view = runtime::SceneView::create(**gpu, rhi::Format::RGBA8_UNORM);
-    if (!view) return std::move(view).error();
     const bool mobile = platform::Platform::is_mobile();
     const std::string quality_name = !o.quality.empty() ? o.quality
                                      : mobile           ? proj->settings().mobile_quality
                                                         : proj->settings().render_quality;
     const auto tier = render::parse_quality_tier(quality_name);
     if (!tier) return make_error(ErrorCode::InvalidArgument, "unknown quality tier '" + quality_name + "'");
+    // Packed R11G11B10F scene colour (ADR-0050, ADR-0126) halves HDR bandwidth where bandwidth is
+    // the limit: phones and the Low/Medium tiers. Fixed for the run (the pipelines are built for it).
+    render::SceneRendererOptions renderer_options;
+    renderer_options.compact_hdr = o.compact_hdr.value_or(compact_hdr_by_default(*tier, mobile));
+    auto view = runtime::SceneView::create(**gpu, rhi::Format::RGBA8_UNORM, renderer_options);
+    if (!view) return std::move(view).error();
+    const char* hdr_format = (*view)->renderer().hdr_format() == rhi::Format::R11G11B10_FLOAT ? "R11G11B10F" : "RGBA16F";
     render::RenderSettings quality = render::RenderSettings::preset(*tier);
     if (proj->settings().render_scale > 0.0f) quality.render_scale = proj->settings().render_scale;
     quality.temporal_upscale = proj->settings().temporal_upscale;
@@ -385,6 +390,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     report.packaged = packaged;
     report.plugins_loaded = plugins.loaded_count();
     report.quality = std::string(render::quality_tier_name(*tier));
+    report.hdr_format = hdr_format;
     VICTUS_LOG_INFO("player", "{}: {} on {}", proj->settings().name, rel, report.backend);
 
     rhi::TextureHandle frame;

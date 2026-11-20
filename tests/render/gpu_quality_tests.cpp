@@ -5,6 +5,7 @@
 #include "victus/render/scene_renderer.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
 
 using namespace victus;
@@ -651,4 +652,64 @@ TEST_CASE("gpu quality: Environment component drives the scene look") {
     CHECK(out.vignette == 1.0f);
     CHECK(out.auto_exposure_max_ev >= out.auto_exposure_min_ev);
     CHECK(sun.shadow_distance == 1.0f);
+}
+
+TEST_CASE("gpu quality: compact HDR (R11G11B10F) matches RGBA16F within a few levels") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    SceneRendererOptions compact;
+    compact.compact_hdr = true;
+    auto full_r = SceneRenderer::create(ctx);
+    auto compact_r = SceneRenderer::create(ctx, compact);
+    REQUIRE(full_r.ok());
+    REQUIRE(compact_r.ok());
+    CHECK((*full_r)->hdr_format() == rhi::Format::RGBA16_FLOAT);
+    const bool packed = (*compact_r)->hdr_format() == rhi::Format::R11G11B10_FLOAT;
+    if (!packed) MESSAGE("R11G11B10F unsupported on this device; the renderer fell back to RGBA16F");
+    Meshes m;
+    const Camera3D cam = Camera3D::look_at({0, 4, 8}, {0, 0.5f, 0});
+    DirectionalLight sun;
+    Environment env;
+    Material red, glow;
+    red.base_color = {0.8f, 0.1f, 0.1f, 1};
+    glow.emissive = {1.0f, 0.6f, 0.2f, 1};
+    glow.emissive_strength = 6.0f; // over-bright: exercises HDR range, bloom and tonemapping
+    auto content = [&](SceneRenderer& r) {
+        r.submit(m.plane, {}, math::Mat4::identity());
+        r.submit(m.cube, red, math::Mat4::translation({-1.2f, 0.5f, 0}));
+        r.submit(m.cube, glow, math::Mat4::translation({1.2f, 0.5f, 0}));
+    };
+    // The Low and Medium presets are where the player turns compact HDR on (ADR-0126).
+    for (const QualityTier tier : {QualityTier::Low, QualityTier::Medium, QualityTier::High}) {
+        CAPTURE(static_cast<int>(tier));
+        RenderSettings s = RenderSettings::preset(tier);
+        s.taa = false; // TAA history differs by the first frame's jitter only; keep frames comparable
+        const Frame a = render_frame(**full_r, s, cam, sun, env, content, 192, 128, 2);
+        const Frame b = render_frame(**compact_r, s, cam, sun, env, content, 192, 128, 2,
+                                     tier == QualityTier::Low ? "compact_hdr_low" : nullptr);
+        int max_diff = 0;
+        double sum = 0;
+        std::size_t outliers = 0;
+        for (std::size_t i = 0; i < a.px.size(); ++i) {
+            if (i % 4 == 3) continue; // alpha
+            const int d = std::abs(static_cast<int>(a.px[i]) - static_cast<int>(b.px[i]));
+            max_diff = std::max(max_diff, d);
+            sum += d;
+            if (d > 8) ++outliers;
+        }
+        const double channels = static_cast<double>(a.px.size()) * 0.75;
+        const double mean = sum / channels;
+        MESSAGE("tier ", static_cast<int>(tier), ": mean diff ", mean, ", max diff ", max_diff, ", channels off by >8: ", outliers);
+        // 6/6/5-bit mantissas: well under one 8-bit level on average; the few larger differences are
+        // single FXAA/edge pixels where a rounding step flips the filter's choice.
+        CHECK(mean < 1.0);
+        CHECK(static_cast<double>(outliers) < channels * 0.005);
+        CHECK(max_diff <= 48);
+        const PathFeature* f = (*compact_r)->path_report().find("hdr_precision");
+        REQUIRE(f != nullptr);
+        CHECK(f->state == (packed ? PathState::Reduced : PathState::Active));
+        const PathFeature* g = (*full_r)->path_report().find("hdr_precision");
+        REQUIRE(g != nullptr);
+        CHECK(g->state == PathState::Active);
+    }
 }

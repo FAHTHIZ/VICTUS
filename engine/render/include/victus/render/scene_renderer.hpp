@@ -888,6 +888,7 @@ private:
     std::vector<math::Mat4> motion_joints_, motion_joints_next_;
     rhi::Format depth_format_{rhi::Format::D32_FLOAT};
     rhi::Format hdr_format_{rhi::Format::RGBA16_FLOAT};
+    bool compact_hdr_requested_{false};
 
     Camera3D camera_;
     DirectionalLight sun_;

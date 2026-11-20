@@ -1783,3 +1783,11 @@ Built: `MeshRendererComponent::lightmapped` (inspector "Static Lighting"); `Envi
 Verified: `victus_gpu_tests -tc="*lightmap*"` (scene bake, save/reload, extract_scene draws 1 lightmapped mesh, floor near/far 162/184 baked vs 185/185 plain, stale after a move, missing/unsafe/damaged files fall back); `victus_editor_tests -tc="studio bake*"`; `victus_export_tests -tc="*lightmap*"`; `ctest -R victus_cli_bake_lighting` (3D template: refuse with nothing marked, dry run writes nothing, --mark-static bake, re-bake, `check`, strict runs on Low/Medium/High/Ultra); a manual `victus bake-lighting --mark-static --samples 64 --density 4` on the 3D template marked 8 renderers and baked a 112x120 atlas in 0.8 s on 2 cores, with visible contact darkening under the stairs, crates and ramp; full `ctest --preset dev` with `VICTUS_REQUIRE_GPU=1` on lavapipe; clang-tidy on scene_lightmap.cpp and lighting_bake.cpp.
 
 Not covered: templates do not ship baked yet; no HDRI or albedo textures in the bake; no measurement on a phone.
+
+## 2026-11-20 — Packed HDR by default on phones and Low/Medium (ADR-0126)
+
+Built: the player creates its renderer with R11G11B10F scene colour, bloom chain and TAA history (`SceneRendererOptions::compact_hdr`, ADR-0050) on every phone and on the Low and Medium tiers (`player::compact_hdr_by_default`), with `PlayerOptions::compact_hdr` / `victus run --hdr compact|full|auto` to override; `victus run` prints `hdr: <format>`; the render path report has an `hdr_precision` feature. The depth pre-pass was already limited to SSAO / occlusion culling / `depth_prepass`; folding FXAA into tonemapping was rejected (ADR-0126).
+
+Verified: `victus_gpu_tests -tc="gpu quality: compact*"` (Low/Medium/High: mean difference 0.22 / 0.27 / 0.29 8-bit levels against RGBA16F, 4-6 of 73 728 channels off by more than 8, path report Reduced vs Active); `victus_render_tests -tc="*path*"`; `victus_cli_smoke` now checks `hdr: RGBA16F` at High/Ultra and `hdr: R11G11B10F` at Low/Medium on lavapipe; full `ctest --preset dev` with `VICTUS_REQUIRE_GPU=1`; clang-tidy on render_path.cpp and player.cpp.
+
+Not covered: no bandwidth measurement on a real tiled GPU (Mali/Adreno counters); Studio's viewport stays RGBA16F.

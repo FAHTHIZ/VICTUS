@@ -203,6 +203,7 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("width", "window width (default: project setting)", "0")
         .option("height", "window height (default: project setting)", "0")
         .option("quality", "rendering quality: low, medium, high or ultra (default: project setting)")
+        .option("hdr", "HDR scene colour: compact (R11G11B10F), full (RGBA16F) or auto (compact on phones and Low/Medium)", "auto")
         .flag("fullscreen", "run fullscreen")
         .flag("sync-assets", "load textures and models on first use instead of in the background")
         .flag("no-hot-reload", "do not reload scripts, textures, models and audio when their files change")
@@ -254,12 +255,16 @@ int cmd_run(const std::vector<std::string>& a) {
     o.hot_reload = !p.has("no-hot-reload");
     o.async_assets = !p.has("sync-assets");
     o.quality = p.get("quality");
+    if (const std::string hdr = p.get("hdr"); hdr == "compact") o.compact_hdr = true;
+    else if (hdr == "full") o.compact_hdr = false;
+    else if (hdr != "auto") return error("--hdr must be compact, full or auto");
     o.saves = p.get("saves");
     auto r = player::run(o);
     if (!r) return error(r.error().message);
     std::printf("ran %llu frames in %.2f s on %s at %s quality (%llu script errors)\n",
                 static_cast<unsigned long long>(r->frames), r->seconds, r->backend.c_str(), r->quality.c_str(),
                 static_cast<unsigned long long>(r->script_errors));
+    std::printf("hdr: %s\n", r->hdr_format.c_str());
     if (!r->net_status.empty()) std::printf("net: %s\n", r->net_status.c_str());
     if (p.has("render-report")) {
         if (r->render_path.features.empty()) {

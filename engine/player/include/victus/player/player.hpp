@@ -7,8 +7,10 @@
 #include "victus/core/fs.hpp"
 #include "victus/core/result.hpp"
 #include "victus/render/render_path.hpp"
+#include "victus/render/scene_renderer.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace victus::player {
@@ -34,6 +36,8 @@ struct PlayerOptions {
     bool async_assets{true};
     bool hot_reload{false};      // reload changed scripts, textures, models and audio while running (development)
     std::string quality;         // low|medium|high|ultra; empty = project rendering.quality
+    // Packed R11G11B10F HDR scene colour; unset = compact_hdr_by_default(tier, mobile).
+    std::optional<bool> compact_hdr;
     std::string connect;         // host[:port] of a `victus serve` server; empty = play offline
     std::string player_name{"player"}; // name shown to other players when connected
     std::string net_conditions;  // link emulation for testing, e.g. "latency=80,loss=0.05"
@@ -77,6 +81,7 @@ struct PlayerReport {
     bool packaged{false};        // ran from an exported game.vpak
     std::size_t plugins_loaded{0}; // native plugins initialized from <project>/plugins (ADR-0078)
     std::string quality;         // quality tier used
+    std::string hdr_format;      // HDR scene colour format used: "R11G11B10F" or "RGBA16F"
     std::string net_status;      // last multiplayer status when --connect was used
     std::uint64_t assets_streamed{0}; // textures/models uploaded by the background loader
     std::size_t assets_reloaded{0}; // textures/models/audio hot-reloaded while running
@@ -89,6 +94,11 @@ struct PlayerReport {
     profiler::FrameReport profile;  // with PlayerOptions::profile or trace
 };
 
+// Packed HDR by default on phones and on the Low and Medium tiers, where framebuffer bandwidth
+// limits the frame rate (ADR-0126).
+[[nodiscard]] constexpr bool compact_hdr_by_default(render::QualityTier tier, bool mobile) noexcept {
+    return mobile || tier == render::QualityTier::Low || tier == render::QualityTier::Medium;
+}
 [[nodiscard]] Result<PlayerReport> run(const PlayerOptions& options);
 
 } // namespace victus::player
