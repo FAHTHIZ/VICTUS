@@ -468,10 +468,17 @@ struct RenderSettings {
     // (another view) fall back to the stateless rule. 0 disables (0..0.9).
     float lod_hysteresis{0.25f};
     // Shadow casters (directional cascades and local shadow tiles) draw this many levels coarser
-    // than the level picked for the main camera (0..3, clamped per mesh). Selection stays
-    // main-camera based, as in Godot and Unreal, so shadows and the lit surface keep the same
-    // reference; the bias only trades shadow-pass triangles for silhouette error. Low: 1.
+    // than the level picked for the main camera (0..3, clamped per mesh). The main-camera pick
+    // plus this bias is the finest level any shadow pass draws, so shadows and the lit surface
+    // keep the same reference; directional cascades may go coarser still (shadow_lod_texels).
+    // The bias only trades shadow-pass triangles for silhouette error. Low: 1.
     std::uint32_t shadow_lod_bias{0};
+    // Per-cascade shadow LOD (ADR-0132): each directional cascade draws a caster no finer than
+    // the coarsest level whose geometric error stays within this many of the cascade's shadow
+    // texels, and never finer than the level above. A 1-texel error is inside the 1-texel
+    // normal offset and the 3x3 PCF footprint, so the shadow keeps its shape while the wide
+    // cascades drop to coarse levels. 0 disables (0..8). Local light tiles keep shadow_lod.
+    float shadow_lod_texels{1.0f};
     // Directional cascades skip casters whose shadow cannot fall on a pixel the cascade shades:
     // the caster's light-space box is tested against the light-space bounds of the cascade's
     // view-depth slice (plus its transition band and filter footprint), not just the cascade's
@@ -769,6 +776,7 @@ private:
         bool skinned{false};
         std::uint8_t lod{0};      // level of detail picked for this frame
         std::uint8_t shadow_lod{0}; // level used by the shadow passes (lod + shadow_lod_bias)
+        std::array<std::uint8_t, 4> cascade_lod{}; // level per directional cascade (>= shadow_lod)
         math::Aabb world_bounds;  // skinned only (static draws use mesh bounds * model)
         int probe{-1};            // reflection probe index (-1: scene environment)
         std::uint64_t motion_id{0};

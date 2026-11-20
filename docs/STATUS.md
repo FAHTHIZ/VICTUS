@@ -1845,3 +1845,11 @@ Verified: `victus simulate samples/arena --scene scenes/autoplay.vscene --frames
 
 Not covered: the enemies share Nova's silhouette with the 3D template's companion; no dedicated enemy character yet.
 
+## 2026-11-20 — Per-cascade shadow LOD (ADR-0132)
+
+Built: `RenderSettings::shadow_lod_texels` (default 1 texel, 0 off). Each directional cascade draws a caster at the coarsest LOD whose geometric error fits in that many of its own shadow texels, never finer than the main-view level plus `shadow_lod_bias` (`cascade_shadow_lod`, `Draw::cascade_lod`; cascade batches sort and instance on it). Local light tiles and the rain occluder are unchanged.
+
+Verified: `victus_gpu_tests -tc="gpu shadows: per-cascade*"` (Low to Ultra: main triangles identical, shadow triangles -8 to -10 % with 2 to 4 cascades, mean image difference at most 0.005 levels, at most 20 of 331 776 channels off by more than 8); `-tc="gpu lods: shadow_lod_bias*"` (now run with per-cascade LOD off, so it checks the bias alone); full `ctest --preset release` 39/39. `victus_perf_budgets` shadow triangles re-baselined: template-3d 23 180 to 19 094, template-multiplayer 15 459 to 14 457, sample-arena 28 328 to 24 178.
+
+Not covered: local light shadow tiles; not measured on a phone GPU; the template still draws more shadow than main-view triangles, because characters sit in two cascades at once.
+

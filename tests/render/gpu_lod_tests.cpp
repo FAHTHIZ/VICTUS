@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 
 using namespace victus;
 using namespace victus::render;
@@ -302,6 +303,7 @@ TEST_CASE("gpu lods: shadow_lod_bias draws coarser casters without changing the 
         s.taa = false;
         s.ssao = false;
         s.lod_error_pixels = 0.25f;
+        s.shadow_lod_texels = 0.0f; // the bias alone (per-cascade LOD has its own test)
         sr.value()->set_settings(s);
         auto target = test::make_target(W, H);
         DirectionalLight sun;
@@ -559,4 +561,94 @@ TEST_CASE("gpu shadows: receiver culling skips casters whose shadow no cascade p
     ctx.destroy(ground);
     ctx.destroy(sphere);
     ctx.destroy(pillar);
+}
+
+// ADR-0132: each directional cascade picks the coarsest level whose error spans at most
+// shadow_lod_texels of its own texels. A street of detailed spheres recedes through every
+// cascade: the main view is unchanged, the wide cascades draw far fewer shadow triangles and the
+// shadows look the same.
+TEST_CASE("gpu shadows: per-cascade LOD cuts shadow triangles without changing the image") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    auto ground = ctx.create_mesh(make_plane({200, 200}), "clod_ground").value();
+    MeshData data = make_uv_sphere(0.5f, 96, 48);
+    REQUIRE(generate_lods(data) == 3);
+    optimize_mesh(data);
+    auto sphere = ctx.create_mesh(data, "clod_sphere").value();
+    Material mat;
+    mat.cast_shadows = true;
+    constexpr std::uint32_t W = 384, H = 216;
+    auto frame = [&](RenderSettings s, SceneStats& st) {
+        s.taa = false;
+        s.ssao = false;
+        s.lod_error_pixels = 0.25f; // fine main-view levels, as at phone and PC resolutions
+        s.lod_hysteresis = 0.0f;
+        sr.value()->set_settings(s);
+        auto target = test::make_target(W, H);
+        DirectionalLight sun;
+        sun.direction = {0.25f, -0.4f, -1.0f}; // low sun: near shadows run into the wide cascades
+        sun.shadow_distance = 60;
+        sr.value()->begin(Camera3D::look_at({0, 1.6f, 4}, {0, 0.8f, -6}), sun, {});
+        sr.value()->submit(ground, mat, math::Mat4::identity());
+        for (int i = 0; i < 20; ++i)
+            for (float x : {-1.5f, 1.5f})
+                sr.value()->submit(sphere, mat, math::Mat4::translation({x, 0.5f, 2.0f - 2.5f * float(i)}));
+        auto cmd = dev.begin_commands();
+        REQUIRE(sr.value()->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target).value();
+        st = sr.value()->stats();
+        dev.destroy(target);
+        return px;
+    };
+    CHECK(RenderSettings{}.shadow_lod_texels == 1.0f);
+    {
+        RenderSettings s;
+        s.shadow_lod_texels = 20.0f;
+        CHECK(s.sanitized().shadow_lod_texels == 8.0f);
+        s.shadow_lod_texels = -1.0f;
+        CHECK(s.sanitized().shadow_lod_texels == 0.0f);
+        s.shadow_lod_texels = std::numeric_limits<float>::quiet_NaN();
+        CHECK(s.sanitized().shadow_lod_texels == 1.0f);
+    }
+    for (const QualityTier tier : {QualityTier::Low, QualityTier::Medium, QualityTier::High, QualityTier::Ultra}) {
+        RenderSettings s = RenderSettings::preset(tier);
+        SceneStats on{}, off{};
+        s.shadow_lod_texels = 0.0f;
+        const auto a = frame(s, off);
+        s.shadow_lod_texels = 1.0f;
+        const auto b = frame(s, on);
+        int worst = 0, over8 = 0;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            const int d = std::abs(int(a[i]) - int(b[i]));
+            worst = std::max(worst, d);
+            over8 += d > 8 ? 1 : 0;
+        }
+        const double mean = mean_diff(a, b);
+        MESSAGE("per-cascade shadow LOD tier " << int(tier) << ": " << on.shadow_triangles << " / "
+                                               << off.shadow_triangles << " shadow triangles, main "
+                                               << on.triangles << ", mean diff " << mean << ", worst " << worst
+                                               << ", channels > 8: " << over8);
+        CHECK(on.triangles == off.triangles); // main view untouched
+        CHECK(on.shadow_batches <= off.shadow_batches + 4);
+        CHECK(on.shadow_triangles <= off.shadow_triangles);
+        if (off.shadow_cascades > 1) CHECK(on.shadow_triangles < off.shadow_triangles);
+        CHECK(mean < 0.05);
+        CHECK(over8 <= 40); // < 0.015 % of the 331 776 channels, all on shadow edges
+        if (tier == QualityTier::High) test::save_output("shadow_cascade_lod", W, H, b);
+    }
+    // force_lod (debugging) still draws the forced level in every cascade.
+    RenderSettings s = RenderSettings::preset(QualityTier::High);
+    s.force_lod = 0;
+    SceneStats forced{}, full{};
+    (void)frame(s, forced);
+    s.force_lod = -1;
+    s.lods = false;
+    (void)frame(s, full);
+    CHECK(forced.shadow_triangles == full.shadow_triangles);
+    ctx.destroy(ground);
+    ctx.destroy(sphere);
 }
