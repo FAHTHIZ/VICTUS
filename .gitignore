@@ -36,4 +36,4 @@ Thumbs.db
 .ccache/
 __pycache__/
 # Per-project cooked asset cache (rebuilt on import)
-.victus/cache/
+**/.victus/cache/
