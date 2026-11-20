@@ -3,6 +3,7 @@
 // within quality bounds, cooked files carry the variants, and import settings select them.
 #include "doctest.h"
 #include "victus/assets/database.hpp"
+#include "victus/assets/export_profile.hpp"
 #include "victus/assets/importers.hpp"
 #include "victus/assets/texture_compression.hpp"
 
@@ -221,4 +222,75 @@ TEST_CASE("texture compression: import settings drive the cooker and the cache k
     REQUIRE(cooked.ok());
     REQUIRE(cooked->compressed.size() == 1);
     CHECK(cooked->compressed[0].codec == TextureCodec::ASTC6x6);
+}
+
+TEST_CASE("texture export profiles: android keeps ASTC, caps size and strips large RGBA8 levels") {
+    CHECK(texture_export_profile("all")->target == "all");
+    CHECK(texture_export_profile("")->target == "all");
+    CHECK(texture_export_profile("desktop")->drop_mobile_codecs);
+    CHECK_FALSE(texture_export_profile("ps9").ok());
+    const auto android = texture_export_profile("android");
+    REQUIRE(android.ok());
+
+    // 256x128 with a tiny cap so the size limit is exercised on a small image.
+    CookedTexture t = cook_texture(test_image(256, 128), "albedo", true, true, 4096);
+    REQUIRE(compress_cooked_texture(t, "bc7+astc4x4").ok());
+    const CookedTexture original = t;
+    TextureExportProfile p = *android;
+    p.max_size = 128;
+    TextureProfileStats stats;
+    apply_texture_profile(t, p, &stats);
+    CHECK(stats.textures == 1);
+    CHECK(stats.levels_dropped == 1);
+    CHECK(stats.variants_dropped == 1);
+    REQUIRE(t.compressed.size() == 1);
+    CHECK(t.compressed[0].codec == TextureCodec::ASTC4x4);
+    REQUIRE(t.mips.size() == original.mips.size() - 1);
+    CHECK(t.mips[0].width == 128);
+    CHECK(t.compressed[0].levels.size() == t.mips.size());
+    CHECK(t.compressed[0].levels[0] == original.compressed[1].levels[1]);
+    CHECK_FALSE(t.has_rgba8());
+    for (const auto& m : t.mips) CHECK(m.pixels.empty() == (std::max(m.width, m.height) > 64));
+    CHECK(stats.rgba8_stripped == 1); // only the 128x64 level is above 64 px
+
+    // The stripped file round trips and is far smaller; a stripped level decodes back on the CPU.
+    CookedHeader header;
+    header.kind = AssetKind::Texture;
+    const auto full = serialize(header, original);
+    const auto bytes = serialize(header, t);
+    CHECK(bytes.size() * 4 < full.size());
+    auto back = deserialize_texture(bytes);
+    REQUIRE(back.ok());
+    CHECK(back->mips[0].width == 128);
+    CHECK(back->mips[0].pixels.empty());
+    auto level0 = rgba8_level(*back, 0);
+    REQUIRE(level0.ok());
+    CHECK(level0->width == 128);
+    CHECK(level0->pixels.size() == 128u * 64 * 4);
+    CHECK(image_psnr(*level0, original.mips[1]) >= 32.0);
+    CHECK(rgba8_level(*back, 1)->pixels == original.mips[2].pixels); // kept level is verbatim
+    CHECK_FALSE(rgba8_level(*back, 99).ok());
+
+    // The byte-level entry point gives the same result and leaves "all" untouched.
+    auto via_bytes = apply_texture_profile(std::span(full), p);
+    REQUIRE(via_bytes.ok());
+    CHECK(*via_bytes == bytes);
+    CHECK(*apply_texture_profile(std::span(full), *texture_export_profile("all")) == full);
+
+    // A level without RGBA8 pixels and no variant to recover it is corrupt.
+    CookedTexture broken = *back;
+    broken.compressed.clear();
+    CHECK_FALSE(deserialize_texture(serialize(header, broken)).ok());
+
+    // Textures without an ASTC variant keep their RGBA8 levels; HDR textures are untouched.
+    CookedTexture plain = cook_texture(test_image(64, 64), "plain", true, true, 4096);
+    REQUIRE(compress_cooked_texture(plain, "bc7").ok());
+    apply_texture_profile(plain, *android);
+    CHECK(plain.compressed.empty());
+    CHECK(plain.has_rgba8());
+    CookedTexture hdr = original;
+    hdr.hdr = true;
+    apply_texture_profile(hdr, *android);
+    CHECK(hdr.compressed.size() == 2);
+    CHECK(hdr.has_rgba8());
 }

@@ -2173,3 +2173,14 @@ Verified: each changed cell cites an ADR or a KNOWN_LIMITATIONS row; competitor 
 Not covered: no side-by-side measurements; competitor pages for Chaos/MetaSounds/UMG still not re-fetched.
 
 Next task: Priority 1 handoff `docs/handoff/VICTUS_LIBRARY_AND_CONTEXTUAL_AUDIO.md`.
+
+## 2026-11-20 — Per-platform texture profiles in exports (ADR-0149)
+
+Built: `victus export --target all|desktop|android` (`ExportOptions::target`, `assets::texture_export_profile`, `apply_texture_profile`). Android drops BC variants and top mips above 1024 px, and keeps levels above 64 px only as ASTC. Cooked format v9 marks RGBA8 levels stored only compressed. `upload_cooked_texture` CPU-decodes such levels when no variant can be sampled (`assets::rgba8_level`). The export manifest records `target`, `cooked_bytes` and `cooked_bytes_shipped`. Gradle property `victus.nativeBuildType`.
+
+Verified: Linux gcc Release build; `victus_asset_tests` 38/38 (new case: android profile), `victus_robustness_tests` 15/15, `victus_export_tests` 22/22 (new case: android export loads in packaged mode).
+
+Not covered: no GPU test of the CPU-decode upload path; no device run. Pack-size numbers for a real project are in the game's BUILD_AND_TEST_LOG once measured.
+
+Next task: Android APK of the Special Ops showcase (`--target android`), then mobile performance.
+

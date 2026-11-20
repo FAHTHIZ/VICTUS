@@ -184,6 +184,55 @@ TEST_CASE("export: pack contains cooked assets and runs in packaged mode") {
     CHECK(player::export_game(o).error().code == ErrorCode::InvalidArgument);
 }
 
+TEST_CASE("export: the android target ships ASTC-only textures that still load and decode") {
+    TempDir tmp("victus_export_android");
+    const fs::Path src = make_project(tmp.path);
+    {
+        auto db = assets::AssetDatabase::open(src);
+        REQUIRE(db.ok());
+        const auto* logo = (*db)->find_path("textures/logo.png");
+        REQUIRE(logo);
+        json::Value settings = logo->settings.is_object() ? logo->settings : json::Value::object();
+        settings.set("compression", "bc7+astc4x4");
+        REQUIRE((*db)->set_settings(logo->uuid, settings).ok());
+    }
+    player::ExportOptions o;
+    o.project = src;
+    o.output = tmp.path / "out";
+    o.include_player = false;
+    o.target = "mars";
+    CHECK(player::export_game(o).error().code == ErrorCode::InvalidArgument);
+    o.target = "android";
+    auto r = player::export_game(o);
+    REQUIRE_MESSAGE(r.ok(), (r.ok() ? "" : r.error().message));
+    CHECK(r->target == "android");
+    CHECK(r->cooked_bytes_out < r->cooked_bytes_in);
+    auto manifest = json::parse(fs::read_text(tmp.path / "out" / "export.json").value());
+    REQUIRE(manifest.ok());
+    CHECK((*manifest)["target"].as_string() == "android");
+
+    const fs::Path game = tmp.path / "shipped" / "game";
+    std::filesystem::create_directories(game);
+    std::filesystem::copy_file(r->pack, game / "game.vpak");
+    auto shipped = pack::Pack::open(game / "game.vpak");
+    REQUIRE(shipped.ok());
+    fs::mount(game, *shipped);
+    auto db = assets::AssetDatabase::open_packaged(game);
+    REQUIRE(db.ok());
+    const auto* logo = (*db)->find_path("textures/logo.png");
+    REQUIRE(logo);
+    auto tex = (*db)->load_texture(logo->uuid);
+    REQUIRE(tex.ok());
+    REQUIRE(tex->compressed.size() == 1);
+    CHECK(tex->compressed[0].codec == assets::TextureCodec::ASTC4x4);
+    CHECK(tex->mips[0].width == 32);
+    CHECK(tex->mips[0].pixels.empty() == false); // 32 px is under the 64 px RGBA8 floor
+    auto m = (*db)->find_path("models/quad.gltf");
+    REQUIRE(m);
+    CHECK((*db)->load_model(m->uuid).ok());
+    fs::unmount(game);
+}
+
 TEST_CASE("export: the no-code templates ship with every behaviour and asset they use") {
     TempDir tmp("victus_export_nocode");
     project::register_components();

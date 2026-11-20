@@ -4,6 +4,7 @@
 #include "victus/animation/sprite.hpp"
 
 #include "victus/assets/database.hpp"
+#include "victus/assets/export_profile.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/core/build_info.hpp"
 #include "victus/core/hash.hpp"
@@ -96,6 +97,10 @@ Result<ExportReport> export_game(const ExportOptions& o) {
     }
     for (const auto& m : imported.messages) report.warnings.push_back(m);
 
+    auto profile = assets::texture_export_profile(o.target);
+    if (!profile) return std::move(profile).error();
+    report.target = profile->target;
+    assets::TextureProfileStats profile_stats;
     pack::PackWriter pw;
     std::vector<std::string> errors;
     VICTUS_TRY_STATUS(pw.add_file("victus.project", proj->file()));
@@ -107,8 +112,21 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         asset_paths.insert(r.path);
         if (r.importer == "texture" || r.importer == "gltf") {
             const fs::Path cooked = (*db)->cooked_path(r.uuid);
-            if (auto st = pw.add_file(std::format(".victus/cache/{}.vcooked", r.uuid.to_string()), cooked); !st) {
-                errors.push_back(std::format("{}: cooked data unavailable: {}", r.path, st.error().message));
+            auto bytes = fs::read_binary(cooked);
+            if (!bytes) {
+                errors.push_back(std::format("{}: cooked data unavailable: {}", r.path, bytes.error().message));
+                continue;
+            }
+            report.cooked_bytes_in += bytes->size();
+            auto shipped = assets::apply_texture_profile(*bytes, *profile, &profile_stats);
+            if (!shipped) {
+                errors.push_back(std::format("{}: export profile '{}': {}", r.path, profile->target, shipped.error().message));
+                continue;
+            }
+            bytes = std::vector<std::uint8_t>{};
+            report.cooked_bytes_out += shipped->size();
+            if (auto st = pw.add(std::format(".victus/cache/{}.vcooked", r.uuid.to_string()), *shipped); !st) {
+                errors.push_back(std::format("{}: {}", r.path, st.error().message));
                 continue;
             }
             ++report.cooked_assets;
@@ -429,6 +447,11 @@ Result<ExportReport> export_game(const ExportOptions& o) {
     manifest.set("executable", report.executable.empty() ? std::string() : report.executable.filename().string());
     manifest.set("pack", std::format("{}/{}", kGameFolder, kPackFile));
     manifest.set("pack_bytes", static_cast<double>(report.pack_bytes));
+    manifest.set("target", report.target);
+    manifest.set("cooked_bytes", static_cast<double>(report.cooked_bytes_in));
+    manifest.set("cooked_bytes_shipped", static_cast<double>(report.cooked_bytes_out));
+    manifest.set("textures_mips_dropped", static_cast<double>(profile_stats.levels_dropped));
+    manifest.set("textures_rgba8_stripped", static_cast<double>(profile_stats.rgba8_stripped));
     manifest.set("files", std::move(files));
     manifest.set("plugins", std::move(plugin_names));
     VICTUS_TRY_STATUS(fs::write_text_atomic(out / "export.json", json::stringify(manifest, true) + "\n"));

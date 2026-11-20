@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Export: `victus export --target android|desktop|all`. Android packs ship textures as ASTC only, at up to 1024 px, and are typically 5-8x smaller. A device that cannot sample ASTC decodes the levels on the CPU. Cooked format v9. `victus.nativeBuildType` Gradle property for debug APKs (ADR-0149).
 - Rendering: a TAA reactive mask. Particles, ribbons, water and rain tell the TAA and temporal upscaling resolves to trust the current frame where they are drawn, so they smear and trail less; `RenderSettings::reactive_mask` / `reactive_max`, `victus run --reactive on|off`, `reactive_mask` in the render path report. See docs/STATUS.md (2026-11-20, TAA reactive mask, ADR-0143).
 - Navigation: large navmeshes (2M+ voxel columns) build on a worker thread instead of stalling the frame; `NavigationSystem::ensure_built_async`, `building()`. Script time budgets no longer count navmesh builds or first-use model loads; `VICTUS_SCRIPT_SLOW_CALLS=<ms>` logs slow native script calls. See docs/STATUS.md (2026-11-20, background navmesh builds).
 - Engine core: results and errors, logging, JSON with limits, sandboxed filesystem helpers, job system, profiler with Chrome/Perfetto traces, math, `.vpak` archives.

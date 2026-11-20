@@ -18,8 +18,9 @@ and the whole engine plus the player run natively from `libmain.so`. The game it
 ## Building an APK
 
 ```sh
-# 1. Export the game on the desktop (any template or project).
-victus export path/to/project --out out/mygame --name mygame
+# 1. Export the game on the desktop (any template or project). --target android ships the
+#    textures as ASTC only, at up to 1024 px (ADR-0149); packs are typically 5-8x smaller.
+victus export path/to/project --out out/mygame --name mygame --pack-only --target android
 
 # 2. Build the APK (debug-signed). victus.game accepts the export folder or its game/ subfolder.
 gradle -p platforms/android assembleDebug -Pvictus.game=$PWD/out/mygame \
@@ -39,6 +40,7 @@ Gradle properties:
 | `victus.versionCode` / `victus.versionName` | `1` / `0.1.0` | store version |
 | `victus.orientation` | `sensorLandscape` | activity `screenOrientation` |
 | `victus.sdlSource` | (download) | local SDL 3 source tree to take the Java glue from |
+| `victus.nativeBuildType` | `RelWithDebInfo` | CMake build type of debug APKs; `Release` skips debug info (smaller, faster build) |
 
 Release builds (`assembleRelease`) need your own signing config; add it to
 `platforms/android/app/build.gradle` or an init script. Debug APKs still compile the engine
@@ -101,4 +103,5 @@ with optimizations (`RelWithDebInfo`), because an unoptimized renderer is unusab
 - There are no on-screen virtual sticks or buttons yet: games read touches directly.
   Touches are not recorded in regression captures.
 - No thermal or memory profiling, Android Game Mode or Performance Hint integration yet.
-- The pack is copied once to internal storage, so it uses the pack size twice on disk.
+- The pack is copied once to internal storage, so it uses the pack size twice on disk. Export
+  with `--target android` to keep it small.

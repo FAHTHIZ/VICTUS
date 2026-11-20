@@ -26,6 +26,9 @@ struct ExportOptions {
     fs::Path player_executable;     // empty = victus_player next to the running executable
     std::string executable_name;    // empty = sanitized project name
     bool include_player{true};      // false = pack only (e.g. when the platform build adds its own)
+    // Texture profile of the target platform (assets::texture_export_profile): "all" ships the
+    // cooked cache as is, "desktop" drops ASTC, "android" ships ASTC at up to 1024 px (ADR-0149).
+    std::string target{"all"};
 };
 
 struct ExportReport {
@@ -36,6 +39,9 @@ struct ExportReport {
     fs::Path pack;
     fs::Path executable;              // empty when include_player is false
     std::size_t plugins{0};           // native plugins copied to game/plugins (ADR-0078)
+    std::string target{"all"};
+    std::uint64_t cooked_bytes_in{0};  // cooked asset bytes before the target profile
+    std::uint64_t cooked_bytes_out{0}; // ... and as packed
     std::vector<std::string> warnings;
 };
 

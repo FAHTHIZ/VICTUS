@@ -8,6 +8,8 @@
 //   victus.versionCode / victus.versionName
 //   victus.orientation    activity screenOrientation, default sensorLandscape
 //   victus.sdlSource      optional local SDL3 source tree (skips the download)
+//   victus.nativeBuildType CMake build type of debug APKs, default RelWithDebInfo; Release
+//                          skips the debug info (much smaller intermediates, faster builds)
 import java.security.MessageDigest
 import javax.inject.Inject
 
@@ -148,7 +150,7 @@ android {
         }
         debug {
             // Debug APKs still run the optimized engine: an unoptimized renderer is unusable on phones.
-            externalNativeBuild { cmake { arguments '-DCMAKE_BUILD_TYPE=RelWithDebInfo' } }
+            externalNativeBuild { cmake { arguments "-DCMAKE_BUILD_TYPE=${prop('victus.nativeBuildType', 'RelWithDebInfo')}" } }
         }
     }
 
