@@ -44,6 +44,13 @@ QualityTier mali_tier(std::string_view g, std::size_t at) {
     if (after < g.size() && g[after] == 't') return QualityTier::Low;
     const auto n = number_after(g, after);
     if (!n) return QualityTier::Low;
+    // Arm 5th-generation names (2025): Mali G1-Ultra and G1-Premium are flagship, G1-Pro mainstream
+    // (arm.com/products/silicon-ip-multimedia). Without this they parse as "G1" and fall to Low.
+    if (*n == 1 && after + 2 < g.size() && g[after + 2] == '-') {
+        const std::string_view rest = g.substr(after + 3);
+        if (rest.starts_with("ultra") || rest.starts_with("premium")) return QualityTier::High;
+        if (rest.starts_with("pro")) return QualityTier::Medium;
+    }
     if (*n < 100) return (*n >= 71 && *n <= 78) ? QualityTier::Medium : QualityTier::Low; // G71-G78 vs G31-G68
     const int series = *n / 100;
     if (series <= 3) return QualityTier::Low;  // G310
@@ -72,6 +79,11 @@ DeviceClass classify_device(const DeviceProfile& device, QualityTier fallback) {
         out.family = GpuFamily::Software;
         out.tier = QualityTier::Low;
         what = "software rasterizer";
+    } else if (g.find("immortalis") != std::string::npos && g.find("mali-") == std::string::npos) {
+        // Mesa PanVK names the flagship parts "Immortalis-G720 MC12"; Arm's driver says "Mali-G720-Immortalis".
+        out.family = GpuFamily::Mali;
+        out.tier = QualityTier::High;
+        what = "Immortalis";
     } else if (const auto m = g.find("mali-"); m != std::string::npos) {
         out.family = GpuFamily::Mali;
         out.tier = mali_tier(g, m);
@@ -103,7 +115,7 @@ DeviceClass classify_device(const DeviceProfile& device, QualityTier fallback) {
         out.family = GpuFamily::Desktop;
         what = "discrete GPU";
     }
-    if (out.family == GpuFamily::Mali) {
+    if (out.family == GpuFamily::Mali && g.find("mali-") != std::string::npos) {
         // "mali-g52 mc2" -> "Mali-G52"
         const auto m = g.find("mali-");
         std::size_t e = m + 5;
