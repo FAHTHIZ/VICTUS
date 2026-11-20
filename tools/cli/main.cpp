@@ -214,6 +214,8 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("quality", "rendering quality: low, medium, high, ultra or auto (from the GPU and RAM; default: project setting)")
         .option("hdr", "HDR scene colour: compact (R11G11B10F), full (RGBA16F) or auto (compact on phones and Low/Medium)", "auto")
         .option("fp16", "half-precision shading: on, off or auto (on for phones and Low/Medium where the GPU supports it)", "auto")
+        .option("render-scale", "3D resolution scale 0.25..2, overriding the tier and project (e.g. 0.5 to test upscaling)")
+        .option("taa", "temporal anti-aliasing and upscaling: on, off or auto (the tier's choice)", "auto")
         .flag("fullscreen", "run fullscreen")
         .flag("sync-assets", "load textures and models on first use instead of in the background")
         .flag("no-hot-reload", "do not reload scripts, textures, models and audio when their files change")
@@ -271,6 +273,14 @@ int cmd_run(const std::vector<std::string>& a) {
     if (const std::string fp16 = p.get("fp16"); fp16 == "on") o.half_precision = true;
     else if (fp16 == "off") o.half_precision = false;
     else if (fp16 != "auto") return error("--fp16 must be on, off or auto");
+    if (p.has("render-scale")) {
+        const double scale = p.get_number("render-scale", 0);
+        if (!(scale >= 0.25 && scale <= 2.0)) return error("--render-scale must be between 0.25 and 2");
+        o.render_scale = static_cast<float>(scale);
+    }
+    if (const std::string taa = p.get("taa"); taa == "on") o.taa = true;
+    else if (taa == "off") o.taa = false;
+    else if (taa != "auto") return error("--taa must be on, off or auto");
     o.saves = p.get("saves");
     auto r = player::run(o);
     if (!r) return error(r.error().message);

@@ -68,7 +68,7 @@ layout(std430, set = 2, binding = 14) readonly buffer FogGrid { vec4 fog_grid[];
 #endif
 layout(set = 3, binding = 0) uniform Lighting {
     vec4 camera_pos;     // w: ambient occlusion enabled
-    vec4 camera_forward; // xyz: view direction
+    vec4 camera_forward; // xyz: view direction, w: material texture mip bias (ADR-0141, < 0 when upscaling)
     vec4 sun_dir;        // xyz: direction light travels, w: shadow enabled
     vec4 sun_color;      // rgb * intensity
     vec4 sky_color;      // rgb zenith ambient radiance, w: exposure
@@ -497,16 +497,16 @@ float local_shadow(LocalLight l, vec3 Ld, float dist, vec3 N) {
 
 void main() {
     vec2 uv = v_uv * material.uv_transform.xy + material.uv_transform.zw;
-    vec4 base = texture(u_base_color, uv) * material.base_color;
+    vec4 base = texture(u_base_color, uv, lighting.camera_forward.w) * material.base_color;
     bool alpha_is_mask = material.flags.z > 0.5;
     vec3 geometric_n = normalize(v_normal);
     if (!gl_FrontFacing) geometric_n = -geometric_n;
     Surface s;
     s.base_color = base.rgb * v_color.rgb;
     s.alpha = alpha_is_mask ? base.a : base.a * v_color.a;
-    s.emissive = texture(u_emissive, uv).rgb * material.emissive.rgb;
+    s.emissive = texture(u_emissive, uv, lighting.camera_forward.w).rgb * material.emissive.rgb;
     s.unlit = material.flags.y > 0.5;
-    vec4 mr = texture(u_metal_rough, uv);
+    vec4 mr = texture(u_metal_rough, uv, lighting.camera_forward.w);
     s.occlusion = 1.0 + material.blend.y * (mr.r - 1.0); // glTF ORM: red = ambient occlusion
     s.metallic = clamp(material.params.x * mr.b, 0.0, 1.0);
     s.roughness = clamp(material.params.y * mr.g, 0.045, 1.0);
@@ -514,7 +514,7 @@ void main() {
     if (material.flags.x > 0.5) {
         vec3 T = normalize(v_tangent.xyz - N * dot(N, v_tangent.xyz));
         vec3 B = cross(N, T) * v_tangent.w;
-        vec3 tn = texture(u_normal_map, uv).xyz * 2.0 - 1.0;
+        vec3 tn = texture(u_normal_map, uv, lighting.camera_forward.w).xyz * 2.0 - 1.0;
         tn.xy *= material.params.z;
         N = normalize(mat3(T, B, N) * tn);
     }

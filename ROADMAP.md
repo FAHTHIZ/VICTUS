@@ -29,7 +29,8 @@ The owner's target: images that read as photoreal on hardware as weak as entry-l
 - [x] **Device classes.** Tier chosen per GPU and capabilities, with project overrides. Done (ADR-0127): `rendering.quality` / `rendering.mobile_quality` = `"auto"` (the phone default) picks the tier from the GPU family (Mali, Adreno, PowerVR, Xclipse, Apple, Intel integrated, software), capped by RAM and compute support; explicit tiers still win.
 - [x] **Material ambient occlusion.** Done (ADR-0139): `.vmat` `occlusion_strength` reads AO from the red channel of the metallic-roughness texture (glTF/Unreal ORM packing) at no extra fetch; glTF `occlusionTexture` is imported and merged.
 - [x] **Photoreal reference scene** with CC0 scanned materials, the reference for perceptual equivalence across tiers. Done (ADR-0140): `samples/reference_scenes/scenes/photoreal.vscene`, five ambientCG CC0 sets (colour, normal, ORM), gated by the reference-scene test; a hardware-GPU golden is still to be recorded.
-- [ ] **Mobile temporal upscaling.** Arm ASR (MIT) evaluated against the built-in TAA upscaler.
+- [x] **Mobile temporal upscaling: ASR evaluation.** Done (ADR-0141): Arm ASR (MIT) evaluated; vendoring it is blocked by SDL_GPU (no native handles, read-only graphics storage textures). Its texture mip bias is adopted, cutting the 50 % upscale FLIP from 0.0705 to 0.0515.
+- [ ] **ASR/FSR2 ideas in the TAA upscaler:** reactive mask, thin-feature locks, depth-clip disocclusion, Lanczos filter; TAAU on Low for mobile (measured).
 - [ ] **OpenGL ES 3 fallback** (ADR first) for the ~7 % of Android handhelds without Vulkan.
 
 ### 1. Creator experience (no-code game making)

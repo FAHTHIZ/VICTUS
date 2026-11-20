@@ -278,6 +278,33 @@ TEST_CASE("gpu: temporal upscaling reconstructs closer to native resolution than
     gpu().ctx->destroy(upscaled.cube);
 }
 
+TEST_CASE("gpu: temporal upscaling biases texture mips by the upscale ratio (ADR-0141)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Scene half = make_scene(true, 0.5f, true);
+    Scene native = make_scene(true, 1.0f);
+    Scene bilinear = make_scene(true, 0.5f, false);
+    Scene no_taa = make_scene(false, 0.5f, true);
+    (void)frame(half, 0.0f);
+    (void)frame(native, 0.0f);
+    (void)frame(bilinear, 0.0f);
+    (void)frame(no_taa, 0.0f);
+    CHECK(half.renderer->stats().texture_mip_bias == doctest::Approx(-1.0f).epsilon(0.02));
+    CHECK(native.renderer->stats().texture_mip_bias == 0.0f);
+    CHECK(bilinear.renderer->stats().texture_mip_bias == 0.0f);
+    CHECK(no_taa.renderer->stats().texture_mip_bias == 0.0f);
+    // The extra offset is added on top and clamped to -2..0 by sanitize.
+    RenderSettings s = half.renderer->settings();
+    s.upscale_mip_bias = -0.5f;
+    half.renderer->set_settings(s);
+    (void)frame(half, 0.0f);
+    CHECK(half.renderer->stats().texture_mip_bias == doctest::Approx(-1.5f).epsilon(0.02));
+    s.upscale_mip_bias = 3.0f;
+    CHECK(s.sanitized().upscale_mip_bias == 0.0f);
+    s.upscale_mip_bias = -9.0f;
+    CHECK(s.sanitized().upscale_mip_bias == -2.0f);
+    for (Scene* sc : {&half, &native, &bilinear, &no_taa}) gpu().ctx->destroy(sc->cube);
+}
+
 TEST_CASE("gpu: temporal upscaling follows camera motion without ghosting") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Scene sc = make_scene(true, 0.5f);

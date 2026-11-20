@@ -41,6 +41,10 @@ struct PlayerOptions {
     std::optional<bool> compact_hdr;
     // Explicit FP16 BRDF maths where supported; unset = half_precision_by_default(tier, mobile).
     std::optional<bool> half_precision;
+    // Overrides of the tier's 3D resolution scale (0.25..2) and TAA, after the project settings;
+    // unset = tier/project values. For upscaler comparisons such as `victus run --render-scale 0.5`.
+    std::optional<float> render_scale;
+    std::optional<bool> taa;
     std::string connect;         // host[:port] of a `victus serve` server; empty = play offline
     std::string player_name{"player"}; // name shown to other players when connected
     std::string net_conditions;  // link emulation for testing, e.g. "latency=80,loss=0.05"

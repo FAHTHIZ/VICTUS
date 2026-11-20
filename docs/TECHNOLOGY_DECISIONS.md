@@ -972,6 +972,34 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0141 — Texture mip bias for temporal upscaling; Arm ASR evaluation
+
+- Status: Accepted (2026-11-20)
+- Context: ROADMAP Priority 0 asked for Arm ASR (Accuracy Super Resolution) to be evaluated against the built-in TAA upscaler (ADR-0057/0058) for mobile. [Arm ASR](https://github.com/arm/accuracy-super-resolution-generic-library) is MIT licensed, derived from AMD FSR2 2.2.2, and runs its passes mostly as fragment shaders for mobile GPUs. Arm publishes 3.6 ms on a Mali-G715 and 2.2 ms on a Mali-G720 at 2400x1080 Balanced (2x).
+- Evaluation of ASR:
+  - Quick integration (the library's Vulkan backend) needs a native `VkDevice`, command buffer and `VkImage` handles. SDL_GPU does not expose these, so it is blocked.
+  - Tight integration (an `FfxmInterface` written over the VICTUS RHI) is blocked as-is. ASR's GLSL uses separate `texture2D` and `sampler` objects, while SDL_GPU needs combined samplers in set 2 and uniforms in set 3. The accumulate pass writes the UAV `rw_new_locks`, and reconstruct-previous-depth does an `imageAtomic` on `rw_reconstructed_previous_nearest_depth` from the fragment stage. SDL_GPU graphics-stage storage textures are read-only. A port would need compute wrappers for those passes plus binding remapping (spirv-cross or glslang binding shifts).
+  - Decision: do not vendor ASR now. Bring its ideas into `taa_upscale.frag` one at a time, each measured with `victus compare`. The first of these is ASR's texture mip bias.
+- Change:
+  - While temporal upscaling is active, material textures (base colour, emissive, metallic-roughness/ORM, normal) are sampled with LOD bias `log2(render / output) + RenderSettings::upscale_mip_bias`. The value is passed in `lighting.camera_forward.w` and reported as `SceneStats::texture_mip_bias`.
+  - Without upscaling (scale 1, TAA off or `temporal_upscale` off) the bias is 0, so the goldens are unchanged.
+  - ASR and FSR2 use `log2(render/display) - 1.0` (the ASR README's `mipBias` formula). The extra `upscale_mip_bias` (clamped to -2..0) defaults to 0, based on these measurements.
+  - `victus run` gains `--render-scale 0.25..2` and `--taa on|off|auto`, which override the project settings so upscaling can be measured from the command line.
+- Measurements (lavapipe, photoreal scene, 640x360, Ultra, 60 frames, mean LDR-FLIP against native scale 1 TAA):
+
+  | Scale | Bias | FLIP | Worst tile | Temporal error |
+  |---|---|---|---|---|
+  | 0.5 | none (before) | 0.0705 | 0.116 | 0.00251 |
+  | 0.5 | log2 ratio | 0.0515 | 0.070 | 0.00307 |
+  | 0.5 | log2 - 0.5 | 0.0510 | 0.071 | 0.00326 |
+  | 0.5 | log2 - 1 (ASR/FSR2) | 0.0532 | 0.083 | 0.00347 |
+  | 0.67 | none (before) | 0.0461 | n/a | n/a |
+  | 0.67 | log2 ratio | 0.0333 | 0.058 | 0.00204 |
+  | 0.67 | log2 - 0.5 | 0.0321 | 0.058 | 0.00224 |
+
+  The ratio bias cuts the 0.5 upscale error by 27 % (0.0705 to 0.0515) and the 0.67 upscale error by 28 %. The 0.5 upscale is now better than the 0.67 upscale was before (0.0461), and well ahead of bilinear (0.0864). Going further than the ratio gains at most 0.001 to 0.004 FLIP and raises frame-to-frame shimmer by 6 to 13 %, so the default is the plain ratio.
+- Consequences: upscaled frames keep scanned-texture detail at no extra cost (the bias is a sampler argument). Low still has TAA off (FXAA, scale 0.75), so it gets no bias. Turning TAAU on for Low on mobile is a separate, measured decision. Next ASR-derived items: a reactive/transparency mask, lock or thin-feature preservation, depth-clip disocclusion and a Lanczos reconstruction filter.
+
 ## ADR-0140 — Photoreal reference scene from CC0 scanned materials
 
 - Status: Accepted (2026-11-20)
