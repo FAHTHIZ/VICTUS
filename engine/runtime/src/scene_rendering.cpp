@@ -1695,17 +1695,23 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         });
     // Foliage entities draw their MeshRenderer once per scattered instance near the camera; the
     // renderer merges the copies into instanced batches (one draw per LOD/probe/pass).
-    std::vector<math::Mat4> foliage;
+    // Low/Medium tiers shorten the range and keep shadows for the nearer part (ADR-0150).
+    std::vector<math::Mat4> foliage;        // casts shadows (if the material does)
+    std::vector<math::Mat4> foliage_far;    // beyond the tier's shadow fraction: lit, shadowless
+    const float foliage_scale = renderer.settings().foliage_distance_scale;
+    const float foliage_shadow = renderer.settings().foliage_shadow_fraction;
     const auto foliage_instances = [&](Entity entity) -> bool {
         const auto* fr = w.get<terrain::FoliageRuntime>(entity);
         const auto* fc = fr ? w.get<terrain::FoliageComponent>(entity) : nullptr;
         if (!fc) return false;
         foliage.clear();
+        foliage_far.clear();
         const auto* twt = fr->terrain.is_null() ? nullptr : w.get<WorldTransform>(fr->terrain);
         if (!twt || fr->instances == 0) return true;
         const math::Mat4 model = terrain::rigid_matrix(twt->matrix);
-        const float range = std::isfinite(fc->draw_distance) ? std::max(fc->draw_distance, 0.0f) : 0.0f;
+        const float range = (std::isfinite(fc->draw_distance) ? std::max(fc->draw_distance, 0.0f) : 0.0f) * foliage_scale;
         const float range2 = range * range;
+        const float shadow_range2 = range2 * foliage_shadow * foliage_shadow;
         for (std::size_t c = 0; c < fr->chunks.size(); ++c) {
             const auto& list = fr->chunks[c];
             if (list.empty() || !fr->chunk_bounds[c].valid()) continue;
@@ -1718,10 +1724,12 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 const math::Mat4 world = model * local;
                 const math::Vec3 p = world.transform_point({});
                 const math::Vec3 d = p - camera.position;
-                if (math::dot(d, d) <= range2) foliage.push_back(world);
+                const float d2 = math::dot(d, d);
+                if (d2 > range2) continue;
+                (d2 <= shadow_range2 ? foliage : foliage_far).push_back(world);
             }
         }
-        stats.foliage_instances += static_cast<std::uint32_t>(foliage.size());
+        stats.foliage_instances += static_cast<std::uint32_t>(foliage.size() + foliage_far.size());
         return true;
     };
     w.each<MeshRendererComponent, WorldTransform>([&](Entity entity, const MeshRendererComponent& mr, const WorldTransform& wt) {
@@ -1744,7 +1752,12 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 renderer.submit(mesh, m, wt.matrix, motion_id, lmm.uv_offset);
                 return;
             }
-            renderer.submit_instances(mesh, m, foliage); // static: no motion id
+            if (!foliage.empty()) renderer.submit_instances(mesh, m, foliage); // static: no motion id
+            if (!foliage_far.empty()) {
+                render::Material shadowless = m;
+                shadowless.cast_shadows = false;
+                renderer.submit_instances(mesh, shadowless, foliage_far);
+            }
         };
         const auto* pm = w.get<scene::ProceduralMeshComponent>(entity);
         if (pm && pm->mesh) {

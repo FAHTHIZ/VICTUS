@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Terrain (ADR-0063) renders its chunks through the built-in splat surface shader: layer tints
 // follow the splat map and edits re-upload only the touched chunks.
+#include <limits>
 #include "gpu_fixture.hpp"
 #include "victus/runtime/scene_rendering.hpp"
 #include "victus/terrain/terrain.hpp"
@@ -24,10 +25,11 @@ struct Frame {
     double extract_ms{0}, render_ms{0}; // CPU time of extract_scene and render() recording+submit
 };
 
-Frame draw(Scene& s, runtime::GpuAssetCache& cache) {
+Frame draw(Scene& s, runtime::GpuAssetCache& cache, const render::RenderSettings* settings = nullptr) {
     auto& dev = gpu().ctx->device();
     auto sr = render::SceneRenderer::create(*gpu().ctx);
     REQUIRE(sr.ok());
+    if (settings) (*sr)->set_settings(*settings);
     auto target = test::make_target(W, H);
     s.update_transforms();
     Frame f;
@@ -176,6 +178,39 @@ TEST_CASE("gpu: foliage draws its mesh renderer on the painted layer within the 
     a = draw(s, cache);
     CHECK(a.stats.foliage_instances > 0u);
     CHECK(a.stats.foliage_instances < rt->instances / 2);
+
+    // Tier foliage range (ADR-0150): half the distance keeps about a quarter of the instances,
+    // and a zero shadow fraction leaves them lit but out of every shadow pass.
+    {
+        s.world().get<terrain::FoliageComponent>(bushes)->draw_distance = 30.0f;
+        const Entity sun = s.create("Sun");
+        s.world().get<Transform>(sun)->rotation = math::Quat::axis_angle({1, 0, 0}, math::radians(-60));
+        s.world().add<scene::LightComponent>(sun).shadows = true;
+        system.update(s);
+        render::RenderSettings full = render::RenderSettings::preset(render::QualityTier::High);
+        const Frame base = draw(s, cache, &full);
+        render::RenderSettings near = full;
+        near.foliage_distance_scale = 0.5f;
+        near.foliage_shadow_fraction = 0.0f;
+        const Frame reduced = draw(s, cache, &near);
+        MESSAGE("foliage range: instances " << base.stats.foliage_instances << " -> " << reduced.stats.foliage_instances
+                                            << ", shadow casters " << base.render.shadow_casters << " -> "
+                                            << reduced.render.shadow_casters << ", shadow triangles "
+                                            << base.render.shadow_triangles << " -> " << reduced.render.shadow_triangles);
+        CHECK(reduced.stats.foliage_instances > 0u);
+        CHECK(reduced.stats.foliage_instances * 2u < base.stats.foliage_instances);
+        CHECK(reduced.render.shadow_casters + reduced.stats.foliage_instances / 2u < base.render.shadow_casters);
+        CHECK(reduced.render.shadow_casters <= base.stats.terrain_chunks + 1u); // terrain only
+        render::RenderSettings bad = full;
+        bad.foliage_distance_scale = std::numeric_limits<float>::quiet_NaN();
+        bad.foliage_shadow_fraction = 7.0f;
+        const render::RenderSettings clean = bad.sanitized();
+        CHECK(clean.foliage_distance_scale == 1.0f);
+        CHECK(clean.foliage_shadow_fraction == 1.0f);
+        CHECK(render::RenderSettings::preset(render::QualityTier::Low).foliage_distance_scale < 1.0f);
+        CHECK(full.foliage_distance_scale == 1.0f);
+        s.destroy(sun);
+    }
 
     // Dense scatter (tens of thousands of instances): still a handful of instanced draws. The
     // CPU times are reported for the record (lavapipe host, not a gate).

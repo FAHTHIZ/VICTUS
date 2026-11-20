@@ -10,6 +10,7 @@
 #include "victus/render/render_graph.hpp"
 #include "victus/render/render_path.hpp"
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <optional>
@@ -500,6 +501,13 @@ struct RenderSettings {
     // keep the same reference; directional cascades may go coarser still (shadow_lod_texels).
     // The bias only trades shadow-pass triangles for silhouette error. Low: 1.
     std::uint32_t shadow_lod_bias{0};
+    // Scattered foliage (ADR-0150): each FoliageComponent draws instances within
+    // `draw_distance * foliage_distance_scale` (0.25..1), and only those within
+    // `foliage_shadow_fraction` (0..1) of that range cast shadows; the rest draw lit but
+    // shadowless, so the shadow pass skips the far grass that a 1024 shadow map cannot resolve.
+    // Instance counts fall with the square of the scale. Low: 0.7 / 0.5, Medium: 0.85 / 0.75.
+    float foliage_distance_scale{1.0f};
+    float foliage_shadow_fraction{1.0f};
     // Per-cascade shadow LOD (ADR-0132): each directional cascade draws a caster no finer than
     // the coarsest level whose geometric error stays within this many of the cascade's shadow
     // texels, and never finer than the level above. A 1-texel error is inside the 1-texel
@@ -960,7 +968,50 @@ private:
     std::uint32_t motion_capacity_{0}; // in instances
     std::unordered_map<std::uint64_t, MotionState> motion_prev_, motion_next_;
     // LOD hysteresis: level drawn last frame per (motion id, mesh), for the output size below.
-    std::unordered_map<std::uint64_t, std::uint8_t> lod_prev_, lod_next_;
+    // LOD hysteresis history (ADR-0150): open addressing over a power-of-two table rebuilt each
+    // frame without per-entry allocation (the node map it replaced allocated once per draw).
+    struct LodHistory {
+        std::vector<std::uint64_t> keys; // 0: empty slot (real keys are remapped away from 0)
+        std::vector<std::uint8_t> lods;
+        std::size_t count{0};
+        static std::uint64_t slot_key(std::uint64_t k) noexcept { return k ? k : 0x9e3779b97f4a7c15ull; }
+        void clear(std::size_t expected) {
+            std::size_t cap = 16;
+            while (cap < expected * 2) cap *= 2;
+            if (keys.size() != cap) {
+                keys.assign(cap, 0);
+                lods.assign(cap, 0);
+            } else if (count > 0) {
+                std::fill(keys.begin(), keys.end(), 0);
+            }
+            count = 0;
+        }
+        // First insert of a key wins (as std::unordered_map::emplace).
+        void insert(std::uint64_t k, std::uint8_t lod) noexcept {
+            if (keys.empty() || (count + 1) * 2 > keys.size()) return; // sized by clear()
+            k = slot_key(k);
+            const std::size_t mask = keys.size() - 1;
+            for (std::size_t i = static_cast<std::size_t>(k * 0x9e3779b97f4a7c15ull >> 17) & mask;; i = (i + 1) & mask) {
+                if (keys[i] == k) return;
+                if (keys[i] == 0) {
+                    keys[i] = k;
+                    lods[i] = lod;
+                    ++count;
+                    return;
+                }
+            }
+        }
+        [[nodiscard]] int find(std::uint64_t k) const noexcept {
+            if (count == 0) return -1;
+            k = slot_key(k);
+            const std::size_t mask = keys.size() - 1;
+            for (std::size_t i = static_cast<std::size_t>(k * 0x9e3779b97f4a7c15ull >> 17) & mask;; i = (i + 1) & mask) {
+                if (keys[i] == k) return lods[i];
+                if (keys[i] == 0) return -1;
+            }
+        }
+    };
+    LodHistory lod_prev_, lod_next_;
     std::uint32_t lod_history_w_{0}, lod_history_h_{0};
     bool lod_history_valid_{false};
     std::vector<math::Mat4> motion_joints_, motion_joints_next_;
