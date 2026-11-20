@@ -2022,3 +2022,13 @@ Verified (Release, clang 21, lavapipe, 2 cores): `compile_shaders.py --check` up
 Not covered: lavapipe only. Alpha-blended meshes have no per-material responsive flag; no auto-generated reactive mask; main's macOS CI also fails `gpu_compact_hdr_tests` on Metal (mean diff 0.78 to 2.5 levels against 0.75, negative bias), which cannot be reproduced here.
 
 Next task: the macOS Metal compact-HDR failure (bias of the stochastic R11G11B10 rounding), then thin-feature locks / depth-clip disocclusion in the upscaler, then the OpenGL ES 3 fallback ADR.
+
+## 2026-11-20 — Compact HDR rounding exact under Metal fast math (ADR-0129 amendment)
+
+Built: the stochastic R11G11B10 rounding in `pbr.frag` (and `#fp16`), `sky.frag`, `taa.frag` and `taa_upscale.frag` scales with `ldexp(floor(ldexp(c, -k) + n), k)` instead of `exp2` and a division. main's macOS CI (Metal, Debug and Release) failed `gpu_compact_hdr_tests` with mean |difference| 0.78 / 0.89 / 2.55 / 2.43 steps and a blue bias about twice red/green, the signature of truncating stores of values that are not exactly representable; Metal compiles with fast math by default, where `exp2` and division are approximate.
+
+Verified (Release, clang 21, lavapipe): `compile_shaders.py --check` up to date (62). `victus_gpu_tests -tc="*compact hdr*"` 2/2 with the ADR-0129 numbers unchanged (0.152 / 0.264 / 0.416 / 0.414). `VICTUS_REQUIRE_GPU=1 ctest -R "reference|render_tests|gpu"` 3/3.
+
+Not covered: the Metal fix is verified only by the macOS CI run on this commit; there is no Mac here.
+
+Next task: confirm the macOS CI result, then thin-feature locks / depth-clip disocclusion in the upscaler, then the OpenGL ES 3 fallback ADR.
