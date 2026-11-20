@@ -3728,7 +3728,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         TaaUpscaleUniforms tu{};
         tu.reproject = prev_view_proj_ * inverse(view_proj_unjittered);
         const bool object_motion = have_prev && !motion_batches.empty();
-        tu.params = {S.taa_blend, have_prev ? 1.0f : 0.0f, 1.25f, object_motion ? 1.0f : 0.0f};
+        // Clip box width (in standard deviations): the upscaler's 3x3 render-texel neighbourhood spans
+        // several output pixels, so a native-width box clips away detail the history reconstructed
+        // from earlier jitter positions (ADR-0142: 2.0 measured best, also under camera motion).
+        tu.params = {S.taa_blend, have_prev ? 1.0f : 0.0f, upscale ? 2.0f : 1.25f, object_motion ? 1.0f : 0.0f};
         tu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh),
                      1.0f / static_cast<float>(have_prev ? history_w_[prev] : hw),
                      1.0f / static_cast<float>(have_prev ? history_h_[prev] : hh)};

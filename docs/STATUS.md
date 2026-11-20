@@ -1981,3 +1981,23 @@ Verified (Release, clang 21, lavapipe, 2 cores): `python3 tools/shaders/compile_
 Not covered: lavapipe only; no phone capture; ASR's reactive mask, locks and Lanczos filter are not ported yet.
 
 Next task: port ASR/FSR2 reconstruction ideas (reactive mask, thin-feature locks, depth clip) into taa_upscale.frag, measured on the photoreal scene, then the OpenGL ES 3 fallback ADR.
+
+## 2026-11-20 — Temporal upscaler tuning (ADR-0142)
+
+Built: in the upscale path only, `taa_upscale.frag` uses reconstruction kernel `exp(-1.5 d^2)` (was 2.29) and a minimum current weight of 0.3 (was 0.15), and the clip gamma is 2.0 (was 1.25). Native TAA is unchanged. `tests/cli/reference_scenes.cmake` adds a photoreal half-resolution capture with and without TAA. The TAA-upscaled one must score below 3/4 of the bilinear FLIP, and `temporal_upscale` must be active.
+
+Verified (Release, clang 21, lavapipe, 2 cores): 640x360 Ultra scale 0.5 mean FLIP against native, before and after:
+
+| Scene | Before | After |
+|---|---|---|
+| Photoreal, static | 0.0515 | 0.0423 |
+| Photoreal, camera pan | 0.0520 | 0.0438 |
+| Exterior | 0.0194 | 0.0187 |
+| Interior | 0.0148 | 0.0137 |
+| Effects | 0.0200 | 0.0198 |
+
+The effects worst tile rose from 0.082 to 0.089. Other knob values are tabulated in ADR-0142. `compile_shaders.py --check` is up to date. `victus_gpu_tests -tc="*taa*,*upscal*"` gives 11/11; the edge test went from 0.76 to 0.97 against a limit of 1.30. `ctest -R victus_reference_scenes` passes: photoreal 50 % upscale FLIP 0.0492 against bilinear 0.0772, and the goldens are unchanged. Full `ctest --test-dir build -j2` 39/39.
+
+Not covered: lavapipe only; particles and water have no reactive mask, so they ghost slightly more under the wider box.
+
+Next task: a reactive mask (particles, water, alpha-blended surfaces write a per-pixel "trust current frame" value the upscaler reads), then the OpenGL ES 3 fallback ADR.

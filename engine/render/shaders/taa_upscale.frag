@@ -84,10 +84,11 @@ void main() {
             vec2 texel = clamp(base + vec2(x, y), vec2(0.0), rsize - 1.0);
             vec2 uv = (texel + 0.5) * px;
             vec3 c = safe(textureLod(u_current, uv, 0.0).rgb);
-            // Gaussian fit of a Blackman-Harris window, measured in output pixels so the
-            // reconstruction is as sharp as the output grid (radius ~1.5 output pixels).
+            // Gaussian reconstruction kernel measured in output pixels (radius ~1.8 output pixels).
+            // exp(-1.5 d^2) is a little wider than a Blackman-Harris fit (2.29): it averages more
+            // jittered samples per frame, which measured lower error and less shimmer (ADR-0142).
             vec2 d = (pos - (texel + 0.5 - u.jitter.xy)) * ratio;
-            float w = exp(-2.29 * dot(d, d));
+            float w = exp(-1.5 * dot(d, d));
             vec3 cw = c / (1.0 + luma(c));
             sum += cw * w;
             wsum += w;
@@ -128,9 +129,10 @@ void main() {
     if (m > 1.0) hw = centre + v / m;
 
     // A sample landing near this output pixel is trusted at the full current-frame weight; output
-    // pixels between this frame's samples lean on the history until the jitter reaches them.
+    // pixels between this frame's samples lean on the history until the jitter reaches them (at no
+    // less than 30 % of the weight, so the history keeps refreshing between jitter hits).
     vec2 motion = (v_uv - prev_uv) * u.output_size.zw;
-    float alpha = u.params.x * mix(0.15, 1.0, wmax);
+    float alpha = u.params.x * mix(0.3, 1.0, wmax);
     alpha = clamp(alpha + length(motion) * 0.01, 0.01, 0.5);
     vec3 r = from_ycocg(mix(hw, to_ycocg(cur_w), alpha));
     r = r / max(1.0 - luma(r), 1e-4);
