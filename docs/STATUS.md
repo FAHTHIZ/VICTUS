@@ -1922,3 +1922,23 @@ Verified (Release, clang 21, lavapipe): `victus_gpu_tests -tc="*particle*"` 14/1
 Not covered: the single `out_of_order == 1` failure seen in the ADR-0137 full run did not reproduce, so the rounding cause is a hypothesis, not confirmed; a real sort error would still fail the check.
 
 Next task: give the Low tier the baked probes (ambient and sun occlusion) cheaply, then the photoreal CC0 reference scene.
+
+## 2026-11-20 — `victus simulate` streams world cells
+
+Found by: SPECIAL OPS. Every headless check of its open world (`world_forest`, `world_relay`, `world_creek`, `world_trail_walk`, the chapter stories) ran on an empty world: `victus simulate` never created a `WorldStreamer`, so no trees, rocks or their colliders were loaded. AI cover search, line of sight and walking were tested against bare terrain only, and the world view plans failed on "streamed".
+
+Built: the headless runner (`Headless` in tools/cli/main.cpp) streams cells the same way the player does in fixed-frame runs:
+- a `WorldStreaming` entity names the `.vworld`;
+- cells load synchronously around the streaming sources (the camera by default), after each tick;
+- a scene transition restarts the streamer.
+
+`simulate` now prints `world: <active> cells active, peak <n> of <total>`. Cells have no GPU dependencies headless, so activation never waits.
+
+Verified (Release, GCC, 2 vCPU):
+- `ctest -R "determinism|cli"`: 7/7 (render compare skipped, no GPU). `cli_smoke` has a new step: `simulate` on the partitioned `world_3d` project must report at least one active cell (3 of 5).
+- SPECIAL OPS `world_forest` 6/6 and `world_trail_walk` 3/3 now PASS. Before, they failed with "trees within 60 m 0", and now report 515 trees and 13-17 active cells.
+
+Not covered:
+- `victus serve` and `crash-test` open the world but do not update the streamer per tick yet;
+- streaming cost in long headless runs is not profiled.
+

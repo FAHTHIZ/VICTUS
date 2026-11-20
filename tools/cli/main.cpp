@@ -349,6 +349,43 @@ struct Headless {
     std::unique_ptr<audio::AudioEngine> audio_engine;
     gameplay::ManualInput input;
     gameplay::Simulation sim;
+    // World streaming (ADR-0090) as in the player's fixed-frame runs: cells load synchronously
+    // around the streaming sources (the camera by default), so headless checks of an open world
+    // see the same trees, rocks and colliders the game does.
+    std::unique_ptr<world::WorldStreamer> streamer;
+    bool world_changed = false;
+    std::uint32_t peak_cells = 0;
+
+    Status start_world() {
+        streamer.reset();
+        std::string world_path;
+        scene.world().each<world::WorldStreamingComponent>([&](const world::WorldStreamingComponent& w) {
+            if (world_path.empty()) world_path = w.world;
+        });
+        if (world_path.empty()) return {};
+        auto file = proj->resolve(world_path);
+        if (!file) return std::move(file).error();
+        auto desc = world::load_world_file(*file);
+        if (!desc) return std::move(desc).error();
+        streamer = std::make_unique<world::WorldStreamer>(std::move(*desc), proj->root());
+        return {};
+    }
+    void stream_world() {
+        if (world_changed) {
+            world_changed = false;
+            if (auto st = start_world(); !st) std::fprintf(stderr, "world streaming: %s\n", st.error().message.c_str());
+        }
+        if (!streamer) return;
+        scene.update_transforms();
+        std::optional<math::Vec3> camera;
+        scene.world().each<scene::CameraComponent, scene::WorldTransform>(
+            [&](const scene::CameraComponent&, const scene::WorldTransform& t) {
+                if (!camera) camera = t.matrix.transform_point({});
+            });
+        const auto sources = world::gather_sources(scene, camera ? &*camera : nullptr);
+        streamer->update(scene, sources);
+        peak_cells = std::max(peak_cells, streamer->stats().active);
+    }
 
     Status open(const std::string& project_dir, const std::string& scene_arg, const std::string& saves = {},
                 std::uint64_t random_seed = 0, bool debugger = false) {
@@ -374,6 +411,7 @@ struct Headless {
         };
         so.on_scene_loaded = [this](scene::Scene&, std::string_view loaded) {
             scene_rel = std::string(loaded);
+            world_changed = true;
             if (physics_world) physics_world->clear();
             if (audio_engine) audio_engine->stop_all();
         };
@@ -421,7 +459,7 @@ struct Headless {
         audio_engine = std::move(*ae);
         audio::add_audio_systems(sim, *audio_engine);
         sim.input = &input;
-        return {};
+        return start_world();
     }
     [[nodiscard]] std::string game_id() const { return net::make_game_id(proj->settings().name, scene_rel); }
 };
@@ -575,6 +613,7 @@ int cmd_simulate(const std::vector<std::string>& a) {
         }
         hs->sim.tick(hs->scene, dt);
         hs->input.end_frame();
+        hs->stream_world();
         if (replaying && !replay->end_tick(hs->scene)) {
             ++f;
             break;
@@ -593,6 +632,9 @@ int cmd_simulate(const std::vector<std::string>& a) {
     std::printf("simulated %llu frames (%.2f s game time): %zu entities, %zu script instances, %llu script errors\n",
                 static_cast<unsigned long long>(f), hs->sim.time().time, hs->scene.world().alive_count(), st.instances,
                 static_cast<unsigned long long>(st.errors));
+    if (hs->streamer)
+        std::printf("world: %u cells active, peak %u of %zu\n", hs->streamer->stats().active, hs->peak_cells,
+                    hs->streamer->world().cells.size());
     for (const auto& e : hs->host->recent_errors()) std::fprintf(stderr, "script error: %s\n", e.c_str());
     if (!hs->plugins->statuses().empty()) {
         std::printf("plugins: %zu loaded\n", hs->plugins->loaded_count());
