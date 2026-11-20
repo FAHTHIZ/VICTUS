@@ -548,7 +548,7 @@ std::vector<particles::GpuParticle> read_state(SceneRenderer& r, std::uint64_t k
 } // namespace
 
 TEST_CASE("gpu particles: compute simulation matches the CPU reference kernel and draws") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto& dev = ctx.device();
     GpuFx fx;
@@ -660,7 +660,7 @@ TEST_CASE("gpu particles: compute simulation matches the CPU reference kernel an
 }
 
 TEST_CASE("gpu particles: depth-buffer collision bounces particles off the floor; reset clears the GPU state") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto& dev = ctx.device();
     auto cube = ctx.create_mesh(make_cube(), "gpu_particle_floor").value();
@@ -736,7 +736,7 @@ TEST_CASE("gpu particles: depth-buffer collision bounces particles off the floor
 }
 
 TEST_CASE("gpu particles: alpha-blended GPU emitters are depth sorted on the GPU, additive ones are not") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto& dev = ctx.device();
     GpuFx fx;
@@ -899,7 +899,7 @@ TEST_CASE("gpu particles: effect budgets keep the nearest particle batches, deca
 }
 
 TEST_CASE("gpu particles: GPU trails record ring histories on the GPU and draw camera-facing ribbons") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto& dev = ctx.device();
     GpuFx fx;

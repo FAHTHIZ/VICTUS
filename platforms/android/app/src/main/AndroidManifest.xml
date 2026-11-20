@@ -3,10 +3,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     android:installLocation="auto">
 
-    <!-- SDL_GPU renders with Vulkan on Android (it has no OpenGL ES backend): require Vulkan 1.1,
-         which every Android 9+ device that ships Vulkan 1.1 drivers reports. -->
-    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
-    <uses-feature android:name="android.hardware.vulkan.level" android:version="0" android:required="true" />
+    <!-- Rendering (ADR-0144): SDL_GPU on Vulkan 1.1 where the device ships it, otherwise the VICTUS
+         OpenGL ES 3.0 backend (no compute: GPU particles, occlusion culling and volumetric fog
+         are turned off there). Vulkan is therefore optional and OpenGL ES 3.0
+         is the floor, which every Android 4.3+ device reports. -->
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="false" />
+    <uses-feature android:name="android.hardware.vulkan.level" android:version="0" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />

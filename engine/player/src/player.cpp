@@ -96,11 +96,16 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     wd.width = o.width > 0 ? o.width : proj->settings().window_width;
     wd.height = o.height > 0 ? o.height : proj->settings().window_height;
     wd.fullscreen = o.fullscreen;
-    auto window = (*plat)->create_window(wd);
-    if (!window) return std::move(window).error();
-    auto device = rhi::Device::create({});
+    // The device comes first (ADR-0144 phase 3): without Vulkan/Metal/D3D12 it falls back to
+    // OpenGL ES 3.0, whose window must then be created with SDL_WINDOW_OPENGL.
+    rhi::DeviceDesc device_desc;
+    device_desc.gles_fallback = true;
+    auto device = rhi::Device::create(device_desc);
     if (!device) return std::move(device).error();
     rhi::Device& dev = **device;
+    wd.opengl = dev.capabilities().backend == rhi::Backend::GLES;
+    auto window = (*plat)->create_window(wd);
+    if (!window) return std::move(window).error();
     VICTUS_TRY_STATUS(dev.attach_window(**window, proj->settings().vsync ? rhi::PresentMode::VSync : rhi::PresentMode::Immediate));
     auto gpu = render::GpuContext::create(dev);
     if (!gpu) return std::move(gpu).error();

@@ -1,6 +1,6 @@
 # Android
 
-VICTUS games run on Android arm64 phones and tablets (Android 9 / API 28 and newer, Vulkan 1.1).
+VICTUS games run on Android arm64 phones and tablets (Android 9 / API 28 and newer; Vulkan 1.1, or OpenGL ES 3.0 without it).
 The Android app is a thin shell: SDL's `SDLActivity` owns the window, input, audio and lifecycle,
 and the whole engine plus the player run natively from `libmain.so`. The game itself is the same
 `game.vpak` that `victus export` produces for desktop.
@@ -78,10 +78,13 @@ with optimizations (`RelWithDebInfo`), because an unoptimized renderer is unusab
   works unchanged. Scripts read every finger with `input.touch_count()` and
   `input.touch(i)`. `touch(i)` returns a vector `(x, y, pressure)` normalized to the window,
   plus the finger id.
-- **Graphics.** SDL_GPU has no OpenGL ES backend, so Vulkan is required. The manifest declares
-  `android.hardware.vulkan.version` 1.1 as required, so stores do not offer the game to devices
-  without it. The RHI relaxes optional Vulkan features that mobile drivers often lack. If device
-  creation still fails, the app shows an error dialog instead of crashing.
+- **Graphics.** The player first asks SDL_GPU for a Vulkan 1.1 device. The RHI relaxes optional
+  Vulkan features that mobile drivers often lack. If no Vulkan device can be created, it falls
+  back to the VICTUS OpenGL ES 3.0 backend (ADR-0144) and creates its window with OpenGL. GLES has
+  no compute shaders, so GPU particles, GPU occlusion culling and volumetric fog are off there and
+  `quality = "auto"` caps the tier at Medium. The manifest declares Vulkan optional and
+  `glEsVersion` 0x30000 as required. If both backends fail, the app shows an error dialog
+  instead of crashing. The GLES path is tested on Mesa llvmpipe only, not on a phone.
 - **Textures.** ASTC is the mobile texture format (SDL_GPU exposes no ETC2). Cook textures with
   `"compression": "auto"` (BC7 + ASTC 4x4) or `"small"` (BC1 + ASTC 6x6). The runtime uploads the
   first variant the GPU samples and falls back to RGBA8.

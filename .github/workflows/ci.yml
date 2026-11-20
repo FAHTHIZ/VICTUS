@@ -116,6 +116,10 @@ jobs:
         run: |
           exe=build/bin/victus_gpu_tests; [ -f "$exe" ] || exe=build/bin/${{ matrix.build_type }}/victus_gpu_tests
           "$exe" | grep '\[victus\]' || true
+      - name: GPU tests on OpenGL ES
+        if: runner.os == 'Linux'
+        # ADR-0144: the whole GPU suite on the GLES backend (Mesa llvmpipe); compute tests skip.
+        run: VICTUS_REQUIRE_GPU=1 VICTUS_GPU_DRIVER=gles SDL_VIDEO_DRIVER=offscreen ./build/bin/victus_gpu_tests
       - name: Windowed swapchain smoke test
         if: runner.os == 'Linux'
         run: xvfb-run -a ./build/bin/victus_render_showcase --frames 20 --screenshot build/showcase.png --width 640 --height 360
@@ -125,6 +129,7 @@ jobs:
           ./build/bin/victus new build/smoke3d --template 3d
           xvfb-run -a ./build/bin/victus_editor build/smoke3d --data-dir build/editor-data --frames 30 --width 1280 --height 720 --screenshot build/editor.png
           xvfb-run -a ./build/bin/victus run build/smoke3d --frames 30 --screenshot build/player.png
+          VICTUS_GPU_DRIVER=gles xvfb-run -a ./build/bin/victus run build/smoke3d --frames 30 --screenshot build/player_gles.png
       - name: Upload rendered images
         if: always()
         uses: actions/upload-artifact@v4
@@ -135,6 +140,7 @@ jobs:
             build/showcase.png
             build/editor.png
             build/player.png
+            build/player_gles.png
             build/test_output/cli_smoke/*.png
           if-no-files-found: ignore
 

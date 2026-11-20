@@ -144,6 +144,8 @@ struct WindowDesc {
     bool fullscreen{false};
     bool hidden{false};
     bool high_dpi{true};
+    // SDL_WINDOW_OPENGL: required for windows presented by an OpenGL ES RHI device (ADR-0144).
+    bool opengl{false};
 };
 
 class Window {

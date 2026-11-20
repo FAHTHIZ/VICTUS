@@ -296,6 +296,20 @@ Result<std::unique_ptr<Device>> Device::create(const DeviceDesc& desc) {
         device->device_ = device->impl_->gl->context();
         return device;
     }
+    if (desc.gles_fallback) {
+        // ADR-0144 phase 3: try the SDL_GPU backends first, then OpenGL ES 3.0.
+        DeviceDesc native = desc;
+        native.gles_fallback = false;
+        auto device = create(native);
+        if (device) return device;
+        DeviceDesc gles = native;
+        gles.preferred_driver = "gles";
+        auto fallback = create(gles);
+        if (!fallback)
+            return make_error(ErrorCode::DeviceError, std::format("{}; OpenGL ES fallback failed: {}", device.error().message, fallback.error().message));
+        VICTUS_LOG_WARN("rhi", "{}; running on OpenGL ES 3.0 without compute", device.error().message);
+        return fallback;
+    }
     const SDL_GPUShaderFormat formats = SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL;
     // Optional Vulkan features are relaxed for Android coverage. VICTUS shaders never write
     // gl_ClipDistance or draw indirect with a first instance, and no pipeline uses depth clamping by

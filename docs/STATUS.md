@@ -2123,3 +2123,13 @@ Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): new `gpu_gles_tests` case re
 Not covered: compute-dependent GPU tests do not yet skip on GLES (they fail when the whole suite is forced onto GLES; CI runs them on Vulkan); no mobile driver or Android device; window presentation through GLES is untested.
 
 Next task: ADR-0144 phase 3 — Android manifest with Vulkan optional and `glEsVersion` 0x30000, the player falling back to GLES when SDL_GPU has no device (with an OpenGL-capable window), then make compute-only GPU tests skip cleanly on devices without compute.
+
+## 2026-11-20 — Android and desktop fall back to OpenGL ES (ADR-0144 phase 3)
+
+Built: `rhi::DeviceDesc::gles_fallback` (SDL_GPU first, then OpenGL ES 3.0; both errors reported when neither works) and `platform::WindowDesc::opengl`. `victus run` / the Android player create the device before the window and open an OpenGL window when the device is GLES. `AndroidManifest.xml` requires `glEsVersion` 0x30000 and makes `android.hardware.vulkan.version` / `.level` optional. `VICTUS_REQUIRE_COMPUTE_OR_SKIP()` in the GPU fixture for the 14 compute-feature cases; the High-tier pass count accepts 16 passes without compute. CI (Linux) runs `victus_gpu_tests` with `VICTUS_GPU_DRIVER=gles` and a GLES player smoke test. `docs/ANDROID.md` describes the fallback.
+
+Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): `VICTUS_GPU_DRIVER=gles victus_gpu_tests` 198/198 cases, 24 339 assertions; new `gpu_gles_tests` case (fallback from an unknown SDL_GPU driver, plain window refused, three frames presented to an OpenGL window and read back). 3D template through `victus run`, GLES vs Vulkan, `victus compare`: Low FLIP mean 0.0031, Medium 0.0057, High 0.0148 (worst tile: the campfire, GPU particles off without compute). Full ctest green.
+
+Not covered: no Android device or emulator run; no GLES timing on phones; GPU particles, occlusion culling and volumetric fog stay off on GLES (no CPU fallback for GPU emitters).
+
+Next task: CI check for the GLES steps; then the TAA upscaler depth-clip disocclusion and thin-feature locks (ROADMAP ASR/FSR2 item).

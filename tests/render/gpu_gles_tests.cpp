@@ -843,3 +843,60 @@ TEST_CASE("gles: the scene renderer draws the Low tier like Vulkan") {
     for (std::size_t i = 0; i + 3 < got.size(); i += 4) red_px += (got[i] > 120 && got[i] > got[i + 1] + 60) ? 1 : 0;
     CHECK(red_px > 100);
 }
+
+// ADR-0144 phase 3: the player asks for the SDL_GPU backends with gles_fallback, then creates its
+// window with SDL_WINDOW_OPENGL when the device came back on GLES, and presents through it.
+TEST_CASE("gles: device creation falls back to GLES and presents to an OpenGL window") {
+    VICTUS_REQUIRE_GLES_OR_SKIP();
+    rhi::DeviceDesc dd;
+    dd.headless = true;
+    dd.preferred_driver = "victus-no-such-driver"; // no SDL_GPU backend has this name
+    {
+        auto strict = rhi::Device::create(dd);
+        CHECK_FALSE(strict.ok());
+    }
+    dd.gles_fallback = true;
+    auto created = rhi::Device::create(dd);
+    REQUIRE_MESSAGE(created.ok(), (created.ok() ? std::string{} : created.error().message));
+    auto& dev = **created;
+    CHECK(dev.capabilities().backend == rhi::Backend::GLES);
+    CHECK_FALSE(dev.capabilities().compute);
+
+    platform::WindowDesc wd;
+    wd.title = "gles present";
+    wd.width = 64;
+    wd.height = 32;
+    wd.hidden = true;
+    wd.high_dpi = false;
+    {
+        auto plain = test::gpu().platform->create_window(wd);
+        REQUIRE(plain.ok());
+        CHECK_FALSE(dev.attach_window(**plain).ok()); // no SDL_WINDOW_OPENGL
+    }
+    wd.opengl = true;
+    auto window = test::gpu().platform->create_window(wd);
+    REQUIRE(window.ok());
+    REQUIRE(dev.attach_window(**window, rhi::PresentMode::Immediate).ok());
+    rhi::TextureHandle last;
+    for (int frame = 0; frame < 3; ++frame) {
+        auto cmd = dev.begin_commands();
+        std::uint32_t w = 0, h = 0;
+        const auto sc = cmd.acquire_swapchain(**window, w, h);
+        REQUIRE(sc.valid());
+        CHECK(w == 64);
+        CHECK(h == 32);
+        rhi::RenderPassDesc rp;
+        rp.colors = {{sc, 0, 0, rhi::LoadOp::Clear, rhi::StoreOp::Store, {0, 1, 0, 1}}};
+        auto pass = cmd.begin_render_pass(rp);
+        REQUIRE(pass.active());
+        pass.end();
+        cmd.submit_and_wait();
+        last = sc;
+    }
+    auto px = dev.read_texture(last);
+    REQUIRE(px.ok());
+    CHECK(test::pixel(px.value(), 64, 0, 0) == 0xff00ff00u);
+    CHECK(test::pixel(px.value(), 64, 63, 31) == 0xff00ff00u);
+    CHECK(dev.stats().frames_submitted >= 3);
+    dev.detach_window(**window);
+}

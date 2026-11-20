@@ -14,7 +14,7 @@ using namespace victus::render;
 using victus::test::gpu;
 
 TEST_CASE("gpu compute: built-in pipeline reduces a buffer and reads it back") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& dev = gpu().ctx->device();
     REQUIRE(dev.capabilities().compute);
     auto pl = create_builtin_compute_pipeline(dev, "hiz_reduce.comp");
@@ -109,7 +109,7 @@ Shot shoot(SceneRenderer& r, RenderSettings s, const WallScene& scene, int frame
 } // namespace
 
 TEST_CASE("gpu occlusion culling: hidden instances are rejected, image unchanged") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto sr = SceneRenderer::create(ctx);
     REQUIRE(sr.ok());

@@ -39,3 +39,15 @@ inline std::uint8_t channel(std::uint32_t px, int c) { return static_cast<std::u
             return;                                                                                \
         }                                                                                          \
     } while (0)
+
+// Tests of compute-shader features (GPU particles, occlusion culling, volumetric fog, compute
+// passes). A device without compute (OpenGL ES, ADR-0144) turns those features off, so the tests
+// skip there; VICTUS_GPU_DRIVER=gles runs the rest of the suite on GLES.
+#define VICTUS_REQUIRE_COMPUTE_OR_SKIP()                                                           \
+    do {                                                                                           \
+        VICTUS_REQUIRE_GPU_OR_SKIP();                                                              \
+        if (!::victus::test::gpu().device->capabilities().compute) {                               \
+            MESSAGE("skipping compute test: the device has no compute shaders");                   \
+            return;                                                                                \
+        }                                                                                          \
+    } while (0)
