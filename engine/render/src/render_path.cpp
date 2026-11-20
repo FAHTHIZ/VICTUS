@@ -113,6 +113,10 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
             std::format("{}x{} rendered for {}x{} output", f.render_width, f.render_height, f.output_width, f.output_height));
     else
         add("render_scale", PathState::Active, PathReason::None, std::format("{}x{}", f.render_width, f.render_height));
+    // Scene colour precision (ADR-0050, ADR-0126): packed HDR halves framebuffer bandwidth on tiled GPUs.
+    if (f.compact_hdr) add("hdr_precision", PathState::Reduced, PathReason::Setting, "R11G11B10F scene colour, 4 bytes/pixel");
+    else add("hdr_precision", PathState::Active, PathReason::None,
+             f.compact_hdr_requested ? "RGBA16F scene colour (R11G11B10F unsupported here)" : "RGBA16F scene colour, 8 bytes/pixel");
 
     // Anti-aliasing and reconstruction.
     if (f.capture_mode) add("taa", PathState::Off, PathReason::CaptureMode, "captures are not jittered");

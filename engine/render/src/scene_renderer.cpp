@@ -554,6 +554,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     r->depth_format_ = ctx.sampled_depth_format();
     // Packed HDR (ADR-0050): half the colour bandwidth of RGBA16F where the GPU can render and blend into it.
     constexpr std::uint32_t kHdrUsage = rhi::TextureUsageSampled | rhi::TextureUsageColorTarget;
+    r->compact_hdr_requested_ = options.compact_hdr;
     if (options.compact_hdr && dev.supports_format(rhi::Format::R11G11B10_FLOAT, kHdrUsage)) r->hdr_format_ = rhi::Format::R11G11B10_FLOAT;
     auto get = [&](const char* n) { return ctx.shader(n); };
     auto mesh_vs = get("mesh.vert");
@@ -1550,6 +1551,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     facts_.output_height = height;
     facts_.capture_mode = capture_mode_;
     facts_.compute = dev.capabilities().compute;
+    facts_.compact_hdr_requested = compact_hdr_requested_;
+    facts_.compact_hdr = hdr_format_ == rhi::Format::R11G11B10_FLOAT;
     facts_.taa = taa;
     facts_.taa_history = stats_.taa_history;
     facts_.temporal_upscale = upscale;

@@ -47,6 +47,7 @@ struct PathFeature {
 struct RenderPathFacts {
     std::uint32_t render_width{0}, render_height{0}, output_width{0}, output_height{0};
     bool capture_mode{false}, linear_output{false}, compute{true};
+    bool compact_hdr_requested{false}, compact_hdr{false}; // R11G11B10F scene colour (ADR-0050)
     bool taa{false}, taa_history{false}, temporal_upscale{false}, spatial_upscale{false}, fxaa{false};
     bool sun_shadows_requested{false};
     std::uint32_t cascades{0}, cascade_resolution{0};

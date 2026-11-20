@@ -972,6 +972,14 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0126 — Packed HDR scene colour by default on phones and the Low/Medium tiers
+
+- Status: Accepted (2026-11-20)
+- Context: ADR-0050 added `SceneRendererOptions::compact_hdr` (R11G11B10F scene colour, bloom chain and TAA history: 4 bytes per pixel instead of 8) but nothing turned it on, so every phone paid RGBA16F bandwidth (audit finding A5, docs/audits/PHOTOREAL_LOW_END_AUDIT.md). Unreal's mobile renderer and Godot's Mobile renderer both default to packed or 10-bit colour targets on phones for the same reason.
+- Decision: the player creates its renderer with `compact_hdr = player::compact_hdr_by_default(tier, mobile)`: on for any phone and for the Low and Medium tiers on every platform, off for High and Ultra on desktop. `PlayerOptions::compact_hdr` and `victus run --hdr compact|full|auto` override it. The choice is fixed for the run because the pipelines are built for the format; devices that cannot render to R11G11B10F fall back to RGBA16F. The render path report gains an `hdr_precision` feature (Active at RGBA16F; Reduced, reason `setting`, at R11G11B10F), and `victus run` prints `hdr: <format>`.
+- Rest of the roadmap item: the depth pre-pass already runs only for SSAO, occlusion culling or an explicit `depth_prepass` (Low and Medium have none; covered by `gpu quality: tiers schedule the expected passes`). Folding FXAA into the tonemap pass was rejected: FXAA needs the tonemapped neighbourhood, so a folded pass would tonemap 5-9 HDR taps per pixel (more ALU and more HDR reads than the separate RGBA8 pass it saves).
+- Consequences: Low/Medium and phone frames move half the colour bytes through the HDR chain. Mantissas drop to 6/6/5 bits, which stays within about one 8-bit level on average after tonemapping (GPU test below). Studio and the editor viewport keep RGBA16F; High/Ultra desktop output is unchanged.
+
 ## ADR-0125 — Scene lightmaps: Static Lighting flag, per-scene bake file, CLI and Studio
 
 - Status: Accepted (2026-11-20)

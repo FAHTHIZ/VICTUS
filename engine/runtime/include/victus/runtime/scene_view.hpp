@@ -42,7 +42,9 @@ struct SceneViewStats {
 
 class SceneView {
 public:
-    [[nodiscard]] static Result<std::unique_ptr<SceneView>> create(render::GpuContext& ctx, rhi::Format target_format);
+    // `options` are fixed for the view's lifetime (compact_hdr changes the pipelines' formats).
+    [[nodiscard]] static Result<std::unique_ptr<SceneView>> create(render::GpuContext& ctx, rhi::Format target_format,
+                                                                   const render::SceneRendererOptions& options = {});
     // Records the frame for `scene` (WorldTransforms must be current) into `target`.
     [[nodiscard]] Result<SceneViewStats> render(rhi::CommandBuffer& cmd, scene::Scene& scene, GpuAssetCache& assets,
                                                 rhi::TextureHandle target, std::uint32_t width, std::uint32_t height,

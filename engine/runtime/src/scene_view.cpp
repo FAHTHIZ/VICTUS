@@ -45,11 +45,12 @@ std::optional<render::Camera2D> scene_camera_2d(Scene& scene, float viewport_hei
     return cam;
 }
 
-Result<std::unique_ptr<SceneView>> SceneView::create(render::GpuContext& ctx, rhi::Format target_format) {
+Result<std::unique_ptr<SceneView>> SceneView::create(render::GpuContext& ctx, rhi::Format target_format,
+                                                     const render::SceneRendererOptions& options) {
     std::unique_ptr<SceneView> v(new SceneView());
     v->format_ = target_format;
     v->gpu_ = &ctx;
-    auto r = render::SceneRenderer::create(ctx);
+    auto r = render::SceneRenderer::create(ctx, options);
     if (!r) return std::move(r).error();
     v->renderer_ = std::move(r).value();
     auto s = render::SpriteBatch::create(ctx, target_format);
