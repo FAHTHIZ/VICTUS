@@ -682,6 +682,7 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
         }
         m.vertex_alpha_coverage_mask = src->vertex_alpha_coverage_mask;
         m.coverage_response = src->coverage_response;
+        m.occlusion_strength = src->occlusion_strength;
         m.blend = static_cast<render::MaterialBlend>(src->blend);
         rhi::TextureHandle* slots[4] = {&m.base_color_texture, &m.metallic_roughness_texture, &m.normal_texture, &m.emissive_texture};
         const auto refs = src->textures();
@@ -848,6 +849,7 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
         m.unlit = src.unlit;
         m.base_color_texture = tex_or(src.base_color_texture);
         m.metallic_roughness_texture = tex_or(src.metallic_roughness_texture);
+        m.occlusion_strength = m.metallic_roughness_texture ? src.occlusion_strength : 0.0f;
         m.normal_texture = tex_or(src.normal_texture);
         m.emissive_texture = tex_or(src.emissive_texture);
         gpu->mesh_materials.push_back(m);

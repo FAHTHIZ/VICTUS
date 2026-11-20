@@ -70,6 +70,8 @@ struct Material {
     // How strongly the scene's coverage layer (Environment::coverage_*) settles on this material,
     // 0 (never, e.g. water or glowing embers) .. 1.
     float coverage_response{1.0f};
+    // Ambient occlusion from metallic_roughness_texture's red channel (glTF ORM packing), 0 = off.
+    float occlusion_strength{0.0f};
     MaterialBlend blend{MaterialBlend::Opaque};
 };
 

@@ -1951,3 +1951,13 @@ Verified (Release, clang 21, lavapipe, 2 cores): `python3 tools/shaders/compile_
 Not covered: no measurement of the 8-fetch cost on a phone GPU; L1 has no ringing or deringing control; hand-placed volumes remain unavailable on Low.
 
 Next task: photoreal reference scene with CC0 scanned materials (ROADMAP Priority 0), then the Arm ASR evaluation.
+
+## 2026-11-20 — Material occlusion from the ORM red channel (ADR-0139)
+
+Built: `.vmat` `occlusion_strength` (field, instance override, clamped 0..1, omitted at default); pbr.frag reads occlusion from the red channel of the metallic-roughness texture (`material.blend.y`); runtime material conversion for `.vmat` and model materials; cooked model format 8; glTF `occlusionTexture` import (shared ORM image, separate image merged into R, AO-only image, size-mismatch warning); Studio Material Editor Occlusion slider.
+
+Verified (Release, clang 21, lavapipe, 2 cores): `python3 tools/shaders/compile_shaders.py` then `--check` up to date (59). `victus_asset_tests` 37/37 (2486 assertions) including the new glTF occlusion case (packed, separate, AO-only, mismatch, cooked round trip) and the `.vmat` occlusion case. New `victus_gpu_tests -tc="gpu orm*"`: ambient-only output 166 / 133 / 72 at strength 0 / 0.5 / 1 with ORM red 64; with the sun 226 / 216. Full `ctest --test-dir build -j2` 39/39 (perf budgets and reference scenes pass); after adding the Studio slider, `victus_editor_tests` 65/65.
+
+Not covered: occlusion uses the metallic-roughness uv set (no `texCoord` 1); mismatched occlusion images are skipped rather than resampled.
+
+Next task: photoreal reference scene with CC0 scanned materials (ROADMAP Priority 0), then the Arm ASR evaluation.

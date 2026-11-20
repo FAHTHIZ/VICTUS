@@ -689,3 +689,123 @@ TEST_CASE("assets: collision meshes come from primitives and cooked models") {
     CHECK_FALSE(provider({Uuid::generate(), 0, {}}));     // no such asset
     CHECK(provider({{}, 0, "sphere"}) == primitive_collision_mesh("sphere"));
 }
+
+namespace {
+std::vector<std::uint8_t> solid_png(std::uint32_t w, std::uint32_t h, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
+    render::Image img;
+    img.width = w;
+    img.height = h;
+    img.pixels.resize(std::size_t{w} * h * 4);
+    for (std::size_t i = 0; i < img.pixels.size(); i += 4) {
+        img.pixels[i] = r;
+        img.pixels[i + 1] = g;
+        img.pixels[i + 2] = b;
+        img.pixels[i + 3] = 255;
+    }
+    return render::encode_png(img).value();
+}
+// Material 0 of `fx` gets the given images as textures: metallicRoughnessTexture `mr` and
+// occlusionTexture `occ` (image indices, -1 = none).
+void set_orm(test::GltfFixture& fx, const std::vector<std::string>& uris, int mr, int occ, double strength) {
+    using json::Value;
+    json::Array imgs, texs;
+    for (std::size_t i = 0; i < uris.size(); ++i) {
+        Value img = Value::object();
+        img.set("uri", uris[i]);
+        imgs.push_back(img);
+        Value tex = Value::object();
+        tex.set("source", static_cast<int>(i));
+        texs.push_back(tex);
+    }
+    fx.doc.set("images", Value(imgs));
+    fx.doc.set("textures", Value(texs));
+    Value mat = fx.doc["materials"][0];
+    Value pbr = mat["pbrMetallicRoughness"];
+    if (mr >= 0) {
+        Value info = Value::object();
+        info.set("index", mr);
+        pbr.set("metallicRoughnessTexture", info);
+    }
+    mat.set("pbrMetallicRoughness", pbr);
+    if (occ >= 0) {
+        Value info = Value::object();
+        info.set("index", occ);
+        info.set("strength", strength);
+        mat.set("occlusionTexture", info);
+    }
+    fx.doc.set("materials", Value(json::Array{mat}));
+}
+} // namespace
+
+TEST_CASE("assets: glTF occlusion lands in the red channel of the metallic-roughness texture (ADR-0139)") {
+    TempDir dir("victus_gltf_orm");
+    write_bytes(dir.path / "orm.png", solid_png(8, 8, 60, 128, 32));
+    write_bytes(dir.path / "mr.png", solid_png(8, 8, 255, 128, 32));
+    write_bytes(dir.path / "ao.png", solid_png(8, 8, 64, 64, 64));
+    write_bytes(dir.path / "ao_small.png", solid_png(4, 4, 64, 64, 64));
+    const auto import = [&](const char* name, const std::vector<std::string>& uris, int mr, int occ, double strength,
+                            ImportResult* result = nullptr) {
+        test::GltfFixture fx;
+        write_bytes(dir.path / "quad.bin", fx.bin);
+        fx.set_buffer_uri("quad.bin");
+        set_orm(fx, uris, mr, occ, strength);
+        write_text(dir.path / name, json::stringify(fx.doc));
+        auto m = import_gltf(dir.path / name, {}, dir.path, result);
+        REQUIRE_MESSAGE(m.ok(), (m.ok() ? "" : m.error().message));
+        return std::move(*m);
+    };
+    const auto texel = [](const CookedModel& m, std::int32_t t) {
+        REQUIRE(t >= 0);
+        const auto& px = m.textures[static_cast<std::size_t>(t)].mips[0].pixels;
+        return std::array<int, 3>{px[0], px[1], px[2]};
+    };
+    {   // Packed ORM (one image for both): used as is, with the glTF strength.
+        const auto m = import("packed.gltf", {"orm.png"}, 0, 0, 0.7);
+        CHECK(m.textures.size() == 1);
+        CHECK(m.materials[0].occlusion_strength == doctest::Approx(0.7f));
+        CHECK(texel(m, m.materials[0].metallic_roughness_texture)[0] == 60);
+    }
+    {   // Separate occlusion image: merged into one texture, roughness and metallic kept.
+        const auto m = import("separate.gltf", {"mr.png", "ao.png"}, 0, 1, 1.0);
+        CHECK(m.textures.size() == 1); // the plain metallic-roughness texture is not cooked as well
+        CHECK(m.materials[0].occlusion_strength == doctest::Approx(1.0f));
+        CHECK(texel(m, m.materials[0].metallic_roughness_texture) == std::array<int, 3>{64, 128, 32});
+        CHECK_FALSE(m.textures[0].srgb);
+    }
+    {   // Occlusion only: roughness and metallic channels are 1, so the factors still apply.
+        const auto m = import("aoonly.gltf", {"ao.png"}, -1, 0, 0.5);
+        CHECK(m.materials[0].occlusion_strength == doctest::Approx(0.5f));
+        CHECK(texel(m, m.materials[0].metallic_roughness_texture) == std::array<int, 3>{64, 255, 255});
+        CHECK(m.materials[0].roughness == doctest::Approx(0.75f));
+    }
+    {   // Different sizes: occlusion skipped with a warning, metallic-roughness unchanged.
+        ImportResult r;
+        const auto m = import("mismatch.gltf", {"mr.png", "ao_small.png"}, 0, 1, 1.0, &r);
+        CHECK(m.materials[0].occlusion_strength == 0.0f);
+        CHECK(texel(m, m.materials[0].metallic_roughness_texture)[0] == 255);
+        bool warned = false;
+        for (const auto& w : r.warnings) warned |= w.find("occlusion texture differs in size") != std::string::npos;
+        CHECK(warned);
+    }
+    {   // Survives the cooked model format.
+        const auto m = import("packed2.gltf", {"orm.png"}, 0, 0, 0.7);
+        CookedHeader h;
+        auto back = deserialize_model(serialize(h, m));
+        REQUIRE(back.ok());
+        CHECK(back->materials[0].occlusion_strength == doctest::Approx(0.7f));
+    }
+}
+
+TEST_CASE("assets: material occlusion_strength round trips and is omitted at its default (ADR-0139)") {
+    MaterialAsset m;
+    CHECK(m.to_json().find("occlusion_strength") == nullptr); // older files and tools see no change
+    m.occlusion_strength = 0.8f;
+    auto back = MaterialAsset::from_json(m.to_json());
+    REQUIRE(back.ok());
+    CHECK(back->occlusion_strength == doctest::Approx(0.8f));
+    auto doc = json::parse(R"({"victus_material": 1, "occlusion_strength": 3})");
+    REQUIRE(doc.ok());
+    auto clamped = MaterialAsset::from_json(*doc);
+    REQUIRE(clamped.ok());
+    CHECK(clamped->occlusion_strength == 1.0f);
+}

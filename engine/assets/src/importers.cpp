@@ -492,6 +492,80 @@ private:
         return index;
     }
 
+    // glTF occlusion (ADR-0139): VICTUS reads ambient occlusion from the red channel of the
+    // metallic-roughness texture, glTF's packed ORM layout. A shared ORM image is used as it is;
+    // a separate occlusion image is merged into the metallic-roughness one (or, without one, into
+    // a texture whose roughness and metallic channels are 1, leaving the factors unchanged).
+    [[nodiscard]] bool separate_occlusion(const cgltf_material& m) const {
+        const cgltf_texture_view& occ = m.occlusion_texture;
+        const cgltf_texture_view& mr = m.pbr_metallic_roughness.metallic_roughness_texture;
+        return settings_.import_textures && occ.texture && occ.texture->image && mr.texture && mr.texture->image &&
+               occ.texture->image != mr.texture->image;
+    }
+    void occlusion(const cgltf_texture_view& occ, const cgltf_texture_view* mr, ModelMaterial& out) {
+        if (!occ.texture || !settings_.import_textures) return;
+        const cgltf_image* occ_image = occ.texture->image;
+        const cgltf_image* mr_image = mr && mr->texture ? mr->texture->image : nullptr;
+        if (!occ_image) {
+            warn("occlusion texture uses an unsupported image extension (e.g. KTX2/WebP); skipped");
+            if (mr_image) out.metallic_roughness_texture = texture(*mr, false, "metallicRoughness");
+            return;
+        }
+        if (occ.texcoord != 0) warn(std::format("occlusion texture uses TEXCOORD_{}; only TEXCOORD_0 is supported", occ.texcoord));
+        const float strength = std::clamp(occ.scale, 0.0f, 1.0f);
+        if (occ_image == mr_image) {
+            if (out.metallic_roughness_texture >= 0) out.occlusion_strength = strength;
+            return;
+        }
+        const auto key = std::make_pair(occ_image, mr_image);
+        if (const auto it = orm_textures_.find(key); it != orm_textures_.end()) {
+            if (it->second >= 0) {
+                out.metallic_roughness_texture = it->second;
+                out.occlusion_strength = strength;
+            } else if (mr_image) {
+                out.metallic_roughness_texture = texture(*mr, false, "metallicRoughness");
+            }
+            return;
+        }
+        std::int32_t index = -1;
+        auto ao = load_image(*occ_image);
+        if (!ao) {
+            warn(std::format("occlusion texture: {}", ao.error().message));
+        } else {
+            render::Image orm;
+            bool ok = true;
+            if (mr_image) {
+                auto base = load_image(*mr_image);
+                if (!base || base->width != ao->width || base->height != ao->height) {
+                    warn("occlusion texture differs in size from the metallic-roughness texture; occlusion skipped");
+                    ok = false;
+                } else {
+                    orm = std::move(*base);
+                }
+            } else {
+                orm.width = ao->width;
+                orm.height = ao->height;
+                orm.pixels.assign(ao->pixels.size(), 255);
+            }
+            if (ok) {
+                for (std::size_t i = 0; i < orm.pixels.size(); i += 4) orm.pixels[i] = ao->pixels[i];
+                std::string name = (occ_image->name ? std::string(occ_image->name) : std::format("image{}", occ_image - data_->images)) + "_orm";
+                CookedTexture t = cook_texture(orm, std::move(name), false, true, settings_.max_texture_size);
+                if (auto r = compress_cooked_texture(t, settings_.texture_compression); !r)
+                    warn(std::format("occlusion texture '{}': {}", t.name, r.error().message));
+                index = static_cast<std::int32_t>(model_.textures.size());
+                model_.textures.push_back(std::move(t));
+            }
+        }
+        orm_textures_.emplace(key, index);
+        if (index >= 0) {
+            out.metallic_roughness_texture = index;
+            out.occlusion_strength = strength;
+        } else if (mr_image) {
+            out.metallic_roughness_texture = texture(*mr, false, "metallicRoughness"); // without occlusion
+        }
+    }
+
     std::uint32_t material(const cgltf_material* m) {
         if (!m) return default_material();
         if (const auto it = materials_.find(m); it != materials_.end()) return it->second;
@@ -511,12 +585,15 @@ private:
             out.metallic = pbr.metallic_factor;
             out.roughness = pbr.roughness_factor;
             out.base_color_texture = texture(pbr.base_color_texture, true, "baseColor", out.alpha_cutoff);
-            out.metallic_roughness_texture = texture(pbr.metallic_roughness_texture, false, "metallicRoughness");
+            // A separate occlusion image is merged into this one by occlusion() below.
+            if (!separate_occlusion(*m)) out.metallic_roughness_texture = texture(pbr.metallic_roughness_texture, false, "metallicRoughness");
         } else {
             out.metallic = 0.0f;
             out.roughness = 0.5f;
             if (m->has_pbr_specular_glossiness) warn(out.name + ": KHR_materials_pbrSpecularGlossiness approximated by defaults");
         }
+        occlusion(m->occlusion_texture, m->has_pbr_metallic_roughness ? &m->pbr_metallic_roughness.metallic_roughness_texture : nullptr,
+                  out);
         out.normal_texture = texture(m->normal_texture, false, "normal");
         out.normal_scale = m->normal_texture.texture ? m->normal_texture.scale : 1.0f;
         out.emissive = {m->emissive_factor[0], m->emissive_factor[1], m->emissive_factor[2], 1.0f};
@@ -887,6 +964,7 @@ private:
     CookedModel model_;
     std::vector<std::vector<std::uint32_t>> mesh_map_;
     std::map<std::tuple<const cgltf_image*, bool, float>, std::int32_t> textures_;
+    std::map<std::pair<const cgltf_image*, const cgltf_image*>, std::int32_t> orm_textures_; // (occlusion, metallic-roughness)
     std::map<const cgltf_material*, std::uint32_t> materials_;
     std::map<const cgltf_node*, std::uint32_t> node_map_;
     std::int32_t default_material_{-1};

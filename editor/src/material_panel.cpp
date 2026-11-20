@@ -281,6 +281,9 @@ void Editor::draw_material_editor() {
         inherit_button(F::Metallic);
         mark(ImGui::SliderFloat("Roughness", &m.roughness, 0.0f, 1.0f), F::Roughness);
         inherit_button(F::Roughness);
+        mark(ImGui::SliderFloat("Occlusion", &m.occlusion_strength, 0.0f, 1.0f), F::OcclusionStrength);
+        ImGui::SetItemTooltip("Ambient occlusion from the red channel of the metallic-roughness (ORM) texture");
+        inherit_button(F::OcclusionStrength);
         texture_slot(1);
         texture_slot(2);
         mark(ImGui::DragFloat("Normal Scale", &m.normal_scale, 0.01f, 0.0f, 4.0f), F::NormalScale);

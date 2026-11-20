@@ -16,6 +16,7 @@
 //     "shader_params": [[x, y, z, w], ...]   // up to 4, read in the shader as si.params[i]
 //     "vertex_alpha": "opacity" | "coverage_mask", "coverage_response": 1,
 //     "blend": "opaque" | "alpha" | "additive"   // blended materials draw after opaque, far to near
+//     "occlusion_strength": 0..1   // AO from metallic_roughness_texture's red channel (ORM); 0 = off
 //   }
 //
 // Material instances name a parent and contain only the fields they override; everything else
@@ -46,7 +47,7 @@ enum class MaterialBlendMode : std::uint8_t { Opaque = 0, Alpha = 1, Additive = 
 enum class MaterialField : std::uint8_t {
     BaseColor, BaseColorTexture, Metallic, Roughness, MetallicRoughnessTexture, NormalTexture, NormalScale, Emissive,
     EmissiveStrength, EmissiveTexture, AlphaCutoff, UvScale, UvOffset, Filter, Unlit, DoubleSided, Shader, ShaderParams,
-    VertexAlpha, CoverageResponse, Blend, Count
+    VertexAlpha, CoverageResponse, Blend, OcclusionStrength, Count
 };
 inline constexpr std::size_t kMaterialFieldCount = static_cast<std::size_t>(MaterialField::Count);
 [[nodiscard]] constexpr std::uint32_t field_bit(MaterialField f) noexcept { return 1u << static_cast<unsigned>(f); }
@@ -70,6 +71,9 @@ struct MaterialAsset {
     bool double_sided{false};
     bool vertex_alpha_coverage_mask{false}; // vertex alpha marks where the coverage layer may settle
     float coverage_response{1.0f};          // 0..1 response to the scene's snow/dust coverage layer
+    // Ambient occlusion read from the red channel of metallic_roughness_texture (glTF's packed
+    // "ORM" layout: R occlusion, G roughness, B metallic), 0 = ignored .. 1 = full (ADR-0139).
+    float occlusion_strength{0.0f};
     MaterialBlendMode blend{MaterialBlendMode::Opaque};
     Uuid base_color_texture, metallic_roughness_texture, normal_texture, emissive_texture;
     Uuid shader; // optional surface shader (.vshader); nil = built-in PBR surface
