@@ -324,6 +324,7 @@ Result<std::unique_ptr<Window>> Platform::create_window(const WindowDesc& desc) 
     if (desc.fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
     if (desc.hidden) flags |= SDL_WINDOW_HIDDEN;
     if (desc.high_dpi) flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    if (desc.opengl) flags |= SDL_WINDOW_OPENGL;
     SDL_Window* w = SDL_CreateWindow(desc.title.c_str(), desc.width, desc.height, flags);
     if (!w) return make_error(ErrorCode::DeviceError, std::format("SDL_CreateWindow failed: {}", SDL_GetError()));
     return std::unique_ptr<Window>(new Window(w));

@@ -198,7 +198,9 @@ TEST_CASE("gpu: 3D PBR scene with shadows, sky and culling") {
     CHECK(r.stats().culled == 1);
     CHECK(r.stats().visible == 2);
     CHECK(r.stats().lines == 220); // 11 lines per axis, each split into 10 one-unit segments
-    CHECK(r.graph_info().executed_passes.size() == 17); // High tier: shadow, prepass, occlusion cull, 2x SSAO, forward, 9x bloom, tonemap, FXAA
+    // High tier: shadow, prepass, occlusion cull, 2x SSAO, forward, 9x bloom, tonemap, FXAA. The
+    // occlusion cull is a compute pass, so a device without compute (GLES) runs one fewer.
+    CHECK(r.graph_info().executed_passes.size() == (dev.capabilities().compute ? 17u : 16u));
 
     auto px = dev.read_texture(target);
     REQUIRE(px.ok());

@@ -372,6 +372,10 @@ struct DeviceDesc {
     // Opt into Vulkan 1.2 shaderFloat16 when the device has it (ADR-0137); creation falls back
     // to a device without it. VICTUS_NO_FP16=1 in the environment also turns it off.
     bool shader_float16{true};
+    // When no SDL_GPU device (Vulkan/Metal/D3D12) can be created, fall back to OpenGL ES 3.0
+    // (ADR-0144 phase 3) instead of failing. Windows presented by a GLES device need
+    // WindowDesc::opengl, so create the device before the window.
+    bool gles_fallback{false};
 };
 
 class Device {

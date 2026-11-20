@@ -105,7 +105,7 @@ DirectionalLight no_sun() {
 } // namespace
 
 TEST_CASE("gpu volumetric fog: a uniform medium matches the analytic in-scattering and transmittance") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto sr = SceneRenderer::create(ctx);
     REQUIRE(sr.ok());
@@ -150,7 +150,7 @@ TEST_CASE("gpu volumetric fog: a uniform medium matches the analytic in-scatteri
 }
 
 TEST_CASE("gpu volumetric fog: height falloff thins the fog above its base height") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto sr = SceneRenderer::create(ctx);
     REQUIRE(sr.ok());
@@ -166,7 +166,7 @@ TEST_CASE("gpu volumetric fog: height falloff thins the fog above its base heigh
 }
 
 TEST_CASE("gpu volumetric fog: sun light scatters only where the shadow map sees the sun") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto sr = SceneRenderer::create(ctx);
     REQUIRE(sr.ok());
@@ -204,7 +204,7 @@ TEST_CASE("gpu volumetric fog: sun light scatters only where the shadow map sees
 }
 
 TEST_CASE("gpu volumetric fog: local lights glow through the fog") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto sr = SceneRenderer::create(ctx);
     REQUIRE(sr.ok());
@@ -239,7 +239,7 @@ TEST_CASE("gpu volumetric fog: local lights glow through the fog") {
 }
 
 TEST_CASE("gpu volumetric fog: fog volumes add density inside their box") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto sr = SceneRenderer::create(ctx);
     REQUIRE(sr.ok());
@@ -279,7 +279,7 @@ TEST_CASE("gpu volumetric fog: fog volumes add density inside their box") {
 }
 
 TEST_CASE("gpu volumetric fog: temporal reprojection converges to the unfiltered result") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto sr = SceneRenderer::create(ctx);
     REQUIRE(sr.ok());
@@ -301,7 +301,7 @@ TEST_CASE("gpu volumetric fog: temporal reprojection converges to the unfiltered
 }
 
 TEST_CASE("gpu volumetric fog: Environment and FogVolume components through runtime extraction") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     gameplay::register_components();
     auto sr = SceneRenderer::create(ctx);
@@ -361,7 +361,7 @@ TEST_CASE("gpu volumetric fog: Environment and FogVolume components through runt
 }
 
 TEST_CASE("gpu volumetric fog: blended surfaces and particles take the fog in front of them") {
-    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto sr = SceneRenderer::create(ctx);
     REQUIRE(sr.ok());
