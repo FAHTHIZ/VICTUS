@@ -56,13 +56,16 @@
       "parent": "7cecb3ac-e7de-500f-b763-7c0d7ded89fd",
       "components": {
         "Animator": {
-          "model": "5d0b7e2a-91c4-4f3e-8a6d-2c7f19b04e63",
+          "model": "44037d0d-1627-44a8-a225-633971f196b2",
+          "clip_source": null,
           "clip": "Idle",
+          "controller": null,
           "playing": true,
           "loop": true,
           "speed": 1,
           "crossfade": 0.20000000298023224,
-          "time": 0
+          "time": 0,
+          "apply_root_motion": true
         },
         "Transform": {
           "position": [
@@ -85,8 +88,8 @@
       }
     },
     {
-      "uuid": "fb5facb1-7d9a-5198-bb94-9b0e2191a1c2",
-      "name": "Body",
+      "uuid": "0eeee27f-35f4-5575-ab94-38bea4f423f8",
+      "name": "Rig",
       "parent": "908d670c-ebf6-5d00-ba9a-2dc5314a47d3",
       "components": {
         "Transform": {
@@ -110,20 +113,45 @@
       }
     },
     {
-      "uuid": "02f1fb2e-3509-5cfe-a232-5ef4c2ba52aa",
-      "name": "Body[0]",
-      "parent": "fb5facb1-7d9a-5198-bb94-9b0e2191a1c2",
+      "uuid": "588030f5-96ea-5b58-83e1-c869fbf0fd23",
+      "name": "Nova_Body",
+      "parent": "0eeee27f-35f4-5575-ab94-38bea4f423f8",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "15f21dcb-37a0-5a2d-920f-d27a917b2ea6",
+      "name": "Nova_Body[0]",
+      "parent": "588030f5-96ea-5b58-83e1-c869fbf0fd23",
       "components": {
         "MeshRenderer": {
-          "mesh": "5d0b7e2a-91c4-4f3e-8a6d-2c7f19b04e63",
+          "mesh": "44037d0d-1627-44a8-a225-633971f196b2",
           "mesh_index": 0,
           "base_color": [
-            1.0,
-            0.38,
-            0.32,
+            0.85,
+            0.16,
+            0.12,
             1
           ],
-          "metallic": 0.3,
+          "metallic": 0,
           "roughness": 0.5,
           "cast_shadows": true,
           "visible": true
@@ -153,20 +181,20 @@
       }
     },
     {
-      "uuid": "f29ded74-165d-53f5-ae26-00bf0129d9c4",
-      "name": "Body[1]",
-      "parent": "fb5facb1-7d9a-5198-bb94-9b0e2191a1c2",
+      "uuid": "036f95dd-495a-539e-a998-9b938a3dd5ec",
+      "name": "Nova_Body[1]",
+      "parent": "588030f5-96ea-5b58-83e1-c869fbf0fd23",
       "components": {
         "MeshRenderer": {
-          "mesh": "5d0b7e2a-91c4-4f3e-8a6d-2c7f19b04e63",
+          "mesh": "44037d0d-1627-44a8-a225-633971f196b2",
           "mesh_index": 1,
           "base_color": [
-            1.0,
-            0.38,
-            0.32,
+            0.85,
+            0.16,
+            0.12,
             1
           ],
-          "metallic": 0.3,
+          "metallic": 0,
           "roughness": 0.5,
           "cast_shadows": true,
           "visible": true
@@ -196,14 +224,125 @@
       }
     },
     {
-      "uuid": "71a3d7e2-181f-5901-9bb4-44e528d73974",
+      "uuid": "8ff3f52d-f9e3-55fd-bb1a-c6de0fb18b98",
+      "name": "Nova_Body[2]",
+      "parent": "588030f5-96ea-5b58-83e1-c869fbf0fd23",
+      "components": {
+        "MeshRenderer": {
+          "mesh": "44037d0d-1627-44a8-a225-633971f196b2",
+          "mesh_index": 2,
+          "base_color": [
+            0.85,
+            0.16,
+            0.12,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.5,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "SkinnedMesh": {
+          "skeleton": "908d670c-ebf6-5d00-ba9a-2dc5314a47d3",
+          "skin": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "5d7fd72b-7530-53f5-a3ce-3d7772e81032",
+      "name": "Nova_Body[3]",
+      "parent": "588030f5-96ea-5b58-83e1-c869fbf0fd23",
+      "components": {
+        "MeshRenderer": {
+          "mesh": "44037d0d-1627-44a8-a225-633971f196b2",
+          "mesh_index": 3,
+          "base_color": [
+            0.85,
+            0.16,
+            0.12,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.5,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "SkinnedMesh": {
+          "skeleton": "908d670c-ebf6-5d00-ba9a-2dc5314a47d3",
+          "skin": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "acda1b73-eb9f-588d-a0c5-d15c4e7da4fd",
+      "name": "Socket.Root",
+      "parent": "0eeee27f-35f4-5575-ab94-38bea4f423f8",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "e3ed7ef0-f12c-5db8-8600-50bc09e7b19c",
       "name": "Hips",
-      "parent": "908d670c-ebf6-5d00-ba9a-2dc5314a47d3",
+      "parent": "0eeee27f-35f4-5575-ab94-38bea4f423f8",
       "components": {
         "Transform": {
           "position": [
             0,
-            0.7799999713897705,
+            0.9200000166893005,
             0
           ],
           "rotation": [
@@ -221,14 +360,14 @@
       }
     },
     {
-      "uuid": "87332a01-f6fb-5be3-86ab-605ae640d280",
+      "uuid": "09dceb9d-1993-5aee-84d9-6460c42bc8c9",
       "name": "Spine",
-      "parent": "71a3d7e2-181f-5901-9bb4-44e528d73974",
+      "parent": "e3ed7ef0-f12c-5db8-8600-50bc09e7b19c",
       "components": {
         "Transform": {
           "position": [
             0,
-            0.07999999821186066,
+            0.09999996423721313,
             0
           ],
           "rotation": [
@@ -246,14 +385,64 @@
       }
     },
     {
-      "uuid": "2ff5b0b3-ade2-5b05-8c8c-224088b95064",
+      "uuid": "6bb253ec-7fe2-51bd-96ec-3822465b7cc6",
+      "name": "Chest",
+      "parent": "09dceb9d-1993-5aee-84d9-6460c42bc8c9",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0.1499999761581421,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "a5ab9070-c782-5975-97e3-6e90abfef3c0",
+      "name": "Neck",
+      "parent": "6bb253ec-7fe2-51bd-96ec-3822465b7cc6",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0.28000009059906006,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "0c03c609-5c8d-57e0-a14b-265a8ba93b57",
       "name": "Head",
-      "parent": "87332a01-f6fb-5be3-86ab-605ae640d280",
+      "parent": "a5ab9070-c782-5975-97e3-6e90abfef3c0",
       "components": {
         "Transform": {
           "position": [
             0,
-            0.5199999809265137,
+            0.06999993324279785,
             0
           ],
           "rotation": [
@@ -271,21 +460,71 @@
       }
     },
     {
-      "uuid": "1e5764da-2e1b-5149-bf3f-257835f32801",
+      "uuid": "1f61fd68-82e8-5aad-abcd-c5462aecb34e",
+      "name": "Socket.Head",
+      "parent": "0c03c609-5c8d-57e0-a14b-265a8ba93b57",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0.1950000524520874,
+            0
+          ],
+          "rotation": [
+            3.774895063202166e-08,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "445e48b1-5d46-5203-831c-89f405789330",
+      "name": "Shoulder.L",
+      "parent": "6bb253ec-7fe2-51bd-96ec-3822465b7cc6",
+      "components": {
+        "Transform": {
+          "position": [
+            0.05000000074505806,
+            0.2200000286102295,
+            0
+          ],
+          "rotation": [
+            -0.5,
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "scale": [
+            1,
+            0.9999999403953552,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "e26a316d-1c65-5683-a2fe-d5a57d72582a",
       "name": "UpperArm.L",
-      "parent": "87332a01-f6fb-5be3-86ab-605ae640d280",
+      "parent": "445e48b1-5d46-5203-831c-89f405789330",
       "components": {
         "Transform": {
           "position": [
-            0.33000001311302185,
-            0.4399999976158142,
-            0
+            -4.3711168018489843e-10,
+            0.15000000596046448,
+            -0.009999990463256836
           ],
           "rotation": [
-            0,
-            0,
-            0,
-            1
+            -0.3830222487449646,
+            -0.3830222487449646,
+            0.17860621213912964,
+            0.8213937878608704
           ],
           "scale": [
             1,
@@ -296,20 +535,20 @@
       }
     },
     {
-      "uuid": "1d7f3ae8-9f6d-58e1-b3c4-f8a331b107da",
+      "uuid": "0adf7855-b559-512a-a761-c97cfaf465c7",
       "name": "LowerArm.L",
-      "parent": "1e5764da-2e1b-5149-bf3f-257835f32801",
+      "parent": "e26a316d-1c65-5683-a2fe-d5a57d72582a",
       "components": {
         "Transform": {
           "position": [
-            0,
-            -0.30000001192092896,
-            0
+            2.5101270395566644e-08,
+            0.2799999415874481,
+            3.540481685604391e-08
           ],
           "rotation": [
-            0,
-            0,
-            0,
+            -2.7922581580241967e-08,
+            -4.470348358154297e-08,
+            3.0180810739466324e-08,
             1
           ],
           "scale": [
@@ -321,21 +560,96 @@
       }
     },
     {
-      "uuid": "0471208d-a7d5-5ab4-8042-9573167b9c85",
+      "uuid": "623136f3-4720-550c-acb4-424e968cc86a",
+      "name": "Hand.L",
+      "parent": "0adf7855-b559-512a-a761-c97cfaf465c7",
+      "components": {
+        "Transform": {
+          "position": [
+            -9.720874061258655e-08,
+            0.2550000846385956,
+            -2.0504526077047558e-08
+          ],
+          "rotation": [
+            5.094579869080462e-09,
+            4.470348358154297e-08,
+            3.0760585190137135e-09,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "0d0b7625-bfb9-52fd-90aa-7f47fecbf101",
+      "name": "Socket.Hand.L",
+      "parent": "623136f3-4720-550c-acb4-424e968cc86a",
+      "components": {
+        "Transform": {
+          "position": [
+            -2.5897526256812853e-07,
+            0.07500019669532776,
+            1.3104956053666683e-07
+          ],
+          "rotation": [
+            0.8830221891403198,
+            0.32139384746551514,
+            0.32139381766319275,
+            0.11697777360677719
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "1afb58bc-29de-5d02-a8a3-924e9f7e32a4",
+      "name": "Shoulder.R",
+      "parent": "6bb253ec-7fe2-51bd-96ec-3822465b7cc6",
+      "components": {
+        "Transform": {
+          "position": [
+            -0.05000000074505806,
+            0.2200000286102295,
+            0
+          ],
+          "rotation": [
+            -0.5,
+            0.5,
+            0.5,
+            0.5
+          ],
+          "scale": [
+            1,
+            0.9999999403953552,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "2a78f582-d1f0-5aea-a835-8e104bc543b3",
       "name": "UpperArm.R",
-      "parent": "87332a01-f6fb-5be3-86ab-605ae640d280",
+      "parent": "1afb58bc-29de-5d02-a8a3-924e9f7e32a4",
       "components": {
         "Transform": {
           "position": [
-            -0.33000001311302185,
-            0.4399999976158142,
-            0
+            4.3711168018489843e-10,
+            0.15000000596046448,
+            -0.009999990463256836
           ],
           "rotation": [
-            0,
-            0,
-            0,
-            1
+            -0.3830222487449646,
+            0.3830222487449646,
+            -0.17860621213912964,
+            0.8213937878608704
           ],
           "scale": [
             1,
@@ -346,18 +660,93 @@
       }
     },
     {
-      "uuid": "32d6804d-b008-58fc-b0b1-b37761a31e1e",
+      "uuid": "2e4edfc1-df44-5401-a6cb-bf780a9e66b3",
       "name": "LowerArm.R",
-      "parent": "0471208d-a7d5-5ab4-8042-9573167b9c85",
+      "parent": "2a78f582-d1f0-5aea-a835-8e104bc543b3",
+      "components": {
+        "Transform": {
+          "position": [
+            -2.5101270395566644e-08,
+            0.2799999415874481,
+            3.540481685604391e-08
+          ],
+          "rotation": [
+            -2.7922581580241967e-08,
+            4.470348358154297e-08,
+            -3.0180810739466324e-08,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "23a42787-0e2f-5afb-8089-7e0b52c6a702",
+      "name": "Hand.R",
+      "parent": "2e4edfc1-df44-5401-a6cb-bf780a9e66b3",
+      "components": {
+        "Transform": {
+          "position": [
+            9.720874061258655e-08,
+            0.2550000846385956,
+            -2.0504526077047558e-08
+          ],
+          "rotation": [
+            5.094579869080462e-09,
+            -4.470348358154297e-08,
+            -3.0760585190137135e-09,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "5ae2a9f6-bf33-554f-bb62-a36a98a820ba",
+      "name": "Socket.Hand.R",
+      "parent": "23a42787-0e2f-5afb-8089-7e0b52c6a702",
+      "components": {
+        "Transform": {
+          "position": [
+            2.5897526256812853e-07,
+            0.07500019669532776,
+            1.3104956053666683e-07
+          ],
+          "rotation": [
+            0.8830221891403198,
+            -0.32139384746551514,
+            -0.32139381766319275,
+            0.11697777360677719
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "0c6b0049-eb4c-5177-b967-8615ceaa2855",
+      "name": "Socket.Back",
+      "parent": "6bb253ec-7fe2-51bd-96ec-3822465b7cc6",
       "components": {
         "Transform": {
           "position": [
             0,
-            -0.30000001192092896,
-            0
+            0.16000008583068848,
+            -0.1599999964237213
           ],
           "rotation": [
-            0,
+            3.774895063202166e-08,
             0,
             0,
             1
@@ -371,21 +760,21 @@
       }
     },
     {
-      "uuid": "81cbb92c-b6e9-55c5-8b2c-dd1be545407c",
+      "uuid": "a02526f6-e32c-5dbb-a797-a084dad074fa",
       "name": "UpperLeg.L",
-      "parent": "71a3d7e2-181f-5901-9bb4-44e528d73974",
+      "parent": "e3ed7ef0-f12c-5db8-8600-50bc09e7b19c",
       "components": {
         "Transform": {
           "position": [
-            0.12999999523162842,
-            -0.05999999865889549,
+            0.10000000149011612,
+            -0.020000040531158447,
             0
           ],
           "rotation": [
+            1,
             0,
-            0,
-            0,
-            1
+            -4.371138828673793e-08,
+            0
           ],
           "scale": [
             1,
@@ -396,19 +785,19 @@
       }
     },
     {
-      "uuid": "84e7036b-b106-5d08-ad2c-47c2bc233dc5",
+      "uuid": "dc7baeea-435d-5ea2-ae6b-404f067284ba",
       "name": "LowerLeg.L",
-      "parent": "81cbb92c-b6e9-55c5-8b2c-dd1be545407c",
+      "parent": "a02526f6-e32c-5dbb-a797-a084dad074fa",
       "components": {
         "Transform": {
           "position": [
             0,
-            -0.36000001430511475,
+            0.41999995708465576,
             0
           ],
           "rotation": [
             0,
-            0,
+            4.371138828673793e-08,
             0,
             1
           ],
@@ -421,19 +810,94 @@
       }
     },
     {
-      "uuid": "1b4948a7-8c6c-51f7-93ea-5c1edf78523d",
+      "uuid": "81328b2e-fa52-5635-a9b6-4ab11c2eeb39",
+      "name": "Foot.L",
+      "parent": "dc7baeea-435d-5ea2-ae6b-404f067284ba",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0.38999998569488525,
+            0
+          ],
+          "rotation": [
+            -0.525731086730957,
+            0,
+            0,
+            0.8506508469581604
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "bef91b26-4779-58fd-a450-46b6d94b9b12",
+      "name": "Toe.L",
+      "parent": "81328b2e-fa52-5635-a9b6-4ab11c2eeb39",
+      "components": {
+        "Transform": {
+          "position": [
+            -7.450580596923828e-09,
+            0.13416408002376556,
+            1.862645149230957e-09
+          ],
+          "rotation": [
+            -1.0042820797195873e-08,
+            0.9732490181922913,
+            -0.22975295782089233,
+            4.2542065870065926e-08
+          ],
+          "scale": [
+            1,
+            0.9999997019767761,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "64563dbb-57ac-594e-a9a5-8f6ebd871e82",
       "name": "UpperLeg.R",
-      "parent": "71a3d7e2-181f-5901-9bb4-44e528d73974",
+      "parent": "e3ed7ef0-f12c-5db8-8600-50bc09e7b19c",
       "components": {
         "Transform": {
           "position": [
-            -0.12999999523162842,
-            -0.05999999865889549,
+            -0.10000000149011612,
+            -0.020000040531158447,
+            0
+          ],
+          "rotation": [
+            1,
+            0,
+            -4.371138828673793e-08,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "200eb22c-ca84-510f-ac42-25450737a97d",
+      "name": "LowerLeg.R",
+      "parent": "64563dbb-57ac-594e-a9a5-8f6ebd871e82",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0.41999995708465576,
             0
           ],
           "rotation": [
             0,
-            0,
+            4.371138828673793e-08,
             0,
             1
           ],
@@ -446,25 +910,50 @@
       }
     },
     {
-      "uuid": "1908a13e-8973-5e8b-bdc9-5f0b21781bd2",
-      "name": "LowerLeg.R",
-      "parent": "1b4948a7-8c6c-51f7-93ea-5c1edf78523d",
+      "uuid": "57bec09e-a038-5090-ba6e-a198e9c751fc",
+      "name": "Foot.R",
+      "parent": "200eb22c-ca84-510f-ac42-25450737a97d",
       "components": {
         "Transform": {
           "position": [
             0,
-            -0.36000001430511475,
+            0.38999998569488525,
             0
           ],
           "rotation": [
+            -0.525731086730957,
             0,
             0,
-            0,
-            1
+            0.8506508469581604
           ],
           "scale": [
             1,
             1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "d6df1306-db46-57da-bda5-2c90830f63b6",
+      "name": "Toe.R",
+      "parent": "57bec09e-a038-5090-ba6e-a198e9c751fc",
+      "components": {
+        "Transform": {
+          "position": [
+            7.450580596923828e-09,
+            0.13416408002376556,
+            1.862645149230957e-09
+          ],
+          "rotation": [
+            -1.0042820797195873e-08,
+            0.9732490181922913,
+            -0.22975295782089233,
+            4.2542065870065926e-08
+          ],
+          "scale": [
+            1,
+            0.9999997019767761,
             1
           ]
         }

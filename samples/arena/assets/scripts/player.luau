@@ -151,11 +151,8 @@ function Player:animate()
     local hurt = State.ready and State.hurt > 0
     if hurt ~= self.flashing then
         self.flashing = hurt
-        local body = self.robot:find_child("Body")
-        if body then
-            for _, part in body:children() do
-                part:set_emissive(if hurt then vector.create(1, 0.1, 0.05) else nil, 2)
-            end
+        for _, part in State.body_parts(self.robot) do
+            part:set_emissive(if hurt then vector.create(1, 0.1, 0.05) else nil, 2)
         end
     end
 end

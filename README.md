@@ -84,7 +84,7 @@ Each sample is a finished game made with engine features alone. Open it in Studi
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/sample_arena.jpg" alt="Robot Arena: a third-person arena with pillars and a wave HUD"><br><sub><a href="samples/arena/README.md">Robot Arena</a>: five waves of robots that chase you over the navmesh</sub></td>
+<td width="50%"><img src="docs/images/sample_arena.jpg" alt="Robot Arena: Orion fights crimson Nova androids in a third-person arena with pillars and a wave HUD"><br><sub><a href="samples/arena/README.md">Robot Arena</a>: five waves of rogue androids that chase you over the navmesh</sub></td>
 <td width="50%"><img src="docs/images/sample_dungeon.png" alt="Dungeon crawler: a pixel-art hero and slime in a stone maze"><br><sub><a href="samples/dungeon_crawler/README.md">Dungeon Crawler</a>: generated tilemap floors, gems and slimes</sub></td>
 </tr>
 <tr>

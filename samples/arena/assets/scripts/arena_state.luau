@@ -22,5 +22,13 @@ function State.attack(origin, facing, range, arc)
     table.insert(State.attacks, { origin = origin, facing = facing, range = range, arc = arc })
 end
 
+-- The skinned mesh parts of a starter character (the "Robot" entity): Robot > Rig > <Name>_Body.
+function State.body_parts(robot)
+    if not robot then return {} end
+    local rig = robot:find_child("Rig") or robot
+    local body = rig:find_child("Orion_Body") or rig:find_child("Nova_Body") or rig:find_child("Body")
+    return if body then body:children() else {}
+end
+
 State.ready = false
 return State

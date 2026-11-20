@@ -5,7 +5,7 @@
     victus new /tmp/arena_template --template 3d
     python3 samples/arena/tools/generate_arena.py /tmp/arena_template samples/arena
 
-Copies the template's art (robot model, ground texture and material, energy shader, impact
+Copies the template's art (the Orion and Nova starter characters, ground texture and material, energy shader, impact
 sound, HUD script) with their .meta files so asset UUIDs stay stable, reuses the template's
 Player, Sun, Environment and HUD entities, and writes the arena level, the enemy robot and
 health orb prefabs, scenes/main.vscene, scenes/autoplay.vscene and victus.project. The
@@ -23,6 +23,14 @@ NS = uuid.UUID("0b8f7c52-3a5e-4c0c-9a51-7e1f2a6d4b10")
 GROUND_MATERIAL = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f003"
 ENERGY_SHADER = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f004"
 GROUND_TEXTURE = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f002"
+
+
+def plain_clips(entities):
+    for e in entities:
+        animator = e["components"].get("Animator")
+        if animator:
+            animator["controller"] = None
+            animator["clip"] = "Idle"
 
 
 def uid(name):
@@ -127,9 +135,12 @@ def main():
     src, dst = Path(sys.argv[1]), Path(sys.argv[2])
     a_src, a_dst = src / "assets", dst / "assets"
 
-    for rel in ["models/robot.gltf", "materials/ground.vmat", "shaders/energy.vshader", "textures/ground_grid.png",
+    for rel in ["models/characters/victus_orion.glb", "models/characters/victus_nova.glb", "materials/ground.vmat", "shaders/energy.vshader", "textures/ground_grid.png",
                 "audio/impact.wav", "scripts/hud.luau"]:
         for suffix in ["", ".meta"]:
+            # Newer templates leave some .meta files to the editor: keep the sample's own then.
+            if suffix and not (a_src / (rel + suffix)).exists():
+                continue
             (a_dst / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(a_src / (rel + suffix), a_dst / (rel + suffix))
 
@@ -162,6 +173,9 @@ def main():
     player[0]["components"]["Script"]["script"] = "scripts/player.luau"
     player[0]["components"]["Transform"]["position"] = [0, 0.05, 3]
     player[0]["components"]["CharacterController"]["radius"] = 0.5
+    # The arena scripts pick Idle/Walk themselves (entity:play_animation), so the characters run
+    # their clips directly instead of the template's locomotion controller.
+    plain_clips(player)
     sparks = by_name(ents, "Sparks")
     player.append(emitter(sparks, "Slash", parent=player[0]["uuid"], pos=(0, 0.9, -1.1), emitting=False, loop=False,
                           rate=0, max_particles=96, shape="sphere", radius=0.35, speed_min=1.5, speed_max=4.0,
@@ -256,12 +270,14 @@ def main():
     cc = root["components"]["CharacterController"]
     cc.update({"radius": 0.45, "height": 1.1, "layer": 2})
     root["components"]["NavAgent"].update({"speed": 3.1, "radius": 0.45, "height": 1.1, "stopping_distance": 1.0})
+    # The template's companion (Nova), 1.28 m tall to fit the 1.1 m controller, tinted red.
     by_name(enemy, "Robot")["components"]["Transform"]["scale"] = [0.75, 0.75, 0.75]
+    plain_clips(enemy)
     for e in enemy:
-        if e["name"].startswith("Body["):
+        if "_Body[" in e["name"]:
+            # Tint the character's own colours red; its PBR inputs stay as authored.
             mr = e["components"]["MeshRenderer"]
-            mr["base_color"] = [1.0, 0.38, 0.32, 1]
-            mr["metallic"] = 0.3
+            mr["base_color"] = [c * t for c, t in zip(mr["base_color"], (0.85, 0.16, 0.12, 1))]
     write_json(a_dst / "prefabs/enemy_robot.vprefab",
                {"format": "victus.prefab", "version": 1, "name": "Enemy Robot", "entities": enemy})
     write_meta(a_dst / "prefabs/enemy_robot.vprefab", uid("prefab/enemy_robot"))
