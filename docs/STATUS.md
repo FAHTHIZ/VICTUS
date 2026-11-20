@@ -2032,3 +2032,13 @@ Verified (Release, clang 21, lavapipe): `compile_shaders.py --check` up to date 
 Not covered: the Metal fix is verified only by the macOS CI run on this commit; there is no Mac here.
 
 Next task: confirm the macOS CI result, then thin-feature locks / depth-clip disocclusion in the upscaler, then the OpenGL ES 3 fallback ADR.
+
+## 2026-11-20 — OpenGL ES 3.0 fallback decision (ADR-0144)
+
+Built: ADR-0144 decides to implement the VICTUS RHI a second time on OpenGL ES 3.0 (no compute) behind the existing interface, selected when SDL_GPU cannot create a device, in three phases (RHI backend with readback test; ESSL output for the built-in shaders and the scene renderer on Low; Android fallback and manifest). SDL_GPU waiting, bgfx/Diligent replacement, ANGLE and dropping the devices were weighed and rejected.
+
+Verified: with the pinned glslang and SPIRV-Cross, all 51 built-in graphics shaders cross-compile to ESSL 3.00 (`spirv-cross --es --version 300`); 40 validate as ES 3.00 with glslangValidator as generated, 11 need source changes (vertex/fragment storage buffers, `frexp`). Mesa's EGL and GLES 3 libraries are present on the Linux runner image used here, so the backend can be tested in CI.
+
+Not covered: no backend code yet; how many of the ~11 % of handhelds without Vulkan 1.1 are arm64 Android 9+ devices (the ones VICTUS can reach) is not published.
+
+Next task: ADR-0144 phase 1 (GLES RHI backend with a draw-and-readback test), after confirming the macOS CI result for the compact-HDR fix.
