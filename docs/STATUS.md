@@ -2042,3 +2042,13 @@ Verified: with the pinned glslang and SPIRV-Cross, all 51 built-in graphics shad
 Not covered: no backend code yet; how many of the ~11 % of handhelds without Vulkan 1.1 are arm64 Android 9+ devices (the ones VICTUS can reach) is not published.
 
 Next task: ADR-0144 phase 1 (GLES RHI backend with a draw-and-readback test), after confirming the macOS CI result for the compact-HDR fix.
+
+## 2026-11-20 — OpenGL ES 3.0 RHI backend (ADR-0144 phase 1)
+
+Built: `engine/rhi/src/rhi_gles.cpp` / `rhi_gles.hpp`, a second implementation of the RHI on OpenGL ES 3.0, selected with `DeviceDesc::preferred_driver = "gles"` or `VICTUS_GPU_DRIVER=gles`; every public Device/CommandBuffer/RenderPass call in `rhi_sdl.cpp` forwards to it when set (`Backend::GLES`, `capabilities().compute` false, compute pipelines rejected). Own entry-point loader through SDL (no GL link dependency), hidden 1x1 context window, `ShaderDesc::glsl_es` with `//! sampler` / `//! ubo` slot comments, streaming uniform ring for push uniforms, MSAA renderbuffers with blit resolve, base vertex/instance emulation, CPU replay of indirect draws, flipped present. The slot map moved to `rhi_slotmap.hpp` for both backends. CI installs `libgles2`.
+
+Verified (Release, clang 21, Mesa 26.0.8 llvmpipe, OpenGL ES 3.2 context): new `gpu_gles_tests.cpp`, 7 cases / 98 assertions: capabilities, clear + draw orientation (row 0 is the top, as on Vulkan), sampled texture round trip keeps row order, depth test, RGBA16F readback as exact halves (1.5, 0.25, -2, 1), indexed instanced draw with vertex_offset 4 and first_instance 1, alpha blend. `VICTUS_REQUIRE_GPU=1 ctest --test-dir build -j2` 39/39; clang-tidy clean on the new and changed files.
+
+Not covered: the scene renderer and built-in shaders do not have ESSL yet (phase 2); window presentation, MSAA resolve, cube/3D/array textures and compressed uploads are implemented but untested; no mobile GPU or real Android device. The macOS CI result for the compact-HDR fix (4a37cbb) is still to be confirmed.
+
+Next task: ADR-0144 phase 2 — ESSL output in `compile_shaders.py` (spirv-cross `--es --version 300 --fixup-clipspace --flip-vert-y`, reflection-driven `//!` headers), the 11 shader fixes, and the scene renderer on Low against the Vulkan golden.

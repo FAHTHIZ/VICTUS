@@ -25,7 +25,7 @@ env:
     ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev
     libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libegl1-mesa-dev
     libdecor-0-dev libasound2-dev libpulse-dev libdrm-dev libgbm-dev libudev-dev
-    mesa-vulkan-drivers libvulkan1 xvfb ccache
+    mesa-vulkan-drivers libvulkan1 libgles2 xvfb ccache
 jobs:
   shaders:
     runs-on: ubuntu-latest

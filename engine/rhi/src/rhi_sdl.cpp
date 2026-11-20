@@ -2,6 +2,9 @@
 // SDL_GPU implementation of the VICTUS RHI.
 #include "victus/rhi/rhi.hpp"
 
+#include "rhi_gles.hpp"
+#include "rhi_slotmap.hpp"
+
 #include "victus/core/log.hpp"
 #include "victus/core/profiler.hpp"
 #include "victus/platform/platform.hpp"
@@ -21,6 +24,7 @@ const char* to_string(Backend b) noexcept {
     case Backend::Vulkan: return "vulkan";
     case Backend::Metal: return "metal";
     case Backend::D3D12: return "direct3d12";
+    case Backend::GLES: return "gles";
     default: return "unknown";
     }
 }
@@ -86,6 +90,7 @@ std::uint64_t mip_size_bytes(Format f, std::uint32_t width, std::uint32_t height
 }
 
 namespace {
+using detail::SlotMap;
 
 SDL_GPUTextureFormat to_sdl(Format f) {
     switch (f) {
@@ -227,51 +232,6 @@ SDL_GPUSamplerAddressMode to_sdl(AddressMode a) {
     return SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
 }
 
-template <typename T>
-struct SlotMap {
-    struct Entry {
-        T value{};
-        std::uint32_t generation{0};
-        bool alive{false};
-    };
-    std::vector<Entry> entries;
-    std::vector<std::uint32_t> free_list;
-    std::uint32_t live{0};
-
-    template <typename H>
-    H insert(T value) {
-        std::uint32_t idx;
-        if (!free_list.empty()) {
-            idx = free_list.back();
-            free_list.pop_back();
-        } else {
-            idx = static_cast<std::uint32_t>(entries.size());
-            entries.push_back({});
-        }
-        Entry& e = entries[idx];
-        e.value = std::move(value);
-        e.generation = e.generation + 1 == 0 ? 1 : e.generation + 1;
-        e.alive = true;
-        ++live;
-        return H{idx, e.generation};
-    }
-    template <typename H>
-    T* get(H h) {
-        if (h.index >= entries.size()) return nullptr;
-        Entry& e = entries[h.index];
-        return (e.alive && e.generation == h.generation) ? &e.value : nullptr;
-    }
-    template <typename H>
-    bool remove(H h, T& out) {
-        T* v = get(h);
-        if (!v) return false;
-        out = std::move(*v);
-        entries[h.index].alive = false;
-        free_list.push_back(h.index);
-        --live;
-        return true;
-    }
-};
 
 struct TextureEntry {
     SDL_GPUTexture* tex{nullptr};
@@ -313,9 +273,29 @@ struct Device::Impl {
     std::uint32_t upload_size{0};
     SDL_GPUShaderFormat formats{0};
     std::vector<SDL_Window*> windows;
+    std::unique_ptr<GlesBackend> gl; // set when the device runs on OpenGL ES (ADR-0144)
 };
 
+namespace {
+
+bool wants_gles(const DeviceDesc& desc) {
+    if (desc.preferred_driver == "gles") return true;
+    const char* env = SDL_getenv("VICTUS_GPU_DRIVER");
+    return desc.preferred_driver.empty() && env && std::string_view(env) == "gles";
+}
+
+} // namespace
+
 Result<std::unique_ptr<Device>> Device::create(const DeviceDesc& desc) {
+    if (wants_gles(desc)) {
+        auto device = std::unique_ptr<Device>(new Device());
+        device->impl_ = std::make_unique<Impl>();
+        auto gl = GlesBackend::create(*device, desc, device->caps_);
+        if (!gl) return gl.error();
+        device->impl_->gl = std::move(gl).value();
+        device->device_ = device->impl_->gl->context();
+        return device;
+    }
     const SDL_GPUShaderFormat formats = SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL;
     // Optional Vulkan features are relaxed for Android coverage. VICTUS shaders never write
     // gl_ClipDistance or draw indirect with a first instance, and no pipeline uses depth clamping by
@@ -428,6 +408,10 @@ Result<std::unique_ptr<Device>> Device::create(const DeviceDesc& desc) {
 }
 
 Device::~Device() {
+    if (impl_ && impl_->gl) {
+        impl_->gl.reset();
+        return;
+    }
     if (!device_) return;
     auto* dev = static_cast<SDL_GPUDevice*>(device_);
     SDL_WaitForGPUIdle(dev);
@@ -449,6 +433,7 @@ Device::~Device() {
 }
 
 Status Device::attach_window(platform::Window& window, PresentMode mode) {
+    if (auto* gl = impl_->gl.get()) return gl->attach_window(window, mode);
     auto* dev = static_cast<SDL_GPUDevice*>(device_);
     auto* w = static_cast<SDL_Window*>(window.native());
     if (!SDL_ClaimWindowForGPUDevice(dev, w)) return make_error(ErrorCode::DeviceError, std::format("claim window failed: {}", SDL_GetError()));
@@ -461,6 +446,7 @@ Status Device::attach_window(platform::Window& window, PresentMode mode) {
 }
 
 void Device::detach_window(platform::Window& window) {
+    if (auto* gl = impl_->gl.get()) return gl->detach_window(window);
     auto* w = static_cast<SDL_Window*>(window.native());
     auto it = std::find(impl_->windows.begin(), impl_->windows.end(), w);
     if (it == impl_->windows.end()) return;
@@ -470,14 +456,17 @@ void Device::detach_window(platform::Window& window) {
 }
 
 Format Device::swapchain_format(platform::Window& window) const {
+    if (impl_->gl) return Format::RGBA8_UNORM;
     return from_sdl(SDL_GetGPUSwapchainTextureFormat(static_cast<SDL_GPUDevice*>(device_), static_cast<SDL_Window*>(window.native())));
 }
 
 bool Device::supports_format(Format format, std::uint32_t usage) const {
+    if (auto* gl = impl_->gl.get()) return gl->supports_format(format, usage);
     return SDL_GPUTextureSupportsFormat(static_cast<SDL_GPUDevice*>(device_), to_sdl(format), SDL_GPU_TEXTURETYPE_2D, to_sdl_usage(usage));
 }
 
 Result<TextureHandle> Device::create_texture(const TextureDesc& desc) {
+    if (auto* gl = impl_->gl.get()) return gl->create_texture(desc);
     if (desc.width == 0 || desc.height == 0) return make_error(ErrorCode::InvalidArgument, "texture dimensions must be non-zero");
     SDL_GPUTextureCreateInfo ci{};
     ci.type = desc.type == TextureType::Cube ? SDL_GPU_TEXTURETYPE_CUBE
@@ -503,6 +492,7 @@ Result<TextureHandle> Device::create_texture(const TextureDesc& desc) {
 }
 
 TextureHandle Device::wrap_transient_texture(void* native, std::uint32_t w, std::uint32_t h, Format f) {
+    if (impl_->gl) return {}; // GLES has no external textures
     TextureDesc d;
     d.name = "swapchain";
     d.width = w;
@@ -515,11 +505,13 @@ TextureHandle Device::wrap_transient_texture(void* native, std::uint32_t w, std:
 }
 
 const TextureDesc* Device::describe(TextureHandle h) const {
+    if (auto* gl = impl_->gl.get()) return gl->describe(h);
     auto* e = impl_->textures.get(h);
     return e ? &e->desc : nullptr;
 }
 
 Result<BufferHandle> Device::create_buffer(const BufferDesc& desc) {
+    if (auto* gl = impl_->gl.get()) return gl->create_buffer(desc);
     if (desc.size == 0) return make_error(ErrorCode::InvalidArgument, "buffer size must be non-zero");
     SDL_GPUBufferCreateInfo ci{};
     if (desc.usage & BufferUsageVertex) ci.usage |= SDL_GPU_BUFFERUSAGE_VERTEX;
@@ -539,6 +531,7 @@ Result<BufferHandle> Device::create_buffer(const BufferDesc& desc) {
 }
 
 Result<SamplerHandle> Device::create_sampler(const SamplerDesc& desc) {
+    if (auto* gl = impl_->gl.get()) return gl->create_sampler(desc);
     SDL_GPUSamplerCreateInfo ci{};
     ci.min_filter = desc.min_filter == Filter::Linear ? SDL_GPU_FILTER_LINEAR : SDL_GPU_FILTER_NEAREST;
     ci.mag_filter = desc.mag_filter == Filter::Linear ? SDL_GPU_FILTER_LINEAR : SDL_GPU_FILTER_NEAREST;
@@ -563,6 +556,7 @@ Result<SamplerHandle> Device::create_sampler(const SamplerDesc& desc) {
 }
 
 Result<ShaderHandle> Device::create_shader(const ShaderDesc& desc) {
+    if (auto* gl = impl_->gl.get()) return gl->create_shader(desc);
     SDL_GPUShaderCreateInfo ci{};
     ci.stage = desc.stage == ShaderStage::Vertex ? SDL_GPU_SHADERSTAGE_VERTEX : SDL_GPU_SHADERSTAGE_FRAGMENT;
     ci.num_samplers = desc.samplers;
@@ -591,6 +585,7 @@ Result<ShaderHandle> Device::create_shader(const ShaderDesc& desc) {
 }
 
 Result<PipelineHandle> Device::create_pipeline(const PipelineDesc& desc) {
+    if (auto* gl = impl_->gl.get()) return gl->create_pipeline(desc);
     SDL_GPUShader** vs = impl_->shaders.get(desc.vertex);
     SDL_GPUShader** fs = impl_->shaders.get(desc.fragment);
     if (!vs || !fs) return make_error(ErrorCode::InvalidArgument, std::format("pipeline '{}' references invalid shaders", desc.name));
@@ -643,6 +638,7 @@ Result<PipelineHandle> Device::create_pipeline(const PipelineDesc& desc) {
 }
 
 void Device::destroy(TextureHandle h) {
+    if (auto* gl = impl_->gl.get()) return gl->destroy(h);
     TextureEntry e;
     if (!impl_->textures.remove(h, e)) return;
     if (!e.external) SDL_ReleaseGPUTexture(static_cast<SDL_GPUDevice*>(device_), e.tex);
@@ -650,6 +646,7 @@ void Device::destroy(TextureHandle h) {
     stats_.live_textures = impl_->textures.live;
 }
 void Device::destroy(BufferHandle h) {
+    if (auto* gl = impl_->gl.get()) return gl->destroy(h);
     BufferEntry e;
     if (!impl_->buffers.remove(h, e)) return;
     SDL_ReleaseGPUBuffer(static_cast<SDL_GPUDevice*>(device_), e.buf);
@@ -657,18 +654,21 @@ void Device::destroy(BufferHandle h) {
     stats_.live_buffers = impl_->buffers.live;
 }
 void Device::destroy(SamplerHandle h) {
+    if (auto* gl = impl_->gl.get()) return gl->destroy(h);
     SDL_GPUSampler* s = nullptr;
     if (!impl_->samplers.remove(h, s)) return;
     SDL_ReleaseGPUSampler(static_cast<SDL_GPUDevice*>(device_), s);
     stats_.live_samplers = impl_->samplers.live;
 }
 void Device::destroy(ShaderHandle h) {
+    if (auto* gl = impl_->gl.get()) return gl->destroy(h);
     SDL_GPUShader* s = nullptr;
     if (!impl_->shaders.remove(h, s)) return;
     SDL_ReleaseGPUShader(static_cast<SDL_GPUDevice*>(device_), s);
     stats_.live_shaders = impl_->shaders.live;
 }
 Result<ComputePipelineHandle> Device::create_compute_pipeline(const ComputePipelineDesc& desc) {
+    if (impl_->gl) return make_error(ErrorCode::Unsupported, std::format("compute pipeline '{}': GLES has no compute", desc.name));
     SDL_GPUComputePipelineCreateInfo ci{};
     std::string entry = desc.entry;
     if ((impl_->formats & SDL_GPU_SHADERFORMAT_SPIRV) && !desc.spirv.empty()) {
@@ -704,6 +704,7 @@ Result<ComputePipelineHandle> Device::create_compute_pipeline(const ComputePipel
 }
 
 void Device::destroy(ComputePipelineHandle h) {
+    if (impl_->gl) return;
     SDL_GPUComputePipeline* p = nullptr;
     if (!impl_->compute_pipelines.remove(h, p)) return;
     SDL_ReleaseGPUComputePipeline(static_cast<SDL_GPUDevice*>(device_), p);
@@ -711,6 +712,7 @@ void Device::destroy(ComputePipelineHandle h) {
 }
 
 void Device::destroy(PipelineHandle h) {
+    if (auto* gl = impl_->gl.get()) return gl->destroy(h);
     PipelineEntry e;
     if (!impl_->pipelines.remove(h, e)) return;
     SDL_ReleaseGPUGraphicsPipeline(static_cast<SDL_GPUDevice*>(device_), e.pipe);
@@ -718,18 +720,22 @@ void Device::destroy(PipelineHandle h) {
 }
 
 void* Device::native_texture(TextureHandle h) const {
+    if (impl_->gl) return nullptr;
     auto* e = impl_->textures.get(h);
     return e ? e->tex : nullptr;
 }
 void* Device::native_sampler(SamplerHandle h) const {
+    if (impl_->gl) return nullptr;
     auto* s = impl_->samplers.get(h);
     return s ? *s : nullptr;
 }
 void* Device::native_buffer(BufferHandle h) const {
+    if (impl_->gl) return nullptr;
     auto* e = impl_->buffers.get(h);
     return e ? e->buf : nullptr;
 }
 void* Device::native_pipeline(PipelineHandle h) const {
+    if (impl_->gl) return nullptr;
     auto* e = impl_->pipelines.get(h);
     return e ? e->pipe : nullptr;
 }
@@ -777,6 +783,15 @@ void Device::record_failure(GpuFailure kind, const char* error) {
 void Device::record_success(GpuFailure kind) noexcept { health_.consecutive[static_cast<int>(kind)] = 0; }
 
 CommandBuffer Device::begin_commands() {
+    if (auto* gl = impl_->gl.get()) {
+        if (injected(GpuFailure::CommandBuffer)) {
+            record_failure(GpuFailure::CommandBuffer, "injected failure");
+            return CommandBuffer(this, nullptr);
+        }
+        record_success(GpuFailure::CommandBuffer);
+        gl->begin_commands();
+        return CommandBuffer(this, gl);
+    }
     SDL_GPUCommandBuffer* cb = injected(GpuFailure::CommandBuffer)
                                    ? nullptr
                                    : SDL_AcquireGPUCommandBuffer(static_cast<SDL_GPUDevice*>(device_));
@@ -785,9 +800,13 @@ CommandBuffer Device::begin_commands() {
     return CommandBuffer(this, cb);
 }
 
-void Device::wait_idle() { SDL_WaitForGPUIdle(static_cast<SDL_GPUDevice*>(device_)); }
+void Device::wait_idle() {
+    if (auto* gl = impl_->gl.get()) return gl->wait_idle();
+    SDL_WaitForGPUIdle(static_cast<SDL_GPUDevice*>(device_));
+}
 
 Result<std::vector<std::uint8_t>> Device::read_texture(TextureHandle h) {
+    if (auto* gl = impl_->gl.get()) return gl->read_texture(h);
     auto* e = impl_->textures.get(h);
     if (!e) return make_error(ErrorCode::InvalidArgument, "invalid texture handle");
     const std::uint32_t bpp = bytes_per_pixel(e->desc.format);
@@ -823,6 +842,7 @@ Result<std::vector<std::uint8_t>> Device::read_texture(TextureHandle h) {
 }
 
 Result<std::vector<std::uint8_t>> Device::read_buffer(BufferHandle h, std::uint32_t offset, std::uint32_t size) {
+    if (auto* gl = impl_->gl.get()) return gl->read_buffer(h, offset, size);
     auto* e = impl_->buffers.get(h);
     if (!e) return make_error(ErrorCode::InvalidArgument, "invalid buffer handle");
     if (offset > e->size) return make_error(ErrorCode::InvalidArgument, "read_buffer offset out of range");
@@ -860,6 +880,7 @@ CommandBuffer::~CommandBuffer() {
 }
 
 void CommandBuffer::push_uniforms(ShaderStage stage, std::uint32_t slot, const void* data, std::uint32_t size) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->push_uniforms(stage, slot, data, size);
     auto* cb = static_cast<SDL_GPUCommandBuffer*>(cmd_);
     if (stage == ShaderStage::Vertex) SDL_PushGPUVertexUniformData(cb, slot, data, size);
     else if (stage == ShaderStage::Compute) SDL_PushGPUComputeUniformData(cb, slot, data, size);
@@ -868,6 +889,7 @@ void CommandBuffer::push_uniforms(ShaderStage stage, std::uint32_t slot, const v
 
 void CommandBuffer::upload_buffer(BufferHandle buffer, std::uint32_t offset, std::span<const std::uint8_t> data, bool discard) {
     if (data.empty()) return;
+    if (auto* gl = device_->impl_->gl.get()) return gl->upload_buffer(buffer, offset, data, discard);
     auto& impl = *device_->impl_;
     auto* entry = impl.buffers.get(buffer);
     if (!entry || offset + data.size() > entry->size) {
@@ -896,6 +918,7 @@ void CommandBuffer::upload_buffer(BufferHandle buffer, std::uint32_t offset, std
 }
 
 void CommandBuffer::upload_texture(TextureHandle texture, std::span<const std::uint8_t> pixels, std::uint32_t mip, std::uint32_t layer) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->upload_texture(texture, pixels, mip, layer);
     auto& impl = *device_->impl_;
     auto* entry = impl.textures.get(texture);
     if (!entry) {
@@ -958,6 +981,7 @@ void CommandBuffer::upload_texture(TextureHandle texture, std::span<const std::u
 }
 
 void CommandBuffer::generate_mipmaps(TextureHandle texture) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->generate_mipmaps(texture);
     if (auto* e = device_->impl_->textures.get(texture); e && e->desc.mip_levels > 1)
         SDL_GenerateMipmapsForGPUTexture(static_cast<SDL_GPUCommandBuffer*>(cmd_), e->tex);
 }
@@ -971,6 +995,10 @@ TextureHandle CommandBuffer::acquire_swapchain(platform::Window& window, std::ui
         device_->record_failure(GpuFailure::Swapchain, "injected failure");
         return {};
     }
+    if (auto* gl = device_->impl_->gl.get()) {
+        device_->record_success(GpuFailure::Swapchain);
+        return gl->acquire_swapchain(window, width, height);
+    }
     if (!SDL_WaitAndAcquireGPUSwapchainTexture(static_cast<SDL_GPUCommandBuffer*>(cmd_), static_cast<SDL_Window*>(window.native()), &tex, &width, &height)) {
         device_->record_failure(GpuFailure::Swapchain, SDL_GetError());
         return {};
@@ -981,6 +1009,7 @@ TextureHandle CommandBuffer::acquire_swapchain(platform::Window& window, std::ui
 }
 
 RenderPass CommandBuffer::begin_render_pass(const RenderPassDesc& desc) {
+    if (auto* gl = device_->impl_->gl.get()) return RenderPass(device_, gl->begin_render_pass(desc) ? gl : nullptr);
     auto& impl = *device_->impl_;
     SDL_GPUColorTargetInfo colors[4]{};
     const auto count = static_cast<Uint32>(std::min<std::size_t>(desc.colors.size(), 4));
@@ -1019,6 +1048,10 @@ RenderPass CommandBuffer::begin_render_pass(const RenderPassDesc& desc) {
 }
 
 ComputePass CommandBuffer::begin_compute_pass(std::span<const BufferHandle> readwrite_buffers) {
+    if (device_->impl_->gl) {
+        VICTUS_LOG_ERROR("rhi", "begin compute pass: GLES has no compute");
+        return ComputePass(device_, nullptr);
+    }
     auto& impl = *device_->impl_;
     std::array<SDL_GPUStorageBufferReadWriteBinding, 8> bindings{};
     const auto count = static_cast<Uint32>(std::min<std::size_t>(readwrite_buffers.size(), bindings.size()));
@@ -1038,6 +1071,7 @@ ComputePass CommandBuffer::begin_compute_pass(std::span<const BufferHandle> read
 }
 
 void CommandBuffer::blit(TextureHandle src, TextureHandle dst, Filter filter) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->blit(src, dst, filter);
     auto& impl = *device_->impl_;
     auto* s = impl.textures.get(src);
     auto* d = impl.textures.get(dst);
@@ -1056,6 +1090,14 @@ void CommandBuffer::blit(TextureHandle src, TextureHandle dst, Filter filter) {
 
 void CommandBuffer::submit() {
     if (!cmd_) return;
+    if (auto* gl = device_->impl_->gl.get()) {
+        gl->submit(false);
+        if (device_->injected(GpuFailure::Submit)) device_->record_failure(GpuFailure::Submit, "injected failure");
+        else device_->record_success(GpuFailure::Submit);
+        cmd_ = nullptr;
+        device_->stats_.frames_submitted++;
+        return;
+    }
     if (device_->injected(GpuFailure::Submit)) {
         // The work still runs (a cancelled buffer cannot hold a swapchain image); only the
         // outcome is reported as a driver failure.
@@ -1079,6 +1121,14 @@ void CommandBuffer::submit() {
 void CommandBuffer::submit_and_wait() {
     if (!cmd_) return;
     VICTUS_PROFILE_SCOPE("gpu.submit_and_wait");
+    if (auto* gl = device_->impl_->gl.get()) {
+        gl->submit(true);
+        if (device_->injected(GpuFailure::Submit)) device_->record_failure(GpuFailure::Submit, "injected failure");
+        else device_->record_success(GpuFailure::Submit);
+        cmd_ = nullptr;
+        device_->stats_.frames_submitted++;
+        return;
+    }
     auto* dev = static_cast<SDL_GPUDevice*>(device_->device_);
     SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(static_cast<SDL_GPUCommandBuffer*>(cmd_));
     cmd_ = nullptr;
@@ -1102,29 +1152,35 @@ void CommandBuffer::submit_and_wait() {
 // ---- RenderPass ----------------------------------------------------------------------
 
 void RenderPass::bind_pipeline(PipelineHandle pipeline) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->bind_pipeline(pipeline);
     if (auto* p = device_->impl_->pipelines.get(pipeline)) SDL_BindGPUGraphicsPipeline(static_cast<SDL_GPURenderPass*>(pass_), p->pipe);
 }
 void RenderPass::set_viewport(const Viewport& vp) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->set_viewport(vp);
     SDL_GPUViewport v{vp.x, vp.y, vp.width, vp.height, vp.min_depth, vp.max_depth};
     SDL_SetGPUViewport(static_cast<SDL_GPURenderPass*>(pass_), &v);
 }
 void RenderPass::set_scissor(const Rect& r) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->set_scissor(r);
     SDL_Rect rect{r.x, r.y, r.width, r.height};
     SDL_SetGPUScissor(static_cast<SDL_GPURenderPass*>(pass_), &rect);
 }
 void RenderPass::bind_vertex_buffer(std::uint32_t slot, BufferHandle buffer, std::uint32_t offset) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->bind_vertex_buffer(slot, buffer, offset);
     if (auto* b = device_->impl_->buffers.get(buffer)) {
         SDL_GPUBufferBinding bind{b->buf, offset};
         SDL_BindGPUVertexBuffers(static_cast<SDL_GPURenderPass*>(pass_), slot, &bind, 1);
     }
 }
 void RenderPass::bind_index_buffer(BufferHandle buffer, IndexType type, std::uint32_t offset) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->bind_index_buffer(buffer, type, offset);
     if (auto* b = device_->impl_->buffers.get(buffer)) {
         SDL_GPUBufferBinding bind{b->buf, offset};
         SDL_BindGPUIndexBuffer(static_cast<SDL_GPURenderPass*>(pass_), &bind, type == IndexType::U16 ? SDL_GPU_INDEXELEMENTSIZE_16BIT : SDL_GPU_INDEXELEMENTSIZE_32BIT);
     }
 }
 void RenderPass::bind_texture(ShaderStage stage, std::uint32_t slot, TextureHandle texture, SamplerHandle sampler) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->bind_texture(stage, slot, texture, sampler);
     auto* t = device_->impl_->textures.get(texture);
     auto* s = device_->impl_->samplers.get(sampler);
     if (!t || !s) {
@@ -1136,6 +1192,7 @@ void RenderPass::bind_texture(ShaderStage stage, std::uint32_t slot, TextureHand
     else SDL_BindGPUFragmentSamplers(static_cast<SDL_GPURenderPass*>(pass_), slot, &b, 1);
 }
 void RenderPass::bind_storage_buffer(ShaderStage stage, std::uint32_t slot, BufferHandle buffer) {
+    if (device_->impl_->gl) return; // no storage buffers on GLES (shaders using them are rejected)
     auto* b = device_->impl_->buffers.get(buffer);
     if (!b) return;
     SDL_GPUBuffer* buf = b->buf;
@@ -1143,14 +1200,17 @@ void RenderPass::bind_storage_buffer(ShaderStage stage, std::uint32_t slot, Buff
     else SDL_BindGPUFragmentStorageBuffers(static_cast<SDL_GPURenderPass*>(pass_), slot, &buf, 1);
 }
 void RenderPass::draw(std::uint32_t vertex_count, std::uint32_t instance_count, std::uint32_t first_vertex, std::uint32_t first_instance) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->draw(vertex_count, instance_count, first_vertex, first_instance);
     SDL_DrawGPUPrimitives(static_cast<SDL_GPURenderPass*>(pass_), vertex_count, instance_count, first_vertex, first_instance);
     device_->stats_.draw_calls++;
 }
 void RenderPass::draw_indexed(std::uint32_t index_count, std::uint32_t instance_count, std::uint32_t first_index, std::int32_t vertex_offset, std::uint32_t first_instance) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->draw_indexed(index_count, instance_count, first_index, vertex_offset, first_instance);
     SDL_DrawGPUIndexedPrimitives(static_cast<SDL_GPURenderPass*>(pass_), index_count, instance_count, first_index, vertex_offset, first_instance);
     device_->stats_.draw_calls++;
 }
 void RenderPass::draw_indexed_indirect(BufferHandle buffer, std::uint32_t offset, std::uint32_t draw_count) {
+    if (auto* gl = device_->impl_->gl.get()) return gl->draw_indexed_indirect(buffer, offset, draw_count);
     auto* b = device_->impl_->buffers.get(buffer);
     if (!b || draw_count == 0) return;
     SDL_DrawGPUIndexedPrimitivesIndirect(static_cast<SDL_GPURenderPass*>(pass_), b->buf, offset, draw_count);
@@ -1158,6 +1218,11 @@ void RenderPass::draw_indexed_indirect(BufferHandle buffer, std::uint32_t offset
     device_->stats_.indirect_draws += draw_count;
 }
 void RenderPass::end() {
+    if (pass_ && device_->impl_->gl) {
+        device_->impl_->gl->end_render_pass();
+        pass_ = nullptr;
+        return;
+    }
     if (pass_) SDL_EndGPURenderPass(static_cast<SDL_GPURenderPass*>(pass_));
     pass_ = nullptr;
 }
@@ -1165,16 +1230,19 @@ void RenderPass::end() {
 // ---- ComputePass ---------------------------------------------------------------------
 
 void ComputePass::bind_pipeline(ComputePipelineHandle pipeline) {
+    if (!pass_) return;
     if (auto* p = device_->impl_->compute_pipelines.get(pipeline))
         SDL_BindGPUComputePipeline(static_cast<SDL_GPUComputePass*>(pass_), *p);
 }
 void ComputePass::bind_storage_buffer(std::uint32_t slot, BufferHandle buffer) {
+    if (!pass_) return;
     auto* b = device_->impl_->buffers.get(buffer);
     if (!b) return;
     SDL_GPUBuffer* buf = b->buf;
     SDL_BindGPUComputeStorageBuffers(static_cast<SDL_GPUComputePass*>(pass_), slot, &buf, 1);
 }
 void ComputePass::bind_texture(std::uint32_t slot, TextureHandle texture, SamplerHandle sampler) {
+    if (!pass_) return;
     auto* t = device_->impl_->textures.get(texture);
     auto* s = device_->impl_->samplers.get(sampler);
     if (!t || !s) return;
@@ -1182,6 +1250,7 @@ void ComputePass::bind_texture(std::uint32_t slot, TextureHandle texture, Sample
     SDL_BindGPUComputeSamplers(static_cast<SDL_GPUComputePass*>(pass_), slot, &b, 1);
 }
 void ComputePass::dispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) {
+    if (!pass_) return;
     if (x == 0 || y == 0 || z == 0) return;
     SDL_DispatchGPUCompute(static_cast<SDL_GPUComputePass*>(pass_), x, y, z);
     device_->stats_.dispatches++;
