@@ -295,6 +295,11 @@ Result<std::vector<std::uint8_t>> Platform::read_bundled(const std::string& path
     return out;
 }
 
+std::uint32_t Platform::system_ram_mb() noexcept {
+    const int mb = SDL_GetSystemRAM();
+    return mb > 0 ? static_cast<std::uint32_t>(mb) : 0u;
+}
+
 bool Platform::is_mobile() noexcept {
 #if defined(__ANDROID__) || (defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
     return true;

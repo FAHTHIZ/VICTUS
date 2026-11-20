@@ -94,6 +94,11 @@ foreach(t 3d 2d simulation multiplayer)
                 message(FATAL_ERROR "run --quality ${q} used the wrong HDR format for ${t}: ${LAST_OUTPUT}")
             endif()
         endforeach()
+        # Device-class selection (ADR-0127): lavapipe is a software rasterizer, so "auto" means Low.
+        run_ok("${VICTUS_CLI}" run "${dir}" --strict --frames 2 --width 160 --height 90 --quality auto)
+        if(NOT LAST_OUTPUT MATCHES "at low quality" OR NOT LAST_OUTPUT MATCHES "device class: software rasterizer")
+            message(FATAL_ERROR "run --quality auto did not pick Low on a software rasterizer for ${t}: ${LAST_OUTPUT}")
+        endif()
         execute_process(COMMAND "${VICTUS_CLI}" run "${dir}" --frames 1 --quality cinematic
                         RESULT_VARIABLE rc OUTPUT_QUIET ERROR_VARIABLE err)
         if(rc EQUAL 0 OR NOT err MATCHES "unknown quality tier")

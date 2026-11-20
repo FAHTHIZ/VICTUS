@@ -30,8 +30,9 @@ struct ProjectSettings {
     int window_width{1280};
     int window_height{720};
     bool vsync{true};
-    // Rendering scalability: "low" | "medium" | "high" | "ultra" and an optional resolution
-    // scale override (0 = the tier's default).
+    // Rendering scalability: "low" | "medium" | "high" | "ultra" | "auto" (pick from the GPU and
+    // RAM, ADR-0127; high when the GPU is unknown) and an optional resolution scale override
+    // (0 = the tier's default).
     std::string render_quality{"high"};
     float render_scale{0.0f};
     // Dynamic resolution: target frame rate the player holds by lowering the 3D render scale
@@ -43,8 +44,9 @@ struct ProjectSettings {
     bool temporal_upscale{true};
     // Phones and tablets (rendering.mobile_quality / rendering.mobile_target_fps): the tier and
     // frame-rate target the player uses there instead of the desktop ones. Mobile GPUs share
-    // power and heat with the CPU, so the defaults hold 30 fps at the medium tier.
-    std::string mobile_quality{"medium"};
+    // power and heat with the CPU, so the defaults hold 30 fps. "auto" (the default, ADR-0127)
+    // picks the tier from the phone's GPU family and RAM, medium when the GPU is unknown.
+    std::string mobile_quality{"auto"};
     // Resident texture + model memory the player keeps (rendering.asset_budget_mb, ADR-0088);
     // assets unused for about a second are evicted least recently used first. 0 = unlimited.
     int asset_budget_mb{0};

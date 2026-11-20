@@ -149,7 +149,7 @@ TEST_CASE("project: rendering quality settings round-trip and validate") {
     CHECK(q->settings().dynamic_resolution_min == doctest::Approx(0.6f));
     CHECK_FALSE(q->settings().temporal_upscale);
     CHECK_FALSE(q->settings().extra.find("rendering")); // a known key, not preserved as "extra"
-    CHECK(q->settings().mobile_quality == "medium");
+    CHECK(q->settings().mobile_quality == "auto"); // device-class selection by default (ADR-0127)
     CHECK(q->settings().mobile_target_fps == 30);
     q->settings().mobile_quality = "low";
     q->settings().mobile_target_fps = 0;

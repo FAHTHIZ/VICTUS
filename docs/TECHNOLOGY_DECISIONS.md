@@ -972,6 +972,14 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0127 — Device-class quality selection ("auto" tier)
+
+- Status: Accepted (2026-11-20)
+- Context: phones ran at `rendering.mobile_quality` (Medium by default) whatever the GPU, so a Mali-G52 got the same work as an Adreno 750. Unity ships per-platform quality levels that games pick from by device; Unreal uses device profiles matched on the GPU family (`Android_Mali_G7x`, `Android_Adreno6xx`, ...). Without that, "runs on anything" means tuning for the weakest phone everywhere.
+- Decision: `victus/render/device_class.hpp`. `classify_device(DeviceProfile{gpu name, mobile, RAM, compute}, fallback)` matches the GPU family in the driver's device name and maps generations to tiers: Mali T-series, G31-G68 and G3xx Low, G71-G78 and G6xx Medium, G7xx/G9xx/Immortalis High; Adreno below 620 Low, 620-649 and 710/720 Medium, 650-699, 730+ and 8xx High; PowerVR Low; Xclipse and Apple High; Intel integrated at most Medium; software rasterizers (llvmpipe, SwiftShader, WARP) Low; anything else keeps the fallback. RAM and compute only lower it: phones under 3 GB Low, under 5 GB at most Medium; desktops under 4 GB at most Medium; no compute shaders at most Medium. `rendering.quality` and `rendering.mobile_quality` accept `"auto"`, which is now the phone default (Medium when the GPU is unknown; desktop projects keep their explicit tier, High when "auto" meets an unknown GPU). `victus run --quality auto` and the player log print the decision ("Mali-G52: entry-level GPU").
+- Alternatives: a startup GPU benchmark (accurate, but costs seconds on every launch and is noisy on thermally throttled phones; may be added later as a refinement); a downloaded device database like Android's Performance Tuner or Unreal's device profiles (needs a service and upkeep); RAM-only rules (misses the large GPU spread at equal RAM).
+- Consequences: projects that never set `mobile_quality` now start low-end phones at Low and flagships at High instead of Medium everywhere. The table is a heuristic from public GPU generations, not measurements; it has not been checked on real phones yet (ROADMAP hardware proof).
+
 ## ADR-0126 — Packed HDR scene colour by default on phones and the Low/Medium tiers
 
 - Status: Accepted (2026-11-20)

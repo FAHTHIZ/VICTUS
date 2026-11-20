@@ -222,6 +222,8 @@ public:
     [[nodiscard]] static Result<std::uint64_t> copy_bundled(const std::string& path, const std::string& dest);
     // True on phones and tablets (touch-first input, small screens, battery and thermal limits).
     [[nodiscard]] static bool is_mobile() noexcept;
+    // Installed system RAM in MiB (0 when unknown); used for device-class quality (ADR-0127).
+    [[nodiscard]] static std::uint32_t system_ram_mb() noexcept;
     [[nodiscard]] std::string clipboard() const;
     void set_clipboard(const std::string& text);
     // Receives every raw OS event (an `SDL_Event*`) before VICTUS processes it. Intended for
