@@ -23,7 +23,7 @@ namespace victus::assets {
 // v2 (Slice 12): mesh skin streams, node skins, skins and animation clips.
 // v3: Vertex3D gained an RGBA8 colour (52 bytes); v4: HDR textures (half-float equirect + SH9);
 // v5: block-compressed texture variants (BC/ASTC, ADR-0047); v6: mesh LODs (ADR-0049).
-inline constexpr std::uint32_t kCookedFormatVersion = 7; // 7: morph targets, weight channels
+inline constexpr std::uint32_t kCookedFormatVersion = 8; // 7: morph targets, weight channels; 8: material occlusion
 
 enum class AssetKind : std::uint8_t { Unknown = 0, Texture = 1, Model = 2, Scene = 3, Script = 4, Audio = 5, Prefab = 6, Material = 7, Shader = 8, SpriteSheet = 9, Tileset = 10, Terrain = 11, BehaviorTree = 12, Sequence = 13, StringTable = 14, AnimController = 15 };
 [[nodiscard]] const char* to_string(AssetKind kind) noexcept;
@@ -54,6 +54,9 @@ struct ModelMaterial {
     float roughness{1.0f};
     float normal_scale{1.0f};
     float alpha_cutoff{0.0f};
+    // glTF occlusionTexture strength; the occlusion is packed into the red channel of
+    // metallic_roughness_texture at import (ADR-0139). 0 = none.
+    float occlusion_strength{0.0f};
     bool double_sided{false};
     bool unlit{false};
     // Indices into CookedModel::textures, -1 when absent.

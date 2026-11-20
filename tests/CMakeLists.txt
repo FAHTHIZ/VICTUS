@@ -141,6 +141,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_lod_tests.cpp
         render/gpu_compact_hdr_tests.cpp
         render/gpu_fp16_tests.cpp
+        render/gpu_orm_tests.cpp
         render/gpu_texture_mip_tests.cpp
     render/gpu_alpha_coverage_tests.cpp
     render/gpu_overdraw_tests.cpp

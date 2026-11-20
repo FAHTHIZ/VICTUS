@@ -123,7 +123,7 @@ layout(set = 3, binding = 1) uniform Material {
     vec4 flags;          // x has normal map, y unlit, z vertex alpha is a coverage mask, w coverage response
     vec4 uv_transform;   // xy scale, zw offset (material tiling)
     vec4 custom[4];      // surface shader parameters (material "shader_params")
-    vec4 blend;          // x: 0 opaque, 1 alpha blended, 2 additive (volumetric fog, ADR-0119)
+    vec4 blend;          // x: 0 opaque, 1 alpha blended, 2 additive (volumetric fog, ADR-0119); y: ORM occlusion strength (ADR-0139)
 } material;
 
 // Local reflection probe for this draw (box-projected cube bound to u_env instead of the scene's
@@ -506,8 +506,8 @@ void main() {
     s.alpha = alpha_is_mask ? base.a : base.a * v_color.a;
     s.emissive = texture(u_emissive, uv).rgb * material.emissive.rgb;
     s.unlit = material.flags.y > 0.5;
-    s.occlusion = 1.0;
     vec4 mr = texture(u_metal_rough, uv);
+    s.occlusion = 1.0 + material.blend.y * (mr.r - 1.0); // glTF ORM: red = ambient occlusion
     s.metallic = clamp(material.params.x * mr.b, 0.0, 1.0);
     s.roughness = clamp(material.params.y * mr.g, 0.045, 1.0);
     vec3 N = geometric_n;

@@ -72,7 +72,8 @@ std::uint64_t material_key(const Material& m) noexcept {
     std::uint64_t h = 0;
     for (float f : {m.base_color.r, m.base_color.g, m.base_color.b, m.base_color.a, m.emissive.r, m.emissive.g,
                     m.emissive.b, m.emissive_strength, m.metallic, m.roughness, m.normal_scale, m.alpha_cutoff,
-                    m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y, m.coverage_response})
+                    m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y, m.coverage_response,
+                    m.occlusion_strength})
         h = mix(h, bits(f));
     for (auto t : {m.base_color_texture, m.metallic_roughness_texture, m.normal_texture, m.emissive_texture})
         h = mix(h, handle_bits(t));
@@ -97,7 +98,7 @@ bool same_material(const Material& a, const Material& b) noexcept {
            std::equal(a.shader_params.begin(), a.shader_params.end(), b.shader_params.begin(),
                       [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; }) &&
            a.vertex_alpha_coverage_mask == b.vertex_alpha_coverage_mask && a.coverage_response == b.coverage_response &&
-           a.blend == b.blend && a.shadow_only == b.shadow_only;
+           a.occlusion_strength == b.occlusion_strength && a.blend == b.blend && a.shadow_only == b.shadow_only;
 }
 struct LightingUniforms {
     Vec4 camera_pos;
@@ -3264,7 +3265,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                              std::clamp(m.coverage_response, 0.0f, 1.0f)};
                 mat.uv_transform = {m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y};
                 for (std::size_t i = 0; i < 4; ++i) mat.custom[i] = m.shader_params[i];
-                mat.blend = {static_cast<float>(m.blend), 0, 0, 0};
+                mat.blend = {static_cast<float>(m.blend), std::clamp(m.occlusion_strength, 0.0f, 1.0f), 0, 0};
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
                 auto pick = [](rhi::TextureHandle t, rhi::TextureHandle fallback) { return t ? t : fallback; };
                 const rhi::SamplerHandle tex_sampler = m.nearest_filter ? ctx_.nearest_repeat() : material_linear.value();

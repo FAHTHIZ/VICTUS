@@ -89,6 +89,7 @@ const char* field_key(MaterialField f) noexcept {
     case MaterialField::VertexAlpha: return "vertex_alpha";
     case MaterialField::CoverageResponse: return "coverage_response";
     case MaterialField::Blend: return "blend";
+    case MaterialField::OcclusionStrength: return "occlusion_strength";
     default: return "";
     }
 }
@@ -116,6 +117,7 @@ void MaterialAsset::copy_field(const MaterialAsset& src, MaterialField f) {
     case MaterialField::VertexAlpha: vertex_alpha_coverage_mask = src.vertex_alpha_coverage_mask; break;
     case MaterialField::CoverageResponse: coverage_response = src.coverage_response; break;
     case MaterialField::Blend: blend = src.blend; break;
+    case MaterialField::OcclusionStrength: occlusion_strength = src.occlusion_strength; break;
     default: break;
     }
 }
@@ -163,6 +165,8 @@ json::Value MaterialAsset::to_json() const {
     v.set("vertex_alpha", vertex_alpha_coverage_mask ? "coverage_mask" : "opacity");
     v.set("coverage_response", num(coverage_response));
     v.set("blend", blend == MaterialBlendMode::Alpha ? "alpha" : blend == MaterialBlendMode::Additive ? "additive" : "opaque");
+    if (occlusion_strength != 0.0f || (is_instance() && overrides_field(MaterialField::OcclusionStrength)))
+        v.set("occlusion_strength", num(occlusion_strength)); // omitted at the default, so older files round-trip
     if (!is_instance()) return v;
     // Instances store only what they override.
     Value inst = Value::object();
@@ -193,7 +197,7 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
                     r.uuid("emissive_texture", m.emissive_texture) && r.number("alpha_cutoff", m.alpha_cutoff) &&
                     r.vec("uv_scale", &m.uv_scale.x, 2, 2) && r.vec("uv_offset", &m.uv_offset.x, 2, 2) &&
                     r.boolean("unlit", m.unlit) && r.boolean("double_sided", m.double_sided) &&
-                    r.number("coverage_response", m.coverage_response);
+                    r.number("coverage_response", m.coverage_response) && r.number("occlusion_strength", m.occlusion_strength);
     if (!ok) return make_error(ErrorCode::ParseError, r.error);
     m.emissive = {emissive[0], emissive[1], emissive[2], 1.0f};
     if (!r.uuid("shader", m.shader)) return make_error(ErrorCode::ParseError, r.error);
@@ -235,6 +239,7 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
         else return make_error(ErrorCode::ParseError, "material field 'blend' must be \"opaque\", \"alpha\" or \"additive\"");
     }
     m.coverage_response = std::clamp(m.coverage_response, 0.0f, 1.0f);
+    m.occlusion_strength = std::clamp(m.occlusion_strength, 0.0f, 1.0f);
     m.metallic = std::clamp(m.metallic, 0.0f, 1.0f);
     m.roughness = std::clamp(m.roughness, 0.0f, 1.0f);
     m.alpha_cutoff = std::clamp(m.alpha_cutoff, 0.0f, 1.0f);
