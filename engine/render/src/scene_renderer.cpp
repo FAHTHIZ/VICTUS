@@ -456,6 +456,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.max_anisotropy = 2;
         s.local_shadows = false;
         s.irradiance_volumes = false;
+        s.probe_sh_bands = 1;
         s.dynamic_gi = false;
         s.volumetric_fog = false;
         s.volumetric_clouds = false;
@@ -1293,8 +1294,9 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
 void SceneRenderer::add_point_light(const PointLight& light) { points_.push_back(light); }
 void SceneRenderer::add_spot_light(const SpotLight& light) { spots_.push_back(light); }
 
-void SceneRenderer::set_irradiance_volume(const IrradianceVolume* volume, float intensity, float normal_offset) {
+void SceneRenderer::set_irradiance_volume(const IrradianceVolume* volume, float intensity, float normal_offset, bool baked) {
     volume_ = volume;
+    volume_baked_ = volume && baked;
     volume_intensity_ = std::isfinite(intensity) ? std::max(intensity, 0.0f) : 1.0f;
     volume_normal_offset_ = std::isfinite(normal_offset) ? std::clamp(normal_offset, 0.0f, 4.0f) : 0.0f;
 }
@@ -2593,14 +2595,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         for (std::size_t i = 0; i < 9; ++i) lighting.env_sh[i] = Vec4(env_map->sh().coefficients[i] * env_intensity, 0.0f);
     }
     for (std::uint32_t c = 0; c < 4; ++c) lighting.cascade_vp[c] = cascade_vp_[c];
-    const IrradianceVolume* gi = S.irradiance_volumes && volume_ && volume_->texture() && volume_->valid_count() > 0 ? volume_ : nullptr;
+    const bool volume_allowed = volume_baked_ ? S.baked_probes : S.irradiance_volumes;
+    const IrradianceVolume* gi = volume_allowed && volume_ && volume_->texture() && volume_->valid_count() > 0 ? volume_ : nullptr;
     stats_.irradiance_probes = gi ? gi->valid_count() : 0;
     facts_.irradiance_available = volume_ && volume_->texture() && volume_->valid_count() > 0;
     facts_.irradiance = gi != nullptr;
     facts_.irradiance_probes = stats_.irradiance_probes;
+    facts_.irradiance_baked = volume_baked_;
     if (gi) {
         const IrradianceGrid& g = gi->grid();
-        lighting.gi_min = Vec4(g.bounds.min, 1.0f);
+        lighting.gi_min = Vec4(g.bounds.min, S.probe_sh_bands <= 1 ? 2.0f : 1.0f); // 2: L1 only (ADR-0138)
         lighting.gi_max = Vec4(g.bounds.max, volume_intensity_);
         lighting.gi_counts = {static_cast<float>(g.counts[0]), static_cast<float>(g.counts[1]), static_cast<float>(g.counts[2]),
                               volume_normal_offset_};

@@ -276,7 +276,9 @@ vec3 volume_irradiance(vec3 p, vec3 n, vec3 fallback, out float sun_vis) {
     float y0 = min(floor(f.y), counts.y - 2.0);
     float ty = f.y - y0;
     vec4 c[9];
-    for (int k = 0; k < 9; ++k) c[k] = mix(gi_fetch(k, y0, f.xz), gi_fetch(k, y0 + 1.0, f.xz), ty);
+    // gi_min.w = 2: L1 only (Low, ADR-0138), the four band 0-1 rows, 8 fetches instead of 18.
+    int bands = lighting.gi_min.w > 1.5 ? 4 : 9;
+    for (int k = 0; k < 9; ++k) c[k] = k < bands ? mix(gi_fetch(k, y0, f.xz), gi_fetch(k, y0 + 1.0, f.xz), ty) : vec4(0.0);
     float valid = c[0].a;
     if (valid < 1e-3) return fallback;
     for (int k = 0; k < 9; ++k) c[k].rgb /= valid;

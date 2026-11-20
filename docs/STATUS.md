@@ -1942,3 +1942,12 @@ Not covered:
 - `victus serve` and `crash-test` open the world but do not update the streamer per tick yet;
 - streaming cost in long headless runs is not profiled.
 
+## 2026-11-20 — Baked probes on every tier, L1 on Low (ADR-0138)
+
+Built: `RenderSettings::baked_probes` and `probe_sh_bands`; `SceneRenderer::set_irradiance_volume(..., baked)`; the runtime passes the lightmap's probes as baked, and skips the capture budget for hand-placed volumes on tiers without irradiance volumes. pbr.frag fetches 4 of 9 SH rows when `gi_min.w = 2` (Low). The render path report says "N baked probes, L1 only" (reduced, quality tier) on Low.
+
+Verified (Release, clang 21, lavapipe, 2 cores): `python3 tools/shaders/compile_shaders.py` regenerated pbr.frag and pbr.frag#fp16, `--check` up to date (59). `victus_gpu_tests -tc="*irradiance*,*probe*,*lightmap*,*ADR-013*"` 16/16, including the extended volume case: on Low, a volume passed as baked lights the cube (27 probes, red 152 with L1, 144 with L2, green under a quarter of red, irradiance_volume reported reduced), `baked_probes = false` turns it off, and hand-placed volumes stay off. `victus new t3d --template 3d` then `victus run --quality low`: report shows `484 baked probes, L1 only` and FP16 shading; screenshot reviewed. Full `ctest --test-dir build -j2` 39/39 (perf budgets and reference scenes pass).
+
+Not covered: no measurement of the 8-fetch cost on a phone GPU; L1 has no ringing or deringing control; hand-placed volumes remain unavailable on Low.
+
+Next task: photoreal reference scene with CC0 scanned materials (ROADMAP Priority 0), then the Arm ASR evaluation.

@@ -172,8 +172,14 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
 
     // Indirect light and screen-space effects.
     if (!f.irradiance_available) add("irradiance_volume", PathState::Off, PathReason::Scene, "no baked irradiance volume");
-    else if (!S.irradiance_volumes) add("irradiance_volume", PathState::Off, by(S.irradiance_volumes == tier.irradiance_volumes), "");
-    else add("irradiance_volume", PathState::Active, PathReason::None, std::format("{} probes", f.irradiance_probes));
+    else if (f.irradiance_baked ? !S.baked_probes : !S.irradiance_volumes)
+        add("irradiance_volume", PathState::Off,
+            f.irradiance_baked ? by(S.baked_probes == tier.baked_probes) : by(S.irradiance_volumes == tier.irradiance_volumes), "");
+    else if (S.probe_sh_bands < ref.probe_sh_bands)
+        add("irradiance_volume", PathState::Reduced, by(S.probe_sh_bands == tier.probe_sh_bands),
+            std::format("{} {}probes, L1 only", f.irradiance_probes, f.irradiance_baked ? "baked " : ""));
+    else add("irradiance_volume", PathState::Active, PathReason::None,
+             std::format("{} {}probes", f.irradiance_probes, f.irradiance_baked ? "baked " : ""));
 
     if (!f.ao_requested) add("ssao", PathState::Off, PathReason::Scene, "environment AO intensity or radius is 0");
     else if (!S.ssao) add("ssao", PathState::Off, by(S.ssao == tier.ssao), "no ambient occlusion");

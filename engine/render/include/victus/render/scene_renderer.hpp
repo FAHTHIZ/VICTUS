@@ -494,8 +494,15 @@ struct RenderSettings {
     // Conservative: the image is identical with it off. Needs compute (RenderCaps::compute).
     bool occlusion_culling{true};
     // Irradiance volumes (ADR-0056): baked probe grids replace environment diffuse light inside
-    // their box. Off on Low (18 extra texture fetches per lit pixel).
+    // their box. Off on Low (runtime cubemap capture, 18 extra texture fetches per lit pixel).
     bool irradiance_volumes{true};
+    // Probes baked with the lightmap (ADR-0133, set_irradiance_volume(..., baked = true)) light
+    // dynamic objects even where irradiance_volumes is off: they cost no capture, and lightmapped
+    // pixels never sample them (ADR-0138).
+    bool baked_probes{true};
+    // Spherical-harmonic bands sampled from probe volumes: 2 = L2 (9 coefficients, 18 fetches),
+    // 1 = L1 (4 coefficients, 8 fetches; Low). Unity's URP offers the same choice.
+    std::uint32_t probe_sh_bands{2};
     // Dynamic GI (ADR-0057): volumes marked dynamic keep re-capturing their probes round-robin with
     // feedback (each refresh adds a bounce), so lighting changes propagate. High/Ultra only; read
     // by the runtime, the renderer itself only samples the volume.
@@ -747,7 +754,10 @@ public:
     // ambient light from its probes (offset `normal_offset` metres along the normal) instead of the
     // environment or reflection probe SH. One volume per frame; cleared by begin(). The volume must
     // outlive the frame.
-    void set_irradiance_volume(const IrradianceVolume* volume, float intensity = 1.0f, float normal_offset = 0.0f);
+    // `baked`: the volume holds the lightmap's probes, drawn under RenderSettings::baked_probes
+    // rather than irradiance_volumes (ADR-0138).
+    void set_irradiance_volume(const IrradianceVolume* volume, float intensity = 1.0f, float normal_offset = 0.0f,
+                               bool baked = false);
     void line(math::Vec3 a, math::Vec3 b, math::Color color);
     void box(const math::Aabb& box, math::Color color);
     void grid(float half_size, float spacing, math::Color color);
@@ -930,6 +940,7 @@ private:
     std::vector<WaterSurface> waters_;
     const IrradianceVolume* volume_{nullptr};
     float volume_intensity_{1.0f}, volume_normal_offset_{0.0f};
+    bool volume_baked_{false};
     bool capture_mode_{false};
     std::vector<LineVertex> lines_;
     std::vector<ParticleInstance> particles_, particle_upload_;

@@ -193,9 +193,9 @@ TEST_CASE("gpu: lit surfaces inside the volume take diffuse light from its probe
                 fill_room(room, r, cam, false, false);
             }).ok());
     constexpr std::uint32_t W = 64, H = 64;
-    auto shoot = [&](bool with_volume, float intensity = 1.0f) {
+    auto shoot = [&](bool with_volume, float intensity = 1.0f, bool baked = false) {
         fill_room(room, **sr, Camera3D::look_at({0, 0.0f, 3.0f}, {0, 0, 0}), false, true);
-        if (with_volume) (*sr)->set_irradiance_volume(vol->get(), intensity, 0.2f);
+        if (with_volume) (*sr)->set_irradiance_volume(vol->get(), intensity, 0.2f, baked);
         auto target = test::make_target(W, H);
         auto cmd = dev.begin_commands();
         REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
@@ -224,6 +224,24 @@ TEST_CASE("gpu: lit surfaces inside the volume take diffuse light from its probe
     (*sr)->set_settings(low);
     (void)shoot(true);
     CHECK((*sr)->stats().irradiance_probes == 0);
+    // ... but the lightmap's baked probes still light dynamic objects there, L1 only (ADR-0138).
+    CHECK(low.baked_probes);
+    CHECK(low.probe_sh_bands == 1);
+    const auto low_l1 = shoot(true, 1.0f, true);
+    CHECK((*sr)->stats().irradiance_probes == 27);
+    CHECK((*sr)->path_report().find("irradiance_volume")->state == PathState::Reduced);
+    low.probe_sh_bands = 2;
+    (*sr)->set_settings(low);
+    const auto low_l2 = shoot(true, 1.0f, true);
+    low.baked_probes = false;
+    (*sr)->set_settings(low);
+    (void)shoot(true, 1.0f, true);
+    CHECK((*sr)->stats().irradiance_probes == 0);
+    const auto l1 = pixel(low_l1, W, W / 2, H / 2), l2 = pixel(low_l2, W, W / 2, H / 2);
+    MESSAGE("Low with baked probes, cube front face red: L1 " << int(channel(l1, 0)) << ", L2 " << int(channel(l2, 0)));
+    CHECK(channel(l1, 0) > 30); // the floor's bounce still reaches it
+    CHECK(std::abs(int(channel(l1, 0)) - int(channel(l2, 0))) < 24);
+    CHECK(channel(l1, 1) < channel(l1, 0) / 4);
     ctx.destroy(room.slab);
     ctx.destroy(room.cube);
 }
