@@ -57,6 +57,7 @@ constexpr GLenum GL_UNSIGNED_BYTE = 0x1401, GL_UNSIGNED_SHORT = 0x1403, GL_INT =
                  GL_FLOAT = 0x1406, GL_HALF_FLOAT = 0x140B, GL_UNSIGNED_INT_2_10_10_10_REV = 0x8368,
                  GL_UNSIGNED_INT_10F_11F_11F_REV = 0x8C3B, GL_UNSIGNED_INT_24_8 = 0x84FA;
 constexpr GLenum GL_RED = 0x1903, GL_RG = 0x8227, GL_RGBA = 0x1908, GL_DEPTH_COMPONENT = 0x1902, GL_DEPTH_STENCIL = 0x84F9;
+constexpr GLenum GL_RGBA32UI = 0x8D70, GL_RGBA_INTEGER = 0x8D99;
 constexpr GLenum GL_R8 = 0x8229, GL_RG8 = 0x822B, GL_RGBA8 = 0x8058, GL_SRGB8_ALPHA8 = 0x8C43, GL_RGBA16F = 0x881A,
                  GL_R16F = 0x822D, GL_RG16F = 0x822F, GL_R32F = 0x822E, GL_RGB10_A2 = 0x8059, GL_R11F_G11F_B10F = 0x8C3A,
                  GL_DEPTH_COMPONENT16 = 0x81A5, GL_DEPTH24_STENCIL8 = 0x88F0, GL_DEPTH_COMPONENT32F = 0x8CAC;
@@ -351,16 +352,26 @@ struct BufferEntry {
     GLuint buf{0};
     std::uint32_t size{0};
     std::uint32_t usage{0};
-    std::vector<std::uint8_t> shadow; // CPU copy of indirect argument buffers
+    std::vector<std::uint8_t> shadow; // CPU copy of indirect argument and storage buffers
+    // Storage buffers (BufferUsageStorageRead) are mirrored into an RGBA32UI texture of
+    // kStorageRowTexels texels per row, 16 bytes per texel: shaders read them with texelFetch.
+    GLuint data_tex{0};
+    std::uint32_t data_width{0}, data_height{0};
 };
 struct ShaderEntry {
     GLuint shader{0};
     ShaderStage stage{ShaderStage::Vertex};
-    std::vector<std::pair<std::uint32_t, std::string>> samplers, ubos;
+    std::vector<std::pair<std::uint32_t, std::string>> samplers, ubos, storage;
+    [[nodiscard]] std::uint32_t sampler_units() const {
+        std::uint32_t n = 0;
+        for (const auto& [slot, name] : samplers) n = std::max(n, slot + 1);
+        return n;
+    }
 };
 struct PipelineEntry {
     GLuint program{0};
     GLint base_instance{-1}; // SPIRV_Cross_BaseInstance (gl_InstanceIndex emulation), -1 if unused
+    std::array<std::uint32_t, 2> storage_unit{}; // first texture unit of the storage slots (vertex, fragment)
     PipelineDesc desc;
     std::array<BlendState, 8> blend{};
 };
@@ -377,7 +388,8 @@ std::uint64_t texture_bytes(const TextureDesc& d) {
     return total * layers * d.sample_count;
 }
 
-constexpr std::uint32_t kFragmentUnitBase = 0, kVertexUnitBase = 16;
+constexpr std::uint32_t kFragmentUnitBase = 0, kVertexUnitBase = 16, kUnitsPerStage = 16;
+constexpr std::uint32_t kStorageRowTexels = 1024;
 constexpr std::uint32_t kVertexUboBase = 0, kFragmentUboBase = 4, kUniformSlots = 4;
 constexpr std::uint32_t kMaxVertexBuffers = 8;
 constexpr GLsizeiptr kUniformRing = 4 << 20;
@@ -410,6 +422,7 @@ void parse_bindings(std::string_view src, ShaderEntry& e) {
         if (s == ~0u) continue;
         if (kind == "sampler") e.samplers.emplace_back(s, std::string(name));
         else if (kind == "ubo") e.ubos.emplace_back(s, std::string(name));
+        else if (kind == "storage") e.storage.emplace_back(s, std::string(name));
     }
 }
 
@@ -425,7 +438,7 @@ struct GlesBackend::State {
     std::vector<std::string> extensions;
     bool float_targets{false}, half_targets{false}, anisotropy{false}, indexed_blend{false};
     GLint ubo_align{256};
-    GLuint vao{0}, fbo{0}, read_fbo{0}, ring{0};
+    GLuint vao{0}, fbo{0}, read_fbo{0}, ring{0}, storage_sampler{0};
     GLsizeiptr ring_offset{0};
     // Last pushed uniform data per stage (0 vertex, 1 fragment) and slot: re-uploaded when the
     // ring is orphaned so bindings never point at discarded storage.
@@ -511,6 +524,9 @@ Result<std::unique_ptr<GlesBackend>> GlesBackend::create(Device& device, const D
     gl.BindVertexArray(s.vao);
     gl.GenFramebuffers(1, &s.fbo);
     gl.GenFramebuffers(1, &s.read_fbo);
+    gl.GenSamplers(1, &s.storage_sampler); // integer data textures must be sampled unfiltered
+    gl.SamplerParameteri(s.storage_sampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    gl.SamplerParameteri(s.storage_sampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     gl.GenBuffers(1, &s.ring);
     gl.BindBuffer(GL_UNIFORM_BUFFER, s.ring);
     gl.BufferData(GL_UNIFORM_BUFFER, kUniformRing, nullptr, GL_STREAM_DRAW);
@@ -550,13 +566,17 @@ GlesBackend::~GlesBackend() {
             for (auto& e : s.samplers.entries)
                 if (e.alive) gl.DeleteSamplers(1, &e.value);
             for (auto& e : s.buffers.entries)
-                if (e.alive) gl.DeleteBuffers(1, &e.value.buf);
+                if (e.alive) {
+                    gl.DeleteBuffers(1, &e.value.buf);
+                    if (e.value.data_tex) gl.DeleteTextures(1, &e.value.data_tex);
+                }
             for (auto& e : s.textures.entries) {
                 if (!e.alive) continue;
                 if (e.value.tex) gl.DeleteTextures(1, &e.value.tex);
                 if (e.value.renderbuffer) gl.DeleteRenderbuffers(1, &e.value.renderbuffer);
             }
             gl.DeleteBuffers(1, &s.ring);
+            gl.DeleteSamplers(1, &s.storage_sampler);
             gl.DeleteFramebuffers(1, &s.fbo);
             gl.DeleteFramebuffers(1, &s.read_fbo);
             gl.DeleteVertexArrays(1, &s.vao);
@@ -670,8 +690,19 @@ Result<BufferHandle> GlesBackend::create_buffer(const BufferDesc& desc) {
     gl.BufferData(target, desc.size, nullptr, GL_DYNAMIC_DRAW);
     gl.BindVertexArray(s_->vao);
     if (desc.usage & BufferUsageIndirect) e.shadow.assign(desc.size, 0);
+    if ((desc.usage & BufferUsageStorageRead) && desc.size > 0) {
+        const std::uint32_t texels = (desc.size + 15) / 16;
+        e.data_width = std::min(texels, kStorageRowTexels);
+        e.data_height = (texels + kStorageRowTexels - 1) / kStorageRowTexels;
+        e.shadow.assign(std::size_t{e.data_width} * e.data_height * 16, 0);
+        gl.GenTextures(1, &e.data_tex);
+        gl.BindTexture(GL_TEXTURE_2D, e.data_tex);
+        gl.TexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32UI, static_cast<GLsizei>(e.data_width), static_cast<GLsizei>(e.data_height));
+        gl.BindTexture(GL_TEXTURE_2D, 0);
+    }
     if (const GLenum err = gl.GetError(); err != GL_NO_ERROR) {
         gl.DeleteBuffers(1, &e.buf);
+        if (e.data_tex) gl.DeleteTextures(1, &e.data_tex);
         return make_error(ErrorCode::DeviceError, std::format("create buffer '{}' failed (GL error 0x{:x})", desc.name, err));
     }
     device_.stats_.buffer_bytes += desc.size;
@@ -707,12 +738,16 @@ Result<ShaderHandle> GlesBackend::create_shader(const ShaderDesc& desc) {
     if (desc.stage == ShaderStage::Compute) return make_error(ErrorCode::Unsupported, "GLES has no compute shaders");
     if (desc.glsl_es.empty())
         return make_error(ErrorCode::Unsupported, std::format("shader '{}' has no GLSL ES source for the GLES backend", desc.name));
-    if (desc.storage_buffers || desc.storage_textures)
-        return make_error(ErrorCode::Unsupported, std::format("shader '{}' uses storage resources, which GLES 3.0 lacks", desc.name));
+    if (desc.storage_textures)
+        return make_error(ErrorCode::Unsupported, std::format("shader '{}' uses storage textures, which GLES 3.0 lacks", desc.name));
     auto& gl = s_->gl;
     ShaderEntry e;
     e.stage = desc.stage;
     parse_bindings(desc.glsl_es, e);
+    if (e.storage.size() < desc.storage_buffers)
+        return make_error(ErrorCode::Unsupported,
+                          std::format("shader '{}': {} storage buffers but only {} \"//! storage\" slots in its GLSL ES", desc.name,
+                                      desc.storage_buffers, e.storage.size()));
     e.shader = gl.CreateShader(desc.stage == ShaderStage::Vertex ? GL_VERTEX_SHADER : GL_FRAGMENT_SHADER);
     const GLchar* src = desc.glsl_es.data();
     const auto len = static_cast<GLint>(desc.glsl_es.size());
@@ -765,6 +800,21 @@ Result<PipelineHandle> GlesBackend::create_pipeline(const PipelineDesc& desc) {
                 gl.UniformBlockBinding(p.program, idx, ubo_base + slot);
     };
     bind(*vs, kVertexUnitBase, kVertexUboBase);
+    // Storage slots take the texture units after the stage's samplers.
+    const auto bind_storage = [&](const ShaderEntry& sh, std::uint32_t unit_base, std::uint32_t stage) -> bool {
+        p.storage_unit[stage] = unit_base + sh.sampler_units();
+        for (const auto& [slot, name] : sh.storage) {
+            if (sh.sampler_units() + slot >= kUnitsPerStage) return false;
+            if (const GLint loc = gl.GetUniformLocation(p.program, name.c_str()); loc >= 0)
+                gl.Uniform1i(loc, static_cast<GLint>(p.storage_unit[stage] + slot));
+        }
+        return true;
+    };
+    if (!bind_storage(*vs, kVertexUnitBase, 0) || !bind_storage(*fs, kFragmentUnitBase, 1)) {
+        gl.DeleteProgram(p.program);
+        return make_error(ErrorCode::Unsupported, std::format("pipeline '{}': more than {} samplers and storage buffers in one stage",
+                                                              desc.name, kUnitsPerStage));
+    }
     p.base_instance = gl.GetUniformLocation(p.program, "SPIRV_Cross_BaseInstance");
     bind(*fs, kFragmentUnitBase, kFragmentUboBase);
     for (std::size_t i = 0; i < desc.color_targets.size(); ++i) p.blend[i] = gl_blend(desc.color_targets[i].blend);
@@ -793,6 +843,7 @@ void GlesBackend::destroy(BufferHandle h) {
     BufferEntry e;
     if (!s_->buffers.remove(h, e)) return;
     s_->gl.DeleteBuffers(1, &e.buf);
+    if (e.data_tex) s_->gl.DeleteTextures(1, &e.data_tex);
     for (auto& vb : s_->vbs)
         if (vb.buf == e.buf) vb = {};
     if (s_->index_buf == e.buf) s_->index_buf = 0;
@@ -967,6 +1018,18 @@ void GlesBackend::upload_buffer(BufferHandle buffer, std::uint32_t offset, std::
     gl.BufferSubData(target, offset, static_cast<GLsizeiptr>(data.size()), data.data());
     gl.BindVertexArray(s_->vao);
     if (!e->shadow.empty()) std::memcpy(e->shadow.data() + offset, data.data(), data.size());
+    if (e->data_tex) {
+        // Re-upload the whole rows the write touched (the shadow is padded to full rows).
+        const std::uint32_t row_bytes = e->data_width * 16;
+        const std::uint32_t first = offset / row_bytes;
+        const std::uint32_t last = (offset + static_cast<std::uint32_t>(data.size()) - 1) / row_bytes;
+        gl.PixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        gl.BindTexture(GL_TEXTURE_2D, e->data_tex);
+        gl.TexSubImage2D(GL_TEXTURE_2D, 0, 0, static_cast<GLint>(first), static_cast<GLsizei>(e->data_width),
+                         static_cast<GLsizei>(last - first + 1), GL_RGBA_INTEGER, GL_UNSIGNED_INT,
+                         e->shadow.data() + std::size_t{first} * row_bytes);
+        gl.BindTexture(GL_TEXTURE_2D, 0);
+    }
     device_.stats_.uploads++;
     device_.stats_.upload_bytes += data.size();
 }
@@ -1324,6 +1387,21 @@ void GlesBackend::bind_texture(ShaderStage stage, std::uint32_t slot, TextureHan
     gl.ActiveTexture(GL_TEXTURE0 + unit);
     gl.BindTexture(t->target, t->tex);
     gl.BindSampler(unit, *smp);
+    gl.ActiveTexture(GL_TEXTURE0);
+}
+
+void GlesBackend::bind_storage_buffer(ShaderStage stage, std::uint32_t slot, BufferHandle buffer) {
+    auto* b = s_->buffers.get(buffer);
+    auto* p = s_->pipelines.get(s_->pipeline);
+    if (!b || !b->data_tex || !p) {
+        VICTUS_LOG_ERROR("rhi", "bind_storage_buffer: needs a bound pipeline and a BufferUsageStorageRead buffer (slot {})", slot);
+        return;
+    }
+    auto& gl = s_->gl;
+    const std::uint32_t unit = p->storage_unit[stage == ShaderStage::Vertex ? 0 : 1] + slot;
+    gl.ActiveTexture(GL_TEXTURE0 + unit);
+    gl.BindTexture(GL_TEXTURE_2D, b->data_tex);
+    gl.BindSampler(unit, s_->storage_sampler);
     gl.ActiveTexture(GL_TEXTURE0);
 }
 

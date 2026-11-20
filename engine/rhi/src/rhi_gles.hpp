@@ -13,10 +13,14 @@
 //  * Resource slots: the source declares them in comment lines, one per resource:
 //      //! sampler <slot> <glsl name>      combined image samplers, SDL_GPU sampler slots
 //      //! ubo <slot> <block name>         uniform blocks, SDL_GPU push-uniform slots
+//      //! storage <slot> <glsl name>      read-only storage buffers, as a highp usampler2D
+//    ES 3.00 has no storage buffers, so each BufferUsageStorageRead buffer is mirrored into an
+//    RGBA32UI texture, 1024 texels (16 bytes each) per row: byte offset 16 * i is texel
+//    (i % 1024, i / 1024). Storage slots use the texture units after the stage's samplers.
 //    Fragment samplers use texture units 0-15, vertex samplers 16-31; vertex uniform slots use
 //    binding points 0-3, fragment slots 4-7.
-//  * There is no compute, no storage buffers and no indirect draws on the GPU: indirect draws
-//    are replayed from a CPU copy of the argument buffer.
+//  * There is no compute and no indirect draws on the GPU: indirect draws are replayed from a
+//    CPU copy of the argument buffer.
 //  * The device is single-threaded: every call must come from the thread that created it.
 #pragma once
 
@@ -77,6 +81,7 @@ public:
     void bind_vertex_buffer(std::uint32_t slot, BufferHandle buffer, std::uint32_t offset);
     void bind_index_buffer(BufferHandle buffer, IndexType type, std::uint32_t offset);
     void bind_texture(ShaderStage stage, std::uint32_t slot, TextureHandle texture, SamplerHandle sampler);
+    void bind_storage_buffer(ShaderStage stage, std::uint32_t slot, BufferHandle buffer);
     void draw(std::uint32_t vertex_count, std::uint32_t instance_count, std::uint32_t first_vertex, std::uint32_t first_instance);
     void draw_indexed(std::uint32_t index_count, std::uint32_t instance_count, std::uint32_t first_index,
                       std::int32_t vertex_offset, std::uint32_t first_instance);

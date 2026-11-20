@@ -1192,7 +1192,7 @@ void RenderPass::bind_texture(ShaderStage stage, std::uint32_t slot, TextureHand
     else SDL_BindGPUFragmentSamplers(static_cast<SDL_GPURenderPass*>(pass_), slot, &b, 1);
 }
 void RenderPass::bind_storage_buffer(ShaderStage stage, std::uint32_t slot, BufferHandle buffer) {
-    if (device_->impl_->gl) return; // no storage buffers on GLES (shaders using them are rejected)
+    if (auto* gl = device_->impl_->gl.get()) return gl->bind_storage_buffer(stage, slot, buffer);
     auto* b = device_->impl_->buffers.get(buffer);
     if (!b) return;
     SDL_GPUBuffer* buf = b->buf;

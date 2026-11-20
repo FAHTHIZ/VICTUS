@@ -2072,3 +2072,13 @@ Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): `compile_shaders.py --check`
 Not covered: 11 graphics shaders still need storage-buffer rewrites (skinning palettes, PBR clustered lights, fog apply, particles, precipitation). Mobile GLES drivers and their `highp` support are untested.
 
 Next task: move the storage-buffer reads of those shaders to uniform blocks or data textures under `VICTUS_ESSL`, then the scene renderer on Low against the Vulkan golden.
+
+## 2026-11-20 — Storage buffers on GLES as data textures; skinning shaders (ADR-0144 phase 2c)
+
+Built: the GLES backend mirrors `BufferUsageStorageRead` buffers into RGBA32UI textures (1024 texels per row, partial uploads touch only their rows) and binds them with `bind_storage_buffer` after the stage's samplers. `compile_shaders.py` emits `//! storage` slots for `vx_storage<N>` textures (ESSL rev 3). `mesh_skinned`, `depth_skinned`, `shadow_skinned` and `motion_skinned` vertex shaders fetch the joint palette from that texture under `VICTUS_ESSL`.
+
+Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): `compile_shaders.py --check` up to date (62), SPIR-V/MSL unchanged; `gpu_gles_tests` 11 cases: 48 built-in GLSL ES shaders compile; a skinned quad follows a joint stored in the second data row and returns after a partial palette upload. `VICTUS_REQUIRE_GPU=1 ctest --test-dir build -j2` 39/39; clang-tidy clean.
+
+Not covered: `pbr.frag` (clustered lights), `fog_apply.frag`, `particle.frag`, `precipitation.frag` (and their variants) still lack ESSL; storage textures are unsupported on GLES; mobile drivers untested.
+
+Next task: the same data-texture reads for PBR clustered lights, fog apply, particles and precipitation, then the scene renderer on Low against the Vulkan golden.

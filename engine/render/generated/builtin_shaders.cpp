@@ -567,7 +567,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Down& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_0[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_src
@@ -867,7 +867,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Up& u [[buffer(0)]],
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_1[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_src
@@ -2135,7 +2135,7 @@ fragment main0_out main0(constant Clouds& u [[buffer(0)]], texture2d<float> u_de
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_2[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_depth
@@ -2725,7 +2725,7 @@ fragment main0_out main0(constant Params& u [[buffer(0)]], texture2d<float> u_cl
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_3[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 1 u_depth
@@ -3240,7 +3240,7 @@ fragment main0_out main0(constant Params& u [[buffer(0)]], texture2d<float> u_te
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_4[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 1 u_depth
@@ -3508,7 +3508,7 @@ vertex main0_out main0(constant Frame& frame [[buffer(0)]], uint gl_VertexIndex 
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_5[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -3672,7 +3672,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_6[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -3701,7 +3701,7 @@ void main()
 }
 
 )VICTUSMSL";
-// depth_skinned.vert sha256=c04c3d49a60dd27bed84b79949ed9bcd5fba54b73d363a8da72511cffd213be8
+// depth_skinned.vert sha256=b559f12918f911519283bee91aa758a1c9009fd5d3268e9603a5f143475645f2
 const std::uint8_t k_spirv_7[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0xac, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53, 0x4c,
@@ -3972,8 +3972,68 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
-const char k_essl_7[] = "";
+// essl rev=3
+const char k_essl_7[] =
+R"VICTUSMSL(#version 300 es
+//! storage 0 vx_storage0
+//! ubo 0 vs_Frame
+
+invariant gl_Position;
+
+layout(std140) uniform vs_Frame
+{
+    mat4 view_proj;
+} frame;
+
+uniform highp usampler2D vx_storage0;
+
+layout(location = 8) in vec4 in_normal0;
+layout(location = 12) in vec4 in_weights;
+layout(location = 11) in uvec4 in_joints;
+layout(location = 4) in vec4 in_model0;
+layout(location = 5) in vec4 in_model1;
+layout(location = 6) in vec4 in_model2;
+layout(location = 7) in vec4 in_model3;
+layout(location = 0) in vec3 in_pos;
+
+vec4 joint_column(uint t)
+{
+    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+}
+
+mat4 joint_matrix(uint i)
+{
+    uint t = i * 4u;
+    uint param = t;
+    uint param_1 = t + 1u;
+    uint param_2 = t + 2u;
+    uint param_3 = t + 3u;
+    return mat4(vec4(joint_column(param)), vec4(joint_column(param_1)), vec4(joint_column(param_2)), vec4(joint_column(param_3)));
+}
+
+void main()
+{
+    uint base = uint(in_normal0.w + 0.5);
+    uint param = base + in_joints.x;
+    mat4 _113 = joint_matrix(param) * in_weights.x;
+    uint param_1 = base + in_joints.y;
+    mat4 _122 = joint_matrix(param_1) * in_weights.y;
+    mat4 _135 = mat4(_113[0] + _122[0], _113[1] + _122[1], _113[2] + _122[2], _113[3] + _122[3]);
+    uint param_2 = base + in_joints.z;
+    mat4 _144 = joint_matrix(param_2) * in_weights.z;
+    mat4 _157 = mat4(_135[0] + _144[0], _135[1] + _144[1], _135[2] + _144[2], _135[3] + _144[3]);
+    uint param_3 = base + in_joints.w;
+    mat4 _166 = joint_matrix(param_3) * in_weights.w;
+    mat4 skin = mat4(_157[0] + _166[0], _157[1] + _166[1], _157[2] + _166[2], _157[3] + _166[3]);
+    mat4 model = mat4(vec4(in_model0), vec4(in_model1), vec4(in_model2), vec4(in_model3));
+    vec4 world = model * (skin * vec4(in_pos, 1.0));
+    vec4 _235 = frame.view_proj * world;
+    gl_Position = _235;
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+    gl_Position.y = -gl_Position.y;
+}
+
+)VICTUSMSL";
 // env_equirect.frag sha256=1b1ec31af14b8a35185a9dfe1236c238a4d20323cc0a4aab50fd1c3840634196
 const std::uint8_t k_spirv_8[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0x95, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -4200,7 +4260,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Face& f [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_8[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_equirect
@@ -4795,7 +4855,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Prefilter& p [[buffe
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_9[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_source
@@ -5120,7 +5180,7 @@ fragment main0_out main0(constant Exposure& u [[buffer(0)]], texture2d<float> u_
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_10[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_lum
@@ -5582,7 +5642,7 @@ fragment main0_out main0(constant Params& u [[buffer(0)]], const device Integrat
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_11[] = "";
 // fog_inject.comp sha256=f2edfca1e5ea7af36c54df8745049d3e4444687a95f94eb6cd9ad93e8a0ed702
 const std::uint8_t k_spirv_12[] = {
@@ -7500,7 +7560,7 @@ R"VICTUSMSL(   float3 param_9 = p;
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_12[] = "";
 // fog_integrate.comp sha256=c33596373844552c7a0fb626b23c6b845c458bac0ffff5e6533c5751ae5fa505
 const std::uint8_t k_spirv_13[] = {
@@ -7877,7 +7937,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device Froxels& _169 [[buffe
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_13[] = "";
 // fullscreen.vert sha256=bc55a1cdc8003d13c16f86acc040bff8f571d3c93326188fcecf14c8716a0c24
 const std::uint8_t k_spirv_14[] = {
@@ -7969,7 +8029,7 @@ vertex main0_out main0(uint gl_VertexIndex [[vertex_id]])
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_14[] =
 R"VICTUSMSL(#version 300 es
 
@@ -8928,7 +8988,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Fxaa& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_15[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_ldr
@@ -9356,7 +9416,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device HiZ& _113 [[buffer(1)
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_16[] = "";
 // hiz_reduce.comp sha256=e9a5a661fa1b41d6e9df65abbce4b0f5f3347ac75307cecc5082376329c90d79
 const std::uint8_t k_spirv_17[] = {
@@ -9553,7 +9613,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device HiZ& _88 [[buffer(1)]
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_17[] = "";
 // light2d.frag sha256=fd9cb4d313f7be7947648048cf7b739b8af4bbc3c28617830d891e985c94e8aa
 const std::uint8_t k_spirv_18[] = {
@@ -9730,7 +9790,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_18[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 fs_Params
@@ -9949,7 +10009,7 @@ vertex main0_out main0(constant Frame& frame [[buffer(0)]], uint gl_VertexIndex 
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_19[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -10020,7 +10080,7 @@ fragment main0_out main0(main0_in in [[stage_in]])
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_20[] =
 R"VICTUSMSL(#version 300 es
 precision mediump float;
@@ -10134,7 +10194,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_21[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -10350,7 +10410,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Lum& u [[buffer(0)]]
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_22[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_hdr
@@ -10683,7 +10743,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_23[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -11039,7 +11099,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_24[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -11090,7 +11150,7 @@ void main()
 }
 
 )VICTUSMSL";
-// mesh_skinned.vert sha256=79ec6c270cdd67e934fb81bbe6f06ad241bd0923e98087173e201e6f19279f02
+// mesh_skinned.vert sha256=3fb4d4f47cd18fd9a2a04fca891cf57ccaff97e5b9db1025e25e0438783b9977
 const std::uint8_t k_spirv_25[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0x16, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53, 0x4c,
@@ -11523,8 +11583,89 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
-const char k_essl_25[] = "";
+// essl rev=3
+const char k_essl_25[] =
+R"VICTUSMSL(#version 300 es
+//! storage 0 vx_storage0
+//! ubo 0 vs_Frame
+
+invariant gl_Position;
+
+layout(std140) uniform vs_Frame
+{
+    mat4 view_proj;
+} frame;
+
+uniform highp usampler2D vx_storage0;
+
+layout(location = 8) in vec4 in_normal0;
+layout(location = 12) in vec4 in_weights;
+layout(location = 11) in uvec4 in_joints;
+layout(location = 4) in vec4 in_model0;
+layout(location = 5) in vec4 in_model1;
+layout(location = 6) in vec4 in_model2;
+layout(location = 7) in vec4 in_model3;
+layout(location = 9) in vec4 in_normal1;
+layout(location = 10) in vec4 in_normal2;
+layout(location = 0) in vec3 in_pos;
+out vec3 vx_io_0;
+out vec3 vx_io_1;
+layout(location = 1) in vec3 in_normal;
+out vec4 vx_io_3;
+layout(location = 3) in vec4 in_tangent;
+out vec2 vx_io_2;
+layout(location = 2) in vec2 in_uv;
+layout(location = 13) in vec4 in_color;
+out vec4 vx_io_4;
+out vec3 vx_io_5;
+
+vec4 joint_column(uint t)
+{
+    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+}
+
+mat4 joint_matrix(uint i)
+{
+    uint t = i * 4u;
+    uint param = t;
+    uint param_1 = t + 1u;
+    uint param_2 = t + 2u;
+    uint param_3 = t + 3u;
+    return mat4(vec4(joint_column(param)), vec4(joint_column(param_1)), vec4(joint_column(param_2)), vec4(joint_column(param_3)));
+}
+
+void main()
+{
+    uint base = uint(in_normal0.w + 0.5);
+    uint param = base + in_joints.x;
+    mat4 _113 = joint_matrix(param) * in_weights.x;
+    uint param_1 = base + in_joints.y;
+    mat4 _122 = joint_matrix(param_1) * in_weights.y;
+    mat4 _135 = mat4(_113[0] + _122[0], _113[1] + _122[1], _113[2] + _122[2], _113[3] + _122[3]);
+    uint param_2 = base + in_joints.z;
+    mat4 _144 = joint_matrix(param_2) * in_weights.z;
+    mat4 _157 = mat4(_135[0] + _144[0], _135[1] + _144[1], _135[2] + _144[2], _135[3] + _144[3]);
+    uint param_3 = base + in_joints.w;
+    mat4 _166 = joint_matrix(param_3) * in_weights.w;
+    mat4 skin = mat4(_157[0] + _166[0], _157[1] + _166[1], _157[2] + _166[2], _157[3] + _166[3]);
+    mat4 model = mat4(vec4(in_model0), vec4(in_model1), vec4(in_model2), vec4(in_model3));
+    mat3 normal_matrix = mat3(vec3(in_normal0.xyz), vec3(in_normal1.xyz), vec3(in_normal2.xyz));
+    vec4 world = model * (skin * vec4(in_pos, 1.0));
+    mat3 skin3 = mat3(skin[0].xyz, skin[1].xyz, skin[2].xyz);
+    vx_io_0 = world.xyz;
+    vx_io_1 = normalize(normal_matrix * (skin3 * in_normal));
+    vx_io_3 = vec4(normalize(mat3(model[0].xyz, model[1].xyz, model[2].xyz) * (skin3 * in_tangent.xyz)), in_tangent.w);
+    vx_io_2 = in_uv;
+    vec3 c = in_color.xyz;
+    vx_io_4 = vec4(mix(c / vec3(12.9200000762939453125), pow((c + vec3(0.054999999701976776123046875)) / vec3(1.05499994754791259765625), vec3(2.400000095367431640625)), step(vec3(0.040449999272823333740234375), c)), in_color.w);
+    vec4 _340 = frame.view_proj * world;
+    gl_Position = _340;
+    vx_io_5 = vec3(0.0);
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+    gl_Position.y = -gl_Position.y;
+}
+
+)VICTUSMSL";
 // motion.frag sha256=8f7ec2a726cb193fdbeb1f38b8571a472832f5ebdf459a69aad99d5f31f557e8
 const std::uint8_t k_spirv_26[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -11617,7 +11758,7 @@ fragment main0_out main0(main0_in in [[stage_in]])
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_26[] =
 R"VICTUSMSL(#version 300 es
 precision mediump float;
@@ -11840,7 +11981,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_27[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -11879,7 +12020,7 @@ void main()
 }
 
 )VICTUSMSL";
-// motion_skinned.vert sha256=dd71c80e6499049df20b96673f0f8d0b11708bfc0446e354723b34be4f9cbacc
+// motion_skinned.vert sha256=d2da3e01cdd23319e9106055274b12740cbf49ab71e7907f8a6d1656c678e021
 const std::uint8_t k_spirv_28[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53, 0x4c,
@@ -12304,8 +12445,90 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
-const char k_essl_28[] = "";
+// essl rev=3
+const char k_essl_28[] =
+R"VICTUSMSL(#version 300 es
+//! storage 0 vx_storage0
+//! ubo 0 vs_Frame
+
+invariant gl_Position;
+
+layout(std140) uniform vs_Frame
+{
+    mat4 view_proj;
+    mat4 prev_view_proj;
+} frame;
+
+uniform highp usampler2D vx_storage0;
+
+layout(location = 13) in vec4 in_params;
+layout(location = 12) in vec4 in_weights;
+layout(location = 11) in uvec4 in_joints;
+layout(location = 4) in vec4 in_model0;
+layout(location = 5) in vec4 in_model1;
+layout(location = 6) in vec4 in_model2;
+layout(location = 7) in vec4 in_model3;
+layout(location = 0) in vec3 in_pos;
+layout(location = 8) in vec4 in_prev_row0;
+layout(location = 9) in vec4 in_prev_row1;
+layout(location = 10) in vec4 in_prev_row2;
+out vec4 vx_io_0;
+out vec4 vx_io_1;
+
+vec4 joint_column(uint t)
+{
+    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+}
+
+mat4 joint_matrix(uint i)
+{
+    uint t = i * 4u;
+    uint param = t;
+    uint param_1 = t + 1u;
+    uint param_2 = t + 2u;
+    uint param_3 = t + 3u;
+    return mat4(vec4(joint_column(param)), vec4(joint_column(param_1)), vec4(joint_column(param_2)), vec4(joint_column(param_3)));
+}
+
+void main()
+{
+    uint base = uint(in_params.x + 0.5);
+    uint param = base + in_joints.x;
+    mat4 _113 = joint_matrix(param) * in_weights.x;
+    uint param_1 = base + in_joints.y;
+    mat4 _122 = joint_matrix(param_1) * in_weights.y;
+    mat4 _135 = mat4(_113[0] + _122[0], _113[1] + _122[1], _113[2] + _122[2], _113[3] + _122[3]);
+    uint param_2 = base + in_joints.z;
+    mat4 _144 = joint_matrix(param_2) * in_weights.z;
+    mat4 _157 = mat4(_135[0] + _144[0], _135[1] + _144[1], _135[2] + _144[2], _135[3] + _144[3]);
+    uint param_3 = base + in_joints.w;
+    mat4 _166 = joint_matrix(param_3) * in_weights.w;
+    mat4 skin = mat4(_157[0] + _166[0], _157[1] + _166[1], _157[2] + _166[2], _157[3] + _166[3]);
+    mat4 model = mat4(vec4(in_model0), vec4(in_model1), vec4(in_model2), vec4(in_model3));
+    vec4 world = model * (skin * vec4(in_pos, 1.0));
+    vec4 _235 = frame.view_proj * world;
+    gl_Position = _235;
+    uint pb = uint(in_params.y + 0.5);
+    uint param_4 = pb + in_joints.x;
+    mat4 _252 = joint_matrix(param_4) * in_weights.x;
+    uint param_5 = pb + in_joints.y;
+    mat4 _261 = joint_matrix(param_5) * in_weights.y;
+    mat4 _274 = mat4(_252[0] + _261[0], _252[1] + _261[1], _252[2] + _261[2], _252[3] + _261[3]);
+    uint param_6 = pb + in_joints.z;
+    mat4 _283 = joint_matrix(param_6) * in_weights.z;
+    mat4 _296 = mat4(_274[0] + _283[0], _274[1] + _283[1], _274[2] + _283[2], _274[3] + _283[3]);
+    uint param_7 = pb + in_joints.w;
+    mat4 _305 = joint_matrix(param_7) * in_weights.w;
+    mat4 prev_skin = mat4(_296[0] + _305[0], _296[1] + _305[1], _296[2] + _305[2], _296[3] + _305[3]);
+    vec4 p = prev_skin * vec4(in_pos, 1.0);
+    vec3 prev_world = vec3(dot(in_prev_row0, p), dot(in_prev_row1, p), dot(in_prev_row2, p));
+    vx_io_0 = frame.prev_view_proj * world;
+    vx_io_1 = frame.prev_view_proj * vec4(prev_world, 1.0);
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+    gl_Position.y = -gl_Position.y;
+}
+
+)VICTUSMSL";
 // occlusion_cull.comp sha256=509dae0f2258c0cc0797cd47b54c3a16f7fa96dca70583ee3b75a6f64a5eaa26
 const std::uint8_t k_spirv_29[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0xab, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -13027,7 +13250,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device Instances& _419 [[buf
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_29[] = "";
 // overdraw.frag sha256=685618088a53582be7fbcb25652e6aebec39028d2b8da666b0624cdf02566c42
 const std::uint8_t k_spirv_30[] = {
@@ -13070,7 +13293,7 @@ fragment main0_out main0()
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_30[] =
 R"VICTUSMSL(#version 300 es
 precision mediump float;
@@ -13326,7 +13549,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Heat& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_31[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_count
@@ -14165,7 +14388,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_32[] = "";
 // particle.frag#reactive sha256=6e22f692c8b5006967d69322ee83f1e42a7927bb69b77d1147e63aa0966280f6
 const std::uint8_t k_spirv_33[] = {
@@ -14967,7 +15190,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_33[] = "";
 // particle.vert sha256=5308eb9280e9897096d4288b6b7f20d702c26d60fb84ab74dc3be1d2eb7030d8
 const std::uint8_t k_spirv_34[] = {
@@ -15319,7 +15542,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_34[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -18142,7 +18365,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device Spawns& _1484 [[buffe
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_35[] = "";
 // particle_sort.comp sha256=215de75124d9a0ba97a63a0310a2fb3f0b9da8a81807cc36b966fb7d4012ea9e
 const std::uint8_t k_spirv_36[] = {
@@ -18801,7 +19024,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device Instances& _143 [[buf
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_36[] = "";
 // pbr.frag sha256=42a47a59f5dd770f0e078a33365b9da42c4b55ea1734a517f6fa33475cc75c19
 const std::uint8_t k_spirv_37[] = {
@@ -24191,7 +24414,7 @@ R"VICTUSMSL(else
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_37[] = "";
 // pbr.frag#fp16 sha256=5759f39cbbb9aefa12cabd72c83b326f106460e3a46659bdb9457bde8e744b4d
 const std::uint8_t k_spirv_38[] = {
@@ -29702,7 +29925,7 @@ R"VICTUSMSL(_texel = _3123;
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_38[] = "";
 // precipitation.frag sha256=a15835e5062b549c41867b9678fe9a067a57c361c2c8d26bcfcd0d1e2c7cf820
 const std::uint8_t k_spirv_39[] = {
@@ -30584,7 +30807,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_39[] = "";
 // precipitation.frag#reactive sha256=2070e1e03b972d7496488c88586bbbbd890692ba8fdda8b6903ce11bfc0cd6f1
 const std::uint8_t k_spirv_40[] = {
@@ -31474,7 +31697,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_40[] = "";
 // precipitation.vert sha256=5509c864f1f92973ba3d6fbea8058250cddb51d2dd260cbade221a8f055d5548
 const std::uint8_t k_spirv_41[] = {
@@ -32137,7 +32360,7 @@ vertex main0_out main0(constant Frame& u [[buffer(0)]], uint gl_VertexIndex [[ve
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_41[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -32453,7 +32676,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_42[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -32521,7 +32744,7 @@ fragment void main0()
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_43[] =
 R"VICTUSMSL(#version 300 es
 precision mediump float;
@@ -32669,7 +32892,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Shadow& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_44[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Shadow
@@ -32787,7 +33010,7 @@ fragment void main0(main0_in in [[stage_in]], constant AlphaTest& m [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_45[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_base_color
@@ -32964,7 +33187,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Shadow& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_46[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Shadow
@@ -32992,7 +33215,7 @@ void main()
 }
 
 )VICTUSMSL";
-// shadow_skinned.vert sha256=a57c68cf979df9b459cf32e37881e8f55307165d803a5efa34c332b2091f3501
+// shadow_skinned.vert sha256=e9f01796344832e77fa28b9dd598c05273260a54ee2c0a84f1cd9c467e8361cb
 const std::uint8_t k_spirv_47[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0xa9, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53, 0x4c,
@@ -33257,8 +33480,64 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Shadow& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=2
-const char k_essl_47[] = "";
+// essl rev=3
+const char k_essl_47[] =
+R"VICTUSMSL(#version 300 es
+//! storage 0 vx_storage0
+//! ubo 0 vs_Shadow
+
+layout(std140) uniform vs_Shadow
+{
+    mat4 light_view_proj;
+} u;
+
+uniform highp usampler2D vx_storage0;
+
+layout(location = 8) in vec4 in_normal0;
+layout(location = 12) in vec4 in_weights;
+layout(location = 11) in uvec4 in_joints;
+layout(location = 4) in vec4 in_model0;
+layout(location = 5) in vec4 in_model1;
+layout(location = 6) in vec4 in_model2;
+layout(location = 7) in vec4 in_model3;
+layout(location = 0) in vec3 in_pos;
+
+vec4 joint_column(uint t)
+{
+    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+}
+
+mat4 joint_matrix(uint i)
+{
+    uint t = i * 4u;
+    uint param = t;
+    uint param_1 = t + 1u;
+    uint param_2 = t + 2u;
+    uint param_3 = t + 3u;
+    return mat4(vec4(joint_column(param)), vec4(joint_column(param_1)), vec4(joint_column(param_2)), vec4(joint_column(param_3)));
+}
+
+void main()
+{
+    uint base = uint(in_normal0.w + 0.5);
+    uint param = base + in_joints.x;
+    mat4 _113 = joint_matrix(param) * in_weights.x;
+    uint param_1 = base + in_joints.y;
+    mat4 _122 = joint_matrix(param_1) * in_weights.y;
+    mat4 _135 = mat4(_113[0] + _122[0], _113[1] + _122[1], _113[2] + _122[2], _113[3] + _122[3]);
+    uint param_2 = base + in_joints.z;
+    mat4 _144 = joint_matrix(param_2) * in_weights.z;
+    mat4 _157 = mat4(_135[0] + _144[0], _135[1] + _144[1], _135[2] + _144[2], _135[3] + _144[3]);
+    uint param_3 = base + in_joints.w;
+    mat4 _166 = joint_matrix(param_3) * in_weights.w;
+    mat4 skin = mat4(_157[0] + _166[0], _157[1] + _166[1], _157[2] + _166[2], _157[3] + _166[3]);
+    mat4 model = mat4(vec4(in_model0), vec4(in_model1), vec4(in_model2), vec4(in_model3));
+    gl_Position = u.light_view_proj * (model * (skin * vec4(in_pos, 1.0)));
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+    gl_Position.y = -gl_Position.y;
+}
+
+)VICTUSMSL";
 // sky.frag sha256=49ec4a2e5694a43af4e1e3c88bf0b5af509c79db08464149d6b62fe51e71ea5b
 const std::uint8_t k_spirv_48[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0x59, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -33772,7 +34051,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Sky& sky [[buffer(0)
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_48[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_env
@@ -34491,7 +34770,7 @@ vertex main0_out main0(constant Frame& u [[buffer(0)]], texture2d<float> u_rain_
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_49[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_rain_depth
@@ -34821,7 +35100,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_50[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_texture
@@ -34987,7 +35266,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_51[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -35256,7 +35535,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_52[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_texture
@@ -35762,7 +36041,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Ssao& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_53[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_depth
@@ -36054,7 +36333,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Blur& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_54[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 1 u_depth
@@ -37236,7 +37515,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Taa& u [[buffer(0)]]
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_55[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 1 u_history
@@ -38691,7 +38970,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant TaaUpscale& u [[buff
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_56[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 1 u_history
@@ -39484,7 +39763,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Post& post [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_57[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_hdr
@@ -40364,7 +40643,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Upscale& u [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_58[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 0 u_ldr
@@ -41852,7 +42131,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_59[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 2 u_env
@@ -43501,7 +43780,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_60[] =
 R"VICTUSMSL(#version 300 es
 //! sampler 2 u_env
@@ -44207,7 +44486,7 @@ vertex main0_out main0(constant Frame& frame [[buffer(0)]], uint gl_VertexIndex 
 }
 
 )VICTUSMSL";
-// essl rev=2
+// essl rev=3
 const char k_essl_61[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
