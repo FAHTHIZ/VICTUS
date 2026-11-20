@@ -398,6 +398,7 @@ void Editor::frame(float dt) {
     else draw_workspace(dt);
     draw_modals();
     draw_export_dialog();
+    poll_lighting_bake();
     draw_diagnostics_dialog();
     draw_about_dialog();
     draw_crash_notice();
@@ -543,6 +544,12 @@ void Editor::draw_menu_bar() {
     }
     if (ImGui::BeginMenu("Assets")) {
         if (ImGui::MenuItem("Reimport All")) (void)reimport_assets();
+        if (ImGui::MenuItem(baking_lighting() ? "Baking Lighting..." : "Bake Lighting", nullptr, false,
+                            editing && project_ && !baking_lighting()))
+            if (auto st = start_lighting_bake(); !st.ok()) notify("Bake Lighting: " + st.error().message, true);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Bakes soft light and bounces into the meshes marked Static Lighting.\n"
+                              "Cheap at runtime on every device; re-bake after moving them.");
         if (ImGui::MenuItem("New Material", nullptr, false, db_ != nullptr)) new_material_for_selection();
         if (ImGui::MenuItem("New Surface Shader", nullptr, false, db_ != nullptr)) {
             if (auto id = create_surface_shader(); !id) notify("cannot create shader: " + id.error().message, true);
@@ -1475,6 +1482,9 @@ bool Editor::inspect_components(Entity e) {
         changed |= ImGui::Checkbox("Cast Shadows", &m->cast_shadows);
         ImGui::SameLine();
         changed |= ImGui::Checkbox("Visible", &m->visible);
+        changed |= ImGui::Checkbox("Static Lighting", &m->lightmapped);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Receives baked lighting (lightmap) after Bake Lighting. The object must not move afterwards.");
     }
     if (auto* sp = w.get<SpriteComponent>(e); sp && removable("Sprite", remove_sprite)) {
         ImGui::Text("Texture: %s", asset_label(db_.get(), sp->texture_asset).c_str());

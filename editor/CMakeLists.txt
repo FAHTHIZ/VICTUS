@@ -27,6 +27,7 @@ add_library(victus_editor_core STATIC
     src/problems.cpp
     src/script_debugger.cpp
     src/export_dialog.cpp
+    src/lighting_bake.cpp
     src/diagnostics_dialog.cpp
     src/console.cpp
     src/assets_panel.cpp

@@ -229,6 +229,7 @@ SerializerRegistry::SerializerRegistry() {
             v.set("roughness", m.roughness);
             v.set("cast_shadows", m.cast_shadows);
             v.set("visible", m.visible);
+            if (m.lightmapped) v.set("lightmapped", true);
             return v;
         },
         [](MeshRendererComponent& m, const Value& v) -> Status {
@@ -242,6 +243,7 @@ SerializerRegistry::SerializerRegistry() {
             m.roughness = v["roughness"].as_float(m.roughness);
             m.cast_shadows = v["cast_shadows"].as_bool(m.cast_shadows);
             m.visible = v["visible"].as_bool(m.visible);
+            m.lightmapped = v["lightmapped"].as_bool(false);
             return {};
         });
 

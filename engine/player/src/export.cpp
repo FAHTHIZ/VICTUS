@@ -10,6 +10,7 @@
 #include "victus/core/json.hpp"
 #include "victus/core/log.hpp"
 #include "victus/core/pack.hpp"
+#include "victus/gameplay/gameplay.hpp"
 #include "victus/project/project.hpp"
 #include "victus/terrain/terrain.hpp"
 #include "victus/runtime/surface_shader.hpp"
@@ -239,6 +240,7 @@ Result<ExportReport> export_game(const ExportOptions& o) {
     if (std::find(scenes.begin(), scenes.end(), proj->settings().startup_scene) == scenes.end())
         scenes.push_back(proj->settings().startup_scene);
     std::set<std::string> packed_worlds;
+    std::set<std::string> packed_lightmaps;
     for (std::size_t scene_index = 0; scene_index < scenes.size(); ++scene_index) {
         const std::string rel = scenes[scene_index]; // copy: streamed worlds append their cells
         auto path = proj->resolve(rel);
@@ -312,6 +314,18 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         scene.world().each<audio::AudioSourceComponent>([&](scene::Entity e, audio::AudioSourceComponent& c) {
             if (!c.clip.empty() && !asset_paths.contains(c.clip))
                 report.warnings.push_back(std::format("{}: entity '{}' uses missing audio clip '{}'", rel, entity_label(scene, e), c.clip));
+        });
+        // Baked lighting (ADR-0125): the scene's lightmap ships with it; a missing bake only
+        // costs the baked lighting, so it is a warning.
+        scene.world().each<gameplay::EnvironmentComponent>([&](scene::Entity e, gameplay::EnvironmentComponent& c) {
+            if (c.lightmap.empty() || !packed_lightmaps.insert(c.lightmap).second) return;
+            auto lpath = proj->resolve(c.lightmap);
+            if (!lpath || !sfs::is_regular_file(*lpath, ec)) {
+                report.warnings.push_back(std::format("{}: entity '{}' uses lightmap '{}', which is missing (bake lighting)", rel,
+                                                      entity_label(scene, e), c.lightmap));
+                return;
+            }
+            if (auto st = pw.add_file(c.lightmap, *lpath); !st) errors.push_back(std::format("{}: {}", c.lightmap, st.error().message));
         });
         // Streamed worlds (ADR-0090): the descriptor ships and every cell is checked like a scene.
         scene.world().each<world::WorldStreamingComponent>([&](scene::Entity e, world::WorldStreamingComponent& c) {

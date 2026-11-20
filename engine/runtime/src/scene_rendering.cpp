@@ -2,6 +2,7 @@
 #include "victus/runtime/scene_rendering.hpp"
 #include "victus/render/reflection_capture.hpp"
 #include "victus/tilemap/tilemap.hpp"
+#include "victus/runtime/scene_lightmap.hpp"
 #include "victus/runtime/surface_shader.hpp"
 #include "victus/terrain/terrain.hpp"
 #include "victus/particles/particles.hpp"
@@ -49,6 +50,7 @@ void GpuAssetCache::clear() {
     models_.clear();
     for (auto& [name, mesh] : primitives_) ctx_.destroy(mesh);
     primitives_.clear();
+    evict_lightmaps();
     for (auto& [id, entry] : procedural_)
         if (entry.mesh.valid()) ctx_.destroy(entry.mesh);
     procedural_.clear();
@@ -878,18 +880,7 @@ const render::GpuMesh* GpuAssetCache::procedural(const scene::ProceduralMesh& me
         entry.failed = true;
         return nullptr;
     }
-    render::MeshData data;
-    data.vertices.resize(mesh.positions.size());
-    for (std::size_t i = 0; i < mesh.positions.size(); ++i) {
-        render::Vertex3D& v = data.vertices[i];
-        v.position = mesh.positions[i];
-        if (i < mesh.normals.size()) v.normal = mesh.normals[i];
-        if (i < mesh.uvs.size()) v.uv = mesh.uvs[i];
-        if (i < mesh.colors.size()) v.color = mesh.colors[i];
-    }
-    data.indices = mesh.indices;
-    for (const scene::ProceduralMesh::Lod& lod : mesh.lods) data.lods.push_back({lod.indices, lod.error});
-    if (!mesh.uvs.empty()) render::compute_tangents(data);
+    const render::MeshData data = procedural_mesh_data(mesh); // shared with lightmap baking
     auto g = ctx_.create_mesh(data, "procedural");
     if (!g) {
         VICTUS_LOG_ERROR("runtime", "procedural mesh {}: {}", mesh.id, g.error().message);
@@ -978,21 +969,89 @@ void GpuAssetCache::collect_procedural(std::uint32_t keep_frames) {
 const render::GpuMesh* GpuAssetCache::primitive(std::string_view name) {
     const std::string key(name);
     if (const auto it = primitives_.find(key); it != primitives_.end()) return &it->second;
-    render::MeshData data;
-    if (key == "cube") data = render::make_cube();
-    else if (key == "sphere") data = render::make_uv_sphere();
-    else if (key == "plane") data = render::make_plane({1, 1});
-    else if (key == "cylinder") data = render::make_cylinder();
-    else return nullptr;
-    // Curved primitives get LODs like imported models (the cube and plane are already minimal).
-    if (key == "sphere" || key == "cylinder") render::generate_lods(data);
-    render::optimize_mesh(data);
+    render::MeshData data = primitive_mesh_data(key); // shared with lightmap baking (same fingerprint)
+    if (data.indices.empty()) return nullptr;
     auto g = ctx_.create_mesh(data, key);
     if (!g) {
         VICTUS_LOG_ERROR("runtime", "primitive '{}': {}", key, g.error().message);
         return nullptr;
     }
     return &primitives_.emplace(key, *g).first->second;
+}
+
+rhi::TextureHandle GpuAssetCache::lightmap(std::string_view path) {
+    const std::string key(path);
+    if (const auto it = lightmaps_.find(key); it != lightmaps_.end()) return it->second.texture;
+    LightmapEntry& entry = lightmaps_[key]; // cached even when it fails, so a bad file is read once
+    if (!db_) {
+        VICTUS_LOG_ERROR("runtime", "lightmap '{}': no asset database to resolve it", key);
+        return {};
+    }
+    // Scene data names the file: keep it inside the project (no absolute paths, no "..").
+    const fs::Path rel(key);
+    if (rel.is_absolute() || rel.has_root_name() || std::any_of(rel.begin(), rel.end(), [](const fs::Path& c) { return c == ".."; })) {
+        VICTUS_LOG_ERROR("runtime", "lightmap '{}': must be a project-relative path", key);
+        return {};
+    }
+    auto bytes = fs::read_binary(db_->project_root() / key, 1ull << 30);
+    if (!bytes) {
+        VICTUS_LOG_WARN("runtime", "lightmap '{}': {} (bake lighting to create it)", key, bytes.error().message);
+        return {};
+    }
+    auto file = render::decode_lightmap_file(*bytes);
+    if (!file) {
+        VICTUS_LOG_ERROR("runtime", "lightmap '{}': {}", key, file.error().message);
+        return {};
+    }
+    auto tex = ctx_.create_lightmap_texture(file->atlas, key);
+    if (!tex) {
+        VICTUS_LOG_ERROR("runtime", "lightmap '{}': {}", key, tex.error().message);
+        return {};
+    }
+    entry.texture = *tex;
+    entry.entries = std::move(file->entries);
+    return entry.texture;
+}
+
+const render::GpuMesh* GpuAssetCache::lightmapped_mesh(std::string_view path, scene::Scene& scene, scene::Entity entity) {
+    if (!lightmap(path).valid()) return nullptr;
+    LightmapEntry& lm = lightmaps_.find(std::string(path))->second;
+    const Uuid id = scene.uuid(entity);
+    if (id.is_nil()) return nullptr;
+    auto [it, inserted] = lm.meshes.try_emplace(id);
+    if (!inserted) return it->second ? &*it->second : nullptr;
+    const auto e = std::find_if(lm.entries.begin(), lm.entries.end(), [&](const render::LightmapFileEntry& x) { return x.entity == id; });
+    if (e == lm.entries.end()) {
+        VICTUS_LOG_WARN("runtime", "lightmap '{}' has no bake for entity {}: bake lighting again", path, id.to_string());
+        return nullptr;
+    }
+    auto data = static_mesh_data(scene, entity, db_);
+    if (!data) {
+        VICTUS_LOG_WARN("runtime", "lightmap '{}', entity {}: {}", path, id.to_string(), data.error().message);
+        return nullptr;
+    }
+    const auto* wt = scene.world().get<scene::WorldTransform>(entity);
+    if (!wt || scene_lightmap_fingerprint(*data, wt->matrix) != e->mesh_fingerprint) {
+        VICTUS_LOG_WARN("runtime", "lightmap '{}': entity {} moved or its mesh changed since it was baked; bake lighting again", path,
+                        id.to_string());
+        return nullptr;
+    }
+    auto g = ctx_.create_lightmapped_mesh(*data, e->unwrap, "lightmapped");
+    if (!g) {
+        VICTUS_LOG_ERROR("runtime", "lightmap '{}', entity {}: {}", path, id.to_string(), g.error().message);
+        return nullptr;
+    }
+    it->second = *g;
+    return &*it->second;
+}
+
+void GpuAssetCache::evict_lightmaps() {
+    for (auto& [path, lm] : lightmaps_) {
+        if (lm.texture.valid()) ctx_.device().destroy(lm.texture);
+        for (auto& [id, mesh] : lm.meshes)
+            if (mesh) ctx_.destroy(*mesh);
+    }
+    lightmaps_.clear();
 }
 
 static_assert(static_cast<int>(gameplay::EnvironmentComponent::Tonemapper::Reinhard) ==
@@ -1375,10 +1434,15 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     if (!has_sun) sun.intensity = 0.0f;
     render::Environment env = settings.environment;
     bool has_env = false;
+    std::string lightmap_path; // the scene's loaded lightmap (ADR-0125); empty = none
     w.each<gameplay::EnvironmentComponent>([&](const gameplay::EnvironmentComponent& e) {
         if (has_env) return;
         has_env = true;
         apply_environment(e, env, sun);
+        if (!e.lightmap.empty()) {
+            env.lightmap = assets.lightmap(e.lightmap);
+            if (env.lightmap.valid()) lightmap_path = e.lightmap;
+        }
         if (!e.environment_map.is_nil()) {
             if (auto map = assets.environment(e.environment_map)) env.environment_map = *map;
             else ++stats.missing_assets;
@@ -1571,7 +1635,14 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         if (!mr.visible) return;
         const std::uint64_t motion_id = entity.bits() + 1; // stable per entity; never 0 for live entities
         const bool scattered = foliage_instances(entity);
-        const auto emit = [&](const render::GpuMesh& mesh, const render::Material& m) {
+        const auto emit = [&](const render::GpuMesh& base, const render::Material& m) {
+            // Baked lighting (ADR-0125): static renderers draw their lightmapped copy when the
+            // scene's lightmap has a current bake for them.
+            const render::GpuMesh* lm = mr.lightmapped && !scattered && !lightmap_path.empty()
+                                            ? assets.lightmapped_mesh(lightmap_path, scene, entity)
+                                            : nullptr;
+            const render::GpuMesh& mesh = lm ? *lm : base;
+            if (lm) ++stats.lightmapped;
             if (streaming && !mr.material_asset.is_nil())
                 assets.note_material_footprint(mr.material_asset,
                                                runtime::projected_pixels(camera, mesh.bounds.transformed(wt.matrix), assets.residency_settings().screen_height));

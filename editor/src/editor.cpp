@@ -89,6 +89,7 @@ Editor::~Editor() {
     if (check_future_.valid()) check_future_.wait();
     if (export_future_.valid()) export_future_.wait();
     if (bundle_future_.valid()) bundle_future_.wait();
+    if (bake_future_.valid()) bake_future_.wait(); // the bake uses workers()
     stop_editor_clients();
     if (play_server_) play_server_->shutdown(sim_.time().time); // tell joined players we are gone
     play_server_.reset();
@@ -188,6 +189,10 @@ Status Editor::create_project(const fs::Path& directory, std::string_view name, 
 
 void Editor::close_project() {
     if (debug_stopped()) return; // the stopped script still uses the project; Stop the game first
+    if (bake_future_.valid()) { // a bake of this project's scene is useless once it is closed
+        bake_future_.wait();
+        bake_future_ = {};
+    }
     finish_startup();
     safe_mode_ = false;
     safe_mode_card_hidden_ = false;
