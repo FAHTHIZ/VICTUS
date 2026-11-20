@@ -16,6 +16,8 @@ layout(location = 1) in vec3 v_normal;
 layout(location = 2) in vec2 v_uv;
 layout(location = 3) in vec4 v_tangent;
 layout(location = 4) in vec4 v_color; // linear rgb, alpha: opacity or coverage mask (material.flags.z)
+// Baked lightmap (ADR-0122): xy atlas uv, z 1 when the mesh is lightmapped (mesh_lightmap.vert), else 0.
+layout(location = 5) in vec3 v_lightmap;
 
 layout(set = 2, binding = 0) uniform sampler2D u_base_color;
 layout(set = 2, binding = 1) uniform sampler2D u_metal_rough;
@@ -27,22 +29,23 @@ layout(set = 2, binding = 6) uniform samplerCube u_env; // prefiltered environme
 layout(set = 2, binding = 7) uniform sampler2DShadow u_local_shadow; // spot/point shadow atlas (ADR-0052)
 layout(set = 2, binding = 8) uniform sampler2D u_irradiance; // irradiance volume probes (ADR-0056)
 layout(set = 2, binding = 9) uniform sampler2DShadow u_rain_occlusion; // depth along the rain (ADR-0114)
+layout(set = 2, binding = 10) uniform sampler2D u_lightmap; // baked irradiance / pi atlas (ADR-0122), black 1x1 when absent
 
 // Clustered local lights (see light_clusters.hpp): a light array and, per cluster, an
 // (offset, count) header followed by the flattened light index list.
 // spot: x cos(inner), y 1 = spot, z first shadow tile + 1 (0 = unshadowed), w shadow texel angle.
 // Shadow matrices (world -> atlas uv/depth) follow the lights in the same array, one per tile.
 struct LocalLight { vec4 position_range; vec4 color_intensity; vec4 direction_cos_outer; vec4 spot; };
-// SDL_GPU: SPIR-V fragment storage buffers follow the 10 textures in set 2; MSL buffers are the
+// SDL_GPU: SPIR-V fragment storage buffers follow the 11 textures in set 2; MSL buffers are the
 // 3 uniform buffers first, then storage buffers ([[buffer(3)]], [[buffer(4)]]).
 #ifdef VICTUS_MSL
 layout(std430, set = 2, binding = 3) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 2, binding = 4) readonly buffer Clusters { uint cluster_data[]; };
 layout(std430, set = 2, binding = 5) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
 #else
-layout(std430, set = 2, binding = 10) readonly buffer Lights { LocalLight local_lights[]; };
-layout(std430, set = 2, binding = 11) readonly buffer Clusters { uint cluster_data[]; };
-layout(std430, set = 2, binding = 12) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
+layout(std430, set = 2, binding = 11) readonly buffer Lights { LocalLight local_lights[]; };
+layout(std430, set = 2, binding = 12) readonly buffer Clusters { uint cluster_data[]; };
+layout(std430, set = 2, binding = 13) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
 #endif
 layout(set = 3, binding = 0) uniform Lighting {
     vec4 camera_pos;     // w: ambient occlusion enabled
@@ -563,7 +566,19 @@ void main() {
     float NdotV = max(dot(N, V), 1e-4);
     vec3 f0 = mix(vec3(0.04), albedo, metallic);
     vec3 kd = (1.0 - fresnel_schlick(NdotV, f0)) * (1.0 - metallic);
-    vec3 irradiance = volume_irradiance(v_world_pos, N, env_irradiance(N));
+    vec3 sky_irradiance = env_irradiance(N);
+    vec3 irradiance;
+    float lightmap_occlusion = 1.0;
+    if (v_lightmap.z > 0.5) {
+        // Baked sky light and bounces replace the probe ambient. Where the bake is darker than
+        // the open sky (under tables, in corners) the environment reflection is dimmed too.
+        irradiance = texture(u_lightmap, v_lightmap.xy).rgb;
+        float sky_l = dot(sky_irradiance, vec3(0.2126, 0.7152, 0.0722));
+        float lm_l = dot(irradiance, vec3(0.2126, 0.7152, 0.0722));
+        lightmap_occlusion = sky_l > 1e-4 ? clamp(lm_l / sky_l, 0.0, 1.0) : 1.0;
+    } else {
+        irradiance = volume_irradiance(v_world_pos, N, sky_irradiance);
+    }
     vec2 ab = env_brdf(NdotV, roughness);
     vec3 R = reflect(-V, N);
     // Specular occlusion approximation: reflections below the local horizon are dimmed.
@@ -573,6 +588,7 @@ void main() {
     ao *= s.occlusion;
     // Specular occlusion from AO (Lagarde & de Rousiers 2014 approximation).
     float spec_ao = clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
+    spec_ao *= lightmap_occlusion;
     color += kd * albedo * irradiance * ao + specular * spec_ao;
     color += s.emissive;
 

@@ -46,6 +46,7 @@ Evidence for every item is in [STATUS.md](STATUS.md); platform coverage is in [P
 
 ## Cross-cutting limitations
 
+- **Baked lighting (ADR-0122):** the CPU lightmap baker and renderer path exist, but scenes cannot use them yet (no per-scene lightmap file, CLI command or Studio button). Bakes cover LOD0 of static meshes only, store non-directional irradiance (no L1 SH, no shadowmask), use RGBA16F (no RGBM/ASTC compression) and have no light probes for dynamic objects. Baking is CPU-only and not yet measured on large scenes.
 - **Hardware:** every rendering result was produced on Mesa lavapipe (software Vulkan) or CI's virtualised Apple GPU. Frame-time numbers in STATUS.md are for that setup and do not predict real GPU performance.
 - **Determinism:** capture/replay is verified on one compiler and machine; cross-platform floating-point determinism is not.
 - **Device loss:** SDL_GPU 3.4 has no device-lost signal. VICTUS infers loss from repeated failed GPU operations and exits cleanly (exit code 3; the editor autosaves first), but cannot recover and keep running. Only injected failures have been tested, not a real driver reset or GPU removal.

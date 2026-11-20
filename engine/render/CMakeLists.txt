@@ -23,6 +23,7 @@ victus_add_module(render
         src/reflection_capture.cpp
         src/irradiance_volume.cpp
         src/irradiance_bake.cpp
+        src/lightmap.cpp
         src/gpu_context.cpp
         src/image.cpp
         src/image_compare.cpp
@@ -48,4 +49,4 @@ target_include_directories(victus_flip SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/thir
 if(NOT MSVC)
     target_compile_options(victus_flip PRIVATE -O2 -w)
 endif()
-target_link_libraries(victus_render PUBLIC victus_stb PRIVATE victus_meshoptimizer victus_flip)
+target_link_libraries(victus_render PUBLIC victus_stb PRIVATE victus_meshoptimizer victus_xatlas victus_flip)

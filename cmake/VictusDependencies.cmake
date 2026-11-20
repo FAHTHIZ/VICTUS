@@ -464,3 +464,24 @@ function(victus_fetch_meshoptimizer)
     target_compile_options(victus_meshoptimizer PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
     victus_third_party_tsan(victus_meshoptimizer)
 endfunction()
+
+# xatlas f700c779 (MIT). https://github.com/jpcy/xatlas
+# Lightmap UV unwrapping and chart packing for baked lighting (engine/render lightmap.cpp,
+# ADR-0122). Built single-threaded (XA_MULTITHREADED=0) so atlases are deterministic.
+function(victus_fetch_xatlas)
+    if(TARGET victus_xatlas)
+        return()
+    endif()
+    FetchContent_Declare(xatlas
+        URL https://github.com/jpcy/xatlas/archive/f700c7790aaa030e794b52ba7791a05c085faf0c.tar.gz
+        URL_HASH SHA256=57b56dbedab3bf0a487e4c0ed3cc3fe79210d4a008d59a8326af59196a3487eb
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        SOURCE_SUBDIR victus_no_cmake)
+    FetchContent_MakeAvailable(xatlas)
+    add_library(victus_xatlas STATIC ${xatlas_SOURCE_DIR}/source/xatlas/xatlas.cpp)
+    target_include_directories(victus_xatlas SYSTEM PUBLIC ${xatlas_SOURCE_DIR}/source/xatlas)
+    target_compile_definitions(victus_xatlas PRIVATE XA_MULTITHREADED=0)
+    set_target_properties(victus_xatlas PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_options(victus_xatlas PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
+    victus_third_party_tsan(victus_xatlas)
+endfunction()

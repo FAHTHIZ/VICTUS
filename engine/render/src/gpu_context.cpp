@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/render/gpu_context.hpp"
+#include "victus/render/lightmap.hpp"
 
 #include "victus/render/builtin_shaders.hpp"
 
@@ -251,7 +252,7 @@ Status GpuContext::update_mesh(GpuMesh& mesh, const MeshData& data, std::string_
         return make_error(ErrorCode::InvalidArgument, std::format("mesh '{}' is empty", name));
     const auto nv = static_cast<std::uint32_t>(data.vertices.size());
     const auto ni = static_cast<std::uint32_t>(data.indices.size());
-    if (data.skinned() || !data.lods.empty() || !mesh.valid() || mesh.skinned()) {
+    if (data.skinned() || !data.lods.empty() || !mesh.valid() || mesh.skinned() || mesh.lightmap_uv) {
         auto g = create_mesh(data, name);
         if (!g) return std::move(g).error();
         destroy(mesh);
@@ -326,7 +327,50 @@ void GpuContext::destroy(GpuMesh& mesh) {
     if (mesh.vertices) device_.destroy(mesh.vertices);
     if (mesh.indices) device_.destroy(mesh.indices);
     if (mesh.skin) device_.destroy(mesh.skin);
+    if (mesh.lightmap_uv) device_.destroy(mesh.lightmap_uv);
     mesh = {};
+}
+
+Result<rhi::TextureHandle> GpuContext::create_lightmap_texture(const ImageF& atlas, std::string_view name) {
+    if (atlas.width == 0 || atlas.height == 0 || atlas.pixels.size() != std::size_t{atlas.width} * atlas.height * 4)
+        return make_error(ErrorCode::InvalidArgument, std::format("lightmap '{}' is empty or malformed", name));
+    rhi::TextureDesc d;
+    d.name = std::string(name);
+    d.format = rhi::Format::RGBA16_FLOAT;
+    d.width = atlas.width;
+    d.height = atlas.height;
+    d.usage = rhi::TextureUsageSampled;
+    auto t = device_.create_texture(d);
+    if (!t) return std::move(t).error();
+    const std::vector<std::uint8_t> bytes = to_rgba16f(atlas);
+    auto cmd = device_.begin_commands();
+    cmd.upload_texture(*t, bytes);
+    cmd.submit();
+    return t;
+}
+
+Result<GpuMesh> GpuContext::create_lightmapped_mesh(const MeshData& mesh, const LightmapUnwrap& unwrap, std::string_view name) {
+    if (unwrap.empty() || unwrap.uv.size() != unwrap.xref.size())
+        return make_error(ErrorCode::InvalidArgument, std::format("lightmapped mesh '{}': empty or inconsistent unwrap", name));
+    for (std::uint32_t x : unwrap.xref)
+        if (x >= mesh.vertices.size())
+            return make_error(ErrorCode::InvalidArgument, std::format("lightmapped mesh '{}': unwrap does not match the mesh", name));
+    for (std::uint32_t i : unwrap.indices)
+        if (i >= unwrap.xref.size())
+            return make_error(ErrorCode::InvalidArgument, std::format("lightmapped mesh '{}': unwrap index out of range", name));
+    auto g = create_mesh(apply_lightmap_unwrap(mesh, unwrap), name);
+    if (!g) return g;
+    const auto size = static_cast<std::uint32_t>(unwrap.uv.size() * sizeof(math::Vec2));
+    auto uv = device_.create_buffer({std::format("{}_lightmap_uv", name), size, rhi::BufferUsageVertex});
+    if (!uv) {
+        destroy(g.value());
+        return std::move(uv).error();
+    }
+    g.value().lightmap_uv = uv.value();
+    auto cmd = device_.begin_commands();
+    cmd.upload_buffer(g.value().lightmap_uv, 0, {reinterpret_cast<const std::uint8_t*>(unwrap.uv.data()), size});
+    cmd.submit();
+    return g;
 }
 
 } // namespace victus::render

@@ -16,6 +16,8 @@
 namespace victus::render {
 
 // One level of detail inside GpuMesh::indices.
+struct LightmapUnwrap;
+
 struct GpuMeshLod {
     std::uint32_t first_index{0}, index_count{0};
     float error{0.0f}; // geometric error in mesh units (0 for LOD 0)
@@ -25,6 +27,9 @@ struct GpuMesh {
     rhi::BufferHandle vertices;
     rhi::BufferHandle indices;
     rhi::BufferHandle skin; // SkinVertex stream (slot 2); valid only for skinned meshes
+    // Lightmap atlas uv per vertex (Vec2, slot 3); valid only for lightmapped meshes (ADR-0122),
+    // which draw with mesh_lightmap.vert and sample the scene's lightmap instead of probe ambient.
+    rhi::BufferHandle lightmap_uv;
     std::uint32_t vertex_count{0};
     std::uint32_t index_count{0}; // LOD 0
     math::Aabb bounds;
@@ -34,6 +39,7 @@ struct GpuMesh {
     std::uint32_t vertex_capacity{0}, index_capacity{0};
     [[nodiscard]] bool valid() const noexcept { return vertices.valid() && indices.valid(); }
     [[nodiscard]] bool skinned() const noexcept { return skin.valid(); }
+    [[nodiscard]] bool lightmapped() const noexcept { return lightmap_uv.valid() && !skin.valid(); }
 };
 
 struct TextureOptions {
@@ -91,6 +97,13 @@ public:
     // On failure `mesh` is left unchanged.
     [[nodiscard]] Status update_mesh(GpuMesh& mesh, const MeshData& data, std::string_view name = "mesh");
     void destroy(GpuMesh& mesh);
+    // A static mesh re-indexed by a lightmap unwrap (apply_lightmap_unwrap) with its lightmap uv
+    // stream. LODs, skin and morph targets are dropped: lightmapped meshes always draw LOD 0.
+    // RGBA16F texture of a lightmap atlas (bake_lightmaps / LightmapFile), one level: mips would
+    // blend neighbouring charts. Bind it as Environment::lightmap.
+    [[nodiscard]] Result<rhi::TextureHandle> create_lightmap_texture(const ImageF& atlas, std::string_view name = "lightmap");
+    [[nodiscard]] Result<GpuMesh> create_lightmapped_mesh(const MeshData& mesh, const LightmapUnwrap& unwrap,
+                                                          std::string_view name = "lightmapped");
     // Vertex variants: a mesh with its own vertex buffer (e.g. CPU-morphed shapes) sharing
     // `base`'s index, LOD and skin buffers. `vertices` must hold base.vertex_count entries.
     // update_vertex_variant rewrites them with a `discard` upload; destroy_vertex_variant frees

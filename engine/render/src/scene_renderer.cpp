@@ -564,6 +564,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     auto line_fs = get("line.frag");
     auto depth_vs = get("depth.vert");
     auto skin_vs = get("mesh_skinned.vert");
+    auto lightmap_vs = get("mesh_lightmap.vert");
     auto skin_depth_vs = get("depth_skinned.vert");
     auto skin_shadow_vs = get("shadow_skinned.vert");
     auto particle_vs = get("particle.vert");
@@ -573,7 +574,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     auto decal_fs = get("decal.frag");
     auto water_vs = get("water.vert");
     auto water_fs = get("water.frag");
-    for (auto* s : {&water_vs, &water_fs, &mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &shadow_alpha_vs, &shadow_alpha_fs, &full_vs, &sky_fs, &line_vs, &line_fs, &depth_vs, &skin_vs,
+    for (auto* s : {&water_vs, &water_fs, &mesh_vs, &pbr_fs, &shadow_vs, &shadow_fs, &shadow_alpha_vs, &shadow_alpha_fs, &full_vs, &sky_fs, &line_vs, &line_fs, &depth_vs, &skin_vs, &lightmap_vs,
                     &skin_depth_vs, &skin_shadow_vs, &particle_vs, &particle_fs, &ribbon_vs, &decal_vs, &decal_fs})
         if (!*s) return std::move(*s).error();
     const rhi::VertexBufferLayout skin_layout{2, sizeof(SkinVertex), false};
@@ -631,6 +632,22 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     p = dev.create_pipeline(skinned);
     if (!p) return std::move(p).error();
     r->skin_double_ = p.value();
+    // Lightmapped static meshes (ADR-0122): the lightmap uv stream in slot 3.
+    rhi::PipelineDesc lightmapped = opaque;
+    lightmapped.name = "pbr_lightmapped";
+    lightmapped.vertex = lightmap_vs.value();
+    lightmapped.vertex_buffers = {mesh_layout, instance_layout, rhi::VertexBufferLayout{3, sizeof(Vec2), false}};
+    lightmapped.attributes = with(opaque.attributes, {{14, 3, rhi::VertexFormat::Float2, 0}});
+    lightmapped.cull = rhi::CullMode::Back;
+    p = dev.create_pipeline(lightmapped);
+    if (!p) return std::move(p).error();
+    r->lightmap_cull_ = p.value();
+    r->lightmap_desc_ = lightmapped;
+    lightmapped.name = "pbr_lightmapped_double_sided";
+    lightmapped.cull = rhi::CullMode::None;
+    p = dev.create_pipeline(lightmapped);
+    if (!p) return std::move(p).error();
+    r->lightmap_double_ = p.value();
 
     rhi::PipelineDesc prepass;
     prepass.name = "depth_prepass";
@@ -826,12 +843,17 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     return r;
 }
 
-rhi::PipelineHandle SceneRenderer::blend_pipeline(MaterialBlend blend, bool skinned, bool double_sided) {
-    if (blend == MaterialBlend::Opaque) return {};
-    const std::size_t i = (blend == MaterialBlend::Additive ? 4u : 0u) + (skinned ? 2u : 0u) + (double_sided ? 1u : 0u);
+const rhi::PipelineDesc& SceneRenderer::variant_desc(std::uint32_t variant) const noexcept {
+    return variant == kVertexSkinned ? skinned_desc_ : variant == kVertexLightmapped ? lightmap_desc_ : opaque_desc_;
+}
+
+rhi::PipelineHandle SceneRenderer::blend_pipeline(MaterialBlend blend, std::uint32_t variant, bool double_sided) {
+    if (blend == MaterialBlend::Opaque || variant >= kVertexVariants) return {};
+    const std::size_t i = (blend == MaterialBlend::Additive ? kVertexVariants * 2u : 0u) + variant * 2u + (double_sided ? 1u : 0u);
     if (!blend_pipelines_[i]) {
-        rhi::PipelineDesc d = skinned ? skinned_desc_ : opaque_desc_;
-        d.name = std::format("pbr_{}{}{}", material_blend_name(blend), skinned ? "_skinned" : "", double_sided ? "_double_sided" : "");
+        rhi::PipelineDesc d = variant_desc(variant);
+        constexpr const char* kVariantNames[kVertexVariants] = {"", "_skinned", "_lightmapped"};
+        d.name = std::format("pbr_{}{}{}", material_blend_name(blend), kVariantNames[variant], double_sided ? "_double_sided" : "");
         d.cull = double_sided ? rhi::CullMode::None : rhi::CullMode::Back;
         d.depth_write = false;
         d.color_targets = {{hdr_format_, blend == MaterialBlend::Additive ? rhi::BlendMode::Additive : rhi::BlendMode::Alpha}};
@@ -845,7 +867,9 @@ rhi::PipelineHandle SceneRenderer::blend_pipeline(MaterialBlend blend, bool skin
     return blend_pipelines_[i];
 }
 
-rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, bool skinned, bool double_sided, MaterialBlend blend) {
+rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, std::uint32_t variant, bool double_sided,
+                                                    MaterialBlend blend) {
+    if (variant >= kVertexVariants) return {};
     const std::uint64_t key = (std::uint64_t{fragment.generation} << 32) | fragment.index;
     auto it = surface_pipelines_.find(key);
     if (it == surface_pipelines_.end()) {
@@ -856,14 +880,14 @@ rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, 
                     if (pl) ctx_.device().destroy(pl);
             surface_pipelines_.clear();
         }
-        it = surface_pipelines_.emplace(key, std::array<rhi::PipelineHandle, 12>{}).first;
+        it = surface_pipelines_.emplace(key, std::array<rhi::PipelineHandle, 4 * kVertexVariants * 2>{}).first;
     }
-    // Variants are created on first use: [blend][skinned][double_sided].
-    const std::size_t i = static_cast<std::size_t>(blend) * 4u + (skinned ? 2u : 0u) + (double_sided ? 1u : 0u);
+    // Variants are created on first use: [blend][variant][double_sided].
+    const std::size_t i = static_cast<std::size_t>(blend) * kVertexVariants * 2u + variant * 2u + (double_sided ? 1u : 0u);
     if (i >= it->second.size()) return {};
     if (!it->second[i]) {
         if (surface_failed_.contains(key)) return {};
-        rhi::PipelineDesc d = skinned ? skinned_desc_ : opaque_desc_;
+        rhi::PipelineDesc d = variant_desc(variant);
         d.name = std::format("surface_{}_{}", fragment.index, i);
         d.fragment = fragment;
         d.cull = double_sided ? rhi::CullMode::None : rhi::CullMode::Back;
@@ -889,7 +913,7 @@ SceneRenderer::~SceneRenderer() {
     for (auto pl : blend_pipelines_)
         if (pl) d.destroy(pl);
     for (auto pl : {opaque_cull_, opaque_double_, shadow_pipeline_, shadow_alpha_, sky_pipeline_, line_pipeline_, prepass_cull_,
-                    prepass_double_, skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_,
+                    prepass_double_, skin_cull_, skin_double_, lightmap_cull_, lightmap_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_,
                     particle_alpha_, particle_additive_, ribbon_alpha_, ribbon_additive_, motion_cull_, motion_double_, skin_motion_cull_, skin_motion_double_})
         if (pl) d.destroy(pl);
     for (auto pl : decal_pipelines_)
@@ -3088,6 +3112,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             const rhi::TextureHandle local_shadow_tex = local_shadow_map.valid() ? ctx.texture(local_shadow_map) : no_shadow_;
             const rhi::TextureHandle rain_tex = rain_map.valid() ? ctx.texture(rain_map) : no_shadow_;
             const rhi::TextureHandle ao_tex = ao.valid() ? ctx.texture(ao) : ctx_.white();
+            const rhi::TextureHandle lightmap_tex = env_.lightmap ? env_.lightmap : ctx_.black();
+            // Lightmapped meshes need a lightmap to sample; without one they draw like any static mesh.
+            const auto vertex_variant = [&](const Draw* d) {
+                return d->skinned                                       ? kVertexSkinned
+                       : (env_.lightmap && d->mesh->lightmapped()) ? kVertexLightmapped
+                                                                       : kVertexStatic;
+            };
             FrameUniforms frame{view_proj};
             ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame);
             ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, lighting);
@@ -3122,6 +3153,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 7, local_shadow_tex, ctx_.shadow_compare());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 8, gi_tex, ctx_.linear_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 9, rain_tex, ctx_.shadow_compare());
+                pass.bind_texture(rhi::ShaderStage::Fragment, 10, lightmap_tex, ctx_.linear_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 5, ao_tex, ctx_.linear_clamp());
                 ProbeUniforms pu{};
                 rhi::TextureHandle env_cube = env_map && env_map->cube() ? env_map->cube() : ctx_.black_cube();
@@ -3140,6 +3172,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 1, cluster_buffer_);
                 pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 2, fog_grid_buffer());
                 pass.bind_vertex_buffer(0, d->mesh->vertices);
+                if (vertex_variant(d) == kVertexLightmapped) pass.bind_vertex_buffer(3, d->mesh->lightmap_uv);
                 pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
                 if (indirect >= 0) {
                     // Survivors are packed from the batch's own offset; first_instance stays 0
@@ -3156,10 +3189,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             for (std::size_t bi = 0; opaque_phase && bi < main_batches.size(); ++bi) {
                 const Batch& b = main_batches[bi];
                 const Draw* d = b.first;
-                rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_double_ : skin_cull_)
-                                                      : (d->material.double_sided ? opaque_double_ : opaque_cull_);
+                const std::uint32_t variant = vertex_variant(d);
+                rhi::PipelineHandle want = variant == kVertexSkinned       ? (d->material.double_sided ? skin_double_ : skin_cull_)
+                                           : variant == kVertexLightmapped ? (d->material.double_sided ? lightmap_double_ : lightmap_cull_)
+                                                                           : (d->material.double_sided ? opaque_double_ : opaque_cull_);
                 if (d->material.surface_shader)
-                    if (const auto custom = surface_pipeline(d->material.surface_shader, d->skinned, d->material.double_sided,
+                    if (const auto custom = surface_pipeline(d->material.surface_shader, variant, d->material.double_sided,
                                                              MaterialBlend::Opaque))
                         want = custom;
                 draw_batch(b, want, occlusion ? static_cast<int>(bi) : -1);
@@ -3168,9 +3203,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             // Blended geometry after every opaque draw (and the decals), far to near.
             for (const Batch& b : transparent_batches) {
                 const Draw* d = b.first;
-                rhi::PipelineHandle want = blend_pipeline(d->material.blend, d->skinned, d->material.double_sided);
+                rhi::PipelineHandle want = blend_pipeline(d->material.blend, vertex_variant(d), d->material.double_sided);
                 if (d->material.surface_shader)
-                    if (const auto custom = surface_pipeline(d->material.surface_shader, d->skinned, d->material.double_sided,
+                    if (const auto custom = surface_pipeline(d->material.surface_shader, vertex_variant(d), d->material.double_sided,
                                                              d->material.blend))
                         want = custom;
                 if (want) draw_batch(b, want);

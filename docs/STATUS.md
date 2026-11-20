@@ -1762,3 +1762,8 @@ Changed expectations: `gpu character lods` coverage floor 300 → 250 px (Orion'
 
 Not covered: no texture maps; README screenshots still show the old robot; no real phone measurement; shadow LOD cost is the next optimisation target (ROADMAP).
 
+## 2026-11-20 — Baked lightmaps v1: baker and renderer path (ADR-0122)
+
+Built: xatlas (MIT, pinned f700c779) lightmap unwrapping into one atlas per bake with automatic density reduction; a CPU path tracer (`render::bake_lightmaps`: SAH BVH, cosine/R2 sampling, sun/point/spot lights with shadow rays, analytic sky matching `pbr.frag`, multi-bounce diffuse, indirect-only by default) running on the job system; back-face leak rejection, a variance-guided à-trous denoiser that keeps contact shadows, and chart dilation; the `.vlightmap` codec (RGBA16F atlas + per-entity UV sets with mesh fingerprints, bounds-checked decode); `GpuContext::create_lightmapped_mesh` / `create_lightmap_texture`; `mesh_lightmap.vert` and `pbr.frag` sampling (`Environment::lightmap`, lightmap replaces ambient irradiance and darkens specular occlusion). Scenes do not reference bakes yet.
+
+Verified: `victus_render_tests -tc="lightmap*"` (10 cases: unwrap determinism and overlap, furnace test, sky occlusion, contact shadows, bounce colour bleeding, leak rejection, denoise keeping contact shadows while cutting open-floor noise from 0.0118 to 0.0046 spread, file round trip and damaged-file rejection); `VICTUS_REQUIRE_GPU=1 victus_gpu_tests -tc="*lightmap*"` on lavapipe; full `cmake --build --preset dev` and `ctest --preset dev`; `tools/shaders/compile_shaders.py --check`; `tools/deps/victus_deps.py check`.
