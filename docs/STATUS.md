@@ -2062,3 +2062,13 @@ Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): `compile_shaders.py --check`
 Not covered: 14 graphics shaders have no GLSL ES yet (storage buffers in skinning, PBR clustered lights, fog apply, particles, precipitation; `frexp`/`ldexp` in sky and TAA). The scene renderer has not run on GLES.
 
 Next task: a `VICTUS_ESSL` compile define so shaders can choose ES 3.00 code paths, portable exponent extraction for sky/TAA (floatBitsToInt), then the storage-buffer rewrites and the scene renderer on Low against the Vulkan golden.
+
+## 2026-11-20 — VICTUS_ESSL shader define and portable compact-HDR rounding (ADR-0144 phase 2b)
+
+Built: `compile_shaders.py` compiles the GLSL ES output from source with `VICTUS_ESSL=1` and stamps it `// essl rev=2`, regenerating only the ESSL of cached shaders when the converter changes. `pbr.frag`, `sky.frag`, `taa.frag` and `taa_upscale.frag` take an ES 3.00 path for the R11G11B10 stochastic rounding (exponent from the float bits, exact power-of-two scales from bits).
+
+Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): `compile_shaders.py --check` up to date (62); Vulkan SPIR-V and MSL bytes unchanged (only hashes and ESSL differ in the generated file). `gpu_gles_tests` 10 cases: 44 built-in GLSL ES shaders compile; built-in sky with quantisation is bit-identical to Vulkan (3072/3072 channels) and R11G11B10-representable; FXAA still byte-identical. `VICTUS_REQUIRE_GPU=1 ctest --test-dir build -j2` 39/39; clang-tidy clean.
+
+Not covered: 11 graphics shaders still need storage-buffer rewrites (skinning palettes, PBR clustered lights, fog apply, particles, precipitation). Mobile GLES drivers and their `highp` support are untested.
+
+Next task: move the storage-buffer reads of those shaders to uniform blocks or data textures under `VICTUS_ESSL`, then the scene renderer on Low against the Vulkan golden.

@@ -7,6 +7,7 @@
 #include "gpu_fixture.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -518,7 +519,7 @@ TEST_CASE("gles: every built-in shader with GLSL ES compiles on the device") {
         }
     }
     MESSAGE(compiled << " built-in shaders compiled as GLSL ES 3.00, " << without << " have none yet");
-    CHECK(compiled >= 41); // 55 graphics shaders; the rest need ES 3.00 rewrites (ADR-0144)
+    CHECK(compiled >= 44); // 55 graphics shaders; the rest need ES 3.00 rewrites (ADR-0144)
 }
 
 TEST_CASE("gles: built-in fullscreen pass matches the SDL_GPU backend") {
@@ -540,4 +541,107 @@ TEST_CASE("gles: built-in fullscreen pass matches the SDL_GPU backend") {
     test::save_output("gles_fxaa_ref", kSize, kSize, ref);
     test::save_output("gles_fxaa_gles", kSize, kSize, got);
     CHECK(worst <= 2);
+}
+
+namespace {
+
+// fullscreen.vert + sky.frag (procedural gradient, compact-HDR quantisation on) into RGBA16F.
+std::vector<std::uint8_t> sky_on(rhi::Device& dev, std::uint32_t w, std::uint32_t h) {
+    auto vs = render::create_builtin_shader(dev, "fullscreen.vert");
+    auto fs = render::create_builtin_shader(dev, "sky.frag");
+    REQUIRE_MESSAGE(fs.ok(), (fs.ok() ? "" : fs.error().message));
+    REQUIRE(vs.ok());
+    rhi::PipelineDesc p;
+    p.name = "gles_sky";
+    p.vertex = vs.value();
+    p.fragment = fs.value();
+    p.cull = rhi::CullMode::None;
+    p.color_targets = {{rhi::Format::RGBA16_FLOAT}};
+    auto pipe = dev.create_pipeline(p);
+    REQUIRE_MESSAGE(pipe.ok(), (pipe.ok() ? "" : pipe.error().message));
+    rhi::TextureDesc cd;
+    cd.name = "gles_sky_env";
+    cd.type = rhi::TextureType::Cube;
+    cd.depth_or_layers = 6;
+    auto cube = dev.create_texture(cd);
+    REQUIRE(cube.ok());
+    auto sampler = dev.create_sampler({});
+    REQUIRE(sampler.ok());
+    rhi::TextureDesc rd;
+    rd.name = "gles_sky_dst";
+    rd.format = rhi::Format::RGBA16_FLOAT;
+    rd.width = w;
+    rd.height = h;
+    rd.usage = rhi::TextureUsageColorTarget | rhi::TextureUsageSampled;
+    auto rt = dev.create_texture(rd);
+    REQUIRE(rt.ok());
+    struct {
+        float inv_view_proj[16];
+        float zenith[4], horizon[4], ground[4], sun_dir[4], sun_color[4], env[4];
+    } u{};
+    // Identity view-projection: rays run along +z with y spanning the view, so the image covers
+    // ground, horizon, zenith and the sun.
+    for (int i = 0; i < 4; ++i) u.inv_view_proj[i * 5] = 1.0f;
+    const float zenith[4] = {0.2f, 0.45f, 1.6f, 0}, horizon[4] = {1.1f, 1.3f, 1.7f, 0}, ground[4] = {0.3f, 0.25f, 0.2f, 0};
+    const float sun_dir[4] = {0.3f, 0.4f, 1.0f, 3.0f}, sun_color[4] = {40.0f, 36.0f, 30.0f, 0.995f};
+    std::memcpy(u.zenith, zenith, sizeof zenith);
+    std::memcpy(u.horizon, horizon, sizeof horizon);
+    std::memcpy(u.ground, ground, sizeof ground);
+    std::memcpy(u.sun_dir, sun_dir, sizeof sun_dir);
+    std::memcpy(u.sun_color, sun_color, sizeof sun_color);
+    auto cmd = dev.begin_commands();
+    rhi::RenderPassDesc rp;
+    rp.colors = {{rt.value()}};
+    auto pass = cmd.begin_render_pass(rp);
+    REQUIRE(pass.active());
+    pass.bind_pipeline(pipe.value());
+    cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, &u, sizeof u);
+    pass.bind_texture(rhi::ShaderStage::Fragment, 0, cube.value(), sampler.value());
+    pass.draw(3);
+    pass.end();
+    cmd.submit_and_wait();
+    auto px = dev.read_texture(rt.value());
+    REQUIRE(px.ok());
+    auto out = std::move(px).value();
+    dev.destroy(pipe.value());
+    dev.destroy(vs.value());
+    dev.destroy(fs.value());
+    dev.destroy(cube.value());
+    dev.destroy(sampler.value());
+    dev.destroy(rt.value());
+    return out;
+}
+
+float half_to_float(std::uint16_t h) {
+    const std::uint32_t e = (h >> 10) & 0x1f, m = h & 0x3ff;
+    const float mag = e == 0 ? std::ldexp(static_cast<float>(m), -24) : std::ldexp(static_cast<float>(m | 0x400), static_cast<int>(e) - 25);
+    return (h & 0x8000) ? -mag : mag;
+}
+
+} // namespace
+
+TEST_CASE("gles: sky with compact-HDR rounding matches the SDL_GPU backend") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    VICTUS_REQUIRE_GLES_OR_SKIP();
+    if (!gles().device->supports_format(rhi::Format::RGBA16_FLOAT, rhi::TextureUsageColorTarget)) return;
+    constexpr std::uint32_t kW = 32, kH = 32;
+    const auto ref = sky_on(*test::gpu().device, kW, kH);
+    const auto got = sky_on(*gles().device, kW, kH);
+    REQUIRE(ref.size() == got.size());
+    double worst = 0;
+    int unquantised = 0, exact = 0;
+    for (std::size_t i = 0; i < ref.size() / 2; ++i) {
+        if (i % 4 == 3) continue; // alpha
+        const std::uint16_t a = half_bits(ref, i), b = half_bits(got, i);
+        exact += a == b;
+        const float fa = half_to_float(a), fb = half_to_float(b);
+        worst = std::max(worst, static_cast<double>(std::abs(fa - fb) / std::max(fa, 1e-3f)));
+        // R11G11B10: 6 mantissa bits for red/green, 5 for blue. Normal halves keep 10.
+        const std::uint32_t drop = i % 4 == 2 ? 5 : 4;
+        if (((b >> 10) & 0x1f) != 0 && (b & ((1u << drop) - 1)) != 0) ++unquantised;
+    }
+    const int channels = static_cast<int>(kW * kH * 3);
+    MESSAGE("sky GLES vs SDL_GPU: " << exact << "/" << channels << " channels identical, worst relative diff " << worst);
+    CHECK(unquantised == 0);
+    CHECK(worst < 0.04); // one R11G11B10 step is 1/64 relative; the noise may round either way
 }
