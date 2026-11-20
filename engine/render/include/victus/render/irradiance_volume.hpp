@@ -8,6 +8,7 @@
 // tile, layers sit side by side horizontally and the nine SH coefficients stack vertically, so a
 // lookup is 2 layers x 9 hardware-bilinear fetches. RGB holds coefficient * validity and A the
 // validity (1 baked, 0 not yet), so partially baked volumes blend smoothly into the fallback.
+// Exception: row 1's A holds sun visibility * validity (probe sun occlusion, ADR-0136).
 #pragma once
 #include "victus/render/environment_map.hpp"
 #include "victus/render/gpu_context.hpp"
@@ -55,6 +56,13 @@ public:
     // CPU reference of the shader's lookup: irradiance / pi for normal n at world position p
     // (trilinear over valid probes; the fallback is returned outside the box or with no data).
     [[nodiscard]] math::Vec3 sample(math::Vec3 p, math::Vec3 n, math::Vec3 fallback) const noexcept;
+    // Probe sun occlusion (ADR-0136): the baked visibility (0..1) of the shadowmask sun at a
+    // probe, 1 by default. The shader uses it for unlightmapped surfaces past the realtime
+    // shadow distance; it travels in the alpha of coefficient row 1 (times validity).
+    void set_probe_sun(std::uint32_t index, float visibility);
+    [[nodiscard]] float probe_sun(std::uint32_t index) const noexcept { return index < sun_.size() ? sun_[index] : 1.0f; }
+    // CPU reference of the shader's sun lookup (1 outside the box or with no valid probes).
+    [[nodiscard]] float sample_sun(math::Vec3 p) const noexcept;
 
     // Rewrites the texture from the CPU probes if anything changed since the last upload.
     Status upload();
@@ -68,6 +76,7 @@ private:
     IrradianceGrid grid_;
     std::vector<SphericalHarmonics9> probes_;
     std::vector<std::uint8_t> valid_;
+    std::vector<float> sun_;
     rhi::TextureHandle texture_;
     bool dirty_{true};
 };

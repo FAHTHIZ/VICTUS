@@ -1892,3 +1892,13 @@ Verified (Release, clang 21, lavapipe): `victus_render_tests -tc="lightmap*"` 13
 Not covered: copies with different scales (the arena's north/south vs west/east walls) still get separate unwraps; shelf packing of many groups wastes more atlas area than xatlas chart packing; not measured on a phone GPU or Metal (the MSL was regenerated but not run).
 
 Next task: probe sun occlusion (Unity's probe occlusion) so dynamic objects past the realtime shadow distance are shadowed, then FP16 shading behind a capability check.
+
+## 2026-11-20 — Probe sun occlusion (ADR-0136)
+
+Built: baked light probes also store the shadowmask sun's visibility (`LightmapProbes::sun`, traced over the sun disc with the shadowmask's sampling, dilated with the SH; `sample_sun` CPU reference). `.vlightmap` version 4 carries it as one byte per probe behind flag 8. `IrradianceVolume::set_probe_sun` stores it in the alpha of SH row 1 (no texture or fetch change); the runtime loads it with the lightmap's probes. pbr.frag samples the probe volume before the sun term and feeds its visibility to `shadow_factor` as the baked shadow for unlightmapped pixels, so dynamic objects past the last cascade are shadowed by static geometry like lightmapped ones are by the shadowmask.
+
+Verified (Release, clang 21, lavapipe, 2 cores): `victus_render_tests -tc="*light probe*,*ADR-0136*,*lightmap file*,*shadowmask*"` 10/10, including the new case (sun straight down over a roof: probe visibility 0 under it, 1 in the open, 1 outside the box; identical on 2 threads; v4 round trip within 1/255; a v3 header with the new flag, the flag without probes and truncated visibility bytes are rejected; a v3 file without the block still loads). `victus_gpu_tests -tc="*ADR-0136*"` 1/1: a dynamic sphere under a roof, green channel of its sun-facing top: 179 with realtime shadows, 224 past the shadow distance without probe sun, 189 with it; a moved sun ignores the data (identical images). `tools/shaders/compile_shaders.py` regenerated pbr.frag, `--check` up to date. Full `ctest --test-dir build -j2` 39/39 (perf budgets unchanged and passing).
+
+Not covered: one occlusion channel (the first shadow-casting directional light); shadow softness follows the 2 m probe spacing; the Low tier has irradiance volumes off, so it uses neither baked probes nor their occlusion; not measured on a phone GPU or Metal.
+
+Next task: FP16 shading behind a capability check, held to `victus compare` goldens; consider enabling the baked-probe volume on Low after measuring it.

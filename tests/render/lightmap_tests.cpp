@@ -679,6 +679,78 @@ TEST_CASE("lightmap file round trip with light probes and damaged probe blocks")
         CHECK_FALSE(decode_lightmap_file(std::span(bytes.data(), n)));
 }
 
+TEST_CASE("light probes bake the shadowmask sun's visibility (ADR-0136)") {
+    // A 4 x 4 m roof slab 2.1..2.3 m up, sun straight down: probes under it see no sun.
+    const MeshData floor = make_plane({12, 12}, 4);
+    const MeshData roof = make_cube({2, 0.1f, 2});
+    LightmapScene scene;
+    scene.instances.push_back({&floor});
+    LightmapInstance slab{&roof, math::Mat4::translation({0, 2.2f, 0})};
+    slab.receives = false;
+    scene.instances.push_back(slab);
+    scene.sky = uniform_sky(0.3f);
+    LightmapLight sun;
+    sun.direction = {0, -1, 0};
+    sun.radiance = {3, 3, 3};
+    scene.lights.push_back(sun);
+    LightmapSettings s = fast_settings();
+    s.samples = 8;
+    s.probe_samples = 32;
+    auto bake = bake_lightmaps(scene, s);
+    REQUIRE(bake);
+    const LightmapProbes& p = bake->probes;
+    REQUIRE(p.sun.size() == p.sh.size());
+    for (std::size_t i = 0; i < p.sun.size(); ++i) {
+        CHECK(p.sun[i] >= 0.0f);
+        CHECK(p.sun[i] <= 1.0f);
+    }
+    const float covered = p.sample_sun({0, 1, 0}), open = p.sample_sun({5, 1, 5});
+    MESSAGE("probe sun covered " << covered << ", open " << open);
+    CHECK(covered < 0.05f);
+    CHECK(open > 0.95f);
+    CHECK(p.sample_sun({100, 1, 0}) == 1.0f); // outside the box: unshadowed
+    // Thread count does not change it.
+    jobs::JobSystem js(2);
+    auto threaded = bake_light_probes(scene, s, &js);
+    REQUIRE(threaded);
+    REQUIRE(threaded->sun.size() == p.sun.size());
+    for (std::size_t i = 0; i < p.sun.size(); ++i) CHECK(threaded->sun[i] == p.sun[i]);
+
+    // File round trip (version 4), quantised to 1/255.
+    LightmapFile file;
+    file.atlas = bake->atlas;
+    file.probes = p;
+    file.shadowmask_direction = bake->shadowmask_direction; // no entries: the visibility bytes end the file
+    const auto bytes = encode_lightmap_file(file);
+    auto back = decode_lightmap_file(bytes);
+    REQUIRE(back);
+    REQUIRE(back->probes.sun.size() == p.sun.size());
+    for (std::size_t i = 0; i < p.sun.size(); ++i) CHECK(back->probes.sun[i] == doctest::Approx(p.sun[i]).epsilon(0.003).scale(1.0));
+    // A version 3 header must not carry the version 4 flag; the flag needs probes; truncated
+    // visibility bytes fail cleanly.
+    auto v3 = bytes;
+    v3[8] = 3;
+    CHECK_FALSE(decode_lightmap_file(v3));
+    auto no_probes = bytes;
+    no_probes[24] &= static_cast<std::uint8_t>(~4u);
+    CHECK_FALSE(decode_lightmap_file(no_probes));
+    for (std::size_t cut = 1; cut <= p.sun.size(); cut += 7) CHECK_FALSE(decode_lightmap_file(std::span(bytes.data(), bytes.size() - cut)));
+    // Dropping the flag and the trailing bytes is a valid version 3 file without probe sun.
+    auto old = std::vector<std::uint8_t>(bytes.begin(), bytes.end() - static_cast<std::ptrdiff_t>(p.sun.size()));
+    old[8] = 3;
+    old[24] &= static_cast<std::uint8_t>(~8u);
+    auto old_back = decode_lightmap_file(old);
+    REQUIRE(old_back);
+    CHECK(old_back->probes.sun.empty());
+    CHECK(old_back->probes.sample_sun({0, 1, 0}) == 1.0f);
+
+    // No shadowmask light: no probe sun data.
+    s.shadowmask = false;
+    auto plain = bake_light_probes(scene, s);
+    REQUIRE(plain);
+    CHECK(plain->sun.empty());
+}
+
 TEST_CASE("lightmap unwrap shares uvs between congruent copies (ADR-0135)") {
     const MeshData plane = make_plane({10, 10}, 2);
     const MeshData cube = make_cube();

@@ -971,6 +971,32 @@ Result<LightmapLayout> unwrap_lightmaps(const LightmapScene& scene, const Lightm
     return make_error(ErrorCode::LimitExceeded, "lightmap scene does not fit the atlas; lower texels_per_unit");
 }
 
+float LightmapProbes::sample_sun(Vec3 p) const noexcept {
+    if (sun.size() != sh.size() || sh.empty()) return 1.0f;
+    const Vec3 size = bounds.max - bounds.min;
+    Vec3 f{};
+    for (int a = 0; a < 3; ++a) {
+        if (!(p[a] >= bounds.min[a] && p[a] <= bounds.max[a])) return 1.0f;
+        const auto n = static_cast<float>(counts[static_cast<std::size_t>(a)] - 1);
+        f[a] = std::clamp((p[a] - bounds.min[a]) / std::max(size[a], 1e-6f) * n, 0.0f, n);
+    }
+    const std::uint32_t x0 = std::min(static_cast<std::uint32_t>(f.x), counts[0] - 2);
+    const std::uint32_t y0 = std::min(static_cast<std::uint32_t>(f.y), counts[1] - 2);
+    const std::uint32_t z0 = std::min(static_cast<std::uint32_t>(f.z), counts[2] - 2);
+    const Vec3 t{f.x - static_cast<float>(x0), f.y - static_cast<float>(y0), f.z - static_cast<float>(z0)};
+    float v = 0.0f, weight = 0.0f;
+    for (std::uint32_t c = 0; c < 8; ++c) {
+        const std::uint32_t dx = c & 1u, dy = (c >> 1) & 1u, dz = (c >> 2) & 1u;
+        const float w = (dx ? t.x : 1 - t.x) * (dy ? t.y : 1 - t.y) * (dz ? t.z : 1 - t.z);
+        const std::uint32_t i = (((y0 + dy) * counts[2]) + z0 + dz) * counts[0] + x0 + dx;
+        if (!valid[i] || w <= 0.0f) continue;
+        v += sun[i] * w;
+        weight += w;
+    }
+    if (weight <= 1e-5f) return 1.0f;
+    return 1.0f + (v / weight - 1.0f) * std::min(weight, 1.0f);
+}
+
 std::uint32_t LightmapProbes::valid_count() const noexcept {
     return static_cast<std::uint32_t>(std::count_if(valid.begin(), valid.end(), [](std::uint8_t v) { return v != 0; }));
 }
@@ -1039,6 +1065,44 @@ Result<IrradianceGrid> probe_grid(const LightmapScene& scene, const LightmapSett
 // SH9 irradiance / pi at a free point: `samples` uniformly distributed paths (spherical
 // Fibonacci, rotated per probe) plus, in fully baked mode, the bake lights' direct light.
 // `inside` is set when more than a quarter of the first hits are back faces.
+// The light the sun shadowmask (ADR-0131) and probe sun occlusion (ADR-0136) are baked for: the
+// first shadow-casting directional light, when settings.shadowmask is on.
+const LightmapLight* shadowmask_light(const LightmapScene& scene, const LightmapSettings& settings) {
+    if (!settings.shadowmask) return nullptr;
+    for (const LightmapLight& l : scene.lights)
+        if (l.type == LightmapLight::Type::Directional && l.cast_shadows && math::length(l.direction) > 1e-6f) return &l;
+    return nullptr;
+}
+
+// Fraction of `samples` rays from `origin` towards the sun's disc (uniform over it, an R2
+// sequence offset by `jitter`) that leave the scene.
+struct SunDisc {
+    Vec3 l{0, 1, 0}, t{1, 0, 0}, b{0, 0, 1};
+    float spread{0};
+    std::uint32_t samples{1};
+};
+SunDisc sun_disc(const LightmapLight& light, const LightmapSettings& settings) {
+    SunDisc d;
+    d.l = -math::normalize(light.direction);
+    basis(d.l, d.t, d.b);
+    d.spread = std::tan(std::clamp(settings.sun_angular_radius, 0.0f, 0.2f));
+    d.samples = std::max(settings.shadowmask_samples, 1u);
+    return d;
+}
+float disc_visibility(const Tracer& tracer, const SunDisc& disc, Vec3 origin, float jitter, std::uint64_t& rays) {
+    std::uint32_t lit = 0;
+    for (std::uint32_t s = 0; s < disc.samples; ++s) {
+        // Concentric-free disc sampling: R2 sequence mapped to a disc (sqrt radius).
+        const float u1 = fract(jitter + 0.7548776662f * static_cast<float>(s));
+        const float u2 = fract(jitter + 0.5698402910f * static_cast<float>(s));
+        const float r = std::sqrt(u1) * disc.spread, phi = 2.0f * math::kPi * u2;
+        const Vec3 d = math::normalize(disc.l + disc.t * (r * std::cos(phi)) + disc.b * (r * std::sin(phi)));
+        ++rays;
+        if (!tracer.bvh().occluded(make_ray(origin, d), 1e30f)) ++lit;
+    }
+    return static_cast<float>(lit) / static_cast<float>(disc.samples);
+}
+
 std::array<Vec3, 9> bake_probe(const Tracer& tracer, Vec3 p, std::uint32_t samples, bool include_direct, std::uint64_t probe_id,
                                std::uint64_t seed, bool& inside, std::uint64_t& rays) {
     Random rng(seed ^ 0x9b0be5u ^ (probe_id * 0xd1b54a32d192ed03ull), probe_id + 1);
@@ -1085,12 +1149,19 @@ Result<LightmapProbes> bake_probes_with(const Tracer& tracer, const LightmapScen
     out.valid.assign(count, 0);
     const std::uint32_t samples = std::clamp(settings.probe_samples, 16u, 8192u);
     std::vector<std::uint64_t> rays(count, 0);
+    // Probe sun occlusion (ADR-0136, Unity's probe occlusion): the shadowmask light's visibility
+    // at each probe, so dynamic objects keep baked sun shadows past the realtime shadow distance.
+    const LightmapLight* mask = shadowmask_light(scene, settings);
+    const SunDisc disc = mask ? sun_disc(*mask, settings) : SunDisc{};
+    if (mask) out.sun.assign(count, 1.0f);
     auto run = [&](std::size_t b, std::size_t e) {
         for (std::size_t i = b; i < e; ++i) {
             const auto idx = static_cast<std::uint32_t>(i);
             bool inside = false;
-            out.sh[i] = bake_probe(tracer, grid->probe_position(idx), samples, settings.include_direct, i, settings.seed, inside, rays[i]);
+            const Vec3 at = grid->probe_position(idx);
+            out.sh[i] = bake_probe(tracer, at, samples, settings.include_direct, i, settings.seed, inside, rays[i]);
             out.valid[i] = inside ? 0 : 1;
+            if (mask && !inside) out.sun[i] = disc_visibility(tracer, disc, at, fract(static_cast<float>(i) * 0.618034f), rays[i]);
             if (inside) out.sh[i] = {};
             for (auto& c : out.sh[i])
                 if (!finite(c)) c = {0, 0, 0};
@@ -1113,7 +1184,7 @@ Result<LightmapProbes> bake_probes_with(const Tracer& tracer, const LightmapScen
                     const std::uint32_t i = (y * c[2] + z) * c[0] + x;
                     if (raw[i]) continue;
                     std::array<Vec3, 9> sum{};
-                    float weight = 0.0f;
+                    float weight = 0.0f, sun = 0.0f;
                     for (int dy = -1; dy <= 1; ++dy)
                         for (int dz = -1; dz <= 1; ++dz)
                             for (int dx = -1; dx <= 1; ++dx) {
@@ -1124,10 +1195,12 @@ Result<LightmapProbes> bake_probes_with(const Tracer& tracer, const LightmapScen
                                 if (!raw[j]) continue;
                                 const float w = 1.0f / static_cast<float>(dx * dx + dy * dy + dz * dz);
                                 for (std::size_t k = 0; k < 9; ++k) sum[k] += out.sh[j][k] * w;
+                                if (!out.sun.empty()) sun += out.sun[j] * w;
                                 weight += w;
                             }
                     if (weight <= 0.0f) continue;
                     for (std::size_t k = 0; k < 9; ++k) out.sh[i][k] = sum[k] * (1.0f / weight);
+                    if (!out.sun.empty()) out.sun[i] = sun / weight;
                     out.valid[i] = 1;
                     ++dilated;
                 }
@@ -1219,37 +1292,12 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
     // Luminance-weighted incoming direction per texel (directional bakes), normalised later.
     std::vector<Vec3> dirs(settings.directional ? texels.size() : 0, Vec3{0, 0, 0});
     // Shadowmask (ADR-0131): visibility of the first shadow-casting directional light.
-    const LightmapLight* mask_light = nullptr;
-    if (settings.shadowmask)
-        for (const LightmapLight& l : scene.lights)
-            if (l.type == LightmapLight::Type::Directional && l.cast_shadows && math::length(l.direction) > 1e-6f) {
-                mask_light = &l;
-                break;
-            }
+    const LightmapLight* mask_light = shadowmask_light(scene, settings);
     std::vector<float> vis(mask_light ? texels.size() : 0, 1.0f);
-    Vec3 mask_l{0, 1, 0}, mask_t{1, 0, 0}, mask_b{0, 0, 1};
-    if (mask_light) {
-        mask_l = -math::normalize(mask_light->direction);
-        basis(mask_l, mask_t, mask_b);
-    }
-    const float mask_spread = std::tan(std::clamp(settings.sun_angular_radius, 0.0f, 0.2f));
-    const std::uint32_t mask_samples = std::max(settings.shadowmask_samples, 1u);
-    // Fraction of rays towards the sun's disc (uniform over it) that leave the scene.
+    const SunDisc disc = mask_light ? sun_disc(*mask_light, settings) : SunDisc{};
     auto sun_visibility = [&](const Texel& t, std::size_t texel_id, std::uint64_t& rays) {
-        if (math::dot(t.geo_n, mask_l) <= 0.0f) return 0.0f; // faces away: self-shadowed
-        const Vec3 origin = t.p + t.geo_n * tracer.eps();
-        const float j = fract(static_cast<float>(texel_id) * 0.618034f);
-        std::uint32_t lit = 0;
-        for (std::uint32_t s = 0; s < mask_samples; ++s) {
-            // Concentric-free disc sampling: R2 sequence mapped to a disc (sqrt radius).
-            const float u1 = fract(j + 0.7548776662f * static_cast<float>(s));
-            const float u2 = fract(j + 0.5698402910f * static_cast<float>(s));
-            const float r = std::sqrt(u1) * mask_spread, phi = 2.0f * math::kPi * u2;
-            const Vec3 d = math::normalize(mask_l + mask_t * (r * std::cos(phi)) + mask_b * (r * std::sin(phi)));
-            ++rays;
-            if (!tracer.bvh().occluded(make_ray(origin, d), 1e30f)) ++lit;
-        }
-        return static_cast<float>(lit) / static_cast<float>(mask_samples);
+        if (math::dot(t.geo_n, disc.l) <= 0.0f) return 0.0f; // faces away: self-shadowed
+        return disc_visibility(tracer, disc, t.p + t.geo_n * tracer.eps(), fract(static_cast<float>(texel_id) * 0.618034f), rays);
     };
     std::vector<std::uint64_t> row_rays(H, 0);
     auto trace_rows = [&](std::size_t rb, std::size_t re) {
@@ -1514,6 +1562,7 @@ constexpr std::uint32_t kMaxAtlasSide = 8192;
 constexpr std::uint32_t kFlagDirectional = 1u; // version 2 header flag: an RGBA8 directional atlas follows the atlas
 constexpr std::uint32_t kFlagShadowmask = 2u;  // version 2 header flag: 3 floats (shadowmask light direction) follow the flags
 constexpr std::uint32_t kFlagProbes = 4u;      // version 3 header flag: a light probe block follows the directional atlas
+constexpr std::uint32_t kFlagProbeSun = 8u;    // version 4 header flag: one sun visibility byte per probe follows the probes
 constexpr std::size_t kProbeBytes = 1 + 27 * 2; // validity byte + 27 half floats
 
 bool probes_encodable(const LightmapProbes& p) {
@@ -1610,7 +1659,9 @@ std::vector<std::uint8_t> encode_lightmap_file(const LightmapFile& file) {
                              !file.direction.pixels.empty();
     const bool shadowmask = math::length(file.shadowmask_direction) > 0.5f && finite(file.shadowmask_direction);
     const bool probes = probes_encodable(file.probes);
-    w.u32((directional ? kFlagDirectional : 0u) | (shadowmask ? kFlagShadowmask : 0u) | (probes ? kFlagProbes : 0u));
+    const bool probe_sun = probes && file.probes.sun.size() == file.probes.sh.size();
+    w.u32((directional ? kFlagDirectional : 0u) | (shadowmask ? kFlagShadowmask : 0u) | (probes ? kFlagProbes : 0u) |
+          (probe_sun ? kFlagProbeSun : 0u));
     if (shadowmask) {
         const Vec3 d = math::normalize(file.shadowmask_direction);
         w.f32(d.x);
@@ -1630,6 +1681,9 @@ std::vector<std::uint8_t> encode_lightmap_file(const LightmapFile& file) {
             for (const Vec3& c : p.sh[i])
                 for (int k = 0; k < 3; ++k) w.u16(float_to_half(c[k]));
         }
+        if (probe_sun)
+            for (const float v : p.sun)
+                w.out.push_back(static_cast<std::uint8_t>(std::lround(std::clamp(std::isfinite(v) ? v : 1.0f, 0.0f, 1.0f) * 255.0f)));
     }
     for (const LightmapFileEntry& e : file.entries) {
         w.u64(e.entity.hi);
@@ -1659,8 +1713,10 @@ Result<LightmapFile> decode_lightmap_file(std::span<const std::uint8_t> bytes) {
         return make_error(ErrorCode::VersionMismatch, "unsupported lightmap file version " + std::to_string(version));
     std::uint32_t flags = 0;
     if (version >= 2 && !r.u32(flags)) return make_error(ErrorCode::ParseError, "truncated lightmap header");
-    const std::uint32_t known = kFlagDirectional | kFlagShadowmask | (version >= 3 ? kFlagProbes : 0u);
+    const std::uint32_t known = kFlagDirectional | kFlagShadowmask | (version >= 3 ? kFlagProbes : 0u) | (version >= 4 ? kFlagProbeSun : 0u);
     if ((flags & ~known) != 0) return make_error(ErrorCode::ParseError, "unknown lightmap file flags");
+    if ((flags & kFlagProbeSun) != 0 && (flags & kFlagProbes) == 0)
+        return make_error(ErrorCode::ParseError, "lightmap probe sun occlusion without probes");
     Vec3 mask_dir{0, 0, 0};
     if ((flags & kFlagShadowmask) != 0) {
         if (!r.f32(mask_dir.x) || !r.f32(mask_dir.y) || !r.f32(mask_dir.z))
@@ -1717,6 +1773,15 @@ Result<LightmapFile> decode_lightmap_file(std::span<const std::uint8_t> bytes) {
                     const float f = half_to_float(hv);
                     c[k] = std::isfinite(f) ? f : 0.0f;
                 }
+        }
+        if ((flags & kFlagProbeSun) != 0) {
+            if (!r.has(n)) return make_error(ErrorCode::ParseError, "truncated lightmap probe sun occlusion");
+            p.sun.resize(n);
+            for (float& v : p.sun) {
+                std::uint8_t b = 0;
+                (void)r.bytes(&b, 1);
+                v = static_cast<float>(b) / 255.0f;
+            }
         }
     }
     // Each entry needs at least 32 bytes, which bounds `count` by the remaining size.
