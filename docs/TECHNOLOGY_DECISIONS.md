@@ -972,6 +972,18 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0121 — Terrain layers: height blending, derivative bump and cavity from layer alpha
+
+- Status: Accepted (2026-11-20)
+- Context: the built-in terrain surface cross-faded four layer textures by splat weight and shaded them with the flat vertex normal. Photoscanned ground (mud, leaf litter, moss, rock) then looks like a printed carpet: transitions are soft smears instead of stones and leaves poking through mud, and the micro relief that sells a photo texture at grazing angles disappears. Shipped engines solve this with height-based layer blending (e.g. Unreal/Unity HDRP "height blend" terrain layers) plus a normal map per layer, but a normal map per layer doubles texture fetches and memory, which the Mali-G52-class phones VICTUS targets cannot spare, and the terrain mesh has no tangents.
+- Decision: the alpha channel of each terrain layer texture is an optional height map (1 = top, 0 = crevice). The shader (`terrain_surface_code`, engine/terrain/src/terrain.cpp):
+  - weights each active layer by `w * exp2(12 (h - hmax))` and renormalises, so the tallest material wins narrow transitions;
+  - bumps the shading normal from screen-space derivatives of the blended height using the surface-gradient form of Mikkelsen, "Bump Mapping Unparametrized Surfaces on the GPU" (2010), amplitude 0.04 m times the material normal scale; no tangents, no extra fetches;
+  - darkens crevices (`occlusion = 1 - 0.6 (1-h)^2`) and makes them up to 25% smoother (moisture);
+  - samples with `textureGrad`, gradients taken once in uniform control flow, so the per-layer branches stay legal and mips stay correct.
+- Compatibility: an opaque layer texture (alpha 1 everywhere) or an untextured layer gives exactly the old result (equal heights, zero height derivatives, cavity 0), so existing projects render unchanged.
+- Consequences: one shader, the same four fetches, a handful of ALU ops and four derivative instructions per terrain pixel. Limits: derivative bump is per 2x2 quad, so very fine height detail aliases slightly at a distance (mips soften it); no parallax/occlusion mapping; height is per layer texture only (no separate height texture slot); BC1/ETC-style formats without alpha drop the height, so use BC7/ASTC for height-carrying layers.
+
 ## ADR-0120 — Behaviours: no-code gameplay components
 
 - Status: Accepted (2026-11-19)

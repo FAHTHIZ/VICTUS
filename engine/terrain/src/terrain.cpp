@@ -229,27 +229,60 @@ std::string_view terrain_surface_code() noexcept {
     return R"glsl(
 // Built-in terrain surface (engine/terrain): blends four layers by the splat weights stored in
 // the vertex colours. params[i] = layer i tint (rgb) and tiling (w, 0 = untextured).
+//
+// Layer texture alpha is an optional height map (ADR-0121): 1 everywhere (an opaque texture)
+// reproduces the plain weighted blend exactly. Lower alpha marks crevices, which
+//   - lose the blend against taller neighbours (height-based blending: stones and leaves poke
+//     through mud instead of cross-fading),
+//   - bend the shading normal (bump from screen-space derivatives of the blended height,
+//     Mikkelsen 2010, so no tangents or extra texture fetches are needed),
+//   - get a little cavity occlusion and hold moisture (slightly smoother).
+// The bump depth is 4 cm times the material normal scale (TerrainComponent roughness keeps its
+// meaning as the base roughness).
 vec3 terrain_encode_srgb(vec3 c) {
     return mix(c * 12.92, 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
 }
-vec3 terrain_layer(sampler2D t, vec4 p, vec2 uv) {
-    return p.w > 0.0 ? texture(t, uv * p.w).rgb * p.rgb : p.rgb;
+vec4 terrain_layer(sampler2D t, vec4 p, vec2 uv, vec2 dx, vec2 dy) {
+    if (p.w <= 0.0) return vec4(p.rgb, 1.0);
+    vec4 c = textureGrad(t, uv * p.w, dx * p.w, dy * p.w);
+    return vec4(c.rgb * p.rgb, c.a);
 }
 void surface(SurfaceInput i, inout Surface s) {
     vec4 w = vec4(clamp(terrain_encode_srgb(i.vertex_color.rgb), 0.0, 1.0), i.vertex_color.a);
     w /= max(w.x + w.y + w.z + w.w, 1e-4);
-    vec3 c = vec3(0.0);
-    if (w.x > 0.002) c += w.x * terrain_layer(u_base_color, i.params[0], i.mesh_uv);
-    if (w.y > 0.002) c += w.y * terrain_layer(u_metal_rough, i.params[1], i.mesh_uv);
-    if (w.z > 0.002) c += w.z * terrain_layer(u_normal_map, i.params[2], i.mesh_uv);
-    if (w.w > 0.002) c += w.w * terrain_layer(u_emissive, i.params[3], i.mesh_uv);
+    // gradients are taken here, in uniform control flow, and passed into the branches below
+    vec2 dx = dFdx(i.mesh_uv), dy = dFdy(i.mesh_uv);
+    vec4 l0 = vec4(0.0), l1 = vec4(0.0), l2 = vec4(0.0), l3 = vec4(0.0);
+    if (w.x > 0.002) l0 = terrain_layer(u_base_color, i.params[0], i.mesh_uv, dx, dy);
+    if (w.y > 0.002) l1 = terrain_layer(u_metal_rough, i.params[1], i.mesh_uv, dx, dy);
+    if (w.z > 0.002) l2 = terrain_layer(u_normal_map, i.params[2], i.mesh_uv, dx, dy);
+    if (w.w > 0.002) l3 = terrain_layer(u_emissive, i.params[3], i.mesh_uv, dx, dy);
+    vec4 h = vec4(l0.a, l1.a, l2.a, l3.a);
+    // height blend: exp2(k (h - hmax)) is 1 for every layer when the heights are equal
+    float hmax = max(max(w.x > 0.002 ? h.x : 0.0, w.y > 0.002 ? h.y : 0.0),
+                     max(w.z > 0.002 ? h.z : 0.0, w.w > 0.002 ? h.w : 0.0));
+    vec4 hw = w * exp2(12.0 * (h - hmax)) * step(vec4(0.002), w);
+    hw /= max(hw.x + hw.y + hw.z + hw.w, 1e-4);
+    vec3 c = hw.x * l0.rgb + hw.y * l1.rgb + hw.z * l2.rgb + hw.w * l3.rgb;
+    float height = dot(hw, h);
+    // bump from the blended height (world metres), surface gradient form
+    vec3 N = normalize(i.vertex_normal);
+    float amp = 0.04 * material.params.z;
+    vec3 sx = dFdx(i.world_position), sy = dFdy(i.world_position);
+    float hx = dFdx(height) * amp, hy = dFdy(height) * amp;
+    vec3 r1 = cross(sy, N), r2 = cross(N, sx);
+    float det = dot(sx, r1);
+    vec3 grad = sign(det) * (hx * r1 + hy * r2);
+    vec3 bumped = abs(det) * N - grad;
+    float bl = dot(bumped, bumped);
+    s.normal = bl > 1e-20 ? normalize(bumped) : N;
     s.base_color = c;
     s.alpha = 1.0;
-    s.normal = i.vertex_normal;
     s.metallic = 0.0;
-    s.roughness = clamp(material.params.y, 0.045, 1.0); // not scaled by the layer 1 texture
+    float cavity = 1.0 - height; // 0 on an opaque (legacy) texture
+    s.roughness = clamp(material.params.y * (1.0 - 0.25 * cavity), 0.045, 1.0);
     s.emissive = vec3(0.0);
-    s.occlusion = 1.0;
+    s.occlusion = 1.0 - 0.6 * cavity * cavity;
 }
 )glsl";
 }

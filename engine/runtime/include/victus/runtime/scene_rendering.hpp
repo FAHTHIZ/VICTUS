@@ -4,6 +4,7 @@
 // - instantiate_model() (from victus/assets/instantiate.hpp) turns a cooked model into entities.
 // - extract_scene() feeds a scene's cameras, lights, meshes and sprites to the renderers.
 #pragma once
+#include <cstdlib>
 #include "victus/animation/animation.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/assets/async_loader.hpp"
@@ -245,7 +246,9 @@ private:
     std::unique_ptr<render::EnvironmentMap> atmosphere_;
     render::AtmosphereSettings atmosphere_key_;
     std::uint32_t atmosphere_bakes_{0};
-    bool allow_compressed_{true};
+    // VICTUS_NO_COMPRESSED_TEXTURES=1 uploads the RGBA8 mips instead of BC/ASTC variants: software
+    // rasterisers (lavapipe) decode block formats per sample, which makes test captures very slow.
+    bool allow_compressed_{std::getenv("VICTUS_NO_COMPRESSED_TEXTURES") == nullptr};
     std::uint32_t compressed_uploads_{0};
     std::unordered_map<std::uint64_t, ProbeCapture> probes_;
     std::unique_ptr<render::SceneRenderer> probe_renderer_;
