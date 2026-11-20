@@ -408,10 +408,42 @@ int entity_tostring(lua_State* L) {
 }
 
 
+namespace {
+// VICTUS_SCRIPT_SLOW_CALLS=<ms>: every native function exposed to scripts logs a warning when
+// one call takes longer than <ms>, naming it (diagnoses "exceeded its time budget" errors).
+double slow_call_threshold() {
+    static const double t = [] {
+        const char* v = std::getenv("VICTUS_SCRIPT_SLOW_CALLS");
+        return v && *v ? std::atof(v) / 1000.0 : 0.0;
+    }();
+    return t;
+}
+
+int timed_native(lua_State* L) {
+    const auto fn = reinterpret_cast<lua_CFunction>(lua_tolightuserdata(L, lua_upvalueindex(1)));
+    const char* name = static_cast<const char*>(lua_tolightuserdata(L, lua_upvalueindex(2)));
+    const double start = now_seconds();
+    const int n = fn(L);
+    const double spent = now_seconds() - start;
+    if (spent > slow_call_threshold()) VICTUS_LOG_WARN("script", "slow native call {}: {:.1f} ms", name, spent * 1000.0);
+    return n;
+}
+} // namespace
+
+void push_native(lua_State* L, lua_CFunction fn, const char* name) {
+    if (slow_call_threshold() <= 0) {
+        lua_pushcfunction(L, fn, name);
+        return;
+    }
+    lua_pushlightuserdata(L, reinterpret_cast<void*>(fn));
+    lua_pushlightuserdata(L, const_cast<char*>(name));
+    lua_pushcclosure(L, timed_native, name, 2);
+}
+
 void register_lib(lua_State* L, const char* name, const luaL_Reg* fns) {
     lua_newtable(L);
     for (const luaL_Reg* f = fns; f->name; ++f) {
-        lua_pushcfunction(L, f->func, f->name);
+        push_native(L, f->func, f->name);
         lua_setfield(L, -2, f->name);
     }
     lua_setglobal(L, name);

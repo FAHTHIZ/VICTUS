@@ -18,6 +18,8 @@
 #include <cfloat>
 #include <cmath>
 #include <cstring>
+#include <future>
+#include <string>
 #include <mutex>
 #include <numbers>
 #include <random>
@@ -330,9 +332,57 @@ float shortest_angle(float from, float to) {
 std::mt19937* g_random = nullptr;
 float random_unit() { return std::uniform_real_distribution<float>(0.0f, 0.99999f)(*g_random); }
 
+rcConfig make_grid_config(const Geometry& geo, const NavMeshSurfaceComponent& s) {
+    rcConfig cfg{};
+    cfg.cs = std::max(s.cell_size, 0.01f);
+    cfg.ch = std::max(s.cell_height, 0.01f);
+    // Keep the voxel grid bounded on very large levels (single-tile navmesh).
+    const float extent_x = geo.bmax[0] - geo.bmin[0], extent_z = geo.bmax[2] - geo.bmin[2];
+    constexpr float kMaxCells = 4096.0f * 4096.0f;
+    if (extent_x / cfg.cs * (extent_z / cfg.cs) > kMaxCells) cfg.cs = std::sqrt(extent_x * extent_z / kMaxCells);
+    cfg.walkableSlopeAngle = std::clamp(s.max_slope, 0.0f, 89.0f);
+    cfg.walkableHeight = static_cast<int>(std::ceil(std::max(s.agent_height, cfg.ch) / cfg.ch));
+    cfg.walkableClimb = static_cast<int>(std::floor(std::max(s.max_climb, 0.0f) / cfg.ch));
+    cfg.walkableRadius = static_cast<int>(std::ceil(std::max(s.agent_radius, 0.0f) / cfg.cs));
+    cfg.maxEdgeLen = static_cast<int>(12.0f / cfg.cs);
+    cfg.maxSimplificationError = 1.3f;
+    cfg.minRegionArea = 8 * 8;
+    cfg.mergeRegionArea = 20 * 20;
+    cfg.maxVertsPerPoly = 6;
+    cfg.detailSampleDist = cfg.cs * 6.0f;
+    cfg.detailSampleMaxError = cfg.ch * 1.0f;
+    rcVcopy(cfg.bmin, geo.bmin);
+    rcVcopy(cfg.bmax, geo.bmax);
+    cfg.bmax[1] += s.agent_height; // headroom above the highest surface
+    if (geo.tris.empty()) return cfg;
+    rcCalcGridSize(cfg.bmin, cfg.bmax, cfg.cs, &cfg.width, &cfg.height);
+    return cfg;
+}
+
 } // namespace
 
 // ---- system ---------------------------------------------------------------------------------------
+
+struct NavigationSystem::BuildJob {
+    std::shared_ptr<Geometry> geo{std::make_shared<Geometry>()};
+    NavMeshSurfaceComponent surface;
+    std::chrono::steady_clock::time_point t0;
+};
+
+struct NavigationSystem::Cooked {
+    unsigned char* data{nullptr}; // Detour tile data (nullptr: nothing walkable)
+    int size{0};
+    std::uint32_t polygons{0}, vertices{0}, source_triangles{0};
+    std::string error;
+    NavMeshSurfaceComponent surface;
+    std::chrono::steady_clock::time_point t0;
+    Cooked() = default;
+    Cooked(const Cooked&) = delete;
+    Cooked& operator=(const Cooked&) = delete;
+    ~Cooked() {
+        if (data) dtFree(data);
+    }
+};
 
 struct NavigationSystem::Impl {
     struct Agent {
@@ -355,12 +405,21 @@ struct NavigationSystem::Impl {
     float check_timer{0};
     std::unordered_map<Entity, Agent, ecs::EntityHash> agents;
     std::vector<Entity> scratch;
+    std::future<std::shared_ptr<NavigationSystem::Cooked>> pending; // background build in flight
+
+    void discard_pending() {
+        if (pending.valid()) pending.wait();
+        pending = {};
+    }
 
     explicit Impl(NavigationSettings s) : settings(s) {
         filter.setIncludeFlags(kWalkFlag);
         filter.setExcludeFlags(0);
     }
-    ~Impl() { release(); }
+    ~Impl() {
+        discard_pending();
+        release();
+    }
 
     void release() {
         dtFreeCrowd(crowd);
@@ -434,17 +493,22 @@ bool NavigationSystem::valid() const noexcept { return impl_->mesh != nullptr; }
 
 Status NavigationSystem::build(Scene& scene) {
     VICTUS_PROFILE_SCOPE("navigation.build");
-    const auto t0 = std::chrono::steady_clock::now();
     Impl& im = *impl_;
-    const NavMeshSurfaceComponent* found = surface_of(scene);
-    im.surface = found ? *found : NavMeshSurfaceComponent{};
-    const NavMeshSurfaceComponent& s = im.surface;
-    im.signature = geometry_signature(scene, s);
-    im.release();
-    stats_.valid = false;
-    stats_.polygons = stats_.vertices = 0;
+    im.discard_pending(); // a synchronous build supersedes a background one
+    stats_.building = false;
+    BuildJob job = gather(scene);
+    return install(scene, cook(std::move(job)));
+}
 
-    Geometry geo;
+NavigationSystem::BuildJob NavigationSystem::gather(Scene& scene) {
+    Impl& im = *impl_;
+    BuildJob job;
+    job.t0 = std::chrono::steady_clock::now();
+    const NavMeshSurfaceComponent* found = surface_of(scene);
+    job.surface = found ? *found : NavMeshSurfaceComponent{};
+    const NavMeshSurfaceComponent& s = job.surface;
+    im.signature = geometry_signature(scene, s);
+    Geometry& geo = *job.geo;
     each_static_collider(scene, s.layer_mask,
                          [&](Entity e, const physics::ColliderComponent& c, bool kinematic, const physics::CollisionMesh* mesh) {
         if (kinematic) add_bound(geo, upright_bound(scene.world_matrix(e), c, mesh));
@@ -453,39 +517,22 @@ Status NavigationSystem::build(Scene& scene) {
     each_static_heightfield(scene, s.layer_mask, [&](Entity e, const physics::StaticHeightfieldComponent& c) {
         add_heightfield(geo, rigid(scene.world_matrix(e)), c);
     });
-    stats_.source_triangles = static_cast<std::uint32_t>(geo.triangle_count());
     ++stats_.builds;
-    auto finish = [&] {
-        stats_.build_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    };
-    if (geo.tris.empty()) {
-        finish();
-        return {}; // nothing to walk on: queries fail, agents stay put
-    }
+    return job;
+}
 
-    rcConfig cfg{};
-    cfg.cs = std::max(s.cell_size, 0.01f);
-    cfg.ch = std::max(s.cell_height, 0.01f);
-    // Keep the voxel grid bounded on very large levels (single-tile navmesh).
-    const float extent_x = geo.bmax[0] - geo.bmin[0], extent_z = geo.bmax[2] - geo.bmin[2];
-    constexpr float kMaxCells = 4096.0f * 4096.0f;
-    if (extent_x / cfg.cs * (extent_z / cfg.cs) > kMaxCells) cfg.cs = std::sqrt(extent_x * extent_z / kMaxCells);
-    cfg.walkableSlopeAngle = std::clamp(s.max_slope, 0.0f, 89.0f);
-    cfg.walkableHeight = static_cast<int>(std::ceil(std::max(s.agent_height, cfg.ch) / cfg.ch));
-    cfg.walkableClimb = static_cast<int>(std::floor(std::max(s.max_climb, 0.0f) / cfg.ch));
-    cfg.walkableRadius = static_cast<int>(std::ceil(std::max(s.agent_radius, 0.0f) / cfg.cs));
-    cfg.maxEdgeLen = static_cast<int>(12.0f / cfg.cs);
-    cfg.maxSimplificationError = 1.3f;
-    cfg.minRegionArea = 8 * 8;
-    cfg.mergeRegionArea = 20 * 20;
-    cfg.maxVertsPerPoly = 6;
-    cfg.detailSampleDist = cfg.cs * 6.0f;
-    cfg.detailSampleMaxError = cfg.ch * 1.0f;
-    rcVcopy(cfg.bmin, geo.bmin);
-    rcVcopy(cfg.bmax, geo.bmax);
-    cfg.bmax[1] += s.agent_height; // headroom above the highest surface
-    rcCalcGridSize(cfg.bmin, cfg.bmax, cfg.cs, &cfg.width, &cfg.height);
+// Recast/Detour pipeline on gathered geometry. Touches no scene or system state, so it may run on a
+// worker thread.
+std::shared_ptr<NavigationSystem::Cooked> NavigationSystem::cook(BuildJob job) {
+    auto out = std::make_shared<Cooked>();
+    out->surface = job.surface;
+    out->t0 = job.t0;
+    const Geometry& geo = *job.geo;
+    const NavMeshSurfaceComponent& s = job.surface;
+    out->source_triangles = static_cast<std::uint32_t>(geo.triangle_count());
+    if (geo.tris.empty()) return out; // nothing to walk on: queries fail, agents stay put
 
+    rcConfig cfg = make_grid_config(geo, s);
     rcContext ctx(false);
     struct Owned {
         rcHeightfield* hf{nullptr};
@@ -501,9 +548,9 @@ Status NavigationSystem::build(Scene& scene) {
             rcFreePolyMeshDetail(dmesh);
         }
     } o;
-    auto fail = [&](const char* what) -> Status {
-        finish();
-        return Error{ErrorCode::Unknown, std::string("navmesh build failed: ") + what};
+    auto fail = [&](const char* what) {
+        out->error = std::string("navmesh build failed: ") + what;
+        return out;
     };
     const int nverts = static_cast<int>(geo.verts.size() / 3), ntris = geo.triangle_count();
     o.hf = rcAllocHeightfield();
@@ -519,6 +566,8 @@ Status NavigationSystem::build(Scene& scene) {
     o.chf = rcAllocCompactHeightfield();
     if (!o.chf || !rcBuildCompactHeightfield(&ctx, cfg.walkableHeight, cfg.walkableClimb, *o.hf, *o.chf))
         return fail("compact heightfield");
+    rcFreeHeightField(o.hf);
+    o.hf = nullptr; // the span heightfield is the largest allocation; free it early
     if (!rcErodeWalkableArea(&ctx, cfg.walkableRadius, *o.chf)) return fail("erode");
     if (!rcBuildDistanceField(&ctx, *o.chf)) return fail("distance field");
     if (!rcBuildRegions(&ctx, *o.chf, 0, cfg.minRegionArea, cfg.mergeRegionArea)) return fail("regions");
@@ -529,10 +578,7 @@ Status NavigationSystem::build(Scene& scene) {
     o.dmesh = rcAllocPolyMeshDetail();
     if (!o.dmesh || !rcBuildPolyMeshDetail(&ctx, *o.pmesh, *o.chf, cfg.detailSampleDist, cfg.detailSampleMaxError, *o.dmesh))
         return fail("detail mesh");
-    if (o.pmesh->npolys == 0) {
-        finish();
-        return {}; // geometry exists but nothing is walkable for this agent size
-    }
+    if (o.pmesh->npolys == 0) return out; // geometry exists but nothing is walkable for this agent size
     if (o.pmesh->nverts >= 0xffff) return fail("too many vertices for a single tile (increase cell_size)");
     for (int i = 0; i < o.pmesh->npolys; ++i) {
         if (o.pmesh->areas[i] == RC_WALKABLE_AREA) o.pmesh->flags[i] = kWalkFlag;
@@ -559,26 +605,50 @@ Status NavigationSystem::build(Scene& scene) {
     p.cs = cfg.cs;
     p.ch = cfg.ch;
     p.buildBvTree = true;
-    unsigned char* data = nullptr;
-    int size = 0;
-    if (!dtCreateNavMeshData(&p, &data, &size)) return fail("detour data");
-    im.mesh = dtAllocNavMesh();
-    if (!im.mesh || dtStatusFailed(im.mesh->init(data, size, DT_TILE_FREE_DATA))) {
-        if (!im.mesh) dtFree(data);
-        im.release();
-        return fail("detour init");
+    if (!dtCreateNavMeshData(&p, &out->data, &out->size)) return fail("detour data");
+    out->polygons = static_cast<std::uint32_t>(o.pmesh->npolys);
+    out->vertices = static_cast<std::uint32_t>(o.pmesh->nverts);
+    return out;
+}
+
+// Replaces the live navmesh with a cooked one (main thread).
+Status NavigationSystem::install(Scene& scene, std::shared_ptr<Cooked> c) {
+    Impl& im = *impl_;
+    im.surface = c->surface;
+    const NavMeshSurfaceComponent& s = im.surface;
+    im.release();
+    stats_.valid = false;
+    stats_.polygons = stats_.vertices = 0;
+    stats_.source_triangles = c->source_triangles;
+    auto finish = [&] {
+        stats_.build_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c->t0).count();
+    };
+    auto fail = [&](std::string what) -> Status {
+        finish();
+        return Error{ErrorCode::Unknown, std::move(what)};
+    };
+    if (!c->error.empty()) return fail(c->error);
+    if (!c->data) {
+        finish();
+        return {};
     }
+    im.mesh = dtAllocNavMesh();
+    if (!im.mesh || dtStatusFailed(im.mesh->init(c->data, c->size, DT_TILE_FREE_DATA))) {
+        im.release();
+        return fail("navmesh build failed: detour init");
+    }
+    c->data = nullptr; // owned by the navmesh now
     im.query = dtAllocNavMeshQuery();
     if (!im.query || dtStatusFailed(im.query->init(im.mesh, 4096))) {
         im.release();
-        return fail("query init");
+        return fail("navmesh build failed: query init");
     }
     im.crowd = dtAllocCrowd();
     float max_radius = s.agent_radius;
     scene.world().each<NavAgentComponent>([&](Entity, NavAgentComponent& a) { max_radius = std::max(max_radius, a.radius); });
     if (!im.crowd || !im.crowd->init(static_cast<int>(im.settings.max_agents), std::max(max_radius, 0.05f), im.mesh)) {
         im.release();
-        return fail("crowd init");
+        return fail("navmesh build failed: crowd init");
     }
     // Avoidance quality presets (DetourCrowd sample values): low, medium, good, high.
     dtObstacleAvoidanceParams oa = *im.crowd->getObstacleAvoidanceParams(0);
@@ -593,8 +663,8 @@ Status NavigationSystem::build(Scene& scene) {
     im.crowd->setObstacleAvoidanceParams(3, &oa);
 
     stats_.valid = true;
-    stats_.polygons = static_cast<std::uint32_t>(o.pmesh->npolys);
-    stats_.vertices = static_cast<std::uint32_t>(o.pmesh->nverts);
+    stats_.polygons = c->polygons;
+    stats_.vertices = c->vertices;
     // Re-register agents on the new mesh, keeping their destinations.
     for (auto& [e, a] : im.agents) {
         if (scene.world().alive(e)) (void)im.add_to_crowd(scene, e, a);
@@ -605,11 +675,43 @@ Status NavigationSystem::build(Scene& scene) {
 
 Status NavigationSystem::ensure_built(Scene& scene) {
     Impl& im = *impl_;
+    if (im.pending.valid()) { // a background build is in flight: finish it now
+        auto c = im.pending.get();
+        stats_.building = false;
+        if (auto st = install(scene, std::move(c)); !st) return st;
+    }
     const NavMeshSurfaceComponent* found = surface_of(scene);
     const NavMeshSurfaceComponent s = found ? *found : NavMeshSurfaceComponent{};
     if (stats_.builds > 0 && geometry_signature(scene, s) == im.signature) return {};
     return build(scene);
 }
+
+Status NavigationSystem::ensure_built_async(Scene& scene) {
+    Impl& im = *impl_;
+    if (im.pending.valid()) {
+        if (im.pending.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return {};
+        auto c = im.pending.get();
+        stats_.building = false;
+        const Status st = install(scene, std::move(c));
+        if (st) VICTUS_LOG_INFO("navigation", "navmesh built in the background: {} polygons in {:.0f} ms", stats_.polygons, stats_.build_ms);
+        return st;
+    }
+    const NavMeshSurfaceComponent* found = surface_of(scene);
+    const NavMeshSurfaceComponent s = found ? *found : NavMeshSurfaceComponent{};
+    if (stats_.builds > 0 && geometry_signature(scene, s) == im.signature) return {};
+    VICTUS_PROFILE_SCOPE("navigation.build");
+    BuildJob job = gather(scene);
+    const rcConfig cfg = make_grid_config(*job.geo, job.surface);
+    if (job.geo->tris.empty() || static_cast<double>(cfg.width) * cfg.height < im.settings.async_min_cells)
+        return install(scene, cook(std::move(job)));
+    // Large levels (a square kilometre of terrain takes seconds) cook on a worker thread; the
+    // previous navmesh, if any, keeps answering queries until the new one is installed.
+    stats_.building = true;
+    im.pending = std::async(std::launch::async, [job = std::move(job)]() mutable { return cook(std::move(job)); });
+    return {};
+}
+
+bool NavigationSystem::building() const noexcept { return impl_->pending.valid(); }
 
 bool NavigationSystem::find_path(math::Vec3 from, math::Vec3 to, std::vector<math::Vec3>& out, bool* partial) const {
     out.clear();
@@ -749,9 +851,9 @@ void NavigationSystem::update(Scene& scene, float dt) {
 
     // Build on first use, then rebuild periodically when static geometry changes.
     im.check_timer -= dt;
-    if (stats_.builds == 0 || (im.surface.auto_rebuild && im.check_timer <= 0)) {
+    if (stats_.builds == 0 || im.pending.valid() || (im.surface.auto_rebuild && im.check_timer <= 0)) {
         im.check_timer = im.settings.rebuild_check_interval;
-        if (auto st = ensure_built(scene); !st) VICTUS_LOG_WARN("navigation", "{}", st.error().message);
+        if (auto st = ensure_built_async(scene); !st) VICTUS_LOG_WARN("navigation", "{}", st.error().message);
     }
     if (!im.crowd) return;
 

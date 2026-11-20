@@ -2,6 +2,7 @@
 // Internal to engine/script: the ScriptHost implementation state and the helpers the binding
 // translation units share. Not installed; include only from engine/script/src.
 #pragma once
+#include "victus/core/log.hpp"
 #include "victus/animation/animation.hpp"
 #include "victus/gameui/gameui.hpp"
 #include "victus/gameui/localization.hpp"
@@ -479,9 +480,28 @@ constexpr int kBridgeTag = 2;
 
 // script_lua.cpp
 ScriptHost::Impl& host_of(lua_State* L);
+
+// Time spent inside a native call that loads assets on first use (a character model's morph and
+// clip data) is not charged to the script's time budget: the load is a one-off engine cost, not
+// script work, and charging it kills the calling script on slow machines.
+struct AssetLoadPause {
+    ScriptHost::Impl& h;
+    const char* what;
+    double start{now_seconds()};
+    AssetLoadPause(lua_State* L, const char* name) : h(host_of(L)), what(name) {}
+    ~AssetLoadPause() {
+        const double spent = now_seconds() - start;
+        if (h.deadline > 0) h.deadline += spent;
+        if (spent > 0.05) VICTUS_LOG_INFO("script", "entity:{}() spent {:.0f} ms resolving assets (not charged to the script budget)", what, spent * 1000.0);
+    }
+    AssetLoadPause(const AssetLoadPause&) = delete;
+    AssetLoadPause& operator=(const AssetLoadPause&) = delete;
+};
 scene::Scene& scene_of(lua_State* L);
 void* lua_alloc(void* ud, void* ptr, std::size_t osize, std::size_t nsize);
 void interrupt(lua_State* L, int gc);
+// Pushes a native function for scripts (wrapped with a timer when VICTUS_SCRIPT_SLOW_CALLS is set).
+void push_native(lua_State* L, lua_CFunction fn, const char* name);
 void push_json(lua_State* L, const Value& v, int depth = 0, bool refs = false);
 Value to_json(lua_State* L, int idx, int depth = 0, bool refs = false);
 void push_entity(lua_State* L, Entity e);
