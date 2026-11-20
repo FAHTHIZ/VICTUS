@@ -17,6 +17,19 @@ Broad and tested, **not production-ready**: no game has shipped with VICTUS, ren
 
 ## Priorities
 
+### 0. Photoreal on low-end hardware (owner direction, 2026-11-20)
+
+The owner's target: images that read as photoreal on hardware as weak as entry-level phones. Research, audit and the ordered plan: [docs/audits/PHOTOREAL_LOW_END_AUDIT.md](docs/audits/PHOTOREAL_LOW_END_AUDIT.md). This track comes before every other priority; new no-code gameplay features wait until its first items land.
+
+- [~] **Baked lighting v1.** xatlas lightmap UVs, a CPU path-traced baker (sun, sky, point/spot lights, multi-bounce diffuse), a per-scene lightmap atlas, renderer sampling, `victus bake-lighting`, Studio *Bake Lighting*. **Accept when:** a template scene bakes from the CLI and Studio, renders lightmapped on every tier, and a GPU test shows bounce light and contact darkening that the unbaked scene lacks.
+- [ ] **Mobile bandwidth quick wins.** R11G11B10 scene colour on Low/Medium and mobile, no depth pre-pass without SSAO, FXAA folded into tonemap on Low.
+- [ ] **Baked lighting v2.** Directional (L1 SH) lightmaps, sun shadowmask, baked light probes for dynamic objects, lightmapped templates.
+- [ ] **FP16 shading** behind a capability check, held to `victus compare` goldens.
+- [ ] **Device classes.** Tier chosen per GPU and capabilities, with project overrides.
+- [ ] **Photoreal reference scene** with CC0 scanned materials, the reference for perceptual equivalence across tiers.
+- [ ] **Mobile temporal upscaling.** Arm ASR (MIT) evaluated against the built-in TAA upscaler.
+- [ ] **OpenGL ES 3 fallback** (ADR first) for the ~7 % of Android handhelds without Vulkan.
+
 ### 1. Creator experience (no-code game making)
 
 - [~] **VICTUS Studio maturity** (brief: [docs/handoff/STUDIO_UX_AND_WORKSPACE_MATURITY.md](docs/handoff/STUDIO_UX_AND_WORKSPACE_MATURITY.md)). Done so far: design tokens, typography and icons, start screen with validation and samples, layouts, Problems panel, Export Game, diagnostics, Hierarchy/Inspector/Console/Assets polish, drag-and-drop import, interface size, Getting Started checklist and lessons, Help panel, undo history, open panels and layout remembered between sessions, user-named layouts. Remaining: a dependency inspector and import queue, a visual UI editor canvas, a visual behaviour-tree editor, a curve editor for the sequencer, plugin loading in the editor. **Accept when:** a first-time user completes the Getting Started path, builds and exports a game in a moderated test without help.
