@@ -230,7 +230,7 @@ std::string_view terrain_surface_code() noexcept {
 // Built-in terrain surface (engine/terrain): blends four layers by the splat weights stored in
 // the vertex colours. params[i] = layer i tint (rgb) and tiling (w, 0 = untextured).
 //
-// Layer texture alpha is an optional height map (ADR-0121): 1 everywhere (an opaque texture)
+// Layer texture alpha is an optional height map (ADR-0123): 1 everywhere (an opaque texture)
 // reproduces the plain weighted blend exactly. Lower alpha marks crevices, which
 //   - lose the blend against taller neighbours (height-based blending: stones and leaves poke
 //     through mud instead of cross-fading),

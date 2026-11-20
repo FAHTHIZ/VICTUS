@@ -489,3 +489,74 @@ TEST_CASE("gpu lods: hysteresis keeps a level at a threshold without exceeding t
     CHECK(view_stats(r, held, {0, 0, threshold * 1.05f}, 60.0f, 160, 96, untracked).triangles < lod0);
     ctx.destroy(sphere);
 }
+
+TEST_CASE("gpu shadows: receiver culling skips casters whose shadow no cascade pixel can see, image unchanged") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    auto ground = ctx.create_mesh(make_plane({200, 200}), "recv_ground").value();
+    auto sphere = ctx.create_mesh(make_uv_sphere(0.5f, 32, 16), "recv_sphere").value();
+    auto pillar = ctx.create_mesh(make_cube({0.25f, 3.0f, 0.25f}), "recv_pillar").value();
+    Material mat;
+    mat.cast_shadows = true;
+    constexpr std::uint32_t W = 256, H = 144;
+    // A street of spheres receding from the camera (they land in every cascade's box), plus an
+    // off-screen pillar up-sun whose long shadow crosses the view: it must still be drawn.
+    auto frame = [&](RenderSettings s, SceneStats& st, math::Vec3 sun_dir) {
+        s.taa = false;
+        s.ssao = false;
+        s.lods = false;
+        sr.value()->set_settings(s);
+        auto target = test::make_target(W, H);
+        DirectionalLight sun;
+        sun.direction = sun_dir;
+        sun.shadow_distance = 60;
+        sr.value()->begin(Camera3D::look_at({0, 1.6f, 4}, {0, 0.8f, -6}), sun, {});
+        sr.value()->submit(ground, mat, math::Mat4::identity());
+        for (int i = 0; i < 24; ++i)
+            for (float x : {-2.0f, 2.0f})
+                sr.value()->submit(sphere, mat, math::Mat4::translation({x, 0.5f, 2.0f - 2.5f * float(i)}));
+        sr.value()->submit(pillar, mat, math::Mat4::translation({-14.0f, 3.0f, -8.0f}));
+        auto cmd = dev.begin_commands();
+        REQUIRE(sr.value()->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target).value();
+        st = sr.value()->stats();
+        dev.destroy(target);
+        return px;
+    };
+    CHECK(RenderSettings{}.shadow_receiver_culling);
+    for (const QualityTier tier : {QualityTier::Low, QualityTier::Medium, QualityTier::High, QualityTier::Ultra}) {
+        const math::Vec3 suns[] = {{1.0f, -0.6f, 0.2f}, {0.3f, -1.0f, -0.4f}, {0.2f, -0.35f, 1.0f}};
+        for (const math::Vec3 sun : suns) {
+            RenderSettings s = RenderSettings::preset(tier);
+            SceneStats on{}, off{};
+            s.shadow_receiver_culling = false;
+            const auto a = frame(s, off, sun);
+            s.shadow_receiver_culling = true;
+            const auto b = frame(s, on, sun);
+            INFO("tier " << int(tier) << " sun " << sun.x << "," << sun.y << "," << sun.z << ": shadow triangles "
+                         << on.shadow_triangles << " vs " << off.shadow_triangles << ", culled pairs "
+                         << on.shadow_receiver_culled);
+            MESSAGE("receiver culling tier " << int(tier) << ": " << on.shadow_triangles << " / "
+                                             << off.shadow_triangles << " shadow triangles, "
+                                             << on.shadow_receiver_culled << " pairs skipped");
+            CHECK(off.shadow_receiver_culled == 0);
+            CHECK(on.triangles == off.triangles); // main view untouched
+            CHECK(on.shadow_triangles <= off.shadow_triangles);
+            if (off.shadow_cascades > 1) {
+                CHECK(on.shadow_receiver_culled > 0);
+                CHECK(on.shadow_triangles < off.shadow_triangles);
+            }
+            int worst = 0;
+            for (std::size_t i = 0; i < a.size(); ++i) worst = std::max(worst, std::abs(int(a[i]) - int(b[i])));
+            CHECK(worst == 0); // lossless: no pixel that samples a cascade loses a caster
+            if (tier == QualityTier::High && sun.x > 0.9f) test::save_output("shadow_receiver_culling", W, H, b);
+        }
+    }
+    ctx.destroy(ground);
+    ctx.destroy(sphere);
+    ctx.destroy(pillar);
+}
