@@ -110,6 +110,7 @@ victus_add_test(victus_gpu_tests
     SOURCES
         render/gpu_fixture.cpp
         render/gpu_render_tests.cpp
+        render/gpu_gles_tests.cpp
         render/gpu_device_loss_tests.cpp
         render/gpu_quality_tests.cpp
         render/gpu_instancing_tests.cpp

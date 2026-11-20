@@ -17,7 +17,7 @@ class Window;
 
 namespace victus::rhi {
 
-enum class Backend : std::uint8_t { Vulkan, Metal, D3D12, Unknown };
+enum class Backend : std::uint8_t { Vulkan, Metal, D3D12, GLES, Unknown };
 [[nodiscard]] const char* to_string(Backend b) noexcept;
 
 enum class Format : std::uint8_t {
@@ -139,6 +139,9 @@ struct ShaderDesc {
     std::span<const std::uint8_t> spirv;
     std::string_view msl;
     std::span<const std::uint8_t> dxil;
+    // GLSL ES 3.00 for the OpenGL ES backend (ADR-0144), with GL clip space and "//! sampler" /
+    // "//! ubo" slot comments (see engine/rhi/src/rhi_gles.hpp).
+    std::string_view glsl_es;
     std::string entry{"main"};
     std::uint32_t samplers{0}, storage_textures{0}, storage_buffers{0}, uniform_buffers{0};
 };
@@ -362,7 +365,9 @@ private:
 struct DeviceDesc {
     bool debug{false};
     bool headless{false};       // allow device creation without a window
-    std::string preferred_driver; // "vulkan", "metal", "direct3d12" or empty for default
+    // "vulkan", "metal", "direct3d12", "gles" (OpenGL ES 3.0, ADR-0144) or empty for the default.
+    // VICTUS_GPU_DRIVER=gles in the environment also selects GLES.
+    std::string preferred_driver;
     bool low_power{false};
     // Opt into Vulkan 1.2 shaderFloat16 when the device has it (ADR-0137); creation falls back
     // to a device without it. VICTUS_NO_FP16=1 in the environment also turns it off.
@@ -430,6 +435,7 @@ private:
     friend class CommandBuffer;
     friend class RenderPass;
     friend class ComputePass;
+    friend class GlesBackend;
     void* device_{nullptr};
     std::unique_ptr<Impl> impl_;
     // Returns true when an injected failure of `kind` applies now.
