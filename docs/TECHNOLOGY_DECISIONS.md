@@ -972,6 +972,14 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0124 — Player frame cap at the target frame rate
+
+**Decision.** Interactive player runs with a target frame rate (`rendering.target_fps`, or `rendering.mobile_target_fps` on phones) now sleep the rest of each frame period instead of rendering at the display's vsync rate. Dynamic resolution is fed the frame's busy time (work plus present, without the sleep), so the cap does not read as a slow frame. Fixed-frame, record and replay runs are uncapped as before.
+
+**Why.** On a 90 Hz phone such as the Infinix Hot 10S, vsync alone lets the game try to render 90 frames a second. A Mali-G52-class GPU cannot sustain that, so it heats up, throttles and then misses even the target. Holding a steady 60 (or 30) and spending the slack sleeping is what keeps a low-end SoC cool over a long session.
+
+**Consequences.** On a 90 Hz panel a 60 Hz cadence alternates one- and two-vsync intervals. A target of 45 or 90 paces evenly, and so does a platform frame-rate hint, which VICTUS does not set yet. Sleep granularity is about 1 ms on desktop and Android. Verified on desktop (lavapipe, 5 FPS target: 73 frames in 15 s, p50 199 ms); not yet measured on the Hot 10S.
+
 ## ADR-0122 — Baked lightmaps v1 (renderer and baker)
 
 - Status: Accepted (2026-11-20)
