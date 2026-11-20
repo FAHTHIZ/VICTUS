@@ -4,6 +4,7 @@
 #include "victus/render/lightmap.hpp"
 
 #include "victus/core/jobs.hpp"
+#include "victus/render/irradiance_volume.hpp"
 #include "victus/core/profiler.hpp"
 
 #include <xatlas.h>
@@ -483,6 +484,72 @@ public:
         return s;
     }
 
+    // Radiance arriving at `origin` along -`dir`: sky, emission and the bake lights' direct light
+    // at every hit, for up to settings.bounces further diffuse bounces. `first_backface` is set
+    // when the first hit is a back face (the origin is inside geometry); that path returns black.
+    Vec3 trace_path(Vec3 origin, Vec3 dir, Random& rng, std::uint64_t& rays, bool& first_backface) const {
+        Vec3 throughput{1, 1, 1};
+        Vec3 radiance{0, 0, 0};
+        for (std::uint32_t bounce = 0;; ++bounce) {
+            ++rays;
+            const Ray ray = make_ray(origin, dir);
+            const Hit h = bvh_.closest(ray, 1e30f);
+            if (!h.found) {
+                radiance += throughput * sky(dir);
+                break;
+            }
+            const Surface surf = surface(ray, h);
+            if (surf.backface) {
+                if (bounce == 0) first_backface = true;
+                break;
+            }
+            radiance += throughput * surf.emissive;
+            const Vec3 ed = direct(surf.p, surf.n, rays);
+            radiance += throughput * surf.albedo * ed * (1.0f / math::kPi);
+            if (bounce >= settings_.bounces) break;
+            throughput = throughput * surf.albedo;
+            if (std::max({throughput.x, throughput.y, throughput.z}) < 1e-3f) break;
+            dir = cosine_sample(surf.n, rng.next_float(), rng.next_float());
+            if (math::dot(dir, surf.geo_n) <= 0.0f) dir = math::normalize(dir - surf.geo_n * (2.0f * math::dot(dir, surf.geo_n)));
+            origin = surf.p + surf.geo_n * eps_;
+        }
+        return radiance;
+    }
+
+    // Each bake light's unoccluded radiance at a free point (no surface normal), with the
+    // direction it arrives from: what a light probe sees of the lights directly.
+    template <typename F> void lights_at(Vec3 p, std::uint64_t& rays, F&& fn) const {
+        for (const LightmapLight& l : scene_.lights) {
+            Vec3 ldir;
+            float dist = std::numeric_limits<float>::max();
+            float atten = 1.0f;
+            if (l.type == LightmapLight::Type::Directional) {
+                if (!(math::length(l.direction) > 1e-6f)) continue;
+                ldir = -math::normalize(l.direction);
+            } else {
+                const Vec3 to = l.position - p;
+                dist = math::length(to);
+                if (!(dist > 1e-5f) || dist >= l.range) continue;
+                ldir = to / dist;
+                const float r = dist / std::max(l.range, 1e-4f);
+                const float falloff = math::saturate(1.0f - r * r * r * r);
+                atten = falloff * falloff / (dist * dist + 1.0f);
+                if (l.type == LightmapLight::Type::Spot) {
+                    const float cd = math::dot(-ldir, math::normalize(l.direction));
+                    const float t = math::saturate((cd - l.cos_outer) / std::max(l.cos_inner - l.cos_outer, 1e-4f));
+                    atten *= t * t;
+                }
+            }
+            if (atten <= 0.0f) continue;
+            if (l.cast_shadows) {
+                ++rays;
+                const float tmax = l.type == LightmapLight::Type::Directional ? 1e30f : std::max(dist - 2.0f * eps_, 0.0f);
+                if (bvh_.occluded(make_ray(p, ldir), tmax)) continue;
+            }
+            fn(ldir, l.radiance * atten);
+        }
+    }
+
     // Irradiance / pi arriving at (p, n) from `samples` cosine-distributed paths. Returns the
     // fraction of first-bounce rays that hit back faces (texels inside geometry).
     // `std_error` is the standard error of the estimate's luminance (guides the denoiser).
@@ -504,33 +571,9 @@ public:
             Vec3 dir = cosine_sample(n, u1, u2);
             if (math::dot(dir, geo_n) <= 0.0f) dir = math::normalize(dir - geo_n * (2.0f * math::dot(dir, geo_n)));
             const Vec3 first_dir = dir;
-            Vec3 origin = p + geo_n * eps_;
-            Vec3 throughput{1, 1, 1};
-            Vec3 radiance{0, 0, 0};
-            for (std::uint32_t bounce = 0;; ++bounce) {
-                ++rays;
-                const Ray ray = make_ray(origin, dir);
-                const Hit h = bvh_.closest(ray, 1e30f);
-                if (!h.found) {
-                    radiance += throughput * sky(dir);
-                    break;
-                }
-                const Surface surf = surface(ray, h);
-                if (surf.backface) {
-                    if (bounce == 0) ++backfaces;
-                    break;
-                }
-                radiance += throughput * surf.emissive;
-                const Vec3 ed = direct(surf.p, surf.n, rays);
-                radiance += throughput * surf.albedo * ed * (1.0f / math::kPi);
-                if (bounce >= settings_.bounces) break;
-                throughput = throughput * surf.albedo;
-                if (std::max({throughput.x, throughput.y, throughput.z}) < 1e-3f) break;
-                dir = cosine_sample(surf.n, rng.next_float(), rng.next_float());
-                if (math::dot(dir, surf.geo_n) <= 0.0f)
-                    dir = math::normalize(dir - surf.geo_n * (2.0f * math::dot(dir, surf.geo_n)));
-                origin = surf.p + surf.geo_n * eps_;
-            }
+            bool backface = false;
+            const Vec3 radiance = trace_path(p + geo_n * eps_, dir, rng, rays, backface);
+            if (backface) ++backfaces;
             sum += radiance;
             const double l = 0.2126 * radiance.x + 0.7152 * radiance.y + 0.0722 * radiance.z;
             lum_sum += l;
@@ -601,6 +644,28 @@ void closest_barycentric(Vec2 q, Vec2 a, Vec2 b, Vec2 c, float& wa, float& wb, f
     edge(a, b, 0, 1);
     edge(b, c, 1, 2);
     edge(c, a, 2, 0);
+}
+
+// SH9 basis in the order and normalisation of pbr.frag's sh9() and SphericalHarmonics9.
+std::array<float, 9> sh_basis(Vec3 n) noexcept {
+    return {0.282095f,
+            0.488603f * n.y,
+            0.488603f * n.z,
+            0.488603f * n.x,
+            1.092548f * n.x * n.y,
+            1.092548f * n.y * n.z,
+            0.315392f * (3.0f * n.z * n.z - 1.0f),
+            1.092548f * n.x * n.z,
+            0.546274f * (n.x * n.x - n.y * n.y)};
+}
+// Cosine-lobe convolution A_l / pi per coefficient (radiance SH -> irradiance / pi).
+constexpr float kShBand[9] = {1.0f, 2.0f / 3.0f, 2.0f / 3.0f, 2.0f / 3.0f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
+
+Vec3 sh_eval(const std::array<Vec3, 9>& c, Vec3 n) noexcept {
+    const auto b = sh_basis(n);
+    Vec3 r{0, 0, 0};
+    for (std::size_t i = 0; i < 9; ++i) r += c[i] * b[i];
+    return math::max(r, Vec3{0.0f});
 }
 
 } // namespace
@@ -700,6 +765,185 @@ Result<LightmapLayout> unwrap_lightmaps(const LightmapScene& scene, const Lightm
         return layout;
     }
     return make_error(ErrorCode::LimitExceeded, "lightmap scene does not fit the atlas; lower texels_per_unit");
+}
+
+std::uint32_t LightmapProbes::valid_count() const noexcept {
+    return static_cast<std::uint32_t>(std::count_if(valid.begin(), valid.end(), [](std::uint8_t v) { return v != 0; }));
+}
+
+Vec3 LightmapProbes::sample(Vec3 p, Vec3 n, Vec3 fallback) const noexcept {
+    if (empty() || sh.size() != probe_count() || valid.size() != sh.size()) return fallback;
+    Vec3 f{};
+    for (int a = 0; a < 3; ++a) {
+        const auto ua = static_cast<std::size_t>(a);
+        if (p[a] < bounds.min[a] || p[a] > bounds.max[a]) return fallback;
+        const float extent = bounds.max[a] - bounds.min[a];
+        const float cells = static_cast<float>(counts[ua] - 1);
+        f[a] = extent > 0.0f ? std::clamp((p[a] - bounds.min[a]) / extent * cells, 0.0f, cells) : 0.0f;
+    }
+    const std::uint32_t x0 = std::min(static_cast<std::uint32_t>(f.x), counts[0] - 2);
+    const std::uint32_t y0 = std::min(static_cast<std::uint32_t>(f.y), counts[1] - 2);
+    const std::uint32_t z0 = std::min(static_cast<std::uint32_t>(f.z), counts[2] - 2);
+    const Vec3 t{f.x - static_cast<float>(x0), f.y - static_cast<float>(y0), f.z - static_cast<float>(z0)};
+    std::array<Vec3, 9> sum{};
+    float weight = 0.0f;
+    for (std::uint32_t c = 0; c < 8; ++c) {
+        const std::uint32_t dx = c & 1u, dy = (c >> 1) & 1u, dz = (c >> 2) & 1u;
+        const float w = (dx ? t.x : 1 - t.x) * (dy ? t.y : 1 - t.y) * (dz ? t.z : 1 - t.z);
+        const std::uint32_t i = ((y0 + dy) * counts[2] + (z0 + dz)) * counts[0] + (x0 + dx);
+        if (!valid[i] || w <= 0.0f) continue;
+        for (std::size_t k = 0; k < 9; ++k) sum[k] += sh[i][k] * w;
+        weight += w;
+    }
+    if (weight <= 1e-5f) return fallback;
+    for (auto& c : sum) c = c * (1.0f / weight);
+    const Vec3 v = sh_eval(sum, n);
+    return fallback + (v - fallback) * std::min(weight, 1.0f);
+}
+
+namespace {
+
+// Probe grid for a scene: probe_bounds when valid, else every instance's world bounds padded by
+// a quarter metre, and at least 3 m tall so characters standing on a flat floor are inside.
+Result<IrradianceGrid> probe_grid(const LightmapScene& scene, const LightmapSettings& settings) {
+    math::Aabb box = settings.probe_bounds;
+    const bool fixed = box.valid() && finite(box.min) && finite(box.max);
+    if (!fixed) {
+        box = {};
+        for (const LightmapInstance& inst : scene.instances) {
+            if (!inst.mesh) continue;
+            for (const Vertex3D& v : inst.mesh->vertices) {
+                const Vec3 w = inst.model.transform_point(v.position);
+                if (finite(w)) box.expand(w);
+            }
+        }
+        if (!box.valid()) return make_error(ErrorCode::InvalidArgument, "light probes: the scene has no geometry");
+        box.min -= Vec3{0.25f};
+        box.max += Vec3{0.25f};
+        box.max.y = std::max(box.max.y, box.min.y + 3.0f);
+    }
+    IrradianceGrid grid;
+    grid.bounds = box;
+    grid.counts = irradiance_counts_for(box.max - box.min, settings.probe_spacing);
+    // Twice the vertical density: dynamic objects (characters) mostly move horizontally, and
+    // with only two layers in a 3 m tall room both end up outside the interesting band (one in
+    // the floor, one above a table or roof) - the shadowing under cover is lost.
+    grid.counts[1] = irradiance_counts_for(box.max - box.min, settings.probe_spacing * 0.5f)[1];
+    return grid.sanitized();
+}
+
+// SH9 irradiance / pi at a free point: `samples` uniformly distributed paths (spherical
+// Fibonacci, rotated per probe) plus, in fully baked mode, the bake lights' direct light.
+// `inside` is set when more than a quarter of the first hits are back faces.
+std::array<Vec3, 9> bake_probe(const Tracer& tracer, Vec3 p, std::uint32_t samples, bool include_direct, std::uint64_t probe_id,
+                               std::uint64_t seed, bool& inside, std::uint64_t& rays) {
+    Random rng(seed ^ 0x9b0be5u ^ (probe_id * 0xd1b54a32d192ed03ull), probe_id + 1);
+    std::array<Vec3, 9> L{};
+    const float jz = rng.next_float(), jphi = rng.next_float();
+    std::uint32_t backfaces = 0;
+    for (std::uint32_t s = 0; s < samples; ++s) {
+        const float z = 1.0f - 2.0f * fract((static_cast<float>(s) + 0.5f) / static_cast<float>(samples) + jz);
+        const float r = std::sqrt(std::max(0.0f, 1.0f - z * z));
+        const float phi = 2.0f * math::kPi * fract(static_cast<float>(s) * 0.6180339887f + jphi);
+        const Vec3 dir{r * std::cos(phi), z, r * std::sin(phi)}; // y up: uniform in cos(theta)
+        bool backface = false;
+        const Vec3 radiance = tracer.trace_path(p, dir, rng, rays, backface);
+        if (backface) {
+            ++backfaces;
+            continue;
+        }
+        const auto b = sh_basis(dir);
+        for (std::size_t k = 0; k < 9; ++k) L[k] += radiance * b[k];
+    }
+    const float w = 4.0f * math::kPi / static_cast<float>(samples);
+    for (auto& c : L) c = c * w;
+    if (include_direct)
+        tracer.lights_at(p, rays, [&](Vec3 ldir, Vec3 radiance) {
+            const auto b = sh_basis(ldir);
+            for (std::size_t k = 0; k < 9; ++k) L[k] += radiance * b[k];
+        });
+    for (std::size_t k = 0; k < 9; ++k) L[k] = L[k] * kShBand[k];
+    inside = static_cast<float>(backfaces) > 0.25f * static_cast<float>(samples);
+    return L;
+}
+
+Result<LightmapProbes> bake_probes_with(const Tracer& tracer, const LightmapScene& scene, const LightmapSettings& settings,
+                                        jobs::JobSystem* jobs, LightmapBakeStats* stats) {
+    VICTUS_PROFILE_SCOPE("bake_light_probes");
+    const auto t0 = std::chrono::steady_clock::now();
+    auto grid = probe_grid(scene, settings);
+    if (!grid) return std::move(grid).error();
+    LightmapProbes out;
+    out.bounds = grid->bounds;
+    out.counts = grid->counts;
+    const std::uint32_t count = grid->probe_count();
+    out.sh.assign(count, {});
+    out.valid.assign(count, 0);
+    const std::uint32_t samples = std::clamp(settings.probe_samples, 16u, 8192u);
+    std::vector<std::uint64_t> rays(count, 0);
+    auto run = [&](std::size_t b, std::size_t e) {
+        for (std::size_t i = b; i < e; ++i) {
+            const auto idx = static_cast<std::uint32_t>(i);
+            bool inside = false;
+            out.sh[i] = bake_probe(tracer, grid->probe_position(idx), samples, settings.include_direct, i, settings.seed, inside, rays[i]);
+            out.valid[i] = inside ? 0 : 1;
+            if (inside) out.sh[i] = {};
+            for (auto& c : out.sh[i])
+                if (!finite(c)) c = {0, 0, 0};
+        }
+    };
+    if (jobs) jobs->parallel_for(0, count, 8, run);
+    else run(0, count);
+    const std::uint32_t invalid = count - out.valid_count();
+    std::uint32_t dilated = 0;
+    if (settings.probe_dilation && invalid > 0) {
+        // Dilation (Unity APV's "Probe Dilation"): an invalid probe takes the inverse-squared-
+        // distance average of its valid neighbours in the surrounding 3x3x3 block, so objects
+        // next to (or overlapping) geometry interpolate full-weight neighbour lighting instead of
+        // fading to the sky. Only raw bake results are sources: one pass, order independent.
+        const std::vector<std::uint8_t> raw = out.valid;
+        const auto& c = out.counts;
+        for (std::uint32_t y = 0; y < c[1]; ++y)
+            for (std::uint32_t z = 0; z < c[2]; ++z)
+                for (std::uint32_t x = 0; x < c[0]; ++x) {
+                    const std::uint32_t i = (y * c[2] + z) * c[0] + x;
+                    if (raw[i]) continue;
+                    std::array<Vec3, 9> sum{};
+                    float weight = 0.0f;
+                    for (int dy = -1; dy <= 1; ++dy)
+                        for (int dz = -1; dz <= 1; ++dz)
+                            for (int dx = -1; dx <= 1; ++dx) {
+                                const auto nx = static_cast<std::int64_t>(x) + dx, ny = static_cast<std::int64_t>(y) + dy,
+                                           nz = static_cast<std::int64_t>(z) + dz;
+                                if (nx < 0 || ny < 0 || nz < 0 || nx >= c[0] || ny >= c[1] || nz >= c[2]) continue;
+                                const auto j = static_cast<std::size_t>((ny * c[2] + nz) * c[0] + nx);
+                                if (!raw[j]) continue;
+                                const float w = 1.0f / static_cast<float>(dx * dx + dy * dy + dz * dz);
+                                for (std::size_t k = 0; k < 9; ++k) sum[k] += out.sh[j][k] * w;
+                                weight += w;
+                            }
+                    if (weight <= 0.0f) continue;
+                    for (std::size_t k = 0; k < 9; ++k) out.sh[i][k] = sum[k] * (1.0f / weight);
+                    out.valid[i] = 1;
+                    ++dilated;
+                }
+    }
+    if (stats) {
+        stats->probes = count;
+        stats->invalid_probes = invalid;
+        stats->dilated_probes = dilated;
+        for (std::uint64_t r : rays) stats->rays += r;
+        stats->probe_ms = ms_since(t0);
+    }
+    return out;
+}
+
+} // namespace
+
+Result<LightmapProbes> bake_light_probes(const LightmapScene& scene, const LightmapSettings& settings, jobs::JobSystem* jobs,
+                                         LightmapBakeStats* stats) {
+    const Tracer tracer(scene, settings);
+    return bake_probes_with(tracer, scene, settings, jobs, stats);
 }
 
 Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSettings& settings, jobs::JobSystem* jobs) {
@@ -834,6 +1078,13 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
     }
     for (std::uint64_t r : row_rays) bake.stats.rays += r;
     bake.stats.trace_ms = ms_since(t0);
+    if (settings.probes) {
+        // Same tracer, sky and bounce settings as the texels, so dynamic objects match the
+        // scenery they stand next to (ADR-0133).
+        auto probes = bake_probes_with(tracer, scene, settings, jobs, &bake.stats);
+        if (!probes) return std::move(probes).error();
+        bake.probes = std::move(*probes);
+    }
 
     // Post: count, denoise, dilate.
     t0 = std::chrono::steady_clock::now();
@@ -1047,6 +1298,15 @@ constexpr char kMagic[8] = {'V', 'I', 'C', 'T', 'U', 'S', 'L', 'M'};
 constexpr std::uint32_t kMaxAtlasSide = 8192;
 constexpr std::uint32_t kFlagDirectional = 1u; // version 2 header flag: an RGBA8 directional atlas follows the atlas
 constexpr std::uint32_t kFlagShadowmask = 2u;  // version 2 header flag: 3 floats (shadowmask light direction) follow the flags
+constexpr std::uint32_t kFlagProbes = 4u;      // version 3 header flag: a light probe block follows the directional atlas
+constexpr std::size_t kProbeBytes = 1 + 27 * 2; // validity byte + 27 half floats
+
+bool probes_encodable(const LightmapProbes& p) {
+    const std::uint32_t n = p.counts[0] * p.counts[1] * p.counts[2];
+    return !p.sh.empty() && p.sh.size() == n && p.valid.size() == n && p.counts[0] >= 2 && p.counts[1] >= 2 && p.counts[2] >= 2 &&
+           p.counts[0] <= kMaxIrradianceProbesPerAxis && p.counts[1] <= kMaxIrradianceProbesY && p.counts[2] <= kMaxIrradianceProbesPerAxis &&
+           p.bounds.valid() && finite(p.bounds.min) && finite(p.bounds.max);
+}
 
 class Writer {
 public:
@@ -1134,7 +1394,8 @@ std::vector<std::uint8_t> encode_lightmap_file(const LightmapFile& file) {
                              file.direction.pixels.size() == static_cast<std::size_t>(file.atlas.width) * file.atlas.height * 4 &&
                              !file.direction.pixels.empty();
     const bool shadowmask = math::length(file.shadowmask_direction) > 0.5f && finite(file.shadowmask_direction);
-    w.u32((directional ? kFlagDirectional : 0u) | (shadowmask ? kFlagShadowmask : 0u));
+    const bool probes = probes_encodable(file.probes);
+    w.u32((directional ? kFlagDirectional : 0u) | (shadowmask ? kFlagShadowmask : 0u) | (probes ? kFlagProbes : 0u));
     if (shadowmask) {
         const Vec3 d = math::normalize(file.shadowmask_direction);
         w.f32(d.x);
@@ -1144,6 +1405,17 @@ std::vector<std::uint8_t> encode_lightmap_file(const LightmapFile& file) {
     const std::size_t texels = static_cast<std::size_t>(file.atlas.width) * file.atlas.height;
     for (std::size_t i = 0; i < texels * 4; ++i) w.u16(float_to_half(i < file.atlas.pixels.size() ? file.atlas.pixels[i] : 0.0f));
     if (directional) w.bytes(file.direction.pixels.data(), file.direction.pixels.size());
+    if (probes) {
+        const LightmapProbes& p = file.probes;
+        for (int a = 0; a < 3; ++a) w.f32(p.bounds.min[a]);
+        for (int a = 0; a < 3; ++a) w.f32(p.bounds.max[a]);
+        for (std::uint32_t c : p.counts) w.u32(c);
+        for (std::size_t i = 0; i < p.sh.size(); ++i) {
+            w.out.push_back(p.valid[i] ? 1 : 0);
+            for (const Vec3& c : p.sh[i])
+                for (int k = 0; k < 3; ++k) w.u16(float_to_half(c[k]));
+        }
+    }
     for (const LightmapFileEntry& e : file.entries) {
         w.u64(e.entity.hi);
         w.u64(e.entity.lo);
@@ -1168,11 +1440,12 @@ Result<LightmapFile> decode_lightmap_file(std::span<const std::uint8_t> bytes) {
         return make_error(ErrorCode::ParseError, "not a VICTUS lightmap file");
     std::uint32_t version = 0, w = 0, h = 0, count = 0;
     if (!r.u32(version) || !r.u32(w) || !r.u32(h) || !r.u32(count)) return make_error(ErrorCode::ParseError, "truncated lightmap header");
-    if (version != 1 && version != kLightmapFileVersion)
+    if (version < 1 || version > kLightmapFileVersion)
         return make_error(ErrorCode::VersionMismatch, "unsupported lightmap file version " + std::to_string(version));
     std::uint32_t flags = 0;
     if (version >= 2 && !r.u32(flags)) return make_error(ErrorCode::ParseError, "truncated lightmap header");
-    if ((flags & ~(kFlagDirectional | kFlagShadowmask)) != 0) return make_error(ErrorCode::ParseError, "unknown lightmap file flags");
+    const std::uint32_t known = kFlagDirectional | kFlagShadowmask | (version >= 3 ? kFlagProbes : 0u);
+    if ((flags & ~known) != 0) return make_error(ErrorCode::ParseError, "unknown lightmap file flags");
     Vec3 mask_dir{0, 0, 0};
     if ((flags & kFlagShadowmask) != 0) {
         if (!r.f32(mask_dir.x) || !r.f32(mask_dir.y) || !r.f32(mask_dir.z))
@@ -1202,6 +1475,34 @@ Result<LightmapFile> decode_lightmap_file(std::span<const std::uint8_t> bytes) {
         file.direction.height = h;
         file.direction.pixels.resize(values);
         (void)r.bytes(file.direction.pixels.data(), values);
+    }
+    if ((flags & kFlagProbes) != 0) {
+        LightmapProbes& p = file.probes;
+        if (!r.f32(p.bounds.min.x) || !r.f32(p.bounds.min.y) || !r.f32(p.bounds.min.z) || !r.f32(p.bounds.max.x) ||
+            !r.f32(p.bounds.max.y) || !r.f32(p.bounds.max.z) || !r.u32(p.counts[0]) || !r.u32(p.counts[1]) || !r.u32(p.counts[2]))
+            return make_error(ErrorCode::ParseError, "truncated lightmap probe header");
+        if (!finite(p.bounds.min) || !finite(p.bounds.max) || !p.bounds.valid())
+            return make_error(ErrorCode::ParseError, "invalid lightmap probe bounds");
+        if (p.counts[0] < 2 || p.counts[1] < 2 || p.counts[2] < 2 || p.counts[0] > kMaxIrradianceProbesPerAxis ||
+            p.counts[1] > kMaxIrradianceProbesY || p.counts[2] > kMaxIrradianceProbesPerAxis)
+            return make_error(ErrorCode::ParseError, "invalid lightmap probe counts");
+        const std::size_t n = p.probe_count();
+        if (!r.has(n * kProbeBytes)) return make_error(ErrorCode::ParseError, "truncated lightmap probes");
+        p.sh.resize(n);
+        p.valid.resize(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            std::uint8_t v = 0;
+            (void)r.bytes(&v, 1);
+            if (v > 1) return make_error(ErrorCode::ParseError, "invalid lightmap probe validity");
+            p.valid[i] = v;
+            for (Vec3& c : p.sh[i])
+                for (int k = 0; k < 3; ++k) {
+                    std::uint16_t hv = 0;
+                    (void)r.u16(hv);
+                    const float f = half_to_float(hv);
+                    c[k] = std::isfinite(f) ? f : 0.0f;
+                }
+        }
     }
     // Each entry needs at least 32 bytes, which bounds `count` by the remaining size.
     if (count > r.remaining() / 32) return make_error(ErrorCode::ParseError, "invalid lightmap entry count");

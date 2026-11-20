@@ -1131,6 +1131,8 @@ int cmd_bake_lighting(const std::vector<std::string>& a) {
         .option("max-size", "largest atlas side in texels (density is lowered to fit)", "2048")
         .option("threads", "worker threads (0 = all cores)", "0")
         .flag("direct", "also bake direct light from the scene's lights (otherwise only sky and bounce light)")
+        .option("probe-spacing", "metres between baked light probes for dynamic objects", "2")
+        .flag("no-probes", "do not bake light probes (dynamic objects keep sky ambient)")
         .flag("mark-static", "first mark every mesh that cannot move (no dynamic/kinematic body, character, animator or script) as Static Lighting")
         .flag("dry-run", "bake and report without writing files");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
@@ -1151,9 +1153,12 @@ int cmd_bake_lighting(const std::vector<std::string>& a) {
         ls.texels_per_unit = std::stof(p.get("density"));
         ls.max_atlas_size = static_cast<std::uint32_t>(std::clamp(std::stoi(p.get("max-size")), 64, 8192));
         threads = static_cast<std::uint32_t>(std::clamp(std::stoi(p.get("threads")), 0, 256));
+        ls.probe_spacing = std::stof(p.get("probe-spacing"));
     } catch (const std::exception&) {
-        return error("--samples, --bounces, --density, --max-size and --threads must be numbers");
+        return error("--samples, --bounces, --density, --max-size, --threads and --probe-spacing must be numbers");
     }
+    if (!(ls.probe_spacing >= 0.25f) || !std::isfinite(ls.probe_spacing)) return error("--probe-spacing must be at least 0.25");
+    ls.probes = !p.has("no-probes");
     if (!(ls.texels_per_unit > 0.0f) || !std::isfinite(ls.texels_per_unit)) return error("--density must be positive");
     ls.include_direct = p.has("direct");
     auto db = assets::AssetDatabase::open(proj->root());
@@ -1193,6 +1198,11 @@ int cmd_bake_lighting(const std::vector<std::string>& a) {
                 bake->receivers, bake->blockers, bake->lights, st.width, st.height, st.texels_per_unit,
                 static_cast<unsigned long long>(st.texels), static_cast<unsigned long long>(st.invalid_texels),
                 static_cast<unsigned long long>(st.rays), secs);
+    if (st.probes > 0) {
+        const auto& pr = bake->file.probes;
+        std::printf("baked %u light probes (%ux%ux%u, %u inside geometry, %u dilated) in %.1f s\n", st.probes, pr.counts[0],
+                    pr.counts[1], pr.counts[2], st.invalid_probes, st.dilated_probes, st.probe_ms / 1000.0);
+    }
     // Where the bake goes: --out, else the Environment's current lightmap, else next to the scene.
     ecs::World& w = s.world();
     gameplay::EnvironmentComponent* env = nullptr;

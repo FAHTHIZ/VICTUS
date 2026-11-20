@@ -14,6 +14,7 @@
 #include "victus/render/image.hpp"
 #include "victus/render/mesh.hpp"
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <span>
@@ -47,6 +48,16 @@ struct LightmapSettings {
     std::uint32_t shadowmask_samples{32};
     float sun_angular_radius{0.01f};
     std::uint32_t dilation{4};         // texels the covered area is grown into the padding
+    // Baked light probes (ADR-0133): an SH9 grid over the scene traced with the same paths as the
+    // lightmap, so dynamic and non-lightmapped objects receive the same baked sky and bounce light
+    // as the static scenery around them. `probe_bounds` (invalid = the scene's bounds, padded)
+    // limits where probes go; spacing is in metres (half of it vertically) and grows when the box
+    // needs more than 32 x 16 x 32 probes. Probes inside geometry are marked invalid and never sampled.
+    bool probes{true};
+    float probe_spacing{2.0f};
+    std::uint32_t probe_samples{256};
+    bool probe_dilation{true}; // invalid probes take their valid neighbours' average (Unity APV dilation)
+    math::Aabb probe_bounds{};
     std::uint64_t seed{0x5eed};
 };
 
@@ -99,6 +110,23 @@ struct LightmapUnwrap {
     [[nodiscard]] bool empty() const noexcept { return indices.empty(); }
 };
 
+// Baked light probes (ADR-0133). Probes sit on a regular grid inside `bounds` (corners included,
+// the IrradianceGrid layout of irradiance_volume.hpp: index = (y * nz + z) * nx + x). Each holds
+// SH9 irradiance / pi pre-convolved with the cosine lobe (SphericalHarmonics9's convention), so
+// evaluating it for a normal gives the value that multiplies kd * albedo, like a lightmap texel.
+struct LightmapProbes {
+    math::Aabb bounds{};
+    std::array<std::uint32_t, 3> counts{}; // probes per axis, 2..32 (y 2..16); all zero = no probes
+    std::vector<std::array<math::Vec3, 9>> sh;
+    std::vector<std::uint8_t> valid; // 0 = inside geometry and not dilated (sampling skips it)
+    [[nodiscard]] bool empty() const noexcept { return sh.empty(); }
+    [[nodiscard]] std::uint32_t probe_count() const noexcept { return counts[0] * counts[1] * counts[2]; }
+    [[nodiscard]] std::uint32_t valid_count() const noexcept;
+    // CPU reference of the shader lookup (trilinear over valid probes, coefficients first);
+    // `fallback` outside the box or where no surrounding probe is valid.
+    [[nodiscard]] math::Vec3 sample(math::Vec3 p, math::Vec3 n, math::Vec3 fallback) const noexcept;
+};
+
 struct LightmapBakeStats {
     std::uint32_t width{0}, height{0}; // atlas size in texels
     float texels_per_unit{0};          // density actually used
@@ -106,7 +134,9 @@ struct LightmapBakeStats {
     std::uint64_t invalid_texels{0};  // covered texels inside geometry, filled by dilation
     std::uint64_t triangles{0};       // triangles in the ray tracing scene
     std::uint64_t rays{0};
-    double unwrap_ms{0}, trace_ms{0}, post_ms{0};
+    std::uint32_t probes{0}, invalid_probes{0}; // baked light probes (ADR-0133), and those inside geometry
+    std::uint32_t dilated_probes{0};            // invalid probes filled from valid neighbours
+    double unwrap_ms{0}, trace_ms{0}, post_ms{0}, probe_ms{0};
 };
 
 // Directional lightmap texels (ADR-0130, the encoding Unity uses): RGB = dominant incoming light
@@ -122,8 +152,14 @@ struct LightmapBake {
     // Direction (travel) of the light the shadowmask was baked for; zero when there is none.
     math::Vec3 shadowmask_direction{0, 0, 0};
     Image direction;                       // RGBA8, same size as atlas; empty unless settings.directional
+    LightmapProbes probes;                 // empty unless settings.probes
     LightmapBakeStats stats;
 };
+
+// Bakes only the light probes of a scene (bake_lightmaps does this too when settings.probes is
+// set). Fails when the scene has no geometry and no probe_bounds.
+[[nodiscard]] Result<LightmapProbes> bake_light_probes(const LightmapScene& scene, const LightmapSettings& settings = {},
+                                                       jobs::JobSystem* jobs = nullptr, LightmapBakeStats* stats = nullptr);
 
 // Irradiance-scale the shader applies for a directional texel (`texel` is the RGBA8 value
 // normalised to 0..1) and a shading normal; 1 when the texel has no direction.
@@ -156,7 +192,8 @@ struct LightmapLayout {
 
 // --- .vlightmap files -----------------------------------------------------------------------
 // Little-endian binary: header, the atlas (RGBA16F), the directional atlas (RGBA8, version 2 when
-// flagged), then one entry per lightmapped entity. Version 1 files still decode. Every
+// flagged), the light probes (version 3 when flagged: bounds, counts, then per probe a validity
+// byte and 27 half floats), then one entry per lightmapped entity. Versions 1 and 2 still decode. Every
 // count and index is validated on decode; a damaged file is an error, never a crash.
 struct LightmapFileEntry {
     Uuid entity;
@@ -167,10 +204,11 @@ struct LightmapFile {
     ImageF atlas;
     Image direction; // optional directional texels (version 2), same size as the atlas
     math::Vec3 shadowmask_direction{0, 0, 0}; // version 2: atlas A is a sun shadowmask for this light
+    LightmapProbes probes;                    // version 3: baked light probes for dynamic objects
     std::vector<LightmapFileEntry> entries;
     [[nodiscard]] const LightmapFileEntry* find(const Uuid& entity) const noexcept;
 };
-inline constexpr std::uint32_t kLightmapFileVersion = 2;
+inline constexpr std::uint32_t kLightmapFileVersion = 3;
 [[nodiscard]] std::vector<std::uint8_t> encode_lightmap_file(const LightmapFile& file);
 [[nodiscard]] Result<LightmapFile> decode_lightmap_file(std::span<const std::uint8_t> bytes);
 

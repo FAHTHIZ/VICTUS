@@ -2,6 +2,7 @@
 // Baked lighting (ADR-0122): lightmap unwrap, the CPU path tracer's physical units (furnace and
 // direct-light tests against closed-form answers), contact darkening, colour bleeding, leak
 // rejection, thread-count independence and the .vlightmap file format.
+#include <algorithm>
 #include "doctest.h"
 #include "victus/core/jobs.hpp"
 #include "victus/render/lightmap.hpp"
@@ -450,4 +451,230 @@ TEST_CASE("lightmap denoise removes noise but keeps contact shadows") {
     REQUIRE(open);
     CHECK(contact->x < 0.62f);
     CHECK(open->x > 0.9f);
+}
+
+// --- Baked light probes (ADR-0133) -------------------------------------------------------------
+
+TEST_CASE("light probes furnace: a uniform sky gives its radiance for every normal") {
+    // A small far-away cube gives the tracer geometry; the probe box is open sky.
+    const MeshData cube = make_cube({0.1f, 0.1f, 0.1f});
+    LightmapScene scene;
+    scene.instances.push_back({&cube, math::Mat4::translation({100, 0, 0})});
+    scene.sky = uniform_sky(0.7f);
+    LightmapSettings s = fast_settings();
+    s.probe_bounds = {{-2, 0, -2}, {2, 2, 2}};
+    s.probe_spacing = 2.0f;
+    LightmapBakeStats stats;
+    auto probes = bake_light_probes(scene, s, nullptr, &stats);
+    REQUIRE(probes);
+    CHECK(probes->counts == std::array<std::uint32_t, 3>{3, 3, 3}); // y at half spacing
+    CHECK(probes->valid_count() == probes->probe_count());
+    CHECK(stats.probes == 27);
+    CHECK(stats.invalid_probes == 0);
+    for (Vec3 n : {Vec3{0, 1, 0}, Vec3{0, -1, 0}, Vec3{1, 0, 0}, math::normalize(Vec3{1, 1, -1})}) {
+        const Vec3 v = probes->sample({0.3f, 1.0f, -0.4f}, n, Vec3{-1});
+        CHECK(v.x == doctest::Approx(0.7f).epsilon(0.01));
+        CHECK(v.z == doctest::Approx(0.7f).epsilon(0.01));
+    }
+    // Outside the box the fallback is returned.
+    CHECK(probes->sample({5, 1, 0}, {0, 1, 0}, Vec3{-1}).x == doctest::Approx(-1.0f));
+}
+
+TEST_CASE("light probes: fully baked mode adds the lights' direct light as SH, indirect mode leaves it out") {
+    const MeshData cube = make_cube({0.1f, 0.1f, 0.1f});
+    LightmapScene scene;
+    scene.instances.push_back({&cube, math::Mat4::translation({100, 0, 0})});
+    scene.sky = uniform_sky(0.0f);
+    LightmapLight sun;
+    sun.direction = {0, -1, 0};
+    sun.radiance = {2, 2, 2};
+    scene.lights.push_back(sun);
+    LightmapSettings s = fast_settings();
+    s.probe_bounds = {{-1, 0, -1}, {1, 2, 1}};
+    s.include_direct = true;
+    auto baked = bake_light_probes(scene, s);
+    REQUIRE(baked);
+    // SH9 of a delta light evaluated at its own direction: E * (1 + 2 + 5/4) / (4 pi), ~6 % above
+    // the exact E / pi; facing away it rings slightly below zero and is clamped.
+    const Vec3 up = baked->sample({0, 1, 0}, {0, 1, 0}, Vec3{0});
+    CHECK(up.x == doctest::Approx(2.0f * 4.25f / (4.0f * math::kPi)).epsilon(0.01));
+    CHECK(up.x > 2.0f / math::kPi);
+    CHECK(baked->sample({0, 1, 0}, {0, -1, 0}, Vec3{0}).x < 0.05f);
+    s.include_direct = false;
+    auto indirect = bake_light_probes(scene, s);
+    REQUIRE(indirect);
+    CHECK(indirect->sample({0, 1, 0}, {0, 1, 0}, Vec3{0}).x == doctest::Approx(0.0f));
+}
+
+TEST_CASE("light probes inside geometry are invalid and skipped by sampling") {
+    const MeshData box = make_cube({1, 1, 1}); // half extents
+    LightmapScene scene;
+    scene.instances.push_back({&box, math::Mat4::translation({0, 1, 0})}); // spans x,z -1..1, y 0..2
+    scene.sky = uniform_sky(0.5f);
+    LightmapSettings s = fast_settings();
+    s.probe_bounds = {{-0.5f, 0.5f, -0.5f}, {3.5f, 1.5f, 3.5f}};
+    s.probe_spacing = 2.0f; // x/z probes at -0.5, 1.5, 3.5
+    s.probe_dilation = false;
+    LightmapBakeStats stats;
+    auto probes = bake_light_probes(scene, s, nullptr, &stats);
+    REQUIRE(probes);
+    // The (-0.5, y, -0.5) column is inside the box.
+    CHECK(stats.invalid_probes == 2);
+    CHECK(stats.dilated_probes == 0);
+    CHECK(probes->valid[0] == 0);
+    CHECK(probes->valid[1] == 1);
+    // A point next to the invalid probes renormalizes over the valid ones and fades toward the
+    // fallback (the sky) by the missing weight, exactly like pbr.frag: never darkened by black
+    // inside-geometry probes.
+    const Vec3 sky{0.5f};
+    float lo = 1e9f;
+    for (float x : {-0.5f, 1.5f})
+        for (float y : {0.5f, 1.5f})
+            for (float z : {-0.5f, 1.5f}) {
+                if (x < 0 && z < 0) continue; // the invalid column
+                lo = std::min(lo, probes->sample({x, y, z}, {0, 1, 0}, sky).x);
+            }
+    const Vec3 v = probes->sample({0.6f, 1.0f, 0.6f}, {0, 1, 0}, sky);
+    MESSAGE("blend " << v.x << ", lowest valid corner " << lo);
+    CHECK(lo > 0.0f);
+    CHECK(v.x >= std::min(lo, sky.x) * 0.999f);
+    // Entirely inside the invalid column there is nothing to interpolate: the fallback.
+    CHECK(probes->sample({-0.5f, 1.0f, -0.5f}, {0, 1, 0}, sky).x == doctest::Approx(sky.x));
+}
+
+TEST_CASE("light probes inside geometry are dilated from their valid neighbours") {
+    const MeshData box = make_cube({1, 1, 1});
+    LightmapScene scene;
+    scene.instances.push_back({&box, math::Mat4::translation({0, 1, 0})});
+    scene.sky = uniform_sky(0.5f);
+    LightmapSettings s = fast_settings();
+    s.probe_bounds = {{-0.5f, 0.5f, -0.5f}, {3.5f, 1.5f, 3.5f}};
+    s.probe_spacing = 2.0f;
+    s.probe_dilation = false;
+    auto raw = bake_light_probes(scene, s);
+    REQUIRE(raw);
+    s.probe_dilation = true;
+    LightmapBakeStats stats;
+    auto probes = bake_light_probes(scene, s, nullptr, &stats);
+    REQUIRE(probes);
+    CHECK(stats.invalid_probes == 2);
+    CHECK(stats.dilated_probes == 2);
+    CHECK(probes->valid_count() == probes->probe_count());
+    // Valid probes are untouched; the dilated one is the weighted mean of its valid neighbours,
+    // so it lies within their range rather than at the fallback.
+    for (std::size_t i = 0; i < probes->sh.size(); ++i)
+        if (raw->valid[i]) CHECK(probes->sh[i][0].x == raw->sh[i][0].x);
+    float lo = 1e9f, hi = -1e9f;
+    for (std::size_t i = 0; i < raw->sh.size(); ++i)
+        if (raw->valid[i]) {
+            lo = std::min(lo, raw->sh[i][0].x);
+            hi = std::max(hi, raw->sh[i][0].x);
+        }
+    CHECK(probes->sh[0][0].x >= lo);
+    CHECK(probes->sh[0][0].x <= hi);
+    // The whole cell next to the box now interpolates at full weight: no fade to the fallback.
+    const Vec3 v = probes->sample({0.6f, 1.0f, 0.6f}, {0, 1, 0}, Vec3{-1});
+    CHECK(v.x > 0.3f);
+    CHECK(v.x < 0.6f);
+}
+
+TEST_CASE("light probes: a roof shelters dynamic objects that the open sky would light") {
+    const MeshData floor = make_plane({12, 12}, 4);
+    const MeshData roof = make_cube({2, 0.1f, 2}); // 4 x 0.2 x 4 m slab, 2.1..2.3 m up
+    LightmapScene scene;
+    scene.instances.push_back({&floor});
+    LightmapInstance slab{&roof, math::Mat4::translation({0, 2.2f, 0})};
+    slab.receives = false;
+    scene.instances.push_back(slab);
+    scene.sky = uniform_sky(1.0f);
+    LightmapSettings s = fast_settings();
+    s.probe_samples = 512;
+    auto bake = bake_lightmaps(scene, s);
+    REQUIRE(bake);
+    const LightmapProbes& p = bake->probes;
+    REQUIRE_FALSE(p.empty());
+    CHECK(bake->stats.probes == p.probe_count());
+    CHECK(p.bounds.max.y - p.bounds.min.y >= 3.0f - 1e-3f); // tall enough for characters on a flat floor
+    const Vec3 covered = p.sample({0, 1, 0}, {0, 1, 0}, Vec3{-1});
+    const Vec3 open = p.sample({5, 1, 5}, {0, 1, 0}, Vec3{-1});
+    MESSAGE("covered " << covered.x << ", open " << open.x);
+    CHECK(covered.x >= 0.0f);
+    CHECK(covered.x < open.x * 0.6f);
+    CHECK(open.x == doctest::Approx(1.0f).epsilon(0.1));
+}
+
+TEST_CASE("light probes do not depend on the number of threads and can be turned off") {
+    const MeshData floor = make_plane({4, 4}, 2);
+    const MeshData cube = make_cube();
+    LightmapScene scene;
+    scene.instances.push_back({&floor});
+    scene.instances.push_back({&cube, math::Mat4::translation({0, 0.5f, 0})});
+    LightmapSettings s = fast_settings();
+    s.samples = 8;
+    s.probe_samples = 32;
+    auto single = bake_lightmaps(scene, s);
+    jobs::JobSystem js(2);
+    auto threaded = bake_lightmaps(scene, s, &js);
+    REQUIRE(single);
+    REQUIRE(threaded);
+    REQUIRE_FALSE(single->probes.empty());
+    CHECK(single->probes.valid == threaded->probes.valid);
+    for (std::size_t i = 0; i < single->probes.sh.size(); ++i)
+        for (std::size_t k = 0; k < 9; ++k) CHECK(single->probes.sh[i][k] == threaded->probes.sh[i][k]);
+    s.probes = false;
+    auto none = bake_lightmaps(scene, s);
+    REQUIRE(none);
+    CHECK(none->probes.empty());
+    CHECK(none->stats.probes == 0);
+}
+
+TEST_CASE("lightmap file round trip with light probes and damaged probe blocks") {
+    const MeshData floor = make_plane({2, 2});
+    LightmapScene scene;
+    scene.instances.push_back({&floor});
+    LightmapSettings s = fast_settings();
+    s.samples = 8;
+    s.probe_samples = 16;
+    auto bake = bake_lightmaps(scene, s);
+    REQUIRE(bake);
+    REQUIRE_FALSE(bake->probes.empty());
+    LightmapFile file;
+    file.atlas = bake->atlas;
+    file.probes = bake->probes;
+    file.entries.push_back({Uuid{1, 2}, lightmap_mesh_fingerprint(floor), bake->instances[0]});
+    const auto bytes = encode_lightmap_file(file);
+    auto back = decode_lightmap_file(bytes);
+    REQUIRE(back);
+    const LightmapProbes& p = back->probes;
+    CHECK(p.counts == file.probes.counts);
+    CHECK(p.valid == file.probes.valid);
+    CHECK(p.bounds.min.y == file.probes.bounds.min.y);
+    for (std::size_t i = 0; i < p.sh.size(); ++i)
+        for (std::size_t k = 0; k < 9; ++k) CHECK(p.sh[i][k].x == doctest::Approx(file.probes.sh[i][k].x).epsilon(0.002).scale(1e-3));
+    CHECK(back->entries.size() == 1);
+
+    // Header offsets: magic 8, version 8, w 12, h 16, count 20, flags 24, then the atlas.
+    // A version 2 file must not carry the version 3 probe flag.
+    auto v2 = bytes;
+    v2[8] = 2;
+    CHECK_FALSE(decode_lightmap_file(v2));
+    // Probe counts out of range are rejected.
+    const std::size_t probe_block = 28 + std::size_t{file.atlas.width} * file.atlas.height * 8;
+    auto counts = bytes;
+    counts[probe_block + 24] = 40; // counts[0] = 40 > 32
+    CHECK_FALSE(decode_lightmap_file(counts));
+    // A validity byte other than 0/1 is rejected.
+    auto validity = bytes;
+    validity[probe_block + 36] = 7;
+    CHECK_FALSE(decode_lightmap_file(validity));
+    // NaN bounds are rejected.
+    auto nan = bytes;
+    nan[probe_block + 0] = 0xff;
+    nan[probe_block + 1] = 0xff;
+    nan[probe_block + 2] = 0xff;
+    nan[probe_block + 3] = 0x7f;
+    CHECK_FALSE(decode_lightmap_file(nan));
+    // Truncation anywhere in the probe block fails cleanly.
+    for (std::size_t n = probe_block; n < probe_block + 36 + p.probe_count() * 55; n += 13)
+        CHECK_FALSE(decode_lightmap_file(std::span(bytes.data(), n)));
 }

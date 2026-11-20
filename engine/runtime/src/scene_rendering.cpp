@@ -1015,8 +1015,33 @@ rhi::TextureHandle GpuAssetCache::lightmap(std::string_view path) {
         else VICTUS_LOG_WARN("runtime", "lightmap '{}': {} (normal maps will not shade baked light)", key, dir.error().message);
     }
     entry.shadowmask_direction = file->shadowmask_direction;
+    if (!file->probes.empty()) {
+        render::IrradianceGrid grid;
+        grid.bounds = file->probes.bounds;
+        grid.counts = file->probes.counts;
+        auto vol = render::IrradianceVolume::create(ctx_, grid);
+        if (vol && (*vol)->grid().counts == grid.counts) {
+            for (std::uint32_t i = 0; i < file->probes.probe_count(); ++i) {
+                if (!file->probes.valid[i]) continue;
+                render::SphericalHarmonics9 sh;
+                for (std::size_t k = 0; k < 9; ++k) sh.coefficients[k] = file->probes.sh[i][k];
+                (*vol)->set_probe(i, sh);
+            }
+            if (const Status st = (*vol)->upload(); st.ok()) entry.probes = std::move(*vol);
+            else VICTUS_LOG_WARN("runtime", "lightmap '{}' probes: {}", key, st.error().message);
+        } else {
+            VICTUS_LOG_WARN("runtime", "lightmap '{}': {} (dynamic objects keep sky ambient)", key,
+                            vol ? std::string("probe grid rejected") : vol.error().message);
+        }
+    }
     entry.entries = std::move(file->entries);
     return entry.texture;
+}
+
+const render::IrradianceVolume* GpuAssetCache::lightmap_probes(std::string_view path) {
+    if (!lightmap(path).valid()) return nullptr;
+    const auto& probes = lightmaps_.find(std::string(path))->second.probes;
+    return probes && probes->valid_count() > 0 ? probes.get() : nullptr;
 }
 
 math::Vec3 GpuAssetCache::lightmap_shadowmask_direction(std::string_view path) {
@@ -1065,6 +1090,7 @@ void GpuAssetCache::evict_lightmaps() {
     for (auto& [path, lm] : lightmaps_) {
         if (lm.texture.valid()) ctx_.device().destroy(lm.texture);
         if (lm.direction.valid()) ctx_.device().destroy(lm.direction);
+        lm.probes.reset();
         for (auto& [id, mesh] : lm.meshes)
             if (mesh) ctx_.destroy(*mesh);
     }
@@ -1270,7 +1296,8 @@ void apply_reflection_probes(Scene& scene, GpuAssetCache& assets, render::SceneR
 // contains the camera (the smallest one when several do), else the nearest. Bake captures see the
 // scene without probes or volumes; bounce passes add the volume being baked (ADR-0056).
 void apply_irradiance_volumes(Scene& scene, GpuAssetCache& assets, render::SceneRenderer& renderer,
-                              const SceneViewSettings& settings, math::Vec3 eye, ExtractStats& stats) {
+                              const SceneViewSettings& settings, math::Vec3 eye, ExtractStats& stats,
+                              const render::IrradianceVolume* baked) {
     auto& w = scene.world();
     auto& bakes = assets.irradiance_bakes();
     for (auto& [key, entry] : bakes) entry.seen = false;
@@ -1384,6 +1411,14 @@ void apply_irradiance_volumes(Scene& scene, GpuAssetCache& assets, render::Scene
             }
         });
     std::erase_if(bakes, [](const auto& kv) { return !kv.second.seen; });
+    // Baked lightmap probes (ADR-0133) cover the whole baked scene: a hand-placed volume around
+    // the camera is more specific and wins; otherwise the baked probes light dynamic objects.
+    if (baked && (!best || !best_inside)) {
+        const float offset = std::min(0.25f, 0.2f * std::min({baked->grid().spacing().x, baked->grid().spacing().y, baked->grid().spacing().z}));
+        renderer.set_irradiance_volume(baked, 1.0f, offset);
+        stats.lightmap_probes = true;
+        return;
+    }
     if (best) renderer.set_irradiance_volume(best, best_intensity, best_offset);
 }
 } // namespace
@@ -1494,7 +1529,8 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     for (const auto& sl : spots) renderer.add_spot_light(sl);
     if (!assets.capturing_probes()) {
         apply_reflection_probes(scene, assets, renderer, settings, stats);
-        apply_irradiance_volumes(scene, assets, renderer, settings, camera.position, stats);
+        apply_irradiance_volumes(scene, assets, renderer, settings, camera.position, stats,
+                                 lightmap_path.empty() ? nullptr : assets.lightmap_probes(lightmap_path));
     }
     static_assert(static_cast<int>(gameplay::DecalComponent::Blend::Additive) == static_cast<int>(render::DecalBlend::Additive));
     static_assert(static_cast<int>(gameplay::DecalComponent::Blend::Alpha) == static_cast<int>(render::DecalBlend::Alpha));

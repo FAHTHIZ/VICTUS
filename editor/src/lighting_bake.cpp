@@ -87,8 +87,8 @@ void Editor::poll_lighting_bake() {
         record_edit("Bake Lighting", std::move(before));
     }
     if (cache_) cache_->evict_lightmaps();
-    notify(std::format("Baked lighting for {} object(s) into {} ({}x{}, {:.1f} s){}", last_bake_->receivers, bake_target_,
-                       last_bake_->stats.width, last_bake_->stats.height, secs,
+    notify(std::format("Baked lighting for {} object(s) into {} ({}x{}, {} light probes, {:.1f} s){}", last_bake_->receivers,
+                       bake_target_, last_bake_->stats.width, last_bake_->stats.height, last_bake_->stats.probes, secs,
                        last_bake_->warnings.empty() ? "" : std::format(", {} warning(s) in the Console", last_bake_->warnings.size())));
 }
 
