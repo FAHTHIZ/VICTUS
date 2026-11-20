@@ -290,6 +290,21 @@ std::uint8_t select_lod(const GpuMesh& mesh, const Mat4& model, const Aabb& worl
     return static_cast<std::uint8_t>(std::clamp(previous, finest, coarsest));
 }
 
+// Per-cascade shadow level (ADR-0132): the coarsest level whose error, scaled to world units,
+// spans at most `budget_texels` texels of an orthographic cascade whose texels are `texel` world
+// units wide (no distance term: the cascade's texel size is the same everywhere in it). Never
+// finer than `finest` (the main-view level plus shadow_lod_bias).
+std::uint8_t cascade_shadow_lod(const GpuMesh& mesh, const Mat4& model, float texel, float budget_texels,
+                                std::uint8_t finest) {
+    if (mesh.lod_count <= 1 || !(budget_texels > 0.0f) || !(texel > 0.0f)) return finest;
+    const auto last = static_cast<int>(mesh.lod_count) - 1;
+    const float scale = std::max({length(model.c[0].xyz()), length(model.c[1].xyz()), length(model.c[2].xyz())});
+    const float budget = budget_texels * texel / std::max(scale, 1e-6f); // in mesh units
+    int lod = finest;
+    while (lod < last && mesh.lods[static_cast<std::size_t>(lod) + 1].error <= budget) ++lod;
+    return static_cast<std::uint8_t>(lod);
+}
+
 void draw_mesh_lod(rhi::RenderPass& pass, const GpuMesh& mesh, std::uint32_t lod, std::uint32_t instances) {
     const GpuMeshLod& l = mesh.lods[std::min(lod, mesh.lod_count - 1)];
     pass.draw_indexed(l.index_count, instances, l.first_index);
@@ -511,6 +526,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.lod_hysteresis = std::isfinite(s.lod_hysteresis) ? std::clamp(s.lod_hysteresis, 0.0f, 0.9f) : 0.0f;
     s.force_lod = std::clamp(s.force_lod, -1, static_cast<int>(kMaxMeshLods) - 1);
     s.shadow_lod_bias = std::min(s.shadow_lod_bias, 3u);
+    s.shadow_lod_texels = std::isfinite(s.shadow_lod_texels) ? std::clamp(s.shadow_lod_texels, 0.0f, 8.0f) : 1.0f;
     if (s.debug_view != DebugView::Overdraw) s.debug_view = DebugView::None;
     {
         std::uint32_t level = 1;
@@ -1737,6 +1753,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         continue;
                     }
                 }
+                d.cascade_lod[c] = d.shadow_lod;
+                if (S.force_lod < 0 && S.lods)
+                    d.cascade_lod[c] =
+                        cascade_shadow_lod(*d.mesh, d.model, cascade_texel_[c], S.shadow_lod_texels, d.shadow_lod);
                 casters[c].push_back(&d);
                 any = true;
             }
@@ -1894,10 +1914,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     auto& instances = F.instances;
     instances.reserve(visible.size() + stats_.shadow_casters);
     // Main and transparent passes draw `lod`; shadow passes (match_material false) draw `shadow_lod`.
-    auto build_batches = [&](const std::vector<const Draw*>& list, bool match_material, std::vector<Batch>& out) {
+    // Directional cascade c (cascade >= 0) draws `cascade_lod[c]`.
+    auto build_batches = [&](const std::vector<const Draw*>& list, bool match_material, std::vector<Batch>& out,
+                             int cascade = -1) {
         for (const Draw* d : list) {
             const auto offset = static_cast<std::uint32_t>(instances.size());
-            const std::uint8_t lod = match_material ? d->lod : d->shadow_lod;
+            const std::uint8_t lod = match_material ? d->lod
+                                     : cascade >= 0 ? d->cascade_lod[static_cast<std::size_t>(cascade)]
+                                                    : d->shadow_lod;
             instances.push_back(make_instance(d->model, d->palette));
             if (S.instancing && !out.empty()) {
                 const Draw* f = out.back().first;
@@ -1918,14 +1942,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     stats_.transparent_draws = static_cast<std::uint32_t>(transparent.size());
     auto& shadow_batches = F.shadow_batches;
     for (std::uint32_t c = 0; c < cascade_count_; ++c) {
-        std::sort(casters[c].begin(), casters[c].end(), [](const Draw* a, const Draw* b) {
+        std::sort(casters[c].begin(), casters[c].end(), [c](const Draw* a, const Draw* b) {
             if (a->skinned != b->skinned) return !a->skinned;
             if (shadow_alpha_tested(a->material) != shadow_alpha_tested(b->material)) return !shadow_alpha_tested(a->material);
             if (a->mesh != b->mesh) return a->mesh < b->mesh;
-            if (a->shadow_lod != b->shadow_lod) return a->shadow_lod < b->shadow_lod;
+            if (a->cascade_lod[c] != b->cascade_lod[c]) return a->cascade_lod[c] < b->cascade_lod[c];
             return a->material.base_color_texture.index < b->material.base_color_texture.index;
         });
-        build_batches(casters[c], false, shadow_batches[c]);
+        build_batches(casters[c], false, shadow_batches[c], static_cast<int>(c));
         stats_.shadow_batches += static_cast<std::uint32_t>(shadow_batches[c].size());
         for (const Batch& b : shadow_batches[c]) stats_.shadow_triangles += std::uint64_t{b.first->mesh->lods[b.lod].index_count / 3} * b.instance_count;
     }
