@@ -451,6 +451,11 @@ struct RenderSettings {
     // lowering it), the resolve reconstructs at output resolution from jittered samples instead of
     // upscaling the internal image bilinearly. Off: the TAA history stays at render resolution.
     bool temporal_upscale{true};
+    // Texture mip bias while temporally upscaling (ADR-0141): material textures are sampled with
+    // log2(render / output size) + upscale_mip_bias, so the jittered low-resolution samples carry
+    // output-resolution texture detail into the history. 0 = render-resolution mips (blurry),
+    // FSR2/Arm ASR add -1 more (measured noisier with no FLIP gain here, so 0). Clamped to -2..0.
+    float upscale_mip_bias{0.0f};
     // Object motion vectors (ADR-0054): opaque draws submitted with a motion id whose transform or
     // joints changed since the previous frame are drawn into a motion buffer the TAA resolve
     // follows, so moving and animated objects keep their history instead of ghosting. TAA only.
@@ -589,6 +594,7 @@ struct SceneStats {
     bool sharpened{false};             // the upscale/sharpen pass ran this frame
     std::uint32_t irradiance_probes{0}; // baked probes of the irradiance volume used this frame (0 = none)
     math::Vec2 jitter{};               // sub-pixel jitter in render pixels
+    float texture_mip_bias{0.0f};      // material texture LOD bias this frame (ADR-0141; < 0 when upscaling)
     // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
     std::uint32_t main_batches{0}, shadow_batches{0}, prepass_batches{0};
     std::uint32_t transparent_draws{0};

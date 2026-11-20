@@ -525,6 +525,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.ssao_samples = std::clamp(s.ssao_samples, 4u, 32u);
     s.bloom_levels = std::clamp(s.bloom_levels, 1u, 8u);
     s.sharpen = std::isfinite(s.sharpen) ? std::clamp(s.sharpen, 0.0f, 1.0f) : 0.0f;
+    s.upscale_mip_bias = std::isfinite(s.upscale_mip_bias) ? std::clamp(s.upscale_mip_bias, -2.0f, 0.0f) : 0.0f;
     s.taa_blend = std::isfinite(s.taa_blend) ? std::clamp(s.taa_blend, 0.04f, 1.0f) : 0.1f;
     s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxLights);
     s.lod_error_pixels = std::isfinite(s.lod_error_pixels) ? std::clamp(s.lod_error_pixels, 0.25f, 16.0f) : 1.0f;
@@ -1573,6 +1574,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const math::Vec2 jitter = taa ? taa_jitter(frame_index_, upscale ? temporal_jitter_period(upscale_ratio) : 8u) : math::Vec2{};
     const Mat4 proj = taa ? jitter_projection(proj_unjittered, jitter, rw, rh) : proj_unjittered;
     const Mat4 view_proj = proj * camera_.view;
+    // ADR-0141: upscaled frames pick material mips for the output resolution.
+    const float texture_mip_bias =
+        upscale ? std::clamp(-std::log2(upscale_ratio) + S.upscale_mip_bias, -4.0f, 0.0f) : 0.0f;
+    stats_.texture_mip_bias = texture_mip_bias;
     stats_.taa = taa;
     stats_.taa_history = taa && history_valid_;
     stats_.temporal_upscale = upscale;
@@ -2554,7 +2559,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
 
     LightingUniforms lighting{};
     lighting.camera_pos = Vec4(camera_.position, ssao ? 1.0f : 0.0f);
-    lighting.camera_forward = Vec4(camera_.forward(), 0.0f);
+    lighting.camera_forward = Vec4(camera_.forward(), texture_mip_bias);
     lighting.sun_dir = Vec4(normalize(sun_.direction), shadows ? 1.0f : 0.0f);
     lighting.sun_color = rgb(sun_.color, sun_.intensity);
     lighting.sky_color = rgb(env_.sky_zenith, env_.ambient_intensity, env_.exposure);

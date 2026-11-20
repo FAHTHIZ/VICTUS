@@ -1971,3 +1971,13 @@ Verified (Release, clang 21, lavapipe, 2 cores): regenerating the scenes leaves 
 Not covered: the goldens are lavapipe only; cube faces other than the camera-facing ones are not tiled to scale; no hardware-GPU or phone capture.
 
 Next task: Arm ASR (Accuracy Super Resolution) evaluation for the Low/Medium temporal upscaler (ROADMAP Priority 0), then the OpenGL ES 3 fallback ADR.
+
+## 2026-11-20 — Texture mip bias for temporal upscaling; Arm ASR evaluation (ADR-0141)
+
+Built: material textures in pbr.frag are sampled with LOD bias `log2(render/output) + upscale_mip_bias` while temporally upscaling (`RenderSettings::upscale_mip_bias`, default 0, clamped -2..0; `SceneStats::texture_mip_bias`). `victus run --render-scale <0.25..2>` and `--taa on|off|auto` override the project settings. The Arm ASR evaluation is recorded in ADR-0141: not vendored, because SDL_GPU exposes no native Vulkan handles and its graphics storage textures are read-only.
+
+Verified (Release, clang 21, lavapipe, 2 cores): `python3 tools/shaders/compile_shaders.py --check` up to date (59). Photoreal 640x360 Ultra, 60 frames, mean FLIP against native: scale 0.5 drops from 0.0705 to 0.0515 (log2 - 1 gives 0.0532, log2 - 0.5 gives 0.0510 but 6 % more temporal error); scale 0.67 drops from 0.0461 to 0.0333. New `victus_gpu_tests` case "temporal upscaling biases texture mips by the upscale ratio" checks a bias of -1 at scale 0.5, 0 at native, bilinear and no TAA, -1.5 with offset -0.5, and the clamping. `-tc="*taa*,*upscal*"` gives 11/11. Full `ctest --test-dir build -j2` 39/39 (perf budgets and reference scenes pass, goldens unchanged).
+
+Not covered: lavapipe only; no phone capture; ASR's reactive mask, locks and Lanczos filter are not ported yet.
+
+Next task: port ASR/FSR2 reconstruction ideas (reactive mask, thin-feature locks, depth clip) into taa_upscale.frag, measured on the photoreal scene, then the OpenGL ES 3 fallback ADR.
