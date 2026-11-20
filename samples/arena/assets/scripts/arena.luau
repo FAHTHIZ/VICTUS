@@ -94,7 +94,7 @@ end
 function Arena:track_robot(e, health)
     local r = { entity = e, health = health or self.enemy_health, cooldown = 0.5, flash = 0, clip = "Idle" }
     r.robot = e:find_child("Robot")
-    r.body = r.robot and r.robot:find_child("Body")
+    r.parts = State.body_parts(r.robot)
     table.insert(self.robots, r)
     State.enemies = self:robot_entities()
 end
@@ -113,8 +113,7 @@ function Arena:spawn_robot()
 end
 
 function Arena:set_flash(r, on)
-    if not r.body then return end
-    for _, part in r.body:children() do
+    for _, part in r.parts do
         part:set_emissive(if on then vector.create(1, 0.9, 0.6) else nil, 3)
     end
 end

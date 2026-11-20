@@ -34,7 +34,7 @@ time, 8500 points).
 
 | Engine feature | Where |
 | --- | --- |
-| Skinned glTF robot with `Idle`/`Walk` clips cross-faded from scripts (`play_animation`) | player and enemies, `assets/models/robot.gltf` |
+| Skinned starter characters with `Idle`/`Walk` clips cross-faded from scripts (`play_animation`) | Orion is the player, red-tinted Nova copies are the enemies: `assets/models/characters/` |
 | `CharacterController` movement, jumping, sliding along walls and cover | `Player`, `assets/scripts/player.luau` |
 | Navmesh baked from the static level, `NavAgent` steering with avoidance, `nav.find_path` | enemy robots, autopilot |
 | Prefabs instantiated at run time (`scene.instantiate`) | `assets/prefabs/enemy_robot.vprefab`, `health_orb.vprefab` |

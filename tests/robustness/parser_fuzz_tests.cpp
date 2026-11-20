@@ -659,7 +659,7 @@ TEST_CASE("fuzz: cooked textures and models") {
     std::vector<Bytes> model_seeds = {cube_bytes};
     assets::ModelImportSettings settings;
     settings.optimize_meshes = false;
-    auto robot = assets::import_gltf(source_path("samples/arena/assets/models/robot.gltf"), settings,
+    auto robot = assets::import_gltf(source_path("tests/fixtures/robot.gltf"), settings,
                                      source_path("samples/arena/assets"));
     REQUIRE_MESSAGE(robot.ok(), (robot.ok() ? std::string{} : robot.error().message));
     model_seeds.push_back(assets::serialize(mh, *robot)); // skins, nodes and animation clips
@@ -684,7 +684,7 @@ TEST_CASE("fuzz: cooked textures and models") {
 }
 
 TEST_CASE("fuzz: glTF import") {
-    const json::Value robot = load_json_file("samples/arena/assets/models/robot.gltf");
+    const json::Value robot = load_json_file("tests/fixtures/robot.gltf");
     const stdfs::path dir = work_dir() / "gltf";
     stdfs::create_directories(dir);
     const stdfs::path file = dir / "model.gltf";

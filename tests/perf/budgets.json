@@ -1,5 +1,5 @@
 {
-  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095); template-3d and template-multiplayer triangles, shadow triangles and buffer bytes re-baselined 2026-11-20 for the Orion/Nova starter characters (26.1k smooth-surface triangles replacing the 20.6k-triangle box robots, ADR-0121); template-3d and template-multiplayer shadow triangles re-baselined the same day at 23 180 and 15 459 for receiver-aware cascade culling (ADR-0124). See docs/PERFORMANCE_STRATEGY.md.",
+  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095); template-3d and template-multiplayer triangles, shadow triangles and buffer bytes re-baselined 2026-11-20 for the Orion/Nova starter characters (26.1k smooth-surface triangles replacing the 20.6k-triangle box robots, ADR-0121); template-3d and template-multiplayer shadow triangles re-baselined the same day at 23 180 and 15 459 for receiver-aware cascade culling (ADR-0124); sample-arena triangles, shadow triangles, entities and buffers re-baselined 2026-11-20 when the arena moved from the old box robot to Orion (player) and Nova (enemies). See docs/PERFORMANCE_STRATEGY.md.",
   "settings": {
     "frames": 120,
     "width": 640,
@@ -119,22 +119,22 @@
       "counters": {
         "frame.draw_calls": [26, 58],
         "frame.render_passes": [0, 14],
-        "frame.triangles": [419, 922],
+        "frame.triangles": [3525, 7756],
         "frame.visible": [10, 22],
         "frame.main_batches": [5, 12],
         "frame.shadow_batches": [0, 48],
-        "frame.shadow_triangles": [1651, 3633],
+        "frame.shadow_triangles": [14164, 31161],
         "frame.transparent_draws": [0, 2],
         "frame.transparent_triangles": [0, 2],
         "frame.alpha_tested_draws": [0, 2],
         "frame.surface_shader_draws": [0, 6],
         "frame.sprites": [0, 2],
         "frame.ui_items": [0, 8],
-        "scene.entities": [44, 97],
+        "scene.entities": [71, 156],
         "gpu.texture_bytes": [0, 29147154],
-        "gpu.buffer_bytes": [0, 406965],
+        "gpu.buffer_bytes": [0, 5615183],
         "gpu.live_textures": [0, 20],
-        "gpu.live_buffers": [0, 22],
+        "gpu.live_buffers": [0, 42],
         "sim.systems": [11, 30]
       }
     },

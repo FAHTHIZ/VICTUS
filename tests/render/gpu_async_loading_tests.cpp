@@ -28,7 +28,7 @@ AsyncProject make_project() {
     sfs::create_directories(p.root / "assets" / "textures");
     sfs::create_directories(p.root / "assets" / "models");
     REQUIRE(render::save_png(p.root / "assets" / "textures" / "wall.png", render::make_checker(8, 1, 0xff0000ffu, 0xff0000ffu)).ok());
-    sfs::copy_file(fs::Path(VICTUS_SOURCE_DIR) / "samples" / "arena" / "assets" / "models" / "robot.gltf",
+    sfs::copy_file(fs::Path(VICTUS_SOURCE_DIR) / "tests" / "fixtures" / "robot.gltf",
                    p.root / "assets" / "models" / "robot.gltf");
     auto db = assets::AssetDatabase::open(p.root);
     REQUIRE(db.ok());
