@@ -13,20 +13,20 @@
 namespace victus::project {
 
 namespace embedded {
-extern const std::uint8_t kVanguard01Glb[];
-extern const std::size_t kVanguard01GlbSize;
-extern const std::uint8_t kVanguard02Glb[];
-extern const std::size_t kVanguard02GlbSize;
+extern const std::uint8_t kOrionGlb[];
+extern const std::size_t kOrionGlbSize;
+extern const std::uint8_t kNovaGlb[];
+extern const std::size_t kNovaGlbSize;
 } // namespace embedded
 
 const std::vector<StarterCharacter>& starter_characters() {
     static const std::vector<StarterCharacter> list = {
-        {"v01", "Vanguard V-01",
-         "Masculine-presenting Vanguard: broader shoulders, two-piece chest shell, squared crown with a rear fin.",
-         "assets/models/characters/victus_vanguard_01.glb", "cc97cbb6-893b-451a-b791-e919b55c4417"},
-        {"v02", "Vanguard V-02",
-         "Feminine-presenting Vanguard: narrower swept shoulders, continuous chest shell, paired rear fins and status lights.",
-         "assets/models/characters/victus_vanguard_02.glb", "634fec79-3d18-4749-b5ce-9c74265f931e"},
+        {"orion", "Orion",
+         "Masculine-presenting VICTUS mannequin: athletic build, V-cut chest cuirass, cropped sculpted hair, cyan mark.",
+         "assets/models/characters/victus_orion.glb", "8e84eb12-63c8-4aed-aae2-517c038d3071"},
+        {"nova", "Nova",
+         "Feminine-presenting VICTUS mannequin: slender build, tapered cuirass, swept sculpted hair, amber mark.",
+         "assets/models/characters/victus_nova.glb", "44037d0d-1627-44a8-a225-633971f196b2"},
     };
     return list;
 }
@@ -47,8 +47,8 @@ std::size_t index_of(const StarterCharacter& c) {
 } // namespace
 
 std::span<const std::uint8_t> starter_character_glb(const StarterCharacter& c) {
-    if (index_of(c) == 0) return {embedded::kVanguard01Glb, embedded::kVanguard01GlbSize};
-    return {embedded::kVanguard02Glb, embedded::kVanguard02GlbSize};
+    if (index_of(c) == 0) return {embedded::kOrionGlb, embedded::kOrionGlbSize};
+    return {embedded::kNovaGlb, embedded::kNovaGlbSize};
 }
 
 std::string starter_character_meta(const StarterCharacter& c) {

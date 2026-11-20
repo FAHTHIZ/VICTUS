@@ -271,7 +271,7 @@ No third-party code was added.
 - Blender glTF 2.0 exporter manual — https://docs.blender.org/manual/en/latest/addons/import_export/scene_gltf2.html (accessed 2026-11-18): Actions mode exports each stashed/NLA-tracked action as one glTF animation named after its track; "Deformation Bones only" bakes animation onto deform bones; "Active" vertex colour exports `COLOR_0` even when the material does not use it. Used for the export settings in `tools/characters/build_vanguard.py`.
 - Khronos glTF 2.0 specification — https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html (accessed 2026-11-18): +Y up, +Z forward for assets, metres; `COLOR_0` multiplies base colour; skins use inverse bind matrices with joints as nodes. Informed the conventions (1.70 m, feet at Y=0, facing +Z) and the socket-as-node design.
 - Alternatives compared: procedural C++ meshes (the previous robot) and a data install directory; see ADR-0069.
-- Open questions: weighted skinning for soft shells, a formal socket component, authored (not simplified) LODs, retargeting other humanoids onto the Vanguard skeleton.
+- Open questions: weighted skinning for soft shells, a formal socket component, authored (not simplified) LODs, retargeting other humanoids onto the shared character skeleton (now used by Orion and Nova, see 2026-11-20).
 
 ## Research conclusions added 2026-11-16 (Slice 22, save games)
 - Unreal Engine saving and loading — https://dev.epicgames.com/documentation/en-us/unreal-engine/saving-and-loading-your-game-in-unreal-engine: `USaveGame` objects saved to a slot name + user index; multiple slots per user. Informed named slots and slot listing.
@@ -355,7 +355,7 @@ Do not replace Jolt with PhysX merely to obtain articulation terminology or assu
 ### Open research and validation questions
 
 - Which Jolt 5.7.0 constraints and drive modes produce stable character rigs across the intended mass and scale ranges?
-- What body proxies, joint limits and collision filters are robust for soft-bodied humanoids as well as the current hard-surface Vanguard starter characters?
+- What body proxies, joint limits and collision filters are robust for soft-bodied humanoids as well as the Orion and Nova starter characters?
 - Which balance controller provides a good trade-off between believable stepping/bracing, controllability, determinism and CPU cost?
 - How should high-detail render skeletons map to compact simulation rigs without visible foot, hand or root drift?
 - How should character simulation tiers behave in headless/server and multiplayer sessions, where authoritative simulation must not depend on client camera visibility?
@@ -523,3 +523,10 @@ The research below informs roadmap priorities 6e and 6g–6l. These are architec
 - **Niagara Scalability: Effect Types** — https://dev.epicgames.com/community/learning/knowledge-base/LJnb/unreal-engine-niagara-scalability-effect-types (accessed 2026-11-19): scalability settings per quality bucket (Low, Medium, High, Epic, Cinematic) with max distance, max instances and spawn count scale.
 - **unreal.NiagaraSystemScalabilitySettings** — https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/class/NiagaraSystemScalabilitySettings?application_version=5.0 (accessed 2026-11-19): with a significance handler, instances are sorted by significance and only the N most significant are kept.
 - **Conclusion:** per-tier instance budgets ranked by significance are the established pattern. VICTUS uses camera distance as the significance for decals, water and CPU particle batches (ADR-0109); spawn-count scaling and distance fades are left for the particle module.
+
+## Research conclusions added 2026-11-20 (Orion and Nova)
+- Epic Games, Third Person template — https://dev.epicgames.com/documentation/unreal-engine/third-person-template-in-unreal-engine (accessed 2026-11-20): the template's playable character is a mannequin (Manny and Quinn are the two variants) on the shared UE5 skeleton; the reference for "an engine mascot pair that shares one rig".
+- UE5 Manny skeleton guide — https://cosindra.ai/guides/ue5-manny-skeleton (accessed 2026-11-20): Manny (male) and Quinn (female) share SK_Mannequin, so animations retarget between them without changes; VICTUS keeps the same rule for Orion and Nova.
+- scikit-image `marching_cubes` — https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.marching_cubes (accessed 2026-11-20): Lewiner marching cubes with a `gradient_direction` switch (`descent`: "object was greater than exterior") and `allow_degenerate=False` to drop zero-area triangles. The generator keeps the default direction for its negative-inside field; the resulting winding was checked empirically (`tools/characters/test_sdf.py` requires outward face normals on a sphere) rather than inferred from the docs.
+- Alternatives compared: hand-sculpted binary, licensed base meshes, SDF-as-code; see ADR-0121.
+- Open questions: baked normal/AO maps from the high-resolution field, a realistic-human head variant, painted weights near the shoulders.

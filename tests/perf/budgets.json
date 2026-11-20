@@ -1,5 +1,5 @@
 {
-  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095). See docs/PERFORMANCE_STRATEGY.md.",
+  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095); template-3d and template-multiplayer triangles, shadow triangles and buffer bytes re-baselined 2026-11-20 for the Orion/Nova starter characters (26.1k smooth-surface triangles replacing the 20.6k-triangle box robots, ADR-0121). See docs/PERFORMANCE_STRATEGY.md.",
   "settings": {
     "frames": 120,
     "width": 640,
@@ -14,11 +14,11 @@
       "counters": {
         "frame.draw_calls": [37, 83],
         "frame.render_passes": [0, 15],
-        "frame.triangles": [2713, 5969],
+        "frame.triangles": [5775, 12707],
         "frame.visible": [11, 26],
         "frame.main_batches": [9, 21],
         "frame.shadow_batches": [0, 59],
-        "frame.shadow_triangles": [8081, 17779],
+        "frame.shadow_triangles": [17268, 37991],
         "frame.transparent_draws": [0, 2],
         "frame.transparent_triangles": [0, 2],
         "frame.alpha_tested_draws": [0, 2],
@@ -27,7 +27,7 @@
         "frame.ui_items": [0, 6],
         "scene.entities": [48, 107],
         "gpu.texture_bytes": [0, 29147154],
-        "gpu.buffer_bytes": [0, 3921061],
+        "gpu.buffer_bytes": [0, 5579121],
         "gpu.live_textures": [0, 20],
         "gpu.live_buffers": [0, 43],
         "sim.systems": [11, 30]
@@ -92,11 +92,11 @@
       "counters": {
         "frame.draw_calls": [38, 85],
         "frame.render_passes": [0, 14],
-        "frame.triangles": [1548, 3406],
+        "frame.triangles": [2579, 5675],
         "frame.visible": [8, 19],
         "frame.main_batches": [3, 8],
         "frame.shadow_batches": [0, 66],
-        "frame.shadow_triangles": [6032, 13271],
+        "frame.shadow_triangles": [10158, 22348],
         "frame.transparent_draws": [0, 2],
         "frame.transparent_triangles": [0, 2],
         "frame.alpha_tested_draws": [0, 2],
@@ -105,7 +105,7 @@
         "frame.ui_items": [0, 9],
         "scene.entities": [33, 73],
         "gpu.texture_bytes": [0, 29123125],
-        "gpu.buffer_bytes": [0, 2158834],
+        "gpu.buffer_bytes": [0, 3008083],
         "gpu.live_textures": [0, 19],
         "gpu.live_buffers": [0, 29],
         "sim.systems": [11, 30]

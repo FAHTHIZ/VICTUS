@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Character silhouette across poses and camera distances (roadmap 6b, Workstream H3 item 7): the
-// Vanguard V-01 starter character goes through the real pipeline (GLB → asset database → scene →
+// Orion starter character goes through the real pipeline (GLB → asset database → scene →
 // AnimationSystem → extraction → skinned draws) at several distances and poses, once with
 // automatic mesh LODs and once at LOD 0. The LOD image must keep the silhouette: few pixels may
 // change, and none of the face/hand detail may disappear at the distances where LODs engage.
@@ -26,14 +26,14 @@ struct Frame {
 
 } // namespace
 
-TEST_CASE("gpu character lods: Vanguard silhouette over poses and distances") {
+TEST_CASE("gpu character lods: Orion silhouette over poses and distances") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto& dev = ctx.device();
 
     const fs::Path project = std::filesystem::temp_directory_path() / ("victus_charlod_" + Uuid::generate().to_string().substr(0, 8));
     std::filesystem::create_directories(project / "assets" / "models");
-    std::filesystem::copy_file(fs::Path(VICTUS_SOURCE_DIR) / "engine" / "project" / "data" / "characters" / "victus_vanguard_01.glb",
+    std::filesystem::copy_file(fs::Path(VICTUS_SOURCE_DIR) / "engine" / "project" / "data" / "characters" / "victus_orion.glb",
                                project / "assets" / "models" / "v01.glb");
     auto db = assets::AssetDatabase::open(project);
     REQUIRE(db.ok());
@@ -137,7 +137,9 @@ TEST_CASE("gpu character lods: Vanguard silhouette over poses and distances") {
                     if (!match) ++unmatched;
                 }
             INFO("covered " << covered << " changed " << changed << " unmatched " << unmatched);
-            CHECK(covered > 300);
+            // The character must cover enough pixels for the comparison to mean something. Orion's
+            // anatomical silhouette is slimmer than the old boxy robot's: about 290 px side-on at 20 m.
+            CHECK(covered > 250);
             CHECK(static_cast<double>(changed) <= 0.06 * static_cast<double>(covered)); // edge pixels only
             CHECK(unmatched <= 2 + covered / 500);
             std::printf("[charlod] %s %.1f m: lod_draws %u tris %llu/%llu covered %zu changed %zu unmatched %zu\n", p.clip, d,

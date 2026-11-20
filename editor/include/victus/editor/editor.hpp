@@ -707,13 +707,13 @@ public:
     std::size_t make_ragdoll(scene::Entity root);
     bool set_ragdoll_mode(scene::Entity root, physics::RagdollComponent::Mode mode);
     std::size_t remove_ragdoll(scene::Entity root);
-    // Starter characters (Vanguard V-01 "v01", V-02 "v02"): copies the model into the project
+    // Starter characters (Orion "orion", Nova "nova"): copies the model into the project
     // when missing and adds it, optionally as a ragdoll in `mode`. One undo step when `record`.
     Result<Uuid> ensure_starter_character(std::string_view id);
     scene::Entity add_character(std::string_view id, scene::Entity parent, math::Vec3 position, bool ragdoll = false,
                                 physics::RagdollComponent::Mode mode = physics::RagdollComponent::Mode::Passive,
                                 bool record = true);
-    // Both Vanguards on a floor at the camera focus: V-01 floppy, V-02 powered. One undo step.
+    // Orion and Nova on a floor at the camera focus: Orion floppy, Nova powered. One undo step.
     scene::Entity add_ragdoll_lab();
 
     [[nodiscard]] float ui_scale() const noexcept { return ui_scale_; }

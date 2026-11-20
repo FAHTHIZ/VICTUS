@@ -198,9 +198,9 @@ TEST_CASE("editor: 3D project workflow end to end") {
         if (!e.is_null()) picked.insert(s.world().get<Name>(e)->value);
     }
     CHECK(picked.count("Spinning Cube") == 1);
-    // The player's skinned Vanguard (its body primitives are the V01_Body[0..3] parts).
-    CHECK((picked.count("V01_Body[0]") + picked.count("V01_Body[1]") + picked.count("V01_Body[2]") +
-           picked.count("V01_Body[3]")) >= 1);
+    // The player's skinned Orion (its body primitives are the Orion_Body[0..3] parts).
+    CHECK((picked.count("Orion_Body[0]") + picked.count("Orion_Body[1]") + picked.count("Orion_Body[2]") +
+           picked.count("Orion_Body[3]")) >= 1);
 
     // Create, undo, redo.
     const Entity cube = h.ed->create_entity(editor::Primitive::Cube);
@@ -1489,7 +1489,7 @@ TEST_CASE("editor: asset thumbnails render models, materials and prefabs and ref
     editor::Editor& ed = *h.ed;
     REQUIRE(ed.thumbnails() != nullptr);
     auto& db = *ed.assets();
-    const auto* robot = db.find_path("models/characters/victus_vanguard_01.glb");
+    const auto* robot = db.find_path("models/characters/victus_orion.glb");
     const auto* ground = db.find_path("materials/ground.vmat");
     const auto* energy = db.find_path("materials/energy_cube.vmat");
     const auto* crate = db.find_path("prefabs/crate.vprefab");
@@ -2393,7 +2393,7 @@ TEST_CASE("editor: the Animation window previews and drives animation controller
     CHECK(ed.animation_preview_target() == robot);
     auto lines = ed.animation_debug_lines(robot);
     REQUIRE_FALSE(lines.empty());
-    CHECK(lines[0] == "controller anim/characters/vanguard_locomotion.vanim state Locomotion time 0.00");
+    CHECK(lines[0] == "controller anim/characters/victus_locomotion.vanim state Locomotion time 0.00");
     CHECK(std::find(lines.begin(), lines.end(), "weight Idle 1.00") != lines.end());
     CHECK(std::find(lines.begin(), lines.end(), "param speed float = 0.00") != lines.end());
     REQUIRE(ed.set_animation_parameter(robot, "speed", 5.0f));

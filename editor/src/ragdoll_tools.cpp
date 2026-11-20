@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// The Inspector's ragdoll card (A.R.C., ADR-0091): turns a character such as Vanguard V-01 or
-// V-02 into a ragdoll in one undoable step (physics::make_humanoid_ragdoll), switches how the body
+// The Inspector's ragdoll card (A.R.C., ADR-0091): turns a character such as Orion or
+// Nova into a ragdoll in one undoable step (physics::make_humanoid_ragdoll), switches how the body
 // behaves with four plain-language buttons and removes the ragdoll again.
 #include "victus/editor/editor.hpp"
 #include "widgets.hpp"
@@ -207,9 +207,9 @@ Entity Editor::add_ragdoll_lab() {
     ft->scale = {8, 0.2f, 8};
     s.world().add<physics::RigidBodyComponent>(floor).type = physics::BodyType::Static;
     s.world().add<physics::ColliderComponent>(floor);
-    // Vanguard V-01 goes limp; V-02 keeps its muscles and stumbles. Both start slightly in the air.
-    const Entity a = add_character("v01", lab, {-0.9f, 0.4f, 0}, true, RagdollMode::Passive, false);
-    const Entity b = add_character("v02", lab, {0.9f, 0.0f, 0}, true, RagdollMode::Powered, false);
+    // Orion goes limp; Nova keeps her muscles and stumbles. Both start slightly in the air.
+    const Entity a = add_character("orion", lab, {-0.9f, 0.4f, 0}, true, RagdollMode::Passive, false);
+    const Entity b = add_character("nova", lab, {0.9f, 0.0f, 0}, true, RagdollMode::Powered, false);
     if (!a.is_null()) s.world().get<Transform>(a)->rotation = math::Quat::euler(math::radians(12.0f), 0, math::radians(-8.0f));
     if (!b.is_null()) s.world().get<Transform>(b)->rotation = math::Quat::euler(0, math::radians(-20.0f), 0);
     s.update_transforms();
@@ -219,7 +219,7 @@ Entity Editor::add_ragdoll_lab() {
         update_title();
     }
     selection_ = {s.uuid(lab)};
-    notify("Ragdoll Lab added: press Play. V-01 is floppy, V-02 is powered.");
+    notify("Ragdoll Lab added: press Play. Orion is floppy, Nova is powered.");
     return lab;
 }
 

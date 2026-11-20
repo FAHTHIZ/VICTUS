@@ -74,7 +74,7 @@ Every behaviour sends events (`collected`, `died`, `bounced`, `triggered`, `talk
 | No-Code Platformer | `victus new MyGame --template nocode` | A complete 2D level made only from Behaviours |
 | No-Code 3D Adventure | `victus new MyGame --template nocode3d` | A 3D island level with an animated character, made only from Behaviours |
 | 2D platformer | `victus new MyGame --template 2d` | Box2D platformer in Luau: one-way ledge, swinging lantern, coins, music |
-| 3D | `victus new MyGame --template 3d` | Third-person robot, physics crates, fire, prefabs, save and load |
+| 3D | `victus new MyGame --template 3d` | Third-person Orion mannequin (or Nova), physics crates, fire, prefabs, save and load |
 | Simulation | `victus new MyGame --template simulation` | 576 entities animated by native systems, with a scripted orbiting camera |
 | Multiplayer | `victus new MyGame --template multiplayer` | Networked coin arena: host with `victus serve`, join with `victus run --connect` |
 

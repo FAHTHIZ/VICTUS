@@ -1071,7 +1071,7 @@ TEST_CASE("studio lessons: a first 2D game built step by step, played to the goa
     CHECK_FALSE(h.ed->start_lesson(editor::Lesson::First2D));
 }
 
-TEST_CASE("studio ragdolls: Make Ragdoll on a Vanguard, behaviour buttons, undo, and the Ragdoll Lab") {
+TEST_CASE("studio ragdolls: Make Ragdoll on Orion, behaviour buttons, undo, and the Ragdoll Lab") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;
     REQUIRE(h.init());
@@ -1085,7 +1085,7 @@ TEST_CASE("studio ragdolls: Make Ragdoll on a Vanguard, behaviour buttons, undo,
     h.ed->select(robot);
     h.frames(2); // Inspector offers the Make Ragdoll card
 
-    // The 21-joint Vanguard rig maps to 16 ragdoll body parts (Neck, Shoulders and Toes ride along).
+    // The 21-joint character rig maps to 16 ragdoll body parts (Neck, Shoulders and Toes ride along).
     const std::size_t undo_before = h.ed->undo_stack().size();
     CHECK(h.ed->make_ragdoll(robot) == 16);
     CHECK(h.ed->ragdoll_bone_count(robot) == 16);
@@ -1116,12 +1116,12 @@ TEST_CASE("studio ragdolls: Make Ragdoll on a Vanguard, behaviour buttons, undo,
     h.ed->undo();
     CHECK(h.ed->ragdoll_bone_count(robot) == 16);
 
-    // Ragdoll Lab: both Vanguards on a floor, one undo step; V-01 falls when played.
+    // Ragdoll Lab: Orion and Nova on a floor, one undo step; Orion falls when played.
     const std::size_t entities = s.size();
     const scene::Entity lab = h.ed->add_ragdoll_lab();
     REQUIRE_FALSE(lab.is_null());
-    const scene::Entity v01 = s.find_by_name("Vanguard V-01");
-    const scene::Entity v02 = s.find_by_name("Vanguard V-02");
+    const scene::Entity v01 = s.find_by_name("Orion");
+    const scene::Entity v02 = s.find_by_name("Nova");
     REQUIRE_FALSE(v01.is_null());
     REQUIRE_FALSE(v02.is_null());
     CHECK(s.parent(v01) == lab);
@@ -1135,15 +1135,15 @@ TEST_CASE("studio ragdolls: Make Ragdoll on a Vanguard, behaviour buttons, undo,
     h.ed->redo();
     CHECK(s.size() > entities);
 
-    // In play the limp V-01's head drops towards the floor.
-    const scene::Entity lab_v01 = h.ed->edit_scene().find_by_name("Vanguard V-01");
+    // In play the limp Orion's head drops towards the floor.
+    const scene::Entity lab_v01 = h.ed->edit_scene().find_by_name("Orion");
     REQUIRE_FALSE(lab_v01.is_null());
     h.ed->play();
     h.frames(2);
     scene::Scene& play = h.ed->active_scene();
     scene::Entity head;
     for (const scene::Entity c : [&] {
-             std::vector<scene::Entity> all, stack{play.find_by_name("Vanguard V-01")};
+             std::vector<scene::Entity> all, stack{play.find_by_name("Orion")};
              while (!stack.empty()) {
                  const scene::Entity e = stack.back();
                  stack.pop_back();

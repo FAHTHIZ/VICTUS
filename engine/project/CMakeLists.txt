@@ -3,14 +3,17 @@
 # templates can write them into new projects (ADR-0069).
 set(_victus_characters ${CMAKE_CURRENT_SOURCE_DIR}/data/characters)
 set(_victus_character_sources)
-foreach(_v 01 02)
-    set(_out ${CMAKE_CURRENT_BINARY_DIR}/generated/vanguard_${_v}_glb.cpp)
+foreach(_v orion nova)
+    string(SUBSTRING ${_v} 0 1 _first)
+    string(TOUPPER ${_first} _first)
+    string(SUBSTRING ${_v} 1 -1 _rest)
+    set(_out ${CMAKE_CURRENT_BINARY_DIR}/generated/character_${_v}_glb.cpp)
     add_custom_command(OUTPUT ${_out}
-        COMMAND ${CMAKE_COMMAND} -DINPUT=${_victus_characters}/victus_vanguard_${_v}.glb -DOUTPUT=${_out}
-                -DSYMBOL=kVanguard${_v}Glb -DNAMESPACE=victus::project::embedded
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${_victus_characters}/victus_${_v}.glb -DOUTPUT=${_out}
+                -DSYMBOL=k${_first}${_rest}Glb -DNAMESPACE=victus::project::embedded
                 -P ${PROJECT_SOURCE_DIR}/cmake/EmbedBinary.cmake
-        DEPENDS ${_victus_characters}/victus_vanguard_${_v}.glb ${PROJECT_SOURCE_DIR}/cmake/EmbedBinary.cmake
-        COMMENT "Embedding victus_vanguard_${_v}.glb"
+        DEPENDS ${_victus_characters}/victus_${_v}.glb ${PROJECT_SOURCE_DIR}/cmake/EmbedBinary.cmake
+        COMMENT "Embedding victus_${_v}.glb"
         VERBATIM)
     list(APPEND _victus_character_sources ${_out})
 endforeach()

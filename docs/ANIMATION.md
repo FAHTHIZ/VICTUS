@@ -4,7 +4,7 @@ An animation controller is a state machine that decides which clips an `Animator
 
 Point an `Animator` at a controller with its `controller` field (a path relative to `assets/`, for example `anim/player.vanim`). The controller names clips; they resolve against the Animator's model when it plays, so one controller can drive every model with clips of those names. While a controller is set, the Animator's `clip` field shows the current state, and writing a state name to it (or calling `play`) enters that state.
 
-The 3D and Multiplayer templates ship a complete example, `assets/anim/characters/vanguard_locomotion.vanim`, shared by both Vanguard starter characters ([CHARACTERS.md](CHARACTERS.md)): a `Locomotion` blend of Idle/Walk/Run by `speed`, a one-shot `Jump` that hands over to a looping `Fall` while `grounded` is false, a `Land` one-shot on touch-down and an `Interact` one-shot from the `interact` trigger.
+The 3D and Multiplayer templates ship a complete example, `assets/anim/characters/victus_locomotion.vanim`, shared by both starter characters, Orion and Nova ([CHARACTERS.md](CHARACTERS.md)): a `Locomotion` blend of Idle/Walk/Run by `speed`, a one-shot `Jump` that hands over to a looping `Fall` while `grounded` is false, a `Land` one-shot on touch-down and an `Interact` one-shot from the `interact` trigger.
 
 ## File format
 

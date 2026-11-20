@@ -4,7 +4,7 @@
 // root a translation channel, so each update samples 33 channels and writes 32 transforms per
 // character. "_crossfade" measures the same with every character mid-way through a cross-fade
 // (two clips sampled and blended). "_1thread" runs serially, "_jobs" through parallel_for.
-// "animation/vanguard_*" runs the real V-01 starter character (21 joints, 7 clips) under its
+// "animation/character_*" runs the real Orion starter character (21 joints, 7 clips) under its
 // shared locomotion controller, walking-to-running blend (two clips sampled per character).
 #include "bench_harness.hpp"
 
@@ -103,15 +103,15 @@ int main(int argc, char** argv) {
                   [&] { sys.update(s, 1.0f / 60); });
         }
     }
-    // The V-01 starter character: real skeleton, clips and controller.
-    const auto* v01 = project::find_starter_character("v01");
+    // The Orion starter character: real skeleton, clips and controller.
+    const auto* v01 = project::find_starter_character("orion");
     assets::ModelImportSettings import;
     import.optimize_meshes = false;
     auto model_v01 = assets::import_gltf_memory(project::starter_character_glb(*v01), "v01.glb", import);
     if (!model_v01) return 3;
-    const auto vanguard = std::make_shared<animation::AnimationSet>(assets::make_animation_set(*model_v01));
-    Uuid vanguard_id;
-    if (!Uuid::parse(v01->uuid, vanguard_id)) return 3;
+    const auto character_set = std::make_shared<animation::AnimationSet>(assets::make_animation_set(*model_v01));
+    Uuid character_id;
+    if (!Uuid::parse(v01->uuid, character_id)) return 3;
     const std::string controller = project::starter_character_controller();
     for (const bool threaded : {false, true}) {
         const std::string suffix = threaded ? "_jobs" : "_1thread";
@@ -126,14 +126,14 @@ int main(int argc, char** argv) {
             if (threaded) settings.jobs = &workers;
             settings.controllers = [&](std::string_view) -> Result<std::string> { return controller; };
             animation::AnimationSystem sys(settings);
-            sys.add_set(vanguard_id, vanguard);
+            sys.add_set(character_id, character_set);
             sys.update(s, 1.0f / 60); // bind
             s.world().each<animation::AnimatorComponent>([&](scene::Entity e, animation::AnimatorComponent&) {
                 (void)sys.set_parameter(s, e, "speed", 3.5f); // between Walk and Run
             });
             sys.update(s, 1.0f / 60);
             if (sys.stats().animators != static_cast<std::uint32_t>(n)) return 5;
-            h.run("animation/vanguard_" + std::to_string(n) + "x21_joints_controller" + suffix, static_cast<std::size_t>(n),
+            h.run("animation/character_" + std::to_string(n) + "x21_joints_controller" + suffix, static_cast<std::size_t>(n),
                   [&] { sys.update(s, 1.0f / 60); });
         }
     }
