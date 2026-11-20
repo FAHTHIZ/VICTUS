@@ -501,6 +501,11 @@ struct RenderSettings {
     // keep the same reference; directional cascades may go coarser still (shadow_lod_texels).
     // The bias only trades shadow-pass triangles for silhouette error. Low: 1.
     std::uint32_t shadow_lod_bias{0};
+    // Alpha-tested draws (leaf and needle cards, grass, ferns) use this many levels coarser than
+    // the main-camera pick (0..3, clamped per mesh); shadows add shadow_lod_bias on top. Card
+    // canopies (ADR-0151) then thin out to fewer, larger cards nearer the camera, trading leaf
+    // density for triangles and alpha-tested overdraw. Low: 1.
+    std::uint32_t foliage_lod_bias{0};
     // Scattered foliage (ADR-0150): each FoliageComponent draws instances within
     // `draw_distance * foliage_distance_scale` (0.25..1), and only those within
     // `foliage_shadow_fraction` (0..1) of that range cast shadows; the rest draw lit but

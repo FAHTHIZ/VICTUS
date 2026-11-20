@@ -468,6 +468,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.max_point_lights = 64;
         s.lod_error_pixels = 2.0f;
         s.shadow_lod_bias = 1;
+        s.foliage_lod_bias = 1;
         s.foliage_distance_scale = 0.7f;
         s.foliage_shadow_fraction = 0.5f;
         s.max_anisotropy = 2;
@@ -553,6 +554,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.lod_hysteresis = std::isfinite(s.lod_hysteresis) ? std::clamp(s.lod_hysteresis, 0.0f, 0.9f) : 0.0f;
     s.force_lod = std::clamp(s.force_lod, -1, static_cast<int>(kMaxMeshLods) - 1);
     s.shadow_lod_bias = std::min(s.shadow_lod_bias, 3u);
+    s.foliage_lod_bias = std::min(s.foliage_lod_bias, 3u);
     s.foliage_distance_scale = std::isfinite(s.foliage_distance_scale) ? std::clamp(s.foliage_distance_scale, 0.25f, 1.0f) : 1.0f;
     s.foliage_shadow_fraction = std::isfinite(s.foliage_shadow_fraction) ? std::clamp(s.foliage_shadow_fraction, 0.0f, 1.0f) : 1.0f;
     s.shadow_lod_texels = std::isfinite(s.shadow_lod_texels) ? std::clamp(s.shadow_lod_texels, 0.0f, 8.0f) : 1.0f;
@@ -1812,6 +1814,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         d.lod = select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S, previous, &stateless);
         if (previous >= 0 && d.lod != stateless) ++stats_.lod_held;
         if (lod_record && d.motion_id != 0) lod_next_.insert(lod_key(d), d.lod);
+        // The history keeps the unbiased pick, so the hysteresis bands stay those of the budget.
+        if (S.foliage_lod_bias > 0 && d.material.alpha_cutoff > 0.0f && S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
+            d.lod = static_cast<std::uint8_t>(std::min<std::uint32_t>(d.lod + S.foliage_lod_bias, d.mesh->lod_count - 1u));
         d.shadow_lod = d.lod;
         if (S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
             d.shadow_lod = static_cast<std::uint8_t>(std::min<std::uint32_t>(d.lod + S.shadow_lod_bias, d.mesh->lod_count - 1u));

@@ -197,3 +197,98 @@ TEST_CASE("mesh lods: settings, tiny meshes and append") {
         CHECK(max_x == doctest::Approx(2.0f));
     }
 }
+
+namespace {
+
+// A canopy of `count` disconnected two-triangle cards (1 x 1 m, random orientation) in a 6 m box.
+MeshData card_canopy(std::uint32_t count) {
+    MeshData m;
+    std::uint32_t seed = 12345u;
+    const auto rnd = [&] {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<float>(seed >> 8) / 16777216.0f;
+    };
+    for (std::uint32_t c = 0; c < count; ++c) {
+        const math::Vec3 centre{rnd() * 6.0f - 3.0f, rnd() * 6.0f + 2.0f, rnd() * 6.0f - 3.0f};
+        const float a = rnd() * 6.2831853f;
+        const math::Vec3 u{std::cos(a) * 0.5f, 0.0f, std::sin(a) * 0.5f}, v{0.0f, 0.5f, 0.0f};
+        const auto base = static_cast<std::uint32_t>(m.vertices.size());
+        const math::Vec3 corners[4] = {centre - u - v, centre + u - v, centre + u + v, centre - u + v};
+        const math::Vec2 uvs[4] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+        for (int k = 0; k < 4; ++k) {
+            Vertex3D x;
+            x.position = corners[k];
+            x.normal = math::normalize(math::cross(u, v));
+            x.uv = uvs[k];
+            m.vertices.push_back(x);
+        }
+        m.indices.insert(m.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+    }
+    return m;
+}
+
+double card_area(const MeshData& m, const std::vector<std::uint32_t>& idx) {
+    double area = 0.0;
+    for (std::size_t t = 0; t + 2 < idx.size(); t += 3) {
+        const auto& a = m.vertices[idx[t]].position;
+        const auto& b = m.vertices[idx[t + 1]].position;
+        const auto& c = m.vertices[idx[t + 2]].position;
+        area += 0.5 * math::length(math::cross(b - a, c - a));
+    }
+    return area;
+}
+
+} // namespace
+
+TEST_CASE("mesh lods: card canopies thin to nested subsets of grown cards (ADR-0151)") {
+    MeshData m = card_canopy(600);
+    const auto lod0 = m.indices;
+    const std::size_t base_vertices = m.vertices.size();
+    const double area0 = card_area(m, m.indices);
+    LodSettings settings;
+    const std::uint32_t built = generate_lods(m, settings);
+    REQUIRE(built == 3u);
+    CHECK(m.indices == lod0); // LOD 0 untouched
+    CHECK(m.vertices.size() > base_vertices);
+    std::size_t previous = m.indices.size();
+    float previous_error = 0.0f;
+    std::set<long> previous_centres;
+    for (std::uint32_t l = 0; l < built; ++l) {
+        const MeshLod& lod = m.lods[l];
+        const std::size_t expected = static_cast<std::size_t>(std::floor(600.0 * std::pow(0.5, l + 1))) * 6;
+        CHECK(lod.indices.size() == expected);
+        CHECK(lod.indices.size() < previous);
+        previous = lod.indices.size();
+        for (const std::uint32_t i : lod.indices) REQUIRE(i < m.vertices.size());
+        // Area coverage within 2% of the full canopy (cards grow by 1/sqrt(kept fraction)).
+        CHECK(card_area(m, lod.indices) == doctest::Approx(area0).epsilon(0.02));
+        // Error: a 1 x 1 m card's corner sits 0.707 m from its centre and moves by (grow - 1).
+        const float grow = 1.0f / std::sqrt(std::floor(600.0f * std::pow(0.5f, static_cast<float>(l + 1))) / 600.0f);
+        CHECK(lod.error == doctest::Approx(0.70710678f * (grow - 1.0f)).epsilon(0.01));
+        CHECK(lod.error >= previous_error);
+        previous_error = lod.error;
+        // Nested: every card centre of this level appears in the finer level.
+        std::set<long> centres;
+        for (std::size_t t = 0; t < lod.indices.size(); t += 6) {
+            const auto& a = m.vertices[lod.indices[t]].position;
+            const auto& c = m.vertices[lod.indices[t + 2]].position;
+            centres.insert(q((a.x + c.x) * 0.5f) * 1000003L + q((a.y + c.y) * 0.5f) * 7919L + q((a.z + c.z) * 0.5f));
+        }
+        if (l > 0)
+            for (const long c : centres) CHECK(previous_centres.count(c) == 1u);
+        previous_centres = std::move(centres);
+    }
+    // optimize_mesh keeps every level's triangles.
+    const auto before = triangle_set(m, m.lods[1].indices);
+    optimize_mesh(m);
+    CHECK(triangle_set(m, m.lods[1].indices) == before);
+}
+
+TEST_CASE("mesh lods: connected meshes and few cards get no card levels") {
+    MeshData few = card_canopy(20); // under 32 pieces
+    CHECK(generate_lods(few) == 0u);
+    MeshData sphere = make_uv_sphere(1.0f, 32, 16);
+    const std::uint32_t built = generate_lods(sphere);
+    CHECK(built > 0u);
+    CHECK(sphere.vertices.size() == make_uv_sphere(1.0f, 32, 16).vertices.size()); // simplifier levels add no vertices
+}

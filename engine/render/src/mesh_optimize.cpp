@@ -6,12 +6,119 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <numeric>
 
 namespace victus::render {
 
 namespace {
 constexpr std::size_t kStride = sizeof(Vertex3D);
 const float* positions(const MeshData& m) { return &m.vertices.data()->position.x; }
+
+// Card LODs (ADR-0151) for meshes made of many small disconnected pieces, such as the alpha-tested
+// leaf and needle cards of a tree canopy, which edge-collapse simplification cannot reduce (every
+// card is a border it may not move). Each level keeps a fixed pseudo-random subset of the cards
+// (the subsets are nested, so coarser levels only ever remove cards) and grows each kept card
+// about its centroid by 1/sqrt(kept fraction), so the canopy keeps its area coverage and
+// silhouette while drawing fewer triangles and fragments. The grown cards are new vertices
+// appended to the mesh; LOD 0 is unchanged. The level error is the largest distance a grown
+// card's corner moved. Removing a card is not captured by that metric, so these levels show the
+// thinning only once the renderer picks them (a tier may bias towards them, foliage_lod_bias).
+// Tried before simplification. Returns the number of levels built (0 when the mesh is not made of
+// cards).
+std::uint32_t generate_card_lods(MeshData& mesh, const LodSettings& settings, std::uint32_t max_lods) {
+    if (mesh.skinned() || !mesh.morphs.empty()) return 0;
+    const std::size_t vc = mesh.vertices.size();
+    const std::size_t tris = mesh.indices.size() / 3;
+    std::vector<std::uint32_t> parent(vc);
+    std::iota(parent.begin(), parent.end(), 0u);
+    const auto find = [&](std::uint32_t x) {
+        while (parent[x] != x) x = parent[x] = parent[parent[x]];
+        return x;
+    };
+    for (std::size_t t = 0; t < tris; ++t) {
+        const std::uint32_t a = find(mesh.indices[t * 3]);
+        parent[find(mesh.indices[t * 3 + 1])] = a;
+        parent[find(mesh.indices[t * 3 + 2])] = a;
+    }
+    // Pieces in first-triangle order, with their triangles.
+    std::vector<std::uint32_t> piece_of(vc, ~0u);
+    std::vector<std::vector<std::uint32_t>> pieces; // triangle indices per piece
+    for (std::size_t t = 0; t < tris; ++t) {
+        const std::uint32_t root = find(mesh.indices[t * 3]);
+        if (piece_of[root] == ~0u) {
+            piece_of[root] = static_cast<std::uint32_t>(pieces.size());
+            pieces.emplace_back();
+        }
+        pieces[piece_of[root]].push_back(static_cast<std::uint32_t>(t));
+    }
+    // Cards: at least 32 pieces of at most 4 triangles on average.
+    if (pieces.size() < 32 || tris > pieces.size() * 4) return 0;
+
+    // Fixed ranks (splitmix64 of the piece index): a level keeps the pieces ranked below its
+    // share, so every coarser level is a subset of the finer ones.
+    std::vector<std::uint32_t> order(pieces.size());
+    std::iota(order.begin(), order.end(), 0u);
+    const auto hash = [](std::uint64_t x) {
+        x += 0x9E3779B97F4A7C15ull;
+        x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+        x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+        return x ^ (x >> 31);
+    };
+    std::sort(order.begin(), order.end(), [&](std::uint32_t a, std::uint32_t b) { return hash(a) < hash(b); });
+
+    const float ratio = std::clamp(settings.ratio, 0.05f, 0.95f);
+    float keep = 1.0f, previous_error = 0.0f;
+    std::vector<std::uint32_t> remap(vc, ~0u);
+    for (std::uint32_t level = 0; level < max_lods; ++level) {
+        keep *= ratio;
+        const auto kept = static_cast<std::size_t>(std::floor(static_cast<float>(pieces.size()) * keep));
+        if (kept < 8) break;
+        std::size_t kept_tris = 0;
+        for (std::size_t k = 0; k < kept; ++k) kept_tris += pieces[order[k]].size();
+        if (kept_tris < settings.min_triangles) break;
+        const float grow = 1.0f / std::sqrt(static_cast<float>(kept) / static_cast<float>(pieces.size()));
+        MeshLod lod;
+        lod.indices.reserve(kept_tris * 3);
+        float error = 0.0f;
+        for (std::size_t k = 0; k < kept; ++k) {
+            const std::vector<std::uint32_t>& piece = pieces[order[k]];
+            // Centroid of the piece's distinct vertices.
+            math::Vec3 centre{};
+            std::uint32_t count = 0;
+            for (const std::uint32_t t : piece)
+                for (int c = 0; c < 3; ++c) {
+                    const std::uint32_t v = mesh.indices[t * 3 + static_cast<std::uint32_t>(c)];
+                    if (remap[v] != ~0u) continue;
+                    remap[v] = 0;
+                    centre = centre + mesh.vertices[v].position;
+                    ++count;
+                }
+            centre = centre * (1.0f / static_cast<float>(std::max(count, 1u)));
+            for (const std::uint32_t t : piece)
+                for (int c = 0; c < 3; ++c) {
+                    const std::uint32_t v = mesh.indices[t * 3 + static_cast<std::uint32_t>(c)];
+                    if (remap[v] == 0) {
+                        Vertex3D grown = mesh.vertices[v];
+                        const math::Vec3 offset = grown.position - centre;
+                        grown.position = centre + offset * grow;
+                        error = std::max(error, math::length(offset) * (grow - 1.0f));
+                        remap[v] = static_cast<std::uint32_t>(mesh.vertices.size());
+                        mesh.vertices.push_back(grown);
+                    }
+                    lod.indices.push_back(remap[v]);
+                }
+            for (const std::uint32_t t : piece)
+                for (int c = 0; c < 3; ++c) remap[mesh.indices[t * 3 + static_cast<std::uint32_t>(c)]] = ~0u;
+        }
+        meshopt_optimizeVertexCache(lod.indices.data(), lod.indices.data(), lod.indices.size(), mesh.vertices.size());
+        lod.error = std::max(error, previous_error);
+        previous_error = lod.error;
+        mesh.lods.push_back(std::move(lod));
+    }
+    return static_cast<std::uint32_t>(mesh.lods.size());
+}
+
 } // namespace
 
 void optimize_mesh(MeshData& mesh) {
@@ -77,6 +184,8 @@ std::uint32_t generate_lods(MeshData& mesh, const LodSettings& settings) {
     const float max_error = std::clamp(settings.max_error, 1e-4f, 1.0f);
     const float scale = meshopt_simplifyScale(positions(mesh), vc, kStride);
     if (!(scale > 0.0f)) return 0;
+    // Card meshes thin by whole cards: edge collapses would only crush some cards into slivers.
+    if (const std::uint32_t cards = generate_card_lods(mesh, settings, max_lods)) return cards;
 
     // Attributes keep shading and texturing intact: normals (weight 0.5) and UVs (weight 0.2 per
     // unit of UV space). Skinned meshes add the dominant joint (weight 1) so edges do not collapse
