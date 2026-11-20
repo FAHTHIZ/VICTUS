@@ -262,6 +262,9 @@ struct EnvironmentComponent {
     float saturation{1.0f};
     float contrast{1.0f};
     float vignette{0.25f};
+    float lens_distortion{0.0f};      // ADR-0146 camera-lens imperfections, all off by default
+    float chromatic_aberration{0.0f};
+    float film_grain{0.0f};
     float bloom_intensity{0.05f};
     float bloom_threshold{1.0f};
     float ao_intensity{1.0f};

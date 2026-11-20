@@ -3,6 +3,8 @@
 // Final HDR resolve: bloom composite, manual or automatic exposure, tonemapping (ACES fit,
 // Khronos PBR Neutral or luminance Reinhard), contrast/saturation grading, vignette and sRGB
 // encoding. With FXAA enabled the output is always sRGB-encoded with luma in alpha.
+// Optional camera-lens imperfections (ADR-0146): barrel distortion, lateral chromatic aberration
+// and luminance-weighted sensor grain. All three are off (exactly the old path) at zero.
 layout(location = 0) in vec2 v_uv;
 layout(set = 2, binding = 0) uniform sampler2D u_hdr;
 layout(set = 2, binding = 1) uniform sampler2D u_bloom;
@@ -11,6 +13,7 @@ layout(set = 3, binding = 0) uniform Post {
     vec4 params;  // x: exposure, y: vignette, z: encode sRGB, w: tonemapper (0 none, 1 ACES, 2 neutral, 3 Reinhard)
     vec4 params2; // x: bloom intensity, y: auto exposure, z: exposure compensation (linear), w: saturation
     vec4 params3; // x: contrast, y: luma in alpha (FXAA input), z: linear HDR output (probe captures)
+    vec4 params4; // x: lens distortion (barrel > 0), y: chromatic aberration, z: film grain, w: frame seed
 } post;
 layout(location = 0) out vec4 out_color;
 
@@ -37,9 +40,33 @@ vec3 reinhard(vec3 c) {
 }
 vec3 to_srgb(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 
+// Integer hash (PCG-ish) -> [0, 1); stable across GPUs, no texture needed.
+float hash13(uvec3 p) {
+    p = p * uvec3(1664525u, 1013904223u, 2654435769u);
+    p.x += p.y * p.z; p.y += p.z * p.x; p.z += p.x * p.y;
+    p ^= p >> 16u;
+    p.x += p.y * p.z;
+    return float(p.x & 0x00ffffffu) / 16777216.0;
+}
+
 void main() {
-    vec3 c = texture(u_hdr, v_uv).rgb;
-    if (post.params2.x > 0.0) c += texture(u_bloom, v_uv).rgb * post.params2.x;
+    vec2 uv = v_uv;
+    vec2 cd = uv - 0.5;
+    float r2 = dot(cd, cd);
+    if (post.params4.x != 0.0) {
+        // Brown-Conrady k1 barrel, normalised so the frame corners stay on screen (zoom to fit).
+        float k = post.params4.x * 0.25;
+        uv = 0.5 + cd * (1.0 + k * r2) / (1.0 + k * 0.5);
+    }
+    vec3 c;
+    if (post.params4.y > 0.0) {
+        // Lateral CA: red and blue magnified slightly differently, growing toward the edges.
+        vec2 off = (uv - 0.5) * (post.params4.y * 0.006);
+        c = vec3(texture(u_hdr, uv + off).r, texture(u_hdr, uv).g, texture(u_hdr, uv - off).b);
+    } else {
+        c = texture(u_hdr, uv).rgb;
+    }
+    if (post.params2.x > 0.0) c += texture(u_bloom, uv).rgb * post.params2.x;
     float exposure = post.params.x;
     if (post.params2.y > 0.5) {
         // Middle grey (0.18) at the adapted average luminance.
@@ -62,6 +89,16 @@ void main() {
     c = clamp((c - 0.18) * post.params3.x + 0.18, 0.0, 1.0);
     vec2 d = v_uv - 0.5;
     c *= mix(1.0, 1.0 - dot(d, d) * 1.6, post.params.y);
+    if (post.params4.z > 0.0) {
+        // Sensor noise: zero-mean triangular noise per pixel per frame, added in perceptual
+        // (square-root) space so the shadows are not swamped; strongest in the darks.
+        uvec3 q = uvec3(uvec2(gl_FragCoord.xy), uint(post.params4.w));
+        float n = (hash13(q) + hash13(q + uvec3(0u, 0u, 7919u))) - 1.0;
+        vec3 p = sqrt(c);
+        float w = post.params4.z * 0.05 * mix(1.0, 0.35, smoothstep(0.0, 0.7, luma(p)));
+        p = clamp(p + vec3(n * w), 0.0, 1.0);
+        c = p * p;
+    }
     if (post.params3.y > 0.5) {
         vec3 s = to_srgb(c);
         out_color = vec4(s, dot(s, vec3(0.299, 0.587, 0.114)));

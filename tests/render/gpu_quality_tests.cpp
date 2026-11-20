@@ -5,6 +5,7 @@
 #include "victus/render/scene_renderer.hpp"
 
 #include <algorithm>
+#include <set>
 #include <cstdlib>
 #include <functional>
 
@@ -438,6 +439,72 @@ TEST_CASE("gpu quality: tonemappers and grading") {
     CHECK(std::abs(int(channel(grey, 1)) - int(channel(grey, 2))) <= 1);
     CHECK(parse_tonemapper("neutral") == Tonemapper::Neutral);
     CHECK_FALSE(parse_tonemapper("filmic").has_value());
+}
+
+TEST_CASE("gpu quality: lens distortion, chromatic aberration and film grain (ADR-0146)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto sr = SceneRenderer::create(*gpu().ctx);
+    REQUIRE(sr.ok());
+    Meshes m;
+    const Camera3D cam = Camera3D::look_at({0, 0, 3}, {0, 0, 0});
+    DirectionalLight sun;
+    sun.intensity = 0.0f;
+    Environment env;
+    env.draw_sky = false;
+    env.vignette = 0.0f;
+    env.tonemap = false;
+    Material white;
+    white.unlit = true;
+    white.base_color = {0.9f, 0.9f, 0.9f, 1};
+    auto content = [&](SceneRenderer& r) { r.submit(m.cube, white, math::Mat4::identity()); };
+    const RenderSettings s = bare();
+    auto frame = [&](float dist, float ca, float grain, int frames = 1) {
+        Environment e = env;
+        e.lens_distortion = dist;
+        e.chromatic_aberration = ca;
+        e.film_grain = grain;
+        return render_frame(*sr.value(), s, cam, sun, e, content, 192, 128, frames);
+    };
+    auto lit = [](const Frame& f) {
+        int n = 0;
+        for (std::uint32_t y = 0; y < f.h; ++y)
+            for (std::uint32_t x = 0; x < f.w; ++x) n += channel(f.at(x, y), 1) > 128;
+        return n;
+    };
+    auto fringe = [](const Frame& f) {
+        int n = 0;
+        for (std::uint32_t y = 0; y < f.h; ++y)
+            for (std::uint32_t x = 0; x < f.w; ++x) {
+                const auto p = f.at(x, y);
+                n += std::abs(int(channel(p, 0)) - int(channel(p, 2))) > 24;
+            }
+        return n;
+    };
+    const Frame base = frame(0, 0, 0);
+    CHECK(fringe(base) == 0);
+    // Barrel distortion magnifies the centre (the frame is zoomed to keep the corners on screen).
+    const Frame barrel = frame(1.0f, 0, 0);
+    CHECK(lit(barrel) > lit(base) + lit(base) / 20);
+    CHECK(lit(frame(-1.0f, 0, 0)) < lit(base));
+    // Lateral CA splits red and blue along the cube's silhouette, not in its flat interior.
+    const Frame ca = frame(0, 1.0f, 0);
+    CHECK(fringe(ca) > 40);
+    CHECK(ca.at(96, 64) == base.at(96, 64));
+    // Grain: zero-mean noise that changes every frame; the flat face is no longer one value.
+    const Frame g1 = frame(0, 0, 1.0f), g2 = frame(0, 0, 1.0f, 2);
+    std::set<std::uint32_t> values;
+    double mean_base = 0, mean_grain = 0;
+    int moved = 0;
+    for (std::uint32_t y = 54; y < 74; ++y)
+        for (std::uint32_t x = 86; x < 106; ++x) {
+            values.insert(channel(g1.at(x, y), 1));
+            mean_base += channel(base.at(x, y), 1);
+            mean_grain += channel(g1.at(x, y), 1);
+            moved += g1.at(x, y) != g2.at(x, y);
+        }
+    CHECK(values.size() > 4);
+    CHECK(std::abs(mean_grain - mean_base) / 400.0 < 3.0);
+    CHECK(moved > 100);
 }
 
 TEST_CASE("gpu quality: FXAA smooths aliased edges") {
