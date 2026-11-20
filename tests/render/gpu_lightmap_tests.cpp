@@ -128,3 +128,92 @@ TEST_CASE("gpu: lightmapped meshes take ambient light from the baked atlas") {
     ctx.destroy(*plain_floor);
     ctx.destroy(*gpu_cube);
 }
+
+TEST_CASE("gpu: directional lightmaps let normal maps shade baked light (ADR-0130)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+
+    const MeshData floor = make_plane({6, 6}, 2);
+    LightmapScene scene;
+    scene.instances.push_back({&floor});
+    auto layout = unwrap_lightmaps(scene, {});
+    REQUIRE(layout.ok());
+    auto lm_floor = ctx.create_lightmapped_mesh(floor, layout->instances[0], "dir_floor");
+    REQUIRE(lm_floor.ok());
+
+    // A uniform grey bake and directional atlases where all light comes from +X or -X.
+    ImageF grey;
+    grey.width = grey.height = 4;
+    for (int i = 0; i < 16; ++i) grey.pixels.insert(grey.pixels.end(), {0.25f, 0.25f, 0.25f, 1.0f});
+    auto grey_tex = ctx.create_lightmap_texture(grey, "grey_lightmap");
+    REQUIRE(grey_tex.ok());
+    auto dir_image = [](std::uint8_t x) {
+        Image img;
+        img.width = img.height = 4;
+        // direction (+-1, 0, 0), rebalancing at the +Y floor normal 0.5 * 0 + 0.5 = 0.5
+        for (int i = 0; i < 16; ++i) img.pixels.insert(img.pixels.end(), {x, 128, 128, 128});
+        return img;
+    };
+    auto from_px = ctx.create_lightmap_direction_texture(dir_image(255), "dir_px");
+    auto from_nx = ctx.create_lightmap_direction_texture(dir_image(0), "dir_nx");
+    REQUIRE(from_px.ok());
+    REQUIRE(from_nx.ok());
+    CHECK_FALSE(ctx.create_lightmap_direction_texture(Image{}).ok());
+
+    // A normal map that tilts the surface 45 degrees about the tangent frame's Z axis.
+    Image tilt;
+    tilt.width = tilt.height = 4;
+    for (int i = 0; i < 16; ++i) tilt.pixels.insert(tilt.pixels.end(), {218, 128, 218, 255});
+    auto tilt_tex = ctx.create_texture(tilt, {false, false, "tilt_normal"});
+    REQUIRE(tilt_tex.ok());
+
+    constexpr std::uint32_t W = 64, H = 64;
+    DirectionalLight sun;
+    sun.intensity = 0.0f;
+    sun.shadows = false;
+    auto shoot = [&](rhi::TextureHandle direction, bool normal_mapped) {
+        Material m;
+        m.base_color = {1, 1, 1, 1};
+        m.roughness = 1.0f;
+        m.metallic = 0.0f;
+        if (normal_mapped) m.normal_texture = *tilt_tex;
+        Environment env = grey_sky();
+        env.ambient_intensity = 0.0f; // no specular environment either: only the lightmap shades
+        env.lightmap = *grey_tex;
+        env.lightmap_direction = direction;
+        (*sr)->begin(Camera3D::look_at({0, 6.0f, 0.01f}, {0, 0, 0}), sun, env);
+        (*sr)->submit(*lm_floor, m, math::Mat4::identity());
+        auto target = test::make_target(W, H);
+        auto cmd = dev.begin_commands();
+        REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target).value();
+        dev.destroy(target);
+        return int(channel(pixel(px, W, W / 2, H / 2), 1));
+    };
+    const int flat_plain = shoot({}, false);
+    const int flat_px = shoot(*from_px, false);
+    const int bumped_plain = shoot({}, true);
+    const int bumped_px = shoot(*from_px, true);
+    const int bumped_nx = shoot(*from_nx, true);
+    MESSAGE("flat " << flat_plain << "/" << flat_px << ", bumped plain/+x/-x " << bumped_plain << "/" << bumped_px << "/"
+                    << bumped_nx);
+    // The baked normal reproduces the stored irradiance exactly (rebalancing).
+    CHECK(std::abs(flat_px - flat_plain) <= 2);
+    // Without a directional atlas the normal map cannot change baked light.
+    CHECK(std::abs(bumped_plain - flat_plain) <= 2);
+    // With one, tilting towards the light brightens and tilting away darkens.
+    CHECK(std::abs(bumped_px - bumped_nx) > 40);
+    CHECK(std::max(bumped_px, bumped_nx) > flat_plain + 20);
+    CHECK(std::min(bumped_px, bumped_nx) < flat_plain - 20);
+
+    dev.destroy(*grey_tex);
+    dev.destroy(*from_px);
+    dev.destroy(*from_nx);
+    dev.destroy(*tilt_tex);
+    ctx.destroy(*lm_floor);
+}

@@ -1009,8 +1009,18 @@ rhi::TextureHandle GpuAssetCache::lightmap(std::string_view path) {
         return {};
     }
     entry.texture = *tex;
+    if (!file->direction.empty()) {
+        auto dir = ctx_.create_lightmap_direction_texture(file->direction, key + "#direction");
+        if (dir) entry.direction = *dir;
+        else VICTUS_LOG_WARN("runtime", "lightmap '{}': {} (normal maps will not shade baked light)", key, dir.error().message);
+    }
     entry.entries = std::move(file->entries);
     return entry.texture;
+}
+
+rhi::TextureHandle GpuAssetCache::lightmap_direction(std::string_view path) {
+    if (!lightmap(path).valid()) return {};
+    return lightmaps_.find(std::string(path))->second.direction;
 }
 
 const render::GpuMesh* GpuAssetCache::lightmapped_mesh(std::string_view path, scene::Scene& scene, scene::Entity entity) {
@@ -1048,6 +1058,7 @@ const render::GpuMesh* GpuAssetCache::lightmapped_mesh(std::string_view path, sc
 void GpuAssetCache::evict_lightmaps() {
     for (auto& [path, lm] : lightmaps_) {
         if (lm.texture.valid()) ctx_.device().destroy(lm.texture);
+        if (lm.direction.valid()) ctx_.device().destroy(lm.direction);
         for (auto& [id, mesh] : lm.meshes)
             if (mesh) ctx_.destroy(*mesh);
     }
@@ -1441,7 +1452,10 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         apply_environment(e, env, sun);
         if (!e.lightmap.empty()) {
             env.lightmap = assets.lightmap(e.lightmap);
-            if (env.lightmap.valid()) lightmap_path = e.lightmap;
+            if (env.lightmap.valid()) {
+                lightmap_path = e.lightmap;
+                env.lightmap_direction = assets.lightmap_direction(e.lightmap);
+            }
         }
         if (!e.environment_map.is_nil()) {
             if (auto map = assets.environment(e.environment_map)) env.environment_map = *map;

@@ -972,6 +972,14 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0130 — Directional lightmaps
+
+- Status: Accepted (2026-11-20)
+- Context: ADR-0122 lightmaps store irradiance for the interpolated vertex normal only, so normal maps went flat wherever baked light replaced the ambient: bricks, tiles and terrain lost their relief in exactly the shadowed areas where baked light matters most. Unity's default is directional lightmaps (a second texture with the dominant light direction); Unreal bakes two SH coefficients per texel for the same reason; Godot's LightmapGI offers L1 SH.
+- Decision: the baker (`LightmapSettings::directional`, on by default) accumulates the luminance-weighted direction of every first-bounce ray (and of the bake lights in fully-baked mode), filters it with the same edge-aware denoiser weights and dilates it with the irradiance. `LightmapBake::direction` is an RGBA8 atlas in Unity's encoding: RGB = dominant direction * 0.5 + 0.5 (length = directionality), A = the rebalancing term 0.5 * dot(n, d) + 0.5 at the baked normal (>= 0.5; 0 = no data). pbr.frag samples it at binding 11 and scales the baked irradiance by (0.5 * dot(N, d) + 0.5) / A, which is exactly 1 for the baked normal, so flat surfaces are unchanged and normal-mapped ones are re-lit. `.vlightmap` version 2 adds a flags word and the RGBA8 atlas; version 1 files still load (no direction). `GpuContext::create_lightmap_direction_texture`, `Environment::lightmap_direction`, and the scene's lightmap loads it automatically. Cost on device: one extra RGBA8 bilinear fetch per lightmapped pixel and 4 bytes per texel (half the irradiance atlas).
+- Alternatives: L1 SH (three RGB coefficient sets, 3-4x the memory and fetches; better for strongly coloured directional light, kept as a later option); per-texel bent normals only (no directionality, cannot reduce to the plain bake); baking with normal maps in the tracer (resolution bound to the lightmap, aliases).
+- Consequences: baked scenes keep their normal-map detail on every tier for one texture fetch. A single dominant direction cannot represent light from two opposite sides; such texels have low directionality and fall back towards the non-directional result. Fragment sampler count of pbr.frag goes from 11 to 12 (SDL_GPU allows 16).
+
 ## ADR-0127 — Device-class quality selection ("auto" tier)
 
 - Status: Accepted (2026-11-20)

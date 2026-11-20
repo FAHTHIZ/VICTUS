@@ -3192,6 +3192,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             const rhi::TextureHandle rain_tex = rain_map.valid() ? ctx.texture(rain_map) : no_shadow_;
             const rhi::TextureHandle ao_tex = ao.valid() ? ctx.texture(ao) : ctx_.white();
             const rhi::TextureHandle lightmap_tex = env_.lightmap ? env_.lightmap : ctx_.black();
+            const rhi::TextureHandle lightmap_dir_tex =
+                env_.lightmap && env_.lightmap_direction ? env_.lightmap_direction : ctx_.no_light_direction();
             // Lightmapped meshes need a lightmap to sample; without one they draw like any static mesh.
             const auto vertex_variant = [&](const Draw* d) {
                 return d->skinned                                       ? kVertexSkinned
@@ -3233,6 +3235,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 8, gi_tex, ctx_.linear_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 9, rain_tex, ctx_.shadow_compare());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 10, lightmap_tex, ctx_.linear_clamp());
+                pass.bind_texture(rhi::ShaderStage::Fragment, 11, lightmap_dir_tex, ctx_.linear_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 5, ao_tex, ctx_.linear_clamp());
                 ProbeUniforms pu{};
                 rhi::TextureHandle env_cube = env_map && env_map->cube() ? env_map->cube() : ctx_.black_cube();

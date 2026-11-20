@@ -24,8 +24,8 @@ LightmapSettings fast_settings() {
     return s;
 }
 
-// Lightmap value at a world-space point on a receiving instance (nullopt when off the mesh).
-std::optional<Vec3> lightmap_at(const LightmapScene& scene, const LightmapBake& bake, std::size_t instance, Vec3 point) {
+// Lightmap uv of a world-space point on a receiving instance (nullopt when off the mesh).
+std::optional<Vec2> lightmap_uv_at(const LightmapScene& scene, const LightmapBake& bake, std::size_t instance, Vec3 point) {
     const LightmapInstance& inst = scene.instances[instance];
     const LightmapUnwrap& u = bake.instances[instance];
     for (std::size_t i = 0; i + 2 < u.indices.size(); i += 3) {
@@ -44,12 +44,30 @@ std::optional<Vec3> lightmap_at(const LightmapScene& scene, const LightmapBake& 
         const float w2 = math::dot(math::cross(p[1] - p[0], point - p[0]), n) / area2;
         const float w0 = 1.0f - w1 - w2;
         if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
-        const Vec2 t = uv[0] * w0 + uv[1] * w1 + uv[2] * w2;
-        const math::Vec4 v = sample_lightmap(bake.atlas, t);
-        return Vec3{v.x, v.y, v.z};
+        return uv[0] * w0 + uv[1] * w1 + uv[2] * w2;
     }
     return std::nullopt;
 }
+
+std::optional<Vec3> lightmap_at(const LightmapScene& scene, const LightmapBake& bake, std::size_t instance, Vec3 point) {
+    const auto t = lightmap_uv_at(scene, bake, instance, point);
+    if (!t) return std::nullopt;
+    const math::Vec4 v = sample_lightmap(bake.atlas, *t);
+    return Vec3{v.x, v.y, v.z};
+}
+
+// Directional texel (RGBA8 normalised to 0..1, nearest) at a world-space point.
+std::optional<math::Vec4> direction_at(const LightmapScene& scene, const LightmapBake& bake, std::size_t instance, Vec3 point) {
+    const auto t = lightmap_uv_at(scene, bake, instance, point);
+    if (!t || bake.direction.empty()) return std::nullopt;
+    const Image& img = bake.direction;
+    const auto x = std::min(static_cast<std::uint32_t>(t->x * static_cast<float>(img.width)), img.width - 1);
+    const auto y = std::min(static_cast<std::uint32_t>(t->y * static_cast<float>(img.height)), img.height - 1);
+    const std::uint8_t* px = img.pixels.data() + (static_cast<std::size_t>(y) * img.width + x) * 4;
+    return math::Vec4{px[0] / 255.0f, px[1] / 255.0f, px[2] / 255.0f, px[3] / 255.0f};
+}
+
+Vec3 decode_direction(math::Vec4 t) { return {t.x * 2.0f - 1.0f, t.y * 2.0f - 1.0f, t.z * 2.0f - 1.0f}; }
 
 LightmapSky uniform_sky(float v) {
     LightmapSky sky;
@@ -156,6 +174,57 @@ TEST_CASE("lightmap include_direct bakes the sun as radiance * N.L / pi") {
     CHECK(w->x == doctest::Approx(0.0f));
 }
 
+TEST_CASE("directional lightmap: dominant direction, directionality and rebalancing (ADR-0130)") {
+    // A sun at 45 degrees, fully baked: all light arrives from one direction.
+    const MeshData plane = make_plane({2, 2});
+    LightmapScene scene;
+    scene.instances.push_back({&plane});
+    scene.sky = uniform_sky(0.0f);
+    LightmapLight sun;
+    sun.direction = math::normalize(Vec3{0, -1, -1});
+    sun.radiance = {2, 2, 2};
+    scene.lights.push_back(sun);
+    LightmapSettings s = fast_settings();
+    s.include_direct = true;
+    s.bounces = 0;
+    auto bake = bake_lightmaps(scene, s);
+    REQUIRE(bake);
+    REQUIRE(bake.value().direction.width == bake.value().atlas.width);
+    const auto t = direction_at(scene, bake.value(), 0, {0.2f, 0, 0.1f});
+    REQUIRE(t);
+    const Vec3 to_sun = -sun.direction;
+    const Vec3 d = decode_direction(*t);
+    CHECK(math::length(d) == doctest::Approx(1.0f).epsilon(0.02));
+    CHECK(math::dot(math::normalize(d), to_sun) > 0.999f);
+    CHECK(t->w == doctest::Approx(0.5f * std::sqrt(0.5f) + 0.5f).epsilon(0.01));
+    // The baked normal gets the stored irradiance back; a normal-mapped pixel facing the sun gets
+    // more (N.L = 1 instead of cos 45), one facing away gets less.
+    CHECK(lightmap_directional_scale(*t, {0, 1, 0}) == doctest::Approx(1.0f).epsilon(0.01));
+    CHECK(lightmap_directional_scale(*t, to_sun) > 1.15f);
+    CHECK(lightmap_directional_scale(*t, math::normalize(Vec3{0, 1, -1})) < 0.65f);
+    CHECK(lightmap_directional_scale({0.5f, 0.5f, 0.5f, 0.0f}, {1, 0, 0}) == 1.0f); // no data
+
+    // A uniform sky: light from the whole hemisphere, mean cosine-weighted direction (0, 2/3, 0).
+    scene.lights.clear();
+    scene.sky = uniform_sky(1.0f);
+    s.include_direct = false;
+    s.samples = 256;
+    auto sky = bake_lightmaps(scene, s);
+    REQUIRE(sky);
+    const auto u = direction_at(scene, sky.value(), 0, {0.2f, 0, 0.1f});
+    REQUIRE(u);
+    const Vec3 du = decode_direction(*u);
+    CHECK(du.y == doctest::Approx(2.0f / 3.0f).epsilon(0.05));
+    CHECK(std::fabs(du.x) < 0.05f);
+    CHECK(std::fabs(du.z) < 0.05f);
+
+    // Directional output is optional.
+    s.directional = false;
+    auto plain = bake_lightmaps(scene, s);
+    REQUIRE(plain);
+    CHECK(plain.value().direction.empty());
+}
+
 TEST_CASE("lightmap contact darkening and colour bleeding") {
     const MeshData floor = make_plane({8, 8}, 4);
     const MeshData wall = make_cube({0.1f, 1.0f, 2.0f});
@@ -215,6 +284,7 @@ TEST_CASE("lightmap bake does not depend on the number of threads") {
     REQUIRE(single);
     REQUIRE(threaded);
     CHECK(single.value().atlas.pixels == threaded.value().atlas.pixels);
+    CHECK(single.value().direction.pixels == threaded.value().direction.pixels);
 }
 
 TEST_CASE("lightmap file round trip and damaged files") {
@@ -227,6 +297,8 @@ TEST_CASE("lightmap file round trip and damaged files") {
     REQUIRE(bake);
     LightmapFile file;
     file.atlas = bake.value().atlas;
+    file.direction = bake.value().direction;
+    REQUIRE_FALSE(file.direction.empty());
     file.entries.push_back({Uuid{1, 2}, lightmap_mesh_fingerprint(floor), bake.value().instances[0]});
     const auto bytes = encode_lightmap_file(file);
     auto back = decode_lightmap_file(bytes);
@@ -240,6 +312,22 @@ TEST_CASE("lightmap file round trip and damaged files") {
     CHECK(back.value().entries[0].mesh_fingerprint == file.entries[0].mesh_fingerprint);
     for (std::size_t i = 0; i < file.atlas.pixels.size(); ++i)
         CHECK(back.value().atlas.pixels[i] == doctest::Approx(file.atlas.pixels[i]).epsilon(0.002));
+    CHECK(back.value().direction.pixels == file.direction.pixels);
+
+    // Version 1 files (no flags word, no directional atlas) still load.
+    LightmapFile v1_src = file;
+    v1_src.direction = {};
+    auto v1 = encode_lightmap_file(v1_src);
+    v1[8] = 1;
+    v1.erase(v1.begin() + 24, v1.begin() + 28); // magic 8 + version, width, height, count
+    auto old = decode_lightmap_file(v1);
+    REQUIRE(old);
+    CHECK(old.value().direction.empty());
+    CHECK(old.value().entries.size() == 1);
+    // Unknown flags are rejected.
+    auto flagged = bytes;
+    flagged[24] |= 0x80;
+    CHECK_FALSE(decode_lightmap_file(flagged));
 
     // Every truncation fails cleanly; a corrupted index is rejected.
     for (std::size_t n = 0; n < bytes.size(); n += std::max<std::size_t>(1, bytes.size() / 97)) {
