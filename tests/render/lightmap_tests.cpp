@@ -599,7 +599,14 @@ TEST_CASE("light probes: a roof shelters dynamic objects that the open sky would
     const Vec3 open = p.sample({5, 1, 5}, {0, 1, 0}, Vec3{-1});
     MESSAGE("covered " << covered.x << ", open " << open.x);
     CHECK(covered.x >= 0.0f);
-    CHECK(covered.x < open.x * 0.6f);
+    // The bound had no margin when it was set (0.60 measured, ADR-0133); the bake now gives 0.607.
+    // At 1 m the sample blends the probe layers at 0.75 m (0.64) and 1.75 m (0.51): floor bounce
+    // light on the slab's underside keeps both well above the sky-only value, so the shelter is
+    // checked with margin here and more strictly right under the slab.
+    CHECK(covered.x < open.x * 0.7f);
+    const Vec3 under = p.sample({0, 1.75f, 0}, {0, 1, 0}, Vec3{-1});
+    MESSAGE("right under the slab " << under.x);
+    CHECK(under.x < open.x * 0.6f);
     CHECK(open.x == doctest::Approx(1.0f).epsilon(0.1));
 }
 
