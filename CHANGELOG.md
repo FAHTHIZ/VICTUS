@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Navigation: large navmeshes (2M+ voxel columns) build on a worker thread instead of stalling the frame; `NavigationSystem::ensure_built_async`, `building()`. Script time budgets no longer count navmesh builds or first-use model loads; `VICTUS_SCRIPT_SLOW_CALLS=<ms>` logs slow native script calls. See docs/STATUS.md (2026-11-20, background navmesh builds).
 - Engine core: results and errors, logging, JSON with limits, sandboxed filesystem helpers, job system, profiler with Chrome/Perfetto traces, math, `.vpak` archives.
 - Crash reports, session logs and unclean-exit detection for `victus` and `victus_player`; `victus diagnose` diagnostics bundles with path redaction and opt-outs; offline symbolizer (`tools/crash/symbolize.py`). ADR-0072, docs/DIAGNOSTICS.md.
 - Rendering on SDL_GPU (Vulkan verified, Metal and D3D12 compiled): render graph, 2D sprite batching and 2D lights, forward HDR PBR with cascaded shadows, SSAO, bloom, auto exposure, TAA, decals, terrain, particles, quality tiers, spatial upscaling and debug views.

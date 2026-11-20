@@ -58,6 +58,7 @@ struct NavStats {
     std::uint32_t vertices{0};
     std::uint32_t builds{0};         // total builds since creation
     double build_ms{0};
+    bool building{false};            // a background build is in flight (ensure_built_async)
     std::uint32_t agents{0};
     std::uint32_t moving{0};
 };
@@ -86,6 +87,9 @@ struct DebugLine {
 struct NavigationSettings {
     std::uint32_t max_agents{256};
     float rebuild_check_interval{0.25f}; // seconds between change checks when auto_rebuild is on
+    // ensure_built_async cooks navmeshes with at least this many voxel columns on a worker thread
+    // (a square kilometre of terrain takes seconds); smaller ones build immediately.
+    double async_min_cells{2.0e6};
 };
 
 class NavigationSystem {
@@ -99,6 +103,12 @@ public:
     [[nodiscard]] Status build(scene::Scene& scene);
     // Builds when there is no navmesh yet or static geometry changed since the last build.
     [[nodiscard]] Status ensure_built(scene::Scene& scene);
+    // Like ensure_built, but large navmeshes are cooked on a worker thread: the call returns at once
+    // and a later call (or update()) installs the result. Until then the previous navmesh, if any,
+    // keeps answering queries (valid() is false on the first build). Used by the per-frame update
+    // and the script API so a big level does not stall the frame or a script's time budget.
+    [[nodiscard]] Status ensure_built_async(scene::Scene& scene);
+    [[nodiscard]] bool building() const noexcept;
     [[nodiscard]] bool valid() const noexcept;
 
     // Straight path (corner points, start and end included). False when either end is off the
@@ -124,6 +134,11 @@ public:
 
 private:
     struct Impl;
+    struct BuildJob;
+    struct Cooked;
+    BuildJob gather(scene::Scene& scene);
+    static std::shared_ptr<Cooked> cook(BuildJob job);
+    Status install(scene::Scene& scene, std::shared_ptr<Cooked> cooked);
     std::unique_ptr<Impl> impl_;
     NavStats stats_;
 };

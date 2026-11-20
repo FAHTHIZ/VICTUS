@@ -79,7 +79,11 @@ int terrain_raycast(lua_State* L) {
 navigation::NavigationSystem* nav_of(lua_State* L) {
     auto& s = scene_of(L);
     navigation::NavigationSystem* n = navigation::navigation_of(s);
-    if (n && !n->valid()) (void)n->ensure_built(s);
+    if (n && (!n->valid() || n->building())) {
+        // large levels bake in the background; a smaller build is not charged to the script budget
+        const AssetLoadPause pause{L, "nav"};
+        (void)n->ensure_built_async(s);
+    }
     return n;
 }
 

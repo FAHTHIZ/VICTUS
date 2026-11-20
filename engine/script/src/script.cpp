@@ -142,7 +142,7 @@ void open_victus_libs(lua_State* L) {
                                 {"owner", entity_owner},
                                 {nullptr, nullptr}};
     for (const luaL_Reg* f = methods; f->name; ++f) {
-        lua_pushcfunction(L, f->func, f->name);
+        push_native(L, f->func, f->name);
         lua_setfield(L, -2, f->name);
     }
     lua_setreadonly(L, -1, 1);

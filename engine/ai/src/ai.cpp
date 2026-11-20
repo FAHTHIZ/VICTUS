@@ -369,7 +369,7 @@ struct AiSystem::Impl {
         if (!s->world().alive(e)) return NodeStatus::Failure;
         const math::Vec3 origin = world_position(*s, e);
         auto* nav = navigation::navigation_of(*s);
-        if (nav) (void)nav->ensure_built(*s);
+        if (nav) (void)nav->ensure_built_async(*s);
         for (int attempt = 0; attempt < 8; ++attempt) {
             const float a = in->rng.range_float(0.0f, 2.0f * std::numbers::pi_v<float>);
             const float r = n.radius * std::sqrt(in->rng.next_float());

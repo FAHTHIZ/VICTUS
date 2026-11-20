@@ -8,7 +8,9 @@
 
 #include <doctest.h>
 
+#include <chrono>
 #include <cmath>
+#include <thread>
 
 using namespace victus;
 using namespace victus::navigation;
@@ -438,4 +440,57 @@ TEST_CASE("navigation: static triangle-mesh colliders are walkable with their co
     (void)nav.find_path({-6, 0, 0}, {6, 0, 0}, path, &partial);
     CHECK(partial); // the slabs are not connected
     physics::bind(s, nullptr);
+}
+
+TEST_CASE("navigation: large navmeshes build in the background without blocking callers") {
+    Scene s;
+    arena(s);
+    NavigationSettings settings;
+    settings.async_min_cells = 1000; // force the background path for this small arena
+    NavigationSystem nav(settings);
+    REQUIRE(nav.ensure_built_async(s).ok());
+    // The first call returns at once; queries fail until the cooked mesh is installed.
+    std::vector<math::Vec3> path;
+    bool installed = nav.valid();
+    for (int i = 0; i < 2000 && !installed; ++i) {
+        if (!nav.valid()) CHECK_FALSE(nav.find_path({-5, 0, 5}, {5, 0, 5}, path));
+        REQUIRE(nav.ensure_built_async(s).ok());
+        installed = nav.valid();
+        if (!installed) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    REQUIRE(installed);
+    CHECK_FALSE(nav.building());
+    CHECK_FALSE(nav.stats().building);
+    CHECK(nav.stats().builds == 1);
+    CHECK(nav.stats().polygons > 0);
+    REQUIRE(nav.find_path({-5, 0, 5}, {5, 0, 5}, path));
+    CHECK(path.size() >= 3); // same mesh as the synchronous build: goes around the wall
+
+    // Unchanged geometry: no new build. A moved wall: a new background build, and the old mesh keeps
+    // answering queries meanwhile.
+    REQUIRE(nav.ensure_built_async(s).ok());
+    CHECK(nav.stats().builds == 1);
+    box(s, {0, 1, -8}, {1, 2, 4}, "Plug"); // closes the gap at z < -6
+    REQUIRE(nav.ensure_built_async(s).ok());
+    CHECK(nav.stats().builds == 2);
+    if (nav.building()) {
+        CHECK(nav.valid());
+        CHECK(nav.find_path({-5, 0, 5}, {5, 0, 5}, path)); // previous mesh
+    }
+    // ensure_built finishes an in-flight build synchronously.
+    REQUIRE(nav.ensure_built(s).ok());
+    CHECK_FALSE(nav.building());
+    bool partial = false;
+    REQUIRE(nav.find_path({-5, 0, 5}, {5, 0, 5}, path, &partial));
+    CHECK(partial); // the plug sealed the only way around
+
+    // A synchronous build discards a pending one; destroying the system mid-build is safe.
+    box(s, {5, 0.5f, 5}, {1, 1, 1}, "Crate");
+    REQUIRE(nav.ensure_built_async(s).ok());
+    REQUIRE(nav.build(s).ok());
+    CHECK_FALSE(nav.building());
+    {
+        NavigationSystem doomed(settings);
+        REQUIRE(doomed.ensure_built_async(s).ok());
+    }
 }

@@ -461,6 +461,7 @@ int loc_name(lua_State* L) {
 // `clip` over `fade` seconds (default: the Animator's crossfade). Before the animation system
 // has run on this scene the clip is only recorded on the component (applied next update).
 int entity_play_animation(lua_State* L) {
+    const AssetLoadPause pause{L, "play_animation"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     const std::string clip = luaL_checkstring(L, 2);
@@ -483,6 +484,7 @@ int entity_play_animation(lua_State* L) {
 // entity:animation() -> {valid, clip, time, duration, playing, looping, finished, blend,
 // controlled, state, normalized_time}
 int entity_animation(lua_State* L) {
+    const AssetLoadPause pause{L, "animation"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     animation::AnimatorStatus st;
@@ -534,6 +536,7 @@ void push_param_value(lua_State* L, animation::ParamType t, float v) {
 // entity:set_anim_param(name, value) -> bool. `value` is a number or boolean; ints round, bools
 // and triggers treat non-zero as true. False when there is no such parameter.
 int entity_set_anim_param(lua_State* L) {
+    const AssetLoadPause pause{L, "set_anim_param"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     const char* name = luaL_checkstring(L, 2);
@@ -547,6 +550,7 @@ int entity_set_anim_param(lua_State* L) {
 
 // entity:anim_param(name) -> number | boolean | nil
 int entity_anim_param(lua_State* L) {
+    const AssetLoadPause pause{L, "anim_param"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     const char* name = luaL_checkstring(L, 2);
@@ -568,6 +572,7 @@ int entity_anim_param(lua_State* L) {
 
 // entity:anim_trigger(name) -> bool. Sets a trigger; the transition that uses it consumes it.
 int entity_anim_trigger(lua_State* L) {
+    const AssetLoadPause pause{L, "anim_trigger"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     auto* sys = animation::system_of(s);
@@ -577,6 +582,7 @@ int entity_anim_trigger(lua_State* L) {
 
 // entity:reset_anim_trigger(name) -> bool. Clears a trigger that has not fired yet.
 int entity_reset_anim_trigger(lua_State* L) {
+    const AssetLoadPause pause{L, "reset_anim_trigger"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     auto* sys = animation::system_of(s);
@@ -586,6 +592,7 @@ int entity_reset_anim_trigger(lua_State* L) {
 
 // entity:anim_state() -> current controller state name, or nil without a running controller.
 int entity_anim_state(lua_State* L) {
+    const AssetLoadPause pause{L, "anim_state"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     auto* sys = animation::system_of(s);
@@ -602,6 +609,7 @@ int entity_anim_state(lua_State* L) {
 // entity:root_motion() -> {active, applied, position = world-space travel of the latest animation
 // update (vector), yaw = radians}. Zero/false until a root-motion state runs.
 int entity_root_motion(lua_State* L) {
+    const AssetLoadPause pause{L, "root_motion"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     animation::RootMotion m;
@@ -680,6 +688,7 @@ int entity_ik_state(lua_State* L) {
 // blend, states = {...}, parameters = {name = value}, types = {name = "float"|...},
 // weights = {{clip, weight, missing}}}
 int entity_anim_controller(lua_State* L) {
+    const AssetLoadPause pause{L, "anim_controller"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     animation::ControllerStatus st;
@@ -761,6 +770,7 @@ int entity_anim_controller(lua_State* L) {
 
 // entity:set_anim_layer_weight(layer, weight) -> bool (weight clamped to 0..1)
 int entity_set_anim_layer_weight(lua_State* L) {
+    const AssetLoadPause pause{L, "set_anim_layer_weight"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     const char* name = luaL_checkstring(L, 2);
@@ -772,6 +782,7 @@ int entity_set_anim_layer_weight(lua_State* L) {
 
 // entity:anim_layer_weight(layer) -> number | nil
 int entity_anim_layer_weight(lua_State* L) {
+    const AssetLoadPause pause{L, "anim_layer_weight"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     const char* name = luaL_checkstring(L, 2);
@@ -784,6 +795,7 @@ int entity_anim_layer_weight(lua_State* L) {
 
 // entity:morph_targets() -> {names...} in target order (empty without targets / before the model resolves)
 int entity_morph_targets(lua_State* L) {
+    const AssetLoadPause pause{L, "morph_targets"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     auto* sys = animation::system_of(s);
@@ -798,6 +810,7 @@ int entity_morph_targets(lua_State* L) {
 
 // entity:set_morph_weight(target, weight) -> bool; target is a name or a 1-based index
 int entity_set_morph_weight(lua_State* L) {
+    const AssetLoadPause pause{L, "set_morph_weight"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     const auto w = static_cast<float>(luaL_checknumber(L, 3));
@@ -815,6 +828,7 @@ int entity_set_morph_weight(lua_State* L) {
 
 // entity:morph_weight(target) -> number | nil; target is a name or a 1-based index
 int entity_morph_weight(lua_State* L) {
+    const AssetLoadPause pause{L, "morph_weight"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     auto* sys = animation::system_of(s);
@@ -832,6 +846,7 @@ int entity_morph_weight(lua_State* L) {
 
 // entity:animation_clips() -> {names...} (empty until the model resolves)
 int entity_animation_clips(lua_State* L) {
+    const AssetLoadPause pause{L, "animation_clips"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     std::vector<std::string> names;
@@ -847,6 +862,7 @@ int entity_animation_clips(lua_State* L) {
 
 // entity:play_sprite(clip, restart?) -> bool. Plays a clip of the entity's SpriteAnimator sheet.
 int entity_play_sprite(lua_State* L) {
+    const AssetLoadPause pause{L, "play_sprite"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     const std::string clip = luaL_checkstring(L, 2);
@@ -868,6 +884,7 @@ int entity_play_sprite(lua_State* L) {
 
 // entity:sprite_animation() -> {valid, clip, frame, clip_frame, time, duration, playing, looping, finished}
 int entity_sprite_animation(lua_State* L) {
+    const AssetLoadPause pause{L, "sprite_animation"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     animation::SpriteAnimatorStatus st;
@@ -902,6 +919,7 @@ int entity_sprite_animation(lua_State* L) {
 
 // entity:sprite_clips() -> {names...} (empty until the sheet resolves)
 int entity_sprite_clips(lua_State* L) {
+    const AssetLoadPause pause{L, "sprite_clips"};
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     std::vector<std::string> names;
