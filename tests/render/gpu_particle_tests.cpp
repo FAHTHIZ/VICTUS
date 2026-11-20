@@ -777,6 +777,7 @@ TEST_CASE("gpu particles: alpha-blended GPU emitters are depth sorted on the GPU
         const auto& draw = got.value();
         REQUIRE(draw.size() == 700);
         std::uint32_t visible = 0, out_of_order = 0, after_dead = 0;
+        double worst_violation = 0; // relative; ulp-level is CPU/GPU rounding, larger is a sort error
         float prev = std::numeric_limits<float>::infinity();
         bool dead_seen = false;
         for (const ParticleInstance& p : draw) {
@@ -789,10 +790,14 @@ TEST_CASE("gpu particles: alpha-blended GPU emitters are depth sorted on the GPU
             ++visible;
             const math::Vec3 d = math::Vec3{p.position_size.x, p.position_size.y, p.position_size.z} - eye;
             const float dist = math::dot(d, d);
-            out_of_order += dist > prev;
+            // The GPU computes dot(d, d) with its own rounding (FMA contraction), so near-ties may
+            // differ from this CPU recomputation by an ulp or two; a real sort error is far larger.
+            out_of_order += dist > prev * (1.0f + 1e-5f);
+            if (dist > prev) worst_violation = std::max(worst_violation, double(dist) / double(prev) - 1.0);
             prev = dist;
         }
-        MESSAGE("sorted " << visible << " live particles (CPU says " << v.alive << ")");
+        MESSAGE("sorted " << visible << " live particles (CPU says " << v.alive << "), worst order violation "
+                          << worst_violation);
         CHECK(std::abs(static_cast<int>(visible) - static_cast<int>(v.alive)) <= 2);
         CHECK(out_of_order == 0);
         CHECK(after_dead == 0);

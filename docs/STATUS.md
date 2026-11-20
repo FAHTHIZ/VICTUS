@@ -1912,3 +1912,13 @@ Verified (Release, clang 21, lavapipe with shaderFloat16, 2 cores): `python3 too
 Not covered: the speed-up is not measured (no phone GPU or Mali/Adreno offline compiler here); Metal stays FP32 (the MSL variant compiles but is not run on Apple hardware); post-processing passes and surface shaders are still FP32; the effects reference scene shows a pre-existing deterministic FLIP of 0.0017 against its golden with the unchanged default shader (inside the limits, not caused by this change); the intermittent particle-sort check needs a look.
 
 Next task: investigate the GPU particle depth-sort flake, then give the Low tier the baked probes (ambient and sun occlusion) cheaply, then the photoreal CC0 reference scene.
+
+## 2026-11-20 — Particle depth-sort check tolerates CPU/GPU rounding
+
+Built: the GPU particle depth-sort test (ADR-0107) now allows a relative 1e-5 when it recomputes squared distances on the CPU (the GPU's `dot(d, d)` may be contracted to FMA and round differently on near-ties), and reports the worst order violation so a future failure shows whether it is rounding or a real sort error.
+
+Verified (Release, clang 21, lavapipe): `victus_gpu_tests -tc="*particle*"` 14/14 three times; the depth-sort case 9/9 in three batches of three parallel runs, with the worst violation 0 in every run.
+
+Not covered: the single `out_of_order == 1` failure seen in the ADR-0137 full run did not reproduce, so the rounding cause is a hypothesis, not confirmed; a real sort error would still fail the check.
+
+Next task: give the Low tier the baked probes (ambient and sun occlusion) cheaply, then the photoreal CC0 reference scene.
