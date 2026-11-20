@@ -57,7 +57,24 @@ layout(set = 2, binding = 11) uniform sampler2D u_lightmap_dir;
 struct LocalLight { vec4 position_range; vec4 color_intensity; vec4 direction_cos_outer; vec4 spot; };
 // SDL_GPU: SPIR-V fragment storage buffers follow the 11 textures in set 2; MSL buffers are the
 // 3 uniform buffers first, then storage buffers ([[buffer(3)]], [[buffer(4)]]).
-#ifdef VICTUS_MSL
+#if defined(VICTUS_ESSL)
+// GLSL ES 3.00 has no storage buffers: the RHI mirrors each into an RGBA32UI texture
+// (1024 texels of 16 bytes per row; a light is four texels, a cluster word one component).
+layout(set = 2, binding = 20) uniform highp usampler2D vx_storage0;
+vec4 vx_texel0(uint t) { return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0)); }
+layout(set = 2, binding = 21) uniform highp usampler2D vx_storage1;
+vec4 vx_texel1(uint t) { return uintBitsToFloat(texelFetch(vx_storage1, ivec2(int(t & 1023u), int(t >> 10u)), 0)); }
+layout(set = 2, binding = 22) uniform highp usampler2D vx_storage2;
+vec4 vx_texel2(uint t) { return uintBitsToFloat(texelFetch(vx_storage2, ivec2(int(t & 1023u), int(t >> 10u)), 0)); }
+LocalLight local_light(uint i) {
+    uint t = i * 4u;
+    return LocalLight(vx_texel0(t), vx_texel0(t + 1u), vx_texel0(t + 2u), vx_texel0(t + 3u));
+}
+uint cluster_word(uint i) { return texelFetch(vx_storage1, ivec2(int((i >> 2u) & 1023u), int(i >> 12u)), 0)[i & 3u]; }
+#define LOCAL_LIGHT(i) local_light(i)
+#define CLUSTER(i) cluster_word(i)
+#define FOG_GRID(i) vx_texel2(i)
+#elif defined(VICTUS_MSL)
 layout(std430, set = 2, binding = 3) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 2, binding = 4) readonly buffer Clusters { uint cluster_data[]; };
 layout(std430, set = 2, binding = 5) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
@@ -65,6 +82,11 @@ layout(std430, set = 2, binding = 5) readonly buffer FogGrid { vec4 fog_grid[]; 
 layout(std430, set = 2, binding = 12) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 2, binding = 13) readonly buffer Clusters { uint cluster_data[]; };
 layout(std430, set = 2, binding = 14) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
+#endif
+#if !defined(VICTUS_ESSL)
+#define LOCAL_LIGHT(i) local_lights[i]
+#define CLUSTER(i) cluster_data[i]
+#define FOG_GRID(i) fog_grid[i]
 #endif
 layout(set = 3, binding = 0) uniform Lighting {
     vec4 camera_pos;     // w: ambient occlusion enabled
@@ -172,8 +194,8 @@ vec4 volumetric_fog(vec2 uv, float view_depth, vec4 grid) {
     vec4 c[2];
     for (int k = 0; k < 2; ++k) {
         uint base = (k == 0 ? z0 : z1) * g.y * g.x;
-        vec4 r0 = mix(fog_grid[base + a.y * g.x + a.x], fog_grid[base + a.y * g.x + b.x], w.x);
-        vec4 r1 = mix(fog_grid[base + b.y * g.x + a.x], fog_grid[base + b.y * g.x + b.x], w.x);
+        vec4 r0 = mix(FOG_GRID(base + a.y * g.x + a.x), FOG_GRID(base + a.y * g.x + b.x), w.x);
+        vec4 r1 = mix(FOG_GRID(base + b.y * g.x + a.x), FOG_GRID(base + b.y * g.x + b.x), w.x);
         c[k] = mix(r0, r1, w.y);
     }
     v1 = s < 1.0 ? mix(v0, c[0], t) : mix(c[0], c[1], t);
@@ -484,7 +506,7 @@ float local_shadow(LocalLight l, vec3 Ld, float dist, vec3 N) {
         int face = (a.x >= a.y && a.x >= a.z) ? (d.x >= 0.0 ? 0 : 1) : (a.y >= a.z ? (d.y >= 0.0 ? 2 : 3) : (d.z >= 0.0 ? 4 : 5));
         tile += face;
     }
-    LocalLight m = local_lights[uint(lighting.local_shadow.z) + uint(tile)];
+    LocalLight m = LOCAL_LIGHT(uint(lighting.local_shadow.z) + uint(tile));
     mat4 M = mat4(m.position_range, m.color_intensity, m.direction_cos_outer, m.spot);
     float ndl = clamp(dot(N, Ld), 0.0, 1.0);
     // Normal offset of about one shadow texel at this distance (texel angle * distance).
@@ -636,9 +658,9 @@ void main() {
         float view_depth = max(dot(v_world_pos - lighting.camera_pos.xyz, lighting.camera_forward.xyz), lighting.cluster_depth.x);
         float slice = clamp(floor(log(view_depth / lighting.cluster_depth.x) * lighting.cluster_depth.y), 0.0, grid.z - 1.0);
         uint cluster = uint((slice * grid.y + tile.y) * grid.x + tile.x);
-        uint first = cluster_data[2u * cluster], count = min(cluster_data[2u * cluster + 1u], uint(lighting.cluster_grid.w));
+        uint first = CLUSTER(2u * cluster), count = min(CLUSTER(2u * cluster + 1u), uint(lighting.cluster_grid.w));
         for (uint i = 0u; i < count; ++i) {
-            LocalLight l = local_lights[cluster_data[first + i]];
+            LocalLight l = LOCAL_LIGHT(CLUSTER(first + i));
             vec3 to_light = l.position_range.xyz - v_world_pos;
             float dist = length(to_light);
             float range = l.position_range.w;

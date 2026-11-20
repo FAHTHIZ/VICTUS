@@ -18,10 +18,18 @@ layout(set = 3, binding = 0) uniform Params {
     vec4 volumetric; // volumetric fog grid (ADR-0119): xyz froxels, w far (0 off)
 } u;
 // SPIR-V: after the two samplers in set 2; MSL: after the one uniform buffer.
-#ifdef VICTUS_MSL
+#if defined(VICTUS_ESSL)
+// GLSL ES 3.00: the RHI mirrors the storage buffer into an RGBA32UI texture (1024 texels per row).
+layout(set = 2, binding = 20) uniform highp usampler2D vx_storage0;
+vec4 vx_texel0(uint t) { return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0)); }
+#define FOG_GRID(i) vx_texel0(i)
+#elif defined(VICTUS_MSL)
 layout(std430, set = 2, binding = 1) readonly buffer FogGrid { vec4 fog_grid[]; };
 #else
 layout(std430, set = 2, binding = 2) readonly buffer FogGrid { vec4 fog_grid[]; };
+#endif
+#if !defined(VICTUS_ESSL)
+#define FOG_GRID(i) fog_grid[i]
 #endif
 // Volumetric fog in front of a transparent fragment (ADR-0119): the integrated froxel grid
 // (in-scattered light rgb, transmittance a) fetched trilinearly at the fragment's view depth,
@@ -49,8 +57,8 @@ vec4 volumetric_fog(vec2 uv, float view_depth, vec4 grid) {
     vec4 c[2];
     for (int k = 0; k < 2; ++k) {
         uint base = (k == 0 ? z0 : z1) * g.y * g.x;
-        vec4 r0 = mix(fog_grid[base + a.y * g.x + a.x], fog_grid[base + a.y * g.x + b.x], w.x);
-        vec4 r1 = mix(fog_grid[base + b.y * g.x + a.x], fog_grid[base + b.y * g.x + b.x], w.x);
+        vec4 r0 = mix(FOG_GRID(base + a.y * g.x + a.x), FOG_GRID(base + a.y * g.x + b.x), w.x);
+        vec4 r1 = mix(FOG_GRID(base + b.y * g.x + a.x), FOG_GRID(base + b.y * g.x + b.x), w.x);
         c[k] = mix(r0, r1, w.y);
     }
     v1 = s < 1.0 ? mix(v0, c[0], t) : mix(c[0], c[1], t);

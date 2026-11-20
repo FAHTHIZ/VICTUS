@@ -5236,7 +5236,7 @@ void main()
 }
 
 )VICTUSMSL";
-// fog_apply.frag sha256=e32ae61e06c41d4310fb6bd3dc3585a7fbae9e59b8fbb7664c9f7636115d647f
+// fog_apply.frag sha256=ff368de77a7033d40ff0856d19cdacde7dc135813284dac9cba2a15df5443595
 const std::uint8_t k_spirv_11[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0x11, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53, 0x4c,
@@ -5643,7 +5643,83 @@ fragment main0_out main0(constant Params& u [[buffer(0)]], const device Integrat
 
 )VICTUSMSL";
 // essl rev=3
-const char k_essl_11[] = "";
+const char k_essl_11[] =
+R"VICTUSMSL(#version 300 es
+//! storage 0 vx_storage0
+//! sampler 0 u_depth
+//! ubo 0 fs_Params
+precision mediump float;
+precision highp int;
+
+layout(std140) uniform fs_Params
+{
+    highp vec4 proj;
+    highp vec4 screen;
+    highp vec4 grid;
+} u;
+
+uniform highp usampler2D vx_storage0;
+uniform highp sampler2D u_depth;
+
+layout(location = 0) out highp vec4 out_color;
+in highp vec2 vx_io_0;
+
+highp vec4 vx_texel0(uint t)
+{
+    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+}
+
+highp vec4 column(uvec2 a, uvec2 b, highp vec2 w, uint z)
+{
+    uvec3 g = uvec3(u.grid.xyz);
+    uint base = (z * g.y) * g.x;
+    uint param = (base + (a.y * g.x)) + a.x;
+    uint param_1 = (base + (a.y * g.x)) + b.x;
+    highp vec4 c0 = mix(vx_texel0(param), vx_texel0(param_1), vec4(w.x));
+    uint param_2 = (base + (b.y * g.x)) + a.x;
+    uint param_3 = (base + (b.y * g.x)) + b.x;
+    highp vec4 c1 = mix(vx_texel0(param_2), vx_texel0(param_3), vec4(w.x));
+    return mix(c0, c1, vec4(w.y));
+}
+
+void main()
+{
+    highp vec2 uv = gl_FragCoord.xy * u.screen.xy;
+    highp float depth = u.proj.x / (textureLod(u_depth, uv, 0.0).x + u.proj.y);
+    highp vec3 g = u.grid.xyz;
+    highp vec2 x = clamp((uv * g.xy) - vec2(0.5), vec2(0.0), g.xy - vec2(1.0));
+    uvec2 a = uvec2(floor(x));
+    uvec2 b = min((a + uvec2(1u)), (uvec2(g.xy) - uvec2(1u)));
+    highp vec2 w = x - vec2(a);
+    highp float s = sqrt(clamp(depth / u.grid.w, 0.0, 1.0)) * g.z;
+    highp vec4 v;
+    if (s < 1.0)
+    {
+        uvec2 param = a;
+        uvec2 param_1 = b;
+        highp vec2 param_2 = w;
+        uint param_3 = 0u;
+        v = mix(vec4(0.0, 0.0, 0.0, 1.0), column(param, param_1, param_2, param_3), vec4(s));
+    }
+    else
+    {
+        highp float f = s - 1.0;
+        uint z0 = min(uint(floor(f)), (uint(g.z) - 1u));
+        uint z1 = min((z0 + 1u), (uint(g.z) - 1u));
+        uvec2 param_4 = a;
+        uvec2 param_5 = b;
+        highp vec2 param_6 = w;
+        uint param_7 = z0;
+        uvec2 param_8 = a;
+        uvec2 param_9 = b;
+        highp vec2 param_10 = w;
+        uint param_11 = z1;
+        v = mix(column(param_4, param_5, param_6, param_7), column(param_8, param_9, param_10, param_11), vec4(f - float(z0)));
+    }
+    out_color = vec4(v.xyz, 1.0 - clamp(v.w, 0.0, 1.0));
+}
+
+)VICTUSMSL";
 // fog_inject.comp sha256=f2edfca1e5ea7af36c54df8745049d3e4444687a95f94eb6cd9ad93e8a0ed702
 const std::uint8_t k_spirv_12[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0xec, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -13629,7 +13705,7 @@ void main()
 }
 
 )VICTUSMSL";
-// particle.frag sha256=967d51213830ce90765708ac706c98ef3674f2fd4ce964fab32d69343efb79e9
+// particle.frag sha256=7cf2ef9391c590f93ec7aa4bc0af2c2baa4bd04dbfeb293421b28f07e3d3d5cb
 const std::uint8_t k_spirv_32[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0xd9, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53, 0x4c,
@@ -14389,8 +14465,173 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 
 )VICTUSMSL";
 // essl rev=3
-const char k_essl_32[] = "";
-// particle.frag#reactive sha256=6e22f692c8b5006967d69322ee83f1e42a7927bb69b77d1147e63aa0966280f6
+const char k_essl_32[] =
+R"VICTUSMSL(#version 300 es
+//! storage 0 vx_storage0
+//! sampler 0 u_texture
+//! sampler 1 u_depth
+//! ubo 0 fs_Params
+precision mediump float;
+precision highp int;
+
+layout(std140) uniform fs_Params
+{
+    highp vec4 proj;
+    highp vec4 screen;
+    highp vec4 fog_color;
+    highp vec4 fog_params;
+    highp vec4 view;
+    highp vec4 volumetric;
+} u;
+
+uniform highp usampler2D vx_storage0;
+uniform highp sampler2D u_texture;
+uniform highp sampler2D u_depth;
+
+in highp vec2 vx_io_0;
+in highp vec4 vx_io_1;
+in highp float vx_io_2;
+layout(location = 0) out highp vec4 out_color;
+
+highp float distance_fog(highp float view_depth)
+{
+    int mode = int(u.fog_color.w + 0.5);
+    if (mode == 0)
+    {
+        return 0.0;
+    }
+    highp vec2 ndc = ((gl_FragCoord.xy * u.screen.xy) * 2.0) - vec2(1.0);
+    highp float d = view_depth * length(vec3(ndc * u.view.xy, 1.0));
+    highp float f;
+    if (mode == 1)
+    {
+        f = clamp((d - u.fog_params.x) / max(u.fog_params.y - u.fog_params.x, 0.001000000047497451305389404296875), 0.0, 1.0);
+    }
+    else
+    {
+        highp float k = max(d - u.fog_params.x, 0.0) * u.fog_params.z;
+        highp float _339;
+        if (mode == 2)
+        {
+            _339 = 1.0 - exp(-k);
+        }
+        else
+        {
+            _339 = 1.0 - exp((-k) * k);
+        }
+        f = _339;
+    }
+    return f * u.fog_params.w;
+}
+
+highp vec4 vx_texel0(uint t)
+{
+    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+}
+
+highp vec4 volumetric_fog(highp vec2 uv, highp float view_depth, highp vec4 grid)
+{
+    if (grid.w <= 0.0)
+    {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    uvec3 g = uvec3(grid.xyz);
+    highp vec2 x = clamp((uv * grid.xy) - vec2(0.5), vec2(0.0), grid.xy - vec2(1.0));
+    uvec2 a = uvec2(floor(x));
+    uvec2 b = min((a + uvec2(1u)), (g.xy - uvec2(1u)));
+    highp vec2 w = x - vec2(a);
+    highp float s = sqrt(clamp(view_depth / grid.w, 0.0, 1.0)) * grid.z;
+    highp vec4 v0 = vec4(0.0, 0.0, 0.0, 1.0);
+    uint z0;
+    uint z1;
+    highp float t;
+    if (s < 1.0)
+    {
+        z0 = 0u;
+        z1 = 0u;
+        t = s;
+    }
+    else
+    {
+        z0 = min(uint(floor(s - 1.0)), (g.z - 1u));
+        z1 = min((z0 + 1u), (g.z - 1u));
+        t = (s - 1.0) - float(z0);
+    }
+    highp vec4 c[2];
+    for (int k = 0; k < 2; k++)
+    {
+        uint base = (((k == 0) ? z0 : z1) * g.y) * g.x;
+        uint param = (base + (a.y * g.x)) + a.x;
+        uint param_1 = (base + (a.y * g.x)) + b.x;
+        highp vec4 r0 = mix(vx_texel0(param), vx_texel0(param_1), vec4(w.x));
+        uint param_2 = (base + (b.y * g.x)) + a.x;
+        uint param_3 = (base + (b.y * g.x)) + b.x;
+        highp vec4 r1 = mix(vx_texel0(param_2), vx_texel0(param_3), vec4(w.x));
+        c[k] = mix(r0, r1, vec4(w.y));
+    }
+    highp vec4 _242;
+    if (s < 1.0)
+    {
+        _242 = mix(v0, c[0], vec4(t));
+    }
+    else
+    {
+        _242 = mix(c[0], c[1], vec4(t));
+    }
+    highp vec4 v1 = _242;
+    v1.w = clamp(v1.w, 0.0, 1.0);
+    return v1;
+}
+
+void main()
+{
+    highp vec4 c = texture(u_texture, vx_io_0) * vx_io_1;
+    highp float scene = u.proj.x / (textureLod(u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).x + u.proj.y);
+    highp float gap = scene - vx_io_2;
+    if (gap <= 0.0)
+    {
+        discard;
+    }
+    c.w *= clamp(gap * u.screen.z, 0.0, 1.0);
+    if (c.w <= 0.00200000009499490261077880859375)
+    {
+        discard;
+    }
+    highp float param = vx_io_2;
+    highp float f = distance_fog(param);
+    highp vec3 _425;
+    if (u.screen.w > 0.5)
+    {
+        _425 = c.xyz * (1.0 - f);
+    }
+    else
+    {
+        _425 = mix(c.xyz, u.fog_color.xyz, vec3(f));
+    }
+    c.x = _425.x;
+    c.y = _425.y;
+    c.z = _425.z;
+    highp vec2 param_1 = gl_FragCoord.xy * u.screen.xy;
+    highp float param_2 = vx_io_2;
+    highp vec4 param_3 = u.volumetric;
+    highp vec4 vf = volumetric_fog(param_1, param_2, param_3);
+    highp vec3 _467;
+    if (u.screen.w > 0.5)
+    {
+        _467 = c.xyz * vf.w;
+    }
+    else
+    {
+        _467 = (c.xyz * vf.w) + vf.xyz;
+    }
+    c.x = _467.x;
+    c.y = _467.y;
+    c.z = _467.z;
+    out_color = c;
+}
+
+)VICTUSMSL";
+// particle.frag#reactive sha256=5f209a31e65ecc32cfd23292f4746a1ef989e1b46ce6621e4d28841c7a595c9b
 const std::uint8_t k_spirv_33[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0xf5, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53, 0x4c,
@@ -15191,7 +15432,181 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 
 )VICTUSMSL";
 // essl rev=3
-const char k_essl_33[] = "";
+const char k_essl_33[] =
+R"VICTUSMSL(#version 300 es
+//! storage 0 vx_storage0
+//! sampler 0 u_texture
+//! sampler 1 u_depth
+//! ubo 0 fs_Params
+precision mediump float;
+precision highp int;
+
+layout(std140) uniform fs_Params
+{
+    highp vec4 proj;
+    highp vec4 screen;
+    highp vec4 fog_color;
+    highp vec4 fog_params;
+    highp vec4 view;
+    highp vec4 volumetric;
+} u;
+
+uniform highp usampler2D vx_storage0;
+uniform highp sampler2D u_texture;
+uniform highp sampler2D u_depth;
+
+in highp vec2 vx_io_0;
+in highp vec4 vx_io_1;
+in highp float vx_io_2;
+layout(location = 0) out highp vec4 out_color;
+layout(location = 1) out highp vec4 out_reactive;
+
+highp float distance_fog(highp float view_depth)
+{
+    int mode = int(u.fog_color.w + 0.5);
+    if (mode == 0)
+    {
+        return 0.0;
+    }
+    highp vec2 ndc = ((gl_FragCoord.xy * u.screen.xy) * 2.0) - vec2(1.0);
+    highp float d = view_depth * length(vec3(ndc * u.view.xy, 1.0));
+    highp float f;
+    if (mode == 1)
+    {
+        f = clamp((d - u.fog_params.x) / max(u.fog_params.y - u.fog_params.x, 0.001000000047497451305389404296875), 0.0, 1.0);
+    }
+    else
+    {
+        highp float k = max(d - u.fog_params.x, 0.0) * u.fog_params.z;
+        highp float _339;
+        if (mode == 2)
+        {
+            _339 = 1.0 - exp(-k);
+        }
+        else
+        {
+            _339 = 1.0 - exp((-k) * k);
+        }
+        f = _339;
+    }
+    return f * u.fog_params.w;
+}
+
+highp vec4 vx_texel0(uint t)
+{
+    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+}
+
+highp vec4 volumetric_fog(highp vec2 uv, highp float view_depth, highp vec4 grid)
+{
+    if (grid.w <= 0.0)
+    {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    uvec3 g = uvec3(grid.xyz);
+    highp vec2 x = clamp((uv * grid.xy) - vec2(0.5), vec2(0.0), grid.xy - vec2(1.0));
+    uvec2 a = uvec2(floor(x));
+    uvec2 b = min((a + uvec2(1u)), (g.xy - uvec2(1u)));
+    highp vec2 w = x - vec2(a);
+    highp float s = sqrt(clamp(view_depth / grid.w, 0.0, 1.0)) * grid.z;
+    highp vec4 v0 = vec4(0.0, 0.0, 0.0, 1.0);
+    uint z0;
+    uint z1;
+    highp float t;
+    if (s < 1.0)
+    {
+        z0 = 0u;
+        z1 = 0u;
+        t = s;
+    }
+    else
+    {
+        z0 = min(uint(floor(s - 1.0)), (g.z - 1u));
+        z1 = min((z0 + 1u), (g.z - 1u));
+        t = (s - 1.0) - float(z0);
+    }
+    highp vec4 c[2];
+    for (int k = 0; k < 2; k++)
+    {
+        uint base = (((k == 0) ? z0 : z1) * g.y) * g.x;
+        uint param = (base + (a.y * g.x)) + a.x;
+        uint param_1 = (base + (a.y * g.x)) + b.x;
+        highp vec4 r0 = mix(vx_texel0(param), vx_texel0(param_1), vec4(w.x));
+        uint param_2 = (base + (b.y * g.x)) + a.x;
+        uint param_3 = (base + (b.y * g.x)) + b.x;
+        highp vec4 r1 = mix(vx_texel0(param_2), vx_texel0(param_3), vec4(w.x));
+        c[k] = mix(r0, r1, vec4(w.y));
+    }
+    highp vec4 _242;
+    if (s < 1.0)
+    {
+        _242 = mix(v0, c[0], vec4(t));
+    }
+    else
+    {
+        _242 = mix(c[0], c[1], vec4(t));
+    }
+    highp vec4 v1 = _242;
+    v1.w = clamp(v1.w, 0.0, 1.0);
+    return v1;
+}
+
+void main()
+{
+    highp vec4 c = texture(u_texture, vx_io_0) * vx_io_1;
+    highp float scene = u.proj.x / (textureLod(u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).x + u.proj.y);
+    highp float gap = scene - vx_io_2;
+    if (gap <= 0.0)
+    {
+        discard;
+    }
+    c.w *= clamp(gap * u.screen.z, 0.0, 1.0);
+    if (c.w <= 0.00200000009499490261077880859375)
+    {
+        discard;
+    }
+    highp float param = vx_io_2;
+    highp float f = distance_fog(param);
+    highp vec3 _425;
+    if (u.screen.w > 0.5)
+    {
+        _425 = c.xyz * (1.0 - f);
+    }
+    else
+    {
+        _425 = mix(c.xyz, u.fog_color.xyz, vec3(f));
+    }
+    c.x = _425.x;
+    c.y = _425.y;
+    c.z = _425.z;
+    highp vec2 param_1 = gl_FragCoord.xy * u.screen.xy;
+    highp float param_2 = vx_io_2;
+    highp vec4 param_3 = u.volumetric;
+    highp vec4 vf = volumetric_fog(param_1, param_2, param_3);
+    highp vec3 _467;
+    if (u.screen.w > 0.5)
+    {
+        _467 = c.xyz * vf.w;
+    }
+    else
+    {
+        _467 = (c.xyz * vf.w) + vf.xyz;
+    }
+    c.x = _467.x;
+    c.y = _467.y;
+    c.z = _467.z;
+    out_color = c;
+    if (u.screen.w > 0.5)
+    {
+        out_reactive = vec4(vec3(c.w * min(dot(c.xyz, vec3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)) * 4.0, 1.0)), 1.0);
+    }
+    else
+    {
+        out_reactive = vec4(1.0, 1.0, 1.0, c.w);
+    }
+}
+
+)VICTUSMSL";
 // particle.vert sha256=5308eb9280e9897096d4288b6b7f20d702c26d60fb84ab74dc3be1d2eb7030d8
 const std::uint8_t k_spirv_34[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0xba, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -19026,7 +19441,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device Instances& _143 [[buf
 )VICTUSMSL";
 // essl rev=3
 const char k_essl_36[] = "";
-// pbr.frag sha256=42a47a59f5dd770f0e078a33365b9da42c4b55ea1734a517f6fa33475cc75c19
+// pbr.frag sha256=fbb21c6a461352be8df3659151cc831c3510d754111f40fe9f711ba38bc11374
 const std::uint8_t k_spirv_37[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0xd5, 0x0d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53, 0x4c,
@@ -24415,8 +24830,1173 @@ R"VICTUSMSL(else
 
 )VICTUSMSL";
 // essl rev=3
-const char k_essl_37[] = "";
-// pbr.frag#fp16 sha256=5759f39cbbb9aefa12cabd72c83b326f106460e3a46659bdb9457bde8e744b4d
+const char k_essl_37[] =
+R"VICTUSMSL(#version 300 es
+//! storage 0 vx_storage0
+//! storage 2 vx_storage2
+//! storage 1 vx_storage1
+//! sampler 8 u_irradiance
+//! sampler 6 u_env
+//! sampler 4 u_shadow
+//! sampler 7 u_local_shadow
+//! sampler 0 u_base_color
+//! sampler 3 u_emissive
+//! sampler 1 u_metal_rough
+//! sampler 2 u_normal_map
+//! sampler 9 u_rain_occlusion
+//! sampler 10 u_lightmap
+//! sampler 11 u_lightmap_dir
+//! sampler 5 u_ao
+//! ubo 1 fs_Material
+//! ubo 0 fs_Lighting
+//! ubo 2 fs_Probe
+precision mediump float;
+precision highp int;
+
+struct LocalLight
+{
+    highp vec4 position_range;
+    highp vec4 color_intensity;
+    highp vec4 direction_cos_outer;
+    highp vec4 spot;
+};
+
+struct Surface
+{
+    highp vec3 base_color;
+    highp float alpha;
+    highp vec3 normal;
+    highp float metallic;
+    highp float roughness;
+    highp vec3 emissive;
+    highp float occlusion;
+    bool unlit;
+};
+
+layout(std140) uniform fs_Material
+{
+    highp vec4 base_color;
+    highp vec4 emissive;
+    highp vec4 params;
+    highp vec4 flags;
+    highp vec4 uv_transform;
+    highp vec4 custom[4];
+    highp vec4 blend;
+} material;
+
+layout(std140) uniform fs_Lighting
+{
+    highp vec4 camera_pos;
+    highp vec4 camera_forward;
+    highp vec4 sun_dir;
+    highp vec4 sun_color;
+    highp vec4 sky_color;
+    highp vec4 horizon_color;
+    highp vec4 ground_color;
+    highp vec4 shadow_params;
+    highp vec4 cascade_params;
+    highp vec4 cascade_splits;
+    highp vec4 cascade_texel;
+    highp vec4 screen;
+    highp vec4 fog_color;
+    highp vec4 fog_params;
+    highp vec4 coverage_color;
+    highp vec4 coverage_params;
+    highp vec4 env_params;
+    highp vec4 env_sh[9];
+    highp mat4 cascade_vp[4];
+    highp vec4 cluster_grid;
+    highp vec4 cluster_depth;
+    highp vec4 local_shadow;
+    highp vec4 gi_min;
+    highp vec4 gi_max;
+    highp vec4 gi_counts;
+    highp vec4 cloud_layer;
+    highp vec4 cloud_shadow;
+    highp vec4 cloud_wind;
+    highp vec4 weather;
+    highp mat4 rain_vp;
+    highp vec4 puddles;
+    highp vec4 volumetric;
+} lighting;
+
+layout(std140) uniform fs_Probe
+{
+    highp vec4 box_min;
+    highp vec4 box_max;
+    highp vec4 position;
+    highp vec4 sh[9];
+} probe;
+
+uniform highp usampler2D vx_storage0;
+uniform highp usampler2D vx_storage2;
+uniform highp usampler2D vx_storage1;
+uniform highp sampler2D u_irradiance;
+uniform highp samplerCube u_env;
+uniform highp sampler2DShadow u_shadow;
+uniform highp sampler2DShadow u_local_shadow;
+uniform highp sampler2D u_base_color;
+uniform highp sampler2D u_emissive;
+uniform highp sampler2D u_metal_rough;
+uniform highp sampler2D u_normal_map;
+uniform highp sampler2DShadow u_rain_occlusion;
+uniform highp sampler2D u_lightmap;
+uniform highp sampler2D u_lightmap_dir;
+uniform highp sampler2D u_ao;
+
+in highp vec3 vx_io_0;
+in highp vec2 vx_io_2;
+in highp vec3 vx_io_1;
+in highp vec4 vx_io_4;
+in highp vec4 vx_io_3;
+layout(location = 0) out highp vec4 out_color;
+in highp vec3 vx_io_5;
+
+highp vec4 vx_texel2(uint t)
+{
+    return uintBitsToFloat(texelFetch(vx_storage2, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+}
+
+highp vec4 volumetric_fog(highp vec2 uv, highp float view_depth, highp vec4 grid)
+{
+    if (grid.w <= 0.0)
+    {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    uvec3 g = uvec3(grid.xyz);
+    highp vec2 x = clamp((uv * grid.xy) - vec2(0.5), vec2(0.0), grid.xy - vec2(1.0));
+    uvec2 a = uvec2(floor(x));
+    uvec2 b = min((a + uvec2(1u)), (g.xy - uvec2(1u)));
+    highp vec2 w = x - vec2(a);
+    highp float s = sqrt(clamp(view_depth / grid.w, 0.0, 1.0)) * grid.z;
+    highp vec4 v0 = vec4(0.0, 0.0, 0.0, 1.0);
+    uint z0;
+    uint z1;
+    highp float t;
+    if (s < 1.0)
+    {
+        z0 = 0u;
+        z1 = 0u;
+        t = s;
+    }
+    else
+    {
+        z0 = min(uint(floor(s - 1.0)), (g.z - 1u));
+        z1 = min((z0 + 1u), (g.z - 1u));
+        t = (s - 1.0) - float(z0);
+    }
+    highp vec4 c[2];
+    for (int k = 0; k < 2; k++)
+    {
+        uint base = (((k == 0) ? z0 : z1) * g.y) * g.x;
+        uint param = (base + (a.y * g.x)) + a.x;
+        uint param_1 = (base + (a.y * g.x)) + b.x;
+        highp vec4 r0 = mix(vx_texel2(param), vx_texel2(param_1), vec4(w.x));
+        uint param_2 = (base + (b.y * g.x)) + a.x;
+        uint param_3 = (base + (b.y * g.x)) + b.x;
+        highp vec4 r1 = mix(vx_texel2(param_2), vx_texel2(param_3), vec4(w.x));
+        c[k] = mix(r0, r1, vec4(w.y));
+    }
+    highp vec4 _525;
+    if (s < 1.0)
+    {
+        _525 = mix(v0, c[0], vec4(t));
+    }
+    else
+    {
+        _525 = mix(c[0], c[1], vec4(t));
+    }
+    highp vec4 v1 = _525;
+    v1.w = clamp(v1.w, 0.0, 1.0);
+    return v1;
+}
+
+highp vec3 blended_fog(highp vec3 color)
+{
+    bool _557 = material.blend.x < 0.5;
+    bool _571;
+    if (!_557)
+    {
+        _571 = lighting.volumetric.w <= 0.0;
+    }
+    else
+    {
+        _571 = _557;
+    }
+    if (_571)
+    {
+        return color;
+    }
+    highp float view_depth = dot(vx_io_0 - lighting.camera_pos.xyz, lighting.camera_forward.xyz);
+    highp vec2 param = gl_FragCoord.xy * lighting.screen.xy;
+    highp float param_1 = view_depth;
+    highp vec4 param_2 = lighting.volumetric;
+    highp vec4 f = volumetric_fog(param, param_1, param_2);
+    highp vec3 _608;
+    if (material.blend.x > 1.5)
+    {
+        _608 = color * f.w;
+    }
+    else
+    {
+        _608 = (color * f.w) + f.xyz;
+    }
+    return _608;
+}
+
+highp vec3 hdr_quantize(inout highp vec3 c, highp float frame)
+{
+    highp vec2 p = gl_FragCoord.xy + vec2(5.588237762451171875 * frame);
+    highp vec3 n = vec3(fract(52.98291778564453125 * fract(dot(p, vec2(0.067110560834407806396484375, 0.005837149918079376220703125)))), fract(52.98291778564453125 * fract(dot(p + vec2(17.0, 59.0), vec2(0.067110560834407806396484375, 0.005837149918079376220703125)))), fract(52.98291778564453125 * fract(dot(p + vec2(83.0, 31.0), vec2(0.067110560834407806396484375, 0.005837149918079376220703125)))));
+    c = clamp(c, vec3(0.0), vec3(64512.0));
+    ivec3 e = ((floatBitsToInt(max(c, vec3(1.0000000031710768509710513471353e-30))) >> ivec3(23)) & ivec3(255)) - ivec3(126);
+    ivec3 sh = max((e - ivec3(1)), ivec3(-14)) - ivec3(6, 6, 5);
+    return floor((c * intBitsToFloat((ivec3(127) - sh) << ivec3(23))) + n) * intBitsToFloat((sh + ivec3(127)) << ivec3(23));
+}
+
+highp float hash12(highp vec2 p)
+{
+    highp vec3 q = fract(p.xyx * 0.103100001811981201171875);
+    q += vec3(dot(q, q.yzx + vec3(33.3300018310546875)));
+    return fract((q.x + q.y) * q.z);
+}
+
+highp float puddle_noise(highp vec2 x)
+{
+    highp vec2 i = floor(x);
+    highp vec2 f = x - i;
+    highp vec2 w = (f * f) * (vec2(3.0) - (f * 2.0));
+    highp vec2 param = i;
+    highp float a = hash12(param);
+    highp vec2 param_1 = i + vec2(1.0, 0.0);
+    highp float b = hash12(param_1);
+    highp vec2 param_2 = i + vec2(0.0, 1.0);
+    highp float c = hash12(param_2);
+    highp vec2 param_3 = i + vec2(1.0);
+    highp float d = hash12(param_3);
+    return mix(mix(a, b, w.x), mix(c, d, w.x), w.y);
+}
+
+highp vec2 ripple_slope(highp vec2 p, highp float t)
+{
+    highp vec2 cell = floor(p);
+    highp vec2 slope = vec2(0.0);
+    for (int j = -1; j <= 1; j++)
+    {
+        for (int i = -1; i <= 1; i++)
+        {
+            highp vec2 id = cell + vec2(float(i), float(j));
+            highp vec2 param = id;
+            highp vec2 param_1 = id + vec2(17.3099994659423828125);
+            highp vec2 centre = (id + vec2(0.20000000298023223876953125)) + (vec2(hash12(param), hash12(param_1)) * 0.60000002384185791015625);
+            highp vec2 param_2 = id + vec2(5.69999980926513671875);
+            highp float phase = fract(t + hash12(param_2));
+            highp vec2 d = p - centre;
+            highp float dist = length(d);
+            highp float x = (dist - (phase * 0.89999997615814208984375)) / 0.119999997317790985107421875;
+            if ((abs(x) < 1.0) && (dist > 9.9999997473787516355514526367188e-05))
+            {
+                highp float fade = (1.0 - phase) * (1.0 - phase);
+                slope += ((d / vec2(dist)) * ((cos(x * 3.1415927410125732421875) * (1.0 - (x * x))) * fade));
+            }
+        }
+    }
+    return slope;
+}
+
+highp vec3 sh9(highp vec4 c[9], highp vec3 n)
+{
+    highp vec3 _889 = ((((((((c[0].xyz * 0.2820949852466583251953125) + (c[1].xyz * (0.48860299587249755859375 * n.y))) + (c[2].xyz * (0.48860299587249755859375 * n.z))) + (c[3].xyz * (0.48860299587249755859375 * n.x))) + (c[4].xyz * ((1.09254801273345947265625 * n.x) * n.y))) + (c[5].xyz * ((1.09254801273345947265625 * n.y) * n.z))) + (c[6].xyz * (0.3153919875621795654296875 * (((3.0 * n.z) * n.z) - 1.0)))) + (c[7].xyz * ((1.09254801273345947265625 * n.x) * n.z))) + (c[8].xyz * (0.546274006366729736328125 * ((n.x * n.x) - (n.y * n.y))));
+    highp vec3 r = _889;
+    return max(r, vec3(0.0));
+}
+
+highp vec3 environment(highp vec3 dir, highp float roughness)
+{
+    highp float h = clamp(dir.y, -1.0, 1.0);
+    highp vec3 _701;
+    if (h > 0.0)
+    {
+        _701 = mix(lighting.horizon_color.xyz, lighting.sky_color.xyz, vec3(sqrt(h)));
+    }
+    else
+    {
+        _701 = mix(lighting.horizon_color.xyz, lighting.ground_color.xyz, vec3(pow(-h, 0.4000000059604644775390625)));
+    }
+    highp vec3 sharp = _701;
+    highp vec3 blurred = (mix(lighting.ground_color.xyz, lighting.sky_color.xyz, vec3((h * 0.5) + 0.5)) * 0.5) + (lighting.horizon_color.xyz * 0.5);
+    return mix(sharp, blurred, vec3(roughness * roughness));
+}
+
+highp vec3 env_rotate(highp vec3 d)
+{
+    highp float c = cos(lighting.env_params.w);
+    highp float s = sin(lighting.env_params.w);
+    return vec3((c * d.x) + (s * d.z), d.y, ((-s) * d.x) + (c * d.z));
+}
+
+highp vec3 env_irradiance(highp vec3 n)
+{
+    if (probe.box_min.w > 0.5)
+    {
+        highp vec4 param[9];
+        param[0] = probe.sh[0];
+        param[1] = probe.sh[1];
+        param[2] = probe.sh[2];
+        param[3] = probe.sh[3];
+        param[4] = probe.sh[4];
+        param[5] = probe.sh[5];
+        param[6] = probe.sh[6];
+        param[7] = probe.sh[7];
+        param[8] = probe.sh[8];
+        highp vec3 param_1 = n;
+        return sh9(param, param_1);
+    }
+    if (lighting.env_params.x < 0.5)
+    {
+        highp vec3 param_2 = n;
+        highp float param_3 = 1.0;
+        return environment(param_2, param_3);
+    }
+    highp vec3 param_4 = n;
+    highp vec4 param_5[9];
+    param_5[0] = lighting.env_sh[0];
+    param_5[1] = lighting.env_sh[1];
+    param_5[2] = lighting.env_sh[2];
+    param_5[3] = lighting.env_sh[3];
+    param_5[4] = lighting.env_sh[4];
+    param_5[5] = lighting.env_sh[5];
+    param_5[6] = lighting.env_sh[6];
+    param_5[7] = lighting.env_sh[7];
+    param_5[8] = lighting.env_sh[8];
+    highp vec3 param_6 = env_rotate(param_4);
+    return sh9(param_5, param_6);
+}
+
+highp vec4 gi_fetch(int k, highp float layer, highp vec2 fxz)
+{
+    highp vec2 size = vec2(lighting.gi_counts.x * lighting.gi_counts.y, lighting.gi_counts.z * 9.0);
+    highp vec2 t = vec2(((layer * lighting.gi_counts.x) + fxz.x) + 0.5, ((float(k) * lighting.gi_counts.z) + fxz.y) + 0.5);
+    return textureLod(u_irradiance, t / size, 0.0);
+}
+
+highp vec3 volume_irradiance(inout highp vec3 p, highp vec3 n, highp vec3 fallback, out highp float sun_vis)
+{
+    sun_vis = 1.0;
+    if (lighting.gi_min.w < 0.5)
+    {
+        return fallback;
+    }
+    highp vec3 counts = lighting.gi_counts.xyz;
+    highp vec3 lo = lighting.gi_min.xyz;
+    highp vec3 hi = lighting.gi_max.xyz;
+    p += (n * lighting.gi_counts.w);
+    highp vec3 eps = (hi - lo) * 9.9999997473787516355514526367188e-05;
+    bool _974 = any(lessThan(p, lo - eps));
+    bool _984;
+    if (!_974)
+    {
+        _984 = any(greaterThan(p, hi + eps));
+    }
+    else
+    {
+        _984 = _974;
+    }
+    if (_984)
+    {
+        return fallback;
+    }
+    highp vec3 f = clamp(((p - lo) / (hi - lo)) * (counts - vec3(1.0)), vec3(0.0), counts - vec3(1.0));
+    highp float y0 = min(floor(f.y), counts.y - 2.0);
+    highp float ty = f.y - y0;
+    int bands = (lighting.gi_min.w > 1.5) ? 4 : 9;
+    highp vec4 c[9];
+    highp vec4 _1038;
+    for (int k = 0; k < 9; k)VICTUSMSL"
+R"VICTUSMSL(++)
+    {
+        if (k < bands)
+        {
+            int param = k;
+            highp float param_1 = y0;
+            highp vec2 param_2 = f.xz;
+            int param_3 = k;
+            highp float param_4 = y0 + 1.0;
+            highp vec2 param_5 = f.xz;
+            _1038 = mix(gi_fetch(param, param_1, param_2), gi_fetch(param_3, param_4, param_5), vec4(ty));
+        }
+        else
+        {
+            _1038 = vec4(0.0);
+        }
+        c[k] = _1038;
+    }
+    highp float valid = c[0].w;
+    if (valid < 0.001000000047497451305389404296875)
+    {
+        return fallback;
+    }
+    for (int k_1 = 0; k_1 < 9; k_1++)
+    {
+        highp vec4 _1088 = c[k_1];
+        highp vec3 _1091 = _1088.xyz / vec3(valid);
+        c[k_1].x = _1091.x;
+        c[k_1].y = _1091.y;
+        c[k_1].z = _1091.z;
+    }
+    highp vec4 param_6[9] = c;
+    highp vec3 param_7 = n;
+    highp vec3 v = sh9(param_6, param_7) * lighting.gi_max.w;
+    sun_vis = mix(1.0, clamp(c[1].w / valid, 0.0, 1.0), min(valid, 1.0));
+    return mix(fallback, v, vec3(min(valid, 1.0)));
+}
+
+highp vec3 fresnel_schlick(highp float cos_theta, highp vec3 f0)
+{
+    return f0 + ((vec3(1.0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0));
+}
+
+highp float distribution_ggx(highp float NdotH, highp float a)
+{
+    highp float a2 = a * a;
+    highp float d = ((NdotH * NdotH) * (a2 - 1.0)) + 1.0;
+    return a2 / (((3.1415927410125732421875 * d) * d) + 1.0000000116860974230803549289703e-07);
+}
+
+highp float geometry_smith(highp float NdotV, highp float NdotL, highp float roughness)
+{
+    highp float k = ((roughness + 1.0) * (roughness + 1.0)) / 8.0;
+    highp float gv = NdotV / ((NdotV * (1.0 - k)) + k);
+    highp float gl = NdotL / ((NdotL * (1.0 - k)) + k);
+    return gv * gl;
+}
+
+highp vec3 brdf(highp vec3 N, highp vec3 V, highp vec3 L, highp vec3 radiance, highp vec3 albedo, highp float metallic, highp float roughness)
+{
+    highp vec3 H = normalize(V + L);
+    highp float NdotL = max(dot(N, L), 0.0);
+    highp float NdotV = max(dot(N, V), 9.9999997473787516355514526367188e-05);
+    highp float NdotH = max(dot(N, H), 0.0);
+    highp vec3 f0 = mix(vec3(0.039999999105930328369140625), albedo, vec3(metallic));
+    highp float param = max(dot(H, V), 0.0);
+    highp vec3 param_1 = f0;
+    highp vec3 F = fresnel_schlick(param, param_1);
+    highp float param_2 = NdotH;
+    highp float param_3 = roughness * roughness;
+    highp float D = distribution_ggx(param_2, param_3);
+    highp float param_4 = NdotV;
+    highp float param_5 = NdotL;
+    highp float param_6 = roughness;
+    highp float G = geometry_smith(param_4, param_5, param_6);
+    highp vec3 spec = (F * (D * G)) / vec3(((4.0 * NdotV) * NdotL) + 9.9999997473787516355514526367188e-05);
+    highp vec3 kd = (vec3(1.0) - F) * (1.0 - metallic);
+    return ((((kd * albedo) / vec3(3.1415927410125732421875)) + spec) * radiance) * NdotL;
+}
+
+highp float interleaved_gradient_noise(highp vec2 p)
+{
+    return fract(52.98291778564453125 * fract(dot(p, vec2(0.067110560834407806396484375, 0.005837149918079376220703125))));
+}
+
+highp float sample_cascade(int c, highp vec3 N, highp vec3 L)
+{
+    highp float ndl = clamp(dot(N, L), 0.0, 1.0);
+    highp vec3 offset = N * ((lighting.cascade_texel[c] * lighting.shadow_params.z) * (1.0 - (ndl * 0.5)));
+    highp vec4 p4 = lighting.cascade_vp[c] * vec4(vx_io_0 + offset, 1.0);
+    highp vec3 p = p4.xyz / vec3(p4.w);
+    highp vec2 uv = (p.xy * vec2(0.5, -0.5)) + vec2(0.5);
+    if (p.z > 1.0)
+    {
+        return 1.0;
+    }
+    highp float tile = lighting.cascade_params.y;
+    highp vec2 origin = vec2(float(c & 1), float(c >> 1)) * tile;
+    highp float texel = lighting.shadow_params.x;
+    highp vec2 lo = origin + vec2(texel * 1.5);
+    highp vec2 hi = origin + vec2(tile - (texel * 1.5));
+    highp vec2 auv = clamp(origin + (uv * tile), lo, hi);
+    highp float z = p.z - lighting.shadow_params.y;
+    if (lighting.cascade_params.x < 0.5)
+    {
+        highp vec3 _1545 = vec3(auv, z);
+        return texture(u_shadow, vec3(_1545.xy, _1545.z));
+    }
+    if (lighting.cascade_params.x > 1.5)
+    {
+        highp vec2 h = vec2(texel * 0.5);
+        highp vec3 _1575 = vec3(clamp(auv + vec2(-h.x, -h.y), lo, hi), z);
+        highp vec3 _1593 = vec3(clamp(auv + vec2(h.x, -h.y), lo, hi), z);
+        highp vec3 _1612 = vec3(clamp(auv + vec2(-h.x, h.y), lo, hi), z);
+        highp vec3 _1630 = vec3(clamp(auv + vec2(h.x, h.y), lo, hi), z);
+        return 0.25 * (((texture(u_shadow, vec3(_1575.xy, _1575.z)) + texture(u_shadow, vec3(_1593.xy, _1593.z))) + texture(u_shadow, vec3(_1612.xy, _1612.z))) + texture(u_shadow, vec3(_1630.xy, _1630.z)));
+    }
+    highp float sum = 0.0;
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            highp vec3 _1670 = vec3(clamp(auv + (vec2(float(x), float(y)) * texel), lo, hi), z);
+            sum += texture(u_shadow, vec3(_1670.xy, _1670.z));
+        }
+    }
+    return sum / 9.0;
+}
+
+highp float shadow_factor(highp vec3 N, highp vec3 L, highp float baked)
+{
+    if (lighting.sun_dir.w < 0.5)
+    {
+        return baked;
+    }
+    int count = int(lighting.shadow_params.w);
+    highp float depth = dot(vx_io_0 - lighting.camera_pos.xyz, lighting.camera_forward.xyz);
+    int c = 0;
+    for (;;)
+    {
+        bool _1713 = c < (count - 1);
+        bool _1721;
+        if (_1713)
+        {
+            _1721 = depth > lighting.cascade_splits[c];
+        }
+        else
+        {
+            _1721 = _1713;
+        }
+        if (_1721)
+        {
+            c++;
+            continue;
+        }
+        else
+        {
+            break;
+        }
+    }
+    highp float far_d = lighting.cascade_splits[c];
+    if (depth > far_d)
+    {
+        return baked;
+    }
+    highp float _1738;
+    if (c == 0)
+    {
+        _1738 = 0.0;
+    }
+    else
+    {
+        _1738 = lighting.cascade_splits[c - 1];
+    }
+    highp float near_d = _1738;
+    highp float t = (depth - near_d) / max(far_d - near_d, 9.9999997473787516355514526367188e-05);
+    highp float band = lighting.cascade_params.z;
+    highp float fade = clamp((1.0 - t) / max(band, 9.9999997473787516355514526367188e-05), 0.0, 1.0);
+    if (c < (count - 1))
+    {
+        highp vec2 param = gl_FragCoord.xy;
+        if (interleaved_gradient_noise(param) > fade)
+        {
+            c++;
+        }
+        int param_1 = c;
+        highp vec3 param_2 = N;
+        highp vec3 param_3 = L;
+        return sample_cascade(param_1, param_2, param_3);
+    }
+    int param_4 = c;
+    highp vec3 param_5 = N;
+    highp vec3 param_6 = L;
+    return mix(baked, sample_cascade(param_4, param_5, param_6), fade);
+}
+
+highp float cloud_hash(inout highp vec3 p)
+{
+    p = fract(p * 0.103100001811981201171875);
+    p += vec3(dot(p, p.zyx + vec3(31.31999969482421875)));
+    return fract((p.x + p.y) * p.z);
+}
+
+highp float cloud_noise(highp vec3 x)
+{
+    highp vec3 i = floor(x);
+    highp vec3 f = x - i;
+    f = ((f * f) * f) * ((f * ((f * 6.0) - vec3(15.0))) + vec3(10.0));
+    highp vec3 param = i;
+    highp float _2041 = cloud_hash(param);
+    highp vec3 param_1 = i + vec3(1.0, 0.0, 0.0);
+    highp float _2046 = cloud_hash(param_1);
+    highp vec3 param_2 = i + vec3(0.0, 1.0, 0.0);
+    highp float _2054 = cloud_hash(param_2);
+    highp vec3 param_3 = i + vec3(1.0, 1.0, 0.0);
+    highp float _2059 = cloud_hash(param_3);
+    highp vec3 param_4 = i + vec3(0.0, 0.0, 1.0);
+    highp float _2070 = cloud_hash(param_4);
+    highp vec3 param_5 = i + vec3(1.0, 0.0, 1.0);
+    highp float _2075 = cloud_hash(param_5);
+    highp vec3 param_6 = i + vec3(0.0, 1.0, 1.0);
+    highp float _2083 = cloud_hash(param_6);
+    highp vec3 param_7 = i + vec3(1.0);
+    highp float _2088 = cloud_hash(param_7);
+    return mix(mix(mix(_2041, _2046, f.x), mix(_2054, _2059, f.x), f.y), mix(mix(_2070, _2075, f.x), mix(_2083, _2088, f.x), f.y), f.z);
+}
+
+highp float cloud_shadow(highp vec3 L)
+{
+    bool _2103 = lighting.cloud_shadow.z < 0.5;
+    bool _2111;
+    if (!_2103)
+    {
+        _2111 = L.y < 0.0199999995529651641845703125;
+    }
+    else
+    {
+        _2111 = _2103;
+    }
+    if (_2111)
+    {
+        return 1.0;
+    }
+    highp float bottom = lighting.cloud_layer.x;
+    highp float top = lighting.cloud_layer.y;
+    highp float mid = mix(bottom, top, 0.300000011920928955078125);
+    if (vx_io_0.y >= mid)
+    {
+        return 1.0;
+    }
+    highp vec3 q = ((vx_io_0 + (L * ((mid - vx_io_0.y) / L.y))) + lighting.cloud_wind.xyz) * lighting.cloud_shadow.x;
+    highp vec3 param = q;
+    highp vec3 param_1 = mat3(vec3(0.0, 1.62399995326995849609375, 1.21800005435943603515625), vec3(-1.62399995326995849609375, 0.730799973011016845703125, -0.974399983882904052734375), vec3(-1.21800005435943603515625, -0.974399983882904052734375, 1.2992000579833984375)) * q;
+    highp float base = ((0.5 * cloud_noise(param)) + (0.25 * cloud_noise(param_1))) / 0.75;
+    highp float thr = 1.0 - lighting.cloud_layer.z;
+    highp float d = clamp((base - thr) / max(1.0 - thr, 0.0500000007450580596923828125), 0.0, 1.0);
+    highp float od = (((d * lighting.cloud_layer.w) * (top - bottom)) * 0.5) / max(L.y, 0.20000000298023223876953125);
+    return mix(1.0, exp(-od), lighting.cloud_shadow.y);
+}
+
+uint cluster_word(uint i)
+{
+    return texelFetch(vx_storage1, ivec2(int((i >> 2u) & 1023u), int(i >> 12u)), 0)[i & 3u];
+}
+
+highp vec4 vx_texel0(uint t)
+{
+    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+}
+
+LocalLight local_light(uint i)
+{
+    uint t = i * 4u;
+    uint param = t;
+    uint param_1 = t + 1u;
+    uint param_2 = t + 2u;
+    uint param_3 = t + 3u;
+    return LocalLight(vx_texel0(param), vx_texel0(param_1), vx_texel0(param_2), vx_texel0(param_3));
+}
+
+highp float local_shadow(LocalLight l, highp vec3 Ld, highp float dist, highp vec3 N)
+{
+    bool _2219 = lighting.local_shadow.w < 0.5;
+    bool _2226;
+    if (!_2219)
+    {
+        _2226 = l.spot.z < 0.5;
+    }
+    else
+    {
+        _2226 = _2219;
+    }
+    if (_2226)
+    {
+        return 1.0;
+    }
+    int tile = int(l.spot.z + 0.5) - 1;
+    if (l.spot.y < 0.5)
+    {
+        highp vec3 d = -Ld;
+        highp vec3 a = abs(d);
+        bool _2252 = a.x >= a.y;
+        bool _2260;
+        if (_2252)
+        {
+            _2260 = a.x >= a.z;
+        }
+        else
+        {
+            _2260 = _2252;
+        }
+        int _2261;
+        if (_2260)
+        {
+            _2261 = (d.x >= 0.0) ? 0 : 1;
+        }
+        else
+        {
+            int _2274;
+            if (a.y >= a.z)
+            {
+                _2274 = (d.y >= 0.0) ? 2 : 3;
+            }
+            else
+            {
+                _2274 = (d.z >= 0.0) ? 4 : 5;
+            }
+            _2261 = _2274;
+        }
+        int face = _2261;
+        tile += face;
+    }
+    uint param = uint(lighting.local_shadow.z) + uint(tile);
+    LocalLight m = local_light(param);
+    highp mat4 M = mat4(vec4(m.position_range), vec4(m.color_intensity), vec4(m.direction_cos_outer), vec4(m.spot));
+    highp float ndl = clamp(dot(N, Ld), 0.0, 1.0);
+    highp vec3 offset = N * (((dist * l.spot.w) * 1.5) * (1.0 - (ndl * 0.5)));
+    highp vec4 p4 = M * vec4(vx_io_0 + offset, 1.0);
+    if (p4.w <= 9.9999997473787516355514526367188e-06)
+    {
+        return 1.0;
+    }
+    highp vec3 p = p4.xyz / vec3(p4.w);
+    if (p.z >= 1.0)
+    {
+        return 1.0;
+    }
+    highp float n = lighting.local_shadow.y;
+    highp float scale = 1.0 / n;
+    highp vec2 origin = vec2(mod(float(tile), n), floor(float(tile) / n)) * scale;
+    highp float texel = lighting.local_shadow.x;
+    highp vec2 lo = origin + vec2(texel * 1.5);
+    highp vec2 hi = origin + vec2(scale - (texel * 1.5));
+    highp vec2 auv = clamp(p.xy, lo, hi);
+    if (lighting.cascade_params.x < 0.5)
+    {
+        highp vec3 _2431 = vec3(auv, p.z);
+        return texture(u_local_shadow, vec3(_2431.xy, _2431.z));
+    }
+    highp float sum = 0.0;
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            highp vec3 _2469 = vec3(clamp()VICTUSMSL"
+R"VICTUSMSL(auv + (vec2(float(x), float(y)) * texel), lo, hi), p.z);
+            sum += texture(u_local_shadow, vec3(_2469.xy, _2469.z));
+        }
+    }
+    return sum / 9.0;
+}
+
+highp vec2 env_brdf(highp float NdotV, highp float roughness)
+{
+    highp vec4 r = (vec4(-1.0, -0.0274999998509883880615234375, -0.572000026702880859375, 0.02199999988079071044921875) * roughness) + vec4(1.0, 0.0425000004470348358154296875, 1.03999996185302734375, -0.039999999105930328369140625);
+    highp float a004 = (min(r.x * r.x, exp2((-9.27999973297119140625) * NdotV)) * r.x) + r.y;
+    return (vec2(-1.03999996185302734375, 1.03999996185302734375) * a004) + r.zw;
+}
+
+highp vec3 probe_direction(highp vec3 p, highp vec3 r)
+{
+    highp vec3 inv = (vec3(1.0) / max(abs(r), vec3(9.9999997473787516355514526367188e-06))) * sign(r + vec3(1.0000000116860974230803549289703e-07));
+    highp vec3 t = max((probe.box_max.xyz - p) * inv, (probe.box_min.xyz - p) * inv);
+    highp float d = max(min(min(t.x, t.y), t.z), 0.0);
+    return (p + (r * d)) - probe.position.xyz;
+}
+
+highp vec3 env_specular(highp vec3 r, highp float roughness, highp vec3 p)
+{
+    if (probe.box_min.w > 0.5)
+    {
+        highp vec3 param = p;
+        highp vec3 param_1 = r;
+        return textureLod(u_env, probe_direction(param, param_1), roughness * probe.box_max.w).xyz * probe.position.w;
+    }
+    if (lighting.env_params.x < 0.5)
+    {
+        highp vec3 param_2 = r;
+        highp float param_3 = roughness;
+        return environment(param_2, param_3);
+    }
+    highp vec3 param_4 = r;
+    return textureLod(u_env, env_rotate(param_4), roughness * lighting.env_params.y).xyz * lighting.env_params.z;
+}
+
+void main()
+{
+    highp vec2 uv = (vx_io_2 * material.uv_transform.xy) + material.uv_transform.zw;
+    highp vec4 base = texture(u_base_color, uv, lighting.camera_forward.w) * material.base_color;
+    bool alpha_is_mask = material.flags.z > 0.5;
+    highp vec3 geometric_n = normalize(vx_io_1);
+    if (!gl_FrontFacing)
+    {
+        geometric_n = -geometric_n;
+    }
+    Surface s;
+    s.base_color = base.xyz * vx_io_4.xyz;
+    highp float _2532;
+    if (alpha_is_mask)
+    {
+        _2532 = base.w;
+    }
+    else
+    {
+        _2532 = base.w * vx_io_4.w;
+    }
+    s.alpha = _2532;
+    s.emissive = texture(u_emissive, uv, lighting.camera_forward.w).xyz * material.emissive.xyz;
+    s.unlit = material.flags.y > 0.5;
+    highp vec4 mr = texture(u_metal_rough, uv, lighting.camera_forward.w);
+    s.occlusion = 1.0 + (material.blend.y * (mr.x - 1.0));
+    s.metallic = clamp(material.params.x * mr.z, 0.0, 1.0);
+    s.roughness = clamp(material.params.y * mr.y, 0.04500000178813934326171875, 1.0);
+    highp vec3 N = geometric_n;
+    if (material.flags.x > 0.5)
+    {
+        highp vec3 T = normalize(vx_io_3.xyz - (N * dot(N, vx_io_3.xyz)));
+        highp vec3 B = cross(N, T) * vx_io_3.w;
+        highp vec3 tn = (texture(u_normal_map, uv, lighting.camera_forward.w).xyz * 2.0) - vec3(1.0);
+        highp vec3 _2630 = tn;
+        highp vec2 _2632 = _2630.xy * material.params.z;
+        tn.x = _2632.x;
+        tn.y = _2632.y;
+        N = normalize(mat3(vec3(T), vec3(B), vec3(N)) * tn);
+    }
+    s.normal = N;
+    highp vec3 V = normalize(lighting.camera_pos.xyz - vx_io_0);
+    if (s.alpha < material.params.w)
+    {
+        discard;
+    }
+    if (s.unlit)
+    {
+        highp vec3 param = s.base_color + s.emissive;
+        out_color = vec4(blended_fog(param), s.alpha);
+        if (lighting.screen.w > 0.0)
+        {
+            highp vec3 param_1 = out_color.xyz;
+            highp float param_2 = lighting.screen.w;
+            highp vec3 _2703 = hdr_quantize(param_1, param_2);
+            out_color.x = _2703.x;
+            out_color.y = _2703.y;
+            out_color.z = _2703.z;
+        }
+        return;
+    }
+    N = s.normal;
+    highp vec3 albedo = s.base_color;
+    highp float metallic = s.metallic;
+    highp float roughness = s.roughness;
+    highp float wet = lighting.weather.x;
+    highp float puddle_amount = lighting.weather.w;
+    highp float ripple = lighting.puddles.y;
+    bool _2741 = ((wet > 0.0) || (puddle_amount > 0.0)) || (ripple > 0.0);
+    bool _2747;
+    if (_2741)
+    {
+        _2747 = lighting.weather.y > 0.5;
+    }
+    else
+    {
+        _2747 = _2741;
+    }
+    if (_2747)
+    {
+        highp vec4 r4 = lighting.rain_vp * vec4(vx_io_0 + (geometric_n * 0.0500000007450580596923828125), 1.0);
+        highp vec3 r = r4.xyz / vec3(r4.w);
+        highp vec2 ruv = (r.xy * vec2(0.5, -0.5)) + vec2(0.5);
+        bool _2779 = all(greaterThanEqual(ruv, vec2(0.0)));
+        bool _2785;
+        if (_2779)
+        {
+            _2785 = all(lessThanEqual(ruv, vec2(1.0)));
+        }
+        else
+        {
+            _2785 = _2779;
+        }
+        bool _2791;
+        if (_2785)
+        {
+            _2791 = r.z <= 1.0;
+        }
+        else
+        {
+            _2791 = _2785;
+        }
+        if (_2791)
+        {
+            highp vec3 _2805 = vec3(ruv, r.z - lighting.weather.z);
+            highp float exposed = texture(u_rain_occlusion, vec3(_2805.xy, _2805.z));
+            wet *= exposed;
+            puddle_amount *= exposed;
+            ripple *= exposed;
+        }
+    }
+    highp float flat_up = clamp((geometric_n.y - 0.85000002384185791015625) / 0.100000001490116119384765625, 0.0, 1.0);
+    highp float puddle = 0.0;
+    if ((puddle_amount > 0.0) && (flat_up > 0.0))
+    {
+        highp vec2 q = vx_io_0.xz * lighting.puddles.x;
+        highp vec2 param_3 = q;
+        highp vec2 param_4 = (q * 2.7000000476837158203125) + vec2(13.1000003814697265625);
+        highp float n = (0.64999997615814208984375 * puddle_noise(param_3)) + (0.3499999940395355224609375 * puddle_noise(param_4));
+        highp float threshold = 1.0 - puddle_amount;
+        puddle = smoothstep(threshold - 0.039999999105930328369140625, threshold + 0.039999999105930328369140625, n) * flat_up;
+        wet = max(wet, puddle);
+    }
+    if (puddle > 0.0)
+    {
+        N = normalize(mix(N, geometric_n, vec3(puddle)));
+    }
+    highp vec2 rp = vx_io_0.xz * lighting.puddles.z;
+    highp float footprint = length(fwidth(rp));
+    if ((ripple > 0.0) && (flat_up > 0.0))
+    {
+        highp float k = ((ripple * flat_up) * mix(0.25 * wet, 1.0, puddle)) * clamp(2.0 - (footprint * 3.0), 0.0, 1.0);
+        if (k > 0.0)
+        {
+            highp vec2 param_5 = rp;
+            highp float param_6 = lighting.screen.z * lighting.puddles.w;
+            highp vec2 g = ripple_slope(param_5, param_6);
+            N = normalize(N - (vec3(g.x, 0.0, g.y) * (0.60000002384185791015625 * k)));
+        }
+    }
+    if (wet > 0.0)
+    {
+        highp float porosity = clamp((roughness - 0.20000000298023223876953125) / 0.60000002384185791015625, 0.0, 1.0) * (1.0 - metallic);
+        highp float factor = mix(1.0, 0.20000000298023223876953125, porosity);
+        albedo *= mix(1.0, factor, wet);
+        roughness *= mix(1.0, factor, 0.5 * wet);
+        highp float up = clamp(N.y, 0.0, 1.0);
+        roughness = clamp(mix(roughness, min(roughness, 0.07999999821186065673828125), (wet * up) * up), 0.04500000178813934326171875, 1.0);
+        roughness = mix(roughness, 0.04500000178813934326171875, puddle);
+    }
+    highp float coverage = lighting.coverage_color.w * material.flags.w;
+    if (coverage > 0.0)
+    {
+        highp float up_1 = clamp((N.y - lighting.coverage_params.y) * lighting.coverage_params.z, 0.0, 1.0);
+        highp float _3004;
+        if (alpha_is_mask)
+        {
+            _3004 = step(0.5, vx_io_4.w);
+        }
+        else
+        {
+            _3004 = 1.0;
+        }
+        highp float mask = _3004;
+        coverage = clamp((coverage * up_1) * mask, 0.0, 1.0);
+        albedo = mix(albedo, lighting.coverage_color.xyz, vec3(coverage));
+        roughness = mix(roughness, lighting.coverage_params.x, coverage);
+        metallic = mix(metallic, 0.0, coverage);
+    }
+    highp vec3 L = normalize(-lighting.sun_dir.xyz);
+    highp vec4 _3044;
+    if (vx_io_5.z > 0.5)
+    {
+        _3044 = texture(u_lightmap, vx_io_5.xy);
+    }
+    else
+    {
+        _3044 = vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    highp vec4 lm_texel = _3044;
+    highp vec3 param_7 = N;
+    highp vec3 sky_irradiance = env_irradiance(param_7);
+    highp float probe_sun = 1.0;
+    highp vec3 _3063;
+    if (vx_io_5.z > 0.5)
+    {
+        _3063 = sky_irradiance;
+    }
+    else
+    {
+        highp vec3 param_8 = vx_io_0;
+        highp vec3 param_9 = N;
+        highp vec3 param_10 = sky_irradiance;
+        highp float param_11;
+        highp vec3 _3075 = volume_irradiance(param_8, param_9, param_10, param_11);
+        probe_sun = param_11;
+        _3063 = _3075;
+    }
+    highp vec3 probe_irradiance = _3063;
+    highp float _3082;
+    if (lighting.cascade_params.w > 0.5)
+    {
+        highp float _3088;
+        if (vx_io_5.z > 0.5)
+        {
+            _3088 = lm_texel.w;
+        }
+        else
+        {
+            _3088 = probe_sun;
+        }
+        _3082 = _3088;
+    }
+    else
+    {
+        _3082 = 1.0;
+    }
+    highp float baked_sun = _3082;
+    highp vec3 param_12 = N;
+    highp vec3 param_13 = V;
+    highp vec3 param_14 = L;
+    highp vec3 param_15 = lighting.sun_color.xyz;
+    highp vec3 param_16 = albedo;
+    highp float param_17 = metallic;
+    highp float param_18 = roughness;
+    highp vec3 param_19 = N;
+    highp vec3 param_20 = L;
+    highp float param_21 = baked_sun;
+    highp vec3 param_22 = L;
+    highp vec3 color = brdf(param_12, param_13, param_14, param_15, param_16, param_17, param_18) * (shadow_factor(param_19, param_20, param_21) * cloud_shadow(param_22));
+    if (lighting.ground_color.w > 0.5)
+    {
+        highp vec3 grid = lighting.cluster_grid.xyz;
+        highp vec2 tile = clamp(floor((gl_FragCoord.xy * lighting.screen.xy) * grid.xy), vec2(0.0), grid.xy - vec2(1.0));
+        highp float view_depth = max(dot(vx_io_0 - lighting.camera_pos.xyz, lighting.camera_forward.xyz), lighting.cluster_depth.x);
+        highp float slice = clamp(floor(log(view_depth / lighting.cluster_depth.x) * lighting.cluster_depth.y), 0.0, grid.z - 1.0);
+        uint cluster = uint((((slice * grid.y) + tile.y) * grid.x) + tile.x);
+        uint param_23 = 2u * cluster;
+        uint first = cluster_word(param_23);
+        uint param_24 = (2u * cluster) + 1u;
+        uint count = min(cluster_word(param_24), uint(lighting.cluster_grid.w));
+        for (uint i = 0u; i < count; i++)
+        {
+            uint param_25 = first + i;
+            uint param_26 = cluster_word(param_25);
+            LocalLight l = local_light(param_26);
+            highp vec3 to_light = l.position_range.xyz - vx_io_0;
+            highp float dist = length(to_light);
+            highp float range = l.position_range.w;
+            highp float falloff = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
+            highp float atten = (falloff * falloff) / ((dist * dist) + 1.0);
+            highp vec3 Ld = to_light / vec3(max(dist, 9.9999997473787516355514526367188e-05));
+            if (l.spot.y > 0.5)
+            {
+                highp float cd = dot(-Ld, l.direction_cos_outer.xyz);
+                highp float t = clamp((cd - l.direction_cos_outer.w) / max(l.spot.x - l.direction_cos_outer.w, 9.9999997473787516355514526367188e-05), 0.0, 1.0);
+                atten *= (t * t);
+            }
+            if (atten <= 0.0)
+            {
+                continue;
+            }
+            LocalLight param_27 = l;
+            highp vec3 param_28 = Ld;
+            highp float param_29 = dist;
+            highp vec3 param_30 = N;
+            atten *= local_shadow(param_27, param_28, param_29, param_30);
+            if (atten <= 0.0)
+            {
+                continue;
+            }
+            highp vec3 radiance = (l.color_intensity.xyz * l.color_intensity.w) * atten;
+            highp vec3 param_31 = N;
+            highp vec3 param_32 = V;
+            highp vec3 param_33 = Ld;
+            highp vec3 param_34 = radiance;
+            highp vec3 param_35 = albedo;
+            highp float par)VICTUSMSL"
+R"VICTUSMSL(am_36 = metallic;
+            highp float param_37 = roughness;
+            color += brdf(param_31, param_32, param_33, param_34, param_35, param_36, param_37);
+        }
+    }
+    highp float NdotV = max(dot(N, V), 9.9999997473787516355514526367188e-05);
+    highp vec3 f0 = mix(vec3(0.039999999105930328369140625), albedo, vec3(metallic));
+    highp float param_38 = NdotV;
+    highp vec3 param_39 = f0;
+    highp vec3 kd = (vec3(1.0) - fresnel_schlick(param_38, param_39)) * (1.0 - metallic);
+    highp float lightmap_occlusion = 1.0;
+    highp vec3 irradiance;
+    if (vx_io_5.z > 0.5)
+    {
+        irradiance = lm_texel.xyz;
+        highp vec4 lm_dir = texture(u_lightmap_dir, vx_io_5.xy);
+        if (lm_dir.w >= 0.25)
+        {
+            irradiance *= (((0.5 * dot(N, (lm_dir.xyz * 2.0) - vec3(1.0))) + 0.5) / lm_dir.w);
+        }
+        highp float sky_l = dot(sky_irradiance, vec3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875));
+        highp float lm_l = dot(irradiance, vec3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875));
+        highp float _3409;
+        if (sky_l > 9.9999997473787516355514526367188e-05)
+        {
+            _3409 = clamp(lm_l / sky_l, 0.0, 1.0);
+        }
+        else
+        {
+            _3409 = 1.0;
+        }
+        lightmap_occlusion = _3409;
+    }
+    else
+    {
+        irradiance = probe_irradiance;
+    }
+    highp float param_40 = NdotV;
+    highp float param_41 = roughness;
+    highp vec2 ab = env_brdf(param_40, param_41);
+    highp vec3 R = reflect(-V, N);
+    highp float horizon = clamp(1.0 + dot(R, geometric_n), 0.0, 1.0);
+    highp vec3 param_42 = R;
+    highp float param_43 = roughness;
+    highp vec3 param_44 = vx_io_0;
+    highp vec3 specular = ((env_specular(param_42, param_43, param_44) * ((f0 * ab.x) + vec3(ab.y))) * horizon) * horizon;
+    highp float _3462;
+    if (lighting.camera_pos.w > 0.5)
+    {
+        _3462 = texture(u_ao, gl_FragCoord.xy * lighting.screen.xy).x;
+    }
+    else
+    {
+        _3462 = 1.0;
+    }
+    highp float ao = _3462;
+    ao *= s.occlusion;
+    highp float spec_ao = clamp((pow(NdotV + ao, exp2(((-16.0) * roughness) - 1.0)) - 1.0) + ao, 0.0, 1.0);
+    spec_ao *= lightmap_occlusion;
+    color += ((((kd * albedo) * irradiance) * ao) + (specular * spec_ao));
+    color += s.emissive;
+    int fog_mode = int(lighting.fog_color.w + 0.5);
+    if (fog_mode > 0)
+    {
+        highp float d = length(vx_io_0 - lighting.camera_pos.xyz);
+        highp float f;
+        if (fog_mode == 1)
+        {
+            f = clamp((d - lighting.fog_params.x) / max(lighting.fog_params.y - lighting.fog_params.x, 0.001000000047497451305389404296875), 0.0, 1.0);
+        }
+        else
+        {
+            highp float k_1 = max(d - lighting.fog_params.x, 0.0) * lighting.fog_params.z;
+            highp float _3562;
+            if (fog_mode == 2)
+            {
+                _3562 = 1.0 - exp(-k_1);
+            }
+            else
+            {
+                _3562 = 1.0 - exp((-k_1) * k_1);
+            }
+            f = _3562;
+        }
+        color = mix(color, lighting.fog_color.xyz, vec3(f * lighting.fog_params.w));
+    }
+    highp vec3 param_45 = color;
+    out_color = vec4(blended_fog(param_45), s.alpha);
+    if (lighting.screen.w > 0.0)
+    {
+        highp vec3 param_46 = out_color.xyz;
+        highp float param_47 = lighting.screen.w;
+        highp vec3 _3607 = hdr_quantize(param_46, param_47);
+        out_color.x = _3607.x;
+        out_color.y = _3607.y;
+        out_color.z = _3607.z;
+    }
+}
+
+)VICTUSMSL";
+// pbr.frag#fp16 sha256=4cc930b2cd75645b7f5b3c8d675fddaaddfe0e622ca48e1dec441e678d2d91b1
 const std::uint8_t k_spirv_38[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0x7a, 0x0e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x11, 0x00, 0x02, 0x00, 0x09, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00,
@@ -29927,7 +31507,7 @@ R"VICTUSMSL(_texel = _3123;
 )VICTUSMSL";
 // essl rev=3
 const char k_essl_38[] = "";
-// precipitation.frag sha256=a15835e5062b549c41867b9678fe9a067a57c361c2c8d26bcfcd0d1e2c7cf820
+// precipitation.frag sha256=328b0bdac787508047cd7228f64568f719a06dfebfab3beca5cdcf3e9a4ccf5f
 const std::uint8_t k_spirv_39[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0x2d, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53, 0x4c,
@@ -30808,8 +32388,202 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 
 )VICTUSMSL";
 // essl rev=3
-const char k_essl_39[] = "";
-// precipitation.frag#reactive sha256=2070e1e03b972d7496488c88586bbbbd890692ba8fdda8b6903ce11bfc0cd6f1
+const char k_essl_39[] =
+R"VICTUSMSL(#version 300 es
+//! storage 0 vx_storage0
+//! sampler 1 u_rain_occlusion
+//! sampler 0 u_depth
+//! ubo 0 fs_Params
+precision mediump float;
+precision highp int;
+
+layout(std140) uniform fs_Params
+{
+    highp vec4 proj;
+    highp vec4 screen;
+    highp mat4 rain_vp;
+    highp vec4 fog_color;
+    highp vec4 fog_params;
+    highp vec4 view;
+    highp vec4 volumetric;
+} u;
+
+uniform highp usampler2D vx_storage0;
+uniform highp sampler2DShadow u_rain_occlusion;
+uniform highp sampler2D u_depth;
+
+in highp vec2 vx_io_0;
+in highp vec4 vx_io_1;
+in highp vec3 vx_io_3;
+in highp float vx_io_2;
+layout(location = 0) out highp vec4 out_color;
+
+highp float distance_fog(highp float view_depth)
+{
+    int mode = int(u.fog_color.w + 0.5);
+    if (mode == 0)
+    {
+        return 0.0;
+    }
+    highp vec2 ndc = ((gl_FragCoord.xy * u.screen.xy) * 2.0) - vec2(1.0);
+    highp float d = view_depth * length(vec3(ndc * u.view.xy, 1.0));
+    highp float f;
+    if (mode == 1)
+    {
+        f = clamp((d - u.fog_params.x) / max(u.fog_params.y - u.fog_params.x, 0.001000000047497451305389404296875), 0.0, 1.0);
+    }
+    else
+    {
+        highp float k = max(d - u.fog_params.x, 0.0) * u.fog_params.z;
+        highp float _341;
+        if (mode == 2)
+        {
+            _341 = 1.0 - exp(-k);
+        }
+        else
+        {
+            _341 = 1.0 - exp((-k) * k);
+        }
+        f = _341;
+    }
+    return f * u.fog_params.w;
+}
+
+highp vec4 vx_texel0(uint t)
+{
+    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+}
+
+highp vec4 volumetric_fog(highp vec2 uv, highp float view_depth, highp vec4 grid)
+{
+    if (grid.w <= 0.0)
+    {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    uvec3 g = uvec3(grid.xyz);
+    highp vec2 x = clamp((uv * grid.xy) - vec2(0.5), vec2(0.0), grid.xy - vec2(1.0));
+    uvec2 a = uvec2(floor(x));
+    uvec2 b = min((a + uvec2(1u)), (g.xy - uvec2(1u)));
+    highp vec2 w = x - vec2(a);
+    highp float s = sqrt(clamp(view_depth / grid.w, 0.0, 1.0)) * grid.z;
+    highp vec4 v0 = vec4(0.0, 0.0, 0.0, 1.0);
+    uint z0;
+    uint z1;
+    highp float t;
+    if (s < 1.0)
+    {
+        z0 = 0u;
+        z1 = 0u;
+        t = s;
+    }
+    else
+    {
+        z0 = min(uint(floor(s - 1.0)), (g.z - 1u));
+        z1 = min((z0 + 1u), (g.z - 1u));
+        t = (s - 1.0) - float(z0);
+    }
+    highp vec4 c[2];
+    for (int k = 0; k < 2; k++)
+    {
+        uint base = (((k == 0) ? z0 : z1) * g.y) * g.x;
+        uint param = (base + (a.y * g.x)) + a.x;
+        uint param_1 = (base + (a.y * g.x)) + b.x;
+        highp vec4 r0 = mix(vx_texel0(param), vx_texel0(param_1), vec4(w.x));
+        uint param_2 = (base + (b.y * g.x)) + a.x;
+        uint param_3 = (base + (b.y * g.x)) + b.x;
+        highp vec4 r1 = mix(vx_texel0(param_2), vx_texel0(param_3), vec4(w.x));
+        c[k] = mix(r0, r1, vec4(w.y));
+    }
+    highp vec4 _242;
+    if (s < 1.0)
+    {
+        _242 = mix(v0, c[0], vec4(t));
+    }
+    else
+    {
+        _242 = mix(c[0], c[1], vec4(t));
+    }
+    highp vec4 v1 = _242;
+    v1.w = clamp(v1.w, 0.0, 1.0);
+    return v1;
+}
+
+void main()
+{
+    highp float shape;
+    if (u.screen.w > 1.5)
+    {
+        highp float r = length(vec2(vx_io_0.x, vx_io_0.y + 1.0) * vec2(1.0, 0.5));
+        shape = smoothstep(0.449999988079071044921875, 0.800000011920928955078125, r) * (1.0 - smoothstep(0.85000002384185791015625, 1.0, r));
+    }
+    else
+    {
+        if (u.screen.w > 0.5)
+        {
+            shape = 1.0 - smoothstep(0.4000000059604644775390625, 1.0, length(vx_io_0));
+        }
+        else
+        {
+            shape = (1.0 - abs(vx_io_0.x)) * (1.0 - (vx_io_0.y * vx_io_0.y));
+        }
+    }
+    highp float a = vx_io_1.w * shape;
+    if (a <= 0.00200000009499490261077880859375)
+    {
+        discard;
+    }
+    if (u.proj.z > 0.5)
+    {
+        highp vec4 r4 = u.rain_vp * vec4(vx_io_3, 1.0);
+        highp vec3 r_1 = r4.xyz / vec3(r4.w);
+        highp vec2 ruv = (r_1.xy * vec2(0.5, -0.5)) + vec2(0.5);
+        bool _462 = all(greaterThanEqual(ruv, vec2(0.0)));
+        bool _469;
+        if (_462)
+        {
+            _469 = all(lessThanEqual(ruv, vec2(1.0)));
+        }
+        else
+        {
+            _469 = _462;
+        }
+        bool _475;
+        if (_469)
+        {
+            _475 = r_1.z <= 1.0;
+        }
+        else
+        {
+            _475 = _469;
+        }
+        if (_475)
+        {
+            highp vec3 _491 = vec3(ruv, r_1.z - u.proj.w);
+            a *= texture(u_rain_occlusion, vec3(_491.xy, _491.z));
+            if (a <= 0.00200000009499490261077880859375)
+            {
+                discard;
+            }
+        }
+    }
+    highp float scene = u.proj.x / (textureLod(u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).x + u.proj.y);
+    highp float gap = scene - vx_io_2;
+    if (gap <= 0.0)
+    {
+        discard;
+    }
+    a *= clamp(gap * u.screen.z, 0.0, 1.0);
+    highp float param = vx_io_2;
+    highp vec3 rgb = mix(vx_io_1.xyz, u.fog_color.xyz, vec3(distance_fog(param)));
+    highp vec2 param_1 = gl_FragCoord.xy * u.screen.xy;
+    highp float param_2 = vx_io_2;
+    highp vec4 param_3 = u.volumetric;
+    highp vec4 vf = volumetric_fog(param_1, param_2, param_3);
+    out_color = vec4((rgb * vf.w) + vf.xyz, a);
+}
+
+)VICTUSMSL";
+// precipitation.frag#reactive sha256=721eb5ade8f14b260489df1dc5d23d40787de9b39427d7849d20fb15e443fb86
 const std::uint8_t k_spirv_40[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0x30, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53, 0x4c,
@@ -31698,7 +33472,203 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 
 )VICTUSMSL";
 // essl rev=3
-const char k_essl_40[] = "";
+const char k_essl_40[] =
+R"VICTUSMSL(#version 300 es
+//! storage 0 vx_storage0
+//! sampler 1 u_rain_occlusion
+//! sampler 0 u_depth
+//! ubo 0 fs_Params
+precision mediump float;
+precision highp int;
+
+layout(std140) uniform fs_Params
+{
+    highp vec4 proj;
+    highp vec4 screen;
+    highp mat4 rain_vp;
+    highp vec4 fog_color;
+    highp vec4 fog_params;
+    highp vec4 view;
+    highp vec4 volumetric;
+} u;
+
+uniform highp usampler2D vx_storage0;
+uniform highp sampler2DShadow u_rain_occlusion;
+uniform highp sampler2D u_depth;
+
+in highp vec2 vx_io_0;
+in highp vec4 vx_io_1;
+in highp vec3 vx_io_3;
+in highp float vx_io_2;
+layout(location = 0) out highp vec4 out_color;
+layout(location = 1) out highp vec4 out_reactive;
+
+highp float distance_fog(highp float view_depth)
+{
+    int mode = int(u.fog_color.w + 0.5);
+    if (mode == 0)
+    {
+        return 0.0;
+    }
+    highp vec2 ndc = ((gl_FragCoord.xy * u.screen.xy) * 2.0) - vec2(1.0);
+    highp float d = view_depth * length(vec3(ndc * u.view.xy, 1.0));
+    highp float f;
+    if (mode == 1)
+    {
+        f = clamp((d - u.fog_params.x) / max(u.fog_params.y - u.fog_params.x, 0.001000000047497451305389404296875), 0.0, 1.0);
+    }
+    else
+    {
+        highp float k = max(d - u.fog_params.x, 0.0) * u.fog_params.z;
+        highp float _341;
+        if (mode == 2)
+        {
+            _341 = 1.0 - exp(-k);
+        }
+        else
+        {
+            _341 = 1.0 - exp((-k) * k);
+        }
+        f = _341;
+    }
+    return f * u.fog_params.w;
+}
+
+highp vec4 vx_texel0(uint t)
+{
+    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+}
+
+highp vec4 volumetric_fog(highp vec2 uv, highp float view_depth, highp vec4 grid)
+{
+    if (grid.w <= 0.0)
+    {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    uvec3 g = uvec3(grid.xyz);
+    highp vec2 x = clamp((uv * grid.xy) - vec2(0.5), vec2(0.0), grid.xy - vec2(1.0));
+    uvec2 a = uvec2(floor(x));
+    uvec2 b = min((a + uvec2(1u)), (g.xy - uvec2(1u)));
+    highp vec2 w = x - vec2(a);
+    highp float s = sqrt(clamp(view_depth / grid.w, 0.0, 1.0)) * grid.z;
+    highp vec4 v0 = vec4(0.0, 0.0, 0.0, 1.0);
+    uint z0;
+    uint z1;
+    highp float t;
+    if (s < 1.0)
+    {
+        z0 = 0u;
+        z1 = 0u;
+        t = s;
+    }
+    else
+    {
+        z0 = min(uint(floor(s - 1.0)), (g.z - 1u));
+        z1 = min((z0 + 1u), (g.z - 1u));
+        t = (s - 1.0) - float(z0);
+    }
+    highp vec4 c[2];
+    for (int k = 0; k < 2; k++)
+    {
+        uint base = (((k == 0) ? z0 : z1) * g.y) * g.x;
+        uint param = (base + (a.y * g.x)) + a.x;
+        uint param_1 = (base + (a.y * g.x)) + b.x;
+        highp vec4 r0 = mix(vx_texel0(param), vx_texel0(param_1), vec4(w.x));
+        uint param_2 = (base + (b.y * g.x)) + a.x;
+        uint param_3 = (base + (b.y * g.x)) + b.x;
+        highp vec4 r1 = mix(vx_texel0(param_2), vx_texel0(param_3), vec4(w.x));
+        c[k] = mix(r0, r1, vec4(w.y));
+    }
+    highp vec4 _242;
+    if (s < 1.0)
+    {
+        _242 = mix(v0, c[0], vec4(t));
+    }
+    else
+    {
+        _242 = mix(c[0], c[1], vec4(t));
+    }
+    highp vec4 v1 = _242;
+    v1.w = clamp(v1.w, 0.0, 1.0);
+    return v1;
+}
+
+void main()
+{
+    highp float shape;
+    if (u.screen.w > 1.5)
+    {
+        highp float r = length(vec2(vx_io_0.x, vx_io_0.y + 1.0) * vec2(1.0, 0.5));
+        shape = smoothstep(0.449999988079071044921875, 0.800000011920928955078125, r) * (1.0 - smoothstep(0.85000002384185791015625, 1.0, r));
+    }
+    else
+    {
+        if (u.screen.w > 0.5)
+        {
+            shape = 1.0 - smoothstep(0.4000000059604644775390625, 1.0, length(vx_io_0));
+        }
+        else
+        {
+            shape = (1.0 - abs(vx_io_0.x)) * (1.0 - (vx_io_0.y * vx_io_0.y));
+        }
+    }
+    highp float a = vx_io_1.w * shape;
+    if (a <= 0.00200000009499490261077880859375)
+    {
+        discard;
+    }
+    if (u.proj.z > 0.5)
+    {
+        highp vec4 r4 = u.rain_vp * vec4(vx_io_3, 1.0);
+        highp vec3 r_1 = r4.xyz / vec3(r4.w);
+        highp vec2 ruv = (r_1.xy * vec2(0.5, -0.5)) + vec2(0.5);
+        bool _462 = all(greaterThanEqual(ruv, vec2(0.0)));
+        bool _469;
+        if (_462)
+        {
+            _469 = all(lessThanEqual(ruv, vec2(1.0)));
+        }
+        else
+        {
+            _469 = _462;
+        }
+        bool _475;
+        if (_469)
+        {
+            _475 = r_1.z <= 1.0;
+        }
+        else
+        {
+            _475 = _469;
+        }
+        if (_475)
+        {
+            highp vec3 _491 = vec3(ruv, r_1.z - u.proj.w);
+            a *= texture(u_rain_occlusion, vec3(_491.xy, _491.z));
+            if (a <= 0.00200000009499490261077880859375)
+            {
+                discard;
+            }
+        }
+    }
+    highp float scene = u.proj.x / (textureLod(u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).x + u.proj.y);
+    highp float gap = scene - vx_io_2;
+    if (gap <= 0.0)
+    {
+        discard;
+    }
+    a *= clamp(gap * u.screen.z, 0.0, 1.0);
+    highp float param = vx_io_2;
+    highp vec3 rgb = mix(vx_io_1.xyz, u.fog_color.xyz, vec3(distance_fog(param)));
+    highp vec2 param_1 = gl_FragCoord.xy * u.screen.xy;
+    highp float param_2 = vx_io_2;
+    highp vec4 param_3 = u.volumetric;
+    highp vec4 vf = volumetric_fog(param_1, param_2, param_3);
+    out_color = vec4((rgb * vf.w) + vf.xyz, a);
+    out_reactive = vec4(1.0, 1.0, 1.0, a);
+}
+
+)VICTUSMSL";
 // precipitation.vert sha256=5509c864f1f92973ba3d6fbea8058250cddb51d2dd260cbade221a8f055d5548
 const std::uint8_t k_spirv_41[] = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0xa6, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

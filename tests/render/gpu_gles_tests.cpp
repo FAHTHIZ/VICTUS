@@ -519,7 +519,7 @@ TEST_CASE("gles: every built-in shader with GLSL ES compiles on the device") {
         }
     }
     MESSAGE(compiled << " built-in shaders compiled as GLSL ES 3.00, " << without << " have none yet");
-    CHECK(compiled >= 48); // 55 graphics shaders; the rest need ES 3.00 rewrites (ADR-0144)
+    CHECK(compiled >= 54); // 55 graphics shaders; pbr.frag#fp16 needs shaderFloat16, which GLES never reports (ADR-0144)
 }
 
 TEST_CASE("gles: built-in fullscreen pass matches the SDL_GPU backend") {
