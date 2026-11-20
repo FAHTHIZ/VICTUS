@@ -16,7 +16,24 @@ layout(set = 3, binding = 0) uniform Taa {
     mat4 reproject;  // current NDC -> previous clip (both unjittered)
     vec4 params;     // x: current-frame weight, y: history valid, z: clip gamma, w: object motion present
     vec4 screen;     // xy: 1 / render size, zw: 1 / history size
+    vec4 quant;      // x: compact HDR frame + 1 (0 off)
 } u;
+
+// Stochastic rounding to R11G11B10_FLOAT (compact HDR, ADR-0129). The result is exactly
+// representable, so the hardware conversion (round-to-nearest or toward zero, which Vulkan leaves
+// to the implementation) cannot bias it, and repeated stores (TAA history) do not drift darker.
+// Interleaved gradient noise (Jimenez 2014) per channel, offset per frame.
+vec3 hdr_quantize(vec3 c, float frame) {
+    vec2 p = gl_FragCoord.xy + 5.588238 * frame;
+    const vec2 k = vec2(0.06711056, 0.00583715);
+    vec3 n = vec3(fract(52.9829189 * fract(dot(p, k))), fract(52.9829189 * fract(dot(p + vec2(17.0, 59.0), k))),
+                  fract(52.9829189 * fract(dot(p + vec2(83.0, 31.0), k))));
+    c = clamp(c, vec3(0.0), vec3(64512.0));
+    ivec3 e;
+    frexp(max(c, vec3(1e-30)), e); // c = m * 2^e with m in [0.5, 1)
+    vec3 ulp = exp2(vec3(max(e - 1, ivec3(-14))) - vec3(6.0, 6.0, 5.0));
+    return floor(c / ulp + n) * ulp;
+}
 layout(location = 0) out vec4 out_color;
 
 vec3 to_ycocg(vec3 c) {
@@ -98,4 +115,5 @@ void main() {
     vec3 r = from_ycocg(mix(hw, cw, alpha));
     r = r / max(1.0 - luma(r), 1e-4);
     out_color = vec4(safe(r), 1.0);
+    if (u.quant.x > 0.0) out_color.rgb = hdr_quantize(out_color.rgb, u.quant.x);
 }
