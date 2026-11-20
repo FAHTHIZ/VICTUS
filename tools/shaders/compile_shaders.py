@@ -36,8 +36,31 @@ def sources():
     return sorted(p for p in SRC.iterdir() if p.suffix in STAGES)
 
 
-def digest(path):
-    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+# Shaders that contain this marker are also compiled with VICTUS_FP16 defined, as
+# "<name>#fp16" (explicit half-precision variant for GPUs with shaderFloat16, ADR-0137).
+FP16_MARKER = "VICTUS_FP16_VARIANT"
+
+
+class Unit:
+    def __init__(self, path, name, defines):
+        self.path, self.name, self.defines, self.suffix = path, name, defines, path.suffix
+
+
+def units():
+    out = []
+    for p in sources():
+        out.append(Unit(p, p.name, []))
+        if FP16_MARKER in p.read_text():
+            out.append(Unit(p, p.name + "#fp16", ["VICTUS_FP16=1"]))
+    return out
+
+
+def digest(unit):
+    path = unit.path if isinstance(unit, Unit) else unit
+    h = hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n"))
+    if isinstance(unit, Unit) and unit.defines:
+        h.update(("\n" + " ".join(unit.defines)).encode())
+    return h.hexdigest()
 
 
 def run(cmd):
@@ -48,13 +71,16 @@ def run(cmd):
     return r.stdout
 
 
-def compile_one(path, tmp):
-    spv = tmp / (path.name + ".spv")
-    run(["glslangValidator", "-V", "--quiet", "--target-env", "vulkan1.0", str(path), "-o", str(spv)])
+def compile_one(unit, tmp):
+    path = unit.path
+    defs = [f"-D{d}" for d in unit.defines]
+    stem = unit.name.replace("#", "_")
+    spv = tmp / (stem + ".spv")
+    run(["glslangValidator", "-V", "--quiet", "--target-env", "vulkan1.0", *defs, str(path), "-o", str(spv)])
     # MSL is generated from a second compile with VICTUS_MSL defined so shaders can pick
     # Metal-specific binding numbers (SDL_GPU orders Metal buffers as uniforms, then storage).
-    spv_msl = tmp / (path.name + ".msl.spv")
-    run(["glslangValidator", "-V", "--quiet", "--target-env", "vulkan1.0", "-DVICTUS_MSL=1", str(path), "-o",
+    spv_msl = tmp / (stem + ".msl.spv")
+    run(["glslangValidator", "-V", "--quiet", "--target-env", "vulkan1.0", "-DVICTUS_MSL=1", *defs, str(path), "-o",
          str(spv_msl)])
     msl = run(["spirv-cross", str(spv_msl), "--msl", "--msl-version", "20100", "--msl-decoration-binding"])
     refl = json.loads(run(["spirv-cross", str(spv), "--reflect"]))
@@ -114,7 +140,7 @@ def renumber(text, old, new):
 
 def generate(recompile_all=False):
     previous = {} if recompile_all else previous_outputs()
-    stale = [s for s in sources() if s.name not in previous or previous[s.name][0] != digest(s)]
+    stale = [s.name for s in units() if s.name not in previous or previous[s.name][0] != digest(s)]
     if stale:
         for tool in ("glslangValidator", "spirv-cross"):
             if not shutil.which(tool):
@@ -123,8 +149,8 @@ def generate(recompile_all=False):
     body = []
     with tempfile.TemporaryDirectory() as t:
         tmp = pathlib.Path(t)
-        for i, src in enumerate(sources()):
-            if src not in stale:
+        for i, src in enumerate(units()):
+            if src.name not in stale:
                 _, block, entry = previous[src.name]
                 old = re.search(r"\bk_spirv_(\d+)\b", block).group(1)
                 body.append(renumber(block, old, i))
@@ -169,9 +195,9 @@ def check():
     if not OUT_CPP.exists():
         sys.exit("generated shader library missing; run tools/shaders/compile_shaders.py")
     text = OUT_CPP.read_text()
-    stale = [s.name for s in sources() if f"// {s.name} sha256={digest(s)}" not in text]
+    stale = [s.name for s in units() if f"// {s.name} sha256={digest(s)}" not in text]
     count = text.count(" sha256=")
-    if stale or count != len(sources()):
+    if stale or count != len(units()):
         sys.exit(f"generated shaders are stale ({', '.join(stale) or 'shader set changed'}); "
                  "run tools/shaders/compile_shaders.py")
     print(f"builtin shaders up to date ({count})")

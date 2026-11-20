@@ -131,6 +131,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     // the limit: phones and the Low/Medium tiers. Fixed for the run (the pipelines are built for it).
     render::SceneRendererOptions renderer_options;
     renderer_options.compact_hdr = o.compact_hdr.value_or(compact_hdr_by_default(*tier, mobile));
+    renderer_options.half_precision = o.half_precision.value_or(half_precision_by_default(*tier, mobile));
     auto view = runtime::SceneView::create(**gpu, rhi::Format::RGBA8_UNORM, renderer_options);
     if (!view) return std::move(view).error();
     const char* hdr_format = (*view)->renderer().hdr_format() == rhi::Format::R11G11B10_FLOAT ? "R11G11B10F" : "RGBA16F";

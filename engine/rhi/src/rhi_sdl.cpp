@@ -322,7 +322,17 @@ Result<std::unique_ptr<Device>> Device::create(const DeviceDesc& desc) {
     // default, so those are always off: Mali-G52-class drivers lack depthClamp and shaderClipDistance,
     // and SDL refuses such devices outright while the features are requested. Anisotropic filtering
     // is wanted when present, so creation is retried without it before giving up.
-    const auto try_create = [&](bool anisotropy) {
+    // Explicit FP16 (ADR-0137): SDL_GPU only enables optional Vulkan 1.2 features through
+    // SDL_GPUVulkanOptions, and refuses devices without a requested feature, so creation is tried
+    // with shaderFloat16 first and retried without it. The feature struct is declared here with
+    // the layout of VkPhysicalDeviceVulkan12Features (sType 51, 47 VkBool32 members, shaderFloat16
+    // the 8th) so the RHI does not need the Vulkan headers.
+    struct Vulkan12Features {
+        std::uint32_t s_type{51}; // VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
+        void* next{nullptr};
+        std::uint32_t features[47]{};
+    };
+    const auto try_create = [&](bool anisotropy, bool fp16) {
         SDL_PropertiesID props = SDL_CreateProperties();
         SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, desc.debug);
         SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_PREFERLOWPOWER_BOOLEAN, desc.low_power);
@@ -334,16 +344,37 @@ Result<std::unique_ptr<Device>> Device::create(const DeviceDesc& desc) {
         SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_ANISOTROPY_BOOLEAN, anisotropy);
         if (!desc.preferred_driver.empty())
             SDL_SetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING, desc.preferred_driver.c_str());
+#ifdef SDL_PROP_GPU_DEVICE_CREATE_VULKAN_OPTIONS_POINTER
+        Vulkan12Features vk12;
+        SDL_GPUVulkanOptions vk{};
+        if (fp16) {
+            vk12.features[7] = 1; // shaderFloat16
+            vk.vulkan_api_version = (1u << 22) | (2u << 12); // VK_MAKE_API_VERSION(0, 1, 2, 0)
+            vk.feature_list = &vk12;
+            SDL_SetPointerProperty(props, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_OPTIONS_POINTER, &vk);
+        }
+#else
+        (void)fp16;
+#endif
         SDL_GPUDevice* d = SDL_CreateGPUDeviceWithProperties(props);
         SDL_DestroyProperties(props);
         return d;
     };
+    const char* no_fp16 = SDL_getenv("VICTUS_NO_FP16");
+    bool fp16 = desc.shader_float16 && !(no_fp16 && *no_fp16 && std::string_view(no_fp16) != "0");
+#ifndef SDL_PROP_GPU_DEVICE_CREATE_VULKAN_OPTIONS_POINTER
+    fp16 = false; // SDL older than 3.4: no way to enable optional Vulkan features
+#endif
     bool anisotropy = true;
-    SDL_GPUDevice* dev = try_create(true);
+    SDL_GPUDevice* dev = fp16 ? try_create(true, true) : nullptr;
+    if (!dev) {
+        fp16 = false;
+        dev = try_create(true, false);
+    }
     if (!dev) {
         const std::string first = SDL_GetError();
         anisotropy = false;
-        dev = try_create(false);
+        dev = try_create(false, false);
         if (!dev) return make_error(ErrorCode::DeviceError, std::format("no compatible GPU device: {}", first));
         VICTUS_LOG_WARN("rhi", "GPU device created without anisotropic filtering ({})", first);
     }
@@ -361,6 +392,10 @@ Result<std::unique_ptr<Device>> Device::create(const DeviceDesc& desc) {
     caps.anisotropy = anisotropy;
     caps.depth_clamp = false; // never requested (see above): pipelines asking for it clip instead
     caps.compute = true; // every SDL_GPU backend has compute and indirect draws
+    // The options struct is Vulkan-only: other backends ignore it, so only a Vulkan device that
+    // was created with it has the feature. (Metal always has half, but the MSL variant is not
+    // verified yet; ADR-0137.)
+    caps.shader_float16 = fp16 && caps.backend == Backend::Vulkan;
     caps.max_texture_size = 8192; // SDL_GPU guaranteed minimum on supported devices
     for (std::uint32_t s : {8u, 4u, 2u}) {
         if (SDL_GPUTextureSupportsSampleCount(dev, SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, to_sdl_samples(s))) {
@@ -372,7 +407,8 @@ Result<std::unique_ptr<Device>> Device::create(const DeviceDesc& desc) {
     const char* name = SDL_GetStringProperty(info, SDL_PROP_GPU_DEVICE_NAME_STRING, nullptr);
     const char* drv = SDL_GetStringProperty(info, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, nullptr);
     if (name) caps.driver_name = std::format("{} ({}{}{})", driver, name, drv ? ", " : "", drv ? drv : "");
-    VICTUS_LOG_INFO("rhi", "GPU device: {} msaa<={} bc={} astc={}", caps.driver_name, caps.max_msaa, caps.bc_compression, caps.astc_compression);
+    VICTUS_LOG_INFO("rhi", "GPU device: {} msaa<={} bc={} astc={} fp16={}", caps.driver_name, caps.max_msaa, caps.bc_compression,
+                    caps.astc_compression, caps.shader_float16);
     if (const char* fail = SDL_getenv("VICTUS_GPU_FAIL"); fail && *fail) {
         // Fault injection for device-loss tests: <commandbuffer|swapchain|submit>[@frames].
         const std::string_view spec(fail);
