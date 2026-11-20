@@ -26,6 +26,14 @@ std::vector<int> metal_slots(std::string_view msl, std::string_view tag) {
     std::sort(out.begin(), out.end());
     return out;
 }
+// Sorted "//! sampler|ubo|storage" lines of GLSL ES source: the slots the GLES backend binds.
+std::vector<std::string> essl_slots(std::string_view essl) {
+    std::vector<std::string> out;
+    for (std::size_t p = essl.find("//! "); p != std::string_view::npos; p = essl.find("//! ", p + 1))
+        out.emplace_back(essl.substr(p, essl.find('\n', p) - p));
+    std::sort(out.begin(), out.end());
+    return out;
+}
 } // namespace
 
 TEST_CASE("shader compiler: built-in shaders compile with the generator's resource counts") {
@@ -53,6 +61,7 @@ TEST_CASE("shader compiler: built-in shaders compile with the generator's resour
         sc::CompileOptions o;
         o.name = std::string(b.name);
         if (fp16) o.defines.push_back({"VICTUS_FP16", "1"});
+        o.want_essl = !b.glsl_es.empty();
         auto r = sc::compile_glsl(*text, stage, o);
         REQUIRE_MESSAGE(r.ok(), (r.ok() ? "" : r.error().message));
         CHECK(r->spirv.size() % 4 == 0);
@@ -68,6 +77,11 @@ TEST_CASE("shader compiler: built-in shaders compile with the generator's resour
         // uniform buffers, then storage buffers), so surface shaders bind like built-ins.
         CHECK(metal_slots(r->msl, "[[buffer(") == metal_slots(b.msl, "[[buffer("));
         CHECK(metal_slots(r->msl, "[[texture(") == metal_slots(b.msl, "[[texture("));
+        // GLES (ADR-0144): the run-time GLSL ES declares the same slots as the offline output.
+        if (!b.glsl_es.empty()) {
+            CHECK(r->glsl_es.starts_with("#version 300 es\n"));
+            CHECK(essl_slots(r->glsl_es) == essl_slots(b.glsl_es));
+        }
         auto again = sc::reflect(r->spirv);
         REQUIRE(again.ok());
         CHECK(*again == r->counts);

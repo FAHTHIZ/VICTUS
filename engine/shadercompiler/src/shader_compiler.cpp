@@ -4,12 +4,15 @@
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/Public/ShaderLang.h>
 #include <SPIRV/GlslangToSpv.h>
+#include <spirv_glsl.hpp>
 #include <spirv_msl.hpp>
 
 #include <algorithm>
 #include <cstring>
 #include <format>
 #include <mutex>
+#include <regex>
+#include <stdexcept>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -105,25 +108,54 @@ void remap_metal_storage_buffers(spirv_cross::CompilerMSL& msl) {
         msl.set_decoration(buffers[i].second, spv::DecorationBinding, uniforms + static_cast<std::uint32_t>(i));
 }
 
+// GLSL ES 3.00 from SPIR-V compiled with VICTUS_ESSL=1, with the conventions of
+// tools/shaders/compile_shaders.py (essl_from_spirv) that the GLES backend parses.
+std::string essl_from_spirv(const std::vector<std::uint32_t>& words, Stage stage) {
+    spirv_cross::CompilerGLSL glsl(words);
+    const auto res = glsl.get_shader_resources();
+    if (!res.storage_buffers.empty() || !res.storage_images.empty() || !res.separate_images.empty() ||
+        !res.separate_samplers.empty())
+        throw std::runtime_error("GLSL ES 3.00 has no storage buffers, storage images or separate samplers "
+                                 "(read buffers through a vx_storage<N> usampler2D under VICTUS_ESSL)");
+    spirv_cross::CompilerGLSL::Options o;
+    o.es = true;
+    o.version = 300;
+    const bool vertex = stage == Stage::Vertex;
+    if (vertex) {
+        o.vertex.fixup_clipspace = true;
+        o.vertex.flip_vert_y = true;
+    }
+    glsl.set_common_options(o);
+    for (const auto& r : vertex ? res.stage_outputs : res.stage_inputs)
+        glsl.set_name(r.id, std::format("vx_io_{}", glsl.get_decoration(r.id, spv::DecorationLocation)));
+    const std::string prefix = vertex ? "vs_" : "fs_";
+    std::string header;
+    static const std::regex storage_name(R"(vx_storage(\d+)(_\w*)?)");
+    for (const auto& r : res.sampled_images) {
+        const std::string name = prefix + r.name;
+        std::smatch m;
+        if (std::regex_match(r.name, m, storage_name)) header += std::format("//! storage {} {}\n", m[1].str(), name);
+        else header += std::format("//! sampler {} {}\n", glsl.get_decoration(r.id, spv::DecorationBinding), name);
+        glsl.set_name(r.id, name);
+    }
+    for (const auto& r : res.uniform_buffers) {
+        const std::string name = prefix + glsl.get_name(r.base_type_id);
+        header += std::format("//! ubo {} {}\n", glsl.get_decoration(r.id, spv::DecorationBinding), name);
+        glsl.set_name(r.base_type_id, name);
+    }
+    std::string text = glsl.compile();
+    const auto eol = text.find('\n');
+    text.insert(eol == std::string::npos ? text.size() : eol + 1, header);
+    return text;
+}
+
 } // namespace
 
 Result<CompiledShader> compile_glsl(std::string_view source, Stage stage, const CompileOptions& options,
                                     std::vector<Diagnostic>* diagnostics) {
     ensure_initialized();
     const EShLanguage lang = language(stage);
-    glslang::TShader shader(lang);
     const std::string text(source);
-    const char* strings[] = {text.c_str()};
-    const char* names[] = {options.name.c_str()};
-    shader.setStringsWithLengthsAndNames(strings, nullptr, names, 1);
-    std::string preamble;
-    for (const auto& [k, v] : options.defines) preamble += std::format("#define {} {}\n", k, v);
-    shader.setPreamble(preamble.c_str());
-    shader.setEnvInput(glslang::EShSourceGlsl, lang, glslang::EShClientVulkan, 100);
-    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_0);
-    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
-    shader.setEntryPoint("main");
-    const auto messages = static_cast<EShMessages>(EShMsgSpvRules | EShMsgVulkanRules);
     std::vector<Diagnostic> diags;
     auto fail = [&](const char* what) -> Error {
         std::string msg = std::format("{}: {}", options.name, what);
@@ -132,21 +164,44 @@ Result<CompiledShader> compile_glsl(std::string_view source, Stage stage, const 
         if (diagnostics) *diagnostics = diags;
         return Error{ErrorCode::InvalidArgument, std::move(msg)};
     };
-    if (!shader.parse(GetDefaultResources(), 450, ENoProfile, false, false, messages)) {
-        parse_log(shader.getInfoLog(), diags);
-        return fail("compile failed");
-    }
-    glslang::TProgram program;
-    program.addShader(&shader);
-    if (!program.link(messages)) {
-        parse_log(program.getInfoLog(), diags);
-        return fail("link failed");
-    }
-    std::vector<std::uint32_t> words;
-    glslang::SpvOptions spv;
-    spv.disableOptimizer = true;
-    glslang::GlslangToSpv(*program.getIntermediate(lang), words, &spv);
-    if (words.empty()) return fail("SPIR-V generation failed");
+    // GLSL -> SPIR-V words with `extra` defines on top of the options'; empty on failure (`what`
+    // and `diags` say why).
+    const char* what = nullptr;
+    auto to_spirv = [&](std::string_view extra) {
+        std::vector<std::uint32_t> words;
+        glslang::TShader shader(lang);
+        const char* strings[] = {text.c_str()};
+        const char* names[] = {options.name.c_str()};
+        shader.setStringsWithLengthsAndNames(strings, nullptr, names, 1);
+        std::string preamble;
+        for (const auto& [k, v] : options.defines) preamble += std::format("#define {} {}\n", k, v);
+        preamble += extra;
+        shader.setPreamble(preamble.c_str());
+        shader.setEnvInput(glslang::EShSourceGlsl, lang, glslang::EShClientVulkan, 100);
+        shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_0);
+        shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
+        shader.setEntryPoint("main");
+        const auto messages = static_cast<EShMessages>(EShMsgSpvRules | EShMsgVulkanRules);
+        if (!shader.parse(GetDefaultResources(), 450, ENoProfile, false, false, messages)) {
+            parse_log(shader.getInfoLog(), diags);
+            what = "compile failed";
+            return words;
+        }
+        glslang::TProgram program;
+        program.addShader(&shader);
+        if (!program.link(messages)) {
+            parse_log(program.getInfoLog(), diags);
+            what = "link failed";
+            return words;
+        }
+        glslang::SpvOptions spv;
+        spv.disableOptimizer = true;
+        glslang::GlslangToSpv(*program.getIntermediate(lang), words, &spv);
+        if (words.empty()) what = "SPIR-V generation failed";
+        return words;
+    };
+    const std::vector<std::uint32_t> words = to_spirv({});
+    if (words.empty()) return fail(what);
 
     CompiledShader out;
     out.spirv.resize(words.size() * 4);
@@ -165,6 +220,16 @@ Result<CompiledShader> compile_glsl(std::string_view source, Stage stage, const 
     } catch (const std::exception& e) {
         diags.push_back({0, e.what()});
         return fail("MSL translation failed");
+    }
+    if (options.want_essl && stage != Stage::Compute) {
+        const std::vector<std::uint32_t> es_words = to_spirv("#define VICTUS_ESSL 1\n");
+        if (es_words.empty()) return fail(what);
+        try {
+            out.glsl_es = essl_from_spirv(es_words, stage);
+        } catch (const std::exception& e) {
+            diags.push_back({0, e.what()});
+            return fail("GLSL ES translation failed");
+        }
     }
     if (diagnostics) diagnostics->clear();
     return out;

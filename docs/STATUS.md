@@ -2113,3 +2113,13 @@ Not covered: no phone measurement of the extra cost; Metal output not run here.
 
 Next task: none queued for this feature.
 
+
+## 2026-11-20 — Scene renderer on OpenGL ES; GLSL ES from the run-time shader compiler (ADR-0144 phase 2e)
+
+Built: GLES backend re-binds its own context at every entry point outside a pass (several devices per thread); the shader generator prefixes samplers per stage (`vs_`/`fs_`, ESSL rev 4) so same-named vertex and fragment samplers no longer share a unit; `shadercompiler::CompileOptions::want_essl` produces GLSL ES 3.00 at run time; `runtime::create_surface_shader` / `compile_surface_shader(code, name, backend)` serve surface shaders, material graphs and terrain on every backend.
+
+Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): new `gpu_gles_tests` case renders a Low-tier scene (cube, plane, bent skinned column, shadows) through GLES and through Vulkan: max channel difference 0, mean 0 (asserted: mean < 1, at most 1 % of channels off by more than 8, skinned column on screen). `shader compiler` test: run-time GLSL ES slot lines equal the offline ones for every built-in shader with ESSL. The whole `victus_gpu_tests` with `VICTUS_GPU_DRIVER=gles`: 181/195 cases pass (was 49/195 before the context fix); the 14 failures all need compute. `VICTUS_REQUIRE_GPU=1 ctest --test-dir build -j2` 39/39; clang-tidy clean on the changed files; `compile_shaders.py --check` up to date.
+
+Not covered: compute-dependent GPU tests do not yet skip on GLES (they fail when the whole suite is forced onto GLES; CI runs them on Vulkan); no mobile driver or Android device; window presentation through GLES is untested.
+
+Next task: ADR-0144 phase 3 — Android manifest with Vulkan optional and `glEsVersion` 0x30000, the player falling back to GLES when SDL_GPU has no device (with an OpenGL-capable window), then make compute-only GPU tests skip cleanly on devices without compute.

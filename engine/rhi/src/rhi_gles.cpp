@@ -555,6 +555,7 @@ Result<std::unique_ptr<GlesBackend>> GlesBackend::create(Device& device, const D
 
 GlesBackend::~GlesBackend() {
     if (context_) {
+        make_current();
         auto& s = *s_;
         auto& gl = s.gl;
         if (gl.Finish) {
@@ -587,6 +588,12 @@ GlesBackend::~GlesBackend() {
     if (window_) SDL_DestroyWindow(static_cast<SDL_Window*>(window_));
 }
 
+void GlesBackend::make_current() const {
+    if (SDL_GL_GetCurrentContext() == static_cast<SDL_GLContext>(context_)) return;
+    SDL_Window* w = s_ && s_->present_window ? s_->present_window : static_cast<SDL_Window*>(window_);
+    SDL_GL_MakeCurrent(w, static_cast<SDL_GLContext>(context_));
+}
+
 Status GlesBackend::attach_window(platform::Window& window, PresentMode mode) {
     auto* w = static_cast<SDL_Window*>(window.native());
     if (!(SDL_GetWindowFlags(w) & SDL_WINDOW_OPENGL))
@@ -600,6 +607,7 @@ Status GlesBackend::attach_window(platform::Window& window, PresentMode mode) {
 }
 
 void GlesBackend::detach_window(platform::Window& window) {
+    make_current();
     if (s_->present_window != window.native()) return;
     s_->gl.Finish();
     s_->present_window = nullptr;
@@ -628,6 +636,7 @@ bool GlesBackend::supports_format(Format format, std::uint32_t usage) const {
 }
 
 Result<TextureHandle> GlesBackend::create_texture(const TextureDesc& desc) {
+    make_current();
     if (desc.width == 0 || desc.height == 0) return make_error(ErrorCode::InvalidArgument, "texture dimensions must be non-zero");
     const GlFormat g = gl_format(desc.format);
     if (!g.internal) return make_error(ErrorCode::Unsupported, std::format("texture '{}': format unsupported on GLES", desc.name));
@@ -676,6 +685,7 @@ const TextureDesc* GlesBackend::describe(TextureHandle h) const {
 }
 
 Result<BufferHandle> GlesBackend::create_buffer(const BufferDesc& desc) {
+    make_current();
     if (desc.size == 0) return make_error(ErrorCode::InvalidArgument, "buffer size must be non-zero");
     auto& gl = s_->gl;
     BufferEntry e;
@@ -712,6 +722,7 @@ Result<BufferHandle> GlesBackend::create_buffer(const BufferDesc& desc) {
 }
 
 Result<SamplerHandle> GlesBackend::create_sampler(const SamplerDesc& desc) {
+    make_current();
     auto& gl = s_->gl;
     GLuint smp = 0;
     gl.GenSamplers(1, &smp);
@@ -735,6 +746,7 @@ Result<SamplerHandle> GlesBackend::create_sampler(const SamplerDesc& desc) {
 }
 
 Result<ShaderHandle> GlesBackend::create_shader(const ShaderDesc& desc) {
+    make_current();
     if (desc.stage == ShaderStage::Compute) return make_error(ErrorCode::Unsupported, "GLES has no compute shaders");
     if (desc.glsl_es.empty())
         return make_error(ErrorCode::Unsupported, std::format("shader '{}' has no GLSL ES source for the GLES backend", desc.name));
@@ -769,6 +781,7 @@ Result<ShaderHandle> GlesBackend::create_shader(const ShaderDesc& desc) {
 }
 
 Result<PipelineHandle> GlesBackend::create_pipeline(const PipelineDesc& desc) {
+    make_current();
     auto* vs = s_->shaders.get(desc.vertex);
     auto* fs = s_->shaders.get(desc.fragment);
     if (!vs || !fs) return make_error(ErrorCode::InvalidArgument, std::format("pipeline '{}' references invalid shaders", desc.name));
@@ -831,6 +844,7 @@ Result<PipelineHandle> GlesBackend::create_pipeline(const PipelineDesc& desc) {
 }
 
 void GlesBackend::destroy(TextureHandle h) {
+    make_current();
     TextureEntry e;
     if (!s_->textures.remove(h, e)) return;
     if (e.tex) s_->gl.DeleteTextures(1, &e.tex);
@@ -840,6 +854,7 @@ void GlesBackend::destroy(TextureHandle h) {
     if (h == s_->swapchain) s_->swapchain = {};
 }
 void GlesBackend::destroy(BufferHandle h) {
+    make_current();
     BufferEntry e;
     if (!s_->buffers.remove(h, e)) return;
     s_->gl.DeleteBuffers(1, &e.buf);
@@ -851,18 +866,21 @@ void GlesBackend::destroy(BufferHandle h) {
     device_.stats_.live_buffers = s_->buffers.live;
 }
 void GlesBackend::destroy(SamplerHandle h) {
+    make_current();
     GLuint smp = 0;
     if (!s_->samplers.remove(h, smp)) return;
     s_->gl.DeleteSamplers(1, &smp);
     device_.stats_.live_samplers = s_->samplers.live;
 }
 void GlesBackend::destroy(ShaderHandle h) {
+    make_current();
     ShaderEntry e;
     if (!s_->shaders.remove(h, e)) return;
     s_->gl.DeleteShader(e.shader); // flagged; freed once no program references it
     device_.stats_.live_shaders = s_->shaders.live;
 }
 void GlesBackend::destroy(PipelineHandle h) {
+    make_current();
     PipelineEntry e;
     if (!s_->pipelines.remove(h, e)) return;
     if (s_->pipeline == h) {
@@ -895,6 +913,7 @@ void attach_read(Gl& gl, const TextureEntry& e, std::uint32_t layer, std::uint32
 } // namespace
 
 Result<std::vector<std::uint8_t>> GlesBackend::read_texture(TextureHandle h) {
+    make_current();
     auto* e = s_->textures.get(h);
     if (!e) return make_error(ErrorCode::InvalidArgument, "invalid texture handle");
     const Format f = e->desc.format;
@@ -957,6 +976,7 @@ Result<std::vector<std::uint8_t>> GlesBackend::read_texture(TextureHandle h) {
 }
 
 Result<std::vector<std::uint8_t>> GlesBackend::read_buffer(BufferHandle h, std::uint32_t offset, std::uint32_t size) {
+    make_current();
     auto* e = s_->buffers.get(h);
     if (!e) return make_error(ErrorCode::InvalidArgument, "invalid buffer handle");
     if (offset > e->size) return make_error(ErrorCode::InvalidArgument, "read_buffer offset out of range");
@@ -975,6 +995,7 @@ Result<std::vector<std::uint8_t>> GlesBackend::read_buffer(BufferHandle h, std::
 void GlesBackend::begin_commands() { s_->presented = false; }
 
 void GlesBackend::push_uniforms(ShaderStage stage, std::uint32_t slot, const void* data, std::uint32_t size) {
+    make_current();
     if (stage == ShaderStage::Compute || slot >= kUniformSlots || size == 0) return;
     auto& s = *s_;
     auto& gl = s.gl;
@@ -1004,6 +1025,7 @@ void GlesBackend::push_uniforms(ShaderStage stage, std::uint32_t slot, const voi
 }
 
 void GlesBackend::upload_buffer(BufferHandle buffer, std::uint32_t offset, std::span<const std::uint8_t> data, bool discard) {
+    make_current();
     auto* e = s_->buffers.get(buffer);
     if (!e || offset + data.size() > e->size) {
         VICTUS_LOG_ERROR("rhi", "upload_buffer out of range or invalid handle");
@@ -1035,6 +1057,7 @@ void GlesBackend::upload_buffer(BufferHandle buffer, std::uint32_t offset, std::
 }
 
 void GlesBackend::upload_texture(TextureHandle texture, std::span<const std::uint8_t> pixels, std::uint32_t mip, std::uint32_t layer) {
+    make_current();
     auto* e = s_->textures.get(texture);
     if (!e || !e->tex) {
         VICTUS_LOG_ERROR("rhi", "upload_texture: invalid handle");
@@ -1081,6 +1104,7 @@ void GlesBackend::upload_texture(TextureHandle texture, std::span<const std::uin
 }
 
 void GlesBackend::generate_mipmaps(TextureHandle texture) {
+    make_current();
     auto* e = s_->textures.get(texture);
     if (!e || !e->tex || e->desc.mip_levels <= 1) return;
     s_->gl.BindTexture(e->target, e->tex);
@@ -1088,6 +1112,7 @@ void GlesBackend::generate_mipmaps(TextureHandle texture) {
 }
 
 TextureHandle GlesBackend::acquire_swapchain(platform::Window& window, std::uint32_t& width, std::uint32_t& height) {
+    make_current();
     width = height = 0;
     auto* w = static_cast<SDL_Window*>(window.native());
     if (w != s_->present_window) return {};
@@ -1115,6 +1140,7 @@ TextureHandle GlesBackend::acquire_swapchain(platform::Window& window, std::uint
 }
 
 bool GlesBackend::begin_render_pass(const RenderPassDesc& desc) {
+    make_current();
     auto& s = *s_;
     auto& gl = s.gl;
     s.colors.clear();
@@ -1234,6 +1260,7 @@ void GlesBackend::end_render_pass() {
 }
 
 void GlesBackend::blit(TextureHandle src, TextureHandle dst, Filter filter) {
+    make_current();
     auto& s = *s_;
     auto* a = s.textures.get(src);
     auto* b = s.textures.get(dst);
@@ -1263,6 +1290,7 @@ void GlesBackend::blit(TextureHandle src, TextureHandle dst, Filter filter) {
 }
 
 void GlesBackend::submit(bool wait) {
+    make_current();
     auto& s = *s_;
     auto& gl = s.gl;
     if (s.presented && s.present_window) {

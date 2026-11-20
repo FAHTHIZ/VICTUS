@@ -10,11 +10,13 @@
 
 namespace victus::runtime {
 
-Result<shadercompiler::CompiledShader> compile_surface_shader(std::string_view code, std::string_view name, bool want_msl,
-                                                              std::vector<shadercompiler::Diagnostic>* diagnostics) {
+namespace {
+Result<shadercompiler::CompiledShader> compile_surface(std::string_view code, std::string_view name, bool want_msl, bool want_essl,
+                                                       std::vector<shadercompiler::Diagnostic>* diagnostics) {
     shadercompiler::CompileOptions options;
     options.name = std::string(name);
     options.want_msl = want_msl;
+    options.want_essl = want_essl;
     auto compiled = shadercompiler::compile_glsl(render::surface_shader_source(code), shadercompiler::Stage::Fragment, options,
                                                  diagnostics);
     if (!compiled) return compiled;
@@ -28,6 +30,33 @@ Result<shadercompiler::CompiledShader> compile_surface_shader(std::string_view c
                                       "(use i.params[0..3] for per-material values)",
                                       name));
     return compiled;
+}
+} // namespace
+
+Result<shadercompiler::CompiledShader> compile_surface_shader(std::string_view code, std::string_view name, bool want_msl,
+                                                              std::vector<shadercompiler::Diagnostic>* diagnostics) {
+    return compile_surface(code, name, want_msl, false, diagnostics);
+}
+
+Result<shadercompiler::CompiledShader> compile_surface_shader(std::string_view code, std::string_view name, rhi::Backend backend,
+                                                              std::vector<shadercompiler::Diagnostic>* diagnostics) {
+    return compile_surface(code, name, backend == rhi::Backend::Metal, backend == rhi::Backend::GLES, diagnostics);
+}
+
+Result<rhi::ShaderHandle> create_surface_shader(rhi::Device& device, std::string_view code, std::string_view name) {
+    auto compiled = compile_surface_shader(code, name, device.capabilities().backend);
+    if (!compiled) return std::move(compiled).error();
+    rhi::ShaderDesc d;
+    d.name = std::string(name);
+    d.stage = rhi::ShaderStage::Fragment;
+    d.spirv = compiled->spirv;
+    d.msl = compiled->msl;
+    d.glsl_es = compiled->glsl_es;
+    d.samplers = compiled->counts.samplers;
+    d.storage_textures = compiled->counts.storage_textures;
+    d.storage_buffers = compiled->counts.storage_buffers;
+    d.uniform_buffers = compiled->counts.uniform_buffers;
+    return device.create_shader(d);
 }
 
 Result<std::string> load_surface_shader_code(const assets::AssetDatabase& db, const Uuid& uuid) {

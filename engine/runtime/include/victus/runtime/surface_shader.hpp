@@ -11,6 +11,7 @@
 #pragma once
 #include "victus/assets/database.hpp"
 #include "victus/core/result.hpp"
+#include "victus/rhi/rhi.hpp"
 #include "victus/shadercompiler/shader_compiler.hpp"
 
 #include <string_view>
@@ -24,6 +25,14 @@ namespace victus::runtime {
 [[nodiscard]] Result<shadercompiler::CompiledShader> compile_surface_shader(std::string_view code, std::string_view name,
                                                                             bool want_msl = true,
                                                                             std::vector<shadercompiler::Diagnostic>* diagnostics = nullptr);
+// The same, producing the source `backend` consumes besides SPIR-V: MSL on Metal, GLSL ES 3.00
+// on GLES (ADR-0144).
+[[nodiscard]] Result<shadercompiler::CompiledShader> compile_surface_shader(std::string_view code, std::string_view name,
+                                                                            rhi::Backend backend,
+                                                                            std::vector<shadercompiler::Diagnostic>* diagnostics = nullptr);
+// Compiles `code` for `device` and creates the fragment shader the scene renderer binds in place
+// of pbr.frag.
+[[nodiscard]] Result<rhi::ShaderHandle> create_surface_shader(rhi::Device& device, std::string_view code, std::string_view name);
 
 // The surface function of a shader asset: a .vshader's text, or the GLSL a .vmatgraph material
 // graph compiles to (ADR-0062). Graph errors name the file and node.

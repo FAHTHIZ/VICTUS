@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Run-time shader compilation for project shaders: GLSL 450 (Vulkan rules) to SPIR-V with
-// glslang, SPIR-V to Metal Shading Language 2.1 with SPIRV-Cross, and resource counts for
-// SDL_GPU shader creation. Thread-safe; every call is independent.
+// glslang, SPIR-V to Metal Shading Language 2.1 and GLSL ES 3.00 (ADR-0144) with SPIRV-Cross,
+// and resource counts for SDL_GPU shader creation. Thread-safe; every call is independent.
 #pragma once
 #include "victus/core/result.hpp"
 
@@ -30,11 +30,16 @@ struct CompileOptions {
     std::string name{"shader"};                                  // used in messages
     std::vector<std::pair<std::string, std::string>> defines;     // -D name=value
     bool want_msl{true};                                          // also produce MSL
+    // Also produce GLSL ES 3.00 for the GLES backend, compiled with VICTUS_ESSL=1 and following
+    // tools/shaders/compile_shaders.py (GL clip space, vx_io_<location> varyings, per-stage
+    // "vs_"/"fs_" names, "//! sampler|ubo|storage" lines). Graphics stages only.
+    bool want_essl{false};
 };
 
 struct CompiledShader {
     std::vector<std::uint8_t> spirv; // SPIR-V words as bytes (little endian)
     std::string msl;                 // empty when not requested
+    std::string glsl_es;             // empty when not requested
     ResourceCounts counts;
 };
 

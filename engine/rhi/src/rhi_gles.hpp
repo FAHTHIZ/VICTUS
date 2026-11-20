@@ -91,6 +91,9 @@ public:
     struct State;
 
 private:
+    // Several devices (and so contexts) may share a thread: every entry point that touches GL
+    // outside a render pass re-binds this one when another is current.
+    void make_current() const;
     explicit GlesBackend(Device& device);
     Device& device_;
     void* window_{nullptr};  // hidden context window (SDL_Window*)
