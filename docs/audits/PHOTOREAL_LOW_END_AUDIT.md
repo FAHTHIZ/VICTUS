@@ -79,7 +79,7 @@ Each item lands on `main` with tests and a `STATUS.md` entry before the next sta
 1. **Baked lighting v1 (A1).** xatlas lightmap UVs per mesh; a CPU path-traced baker (BVH, sun, sky, point and spot lights, multi-bounce diffuse, albedo from materials, dilation and a denoise filter); a per-scene lightmap atlas; per-instance scale/offset; renderer sampling that replaces ambient for lightmapped surfaces; `victus bake-lighting`; a Studio *Bake Lighting* command. Encodings follow Unity's reasoning: RGBM on desktop, dLDR-style on mobile.
 2. **Mobile bandwidth quick wins (A5, A7).** R11G11B10 scene colour on Low/Medium and on mobile; no depth pre-pass where SSAO is off; fold FXAA into tonemap on Low.
 3. **Baked lighting v2.** Directional (L1 SH) lightmaps for normal maps, a sun shadowmask so Low can drop realtime cascades beyond a short distance, light probes baked from the same tracer for dynamic objects, and lightmapped templates.
-4. **FP16 shading (A4)** in pbr.frag and post passes behind a device capability check, verified against `victus compare` goldens.
+4. **FP16 shading (A4)** in pbr.frag and post passes behind a device capability check, verified against `victus compare` goldens. Done for pbr.frag's BRDF (ADR-0137); post passes still FP32.
 5. **Device classes (A6).** GPU-name and capability-based tier selection with project overrides, recorded in the run report.
 6. **Photoreal reference scene (A8).** CC0 scanned materials (Poly Haven) in a lightmapped interior and exterior, used as the perceptual-equivalence reference across tiers.
 7. **Temporal upscaling for mobile.** Evaluate Arm ASR (MIT) against the existing TAA upscaler on the reference scene.

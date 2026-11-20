@@ -39,6 +39,8 @@ struct PlayerOptions {
     std::string quality;         // low|medium|high|ultra|auto; empty = project rendering.quality
     // Packed R11G11B10F HDR scene colour; unset = compact_hdr_by_default(tier, mobile).
     std::optional<bool> compact_hdr;
+    // Explicit FP16 BRDF maths where supported; unset = half_precision_by_default(tier, mobile).
+    std::optional<bool> half_precision;
     std::string connect;         // host[:port] of a `victus serve` server; empty = play offline
     std::string player_name{"player"}; // name shown to other players when connected
     std::string net_conditions;  // link emulation for testing, e.g. "latency=80,loss=0.05"
@@ -99,6 +101,11 @@ struct PlayerReport {
 // Packed HDR by default on phones and on the Low and Medium tiers, where framebuffer bandwidth
 // limits the frame rate (ADR-0126).
 [[nodiscard]] constexpr bool compact_hdr_by_default(render::QualityTier tier, bool mobile) noexcept {
+    return mobile || tier == render::QualityTier::Low || tier == render::QualityTier::Medium;
+}
+// FP16 shading by default where ALU and register pressure limit the frame: phones and the Low and
+// Medium tiers (ADR-0137). Only takes effect on devices with shaderFloat16.
+[[nodiscard]] constexpr bool half_precision_by_default(render::QualityTier tier, bool mobile) noexcept {
     return mobile || tier == render::QualityTier::Low || tier == render::QualityTier::Medium;
 }
 [[nodiscard]] Result<PlayerReport> run(const PlayerOptions& options);

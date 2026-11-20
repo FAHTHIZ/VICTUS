@@ -579,7 +579,10 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     if (options.compact_hdr && dev.supports_format(rhi::Format::R11G11B10_FLOAT, kHdrUsage)) r->hdr_format_ = rhi::Format::R11G11B10_FLOAT;
     auto get = [&](const char* n) { return ctx.shader(n); };
     auto mesh_vs = get("mesh.vert");
-    auto pbr_fs = get("pbr.frag");
+    // Half-precision shading (ADR-0137) only where the device enabled shaderFloat16.
+    r->half_precision_requested_ = options.half_precision;
+    r->half_precision_ = options.half_precision && dev.capabilities().shader_float16 && find_builtin_shader("pbr.frag#fp16");
+    auto pbr_fs = get(r->half_precision_ ? "pbr.frag#fp16" : "pbr.frag");
     auto shadow_vs = get("shadow.vert");
     auto shadow_fs = get("shadow.frag");
     auto shadow_alpha_vs = get("shadow_alpha.vert");
@@ -1580,6 +1583,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     facts_.compute = dev.capabilities().compute;
     facts_.compact_hdr_requested = compact_hdr_requested_;
     facts_.compact_hdr = hdr_format_ == rhi::Format::R11G11B10_FLOAT;
+    facts_.half_precision_requested = half_precision_requested_;
+    facts_.half_precision = half_precision_;
     facts_.taa = taa;
     facts_.taa_history = stats_.taa_history;
     facts_.temporal_upscale = upscale;

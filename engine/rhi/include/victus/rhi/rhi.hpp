@@ -241,6 +241,7 @@ struct DeviceCapabilities {
     bool anisotropy{false};
     bool depth_clamp{false};
     bool compute{false};       // compute pipelines and indirect draws with a first instance
+    bool shader_float16{false}; // explicit half-precision arithmetic in shaders (Vulkan shaderFloat16)
     std::uint32_t max_texture_size{0};
     std::uint32_t max_msaa{1};
 };
@@ -363,6 +364,9 @@ struct DeviceDesc {
     bool headless{false};       // allow device creation without a window
     std::string preferred_driver; // "vulkan", "metal", "direct3d12" or empty for default
     bool low_power{false};
+    // Opt into Vulkan 1.2 shaderFloat16 when the device has it (ADR-0137); creation falls back
+    // to a device without it. VICTUS_NO_FP16=1 in the environment also turns it off.
+    bool shader_float16{true};
 };
 
 class Device {

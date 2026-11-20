@@ -117,6 +117,10 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
     if (f.compact_hdr) add("hdr_precision", PathState::Reduced, PathReason::Setting, "R11G11B10F scene colour, 4 bytes/pixel");
     else add("hdr_precision", PathState::Active, PathReason::None,
              f.compact_hdr_requested ? "RGBA16F scene colour (R11G11B10F unsupported here)" : "RGBA16F scene colour, 8 bytes/pixel");
+    // Shading precision (ADR-0137): explicit FP16 BRDF maths in the PBR shader.
+    if (f.half_precision) add("shading_precision", PathState::Reduced, PathReason::Setting, "FP16 BRDF maths (shaderFloat16)");
+    else add("shading_precision", PathState::Active, PathReason::None,
+             f.half_precision_requested ? "FP32 shading (shaderFloat16 unsupported here)" : "FP32 shading");
 
     // Anti-aliasing and reconstruction.
     if (f.capture_mode) add("taa", PathState::Off, PathReason::CaptureMode, "captures are not jittered");

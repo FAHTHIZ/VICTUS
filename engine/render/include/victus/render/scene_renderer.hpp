@@ -637,6 +637,9 @@ struct SceneRendererOptions {
     // RGBA16_FLOAT (8): half the framebuffer bandwidth on tile-based mobile GPUs. No alpha and no negative
     // values, neither of which the HDR chain uses. Falls back to RGBA16_FLOAT when unsupported.
     bool compact_hdr{false};
+    // Explicit FP16 BRDF maths in the built-in PBR shader (pbr.frag#fp16, ADR-0137) where the device
+    // has shaderFloat16; ignored elsewhere. Surface shaders stay FP32.
+    bool half_precision{false};
 };
 
 class SceneRenderer {
@@ -645,6 +648,8 @@ public:
     static constexpr std::uint32_t kMaxPointLights = kMaxLights; // former name
     [[nodiscard]] static Result<std::unique_ptr<SceneRenderer>> create(GpuContext& ctx, const SceneRendererOptions& options = {});
     [[nodiscard]] rhi::Format hdr_format() const noexcept { return hdr_format_; }
+    // True when the built-in PBR shader runs its BRDF in FP16 (ADR-0137).
+    [[nodiscard]] bool half_precision() const noexcept { return half_precision_; }
     ~SceneRenderer();
     SceneRenderer(const SceneRenderer&) = delete;
     SceneRenderer& operator=(const SceneRenderer&) = delete;
@@ -909,6 +914,7 @@ private:
     rhi::Format depth_format_{rhi::Format::D32_FLOAT};
     rhi::Format hdr_format_{rhi::Format::RGBA16_FLOAT};
     bool compact_hdr_requested_{false};
+    bool half_precision_requested_{false}, half_precision_{false};
 
     Camera3D camera_;
     DirectionalLight sun_;

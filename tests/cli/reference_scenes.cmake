@@ -27,7 +27,7 @@ file(MAKE_DIRECTORY "${WORK}")
 function(capture scene quality out_dir)
     execute_process(COMMAND "${VICTUS_CLI}" run "${project}" --scene scenes/${scene}.vscene --frames 30
                             --capture-dir "${out_dir}" --capture-every 15 --quality ${quality} --width 320 --height 180
-                            --render-report "${out_dir}.path.json"
+                            --render-report "${out_dir}.path.json" ${ARGN}
                     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
     if(NOT rc EQUAL 0 OR NOT out MATCHES "captured 2 frames")
         message(FATAL_ERROR "victus run ${scene} (${quality}) failed (${rc}):\n${out}\n${err}")
@@ -74,6 +74,27 @@ foreach(scene exterior interior effects)
             message(FATAL_ERROR "${scene}: render path feature ${f} is ${st}, expected active")
         endif()
     endforeach()
+    # FP16 shading (ADR-0137) is held to the same FP32 goldens and limits (ultra defaults to FP32).
+    feature_state("${path_json}" shading_precision st)
+    if(NOT st STREQUAL "active")
+        message(FATAL_ERROR "${scene}: ultra should shade in FP32 by default, shading_precision is ${st}")
+    endif()
+    capture(${scene} ultra "${WORK}/${scene}_fp16" --fp16 on)
+    file(READ "${WORK}/${scene}_fp16.path.json" fp16_json)
+    feature_state("${fp16_json}" shading_precision st)
+    if(st STREQUAL "reduced")
+        execute_process(COMMAND "${VICTUS_CLI}" compare "${golden}/${scene}" "${WORK}/${scene}_fp16" ${limits}
+                                --json "${WORK}/${scene}_fp16.compare.json" --heatmap "${WORK}/${scene}_fp16_heat.png"
+                        RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+        if(NOT rc EQUAL 0)
+            message(FATAL_ERROR "${scene}: FP16 shading drifted from the FP32 golden (${rc}):\n${out}\n${err}")
+        endif()
+        file(READ "${WORK}/${scene}_fp16.compare.json" report)
+        string(JSON hflip GET "${report}" flip_mean)
+        string(APPEND summary " ${scene}: fp16 FLIP ${hflip};")
+    else()
+        message(STATUS "${scene}: device has no shaderFloat16, FP16 golden check skipped")
+    endif()
     # Low vs ultra: recorded for the log, not gated (it measures what the low tier gives up).
     capture(${scene} low "${WORK}/${scene}_low")
     execute_process(COMMAND "${VICTUS_CLI}" compare "${WORK}/${scene}" "${WORK}/${scene}_low"

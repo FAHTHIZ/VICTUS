@@ -31,7 +31,10 @@ std::vector<int> metal_slots(std::string_view msl, std::string_view tag) {
 TEST_CASE("shader compiler: built-in shaders compile with the generator's resource counts") {
     int compiled = 0;
     for (const auto& b : render::builtin_shaders()) {
-        const std::filesystem::path file = std::filesystem::path(VICTUS_SHADER_SOURCE_DIR) / std::string(b.name);
+        // "<file>#fp16" is the file compiled with VICTUS_FP16 (ADR-0137).
+        const std::string_view base = b.name.substr(0, b.name.find('#'));
+        const bool fp16 = base.size() != b.name.size();
+        const std::filesystem::path file = std::filesystem::path(VICTUS_SHADER_SOURCE_DIR) / std::string(base);
         auto text = fs::read_text(file);
         REQUIRE_MESSAGE(text.ok(), std::string(b.name));
         if (b.stage == rhi::ShaderStage::Compute) {
@@ -49,6 +52,7 @@ TEST_CASE("shader compiler: built-in shaders compile with the generator's resour
         const sc::Stage stage = b.stage == rhi::ShaderStage::Vertex ? sc::Stage::Vertex : sc::Stage::Fragment;
         sc::CompileOptions o;
         o.name = std::string(b.name);
+        if (fp16) o.defines.push_back({"VICTUS_FP16", "1"});
         auto r = sc::compile_glsl(*text, stage, o);
         REQUIRE_MESSAGE(r.ok(), (r.ok() ? "" : r.error().message));
         CHECK(r->spirv.size() % 4 == 0);

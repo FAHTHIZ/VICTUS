@@ -11,6 +11,23 @@
 // textures were sampled and before lighting. The interface below is a stable contract.
 // per-vertex colour, a weather coverage layer (snow, dust, ash) on
 // upward faces and distance fog.
+//
+// VICTUS_FP16_VARIANT: compile_shaders.py also builds this shader with VICTUS_FP16 defined
+// (pbr.frag#fp16, ADR-0137). That variant evaluates the BRDF terms in explicit half precision
+// (float16_t) for GPUs with shaderFloat16; positions, directions, dot products, shadow and fog
+// maths and light radiance stay FP32. `mfloat`/`mvec3` are float/vec3 in the default build.
+#ifdef VICTUS_FP16
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#define mfloat float16_t
+#define mvec2 f16vec2
+#define mvec3 f16vec3
+#define mvec4 f16vec4
+#else
+#define mfloat float
+#define mvec2 vec2
+#define mvec3 vec3
+#define mvec4 vec4
+#endif
 layout(location = 0) in vec3 v_world_pos;
 layout(location = 1) in vec3 v_normal;
 layout(location = 2) in vec2 v_uv;
@@ -196,6 +213,17 @@ float distribution_ggx(float NdotH, float a) {
     float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
     return a2 / (PI * d * d + 1e-7);
 }
+#ifdef VICTUS_FP16
+// Half-precision GGX (Filament's mobile form): 1 - NdotH^2 = |N x H|^2 is computed in FP32,
+// where it does not cancel out, and the perceptual roughness is clamped to 0.089 so that the
+// specular peak (1 / (pi a^2)) stays far below the half-float maximum.
+const float kMinRoughnessFp16 = 0.089;
+mfloat distribution_ggx_h(float one_minus_nh2, float NdotH, mfloat a) {
+    mfloat an = mfloat(NdotH) * a;
+    mfloat k = a / (mfloat(one_minus_nh2) + an * an);
+    return min(k * k * mfloat(1.0 / PI), mfloat(60000.0));
+}
+#endif
 float geometry_smith(float NdotV, float NdotL, float roughness) {
     float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
     float gv = NdotV / (NdotV * (1.0 - k) + k);
@@ -275,11 +303,11 @@ vec3 env_specular(vec3 r, float roughness, vec3 p) {
 }
 // Karis' analytic approximation of the split-sum environment BRDF (mobile).
 vec2 env_brdf(float NdotV, float roughness) {
-    const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
-    const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
-    vec4 r = roughness * c0 + c1;
-    float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
-    return vec2(-1.04, 1.04) * a004 + r.zw;
+    const mvec4 c0 = mvec4(-1.0, -0.0275, -0.572, 0.022);
+    const mvec4 c1 = mvec4(1.0, 0.0425, 1.04, -0.04);
+    mvec4 r = mfloat(roughness) * c0 + c1;
+    mfloat a004 = min(r.x * r.x, mfloat(exp2(-9.28 * NdotV))) * r.x + r.y;
+    return vec2(mvec2(-1.04, 1.04) * a004 + r.zw);
 }
 
 vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float metallic, float roughness) {
@@ -287,6 +315,26 @@ vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float metallic, fl
     float NdotL = max(dot(N, L), 0.0);
     float NdotV = max(dot(N, V), 1e-4);
     float NdotH = max(dot(N, H), 0.0);
+#ifdef VICTUS_FP16
+    // Half-precision terms (ADR-0137); the result is multiplied by the FP32 radiance, so bright
+    // lights cannot overflow.
+    vec3 NxH = cross(N, H);
+    mfloat r = mfloat(max(roughness, kMinRoughnessFp16));
+    mfloat m = mfloat(metallic);
+    mvec3 a = mvec3(albedo);
+    mvec3 f0h = mix(mvec3(0.04), a, m);
+    mfloat hv = mfloat(max(dot(H, V), 0.0));
+    mfloat fw = mfloat(1.0) - hv;
+    mfloat fw2 = fw * fw;
+    mvec3 Fh = f0h + (mvec3(1.0) - f0h) * (fw2 * fw2 * fw);
+    mfloat Dh = distribution_ggx_h(dot(NxH, NxH), NdotH, r * r);
+    mfloat kh = (r + mfloat(1.0)) * (r + mfloat(1.0)) * mfloat(0.125);
+    mfloat nv = mfloat(NdotV), nl = mfloat(NdotL);
+    mfloat Gh = nv / (nv * (mfloat(1.0) - kh) + kh) * (nl / (nl * (mfloat(1.0) - kh) + kh));
+    mvec3 spec_h = Dh * Gh * Fh / (mfloat(4.0) * nv * nl + mfloat(1e-4));
+    mvec3 kd_h = (mvec3(1.0) - Fh) * (mfloat(1.0) - m);
+    return vec3((kd_h * a * mfloat(1.0 / PI) + spec_h) * nl) * radiance;
+#endif
     vec3 f0 = mix(vec3(0.04), albedo, metallic);
     vec3 F = fresnel_schlick(max(dot(H, V), 0.0), f0);
     float D = distribution_ggx(NdotH, roughness * roughness);

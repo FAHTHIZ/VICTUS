@@ -213,6 +213,7 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("height", "window height (default: project setting)", "0")
         .option("quality", "rendering quality: low, medium, high, ultra or auto (from the GPU and RAM; default: project setting)")
         .option("hdr", "HDR scene colour: compact (R11G11B10F), full (RGBA16F) or auto (compact on phones and Low/Medium)", "auto")
+        .option("fp16", "half-precision shading: on, off or auto (on for phones and Low/Medium where the GPU supports it)", "auto")
         .flag("fullscreen", "run fullscreen")
         .flag("sync-assets", "load textures and models on first use instead of in the background")
         .flag("no-hot-reload", "do not reload scripts, textures, models and audio when their files change")
@@ -267,6 +268,9 @@ int cmd_run(const std::vector<std::string>& a) {
     if (const std::string hdr = p.get("hdr"); hdr == "compact") o.compact_hdr = true;
     else if (hdr == "full") o.compact_hdr = false;
     else if (hdr != "auto") return error("--hdr must be compact, full or auto");
+    if (const std::string fp16 = p.get("fp16"); fp16 == "on") o.half_precision = true;
+    else if (fp16 == "off") o.half_precision = false;
+    else if (fp16 != "auto") return error("--fp16 must be on, off or auto");
     o.saves = p.get("saves");
     auto r = player::run(o);
     if (!r) return error(r.error().message);
