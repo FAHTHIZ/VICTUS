@@ -21,6 +21,7 @@ layout(set = 3, binding = 0) uniform Taa {
     vec4 screen;     // xy: 1 / render size, zw: 1 / history size
     vec4 quant;       // x: compact HDR frame + 1 (0 off), y: reactive mask, z: its max current weight, w: last frame's mask
     vec4 depth_clip;  // ADR-0147: x: disocclusion strength (0 off), yz: linear depth 1 / (y d + z), w: tolerance per unit depth
+    vec4 lock;        // ADR-0148: x: thin-feature lock strength (0 off), y: lifetime lost per frame, z: luma similarity ratio
 } u;
 
 // Stochastic rounding to R11G11B10_FLOAT (compact HDR, ADR-0129). The result is exactly
@@ -50,7 +51,7 @@ vec3 hdr_quantize(vec3 c, float frame) {
 #endif
 }
 layout(location = 0) out vec4 out_color;
-layout(location = 1) out float out_depth; // ADR-0147: linear depth history
+layout(location = 1) out vec2 out_depth; // ADR-0147: linear depth history; ADR-0148: lock lifetime (g)
 
 // ADR-0147: linear view depth from 0..1 window depth (u.depth_clip.yz), clamped to the R16F range.
 float linear_depth(float d) { return min(1.0 / max(u.depth_clip.y * d + u.depth_clip.z, 1e-6), 65000.0); }
@@ -76,6 +77,28 @@ float disocclusion(vec2 prev_uv, float reprojected) {
     if (separation <= tolerance) return 0.0;
     float k = tolerance / separation;
     return 1.0 - k * k;
+}
+
+// ADR-0148, FSR2's ComputeThinFeatureConfidence: the centre luma (index 4 of the 3x3, row-major) is a
+// ridge, brighter or darker than every dissimilar neighbour, and no 2x2 quadrant through the centre is
+// uniformly similar (that would be an edge or a flat area, not a thin feature).
+float thin_feature(float l[9]) {
+    float nucleus = l[4];
+    float lo = 1e30, hi = 0.0;
+    uint similar = 16u;
+    for (int i = 0; i < 9; ++i) {
+        if (i == 4) continue;
+        float ratio = max(l[i], nucleus) / max(min(l[i], nucleus), 1e-4);
+        if (ratio < u.lock.z) similar |= 1u << uint(i);
+        else {
+            lo = min(lo, l[i]);
+            hi = max(hi, l[i]);
+        }
+    }
+    if (!(nucleus > hi || nucleus < lo)) return 0.0;
+    const uint q0 = 1u | 2u | 8u | 16u, q1 = 2u | 4u | 16u | 32u, q2 = 8u | 16u | 64u | 128u, q3 = 16u | 32u | 128u | 256u;
+    if ((similar & q0) == q0 || (similar & q1) == q1 || (similar & q2) == q2 || (similar & q3) == q3) return 0.0;
+    return 1.0;
 }
 
 vec3 to_ycocg(vec3 c) {
@@ -113,11 +136,14 @@ void main() {
     vec3 m1 = vec3(0.0), m2 = vec3(0.0);
     float closest = 1.0;
     vec2 closest_uv = v_uv;
+    float lum[9];
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
             vec2 uv = v_uv + vec2(x, y) * px;
             vec3 c = x == 0 && y == 0 ? current : safe(textureLod(u_current, uv, 0.0).rgb);
-            c = to_ycocg(c / (1.0 + luma(c)));
+            c = c / (1.0 + luma(c));
+            lum[(y + 1) * 3 + x + 1] = luma(c);
+            c = to_ycocg(c);
             m1 += c;
             m2 += c * c;
             float d = textureLod(u_depth, uv, 0.0).r;
@@ -130,7 +156,9 @@ void main() {
     // The pixel's own depth, not the dilated closest: a dilated history widens thin features (fence
     // posts) to fill the disocclusion footprint, and their sub-pixel flicker under the jitter then
     // reads as uncovered every frame.
-    out_depth = linear_depth(textureLod(u_depth, v_uv, 0.0).r);
+    // ADR-0148: a thin feature (luma ridge) in this frame's neighbourhood starts a lock.
+    float ridge = thin_feature(lum);
+    out_depth = vec2(linear_depth(textureLod(u_depth, v_uv, 0.0).r), ridge);
     if (u.params.y < 0.5) { out_color = vec4(current, 1.0); return; }
 
     vec4 prev = u.reproject * vec4(v_uv.x * 2.0 - 1.0, 1.0 - v_uv.y * 2.0, closest, 1.0);
@@ -146,12 +174,12 @@ void main() {
     // motion are left to the colour clip: the camera-only reprojected depth is wrong for them (a
     // receding object would read as uncovered).
     float dis = 0.0;
+    bool moving = false;
+    if (u.params.w > 0.5) {
+        vec2 mv = textureLod(u_motion, closest_uv, 0.0).rg;
+        moving = dot(mv, mv) > 0.0;
+    }
     if (u.depth_clip.x > 0.0) {
-        bool moving = false;
-        if (u.params.w > 0.5) {
-            vec2 mv = textureLod(u_motion, closest_uv, 0.0).rg;
-            moving = dot(mv, mv) > 0.0;
-        }
         // The far plane (sky) reprojects to itself; through the inverted matrices its linear depth
         // loses most of its precision (1 / (a d + b) with a d + b near zero) and would read as uncovered.
         float reprojected = linear_depth(closest >= 1.0 ? 1.0 : prev.z / prev.w);
@@ -162,6 +190,7 @@ void main() {
     vec3 sigma = sqrt(max(m2 / 9.0 - mean * mean, vec3(0.0))) * u.params.z;
     vec3 lo = mean - sigma, hi = mean + sigma;
     vec3 hw = to_ycocg(history / (1.0 + luma(history)));
+    vec3 hw_unclipped = hw;
     // Clip towards the box centre (not clamp per channel): keeps hue, avoids box-corner colours.
     vec3 centre = 0.5 * (lo + hi), extent = 0.5 * (hi - lo) + 1e-5;
     vec3 v = hw - centre;
@@ -183,6 +212,17 @@ void main() {
     // Uncovered surfaces take this frame: their history belongs to the occluder (ADR-0147; a smaller
     // clip box or a partial weight measured worse in the stripes test, also when upscaling).
     alpha = mix(alpha, 1.0, dis);
+    // Thin-feature locks (ADR-0148, FSR2): a locked pixel keeps its history unclipped, so a wire seen
+    // in only some jitter phases accumulates its coverage instead of being clipped to the background
+    // in the others. The lock lasts one jitter period after the ridge was last seen; uncovered and
+    // reactive pixels drop it.
+    // Moving objects drop it too: their unclipped history trails behind them.
+    float lifetime = ridge;
+    if (moving || reactive >= 0.1) lifetime = 0.0;
+    else if (dis <= 0.0) lifetime = max(ridge, textureLod(u_depth_prev, prev_uv, 0.0).g - u.lock.y);
+    lifetime = clamp(lifetime, 0.0, 1.0);
+    out_depth.y = lifetime;
+    hw = mix(hw, hw_unclipped, clamp(4.0 * lifetime, 0.0, 1.0) * u.lock.x * (1.0 - dis));
     vec3 r = from_ycocg(mix(hw, cw, alpha));
     r = r / max(1.0 - luma(r), 1e-4);
     out_color = vec4(safe(r), 1.0);

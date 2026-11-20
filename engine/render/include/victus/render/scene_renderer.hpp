@@ -474,8 +474,12 @@ struct RenderSettings {
     // Depth-based disocclusion (ADR-0147, FSR2 "depth clip" in gather form): the resolves keep a
     // linear depth history and trust the current frame where the reprojected surface was hidden
     // behind something nearer last frame, so uncovered background whose colours match the occluder
-    // does not ghost. 0 off .. 1 full; costs one R16F target per history.
+    // does not ghost. 0 off .. 1 full; costs one RG16F target per history (shared with the locks).
     float taa_disocclusion{1.0f};
+    // Thin-feature locks (ADR-0148, FSR2's locks): pixels whose luminance is a ridge in their 3x3
+    // neighbourhood (wires, fences, railings narrower than a pixel) keep their history unclipped for
+    // one jitter period, so sub-pixel features stop breaking into flickering dashes. 0 off .. 1 full.
+    float taa_thin_features{1.0f};
     bool auto_exposure{true};             // allowed; scenes enable it through Environment
     bool instancing{true};                // merge identical mesh+material draws into instanced batches
     // Mesh levels of detail: each draw uses the coarsest level whose geometric error, projected
@@ -606,6 +610,7 @@ struct SceneStats {
     bool taa{false};                   // TAA resolved this frame
     bool taa_history{false};           // ... with a valid history (false on the first frame / after a reset)
     bool taa_disocclusion{false};      // ... with the depth-history disocclusion test (ADR-0147)
+    bool taa_thin_features{false};     // ... with thin-feature locks (ADR-0148)
     bool temporal_upscale{false};      // ... reconstructed at output resolution from a lower render resolution
     bool spatial_upscale{false};       // ADR-0066: resampled to the output by the Catmull-Rom + RCAS pass
     bool sharpened{false};             // the upscale/sharpen pass ran this frame

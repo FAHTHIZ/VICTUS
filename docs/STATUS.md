@@ -2153,3 +2153,13 @@ Verified: `g++ 15.2 -fsyntax-only -Wall -Wshadow=local -Werror` on `scene_render
 Not covered: the macOS run itself is only checked by the next CI run.
 
 Next task: confirm CI green on main including the GLES steps, then TAA thin-feature locks.
+
+## 2026-11-20 — Thin-feature locks in the TAA resolves (ADR-0148)
+
+Built: `taa.frag` / `taa_upscale.frag` run FSR2's thin-feature (luma ridge) test on the 3x3 neighbourhood they already read and keep an 8-frame lock lifetime in the green channel of the depth history (now RG16F, else RGBA16F); locked pixels blend the clipped history back to the unclipped one. Disocclusion, the reactive mask and object motion clear locks. `RenderSettings::taa_thin_features` (0..1, default 1), `SceneRenderStats::taa_thin_features`.
+
+Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): new `gpu: taa keeps sub-pixel wires (ADR-0148)` against an 8x8 supersampled truth, in linear light — native error 47.0 to 36.0, flicker 22.4 to 9.6; half-resolution upscaling 60.4 to 25.1, flicker 11.6 to 7.2; no ghost 10 frames after the wires vanish. `gpu thin geometry: sub-pixel poles keep their coverage` now measures linear light and asserts the fix (TAA energy 0.72x / 0.62x of point sampling at 0.5 / 0.25 px, was 0.16x / 0.10x) instead of the old defect. Motion-vector and ghosting TAA cases unchanged. Reference-scene goldens regenerated after checking each scene against a 4x supersampled render: exterior PSNR +1.3/+1.7 dB, photoreal +0.9/+0.8 dB, effects +0.3/+0.2 dB, interior -0.15/-0.07 dB. Full ctest green.
+
+Not covered: no shading-change unlock (FSR2 compares luma at lock time), so a lit wire whose lighting jumps keeps its old history for up to 8 frames at 10 % per frame; no phone timing; Metal not run here; natively the luminance-weighted blend over-darkens a dark wire (1.44x the true darkness).
+
+Next task: refresh docs/audits/COMPETITOR_BENCHMARK.md for ADR-0144 to 0148, then the Priority 1 VICTUS Library and contextual audio handoff.

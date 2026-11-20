@@ -490,3 +490,136 @@ TEST_CASE("gpu: taa depth disocclusion stops occluder-coloured ghosts (ADR-0147)
     ctx.destroy(*stripe);
     ctx.destroy(*box);
 }
+
+namespace {
+// ADR-0148 scene: dark wires a fraction of a render pixel wide, slightly slanted, in front of a white
+// wall. The colour clip sees a wire only in the jitter phases whose sample lands on it.
+std::vector<std::uint8_t> wires_frame(SceneRenderer& r, GpuMesh bar, std::uint32_t w, std::uint32_t h, bool wires = true) {
+    auto& dev = gpu().ctx->device();
+    Environment env;
+    env.draw_sky = false;
+    env.clear_color = {1, 1, 1, 1};
+    env.tonemap = false;
+    env.auto_exposure = false;
+    env.vignette = 0.0f;
+    DirectionalLight sun;
+    sun.intensity = 0.0f;
+    sun.shadows = false;
+    r.begin(Camera3D::look_at({0, 0, 6}, {0, 0, 0}, {0, 1, 0}), sun, env);
+    Material white, black;
+    white.unlit = black.unlit = true;
+    white.base_color = {1, 1, 1, 1};
+    black.base_color = {0, 0, 0, 1};
+    r.submit(bar, white, math::Mat4::trs({0, 0, -1}, {}, {40, 40, 1}));
+    // One output pixel is 6 / 83.1 = 0.072 units at the wires' distance.
+    const float widths[] = {0.012f, 0.024f, 0.036f};
+    for (int i = 0; i < (wires ? 6 : 0); ++i) {
+        const float width = widths[i % 3];
+        const math::Quat tilt = math::Quat::axis_angle({0, 0, 1}, 0.03f + 0.02f * static_cast<float>(i));
+        r.submit(bar, black, math::Mat4::trs({-2.0f + 0.8f * static_cast<float>(i), 0, 0}, tilt, {width, 6, 0.01f}));
+        const math::Quat flat = math::Quat::axis_angle({0, 0, 1}, 1.55f - 0.02f * static_cast<float>(i));
+        r.submit(bar, black, math::Mat4::trs({0, -2.0f + 0.8f * static_cast<float>(i), 0}, flat, {width, 6, 0.01f}));
+    }
+    auto target = test::make_target(w, h);
+    auto cmd = dev.begin_commands();
+    REQUIRE(r.render(cmd, target, w, h, rhi::Format::RGBA8_UNORM).ok());
+    cmd.submit_and_wait();
+    auto px = dev.read_texture(target).value();
+    dev.destroy(target);
+    return px;
+}
+// The post pass encodes sRGB into the UNORM target; compare coverage in linear light (0..255).
+double linear255(int v) {
+    const double c = v / 255.0;
+    return 255.0 * (c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4));
+}
+} // namespace
+
+TEST_CASE("gpu: taa keeps sub-pixel wires (ADR-0148)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto bar = ctx.create_mesh(make_cube({0.5f, 0.5f, 0.5f}), "wire");
+    REQUIRE(bar.ok());
+    // Ground truth: 8x8 supersampled without TAA (pixels are 0 or 255, so already linear), box-filtered down.
+    constexpr std::uint32_t S = 8;
+    std::vector<double> truth(static_cast<std::size_t>(W) * H, 0.0);
+    {
+        auto sr = SceneRenderer::create(ctx);
+        REQUIRE(sr.ok());
+        RenderSettings s = RenderSettings::preset(QualityTier::High);
+        s.taa = s.fxaa = s.ssao = s.bloom = false;
+        (*sr)->set_settings(s);
+        const auto big = wires_frame(**sr, *bar, W * S, H * S, true);
+        for (std::uint32_t y = 0; y < H * S; ++y)
+            for (std::uint32_t x = 0; x < W * S; ++x)
+                truth[static_cast<std::size_t>(y / S) * W + x / S] += channel(pixel(big, W * S, x, y), 0) / double(S * S);
+    }
+    std::vector<bool> mask(truth.size());
+    std::size_t mask_px = 0;
+    for (std::size_t i = 0; i < truth.size(); ++i) {
+        mask[i] = truth[i] < 250.0;
+        mask_px += mask[i] ? 1 : 0;
+    }
+    MESSAGE("wire pixels " << mask_px);
+    struct Result {
+        double error, flicker, darkness, ghost;
+        bool active;
+    };
+    const auto run = [&](float scale, float strength) {
+        auto sr = SceneRenderer::create(ctx);
+        REQUIRE(sr.ok());
+        RenderSettings s = RenderSettings::preset(QualityTier::High);
+        s.fxaa = s.ssao = s.bloom = false;
+        s.render_scale = scale;
+        s.taa_thin_features = strength;
+        (*sr)->set_settings(s);
+        std::vector<std::vector<std::uint8_t>> frames;
+        for (int i = 0; i < 64; ++i) {
+            auto f = wires_frame(**sr, *bar, W, H, true);
+            if (i >= 64 - 17) frames.push_back(std::move(f));
+        }
+        Result r{0, 0, 0, 0, (*sr)->stats().taa_thin_features};
+        for (std::size_t f = 1; f < frames.size(); ++f)
+            for (std::size_t i = 0; i < truth.size(); ++i) {
+                if (!mask[i]) continue;
+                const auto x = static_cast<std::uint32_t>(i % W), y = static_cast<std::uint32_t>(i / W);
+                const double v = linear255(channel(pixel(frames[f], W, x, y), 0)), p = linear255(channel(pixel(frames[f - 1], W, x, y), 0));
+                r.error += std::abs(v - truth[i]);
+                r.flicker += std::abs(v - p);
+                r.darkness += 255.0 - v;
+            }
+        const double n = static_cast<double>(mask_px * (frames.size() - 1));
+        r.error /= n;
+        r.flicker /= n;
+        r.darkness /= n;
+        if (strength > 0.0f) test::save_output(scale < 1.0f ? "taa_wires_upscale" : "taa_wires", W, H, frames.back());
+        // The wires vanish: a lock must not hold them for long (one jitter period at most).
+        std::vector<std::uint8_t> after;
+        for (int i = 0; i < 10; ++i) after = wires_frame(**sr, *bar, W, H, false);
+        for (std::size_t i = 0; i < truth.size(); ++i)
+            if (mask[i]) r.ghost += 255.0 - linear255(channel(pixel(after, W, static_cast<std::uint32_t>(i % W), static_cast<std::uint32_t>(i / W)), 0));
+        r.ghost /= static_cast<double>(mask_px);
+        return r;
+    };
+    double truth_dark = 0;
+    for (std::size_t i = 0; i < truth.size(); ++i) truth_dark += mask[i] ? 255.0 - truth[i] : 0.0;
+    truth_dark /= static_cast<double>(mask_px);
+    for (const float scale : {1.0f, 0.5f}) {
+        CAPTURE(scale);
+        const Result on = run(scale, 1.0f), off = run(scale, 0.0f);
+        MESSAGE("scale " << scale << " locks on: error " << on.error << ", flicker " << on.flicker << ", darkness " << on.darkness
+                         << ", ghost after 10 frames " << on.ghost << "; off: error " << off.error << ", flicker " << off.flicker
+                         << ", darkness " << off.darkness << ", ghost " << off.ghost << "; truth darkness " << truth_dark);
+        CHECK(on.active);
+        CHECK_FALSE(off.active);
+        // lavapipe, linear light: error 0.76x native, 0.42x upscaling; flicker 0.43x / 0.62x; wire
+        // darkness 1.44 / 0.99 of the truth (0.34 / 0.13 with locks off). Natively the luminance-
+        // weighted blend over-darkens the dark wire a little; without locks it nearly vanishes.
+        CHECK(on.error < 0.85 * off.error);
+        CHECK(on.flicker < 0.8 * off.flicker);
+        CHECK(on.darkness > 0.6 * truth_dark);
+        CHECK(on.darkness < 1.6 * truth_dark);
+        CHECK(on.ghost < 2.0);
+    }
+    ctx.destroy(*bar);
+}
