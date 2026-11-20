@@ -45,7 +45,7 @@ Value settings_to_json(const ProjectSettings& s) {
         rendering.set("dynamic_resolution_min", s.dynamic_resolution_min);
     }
     if (!s.temporal_upscale) rendering.set("temporal_upscale", false);
-    if (s.mobile_quality != "medium") rendering.set("mobile_quality", s.mobile_quality);
+    if (s.mobile_quality != "auto") rendering.set("mobile_quality", s.mobile_quality);
     if (s.mobile_target_fps != 30) rendering.set("mobile_target_fps", s.mobile_target_fps);
     if (s.asset_budget_mb > 0) rendering.set("asset_budget_mb", s.asset_budget_mb);
     if (s.texture_streaming) rendering.set("texture_streaming", true);
@@ -71,12 +71,12 @@ Status settings_from_json(const Value& source, ProjectSettings& s) {
     const Value& r = v["rendering"];
     s.render_quality = r["quality"].as_string_or("high");
     if (s.render_quality != "low" && s.render_quality != "medium" && s.render_quality != "high" &&
-        s.render_quality != "ultra")
-        return bad("rendering.quality must be low, medium, high or ultra");
-    s.mobile_quality = r["mobile_quality"].as_string_or("medium");
+        s.render_quality != "ultra" && s.render_quality != "auto")
+        return bad("rendering.quality must be low, medium, high, ultra or auto");
+    s.mobile_quality = r["mobile_quality"].as_string_or("auto");
     if (s.mobile_quality != "low" && s.mobile_quality != "medium" && s.mobile_quality != "high" &&
-        s.mobile_quality != "ultra")
-        return bad("rendering.mobile_quality must be low, medium, high or ultra");
+        s.mobile_quality != "ultra" && s.mobile_quality != "auto")
+        return bad("rendering.mobile_quality must be low, medium, high, ultra or auto");
     const auto mfps = r["mobile_target_fps"].as_int(30);
     if (mfps < 0 || mfps > 1000) return bad("rendering.mobile_target_fps must be 0 (off) or between 1 and 1000");
     s.mobile_target_fps = static_cast<int>(mfps);

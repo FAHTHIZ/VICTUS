@@ -25,7 +25,7 @@ The owner's target: images that read as photoreal on hardware as weak as entry-l
 - [x] **Mobile bandwidth quick wins.** R11G11B10 scene colour on Low/Medium and mobile, no depth pre-pass without SSAO, FXAA folded into tonemap on Low. Done (ADR-0126): packed HDR by default on phones and Low/Medium, `victus run --hdr`, `hdr_precision` in the render path report; the depth pre-pass was already SSAO/occlusion-only; the FXAA fold was rejected (more ALU and HDR reads than it saves).
 - [ ] **Baked lighting v2.** Directional (L1 SH) lightmaps, sun shadowmask, baked light probes for dynamic objects, lightmapped templates.
 - [ ] **FP16 shading** behind a capability check, held to `victus compare` goldens.
-- [ ] **Device classes.** Tier chosen per GPU and capabilities, with project overrides.
+- [x] **Device classes.** Tier chosen per GPU and capabilities, with project overrides. Done (ADR-0127): `rendering.quality` / `rendering.mobile_quality` = `"auto"` (the phone default) picks the tier from the GPU family (Mali, Adreno, PowerVR, Xclipse, Apple, Intel integrated, software), capped by RAM and compute support; explicit tiers still win.
 - [ ] **Photoreal reference scene** with CC0 scanned materials, the reference for perceptual equivalence across tiers.
 - [ ] **Mobile temporal upscaling.** Arm ASR (MIT) evaluated against the built-in TAA upscaler.
 - [ ] **OpenGL ES 3 fallback** (ADR first) for the ~7 % of Android handhelds without Vulkan.

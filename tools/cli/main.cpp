@@ -202,7 +202,7 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("render-report", "write the rendering path of the last frame (features, reason codes) as JSON; prints it too")
         .option("width", "window width (default: project setting)", "0")
         .option("height", "window height (default: project setting)", "0")
-        .option("quality", "rendering quality: low, medium, high or ultra (default: project setting)")
+        .option("quality", "rendering quality: low, medium, high, ultra or auto (from the GPU and RAM; default: project setting)")
         .option("hdr", "HDR scene colour: compact (R11G11B10F), full (RGBA16F) or auto (compact on phones and Low/Medium)", "auto")
         .flag("fullscreen", "run fullscreen")
         .flag("sync-assets", "load textures and models on first use instead of in the background")
@@ -265,6 +265,7 @@ int cmd_run(const std::vector<std::string>& a) {
                 static_cast<unsigned long long>(r->frames), r->seconds, r->backend.c_str(), r->quality.c_str(),
                 static_cast<unsigned long long>(r->script_errors));
     std::printf("hdr: %s\n", r->hdr_format.c_str());
+    if (!r->device_class.empty()) std::printf("device class: %s\n", r->device_class.c_str());
     if (!r->net_status.empty()) std::printf("net: %s\n", r->net_status.c_str());
     if (p.has("render-report")) {
         if (r->render_path.features.empty()) {

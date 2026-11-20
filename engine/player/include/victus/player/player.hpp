@@ -7,6 +7,7 @@
 #include "victus/core/fs.hpp"
 #include "victus/core/result.hpp"
 #include "victus/render/render_path.hpp"
+#include "victus/render/device_class.hpp"
 #include "victus/render/scene_renderer.hpp"
 
 #include <cstdint>
@@ -35,7 +36,7 @@ struct PlayerOptions {
     // load synchronously so captures and screenshots stay deterministic.
     bool async_assets{true};
     bool hot_reload{false};      // reload changed scripts, textures, models and audio while running (development)
-    std::string quality;         // low|medium|high|ultra; empty = project rendering.quality
+    std::string quality;         // low|medium|high|ultra|auto; empty = project rendering.quality
     // Packed R11G11B10F HDR scene colour; unset = compact_hdr_by_default(tier, mobile).
     std::optional<bool> compact_hdr;
     std::string connect;         // host[:port] of a `victus serve` server; empty = play offline
@@ -82,6 +83,7 @@ struct PlayerReport {
     std::size_t plugins_loaded{0}; // native plugins initialized from <project>/plugins (ADR-0078)
     std::string quality;         // quality tier used
     std::string hdr_format;      // HDR scene colour format used: "R11G11B10F" or "RGBA16F"
+    std::string device_class;    // with quality "auto": why that tier was picked (ADR-0127)
     std::string net_status;      // last multiplayer status when --connect was used
     std::uint64_t assets_streamed{0}; // textures/models uploaded by the background loader
     std::size_t assets_reloaded{0}; // textures/models/audio hot-reloaded while running

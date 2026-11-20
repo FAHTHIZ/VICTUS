@@ -109,7 +109,23 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     const std::string quality_name = !o.quality.empty() ? o.quality
                                      : mobile           ? proj->settings().mobile_quality
                                                         : proj->settings().render_quality;
-    const auto tier = render::parse_quality_tier(quality_name);
+    // "auto" (ADR-0127): pick the tier from the GPU family and RAM; Medium on unknown phones,
+    // High on unknown desktops.
+    std::optional<render::QualityTier> tier;
+    std::string device_class;
+    if (quality_name == "auto") {
+        render::DeviceProfile profile;
+        profile.gpu = dev.capabilities().driver_name;
+        profile.mobile = mobile;
+        profile.ram_mb = platform::Platform::system_ram_mb();
+        profile.compute = dev.capabilities().compute;
+        const render::DeviceClass dc = render::classify_device(profile, mobile ? render::QualityTier::Medium : render::QualityTier::High);
+        tier = dc.tier;
+        device_class = dc.reason;
+        VICTUS_LOG_INFO("player", "quality auto -> {} ({})", render::quality_tier_name(dc.tier), dc.reason);
+    } else {
+        tier = render::parse_quality_tier(quality_name);
+    }
     if (!tier) return make_error(ErrorCode::InvalidArgument, "unknown quality tier '" + quality_name + "'");
     // Packed R11G11B10F scene colour (ADR-0050, ADR-0126) halves HDR bandwidth where bandwidth is
     // the limit: phones and the Low/Medium tiers. Fixed for the run (the pipelines are built for it).
@@ -391,6 +407,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     report.plugins_loaded = plugins.loaded_count();
     report.quality = std::string(render::quality_tier_name(*tier));
     report.hdr_format = hdr_format;
+    report.device_class = device_class;
     VICTUS_LOG_INFO("player", "{}: {} on {}", proj->settings().name, rel, report.backend);
 
     rhi::TextureHandle frame;

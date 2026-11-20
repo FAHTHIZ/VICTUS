@@ -101,6 +101,7 @@ victus_add_test(victus_render_tests
         render/image_compare_tests.cpp
         render/render_path_tests.cpp
         render/lightmap_tests.cpp
+        render/device_class_tests.cpp
     DEPS VICTUS::Render VICTUS::Shadercompiler
     LABELS render)
 target_compile_definitions(victus_render_tests PRIVATE VICTUS_SHADER_SOURCE_DIR="${PROJECT_SOURCE_DIR}/engine/render/shaders")

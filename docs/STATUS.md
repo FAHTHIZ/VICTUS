@@ -1791,3 +1791,11 @@ Built: the player creates its renderer with R11G11B10F scene colour, bloom chain
 Verified: `victus_gpu_tests -tc="gpu quality: compact*"` (Low/Medium/High: mean difference 0.22 / 0.27 / 0.29 8-bit levels against RGBA16F, 4-6 of 73 728 channels off by more than 8, path report Reduced vs Active); `victus_render_tests -tc="*path*"`; `victus_cli_smoke` now checks `hdr: RGBA16F` at High/Ultra and `hdr: R11G11B10F` at Low/Medium on lavapipe; full `ctest --preset dev` with `VICTUS_REQUIRE_GPU=1`; clang-tidy on render_path.cpp and player.cpp.
 
 Not covered: no bandwidth measurement on a real tiled GPU (Mali/Adreno counters); Studio's viewport stays RGBA16F.
+
+## 2026-11-20 — Device-class quality: the "auto" tier (ADR-0127)
+
+Built: `render::classify_device` (GPU family and generation from the driver's device name, capped by RAM and compute support); `platform::Platform::system_ram_mb`; `rendering.quality` / `rendering.mobile_quality` accept `"auto"`, the new phone default; the player resolves it at start-up and logs the reason; `victus run --quality auto` prints `device class: <reason>`; `PlayerReport::device_class`.
+
+Verified: `victus_render_tests -tc="device class*"` (Mali, Adreno, PowerVR, Xclipse, Apple, Intel, NVIDIA, llvmpipe and WARP names; RAM and compute caps); `victus_project_tests` (default `auto`, round trip); `victus_cli_smoke` checks that `--quality auto` picks Low with `device class: software rasterizer` on lavapipe; full `ctest --preset dev` with `VICTUS_REQUIRE_GPU=1`; clang-tidy on device_class.cpp, player.cpp and platform.cpp.
+
+Not covered: the GPU table is a heuristic from public GPU generations and has not been checked on real phones.

@@ -24,6 +24,7 @@ victus_add_module(render
         src/irradiance_volume.cpp
         src/irradiance_bake.cpp
         src/lightmap.cpp
+        src/device_class.cpp
         src/gpu_context.cpp
         src/image.cpp
         src/image_compare.cpp
