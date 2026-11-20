@@ -1014,8 +1014,14 @@ rhi::TextureHandle GpuAssetCache::lightmap(std::string_view path) {
         if (dir) entry.direction = *dir;
         else VICTUS_LOG_WARN("runtime", "lightmap '{}': {} (normal maps will not shade baked light)", key, dir.error().message);
     }
+    entry.shadowmask_direction = file->shadowmask_direction;
     entry.entries = std::move(file->entries);
     return entry.texture;
+}
+
+math::Vec3 GpuAssetCache::lightmap_shadowmask_direction(std::string_view path) {
+    if (!lightmap(path).valid()) return {0, 0, 0};
+    return lightmaps_.find(std::string(path))->second.shadowmask_direction;
 }
 
 rhi::TextureHandle GpuAssetCache::lightmap_direction(std::string_view path) {
@@ -1455,6 +1461,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             if (env.lightmap.valid()) {
                 lightmap_path = e.lightmap;
                 env.lightmap_direction = assets.lightmap_direction(e.lightmap);
+                env.lightmap_shadowmask_direction = assets.lightmap_shadowmask_direction(e.lightmap);
             }
         }
         if (!e.environment_map.is_nil()) {

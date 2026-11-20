@@ -972,6 +972,14 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0131 — Baked sun shadowmask (distance shadowmask)
+
+- Status: Accepted (2026-11-20)
+- Context: phones render one 1024 cascade over a short shadow distance (Low tier), so static scenery past a few tens of metres loses its sun shadows and looks flat; raising the distance costs shadow-map draws and resolution on exactly the devices that can least afford it. Unity's default mixed-lighting mode on mobile is Distance Shadowmask (baked static shadows past the realtime distance); Unreal's stationary lights bake distance-field shadowmaps for the same reason.
+- Decision: the lightmap baker (`LightmapSettings::shadowmask`, on by default) traces the first shadow-casting directional light's visibility per texel over the sun's disc (`sun_angular_radius`, 0.01 rad; `shadowmask_samples` 32, R2 sequence) and stores it in the atlas alpha, dilated with the irradiance; `LightmapBake::shadowmask_direction` records the light. `.vlightmap` version 2 gains a flag and the direction (files without it, including version 1, have no mask). `Environment::lightmap_shadowmask_direction` (set by scene lightmaps automatically) turns it on in pbr.frag through `Lighting.cascade_params.w`: inside the cascades the realtime map still shades every caster, the last cascade fades into the baked value instead of to 1, and beyond it lightmapped pixels take the baked visibility. The renderer only enables it while the sun points within about 1 degree of the baked direction and casts shadows, so a moved sun never shows stale shadows. Cost: one texture channel that was already fetched; no extra pass.
+- Alternatives: full shadowmask (static casters skipped in the shadow map, baked shadows everywhere: cheaper still but needs per-caster static flags in the shadow pass; possible follow-up); signed-distance shadowmaps (sharper at low resolution, more complex bake); longer realtime distance on phones (the cost this avoids).
+- Consequences: static sun shadows at every distance and on every tier; dynamic objects still need the realtime cascades for their own shadows, and they receive no baked shadow (no probes yet). Coverage alpha (1 / 0.5 / 0) is only kept for bakes without a mask.
+
 ## ADR-0130 — Directional lightmaps
 
 - Status: Accepted (2026-11-20)

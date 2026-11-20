@@ -404,6 +404,11 @@ struct Environment {
     // Directional lightmap (ADR-0130, create_lightmap_direction_texture): lets normal maps shade
     // the baked light. Optional; without it baked light ignores the per-pixel normal.
     rhi::TextureHandle lightmap_direction{};
+    // Baked sun shadowmask (ADR-0131): the direction of the sun the lightmap's alpha was baked
+    // for (LightmapBake::shadowmask_direction), zero = none. Lightmapped pixels beyond the
+    // realtime shadow distance take the sun's shadow from it; ignored while the sun points
+    // elsewhere (more than ~1 degree off) or casts no shadows.
+    math::Vec3 lightmap_shadowmask_direction{0, 0, 0};
 };
 
 // Scalability tiers. Low targets entry-level phones, Medium mid-range phones/tablets, High

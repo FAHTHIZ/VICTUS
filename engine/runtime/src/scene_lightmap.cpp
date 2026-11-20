@@ -240,6 +240,7 @@ Result<SceneLightmapBake> bake_prepared_lightmap(const PreparedLightmapBake& pre
     out.stats = bake->stats;
     out.file.atlas = std::move(bake->atlas);
     out.file.direction = std::move(bake->direction);
+    out.file.shadowmask_direction = bake->shadowmask_direction;
     for (std::size_t i = 0; i < prepared.items.size(); ++i) {
         if (!prepared.items[i].receives || bake->instances[i].empty()) continue;
         render::LightmapFileEntry entry;
