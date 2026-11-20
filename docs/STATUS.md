@@ -2184,3 +2184,12 @@ Not covered: no GPU test of the CPU-decode upload path; no device run. Pack-size
 
 Next task: Android APK of the Special Ops showcase (`--target android`), then mobile performance.
 
+## 2026-11-20 — Android orientation, tier foliage range, faster visibility (ADR-0150)
+
+Built: `VictusActivity` keeps the manifest orientation (`victus.orientation`, default `sensorLandscape`) when SDL creates the window, so phones with rotation locked upright start in landscape. Allocation-free LOD hysteresis history and a single LOD pick per draw. `RenderSettings::foliage_distance_scale` / `foliage_shadow_fraction` (Low 0.7 / 0.5, Medium 0.85 / 0.75). Per-stage `render.cpu.*` profiler zones in `SceneRenderer::render`; `frame.submitted`, `frame.culled`, `frame.shadow_casters`, `frame.reflection_probes` profile counters.
+
+Verified: Linux gcc Release build; `victus_gpu_tests` 200/200 (foliage case extended), `victus_robustness_tests` 15/15. Special Ops forest at Low on lavapipe: visibility 2.41 to 0.97 ms, renderer CPU 4.69 to 3.48 ms per frame, same draws and triangles.
+
+Not covered: no device run of the orientation fix; phone frame times are not measurable here.
+
+Next task: Low-tier image stability on phones (foliage and rain shimmer), GPU triangle budget of the forest scenes.

@@ -642,7 +642,11 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         c.emplace_back("frame.render_passes", static_cast<double>(last_view_passes));
         c.emplace_back("frame.triangles", static_cast<double>(ss.triangles));
         c.emplace_back("frame.shadow_triangles", static_cast<double>(ss.shadow_triangles));
+        c.emplace_back("frame.submitted", static_cast<double>(ss.submitted));
         c.emplace_back("frame.visible", static_cast<double>(ss.visible));
+        c.emplace_back("frame.culled", static_cast<double>(ss.culled));
+        c.emplace_back("frame.shadow_casters", static_cast<double>(ss.shadow_casters));
+        c.emplace_back("frame.reflection_probes", static_cast<double>(ss.reflection_probes));
         c.emplace_back("frame.main_batches", static_cast<double>(ss.main_batches));
         c.emplace_back("frame.shadow_batches", static_cast<double>(ss.shadow_batches + ss.local_shadow_draws));
         c.emplace_back("frame.transparent_draws", static_cast<double>(ss.transparent_draws));

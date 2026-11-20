@@ -38,7 +38,7 @@ Gradle properties:
 | `victus.applicationId` | `dev.victus.game` | Android package name |
 | `victus.appName` | `VICTUS Game` | launcher label |
 | `victus.versionCode` / `victus.versionName` | `1` / `0.1.0` | store version |
-| `victus.orientation` | `sensorLandscape` | activity `screenOrientation` |
+| `victus.orientation` | `sensorLandscape` | activity `screenOrientation`; `VictusActivity` keeps it when SDL creates the window (ADR-0150), so a phone with rotation locked upright still starts in landscape. `unspecified` hands the choice back to SDL |
 | `victus.sdlSource` | (download) | local SDL 3 source tree to take the Java glue from |
 | `victus.nativeBuildType` | `RelWithDebInfo` | CMake build type of debug APKs; `Release` skips debug info (smaller, faster build) |
 

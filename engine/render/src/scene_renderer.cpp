@@ -281,10 +281,15 @@ rhi::TextureDesc color_desc(rhi::Format f, std::uint32_t w, std::uint32_t h) {
 // With `previous` >= 0 (the level drawn last frame), that level is kept while it lies between this
 // pick and the pick for the budget shrunk by `lod_hysteresis` (ADR-0077).
 std::uint8_t select_lod(const GpuMesh& mesh, const Mat4& model, const Aabb& world, Vec3 eye, float pixels_per_unit,
-                        const RenderSettings& s, int previous = -1) {
+                        const RenderSettings& s, int previous = -1, std::uint8_t* stateless = nullptr) {
+    if (stateless) *stateless = 0;
     if (mesh.lod_count <= 1 || (!s.lods && s.force_lod < 0)) return 0;
     const auto last = static_cast<int>(mesh.lod_count) - 1;
-    if (s.force_lod >= 0) return static_cast<std::uint8_t>(std::min(s.force_lod, last));
+    if (s.force_lod >= 0) {
+        const auto forced = static_cast<std::uint8_t>(std::min(s.force_lod, last));
+        if (stateless) *stateless = forced;
+        return forced;
+    }
     const Vec3 nearest{std::clamp(eye.x, world.min.x, world.max.x), std::clamp(eye.y, world.min.y, world.max.y),
                        std::clamp(eye.z, world.min.z, world.max.z)};
     const float distance = length(nearest - eye);
@@ -297,6 +302,7 @@ std::uint8_t select_lod(const GpuMesh& mesh, const Mat4& model, const Aabb& worl
         return lod;
     };
     const int coarsest = pick(s.lod_error_pixels);
+    if (stateless) *stateless = static_cast<std::uint8_t>(coarsest);
     if (previous < 0 || s.lod_hysteresis <= 0.0f) return static_cast<std::uint8_t>(coarsest);
     const int finest = pick(s.lod_error_pixels * (1.0f - s.lod_hysteresis));
     return static_cast<std::uint8_t>(std::clamp(previous, finest, coarsest));
@@ -462,6 +468,8 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.max_point_lights = 64;
         s.lod_error_pixels = 2.0f;
         s.shadow_lod_bias = 1;
+        s.foliage_distance_scale = 0.7f;
+        s.foliage_shadow_fraction = 0.5f;
         s.max_anisotropy = 2;
         s.local_shadows = false;
         s.irradiance_volumes = false;
@@ -487,6 +495,8 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.taa = false;
         s.max_point_lights = 256;
         s.lod_error_pixels = 1.5f;
+        s.foliage_distance_scale = 0.85f;
+        s.foliage_shadow_fraction = 0.75f;
         s.max_anisotropy = 4;
         s.local_shadow_atlas = 1024;
         s.local_shadow_tile = 256;
@@ -543,6 +553,8 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.lod_hysteresis = std::isfinite(s.lod_hysteresis) ? std::clamp(s.lod_hysteresis, 0.0f, 0.9f) : 0.0f;
     s.force_lod = std::clamp(s.force_lod, -1, static_cast<int>(kMaxMeshLods) - 1);
     s.shadow_lod_bias = std::min(s.shadow_lod_bias, 3u);
+    s.foliage_distance_scale = std::isfinite(s.foliage_distance_scale) ? std::clamp(s.foliage_distance_scale, 0.25f, 1.0f) : 1.0f;
+    s.foliage_shadow_fraction = std::isfinite(s.foliage_shadow_fraction) ? std::clamp(s.foliage_shadow_fraction, 0.0f, 1.0f) : 1.0f;
     s.shadow_lod_texels = std::isfinite(s.shadow_lod_texels) ? std::clamp(s.shadow_lod_texels, 0.0f, 8.0f) : 1.0f;
     if (s.debug_view != DebugView::Overdraw) s.debug_view = DebugView::None;
     {
@@ -1600,6 +1612,8 @@ void SceneRenderer::compute_cascades(float aspect, std::uint32_t resolution) {
 Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target, std::uint32_t width, std::uint32_t height,
                              rhi::Format target_format) {
     VICTUS_PROFILE_SCOPE("SceneRenderer::render");
+    std::optional<profiler::ScopedZone> stage; // sequential CPU stages, each closes the previous
+    stage.emplace("render.cpu.setup");
     if (width == 0 || height == 0) return {};
     auto& dev = ctx_.device();
     const RenderSettings& S = settings_;
@@ -1676,6 +1690,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     std::array<Frustum, 4> cascade_frustum{};
     for (std::uint32_t c = 0; c < cascade_count_; ++c) cascade_frustum[c] = Frustum::from_matrix(cascade_vp_[c]);
 
+    stage.emplace("render.cpu.shadow_setup");
     // Rain occlusion (ADR-0114): a depth map of the opaque scene seen along the fall direction,
     // centred on the camera and snapped to whole texels, so drops and wetness stop under roofs.
     const Precipitation& weather = env_.precipitation;
@@ -1770,6 +1785,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         stats_.local_shadow_tiles = static_cast<std::uint32_t>(local_views.size());
     }
 
+    stage.emplace("render.cpu.visibility");
     // Visibility + sorting (front-to-back within pipeline and base texture runs).
     if (!scratch_) scratch_ = std::make_unique<FrameScratch>();
     FrameScratch& F = *scratch_;
@@ -1784,18 +1800,18 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     // Frames with LODs off or forced record nothing, so they do not pin the next frame's levels.
     const bool lod_record = S.lod_hysteresis > 0.0f && S.lods && S.force_lod < 0;
     const bool lod_history = lod_record && lod_history_valid_ && lod_history_w_ == width && lod_history_h_ == height;
-    lod_next_.clear();
+    lod_next_.clear(lod_record ? draws_.size() : 0);
     const auto lod_key = [](const Draw& d) { return mix(d.motion_id, reinterpret_cast<std::uintptr_t>(d.mesh)); };
     for (Draw& d : draws_) {
         const Aabb world = d.skinned ? d.world_bounds : d.mesh->bounds.transformed(d.model);
         const bool blended = d.material.blend != MaterialBlend::Opaque;
         int previous = -1;
         if (lod_history && d.motion_id != 0)
-            if (const auto it = lod_prev_.find(lod_key(d)); it != lod_prev_.end()) previous = it->second;
-        d.lod = select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S, previous);
-        if (previous >= 0 && d.lod != select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S))
-            ++stats_.lod_held;
-        if (lod_record && d.motion_id != 0) lod_next_.emplace(lod_key(d), d.lod);
+            previous = lod_prev_.find(lod_key(d));
+        std::uint8_t stateless = 0;
+        d.lod = select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S, previous, &stateless);
+        if (previous >= 0 && d.lod != stateless) ++stats_.lod_held;
+        if (lod_record && d.motion_id != 0) lod_next_.insert(lod_key(d), d.lod);
         d.shadow_lod = d.lod;
         if (S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
             d.shadow_lod = static_cast<std::uint8_t>(std::min<std::uint32_t>(d.lod + S.shadow_lod_bias, d.mesh->lod_count - 1u));
@@ -1877,7 +1893,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         if (d.material.surface_shader) ++stats_.surface_shader_draws;
         (blended ? transparent : visible).push_back(&d);
     }
-    lod_prev_.swap(lod_next_);
+    std::swap(lod_prev_, lod_next_);
     lod_history_w_ = width;
     lod_history_h_ = height;
     lod_history_valid_ = true;
@@ -1903,6 +1919,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     });
     stats_.visible = static_cast<std::uint32_t>(visible.size());
 
+    stage.emplace("render.cpu.motion");
     // Object motion vectors: visible opaque draws whose transform or joints changed since the last
     // frame. Previous joints are appended to this frame's palette so one storage buffer serves both.
     auto& motion_instances = F.motion_instances;
@@ -1993,6 +2010,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                           true);
     }
 
+    stage.emplace("render.cpu.batches");
     // Instancing: consecutive draws with the same mesh and identical material become one batch.
     // Every pass reads its own contiguous range of the per-frame instance buffer.
     auto& instances = F.instances;
@@ -2095,6 +2113,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     }
     constexpr auto kInstanceStride = static_cast<std::uint32_t>(sizeof(InstanceData));
 
+    stage.emplace("render.cpu.occlusion_setup");
     // GPU occlusion culling setup: per-instance world bounds (tagged with batch index and the
     // batch's instance offset) and one indirect command per main batch with zero instances; the
     // cull shader appends survivors. Main batches own instances [0, visible.size()) in order.
@@ -2154,6 +2173,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     }
     for (std::uint32_t c = 0; c < cascade_count_; ++c) stats_.shadow_draws += static_cast<std::uint32_t>(casters[c].size());
 
+    stage.emplace("render.cpu.lights");
     // Local lights: frustum-cull bounding spheres, keep the nearest when over budget, then
     // assign them to view-space clusters and upload both storage buffers.
     std::vector<GpuLight> local_lights;
@@ -2240,6 +2260,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                                  clusters.data.size() * sizeof(std::uint32_t)));
     }
 
+    stage.emplace("render.cpu.uploads");
     // Debug line upload happens before any render pass.
     stats_.lines = static_cast<std::uint32_t>(lines_.size() / 2);
     if (!lines_.empty()) {
@@ -2256,6 +2277,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                           {reinterpret_cast<const std::uint8_t*>(lines_.data()), lines_.size() * sizeof(LineVertex)}, true);
     }
 
+    stage.emplace("render.cpu.gpu_particles");
     // GPU particles (ADR-0097): bring every submitted emitter's GPU state up to its clock. New
     // or reset emitters start from zeroed (dead) slots; spawn records the GPU has not seen yet
     // (and whose particle is still alive) are written into their slots, pre-aged to the clock.
@@ -2474,6 +2496,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         }
     }
 
+    stage.emplace("render.cpu.particles");
     // Particles: cull batches, order them back to front, sort alpha batches' particles back to
     // front, then upload everything as one instance stream.
     std::vector<ParticleBatch> particle_draws;
@@ -2538,6 +2561,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         }
     }
     stats_.particle_batches = static_cast<std::uint32_t>(particle_draws.size());
+    stage.emplace("render.cpu.decals_water");
     // Decals: frustum cull the boxes, keep the nearest kMaxDecals, draw by sort order then distance.
     std::vector<const Decal*> decal_draws;
     {
@@ -2687,6 +2711,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         lighting.local_shadow = {1.0f / static_cast<float>(S.local_shadow_atlas), static_cast<float>(local_tiles_per_row),
                                  static_cast<float>(stats_.point_lights), 1.0f};
 
+    stage.emplace("render.cpu.fog_setup");
     // Volumetric fog (ADR-0098): froxel grid setup; the passes run after the blended geometry.
     struct FogUniforms {
         Mat4 inv_view_proj, prev_view_proj;
@@ -3011,6 +3036,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     }
     facts_.precipitation_drops = precip_count;
 
+    stage.emplace("render.cpu.graph_build");
     RenderGraph graph;
     rhi::TextureDesc target_desc;
     target_desc.name = "scene_target";
@@ -4149,6 +4175,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(counts), ctx_.nearest_clamp());
                 ctx.pass->draw(3);
             });
+        stage.reset();
         VICTUS_TRY_STATUS(graph.compile());
         VICTUS_TRY_STATUS(graph.execute(dev, cmd, pool_));
         graph_info_ = graph.info();
@@ -4249,6 +4276,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     stats_.spatial_upscale = spatial;
     stats_.sharpened = sharpen_pass;
 
+    stage.reset();
     VICTUS_TRY_STATUS(graph.compile());
     VICTUS_TRY_STATUS(graph.execute(dev, cmd, pool_));
     graph_info_ = graph.info();
