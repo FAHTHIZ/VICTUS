@@ -2163,3 +2163,13 @@ Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): new `gpu: taa keeps sub-pixe
 Not covered: no shading-change unlock (FSR2 compares luma at lock time), so a lit wire whose lighting jumps keeps its old history for up to 8 frames at 10 % per frame; no phone timing; Metal not run here; natively the luminance-weighted blend over-darkens a dark wire (1.44x the true darkness).
 
 Next task: refresh docs/audits/COMPETITOR_BENCHMARK.md for ADR-0144 to 0148, then the Priority 1 VICTUS Library and contextual audio handoff.
+
+## 2026-11-20 — Competitor benchmark refresh
+
+Built: refreshed `docs/audits/COMPETITOR_BENCHMARK.md` from `a61b143` to `f814aab`. Rows changed: 3D authoring (instanced foliage, world streaming, baked lighting), rendering (TAA reactive/disocclusion/thin-feature locks compared with UE TSR thin-geometry detection, GLES 3.0 backend), real-device (Android GLES fallback), animation (IK, layers, retargeting, morphs), physics (ragdolls, destruction, mesh colliders), audio (occlusion, reverb zones), debugging (crash reports), plugin SDK (was "missing", now implemented for runtime), and release process. Pre-releases noted: Godot 4.8 beta 4, UE 5.9 Preview 2, Unity 6.7 LTS announced. Also fixed the stale "no GLES fallback" cell in `KNOWN_LIMITATIONS.md`.
+
+Verified: each changed cell cites an ADR or a KNOWN_LIMITATIONS row; competitor stable versions checked on 2026-11-20 (Godot 4.7.2, Unity 6.3 LTS, UE 5.8.4). Docs only.
+
+Not covered: no side-by-side measurements; competitor pages for Chaos/MetaSounds/UMG still not re-fetched.
+
+Next task: Priority 1 handoff `docs/handoff/VICTUS_LIBRARY_AND_CONTEXTUAL_AUDIO.md`.
