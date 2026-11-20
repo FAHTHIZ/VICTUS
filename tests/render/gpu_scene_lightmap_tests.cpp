@@ -187,3 +187,121 @@ TEST_CASE("gpu: scene lightmap baked, saved with the scene and drawn by extract_
     std::error_code ec;
     std::filesystem::remove_all(project, ec);
 }
+
+TEST_CASE("gpu: baked light probes shade dynamic objects under cover (ADR-0133)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    gameplay::register_components();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    const fs::Path project = std::filesystem::temp_directory_path() / ("victus_lp_" + Uuid::generate().to_string().substr(0, 8));
+    std::filesystem::create_directories(project / "lighting");
+    auto db = assets::AssetDatabase::open(project);
+    REQUIRE(db.ok());
+
+    // A lightmapped floor, a roof slab (blocker) over the left sphere, and two identical white
+    // spheres that are not lightmapped (dynamic objects).
+    Scene scene;
+    author(scene);
+    scene.destroy(scene.find_by_name("Cube"));
+    const Entity roof = scene.create("Roof");
+    scene.world().get<Transform>(roof)->position = {-2.5f, 2.0f, 0};
+    scene.world().get<Transform>(roof)->scale = {5, 0.2f, 5};
+    scene.world().add<MeshRendererComponent>(roof).primitive = "cube";
+    for (const auto& [name, x] : {std::pair{"Covered", -2.5f}, std::pair{"Open", 2.5f}}) {
+        const Entity e = scene.create(name);
+        scene.world().get<Transform>(e)->position = {x, 1.0f, 0};
+        auto& m = scene.world().add<MeshRendererComponent>(e);
+        m.primitive = "sphere";
+        m.roughness = 1.0f;
+        m.base_color = {0.8f, 0.8f, 0.8f, 1};
+    }
+    scene.world().get<Transform>(scene.find_by_name("Floor"))->scale = {12, 1, 12};
+    scene.world().get<MeshRendererComponent>(scene.find_by_name("Floor"))->base_color = {0.3f, 0.3f, 0.3f, 1}; // weak bounce
+    scene.update_transforms();
+    render::LightmapSettings ls;
+    ls.texels_per_unit = 2.0f;
+    ls.samples = 32;
+    ls.probe_samples = 256;
+    auto bake = runtime::bake_scene_lightmap(scene, db->get(), ls);
+    REQUIRE_MESSAGE(bake.ok(), (bake.ok() ? "" : bake.error().message));
+    REQUIRE_FALSE(bake->file.probes.empty());
+    CHECK(bake->stats.probes == bake->file.probes.probe_count());
+    // The spheres overlap a probe each; dilation fills them from the neighbours.
+    CHECK(bake->stats.dilated_probes > 0);
+    {
+        const auto& pr = bake->file.probes;
+        const float covered = pr.sample({-2.5f, 1, 0}, {0, 1, 0}, math::Vec3{-1}).x, open = pr.sample({2.5f, 1, 0}, {0, 1, 0}, math::Vec3{-1}).x;
+        MESSAGE("probes " << pr.counts[0] << "x" << pr.counts[1] << "x" << pr.counts[2] << ", " << bake->stats.invalid_probes << " invalid, "
+                          << bake->stats.dilated_probes << " dilated; up irradiance covered " << covered << ", open " << open);
+        CHECK(covered > 0.0f);
+        CHECK(covered < 0.75f * open);
+    }
+    REQUIRE(fs::write_atomic(project / "lighting" / "probes.vlightmap", render::encode_lightmap_file(bake->file)).ok());
+
+    auto sr = render::SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+    constexpr std::uint32_t W = 128, H = 64;
+    const render::Camera3D camera = render::Camera3D::look_at({0, 1.0f, 9.0f}, {0, 1.0f, 0});
+    runtime::GpuAssetCache cache(ctx, db->get());
+    auto shoot = [&](runtime::ExtractStats& stats) {
+        stats = runtime::extract_scene(scene, cache, **sr, {}, &camera);
+        auto target = test::make_target(W, H);
+        auto cmd = dev.begin_commands();
+        REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target).value();
+        dev.destroy(target);
+        return px;
+    };
+    // Upward-facing part of each sphere: find the sphere's centre column on the centre row (the
+    // brightest pixel of that half), then average the three rows above it, whose normals tilt
+    // 30-70 degrees towards the roof / open sky.
+    auto sphere_level = [&](const std::vector<std::uint8_t>& px, bool left) {
+        int best = -1;
+        std::uint32_t col = 0;
+        const std::uint32_t y = H / 2;
+        for (std::uint32_t x = left ? 4 : W / 2 + 4; x < (left ? W / 2 - 4 : W - 4); ++x) {
+            const int v = int(channel(pixel(px, W, x, y), 1));
+            if (v > best) best = v, col = x;
+        }
+        int sum = 0;
+        for (std::uint32_t r = 1; r <= 3; ++r) sum += int(channel(pixel(px, W, col, y - r), 1));
+        return sum / 3;
+    };
+
+    runtime::ExtractStats stats;
+    environment(scene).lightmap.clear();
+    const auto sky_only = shoot(stats);
+    CHECK_FALSE(stats.lightmap_probes);
+    environment(scene).lightmap = "lighting/probes.vlightmap";
+    const auto probed = shoot(stats);
+    CHECK(stats.lightmap_probes);
+    CHECK((*sr)->stats().irradiance_probes > 0);
+    test::save_output("lightmap_probes_sky_only", W, H, sky_only);
+    test::save_output("lightmap_probes_baked", W, H, probed);
+    const int sky_covered = sphere_level(sky_only, true), sky_open = sphere_level(sky_only, false);
+    const int lp_covered = sphere_level(probed, true), lp_open = sphere_level(probed, false);
+    MESSAGE("sky-only covered/open " << sky_covered << "/" << sky_open << ", probes covered/open " << lp_covered << "/" << lp_open);
+    // Without probes the roof does not matter to the dynamic spheres; with them the sheltered one
+    // loses a clear part of its sky light while the open one keeps it.
+    CHECK(std::abs(sky_covered - sky_open) <= 3);
+    CHECK(lp_covered < lp_open - 10);
+    CHECK(std::abs(lp_open - sky_open) <= 20);
+
+    // A hand-placed irradiance volume around the camera takes precedence over the baked probes.
+    const Entity vol = scene.create("Volume");
+    scene.world().get<Transform>(vol)->position = {0, 1.0f, 9.0f};
+    auto& iv = scene.world().add<gameplay::IrradianceVolumeComponent>(vol);
+    iv.size = {2, 2, 2};
+    scene.update_transforms();
+    for (int frame = 0; frame < 16; ++frame) { // the volume bakes over a few frames
+        (void)shoot(stats);
+        if (!stats.lightmap_probes) break;
+    }
+    CHECK_FALSE(stats.lightmap_probes);
+
+    cache.clear();
+    std::error_code ec;
+    std::filesystem::remove_all(project, ec);
+}

@@ -241,6 +241,9 @@ public:
     [[nodiscard]] rhi::TextureHandle lightmap_direction(std::string_view path);
     // Direction of the sun the lightmap's shadowmask was baked for (ADR-0131); zero when none.
     [[nodiscard]] math::Vec3 lightmap_shadowmask_direction(std::string_view path);
+    // The baked light probes of the lightmap at `path` (ADR-0133) as an irradiance volume that
+    // lights dynamic and non-lightmapped objects; nullptr when the file has none.
+    [[nodiscard]] const render::IrradianceVolume* lightmap_probes(std::string_view path);
     [[nodiscard]] const render::GpuMesh* lightmapped_mesh(std::string_view path, scene::Scene& scene, scene::Entity entity);
     // Drops loaded lightmaps (after a re-bake) so the next request reads the file again.
     void evict_lightmaps();
@@ -287,6 +290,7 @@ private:
         rhi::TextureHandle texture;
         rhi::TextureHandle direction; // directional atlas (ADR-0130); invalid for non-directional bakes
         math::Vec3 shadowmask_direction{0, 0, 0}; // sun the atlas alpha is a shadowmask for (ADR-0131)
+        std::unique_ptr<render::IrradianceVolume> probes; // baked light probes (ADR-0133); null when none
         std::vector<render::LightmapFileEntry> entries; // the file's UV sets (atlas pixels released after upload)
         std::unordered_map<Uuid, std::optional<render::GpuMesh>, UuidHash> meshes; // nullopt = no entry or stale
     };
@@ -365,6 +369,7 @@ struct ExtractStats {
     std::uint32_t meshes{0}, sprites{0}, lights{0}, missing_assets{0};
     std::uint32_t reflection_probes{0}; // captured probes handed to the renderer
     std::uint32_t irradiance_volumes{0}; // volumes with baked probes in the scene
+    bool lightmap_probes{false};         // the lightmap's baked probes lit dynamic objects this frame (ADR-0133)
     std::uint32_t irradiance_probes_baked{0}; // probes baked during this call
     std::uint32_t irradiance_probes_refreshed{0}; // dynamic-volume probes re-captured during this call
     std::uint32_t skinned{0}; // meshes drawn with GPU skinning

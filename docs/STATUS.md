@@ -1853,3 +1853,13 @@ Verified: `victus_gpu_tests -tc="gpu shadows: per-cascade*"` (Low to Ultra: main
 
 Not covered: local light shadow tiles; not measured on a phone GPU; the template still draws more shadow than main-view triangles, because characters sit in two cascades at once.
 
+## 2026-11-20 — Baked light probes for dynamic objects (ADR-0133)
+
+Built: the lightmap baker also bakes an SH9 light-probe grid (`LightmapSettings::probes`, on by default; `probe_spacing` 2 m, half vertically; `probe_samples` 256; `probe_bounds`) with the same path tracer as the texels (`Tracer::trace_path`, shared with the texel gather). Probes whose first hits are more than 25 % back faces are invalid and, with `probe_dilation`, take the weighted mean of their valid neighbours. `render::bake_light_probes` bakes probes alone. `.vlightmap` version 3 stores the grid (bounds, counts, validity, 27 halves per probe; versions 1 and 2 still load, damaged blocks are rejected). `GpuAssetCache` turns it into an `IrradianceVolume` with the lightmap; `extract_scene` binds it for non-lightmapped surfaces unless a hand-placed irradiance volume contains the camera (`ExtractStats::lightmap_probes`). `victus bake-lighting --probe-spacing <m> | --no-probes` prints probe, invalid and dilated counts; Studio's Bake Lighting notice reports the probe count.
+
+Verified (Release, clang 21, lavapipe): `victus_render_tests -tc="*probe*,*lightmap*"` 20/20 (furnace: uniform sky 0.7 returns 0.7 for every normal within 1 %; fully baked sun gives the analytic SH9 value; probes inside a box are invalid and the blend stays within the valid range; dilation fills both and leaves valid probes bit-identical; a roof gives 0.60 under cover vs 1.00 in the open; 1 and N threads identical; file round trip and damaged probe blocks rejected). `victus_gpu_tests -tc="*lightmap*,*probe*,*irradiance*"` 13/13, including the new end-to-end case: 7x4x7 probes, 27 invalid, 27 dilated; up irradiance under a roof 0.23 vs 0.47 open; the covered dynamic sphere renders 85 vs 103 (sky-only 111/111); a hand-placed volume around the camera takes precedence. `ctest --test-dir build -j2 -E perf_budgets` 38/38 and `ctest -R perf_budgets` 1/1; `tools/shaders/compile_shaders.py --check` up to date (no shader change).
+
+Not covered: no adaptive density or virtual offset; dilation can leak through walls thinner than the spacing; no baked sun occlusion for dynamic objects past the realtime shadow distance; not measured on a phone GPU or on a large scene.
+
+Next task: ROADMAP Priority 0 "Baked lighting v2" remaining items (lightmapped templates, probe sun occlusion), then FP16 shading behind a capability check.
+

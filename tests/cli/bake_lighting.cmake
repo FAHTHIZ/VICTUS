@@ -35,7 +35,8 @@ if(scene MATCHES "\"lightmapped\"")
 endif()
 
 run_ok("${VICTUS_CLI}" bake-lighting "${dir}" ${fast} --mark-static)
-if(NOT LAST_OUTPUT MATCHES "marked [1-9][0-9]* mesh renderers" OR NOT LAST_OUTPUT MATCHES "baked [1-9][0-9]* lightmapped")
+if(NOT LAST_OUTPUT MATCHES "marked [1-9][0-9]* mesh renderers" OR NOT LAST_OUTPUT MATCHES "baked [1-9][0-9]* lightmapped"
+   OR NOT LAST_OUTPUT MATCHES "baked [1-9][0-9]* light probes")
     message(FATAL_ERROR "unexpected bake output: ${LAST_OUTPUT}")
 endif()
 if(NOT EXISTS "${dir}/scenes/main.vlightmap")
@@ -47,6 +48,14 @@ if(NOT scene MATCHES "\"lightmapped\": *true" OR NOT scene MATCHES "\"lightmap\"
 endif()
 
 # Re-baking uses the saved flags and the Environment's file.
+run_ok("${VICTUS_CLI}" bake-lighting "${dir}" ${fast} --no-probes --dry-run)
+if(LAST_OUTPUT MATCHES "light probes")
+    message(FATAL_ERROR "--no-probes still baked probes: ${LAST_OUTPUT}")
+endif()
+execute_process(COMMAND "${VICTUS_CLI}" bake-lighting "${dir}" ${fast} --probe-spacing 0.1 RESULT_VARIABLE rc OUTPUT_QUIET ERROR_VARIABLE err)
+if(rc EQUAL 0 OR NOT err MATCHES "probe-spacing")
+    message(FATAL_ERROR "--probe-spacing 0.1 was not rejected (${rc}): ${err}")
+endif()
 run_ok("${VICTUS_CLI}" bake-lighting "${dir}" ${fast})
 if(NOT LAST_OUTPUT MATCHES "baked [1-9][0-9]* lightmapped")
     message(FATAL_ERROR "re-bake failed: ${LAST_OUTPUT}")
