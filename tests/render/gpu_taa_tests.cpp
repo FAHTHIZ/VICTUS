@@ -330,3 +330,163 @@ TEST_CASE("gpu: temporal upscaling follows camera motion without ghosting") {
     CHECK(red(native, W / 2 - 24, H / 2) > 230);
     gpu().ctx->destroy(sc.cube);
 }
+
+namespace {
+// ADR-0147 scene: a red occluder 3 units from the camera in front of a wall of 2-pixel red and blue
+// stripes 8 units away. A sideways camera move uncovers the wall behind the occluder (parallax).
+// Every 3x3 neighbourhood of the uncovered wall holds red, so the colour clip keeps the occluder's
+// red history on the blue stripes; only the depth test can tell that history belongs to something nearer.
+std::vector<std::uint8_t> stripes_frame(SceneRenderer& r, GpuMesh stripe, GpuMesh box, float camera_x, float pitch = 0.2f) {
+    auto& dev = gpu().ctx->device();
+    Environment env;
+    env.draw_sky = false;
+    env.clear_color = {0, 0, 0, 1};
+    env.tonemap = false;
+    env.auto_exposure = false;
+    env.vignette = 0.0f;
+    DirectionalLight sun;
+    sun.intensity = 0.0f;
+    sun.shadows = false;
+    r.begin(Camera3D::look_at({camera_x, 0, 6}, {camera_x, 0, 0}, {0, 1, 0}), sun, env);
+    Material red, blue;
+    red.unlit = blue.unlit = true;
+    red.base_color = {1, 0, 0, 1};
+    blue.base_color = {0, 0, 1, 1};
+    // Stripes `pitch` wide (the mesh is 0.2 wide, scaled), about 2 render pixels at render scale 0.2 / pitch.
+    const int n = static_cast<int>(8.0f / pitch);
+    for (int i = -n; i < n; ++i)
+        r.submit(stripe, (i & 1) ? blue : red,
+                 math::Mat4::trs({pitch * static_cast<float>(i) + 0.5f * pitch, 0, -2}, {}, {pitch / 0.2f, 1, 1}));
+    r.submit(box, red, math::Mat4::trs({0, 0, 3}, {}, {1, 1, 1}));
+    auto target = test::make_target(W, H);
+    auto cmd = dev.begin_commands();
+    REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+    cmd.submit_and_wait();
+    auto px = dev.read_texture(target).value();
+    dev.destroy(target);
+    return px;
+}
+
+// Mean |a - b| over RGB, inside `mask` when given.
+double mean_abs_rgb(const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>& b, const std::vector<bool>* mask = nullptr) {
+    double sum = 0;
+    std::size_t n = 0;
+    for (std::size_t p = 0; p < static_cast<std::size_t>(W) * H; ++p) {
+        if (mask && !(*mask)[p]) continue;
+        for (std::size_t c = 0; c < 3; ++c) sum += std::abs(static_cast<int>(a[p * 4 + c]) - static_cast<int>(b[p * 4 + c]));
+        n += 3;
+    }
+    return n ? sum / static_cast<double>(n) : 0.0;
+}
+
+// Slab test: does the segment o + t d, t in [0, t_max], hit the occluder's box?
+bool hits_occluder(const math::Vec3& o, const math::Vec3& d, float t_max) {
+    const math::Vec3 lo{-0.5f, -0.5f, 2.9f}, hi{0.5f, 0.5f, 3.1f};
+    float t0 = 0.0f, t1 = t_max;
+    const float os[3] = {o.x, o.y, o.z}, ds[3] = {d.x, d.y, d.z}, ls[3] = {lo.x, lo.y, lo.z}, hs[3] = {hi.x, hi.y, hi.z};
+    for (int k = 0; k < 3; ++k) {
+        if (std::abs(ds[k]) < 1e-9f) {
+            if (os[k] < ls[k] || os[k] > hs[k]) return false;
+            continue;
+        }
+        float a = (ls[k] - os[k]) / ds[k], b = (hs[k] - os[k]) / ds[k];
+        if (a > b) std::swap(a, b);
+        t0 = std::max(t0, a);
+        t1 = std::min(t1, b);
+        if (t0 > t1) return false;
+    }
+    return true;
+}
+
+// Disoccluded wall, exactly: pixels that see the wall (z = -2) from the camera at x = 1.5 where the
+// occluder hid that wall point from the camera at x = 0, eroded by a pixel (anti-aliased edges).
+std::vector<bool> disoccluded_mask() {
+    const float t = std::tan(math::radians(30.0f));
+    std::vector<bool> raw(static_cast<std::size_t>(W) * H, false), m(raw.size(), false);
+    for (std::uint32_t y = 0; y < H; ++y)
+        for (std::uint32_t x = 0; x < W; ++x) {
+            const float nx = (static_cast<float>(x) + 0.5f) / W * 2.0f - 1.0f, ny = 1.0f - (static_cast<float>(y) + 0.5f) / H * 2.0f;
+            const math::Vec3 c{1.5f, 0, 6}, d{nx * t, ny * t, -1};
+            if (hits_occluder(c, d, 8.0f)) continue;
+            const math::Vec3 wall{c.x + d.x * 8.0f, c.y + d.y * 8.0f, -2.0f}, old{0, 0, 6};
+            raw[static_cast<std::size_t>(y) * W + x] = hits_occluder(old, {wall.x - old.x, wall.y - old.y, wall.z - old.z}, 1.0f);
+        }
+    for (std::uint32_t y = 1; y + 1 < H; ++y)
+        for (std::uint32_t x = 1; x + 1 < W; ++x) {
+            bool all = true;
+            for (std::uint32_t j = y - 1; j <= y + 1; ++j)
+                for (std::uint32_t i = x - 1; i <= x + 1; ++i) all = all && raw[static_cast<std::size_t>(j) * W + i];
+            m[static_cast<std::size_t>(y) * W + x] = all;
+        }
+    return m;
+}
+} // namespace
+
+TEST_CASE("gpu: taa depth disocclusion stops occluder-coloured ghosts (ADR-0147)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto stripe = ctx.create_mesh(make_cube({0.1f, 8, 0.05f}), "stripe");
+    auto box = ctx.create_mesh(make_cube({0.5f, 0.5f, 0.1f}), "occluder");
+    REQUIRE(stripe.ok());
+    REQUIRE(box.ok());
+    for (const float scale : {1.0f, 0.5f}) {
+        CAPTURE(scale);
+        const float pitch = 0.2f / scale;
+        const auto run = [&](float strength, bool& active) {
+            auto sr = SceneRenderer::create(ctx);
+            REQUIRE(sr.ok());
+            RenderSettings s = RenderSettings::preset(QualityTier::High);
+            s.fxaa = s.ssao = s.bloom = false;
+            s.render_scale = scale;
+            s.taa_disocclusion = strength;
+            (*sr)->set_settings(s);
+            for (int i = 0; i < 24; ++i) (void)stripes_frame(**sr, *stripe, *box, 0.0f, pitch);
+            std::vector<std::vector<std::uint8_t>> after;
+            for (int i = 0; i < 4; ++i) after.push_back(stripes_frame(**sr, *stripe, *box, 1.5f, pitch));
+            active = (*sr)->stats().taa_disocclusion;
+            return after;
+        };
+        bool on_active = false, off_active = true;
+        const auto on = run(1.0f, on_active);
+        const auto off = run(0.0f, off_active);
+        CHECK(on_active);
+        CHECK_FALSE(off_active);
+        // Reference: converged at the final camera with a fresh history.
+        auto fresh = SceneRenderer::create(ctx);
+        REQUIRE(fresh.ok());
+        RenderSettings s = RenderSettings::preset(QualityTier::High);
+        s.fxaa = s.ssao = s.bloom = false;
+        s.render_scale = scale;
+        (*fresh)->set_settings(s);
+        std::vector<std::uint8_t> reference;
+        for (int i = 0; i < 32; ++i) reference = stripes_frame(**fresh, *stripe, *box, 1.5f, pitch);
+        const auto uncovered = disoccluded_mask();
+        std::size_t uncovered_px = 0;
+        for (const bool u : uncovered) uncovered_px += u ? 1 : 0;
+        MESSAGE("uncovered pixels " << uncovered_px);
+        REQUIRE(uncovered_px > 400);
+        double sum_on = 0, sum_off = 0;
+        for (std::size_t f = 0; f < on.size(); ++f) {
+            const double e_on = mean_abs_rgb(on[f], reference, &uncovered), e_off = mean_abs_rgb(off[f], reference, &uncovered);
+            MESSAGE("scale " << scale << " frame " << f + 1 << " after the move: error with depth test " << e_on << ", without " << e_off);
+            sum_on += e_on;
+            sum_off += e_off;
+        }
+        test::save_output(scale < 1.0f ? "taa_disocclusion_upscale_on" : "taa_disocclusion_on", W, H, on[0]);
+        test::save_output(scale < 1.0f ? "taa_disocclusion_upscale_off" : "taa_disocclusion_off", W, H, off[0]);
+        // Measured on lavapipe: 0.36 native, 0.53 upscaling (ADR-0147).
+        CHECK(sum_on < 0.65 * sum_off);
+        // A static camera keeps its history: the converged image is unchanged by the test.
+        auto still_on = SceneRenderer::create(ctx);
+        REQUIRE(still_on.ok());
+        s.taa_disocclusion = 1.0f;
+        (*still_on)->set_settings(s);
+        std::vector<std::uint8_t> still;
+        for (int i = 0; i < 32; ++i) still = stripes_frame(**still_on, *stripe, *box, 1.5f, pitch);
+        const double still_diff = mean_abs_rgb(still, reference);
+        MESSAGE("scale " << scale << " static camera, depth test on vs off: " << still_diff);
+        CHECK(still_diff < 0.5);
+    }
+    ctx.destroy(*stripe);
+    ctx.destroy(*box);
+}
