@@ -1807,3 +1807,10 @@ Built: `perf(render)` (commit 666a6be; ADR-0129, amends ADR-0126). When the scen
 Verified: `victus_gpu_tests -tc="gpu compact hdr*"` (four tiers, 24 TAA frames on High/Ultra): mean |difference| 0.15 / 0.26 / 0.42 / 0.41 8-bit steps, per-channel mean bias at most 0.38/255 (plain stores measured -0.55/255 in blue without TAA and -1.8/255 with it), fewer render-target bytes; full `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1 VICTUS_NO_AUDIO=1 ctest --preset release -j2` 39/39 on lavapipe before the test was listed, then the new case on its own (152 assertions).
 
 Not covered: blended passes (particles, decals, water, fog/cloud composites, bloom) are not dithered; not viewed on a phone panel.
+## 2026-11-20 — Directional lightmaps (ADR-0130)
+
+Built: the lightmap baker records the luminance-weighted dominant incoming direction per texel (denoised and dilated with the irradiance) into `LightmapBake::direction` (RGBA8, Unity's direction + rebalancing encoding); `.vlightmap` version 2 stores it (version 1 still loads); `GpuContext::create_lightmap_direction_texture`, `Environment::lightmap_direction`; scene lightmaps load it automatically; pbr.frag re-lights baked irradiance with the per-pixel normal.
+
+Verified: `victus_render_tests -tc="*lightmap*"`: a 45-degree sun gives direction (0, 0.71, 0.71) with directionality 1 and rebalancing 0.854, the baked normal gets scale 1, a uniform sky gives the cosine-weighted mean (0, 2/3, 0); threaded and single-threaded bakes match; version 2 round trip, version 1 decode, unknown flags rejected. `gpu: directional lightmaps let normal maps shade baked light` on lavapipe: a flat floor is unchanged by the directional atlas, a normal map changes nothing without it and brightens/darkens towards/away from the baked direction with it. Full `ctest --preset dev` with `VICTUS_REQUIRE_GPU=1`; clang-tidy on lightmap.cpp, gpu_context.cpp and scene_lightmap.cpp; `tools/shaders/compile_shaders.py --check`.
+
+Not covered: no measurement of the extra fetch on a phone GPU.

@@ -236,6 +236,9 @@ public:
     // The lightmapped GPU copy of a MeshRenderer's geometry for the lightmap at `path`; nullptr
     // when the file has no entry for the entity or its geometry changed since the bake (stale
     // entries draw unlightmapped; logged once per entity). Built on first use.
+    // The directional atlas of the lightmap at `path` (ADR-0130), loaded with lightmap(); invalid
+    // when the bake has none.
+    [[nodiscard]] rhi::TextureHandle lightmap_direction(std::string_view path);
     [[nodiscard]] const render::GpuMesh* lightmapped_mesh(std::string_view path, scene::Scene& scene, scene::Entity entity);
     // Drops loaded lightmaps (after a re-bake) so the next request reads the file again.
     void evict_lightmaps();
@@ -280,6 +283,7 @@ private:
     std::unordered_map<std::uint64_t, ProceduralEntry> procedural_;
     struct LightmapEntry {
         rhi::TextureHandle texture;
+        rhi::TextureHandle direction; // directional atlas (ADR-0130); invalid for non-directional bakes
         std::vector<render::LightmapFileEntry> entries; // the file's UV sets (atlas pixels released after upload)
         std::unordered_map<Uuid, std::optional<render::GpuMesh>, UuidHash> meshes; // nullopt = no entry or stale
     };

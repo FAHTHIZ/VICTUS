@@ -60,6 +60,8 @@ public:
     [[nodiscard]] rhi::TextureHandle white() const noexcept { return white_; }
     [[nodiscard]] rhi::TextureHandle black() const noexcept { return black_; }
     [[nodiscard]] rhi::TextureHandle flat_normal() const noexcept { return flat_normal_; }
+    // 4x4 RGBA8 (128, 128, 128, 0): a directional lightmap texel with no direction (ADR-0130).
+    [[nodiscard]] rhi::TextureHandle no_light_direction() const noexcept { return no_light_direction_; }
     // 1x1 black cubemap (no environment map).
     [[nodiscard]] rhi::TextureHandle black_cube() const noexcept { return black_cube_; }
     // 64x64 white disc with a smooth radial alpha falloff: the default particle texture.
@@ -102,6 +104,10 @@ public:
     // RGBA16F texture of a lightmap atlas (bake_lightmaps / LightmapFile), one level: mips would
     // blend neighbouring charts. Bind it as Environment::lightmap.
     [[nodiscard]] Result<rhi::TextureHandle> create_lightmap_texture(const ImageF& atlas, std::string_view name = "lightmap");
+    // RGBA8 UNORM texture of a directional lightmap (LightmapBake::direction, ADR-0130), one
+    // level. Bind it as Environment::lightmap_direction next to the atlas it was baked with.
+    [[nodiscard]] Result<rhi::TextureHandle> create_lightmap_direction_texture(const Image& direction,
+                                                                                std::string_view name = "lightmap_direction");
     [[nodiscard]] Result<GpuMesh> create_lightmapped_mesh(const MeshData& mesh, const LightmapUnwrap& unwrap,
                                                           std::string_view name = "lightmapped");
     // Vertex variants: a mesh with its own vertex buffer (e.g. CPU-morphed shapes) sharing
@@ -118,7 +124,7 @@ public:
 private:
     explicit GpuContext(rhi::Device& d) : device_(d) {}
     rhi::Device& device_;
-    rhi::TextureHandle white_, black_, flat_normal_, soft_particle_, black_cube_;
+    rhi::TextureHandle white_, black_, flat_normal_, soft_particle_, black_cube_, no_light_direction_;
     rhi::SamplerHandle linear_repeat_, linear_clamp_, nearest_clamp_, nearest_repeat_, shadow_;
     std::array<rhi::SamplerHandle, 5> material_samplers_{}; // 1x, 2x, 4x, 8x, 16x
     rhi::Format sampled_depth_{rhi::Format::D32_FLOAT};

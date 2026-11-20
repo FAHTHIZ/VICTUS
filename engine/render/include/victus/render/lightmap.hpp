@@ -37,6 +37,9 @@ struct LightmapSettings {
     // realtime lights stay realtime and only their bounce light is baked.
     bool include_direct{false};
     bool denoise{true};
+    // Directional lightmap (ADR-0130): also bake the dominant direction of the incoming light so
+    // normal maps and per-pixel normals still shade baked light (LightmapBake::direction).
+    bool directional{true};
     std::uint32_t dilation{4};         // texels the covered area is grown into the padding
     std::uint64_t seed{0x5eed};
 };
@@ -100,11 +103,21 @@ struct LightmapBakeStats {
     double unwrap_ms{0}, trace_ms{0}, post_ms{0};
 };
 
+// Directional lightmap texels (ADR-0130, the encoding Unity uses): RGB = dominant incoming light
+// direction * 0.5 + 0.5 in world space, its length the directionality (1 = all light from one
+// direction, 0 = uniform); A = the rebalancing term 0.5 * dot(n, d) + 0.5 at the baked normal,
+// always >= 0.5 on covered texels, 0 where there is no data. The shader scales the irradiance by
+// (0.5 * dot(N, d) + 0.5) / A, which is exactly 1 for the normal the texel was baked with.
 struct LightmapBake {
     std::vector<LightmapUnwrap> instances; // one per scene instance (empty when it does not receive)
     ImageF atlas;                          // RGB irradiance / pi, A coverage
+    Image direction;                       // RGBA8, same size as atlas; empty unless settings.directional
     LightmapBakeStats stats;
 };
+
+// Irradiance-scale the shader applies for a directional texel (`texel` is the RGBA8 value
+// normalised to 0..1) and a shading normal; 1 when the texel has no direction.
+[[nodiscard]] float lightmap_directional_scale(math::Vec4 texel, math::Vec3 normal) noexcept;
 
 // Unwraps every receiving instance (in world space, so texel density is uniform) into one
 // atlas. Deterministic for the same input.
@@ -132,7 +145,8 @@ struct LightmapLayout {
 [[nodiscard]] std::uint64_t lightmap_mesh_fingerprint(const MeshData& mesh) noexcept;
 
 // --- .vlightmap files -----------------------------------------------------------------------
-// Little-endian binary: header, the atlas (RGBA16F), then one entry per lightmapped entity. Every
+// Little-endian binary: header, the atlas (RGBA16F), the directional atlas (RGBA8, version 2 when
+// flagged), then one entry per lightmapped entity. Version 1 files still decode. Every
 // count and index is validated on decode; a damaged file is an error, never a crash.
 struct LightmapFileEntry {
     Uuid entity;
@@ -141,10 +155,11 @@ struct LightmapFileEntry {
 };
 struct LightmapFile {
     ImageF atlas;
+    Image direction; // optional directional texels (version 2), same size as the atlas
     std::vector<LightmapFileEntry> entries;
     [[nodiscard]] const LightmapFileEntry* find(const Uuid& entity) const noexcept;
 };
-inline constexpr std::uint32_t kLightmapFileVersion = 1;
+inline constexpr std::uint32_t kLightmapFileVersion = 2;
 [[nodiscard]] std::vector<std::uint8_t> encode_lightmap_file(const LightmapFile& file);
 [[nodiscard]] Result<LightmapFile> decode_lightmap_file(std::span<const std::uint8_t> bytes);
 

@@ -30,6 +30,9 @@ Result<std::unique_ptr<GpuContext>> GpuContext::create(rhi::Device& device) {
     auto b = solid(*ctx, 0xFF000000u, true, "default_black");
     if (!b) return std::move(b).error();
     ctx->black_ = b.value();
+    auto nd = solid(*ctx, 0x00808080u, false, "default_no_light_direction");
+    if (!nd) return std::move(nd).error();
+    ctx->no_light_direction_ = nd.value();
     auto n = solid(*ctx, 0xFFFF8080u, false, "default_flat_normal");
     if (!n) return std::move(n).error();
     ctx->flat_normal_ = n.value();
@@ -98,7 +101,7 @@ Result<std::unique_ptr<GpuContext>> GpuContext::create(rhi::Device& device) {
 
 GpuContext::~GpuContext() {
     for (auto& [name, s] : shaders_) device_.destroy(s);
-    for (auto t : {white_, black_, flat_normal_, soft_particle_, black_cube_})
+    for (auto t : {white_, black_, flat_normal_, soft_particle_, black_cube_, no_light_direction_})
         if (t) device_.destroy(t);
     for (auto s : {linear_repeat_, linear_clamp_, nearest_clamp_, nearest_repeat_, shadow_})
         if (s) device_.destroy(s);
@@ -345,6 +348,24 @@ Result<rhi::TextureHandle> GpuContext::create_lightmap_texture(const ImageF& atl
     const std::vector<std::uint8_t> bytes = to_rgba16f(atlas);
     auto cmd = device_.begin_commands();
     cmd.upload_texture(*t, bytes);
+    cmd.submit();
+    return t;
+}
+
+Result<rhi::TextureHandle> GpuContext::create_lightmap_direction_texture(const Image& direction, std::string_view name) {
+    if (direction.width == 0 || direction.height == 0 ||
+        direction.pixels.size() != std::size_t{direction.width} * direction.height * 4)
+        return make_error(ErrorCode::InvalidArgument, std::format("directional lightmap '{}' is empty or malformed", name));
+    rhi::TextureDesc d;
+    d.name = std::string(name);
+    d.format = rhi::Format::RGBA8_UNORM; // a direction, not a colour: never sRGB
+    d.width = direction.width;
+    d.height = direction.height;
+    d.usage = rhi::TextureUsageSampled;
+    auto t = device_.create_texture(d);
+    if (!t) return std::move(t).error();
+    auto cmd = device_.begin_commands();
+    cmd.upload_texture(*t, direction.pixels);
     cmd.submit();
     return t;
 }

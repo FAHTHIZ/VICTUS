@@ -32,6 +32,8 @@ float srgb_to_linear(float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c 
 
 math::Mat4 normal_matrix(const math::Mat4& model) { return math::transpose(math::inverse(model)); }
 
+float luminance(Vec3 c) { return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z; }
+
 bool finite(Vec3 v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 
 // --- Ray tracing scene ---------------------------------------------------------------------
@@ -407,7 +409,8 @@ public:
     Vec3 sky(Vec3 dir) const { return scene_.sky.evaluate(dir); }
 
     // Sum of light radiance * N.L arriving at p (shadowed), the shader's direct irradiance.
-    Vec3 direct(Vec3 p, Vec3 n, std::uint64_t& rays) const {
+    // `dir_acc` (optional) gains each light's direction weighted by its luminance / pi.
+    Vec3 direct(Vec3 p, Vec3 n, std::uint64_t& rays, Vec3* dir_acc = nullptr) const {
         Vec3 e{0, 0, 0};
         const Vec3 origin = p + n * eps_;
         for (const LightmapLight& l : scene_.lights) {
@@ -438,6 +441,7 @@ public:
                 if (bvh_.occluded(make_ray(origin, ldir), tmax)) continue;
             }
             e += l.radiance * (ndl * atten);
+            if (dir_acc) *dir_acc += ldir * (luminance(l.radiance) * ndl * atten * (1.0f / math::kPi));
         }
         return e;
     }
@@ -482,12 +486,15 @@ public:
     // Irradiance / pi arriving at (p, n) from `samples` cosine-distributed paths. Returns the
     // fraction of first-bounce rays that hit back faces (texels inside geometry).
     // `std_error` is the standard error of the estimate's luminance (guides the denoiser).
+    // `dir_sum` receives the first-ray directions weighted by each path's luminance / samples
+    // (its length over the mean luminance is the directionality).
     Vec3 gather(Vec3 p, Vec3 n, Vec3 geo_n, std::uint64_t texel_id, float& backface_ratio, float& std_error,
-                std::uint64_t& rays) const {
+                std::uint64_t& rays, Vec3& dir_sum) const {
         Random rng(settings_.seed ^ (texel_id * 0x9e3779b97f4a7c15ull), texel_id);
         const std::uint32_t samples = std::max(settings_.samples, 1u);
         const float jx = rng.next_float(), jy = rng.next_float();
         Vec3 sum{0, 0, 0};
+        Vec3 dsum{0, 0, 0};
         double lum_sum = 0, lum_sq = 0;
         std::uint32_t backfaces = 0;
         for (std::uint32_t s = 0; s < samples; ++s) {
@@ -496,6 +503,7 @@ public:
             const float u2 = fract(jy + 0.5698402910f * static_cast<float>(s));
             Vec3 dir = cosine_sample(n, u1, u2);
             if (math::dot(dir, geo_n) <= 0.0f) dir = math::normalize(dir - geo_n * (2.0f * math::dot(dir, geo_n)));
+            const Vec3 first_dir = dir;
             Vec3 origin = p + geo_n * eps_;
             Vec3 throughput{1, 1, 1};
             Vec3 radiance{0, 0, 0};
@@ -527,7 +535,9 @@ public:
             const double l = 0.2126 * radiance.x + 0.7152 * radiance.y + 0.0722 * radiance.z;
             lum_sum += l;
             lum_sq += l * l;
+            dsum += first_dir * static_cast<float>(l);
         }
+        dir_sum = dsum / static_cast<float>(samples);
         const double mean = lum_sum / samples;
         const double var = std::max(0.0, lum_sq / samples - mean * mean);
         std_error = static_cast<float>(std::sqrt(var / samples));
@@ -758,6 +768,8 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
     bake.stats.triangles = tracer.triangles();
     std::vector<Vec4> result(texels.size(), Vec4{0, 0, 0, 0});
     std::vector<float> noise(texels.size(), 0.0f); // standard error of each texel's luminance
+    // Luminance-weighted incoming direction per texel (directional bakes), normalised later.
+    std::vector<Vec3> dirs(settings.directional ? texels.size() : 0, Vec3{0, 0, 0});
     std::vector<std::uint64_t> row_rays(H, 0);
     auto trace_rows = [&](std::size_t rb, std::size_t re) {
         for (std::size_t y = rb; y < re; ++y) {
@@ -767,8 +779,13 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
                 const Texel& t = texels[i];
                 if (!t.covered) continue;
                 float backface = 0;
-                Vec3 e = tracer.gather(t.p, t.n, t.geo_n, i, backface, noise[i], rays);
-                if (settings.include_direct) e += tracer.direct(t.p, t.n, rays) * (1.0f / math::kPi);
+                Vec3 dsum{0, 0, 0};
+                Vec3 e = tracer.gather(t.p, t.n, t.geo_n, i, backface, noise[i], rays, dsum);
+                if (settings.include_direct) e += tracer.direct(t.p, t.n, rays, &dsum) * (1.0f / math::kPi);
+                if (!dirs.empty()) {
+                    const float le = luminance(e);
+                    dirs[i] = le > 1e-8f ? dsum / le : Vec3{0, 0, 0};
+                }
                 // Texels that mostly see back faces are inside geometry (behind walls, under
                 // floors): drop them so dilation fills them from valid neighbours (no leaks).
                 result[i] = backface > 0.25f ? Vec4{0, 0, 0, -1} : Vec4{e.x, e.y, e.z, 1};
@@ -802,6 +819,7 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
         const float kernel[3] = {3.0f / 8.0f, 1.0f / 4.0f, 1.0f / 16.0f};
         std::vector<Vec4> tmp(result.size());
         std::vector<float> tmp_noise(result.size());
+        std::vector<Vec3> tmp_dirs(dirs.size());
         auto lum = [](const Vec4& v) { return 0.2126f * v.x + 0.7152f * v.y + 0.0722f * v.z; };
         for (int pass = 0; pass < 3; ++pass) {
             const int step = 1 << pass;
@@ -812,11 +830,12 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
                     if (result[i].w <= 0.5f) {
                         tmp[i] = result[i];
                         tmp_noise[i] = noise[i];
+                        if (!dirs.empty()) tmp_dirs[i] = dirs[i];
                         continue;
                     }
                     const Texel& c = texels[i];
                     const float lc = lum(result[i]);
-                    Vec3 acc{0, 0, 0};
+                    Vec3 acc{0, 0, 0}, dacc{0, 0, 0};
                     float wsum = 0, var_acc = 0;
                     for (int dy = -2; dy <= 2; ++dy) {
                         const int yy = static_cast<int>(y) + dy * step;
@@ -835,24 +854,42 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
                             const float wl = std::exp(-std::fabs(lum(result[j]) - lc) / sigma_l);
                             const float w = kernel[std::abs(dx)] * kernel[std::abs(dy)] * wn * wp * wl;
                             acc += Vec3{result[j].x, result[j].y, result[j].z} * w;
+                            if (!dirs.empty()) dacc += dirs[j] * (w * lum(result[j])); // keep it luminance-weighted
                             wsum += w;
                             var_acc += w * w * noise[j] * noise[j];
                         }
                     }
                     const Vec3 v = wsum > 0 ? acc / wsum : Vec3{result[i].x, result[i].y, result[i].z};
                     tmp[i] = {v.x, v.y, v.z, 1.0f};
+                    if (!dirs.empty()) {
+                        const float lv = wsum > 0 ? luminance(v) * wsum : 0.0f;
+                        tmp_dirs[i] = lv > 1e-8f ? dacc / lv : dirs[i];
+                    }
                     // Noise left after this pass (weighted mean of independent estimates).
                     tmp_noise[i] = wsum > 0 ? std::sqrt(var_acc) / wsum : noise[i];
                 }
             }
             result.swap(tmp);
             noise.swap(tmp_noise);
+            if (!dirs.empty()) dirs.swap(tmp_dirs);
         }
     }
 
+    // Directional texels: (direction, rebalancing term at the baked normal). Dilation then grows
+    // them together with the irradiance.
+    std::vector<Vec4> dir_texels(dirs.size(), Vec4{0, 0, 0, 0});
+    for (std::size_t i = 0; i < dirs.size(); ++i) {
+        if (result[i].w <= 0.5f) continue;
+        Vec3 d = dirs[i];
+        const float len = math::length(d);
+        if (!(len <= 1.0f)) d = len > 0.0f && std::isfinite(len) ? d / len : Vec3{0, 0, 0};
+        const float rebalance = std::max(0.5f * math::dot(texels[i].n, d) + 0.5f, 0.5f);
+        dir_texels[i] = {d.x, d.y, d.z, rebalance};
+    }
     // Dilation: grow covered texels into the padding so bilinear filtering and mips never pull
     // in black from outside a chart.
     std::vector<Vec4> grown = result;
+    std::vector<Vec4> grown_dirs = dir_texels;
     for (std::uint32_t it = 0; it < settings.dilation; ++it) {
         bool changed = false;
         for (std::uint32_t y = 0; y < H; ++y) {
@@ -860,6 +897,7 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
                 const std::size_t i = static_cast<std::size_t>(y) * W + x;
                 if (result[i].w > 0.0f) continue;
                 Vec3 acc{0, 0, 0};
+                Vec4 dacc{0, 0, 0, 0};
                 float n = 0;
                 for (int dy = -1; dy <= 1; ++dy) {
                     for (int dx = -1; dx <= 1; ++dx) {
@@ -868,6 +906,7 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
                         const Vec4& q = result[static_cast<std::size_t>(yy) * W + static_cast<std::size_t>(xx)];
                         if (q.w <= 0.0f) continue;
                         acc += Vec3{q.x, q.y, q.z};
+                        if (!dir_texels.empty()) dacc = dacc + dir_texels[static_cast<std::size_t>(yy) * W + static_cast<std::size_t>(xx)];
                         n += 1.0f;
                     }
                 }
@@ -876,11 +915,13 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
                     // Dilated texels keep a small positive coverage so later passes grow from them
                     // but they are distinguishable from real ones.
                     grown[i] = {v.x, v.y, v.z, 0.25f};
+                    if (!dir_texels.empty()) grown_dirs[i] = dacc * (1.0f / n);
                     changed = true;
                 }
             }
         }
         result = grown;
+        dir_texels = grown_dirs;
         if (!changed) break;
     }
 
@@ -893,8 +934,28 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
         bake.atlas.pixels[i * 4 + 2] = result[i].z;
         bake.atlas.pixels[i * 4 + 3] = result[i].w >= 1.0f ? 1.0f : (result[i].w > 0.0f ? 0.5f : 0.0f);
     }
+    if (!dir_texels.empty()) {
+        bake.direction.width = W;
+        bake.direction.height = H;
+        bake.direction.pixels.resize(dir_texels.size() * 4);
+        auto unorm = [](float v) { return static_cast<std::uint8_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+        for (std::size_t i = 0; i < dir_texels.size(); ++i) {
+            const Vec4& d = dir_texels[i];
+            const bool has = d.w >= 0.25f;
+            bake.direction.pixels[i * 4 + 0] = unorm(has ? d.x * 0.5f + 0.5f : 0.5f);
+            bake.direction.pixels[i * 4 + 1] = unorm(has ? d.y * 0.5f + 0.5f : 0.5f);
+            bake.direction.pixels[i * 4 + 2] = unorm(has ? d.z * 0.5f + 0.5f : 0.5f);
+            bake.direction.pixels[i * 4 + 3] = unorm(has ? d.w : 0.0f);
+        }
+    }
     bake.stats.post_ms = ms_since(t0);
     return bake;
+}
+
+float lightmap_directional_scale(math::Vec4 texel, Vec3 normal) noexcept {
+    if (!(texel.w >= 0.25f)) return 1.0f;
+    const Vec3 d{texel.x * 2.0f - 1.0f, texel.y * 2.0f - 1.0f, texel.z * 2.0f - 1.0f};
+    return (0.5f * math::dot(normal, d) + 0.5f) / texel.w;
 }
 
 math::Vec4 sample_lightmap(const ImageF& atlas, Vec2 uv) noexcept {
@@ -942,6 +1003,7 @@ namespace {
 
 constexpr char kMagic[8] = {'V', 'I', 'C', 'T', 'U', 'S', 'L', 'M'};
 constexpr std::uint32_t kMaxAtlasSide = 8192;
+constexpr std::uint32_t kFlagDirectional = 1u; // version 2 header flag: an RGBA8 directional atlas follows the atlas
 
 class Writer {
 public:
@@ -1025,8 +1087,13 @@ std::vector<std::uint8_t> encode_lightmap_file(const LightmapFile& file) {
     w.u32(file.atlas.width);
     w.u32(file.atlas.height);
     w.u32(static_cast<std::uint32_t>(file.entries.size()));
+    const bool directional = file.direction.width == file.atlas.width && file.direction.height == file.atlas.height &&
+                             file.direction.pixels.size() == static_cast<std::size_t>(file.atlas.width) * file.atlas.height * 4 &&
+                             !file.direction.pixels.empty();
+    w.u32(directional ? kFlagDirectional : 0u);
     const std::size_t texels = static_cast<std::size_t>(file.atlas.width) * file.atlas.height;
     for (std::size_t i = 0; i < texels * 4; ++i) w.u16(float_to_half(i < file.atlas.pixels.size() ? file.atlas.pixels[i] : 0.0f));
+    if (directional) w.bytes(file.direction.pixels.data(), file.direction.pixels.size());
     for (const LightmapFileEntry& e : file.entries) {
         w.u64(e.entity.hi);
         w.u64(e.entity.lo);
@@ -1051,8 +1118,11 @@ Result<LightmapFile> decode_lightmap_file(std::span<const std::uint8_t> bytes) {
         return make_error(ErrorCode::ParseError, "not a VICTUS lightmap file");
     std::uint32_t version = 0, w = 0, h = 0, count = 0;
     if (!r.u32(version) || !r.u32(w) || !r.u32(h) || !r.u32(count)) return make_error(ErrorCode::ParseError, "truncated lightmap header");
-    if (version != kLightmapFileVersion)
+    if (version != 1 && version != kLightmapFileVersion)
         return make_error(ErrorCode::VersionMismatch, "unsupported lightmap file version " + std::to_string(version));
+    std::uint32_t flags = 0;
+    if (version >= 2 && !r.u32(flags)) return make_error(ErrorCode::ParseError, "truncated lightmap header");
+    if ((flags & ~kFlagDirectional) != 0) return make_error(ErrorCode::ParseError, "unknown lightmap file flags");
     if (w > kMaxAtlasSide || h > kMaxAtlasSide || (w == 0) != (h == 0))
         return make_error(ErrorCode::ParseError, "invalid lightmap atlas size");
     LightmapFile file;
@@ -1066,6 +1136,13 @@ Result<LightmapFile> decode_lightmap_file(std::span<const std::uint8_t> bytes) {
         (void)r.u16(hv);
         const float f = half_to_float(hv);
         file.atlas.pixels[i] = std::isfinite(f) ? f : 0.0f;
+    }
+    if ((flags & kFlagDirectional) != 0) {
+        if (w == 0 || !r.has(values)) return make_error(ErrorCode::ParseError, "truncated directional lightmap atlas");
+        file.direction.width = w;
+        file.direction.height = h;
+        file.direction.pixels.resize(values);
+        (void)r.bytes(file.direction.pixels.data(), values);
     }
     // Each entry needs at least 32 bytes, which bounds `count` by the remaining size.
     if (count > r.remaining() / 32) return make_error(ErrorCode::ParseError, "invalid lightmap entry count");

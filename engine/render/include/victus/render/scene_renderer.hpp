@@ -401,6 +401,9 @@ struct Environment {
     // lightmap.hpp). Meshes created with GpuContext::create_lightmapped_mesh sample it in place of
     // the probe/sky ambient; everything else is unaffected. Must outlive the frames that use it.
     rhi::TextureHandle lightmap{};
+    // Directional lightmap (ADR-0130, create_lightmap_direction_texture): lets normal maps shade
+    // the baked light. Optional; without it baked light ignores the per-pixel normal.
+    rhi::TextureHandle lightmap_direction{};
 };
 
 // Scalability tiers. Low targets entry-level phones, Medium mid-range phones/tablets, High
