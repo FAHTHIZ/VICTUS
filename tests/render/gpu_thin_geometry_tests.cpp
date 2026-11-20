@@ -24,12 +24,16 @@ struct Coverage {
     double continuity{0}; // share of rows where the pole shows (> 5% of a pixel)
 };
 
+double srgb_to_linear(double v) { return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); }
+
 Coverage measure(const std::vector<std::uint8_t>& px) {
     Coverage c;
     const std::uint32_t y0 = H / 2 - 30, y1 = H / 2 + 30;
     for (std::uint32_t y = y0; y < y1; ++y) {
         double row = 0;
-        for (std::uint32_t x = 0; x < W; ++x) row += px[(std::size_t{y} * W + x) * 4] / 255.0;
+        // Linear light: the post pass encodes sRGB into the UNORM target, which would count a 25 %
+        // covered pixel as 54 %.
+        for (std::uint32_t x = 0; x < W; ++x) row += srgb_to_linear(px[(std::size_t{y} * W + x) * 4] / 255.0);
         c.energy += row;
         c.continuity += row > 0.05 ? 1.0 : 0.0;
     }
@@ -102,21 +106,23 @@ TEST_CASE("gpu thin geometry: sub-pixel poles keep their coverage") {
         CHECK(base_lod == 0);
         CHECK(std::abs(plain.energy - base.energy) < 0.05 * base.energy + 0.01);
         CHECK(std::abs(plain.continuity - base.continuity) < 0.05);
-        // Without TAA, coverage is right on average (point sampling, within 2x) ...
+        // Without TAA, coverage is right on average (point sampling; linear light, within 1.3x) ...
         CHECK(plain.energy > 0.8 * w);
-        CHECK(plain.energy < 1.8 * w);
+        CHECK(plain.energy < 1.3 * w);
         if (w >= 1.0f) {
             CHECK(plain.continuity == doctest::Approx(1.0));
             CHECK(taa.continuity == doctest::Approx(1.0));
-            CHECK(taa.energy == doctest::Approx(plain.energy).epsilon(0.1));
+            CHECK(taa.energy == doctest::Approx(plain.energy).epsilon(0.15)); // lavapipe: 0.89x
         } else {
             // ... but a sub-pixel pole breaks into dashes: only rows whose pixel centre it covers.
             CHECK(plain.continuity < 0.8);
-            // TAA's jittered accumulation fills more rows, while neighbourhood clamping removes part
-            // of the energy (measured ~0.7x at 0.5 px, ~0.55x at 0.25 px on lavapipe).
-            CHECK(taa.continuity > plain.continuity + 0.15);
-            CHECK(taa.energy > 0.4 * w);
-            CHECK(taa.energy < plain.energy);
+            // TAA's jittered accumulation fills the rows; the thin-feature locks (ADR-0148) keep the
+            // neighbourhood clip from erasing the pole between jitter hits. Linear-light energy on
+            // lavapipe: 0.72x of point sampling at 0.5 px, 0.62x at 0.25 px (the luminance-weighted
+            // blend darkens bright sub-pixel features); without locks 0.16x and 0.10x.
+            CHECK(taa.continuity > plain.continuity + 0.3);
+            CHECK(taa.energy > 0.5 * plain.energy);
+            CHECK(taa.energy < 1.05 * plain.energy);
         }
     }
     ctx.destroy(pole);

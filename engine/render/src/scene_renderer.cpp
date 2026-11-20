@@ -230,12 +230,16 @@ struct TaaUniforms {
     // ADR-0147: x: disocclusion strength (0: off or no depth history), y, z: linear depth
     // 1 / (y * d + z) from window depth d, w: separation tolerance per unit depth.
     Vec4 depth_clip;
+    // ADR-0148: x: thin-feature lock strength (0 off), y: lifetime lost per frame (1 / jitter
+    // period), z: FSR2's luma similarity ratio.
+    Vec4 lock;
 };
 struct TaaUpscaleUniforms {
     Mat4 reproject;
     Vec4 params, screen, jitter, output;
     Vec4 quant; // x: compact HDR frame + 1 (0 off), ADR-0129
     Vec4 depth_clip; // as TaaUniforms::depth_clip
+    Vec4 lock;       // as TaaUniforms::lock
 };
 static_assert(sizeof(LightingUniforms) == 38 * 16 + 64 * 5);
 
@@ -533,6 +537,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.taa_blend = std::isfinite(s.taa_blend) ? std::clamp(s.taa_blend, 0.04f, 1.0f) : 0.1f;
     s.reactive_max = std::isfinite(s.reactive_max) ? std::clamp(s.reactive_max, 0.0f, 1.0f) : 0.5f;
     s.taa_disocclusion = std::isfinite(s.taa_disocclusion) ? std::clamp(s.taa_disocclusion, 0.0f, 1.0f) : 1.0f;
+    s.taa_thin_features = std::isfinite(s.taa_thin_features) ? std::clamp(s.taa_thin_features, 0.0f, 1.0f) : 1.0f;
     s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxLights);
     s.lod_error_pixels = std::isfinite(s.lod_error_pixels) ? std::clamp(s.lod_error_pixels, 0.25f, 16.0f) : 1.0f;
     s.lod_hysteresis = std::isfinite(s.lod_hysteresis) ? std::clamp(s.lod_hysteresis, 0.0f, 0.9f) : 0.0f;
@@ -586,11 +591,12 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     constexpr std::uint32_t kHdrUsage = rhi::TextureUsageSampled | rhi::TextureUsageColorTarget;
     r->compact_hdr_requested_ = options.compact_hdr;
     if (options.compact_hdr && dev.supports_format(rhi::Format::R11G11B10_FLOAT, kHdrUsage)) r->hdr_format_ = rhi::Format::R11G11B10_FLOAT;
-    // ADR-0147 depth history: R16F, else R32F; RGBA8 (always renderable) keeps the resolve's second
-    // target valid where neither renders (ES 3.0 without float colour buffers) and turns the test off.
-    r->depth_history_format_ = dev.supports_format(rhi::Format::R16_FLOAT, kHdrUsage)   ? rhi::Format::R16_FLOAT
-                               : dev.supports_format(rhi::Format::R32_FLOAT, kHdrUsage) ? rhi::Format::R32_FLOAT
-                                                                                        : rhi::Format::RGBA8_UNORM;
+    // ADR-0147/0148 depth history (R: linear depth, G: thin-feature lock lifetime): RG16F, else
+    // RGBA16F; RGBA8 (always renderable) keeps the resolve's second target valid where neither renders
+    // (ES 3.0 without float colour buffers) and turns both tests off.
+    r->depth_history_format_ = dev.supports_format(rhi::Format::RG16_FLOAT, kHdrUsage)     ? rhi::Format::RG16_FLOAT
+                               : dev.supports_format(rhi::Format::RGBA16_FLOAT, kHdrUsage) ? rhi::Format::RGBA16_FLOAT
+                                                                                          : rhi::Format::RGBA8_UNORM;
     auto get = [&](const char* n) { return ctx.shader(n); };
     auto mesh_vs = get("mesh.vert");
     // Half-precision shading (ADR-0137) only where the device enabled shaderFloat16.
@@ -1638,6 +1644,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     stats_.taa = taa;
     stats_.taa_history = taa && history_valid_;
     stats_.taa_disocclusion = false;
+    stats_.taa_thin_features = false;
     stats_.temporal_upscale = upscale;
     stats_.reactive_mask = false;
     stats_.jitter = jitter;
@@ -3885,6 +3892,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             const float strength = usable ? S.taa_disocclusion : 0.0f;
             tu.depth_clip = {strength, linear ? 1.0f / p23 : 0.0f, linear ? p22 / p23 : 1.0f, tolerance};
             stats_.taa_disocclusion = strength > 0.0f;
+            // ADR-0148: a lock lasts 8 frames unless the ridge is seen again (FSR2: one jitter period;
+            // the upscaler's longer periods, 32 frames at half resolution, held vanished wires too long).
+            const bool lockable = have_prev && depth_history_[prev] && depth_history_format_ != rhi::Format::RGBA8_UNORM;
+            const float lock = lockable ? S.taa_thin_features : 0.0f;
+            tu.lock = {lock, 1.0f / 8.0f, 1.05f, 0.0f};
+            stats_.taa_thin_features = lock > 0.0f;
         }
         scene_w = hw;
         scene_h = hh;
@@ -3928,7 +3941,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         if (have_prev)
             previous = graph.import_texture("taa_history", history_[prev],
                                             color_desc(hdr_format_, history_w_[prev], history_h_[prev]));
-        if (tu.depth_clip.x > 0.0f)
+        if (tu.depth_clip.x > 0.0f || tu.lock.x > 0.0f)
             depth_previous = graph.import_texture("taa_depth_history_prev", depth_history_[prev],
                                                   color_desc(depth_history_format_, history_w_[prev], history_h_[prev]));
         graph.add_pass(
@@ -3950,7 +3963,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 if (upscale) ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, tu);
                 else
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0,
-                                          TaaUniforms{tu.reproject, tu.params, tu.screen, tu.quant, tu.depth_clip});
+                                          TaaUniforms{tu.reproject, tu.params, tu.screen, tu.quant, tu.depth_clip, tu.lock});
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(hdr), ctx_.nearest_clamp());
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1,
                                        previous.valid() ? ctx.texture(previous) : ctx.texture(hdr), ctx_.linear_clamp());
