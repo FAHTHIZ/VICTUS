@@ -24,6 +24,13 @@ vec3 hdr_quantize(vec3 c, float frame) {
     vec3 n = vec3(fract(52.9829189 * fract(dot(p, k))), fract(52.9829189 * fract(dot(p + vec2(17.0, 59.0), k))),
                   fract(52.9829189 * fract(dot(p + vec2(83.0, 31.0), k))));
     c = clamp(c, vec3(0.0), vec3(64512.0));
+#ifdef VICTUS_ESSL
+    // GLSL ES 3.00 has no frexp/ldexp: the exponent comes from the float bits, and the scales are
+    // exact powers of two built from bits, so the products are exact as with ldexp.
+    ivec3 e = ((floatBitsToInt(max(c, vec3(1e-30))) >> 23) & 0xff) - 126;
+    ivec3 sh = max(e - 1, ivec3(-14)) - ivec3(6, 6, 5);
+    return floor(c * intBitsToFloat((127 - sh) << 23) + n) * intBitsToFloat((sh + 127) << 23);
+#else
     ivec3 e;
     frexp(max(c, vec3(1e-30)), e); // c = m * 2^e with m in [0.5, 1)
     // Scale by exact powers of two with ldexp, not exp2 and a division: Metal compiles with fast
@@ -31,6 +38,7 @@ vec3 hdr_quantize(vec3 c, float frame) {
     // representable and truncating stores biased it dark again.
     ivec3 sh = max(e - 1, ivec3(-14)) - ivec3(6, 6, 5);
     return ldexp(floor(ldexp(c, -sh) + n), sh);
+#endif
 }
 layout(location = 0) out vec4 out_color;
 void main() {

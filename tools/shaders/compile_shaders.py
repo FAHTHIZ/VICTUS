@@ -6,8 +6,9 @@ For every *.vert / *.frag / *.comp in engine/render/shaders this produces:
   * SPIR-V (glslangValidator -V)            -> Vulkan
   * MSL 2.1 (spirv-cross --msl, compiled with -DVICTUS_MSL=1) -> Metal
   * resource counts (spirv-cross --reflect)  -> SDL_GPU shader create info
-  * GLSL ES 3.00 (spirv-cross --es, graphics shaders only) -> OpenGL ES backend (ADR-0144), or
-    an empty string when the shader needs more than ES 3.00 (validated with glslangValidator)
+  * GLSL ES 3.00 (spirv-cross --es from a compile with -DVICTUS_ESSL=1, graphics shaders only)
+    -> OpenGL ES backend (ADR-0144), or an empty string when the shader needs more than ES 3.00
+    (validated with glslangValidator)
 
 Generated files are committed so engine builds do not require shader tools.
 `--check` verifies (without any shader tools) that the generated file was produced
@@ -112,6 +113,21 @@ def compile_one(unit, tmp):
 
 
 ESSL_PREFIX = {"Vertex": "vs_", "Fragment": "fs_"}
+# Bump when the GLSL ES conversion changes so cached shaders regenerate their ESSL only.
+ESSL_REV = 2
+
+
+def essl_for(unit, tmp):
+    """(text, reason): GLSL ES for a graphics unit, compiled from source with VICTUS_ESSL=1."""
+    stage = STAGES[unit.suffix]
+    if stage == "Compute":
+        return None, None
+    stem = unit.name.replace("#", "_")
+    spv = tmp / (stem + ".essl.spv")
+    defs = [f"-D{d}" for d in unit.defines]
+    run(["glslangValidator", "-V", "--quiet", "--target-env", "vulkan1.0", "-DVICTUS_ESSL=1", *defs, str(unit.path),
+         "-o", str(spv)])
+    return essl_from_spirv(spv, stage, tmp, stem)
 
 
 def essl_from_spirv(spv, stage, tmp, stem):
@@ -161,13 +177,14 @@ def essl_from_spirv(spv, stage, tmp, stem):
     return text, None
 
 
-def spirv_from_block(block):
-    m = re.search(r"k_spirv_\d+\[\] = \{\n(.*?)\n\};", block, re.S)
-    return bytes(int(x, 16) for x in re.findall(r"0x([0-9a-f]{2})", m.group(1)))
+# A generated GLSL ES declaration: the optional revision line, then "" or raw-string chunks.
+ESSL_DECL = re.compile(r'\n(?:// essl rev=\d+\n)?const char k_essl_\d+\[\] =(?: "";|\n(?:R"VICTUSMSL\(.*?\)VICTUSMSL"\n?)+;)',
+                       re.S)
 
 
 def essl_decl(i, text):
-    return f"const char k_essl_{i}[] =\n{c_string(text)};" if text else f'const char k_essl_{i}[] = "";'
+    body = f"const char k_essl_{i}[] =\n{c_string(text)};" if text else f'const char k_essl_{i}[] = "";'
+    return f"// essl rev={ESSL_REV}\n{body}"
 
 
 def c_bytes(data):
@@ -213,9 +230,11 @@ def generate(recompile_all=False):
         for tool in ("glslangValidator", "spirv-cross"):
             if not shutil.which(tool):
                 sys.exit(f"{tool} not found (install glslang-tools and spirv-cross)")
-    missing_essl = [s.name for s in units() if s.name in previous and "k_essl_" not in previous[s.name][1]]
-    if missing_essl and not shutil.which("spirv-cross"):
-        sys.exit("spirv-cross not found (needed to add GLSL ES output)")
+    essl_stale = [s.name for s in units() if s.name in previous and f"// essl rev={ESSL_REV}\n" not in previous[s.name][1]]
+    if essl_stale:
+        for tool in ("glslangValidator", "spirv-cross"):
+            if not shutil.which(tool):
+                sys.exit(f"{tool} not found (needed to regenerate GLSL ES output)")
     entries = []
     body = []
     no_essl = []
@@ -223,36 +242,32 @@ def generate(recompile_all=False):
         tmp = pathlib.Path(t)
         for i, src in enumerate(units()):
             stage = STAGES[src.suffix]
-            stem = src.name.replace("#", "_")
             if src.name not in stale:
                 _, block, entry = previous[src.name]
                 old = re.search(r"\bk_spirv_(\d+)\b", block).group(1)
                 block, entry = renumber(block, old, i), renumber(entry, old, i)
-                if "k_essl_" not in block:
-                    # Older generated file: derive GLSL ES from the embedded SPIR-V, leaving the
-                    # SPIR-V and MSL untouched.
-                    text = None
-                    if stage != "Compute":
-                        spv = tmp / (stem + ".cached.spv")
-                        spv.write_bytes(spirv_from_block(block))
-                        text, why = essl_from_spirv(spv, stage, tmp, stem)
-                        if why:
-                            no_essl.append(f"{src.name}: {why}")
+                if f"// essl rev={ESSL_REV}\n" not in block:
+                    # GLSL ES from an older generator: regenerate only it, leaving the SPIR-V and
+                    # MSL untouched.
+                    had_essl = "k_essl_" in block
+                    block = ESSL_DECL.sub("", block)
+                    text, why = essl_for(src, tmp)
+                    if why:
+                        no_essl.append(f"{src.name}: {why}")
                     block += "\n" + essl_decl(i, text)
-                    entry = entry.replace(f"sizeof(k_msl_{i}) - 1}}, ",
-                                          f"sizeof(k_msl_{i}) - 1}}, {{k_essl_{i}, sizeof(k_essl_{i}) - 1}}, ", 1)
+                    if not had_essl:
+                        entry = entry.replace(f"sizeof(k_msl_{i}) - 1}}, ",
+                                              f"sizeof(k_msl_{i}) - 1}}, {{k_essl_{i}, sizeof(k_essl_{i}) - 1}}, ", 1)
+                elif stage != "Compute" and re.search(r'const char k_essl_\d+\[\] = "";', block):
+                    no_essl.append(f"{src.name}: (cached)")
                 body.append(block)
                 entries.append(entry)
                 continue
             print(f"compiling {src.name}")
             spv, msl, c = compile_one(src, tmp)
-            text = None
-            if stage != "Compute":
-                spv_path = tmp / (stem + ".essl.spv")
-                spv_path.write_bytes(spv)
-                text, why = essl_from_spirv(spv_path, stage, tmp, stem)
-                if why:
-                    no_essl.append(f"{src.name}: {why}")
+            text, why = essl_for(src, tmp)
+            if why:
+                no_essl.append(f"{src.name}: {why}")
             body.append(f"// {src.name} sha256={digest(src)}")
             body.append(f"const std::uint8_t k_spirv_{i}[] = {{\n{c_bytes(spv)}\n}};")
             body.append(f"const char k_msl_{i}[] =\n{c_string(msl)};")
