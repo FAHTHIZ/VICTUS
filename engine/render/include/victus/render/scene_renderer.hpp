@@ -397,6 +397,10 @@ struct Environment {
     // water about `puddle_size` metres across, fully wet and mirror smooth; rain ripples them.
     float puddles{0.0f};
     float puddle_size{3.0f};
+    // Baked lighting (ADR-0122): the scene's lightmap atlas (RGBA16F irradiance / pi, see
+    // lightmap.hpp). Meshes created with GpuContext::create_lightmapped_mesh sample it in place of
+    // the probe/sky ambient; everything else is unaffected. Must outlive the frames that use it.
+    rhi::TextureHandle lightmap{};
 };
 
 // Scalability tiers. Low targets entry-level phones, Medium mid-range phones/tablets, High
@@ -799,8 +803,13 @@ private:
                                                             rhi::BlendMode blend = rhi::BlendMode::Opaque);
     void compute_cascades(float aspect, std::uint32_t resolution);
     // Pipeline for a project surface shader (created on first use); the built-in one on failure.
-    [[nodiscard]] rhi::PipelineHandle surface_pipeline(rhi::ShaderHandle fragment, bool skinned, bool double_sided, MaterialBlend blend);
-    [[nodiscard]] rhi::PipelineHandle blend_pipeline(MaterialBlend blend, bool skinned, bool double_sided);
+    // Vertex variants of the PBR pipelines: kVertexStatic (mesh.vert), kVertexSkinned
+    // (mesh_skinned.vert) and kVertexLightmapped (mesh_lightmap.vert, ADR-0122).
+    static constexpr std::uint32_t kVertexStatic = 0, kVertexSkinned = 1, kVertexLightmapped = 2, kVertexVariants = 3;
+    [[nodiscard]] rhi::PipelineHandle surface_pipeline(rhi::ShaderHandle fragment, std::uint32_t variant, bool double_sided,
+                                                       MaterialBlend blend);
+    [[nodiscard]] rhi::PipelineHandle blend_pipeline(MaterialBlend blend, std::uint32_t variant, bool double_sided);
+    [[nodiscard]] const rhi::PipelineDesc& variant_desc(std::uint32_t variant) const noexcept;
     [[nodiscard]] Status ensure_exposure_textures();
     [[nodiscard]] Status ensure_history(std::uint32_t index, std::uint32_t width, std::uint32_t height);
     // Creates the occlusion compute pipelines on first use; false (logged once) when unavailable.
@@ -818,6 +827,7 @@ private:
     std::array<rhi::PipelineHandle, 3> decal_pipelines_{}; // by DecalBlend
     rhi::PipelineHandle water_pipeline_, water_depth_pipeline_;
     rhi::PipelineHandle skin_cull_, skin_double_, skin_prepass_cull_, skin_prepass_double_, skin_shadow_;
+    rhi::PipelineHandle lightmap_cull_, lightmap_double_;
     // DebugView::Overdraw: [skinned][double_sided] counters and the persistent RGBA8 count target.
     rhi::PipelineHandle overdraw_[2][2]{};
     rhi::TextureHandle overdraw_tex_{};
@@ -825,12 +835,12 @@ private:
     bool overdraw_valid_{false};
     std::unordered_map<std::string, rhi::PipelineHandle> post_; // "<shader>/<format>/<blend>"
     // Built-in PBR pipeline descriptions, reused for surface shader variants.
-    rhi::PipelineDesc opaque_desc_, skinned_desc_;
-    // Surface shader pipelines by shader handle: [skinned * 2 + double_sided]; all invalid
+    rhi::PipelineDesc opaque_desc_, skinned_desc_, lightmap_desc_;
+    // Surface shader pipelines by shader handle: [blend][variant][double_sided]; all invalid
     // when creation failed (the built-in pipeline is used and the failure logged once).
-    std::unordered_map<std::uint64_t, std::array<rhi::PipelineHandle, 12>> surface_pipelines_;
+    std::unordered_map<std::uint64_t, std::array<rhi::PipelineHandle, 4 * kVertexVariants * 2>> surface_pipelines_;
     std::unordered_set<std::uint64_t> surface_failed_; // shaders whose pipeline failed (logged once)
-    std::array<rhi::PipelineHandle, 8> blend_pipelines_{}; // [blend-1][skinned][double_sided], created on first use
+    std::array<rhi::PipelineHandle, 2 * kVertexVariants * 2> blend_pipelines_{}; // [additive][variant][double_sided], on first use
     std::optional<double> time_;
     RenderPathFacts facts_;
     RenderPathReport path_;

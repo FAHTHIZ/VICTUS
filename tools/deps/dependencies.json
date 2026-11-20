@@ -13,7 +13,8 @@
     "spirv_cross": "Apache-2.0",
     "bc7enc_rdo": "MIT OR Unlicense",
     "astcenc": "Apache-2.0",
-    "meshoptimizer": "MIT"
+    "meshoptimizer": "MIT",
+    "xatlas": "MIT"
   },
   "doc_names": {
     "SDL3": "SDL3",
@@ -28,7 +29,8 @@
     "spirv_cross": "SPIRV-Cross",
     "bc7enc_rdo": "bc7enc_rdo",
     "astcenc": "Arm ASTC Encoder",
-    "meshoptimizer": "meshoptimizer"
+    "meshoptimizer": "meshoptimizer",
+    "xatlas": "xatlas"
   },
   "vendored": [
     {

@@ -33,6 +33,7 @@ layout(location = 1) out vec3 v_normal;
 layout(location = 2) out vec2 v_uv;
 layout(location = 3) out vec4 v_tangent;
 layout(location = 4) out vec4 v_color;
+layout(location = 5) out vec3 v_lightmap; // not lightmapped (see mesh_lightmap.vert)
 invariant gl_Position;
 void main() {
     uint base = uint(in_normal0.w + 0.5);
@@ -50,4 +51,5 @@ void main() {
     vec3 c = in_color.rgb;
     v_color = vec4(mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)), in_color.a);
     gl_Position = frame.view_proj * world;
+    v_lightmap = vec3(0.0);
 }
