@@ -464,6 +464,11 @@ struct RenderSettings {
     // main-camera based, as in Godot and Unreal, so shadows and the lit surface keep the same
     // reference; the bias only trades shadow-pass triangles for silhouette error. Low: 1.
     std::uint32_t shadow_lod_bias{0};
+    // Directional cascades skip casters whose shadow cannot fall on a pixel the cascade shades:
+    // the caster's light-space box is tested against the light-space bounds of the cascade's
+    // view-depth slice (plus its transition band and filter footprint), not just the cascade's
+    // bounding-sphere box. Lossless; off only to compare against the unculled image.
+    bool shadow_receiver_culling{true};
     // Anisotropic filtering for material textures: at most this many taps along the texture's
     // stretched axis on surfaces seen at grazing angles (floors, roads, terrain). 1 (off), 2, 4, 8
     // or 16; other values round down. Low 2, Medium 4, High 8, Ultra 16. Nearest-filtered (pixel
@@ -543,6 +548,9 @@ struct OverdrawStats {
 
 struct SceneStats {
     std::uint32_t submitted{0}, visible{0}, culled{0}, shadow_casters{0}, lines{0};
+    // Caster/cascade pairs inside a cascade's box that receiver culling skipped (their shadow
+    // cannot reach a pixel that samples that cascade; RenderSettings::shadow_receiver_culling).
+    std::uint32_t shadow_receiver_culled{0};
     std::uint32_t anisotropy{1}; // anisotropic filtering level applied to material textures this frame
     std::uint32_t point_lights{0};      // local lights used (point + spot)
     std::uint32_t spot_lights{0};
@@ -934,6 +942,16 @@ private:
                                           math::Mat4::identity()};
     std::array<float, 4> cascade_splits_{};
     std::array<float, 4> cascade_texel_{};
+    // Light-space bounds of the points each cascade shades (its view-depth slice plus the
+    // dithered transition band taken from the previous cascade), widened by the filter and
+    // normal-offset footprint. A caster whose light-space box misses this region in x/y, or lies
+    // entirely downstream of it, cannot darken a pixel that samples the cascade (ADR-0124).
+    std::array<math::Aabb, 4> cascade_receivers_{};
+    // The same slices as camera frusta (planes pushed out by the margin): a caster's shadow volume
+    // (its box swept along the sun down to the lowest receiver) must reach inside all six.
+    std::array<math::Frustum, 4> cascade_slices_{};
+    math::Mat4 cascade_light_view_{math::Mat4::identity()};
+    math::Vec3 cascade_sun_dir_{0, -1, 0};
     std::uint32_t cascade_count_{0};
     SceneStats stats_;
     CompiledGraphInfo graph_info_;

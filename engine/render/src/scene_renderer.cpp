@@ -230,6 +230,10 @@ struct TaaUpscaleUniforms {
 static_assert(sizeof(LightingUniforms) == 38 * 16 + 64 * 5);
 
 constexpr std::uint32_t kLuminanceSize = 64;
+// Fraction at the far end of each cascade's slice where pbr.frag dithers into the next cascade.
+constexpr float kCascadeTransition = 0.1f;
+// Receiver normal offset in shadow texels (pbr.frag sample_cascade).
+constexpr float kShadowNormalBiasTexels = 1.0f;
 
 Vec4 rgb(Color c, float scale = 1.0f, float w = 0.0f) { return {c.r * scale, c.g * scale, c.b * scale, w}; }
 
@@ -1440,7 +1444,13 @@ void SceneRenderer::compute_cascades(float aspect, std::uint32_t resolution) {
     cascade_splits_ = {};
     cascade_texel_ = {};
     float prev = n;
-    for (std::uint32_t i = 0; i < 4; ++i) cascade_vp_[i] = Mat4::identity();
+    float prev_near = n; // near depth of the previous cascade (its transition band feeds this one)
+    cascade_light_view_ = light_view;
+    cascade_sun_dir_ = d;
+    for (std::uint32_t i = 0; i < 4; ++i) {
+        cascade_vp_[i] = Mat4::identity();
+        cascade_receivers_[i] = {};
+    }
     for (std::uint32_t i = 0; i < count; ++i) {
         const float t = static_cast<float>(i + 1) / static_cast<float>(count);
         const float split = lambda * n * std::pow(f / n, t) + (1.0f - lambda) * (n + (f - n) * t);
@@ -1470,6 +1480,28 @@ void SceneRenderer::compute_cascades(float aspect, std::uint32_t resolution) {
         const Mat4 proj = Mat4::orthographic(c.x - r, c.x + r, c.y - r, c.y + r, -c.z - back, -c.z + r);
         cascade_vp_[i] = proj * light_view;
         cascade_texel_[i] = texel;
+        // Receivers: view depths [prev - band * (prev - prev_near), split] (pbr.frag's dithered
+        // transition samples this cascade from the last `band` of the previous slice), in light
+        // space, widened by the 3x3 PCF footprint, the normal offset and a texel of snapping.
+        {
+            const float from = i == 0 ? n : std::max(n, prev - kCascadeTransition * (prev - prev_near));
+            math::Aabb rec;
+            for (float z : {from, split})
+                for (float sy : {-1.0f, 1.0f})
+                    for (float sx : {-1.0f, 1.0f}) {
+                        const Vec3 corner = inv_view.transform_point({sx * tan_x * z, sy * tan_y * z, -z});
+                        rec.expand(light_view.transform_point(corner));
+                    }
+            const float margin = texel * (kShadowNormalBiasTexels + 3.0f);
+            rec.min = rec.min - Vec3{margin, margin, margin};
+            rec.max = rec.max + Vec3{margin, margin, margin};
+            cascade_receivers_[i] = rec;
+            const Mat4 slice_proj = Mat4::perspective(camera_.fov_y, aspect, from, split);
+            math::Frustum slice = math::Frustum::from_matrix(slice_proj * camera_.view);
+            for (auto& p : slice.planes) p.w += margin;
+            cascade_slices_[i] = slice;
+        }
+        prev_near = prev;
         prev = split;
     }
 }
@@ -1660,11 +1692,45 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             d.shadow_lod = static_cast<std::uint8_t>(std::min<std::uint32_t>(d.lod + S.shadow_lod_bias, d.mesh->lod_count - 1u));
         if (d.material.cast_shadows && !blended) {
             bool any = false;
-            for (std::uint32_t c = 0; c < cascade_count_; ++c)
-                if (cascade_frustum[c].intersects(world)) {
-                    casters[c].push_back(&d);
-                    any = true;
+            bool have_light_box = false;
+            math::Aabb light_box;
+            for (std::uint32_t c = 0; c < cascade_count_; ++c) {
+                if (!cascade_frustum[c].intersects(world)) continue;
+                if (S.shadow_receiver_culling) {
+                    if (!have_light_box) {
+                        light_box = world.transformed(cascade_light_view_);
+                        have_light_box = true;
+                    }
+                    // Its shadow falls along -Z in light view space: it can only darken receivers
+                    // it overlaps in x/y and that lie no further upstream (+Z) than its top.
+                    const math::Aabb& r = cascade_receivers_[c];
+                    bool reaches = !(light_box.max.x < r.min.x || light_box.min.x > r.max.x ||
+                                     light_box.max.y < r.min.y || light_box.min.y > r.max.y ||
+                                     light_box.max.z < r.min.z);
+                    if (reaches) {
+                        // Shadow volume: the box swept along the sun by its height above the
+                        // lowest receiver. Outside a slice plane, and not swept back in, is culled.
+                        const float sweep = light_box.max.z - r.min.z;
+                        const Vec3 bc = world.center(), be = world.extents();
+                        for (const auto& p : cascade_slices_[c].planes) {
+                            const float top = p.x * bc.x + p.y * bc.y + p.z * bc.z + p.w + be.x * std::fabs(p.x) +
+                                              be.y * std::fabs(p.y) + be.z * std::fabs(p.z);
+                            const Vec3& sd = cascade_sun_dir_;
+                            const float toward = p.x * sd.x + p.y * sd.y + p.z * sd.z;
+                            if (std::max(top, top + sweep * toward) < 0.0f) {
+                                reaches = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (!reaches) {
+                        ++stats_.shadow_receiver_culled;
+                        continue;
+                    }
                 }
+                casters[c].push_back(&d);
+                any = true;
+            }
             if (any) ++stats_.shadow_casters;
         }
         if (rain_occlusion && !blended && rain_frustum.intersects(world)) F.rain_casters.push_back(&d);
@@ -1898,7 +1964,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         const auto needed = static_cast<std::uint32_t>(instances.size());
         if (needed > instance_capacity_) {
             if (instance_buffer_) dev.destroy(instance_buffer_);
-            instance_capacity_ = std::max({needed, instance_capacity_ * 2, 256u});
+            // 1/8 headroom: per-cascade culling makes the count vary by a few instances between frames,
+            // and growing to exactly the first frame's need would double the buffer for a few bytes.
+            instance_capacity_ = std::max({needed + needed / 8, instance_capacity_ * 2, 256u});
             auto b = dev.create_buffer(
                 {"scene_instances", instance_capacity_ * static_cast<std::uint32_t>(sizeof(InstanceData)),
                  rhi::BufferUsageVertex | rhi::BufferUsageComputeRead});
@@ -2449,8 +2517,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     lighting.cluster_grid = {static_cast<float>(clusters.grid.tiles_x), static_cast<float>(clusters.grid.tiles_y),
                              static_cast<float>(clusters.grid.slices), static_cast<float>(clusters.grid.max_lights_per_cluster)};
     lighting.cluster_depth = {clusters.z_near, static_cast<float>(clusters.grid.slices) / std::log(clusters.z_far / clusters.z_near), 0, 0};
-    lighting.shadow_params = {1.0f / static_cast<float>(atlas_size), 0.0004f, 1.0f, static_cast<float>(cascade_count_)};
-    lighting.cascade_params = {S.soft_shadows ? (S.fast_soft_shadows ? 2.0f : 1.0f) : 0.0f, 1.0f / static_cast<float>(atlas_tiles), 0.1f, 0.0f};
+    lighting.shadow_params = {1.0f / static_cast<float>(atlas_size), 0.0004f, kShadowNormalBiasTexels,
+                              static_cast<float>(cascade_count_)};
+    lighting.cascade_params = {S.soft_shadows ? (S.fast_soft_shadows ? 2.0f : 1.0f) : 0.0f,
+                               1.0f / static_cast<float>(atlas_tiles), kCascadeTransition, 0.0f};
     lighting.cascade_splits = {cascade_splits_[0], cascade_splits_[1], cascade_splits_[2], cascade_splits_[3]};
     lighting.cascade_texel = {cascade_texel_[0], cascade_texel_[1], cascade_texel_[2], cascade_texel_[3]};
     {

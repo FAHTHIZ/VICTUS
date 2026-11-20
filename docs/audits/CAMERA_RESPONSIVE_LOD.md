@@ -53,7 +53,7 @@ GPU timing.
    `RenderSettings::shadow_lod_bias` (0..3, Low 1) draws casters that many levels coarser
    (ADR-0049 addendum). Tested in "gpu lods: shadow_lod_bias draws coarser casters without changing the
    main view": main-view triangles unchanged, shadow triangles lower, mean image difference under 1.5/255,
-   instancing kept. Independent per-cascade selection from shadow texel density is not implemented.
+   instancing kept. Independent per-cascade selection from shadow texel density is not implemented. Since ADR-0124 each cascade also skips casters whose shadow no pixel of that cascade samples (receiver AABB plus swept-volume test against the camera slice), pixel-identical in "gpu shadows: receiver culling ...".
 2. **Reflection probe captures already select per view.** Each capture face renders through the same
    `SceneRenderer::render` with its own 90-degree camera and face resolution, so its level follows that
    view.

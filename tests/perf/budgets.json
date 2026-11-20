@@ -1,5 +1,5 @@
 {
-  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095); template-3d and template-multiplayer triangles, shadow triangles and buffer bytes re-baselined 2026-11-20 for the Orion/Nova starter characters (26.1k smooth-surface triangles replacing the 20.6k-triangle box robots, ADR-0121). See docs/PERFORMANCE_STRATEGY.md.",
+  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095); template-3d and template-multiplayer triangles, shadow triangles and buffer bytes re-baselined 2026-11-20 for the Orion/Nova starter characters (26.1k smooth-surface triangles replacing the 20.6k-triangle box robots, ADR-0121); template-3d and template-multiplayer shadow triangles re-baselined the same day at 23 180 and 15 459 for receiver-aware cascade culling (ADR-0124). See docs/PERFORMANCE_STRATEGY.md.",
   "settings": {
     "frames": 120,
     "width": 640,
@@ -18,7 +18,7 @@
         "frame.visible": [11, 26],
         "frame.main_batches": [9, 21],
         "frame.shadow_batches": [0, 59],
-        "frame.shadow_triangles": [17268, 37991],
+        "frame.shadow_triangles": [11590, 25498],
         "frame.transparent_draws": [0, 2],
         "frame.transparent_triangles": [0, 2],
         "frame.alpha_tested_draws": [0, 2],
@@ -96,7 +96,7 @@
         "frame.visible": [8, 19],
         "frame.main_batches": [3, 8],
         "frame.shadow_batches": [0, 66],
-        "frame.shadow_triangles": [10158, 22348],
+        "frame.shadow_triangles": [7730, 17005],
         "frame.transparent_draws": [0, 2],
         "frame.transparent_triangles": [0, 2],
         "frame.alpha_tested_draws": [0, 2],
