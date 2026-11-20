@@ -2082,3 +2082,13 @@ Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): `compile_shaders.py --check`
 Not covered: `pbr.frag` (clustered lights), `fog_apply.frag`, `particle.frag`, `precipitation.frag` (and their variants) still lack ESSL; storage textures are unsupported on GLES; mobile drivers untested.
 
 Next task: the same data-texture reads for PBR clustered lights, fog apply, particles and precipitation, then the scene renderer on Low against the Vulkan golden.
+
+## 2026-11-20 — GLSL ES for PBR clustered lights, fog apply, particles, precipitation (ADR-0144 phase 2d)
+
+Built: `pbr.frag`, `fog_apply.frag`, `particle.frag` and `precipitation.frag` read local lights, light clusters and fog grids from RGBA32UI data textures under `VICTUS_ESSL` (index macros keep one source for every backend).
+
+Verified (Release, clang 21, Mesa 26.0.8 llvmpipe): `compile_shaders.py --check` up to date (62); generated SPIR-V and MSL identical to the previous commit apart from source hashes; `gpu_gles_tests`: 54 of 55 built-in graphics shaders compile on the GLES device (`pbr.frag#fp16` excluded by design). `VICTUS_REQUIRE_GPU=1 ctest --test-dir build -j2` 39/39.
+
+Not covered: the converted PBR/fog/particle paths have not rendered on GLES yet (compile only); the scene renderer has not run on GLES.
+
+Next task: run the scene renderer on the Low tier through GLES and compare against the Vulkan result.

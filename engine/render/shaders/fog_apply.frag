@@ -9,7 +9,15 @@ layout(location = 0) out vec4 out_color;
 
 layout(set = 2, binding = 0) uniform sampler2D u_depth;
 // SPIR-V: after the one sampler in set 2; MSL: after the one uniform buffer. Both are binding 1.
+#if defined(VICTUS_ESSL)
+// GLSL ES 3.00: the RHI mirrors the storage buffer into an RGBA32UI texture (1024 texels per row).
+layout(set = 2, binding = 20) uniform highp usampler2D vx_storage0;
+vec4 vx_texel0(uint t) { return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0)); }
+#define INTEGRATED(i) vx_texel0(i)
+#else
 layout(std430, set = 2, binding = 1) readonly buffer Integrated { vec4 integrated[]; };
+#define INTEGRATED(i) integrated[i]
+#endif
 layout(set = 3, binding = 0) uniform Params {
     vec4 proj;   // view depth = proj.x / (depth + proj.y)
     vec4 screen; // xy: 1 / render size
@@ -19,8 +27,8 @@ layout(set = 3, binding = 0) uniform Params {
 vec4 column(uvec2 a, uvec2 b, vec2 w, uint z) {
     uvec3 g = uvec3(u.grid.xyz);
     uint base = z * g.y * g.x;
-    vec4 c0 = mix(integrated[base + a.y * g.x + a.x], integrated[base + a.y * g.x + b.x], w.x);
-    vec4 c1 = mix(integrated[base + b.y * g.x + a.x], integrated[base + b.y * g.x + b.x], w.x);
+    vec4 c0 = mix(INTEGRATED(base + a.y * g.x + a.x), INTEGRATED(base + a.y * g.x + b.x), w.x);
+    vec4 c1 = mix(INTEGRATED(base + b.y * g.x + a.x), INTEGRATED(base + b.y * g.x + b.x), w.x);
     return mix(c0, c1, w.y);
 }
 
