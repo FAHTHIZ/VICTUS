@@ -1799,3 +1799,11 @@ Built: `render::classify_device` (GPU family and generation from the driver's de
 Verified: `victus_render_tests -tc="device class*"` (Mali, Adreno, PowerVR, Xclipse, Apple, Intel, NVIDIA, llvmpipe and WARP names; RAM and compute caps); `victus_project_tests` (default `auto`, round trip); `victus_cli_smoke` checks that `--quality auto` picks Low with `device class: software rasterizer` on lavapipe; full `ctest --preset dev` with `VICTUS_REQUIRE_GPU=1`; clang-tidy on device_class.cpp, player.cpp and platform.cpp.
 
 Not covered: the GPU table is a heuristic from public GPU generations and has not been checked on real phones.
+
+## 2026-11-20 — Stochastic rounding into packed HDR targets (ADR-0129)
+
+Built: `perf(render)` (commit 666a6be; ADR-0129, amends ADR-0126). When the scene colour is R11G11B10F, `pbr.frag` (and so surface shaders), `sky.frag`, `taa.frag` and `taa_upscale.frag` round each channel to an exactly representable value with interleaved-gradient-noise stochastic rounding, so stores are unbiased whatever rounding the GPU uses and the TAA history does not drift. The flag (frame + 1, 0 = off) is in `Lighting.screen.w`, `Sky.sun_dir.w` and a new `quant` vector in both TAA uniform blocks. The player frame-cap ADR from 590ffef is renumbered ADR-0124 -> ADR-0128 (the number was already taken by receiver-aware shadow culling).
+
+Verified: `victus_gpu_tests -tc="gpu compact hdr*"` (four tiers, 24 TAA frames on High/Ultra): mean |difference| 0.15 / 0.26 / 0.42 / 0.41 8-bit steps, per-channel mean bias at most 0.38/255 (plain stores measured -0.55/255 in blue without TAA and -1.8/255 with it), fewer render-target bytes; full `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1 VICTUS_NO_AUDIO=1 ctest --preset release -j2` 39/39 on lavapipe before the test was listed, then the new case on its own (152 assertions).
+
+Not covered: blended passes (particles, decals, water, fog/cloud composites, bloom) are not dithered; not viewed on a phone panel.
