@@ -391,6 +391,15 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     std::uint32_t fw = 0, fh = 0;
     const double start = platform::Platform::seconds();
     double last = start;
+    // Frame cap (interactive runs with a target frame rate): sleep the rest of each frame period
+    // instead of rendering at the panel's vsync rate. A 90 Hz phone would otherwise render 90
+    // frames a second it cannot sustain, heat up and throttle; holding the target steadily is
+    // what keeps a low-end GPU cool. Dynamic resolution is fed the frame's busy time (excluding
+    // this sleep) so the cap does not read as a slow frame.
+    const bool frame_cap = target_fps > 0 && o.max_frames == 0 && o.replay.empty() && o.record.empty();
+    const double frame_period = frame_cap ? 1.0 / static_cast<double>(target_fps) : 0.0;
+    double frame_begin = start;
+    float busy_ms = 0.0f;
     Status result;
     LifecycleGate lifecycle;
     std::optional<profiler::FrameProfiler> frame_profiler;
@@ -430,6 +439,16 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             continue;
         }
         if ((*plat)->input().key_pressed(platform::Key::Escape) && !o.fullscreen && o.max_frames == 0) break;
+        if (frame_cap) {
+            const double t = platform::Platform::seconds();
+            busy_ms = static_cast<float>((t - frame_begin) * 1000.0);
+            const double wait = frame_begin + frame_period - t;
+            if (wait > 0.001) std::this_thread::sleep_for(std::chrono::duration<double>(wait - 0.0005));
+            const double after = platform::Platform::seconds();
+            // Keep a fixed cadence; resynchronise after a long frame instead of bursting to catch up.
+            frame_begin = after - frame_begin > 2.0 * frame_period ? after : frame_begin + frame_period;
+            if (frame_begin > after + frame_period) frame_begin = after;
+        }
         const double now = platform::Platform::seconds();
         if (reloader) {
             const auto changes = reloader->poll(now);
@@ -446,7 +465,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         }
         if (dynamic_resolution) {
             const float before = dynamic_resolution->scale();
-            const float scale = dynamic_resolution->update(static_cast<float>(now - last) * 1000.0f);
+            const float scale = dynamic_resolution->update(frame_cap ? busy_ms : static_cast<float>(now - last) * 1000.0f);
             if (scale != before) {
                 render::RenderSettings rs = (*view)->renderer().settings();
                 rs.render_scale = scale;
