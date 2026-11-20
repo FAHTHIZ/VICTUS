@@ -77,5 +77,6 @@ victus_add_module(player
         src/migrate.cpp
         src/diagnostics.cpp
         src/mobile.cpp
+        src/bake_lighting.cpp
         ${_notices_cpp}
     DEPS VICTUS::Runtime VICTUS::Project VICTUS::Gameplay VICTUS::Script VICTUS::Platform VICTUS::Audio VICTUS::Net VICTUS::Plugin VICTUS::World)

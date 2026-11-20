@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Editor core: projects, scenes, editing operations, undo, selection, play mode, rendering.
+#include "victus/player/bake_lighting.hpp"
 #include "victus/gameui/gameui.hpp"
 #include "victus/editor/editor.hpp"
 
@@ -184,6 +185,10 @@ Status Editor::create_project(const fs::Path& directory, std::string_view name, 
                               const project::TemplateOptions& options) {
     auto p = project::Project::create(directory, name, template_id, options);
     if (!p) return std::move(p).error();
+    // 3D templates ship with baked static lighting and light probes (ADR-0134); a failed bake
+    // only costs the baked look, so the project still opens.
+    if (auto baked = player::bake_template_lighting(*p); !baked)
+        VICTUS_LOG_WARN("editor", "baking the template's lighting failed: {}", baked.error().message);
     return open_project(directory);
 }
 

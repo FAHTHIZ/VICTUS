@@ -1492,12 +1492,20 @@ TEST_CASE("studio bake lighting: Assets > Bake Lighting bakes off the UI thread 
     REQUIRE(h.ed->create_project(h.dir / "Lit", "Lit", "3d").ok());
     REQUIRE_FALSE(h.ed->scene_path().empty());
 
-    // Nothing is marked Static Lighting yet: refused with a hint.
+    // New 3D projects ship with their lighting already baked (ADR-0134).
+    scene::Scene& s = h.ed->edit_scene();
+    std::string shipped;
+    s.world().each<gameplay::EnvironmentComponent>([&](const gameplay::EnvironmentComponent& e) { shipped = e.lightmap; });
+    CHECK(shipped == runtime::default_lightmap_path(h.ed->scene_path()));
+    CHECK(sfs::exists(h.dir / "Lit" / shipped));
+
+    // Strip it back to realtime-only: nothing marked Static Lighting is refused with a hint.
+    s.world().each<scene::MeshRendererComponent>([](scene::MeshRendererComponent& mr) { mr.lightmapped = false; });
+    s.world().each<gameplay::EnvironmentComponent>([](gameplay::EnvironmentComponent& e) { e.lightmap.clear(); });
     const Status none = h.ed->start_lighting_bake();
     REQUIRE_FALSE(none.ok());
     CHECK_FALSE(h.ed->baking_lighting());
 
-    scene::Scene& s = h.ed->edit_scene();
     int marked = 0;
     s.world().each<scene::MeshRendererComponent>([&](scene::MeshRendererComponent& mr) {
         if (marked < 2 && !mr.primitive.empty()) {

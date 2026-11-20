@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-# `victus bake-lighting` end to end (ADR-0125): a fresh 3D template is marked Static Lighting,
-# baked, saved with its Environment pointing at the file, re-baked, and (with a GPU) run on
-# every quality tier with the lightmap.
+# `victus bake-lighting` end to end (ADR-0125, ADR-0134): `victus new` bakes 3D templates and not
+# 2D ones; an unbaked 3D template is baked, saved with its Environment pointing at the file,
+# re-baked, and (with a GPU) run on every quality tier with the lightmap.
 #   cmake -DVICTUS_CLI=<victus> -DWORK=<dir> -P bake_lighting.cmake
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
@@ -14,28 +14,50 @@ function(run_ok)
     set(LAST_OUTPUT "${out}" PARENT_SCOPE)
 endfunction()
 
-set(dir "${WORK}/lit")
 set(fast --samples 4 --bounces 1 --density 1 --max-size 256 --threads 2)
-run_ok("${VICTUS_CLI}" new "${dir}" --template 3d --name "Lit")
 
-# Nothing is marked yet: the bake refuses and writes nothing.
-execute_process(COMMAND "${VICTUS_CLI}" bake-lighting "${dir}" ${fast} RESULT_VARIABLE rc OUTPUT_QUIET ERROR_VARIABLE err)
+# 3D templates ship baked (ADR-0134): `victus new` writes the lightmap and references it.
+set(baked "${WORK}/baked")
+run_ok("${VICTUS_CLI}" new "${baked}" --template 3d --name "Baked")
+if(NOT LAST_OUTPUT MATCHES "Baked static lighting" OR NOT EXISTS "${baked}/scenes/main.vlightmap")
+    message(FATAL_ERROR "victus new did not bake the 3D template: ${LAST_OUTPUT}")
+endif()
+file(READ "${baked}/scenes/main.vscene" scene)
+if(NOT scene MATCHES "\"lightmapped\": *true" OR NOT scene MATCHES "\"lightmap\": *\"scenes/main.vlightmap\"")
+    message(FATAL_ERROR "the baked template scene does not reference its lightmap")
+endif()
+run_ok("${VICTUS_CLI}" check "${baked}")
+# 2D templates have nothing to bake; the bake refuses clearly and writes nothing.
+set(flat "${WORK}/flat")
+run_ok("${VICTUS_CLI}" new "${flat}" --template 2d --name "Flat")
+if(LAST_OUTPUT MATCHES "Baked static lighting")
+    message(FATAL_ERROR "victus new baked a 2D template: ${LAST_OUTPUT}")
+endif()
+execute_process(COMMAND "${VICTUS_CLI}" bake-lighting "${flat}" ${fast} RESULT_VARIABLE rc OUTPUT_QUIET ERROR_VARIABLE err)
 if(rc EQUAL 0 OR NOT err MATCHES "lightmapped")
     message(FATAL_ERROR "bake without Static Lighting meshes did not fail clearly (${rc}): ${err}")
 endif()
 
+# --no-bake leaves the Static Lighting flags but writes no lightmap.
+set(dir "${WORK}/lit")
+run_ok("${VICTUS_CLI}" new "${dir}" --template 3d --name "Lit" --no-bake)
+if(LAST_OUTPUT MATCHES "Baked static lighting" OR EXISTS "${dir}/scenes/main.vlightmap")
+    message(FATAL_ERROR "--no-bake still baked: ${LAST_OUTPUT}")
+endif()
+
 # A dry run reports but changes nothing.
+file(READ "${dir}/scenes/main.vscene" before)
 run_ok("${VICTUS_CLI}" bake-lighting "${dir}" ${fast} --mark-static --dry-run)
 if(NOT LAST_OUTPUT MATCHES "dry run" OR EXISTS "${dir}/scenes/main.vlightmap")
     message(FATAL_ERROR "dry run wrote files: ${LAST_OUTPUT}")
 endif()
 file(READ "${dir}/scenes/main.vscene" scene)
-if(scene MATCHES "\"lightmapped\"")
+if(NOT scene STREQUAL before)
     message(FATAL_ERROR "dry run saved the scene")
 endif()
 
 run_ok("${VICTUS_CLI}" bake-lighting "${dir}" ${fast} --mark-static)
-if(NOT LAST_OUTPUT MATCHES "marked [1-9][0-9]* mesh renderers" OR NOT LAST_OUTPUT MATCHES "baked [1-9][0-9]* lightmapped"
+if(NOT LAST_OUTPUT MATCHES "marked [0-9]+ mesh renderers" OR NOT LAST_OUTPUT MATCHES "baked [1-9][0-9]* lightmapped"
    OR NOT LAST_OUTPUT MATCHES "baked [1-9][0-9]* light probes")
     message(FATAL_ERROR "unexpected bake output: ${LAST_OUTPUT}")
 endif()
