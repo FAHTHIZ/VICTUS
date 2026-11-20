@@ -1,4 +1,5 @@
-# Perceptual reference scenes (ADR-0104/0105): renders samples/reference_scenes (exterior, interior, effects)
+# Perceptual reference scenes (ADR-0104/0105/0140): renders samples/reference_scenes (exterior, interior, effects,
+# photoreal)
 # at ultra, 320x180, frames 15 and 30, and scores them against the committed software-renderer
 # goldens (lavapipe/llvmpipe) with FLIP + worst tile + temporal error. Also checks the
 # rendering-path report shows each scene's key features running, and records low-vs-ultra
@@ -51,8 +52,9 @@ endfunction()
 set(expect_exterior sun_shadows volumetric_fog bloom ssao taa)
 set(expect_interior local_lights local_shadows volumetric_fog bloom ssao)
 set(expect_effects decals water particles gpu_particles reflection_probes sun_shadows)
+set(expect_photoreal sun_shadows ssao taa bloom)
 set(summary "")
-foreach(scene exterior interior effects)
+foreach(scene exterior interior effects photoreal)
     capture(${scene} ultra "${WORK}/${scene}")
     if("$ENV{VICTUS_UPDATE_GOLDENS}" STREQUAL "1")
         file(MAKE_DIRECTORY "${golden}/${scene}")

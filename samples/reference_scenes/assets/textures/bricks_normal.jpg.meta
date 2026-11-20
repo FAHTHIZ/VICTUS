@@ -1,0 +1,12 @@
+{
+  "victus_meta": 1,
+  "uuid": "fa3b44a2-c2ae-5871-932e-de30d46603e4",
+  "importer": "texture",
+  "settings": {
+    "srgb": false,
+    "mipmaps": true,
+    "max_size": 4096,
+    "flip_y": false,
+    "filter": "linear"
+  }
+}

@@ -28,7 +28,7 @@ The owner's target: images that read as photoreal on hardware as weak as entry-l
 - [x] **Baked probes on Low.** Done (ADR-0138): the lightmap's probes (ambient and sun occlusion) light dynamic objects on every tier, sampled L1 only on Low (8 fetches instead of 18), Unity URP's SH bands choice; Low no longer captures hand-placed volumes it never draws.
 - [x] **Device classes.** Tier chosen per GPU and capabilities, with project overrides. Done (ADR-0127): `rendering.quality` / `rendering.mobile_quality` = `"auto"` (the phone default) picks the tier from the GPU family (Mali, Adreno, PowerVR, Xclipse, Apple, Intel integrated, software), capped by RAM and compute support; explicit tiers still win.
 - [x] **Material ambient occlusion.** Done (ADR-0139): `.vmat` `occlusion_strength` reads AO from the red channel of the metallic-roughness texture (glTF/Unreal ORM packing) at no extra fetch; glTF `occlusionTexture` is imported and merged.
-- [ ] **Photoreal reference scene** with CC0 scanned materials, the reference for perceptual equivalence across tiers.
+- [x] **Photoreal reference scene** with CC0 scanned materials, the reference for perceptual equivalence across tiers. Done (ADR-0140): `samples/reference_scenes/scenes/photoreal.vscene`, five ambientCG CC0 sets (colour, normal, ORM), gated by the reference-scene test; a hardware-GPU golden is still to be recorded.
 - [ ] **Mobile temporal upscaling.** Arm ASR (MIT) evaluated against the built-in TAA upscaler.
 - [ ] **OpenGL ES 3 fallback** (ADR first) for the ~7 % of Android handhelds without Vulkan.
 
