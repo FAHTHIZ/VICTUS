@@ -132,6 +132,11 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
     else if (!scaled_down) add("temporal_upscale", PathState::Off, PathReason::NotNeeded, "rendering at output resolution");
     else if (!f.taa) add("temporal_upscale", PathState::Off, PathReason::Requires, "needs TAA");
     else add("temporal_upscale", PathState::Off, by(S.temporal_upscale == tier.temporal_upscale), "upscaled without temporal reconstruction");
+    // ADR-0143: transparent effects without motion vectors steer the TAA resolve through a reactive mask.
+    if (f.reactive_mask) add("reactive_mask", PathState::Active, PathReason::None, "particles, water and rain trust the current frame");
+    else if (!f.taa) add("reactive_mask", PathState::Off, PathReason::Requires, "needs TAA");
+    else if (!S.reactive_mask || S.reactive_max <= 0.0f) add("reactive_mask", PathState::Off, PathReason::Setting, "effects resolve from history");
+    else add("reactive_mask", PathState::Off, PathReason::NotNeeded, "no particles, water or rain drawn");
 
     if (f.spatial_upscale) add("spatial_upscale", PathState::Active, PathReason::None, "Catmull-Rom + RCAS");
     else if (!scaled_down) add("spatial_upscale", PathState::Off, PathReason::NotNeeded, "rendering at output resolution");

@@ -140,6 +140,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     quality.temporal_upscale = proj->settings().temporal_upscale;
     if (o.render_scale) quality.render_scale = *o.render_scale;
     if (o.taa) quality.taa = *o.taa;
+    if (o.reactive_mask) quality.reactive_mask = *o.reactive_mask;
     quality = quality.sanitized();
     (*view)->renderer().set_settings(quality);
     // Dynamic resolution holds the project's target frame rate in interactive runs (fixed-step,

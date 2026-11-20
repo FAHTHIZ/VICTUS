@@ -30,6 +30,11 @@ layout(set = 3, binding = 0) uniform Params {
 layout(location = 0) in vec3 v_world;
 layout(location = 1) in vec2 v_rest;
 layout(location = 0) out vec4 out_color;
+// VICTUS_REACTIVE_VARIANT: the "#reactive" build also writes the TAA reactive mask (ADR-0143), an
+// R8 second target blended like the colour: how much the resolve should trust this frame here.
+#ifdef VICTUS_REACTIVE
+layout(location = 1) out vec4 out_reactive;
+#endif
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float value_noise(vec2 p) {
@@ -161,4 +166,9 @@ void main() {
     float edge = clamp(thickness / 0.08, 0.0, 1.0);
     if (any(isnan(color))) color = body;
     out_color = vec4(max(color, vec3(0.0)), edge);
+#ifdef VICTUS_REACTIVE
+    // Partly reactive (FSR2 guidance for animated surfaces): moving waves, reflections and refraction
+    // have no motion vectors, but the surface itself is smooth, so half the history is still kept.
+    out_reactive = vec4(0.5, 0.5, 0.5, edge);
+#endif
 }

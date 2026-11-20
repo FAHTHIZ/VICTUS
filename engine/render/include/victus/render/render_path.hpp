@@ -50,6 +50,7 @@ struct RenderPathFacts {
     bool compact_hdr_requested{false}, compact_hdr{false}; // R11G11B10F scene colour (ADR-0050)
     bool half_precision_requested{false}, half_precision{false}; // FP16 BRDF maths (ADR-0137)
     bool taa{false}, taa_history{false}, temporal_upscale{false}, spatial_upscale{false}, fxaa{false};
+    bool reactive_mask{false}; // ADR-0143: transparent effects wrote the TAA reactive mask
     bool sun_shadows_requested{false};
     std::uint32_t cascades{0}, cascade_resolution{0};
     bool ao_requested{false}, ssao{false};

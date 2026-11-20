@@ -76,6 +76,11 @@ float distance_fog(float view_depth) {
 }
 
 layout(location = 0) out vec4 out_color;
+// VICTUS_REACTIVE_VARIANT: the "#reactive" build also writes the TAA reactive mask (ADR-0143), an
+// R8 second target blended like the colour: how much the resolve should trust this frame here.
+#ifdef VICTUS_REACTIVE
+layout(location = 1) out vec4 out_reactive;
+#endif
 void main() {
     float shape;
     if (u.screen.w > 1.5) { // splash crown (ADR-0118): a ring around the landing point at the bottom edge
@@ -101,4 +106,7 @@ void main() {
     vec3 rgb = mix(v_color.rgb, u.fog_color.rgb, distance_fog(v_distance));
     vec4 vf = volumetric_fog(gl_FragCoord.xy * u.screen.xy, v_distance, u.volumetric); // ADR-0119
     out_color = vec4(rgb * vf.a + vf.rgb, a);
+#ifdef VICTUS_REACTIVE
+    out_reactive = vec4(1.0, 1.0, 1.0, a); // fast thin streaks: trust this frame where they cover
+#endif
 }

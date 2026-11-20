@@ -12,13 +12,15 @@ layout(set = 2, binding = 0) uniform sampler2D u_current; // render resolution, 
 layout(set = 2, binding = 1) uniform sampler2D u_history; // output resolution
 layout(set = 2, binding = 2) uniform sampler2D u_depth;   // render resolution
 layout(set = 2, binding = 3) uniform sampler2D u_motion;  // render resolution, RG: object motion in uv
+layout(set = 2, binding = 4) uniform sampler2D u_reactive; // R8 reactive mask, render resolution (quant.y)
+layout(set = 2, binding = 5) uniform sampler2D u_reactive_prev; // last frame's mask (quant.w)
 layout(set = 3, binding = 0) uniform TaaUpscale {
     mat4 reproject; // current NDC -> previous clip (both unjittered)
     vec4 params;    // x: current-frame weight, y: history valid, z: clip gamma, w: object motion present
     vec4 screen;    // xy: 1 / render size, zw: 1 / history size
     vec4 jitter;    // xy: jitter in render pixels (x right, y down), zw: render size
     vec4 output_size; // xy: 1 / output size, zw: output size
-    vec4 quant;       // x: compact HDR frame + 1 (0 off)
+    vec4 quant;       // x: compact HDR frame + 1 (0 off), y: reactive mask, z: its max current weight, w: last frame's mask
 } u;
 
 // Stochastic rounding to R11G11B10_FLOAT (compact HDR, ADR-0129). The result is exactly
@@ -134,6 +136,14 @@ void main() {
     vec2 motion = (v_uv - prev_uv) * u.output_size.zw;
     float alpha = u.params.x * mix(0.3, 1.0, wmax);
     alpha = clamp(alpha + length(motion) * 0.01, 0.01, 0.5);
+    // Reactive mask (ADR-0143, render resolution, filtered): particles, water and rain have no motion
+    // vectors and change every frame, so the history is mostly wrong there; trust this frame instead.
+    // Last frame's mask at the reprojected position: where a particle was, the history holds it, so the
+    // pixel it just left must also take this frame (FSR2 decays its accumulation there instead).
+    float reactive = 0.0;
+    if (u.quant.y > 0.5) reactive = textureLod(u_reactive, v_uv, 0.0).r;
+    if (u.quant.w > 0.5) reactive = max(reactive, textureLod(u_reactive_prev, prev_uv, 0.0).r);
+    alpha = max(alpha, reactive * u.quant.z);
     vec3 r = from_ycocg(mix(hw, to_ycocg(cur_w), alpha));
     r = r / max(1.0 - luma(r), 1e-4);
     out_color = vec4(safe(r), 1.0);

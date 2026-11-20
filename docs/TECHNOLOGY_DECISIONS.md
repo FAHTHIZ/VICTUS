@@ -972,6 +972,33 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0143 — TAA reactive mask for particles, water and rain
+
+- Status: Accepted (2026-11-20)
+- Context: particles, water and precipitation are blended after the opaque pass and write no motion vectors. The TAA and temporal upscaling resolves therefore reproject their pixels with the background's motion and blend them with a history that does not contain them in the same place, so they lag, smear and leave short trails; the wider upscale clip box of ADR-0142 made this slightly worse (effects worst tile 0.082 to 0.089). FSR2 and Arm ASR solve this with a reactive mask: blended effects write a per-pixel "trust the current frame" value, and FSR2's guidance is to write it from the material (alpha), clamp it near 0.9 and prefer material-written masks over auto-generation ([FSR2 README](https://github.com/GPUOpen-Effects/FidelityFX-FSR2/blob/master/README.md)). Unreal exposes the same thing per material as Responsive AA ([UMaterial::bEnableResponsiveAA](https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/Engine/UMaterial?application_version=5.8)); TSR handles it with separate translucency and thin-geometry passes ([TSR FAQ](https://dev.epicgames.com/documentation/unreal-engine/temporal-super-resolution-frequently-asked-questions-for-unreal-engine?lang=en-US)).
+- Change:
+  - `compile_shaders.py` builds a `#reactive` variant (`-DVICTUS_REACTIVE=1`) of every shader marked `VICTUS_REACTIVE_VARIANT`: `particle.frag`, `water.frag` and `precipitation.frag`. The variant adds a second colour output to an R8 render-resolution target, blended like the colour: alpha particles and rain write coverage with the "over" blend, additive particles add `alpha * min(4 * luma, 1)` (faint glows stay history-resolved), water writes 0.5 times its shoreline alpha.
+  - The renderer allocates the mask (`reactive_mask` in the render graph, two persistent textures ping-ponged with the TAA history) only while TAA is on and at least one particle system, water surface or precipitation emitter is drawn; the first writer clears it. Ribbons use the particle variant.
+  - `taa.frag` and `taa_upscale.frag` read the mask at the pixel and last frame's mask at the reprojected position (where the effect was, the history still holds it), and raise the current-frame weight to `max(alpha, reactive * reactive_max)` after the usual clamp.
+  - `RenderSettings::reactive_mask` (default on) and `reactive_max` (default 0.5, clamped 0..1), `SceneStats::reactive_mask`, a `reactive_mask` feature in the render path report (active / needs TAA / setting / not needed), `victus run --reactive on|off` and the player's `reactive_mask` override.
+- Measurements (lavapipe, Release):
+  - GPU test scene: a magenta particle moving 1.7 px per frame over 3-px stripes, error against a history-free reference over the particle's current and previous footprint, summed over 24 frames. Native TAA: 299 360 without the mask, 252 848 with `reactive_max` 0.9 (-16 %), 277 166 with 0.5 (-7 %). Upscale at 0.5: 472 187, 338 160 (-28 %), 395 346 (-16 %).
+  - Effects reference scene, 640x360 Ultra, 60 frames, render scale 0.5, mean LDR-FLIP and temporal error against native TAA without the mask:
+
+    | `reactive_max` | Mean FLIP | Temporal error |
+    |---|---|---|
+    | mask off | 0.0202 | 0.00086 |
+    | 0.3 | 0.0191 | 0.00096 |
+    | 0.5 (default) | 0.0192 | 0.00108 |
+    | 0.6 | 0.0194 | 0.00115 |
+    | 0.7 | 0.0195 | 0.00121 |
+    | 0.9 | 0.0199 | 0.00134 |
+    | 0.5, current mask only | 0.0194 | 0.00102 |
+
+    The effects scene's particles move slowly, so trusting the current frame mostly trades stability for sharpness there; 0.5 keeps most of the FLIP gain at about a quarter more temporal error, while 0.9 is better for fast effects (the test scene). Projects with fast effects can raise it.
+- Gates: `victus_gpu_tests` gains four cases in `gpu_reactive_tests.cpp` (settings defaults and clamping; native reduction below 0.92 of no-mask at 0.9; upscaled below 0.8; frames without effects are byte-identical with the mask on and off and the report says "not needed"). The effects golden was re-recorded (old against new: mean FLIP 0.0047, changes only on the water and the particle plume); exterior, interior and photoreal are unchanged.
+- Consequences: one R8 target (two persistent textures) while effects are drawn under TAA; frames without effects pay nothing. Alpha-blended meshes do not write the mask yet (no per-material "responsive" flag like Unreal's), and the mask is not generated automatically from opaque/translucent differences as FSR2's optional auto-reactive pass does. Thin-feature locks and depth-clip disocclusion remain to be ported.
+
 ## ADR-0142 — Temporal upscaler tuning: wider clip box and reconstruction kernel
 
 - Status: Accepted (2026-11-20)

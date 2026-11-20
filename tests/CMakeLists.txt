@@ -136,6 +136,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_lightmap_tests.cpp
         render/gpu_scene_lightmap_tests.cpp
         render/gpu_taa_tests.cpp
+        render/gpu_reactive_tests.cpp
         render/gpu_light_tests.cpp
         render/gpu_texture_compression_tests.cpp
         render/gpu_lod_tests.cpp
