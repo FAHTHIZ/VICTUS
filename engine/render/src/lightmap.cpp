@@ -16,6 +16,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <unordered_map>
 
 namespace victus::render {
 
@@ -677,24 +678,152 @@ Vec3 LightmapSky::evaluate(Vec3 dir) const {
     return c * intensity;
 }
 
+namespace {
+
+// World-space copy of one receiver (positions + normals) for xatlas.
+struct UnwrapInput {
+    std::uint32_t instance;
+    std::vector<Vec3> positions, normals;
+    std::vector<std::uint32_t> indices;
+};
+
+// Charts of `inputs` packed by xatlas into one atlas; uvs in texels of that atlas.
+struct ChartAtlas {
+    std::uint32_t width{0}, height{0};
+    std::vector<LightmapUnwrap> unwraps; // per input, uv in texels
+};
+
+Result<ChartAtlas> xatlas_pack(const std::vector<const UnwrapInput*>& inputs, float tpu, std::uint32_t padding) {
+    std::unique_ptr<xatlas::Atlas, void (*)(xatlas::Atlas*)> atlas(xatlas::Create(), xatlas::Destroy);
+    for (const UnwrapInput* in : inputs) {
+        xatlas::MeshDecl decl;
+        decl.vertexPositionData = in->positions.data();
+        decl.vertexPositionStride = sizeof(Vec3);
+        decl.vertexNormalData = in->normals.data();
+        decl.vertexNormalStride = sizeof(Vec3);
+        decl.vertexCount = static_cast<std::uint32_t>(in->positions.size());
+        decl.indexData = in->indices.data();
+        decl.indexCount = static_cast<std::uint32_t>(in->indices.size());
+        decl.indexFormat = xatlas::IndexFormat::UInt32;
+        const xatlas::AddMeshError err = xatlas::AddMesh(atlas.get(), decl, static_cast<std::uint32_t>(inputs.size()));
+        if (err != xatlas::AddMeshError::Success)
+            return make_error(ErrorCode::InvalidArgument, std::string("lightmap unwrap failed: ") + xatlas::StringForEnum(err));
+    }
+    xatlas::ChartOptions chart;
+    xatlas::PackOptions pack;
+    pack.texelsPerUnit = tpu;
+    pack.padding = padding;
+    pack.bilinear = true;
+    pack.blockAlign = true;
+    pack.resolution = 0; // one atlas sized to fit
+    xatlas::Generate(atlas.get(), chart, pack);
+    ChartAtlas out;
+    out.width = atlas->width;
+    out.height = atlas->height;
+    if (out.width == 0 || out.height == 0 || atlas->meshCount != inputs.size())
+        return make_error(ErrorCode::InvalidArgument, "lightmap unwrap produced an empty atlas");
+    out.unwraps.resize(inputs.size());
+    for (std::uint32_t mi = 0; mi < atlas->meshCount; ++mi) {
+        const xatlas::Mesh& om = atlas->meshes[mi];
+        LightmapUnwrap& u = out.unwraps[mi];
+        u.xref.resize(om.vertexCount);
+        u.uv.resize(om.vertexCount);
+        for (std::uint32_t v = 0; v < om.vertexCount; ++v) {
+            u.xref[v] = om.vertexArray[v].xref;
+            u.uv[v] = {om.vertexArray[v].uv[0], om.vertexArray[v].uv[1]};
+        }
+        u.indices.assign(om.indexArray, om.indexArray + om.indexCount);
+    }
+    return out;
+}
+
+// Receivers whose meshes are identical and whose model matrices differ only by a rotation,
+// reflection-free, plus translation (equal Gram matrix M^T M of the linear part) are congruent:
+// one unwrap is valid for all of them at the same texel density (ADR-0135).
+struct UvGroup {
+    std::uint64_t mesh{0};
+    std::size_t vertices{0}, indices{0};
+    std::array<float, 6> gram{};
+    bool mirrored{false};
+    std::vector<std::uint32_t> members; // indices into the inputs
+};
+
+std::array<float, 6> gram_of(const math::Mat4& m, bool& mirrored) {
+    const Vec3 c0{m.c[0].x, m.c[0].y, m.c[0].z}, c1{m.c[1].x, m.c[1].y, m.c[1].z}, c2{m.c[2].x, m.c[2].y, m.c[2].z};
+    mirrored = math::dot(math::cross(c0, c1), c2) < 0.0f;
+    return {math::dot(c0, c0), math::dot(c1, c1), math::dot(c2, c2), math::dot(c0, c1), math::dot(c0, c2), math::dot(c1, c2)};
+}
+
+bool same_gram(const std::array<float, 6>& a, const std::array<float, 6>& b) {
+    float scale = 1e-6f;
+    for (int i = 0; i < 3; ++i) scale = std::max({scale, std::abs(a[i]), std::abs(b[i])});
+    for (int i = 0; i < 6; ++i)
+        if (std::abs(a[i] - b[i]) > 1e-5f * scale) return false;
+    return true;
+}
+
+// Shelf packing of rectangles (texels, gap already included); deterministic. Returns the atlas
+// size and each rectangle's corner, trying a few widths and keeping the smallest square side.
+struct ShelfResult {
+    std::uint32_t width{0}, height{0};
+    std::vector<std::array<std::uint32_t, 2>> at;
+};
+ShelfResult shelf_pack(const std::vector<std::array<std::uint32_t, 2>>& rects) {
+    std::vector<std::uint32_t> order(rects.size());
+    for (std::uint32_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](std::uint32_t a, std::uint32_t b) {
+        if (rects[a][1] != rects[b][1]) return rects[a][1] > rects[b][1];
+        return rects[a][0] > rects[b][0];
+    });
+    std::uint64_t area = 0;
+    std::uint32_t widest = 0;
+    for (const auto& r : rects) {
+        area += std::uint64_t{r[0]} * r[1];
+        widest = std::max(widest, r[0]);
+    }
+    ShelfResult best;
+    std::uint64_t best_side = std::numeric_limits<std::uint64_t>::max(), best_area = best_side;
+    const double root = std::sqrt(static_cast<double>(area));
+    for (const double f : {0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 2.0}) {
+        const std::uint32_t limit = std::max(widest, static_cast<std::uint32_t>(std::ceil(root * f)));
+        ShelfResult r;
+        r.at.resize(rects.size());
+        std::uint32_t x = 0, y = 0, shelf = 0;
+        for (const std::uint32_t i : order) {
+            if (x > 0 && x + rects[i][0] > limit) {
+                y += shelf;
+                x = shelf = 0;
+            }
+            r.at[i] = {x, y};
+            x += rects[i][0];
+            shelf = std::max(shelf, rects[i][1]);
+            r.width = std::max(r.width, x);
+        }
+        r.height = y + shelf;
+        const std::uint64_t side = std::max(r.width, r.height), a = std::uint64_t{r.width} * r.height;
+        if (side < best_side || (side == best_side && a < best_area)) {
+            best_side = side;
+            best_area = a;
+            best = std::move(r);
+        }
+    }
+    return best;
+}
+
+} // namespace
+
 Result<LightmapLayout> unwrap_lightmaps(const LightmapScene& scene, const LightmapSettings& settings) {
     VICTUS_PROFILE_SCOPE("unwrap_lightmaps");
     if (!(settings.texels_per_unit > 0.0f) || !std::isfinite(settings.texels_per_unit))
         return make_error(ErrorCode::InvalidArgument, "lightmap texels_per_unit must be positive");
     if (settings.max_atlas_size < 16 || settings.max_atlas_size > 8192)
         return make_error(ErrorCode::InvalidArgument, "lightmap max_atlas_size must be 16..8192");
-    // World-space copies of every receiver (positions + normals) for xatlas.
-    struct Input {
-        std::uint32_t instance;
-        std::vector<Vec3> positions, normals;
-        std::vector<std::uint32_t> indices;
-    };
-    std::vector<Input> inputs;
+    std::vector<UnwrapInput> inputs;
     for (std::uint32_t ii = 0; ii < scene.instances.size(); ++ii) {
         const LightmapInstance& inst = scene.instances[ii];
         if (!inst.receives || !inst.mesh || inst.mesh->indices.size() < 3) continue;
         const MeshData& m = *inst.mesh;
-        Input in;
+        UnwrapInput in;
         in.instance = ii;
         const math::Mat4 nm = normal_matrix(inst.model);
         in.positions.reserve(m.vertices.size());
@@ -715,52 +844,127 @@ Result<LightmapLayout> unwrap_lightmaps(const LightmapScene& scene, const Lightm
     layout.instances.resize(scene.instances.size());
     if (inputs.empty()) return layout;
 
+    // Congruent receivers share one unwrap (ADR-0135), so their uvs differ by a translation only
+    // and the renderer can draw them from one mesh, instanced, with a per-instance uv offset.
+    std::vector<UvGroup> groups;
+    if (settings.share_uvs) {
+        std::unordered_map<const MeshData*, std::uint64_t> prints;
+        for (std::uint32_t k = 0; k < inputs.size(); ++k) {
+            const LightmapInstance& inst = scene.instances[inputs[k].instance];
+            auto [pit, fresh] = prints.try_emplace(inst.mesh, 0);
+            if (fresh) pit->second = lightmap_mesh_fingerprint(*inst.mesh);
+            bool mirrored = false;
+            const auto gram = gram_of(inst.model, mirrored);
+            UvGroup* g = nullptr;
+            for (UvGroup& c : groups)
+                if (c.mesh == pit->second && c.vertices == inst.mesh->vertices.size() && c.indices == inst.mesh->indices.size() &&
+                    c.mirrored == mirrored && same_gram(c.gram, gram)) {
+                    g = &c;
+                    break;
+                }
+            if (!g) {
+                groups.push_back({pit->second, inst.mesh->vertices.size(), inst.mesh->indices.size(), gram, mirrored, {}});
+                g = &groups.back();
+            }
+            g->members.push_back(k);
+        }
+    }
+    const bool shared = std::any_of(groups.begin(), groups.end(), [](const UvGroup& g) { return g.members.size() > 1; });
+
     float tpu = settings.texels_per_unit;
     for (int attempt = 0; attempt < 8; ++attempt) {
-        std::unique_ptr<xatlas::Atlas, void (*)(xatlas::Atlas*)> atlas(xatlas::Create(), xatlas::Destroy);
-        for (const Input& in : inputs) {
-            xatlas::MeshDecl decl;
-            decl.vertexPositionData = in.positions.data();
-            decl.vertexPositionStride = sizeof(Vec3);
-            decl.vertexNormalData = in.normals.data();
-            decl.vertexNormalStride = sizeof(Vec3);
-            decl.vertexCount = static_cast<std::uint32_t>(in.positions.size());
-            decl.indexData = in.indices.data();
-            decl.indexCount = static_cast<std::uint32_t>(in.indices.size());
-            decl.indexFormat = xatlas::IndexFormat::UInt32;
-            const xatlas::AddMeshError err = xatlas::AddMesh(atlas.get(), decl, static_cast<std::uint32_t>(inputs.size()));
-            if (err != xatlas::AddMeshError::Success)
-                return make_error(ErrorCode::InvalidArgument, std::string("lightmap unwrap failed: ") + xatlas::StringForEnum(err));
+        if (!shared) {
+            // Every receiver unique: one xatlas run packs all charts together (tightest atlas).
+            std::vector<const UnwrapInput*> all;
+            for (const UnwrapInput& in : inputs) all.push_back(&in);
+            auto packed = xatlas_pack(all, tpu, settings.padding);
+            if (!packed) return std::move(packed).error();
+            const std::uint32_t w = packed->width, h = packed->height;
+            if (std::max(w, h) > settings.max_atlas_size) {
+                // Area scales with density squared; aim a little under the limit.
+                tpu *= 0.95f * static_cast<float>(settings.max_atlas_size) / static_cast<float>(std::max(w, h));
+                continue;
+            }
+            layout.width = w;
+            layout.height = h;
+            layout.texels_per_unit = tpu;
+            for (std::uint32_t k = 0; k < inputs.size(); ++k) {
+                LightmapUnwrap& u = layout.instances[inputs[k].instance];
+                u = std::move(packed->unwraps[k]);
+                for (Vec2& uv : u.uv) uv = {uv.x / static_cast<float>(w), uv.y / static_cast<float>(h)};
+            }
+            return layout;
         }
-        xatlas::ChartOptions chart;
-        xatlas::PackOptions pack;
-        pack.texelsPerUnit = tpu;
-        pack.padding = settings.padding;
-        pack.bilinear = true;
-        pack.blockAlign = true;
-        pack.resolution = 0; // one atlas sized to fit
-        xatlas::Generate(atlas.get(), chart, pack);
-        const std::uint32_t w = atlas->width, h = atlas->height;
+        // Blocks: every shared group's representative unwrapped on its own (one copy per member),
+        // and all unique receivers packed together by xatlas into one more block; then the blocks
+        // are shelf-packed into the atlas.
+        std::vector<ChartAtlas> atlases;
+        std::vector<std::vector<std::uint32_t>> atlas_inputs;
+        std::vector<const UnwrapInput*> singles;
+        std::vector<std::uint32_t> single_ids;
+        for (const UvGroup& g : groups) {
+            if (g.members.size() == 1) {
+                singles.push_back(&inputs[g.members[0]]);
+                single_ids.push_back(g.members[0]);
+                continue;
+            }
+            auto packed = xatlas_pack({&inputs[g.members[0]]}, tpu, settings.padding);
+            if (!packed) return std::move(packed).error();
+            atlases.push_back(std::move(*packed));
+            atlas_inputs.push_back(g.members);
+        }
+        if (!singles.empty()) {
+            auto packed = xatlas_pack(singles, tpu, settings.padding);
+            if (!packed) return std::move(packed).error();
+            atlases.push_back(std::move(*packed));
+            atlas_inputs.push_back({}); // marker: one block holding every single
+        }
+        // One rectangle per shared member, one for the singles block.
+        struct Rect {
+            std::uint32_t atlas, member; // member: index into atlas_inputs[atlas] (shared) or ~0u (singles)
+        };
+        std::vector<Rect> rects;
+        std::vector<std::array<std::uint32_t, 2>> sizes;
+        const std::uint32_t gap = std::max(settings.padding, 1u);
+        for (std::uint32_t a = 0; a < atlases.size(); ++a) {
+            const std::array<std::uint32_t, 2> size{atlases[a].width + gap, atlases[a].height + gap};
+            if (atlas_inputs[a].empty()) {
+                rects.push_back({a, ~0u});
+                sizes.push_back(size);
+            } else {
+                for (std::uint32_t m = 0; m < atlas_inputs[a].size(); ++m) {
+                    rects.push_back({a, m});
+                    sizes.push_back(size);
+                }
+            }
+        }
+        const ShelfResult shelf = shelf_pack(sizes);
+        const std::uint32_t w = shelf.width, h = shelf.height;
         if (w == 0 || h == 0) return make_error(ErrorCode::InvalidArgument, "lightmap unwrap produced an empty atlas");
-        const std::uint32_t side = std::max(w, h);
-        if (side > settings.max_atlas_size) {
-            // Area scales with density squared; aim a little under the limit.
-            tpu *= 0.95f * static_cast<float>(settings.max_atlas_size) / static_cast<float>(side);
+        if (std::max(w, h) > settings.max_atlas_size) {
+            tpu *= 0.95f * static_cast<float>(settings.max_atlas_size) / static_cast<float>(std::max(w, h));
             continue;
         }
         layout.width = w;
         layout.height = h;
         layout.texels_per_unit = tpu;
-        for (std::uint32_t mi = 0; mi < atlas->meshCount; ++mi) {
-            const xatlas::Mesh& om = atlas->meshes[mi];
-            LightmapUnwrap& u = layout.instances[inputs[mi].instance];
-            u.xref.resize(om.vertexCount);
-            u.uv.resize(om.vertexCount);
-            for (std::uint32_t v = 0; v < om.vertexCount; ++v) {
-                u.xref[v] = om.vertexArray[v].xref;
-                u.uv[v] = {om.vertexArray[v].uv[0] / static_cast<float>(w), om.vertexArray[v].uv[1] / static_cast<float>(h)};
+        const auto place = [&](const LightmapUnwrap& src, std::array<std::uint32_t, 2> at, LightmapUnwrap& dst) {
+            dst.xref = src.xref;
+            dst.indices = src.indices;
+            dst.uv.resize(src.uv.size());
+            for (std::size_t v = 0; v < src.uv.size(); ++v)
+                dst.uv[v] = {(src.uv[v].x + static_cast<float>(at[0])) / static_cast<float>(w),
+                             (src.uv[v].y + static_cast<float>(at[1])) / static_cast<float>(h)};
+        };
+        for (std::size_t r = 0; r < rects.size(); ++r) {
+            const ChartAtlas& ca = atlases[rects[r].atlas];
+            if (rects[r].member == ~0u) {
+                for (std::size_t k = 0; k < single_ids.size(); ++k)
+                    place(ca.unwraps[k], shelf.at[r], layout.instances[inputs[single_ids[k]].instance]);
+            } else {
+                const std::uint32_t input = atlas_inputs[rects[r].atlas][rects[r].member];
+                place(ca.unwraps[0], shelf.at[r], layout.instances[inputs[input].instance]);
             }
-            u.indices.assign(om.indexArray, om.indexArray + om.indexCount);
         }
         return layout;
     }
@@ -1273,6 +1477,17 @@ MeshData apply_lightmap_unwrap(const MeshData& mesh, const LightmapUnwrap& unwra
     for (std::uint32_t x : unwrap.xref) out.vertices.push_back(x < mesh.vertices.size() ? mesh.vertices[x] : Vertex3D{});
     out.indices = unwrap.indices;
     return out;
+}
+
+std::optional<Vec2> lightmap_uv_offset(const LightmapUnwrap& base, const LightmapUnwrap& unwrap, float tolerance) noexcept {
+    if (base.empty() || base.uv.size() != unwrap.uv.size() || base.xref != unwrap.xref || base.indices != unwrap.indices)
+        return std::nullopt;
+    const Vec2 off = unwrap.uv[0] - base.uv[0];
+    for (std::size_t i = 0; i < base.uv.size(); ++i) {
+        const Vec2 d = unwrap.uv[i] - base.uv[i] - off;
+        if (!(std::abs(d.x) <= tolerance && std::abs(d.y) <= tolerance)) return std::nullopt;
+    }
+    return off;
 }
 
 std::uint64_t lightmap_mesh_fingerprint(const MeshData& mesh) noexcept {

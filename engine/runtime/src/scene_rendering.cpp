@@ -1054,36 +1054,64 @@ rhi::TextureHandle GpuAssetCache::lightmap_direction(std::string_view path) {
     return lightmaps_.find(std::string(path))->second.direction;
 }
 
-const render::GpuMesh* GpuAssetCache::lightmapped_mesh(std::string_view path, scene::Scene& scene, scene::Entity entity) {
-    if (!lightmap(path).valid()) return nullptr;
+GpuAssetCache::LightmappedMesh GpuAssetCache::lightmapped_mesh(std::string_view path, scene::Scene& scene, scene::Entity entity) {
+    if (!lightmap(path).valid()) return {};
     LightmapEntry& lm = lightmaps_.find(std::string(path))->second;
     const Uuid id = scene.uuid(entity);
-    if (id.is_nil()) return nullptr;
+    if (id.is_nil()) return {};
     auto [it, inserted] = lm.meshes.try_emplace(id);
-    if (!inserted) return it->second ? &*it->second : nullptr;
+    if (!inserted) return it->second ? *it->second : LightmappedMesh{};
     const auto e = std::find_if(lm.entries.begin(), lm.entries.end(), [&](const render::LightmapFileEntry& x) { return x.entity == id; });
     if (e == lm.entries.end()) {
         VICTUS_LOG_WARN("runtime", "lightmap '{}' has no bake for entity {}: bake lighting again", path, id.to_string());
-        return nullptr;
+        return {};
     }
     auto data = static_mesh_data(scene, entity, db_);
     if (!data) {
         VICTUS_LOG_WARN("runtime", "lightmap '{}', entity {}: {}", path, id.to_string(), data.error().message);
-        return nullptr;
+        return {};
     }
     const auto* wt = scene.world().get<scene::WorldTransform>(entity);
     if (!wt || scene_lightmap_fingerprint(*data, wt->matrix) != e->mesh_fingerprint) {
         VICTUS_LOG_WARN("runtime", "lightmap '{}': entity {} moved or its mesh changed since it was baked; bake lighting again", path,
                         id.to_string());
-        return nullptr;
+        return {};
+    }
+    // A congruent copy already uploaded (same geometry, uvs shifted by a constant): draw that mesh
+    // with this instance's offset so the copies batch (ADR-0135).
+    // Every vertex attribute counts (texture uvs, tangents, colours), not only the geometry.
+    std::uint64_t geometry = 1469598103934665603ull;
+    const auto hash_bytes = [&](const void* p, std::size_t n) {
+        const auto* b = static_cast<const unsigned char*>(p);
+        for (std::size_t i = 0; i < n; ++i) geometry = (geometry ^ b[i]) * 1099511628211ull;
+    };
+    hash_bytes(data->vertices.data(), data->vertices.size() * sizeof(render::Vertex3D));
+    hash_bytes(data->indices.data(), data->indices.size() * sizeof(std::uint32_t));
+    for (const auto& sh : lm.shared) {
+        if (sh->geometry != geometry) continue;
+        if (const auto off = render::lightmap_uv_offset(lm.entries[sh->entry].unwrap, e->unwrap)) {
+            it->second = LightmappedMesh{&sh->gpu, *off};
+            return *it->second;
+        }
     }
     auto g = ctx_.create_lightmapped_mesh(*data, e->unwrap, "lightmapped");
     if (!g) {
         VICTUS_LOG_ERROR("runtime", "lightmap '{}', entity {}: {}", path, id.to_string(), g.error().message);
-        return nullptr;
+        return {};
     }
-    it->second = *g;
-    return &*it->second;
+    auto sh = std::make_unique<LightmapEntry::Shared>();
+    sh->gpu = *g;
+    sh->geometry = geometry;
+    sh->entry = static_cast<std::size_t>(e - lm.entries.begin());
+    it->second = LightmappedMesh{&sh->gpu, {}};
+    lm.shared.push_back(std::move(sh));
+    return *it->second;
+}
+
+std::size_t GpuAssetCache::lightmapped_mesh_count() const noexcept {
+    std::size_t n = 0;
+    for (const auto& [path, lm] : lightmaps_) n += lm.shared.size();
+    return n;
 }
 
 void GpuAssetCache::evict_lightmaps() {
@@ -1091,8 +1119,7 @@ void GpuAssetCache::evict_lightmaps() {
         if (lm.texture.valid()) ctx_.device().destroy(lm.texture);
         if (lm.direction.valid()) ctx_.device().destroy(lm.direction);
         lm.probes.reset();
-        for (auto& [id, mesh] : lm.meshes)
-            if (mesh) ctx_.destroy(*mesh);
+        for (auto& sh : lm.shared) ctx_.destroy(sh->gpu);
     }
     lightmaps_.clear();
 }
@@ -1695,16 +1722,17 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         const auto emit = [&](const render::GpuMesh& base, const render::Material& m) {
             // Baked lighting (ADR-0125): static renderers draw their lightmapped copy when the
             // scene's lightmap has a current bake for them.
-            const render::GpuMesh* lm = mr.lightmapped && !scattered && !lightmap_path.empty()
-                                            ? assets.lightmapped_mesh(lightmap_path, scene, entity)
-                                            : nullptr;
+            const GpuAssetCache::LightmappedMesh lmm = mr.lightmapped && !scattered && !lightmap_path.empty()
+                                                           ? assets.lightmapped_mesh(lightmap_path, scene, entity)
+                                                           : GpuAssetCache::LightmappedMesh{};
+            const render::GpuMesh* lm = lmm.mesh;
             const render::GpuMesh& mesh = lm ? *lm : base;
             if (lm) ++stats.lightmapped;
             if (streaming && !mr.material_asset.is_nil())
                 assets.note_material_footprint(mr.material_asset,
                                                runtime::projected_pixels(camera, mesh.bounds.transformed(wt.matrix), assets.residency_settings().screen_height));
             if (!scattered) {
-                renderer.submit(mesh, m, wt.matrix, motion_id);
+                renderer.submit(mesh, m, wt.matrix, motion_id, lmm.uv_offset);
                 return;
             }
             renderer.submit_instances(mesh, m, foliage); // static: no motion id

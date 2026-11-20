@@ -244,7 +244,16 @@ public:
     // The baked light probes of the lightmap at `path` (ADR-0133) as an irradiance volume that
     // lights dynamic and non-lightmapped objects; nullptr when the file has none.
     [[nodiscard]] const render::IrradianceVolume* lightmap_probes(std::string_view path);
-    [[nodiscard]] const render::GpuMesh* lightmapped_mesh(std::string_view path, scene::Scene& scene, scene::Entity entity);
+    // The lightmapped copy of a static renderer, and the atlas uv offset its instance applies:
+    // congruent copies baked at different atlas places share one GPU mesh (ADR-0135), so they
+    // still batch. mesh is null when the lightmap has no current bake for the entity.
+    struct LightmappedMesh {
+        const render::GpuMesh* mesh{nullptr};
+        math::Vec2 uv_offset{};
+    };
+    [[nodiscard]] LightmappedMesh lightmapped_mesh(std::string_view path, scene::Scene& scene, scene::Entity entity);
+    // GPU meshes created for lightmapped renderers so far (shared copies count once).
+    [[nodiscard]] std::size_t lightmapped_mesh_count() const noexcept;
     // Drops loaded lightmaps (after a re-bake) so the next request reads the file again.
     void evict_lightmaps();
     [[nodiscard]] std::size_t lightmap_count() const noexcept { return lightmaps_.size(); }
@@ -292,7 +301,13 @@ private:
         math::Vec3 shadowmask_direction{0, 0, 0}; // sun the atlas alpha is a shadowmask for (ADR-0131)
         std::unique_ptr<render::IrradianceVolume> probes; // baked light probes (ADR-0133); null when none
         std::vector<render::LightmapFileEntry> entries; // the file's UV sets (atlas pixels released after upload)
-        std::unordered_map<Uuid, std::optional<render::GpuMesh>, UuidHash> meshes; // nullopt = no entry or stale
+        struct Shared {
+            render::GpuMesh gpu;
+            std::uint64_t geometry{0}; // hash of the source mesh (every vertex attribute and index)
+            std::size_t entry{0};      // the file entry whose uvs the mesh carries
+        };
+        std::vector<std::unique_ptr<Shared>> shared; // stable addresses: draws batch on the mesh pointer
+        std::unordered_map<Uuid, std::optional<LightmappedMesh>, UuidHash> meshes; // nullopt = no entry or stale
     };
     std::unordered_map<std::string, LightmapEntry> lightmaps_;
     struct MorphEntry {

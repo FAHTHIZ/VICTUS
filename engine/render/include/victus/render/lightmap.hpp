@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <functional>
 #include <span>
+#include <optional>
 #include <vector>
 
 namespace victus::jobs {
@@ -32,6 +33,10 @@ struct LightmapSettings {
     // again at a lower density (reported in LightmapBakeStats::texels_per_unit).
     std::uint32_t max_atlas_size{2048};
     std::uint32_t padding{2};          // texels between charts (bilinear filtering needs >= 1)
+    // Receivers with identical meshes whose transforms differ only by rotation and translation
+    // share one unwrap at different places in the atlas (ADR-0135, Unity's lightmapScaleOffset):
+    // their lightmap uvs differ by a constant offset, so the renderer instances them again.
+    bool share_uvs{true};
     std::uint32_t samples{128};        // hemisphere rays per texel
     std::uint32_t bounces{3};          // indirect bounces after the first hit (0 = sky + direct only)
     // Also bake the bake lights' direct light on the receiver (fully baked). Off by default:
@@ -185,6 +190,12 @@ struct LightmapLayout {
 // Re-indexes `mesh` with an unwrap: vertices are copied through `xref`, indices replaced, LODs,
 // skin and morph targets dropped (lightmapped meshes are static and draw LOD 0).
 [[nodiscard]] MeshData apply_lightmap_unwrap(const MeshData& mesh, const LightmapUnwrap& unwrap);
+
+// When `unwrap` is `base` moved within the atlas (same vertices and triangles, every uv shifted
+// by one constant within `tolerance` atlas units), returns that shift: such receivers draw from
+// one mesh with a per-instance uv offset (ADR-0135). nullopt otherwise.
+[[nodiscard]] std::optional<math::Vec2> lightmap_uv_offset(const LightmapUnwrap& base, const LightmapUnwrap& unwrap,
+                                                           float tolerance = 1e-5f) noexcept;
 
 // Stable fingerprint of a mesh's geometry (positions, normals, indices) so a stored bake can
 // tell whether it still matches the mesh it was made for.

@@ -678,3 +678,71 @@ TEST_CASE("lightmap file round trip with light probes and damaged probe blocks")
     for (std::size_t n = probe_block; n < probe_block + 36 + p.probe_count() * 55; n += 13)
         CHECK_FALSE(decode_lightmap_file(std::span(bytes.data(), n)));
 }
+
+TEST_CASE("lightmap unwrap shares uvs between congruent copies (ADR-0135)") {
+    const MeshData plane = make_plane({10, 10}, 2);
+    const MeshData cube = make_cube();
+    const MeshData cube_copy = make_cube(); // a separate but identical mesh still shares
+    const math::Quat quarter = math::Quat::axis_angle({0, 1, 0}, math::radians(90.0f));
+    LightmapScene scene;
+    scene.instances.push_back({&plane});
+    scene.instances.push_back({&cube, math::Mat4::translation({-2, 0.5f, 0})});
+    scene.instances.push_back({&cube_copy, math::Mat4::trs({2, 0.5f, 0}, quarter, {1, 1, 1})});
+    scene.instances.push_back({&cube, math::Mat4::trs({0, 0.5f, 3}, {}, {2, 1, 1})}); // stretched: its own unwrap
+    scene.sky = uniform_sky(0.7f);
+    LightmapSettings s = fast_settings();
+    s.texels_per_unit = 8.0f;
+    auto bake = bake_lightmaps(scene, s);
+    REQUIRE(bake);
+    const auto& in = bake->instances;
+    const auto ab = lightmap_uv_offset(in[1], in[2]);
+    REQUIRE(ab);
+    CHECK(std::abs(ab->x) + std::abs(ab->y) > 0.01f); // a different place in the atlas
+    CHECK_FALSE(lightmap_uv_offset(in[1], in[3]));
+    CHECK_FALSE(lightmap_uv_offset(in[0], in[1]));
+
+    // No two receivers claim the same texel.
+    const std::uint32_t W = bake->stats.width, H = bake->stats.height;
+    std::vector<int> owner(std::size_t{W} * H, -1);
+    int overlaps = 0;
+    for (int ii = 0; ii < 4; ++ii) {
+        const LightmapUnwrap& u = in[static_cast<std::size_t>(ii)];
+        std::vector<std::uint8_t> mine(owner.size(), 0);
+        for (std::size_t t = 0; t + 2 < u.indices.size(); t += 3) {
+            Vec2 p[3];
+            for (int j = 0; j < 3; ++j) p[j] = {u.uv[u.indices[t + j]].x * W, u.uv[u.indices[t + j]].y * H};
+            const float area = (p[1].x - p[0].x) * (p[2].y - p[0].y) - (p[2].x - p[0].x) * (p[1].y - p[0].y);
+            if (std::abs(area) < 1e-6f) continue;
+            for (std::uint32_t y = 0; y < H; ++y)
+                for (std::uint32_t x = 0; x < W; ++x) {
+                    const Vec2 c{x + 0.5f, y + 0.5f};
+                    const auto edge = [&](Vec2 a, Vec2 b) { return ((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / area; };
+                    if (edge(p[0], p[1]) >= 0 && edge(p[1], p[2]) >= 0 && edge(p[2], p[0]) >= 0) mine[std::size_t{y} * W + x] = 1;
+                }
+        }
+        for (std::size_t k = 0; k < owner.size(); ++k) {
+            if (!mine[k]) continue;
+            if (owner[k] >= 0 && owner[k] != ii) ++overlaps;
+            owner[k] = ii;
+        }
+    }
+    CHECK(overlaps == 0);
+
+    // The copies are lit alike at matching points: the shared layout is valid for both.
+    for (const Vec3 local : {Vec3{0, 0.5f, 0}, Vec3{0.5f, 0, 0}, Vec3{0, 0, 0.5f}, Vec3{-0.5f, 0, 0}}) {
+        const auto a = lightmap_at(scene, *bake, 1, scene.instances[1].model.transform_point(local));
+        const auto b = lightmap_at(scene, *bake, 2, scene.instances[2].model.transform_point(local));
+        REQUIRE(a);
+        REQUIRE(b);
+        MESSAGE("copy A " << a->x << ", copy B " << b->x);
+        CHECK(std::abs(a->x - b->x) < 0.06f);
+        CHECK(a->x > 0.2f);
+    }
+
+    // Sharing off: every receiver is unwrapped as before (no constant offset expected, and the
+    // layout matches the single xatlas pass).
+    s.share_uvs = false;
+    auto separate = unwrap_lightmaps(scene, s);
+    REQUIRE(separate);
+    CHECK(separate->instances[1].indices.size() == cube.indices.size());
+}
