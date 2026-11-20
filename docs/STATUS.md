@@ -1961,3 +1961,13 @@ Verified (Release, clang 21, lavapipe, 2 cores): `python3 tools/shaders/compile_
 Not covered: occlusion uses the metallic-roughness uv set (no `texCoord` 1); mismatched occlusion images are skipped rather than resampled.
 
 Next task: photoreal reference scene with CC0 scanned materials (ROADMAP Priority 0), then the Arm ASR evaluation.
+
+## 2026-11-20 — Photoreal reference scene from CC0 scanned materials (ADR-0140)
+
+Built: `samples/reference_scenes/tools/fetch_cc0_materials.py` (five ambientCG CC0 sets resized to 512 px; colour, OpenGL normal and ORM JPEGs, 1.5 MB); `generate_reference.py` now writes the texture `.meta`, five scanned `.vmat` files (`occlusion_strength` 1) and `scenes/photoreal.vscene`; goldens `golden/lavapipe_ultra_320x180/photoreal` (frames 15 and 30); `tests/cli/reference_scenes.cmake` runs the scene and requires sun_shadows, ssao, taa and bloom; licences in docs/THIRD_PARTY_AND_LICENSES.md.
+
+Verified (Release, clang 21, lavapipe, 2 cores): regenerating the scenes leaves exterior, interior and effects byte-identical. Screenshots at 960x540 and 640x360 (low and ultra) reviewed. `VICTUS_REQUIRE_GPU=1 ctest -R victus_reference_scenes -V` passes: photoreal golden FLIP 0, FP16 FLIP 0.0040, low-vs-ultra FLIP 0.068 (other scenes unchanged: exterior 0, interior 0.0000013, effects 0.0017). The same scene with `occlusion_strength` 0 scores mean FLIP 0.0515 against the golden, so losing the ORM occlusion fails the gate. Full `ctest --test-dir build -j2` 39/39 (perf budgets and reference scenes pass).
+
+Not covered: the goldens are lavapipe only; cube faces other than the camera-facing ones are not tiled to scale; no hardware-GPU or phone capture.
+
+Next task: Arm ASR (Accuracy Super Resolution) evaluation for the Low/Medium temporal upscaler (ROADMAP Priority 0), then the OpenGL ES 3 fallback ADR.

@@ -1,0 +1,442 @@
+{
+  "format": "victus.scene",
+  "version": 1,
+  "name": "Reference Photoreal",
+  "entities": [
+    {
+      "uuid": "bcbca0e7-f4ca-5d0c-9610-5d14e5331be8",
+      "name": "Reference Camera",
+      "components": {
+        "Camera": {
+          "projection": "perspective",
+          "fov_y": 50,
+          "ortho_height": 10,
+          "near": 0.1,
+          "far": 300,
+          "primary": true
+        },
+        "Transform": {
+          "position": [
+            0.6,
+            1.65,
+            7.2
+          ],
+          "rotation": [
+            -0.0696609,
+            0.0522085,
+            0.0036508,
+            0.9961969
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "6a76c290-f067-5ad8-b19b-bb05b34b18da",
+      "name": "Sun",
+      "components": {
+        "Light": {
+          "type": "directional",
+          "color": [
+            1,
+            0.88,
+            0.74,
+            1
+          ],
+          "intensity": 3.4,
+          "range": 10.0,
+          "shadows": true
+        },
+        "Transform": {
+          "position": [
+            0,
+            10,
+            0
+          ],
+          "rotation": [
+            -0.1439609,
+            -0.5506975,
+            -0.0971028,
+            0.8164426
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "3459513f-d6de-5dca-b179-5e4baa88b782",
+      "name": "Environment",
+      "components": {
+        "Environment": {
+          "sky_zenith": [
+            0.18,
+            0.36,
+            0.75,
+            1
+          ],
+          "sky_horizon": [
+            0.62,
+            0.72,
+            0.85,
+            1
+          ],
+          "ground": [
+            0.22,
+            0.2,
+            0.18,
+            1
+          ],
+          "ambient_intensity": 0.8,
+          "draw_sky": true,
+          "clear_color": [
+            0.02,
+            0.02,
+            0.025,
+            1
+          ],
+          "tonemapper": "aces",
+          "exposure": 1,
+          "exposure_compensation": 0,
+          "auto_exposure": false,
+          "saturation": 1,
+          "contrast": 1,
+          "vignette": 0.0,
+          "bloom_intensity": 0.03,
+          "bloom_threshold": 1,
+          "ao_intensity": 1,
+          "ao_radius": 0.5,
+          "shadow_distance": 30,
+          "fog": "exponential",
+          "physical_sky": true,
+          "fog_density": 0.003,
+          "fog_color": [
+            0.66,
+            0.74,
+            0.86,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "50633400-78b5-5865-9cef-d5d23d8b54da",
+      "name": "Paving",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "plane",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "e3b1c045-d1ff-5e8a-8bfd-f50677b24100"
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            48,
+            1,
+            48
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "f7b7dc32-62a2-52b5-80d5-2351b80af2c9",
+      "name": "Brick Wall",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "24b458d1-f7f9-583e-8530-19e2f8d41ef7"
+        },
+        "Transform": {
+          "position": [
+            0,
+            1.5,
+            -3.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            21,
+            3,
+            0.4
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "3fc8d9bd-3874-5fec-a0c9-3d7a270e7ce6",
+      "name": "Wood Deck",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "755a2516-acbf-50c6-9568-57b4b21e6c20"
+        },
+        "Transform": {
+          "position": [
+            2.0,
+            0.12,
+            -1.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            3.2,
+            0.24,
+            2.4
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "ba06bbc7-b031-5eee-b1e1-2f6f49ed4624",
+      "name": "Rock Large",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "18707112-10b0-5e6c-bbf7-b3c46e1e092f"
+        },
+        "Transform": {
+          "position": [
+            -1.6,
+            0.35,
+            -1.6
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1.6,
+            0.9,
+            1.3
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "cf444300-ead0-564f-b413-932ee9ca3f49",
+      "name": "Rock Small",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "18707112-10b0-5e6c-bbf7-b3c46e1e092f"
+        },
+        "Transform": {
+          "position": [
+            -0.6,
+            0.2,
+            -0.4
+          ],
+          "rotation": [
+            0.0,
+            0.3007058,
+            -0.0,
+            0.953717
+          ],
+          "scale": [
+            0.6,
+            0.45,
+            0.7
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "981961f9-c071-5e6e-828e-df99dd29c540",
+      "name": "Metal Sphere",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "sphere",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "ae3aaed4-5c04-5889-bbcd-9637fb2fbeb3"
+        },
+        "Transform": {
+          "position": [
+            1.4,
+            0.69,
+            -0.9
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.9,
+            0.9,
+            0.9
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "6b1547d0-deb4-52ad-8e8c-1f8a85006e6a",
+      "name": "Wood Crate",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "755a2516-acbf-50c6-9568-57b4b21e6c20"
+        },
+        "Transform": {
+          "position": [
+            2.9,
+            0.54,
+            -1.7
+          ],
+          "rotation": [
+            0.0,
+            0.1736482,
+            -0.0,
+            0.9848078
+          ],
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "0a1f94a7-0e25-55f0-b55c-dc92c5e92284",
+      "name": "Rotating Rock",
+      "components": {
+        "MeshRenderer": {
+          "primitive": "cube",
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0.0,
+          "roughness": 0.8,
+          "cast_shadows": true,
+          "visible": true,
+          "material": "18707112-10b0-5e6c-bbf7-b3c46e1e092f"
+        },
+        "Transform": {
+          "position": [
+            0.2,
+            0.45,
+            1.6
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "Rotator": {
+          "axis": [
+            0.2,
+            1,
+            0.1
+          ],
+          "degrees_per_second": 20
+        }
+      }
+    }
+  ]
+}

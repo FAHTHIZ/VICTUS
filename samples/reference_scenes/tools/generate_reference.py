@@ -15,6 +15,10 @@ gives the sequence a temporal signal (flicker, ghosting, TAA trails).
 - interior.vscene: closed room lit only by local lights: a shadowed point lamp, a shadowed spot,
   an emissive panel, a fog volume (light shafts), glossy floor, dark corners (AO, noise), a
   rotating metal cylinder.
+- photoreal.vscene (ADR-0140): a sunlit courtyard built only from CC0 scanned materials
+  (ambientCG; fetched by tools/fetch_cc0_materials.py): paving, a brick wall, a wooden deck, rock
+  boulders and a polished metal sphere, each with colour, normal and ORM maps (ambient occlusion
+  from the red channel, ADR-0139). The reference for perceptual equivalence across tiers.
 - effects.vscene: the surface and effect passes the render-path report covers (ADR-0105): a
   water pool with refraction, projected decals (multiply and alpha), a seeded CPU spark
   fountain with trails, a GPU particle emitter and a captured reflection probe around a chrome
@@ -92,6 +96,22 @@ def material(name, color, roughness, metallic=0.0, emissive=(0, 0, 0), strength=
             "emissive": list(emissive), "emissive_strength": strength, "emissive_texture": None, "alpha_cutoff": 0,
             "uv_scale": [1, 1], "uv_offset": [0, 0], "filter": "linear", "unlit": False, "double_sided": False,
             "vertex_alpha": "opacity", "coverage_response": 1, "blend": "opaque"}
+
+
+def scanned(name, uv_scale, maps=None, roughness=1.0, metallic=1.0, normal_scale=1.0):
+    """A .vmat over the CC0 maps in assets/textures: factors stay 1 so the maps drive the surface."""
+    maps = maps or name
+    m = material(name, (1, 1, 1), roughness, metallic)
+    m.update(base_color_texture=uid(f"texture/{maps}_color"), metallic_roughness_texture=uid(f"texture/{maps}_orm"),
+             normal_texture=uid(f"texture/{maps}_normal"), normal_scale=normal_scale, uv_scale=list(uv_scale),
+             occlusion_strength=1)
+    return m
+
+
+# Material -> (uv scale, texture set). Cube faces each map 0..1, so the tiling is chosen for the
+# face the camera sees (the wall front: about 3 m of the brick scan per tile).
+SCANNED = {"paving": ((24, 24), "paving"), "bricks": ((7, 1), "bricks"),
+           "wood": ((2, 1.5), "wood"), "metal": ((1, 1), "metal"), "rock": ((2, 1), "rock")}
 
 
 def write_json(path, data):
@@ -197,6 +217,24 @@ def effects(mats):
     return scene("Reference Effects", e)
 
 
+def photoreal(mats):
+    e = [camera((0.6, 1.65, 7.2), -8, 6, fov=50),
+         light("Sun", "directional", (0, 10, 0), (1, 0.88, 0.74), 3.4, rot=quat_euler(-20, -68)),
+         environment(physical_sky=True, ambient_intensity=0.8, ao_radius=0.5, shadow_distance=30, bloom_intensity=0.03,
+                     fog="exponential", fog_density=0.003, fog_color=[0.66, 0.74, 0.86, 1]),
+         solid("Paving", "plane", (0, 0, 0), (48, 1, 48), material=mats["paving"]),
+         solid("Brick Wall", "cube", (0, 1.5, -3.0), (21, 3, 0.4), material=mats["bricks"]),
+         solid("Wood Deck", "cube", (2.0, 0.12, -1.2), (3.2, 0.24, 2.4), material=mats["wood"]),
+         solid("Rock Large", "sphere", (-1.6, 0.35, -1.6), (1.6, 0.9, 1.3), material=mats["rock"]),
+         solid("Rock Small", "sphere", (-0.6, 0.2, -0.4), (0.6, 0.45, 0.7), rot=quat_euler(0, 35), material=mats["rock"]),
+         solid("Metal Sphere", "sphere", (1.4, 0.69, -0.9), (0.9, 0.9, 0.9), material=mats["metal"]),
+         solid("Wood Crate", "cube", (2.9, 0.54, -1.7), (0.6, 0.6, 0.6), rot=quat_euler(0, 20), material=mats["wood"])]
+    rot = solid("Rotating Rock", "cube", (0.2, 0.45, 1.6), (0.5, 0.5, 0.5), material=mats["rock"])
+    rot["components"]["Rotator"] = {"axis": [0.2, 1, 0.1], "degrees_per_second": 20}
+    e.append(rot)
+    return scene("Reference Photoreal", e)
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
@@ -206,6 +244,17 @@ def main():
     write_json(out / "assets/materials/panel.vmat", material("panel", (0.9, 0.95, 1), 0.5, emissive=(0.85, 0.92, 1), strength=4))
     for key, file in (("glow", "glow.vmat"), ("panel", "panel.vmat")):
         write_json(out / f"assets/materials/{file}.meta", {"victus_meta": 1, "uuid": mats[key], "importer": ""})
+    for name, (uv, maps) in SCANNED.items():
+        mats[name] = uid(f"material/{name}")
+        write_json(out / f"assets/materials/{name}.vmat", scanned(name, uv, maps))
+        write_json(out / f"assets/materials/{name}.vmat.meta", {"victus_meta": 1, "uuid": mats[name], "importer": ""})
+    for name in sorted({maps for _, maps in SCANNED.values()}):
+        for kind in ("color", "normal", "orm"):
+            write_json(out / f"assets/textures/{name}_{kind}.jpg.meta",
+                       {"victus_meta": 1, "uuid": uid(f"texture/{name}_{kind}"), "importer": "texture",
+                        "settings": {"srgb": kind == "color", "mipmaps": True, "max_size": 4096, "flip_y": False,
+                                     "filter": "linear"}})
+    write_json(out / "scenes/photoreal.vscene", photoreal(mats))
     write_json(out / "scenes/exterior.vscene", exterior(mats))
     write_json(out / "scenes/interior.vscene", interior(mats))
     write_json(out / "scenes/effects.vscene", effects(mats))
