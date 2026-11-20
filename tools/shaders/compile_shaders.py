@@ -39,6 +39,10 @@ def sources():
 # Shaders that contain this marker are also compiled with VICTUS_FP16 defined, as
 # "<name>#fp16" (explicit half-precision variant for GPUs with shaderFloat16, ADR-0137).
 FP16_MARKER = "VICTUS_FP16_VARIANT"
+# Shaders that contain this marker are also compiled with VICTUS_REACTIVE defined, as
+# "<name>#reactive": transparent passes that also write the TAA reactive mask as a second colour
+# target (ADR-0143).
+REACTIVE_MARKER = "VICTUS_REACTIVE_VARIANT"
 
 
 class Unit:
@@ -50,8 +54,11 @@ def units():
     out = []
     for p in sources():
         out.append(Unit(p, p.name, []))
-        if FP16_MARKER in p.read_text():
+        text = p.read_text()
+        if FP16_MARKER in text:
             out.append(Unit(p, p.name + "#fp16", ["VICTUS_FP16=1"]))
+        if REACTIVE_MARKER in text:
+            out.append(Unit(p, p.name + "#reactive", ["VICTUS_REACTIVE=1"]))
     return out
 
 

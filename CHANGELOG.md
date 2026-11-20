@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Rendering: a TAA reactive mask. Particles, ribbons, water and rain tell the TAA and temporal upscaling resolves to trust the current frame where they are drawn, so they smear and trail less; `RenderSettings::reactive_mask` / `reactive_max`, `victus run --reactive on|off`, `reactive_mask` in the render path report. See docs/STATUS.md (2026-11-20, TAA reactive mask, ADR-0143).
 - Navigation: large navmeshes (2M+ voxel columns) build on a worker thread instead of stalling the frame; `NavigationSystem::ensure_built_async`, `building()`. Script time budgets no longer count navmesh builds or first-use model loads; `VICTUS_SCRIPT_SLOW_CALLS=<ms>` logs slow native script calls. See docs/STATUS.md (2026-11-20, background navmesh builds).
 - Engine core: results and errors, logging, JSON with limits, sandboxed filesystem helpers, job system, profiler with Chrome/Perfetto traces, math, `.vpak` archives.
 - Crash reports, session logs and unclean-exit detection for `victus` and `victus_player`; `victus diagnose` diagnostics bundles with path redaction and opt-outs; offline symbolizer (`tools/crash/symbolize.py`). ADR-0072, docs/DIAGNOSTICS.md.

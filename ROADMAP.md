@@ -31,7 +31,7 @@ The owner's target: images that read as photoreal on hardware as weak as entry-l
 - [x] **Photoreal reference scene** with CC0 scanned materials, the reference for perceptual equivalence across tiers. Done (ADR-0140): `samples/reference_scenes/scenes/photoreal.vscene`, five ambientCG CC0 sets (colour, normal, ORM), gated by the reference-scene test; a hardware-GPU golden is still to be recorded.
 - [x] **Mobile temporal upscaling: ASR evaluation.** Done (ADR-0141): Arm ASR (MIT) evaluated; vendoring it is blocked by SDL_GPU (no native handles, read-only graphics storage textures). Its texture mip bias is adopted, cutting the 50 % upscale FLIP from 0.0705 to 0.0515.
 - [x] **Upscaler tuning.** Done (ADR-0142): wider clip box (gamma 2), wider reconstruction kernel and higher minimum blend for the upscale path; photoreal half-resolution FLIP 0.0515 to 0.0423 (pan 0.0520 to 0.0438), gated by the reference-scene test against bilinear.
-- [ ] **ASR/FSR2 ideas in the TAA upscaler:** reactive mask for particles and water, thin-feature locks, depth-clip disocclusion; TAAU on Low for mobile (measured).
+- [~] **ASR/FSR2 ideas in the TAA upscaler:** reactive mask for particles and water, thin-feature locks, depth-clip disocclusion; TAAU on Low for mobile (measured). Reactive mask done (ADR-0143): particles, ribbons, water and rain write an R8 mask the TAA and upscale resolves trust, effects scene half-resolution FLIP 0.0202 to 0.0192. Remaining: a per-material responsive flag for blended meshes, thin-feature locks, depth-clip disocclusion, TAAU on Low.
 - [ ] **OpenGL ES 3 fallback** (ADR first) for the ~7 % of Android handhelds without Vulkan.
 
 ### 1. Creator experience (no-code game making)

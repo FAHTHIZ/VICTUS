@@ -59,6 +59,11 @@ vec4 volumetric_fog(vec2 uv, float view_depth, vec4 grid) {
 }
 
 layout(location = 0) out vec4 out_color;
+// VICTUS_REACTIVE_VARIANT: the "#reactive" build also writes the TAA reactive mask (ADR-0143), an
+// R8 second target blended like the colour: how much the resolve should trust this frame here.
+#ifdef VICTUS_REACTIVE
+layout(location = 1) out vec4 out_reactive;
+#endif
 
 // Distance fog (ADR-0116), matching pbr.frag: range along the pixel's ray from the view depth.
 float distance_fog(float view_depth) {
@@ -89,4 +94,10 @@ void main() {
     vec4 vf = volumetric_fog(gl_FragCoord.xy * u.screen.xy, v_distance, u.volumetric);
     c.rgb = u.screen.w > 0.5 ? c.rgb * vf.a : c.rgb * vf.a + vf.rgb;
     out_color = c;
+#ifdef VICTUS_REACTIVE
+    // Alpha: coverage accumulated with the same "over" blend. Additive: light added on top, blended
+    // additively, so faint glows stay mostly history-resolved and bright ones trust this frame.
+    if (u.screen.w > 0.5) out_reactive = vec4(vec3(c.a * min(dot(c.rgb, vec3(0.2126, 0.7152, 0.0722)) * 4.0, 1.0)), 1.0);
+    else out_reactive = vec4(1.0, 1.0, 1.0, c.a);
+#endif
 }

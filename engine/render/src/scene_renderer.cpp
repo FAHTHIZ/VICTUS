@@ -527,6 +527,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.sharpen = std::isfinite(s.sharpen) ? std::clamp(s.sharpen, 0.0f, 1.0f) : 0.0f;
     s.upscale_mip_bias = std::isfinite(s.upscale_mip_bias) ? std::clamp(s.upscale_mip_bias, -2.0f, 0.0f) : 0.0f;
     s.taa_blend = std::isfinite(s.taa_blend) ? std::clamp(s.taa_blend, 0.04f, 1.0f) : 0.1f;
+    s.reactive_max = std::isfinite(s.reactive_max) ? std::clamp(s.reactive_max, 0.0f, 1.0f) : 0.5f;
     s.max_point_lights = std::min(s.max_point_lights, SceneRenderer::kMaxLights);
     s.lod_error_pixels = std::isfinite(s.lod_error_pixels) ? std::clamp(s.lod_error_pixels, 0.25f, 16.0f) : 1.0f;
     s.lod_hysteresis = std::isfinite(s.lod_hysteresis) ? std::clamp(s.lod_hysteresis, 0.0f, 0.9f) : 0.0f;
@@ -969,6 +970,8 @@ SceneRenderer::~SceneRenderer() {
         if (t) d.destroy(t);
     for (auto t : history_)
         if (t) d.destroy(t);
+    for (auto t : reactive_)
+        if (t) d.destroy(t);
     if (line_buffer_) d.destroy(line_buffer_);
     if (instance_buffer_) d.destroy(instance_buffer_);
     if (particle_buffer_) d.destroy(particle_buffer_);
@@ -1207,12 +1210,12 @@ Result<OverdrawStats> SceneRenderer::read_overdraw() {
     return s;
 }
 
-Result<rhi::PipelineHandle> SceneRenderer::precipitation_pipeline(bool splash) {
-    const std::string key = splash ? "precipitation_splash" : "precipitation";
+Result<rhi::PipelineHandle> SceneRenderer::precipitation_pipeline(bool splash, bool reactive) {
+    const std::string key = std::string(splash ? "precipitation_splash" : "precipitation") + (reactive ? "#reactive" : "");
     if (auto it = post_.find(key); it != post_.end()) return it->second;
     auto vs = ctx_.shader(splash ? "splash.vert" : "precipitation.vert");
     if (!vs) return std::move(vs).error();
-    auto fs = ctx_.shader("precipitation.frag");
+    auto fs = ctx_.shader(reactive ? "precipitation.frag#reactive" : "precipitation.frag");
     if (!fs) return std::move(fs).error();
     rhi::PipelineDesc d;
     d.name = key;
@@ -1220,6 +1223,36 @@ Result<rhi::PipelineHandle> SceneRenderer::precipitation_pipeline(bool splash) {
     d.fragment = fs.value();
     d.cull = rhi::CullMode::None;
     d.color_targets = {{hdr_format_, rhi::BlendMode::Alpha}};
+    if (reactive) d.color_targets.push_back({rhi::Format::R8_UNORM, rhi::BlendMode::Alpha});
+    auto p = ctx_.device().create_pipeline(d);
+    if (!p) return p;
+    post_.emplace(key, p.value());
+    return p;
+}
+
+Result<rhi::PipelineHandle> SceneRenderer::reactive_pipeline(int kind, bool additive) {
+    static constexpr const char* names[3][2] = {{"particles_alpha#reactive", "particles_additive#reactive"},
+                                                {"ribbons_alpha#reactive", "ribbons_additive#reactive"},
+                                                {"water#reactive", "water#reactive"}};
+    const std::string key = names[kind][additive ? 1 : 0];
+    if (auto it = post_.find(key); it != post_.end()) return it->second;
+    auto vs = ctx_.shader(kind == 0 ? "particle.vert" : kind == 1 ? "ribbon.vert" : "water.vert");
+    if (!vs) return std::move(vs).error();
+    auto fs = ctx_.shader(kind == 2 ? "water.frag#reactive" : "particle.frag#reactive");
+    if (!fs) return std::move(fs).error();
+    rhi::PipelineDesc d;
+    d.name = key;
+    d.vertex = vs.value();
+    d.fragment = fs.value();
+    d.cull = rhi::CullMode::None;
+    if (kind < 2) {
+        // Same layout as the plain particle and ribbon pipelines (create()).
+        d.vertex_buffers = {{0, sizeof(ParticleInstance), kind == 0}};
+        d.attributes = {{0, 0, rhi::VertexFormat::Float4, 0}, {1, 0, rhi::VertexFormat::Float4, 16}, {2, 0, rhi::VertexFormat::Float4, 32}};
+    }
+    // The mask blends like the colour: "over" accumulates coverage, additive adds brightness.
+    const rhi::BlendMode blend = additive ? rhi::BlendMode::Additive : rhi::BlendMode::Alpha;
+    d.color_targets = {{hdr_format_, blend}, {rhi::Format::R8_UNORM, blend}};
     auto p = ctx_.device().create_pipeline(d);
     if (!p) return p;
     post_.emplace(key, p.value());
@@ -1561,7 +1594,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const Frustum frustum = Frustum::from_matrix(view_proj_unjittered);
     // TAA: every 3D pass renders with a sub-pixel jittered projection.
     const bool taa = S.taa && !capture_mode_;
-    if (!taa) history_valid_ = false;
+    if (!taa) {
+        history_valid_ = false;
+        reactive_valid_[0] = reactive_valid_[1] = false;
+    }
     // Temporal upscaling (ADR-0055): below output resolution the TAA resolve reconstructs and
     // accumulates at the output size, with a longer jitter cycle so every output pixel is visited.
     const bool upscale = taa && S.temporal_upscale && (rw < width || rh < height);
@@ -1581,6 +1617,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     stats_.taa = taa;
     stats_.taa_history = taa && history_valid_;
     stats_.temporal_upscale = upscale;
+    stats_.reactive_mask = false;
     stats_.jitter = jitter;
     facts_ = {};
     facts_.render_width = rw;
@@ -3396,6 +3433,69 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 }
             });
     }
+    // Reactive mask (ADR-0143): effects with no motion vectors (particles, water, precipitation)
+    // also write how much they cover each pixel, and the TAA resolve trusts the current frame there.
+    bool reactive = taa && S.reactive_mask && !reactive_failed_ && S.reactive_max > 0.0f &&
+                    (!water_draws.empty() || !particle_draws.empty() || precip_count > 0);
+    rhi::PipelineHandle reactive_pl[3][2]{}; // [particles, ribbons, water][alpha, additive]
+    if (reactive) {
+        const auto use = [&](Result<rhi::PipelineHandle> pl, rhi::PipelineHandle& out) {
+            if (!reactive) return;
+            if (!pl) {
+                VICTUS_LOG_WARN("render", "TAA reactive mask disabled: {}", pl.error().message);
+                reactive_failed_ = true;
+                reactive = false;
+            } else out = pl.value();
+        };
+        for (const ParticleBatch& b : particle_draws) {
+            const int kind = b.ribbon ? 1 : 0, add = b.material.blend == ParticleBlend::Additive ? 1 : 0;
+            if (!reactive_pl[kind][add]) use(reactive_pipeline(kind, add != 0), reactive_pl[kind][add]);
+        }
+        if (!water_draws.empty()) use(reactive_pipeline(2, false), reactive_pl[2][0]);
+        rhi::PipelineHandle rp{}, rs{};
+        if (precip_count > 0) use(precipitation_pipeline(false, true), rp);
+        if (precip_count > 0 && splash_count > 0) use(precipitation_pipeline(true, true), rs);
+        if (reactive && precip_count > 0) {
+            precip_pl = rp;
+            if (splash_count > 0) splash_pl = rs;
+        }
+    }
+    RGTexture reactive_tex, reactive_prev;
+    bool reactive_written = false;
+    {
+        const std::uint32_t cur = history_index_ ^ 1u, prev = history_index_;
+        reactive_valid_[cur] = false;
+        if (reactive && !(reactive_[cur] && reactive_w_[cur] == rw && reactive_h_[cur] == rh)) {
+            if (reactive_[cur]) dev.destroy(reactive_[cur]);
+            rhi::TextureDesc d = color_desc(rhi::Format::R8_UNORM, rw, rh);
+            d.name = cur == 0 ? "reactive_mask_a" : "reactive_mask_b";
+            auto t = dev.create_texture(d);
+            reactive_[cur] = t ? t.value() : rhi::TextureHandle{};
+            reactive_w_[cur] = t ? rw : 0;
+            reactive_h_[cur] = t ? rh : 0;
+            if (!t) {
+                VICTUS_LOG_WARN("render", "TAA reactive mask disabled: {}", t.error().message);
+                reactive_failed_ = true;
+                reactive = false;
+            }
+        }
+        if (reactive) {
+            reactive_tex = graph.import_texture("reactive_mask", reactive_[cur], color_desc(rhi::Format::R8_UNORM, rw, rh));
+            reactive_valid_[cur] = true;
+        }
+        // Last frame's mask, sampled at the reprojected uv by the resolve (any resolution).
+        if (taa && history_valid_ && reactive_valid_[prev] && reactive_[prev])
+            reactive_prev = graph.import_texture("reactive_mask_prev", reactive_[prev],
+                                                 color_desc(rhi::Format::R8_UNORM, reactive_w_[prev], reactive_h_[prev]));
+    }
+    // Called after write_color(hdr) so the mask is colour target 1; the first writer clears it.
+    const auto write_reactive = [&](PassBuilder& b) {
+        if (!reactive) return;
+        b.write_color(reactive_tex, reactive_written ? rhi::LoadOp::Load : rhi::LoadOp::Clear, {0, 0, 0, 0});
+        reactive_written = true;
+    };
+    stats_.reactive_mask = reactive;
+    facts_.reactive_mask = reactive;
     if (!water_draws.empty()) {
         // Refraction source: the opaque scene before any water is drawn.
         const RGTexture water_scene = graph.create_texture("water_scene", color_desc(hdr_format_, rw, rh));
@@ -3440,10 +3540,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 b.read(water_scene);
                 b.read(depth);
                 b.write_color(hdr, rhi::LoadOp::Load);
+                write_reactive(b);
             },
             [&, base, frame_of, wenv, water_scene](PassContext& ctx) {
                 rhi::RenderPass& pass = *ctx.pass;
-                pass.bind_pipeline(water_pipeline_);
+                pass.bind_pipeline(reactive ? reactive_pl[2][0] : water_pipeline_);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(water_scene), ctx_.linear_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(depth), ctx_.nearest_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 2, wenv ? wenv->cube() : ctx_.black_cube(), ctx_.linear_clamp());
@@ -3648,6 +3749,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             [&](PassBuilder& b) {
                 b.read(depth);
                 b.write_color(hdr, rhi::LoadOp::Load);
+                write_reactive(b);
             },
             [&, pf, proj, rw, rh](PassContext& ctx) {
                 rhi::RenderPass& pass = *ctx.pass;
@@ -3656,7 +3758,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 rhi::PipelineHandle bound{};
                 for (const ParticleBatch& b : particle_draws) {
                     const bool add = b.material.blend == ParticleBlend::Additive;
-                    const rhi::PipelineHandle want = b.ribbon ? (add ? ribbon_additive_ : ribbon_alpha_) : (add ? particle_additive_ : particle_alpha_);
+                    const rhi::PipelineHandle want =
+                        reactive ? reactive_pl[b.ribbon ? 1 : 0][add ? 1 : 0]
+                                 : b.ribbon ? (add ? ribbon_additive_ : ribbon_alpha_) : (add ? particle_additive_ : particle_alpha_);
                     if (!(bound == want)) {
                         pass.bind_pipeline(want);
                         bound = want;
@@ -3692,6 +3796,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 b.read(depth);
                 if (rain_map.valid()) b.read(rain_map);
                 b.write_color(hdr, rhi::LoadOp::Load);
+                write_reactive(b);
             },
             [&, pl = precip_pl, precip_count, splash_count, splash_pl](PassContext& ctx) {
                 ctx.pass->bind_pipeline(pl);
@@ -3739,7 +3844,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         tu.jitter = {jitter.x, -jitter.y, static_cast<float>(rw), static_cast<float>(rh)};
         tu.output = {1.0f / static_cast<float>(hw), 1.0f / static_cast<float>(hh), static_cast<float>(hw),
                      static_cast<float>(hh)};
-        tu.quant = {hdr_quant, 0, 0, 0};
+        // y: reactive mask bound, z: current-frame weight at a fully reactive pixel (ADR-0143).
+        // w: last frame's mask bound (reprojected).
+        tu.quant = {hdr_quant, reactive ? 1.0f : 0.0f, S.reactive_max, reactive_prev.valid() ? 1.0f : 0.0f};
         scene_w = hw;
         scene_h = hh;
         const RGTexture resolved = graph.import_texture("taa_resolved", history_[cur], color_desc(hdr_format_, hw, hh));
@@ -3787,9 +3894,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 b.read(depth);
                 if (previous.valid()) b.read(previous);
                 if (motion.valid()) b.read(motion);
+                if (reactive_tex.valid()) b.read(reactive_tex);
+                if (reactive_prev.valid()) b.read(reactive_prev);
                 b.write_color(resolved, rhi::LoadOp::DontCare);
             },
-            [this, hdr, depth, previous, motion, tu, upscale, pl = taa_pl.value()](PassContext& ctx) {
+            [this, hdr, depth, previous, motion, reactive_tex, reactive_prev, tu, upscale, pl = taa_pl.value()](PassContext& ctx) {
                 ctx.pass->bind_pipeline(pl);
                 if (upscale) ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, tu);
                 else
@@ -3801,6 +3910,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 2, ctx.texture(depth), ctx_.nearest_clamp());
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 3, motion.valid() ? ctx.texture(motion) : ctx.texture(hdr),
                                        ctx_.nearest_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 4, reactive_tex.valid() ? ctx.texture(reactive_tex) : ctx_.black(),
+                                       ctx_.linear_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 5, reactive_prev.valid() ? ctx.texture(reactive_prev) : ctx_.black(),
+                                       ctx_.linear_clamp());
                 ctx.pass->draw(3);
             });
         scene_color = resolved;

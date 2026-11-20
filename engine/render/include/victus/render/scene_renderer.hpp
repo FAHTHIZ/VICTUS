@@ -460,6 +460,12 @@ struct RenderSettings {
     // joints changed since the previous frame are drawn into a motion buffer the TAA resolve
     // follows, so moving and animated objects keep their history instead of ghosting. TAA only.
     bool motion_vectors{true};
+    // Reactive mask (ADR-0143, FSR2/Arm ASR "reactive"): particles, water and precipitation also
+    // write an R8 mask of how much of each pixel they cover; the TAA and temporal upscaling resolves
+    // trust the current frame there (up to `reactive_max` of its weight), so effects without motion
+    // vectors stop smearing and trailing. TAA only; costs one R8 target while such effects are drawn.
+    bool reactive_mask{true};
+    float reactive_max{0.5f}; // current-frame weight at a fully reactive pixel (0..1, ADR-0143)
     bool auto_exposure{true};             // allowed; scenes enable it through Environment
     bool instancing{true};                // merge identical mesh+material draws into instanced batches
     // Mesh levels of detail: each draw uses the coarsest level whose geometric error, projected
@@ -595,6 +601,7 @@ struct SceneStats {
     std::uint32_t irradiance_probes{0}; // baked probes of the irradiance volume used this frame (0 = none)
     math::Vec2 jitter{};               // sub-pixel jitter in render pixels
     float texture_mip_bias{0.0f};      // material texture LOD bias this frame (ADR-0141; < 0 when upscaling)
+    bool reactive_mask{false};         // ADR-0143: transparent effects wrote the TAA reactive mask this frame
     // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
     std::uint32_t main_batches{0}, shadow_batches{0}, prepass_batches{0};
     std::uint32_t transparent_draws{0};
@@ -849,7 +856,10 @@ private:
         math::Vec3 pos;
         std::uint32_t color;
     };
-    Result<rhi::PipelineHandle> precipitation_pipeline(bool splash = false);
+    Result<rhi::PipelineHandle> precipitation_pipeline(bool splash = false, bool reactive = false);
+    // ADR-0143: particle/ribbon/water pipelines with the reactive mask as a second colour target,
+    // created on first use. kind: 0 particles, 1 ribbons, 2 water.
+    Result<rhi::PipelineHandle> reactive_pipeline(int kind, bool additive);
     [[nodiscard]] Result<rhi::PipelineHandle> post_pipeline(const char* fragment, rhi::Format format,
                                                             rhi::BlendMode blend = rhi::BlendMode::Opaque);
     void compute_cascades(float aspect, std::uint32_t resolution);
@@ -900,6 +910,11 @@ private:
     std::uint32_t exposure_index_{0};
     rhi::TextureHandle history_[2];
     std::uint32_t history_w_[2]{}, history_h_[2]{};
+    // ADR-0143: reactive masks at render resolution, ping-ponged with the TAA history; last frame's
+    // mask is reprojected so pixels a particle just left also trust the current frame (no trails).
+    rhi::TextureHandle reactive_[2];
+    std::uint32_t reactive_w_[2]{}, reactive_h_[2]{};
+    bool reactive_valid_[2]{};
     std::uint32_t history_index_{0};
     bool history_valid_{false};
     math::Mat4 prev_view_proj_{math::Mat4::identity()};
@@ -981,6 +996,7 @@ private:
     math::Vec3 fog_prev_position_{}, fog_prev_forward_{0, 0, -1};
     std::uint64_t fog_frame_{0};
     bool precipitation_failed_{false}; // precipitation pipeline failed to build (logged once)
+    bool reactive_failed_{false};      // a reactive-mask pipeline failed to build (logged once, ADR-0143)
     bool splash_failed_{false};        // rain splash pipeline failed to build (logged once)
     bool clouds_failed_{false};      // cloud pipelines failed to build: clouds stay off (logged once)
     std::uint64_t cloud_frame_{0};   // jitter sequence of the cloud march
