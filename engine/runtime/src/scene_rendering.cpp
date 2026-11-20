@@ -1331,7 +1331,9 @@ void apply_irradiance_volumes(Scene& scene, GpuAssetCache& assets, render::Scene
     auto& w = scene.world();
     auto& bakes = assets.irradiance_bakes();
     for (auto& [key, entry] : bakes) entry.seen = false;
-    std::uint32_t budget = assets.irradiance_probes_per_frame();
+    // Tiers without irradiance volumes (Low) never draw hand-placed ones, so they are not captured
+    // either; the lightmap's baked probes below still light dynamic objects (ADR-0138).
+    std::uint32_t budget = renderer.settings().irradiance_volumes ? assets.irradiance_probes_per_frame() : 0u;
     const render::IrradianceVolume* best = nullptr;
     float best_score = 0.0f, best_intensity = 1.0f, best_offset = 0.0f;
     bool best_inside = false;
@@ -1445,7 +1447,7 @@ void apply_irradiance_volumes(Scene& scene, GpuAssetCache& assets, render::Scene
     // the camera is more specific and wins; otherwise the baked probes light dynamic objects.
     if (baked && (!best || !best_inside)) {
         const float offset = std::min(0.25f, 0.2f * std::min({baked->grid().spacing().x, baked->grid().spacing().y, baked->grid().spacing().z}));
-        renderer.set_irradiance_volume(baked, 1.0f, offset);
+        renderer.set_irradiance_volume(baked, 1.0f, offset, true);
         stats.lightmap_probes = true;
         return;
     }

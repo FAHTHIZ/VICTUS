@@ -63,7 +63,7 @@ struct RenderPathFacts {
     std::uint32_t cloud_width{0}, cloud_height{0}, cloud_steps{0};
     bool precipitation_requested{false};
     std::uint32_t precipitation_drops{0};
-    bool irradiance_available{false}, irradiance{false};
+    bool irradiance_available{false}, irradiance{false}, irradiance_baked{false};
     std::uint32_t irradiance_probes{0};
     std::uint32_t local_lights_visible{0}, local_lights_kept{0};
     std::uint32_t local_shadow_candidates{0}, local_shadow_lights{0}, local_shadow_tiles{0};
