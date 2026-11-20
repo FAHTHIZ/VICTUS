@@ -1350,6 +1350,7 @@ TEST_CASE("studio: the Script Debugger stops play mode at a breakpoint, inspects
 }
 
 TEST_CASE("studio workspace: open panels and the layout preset are remembered between sessions") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;
     REQUIRE(h.init());
     REQUIRE(h.ed->create_project(h.dir / "Remember", "Remember", "2d").ok());
@@ -1390,6 +1391,7 @@ TEST_CASE("studio workspace: open panels and the layout preset are remembered be
 }
 
 TEST_CASE("studio workspace: named layouts keep panels and docking and survive restarts") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;
     REQUIRE(h.init());
     REQUIRE(h.ed->create_project(h.dir / "Named", "Named", "2d").ok());
