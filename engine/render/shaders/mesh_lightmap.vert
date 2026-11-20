@@ -1,7 +1,9 @@
 #version 450
 // SPDX-License-Identifier: Apache-2.0
 // Forward/PBR vertex stage for lightmapped static meshes (ADR-0122): mesh.vert plus the lightmap
-// atlas uv from vertex buffer slot 3. Per-instance model and normal matrices come from slot 1.
+// atlas uv from vertex buffer slot 3. Per-instance model and normal matrices come from slot 1;
+// in_normal1.w / in_normal2.w shift the atlas uv per instance, so congruent static copies baked
+// into different atlas places share one mesh and draw instanced (ADR-0135).
 // gl_Position is invariant so the depth pre-pass (depth.vert) and this pass produce bit-identical
 // depth (EQUAL/LEQUAL without z-fighting).
 layout(location = 0) in vec3 in_pos;
@@ -39,5 +41,5 @@ void main() {
     vec3 c = in_color.rgb;
     v_color = vec4(mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)), in_color.a);
     gl_Position = frame.view_proj * world;
-    v_lightmap = vec3(in_lightmap_uv, 1.0);
+    v_lightmap = vec3(in_lightmap_uv + vec2(in_normal1.w, in_normal2.w), 1.0);
 }

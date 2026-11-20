@@ -298,3 +298,105 @@ TEST_CASE("gpu: the baked shadowmask shades static sun shadows beyond the shadow
     ctx.destroy(*lm_floor);
     ctx.destroy(*gpu_roof);
 }
+
+TEST_CASE("gpu: congruent lightmapped copies share one mesh and batch (ADR-0135)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+
+    const MeshData floor = make_plane({8, 8}, 4);
+    const MeshData cube = make_cube();
+    const math::Quat quarter = math::Quat::axis_angle({0, 1, 0}, math::radians(90.0f));
+    const math::Mat4 models[3] = {math::Mat4::translation({-2, 0.5f, 0}), math::Mat4::trs({0, 0.5f, 0}, quarter, {1, 1, 1}),
+                                  math::Mat4::translation({2, 0.5f, 0})};
+    LightmapScene scene;
+    scene.instances.push_back({&floor});
+    for (const auto& m : models) scene.instances.push_back({&cube, m});
+    scene.sky.sky = scene.sky.horizon = scene.sky.ground = math::Vec3{0.2f};
+    LightmapLight key; // fully baked low sun from +x: lit, shadowed and dark faces differ clearly
+    key.direction = math::normalize(math::Vec3{-1.0f, -0.6f, -0.3f});
+    key.radiance = {3, 3, 3};
+    scene.lights.push_back(key);
+    LightmapSettings ls;
+    ls.texels_per_unit = 8.0f;
+    ls.samples = 64;
+    ls.include_direct = true;
+    ls.shadowmask = false;
+    ls.probes = false;
+    auto bake = bake_lightmaps(scene, ls);
+    REQUIRE(bake.ok());
+    std::optional<math::Vec2> offsets[3] = {math::Vec2{0, 0}, lightmap_uv_offset(bake->instances[1], bake->instances[2]),
+                                            lightmap_uv_offset(bake->instances[1], bake->instances[3])};
+    REQUIRE(offsets[1]);
+    REQUIRE(offsets[2]);
+
+    auto lm_floor = ctx.create_lightmapped_mesh(floor, bake->instances[0], "share_floor");
+    REQUIRE(lm_floor.ok());
+    std::vector<GpuMesh> own;
+    for (int i = 0; i < 3; ++i) {
+        auto g = ctx.create_lightmapped_mesh(cube, bake->instances[static_cast<std::size_t>(i) + 1], "share_cube");
+        REQUIRE(g.ok());
+        own.push_back(*g);
+    }
+    auto atlas = ctx.create_lightmap_texture(bake->atlas);
+    REQUIRE(atlas.ok());
+
+    constexpr std::uint32_t W = 128, H = 96;
+    DirectionalLight sun;
+    sun.intensity = 0.0f;
+    sun.shadows = false;
+    Material white;
+    white.base_color = {1, 1, 1, 1};
+    white.roughness = 1.0f;
+    std::uint32_t batches = 0;
+    auto shoot = [&](bool shared, bool offsets_on = true) {
+        Environment env = grey_sky();
+        env.lightmap = *atlas;
+        (*sr)->begin(Camera3D::look_at({1.5f, 3.0f, 5.0f}, {0, 0.5f, 0}), sun, env);
+        (*sr)->submit(*lm_floor, white, math::Mat4::identity());
+        for (int i = 0; i < 3; ++i) {
+            if (shared) (*sr)->submit(own[0], white, models[i], 0, offsets_on ? *offsets[i] : math::Vec2{});
+            else (*sr)->submit(own[static_cast<std::size_t>(i)], white, models[i]);
+        }
+        auto target = test::make_target(W, H);
+        auto cmd = dev.begin_commands();
+        REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        batches = (*sr)->stats().main_batches;
+        auto px = dev.read_texture(target).value();
+        dev.destroy(target);
+        return px;
+    };
+    const auto separate = shoot(false);
+    const std::uint32_t separate_batches = batches;
+    const auto shared = shoot(true);
+    const std::uint32_t shared_batches = batches;
+    test::save_output("lightmap_shared_separate", W, H, separate);
+    test::save_output("lightmap_shared", W, H, shared);
+    MESSAGE("main batches: separate " << separate_batches << ", shared " << shared_batches);
+    CHECK(shared_batches + 2 == separate_batches); // three cubes in one instanced draw
+    int worst = 0;
+    std::size_t off = 0;
+    for (std::size_t i = 0; i < separate.size(); ++i) {
+        const int d = std::abs(int(separate[i]) - int(shared[i]));
+        worst = std::max(worst, d);
+        if (d > 1) ++off;
+    }
+    MESSAGE("worst channel difference " << worst << ", channels off by more than 1: " << off);
+    CHECK(worst <= 2);
+    // The offsets matter: without them the second and third cubes read the first one's texels
+    // (lit as if they stood at x = -2), which visibly changes the picture.
+    const auto unshifted = shoot(true, false);
+    std::size_t changed = 0;
+    for (std::size_t i = 0; i < separate.size(); ++i)
+        if (std::abs(int(separate[i]) - int(unshifted[i])) > 8) ++changed;
+    MESSAGE("channels changed without offsets: " << changed);
+    CHECK(changed > 100);
+
+    dev.destroy(*atlas);
+    ctx.destroy(*lm_floor);
+    for (auto& g : own) ctx.destroy(g);
+}

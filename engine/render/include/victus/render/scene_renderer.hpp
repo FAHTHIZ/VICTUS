@@ -676,7 +676,10 @@ public:
     // `motion_id` (non-zero, unique per object and stable across frames, e.g. an entity id) lets
     // the renderer compare the draw with the previous frame and write object motion vectors for
     // TAA; 0 = no tracking (the object is treated as static, camera motion only).
-    void submit(const GpuMesh& mesh, const Material& material, const math::Mat4& model, std::uint64_t motion_id = 0);
+    // `lightmap_uv_offset` shifts a lightmapped mesh's atlas uvs for this instance, so congruent
+    // static copies baked into different atlas places share one mesh and batch (ADR-0135).
+    void submit(const GpuMesh& mesh, const Material& material, const math::Mat4& model, std::uint64_t motion_id = 0,
+                math::Vec2 lightmap_uv_offset = {});
     // Many static copies of one mesh+material (foliage, scattered props): equivalent to calling
     // submit() once per model with motion_id 0, but the material is hashed once and the draw list
     // grows once. The copies are still culled, LOD-selected and shadowed per instance and merge
@@ -781,6 +784,7 @@ private:
         int probe{-1};            // reflection probe index (-1: scene environment)
         std::uint64_t motion_id{0};
         std::uint32_t joint_count{0}; // skinned only
+        math::Vec2 lightmap_offset{};  // lightmapped meshes: per-instance atlas uv shift (ADR-0135)
     };
     // Previous-frame state of a tracked object (motion vectors).
     struct MotionState {

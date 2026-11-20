@@ -44,13 +44,16 @@ struct InstanceData {
 };
 static_assert(sizeof(InstanceData) == 112);
 
-// normal[0].w carries the first joint matrix of a skinned instance (exact as float up to 2^24).
-InstanceData make_instance(const Mat4& model, std::uint32_t palette = 0) {
+// normal[0].w carries the first joint matrix of a skinned instance (exact as float up to 2^24);
+// normal[1].w and normal[2].w the lightmap uv offset of a lightmapped one (ADR-0135).
+InstanceData make_instance(const Mat4& model, std::uint32_t palette = 0, Vec2 lightmap_offset = {}) {
     InstanceData d;
     d.model = model;
     const Mat4 n = transpose(inverse(model));
     for (int i = 0; i < 3; ++i) d.normal[i] = Vec4(n[i].x, n[i].y, n[i].z, 0.0f);
     d.normal[0].w = static_cast<float>(palette);
+    d.normal[1].w = lightmap_offset.x;
+    d.normal[2].w = lightmap_offset.y;
     return d;
 }
 
@@ -1341,11 +1344,13 @@ void SceneRenderer::add_water(const WaterSurface& water) {
     waters_.push_back(w);
 }
 
-void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const Mat4& model, std::uint64_t motion_id) {
+void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const Mat4& model, std::uint64_t motion_id,
+                           Vec2 lightmap_uv_offset) {
     if (!mesh.valid()) return;
     ++stats_.submitted;
     Draw d{&mesh, material, model, 0.0f, mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh))};
     d.motion_id = motion_id;
+    d.lightmap_offset = lightmap_uv_offset;
     draws_.push_back(d);
 }
 
@@ -1922,7 +1927,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             const std::uint8_t lod = match_material ? d->lod
                                      : cascade >= 0 ? d->cascade_lod[static_cast<std::size_t>(cascade)]
                                                     : d->shadow_lod;
-            instances.push_back(make_instance(d->model, d->palette));
+            instances.push_back(make_instance(d->model, d->palette, d->lightmap_offset));
             if (S.instancing && !out.empty()) {
                 const Draw* f = out.back().first;
                 if (f->mesh == d->mesh && out.back().lod == lod && f->skinned == d->skinned &&
