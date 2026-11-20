@@ -2203,3 +2203,13 @@ Verified: Linux gcc Release build; `victus_render_tests` 66/66 (two new card-LOD
 Not covered: no phone frame times; the specular AA experiment was measured worse and not shipped (see the ADR).
 
 Next task: impostors for far trees; prologue camp image quality at Low; script and physics CPU time.
+
+## 2026-11-21 — 4x MSAA with alpha to coverage on Low (ADR-0152)
+
+Built: `RenderSettings::msaa_samples` (Low 4) and `alpha_to_coverage`; multisampled forward pass with a resolve into the HDR target (`RenderGraph::write_color_resolved`, `write_depth(..., keep)`); `rhi::PipelineDesc::alpha_to_coverage` on SDL_GPU and GLES; `rhi::Device::supports_samples`; coverage ramp for alpha-tested materials in `pbr.frag`; `SceneStats::msaa_samples`; `msaa` line in the render-path report; `victus run --msaa`.
+
+Verified: Linux gcc Release build; `victus_render_tests` 67/67 (render-graph resolve case), `victus_gpu_tests` 202/202 (new `gpu_msaa_tests.cpp`: edge error 0.697 to 0.342, cut-out error 16.43 to 10.80 against a 4x4 supersampled reference; Low quality case), `victus_robustness_tests` 15/15.
+
+Not covered: no phone run; the cost of the multisampled pass on a Mali GPU is not measured. Vulkan sample-count support comes from SDL_GPU's format query and is not tested on a device here.
+
+Next task: prologue camp at night on Low (terrain cut, ambient fill, ground noise).

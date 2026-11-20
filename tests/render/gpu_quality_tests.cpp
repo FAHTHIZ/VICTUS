@@ -117,7 +117,8 @@ TEST_CASE("gpu quality: tiers schedule the expected passes") {
     CHECK(has_pass(low, "fxaa"));
     CHECK(has_pass(low, "exposure"));
     CHECK_FALSE(has_pass(low, "ssao"));
-    CHECK_FALSE(has_pass(low, "depth_prepass"));
+    CHECK_FALSE(has_pass(low, "depth_prepass")); // MSAA (ADR-0152): nothing samples the depth here
+    CHECK(low.stats.msaa_samples == 4u);
     CHECK_FALSE(has_pass(low, "bloom_down_0"));
 
     const Frame high = render_frame(*sr.value(), RenderSettings::preset(QualityTier::High), cam, sun, env, content);

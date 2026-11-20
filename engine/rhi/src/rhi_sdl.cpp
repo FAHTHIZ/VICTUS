@@ -479,6 +479,13 @@ bool Device::supports_format(Format format, std::uint32_t usage) const {
     return SDL_GPUTextureSupportsFormat(static_cast<SDL_GPUDevice*>(device_), to_sdl(format), SDL_GPU_TEXTURETYPE_2D, to_sdl_usage(usage));
 }
 
+bool Device::supports_samples(Format format, std::uint32_t samples) const {
+    if (samples <= 1) return true;
+    if (samples > caps_.max_msaa) return false;
+    if (auto* gl = impl_->gl.get()) return gl->supports_format(format, rhi::is_depth(format) ? TextureUsageDepthTarget : TextureUsageColorTarget);
+    return SDL_GPUTextureSupportsSampleCount(static_cast<SDL_GPUDevice*>(device_), to_sdl(format), to_sdl_samples(samples));
+}
+
 Result<TextureHandle> Device::create_texture(const TextureDesc& desc) {
     if (auto* gl = impl_->gl.get()) return gl->create_texture(desc);
     if (desc.width == 0 || desc.height == 0) return make_error(ErrorCode::InvalidArgument, "texture dimensions must be non-zero");
@@ -635,6 +642,7 @@ Result<PipelineHandle> Device::create_pipeline(const PipelineDesc& desc) {
     }
     ci.rasterizer_state.enable_depth_clip = !(desc.depth_clamp && caps_.depth_clamp);
     ci.multisample_state.sample_count = to_sdl_samples(desc.sample_count);
+    ci.multisample_state.enable_alpha_to_coverage = desc.alpha_to_coverage && desc.sample_count > 1;
     ci.depth_stencil_state.enable_depth_test = desc.depth_test;
     ci.depth_stencil_state.enable_depth_write = desc.depth_write;
     ci.depth_stencil_state.compare_op = to_sdl(desc.depth_compare);

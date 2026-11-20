@@ -21,8 +21,12 @@ rhi::TextureHandle PassContext::texture(RGTexture t) const { return graph.physic
 void PassBuilder::write_color(RGTexture t, rhi::LoadOp load, math::Color clear) {
     graph_.passes_[pass_].accesses.push_back({t.id, RenderGraph::Access::Color, load, clear, 1.0f});
 }
-void PassBuilder::write_depth(RGTexture t, rhi::LoadOp load, float clear_depth) {
-    graph_.passes_[pass_].accesses.push_back({t.id, RenderGraph::Access::Depth, load, {}, clear_depth});
+void PassBuilder::write_color_resolved(RGTexture t, RGTexture resolve, rhi::LoadOp load, math::Color clear) {
+    graph_.passes_[pass_].accesses.push_back({t.id, RenderGraph::Access::Color, load, clear, 1.0f, resolve.id, false});
+    graph_.passes_[pass_].accesses.push_back({resolve.id, RenderGraph::Access::Resolve, rhi::LoadOp::DontCare, {}, 1.0f});
+}
+void PassBuilder::write_depth(RGTexture t, rhi::LoadOp load, float clear_depth, bool keep) {
+    graph_.passes_[pass_].accesses.push_back({t.id, RenderGraph::Access::Depth, load, {}, clear_depth, ~0u, keep});
 }
 void PassBuilder::read(RGTexture t) {
     graph_.passes_[pass_].accesses.push_back({t.id, RenderGraph::Access::Read, rhi::LoadOp::Load, {}, 1.0f});
@@ -87,6 +91,16 @@ Status RenderGraph::compile() {
                 if (rhi::is_depth(r.desc.format))
                     return make_error(ErrorCode::InvalidArgument,
                                       std::format("pass '{}' writes depth texture '{}' as colour", p.name, r.name));
+            }
+            if (a.kind == Access::Color && a.resolve != ~0u) {
+                if (a.resolve >= resources_.size())
+                    return make_error(ErrorCode::InvalidArgument, std::format("pass '{}' resolves into an unknown texture", p.name));
+                const rhi::TextureDesc& rd = resources_[a.resolve].desc;
+                if (r.desc.sample_count <= 1 || rd.sample_count != 1 || rd.format != r.desc.format || rd.width != r.desc.width ||
+                    rd.height != r.desc.height)
+                    return make_error(ErrorCode::InvalidArgument,
+                                      std::format("pass '{}' resolves '{}' into incompatible '{}'", p.name, r.name,
+                                                  resources_[a.resolve].name));
             }
             if (a.kind == Access::Depth) {
                 ++depth_targets;
@@ -209,11 +223,14 @@ Status RenderGraph::execute(rhi::Device& device, rhi::CommandBuffer& cmd, Transi
                     c.texture = r.physical;
                     c.load = a.load;
                     c.clear = a.clear;
+                    if (a.resolve != ~0u) c.resolve = resources_[a.resolve].physical;
+                    if (!a.keep) c.store = rhi::StoreOp::DontCare;
                     rp.colors.push_back(c);
                 } else if (a.kind == Access::Depth) {
                     rp.depth.texture = r.physical;
                     rp.depth.load = a.load;
                     rp.depth.clear_depth = a.clear_depth;
+                    if (!a.keep) rp.depth.store = rhi::StoreOp::DontCare;
                 } else {
                     continue;
                 }

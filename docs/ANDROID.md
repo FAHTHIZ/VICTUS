@@ -87,6 +87,9 @@ with optimizations (`RelWithDebInfo`), because an unoptimized renderer is unusab
   `quality = "auto"` caps the tier at Medium. The manifest declares Vulkan optional and
   `glEsVersion` 0x30000 as required. If both backends fail, the app shows an error dialog
   instead of crashing. The GLES path is tested on Mesa llvmpipe only, not on a phone.
+- **Anti-aliasing.** The Low tier renders the opaque pass with 4x MSAA, which tile-based phone
+  GPUs can resolve on chip, and alpha-tested foliage with alpha to coverage (ADR-0152). If the device
+  does not report 4x for the HDR and depth formats, the pass steps down to 2x, then to one sample.
 - **Textures.** ASTC is the mobile texture format (SDL_GPU exposes no ETC2). Cook textures with
   `"compression": "auto"` (BC7 + ASTC 4x4) or `"small"` (BC1 + ASTC 6x6). The runtime uploads the
   first variant the GPU samples and falls back to RGBA8.

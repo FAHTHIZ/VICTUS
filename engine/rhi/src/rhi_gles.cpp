@@ -78,6 +78,7 @@ constexpr GLenum GL_READ_FRAMEBUFFER = 0x8CA8, GL_DRAW_FRAMEBUFFER = 0x8CA9,
                  GL_DEPTH_STENCIL_ATTACHMENT = 0x821A, GL_FRAMEBUFFER_COMPLETE = 0x8CD5,
                  GL_COLOR = 0x1800, GL_DEPTH = 0x1801;
 constexpr GLbitfield GL_COLOR_BUFFER_BIT = 0x4000;
+constexpr GLenum GL_SAMPLE_ALPHA_TO_COVERAGE = 0x809E;
 constexpr GLenum GL_BLEND = 0x0BE2, GL_CULL_FACE = 0x0B44, GL_DEPTH_TEST = 0x0B71, GL_SCISSOR_TEST = 0x0C11,
                  GL_POLYGON_OFFSET_FILL = 0x8037;
 constexpr GLenum GL_FRONT = 0x0404, GL_BACK_FACE = 0x0405, GL_CW = 0x0900, GL_CCW = 0x0901;
@@ -1343,6 +1344,8 @@ void GlesBackend::bind_pipeline(PipelineHandle pipeline) {
     } else {
         gl.Disable(GL_DEPTH_TEST);
     }
+    if (d.alpha_to_coverage && d.sample_count > 1) gl.Enable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    else gl.Disable(GL_SAMPLE_ALPHA_TO_COVERAGE);
     gl.DepthMask(d.depth_write ? GL_TRUE_ : GL_FALSE_);
     gl.ColorMask(GL_TRUE_, GL_TRUE_, GL_TRUE_, GL_TRUE_);
     const std::size_t n = d.color_targets.size();

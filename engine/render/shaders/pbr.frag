@@ -568,7 +568,15 @@ void main() {
     s.metallic = clamp(s.metallic, 0.0, 1.0);
     s.roughness = clamp(s.roughness, 0.045, 1.0);
 #endif
-    if (s.alpha < material.params.w) discard;
+    if (material.blend.z > 0.5) {
+        // Alpha to coverage (ADR-0152): the cut-out edge becomes a one-pixel coverage ramp that
+        // the MSAA samples resolve, instead of a hard per-pixel discard that shimmers.
+        float a2c_width = max(fwidth(s.alpha), 1e-4);
+        s.alpha = clamp((s.alpha - material.params.w) / a2c_width + 0.5, 0.0, 1.0);
+        if (s.alpha <= 0.0) discard;
+    } else if (s.alpha < material.params.w) {
+        discard;
+    }
     if (s.unlit) {
         out_color = vec4(blended_fog(s.base_color + s.emissive), s.alpha);
         if (lighting.screen.w > 0.0) out_color.rgb = hdr_quantize(out_color.rgb, lighting.screen.w);

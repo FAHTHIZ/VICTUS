@@ -207,6 +207,9 @@ struct PipelineDesc {
     std::vector<ColorTargetDesc> color_targets;
     Format depth_format{Format::Invalid};
     std::uint32_t sample_count{1};
+    // Multisampled targets: the alpha of colour output 0 sets the fraction of covered samples
+    // (alpha-tested foliage gets anti-aliased cut-out edges). Ignored at one sample.
+    bool alpha_to_coverage{false};
 };
 
 struct ColorAttachment {
@@ -400,6 +403,8 @@ public:
     void detach_window(platform::Window& window);
     [[nodiscard]] Format swapchain_format(platform::Window& window) const;
     [[nodiscard]] bool supports_format(Format format, std::uint32_t usage) const;
+    // Whether 2D render targets of `format` can have `samples` samples (1 is always true).
+    [[nodiscard]] bool supports_samples(Format format, std::uint32_t samples) const;
 
     [[nodiscard]] Result<TextureHandle> create_texture(const TextureDesc& desc);
     [[nodiscard]] Result<BufferHandle> create_buffer(const BufferDesc& desc);

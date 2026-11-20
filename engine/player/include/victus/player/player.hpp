@@ -46,6 +46,7 @@ struct PlayerOptions {
     std::optional<float> render_scale;
     std::optional<bool> taa;
     std::optional<bool> reactive_mask; // TAA reactive mask for particles, water and rain (ADR-0143)
+    std::optional<std::uint32_t> msaa_samples; // MSAA of the opaque pass: 1, 2, 4 or 8 (ADR-0152)
     std::string connect;         // host[:port] of a `victus serve` server; empty = play offline
     std::string player_name{"player"}; // name shown to other players when connected
     std::string net_conditions;  // link emulation for testing, e.g. "latency=80,loss=0.05"
