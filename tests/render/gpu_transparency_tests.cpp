@@ -100,13 +100,14 @@ TEST_CASE("gpu: blended surface shaders read the vertex colour") {
     // Data in the vertex colour (here: white everywhere) drives colour and opacity.
     auto compiled = runtime::compile_surface_shader(
         "void surface(SurfaceInput i, inout Surface s) {\n    s.base_color = vec3(0.0, i.vertex_color.g, 0.0);\n    s.alpha = 0.5;\n}\n",
-        "vertex_data.vshader", dev.capabilities().backend == rhi::Backend::Metal);
+        "vertex_data.vshader", dev.capabilities().backend);
     REQUIRE(compiled.ok());
     rhi::ShaderDesc d;
     d.name = "vertex_data";
     d.stage = rhi::ShaderStage::Fragment;
     d.spirv = compiled->spirv;
     d.msl = compiled->msl;
+    d.glsl_es = compiled->glsl_es;
     d.samplers = compiled->counts.samplers;
     d.storage_textures = compiled->counts.storage_textures;
     d.storage_buffers = compiled->counts.storage_buffers;

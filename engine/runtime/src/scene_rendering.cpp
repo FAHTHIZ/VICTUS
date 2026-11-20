@@ -710,18 +710,7 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
 
 namespace {
 Result<rhi::ShaderHandle> create_surface_fragment(rhi::Device& device, std::string_view code, const std::string& name) {
-    auto compiled = compile_surface_shader(code, name, device.capabilities().backend == rhi::Backend::Metal);
-    if (!compiled) return std::move(compiled).error();
-    rhi::ShaderDesc d;
-    d.name = name;
-    d.stage = rhi::ShaderStage::Fragment;
-    d.spirv = compiled->spirv;
-    d.msl = compiled->msl;
-    d.samplers = compiled->counts.samplers;
-    d.storage_textures = compiled->counts.storage_textures;
-    d.storage_buffers = compiled->counts.storage_buffers;
-    d.uniform_buffers = compiled->counts.uniform_buffers;
-    return device.create_shader(d);
+    return create_surface_shader(device, code, name);
 }
 } // namespace
 

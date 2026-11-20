@@ -567,10 +567,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Down& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_0[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_src
+//! sampler 0 fs_u_src
 //! ubo 0 fs_Down
 precision mediump float;
 precision highp int;
@@ -581,14 +581,14 @@ layout(std140) uniform fs_Down
     highp vec4 threshold;
 } u;
 
-uniform highp sampler2D u_src;
+uniform highp sampler2D fs_u_src;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_color;
 
 highp vec3 fetch(highp vec2 uv)
 {
-    highp vec3 c = textureLod(u_src, uv, 0.0).xyz;
+    highp vec3 c = textureLod(fs_u_src, uv, 0.0).xyz;
     return clamp(c, vec3(0.0), vec3(u.threshold.z));
 }
 
@@ -867,10 +867,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Up& u [[buffer(0)]],
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_1[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_src
+//! sampler 0 fs_u_src
 //! ubo 0 fs_Up
 precision mediump float;
 precision highp int;
@@ -880,7 +880,7 @@ layout(std140) uniform fs_Up
     highp vec4 params;
 } u;
 
-uniform highp sampler2D u_src;
+uniform highp sampler2D fs_u_src;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_color;
@@ -888,9 +888,9 @@ layout(location = 0) out highp vec4 out_color;
 void main()
 {
     highp vec2 t = u.params.xy * u.params.z;
-    highp vec3 c = textureLod(u_src, vx_io_0, 0.0).xyz * 4.0;
-    c += ((((textureLod(u_src, vx_io_0 + vec2(-t.x, 0.0), 0.0).xyz + textureLod(u_src, vx_io_0 + vec2(t.x, 0.0), 0.0).xyz) + textureLod(u_src, vx_io_0 + vec2(0.0, -t.y), 0.0).xyz) + textureLod(u_src, vx_io_0 + vec2(0.0, t.y), 0.0).xyz) * 2.0);
-    c += (((textureLod(u_src, vx_io_0 - t, 0.0).xyz + textureLod(u_src, vx_io_0 + t, 0.0).xyz) + textureLod(u_src, vx_io_0 + vec2(-t.x, t.y), 0.0).xyz) + textureLod(u_src, vx_io_0 + vec2(t.x, -t.y), 0.0).xyz);
+    highp vec3 c = textureLod(fs_u_src, vx_io_0, 0.0).xyz * 4.0;
+    c += ((((textureLod(fs_u_src, vx_io_0 + vec2(-t.x, 0.0), 0.0).xyz + textureLod(fs_u_src, vx_io_0 + vec2(t.x, 0.0), 0.0).xyz) + textureLod(fs_u_src, vx_io_0 + vec2(0.0, -t.y), 0.0).xyz) + textureLod(fs_u_src, vx_io_0 + vec2(0.0, t.y), 0.0).xyz) * 2.0);
+    c += (((textureLod(fs_u_src, vx_io_0 - t, 0.0).xyz + textureLod(fs_u_src, vx_io_0 + t, 0.0).xyz) + textureLod(fs_u_src, vx_io_0 + vec2(-t.x, t.y), 0.0).xyz) + textureLod(fs_u_src, vx_io_0 + vec2(t.x, -t.y), 0.0).xyz);
     out_color = vec4(c * (u.params.w / 16.0), 1.0);
 }
 
@@ -2135,10 +2135,10 @@ fragment main0_out main0(constant Clouds& u [[buffer(0)]], texture2d<float> u_de
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_2[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_depth
+//! sampler 0 fs_u_depth
 //! ubo 0 fs_Clouds
 precision mediump float;
 precision highp int;
@@ -2156,7 +2156,7 @@ layout(std140) uniform fs_Clouds
     highp vec4 screen;
 } u;
 
-uniform highp sampler2D u_depth;
+uniform highp sampler2D fs_u_depth;
 
 layout(location = 0) out highp vec4 out_color;
 in highp vec2 vx_io_0;
@@ -2287,7 +2287,7 @@ void main()
     highp float param_3 = 0.0;
     highp vec3 dir = normalize(far_p - world_at(param_2, param_3));
     highp vec2 hpx = u.screen.zw;
-    highp float dmax = max(max(textureLod(u_depth, uv + vec2(-hpx.x, -hpx.y), 0.0).x, textureLod(u_depth, uv + vec2(hpx.x, -hpx.y), 0.0).x), max(textureLod(u_depth, uv + vec2(-hpx.x, hpx.y), 0.0).x, textureLod(u_depth, uv + vec2(hpx.x, hpx.y), 0.0).x));
+    highp float dmax = max(max(textureLod(fs_u_depth, uv + vec2(-hpx.x, -hpx.y), 0.0).x, textureLod(fs_u_depth, uv + vec2(hpx.x, -hpx.y), 0.0).x), max(textureLod(fs_u_depth, uv + vec2(-hpx.x, hpx.y), 0.0).x, textureLod(fs_u_depth, uv + vec2(hpx.x, hpx.y), 0.0).x));
     highp float _484;
     if (dmax >= 1.0)
     {
@@ -2725,11 +2725,11 @@ fragment main0_out main0(constant Params& u [[buffer(0)]], texture2d<float> u_cl
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_3[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 1 u_depth
-//! sampler 0 u_clouds
+//! sampler 1 fs_u_depth
+//! sampler 0 fs_u_clouds
 //! ubo 0 fs_Params
 precision mediump float;
 precision highp int;
@@ -2742,8 +2742,8 @@ layout(std140) uniform fs_Params
     highp vec4 screen;
 } u;
 
-uniform highp sampler2D u_depth;
-uniform highp sampler2D u_clouds;
+uniform highp sampler2D fs_u_depth;
+uniform highp sampler2D fs_u_clouds;
 
 layout(location = 0) out highp vec4 out_color;
 in highp vec2 vx_io_0;
@@ -2757,7 +2757,7 @@ highp vec3 world_at(highp vec2 uv, highp float d)
 void main()
 {
     highp vec2 uv = gl_FragCoord.xy * u.screen.xy;
-    highp float d = textureLod(u_depth, uv, 0.0).x;
+    highp float d = textureLod(fs_u_depth, uv, 0.0).x;
     if (d < 1.0)
     {
         highp vec3 o = u.camera.xyz;
@@ -2810,7 +2810,7 @@ void main()
             return;
         }
     }
-    highp vec4 c = textureLod(u_clouds, uv, 0.0);
+    highp vec4 c = textureLod(fs_u_clouds, uv, 0.0);
     out_color = vec4(c.xyz, clamp(c.w, 0.0, 1.0));
 }
 
@@ -3240,11 +3240,11 @@ fragment main0_out main0(constant Params& u [[buffer(0)]], texture2d<float> u_te
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_4[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 1 u_depth
-//! sampler 0 u_texture
+//! sampler 1 fs_u_depth
+//! sampler 0 fs_u_texture
 //! ubo 0 fs_Params
 precision mediump float;
 precision highp int;
@@ -3259,15 +3259,15 @@ layout(std140) uniform fs_Params
     highp vec4 axis;
 } u;
 
-uniform highp sampler2D u_depth;
-uniform highp sampler2D u_texture;
+uniform highp sampler2D fs_u_depth;
+uniform highp sampler2D fs_u_texture;
 
 layout(location = 0) out highp vec4 out_color;
 
 void main()
 {
     highp vec2 suv = gl_FragCoord.xy * u.screen.xy;
-    highp float depth = textureLod(u_depth, suv, 0.0).x;
+    highp float depth = textureLod(fs_u_depth, suv, 0.0).x;
     highp vec2 ndc = vec2((suv.x * 2.0) - 1.0, 1.0 - (suv.y * 2.0));
     highp vec4 wp = u.inv_view_proj * vec4(ndc, depth, 1.0);
     highp vec3 world = wp.xyz / vec3(wp.w);
@@ -3322,7 +3322,7 @@ void main()
     {
         weight *= (1.0 - smoothstep(0.5 - (u.axis.w * 0.5), 0.5, a.z));
     }
-    highp vec4 c = textureGrad(u_texture, uv, duv_dx, duv_dy) * u.color;
+    highp vec4 c = textureGrad(fs_u_texture, uv, duv_dx, duv_dy) * u.color;
     highp float alpha = clamp(c.w * weight, 0.0, 1.0);
     if (alpha <= 0.00200000009499490261077880859375)
     {
@@ -3508,7 +3508,7 @@ vertex main0_out main0(constant Frame& frame [[buffer(0)]], uint gl_VertexIndex 
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_5[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -3672,7 +3672,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_6[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -3972,10 +3972,10 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_7[] =
 R"VICTUSMSL(#version 300 es
-//! storage 0 vx_storage0
+//! storage 0 vs_vx_storage0
 //! ubo 0 vs_Frame
 
 invariant gl_Position;
@@ -3985,7 +3985,7 @@ layout(std140) uniform vs_Frame
     mat4 view_proj;
 } frame;
 
-uniform highp usampler2D vx_storage0;
+uniform highp usampler2D vs_vx_storage0;
 
 layout(location = 8) in vec4 in_normal0;
 layout(location = 12) in vec4 in_weights;
@@ -3998,7 +3998,7 @@ layout(location = 0) in vec3 in_pos;
 
 vec4 joint_column(uint t)
 {
-    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+    return uintBitsToFloat(texelFetch(vs_vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
 }
 
 mat4 joint_matrix(uint i)
@@ -4260,10 +4260,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Face& f [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_8[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_equirect
+//! sampler 0 fs_u_equirect
 //! ubo 0 fs_Face
 precision mediump float;
 precision highp int;
@@ -4273,7 +4273,7 @@ layout(std140) uniform fs_Face
     highp vec4 face;
 } f;
 
-uniform highp sampler2D u_equirect;
+uniform highp sampler2D fs_u_equirect;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_color;
@@ -4311,7 +4311,7 @@ void main()
     highp vec2 param_1 = vx_io_0;
     highp vec3 d = face_direction(param, param_1);
     highp vec2 uv = vec2((atan(d.x, -d.z) / 6.283185482025146484375) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / 3.1415927410125732421875);
-    out_color = vec4(textureLod(u_equirect, uv, 0.0).xyz, 1.0);
+    out_color = vec4(textureLod(fs_u_equirect, uv, 0.0).xyz, 1.0);
 }
 
 )VICTUSMSL";
@@ -4855,10 +4855,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Prefilter& p [[buffe
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_9[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_source
+//! sampler 0 fs_u_source
 //! ubo 0 fs_Prefilter
 precision mediump float;
 precision highp int;
@@ -4869,7 +4869,7 @@ layout(std140) uniform fs_Prefilter
     highp vec4 params2;
 } p;
 
-uniform highp samplerCube u_source;
+uniform highp samplerCube fs_u_source;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_color;
@@ -4919,7 +4919,7 @@ void main()
     highp float roughness = p.params.y;
     if (roughness <= 0.0)
     {
-        out_color = vec4(textureLod(u_source, N, 0.0).xyz, 1.0);
+        out_color = vec4(textureLod(fs_u_source, N, 0.0).xyz, 1.0);
         return;
     }
     highp float a = roughness * roughness;
@@ -4954,7 +4954,7 @@ void main()
         highp float pdf = D * 0.25;
         highp float sample_solid_angle = 1.0 / ((float(count) * pdf) + 9.9999999747524270787835121154785e-07);
         highp float lod = clamp((0.5 * log2(sample_solid_angle / texel_solid_angle)) + 1.0, 0.0, max_lod);
-        sum += (textureLod(u_source, L, lod).xyz * NdotL);
+        sum += (textureLod(fs_u_source, L, lod).xyz * NdotL);
         weight += NdotL;
     }
     out_color = vec4(sum / vec3(max(weight, 9.9999997473787516355514526367188e-05)), 1.0);
@@ -5180,11 +5180,11 @@ fragment main0_out main0(constant Exposure& u [[buffer(0)]], texture2d<float> u_
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_10[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_lum
-//! sampler 1 u_previous
+//! sampler 0 fs_u_lum
+//! sampler 1 fs_u_previous
 //! ubo 0 fs_Exposure
 precision mediump float;
 precision highp int;
@@ -5195,8 +5195,8 @@ layout(std140) uniform fs_Exposure
     highp vec4 flags;
 } u;
 
-uniform highp sampler2D u_lum;
-uniform highp sampler2D u_previous;
+uniform highp sampler2D fs_u_lum;
+uniform highp sampler2D fs_u_previous;
 
 layout(location = 0) out highp vec4 out_value;
 in highp vec2 vx_io_0;
@@ -5212,12 +5212,12 @@ void main()
             highp vec2 uv = (vec2(float(x), float(y)) + vec2(0.5)) / vec2(32.0);
             highp vec2 c = uv - vec2(0.5);
             highp float w = 1.0 - (0.75 * clamp(dot(c, c) * 2.0, 0.0, 1.0));
-            sum += (textureLod(u_lum, uv, 0.0).x * w);
+            sum += (textureLod(fs_u_lum, uv, 0.0).x * w);
             wsum += w;
         }
     }
     highp float target = clamp(sum / wsum, u.params.z, u.params.w);
-    highp float previous = textureLod(u_previous, vec2(0.5), 0.0).x;
+    highp float previous = textureLod(fs_u_previous, vec2(0.5), 0.0).x;
     highp float value = target;
     if (u.flags.x < 0.5)
     {
@@ -5642,11 +5642,11 @@ fragment main0_out main0(constant Params& u [[buffer(0)]], const device Integrat
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_11[] =
 R"VICTUSMSL(#version 300 es
-//! storage 0 vx_storage0
-//! sampler 0 u_depth
+//! storage 0 fs_vx_storage0
+//! sampler 0 fs_u_depth
 //! ubo 0 fs_Params
 precision mediump float;
 precision highp int;
@@ -5658,15 +5658,15 @@ layout(std140) uniform fs_Params
     highp vec4 grid;
 } u;
 
-uniform highp usampler2D vx_storage0;
-uniform highp sampler2D u_depth;
+uniform highp usampler2D fs_vx_storage0;
+uniform highp sampler2D fs_u_depth;
 
 layout(location = 0) out highp vec4 out_color;
 in highp vec2 vx_io_0;
 
 highp vec4 vx_texel0(uint t)
 {
-    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+    return uintBitsToFloat(texelFetch(fs_vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
 }
 
 highp vec4 column(uvec2 a, uvec2 b, highp vec2 w, uint z)
@@ -5685,7 +5685,7 @@ highp vec4 column(uvec2 a, uvec2 b, highp vec2 w, uint z)
 void main()
 {
     highp vec2 uv = gl_FragCoord.xy * u.screen.xy;
-    highp float depth = u.proj.x / (textureLod(u_depth, uv, 0.0).x + u.proj.y);
+    highp float depth = u.proj.x / (textureLod(fs_u_depth, uv, 0.0).x + u.proj.y);
     highp vec3 g = u.grid.xyz;
     highp vec2 x = clamp((uv * g.xy) - vec2(0.5), vec2(0.0), g.xy - vec2(1.0));
     uvec2 a = uvec2(floor(x));
@@ -7636,7 +7636,7 @@ R"VICTUSMSL(   float3 param_9 = p;
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_12[] = "";
 // fog_integrate.comp sha256=c33596373844552c7a0fb626b23c6b845c458bac0ffff5e6533c5751ae5fa505
 const std::uint8_t k_spirv_13[] = {
@@ -8013,7 +8013,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device Froxels& _169 [[buffe
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_13[] = "";
 // fullscreen.vert sha256=bc55a1cdc8003d13c16f86acc040bff8f571d3c93326188fcecf14c8716a0c24
 const std::uint8_t k_spirv_14[] = {
@@ -8105,7 +8105,7 @@ vertex main0_out main0(uint gl_VertexIndex [[vertex_id]])
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_14[] =
 R"VICTUSMSL(#version 300 es
 
@@ -9064,10 +9064,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Fxaa& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_15[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_ldr
+//! sampler 0 fs_u_ldr
 //! ubo 0 fs_Fxaa
 precision mediump float;
 precision highp int;
@@ -9079,14 +9079,14 @@ layout(std140) uniform fs_Fxaa
     highp vec4 params;
 } u;
 
-uniform highp sampler2D u_ldr;
+uniform highp sampler2D fs_u_ldr;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_color;
 
 highp float L(highp vec2 uv)
 {
-    return textureLod(u_ldr, uv, 0.0).w;
+    return textureLod(fs_u_ldr, uv, 0.0).w;
 }
 
 highp vec3 to_linear(highp vec3 c)
@@ -9112,7 +9112,7 @@ highp vec4 finish(highp vec3 c)
 void main()
 {
     highp vec2 px = u.params.xy;
-    highp vec4 center = textureLod(u_ldr, vx_io_0, 0.0);
+    highp vec4 center = textureLod(fs_u_ldr, vx_io_0, 0.0);
     highp float m = center.w;
     highp vec2 param = vx_io_0 + vec2(0.0, -px.y);
     highp float n = L(param);
@@ -9273,7 +9273,7 @@ void main()
     {
         fuv.x += (final_offset * step_len);
     }
-    highp vec3 param_13 = textureLod(u_ldr, fuv, 0.0).xyz;
+    highp vec3 param_13 = textureLod(fs_u_ldr, fuv, 0.0).xyz;
     out_color = finish(param_13);
 }
 
@@ -9492,7 +9492,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device HiZ& _113 [[buffer(1)
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_16[] = "";
 // hiz_reduce.comp sha256=e9a5a661fa1b41d6e9df65abbce4b0f5f3347ac75307cecc5082376329c90d79
 const std::uint8_t k_spirv_17[] = {
@@ -9689,7 +9689,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device HiZ& _88 [[buffer(1)]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_17[] = "";
 // light2d.frag sha256=fd9cb4d313f7be7947648048cf7b739b8af4bbc3c28617830d891e985c94e8aa
 const std::uint8_t k_spirv_18[] = {
@@ -9866,7 +9866,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_18[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 fs_Params
@@ -10085,7 +10085,7 @@ vertex main0_out main0(constant Frame& frame [[buffer(0)]], uint gl_VertexIndex 
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_19[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -10156,7 +10156,7 @@ fragment main0_out main0(main0_in in [[stage_in]])
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_20[] =
 R"VICTUSMSL(#version 300 es
 precision mediump float;
@@ -10270,7 +10270,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_21[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -10486,10 +10486,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Lum& u [[buffer(0)]]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_22[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_hdr
+//! sampler 0 fs_u_hdr
 //! ubo 0 fs_Lum
 precision mediump float;
 precision highp int;
@@ -10499,7 +10499,7 @@ layout(std140) uniform fs_Lum
     highp vec4 params;
 } u;
 
-uniform highp sampler2D u_hdr;
+uniform highp sampler2D fs_u_hdr;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_lum;
@@ -10513,13 +10513,13 @@ void main()
 {
     highp vec2 q = u.params.xy * 0.25;
     highp float l = 0.0;
-    highp vec3 param = textureLod(u_hdr, vx_io_0 + vec2(-q.x, -q.y), 0.0).xyz;
+    highp vec3 param = textureLod(fs_u_hdr, vx_io_0 + vec2(-q.x, -q.y), 0.0).xyz;
     l += log2(max(luma(param), 9.9999997473787516355514526367188e-06));
-    highp vec3 param_1 = textureLod(u_hdr, vx_io_0 + vec2(q.x, -q.y), 0.0).xyz;
+    highp vec3 param_1 = textureLod(fs_u_hdr, vx_io_0 + vec2(q.x, -q.y), 0.0).xyz;
     l += log2(max(luma(param_1), 9.9999997473787516355514526367188e-06));
-    highp vec3 param_2 = textureLod(u_hdr, vx_io_0 + vec2(-q.x, q.y), 0.0).xyz;
+    highp vec3 param_2 = textureLod(fs_u_hdr, vx_io_0 + vec2(-q.x, q.y), 0.0).xyz;
     l += log2(max(luma(param_2), 9.9999997473787516355514526367188e-06));
-    highp vec3 param_3 = textureLod(u_hdr, vx_io_0 + vec2(q.x, q.y), 0.0).xyz;
+    highp vec3 param_3 = textureLod(fs_u_hdr, vx_io_0 + vec2(q.x, q.y), 0.0).xyz;
     l += log2(max(luma(param_3), 9.9999997473787516355514526367188e-06));
     out_lum = vec4(l * 0.25, 0.0, 0.0, 1.0);
 }
@@ -10819,7 +10819,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_23[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -11175,7 +11175,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_24[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -11659,10 +11659,10 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_25[] =
 R"VICTUSMSL(#version 300 es
-//! storage 0 vx_storage0
+//! storage 0 vs_vx_storage0
 //! ubo 0 vs_Frame
 
 invariant gl_Position;
@@ -11672,7 +11672,7 @@ layout(std140) uniform vs_Frame
     mat4 view_proj;
 } frame;
 
-uniform highp usampler2D vx_storage0;
+uniform highp usampler2D vs_vx_storage0;
 
 layout(location = 8) in vec4 in_normal0;
 layout(location = 12) in vec4 in_weights;
@@ -11697,7 +11697,7 @@ out vec3 vx_io_5;
 
 vec4 joint_column(uint t)
 {
-    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+    return uintBitsToFloat(texelFetch(vs_vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
 }
 
 mat4 joint_matrix(uint i)
@@ -11834,7 +11834,7 @@ fragment main0_out main0(main0_in in [[stage_in]])
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_26[] =
 R"VICTUSMSL(#version 300 es
 precision mediump float;
@@ -12057,7 +12057,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_27[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -12521,10 +12521,10 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_28[] =
 R"VICTUSMSL(#version 300 es
-//! storage 0 vx_storage0
+//! storage 0 vs_vx_storage0
 //! ubo 0 vs_Frame
 
 invariant gl_Position;
@@ -12535,7 +12535,7 @@ layout(std140) uniform vs_Frame
     mat4 prev_view_proj;
 } frame;
 
-uniform highp usampler2D vx_storage0;
+uniform highp usampler2D vs_vx_storage0;
 
 layout(location = 13) in vec4 in_params;
 layout(location = 12) in vec4 in_weights;
@@ -12553,7 +12553,7 @@ out vec4 vx_io_1;
 
 vec4 joint_column(uint t)
 {
-    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+    return uintBitsToFloat(texelFetch(vs_vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
 }
 
 mat4 joint_matrix(uint i)
@@ -13326,7 +13326,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device Instances& _419 [[buf
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_29[] = "";
 // overdraw.frag sha256=685618088a53582be7fbcb25652e6aebec39028d2b8da666b0624cdf02566c42
 const std::uint8_t k_spirv_30[] = {
@@ -13369,7 +13369,7 @@ fragment main0_out main0()
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_30[] =
 R"VICTUSMSL(#version 300 es
 precision mediump float;
@@ -13625,10 +13625,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Heat& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_31[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_count
+//! sampler 0 fs_u_count
 //! ubo 0 fs_Heat
 precision mediump float;
 precision highp int;
@@ -13638,7 +13638,7 @@ layout(std140) uniform fs_Heat
     highp vec4 params;
 } u;
 
-uniform highp sampler2D u_count;
+uniform highp sampler2D fs_u_count;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_color;
@@ -13650,7 +13650,7 @@ highp vec3 to_linear(highp vec3 c)
 
 void main()
 {
-    highp float n = floor((textureLod(u_count, vx_io_0, 0.0).x * 255.0) + 0.5);
+    highp float n = floor((textureLod(fs_u_count, vx_io_0, 0.0).x * 255.0) + 0.5);
     highp vec3 c = vec3(0.0);
     if (n >= 8.0)
     {
@@ -14464,12 +14464,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_32[] =
 R"VICTUSMSL(#version 300 es
-//! storage 0 vx_storage0
-//! sampler 0 u_texture
-//! sampler 1 u_depth
+//! storage 0 fs_vx_storage0
+//! sampler 0 fs_u_texture
+//! sampler 1 fs_u_depth
 //! ubo 0 fs_Params
 precision mediump float;
 precision highp int;
@@ -14484,9 +14484,9 @@ layout(std140) uniform fs_Params
     highp vec4 volumetric;
 } u;
 
-uniform highp usampler2D vx_storage0;
-uniform highp sampler2D u_texture;
-uniform highp sampler2D u_depth;
+uniform highp usampler2D fs_vx_storage0;
+uniform highp sampler2D fs_u_texture;
+uniform highp sampler2D fs_u_depth;
 
 in highp vec2 vx_io_0;
 in highp vec4 vx_io_1;
@@ -14526,7 +14526,7 @@ highp float distance_fog(highp float view_depth)
 
 highp vec4 vx_texel0(uint t)
 {
-    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+    return uintBitsToFloat(texelFetch(fs_vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
 }
 
 highp vec4 volumetric_fog(highp vec2 uv, highp float view_depth, highp vec4 grid)
@@ -14585,8 +14585,8 @@ highp vec4 volumetric_fog(highp vec2 uv, highp float view_depth, highp vec4 grid
 
 void main()
 {
-    highp vec4 c = texture(u_texture, vx_io_0) * vx_io_1;
-    highp float scene = u.proj.x / (textureLod(u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).x + u.proj.y);
+    highp vec4 c = texture(fs_u_texture, vx_io_0) * vx_io_1;
+    highp float scene = u.proj.x / (textureLod(fs_u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).x + u.proj.y);
     highp float gap = scene - vx_io_2;
     if (gap <= 0.0)
     {
@@ -15431,12 +15431,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_33[] =
 R"VICTUSMSL(#version 300 es
-//! storage 0 vx_storage0
-//! sampler 0 u_texture
-//! sampler 1 u_depth
+//! storage 0 fs_vx_storage0
+//! sampler 0 fs_u_texture
+//! sampler 1 fs_u_depth
 //! ubo 0 fs_Params
 precision mediump float;
 precision highp int;
@@ -15451,9 +15451,9 @@ layout(std140) uniform fs_Params
     highp vec4 volumetric;
 } u;
 
-uniform highp usampler2D vx_storage0;
-uniform highp sampler2D u_texture;
-uniform highp sampler2D u_depth;
+uniform highp usampler2D fs_vx_storage0;
+uniform highp sampler2D fs_u_texture;
+uniform highp sampler2D fs_u_depth;
 
 in highp vec2 vx_io_0;
 in highp vec4 vx_io_1;
@@ -15494,7 +15494,7 @@ highp float distance_fog(highp float view_depth)
 
 highp vec4 vx_texel0(uint t)
 {
-    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+    return uintBitsToFloat(texelFetch(fs_vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
 }
 
 highp vec4 volumetric_fog(highp vec2 uv, highp float view_depth, highp vec4 grid)
@@ -15553,8 +15553,8 @@ highp vec4 volumetric_fog(highp vec2 uv, highp float view_depth, highp vec4 grid
 
 void main()
 {
-    highp vec4 c = texture(u_texture, vx_io_0) * vx_io_1;
-    highp float scene = u.proj.x / (textureLod(u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).x + u.proj.y);
+    highp vec4 c = texture(fs_u_texture, vx_io_0) * vx_io_1;
+    highp float scene = u.proj.x / (textureLod(fs_u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).x + u.proj.y);
     highp float gap = scene - vx_io_2;
     if (gap <= 0.0)
     {
@@ -15957,7 +15957,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_34[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -18780,7 +18780,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device Spawns& _1484 [[buffe
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_35[] = "";
 // particle_sort.comp sha256=215de75124d9a0ba97a63a0310a2fb3f0b9da8a81807cc36b966fb7d4012ea9e
 const std::uint8_t k_spirv_36[] = {
@@ -19439,7 +19439,7 @@ kernel void main0(constant Params& u [[buffer(0)]], device Instances& _143 [[buf
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_36[] = "";
 // pbr.frag sha256=fbb21c6a461352be8df3659151cc831c3510d754111f40fe9f711ba38bc11374
 const std::uint8_t k_spirv_37[] = {
@@ -24829,24 +24829,24 @@ R"VICTUSMSL(else
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_37[] =
 R"VICTUSMSL(#version 300 es
-//! storage 0 vx_storage0
-//! storage 2 vx_storage2
-//! storage 1 vx_storage1
-//! sampler 8 u_irradiance
-//! sampler 6 u_env
-//! sampler 4 u_shadow
-//! sampler 7 u_local_shadow
-//! sampler 0 u_base_color
-//! sampler 3 u_emissive
-//! sampler 1 u_metal_rough
-//! sampler 2 u_normal_map
-//! sampler 9 u_rain_occlusion
-//! sampler 10 u_lightmap
-//! sampler 11 u_lightmap_dir
-//! sampler 5 u_ao
+//! storage 0 fs_vx_storage0
+//! storage 2 fs_vx_storage2
+//! storage 1 fs_vx_storage1
+//! sampler 8 fs_u_irradiance
+//! sampler 6 fs_u_env
+//! sampler 4 fs_u_shadow
+//! sampler 7 fs_u_local_shadow
+//! sampler 0 fs_u_base_color
+//! sampler 3 fs_u_emissive
+//! sampler 1 fs_u_metal_rough
+//! sampler 2 fs_u_normal_map
+//! sampler 9 fs_u_rain_occlusion
+//! sampler 10 fs_u_lightmap
+//! sampler 11 fs_u_lightmap_dir
+//! sampler 5 fs_u_ao
 //! ubo 1 fs_Material
 //! ubo 0 fs_Lighting
 //! ubo 2 fs_Probe
@@ -24928,21 +24928,21 @@ layout(std140) uniform fs_Probe
     highp vec4 sh[9];
 } probe;
 
-uniform highp usampler2D vx_storage0;
-uniform highp usampler2D vx_storage2;
-uniform highp usampler2D vx_storage1;
-uniform highp sampler2D u_irradiance;
-uniform highp samplerCube u_env;
-uniform highp sampler2DShadow u_shadow;
-uniform highp sampler2DShadow u_local_shadow;
-uniform highp sampler2D u_base_color;
-uniform highp sampler2D u_emissive;
-uniform highp sampler2D u_metal_rough;
-uniform highp sampler2D u_normal_map;
-uniform highp sampler2DShadow u_rain_occlusion;
-uniform highp sampler2D u_lightmap;
-uniform highp sampler2D u_lightmap_dir;
-uniform highp sampler2D u_ao;
+uniform highp usampler2D fs_vx_storage0;
+uniform highp usampler2D fs_vx_storage2;
+uniform highp usampler2D fs_vx_storage1;
+uniform highp sampler2D fs_u_irradiance;
+uniform highp samplerCube fs_u_env;
+uniform highp sampler2DShadow fs_u_shadow;
+uniform highp sampler2DShadow fs_u_local_shadow;
+uniform highp sampler2D fs_u_base_color;
+uniform highp sampler2D fs_u_emissive;
+uniform highp sampler2D fs_u_metal_rough;
+uniform highp sampler2D fs_u_normal_map;
+uniform highp sampler2DShadow fs_u_rain_occlusion;
+uniform highp sampler2D fs_u_lightmap;
+uniform highp sampler2D fs_u_lightmap_dir;
+uniform highp sampler2D fs_u_ao;
 
 in highp vec3 vx_io_0;
 in highp vec2 vx_io_2;
@@ -24954,7 +24954,7 @@ in highp vec3 vx_io_5;
 
 highp vec4 vx_texel2(uint t)
 {
-    return uintBitsToFloat(texelFetch(vx_storage2, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+    return uintBitsToFloat(texelFetch(fs_vx_storage2, ivec2(int(t & 1023u), int(t >> 10u)), 0));
 }
 
 highp vec4 volumetric_fog(highp vec2 uv, highp float view_depth, highp vec4 grid)
@@ -25177,7 +25177,7 @@ highp vec4 gi_fetch(int k, highp float layer, highp vec2 fxz)
 {
     highp vec2 size = vec2(lighting.gi_counts.x * lighting.gi_counts.y, lighting.gi_counts.z * 9.0);
     highp vec2 t = vec2(((layer * lighting.gi_counts.x) + fxz.x) + 0.5, ((float(k) * lighting.gi_counts.z) + fxz.y) + 0.5);
-    return textureLod(u_irradiance, t / size, 0.0);
+    return textureLod(fs_u_irradiance, t / size, 0.0);
 }
 
 highp vec3 volume_irradiance(inout highp vec3 p, highp vec3 n, highp vec3 fallback, out highp float sun_vis)
@@ -25209,11 +25209,11 @@ highp vec3 volume_irradiance(inout highp vec3 p, highp vec3 n, highp vec3 fallba
     highp vec3 f = clamp(((p - lo) / (hi - lo)) * (counts - vec3(1.0)), vec3(0.0), counts - vec3(1.0));
     highp float y0 = min(floor(f.y), counts.y - 2.0);
     highp float ty = f.y - y0;
-    int bands = (lighting.gi_min.w > 1.5) ? 4 : 9;
+    int bands = (lighting.)VICTUSMSL"
+R"VICTUSMSL(gi_min.w > 1.5) ? 4 : 9;
     highp vec4 c[9];
     highp vec4 _1038;
-    for (int k = 0; k < 9; k)VICTUSMSL"
-R"VICTUSMSL(++)
+    for (int k = 0; k < 9; k++)
     {
         if (k < bands)
         {
@@ -25319,7 +25319,7 @@ highp float sample_cascade(int c, highp vec3 N, highp vec3 L)
     if (lighting.cascade_params.x < 0.5)
     {
         highp vec3 _1545 = vec3(auv, z);
-        return texture(u_shadow, vec3(_1545.xy, _1545.z));
+        return texture(fs_u_shadow, vec3(_1545.xy, _1545.z));
     }
     if (lighting.cascade_params.x > 1.5)
     {
@@ -25328,7 +25328,7 @@ highp float sample_cascade(int c, highp vec3 N, highp vec3 L)
         highp vec3 _1593 = vec3(clamp(auv + vec2(h.x, -h.y), lo, hi), z);
         highp vec3 _1612 = vec3(clamp(auv + vec2(-h.x, h.y), lo, hi), z);
         highp vec3 _1630 = vec3(clamp(auv + vec2(h.x, h.y), lo, hi), z);
-        return 0.25 * (((texture(u_shadow, vec3(_1575.xy, _1575.z)) + texture(u_shadow, vec3(_1593.xy, _1593.z))) + texture(u_shadow, vec3(_1612.xy, _1612.z))) + texture(u_shadow, vec3(_1630.xy, _1630.z)));
+        return 0.25 * (((texture(fs_u_shadow, vec3(_1575.xy, _1575.z)) + texture(fs_u_shadow, vec3(_1593.xy, _1593.z))) + texture(fs_u_shadow, vec3(_1612.xy, _1612.z))) + texture(fs_u_shadow, vec3(_1630.xy, _1630.z)));
     }
     highp float sum = 0.0;
     for (int y = -1; y <= 1; y++)
@@ -25336,7 +25336,7 @@ highp float sample_cascade(int c, highp vec3 N, highp vec3 L)
         for (int x = -1; x <= 1; x++)
         {
             highp vec3 _1670 = vec3(clamp(auv + (vec2(float(x), float(y)) * texel), lo, hi), z);
-            sum += texture(u_shadow, vec3(_1670.xy, _1670.z));
+            sum += texture(fs_u_shadow, vec3(_1670.xy, _1670.z));
         }
     }
     return sum / 9.0;
@@ -25475,12 +25475,12 @@ highp float cloud_shadow(highp vec3 L)
 
 uint cluster_word(uint i)
 {
-    return texelFetch(vx_storage1, ivec2(int((i >> 2u) & 1023u), int(i >> 12u)), 0)[i & 3u];
+    return texelFetch(fs_vx_storage1, ivec2(int((i >> 2u) & 1023u), int(i >> 12u)), 0)[i & 3u];
 }
 
 highp vec4 vx_texel0(uint t)
 {
-    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+    return uintBitsToFloat(texelFetch(fs_vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
 }
 
 LocalLight local_light(uint i)
@@ -25570,16 +25570,16 @@ highp float local_shadow(LocalLight l, highp vec3 Ld, highp float dist, highp ve
     if (lighting.cascade_params.x < 0.5)
     {
         highp vec3 _2431 = vec3(auv, p.z);
-        return texture(u_local_shadow, vec3(_2431.xy, _2431.z));
+        return texture(fs_u_local_shadow, vec3(_2431.xy, _2431.z));
     }
     highp float sum = 0.0;
-    for (int y = -1; y <= 1; y++)
+    for)VICTUSMSL"
+R"VICTUSMSL( (int y = -1; y <= 1; y++)
     {
         for (int x = -1; x <= 1; x++)
         {
-            highp vec3 _2469 = vec3(clamp()VICTUSMSL"
-R"VICTUSMSL(auv + (vec2(float(x), float(y)) * texel), lo, hi), p.z);
-            sum += texture(u_local_shadow, vec3(_2469.xy, _2469.z));
+            highp vec3 _2469 = vec3(clamp(auv + (vec2(float(x), float(y)) * texel), lo, hi), p.z);
+            sum += texture(fs_u_local_shadow, vec3(_2469.xy, _2469.z));
         }
     }
     return sum / 9.0;
@@ -25606,7 +25606,7 @@ highp vec3 env_specular(highp vec3 r, highp float roughness, highp vec3 p)
     {
         highp vec3 param = p;
         highp vec3 param_1 = r;
-        return textureLod(u_env, probe_direction(param, param_1), roughness * probe.box_max.w).xyz * probe.position.w;
+        return textureLod(fs_u_env, probe_direction(param, param_1), roughness * probe.box_max.w).xyz * probe.position.w;
     }
     if (lighting.env_params.x < 0.5)
     {
@@ -25615,13 +25615,13 @@ highp vec3 env_specular(highp vec3 r, highp float roughness, highp vec3 p)
         return environment(param_2, param_3);
     }
     highp vec3 param_4 = r;
-    return textureLod(u_env, env_rotate(param_4), roughness * lighting.env_params.y).xyz * lighting.env_params.z;
+    return textureLod(fs_u_env, env_rotate(param_4), roughness * lighting.env_params.y).xyz * lighting.env_params.z;
 }
 
 void main()
 {
     highp vec2 uv = (vx_io_2 * material.uv_transform.xy) + material.uv_transform.zw;
-    highp vec4 base = texture(u_base_color, uv, lighting.camera_forward.w) * material.base_color;
+    highp vec4 base = texture(fs_u_base_color, uv, lighting.camera_forward.w) * material.base_color;
     bool alpha_is_mask = material.flags.z > 0.5;
     highp vec3 geometric_n = normalize(vx_io_1);
     if (!gl_FrontFacing)
@@ -25640,9 +25640,9 @@ void main()
         _2532 = base.w * vx_io_4.w;
     }
     s.alpha = _2532;
-    s.emissive = texture(u_emissive, uv, lighting.camera_forward.w).xyz * material.emissive.xyz;
+    s.emissive = texture(fs_u_emissive, uv, lighting.camera_forward.w).xyz * material.emissive.xyz;
     s.unlit = material.flags.y > 0.5;
-    highp vec4 mr = texture(u_metal_rough, uv, lighting.camera_forward.w);
+    highp vec4 mr = texture(fs_u_metal_rough, uv, lighting.camera_forward.w);
     s.occlusion = 1.0 + (material.blend.y * (mr.x - 1.0));
     s.metallic = clamp(material.params.x * mr.z, 0.0, 1.0);
     s.roughness = clamp(material.params.y * mr.y, 0.04500000178813934326171875, 1.0);
@@ -25651,7 +25651,7 @@ void main()
     {
         highp vec3 T = normalize(vx_io_3.xyz - (N * dot(N, vx_io_3.xyz)));
         highp vec3 B = cross(N, T) * vx_io_3.w;
-        highp vec3 tn = (texture(u_normal_map, uv, lighting.camera_forward.w).xyz * 2.0) - vec3(1.0);
+        highp vec3 tn = (texture(fs_u_normal_map, uv, lighting.camera_forward.w).xyz * 2.0) - vec3(1.0);
         highp vec3 _2630 = tn;
         highp vec2 _2632 = _2630.xy * material.params.z;
         tn.x = _2632.x;
@@ -25723,7 +25723,7 @@ void main()
         if (_2791)
         {
             highp vec3 _2805 = vec3(ruv, r.z - lighting.weather.z);
-            highp float exposed = texture(u_rain_occlusion, vec3(_2805.xy, _2805.z));
+            highp float exposed = texture(fs_u_rain_occlusion, vec3(_2805.xy, _2805.z));
             wet *= exposed;
             puddle_amount *= exposed;
             ripple *= exposed;
@@ -25791,7 +25791,7 @@ void main()
     highp vec4 _3044;
     if (vx_io_5.z > 0.5)
     {
-        _3044 = texture(u_lightmap, vx_io_5.xy);
+        _3044 = texture(fs_u_lightmap, vx_io_5.xy);
     }
     else
     {
@@ -25892,11 +25892,11 @@ void main()
             highp vec3 radiance = (l.color_intensity.xyz * l.color_intensity.w) * atten;
             highp vec3 param_31 = N;
             highp vec3 param_32 = V;
-            highp vec3 param_33 = Ld;
+ )VICTUSMSL"
+R"VICTUSMSL(           highp vec3 param_33 = Ld;
             highp vec3 param_34 = radiance;
             highp vec3 param_35 = albedo;
-            highp float par)VICTUSMSL"
-R"VICTUSMSL(am_36 = metallic;
+            highp float param_36 = metallic;
             highp float param_37 = roughness;
             color += brdf(param_31, param_32, param_33, param_34, param_35, param_36, param_37);
         }
@@ -25911,7 +25911,7 @@ R"VICTUSMSL(am_36 = metallic;
     if (vx_io_5.z > 0.5)
     {
         irradiance = lm_texel.xyz;
-        highp vec4 lm_dir = texture(u_lightmap_dir, vx_io_5.xy);
+        highp vec4 lm_dir = texture(fs_u_lightmap_dir, vx_io_5.xy);
         if (lm_dir.w >= 0.25)
         {
             irradiance *= (((0.5 * dot(N, (lm_dir.xyz * 2.0) - vec3(1.0))) + 0.5) / lm_dir.w);
@@ -25945,7 +25945,7 @@ R"VICTUSMSL(am_36 = metallic;
     highp float _3462;
     if (lighting.camera_pos.w > 0.5)
     {
-        _3462 = texture(u_ao, gl_FragCoord.xy * lighting.screen.xy).x;
+        _3462 = texture(fs_u_ao, gl_FragCoord.xy * lighting.screen.xy).x;
     }
     else
     {
@@ -31505,7 +31505,7 @@ R"VICTUSMSL(_texel = _3123;
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_38[] = "";
 // precipitation.frag sha256=328b0bdac787508047cd7228f64568f719a06dfebfab3beca5cdcf3e9a4ccf5f
 const std::uint8_t k_spirv_39[] = {
@@ -32387,12 +32387,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_39[] =
 R"VICTUSMSL(#version 300 es
-//! storage 0 vx_storage0
-//! sampler 1 u_rain_occlusion
-//! sampler 0 u_depth
+//! storage 0 fs_vx_storage0
+//! sampler 1 fs_u_rain_occlusion
+//! sampler 0 fs_u_depth
 //! ubo 0 fs_Params
 precision mediump float;
 precision highp int;
@@ -32408,9 +32408,9 @@ layout(std140) uniform fs_Params
     highp vec4 volumetric;
 } u;
 
-uniform highp usampler2D vx_storage0;
-uniform highp sampler2DShadow u_rain_occlusion;
-uniform highp sampler2D u_depth;
+uniform highp usampler2D fs_vx_storage0;
+uniform highp sampler2DShadow fs_u_rain_occlusion;
+uniform highp sampler2D fs_u_depth;
 
 in highp vec2 vx_io_0;
 in highp vec4 vx_io_1;
@@ -32451,7 +32451,7 @@ highp float distance_fog(highp float view_depth)
 
 highp vec4 vx_texel0(uint t)
 {
-    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+    return uintBitsToFloat(texelFetch(fs_vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
 }
 
 highp vec4 volumetric_fog(highp vec2 uv, highp float view_depth, highp vec4 grid)
@@ -32559,14 +32559,14 @@ void main()
         if (_475)
         {
             highp vec3 _491 = vec3(ruv, r_1.z - u.proj.w);
-            a *= texture(u_rain_occlusion, vec3(_491.xy, _491.z));
+            a *= texture(fs_u_rain_occlusion, vec3(_491.xy, _491.z));
             if (a <= 0.00200000009499490261077880859375)
             {
                 discard;
             }
         }
     }
-    highp float scene = u.proj.x / (textureLod(u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).x + u.proj.y);
+    highp float scene = u.proj.x / (textureLod(fs_u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).x + u.proj.y);
     highp float gap = scene - vx_io_2;
     if (gap <= 0.0)
     {
@@ -33471,12 +33471,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_40[] =
 R"VICTUSMSL(#version 300 es
-//! storage 0 vx_storage0
-//! sampler 1 u_rain_occlusion
-//! sampler 0 u_depth
+//! storage 0 fs_vx_storage0
+//! sampler 1 fs_u_rain_occlusion
+//! sampler 0 fs_u_depth
 //! ubo 0 fs_Params
 precision mediump float;
 precision highp int;
@@ -33492,9 +33492,9 @@ layout(std140) uniform fs_Params
     highp vec4 volumetric;
 } u;
 
-uniform highp usampler2D vx_storage0;
-uniform highp sampler2DShadow u_rain_occlusion;
-uniform highp sampler2D u_depth;
+uniform highp usampler2D fs_vx_storage0;
+uniform highp sampler2DShadow fs_u_rain_occlusion;
+uniform highp sampler2D fs_u_depth;
 
 in highp vec2 vx_io_0;
 in highp vec4 vx_io_1;
@@ -33536,7 +33536,7 @@ highp float distance_fog(highp float view_depth)
 
 highp vec4 vx_texel0(uint t)
 {
-    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+    return uintBitsToFloat(texelFetch(fs_vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
 }
 
 highp vec4 volumetric_fog(highp vec2 uv, highp float view_depth, highp vec4 grid)
@@ -33644,14 +33644,14 @@ void main()
         if (_475)
         {
             highp vec3 _491 = vec3(ruv, r_1.z - u.proj.w);
-            a *= texture(u_rain_occlusion, vec3(_491.xy, _491.z));
+            a *= texture(fs_u_rain_occlusion, vec3(_491.xy, _491.z));
             if (a <= 0.00200000009499490261077880859375)
             {
                 discard;
             }
         }
     }
-    highp float scene = u.proj.x / (textureLod(u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).x + u.proj.y);
+    highp float scene = u.proj.x / (textureLod(fs_u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).x + u.proj.y);
     highp float gap = scene - vx_io_2;
     if (gap <= 0.0)
     {
@@ -34330,7 +34330,7 @@ vertex main0_out main0(constant Frame& u [[buffer(0)]], uint gl_VertexIndex [[ve
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_41[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -34646,7 +34646,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_42[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -34714,7 +34714,7 @@ fragment void main0()
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_43[] =
 R"VICTUSMSL(#version 300 es
 precision mediump float;
@@ -34862,7 +34862,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Shadow& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_44[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Shadow
@@ -34980,10 +34980,10 @@ fragment void main0(main0_in in [[stage_in]], constant AlphaTest& m [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_45[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_base_color
+//! sampler 0 fs_u_base_color
 //! ubo 0 fs_AlphaTest
 precision mediump float;
 precision highp int;
@@ -34994,13 +34994,13 @@ layout(std140) uniform fs_AlphaTest
     highp vec4 params;
 } m;
 
-uniform highp sampler2D u_base_color;
+uniform highp sampler2D fs_u_base_color;
 
 in highp vec2 vx_io_0;
 
 void main()
 {
-    highp float a = texture(u_base_color, (vx_io_0 * m.uv.xy) + m.uv.zw).w * m.params.y;
+    highp float a = texture(fs_u_base_color, (vx_io_0 * m.uv.xy) + m.uv.zw).w * m.params.y;
     if (a < m.params.x)
     {
         discard;
@@ -35157,7 +35157,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Shadow& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_46[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Shadow
@@ -35450,10 +35450,10 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Shadow& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_47[] =
 R"VICTUSMSL(#version 300 es
-//! storage 0 vx_storage0
+//! storage 0 vs_vx_storage0
 //! ubo 0 vs_Shadow
 
 layout(std140) uniform vs_Shadow
@@ -35461,7 +35461,7 @@ layout(std140) uniform vs_Shadow
     mat4 light_view_proj;
 } u;
 
-uniform highp usampler2D vx_storage0;
+uniform highp usampler2D vs_vx_storage0;
 
 layout(location = 8) in vec4 in_normal0;
 layout(location = 12) in vec4 in_weights;
@@ -35474,7 +35474,7 @@ layout(location = 0) in vec3 in_pos;
 
 vec4 joint_column(uint t)
 {
-    return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
+    return uintBitsToFloat(texelFetch(vs_vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0));
 }
 
 mat4 joint_matrix(uint i)
@@ -36021,10 +36021,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Sky& sky [[buffer(0)
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_48[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_env
+//! sampler 0 fs_u_env
 //! ubo 0 fs_Sky
 precision mediump float;
 precision highp int;
@@ -36040,7 +36040,7 @@ layout(std140) uniform fs_Sky
     highp vec4 env;
 } sky;
 
-uniform highp samplerCube u_env;
+uniform highp samplerCube fs_u_env;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_color;
@@ -36066,7 +36066,7 @@ void main()
         highp float c = cos(sky.env.w);
         highp float s = sin(sky.env.w);
         highp vec3 d = vec3((c * dir.x) + (s * dir.z), dir.y, ((-s) * dir.x) + (c * dir.z));
-        highp vec3 e = textureLod(u_env, d, sky.env.y).xyz * sky.env.z;
+        highp vec3 e = textureLod(fs_u_env, d, sky.env.y).xyz * sky.env.z;
         if (sky.env.x > 1.5)
         {
             e += (sky.sun_color.xyz * smoothstep(sky.sun_color.w, 1.0, dot(dir, normalize(sky.sun_dir.xyz))));
@@ -36740,10 +36740,10 @@ vertex main0_out main0(constant Frame& u [[buffer(0)]], texture2d<float> u_rain_
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_49[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_rain_depth
+//! sampler 0 vs_u_rain_depth
 //! ubo 0 vs_Frame
 #ifdef GL_ARB_shader_draw_parameters
 #extension GL_ARB_shader_draw_parameters : enable
@@ -36763,7 +36763,7 @@ layout(std140) uniform vs_Frame
     mat4 rain_inv;
 } u;
 
-uniform highp sampler2D u_rain_depth;
+uniform highp sampler2D vs_u_rain_depth;
 
 #ifdef GL_ARB_shader_draw_parameters
 #define SPIRV_Cross_BaseInstance gl_BaseInstanceARB
@@ -36806,7 +36806,7 @@ void main()
     vec4 rc = u.rain_vp * vec4(column, 1.0);
     vec2 ndc = rc.xy / vec2(rc.w);
     vec2 uv = (ndc * vec2(0.5, -0.5)) + vec2(0.5);
-    float depth = textureLod(u_rain_depth, uv, 0.0).x;
+    float depth = textureLod(vs_u_rain_depth, uv, 0.0).x;
     bool _251 = any(lessThan(uv, vec2(0.0)));
     bool _258;
     if (!_251)
@@ -37070,10 +37070,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_50[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_texture
+//! sampler 0 fs_u_texture
 //! ubo 0 fs_Params
 precision mediump float;
 precision highp int;
@@ -37083,7 +37083,7 @@ layout(std140) uniform fs_Params
     highp vec4 flags;
 } u;
 
-uniform highp sampler2D u_texture;
+uniform highp sampler2D fs_u_texture;
 
 in highp vec2 vx_io_0;
 in highp vec4 vx_io_1;
@@ -37101,7 +37101,7 @@ highp vec3 srgb_to_linear(highp vec3 c)
 
 void main()
 {
-    highp vec4 t = texture(u_texture, vx_io_0);
+    highp vec4 t = texture(fs_u_texture, vx_io_0);
     if (u.flags.x > 0.5)
     {
         highp vec3 param = t.xyz;
@@ -37236,7 +37236,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant Frame& frame [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_51[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame
@@ -37505,11 +37505,11 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_52[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_texture
-//! sampler 1 u_light
+//! sampler 0 fs_u_texture
+//! sampler 1 fs_u_light
 //! ubo 0 fs_Params
 precision mediump float;
 precision highp int;
@@ -37519,8 +37519,8 @@ layout(std140) uniform fs_Params
     highp vec4 screen;
 } u;
 
-uniform highp sampler2D u_texture;
-uniform highp sampler2D u_light;
+uniform highp sampler2D fs_u_texture;
+uniform highp sampler2D fs_u_light;
 
 in highp vec2 vx_io_0;
 in highp vec4 vx_io_1;
@@ -37538,7 +37538,7 @@ highp vec3 srgb_to_linear(highp vec3 c)
 
 void main()
 {
-    highp vec4 t = texture(u_texture, vx_io_0);
+    highp vec4 t = texture(fs_u_texture, vx_io_0);
     if (u.screen.z > 0.5)
     {
         highp vec3 param = t.xyz;
@@ -37552,7 +37552,7 @@ void main()
     {
         discard;
     }
-    highp vec3 light = textureLod(u_light, gl_FragCoord.xy * u.screen.xy, 0.0).xyz;
+    highp vec3 light = textureLod(fs_u_light, gl_FragCoord.xy * u.screen.xy, 0.0).xyz;
     highp vec3 rgb = c.xyz * light;
     if (u.screen.w > 0.5)
     {
@@ -38011,10 +38011,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Ssao& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_53[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_depth
+//! sampler 0 fs_u_depth
 //! ubo 0 fs_Ssao
 precision mediump float;
 precision highp int;
@@ -38026,21 +38026,21 @@ layout(std140) uniform fs_Ssao
     highp vec4 screen;
 } u;
 
-uniform highp sampler2D u_depth;
+uniform highp sampler2D fs_u_depth;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_ao;
 
 highp vec3 view_pos(highp vec2 uv)
 {
-    highp float d = textureLod(u_depth, uv, 0.0).x;
+    highp float d = textureLod(fs_u_depth, uv, 0.0).x;
     highp vec4 p = u.inv_proj * vec4((uv.x * 2.0) - 1.0, 1.0 - (uv.y * 2.0), d, 1.0);
     return p.xyz / vec3(p.w);
 }
 
 void main()
 {
-    highp float d = textureLod(u_depth, vx_io_0, 0.0).x;
+    highp float d = textureLod(fs_u_depth, vx_io_0, 0.0).x;
     if (d >= 1.0)
     {
         out_ao = vec4(1.0);
@@ -38303,11 +38303,11 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Blur& u [[buffer(0)]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_54[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 1 u_depth
-//! sampler 0 u_ao
+//! sampler 1 fs_u_depth
+//! sampler 0 fs_u_ao
 //! ubo 0 fs_Blur
 precision mediump float;
 precision highp int;
@@ -38318,15 +38318,15 @@ layout(std140) uniform fs_Blur
     highp vec4 screen;
 } u;
 
-uniform highp sampler2D u_depth;
-uniform highp sampler2D u_ao;
+uniform highp sampler2D fs_u_depth;
+uniform highp sampler2D fs_u_ao;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_ao;
 
 highp float view_z(highp vec2 uv)
 {
-    return u.proj.x / ((textureLod(u_depth, uv, 0.0).x * u.proj.y) + u.proj.z);
+    return u.proj.x / ((textureLod(fs_u_depth, uv, 0.0).x * u.proj.y) + u.proj.z);
 }
 
 void main()
@@ -38342,7 +38342,7 @@ void main()
             highp vec2 uv = vx_io_0 + ((vec2(float(x), float(y)) + vec2(0.5)) * u.screen.xy);
             highp vec2 param_1 = uv;
             highp float w = 1.0 / (0.001000000047497451305389404296875 + ((abs(view_z(param_1) - z0) / max(abs(z0), 0.001000000047497451305389404296875)) * 40.0));
-            sum += (textureLod(u_ao, uv, 0.0).x * w);
+            sum += (textureLod(fs_u_ao, uv, 0.0).x * w);
             wsum += w;
         }
     }
@@ -39485,15 +39485,15 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Taa& u [[buffer(0)]]
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_55[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 1 u_history
-//! sampler 0 u_current
-//! sampler 2 u_depth
-//! sampler 3 u_motion
-//! sampler 4 u_reactive
-//! sampler 5 u_reactive_prev
+//! sampler 1 fs_u_history
+//! sampler 0 fs_u_current
+//! sampler 2 fs_u_depth
+//! sampler 3 fs_u_motion
+//! sampler 4 fs_u_reactive
+//! sampler 5 fs_u_reactive_prev
 //! ubo 0 fs_Taa
 precision mediump float;
 precision highp int;
@@ -39506,12 +39506,12 @@ layout(std140) uniform fs_Taa
     highp vec4 quant;
 } u;
 
-uniform highp sampler2D u_history;
-uniform highp sampler2D u_current;
-uniform highp sampler2D u_depth;
-uniform highp sampler2D u_motion;
-uniform highp sampler2D u_reactive;
-uniform highp sampler2D u_reactive_prev;
+uniform highp sampler2D fs_u_history;
+uniform highp sampler2D fs_u_current;
+uniform highp sampler2D fs_u_depth;
+uniform highp sampler2D fs_u_motion;
+uniform highp sampler2D fs_u_reactive;
+uniform highp sampler2D fs_u_reactive_prev;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_color;
@@ -39564,7 +39564,7 @@ highp vec3 history_catmull_rom(highp vec2 uv)
     highp vec2 t0 = (c1 - vec2(1.0)) * u.screen.zw;
     highp vec2 t3 = (c1 + vec2(2.0)) * u.screen.zw;
     highp vec2 t12 = (c1 + (w2 / w12)) * u.screen.zw;
-    highp vec3 r = ((((textureLod(u_history, vec2(t12.x, t0.y), 0.0).xyz * (w12.x * w0.y)) + (textureLod(u_history, vec2(t0.x, t12.y), 0.0).xyz * (w0.x * w12.y))) + (textureLod(u_history, t12, 0.0).xyz * (w12.x * w12.y))) + (textureLod(u_history, vec2(t3.x, t12.y), 0.0).xyz * (w3.x * w12.y))) + (textureLod(u_history, vec2(t12.x, t3.y), 0.0).xyz * (w12.x * w3.y));
+    highp vec3 r = ((((textureLod(fs_u_history, vec2(t12.x, t0.y), 0.0).xyz * (w12.x * w0.y)) + (textureLod(fs_u_history, vec2(t0.x, t12.y), 0.0).xyz * (w0.x * w12.y))) + (textureLod(fs_u_history, t12, 0.0).xyz * (w12.x * w12.y))) + (textureLod(fs_u_history, vec2(t3.x, t12.y), 0.0).xyz * (w3.x * w12.y))) + (textureLod(fs_u_history, vec2(t12.x, t3.y), 0.0).xyz * (w12.x * w3.y));
     highp float wsum = ((((w12.x * w0.y) + (w0.x * w12.y)) + (w12.x * w12.y)) + (w3.x * w12.y)) + (w12.x * w3.y);
     highp vec3 param = r / vec3(wsum);
     return safe(param);
@@ -39588,7 +39588,7 @@ highp vec3 hdr_quantize(inout highp vec3 c, highp float frame)
 void main()
 {
     highp vec2 px = u.screen.xy;
-    highp vec3 param = textureLod(u_current, vx_io_0, 0.0).xyz;
+    highp vec3 param = textureLod(fs_u_current, vx_io_0, 0.0).xyz;
     highp vec3 current = safe(param);
     highp vec3 m1 = vec3(0.0);
     highp vec3 m2 = vec3(0.0);
@@ -39606,7 +39606,7 @@ void main()
             }
             else
             {
-                highp vec3 param_1 = textureLod(u_current, uv, 0.0).xyz;
+                highp vec3 param_1 = textureLod(fs_u_current, uv, 0.0).xyz;
                 _495 = safe(param_1);
             }
             highp vec3 c = _495;
@@ -39615,7 +39615,7 @@ void main()
             c = to_ycocg(param_3);
             m1 += c;
             m2 += (c * c);
-            highp float d = textureLod(u_depth, uv, 0.0).x;
+            highp float d = textureLod(fs_u_depth, uv, 0.0).x;
             if (d < closest)
             {
                 closest = d;
@@ -39633,7 +39633,7 @@ void main()
     highp vec2 prev_uv = vec2((prev_ndc.x * 0.5) + 0.5, 0.5 - (prev_ndc.y * 0.5));
     if (u.params.w > 0.5)
     {
-        prev_uv -= textureLod(u_motion, closest_uv, 0.0).xy;
+        prev_uv -= textureLod(fs_u_motion, closest_uv, 0.0).xy;
     }
     bool _606 = prev.w <= 0.0;
     bool _615;
@@ -39685,11 +39685,11 @@ void main()
     highp float reactive = 0.0;
     if (u.quant.y > 0.5)
     {
-        reactive = textureLod(u_reactive, vx_io_0, 0.0).x;
+        reactive = textureLod(fs_u_reactive, vx_io_0, 0.0).x;
     }
     if (u.quant.w > 0.5)
     {
-        reactive = max(reactive, textureLod(u_reactive_prev, prev_uv, 0.0).x);
+        reactive = max(reactive, textureLod(fs_u_reactive_prev, prev_uv, 0.0).x);
     }
     alpha = max(alpha, reactive * u.quant.z);
     highp vec3 param_9 = mix(hw, cw, vec3(alpha));
@@ -40940,15 +40940,15 @@ fragment main0_out main0(main0_in in [[stage_in]], constant TaaUpscale& u [[buff
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_56[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 1 u_history
-//! sampler 0 u_current
-//! sampler 2 u_depth
-//! sampler 3 u_motion
-//! sampler 4 u_reactive
-//! sampler 5 u_reactive_prev
+//! sampler 1 fs_u_history
+//! sampler 0 fs_u_current
+//! sampler 2 fs_u_depth
+//! sampler 3 fs_u_motion
+//! sampler 4 fs_u_reactive
+//! sampler 5 fs_u_reactive_prev
 //! ubo 0 fs_TaaUpscale
 precision mediump float;
 precision highp int;
@@ -40963,12 +40963,12 @@ layout(std140) uniform fs_TaaUpscale
     highp vec4 quant;
 } u;
 
-uniform highp sampler2D u_history;
-uniform highp sampler2D u_current;
-uniform highp sampler2D u_depth;
-uniform highp sampler2D u_motion;
-uniform highp sampler2D u_reactive;
-uniform highp sampler2D u_reactive_prev;
+uniform highp sampler2D fs_u_history;
+uniform highp sampler2D fs_u_current;
+uniform highp sampler2D fs_u_depth;
+uniform highp sampler2D fs_u_motion;
+uniform highp sampler2D fs_u_reactive;
+uniform highp sampler2D fs_u_reactive_prev;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_color;
@@ -41021,7 +41021,7 @@ highp vec3 history_catmull_rom(highp vec2 uv)
     highp vec2 t0 = (c1 - vec2(1.0)) * u.screen.zw;
     highp vec2 t3 = (c1 + vec2(2.0)) * u.screen.zw;
     highp vec2 t12 = (c1 + (w2 / w12)) * u.screen.zw;
-    highp vec3 r = ((((textureLod(u_history, vec2(t12.x, t0.y), 0.0).xyz * (w12.x * w0.y)) + (textureLod(u_history, vec2(t0.x, t12.y), 0.0).xyz * (w0.x * w12.y))) + (textureLod(u_history, t12, 0.0).xyz * (w12.x * w12.y))) + (textureLod(u_history, vec2(t3.x, t12.y), 0.0).xyz * (w3.x * w12.y))) + (textureLod(u_history, vec2(t12.x, t3.y), 0.0).xyz * (w12.x * w3.y));
+    highp vec3 r = ((((textureLod(fs_u_history, vec2(t12.x, t0.y), 0.0).xyz * (w12.x * w0.y)) + (textureLod(fs_u_history, vec2(t0.x, t12.y), 0.0).xyz * (w0.x * w12.y))) + (textureLod(fs_u_history, t12, 0.0).xyz * (w12.x * w12.y))) + (textureLod(fs_u_history, vec2(t3.x, t12.y), 0.0).xyz * (w3.x * w12.y))) + (textureLod(fs_u_history, vec2(t12.x, t3.y), 0.0).xyz * (w12.x * w3.y));
     highp float wsum = ((((w12.x * w0.y) + (w0.x * w12.y)) + (w12.x * w12.y)) + (w3.x * w12.y)) + (w12.x * w3.y);
     highp vec3 param = r / vec3(wsum);
     return safe(param);
@@ -41062,7 +41062,7 @@ void main()
         {
             highp vec2 texel = clamp(base + vec2(float(x), float(y)), vec2(0.0), rsize - vec2(1.0));
             highp vec2 uv = (texel + vec2(0.5)) * px;
-            highp vec3 param = textureLod(u_current, uv, 0.0).xyz;
+            highp vec3 param = textureLod(fs_u_current, uv, 0.0).xyz;
             highp vec3 c = safe(param);
             highp vec2 d = (pos - ((texel + vec2(0.5)) - u.jitter.xy)) * ratio;
             highp float w = exp((-1.5) * dot(d, d));
@@ -41075,7 +41075,7 @@ void main()
             highp vec3 cy = to_ycocg(param_2);
             m1 += cy;
             m2 += (cy * cy);
-            highp float dd = textureLod(u_depth, uv, 0.0).x;
+            highp float dd = textureLod(fs_u_depth, uv, 0.0).x;
             if (dd < closest)
             {
                 closest = dd;
@@ -41097,7 +41097,7 @@ void main()
     highp vec2 prev_uv = vec2((prev_ndc.x * 0.5) + 0.5, 0.5 - (prev_ndc.y * 0.5));
     if (u.params.w > 0.5)
     {
-        prev_uv -= textureLod(u_motion, closest_uv, 0.0).xy;
+        prev_uv -= textureLod(fs_u_motion, closest_uv, 0.0).xy;
     }
     bool _679 = prev.w <= 0.0;
     bool _687;
@@ -41148,11 +41148,11 @@ void main()
     highp float reactive = 0.0;
     if (u.quant.y > 0.5)
     {
-        reactive = textureLod(u_reactive, vx_io_0, 0.0).x;
+        reactive = textureLod(fs_u_reactive, vx_io_0, 0.0).x;
     }
     if (u.quant.w > 0.5)
     {
-        reactive = max(reactive, textureLod(u_reactive_prev, prev_uv, 0.0).x);
+        reactive = max(reactive, textureLod(fs_u_reactive_prev, prev_uv, 0.0).x);
     }
     alpha = max(alpha, reactive * u.quant.z);
     highp vec3 param_9 = cur_w;
@@ -41979,12 +41979,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Post& post [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_57[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_hdr
-//! sampler 1 u_bloom
-//! sampler 2 u_exposure
+//! sampler 0 fs_u_hdr
+//! sampler 1 fs_u_bloom
+//! sampler 2 fs_u_exposure
 //! ubo 0 fs_Post
 precision mediump float;
 precision highp int;
@@ -41997,9 +41997,9 @@ layout(std140) uniform fs_Post
     highp vec4 params4;
 } post;
 
-uniform highp sampler2D u_hdr;
-uniform highp sampler2D u_bloom;
-uniform highp sampler2D u_exposure;
+uniform highp sampler2D fs_u_hdr;
+uniform highp sampler2D fs_u_bloom;
+uniform highp sampler2D fs_u_exposure;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_color;
@@ -42077,20 +42077,20 @@ void main()
     if (post.params4.y > 0.0)
     {
         highp vec2 off = (uv - vec2(0.5)) * (post.params4.y * 0.006000000052154064178466796875);
-        c = vec3(texture(u_hdr, uv + off).x, texture(u_hdr, uv).y, texture(u_hdr, uv - off).z);
+        c = vec3(texture(fs_u_hdr, uv + off).x, texture(fs_u_hdr, uv).y, texture(fs_u_hdr, uv - off).z);
     }
     else
     {
-        c = texture(u_hdr, uv).xyz;
+        c = texture(fs_u_hdr, uv).xyz;
     }
     if (post.params2.x > 0.0)
     {
-        c += (texture(u_bloom, uv).xyz * post.params2.x);
+        c += (texture(fs_u_bloom, uv).xyz * post.params2.x);
     }
     highp float exposure = post.params.x;
     if (post.params2.y > 0.5)
     {
-        highp float avg = exp2(textureLod(u_exposure, vec2(0.5), 0.0).x);
+        highp float avg = exp2(textureLod(fs_u_exposure, vec2(0.5), 0.0).x);
         exposure = 0.180000007152557373046875 / max(avg, 9.9999997473787516355514526367188e-06);
     }
     c *= (exposure * post.params2.z);
@@ -42902,10 +42902,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Upscale& u [[buffer(
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_58[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 0 u_ldr
+//! sampler 0 fs_u_ldr
 //! ubo 0 fs_Upscale
 precision mediump float;
 precision highp int;
@@ -42916,14 +42916,14 @@ layout(std140) uniform fs_Upscale
     highp vec4 size;
 } u;
 
-uniform highp sampler2D u_ldr;
+uniform highp sampler2D fs_u_ldr;
 
 in highp vec2 vx_io_0;
 layout(location = 0) out highp vec4 out_color;
 
 highp vec3 tap(highp vec2 uv)
 {
-    return textureLod(u_ldr, uv, 0.0).xyz;
+    return textureLod(fs_u_ldr, uv, 0.0).xyz;
 }
 
 highp vec3 catmull_rom(highp vec2 uv)
@@ -44390,12 +44390,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_59[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 2 u_env
-//! sampler 1 u_depth
-//! sampler 0 u_scene
+//! sampler 2 fs_u_env
+//! sampler 1 fs_u_depth
+//! sampler 0 fs_u_scene
 //! ubo 0 fs_Params
 precision mediump float;
 precision highp int;
@@ -44420,9 +44420,9 @@ layout(std140) uniform fs_Params
     highp vec4 wave_b[4];
 } u;
 
-uniform highp samplerCube u_env;
-uniform highp sampler2D u_depth;
-uniform highp sampler2D u_scene;
+uniform highp samplerCube fs_u_env;
+uniform highp sampler2D fs_u_depth;
+uniform highp sampler2D fs_u_scene;
 
 in highp vec2 vx_io_1;
 in highp vec3 vx_io_0;
@@ -44441,7 +44441,7 @@ highp vec3 sky_radiance(highp vec3 dir, highp float roughness)
         highp float c = cos(u.env.y);
         highp float s = sin(u.env.y);
         highp vec3 d = vec3((c * dir.x) + (s * dir.z), dir.y, ((-s) * dir.x) + (c * dir.z));
-        return textureLod(u_env, d, roughness * u.params.w).xyz * u.env.x;
+        return textureLod(fs_u_env, d, roughness * u.params.w).xyz * u.env.x;
     }
     highp float h = clamp(dir.y, -1.0, 1.0);
     highp vec3 _191;
@@ -44476,7 +44476,7 @@ highp float value_noise(highp vec2 p)
 void main()
 {
     highp vec2 suv = gl_FragCoord.xy * u.screen.xy;
-    highp float scene_depth = textureLod(u_depth, suv, 0.0).x;
+    highp float scene_depth = textureLod(fs_u_depth, suv, 0.0).x;
     if (gl_FragCoord.z > scene_depth)
     {
         discard;
@@ -44540,7 +44540,7 @@ void main()
     }
     highp float thickness = _475;
     highp vec2 ruv = suv + (((N.xz * u.params.x) * clamp(thickness, 0.0, 2.0)) / vec2(1.0 + (dist * 0.0500000007450580596923828125)));
-    highp float rdepth = textureLod(u_depth, ruv, 0.0).x;
+    highp float rdepth = textureLod(fs_u_depth, ruv, 0.0).x;
     bool _509 = rdepth < gl_FragCoord.z;
     bool _518;
     if (!_509)
@@ -44578,7 +44578,7 @@ void main()
         _539 = length(rbehind - vx_io_0);
     }
     highp float rthick = _539;
-    highp vec3 under = textureLod(u_scene, ruv, 0.0).xyz;
+    highp vec3 under = textureLod(fs_u_scene, ruv, 0.0).xyz;
     highp vec3 L = normalize(u.sun_dir.xyz);
     highp float sun_up = clamp(L.y * 4.0, 0.0, 1.0);
     highp vec3 param_4 = vec3(0.0, 1.0, 0.0);
@@ -46039,12 +46039,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant Params& u [[buffer(0
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_60[] =
 R"VICTUSMSL(#version 300 es
-//! sampler 2 u_env
-//! sampler 1 u_depth
-//! sampler 0 u_scene
+//! sampler 2 fs_u_env
+//! sampler 1 fs_u_depth
+//! sampler 0 fs_u_scene
 //! ubo 0 fs_Params
 precision mediump float;
 precision highp int;
@@ -46069,9 +46069,9 @@ layout(std140) uniform fs_Params
     highp vec4 wave_b[4];
 } u;
 
-uniform highp samplerCube u_env;
-uniform highp sampler2D u_depth;
-uniform highp sampler2D u_scene;
+uniform highp samplerCube fs_u_env;
+uniform highp sampler2D fs_u_depth;
+uniform highp sampler2D fs_u_scene;
 
 in highp vec2 vx_io_1;
 in highp vec3 vx_io_0;
@@ -46091,7 +46091,7 @@ highp vec3 sky_radiance(highp vec3 dir, highp float roughness)
         highp float c = cos(u.env.y);
         highp float s = sin(u.env.y);
         highp vec3 d = vec3((c * dir.x) + (s * dir.z), dir.y, ((-s) * dir.x) + (c * dir.z));
-        return textureLod(u_env, d, roughness * u.params.w).xyz * u.env.x;
+        return textureLod(fs_u_env, d, roughness * u.params.w).xyz * u.env.x;
     }
     highp float h = clamp(dir.y, -1.0, 1.0);
     highp vec3 _191;
@@ -46126,7 +46126,7 @@ highp float value_noise(highp vec2 p)
 void main()
 {
     highp vec2 suv = gl_FragCoord.xy * u.screen.xy;
-    highp float scene_depth = textureLod(u_depth, suv, 0.0).x;
+    highp float scene_depth = textureLod(fs_u_depth, suv, 0.0).x;
     if (gl_FragCoord.z > scene_depth)
     {
         discard;
@@ -46190,7 +46190,7 @@ void main()
     }
     highp float thickness = _475;
     highp vec2 ruv = suv + (((N.xz * u.params.x) * clamp(thickness, 0.0, 2.0)) / vec2(1.0 + (dist * 0.0500000007450580596923828125)));
-    highp float rdepth = textureLod(u_depth, ruv, 0.0).x;
+    highp float rdepth = textureLod(fs_u_depth, ruv, 0.0).x;
     bool _509 = rdepth < gl_FragCoord.z;
     bool _518;
     if (!_509)
@@ -46228,7 +46228,7 @@ void main()
         _539 = length(rbehind - vx_io_0);
     }
     highp float rthick = _539;
-    highp vec3 under = textureLod(u_scene, ruv, 0.0).xyz;
+    highp vec3 under = textureLod(fs_u_scene, ruv, 0.0).xyz;
     highp vec3 L = normalize(u.sun_dir.xyz);
     highp float sun_up = clamp(L.y * 4.0, 0.0, 1.0);
     highp vec3 param_4 = vec3(0.0, 1.0, 0.0);
@@ -46745,7 +46745,7 @@ vertex main0_out main0(constant Frame& frame [[buffer(0)]], uint gl_VertexIndex 
 }
 
 )VICTUSMSL";
-// essl rev=3
+// essl rev=4
 const char k_essl_61[] =
 R"VICTUSMSL(#version 300 es
 //! ubo 0 vs_Frame

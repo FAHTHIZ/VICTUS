@@ -114,7 +114,7 @@ def compile_one(unit, tmp):
 
 ESSL_PREFIX = {"Vertex": "vs_", "Fragment": "fs_"}
 # Bump when the GLSL ES conversion changes so cached shaders regenerate their ESSL only.
-ESSL_REV = 3
+ESSL_REV = 4
 
 
 def essl_for(unit, tmp):
@@ -135,8 +135,8 @@ def essl_from_spirv(spv, stage, tmp, stem):
 
     Conventions (engine/rhi/src/rhi_gles.hpp): vertex shaders get --fixup-clipspace and
     --flip-vert-y; vertex outputs and fragment inputs are renamed vx_io_<location> so the stages
-    link by name; uniform blocks get a per-stage prefix so same-named blocks in the two stages do
-    not have to match; SDL_GPU's sets (vertex samplers 0 / uniforms 1, fragment samplers 2 /
+    link by name; uniform blocks and samplers get a per-stage prefix so same-named ones in the two
+    stages do not have to match or share a unit; SDL_GPU's sets (vertex samplers 0 / uniforms 1, fragment samplers 2 /
     uniforms 3) become "//! sampler <binding> <name>" and "//! ubo <binding> <block>" lines.
     """
     refl = json.loads(run(["spirv-cross", str(spv), "--reflect"]))
@@ -160,7 +160,13 @@ def essl_from_spirv(spv, stage, tmp, stem):
         # ES 3.00 has no storage buffers: under VICTUS_ESSL shaders read storage slot N through a
         # "highp usampler2D vx_storage<N>" that the RHI fills with the buffer's bytes.
         m = re.fullmatch(r"vx_storage(\d+)(_\w*)?", t["name"])
-        header.append(f"//! storage {m.group(1)} {t['name']}" if m else f"//! sampler {t['binding']} {t['name']}")
+        # GLSL ES uniforms with one name are one uniform across the program, so a vertex and a
+        # fragment sampler sharing a name would share a texture unit: prefix them per stage too.
+        name = prefix + t["name"]
+        text, n = re.subn(rf"\b{re.escape(t['name'])}\b", name, text)
+        if n == 0:
+            return None, f"sampler {t['name']} not found in output"
+        header.append(f"//! storage {m.group(1)} {name}" if m else f"//! sampler {t['binding']} {name}")
     types = refl.get("types", {})
     for u in refl.get("ubos", []):
         block = types.get(u["type"], {}).get("name", u["name"])

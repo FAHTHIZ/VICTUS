@@ -4,7 +4,10 @@
 // conventions (clip space fixed up as spirv-cross --fixup-clipspace --flip-vert-y does, slots
 // declared with "//!" comments), so the expected images match what the SDL_GPU backends produce
 // from the equivalent SPIR-V.
+#include "../assets/skinned_model.hpp"
 #include "gpu_fixture.hpp"
+#include "victus/render/gpu_context.hpp"
+#include "victus/render/scene_renderer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -748,4 +751,95 @@ TEST_CASE("gles: skinned vertices read the joint palette from a storage buffer")
     REQUIRE(px2.ok());
     CHECK(test::channel(test::pixel(px2.value(), 4, 0, 0), 0) == 255);
     CHECK(test::pixel(px2.value(), 4, 3, 0) == 0xff000000u);
+}
+
+namespace {
+
+// One Low-tier frame of a lit cube on a plane, rendered by the scene renderer on CTX.
+std::vector<std::uint8_t> render_low_scene(render::GpuContext& ctx, std::uint32_t w, std::uint32_t h, std::string& error) {
+    auto& dev = ctx.device();
+    auto sr = render::SceneRenderer::create(ctx);
+    if (!sr) {
+        error = "scene renderer: " + sr.error().message;
+        return {};
+    }
+    auto cube = ctx.create_mesh(render::make_cube(), "gles_cube").value();
+    auto plane = ctx.create_mesh(render::make_plane({200, 200}), "gles_plane").value();
+    // A skinned column bent at its middle joint: the vertex stage reads the joint palette from a
+    // storage slot while pbr.frag reads its light lists from its own (distinct GL uniforms).
+    const assets::CookedModel model = test::make_skinned_column();
+    auto column = ctx.create_mesh(model.meshes[0].data, "gles_column").value();
+    const math::Mat4 palette[2] = {math::Mat4::identity(),
+                                   math::Mat4::translation({0, 1, 0}) *
+                                       math::Mat4::rotation(math::Quat::axis_angle({0, 0, 1}, 1.2f)) *
+                                       math::Mat4::translation({0, -1, 0})};
+    render::Material red;
+    red.base_color = {0.9f, 0.1f, 0.05f, 1};
+    rhi::TextureDesc td;
+    td.name = "gles_scene_target";
+    td.format = rhi::Format::RGBA8_UNORM;
+    td.width = w;
+    td.height = h;
+    td.usage = rhi::TextureUsageColorTarget | rhi::TextureUsageSampled;
+    auto target = dev.create_texture(td).value();
+    sr.value()->set_settings(render::RenderSettings::preset(render::QualityTier::Low));
+    const render::Camera3D cam = render::Camera3D::look_at({0, 4, 8}, {0, 0.5f, 0});
+    std::vector<std::uint8_t> px;
+    sr.value()->begin(cam, render::DirectionalLight{}, render::Environment{});
+    sr.value()->submit(plane, {}, math::Mat4::identity());
+    sr.value()->submit(cube, {}, math::Mat4::translation({0, 1, 0}));
+    sr.value()->submit_skinned(column, red, math::Mat4::translation({2.5f, 0, 0}), palette,
+                               math::Aabb{{1.2f, -0.3f, -0.3f}, {2.8f, 1.3f, 0.3f}});
+    auto cmd = dev.begin_commands();
+    auto st = sr.value()->render(cmd, target, w, h, rhi::Format::RGBA8_UNORM);
+    if (!st) error = "render: " + st.error().message;
+    cmd.submit_and_wait();
+    if (st) {
+        auto r = dev.read_texture(target);
+        if (r) px = std::move(r).value();
+        else error = "readback: " + r.error().message;
+    }
+    dev.destroy(target);
+    ctx.destroy(cube);
+    ctx.destroy(plane);
+    ctx.destroy(column);
+    return px;
+}
+
+} // namespace
+
+TEST_CASE("gles: the scene renderer draws the Low tier like Vulkan") {
+    VICTUS_REQUIRE_GLES_OR_SKIP();
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    constexpr std::uint32_t W = 192, H = 128;
+    auto c = render::GpuContext::create(*gles().device);
+    REQUIRE_MESSAGE(c.ok(), (c.ok() ? "" : c.error().message));
+    std::string err;
+    const auto got = render_low_scene(*c.value(), W, H, err);
+    REQUIRE_MESSAGE(err.empty(), err);
+    const auto ref = render_low_scene(*test::gpu().ctx, W, H, err);
+    REQUIRE_MESSAGE(err.empty(), err);
+    test::save_output("gles_scene_low_gles", W, H, got);
+    test::save_output("gles_scene_low_ref", W, H, ref);
+    REQUIRE(got.size() == ref.size());
+    int worst = 0;
+    double sum = 0;
+    std::size_t over8 = 0;
+    for (std::size_t i = 0; i < got.size(); ++i) {
+        if (i % 4 == 3) continue;
+        const int d = std::abs(int(got[i]) - int(ref[i]));
+        worst = std::max(worst, d);
+        sum += d;
+        over8 += d > 8 ? 1 : 0;
+    }
+    const double mean = sum / (double(got.size()) * 0.75);
+    MESSAGE("scene Low GLES vs " << test::gpu().device->capabilities().driver_name << ": max diff " << worst << ", mean "
+                                 << mean << ", channels > 8: " << over8 << "/" << got.size() / 4 * 3);
+    // Same rasteriser on CI (Mesa), different API: allow rounding, not structural differences.
+    CHECK(mean < 1.0);
+    CHECK(over8 * 100 <= got.size() / 4 * 3);
+    // The bent skinned column is on screen (reddish pixels), not collapsed by a wrong palette.
+    std::size_t red_px = 0;
+    for (std::size_t i = 0; i + 3 < got.size(); i += 4) red_px += (got[i] > 120 && got[i] > got[i + 1] + 60) ? 1 : 0;
+    CHECK(red_px > 100);
 }
