@@ -100,3 +100,58 @@ TEST_CASE("render graph validates misuse") {
         CHECK_FALSE(g.compile().ok());
     }
 }
+
+TEST_CASE("render graph resolves multisampled colour into a single-sample texture (ADR-0152)") {
+    rhi::TextureDesc ms = color_desc();
+    ms.sample_count = 4;
+    ms.usage = rhi::TextureUsageColorTarget;
+    rhi::TextureDesc ms_depth = ms;
+    ms_depth.format = rhi::Format::D32_FLOAT;
+    ms_depth.usage = rhi::TextureUsageDepthTarget;
+    SUBCASE("the resolve target is written by the pass and feeds later readers") {
+        RenderGraph g;
+        auto out = g.import_texture("out", {1, 1}, color_desc());
+        auto msaa = g.create_texture("msaa", ms);
+        auto depth = g.create_texture("depth_msaa", ms_depth);
+        auto hdr = g.create_texture("hdr", color_desc());
+        g.add_pass("forward", [&](PassBuilder& b) {
+            b.write_color_resolved(msaa, hdr);
+            b.write_depth(depth, rhi::LoadOp::Clear, 1.0f, false);
+        }, nullptr);
+        g.add_pass("compose", [&](PassBuilder& b) {
+            b.read(hdr);
+            b.write_color(out);
+        }, nullptr);
+        g.mark_output(out);
+        REQUIRE(g.compile().ok());
+        REQUIRE(g.info().executed_passes.size() == 2);
+        CHECK(g.info().executed_passes[0] == "forward");
+        CHECK(g.alias_slot(msaa) != g.alias_slot(hdr)); // different sample counts never alias
+    }
+    SUBCASE("mismatched resolve targets are rejected") {
+        RenderGraph g;
+        auto out = g.import_texture("out", {1, 1}, color_desc());
+        auto msaa = g.create_texture("msaa", ms);
+        auto small = g.create_texture("small", color_desc(32, 32));
+        g.add_pass("forward", [&](PassBuilder& b) { b.write_color_resolved(msaa, small); }, nullptr);
+        g.add_pass("compose", [&](PassBuilder& b) {
+            b.read(small);
+            b.write_color(out);
+        }, nullptr);
+        g.mark_output(out);
+        CHECK_FALSE(g.compile().ok());
+    }
+    SUBCASE("a single-sample source cannot resolve") {
+        RenderGraph g;
+        auto out = g.import_texture("out", {1, 1}, color_desc());
+        auto one = g.create_texture("one", color_desc());
+        auto hdr = g.create_texture("hdr", color_desc());
+        g.add_pass("forward", [&](PassBuilder& b) { b.write_color_resolved(one, hdr); }, nullptr);
+        g.add_pass("compose", [&](PassBuilder& b) {
+            b.read(hdr);
+            b.write_color(out);
+        }, nullptr);
+        g.mark_output(out);
+        CHECK_FALSE(g.compile().ok());
+    }
+}

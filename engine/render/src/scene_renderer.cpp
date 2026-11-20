@@ -469,6 +469,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.lod_error_pixels = 2.0f;
         s.shadow_lod_bias = 1;
         s.foliage_lod_bias = 1;
+        s.msaa_samples = 4;
         s.foliage_distance_scale = 0.7f;
         s.foliage_shadow_fraction = 0.5f;
         s.max_anisotropy = 2;
@@ -555,6 +556,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.force_lod = std::clamp(s.force_lod, -1, static_cast<int>(kMaxMeshLods) - 1);
     s.shadow_lod_bias = std::min(s.shadow_lod_bias, 3u);
     s.foliage_lod_bias = std::min(s.foliage_lod_bias, 3u);
+    s.msaa_samples = s.msaa_samples >= 8 ? 8u : s.msaa_samples >= 4 ? 4u : s.msaa_samples >= 2 ? 2u : 1u;
     s.foliage_distance_scale = std::isfinite(s.foliage_distance_scale) ? std::clamp(s.foliage_distance_scale, 0.25f, 1.0f) : 1.0f;
     s.foliage_shadow_fraction = std::isfinite(s.foliage_shadow_fraction) ? std::clamp(s.foliage_shadow_fraction, 0.0f, 1.0f) : 1.0f;
     s.shadow_lod_texels = std::isfinite(s.shadow_lod_texels) ? std::clamp(s.shadow_lod_texels, 0.0f, 8.0f) : 1.0f;
@@ -674,11 +676,13 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     if (!p) return std::move(p).error();
     r->opaque_cull_ = p.value();
     r->opaque_desc_ = opaque;
+    r->remember_forward(r->opaque_cull_, opaque);
     opaque.name = "pbr_double_sided";
     opaque.cull = rhi::CullMode::None;
     p = dev.create_pipeline(opaque);
     if (!p) return std::move(p).error();
     r->opaque_double_ = p.value();
+    r->remember_forward(r->opaque_double_, opaque);
     // Skinned variants: same state, extra skin stream and joint palette.
     rhi::PipelineDesc skinned = opaque;
     skinned.name = "pbr_skinned";
@@ -689,12 +693,14 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     p = dev.create_pipeline(skinned);
     if (!p) return std::move(p).error();
     r->skin_cull_ = p.value();
+    r->remember_forward(r->skin_cull_, skinned);
     r->skinned_desc_ = skinned;
     skinned.name = "pbr_skinned_double_sided";
     skinned.cull = rhi::CullMode::None;
     p = dev.create_pipeline(skinned);
     if (!p) return std::move(p).error();
     r->skin_double_ = p.value();
+    r->remember_forward(r->skin_double_, skinned);
     // Lightmapped static meshes (ADR-0122): the lightmap uv stream in slot 3.
     rhi::PipelineDesc lightmapped = opaque;
     lightmapped.name = "pbr_lightmapped";
@@ -705,12 +711,14 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     p = dev.create_pipeline(lightmapped);
     if (!p) return std::move(p).error();
     r->lightmap_cull_ = p.value();
+    r->remember_forward(r->lightmap_cull_, lightmapped);
     r->lightmap_desc_ = lightmapped;
     lightmapped.name = "pbr_lightmapped_double_sided";
     lightmapped.cull = rhi::CullMode::None;
     p = dev.create_pipeline(lightmapped);
     if (!p) return std::move(p).error();
     r->lightmap_double_ = p.value();
+    r->remember_forward(r->lightmap_double_, lightmapped);
 
     rhi::PipelineDesc prepass;
     prepass.name = "depth_prepass";
@@ -808,6 +816,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     p = dev.create_pipeline(sky);
     if (!p) return std::move(p).error();
     r->sky_pipeline_ = p.value();
+    r->remember_forward(r->sky_pipeline_, sky);
 
     rhi::PipelineDesc lines;
     lines.name = "debug_lines";
@@ -824,6 +833,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     p = dev.create_pipeline(lines);
     if (!p) return std::move(p).error();
     r->line_pipeline_ = p.value();
+    r->remember_forward(r->line_pipeline_, lines);
 
     // Particles: instanced billboards, no depth attachment (the shader samples scene depth).
     for (const bool additive : {false, true}) {
@@ -926,6 +936,7 @@ rhi::PipelineHandle SceneRenderer::blend_pipeline(MaterialBlend blend, std::uint
             return {};
         }
         blend_pipelines_[i] = *p;
+        remember_forward(*p, d);
     }
     return blend_pipelines_[i];
 }
@@ -940,7 +951,10 @@ rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, 
         if (surface_pipelines_.size() >= 64) {
             for (auto& [k, set] : surface_pipelines_)
                 for (auto pl : set)
-                    if (pl) ctx_.device().destroy(pl);
+                    if (pl) {
+                        forget_forward(pl);
+                        ctx_.device().destroy(pl);
+                    }
             surface_pipelines_.clear();
         }
         it = surface_pipelines_.emplace(key, std::array<rhi::PipelineHandle, 4 * kVertexVariants * 2>{}).first;
@@ -965,8 +979,66 @@ rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, 
             return {};
         }
         it->second[i] = *p;
+        remember_forward(*p, d);
     }
     return it->second[i];
+}
+
+namespace {
+std::uint64_t pipeline_key(rhi::PipelineHandle h) { return (std::uint64_t{h.generation} << 32) | h.index; }
+constexpr std::uint64_t kAlphaToCoverageBit = std::uint64_t{1} << 63;
+} // namespace
+
+void SceneRenderer::remember_forward(rhi::PipelineHandle pipeline, const rhi::PipelineDesc& desc) {
+    if (pipeline) forward_descs_[pipeline_key(pipeline)] = desc;
+}
+
+void SceneRenderer::forget_forward(rhi::PipelineHandle pipeline) {
+    const std::uint64_t key = pipeline_key(pipeline);
+    forward_descs_.erase(key);
+    for (const std::uint64_t k : {key, key | kAlphaToCoverageBit}) {
+        if (auto it = msaa_pipelines_.find(k); it != msaa_pipelines_.end()) {
+            if (it->second) ctx_.device().destroy(it->second);
+            msaa_pipelines_.erase(it);
+        }
+    }
+}
+
+rhi::PipelineHandle SceneRenderer::multisampled(rhi::PipelineHandle base, std::uint32_t samples, bool alpha_to_coverage) {
+    if (!base) return {};
+    if (samples != msaa_pipeline_samples_) {
+        for (auto& [k, pl] : msaa_pipelines_)
+            if (pl) ctx_.device().destroy(pl);
+        msaa_pipelines_.clear();
+        msaa_pipeline_samples_ = samples;
+    }
+    const std::uint64_t key = pipeline_key(base) | (alpha_to_coverage ? kAlphaToCoverageBit : 0u);
+    if (auto it = msaa_pipelines_.find(key); it != msaa_pipelines_.end()) return it->second;
+    rhi::PipelineHandle made{};
+    if (auto d = forward_descs_.find(pipeline_key(base)); d != forward_descs_.end()) {
+        rhi::PipelineDesc desc = d->second;
+        desc.name += alpha_to_coverage ? std::format("_msaa{}_a2c", samples) : std::format("_msaa{}", samples);
+        desc.sample_count = samples;
+        desc.alpha_to_coverage = alpha_to_coverage;
+        auto p = ctx_.device().create_pipeline(desc);
+        if (p) made = *p;
+        else VICTUS_LOG_ERROR("render", "multisampled pipeline: {}", p.error().message);
+    }
+    msaa_pipelines_.emplace(key, made); // failures are cached too (logged once)
+    return made;
+}
+
+std::uint32_t SceneRenderer::supported_msaa(std::uint32_t samples) {
+    while (samples > 1) {
+        std::int8_t& known = msaa_support_[std::min<std::uint32_t>(samples, 8u)];
+        if (known == 0) {
+            const auto& dev = ctx_.device();
+            known = dev.supports_samples(hdr_format_, samples) && dev.supports_samples(depth_format_, samples) ? 1 : -1;
+        }
+        if (known > 0) return samples;
+        samples /= 2;
+    }
+    return 1;
 }
 
 SceneRenderer::SceneRenderer(GpuContext& ctx) : ctx_(ctx), pool_(ctx.device()) {}
@@ -995,6 +1067,8 @@ SceneRenderer::~SceneRenderer() {
     for (auto& [k, set] : surface_pipelines_)
         for (auto pl : set)
             if (pl) d.destroy(pl);
+    for (auto& [k, pl] : msaa_pipelines_)
+        if (pl) d.destroy(pl);
     if (no_shadow_) d.destroy(no_shadow_);
     for (auto t : exposure_)
         if (t) d.destroy(t);
@@ -1644,6 +1718,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     // Temporal upscaling (ADR-0055): below output resolution the TAA resolve reconstructs and
     // accumulates at the output size, with a longer jitter cycle so every output pixel is visited.
     const bool upscale = taa && S.temporal_upscale && (rw < width || rh < height);
+    // MSAA (ADR-0152) replaces TAA's anti-aliasing; never both.
+    const std::uint32_t msaa = !taa && S.msaa_samples > 1 && S.debug_view == DebugView::None ? supported_msaa(S.msaa_samples) : 1u;
+    stats_.msaa_samples = msaa;
+    facts_.msaa_samples = msaa;
+    facts_.alpha_to_coverage = msaa > 1 && S.alpha_to_coverage;
     const float upscale_ratio = std::max(static_cast<float>(width) / static_cast<float>(rw),
                                          static_cast<float>(height) / static_cast<float>(rh));
     // Compact HDR (ADR-0129): shaders writing the R11G11B10 scene colour round stochastically to
@@ -2634,7 +2713,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     }
 
     const bool ssao = S.ssao && env_.ao_intensity > 0.0f && env_.ao_radius > 0.0f;
-    const bool prepass = S.depth_prepass || ssao;
+    const bool user_prepass = S.depth_prepass || ssao;
     const bool bloom = S.bloom && env_.bloom_intensity > 0.0f;
     const bool auto_exposure = S.auto_exposure && env_.auto_exposure;
     const bool linear_out = env_.linear_output || capture_mode_;
@@ -3168,11 +3247,26 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const RGTexture hdr = graph.create_texture("hdr_color", hdr_desc);
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
-    depth_desc.usage = rhi::TextureUsageDepthTarget |
-                       ((ssao || taa || occlusion || fog || clouds || precip_count > 0 || !particle_draws.empty() || !gpu_jobs.empty() || !decal_draws.empty() || !water_draws.empty())
-                            ? rhi::TextureUsageSampled
-                            : 0u);
+    const bool depth_sampled = ssao || taa || occlusion || fog || clouds || precip_count > 0 || !particle_draws.empty() ||
+                               !gpu_jobs.empty() || !decal_draws.empty() || !water_draws.empty();
+    depth_desc.usage = rhi::TextureUsageDepthTarget | (depth_sampled ? rhi::TextureUsageSampled : 0u);
+    // With MSAA the forward pass has its own multisampled depth, so the pre-pass provides the
+    // single-sample scene depth - needed only when a later pass samples or depth-tests it.
+    const bool prepass = user_prepass || (msaa > 1 && depth_sampled);
+    if (prepass && !will_prepass) facts_.prepass = true;
     const RGTexture depth = graph.create_texture("scene_depth", depth_desc);
+    // ADR-0152: the opaque forward pass renders into multisampled targets resolved into `hdr`;
+    // its depth is discarded (the pre-pass `depth` serves every later pass).
+    RGTexture hdr_ms{}, depth_ms{};
+    if (msaa > 1) {
+        rhi::TextureDesc ms = hdr_desc;
+        ms.sample_count = msaa;
+        ms.usage = rhi::TextureUsageColorTarget;
+        hdr_ms = graph.create_texture("hdr_color_msaa", ms);
+        ms.format = depth_format_;
+        ms.usage = rhi::TextureUsageDepthTarget;
+        depth_ms = graph.create_texture("scene_depth_msaa", ms);
+    }
 
     if (prepass) {
         graph.add_pass(
@@ -3185,7 +3279,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 for (const Batch& b : main_batches) {
                     const Draw* d = b.first;
                     // Alpha-tested and surface-shaded draws (which may discard): depth comes from the main pass.
-                    if (d->material.alpha_cutoff > 0.0f || d->material.surface_shader) continue;
+                    // With MSAA the main pass depth is multisampled and not sampled later, so surface-shaded
+                    // draws without an alpha test (terrain) are written here; alpha-tested ones are left out.
+                    if (d->material.alpha_cutoff > 0.0f || (d->material.surface_shader && msaa <= 1)) continue;
                     const rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_prepass_double_ : skin_prepass_cull_)
                                                                 : (d->material.double_sided ? prepass_double_ : prepass_cull_);
                     if (!(bound == want)) {
@@ -3314,6 +3410,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     // Without decals one forward pass draws both phases.
     auto forward_body = [&](PassContext& ctx, bool opaque_phase, bool blended_phase) {
             rhi::RenderPass& pass = *ctx.pass;
+            // Only the opaque forward pass is multisampled (and the blended phase when it shares it).
+            const bool ms = opaque_phase && msaa > 1;
+            const auto ms_pipe = [&](rhi::PipelineHandle p, bool a2c) { return ms ? multisampled(p, msaa, a2c) : p; };
+            const auto a2c_of = [&](const Material& m) {
+                return ms && S.alpha_to_coverage && m.alpha_cutoff > 0.0f && m.blend == MaterialBlend::Opaque;
+            };
             if (opaque_phase && env_.draw_sky) {
                 SkyUniforms sky{};
                 sky.inv_view_proj = inverse(view_proj);
@@ -3327,7 +3429,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     const float blur = std::isfinite(env_.sky_blur) ? std::clamp(env_.sky_blur, 0.0f, 1.0f) : 0.0f;
                     sky.env = {env_.environment_sun_disc ? 2.0f : 1.0f, blur * static_cast<float>(env_map->mip_count() - 1), env_intensity, env_rotation};
                 }
-                pass.bind_pipeline(sky_pipeline_);
+                pass.bind_pipeline(ms_pipe(sky_pipeline_, false));
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, sky);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 0, has_env ? env_map->cube() : ctx_.black_cube(), ctx_.linear_clamp());
                 pass.draw(3);
@@ -3367,7 +3469,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                              std::clamp(m.coverage_response, 0.0f, 1.0f)};
                 mat.uv_transform = {m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y};
                 for (std::size_t i = 0; i < 4; ++i) mat.custom[i] = m.shader_params[i];
-                mat.blend = {static_cast<float>(m.blend), std::clamp(m.occlusion_strength, 0.0f, 1.0f), 0, 0};
+                // blend.z: alpha to coverage (ADR-0152) - the cut-out becomes a coverage ramp.
+                mat.blend = {static_cast<float>(m.blend), std::clamp(m.occlusion_strength, 0.0f, 1.0f), a2c_of(m) ? 1.0f : 0.0f, 0};
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
                 auto pick = [](rhi::TextureHandle t, rhi::TextureHandle fallback) { return t ? t : fallback; };
                 const rhi::SamplerHandle tex_sampler = m.nearest_filter ? ctx_.nearest_repeat() : material_linear.value();
@@ -3424,7 +3527,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     if (const auto custom = surface_pipeline(d->material.surface_shader, variant, d->material.double_sided,
                                                              MaterialBlend::Opaque))
                         want = custom;
-                draw_batch(b, want, occlusion ? static_cast<int>(bi) : -1);
+                want = ms_pipe(want, a2c_of(d->material));
+                if (want) draw_batch(b, want, occlusion ? static_cast<int>(bi) : -1);
             }
             if (!blended_phase) return;
             // Blended geometry after every opaque draw (and the decals), far to near.
@@ -3435,10 +3539,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     if (const auto custom = surface_pipeline(d->material.surface_shader, vertex_variant(d), d->material.double_sided,
                                                              d->material.blend))
                         want = custom;
+                want = ms_pipe(want, false);
                 if (want) draw_batch(b, want);
             }
             if (!lines_.empty()) {
-                pass.bind_pipeline(line_pipeline_);
+                pass.bind_pipeline(ms_pipe(line_pipeline_, false));
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, view_proj);
                 pass.bind_vertex_buffer(0, line_buffer_);
                 pass.draw(static_cast<std::uint32_t>(lines_.size()));
@@ -3453,8 +3558,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (local_shadow_map.valid()) b.read(local_shadow_map);
             if (rain_map.valid()) b.read(rain_map);
             if (ao.valid()) b.read(ao);
-            b.write_color(hdr, rhi::LoadOp::Clear, env_.clear_color);
-            b.write_depth(depth, prepass ? rhi::LoadOp::Load : rhi::LoadOp::Clear, 1.0f);
+            if (msaa > 1) {
+                b.write_color_resolved(hdr_ms, hdr, rhi::LoadOp::Clear, env_.clear_color);
+                b.write_depth(depth_ms, rhi::LoadOp::Clear, 1.0f, false);
+            } else {
+                b.write_color(hdr, rhi::LoadOp::Clear, env_.clear_color);
+                b.write_depth(depth, prepass ? rhi::LoadOp::Load : rhi::LoadOp::Clear, 1.0f);
+            }
         },
         [&](PassContext& ctx) { forward_body(ctx, true, !split_forward); });
     if (split_forward && !decal_draws.empty()) {

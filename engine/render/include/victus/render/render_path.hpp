@@ -51,6 +51,8 @@ struct RenderPathFacts {
     bool half_precision_requested{false}, half_precision{false}; // FP16 BRDF maths (ADR-0137)
     bool taa{false}, taa_history{false}, temporal_upscale{false}, spatial_upscale{false}, fxaa{false};
     bool reactive_mask{false}; // ADR-0143: transparent effects wrote the TAA reactive mask
+    std::uint32_t msaa_samples{1};   // ADR-0152: samples of the opaque forward pass (1 = off)
+    bool alpha_to_coverage{false};   // ... with alpha-tested cut-outs as sample coverage
     bool sun_shadows_requested{false};
     std::uint32_t cascades{0}, cascade_resolution{0};
     bool ao_requested{false}, ssao{false};

@@ -217,6 +217,7 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("render-scale", "3D resolution scale 0.25..2, overriding the tier and project (e.g. 0.5 to test upscaling)")
         .option("taa", "temporal anti-aliasing and upscaling: on, off or auto (the tier's choice)", "auto")
         .option("reactive", "TAA reactive mask for particles, water and rain: on or off (ADR-0143)", "on")
+        .option("msaa", "MSAA of the opaque pass without TAA: off, 2, 4, 8 or auto (the tier's choice; ADR-0152)", "auto")
         .flag("fullscreen", "run fullscreen")
         .flag("sync-assets", "load textures and models on first use instead of in the background")
         .flag("no-hot-reload", "do not reload scripts, textures, models and audio when their files change")
@@ -284,6 +285,9 @@ int cmd_run(const std::vector<std::string>& a) {
     else if (taa != "auto") return error("--taa must be on, off or auto");
     if (const std::string reactive = p.get("reactive"); reactive == "off") o.reactive_mask = false;
     else if (reactive != "on") return error("--reactive must be on or off");
+    if (const std::string msaa = p.get("msaa"); msaa == "off" || msaa == "1") o.msaa_samples = 1u;
+    else if (msaa == "2" || msaa == "4" || msaa == "8") o.msaa_samples = static_cast<std::uint32_t>(std::stoul(msaa));
+    else if (msaa != "auto") return error("--msaa must be off, 2, 4, 8 or auto");
     o.saves = p.get("saves");
     auto r = player::run(o);
     if (!r) return error(r.error().message);

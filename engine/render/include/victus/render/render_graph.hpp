@@ -34,7 +34,13 @@ class PassBuilder {
 public:
     // Colour attachment. Clear starts a new version; Load depends on prior writers.
     void write_color(RGTexture t, rhi::LoadOp load = rhi::LoadOp::Clear, math::Color clear = {0, 0, 0, 1});
-    void write_depth(RGTexture t, rhi::LoadOp load = rhi::LoadOp::Clear, float clear_depth = 1.0f);
+    // Multisampled colour attachment `t` resolved at the end of the pass into the single-sample
+    // `resolve` (same format and size), which this pass writes in full. The samples of `t` are not
+    // kept (on tiled GPUs they never leave tile memory).
+    void write_color_resolved(RGTexture t, RGTexture resolve, rhi::LoadOp load = rhi::LoadOp::Clear,
+                              math::Color clear = {0, 0, 0, 1});
+    // `keep` false: the contents are discarded when the pass ends (no later pass may use them).
+    void write_depth(RGTexture t, rhi::LoadOp load = rhi::LoadOp::Clear, float clear_depth = 1.0f, bool keep = true);
     // Sampled read in shaders.
     void read(RGTexture t);
     // Pass has effects outside the graph (readback, presentation) and is never culled.
@@ -89,10 +95,12 @@ private:
     };
     struct Access {
         std::uint32_t resource;
-        enum Kind : std::uint8_t { Read, Color, Depth } kind;
+        enum Kind : std::uint8_t { Read, Color, Depth, Resolve } kind;
         rhi::LoadOp load{rhi::LoadOp::Clear};
         math::Color clear{};
         float clear_depth{1.0f};
+        std::uint32_t resolve{~0u}; // Color: resource it resolves into
+        bool keep{true};            // stored after the pass
     };
     struct Pass {
         std::string name;

@@ -441,6 +441,15 @@ struct RenderSettings {
     bool bloom{true};
     std::uint32_t bloom_levels{5};        // 1..8 mip levels
     bool fxaa{true};                      // ignored while TAA is active
+    // Multisample anti-aliasing of the opaque forward pass (ADR-0152): 1 (off), 2, 4 or 8 samples,
+    // used only without TAA and where the GPU supports the HDR and depth formats at that count.
+    // The pass renders into multisampled colour and depth that are resolved into the scene colour
+    // at its end (on tiled mobile GPUs the samples stay in tile memory); a depth pre-pass then
+    // provides the single-sample depth that decals, water, particles and rain sample. Low: 4.
+    std::uint32_t msaa_samples{1};
+    // With MSAA, alpha-tested materials turn their cut-out alpha into sample coverage, sharpened
+    // to about one pixel, instead of discarding whole pixels (anti-aliased leaf and grass edges).
+    bool alpha_to_coverage{true};
     // Spatial upscale (ADR-0066): below output resolution without temporal upscaling, tonemap and FXAA
     // run at render resolution and a final pass resamples to the output with a Catmull-Rom filter and
     // contrast-adaptive sharpening (RCAS), instead of stretching the HDR image bilinearly and running
@@ -627,6 +636,7 @@ struct SceneStats {
     bool temporal_upscale{false};      // ... reconstructed at output resolution from a lower render resolution
     bool spatial_upscale{false};       // ADR-0066: resampled to the output by the Catmull-Rom + RCAS pass
     bool sharpened{false};             // the upscale/sharpen pass ran this frame
+    std::uint32_t msaa_samples{1};     // ADR-0152: samples per pixel of the opaque forward pass this frame
     std::uint32_t irradiance_probes{0}; // baked probes of the irradiance volume used this frame (0 = none)
     math::Vec2 jitter{};               // sub-pixel jitter in render pixels
     float texture_mip_bias{0.0f};      // material texture LOD bias this frame (ADR-0141; < 0 when upscaling)
@@ -900,6 +910,12 @@ private:
     [[nodiscard]] rhi::PipelineHandle surface_pipeline(rhi::ShaderHandle fragment, std::uint32_t variant, bool double_sided,
                                                        MaterialBlend blend);
     [[nodiscard]] rhi::PipelineHandle blend_pipeline(MaterialBlend blend, std::uint32_t variant, bool double_sided);
+    // Forward pipelines remember their description so multisampled (and alpha-to-coverage)
+    // copies can be made on first use (ADR-0152). An unknown base gives an invalid handle.
+    void remember_forward(rhi::PipelineHandle pipeline, const rhi::PipelineDesc& desc);
+    void forget_forward(rhi::PipelineHandle pipeline);
+    [[nodiscard]] rhi::PipelineHandle multisampled(rhi::PipelineHandle base, std::uint32_t samples, bool alpha_to_coverage);
+    [[nodiscard]] std::uint32_t supported_msaa(std::uint32_t samples);
     [[nodiscard]] const rhi::PipelineDesc& variant_desc(std::uint32_t variant) const noexcept;
     [[nodiscard]] Status ensure_exposure_textures();
     [[nodiscard]] Status ensure_history(std::uint32_t index, std::uint32_t width, std::uint32_t height);
@@ -932,6 +948,10 @@ private:
     std::unordered_map<std::uint64_t, std::array<rhi::PipelineHandle, 4 * kVertexVariants * 2>> surface_pipelines_;
     std::unordered_set<std::uint64_t> surface_failed_; // shaders whose pipeline failed (logged once)
     std::array<rhi::PipelineHandle, 2 * kVertexVariants * 2> blend_pipelines_{}; // [additive][variant][double_sided], on first use
+    std::unordered_map<std::uint64_t, rhi::PipelineDesc> forward_descs_;   // by pipeline handle
+    std::unordered_map<std::uint64_t, rhi::PipelineHandle> msaa_pipelines_; // by base handle, bit 63: alpha to coverage
+    std::uint32_t msaa_pipeline_samples_{0};
+    std::array<std::int8_t, 9> msaa_support_{}; // by sample count: 0 unknown, 1 yes, -1 no
     std::optional<double> time_;
     RenderPathFacts facts_;
     RenderPathReport path_;

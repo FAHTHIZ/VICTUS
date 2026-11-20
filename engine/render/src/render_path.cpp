@@ -144,6 +144,14 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
     else if (f.linear_output) add("spatial_upscale", PathState::Off, f.capture_mode ? PathReason::CaptureMode : PathReason::Scene, "linear output");
     else add("spatial_upscale", PathState::Off, by(S.spatial_upscale == tier.spatial_upscale), "bilinear upscale");
 
+    // ADR-0152: multisampled opaque pass where TAA is off.
+    if (f.msaa_samples > 1)
+        add("msaa", PathState::Active, PathReason::None,
+            std::format("{}x{}", f.msaa_samples, f.alpha_to_coverage ? ", alpha to coverage" : ""));
+    else if (f.taa || S.taa) add("msaa", PathState::Off, PathReason::Replaced, "TAA resolves edges");
+    else if (S.msaa_samples <= 1) add("msaa", PathState::Off, by(S.msaa_samples == tier.msaa_samples), "single-sample forward pass");
+    else if (S.debug_view != DebugView::None) add("msaa", PathState::Off, PathReason::NotNeeded, "debug view");
+    else add("msaa", PathState::Off, PathReason::Unsupported, "sample count unsupported for the scene formats");
     if (f.fxaa) add("fxaa", PathState::Active, PathReason::None, "");
     else if (f.taa) add("fxaa", PathState::Off, PathReason::Replaced, "TAA resolves edges");
     else if (f.linear_output) add("fxaa", PathState::Off, f.capture_mode ? PathReason::CaptureMode : PathReason::Scene, "linear output");
