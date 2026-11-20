@@ -113,8 +113,11 @@ vec3 hdr_quantize(vec3 c, float frame) {
     c = clamp(c, vec3(0.0), vec3(64512.0));
     ivec3 e;
     frexp(max(c, vec3(1e-30)), e); // c = m * 2^e with m in [0.5, 1)
-    vec3 ulp = exp2(vec3(max(e - 1, ivec3(-14))) - vec3(6.0, 6.0, 5.0));
-    return floor(c / ulp + n) * ulp;
+    // Scale by exact powers of two with ldexp, not exp2 and a division: Metal compiles with fast
+    // math by default, where exp2 and division are approximate, so the result was not exactly
+    // representable and truncating stores biased it dark again.
+    ivec3 sh = max(e - 1, ivec3(-14)) - ivec3(6, 6, 5);
+    return ldexp(floor(ldexp(c, -sh) + n), sh);
 }
 layout(set = 3, binding = 1) uniform Material {
     vec4 base_color;
