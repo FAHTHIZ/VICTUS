@@ -114,7 +114,7 @@ def compile_one(unit, tmp):
 
 ESSL_PREFIX = {"Vertex": "vs_", "Fragment": "fs_"}
 # Bump when the GLSL ES conversion changes so cached shaders regenerate their ESSL only.
-ESSL_REV = 2
+ESSL_REV = 3
 
 
 def essl_for(unit, tmp):
@@ -157,7 +157,10 @@ def essl_from_spirv(spv, stage, tmp, stem):
     prefix = ESSL_PREFIX[stage]
     header = []
     for t in refl.get("textures", []):
-        header.append(f"//! sampler {t['binding']} {t['name']}")
+        # ES 3.00 has no storage buffers: under VICTUS_ESSL shaders read storage slot N through a
+        # "highp usampler2D vx_storage<N>" that the RHI fills with the buffer's bytes.
+        m = re.fullmatch(r"vx_storage(\d+)(_\w*)?", t["name"])
+        header.append(f"//! storage {m.group(1)} {t['name']}" if m else f"//! sampler {t['binding']} {t['name']}")
     types = refl.get("types", {})
     for u in refl.get("ubos", []):
         block = types.get(u["type"], {}).get("name", u["name"])

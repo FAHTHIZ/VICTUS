@@ -14,10 +14,22 @@ layout(location = 10) in vec4 in_prev_row2;
 layout(location = 11) in uvec4 in_joints;
 layout(location = 12) in vec4 in_weights;
 layout(location = 13) in vec4 in_params; // x: current palette base, y: previous palette base
-#ifdef VICTUS_MSL
+#if defined(VICTUS_ESSL)
+// GLSL ES 3.00 has no storage buffers: the RHI mirrors the palette into an RGBA32UI texture
+// (1024 texels of 16 bytes per row, four texels per matrix).
+layout(set = 0, binding = 15) uniform highp usampler2D vx_storage0;
+vec4 joint_column(uint t) { return uintBitsToFloat(texelFetch(vx_storage0, ivec2(int(t & 1023u), int(t >> 10u)), 0)); }
+mat4 joint_matrix(uint i) {
+    uint t = i * 4u;
+    return mat4(joint_column(t), joint_column(t + 1u), joint_column(t + 2u), joint_column(t + 3u));
+}
+#define JOINT(i) joint_matrix(i)
+#elif defined(VICTUS_MSL)
 layout(std430, set = 0, binding = 1) readonly buffer Joints { mat4 joints[]; } palette;
+#define JOINT(i) palette.joints[i]
 #else
 layout(std430, set = 0, binding = 0) readonly buffer Joints { mat4 joints[]; } palette;
+#define JOINT(i) palette.joints[i]
 #endif
 layout(set = 1, binding = 0) uniform Frame {
     mat4 view_proj;
@@ -28,14 +40,14 @@ layout(location = 1) out vec4 v_previous;
 invariant gl_Position;
 void main() {
     uint base = uint(in_params.x + 0.5);
-    mat4 skin = in_weights.x * palette.joints[base + in_joints.x] + in_weights.y * palette.joints[base + in_joints.y] +
-                in_weights.z * palette.joints[base + in_joints.z] + in_weights.w * palette.joints[base + in_joints.w];
+    mat4 skin = in_weights.x * JOINT(base + in_joints.x) + in_weights.y * JOINT(base + in_joints.y) +
+                in_weights.z * JOINT(base + in_joints.z) + in_weights.w * JOINT(base + in_joints.w);
     mat4 model = mat4(in_model0, in_model1, in_model2, in_model3);
     vec4 world = model * (skin * vec4(in_pos, 1.0));
     gl_Position = frame.view_proj * world;
     uint pb = uint(in_params.y + 0.5);
-    mat4 prev_skin = in_weights.x * palette.joints[pb + in_joints.x] + in_weights.y * palette.joints[pb + in_joints.y] +
-                     in_weights.z * palette.joints[pb + in_joints.z] + in_weights.w * palette.joints[pb + in_joints.w];
+    mat4 prev_skin = in_weights.x * JOINT(pb + in_joints.x) + in_weights.y * JOINT(pb + in_joints.y) +
+                     in_weights.z * JOINT(pb + in_joints.z) + in_weights.w * JOINT(pb + in_joints.w);
     vec4 p = prev_skin * vec4(in_pos, 1.0);
     vec3 prev_world = vec3(dot(in_prev_row0, p), dot(in_prev_row1, p), dot(in_prev_row2, p));
     v_current = frame.prev_view_proj * world;

@@ -519,7 +519,7 @@ TEST_CASE("gles: every built-in shader with GLSL ES compiles on the device") {
         }
     }
     MESSAGE(compiled << " built-in shaders compiled as GLSL ES 3.00, " << without << " have none yet");
-    CHECK(compiled >= 44); // 55 graphics shaders; the rest need ES 3.00 rewrites (ADR-0144)
+    CHECK(compiled >= 48); // 55 graphics shaders; the rest need ES 3.00 rewrites (ADR-0144)
 }
 
 TEST_CASE("gles: built-in fullscreen pass matches the SDL_GPU backend") {
@@ -644,4 +644,108 @@ TEST_CASE("gles: sky with compact-HDR rounding matches the SDL_GPU backend") {
     MESSAGE("sky GLES vs SDL_GPU: " << exact << "/" << channels << " channels identical, worst relative diff " << worst);
     CHECK(unquantised == 0);
     CHECK(worst < 0.04); // one R11G11B10 step is 1/64 relative; the noise may round either way
+}
+
+TEST_CASE("gles: skinned vertices read the joint palette from a storage buffer") {
+    VICTUS_REQUIRE_GLES_OR_SKIP();
+    auto& dev = *gles().device;
+    auto vs = render::create_builtin_shader(dev, "mesh_skinned.vert");
+    REQUIRE_MESSAGE(vs.ok(), (vs.ok() ? "" : vs.error().message));
+    rhi::ShaderDesc fd;
+    fd.name = "gles_skin_fs";
+    fd.stage = rhi::ShaderStage::Fragment;
+    fd.glsl_es = "#version 300 es\nprecision highp float;\nin vec3 vx_io_0;\nlayout(location = 0) out vec4 o;\n"
+                 "void main() { o = vec4(1.0, 0.0, vx_io_0.z, 1.0); }\n";
+    auto fs = dev.create_shader(fd);
+    REQUIRE_MESSAGE(fs.ok(), (fs.ok() ? "" : fs.error().message));
+    rhi::PipelineDesc p;
+    p.name = "gles_skin";
+    p.vertex = vs.value();
+    p.fragment = fs.value();
+    p.cull = rhi::CullMode::None;
+    p.vertex_buffers = {{0, 48, false}, {1, 112, true}, {2, 28, false}};
+    p.attributes = {{0, 0, rhi::VertexFormat::Float3, 0},    {1, 0, rhi::VertexFormat::Float3, 12},
+                    {2, 0, rhi::VertexFormat::Float2, 24},   {3, 0, rhi::VertexFormat::Float4, 32},
+                    {4, 1, rhi::VertexFormat::Float4, 0},    {5, 1, rhi::VertexFormat::Float4, 16},
+                    {6, 1, rhi::VertexFormat::Float4, 32},   {7, 1, rhi::VertexFormat::Float4, 48},
+                    {8, 1, rhi::VertexFormat::Float4, 64},   {9, 1, rhi::VertexFormat::Float4, 80},
+                    {10, 1, rhi::VertexFormat::Float4, 96},  {11, 2, rhi::VertexFormat::UShort4, 0},
+                    {12, 2, rhi::VertexFormat::Float4, 8},   {13, 2, rhi::VertexFormat::UByte4Norm, 24}};
+    p.color_targets = {{rhi::Format::RGBA8_UNORM}};
+    auto pipe = dev.create_pipeline(p);
+    REQUIRE_MESSAGE(pipe.ok(), (pipe.ok() ? "" : pipe.error().message));
+
+    // Quad over the left half of clip space; the skin moves it to the right half.
+    std::vector<float> verts;
+    for (auto [x, y] : {std::pair{-1.0f, -1.0f}, {0.0f, -1.0f}, {0.0f, 1.0f}, {-1.0f, 1.0f}})
+        verts.insert(verts.end(), {x, y, 0.5f, 0, 0, 1, 0, 0, 1, 0, 0, 1});
+    struct Skin {
+        std::uint16_t joints[4];
+        float weights[4];
+        std::uint8_t color[4];
+    };
+    static_assert(sizeof(Skin) == 28);
+    const std::vector<Skin> skin(4, Skin{{1, 0, 0, 0}, {1, 0, 0, 0}, {255, 255, 255, 255}});
+    // Identity model and normal matrices; normal0.w is the palette base (300 matrices = texel
+    // 1200, in the data texture's second row).
+    const std::vector<float> inst = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 300, 0, 1, 0, 0, 0, 0, 1, 0};
+    std::vector<float> palette(400 * 16, 0.0f);
+    auto translate = [&](std::size_t m, float tx) {
+        float* a = palette.data() + m * 16;
+        a[0] = a[5] = a[10] = a[15] = 1.0f;
+        a[12] = tx;
+    };
+    translate(300, -5.0f); // joint 0 of the instance: unused, off screen if indexed by mistake
+    translate(301, 1.0f);  // joint 1
+    auto vb = buffer(verts, rhi::BufferUsageVertex);
+    auto ib = buffer(kQuadIndices, rhi::BufferUsageIndex);
+    auto ibuf = buffer(inst, rhi::BufferUsageVertex);
+    auto sb = buffer(skin, rhi::BufferUsageVertex);
+    auto pal = buffer(palette, rhi::BufferUsageStorageRead);
+    const auto rt = target(4, 2, rhi::Format::RGBA8_UNORM);
+    float view_proj[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    auto cmd = dev.begin_commands();
+    rhi::RenderPassDesc rp;
+    rp.colors = {{rt}};
+    auto pass = cmd.begin_render_pass(rp);
+    REQUIRE(pass.active());
+    pass.bind_pipeline(pipe.value());
+    cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, view_proj, sizeof view_proj);
+    pass.bind_vertex_buffer(0, vb);
+    pass.bind_vertex_buffer(1, ibuf);
+    pass.bind_vertex_buffer(2, sb);
+    pass.bind_index_buffer(ib, rhi::IndexType::U16);
+    pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, pal);
+    pass.draw_indexed(6, 1, 0, 0, 0);
+    pass.end();
+    cmd.submit_and_wait();
+    auto px = dev.read_texture(rt);
+    REQUIRE(px.ok());
+    for (std::uint32_t y = 0; y < 2; ++y) {
+        CHECK(test::pixel(px.value(), 4, 0, y) == 0xff000000u);
+        CHECK(test::pixel(px.value(), 4, 1, y) == 0xff000000u);
+        CHECK(test::channel(test::pixel(px.value(), 4, 2, y), 0) == 255);
+        CHECK(test::channel(test::pixel(px.value(), 4, 3, y), 0) == 255);
+    }
+    // A partial upload into the second row moves the quad back.
+    translate(301, 0.0f);
+    auto up = dev.begin_commands();
+    up.upload_buffer(pal, 301 * 64, {reinterpret_cast<const std::uint8_t*>(palette.data() + 301 * 16), 64});
+    up.submit_and_wait();
+    auto cmd2 = dev.begin_commands();
+    auto pass2 = cmd2.begin_render_pass(rp);
+    pass2.bind_pipeline(pipe.value());
+    cmd2.push_uniforms(rhi::ShaderStage::Vertex, 0, view_proj, sizeof view_proj);
+    pass2.bind_vertex_buffer(0, vb);
+    pass2.bind_vertex_buffer(1, ibuf);
+    pass2.bind_vertex_buffer(2, sb);
+    pass2.bind_index_buffer(ib, rhi::IndexType::U16);
+    pass2.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, pal);
+    pass2.draw_indexed(6, 1, 0, 0, 0);
+    pass2.end();
+    cmd2.submit_and_wait();
+    auto px2 = dev.read_texture(rt);
+    REQUIRE(px2.ok());
+    CHECK(test::channel(test::pixel(px2.value(), 4, 0, 0), 0) == 255);
+    CHECK(test::pixel(px2.value(), 4, 3, 0) == 0xff000000u);
 }
