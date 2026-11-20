@@ -972,6 +972,32 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences.** Volumes ignore rotation and have no bottom (bodies below the surface anywhere in the footprint are in the water). Reflections show only the sky/environment, not scene objects; water receives no shadows and writes no TAA motion vectors. Buoyancy samples a single plane per body (long boats see one slope), uses Jolt's bounding-box volume for capsules/cylinders, and ignores 2D bodies and ragdoll bones. The editor preview animates with wall-clock time when the simulation clock is not running.
 
+## ADR-0142 — Temporal upscaler tuning: wider clip box and reconstruction kernel
+
+- Status: Accepted (2026-11-20)
+- Context: after the mip bias (ADR-0141), the half-resolution TAA upscale of the photoreal scene still scored mean FLIP 0.0515 against native, with paving and brick detail softer than native. In the upscaler, the variance clip box comes from a 3x3 neighbourhood of render texels, which covers about 6x6 output pixels at 2x. With the native TAA width (gamma 1.25), that box clips away detail the history had rebuilt from earlier jitter positions. FSR2 and Arm ASR avoid the same loss with locks and a looser, depth-aware rectification ([Arm ASR](https://github.com/arm/accuracy-super-resolution-generic-library)). Before porting those passes, the existing knobs were measured.
+- Change, in the upscale path only (native TAA and the goldens are unchanged):
+  - The clip gamma goes from 1.25 to 2.0.
+  - The reconstruction Gaussian goes from `exp(-2.29 d^2)` to `exp(-1.5 d^2)` (in output pixels).
+  - The minimum current-frame weight between jitter hits goes from 0.15 to 0.3 of `taa_blend`.
+- Measurements (lavapipe, Ultra, 640x360, 60 frames, scale 0.5, mean LDR-FLIP against native TAA; temporary uniform knobs, since removed):
+
+  | Variant | Photoreal static | Photoreal pan | Exterior | Interior | Effects (worst tile) |
+  |---|---|---|---|---|---|
+  | ADR-0141 (gamma 1.25, k 2.29, min 0.15) | 0.0515 | 0.0520 | 0.0194 | 0.0148 | 0.0200 (0.082) |
+  | gamma 1.5 | 0.0457 | 0.0483 | | | |
+  | gamma 2.0 | 0.0410 | 0.0456 | 0.0194 | 0.0134 | 0.0206 (0.099) |
+  | gamma 2.5 | 0.0398 | | | | |
+  | gamma 2.0, k 1.5, min 0.3 (adopted) | 0.0423 | 0.0438 | 0.0187 | 0.0137 | 0.0198 (0.089) |
+  | adopted + RCAS sharpen 0.3 | 0.0404 | | | | |
+
+  Other single knobs at scale 0.5 on static photoreal: k 1.5 gives 0.0507, k 3.5 gives 0.0540, min 0.05 gives 0.0526, min 0.3 gives 0.0505, RCAS 0.5 gives 0.0479 (temporal error +18 %). The pan run is a temporary copy of the photoreal scene with a Luau script that swings the camera 1.2 m sideways while it keeps looking at the scene. The adopted set is best or close to best on every scene. It also has the lowest temporal error of the gamma 2 variants (0.00250 against 0.00354 on static photoreal), so the wider box does not add shimmer. Plain gamma 2.5 scores lower on the static scene but was not adopted, because a wider box keeps more stale history once content moves.
+- Gates:
+  - `victus_reference_scenes` now renders photoreal at `--render-scale 0.5` with and without TAA. It requires `temporal_upscale` to be active and the upscaled FLIP against the golden to stay below 3/4 of the bilinear FLIP (lavapipe at 320x180: 0.049 against 0.077).
+  - The GPU disocclusion and ghosting tests still pass (uncovered pixel 0).
+  - The hard-edged cube test moves from 0.76 to 0.97 mean abs diff against native (limit 1.30), because the wider kernel softens a pure black-to-white edge slightly.
+- Consequences: the half-resolution upscale now beats the earlier 67 % upscale (0.0461) and comes close to native on textured content. The effects scene's worst tile grew slightly (0.082 to 0.089), because particles and water move without motion vectors. That is what FSR2's reactive mask exists for, and it is the next item. RCAS after TAAU (`RenderSettings::sharpen`) is left to projects: it lowers FLIP but raises shimmer.
+
 ## ADR-0141 — Texture mip bias for temporal upscaling; Arm ASR evaluation
 
 - Status: Accepted (2026-11-20)

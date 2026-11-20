@@ -267,7 +267,7 @@ TEST_CASE("gpu: temporal upscaling reconstructs closer to native resolution than
     CHECK(upscaled.renderer->stats().render_width == W / 2);
     const double d_bil = mean_abs_diff(ref, bil), d_up = mean_abs_diff(ref, up);
     MESSAGE("mean abs diff to native TAA: bilinear " << d_bil << ", temporal upscale " << d_up);
-    CHECK(d_up < d_bil * 0.6); // lavapipe: bilinear 2.17, temporal 0.76
+    CHECK(d_up < d_bil * 0.6); // lavapipe: bilinear 2.17, temporal 0.97 (0.76 before the ADR-0142 kernel)
     CHECK(red(up, W / 2, H / 2) > 240);
     CHECK(red(up, 4, 4) < 8);
     // Static image: consecutive converged frames barely change (no shimmering from the long cycle).

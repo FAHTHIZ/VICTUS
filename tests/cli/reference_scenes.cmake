@@ -97,6 +97,38 @@ foreach(scene exterior interior effects photoreal)
     else()
         message(STATUS "${scene}: device has no shaderFloat16, FP16 golden check skipped")
     endif()
+    # Temporal upscaling (ADR-0141/0142): photoreal at half resolution, TAA-upscaled vs the same
+    # scale without TAA (bilinear), both against the native golden. Gated relative to bilinear so
+    # another rasteriser does not need new limits; lavapipe: upscaled 0.049, bilinear 0.077.
+    if(scene STREQUAL "photoreal")
+        capture(${scene} ultra "${WORK}/${scene}_up50" --render-scale 0.5)
+        capture(${scene} ultra "${WORK}/${scene}_bil50" --render-scale 0.5 --taa off)
+        foreach(v up50 bil50)
+            execute_process(COMMAND "${VICTUS_CLI}" compare "${golden}/${scene}" "${WORK}/${scene}_${v}"
+                                    --json "${WORK}/${scene}_${v}.compare.json"
+                            RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+            file(READ "${WORK}/${scene}_${v}.compare.json" report)
+            string(JSON flip_${v} GET "${report}" flip_mean)
+        endforeach()
+        file(READ "${WORK}/${scene}_up50.path.json" up_json)
+        feature_state("${up_json}" temporal_upscale st)
+        if(NOT st STREQUAL "active")
+            message(FATAL_ERROR "${scene}: --render-scale 0.5 should temporally upscale, temporal_upscale is ${st}")
+        endif()
+        if(flip_up50 GREATER_EQUAL 1 OR flip_bil50 LESS_EQUAL 0)
+            message(FATAL_ERROR "${scene}: bad upscale FLIP values ${flip_up50} / ${flip_bil50}")
+        endif()
+        # CMake has no float math: compare FLIP x 10000 as integers.
+        string(REGEX REPLACE "^0\\.([0-9][0-9][0-9][0-9]).*" "\\1" up_i "${flip_up50}0000")
+        string(REGEX REPLACE "^0\\.([0-9][0-9][0-9][0-9]).*" "\\1" bil_i "${flip_bil50}0000")
+        math(EXPR up_i "1${up_i} - 10000")
+        math(EXPR bil_i "1${bil_i} - 10000")
+        math(EXPR limit_i "${bil_i} * 3 / 4")
+        if(up_i GREATER limit_i)
+            message(FATAL_ERROR "${scene}: temporal upscale FLIP ${flip_up50} is not below 3/4 of bilinear ${flip_bil50}")
+        endif()
+        string(APPEND summary " ${scene}: 50% upscale FLIP ${flip_up50} (bilinear ${flip_bil50});")
+    endif()
     # Low vs ultra: recorded for the log, not gated (it measures what the low tier gives up).
     capture(${scene} low "${WORK}/${scene}_low")
     execute_process(COMMAND "${VICTUS_CLI}" compare "${WORK}/${scene}" "${WORK}/${scene}_low"
