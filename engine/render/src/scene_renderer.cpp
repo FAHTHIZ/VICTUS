@@ -2528,8 +2528,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     lighting.cluster_depth = {clusters.z_near, static_cast<float>(clusters.grid.slices) / std::log(clusters.z_far / clusters.z_near), 0, 0};
     lighting.shadow_params = {1.0f / static_cast<float>(atlas_size), 0.0004f, kShadowNormalBiasTexels,
                               static_cast<float>(cascade_count_)};
+    // w: the lightmap alpha is a shadowmask for this sun (ADR-0131).
+    const bool shadowmask = env_.lightmap && sun_.shadows && sun_.intensity > 0.0f &&
+                            math::length(env_.lightmap_shadowmask_direction) > 0.5f &&
+                            math::dot(normalize(env_.lightmap_shadowmask_direction), normalize(sun_.direction)) > 0.99985f;
     lighting.cascade_params = {S.soft_shadows ? (S.fast_soft_shadows ? 2.0f : 1.0f) : 0.0f,
-                               1.0f / static_cast<float>(atlas_tiles), kCascadeTransition, 0.0f};
+                               1.0f / static_cast<float>(atlas_tiles), kCascadeTransition, shadowmask ? 1.0f : 0.0f};
     lighting.cascade_splits = {cascade_splits_[0], cascade_splits_[1], cascade_splits_[2], cascade_splits_[3]};
     lighting.cascade_texel = {cascade_texel_[0], cascade_texel_[1], cascade_texel_[2], cascade_texel_[3]};
     {

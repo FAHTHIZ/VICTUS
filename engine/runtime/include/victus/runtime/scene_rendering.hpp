@@ -239,6 +239,8 @@ public:
     // The directional atlas of the lightmap at `path` (ADR-0130), loaded with lightmap(); invalid
     // when the bake has none.
     [[nodiscard]] rhi::TextureHandle lightmap_direction(std::string_view path);
+    // Direction of the sun the lightmap's shadowmask was baked for (ADR-0131); zero when none.
+    [[nodiscard]] math::Vec3 lightmap_shadowmask_direction(std::string_view path);
     [[nodiscard]] const render::GpuMesh* lightmapped_mesh(std::string_view path, scene::Scene& scene, scene::Entity entity);
     // Drops loaded lightmaps (after a re-bake) so the next request reads the file again.
     void evict_lightmaps();
@@ -284,6 +286,7 @@ private:
     struct LightmapEntry {
         rhi::TextureHandle texture;
         rhi::TextureHandle direction; // directional atlas (ADR-0130); invalid for non-directional bakes
+        math::Vec3 shadowmask_direction{0, 0, 0}; // sun the atlas alpha is a shadowmask for (ADR-0131)
         std::vector<render::LightmapFileEntry> entries; // the file's UV sets (atlas pixels released after upload)
         std::unordered_map<Uuid, std::optional<render::GpuMesh>, UuidHash> meshes; // nullopt = no entry or stale
     };

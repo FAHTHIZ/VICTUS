@@ -40,6 +40,12 @@ struct LightmapSettings {
     // Directional lightmap (ADR-0130): also bake the dominant direction of the incoming light so
     // normal maps and per-pixel normals still shade baked light (LightmapBake::direction).
     bool directional{true};
+    // Baked sun shadowmask (ADR-0131): the visibility of the first shadow-casting directional
+    // light is stored in the atlas alpha, so static geometry keeps sun shadows beyond the realtime
+    // shadow distance at no per-frame cost. `sun_angular_radius` (radians) softens its edges.
+    bool shadowmask{true};
+    std::uint32_t shadowmask_samples{32};
+    float sun_angular_radius{0.01f};
     std::uint32_t dilation{4};         // texels the covered area is grown into the padding
     std::uint64_t seed{0x5eed};
 };
@@ -110,7 +116,11 @@ struct LightmapBakeStats {
 // (0.5 * dot(N, d) + 0.5) / A, which is exactly 1 for the normal the texel was baked with.
 struct LightmapBake {
     std::vector<LightmapUnwrap> instances; // one per scene instance (empty when it does not receive)
-    ImageF atlas;                          // RGB irradiance / pi, A coverage
+    // RGB irradiance / pi; A the baked sun visibility (0 shadowed .. 1 lit) when
+    // shadowmask_direction is set, otherwise coverage (1 covered, 0.5 dilated, 0 empty).
+    ImageF atlas;
+    // Direction (travel) of the light the shadowmask was baked for; zero when there is none.
+    math::Vec3 shadowmask_direction{0, 0, 0};
     Image direction;                       // RGBA8, same size as atlas; empty unless settings.directional
     LightmapBakeStats stats;
 };
@@ -156,6 +166,7 @@ struct LightmapFileEntry {
 struct LightmapFile {
     ImageF atlas;
     Image direction; // optional directional texels (version 2), same size as the atlas
+    math::Vec3 shadowmask_direction{0, 0, 0}; // version 2: atlas A is a sun shadowmask for this light
     std::vector<LightmapFileEntry> entries;
     [[nodiscard]] const LightmapFileEntry* find(const Uuid& entity) const noexcept;
 };

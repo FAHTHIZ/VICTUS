@@ -217,3 +217,84 @@ TEST_CASE("gpu: directional lightmaps let normal maps shade baked light (ADR-013
     dev.destroy(*tilt_tex);
     ctx.destroy(*lm_floor);
 }
+
+TEST_CASE("gpu: the baked shadowmask shades static sun shadows beyond the shadow distance (ADR-0131)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+
+    const MeshData floor = make_plane({6, 6}, 4);
+    const MeshData roof = make_cube({2, 0.1f, 2});
+    const math::Mat4 roof_model = math::Mat4::translation({0, 1.5f, 0});
+    LightmapScene scene;
+    scene.instances.push_back({&floor});
+    LightmapInstance occluder{&roof, roof_model};
+    occluder.receives = false;
+    scene.instances.push_back(occluder);
+    scene.sky.sky = scene.sky.horizon = scene.sky.ground = math::Vec3{0.5f};
+    LightmapLight baked_sun;
+    baked_sun.direction = math::normalize(math::Vec3{0.2f, -1.0f, 0.1f});
+    scene.lights.push_back(baked_sun);
+    LightmapSettings ls;
+    ls.samples = 32;
+    auto bake = bake_lightmaps(scene, ls);
+    REQUIRE(bake.ok());
+    REQUIRE(math::length(bake->shadowmask_direction) > 0.5f);
+
+    auto lm_floor = ctx.create_lightmapped_mesh(floor, bake->instances[0], "mask_floor");
+    auto gpu_roof = ctx.create_mesh(roof, "mask_roof");
+    auto atlas = ctx.create_lightmap_texture(bake->atlas);
+    REQUIRE(lm_floor.ok());
+    REQUIRE(gpu_roof.ok());
+    REQUIRE(atlas.ok());
+
+    constexpr std::uint32_t W = 96, H = 96;
+    Material white;
+    white.base_color = {1, 1, 1, 1};
+    white.roughness = 1.0f;
+    // Camera looks at the floor under the roof from the side, so the shadowed patch is visible.
+    auto shoot = [&](math::Vec3 sun_dir, math::Vec3 mask_dir, float shadow_distance) {
+        DirectionalLight sun;
+        sun.direction = sun_dir;
+        sun.intensity = 3.0f;
+        sun.shadow_distance = shadow_distance;
+        Environment env = grey_sky();
+        env.lightmap = *atlas;
+        env.lightmap_shadowmask_direction = mask_dir;
+        (*sr)->begin(Camera3D::look_at({0, 1.0f, 5.0f}, {0, 0, 0}), sun, env);
+        (*sr)->submit(*lm_floor, white, math::Mat4::identity());
+        (*sr)->submit(*gpu_roof, white, roof_model);
+        auto target = test::make_target(W, H);
+        auto cmd = dev.begin_commands();
+        REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target).value();
+        dev.destroy(target);
+        return px;
+    };
+    const math::Vec3 sun_dir = baked_sun.direction;
+    const auto realtime = shoot(sun_dir, {0, 0, 0}, 40.0f); // cascades cover the scene
+    const auto no_mask = shoot(sun_dir, {0, 0, 0}, 0.5f);   // cascades end before the floor
+    const auto masked = shoot(sun_dir, sun_dir, 0.5f);
+    const math::Vec3 moved = math::normalize(math::Vec3{-0.6f, -1.0f, 0.0f});
+    const auto stale = shoot(moved, sun_dir, 0.5f);         // the sun moved: the mask is ignored
+    const auto stale_ref = shoot(moved, {0, 0, 0}, 0.5f);
+    test::save_output("shadowmask_realtime", W, H, realtime);
+    test::save_output("shadowmask_masked", W, H, masked);
+
+    // The floor pixel at the screen centre is the world origin, under the middle of the roof.
+    const std::uint32_t x = W / 2, y = H / 2;
+    const int rt = int(channel(pixel(realtime, W, x, y), 1)), nm = int(channel(pixel(no_mask, W, x, y), 1));
+    const int mk = int(channel(pixel(masked, W, x, y), 1));
+    MESSAGE("under the roof: realtime " << rt << ", beyond shadow distance without/with mask " << nm << "/" << mk);
+    CHECK(nm > rt + 40); // without a mask the shadow disappears past the cascades
+    CHECK(std::abs(mk - rt) <= 12); // the mask brings it back
+    CHECK(stale == stale_ref);
+
+    dev.destroy(*atlas);
+    ctx.destroy(*lm_floor);
+    ctx.destroy(*gpu_roof);
+}

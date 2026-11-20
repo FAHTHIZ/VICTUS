@@ -58,7 +58,7 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 horizon_color;  // rgb horizon ambient radiance
     vec4 ground_color;   // rgb ground ambient radiance, w: local light count
     vec4 shadow_params;  // x: atlas texel size, y: depth bias, z: normal bias (texels), w: cascade count
-    vec4 cascade_params; // x: soft (3x3 PCF), y: atlas tile scale, z: transition fraction
+    vec4 cascade_params; // x: soft (3x3 PCF), y: atlas tile scale, z: transition fraction, w: lightmap alpha is a sun shadowmask (ADR-0131)
     vec4 cascade_splits; // far view depth of each cascade
     vec4 cascade_texel;  // world-space texel size of each cascade
     vec4 screen;         // xy: 1 / render size, z: time in seconds (wraps every hour), w: compact HDR frame + 1 (0 off)
@@ -323,14 +323,17 @@ float sample_cascade(int c, vec3 N, vec3 L) {
     return sum / 9.0;
 }
 
-float shadow_factor(vec3 N, vec3 L) {
-    if (lighting.sun_dir.w < 0.5) return 1.0;
+// `baked`: the static sun visibility from the lightmap shadowmask (ADR-0131), 1 without one. It
+// takes over where the realtime cascades end (Unity's distance shadowmask), so static geometry
+// keeps its sun shadows at any distance; inside the cascades the realtime map covers every caster.
+float shadow_factor(vec3 N, vec3 L, float baked) {
+    if (lighting.sun_dir.w < 0.5) return baked;
     int count = int(lighting.shadow_params.w);
     float depth = dot(v_world_pos - lighting.camera_pos.xyz, lighting.camera_forward.xyz);
     int c = 0;
     while (c < count - 1 && depth > lighting.cascade_splits[c]) ++c;
     float far_d = lighting.cascade_splits[c];
-    if (depth > far_d) return 1.0;
+    if (depth > far_d) return baked;
     float near_d = c == 0 ? 0.0 : lighting.cascade_splits[c - 1];
     float t = (depth - near_d) / max(far_d - near_d, 1e-4);
     float band = lighting.cascade_params.z;
@@ -340,7 +343,7 @@ float shadow_factor(vec3 N, vec3 L) {
         if (interleaved_gradient_noise(gl_FragCoord.xy) > fade) c += 1;
         return sample_cascade(c, N, L);
     }
-    return mix(1.0, sample_cascade(c, N, L), fade); // last cascade fades out at shadow distance
+    return mix(baked, sample_cascade(c, N, L), fade); // last cascade fades out at shadow distance
 }
 
 // Cloud shadow (ADR-0112): transmittance of the sun ray through the cloud layer at its middle,
@@ -552,7 +555,9 @@ void main() {
     }
 
     vec3 L = normalize(-lighting.sun_dir.xyz);
-    vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * (shadow_factor(N, L) * cloud_shadow(L));
+    vec4 lm_texel = v_lightmap.z > 0.5 ? texture(u_lightmap, v_lightmap.xy) : vec4(0.0, 0.0, 0.0, 1.0);
+    float baked_sun = (v_lightmap.z > 0.5 && lighting.cascade_params.w > 0.5) ? lm_texel.a : 1.0;
+    vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * (shadow_factor(N, L, baked_sun) * cloud_shadow(L));
 
     if (lighting.ground_color.w > 0.5) {
         vec3 grid = lighting.cluster_grid.xyz;
@@ -591,7 +596,7 @@ void main() {
     if (v_lightmap.z > 0.5) {
         // Baked sky light and bounces replace the probe ambient. Where the bake is darker than
         // the open sky (under tables, in corners) the environment reflection is dimmed too.
-        irradiance = texture(u_lightmap, v_lightmap.xy).rgb;
+        irradiance = lm_texel.rgb;
         // Directional lightmap: re-light the baked irradiance with the per-pixel normal (normal
         // maps), scaled so the normal it was baked with gets exactly the stored value.
         vec4 lm_dir = texture(u_lightmap_dir, v_lightmap.xy);

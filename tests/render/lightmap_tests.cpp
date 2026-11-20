@@ -253,6 +253,61 @@ TEST_CASE("lightmap contact darkening and colour bleeding") {
     CHECK(near_wall->x / near_wall->y > 1.5f * (far->x / far->y));
 }
 
+TEST_CASE("lightmap shadowmask stores the baked sun visibility in the atlas alpha (ADR-0131)") {
+    // A wide box above the floor, sun straight down: the floor under it is in the sun's shadow.
+    const MeshData floor = make_plane({8, 8}, 4);
+    const MeshData roof = make_cube({2, 0.1f, 2});
+    LightmapScene scene;
+    scene.instances.push_back({&floor});
+    LightmapInstance occluder{&roof, math::Mat4::translation({0, 1.5f, 0})};
+    occluder.receives = false;
+    scene.instances.push_back(occluder);
+    scene.sky = uniform_sky(0.3f);
+    LightmapLight sun;
+    sun.direction = {0, -1, 0};
+    sun.radiance = {3, 3, 3};
+    scene.lights.push_back(sun);
+    LightmapSettings s = fast_settings();
+    s.samples = 16;
+    auto bake = bake_lightmaps(scene, s);
+    REQUIRE(bake);
+    CHECK(math::dot(bake.value().shadowmask_direction, Vec3{0, -1, 0}) == doctest::Approx(1.0f));
+    auto alpha_at = [&](const LightmapBake& b, Vec3 p) {
+        const auto uv = lightmap_uv_at(scene, b, 0, p);
+        REQUIRE(uv);
+        return sample_lightmap(b.atlas, *uv).w;
+    };
+    CHECK(alpha_at(bake.value(), {0, 0, 0}) < 0.05f);       // under the roof
+    CHECK(alpha_at(bake.value(), {3.0f, 0, 3.0f}) > 0.95f); // open floor
+    // The penumbra is soft: some texel near the roof's edge is partly lit.
+    bool partial = false;
+    for (float x = 1.6f; x < 2.4f; x += 0.02f) { // the roof ends at x = 2 (half extent)
+        const float a = alpha_at(bake.value(), {x, 0, 0});
+        partial = partial || (a > 0.1f && a < 0.9f);
+    }
+    CHECK(partial);
+
+    // The file keeps the light the mask belongs to.
+    LightmapFile file;
+    file.atlas = bake.value().atlas;
+    file.shadowmask_direction = bake.value().shadowmask_direction;
+    auto back = decode_lightmap_file(encode_lightmap_file(file));
+    REQUIRE(back);
+    CHECK(math::dot(back.value().shadowmask_direction, Vec3{0, -1, 0}) == doctest::Approx(1.0f));
+
+    // No shadow-casting directional light (or shadowmask off): alpha is coverage again.
+    s.shadowmask = false;
+    auto plain = bake_lightmaps(scene, s);
+    REQUIRE(plain);
+    CHECK(math::length(plain.value().shadowmask_direction) == 0.0f);
+    CHECK(alpha_at(plain.value(), {0, 0, 0}) == doctest::Approx(1.0f));
+    LightmapFile none;
+    none.atlas = plain.value().atlas;
+    auto none_back = decode_lightmap_file(encode_lightmap_file(none));
+    REQUIRE(none_back);
+    CHECK(math::length(none_back.value().shadowmask_direction) == 0.0f);
+}
+
 TEST_CASE("lightmap texels inside geometry are rejected instead of leaking") {
     // A closed box sitting on a receiving floor: the floor under the box sees only back faces.
     const MeshData floor = make_plane({4, 4}, 8);
