@@ -76,7 +76,7 @@ constexpr const char* kUsage =
     "usage: victus <command> [options]\n"
     "\n"
     "commands:\n"
-    "  new <folder> [--template 3d|2d|simulation|multiplayer] [--name NAME] [--character v01|v02|none]\n"
+    "  new <folder> [--template 3d|2d|simulation|multiplayer] [--name NAME] [--character orion|nova|none]\n"
     "  templates                                                  list project templates\n"
     "  info <project>                                             show project settings, scenes, assets\n"
     "  import <project>                                           import changed assets (exit 1 on failure)\n"
@@ -125,7 +125,7 @@ int cmd_new(const std::vector<std::string>& a) {
     p.positional("folder", "new project folder", true)
         .option("template", "3d, 2d, nocode, nocode3d, simulation or multiplayer", "3d")
         .option("name", "project name (default: folder name)")
-        .option("character", "starter character for 3d/multiplayer: v01, v02 or none", "v01");
+        .option("character", "starter character for 3d/multiplayer: orion, nova or none", "orion");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message + "\n" + p.help());
     const fs::Path dir = p.get("folder");

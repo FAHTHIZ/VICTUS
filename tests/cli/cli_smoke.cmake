@@ -153,7 +153,7 @@ if(NOT rc EQUAL 3 OR NOT err MATCHES "boom")
     message(FATAL_ERROR "simulate did not fail on a runtime script error (${rc}): ${err}")
 endif()
 # Controller problems that only show against the model are warnings: a root-motion node it lacks.
-set(vanim "${WORK}/game_3d/assets/anim/characters/vanguard_locomotion.vanim")
+set(vanim "${WORK}/game_3d/assets/anim/characters/victus_locomotion.vanim")
 file(READ "${vanim}" vanim_text)
 string(REPLACE "\"name\": \"Fall\"" "\"name\": \"Fall\", \"root_motion\": true" bad_vanim "${vanim_text}")
 string(REPLACE "\"default_state\"" "\"root_node\": \"Pelvis\", \"default_state\"" bad_vanim "${bad_vanim}")

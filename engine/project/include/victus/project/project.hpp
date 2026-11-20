@@ -72,8 +72,8 @@ struct TemplateInfo {
 
 // Choices made when creating a project from a template.
 struct TemplateOptions {
-    // Starter character (victus/project/characters.hpp) for templates with `characters`: "v01"
-    // (default), "v02", or "none" for a plain capsule body without a skinned character.
+    // Starter character (victus/project/characters.hpp) for templates with `characters`: "orion"
+    // (default), "nova", or "none" for a plain capsule body without a skinned character.
     std::string character{kDefaultCharacter};
 };
 

@@ -89,11 +89,11 @@ constexpr HelpTopic kTopics[] = {
     {"Playing and testing", "Physics and ragdolls",
      "Add a Rigid Body and a Collider (Inspector > Add Component) to make an object fall, bounce and collide. Static "
      "bodies never move, dynamic bodies are pushed around, kinematic bodies follow their animation.\n\n"
-     "Characters can become ragdolls: select a character (for example the Vanguard robot of the 3D template) and "
+     "Characters can become ragdolls: select a character (for example Orion, the player of the 3D template) and "
      "press Make Ragdoll in the Inspector. Its body then gets physical bones. Choose Floppy to let it fall like a "
      "rag doll, Powered to let motors hold the animated pose, or Animated to turn physics off again.\n\n"
      "View > Physics Colliders shows the collision shapes as outlines.",
-     "physics rigid body collider gravity ragdoll fall bounce joint vanguard character"},
+     "physics rigid body collider gravity ragdoll fall bounce joint orion nova mannequin character"},
     {"Playing and testing", "Find and fix problems",
      "The Problems panel checks your scenes, scripts, materials and assets in the background and lists anything "
      "that would break the game, in plain words. Double-click a problem to jump to it.\n\n"

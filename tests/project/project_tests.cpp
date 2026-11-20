@@ -644,7 +644,7 @@ TEST_CASE("templates: 3D character climbs the steps, jumps and swings the gate")
     const scene::Entity robot = r->scene.find_by_name("Robot");
     r->frames(1);
     CHECK(r->animation->controller_status(r->scene, robot).state == "Jump"); // the "jump" trigger fired
-    // The Vanguard controller: the one-shot Jump hands over to the Fall loop while airborne, Land
+    // The shared character controller: the one-shot Jump hands over to the Fall loop while airborne, Land
     // plays on touch-down and Locomotion resumes.
     float apex = 0;
     std::set<std::string> states;
@@ -705,7 +705,7 @@ TEST_CASE("templates: 3D player moves with WASD and the camera follows") {
     CHECK(c1.z < c0.z - 2.0f); // smoothed follow
     // The robot walks while moving and faces the direction of travel (-Z: yaw 180 degrees).
     const scene::Entity robot = r->scene.find_by_name("Robot");
-    // Its controller (assets/anim/characters/vanguard_locomotion.vanim) blends Locomotion by
+    // Its controller (assets/anim/characters/victus_locomotion.vanim) blends Locomotion by
     // ground speed: 5 m/s is a run.
     const auto walking = r->animation->status(r->scene, robot);
     CHECK(walking.valid);

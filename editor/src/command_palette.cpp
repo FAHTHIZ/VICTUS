@@ -129,8 +129,8 @@ std::vector<EditorCommand> Editor::commands() {
         if (auto t = create_terrain(); !t) notify("cannot create terrain: " + t.error().message, true);
     });
 
-    add("Entity: Add Vanguard V-01 (character)", {}, has_db && editing, [this] { (void)add_character("v01", {}, camera_.target); });
-    add("Entity: Add Vanguard V-02 (character)", {}, has_db && editing, [this] { (void)add_character("v02", {}, camera_.target); });
+    add("Entity: Add Orion (character)", {}, has_db && editing, [this] { (void)add_character("orion", {}, camera_.target); });
+    add("Entity: Add Nova (character)", {}, has_db && editing, [this] { (void)add_character("nova", {}, camera_.target); });
     add("Entity: Add Ragdoll Lab", {}, has_db && editing, [this] { (void)add_ragdoll_lab(); });
     add("Entity: Make Ragdoll", {}, !selection_.empty() && can_make_ragdoll(selected()),
         [this] { (void)make_ragdoll(selected()); });

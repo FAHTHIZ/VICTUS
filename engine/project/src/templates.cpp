@@ -356,7 +356,7 @@ Entity hud(Scene& s, std::string_view controls, math::Vec2 panel_size, bool save
 }
 
 // Starter characters (victus/project/characters.hpp). Projects with a character get both
-// Vanguards and the shared controller, so swapping one for the other is a reference change.
+// starter characters and the shared controller, so swapping one for the other is a reference change.
 void add_character_files(std::vector<TemplateFile>& files, const TemplateOptions& options) {
     if (options.character == kNoCharacter) return;
     for (const StarterCharacter& c : starter_characters()) {
@@ -367,10 +367,10 @@ void add_character_files(std::vector<TemplateFile>& files, const TemplateOptions
     files.push_back({kCharacterControllerPath, starter_character_controller()});
 }
 
-// The other Vanguard (the 3D template's companion is the player's counterpart).
+// The other starter character (the 3D template's companion is the player's counterpart).
 std::string companion_character(const std::string& player) {
     if (player == kNoCharacter) return player;
-    return player == "v02" ? "v01" : "v02";
+    return player == "nova" ? "orion" : "nova";
 }
 
 // The visible body under a gameplay root (origin at the feet), scaled so the 1.70 m character is
@@ -470,7 +470,7 @@ void build_3d(Scene& s, const TemplateOptions& options) {
         agent.radius = 0.35f;
         agent.height = 0.8f;
         agent.stopping_distance = 0.3f;
-        // The companion is the other Vanguard at half size, so the pair reads as a family.
+        // The companion is the other character at half size, so the pair reads as a family.
         character_visual(s, buddy, companion_character(options.character), 0.82f);
     }
 
@@ -1090,8 +1090,8 @@ void build_simulation(Scene& s) {
 constexpr const char* kPlayer3d = R"lua(-- Walks the character with the "move_x"/"move_y" actions (WASD, arrows, left stick) and jumps
 -- with "jump" (Space, gamepad A). The entity has a
 -- CharacterController (it slides along walls, climbs steps and pushes physics bodies); the
--- child "Robot" (a Vanguard starter character) faces the direction of travel; its animation
--- controller (assets/anim/characters/vanguard_locomotion.vanim) blends Idle/Walk/Run from the
+-- child "Robot" (an Orion or Nova starter character) faces the direction of travel; its animation
+-- controller (assets/anim/characters/victus_locomotion.vanim) blends Idle/Walk/Run from the
 -- "speed" parameter, plays Jump, Fall and Land from the "jump" trigger and "grounded", and
 -- Interact from the "interact" trigger. Its child "Dust" particle emitter puffs on jumps and
 -- landings.
@@ -1585,7 +1585,7 @@ function Player:update(dt)
     local speed = dt > 0 and vector.magnitude(d) / dt or 0
     if self.robot then
         if speed > 0.3 then self.robot.rotation = vector.create(0, math.deg(math.atan2(d.x, d.z)), 0) end
-        self.robot:set_anim_param("speed", speed) -- assets/anim/characters/vanguard_locomotion.vanim blends Idle/Walk/Run
+        self.robot:set_anim_param("speed", speed) -- assets/anim/characters/victus_locomotion.vanim blends Idle/Walk/Run
     end
     local color = e:get_net("color")
     if self.badge and color and color ~= self.color then
@@ -1924,7 +1924,7 @@ void build_nocode3d(Scene& s, const TemplateOptions& options) {
 
 const std::vector<TemplateInfo>& templates() {
     static const std::vector<TemplateInfo> list = {
-        {"3d", "3D Scene", "A Vanguard starter robot you walk with WASD/arrow keys, jump with Space and interact with E (Luau + CharacterController) that climbs steps, swings a hinged gate and shoves a stack of physics crates with positional impact sounds, its Vanguard counterpart as a companion that follows you over an automatic navmesh, a follow camera, sun shadows, PBR primitives and a point light.", true},
+        {"3d", "3D Scene", "An Orion starter character you walk with WASD/arrow keys, jump with Space and interact with E (Luau + CharacterController) that climbs steps, swings a hinged gate and shoves a stack of physics crates with positional impact sounds, Nova as a companion that follows you over an automatic navmesh, a follow camera, sun shadows, PBR primitives and a point light.", true},
         {"2d", "2D Game", "A playable platformer on Box2D physics with music and sound effects: a CharacterController2D you run with A/D or arrows and jump with Space, a one-way ledge you jump through and drop off with S/Down, a lantern swinging on a joint and coins to collect. Gameplay is in Luau scripts."},
         {"nocode", "No-Code Platformer",
          "A complete side-scrolling level made without a single line of code: run, double jump, collect coins, stomp patrolling slimes, dodge spikes and pits, reach a checkpoint and the goal flag, with score, lives and a timer on screen. Every piece is a Behaviour component you can click on and change in the Inspector."},
@@ -1933,7 +1933,7 @@ const std::vector<TemplateInfo>& templates() {
         {"simulation", "Simulation",
          "576 entities animated by native systems, with a scripted orbiting camera: a starting point for simulation work."},
         {"multiplayer", "Multiplayer Arena",
-         "A networked coin-collecting arena: host it with `victus serve` and join with `victus run --connect` (or play it offline). Each client gets its own predicted Vanguard robot from the player template, coins and scores are replicated server state, and the HUD shows the session status and scoreboard.", true},
+         "A networked coin-collecting arena: host it with `victus serve` and join with `victus run --connect` (or play it offline). Each client gets its own predicted Orion character from the player template, coins and scores are replicated server state, and the HUD shows the session status and scoreboard.", true},
     };
     return list;
 }

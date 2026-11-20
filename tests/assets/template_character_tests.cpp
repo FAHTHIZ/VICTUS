@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// The Vanguard starter characters (docs/CHARACTERS.md): both GLBs import through the asset
+// The Orion and Nova starter characters (docs/CHARACTERS.md): both GLBs import through the asset
 // database without warnings, share one skeleton and clip library, meet the size and budget
 // targets, match the template scene's hierarchy, and the shared controller drives them.
 #include "doctest.h"
@@ -46,10 +46,10 @@ math::Vec3 model_space(scene::Scene& s, scene::Entity root, scene::Entity e) {
 
 } // namespace
 
-TEST_CASE("starter characters: both Vanguards import cleanly with one shared skeleton and clip library") {
-    TempDir dir("victus_tpl_vanguard");
+TEST_CASE("starter characters: Orion and Nova import cleanly with one shared skeleton and clip library") {
+    TempDir dir("victus_tpl_chars");
     project::register_components();
-    auto p = project::Project::create(dir.path, "Vanguard", "3d");
+    auto p = project::Project::create(dir.path, "Mannequins", "3d");
     REQUIRE(p.ok());
     auto db = assets::AssetDatabase::open(dir.path);
     REQUIRE(db.ok());
@@ -94,7 +94,7 @@ TEST_CASE("starter characters: both Vanguards import cleanly with one shared ske
         for (const auto& m : model->meshes)
             for (const auto& v : m.data.vertices) bounds.expand(v.position);
         CHECK(bounds.min.y == doctest::Approx(0.0f).epsilon(0.005));
-        // 1.70 m to the top of the helmet; V-01's crest fin rises about 2 cm above it.
+        // 1.70 m to the crown of the sculpted hair (within a couple of centimetres).
         CHECK(bounds.max.y >= project::kCharacterHeight - 0.01f);
         CHECK(bounds.max.y <= project::kCharacterHeight + 0.03f);
         CHECK(bounds.max.x == doctest::Approx(-bounds.min.x).epsilon(0.01)); // symmetric
@@ -111,7 +111,7 @@ TEST_CASE("starter characters: both Vanguards import cleanly with one shared ske
         }
         const std::pair<const char*, const char*> sockets[] = {{"Socket.Head", "Head"},     {"Socket.Hand.L", "Hand.L"},
                                                                {"Socket.Hand.R", "Hand.R"}, {"Socket.Back", "Chest"},
-                                                               {"Socket.Root", "Vanguard"}};
+                                                               {"Socket.Root", "Rig"}};
         for (const auto& [socket, parent] : sockets) {
             const auto it = std::find_if(model->nodes.begin(), model->nodes.end(),
                                          [&](const assets::ModelNode& n) { return n.name == socket; });
@@ -142,19 +142,19 @@ TEST_CASE("starter characters: both Vanguards import cleanly with one shared ske
                                         "UpperLeg.L", "LowerLeg.L", "UpperLeg.R", "LowerLeg.R"};
     std::set<std::string> joints;
     for (const auto j : a.skins[0].joints) joints.insert(a.nodes[j].name);
-    for (const auto& n : core) CHECK(joints.count(n) == 1); // the template robot's joint names survive
+    for (const auto& n : core) CHECK(joints.count(n) == 1); // the template character's joint names survive
     // The two variants are distinct designs, not recolours.
     CHECK(a.triangle_count() != b.triangle_count());
 }
 
 TEST_CASE("starter characters: template scene mirrors the model and the shared controller drives it") {
-    TempDir dir("victus_tpl_vanguard_scene");
+    TempDir dir("victus_tpl_chars_scene");
     project::register_components();
-    auto p = project::Project::create(dir.path, "Vanguard", "3d");
+    auto p = project::Project::create(dir.path, "Mannequins", "3d");
     REQUIRE(p.ok());
     auto db = assets::AssetDatabase::open(dir.path);
     REQUIRE(db.ok());
-    const auto* v01 = project::find_starter_character("v01");
+    const auto* v01 = project::find_starter_character("orion");
     REQUIRE(v01);
     const assets::AssetRecord* rec = (*db)->find_path(model_rel(*v01));
     REQUIRE(rec);
@@ -192,7 +192,7 @@ TEST_CASE("starter characters: template scene mirrors the model and the shared c
     REQUIRE(animator);
     CHECK(animator->model == rec->uuid);
     CHECK(animator->controller == project::kCharacterControllerAsset);
-    // The companion is the other Vanguard at companion size.
+    // The companion is the other character (Nova) at companion size.
     const scene::Entity buddy = s.find_by_name("Buddy");
     REQUIRE_FALSE(buddy.is_null());
     scene::Entity buddy_model;
@@ -200,7 +200,7 @@ TEST_CASE("starter characters: template scene mirrors the model and the shared c
         if (s.world().get<scene::Name>(c)->value == "Robot") buddy_model = c;
     REQUIRE_FALSE(buddy_model.is_null());
     CHECK(s.world().get<animation::AnimatorComponent>(buddy_model)->model.to_string() ==
-          project::find_starter_character("v02")->uuid);
+          project::find_starter_character("nova")->uuid);
 
     // The project's loader runs the shared controller: Locomotion by speed, Jump -> Fall while
     // airborne -> Land on touch-down -> Locomotion, and Interact from its trigger.
@@ -251,22 +251,22 @@ TEST_CASE("starter characters: template scene mirrors the model and the shared c
     CHECK(ctl.controller_status(s, robot).state == "Locomotion");
 }
 
-TEST_CASE("starter characters: template options pick V-02 or no character") {
+TEST_CASE("starter characters: template options pick Nova or no character") {
     project::register_components();
     {
-        TempDir dir("victus_tpl_v02");
+        TempDir dir("victus_tpl_nova");
         project::TemplateOptions o;
-        o.character = "v02";
-        auto p = project::Project::create(dir.path, "V02", "3d", o);
+        o.character = "nova";
+        auto p = project::Project::create(dir.path, "NovaGame", "3d", o);
         REQUIRE(p.ok());
         scene::Scene s;
         REQUIRE(s.load_file(*p->startup_scene_path()).ok());
         const scene::Entity robot = s.find_by_name("Robot");
         REQUIRE_FALSE(robot.is_null());
         CHECK(s.world().get<animation::AnimatorComponent>(robot)->model.to_string() ==
-              project::find_starter_character("v02")->uuid);
-        CHECK_FALSE(s.find_by_name("V02_Body[0]").is_null());
-        CHECK(fs::exists(dir.path / "assets/models/characters/victus_vanguard_01.glb")); // swap target ships too
+              project::find_starter_character("nova")->uuid);
+        CHECK_FALSE(s.find_by_name("Nova_Body[0]").is_null());
+        CHECK(fs::exists(dir.path / "assets/models/characters/victus_orion.glb")); // swap target ships too
     }
     {
         TempDir dir("victus_tpl_nochar");
@@ -299,7 +299,7 @@ TEST_CASE("starter characters: template options pick V-02 or no character") {
         REQUIRE(p.ok());
         scene::Scene s;
         REQUIRE(s.load_file(*p->startup_scene_path()).ok());
-        CHECK_FALSE(s.find_by_name("V01_Body[0]").is_null());
+        CHECK_FALSE(s.find_by_name("Orion_Body[0]").is_null());
         TempDir d2("victus_tpl_2d");
         REQUIRE(project::Project::create(d2.path, "Flat", "2d").ok());
         CHECK_FALSE(fs::exists(d2.path / "assets/models/characters"));
@@ -307,10 +307,10 @@ TEST_CASE("starter characters: template options pick V-02 or no character") {
 }
 
 TEST_CASE("assets: import_gltf_memory reads self-contained models and rejects external references") {
-    const auto* c = project::find_starter_character("v01");
+    const auto* c = project::find_starter_character("orion");
     REQUIRE(c);
     assets::ImportResult res;
-    auto m = assets::import_gltf_memory(project::starter_character_glb(*c), "v01.glb", {}, &res);
+    auto m = assets::import_gltf_memory(project::starter_character_glb(*c), "orion.glb", {}, &res);
     REQUIRE(m.ok());
     CHECK(res.warnings.empty());
     CHECK(m->skins.size() == 1);

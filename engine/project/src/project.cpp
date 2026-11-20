@@ -158,7 +158,7 @@ Result<Project> Project::create(const fs::Path& directory, std::string_view name
     const auto it = std::find_if(list.begin(), list.end(), [&](const TemplateInfo& t) { return t.id == template_id; });
     if (it == list.end()) return make_error(ErrorCode::InvalidArgument, "unknown template '" + std::string(template_id) + "'");
     if (options.character != kNoCharacter && !find_starter_character(options.character))
-        return make_error(ErrorCode::InvalidArgument, "unknown starter character '" + options.character + "' (v01, v02 or none)");
+        return make_error(ErrorCode::InvalidArgument, "unknown starter character '" + options.character + "' (orion, nova or none)");
     if (name.empty()) return make_error(ErrorCode::InvalidArgument, "project name must not be empty");
     std::error_code ec;
     if (sfs::exists(directory, ec)) {
