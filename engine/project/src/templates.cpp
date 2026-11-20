@@ -403,7 +403,12 @@ void build_3d(Scene& s, const TemplateOptions& options) {
     }
     const Entity ground = add(s, "Ground", {0, 0, 0});
     s.world().get<Transform>(ground)->scale = {20, 1, 20};
-    (void)Uuid::parse(kGroundMaterialUuid, mesh(s, ground, "plane", {1, 1, 1, 1}, 0.0f, 0.9f).material_asset);
+    // Static scenery is marked Static Lighting: `victus new` and Studio bake it (ADR-0134).
+    {
+        auto& gm = mesh(s, ground, "plane", {1, 1, 1, 1}, 0.0f, 0.9f);
+        (void)Uuid::parse(kGroundMaterialUuid, gm.material_asset);
+        gm.lightmapped = true;
+    }
     {
         s.world().add<physics::RigidBodyComponent>(ground).type = physics::BodyType::Static;
         auto& c = s.world().add<physics::ColliderComponent>(ground);
@@ -502,7 +507,7 @@ void build_3d(Scene& s, const TemplateOptions& options) {
         const float h = 0.3f * static_cast<float>(i + 1);
         const Entity step = add(s, "Step " + std::to_string(i + 1), {-5.0f - 0.8f * static_cast<float>(i), h * 0.5f, -4.0f});
         s.world().get<Transform>(step)->scale = {0.8f, h, 3.0f};
-        mesh(s, step, "cube", {0.55f, 0.57f, 0.6f, 1}, 0.0f, 0.8f);
+        mesh(s, step, "cube", {0.55f, 0.57f, 0.6f, 1}, 0.0f, 0.8f).lightmapped = true;
         s.world().add<physics::ColliderComponent>(step);
     }
 
@@ -510,7 +515,7 @@ void build_3d(Scene& s, const TemplateOptions& options) {
     {
         const Entity post = add(s, "Gate Post", {-6.0f, 1.0f, 4.0f});
         s.world().get<Transform>(post)->scale = {0.2f, 2.0f, 0.2f};
-        mesh(s, post, "cube", {0.3f, 0.3f, 0.32f, 1}, 1.0f, 0.4f);
+        mesh(s, post, "cube", {0.3f, 0.3f, 0.32f, 1}, 1.0f, 0.4f).lightmapped = true;
         s.world().add<physics::ColliderComponent>(post);
         const Entity gate = add(s, "Gate", {-5.0f, 1.0f, 4.0f});
         s.world().get<Transform>(gate)->scale = {1.8f, 1.6f, 0.1f};
@@ -549,7 +554,7 @@ void build_3d(Scene& s, const TemplateOptions& options) {
 
     const Entity pillar = add(s, "Metal Pillar", {2.4f, 1.0f, -0.4f});
     s.world().get<Transform>(pillar)->scale = {1.0f, 2.0f, 1.0f};
-    mesh(s, pillar, "cylinder", {0.95f, 0.93f, 0.88f, 1}, 1.0f, 0.3f);
+    mesh(s, pillar, "cylinder", {0.95f, 0.93f, 0.88f, 1}, 1.0f, 0.3f).lightmapped = true;
     s.world().add<physics::RigidBodyComponent>(pillar).type = physics::BodyType::Static;
     s.world().add<physics::ColliderComponent>(pillar).shape = physics::ColliderComponent::Shape::Cylinder;
 
@@ -557,7 +562,7 @@ void build_3d(Scene& s, const TemplateOptions& options) {
     // fire's light. Fire and sparks are additive and HDR (> 1) so they glow through bloom.
     const Entity brazier = add(s, "Brazier", {0.5f, 0.3f, 2.5f});
     s.world().get<Transform>(brazier)->scale = {0.7f, 0.6f, 0.7f};
-    mesh(s, brazier, "cylinder", {0.18f, 0.17f, 0.16f, 1}, 1.0f, 0.55f);
+    mesh(s, brazier, "cylinder", {0.18f, 0.17f, 0.16f, 1}, 1.0f, 0.55f).lightmapped = true;
     s.world().add<physics::RigidBodyComponent>(brazier).type = physics::BodyType::Static;
     s.world().add<physics::ColliderComponent>(brazier).shape = physics::ColliderComponent::Shape::Cylinder;
     {
@@ -655,7 +660,7 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
     }
     const Entity ground = add(s, "Arena Floor", {0, 0, 0});
     s.world().get<Transform>(ground)->scale = {24, 1, 24};
-    mesh(s, ground, "plane", {0.14f, 0.16f, 0.2f, 1}, 0.0f, 0.85f);
+    mesh(s, ground, "plane", {0.14f, 0.16f, 0.2f, 1}, 0.0f, 0.85f).lightmapped = true; // baked on creation (ADR-0134)
     {
         s.world().add<physics::RigidBodyComponent>(ground).type = physics::BodyType::Static;
         auto& c = s.world().add<physics::ColliderComponent>(ground);
@@ -674,7 +679,7 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
     for (const auto& w : walls) {
         const Entity e = add(s, w.name, w.at);
         s.world().get<Transform>(e)->scale = w.size;
-        mesh(s, e, "cube", wall_color, 0.0f, 0.7f);
+        mesh(s, e, "cube", wall_color, 0.0f, 0.7f).lightmapped = true;
         s.world().add<physics::RigidBodyComponent>(e).type = physics::BodyType::Static;
         s.world().add<physics::ColliderComponent>(e);
     }
@@ -683,7 +688,7 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
         const float a = 0.7854f + 1.5708f * static_cast<float>(i);
         const Entity e = add(s, "Pillar " + std::to_string(i + 1), {std::cos(a) * 6.0f, 1.25f, std::sin(a) * 6.0f});
         s.world().get<Transform>(e)->scale = {1.1f, 2.5f, 1.1f};
-        mesh(s, e, "cylinder", {0.9f, 0.9f, 0.95f, 1}, 1.0f, 0.25f);
+        mesh(s, e, "cylinder", {0.9f, 0.9f, 0.95f, 1}, 1.0f, 0.25f).lightmapped = true;
         s.world().add<physics::RigidBodyComponent>(e).type = physics::BodyType::Static;
         s.world().add<physics::ColliderComponent>(e).shape = physics::ColliderComponent::Shape::Cylinder;
         const Entity lamp = add(s, "Pillar Light " + std::to_string(i + 1), {std::cos(a) * 6.0f, 2.9f, std::sin(a) * 6.0f});
@@ -1738,6 +1743,7 @@ Entity block(Scene& s, std::string_view name, math::Vec3 at, math::Vec3 size, ma
     s.world().get<Transform>(e)->scale = size;
     auto& m = mesh(s, e, "cube", color, 0.0f, 0.85f);
     if (ground_material) (void)Uuid::parse(kGroundMaterialUuid, m.material_asset);
+    m.lightmapped = true; // static scenery, baked on creation (ADR-0134)
     s.world().add<physics::RigidBodyComponent>(e).type = physics::BodyType::Static;
     s.world().add<physics::ColliderComponent>(e);
     return e;

@@ -1,5 +1,5 @@
 {
-  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095); template-3d and template-multiplayer triangles, shadow triangles and buffer bytes re-baselined 2026-11-20 for the Orion/Nova starter characters (26.1k smooth-surface triangles replacing the 20.6k-triangle box robots, ADR-0121); template-3d and template-multiplayer shadow triangles re-baselined the same day at 23 180 and 15 459 for receiver-aware cascade culling (ADR-0124); sample-arena triangles, shadow triangles, entities and buffers re-baselined 2026-11-20 when the arena moved from the old box robot to Orion (player) and Nova (enemies); shadow triangles re-baselined the same day for per-cascade shadow LOD (ADR-0132): template-3d 23 180 to 19 094, template-multiplayer 15 459 to 14 457, sample-arena 28 328 to 24 178. See docs/PERFORMANCE_STRATEGY.md.",
+  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095); template-3d and template-multiplayer triangles, shadow triangles and buffer bytes re-baselined 2026-11-20 for the Orion/Nova starter characters (26.1k smooth-surface triangles replacing the 20.6k-triangle box robots, ADR-0121); template-3d and template-multiplayer shadow triangles re-baselined the same day at 23 180 and 15 459 for receiver-aware cascade culling (ADR-0124); sample-arena triangles, shadow triangles, entities and buffers re-baselined 2026-11-20 when the arena moved from the old box robot to Orion (player) and Nova (enemies); shadow triangles re-baselined the same day for per-cascade shadow LOD (ADR-0132): template-3d 23 180 to 19 094, template-multiplayer 15 459 to 14 457, sample-arena 28 328 to 24 178. See docs/PERFORMANCE_STRATEGY.md. Lightmapped templates (ADR-0134) re-baselined 2026-11-20: template-3d live buffers 60 and textures 22, template-multiplayer live buffers 53, textures 21 and main batches 13 (each lightmapped renderer owns its own atlas-space lightmap UV stream, so the arena's eight walls and pillars no longer instance together; per-instance lightmap scale/offset is the follow-up).",
   "settings": {
     "frames": 120,
     "width": 640,
@@ -28,8 +28,8 @@
         "scene.entities": [48, 107],
         "gpu.texture_bytes": [0, 29147154],
         "gpu.buffer_bytes": [0, 5579121],
-        "gpu.live_textures": [0, 20],
-        "gpu.live_buffers": [0, 43],
+        "gpu.live_textures": [0, 25],
+        "gpu.live_buffers": [0, 66],
         "sim.systems": [11, 30]
       }
     },
@@ -94,7 +94,7 @@
         "frame.render_passes": [0, 14],
         "frame.triangles": [2579, 5675],
         "frame.visible": [8, 19],
-        "frame.main_batches": [3, 8],
+        "frame.main_batches": [6, 15],
         "frame.shadow_batches": [0, 66],
         "frame.shadow_triangles": [7228, 15903],
         "frame.transparent_draws": [0, 2],
@@ -106,8 +106,8 @@
         "scene.entities": [33, 73],
         "gpu.texture_bytes": [0, 29123125],
         "gpu.buffer_bytes": [0, 3008083],
-        "gpu.live_textures": [0, 19],
-        "gpu.live_buffers": [0, 29],
+        "gpu.live_textures": [0, 24],
+        "gpu.live_buffers": [0, 59],
         "sim.systems": [11, 30]
       }
     },

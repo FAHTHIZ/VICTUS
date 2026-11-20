@@ -24,6 +24,7 @@
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/physics/physics.hpp"
+#include "victus/player/bake_lighting.hpp"
 #include "victus/player/diagnostics.hpp"
 #include "victus/player/export.hpp"
 #include "victus/player/migrate.hpp"
@@ -127,7 +128,8 @@ int cmd_new(const std::vector<std::string>& a) {
     p.positional("folder", "new project folder", true)
         .option("template", "3d, 2d, nocode, nocode3d, simulation or multiplayer", "3d")
         .option("name", "project name (default: folder name)")
-        .option("character", "starter character for 3d/multiplayer: orion, nova or none", "orion");
+        .option("character", "starter character for 3d/multiplayer: orion, nova or none", "orion")
+        .flag("no-bake", "do not bake the template's static lighting (victus bake-lighting can do it later)");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message + "\n" + p.help());
     const fs::Path dir = p.get("folder");
@@ -137,6 +139,13 @@ int cmd_new(const std::vector<std::string>& a) {
     auto proj = project::Project::create(dir, name, p.get("template"), options);
     if (!proj) return error(proj.error().message);
     std::printf("Created %s project '%s' in %s\n", p.get("template").c_str(), name.c_str(), proj->root().string().c_str());
+    if (!p.has("no-bake")) {
+        // 3D templates ship with baked static lighting and light probes (ADR-0134).
+        jobs::JobSystem workers(0);
+        auto baked = player::bake_template_lighting(*proj, &workers);
+        if (!baked) std::fprintf(stderr, "victus: warning: baking the template's lighting failed: %s\n", baked.error().message.c_str());
+        else if (*baked) std::printf("Baked static lighting (victus bake-lighting re-bakes it after you change the scene)\n");
+    }
     std::printf("Open it with: victus_editor \"%s\"   or run it with: victus run \"%s\"\n", proj->root().string().c_str(),
                 proj->root().string().c_str());
     return 0;
@@ -1140,12 +1149,8 @@ int cmd_bake_lighting(const std::vector<std::string>& a) {
     auto proj = project::Project::open(p.get("project"));
     if (!proj) return error(proj.error().message);
     project::register_components();
-    const std::string rel = p.get("scene").empty() ? proj->settings().startup_scene : p.get("scene");
-    auto path = proj->resolve(rel);
-    if (!path) return error(path.error().message);
-    scene::Scene s;
-    if (auto st = s.load_file(*path); !st) return error(st.error().message);
-    render::LightmapSettings ls;
+    player::BakeLightingOptions o;
+    render::LightmapSettings& ls = o.settings;
     std::uint32_t threads = 0;
     try {
         ls.samples = static_cast<std::uint32_t>(std::clamp(std::stoi(p.get("samples")), 1, 65536));
@@ -1161,76 +1166,31 @@ int cmd_bake_lighting(const std::vector<std::string>& a) {
     ls.probes = !p.has("no-probes");
     if (!(ls.texels_per_unit > 0.0f) || !std::isfinite(ls.texels_per_unit)) return error("--density must be positive");
     ls.include_direct = p.has("direct");
-    auto db = assets::AssetDatabase::open(proj->root());
-    if (!db) return error(db.error().message);
-    const auto imported = (*db)->import_all();
-    for (const auto& m : imported.messages) std::fprintf(stderr, "victus: %s\n", m.c_str());
-    if (p.has("mark-static")) {
-        ecs::World& mw = s.world();
-        std::uint32_t marked = 0;
-        mw.each<scene::MeshRendererComponent>([&](ecs::Entity e, scene::MeshRendererComponent& mr) {
-            if (mr.lightmapped || !mr.visible) return;
-            if (const auto* rb = mw.get<physics::RigidBodyComponent>(e); rb && rb->type != physics::BodyType::Static) return;
-            if (mw.has<physics::CharacterControllerComponent>(e) || mw.has<animation::AnimatorComponent>(e) ||
-                mw.has<script::ScriptComponent>(e))
-                return;
-            // A moving parent (a character's held prop, a vehicle's wheel) moves the child too.
-            for (ecs::Entity up = s.parent(e); !up.is_null(); up = s.parent(up))
-                if (const auto* rb = mw.get<physics::RigidBodyComponent>(up);
-                    (rb && rb->type != physics::BodyType::Static) || mw.has<physics::CharacterControllerComponent>(up) ||
-                    mw.has<animation::AnimatorComponent>(up) || mw.has<script::ScriptComponent>(up))
-                    return;
-            mr.lightmapped = true;
-            ++marked;
-        });
-        std::printf("marked %u mesh renderers as Static Lighting\n", marked);
-    }
-    s.update_transforms();
+    o.scene = p.get("scene");
+    o.out = p.get("out");
+    o.mark_static = p.has("mark-static");
+    o.dry_run = p.has("dry-run");
     jobs::JobSystem workers(threads);
-    const auto t0 = std::chrono::steady_clock::now();
-    auto bake = runtime::bake_scene_lightmap(s, db->get(), ls, &workers);
-    if (!bake) return error(bake.error().message);
-    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    for (const auto& w : bake->warnings) std::fprintf(stderr, "victus: warning: %s\n", w.c_str());
-    const auto& st = bake->stats;
+    o.jobs = &workers;
+    auto r = player::bake_project_lighting(*proj, o);
+    if (!r) return error(r.error().message);
+    if (o.mark_static) std::printf("marked %u mesh renderers as Static Lighting\n", r->marked);
+    const auto& bake = r->bake;
+    for (const auto& w : bake.warnings) std::fprintf(stderr, "victus: warning: %s\n", w.c_str());
+    const auto& st = bake.stats;
     std::printf("baked %u lightmapped renderers (%u blockers, %u lights): %ux%u atlas at %.2f texels/m, %llu texels "
                 "(%llu inside geometry), %llu rays in %.1f s\n",
-                bake->receivers, bake->blockers, bake->lights, st.width, st.height, st.texels_per_unit,
+                bake.receivers, bake.blockers, bake.lights, st.width, st.height, st.texels_per_unit,
                 static_cast<unsigned long long>(st.texels), static_cast<unsigned long long>(st.invalid_texels),
-                static_cast<unsigned long long>(st.rays), secs);
+                static_cast<unsigned long long>(st.rays), r->seconds);
     if (st.probes > 0) {
-        const auto& pr = bake->file.probes;
+        const auto& pr = bake.file.probes;
         std::printf("baked %u light probes (%ux%ux%u, %u inside geometry, %u dilated) in %.1f s\n", st.probes, pr.counts[0],
                     pr.counts[1], pr.counts[2], st.invalid_probes, st.dilated_probes, st.probe_ms / 1000.0);
     }
-    // Where the bake goes: --out, else the Environment's current lightmap, else next to the scene.
-    ecs::World& w = s.world();
-    gameplay::EnvironmentComponent* env = nullptr;
-    w.each<gameplay::EnvironmentComponent>([&](gameplay::EnvironmentComponent& e) {
-        if (!env) env = &e;
-    });
-    std::string out = p.get("out");
-    if (out.empty()) out = env && !env->lightmap.empty() ? env->lightmap : runtime::default_lightmap_path(rel);
-    if (p.has("dry-run")) return std::printf("dry run: would write %s\n", out.c_str()), 0;
-    auto target = proj->resolve(out);
-    if (!target) return error(target.error().message);
-    std::error_code ec;
-    std::filesystem::create_directories(target->parent_path(), ec);
-    if (auto wr = fs::write_atomic(*target, render::encode_lightmap_file(bake->file)); !wr) return error(wr.error().message);
-    bool rewrite = false;
-    if (!env) {
-        const scene::Entity e = s.create("Environment");
-        env = &w.add<gameplay::EnvironmentComponent>(e);
-        std::printf("added an Environment entity (default sky) to reference the lightmap\n");
-        rewrite = true;
-    }
-    if (env->lightmap != out) {
-        env->lightmap = out;
-        rewrite = true;
-    }
-    if (rewrite)
-        if (auto sv = s.save_file(*path); !sv) return error(sv.error().message);
-    std::printf("wrote %s%s\n", out.c_str(), rewrite ? std::format(" and updated {}", rel).c_str() : "");
+    if (o.dry_run) return std::printf("dry run: would write %s\n", r->out.c_str()), 0;
+    if (r->added_environment) std::printf("added an Environment entity (default sky) to reference the lightmap\n");
+    std::printf("wrote %s%s\n", r->out.c_str(), r->scene_updated ? std::format(" and updated {}", r->scene).c_str() : "");
     return 0;
 }
 

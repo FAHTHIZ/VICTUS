@@ -1873,3 +1873,12 @@ Verified (Release, GCC, 2 vCPU): `victus_navigation_tests` 11/11 (new case: forc
 
 Not covered: TSan not run; the full ctest suite was not run for this change (navigation, script and AI suites only); the cook time on a 1 km terrain is unchanged (it is just off the main thread), and navmesh availability now depends on wall-clock time on large levels, so `victus simulate` runs of such scenes are not frame-deterministic until the mesh is installed.
 
+## 2026-11-20 — Templates ship with baked lighting (ADR-0134)
+
+Built: `victus new` and Studio's New Project bake the 3D templates' static lighting on creation (`--no-bake` skips it), through a shared `player::bake_project_lighting` / `bake_template_lighting` module that `victus bake-lighting` now also uses. The 3d, nocode3d and multiplayer templates mark their ground, steps, walls, pillars, islands and bridges Static Lighting; `is_static_for_lighting` refuses anything that moves (non-static rigid bodies, character controllers, nav agents, animators, scripts, rotators, oscillators, moving platforms, sequence players, on the entity or a parent), so `--mark-static` no longer marks the template's spinning gem. The 2d template is not baked.
+
+Verified (Release, clang 21, lavapipe, 2 cores): `victus_export_tests -tc="bake lighting*"` 2/2 (78 assertions); `victus new` takes 0.83 s (3d: 8 renderers, 200x200 atlas, 484 probes, 83 invalid and dilated), 3.23 s (nocode3d), 1.96 s (multiplayer), 0.02 s (2d, no bake). Low-tier screenshots of the 3d template show contact darkening at the steps, pillar and brazier (mean difference 2.47 levels against the unbaked scene); nocode3d and multiplayer screenshots show no regressions. Full `ctest --test-dir build -j2`: 37/39 on the first run, then `victus_editor_tests` and `victus_perf_budgets` pass after two updates: the Studio bake test strips the shipped bake before checking the "nothing marked" refusal, and the perf budgets are re-baselined (template-3d live buffers 60, textures 22; template-multiplayer live buffers 53, textures 21, main batches 8 to 13).
+
+Not covered: each lightmapped renderer owns an atlas-space lightmap UV stream, so identical lightmapped meshes stop instancing (the multiplayer arena's walls and pillars: 13 main batches instead of 8); no automatic re-bake when the scene changes (Unity 6 also dropped Auto Generate); not measured on a phone GPU.
+
+Next task: per-instance lightmap scale/offset so lightmapped copies of one mesh batch again, then probe sun occlusion and FP16 shading behind a capability check.

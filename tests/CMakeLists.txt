@@ -176,6 +176,7 @@ endif()
 if(VICTUS_WITH_GRAPHICS)
 victus_add_test(victus_export_tests
     SOURCES
+        export/bake_lighting_tests.cpp
         export/diagnostics_tests.cpp
         export/export_tests.cpp
         export/migrate_tests.cpp
