@@ -59,7 +59,7 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 cascade_params; // x: soft (3x3 PCF), y: atlas tile scale, z: transition fraction
     vec4 cascade_splits; // far view depth of each cascade
     vec4 cascade_texel;  // world-space texel size of each cascade
-    vec4 screen;         // xy: 1 / render size, z: time in seconds (wraps every hour)
+    vec4 screen;         // xy: 1 / render size, z: time in seconds (wraps every hour), w: compact HDR frame + 1 (0 off)
     vec4 fog_color;      // rgb fog radiance, w: mode (0 off, 1 linear, 2 exponential, 3 exponential squared)
     vec4 fog_params;     // x start distance, y end distance (linear), z density (exp), w max opacity
     vec4 coverage_color; // rgb coverage albedo (linear), w: global coverage amount 0..1
@@ -81,6 +81,22 @@ layout(set = 3, binding = 0) uniform Lighting {
     vec4 puddles;        // x 1 / puddle size (m), y ripple strength, z 1 / ripple cell size (m), w ripples per second
     vec4 volumetric;     // volumetric fog grid for blended draws (ADR-0119): xyz froxels, w far (0 off)
 } lighting;
+
+// Stochastic rounding to R11G11B10_FLOAT (compact HDR, ADR-0129). The result is exactly
+// representable, so the hardware conversion (round-to-nearest or toward zero, which Vulkan leaves
+// to the implementation) cannot bias it, and repeated stores (TAA history) do not drift darker.
+// Interleaved gradient noise (Jimenez 2014) per channel, offset per frame.
+vec3 hdr_quantize(vec3 c, float frame) {
+    vec2 p = gl_FragCoord.xy + 5.588238 * frame;
+    const vec2 k = vec2(0.06711056, 0.00583715);
+    vec3 n = vec3(fract(52.9829189 * fract(dot(p, k))), fract(52.9829189 * fract(dot(p + vec2(17.0, 59.0), k))),
+                  fract(52.9829189 * fract(dot(p + vec2(83.0, 31.0), k))));
+    c = clamp(c, vec3(0.0), vec3(64512.0));
+    ivec3 e;
+    frexp(max(c, vec3(1e-30)), e); // c = m * 2^e with m in [0.5, 1)
+    vec3 ulp = exp2(vec3(max(e - 1, ivec3(-14))) - vec3(6.0, 6.0, 5.0));
+    return floor(c / ulp + n) * ulp;
+}
 layout(set = 3, binding = 1) uniform Material {
     vec4 base_color;
     vec4 emissive;       // rgb * strength
@@ -463,6 +479,7 @@ void main() {
     if (s.alpha < material.params.w) discard;
     if (s.unlit) {
         out_color = vec4(blended_fog(s.base_color + s.emissive), s.alpha);
+        if (lighting.screen.w > 0.0) out_color.rgb = hdr_quantize(out_color.rgb, lighting.screen.w);
         return;
     }
     N = s.normal;
@@ -604,4 +621,5 @@ void main() {
         color = mix(color, lighting.fog_color.rgb, f * lighting.fog_params.w);
     }
     out_color = vec4(blended_fog(color), s.alpha);
+    if (lighting.screen.w > 0.0) out_color.rgb = hdr_quantize(out_color.rgb, lighting.screen.w);
 }

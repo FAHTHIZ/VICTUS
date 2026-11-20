@@ -222,10 +222,12 @@ bool same_alpha_test(const Material& a, const Material& b) noexcept {
 struct TaaUniforms {
     Mat4 reproject;
     Vec4 params, screen;
+    Vec4 quant; // x: compact HDR frame + 1 (0 off), ADR-0129
 };
 struct TaaUpscaleUniforms {
     Mat4 reproject;
     Vec4 params, screen, jitter, output;
+    Vec4 quant; // x: compact HDR frame + 1 (0 off), ADR-0129
 };
 static_assert(sizeof(LightingUniforms) == 38 * 16 + 64 * 5);
 
@@ -1537,6 +1539,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const bool upscale = taa && S.temporal_upscale && (rw < width || rh < height);
     const float upscale_ratio = std::max(static_cast<float>(width) / static_cast<float>(rw),
                                          static_cast<float>(height) / static_cast<float>(rh));
+    // Compact HDR (ADR-0129): shaders writing the R11G11B10 scene colour round stochastically to
+    // representable values; the frame number (+1, 0 = off) decorrelates the noise between frames.
+    const float hdr_quant =
+        hdr_format_ == rhi::Format::R11G11B10_FLOAT ? static_cast<float>(1u + frame_index_ % 64u) : 0.0f;
     const math::Vec2 jitter = taa ? taa_jitter(frame_index_, upscale ? temporal_jitter_period(upscale_ratio) : 8u) : math::Vec2{};
     const Mat4 proj = taa ? jitter_projection(proj_unjittered, jitter, rw, rh) : proj_unjittered;
     const Mat4 view_proj = proj * camera_.view;
@@ -2529,7 +2535,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     {
         double t = time_ ? *time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - render_epoch()).count();
         t = std::fmod(std::max(t, 0.0), 3600.0); // keeps float precision for sin(time) and scrolling
-        lighting.screen = inv_size(rw, rh, static_cast<float>(t));
+        lighting.screen = inv_size(rw, rh, static_cast<float>(t), hdr_quant);
         const float ai = env_.ambient_intensity;
         lighting.fog_color = {env_.fog_color.r * ai, env_.fog_color.g * ai, env_.fog_color.b * ai,
                               static_cast<float>(env_.fog_mode)};
@@ -3169,7 +3175,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 sky.zenith = rgb(env_.sky_background ? env_.background_zenith : env_.sky_zenith);
                 sky.horizon = rgb(env_.sky_background ? env_.background_horizon : env_.sky_horizon);
                 sky.ground = rgb(env_.sky_background ? env_.background_ground : env_.ground);
-                sky.sun_dir = Vec4(-normalize(sun_.direction), 0);
+                sky.sun_dir = Vec4(-normalize(sun_.direction), hdr_quant);
                 sky.sun_color = rgb(sun_.color, sun_.intensity * 4.0f, 0.9995f);
                 const bool has_env = env_map && env_map->cube();
                 if (has_env) {
@@ -3679,6 +3685,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         tu.jitter = {jitter.x, -jitter.y, static_cast<float>(rw), static_cast<float>(rh)};
         tu.output = {1.0f / static_cast<float>(hw), 1.0f / static_cast<float>(hh), static_cast<float>(hw),
                      static_cast<float>(hh)};
+        tu.quant = {hdr_quant, 0, 0, 0};
         scene_w = hw;
         scene_h = hh;
         const RGTexture resolved = graph.import_texture("taa_resolved", history_[cur], color_desc(hdr_format_, hw, hh));
@@ -3731,7 +3738,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             [this, hdr, depth, previous, motion, tu, upscale, pl = taa_pl.value()](PassContext& ctx) {
                 ctx.pass->bind_pipeline(pl);
                 if (upscale) ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, tu);
-                else ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, TaaUniforms{tu.reproject, tu.params, tu.screen});
+                else
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0,
+                                          TaaUniforms{tu.reproject, tu.params, tu.screen, tu.quant});
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(hdr), ctx_.nearest_clamp());
                 ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1,
                                        previous.valid() ? ctx.texture(previous) : ctx.texture(hdr), ctx_.linear_clamp());
