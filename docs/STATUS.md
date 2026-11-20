@@ -2001,3 +2001,14 @@ The effects worst tile rose from 0.082 to 0.089. Other knob values are tabulated
 Not covered: lavapipe only; particles and water have no reactive mask, so they ghost slightly more under the wider box.
 
 Next task: a reactive mask (particles, water, alpha-blended surfaces write a per-pixel "trust current frame" value the upscaler reads), then the OpenGL ES 3 fallback ADR.
+
+
+## 2026-11-20 — VICTUS Library and contextual-audio handoff
+
+Built: [docs/handoff/VICTUS_LIBRARY_AND_CONTEXTUAL_AUDIO.md](handoff/VICTUS_LIBRARY_AND_CONTEXTUAL_AUDIO.md) records the repository-audited product boundaries, current asset/audio foundations, offline-first catalogue and pack architecture, transactional Add-to-Project flow, licensing/provenance requirements, environment-aware ambience design, explicit override modes, platform boundaries, phased agent instructions and acceptance tests. ROADMAP.md now queues this work under Priority 1 Creator experience, after the active Priority 0 photoreal/mobile-rendering track. RESEARCH_REGISTER.md records the upstream and dependency findings.
+
+Verified: inspected the current main tree and existing asset database/importers, audio API/acoustics, Studio asset/import/thumbnail panels, platform configuration, dependency pins, licence register, roadmap and existing Studio handoff. Checked the new handoff and roadmap/research links on main. This is documentation and handoff work only; no engine/editor feature code changed. No build or tests were run because no executable code changed.
+
+Not covered: the Library catalogue, installed packs, transactional import queue, dependency inspector and contextual ambience resolver have not been implemented. KTX2/Basis, Assimp and Steam Audio remain optional evaluations, not newly adopted dependencies.
+
+Next task: continue the currently active Priority 0 workstream (reactive-mask work followed by the OpenGL ES 3 fallback decision). The Library/contextual-audio handoff is queued for agent pickup under Priority 1.
