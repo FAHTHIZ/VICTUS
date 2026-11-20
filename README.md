@@ -32,10 +32,10 @@ In the Inspector, **Make it a...** turns any selected object into a Player, Enem
 <table>
 <tr>
 <td width="50%"><img src="docs/images/nocode_platformer.png" alt="The No-Code Platformer template running: player, slime, heart, coins, spikes and a HUD"><br><sub>No-Code Platformer: built only from Behaviours, with no scripts</sub></td>
-<td width="50%"><img src="docs/images/nocode_3d.jpg" alt="The No-Code 3D Adventure running: a robot on grassy islands over glowing lava, with coins, a guard robot and a HUD"><br><sub>No-Code 3D Adventure: islands, lava, a guard robot and a turret, still with no scripts</sub></td>
+<td width="50%"><img src="docs/images/nocode_3d.jpg" alt="The No-Code 3D Adventure running: Orion, the VICTUS android mannequin, on grassy islands over glowing lava, with coins, a guard and a HUD"><br><sub>No-Code 3D Adventure: islands, lava, a guard and a turret, still with no scripts</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/images/template_3d.jpg" alt="The 3D template: a robot character, a fire, physics crates and a controls panel"><br><sub>3D template: character controller, physics, particles, prefabs and save games</sub></td>
+<td width="50%"><img src="docs/images/template_3d.jpg" alt="The 3D template: the Orion and Nova starter characters, a fire, physics crates and a controls panel"><br><sub>3D template: character controller, physics, particles, prefabs and save games</sub></td>
 <td width="50%"></td>
 </tr>
 </table>
