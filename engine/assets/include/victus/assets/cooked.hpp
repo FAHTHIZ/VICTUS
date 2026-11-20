@@ -23,7 +23,9 @@ namespace victus::assets {
 // v2 (Slice 12): mesh skin streams, node skins, skins and animation clips.
 // v3: Vertex3D gained an RGBA8 colour (52 bytes); v4: HDR textures (half-float equirect + SH9);
 // v5: block-compressed texture variants (BC/ASTC, ADR-0047); v6: mesh LODs (ADR-0049).
-inline constexpr std::uint32_t kCookedFormatVersion = 8; // 7: morph targets, weight channels; 8: material occlusion
+// v9: RGBA8 mip levels may be stored without pixels when a compressed variant covers them
+// (mobile export profile, ADR-0149).
+inline constexpr std::uint32_t kCookedFormatVersion = 9; // 7: morph targets, weight channels; 8: material occlusion
 
 enum class AssetKind : std::uint8_t { Unknown = 0, Texture = 1, Model = 2, Scene = 3, Script = 4, Audio = 5, Prefab = 6, Material = 7, Shader = 8, SpriteSheet = 9, Tileset = 10, Terrain = 11, BehaviorTree = 12, Sequence = 13, StringTable = 14, AnimController = 15 };
 [[nodiscard]] const char* to_string(AssetKind kind) noexcept;
@@ -31,7 +33,10 @@ enum class AssetKind : std::uint8_t { Unknown = 0, Texture = 1, Model = 2, Scene
 struct CookedTexture {
     std::string name;
     bool srgb{true};
-    std::vector<render::Image> mips; // mip 0 first, each RGBA8
+    // Mip 0 first, each RGBA8. A level's `pixels` may be empty (width/height still set) in a
+    // mobile export when `compressed` holds it: the runtime then samples the compressed variant
+    // or, on a device that cannot, decodes it on the CPU (see has_rgba8 / rgba8_level).
+    std::vector<render::Image> mips;
     // HDR sources (.hdr): linear radiance as RGBA16F (mips above hold a tonemapped LDR preview
     // so the texture still works anywhere an ordinary texture does), plus the SH9 irradiance of
     // the image when it is used as an equirect environment map.
@@ -43,7 +48,14 @@ struct CookedTexture {
     // The runtime uploads the first one the device samples and otherwise uses the RGBA8 mips.
     std::vector<CompressedMips> compressed;
     [[nodiscard]] render::ImageF hdr_image() const; // decoded to RGBA32F
+    // True when every RGBA8 level carries its pixels.
+    [[nodiscard]] bool has_rgba8() const noexcept;
 };
+
+// RGBA8 pixels of one level: the stored mip, or a CPU decode of the first compressed variant
+// when the export stripped it. Fails only for a texture that has neither.
+[[nodiscard]] Result<render::Image> rgba8_level(const CookedTexture& texture, std::size_t level);
+
 
 struct ModelMaterial {
     std::string name;

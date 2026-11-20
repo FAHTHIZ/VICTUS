@@ -934,6 +934,7 @@ int cmd_export(const std::vector<std::string>& a) {
         .option("out", "output folder (created; must be empty or a previous export)", "")
         .option("name", "executable name (default: project name)", "")
         .option("player", "player executable to ship (default: victus_player next to victus)", "")
+        .option("target", "texture profile: all (cooked cache as is), desktop (no ASTC), android (ASTC, 1024 px cap)", "all")
         .flag("pack-only", "write game/game.vpak and the manifest without copying the player");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
@@ -944,11 +945,15 @@ int cmd_export(const std::vector<std::string>& a) {
     o.executable_name = p.get("name");
     o.player_executable = p.get("player");
     o.include_player = !p.has("pack-only");
+    o.target = p.get("target");
     auto r = player::export_game(o);
     if (!r) return error(r.error().message);
     for (const auto& w : r->warnings) std::printf("warning: %s\n", w.c_str());
     std::printf("exported %zu files (%zu cooked assets), pack %llu bytes: %s\n", r->files, r->cooked_assets,
                 static_cast<unsigned long long>(r->pack_bytes), r->pack.string().c_str());
+    if (r->target != "all")
+        std::printf("target %s: cooked assets %llu -> %llu bytes\n", r->target.c_str(), static_cast<unsigned long long>(r->cooked_bytes_in),
+                    static_cast<unsigned long long>(r->cooked_bytes_out));
     if (r->plugins) std::printf("exported %zu native plugin(s) to game/plugins\n", r->plugins);
     if (!r->executable.empty()) std::printf("run: %s\n", r->executable.string().c_str());
     return 0;

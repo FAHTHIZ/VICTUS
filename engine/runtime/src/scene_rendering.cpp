@@ -107,7 +107,17 @@ Result<rhi::TextureHandle> upload_cooked_texture(render::GpuContext& ctx, const 
             return tex;
         }
     }
-    return ctx.create_texture_mips(std::span(texture.mips).subspan(base), opt);
+    if (texture.has_rgba8() || texture.mips.empty()) return ctx.create_texture_mips(std::span(texture.mips).subspan(base), opt);
+    // A mobile export keeps the large levels only as ASTC; a device that cannot sample them
+    // (or allow_compressed off) gets a CPU decode, so the texture still renders, just slower to load.
+    std::vector<render::Image> decoded;
+    decoded.reserve(texture.mips.size() - base);
+    for (std::size_t i = base; i < texture.mips.size(); ++i) {
+        auto img = assets::rgba8_level(texture, i);
+        if (!img) return std::move(img).error();
+        decoded.push_back(std::move(*img));
+    }
+    return ctx.create_texture_mips(decoded, opt);
 }
 
 namespace {

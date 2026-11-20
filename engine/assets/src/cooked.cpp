@@ -54,7 +54,8 @@ void write_texture_body(BinaryWriter& w, const CookedTexture& t) {
     for (const auto& m : t.mips) {
         w.u32(m.width);
         w.u32(m.height);
-        w.raw(m.pixels);
+        w.u8(m.pixels.empty() ? 0 : 1); // v9: 0 = level stored only in the compressed variants
+        if (!m.pixels.empty()) w.raw(m.pixels);
     }
     w.u8(t.hdr ? 1 : 0);
     if (t.hdr) {
@@ -81,6 +82,9 @@ bool read_texture_body(BinaryReader& r, CookedTexture& t) {
     for (auto& m : t.mips) {
         if (!r.u32(m.width) || !r.u32(m.height)) return false;
         if (m.width == 0 || m.height == 0 || m.width > kMaxTextureDim || m.height > kMaxTextureDim) return false;
+        std::uint8_t stored = 0;
+        if (!r.u8(stored) || stored > 1) return false;
+        if (stored == 0) continue;
         if (!r.raw(m.pixels, std::uint64_t{m.width} * m.height * 4)) return false;
         if (m.pixels.size() != std::size_t{m.width} * m.height * 4) return false;
     }
@@ -110,6 +114,8 @@ bool read_texture_body(BinaryReader& r, CookedTexture& t) {
             if (!r.raw(v.levels[m], bytes) || v.levels[m].size() != bytes) return false;
         }
     }
+    // A level without RGBA8 pixels must be recoverable from a compressed variant.
+    if (t.compressed.empty() && !t.has_rgba8()) return false;
     return true;
 }
 
@@ -438,6 +444,24 @@ render::ImageF CookedTexture::hdr_image() const {
     img.pixels.resize(hdr_pixels.size());
     for (std::size_t i = 0; i < hdr_pixels.size(); ++i) img.pixels[i] = render::half_to_float(hdr_pixels[i]);
     return img;
+}
+
+bool CookedTexture::has_rgba8() const noexcept {
+    for (const auto& m : mips)
+        if (m.pixels.empty()) return false;
+    return true;
+}
+
+Result<render::Image> rgba8_level(const CookedTexture& t, std::size_t level) {
+    if (level >= t.mips.size()) return make_error(ErrorCode::InvalidArgument, std::format("{}: mip {} out of range", t.name, level));
+    const render::Image& m = t.mips[level];
+    if (!m.pixels.empty()) return m;
+    for (const auto& v : t.compressed) {
+        if (v.levels.size() != t.mips.size()) continue;
+        auto img = decode_texture(v.levels[level], m.width, m.height, v.codec, t.srgb);
+        if (img) return img;
+    }
+    return make_error(ErrorCode::ParseError, std::format("{}: mip {} has no RGBA8 pixels and no decodable variant", t.name, level));
 }
 
 } // namespace victus::assets
