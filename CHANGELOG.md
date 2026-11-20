@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Rendering: tree canopies made of leaf cards get LODs (fewer, larger cards at distance), and Low draws foliage one level coarser (`foliage_lod_bias`). The showcase forest at Low draws about half the triangles. Model importer version 7 (ADR-0151).
 - Android: the activity keeps the manifest orientation (landscape by default) instead of SDL's rotation-lock rule. Rendering: Low/Medium shorten foliage range and drop far-foliage shadows (`foliage_distance_scale`, `foliage_shadow_fraction`); visibility CPU time down about 60 % on a 7k-draw scene; per-stage `render.cpu.*` profiler zones (ADR-0150).
 - Export: `victus export --target android|desktop|all`. Android packs ship textures as ASTC only, at up to 1024 px, and are typically 5-8x smaller. A device that cannot sample ASTC decodes the levels on the CPU. Cooked format v9. `victus.nativeBuildType` Gradle property for debug APKs (ADR-0149).
 - Rendering: a TAA reactive mask. Particles, ribbons, water and rain tell the TAA and temporal upscaling resolves to trust the current frame where they are drawn, so they smear and trail less; `RenderSettings::reactive_mask` / `reactive_max`, `victus run --reactive on|off`, `reactive_mask` in the render path report. See docs/STATUS.md (2026-11-20, TAA reactive mask, ADR-0143).

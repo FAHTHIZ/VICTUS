@@ -2193,3 +2193,13 @@ Verified: Linux gcc Release build; `victus_gpu_tests` 200/200 (foliage case exte
 Not covered: no device run of the orientation fix; phone frame times are not measurable here.
 
 Next task: Low-tier image stability on phones (foliage and rain shimmer), GPU triangle budget of the forest scenes.
+
+## 2026-11-20 — Card LODs for leaf canopies, Low foliage LOD bias (ADR-0151)
+
+Built: `generate_lods` builds card LODs (nested subsets of grown cards) for meshes made of many disconnected cards, such as tree canopies, which the simplifier could not reduce. `RenderSettings::foliage_lod_bias` (Low 1). Model importer version 7.
+
+Verified: Linux gcc Release build; `victus_render_tests` 66/66 (two new card-LOD cases), `victus_asset_tests` 38/38, `victus_gpu_tests` 200/200, `victus_robustness_tests` 15/15. Special Ops forest at Low on lavapipe: main-view triangles 1.14 M to 0.61 M, shadow triangles 514 k to 157 k per frame.
+
+Not covered: no phone frame times; the specular AA experiment was measured worse and not shipped (see the ADR).
+
+Next task: impostors for far trees; prologue camp image quality at Low; script and physics CPU time.
