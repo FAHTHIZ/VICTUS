@@ -2257,3 +2257,13 @@ Verified (Release, GCC, 2 vCPU): `victus_script_tests` 126/126; new case: 50 ms 
 Not covered: CPU clock granularity on Windows (`GetThreadTimes` ticks at about 15.6 ms) was not measured here; Windows/macOS behaviour is verified only by CI.
 
 Next task: confirm CI; then B3 (GPU device-loss recovery design) or generated Luau type definitions.
+
+## 2026-11-21 — GPU device-loss recovery in the player (ADR-0157, blocker B3 partial)
+
+Built: on a lost device (rhi::DeviceHealth, 30 failed operations in a row) the player no longer exits. At the top of the next frame, when no command buffer of the lost device exists, it destroys the scene view, the frame target and every cached GPU asset (`GpuAssetCache::clear` on the old context), the GPU context and the device, then creates a new device with the same `DeviceDesc` (retried for about 10 s, a driver reset can take seconds), attaches the same window, creates a new `GpuContext`, calls the new `GpuAssetCache::rebind` and a new `SceneView` with the previous render settings (including the dynamic resolution scale). Scene, scripts, physics, audio, navigation, network session and save state are untouched; assets reload on their next use. `PlayerOptions::device_recoveries` / `victus_player --device-recoveries N` (default 3, 0 = old behaviour); `PlayerReport::device_recoveries`, printed by `victus_player` and `victus run`. `DeviceDesc::env_fault_injection` (recreated devices ignore `VICTUS_GPU_FAIL`, so an injected loss acts like a one-time reset). `GpuAssetCache` now holds its context by pointer. Post-loop reporting tolerates a recovery that failed part way.
+
+Verified (Release, GCC, lavapipe, 2 vCPU): `victus_device_loss` extended: with `--device-recoveries 0` the player and editor still exit 3 for each failure kind; with recovery, swapchain, submit and command-buffer losses injected at frame 5 all recover and the 90-frame 2D template run ends with exit 0; its final frame against a clean run: FLIP mean 0.010/0.002/0.010, SSIM 0.991/0.998/0.991 (only the spinning coins differ, the simulation kept ticking while frames failed), gated at FLIP <= 0.03, SSIM >= 0.97. 3D template (shadows, IBL, materials), submit loss at frame 5, 60 frames: FLIP 0.0031, SSIM 0.9977. Full `ctest` under `VICTUS_REQUIRE_GPU=1` before push.
+
+Not covered: a real driver reset or GPU removal (none available); sanitizer lanes run without a GPU, so recovery has no ASan run; the editor still autosaves and exits; models added with `add_model` are not restored; Android surface loss is a separate path (lifecycle suspend).
+
+Next task: editor device recovery (UI renderer, thumbnails, viewport) or generated Luau type definitions.

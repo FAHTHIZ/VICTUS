@@ -33,7 +33,7 @@ void GpuAssetCache::clear() {
     model_hints_.clear();
     material_textures_.clear();
     residency_stats_.resident_bytes = 0;
-    for (auto& [id, tex] : textures_) ctx_.device().destroy(tex);
+    for (auto& [id, tex] : textures_) ctx_->device().destroy(tex);
     textures_.clear();
     nearest_.clear();
     environments_.clear();
@@ -44,19 +44,26 @@ void GpuAssetCache::clear() {
     probe_renderer_.reset();
     drop_morphed(nullptr);
     for (auto& [id, model] : models_) {
-        for (auto& m : model->meshes) ctx_.destroy(m);
-        for (auto& t : model->textures) ctx_.device().destroy(t);
+        for (auto& m : model->meshes) ctx_->destroy(m);
+        for (auto& t : model->textures) ctx_->device().destroy(t);
     }
     models_.clear();
-    for (auto& [name, mesh] : primitives_) ctx_.destroy(mesh);
+    for (auto& [name, mesh] : primitives_) ctx_->destroy(mesh);
     primitives_.clear();
     evict_lightmaps();
     for (auto& [id, entry] : procedural_)
-        if (entry.mesh.valid()) ctx_.destroy(entry.mesh);
+        if (entry.mesh.valid()) ctx_->destroy(entry.mesh);
     procedural_.clear();
     evict_shaders();
-    if (terrain_shader_ && *terrain_shader_) ctx_.device().destroy(**terrain_shader_);
+    if (terrain_shader_ && *terrain_shader_) ctx_->device().destroy(**terrain_shader_);
     terrain_shader_.reset();
+}
+
+void GpuAssetCache::rebind(render::GpuContext& ctx) {
+    wait_loads(); // decodes in flight finish before their records are forgotten
+    clear();
+    materials_.clear();
+    ctx_ = &ctx;
 }
 
 void GpuAssetCache::evict(const Uuid& uuid) {
@@ -77,14 +84,14 @@ void GpuAssetCache::evict(const Uuid& uuid) {
     environments_.erase(uuid);
     environment_errors_.erase(uuid);
     if (const auto it = textures_.find(uuid); it != textures_.end()) {
-        ctx_.device().destroy(it->second);
+        ctx_->device().destroy(it->second);
         textures_.erase(it);
     }
     drop_morphed(&uuid);
     if (const auto it = models_.find(uuid); it != models_.end()) {
         forget_model_streams(*it->second, uuid);
-        for (auto& m : it->second->meshes) ctx_.destroy(m);
-        for (auto& t : it->second->textures) ctx_.device().destroy(t);
+        for (auto& m : it->second->meshes) ctx_->destroy(m);
+        for (auto& t : it->second->textures) ctx_->device().destroy(t);
         models_.erase(it);
     }
 }
@@ -277,7 +284,7 @@ Result<rhi::TextureHandle> GpuAssetCache::upload_texture(const Uuid& uuid, const
         if (residency_stats_.frame - s->seen_frame <= 1) level = wanted_level(*s);
     }
     std::optional<assets::TextureCodec> codec;
-    auto tex = upload_cooked_texture(ctx_, cooked, allow_compressed_, &codec, level);
+    auto tex = upload_cooked_texture(*ctx_, cooked, allow_compressed_, &codec, level);
     if (!tex) {
         if (s) s->levels = 0;
         return tex;
@@ -303,14 +310,14 @@ void GpuAssetCache::replace_texture(const Uuid& uuid, const assets::CookedTextur
     level = std::min(level, max_level(s));
     if (level == s.level) return;
     std::optional<assets::TextureCodec> codec;
-    auto tex = upload_cooked_texture(ctx_, cooked, allow_compressed_, &codec, level);
+    auto tex = upload_cooked_texture(*ctx_, cooked, allow_compressed_, &codec, level);
     if (!tex) {
         VICTUS_LOG_WARN("assets", "mip streaming: re-upload of {} failed: {}", uuid.to_string(), tex.error().message);
         return; // the old levels stay
     }
     const rhi::TextureHandle old = *handle;
     // Safe while frames that sample the old texture are in flight: the device frees it once the GPU is done.
-    ctx_.device().destroy(old);
+    ctx_->device().destroy(old);
     *handle = *tex;
     const Resident before = resident_[owner];
     if (owner == uuid) {
@@ -608,7 +615,7 @@ Result<const render::EnvironmentMap*> GpuAssetCache::environment(const Uuid& uui
                               std::format("{}: environment maps need an HDR (.hdr) texture", cooked->name));
         render::SphericalHarmonics9 sh;
         sh.coefficients = cooked->sh;
-        return render::EnvironmentMap::create(ctx_, cooked->hdr_image(), sh, env_bake_);
+        return render::EnvironmentMap::create(*ctx_, cooked->hdr_image(), sh, env_bake_);
     };
     auto env = build();
     if (!env) {
@@ -627,7 +634,7 @@ Result<const render::EnvironmentMap*> GpuAssetCache::atmosphere(const render::At
     // Bake settings scale the cube; the sky itself is smooth, so a 64-128 px cube is plenty.
     render::EnvironmentBakeSettings bake = env_bake_;
     bake.cube_size = std::min(bake.cube_size, 128u);
-    auto env = render::EnvironmentMap::create(ctx_, render::render_atmosphere(s), bake);
+    auto env = render::EnvironmentMap::create(*ctx_, render::render_atmosphere(s), bake);
     if (!env) return std::move(env).error();
     atmosphere_ = std::move(*env); // the previous cube is released once in-flight frames finish
     atmosphere_key_ = s;
@@ -637,7 +644,7 @@ Result<const render::EnvironmentMap*> GpuAssetCache::atmosphere(const render::At
 
 Result<render::SceneRenderer*> GpuAssetCache::probe_renderer() {
     if (!probe_renderer_) {
-        auto r = render::SceneRenderer::create(ctx_);
+        auto r = render::SceneRenderer::create(*ctx_);
         if (!r) return std::move(r).error();
         probe_renderer_ = std::move(*r);
         // Captures are small and viewed through rough reflections: skip SSAO, keep shadows.
@@ -734,7 +741,7 @@ Result<rhi::ShaderHandle> GpuAssetCache::surface_shader(const Uuid& uuid) {
         const std::string path = rec->path; // records may move on refresh
         auto code = load_surface_shader_code(*db_, uuid);
         if (!code) return std::move(code).error();
-        return create_surface_fragment(ctx_.device(), *code, path);
+        return create_surface_fragment(ctx_->device(), *code, path);
     };
     auto result = build();
     if (!result) VICTUS_LOG_ERROR("assets", "{}", result.error().message);
@@ -743,7 +750,7 @@ Result<rhi::ShaderHandle> GpuAssetCache::surface_shader(const Uuid& uuid) {
 
 Result<rhi::ShaderHandle> GpuAssetCache::terrain_shader() {
     if (!terrain_shader_) {
-        terrain_shader_ = create_surface_fragment(ctx_.device(), terrain::terrain_surface_code(), "terrain");
+        terrain_shader_ = create_surface_fragment(ctx_->device(), terrain::terrain_surface_code(), "terrain");
         if (!*terrain_shader_) VICTUS_LOG_ERROR("assets", "built-in terrain shader: {}", terrain_shader_->error().message);
     }
     return *terrain_shader_;
@@ -752,7 +759,7 @@ Result<rhi::ShaderHandle> GpuAssetCache::terrain_shader() {
 void GpuAssetCache::evict_shaders() {
     materials_.clear(); // they hold the shader handles
     for (auto& [id, sh] : shaders_)
-        if (sh) ctx_.device().destroy(*sh);
+        if (sh) ctx_->device().destroy(*sh);
     shaders_.clear();
 }
 
@@ -776,8 +783,8 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
     const std::size_t bytes = assets::upload_bytes(model);
     auto gpu = std::make_unique<GpuModel>();
     auto fail = [&](Error e) -> Result<const GpuModel*> {
-        for (auto& m : gpu->meshes) ctx_.destroy(m);
-        for (auto& t : gpu->textures) ctx_.device().destroy(t);
+        for (auto& m : gpu->meshes) ctx_->destroy(m);
+        for (auto& t : gpu->textures) ctx_->device().destroy(t);
         return e;
     };
     std::size_t skipped_bytes = 0; // top levels of streamed textures that were not uploaded
@@ -802,7 +809,7 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
             if (residency_stats_.frame - s->seen_frame <= 1) level = wanted_level(*s);
         }
         std::optional<assets::TextureCodec> codec;
-        auto tex = upload_cooked_texture(ctx_, t, allow_compressed_, &codec, level);
+        auto tex = upload_cooked_texture(*ctx_, t, allow_compressed_, &codec, level);
         if (!tex) {
             if (s) s->levels = 0;
             return fail(std::move(tex).error());
@@ -832,7 +839,7 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
         }
         gpu->joint_bounds.push_back(std::move(bounds));
         gpu->max_joint.push_back(max_joint);
-        auto g = ctx_.create_mesh(mesh.data, mesh.name);
+        auto g = ctx_->create_mesh(mesh.data, mesh.name);
         if (!g) return fail(std::move(g).error());
         gpu->meshes.push_back(*g);
         const assets::ModelMaterial& src = model.materials[mesh.material];
@@ -882,7 +889,7 @@ const render::GpuMesh* GpuAssetCache::procedural(const scene::ProceduralMesh& me
         return nullptr;
     }
     const render::MeshData data = procedural_mesh_data(mesh); // shared with lightmap baking
-    auto g = ctx_.create_mesh(data, "procedural");
+    auto g = ctx_->create_mesh(data, "procedural");
     if (!g) {
         VICTUS_LOG_ERROR("runtime", "procedural mesh {}: {}", mesh.id, g.error().message);
         entry.failed = true;
@@ -898,7 +905,7 @@ void GpuAssetCache::drop_morphed(const Uuid* model) {
             ++it;
             continue;
         }
-        if (it->second.gpu.valid()) ctx_.destroy_vertex_variant(it->second.gpu);
+        if (it->second.gpu.valid()) ctx_->destroy_vertex_variant(it->second.gpu);
         it = morphed_.erase(it);
     }
 }
@@ -912,26 +919,26 @@ const render::GpuMesh* GpuAssetCache::morphed(std::uint64_t key, const Uuid& mod
     MorphEntry& e = it->second;
     e.last_used = procedural_clock_;
     if (!inserted && (e.model != model_id || e.mesh != mesh)) {
-        if (e.gpu.valid()) ctx_.destroy_vertex_variant(e.gpu);
+        if (e.gpu.valid()) ctx_->destroy_vertex_variant(e.gpu);
         e = MorphEntry{.last_used = procedural_clock_};
     }
     const std::size_t n = std::min(weights.size(), base.morphs.size());
     const bool same = e.gpu.valid() && e.weights.size() == n && std::equal(e.weights.begin(), e.weights.end(), weights.begin());
     if (same) return &e.gpu;
     if (!render::apply_morphs(base, weights.first(n), morph_scratch_)) {
-        if (e.gpu.valid()) ctx_.destroy_vertex_variant(e.gpu); // all zero: the base mesh is exact
+        if (e.gpu.valid()) ctx_->destroy_vertex_variant(e.gpu); // all zero: the base mesh is exact
         morphed_.erase(it);
         return nullptr;
     }
     math::Aabb bounds;
     for (const render::Vertex3D& v : morph_scratch_) bounds.expand(v.position);
     if (e.gpu.valid()) {
-        if (auto st = ctx_.update_vertex_variant(e.gpu, morph_scratch_); !st) {
+        if (auto st = ctx_->update_vertex_variant(e.gpu, morph_scratch_); !st) {
             VICTUS_LOG_ERROR("runtime", "morph upload: {}", st.error().message);
             return nullptr;
         }
     } else {
-        auto g = ctx_.create_vertex_variant(model.meshes[mesh], morph_scratch_, "morphed");
+        auto g = ctx_->create_vertex_variant(model.meshes[mesh], morph_scratch_, "morphed");
         if (!g) {
             VICTUS_LOG_ERROR("runtime", "morph upload: {}", g.error().message);
             morphed_.erase(it);
@@ -951,7 +958,7 @@ void GpuAssetCache::collect_procedural(std::uint32_t keep_frames) {
     ++procedural_clock_;
     for (auto it = morphed_.begin(); it != morphed_.end();) {
         if (it->second.last_used + keep_frames < procedural_clock_) {
-            if (it->second.gpu.valid()) ctx_.destroy_vertex_variant(it->second.gpu);
+            if (it->second.gpu.valid()) ctx_->destroy_vertex_variant(it->second.gpu);
             it = morphed_.erase(it);
         } else {
             ++it;
@@ -959,7 +966,7 @@ void GpuAssetCache::collect_procedural(std::uint32_t keep_frames) {
     }
     for (auto it = procedural_.begin(); it != procedural_.end();) {
         if (it->second.last_used + keep_frames < procedural_clock_) {
-            if (it->second.mesh.valid()) ctx_.destroy(it->second.mesh);
+            if (it->second.mesh.valid()) ctx_->destroy(it->second.mesh);
             it = procedural_.erase(it);
         } else {
             ++it;
@@ -972,7 +979,7 @@ const render::GpuMesh* GpuAssetCache::primitive(std::string_view name) {
     if (const auto it = primitives_.find(key); it != primitives_.end()) return &it->second;
     render::MeshData data = primitive_mesh_data(key); // shared with lightmap baking (same fingerprint)
     if (data.indices.empty()) return nullptr;
-    auto g = ctx_.create_mesh(data, key);
+    auto g = ctx_->create_mesh(data, key);
     if (!g) {
         VICTUS_LOG_ERROR("runtime", "primitive '{}': {}", key, g.error().message);
         return nullptr;
@@ -1004,14 +1011,14 @@ rhi::TextureHandle GpuAssetCache::lightmap(std::string_view path) {
         VICTUS_LOG_ERROR("runtime", "lightmap '{}': {}", key, file.error().message);
         return {};
     }
-    auto tex = ctx_.create_lightmap_texture(file->atlas, key);
+    auto tex = ctx_->create_lightmap_texture(file->atlas, key);
     if (!tex) {
         VICTUS_LOG_ERROR("runtime", "lightmap '{}': {}", key, tex.error().message);
         return {};
     }
     entry.texture = *tex;
     if (!file->direction.empty()) {
-        auto dir = ctx_.create_lightmap_direction_texture(file->direction, key + "#direction");
+        auto dir = ctx_->create_lightmap_direction_texture(file->direction, key + "#direction");
         if (dir) entry.direction = *dir;
         else VICTUS_LOG_WARN("runtime", "lightmap '{}': {} (normal maps will not shade baked light)", key, dir.error().message);
     }
@@ -1020,7 +1027,7 @@ rhi::TextureHandle GpuAssetCache::lightmap(std::string_view path) {
         render::IrradianceGrid grid;
         grid.bounds = file->probes.bounds;
         grid.counts = file->probes.counts;
-        auto vol = render::IrradianceVolume::create(ctx_, grid);
+        auto vol = render::IrradianceVolume::create(*ctx_, grid);
         if (vol && (*vol)->grid().counts == grid.counts) {
             for (std::uint32_t i = 0; i < file->probes.probe_count(); ++i) {
                 if (!file->probes.valid[i]) continue;
@@ -1098,7 +1105,7 @@ GpuAssetCache::LightmappedMesh GpuAssetCache::lightmapped_mesh(std::string_view 
             return *it->second;
         }
     }
-    auto g = ctx_.create_lightmapped_mesh(*data, e->unwrap, "lightmapped");
+    auto g = ctx_->create_lightmapped_mesh(*data, e->unwrap, "lightmapped");
     if (!g) {
         VICTUS_LOG_ERROR("runtime", "lightmap '{}', entity {}: {}", path, id.to_string(), g.error().message);
         return {};
@@ -1120,10 +1127,10 @@ std::size_t GpuAssetCache::lightmapped_mesh_count() const noexcept {
 
 void GpuAssetCache::evict_lightmaps() {
     for (auto& [path, lm] : lightmaps_) {
-        if (lm.texture.valid()) ctx_.device().destroy(lm.texture);
-        if (lm.direction.valid()) ctx_.device().destroy(lm.direction);
+        if (lm.texture.valid()) ctx_->device().destroy(lm.texture);
+        if (lm.direction.valid()) ctx_->device().destroy(lm.direction);
         lm.probes.reset();
-        for (auto& sh : lm.shared) ctx_.destroy(sh->gpu);
+        for (auto& sh : lm.shared) ctx_->destroy(sh->gpu);
     }
     lightmaps_.clear();
 }

@@ -102,16 +102,19 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     // OpenGL ES 3.0, whose window must then be created with SDL_WINDOW_OPENGL.
     rhi::DeviceDesc device_desc;
     device_desc.gles_fallback = true;
-    auto device = rhi::Device::create(device_desc);
-    if (!device) return std::move(device).error();
-    rhi::Device& dev = **device;
-    wd.opengl = dev.capabilities().backend == rhi::Backend::GLES;
+    auto created_device = rhi::Device::create(device_desc);
+    if (!created_device) return std::move(created_device).error();
+    // Owned through pointers: after a device loss they are replaced by new objects (ADR-0157).
+    std::unique_ptr<rhi::Device> device = std::move(created_device).value();
+    rhi::Device* dev = device.get();
+    wd.opengl = dev->capabilities().backend == rhi::Backend::GLES;
     auto window = (*plat)->create_window(wd);
     if (!window) return std::move(window).error();
-    VICTUS_TRY_STATUS(dev.attach_window(**window, proj->settings().vsync ? rhi::PresentMode::VSync : rhi::PresentMode::Immediate));
-    auto gpu = render::GpuContext::create(dev);
-    if (!gpu) return std::move(gpu).error();
-    runtime::GpuAssetCache cache(**gpu, db->get());
+    VICTUS_TRY_STATUS(dev->attach_window(**window, proj->settings().vsync ? rhi::PresentMode::VSync : rhi::PresentMode::Immediate));
+    auto created_gpu = render::GpuContext::create(*dev);
+    if (!created_gpu) return std::move(created_gpu).error();
+    std::unique_ptr<render::GpuContext> gpu = std::move(created_gpu).value();
+    runtime::GpuAssetCache cache(*gpu, db->get());
     const bool mobile = platform::Platform::is_mobile();
     const std::string quality_name = !o.quality.empty() ? o.quality
                                      : mobile           ? proj->settings().mobile_quality
@@ -122,10 +125,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     std::string device_class;
     if (quality_name == "auto") {
         render::DeviceProfile profile;
-        profile.gpu = dev.capabilities().driver_name;
+        profile.gpu = dev->capabilities().driver_name;
         profile.mobile = mobile;
         profile.ram_mb = platform::Platform::system_ram_mb();
-        profile.compute = dev.capabilities().compute;
+        profile.compute = dev->capabilities().compute;
         const render::DeviceClass dc = render::classify_device(profile, mobile ? render::QualityTier::Medium : render::QualityTier::High);
         tier = dc.tier;
         device_class = dc.reason;
@@ -139,9 +142,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     render::SceneRendererOptions renderer_options;
     renderer_options.compact_hdr = o.compact_hdr.value_or(compact_hdr_by_default(*tier, mobile));
     renderer_options.half_precision = o.half_precision.value_or(half_precision_by_default(*tier, mobile));
-    auto view = runtime::SceneView::create(**gpu, rhi::Format::RGBA8_UNORM, renderer_options);
-    if (!view) return std::move(view).error();
-    const char* hdr_format = (*view)->renderer().hdr_format() == rhi::Format::R11G11B10_FLOAT ? "R11G11B10F" : "RGBA16F";
+    auto created_view = runtime::SceneView::create(*gpu, rhi::Format::RGBA8_UNORM, renderer_options);
+    if (!created_view) return std::move(created_view).error();
+    std::unique_ptr<runtime::SceneView> view = std::move(created_view).value();
+    const char* hdr_format = view->renderer().hdr_format() == rhi::Format::R11G11B10_FLOAT ? "R11G11B10F" : "RGBA16F";
     render::RenderSettings quality = render::RenderSettings::preset(*tier);
     if (proj->settings().render_scale > 0.0f) quality.render_scale = proj->settings().render_scale;
     quality.temporal_upscale = proj->settings().temporal_upscale;
@@ -150,7 +154,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     if (o.reactive_mask) quality.reactive_mask = *o.reactive_mask;
     if (o.msaa_samples) quality.msaa_samples = *o.msaa_samples;
     quality = quality.sanitized();
-    (*view)->renderer().set_settings(quality);
+    view->renderer().set_settings(quality);
     // Dynamic resolution holds the project's target frame rate in interactive runs (fixed-step,
     // recorded and replayed runs keep a constant scale so captures stay deterministic).
     std::optional<render::DynamicResolution> dynamic_resolution;
@@ -416,7 +420,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         VICTUS_LOG_INFO("player", "hosting on UDP port {} as '{}' ({})", uo.port, o.player_name, security);
     }
     PlayerReport report;
-    report.backend = dev.capabilities().driver_name;
+    report.backend = dev->capabilities().driver_name;
     report.packaged = packaged;
     report.plugins_loaded = plugins.loaded_count();
     report.quality = std::string(render::quality_tier_name(*tier));
@@ -448,6 +452,58 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         frame_profiler.emplace(600);
         if (!o.trace.empty()) frame_profiler->record(600);
     }
+    // GPU device loss (ADR-0157): the scene, scripts, physics, audio and network session live on
+    // the CPU and survive; only GPU objects are rebuilt. Recovery runs at the top of a frame, when
+    // no command buffer of the lost device exists any more.
+    const rhi::PresentMode present_mode = proj->settings().vsync ? rhi::PresentMode::VSync : rhi::PresentMode::Immediate;
+    std::uint32_t recoveries_left = o.device_recoveries;
+    bool device_lost = false;
+    const auto recover_device = [&]() -> Status {
+        const std::string reason = dev->lost_reason();
+        VICTUS_LOG_WARN("player", "{}; recreating the GPU device ({} of {} recoveries left)", reason, recoveries_left - 1,
+                        o.device_recoveries);
+        --recoveries_left;
+        const render::RenderSettings settings = view->renderer().settings(); // includes the dynamic resolution scale
+        // Old objects go first, on the old device: the view, the frame target, every cached asset.
+        view.reset();
+        if (frame) dev->destroy(frame);
+        frame = {};
+        fw = fh = 0;
+        cache.wait_loads();
+        cache.clear();
+        gpu.reset();
+        dev->detach_window(**window);
+        device.reset();
+        dev = nullptr;
+        // A driver reset can take a few seconds: keep trying for about ten.
+        rhi::DeviceDesc again = device_desc;
+        again.env_fault_injection = false;
+        std::string create_error;
+        for (int attempt = 0; attempt < 20 && !device; ++attempt) {
+            if (attempt > 0) std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            auto d = rhi::Device::create(again);
+            if (d) device = std::move(d).value();
+            else create_error = d.error().message;
+        }
+        if (!device) return make_error(ErrorCode::DeviceError, reason + "; recreating the device failed: " + create_error);
+        dev = device.get();
+        // GLES needs an OpenGL window; switching between GLES and Vulkan/Metal would need a new window.
+        if ((dev->capabilities().backend == rhi::Backend::GLES) != wd.opengl)
+            return make_error(ErrorCode::DeviceError, reason + "; the new device uses a different graphics API");
+        if (auto st = dev->attach_window(**window, present_mode); !st)
+            return make_error(ErrorCode::DeviceError, reason + "; attaching the window to the new device failed: " + st.error().message);
+        auto g = render::GpuContext::create(*dev);
+        if (!g) return make_error(ErrorCode::DeviceError, reason + "; " + g.error().message);
+        gpu = std::move(g).value();
+        cache.rebind(*gpu);
+        auto v = runtime::SceneView::create(*gpu, rhi::Format::RGBA8_UNORM, renderer_options);
+        if (!v) return make_error(ErrorCode::DeviceError, reason + "; " + v.error().message);
+        view = std::move(v).value();
+        view->renderer().set_settings(settings);
+        ++report.device_recoveries;
+        VICTUS_LOG_INFO("player", "GPU device recreated: {}", dev->capabilities().driver_name);
+        return {};
+    };
     bool master_was_muted = false;
     for (;;) {
         for (const auto& ev : (*plat)->poll_events()) {
@@ -504,9 +560,9 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             const float before = dynamic_resolution->scale();
             const float scale = dynamic_resolution->update(frame_cap ? busy_ms : static_cast<float>(now - last) * 1000.0f);
             if (scale != before) {
-                render::RenderSettings rs = (*view)->renderer().settings();
+                render::RenderSettings rs = view->renderer().settings();
                 rs.render_scale = scale;
-                (*view)->renderer().set_settings(rs);
+                view->renderer().set_settings(rs);
             }
         }
         float dt = o.max_frames ? 1.0f / 60.0f : std::clamp(static_cast<float>(now - last), 1e-4f, 0.25f);
@@ -527,30 +583,38 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             recording.after_tick(scene);
         }
         stream_world();
-        (*view)->renderer().set_frame_time(dt);
+        view->renderer().set_frame_time(dt);
         // Surface-shader time follows game time, not the wall clock: animated materials pause
         // with the game and fixed-frame runs render the same pixels every time (ADR-0102).
-        (*view)->renderer().set_time(sim.time().time);
+        view->renderer().set_time(sim.time().time);
 
-        auto cmd = dev.begin_commands();
+        if (device_lost) {
+            device_lost = false;
+            if (recoveries_left == 0) {
+                result = make_error(ErrorCode::DeviceError, dev->lost_reason());
+                break;
+            }
+            if (auto st = recover_device(); !st) {
+                result = std::move(st).error();
+                break;
+            }
+        }
+        auto cmd = dev->begin_commands();
         std::uint32_t sw = 0, sh = 0;
         const rhi::TextureHandle swap = cmd.acquire_swapchain(**window, sw, sh);
         if (!swap) {
             cmd.submit();
-            if (dev.lost()) {
-                result = make_error(ErrorCode::DeviceError, dev.lost_reason());
-                break;
-            }
+            device_lost = dev->lost();
             continue;
         }
         if (!frame || fw != sw || fh != sh) {
-            if (frame) dev.destroy(frame);
+            if (frame) dev->destroy(frame);
             rhi::TextureDesc d;
             d.name = "player_frame";
             d.width = fw = sw;
             d.height = fh = sh;
             d.usage = rhi::TextureUsageColorTarget | rhi::TextureUsageSampled;
-            auto t = dev.create_texture(d);
+            auto t = dev->create_texture(d);
             if (!t) {
                 result = std::move(t).error();
                 cmd.submit();
@@ -559,22 +623,22 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             frame = *t;
         }
         VICTUS_PROFILE_SCOPE("frame.render");
-        const std::uint64_t draws_before = dev.stats().draw_calls;
-        auto rendered = (*view)->render(cmd, scene, cache, frame, fw, fh);
+        const std::uint64_t draws_before = dev->stats().draw_calls;
+        auto rendered = view->render(cmd, scene, cache, frame, fw, fh);
         if (!rendered) {
             result = std::move(rendered).error();
             cmd.submit();
             break;
         }
-        if (dev.lost()) { // submissions kept failing while the swapchain still worked
+        if (dev->lost()) { // submissions kept failing while the swapchain still worked
             cmd.submit();
-            result = make_error(ErrorCode::DeviceError, dev.lost_reason());
-            break;
+            device_lost = true;
+            continue;
         }
         last_view = *rendered;
-        last_view_draws = dev.stats().draw_calls - draws_before;
+        last_view_draws = dev->stats().draw_calls - draws_before;
         last_view_passes = rendered->mode == runtime::ViewMode::ThreeD
-                               ? static_cast<std::uint32_t>((*view)->renderer().graph_info().executed_passes.size())
+                               ? static_cast<std::uint32_t>(view->renderer().graph_info().executed_passes.size())
                                : 0;
         cmd.blit(frame, swap);
         ++report.frames;
@@ -588,7 +652,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         }
         cmd.submit_and_wait();
         const auto save_frame = [&](const fs::Path& png) -> Status {
-            auto px = dev.read_texture(frame);
+            auto px = dev->read_texture(frame);
             if (!px) return std::move(px).error();
             render::Image img{fw, fh, std::move(px).value()};
             for (std::size_t i = 3; i < img.pixels.size(); i += 4) img.pixels[i] = 255;
@@ -610,7 +674,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         break;
     }
     report.assets_streamed = cache.async_stats().uploaded;
-    if (last_view.mode == runtime::ViewMode::ThreeD) report.render_path = (*view)->renderer().path_report();
+    // view and dev are null when a device-loss recovery failed part way (ADR-0157).
+    if (view && last_view.mode == runtime::ViewMode::ThreeD) report.render_path = view->renderer().path_report();
     if (server) {
         const auto joined = server->diagnostics().clients;
         report.net_status = "hosted the session; " + std::to_string(joined) + (joined == 1 ? " client" : " clients") + " connected at exit";
@@ -631,7 +696,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     if (frame_profiler) {
         frame_profiler->frame();
         report.profile = frame_profiler->report();
-        const rhi::DeviceStats ds = dev.stats();
+        const rhi::DeviceStats ds = dev ? dev->stats() : rhi::DeviceStats{};
         auto& c = report.profile.counters;
         c.emplace_back("gpu.texture_bytes", static_cast<double>(ds.texture_bytes));
         c.emplace_back("gpu.buffer_bytes", static_cast<double>(ds.buffer_bytes));
@@ -675,8 +740,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             if (auto st = profiler::write_chrome_trace(o.trace, zones); !st && result.ok()) result = std::move(st).error();
         }
     }
-    dev.wait_idle();
-    if (frame) dev.destroy(frame);
+    if (dev) {
+        dev->wait_idle();
+        if (frame) dev->destroy(frame);
+    }
     report.seconds = platform::Platform::seconds() - start;
     report.script_errors = (*scripts)->stats().errors;
     report.scene_loads = (*scripts)->stats().scene_loads;

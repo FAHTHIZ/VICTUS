@@ -263,8 +263,9 @@ add_test(NAME victus_reference_scenes
 set_tests_properties(victus_reference_scenes PROPERTIES LABELS "cli;gpu" SKIP_REGULAR_EXPRESSION "VICTUS_REFERENCE_SKIPPED"
     TIMEOUT 600)
 
-# Device loss: the player and editor exit cleanly with a clear message when GPU operations keep
-# failing (injected with VICTUS_GPU_FAIL); the editor autosaves unsaved edits first.
+# Device loss: the player recreates the device and keeps running (ADR-0157); with recovery off
+# it and the editor exit cleanly with a clear message when GPU operations keep failing
+# (injected with VICTUS_GPU_FAIL); the editor autosaves unsaved edits first.
 add_test(NAME victus_device_loss
     COMMAND ${CMAKE_COMMAND}
         -DVICTUS_CLI=$<TARGET_FILE:victus_cli>

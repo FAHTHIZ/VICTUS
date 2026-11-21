@@ -403,7 +403,7 @@ Result<std::unique_ptr<Device>> Device::create(const DeviceDesc& desc) {
     if (name) caps.driver_name = std::format("{} ({}{}{})", driver, name, drv ? ", " : "", drv ? drv : "");
     VICTUS_LOG_INFO("rhi", "GPU device: {} msaa<={} bc={} astc={} fp16={}", caps.driver_name, caps.max_msaa, caps.bc_compression,
                     caps.astc_compression, caps.shader_float16);
-    if (const char* fail = SDL_getenv("VICTUS_GPU_FAIL"); fail && *fail) {
+    if (const char* fail = desc.env_fault_injection ? SDL_getenv("VICTUS_GPU_FAIL") : nullptr; fail && *fail) {
         // Fault injection for device-loss tests: <commandbuffer|swapchain|submit>[@frames].
         const std::string_view spec(fail);
         const auto at = spec.find('@');

@@ -10,8 +10,8 @@ subsystem, closes a weakness or adds a blocker.
 
 **Overall verdict (2026-11-21): not production-ready.** VICTUS is broad and heavily tested on
 Linux with a software rasteriser, but no game has shipped on it, no rendering has run on a
-physical GPU on any platform, Android has never run on a device, and GPU device loss ends the
-session. No subsystem is labelled production-ready (definition below).
+physical GPU on any platform, Android has never run on a device, and GPU device-loss recovery
+(player only) has been exercised with injected failures, never a real driver reset. No subsystem is labelled production-ready (definition below).
 
 ## Maturity labels
 
@@ -31,7 +31,7 @@ Items that keep the whole engine from production use, regardless of feature work
 |---|---|---|---|---|
 | B1 | No physical-GPU validation | Every frame-time and image result comes from Mesa lavapipe or CI's virtual Apple GPU; real driver bugs, performance and thermals are unknown | Windows PC with GPU, Apple Silicon Mac, Android phones | [!] blocked on hardware |
 | B2 | Android never run on a device | APK builds in CI only; lifecycle, input, GLES fallback, frame rate and thermals unverified | At least one Vulkan and one GLES-only phone | [!] blocked on hardware |
-| B3 | GPU device loss is fatal | SDL_GPU 3.4 has no device-lost signal or recreate path; the player exits with code 3 | — (upstream SDL or own backend) | [ ] |
+| B3 | GPU device loss is fatal | SDL_GPU 3.4 has no device-lost signal; loss is inferred from 30 failed operations in a row | A real driver reset/GPU removal to test against | [~] 2026-11-21 (ADR-0157): the player recreates the device and every GPU object and keeps the game running (up to 3 times); verified with injected failures only. The editor still autosaves and exits |
 | B4 | No shipped or external project | Workflows are verified by tests, not by an external developer building a game | External testers | [ ] |
 | B5 | Windows rendering untested | CI Windows runners have no GPU; D3D12 unusable (no DXIL) | Windows GPU machine | [!] blocked on hardware |
 | B6 | Packaging lacks installers, OS code signing, patches, cross-export (pack compression and pack signing done, ADR-0154) | Required for store distribution | Signing certificates for release | [~] |
@@ -43,7 +43,7 @@ Items that keep the whole engine from production use, regardless of feature work
 |---|---|---|---|
 | Core (jobs, memory, JSON, fs, logging, profiler) | Usable | No allocation call stacks; one profiler per process | Allocation call-stack capture in tracking builds |
 | Platform (SDL3) | Usable on Linux desktop | Windows/macOS never used interactively; Android untested on device | Hardware (B1, B2) |
-| RHI (SDL_GPU Vulkan/Metal, GLES 3.0 fallback) | Usable on Vulkan; Experimental Metal/GLES | No D3D12 (no DXIL), no GPU timestamps, device loss not recoverable | Device-loss recovery design (B3) |
+| RHI (SDL_GPU Vulkan/Metal, GLES 3.0 fallback) | Usable on Vulkan; Experimental Metal/GLES | No D3D12 (no DXIL), no GPU timestamps, device loss recovered in the player only (injected failures) | Editor device recovery; test a real driver reset (B3) |
 | Shader pipeline (GLSL → SPIR-V/MSL/ESSL) | Usable | FP16 variant only for the PBR BRDF; surface shaders fragment-only | — |
 | 3D renderer | Usable on software Vulkan | Unmeasured on real GPUs; no area lights/cookies, LOD cross-fade, SSR/planar reflections, FFT ocean, dynamic GI beyond probes | Rendering gaps in ROADMAP §2 |
 | Temporal AA / upscaling | Usable | No per-material responsive flag for blended meshes; TAAU on Low unmeasured on phones | Responsive flag |
@@ -93,6 +93,7 @@ Newest first. Feature history before this file existed is in [../CHANGELOG.md](.
 
 | Date | Change | Evidence |
 |---|---|---|
+| 2026-11-21 | GPU device-loss recovery in the player (ADR-0157, B3 partial): new device, GPU context, asset cache contents and scene view rebuilt on the same window; scene, scripts, physics, audio and network survive; `--device-recoveries` (default 3) | `victus_device_loss`: all three injected failure kinds recover in the 2D template, final frame vs clean run FLIP 0.002-0.010, SSIM >= 0.991; 3D template FLIP 0.003, SSIM 0.998 |
 | 2026-11-21 | Script time budgets charge thread CPU time, not wall time (ADR-0156): a descheduled or blocked script thread no longer fails healthy scripts (flaky macOS Debug CI `dungeon_crawler` "exceeded its time budget of 250 ms"); busy loops are still stopped | `victus_script_tests` 126/126, new budget case |
 | 2026-11-21 | Versioned script API 1.0 (ADR-0155, closes B7): `kScriptApiVersion`, `victus.project` `script_api`, hosts refuse incompatible scripts, `victus check` error, frozen snapshot in `engine/script/api/` checked by `victus_script_tests`, `victus script-api`; Entity members moved to one property table | STATUS.md 2026-11-21 (script API) |
 | 2026-11-21 | Fixed red CI after ADR-0154: `pack_tests.cpp` read a `PackEntry*` from a destroyed temporary `Pack` (ASan heap-use-after-free; random codec value on macOS/Windows). Test now keeps the pack alive | `victus_core_tests` 75/75 under ASan+UBSan locally |

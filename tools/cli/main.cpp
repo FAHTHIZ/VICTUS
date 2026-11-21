@@ -348,6 +348,7 @@ int cmd_run(const std::vector<std::string>& a) {
         std::printf("captured %llu frames to %s\n", static_cast<unsigned long long>(r->frames_captured), o.capture_dir.string().c_str());
     if (r->assets_streamed) std::printf("assets: %llu streamed in the background\n", static_cast<unsigned long long>(r->assets_streamed));
     if (r->assets_reloaded) std::printf("hot reload: %zu assets reloaded\n", r->assets_reloaded);
+    if (r->device_recoveries) std::printf("gpu: recovered from %u device loss(es)\n", r->device_recoveries);
     if (r->world_cell_loads)
         std::printf("world: %llu cells streamed in, up to %u active\n", static_cast<unsigned long long>(r->world_cell_loads),
                     r->world_cells_peak);

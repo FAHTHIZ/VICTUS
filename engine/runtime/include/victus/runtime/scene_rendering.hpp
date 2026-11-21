@@ -96,7 +96,7 @@ struct GpuModel {
 
 class GpuAssetCache {
 public:
-    GpuAssetCache(render::GpuContext& ctx, assets::AssetDatabase* db) : ctx_(ctx), db_(db) {}
+    GpuAssetCache(render::GpuContext& ctx, assets::AssetDatabase* db) : ctx_(&ctx), db_(db) {}
     ~GpuAssetCache();
     GpuAssetCache(const GpuAssetCache&) = delete;
     GpuAssetCache& operator=(const GpuAssetCache&) = delete;
@@ -260,11 +260,16 @@ public:
     // Drops one asset (e.g. after re-import) so the next request reloads it.
     void evict(const Uuid& uuid);
     void clear();
-    [[nodiscard]] render::GpuContext& context() noexcept { return ctx_; }
+    // After a GPU device loss (ADR-0157): drops every GPU object (clear(), on the old context,
+    // which must still be alive) and continues on `ctx`. CPU-side settings (residency, async
+    // loading, environment bake, footprints) are kept; assets reload on their next use. Models
+    // registered with add_model() are dropped and must be added again.
+    void rebind(render::GpuContext& ctx);
+    [[nodiscard]] render::GpuContext& context() noexcept { return *ctx_; }
     [[nodiscard]] assets::AssetDatabase* database() noexcept { return db_; }
 
 private:
-    render::GpuContext& ctx_;
+    render::GpuContext* ctx_;
     assets::AssetDatabase* db_;
     std::unordered_map<Uuid, rhi::TextureHandle, UuidHash> textures_;
     std::unordered_map<Uuid, bool, UuidHash> nearest_;
