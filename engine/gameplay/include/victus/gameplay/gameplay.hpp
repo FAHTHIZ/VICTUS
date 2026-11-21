@@ -70,6 +70,8 @@ public:
     // Fingers currently down, in the order they touched. Taps also arrive as left mouse clicks.
     [[nodiscard]] virtual int touch_count() const { return 0; }
     [[nodiscard]] virtual Touch touch(int /*index*/) const { return {}; }
+    // UTF-8 text typed this frame (platform text input events; empty when text input is off).
+    [[nodiscard]] virtual std::string_view text_input() const { return {}; }
 };
 
 // Programmatic input for tests, headless runs, bots and replays. `pressed`/`released` edges are
@@ -112,7 +114,11 @@ public:
         prev_pos_ = mouse_pos_;
         prev_pads_ = pads_;
         wheel_ = 0;
+        text_.clear();
     }
+    // UTF-8 text typed this frame (cleared by end_frame).
+    void add_text(std::string_view utf8) { text_ += utf8; }
+    [[nodiscard]] std::string_view text_input() const override { return text_; }
     // Wheel notches for this frame (cleared by end_frame).
     void add_mouse_wheel(float notches) noexcept { wheel_ += notches; }
     [[nodiscard]] float mouse_wheel() const override { return wheel_; }
@@ -139,6 +145,7 @@ public:
     }
 
 private:
+    std::string text_;
     struct Pad {
         bool connected{false};
         std::array<bool, kGamepadButtonCount> buttons{};

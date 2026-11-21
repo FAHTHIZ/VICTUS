@@ -15,6 +15,7 @@
 #include <vector>
 
 struct ImFont;
+struct ImDrawList;
 
 namespace victus::ui {
 class UiContext;
@@ -44,6 +45,7 @@ public:
 private:
     GameUiRenderer() = default;
     ImFont* font_for(const gameui::DrawItem& item, GpuAssetCache& assets, GameUiStats& stats);
+    void draw_rich_text(ImDrawList* dl, const gameui::DrawItem& item, ImFont* regular);
 
     render::GpuContext* gpu_{nullptr};
     std::unique_ptr<ui::UiContext> ui_;

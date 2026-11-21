@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace victus::gameui {
@@ -85,6 +86,9 @@ struct UiTextComponent {
     math::Color shadow_color{0, 0, 0, 0.45f}; // alpha 0 = no shadow
     math::Vec2 shadow_offset{0, 2};
     std::string font;                // project font asset (.ttf/.otf under assets/); empty = built-in
+    // Inline markup: <b>bold</b>, <color=#ff8800>colour</color> (#rrggbb, #rrggbbaa or a name such
+    // as red, green, blue, yellow, orange, white, black, gray), nestable. Unknown tags stay literal.
+    bool rich{false};
 };
 
 // Clickable element: draws its background in the state colour (keeping a UiPanel's radius and
@@ -96,6 +100,63 @@ struct UiButtonComponent {
     math::Color hovered{0.24f, 0.32f, 0.5f, 0.95f};
     math::Color pressed{0.1f, 0.13f, 0.2f, 1.0f};
     math::Color disabled{0.2f, 0.2f, 0.22f, 0.5f};
+};
+
+// Horizontal (or vertical) slider: drag the handle or click the track; focused sliders step with
+// Left/Right. Every change sends `on_value_changed(slider, action, value)` to scripts.
+struct UiSliderComponent {
+    float value{0.5f};
+    float min_value{0.0f};
+    float max_value{1.0f};
+    float step{0.0f};         // snap increment; 0 = continuous (keyboard steps 1/20 of the range)
+    bool vertical{false};     // bottom is min_value
+    bool interactable{true};
+    std::string action;
+    math::Color track{1, 1, 1, 0.18f};
+    math::Color fill{0.35f, 0.6f, 1.0f, 1.0f};
+    math::Color handle{1, 1, 1, 1};
+    float track_thickness{6};  // canvas units
+    float handle_size{22};     // canvas units (diameter)
+};
+
+// On/off switch: a click flips it and sends `on_value_changed(toggle, action, on)`.
+struct UiToggleComponent {
+    bool on{false};
+    bool interactable{true};
+    std::string action;
+    math::Color off_color{0.3f, 0.32f, 0.38f, 1.0f};
+    math::Color on_color{0.3f, 0.65f, 1.0f, 1.0f};
+    math::Color knob{1, 1, 1, 1};
+};
+
+// Single-line text field. Click (or Enter/Space when focused) to edit; typing, Backspace, Delete,
+// Left/Right, Home/End edit at the caret; Enter submits (`on_submit(field, action, text)`), Escape
+// or a click elsewhere stops editing. Every edit sends `on_value_changed(field, action, text)`.
+struct UiTextInputComponent {
+    std::string text;
+    std::string placeholder{"Type here"};
+    std::uint32_t max_length{256};   // characters (UTF-8 code points)
+    bool password{false};            // shows '*' per character
+    bool interactable{true};
+    std::string action;
+    float font_size{24};
+    std::string font;
+    math::Color color{1, 1, 1, 1};
+    math::Color placeholder_color{1, 1, 1, 0.4f};
+    math::Color background{0.08f, 0.09f, 0.12f, 0.9f};
+    math::Color border{1, 1, 1, 0.2f};
+    math::Color focused_border{0.35f, 0.6f, 1.0f, 1.0f};
+    float corner_radius{6};
+    float padding{10};
+};
+
+// Read-only bar filled to `value` (0..1): health, loading, cooldowns.
+struct UiProgressBarComponent {
+    float value{0.5f};
+    bool vertical{false};  // fills bottom to top
+    math::Color background{1, 1, 1, 0.15f};
+    math::Color fill{0.35f, 0.6f, 1.0f, 1.0f};
+    float corner_radius{6};
 };
 
 // Arranges the element's visible child elements in order along one axis, starting at the
@@ -142,10 +203,18 @@ struct UiStateComponent {
     math::Vec2 scroll_max{0, 0}; // scroll views: largest offset per axis (canvas units)
 };
 
+enum class UiEventKind : std::uint8_t { Click, Changed, Submitted };
+
+// UI event from a button click, a widget value change or a text field submit. `value` holds a
+// slider's value or a toggle's state (0/1); `text` a text field's contents.
 struct ClickEvent {
-    scene::Entity button;
+    scene::Entity button;   // the element (button, slider, toggle or text field)
     std::string action;
+    UiEventKind kind{UiEventKind::Click};
+    float value{0};
+    std::string text;
 };
+using UiEvent = ClickEvent;
 
 struct DrawItem {
     enum class Kind : std::uint8_t { Rect, Image, Text };
@@ -168,10 +237,25 @@ struct DrawItem {
     bool bold{false};
     math::Color shadow_color;
     math::Vec2 shadow_offset;   // pixels
+    bool rich{false};           // parse markup with parse_rich_text
+    float opacity{1};           // element opacity (rich text multiplies explicit colours by it)
+    int caret{-1};              // text fields: caret byte offset into `text` when drawn, else -1
+    bool scroll_to_caret{false};// single-line field: shift left so the caret stays visible
 };
+
+// A run of rich text with one style.
+struct TextRun {
+    std::string text;
+    math::Color color;
+    bool bold{false};
+};
+// Splits UiText markup into runs (see UiTextComponent::rich). Explicit colours keep their own
+// alpha multiplied by `opacity`; text outside tags uses `base`.
+[[nodiscard]] std::vector<TextRun> parse_rich_text(std::string_view text, math::Color base, bool bold, float opacity = 1.0f);
 
 struct UiStats {
     std::uint32_t canvases{0}, elements{0}, visible{0}, buttons{0}, clicks{0};
+    std::uint32_t widgets{0};  // visible sliders, toggles and text fields
 };
 
 // Registers "UiCanvas", "UiRect", "UiPanel", "UiImage", "UiText", "UiButton", "UiLayout"
@@ -203,9 +287,21 @@ void mark_events_delivered(scene::Scene& scene);
 [[nodiscard]] scene::Entity pick(scene::Scene& scene, math::Vec2 point, bool buttons_only = false);
 [[nodiscard]] scene::Entity focused(scene::Scene& scene);
 void focus(scene::Scene& scene, scene::Entity button);
-// Clicks a button as if the user did (keyboard activation, scripts, tests). False when it is
-// not a visible, interactable button.
+// Activates a widget as if the user clicked it (keyboard activation, scripts, tests): buttons send
+// a click, toggles flip, text fields start editing. False when it is not a visible, interactable
+// button, toggle or text field.
 bool click(scene::Scene& scene, scene::Entity button);
+
+// Sets a slider's value (snapped and clamped) or a toggle's state and sends the change event when
+// it changed. False when `widget` is neither.
+bool set_value(scene::Scene& scene, scene::Entity widget, float value);
+// Text field being edited (null when none). Hosts enable the platform text input (on-screen
+// keyboard on phones) while this is set.
+[[nodiscard]] scene::Entity editing(scene::Scene& scene);
+// Starts or stops editing a text field (caret at the end). False when `field` is not an
+// interactable, visible text field.
+bool begin_editing(scene::Scene& scene, scene::Entity field);
+void end_editing(scene::Scene& scene);
 
 // Draw items for every visible element in draw order (requires a current layout()).
 void build_draw_list(scene::Scene& scene, std::vector<DrawItem>& out);

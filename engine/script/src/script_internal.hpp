@@ -594,7 +594,8 @@ inline constexpr const char* kScriptCallbacks[] = {
     "start",          "update",          "fixed_update",       "reload",
     "on_collision_enter", "on_collision_exit", "on_trigger_enter", "on_trigger_exit",
     "on_click",       "on_event",        "on_sequence_event",  "on_net_message",
-    "save_state",     "load_state",      "on_task_abort",
+    "save_state",     "load_state",      "on_task_abort",      "on_value_changed",
+    "on_submit",
 };
 
 // Entity members that are not methods ("valid" first); writable ones accept assignment.
@@ -711,6 +712,8 @@ int entity_set_text_key(lua_State* L);
 int entity_scroll_to(lua_State* L);
 int entity_scroll(lua_State* L);
 int entity_text(lua_State* L);
+int entity_ui_value(lua_State* L);
+int entity_set_ui_value(lua_State* L);
 int entity_set_visible(lua_State* L);
 int entity_visible(lua_State* L);
 bool is_primitive(std::string_view name);

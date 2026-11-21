@@ -35,6 +35,9 @@ struct UiFrame {
     bool dragging{false};
     bool pointer_over{false};
     std::uint32_t modal_order{0}; // elements at or below this order ignore the pointer
+    Entity editing;               // text field taking keyboard text
+    std::size_t caret{0};         // byte offset into the edited text
+    std::uint32_t blink{0};       // updates since the last edit (caret blink phase)
     UiStats stats;
 };
 
@@ -127,6 +130,7 @@ struct Walker {
                 frame.order.push_back(c);
                 ++frame.stats.visible;
                 if (w.has<UiButtonComponent>(c)) ++frame.stats.buttons;
+                if (w.has<UiSliderComponent>(c) || w.has<UiToggleComponent>(c) || w.has<UiTextInputComponent>(c)) ++frame.stats.widgets;
             } else {
                 st.order = 0;
             }
@@ -185,10 +189,155 @@ struct Walker {
     }
 };
 
+// Buttons, toggles, sliders and text fields take the pointer and keyboard focus.
+bool widget_enabled(const ecs::World& w, Entity e) {
+    if (const auto* b = w.get<UiButtonComponent>(e)) return b->interactable;
+    if (const auto* t = w.get<UiToggleComponent>(e)) return t->interactable;
+    if (const auto* sl = w.get<UiSliderComponent>(e)) return sl->interactable;
+    if (const auto* ti = w.get<UiTextInputComponent>(e)) return ti->interactable;
+    return false;
+}
+
 bool is_interactable(Scene& scene, Entity e) {
-    const auto* b = scene.world().get<UiButtonComponent>(e);
     const auto* st = scene.world().get<UiStateComponent>(e);
-    return b && st && b->interactable && st->visible && st->opacity > 0.0f;
+    return st && st->visible && st->opacity > 0.0f && widget_enabled(scene.world(), e);
+}
+
+void emit(Scene& scene, Entity e, const std::string& action, UiEventKind kind, float value = 0, std::string text = {}) {
+    frame_of(scene).events.push_back({e, action, kind, value, std::move(text)});
+}
+
+float snap(const UiSliderComponent& sl, float v) {
+    const float lo = std::min(sl.min_value, sl.max_value), hi = std::max(sl.min_value, sl.max_value);
+    if (sl.step > 0) v = sl.min_value + std::round((v - sl.min_value) / sl.step) * sl.step;
+    return std::clamp(v, lo, hi);
+}
+
+bool set_slider(Scene& scene, Entity e, float v) {
+    auto* sl = scene.world().get<UiSliderComponent>(e);
+    if (!sl) return false;
+    v = snap(*sl, v);
+    if (v == sl->value) return false;
+    sl->value = v;
+    emit(scene, e, sl->action, UiEventKind::Changed, v);
+    return true;
+}
+
+// Slider value under pointer `p` (pixels): the handle centre follows the pointer.
+float slider_at(const UiSliderComponent& sl, const UiStateComponent& st, math::Vec2 p) {
+    const float hs = sl.handle_size * st.scale;
+    float t;
+    if (sl.vertical) t = 1.0f - (p.y - st.rect.y - hs * 0.5f) / std::max(st.rect.h - hs, 1.0f);
+    else t = (p.x - st.rect.x - hs * 0.5f) / std::max(st.rect.w - hs, 1.0f);
+    return sl.min_value + std::clamp(t, 0.0f, 1.0f) * (sl.max_value - sl.min_value);
+}
+
+std::size_t codepoints(std::string_view s) {
+    std::size_t n = 0;
+    for (const char c : s) n += (static_cast<unsigned char>(c) & 0xC0) != 0x80;
+    return n;
+}
+
+// Applies this frame's typing to the edited field. Returns true when the text changed.
+void edit_text(Scene& scene, UiFrame& f, const gameplay::InputSource& in) {
+    auto* ti = scene.world().get<UiTextInputComponent>(f.editing);
+    if (!ti) return;
+    std::string& t = ti->text;
+    std::size_t& c = f.caret;
+    c = std::min(c, t.size());
+    while (c > 0 && c < t.size() && (static_cast<unsigned char>(t[c]) & 0xC0) == 0x80) --c;
+    bool changed = false, moved = false;
+    const std::string_view typed = in.text_input();
+    for (std::size_t i = 0; i < typed.size();) {
+        std::size_t len = 1;
+        const auto lead = static_cast<unsigned char>(typed[i]);
+        if (lead >= 0xF0) len = 4;
+        else if (lead >= 0xE0) len = 3;
+        else if (lead >= 0xC0) len = 2;
+        len = std::min(len, typed.size() - i);
+        if (lead >= 0x20 && lead != 0x7F && codepoints(t) < ti->max_length) {
+            t.insert(c, typed.substr(i, len));
+            c += len;
+            changed = true;
+        }
+        i += len;
+    }
+    auto prev = [&](std::size_t p) {
+        if (p == 0) return p;
+        --p;
+        while (p > 0 && (static_cast<unsigned char>(t[p]) & 0xC0) == 0x80) --p;
+        return p;
+    };
+    auto next = [&](std::size_t p) {
+        if (p >= t.size()) return t.size();
+        ++p;
+        while (p < t.size() && (static_cast<unsigned char>(t[p]) & 0xC0) == 0x80) ++p;
+        return p;
+    };
+    if (in.key_pressed("Backspace") && c > 0) {
+        const std::size_t p = prev(c);
+        t.erase(p, c - p);
+        c = p;
+        changed = true;
+    }
+    if (in.key_pressed("Delete") && c < t.size()) {
+        t.erase(c, next(c) - c);
+        changed = true;
+    }
+    if (in.key_pressed("Left")) c = prev(c), moved = true;
+    if (in.key_pressed("Right")) c = next(c), moved = true;
+    if (in.key_pressed("Home")) c = 0, moved = true;
+    if (in.key_pressed("End")) c = t.size(), moved = true;
+    if (changed || moved) f.blink = 0;
+    const Entity field = f.editing;
+    if (changed) emit(scene, field, ti->action, UiEventKind::Changed, 0, t);
+    if (in.key_pressed("Enter")) {
+        emit(scene, field, ti->action, UiEventKind::Submitted, 0, t);
+        f.editing = {};
+    } else if (in.key_pressed("Escape")) {
+        f.editing = {};
+    }
+}
+
+bool parse_hex(std::string_view h, math::Color& out) {
+    if (h.size() != 6 && h.size() != 8) return false;
+    float v[4]{0, 0, 0, 1};
+    for (std::size_t i = 0; i < h.size() / 2; ++i) {
+        int byte = 0;
+        for (int k = 0; k < 2; ++k) {
+            const char ch = h[i * 2 + static_cast<std::size_t>(k)];
+            int d;
+            if (ch >= '0' && ch <= '9') d = ch - '0';
+            else if (ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;
+            else if (ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;
+            else return false;
+            byte = byte * 16 + d;
+        }
+        v[i] = static_cast<float>(byte) / 255.0f;
+    }
+    out = {v[0], v[1], v[2], v[3]};
+    return true;
+}
+
+bool parse_color_name(std::string_view n, math::Color& out) {
+    if (n.size() >= 2 && (n.front() == '"' || n.front() == '\'') && n.back() == n.front()) n = n.substr(1, n.size() - 2);
+    if (!n.empty() && n.front() == '#') return parse_hex(n.substr(1), out);
+    struct Named {
+        std::string_view name;
+        math::Color c;
+    };
+    static constexpr Named kNames[] = {
+        {"white", {1, 1, 1, 1}},          {"black", {0, 0, 0, 1}},        {"red", {1, 0.23f, 0.19f, 1}},
+        {"green", {0.2f, 0.84f, 0.29f, 1}}, {"blue", {0.25f, 0.5f, 1, 1}}, {"yellow", {1, 0.84f, 0.04f, 1}},
+        {"orange", {1, 0.58f, 0, 1}},     {"gray", {0.56f, 0.56f, 0.58f, 1}}, {"grey", {0.56f, 0.56f, 0.58f, 1}},
+        {"cyan", {0.39f, 0.82f, 1, 1}},   {"magenta", {0.75f, 0.35f, 0.95f, 1}},
+    };
+    for (const Named& k : kNames)
+        if (k.name == n) {
+            out = k.c;
+            return true;
+        }
+    return false;
 }
 
 template <class Pred>
@@ -204,7 +353,8 @@ Entity pick_where(Scene& scene, const UiFrame& f, math::Vec2 p, Pred&& pred) {
 
 bool blocks_pointer(Scene& scene, Entity e) {
     const ecs::World& w = scene.world();
-    return w.has<UiPanelComponent>(e) || w.has<UiImageComponent>(e) || w.has<UiButtonComponent>(e);
+    return w.has<UiPanelComponent>(e) || w.has<UiImageComponent>(e) || w.has<UiButtonComponent>(e) || w.has<UiSliderComponent>(e) ||
+           w.has<UiToggleComponent>(e) || w.has<UiTextInputComponent>(e) || w.has<UiProgressBarComponent>(e);
 }
 
 bool scrollable(Scene& scene, Entity e) {
@@ -237,7 +387,7 @@ bool scroll_input(Scene& scene, UiFrame& f, const gameplay::InputSource& in, mat
                                                     : math::Vec2{o.x - wheel * sc->wheel_step, o.y});
         }
     }
-    if (in.mouse_pressed(0)) {
+    if (in.mouse_pressed(0) && !w.has<UiSliderComponent>(f.capture)) {
         f.drag_view = pick_where(scene, f, p, [&](Entity e) {
             const auto* sc = w.get<UiScrollComponent>(e);
             return sc && sc->drag_to_scroll && scrollable(scene, e);
@@ -347,6 +497,7 @@ void register_components() {
             .field(&UiTextComponent::shadow_color, "shadow_color")
             .field(&UiTextComponent::shadow_offset, "shadow_offset", {.speed = 0.25f})
             .field(&UiTextComponent::font, "font", {.tooltip = "Font asset path under assets/ (.ttf/.otf); empty = built-in"})
+            .field(&UiTextComponent::rich, "rich", {.tooltip = "Markup: <b>bold</b>, <color=#ff8800>colour</color>"})
             .commit();
         scene::Schema<UiButtonComponent>("UiButton", "UI")
             .field(&UiButtonComponent::interactable, "interactable")
@@ -362,6 +513,52 @@ void register_components() {
             .field(&UiScrollComponent::offset, "offset", {.min = 0, .speed = 1, .tooltip = "Canvas units scrolled; clamped to the content"})
             .field(&UiScrollComponent::wheel_step, "wheel_step", {.min = 0, .max = 10000, .speed = 1, .tooltip = "Canvas units per wheel notch"})
             .field(&UiScrollComponent::drag_to_scroll, "drag_to_scroll", {.tooltip = "Dragging the content (touch or mouse) scrolls it"})
+            .commit();
+        scene::Schema<UiSliderComponent>("UiSlider", "UI")
+            .field(&UiSliderComponent::value, "value", {.speed = 0.01f})
+            .field(&UiSliderComponent::min_value, "min_value", {.speed = 0.01f})
+            .field(&UiSliderComponent::max_value, "max_value", {.speed = 0.01f})
+            .field(&UiSliderComponent::step, "step", {.min = 0, .speed = 0.01f, .tooltip = "Snap increment; 0 = continuous"})
+            .field(&UiSliderComponent::vertical, "vertical", {.tooltip = "Bottom is the minimum"})
+            .field(&UiSliderComponent::interactable, "interactable")
+            .field(&UiSliderComponent::action, "action", {.tooltip = "Passed to on_value_changed(slider, action, value)"})
+            .field(&UiSliderComponent::track, "track")
+            .field(&UiSliderComponent::fill, "fill")
+            .field(&UiSliderComponent::handle, "handle")
+            .field(&UiSliderComponent::track_thickness, "track_thickness", {.min = 0, .max = 200, .speed = 0.25f})
+            .field(&UiSliderComponent::handle_size, "handle_size", {.min = 0, .max = 400, .speed = 0.25f})
+            .commit();
+        scene::Schema<UiToggleComponent>("UiToggle", "UI")
+            .field(&UiToggleComponent::on, "on")
+            .field(&UiToggleComponent::interactable, "interactable")
+            .field(&UiToggleComponent::action, "action", {.tooltip = "Passed to on_value_changed(toggle, action, on)"})
+            .field(&UiToggleComponent::off_color, "off_color")
+            .field(&UiToggleComponent::on_color, "on_color")
+            .field(&UiToggleComponent::knob, "knob")
+            .commit();
+        scene::Schema<UiTextInputComponent>("UiTextInput", "UI")
+            .field(&UiTextInputComponent::text, "text")
+            .field(&UiTextInputComponent::placeholder, "placeholder")
+            .field(&UiTextInputComponent::max_length, "max_length", {.min = 1, .max = 100000, .tooltip = "Characters"})
+            .field(&UiTextInputComponent::password, "password", {.tooltip = "Show * per character"})
+            .field(&UiTextInputComponent::interactable, "interactable")
+            .field(&UiTextInputComponent::action, "action", {.tooltip = "Passed to on_value_changed and on_submit"})
+            .field(&UiTextInputComponent::font_size, "font_size", {.min = 1, .max = 1000, .speed = 0.5f})
+            .field(&UiTextInputComponent::font, "font", {.tooltip = "Font asset path under assets/; empty = built-in"})
+            .field(&UiTextInputComponent::color, "color")
+            .field(&UiTextInputComponent::placeholder_color, "placeholder_color")
+            .field(&UiTextInputComponent::background, "background")
+            .field(&UiTextInputComponent::border, "border")
+            .field(&UiTextInputComponent::focused_border, "focused_border")
+            .field(&UiTextInputComponent::corner_radius, "corner_radius", {.min = 0, .max = 1000, .speed = 0.5f})
+            .field(&UiTextInputComponent::padding, "padding", {.min = 0, .max = 1000, .speed = 0.5f})
+            .commit();
+        scene::Schema<UiProgressBarComponent>("UiProgressBar", "UI")
+            .field(&UiProgressBarComponent::value, "value", {.min = 0, .max = 1, .speed = 0.01f})
+            .field(&UiProgressBarComponent::vertical, "vertical", {.tooltip = "Fill bottom to top"})
+            .field(&UiProgressBarComponent::background, "background")
+            .field(&UiProgressBarComponent::fill, "fill")
+            .field(&UiProgressBarComponent::corner_radius, "corner_radius", {.min = 0, .max = 1000, .speed = 0.5f})
             .commit();
         scene::Schema<UiLayoutComponent>("UiLayout", "UI")
             .enumeration(&UiLayoutComponent::direction, "direction", {"vertical", "horizontal"})
@@ -453,6 +650,8 @@ void update(Scene& scene, const gameplay::InputSource* input) {
     });
     if (!f.focus.is_null() && !is_interactable(scene, f.focus)) f.focus = {};
     if (!f.capture.is_null() && !is_interactable(scene, f.capture)) f.capture = {};
+    if (!f.editing.is_null() && (!is_interactable(scene, f.editing) || !w.has<UiTextInputComponent>(f.editing))) f.editing = {};
+    ++f.blink;
 
     Entity hovered;
     const Entity focus_before = f.focus;
@@ -467,14 +666,33 @@ void update(Scene& scene, const gameplay::InputSource* input) {
             const auto* c = st ? w.get<UiCanvasComponent>(st->canvas) : nullptr;
             if (c && c->keyboard_navigation) f.focus = hovered;
         }
-        if (input->mouse_pressed(0) && !hovered.is_null()) f.capture = hovered;
+        if (input->mouse_pressed(0)) {
+            if (!f.editing.is_null() && hovered != f.editing) f.editing = {}; // click elsewhere ends editing
+            if (!hovered.is_null()) f.capture = hovered;
+        }
         scrolled = scroll_input(scene, f, *input, p);
         if (!f.capture.is_null()) {
-            if (!input->mouse_down(0)) {
-                if (f.capture == hovered) (void)click(scene, f.capture);
+            const bool slider = w.has<UiSliderComponent>(f.capture);
+            if (slider && input->mouse_down(0)) { // dragging: the value follows the pointer anywhere
+                (void)set_slider(scene, f.capture, slider_at(*w.get<UiSliderComponent>(f.capture), *w.get<UiStateComponent>(f.capture), p));
+                w.get<UiStateComponent>(f.capture)->pressed = true;
+            } else if (!input->mouse_down(0)) {
+                if (f.capture == hovered && !slider) (void)click(scene, f.capture);
                 f.capture = {};
             } else if (f.capture == hovered) {
                 w.get<UiStateComponent>(hovered)->pressed = true;
+            }
+        }
+
+        // Text editing takes the keyboard; otherwise focused sliders step with Left/Right.
+        const bool typing = !f.editing.is_null();
+        if (typing) edit_text(scene, f, *input);
+        if (!typing && !f.focus.is_null()) {
+            if (const auto* sl = w.get<UiSliderComponent>(f.focus)) {
+                const float step = sl->step > 0 ? sl->step : (sl->max_value - sl->min_value) / 20.0f;
+                const int dir = (input->key_pressed("Right") || input->key_pressed("D") ? 1 : 0) -
+                                (input->key_pressed("Left") || input->key_pressed("A") ? 1 : 0);
+                if (dir != 0) (void)set_slider(scene, f.focus, sl->value + static_cast<float>(dir) * step);
             }
         }
 
@@ -487,7 +705,7 @@ void update(Scene& scene, const gameplay::InputSource* input) {
                 nav_order = st.order;
             }
         });
-        if (!nav_canvas.is_null()) {
+        if (!nav_canvas.is_null() && !typing) {
             std::vector<Entity> buttons;
             for (const Entity e : f.order) {
                 const auto* st = w.get<UiStateComponent>(e);
@@ -559,11 +777,93 @@ void focus(Scene& scene, Entity button) {
 
 bool click(Scene& scene, Entity button) {
     if (!scene.world().alive(button) || !is_interactable(scene, button)) return false;
+    ecs::World& w = scene.world();
     UiFrame& f = frame_of(scene);
-    f.events.push_back({button, scene.world().get<UiButtonComponent>(button)->action});
-    ++scene.world().get<UiStateComponent>(button)->clicks;
+    if (auto* t = w.get<UiToggleComponent>(button); t && !w.has<UiButtonComponent>(button)) {
+        t->on = !t->on;
+        emit(scene, button, t->action, UiEventKind::Changed, t->on ? 1.0f : 0.0f);
+    } else if (w.has<UiTextInputComponent>(button) && !w.has<UiButtonComponent>(button)) {
+        return begin_editing(scene, button);
+    } else if (const auto* b = w.get<UiButtonComponent>(button)) {
+        f.events.push_back({button, b->action});
+    } else {
+        return false; // sliders have no click
+    }
+    ++w.get<UiStateComponent>(button)->clicks;
     ++f.stats.clicks;
     return true;
+}
+
+bool set_value(Scene& scene, Entity widget, float value) {
+    ecs::World& w = scene.world();
+    if (!w.alive(widget)) return false;
+    if (w.has<UiSliderComponent>(widget)) return set_slider(scene, widget, value);
+    if (auto* t = w.get<UiToggleComponent>(widget)) {
+        const bool on = value != 0.0f;
+        if (t->on == on) return false;
+        t->on = on;
+        emit(scene, widget, t->action, UiEventKind::Changed, on ? 1.0f : 0.0f);
+        return true;
+    }
+    return false;
+}
+
+Entity editing(Scene& scene) { return frame_of(scene).editing; }
+
+bool begin_editing(Scene& scene, Entity field) {
+    const auto* ti = scene.world().alive(field) ? scene.world().get<UiTextInputComponent>(field) : nullptr;
+    if (!ti || !is_interactable(scene, field)) return false;
+    UiFrame& f = frame_of(scene);
+    f.editing = field;
+    f.focus = field;
+    f.caret = ti->text.size();
+    f.blink = 0;
+    return true;
+}
+
+void end_editing(Scene& scene) { frame_of(scene).editing = {}; }
+
+std::vector<TextRun> parse_rich_text(std::string_view text, math::Color base, bool bold, float opacity) {
+    std::vector<TextRun> runs;
+    std::vector<math::Color> colors{base};
+    const int bold_floor = bold ? 1 : 0;
+    int bold_depth = bold_floor;
+    std::string cur;
+    auto flush = [&] {
+        if (cur.empty()) return;
+        if (!runs.empty() && runs.back().bold == (bold_depth > 0) && runs.back().color.r == colors.back().r &&
+            runs.back().color.g == colors.back().g && runs.back().color.b == colors.back().b && runs.back().color.a == colors.back().a)
+            runs.back().text += cur;
+        else runs.push_back({cur, colors.back(), bold_depth > 0});
+        cur.clear();
+    };
+    for (std::size_t i = 0; i < text.size();) {
+        if (text[i] == '<') {
+            const std::size_t j = text.find('>', i);
+            if (j != std::string_view::npos) {
+                const std::string_view tag = text.substr(i + 1, j - i - 1);
+                math::Color c;
+                bool handled = true;
+                if (tag == "b") flush(), ++bold_depth;
+                else if (tag == "/b") flush(), bold_depth = std::max(bold_floor, bold_depth - 1);
+                else if (tag == "/color") {
+                    flush();
+                    if (colors.size() > 1) colors.pop_back();
+                } else if (tag.size() > 6 && tag.substr(0, 6) == "color=" && parse_color_name(tag.substr(6), c)) {
+                    flush();
+                    c.a *= opacity;
+                    colors.push_back(c);
+                } else handled = false;
+                if (handled) {
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        cur += text[i++];
+    }
+    flush();
+    return runs;
 }
 
 void build_draw_list(Scene& scene, std::vector<DrawItem>& out) {
@@ -598,6 +898,86 @@ void build_draw_list(Scene& scene, std::vector<DrawItem>& out) {
             d.color = with_opacity(c, st->opacity);
             if (d.color.a > 0 || (d.border_width > 0 && d.border_color.a > 0)) out.push_back(std::move(d));
         }
+        auto rect_item = [&](Rect r, math::Color c, float radius, math::Color border = {}, float border_width = 0) {
+            DrawItem d;
+            d.kind = DrawItem::Kind::Rect;
+            d.entity = e;
+            d.rect = r;
+            d.clip = st->clip;
+            d.color = with_opacity(c, st->opacity);
+            d.corner_radius = radius;
+            d.border_color = with_opacity(border, st->opacity);
+            d.border_width = border_width;
+            if (d.color.a > 0 || (d.border_width > 0 && d.border_color.a > 0)) out.push_back(std::move(d));
+        };
+        const Rect& R = st->rect;
+        const bool emphasised = st->hovered || st->focused || st->pressed;
+        if (const auto* pb = w.get<UiProgressBarComponent>(e)) {
+            const float v = std::clamp(pb->value, 0.0f, 1.0f), r = pb->corner_radius * st->scale;
+            rect_item(R, pb->background, r);
+            if (v > 0) rect_item(pb->vertical ? Rect{R.x, R.y + R.h * (1 - v), R.w, R.h * v} : Rect{R.x, R.y, R.w * v, R.h}, pb->fill, r);
+        }
+        if (const auto* sl = w.get<UiSliderComponent>(e)) {
+            const float range = sl->max_value - sl->min_value;
+            const float t = range != 0 ? std::clamp((sl->value - sl->min_value) / range, 0.0f, 1.0f) : 0.0f;
+            const float hs = sl->handle_size * st->scale, th = sl->track_thickness * st->scale;
+            const float alpha = sl->interactable ? 1.0f : 0.45f;
+            auto dim = [&](math::Color c) { return math::Color{c.r, c.g, c.b, c.a * alpha}; };
+            if (sl->vertical) {
+                const float cx = R.x + R.w * 0.5f, hy = R.y + hs * 0.5f + (1 - t) * std::max(R.h - hs, 0.0f);
+                rect_item({cx - th * 0.5f, R.y + hs * 0.5f, th, std::max(R.h - hs, 0.0f)}, dim(sl->track), th * 0.5f);
+                rect_item({cx - th * 0.5f, hy, th, R.y + R.h - hs * 0.5f - hy}, dim(sl->fill), th * 0.5f);
+                rect_item({cx - hs * 0.5f, hy - hs * 0.5f, hs, hs}, dim(sl->handle), hs * 0.5f, sl->fill, emphasised ? 2 * st->scale : 0);
+            } else {
+                const float cy = R.y + R.h * 0.5f, hx = R.x + hs * 0.5f + t * std::max(R.w - hs, 0.0f);
+                rect_item({R.x + hs * 0.5f, cy - th * 0.5f, std::max(R.w - hs, 0.0f), th}, dim(sl->track), th * 0.5f);
+                rect_item({R.x + hs * 0.5f, cy - th * 0.5f, hx - (R.x + hs * 0.5f), th}, dim(sl->fill), th * 0.5f);
+                rect_item({hx - hs * 0.5f, cy - hs * 0.5f, hs, hs}, dim(sl->handle), hs * 0.5f, sl->fill, emphasised ? 2 * st->scale : 0);
+            }
+        }
+        if (const auto* tg = w.get<UiToggleComponent>(e)) {
+            const float alpha = tg->interactable ? 1.0f : 0.45f;
+            math::Color track = tg->on ? tg->on_color : tg->off_color;
+            track.a *= alpha;
+            rect_item(R, track, R.h * 0.5f, math::Color{1, 1, 1, 0.6f}, emphasised ? 2 * st->scale : 0);
+            const float inset = std::max(2.0f, R.h * 0.1f), k = R.h - 2 * inset;
+            math::Color knob = tg->knob;
+            knob.a *= alpha;
+            rect_item({tg->on ? R.x + R.w - inset - k : R.x + inset, R.y + inset, k, k}, knob, k * 0.5f);
+        }
+        if (const auto* ti = w.get<UiTextInputComponent>(e)) {
+            const bool is_editing = f.editing == e;
+            rect_item(R, ti->background, ti->corner_radius * st->scale, is_editing || st->focused ? ti->focused_border : ti->border,
+                      (is_editing ? 2.0f : 1.0f) * st->scale);
+            const float pad = ti->padding * st->scale;
+            DrawItem d;
+            d.kind = DrawItem::Kind::Text;
+            d.entity = e;
+            d.rect = {R.x + pad, R.y, std::max(0.0f, R.w - 2 * pad), R.h};
+            d.clip = st->clip.intersect(d.rect);
+            d.font = ti->font;
+            d.font_size = std::max(1.0f, ti->font_size * st->scale);
+            d.align = TextAlign::Left;
+            d.vertical_align = VerticalAlign::Middle;
+            d.shadow_color = {0, 0, 0, 0};
+            d.opacity = st->opacity;
+            d.scroll_to_caret = true;
+            const std::size_t caret = std::min(f.caret, ti->text.size());
+            if (ti->text.empty()) {
+                d.text = is_editing ? std::string{} : ti->placeholder;
+                d.color = with_opacity(ti->placeholder_color, st->opacity);
+                if (is_editing) d.color = with_opacity(ti->color, st->opacity);
+            } else if (ti->password) {
+                d.text.assign(codepoints(ti->text), '*');
+                d.color = with_opacity(ti->color, st->opacity);
+            } else {
+                d.text = ti->text;
+                d.color = with_opacity(ti->color, st->opacity);
+            }
+            if (is_editing && (f.blink / 30) % 2 == 0)
+                d.caret = static_cast<int>(ti->password ? codepoints(std::string_view(ti->text).substr(0, caret)) : caret);
+            if ((!d.text.empty() || d.caret >= 0) && d.color.a > 0) out.push_back(std::move(d));
+        }
         if (const auto* img = w.get<UiImageComponent>(e)) {
             DrawItem d;
             d.kind = DrawItem::Kind::Image;
@@ -630,7 +1010,9 @@ void build_draw_list(Scene& scene, std::vector<DrawItem>& out) {
             d.bold = txt->bold;
             d.shadow_color = with_opacity(txt->shadow_color, st->opacity);
             d.shadow_offset = {txt->shadow_offset.x * st->scale, txt->shadow_offset.y * st->scale};
-            if (d.color.a > 0) out.push_back(std::move(d));
+            d.rich = txt->rich;
+            d.opacity = st->opacity;
+            if (d.color.a > 0 || d.rich) out.push_back(std::move(d));
         }
     }
 }

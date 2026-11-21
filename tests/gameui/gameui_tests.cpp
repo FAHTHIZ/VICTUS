@@ -314,7 +314,7 @@ TEST_CASE("ui: keyboard navigation cycles focus and activates buttons") {
 
 TEST_CASE("ui: components serialize through their schemas and draw items carry styles") {
     register_components();
-    for (const char* name : {"UiCanvas", "UiRect", "UiPanel", "UiImage", "UiText", "UiButton", "UiLayout", "UiScroll"}) {
+    for (const char* name : {"UiCanvas", "UiRect", "UiPanel", "UiImage", "UiText", "UiButton", "UiLayout", "UiScroll", "UiSlider", "UiToggle", "UiTextInput", "UiProgressBar"}) {
         CAPTURE(name);
         const auto* schema = scene::find_schema(name);
         REQUIRE(schema);
@@ -562,4 +562,273 @@ TEST_CASE("ui: scroll views clamp to their content and scroll by wheel, drag, fo
     CHECK(s.world().get<UiStateComponent>(view)->scroll_max.y == doctest::Approx(0));
     CHECK(s.world().get<UiScrollComponent>(view)->offset.y == doctest::Approx(0));
     check_rect(rect(s, items[0]), 112, 112, 276, 50);
+}
+
+TEST_CASE("ui widgets: sliders drag, snap, step with the keyboard and report changes") {
+    register_components();
+    Scene s;
+    set_screen_size(s, {1280, 720});
+    const Entity c = canvas(s);
+    s.world().get<UiCanvasComponent>(c)->keyboard_navigation = true;
+    // 400 x 40 slider at (100, 100); 20 px handle, so the value spans x in [110, 490].
+    const Entity sl = element(s, c, "Volume", corner({0, 0}, {0, 0}, {100, 100}, {400, 40}));
+    UiSliderComponent slider;
+    slider.value = 0.25f;
+    slider.handle_size = 20;
+    slider.action = "volume";
+    s.world().add<UiSliderComponent>(sl, slider);
+    gameplay::ManualInput in;
+    auto step = [&] {
+        update(s, &in);
+        in.end_frame();
+    };
+    step();
+    CHECK(stats(s).widgets == 1);
+    CHECK(pointer_over_ui(s) == false);
+
+    // Press on the track at 3/4, drag to the far left and beyond, release.
+    in.set_mouse_position({110 + 380 * 0.75f, 120});
+    in.set_mouse(0, true);
+    step();
+    CHECK(s.world().get<UiSliderComponent>(sl)->value == doctest::Approx(0.75f));
+    REQUIRE(events(s).size() == 1);
+    CHECK(events(s)[0].kind == UiEventKind::Changed);
+    CHECK(events(s)[0].action == "volume");
+    CHECK(events(s)[0].value == doctest::Approx(0.75f));
+    CHECK(pointer_over_ui(s));
+    in.set_mouse_position({20, 300}); // outside the slider: the drag keeps control
+    step();
+    CHECK(s.world().get<UiSliderComponent>(sl)->value == 0.0f);
+    in.set_mouse(0, false);
+    step();
+    CHECK(events(s).empty()); // releasing is not a change or a click
+    in.set_mouse_position({300, 120});
+    step();
+    CHECK(s.world().get<UiSliderComponent>(sl)->value == 0.0f); // no longer dragging
+
+    // Snapping to a step and clamping through set_value.
+    auto* comp = s.world().get<UiSliderComponent>(sl);
+    comp->min_value = 0;
+    comp->max_value = 10;
+    comp->step = 2.5f;
+    CHECK(set_value(s, sl, 6.4f));
+    CHECK(comp->value == doctest::Approx(7.5f));
+    CHECK_FALSE(set_value(s, sl, 7.4f)); // snaps to the same value: no event
+    CHECK(set_value(s, sl, 99));
+    CHECK(comp->value == doctest::Approx(10));
+
+    // Focused slider: Left/Right step by `step`.
+    focus(s, sl);
+    in.set_key("Left", true);
+    step();
+    CHECK(comp->value == doctest::Approx(7.5f));
+    in.set_key("Left", false);
+    step();
+
+    // Vertical sliders: bottom is the minimum.
+    comp->vertical = true;
+    comp->step = 0;
+    s.world().get<UiRectComponent>(sl)->size = {40, 400};
+    step();
+    in.set_mouse_position({120, 110 + 380 * 0.2f}); // 20 % from the top
+    in.set_mouse(0, true);
+    step();
+    CHECK(comp->value == doctest::Approx(8.0f).epsilon(0.01));
+    in.set_mouse(0, false);
+    step();
+
+    // Draw items: track, fill and handle.
+    std::vector<DrawItem> items;
+    build_draw_list(s, items);
+    CHECK(items.size() == 3);
+}
+
+TEST_CASE("ui widgets: toggles, progress bars and change events reach the right element") {
+    register_components();
+    Scene s;
+    const Entity c = canvas(s);
+    const Entity t = element(s, c, "Fullscreen", corner({0, 0}, {0, 0}, {10, 10}, {60, 30}));
+    s.world().add<UiToggleComponent>(t).action = "fullscreen";
+    const Entity bar = element(s, c, "Health", corner({0, 0}, {0, 0}, {10, 100}, {200, 20}));
+    s.world().add<UiProgressBarComponent>(bar).value = 0.3f;
+    gameplay::ManualInput in;
+    auto step = [&] {
+        update(s, &in);
+        in.end_frame();
+    };
+    step();
+    in.set_mouse_position({40, 25});
+    in.set_mouse(0, true);
+    step();
+    CHECK_FALSE(s.world().get<UiToggleComponent>(t)->on); // flips on release, like a button
+    in.set_mouse(0, false);
+    step();
+    CHECK(s.world().get<UiToggleComponent>(t)->on);
+    REQUIRE(events(s).size() == 1);
+    CHECK(events(s)[0].kind == UiEventKind::Changed);
+    CHECK(events(s)[0].value == 1.0f);
+    CHECK(events(s)[0].action == "fullscreen");
+    CHECK(set_value(s, t, 0));
+    CHECK_FALSE(s.world().get<UiToggleComponent>(t)->on);
+    s.world().get<UiToggleComponent>(t)->interactable = false;
+    step();
+    CHECK_FALSE(click(s, t));
+
+    std::vector<DrawItem> items;
+    build_draw_list(s, items);
+    // Toggle: track and knob; progress bar: background and fill 30 % wide.
+    REQUIRE(items.size() == 4);
+    CHECK(items[3].rect.w == doctest::Approx(60.0f));
+    CHECK(items[2].rect.w == doctest::Approx(200.0f));
+    s.world().get<UiProgressBarComponent>(bar)->value = 0;
+    build_draw_list(s, items);
+    CHECK(items.size() == 3);
+}
+
+TEST_CASE("ui widgets: text fields edit at the caret, submit, cancel and respect limits") {
+    register_components();
+    Scene s;
+    const Entity c = canvas(s);
+    s.world().get<UiCanvasComponent>(c)->keyboard_navigation = true;
+    const Entity field = element(s, c, "Name", corner({0, 0}, {0, 0}, {10, 10}, {300, 44}));
+    UiTextInputComponent ti;
+    ti.action = "name";
+    ti.max_length = 8;
+    s.world().add<UiTextInputComponent>(field, ti);
+    const Entity other = button(s, c, "Ok", corner({0, 0}, {0, 0}, {10, 80}, {100, 40}), "ok");
+    gameplay::ManualInput in;
+    auto step = [&] {
+        update(s, &in);
+        in.end_frame();
+    };
+    auto press = [&](const char* key) {
+        in.set_key(key, true);
+        step();
+        in.set_key(key, false);
+        step();
+    };
+    step();
+    // Placeholder shown while empty and not editing.
+    std::vector<DrawItem> items;
+    build_draw_list(s, items);
+    bool placeholder = false;
+    for (const auto& d : items) placeholder |= d.kind == DrawItem::Kind::Text && d.text == "Type here";
+    CHECK(placeholder);
+
+    // Click to edit; typing goes in, W/S do not move focus while typing.
+    in.set_mouse_position({50, 30});
+    in.set_mouse(0, true);
+    step();
+    in.set_mouse(0, false);
+    step();
+    REQUIRE(editing(s) == field);
+    in.add_text("Héllo");
+    in.set_key("S", true); // also typed as text by the platform; must not navigate
+    step();
+    in.set_key("S", false);
+    auto& text = s.world().get<UiTextInputComponent>(field)->text;
+    CHECK(text == "Héllo");
+    CHECK(focused(s) == field);
+    REQUIRE(events(s).size() == 1);
+    CHECK(events(s)[0].kind == UiEventKind::Changed);
+    CHECK(events(s)[0].text == "Héllo");
+    step();
+    // Caret editing: Home, Delete, End, Left, Backspace (multi-byte safe).
+    press("Home");
+    press("Delete");
+    CHECK(text == "éllo");
+    press("Delete");
+    CHECK(text == "llo");
+    in.add_text("é");
+    step();
+    CHECK(text == "éllo");
+    press("Backspace");
+    CHECK(text == "llo");
+    press("End");
+    press("Left");
+    in.add_text("XYZWVUT"); // limit is 8 characters
+    step();
+    CHECK(text == "llXYZWVo");
+    // Caret drawn at its byte offset while editing.
+    build_draw_list(s, items);
+    int caret = -2;
+    for (const auto& d : items)
+        if (d.kind == DrawItem::Kind::Text) caret = d.caret;
+    CHECK((caret == 7 || caret == -1)); // -1 during the blink-off phase
+    // Enter submits and stops editing.
+    in.set_key("Enter", true);
+    step();
+    in.set_key("Enter", false);
+    REQUIRE(events(s).size() == 1);
+    CHECK(events(s)[0].kind == UiEventKind::Submitted);
+    CHECK(events(s)[0].text == "llXYZWVo");
+    CHECK(editing(s).is_null());
+    CHECK(s.world().get<UiStateComponent>(other)->clicks == 0); // Enter did not also click a button
+    step();
+
+    // Keyboard: focus the field, Enter starts editing, Escape stops without submitting.
+    focus(s, field);
+    press("Enter");
+    CHECK(editing(s) == field);
+    in.set_key("Escape", true);
+    step();
+    in.set_key("Escape", false);
+    CHECK(editing(s).is_null());
+    CHECK(events(s).empty());
+    step();
+    // Clicking elsewhere ends editing; password fields draw stars.
+    REQUIRE(begin_editing(s, field));
+    s.world().get<UiTextInputComponent>(field)->password = true;
+    in.set_mouse_position({50, 100});
+    in.set_mouse(0, true);
+    step();
+    CHECK(editing(s).is_null());
+    in.set_mouse(0, false);
+    step();
+    build_draw_list(s, items);
+    bool stars = false;
+    for (const auto& d : items) stars |= d.kind == DrawItem::Kind::Text && d.text == "********";
+    CHECK(stars);
+    // Hidden fields stop editing.
+    REQUIRE(begin_editing(s, field));
+    s.world().get<UiRectComponent>(field)->visible = false;
+    step();
+    CHECK(editing(s).is_null());
+}
+
+TEST_CASE("ui rich text: bold and colour tags become styled runs") {
+    const math::Color white{1, 1, 1, 1};
+    auto runs = parse_rich_text("Score: <b>42</b> <color=#ff8000>hot</color> <color=red><b>!</b></color>", white, false, 0.5f);
+    REQUIRE(runs.size() == 6);
+    CHECK(runs[0].text == "Score: ");
+    CHECK_FALSE(runs[0].bold);
+    CHECK(runs[1].text == "42");
+    CHECK(runs[1].bold);
+    CHECK(runs[2].text == " ");
+    CHECK(runs[3].text == "hot");
+    CHECK(runs[3].color.r == doctest::Approx(1.0f));
+    CHECK(runs[3].color.g == doctest::Approx(128.0f / 255.0f));
+    CHECK(runs[3].color.a == doctest::Approx(0.5f)); // explicit colours take the element opacity
+    CHECK(runs[4].text == " ");
+    CHECK(runs[5].text == "!");
+    CHECK(runs[5].bold);
+    CHECK(runs[5].color.g == doctest::Approx(0.23f));
+    // Unknown tags and broken markup stay literal; unbalanced closers are ignored.
+    runs = parse_rich_text("a <i>b</i> </b></color> c < d <color=nope>e", white, true);
+    REQUIRE(runs.size() == 1);
+    CHECK(runs[0].text == "a <i>b</i>  c < d <color=nope>e");
+    CHECK(runs[0].bold);
+
+    register_components();
+    Scene s;
+    const Entity c = canvas(s);
+    const Entity label = element(s, c, "Label", corner({0, 0}, {0, 0}, {0, 0}, {300, 40}));
+    auto& t = s.world().add<UiTextComponent>(label);
+    t.text = "<b>Rich</b>";
+    t.rich = true;
+    layout(s);
+    std::vector<DrawItem> items;
+    build_draw_list(s, items);
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].rich);
 }

@@ -45,6 +45,8 @@ public:
         return previous ? state_->gamepad_axis_prev(idx(pad), a) : state_->gamepad(idx(pad)).axes[static_cast<std::size_t>(axis)];
     }
 
+    std::string_view text_input() const override { return enabled_ ? std::string_view(state_->text_input()) : std::string_view{}; }
+
     int touch_count() const override { return enabled_ ? static_cast<int>(state_->touches().size()) : 0; }
     gameplay::Touch touch(int i) const override {
         if (i < 0 || i >= touch_count()) return {};
