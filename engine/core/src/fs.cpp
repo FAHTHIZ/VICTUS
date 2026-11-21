@@ -315,6 +315,26 @@ Status write_atomic(const Path& path, std::span<const std::uint8_t> bytes) {
 
 Status write_text_atomic(const Path& path, std::string_view text) { return write_atomic(path, as_bytes(text)); }
 
+Result<bool> write_text_if_absent(const Path& path, std::string_view text) {
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) return false;
+    auto tmp = stage(path, as_bytes(text));
+    if (!tmp) return std::move(tmp).error();
+    std::filesystem::create_hard_link(*tmp, path, ec);
+    if (!ec) {
+        std::filesystem::remove(*tmp, ec);
+        sync_directory(path.parent_path());
+        return true;
+    }
+    if (ec == std::errc::file_exists || std::filesystem::exists(path)) {
+        std::filesystem::remove(*tmp, ec);
+        return false;
+    }
+    // No hard links here (FAT, some network shares): best effort.
+    VICTUS_TRY_STATUS(swap_in(*tmp, path));
+    return true;
+}
+
 Path history_path(const Path& path, std::uint32_t generation) {
     return hidden_sibling(path, std::format(".vbak{}", generation));
 }

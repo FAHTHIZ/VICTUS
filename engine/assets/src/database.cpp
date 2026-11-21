@@ -243,13 +243,23 @@ fs::Path AssetDatabase::source_path(const AssetRecord& r) const { return assets_
 
 fs::Path AssetDatabase::cooked_path(const Uuid& uuid) const { return cache_dir() / (uuid.to_string() + ".vcooked"); }
 
-Status AssetDatabase::write_meta(const AssetRecord& r) const {
+namespace {
+std::string meta_text(const AssetRecord& r, int version) {
     json::Value meta = json::Value::object();
-    meta.set("victus_meta", kMetaVersion);
+    meta.set("victus_meta", version);
     meta.set("uuid", r.uuid.to_string());
     meta.set("importer", r.importer);
     meta.set("settings", r.settings);
-    return fs::write_text_atomic(fs::Path(source_path(r).string() + ".meta"), json::stringify(meta, true) + "\n");
+    return json::stringify(meta, true) + "\n";
+}
+} // namespace
+
+Status AssetDatabase::write_meta(const AssetRecord& r) const {
+    return fs::write_text_atomic(fs::Path(source_path(r).string() + ".meta"), meta_text(r, kMetaVersion));
+}
+
+Result<bool> AssetDatabase::create_meta(const AssetRecord& r) const {
+    return fs::write_text_if_absent(fs::Path(source_path(r).string() + ".meta"), meta_text(r, kMetaVersion));
 }
 
 RefreshReport AssetDatabase::refresh() {
@@ -297,6 +307,29 @@ RefreshReport AssetDatabase::refresh() {
             r.settings = default_settings(r.importer, rel);
             write = true;
             report.added.push_back(rel);
+        }
+        if (write) {
+            // A new sidecar is created exclusively: another database open on the same project
+            // (Studio's background project check, `victus check`, a second editor) may be giving
+            // the same file its identity right now, and the first writer must win everywhere.
+            auto created = create_meta(r);
+            if (!created) {
+                report.errors.push_back(std::format("{}: {}", rel, created.error().message));
+            } else if (!*created) {
+                if (!report.added.empty() && report.added.back() == rel) report.added.pop_back();
+                auto text = fs::read_text(meta_path, 1u << 20);
+                auto doc = text ? json::parse(*text) : Result<json::Value>(std::move(text).error());
+                Uuid theirs;
+                if (doc && doc->is_object() && Uuid::parse((*doc)["uuid"].as_string_or(""), theirs) && !theirs.is_nil()) {
+                    r.uuid = theirs;
+                    r.importer = (*doc)["importer"].as_string_or(default_importer(r.kind));
+                    r.settings = (*doc)["settings"].is_object() ? (*doc)["settings"] : default_settings(r.importer, rel);
+                } else {
+                    report.errors.push_back(std::format("{}.meta is invalid; asset ignored until fixed", rel));
+                    continue;
+                }
+            }
+            write = false;
         }
         if (by_uuid.contains(r.uuid)) {
             // A copied file+meta pair: the later path (sorted order) gets a fresh identity.

@@ -125,6 +125,8 @@ private:
     explicit AssetDatabase(fs::Path root) : root_(std::move(root)) {}
     [[nodiscard]] Result<std::uint64_t> source_key(const AssetRecord& r) const;
     [[nodiscard]] Status write_meta(const AssetRecord& r) const;
+    // Writes a new sidecar only if none exists; false when another writer created it first.
+    [[nodiscard]] Result<bool> create_meta(const AssetRecord& r) const;
 
     fs::Path root_;
     bool packaged_{false};

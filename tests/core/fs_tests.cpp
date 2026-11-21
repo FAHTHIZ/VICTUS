@@ -182,3 +182,20 @@ TEST_CASE("fs: safe writes keep verified generations and recover from damage") {
     for (const auto& f : fs::list_files(dir)) CHECK(f.front() != '.');
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("fs: write_text_if_absent creates once and never replaces") {
+    const auto dir = std::filesystem::temp_directory_path() / "victus_fs_absent_test";
+    std::filesystem::remove_all(dir);
+    const auto file = dir / "id.meta";
+    auto first = fs::write_text_if_absent(file, "first");
+    REQUIRE(first.ok());
+    CHECK(*first);
+    auto second = fs::write_text_if_absent(file, "second");
+    REQUIRE(second.ok());
+    CHECK_FALSE(*second);
+    CHECK(*fs::read_text(file) == "first");
+    int leftovers = 0;
+    for (auto& e : std::filesystem::directory_iterator(dir)) leftovers += e.path().filename() != "id.meta";
+    CHECK(leftovers == 0);
+    std::filesystem::remove_all(dir);
+}

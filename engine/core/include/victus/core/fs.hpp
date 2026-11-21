@@ -27,6 +27,13 @@ using Path = std::filesystem::path;
 // failed or short write (disk full, permissions) reports an error and leaves `path` untouched.
 [[nodiscard]] Status write_atomic(const Path& path, std::span<const std::uint8_t> bytes);
 [[nodiscard]] Status write_text_atomic(const Path& path, std::string_view text);
+// Creates `path` with `text` only if nothing exists there yet, atomically with respect to other
+// threads and processes doing the same: exactly one writer wins. Returns true if this call
+// created the file, false if it already existed (its content is left untouched). The file is
+// staged and verified like write_atomic, then published with a hard link, which fails if the
+// target exists; on filesystems without hard links it falls back to an existence check and a
+// rename (a narrow race remains there).
+[[nodiscard]] Result<bool> write_text_if_absent(const Path& path, std::string_view text);
 
 // ---- transactional saves with generation history ----------------------------------------------
 // Checks a document's bytes (e.g. that a scene parses). Return ErrorCode::VersionMismatch for a

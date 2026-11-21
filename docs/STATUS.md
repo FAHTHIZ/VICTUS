@@ -2627,3 +2627,17 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 Not covered: no scene or template enables the new fields yet; fog does not shadow ambient or local lights; cost on real GPUs unmeasured.
 
 Next task: clouds in reflection probes and temporal reprojection of the cloud target (ENGINE_BENCHMARK gap 3, second half).
+
+## 2026-11-22 — CI repair, asset `.meta` race and LOD test search (commits b21cefe and following)
+
+Main's CI had been red. b21cefe fixed the MSVC C4458/C4244, `-Wshadow` and clang-tidy findings; this unit fixes the rest found on that run:
+- Windows Debug: `editor/src/bt_document.cpp` used `long` for iterator differences (C4244 on LLP64); now `std::ptrdiff_t`.
+- macOS Release: `gpu_lod_tests` LOD cross-fade case searched for the transition distance from a point where the coarsest level was already selected; the search now starts where a coarser level remains.
+- macOS Studio flake "asset references rename": `Editor::check_project` validates the project on a worker thread with its own `AssetDatabase`, and both databases created `.meta` files for new assets at the same time, each with its own UUID; the last writer won and references saved by the other broke. New `fs::write_text_if_absent` (stage, hard link, rename fallback) creates a file only if absent; `AssetDatabase::refresh` creates new metas exclusively and adopts the winner's UUID.
+
+Verified (Release, clang 21, 2 vCPU, lavapipe):
+- New `victus_core_tests -tc="fs: write_text_if_absent*"` and `victus_asset_tests -tc="*same project at once*"` (192 identity mismatches before the fix, 0 after).
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build -j2`: 42/42 passed (521 s).
+
+Not covered: Windows and macOS results come from CI after push.
+

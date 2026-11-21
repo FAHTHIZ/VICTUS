@@ -292,9 +292,9 @@ Result<int> BehaviorTreeDocument::move(int node, int delta) {
     if (parent < 0) return make_error(ErrorCode::InvalidArgument, "the root has no siblings");
     auto& kids = nodes_[static_cast<std::size_t>(parent)].children;
     const auto it = std::find(kids.begin(), kids.end(), static_cast<std::uint32_t>(node));
-    const long pos = it - kids.begin();
-    const long to = pos + delta;
-    if (to < 0 || to >= static_cast<long>(kids.size())) return make_error(ErrorCode::InvalidArgument, "already at the end");
+    const std::ptrdiff_t pos = it - kids.begin();
+    const std::ptrdiff_t to = pos + delta;
+    if (to < 0 || to >= static_cast<std::ptrdiff_t>(kids.size())) return make_error(ErrorCode::InvalidArgument, "already at the end");
     push_undo(delta < 0 ? "Move Left" : "Move Right");
     auto& k = nodes_[static_cast<std::size_t>(parent)].children;
     std::swap(k[static_cast<std::size_t>(pos)], k[static_cast<std::size_t>(to)]);

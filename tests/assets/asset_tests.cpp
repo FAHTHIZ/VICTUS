@@ -6,6 +6,7 @@
 #include "victus/render/environment_map.hpp"
 
 #include <cmath>
+#include <thread>
 #include <filesystem>
 #include <format>
 
@@ -808,4 +809,33 @@ TEST_CASE("assets: material occlusion_strength round trips and is omitted at its
     auto clamped = MaterialAsset::from_json(*doc);
     REQUIRE(clamped.ok());
     CHECK(clamped->occlusion_strength == 1.0f);
+}
+
+TEST_CASE("assets: databases refreshing the same project at once agree on new identities") {
+    // Studio's background project check opens its own database while the editor imports; both
+    // used to give a new file different UUIDs and the last .meta written won on disk only.
+    TempDir dir("victus_meta_race");
+    for (int round = 0; round < 8; ++round) {
+        auto a = AssetDatabase::open(dir.path);
+        auto b = AssetDatabase::open(dir.path);
+        REQUIRE(a.ok());
+        REQUIRE(b.ok());
+        for (int i = 0; i < 24; ++i) write_text(dir.path / "assets" / std::format("r{}/s{}.luau", round, i), "return {}\n");
+        std::thread other([&] { (void)(*b)->refresh(); });
+        (void)(*a)->refresh();
+        other.join();
+        auto c = AssetDatabase::open(dir.path); // what is on disk now
+        REQUIRE(c.ok());
+        for (int i = 0; i < 24; ++i) {
+            const std::string rel = std::format("r{}/s{}.luau", round, i);
+            const AssetRecord* ra = (*a)->find_path(rel);
+            const AssetRecord* rb = (*b)->find_path(rel);
+            const AssetRecord* rc = (*c)->find_path(rel);
+            REQUIRE(ra);
+            REQUIRE(rb);
+            REQUIRE(rc);
+            CHECK(ra->uuid == rc->uuid);
+            CHECK(rb->uuid == rc->uuid);
+        }
+    }
 }
