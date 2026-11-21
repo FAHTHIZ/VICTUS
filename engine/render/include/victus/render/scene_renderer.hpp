@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -772,7 +774,24 @@ public:
     };
     Result<std::uint32_t> create_instance_group(const InstanceGroupDesc& desc); // id > 0
     void destroy_instance_group(std::uint32_t id);
-    void submit_instance_group(std::uint32_t id); // unknown ids are ignored
+    // Per-submission distance limits, tested per cluster against the nearest point of its bounds:
+    // clusters farther than `max_distance` are skipped, those farther than `shadow_distance` draw
+    // lit but cast no shadow (ADR-0164). Returns the instances submitted (0 for unknown ids).
+    struct InstanceGroupDraw {
+        float max_distance{std::numeric_limits<float>::infinity()};
+        float shadow_distance{std::numeric_limits<float>::infinity()};
+    };
+    std::uint32_t submit_instance_group(std::uint32_t id, const InstanceGroupDraw& draw);
+    std::uint32_t submit_instance_group(std::uint32_t id); // no distance limits
+    // Keyed cache over instance groups for callers that rebuild their copies rarely (foliage,
+    // scattered props): returns the group for `key`, rebuilding it with `build` only when the
+    // key is new or `revision`, the mesh or the material changed. Groups not requested for
+    // 120 begin() calls are destroyed. Returns 0 when building fails or yields no copies.
+    std::uint32_t cached_instance_group(std::uint64_t key, std::uint64_t revision, const GpuMesh& mesh,
+                                        const Material& material,
+                                        const std::function<void(std::vector<math::Mat4>&)>& build,
+                                        std::uint32_t cluster_size = 64);
+    std::uint32_t cached_instance_groups() const noexcept { return static_cast<std::uint32_t>(group_cache_.size()); }
     std::uint32_t instance_group_clusters(std::uint32_t id) const noexcept;
     // Skinned draw (GPU skinning). `joints` are skin matrices in the mesh's model space
     // (inverse(model) * joint_world * inverse_bind); `world_bounds` must contain the posed mesh.
@@ -907,6 +926,9 @@ private:
         rhi::BufferHandle buffer;
         std::uint32_t generation{0};
         bool live{false};
+        std::uint64_t cache_key{0}, revision{0}, last_used{0}; // cached groups only
+        std::uint32_t cluster_size{0};
+        bool cached{false};
     };
     struct ParticleBatch {
         ParticleMaterial material;
@@ -1021,6 +1043,9 @@ private:
     std::uint32_t line_capacity_{0};
     rhi::BufferHandle instance_buffer_;
     std::vector<InstanceGroup> groups_; // slot i has id (generation << 16) | (i + 1)
+    std::unordered_map<std::uint64_t, std::uint32_t> group_cache_; // cache key -> group id
+    std::uint64_t group_frame_{0};                                   // begin() calls
+    std::vector<math::Mat4> group_build_;                            // scratch for cached builds
     std::uint32_t instance_capacity_{0}; // in instances
     rhi::BufferHandle palette_buffer_;
     std::uint32_t palette_capacity_{0}; // in matrices

@@ -162,8 +162,12 @@ TEST_CASE("gpu: foliage draws its mesh renderer on the painted layer within the 
                        << a.render.main_batches << ", shadow batches " << a.render.shadow_batches << " ("
                        << a.render.shadow_cascades << " cascades), extract " << a.extract_ms << " ms, render "
                        << a.render_ms << " ms");
-    CHECK(a.render.visible > 200u); // the rest is outside the top-down frustum
-    CHECK(a.render.main_batches <= a.stats.terrain_chunks + 2u);
+    // Foliage draws from a retained instance group (ADR-0164): visibility is per cluster.
+    CHECK(a.render.group_instances_drawn > 200u); // the rest is outside the top-down frustum
+    CHECK(a.render.group_instances_drawn < rt->instances);
+    CHECK(a.render.instances_uploaded <= a.stats.terrain_chunks * 2u); // terrain only, no foliage copies
+    // Visible clusters merge into runs; frustum-culled clusters split them (ADR-0164).
+    CHECK(a.render.main_batches <= a.stats.terrain_chunks + 2u + a.render.group_clusters_visible / 4u);
     CHECK(a.render.shadow_batches <= (a.stats.terrain_chunks + 2u) * std::max(a.render.shadow_cascades, 1u));
     const auto l = pixel(a.px, W, 20, 32), r = pixel(a.px, W, 76, 32);
     MESSAGE("left " << channel(l, 0) << "," << channel(l, 2) << " right " << channel(r, 0) << "," << channel(r, 2));
@@ -199,7 +203,9 @@ TEST_CASE("gpu: foliage draws its mesh renderer on the painted layer within the 
                                             << base.render.shadow_triangles << " -> " << reduced.render.shadow_triangles);
         CHECK(reduced.stats.foliage_instances > 0u);
         CHECK(reduced.stats.foliage_instances * 2u < base.stats.foliage_instances);
-        CHECK(reduced.render.shadow_casters + reduced.stats.foliage_instances / 2u < base.render.shadow_casters);
+        // Shadow casters are counted per cluster for foliage; triangles show the work removed.
+        CHECK(reduced.render.shadow_casters < base.render.shadow_casters);
+        CHECK(reduced.render.shadow_triangles * 2u < base.render.shadow_triangles);
         CHECK(reduced.render.shadow_casters <= base.stats.terrain_chunks + 1u); // terrain only
         render::RenderSettings bad = full;
         bad.foliage_distance_scale = std::numeric_limits<float>::quiet_NaN();
@@ -224,8 +230,35 @@ TEST_CASE("gpu: foliage draws its mesh renderer on the painted layer within the 
                              << a.render.main_batches << ", shadow batches " << a.render.shadow_batches
                              << ", extract " << a.extract_ms << " ms, render " << a.render_ms << " ms");
     CHECK(a.stats.foliage_instances == rt->instances);
-    CHECK(a.render.main_batches <= a.stats.terrain_chunks + 2u);
+    // Visible clusters merge into runs; frustum-culled clusters split them (ADR-0164).
+    CHECK(a.render.main_batches <= a.stats.terrain_chunks + 2u + a.render.group_clusters_visible / 4u);
     CHECK(a.render.shadow_batches <= (a.stats.terrain_chunks + 2u) * std::max(a.render.shadow_cascades, 1u));
+    {
+        // Steady state with one renderer (pipelines and groups warm): CPU time of extract_scene and
+        // render() recording, mean of frames 3..12, for the record (lavapipe host, not a gate).
+        auto& dev = gpu().ctx->device();
+        auto sr = render::SceneRenderer::create(*gpu().ctx);
+        REQUIRE(sr.ok());
+        auto target = test::make_target(W, H);
+        double extract = 0, record = 0;
+        for (int frame = 0; frame < 12; ++frame) {
+            const auto t0 = std::chrono::steady_clock::now();
+            const auto st = runtime::extract_scene(s, cache, **sr, {});
+            const auto t1 = std::chrono::steady_clock::now();
+            auto cmd = dev.begin_commands();
+            REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+            const auto t2 = std::chrono::steady_clock::now();
+            cmd.submit_and_wait();
+            CHECK(st.foliage_instances == rt->instances);
+            if (frame < 2) continue;
+            extract += std::chrono::duration<double, std::milli>(t1 - t0).count();
+            record += std::chrono::duration<double, std::milli>(t2 - t1).count();
+        }
+        MESSAGE("dense foliage steady state: extract " << extract / 10 << " ms, render " << record / 10
+                                                       << " ms per frame, instances uploaded "
+                                                       << (*sr)->stats().instances_uploaded);
+        dev.destroy(target);
+    }
     cache.clear();
 }
 

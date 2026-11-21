@@ -57,6 +57,15 @@ InstanceData make_instance(const Mat4& model, std::uint32_t palette = 0, Vec2 li
     return d;
 }
 
+// Retained instance group lookup by id (slot + generation, ADR-0162); nullptr when stale.
+template <class Groups> auto* find_group(Groups& groups, std::uint32_t id) noexcept {
+    const std::uint32_t slot = (id & 0xFFFFu);
+    using G = std::remove_reference_t<decltype(groups[0])>;
+    if (slot == 0 || slot > groups.size()) return static_cast<G*>(nullptr);
+    auto& g = groups[slot - 1];
+    return g.live && g.generation == (id >> 16) ? &g : static_cast<G*>(nullptr);
+}
+
 std::uint64_t mix(std::uint64_t h, std::uint64_t v) noexcept {
     h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
     return h;
@@ -1442,6 +1451,17 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     waters_.clear();
     fog_volumes_.clear();
     stats_ = {};
+    // Cached instance groups nobody asked for in the last 120 frames are released.
+    ++group_frame_;
+    for (auto it = group_cache_.begin(); it != group_cache_.end();) {
+        const InstanceGroup* g = find_group(groups_, it->second);
+        if (!g || g->last_used + 120 < group_frame_) {
+            destroy_instance_group(it->second);
+            it = group_cache_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 void SceneRenderer::add_point_light(const PointLight& light) { points_.push_back(light); }
@@ -1571,6 +1591,7 @@ Result<std::uint32_t> SceneRenderer::create_instance_group(const InstanceGroupDe
     g.mesh = desc.mesh;
     g.material = desc.material;
     g.key = mix(material_key(desc.material), reinterpret_cast<std::uintptr_t>(desc.mesh));
+    g.cluster_size = cluster_size;
     g.pending.resize(std::size_t{n} * sizeof(InstanceData));
     auto* data = reinterpret_cast<InstanceData*>(g.pending.data());
     for (std::uint32_t k = 0; k < n; ++k) {
@@ -1601,16 +1622,6 @@ Result<std::uint32_t> SceneRenderer::create_instance_group(const InstanceGroupDe
     return (groups_[slot].generation << 16) | static_cast<std::uint32_t>(slot + 1);
 }
 
-namespace {
-template <class Groups> auto* find_group(Groups& groups, std::uint32_t id) noexcept {
-    const std::uint32_t slot = (id & 0xFFFFu);
-    using G = std::remove_reference_t<decltype(groups[0])>;
-    if (slot == 0 || slot > groups.size()) return static_cast<G*>(nullptr);
-    auto& g = groups[slot - 1];
-    return g.live && g.generation == (id >> 16) ? &g : static_cast<G*>(nullptr);
-}
-} // namespace
-
 void SceneRenderer::destroy_instance_group(std::uint32_t id) {
     InstanceGroup* g = find_group(groups_, id);
     if (!g) return;
@@ -1625,21 +1636,78 @@ std::uint32_t SceneRenderer::instance_group_clusters(std::uint32_t id) const noe
     return g ? static_cast<std::uint32_t>(g->clusters.size()) : 0u;
 }
 
-void SceneRenderer::submit_instance_group(std::uint32_t id) {
+std::uint32_t SceneRenderer::submit_instance_group(std::uint32_t id, const InstanceGroupDraw& opts) {
     InstanceGroup* g = find_group(groups_, id);
-    if (!g) return;
+    if (!g) return 0;
+    if (g->cached) g->last_used = group_frame_;
     const auto slot = static_cast<std::int32_t>((id & 0xFFFFu) - 1u);
+    const float max_d = std::isnan(opts.max_distance) ? 0.0f : opts.max_distance;
+    const float shadow_d = std::isnan(opts.shadow_distance) ? 0.0f : opts.shadow_distance;
+    const bool limited = max_d < std::numeric_limits<float>::infinity() || shadow_d < std::numeric_limits<float>::infinity();
+    const float max2 = max_d * max_d, shadow2 = shadow_d * shadow_d;
+    const Vec3 eye = camera_.position;
+    std::uint32_t submitted = 0;
     draws_.reserve(draws_.size() + g->clusters.size());
     for (const InstanceCluster& cl : g->clusters) {
+        bool shadows = g->material.cast_shadows;
+        if (limited) {
+            const Vec3 nearest{std::clamp(eye.x, cl.bounds.min.x, cl.bounds.max.x),
+                               std::clamp(eye.y, cl.bounds.min.y, cl.bounds.max.y),
+                               std::clamp(eye.z, cl.bounds.min.z, cl.bounds.max.z)};
+            const Vec3 v = nearest - eye;
+            const float d2 = dot(v, v);
+            if (!(max_d >= 0.0f) || d2 > max2) continue;
+            if (!(shadow_d >= 0.0f) || d2 > shadow2) shadows = false;
+        }
         Draw d{g->mesh, g->material, cl.representative, 0.0f, g->key};
+        d.material.cast_shadows = shadows;
         d.group = slot;
         d.cluster_first = cl.first;
         d.cluster_count = cl.count;
         d.world_bounds = cl.bounds;
         draws_.push_back(d);
-        stats_.submitted += cl.count;
+        submitted += cl.count;
+        ++stats_.group_clusters;
     }
-    stats_.group_clusters += static_cast<std::uint32_t>(g->clusters.size());
+    stats_.submitted += submitted;
+    return submitted;
+}
+
+std::uint32_t SceneRenderer::submit_instance_group(std::uint32_t id) { return submit_instance_group(id, InstanceGroupDraw{}); }
+
+std::uint32_t SceneRenderer::cached_instance_group(std::uint64_t key, std::uint64_t revision, const GpuMesh& mesh,
+                                                   const Material& material,
+                                                   const std::function<void(std::vector<Mat4>&)>& build,
+                                                   std::uint32_t cluster_size) {
+    if (!mesh.valid()) return 0;
+    const std::uint64_t material_hash = mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh));
+    if (const auto it = group_cache_.find(key); it != group_cache_.end()) {
+        InstanceGroup* g = find_group(groups_, it->second);
+        if (g && g->revision == revision && g->key == material_hash && g->cluster_size == std::clamp(cluster_size, 1u, 4096u)) {
+            g->last_used = group_frame_;
+            return it->second;
+        }
+        destroy_instance_group(it->second);
+        group_cache_.erase(it);
+    }
+    group_build_.clear();
+    if (build) build(group_build_);
+    if (group_build_.empty()) return 0;
+    InstanceGroupDesc desc;
+    desc.mesh = &mesh;
+    desc.material = material;
+    desc.models = group_build_;
+    desc.cluster_size = cluster_size;
+    auto id = create_instance_group(desc);
+    group_build_.clear();
+    if (!id) return 0;
+    InstanceGroup* g = find_group(groups_, id.value());
+    g->cached = true;
+    g->cache_key = key;
+    g->revision = revision;
+    g->last_used = group_frame_;
+    group_cache_.emplace(key, id.value());
+    return id.value();
 }
 
 void SceneRenderer::submit_skinned(const GpuMesh& mesh, const Material& material, const Mat4& model,
