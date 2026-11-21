@@ -198,7 +198,8 @@ void update_traffic(scene::Scene& scene, float dt);
 // generated as a `columns` x `rows` grid; the lane graph is built and `vehicles` agents are
 // spawned as children of this entity. When the entity has a child, the first child is the vehicle
 // template: each agent gets a copy of it (meshes, scripts...) as a child, and the template is
-// hidden (its meshes are made invisible). The graph is in this entity's local space.
+// hidden (its meshes are made invisible). The template's local transform is kept as each copy's
+// offset from its car, so author it at the origin. The graph is in this entity's local space.
 struct TrafficNetworkComponent {
     std::string network;          // .vroads asset; empty = grid
     std::uint32_t columns{4}, rows{4};

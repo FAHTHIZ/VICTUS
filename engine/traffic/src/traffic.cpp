@@ -792,8 +792,7 @@ bool build_authored_network(scene::Scene& scene, const NetworkLoader& loader) {
     if (templ != Entity{}) {
         for (const Entity car : cars) {
             const Entity copy = scene.duplicate(templ);
-            scene.set_parent(copy, car);
-            if (auto* tr = w.get<scene::Transform>(copy)) *tr = scene::Transform{};
+            scene.set_parent(copy, car); // keeps the template's local transform as the offset from the car
         }
         // Hide the template's meshes (copies were made above with their own visibility).
         std::vector<Entity> stack{templ};
