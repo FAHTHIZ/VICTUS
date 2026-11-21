@@ -1663,3 +1663,61 @@ TEST_CASE("studio bake lighting: Assets > Bake Lighting bakes off the UI thread 
         [&](const gameplay::EnvironmentComponent& e) { env_path = e.lightmap; });
     CHECK(env_path.empty());
 }
+
+TEST_CASE("studio asset references: find users, rename keeps the scene working, delete warns first") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    REQUIRE(h.ed->create_project(h.dir / "Ref Game", "Ref Game", "3d").ok());
+    const sfs::path root = h.ed->project()->root();
+    sfs::create_directories(root / "assets" / "scripts");
+    std::ofstream(root / "assets" / "scripts" / "mover.luau") << "return {}\n";
+    REQUIRE(h.ed->reimport_assets().ok());
+    const auto* rec = h.ed->assets()->find_path("scripts/mover.luau");
+    REQUIRE(rec);
+    const Uuid script = rec->uuid;
+    CHECK(h.ed->asset_users(script).empty());
+
+    // An entity uses the script by path; the saved scene is now a user.
+    const auto e = h.ed->create_entity(editor::Primitive::Empty);
+    auto& w = h.ed->active_scene().world();
+    w.add<script::ScriptComponent>(e);
+    w.get<script::ScriptComponent>(e)->script = "scripts/mover.luau";
+    const Uuid entity = h.ed->active_scene().uuid(e);
+    REQUIRE(h.ed->save_scene().ok());
+    const auto users = h.ed->asset_users(script);
+    REQUIRE(users.size() == 1);
+    CHECK(users[0].file == h.ed->scene_path());
+    CHECK(users[0].by_path);
+
+    // The References window, Rename dialog and Delete confirmation all draw.
+    h.ed->open_asset_references(script);
+    CHECK(h.ed->asset_references_open());
+    h.frames(2);
+    h.ed->begin_rename_asset(script);
+    h.frames(2);
+
+    // Rename moves the file, keeps the ID and rewrites the scene, which is reloaded.
+    auto r = h.ed->rename_asset(script, "scripts/movement/mover_v2.luau");
+    REQUIRE_MESSAGE(r.ok(), r.error().message);
+    CHECK(r->rewritten == std::vector<std::string>{h.ed->scene_path()});
+    CHECK(sfs::exists(root / "assets" / "scripts" / "movement" / "mover_v2.luau"));
+    REQUIRE(h.ed->assets()->find(script));
+    CHECK(h.ed->assets()->find(script)->path == "scripts/movement/mover_v2.luau");
+    const auto again = h.ed->active_scene().find(entity);
+    REQUIRE_FALSE(again.is_null());
+    REQUIRE(h.ed->active_scene().world().get<script::ScriptComponent>(again));
+    CHECK(h.ed->active_scene().world().get<script::ScriptComponent>(again)->script == "scripts/movement/mover_v2.luau");
+    CHECK_FALSE(h.ed->dirty());
+    CHECK_FALSE(h.ed->rename_asset(script, "../outside.luau").ok());
+    h.frames(2);
+
+    h.ed->begin_delete_asset(script);
+    h.frames(2);
+    REQUIRE(h.ed->delete_asset(script).ok());
+    CHECK(h.ed->assets()->find(script) == nullptr);
+    CHECK_FALSE(sfs::exists(root / "assets" / "scripts" / "movement" / "mover_v2.luau"));
+    h.frames(2); // dialogs close themselves when their asset is gone
+    CHECK_FALSE(h.ed->asset_references_open());
+}
