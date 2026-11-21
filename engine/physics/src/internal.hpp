@@ -117,6 +117,9 @@ public:
     [[nodiscard]] virtual Entity ragdoll_of(Entity bone) const = 0;
     virtual RagdollGetUp begin_get_up(scene::Scene& scene, Entity root, float blend_seconds) = 0;
     [[nodiscard]] virtual WaterContact water_contact(Entity e) const = 0;
+    virtual void set_vehicle_input(Entity e, const VehicleInput& input) = 0;
+    [[nodiscard]] virtual VehicleInput vehicle_input(Entity e) const = 0;
+    [[nodiscard]] virtual VehicleState vehicle_state(Entity e) const = 0;
     // Captures the animated bone pose and writes the simulated one (Phase::PostUpdate).
     virtual void write_ragdolls(scene::Scene& scene) = 0;
     virtual void set_gravity(math::Vec3 g) = 0;

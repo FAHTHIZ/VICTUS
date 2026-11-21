@@ -667,6 +667,8 @@ int entity_jump(lua_State* L);
 int entity_drop_through(lua_State* L);
 int entity_character_state(lua_State* L);
 int entity_joint_state(lua_State* L);
+int entity_set_vehicle_input(lua_State* L);
+int entity_vehicle_state(lua_State* L);
 int entity_set_ragdoll(lua_State* L);
 int entity_damage(lua_State* L);
 // bind_gameplay.cpp

@@ -60,6 +60,8 @@ void open_victus_libs(lua_State* L) {
                                 {"reset_particles", entity_reset_particles},
                                 {"particles", entity_particles},
                                 {"joint_state", entity_joint_state},
+                                {"set_vehicle_input", entity_set_vehicle_input},
+                                {"vehicle_state", entity_vehicle_state},
                                 {"set_motor", entity_set_motor},
                                 {"set_ragdoll", entity_set_ragdoll},
                                 {"ragdoll_state", entity_ragdoll_state},

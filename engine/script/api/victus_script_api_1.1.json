@@ -268,6 +268,7 @@
         "set_tile",
         "set_uv_offset",
         "set_uv_scroll",
+        "set_vehicle_input",
         "set_visible",
         "sprite",
         "sprite_animation",
@@ -285,6 +286,7 @@
         "timer_left",
         "translate",
         "ui_state",
+        "vehicle_state",
         "visible",
         "water_state",
         "world_to_tile"

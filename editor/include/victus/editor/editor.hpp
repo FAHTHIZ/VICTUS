@@ -725,6 +725,11 @@ public:
     std::size_t remove_foot_placement(scene::Entity root);
     bool set_foot_locking(scene::Entity root, bool on);
     [[nodiscard]] std::size_t foot_contact_count(scene::Entity root) const;
+    // Vehicles (Inspector "Drivable vehicle" card, ADR-0166). make_vehicle runs
+    // physics::make_vehicle in one undoable step (wheels it creates are removed by undo) and
+    // returns the wheel count; set_vehicle_player_input toggles keyboard/gamepad driving.
+    std::size_t make_vehicle(scene::Entity chassis);
+    bool set_vehicle_player_input(scene::Entity chassis, bool on);
     // Starter characters (Orion "orion", Nova "nova"): copies the model into the project
     // when missing and adds it, optionally as a ragdoll in `mode`. One undo step when `record`.
     Result<Uuid> ensure_starter_character(std::string_view id);
@@ -1321,6 +1326,7 @@ private:
     void draw_prefab_section(scene::Entity e);
     void draw_ragdoll_section(scene::Entity e);
     void draw_foot_section(scene::Entity e);
+    void draw_vehicle_section(scene::Entity e);
     int help_place_{0};
     bool help_was_open_{false};
     // Marks components of `e` that differ from `before` as prefab overrides (instance parts only).

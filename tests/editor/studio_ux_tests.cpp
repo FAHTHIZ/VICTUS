@@ -1225,6 +1225,54 @@ TEST_CASE("studio feet: Add Foot Placement on Orion, undo, foot locking, and the
     CHECK(h.ed->foot_contact_count(robot) == 2);
 }
 
+TEST_CASE("studio vehicle: Make Vehicle on a cube, undo removes the wheels, and the car simulates in play") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Cars", "Cars", "3d").ok());
+    h.frames(2);
+    scene::Scene& s = h.ed->edit_scene();
+    const scene::Entity car = h.ed->create_entity(editor::Primitive::Cube);
+    REQUIRE_FALSE(car.is_null());
+    s.world().get<scene::Name>(car)->value = "Car";
+    s.world().get<scene::Transform>(car)->position = {0, 3, 0};
+    s.world().get<scene::Transform>(car)->scale = {1, 1, 1};
+    physics::ColliderComponent col;
+    col.size = {1.8f, 0.6f, 4.0f};
+    s.world().add<physics::ColliderComponent>(car, col);
+    physics::RigidBodyComponent rb;
+    s.world().add<physics::RigidBodyComponent>(car, rb);
+    h.ed->select(car);
+    h.frames(2); // the "Drivable vehicle" card offers Make Vehicle
+    const std::size_t undo_before = h.ed->undo_stack().size();
+    CHECK(h.ed->make_vehicle(car) == 4);
+    CHECK(h.ed->undo_stack().size() == undo_before + 1);
+    CHECK(s.children(car).size() == 4);
+    CHECK(s.world().get<physics::VehicleComponent>(car) != nullptr);
+    h.frames(2); // the card shows the wheel count and the keyboard toggle
+    CHECK(h.ed->set_vehicle_player_input(car, true));
+    CHECK(s.world().get<physics::VehicleComponent>(car)->player_input);
+    h.ed->undo();
+    CHECK_FALSE(s.world().get<physics::VehicleComponent>(car)->player_input);
+    h.ed->undo();
+    CHECK(s.world().get<physics::VehicleComponent>(car) == nullptr);
+    CHECK(s.children(car).empty());
+    h.ed->redo();
+    CHECK(s.children(car).size() == 4);
+    REQUIRE(s.world().get<physics::VehicleComponent>(car) != nullptr);
+
+    h.ed->play();
+    h.frames(10);
+    scene::Scene& ps = h.ed->active_scene();
+    const scene::Entity pcar = ps.find_by_name("Car");
+    REQUIRE_FALSE(pcar.is_null());
+    REQUIRE(h.ed->play_physics() != nullptr);
+    const physics::VehicleState st = h.ed->play_physics()->vehicle_state(pcar);
+    CHECK_MESSAGE(st.valid, st.error);
+    CHECK(st.wheels.size() == 4);
+    h.ed->stop();
+}
+
 TEST_CASE("studio safe mode: unfinished openings switch it on, it skips project content and restarts normally") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;

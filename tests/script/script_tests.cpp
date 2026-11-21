@@ -593,6 +593,65 @@ return { valid = cs.valid, grounded = cs.grounded, ny = cs.ground_normal.y, grou
     CHECK(std::abs(q.value()["angle"].as_number()) > 60.0); // ~90 deg/s for ~1.7 s, wraps at 180
 }
 
+TEST_CASE("script: vehicle input and state (ADR-0166)") {
+    TempDir d("victus_script_vehicle");
+    d.write("scripts/driver.luau", R"lua(
+local Driver = {}
+function Driver:update(dt)
+    self.entity:set_vehicle_input(1, 0.5)
+end
+return Driver
+)lua");
+    auto host = make_host(d);
+    auto pw = physics::PhysicsWorld::create();
+    REQUIRE(pw.ok());
+    auto& world = *pw.value();
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    physics::add_physics_systems(sim, world);
+    Scene s;
+    const Entity ground = s.create("Ground");
+    s.world().get<Transform>(ground)->position = {0, -0.5f, 0};
+    physics::ColliderComponent gc;
+    gc.size = {200, 1, 200};
+    s.world().add<physics::ColliderComponent>(ground, gc);
+    const Entity car = scripted(s, "Car", "scripts/driver.luau");
+    s.world().get<Transform>(car)->position = {0, 1.2f, 0};
+    physics::ColliderComponent cc;
+    cc.size = {1.8f, 0.6f, 4};
+    s.world().add<physics::ColliderComponent>(car, cc);
+    physics::RigidBodyComponent rb;
+    rb.mass = 1500;
+    s.world().add<physics::RigidBodyComponent>(car, rb);
+    s.world().add<physics::VehicleComponent>(car);
+    const math::Vec3 at[4] = {{0.9f, -0.3f, 1.4f}, {-0.9f, -0.3f, 1.4f}, {0.9f, -0.3f, -1.4f}, {-0.9f, -0.3f, -1.4f}};
+    for (int i = 0; i < 4; ++i) {
+        const Entity w = s.create("Wheel", car);
+        s.world().get<Transform>(w)->position = at[i];
+        physics::VehicleWheelComponent wc;
+        wc.steer_degrees = i < 2 ? 30.0f : 0.0f;
+        s.world().add<physics::VehicleWheelComponent>(w, wc);
+    }
+    for (int i = 0; i < 120; ++i) sim.tick(s, 1.0f / 60);
+    CHECK(world.vehicle_input(car).forward == 1.0f);
+    CHECK(world.vehicle_input(car).steer == 0.5f);
+    auto q = host->eval(R"lua(
+local v = scene.find("Car"):vehicle_state()
+local bad = scene.find("Ground"):vehicle_state()
+return { valid = v.valid, speed = v.speed, gear = v.gear, contacts = v.wheels_in_contact, wheels = #v.wheels,
+         steer = v.wheels[1].steer, bad = bad.valid, err = bad.error or "" }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["valid"].as_bool());
+    CHECK(q.value()["speed"].as_number() > 1.0);
+    CHECK(q.value()["gear"].as_number() >= 1);
+    CHECK(q.value()["wheels"].as_number() == 4);
+    CHECK(q.value()["contacts"].as_number() >= 3);
+    CHECK(q.value()["steer"].as_number() != doctest::Approx(0.0));
+    CHECK_FALSE(q.value()["bad"].as_bool());
+    CHECK(!q.value()["err"].as_string().empty());
+}
+
 TEST_CASE("script: ragdoll mode, state and bone lookup") {
     TempDir d("victus_script_ragdoll");
     auto host = make_host(d);

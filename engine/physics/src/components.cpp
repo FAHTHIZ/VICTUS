@@ -66,6 +66,33 @@ void register_components() {
             .field(&JointComponent::break_force, "break_force", {.min = 0, .max = 1e9f, .speed = 1, .tooltip = "0 = unbreakable"})
             .field(&JointComponent::collide_connected, "collide_connected")
             .commit();
+        scene::Schema<VehicleComponent>("Vehicle", "Physics 3D")
+            .field(&VehicleComponent::engine_torque, "engine_torque", {.min = 0, .max = 1e5f, .speed = 1, .tooltip = "N*m"})
+            .field(&VehicleComponent::min_rpm, "min_rpm", {.min = 1, .max = 30000, .speed = 10})
+            .field(&VehicleComponent::max_rpm, "max_rpm", {.min = 1, .max = 30000, .speed = 10})
+            .field(&VehicleComponent::shift_up_rpm, "shift_up_rpm", {.min = 1, .max = 30000, .speed = 10})
+            .field(&VehicleComponent::shift_down_rpm, "shift_down_rpm", {.min = 1, .max = 30000, .speed = 10})
+            .field(&VehicleComponent::differential_ratio, "differential_ratio", {.min = 0.01f, .max = 20, .speed = 0.01f})
+            .field(&VehicleComponent::limited_slip_ratio, "limited_slip_ratio",
+                   {.min = 1, .max = 1e6f, .speed = 0.01f, .tooltip = "Max/min wheel speed on an axle; large = open differential"})
+            .field(&VehicleComponent::max_pitch_roll, "max_pitch_roll", {.min = 0, .max = 180, .speed = 1, .tooltip = "degrees; 180 = unlimited"})
+            .field(&VehicleComponent::anti_roll, "anti_roll", {.min = 0, .max = 1e6f, .speed = 10, .tooltip = "N/m per axle; 0 = none"})
+            .field(&VehicleComponent::player_input, "player_input", {.tooltip = "W/S/A/D, arrows, Space handbrake, gamepad"})
+            .commit();
+        scene::Schema<VehicleWheelComponent>("VehicleWheel", "Physics 3D")
+            .field(&VehicleWheelComponent::radius, "radius", {.min = 0.01f, .max = 10, .speed = 0.01f})
+            .field(&VehicleWheelComponent::width, "width", {.min = 0.01f, .max = 10, .speed = 0.01f})
+            .field(&VehicleWheelComponent::suspension_length, "suspension_length",
+                   {.min = 0, .max = 10, .speed = 0.01f, .tooltip = "Attachment to wheel centre at full droop (m)"})
+            .field(&VehicleWheelComponent::suspension_travel, "suspension_travel", {.min = 0, .max = 10, .speed = 0.01f})
+            .field(&VehicleWheelComponent::spring_frequency, "spring_frequency", {.min = 0.01f, .max = 20, .speed = 0.01f, .tooltip = "Hz"})
+            .field(&VehicleWheelComponent::spring_damping, "spring_damping", {.min = 0, .max = 1, .speed = 0.01f})
+            .field(&VehicleWheelComponent::steer_degrees, "steer_degrees", {.min = 0, .max = 89, .speed = 0.5f})
+            .field(&VehicleWheelComponent::driven, "driven")
+            .field(&VehicleWheelComponent::brake_torque, "brake_torque", {.min = 0, .max = 1e6f, .speed = 10, .tooltip = "N*m"})
+            .field(&VehicleWheelComponent::handbrake_torque, "handbrake_torque", {.min = 0, .max = 1e6f, .speed = 10, .tooltip = "N*m"})
+            .field(&VehicleWheelComponent::grip, "grip", {.min = 0, .max = 10, .speed = 0.01f, .tooltip = "Scales tyre friction"})
+            .commit();
         scene::Schema<RagdollComponent>("Ragdoll", "Physics 3D")
             .enumeration(&RagdollComponent::mode, "mode", {"off", "kinematic", "powered", "passive"},
                          {.tooltip = "kinematic: bodies follow the animation; powered: joint motors track it; passive: limp"})
