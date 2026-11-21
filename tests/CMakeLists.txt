@@ -184,6 +184,16 @@ victus_add_test(victus_editor_tests
 target_compile_definitions(victus_editor_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")
 endif()
 
+if(VICTUS_WITH_GRAPHICS AND VICTUS_BUILD_TOOLS)
+victus_add_test(victus_library_tests
+    SOURCES
+        library/library_tests.cpp
+        library/install_tests.cpp
+    DEPS VICTUS::Library victus_stb
+    LABELS library)
+target_compile_definitions(victus_library_tests PRIVATE VICTUS_LIBRARY_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/library")
+endif()
+
 if(VICTUS_WITH_GRAPHICS)
 victus_add_test(victus_export_tests
     SOURCES

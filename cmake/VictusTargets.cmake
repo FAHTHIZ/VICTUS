@@ -38,7 +38,7 @@ set(VICTUS_MODULE_LAYERS
     ui=4 physics=4 plugin=4 animation=4 particles=4 audio=4 gameui=4
     navigation=5 traffic=5 tilemap=5 terrain=5 sequencer=5 net=5
     ai=6 assets=6
-    script=7
+    script=7 library=7
     runtime=8 project=8
     player=9)
 

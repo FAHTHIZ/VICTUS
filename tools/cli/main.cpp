@@ -33,6 +33,8 @@
 #include "victus/player/validate.hpp"
 #include "victus/plugin/plugin.hpp"
 #include "victus/project/project.hpp"
+#include "victus/library/install.hpp"
+#include "victus/library/library.hpp"
 #include "victus/runtime/scene_lightmap.hpp"
 #include "victus/runtime/physics_ground_probe.hpp"
 #include "victus/runtime/surface_shader.hpp"
@@ -58,6 +60,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -105,6 +108,7 @@ constexpr const char* kUsage =
     "  pack keygen --out FILE | verify PAK [--key HEX] | list PAK  pack signing keys, verification, contents\n"
     "  world <project> --scene S --out DIR [--cell-size N]       split a scene into streamed world cells (.vworld)\n"
     "  bake-lighting <project> [--scene S] [--samples N] [--density T] [--mark-static]  bake lightmaps for Static Lighting meshes\n"
+    "  library providers|search|install|import-zip|list|remove|credits ...  Asset Store: CC0/CC BY content into a project\n"
     "  diagnose [project] --out FILE.zip [--no-logs] [--keep-paths] ...  bundle crash reports, logs and checks\n"
     "  script-api [--out FILE] [--write DIR] [--check DIR]        print, freeze or check the versioned Luau API\n"
     "  version                                                    print the engine version\n"
@@ -1305,6 +1309,164 @@ int cmd_plugins(const std::vector<std::string>& a) {
 
 // World partition (6h, ADR-0090): moves the scene's streamable root subtrees into grid cell
 // scenes under DIR, writes DIR.vworld and rewrites the scene as the persistent part.
+// ---- victus library: the Studio Asset Store from a terminal (ADR-0174) ----------------------
+
+library::Provider* find_provider(std::vector<std::unique_ptr<library::Provider>>& all, std::string_view id) {
+    for (auto& p : all)
+        if (p->info().id == id) return p.get();
+    return nullptr;
+}
+
+struct LibrarySession {
+    std::unique_ptr<library::HttpClient> curl = library::make_curl_client();
+    library::CachingHttpClient http{*curl, fs::user_data_dir() / "store_cache" / "http", std::chrono::hours(12)};
+    std::vector<std::unique_ptr<library::Provider>> providers = library::make_all_providers();
+    LibrarySession() {
+        if (const char* token = std::getenv("VICTUS_SKETCHFAB_TOKEN"))
+            if (auto* p = find_provider(providers, "sketchfab")) p->set_api_key(token);
+    }
+};
+
+int cmd_library(const std::vector<std::string>& a) {
+    constexpr const char* kLibraryUsage =
+        "usage: victus library <subcommand>\n"
+        "  providers                                         list content providers and their licences\n"
+        "  search <provider> [words] [--type T] [--page N]   search a provider (T: model, material, hdri, texture, audio, pack)\n"
+        "  install <project> <provider> <id> [--variant V] [--query Q] [--replace]\n"
+        "                                                    download into assets/library/<provider>/<id> and import\n"
+        "  import-zip <project> <provider> <id> <zip> [--query Q]  import a pack downloaded from the provider's site (Kenney)\n"
+        "  list <project>                                    installed assets with licences\n"
+        "  remove <project> <folder>                         uninstall (folder as printed by list)\n"
+        "  credits <project>                                 regenerate CREDITS.md\n"
+        "Sketchfab downloads read your API token from VICTUS_SKETCHFAB_TOKEN.\n";
+    if (a.empty() || wants_help(a)) return std::printf("%s", kLibraryUsage), a.empty() ? 1 : 0;
+    const std::string& sub = a[0];
+    const std::vector<std::string> args(a.begin() + 1, a.end());
+    LibrarySession session;
+    if (sub == "providers") {
+        for (const auto& p : session.providers) {
+            const auto& i = p->info();
+            std::string types;
+            for (auto t : i.types) types += std::string(types.empty() ? "" : ", ") + library::to_string(t);
+            std::printf("%-13s %s (%s)\n              %s\n              types: %s%s%s\n", i.id.c_str(), i.name.c_str(), i.homepage.c_str(),
+                        i.description.c_str(), types.c_str(), i.needs_api_key ? "; needs your account token" : "",
+                        i.browse_only ? "; download on the provider's site, then import-zip" : "");
+        }
+        return 0;
+    }
+    const auto open_db = [](const std::string& path) -> Result<std::unique_ptr<assets::AssetDatabase>> {
+        auto proj = project::Project::open(path);
+        if (!proj) return proj.error();
+        return assets::AssetDatabase::open(proj->root());
+    };
+    // Finds `id` among the provider's results for `query` (default: the id itself).
+    const auto lookup = [&](library::Provider& p, const std::string& id, std::string query) -> Result<library::LibraryAsset> {
+        if (query.empty()) query = id;
+        for (std::uint32_t page = 0; page < 5; ++page) {
+            library::SearchQuery q;
+            q.text = query;
+            q.page = page;
+            q.page_size = 48;
+            auto r = p.search(session.http, q);
+            if (!r) return r.error();
+            for (auto& asset : r->assets)
+                if (asset.id == id) return std::move(asset);
+            if (!r->has_more) break;
+        }
+        return make_error(ErrorCode::NotFound, std::format("'{}' not found on {} (try --query with words from its name)", id, p.info().name));
+    };
+    if (sub == "search") {
+        std::vector<std::string> positionals;
+        std::map<std::string, std::string> opts;
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            if (args[i].starts_with("--")) {
+                if (i + 1 >= args.size()) return error(args[i] + " needs a value");
+                opts[args[i].substr(2)] = args[i + 1];
+                ++i;
+            } else {
+                positionals.push_back(args[i]);
+            }
+        }
+        for (const auto& [k, v] : opts)
+            if (k != "type" && k != "page") return error("unknown option --" + k);
+        if (positionals.empty()) return error("search needs a provider id (see `victus library providers`)");
+        auto* prov = find_provider(session.providers, positionals[0]);
+        if (!prov) return error("unknown provider '" + positionals[0] + "' (see `victus library providers`)");
+        std::string words;
+        for (std::size_t i = 1; i < positionals.size(); ++i) words += (words.empty() ? "" : " ") + positionals[i];
+        library::SearchQuery q;
+        q.text = words;
+        q.page = opts.contains("page") ? static_cast<std::uint32_t>(std::strtoul(opts["page"].c_str(), nullptr, 10)) : 0u;
+        if (opts.contains("type")) q.type = static_cast<int>(library::asset_type_from_string(opts["type"]));
+        auto r = prov->search(session.http, q);
+        if (!r) return error(r.error().message);
+        for (const auto& asset : r->assets)
+            std::printf("%-40s %-9s %-36s %s\n", asset.id.c_str(), library::to_string(asset.type), asset.name.substr(0, 36).c_str(),
+                        asset.licence.id.c_str());
+        std::printf("%zu shown%s. %s\n", r->assets.size(), r->has_more ? ", more with --page" : "", prov->info().credit.c_str());
+        return 0;
+    }
+    if (sub == "install" || sub == "import-zip") {
+        const bool zip = sub == "import-zip";
+        cli::Parser p("victus library " + sub, zip ? "Import a downloaded pack" : "Install an asset into a project");
+        p.positional("project", "project folder", true).positional("provider", "provider id", true).positional("id", "asset id", true);
+        if (zip) p.positional("zip", "downloaded .zip", true);
+        p.option("variant", "variant id (resolution / format)", "").option("query", "search words that find the asset", "").flag("replace", "reinstall");
+        if (auto st = p.parse(args); !st) return error(st.error().message);
+        auto* prov = find_provider(session.providers, p.get("provider"));
+        if (!prov) return error("unknown provider '" + p.get("provider") + "'");
+        auto asset = lookup(*prov, p.get("id"), p.get("query"));
+        if (!asset) return error(asset.error().message);
+        auto db = open_db(p.get("project"));
+        if (!db) return error(db.error().message);
+        library::InstallOptions o;
+        o.variant = p.get("variant");
+        o.replace = p.has("replace");
+        o.progress = [last = std::string()](const library::InstallProgress& pr) mutable {
+            if (pr.stage != last) std::printf("  %3d%%  %s\n", static_cast<int>(pr.fraction * 100.0f), pr.stage.c_str()), last = pr.stage;
+        };
+        std::printf("%s - %s\n  licence: %s\n", asset->name.c_str(), asset->page_url.c_str(), asset->licence.name.c_str());
+        auto r = zip ? library::import_archive(*asset, p.get("zip"), **db, o) : library::install(*prov, session.http, *asset, **db, o);
+        if (!r) return error(r.error().message);
+        if (r->already_installed) std::printf("already installed: assets/%s (use --replace to reinstall)\n", r->folder.c_str());
+        jobs::JobSystem jobs;
+        const auto ir = (*db)->import_all(&jobs);
+        for (const auto& m : ir.messages) std::printf("  %s\n", m.c_str());
+        std::printf("  100%%  Imported\ninstalled assets/%s (%zu files), primary: %s\n%s\n", r->folder.c_str(), r->files.size(), r->primary.c_str(),
+                    asset->attribution().c_str());
+        return ir.failed ? 1 : 0;
+    }
+    if (sub == "list" || sub == "credits") {
+        cli::Parser p("victus library " + sub, "");
+        p.positional("project", "project folder", true);
+        if (auto st = p.parse(args); !st) return error(st.error().message);
+        auto proj = project::Project::open(p.get("project"));
+        if (!proj) return error(proj.error().message);
+        if (sub == "credits") {
+            if (auto st = library::write_credits(proj->root()); !st) return error(st.error().message);
+            std::printf("wrote %s\n", (proj->root() / "CREDITS.md").string().c_str());
+            return 0;
+        }
+        std::vector<std::string> errors;
+        for (const auto& ia : library::installed_assets(proj->root(), &errors))
+            std::printf("%-48s %-30s %s%s\n", ia.folder.c_str(), ia.asset.name.substr(0, 30).c_str(), ia.asset.licence.id.c_str(),
+                        ia.asset.licence.attribution_required ? " (attribution required)" : "");
+        for (const auto& e : errors) std::printf("unreadable record: %s\n", e.c_str());
+        return errors.empty() ? 0 : 1;
+    }
+    if (sub == "remove") {
+        cli::Parser p("victus library remove", "");
+        p.positional("project", "project folder", true).positional("folder", "installed folder", true);
+        if (auto st = p.parse(args); !st) return error(st.error().message);
+        auto db = open_db(p.get("project"));
+        if (!db) return error(db.error().message);
+        if (auto st = library::uninstall(**db, p.get("folder")); !st) return error(st.error().message);
+        std::printf("removed assets/%s\n", p.get("folder").c_str());
+        return 0;
+    }
+    return error("unknown library subcommand '" + sub + "'\n" + kLibraryUsage);
+}
+
 int cmd_bake_lighting(const std::vector<std::string>& a) {
     cli::Parser p("victus bake-lighting", "Bake static lighting (lightmaps, ADR-0125) for a scene's Lightmapped mesh renderers");
     p.positional("project", "project folder", true)
@@ -1665,6 +1827,7 @@ int main(int argc, char** argv) {
     if (cmd == "diagnose") return cmd_diagnose(args);
     if (cmd == "world") return cmd_world(args);
     if (cmd == "bake-lighting") return cmd_bake_lighting(args);
+    if (cmd == "library") return cmd_library(args);
     if (cmd == "crash-test") return cmd_crash_test(args);
     if (cmd == "script-api") return cmd_script_api(args);
     if (cmd == "version" || cmd == "--version")

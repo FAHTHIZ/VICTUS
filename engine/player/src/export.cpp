@@ -444,6 +444,13 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         }
     }
     VICTUS_TRY_STATUS(fs::write_text_atomic(out / "THIRD_PARTY_NOTICES.txt", third_party_notices()));
+    // Asset Store installs keep their attributions in CREDITS.md (ADR-0174); CC BY content
+    // must stay credited wherever the game ships, so the file travels with every export.
+    if (const fs::Path credits = proj->root() / "CREDITS.md"; sfs::is_regular_file(credits)) {
+        std::error_code copy_ec;
+        sfs::copy_file(credits, out / "CREDITS.md", sfs::copy_options::overwrite_existing, copy_ec);
+        if (copy_ec) return make_error(ErrorCode::IoError, std::format("cannot copy CREDITS.md: {}", copy_ec.message()));
+    }
 
     json::Value files = json::Value::array();
     for (const auto& e : (*written)->entries()) {

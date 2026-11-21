@@ -79,6 +79,7 @@ TEST_CASE("export: pack contains cooked assets and runs in packaged mode") {
     TempDir tmp("victus_export");
     const fs::Path src = make_project(tmp.path);
     const fs::Path out = tmp.path / "out";
+    REQUIRE(fs::write_text_atomic(src / "CREDITS.md", "# Asset credits\n\n- Rock by Someone (CC BY 4.0)\n").ok());
 
     player::ExportOptions o;
     o.project = src;
@@ -90,6 +91,7 @@ TEST_CASE("export: pack contains cooked assets and runs in packaged mode") {
     CHECK(r->executable.empty());
     CHECK(std::filesystem::is_regular_file(out / "game" / "game.vpak"));
     CHECK(std::filesystem::is_regular_file(out / "THIRD_PARTY_NOTICES.txt"));
+    CHECK(fs::read_text(out / "CREDITS.md").value().find("Rock by Someone") != std::string::npos);
     auto manifest = json::parse(fs::read_text(out / "export.json").value());
     REQUIRE(manifest.ok());
     CHECK((*manifest)["name"].as_string() == "Export Test!");
