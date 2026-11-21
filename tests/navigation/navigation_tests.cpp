@@ -494,3 +494,91 @@ TEST_CASE("navigation: large navmeshes build in the background without blocking 
         REQUIRE(doomed.ensure_built_async(s).ok());
     }
 }
+
+TEST_CASE("navigation: forced tiles give the same paths as a single tile on small levels") {
+    Scene s;
+    arena(s);
+    const Entity surface = s.create("Navigation");
+    NavMeshSurfaceComponent tiled;
+    tiled.tile_size = 6.0f; // 40 voxels per tile: a 4 x 4 grid over the 20 m arena
+    s.world().add<NavMeshSurfaceComponent>(surface, tiled);
+    NavigationSystem nav;
+    REQUIRE(nav.ensure_built(s).ok());
+    CHECK(nav.valid());
+    CHECK(nav.stats().tiles >= 9);
+    CHECK(nav.stats().tiles_rebuilt == nav.stats().tiles);
+    std::vector<math::Vec3> path;
+    bool partial = true;
+    REQUIRE(nav.find_path({-5, 0, 5}, {5, 0, 5}, path, &partial));
+    CHECK_FALSE(partial);
+    CHECK(horizontal(path.back(), {5, 0, 5}) < 0.3f);
+    bool via_gap = false;
+    for (const auto& p : path) via_gap |= p.z < -6.0f;
+    CHECK(via_gap);
+    CHECK(path_length(path) > 2 * std::hypot(5.0f, 11.0f) - 1.0f);
+    CHECK(path_length(path) < 2 * std::hypot(5.0f, 11.0f) + 3.0f);
+    std::vector<DebugLine> lines;
+    nav.debug_lines(lines);
+    CHECK(lines.size() > 8);
+}
+
+TEST_CASE("navigation: large levels build tiled navmeshes and rebuild only touched tiles") {
+    // 200 m x 200 m at 0.15 m voxels is 1.78 M columns: above the automatic tiling threshold.
+    Scene s;
+    box(s, {0, -0.5f, 0}, {200, 1, 200}, "Floor");
+    for (int i = -4; i <= 4; ++i) box(s, {i * 20.0f, 1, 0}, {1, 2, 30}, "Wall");
+    const Entity agent = s.create("Agent");
+    s.world().get<Transform>(agent)->position = {-30, 0, 20};
+    s.world().add<NavAgentComponent>(agent, NavAgentComponent{});
+
+    NavigationSystem nav;
+    auto t0 = std::chrono::steady_clock::now();
+    REQUIRE(nav.ensure_built(s).ok());
+    const double full_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    REQUIRE(nav.valid());
+    const std::uint32_t tiles = nav.stats().tiles;
+    CHECK(tiles >= 25);
+    CHECK(nav.stats().tiles_rebuilt == tiles);
+
+    // Long paths cross many tile borders without detours or gaps.
+    std::vector<math::Vec3> path;
+    bool partial = true;
+    REQUIRE(nav.find_path({-90, 0, -90}, {90, 0, 90}, path, &partial));
+    CHECK_FALSE(partial);
+    CHECK(horizontal(path.back(), {90, 0, 90}) < 0.3f);
+    CHECK(path_length(path) == doctest::Approx(std::hypot(180.0f, 180.0f)).epsilon(0.03));
+    // Walls still bend paths (z = 0 row, walls span z in [-15, 15]).
+    REQUIRE(nav.find_path({-30, 0, 0}, {30, 0, 0}, path, &partial));
+    CHECK_FALSE(partial);
+    CHECK(path_length(path) > 2 * std::hypot(10.0f, 15.0f) + 40.0f - 1.0f); // over the wall ends at z = 15
+
+    // A crate dropped in one spot re-cooks only the tiles it overlaps.
+    box(s, {50, 0.5f, 50}, {2, 1, 2}, "Crate");
+    t0 = std::chrono::steady_clock::now();
+    REQUIRE(nav.ensure_built(s).ok());
+    const double incr_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    CHECK(nav.stats().builds == 2);
+    CHECK(nav.stats().tiles == tiles);
+    CHECK(nav.stats().tiles_rebuilt >= 1);
+    CHECK(nav.stats().tiles_rebuilt <= 4);
+    REQUIRE(nav.find_path({45, 0, 50}, {55, 0, 50}, path, &partial));
+    CHECK_FALSE(partial);
+    CHECK(path.size() >= 3); // around the crate
+    REQUIRE(nav.find_path({-90, 0, -90}, {90, 0, 90}, path, &partial));
+    CHECK_FALSE(partial);
+    MESSAGE("tiled navmesh 200x200 m: " << tiles << " tiles, full build " << full_ms << " ms, one-crate rebuild "
+                                        << incr_ms << " ms (" << nav.stats().tiles_rebuilt << " tiles)");
+    CHECK(incr_ms < full_ms);
+
+    // Agents keep walking across tile borders and through incremental rebuilds.
+    gameplay::Simulation sim;
+    add_navigation_systems(sim, nav);
+    sim.tick(s, 1.0f / 60.0f);
+    REQUIRE(nav.set_destination(s, agent, {30, 0, 20}));
+    for (int i = 0; i < 60; ++i) sim.tick(s, 1.0f / 30.0f);
+    box(s, {-50, 0.5f, -50}, {2, 1, 2}, "Crate2");
+    for (int i = 0; i < 900 && !nav.agent_state(agent).reached; ++i) sim.tick(s, 1.0f / 30.0f);
+    CHECK(nav.stats().builds == 3);
+    CHECK(nav.agent_state(agent).reached);
+    CHECK(horizontal(s.world().get<Transform>(agent)->position, {30, 0, 20}) < 0.6f);
+}

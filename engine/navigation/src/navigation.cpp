@@ -14,6 +14,8 @@
 #include <Recast.h>
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 #include <chrono>
 #include <cfloat>
 #include <cmath>
@@ -65,6 +67,32 @@ struct Geometry {
         tris.insert(tris.end(), {vertex(a), vertex(b), vertex(c)});
     }
     [[nodiscard]] int triangle_count() const { return static_cast<int>(tris.size() / 3); }
+
+    // One contributing collider or height field: its triangles, bounds and a content hash, so a
+    // tiled build can tell which tiles a change touches.
+    struct Source {
+        std::uint64_t hash{0};
+        float bmin[3]{FLT_MAX, FLT_MAX, FLT_MAX};
+        float bmax[3]{-FLT_MAX, -FLT_MAX, -FLT_MAX};
+    };
+    std::vector<Source> sources;
+    std::size_t source_vert_begin{0};
+    void begin_source() { source_vert_begin = verts.size(); }
+    void end_source() {
+        if (verts.size() == source_vert_begin) return;
+        Source src;
+        std::uint64_t h = 1469598103934665603ull;
+        for (std::size_t i = source_vert_begin; i < verts.size(); ++i) {
+            std::uint32_t bits;
+            std::memcpy(&bits, &verts[i], sizeof bits);
+            for (int k = 0; k < 4; ++k) h = (h ^ ((bits >> (8 * k)) & 0xffu)) * 1099511628211ull;
+            const int axis = static_cast<int>((i - source_vert_begin) % 3);
+            src.bmin[axis] = std::min(src.bmin[axis], verts[i]);
+            src.bmax[axis] = std::max(src.bmax[axis], verts[i]);
+        }
+        src.hash = h;
+        sources.push_back(src);
+    }
 };
 
 // Revolves a (radius, y) profile around local Y (spheres, capsules, cylinders).
@@ -332,14 +360,27 @@ float shortest_angle(float from, float to) {
 std::mt19937* g_random = nullptr;
 float random_unit() { return std::uniform_real_distribution<float>(0.0f, 0.99999f)(*g_random); }
 
-rcConfig make_grid_config(const Geometry& geo, const NavMeshSurfaceComponent& s) {
+// Voxel columns above which the automatic mode switches to a tiled navmesh.
+constexpr double kAutoTileCells = 1024.0 * 1024.0;
+constexpr int kAutoTileCellsPerSide = 256;
+constexpr int kMaxTiles = 4096; // 12 tile bits; 10+ poly bits keep 32-bit poly refs valid
+
+[[nodiscard]] bool wants_tiles(const Geometry& geo, const NavMeshSurfaceComponent& s) {
+    if (geo.tris.empty()) return false;
+    if (s.tile_size > 0.0f) return true;
+    const double cs = std::max(s.cell_size, 0.01f);
+    return (geo.bmax[0] - geo.bmin[0]) / cs * ((geo.bmax[2] - geo.bmin[2]) / cs) > kAutoTileCells;
+}
+
+rcConfig make_grid_config(const Geometry& geo, const NavMeshSurfaceComponent& s, bool tiled = false) {
     rcConfig cfg{};
     cfg.cs = std::max(s.cell_size, 0.01f);
     cfg.ch = std::max(s.cell_height, 0.01f);
-    // Keep the voxel grid bounded on very large levels (single-tile navmesh).
+    // Keep the voxel grid bounded on very large single-tile levels; tiled meshes keep full detail
+    // (the tile layout bounds the work per tile instead).
     const float extent_x = geo.bmax[0] - geo.bmin[0], extent_z = geo.bmax[2] - geo.bmin[2];
-    constexpr float kMaxCells = 4096.0f * 4096.0f;
-    if (extent_x / cfg.cs * (extent_z / cfg.cs) > kMaxCells) cfg.cs = std::sqrt(extent_x * extent_z / kMaxCells);
+    const float max_cells = tiled ? 65536.0f * 65536.0f : 4096.0f * 4096.0f;
+    if (extent_x / cfg.cs * (extent_z / cfg.cs) > max_cells) cfg.cs = std::sqrt(extent_x * extent_z / max_cells);
     cfg.walkableSlopeAngle = std::clamp(s.max_slope, 0.0f, 89.0f);
     cfg.walkableHeight = static_cast<int>(std::ceil(std::max(s.agent_height, cfg.ch) / cfg.ch));
     cfg.walkableClimb = static_cast<int>(std::floor(std::max(s.max_climb, 0.0f) / cfg.ch));
@@ -359,6 +400,88 @@ rcConfig make_grid_config(const Geometry& geo, const NavMeshSurfaceComponent& s)
     return cfg;
 }
 
+// Tile grid of a tiled navmesh. Two builds with equal layouts can swap individual tiles.
+struct TileLayout {
+    bool tiled{false};
+    float orig[3]{0, 0, 0};
+    float tile_world{0};  // tile side in metres
+    int tile_cells{0};    // tile side in voxels
+    int tw{0}, th{0};     // tiles along X and Z
+    float cs{0};
+    int border{0};        // voxels of overlap rasterized around each tile
+    int max_polys{0};
+    std::uint64_t settings_hash{0};
+    [[nodiscard]] bool same_grid(const TileLayout& o) const noexcept {
+        return tiled && o.tiled && orig[0] == o.orig[0] && orig[2] == o.orig[2] && tile_world == o.tile_world &&
+               tile_cells == o.tile_cells && tw == o.tw && th == o.th && cs == o.cs && settings_hash == o.settings_hash;
+    }
+    [[nodiscard]] int count() const noexcept { return tw * th; }
+};
+
+std::uint64_t surface_hash(const NavMeshSurfaceComponent& s) {
+    Hasher hs;
+    hs.value(s.agent_radius), hs.value(s.agent_height), hs.value(s.max_climb), hs.value(s.max_slope);
+    hs.value(s.cell_size), hs.value(s.cell_height), hs.value(s.tile_size);
+    return hs.h;
+}
+
+TileLayout make_tile_layout(const Geometry& geo, const NavMeshSurfaceComponent& s, const rcConfig& cfg) {
+    TileLayout L;
+    L.tiled = true;
+    L.cs = cfg.cs;
+    L.border = cfg.walkableRadius + 3;
+    L.settings_hash = surface_hash(s);
+    int cells = s.tile_size > 0.0f ? static_cast<int>(std::ceil(s.tile_size / cfg.cs)) : kAutoTileCellsPerSide;
+    cells = std::clamp(cells, 32, 1024);
+    for (;;) {
+        L.tile_cells = cells;
+        L.tile_world = static_cast<float>(cells) * cfg.cs;
+        // Snap the origin to the tile grid so geometry growing at one edge keeps the other tiles.
+        L.orig[0] = std::floor(geo.bmin[0] / L.tile_world) * L.tile_world;
+        L.orig[1] = cfg.bmin[1];
+        L.orig[2] = std::floor(geo.bmin[2] / L.tile_world) * L.tile_world;
+        L.tw = std::max(1, static_cast<int>(std::ceil((geo.bmax[0] - L.orig[0]) / L.tile_world)));
+        L.th = std::max(1, static_cast<int>(std::ceil((geo.bmax[2] - L.orig[2]) / L.tile_world)));
+        if (L.count() <= kMaxTiles || cells >= 4096) break;
+        cells *= 2;
+    }
+    const int tile_bits = static_cast<int>(dtIlog2(dtNextPow2(static_cast<unsigned>(std::max(L.count(), 1)))));
+    L.max_polys = 1 << std::min(22 - tile_bits, 16);
+    return L;
+}
+
+// Tile (x, z) bounds in world XZ including the rasterization border.
+void tile_bounds(const TileLayout& L, int tx, int tz, float bmin[2], float bmax[2]) {
+    const float pad = static_cast<float>(L.border) * L.cs;
+    bmin[0] = L.orig[0] + static_cast<float>(tx) * L.tile_world - pad;
+    bmin[1] = L.orig[2] + static_cast<float>(tz) * L.tile_world - pad;
+    bmax[0] = L.orig[0] + static_cast<float>(tx + 1) * L.tile_world + pad;
+    bmax[1] = L.orig[2] + static_cast<float>(tz + 1) * L.tile_world + pad;
+}
+
+// Inclusive tile index range touched by an XZ box (with the border), clamped to the grid.
+void tile_range(const TileLayout& L, float minx, float minz, float maxx, float maxz, int& x0, int& z0, int& x1, int& z1) {
+    const float pad = static_cast<float>(L.border) * L.cs;
+    x0 = std::clamp(static_cast<int>(std::floor((minx - pad - L.orig[0]) / L.tile_world)), 0, L.tw - 1);
+    z0 = std::clamp(static_cast<int>(std::floor((minz - pad - L.orig[2]) / L.tile_world)), 0, L.th - 1);
+    x1 = std::clamp(static_cast<int>(std::floor((maxx + pad - L.orig[0]) / L.tile_world)), 0, L.tw - 1);
+    z1 = std::clamp(static_cast<int>(std::floor((maxz + pad - L.orig[2]) / L.tile_world)), 0, L.th - 1);
+}
+
+std::vector<std::uint64_t> tile_hashes(const Geometry& geo, const TileLayout& L) {
+    std::vector<std::uint64_t> h(static_cast<std::size_t>(L.count()), L.settings_hash);
+    for (const Geometry::Source& src : geo.sources) {
+        int x0, z0, x1, z1;
+        tile_range(L, src.bmin[0], src.bmin[2], src.bmax[0], src.bmax[2], x0, z0, x1, z1);
+        for (int z = z0; z <= z1; ++z)
+            for (int x = x0; x <= x1; ++x) {
+                std::uint64_t& t = h[static_cast<std::size_t>(z * L.tw + x)];
+                t = (t ^ src.hash) * 1099511628211ull + 0x9e3779b97f4a7c15ull;
+            }
+    }
+    return h;
+}
+
 } // namespace
 
 // ---- system ---------------------------------------------------------------------------------------
@@ -367,6 +490,11 @@ struct NavigationSystem::BuildJob {
     std::shared_ptr<Geometry> geo{std::make_shared<Geometry>()};
     NavMeshSurfaceComponent surface;
     std::chrono::steady_clock::time_point t0;
+    TileLayout layout;                  // tiled builds
+    std::vector<std::uint64_t> hashes;  // per tile
+    std::vector<int> build;             // tile indices to cook (all, or the changed ones)
+    bool incremental{false};
+    unsigned threads{1};
 };
 
 struct NavigationSystem::Cooked {
@@ -376,11 +504,22 @@ struct NavigationSystem::Cooked {
     std::string error;
     NavMeshSurfaceComponent surface;
     std::chrono::steady_clock::time_point t0;
+    struct Tile {
+        int x{0}, z{0};
+        unsigned char* data{nullptr}; // nullptr: the tile has nothing walkable (removes the old one)
+        int size{0};
+    };
+    TileLayout layout;
+    std::vector<std::uint64_t> hashes;
+    std::vector<Tile> tiles;
+    bool incremental{false};
     Cooked() = default;
     Cooked(const Cooked&) = delete;
     Cooked& operator=(const Cooked&) = delete;
     ~Cooked() {
         if (data) dtFree(data);
+        for (Tile& t : tiles)
+            if (t.data) dtFree(t.data);
     }
 };
 
@@ -402,6 +541,8 @@ struct NavigationSystem::Impl {
     dtQueryFilter filter;
     NavMeshSurfaceComponent surface;
     std::uint64_t signature{0};
+    TileLayout layout;                  // of the live mesh when tiled
+    std::vector<std::uint64_t> hashes;  // per tile of the live mesh
     float check_timer{0};
     std::unordered_map<Entity, Agent, ecs::EntityHash> agents;
     std::vector<Entity> scratch;
@@ -511,14 +652,180 @@ NavigationSystem::BuildJob NavigationSystem::gather(Scene& scene) {
     Geometry& geo = *job.geo;
     each_static_collider(scene, s.layer_mask,
                          [&](Entity e, const physics::ColliderComponent& c, bool kinematic, const physics::CollisionMesh* mesh) {
+        geo.begin_source();
         if (kinematic) add_bound(geo, upright_bound(scene.world_matrix(e), c, mesh));
         else add_collider(geo, scene.world_matrix(e), c, mesh);
+        geo.end_source();
     });
     each_static_heightfield(scene, s.layer_mask, [&](Entity e, const physics::StaticHeightfieldComponent& c) {
+        geo.begin_source();
         add_heightfield(geo, rigid(scene.world_matrix(e)), c);
+        geo.end_source();
     });
     ++stats_.builds;
+    if (wants_tiles(geo, s)) {
+        const rcConfig cfg = make_grid_config(geo, s, true);
+        job.layout = make_tile_layout(geo, s, cfg);
+        job.hashes = tile_hashes(geo, job.layout);
+        job.incremental = im.mesh && job.layout.same_grid(im.layout) && im.hashes.size() == job.hashes.size();
+        for (int i = 0; i < job.layout.count(); ++i)
+            if (!job.incremental || job.hashes[static_cast<std::size_t>(i)] != im.hashes[static_cast<std::size_t>(i)])
+                job.build.push_back(i);
+        const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+        job.threads = im.settings.build_threads ? im.settings.build_threads : std::min(hw, 8u);
+    }
     return job;
+}
+
+namespace {
+
+// One tile of a tiled navmesh: the triangles overlapping it (with the border) through the Recast
+// pipeline into Detour tile data. Thread-safe (own context and buffers).
+bool build_tile(const Geometry& geo, const std::vector<int>& tris, const NavMeshSurfaceComponent& s, const TileLayout& L,
+                int tx, int tz, unsigned char** data, int* size, std::string& error) {
+    *data = nullptr;
+    *size = 0;
+    if (tris.empty()) return true;
+    rcConfig cfg = make_grid_config(geo, s, true);
+    cfg.cs = L.cs;
+    cfg.walkableRadius = static_cast<int>(std::ceil(std::max(s.agent_radius, 0.0f) / cfg.cs));
+    cfg.maxEdgeLen = static_cast<int>(12.0f / cfg.cs);
+    cfg.detailSampleDist = cfg.cs * 6.0f;
+    cfg.tileSize = L.tile_cells;
+    cfg.borderSize = L.border;
+    cfg.width = cfg.height = L.tile_cells + 2 * L.border;
+    float bmin[2], bmax[2];
+    tile_bounds(L, tx, tz, bmin, bmax);
+    cfg.bmin[0] = bmin[0], cfg.bmin[2] = bmin[1];
+    cfg.bmax[0] = bmax[0], cfg.bmax[2] = bmax[1];
+    rcContext ctx(false);
+    struct Owned {
+        rcHeightfield* hf{nullptr};
+        rcCompactHeightfield* chf{nullptr};
+        rcContourSet* cset{nullptr};
+        rcPolyMesh* pmesh{nullptr};
+        rcPolyMeshDetail* dmesh{nullptr};
+        ~Owned() {
+            rcFreeHeightField(hf);
+            rcFreeCompactHeightfield(chf);
+            rcFreeContourSet(cset);
+            rcFreePolyMesh(pmesh);
+            rcFreePolyMeshDetail(dmesh);
+        }
+    } o;
+    auto fail = [&](const char* what) {
+        error = std::string("navmesh tile ") + std::to_string(tx) + "," + std::to_string(tz) + " failed: " + what;
+        return false;
+    };
+    const int nverts = static_cast<int>(geo.verts.size() / 3), ntris = static_cast<int>(tris.size() / 3);
+    o.hf = rcAllocHeightfield();
+    if (!o.hf || !rcCreateHeightfield(&ctx, *o.hf, cfg.width, cfg.height, cfg.bmin, cfg.bmax, cfg.cs, cfg.ch)) return fail("heightfield");
+    std::vector<unsigned char> areas(static_cast<std::size_t>(ntris), 0);
+    rcMarkWalkableTriangles(&ctx, cfg.walkableSlopeAngle, geo.verts.data(), nverts, tris.data(), ntris, areas.data());
+    if (!rcRasterizeTriangles(&ctx, geo.verts.data(), nverts, tris.data(), areas.data(), ntris, *o.hf, cfg.walkableClimb))
+        return fail("rasterize");
+    rcFilterLowHangingWalkableObstacles(&ctx, cfg.walkableClimb, *o.hf);
+    rcFilterLedgeSpans(&ctx, cfg.walkableHeight, cfg.walkableClimb, *o.hf);
+    rcFilterWalkableLowHeightSpans(&ctx, cfg.walkableHeight, *o.hf);
+    o.chf = rcAllocCompactHeightfield();
+    if (!o.chf || !rcBuildCompactHeightfield(&ctx, cfg.walkableHeight, cfg.walkableClimb, *o.hf, *o.chf)) return fail("compact heightfield");
+    rcFreeHeightField(o.hf);
+    o.hf = nullptr;
+    if (!rcErodeWalkableArea(&ctx, cfg.walkableRadius, *o.chf)) return fail("erode");
+    if (!rcBuildDistanceField(&ctx, *o.chf)) return fail("distance field");
+    if (!rcBuildRegions(&ctx, *o.chf, cfg.borderSize, cfg.minRegionArea, cfg.mergeRegionArea)) return fail("regions");
+    o.cset = rcAllocContourSet();
+    if (!o.cset || !rcBuildContours(&ctx, *o.chf, cfg.maxSimplificationError, cfg.maxEdgeLen, *o.cset)) return fail("contours");
+    if (o.cset->nconts == 0) return true;
+    o.pmesh = rcAllocPolyMesh();
+    if (!o.pmesh || !rcBuildPolyMesh(&ctx, *o.cset, cfg.maxVertsPerPoly, *o.pmesh)) return fail("polygon mesh");
+    o.dmesh = rcAllocPolyMeshDetail();
+    if (!o.dmesh || !rcBuildPolyMeshDetail(&ctx, *o.pmesh, *o.chf, cfg.detailSampleDist, cfg.detailSampleMaxError, *o.dmesh))
+        return fail("detail mesh");
+    if (o.pmesh->npolys == 0) return true;
+    if (o.pmesh->nverts >= 0xffff) return fail("too many vertices (lower tile_size)");
+    for (int i = 0; i < o.pmesh->npolys; ++i)
+        if (o.pmesh->areas[i] == RC_WALKABLE_AREA) o.pmesh->flags[i] = kWalkFlag;
+    dtNavMeshCreateParams p{};
+    p.verts = o.pmesh->verts;
+    p.vertCount = o.pmesh->nverts;
+    p.polys = o.pmesh->polys;
+    p.polyAreas = o.pmesh->areas;
+    p.polyFlags = o.pmesh->flags;
+    p.polyCount = o.pmesh->npolys;
+    p.nvp = o.pmesh->nvp;
+    p.detailMeshes = o.dmesh->meshes;
+    p.detailVerts = o.dmesh->verts;
+    p.detailVertsCount = o.dmesh->nverts;
+    p.detailTris = o.dmesh->tris;
+    p.detailTriCount = o.dmesh->ntris;
+    p.walkableHeight = s.agent_height;
+    p.walkableRadius = s.agent_radius;
+    p.walkableClimb = s.max_climb;
+    p.tileX = tx;
+    p.tileY = tz;
+    p.tileLayer = 0;
+    rcVcopy(p.bmin, o.pmesh->bmin);
+    rcVcopy(p.bmax, o.pmesh->bmax);
+    p.cs = cfg.cs;
+    p.ch = cfg.ch;
+    p.buildBvTree = true;
+    if (!dtCreateNavMeshData(&p, data, size)) return fail("detour data");
+    return true;
+}
+
+} // namespace
+
+// Cooks the job's tiles on up to `threads` threads. Triangles are bucketed per tile first, so each
+// tile rasterizes only what overlaps it.
+std::shared_ptr<NavigationSystem::Cooked> NavigationSystem::cook_tiles(BuildJob job, std::shared_ptr<Cooked> out) {
+    const Geometry& geo = *job.geo;
+    const TileLayout& L = job.layout;
+    out->layout = L;
+    out->hashes = job.hashes;
+    out->incremental = job.incremental;
+    std::vector<int> slot(static_cast<std::size_t>(L.count()), -1);
+    for (std::size_t i = 0; i < job.build.size(); ++i) slot[static_cast<std::size_t>(job.build[i])] = static_cast<int>(i);
+    std::vector<std::vector<int>> buckets(job.build.size());
+    const int ntris = geo.triangle_count();
+    for (int t = 0; t < ntris; ++t) {
+        const int* idx = &geo.tris[static_cast<std::size_t>(t) * 3];
+        float mnx = FLT_MAX, mnz = FLT_MAX, mxx = -FLT_MAX, mxz = -FLT_MAX;
+        for (int k = 0; k < 3; ++k) {
+            const float* v = &geo.verts[static_cast<std::size_t>(idx[k]) * 3];
+            mnx = std::min(mnx, v[0]), mxx = std::max(mxx, v[0]);
+            mnz = std::min(mnz, v[2]), mxz = std::max(mxz, v[2]);
+        }
+        int x0, z0, x1, z1;
+        tile_range(L, mnx, mnz, mxx, mxz, x0, z0, x1, z1);
+        for (int z = z0; z <= z1; ++z)
+            for (int x = x0; x <= x1; ++x) {
+                const int sl = slot[static_cast<std::size_t>(z * L.tw + x)];
+                if (sl >= 0) buckets[static_cast<std::size_t>(sl)].insert(buckets[static_cast<std::size_t>(sl)].end(), idx, idx + 3);
+            }
+    }
+    out->tiles.resize(job.build.size());
+    std::vector<std::string> errors(job.build.size());
+    std::atomic<std::size_t> next{0};
+    auto worker = [&] {
+        for (std::size_t i = next.fetch_add(1); i < job.build.size(); i = next.fetch_add(1)) {
+            Cooked::Tile& t = out->tiles[i];
+            t.x = job.build[i] % L.tw;
+            t.z = job.build[i] / L.tw;
+            (void)build_tile(geo, buckets[i], job.surface, L, t.x, t.z, &t.data, &t.size, errors[i]);
+        }
+    };
+    const unsigned n = std::clamp<unsigned>(job.threads, 1u, static_cast<unsigned>(std::max<std::size_t>(job.build.size(), 1)));
+    std::vector<std::thread> pool;
+    for (unsigned i = 1; i < n; ++i) pool.emplace_back(worker);
+    worker();
+    for (std::thread& th : pool) th.join();
+    for (const std::string& e : errors)
+        if (!e.empty()) {
+            out->error = e;
+            break;
+        }
+    return out;
 }
 
 // Recast/Detour pipeline on gathered geometry. Touches no scene or system state, so it may run on a
@@ -531,6 +838,7 @@ std::shared_ptr<NavigationSystem::Cooked> NavigationSystem::cook(BuildJob job) {
     const NavMeshSurfaceComponent& s = job.surface;
     out->source_triangles = static_cast<std::uint32_t>(geo.triangle_count());
     if (geo.tris.empty()) return out; // nothing to walk on: queries fail, agents stay put
+    if (job.layout.tiled) return cook_tiles(std::move(job), std::move(out));
 
     rcConfig cfg = make_grid_config(geo, s);
     rcContext ctx(false);
@@ -615,11 +923,11 @@ std::shared_ptr<NavigationSystem::Cooked> NavigationSystem::cook(BuildJob job) {
 Status NavigationSystem::install(Scene& scene, std::shared_ptr<Cooked> c) {
     Impl& im = *impl_;
     im.surface = c->surface;
-    const NavMeshSurfaceComponent& s = im.surface;
+    stats_.source_triangles = c->source_triangles;
+    if (c->layout.tiled && c->error.empty()) return install_tiles(scene, std::move(c));
     im.release();
     stats_.valid = false;
     stats_.polygons = stats_.vertices = 0;
-    stats_.source_triangles = c->source_triangles;
     auto finish = [&] {
         stats_.build_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c->t0).count();
     };
@@ -628,6 +936,10 @@ Status NavigationSystem::install(Scene& scene, std::shared_ptr<Cooked> c) {
         return Error{ErrorCode::Unknown, std::move(what)};
     };
     if (!c->error.empty()) return fail(c->error);
+    im.layout = {};
+    im.hashes.clear();
+    stats_.tiles = c->data ? 1 : 0;
+    stats_.tiles_rebuilt = stats_.tiles;
     if (!c->data) {
         finish();
         return {};
@@ -638,8 +950,22 @@ Status NavigationSystem::install(Scene& scene, std::shared_ptr<Cooked> c) {
         return fail("navmesh build failed: detour init");
     }
     c->data = nullptr; // owned by the navmesh now
+    return finish_install(scene, *c);
+}
+
+// Query and crowd on the live mesh, agents re-registered (shared by single-tile and tiled installs).
+Status NavigationSystem::finish_install(Scene& scene, const Cooked& c) {
+    Impl& im = *impl_;
+    const NavMeshSurfaceComponent& s = im.surface;
+    auto finish = [&] {
+        stats_.build_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c.t0).count();
+    };
+    auto fail = [&](std::string what) -> Status {
+        finish();
+        return Error{ErrorCode::Unknown, std::move(what)};
+    };
     im.query = dtAllocNavMeshQuery();
-    if (!im.query || dtStatusFailed(im.query->init(im.mesh, 4096))) {
+    if (!im.query || dtStatusFailed(im.query->init(im.mesh, im.layout.tiled ? 16384 : 4096))) {
         im.release();
         return fail("navmesh build failed: query init");
     }
@@ -663,14 +989,85 @@ Status NavigationSystem::install(Scene& scene, std::shared_ptr<Cooked> c) {
     im.crowd->setObstacleAvoidanceParams(3, &oa);
 
     stats_.valid = true;
-    stats_.polygons = c->polygons;
-    stats_.vertices = c->vertices;
+    stats_.polygons = c.polygons;
+    stats_.vertices = c.vertices;
     // Re-register agents on the new mesh, keeping their destinations.
     for (auto& [e, a] : im.agents) {
         if (scene.world().alive(e)) (void)im.add_to_crowd(scene, e, a);
     }
     finish();
     return {};
+}
+
+// Installs a tiled build: swaps only the cooked tiles into the live mesh when the grid is
+// unchanged (incremental), otherwise creates a new multi-tile mesh.
+Status NavigationSystem::install_tiles(Scene& scene, std::shared_ptr<Cooked> c) {
+    Impl& im = *impl_;
+    const TileLayout& L = c->layout;
+    auto count_mesh = [&] {
+        c->polygons = c->vertices = 0;
+        std::uint32_t tiles = 0;
+        const dtNavMesh& m = *im.mesh;
+        for (int t = 0; t < m.getMaxTiles(); ++t) {
+            const dtMeshTile* tile = m.getTile(t);
+            if (!tile || !tile->header) continue;
+            ++tiles;
+            c->polygons += static_cast<std::uint32_t>(tile->header->polyCount);
+            c->vertices += static_cast<std::uint32_t>(tile->header->vertCount);
+        }
+        stats_.tiles = tiles;
+    };
+    auto add_tiles = [&]() -> bool {
+        for (Cooked::Tile& t : c->tiles) {
+            if (const dtTileRef ref = im.mesh->getTileRefAt(t.x, t.z, 0)) im.mesh->removeTile(ref, nullptr, nullptr);
+            if (!t.data) continue;
+            if (dtStatusFailed(im.mesh->addTile(t.data, t.size, DT_TILE_FREE_DATA, 0, nullptr))) return false;
+            t.data = nullptr; // owned by the navmesh
+        }
+        return true;
+    };
+    stats_.tiles_rebuilt = static_cast<std::uint32_t>(c->tiles.size());
+    if (c->incremental && im.mesh && im.crowd && L.same_grid(im.layout)) {
+        // Agents on swapped tiles hold stale polygon refs: re-register everyone on the patched mesh.
+        for (auto& [e, a] : im.agents) im.remove_from_crowd(a);
+        if (!add_tiles()) {
+            im.signature = 0; // force a full rebuild next time
+            return Error{ErrorCode::Unknown, "navmesh build failed: detour add tile"};
+        }
+        im.hashes = c->hashes;
+        count_mesh();
+        stats_.valid = true;
+        stats_.polygons = c->polygons;
+        stats_.vertices = c->vertices;
+        for (auto& [e, a] : im.agents)
+            if (scene.world().alive(e)) (void)im.add_to_crowd(scene, e, a);
+        stats_.build_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c->t0).count();
+        return {};
+    }
+    if (c->incremental) im.signature = 0; // the grid changed while cooking: rebuild everything next check
+    im.release();
+    stats_.valid = false;
+    stats_.polygons = stats_.vertices = 0;
+    im.layout = L;
+    im.hashes = c->hashes;
+    im.mesh = dtAllocNavMesh();
+    dtNavMeshParams params{};
+    rcVcopy(params.orig, L.orig);
+    params.tileWidth = L.tile_world;
+    params.tileHeight = L.tile_world;
+    params.maxTiles = L.count();
+    params.maxPolys = L.max_polys;
+    if (!im.mesh || dtStatusFailed(im.mesh->init(&params)) || !add_tiles()) {
+        im.release();
+        return Error{ErrorCode::Unknown, "navmesh build failed: detour tiled init"};
+    }
+    count_mesh();
+    if (stats_.tiles == 0) { // nothing walkable anywhere
+        im.release();
+        stats_.build_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c->t0).count();
+        return {};
+    }
+    return finish_install(scene, *c);
 }
 
 Status NavigationSystem::ensure_built(Scene& scene) {
@@ -1004,6 +1401,8 @@ void register_components() {
             .field(&NavMeshSurfaceComponent::cell_height, "cell_height", {.min = 0.02f, .max = 2, .speed = 0.005f})
             .field(&NavMeshSurfaceComponent::layer_mask, "layer_mask", {.tooltip = "Collider layers that contribute walkable geometry", .hint = "bitmask16"})
             .field(&NavMeshSurfaceComponent::auto_rebuild, "auto_rebuild", {.tooltip = "Rebuild when static colliders move or change"})
+            .field(&NavMeshSurfaceComponent::tile_size, "tile_size", {.min = 0, .max = 1000, .speed = 0.5f, .label = "Tile Size",
+                   .tooltip = "Metres per navmesh tile; 0 = automatic (one tile for small levels, tiles of 256 voxels above a million voxel columns). Tiled meshes rebuild only the tiles a change touches"})
             .commit();
         scene::Schema<NavAgentComponent>("NavAgent", "Navigation")
             .field(&NavAgentComponent::speed, "speed", {.min = 0, .max = 100, .speed = 0.05f, .tooltip = "m/s"})

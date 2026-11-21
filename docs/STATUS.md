@@ -2377,3 +2377,16 @@ Verified (Release, GCC 15.2, 2 vCPU):
 Not covered: no lane changes, protected turns, pedestrians or routing; agents ignore physics bodies; no Studio road editor or lane overlay; no rendered city capture yet.
 
 Next task: GAP-20 procedural city (road graph, blocks, lots, buildings) feeding this lane graph.
+
+## 2026-11-21 — Tiled navmesh (ADR-0168, GAP-23)
+
+Built: `NavMeshSurfaceComponent::tile_size` (reflected, serialized); automatic tiling above 1,048,576 voxel columns; snapped tile grid with up to 4,096 tiles at full voxel detail; per-source content hashes and per-tile hashes; parallel tile cooking (`NavigationSettings::build_threads`); incremental installs with `removeTile`/`addTile` and agent re-registration; `NavStats::tiles` and `tiles_rebuilt`.
+
+Verified (Release, GCC 15.2, 2 vCPU):
+- `victus_navigation_tests`: 13 cases, 613 assertions pass (11 previous cases unchanged).
+- 200 m x 200 m floor with nine walls: 36 tiles; full build 263.9 / 255.8 / 268.4 ms; adding one crate re-cooks 1 tile in 19.1 / 19.1 / 19.6 ms. With tiling disabled the same level as one tile: 646.6 ms build, 688.0 ms rebuild.
+- cross-tile diagonal path 254.6 m within 3 % of the straight line; an agent crosses tile borders through an incremental rebuild and arrives within 0.6 m.
+
+Not covered: no TileCache obstacle carving, no streaming of tiles with world cells, no off-mesh links; gather still visits all colliders on every change check.
+
+Next task: GAP-29 UI widgets (slider, text input, rich text) and a UI editor canvas.
