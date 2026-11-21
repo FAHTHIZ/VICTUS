@@ -2362,3 +2362,18 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 Not covered: no tracked vehicles or motorcycles; no tyre-model tuning against real data; no network replication of vehicle state; no AI drivers yet (traffic is next).
 
 Next task: GAP-22 lane-graph traffic with signals and IDM agents (ADR-0167).
+
+## 2026-11-21 — Lane-graph traffic (ADR-0167, GAP-22 slice 1)
+
+Built: new `engine/traffic` module. `RoadNetwork` with `grid_network`, `.vroads` JSON (`parse_road_network`, `road_network_to_json`, `validate`); `build_lane_graph` (right- or left-hand driving lanes trimmed at junctions, cubic-Bezier connectors with curvature speed caps, U-turns at dead ends, split-phase signals with deterministic offsets); `TrafficAgent` component and `update_traffic` (IDM car following, red/amber stop lines, merge priority, braking for slower next lanes, deterministic turn choice, simulation LOD, sub-steps of at most 0.1 s); `TrafficNetwork` component (grid or `.vroads`, vehicle template child) built on the first `traffic.update`; registered in the player, Studio play mode and networked play clients.
+
+Verified (Release, GCC 15.2, 2 vCPU):
+- `victus_traffic_tests` (new): 7 cases, 973 assertions pass.
+- lone car on a 400 m road peaks at 13.8998 m/s (limit 13.9) and U-turns at the dead end.
+- 120 cars, 4x4 grid, 70 m blocks, 180 s at 30 Hz, two runs: minimum same-lane bumper gap 1.99 m, up to 32 cars waiting at lights at once, every car drives at least 131 m, final positions bit-identical between runs; mean speed 1.6-2.4 m/s with 50-80 of 120 stopped, because split-phase lights give each approach green for 12 of every 48-64 s.
+- 2,000 cars on a 10x10 two-lane grid: 0.42 ms per `update_traffic`, no same-lane overlap.
+- full build, 0 warnings; `ctest --test-dir build -j2`: 41/41 pass; 4 GPU reference suites skipped as before.
+
+Not covered: no lane changes, protected turns, pedestrians or routing; agents ignore physics bodies; no Studio road editor or lane overlay; no rendered city capture yet.
+
+Next task: GAP-20 procedural city (road graph, blocks, lots, buildings) feeding this lane graph.
