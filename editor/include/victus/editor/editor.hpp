@@ -49,6 +49,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <utility>
 
 namespace victus::platform {
 class Platform;
@@ -374,6 +375,10 @@ public:
     [[nodiscard]] std::vector<std::string> animation_debug_lines(scene::Entity e);
     // View > Navigation Mesh: draws the navmesh (built from static colliders) in the viewport.
     void set_show_navmesh(bool show) noexcept { show_navmesh_ = show; }
+    // View > IK and Foot Placement: IK chains and targets, and (in play) foot probe rays, ground
+    // points with normals and boxes around locked feet. The segments drawn this frame.
+    void set_show_ik(bool show) noexcept { show_ik_ = show; }
+    [[nodiscard]] std::vector<std::pair<math::Vec3, math::Vec3>> ik_overlay_lines();
     [[nodiscard]] const navigation::NavigationSystem* navmesh_preview() const noexcept { return edit_navigation_.get(); }
     // Audio engine for play sessions and clip preview (null if no engine could be created).
     audio::AudioEngine* audio();
@@ -714,6 +719,12 @@ public:
     // Play mode only: stands a fallen passive/powered ragdoll back up (ADR-0158), blending from the
     // lying pose to the animation. Not an edit (no undo step); false with a notice when it cannot.
     bool ragdoll_get_up(scene::Entity root);
+    // Foot placement (Inspector "Feet on the ground" card, ADR-0163): one undoable step each.
+    // add_foot_placement returns the feet configured (0 with a notice when none are found).
+    std::size_t add_foot_placement(scene::Entity root);
+    std::size_t remove_foot_placement(scene::Entity root);
+    bool set_foot_locking(scene::Entity root, bool on);
+    [[nodiscard]] std::size_t foot_contact_count(scene::Entity root) const;
     // Starter characters (Orion "orion", Nova "nova"): copies the model into the project
     // when missing and adds it, optionally as a ragdoll in `mode`. One undo step when `record`.
     Result<Uuid> ensure_starter_character(std::string_view id);
@@ -1109,6 +1120,7 @@ private:
     float script_poll_{0};
     bool show_colliders_{true};
     bool show_navmesh_{false};
+    bool show_ik_{false};
     std::unique_ptr<navigation::NavigationSystem> edit_navigation_; // navmesh preview while editing
     std::vector<navigation::DebugLine> nav_scratch_;
     render::QualityTier quality_{render::QualityTier::High};
@@ -1308,6 +1320,7 @@ private:
     void draw_input_actions();
     void draw_prefab_section(scene::Entity e);
     void draw_ragdoll_section(scene::Entity e);
+    void draw_foot_section(scene::Entity e);
     int help_place_{0};
     bool help_was_open_{false};
     // Marks components of `e` that differ from `before` as prefab overrides (instance parts only).

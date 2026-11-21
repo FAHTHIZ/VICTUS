@@ -50,6 +50,7 @@ void register_components() {
             .commit();
     });
     register_ik_components();
+    register_foot_placement_components();
 }
 
 namespace {
@@ -1202,9 +1203,14 @@ void AnimationSystem::update(Scene& scene, float dt) {
         if (w.s->ctl.ctrl) ++stats_.controlled;
         else if (!w.a->controller.empty()) ++stats_.controller_errors;
     }
-    // IK post-processes the pose every animator just wrote (and procedural rigs without one).
+    // IK post-processes the pose every animator just wrote (and procedural rigs without one);
+    // foot placement sets the foot targets first and tilts the feet after.
+    stats_.feet = prepare_foot_placement(scene, impl_->settings.ground, dt);
     stats_.ik = apply_ik(scene);
+    finish_foot_placement(scene);
 }
+
+void AnimationSystem::set_ground_probe(GroundProbe probe) { impl_->settings.ground = std::move(probe); }
 
 bool AnimationSystem::update_entity(Scene& scene, Entity e, float dt) {
     AnimatorComponent* a = nullptr;
@@ -1224,7 +1230,9 @@ bool AnimationSystem::update_entity(Scene& scene, Entity e, float dt) {
     stats_.transitions = w.transitions;
     if (s->ctl.ctrl) stats_.controlled = 1;
     else if (!a->controller.empty()) stats_.controller_errors = 1;
+    stats_.feet = prepare_foot_placement(scene, impl_->settings.ground, dt);
     stats_.ik = apply_ik(scene);
+    finish_foot_placement(scene);
     return true;
 }
 

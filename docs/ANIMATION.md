@@ -188,7 +188,7 @@ Unreachable targets stretch the chain straight toward them. Chains are solved pa
 Visual scripts: Set IK Target. Luau: `entity:set_ik_target(vector | entity | nil, weight?)` (nil disables) and `entity:ik_state()` → `{enabled, weight, solver, target, reached}`. The fields are also settable through `entity:set("IKConstraint", field, value)`.
 
 ```lua
--- Foot placement: plant each foot on the ground under it.
+-- Hand-made ground contact (for full foot placement use the FootPlacement component).
 function Feet:update(dt)
     for _, foot in self.feet do
         local p = foot.world_position
@@ -197,6 +197,22 @@ function Feet:update(dt)
     end
 end
 ```
+
+## Foot placement and foot locking
+
+`FootPlacement` on a character root and `FootContact` on each foot bone (each with a `two_bone` `IKConstraint` that has no target entity) plant the feet on the ground under them and stop planted feet from sliding (ADR-0163). Studio: select a character and press Add Foot Placement on the Inspector's "Feet on the ground" card, or run "Entity: Add Foot Placement"; code: `animation::make_humanoid_foot_placement(scene, root)` (finds the Hips/Pelvis bone and both feet; returns the number of feet).
+
+| `FootPlacement` field | Meaning |
+| --- | --- |
+| `pelvis` | Bone lowered so the lower foot reaches (nil = never move the body) |
+| `probe_up`, `probe_down` | The ray starts this far above the animated foot and reaches this far below it |
+| `max_pelvis_drop` | Largest pelvis drop in metres |
+| `smoothing` | 1/s, how fast corrections follow the ground (0 = instant) |
+| `align_to_ground`, `max_slope` | Tilt feet to the ground normal, at most this many degrees |
+| `lock_feet`, `lock_speed`, `lock_height`, `release_distance` | Foot locking: a foot slower than `lock_speed` m/s within `lock_height` of its rest height stays where it planted until it lifts or is `release_distance` away from the animated foot |
+| `mask` | Physics layers that count as ground |
+
+`FootContact.lock` off lets a foot follow the ground without planting (a dragging foot, a tail tip). The ground comes from `AnimationSettings::ground`; the player, CLI and Studio play mode pass `runtime::physics_ground_probe(physics)`, which ignores the character's own bodies. With no probe (edit mode) the pose is unchanged. `AnimationStats::feet` reports characters, feet, grounded, locked and invalid (FootContact without a usable two-bone IK). View > IK and Foot Placement draws IK chains, targets, probe rays and ground points.
 
 ## Retargeting
 

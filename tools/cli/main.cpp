@@ -34,6 +34,7 @@
 #include "victus/plugin/plugin.hpp"
 #include "victus/project/project.hpp"
 #include "victus/runtime/scene_lightmap.hpp"
+#include "victus/runtime/physics_ground_probe.hpp"
 #include "victus/runtime/surface_shader.hpp"
 #include "victus/platform/platform.hpp"
 #include "victus/scene/scene.hpp"
@@ -495,7 +496,8 @@ struct Headless {
         animations = std::make_unique<animation::AnimationSystem>(
             animation::AnimationSettings{.provider = db ? assets::animation_provider(*db) : animation::SetProvider{},
                                          .controllers = db ? animation::directory_loader(db->assets_dir()) : animation::ControllerLoader{},
-                                         .sheets = db ? assets::sprite_sheet_provider(*db) : animation::SheetProvider{}});
+                                         .sheets = db ? assets::sprite_sheet_provider(*db) : animation::SheetProvider{},
+                                         .ground = runtime::physics_ground_probe(*physics_world)});
         animation::add_animation_systems(sim, *animations);
         tilemaps = std::make_unique<tilemap::TilemapSystem>(db ? assets::tileset_provider(*db) : tilemap::TilesetProvider{});
         tilemap::add_tilemap_systems(sim, *tilemaps);

@@ -590,6 +590,8 @@ void Editor::draw_menu_bar() {
         ImGui::Separator();
         ImGui::MenuItem("Physics Colliders", nullptr, &show_colliders_);
         ImGui::MenuItem("Navigation Mesh", nullptr, &show_navmesh_);
+        ImGui::MenuItem("IK and Foot Placement", nullptr, &show_ik_);
+        kit::tooltip("IK chains and targets; in play, foot probes, ground points and locked feet");
         ImGui::MenuItem("UI Demo Window", nullptr, &show_demo_);
         if (ImGui::BeginMenu("Rendering Quality")) {
             for (auto tier : {render::QualityTier::Low, render::QualityTier::Medium, render::QualityTier::High,
@@ -1818,6 +1820,7 @@ void Editor::draw_inspector() {
         if (multi) ImGui::TextColored(ui::tokens::kInfo, "%zu selected: changes apply to all", selection_.size());
         draw_prefab_section(e);
         if (!multi) draw_ragdoll_section(e);
+        if (!multi) draw_foot_section(e);
         begin_inspector_frame(e);
         const json::Value before_frame = multi ? active_scene().save_entity(e) : json::Value();
         const bool changed = inspect_components(e);

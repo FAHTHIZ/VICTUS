@@ -330,7 +330,8 @@ target_compile_definitions(victus_audio_tests PRIVATE VICTUS_MINIAUDIO_DATA_DIR=
 
 victus_add_test(victus_animation_tests
     SOURCES animation/animation_tests.cpp animation/sprite_animation_tests.cpp animation/controller_tests.cpp animation/ik_tests.cpp animation/layer_tests.cpp animation/retarget_tests.cpp animation/morph_tests.cpp
-    DEPS VICTUS::Animation VICTUS::Core
+        animation/foot_placement_tests.cpp
+    DEPS VICTUS::Animation VICTUS::Runtime VICTUS::Physics VICTUS::Core
     LABELS animation)
 
 victus_add_test(victus_gameui_tests
