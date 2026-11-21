@@ -1,5 +1,5 @@
 {
-  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095); template-3d and template-multiplayer triangles, shadow triangles and buffer bytes re-baselined 2026-11-20 for the Orion/Nova starter characters (26.1k smooth-surface triangles replacing the 20.6k-triangle box robots, ADR-0121); template-3d and template-multiplayer shadow triangles re-baselined the same day at 23 180 and 15 459 for receiver-aware cascade culling (ADR-0124); sample-arena triangles, shadow triangles, entities and buffers re-baselined 2026-11-20 when the arena moved from the old box robot to Orion (player) and Nova (enemies); shadow triangles re-baselined the same day for per-cascade shadow LOD (ADR-0132): template-3d 23 180 to 19 094, template-multiplayer 15 459 to 14 457, sample-arena 28 328 to 24 178. See docs/PERFORMANCE_STRATEGY.md. Lightmapped templates (ADR-0134) re-baselined 2026-11-20: template-3d live buffers 60 and textures 22, template-multiplayer live buffers 53, textures 21 and main batches 13 (each lightmapped renderer owns its own atlas-space lightmap UV stream, so the arena's eight walls and pillars no longer instance together; per-instance lightmap scale/offset is the follow-up); the same day congruent lightmapped copies share one unwrap and batch again (ADR-0135): template-multiplayer main batches 13 to 9, live buffers 53 to 38.",
+  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095); template-3d and template-multiplayer triangles, shadow triangles and buffer bytes re-baselined 2026-11-20 for the Orion/Nova starter characters (26.1k smooth-surface triangles replacing the 20.6k-triangle box robots, ADR-0121); template-3d and template-multiplayer shadow triangles re-baselined the same day at 23 180 and 15 459 for receiver-aware cascade culling (ADR-0124); sample-arena triangles, shadow triangles, entities and buffers re-baselined 2026-11-20 when the arena moved from the old box robot to Orion (player) and Nova (enemies); shadow triangles re-baselined the same day for per-cascade shadow LOD (ADR-0132): template-3d 23 180 to 19 094, template-multiplayer 15 459 to 14 457, sample-arena 28 328 to 24 178. sim.systems re-baselined 2026-11-21 at 31 after the simulation-LOD, vehicle and traffic work (ADR-0165-0167) registered more systems (min raised to half the count). See docs/PERFORMANCE_STRATEGY.md. Lightmapped templates (ADR-0134) re-baselined 2026-11-20: template-3d live buffers 60 and textures 22, template-multiplayer live buffers 53, textures 21 and main batches 13 (each lightmapped renderer owns its own atlas-space lightmap UV stream, so the arena's eight walls and pillars no longer instance together; per-instance lightmap scale/offset is the follow-up); the same day congruent lightmapped copies share one unwrap and batch again (ADR-0135): template-multiplayer main batches 13 to 9, live buffers 53 to 38.",
   "settings": {
     "frames": 120,
     "width": 640,
@@ -30,7 +30,7 @@
         "gpu.buffer_bytes": [0, 5579121],
         "gpu.live_textures": [0, 25],
         "gpu.live_buffers": [0, 66],
-        "sim.systems": [11, 30]
+        "sim.systems": [16, 34]
       }
     },
     "template-2d": {
@@ -56,7 +56,7 @@
         "gpu.buffer_bytes": [0, 225281],
         "gpu.live_textures": [0, 11],
         "gpu.live_buffers": [0, 6],
-        "sim.systems": [11, 30]
+        "sim.systems": [16, 34]
       }
     },
     "template-simulation": {
@@ -82,7 +82,7 @@
         "gpu.buffer_bytes": [0, 296147],
         "gpu.live_textures": [0, 17],
         "gpu.live_buffers": [0, 11],
-        "sim.systems": [11, 30]
+        "sim.systems": [16, 34]
       }
     },
     "template-multiplayer": {
@@ -108,7 +108,7 @@
         "gpu.buffer_bytes": [0, 3008083],
         "gpu.live_textures": [0, 24],
         "gpu.live_buffers": [0, 42],
-        "sim.systems": [11, 30]
+        "sim.systems": [16, 34]
       }
     },
     "sample-arena": {
@@ -135,7 +135,7 @@
         "gpu.buffer_bytes": [0, 5615183],
         "gpu.live_textures": [0, 20],
         "gpu.live_buffers": [0, 42],
-        "sim.systems": [11, 30]
+        "sim.systems": [16, 34]
       }
     },
     "sample-dungeon_crawler": {
@@ -162,7 +162,7 @@
         "gpu.buffer_bytes": [0, 225281],
         "gpu.live_textures": [0, 11],
         "gpu.live_buffers": [0, 6],
-        "sim.systems": [11, 30]
+        "sim.systems": [16, 34]
       }
     },
     "sample-platformer": {
@@ -189,7 +189,7 @@
         "gpu.buffer_bytes": [0, 225281],
         "gpu.live_textures": [0, 11],
         "gpu.live_buffers": [0, 6],
-        "sim.systems": [11, 30]
+        "sim.systems": [16, 34]
       }
     }
   }

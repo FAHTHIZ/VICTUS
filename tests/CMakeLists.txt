@@ -179,7 +179,8 @@ victus_add_test(victus_editor_tests
         editor/editor_tests.cpp
         editor/gizmo_tests.cpp
         editor/studio_ux_tests.cpp
-    DEPS VICTUS::EditorCore VICTUS::Platform
+        editor/asset_store_tests.cpp
+    DEPS VICTUS::EditorCore VICTUS::Platform victus_stb
     LABELS "editor;gpu")
 target_compile_definitions(victus_editor_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")
 endif()

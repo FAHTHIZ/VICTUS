@@ -467,6 +467,7 @@ void Editor::draw_workspace(float) {
     draw_help();
     draw_history();
     draw_project_settings();
+    draw_asset_store();
     ImGui::EndDisabled();
     draw_script_debugger();
     draw_status_bar();
@@ -543,6 +544,9 @@ void Editor::draw_menu_bar() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Assets")) {
+        if (ImGui::MenuItem("Asset Store...", nullptr, show_asset_store_)) show_panel(Panel::AssetStore);
+        kit::tooltip("Free models, materials, skies and sounds with their licences, added to this project in one click");
+        ImGui::Separator();
         if (ImGui::MenuItem("Reimport All")) (void)reimport_assets();
         if (ImGui::MenuItem(baking_lighting() ? "Baking Lighting..." : "Bake Lighting", nullptr, false,
                             editing && project_ && !baking_lighting()))
