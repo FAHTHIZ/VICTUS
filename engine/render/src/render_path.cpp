@@ -202,6 +202,17 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
         add("ssao", reduced ? PathState::Reduced : PathState::Active, reduced ? by(matches) : PathReason::None,
             std::format("{} samples, {} resolution", S.ssao_samples, S.ssao_half_resolution ? "half" : "full"));
     }
+    if (!f.contact_shadows_requested)
+        add("contact_shadows", PathState::Off, PathReason::Scene, "environment contact shadow length is 0");
+    else if (!S.contact_shadows)
+        add("contact_shadows", PathState::Off, by(S.contact_shadows == tier.contact_shadows), "no sun contact shadows");
+    else if (!f.contact_shadows) add("contact_shadows", PathState::Off, PathReason::Scene, "no sunlight");
+    else {
+        const bool reduced = S.contact_shadow_steps < ref.contact_shadow_steps;
+        add("contact_shadows", reduced ? PathState::Reduced : PathState::Active,
+            reduced ? by(S.contact_shadow_steps == tier.contact_shadow_steps) : PathReason::None,
+            std::format("{} steps", S.contact_shadow_steps));
+    }
     if (!f.bloom_requested) add("bloom", PathState::Off, PathReason::Scene, "environment bloom intensity is 0");
     else if (!S.bloom) add("bloom", PathState::Off, by(S.bloom == tier.bloom), "");
     else {

@@ -167,6 +167,9 @@ struct SsaoUniforms {
     Mat4 inv_proj;
     Vec4 params;
     Vec4 screen;
+    Mat4 proj;
+    Vec4 light;   // contact shadows: xyz towards the sun (view space), w ray length
+    Vec4 contact; // x steps, y thickness, z enabled, w fade distance
 };
 struct BlurUniforms {
     Vec4 proj;
@@ -481,6 +484,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.shadow_resolution = 1024;
         s.soft_shadows = false;
         s.ssao = false;
+        s.contact_shadows = false;
         s.bloom = false;
         s.bloom_levels = 4;
         s.fxaa = true;
@@ -511,6 +515,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.shadow_resolution = 1024;
         s.soft_shadows = true;
         s.ssao = false;
+        s.contact_shadows = false; // like SSAO: the depth prepass it needs is the main cost
         s.bloom = true;
         s.bloom_levels = 4;
         s.fxaa = true;
@@ -539,6 +544,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.shadow_resolution = 2048;
         s.ssao_half_resolution = false;
         s.ssao_samples = 16;
+        s.contact_shadow_steps = 16;
         s.bloom_levels = 6;
         s.max_point_lights = 1024;
         s.lod_error_pixels = 0.5f;
@@ -563,6 +569,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.shadow_resolution = std::clamp(s.shadow_resolution, 64u, 4096u);
     s.cascade_split_lambda = std::isfinite(s.cascade_split_lambda) ? std::clamp(s.cascade_split_lambda, 0.0f, 1.0f) : 0.8f;
     s.ssao_samples = std::clamp(s.ssao_samples, 4u, 32u);
+    s.contact_shadow_steps = std::clamp(s.contact_shadow_steps, 4u, 32u);
     s.bloom_levels = std::clamp(s.bloom_levels, 1u, 8u);
     s.sharpen = std::isfinite(s.sharpen) ? std::clamp(s.sharpen, 0.0f, 1.0f) : 0.0f;
     s.upscale_mip_bias = std::isfinite(s.upscale_mip_bias) ? std::clamp(s.upscale_mip_bias, -2.0f, 0.0f) : 0.0f;
@@ -2508,7 +2515,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     };
     std::array<HiZLevel, 16> hiz_levels{};
     std::uint32_t hiz_level_count = 0, occl_instance_count = 0;
-    const bool will_prepass = S.depth_prepass || (S.ssao && env_.ao_intensity > 0.0f && env_.ao_radius > 0.0f);
+    const bool will_prepass = S.depth_prepass || (S.ssao && env_.ao_intensity > 0.0f && env_.ao_radius > 0.0f) ||
+                              (S.contact_shadows && env_.contact_shadow_length > 0.0f && sun_.intensity > 0.0f);
     std::size_t occl_candidates = 0; // per-frame main batches; retained-group batches follow them
     while (occl_candidates < main_batches.size() && !main_batches[occl_candidates].buffer) ++occl_candidates;
     const bool occlusion = S.occlusion_culling && will_prepass && dev.capabilities().compute && occl_candidates > 0 &&
@@ -3018,13 +3026,19 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     }
 
     const bool ssao = S.ssao && env_.ao_intensity > 0.0f && env_.ao_radius > 0.0f;
-    const bool user_prepass = S.depth_prepass || ssao;
+    // Sun contact shadows (ADR-0183) share the SSAO pass and its target (green channel).
+    const bool contact_shadows = S.contact_shadows && std::isfinite(env_.contact_shadow_length) &&
+                                 env_.contact_shadow_length > 0.0f && sun_.intensity > 0.0f;
+    const bool screen_occlusion = ssao || contact_shadows;
+    const bool user_prepass = S.depth_prepass || screen_occlusion;
     const bool bloom = S.bloom && env_.bloom_intensity > 0.0f;
     const bool auto_exposure = S.auto_exposure && env_.auto_exposure;
     const bool linear_out = env_.linear_output || capture_mode_;
     const bool fxaa = S.fxaa && !linear_out && !taa; // captures keep float precision
     facts_.ao_requested = env_.ao_intensity > 0.0f && env_.ao_radius > 0.0f;
     facts_.ssao = ssao;
+    facts_.contact_shadows_requested = env_.contact_shadow_length > 0.0f;
+    facts_.contact_shadows = contact_shadows;
     facts_.bloom_requested = env_.bloom_intensity > 0.0f;
     facts_.bloom = bloom;
     facts_.auto_exposure_requested = env_.auto_exposure;
@@ -3037,7 +3051,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const std::uint32_t atlas_size = shadow_res * atlas_tiles;
 
     LightingUniforms lighting{};
-    lighting.camera_pos = Vec4(camera_.position, ssao ? 1.0f : 0.0f);
+    lighting.camera_pos = Vec4(camera_.position, contact_shadows ? 2.0f : (ssao ? 1.0f : 0.0f));
     lighting.camera_forward = Vec4(camera_.forward(), texture_mip_bias);
     lighting.sun_dir = Vec4(normalize(sun_.direction), shadows ? 1.0f : 0.0f);
     lighting.sun_color = rgb(sun_.color, sun_.intensity);
@@ -3581,7 +3595,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const RGTexture hdr = graph.create_texture("hdr_color", hdr_desc);
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
-    const bool depth_sampled = ssao || taa || occlusion || fog || clouds || precip_count > 0 || !particle_draws.empty() ||
+    const bool depth_sampled = screen_occlusion || taa || occlusion || fog || clouds || precip_count > 0 || !particle_draws.empty() ||
                                !gpu_jobs.empty() || !decal_draws.empty() || !water_draws.empty();
     depth_desc.usage = rhi::TextureUsageDepthTarget | (depth_sampled ? rhi::TextureUsageSampled : 0u);
     // With MSAA the forward pass has its own multisampled depth, so the pre-pass provides the
@@ -3696,20 +3710,28 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     }
 
     RGTexture ao;
-    if (ssao) {
+    if (screen_occlusion) {
         const std::uint32_t aw = S.ssao_half_resolution ? std::max(1u, rw / 2) : rw;
         const std::uint32_t ah = S.ssao_half_resolution ? std::max(1u, rh / 2) : rh;
-        const RGTexture ao_raw = graph.create_texture("ssao_raw", color_desc(rhi::Format::R8_UNORM, aw, ah));
-        ao = graph.create_texture("ssao", color_desc(rhi::Format::R8_UNORM, aw, ah));
-        auto ssao_pl = post_pipeline("ssao.frag", rhi::Format::R8_UNORM);
+        // R: ambient occlusion, G: sun contact shadow (ADR-0183).
+        const RGTexture ao_raw = graph.create_texture("ssao_raw", color_desc(rhi::Format::RG8_UNORM, aw, ah));
+        ao = graph.create_texture("ssao", color_desc(rhi::Format::RG8_UNORM, aw, ah));
+        auto ssao_pl = post_pipeline("ssao.frag", rhi::Format::RG8_UNORM);
         if (!ssao_pl) return std::move(ssao_pl).error();
-        auto blur_pl = post_pipeline("ssao_blur.frag", rhi::Format::R8_UNORM);
+        auto blur_pl = post_pipeline("ssao_blur.frag", rhi::Format::RG8_UNORM);
         if (!blur_pl) return std::move(blur_pl).error();
         SsaoUniforms su{};
         su.inv_proj = inverse(proj);
-        su.params = {env_.ao_radius, env_.ao_intensity, 0.002f, static_cast<float>(S.ssao_samples)};
+        su.params = {env_.ao_radius, ssao ? env_.ao_intensity : 0.0f, 0.002f, static_cast<float>(S.ssao_samples)};
         su.screen = inv_size(rw, rh, 0.5f * static_cast<float>(rh) / std::tan(camera_.fov_y * 0.5f),
                              std::max(env_.ao_fade_distance, 1.0f));
+        su.proj = proj;
+        if (contact_shadows) {
+            const Vec3 to_sun = normalize(camera_.view.transform_vector(-normalize(sun_.direction)));
+            su.light = Vec4(to_sun, std::min(env_.contact_shadow_length, 10.0f));
+            su.contact = {static_cast<float>(S.contact_shadow_steps), std::clamp(env_.contact_shadow_thickness, 0.01f, 10.0f),
+                          1.0f, std::max(env_.ao_fade_distance, 1.0f)};
+        }
         BlurUniforms bu{};
         bu.proj = {-proj[3].z, 1.0f, proj[2].z, 0.0f};
         bu.screen = inv_size(aw, ah);

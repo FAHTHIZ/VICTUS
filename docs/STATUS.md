@@ -2561,3 +2561,13 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 - **Verified:** full `ctest --test-dir build/release -j2` before these changes on main 52922f6: 42/42 passed (526 s). After them: `victus_animation_tests` 66 cases passed (new "twist drivers"), `victus_scene_tests` and `victus_script_tests` all passed, `victus_asset_tests -tc="starter characters*,character validation*"` 4 cases / 749 assertions passed, `victus_editor_tests -tc="*nim*,*ontroller*,*script api*,*character*"` passed, `ctest -R "cli_smoke|tools|script|scene"` passed; `victus character-check orion` and `nova`: OK, 0 errors, 0 warnings (60 joints, 8/8 sockets, 125,184 / 128,816 triangles, 3 LODs, 41 clips).
 - **Not covered:** full ctest not rerun after these changes; no visual before/after of the forearm twist in a render.
 - **Next task:** authored equipment parts on the sockets; Studio character validation panel.
+
+## 2026-11-21 — Sun contact shadows (ADR-0183)
+
+Follows `bb3e02a`. The SSAO pass also traces a short ray from every pixel towards the sun through the depth buffer and writes the result to a second channel; PBR surfaces multiply the sun's direct light by it. Environments set `contact_shadow_length` in metres (0 = off); the 3D templates use 0.3. Off on the Low and Medium tiers (like SSAO, since they force the depth prepass), 12/16 steps on High/Ultra, reported as `contact_shadows` by `--render-report`. Also adds docs/ENGINE_BENCHMARK.md, a cited comparison against IW 8.0, RAGE, id Tech 7, Unreal Engine 5, Frostbite and Decima with the ordered gap list.
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- `tools/shaders/compile_shaders.py --check`: generated shaders match the sources.
+- `victus_gpu_tests -tc="*contact*,*SSAO*"`: 2 cases pass. Ground behind a 0.3 m cube with shadow maps off: luminance 634 → 417 with contact shadows; open ground 626 → 626 and the sun side 629 → 629; length 0 removes the pass.
+- `VICTUS_REQUIRE_GPU=1 ctest -R "gpu|editor|reference|render_compare|perf"`: all pass (perf budgets run at Medium, where contact shadows stay off; an earlier build with them on at Medium pushed the 3D template to 17 render passes and 101 draw calls, over budget, which is why Medium matches SSAO). Full `ctest --preset release -j2`: 42/42.
+- 3D template at High, `victus run --frames 30 --screenshot` with length 0 vs 0.3: 1700 pixels darker by more than 8/255 (crate bases, character feet, props), 5 brighter (TAA jitter), no other change.

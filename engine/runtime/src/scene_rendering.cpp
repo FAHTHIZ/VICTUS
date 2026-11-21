@@ -651,6 +651,7 @@ Result<render::SceneRenderer*> GpuAssetCache::probe_renderer() {
         // Captures are small and viewed through rough reflections: skip SSAO, keep shadows.
         render::RenderSettings s = render::RenderSettings::preset(render::QualityTier::Medium);
         s.ssao = false;
+        s.contact_shadows = false;
         s.shadow_cascades = 1;
         s.shadow_resolution = 1024;
         probe_renderer_->set_settings(s);
@@ -1219,6 +1220,9 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     env.bloom_threshold = std::max(e.bloom_threshold, 0.0f);
     env.ao_intensity = std::max(e.ao_intensity, 0.0f);
     env.ao_radius = std::max(e.ao_radius, 0.0f);
+    env.contact_shadow_length = std::isfinite(e.contact_shadow_length) ? std::clamp(e.contact_shadow_length, 0.0f, 10.0f) : 0.0f;
+    env.contact_shadow_thickness =
+        std::isfinite(e.contact_shadow_thickness) ? std::clamp(e.contact_shadow_thickness, 0.01f, 10.0f) : 0.25f;
     sun.shadow_distance = std::max(e.shadow_distance, 1.0f);
     env.fog_mode = static_cast<render::FogMode>(e.fog);
     env.fog_color = e.fog_color;

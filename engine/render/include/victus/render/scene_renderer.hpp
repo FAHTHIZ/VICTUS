@@ -421,6 +421,10 @@ struct Environment {
     float ao_radius{0.6f};
     float ao_intensity{1.0f};
     float ao_fade_distance{60.0f}; // AO fades out between half this view distance and this
+    // Sun contact shadows (ADR-0183): screen-space ray length in metres (0 = off) and the assumed
+    // thickness of depth-buffer occluders. They fade out with the AO fade distance.
+    float contact_shadow_length{0.0f};
+    float contact_shadow_thickness{0.25f};
     bool draw_sky{true};
     math::Color clear_color{0.05f, 0.05f, 0.06f, 1}; // when draw_sky is false
     // Procedural sky background with its own gradient. Off: the background shows sky_zenith/sky_horizon/ground,
@@ -500,6 +504,10 @@ struct RenderSettings {
     bool ssao{true};
     bool ssao_half_resolution{true};
     std::uint32_t ssao_samples{8};        // 4..32
+    // Screen-space sun contact shadows (ADR-0183), marched in the SSAO pass when the scene's
+    // Environment sets a contact_shadow_length; forces the depth prepass like SSAO.
+    bool contact_shadows{true};
+    std::uint32_t contact_shadow_steps{12}; // 4..32 depth taps per pixel
     bool bloom{true};
     std::uint32_t bloom_levels{5};        // 1..8 mip levels
     bool fxaa{true};                      // ignored while TAA is active

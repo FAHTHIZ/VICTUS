@@ -304,6 +304,9 @@ struct EnvironmentComponent {
     float bloom_threshold{1.0f};
     float ao_intensity{1.0f};
     float ao_radius{0.6f};
+    // Screen-space sun contact shadows (ADR-0183): metres marched towards the sun, 0 = off.
+    float contact_shadow_length{0.0f};
+    float contact_shadow_thickness{0.25f};
     float shadow_distance{40.0f};
     enum class Fog : std::uint8_t { None, Linear, Exponential, ExponentialSquared };
     Fog fog{Fog::None};
