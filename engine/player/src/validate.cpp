@@ -150,13 +150,13 @@ Result<ValidationReport> validate_project(const project::Project& proj) {
             sink.error(Category::Material, r.path, m.error().message, "Fix the material file or its parent material.").asset = r.uuid;
             continue;
         }
-        const auto refs = m->textures();
+        const auto refs = m->all_textures();
         for (std::size_t i = 0; i < refs.size(); ++i) {
             if (refs[i]->is_nil()) continue;
             const assets::AssetRecord* t = (*db)->find(*refs[i]);
             if (!t || t->kind != assets::AssetKind::Texture)
                 sink.error(Category::Material, r.path,
-                           r.path + ": " + assets::kMaterialTextureSlotNames[i] + " texture " + refs[i]->to_string() +
+                           r.path + ": " + assets::kMaterialAllTextureNames[i] + " texture " + refs[i]->to_string() +
                                " does not exist",
                            "Assign an existing texture in the Material Editor or clear the slot.")
                     .asset = *refs[i];

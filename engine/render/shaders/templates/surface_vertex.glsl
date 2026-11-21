@@ -40,7 +40,8 @@ mat4 joint_matrix(uint i) {
 #define JOINT(i) joint_matrix(i)
 #else
 // Metal buffer indices are renumbered after the uniform buffers by the run-time compiler.
-layout(std430, set = 0, binding = 0) readonly buffer Joints { mat4 joints[]; } palette;
+// Surface shader textures (ADR-0171) take vertex sampler bindings 0..VX_CUSTOM_TEXTURES-1.
+layout(std430, set = 0, binding = VX_CUSTOM_TEXTURES) readonly buffer Joints { mat4 joints[]; } palette;
 #define JOINT(i) palette.joints[i]
 #endif
 #endif

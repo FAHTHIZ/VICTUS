@@ -47,7 +47,7 @@ enum class MaterialBlendMode : std::uint8_t { Opaque = 0, Alpha = 1, Additive = 
 enum class MaterialField : std::uint8_t {
     BaseColor, BaseColorTexture, Metallic, Roughness, MetallicRoughnessTexture, NormalTexture, NormalScale, Emissive,
     EmissiveStrength, EmissiveTexture, AlphaCutoff, UvScale, UvOffset, Filter, Unlit, DoubleSided, Shader, ShaderParams,
-    VertexAlpha, CoverageResponse, Blend, OcclusionStrength, Count
+    VertexAlpha, CoverageResponse, Blend, OcclusionStrength, ShaderTextures, Count
 };
 inline constexpr std::size_t kMaterialFieldCount = static_cast<std::size_t>(MaterialField::Count);
 [[nodiscard]] constexpr std::uint32_t field_bit(MaterialField f) noexcept { return 1u << static_cast<unsigned>(f); }
@@ -78,6 +78,19 @@ struct MaterialAsset {
     Uuid base_color_texture, metallic_roughness_texture, normal_texture, emissive_texture;
     Uuid shader; // optional surface shader (.vshader); nil = built-in PBR surface
     std::array<math::Vec4, 4> shader_params{};
+    // Slots given explicitly (the "shader_params" length). A slot that is neither given nor
+    // non-zero takes the default its shader declares (`uniform float wind = 0.5;`, ADR-0171).
+    // A hint only: equality ignores it.
+    struct ParamsSet {
+        std::uint8_t count{0};
+        friend constexpr bool operator==(ParamsSet, ParamsSet) noexcept { return true; }
+    } shader_params_set;
+    [[nodiscard]] bool shader_param_set(std::size_t slot) const noexcept {
+        return slot < shader_params_set.count || (slot < shader_params.size() && shader_params[slot] != math::Vec4{});
+    }
+    // Textures for the shader's `uniform sampler2D` declarations, by declaration order; nil = the
+    // declared default (white, black or flat normal).
+    std::array<Uuid, 4> shader_textures{};
     // Instances: the parent material (nil = a standalone material) and which fields this file
     // sets. from_json() records the keys present; to_json() writes only those for instances.
     Uuid parent;
@@ -96,6 +109,11 @@ struct MaterialAsset {
     [[nodiscard]] std::array<Uuid*, 4> textures() noexcept {
         return {&base_color_texture, &metallic_roughness_texture, &normal_texture, &emissive_texture};
     }
+    // Every referenced texture: the four slots above, then the shader textures (dependency walks).
+    [[nodiscard]] std::array<const Uuid*, 8> all_textures() const noexcept {
+        return {&base_color_texture, &metallic_roughness_texture, &normal_texture, &emissive_texture,
+                &shader_textures[0], &shader_textures[1], &shader_textures[2], &shader_textures[3]};
+    }
     [[nodiscard]] json::Value to_json() const;
     // Strict about types (a string where a number belongs is an error), lenient about missing
     // keys (they keep their defaults), so hand-written materials can stay short.
@@ -105,6 +123,9 @@ struct MaterialAsset {
 };
 
 inline constexpr const char* kMaterialTextureSlotNames[4] = {"Base Color", "Metallic/Roughness", "Normal", "Emissive"};
+// Names for all_textures() entries.
+inline constexpr const char* kMaterialAllTextureNames[8] = {"Base Color", "Metallic/Roughness", "Normal", "Emissive",
+                                                            "Shader texture 0", "Shader texture 1", "Shader texture 2", "Shader texture 3"};
 
 // Applies `instance`'s overridden fields on top of `base` (a resolved parent). The result keeps
 // the instance's parent and override mask so editors can save it back unchanged.

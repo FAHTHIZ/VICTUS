@@ -90,6 +90,7 @@ const char* field_key(MaterialField f) noexcept {
     case MaterialField::CoverageResponse: return "coverage_response";
     case MaterialField::Blend: return "blend";
     case MaterialField::OcclusionStrength: return "occlusion_strength";
+    case MaterialField::ShaderTextures: return "shader_textures";
     default: return "";
     }
 }
@@ -113,7 +114,11 @@ void MaterialAsset::copy_field(const MaterialAsset& src, MaterialField f) {
     case MaterialField::Unlit: unlit = src.unlit; break;
     case MaterialField::DoubleSided: double_sided = src.double_sided; break;
     case MaterialField::Shader: shader = src.shader; break;
-    case MaterialField::ShaderParams: shader_params = src.shader_params; break;
+    case MaterialField::ShaderParams:
+        shader_params = src.shader_params;
+        shader_params_set = src.shader_params_set;
+        break;
+    case MaterialField::ShaderTextures: shader_textures = src.shader_textures; break;
     case MaterialField::VertexAlpha: vertex_alpha_coverage_mask = src.vertex_alpha_coverage_mask; break;
     case MaterialField::CoverageResponse: coverage_response = src.coverage_response; break;
     case MaterialField::Blend: blend = src.blend; break;
@@ -154,7 +159,7 @@ json::Value MaterialAsset::to_json() const {
     v.set("double_sided", double_sided);
     v.set("shader", uuid_or_null(shader));
     Value params = Value::array();
-    std::size_t used = 0;
+    std::size_t used = shader_params_set.count;
     for (std::size_t i = 0; i < shader_params.size(); ++i)
         if (shader_params[i] != math::Vec4{}) used = i + 1;
     for (std::size_t i = 0; i < used; ++i) {
@@ -162,6 +167,14 @@ json::Value MaterialAsset::to_json() const {
         params.push(floats({p.x, p.y, p.z, p.w}));
     }
     v.set("shader_params", std::move(params));
+    std::size_t textures_used = 0;
+    for (std::size_t i = 0; i < shader_textures.size(); ++i)
+        if (!shader_textures[i].is_nil()) textures_used = i + 1;
+    if (textures_used > 0 || (is_instance() && overrides_field(MaterialField::ShaderTextures))) {
+        Value tex = Value::array(); // omitted when empty, so older files round-trip
+        for (std::size_t i = 0; i < textures_used; ++i) tex.push(uuid_or_null(shader_textures[i]));
+        v.set("shader_textures", std::move(tex));
+    }
     v.set("vertex_alpha", vertex_alpha_coverage_mask ? "coverage_mask" : "opacity");
     v.set("coverage_response", num(coverage_response));
     v.set("blend", blend == MaterialBlendMode::Alpha ? "alpha" : blend == MaterialBlendMode::Additive ? "additive" : "opaque");
@@ -214,6 +227,17 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
                 out[c] = e[c].as_float();
             }
             m.shader_params[i] = {out[0], out[1], out[2], out[3]};
+        }
+        m.shader_params_set.count = static_cast<std::uint8_t>(p->size());
+    }
+    if (const Value* t = v.find("shader_textures"); t && !t->is_null()) {
+        if (!t->is_array() || t->size() > m.shader_textures.size())
+            return make_error(ErrorCode::ParseError, "material field 'shader_textures' must be an array of up to 4 asset UUIDs or nulls");
+        for (std::size_t i = 0; i < t->size(); ++i) {
+            const Value& e = (*t)[i];
+            if (e.is_null()) continue;
+            if (!e.is_string() || !Uuid::parse(e.as_string(), m.shader_textures[i]))
+                return make_error(ErrorCode::ParseError, "material field 'shader_textures' entries must be asset UUIDs or null");
         }
     }
     if (const Value* f = v.find("filter"); f && !f->is_null()) {

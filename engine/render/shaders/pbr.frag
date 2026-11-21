@@ -79,9 +79,13 @@ layout(std430, set = 2, binding = 3) readonly buffer Lights { LocalLight local_l
 layout(std430, set = 2, binding = 4) readonly buffer Clusters { uint cluster_data[]; };
 layout(std430, set = 2, binding = 5) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
 #else
-layout(std430, set = 2, binding = 12) readonly buffer Lights { LocalLight local_lights[]; };
-layout(std430, set = 2, binding = 13) readonly buffer Clusters { uint cluster_data[]; };
-layout(std430, set = 2, binding = 14) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
+// Surface shader textures (ADR-0171) take bindings 12.. and the storage buffers follow them.
+#ifndef VX_CUSTOM_TEXTURES
+#define VX_CUSTOM_TEXTURES 0
+#endif
+layout(std430, set = 2, binding = 12 + VX_CUSTOM_TEXTURES) readonly buffer Lights { LocalLight local_lights[]; };
+layout(std430, set = 2, binding = 13 + VX_CUSTOM_TEXTURES) readonly buffer Clusters { uint cluster_data[]; };
+layout(std430, set = 2, binding = 14 + VX_CUSTOM_TEXTURES) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
 #endif
 #if !defined(VICTUS_ESSL)
 #define LOCAL_LIGHT(i) local_lights[i]
