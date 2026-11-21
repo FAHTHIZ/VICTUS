@@ -53,6 +53,7 @@ The owner's target: images that read as photoreal on hardware as weak as entry-l
 - [~] **Audio depth.** Done: voice budgets and virtual voices (ADR-0083), geometry occlusion, reverb zones and underwater filtering (ADR-0096). Remaining: per-source effects, ducking, HRTF evaluation, streaming through V.A.U.L.T., a Studio voice profiler.
 - [ ] **Rendering gaps.** Area lights and light cookies, LOD cross-fade, planar/screen-space reflections of scene objects on water, an FFT ocean, 2D normal maps and shadows, impostors and wind for foliage, GPU timestamps once SDL_GPU exposes them.
 - [ ] **Gameplay framework gaps.** Game session and level lifecycle, replicated attributes and inventories.
+- [ ] **City-scale simulation (owner direction, 2026-11-21).** The S1 chain in [docs/audits/ENGINE_LANDSCAPE_AND_GAP_AUDIT.md](docs/audits/ENGINE_LANDSCAPE_AND_GAP_AUDIT.md) section 5: persistent GPU instancing and GPU culling (GAP-08), a simulation scheduler with phases and LOD tick rates (GAP-09), rig-encoded vertex-animation crowds (GAP-10), HLOD and impostors (GAP-11), emissive night lighting (GAP-14), a procedural road/block/building graph (GAP-20), a lane graph for traffic (GAP-22) and wheeled vehicles (GAP-24). **Accept when:** a sample city with thousands of simulated pedestrians and vehicles runs from a clean checkout with per-system timings in STATUS.md, and the same build has a frame-time capture on an entry-level Android phone.
 
 ### 3. Reliability and production
 
@@ -68,7 +69,7 @@ The owner's target: images that read as photoreal on hardware as weak as entry-l
 - [!] **Hardware validation.** Needs a Windows PC with a GPU, an Apple Silicon Mac and at least one Android phone. **Accept when:** the editor and every template run on each, with frame-time captures in STATUS.md and the platform matrix updated.
 - [ ] **Reference projects.** Finish the 2D (dungeon crawler, platformer) and 3D (arena) games with title flow and audio mix; add a simulation project with large populations, simulation LOD and headless mode; build all of them from clean checkouts in CI.
 - [ ] **iOS, Web, XR.** Feasibility studies first; consoles only with platform-holder access.
-- [ ] **Competitive maturity** (brief: [docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md](docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md); current comparison: [docs/audits/COMPETITOR_BENCHMARK.md](docs/audits/COMPETITOR_BENCHMARK.md)): evidence-based comparison with Godot, Unity and Unreal by workflow, side-by-side measurements once hardware exists.
+- [ ] **Competitive maturity** (brief: [docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md](docs/handoff/COMPETITIVE_MATURITY_GAP_CLOSURE.md); current comparison: [docs/audits/COMPETITOR_BENCHMARK.md](docs/audits/COMPETITOR_BENCHMARK.md); full gap register against Unreal, Unity, Godot, O3DE, Bevy, Defold, Flax, Stride and CRYENGINE: [docs/audits/ENGINE_LANDSCAPE_AND_GAP_AUDIT.md](docs/audits/ENGINE_LANDSCAPE_AND_GAP_AUDIT.md)): evidence-based comparison with Godot, Unity and Unreal by workflow, side-by-side measurements once hardware exists.
 - [ ] **External usability testing** and stable release criteria for 1.0.
 
 ## Working rules

@@ -2291,3 +2291,11 @@ Verified (Release, GCC, lavapipe, 2 vCPU): `victus_device_loss` extended: with `
 Not covered: a real driver reset or GPU removal (none available); sanitizer lanes run without a GPU, so recovery has no ASan run; the editor still autosaves and exits; models added with `add_model` are not restored; Android surface loss is a separate path (lifecycle suspend).
 
 Next task: editor device recovery (UI renderer, thumbnails, viewport) or generated Luau type definitions.
+
+## 2026-11-21 — Engine landscape and gap audit (docs only)
+
+Built: [docs/audits/ENGINE_LANDSCAPE_AND_GAP_AUDIT.md](audits/ENGINE_LANDSCAPE_AND_GAP_AUDIT.md): what an engine must provide, the market, a comparison with Unreal 5.8, Unity 6.3, Godot 4.7, O3DE 25.05, Bevy 0.18, Defold, Flax, Stride and CRYENGINE, and a register of 37 gaps (GAP-01 to GAP-37) with severity and fix direction. ROADMAP gains a "City-scale simulation" item for the owner's 2026-11-21 showcase direction; RESEARCH_REGISTER records the sources.
+
+Verified: documentation only; no code changed, nothing built. Competitor rows come from vendor documentation; no side-by-side measurement exists.
+
+Next task: GAP-08 (persistent GPU instance buffers and culling) measured with `victus_render_bench` before and after.
