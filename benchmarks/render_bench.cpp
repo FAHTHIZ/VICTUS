@@ -7,7 +7,9 @@
 #include "victus/render/scene_renderer.hpp"
 #include "victus/render/sprite_batch.hpp"
 
+#include <chrono>
 #include <cstdio>
+#include <vector>
 #include <cstdlib>
 
 using namespace victus;
@@ -153,6 +155,56 @@ int main(int argc, char** argv) {
                   });
             std::printf("instancing %s: visible %u, main batches %u, shadow batches %u\n", instancing ? "on" : "off",
                         scene->stats().visible, scene->stats().main_batches, scene->stats().shadow_batches);
+        }
+        // Retained instance groups (ADR-0162) vs per-frame instances: 16,384 cubes, Low tier, tiny
+        // target so vertex/fill work stays small. "cpu" is the render() call alone (culling, LOD,
+        // batching, upload recording); the frame cases add GPU execution and wait.
+        {
+            constexpr int kCity = 128;
+            std::vector<Mat4> city;
+            city.reserve(kCity * kCity);
+            for (int z = 0; z < kCity; ++z)
+                for (int x = 0; x < kCity; ++x)
+                    city.push_back(Mat4::translation({static_cast<float>(x - kCity / 2) * 3.0f, 0.5f, static_cast<float>(z - kCity / 2) * 3.0f}));
+            render::Camera3D city_cam = render::Camera3D::look_at({0, 40, 200}, {0, 0, 0});
+            city_cam.z_far = 800;
+            render::DirectionalLight city_sun;
+            city_sun.shadow_distance = 300;
+            render::RenderSettings rs = render::RenderSettings::preset(render::QualityTier::Low);
+            scene->set_settings(rs);
+            render::SceneRenderer::InstanceGroupDesc gd;
+            gd.mesh = &cube;
+            gd.material = m;
+            gd.models = city;
+            const auto t0 = std::chrono::steady_clock::now();
+            const std::uint32_t group = scene->create_instance_group(gd).value();
+            const double create_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            for (bool retained : {false, true}) {
+                double cpu_ms = 0;
+                int frames = 0;
+                h.run(retained ? "scene/frame_16384_cubes_low_320p_group_gpu" : "scene/frame_16384_cubes_low_320p_per_frame_gpu",
+                      kCity * kCity, [&] {
+                          const auto c0 = std::chrono::steady_clock::now();
+                          scene->begin(city_cam, city_sun, {});
+                          if (retained)
+                              scene->submit_instance_group(group);
+                          else
+                              scene->submit_instances(cube, m, city);
+                          auto cmd = d.begin_commands();
+                          if (!scene->render(cmd, small, 320, 180, td.format).ok()) std::abort();
+                          cpu_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c0).count();
+                          ++frames;
+                          cmd.submit_and_wait();
+                      });
+                const auto& st = scene->stats();
+                std::printf("16384 cubes %s: cpu submit+render %.3f ms/frame (%d frames), visible %u, instances uploaded %u, "
+                            "main batches %u, shadow batches %u, group clusters %u visible %u drawn %u\n",
+                            retained ? "retained group" : "per-frame", frames ? cpu_ms / frames : 0.0, frames, st.visible,
+                            st.instances_uploaded, st.main_batches, st.shadow_batches, st.group_clusters,
+                            st.group_clusters_visible, st.group_instances_drawn);
+            }
+            std::printf("instance group create (16384 copies, 256 clusters): %.3f ms\n", create_ms);
+            scene->destroy_instance_group(group);
         }
         d.destroy(small);
         ctx->destroy(cube);

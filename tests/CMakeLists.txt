@@ -116,6 +116,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_device_loss_tests.cpp
         render/gpu_quality_tests.cpp
         render/gpu_instancing_tests.cpp
+        render/gpu_instance_group_tests.cpp
         render/gpu_skinning_tests.cpp
         render/gpu_scene_tests.cpp
         render/gpu_ui_tests.cpp

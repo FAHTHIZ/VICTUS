@@ -1080,6 +1080,9 @@ SceneRenderer::~SceneRenderer() {
         if (t) d.destroy(t);
     if (line_buffer_) d.destroy(line_buffer_);
     if (instance_buffer_) d.destroy(instance_buffer_);
+    for (auto& g : groups_)
+        if (g.live && g.buffer) d.destroy(g.buffer);
+    groups_.clear();
     if (particle_buffer_) d.destroy(particle_buffer_);
     for (auto& [key, st] : gpu_particle_states_) destroy_gpu_particle_state(st);
     gpu_particle_states_.clear();
@@ -1517,6 +1520,128 @@ void SceneRenderer::submit_instances(const GpuMesh& mesh, const Material& materi
     for (const Mat4& model : models) draws_.push_back(Draw{&mesh, material, model, 0.0f, key});
 }
 
+namespace {
+// 10 bits per axis interleaved (z y x), for spatially coherent clusters.
+std::uint32_t morton3(std::uint32_t x, std::uint32_t y, std::uint32_t z) noexcept {
+    const auto spread = [](std::uint32_t v) {
+        v &= 0x3FFu;
+        v = (v | (v << 16)) & 0x030000FFu;
+        v = (v | (v << 8)) & 0x0300F00Fu;
+        v = (v | (v << 4)) & 0x030C30C3u;
+        v = (v | (v << 2)) & 0x09249249u;
+        return v;
+    };
+    return spread(x) | (spread(y) << 1) | (spread(z) << 2);
+}
+float max_axis_scale(const Mat4& m) noexcept {
+    return std::max({length(m.c[0].xyz()), length(m.c[1].xyz()), length(m.c[2].xyz())});
+}
+} // namespace
+
+Result<std::uint32_t> SceneRenderer::create_instance_group(const InstanceGroupDesc& desc) {
+    if (!desc.mesh || !desc.mesh->valid()) return Error{ErrorCode::InvalidArgument, "instance group: invalid mesh"};
+    if (desc.models.empty()) return Error{ErrorCode::InvalidArgument, "instance group: no instances"};
+    if (!desc.lightmap_offsets.empty() && desc.lightmap_offsets.size() != desc.models.size())
+        return Error{ErrorCode::InvalidArgument, "instance group: lightmap_offsets must be empty or one per model"};
+    if (desc.models.size() > (1u << 24)) return Error{ErrorCode::InvalidArgument, "instance group: more than 2^24 instances"};
+    for (const Mat4& m : desc.models)
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r)
+                if (!std::isfinite(m.c[c][r])) return Error{ErrorCode::InvalidArgument, "instance group: non-finite transform"};
+    const auto n = static_cast<std::uint32_t>(desc.models.size());
+    const std::uint32_t cluster_size = std::clamp(desc.cluster_size, 1u, 4096u);
+    std::vector<Aabb> boxes(n);
+    Aabb all = desc.mesh->bounds.transformed(desc.models[0]);
+    for (std::uint32_t i = 0; i < n; ++i) {
+        boxes[i] = desc.mesh->bounds.transformed(desc.models[i]);
+        all.min = min(all.min, boxes[i].min);
+        all.max = max(all.max, boxes[i].max);
+    }
+    const Vec3 extent = all.max - all.min;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> order(n); // (morton code, index)
+    for (std::uint32_t i = 0; i < n; ++i) {
+        const Vec3 c = boxes[i].center();
+        const auto q = [](float v, float lo, float e) {
+            return e > 0.0f ? static_cast<std::uint32_t>(std::clamp((v - lo) / e, 0.0f, 1.0f) * 1023.0f) : 0u;
+        };
+        order[i] = {morton3(q(c.x, all.min.x, extent.x), q(c.y, all.min.y, extent.y), q(c.z, all.min.z, extent.z)), i};
+    }
+    std::sort(order.begin(), order.end()); // ties broken by index: deterministic
+    InstanceGroup g;
+    g.mesh = desc.mesh;
+    g.material = desc.material;
+    g.key = mix(material_key(desc.material), reinterpret_cast<std::uintptr_t>(desc.mesh));
+    g.pending.resize(std::size_t{n} * sizeof(InstanceData));
+    auto* data = reinterpret_cast<InstanceData*>(g.pending.data());
+    for (std::uint32_t k = 0; k < n; ++k) {
+        const std::uint32_t i = order[k].second;
+        data[k] = make_instance(desc.models[i], 0, desc.lightmap_offsets.empty() ? Vec2{} : desc.lightmap_offsets[i]);
+        if (k % cluster_size == 0) g.clusters.push_back({boxes[i], desc.models[i], k, 0});
+        InstanceCluster& cl = g.clusters.back();
+        cl.bounds.min = min(cl.bounds.min, boxes[i].min);
+        cl.bounds.max = max(cl.bounds.max, boxes[i].max);
+        if (max_axis_scale(desc.models[i]) > max_axis_scale(cl.representative)) cl.representative = desc.models[i];
+        ++cl.count;
+    }
+    auto buffer = ctx_.device().create_buffer(
+        {"instance_group", static_cast<std::uint32_t>(g.pending.size()), rhi::BufferUsageVertex});
+    if (!buffer) return std::move(buffer).error();
+    g.buffer = buffer.value();
+    g.live = true;
+    std::size_t slot = 0;
+    while (slot < groups_.size() && groups_[slot].live) ++slot;
+    if (slot >= 0xFFFFu) {
+        ctx_.device().destroy(g.buffer);
+        return Error{ErrorCode::LimitExceeded, "instance group: too many groups"};
+    }
+    if (slot == groups_.size()) groups_.emplace_back();
+    g.generation = (groups_[slot].generation + 1u) & 0xFFFFu;
+    if (g.generation == 0) g.generation = 1;
+    groups_[slot] = std::move(g);
+    return (groups_[slot].generation << 16) | static_cast<std::uint32_t>(slot + 1);
+}
+
+namespace {
+template <class Groups> auto* find_group(Groups& groups, std::uint32_t id) noexcept {
+    const std::uint32_t slot = (id & 0xFFFFu);
+    using G = std::remove_reference_t<decltype(groups[0])>;
+    if (slot == 0 || slot > groups.size()) return static_cast<G*>(nullptr);
+    auto& g = groups[slot - 1];
+    return g.live && g.generation == (id >> 16) ? &g : static_cast<G*>(nullptr);
+}
+} // namespace
+
+void SceneRenderer::destroy_instance_group(std::uint32_t id) {
+    InstanceGroup* g = find_group(groups_, id);
+    if (!g) return;
+    if (g->buffer) ctx_.device().destroy(g->buffer);
+    const std::uint32_t generation = g->generation;
+    *g = InstanceGroup{};
+    g->generation = generation; // the next group in this slot gets a new id
+}
+
+std::uint32_t SceneRenderer::instance_group_clusters(std::uint32_t id) const noexcept {
+    const InstanceGroup* g = find_group(groups_, id);
+    return g ? static_cast<std::uint32_t>(g->clusters.size()) : 0u;
+}
+
+void SceneRenderer::submit_instance_group(std::uint32_t id) {
+    InstanceGroup* g = find_group(groups_, id);
+    if (!g) return;
+    const auto slot = static_cast<std::int32_t>((id & 0xFFFFu) - 1u);
+    draws_.reserve(draws_.size() + g->clusters.size());
+    for (const InstanceCluster& cl : g->clusters) {
+        Draw d{g->mesh, g->material, cl.representative, 0.0f, g->key};
+        d.group = slot;
+        d.cluster_first = cl.first;
+        d.cluster_count = cl.count;
+        d.world_bounds = cl.bounds;
+        draws_.push_back(d);
+        stats_.submitted += cl.count;
+    }
+    stats_.group_clusters += static_cast<std::uint32_t>(g->clusters.size());
+}
+
 void SceneRenderer::submit_skinned(const GpuMesh& mesh, const Material& material, const Mat4& model,
                                    std::span<const Mat4> joints, const Aabb& world_bounds, std::uint64_t motion_id) {
     if (!mesh.skinned() || joints.empty()) {
@@ -1884,7 +2009,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     lod_next_.clear(lod_record ? draws_.size() : 0);
     const auto lod_key = [](const Draw& d) { return mix(d.motion_id, reinterpret_cast<std::uintptr_t>(d.mesh)); };
     for (Draw& d : draws_) {
-        const Aabb world = d.skinned ? d.world_bounds : d.mesh->bounds.transformed(d.model);
+        const Aabb world = d.has_bounds() ? d.world_bounds : d.mesh->bounds.transformed(d.model);
         const bool blended = d.material.blend != MaterialBlend::Opaque;
         int previous = -1;
         if (lod_history && d.motion_id != 0)
@@ -1952,6 +2077,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             ++stats_.culled;
             continue;
         }
+        if (d.group >= 0) {
+            ++stats_.group_clusters_visible;
+            stats_.group_instances_drawn += d.cluster_count;
+        }
         d.distance = length(world.center() - camera_.position);
         d.probe = -1;
         float best = std::numeric_limits<float>::max();
@@ -1986,11 +2115,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     if (!local_views.empty())
         for (const Draw& d : draws_) {
             if (!d.material.cast_shadows || d.material.blend != MaterialBlend::Opaque) continue;
-            const Aabb world = d.skinned ? d.world_bounds : d.mesh->bounds.transformed(d.model);
+            const Aabb world = d.has_bounds() ? d.world_bounds : d.mesh->bounds.transformed(d.model);
             for (std::size_t v = 0; v < local_views.size(); ++v)
                 if (local_views[v].frustum.intersects(world)) local_casters[v].push_back(&d);
         }
     std::sort(visible.begin(), visible.end(), [](const Draw* a, const Draw* b) {
+        // Retained-group clusters last: per-frame draws own instances [0, n) of the frame buffer
+        // in order, which GPU occlusion culling relies on (ADR-0162).
+        if ((a->group >= 0) != (b->group >= 0)) return b->group >= 0;
         if (a->material.surface_shader.index != b->material.surface_shader.index)
             return a->material.surface_shader.index < b->material.surface_shader.index;
         if (a->material.double_sided != b->material.double_sided) return !a->material.double_sided;
@@ -1999,6 +2131,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         if (a->batch_key != b->batch_key) return a->batch_key < b->batch_key;
         if (a->lod != b->lod) return a->lod < b->lod;
         if (a->probe != b->probe) return a->probe < b->probe;
+        // Clusters of one group in buffer order, so neighbours merge into one draw.
+        if (a->group >= 0 && a->group == b->group) return a->cluster_first < b->cluster_first;
         return a->distance < b->distance;
     });
     stats_.visible = static_cast<std::uint32_t>(visible.size());
@@ -2108,6 +2242,20 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             const std::uint8_t lod = match_material ? d->lod
                                      : cascade >= 0 ? d->cascade_lod[static_cast<std::size_t>(cascade)]
                                                     : d->shadow_lod;
+            if (d->group >= 0) {
+                // Retained cluster: its instances are already in the group buffer (ADR-0162).
+                const rhi::BufferHandle buf = groups_[static_cast<std::size_t>(d->group)].buffer;
+                if (!out.empty()) {
+                    Batch& p = out.back();
+                    if (p.buffer == buf && p.lod == lod && p.first->probe == d->probe &&
+                        p.instance_offset + p.instance_count == d->cluster_first) {
+                        p.instance_count += d->cluster_count;
+                        continue;
+                    }
+                }
+                out.push_back({d, d->cluster_first, d->cluster_count, lod, buf});
+                continue;
+            }
             instances.push_back(make_instance(d->model, d->palette, d->lightmap_offset));
             if (S.instancing && !out.empty()) {
                 const Draw* f = out.back().first;
@@ -2133,7 +2281,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (shadow_alpha_tested(a->material) != shadow_alpha_tested(b->material)) return !shadow_alpha_tested(a->material);
             if (a->mesh != b->mesh) return a->mesh < b->mesh;
             if (a->cascade_lod[c] != b->cascade_lod[c]) return a->cascade_lod[c] < b->cascade_lod[c];
-            return a->material.base_color_texture.index < b->material.base_color_texture.index;
+            if (a->material.base_color_texture.index != b->material.base_color_texture.index)
+                return a->material.base_color_texture.index < b->material.base_color_texture.index;
+            if (a->group != b->group) return a->group < b->group;
+            return a->cluster_first < b->cluster_first;
         });
         build_batches(casters[c], false, shadow_batches[c], static_cast<int>(c));
         stats_.shadow_batches += static_cast<std::uint32_t>(shadow_batches[c].size());
@@ -2144,7 +2295,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (a->skinned != b->skinned) return !a->skinned;
             if (shadow_alpha_tested(a->material) != shadow_alpha_tested(b->material)) return !shadow_alpha_tested(a->material);
             if (a->mesh != b->mesh) return a->mesh < b->mesh;
-            return a->shadow_lod < b->shadow_lod;
+            if (a->shadow_lod != b->shadow_lod) return a->shadow_lod < b->shadow_lod;
+            if (a->group != b->group) return a->group < b->group;
+            return a->cluster_first < b->cluster_first;
         });
         build_batches(F.rain_casters, false, F.rain_batches);
         stats_.precipitation_occluders = static_cast<std::uint32_t>(F.rain_casters.size());
@@ -2156,7 +2309,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (shadow_alpha_tested(a->material) != shadow_alpha_tested(b->material)) return !shadow_alpha_tested(a->material);
             if (a->mesh != b->mesh) return a->mesh < b->mesh;
             if (a->shadow_lod != b->shadow_lod) return a->shadow_lod < b->shadow_lod;
-            return a->material.base_color_texture.index < b->material.base_color_texture.index;
+            if (a->material.base_color_texture.index != b->material.base_color_texture.index)
+                return a->material.base_color_texture.index < b->material.base_color_texture.index;
+            if (a->group != b->group) return a->group < b->group;
+            return a->cluster_first < b->cluster_first;
         });
         build_batches(local_casters[v], false, local_batches[v]);
         for (const Batch& b : local_batches[v]) stats_.shadow_triangles += std::uint64_t{b.first->mesh->lods[b.lod].index_count / 3} * b.instance_count;
@@ -2179,6 +2335,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         cmd.upload_buffer(palette_buffer_, 0,
                           {reinterpret_cast<const std::uint8_t*>(palette_.data()), palette_.size() * sizeof(Mat4)}, true);
     }
+    for (InstanceGroup& g : groups_)
+        if (g.live && !g.pending.empty()) {
+            cmd.upload_buffer(g.buffer, 0, g.pending, false);
+            g.pending.clear();
+            g.pending.shrink_to_fit();
+        }
     if (!instances.empty()) {
         const auto needed = static_cast<std::uint32_t>(instances.size());
         if (needed > instance_capacity_) {
@@ -2207,7 +2369,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     std::array<HiZLevel, 16> hiz_levels{};
     std::uint32_t hiz_level_count = 0, occl_instance_count = 0;
     const bool will_prepass = S.depth_prepass || (S.ssao && env_.ao_intensity > 0.0f && env_.ao_radius > 0.0f);
-    const bool occlusion = S.occlusion_culling && will_prepass && dev.capabilities().compute && !main_batches.empty() &&
+    std::size_t occl_candidates = 0; // per-frame main batches; retained-group batches follow them
+    while (occl_candidates < main_batches.size() && !main_batches[occl_candidates].buffer) ++occl_candidates;
+    const bool occlusion = S.occlusion_culling && will_prepass && dev.capabilities().compute && occl_candidates > 0 &&
                            ensure_occlusion_pipelines();
     facts_.prepass = will_prepass;
     facts_.occlusion = occlusion;
@@ -2222,12 +2386,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             w = (w + 1) / 2;
             h = (h + 1) / 2;
         }
-        occl_instance_count = static_cast<std::uint32_t>(visible.size());
+        occl_instance_count = 0;
+        for (std::size_t bi = 0; bi < occl_candidates; ++bi) occl_instance_count += main_batches[bi].instance_count;
         auto& bounds = F.occl_bounds;
         bounds.reserve(occl_instance_count * 2u);
         auto& args = F.occl_args;
-        args.reserve(main_batches.size());
-        for (std::size_t bi = 0; bi < main_batches.size(); ++bi) {
+        args.reserve(occl_candidates);
+        for (std::size_t bi = 0; bi < occl_candidates; ++bi) {
             const Batch& b = main_batches[bi];
             const GpuMeshLod& l = b.first->mesh->lods[std::min<std::uint32_t>(b.lod, b.first->mesh->lod_count - 1)];
             args.push_back({l.index_count, 0, l.first_index, 0, 0});
@@ -2251,7 +2416,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         cmd.upload_buffer(occl_args_, 0,
                           {reinterpret_cast<const std::uint8_t*>(args.data()), args.size() * sizeof(rhi::IndexedIndirectCommand)},
                           true);
-        occl_batches_ = static_cast<std::uint32_t>(main_batches.size());
+        occl_batches_ = static_cast<std::uint32_t>(occl_candidates);
         stats_.occlusion = true;
         stats_.occlusion_tested = occl_instance_count;
     }
@@ -3169,7 +3334,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
                         if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
-                        ctx.pass->bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
+                        ctx.pass->bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
                         ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
                         draw_mesh_lod(*ctx.pass, *b.first->mesh, b.lod, b.instance_count);
                     }
@@ -3204,7 +3369,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
                         if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
-                        ctx.pass->bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
+                        ctx.pass->bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
                         ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
                         draw_mesh_lod(*ctx.pass, *b.first->mesh, b.lod, b.instance_count);
                     }
@@ -3236,7 +3401,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
                     if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                     ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
-                    ctx.pass->bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
+                    ctx.pass->bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
                     ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
                     draw_mesh_lod(*ctx.pass, *b.first->mesh, b.lod, b.instance_count);
                 }
@@ -3291,7 +3456,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     }
                     if (d->skinned) pass.bind_vertex_buffer(2, d->mesh->skin);
                     pass.bind_vertex_buffer(0, d->mesh->vertices);
-                    pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
+                    pass.bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
                     pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
                     draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
                     stats_.prepass_draws += b.instance_count;
@@ -3512,7 +3677,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                                                                static_cast<std::uint32_t>(sizeof(rhi::IndexedIndirectCommand)));
                     ++stats_.occlusion_batches;
                 } else {
-                    pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
+                    pass.bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
                     draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
                 }
             };
@@ -3528,7 +3693,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                                                              MaterialBlend::Opaque))
                         want = custom;
                 want = ms_pipe(want, a2c_of(d->material));
-                if (want) draw_batch(b, want, occlusion ? static_cast<int>(bi) : -1);
+                if (want) draw_batch(b, want, occlusion && bi < occl_batches_ ? static_cast<int>(bi) : -1);
             }
             if (!blended_phase) return;
             // Blended geometry after every opaque draw (and the decals), far to near.
@@ -4270,7 +4435,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         }
                         if (d->skinned) pass.bind_vertex_buffer(2, d->mesh->skin);
                         pass.bind_vertex_buffer(0, d->mesh->vertices);
-                        pass.bind_vertex_buffer(1, instance_buffer_, b.instance_offset * kInstanceStride);
+                        pass.bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
                         pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
                         draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
                     }
