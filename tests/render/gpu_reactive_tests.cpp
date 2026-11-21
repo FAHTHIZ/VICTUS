@@ -3,10 +3,12 @@
 // trusts the current frame where they cover a pixel (and where they covered it last frame). A
 // particle moving over a high-contrast background tracks a history-free reference more closely with
 // the mask than without, frames without such effects are unchanged, and the path report says so.
+// Blended meshes opt in per material (Material::responsive, ADR-0187) and get the same benefit.
 #include "gpu_fixture.hpp"
 #include "victus/render/render_path.hpp"
 #include "victus/render/scene_renderer.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <vector>
@@ -56,7 +58,13 @@ void background(SceneRenderer& r, const GpuMesh& cell) {
 
 ParticleInstance magenta(float x) { return {{x, 0, 0, 1.2f}, {1, 0, 1, 1}, {0, 0, 0, 0}}; }
 
-std::vector<std::uint8_t> frame(Setup& s, const ParticleInstance* p, SceneStats* stats = nullptr) {
+// A moving alpha-blended "glass" cube (unlit magenta, 90% opaque) with the given responsiveness.
+struct Glass {
+    float x{0.0f};
+    float responsive{0.0f};
+};
+
+std::vector<std::uint8_t> frame(Setup& s, const ParticleInstance* p, SceneStats* stats = nullptr, const Glass* glass = nullptr) {
     auto& dev = gpu().ctx->device();
     Environment env;
     env.draw_sky = false;
@@ -78,6 +86,14 @@ std::vector<std::uint8_t> frame(Setup& s, const ParticleInstance* p, SceneStats*
         b.expand({p->position_size.x - h, p->position_size.y - h, p->position_size.z - h});
         b.expand({p->position_size.x + h, p->position_size.y + h, p->position_size.z + h});
         s.renderer->submit_particles({p, 1}, m, b);
+    }
+    if (glass) {
+        Material m;
+        m.unlit = true;
+        m.blend = MaterialBlend::Alpha;
+        m.base_color = {1, 0, 1, 0.9f};
+        m.responsive = glass->responsive;
+        s.renderer->submit(s.cell, m, math::Mat4::trs({glass->x, 0, 0}, {}, {1.2f, 1.2f, 1.2f}));
     }
     auto target = test::make_target(W, H);
     auto cmd = dev.begin_commands();
@@ -113,7 +129,8 @@ double footprint_error(const std::vector<std::uint8_t>& img, const std::vector<s
 
 // Runs a particle from x = -3 to x = +1.2 (0.12 m, about 1.7 pixels per frame) and returns the last
 // frame and the footprint error summed over the last 24 frames.
-std::pair<std::vector<std::uint8_t>, double> sweep(Setup& s, Setup& ref) {
+// `responsive` < 0 sweeps the particle, otherwise a glass cube with that responsiveness.
+std::pair<std::vector<std::uint8_t>, double> sweep(Setup& s, Setup& ref, float responsive = -1.0f) {
     for (int i = 0; i < 12; ++i) (void)frame(s, nullptr); // converged background history
     const auto bg = frame(ref, nullptr);
     std::vector<std::uint8_t> last, ref_prev = bg;
@@ -121,8 +138,10 @@ std::pair<std::vector<std::uint8_t>, double> sweep(Setup& s, Setup& ref) {
     float x = -3.0f;
     for (int i = 0; i < 36; ++i, x += 0.12f) {
         const ParticleInstance p = magenta(x);
-        last = frame(s, &p);
-        auto r = frame(ref, &p);
+        const Glass g{x, std::max(responsive, 0.0f)};
+        const bool mesh = responsive >= 0.0f;
+        last = mesh ? frame(s, nullptr, nullptr, &g) : frame(s, &p);
+        auto r = mesh ? frame(ref, nullptr, nullptr, &g) : frame(ref, &p);
         if (i >= 12) err += footprint_error(last, r, ref_prev, bg);
         ref_prev = std::move(r);
     }
@@ -197,6 +216,46 @@ TEST_CASE("gpu: frames without particles, water or rain are unchanged by the rea
             CHECK(f.reason == PathReason::NotNeeded);
         }
     CHECK(found);
+    gpu().ctx->destroy(off.cell);
+    gpu().ctx->destroy(on.cell);
+}
+
+TEST_CASE("gpu: responsive blended meshes write the reactive mask and ghost less (ADR-0187)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Setup plain = make(true), responsive = make(true), ref = make(false, 1.0f, false);
+    const auto [img_plain, err_plain] = sweep(plain, ref, 0.0f);
+    const auto [img_resp, err_resp] = sweep(responsive, ref, 1.0f);
+    test::save_output("reactive_mesh_off", W, H, img_plain);
+    test::save_output("reactive_mesh_on", W, H, img_resp);
+    MESSAGE("glass footprint error at responsive 0 " << err_plain << ", at 1 " << err_resp);
+    CHECK(err_plain > 1.0e5);           // a blended mesh without motion vectors ghosts
+    CHECK(err_resp < err_plain * 0.92); // the per-material flag measurably reduces it
+    SceneStats st{};
+    Glass g{0.0f, 1.0f};
+    (void)frame(responsive, nullptr, &st, &g);
+    CHECK(st.reactive_mask);
+    CHECK(st.reactive_mesh_draws == 1);
+    g.responsive = 0.0f;
+    (void)frame(responsive, nullptr, &st, &g);
+    CHECK_FALSE(st.reactive_mask);
+    CHECK(st.reactive_mesh_draws == 0);
+    gpu().ctx->destroy(plain.cell);
+    gpu().ctx->destroy(responsive.cell);
+    gpu().ctx->destroy(ref.cell);
+}
+
+TEST_CASE("gpu: blended meshes at responsive 0 render exactly as without the reactive mask") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Setup off = make(false), on = make(true);
+    std::vector<std::uint8_t> a, b;
+    SceneStats st{};
+    for (int i = 0; i < 6; ++i) {
+        const Glass g{-1.0f + 0.12f * static_cast<float>(i), 0.0f};
+        a = frame(off, nullptr, nullptr, &g);
+        b = frame(on, nullptr, &st, &g);
+    }
+    CHECK_FALSE(st.reactive_mask);
+    CHECK(a == b);
     gpu().ctx->destroy(off.cell);
     gpu().ctx->destroy(on.cell);
 }

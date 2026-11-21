@@ -2641,3 +2641,16 @@ Verified (Release, clang 21, 2 vCPU, lavapipe):
 
 Not covered: Windows and macOS results come from CI after push.
 
+## 2026-11-22 — Per-material responsive flag for blended meshes (ADR-0187)
+
+`MaterialAsset::responsive` / `render::Material::responsive` (0..1, default 0): alpha-blended and additive meshes above 0 draw their coverage into the TAA reactive mask in a `reactive_meshes` pass (`reactive_mesh.frag`, static/skinned/lightmapped vertex variants, shader-side depth test). Studio's material panel gains Blend, Responsive and Coverage Response controls.
+
+Verified (Release, clang 21, 2 vCPU, lavapipe):
+- `tools/shaders/compile_shaders.py --check`: generated shaders match (64 shaders).
+- `victus_gpu_tests -tc="*reactive*,*responsive*"`: 6 cases pass. Glass sweep footprint error 532,610 at responsive 0, 270,958 at 1; responsive 0 frames byte-identical to the mask off; `reactive_mesh_draws` 1 / 0.
+- `victus_asset_tests -tc="*responsive*"`: round trip, clamp, default omission, inheritance.
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build -j2`: 42/42 passed (521 s; reference scenes unchanged since the flag defaults to 0).
+
+Not covered: lavapipe only; materials with custom vertex stages are skipped; no project or template sets the flag yet.
+
+Next task: TAAU on Low (measured), then Studio dependency inspector and import queue.

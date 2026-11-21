@@ -95,6 +95,10 @@ struct Material {
     // Ambient occlusion from metallic_roughness_texture's red channel (glTF ORM packing), 0 = off.
     float occlusion_strength{0.0f};
     MaterialBlend blend{MaterialBlend::Opaque};
+    // Blended only (ADR-0187): where this surface covers a pixel, the TAA reactive mask is raised
+    // by responsive * coverage, so the resolve trusts the current frame there (blended draws have
+    // no motion vectors and would otherwise ghost when they move). 0 = off, the default.
+    float responsive{0.0f};
 };
 
 enum class FogMode : std::uint8_t { None, Linear, Exponential, ExponentialSquared };
@@ -728,6 +732,7 @@ struct SceneStats {
     math::Vec2 jitter{};               // sub-pixel jitter in render pixels
     float texture_mip_bias{0.0f};      // material texture LOD bias this frame (ADR-0141; < 0 when upscaling)
     bool reactive_mask{false};         // ADR-0143: transparent effects wrote the TAA reactive mask this frame
+    std::uint32_t reactive_mesh_draws{0}; // ADR-0187: responsive blended mesh batches drawn into the mask
     // Draw calls issued per pass after instancing (a batch = one draw_indexed with N instances).
     std::uint32_t main_batches{0}, shadow_batches{0}, prepass_batches{0};
     std::uint32_t transparent_draws{0};
@@ -1050,6 +1055,8 @@ private:
     // ADR-0143: particle/ribbon/water pipelines with the reactive mask as a second colour target,
     // created on first use. kind: 0 particles, 1 ribbons, 2 water.
     Result<rhi::PipelineHandle> reactive_pipeline(int kind, bool additive);
+    // Mesh vertex stage + reactive_mesh.frag into the R8 mask (ADR-0187); cached in post_.
+    Result<rhi::PipelineHandle> reactive_mesh_pipeline(std::uint32_t variant, bool double_sided);
     [[nodiscard]] Result<rhi::PipelineHandle> post_pipeline(const char* fragment, rhi::Format format,
                                                             rhi::BlendMode blend = rhi::BlendMode::Opaque,
                                                             rhi::Format second = rhi::Format::Invalid);

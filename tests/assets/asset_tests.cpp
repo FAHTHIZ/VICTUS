@@ -496,6 +496,28 @@ TEST_CASE("material blend and coverage fields round trip and inherit") {
     CHECK_FALSE(MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "blend": "glass"})")).ok());
 }
 
+TEST_CASE("material responsive flag round trips, clamps, inherits and is omitted at its default (ADR-0187)") {
+    auto m = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "blend": "alpha", "responsive": 0.75})"));
+    REQUIRE(m.ok());
+    CHECK(m->responsive == doctest::Approx(0.75f));
+    auto back = MaterialAsset::from_json(m->to_json());
+    REQUIRE(back.ok());
+    CHECK(back->responsive == doctest::Approx(0.75f));
+    CHECK(MaterialAsset{}.to_json().find("responsive") == nullptr);
+    auto high = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "responsive": 4})"));
+    REQUIRE(high.ok());
+    CHECK(high->responsive == doctest::Approx(1.0f));
+    MaterialAsset parent;
+    parent.responsive = 0.5f;
+    MaterialAsset child;
+    child.parent = Uuid::generate();
+    child.overrides = 0;
+    CHECK(apply_instance(parent, child).responsive == doctest::Approx(0.5f)); // inherited
+    child.overrides = field_bit(MaterialField::Responsive);
+    child.responsive = 1.0f;
+    CHECK(apply_instance(parent, child).responsive == doctest::Approx(1.0f));
+}
+
 TEST_CASE("assets: HDR textures cook to half floats with SH irradiance and an LDR preview") {
     TempDir dir("victus_hdr_cook");
     render::ImageF env;

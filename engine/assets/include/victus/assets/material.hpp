@@ -17,6 +17,7 @@
 //     "vertex_alpha": "opacity" | "coverage_mask", "coverage_response": 1,
 //     "blend": "opaque" | "alpha" | "additive"   // blended materials draw after opaque, far to near
 //     "occlusion_strength": 0..1   // AO from metallic_roughness_texture's red channel (ORM); 0 = off
+//     "responsive": 0..1           // blended only: how much TAA trusts the current frame under it (ADR-0187)
 //   }
 //
 // Material instances name a parent and contain only the fields they override; everything else
@@ -47,7 +48,7 @@ enum class MaterialBlendMode : std::uint8_t { Opaque = 0, Alpha = 1, Additive = 
 enum class MaterialField : std::uint8_t {
     BaseColor, BaseColorTexture, Metallic, Roughness, MetallicRoughnessTexture, NormalTexture, NormalScale, Emissive,
     EmissiveStrength, EmissiveTexture, AlphaCutoff, UvScale, UvOffset, Filter, Unlit, DoubleSided, Shader, ShaderParams,
-    VertexAlpha, CoverageResponse, Blend, OcclusionStrength, ShaderTextures, Count
+    VertexAlpha, CoverageResponse, Blend, OcclusionStrength, ShaderTextures, Responsive, Count
 };
 inline constexpr std::size_t kMaterialFieldCount = static_cast<std::size_t>(MaterialField::Count);
 [[nodiscard]] constexpr std::uint32_t field_bit(MaterialField f) noexcept { return 1u << static_cast<unsigned>(f); }
@@ -75,6 +76,12 @@ struct MaterialAsset {
     // "ORM" layout: R occlusion, G roughness, B metallic), 0 = ignored .. 1 = full (ADR-0139).
     float occlusion_strength{0.0f};
     MaterialBlendMode blend{MaterialBlendMode::Opaque};
+    // Blended materials have no motion vectors, so TAA and temporal upscaling blend a moving glass
+    // pane or hologram with a history that does not move with it (ghosting). Responsive marks
+    // where the surface covers a pixel in the TAA reactive mask: 0 = resolve from history as
+    // before .. 1 = trust the current frame (up to RenderSettings::reactive_max). Ignored for
+    // opaque materials (ADR-0187; FSR2/Arm ASR "reactive", Unreal "responsive AA").
+    float responsive{0.0f};
     Uuid base_color_texture, metallic_roughness_texture, normal_texture, emissive_texture;
     Uuid shader; // optional surface shader (.vshader); nil = built-in PBR surface
     std::array<math::Vec4, 4> shader_params{};

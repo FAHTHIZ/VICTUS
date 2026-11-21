@@ -208,6 +208,13 @@ struct WaterFrameUniforms {
     Vec4 center, extent;
     Vec4 wave_a[4], wave_b[4];
 };
+// reactive_mesh.frag Params (ADR-0187).
+struct ReactiveMeshUniforms {
+    Vec4 base_color;
+    Vec4 uv_transform;
+    Vec4 params; // x responsive, y alpha cutoff, z vertex alpha is a coverage mask, w additive
+    Vec4 screen; // xy 1 / render size
+};
 struct WaterUniforms {
     Mat4 inv_view_proj;
     Vec4 camera, sun_dir, sun_color, shallow, deep, params, env, sky, horizon, ground, screen, fog_color, fog_params;
@@ -1456,6 +1463,30 @@ Result<rhi::PipelineHandle> SceneRenderer::reactive_pipeline(int kind, bool addi
     auto p = ctx_.device().create_pipeline(d);
     if (!p) return p;
     post_.emplace(key, p.value());
+    return p;
+}
+
+Result<rhi::PipelineHandle> SceneRenderer::reactive_mesh_pipeline(std::uint32_t variant, bool double_sided) {
+    if (variant >= kVertexVariants) return Error{ErrorCode::InvalidArgument, "reactive mesh pipeline: bad vertex variant"};
+    std::string key = std::format("reactive_mesh/{}/{}", variant, double_sided ? 1 : 0);
+    if (auto it = post_.find(key); it != post_.end()) return it->second;
+    auto fs = ctx_.shader("reactive_mesh.frag");
+    if (!fs) return std::move(fs).error();
+    // The forward variant's vertex stage and layouts; one R8 target, no depth attachment (the
+    // shader tests against the sampled opaque depth), single-sampled like the mask.
+    rhi::PipelineDesc d = variant_desc(variant);
+    d.name = key;
+    d.fragment = fs.value();
+    d.cull = double_sided ? rhi::CullMode::None : rhi::CullMode::Back;
+    d.depth_test = false;
+    d.depth_write = false;
+    d.depth_format = rhi::Format::Invalid;
+    d.sample_count = 1;
+    d.alpha_to_coverage = false;
+    d.color_targets = {{rhi::Format::R8_UNORM, rhi::BlendMode::Alpha}};
+    auto p = ctx_.device().create_pipeline(d);
+    if (!p) return p;
+    post_.emplace(std::move(key), p.value());
     return p;
 }
 
@@ -4025,9 +4056,21 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     }
     // Reactive mask (ADR-0143): effects with no motion vectors (particles, water, precipitation)
     // also write how much they cover each pixel, and the TAA resolve trusts the current frame there.
+    // Blended meshes opt in per material (Material::responsive, ADR-0187). Custom vertex stages
+    // are skipped: the mask pass draws with the built-in vertex functions and would misplace them.
+    const auto responsive_draw = [](const Draw* d) {
+        return d->material.blend != MaterialBlend::Opaque && d->material.responsive > 0.0f && std::isfinite(d->material.responsive) &&
+               !d->material.vertex_stage;
+    };
+    const auto mesh_variant = [&](const Draw* d) {
+        return d->skinned ? kVertexSkinned : (env_.lightmap && d->mesh->lightmapped()) ? kVertexLightmapped : kVertexStatic;
+    };
+    const bool responsive_meshes = std::any_of(transparent_batches.begin(), transparent_batches.end(),
+                                               [&](const Batch& b) { return responsive_draw(b.first); });
     bool reactive = taa && S.reactive_mask && !reactive_failed_ && S.reactive_max > 0.0f &&
-                    (!water_draws.empty() || !particle_draws.empty() || precip_count > 0);
+                    (!water_draws.empty() || !particle_draws.empty() || precip_count > 0 || responsive_meshes);
     rhi::PipelineHandle reactive_pl[3][2]{}; // [particles, ribbons, water][alpha, additive]
+    rhi::PipelineHandle reactive_mesh_pl[kVertexVariants][2]{}; // [variant][double sided], ADR-0187
     if (reactive) {
         const auto use = [&](Result<rhi::PipelineHandle> pl, rhi::PipelineHandle& slot) {
             if (!reactive) return;
@@ -4042,6 +4085,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (!reactive_pl[kind][add]) use(reactive_pipeline(kind, add != 0), reactive_pl[kind][add]);
         }
         if (!water_draws.empty()) use(reactive_pipeline(2, false), reactive_pl[2][0]);
+        for (const Batch& b : transparent_batches) {
+            if (!responsive_draw(b.first)) continue;
+            const std::uint32_t v = mesh_variant(b.first);
+            const int ds = b.first->material.double_sided ? 1 : 0;
+            if (!reactive_mesh_pl[v][ds]) use(reactive_mesh_pipeline(v, ds != 0), reactive_mesh_pl[v][ds]);
+        }
         rhi::PipelineHandle rp{}, rs{};
         if (precip_count > 0) use(precipitation_pipeline(false, true), rp);
         if (precip_count > 0 && splash_count > 0) use(precipitation_pipeline(true, true), rs);
@@ -4261,6 +4310,54 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 b.write_depth(depth, rhi::LoadOp::Load, 1.0f);
             },
             [&](PassContext& ctx) { forward_body(ctx, false, true); });
+    }
+
+    // Responsive blended meshes (ADR-0187) write the reactive mask over their coverage, after all
+    // blended geometry; depth-tested in the shader against the opaque depth.
+    if (reactive && responsive_meshes) {
+        graph.add_pass(
+            "reactive_meshes",
+            [&](PassBuilder& b) {
+                b.read(depth);
+                write_reactive(b);
+            },
+            [&](PassContext& ctx) {
+                rhi::RenderPass& pass = *ctx.pass;
+                FrameUniforms frame{view_proj};
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame);
+                const rhi::TextureHandle depth_tex = ctx.texture(depth);
+                rhi::PipelineHandle bound{};
+                for (const Batch& b : transparent_batches) {
+                    const Draw* d = b.first;
+                    if (!responsive_draw(d)) continue;
+                    const std::uint32_t v = mesh_variant(d);
+                    const rhi::PipelineHandle want = reactive_mesh_pl[v][d->material.double_sided ? 1 : 0];
+                    if (!want) continue;
+                    if (!(bound == want)) {
+                        pass.bind_pipeline(want);
+                        if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                        bound = want;
+                    }
+                    const Material& m = d->material;
+                    ReactiveMeshUniforms u{};
+                    u.base_color = m.base_color.vec();
+                    u.uv_transform = {m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y};
+                    u.params = {std::clamp(m.responsive, 0.0f, 1.0f), m.alpha_cutoff, m.vertex_alpha_coverage_mask ? 1.0f : 0.0f,
+                                m.blend == MaterialBlend::Additive ? 1.0f : 0.0f};
+                    u.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), 0.0f, 0.0f};
+                    ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, u);
+                    const rhi::SamplerHandle tex_sampler = m.nearest_filter ? ctx_.nearest_repeat() : material_linear.value();
+                    pass.bind_texture(rhi::ShaderStage::Fragment, 0, m.base_color_texture ? m.base_color_texture : ctx_.white(), tex_sampler);
+                    pass.bind_texture(rhi::ShaderStage::Fragment, 1, depth_tex, ctx_.nearest_clamp());
+                    if (d->skinned) pass.bind_vertex_buffer(2, d->mesh->skin);
+                    pass.bind_vertex_buffer(0, d->mesh->vertices);
+                    if (v == kVertexLightmapped) pass.bind_vertex_buffer(3, d->mesh->lightmap_uv);
+                    pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
+                    pass.bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
+                    draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
+                    ++stats_.reactive_mesh_draws;
+                }
+            });
     }
 
     if (!gpu_jobs.empty() || !sort_jobs.empty()) {

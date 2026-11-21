@@ -732,6 +732,7 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
         m.coverage_response = src->coverage_response;
         m.occlusion_strength = src->occlusion_strength;
         m.blend = static_cast<render::MaterialBlend>(src->blend);
+        m.responsive = src->responsive;
         rhi::TextureHandle* slots[4] = {&m.base_color_texture, &m.metallic_roughness_texture, &m.normal_texture, &m.emissive_texture};
         const auto refs = src->textures();
         for (std::size_t i = 0; i < 4; ++i) {

@@ -443,6 +443,20 @@ void Editor::draw_material_editor() {
         inherit_button(F::Unlit);
         mark(ImGui::Checkbox("Double Sided", &m.double_sided), F::DoubleSided);
         inherit_button(F::DoubleSided);
+        int blend = static_cast<int>(m.blend);
+        if (mark(ImGui::Combo("Blend", &blend, "Opaque\0Alpha (glass, smoke)\0Additive (glow)\0"), F::Blend))
+            m.blend = static_cast<assets::MaterialBlendMode>(std::clamp(blend, 0, 2));
+        ImGui::SetItemTooltip("Blended materials draw after everything opaque, far to near, and do not cast shadows");
+        inherit_button(F::Blend);
+        if (m.blend != assets::MaterialBlendMode::Opaque) {
+            mark(ImGui::SliderFloat("Responsive", &m.responsive, 0.0f, 1.0f), F::Responsive);
+            ImGui::SetItemTooltip("Raise for moving glass, holograms or screens that leave trails with TAA: anti-aliasing trusts the\n"
+                                  "current frame where this surface covers the screen (0 = smoothest, 1 = no trails)");
+            inherit_button(F::Responsive);
+        }
+        mark(ImGui::SliderFloat("Coverage Response", &m.coverage_response, 0.0f, 1.0f), F::CoverageResponse);
+        ImGui::SetItemTooltip("How much the scene's snow or dust layer settles on this material (0 = never)");
+        inherit_button(F::CoverageResponse);
     }
     ImGui::PopItemWidth();
     ImGui::Separator();
