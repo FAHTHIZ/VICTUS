@@ -690,11 +690,15 @@ public:
             if (!scene.world().alive(root)) continue;
             const std::size_t n = r.bones.size();
             // Capture the animated pose: a Transform that differs from what we wrote last was set by
-            // animation (or gameplay) this frame; unchanged ones keep their previous target.
+            // animation (or gameplay) this frame; unchanged ones keep their previous target. The test is
+            // exact: |dot| of a float unit quaternion with itself can round below any 1 - eps threshold
+            // this tight, which used to recapture the lying pose as the animated target.
+            const auto same = [](math::Vec3 a, math::Vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; };
+            const auto same_q = [](math::Quat a, math::Quat b) { return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w; };
             for (RagdollBody& b : r.bones) {
                 const auto* t = scene.world().get<scene::Transform>(b.entity);
                 if (!t) continue;
-                if (!r.wrote || !nearly_equal(t->position, b.written_pos, 1e-6f) || !nearly_equal(t->rotation, b.written_rot, 1e-7f)) {
+                if (!r.wrote || !same(t->position, b.written_pos) || !same_q(t->rotation, b.written_rot)) {
                     b.target_pos = t->position;
                     b.target_rot = t->rotation;
                 }
