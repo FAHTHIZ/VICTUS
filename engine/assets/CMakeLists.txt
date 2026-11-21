@@ -21,5 +21,6 @@ victus_add_module(assets
         src/material.cpp
         src/texture_compression.cpp
         src/export_profile.cpp
+        src/references.cpp
     DEPS VICTUS::Render VICTUS::Animation VICTUS::Physics VICTUS::Tilemap VICTUS::Terrain
     PRIVATE_DEPS victus_cgltf victus_ufbx victus_bc7enc victus_astcenc)

@@ -15,6 +15,7 @@
 #include "victus/assets/database.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/asset_store.hpp"
+#include "victus/assets/references.hpp"
 #include "victus/editor/gizmo.hpp"
 #include "victus/editor/thumbnails.hpp"
 #include "victus/editor/undo.hpp"
@@ -970,6 +971,18 @@ public:
     void set_asset_kind_filter(std::optional<assets::AssetKind> kind) noexcept { asset_kind_filter_ = kind; }
     void set_asset_folder(std::string folder) { asset_folder_ = std::move(folder); }
     [[nodiscard]] const std::string& asset_folder() const noexcept { return asset_folder_; }
+    // ---- asset references (ADR-0175) ----
+    // Project files that use `asset` (by ID or by path) and the assets it uses.
+    [[nodiscard]] std::vector<assets::AssetReference> asset_users(const Uuid& asset) const;
+    [[nodiscard]] std::vector<assets::AssetReference> asset_dependencies(const Uuid& asset) const;
+    // Moves/renames an asset, keeping its ID and updating files that name it by path; the open
+    // scene is saved first and reloaded when it changed on disk.
+    [[nodiscard]] Result<assets::RenameReport> rename_asset(const Uuid& asset, std::string new_relative);
+    [[nodiscard]] Status delete_asset(const Uuid& asset);
+    void open_asset_references(const Uuid& asset); // the References window
+    void begin_rename_asset(const Uuid& asset);    // the Rename Asset dialog
+    void begin_delete_asset(const Uuid& asset);    // the Delete Asset confirmation
+    [[nodiscard]] bool asset_references_open() const noexcept { return show_asset_refs_; }
     [[nodiscard]] std::size_t asset_rows() const;              // assets shown with the current filters
     [[nodiscard]] std::vector<std::string> asset_folders() const; // every folder holding assets, sorted
     // Plain name for an asset kind: Texture -> "Image", Model -> "3D Model", SpriteSheet -> "Sprite Sheet".
@@ -1290,6 +1303,14 @@ private:
     bool show_getting_started_{false}, show_help_{false}, show_project_settings_{false}, show_history_{false};
     bool show_asset_store_{false};
     std::unique_ptr<AssetStore> asset_store_;
+    // Asset references / rename / delete (asset_refs.cpp).
+    void draw_asset_dialogs();
+    void draw_asset_context_items(const assets::AssetRecord& r);
+    bool show_asset_refs_{false};
+    bool refs_stale_{true};
+    Uuid refs_asset_, refs_cache_asset_, rename_target_, delete_target_;
+    std::vector<assets::AssetReference> refs_users_, refs_deps_, rename_users_;
+    std::string rename_text_, rename_error_;
     void draw_asset_store();
     bool show_script_debugger_{false};
     std::string help_topic_, help_query_;

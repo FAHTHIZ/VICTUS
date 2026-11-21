@@ -468,6 +468,7 @@ void Editor::draw_workspace(float) {
     draw_history();
     draw_project_settings();
     draw_asset_store();
+    draw_asset_dialogs();
     ImGui::EndDisabled();
     draw_script_debugger();
     draw_status_bar();
@@ -1845,13 +1846,17 @@ void Editor::draw_inspector() {
 // ---- assets & console ---------------------------------------------------------------------------
 
 void Editor::draw_asset_item(const assets::AssetRecord& r) {
-    if (r.kind == assets::AssetKind::Texture && ImGui::BeginPopupContextItem("##texctx")) {
-        if (ImGui::MenuItem("Import Settings...")) {
-            import_texture_ = r.uuid;
-            import_edit_ = assets::TextureImportSettings::from_json(r.settings);
+    if (ImGui::BeginPopupContextItem("##assetctx")) {
+        if (r.kind == assets::AssetKind::Texture) {
+            if (ImGui::MenuItem("Import Settings...")) {
+                import_texture_ = r.uuid;
+                import_edit_ = assets::TextureImportSettings::from_json(r.settings);
+            }
+            if (ImGui::MenuItem("Create Sprite Sheet...")) sheet_texture_ = r.uuid;
+            if (ImGui::MenuItem("Create Tile Set...")) tileset_texture_ = r.uuid;
+            ImGui::Separator();
         }
-        if (ImGui::MenuItem("Create Sprite Sheet...")) sheet_texture_ = r.uuid;
-        if (ImGui::MenuItem("Create Tile Set...")) tileset_texture_ = r.uuid;
+        draw_asset_context_items(r);
         ImGui::EndPopup();
     }
     if (ImGui::BeginDragDropSource()) {

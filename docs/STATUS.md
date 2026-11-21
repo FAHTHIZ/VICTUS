@@ -2480,3 +2480,16 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 - `ctest --preset release -j2`: 41 of 42 pass; `victus_perf_budgets` failed on `sim.systems = 31` against a cap of 30 set before the simulation-LOD, vehicle and traffic work registered more systems (not caused by this change; the count is the same in every template and sample). Re-baselined to [16, 34] in `tests/perf/budgets.json`; the suite passes.
 
 Not covered: audio preview before install, offline starter pack, drag from the store into the viewport.
+
+## 2026-11-21 — Asset references, rename and delete (ADR-0175)
+
+Follows `20976f3` (Studio Asset Store window). New `assets::ReferenceIndex` scans the project's text files for asset UUIDs and quoted asset paths; `assets::rename_asset` moves an asset with its `.meta` and rewrites path references; `assets::delete_asset` removes source, `.meta` and cooked data. Studio's Assets rows get Find References, Rename or Move..., Delete..., Copy Path and Copy ID; the References window shows Used by / Uses with click-through; Rename saves and reloads the open scene when it was rewritten; Delete lists remaining users before confirming.
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- `victus_asset_tests -tc="asset references*"` 1 case / 47 assertions: UUID and path users with counts, dependencies, unreferenced list, rename across folders (`.meta` moved, scene and Luau path rewrites in both quote styles), UUID references unchanged, five refusal cases, delete.
+- `victus_editor_tests -tc="studio asset references*"` 1 case / 44 assertions: by-path user found in the saved scene, dialogs drawn, rename rewrites and reloads the scene (same entity, new script path, scene clean), unsafe rename refused, delete removes the record and closes the References window.
+- Live: References window on the smoke project for `Wood096_1K-JPG_Color.jpg` lists `wood096.vmat` (by ID).
+- clang-tidy on `engine/assets/src/references.cpp` and `editor/src/asset_refs.cpp`: 0 diagnostics.
+- `ctest --preset release -j2`: 41/42 passed; `victus_cli_smoke` crashed inside lavapipe at exit after `--quality cinematic` was rejected (passes on rerun; fixed in the next entry by validating the tier before the device is created).
+
+Not covered: paths built at run time in scripts, undo for Delete, folder rename/move as one operation.

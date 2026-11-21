@@ -52,7 +52,7 @@ Items that keep the whole engine from production use, regardless of feature work
 | Materials / surface shaders / material graphs | Usable | Four parameters, no custom textures/uniforms, fragment-only | Custom texture slots |
 | Scene, prefabs, serialization | Usable | Nested prefabs flattened; no variants; formats all at v1 (migrators unexercised) | Prefab variants |
 | ECS | Usable | — | — |
-| Asset pipeline | Usable | No import queue UI or dependency inspector; glTF cameras/lights not imported; V.A.U.L.T. budgets cover textures/models only | V.A.U.L.T. CPU budgets and mesh/audio residency |
+| Asset pipeline | Usable | No import queue UI; references miss paths built at run time; V.A.U.L.T. budgets cover textures/models only | V.A.U.L.T. CPU budgets and mesh/audio residency |
 | World streaming | Experimental | No cross-cell references, data layers, server cell ownership, Studio world view | Cross-cell references |
 | Physics (Jolt 3D, Box2D 2D) | Usable | No convex decomposition; whole heightfield rebuild per edit; ragdoll root does not follow while simulating; no get-up clips or pose matching | Convex decomposition |
 | Animation | Usable | IK limits are one cone per chain (no per-joint/twist); foot placement uses one ray per foot along world up; no sync markers, GPU morphs; layer masks read-only in Studio | Sync markers, then GPU morph targets |
@@ -70,7 +70,7 @@ Items that keep the whole engine from production use, regardless of feature work
 | Networking (ENet) | Experimental | Loopback only; no NAT traversal, host migration, lag compensation | Lag-compensated hits |
 | Save games / save history | Usable | No compression, cloud saves, restore UI | Generation restore UI |
 | Plugins / modding | Usable for trusted code | No sandbox, hot reload, editor loading, signing | Editor plugin loading |
-| VICTUS Studio (editor) | Usable on Linux | Never run on Windows/macOS by a person; no dependency inspector, UI canvas, BT editor, curve editor | ROADMAP §1 Studio maturity |
+| VICTUS Studio (editor) | Usable on Linux | Never run on Windows/macOS by a person; no UI canvas, BT editor, curve editor | ROADMAP §1 Studio maturity |
 | Debugging, profiling, perceptual compare | Usable for CPU | No GPU timings; compare is LDR-only; goldens are lavapipe-only | — |
 | Packaging and export | Usable on host platform | B6: installers, OS code signing, delta patches, cross-export; trusted pack key comes from `export.json` (not tamper-proof without code signing) | Delta patch packs signed with the game's key |
 | Android | Incomplete | B2 | Hardware |
