@@ -675,9 +675,15 @@ TEST_CASE("gpu lods: cross-fade dissolves a level change over lod_fade_frames wi
     SceneRenderer& r = *sr.value();
     const auto at = [&](const RenderSettings& s, float z) { return view_stats(r, s, {0, 0, z}, 60.0f, 160, 96, tracked); };
 
-    const std::uint64_t lod0 = at(snap, 1.0f).triangles;
+    // Start close enough that a coarser level is still left to switch to: simplification errors
+    // differ slightly between platforms, so at distance 1 lavapipe draws LOD2 and Metal already
+    // the coarsest level. Halve the gap to the surface (radius 0.5) until the far view is coarser.
     float lo = 1.0f, hi = 60.0f;
-    REQUIRE(at(snap, hi).triangles < lod0);
+    const std::uint64_t coarsest = at(snap, hi).triangles;
+    while (lo > 0.505f && at(snap, lo).triangles <= coarsest) lo = 0.5f + 0.5f * (lo - 0.5f);
+    const std::uint64_t lod0 = at(snap, lo).triangles;
+    INFO("search starts at z " << lo << " with " << lod0 << " tris, far view " << coarsest);
+    REQUIRE(coarsest < lod0);
     while (hi - lo > 1e-3f) {
         const float mid = 0.5f * (lo + hi);
         (at(snap, mid).triangles == lod0 ? lo : hi) = mid;
