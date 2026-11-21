@@ -124,7 +124,11 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
 
     // Anti-aliasing and reconstruction.
     if (f.capture_mode) add("taa", PathState::Off, PathReason::CaptureMode, "captures are not jittered");
-    else if (!S.taa) add("taa", PathState::Off, by(S.taa == tier.taa), "no temporal anti-aliasing");
+    else if (!f.taa) add("taa", PathState::Off, by(S.taa == tier.taa), "no temporal anti-aliasing");
+    else if (f.taa_by_scale && !f.taa_history)
+        add("taa", PathState::Reduced, PathReason::NoHistory, "render scale below the TAA threshold; no history this frame");
+    else if (f.taa_by_scale)
+        add("taa", PathState::Active, PathReason::None, std::format("render scale below {:.2f}: replaces MSAA and FXAA", S.taa_below_scale));
     else if (!f.taa_history) add("taa", PathState::Reduced, PathReason::NoHistory, "no history this frame (first frame or reset)");
     else add("taa", PathState::Active, PathReason::None, std::format("current-frame weight {:.2f}", S.taa_blend));
 

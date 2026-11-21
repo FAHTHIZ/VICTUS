@@ -496,6 +496,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.bloom_levels = 4;
         s.fxaa = true;
         s.taa = false;
+        s.taa_below_scale = 0.65f; // ADR-0188: TAAU beats MSAA + FXAA at 0.6 and below
         s.max_point_lights = 64;
         s.lod_error_pixels = 2.0f;
         s.shadow_lod_bias = 1;
@@ -593,6 +594,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.force_lod = std::clamp(s.force_lod, -1, static_cast<int>(kMaxMeshLods) - 1);
     s.shadow_lod_bias = std::min(s.shadow_lod_bias, 3u);
     s.foliage_lod_bias = std::min(s.foliage_lod_bias, 3u);
+    s.taa_below_scale = std::isfinite(s.taa_below_scale) ? std::clamp(s.taa_below_scale, 0.0f, 2.0f) : 0.0f;
     s.msaa_samples = s.msaa_samples >= 8 ? 8u : s.msaa_samples >= 4 ? 4u : s.msaa_samples >= 2 ? 2u : 1u;
     s.foliage_distance_scale = std::isfinite(s.foliage_distance_scale) ? std::clamp(s.foliage_distance_scale, 0.25f, 1.0f) : 1.0f;
     s.foliage_shadow_fraction = std::isfinite(s.foliage_shadow_fraction) ? std::clamp(s.foliage_shadow_fraction, 0.0f, 1.0f) : 1.0f;
@@ -2016,7 +2018,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const Mat4 view_proj_unjittered = proj_unjittered * camera_.view;
     const Frustum frustum = Frustum::from_matrix(view_proj_unjittered);
     // TAA: every 3D pass renders with a sub-pixel jittered projection.
-    const bool taa = S.taa && !capture_mode_;
+    // ADR-0188: tiers without TAA switch to temporal upscaling at low render scales, where it
+    // beats MSAA + FXAA; the 0.05 hysteresis keeps dynamic resolution from toggling it each frame.
+    if (S.taa || S.taa_below_scale <= 0.0f || !S.temporal_upscale) scale_taa_ = false;
+    else if (S.render_scale < S.taa_below_scale) scale_taa_ = true;
+    else if (S.render_scale >= S.taa_below_scale + 0.05f) scale_taa_ = false;
+    const bool taa = (S.taa || scale_taa_) && !capture_mode_;
     if (!taa) {
         history_valid_ = false;
         reactive_valid_[0] = reactive_valid_[1] = false;
@@ -2061,6 +2068,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     facts_.half_precision_requested = half_precision_requested_;
     facts_.half_precision = half_precision_;
     facts_.taa = taa;
+    facts_.taa_by_scale = taa && !S.taa;
+    stats_.taa_by_scale = taa && !S.taa;
     facts_.taa_history = stats_.taa_history;
     facts_.temporal_upscale = upscale;
     const bool shadows = sun_.shadows && sun_.intensity > 0.0f;
@@ -3378,7 +3387,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         const float shape = std::clamp(finite_or(vc.shape_size, 4000.0f), 10.0f, 1e6f);
         const float detail = std::clamp(finite_or(vc.detail_size, 600.0f), 1.0f, 1e6f);
         cloud_u.noise = {1.0f / shape, 1.0f / detail, std::clamp(finite_or(vc.detail, 0.35f), 0.0f, 1.0f),
-                         S.taa ? static_cast<float>(cloud_frame_ % 64u) : 0.0f};
+                         taa ? static_cast<float>(cloud_frame_ % 64u) : 0.0f};
         // Wind drift; wrapped every 200 km so the offset keeps float precision.
         const double t = time_ ? *time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - render_epoch()).count();
         const auto drift = [&](float w) {

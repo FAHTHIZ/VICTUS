@@ -544,6 +544,11 @@ struct RenderSettings {
     // Temporal anti-aliasing: sub-pixel jitter + reprojected history (camera motion from depth,
     // moving objects bounded by neighbourhood clipping). Also stabilises SSAO and shadows.
     bool taa{true};                       // High/Ultra; Low/Medium use FXAA
+    // With `taa` off: temporal upscaling takes over from MSAA/FXAA while the render scale (set
+    // directly or lowered by dynamic resolution) is below this, and hands back once it is 0.05
+    // above it (ADR-0188; Low uses 0.65, measured by tools/render/measure_low_aa.py). 0 = never.
+    // Needs `temporal_upscale`.
+    float taa_below_scale{0.0f};
     float taa_blend{0.1f};                // weight of the current frame (0.04..1)
     // Temporal upscaling (ADR-0055): with TAA on and render_scale < 1 (or dynamic resolution
     // lowering it), the resolve reconstructs at output resolution from jittered samples instead of
@@ -721,6 +726,7 @@ struct SceneStats {
     std::uint32_t shadow_cascades{0}, shadow_draws{0}, prepass_draws{0};
     std::uint32_t render_width{0}, render_height{0};
     bool taa{false};                   // TAA resolved this frame
+    bool taa_by_scale{false};          // ... because the render scale fell below taa_below_scale (ADR-0188)
     bool taa_history{false};           // ... with a valid history (false on the first frame / after a reset)
     bool taa_disocclusion{false};      // ... with the depth-history disocclusion test (ADR-0147)
     bool taa_thin_features{false};     // ... with thin-feature locks (ADR-0148)
@@ -1276,6 +1282,7 @@ private:
     math::Vec3 fog_prev_position_{}, fog_prev_forward_{0, 0, -1};
     std::uint64_t fog_frame_{0};
     bool precipitation_failed_{false}; // precipitation pipeline failed to build (logged once)
+    bool scale_taa_{false};            // TAA on because the render scale is below taa_below_scale (ADR-0188)
     bool reactive_failed_{false};      // a reactive-mask pipeline failed to build (logged once, ADR-0143)
     bool splash_failed_{false};        // rain splash pipeline failed to build (logged once)
     bool clouds_failed_{false};      // cloud pipelines failed to build: clouds stay off (logged once)

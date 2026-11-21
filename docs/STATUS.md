@@ -2654,3 +2654,16 @@ Verified (Release, clang 21, 2 vCPU, lavapipe):
 Not covered: lavapipe only; materials with custom vertex stages are skipped; no project or template sets the flag yet.
 
 Next task: TAAU on Low (measured), then Studio dependency inspector and import queue.
+
+## 2026-11-22 — Low tier switches to TAAU below 0.65 render scale (ADR-0188)
+
+`RenderSettings::taa_below_scale` (0 = never; the Low preset uses 0.65): with `taa` off and `temporal_upscale` on, TAA with temporal upscaling replaces MSAA and FXAA while `render_scale` is below the threshold, and turns off again at 0.05 above it. `SceneStats::taa_by_scale` and the render-path report show the switch; `victus run --taa off` disables it.
+
+Verified (Release, clang 21, 2 vCPU, lavapipe):
+- `python3 tools/render/measure_low_aa.py` (reference: Low at scale 2 with 4x MSAA; four reference scenes; results in docs/audits/LOW_TIER_AA.md): mean FLIP averaged over the scenes, MSAA + FXAA vs TAAU, 0.0287 vs 0.0289 at 0.75, 0.0337 vs 0.0296 at 0.6, 0.0395 vs 0.0311 at 0.5; TAAU has the lower worst-tile FLIP in all four scenes at 0.6 and below, and 5-25x more frame-to-frame change at every scale.
+- New `victus_gpu_tests -tc="*TAAU*,*temporal upscaling at low*"`: 2 cases / 43 assertions pass (0.75 keeps MSAA; 0.5 switches with history on the next frame; hysteresis 0.68/0.7/0.68; no switch with `temporal_upscale` off or threshold 0).
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build -j2`: 42/42 passed (534 s; Low is not used by the reference scenes or perf budgets at their scales).
+
+Not covered: phone GPUs (Adreno, Mali, Apple) are not measured; the threshold may move there.
+
+Next task: Studio background import queue.

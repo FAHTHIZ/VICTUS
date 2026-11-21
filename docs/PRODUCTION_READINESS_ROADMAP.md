@@ -46,7 +46,7 @@ Items that keep the whole engine from production use, regardless of feature work
 | RHI (SDL_GPU Vulkan/Metal, GLES 3.0 fallback) | Usable on Vulkan; Experimental Metal/GLES | No D3D12 (no DXIL), no GPU timestamps, device loss recovered in the player only (injected failures) | Editor device recovery; test a real driver reset (B3) |
 | Shader pipeline (GLSL → SPIR-V/MSL/ESSL) | Usable | FP16 variant only for the PBR BRDF; surface shaders fragment-only | — |
 | 3D renderer | Usable on software Vulkan | Unmeasured on real GPUs; no area lights/cookies, LOD cross-fade, SSR/planar reflections, FFT ocean, dynamic GI beyond probes | Rendering gaps in ROADMAP §2 |
-| Temporal AA / upscaling | Usable | TAAU on Low unmeasured on phones; no auto-generated reactive mask | TAAU on Low |
+| Temporal AA / upscaling | Usable | Low-tier TAAU threshold measured on lavapipe only, not phones; no auto-generated reactive mask | Phone measurements |
 | Baked lighting | Usable | CPU-only bake, analytic sky only, no auto re-bake, no adaptive probe density | Bake performance on large scenes |
 | 2D renderer | Usable | No 2D shadows/normal maps; tiles not camera-culled | 2D normal maps |
 | Materials / surface shaders / material graphs | Usable | Four parameters, no custom textures/uniforms, fragment-only | Custom texture slots |

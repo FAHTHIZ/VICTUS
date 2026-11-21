@@ -159,6 +159,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     quality.temporal_upscale = proj->settings().temporal_upscale;
     if (o.render_scale) quality.render_scale = *o.render_scale;
     if (o.taa) quality.taa = *o.taa;
+    if (o.taa && !*o.taa) quality.taa_below_scale = 0.0f; // --taa off: no switch at low scales either
     if (o.reactive_mask) quality.reactive_mask = *o.reactive_mask;
     if (o.msaa_samples) quality.msaa_samples = *o.msaa_samples;
     quality = quality.sanitized();

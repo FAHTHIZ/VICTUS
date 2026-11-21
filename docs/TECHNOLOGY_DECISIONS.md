@@ -1937,3 +1937,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** `victus_gpu_tests -tc="*reactive*,*responsive*"`: 6 cases pass. A 90% opaque glass cube sweeping over 3-pixel stripes: footprint error against a history-free reference 532,610 at responsive 0 and 270,958 at 1; `SceneStats::reactive_mesh_draws` counts 1 then 0; at responsive 0 frames are byte-identical to the mask off. `victus_asset_tests -tc="*responsive*"`: round trip, clamp, default omission, inheritance.
 
 **Consequences:** One extra draw per responsive blended batch (vertex work only, a trivial fragment). Materials with a custom vertex stage are skipped (the mask pass uses the built-in vertex functions); surface shaders cannot vary the value per pixel; lavapipe only.
+
+### ADR-0188: Low tier switches to TAAU below 0.65 render scale
+
+**Status:** Accepted (2026-11-22). Closes the ROADMAP "ASR/FSR2 ideas" item ("TAAU on Low, measured"); follows ADR-0055, ADR-0141 and ADR-0152.
+
+**Context:** Low renders at 0.75 scale with 4x MSAA and FXAA and no TAA; dynamic resolution can take it down to 0.5. Mobile engines differ here: Arm ASR and FSR2 target upscaling from low resolutions on phones, while tilers make MSAA cheap. ADR-0141 left the choice open until measured.
+
+**Decision:** Measured with `tools/render/measure_low_aa.py` (docs/audits/LOW_TIER_AA.md): Low at each candidate against Low supersampled, on the four reference scenes. At 0.75 the two tie on mean FLIP (0.0287 vs 0.0289 averaged) and MSAA + FXAA is 5-25x more stable frame to frame, so Low keeps it. At 0.6 and 0.5 TAAU has the lower worst-tile FLIP in every scene and the lower average (0.0296 vs 0.0337, 0.0311 vs 0.0395). New `RenderSettings::taa_below_scale` (0 = never; Low 0.65): with `taa` off and `temporal_upscale` on, TAA and temporal upscaling turn on while `render_scale` is below it and off again at 0.05 above it (hysteresis against dynamic-resolution oscillation). `SceneStats::taa_by_scale` and the path report ("render scale below 0.65: replaces MSAA and FXAA") show it; `victus run --taa off` disables the switch.
+
+**Alternatives:** TAAU always on Low (worse mean FLIP on three of four scenes at 0.75 and much less stable); never (dynamic resolution at 0.5 loses 20% average FLIP and up to 45% worst tile); a lower Low scale with TAAU on (blurrier than 0.75 MSAA on the geometric scenes).
+
+**Evidence:** `victus_gpu_tests -tc="*TAAU*,*temporal upscaling at low*"`: 0.75 keeps MSAA; 0.5 runs TAA with temporal upscaling, history on the next frame, MSAA reported replaced; 0.68 stays on, 0.7 turns it off, 0.68 from above stays off; `temporal_upscale` off or threshold 0 never switch.
+
+**Consequences:** Low frames below 0.65 scale cost the TAA history traffic instead of MSAA, and the first frame after the switch has no history. The threshold comes from lavapipe; phone GPUs (Adreno, Mali, Apple) are not measured and may move it.
