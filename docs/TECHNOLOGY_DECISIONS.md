@@ -1910,3 +1910,16 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
   - LOD 0 grows from about 125k to about 205k triangles and from five to nine skinned draws when all items are visible. The GLBs grow by about 3 MB.
   - The clearance gate is numerical only in the rest pose. In motion the shells inherit the covered surface's weights, but the rigid pack and the boots' toe box are judged from gameplay renders.
   - Items attached at `Socket.Back` now sit over the pack unless it is hidden.
+### ADR-0186: Heterogeneous volumetric fog and sun self-shadowing
+
+**Status:** Accepted (2026-11-21)
+
+**Context:** The froxel fog (ADR-0098) had uniform density inside height fog and fog volumes and was lit by the sun through the shadow map only, so a thick bank of fog never shaded itself and every volume looked like a clean box. Frostbite's physically based volumetrics (Hillaire 2015) and RDR2's fog and cloud system (Bauer, SIGGRAPH 2019) both rely on density noise and on the medium's own transmittance towards the light; `docs/ENGINE_BENCHMARK.md` listed this as gap 3.
+
+**Decision:** `fog_inject.comp` evaluates the medium through one `media_at()` function (height fog plus volumes) whose density is multiplied by two octaves of hashed value noise (`VolumetricFog::noise`, `noise_scale`, drifting by `wind` over the shader clock; the multiplier `mix(1, 2·smoothstep(0.3, 0.7, n), amount)` keeps the mean near 1). The sun term of each froxel is multiplied by `exp(-strength · Σ σt · ds)` from `RenderSettings::volumetric_fog_shadow_steps` samples of the same function towards the sun over `self_shadow_distance` metres (Medium 2, High 4, Ultra 6; Low has no fog), offset by the slice jitter so temporal filtering integrates them. Both default off in `VolumetricFog` so existing scenes and reference images keep their look; the Environment component exposes `volumetric_noise`, `volumetric_noise_scale`, `volumetric_wind` and `volumetric_self_shadow`. The render path report adds "noise" and "self-shadow N steps" to the volumetric fog detail.
+
+**Alternatives:** A baked 3D noise texture (needs a new binding and asset; hashed value noise costs ALU only, which suits the small froxel grid); a separate sun-transmittance volume like UE's volumetric shadow (better for many froxels, but another pass and buffer); shadowing local lights by the fog too (left for later: cost scales with lights per froxel).
+
+**Evidence:** `victus_gpu_tests -tc="gpu volumetric fog*"`: 10 cases. Under a 0.5/m layer 4 m thick the sunlit fog falls below 0.6× the open side with self-shadowing and is equal without; zero steps matches off. Noise at amount 1 raises the pixel standard deviation from 2.8 to 20.9 with the mean 165 → 154 (within 30%); one second of wind changes over 500 pixels while uniform fog is bit-identical. See STATUS.
+
+**Consequences:** Self-shadowing costs `steps` extra density evaluations per froxel (each looping over the active fog volumes plus 16 hashes per octave with noise on); there is no shadowing of ambient or local lights by the fog, and the march length is fixed rather than adapted to the medium.

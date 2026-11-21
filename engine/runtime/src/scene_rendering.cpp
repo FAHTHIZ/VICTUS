@@ -1251,6 +1251,10 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     vf.ambient_intensity = std::max(fin(e.volumetric_ambient, 1.0f), 0.0f);
     vf.local_light_intensity = std::max(fin(e.volumetric_local_lights, 1.0f), 0.0f);
     vf.temporal = std::clamp(fin(e.volumetric_temporal, 0.9f), 0.0f, 0.98f);
+    vf.noise = std::clamp(fin(e.volumetric_noise, 0.0f), 0.0f, 1.0f);
+    vf.noise_scale = std::clamp(fin(e.volumetric_noise_scale, 6.0f), 0.25f, 1000.0f);
+    vf.wind = {fin(e.volumetric_wind.x, 0.0f), fin(e.volumetric_wind.y, 0.0f), fin(e.volumetric_wind.z, 0.0f)};
+    vf.self_shadow = std::clamp(fin(e.volumetric_self_shadow, 0.0f), 0.0f, 4.0f);
     render::VolumetricClouds& vc = env.clouds;
     vc.enabled = e.clouds;
     vc.coverage = std::clamp(fin(e.cloud_coverage, 0.5f), 0.0f, 1.0f);

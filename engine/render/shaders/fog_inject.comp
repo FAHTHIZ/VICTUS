@@ -45,6 +45,8 @@ layout(std140, set = 2, binding = 0) uniform Params {
     vec4 cluster_grid;
     vec4 cluster_depth;
     vec4 local_shadow;
+    vec4 noise;            // ADR-0186: xyz wind drift (m), w: 1 / feature size (per metre)
+    vec4 media;            // x noise amount, y self-shadow steps, z self-shadow distance (m), w strength
     vec4 volumes[MAX_VOLUMES * 5]; // per volume: 3 rows world -> unit box, (albedo, density), (edge fade)
 } u;
 
@@ -108,6 +110,69 @@ float local_shadow(LocalLight l, vec3 Ld, vec3 p) {
     return texture(u_local_shadow, vec3(auv, q.z));
 }
 
+// Heterogeneous media (ADR-0186): two octaves of value noise. Hashes integer lattice points
+// (Hoskins' hash without sine), so the pattern is identical on every backend.
+float hash13(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+}
+
+float value_noise(vec3 x) {
+    vec3 i = floor(x);
+    vec3 f = x - i;
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(hash13(i), hash13(i + vec3(1, 0, 0)), f.x), mix(hash13(i + vec3(0, 1, 0)), hash13(i + vec3(1, 1, 0)), f.x), f.y),
+               mix(mix(hash13(i + vec3(0, 0, 1)), hash13(i + vec3(1, 0, 1)), f.x), mix(hash13(i + vec3(0, 1, 1)), hash13(i + vec3(1, 1, 1)), f.x), f.y),
+               f.z);
+}
+
+// Density multiplier with mean ~1: patches up to 2x separated by clear gaps at amount 1.
+float media_noise(vec3 p) {
+    if (u.media.x <= 0.0) return 1.0;
+    vec3 q = (p - u.noise.xyz) * u.noise.w;
+    float n = 0.65 * value_noise(q) + 0.35 * value_noise(q * 2.03 + vec3(17.1, 5.3, 11.7));
+    return mix(1.0, 2.0 * smoothstep(0.3, 0.7, n), u.media.x);
+}
+
+// Extinction at p (height fog plus fog volumes, shaped by the noise); scattering in `scat`.
+float media_at(vec3 p, out vec3 scat) {
+    float ext = u.height_fog.x;
+    if (u.height_fog.y > 0.0) ext *= exp(-u.height_fog.y * max(p.y - u.height_fog.z, 0.0));
+    scat = u.albedo.rgb * ext;
+    int volumes = int(u.grid.w);
+    for (int i = 0; i < volumes; ++i) {
+        vec4 hp = vec4(p, 1.0);
+        vec3 l = vec3(dot(u.volumes[i * 5], hp), dot(u.volumes[i * 5 + 1], hp), dot(u.volumes[i * 5 + 2], hp));
+        vec3 a = 0.5 - abs(l);
+        float inside = min(a.x, min(a.y, a.z));
+        if (inside <= 0.0) continue;
+        float w = clamp(inside / max(u.volumes[i * 5 + 4].x, 1e-4), 0.0, 1.0);
+        float dv = u.volumes[i * 5 + 3].w * w;
+        ext += dv;
+        scat += u.volumes[i * 5 + 3].rgb * dv;
+    }
+    if (ext > 0.0 && u.media.x > 0.0) {
+        float k = media_noise(p);
+        ext *= k;
+        scat *= k;
+    }
+    return ext;
+}
+
+// Transmittance of the fog between p and the sun (ADR-0186), marched with `steps` samples over
+// `distance` metres; the slice jitter offsets the samples so temporal filtering smooths them.
+float fog_self_shadow(vec3 p) {
+    int steps = int(u.media.y + 0.5);
+    if (steps <= 0) return 1.0;
+    float ds = u.media.z / float(steps);
+    vec3 to_sun = -u.sun_dir.xyz;
+    float depth = 0.0;
+    vec3 unused;
+    for (int i = 0; i < steps; ++i) depth += media_at(p + to_sun * ((float(i) + u.camera_forward.w) * ds), unused);
+    return exp(-depth * ds * u.media.w);
+}
+
 uint index_of(uvec3 c) {
     uvec3 g = uvec3(u.grid.xyz);
     return (c.z * g.y + c.y) * g.x + c.x;
@@ -139,28 +204,15 @@ void main() {
     vec3 p = world_at(uv, depth, dir);
 
     // Density: exponential height fog (uniform below its base height) plus fog volumes.
-    float ext = u.height_fog.x;
-    if (u.height_fog.y > 0.0) ext *= exp(-u.height_fog.y * max(p.y - u.height_fog.z, 0.0));
-    vec3 scat = u.albedo.rgb * ext;
-    int volumes = int(u.grid.w);
-    for (int i = 0; i < volumes; ++i) {
-        vec4 hp = vec4(p, 1.0);
-        vec3 l = vec3(dot(u.volumes[i * 5], hp), dot(u.volumes[i * 5 + 1], hp), dot(u.volumes[i * 5 + 2], hp));
-        vec3 a = 0.5 - abs(l);
-        float inside = min(a.x, min(a.y, a.z));
-        if (inside <= 0.0) continue;
-        float w = clamp(inside / max(u.volumes[i * 5 + 4].x, 1e-4), 0.0, 1.0);
-        float dv = u.volumes[i * 5 + 3].w * w;
-        ext += dv;
-        scat += u.volumes[i * 5 + 3].rgb * dv;
-    }
+    vec3 scat;
+    float ext = media_at(p, scat);
 
     vec4 result = vec4(0.0);
     if (ext > 0.0) {
         float g_aniso = u.albedo.w;
         vec3 light = u.ambient.rgb; // isotropic phase over a uniform sky gives its radiance
         if (dot(u.sun_color.rgb, vec3(1.0)) > 0.0)
-            light += u.sun_color.rgb * hg_phase(dot(u.sun_dir.xyz, -dir), g_aniso) * sun_shadow(p, depth);
+            light += u.sun_color.rgb * hg_phase(dot(u.sun_dir.xyz, -dir), g_aniso) * sun_shadow(p, depth) * fog_self_shadow(p);
         if (u.height_fog.w > 0.5 && u.ambient.w > 0.0) {
             vec3 cg = u.cluster_grid.xyz;
             vec2 tile = clamp(floor(uv * cg.xy), vec2(0.0), cg.xy - 1.0);

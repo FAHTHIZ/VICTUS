@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Volumetric fog noise patches with wind drift and sun self-shadowing: `volumetric_noise`, `volumetric_noise_scale`, `volumetric_wind`, `volumetric_self_shadow` on the Environment (ADR-0186). ([evidence](docs/STATUS.md#2026-11-21--heterogeneous-volumetric-fog-and-self-shadowing-adr-0186))
 - Modular equipment on both starter characters: boots, gloves, a belt and a backpack with shoulder straps. Each item is its own skinned node (`Orion_Boots`, `Orion_Gloves`, `Orion_Belt`, `Orion_Backpack`) that you can hide in Studio or with `entity:set_visible(false)`, and it carries baked PBR maps (leather, rubber tread, webbing, a metal buckle, ripstop). The build checks clearance against the body in the rest pose (ADR-0185). ([evidence](docs/STATUS.md#2026-11-21--starter-character-equipment-adr-0185))
 - Dithered LOD cross-fade: level changes dissolve over `lod_fade_frames` (default 8) instead of popping (ADR-0184). ([evidence](docs/STATUS.md#2026-11-21--dithered-lod-cross-fade-adr-0184))
 - Screen-space sun contact shadows: `contact_shadow_length` on the Environment adds sharp small-scale sun shadows, on in the 3D templates (ADR-0183). ([evidence](docs/STATUS.md#2026-11-21--sun-contact-shadows-adr-0183))

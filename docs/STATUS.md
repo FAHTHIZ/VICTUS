@@ -2615,3 +2615,15 @@ Next task: volumetric fog noise and self-shadowing (ENGINE_BENCHMARK gap 3).
   - No numerical clearance check in animated poses; the rigid pack and the boot toe box under strong spine or toe bends were judged only from the runtime screenshots.
   - No close-up runtime review of the gear.
 - **Next task:** Studio character workbench and validation panel; posed clearance check over the clip library.
+## 2026-11-21 — Heterogeneous volumetric fog and self-shadowing (ADR-0186)
+
+Follows the LOD cross-fade (ADR-0184). Environments can break volumetric fog and fog volumes into drifting noise patches (`volumetric_noise`, `volumetric_noise_scale`, `volumetric_wind`) and let thick fog shade the sun light behind it (`volumetric_self_shadow`); both default off.
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- `tools/shaders/compile_shaders.py --check`: generated shaders match the sources.
+- `victus_gpu_tests -tc="gpu volumetric fog*"`: 10 cases / 137 assertions pass, including the new self-shadowing case (bottom-left under a dense layer well below 0.6× the open right side when on, equal to it when off, zero steps identical to off) and the noise case (standard deviation 2.8 → 20.9, mean 165 → 154, wind moves the patches, uniform fog bit-identical across time). Saved `fog_self_shadow_{off,on}.png` and `fog_noise_{off,on}.png` checked by eye.
+- `VICTUS_REQUIRE_GPU=1 ctest --preset release -j2`: 42/42 passed (reference scenes and perf budgets unchanged: both features default off).
+
+Not covered: no scene or template enables the new fields yet; fog does not shadow ambient or local lights; cost on real GPUs unmeasured.
+
+Next task: clouds in reflection probes and temporal reprojection of the cloud target (ENGINE_BENCHMARK gap 3, second half).
