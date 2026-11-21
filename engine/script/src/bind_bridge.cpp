@@ -30,14 +30,12 @@ void push_bridge(lua_State* L, int id) {
 
 // Waiting for the helper does not count against the script's time budget.
 struct BudgetPause {
-    ScriptHost::Impl& h;
     ScriptHost::Impl::Bridge& b;
-    double start{now_seconds()};
-    ~BudgetPause() {
-        const double waited = now_seconds() - start;
-        b.wait_seconds += waited;
-        if (h.deadline > 0) h.deadline += waited;
-    }
+    BudgetPauseScope pause;
+    BudgetPause(ScriptHost::Impl& h, ScriptHost::Impl::Bridge& bridge) : b(bridge), pause(h.budget) {}
+    ~BudgetPause() { b.wait_seconds += pause.elapsed(); }
+    BudgetPause(const BudgetPause&) = delete;
+    BudgetPause& operator=(const BudgetPause&) = delete;
 };
 
 

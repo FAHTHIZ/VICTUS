@@ -2245,3 +2245,15 @@ Verified (Release, GCC 15.2, lavapipe, Ubuntu 26.04, 2 vCPU): `victus_script_tes
 Not covered: argument lists and return-table shapes; deprecation warnings.
 
 Next task: confirm CI on this commit; then B3 (GPU device-loss recovery design) or generated Luau type definitions.
+
+## 2026-11-21 — Script budgets charge CPU time (ADR-0156)
+
+Found by: CI run 44858500077, macOS Debug: `victus_sample_dungeon_crawler` failed with `scripts/hero.luau:114: script exceeded its time budget of 250 ms`. The budget compared wall-clock time, so a script thread preempted on a loaded runner (or blocked in a native call) was killed though it used little CPU.
+
+Built: `detail::CallBudget` replaces the call deadline. Budget checks stay on `steady_clock` (about 29 ns per read here); the thread CPU clock (`CLOCK_THREAD_CPUTIME_ID`, `GetThreadTimes` on Windows; about 222 ns per read here) is read once after 1/8 of the budget, and after that only while wall time exceeds the limit. Wall time before that first CPU read is charged in full up to 1/8 of the budget. A call expires when its charged CPU time exceeds the limit. `BudgetPauseScope` (asset loads, nav builds, bridge waits, debugger stops) credits both wall and CPU time. Nested calls still share the outermost budget; debugger `eval` saves and restores it.
+
+Verified (Release, GCC, 2 vCPU): `victus_script_tests` 126/126; new case: 50 ms budget, a native call that blocks 300 ms followed by a 200 000-iteration loop succeeds (the old wall-clock budget failed it); `while true do end` still fails with "time budget" in under 2 s, also right after a blocking call. Full `ctest` under `VICTUS_REQUIRE_GPU=1` before push.
+
+Not covered: CPU clock granularity on Windows (`GetThreadTimes` ticks at about 15.6 ms) was not measured here; Windows/macOS behaviour is verified only by CI.
+
+Next task: confirm CI; then B3 (GPU device-loss recovery design) or generated Luau type definitions.

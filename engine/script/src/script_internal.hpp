@@ -70,6 +70,69 @@ inline double now_seconds() {
     return duration<double>(steady_clock::now().time_since_epoch()).count();
 }
 
+// CPU time of the calling thread in seconds (steady-clock time where the OS has no thread clock).
+// About 10x the cost of now_seconds(); CallBudget reads it only for calls that run long.
+double thread_cpu_seconds();
+
+// The time budget of one top-level script call (HostOptions::call_budget_seconds). It charges
+// the CPU time the script itself uses: time the thread is descheduled (a loaded CI runner, a
+// throttled phone) and engine work inside pauses (asset loads on first use, bridge waits,
+// debugger stops) are not charged, so a busy machine cannot kill a healthy script.
+//
+// Cost: the hot path compares the steady clock only. Wall time since the call began bounds the
+// CPU time it used, so the thread clock is read once when a call passes 1/8 of its budget and
+// again only while its wall time is over the limit. Preemption before that first read is charged
+// up to 1/8 of the budget.
+struct CallBudget {
+    double limit{0};       // seconds; 0 = not armed
+    double start{0};       // steady clock at arm()
+    double wall_credit{0}; // pause time excluded so far (steady clock)
+    double cpu_ref{-1};    // thread CPU clock at the first long-call check; < 0 = not read yet
+    double pre_charge{0};  // seconds charged before cpu_ref
+    double cpu_credit{0};  // thread CPU time inside pauses after cpu_ref
+
+    [[nodiscard]] bool armed() const noexcept { return limit > 0; }
+    void arm(double seconds) noexcept { *this = CallBudget{seconds > 0 ? seconds : 0, now_seconds()}; }
+    // Called from the interrupt callback; true when the call has used up its budget.
+    [[nodiscard]] bool expired() noexcept {
+        if (!armed()) return false;
+        const double elapsed = now_seconds() - start - wall_credit;
+        const double first_read = limit * 0.125;
+        if (cpu_ref < 0) {
+            if (elapsed <= first_read) return false;
+            cpu_ref = thread_cpu_seconds();
+            pre_charge = std::min(elapsed, first_read);
+            return false;
+        }
+        if (elapsed <= limit) return false; // CPU used <= wall time elapsed
+        return pre_charge + (thread_cpu_seconds() - cpu_ref - cpu_credit) > limit;
+    }
+    // Excludes a pause that took `wall` seconds of steady clock and `cpu` seconds of this
+    // thread's CPU time (pass the CPU only when cpu_ref was set when the pause began).
+    void credit(double wall, double cpu) noexcept {
+        if (!armed()) return;
+        wall_credit += wall;
+        if (cpu_ref >= 0) cpu_credit += cpu;
+    }
+};
+
+// Scope whose time is not charged to the running call's budget (see CallBudget).
+class BudgetPauseScope {
+public:
+    explicit BudgetPauseScope(CallBudget& b)
+        : budget_(b), wall0_(now_seconds()), cpu_(b.cpu_ref >= 0), cpu0_(cpu_ ? thread_cpu_seconds() : 0) {}
+    ~BudgetPauseScope() { budget_.credit(now_seconds() - wall0_, cpu_ ? thread_cpu_seconds() - cpu0_ : 0); }
+    [[nodiscard]] double elapsed() const { return now_seconds() - wall0_; }
+    BudgetPauseScope(const BudgetPauseScope&) = delete;
+    BudgetPauseScope& operator=(const BudgetPauseScope&) = delete;
+
+private:
+    CallBudget& budget_;
+    double wall0_;
+    bool cpu_; // the budget had read the CPU clock when the pause began
+    double cpu0_;
+};
+
 } // namespace detail
 
 using namespace detail;  // internal header: the binding TUs use detail:: names unqualified
@@ -99,7 +162,7 @@ struct ScriptHost::Impl {
     // libraries, which are not part of the versioned script API (api.hpp).
     std::vector<std::string> builtin_globals;
     std::size_t heap{0};
-    double deadline{0};
+    CallBudget budget; // of the running top-level call
     std::uint32_t interrupt_counter{0};
     std::unordered_map<std::string, Module> modules;
     std::unordered_map<std::uint64_t, Instance> instances;
@@ -276,9 +339,9 @@ struct ScriptHost::Impl {
     // outer call's budget.
     bool pcall(int nargs, int nresults, std::string_view what) { return pcall_on(L, nargs, nresults, what); }
     bool pcall_on(lua_State* T, int nargs, int nresults, std::string_view what) {
-        const double outer = deadline;
-        if (outer <= 0) {
-            deadline = options.call_budget_seconds > 0 ? now_seconds() + options.call_budget_seconds : 0;
+        const CallBudget outer = budget;
+        if (!outer.armed()) {
+            budget.arm(options.call_budget_seconds);
             interrupt_counter = 0;
         }
         const bool top = dbg.call_depth == 0;
@@ -296,7 +359,7 @@ struct ScriptHost::Impl {
         --dbg.call_depth;
         if (errfunc) lua_remove(T, errfunc);
         if (options.debugger && top) debug_end_call(T);
-        deadline = outer;
+        if (!outer.armed()) budget = CallBudget{}; // nested calls keep sharing (and crediting) the outer budget
         ++counters.calls;
         if (st == LUA_OK) return true;
         const char* msg = lua_tostring(T, -1);
@@ -488,13 +551,11 @@ ScriptHost::Impl& host_of(lua_State* L);
 // clip data) is not charged to the script's time budget: the load is a one-off engine cost, not
 // script work, and charging it kills the calling script on slow machines.
 struct AssetLoadPause {
-    ScriptHost::Impl& h;
     const char* what;
-    double start{now_seconds()};
-    AssetLoadPause(lua_State* L, const char* name) : h(host_of(L)), what(name) {}
+    BudgetPauseScope pause;
+    AssetLoadPause(lua_State* L, const char* name) : what(name), pause(host_of(L).budget) {}
     ~AssetLoadPause() {
-        const double spent = now_seconds() - start;
-        if (h.deadline > 0) h.deadline += spent;
+        const double spent = pause.elapsed();
         if (spent > 0.05) VICTUS_LOG_INFO("script", "entity:{}() spent {:.0f} ms resolving assets (not charged to the script budget)", what, spent * 1000.0);
     }
     AssetLoadPause(const AssetLoadPause&) = delete;

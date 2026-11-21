@@ -1623,3 +1623,12 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 - Alternatives: version only the engine (every release would be "maybe breaking"); a hand-maintained list of symbols (drifts from the bindings, which is the failure this prevents); generated Luau type definitions as the snapshot (also covers signatures, but needs every binding annotated first; can be layered on later); semver with a patch number (patches cannot change the surface, so they carry no information for scripts).
 - Limits: argument lists, argument types and the shape of returned tables are not in the snapshot; they are kept by review and the behaviour tests. Deprecation warnings for symbols scheduled for removal are not implemented yet (there are none; the first major bump needs them).
 - Consequences: adding a binding now also means raising the minor version and writing a snapshot in the same commit. Version 1.0 freezes the API as of this commit.
+
+### ADR-0156: Script call budgets charge thread CPU time
+
+- **Status:** Accepted (2026-11-21).
+- **Context:** The per-call script time budget (ADR-0008) compared wall-clock time against a deadline. On loaded CI runners (macOS Debug) a healthy `fixed_update` was killed when its thread was descheduled; blocking native calls had the same effect. Measuring the thread CPU clock on every interrupt check costs about 222 ns against 29 ns for `steady_clock` on this machine.
+- **Decision:** Keep the cheap wall-clock check as the fast path. Read the thread CPU clock once after 1/8 of the budget and afterwards only while wall time is over the limit; expire the call when charged CPU time (CPU since the first read plus at most 1/8 budget of earlier wall time) exceeds the limit. Pauses (`BudgetPauseScope`) credit wall and CPU time.
+- **Alternatives:** Larger default budget (hides real runaway loops longer and still flakes); pure CPU-time checks (8x more expensive per check); a watchdog thread (cross-thread interrupts, more complexity).
+- **Evidence:** CI run 44858500077 failure; `victus_script_tests` budget case (blocked 300 ms on a 50 ms budget survives, busy loops still stop).
+- **Consequences:** Budgets now mean CPU time; a script blocked in a slow native call is not stopped by the budget (native calls must bound themselves). On Windows the CPU clock is coarse (~15.6 ms ticks), so expiry there may land up to one tick late.

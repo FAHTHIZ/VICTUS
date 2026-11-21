@@ -233,10 +233,10 @@ struct DebugStop::Impl {
             lua_settop(L, top);
             return make_error(ErrorCode::ScriptError, error);
         }
-        const double saved = host->deadline;
-        host->deadline = host->options.call_budget_seconds > 0 ? now_seconds() + host->options.call_budget_seconds : 0;
+        const CallBudget saved = host->budget; // an evaluation gets a budget of its own
+        host->budget.arm(host->options.call_budget_seconds);
         const int st = lua_pcall(L, 0, 1, 0);
-        host->deadline = saved;
+        host->budget = saved;
         if (st != LUA_OK) {
             std::string msg = lua_tostring(L, -1) ? lua_tostring(L, -1) : "error";
             lua_settop(L, top);
@@ -386,7 +386,7 @@ void stop(Impl& h, lua_State* L, StopReason reason, std::string message) {
     if (!d.handler || d.in_handler) return;
     d.in_handler = true;
     ++d.stats.stops;
-    const double paused_at = now_seconds();
+    BudgetPauseScope pause(h.budget); // time spent stopped is not the script's
     DebugStop::Impl s;
     s.host = &h;
     s.L = L;
@@ -416,7 +416,6 @@ void stop(Impl& h, lua_State* L, StopReason reason, std::string message) {
     }
     const int line = s.frames.empty() ? 0 : s.frames.front().line;
     d.in_handler = false;
-    if (h.deadline > 0) h.deadline += now_seconds() - paused_at; // time spent stopped is not the script's
     d.step = action;
     if (action == StepAction::Continue) {
         d.step_thread = nullptr;
