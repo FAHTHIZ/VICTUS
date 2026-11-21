@@ -79,6 +79,8 @@ Items that keep the whole engine from production use, regardless of feature work
 
 ## Process weaknesses
 
+- **Pack v2 (8649027) pushed with a use-after-free in its own test**, red on sanitizers, macOS and
+  Windows. Rule: slices touching `engine/core` run the asan preset's core tests before push.
 - **Commits recorded as verified while CI was red.** From d1f895b to 2096152 (2026-11-20/21) every
   push failed `victus_reference_scenes` in the Linux Release lane while STATUS.md listed only the
   suites that passed locally. Rule from now on: a slice that touches rendering runs
@@ -91,6 +93,7 @@ Newest first. Feature history before this file existed is in [../CHANGELOG.md](.
 
 | Date | Change | Evidence |
 |---|---|---|
+| 2026-11-21 | Fixed red CI after ADR-0154: `pack_tests.cpp` read a `PackEntry*` from a destroyed temporary `Pack` (ASan heap-use-after-free; random codec value on macOS/Windows). Test now keeps the pack alive | `victus_core_tests` 75/75 under ASan+UBSan locally |
 | 2026-11-21 | `.vpak` v2 (ADR-0154): per-entry zstd (3D template pack 6.50 MB to 2.43 MB), BLAKE2b-256 digests, Ed25519 signatures enforced by the player, `victus pack keygen/verify/list` | STATUS.md 2026-11-21 |
 | 2026-11-21 | FP16 PBR keeps Lambert and environment BRDF in FP32 (ADR-0153): FP16-vs-FP32 error halved on all four reference scenes, fixing the red CI reference gate | STATUS.md 2026-11-21 |
 | 2026-11-21 | Created this tracker | — |
