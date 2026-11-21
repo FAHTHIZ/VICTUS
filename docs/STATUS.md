@@ -2680,3 +2680,9 @@ Verified (Release, clang 21, 2 vCPU, lavapipe):
 Not covered: running imports cannot be interrupted; the viewport still cooks assets it needs immediately on the main thread; import throughput on large real projects is not measured.
 
 Next task: sequencer curve editor.
+
+## 2026-11-22 — LOD cross-fade test: compare against both levels
+
+CI run 44942634058 (4031b8f) failed `gpu lods: cross-fade dissolves a level change` on Ubuntu and macOS Release: 56 pixels > 40 differed from the solid coarse level. There the switch distance is closer (the coarsest level is already drawn at distance 1), so the silhouettes of the two levels differ by more pixels than the margin. A dithered pixel may legitimately show either level, so the test now also renders the finer level forced at the same distance and counts only pixels that match neither (holes or artefacts), still at most 40.
+
+Verified: `victus_gpu_tests -tc="gpu lods*"`: 7 cases / 456 assertions pass; 0-2 pixels match neither level per fade frame, also with the search started closer (0.96) to mimic the CI geometry.

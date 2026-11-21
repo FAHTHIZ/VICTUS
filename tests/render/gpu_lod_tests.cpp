@@ -694,6 +694,15 @@ TEST_CASE("gpu lods: cross-fade dissolves a level change over lod_fade_frames wi
     const std::uint64_t lod1 = solid_far.stats.triangles;
     REQUIRE(lod1 < lod0);
     INFO("threshold " << lo << ", LOD0 " << lod0 << " tris, LOD1 " << lod1);
+    // The finer level forced at the same distance: a dithered pixel may show either level, so
+    // only pixels matching neither are holes or artefacts.
+    RenderSettings fine = snap;
+    for (fine.force_lod = 0; fine.force_lod < 4 && at(fine, far_z).triangles != lod0; ++fine.force_lod) {
+    }
+    r.reset_history();
+    const Shot solid_fine = shoot(r, fine, {0, 0, far_z}, tracked, "lod_fade_solid_fine");
+    INFO("fine view " << solid_fine.stats.triangles << " tris");
+    REQUIRE(solid_fine.stats.triangles == lod0);
 
     // Without cross-fade the level snaps in one frame.
     r.reset_history();
@@ -710,14 +719,19 @@ TEST_CASE("gpu lods: cross-fade dissolves a level change over lod_fade_frames wi
         CHECK(s.stats.lod_fading == 1);
         CHECK(s.stats.triangles == lod0 + lod1); // both levels drawn
         CHECK(s.stats.prepass_draws == 0);       // dithered draws take their depth from the main pass
-        // The two levels cover complementary pixels: the image matches the solid coarse level
-        // (no holes showing the background), up to the small shape difference between levels.
+        // The two levels cover complementary pixels: every pixel matches one of the solid levels
+        // (no holes showing the background). Near the switch distance the sphere fills much of
+        // the view, so the silhouettes of the two levels differ by more pixels than a margin.
         std::size_t far_off = 0;
         for (std::size_t i = 0; i < s.px.size(); i += 4) {
-            int d = 0;
-            for (std::size_t c = 0; c < 3; ++c) d += std::abs(int(s.px[i + c]) - int(solid_far.px[i + c]));
-            if (d > 90) ++far_off;
+            int d_coarse = 0, d_fine = 0;
+            for (std::size_t c = 0; c < 3; ++c) {
+                d_coarse += std::abs(int(s.px[i + c]) - int(solid_far.px[i + c]));
+                d_fine += std::abs(int(s.px[i + c]) - int(solid_fine.px[i + c]));
+            }
+            if (std::min(d_coarse, d_fine) > 90) ++far_off;
         }
+        MESSAGE("cross-fade frame " << frame << ": " << far_off << " pixels match neither level");
         CHECK(far_off <= 40);
     }
     const Shot done = shoot(r, fade, {0, 0, far_z}, tracked);
