@@ -41,7 +41,9 @@ add_library(victus_editor_core STATIC
     src/vehicle_tools.cpp
     src/safe_mode.cpp
     src/asset_store.cpp
-    src/asset_refs.cpp)
+    src/asset_refs.cpp
+    src/bt_document.cpp
+    src/bt_editor.cpp)
 add_library(VICTUS::EditorCore ALIAS victus_editor_core)
 target_include_directories(victus_editor_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(victus_editor_core PUBLIC VICTUS::Scene VICTUS::Project VICTUS::Runtime VICTUS::Ui VICTUS::Gameplay VICTUS::Player VICTUS::Script VICTUS::Physics VICTUS::Audio VICTUS::Net VICTUS::Tilemap VICTUS::Library)

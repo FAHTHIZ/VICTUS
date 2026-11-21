@@ -150,22 +150,8 @@ constexpr OpName kOps[] = {
     {CompareOp::False, "false"},
 };
 
-enum class Arity : std::uint8_t { Leaf, One, Many };
-Arity arity(NodeType t) {
-    switch (t) {
-    case NodeType::Sequence:
-    case NodeType::Selector:
-    case NodeType::Parallel: return Arity::Many;
-    case NodeType::Inverter:
-    case NodeType::Succeeder:
-    case NodeType::Failer:
-    case NodeType::Repeat:
-    case NodeType::Cooldown:
-    case NodeType::Timeout:
-    case NodeType::Guard: return Arity::One;
-    default: return Arity::Leaf;
-    }
-}
+using Arity = NodeArity;
+Arity arity(NodeType t) { return node_arity(t); }
 
 float finite_nonneg(const json::Value* v, float fallback) {
     if (!v || !v->is_number()) return fallback;
@@ -244,6 +230,104 @@ struct Parser {
     }
 };
 } // namespace
+
+NodeArity node_arity(NodeType t) noexcept {
+    switch (t) {
+    case NodeType::Sequence:
+    case NodeType::Selector:
+    case NodeType::Parallel: return NodeArity::Many;
+    case NodeType::Inverter:
+    case NodeType::Succeeder:
+    case NodeType::Failer:
+    case NodeType::Repeat:
+    case NodeType::Cooldown:
+    case NodeType::Timeout:
+    case NodeType::Guard: return NodeArity::One;
+    default: return NodeArity::Leaf;
+    }
+}
+
+std::optional<NodeType> node_type_from_name(std::string_view name) noexcept {
+    for (const auto& n : kTypes)
+        if (n.name == name) return n.type;
+    return std::nullopt;
+}
+
+std::string_view compare_op_name(CompareOp op) noexcept {
+    for (const auto& o : kOps)
+        if (o.op == op) return o.name;
+    return "?";
+}
+
+json::Value value_to_json(const Value& v) {
+    struct Visitor {
+        json::Value operator()(std::monostate) const { return {}; }
+        json::Value operator()(bool b) const { return b; }
+        json::Value operator()(double d) const { return d; }
+        json::Value operator()(math::Vec3 p) const { return json::Array{json::Value(p.x), json::Value(p.y), json::Value(p.z)}; }
+        json::Value operator()(Entity) const { return {}; }
+        json::Value operator()(const std::string& s) const { return s; }
+    };
+    return std::visit(Visitor{}, v);
+}
+
+namespace {
+Result<json::Value> node_to_json(const std::vector<Node>& nodes, std::uint32_t index, std::vector<std::uint8_t>& seen, std::uint32_t depth) {
+    if (index >= nodes.size()) return make_error(ErrorCode::InvalidArgument, std::format("child index {} is out of range", index));
+    if (seen[index]) return make_error(ErrorCode::InvalidArgument, std::format("node {} is used twice (or in a cycle)", index));
+    if (depth > 120) return make_error(ErrorCode::LimitExceeded, "the tree is more than 120 levels deep");
+    seen[index] = 1;
+    const Node& n = nodes[index];
+    const Node def;
+    json::Value o = json::Value::object();
+    o.set("type", std::string(node_type_name(n.type)));
+    if (!n.name.empty()) o.set("name", n.name);
+    if (!n.key.empty()) o.set("key", n.key);
+    const bool compares = n.type == NodeType::Check || n.type == NodeType::Guard;
+    if (compares) o.set("op", std::string(compare_op_name(n.op)));
+    if (!std::holds_alternative<std::monostate>(n.value)) {
+        if (json::Value v = value_to_json(n.value); !v.is_null()) o.set("value", std::move(v));
+    }
+    if (n.type == NodeType::Action && !n.action.empty()) o.set("action", n.action);
+    if (n.type == NodeType::Log && !n.action.empty()) o.set("message", n.action);
+    if (n.seconds != def.seconds) o.set("seconds", n.seconds);
+    if (n.deviation != def.deviation) o.set("deviation", n.deviation);
+    if (n.count != def.count) o.set("count", n.count);
+    if (n.threshold != def.threshold) o.set("threshold", n.threshold);
+    if (n.reactive) o.set("reactive", true);
+    if (n.type == NodeType::MoveTo) {
+        if (n.acceptance != def.acceptance) o.set("acceptance", n.acceptance);
+        if (n.speed != def.speed) o.set("speed", n.speed);
+    }
+    if (n.type == NodeType::RandomPoint && n.radius != def.radius) o.set("radius", n.radius);
+    if (!n.children.empty()) {
+        json::Value kids = json::Value::array();
+        for (const std::uint32_t c : n.children) {
+            auto k = node_to_json(nodes, c, seen, depth + 1);
+            if (!k) return k;
+            kids.push(std::move(*k));
+        }
+        o.set("children", std::move(kids));
+    }
+    return o;
+}
+} // namespace
+
+Result<json::Value> tree_to_json(const std::vector<Node>& nodes, const Blackboard& defaults) {
+    if (nodes.empty()) return make_error(ErrorCode::InvalidArgument, "the tree has no nodes");
+    std::vector<std::uint8_t> seen(nodes.size(), 0);
+    auto root = node_to_json(nodes, 0, seen, 0);
+    if (!root) return root;
+    json::Value doc = json::Value::object();
+    doc.set("root", std::move(*root));
+    if (!defaults.entries().empty()) {
+        json::Value bb = json::Value::object();
+        for (const auto& [k, v] : defaults.entries())
+            if (json::Value j = value_to_json(v); !j.is_null()) bb.set(k, std::move(j));
+        doc.set("blackboard", std::move(bb));
+    }
+    return doc;
+}
 
 std::string_view node_type_name(NodeType t) noexcept {
     for (const auto& n : kTypes)

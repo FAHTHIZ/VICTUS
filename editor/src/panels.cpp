@@ -468,6 +468,7 @@ void Editor::draw_workspace(float) {
     draw_history();
     draw_project_settings();
     draw_asset_store();
+    draw_behavior_tree_editor();
     draw_asset_dialogs();
     ImGui::EndDisabled();
     draw_script_debugger();
@@ -574,6 +575,9 @@ void Editor::draw_menu_bar() {
             }
         }
         ImGui::MenuItem("Graph Editor", nullptr, &show_graph_editor_);
+        if (ImGui::MenuItem("New Behaviour Tree", nullptr, false, db_ != nullptr)) {
+            if (auto id = create_behavior_tree(); !id) notify("cannot create behaviour tree: " + id.error().message, true);
+        }
         ImGui::MenuItem("Sequencer", nullptr, &show_sequencer_);
         if (ImGui::MenuItem("Copy Assets Folder Path") && platform_) platform_->set_clipboard(project_->assets_dir().string());
         ImGui::EndMenu();
@@ -1872,6 +1876,8 @@ void Editor::draw_asset_item(const assets::AssetRecord& r) {
         else if ((r.kind == assets::AssetKind::Script && r.path.ends_with(".vgraph")) ||
                  (r.kind == assets::AssetKind::Shader && r.path.ends_with(".vmatgraph"))) {
             if (auto st = open_graph_editor(r.uuid); !st.ok()) notify(st.error().message, true);
+        } else if (r.path.ends_with(".vbt")) {
+            if (auto st = open_behavior_tree(r.uuid); !st.ok()) notify(st.error().message, true);
         } else if (r.kind == assets::AssetKind::Script) {
             const Entity e = selected();
             if (!e.is_null()) {

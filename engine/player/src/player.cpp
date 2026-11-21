@@ -94,6 +94,11 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     if (!path) return std::move(path).error();
     VICTUS_TRY_STATUS(scene.load_file(*path));
 
+    // A mistyped --quality is reported before any window or GPU device exists: failing after the
+    // device is up raced the Vulkan driver's worker threads at exit (a crash instead of the error).
+    if (!o.quality.empty() && o.quality != "auto" && !render::parse_quality_tier(o.quality))
+        return make_error(ErrorCode::InvalidArgument, "unknown quality tier '" + o.quality + "'");
+
     auto plat = platform::Platform::create({});
     if (!plat) return std::move(plat).error();
     platform::WindowDesc wd;

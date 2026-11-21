@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
         .option("asset-search", "type this into the Assets search after opening")
         .option("asset-grid", "show the Assets panel as a thumbnail grid with tiles of N pixels (0 = list)", "0")
         .option("show", "open a window after opening: input-actions, network, profiler, problems, export, report-problem, about, add-menu, add-component, "
-                        "console, crash-notice, command-palette, animation, getting-started, help, history, project-settings, asset-store, "
+                        "console, crash-notice, command-palette, animation, getting-started, help, history, project-settings, asset-store, a .vbt asset path, "
                         "animation-preview (selected entity), material-editor (selected entity's material)")
         .option("lesson", "start a lesson after opening: 2d or 3d (Getting Started > lessons)")
         .option("lesson-steps", "with --lesson: do this many steps with their buttons first", "0")
@@ -239,6 +239,9 @@ int main(int argc, char** argv) {
             ed.show_panel(editor::Panel::History);
         else if (args.get("show") == "asset-store")
             ed.show_panel(editor::Panel::AssetStore);
+        else if (args.get("show").ends_with(".vbt")) {
+            if (auto st = ed.open_behavior_tree_path(args.get("show")); !st.ok()) std::fprintf(stderr, "%s\n", st.error().message.c_str());
+        }
         else if (args.get("show") == "project-settings")
             ed.show_panel(editor::Panel::ProjectSettings);
         else if (args.get("show") == "animation-preview") {

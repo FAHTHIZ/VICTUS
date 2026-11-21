@@ -159,6 +159,9 @@ std::vector<EditorCommand> Editor::commands() {
         else if (auto st = open_graph_editor(*id); !st.ok())
             notify(st.error().message, true);
     });
+    add("Assets: New Behaviour Tree", {}, has_db, [this] {
+        if (auto id = create_behavior_tree(); !id) notify("cannot create behaviour tree: " + id.error().message, true);
+    });
     add("Assets: New Material Graph", {}, has_db, [this] {
         if (auto id = create_material_graph(); !id)
             notify("cannot create material graph: " + id.error().message, true);

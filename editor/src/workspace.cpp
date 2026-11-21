@@ -64,6 +64,8 @@ const char* window_id(Panel p) noexcept {
         return "Script Debugger";
     case Panel::AssetStore:
         return "Asset Store";
+    case Panel::BehaviorTreeEditor:
+        return "###BehaviourTree";
     case Panel::Count:
         break;
     }
@@ -116,6 +118,8 @@ const char* panel_hint(Panel p) noexcept {
         return "Breakpoints, stepping, call stack and variables of running scripts";
     case Panel::AssetStore:
         return "Free models, materials, skies and sounds from Poly Haven, ambientCG, Smithsonian, Sketchfab and more, with their licences";
+    case Panel::BehaviorTreeEditor:
+        return "Build AI decisions as a tree of nodes, and watch them run during Play";
     case Panel::Count:
         break;
     }
@@ -148,6 +152,8 @@ const char* panel_title(Panel p) noexcept {
     switch (p) {
     case Panel::GraphEditor:
         return "Graph Editor";
+    case Panel::BehaviorTreeEditor:
+        return "Behaviour Tree Editor";
     case Panel::Problems:
         return "Problems";
     default:
@@ -209,6 +215,8 @@ bool* Editor::panel_flag(Panel p) noexcept {
         return &show_script_debugger_;
     case Panel::AssetStore:
         return &show_asset_store_;
+    case Panel::BehaviorTreeEditor:
+        return &show_bt_editor_;
     default:
         return nullptr;
     }
@@ -359,7 +367,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
                   Panel::Network, Panel::ScriptDebugger},
                  bottom);
         dock_all({Panel::ProjectSettings, Panel::History}, right);
-        dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore}, center);
+        dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore, Panel::BehaviorTreeEditor}, center);
         break;
     }
     case Layout::LevelDesign: {
@@ -372,7 +380,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
             {Panel::Inspector, Panel::TerrainTools, Panel::TilePalette, Panel::MaterialEditor, Panel::InputActions},
             right);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
-        dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore}, center);
+        dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore, Panel::BehaviorTreeEditor}, center);
         dock_all({Panel::Animation, Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger, Panel::ScriptDebugger},
                  left_bottom);
         break;
@@ -389,7 +397,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::Animation, Panel::Assets, Panel::Console, Panel::Problems}, bottom);
         dock_all({Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger, Panel::ScriptDebugger}, bottom_right);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
-        dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore}, center);
+        dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore, Panel::BehaviorTreeEditor}, center);
         break;
     }
     case Layout::Scripting: {
@@ -406,7 +414,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
                   Panel::Network, Panel::AiDebugger},
                  bottom);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
-        dock_all({Panel::GraphEditor, Panel::Viewport, Panel::AssetStore}, center);
+        dock_all({Panel::GraphEditor, Panel::Viewport, Panel::AssetStore, Panel::BehaviorTreeEditor}, center);
         break;
     }
     case Layout::Debugging: {
@@ -421,7 +429,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::ScriptDebugger, Panel::Console, Panel::Problems, Panel::Assets, Panel::Animation, Panel::Sequencer}, bottom);
         dock(Panel::Profiler, bottom_right);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
-        dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore}, center);
+        dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore, Panel::BehaviorTreeEditor}, center);
         break;
     }
     }
@@ -446,7 +454,7 @@ void Editor::draw_window_menu() {
     item(Panel::AssetStore);
     ImGui::Separator();
     ImGui::TextDisabled("Tools");
-    for (Panel p : {Panel::Animation, Panel::Sequencer, Panel::GraphEditor, Panel::MaterialEditor, Panel::TilePalette,
+    for (Panel p : {Panel::Animation, Panel::Sequencer, Panel::GraphEditor, Panel::BehaviorTreeEditor, Panel::MaterialEditor, Panel::TilePalette,
                     Panel::TerrainTools, Panel::InputActions, Panel::ProjectSettings, Panel::History})
         item(p);
     ImGui::Separator();
