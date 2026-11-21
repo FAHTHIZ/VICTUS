@@ -32,7 +32,7 @@ In the Inspector, **Make it a...** turns any selected object into a Player, Enem
 <table>
 <tr>
 <td width="50%"><img src="docs/images/nocode_platformer.png" alt="The No-Code Platformer template running: player, slime, heart, coins, spikes and a HUD"><br><sub>No-Code Platformer: built only from Behaviours, with no scripts</sub></td>
-<td width="50%"><img src="docs/images/nocode_3d.jpg" alt="The No-Code 3D Adventure running: Orion, the VICTUS android mannequin, on grassy islands over glowing lava, with coins, a guard and a HUD"><br><sub>No-Code 3D Adventure: islands, lava, a guard and a turret, still with no scripts</sub></td>
+<td width="50%"><img src="docs/images/nocode_3d.jpg" alt="The No-Code 3D Adventure running: Orion (pre-ADR-0179 mannequin build) on grassy islands over glowing lava, with coins, a guard and a HUD"><br><sub>No-Code 3D Adventure: islands, lava, a guard and a turret, still with no scripts</sub></td>
 </tr>
 <tr>
 <td width="50%"><img src="docs/images/template_3d.jpg" alt="The 3D template: the Orion and Nova starter characters, a fire, physics crates and a controls panel"><br><sub>3D template: character controller, physics, particles, prefabs and save games</sub></td>
@@ -74,7 +74,7 @@ Every behaviour sends events (`collected`, `died`, `bounced`, `triggered`, `talk
 | No-Code Platformer | `victus new MyGame --template nocode` | A complete 2D level made only from Behaviours |
 | No-Code 3D Adventure | `victus new MyGame --template nocode3d` | A 3D island level with an animated character, made only from Behaviours |
 | 2D platformer | `victus new MyGame --template 2d` | Box2D platformer in Luau: one-way ledge, swinging lantern, coins, music |
-| 3D | `victus new MyGame --template 3d` | Third-person Orion mannequin (or Nova), physics crates, fire, prefabs, save and load |
+| 3D | `victus new MyGame --template 3d` | Third-person Orion (or Nova): human starter characters with a 60-joint rig, facial blend shapes and 41 clips, physics crates, fire, prefabs, save and load |
 | Simulation | `victus new MyGame --template simulation` | 576 entities animated by native systems, with a scripted orbiting camera |
 | Multiplayer | `victus new MyGame --template multiplayer` | Networked coin arena: host with `victus serve`, join with `victus run --connect` |
 

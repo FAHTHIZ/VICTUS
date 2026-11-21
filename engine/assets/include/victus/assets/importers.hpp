@@ -38,6 +38,11 @@ struct ModelImportSettings {
     bool import_textures{true};
     std::uint32_t max_texture_size{4096};
     std::string texture_compression{"none"}; // as TextureImportSettings::compression
+    // With texture_compression on: RGBA8 copies of mip levels larger than this many pixels are
+    // not kept (0 keeps them all). Devices without the compressed formats decode those levels
+    // on the CPU at load (assets::rgba8_level), so nothing stops rendering; the cooked file and
+    // the cache shrink by about two thirds.
+    std::uint32_t rgba8_max_size{0};
     // Vertex cache / overdraw / fetch order optimisation and automatic LODs (render::generate_lods).
     bool optimize_meshes{true};
     std::uint32_t lods{3};      // coarser levels per mesh (0..7); needs optimize_meshes
@@ -70,6 +75,9 @@ inline constexpr std::uint32_t kModelImporterVersion = 8; // v8: node lights and
 // keep only their RGBA8 preview uncompressed (their float data is what lighting uses).
 [[nodiscard]] Result<void> compress_cooked_texture(CookedTexture& texture, std::string_view setting,
                                                    CompressionEffort effort = CompressionEffort::Fast);
+// Clears the RGBA8 pixels of levels larger than `max_size` when a compressed variant holds them
+// (0, HDR textures and textures without a full variant are left alone).
+void strip_rgba8_levels(CookedTexture& texture, std::uint32_t max_size);
 
 // Imports .gltf (with external or data-URI buffers/images) and .glb. External files must
 // resolve inside `sandbox_root`; remote URIs and absolute paths are rejected.

@@ -260,6 +260,7 @@ private:
             CookedTexture ct = cook_texture(*img, std::move(name), srgb, true, settings_.max_texture_size, alpha_cutoff);
             if (auto r = compress_cooked_texture(ct, settings_.texture_compression); !r)
                 warn(std::format("{} texture '{}': {}", slot, ct.name, r.error().message));
+            strip_rgba8_levels(ct, settings_.rgba8_max_size);
             index = static_cast<std::int32_t>(model_.textures.size());
             model_.textures.push_back(std::move(ct));
         }

@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cstdlib>
 #include <format>
 #include <fstream>
 #include <set>
@@ -70,6 +72,92 @@ Result<std::uint64_t> hash_file(const fs::Path& p) {
     if (!bytes) return std::move(bytes).error();
     return fnv1a64(*bytes);
 }
+
+// ---- shared cooked-data cache (ADR-0180) --------------------------------------------------------
+
+fs::Path shared_entry(const fs::Path& dir, const AssetRecord& r, std::uint64_t key) {
+    return dir / std::format("{}-v{}-{:016x}.vcooked", r.importer, kCookedFormatVersion, key);
+}
+
+std::uint64_t shared_cache_limit() {
+    if (const char* e = std::getenv("VICTUS_SHARED_CACHE_MB"); e && *e) {
+        char* end = nullptr;
+        const unsigned long long mb = std::strtoull(e, &end, 10);
+        if (end && *end == '\0') return static_cast<std::uint64_t>(mb) << 20;
+    }
+    return std::uint64_t{8192} << 20;
+}
+
+// Links `from` to `to` (replacing it) through a temporary name, so readers never see a partial
+// file; copies when the two paths are on different file systems.
+bool link_or_copy(const fs::Path& from, const fs::Path& to) {
+    std::error_code ec;
+    std::filesystem::create_directories(to.parent_path(), ec);
+    fs::Path tmp = to;
+    tmp += std::format(".link{:08x}", static_cast<std::uint32_t>(fnv1a64(to.string()) ^
+                                                                   static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count())));
+    std::filesystem::create_hard_link(from, tmp, ec);
+    if (ec) {
+        ec.clear();
+        std::filesystem::copy_file(from, tmp, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) return false;
+    }
+    std::filesystem::rename(tmp, to, ec);
+    if (ec) {
+        std::filesystem::remove(tmp, ec);
+        return false;
+    }
+    return true;
+}
+
+// Least recently used entries go first once the cache is over its size limit.
+void trim_shared_cache(const fs::Path& dir) {
+    const std::uint64_t limit = shared_cache_limit();
+    struct Entry {
+        fs::Path path;
+        std::uint64_t size;
+        std::filesystem::file_time_type time;
+    };
+    std::vector<Entry> entries;
+    std::uint64_t total = 0;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+        if (!e.is_regular_file(ec) || e.path().extension() != ".vcooked") continue;
+        const auto size = e.file_size(ec);
+        if (ec) continue;
+        entries.push_back({e.path(), size, e.last_write_time(ec)});
+        total += size;
+    }
+    if (total <= limit) return;
+    std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.time < b.time; });
+    for (const Entry& e : entries) {
+        if (total <= limit) break;
+        if (std::filesystem::remove(e.path, ec)) total -= e.size;
+    }
+}
+
+} // namespace
+
+fs::Path shared_cooked_cache_dir() {
+    if (const char* e = std::getenv("VICTUS_SHARED_CACHE")) {
+        const std::string_view v(e);
+        if (v == "off" || v == "0" || v == "none") return {};
+        if (!v.empty()) return fs::Path(v);
+    }
+#if defined(_WIN32)
+    if (const char* local = std::getenv("LOCALAPPDATA"); local && *local) return fs::Path(local) / "VICTUS" / "Cache" / "cooked";
+#elif defined(__APPLE__)
+    if (const char* home = std::getenv("HOME"); home && *home) return fs::Path(home) / "Library" / "Caches" / "VICTUS" / "cooked";
+#elif defined(__ANDROID__)
+    return {};
+#else
+    if (const char* xdg = std::getenv("XDG_CACHE_HOME"); xdg && *xdg) return fs::Path(xdg) / "victus" / "cooked";
+    if (const char* home = std::getenv("HOME"); home && *home) return fs::Path(home) / ".cache" / "victus" / "cooked";
+#endif
+    return {};
+}
+
+namespace {
 
 } // namespace
 
@@ -291,9 +379,25 @@ Result<bool> AssetDatabase::import(const Uuid& uuid, std::vector<std::string>* m
 
     auto key = source_key(r);
     if (!key) return std::move(key).error();
+    const fs::Path shared_dir = shared_cooked_cache_dir();
+    const fs::Path shared = shared_dir.empty() ? fs::Path{} : shared_entry(shared_dir, r, *key);
+    if (!shared.empty()) {
+        // An entry only counts when its header carries the same key and no dependency files
+        // (it was written that way; this guards against foreign or truncated files).
+        if (auto prefix = read_prefix(shared, 1u << 20)) {
+            auto header = read_header(*prefix);
+            if (header && header->key == *key && header->dependencies.empty() && link_or_copy(shared, cooked_path(uuid))) {
+                std::error_code ec;
+                std::filesystem::last_write_time(shared, std::filesystem::file_time_type::clock::now(), ec);
+                ++shared_hits_;
+                return true;
+            }
+        }
+    }
     CookedHeader header;
     header.key = *key;
     std::vector<std::uint8_t> bytes;
+    bool clean = true; // no importer warnings: a later cache hit would not repeat them
     const fs::Path src = source_path(r);
     if (r.importer == "texture") {
         auto tex = import_texture(src, TextureImportSettings::from_json(r.settings));
@@ -306,6 +410,7 @@ Result<bool> AssetDatabase::import(const Uuid& uuid, std::vector<std::string>* m
         const ModelImportSettings settings = ModelImportSettings::from_json(r.settings);
         auto model = ext == ".fbx" || ext == ".obj" ? import_fbx(src, settings, assets_dir(), &result)
                                                     : import_gltf(src, settings, assets_dir(), &result);
+        clean = result.warnings.empty();
         if (messages)
             for (const auto& w : result.warnings) messages->push_back(std::format("{}: warning: {}", r.path, w));
         if (!model) return make_error(model.error().code, std::format("{}: {}", r.path, model.error().message));
@@ -320,6 +425,11 @@ Result<bool> AssetDatabase::import(const Uuid& uuid, std::vector<std::string>* m
         bytes = serialize(header, *model);
     }
     if (auto st = fs::write_atomic(cooked_path(uuid), bytes); !st.ok()) return std::move(st).error();
+    // Share clean, self-contained results worth sharing (small ones cook faster than they link).
+    if (!shared.empty() && clean && header.dependencies.empty() && bytes.size() >= (std::size_t{256} << 10)) {
+        std::error_code ec;
+        if (!std::filesystem::exists(shared, ec) && link_or_copy(cooked_path(uuid), shared)) trim_shared_cache(shared_dir);
+    }
     return true;
 }
 

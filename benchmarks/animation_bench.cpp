@@ -4,7 +4,7 @@
 // root a translation channel, so each update samples 33 channels and writes 32 transforms per
 // character. "_crossfade" measures the same with every character mid-way through a cross-fade
 // (two clips sampled and blended). "_1thread" runs serially, "_jobs" through parallel_for.
-// "animation/character_*" runs the real Orion starter character (21 joints, 7 clips) under its
+// "animation/character_*" runs the real Orion starter character (60 joints, 41 clips) under its
 // shared locomotion controller, walking-to-running blend (two clips sampled per character).
 #include "bench_harness.hpp"
 

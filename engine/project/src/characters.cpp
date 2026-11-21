@@ -13,20 +13,20 @@
 namespace victus::project {
 
 namespace embedded {
-extern const std::uint8_t kOrionGlb[];
-extern const std::size_t kOrionGlbSize;
-extern const std::uint8_t kNovaGlb[];
-extern const std::size_t kNovaGlbSize;
+std::span<const std::uint8_t> kOrionGlb();
+std::span<const std::uint8_t> kNovaGlb();
 } // namespace embedded
 
 const std::vector<StarterCharacter>& starter_characters() {
     static const std::vector<StarterCharacter> list = {
         {"orion", "Orion",
-         "Masculine-presenting VICTUS mannequin: athletic build, V-cut chest cuirass, cropped sculpted hair, cyan mark.",
-         "assets/models/characters/victus_orion.glb", "8e84eb12-63c8-4aed-aae2-517c038d3071"},
+         "Masculine-presenting human pilot: athletic 1.77 m build, cropped hair and stubble, graphite flight suit with "
+         "cyan piping; 60-joint skeleton, 44 facial blend shapes, full PBR texture set.",
+         "assets/models/characters/victus_orion.glb", "8e84eb12-63c8-4aed-aae2-517c038d3071", 1.7697f},
         {"nova", "Nova",
-         "Feminine-presenting VICTUS mannequin: slender build, tapered cuirass, swept sculpted hair, amber mark.",
-         "assets/models/characters/victus_nova.glb", "44037d0d-1627-44a8-a225-633971f196b2"},
+         "Feminine-presenting human pilot: slender 1.68 m build, hair in a low bun, freckles, ivory flight suit with "
+         "amber piping; 60-joint skeleton, 44 facial blend shapes, full PBR texture set.",
+         "assets/models/characters/victus_nova.glb", "44037d0d-1627-44a8-a225-633971f196b2", 1.6827f},
     };
     return list;
 }
@@ -47,8 +47,8 @@ std::size_t index_of(const StarterCharacter& c) {
 } // namespace
 
 std::span<const std::uint8_t> starter_character_glb(const StarterCharacter& c) {
-    if (index_of(c) == 0) return {embedded::kOrionGlb, embedded::kOrionGlbSize};
-    return {embedded::kNovaGlb, embedded::kNovaGlbSize};
+    if (index_of(c) == 0) return embedded::kOrionGlb();
+    return embedded::kNovaGlb();
 }
 
 std::string starter_character_meta(const StarterCharacter& c) {
@@ -56,6 +56,15 @@ std::string starter_character_meta(const StarterCharacter& c) {
     m.set("victus_meta", 1);
     m.set("uuid", std::string(c.uuid));
     m.set("importer", "gltf");
+    // Block-compressed textures (BC7 for desktop, ASTC 4x4 for mobile): each character carries
+    // sixteen PBR maps up to 2048 px, about 245 MB as RGBA8 mip chains on the GPU, a quarter of
+    // that compressed. RGBA8 copies are kept only up to 256 px (a device without BC or ASTC
+    // decodes the larger levels at load). The cooked result is shared between projects through
+    // the machine-wide cooked cache (ADR-0180), so only the first project pays for encoding.
+    json::Value settings = json::Value::object();
+    settings.set("texture_compression", "auto");
+    settings.set("rgba8_max_size", 256);
+    m.set("settings", std::move(settings));
     return json::stringify(m, true) + "\n";
 }
 

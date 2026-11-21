@@ -101,7 +101,9 @@ TEST_CASE("gpu character lods: Orion silhouette over poses and distances") {
             const float d = distances[di];
             char name[64];
             std::snprintf(name, sizeof name, "charlod_%s_%02d", p.clip, static_cast<int>(d));
-            const Frame full = render_pose(p.clip, p.t, d, false, nullptr);
+            char full_name[72];
+            std::snprintf(full_name, sizeof full_name, "%s_full", name);
+            const Frame full = render_pose(p.clip, p.t, d, false, full_name);
             const Frame lod = render_pose(p.clip, p.t, d, true, name);
             INFO(std::string(p.clip) << " at " << d << " m: " << lod.stats.lod_draws << " LOD draws, " << lod.stats.triangles << "/"
                         << full.stats.triangles << " triangles");
@@ -141,7 +143,11 @@ TEST_CASE("gpu character lods: Orion silhouette over poses and distances") {
             // anatomical silhouette is slimmer than the old boxy robot's: about 290 px side-on at 20 m.
             CHECK(covered > 250);
             CHECK(static_cast<double>(changed) <= 0.06 * static_cast<double>(covered)); // edge pixels only
-            CHECK(unmatched <= 2 + covered / 500);
+            // Textured characters (ADR-0174) lose a few more isolated pixels than flat-shaded ones:
+            // the emissive piping and suit seams are high-contrast texture edges, and a simplified
+            // triangle interpolates their UVs slightly differently. Measured worst case 0.31% of
+            // the covered pixels (Interact at 2.5 m), all single pixels along piping and outlines.
+            CHECK(unmatched <= 4 + covered / 250);
             std::printf("[charlod] %s %.1f m: lod_draws %u tris %llu/%llu covered %zu changed %zu unmatched %zu\n", p.clip, d,
                         lod.stats.lod_draws, static_cast<unsigned long long>(lod.stats.triangles),
                         static_cast<unsigned long long>(full.stats.triangles), covered, changed, unmatched);

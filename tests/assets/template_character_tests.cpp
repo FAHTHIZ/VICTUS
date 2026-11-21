@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-// The Orion and Nova starter characters (docs/CHARACTERS.md): both GLBs import through the asset
-// database without warnings, share one skeleton and clip library, meet the size and budget
-// targets, match the template scene's hierarchy, and the shared controller drives them.
+// The Orion and Nova starter characters (docs/CHARACTERS.md, ADR-0174): both GLBs import through
+// the asset database without warnings, share one 60-joint skeleton layout (the 21 core joints
+// first) and the clip library, carry the facial blend shapes, PBR texture sets and sockets, meet
+// the triangle budget, match the template scene's hierarchy, and the shared controller drives them.
 #include "doctest.h"
 #include "victus/animation/animation.hpp"
 #include "victus/assets/database.hpp"
@@ -76,32 +77,46 @@ TEST_CASE("starter characters: Orion and Nova import cleanly with one shared ske
         CHECK(messages.empty()); // zero importer warnings
         auto model = (*db)->load_model(rec->uuid);
         REQUIRE(model.ok());
-        CHECK(model->meshes.size() == 4); // shell, structure, visor, glow
-        CHECK(model->materials.size() == 4);
+        // Skin, Suit, Eye, Mouth (teeth/tongue), Groom (hair, brows, lashes).
+        const char* parts[] = {"Skin", "Suit", "Eye", "Mouth", "Groom"};
+        CHECK(model->meshes.size() == std::size(parts));
+        REQUIRE(model->materials.size() == std::size(parts));
+        for (std::size_t i = 0; i < std::size(parts); ++i) {
+            const auto& mat = model->materials[i];
+            INFO(mat.name);
+            CHECK(mat.name == std::string(c.display_name) + "_" + parts[i]);
+            // Real texture sets, not flat colours: albedo, tangent-space normal and ORM on every part.
+            CHECK(mat.base_color_texture >= 0);
+            CHECK(mat.normal_texture >= 0);
+            CHECK(mat.metallic_roughness_texture >= 0);
+        }
+        CHECK(model->materials[4].alpha_cutoff > 0.0f); // strand alpha (MASK)
         REQUIRE(model->skins.size() == 1);
         CHECK(model->skins[0].joints.size() == project::kCharacterJointCount);
-        // Budget: 20k-35k triangles at the highest LOD, with generated coarser LODs.
+        // High-end budget: 100k-140k triangles at LOD0, with generated coarser LODs.
         const std::size_t tris = model->triangle_count();
         MESSAGE(c.id << ": " << tris << " triangles");
-        CHECK(tris >= 20000);
-        CHECK(tris <= 35000);
+        CHECK(tris >= 100000);
+        CHECK(tris <= 140000);
         for (const auto& m : model->meshes) {
             CHECK(m.data.skinned());
             CHECK(m.data.lods.size() >= 1);
+            // Every part carries the same 44 ARKit-style facial blend shapes (jawOpen, eyeBlink_L ...).
+            CHECK(m.data.morphs.size() == 44);
         }
-        // 1.70 m tall, feet on the ground plane, arms in an A-pose.
+        // Feet on the ground plane, arms in an A-pose, the character's own height to the hair.
         math::Aabb bounds;
         for (const auto& m : model->meshes)
             for (const auto& v : m.data.vertices) bounds.expand(v.position);
         CHECK(bounds.min.y == doctest::Approx(0.0f).epsilon(0.005));
-        // 1.70 m to the crown of the sculpted hair (within a couple of centimetres).
-        CHECK(bounds.max.y >= project::kCharacterHeight - 0.01f);
-        CHECK(bounds.max.y <= project::kCharacterHeight + 0.03f);
+        MESSAGE(c.id << ": " << bounds.max.y << " m tall");
+        CHECK(bounds.max.y == doctest::Approx(c.height).epsilon(0.01));
         CHECK(bounds.max.x == doctest::Approx(-bounds.min.x).epsilon(0.01)); // symmetric
-        // Clips (seconds) and sockets.
+        // Clips (seconds): the original seven keep their durations; the library adds strafes,
+        // crouch, turns, combat, emotes, gestures and facial clips (docs/ANIMATION.md).
         const std::pair<const char*, float> clips[] = {{"Idle", 4.0f}, {"Walk", 0.8f}, {"Run", 0.55f}, {"Jump", 0.6f},
                                                        {"Fall", 0.8f}, {"Land", 0.4f}, {"Interact", 0.9f}};
-        REQUIRE(model->animations.size() == std::size(clips));
+        CHECK(model->animations.size() >= 40);
         for (const auto& [name, seconds] : clips) {
             const auto it = std::find_if(model->animations.begin(), model->animations.end(),
                                          [&](const animation::Clip& k) { return k.name == name; });
@@ -111,7 +126,8 @@ TEST_CASE("starter characters: Orion and Nova import cleanly with one shared ske
         }
         const std::pair<const char*, const char*> sockets[] = {{"Socket.Head", "Head"},     {"Socket.Hand.L", "Hand.L"},
                                                                {"Socket.Hand.R", "Hand.R"}, {"Socket.Back", "Chest"},
-                                                               {"Socket.Root", "Rig"}};
+                                                               {"Socket.Root", "Rig"},      {"Socket.Face", "Head"},
+                                                               {"Socket.Hip.L", "Hips"},    {"Socket.Hip.R", "Hips"}};
         for (const auto& [socket, parent] : sockets) {
             const auto it = std::find_if(model->nodes.begin(), model->nodes.end(),
                                          [&](const assets::ModelNode& n) { return n.name == socket; });
@@ -123,21 +139,33 @@ TEST_CASE("starter characters: Orion and Nova import cleanly with one shared ske
         models.push_back(std::move(model).value());
     }
 
-    // Same joint names, order and bind pose in both variants: clips and scripts are shared.
+    // Same joint names, order and hierarchy in both variants: clips and scripts are shared. The
+    // bind poses differ (each character has its own proportions - skeleton profiles
+    // VictusHumanoid.Orion / VictusHumanoid.Nova); clips store rotations plus the Hips translation.
     const auto& a = models[0];
     const auto& b = models[1];
     REQUIRE(a.skins[0].joints.size() == b.skins[0].joints.size());
+    auto parent_name = [](const assets::CookedModel& m, std::uint32_t node) {
+        const int up = m.nodes[node].parent;
+        return up < 0 ? std::string() : m.nodes[static_cast<std::size_t>(up)].name;
+    };
     for (std::size_t j = 0; j < a.skins[0].joints.size(); ++j) {
-        const auto& na = a.nodes[a.skins[0].joints[j]];
-        const auto& nb = b.nodes[b.skins[0].joints[j]];
-        CHECK(na.name == nb.name);
-        CHECK(math::length(na.translation - nb.translation) < 1e-5f);
-        for (int col = 0; col < 4; ++col) {
-            const math::Vec4 x = a.skins[0].inverse_bind[j].c[col];
-            const math::Vec4 y = b.skins[0].inverse_bind[j].c[col];
-            CHECK(std::abs(x.x - y.x) + std::abs(x.y - y.y) + std::abs(x.z - y.z) + std::abs(x.w - y.w) < 1e-4f);
-        }
+        CHECK(a.nodes[a.skins[0].joints[j]].name == b.nodes[b.skins[0].joints[j]].name);
+        CHECK(parent_name(a, a.skins[0].joints[j]) == parent_name(b, b.skins[0].joints[j]));
     }
+    // The original 21-joint layout comes first, in its original order.
+    const char* original[] = {"Hips",       "Spine",      "Chest",      "Neck",       "Head",       "Shoulder.L", "UpperArm.L",
+                              "LowerArm.L", "Hand.L",     "Shoulder.R", "UpperArm.R", "LowerArm.R", "Hand.R",     "UpperLeg.L",
+                              "LowerLeg.L", "Foot.L",     "Toe.L",     "UpperLeg.R", "LowerLeg.R", "Foot.R",     "Toe.R"};
+    static_assert(std::size(original) == project::kCharacterCoreJointCount);
+    for (std::size_t j = 0; j < std::size(original); ++j) CHECK(a.nodes[a.skins[0].joints[j]].name == original[j]);
+    std::set<std::string> extra;
+    for (const auto j : a.skins[0].joints) extra.insert(a.nodes[j].name);
+    for (const char* n : {"Thumb1.L", "Index3.L", "Pinky3.R", "UpperArmTwist.L", "LowerArmTwist.R", "UpperLegTwist.L", "Jaw",
+                          "Eye.L", "Eye.R"})
+        CHECK(extra.count(n) == 1);
+    // Orion is the taller of the two.
+    CHECK(project::find_starter_character("orion")->height > project::find_starter_character("nova")->height);
     const std::set<std::string> core = {"Hips", "Spine", "Head", "UpperArm.L", "LowerArm.L", "UpperArm.R", "LowerArm.R",
                                         "UpperLeg.L", "LowerLeg.L", "UpperLeg.R", "LowerLeg.R"};
     std::set<std::string> joints;
@@ -217,13 +245,16 @@ TEST_CASE("starter characters: template scene mirrors the model and the shared c
     for (const auto& w : st.weights) CHECK_FALSE(w.missing);
     CHECK(ctl.status(s, robot).bound_nodes >= project::kCharacterJointCount);
 
-    // Idle keeps the feet planted: the ankles stay at their rest height (0.09 m) in model space.
+    // Idle keeps the feet planted: the ankles stay at their rest height in model space.
     const scene::Entity foot = s.find_by_name("Foot.L");
     const scene::Entity knee = s.find_by_name("LowerLeg.L");
     const scene::Entity hips = s.find_by_name("Hips");
+    const float rest_ankle = model_space(s, robot, foot).y;
+    CHECK(rest_ankle > 0.05f);
+    CHECK(rest_ankle < 0.11f);
     for (int i = 0; i < 4; ++i) {
         ctl.update(s, 0.5f);
-        CHECK(model_space(s, robot, foot).y == doctest::Approx(0.09f).epsilon(0.1));
+        CHECK(model_space(s, robot, foot).y == doctest::Approx(rest_ankle).epsilon(0.1));
     }
     // Walk strides: the legs swing in opposition, about 0.2 m each side of the hips (the clip
     // starts with the left leg back; the model faces +Z).

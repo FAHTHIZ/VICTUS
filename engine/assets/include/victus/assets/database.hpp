@@ -19,6 +19,7 @@
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/terrain/terrain.hpp"
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -52,6 +53,16 @@ struct ImportReport {
 };
 
 [[nodiscard]] AssetKind kind_for_extension(std::string_view extension) noexcept;
+
+// Machine-wide cache of cooked assets shared by every project on this machine (ADR-0180), like a
+// local derived-data cache: an import whose source bytes, importer, importer version and settings
+// match an entry is satisfied by hard-linking (or copying) that entry instead of cooking again.
+// Only self-contained results are shared (no external dependency files). `VICTUS_SHARED_CACHE`
+// overrides the location, or disables the cache when set to "off"; the default is the user cache
+// directory (`$XDG_CACHE_HOME/victus/cooked`, `~/Library/Caches/VICTUS/cooked`,
+// `%LOCALAPPDATA%\VICTUS\Cache\cooked`). `VICTUS_SHARED_CACHE_MB` caps its size (default 8192 MB;
+// least recently used entries go first). Returns an empty path when disabled.
+[[nodiscard]] fs::Path shared_cooked_cache_dir();
 
 class AssetDatabase {
 public:
@@ -107,6 +118,8 @@ public:
     [[nodiscard]] fs::Path cache_dir() const { return root_ / ".victus" / "cache"; }
     [[nodiscard]] fs::Path source_path(const AssetRecord& r) const;
     [[nodiscard]] fs::Path cooked_path(const Uuid& uuid) const;
+    // Imports satisfied from the shared cooked-data cache (see shared_cooked_cache_dir) since open.
+    [[nodiscard]] std::uint32_t shared_cache_hits() const noexcept { return shared_hits_.load(); }
 
 private:
     explicit AssetDatabase(fs::Path root) : root_(std::move(root)) {}
@@ -115,6 +128,7 @@ private:
 
     fs::Path root_;
     bool packaged_{false};
+    std::atomic<std::uint32_t> shared_hits_{0};
     mutable std::mutex mutex_;
     std::vector<AssetRecord> records_;
     std::unordered_map<Uuid, std::size_t, UuidHash> by_uuid_;

@@ -35,6 +35,19 @@ jobs:
       - name: Generated shader library matches sources
         run: python3 tools/shaders/compile_shaders.py --check
 
+  character-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Character pipeline unit checks (docs/CHARACTERS.md)
+        run: |
+          python -m pip install --quiet numpy scipy pillow
+          python tools/characters/test_pipeline.py
+
   dependencies:
     runs-on: ubuntu-latest
     timeout-minutes: 10
