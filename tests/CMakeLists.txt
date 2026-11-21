@@ -73,6 +73,7 @@ victus_add_test(victus_asset_tests
     SOURCES
         assets/asset_tests.cpp
         assets/reference_tests.cpp
+        assets/import_queue_tests.cpp
         assets/async_loader_tests.cpp
         assets/animation_asset_tests.cpp
         assets/template_character_tests.cpp

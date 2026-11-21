@@ -233,19 +233,26 @@ Editor::ImportedFiles Editor::import_files(const std::vector<sfs::path>& sources
     const auto refresh = db_->refresh();
     for (const auto& e : refresh.errors)
         notify("asset metadata: " + e, true);
+    std::vector<assets::ImportRequest> queued;
     for (const auto& rec : db_->records()) {
         const sfs::path full = assets / rec.path;
         const bool ours = std::any_of(written.begin(), written.end(),
                                       [&](const sfs::path& w) { return full == w || inside(full, w); });
         if (!ours) continue;
-        if (!rec.importer.empty()) {
-            std::vector<std::string> messages;
-            if (auto r = db_->import(rec.uuid, &messages); !r)
-                result.skipped.push_back(
-                    std::format("{}: copied, but the import failed: {}", rec.path, r.error().message));
+        if (assets::is_importable(rec)) {
+            if (imports_) {
+                // Cooked on the import queue; failures show there and in the Console (ADR-0189).
+                queued.push_back({rec.uuid, rec.path});
+            } else {
+                std::vector<std::string> messages;
+                if (auto r = db_->import(rec.uuid, &messages); !r)
+                    result.skipped.push_back(
+                        std::format("{}: copied, but the import failed: {}", rec.path, r.error().message));
+            }
         }
         result.added.push_back(rec.path);
     }
+    if (!queued.empty()) (void)imports_->enqueue(queued);
     std::sort(result.added.begin(), result.added.end());
     if (!result.added.empty()) {
         // Show where they went: clear filters that would hide them.

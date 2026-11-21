@@ -52,7 +52,7 @@ Items that keep the whole engine from production use, regardless of feature work
 | Materials / surface shaders / material graphs | Usable | Four parameters, no custom textures/uniforms, fragment-only | Custom texture slots |
 | Scene, prefabs, serialization | Usable | Nested prefabs flattened; no variants; formats all at v1 (migrators unexercised) | Prefab variants |
 | ECS | Usable | — | — |
-| Asset pipeline | Usable | No import queue UI; references miss paths built at run time; V.A.U.L.T. budgets cover textures/models only | V.A.U.L.T. CPU budgets and mesh/audio residency |
+| Asset pipeline | Usable | Running background imports (ADR-0189) are not interruptible; references miss paths built at run time; V.A.U.L.T. budgets cover textures/models only | V.A.U.L.T. CPU budgets and mesh/audio residency |
 | World streaming | Experimental | No cross-cell references, data layers, server cell ownership, Studio world view | Cross-cell references |
 | Physics (Jolt 3D, Box2D 2D) | Usable | No convex decomposition; whole heightfield rebuild per edit; ragdoll root does not follow while simulating; no get-up clips or pose matching | Convex decomposition |
 | Animation | Usable | IK limits are one cone per chain (no per-joint/twist); foot placement uses one ray per foot along world up; no sync markers, GPU morphs; layer masks read-only in Studio | Sync markers, then GPU morph targets |

@@ -32,7 +32,7 @@ std::string default_importer(AssetKind kind) {
     }
 }
 
-bool importable(const AssetRecord& r) { return r.importer == "texture" || r.importer == "gltf"; }
+bool importable(const AssetRecord& r) { return is_importable(r); }
 
 std::uint32_t importer_version(const std::string& importer) {
     return importer == "texture" ? kTextureImporterVersion : importer == "gltf" ? kModelImporterVersion : 0;
@@ -160,6 +160,8 @@ fs::Path shared_cooked_cache_dir() {
 namespace {
 
 } // namespace
+
+bool is_importable(const AssetRecord& r) noexcept { return r.importer == "texture" || r.importer == "gltf"; }
 
 AssetKind kind_for_extension(std::string_view extension) noexcept {
     std::string e;

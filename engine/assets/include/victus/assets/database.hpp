@@ -53,6 +53,8 @@ struct ImportReport {
 };
 
 [[nodiscard]] AssetKind kind_for_extension(std::string_view extension) noexcept;
+// True for assets that are cooked into the cache (textures, models); others are used from source.
+[[nodiscard]] bool is_importable(const AssetRecord& r) noexcept;
 
 // Machine-wide cache of cooked assets shared by every project on this machine (ADR-0180), like a
 // local derived-data cache: an import whose source bytes, importer, importer version and settings

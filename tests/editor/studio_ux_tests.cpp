@@ -9,6 +9,7 @@
 #include "victus/core/fs.hpp"
 #include "victus/core/zip.hpp"
 #include "victus/core/json.hpp"
+#include "victus/render/image.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
 #include "victus/runtime/scene_lightmap.hpp"
@@ -21,6 +22,7 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <optional>
 #include <fstream>
@@ -811,8 +813,19 @@ TEST_CASE("studio import: dropped files are copied into the right folders and im
                            [&](const std::string& s) { return s.find(needle) != std::string::npos; });
     };
     CHECK(said("hero.blend"));
-    CHECK(said("glTF"));
     CHECK(said("missing.png"));
+    // Dropped models and textures cook on the background import queue (ADR-0189): the broken
+    // glTF fails there, with its reason, instead of blocking the drop.
+    REQUIRE(h.ed->import_queue() != nullptr);
+    CHECK(h.ed->wait_for_imports(std::chrono::minutes(2)));
+    {
+        const auto items = h.ed->import_queue()->items();
+        const auto ship = std::find_if(items.begin(), items.end(),
+                                       [](const assets::ImportItem& i) { return i.path == "models/ship/ship.gltf"; });
+        REQUIRE(ship != items.end());
+        CHECK(ship->state == assets::ImportState::Failed);
+        CHECK_FALSE(ship->error.empty());
+    }
 
     // Same name again: a second copy, not an overwrite. Files already in the project are left alone.
     const auto again = h.ed->import_files({outside / "hello.luau", assets / "scripts" / "hello.luau"});
@@ -2012,4 +2025,69 @@ TEST_CASE("studio behaviour tree editor: open from Assets, edit, save, and live 
     CHECK(bb->has("finished"));
     h.ed->stop();
     h.frames(2);
+}
+
+TEST_CASE("studio import queue: reimport runs in the background, the panel lists results, cancel and retry") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    REQUIRE(h.ed->create_project(h.dir / "Queue Game", "Queue Game", "3d").ok());
+    auto* q = h.ed->import_queue();
+    REQUIRE(q != nullptr);
+    CHECK(h.ed->wait_for_imports(std::chrono::minutes(2))); // the project's own assets, queued on open
+    const sfs::path tex = h.ed->project()->root() / "assets" / "textures";
+    sfs::create_directories(tex);
+    auto png = render::encode_png(render::make_checker(64, 4, 0xff3366ccu, 0xff000000u));
+    REQUIRE(png.ok());
+    REQUIRE(fs::write_atomic(tex / "queued.png", *png).ok());
+    REQUIRE(fs::write_text_atomic(tex / "broken.png", "not a png").ok());
+
+    // Reimport returns at once; the work shows in the queue (and the status bar) while it runs.
+    q->set_paused(true);
+    REQUIRE(h.ed->reimport_assets().ok());
+    CHECK(q->progress().queued >= 2);
+    h.ed->show_panel(editor::Panel::ImportQueue);
+    CHECK(h.ed->panel_open(editor::Panel::ImportQueue));
+    h.frames(2);
+    CHECK(ImGui::FindWindowByName("Import Queue") != nullptr);
+
+    // Cancelled while paused, then retried.
+    CHECK(q->cancel_all() >= 2);
+    CHECK(q->progress().cancelled >= 2);
+    CHECK_FALSE(q->progress().busy());
+    CHECK(q->retry_failed() >= 2);
+    q->set_paused(false);
+    CHECK(h.ed->wait_for_imports(std::chrono::minutes(2)));
+    const auto items = q->items();
+    const auto find = [&](std::string_view path) {
+        const auto it = std::find_if(items.begin(), items.end(), [&](const assets::ImportItem& i) { return i.path == path; });
+        return it == items.end() ? nullptr : &*it;
+    };
+    const auto* good = find("textures/queued.png");
+    const auto* bad = find("textures/broken.png");
+    REQUIRE(good);
+    REQUIRE(bad);
+    // Imported here, or already current when the Assets panel's thumbnail cooked it on demand.
+    CHECK((good->state == assets::ImportState::Imported || good->state == assets::ImportState::UpToDate));
+    CHECK(bad->state == assets::ImportState::Failed);
+    CHECK_FALSE(bad->error.empty());
+    // The Studio's database sees the background result as current.
+    const auto* rec = h.ed->assets()->find_path("textures/queued.png");
+    REQUIRE(rec);
+    auto fresh = h.ed->assets()->is_up_to_date(rec->uuid);
+    REQUIRE(fresh.ok());
+    CHECK(*fresh);
+    h.frames(2); // the panel draws finished rows
+
+    // Clear Finished empties the list; a second reimport finds everything but the broken file current.
+    q->clear_finished();
+    CHECK(q->items().empty());
+    REQUIRE(h.ed->reimport_assets().ok());
+    CHECK(h.ed->wait_for_imports(std::chrono::minutes(2)));
+    const auto again = q->progress();
+    CHECK(again.imported == 0);
+    CHECK(again.failed == 1);
+    CHECK(again.up_to_date + 1 == again.total);
+    h.frames(1);
 }

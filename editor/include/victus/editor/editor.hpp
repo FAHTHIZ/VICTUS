@@ -13,6 +13,7 @@
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
+#include "victus/assets/import_queue.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/asset_store.hpp"
 #include "victus/editor/bt_document.hpp"
@@ -161,6 +162,7 @@ enum class Panel : std::uint8_t {
     ScriptDebugger,
     AssetStore,
     BehaviorTreeEditor,
+    ImportQueue,
     Count
 };
 [[nodiscard]] const char* panel_title(Panel panel) noexcept;
@@ -294,7 +296,19 @@ public:
     [[nodiscard]] bool has_project() const noexcept { return project_.has_value(); }
     [[nodiscard]] project::Project* project() noexcept { return project_ ? &*project_ : nullptr; }
     [[nodiscard]] assets::AssetDatabase* assets() noexcept { return db_.get(); }
+    // Re-reads the project's assets and queues every importable one on the background import
+    // queue (ADR-0189); returns at once. Finished imports are swapped into the viewport as they
+    // complete (see poll_imports) and listed in the Import Queue panel.
     [[nodiscard]] Status reimport_assets();
+    // The background import queue of the open project (null without a project or in safe mode).
+    [[nodiscard]] assets::ImportQueue* import_queue() noexcept { return imports_.get(); }
+    // Blocks until the queue is idle (or the timeout passes), then applies the finished imports.
+    // For tests and command-line flows; the Studio itself never waits. True when idle.
+    bool wait_for_imports(std::chrono::milliseconds timeout = std::chrono::minutes(10));
+    // Applies imports that finished since the last call: evicts stale GPU copies, thumbnails and
+    // collider meshes, reports failures, and summarises a batch when the queue goes idle. Called
+    // every frame; returns how many finished items were handled.
+    std::size_t poll_imports();
     // Copies files (or whole folders) from anywhere on disk into the project's assets and imports
     // them: what dropping files on the Studio window and Assets > Import do. Files go to the folder
     // selected in the Assets panel, else to a folder for their type (images -> textures/, models ->
@@ -1139,6 +1153,12 @@ private:
     std::uint32_t thumbnail_budget_{2};
     void draw_asset_item(const assets::AssetRecord& r); // context menu, drag source, double-click, tooltip
     std::unique_ptr<runtime::AssetHotReloader> hot_reload_; // watches assets/ while a project is open
+    std::unique_ptr<assets::ImportQueue> imports_;          // background imports (ADR-0189)
+    struct ImportBatch {
+        std::size_t imported{0}, up_to_date{0}, failed{0}, cancelled{0};
+        bool reported{true};
+    } import_batch_;
+    float import_poll_{0.0f};
     std::unique_ptr<runtime::SceneView> view_;
     std::unique_ptr<scene::Scene> scene_;
     std::unique_ptr<scene::Scene> play_scene_;
@@ -1358,6 +1378,7 @@ private:
     mutable std::vector<std::string> disk_folders_;
     mutable double disk_folders_time_{-1.0};
     void draw_asset_store();
+    void draw_import_queue();
     void draw_behavior_tree_editor();
     void draw_bt_palette();
     void draw_bt_canvas(const std::optional<ai::TreeDebug>& live);
@@ -1365,6 +1386,7 @@ private:
     void draw_bt_node_menu(int index);
     void bt_apply(Result<int> r);
     bool show_bt_editor_{false};
+    bool show_import_queue_{false};
     std::optional<BehaviorTreeDocument> bt_doc_;
     int bt_selected_{0};
     bool bt_frame_{true};

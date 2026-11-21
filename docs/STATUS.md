@@ -2666,4 +2666,17 @@ Verified (Release, clang 21, 2 vCPU, lavapipe):
 
 Not covered: phone GPUs (Adreno, Mali, Apple) are not measured; the threshold may move there.
 
-Next task: Studio background import queue.
+Next task: Studio background import queue (ADR-0189).
+
+## 2026-11-22 — Background import queue in the Studio (ADR-0189)
+
+`assets::ImportQueue` cooks textures and models on worker threads with its own `AssetDatabase`, with per-file state, messages, errors and timings, de-duplication, pause, cancel and retry. The Studio queues everything on project open, on Reimport All and for dropped files instead of importing synchronously; finished items are swapped in each frame through the hot-reload path. New Import Queue panel (Assets > Import Queue..., Window > Content, status-bar "Importing n/m").
+
+Verified (Release, clang 21, 2 vCPU, lavapipe):
+- New `victus_asset_tests -tc="import queue*"`: 3 cases / 112 assertions pass.
+- `victus_editor_tests -tc="studio import*"`: 2 cases pass (drop test now checks the broken glTF fails in the queue with its reason; new queue test covers pause, non-blocking reimport, cancel, retry, the panel, clear and an all-up-to-date second pass).
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build -j2`: 42/42 passed (541.57 sec).
+
+Not covered: running imports cannot be interrupted; the viewport still cooks assets it needs immediately on the main thread; import throughput on large real projects is not measured.
+
+Next task: sequencer curve editor.

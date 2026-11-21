@@ -388,6 +388,7 @@ void Editor::frame(float dt) {
         update_animation_preview(dt);
     }
     // Inspector property discovery follows script edits made in an external editor.
+    (void)poll_imports(); // background imports that finished: swap them in (ADR-0189)
     if (!stopped && (script_poll_ += dt) >= 1.0f) {
         script_poll_ = 0;
         if (edit_scripts_) (void)edit_scripts_->reload_changed();
@@ -468,6 +469,7 @@ void Editor::draw_workspace(float) {
     draw_history();
     draw_project_settings();
     draw_asset_store();
+    draw_import_queue();
     draw_behavior_tree_editor();
     draw_trash();
     draw_asset_dialogs();
@@ -553,6 +555,8 @@ void Editor::draw_menu_bar() {
         kit::tooltip("Free models, materials, skies and sounds with their licences, added to this project in one click");
         ImGui::Separator();
         if (ImGui::MenuItem("Reimport All")) (void)reimport_assets();
+        if (ImGui::MenuItem("Import Queue...", nullptr, show_import_queue_)) show_panel(Panel::ImportQueue);
+        kit::tooltip("Background imports: progress, errors per file, cancel and retry");
         if (ImGui::MenuItem(baking_lighting() ? "Baking Lighting..." : "Bake Lighting", nullptr, false,
                             editing && project_ && !baking_lighting()))
             if (auto st = start_lighting_bake(); !st.ok()) notify("Bake Lighting: " + st.error().message, true);
@@ -835,6 +839,14 @@ void Editor::draw_status_bar() {
         }
         sep();
         ImGui::TextColored(tk::kTextMuted, "%zu entities", active_scene().size());
+        if (imports_) {
+            if (const auto ip = imports_->progress(); ip.busy()) {
+                sep();
+                const std::string label = std::format("Importing {}/{}##imports", ip.total - ip.queued - ip.running, ip.total);
+                if (ImGui::SmallButton(label.c_str())) show_panel(Panel::ImportQueue);
+                kit::tooltip("Assets cooking in the background - click for the Import Queue");
+            }
+        }
         if (status_time_ > 0 && !status_line_.empty()) {
             sep();
             ImGui::TextUnformatted(status_line_.c_str());

@@ -66,6 +66,8 @@ const char* window_id(Panel p) noexcept {
         return "Asset Store";
     case Panel::BehaviorTreeEditor:
         return "###BehaviourTree";
+    case Panel::ImportQueue:
+        return "Import Queue";
     case Panel::Count:
         break;
     }
@@ -120,6 +122,8 @@ const char* panel_hint(Panel p) noexcept {
         return "Free models, materials, skies and sounds from Poly Haven, ambientCG, Smithsonian, Sketchfab and more, with their licences";
     case Panel::BehaviorTreeEditor:
         return "Build AI decisions as a tree of nodes, and watch them run during Play";
+    case Panel::ImportQueue:
+        return "Background imports: progress, errors per file, cancel and retry";
     case Panel::Count:
         break;
     }
@@ -217,6 +221,8 @@ bool* Editor::panel_flag(Panel p) noexcept {
         return &show_asset_store_;
     case Panel::BehaviorTreeEditor:
         return &show_bt_editor_;
+    case Panel::ImportQueue:
+        return &show_import_queue_;
     default:
         return nullptr;
     }
@@ -363,7 +369,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::Inspector, Panel::TerrainTools, Panel::TilePalette, Panel::MaterialEditor, Panel::AiDebugger,
                   Panel::InputActions},
                  right);
-        dock_all({Panel::Assets, Panel::Console, Panel::Problems, Panel::Animation, Panel::Sequencer, Panel::Profiler,
+        dock_all({Panel::Assets, Panel::Console, Panel::Problems, Panel::ImportQueue, Panel::Animation, Panel::Sequencer, Panel::Profiler,
                   Panel::Network, Panel::ScriptDebugger},
                  bottom);
         dock_all({Panel::ProjectSettings, Panel::History}, right);
@@ -375,7 +381,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.22f, nullptr, &center);
         ImGuiID left_bottom = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.45f, nullptr, &left);
         dock(Panel::Hierarchy, left);
-        dock_all({Panel::Assets, Panel::Console, Panel::Problems}, left_bottom);
+        dock_all({Panel::Assets, Panel::Console, Panel::Problems, Panel::ImportQueue}, left_bottom);
         dock_all(
             {Panel::Inspector, Panel::TerrainTools, Panel::TilePalette, Panel::MaterialEditor, Panel::InputActions},
             right);
@@ -394,7 +400,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all(
             {Panel::Inspector, Panel::MaterialEditor, Panel::TerrainTools, Panel::TilePalette, Panel::InputActions},
             right);
-        dock_all({Panel::Animation, Panel::Assets, Panel::Console, Panel::Problems}, bottom);
+        dock_all({Panel::Animation, Panel::Assets, Panel::Console, Panel::Problems, Panel::ImportQueue}, bottom);
         dock_all({Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger, Panel::ScriptDebugger}, bottom_right);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore, Panel::BehaviorTreeEditor}, center);
@@ -410,7 +416,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all(
             {Panel::Inspector, Panel::MaterialEditor, Panel::InputActions, Panel::TerrainTools, Panel::TilePalette},
             right);
-        dock_all({Panel::ScriptDebugger, Panel::Console, Panel::Problems, Panel::Profiler, Panel::Animation, Panel::Sequencer,
+        dock_all({Panel::ScriptDebugger, Panel::Console, Panel::Problems, Panel::ImportQueue, Panel::Profiler, Panel::Animation, Panel::Sequencer,
                   Panel::Network, Panel::AiDebugger},
                  bottom);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
@@ -426,7 +432,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::Inspector, Panel::AiDebugger, Panel::Network, Panel::MaterialEditor, Panel::InputActions,
                   Panel::TerrainTools, Panel::TilePalette},
                  right);
-        dock_all({Panel::ScriptDebugger, Panel::Console, Panel::Problems, Panel::Assets, Panel::Animation, Panel::Sequencer}, bottom);
+        dock_all({Panel::ScriptDebugger, Panel::Console, Panel::Problems, Panel::ImportQueue, Panel::Assets, Panel::Animation, Panel::Sequencer}, bottom);
         dock(Panel::Profiler, bottom_right);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore, Panel::BehaviorTreeEditor}, center);
@@ -452,6 +458,7 @@ void Editor::draw_window_menu() {
     ImGui::Separator();
     ImGui::TextDisabled("Content");
     item(Panel::AssetStore);
+    item(Panel::ImportQueue);
     ImGui::Separator();
     ImGui::TextDisabled("Tools");
     for (Panel p : {Panel::Animation, Panel::Sequencer, Panel::GraphEditor, Panel::BehaviorTreeEditor, Panel::MaterialEditor, Panel::TilePalette,

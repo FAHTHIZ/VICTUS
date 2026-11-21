@@ -15,6 +15,7 @@
 #include "victus/traffic/traffic.hpp"
 
 #include <algorithm>
+#include <thread>
 #include <iterator>
 #include <cctype>
 #include <chrono>
@@ -136,8 +137,17 @@ Status Editor::open_project(const fs::Path& path) {
     db_ = std::move(db).value();
     for (const auto& e : report.errors) notify("asset metadata: " + e, true);
     if (!safe_mode_) {
-        const auto imported = db_->import_all();
-        for (const auto& m : imported.messages) notify(m, imported.failed > 0);
+        // Textures and models cook in the background (ADR-0189); the viewport imports what it
+        // needs right away on demand, and the queue swaps the rest in as it finishes.
+        if (auto q = assets::ImportQueue::open(
+                project_->root(), std::clamp(std::thread::hardware_concurrency() / 2, 1u, 4u)); q) {
+            imports_ = std::move(q).value();
+            (void)imports_->enqueue_all();
+        } else {
+            notify("background imports unavailable: " + q.error().message, true);
+            const auto imported = db_->import_all();
+            for (const auto& m : imported.messages) notify(m, imported.failed > 0);
+        }
     }
     cache_ = std::make_unique<runtime::GpuAssetCache>(gpu_, db_.get());
     if (safe_mode_) {
@@ -226,6 +236,8 @@ void Editor::close_project() {
     terrain_hover_.reset();
     dirty_terrains_.clear();
     undo_.clear();
+    imports_.reset(); // drops queued imports, waits for a running one
+    import_batch_ = {};
     hot_reload_.reset();
     thumbnails_.reset();
     cache_.reset();
@@ -261,6 +273,11 @@ Status Editor::reimport_assets() {
     if (!db_) return {};
     const auto refresh = db_->refresh();
     for (const auto& e : refresh.errors) notify("asset metadata: " + e, true);
+    if (imports_) {
+        const std::size_t n = imports_->enqueue_all();
+        if (n > 0) notify(std::format("Reimporting {} asset{} in the background", n, n == 1 ? "" : "s"));
+        return {};
+    }
     const auto report = db_->import_all();
     for (const auto& m : report.messages) notify(m, report.failed > 0);
     if (report.imported > 0) {
