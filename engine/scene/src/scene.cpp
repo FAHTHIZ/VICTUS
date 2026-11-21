@@ -376,6 +376,29 @@ bool Scene::is_descendant(Entity e, Entity ancestor) const noexcept {
     return false;
 }
 
+Entity Scene::find_descendant(Entity root, std::string_view name) const {
+    if (!world_.alive(root)) return kNullEntity;
+    std::vector<Entity> queue = children(root);
+    for (std::size_t i = 0; i < queue.size(); ++i) {
+        const Entity e = queue[i];
+        const auto* n = world_.get<Name>(e);
+        if (n && n->value == name) return e;
+        for (const Entity c : children(e)) queue.push_back(c);
+    }
+    return kNullEntity;
+}
+
+Entity Scene::attach_to_socket(Entity item, Entity root, std::string_view socket, bool keep_world) {
+    const Entity s = find_descendant(root, socket);
+    if (s.is_null() || s == item || !set_parent(item, s, keep_world)) return kNullEntity;
+    if (!keep_world) {
+        Transform* t = world_.get<Transform>(item);
+        t->position = {};
+        t->rotation = {};
+    }
+    return s;
+}
+
 bool Scene::set_parent(Entity child, Entity new_parent, bool keep_world) {
     if (!world_.alive(child) || child == new_parent) return false;
     if (!new_parent.is_null() && (!world_.alive(new_parent) || is_descendant(new_parent, child))) return false;

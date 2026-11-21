@@ -583,6 +583,8 @@ int entity_has(lua_State* L);
 int entity_remove(lua_State* L);
 int entity_destroy(lua_State* L);
 int entity_find_child(lua_State* L);
+int entity_find_descendant(lua_State* L);
+int entity_attach(lua_State* L);
 int entity_children(lua_State* L);
 int entity_set_parent(lua_State* L);
 int entity_translate(lua_State* L);

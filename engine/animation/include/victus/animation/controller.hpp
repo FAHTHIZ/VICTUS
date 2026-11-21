@@ -151,6 +151,19 @@ struct ControllerLayer {
     std::shared_ptr<const Controller> machine;
 };
 
+// Twist driver (ADR-0182): after the layers, `joint` takes `weight` of the twist of `source` about
+// the joint's bone axis (its rest offset from its parent). `source` is the joint's parent (the
+// twist of that segment relative to its own rest; negative weights counter-rotate, as an upper-arm
+// twist bone does against the shoulder roll) or a sibling (the twist the sibling's rotation adds
+// in the shared parent's space, as a forearm twist bone shares the wrist's roll). Keeps volume in
+// skin weighted across twist bones when clips roll the wrist or the upper arm.
+struct ControllerTwist {
+    std::string joint;
+    std::string source;
+    float weight{0.5f}; // -1..1
+    friend bool operator==(const ControllerTwist&, const ControllerTwist&) = default;
+};
+
 class Controller {
   public:
     static constexpr std::size_t kMaxStates = 256;
@@ -160,6 +173,7 @@ class Controller {
     static constexpr std::size_t kMaxConditions = 32;
     static constexpr std::size_t kMaxLayers = 16;
     static constexpr std::size_t kMaxMaskNodes = 256;
+    static constexpr std::size_t kMaxTwists = 64;
 
     // Validates names, references and values. Errors name the offending element.
     [[nodiscard]] static Result<std::shared_ptr<const Controller>> parse(std::string_view text, std::string name = {});
@@ -181,6 +195,7 @@ class Controller {
     // Node whose motion root-motion states extract; empty = the model's first root node.
     std::string root_node;
     std::vector<ControllerLayer> layers; // applied in order after the base layer
+    std::vector<ControllerTwist> twists; // applied after the layers, before IK
 };
 
 // 1D blend weights: linear between the two thresholds around x, clamped at the ends.

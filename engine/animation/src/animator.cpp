@@ -80,6 +80,13 @@ struct ControllerRun {
     std::vector<NodePose> frozen_pose, scratch;
     std::vector<float> weights;
     std::int32_t root{-1}; // root-motion node index in the set (-1 = none)
+    struct Twist {
+        std::int32_t joint{-1}, source{-1};
+        bool from_parent{false}; // source is the joint's parent (else a sibling)
+        Vec3 axis;               // bone axis in the frame the source's twist is measured in
+        float weight{0};
+    };
+    std::vector<Twist> twists; // resolved ControllerTwist drivers (ADR-0182)
 };
 
 // One extra controller layer (ADR-0074): its own state machine over the shared parameters.
@@ -327,6 +334,35 @@ void resolve_controller_clips(AnimatorState& s) {
     if (s.set)
         for (std::size_t i = 0; i < s.layers.size() && i < c.layers.size(); ++i)
             resolve_layer(s.layers[i], c.layers[i], *s.set, s.animated, r.path);
+    r.twists.clear();
+    for (const ControllerTwist& t : c.twists) {
+        if (!s.set) break;
+        std::int32_t j = -1, src = -1;
+        for (std::size_t i = 0; i < s.set->nodes.size(); ++i) {
+            if (s.set->nodes[i].name == t.joint) j = static_cast<std::int32_t>(i);
+            if (s.set->nodes[i].name == t.source) src = static_cast<std::int32_t>(i);
+        }
+        if (j < 0 || src < 0) continue; // drivers for joints this model lacks are skipped silently
+        const auto& jn = s.set->nodes[static_cast<std::size_t>(j)];
+        const auto& sn = s.set->nodes[static_cast<std::size_t>(src)];
+        ControllerRun::Twist tw;
+        tw.joint = j;
+        tw.source = src;
+        tw.weight = t.weight;
+        tw.from_parent = jn.parent == src;
+        if (!tw.from_parent && jn.parent != sn.parent) {
+            VICTUS_LOG_WARN("animation", "controller {}: twist source '{}' is neither the parent nor a sibling of '{}'",
+                            r.path, t.source, t.joint);
+            continue;
+        }
+        // Bone axis: the joint's rest offset (in its parent's frame) for a parent source; for a
+        // sibling, the sibling's offset (the segment between the shared parent and the sibling).
+        const Vec3 off = tw.from_parent ? jn.rest.translation : sn.rest.translation;
+        if (math::length(off) < 1e-6f) continue;
+        tw.axis = math::normalize(off);
+        r.twists.push_back(tw);
+        s.animated[static_cast<std::size_t>(j)] = 1;
+    }
     r.root = -1;
     const bool wants_root = std::any_of(c.states.begin(), c.states.end(), [](const ControllerState& st) { return st.root_motion; });
     if (s.set && wants_root) {
@@ -647,6 +683,31 @@ float advance(float time, float delta, float duration, bool loop, bool& finished
     return std::clamp(t, 0.0f, duration);
 }
 
+// Twist part of `q` about unit `axis` (swing-twist decomposition), identity when q is a pure swing.
+Quat twist_about(Quat q, Vec3 axis) {
+    const float d = q.x * axis.x + q.y * axis.y + q.z * axis.z;
+    Quat t{axis.x * d, axis.y * d, axis.z * d, q.w};
+    const float l2 = t.x * t.x + t.y * t.y + t.z * t.z + t.w * t.w;
+    if (l2 < 1e-12f) return {};
+    t = math::normalize(t);
+    return t.w < 0 ? Quat{-t.x, -t.y, -t.z, -t.w} : t;
+}
+
+void apply_twists(AnimatorState& s) {
+    for (const ControllerRun::Twist& t : s.ctl.twists) {
+        const auto j = static_cast<std::size_t>(t.joint), src = static_cast<std::size_t>(t.source);
+        if (j >= s.pose.size() || src >= s.pose.size()) continue;
+        const Quat rest_s = s.set->nodes[src].rest.rotation;
+        const Quat q = s.pose[src].rotation;
+        // Parent source: its rotation relative to rest, in its own frame (the joint's parent
+        // frame). Sibling source: the rotation it adds in the shared parent's frame.
+        const Quat delta = t.from_parent ? rest_s.conjugate() * q : q * rest_s.conjugate();
+        Quat tw = math::slerp(Quat{}, twist_about(math::normalize(delta), t.axis), std::abs(t.weight));
+        if (t.weight < 0) tw = tw.conjugate();
+        s.pose[j].rotation = math::normalize(tw * s.pose[j].rotation); // the joint's own pose, usually rest
+    }
+}
+
 void write_pose(Scene& scene, Work& w) {
     AnimatorState& s = *w.s;
     const std::size_t n = std::min({s.pose.size(), s.animated.size(), s.bindings.size()});
@@ -832,6 +893,7 @@ void evaluate_controller(Scene& scene, Work& w, float dt) {
         for (std::size_t i = 0; i < s.layers.size() && i < r.ctrl->layers.size(); ++i)
             evaluate_layer(s, s.layers[i], r.ctrl->layers[i], a, dt, w);
     }
+    apply_twists(s);
     write_pose(scene, w);
 }
 

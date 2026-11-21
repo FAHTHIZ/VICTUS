@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// The Orion and Nova starter characters (docs/CHARACTERS.md, ADR-0174): both GLBs import through
+// The Orion and Nova starter characters (docs/CHARACTERS.md, ADR-0179): both GLBs import through
 // the asset database without warnings, share one 60-joint skeleton layout (the 21 core joints
 // first) and the clip library, carry the facial blend shapes, PBR texture sets and sockets, meet
 // the triangle budget, match the template scene's hierarchy, and the shared controller drives them.
@@ -17,6 +17,7 @@
 #include <cmath>
 #include <functional>
 #include <filesystem>
+#include <optional>
 #include <set>
 
 using namespace victus;
@@ -287,6 +288,65 @@ TEST_CASE("starter characters: template scene mirrors the model and the shared c
     CHECK(ctl.controller_status(s, robot).state == "Interact");
     for (int i = 0; i < 70; ++i) ctl.update(s, 1.0f / 60);
     CHECK(ctl.controller_status(s, robot).state == "Locomotion");
+}
+
+TEST_CASE("character validation: starters pass, broken skeletons, sockets and clips are reported") {
+    assets::ModelImportSettings settings;
+    settings.max_texture_size = 64;
+    std::optional<assets::CookedModel> orion;
+    for (const auto& c : project::starter_characters()) {
+        auto model = assets::import_gltf_memory(project::starter_character_glb(c), c.model_path, settings);
+        REQUIRE(model.ok());
+        const auto r = project::validate_character(*model);
+        for (const auto& i : r.issues) MESSAGE(c.id << ": [" << i.code << "] " << i.message);
+        CHECK(r.ok());
+        CHECK(r.issues.empty()); // the starters are the reference: no warnings either
+        CHECK(r.joints == project::kCharacterJointCount);
+        CHECK(r.sockets == project::character_socket_names().size());
+        CHECK(r.lods >= 1);
+        CHECK(r.height == doctest::Approx(c.height).epsilon(0.01));
+        if (c.id == "orion") orion = std::move(model).value();
+    }
+    REQUIRE(orion);
+    auto has = [](const project::CharacterReport& r, std::string_view code, std::string_view text) {
+        return std::any_of(r.issues.begin(), r.issues.end(), [&](const project::CharacterIssue& i) {
+            return i.severity == project::CharacterIssue::Severity::Error && i.code == code &&
+                   i.message.find(text) != std::string::npos;
+        });
+    };
+    auto node = [](assets::CookedModel& m, std::string_view name) -> assets::ModelNode& {
+        return *std::find_if(m.nodes.begin(), m.nodes.end(), [&](const auto& n) { return n.name == name; });
+    };
+    {
+        auto m = *orion; // a renamed core joint breaks scripts that look it up
+        node(m, "LowerArm.L").name = "Forearm.L";
+        const auto r = project::validate_character(m);
+        CHECK_FALSE(r.ok());
+        CHECK(has(r, "joints", "'LowerArm.L' is missing"));
+    }
+    {
+        auto m = *orion; // a missing socket and a missing controller clip
+        node(m, "Socket.Hand.R").name = "Grip";
+        std::erase_if(m.animations, [](const animation::Clip& k) { return k.name == "Land"; });
+        const auto r = project::validate_character(m);
+        CHECK(has(r, "sockets", "Socket.Hand.R"));
+        CHECK(has(r, "clips", "'Land'"));
+        project::CharacterValidationOptions lax;
+        lax.require_sockets = lax.require_controller_clips = false;
+        CHECK(project::validate_character(m, lax).ok()); // reported as warnings instead
+    }
+    {
+        auto m = *orion; // centimetre units: 100x too tall
+        for (auto& mesh : m.meshes)
+            for (auto& v : mesh.data.vertices) v.position = v.position * 100.0f;
+        CHECK(has(project::validate_character(m), "scale", "outside"));
+    }
+    {
+        auto m = *orion; // swapped joint order breaks skin-index based retarget maps
+        std::swap(m.skins[0].joints[1], m.skins[0].joints[2]);
+        std::swap(m.skins[0].inverse_bind[1], m.skins[0].inverse_bind[2]);
+        CHECK(has(project::validate_character(m), "joints", "must be joint"));
+    }
 }
 
 TEST_CASE("starter characters: template options pick Nova or no character") {

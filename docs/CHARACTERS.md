@@ -80,8 +80,11 @@ authored for one character fits the other:
 | `Socket.Hand.L`, `Socket.Hand.R` | Hand.L / Hand.R | grip centre; +Y along the fingers, +Z out of the palm |
 | `Socket.Hip.L`, `Socket.Hip.R` | Hips | outside of each hip (holsters, pouches) |
 
-Attach something with `entity:find_child("Socket.Hand.R")` in Luau or by dragging an entity onto
-the node in the Hierarchy.
+Attach something with `character:attach(item, "Socket.Hand.R")` in Luau (it snaps the item to the
+socket and returns the socket node, or `nil` when the character has no such socket; pass `true` as
+a third argument to keep the item's world placement), `Scene::attach_to_socket` in C++, or by
+dragging an entity onto the node in the Hierarchy. `entity:find_descendant(name)` finds any nested
+node; `find_child` only looks at direct children, and sockets sit inside the skeleton.
 
 ## Clips and controller
 
@@ -164,6 +167,11 @@ into new projects by the templates.
   with the original 21 first, the per-character height, the original seven clips with their
   lengths, every socket under its parent, and the shared controller driving Idle, Walk, Jump,
   Fall, Land and Interact on the imported model.
+- `victus_asset_tests` "character validation": both starters pass `project::validate_character`
+  with no errors or warnings; a renamed core joint, reordered skin joints, a missing socket, a
+  missing controller clip and centimetre units are each reported.
+- `victus_scene_tests` "find_descendant and attach_to_socket" and `victus_script_tests` "scene,
+  entity and input API": nested socket lookup and attachment from C++ and Luau.
 - `victus_gpu_tests` "gpu character lods": Orion rendered by the VICTUS renderer in four poses at
   2.5, 8 and 20 m, LOD image against LOD 0 image.
 
@@ -181,6 +189,25 @@ VICTUS runtime (the engine's own renderer, `victus run --screenshot` on a fresh 
 ![VICTUS runtime: Orion in the 3D template](images/characters/victus_runtime_orion.jpg)
 
 ![VICTUS runtime: Nova in the 3D template](images/characters/victus_runtime_nova.jpg)
+
+### Validating a character
+
+`victus character-check <model>` imports a `.glb`, `.gltf` or `.fbx` (or `orion` / `nova`, the
+embedded starters) and checks that it can replace a starter character without script, controller
+or template changes:
+
+- errors: no skin; a core joint missing, out of the original order or under the wrong parent; a
+  socket missing; one of the controller clips (Idle, Walk, Run, Jump, Fall, Land, Interact)
+  missing or empty; weights pointing outside the skin; a bind-pose height outside 1.2-2.4 m
+  (usually centimetre units or a Z-up export);
+- warnings: a joint count other than 60 (`--any-joints` silences it), a socket under an
+  unexpected parent, unskinned meshes, weights that do not sum to 1, feet off the ground, more
+  than 20k triangles without LODs, materials without a base colour texture or normal map, and
+  importer warnings.
+
+It prints a summary line, one line per issue and `OK` or `FAILED` (exit code 1 on errors, or on
+any issue with `--strict`); `--json` prints the same report as JSON for CI. The checks are
+`project::validate_character` in `engine/project/src/character_validate.cpp`.
 
 ## Choosing a character
 

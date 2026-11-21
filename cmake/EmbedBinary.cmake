@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # cmake -DINPUT=<file> -DOUTPUT=<file.cpp> -DSYMBOL=<name> -DNAMESPACE=<ns> [-DMODE=incbin|hex] -P EmbedBinary.cmake
 # Writes a C++ source defining `std::span<const std::uint8_t> <SYMBOL>()` in namespace <NAMESPACE>
-# returning the bytes of <INPUT> (engine-embedded template assets, ADR-0069 / ADR-0174).
+# returning the bytes of <INPUT> (engine-embedded template assets, ADR-0069 / ADR-0179).
 #
 # MODE=incbin (GCC/Clang): the bytes are pulled in by the assembler's `.incbin`, so multi-megabyte
 # assets compile in milliseconds. MODE=hex (MSVC, which has no inline assembler on x64): a byte

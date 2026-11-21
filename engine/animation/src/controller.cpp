@@ -166,7 +166,7 @@ Result<std::shared_ptr<const Controller>> parse_machine(const json::Value& doc, 
     // Parameters.
     const json::Value* params = nullptr;
     if (in_layer) {
-        for (const std::string_view key : {"parameters", "layers", "root_node", "version"})
+        for (const std::string_view key : {"parameters", "layers", "root_node", "version", "twist"})
             if (doc.find(key))
                 return fail("document", std::format("\"{}\" is not allowed in a layer (layers share the controller's)", key));
         c->parameters = *inherited;
@@ -438,12 +438,30 @@ Result<std::shared_ptr<const Controller>> parse_machine(const json::Value& doc, 
         json::Value machine = json::Value::object();
         for (const std::string_view key : {"default_state", "states", "transitions"})
             if (const json::Value* v = lv.find(key)) machine.set(std::string(key), *v);
-        for (const std::string_view key : {"parameters", "layers", "root_node"})
+        for (const std::string_view key : {"parameters", "layers", "root_node", "twist"})
             if (lv.find(key)) return fail(where, std::format("\"{}\" is not allowed in a layer", key));
         auto m = parse_machine(machine, c->name, &c->parameters);
         if (!m) return nest_error(std::move(m).error(), where);
         l.machine = std::move(*m);
         c->layers.push_back(std::move(l));
+    }
+
+    // Twist drivers.
+    const json::Value* twists = nullptr;
+    if (st = read_array(doc, "twist", "document", Controller::kMaxTwists, twists); !st) return std::move(st).error();
+    for (std::size_t i = 0; twists && i < twists->size(); ++i) {
+        const json::Value& tv = (*twists)[i];
+        const std::string where = std::format("twist[{}]", i);
+        if (!tv.is_object()) return fail(where, "a twist driver must be an object");
+        ControllerTwist t;
+        if (st = read_string(tv, "joint", where, t.joint, true); !st) return std::move(st).error();
+        if (st = read_string(tv, "source", where, t.source, true); !st) return std::move(st).error();
+        if (t.joint == t.source) return fail(where, "\"joint\" and \"source\" must differ");
+        if (st = read_number(tv, "weight", where, t.weight); !st) return std::move(st).error();
+        if (t.weight < -1 || t.weight > 1) return fail(where, "\"weight\" must be in [-1, 1]");
+        for (const ControllerTwist& o : c->twists)
+            if (o.joint == t.joint) return fail(where, "joint \"" + t.joint + "\" already has a twist driver");
+        c->twists.push_back(std::move(t));
     }
     return std::shared_ptr<const Controller>(std::move(c));
 }
@@ -562,6 +580,17 @@ json::Value Controller::to_json() const {
             ls.push(std::move(o));
         }
         doc.set("layers", std::move(ls));
+    }
+    if (!twists.empty()) {
+        json::Value tw = json::Value::array();
+        for (const ControllerTwist& t : twists) {
+            json::Value o = json::Value::object();
+            o.set("joint", t.joint);
+            o.set("source", t.source);
+            o.set("weight", t.weight);
+            tw.push(std::move(o));
+        }
+        doc.set("twist", std::move(tw));
     }
     return doc;
 }

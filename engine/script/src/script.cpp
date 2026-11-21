@@ -22,6 +22,8 @@ void open_victus_libs(lua_State* L) {
                                 {"remove", entity_remove},
                                 {"destroy", entity_destroy},
                                 {"find_child", entity_find_child},
+                                {"find_descendant", entity_find_descendant},
+                                {"attach", entity_attach},
                                 {"children", entity_children},
                                 {"set_parent", entity_set_parent},
                                 {"translate", entity_translate},
