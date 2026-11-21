@@ -252,9 +252,16 @@ TEST_CASE("starter characters: template scene mirrors the model and the shared c
     const float rest_ankle = model_space(s, robot, foot).y;
     CHECK(rest_ankle > 0.05f);
     CHECK(rest_ankle < 0.11f);
+    // ...and lets the arms hang from the rest A-pose: shoulder to wrist within about 25 degrees of
+    // vertical (the bind pose holds them about 45 degrees out, which an idle must not keep).
+    const scene::Entity shoulder = s.find_by_name("UpperArm.L");
+    const scene::Entity wrist = s.find_by_name("Hand.L");
     for (int i = 0; i < 4; ++i) {
         ctl.update(s, 0.5f);
         CHECK(model_space(s, robot, foot).y == doctest::Approx(rest_ankle).epsilon(0.1));
+        const math::Vec3 arm = model_space(s, robot, shoulder) - model_space(s, robot, wrist);
+        INFO("idle arm drop " << arm.y / math::length(arm));
+        CHECK(arm.y > 0.9f * math::length(arm));
     }
     // Walk strides: the legs swing in opposition, about 0.2 m each side of the hips (the clip
     // starts with the left leg back; the model faces +Z).
