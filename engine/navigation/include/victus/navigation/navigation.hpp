@@ -33,6 +33,10 @@ struct NavMeshSurfaceComponent {
     float cell_height{0.1f};    // vertical voxel size
     std::uint32_t layer_mask{0xFFFFu}; // collider layers (bit per layer) that contribute geometry
     bool auto_rebuild{true};    // rebuild when static colliders change
+    // Metres per tile; 0 = automatic: one tile for small levels, 256-voxel tiles once the level
+    // exceeds a million voxel columns. Tiled meshes keep full voxel detail at any size, cook
+    // tiles on several threads and, after a change, rebuild only the tiles it touches.
+    float tile_size{0.0f};
     friend bool operator==(const NavMeshSurfaceComponent&, const NavMeshSurfaceComponent&) = default;
 };
 
@@ -57,6 +61,8 @@ struct NavStats {
     std::uint32_t polygons{0};
     std::uint32_t vertices{0};
     std::uint32_t builds{0};         // total builds since creation
+    std::uint32_t tiles{0};          // tiles in the live navmesh (1 for a single-tile mesh)
+    std::uint32_t tiles_rebuilt{0};  // tiles cooked by the last build
     double build_ms{0};
     bool building{false};            // a background build is in flight (ensure_built_async)
     std::uint32_t agents{0};
@@ -90,6 +96,7 @@ struct NavigationSettings {
     // ensure_built_async cooks navmeshes with at least this many voxel columns on a worker thread
     // (a square kilometre of terrain takes seconds); smaller ones build immediately.
     double async_min_cells{2.0e6};
+    std::uint32_t build_threads{0};  // tiled builds: 0 = hardware threads (at most 8)
 };
 
 class NavigationSystem {
@@ -138,7 +145,10 @@ private:
     struct Cooked;
     BuildJob gather(scene::Scene& scene);
     static std::shared_ptr<Cooked> cook(BuildJob job);
+    static std::shared_ptr<Cooked> cook_tiles(BuildJob job, std::shared_ptr<Cooked> out);
     Status install(scene::Scene& scene, std::shared_ptr<Cooked> cooked);
+    Status install_tiles(scene::Scene& scene, std::shared_ptr<Cooked> cooked);
+    Status finish_install(scene::Scene& scene, const Cooked& cooked);
     std::unique_ptr<Impl> impl_;
     NavStats stats_;
 };
