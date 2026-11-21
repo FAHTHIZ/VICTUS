@@ -2,9 +2,38 @@
 // Script bindings: Lua VM helpers: allocation and time budget, JSON <-> Lua conversion, Entity userdata and its core methods, the json library.
 #include "script_internal.hpp"
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <time.h>
+#endif
+
 namespace victus::script::detail {
 
 
+
+double thread_cpu_seconds() {
+#if defined(_WIN32)
+    FILETIME created, exited, kernel, user;
+    if (GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user)) {
+        const auto ticks = [](const FILETIME& f) { return (static_cast<std::uint64_t>(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
+        return static_cast<double>(ticks(kernel) + ticks(user)) * 1e-7; // 100 ns units
+    }
+    return now_seconds();
+#elif defined(CLOCK_THREAD_CPUTIME_ID)
+    timespec ts{};
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0) return static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1e-9;
+    return now_seconds();
+#else
+    return now_seconds();
+#endif
+}
 
 ScriptHost::Impl& host_of(lua_State* L) { return *static_cast<ScriptHost::Impl*>(lua_callbacks(L)->userdata); }
 
@@ -33,9 +62,9 @@ void* lua_alloc(void* ud, void* ptr, std::size_t osize, std::size_t nsize) {
 void interrupt(lua_State* L, int gc) {
     if (gc >= 0) return;
     auto& h = host_of(L);
-    if (h.deadline <= 0 || (++h.interrupt_counter & 255u) != 0) return;
-    if (now_seconds() > h.deadline) {
-        h.deadline = 0;
+    if (!h.budget.armed() || (++h.interrupt_counter & 255u) != 0) return;
+    if (h.budget.expired()) {
+        h.budget.limit = 0; // disarm: the error unwinds through this call
         lua_rawcheckstack(L, 1);
         luaL_error(L, "script exceeded its time budget of %.0f ms", h.options.call_budget_seconds * 1000.0);
     }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Versioned script API (ADR-0155): version rules, the live description, the frozen snapshots and
-// hosts refusing scripts written for an incompatible API.
+// hosts refusing scripts written for an incompatible API. Also the CPU-time call budget.
 #include "victus/core/fs.hpp"
 #include "victus/core/json.hpp"
 #include "victus/script/api.hpp"
@@ -9,8 +9,10 @@
 #include "doctest.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <set>
+#include <thread>
 
 using namespace victus;
 using script::ApiVersion;
@@ -163,4 +165,34 @@ TEST_CASE("script api: hosts refuse scripts written for an incompatible API") {
         REQUIRE_FALSE(host.ok());
         CHECK(host.error().code == ErrorCode::VersionMismatch);
     }
+}
+
+TEST_CASE("script budget: time the thread is blocked or descheduled is not charged") {
+    // plugins.call blocks the script thread without using CPU, like a preempted thread on a
+    // loaded machine. The budget is 50 ms; the call blocks 300 ms and the script then keeps
+    // running (enough loop iterations to pass many budget checks). Wall-clock budgets killed it.
+    script::HostOptions o;
+    o.call_budget_seconds = 0.05;
+    o.plugin_has = [](std::string_view) { return true; };
+    o.plugin_call = [](std::string_view, std::string_view) -> Result<std::string> {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        return std::string("1");
+    };
+    auto host = script::ScriptHost::create(o);
+    REQUIRE(host.ok());
+    auto r = (*host)->eval("local x = plugins.call('block', '0') local s = 0 for i = 1, 200000 do s += i end return s");
+    REQUIRE_MESSAGE(r.ok(), (r.ok() ? std::string() : r.error().message));
+    CHECK(r->as_number() == 200000.0 * 200001.0 / 2.0);
+
+    // A script that really uses its CPU budget is still stopped, and promptly.
+    const auto t0 = std::chrono::steady_clock::now();
+    auto spin = (*host)->eval("while true do end");
+    const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    REQUIRE_FALSE(spin.ok());
+    CHECK(spin.error().message.find("time budget") != std::string::npos);
+    CHECK(took < 2.0);
+    // Blocking before a busy loop does not buy the loop extra time.
+    auto both = (*host)->eval("plugins.call('block', '0') while true do end");
+    REQUIRE_FALSE(both.ok());
+    CHECK(both.error().message.find("time budget") != std::string::npos);
 }

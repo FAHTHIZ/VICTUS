@@ -93,6 +93,7 @@ Newest first. Feature history before this file existed is in [../CHANGELOG.md](.
 
 | Date | Change | Evidence |
 |---|---|---|
+| 2026-11-21 | Script time budgets charge thread CPU time, not wall time (ADR-0156): a descheduled or blocked script thread no longer fails healthy scripts (flaky macOS Debug CI `dungeon_crawler` "exceeded its time budget of 250 ms"); busy loops are still stopped | `victus_script_tests` 126/126, new budget case |
 | 2026-11-21 | Versioned script API 1.0 (ADR-0155, closes B7): `kScriptApiVersion`, `victus.project` `script_api`, hosts refuse incompatible scripts, `victus check` error, frozen snapshot in `engine/script/api/` checked by `victus_script_tests`, `victus script-api`; Entity members moved to one property table | STATUS.md 2026-11-21 (script API) |
 | 2026-11-21 | Fixed red CI after ADR-0154: `pack_tests.cpp` read a `PackEntry*` from a destroyed temporary `Pack` (ASan heap-use-after-free; random codec value on macOS/Windows). Test now keeps the pack alive | `victus_core_tests` 75/75 under ASan+UBSan locally |
 | 2026-11-21 | `.vpak` v2 (ADR-0154): per-entry zstd (3D template pack 6.50 MB to 2.43 MB), BLAKE2b-256 digests, Ed25519 signatures enforced by the player, `victus pack keygen/verify/list` | STATUS.md 2026-11-21 |
