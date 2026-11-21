@@ -9,7 +9,8 @@ Parts (one glTF primitive per material):
          poke through);
   Eye    the MakeHuman high-poly eye proxy (sclera, iris and cornea surface);
   Mouth  upper and lower teeth and the tongue (lower teeth and tongue follow the Jaw joint);
-  Groom  scalp hair shell, eyebrow shells and eyelash cards, alpha-tested strands.
+  Groom  scalp hair shell, eyebrow shells and eyelash cards, alpha-tested strands;
+  Gear   boots, gloves, belt and backpack (gear.py), exported as one mesh node per item.
 
 Every part is a quad mesh with face-varying UVs plus per-vertex skin weights, blend-shape deltas
 and bake attributes (hair flow, card coordinates, region masks), so one Catmull-Clark step
@@ -23,6 +24,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 import fit
+import gear
 import mh
 from meshops import Quads, repack_islands, vertex_normals, triangulate
 
@@ -52,15 +54,19 @@ class Style:
     stubble: float
     freckles: float
     brow_thickness: float
+    gear: tuple = (0.03, 0.03, 0.032)  # boots, gloves and pack shell
+    webbing: tuple = (0.05, 0.05, 0.05)  # belt and pack straps
 
 
 STYLES = {
     "orion": Style(skin=(0.235, 0.120, 0.074), lips=(0.20, 0.085, 0.07), iris=(0.10, 0.052, 0.022),
                    hair=(0.012, 0.009, 0.008), suit=(0.040, 0.048, 0.060), trim=(0.32, 0.34, 0.36),
-                   glow=(0.30, 0.85, 1.0), hair_style="crop", stubble=0.8, freckles=0.0, brow_thickness=1.15),
+                   glow=(0.30, 0.85, 1.0), hair_style="crop", stubble=0.8, freckles=0.0, brow_thickness=1.15,
+                   gear=(0.022, 0.022, 0.024), webbing=(0.055, 0.060, 0.050)),
     "nova": Style(skin=(0.56, 0.37, 0.27), lips=(0.48, 0.20, 0.18), iris=(0.13, 0.075, 0.035),
                   hair=(0.018, 0.012, 0.010), suit=(0.50, 0.47, 0.42), trim=(0.06, 0.06, 0.07),
-                  glow=(1.0, 0.55, 0.22), hair_style="bun", stubble=0.0, freckles=0.35, brow_thickness=0.85),
+                  glow=(1.0, 0.55, 0.22), hair_style="bun", stubble=0.0, freckles=0.35, brow_thickness=0.85,
+                  gear=(0.11, 0.072, 0.045), webbing=(0.035, 0.034, 0.036)),
 }
 
 
@@ -459,7 +465,15 @@ def assemble(body: fit.Body):
     skin, suit, body_q, body_n, body_used = body_parts(body, style)
     pieces = groom_parts(body, style, body_q, body_n, body_used) + lash_part(body)
     groom = merge_groom(body, pieces)
-    return [skin, suit, eye_part(body), mouth_part(body), groom], style
+    names = [j[0] for j in body.joints]
+    gq, gW, kind, lip = gear.build(fit_joints(body), names, skin.q, skin.W, suit.q, suit.W, None)
+    gear_part = Part("Gear", "Gear", gq, gW, {}, attrs={"rest": gq.v.copy()},
+                     face_attrs={"kind": kind, "cuff": lip})
+    return [skin, suit, eye_part(body), mouth_part(body), groom, gear_part], style
+
+
+def fit_joints(body):
+    return joint_map(body)
 
 
 del math

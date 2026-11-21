@@ -2051,6 +2051,178 @@
           ]
         }
       }
+    },
+    {
+      "uuid": "ecf95164-469f-56f3-9935-af0d2cf20c7a",
+      "name": "Nova_Boots",
+      "parent": "0eeee27f-35f4-5575-ab94-38bea4f423f8",
+      "components": {
+        "MeshRenderer": {
+          "mesh": "44037d0d-1627-44a8-a225-633971f196b2",
+          "mesh_index": 5,
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.5,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "SkinnedMesh": {
+          "skeleton": "908d670c-ebf6-5d00-ba9a-2dc5314a47d3",
+          "skin": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "24c8cb4b-d2c6-5f87-a2e1-66ec8db98994",
+      "name": "Nova_Gloves",
+      "parent": "0eeee27f-35f4-5575-ab94-38bea4f423f8",
+      "components": {
+        "MeshRenderer": {
+          "mesh": "44037d0d-1627-44a8-a225-633971f196b2",
+          "mesh_index": 6,
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.5,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "SkinnedMesh": {
+          "skeleton": "908d670c-ebf6-5d00-ba9a-2dc5314a47d3",
+          "skin": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "1b96608b-66e3-5868-9f14-6cb04eba1fe1",
+      "name": "Nova_Belt",
+      "parent": "0eeee27f-35f4-5575-ab94-38bea4f423f8",
+      "components": {
+        "MeshRenderer": {
+          "mesh": "44037d0d-1627-44a8-a225-633971f196b2",
+          "mesh_index": 7,
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.5,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "SkinnedMesh": {
+          "skeleton": "908d670c-ebf6-5d00-ba9a-2dc5314a47d3",
+          "skin": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "57b5fc82-154e-57af-baef-58384672c6f3",
+      "name": "Nova_Backpack",
+      "parent": "0eeee27f-35f4-5575-ab94-38bea4f423f8",
+      "components": {
+        "MeshRenderer": {
+          "mesh": "44037d0d-1627-44a8-a225-633971f196b2",
+          "mesh_index": 8,
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.5,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "SkinnedMesh": {
+          "skeleton": "908d670c-ebf6-5d00-ba9a-2dc5314a47d3",
+          "skin": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
     }
   ]
 }

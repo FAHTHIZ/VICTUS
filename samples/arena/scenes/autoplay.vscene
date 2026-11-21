@@ -4,7 +4,7 @@
   "name": "Robot Arena (autoplay)",
   "entities": [
     {
-      "uuid": "d06c8231-b4ab-45db-937a-db5d8f8b8723",
+      "uuid": "fc01cdd7-a1b9-421e-a1a8-3f28c5b99ac3",
       "name": "Main Camera",
       "components": {
         "Camera": {
@@ -41,7 +41,7 @@
       }
     },
     {
-      "uuid": "6b2eb51b-0197-4c5d-a7e9-21c32dccbf4b",
+      "uuid": "a6607e00-2fcc-4520-8c53-b496f585c793",
       "name": "Sun",
       "components": {
         "Light": {
@@ -77,7 +77,7 @@
       }
     },
     {
-      "uuid": "85a10dd3-f838-4d54-ab35-41afa3b83720",
+      "uuid": "27960e0c-4015-4d31-9fe2-1ad396b85462",
       "name": "Environment",
       "components": {
         "Environment": {
@@ -2169,7 +2169,7 @@
       }
     },
     {
-      "uuid": "540b9add-f2e2-4c9f-a81a-9fafb79244a7",
+      "uuid": "8bd77d94-1191-4295-adf3-d5b61e06ced2",
       "name": "Player",
       "components": {
         "CharacterController": {
@@ -2217,9 +2217,9 @@
       }
     },
     {
-      "uuid": "e4393f5f-f2b6-4348-886b-a617c40b4e22",
+      "uuid": "78fef8ad-1174-48af-b416-2104f5cd8c64",
       "name": "Robot",
-      "parent": "540b9add-f2e2-4c9f-a81a-9fafb79244a7",
+      "parent": "8bd77d94-1191-4295-adf3-d5b61e06ced2",
       "components": {
         "Animator": {
           "model": "8e84eb12-63c8-4aed-aae2-517c038d3071",
@@ -2254,9 +2254,9 @@
       }
     },
     {
-      "uuid": "e21d41da-8f32-42d7-926f-5bc5abb6f464",
+      "uuid": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
       "name": "Rig",
-      "parent": "e4393f5f-f2b6-4348-886b-a617c40b4e22",
+      "parent": "78fef8ad-1174-48af-b416-2104f5cd8c64",
       "components": {
         "Transform": {
           "position": [
@@ -2279,9 +2279,9 @@
       }
     },
     {
-      "uuid": "9268d30e-1bae-41d2-8044-ef5d760cb06a",
+      "uuid": "495c9cca-d7b7-4ac4-b765-dca957049bbf",
       "name": "Orion_Body",
-      "parent": "e21d41da-8f32-42d7-926f-5bc5abb6f464",
+      "parent": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
       "components": {
         "Transform": {
           "position": [
@@ -2304,9 +2304,9 @@
       }
     },
     {
-      "uuid": "33902ce6-f744-47ae-a9a7-3999bbe1d78b",
+      "uuid": "a3526792-425f-4347-9705-6e919089cda2",
       "name": "Orion_Body[0]",
-      "parent": "9268d30e-1bae-41d2-8044-ef5d760cb06a",
+      "parent": "495c9cca-d7b7-4ac4-b765-dca957049bbf",
       "components": {
         "MeshRenderer": {
           "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
@@ -2323,7 +2323,7 @@
           "visible": true
         },
         "SkinnedMesh": {
-          "skeleton": "e4393f5f-f2b6-4348-886b-a617c40b4e22",
+          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
           "skin": 0
         },
         "Transform": {
@@ -2347,9 +2347,9 @@
       }
     },
     {
-      "uuid": "20fe7a91-d303-482b-ac3b-60cd9a1258b5",
+      "uuid": "8f56f9ca-4583-4d65-8764-03c154961a2f",
       "name": "Orion_Body[1]",
-      "parent": "9268d30e-1bae-41d2-8044-ef5d760cb06a",
+      "parent": "495c9cca-d7b7-4ac4-b765-dca957049bbf",
       "components": {
         "MeshRenderer": {
           "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
@@ -2366,7 +2366,7 @@
           "visible": true
         },
         "SkinnedMesh": {
-          "skeleton": "e4393f5f-f2b6-4348-886b-a617c40b4e22",
+          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
           "skin": 0
         },
         "Transform": {
@@ -2390,9 +2390,9 @@
       }
     },
     {
-      "uuid": "93eac02d-c2b2-4e43-91a7-162bfc0d2b53",
+      "uuid": "3828cd8f-8824-4756-a758-bb4f5cbcb5a7",
       "name": "Orion_Body[2]",
-      "parent": "9268d30e-1bae-41d2-8044-ef5d760cb06a",
+      "parent": "495c9cca-d7b7-4ac4-b765-dca957049bbf",
       "components": {
         "MeshRenderer": {
           "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
@@ -2409,7 +2409,7 @@
           "visible": true
         },
         "SkinnedMesh": {
-          "skeleton": "e4393f5f-f2b6-4348-886b-a617c40b4e22",
+          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
           "skin": 0
         },
         "Transform": {
@@ -2433,9 +2433,9 @@
       }
     },
     {
-      "uuid": "a1ff83ca-374d-49a6-99a0-dd5933397cf8",
+      "uuid": "7102346a-b3d3-4479-8156-ddfbfc7db93e",
       "name": "Orion_Body[3]",
-      "parent": "9268d30e-1bae-41d2-8044-ef5d760cb06a",
+      "parent": "495c9cca-d7b7-4ac4-b765-dca957049bbf",
       "components": {
         "MeshRenderer": {
           "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
@@ -2452,7 +2452,7 @@
           "visible": true
         },
         "SkinnedMesh": {
-          "skeleton": "e4393f5f-f2b6-4348-886b-a617c40b4e22",
+          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
           "skin": 0
         },
         "Transform": {
@@ -2476,9 +2476,9 @@
       }
     },
     {
-      "uuid": "4e347662-60b2-4124-9b35-d28d8d246809",
+      "uuid": "37068b0c-e805-4738-b437-92872e336efb",
       "name": "Orion_Body[4]",
-      "parent": "9268d30e-1bae-41d2-8044-ef5d760cb06a",
+      "parent": "495c9cca-d7b7-4ac4-b765-dca957049bbf",
       "components": {
         "MeshRenderer": {
           "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
@@ -2495,7 +2495,7 @@
           "visible": true
         },
         "SkinnedMesh": {
-          "skeleton": "e4393f5f-f2b6-4348-886b-a617c40b4e22",
+          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
           "skin": 0
         },
         "Transform": {
@@ -2519,9 +2519,9 @@
       }
     },
     {
-      "uuid": "a60dcc9b-0bbb-4a9a-9bdd-75efc8482937",
+      "uuid": "d522ee9d-3413-4769-bdf3-b4fa45ef74e3",
       "name": "Socket.Root",
-      "parent": "e21d41da-8f32-42d7-926f-5bc5abb6f464",
+      "parent": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
       "components": {
         "Transform": {
           "position": [
@@ -2544,9 +2544,9 @@
       }
     },
     {
-      "uuid": "de8d0aca-0ee1-4007-be1d-cd3c50aa1b51",
+      "uuid": "4a306263-15fd-43ba-b797-630be42769f2",
       "name": "Hips",
-      "parent": "e21d41da-8f32-42d7-926f-5bc5abb6f464",
+      "parent": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
       "components": {
         "Transform": {
           "position": [
@@ -2569,9 +2569,9 @@
       }
     },
     {
-      "uuid": "22783e9f-ce5a-4ca8-b2be-85b48368bdc0",
+      "uuid": "3e01eae4-9205-4776-b3bf-ab77835f960b",
       "name": "Spine",
-      "parent": "de8d0aca-0ee1-4007-be1d-cd3c50aa1b51",
+      "parent": "4a306263-15fd-43ba-b797-630be42769f2",
       "components": {
         "Transform": {
           "position": [
@@ -2594,9 +2594,9 @@
       }
     },
     {
-      "uuid": "2c1dbb5e-c5cd-403a-9108-f5de3c4334fa",
+      "uuid": "d146bc1b-ce4a-4e21-a8f2-daa2b29f649e",
       "name": "Chest",
-      "parent": "22783e9f-ce5a-4ca8-b2be-85b48368bdc0",
+      "parent": "3e01eae4-9205-4776-b3bf-ab77835f960b",
       "components": {
         "Transform": {
           "position": [
@@ -2619,9 +2619,9 @@
       }
     },
     {
-      "uuid": "cb83ad00-ac9e-4e9e-a40b-35a93797dfd4",
+      "uuid": "33d63b55-23e1-49f4-bf5b-3dac77ca75c0",
       "name": "Neck",
-      "parent": "2c1dbb5e-c5cd-403a-9108-f5de3c4334fa",
+      "parent": "d146bc1b-ce4a-4e21-a8f2-daa2b29f649e",
       "components": {
         "Transform": {
           "position": [
@@ -2644,9 +2644,9 @@
       }
     },
     {
-      "uuid": "818764c3-3929-42c4-95a0-23904a852b31",
+      "uuid": "54dda455-5acc-4a07-b8d7-417aa7793fa4",
       "name": "Head",
-      "parent": "cb83ad00-ac9e-4e9e-a40b-35a93797dfd4",
+      "parent": "33d63b55-23e1-49f4-bf5b-3dac77ca75c0",
       "components": {
         "Transform": {
           "position": [
@@ -2669,9 +2669,9 @@
       }
     },
     {
-      "uuid": "c6bc45d8-5674-43c1-a0fb-173abcb3865b",
+      "uuid": "a3133b22-a012-4850-bebd-f17866a24384",
       "name": "Jaw",
-      "parent": "818764c3-3929-42c4-95a0-23904a852b31",
+      "parent": "54dda455-5acc-4a07-b8d7-417aa7793fa4",
       "components": {
         "Transform": {
           "position": [
@@ -2694,9 +2694,9 @@
       }
     },
     {
-      "uuid": "28bae827-7366-4df3-9fa5-e17cfa92cc15",
+      "uuid": "5d948431-4dec-4756-b26f-b430d8c7ec3b",
       "name": "Eye.L",
-      "parent": "818764c3-3929-42c4-95a0-23904a852b31",
+      "parent": "54dda455-5acc-4a07-b8d7-417aa7793fa4",
       "components": {
         "Transform": {
           "position": [
@@ -2719,9 +2719,9 @@
       }
     },
     {
-      "uuid": "7daace05-0ca6-4ff6-8bdc-7de26b6a76c0",
+      "uuid": "f663b474-56b9-4b1c-a04d-729a7a27c87a",
       "name": "Eye.R",
-      "parent": "818764c3-3929-42c4-95a0-23904a852b31",
+      "parent": "54dda455-5acc-4a07-b8d7-417aa7793fa4",
       "components": {
         "Transform": {
           "position": [
@@ -2744,9 +2744,9 @@
       }
     },
     {
-      "uuid": "0fa0ba9b-efee-42c3-bd4c-9ee323ca1a8f",
+      "uuid": "70954469-f7e1-4272-9e31-addb4bac316b",
       "name": "Socket.Head",
-      "parent": "818764c3-3929-42c4-95a0-23904a852b31",
+      "parent": "54dda455-5acc-4a07-b8d7-417aa7793fa4",
       "components": {
         "Transform": {
           "position": [
@@ -2769,9 +2769,9 @@
       }
     },
     {
-      "uuid": "7828840a-07c5-481f-b43f-b10b49cb55c8",
+      "uuid": "a1873af9-cc50-46dc-ba5d-50e16ffd3e73",
       "name": "Socket.Face",
-      "parent": "818764c3-3929-42c4-95a0-23904a852b31",
+      "parent": "54dda455-5acc-4a07-b8d7-417aa7793fa4",
       "components": {
         "Transform": {
           "position": [
@@ -2794,9 +2794,9 @@
       }
     },
     {
-      "uuid": "9f01fdcd-dcac-46c9-8c74-521d9ef8160f",
+      "uuid": "06a2e118-5c50-42c1-907a-44bdd90fe2bc",
       "name": "Shoulder.L",
-      "parent": "2c1dbb5e-c5cd-403a-9108-f5de3c4334fa",
+      "parent": "d146bc1b-ce4a-4e21-a8f2-daa2b29f649e",
       "components": {
         "Transform": {
           "position": [
@@ -2819,9 +2819,9 @@
       }
     },
     {
-      "uuid": "4f2716cf-6231-43f6-bcd0-9d757c49a533",
+      "uuid": "98e7f0ed-5b54-4686-8249-df9bce96f582",
       "name": "UpperArm.L",
-      "parent": "9f01fdcd-dcac-46c9-8c74-521d9ef8160f",
+      "parent": "06a2e118-5c50-42c1-907a-44bdd90fe2bc",
       "components": {
         "Transform": {
           "position": [
@@ -2844,9 +2844,9 @@
       }
     },
     {
-      "uuid": "ad25a4bd-7811-4bfa-8a04-2c669606ac97",
+      "uuid": "f679b76a-9ab2-4da5-b105-4f42f397e17d",
       "name": "LowerArm.L",
-      "parent": "4f2716cf-6231-43f6-bcd0-9d757c49a533",
+      "parent": "98e7f0ed-5b54-4686-8249-df9bce96f582",
       "components": {
         "Transform": {
           "position": [
@@ -2869,9 +2869,9 @@
       }
     },
     {
-      "uuid": "8446e2b3-5b3b-4041-9f9e-46def1898100",
+      "uuid": "9bb4869b-f3b0-49d1-a835-5f918c98050b",
       "name": "Hand.L",
-      "parent": "ad25a4bd-7811-4bfa-8a04-2c669606ac97",
+      "parent": "f679b76a-9ab2-4da5-b105-4f42f397e17d",
       "components": {
         "Transform": {
           "position": [
@@ -2894,9 +2894,9 @@
       }
     },
     {
-      "uuid": "ab97703c-9bc1-4ba6-b536-a3d0c42a8be9",
+      "uuid": "570274f8-1ab7-4425-9b99-cf072f8873ba",
       "name": "Thumb1.L",
-      "parent": "8446e2b3-5b3b-4041-9f9e-46def1898100",
+      "parent": "9bb4869b-f3b0-49d1-a835-5f918c98050b",
       "components": {
         "Transform": {
           "position": [
@@ -2919,9 +2919,9 @@
       }
     },
     {
-      "uuid": "33910749-b8f7-446e-a110-3bd55235d698",
+      "uuid": "c5113d60-29e7-48e1-8ada-bc876f9f0514",
       "name": "Thumb2.L",
-      "parent": "ab97703c-9bc1-4ba6-b536-a3d0c42a8be9",
+      "parent": "570274f8-1ab7-4425-9b99-cf072f8873ba",
       "components": {
         "Transform": {
           "position": [
@@ -2944,9 +2944,9 @@
       }
     },
     {
-      "uuid": "869d0271-c697-4c93-b608-7eb82f17e280",
+      "uuid": "24c13cb3-0c9f-4de3-b5dc-a51078b6a25a",
       "name": "Thumb3.L",
-      "parent": "33910749-b8f7-446e-a110-3bd55235d698",
+      "parent": "c5113d60-29e7-48e1-8ada-bc876f9f0514",
       "components": {
         "Transform": {
           "position": [
@@ -2969,9 +2969,9 @@
       }
     },
     {
-      "uuid": "f7a6130a-f362-4621-a1e8-09627a40328b",
+      "uuid": "741ff1cd-cc35-4aca-a400-51d909568271",
       "name": "Index1.L",
-      "parent": "8446e2b3-5b3b-4041-9f9e-46def1898100",
+      "parent": "9bb4869b-f3b0-49d1-a835-5f918c98050b",
       "components": {
         "Transform": {
           "position": [
@@ -2994,9 +2994,9 @@
       }
     },
     {
-      "uuid": "60806b04-2029-4e78-943f-135b6439228a",
+      "uuid": "ec726d69-36c2-4224-99c1-d29039e38a28",
       "name": "Index2.L",
-      "parent": "f7a6130a-f362-4621-a1e8-09627a40328b",
+      "parent": "741ff1cd-cc35-4aca-a400-51d909568271",
       "components": {
         "Transform": {
           "position": [
@@ -3019,9 +3019,9 @@
       }
     },
     {
-      "uuid": "c572d04c-991b-44d9-acfb-61c3bbc9271a",
+      "uuid": "83f20475-d2f7-4074-9730-b665c697e143",
       "name": "Index3.L",
-      "parent": "60806b04-2029-4e78-943f-135b6439228a",
+      "parent": "ec726d69-36c2-4224-99c1-d29039e38a28",
       "components": {
         "Transform": {
           "position": [
@@ -3044,9 +3044,9 @@
       }
     },
     {
-      "uuid": "88e9193a-56cd-49e5-b35e-b702a306ec9a",
+      "uuid": "19f868c8-9c6f-4455-ba97-eec2514417aa",
       "name": "Middle1.L",
-      "parent": "8446e2b3-5b3b-4041-9f9e-46def1898100",
+      "parent": "9bb4869b-f3b0-49d1-a835-5f918c98050b",
       "components": {
         "Transform": {
           "position": [
@@ -3069,9 +3069,9 @@
       }
     },
     {
-      "uuid": "d782fdb9-3592-444c-b8e5-5df9af43ae67",
+      "uuid": "38a042ec-019c-4051-b072-bbba1f88ebc5",
       "name": "Middle2.L",
-      "parent": "88e9193a-56cd-49e5-b35e-b702a306ec9a",
+      "parent": "19f868c8-9c6f-4455-ba97-eec2514417aa",
       "components": {
         "Transform": {
           "position": [
@@ -3094,9 +3094,9 @@
       }
     },
     {
-      "uuid": "deef56f6-e9d9-49b0-81c1-9dfafc06e89c",
+      "uuid": "78652113-92bf-4c56-aad9-58cbb6a1dabe",
       "name": "Middle3.L",
-      "parent": "d782fdb9-3592-444c-b8e5-5df9af43ae67",
+      "parent": "38a042ec-019c-4051-b072-bbba1f88ebc5",
       "components": {
         "Transform": {
           "position": [
@@ -3119,9 +3119,9 @@
       }
     },
     {
-      "uuid": "a0392b9f-98b4-4954-a280-0aee5a66f341",
+      "uuid": "d633a094-bdd8-4927-b5d4-24eaa1a73309",
       "name": "Ring1.L",
-      "parent": "8446e2b3-5b3b-4041-9f9e-46def1898100",
+      "parent": "9bb4869b-f3b0-49d1-a835-5f918c98050b",
       "components": {
         "Transform": {
           "position": [
@@ -3144,9 +3144,9 @@
       }
     },
     {
-      "uuid": "458e08c9-672e-49bf-b406-b70e95e74d34",
+      "uuid": "991d14d0-acfa-4b3c-af17-9b00be781a0f",
       "name": "Ring2.L",
-      "parent": "a0392b9f-98b4-4954-a280-0aee5a66f341",
+      "parent": "d633a094-bdd8-4927-b5d4-24eaa1a73309",
       "components": {
         "Transform": {
           "position": [
@@ -3169,9 +3169,9 @@
       }
     },
     {
-      "uuid": "3d3eedd0-6ea7-486d-b7bb-9e65fa767389",
+      "uuid": "82a18b39-b79d-4313-a68d-bdb114d5fc23",
       "name": "Ring3.L",
-      "parent": "458e08c9-672e-49bf-b406-b70e95e74d34",
+      "parent": "991d14d0-acfa-4b3c-af17-9b00be781a0f",
       "components": {
         "Transform": {
           "position": [
@@ -3194,9 +3194,9 @@
       }
     },
     {
-      "uuid": "24115ddd-a567-4ce0-9480-61b7b1449f17",
+      "uuid": "f7461640-5e3c-4234-a95c-c794b6651256",
       "name": "Pinky1.L",
-      "parent": "8446e2b3-5b3b-4041-9f9e-46def1898100",
+      "parent": "9bb4869b-f3b0-49d1-a835-5f918c98050b",
       "components": {
         "Transform": {
           "position": [
@@ -3219,9 +3219,9 @@
       }
     },
     {
-      "uuid": "d154a3f3-e146-4b59-945b-3d43a0e9a1d3",
+      "uuid": "e1fcbed2-6fe1-49a0-9b58-587db197d8be",
       "name": "Pinky2.L",
-      "parent": "24115ddd-a567-4ce0-9480-61b7b1449f17",
+      "parent": "f7461640-5e3c-4234-a95c-c794b6651256",
       "components": {
         "Transform": {
           "position": [
@@ -3244,9 +3244,9 @@
       }
     },
     {
-      "uuid": "89c28070-b45e-4a75-858d-51f633bc9cb2",
+      "uuid": "a09360a1-3aec-491f-a0e5-1551806af645",
       "name": "Pinky3.L",
-      "parent": "d154a3f3-e146-4b59-945b-3d43a0e9a1d3",
+      "parent": "e1fcbed2-6fe1-49a0-9b58-587db197d8be",
       "components": {
         "Transform": {
           "position": [
@@ -3269,9 +3269,9 @@
       }
     },
     {
-      "uuid": "1c5beaaf-20fe-4958-bbb5-ddb239efdec9",
+      "uuid": "dfa2bfa0-087c-48c3-90ac-9dca0deb38bf",
       "name": "Socket.Hand.L",
-      "parent": "8446e2b3-5b3b-4041-9f9e-46def1898100",
+      "parent": "9bb4869b-f3b0-49d1-a835-5f918c98050b",
       "components": {
         "Transform": {
           "position": [
@@ -3294,9 +3294,9 @@
       }
     },
     {
-      "uuid": "0674f8b0-5bef-444f-9dab-e6a1f74e0a93",
+      "uuid": "5e1c34a9-805c-43ab-b965-6e8d70b4f9bf",
       "name": "LowerArmTwist.L",
-      "parent": "ad25a4bd-7811-4bfa-8a04-2c669606ac97",
+      "parent": "f679b76a-9ab2-4da5-b105-4f42f397e17d",
       "components": {
         "Transform": {
           "position": [
@@ -3319,9 +3319,9 @@
       }
     },
     {
-      "uuid": "4ee631fc-2e59-48be-a667-3539ca9ccbf8",
+      "uuid": "bb2035e1-42e7-429e-9cfd-29087fd2ac4a",
       "name": "UpperArmTwist.L",
-      "parent": "4f2716cf-6231-43f6-bcd0-9d757c49a533",
+      "parent": "98e7f0ed-5b54-4686-8249-df9bce96f582",
       "components": {
         "Transform": {
           "position": [
@@ -3344,9 +3344,9 @@
       }
     },
     {
-      "uuid": "f47a6b0e-86a1-413c-8fe4-1430ced19286",
+      "uuid": "cee49fc6-93f4-4c84-8e3e-36f7d1a22fee",
       "name": "Shoulder.R",
-      "parent": "2c1dbb5e-c5cd-403a-9108-f5de3c4334fa",
+      "parent": "d146bc1b-ce4a-4e21-a8f2-daa2b29f649e",
       "components": {
         "Transform": {
           "position": [
@@ -3369,9 +3369,9 @@
       }
     },
     {
-      "uuid": "632db610-08cb-4cc0-bb90-2159baac869f",
+      "uuid": "8ff5f675-703a-4d43-99fa-153effecd0bf",
       "name": "UpperArm.R",
-      "parent": "f47a6b0e-86a1-413c-8fe4-1430ced19286",
+      "parent": "cee49fc6-93f4-4c84-8e3e-36f7d1a22fee",
       "components": {
         "Transform": {
           "position": [
@@ -3394,9 +3394,9 @@
       }
     },
     {
-      "uuid": "359f144c-9b89-432c-b291-e408e4459908",
+      "uuid": "4f6a09e6-2c8e-4020-ac77-0240480ea7e6",
       "name": "LowerArm.R",
-      "parent": "632db610-08cb-4cc0-bb90-2159baac869f",
+      "parent": "8ff5f675-703a-4d43-99fa-153effecd0bf",
       "components": {
         "Transform": {
           "position": [
@@ -3419,9 +3419,9 @@
       }
     },
     {
-      "uuid": "d5bff9ec-6e88-4ac0-b67d-e2d1b599df04",
+      "uuid": "f25d5eff-ab47-4453-ba25-4bca64cc3e1e",
       "name": "Hand.R",
-      "parent": "359f144c-9b89-432c-b291-e408e4459908",
+      "parent": "4f6a09e6-2c8e-4020-ac77-0240480ea7e6",
       "components": {
         "Transform": {
           "position": [
@@ -3444,9 +3444,9 @@
       }
     },
     {
-      "uuid": "9728a2a7-b653-4619-82fb-9c3d2cd4dd1e",
+      "uuid": "715f4ce3-de65-4ad4-ba2c-afccf9618054",
       "name": "Thumb1.R",
-      "parent": "d5bff9ec-6e88-4ac0-b67d-e2d1b599df04",
+      "parent": "f25d5eff-ab47-4453-ba25-4bca64cc3e1e",
       "components": {
         "Transform": {
           "position": [
@@ -3469,9 +3469,9 @@
       }
     },
     {
-      "uuid": "66c41f61-9be4-494e-bde2-a333b2d29796",
+      "uuid": "71e3abdb-088c-4c8e-afa4-10597b4e8f10",
       "name": "Thumb2.R",
-      "parent": "9728a2a7-b653-4619-82fb-9c3d2cd4dd1e",
+      "parent": "715f4ce3-de65-4ad4-ba2c-afccf9618054",
       "components": {
         "Transform": {
           "position": [
@@ -3494,9 +3494,9 @@
       }
     },
     {
-      "uuid": "c7b4ad32-dcf3-4aad-b4c4-c144fcedeabf",
+      "uuid": "a2ebbc50-b768-4c96-b1ac-b31f71cc0ff1",
       "name": "Thumb3.R",
-      "parent": "66c41f61-9be4-494e-bde2-a333b2d29796",
+      "parent": "71e3abdb-088c-4c8e-afa4-10597b4e8f10",
       "components": {
         "Transform": {
           "position": [
@@ -3519,9 +3519,9 @@
       }
     },
     {
-      "uuid": "ed4e039d-33ec-4faf-a792-bc5850f4049b",
+      "uuid": "b787b474-64cc-4d27-a8a7-4d94d9a4ad6c",
       "name": "Index1.R",
-      "parent": "d5bff9ec-6e88-4ac0-b67d-e2d1b599df04",
+      "parent": "f25d5eff-ab47-4453-ba25-4bca64cc3e1e",
       "components": {
         "Transform": {
           "position": [
@@ -3544,9 +3544,9 @@
       }
     },
     {
-      "uuid": "a6116a15-23a2-4e2d-8757-3594ad5cb8b4",
+      "uuid": "1ab393c0-405a-4973-85bf-e503b7eb13ad",
       "name": "Index2.R",
-      "parent": "ed4e039d-33ec-4faf-a792-bc5850f4049b",
+      "parent": "b787b474-64cc-4d27-a8a7-4d94d9a4ad6c",
       "components": {
         "Transform": {
           "position": [
@@ -3569,9 +3569,9 @@
       }
     },
     {
-      "uuid": "81ce32ed-a33b-4563-8e44-2d60e12cb688",
+      "uuid": "21312a0f-a1e6-4430-8d11-e0969d2fcd29",
       "name": "Index3.R",
-      "parent": "a6116a15-23a2-4e2d-8757-3594ad5cb8b4",
+      "parent": "1ab393c0-405a-4973-85bf-e503b7eb13ad",
       "components": {
         "Transform": {
           "position": [
@@ -3594,9 +3594,9 @@
       }
     },
     {
-      "uuid": "7e0eea70-92a6-41d7-a697-dd4e6018138b",
+      "uuid": "cfe8b743-1063-476b-93a0-535cada94d91",
       "name": "Middle1.R",
-      "parent": "d5bff9ec-6e88-4ac0-b67d-e2d1b599df04",
+      "parent": "f25d5eff-ab47-4453-ba25-4bca64cc3e1e",
       "components": {
         "Transform": {
           "position": [
@@ -3619,9 +3619,9 @@
       }
     },
     {
-      "uuid": "9f9c7106-097c-49ff-834f-b7a210ee79c5",
+      "uuid": "e856d656-674c-4f09-86e6-709445908911",
       "name": "Middle2.R",
-      "parent": "7e0eea70-92a6-41d7-a697-dd4e6018138b",
+      "parent": "cfe8b743-1063-476b-93a0-535cada94d91",
       "components": {
         "Transform": {
           "position": [
@@ -3644,9 +3644,9 @@
       }
     },
     {
-      "uuid": "d27b9f1b-9e0e-48c9-9e9e-378bb57c72e1",
+      "uuid": "e8cb749c-9d1d-49a4-9aed-b44530018bd9",
       "name": "Middle3.R",
-      "parent": "9f9c7106-097c-49ff-834f-b7a210ee79c5",
+      "parent": "e856d656-674c-4f09-86e6-709445908911",
       "components": {
         "Transform": {
           "position": [
@@ -3669,9 +3669,9 @@
       }
     },
     {
-      "uuid": "e0ef5baa-0c70-4a6d-a2c2-5c21fc8c3bf2",
+      "uuid": "8590a189-258b-4254-ba54-191aba73d521",
       "name": "Ring1.R",
-      "parent": "d5bff9ec-6e88-4ac0-b67d-e2d1b599df04",
+      "parent": "f25d5eff-ab47-4453-ba25-4bca64cc3e1e",
       "components": {
         "Transform": {
           "position": [
@@ -3694,9 +3694,9 @@
       }
     },
     {
-      "uuid": "ff2f3e00-86c7-44f9-bc48-d0c4d3f3176b",
+      "uuid": "a3bf12cf-1e19-4892-85a1-c6bcd2198397",
       "name": "Ring2.R",
-      "parent": "e0ef5baa-0c70-4a6d-a2c2-5c21fc8c3bf2",
+      "parent": "8590a189-258b-4254-ba54-191aba73d521",
       "components": {
         "Transform": {
           "position": [
@@ -3719,9 +3719,9 @@
       }
     },
     {
-      "uuid": "44358aca-53b4-4475-a8c1-3ae1fbcf8c20",
+      "uuid": "3bba1457-a023-4afd-a9f6-5379a8ffa819",
       "name": "Ring3.R",
-      "parent": "ff2f3e00-86c7-44f9-bc48-d0c4d3f3176b",
+      "parent": "a3bf12cf-1e19-4892-85a1-c6bcd2198397",
       "components": {
         "Transform": {
           "position": [
@@ -3744,9 +3744,9 @@
       }
     },
     {
-      "uuid": "eeb7f028-1c21-43f9-b98a-50cdd3cd7486",
+      "uuid": "d67c621f-0037-446a-b307-7210772c8ffc",
       "name": "Pinky1.R",
-      "parent": "d5bff9ec-6e88-4ac0-b67d-e2d1b599df04",
+      "parent": "f25d5eff-ab47-4453-ba25-4bca64cc3e1e",
       "components": {
         "Transform": {
           "position": [
@@ -3769,9 +3769,9 @@
       }
     },
     {
-      "uuid": "6a1c7ee9-cb81-490a-bbc5-cdce6c738b7c",
+      "uuid": "9fe7b692-bbe3-4d70-86da-659954c0cf5e",
       "name": "Pinky2.R",
-      "parent": "eeb7f028-1c21-43f9-b98a-50cdd3cd7486",
+      "parent": "d67c621f-0037-446a-b307-7210772c8ffc",
       "components": {
         "Transform": {
           "position": [
@@ -3794,9 +3794,9 @@
       }
     },
     {
-      "uuid": "1cec61a6-4a3f-4f09-9046-ce99390252c9",
+      "uuid": "86bdfd76-63e1-4347-84d6-66a55acf438d",
       "name": "Pinky3.R",
-      "parent": "6a1c7ee9-cb81-490a-bbc5-cdce6c738b7c",
+      "parent": "9fe7b692-bbe3-4d70-86da-659954c0cf5e",
       "components": {
         "Transform": {
           "position": [
@@ -3819,9 +3819,9 @@
       }
     },
     {
-      "uuid": "0d228f73-6d27-4b37-920f-6dad2a359164",
+      "uuid": "f03f2913-90cc-41cb-b1f8-8d25bd0e7642",
       "name": "Socket.Hand.R",
-      "parent": "d5bff9ec-6e88-4ac0-b67d-e2d1b599df04",
+      "parent": "f25d5eff-ab47-4453-ba25-4bca64cc3e1e",
       "components": {
         "Transform": {
           "position": [
@@ -3844,9 +3844,9 @@
       }
     },
     {
-      "uuid": "9c0c8a31-8184-47de-9dfe-16a33d320fa0",
+      "uuid": "b40c0ef4-86b5-4e80-9600-8757b99dcead",
       "name": "LowerArmTwist.R",
-      "parent": "359f144c-9b89-432c-b291-e408e4459908",
+      "parent": "4f6a09e6-2c8e-4020-ac77-0240480ea7e6",
       "components": {
         "Transform": {
           "position": [
@@ -3869,9 +3869,9 @@
       }
     },
     {
-      "uuid": "1dce6573-2044-4c14-8751-7366f52a8f71",
+      "uuid": "92bff5ef-b6a8-43b4-8aab-e687996f783e",
       "name": "UpperArmTwist.R",
-      "parent": "632db610-08cb-4cc0-bb90-2159baac869f",
+      "parent": "8ff5f675-703a-4d43-99fa-153effecd0bf",
       "components": {
         "Transform": {
           "position": [
@@ -3894,9 +3894,9 @@
       }
     },
     {
-      "uuid": "090702ab-c4e8-473a-8ac9-b8e15b3aa22f",
+      "uuid": "7a5d28f5-e184-4ccd-8d72-9c082a6dcd79",
       "name": "Socket.Back",
-      "parent": "2c1dbb5e-c5cd-403a-9108-f5de3c4334fa",
+      "parent": "d146bc1b-ce4a-4e21-a8f2-daa2b29f649e",
       "components": {
         "Transform": {
           "position": [
@@ -3919,9 +3919,9 @@
       }
     },
     {
-      "uuid": "d88f6848-572b-49a8-9523-5477fc5007dd",
+      "uuid": "70d85e53-1ad3-4219-ba1b-50b11800b99e",
       "name": "UpperLeg.L",
-      "parent": "de8d0aca-0ee1-4007-be1d-cd3c50aa1b51",
+      "parent": "4a306263-15fd-43ba-b797-630be42769f2",
       "components": {
         "Transform": {
           "position": [
@@ -3944,9 +3944,9 @@
       }
     },
     {
-      "uuid": "61a7d718-3308-4455-a14a-0f5ea0317517",
+      "uuid": "9cee1fdc-0456-408e-8640-32804a7d7ca5",
       "name": "LowerLeg.L",
-      "parent": "d88f6848-572b-49a8-9523-5477fc5007dd",
+      "parent": "70d85e53-1ad3-4219-ba1b-50b11800b99e",
       "components": {
         "Transform": {
           "position": [
@@ -3969,9 +3969,9 @@
       }
     },
     {
-      "uuid": "5319b37d-758c-4560-bceb-61cfd733a3f6",
+      "uuid": "d48aa891-8578-44fd-bc1e-f5ff7dcc841d",
       "name": "Foot.L",
-      "parent": "61a7d718-3308-4455-a14a-0f5ea0317517",
+      "parent": "9cee1fdc-0456-408e-8640-32804a7d7ca5",
       "components": {
         "Transform": {
           "position": [
@@ -3994,9 +3994,9 @@
       }
     },
     {
-      "uuid": "1204068e-f412-4214-9438-facff186c5d4",
+      "uuid": "b474c4ff-cdc6-4298-8579-a42b942835db",
       "name": "Toe.L",
-      "parent": "5319b37d-758c-4560-bceb-61cfd733a3f6",
+      "parent": "d48aa891-8578-44fd-bc1e-f5ff7dcc841d",
       "components": {
         "Transform": {
           "position": [
@@ -4019,9 +4019,9 @@
       }
     },
     {
-      "uuid": "0d570158-ecec-4a93-9026-1ad5a1dd76aa",
+      "uuid": "8a738fdc-69e0-42b5-b183-cc57aa7c1e53",
       "name": "UpperLegTwist.L",
-      "parent": "d88f6848-572b-49a8-9523-5477fc5007dd",
+      "parent": "70d85e53-1ad3-4219-ba1b-50b11800b99e",
       "components": {
         "Transform": {
           "position": [
@@ -4044,9 +4044,9 @@
       }
     },
     {
-      "uuid": "8a031060-6def-4095-8c5b-026ffcd1c602",
+      "uuid": "de2e9736-0184-4b68-9e36-deaee56e5109",
       "name": "UpperLeg.R",
-      "parent": "de8d0aca-0ee1-4007-be1d-cd3c50aa1b51",
+      "parent": "4a306263-15fd-43ba-b797-630be42769f2",
       "components": {
         "Transform": {
           "position": [
@@ -4069,9 +4069,9 @@
       }
     },
     {
-      "uuid": "3a5f7444-d22a-4cde-84c7-54cc412f8dce",
+      "uuid": "db2312d9-e26f-4526-a3a8-52fd0a4a7dd9",
       "name": "LowerLeg.R",
-      "parent": "8a031060-6def-4095-8c5b-026ffcd1c602",
+      "parent": "de2e9736-0184-4b68-9e36-deaee56e5109",
       "components": {
         "Transform": {
           "position": [
@@ -4094,9 +4094,9 @@
       }
     },
     {
-      "uuid": "bceb5a5e-9b19-4d69-9785-07bb4dd9e4c4",
+      "uuid": "55d92dcf-7dbe-4f81-856f-1bf830fde273",
       "name": "Foot.R",
-      "parent": "3a5f7444-d22a-4cde-84c7-54cc412f8dce",
+      "parent": "db2312d9-e26f-4526-a3a8-52fd0a4a7dd9",
       "components": {
         "Transform": {
           "position": [
@@ -4119,9 +4119,9 @@
       }
     },
     {
-      "uuid": "e1789f12-6e58-4481-9103-faaf21b7a132",
+      "uuid": "9458a63c-0db9-4239-b0e4-b8653e5d6130",
       "name": "Toe.R",
-      "parent": "bceb5a5e-9b19-4d69-9785-07bb4dd9e4c4",
+      "parent": "55d92dcf-7dbe-4f81-856f-1bf830fde273",
       "components": {
         "Transform": {
           "position": [
@@ -4144,9 +4144,9 @@
       }
     },
     {
-      "uuid": "52024982-5bd2-4c08-a5f1-8930e4684016",
+      "uuid": "860e7169-a436-4bd6-87cc-c1963813d700",
       "name": "UpperLegTwist.R",
-      "parent": "8a031060-6def-4095-8c5b-026ffcd1c602",
+      "parent": "de2e9736-0184-4b68-9e36-deaee56e5109",
       "components": {
         "Transform": {
           "position": [
@@ -4169,9 +4169,9 @@
       }
     },
     {
-      "uuid": "3df2e2d3-c561-40f1-916e-932c1467cd86",
+      "uuid": "fe991f6c-7ef9-4939-97c7-8a7b93d023a8",
       "name": "Socket.Hip.L",
-      "parent": "de8d0aca-0ee1-4007-be1d-cd3c50aa1b51",
+      "parent": "4a306263-15fd-43ba-b797-630be42769f2",
       "components": {
         "Transform": {
           "position": [
@@ -4194,9 +4194,9 @@
       }
     },
     {
-      "uuid": "25e758c2-8e82-46a9-afc6-cfa33371798c",
+      "uuid": "c3c889dc-2229-462e-aa04-9b03b6282b9a",
       "name": "Socket.Hip.R",
-      "parent": "de8d0aca-0ee1-4007-be1d-cd3c50aa1b51",
+      "parent": "4a306263-15fd-43ba-b797-630be42769f2",
       "components": {
         "Transform": {
           "position": [
@@ -4219,9 +4219,181 @@
       }
     },
     {
-      "uuid": "7124a8da-8865-41ad-93f4-7bb6815e94dd",
+      "uuid": "886596db-e08c-478c-a54f-71c06fdbca43",
+      "name": "Orion_Boots",
+      "parent": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
+      "components": {
+        "MeshRenderer": {
+          "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
+          "mesh_index": 5,
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.5,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "SkinnedMesh": {
+          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
+          "skin": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "c38eecf4-e768-42a5-a8fe-41f097432da1",
+      "name": "Orion_Gloves",
+      "parent": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
+      "components": {
+        "MeshRenderer": {
+          "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
+          "mesh_index": 6,
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.5,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "SkinnedMesh": {
+          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
+          "skin": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "80cbd9d3-6917-4f77-9a90-7bf2557a1f51",
+      "name": "Orion_Belt",
+      "parent": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
+      "components": {
+        "MeshRenderer": {
+          "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
+          "mesh_index": 7,
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.5,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "SkinnedMesh": {
+          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
+          "skin": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "35300049-6bf7-4bc9-a645-f7f9e953a973",
+      "name": "Orion_Backpack",
+      "parent": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
+      "components": {
+        "MeshRenderer": {
+          "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
+          "mesh_index": 8,
+          "base_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "metallic": 0,
+          "roughness": 0.5,
+          "cast_shadows": true,
+          "visible": true
+        },
+        "SkinnedMesh": {
+          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
+          "skin": 0
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "uuid": "5c3928ed-8485-42bb-9525-d8d058677071",
       "name": "Dust",
-      "parent": "540b9add-f2e2-4c9f-a81a-9fafb79244a7",
+      "parent": "8bd77d94-1191-4295-adf3-d5b61e06ced2",
       "components": {
         "ParticleEmitter": {
           "emitting": false,
@@ -4416,10 +4588,10 @@
           ]
         }
       },
-      "parent": "540b9add-f2e2-4c9f-a81a-9fafb79244a7"
+      "parent": "8bd77d94-1191-4295-adf3-d5b61e06ced2"
     },
     {
-      "uuid": "1920f256-2b8a-4b2b-bda4-bef61b221a53",
+      "uuid": "b38b9a1f-4a65-4b87-aa6d-77d238607461",
       "name": "HUD",
       "components": {
         "Script": {
@@ -4462,9 +4634,9 @@
       }
     },
     {
-      "uuid": "3c517155-5ba3-4904-a0c8-7505f6aba040",
+      "uuid": "05262449-6c50-431c-befb-179f84634850",
       "name": "Help Button",
-      "parent": "1920f256-2b8a-4b2b-bda4-bef61b221a53",
+      "parent": "b38b9a1f-4a65-4b87-aa6d-77d238607461",
       "components": {
         "Transform": {
           "position": [
@@ -4583,9 +4755,9 @@
       }
     },
     {
-      "uuid": "3fb8acee-2dff-4ee2-a493-59510e11bae8",
+      "uuid": "941828b5-296c-4765-821d-ed60db54fb15",
       "name": "Controls Panel",
-      "parent": "1920f256-2b8a-4b2b-bda4-bef61b221a53",
+      "parent": "b38b9a1f-4a65-4b87-aa6d-77d238607461",
       "components": {
         "Transform": {
           "position": [
@@ -4649,9 +4821,9 @@
       }
     },
     {
-      "uuid": "cd6b5dd3-724a-4573-a8e9-22decb7e62bf",
+      "uuid": "aaac8230-8695-45d8-8df1-89c7189e871c",
       "name": "Controls Text",
-      "parent": "3fb8acee-2dff-4ee2-a493-59510e11bae8",
+      "parent": "941828b5-296c-4765-821d-ed60db54fb15",
       "components": {
         "Transform": {
           "position": [
@@ -4726,9 +4898,9 @@
       }
     },
     {
-      "uuid": "e36bb28f-9537-407c-a8b5-233b97788024",
+      "uuid": "ccd835a9-29c3-46ef-a996-fa660bce8226",
       "name": "Save Status",
-      "parent": "1920f256-2b8a-4b2b-bda4-bef61b221a53",
+      "parent": "b38b9a1f-4a65-4b87-aa6d-77d238607461",
       "components": {
         "Transform": {
           "position": [
@@ -4821,7 +4993,7 @@
     {
       "uuid": "4b5e3bac-4dbd-5b69-bfe0-c8f9d4d05ac2",
       "name": "Status Text",
-      "parent": "1920f256-2b8a-4b2b-bda4-bef61b221a53",
+      "parent": "b38b9a1f-4a65-4b87-aa6d-77d238607461",
       "components": {
         "Transform": {
           "position": [
@@ -4914,7 +5086,7 @@
     {
       "uuid": "54cd7840-6f15-5776-a4a6-e89ef03dfe10",
       "name": "Banner",
-      "parent": "1920f256-2b8a-4b2b-bda4-bef61b221a53",
+      "parent": "b38b9a1f-4a65-4b87-aa6d-77d238607461",
       "components": {
         "Transform": {
           "position": [

@@ -3,7 +3,8 @@
   "uuid": "8e84eb12-63c8-4aed-aae2-517c038d3071",
   "importer": "gltf",
   "settings": {
-    "texture_compression": "auto"
+    "texture_compression": "auto",
+    "rgba8_max_size": 256
   }
 }
 

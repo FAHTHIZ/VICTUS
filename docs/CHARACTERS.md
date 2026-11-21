@@ -26,23 +26,25 @@ characters used (arms 40° from vertical), so existing clips and ragdoll setups 
 ## What a character contains
 
 Each GLB is self-contained (no external buffers or images). One skinned mesh node
-`<Name>_Body` carries five primitives, one per material, so a character costs five skinned draws
-per pass:
+`<Name>_Body` carries five primitives, one per material, and four equipment nodes share the same
+skin and a sixth material (see [Equipment](#equipment)), so a fully equipped character costs nine
+skinned draws per pass:
 
 | Material | Part | Maps | Notes |
 |---|---|---|---|
 | `<Name>_Skin` | head, neck, hands (the bare skin) | base colour, normal, ORM (AO/roughness/metal) | 2048² atlas; the head and hands are repacked from MakeHuman's UV layout at 2.3× texel density. Skin tone, lip tint, pores, stubble/freckles, nail plates, knuckle creases, skin lines and redness over the cheeks, nose and ears are baked per texel (no subsurface scattering yet; the engine's PBR shader is a standard metal/rough BRDF) |
-| `<Name>_Suit` | flight suit | base colour, normal, ORM, emissive | 2048²; panel seams, stitching, knee and shoulder pads, collar and wrist cuffs, piping on the emissive map (strength 4, `KHR_materials_emissive_strength`) |
+| `<Name>_Suit` | flight suit | base colour, normal, ORM, emissive | 2048²; panel seams, stitching, knee and shoulder pads, collar and wrist cuffs, piping down the arms and legs on the emissive map (strength 2, `KHR_materials_emissive_strength`); the chest outline is a non-emissive bonded tape |
 | `<Name>_Eye` | eyeballs | base colour, normal, ORM | 512²; MakeHuman high-poly eye proxy; iris stroma and collarette, limbal ring, sclera veins |
 | `<Name>_Mouth` | teeth, gums, tongue | base colour, normal, ORM | 512²; separate upper teeth (Head) and lower teeth/tongue (Jaw) |
 | `<Name>_Groom` | scalp hair, brows, lashes (and Nova's bun) | base colour with alpha, normal, ORM | 2048², alpha mask 0.5, double-sided; strand patterns are line-integral-convolved along a hair flow field |
+| `<Name>_Gear` | boots, gloves, belt, backpack and its straps | base colour, normal, ORM | 2048²; pebbled leather uppers over a rubber lug sole with a stitched welt, synthetic-leather gloves with a dotted grip palm and a ribbed knuckle panel, woven webbing with a brushed-metal buckle (metallic 1), coated ripstop with taped seams, a zip track and webbing straps |
 
 All maps are baked from the actual surface (per-texel world position and normal, a Cycles
 ambient-occlusion bake against the whole character) — there are no flat material colours and no
 placeholder textures. Albedo and ORM are JPEG, the groom is PNG (it needs alpha). The engine's
 texture cooker builds mips and GPU block compression (BC7/ASTC) at import like any other model.
 
-Blend shapes: every primitive carries the same 44 ARKit-style facial targets (`browDown_L`,
+Blend shapes: every body primitive carries the same 44 ARKit-style facial targets (`browDown_L`,
 `eyeBlink_L`, `eyeWide_L`, `cheekPuff`, `mouthSmile_L`, `mouthFrown_R`, `mouthPucker`, `tongueOut`,
 ...), derived from MakeHuman's facial pose units. Jaw opening is the `Jaw` joint, eye gaze the
 `Eye.L` / `Eye.R` joints. Morph deltas are sparse and stored as normalised integers
@@ -118,9 +120,39 @@ clip with its length, loop flag and layer.
 - Touching down enters `Land`, which returns to `Locomotion`.
 - `interact` (E / gamepad West in the templates) plays `Interact` and returns to `Locomotion`.
 
+## Equipment
+
+Four items ship on both characters, each its own skinned mesh node under `Rig` (they are listed in
+the GLB's `extras.victus.equipment`):
+
+| Node | Made from | Deforms with |
+|---|---|---|
+| `<Name>_Boots` | per foot, the radial graph about a point in the ankle of the union of two convex hulls (foot, lower leg up to 8.5 cm above the ankle), dilated 5 mm; cut at the boot top with a lip tucked onto the leg | the weights of the nearest suit point (Foot, Toe, LowerLeg) |
+| `<Name>_Gloves` | the bare hand beyond a plane 3 cm up the forearm, 1.8 mm out along the rest normal; the cuff starts under the sleeve | the hand's own weights, vertex for vertex |
+| `<Name>_Belt` | a 4.5 cm band of the suit around the waist seam, 5 mm out, with rolled lips on both edges | the suit's weights |
+| `<Name>_Backpack` | a rounded box (27 x 11 x 31 cm) leaning on the back along the side-profile line with the least gap, whose padded front conforms to the back with 8 mm clearance, plus two 4 cm shoulder straps grown from the suit | the box: Chest only; straps: the suit's weights |
+
+The covered surface is kept, so each item can be hidden on its own without holes, and nothing
+under an item is darkened by it (the body's AO bake ignores equipment; the equipment's bake sees
+the body). The build fails if, in the shipped LOD 0 in the rest pose, any covered body point lies
+less than 0.2 mm inside its boots, gloves or belt, or the back comes closer than 2 mm to the pack
+(`check_gear_clearance` in `build_characters.py`: distance to the closest item triangle, signed by
+its normal; it prints the margins: boots >= 1.18 mm, gloves >= 1.03 mm, belt >= 2.62 mm, back to
+pack >= 7.85 mm on both characters). In motion the shells share the weights of the surface they
+cover, so they follow it; the rigid pack and the boots' toe box are checked only in gameplay
+renders, not numerically per pose.
+
+Hide or show an item in a script, or untick Visible on its Mesh Renderer in Studio:
+
+```lua
+local pack = self.entity:find_descendant("Orion_Backpack")
+pack:set_visible(false)
+```
+
 ## LODs and budgets
 
-LOD 0 is one Catmull-Clark subdivision of the MakeHuman topology (about 125k triangles): the
+LOD 0 is one Catmull-Clark subdivision of the MakeHuman topology (about 125k triangles for the
+body, about 205k with the equipment): the
 high-end PC budget, with clean edge loops at the eyes, mouth, shoulders, elbows, knees and
 fingers. The importer generates three coarser LODs with meshoptimizer
 (`ModelImportSettings::lods`), and per-cascade shadow LOD applies as for any model. Templates

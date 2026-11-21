@@ -2560,6 +2560,7 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 - **Built:** `project::validate_character` (`engine/project/src/character_validate.cpp`) and `victus character-check <model|orion|nova> [--json] [--any-joints] [--strict]`; `Scene::find_descendant` / `Scene::attach_to_socket` with Luau `entity:find_descendant(name)` and `character:attach(item, socket [, keep_world])` (script API 1.1 snapshot updated); controller twist drivers (`"twist"` in `.vanim`, applied after layers, before IK) and the starter controller driving `LowerArmTwist.L/R` from the hands at 0.5. Docs: CHARACTERS.md (validating a character, attaching), ANIMATION.md (twist drivers).
 - **Verified:** full `ctest --test-dir build/release -j2` before these changes on main 52922f6: 42/42 passed (526 s). After them: `victus_animation_tests` 66 cases passed (new "twist drivers"), `victus_scene_tests` and `victus_script_tests` all passed, `victus_asset_tests -tc="starter characters*,character validation*"` 4 cases / 749 assertions passed, `victus_editor_tests -tc="*nim*,*ontroller*,*script api*,*character*"` passed, `ctest -R "cli_smoke|tools|script|scene"` passed; `victus character-check orion` and `nova`: OK, 0 errors, 0 warnings (60 joints, 8/8 sockets, 125,184 / 128,816 triangles, 3 LODs, 41 clips).
 - **Not covered:** full ctest not rerun after these changes; no visual before/after of the forearm twist in a render.
+- **Commit:** f3194ce on main.
 - **Next task:** authored equipment parts on the sockets; Studio character validation panel.
 
 ## 2026-11-21 — Sun contact shadows (ADR-0183)
@@ -2585,3 +2586,32 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 Not covered: instanced foliage groups and blended draws still snap; no geomorphing; cost on real GPUs unmeasured.
 
 Next task: volumetric fog noise and self-shadowing (ENGINE_BENCHMARK gap 3).
+
+## 2026-11-21 — Starter character equipment (ADR-0185)
+
+- **Built:**
+  - `tools/characters/gear.py` makes the Orion and Nova equipment:
+    - boots: per foot, the radial graph of a union of two dilated convex hulls, which holds every toe;
+    - gloves: a 1.8 mm shell over the bare hand, starting under the sleeve;
+    - belt: a 5 mm band over the waist seam;
+    - backpack: a rounded box leaning on the back profile, with a padded front that conforms to the back and two shoulder straps grown from the suit.
+  - The shells share the covered surface's skin weights. Each item is its own skinned node (`<Name>_Boots`, `_Gloves`, `_Belt`, `_Backpack`) using a sixth `Gear` material with baked maps: leather, rubber lug tread, webbing, a metallic buckle, ripstop and a zip track.
+  - The build refuses to write a character that fails the rest-pose clearance gate (`check_gear_clearance`).
+  - Suit: the chest outline is now a tape rather than emissive piping, and the emissive strength drops from 4 to 2.
+  - Regenerated the GLBs (Orion 20.09 MB, 203,472 triangles; Nova 20.26 MB, 210,608) in `engine/project/data/characters` and `samples/arena`. Regenerated the arena scenes and prefab with `generate_arena.py`, keeping the arena's audio and HUD asset UUIDs. Re-baselined the perf budgets for template-3d, template-multiplayer and sample-arena.
+  - Docs: CHARACTERS.md (Equipment), ADR-0185 and the research register.
+- **Verified:**
+  - Clearance margins printed by both builds:
+    - Orion: boots 1.18 mm, gloves 1.10 mm, belt 2.62 mm, back-to-pack 7.85 mm.
+    - Nova: 1.24, 1.03, 3.52 and 11.25 mm.
+  - `tools/characters/test_pipeline.py`: 9/9, including new tests for winding and welding of closed gear surfaces and for the closest-point and signed-clearance functions.
+  - `victus_asset_tests -tc="*character*"`: 4 cases, 845 assertions passed. They check six materials, the four equipment nodes on skin 0 with no morphs, and body triangles 100k-140k within a 170k-230k total.
+  - `victus character-check orion|nova`: OK, 0 errors, 0 warnings (6 materials, 19 textures).
+  - Full `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1 VICTUS_NO_AUDIO=1 ctest --test-dir build/release -j2`: 42/42 passed (539 s).
+  - Images:
+    - Blender render: docs/images/characters/blender_render_bodies.jpg.
+    - VICTUS runtime renders of fresh 3D templates: victus_runtime_orion.jpg and victus_runtime_nova.jpg. They show the boots, gloves, belt, straps and pack, and the walking companion wears its pack.
+- **Not covered:**
+  - No numerical clearance check in animated poses; the rigid pack and the boot toe box under strong spine or toe bends were judged only from the runtime screenshots.
+  - No close-up runtime review of the gear.
+- **Next task:** Studio character workbench and validation panel; posed clearance check over the clip library.

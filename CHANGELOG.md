@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Modular equipment on both starter characters: boots, gloves, a belt and a backpack with shoulder straps. Each item is its own skinned node (`Orion_Boots`, `Orion_Gloves`, `Orion_Belt`, `Orion_Backpack`) that you can hide in Studio or with `entity:set_visible(false)`, and it carries baked PBR maps (leather, rubber tread, webbing, a metal buckle, ripstop). The build checks clearance against the body in the rest pose (ADR-0185). ([evidence](docs/STATUS.md#2026-11-21--starter-character-equipment-adr-0185))
 - Dithered LOD cross-fade: level changes dissolve over `lod_fade_frames` (default 8) instead of popping (ADR-0184). ([evidence](docs/STATUS.md#2026-11-21--dithered-lod-cross-fade-adr-0184))
 - Screen-space sun contact shadows: `contact_shadow_length` on the Environment adds sharp small-scale sun shadows, on in the 3D templates (ADR-0183). ([evidence](docs/STATUS.md#2026-11-21--sun-contact-shadows-adr-0183))
 - docs/ENGINE_BENCHMARK.md compares VICTUS with IW 8.0, RAGE, id Tech 7, Unreal Engine 5, Frostbite and Decima and orders the remaining gaps. ([evidence](docs/STATUS.md#2026-11-21--sun-contact-shadows-adr-0183))
@@ -76,6 +77,10 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 - Project templates (3D, 2D, No-Code Platformer, No-Code 3D Adventure, simulation, multiplayer), Orion and Nova starter characters, sample projects (arena, dungeon crawler, render showcase).
 - Behaviours (ADR-0120): no-code gameplay components (platformer and top-down movement, camera follow, health, hazards, collectibles, patrol, chase, shooter, projectiles, spawner, lifetime, checkpoints, goals, game rules with a HUD), the No-Code Platformer and No-Code 3D Adventure templates, and behaviour-driven character animation.
 - Release process: this changelog, docs/RELEASE_PROCESS.md, `tools/release/release.py` and the tag-triggered release workflow with separate debug-symbol archives.
+
+### Changed
+
+- Starter character suits: the chest outline is now a tape instead of emissive piping, and the emissive strength drops from 4 to 2 (ADR-0185). Character GLBs grow to about 20 MB and about 205k LOD 0 triangles with equipment. Existing mesh, material and entity indices are unchanged. ([evidence](docs/STATUS.md#2026-11-21--starter-character-equipment-adr-0185))
 
 ### Fixed
 

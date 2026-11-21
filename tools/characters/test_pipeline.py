@@ -18,6 +18,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import anim  # noqa: E402
 import fit  # noqa: E402
+import gear  # noqa: E402
 import gltf  # noqa: E402
 import meshops  # noqa: E402
 import mh  # noqa: E402
@@ -32,6 +33,39 @@ def cube():
     f = np.array([[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]])
     uv = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], float)
     return meshops.Quads(v, f, uv, np.tile([0, 1, 2, 3], (6, 1)))
+
+
+def _outward_fraction(q, center):
+    tri = meshops.triangulate(q.f)
+    a, b, c = q.v[tri[:, 0]], q.v[tri[:, 1]], q.v[tri[:, 2]]
+    n = np.cross(b - a, c - a)
+    return float(((((a + b + c) / 3 - center) * n).sum(1) > 0).mean())
+
+
+def test_gear_closed_surfaces_wind_outward():
+    # Every side of the rounded box and the cube-sphere winds counter-clockwise from outside
+    # (a flipped side renders inside-out and breaks the clearance sign).
+    box = gear.rounded_box(np.array([1.0, 2.0, 3.0]), (0.2, 0.1, 0.3), 0.03, n=6)
+    assert _outward_fraction(box, np.array([1.0, 2.0, 3.0])) == 1.0
+    sph = gear.cube_sphere(5)
+    assert _outward_fraction(sph, np.zeros(3)) == 1.0
+    assert np.allclose(np.linalg.norm(sph.v, axis=1), 1.0)
+    # Welded: a closed surface has every edge on exactly two faces.
+    e = np.sort(np.concatenate([sph.f[:, [0, 1]], sph.f[:, [1, 2]], sph.f[:, [2, 3]], sph.f[:, [3, 0]]]), 1)
+    _, counts = np.unique(e, axis=0, return_counts=True)
+    assert (counts == 2).all()
+
+
+def test_gear_closest_point_and_signed_clearance():
+    a, b, c = np.array([[0.0, 0, 0]]), np.array([[1.0, 0, 0]]), np.array([[0.0, 1, 0]])
+    pts = np.array([[0.2, 0.2, 0.5], [2.0, -1.0, 0.0], [-1.0, -1.0, 1.0], [1.0, 1.0, 0.0]])
+    cp = gear.closest_on_triangles(pts, np.repeat(a, 4, 0), np.repeat(b, 4, 0), np.repeat(c, 4, 0))
+    assert np.allclose(cp, [[0.2, 0.2, 0], [1, 0, 0], [0, 0, 0], [0.5, 0.5, 0]])
+    # A point inside a closed box has positive clearance (covered), outside negative.
+    box = gear.rounded_box(np.zeros(3), (0.1, 0.1, 0.1), 0.01, n=6)
+    tri = meshops.triangulate(box.f)
+    s = gear._signed(box.v, tri, np.array([[0.0, 0.0, 0.05], [0.0, 0.0, 0.13]]), 24)
+    assert abs(s[0] - 0.05) < 2e-3 and abs(s[1] + 0.03) < 2e-3
 
 
 def test_catmull_clark_operator():
