@@ -23,6 +23,7 @@ namespace {
 constexpr const char* kRefsWindow = "References###asset_refs";
 constexpr const char* kRenamePopup = "Rename Asset";
 constexpr const char* kFolderPopup = "Rename Folder";
+constexpr const char* kNewFolderPopup = "New Folder";
 constexpr const char* kDeletePopup = "Delete Asset";
 
 std::string file_name(std::string_view rel) {
@@ -437,6 +438,42 @@ void Editor::draw_asset_dialogs() {
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             folder_rename_from_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    // ---- New Folder ----
+    if (new_folder_parent_) ImGui::OpenPopup(kNewFolderPopup);
+    if (ImGui::BeginPopupModal(kNewFolderPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const std::string& parent = new_folder_parent_ ? *new_folder_parent_ : std::string();
+        ImGui::Text("New folder in assets/%s", parent.c_str());
+        ImGui::SetNextItemWidth(360);
+        if (ImGui::IsWindowAppearing()) {
+            ImGui::SetKeyboardFocusHere();
+        }
+        const bool enter = ImGui::InputText("##new_folder", &new_folder_text_,
+                                            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        if (!new_folder_error_.empty()) {
+            ImGui::PushTextWrapPos(360);
+            ImGui::TextColored(tok::kDanger, "%s", new_folder_error_.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        const bool ok = !new_folder_text_.empty();
+        ImGui::BeginDisabled(!ok);
+        if (ImGui::Button("Create", ImVec2(120, 0)) || (enter && ok)) {
+            const std::string rel = parent.empty() ? new_folder_text_ : parent + "/" + new_folder_text_;
+            if (auto st = create_asset_folder(rel); st.ok()) {
+                new_folder_parent_.reset();
+                ImGui::CloseCurrentPopup();
+            } else {
+                new_folder_error_ = st.error().message;
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            new_folder_parent_.reset();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();

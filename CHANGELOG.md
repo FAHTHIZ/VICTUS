@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Assets > New Folder..., New Folder Inside... and Delete Folder (empty folders only); empty folders show in the folder list. ([evidence](docs/STATUS.md#2026-11-21--empty-folders-new-folder-and-delete-folder))
 - Rename or move whole asset folders, and drag assets onto folders to move them, keeping IDs and updating path references (ADR-0178). ([evidence](docs/STATUS.md#2026-11-21--folder-renamemove-and-drag-to-folder-adr-0178))
 - Inspector New Tree / Edit Tree buttons on the BehaviorTree component, a Help topic for behaviour trees and the Assets panel shortcuts in the shortcut list. ([evidence](docs/STATUS.md#2026-11-21--behaviour-tree-from-the-inspector))
 - Asset Trash in Studio (ADR-0177). Delete moves an asset to the project Trash; Assets > Trash... restores it with the same ID (references work again) or deletes it for good. With the Assets panel focused, F2 renames, Delete deletes and Shift+Alt+F finds references. ([evidence](docs/STATUS.md#2026-11-21--asset-trash-and-assets-shortcuts-adr-0177))

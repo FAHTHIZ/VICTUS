@@ -2533,3 +2533,11 @@ Follows `5f46244`. `assets::rename_folder` moves a folder under `assets/` in one
 Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 - `victus_asset_tests -tc="asset*"`: 32 cases / 2136 assertions pass, including "asset folders: rename and move a folder with path rewrites, IDs and companions kept".
 - `victus_editor_tests -tc="studio asset*"`: 2 cases pass; "studio asset references" covers the Rename Folder dialog, a folder rename that rewrites and reloads the scene (and the template's crate prefab, which names template scripts by path), the folder view following the move, move-into-itself refused, and moving an asset to the root.
+
+## 2026-11-21 — Empty folders, New Folder and Delete Folder
+
+Follows `2457299` (ADR-0178 follow-up). The Assets folder list includes folders that exist only on disk; Assets > New Folder... and the folder menu's New Folder Inside... create one (hidden names, `..` and `\:*?"<>|` refused) and select it; Delete Folder removes a folder that holds no files.
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- `victus_editor_tests -tc="studio asset*"`: 2 cases pass; "studio assets" covers creating `levels/forest` (listed with its parent, selected), refusing an existing folder, `../escape`, `.hidden` and `a:b`, the New Folder dialog drawing, refusing to delete a folder holding a file, and deleting it once empty (view returns to the parent).
+- clang-tidy on `editor/src/assets_panel.cpp`, `editor/src/asset_refs.cpp`: no new diagnostics.
