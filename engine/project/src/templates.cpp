@@ -5,6 +5,7 @@
 #include "victus/assets/material.hpp"
 #include "victus/render/image.hpp"
 #include "victus/ai/ai.hpp"
+#include "victus/traffic/traffic.hpp"
 #include "victus/sequencer/sequencer.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/terrain/terrain.hpp"
@@ -2023,6 +2024,7 @@ void register_components() {
     particles::register_components();
     gameui::register_components();
     navigation::register_components();
+    traffic::register_components();
     ai::register_components();
     sequencer::register_components();
     terrain::register_components();

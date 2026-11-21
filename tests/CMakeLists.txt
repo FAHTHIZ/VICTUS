@@ -397,3 +397,8 @@ victus_add_test(victus_gameplay_tests
     SOURCES gameplay/schedule_tests.cpp
     DEPS VICTUS::Gameplay VICTUS::Core
     LABELS gameplay)
+
+victus_add_test(victus_traffic_tests
+    SOURCES traffic/traffic_tests.cpp
+    DEPS VICTUS::Traffic VICTUS::Scene VICTUS::Core
+    LABELS traffic)
