@@ -8,7 +8,10 @@
 #include "victus/assets/texture_compression.hpp"
 
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
+#include <optional>
+#include <string>
 
 using namespace victus;
 using namespace victus::assets;
@@ -293,4 +296,112 @@ TEST_CASE("texture export profiles: android keeps ASTC, caps size and strips lar
     apply_texture_profile(hdr, *android);
     CHECK(hdr.compressed.size() == 2);
     CHECK(hdr.has_rgba8());
+}
+
+namespace {
+// Sets an environment variable for the scope of one test and restores the previous value.
+struct ScopedEnv {
+    std::string name;
+    std::optional<std::string> old;
+    ScopedEnv(const char* n, const std::string& value) : name(n) {
+        if (const char* v = std::getenv(n)) old = v;
+        set(value.c_str());
+    }
+    ~ScopedEnv() { set(old ? old->c_str() : nullptr); }
+    void set(const char* v) const {
+#if defined(_WIN32)
+        _putenv_s(name.c_str(), v ? v : "");
+#else
+        if (v) setenv(name.c_str(), v, 1);
+        else unsetenv(name.c_str());
+#endif
+    }
+};
+} // namespace
+
+TEST_CASE("shared cooked cache: identical sources cook once across projects (ADR-0180)") {
+    TempDir cache("victus_ddc");
+    TempDir a("victus_ddc_a"), b("victus_ddc_b");
+    ScopedEnv dir("VICTUS_SHARED_CACHE", cache.path.string());
+    CHECK(shared_cooked_cache_dir() == cache.path);
+    auto png = render::encode_png(test_image(512, 512));
+    REQUIRE(png.ok());
+    for (const TempDir* p : {&a, &b}) {
+        std::filesystem::create_directories(p->path / "assets");
+        REQUIRE(fs::write_atomic(p->path / "assets" / "albedo.png", *png).ok());
+    }
+    auto count_entries = [&] {
+        std::size_t n = 0;
+        for (const auto& e : std::filesystem::directory_iterator(cache.path))
+            if (e.path().extension() == ".vcooked") ++n;
+        return n;
+    };
+
+    auto da = AssetDatabase::open(a.path);
+    REQUIRE(da.ok());
+    CHECK((*da)->import_all().imported == 1);
+    CHECK((*da)->shared_cache_hits() == 0);
+    CHECK(count_entries() == 1);
+
+    // Another project with the same bytes and settings links the entry instead of cooking.
+    auto dbb = AssetDatabase::open(b.path);
+    REQUIRE(dbb.ok());
+    auto& db = **dbb;
+    CHECK(db.import_all().imported == 1);
+    CHECK(db.shared_cache_hits() == 1);
+    const Uuid ida = (*da)->find_path("albedo.png")->uuid, idb = db.find_path("albedo.png")->uuid;
+    CHECK(ida != idb);
+    CHECK(*fs::read_binary((*da)->cooked_path(ida)) == *fs::read_binary(db.cooked_path(idb)));
+    CHECK(*db.is_up_to_date(idb));
+    auto tex = db.load_texture(idb);
+    REQUIRE(tex.ok());
+    CHECK(tex->mips.front().width == 512);
+
+    // Different settings are a different entry; the hit count stays.
+    json::Value settings = db.find_path("albedo.png")->settings;
+    settings.set("compression", "bc7");
+    REQUIRE(db.set_settings(idb, settings).ok());
+    CHECK(db.import_all().imported == 1);
+    CHECK(db.shared_cache_hits() == 1);
+    CHECK(count_entries() == 2);
+    REQUIRE(db.load_texture(idb)->compressed.size() == 1);
+    // The project's copy survives the shared entry going away (hard link or copy).
+    std::filesystem::remove_all(cache.path);
+    std::filesystem::create_directories(cache.path);
+    CHECK(db.load_texture(idb).ok());
+
+    // A zero size limit trims everything, including the entry just stored.
+    {
+        ScopedEnv limit("VICTUS_SHARED_CACHE_MB", "0");
+        settings.set("compression", "bc1");
+        REQUIRE(db.set_settings(idb, settings).ok());
+        CHECK(db.import_all().imported == 1);
+        CHECK(count_entries() == 0);
+        CHECK(db.load_texture(idb).ok());
+    }
+    {
+        ScopedEnv off("VICTUS_SHARED_CACHE", "off");
+        CHECK(shared_cooked_cache_dir().empty());
+    }
+}
+
+TEST_CASE("model import settings: rgba8_max_size keeps only small RGBA8 levels when compressed") {
+    ModelImportSettings ms;
+    CHECK(ModelImportSettings::from_json(ms.to_json()).rgba8_max_size == 0);
+    CHECK(ms.to_json().find("rgba8_max_size") == nullptr);
+    ms.rgba8_max_size = 256;
+    CHECK(ModelImportSettings::from_json(ms.to_json()).rgba8_max_size == 256);
+
+    CookedTexture t = cook_texture(test_image(1024, 1024), "albedo", true, true, 4096);
+    CookedTexture plain = t;
+    strip_rgba8_levels(plain, 256); // no compressed variant: nothing is stripped
+    CHECK(plain.has_rgba8());
+    REQUIRE(compress_cooked_texture(t, "bc7").ok());
+    strip_rgba8_levels(t, 256);
+    CHECK_FALSE(t.has_rgba8());
+    for (const auto& m : t.mips) CHECK(m.pixels.empty() == (std::max(m.width, m.height) > 256));
+    auto level0 = rgba8_level(t, 0); // decoded from BC7 on demand
+    REQUIRE(level0.ok());
+    CHECK(level0->width == 1024);
+    CHECK(level0->pixels.size() == std::size_t{1024} * 1024 * 4);
 }

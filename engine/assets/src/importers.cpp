@@ -53,6 +53,7 @@ json::Value ModelImportSettings::to_json() const {
     v.set("import_textures", import_textures);
     v.set("max_texture_size", max_texture_size);
     if (texture_compression != "none") v.set("texture_compression", texture_compression);
+    if (rgba8_max_size != 0) v.set("rgba8_max_size", static_cast<std::int64_t>(rgba8_max_size));
     // Written only when changed, so existing .meta files stay as they are.
     if (!optimize_meshes) v.set("optimize_meshes", false);
     if (lods != ModelImportSettings{}.lods) v.set("lods", lods);
@@ -72,6 +73,7 @@ ModelImportSettings ModelImportSettings::from_json(const json::Value& v) {
     s.max_texture_size =
         static_cast<std::uint32_t>(std::clamp<std::int64_t>(v["max_texture_size"].as_int(s.max_texture_size), 1, 16384));
     if (v["texture_compression"].is_string()) s.texture_compression = v["texture_compression"].as_string();
+    s.rgba8_max_size = static_cast<std::uint32_t>(std::clamp<std::int64_t>(v["rgba8_max_size"].as_int(0), 0, 16384));
     s.optimize_meshes = v["optimize_meshes"].as_bool(s.optimize_meshes);
     s.lods = static_cast<std::uint32_t>(
         std::clamp<std::int64_t>(v["lods"].as_int(s.lods), 0, static_cast<std::int64_t>(render::kMaxMeshLods) - 1));
@@ -137,6 +139,18 @@ CookedTexture cook_hdr_texture(const render::ImageF& source, std::string name, s
     }
     t.mips = render::build_mip_chain(ldr, true);
     return t;
+}
+
+void strip_rgba8_levels(CookedTexture& texture, std::uint32_t max_size) {
+    if (max_size == 0 || texture.hdr || texture.mips.empty()) return;
+    const bool covered = std::any_of(texture.compressed.begin(), texture.compressed.end(),
+                                     [&](const CompressedMips& v) { return v.levels.size() == texture.mips.size(); });
+    if (!covered) return;
+    for (auto& m : texture.mips) {
+        if (std::max(m.width, m.height) <= max_size) continue;
+        m.pixels.clear();
+        m.pixels.shrink_to_fit();
+    }
 }
 
 Result<void> compress_cooked_texture(CookedTexture& texture, std::string_view setting, CompressionEffort effort) {
@@ -495,6 +509,7 @@ private:
             CookedTexture t = cook_texture(*img, std::move(name), srgb, true, settings_.max_texture_size, alpha_cutoff);
             if (auto r = compress_cooked_texture(t, settings_.texture_compression); !r)
                 warn(std::format("{} texture '{}': {}", slot, t.name, r.error().message));
+            strip_rgba8_levels(t, settings_.rgba8_max_size);
             model_.textures.push_back(std::move(t));
         }
         textures_.emplace(key, index);
@@ -562,6 +577,7 @@ private:
                 CookedTexture t = cook_texture(orm, std::move(name), false, true, settings_.max_texture_size);
                 if (auto r = compress_cooked_texture(t, settings_.texture_compression); !r)
                     warn(std::format("occlusion texture '{}': {}", t.name, r.error().message));
+                strip_rgba8_levels(t, settings_.rgba8_max_size);
                 index = static_cast<std::int32_t>(model_.textures.size());
                 model_.textures.push_back(std::move(t));
             }
@@ -1060,7 +1076,9 @@ Result<CookedModel> import_gltf_bytes(std::span<const std::uint8_t> bytes, const
         return make_error(ErrorCode::ParseError, std::format("{}: validation failed: {}", path.filename().string(), result_name(r)));
     for (cgltf_size i = 0; i < guard.data->extensions_required_count; ++i) {
         const std::string_view ext = guard.data->extensions_required[i];
-        if (ext != "KHR_materials_emissive_strength" && ext != "KHR_materials_unlit")
+        // KHR_mesh_quantization: every attribute and sparse morph delta is decoded through
+        // cgltf_accessor_read_float / unpack_floats, which dequantise normalised integers.
+        if (ext != "KHR_materials_emissive_strength" && ext != "KHR_materials_unlit" && ext != "KHR_mesh_quantization")
             res.warnings.push_back(std::format("required extension {} is not supported", ext));
     }
     GltfImporter importer(path, settings, options, ctx, res);

@@ -1244,9 +1244,9 @@ void Editor::draw_create_entity_items(Entity parent) {
                 ImGui::SetTooltip("%s", help);
         };
         const math::Vec3 at = parent.is_null() ? camera_.target : math::Vec3{};
-        character("Orion", "The athletic VICTUS mannequin: animated, ready for a script or a ragdoll",
+        character("Orion", "Athletic human pilot (60-joint rig, facial blend shapes, 41 clips): ready for a script or a ragdoll",
                   [&] { (void)add_character("orion", parent, at); });
-        character("Nova", "The slender VICTUS mannequin: animated, ready for a script or a ragdoll",
+        character("Nova", "Slender human pilot (60-joint rig, facial blend shapes, 41 clips): ready for a script or a ragdoll",
                   [&] { (void)add_character("nova", parent, at); });
         character("Ragdoll Lab", "Orion and Nova as ragdolls on a floor: press Play to watch Orion go limp and Nova stumble",
                   [&] { (void)add_ragdoll_lab(); });
