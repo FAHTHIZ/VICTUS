@@ -123,6 +123,11 @@ bool Editor::fire_animation_trigger(Entity e, std::string_view name) {
     return sys && sys->set_trigger(active_scene(), e, name);
 }
 
+bool Editor::set_animation_layer_weight(Entity e, std::string_view layer, float weight) {
+    animation::AnimationSystem* sys = animation_inspected();
+    return sys && sys->set_layer_weight(active_scene(), e, layer, std::clamp(weight, 0.0f, 1.0f));
+}
+
 bool Editor::enter_animation_state(Entity e, std::string_view state) {
     animation::AnimationSystem* sys = animation_inspected();
     if (!sys) return false;
@@ -148,6 +153,9 @@ std::vector<std::string> Editor::animation_debug_lines(Entity e) {
         out.push_back(std::format("param {} {} = {}", p.name, animation::param_type_name(p.type),
                                   p.type == animation::ParamType::Float ? std::format("{:.2f}", p.value)
                                                                         : std::format("{}", static_cast<int>(p.value))));
+    for (const auto& l : st.layers)
+        out.push_back(std::format("layer {} {} state {} weight {:.2f} nodes {}", l.name, animation::layer_blend_name(l.blend),
+                                  l.state, l.effective_weight, l.affected_nodes));
     return out;
 }
 
@@ -231,6 +239,40 @@ void Editor::draw_animation_panel() {
             if (w.missing) ImGui::TextColored({1.0f, 0.65f, 0.25f, 1}, "%s (missing: rest pose)", w.clip.c_str());
             else ImGui::Text("%s", w.clip.c_str());
         }
+    }
+    if (!st.layers.empty() && ImGui::CollapsingHeader("Layers", ImGuiTreeNodeFlags_DefaultOpen)) {
+        for (std::size_t i = 0; i < st.layers.size(); ++i) {
+            const auto& l = st.layers[i];
+            const animation::ControllerLayer* def = ctrl && i < ctrl->layers.size() ? &ctrl->layers[i] : nullptr;
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::SeparatorText(std::format("{}  ({}{})", l.name, animation::layer_blend_name(l.blend),
+                                             def && def->sync ? ", synced to base" : "")
+                                     .c_str());
+            float w = l.weight;
+            if (ImGui::SliderFloat("weight", &w, 0.0f, 1.0f, "%.2f")) (void)set_animation_layer_weight(e, l.name, w);
+            if (def && !def->weight_parameter.empty())
+                ImGui::TextDisabled("x %s = effective %.2f", def->weight_parameter.c_str(), l.effective_weight);
+            ImGui::TextDisabled("state %s%s  %.2f  -  %u bones affected", l.state.empty() ? "(none)" : l.state.c_str(),
+                                l.previous_state.empty() ? "" : std::format(" (from {})", l.previous_state).c_str(),
+                                l.normalized_time, l.affected_nodes);
+            if (!l.previous_state.empty()) ImGui::ProgressBar(l.blend_progress, ImVec2(-1, 0));
+            if (def) {
+                if (def->mask.empty() && def->mask_weights.empty()) ImGui::TextDisabled("mask: every animated bone");
+                for (const std::string& n : def->mask) {
+                    ImGui::ProgressBar(1.0f, ImVec2(90, 0), "1.00");
+                    ImGui::SameLine();
+                    ImGui::Text("%s", n.c_str());
+                }
+                for (const auto& [n, mw] : def->mask_weights) {
+                    ImGui::ProgressBar(mw, ImVec2(90, 0), std::format("{:.2f}", mw).c_str());
+                    ImGui::SameLine();
+                    ImGui::Text("%s", n.c_str());
+                }
+                for (const std::string& n : def->exclude) ImGui::TextDisabled("excluded: %s", n.c_str());
+            }
+            ImGui::PopID();
+        }
+        ImGui::TextDisabled("Bars show how strongly each listed bone and its children follow the layer.");
     }
     if (ImGui::CollapsingHeader("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
         for (const auto& p : st.parameters) {

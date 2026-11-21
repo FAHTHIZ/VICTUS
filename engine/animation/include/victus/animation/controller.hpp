@@ -137,6 +137,15 @@ struct ControllerLayer {
     AdditiveReference reference{AdditiveReference::FirstFrame};
     std::vector<std::string> mask;    // node names whose subtrees the layer affects (empty: all)
     std::vector<std::string> exclude; // node names whose subtrees it never affects
+    // Weighted mask entries (ADR-0159): node name -> 0..1 influence of its subtree, e.g. Spine 0.3,
+    // Chest 0.6, Neck 1 for an aim layer that turns the upper body gradually. The nearest listed
+    // ancestor among mask (1), exclude (0) and mask_weights decides; a name may appear in only one
+    // list. With an empty `mask`, the weighted names act as the mask.
+    std::vector<std::pair<std::string, float>> mask_weights;
+    // Sync (ADR-0160): the layer's looping states take the base layer's normalized time instead of
+    // advancing on their own, so a limp or carry upper-body cycle stays in step with locomotion
+    // whatever the speed. One-shot (non-looping) layer states still play on their own clock.
+    bool sync{false};
     // States, transitions and default state. Its `parameters` mirror the controller's; it has no
     // layers or root motion. A state with no clip and no blend space is empty (no influence).
     std::shared_ptr<const Controller> machine;

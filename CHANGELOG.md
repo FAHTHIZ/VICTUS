@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Animation: layer masks can be weighted per bone (`"mask_weights": { "Spine": 0.3, "Chest": 1 }`), so aim and upper-body layers spread over several joints, and `"sync": true` keeps a layer's looping cycle in step with the base layer (ADR-0160); IK chains take a `max_bend` joint limit so tails and spines no longer fold back on themselves (ADR-0161); Studio's Animation window shows every layer with its state, a weight slider and its mask (ADR-0159, [STATUS](docs/STATUS.md)).
 - Physics: fallen ragdolls can get up. `begin_ragdoll_get_up` (Luau `entity:ragdoll_get_up()`, Studio "Get Up" in play) moves the character to where it lies, facing where a get-up animation starts, tells whether it lies on its back, and blends smoothly from the lying pose back to the animation (ADR-0158). Script API 1.1 ([STATUS](docs/STATUS.md)).
 - Player: survives GPU device loss. The device, GPU context, cached assets and scene view are recreated on the same window while the scene, scripts, physics, audio and network session keep running (`--device-recoveries`, default 3; ADR-0157). Verified with injected failures only.
 - Scripting: the per-call time budget counts the script thread's CPU time instead of wall time, so a machine under load or a blocking native call no longer kills a healthy script; runaway loops are still stopped within the budget (ADR-0156).

@@ -272,30 +272,43 @@ void resolve_layer(LayerRun& lr, const ControllerLayer& def, const AnimationSet&
     auto listed = [&](const std::vector<std::string>& names, std::size_t node) {
         return std::find(names.begin(), names.end(), set.nodes[node].name) != names.end();
     };
+    auto warn_missing = [&](const std::string& nm) {
+        if (std::none_of(set.nodes.begin(), set.nodes.end(), [&](const AnimationSet::Node& nd) { return nd.name == nm; }))
+            VICTUS_LOG_WARN("animation", "controller {}: layer '{}': model has no node '{}' (ignored)", path, def.name, nm);
+    };
     for (const auto* names : {&def.mask, &def.exclude})
-        for (const std::string& nm : *names)
-            if (std::none_of(set.nodes.begin(), set.nodes.end(), [&](const AnimationSet::Node& nd) { return nd.name == nm; }))
-                VICTUS_LOG_WARN("animation", "controller {}: layer '{}': model has no node '{}' (ignored)", path,
-                                def.name, nm);
+        for (const std::string& nm : *names) warn_missing(nm);
+    for (const auto& [nm, w] : def.mask_weights) warn_missing(nm);
+    auto weighted = [&](std::size_t node) -> const float* {
+        for (const auto& [nm, w] : def.mask_weights)
+            if (nm == set.nodes[node].name) return &w;
+        return nullptr;
+    };
     lr.influence.assign(n, 0.0f);
     for (std::size_t i = 0; i < n; ++i) {
         if (!mine[i]) continue;
-        bool in = def.mask.empty(); // the nearest listed ancestor (or the node itself) decides
+        // The nearest listed ancestor (or the node itself) decides; nothing listed above the node
+        // means "inside" only when no mask of either kind exists.
+        float in = def.mask.empty() && def.mask_weights.empty() ? 1.0f : 0.0f;
         for (std::int32_t k = static_cast<std::int32_t>(i), hops = 0; k >= 0 && hops <= static_cast<std::int32_t>(n);
              k = set.nodes[static_cast<std::size_t>(k)].parent, ++hops) {
             const auto ku = static_cast<std::size_t>(k);
             if (ku >= n) break;
             if (listed(def.exclude, ku)) {
-                in = false;
+                in = 0.0f;
                 break;
             }
             if (listed(def.mask, ku)) {
-                in = true;
+                in = 1.0f;
+                break;
+            }
+            if (const float* w = weighted(ku)) {
+                in = *w;
                 break;
             }
         }
-        if (in) {
-            lr.influence[i] = 1.0f;
+        if (in > 0.0f) {
+            lr.influence[i] = in;
             animated[i] = 1;
         }
     }
@@ -694,6 +707,15 @@ void evaluate_layer(AnimatorState& s, LayerRun& lr, const ControllerLayer& def, 
     const float step = a.playing ? dt : 0.0f;
     advance_playback(r, &set, a, r.cur, step);
     if (r.fading && !r.frozen) advance_playback(r, &set, a, r.prev, step);
+    // Synced layers: looping states follow the base layer's phase (the base already advanced).
+    const auto follow_base = [&](Playback& pb) {
+        if (!def.sync || pb.state < 0 || base.cur.state < 0) return;
+        if (!r.ctrl->states[static_cast<std::size_t>(pb.state)].loop) return;
+        pb.last = base.cur.last;
+        pb.norm = base.cur.norm;
+    };
+    follow_base(r.cur);
+    if (r.fading && !r.frozen) follow_base(r.prev);
     if (a.playing) {
         if (const ControllerTransition* t = pick_transition(r)) {
             for (const Condition& cond : t->conditions)
@@ -702,6 +724,7 @@ void evaluate_layer(AnimatorState& s, LayerRun& lr, const ControllerLayer& def, 
                     base.params[static_cast<std::size_t>(cond.index)] = 0; // consumed for every layer
                 }
             enter_run(r, lr.out, n, t->to, t->duration, t->offset);
+            follow_base(r.cur); // a synced looping state enters in step, not at its offset
             ++w.transitions;
         }
     }

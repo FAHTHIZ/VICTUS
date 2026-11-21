@@ -406,6 +406,35 @@ Result<std::shared_ptr<const Controller>> parse_machine(const json::Value& doc, 
             return fail(where, "\"reference\" only applies to additive layers");
         if (st = read_names(lv, "mask", where, l.mask); !st) return std::move(st).error();
         if (st = read_names(lv, "exclude", where, l.exclude); !st) return std::move(st).error();
+        if (const json::Value* sv = lv.find("sync")) {
+            if (!sv->is_bool()) return fail(where, "\"sync\" must be true or false");
+            l.sync = sv->as_bool();
+        }
+        if (const json::Value* mw = lv.find("mask_weights")) {
+            if (!mw->is_object()) return fail(where, "\"mask_weights\" must be an object of node name -> weight");
+            if (mw->as_object().size() > Controller::kMaxMaskNodes)
+                return fail(where, std::format("\"mask_weights\" has more than {} entries", Controller::kMaxMaskNodes));
+            for (const auto& [node, v] : mw->as_object()) {
+                if (node.empty() || node.size() > 256) return fail(where, "\"mask_weights\" keys must be non-empty node names");
+                if (!v.is_number() || !std::isfinite(v.as_number()) || v.as_number() < 0.0 || v.as_number() > 1.0)
+                    return fail(where, std::format("\"mask_weights\".\"{}\" must be a number from 0 to 1", node));
+                l.mask_weights.emplace_back(node, static_cast<float>(v.as_number()));
+            }
+        }
+        {
+            std::vector<std::string_view> seen;
+            auto dup = [&](std::string_view nm) {
+                if (std::find(seen.begin(), seen.end(), nm) != seen.end()) return true;
+                seen.push_back(nm);
+                return false;
+            };
+            for (const std::string& nm : l.mask)
+                if (dup(nm)) return fail(where, std::format("node \"{}\" is listed twice in mask/exclude/mask_weights", nm));
+            for (const std::string& nm : l.exclude)
+                if (dup(nm)) return fail(where, std::format("node \"{}\" is listed twice in mask/exclude/mask_weights", nm));
+            for (const auto& [nm, w] : l.mask_weights)
+                if (dup(nm)) return fail(where, std::format("node \"{}\" is listed twice in mask/exclude/mask_weights", nm));
+        }
         json::Value machine = json::Value::object();
         for (const std::string_view key : {"default_state", "states", "transitions"})
             if (const json::Value* v = lv.find(key)) machine.set(std::string(key), *v);
@@ -519,6 +548,12 @@ json::Value Controller::to_json() const {
             };
             if (!l.mask.empty()) o.set("mask", names(l.mask));
             if (!l.exclude.empty()) o.set("exclude", names(l.exclude));
+            if (l.sync) o.set("sync", true);
+            if (!l.mask_weights.empty()) {
+                json::Value mw = json::Value::object();
+                for (const auto& [nm, w] : l.mask_weights) mw.set(nm, w);
+                o.set("mask_weights", std::move(mw));
+            }
             if (l.machine) {
                 const json::Value m = l.machine->to_json();
                 for (const char* key : {"default_state", "states", "transitions"})
