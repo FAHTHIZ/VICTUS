@@ -184,6 +184,76 @@ TEST_CASE("export: pack contains cooked assets and runs in packaged mode") {
     CHECK(player::export_game(o).error().code == ErrorCode::InvalidArgument);
 }
 
+TEST_CASE("export: packs are compressed by default and can be signed (ADR-0154)") {
+    TempDir tmp("victus_export_sign");
+    const fs::Path src = make_project(tmp.path);
+    player::ExportOptions o;
+    o.project = src;
+    o.include_player = false;
+
+    o.output = tmp.path / "raw";
+    o.compress = false;
+    auto raw = player::export_game(o);
+    REQUIRE_MESSAGE(raw.ok(), (raw.ok() ? "" : raw.error().message));
+    CHECK(raw->compressed_entries == 0);
+    CHECK(raw->signer.empty());
+
+    o.output = tmp.path / "zstd";
+    o.compress = true;
+    auto packed = player::export_game(o);
+    REQUIRE(packed.ok());
+    CHECK(packed->compressed_entries > 0);
+    CHECK(packed->payload_bytes == raw->payload_bytes);
+    CHECK(packed->pack_bytes < raw->pack_bytes);
+    // Unsigned export: the manifest names no signer and the player accepts the pack as is.
+    auto unsigned_opts = player::pack_open_options(tmp.path / "zstd" / "game");
+    REQUIRE(unsigned_opts.ok());
+    CHECK(unsigned_opts->trusted_keys.empty());
+
+    const fs::Path key_file = tmp.path / "keys" / "game.key";
+    std::filesystem::create_directories(key_file.parent_path());
+    auto key = pack::generate_signing_key();
+    REQUIRE(key.ok());
+    REQUIRE(pack::save_signing_key(*key, key_file).ok());
+    o.output = tmp.path / "signed";
+    o.signing_key = key_file;
+    auto sg = player::export_game(o);
+    REQUIRE_MESSAGE(sg.ok(), (sg.ok() ? "" : sg.error().message));
+    CHECK(sg->signer == pack::to_hex(key->public_key()));
+    auto manifest = json::parse(fs::read_text(tmp.path / "signed" / "export.json").value());
+    REQUIRE(manifest.ok());
+    CHECK((*manifest)["signing_public_key"].as_string() == sg->signer);
+    CHECK((*manifest)["pack_version"].as_number() == 2);
+    const auto& files = (*manifest)["files"];
+    REQUIRE(files.size() == sg->files);
+    CHECK(files[std::size_t{0}]["blake2b256"].as_string().size() == 64);
+
+    // The player's policy: the manifest's key is required...
+    const fs::Path game = tmp.path / "signed" / "game";
+    auto po = player::pack_open_options(game);
+    REQUIRE(po.ok());
+    REQUIRE(po->trusted_keys.size() == 1);
+    CHECK(po->trusted_keys[0] == key->public_key());
+    auto opened = pack::Pack::open(game / "game.vpak", *po);
+    REQUIRE(opened.ok());
+    for (const auto& e : (*opened)->entries()) CHECK((*opened)->read(e.path).ok());
+    // ...so swapping in an unsigned pack (or one signed by someone else) is refused.
+    std::filesystem::copy_file(tmp.path / "zstd" / "game" / "game.vpak", game / "game.vpak",
+                               std::filesystem::copy_options::overwrite_existing);
+    CHECK_FALSE(pack::Pack::open(game / "game.vpak", *po).ok());
+    // An explicit key wins over the manifest; a malformed one is an error.
+    auto other = pack::generate_signing_key();
+    REQUIRE(other.ok());
+    auto explicit_opts = player::pack_open_options(game, pack::to_hex(other->public_key()));
+    REQUIRE(explicit_opts.ok());
+    CHECK(explicit_opts->trusted_keys[0] == other->public_key());
+    CHECK_FALSE(player::pack_open_options(game, "zz").ok());
+    // A missing key file fails the export instead of shipping an unsigned pack.
+    o.output = tmp.path / "nokey";
+    o.signing_key = tmp.path / "keys" / "missing.key";
+    CHECK_FALSE(player::export_game(o).ok());
+}
+
 TEST_CASE("export: the android target ships ASTC-only textures that still load and decode") {
     TempDir tmp("victus_export_android");
     const fs::Path src = make_project(tmp.path);

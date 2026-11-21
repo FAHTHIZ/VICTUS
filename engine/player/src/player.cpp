@@ -61,7 +61,9 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     std::error_code ec;
     const bool packaged = std::filesystem::is_regular_file(pack_path, ec);
     if (packaged) {
-        auto pk = pack::Pack::open(pack_path);
+        auto po = pack_open_options(o.project, o.pack_key);
+        if (!po) return std::move(po).error();
+        auto pk = pack::Pack::open(pack_path, *po);
         if (!pk) return std::move(pk).error();
         fs::mount(o.project, std::move(pk).value());
         mount.root = o.project;

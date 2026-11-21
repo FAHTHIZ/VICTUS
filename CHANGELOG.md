@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Export: game packs are zstd-compressed per file by default (the 3D template pack drops from 6.5 MB to 2.4 MB) and can be signed with an Ed25519 key (`victus pack keygen`, `victus export --sign-key`); the exported player then refuses a pack not signed by that key. `victus pack verify|list` check and inspect packs. Pack format version 2; version 1 packs still open ([STATUS](docs/STATUS.md)).
 - Rendering: the Low tier renders the opaque pass with 4x MSAA when TAA is off, and alpha-tested foliage uses alpha to coverage, so edges and grass cards flicker much less on phones (`RenderSettings::msaa_samples`, `alpha_to_coverage`, `victus run --msaa`) (ADR-0152).
 - Rendering: tree canopies made of leaf cards get LODs (fewer, larger cards at distance), and Low draws foliage one level coarser (`foliage_lod_bias`). The showcase forest at Low draws about half the triangles. Model importer version 7 (ADR-0151).
 - Android: the activity keeps the manifest orientation (landscape by default) instead of SDL's rotation-lock rule. Rendering: Low/Medium shorten foliage range and drop far-foliage shadows (`foliage_distance_scale`, `foliage_shadow_fraction`); visibility CPU time down about 60 % on a 7k-draw scene; per-stage `render.cpu.*` profiler zones (ADR-0150).

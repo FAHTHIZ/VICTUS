@@ -14,7 +14,8 @@
     "bc7enc_rdo": "MIT OR Unlicense",
     "astcenc": "Apache-2.0",
     "meshoptimizer": "MIT",
-    "xatlas": "MIT"
+    "xatlas": "MIT",
+    "zstd": "BSD-3-Clause"
   },
   "doc_names": {
     "SDL3": "SDL3",
@@ -30,7 +31,8 @@
     "bc7enc_rdo": "bc7enc_rdo",
     "astcenc": "Arm ASTC Encoder",
     "meshoptimizer": "meshoptimizer",
-    "xatlas": "xatlas"
+    "xatlas": "xatlas",
+    "zstd": "Zstandard"
   },
   "vendored": [
     {

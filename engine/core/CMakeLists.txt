@@ -30,13 +30,18 @@ victus_add_module(core
         src/log.cpp
         src/migration.cpp
         src/math.cpp
+        src/os_random.cpp
         src/pack.cpp
         src/zip.cpp
         src/memory.cpp
         src/process.cpp
         src/profiler.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/build_info.cpp
-    DEPS Threads::Threads ${CMAKE_DL_LIBS})
+    DEPS Threads::Threads ${CMAKE_DL_LIBS}
+    PRIVATE_DEPS victus_zstd victus_monocypher)
+if(WIN32)
+    target_link_libraries(victus_core PRIVATE bcrypt) # BCryptGenRandom (os_random.cpp)
+endif()
 if(ANDROID)
     target_link_libraries(victus_core PUBLIC log)
 endif()

@@ -323,7 +323,8 @@ endfunction()
 
 # Monocypher 4.0.2 (CC0-1.0 or BSD-2-Clause). https://monocypher.org/
 # X25519, BLAKE2b and XChaCha20-Poly1305 for encrypted, authenticated multiplayer sessions
-# (engine/net/src/secure.cpp, ADR-0028). Two C files compiled into a static library.
+# (engine/net/src/secure.cpp, ADR-0028); BLAKE2b and Ed25519 for `.vpak` integrity and
+# signatures (ADR-0154). Compiled into a static library.
 function(victus_fetch_monocypher)
     if(TARGET victus_monocypher)
         return()
@@ -334,8 +335,12 @@ function(victus_fetch_monocypher)
         DOWNLOAD_EXTRACT_TIMESTAMP ON
         SOURCE_SUBDIR victus_no_cmake)
     FetchContent_MakeAvailable(monocypher)
-    add_library(victus_monocypher STATIC ${monocypher_SOURCE_DIR}/src/monocypher.c)
-    target_include_directories(victus_monocypher SYSTEM PUBLIC ${monocypher_SOURCE_DIR}/src)
+    # The optional Ed25519 (SHA-512) file signs `.vpak` archives with standard RFC 8032
+    # signatures (engine/core pack.cpp, ADR-0154).
+    add_library(victus_monocypher STATIC ${monocypher_SOURCE_DIR}/src/monocypher.c
+                                         ${monocypher_SOURCE_DIR}/src/optional/monocypher-ed25519.c)
+    target_include_directories(victus_monocypher SYSTEM PUBLIC ${monocypher_SOURCE_DIR}/src
+                                                               ${monocypher_SOURCE_DIR}/src/optional)
     set_target_properties(victus_monocypher PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 99)
     target_compile_options(victus_monocypher PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w,-w>)
     victus_third_party_tsan(victus_monocypher)
@@ -484,4 +489,30 @@ function(victus_fetch_xatlas)
     set_target_properties(victus_xatlas PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_options(victus_xatlas PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)
     victus_third_party_tsan(victus_xatlas)
+endfunction()
+
+# Zstandard 1.5.7 (BSD-3-Clause; upstream is dual BSD-3-Clause / GPL-2.0-only, VICTUS uses it
+# under BSD-3-Clause). https://github.com/facebook/zstd/releases/tag/v1.5.7
+# Per-entry compression of `.vpak` archives (engine/core pack.cpp, ADR-0154). Only lib/common,
+# lib/compress and lib/decompress are built, single-threaded, without the x86-64 assembly
+# Huffman decoder (one portable build for every compiler; ZSTD_DISABLE_ASM).
+function(victus_fetch_zstd)
+    if(TARGET victus_zstd)
+        return()
+    endif()
+    FetchContent_Declare(zstd
+        URL https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
+        URL_HASH SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        SOURCE_SUBDIR victus_no_cmake)
+    FetchContent_MakeAvailable(zstd)
+    file(GLOB _zstd_sources ${zstd_SOURCE_DIR}/lib/common/*.c ${zstd_SOURCE_DIR}/lib/compress/*.c
+                            ${zstd_SOURCE_DIR}/lib/decompress/*.c)
+    add_library(victus_zstd STATIC ${_zstd_sources})
+    target_include_directories(victus_zstd SYSTEM PUBLIC ${zstd_SOURCE_DIR}/lib)
+    target_compile_definitions(victus_zstd PRIVATE ZSTD_DISABLE_ASM=1
+                                                   XXH_NAMESPACE=VICTUS_ZSTD_)
+    set_target_properties(victus_zstd PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 99)
+    target_compile_options(victus_zstd PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w,-w>)
+    victus_third_party_tsan(victus_zstd)
 endfunction()

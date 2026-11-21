@@ -34,7 +34,7 @@ Items that keep the whole engine from production use, regardless of feature work
 | B3 | GPU device loss is fatal | SDL_GPU 3.4 has no device-lost signal or recreate path; the player exits with code 3 | — (upstream SDL or own backend) | [ ] |
 | B4 | No shipped or external project | Workflows are verified by tests, not by an external developer building a game | External testers | [ ] |
 | B5 | Windows rendering untested | CI Windows runners have no GPU; D3D12 unusable (no DXIL) | Windows GPU machine | [!] blocked on hardware |
-| B6 | Packaging lacks signing, compression, installers, cross-export | Required for store distribution | Signing certificates for release | [ ] |
+| B6 | Packaging lacks installers, OS code signing, patches, cross-export (pack compression and pack signing done, ADR-0154) | Required for store distribution | Signing certificates for release | [~] |
 | B7 | Scripting API is unversioned | Game code can break between engine versions | — | [ ] |
 
 ## Subsystems
@@ -72,7 +72,7 @@ Items that keep the whole engine from production use, regardless of feature work
 | Plugins / modding | Usable for trusted code | No sandbox, hot reload, editor loading, signing | Editor plugin loading |
 | VICTUS Studio (editor) | Usable on Linux | Never run on Windows/macOS by a person; no dependency inspector, UI canvas, BT editor, curve editor | ROADMAP §1 Studio maturity |
 | Debugging, profiling, perceptual compare | Usable for CPU | No GPU timings; compare is LDR-only; goldens are lavapipe-only | — |
-| Packaging and export | Usable on host platform | B6 | Compressed `.vpak` |
+| Packaging and export | Usable on host platform | B6: installers, OS code signing, delta patches, cross-export; trusted pack key comes from `export.json` (not tamper-proof without code signing) | Delta patch packs signed with the game's key |
 | Android | Incomplete | B2 | Hardware |
 | iOS, Web, XR, consoles | Missing | — | Feasibility studies |
 | Build, CI, static analysis | Usable | clang-tidy not a required check (owner setting); reference-scene gate was red on main for six commits before 2026-11-21 (see process weaknesses) | Keep main green |
@@ -91,5 +91,6 @@ Newest first. Feature history before this file existed is in [../CHANGELOG.md](.
 
 | Date | Change | Evidence |
 |---|---|---|
+| 2026-11-21 | `.vpak` v2 (ADR-0154): per-entry zstd (3D template pack 6.50 MB to 2.43 MB), BLAKE2b-256 digests, Ed25519 signatures enforced by the player, `victus pack keygen/verify/list` | STATUS.md 2026-11-21 |
 | 2026-11-21 | FP16 PBR keeps Lambert and environment BRDF in FP32 (ADR-0153): FP16-vs-FP32 error halved on all four reference scenes, fixing the red CI reference gate | STATUS.md 2026-11-21 |
 | 2026-11-21 | Created this tracker | — |
