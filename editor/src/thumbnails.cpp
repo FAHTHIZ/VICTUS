@@ -126,6 +126,7 @@ Result<std::unique_ptr<ThumbnailCache>> ThumbnailCache::create(render::GpuContex
     rs.taa = false;
     rs.auto_exposure = false;
     rs.ssao = false;
+    rs.contact_shadows = false;
     rs.bloom = false;
     rs.fxaa = true;
     rs.shadow_cascades = 1;

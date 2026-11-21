@@ -396,11 +396,13 @@ void build_3d(Scene& s, const TemplateOptions& options) {
     attach(s, camera_3d(s, {0, 4.5f, 9}, {0, 0.6f, 0}), "scripts/follow_camera.luau");
     sun(s);
     {
-        // Scene look: filmic tonemapping with subtle bloom and contact shadows (SSAO).
+        // Scene look: filmic tonemapping with subtle bloom, ambient occlusion (SSAO) and sun contact
+        // shadows (ADR-0183) that ground the player and props.
         auto& env = s.world().add<gameplay::EnvironmentComponent>(add(s, "Environment", {0, 0, 0}));
         env.bloom_intensity = 0.04f;
         env.ao_intensity = 1.0f;
         env.shadow_distance = 30.0f;
+        env.contact_shadow_length = 0.3f;
     }
     const Entity ground = add(s, "Ground", {0, 0, 0});
     s.world().get<Transform>(ground)->scale = {20, 1, 20};
@@ -658,6 +660,7 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
         env.bloom_intensity = 0.05f;
         env.ao_intensity = 1.0f;
         env.shadow_distance = 34.0f;
+        env.contact_shadow_length = 0.3f;
     }
     const Entity ground = add(s, "Arena Floor", {0, 0, 0});
     s.world().get<Transform>(ground)->scale = {24, 1, 24};
@@ -1770,6 +1773,7 @@ void build_nocode3d(Scene& s, const TemplateOptions& options) {
         env.bloom_intensity = 0.05f;
         env.ao_intensity = 1.0f;
         env.shadow_distance = 40.0f;
+        env.contact_shadow_length = 0.3f;
         env.sky_zenith = {0.16f, 0.36f, 0.8f, 1};
         env.sky_horizon = {0.7f, 0.8f, 0.92f, 1};
     }

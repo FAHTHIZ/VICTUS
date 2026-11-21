@@ -56,6 +56,7 @@ struct RenderPathFacts {
     bool sun_shadows_requested{false};
     std::uint32_t cascades{0}, cascade_resolution{0};
     bool ao_requested{false}, ssao{false};
+    bool contact_shadows_requested{false}, contact_shadows{false}; // ADR-0183
     bool bloom_requested{false}, bloom{false};
     bool auto_exposure_requested{false}, auto_exposure{false};
     bool prepass{false}, occlusion{false}, nothing_drawn{false};

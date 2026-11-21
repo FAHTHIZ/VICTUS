@@ -321,6 +321,8 @@ void register_components() {
             .field(&E::bloom_threshold, "bloom_threshold", {.min = 0, .max = 64, .speed = 0.01f})
             .field(&E::ao_intensity, "ao_intensity", {.min = 0, .max = 4, .speed = 0.01f})
             .field(&E::ao_radius, "ao_radius", {.min = 0.01f, .max = 10, .speed = 0.01f})
+            .field(&E::contact_shadow_length, "contact_shadow_length", {.min = 0, .max = 10, .speed = 0.01f, .tooltip = "Screen-space sun shadows for small details the shadow map misses (feet, cracks, grass); metres, 0 = off"})
+            .field(&E::contact_shadow_thickness, "contact_shadow_thickness", {.min = 0.01f, .max = 10, .speed = 0.01f, .tooltip = "How thick on-screen occluders are assumed to be (larger = fewer light leaks, more false shadows)"})
             .field(&E::shadow_distance, "shadow_distance", {.min = 1, .max = 5000, .speed = 0.5f})
             .enumeration(&E::fog, "fog", {"none", "linear", "exponential", "exponential_squared"})
             .field(&E::fog_color, "fog_color", {.hint = "color_hdr"})

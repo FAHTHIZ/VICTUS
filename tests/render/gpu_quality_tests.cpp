@@ -322,6 +322,47 @@ TEST_CASE("gpu quality: SSAO darkens creases but not open ground") {
     CHECK(std::abs(on.lum_at(open) - off.lum_at(open)) <= 12);
 }
 
+TEST_CASE("gpu quality: sun contact shadows catch small occluders the shadow map misses") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto sr = SceneRenderer::create(*gpu().ctx);
+    REQUIRE(sr.ok());
+    Meshes m;
+    const Camera3D cam = Camera3D::look_at({0, 1.2f, 2.2f}, {-0.3f, 0, 0});
+    DirectionalLight sun;
+    sun.direction = {-1.0f, -0.6f, 0.0f}; // low sun from +X: the shadow falls towards -X
+    sun.intensity = 3.0f;
+    sun.shadows = false; // only contact shadows can darken the ground
+    Environment env;
+    env.ambient_intensity = 0.2f;
+    env.contact_shadow_length = 0.6f;
+    auto content = [&](SceneRenderer& r) {
+        r.submit(m.plane, {}, math::Mat4::identity());
+        r.submit(m.cube, {}, math::Mat4::trs({0, 0.15f, 0}, {}, {0.3f, 0.3f, 0.3f}));
+    };
+    RenderSettings s = bare();
+    s.ssao_half_resolution = false;
+    s.contact_shadows = false;
+    const Frame off = render_frame(*sr.value(), s, cam, sun, env, content);
+    CHECK_FALSE(has_pass(off, "ssao"));
+    s.contact_shadows = true;
+    const Frame on = render_frame(*sr.value(), s, cam, sun, env, content, 192, 128, 1, "quality_contact_shadows");
+    CHECK(has_pass(on, "ssao")); // contact shadows run in the SSAO pass even with SSAO off
+    const math::Vec3 behind{-0.3f, 0.0f, 0.0f}; // in the cube's short shadow
+    const math::Vec3 open{-1.5f, 0.0f, 0.0f};   // beyond the ray length
+    const math::Vec3 lit{0.6f, 0.0f, 0.0f};     // sun side
+    MESSAGE("behind off " << off.lum_at(behind) << " on " << on.lum_at(behind) << "; open off " << off.lum_at(open) << " on "
+                          << on.lum_at(open) << "; lit off " << off.lum_at(lit) << " on " << on.lum_at(lit));
+    CHECK(on.lum_at(behind) + 60 < off.lum_at(behind));
+    CHECK(std::abs(on.lum_at(open) - off.lum_at(open)) <= 12);
+    CHECK(std::abs(on.lum_at(lit) - off.lum_at(lit)) <= 12);
+
+    // A length of 0 turns them off again (and with SSAO off, the whole pass).
+    env.contact_shadow_length = 0.0f;
+    const Frame zero = render_frame(*sr.value(), s, cam, sun, env, content);
+    CHECK_FALSE(has_pass(zero, "ssao"));
+    CHECK(std::abs(zero.lum_at(behind) - off.lum_at(behind)) <= 6);
+}
+
 TEST_CASE("gpu quality: bloom spreads bright emissive light") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     auto sr = SceneRenderer::create(*gpu().ctx);

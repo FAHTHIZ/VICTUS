@@ -93,7 +93,7 @@ layout(std430, set = 2, binding = 14 + VX_CUSTOM_TEXTURES) readonly buffer FogGr
 #define FOG_GRID(i) fog_grid[i]
 #endif
 layout(set = 3, binding = 0) uniform Lighting {
-    vec4 camera_pos;     // w: ambient occlusion enabled
+    vec4 camera_pos;     // w: screen-space occlusion texture: 0 none, 1 ambient occlusion (r), 2 also sun contact shadows (g, ADR-0183)
     vec4 camera_forward; // xyz: view direction, w: material texture mip bias (ADR-0141, < 0 when upscaling)
     vec4 sun_dir;        // xyz: direction light travels, w: shadow enabled
     vec4 sun_color;      // rgb * intensity
@@ -666,7 +666,9 @@ void main() {
     float probe_sun = 1.0;
     vec3 probe_irradiance = v_lightmap.z > 0.5 ? sky_irradiance : volume_irradiance(v_world_pos, N, sky_irradiance, probe_sun);
     float baked_sun = lighting.cascade_params.w > 0.5 ? (v_lightmap.z > 0.5 ? lm_texel.a : probe_sun) : 1.0;
-    vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * (shadow_factor(N, L, baked_sun) * cloud_shadow(L));
+    vec2 screen_occlusion = lighting.camera_pos.w > 0.5 ? texture(u_ao, gl_FragCoord.xy * lighting.screen.xy).rg : vec2(1.0);
+    float contact = lighting.camera_pos.w > 1.5 ? screen_occlusion.g : 1.0;
+    vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * (shadow_factor(N, L, baked_sun) * cloud_shadow(L) * contact);
 
     if (lighting.ground_color.w > 0.5) {
         vec3 grid = lighting.cluster_grid.xyz;
@@ -721,7 +723,7 @@ void main() {
     // Specular occlusion approximation: reflections below the local horizon are dimmed.
     float horizon = clamp(1.0 + dot(R, geometric_n), 0.0, 1.0);
     vec3 specular = env_specular(R, roughness, v_world_pos) * (f0 * ab.x + ab.y) * horizon * horizon;
-    float ao = lighting.camera_pos.w > 0.5 ? texture(u_ao, gl_FragCoord.xy * lighting.screen.xy).r : 1.0;
+    float ao = screen_occlusion.r;
     ao *= s.occlusion;
     // Specular occlusion from AO (Lagarde & de Rousiers 2014 approximation).
     float spec_ao = clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
