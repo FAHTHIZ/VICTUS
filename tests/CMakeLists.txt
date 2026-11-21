@@ -78,6 +78,7 @@ victus_add_test(victus_asset_tests
         assets/texture_compression_tests.cpp
         assets/mesh_lod_asset_tests.cpp
         assets/morph_asset_tests.cpp
+        assets/model_scene_objects_tests.cpp
     DEPS VICTUS::Assets VICTUS::Project
     LABELS assets)
 

@@ -25,7 +25,7 @@ namespace victus::assets {
 // v5: block-compressed texture variants (BC/ASTC, ADR-0047); v6: mesh LODs (ADR-0049).
 // v9: RGBA8 mip levels may be stored without pixels when a compressed variant covers them
 // (mobile export profile, ADR-0149).
-inline constexpr std::uint32_t kCookedFormatVersion = 9; // 7: morph targets, weight channels; 8: material occlusion
+inline constexpr std::uint32_t kCookedFormatVersion = 10; // 7: morph targets, weight channels; 8: material occlusion; 10: node lights and cameras
 
 enum class AssetKind : std::uint8_t { Unknown = 0, Texture = 1, Model = 2, Scene = 3, Script = 4, Audio = 5, Prefab = 6, Material = 7, Shader = 8, SpriteSheet = 9, Tileset = 10, Terrain = 11, BehaviorTree = 12, Sequence = 13, StringTable = 14, AnimController = 15 };
 [[nodiscard]] const char* to_string(AssetKind kind) noexcept;
@@ -90,6 +90,31 @@ struct ModelNode {
     std::vector<std::uint32_t> meshes; // indices into CookedModel::meshes
     std::int32_t skin{-1};             // index into CookedModel::skins for skinned meshes
     std::vector<float> morph_weights;  // glTF node.weights: per-node default morph weights (else the mesh's)
+    std::int32_t light{-1};            // index into CookedModel::lights
+    std::int32_t camera{-1};           // index into CookedModel::cameras
+};
+
+// A punctual light (glTF KHR_lights_punctual, FBX light). Lights shine along the node's -Z axis.
+struct ModelLight {
+    enum class Type : std::uint8_t { Directional, Point, Spot };
+    std::string name;
+    Type type{Type::Point};
+    math::Color color{1, 1, 1, 1}; // linear
+    float intensity{1.0f};         // VICTUS units (source intensity x ModelImportSettings::light_intensity_scale)
+    float range{0.0f};             // metres after import scale; 0 = unlimited in the source
+    float inner_cone{0.0f};        // spot half-angles in radians
+    float outer_cone{0.7853982f};
+};
+
+// A camera looking along the node's -Z axis (glTF camera, FBX camera).
+struct ModelCamera {
+    std::string name;
+    bool orthographic{false};
+    float yfov{0.8f};   // perspective vertical field of view, radians
+    float ymag{1.0f};   // orthographic half height, metres
+    float aspect{0.0f}; // 0 = viewport aspect
+    float znear{0.1f};
+    float zfar{0.0f};   // 0 = infinite
 };
 
 // A glTF skin: joint nodes and their inverse bind matrices (model space -> joint space at bind).
@@ -107,6 +132,8 @@ struct CookedModel {
     std::vector<ModelNode> nodes;
     std::vector<ModelSkin> skins;
     std::vector<animation::Clip> animations; // channel node indices refer to `nodes`
+    std::vector<ModelLight> lights;
+    std::vector<ModelCamera> cameras;
     [[nodiscard]] std::size_t triangle_count() const noexcept;
 };
 

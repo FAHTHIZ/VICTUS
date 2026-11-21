@@ -224,6 +224,8 @@ std::vector<std::uint8_t> serialize(const CookedHeader& header, const CookedMode
         w.array(n.meshes);
         w.i32(n.skin);
         w.array(n.morph_weights);
+        w.i32(n.light);
+        w.i32(n.camera);
     }
     w.u32(static_cast<std::uint32_t>(model.skins.size()));
     for (const auto& skin : model.skins) {
@@ -245,6 +247,26 @@ std::vector<std::uint8_t> serialize(const CookedHeader& header, const CookedMode
             w.array(ch.values);
         }
     }
+    w.u32(static_cast<std::uint32_t>(model.lights.size()));
+    for (const auto& l : model.lights) {
+        w.str(l.name);
+        w.u8(static_cast<std::uint8_t>(l.type));
+        w.pod(l.color);
+        w.f32(l.intensity);
+        w.f32(l.range);
+        w.f32(l.inner_cone);
+        w.f32(l.outer_cone);
+    }
+    w.u32(static_cast<std::uint32_t>(model.cameras.size()));
+    for (const auto& c : model.cameras) {
+        w.str(c.name);
+        w.u8(c.orthographic ? 1 : 0);
+        w.f32(c.yfov);
+        w.f32(c.ymag);
+        w.f32(c.aspect);
+        w.f32(c.znear);
+        w.f32(c.zfar);
+    }
     return w.take();
 }
 
@@ -264,6 +286,8 @@ Status validate_model(const CookedModel& model) {
         if (const std::string e = render::validate_morphs(mesh.data); !e.empty()) return bad(std::format("mesh '{}': {}", mesh.name, e));
     }
     for (const ModelNode& node : model.nodes) {
+        if (node.light < -1 || node.light >= static_cast<std::int32_t>(model.lights.size())) return bad("node light index out of range");
+        if (node.camera < -1 || node.camera >= static_cast<std::int32_t>(model.cameras.size())) return bad("node camera index out of range");
         if (node.skin < -1 || node.skin >= static_cast<std::int32_t>(model.skins.size())) return bad("node skin index out of range");
         if (node.skin < 0) continue;
         const std::size_t joints = model.skins[static_cast<std::size_t>(node.skin)].joints.size();
@@ -406,7 +430,7 @@ Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) {
         auto& node = m.nodes[i];
         if (!r.str(node.name) || !r.i32(node.parent) || !r.pod(node.translation) || !r.pod(node.rotation) ||
             !r.pod(node.scale) || !r.array(node.meshes) || !r.i32(node.skin) ||
-            !r.array(node.morph_weights, render::kMaxMorphTargets))
+            !r.array(node.morph_weights, render::kMaxMorphTargets) || !r.i32(node.light) || !r.i32(node.camera))
             return corrupt("node");
         if (node.parent < -1 || node.parent >= static_cast<std::int32_t>(i)) return corrupt("node parent order");
         for (const std::uint32_t mi : node.meshes)
@@ -430,6 +454,24 @@ Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) {
             ch.path = static_cast<animation::Path>(path);
             ch.interpolation = static_cast<animation::Interpolation>(interp);
         }
+    }
+    if (!r.u32(n) || n > kMaxItems) return corrupt("light count");
+    m.lights.resize(n);
+    for (auto& l : m.lights) {
+        std::uint8_t type = 0;
+        if (!r.str(l.name) || !r.u8(type) || type > 2 || !r.pod(l.color) || !r.f32(l.intensity) || !r.f32(l.range) ||
+            !r.f32(l.inner_cone) || !r.f32(l.outer_cone))
+            return corrupt("light");
+        l.type = static_cast<ModelLight::Type>(type);
+    }
+    if (!r.u32(n) || n > kMaxItems) return corrupt("camera count");
+    m.cameras.resize(n);
+    for (auto& c : m.cameras) {
+        std::uint8_t ortho = 0;
+        if (!r.str(c.name) || !r.u8(ortho) || ortho > 1 || !r.f32(c.yfov) || !r.f32(c.ymag) || !r.f32(c.aspect) ||
+            !r.f32(c.znear) || !r.f32(c.zfar))
+            return corrupt("camera");
+        c.orthographic = ortho != 0;
     }
     if (!r.at_end()) return corrupt("trailing bytes");
     if (auto st = validate_model(m); !st) return corrupt(st.error().message);

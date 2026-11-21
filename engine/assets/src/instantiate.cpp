@@ -3,6 +3,8 @@
 
 #include "victus/animation/animation.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <format>
 #include <vector>
 
@@ -11,6 +13,32 @@ namespace victus::assets {
 using scene::Entity;
 using scene::MeshRendererComponent;
 using scene::Transform;
+
+scene::LightComponent light_component(const ModelLight& l) {
+    scene::LightComponent c;
+    c.type = l.type == ModelLight::Type::Directional ? scene::LightComponent::Type::Directional
+             : l.type == ModelLight::Type::Spot      ? scene::LightComponent::Type::Spot
+                                                     : scene::LightComponent::Type::Point;
+    c.color = l.color;
+    c.intensity = l.intensity;
+    // Unlimited source range: where the light falls to 1% of a unit light at 1 m.
+    c.range = l.range > 0.0f ? l.range : std::clamp(std::sqrt(l.intensity * 100.0f), 1.0f, 1000.0f);
+    constexpr float kDeg = 57.29578f;
+    c.outer_angle_degrees = l.outer_cone * kDeg;
+    c.inner_angle_degrees = std::min(l.inner_cone * kDeg, c.outer_angle_degrees);
+    return c;
+}
+
+scene::CameraComponent camera_component(const ModelCamera& m) {
+    scene::CameraComponent c;
+    c.primary = false; // an imported camera never takes over the scene's view by itself
+    c.projection = m.orthographic ? scene::CameraComponent::Projection::Orthographic : scene::CameraComponent::Projection::Perspective;
+    c.fov_y_degrees = m.yfov * 57.29578f;
+    c.ortho_height = m.ymag * 2.0f;
+    c.z_near = std::max(m.znear, 0.001f);
+    c.z_far = m.zfar > c.z_near ? m.zfar : std::max(1000.0f, c.z_near * 2.0f);
+    return c;
+}
 
 Entity instantiate_model(scene::Scene& scene, const Uuid& model_uuid, const CookedModel& model, std::string_view name,
                          Entity parent) {
@@ -25,6 +53,9 @@ Entity instantiate_model(scene::Scene& scene, const Uuid& model_uuid, const Cook
         t->rotation = node.rotation;
         t->scale = node.scale;
         created[i] = e;
+        if (node.light >= 0) scene.world().add<scene::LightComponent>(e, light_component(model.lights[static_cast<std::size_t>(node.light)]));
+        if (node.camera >= 0) scene.world().add<scene::CameraComponent>(e, camera_component(model.cameras[static_cast<std::size_t>(node.camera)]));
+        if (node.meshes.empty()) continue;
         auto add_mesh = [&](Entity target, std::uint32_t mi) {
             auto& mr = scene.world().add<MeshRendererComponent>(target);
             mr.mesh_asset = model_uuid;

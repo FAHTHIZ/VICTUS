@@ -2427,3 +2427,15 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 Not covered: more than four parameter slots, int/bool/array uniforms, per-texture samplers or sRGB hints; vertex functions still skip the depth prepass and motion vectors and do not grow bounds; no per-frame cost benchmark (one extra descriptor per custom texture, no extra draws).
 
 Next task: GAP-30 FBX import (ufbx) and glTF cameras/lights, then GAP-27 audio effects and HRTF.
+
+## 2026-11-21 — glTF lights and cameras (ADR-0172, GAP-30 slice 1)
+
+Built: `KHR_lights_punctual` (directional, point, spot) and glTF `cameras` (perspective, orthographic) in the importer, cooked model format 10 (`ModelLight`, `ModelCamera`, `ModelNode::light/camera`, index validation), importer version 8; `ModelImportSettings::import_lights`, `import_cameras` and `light_intensity_scale` (default 1/683: lux and candela to VICTUS units, as Blender's exporter's 683 lm/W); `instantiate` adds `LightComponent` (range derived from intensity when unlimited, cone radians to degrees) and non-primary `CameraComponent` on the node entities, including mesh-less nodes; `export_gltf` writes both back (intensity x683) so models round-trip.
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- full `ctest` 41/41 pass (4 GPU reference suites skipped as usual), 0 compiler warnings.
+- `victus_asset_tests` new `model_scene_objects_tests.cpp`: 69 assertions (parse of all three light types and both camera types, scale applied to ranges and clip planes, intensity scale and opt-out settings, cooked round trip, bad indices refused, instantiated components, export/re-import round trip).
+
+Not covered: FBX import, light cookies/IES, physical camera properties (aperture, sensor), animated light/camera properties.
+
+Next task: GAP-30 slice 2, FBX and OBJ import through ufbx.

@@ -57,6 +57,9 @@ json::Value ModelImportSettings::to_json() const {
     if (!optimize_meshes) v.set("optimize_meshes", false);
     if (lods != ModelImportSettings{}.lods) v.set("lods", lods);
     if (lod_error != ModelImportSettings{}.lod_error) v.set("lod_error", lod_error);
+    if (!import_lights) v.set("import_lights", false);
+    if (!import_cameras) v.set("import_cameras", false);
+    if (light_intensity_scale != ModelImportSettings{}.light_intensity_scale) v.set("light_intensity_scale", light_intensity_scale);
     return v;
 }
 
@@ -75,6 +78,10 @@ ModelImportSettings ModelImportSettings::from_json(const json::Value& v) {
     s.lod_error = v["lod_error"].as_float(s.lod_error);
     if (!(s.lod_error > 0.0f)) s.lod_error = 0.05f;
     s.lod_error = std::min(s.lod_error, 1.0f);
+    s.import_lights = v["import_lights"].as_bool(s.import_lights);
+    s.import_cameras = v["import_cameras"].as_bool(s.import_cameras);
+    s.light_intensity_scale = v["light_intensity_scale"].as_float(s.light_intensity_scale);
+    if (!(s.light_intensity_scale >= 0.0f) || !std::isfinite(s.light_intensity_scale)) s.light_intensity_scale = 1.0f / 683.0f;
     return s;
 }
 
@@ -835,10 +842,62 @@ private:
         if (node->skin) n.skin = static_cast<std::int32_t>(node->skin - data_->skins); // remapped in import_skins
         for (cgltf_size t = 0; t < node->weights_count && t < render::kMaxMorphTargets; ++t)
             n.morph_weights.push_back(std::isfinite(node->weights[t]) ? node->weights[t] : 0.0f);
+        if (node->light && settings_.import_lights) n.light = light(node->light);
+        if (node->camera && settings_.import_cameras) n.camera = camera(node->camera);
         const auto index = static_cast<std::int32_t>(model_.nodes.size());
         node_map_[node] = static_cast<std::uint32_t>(index);
         model_.nodes.push_back(std::move(n));
         for (cgltf_size c = 0; c < node->children_count; ++c) add_node(node->children[c], index, depth + 1);
+    }
+
+    // KHR_lights_punctual: photometric intensity times light_intensity_scale; the range follows
+    // the import scale (the spec leaves light properties unaffected by node scale).
+    std::int32_t light(const cgltf_light* l) {
+        if (auto it = light_map_.find(l); it != light_map_.end()) return it->second;
+        const auto fin = [](float v, float d) { return std::isfinite(v) ? v : d; };
+        ModelLight out;
+        out.name = l->name ? l->name : std::format("light{}", l - data_->lights);
+        out.type = l->type == cgltf_light_type_directional ? ModelLight::Type::Directional
+                   : l->type == cgltf_light_type_spot      ? ModelLight::Type::Spot
+                                                           : ModelLight::Type::Point;
+        out.color = {std::max(fin(l->color[0], 1), 0.0f), std::max(fin(l->color[1], 1), 0.0f), std::max(fin(l->color[2], 1), 0.0f), 1.0f};
+        out.intensity = std::max(fin(l->intensity, 1.0f), 0.0f) * settings_.light_intensity_scale;
+        out.range = std::max(fin(l->range, 0.0f), 0.0f) * settings_.scale;
+        if (out.type == ModelLight::Type::Spot) {
+            constexpr float kHalfPi = 1.5707963f;
+            out.outer_cone = std::clamp(fin(l->spot_outer_cone_angle, 0.7853982f), 0.001f, kHalfPi);
+            out.inner_cone = std::clamp(fin(l->spot_inner_cone_angle, 0.0f), 0.0f, out.outer_cone);
+        }
+        const auto index = static_cast<std::int32_t>(model_.lights.size());
+        model_.lights.push_back(std::move(out));
+        light_map_[l] = index;
+        return index;
+    }
+
+    std::int32_t camera(const cgltf_camera* c) {
+        if (auto it = camera_map_.find(c); it != camera_map_.end()) return it->second;
+        const auto fin = [](float v, float d) { return std::isfinite(v) && v > 0.0f ? v : d; };
+        ModelCamera out;
+        out.name = c->name ? c->name : std::format("camera{}", c - data_->cameras);
+        if (c->type == cgltf_camera_type_orthographic) {
+            const auto& o = c->data.orthographic;
+            out.orthographic = true;
+            out.ymag = fin(o.ymag, 1.0f) * settings_.scale;
+            out.aspect = fin(o.xmag, 0.0f) > 0.0f && fin(o.ymag, 0.0f) > 0.0f ? o.xmag / o.ymag : 0.0f;
+            out.znear = std::max(std::isfinite(o.znear) ? o.znear : 0.0f, 0.0f) * settings_.scale;
+            out.zfar = fin(o.zfar, 100.0f) * settings_.scale;
+        } else {
+            const auto& p = c->data.perspective;
+            out.yfov = std::clamp(fin(p.yfov, 0.8f), 0.01f, 3.1f);
+            out.aspect = p.has_aspect_ratio ? fin(p.aspect_ratio, 0.0f) : 0.0f;
+            out.znear = fin(p.znear, 0.1f) * settings_.scale;
+            out.zfar = p.has_zfar ? fin(p.zfar, 0.0f) * settings_.scale : 0.0f;
+            if (out.zfar > 0.0f && out.zfar <= out.znear) out.zfar = 0.0f;
+        }
+        const auto index = static_cast<std::int32_t>(model_.cameras.size());
+        model_.cameras.push_back(std::move(out));
+        camera_map_[c] = index;
+        return index;
     }
 
     void import_skins() {
@@ -967,6 +1026,8 @@ private:
     std::map<std::pair<const cgltf_image*, const cgltf_image*>, std::int32_t> orm_textures_; // (occlusion, metallic-roughness)
     std::map<const cgltf_material*, std::uint32_t> materials_;
     std::map<const cgltf_node*, std::uint32_t> node_map_;
+    std::map<const cgltf_light*, std::int32_t> light_map_;
+    std::map<const cgltf_camera*, std::int32_t> camera_map_;
     std::int32_t default_material_{-1};
 };
 
