@@ -2493,3 +2493,16 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 - `ctest --preset release -j2`: 41/42 passed; `victus_cli_smoke` crashed inside lavapipe at exit after `--quality cinematic` was rejected (passes on rerun; fixed in the next entry by validating the tier before the device is created).
 
 Not covered: paths built at run time in scripts, undo for Delete, folder rename/move as one operation.
+
+## 2026-11-21 — Behaviour Tree Editor (ADR-0176)
+
+Follows `9d22dba` (asset references). Studio gets a Behaviour Tree Editor for `.vbt` files: top-down auto-laid-out tree, node palette with descriptions, right-click Add Child / Wrap In / Change To / Move Left/Right / Duplicate / Delete, a details pane in plain words, blackboard defaults, per-node problems and a "Ready to run" / "Will not run" pill, its own undo history, Save (reloads the tree in a running Play session) and live active-path statuses for the selected entity during Play. Engine: `ai::tree_to_json`, `ai::value_to_json`, `ai::node_arity`, `ai::node_type_from_name`, `ai::compare_op_name`. Also fixed: `victus run --quality <unknown>` validated the tier only after creating the GPU device, and on lavapipe the early exit could crash in the driver's worker threads instead of printing the error; the tier is now checked before any window or device exists.
+
+![Behaviour Tree Editor](images/studio_behavior_tree.jpg)
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- `victus_ai_tests` 8 cases / 486 assertions, including "tree_to_json writes every node field and reads back to the same tree" (all 20 node types and every field, default fields omitted, cycles, dangling children and empty lists refused).
+- `victus_editor_tests -tc="behaviour tree document*,studio behaviour tree*,studio asset*"` 4 cases / 336 assertions: document edits keep pre-order and refuse ill-shaped trees, root wrap, change type, subtree duplicate/delete, property undo/redo, undo back to the starter tree, save/load, parser error text on a bad file, every node type valid when fresh; Studio creates `ai/guard.vbt`, draws the window, edits, saves, reopens, gets live debug data matching the document during Play, and saving during Play reloads the running tree (new blackboard key written).
+- Live: `victus_editor /tmp/smoke --show ai/sentry.vbt` (screenshot above).
+- `ctest -R "victus_cli_smoke|victus_ai_tests"`: 2/2 passed (the CLI smoke covers the unknown-tier error).
+- clang-tidy on `editor/src/bt_editor.cpp`, `editor/src/bt_document.cpp`, `engine/player/src/player.cpp`: 0 diagnostics.

@@ -439,3 +439,77 @@ TEST_CASE("ai: simulation LOD ticks far trees less often with the same simulated
     CHECK(far_frames >= near_frames);
     CHECK(far_frames <= near_frames + 8);
 }
+
+TEST_CASE("ai: tree_to_json writes every node field and reads back to the same tree (ADR-0176)") {
+    const char* text = R"({
+      "root": {"type": "selector", "reactive": true, "name": "Brain", "children": [
+        {"type": "guard", "key": "target", "child":
+          {"type": "sequence", "children": [
+            {"type": "move_to", "key": "target", "acceptance": 1.25, "speed": 5},
+            {"type": "action", "action": "attack"},
+            {"type": "set", "key": "pos", "value": [1, 2, 3]}]}},
+        {"type": "parallel", "threshold": 1, "children": [
+          {"type": "repeat", "count": 3, "child": {"type": "wait", "seconds": 2, "deviation": 0.5}},
+          {"type": "timeout", "seconds": 4, "child": {"type": "random_point", "key": "dest", "radius": 12}},
+          {"type": "cooldown", "seconds": 1.5, "child": {"type": "log", "message": "hi"}}]},
+        {"type": "check", "key": "hp", "op": "<=", "value": 10},
+        {"type": "inverter", "child": {"type": "check", "key": "name", "value": "bob"}},
+        {"type": "clear", "key": "alert"}, {"type": "succeeder", "child": {"type": "fail"}},
+        {"type": "failer", "child": {"type": "succeed"}}]},
+      "blackboard": {"hp": 100, "alert": true, "name": "guard", "home": [0, 0, 5]}
+    })";
+    auto a = BehaviorTree::parse(text);
+    REQUIRE(a.ok());
+    auto j = tree_to_json((*a)->nodes(), (*a)->defaults());
+    REQUIRE(j.ok());
+    auto b = BehaviorTree::from_json(*j);
+    REQUIRE(b.ok());
+    const auto& na = (*a)->nodes();
+    const auto& nb = (*b)->nodes();
+    REQUIRE(na.size() == nb.size());
+    for (std::size_t i = 0; i < na.size(); ++i) {
+        CAPTURE(i);
+        CHECK(na[i].type == nb[i].type);
+        CHECK(na[i].name == nb[i].name);
+        CHECK(na[i].children == nb[i].children);
+        CHECK(na[i].depth == nb[i].depth);
+        CHECK(na[i].key == nb[i].key);
+        CHECK(na[i].op == nb[i].op);
+        CHECK(na[i].value == nb[i].value);
+        CHECK(na[i].seconds == nb[i].seconds);
+        CHECK(na[i].deviation == nb[i].deviation);
+        CHECK(na[i].count == nb[i].count);
+        CHECK(na[i].threshold == nb[i].threshold);
+        CHECK(na[i].reactive == nb[i].reactive);
+        CHECK(na[i].acceptance == nb[i].acceptance);
+        CHECK(na[i].speed == nb[i].speed);
+        CHECK(na[i].radius == nb[i].radius);
+        CHECK(na[i].action == nb[i].action);
+    }
+    CHECK((*a)->defaults().entries() == (*b)->defaults().entries());
+    // Default-valued fields are left out of the file.
+    const json::Value& root = (*j)["root"];
+    CHECK(root.find("seconds") == nullptr);
+    CHECK(root["children"][0].find("reactive") == nullptr);
+
+    CHECK(node_arity(NodeType::Parallel) == NodeArity::Many);
+    CHECK(node_arity(NodeType::Guard) == NodeArity::One);
+    CHECK(node_arity(NodeType::Log) == NodeArity::Leaf);
+    CHECK(node_type_from_name("random_point") == NodeType::RandomPoint);
+    CHECK_FALSE(node_type_from_name("nope").has_value());
+    CHECK(compare_op_name(CompareOp::GreaterEqual) == ">=");
+    CHECK(value_to_json(Value{Entity{}}).is_null());
+
+    // Malformed node lists are refused, not written.
+    std::vector<Node> cyclic(2);
+    cyclic[0].type = NodeType::Sequence;
+    cyclic[0].children = {1};
+    cyclic[1].type = NodeType::Sequence;
+    cyclic[1].children = {0};
+    CHECK_FALSE(tree_to_json(cyclic, {}).ok());
+    std::vector<Node> dangling(1);
+    dangling[0].type = NodeType::Inverter;
+    dangling[0].children = {7};
+    CHECK_FALSE(tree_to_json(dangling, {}).ok());
+    CHECK_FALSE(tree_to_json({}, {}).ok());
+}

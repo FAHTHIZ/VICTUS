@@ -1721,3 +1721,216 @@ TEST_CASE("studio asset references: find users, rename keeps the scene working, 
     h.frames(2); // dialogs close themselves when their asset is gone
     CHECK_FALSE(h.ed->asset_references_open());
 }
+
+TEST_CASE("behaviour tree document: structural edits keep pre-order, undo restores, save reloads the same tree") {
+    using ai::NodeType;
+    editor::BehaviorTreeDocument doc;
+    REQUIRE(doc.nodes().size() == 2);
+    CHECK(doc.nodes()[0].type == NodeType::Selector);
+    CHECK(doc.validate().empty());
+    CHECK_FALSE(doc.dirty());
+
+    // Add a Sequence under the root, a Check and a Move To under it.
+    auto seq = doc.add_child(0, NodeType::Sequence);
+    REQUIRE(seq.ok());
+    CHECK(doc.nodes()[static_cast<std::size_t>(*seq)].type == NodeType::Sequence);
+    CHECK(doc.node_problem(*seq) == "needs at least one child");
+    CHECK_FALSE(doc.validate().empty());
+    auto check = doc.add_child(*seq, NodeType::Check);
+    REQUIRE(check.ok());
+    auto mv = doc.add_child(*seq, NodeType::MoveTo);
+    REQUIRE(mv.ok());
+    CHECK(doc.validate().empty());
+    CHECK(doc.dirty());
+    // Pre-order: root, wait, sequence, check, move_to.
+    REQUIRE(doc.nodes().size() == 5);
+    CHECK(doc.nodes()[1].type == NodeType::Wait);
+    CHECK(doc.nodes()[2].type == NodeType::Sequence);
+    CHECK(doc.nodes()[3].type == NodeType::Check);
+    CHECK(doc.nodes()[4].type == NodeType::MoveTo);
+    CHECK(doc.nodes()[4].depth == 2);
+    CHECK(doc.parent_of(4) == 2);
+
+    // Leaves take no children; decorators only one.
+    CHECK_FALSE(doc.add_child(1, NodeType::Wait).ok());
+    CHECK_FALSE(doc.can_add_child(3));
+
+    // Move the sequence before the wait: the selector tries it first.
+    auto moved = doc.move(2, -1);
+    REQUIRE(moved.ok());
+    CHECK(*moved == 1);
+    CHECK(doc.nodes()[1].type == NodeType::Sequence);
+    CHECK(doc.nodes()[4].type == NodeType::Wait);
+    CHECK_FALSE(doc.move(1, -1).ok());
+
+    // Wrap the Move To in a Timeout, then turn the Check into a Guard? No: a Check keeps its
+    // condition when it becomes a Guard, but a Guard needs a child, so change the Wait instead.
+    auto wrapped = doc.wrap(3, NodeType::Timeout);
+    REQUIRE(wrapped.ok());
+    CHECK(doc.nodes()[static_cast<std::size_t>(*wrapped)].type == NodeType::Timeout);
+    CHECK(doc.nodes()[static_cast<std::size_t>(*wrapped) + 1].type == NodeType::MoveTo);
+    CHECK(doc.validate().empty());
+    CHECK_FALSE(doc.change_type(1, NodeType::Log).ok()); // a sequence with children cannot become a leaf
+    auto changed = doc.change_type(static_cast<int>(doc.nodes().size()) - 1, NodeType::Log);
+    REQUIRE(changed.ok());
+    CHECK(doc.nodes().back().type == NodeType::Log);
+    CHECK_FALSE(doc.nodes().back().action.empty());
+
+    // Wrapping the root makes the decorator the new root.
+    auto top = doc.wrap(0, NodeType::Repeat);
+    REQUIRE(top.ok());
+    CHECK(*top == 0);
+    CHECK(doc.nodes()[0].type == NodeType::Repeat);
+    CHECK(doc.nodes()[1].type == NodeType::Selector);
+    CHECK(doc.nodes()[1].depth == 1);
+
+    // Duplicate and delete subtrees; the root cannot be deleted.
+    const std::size_t before = doc.nodes().size();
+    auto dup = doc.duplicate(2); // the sequence and its 3 descendants
+    REQUIRE(dup.ok());
+    CHECK(doc.nodes().size() == before + 4);
+    auto removed = doc.remove(*dup);
+    REQUIRE(removed.ok());
+    CHECK(doc.nodes().size() == before);
+    CHECK_FALSE(doc.remove(0).ok());
+
+    // Property edits are one undo step each.
+    doc.begin_edit("Edit Check");
+    doc.mutable_node(3).key = "enemy";
+    doc.mutable_node(3).op = ai::CompareOp::Greater;
+    doc.mutable_node(3).value = 2.0;
+    doc.end_edit();
+    CHECK(editor::bt_node_summary(doc.nodes()[3]) == "enemy > 2");
+    doc.begin_edit("Clear key");
+    doc.mutable_node(3).key.clear();
+    doc.end_edit();
+    CHECK(doc.node_problem(3) == "needs a blackboard key");
+    REQUIRE(doc.undo());
+    CHECK(doc.nodes()[3].key == "enemy");
+    REQUIRE(doc.redo());
+    CHECK(doc.nodes()[3].key.empty());
+    REQUIRE(doc.undo());
+    doc.begin_edit("Add default"); // a new edit drops the redo of "Clear key"
+    CHECK_FALSE(doc.can_redo());
+    doc.mutable_defaults().set("enemy", 0.0);
+    doc.end_edit();
+
+    // Undo walks every structural step back to the starter tree.
+    int steps = 0;
+    while (doc.undo()) ++steps;
+    CHECK(steps >= 10);
+    CHECK(doc.nodes().size() == 2);
+    while (doc.redo()) {
+    }
+    CHECK(doc.nodes()[0].type == NodeType::Repeat);
+
+    // Save, load back and compare through the runtime parser.
+    const sfs::path file = sfs::temp_directory_path() / ("victus_bt_" + Uuid::generate().to_string().substr(0, 8) + ".vbt");
+    REQUIRE(doc.save_as(file, "ai/test.vbt").ok());
+    CHECK_FALSE(doc.dirty());
+    auto loaded = editor::BehaviorTreeDocument::load(file, "ai/test.vbt");
+    REQUIRE(loaded.ok());
+    REQUIRE(loaded->nodes().size() == doc.nodes().size());
+    for (std::size_t i = 0; i < doc.nodes().size(); ++i) {
+        CAPTURE(i);
+        CHECK(loaded->nodes()[i].type == doc.nodes()[i].type);
+        CHECK(loaded->nodes()[i].children == doc.nodes()[i].children);
+        CHECK(loaded->nodes()[i].key == doc.nodes()[i].key);
+    }
+    CHECK(loaded->defaults().has("enemy"));
+    // Invalid files are refused with the parser's reason.
+    std::ofstream(file) << R"({"root": {"type": "sequence"}})";
+    auto bad = editor::BehaviorTreeDocument::load(file, "ai/test.vbt");
+    REQUIRE_FALSE(bad.ok());
+    CHECK(bad.error().message.find("needs children") != std::string::npos);
+    sfs::remove(file);
+
+    // Every catalogued type has a label, a category and a fresh node that is valid on its own
+    // (leaves) or with one child (decorators/composites).
+    for (const auto& info : editor::bt_node_catalog()) {
+        CAPTURE(info.label);
+        CHECK(std::string_view(info.description).size() > 10);
+        editor::BehaviorTreeDocument d;
+        auto added = d.add_child(0, info.type);
+        REQUIRE(added.ok());
+        if (ai::node_arity(info.type) != ai::NodeArity::Leaf) REQUIRE(d.add_child(*added, NodeType::Succeed).ok());
+        CHECK(d.validate().empty());
+    }
+}
+
+TEST_CASE("studio behaviour tree editor: open from Assets, edit, save, and live statuses during Play") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    REQUIRE(h.ed->create_project(h.dir / "BT Game", "BT Game", "3d").ok());
+    h.frames(2);
+    CHECK(h.ed->behavior_tree_document() == nullptr);
+    h.ed->show_panel(editor::Panel::BehaviorTreeEditor);
+    h.frames(2); // the empty state draws
+
+    auto id = h.ed->create_behavior_tree("ai/guard");
+    REQUIRE(id.ok());
+    const auto* rec = h.ed->assets()->find(*id);
+    REQUIRE(rec);
+    CHECK(rec->path == "ai/guard.vbt");
+    CHECK_FALSE(h.ed->create_behavior_tree("ai/guard").ok()); // already exists
+    auto* doc = h.ed->behavior_tree_document();
+    REQUIRE(doc);
+    CHECK(doc->asset_path() == "ai/guard.vbt");
+    h.frames(3);
+    CHECK(ImGui::FindWindowByName("###BehaviourTree") != nullptr);
+
+    // Build: selector { sequence { set done=true }, wait }.
+    auto seq = doc->add_child(0, ai::NodeType::Sequence);
+    REQUIRE(seq.ok());
+    auto set = doc->add_child(*seq, ai::NodeType::Set);
+    REQUIRE(set.ok());
+    doc->begin_edit("key");
+    doc->mutable_node(*set).key = "done";
+    doc->end_edit();
+    REQUIRE(doc->move(*seq, -1).ok());
+    h.ed->select_behavior_tree_node(1);
+    h.frames(3); // canvas, palette and details for a selected composite
+    CHECK(doc->dirty());
+    REQUIRE(h.ed->save_behavior_tree().ok());
+    CHECK_FALSE(doc->dirty());
+    auto text = fs::read_text(h.ed->assets()->source_path(*rec));
+    REQUIRE(text.ok());
+    CHECK(text->find("\"done\"") != std::string::npos);
+
+    // Reopening from the asset gives the same tree.
+    REQUIRE(h.ed->open_behavior_tree(*id).ok());
+    doc = h.ed->behavior_tree_document();
+    REQUIRE(doc->nodes().size() == 4);
+    CHECK(doc->nodes()[1].type == ai::NodeType::Sequence);
+    CHECK_FALSE(h.ed->open_behavior_tree_path("ai/missing.vbt").ok());
+
+    // During Play the selected entity runs the tree; the editor shows its statuses.
+    auto& s = h.ed->edit_scene();
+    const auto e = s.create("Guard");
+    s.world().add<ai::BehaviorTreeComponent>(e, ai::BehaviorTreeComponent{.tree = "ai/guard.vbt"});
+    h.ed->play();
+    h.frames(6);
+    REQUIRE(h.ed->play_ai() != nullptr);
+    h.ed->select(e, false);
+    scene::Scene& play = h.ed->active_scene();
+    const auto pe = play.find(s.uuid(e));
+    REQUIRE_FALSE(pe.is_null());
+    const auto live = h.ed->play_ai()->debug(play, pe);
+    REQUIRE(live);
+    CHECK(live->tree == "ai/guard.vbt");
+    CHECK(live->nodes.size() == doc->nodes().size());
+    h.frames(3); // live overlay draws
+    // Saving during Play reloads the tree in the running session.
+    doc->begin_edit("key");
+    doc->mutable_node(2).key = "finished";
+    doc->end_edit();
+    REQUIRE(h.ed->save_behavior_tree().ok());
+    h.frames(4);
+    const auto* bb = h.ed->play_ai()->blackboard(play, pe);
+    REQUIRE(bb);
+    CHECK(bb->has("finished"));
+    h.ed->stop();
+    h.frames(2);
+}

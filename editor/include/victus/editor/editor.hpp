@@ -15,6 +15,7 @@
 #include "victus/assets/database.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/asset_store.hpp"
+#include "victus/editor/bt_document.hpp"
 #include "victus/assets/references.hpp"
 #include "victus/editor/gizmo.hpp"
 #include "victus/editor/thumbnails.hpp"
@@ -159,6 +160,7 @@ enum class Panel : std::uint8_t {
     History,
     ScriptDebugger,
     AssetStore,
+    BehaviorTreeEditor,
     Count
 };
 [[nodiscard]] const char* panel_title(Panel panel) noexcept;
@@ -561,6 +563,16 @@ public:
     // Loads a graph asset into the Graph Editor and shows it (unsaved edits of the previous graph
     // are discarded).
     Status open_graph_editor(const Uuid& asset);
+    // Behaviour Tree Editor (ADR-0176): opens a .vbt asset (replacing the open tree, unsaved
+    // edits included), creates a starter tree under assets/ai/ and opens it, and saves the open
+    // tree (reloading it in a running Play session).
+    Status open_behavior_tree(const Uuid& asset);
+    Status open_behavior_tree_path(std::string_view asset_path);
+    Result<Uuid> create_behavior_tree(std::string_view relative_path = {});
+    Status save_behavior_tree();
+    [[nodiscard]] BehaviorTreeDocument* behavior_tree_document() noexcept { return bt_doc_ ? &*bt_doc_ : nullptr; }
+    [[nodiscard]] int behavior_tree_selection() const noexcept { return bt_selected_; }
+    void select_behavior_tree_node(int index) noexcept { bt_selected_ = index; }
     [[nodiscard]] bool graph_editor_open() const noexcept { return show_graph_editor_; }
     [[nodiscard]] const Uuid& editing_graph_asset() const noexcept { return graph_asset_; }
     [[nodiscard]] const graph::ScriptGraph& editing_graph() const noexcept { return graph_; }
@@ -1312,6 +1324,23 @@ private:
     std::vector<assets::AssetReference> refs_users_, refs_deps_, rename_users_;
     std::string rename_text_, rename_error_;
     void draw_asset_store();
+    void draw_behavior_tree_editor();
+    void draw_bt_palette();
+    void draw_bt_canvas(const std::optional<ai::TreeDebug>& live);
+    void draw_bt_details(const std::optional<ai::TreeDebug>& live);
+    void draw_bt_node_menu(int index);
+    void bt_apply(Result<int> r);
+    bool show_bt_editor_{false};
+    std::optional<BehaviorTreeDocument> bt_doc_;
+    int bt_selected_{0};
+    bool bt_frame_{true};
+    float bt_zoom_{1.0f};
+    float bt_pan_x_{0.0f};
+    float bt_pan_y_{0.0f};
+    std::string bt_message_;
+    std::string bt_edit_gesture_;
+    std::string bt_new_key_;
+    ai::Blackboard* live_bb_{nullptr};
     bool show_script_debugger_{false};
     std::string help_topic_, help_query_;
     int help_focus_{0};

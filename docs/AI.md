@@ -69,6 +69,18 @@ nearest visible one is chosen; a lost target is remembered for `memory` seconds.
 Blackboard keys written: `<target_key>` (entity, removed when forgotten),
 `<target_key>_position` (last seen position), `<target_key>_visible`, `heard`, `noise_position`.
 
+## Editing trees in Studio
+
+Double-click a `.vbt` in Assets (or Assets > New Behaviour Tree) to open the Behaviour Tree Editor.
+The tree is drawn top-down; children run left to right. Right-click a node to Add Child, Wrap In a
+decorator, Change To another type, Move Left/Right, Duplicate or Delete; the Nodes list on the left
+adds the clicked type under the selected node. The right-hand pane edits the selected node's
+settings and the tree's blackboard defaults. Nodes with a problem (a sequence without children, a
+check without a key) are outlined in red and the toolbar says "Will not run" with the reason.
+Ctrl+Z / Ctrl+Y undo and redo, Ctrl+S saves, Delete removes the selected node, F frames the tree.
+During Play, select an entity that runs the open tree to see the active path and each node's last
+status on the canvas; saving during Play reloads the tree for running entities.
+
 ## Debugging
 
 Window > AI Debugger draws sight cones (yellow), lines to visible (red) or remembered (orange)

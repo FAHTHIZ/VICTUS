@@ -112,6 +112,20 @@ struct Node {
     std::string action;         // Action name / Log message
 };
 
+// How many children a node type takes: composites any number (at least one), decorators exactly
+// one, leaves none.
+enum class NodeArity : std::uint8_t { Leaf, One, Many };
+[[nodiscard]] NodeArity node_arity(NodeType t) noexcept;
+[[nodiscard]] std::optional<NodeType> node_type_from_name(std::string_view name) noexcept;
+[[nodiscard]] std::string_view compare_op_name(CompareOp op) noexcept; // "set", "==", ...
+// Null for nil and entity values (entities cannot be written to a file).
+[[nodiscard]] json::Value value_to_json(const Value& v);
+// Writes a tree as .vbt JSON that BehaviorTree::from_json reads back to the same nodes. `nodes`
+// may be in any order: node 0 is the root and `children` are indices (cycles and shared children
+// are an error). Fields left at their defaults are omitted; blackboard defaults are written
+// sorted by key.
+[[nodiscard]] Result<json::Value> tree_to_json(const std::vector<Node>& nodes, const Blackboard& defaults);
+
 class BehaviorTree {
 public:
     static constexpr std::size_t kMaxNodes = 4096;
