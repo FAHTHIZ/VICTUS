@@ -2505,4 +2505,15 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 - `victus_editor_tests -tc="behaviour tree document*,studio behaviour tree*,studio asset*"` 4 cases / 336 assertions: document edits keep pre-order and refuse ill-shaped trees, root wrap, change type, subtree duplicate/delete, property undo/redo, undo back to the starter tree, save/load, parser error text on a bad file, every node type valid when fresh; Studio creates `ai/guard.vbt`, draws the window, edits, saves, reopens, gets live debug data matching the document during Play, and saving during Play reloads the running tree (new blackboard key written).
 - Live: `victus_editor /tmp/smoke --show ai/sentry.vbt` (screenshot above).
 - `ctest -R "victus_cli_smoke|victus_ai_tests"`: 2/2 passed (the CLI smoke covers the unknown-tier error).
-- clang-tidy on `editor/src/bt_editor.cpp`, `editor/src/bt_document.cpp`, `engine/player/src/player.cpp`: 0 diagnostics.
+- clang-tidy on `editor/src/bt_editor.cpp`, `editor/src/bt_document.cpp`, `engine/player/src/player.cpp`: no diagnostics in these files (only the pre-existing `bugprone-signed-bitwise` in included headers such as `tilemap.hpp`).
+
+## 2026-11-21 — Asset trash and Assets shortcuts (ADR-0177)
+
+Follows `b808131` (Behaviour Tree Editor). Delete in the Assets panel now moves the asset and its `.meta` into a project Trash (`.victus/trash/`) instead of removing it; Assets > Trash... lists deleted assets with Restore (same path and ID, so by-ID references work again), Delete for good and Empty Trash. The Assets panel remembers the clicked asset; while it has focus, F2 renames, Delete deletes and Shift+Alt+F finds references, and the global F2 (Help) and Delete (entity) shortcuts stand aside. Fix: the Behaviour Tree Editor's Ctrl+S/Z/Y and Delete no longer also fire the scene's shortcuts.
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- `victus_asset_tests` full: 2861 assertions pass, including "asset trash" (move with `.meta`, UUID kept, dependency gone while trashed and back after restore, refusals for taken path, extension change, unsafe ids and missing entries, restore under another name, purge one and all).
+- `victus_editor_tests` full under `VICTUS_REQUIRE_GPU=1`: 72 cases / 5644 assertions pass; "studio asset references" now covers Delete to Trash, the Trash window, Restore (same path, ID and scene user) and purge.
+- clang-tidy on `engine/assets/src/references.cpp`, `editor/src/asset_refs.cpp`, `editor/src/bt_editor.cpp`, `editor/src/panels.cpp`: no new diagnostics (pre-existing `bugprone-signed-bitwise`, one `bugprone-suspicious-enum-usage` and one analyzer note in unchanged `panels.cpp` lines).
+
+Not covered: the OS trash, sharing the Trash through version control, moving `.gltf`/`.obj` companion files, folder delete.

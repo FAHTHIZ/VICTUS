@@ -8,6 +8,8 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <format>
 #include <functional>
 
@@ -65,13 +67,128 @@ Status Editor::delete_asset(const Uuid& asset) {
     if (play_state_ != PlayState::Editing) return make_error(ErrorCode::InvalidArgument, "stop play mode before deleting assets");
     const auto* r = db_->find(asset);
     const std::string name = r ? r->path : std::string();
-    VICTUS_TRY_STATUS(assets::delete_asset(*db_, asset));
+    auto trashed = assets::trash_asset(*db_, asset);
+    if (!trashed) return std::move(trashed).error();
     cache_->clear();
     if (thumbnails_) thumbnails_->clear();
     if (asset_store_) asset_store_->invalidate_installed();
     refs_stale_ = true;
-    notify("Deleted " + name);
+    if (asset_focus_ == asset) asset_focus_ = {};
+    notify("Moved " + name + " to the Trash (Assets > Trash... restores it)");
     return {};
+}
+
+std::vector<assets::TrashEntry> Editor::trash_entries() const {
+    return db_ ? assets::list_trash(*db_) : std::vector<assets::TrashEntry>{};
+}
+
+Status Editor::restore_trashed(std::string_view id) {
+    if (!db_) return make_error(ErrorCode::InvalidArgument, "no project is open");
+    if (play_state_ != PlayState::Editing) return make_error(ErrorCode::InvalidArgument, "stop play mode before restoring assets");
+    std::string path;
+    for (const auto& e : assets::list_trash(*db_))
+        if (e.id == id) path = e.original_path;
+    VICTUS_TRY_STATUS(assets::restore_from_trash(*db_, id));
+    cache_->clear();
+    if (thumbnails_) thumbnails_->clear();
+    if (asset_store_) asset_store_->invalidate_installed();
+    refs_stale_ = true;
+    if (const auto* r = db_->find_path(path)) asset_focus_ = r->uuid;
+    notify("Restored " + path);
+    return {};
+}
+
+Status Editor::purge_trashed(std::string_view id) {
+    if (!db_) return make_error(ErrorCode::InvalidArgument, "no project is open");
+    VICTUS_TRY_STATUS(assets::purge_trash(*db_, id));
+    notify(id.empty() ? std::string("Emptied the Trash") : std::string("Deleted for good"));
+    return {};
+}
+
+void Editor::handle_asset_shortcuts() {
+    if (!db_ || asset_focus_.is_nil() || !db_->find(asset_focus_)) return;
+    if (ImGui::GetIO().WantTextInput || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) return;
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return;
+    if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) begin_rename_asset(asset_focus_);
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) begin_delete_asset(asset_focus_);
+    if (ImGui::GetIO().KeyShift && ImGui::GetIO().KeyAlt && ImGui::IsKeyPressed(ImGuiKey_F, false)) open_asset_references(asset_focus_);
+}
+
+void Editor::draw_trash() {
+    if (!show_trash_) return;
+    ImGui::SetNextWindowSize(ImVec2(620, 380), ImGuiCond_FirstUseEver);
+    const ImVec2 c = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(c, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+    if (!ImGui::Begin("Trash", &show_trash_)) {
+        ImGui::End();
+        return;
+    }
+    const auto entries = trash_entries();
+    if (entries.empty()) {
+        kit::empty_state(kit::Icon::Folder, "The Trash is empty",
+                         "Assets you delete land here, with their IDs, so you can bring them back. The Trash lives in "
+                         "this project's .victus folder on this computer.");
+        ImGui::End();
+        return;
+    }
+    ImGui::TextColored(tok::kTextMuted, "%zu deleted asset%s. Restore puts an asset back where it was, with the same ID, so "
+                                        "everything that used it works again.",
+                       entries.size(), entries.size() == 1 ? "" : "s");
+    std::string restore, purge;
+    if (ImGui::BeginTable("##trash", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY,
+                          ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.4f))) {
+        ImGui::TableSetupColumn("Asset", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Deleted", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableHeadersRow();
+        const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        for (const auto& e : entries) {
+            ImGui::PushID(e.id.c_str());
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(e.original_path.c_str());
+            ImGui::TableNextColumn();
+            const std::int64_t ago = std::max<std::int64_t>(now - e.deleted_unix, 0);
+            const std::string when = ago < 60      ? std::string("just now")
+                                     : ago < 3600  ? std::format("{} min ago", ago / 60)
+                                     : ago < 86400 ? std::format("{} h ago", ago / 3600)
+                                                   : std::format("{} days ago", ago / 86400);
+            ImGui::TextColored(tok::kTextMuted, "%s", when.c_str());
+            ImGui::TableNextColumn();
+            const std::string size = e.bytes >= (1u << 20) ? std::format("{:.1f} MB", static_cast<double>(e.bytes) / (1 << 20))
+                                                           : std::format("{:.0f} KB", std::ceil(static_cast<double>(e.bytes) / 1024.0));
+            ImGui::TextColored(tok::kTextMuted, "%s", size.c_str());
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton("Restore")) restore = e.id;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Delete for good")) purge = e.id;
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    if (!restore.empty())
+        if (auto st = restore_trashed(restore); !st) notify(st.error().message, true);
+    if (!purge.empty())
+        if (auto st = purge_trashed(purge); !st) notify(st.error().message, true);
+    if (!confirm_empty_trash_) {
+        if (ImGui::Button("Empty Trash")) confirm_empty_trash_ = true;
+    } else {
+        ImGui::TextColored(tok::kWarning, "Delete %zu asset%s for good?", entries.size(), entries.size() == 1 ? "" : "s");
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, tok::kDanger);
+        ImGui::PushStyleColor(ImGuiCol_Text, tok::kSurfaceBase);
+        const bool yes = ImGui::Button("Empty");
+        ImGui::PopStyleColor(2);
+        ImGui::SameLine();
+        if (yes) {
+            if (auto st = purge_trashed(); !st) notify(st.error().message, true);
+            confirm_empty_trash_ = false;
+        } else if (ImGui::Button("Cancel")) {
+            confirm_empty_trash_ = false;
+        }
+    }
+    ImGui::End();
 }
 
 void Editor::open_asset_references(const Uuid& asset) {
@@ -97,8 +214,8 @@ void Editor::begin_delete_asset(const Uuid& asset) {
 
 void Editor::draw_asset_context_items(const assets::AssetRecord& r) {
     if (ImGui::MenuItem("Find References")) open_asset_references(r.uuid);
-    if (ImGui::MenuItem("Rename or Move...")) begin_rename_asset(r.uuid);
-    if (ImGui::MenuItem("Delete...")) begin_delete_asset(r.uuid);
+    if (ImGui::MenuItem("Rename or Move...", "F2")) begin_rename_asset(r.uuid);
+    if (ImGui::MenuItem("Delete...", "Delete")) begin_delete_asset(r.uuid);
     ImGui::Separator();
     if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(r.path.c_str());
     if (ImGui::MenuItem("Copy ID")) ImGui::SetClipboardText(r.uuid.to_string().c_str());
@@ -262,10 +379,10 @@ void Editor::draw_asset_dialogs() {
                 for (std::size_t i = 0; i < rename_users_.size() && i < 8; ++i) ImGui::BulletText("%s", rename_users_[i].file.c_str());
                 if (rename_users_.size() > 8) ImGui::TextColored(tok::kTextMuted, "and %zu more", rename_users_.size() - 8);
             }
-            ImGui::TextColored(tok::kTextMuted, "This cannot be undone.");
+            ImGui::TextColored(tok::kTextMuted, "It goes to the Trash (Assets > Trash...), where you can restore it.");
             ImGui::PushStyleColor(ImGuiCol_Button, tok::kDanger);
             ImGui::PushStyleColor(ImGuiCol_Text, tok::kSurfaceBase);
-            const bool del = ImGui::Button("Delete", ImVec2(120, 0));
+            const bool del = ImGui::Button("Move to Trash", ImVec2(140, 0)) || ImGui::IsKeyPressed(ImGuiKey_Enter, false);
             ImGui::PopStyleColor(2);
             if (del) {
                 if (auto st = delete_asset(delete_target_); !st) notify(st.error().message, true);

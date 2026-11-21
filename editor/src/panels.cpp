@@ -469,6 +469,7 @@ void Editor::draw_workspace(float) {
     draw_project_settings();
     draw_asset_store();
     draw_behavior_tree_editor();
+    draw_trash();
     draw_asset_dialogs();
     ImGui::EndDisabled();
     draw_script_debugger();
@@ -547,6 +548,7 @@ void Editor::draw_menu_bar() {
     }
     if (ImGui::BeginMenu("Assets")) {
         if (ImGui::MenuItem("Asset Store...", nullptr, show_asset_store_)) show_panel(Panel::AssetStore);
+        if (ImGui::MenuItem("Trash...", nullptr, show_trash_, db_ != nullptr)) show_trash_ = true;
         kit::tooltip("Free models, materials, skies and sounds with their licences, added to this project in one click");
         ImGui::Separator();
         if (ImGui::MenuItem("Reimport All")) (void)reimport_assets();
@@ -1850,6 +1852,7 @@ void Editor::draw_inspector() {
 // ---- assets & console ---------------------------------------------------------------------------
 
 void Editor::draw_asset_item(const assets::AssetRecord& r) {
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) asset_focus_ = r.uuid;
     if (ImGui::BeginPopupContextItem("##assetctx")) {
         if (r.kind == assets::AssetKind::Texture) {
             if (ImGui::MenuItem("Import Settings...")) {
@@ -1928,10 +1931,13 @@ void Editor::draw_asset_item(const assets::AssetRecord& r) {
 
 void Editor::draw_assets() {
     if (!core_open_[3]) return;
+    assets_focused_ = false;
     if (!ImGui::Begin(kAssetsWindow, &core_open_[3])) {
         ImGui::End();
         return;
     }
+    assets_focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !asset_focus_.is_nil();
+    handle_asset_shortcuts();
     std::vector<assets::AssetRecord> all = db_ ? db_->records() : std::vector<assets::AssetRecord>{};
     std::sort(all.begin(), all.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
     std::vector<assets::AssetRecord> recs;
@@ -2058,7 +2064,7 @@ void Editor::draw_assets() {
                 if (col > 0) ImGui::SameLine();
                 ImGui::BeginGroup();
                 const ImVec2 p0 = ImGui::GetCursorPos();
-                ImGui::Selectable("##tile", false, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap,
+                ImGui::Selectable("##tile", asset_focus_ == r.uuid, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap,
                                   ImVec2(cell, cell + label_h));
                 draw_asset_item(r);
                 ImGui::SetCursorPos(p0);
@@ -2084,7 +2090,7 @@ void Editor::draw_assets() {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::PushID(r.path.c_str());
-            ImGui::Selectable("##row", false,
+            ImGui::Selectable("##row", asset_focus_ == r.uuid,
                               ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap,
                               ImVec2(0, row));
             draw_asset_item(r);
@@ -2421,7 +2427,9 @@ void Editor::handle_shortcuts() {
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Minus) || ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadSubtract))
         step_ui_scale(-1);
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_0)) step_ui_scale(0);
-    if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) open_help();
+    // F2 renames the focused asset while the Assets panel has focus (as in Unity, Unreal and
+    // Godot); elsewhere it opens Help.
+    if (ImGui::IsKeyPressed(ImGuiKey_F2, false) && !assets_focused_) open_help();
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_P)) {
         if (editing) play();
         else stop();
@@ -2435,7 +2443,7 @@ void Editor::handle_shortcuts() {
     }
     // While the game has the keyboard, editor shortcuts other than Play/Stop stay out of its way.
     if (!editing && viewport_focused_) return;
-    if (graph_focused_) return; // the Graph Editor handles its own save, undo and delete
+    if (graph_focused_ || bt_focused_) return; // these editors handle their own save, undo and delete
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S) && editing) {
         if (scene_path_.empty()) show_save_as_ = true;
         else if (auto st = save_scene(); !st.ok()) notify(st.error().message, true);
@@ -2445,7 +2453,7 @@ void Editor::handle_shortcuts() {
         redo();
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D)) duplicate_selected();
     const bool mouse_nav = ImGui::IsMouseDown(ImGuiMouseButton_Right);
-    if (!mouse_nav && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) delete_selected();
+    if (!mouse_nav && !assets_focused_ && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) delete_selected();
     if (!mouse_nav && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) frame_selected();
     gizmo_shortcuts();
 }
