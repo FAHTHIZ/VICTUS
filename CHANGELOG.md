@@ -51,6 +51,10 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 - Behaviours (ADR-0120): no-code gameplay components (platformer and top-down movement, camera follow, health, hazards, collectibles, patrol, chase, shooter, projectiles, spawner, lifetime, checkpoints, goals, game rules with a HUD), the No-Code Platformer and No-Code 3D Adventure templates, and behaviour-driven character animation.
 - Release process: this changelog, docs/RELEASE_PROCESS.md, `tools/release/release.py` and the tag-triggered release workflow with separate debug-symbol archives.
 
+### Fixed
+
+- Physics: a ragdoll getting up could end with a bone (head, hips, an arm) still bent the way it lay instead of back in the animated pose. The check for "was this bone re-animated since the ragdoll wrote it?" compared quaternions with a threshold tighter than float rounding, so an unchanged lying pose was sometimes taken as the new animation target. The comparison is now exact; regression pushes added to the get-up test.
+
 ### Security
 
 - Untrusted-input hardening for glTF, archives, project files and network packets is described in [SECURITY.md](SECURITY.md) and docs/THIRD_PARTY_AND_LICENSES.md (cgltf advisories are mitigated, not fixed upstream).

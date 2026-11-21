@@ -395,7 +395,9 @@ void knock_down(Sim& s, const Rig& r, float push_z) {
 
 TEST_CASE("ragdoll get-up moves the root under the hips and blends from the lying pose to the animation") {
     register_components();
-    for (const float push : {12.0f, -12.0f}) {
+    // -10.25 and -8.5 used to recapture the lying pose as the animated target (rounding in the
+    // "unchanged since we wrote it" test); keep them as regressions.
+    for (const float push : {12.0f, -12.0f, -10.25f, -8.5f, 12.5f}) {
         CAPTURE(push);
         Sim s;
         ground(s.scene);
