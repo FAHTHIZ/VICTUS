@@ -115,6 +115,7 @@ public:
     virtual void set_joint_motor(Entity e, bool enabled, float speed) = 0;
     [[nodiscard]] virtual RagdollState ragdoll_state(Entity root) const = 0;
     [[nodiscard]] virtual Entity ragdoll_of(Entity bone) const = 0;
+    virtual RagdollGetUp begin_get_up(scene::Scene& scene, Entity root, float blend_seconds) = 0;
     [[nodiscard]] virtual WaterContact water_contact(Entity e) const = 0;
     // Captures the animated bone pose and writes the simulated one (Phase::PostUpdate).
     virtual void write_ragdolls(scene::Scene& scene) = 0;

@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Physics: fallen ragdolls can get up. `begin_ragdoll_get_up` (Luau `entity:ragdoll_get_up()`, Studio "Get Up" in play) moves the character to where it lies, facing where a get-up animation starts, tells whether it lies on its back, and blends smoothly from the lying pose back to the animation (ADR-0158). Script API 1.1 ([STATUS](docs/STATUS.md)).
 - Player: survives GPU device loss. The device, GPU context, cached assets and scene view are recreated on the same window while the scene, scripts, physics, audio and network session keep running (`--device-recoveries`, default 3; ADR-0157). Verified with injected failures only.
 - Scripting: the per-call time budget counts the script thread's CPU time instead of wall time, so a machine under load or a blocking native call no longer kills a healthy script; runaway loops are still stopped within the budget (ADR-0156).
 - Scripting: the Luau script API is versioned (1.0, ADR-0155). `victus.project` records `"script_api"`; engines refuse scripts written for an incompatible version and `victus check` reports it. The API is frozen in `engine/script/api/` and CI fails when a binding is added without a minor bump or removed without a major bump. `victus script-api` prints, freezes and checks it; see docs/SCRIPT_API.md ([STATUS](docs/STATUS.md)).

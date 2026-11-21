@@ -252,6 +252,9 @@ void PhysicsWorld::set_ragdoll_mode(scene::Scene& scene, Entity root, RagdollCom
     if (auto* r = scene.world().get<RagdollComponent>(root)) r->mode = mode;
 }
 Entity PhysicsWorld::ragdoll_of(Entity bone) const { return impl_->w3->ragdoll_of(bone); }
+RagdollGetUp PhysicsWorld::begin_ragdoll_get_up(scene::Scene& scene, Entity root, float blend_seconds) {
+    return impl_->w3->begin_get_up(scene, root, blend_seconds);
+}
 void PhysicsWorld::update_ragdoll_poses(scene::Scene& scene) {
     VICTUS_PROFILE_SCOPE("physics.ragdoll_pose");
     impl_->w3->write_ragdolls(scene);

@@ -365,3 +365,110 @@ TEST_CASE("collider_lines draws ragdoll bones") {
     collider_lines(scene, lines);
     CHECK(lines.size() > 16 * 30);
 }
+
+namespace {
+
+float quat_dot(math::Quat a, math::Quat b) { return std::abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w); }
+
+// Local bone poses of the T-posed humanoid, i.e. the animated pose get-up blends back to.
+std::map<std::string, std::pair<math::Vec3, math::Quat>> local_pose(const Scene& scene, const Rig& r) {
+    std::map<std::string, std::pair<math::Vec3, math::Quat>> out;
+    for (const char* n : kSkeleton) {
+        const auto* t = scene.world().get<Transform>(r[n]);
+        out[n] = {t->position, t->rotation};
+    }
+    return out;
+}
+
+// Drops the humanoid as a passive ragdoll after tipping it backwards (+Z, away from its -Z front)
+// or forwards, and waits until it rests.
+void knock_down(Sim& s, const Rig& r, float push_z) {
+    REQUIRE(make_humanoid_ragdoll(s.scene, r.root) == 16);
+    s.scene.world().get<RagdollComponent>(r.root)->mode = Mode::Passive;
+    s.run(kDt);
+    s.world->add_impulse(r["Chest"], {0, 0, push_z});
+    s.world->add_impulse(r["Head"], {0, 0, push_z * 0.5f});
+    s.run(4.0f);
+}
+
+} // namespace
+
+TEST_CASE("ragdoll get-up moves the root under the hips and blends from the lying pose to the animation") {
+    register_components();
+    for (const float push : {12.0f, -12.0f}) {
+        CAPTURE(push);
+        Sim s;
+        ground(s.scene);
+        const Rig r = humanoid(s.scene, {1, 0, 2});
+        const auto animated = local_pose(s.scene, r);
+        knock_down(s, r, push);
+        std::map<std::string, math::Vec3> lying;
+        for (const char* n : kSkeleton) lying[n] = world_pos(s.scene, r[n]);
+        const math::Vec3 hips = lying["Hips"];
+        const math::Vec3 head = lying["Head"];
+
+        const RagdollGetUp g = s.world->begin_ragdoll_get_up(s.scene, r.root, 0.5f);
+        REQUIRE_MESSAGE(g.started, g.reason);
+        // Pushed backwards (+Z) the body lands on its back.
+        CHECK(g.face_up == (push > 0));
+        CHECK(std::abs(g.position.y) < 0.05f); // on the ground
+        CHECK(std::hypot(g.position.x - hips.x, g.position.z - hips.z) < 0.05f);
+        CHECK(math::length(world_pos(s.scene, r.root) - g.position) < 1e-4f);
+        // Face up the character faces its feet (away from the head), face down it faces the head.
+        const math::Vec3 facing = g.rotation.rotate({0, 0, -1});
+        math::Vec3 to_head{head.x - hips.x, 0, head.z - hips.z};
+        to_head = math::normalize(to_head);
+        CHECK(math::dot(facing, to_head) * (g.face_up ? -1.0f : 1.0f) > 0.7f);
+        CHECK(s.scene.world().get<RagdollComponent>(r.root)->mode == Mode::Kinematic);
+
+        // First frame: no pop — the bones are where the ragdoll lay.
+        s.run(kDt);
+        const RagdollState st = s.world->ragdoll_state(r.root);
+        CHECK(st.getting_up);
+        CHECK(st.get_up_progress > 0.0f);
+        CHECK(st.get_up_progress < 0.1f);
+        for (const char* n : kSkeleton) CHECK_MESSAGE(math::length(world_pos(s.scene, r[n]) - lying[n]) < 0.06f, n);
+
+        // Halfway the pose is in between; after the blend the animation owns the bones again.
+        s.run(0.25f);
+        CHECK(s.world->ragdoll_state(r.root).get_up_progress > 0.4f);
+        s.run(0.5f);
+        CHECK_FALSE(s.world->ragdoll_state(r.root).getting_up);
+        for (const char* n : kSkeleton) {
+            const auto* t = s.scene.world().get<Transform>(r[n]);
+            CHECK_MESSAGE(math::length(t->position - animated.at(n).first) < 1e-3f, n);
+            CHECK_MESSAGE(quat_dot(t->rotation, animated.at(n).second) > 0.9999f, n);
+        }
+        // Standing on the ground at the new place: feet near y = 0, hips 1 m up.
+        CHECK(std::abs(world_pos(s.scene, r["Hips"]).y - 1.0f) < 0.05f);
+        // Bodies follow the animation kinematically (raycasts hit the standing character).
+        const auto hit = s.world->raycast(world_pos(s.scene, r["Chest"]) + math::Vec3{0, 0, 3}, {0, 0, -1}, 6.0f);
+        REQUIRE(hit);
+        CHECK(s.world->ragdoll_of(hit->entity) == r.root);
+    }
+}
+
+TEST_CASE("ragdoll get-up is rejected unless the ragdoll simulates, and a new knock-down cancels it") {
+    register_components();
+    Sim s;
+    ground(s.scene);
+    const Rig r = humanoid(s.scene);
+    CHECK_FALSE(s.world->begin_ragdoll_get_up(s.scene, r.root).started); // no ragdoll
+    REQUIRE(make_humanoid_ragdoll(s.scene, r.root) == 16);
+    s.scene.world().get<RagdollComponent>(r.root)->mode = Mode::Kinematic;
+    s.run(kDt);
+    const RagdollGetUp k = s.world->begin_ragdoll_get_up(s.scene, r.root);
+    CHECK_FALSE(k.started);
+    CHECK_FALSE(k.reason.empty());
+
+    s.scene.world().get<RagdollComponent>(r.root)->mode = Mode::Passive;
+    s.run(2.0f);
+    REQUIRE(s.world->begin_ragdoll_get_up(s.scene, r.root, 1.0f).started);
+    s.run(0.2f);
+    CHECK(s.world->ragdoll_state(r.root).getting_up);
+    s.scene.world().get<RagdollComponent>(r.root)->mode = Mode::Passive; // hit again mid get-up
+    s.run(kDt);
+    CHECK_FALSE(s.world->ragdoll_state(r.root).getting_up);
+    s.run(1.0f);
+    for (const char* n : kSkeleton) CHECK_MESSAGE(finite(world_pos(s.scene, r[n])), n);
+}

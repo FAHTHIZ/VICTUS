@@ -54,7 +54,7 @@ Items that keep the whole engine from production use, regardless of feature work
 | ECS | Usable | — | — |
 | Asset pipeline | Usable | No import queue UI or dependency inspector; glTF cameras/lights not imported; V.A.U.L.T. budgets cover textures/models only | V.A.U.L.T. CPU budgets and mesh/audio residency |
 | World streaming | Experimental | No cross-cell references, data layers, server cell ownership, Studio world view | Cross-cell references |
-| Physics (Jolt 3D, Box2D 2D) | Usable | No convex decomposition; whole heightfield rebuild per edit; ragdoll get-up missing | Convex decomposition |
+| Physics (Jolt 3D, Box2D 2D) | Usable | No convex decomposition; whole heightfield rebuild per edit; ragdoll root does not follow while simulating; no get-up clips or pose matching | Convex decomposition |
 | Animation | Usable | No weighted bone masks/layer sync, IK poles/limits, foot locking, GPU morphs | Weighted bone masks |
 | Navigation (Recast/Detour) | Usable | Single tile; whole-mesh rebuilds; no off-mesh links | Tiled navmesh |
 | Gameplay AI | Usable | No visual tree editor, no environment queries | Visual BT editor |
@@ -93,6 +93,7 @@ Newest first. Feature history before this file existed is in [../CHANGELOG.md](.
 
 | Date | Change | Evidence |
 |---|---|---|
+| 2026-11-21 | Ragdoll get-up (ADR-0158): root moved under the hips and turned for a get-up clip, back/front detection, smoothstep blend from the lying pose to the animation; Luau `entity:ragdoll_get_up` (script API 1.1), Studio "Get Up" | `victus_physics_tests` back and front falls: root within 5 cm of hips on the ground, first frame within 6 cm of the lying pose, final pose exact; script and editor tests |
 | 2026-11-21 | GPU device-loss recovery in the player (ADR-0157, B3 partial): new device, GPU context, asset cache contents and scene view rebuilt on the same window; scene, scripts, physics, audio and network survive; `--device-recoveries` (default 3) | `victus_device_loss`: all three injected failure kinds recover in the 2D template, final frame vs clean run FLIP 0.002-0.010, SSIM >= 0.991; 3D template FLIP 0.003, SSIM 0.998 |
 | 2026-11-21 | Script time budgets charge thread CPU time, not wall time (ADR-0156): a descheduled or blocked script thread no longer fails healthy scripts (flaky macOS Debug CI `dungeon_crawler` "exceeded its time budget of 250 ms"); busy loops are still stopped | `victus_script_tests` 126/126, new budget case |
 | 2026-11-21 | Versioned script API 1.0 (ADR-0155, closes B7): `kScriptApiVersion`, `victus.project` `script_api`, hosts refuse incompatible scripts, `victus check` error, frozen snapshot in `engine/script/api/` checked by `victus_script_tests`, `victus script-api`; Entity members moved to one property table | STATUS.md 2026-11-21 (script API) |

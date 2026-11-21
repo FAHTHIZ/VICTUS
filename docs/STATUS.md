@@ -2258,6 +2258,16 @@ Not covered: CPU clock granularity on Windows (`GetThreadTimes` ticks at about 1
 
 Next task: confirm CI; then B3 (GPU device-loss recovery design) or generated Luau type definitions.
 
+## 2026-11-21 — Ragdoll get-up (ADR-0158)
+
+Built: `PhysicsWorld::begin_ragdoll_get_up(scene, root, blend_seconds)` returns `RagdollGetUp {started, face_up, position, rotation, reason}`. A passive/powered ragdoll's hips orientation tells whether it lies on its back (new serialized `RagdollComponent::front`, default -Z); the root moves to the ground under the hips (raycast ignoring the character) and turns towards the feet (face up) or head (face down), the mode switches to Kinematic and the bones and kinematic bodies blend (smoothstep, parent-local lerp/slerp) from the lying pose to the animation over `blend_seconds`; the last frame writes the animated pose exactly. `RagdollState::getting_up`, `get_up_progress`. Luau `entity:ragdoll_get_up([blend])` returns `{face_up, position, rotation}` or `nil, reason`; script API raised to 1.1 with a new frozen snapshot. Studio: the Ragdoll card shows "Get Up" in play mode (`Editor::ragdoll_get_up`).
+
+Verified (Release, GCC, 2 vCPU): two new `victus_physics_tests` cases (back and front falls of the 16-bone humanoid; values in ADR-0158) and the existing 89 pass; `victus_script_tests` ragdoll case extended (binding, rejection with reason, blend ends); `victus_editor_tests` Ragdoll Lab case: Get Up in play raises Orion's head more than 0.5 m after 60 frames and is refused in edit mode. Full `ctest` under `VICTUS_REQUIRE_GPU=1` before push.
+
+Not covered: no get-up animation clips ship (the caller plays its own); feet may slide during long blends; no pose matching against clip first frames; ragdolls still do not move their root while simulating.
+
+Next task: Studio front-end maturity (curve editor / dependency inspector) or editor device recovery.
+
 ## 2026-11-21 — GPU device-loss recovery in the player (ADR-0157, blocker B3 partial)
 
 Built: on a lost device (rhi::DeviceHealth, 30 failed operations in a row) the player no longer exits. At the top of the next frame, when no command buffer of the lost device exists, it destroys the scene view, the frame target and every cached GPU asset (`GpuAssetCache::clear` on the old context), the GPU context and the device, then creates a new device with the same `DeviceDesc` (retried for about 10 s, a driver reset can take seconds), attaches the same window, creates a new `GpuContext`, calls the new `GpuAssetCache::rebind` and a new `SceneView` with the previous render settings (including the dynamic resolution scale). Scene, scripts, physics, audio, navigation, network session and save state are untouched; assets reload on their next use. `PlayerOptions::device_recoveries` / `victus_player --device-recoveries N` (default 3, 0 = old behaviour); `PlayerReport::device_recoveries`, printed by `victus_player` and `victus run`. `DeviceDesc::env_fault_injection` (recreated devices ignore `VICTUS_GPU_FAIL`, so an injected loss acts like a one-time reset). `GpuAssetCache` now holds its context by pointer. Post-loop reporting tolerates a recovery that failed part way.

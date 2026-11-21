@@ -3,6 +3,7 @@
 #include "script_internal.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <string_view>
 
@@ -262,6 +263,36 @@ int entity_ragdoll_state(lua_State* L) {
     lua_setfield(L, -2, "velocity");
     lua_pushnumber(L, st.pose_error);
     lua_setfield(L, -2, "pose_error");
+    lua_pushboolean(L, st.getting_up);
+    lua_setfield(L, -2, "getting_up");
+    lua_pushnumber(L, st.get_up_progress);
+    lua_setfield(L, -2, "get_up_progress");
+    return 1;
+}
+
+// entity:ragdoll_get_up([blend_seconds = 0.4]) -> {face_up, position, rotation} or nil, reason.
+// Recovers a fallen passive/powered ragdoll (ADR-0158): the root moves to the ground under the
+// hips, facing where a get-up animation starts; play "get up from back" when face_up is true,
+// "from front" otherwise, in the same frame. rotation is Euler degrees like entity.rotation.
+int entity_ragdoll_get_up(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const float blend = static_cast<float>(luaL_optnumber(L, 2, 0.4));
+    if (!std::isfinite(blend) || blend < 0 || blend > 10) luaL_error(L, "ragdoll_get_up: blend_seconds must be between 0 and 10");
+    auto* w = physics::world_of(s);
+    const physics::RagdollGetUp g = w ? w->begin_ragdoll_get_up(s, e, blend) : physics::RagdollGetUp{.reason = "no physics world"};
+    if (!g.started) {
+        lua_pushnil(L);
+        lua_pushstring(L, g.reason.c_str());
+        return 2;
+    }
+    lua_createtable(L, 0, 3);
+    lua_pushboolean(L, g.face_up);
+    lua_setfield(L, -2, "face_up");
+    push_vec3(L, g.position);
+    lua_setfield(L, -2, "position");
+    push_vec3(L, euler_degrees(g.rotation));
+    lua_setfield(L, -2, "rotation");
     return 1;
 }
 

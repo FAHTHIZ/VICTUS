@@ -575,6 +575,7 @@ Entity check_live(lua_State* L, int idx, scene::Scene& s);
 math::Vec3 check_vec3(lua_State* L, int idx);
 void push_vec3(lua_State* L, math::Vec3 v);
 math::Quat from_euler_degrees(math::Vec3 d);
+math::Vec3 euler_degrees(math::Quat q);
 const scene::ComponentSerializer* check_serializer(lua_State* L, int idx);
 int entity_get(lua_State* L);
 int entity_set(lua_State* L);
@@ -699,6 +700,7 @@ int entity_water_state(lua_State* L);
 int entity_destructible_state(lua_State* L);
 int entity_ragdoll_state(lua_State* L);
 int entity_ragdoll_root(lua_State* L);
+int entity_ragdoll_get_up(lua_State* L);
 int entity_set_motor(lua_State* L);
 
 // bind_render.cpp
