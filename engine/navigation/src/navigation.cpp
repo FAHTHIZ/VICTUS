@@ -475,7 +475,7 @@ std::vector<std::uint64_t> tile_hashes(const Geometry& geo, const TileLayout& L)
         tile_range(L, src.bmin[0], src.bmin[2], src.bmax[0], src.bmax[2], x0, z0, x1, z1);
         for (int z = z0; z <= z1; ++z)
             for (int x = x0; x <= x1; ++x) {
-                std::uint64_t& t = h[static_cast<std::size_t>(z * L.tw + x)];
+                std::uint64_t& t = h[static_cast<std::size_t>(z) * static_cast<std::size_t>(L.tw) + static_cast<std::size_t>(x)];
                 t = (t ^ src.hash) * 1099511628211ull + 0x9e3779b97f4a7c15ull;
             }
     }
@@ -800,7 +800,7 @@ std::shared_ptr<NavigationSystem::Cooked> NavigationSystem::cook_tiles(BuildJob 
         tile_range(L, mnx, mnz, mxx, mxz, x0, z0, x1, z1);
         for (int z = z0; z <= z1; ++z)
             for (int x = x0; x <= x1; ++x) {
-                const int sl = slot[static_cast<std::size_t>(z * L.tw + x)];
+                const int sl = slot[static_cast<std::size_t>(z) * static_cast<std::size_t>(L.tw) + static_cast<std::size_t>(x)];
                 if (sl >= 0) buckets[static_cast<std::size_t>(sl)].insert(buckets[static_cast<std::size_t>(sl)].end(), idx, idx + 3);
             }
     }
