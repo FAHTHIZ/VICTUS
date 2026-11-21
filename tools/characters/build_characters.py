@@ -39,9 +39,9 @@ import gltf  # noqa: E402
 import materials  # noqa: E402
 import meshops  # noqa: E402
 
-PIPELINE_VERSION = 2
-MATERIAL_ORDER = ("Skin", "Suit", "Eye", "Mouth", "Groom")
-TEXTURE_SIZE = {"Skin": 2048, "Suit": 2048, "Eye": 512, "Mouth": 512, "Groom": 2048}
+PIPELINE_VERSION = 3
+MATERIAL_ORDER = ("Skin", "Suit", "Eye", "Mouth", "Groom", "Gear")
+TEXTURE_SIZE = {"Skin": 2048, "Suit": 2048, "Eye": 512, "Mouth": 512, "Groom": 2048, "Gear": 2048}
 
 
 def log(*a):
@@ -105,13 +105,21 @@ def bake_part(lod: Lod0, L, style, all_lods, size, ao, seed):
         m = materials.eye_maps(tx, P, N, attrs, style, seed)
     elif name == "Mouth":
         m = materials.mouth_maps(tx, P, N, attrs, seed)
+    elif name == "Gear":
+        fa = lod.tri_face[tx.tri_id]
+        kind = lod.face_attrs["kind"][fa].astype(float)
+        cuff = lod.face_attrs["cuff"][fa].astype(float)
+        m = materials.gear_maps(tx, P, N, L, style, kind, cuff, seed)
     else:
         m = materials.groom_maps(tx, P, N, attrs, style, seed)
     mask = tx.mask()
     occl = np.ones((size, size))
     if ao and name != "Groom":
-        others = [(o.r.pos, o.r.tri) for o in all_lods if o is not lod and o.part.name != "Groom"]
-        dist = {"Skin": 0.08, "Suit": 0.12, "Eye": 0.03, "Mouth": 0.05}[name]
+        # Equipment is optional (each item can be hidden), so it never darkens the body maps;
+        # the body does occlude the equipment (pack against the back, cuffs, boot tops).
+        others = [(o.r.pos, o.r.tri) for o in all_lods
+                  if o is not lod and o.part.name not in ("Groom", "Gear")]
+        dist = {"Skin": 0.08, "Suit": 0.12, "Eye": 0.03, "Mouth": 0.05, "Gear": 0.08}[name]
         occl = bake.bake_ao(r, size, occluders=others, samples=64 if size <= 1024 else 32, distance=dist)
     out = {}
     color = tx.image(m["color"], fill=0.0)
@@ -280,7 +288,7 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
         if "emissive" in ti:
             m["emissiveTexture"] = {"index": ti["emissive"]}
             m["emissiveFactor"] = [1.0, 1.0, 1.0]
-            m["extensions"] = {"KHR_materials_emissive_strength": {"emissiveStrength": 4.0}}
+            m["extensions"] = {"KHR_materials_emissive_strength": {"emissiveStrength": 2.0}}
             w.used_ext.add("KHR_materials_emissive_strength")
         if mname == "Groom":
             m["alphaMode"] = "MASK"
@@ -291,7 +299,8 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
     # Mesh: one primitive per material, every primitive carries every blend shape.
     targets = morph_set(lods)
     prims = []
-    for lod in sorted(lods, key=lambda x: MATERIAL_ORDER.index(x.part.name)):
+    body_lods = [lod for lod in lods if lod.part.name != "Gear"]
+    for lod in sorted(body_lods, key=lambda x: MATERIAL_ORDER.index(x.part.name)):
         r = lod.r
         idx, wts = top4(lod.W[r.src])
         morphs = []
@@ -318,6 +327,29 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
     w.j["nodes"][body_node]["mesh"] = mesh
     skin = w.skin(f"{name}_Skeleton", joint_nodes, sk.inverse_bind(), skeleton=joint_nodes[0])
     w.j["nodes"][body_node]["skin"] = skin
+
+    # Equipment: one skinned mesh node per item, sharing the body's skin (docs/CHARACTERS.md#equipment).
+    gear_lod = next((lod for lod in lods if lod.part.name == "Gear"), None)
+    equipment = []
+    if gear_lod is not None:
+        from gear import ITEM_KINDS, KINDS
+        r = gear_lod.r
+        tri_kind = gear_lod.face_attrs["kind"][gear_lod.tri_face]
+        for k, kname in enumerate(KINDS):
+            sel = np.where(np.isin(tri_kind, ITEM_KINDS[k]))[0]
+            if not len(sel):
+                continue
+            tri = r.tri[sel]
+            used = np.unique(tri)
+            remap = -np.ones(len(r.pos), np.int64)
+            remap[used] = np.arange(len(used))
+            idx, wts = top4(gear_lod.W[r.src[used]])
+            prim = w.skinned_primitive(gltf.to_gl(r.pos[used]), gltf.to_gl(r.nrm[used]), r.uv[used],
+                                       gltf.to_gl_tangent(r.tan[used]), remap[tri], idx, wts, mat_index["Gear"])
+            node = w.node(f"{name}_{kname}", parent=rig)
+            w.j["nodes"][node]["mesh"] = w.mesh(f"{name}_{kname}", [prim])
+            w.j["nodes"][node]["skin"] = skin
+            equipment.append(f"{name}_{kname}")
 
     # Animations.
     hips = sk.names.index("Hips")
@@ -372,7 +404,7 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
         "character": spec.key, "displayName": name, "profile": spec.profile,
         "skeleton": "VictusHumanoid", "coreJoints": 21, "joints": len(sk.names),
         "height": float(max(lod.r.pos[:, 2].max() for lod in lods)), "skullTop": spec.skull_top,
-        "materials": list(MATERIAL_ORDER), "blendShapes": targets, "clips": clip_meta,
+        "materials": list(MATERIAL_ORDER), "blendShapes": targets, "equipment": equipment, "clips": clip_meta,
         "sockets": ["Socket.Root", "Socket.Head", "Socket.Face", "Socket.Back", "Socket.Hand.L", "Socket.Hand.R",
                     "Socket.Hip.L", "Socket.Hip.R"],
         "provenance": {"baseMesh": "MakeHuman hm08 (CC0 1.0), third_party/makehuman",
@@ -395,6 +427,34 @@ def _seam_normals(r, n):
 # ---- main -------------------------------------------------------------------------------
 
 
+def check_gear_clearance(spec, L, lods):
+    """Fails the build if any covered body point pokes through its equipment item in the rest
+    pose (subdivided LOD0, the geometry that ships)."""
+    import gear as gear_mod
+
+    by = {lod.part.name: lod for lod in lods}
+    g = by.get("Gear")
+    if g is None:
+        return
+    tk = g.face_attrs["kind"][g.tri_face]
+    for kind, surf in ((0, "Suit"), (1, "Skin"), (2, "Suit")):
+        c = gear_mod.clearance(L.J, g.r.pos, g.r.tri, tk, by[surf].r.pos, kind)
+        if len(c):
+            log(f"    {gear_mod.KINDS[kind]}: clearance min {c.min() * 1000:.2f} mm, "
+                f"p1 {np.percentile(c, 1) * 1000:.2f} mm over {len(c)} points")
+            if os.environ.get("VICTUS_GEAR_DEBUG"):
+                m = gear_mod.covered(L.J, kind, by[surf].r.pos)
+                bad = by[surf].r.pos[m][c < 0.0002]
+                log("      worst at", bad[:: max(1, len(bad) // 12)].round(3).tolist(), "count", len(bad))
+            if c.min() < 0.0002:
+                raise SystemExit(f"{spec.name}: {gear_mod.KINDS[kind]} clips its {surf} ({c.min() * 1000:.2f} mm)")
+    c = gear_mod.pack_contact(g.r.pos, g.r.tri, tk, by["Suit"].r.pos)
+    if len(c):
+        log(f"    Backpack: back stays {-c.max() * 1000:.2f} mm outside (closest) over {len(c)} points")
+        if c.max() > -0.002:
+            raise SystemExit(f"{spec.name}: the backpack intersects the back ({-c.max() * 1000:.2f} mm)")
+
+
 def build_one(spec, out_dir, size_scale, ao):
     t0 = time.time()
     log(f"{spec.name}: fitting")
@@ -407,6 +467,7 @@ def build_one(spec, out_dir, size_scale, ao):
     for lod in lods:
         lod.r.nrm = _seam_normals(lod.r, lod.r.nrm)
         lod.r.tan = meshops.tangents(lod.r.pos, lod.r.nrm, lod.r.uv, lod.r.tri)
+    check_gear_clearance(spec, L, lods)
     log(f"{spec.name}: texturing")
     seed = int(hashlib.sha256(spec.key.encode()).hexdigest()[:6], 16) % 10000
     textures = {}

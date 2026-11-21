@@ -260,7 +260,9 @@ def suit_maps(tx, P, N, L: Landmarks, style, cuff, seed):
     piping = np.clip(arm_line + leg_line, 0, 1)
     chest_pipe = np.exp(-((chest_d - 0.006) / 0.0011) ** 2) * front * (np.abs(P[:, 0]) < v_edge + 0.002) * \
         (P[:, 2] > cz0 - 0.002) * (P[:, 2] < cz1 + 0.002)
-    piping = np.clip(piping + chest_pipe, 0, 1)
+    # The chest outline is a contrasting bonded tape, not a light: emissive piping stays on the
+    # limbs only (a lit V on the chest read as a decal at gameplay distance).
+    seams = np.clip(seams + 0.6 * chest_pipe, 0, 1)
 
     # Knit micro-structure in texel space (fine weave) plus 3D fibre noise.
     ij = tx.ij.astype(float)
@@ -279,6 +281,8 @@ def suit_maps(tx, P, N, L: Landmarks, style, cuff, seed):
     col = base[None, :] * (1 + 0.06 * mottle[:, None] + 0.04 * weave[:, None])
     col = np.where(panel[:, None] > 0.5, base[None, :] * 1.6 * (1 + 0.03 * mottle[:, None]), col)
     col = col * (1 - stitch[:, None]) + trim[None, :] * stitch[:, None] * 0.6
+    tape = np.clip(chest_pipe * 1.5 - 0.2, 0, 1)
+    col = col * (1 - tape[:, None]) + trim[None, :] * 0.5 * tape[:, None]
     col = col * (1 - cuff[:, None]) + (base * 1.3)[None, :] * cuff[:, None]
     piping_core = np.clip(piping * 1.4 - 0.2, 0, 1)
     col = col * (1 - piping_core[:, None]) + np.array(style.glow)[None, :] * 0.25 * piping_core[:, None]
@@ -288,6 +292,146 @@ def suit_maps(tx, P, N, L: Landmarks, style, cuff, seed):
     cavity = 1 - 0.35 * seams
     return {"color": np.clip(col, 0, 1), "rough": np.clip(rough, 0.05, 1), "metal": metal, "height": h,
             "cavity": cavity, "emissive": np.clip(emissive, 0, 1)}
+
+
+# ---- equipment -------------------------------------------------------------------------
+
+
+def gear_maps(tx, P, N, L: Landmarks, style, kind, cuff, seed):
+    """Boots (kind 0): pebbled leather uppers, a moulded rubber sole with lug tread and a
+    stitched welt; gloves (1): fine-grain synthetic leather with a textured palm and knuckle
+    panel; belt (2): woven nylon webbing with a brushed-metal buckle; backpack (3): coated
+    ripstop with taped panel seams, a zip track and two webbing straps; pack shoulder straps (4)."""
+    n = len(P)
+    J = L.J
+    k = np.rint(kind).astype(np.int64)
+    boots, gloves, belt, pack, straps_k = (k == 0), (k == 1), (k == 2), (k == 3), (k == 4)
+    gear = np.array(style.gear)
+    web = np.array(style.webbing)
+    col = np.tile(gear, (n, 1))
+    rough = np.full(n, 0.6)
+    metal = np.zeros(n)
+    h = np.zeros(n)
+    cavity = np.ones(n)
+    ij = tx.ij.astype(float)
+    mottle = fbm(P, 25, 3, seed + 40)
+
+    # Boots.
+    if boots.any():
+        grain = worley(P[boots], 0.0016, seed + 41)
+        sole_top = 0.028
+        z = P[boots, 2]
+        sole = soft(z - sole_top, -0.0015, 0.0015)
+        tread_cell = worley(P[boots] * np.array([1, 1, 0.0]), 0.009, seed + 42)
+        tread = np.clip((tread_cell - 0.35) * 4, 0, 1) * (N[boots, 2] < -0.3)
+        lug = sole * (0.0008 * tread + 0.0003 * (0.5 + 0.5 * np.sin(2 * np.pi * z / 0.004)) * (N[boots, 2] > -0.3))
+        welt = np.exp(-((z - sole_top) / 0.0012) ** 2)
+        stitch = np.exp(-((z - sole_top - 0.004) / 0.0005) ** 2) * \
+            (np.sin(2 * np.pi * (P[boots] @ np.array([0.7, 0.7, 0.1])) / 0.004) > -0.2)
+        # Toe and heel caps: smoother panels.
+        foot_l, foot_r = J["Toe.L"][0], J["Toe.R"][0]
+        toe = np.maximum(soft(dist_to(P[boots], foot_l), 0.035, 0.04), soft(dist_to(P[boots], foot_r), 0.035, 0.04))
+        upper_h = (grain ** 2) * 0.00006 * (1 - toe) - welt * 0.0004 + stitch * 0.0001
+        h[boots] = upper_h * (1 - sole) + lug
+        col[boots] = gear * (1 + 0.08 * mottle[boots, None]) * (1 - 0.15 * toe[:, None])
+        rubber = np.array([0.018, 0.017, 0.016])
+        col[boots] = col[boots] * (1 - sole[:, None]) + rubber * sole[:, None]
+        col[boots] = col[boots] * (1 - stitch[:, None]) + (web * 2.5) * stitch[:, None]
+        rough[boots] = (0.55 - 0.15 * toe + 0.05 * mottle[boots]) * (1 - sole) + 0.85 * sole
+        cavity[boots] = 1 - 0.4 * welt - 0.25 * tread * sole
+
+    # Gloves.
+    if gloves.any():
+        Pg = P[gloves]
+        grain = worley(Pg, 0.0009, seed + 43)
+        palm = np.zeros(len(Pg))
+        knuck = np.zeros(len(Pg))
+        for t in ("L", "R"):
+            wr, m1 = J[f"Hand.{t}"][0], J[f"Middle1.{t}"][0]
+            side = dist_to(Pg, wr) < 0.25
+            dors = L.hands[t]["dorsal"]
+            palm = np.maximum(palm, side * np.clip((-(N[gloves] @ dors) - 0.2) * 2, 0, 1))
+            kc = wr + (m1 - wr) * 1.02 + dors * 0.01
+            knuck = np.maximum(knuck, side * soft(dist_to(Pg, kc), 0.03, 0.034) * np.clip((N[gloves] @ dors) * 2, 0, 1))
+        dots = np.clip(1.0 - worley(Pg, 0.0025, seed + 44) * 2.2, 0, 1)
+        rib = 0.5 + 0.5 * np.cos(2 * np.pi * (Pg @ np.array([0.0, 1.0, 0.3])) / 0.006)
+        edge = np.exp(-(((knuck - 0.5) / 0.15) ** 2))
+        h[gloves] = grain ** 2 * 0.00003 + palm * dots * 0.00025 + knuck * (0.0005 + rib ** 3 * 0.0002) - edge * 0.0002
+        col[gloves] = gear * 1.15 * (1 + 0.06 * mottle[gloves, None])
+        col[gloves] = col[gloves] * (1 - palm[:, None]) + (gear * 0.7) * palm[:, None]
+        col[gloves] = col[gloves] * (1 - knuck[:, None]) + (web * 0.8) * knuck[:, None]
+        rough[gloves] = 0.45 + 0.35 * palm - 0.1 * knuck
+        cavity[gloves] = 1 - 0.3 * edge
+
+    # Belt.
+    if belt.any():
+        Pb = P[belt]
+        hips = J["Hips"][0]
+        z0, z1 = hips[2] + 0.04, hips[2] + 0.085
+        u = (Pb[:, 2] - z0) / (z1 - z0)
+        weave = 0.5 + 0.5 * np.sin(ij[belt, 1] * np.pi / 1.5) * np.sin(ij[belt, 0] * np.pi / 3.0)
+        ribs = 0.5 + 0.5 * np.cos(2 * np.pi * Pb[:, 2] / 0.0018)
+        edge = np.exp(-(u / 0.06) ** 2) + np.exp(-((1 - u) / 0.06) ** 2)
+        # Buckle: a rounded-rectangle plate at the front centre.
+        bx, bz = np.abs(Pb[:, 0]) / 0.032, np.abs(Pb[:, 2] - 0.5 * (z0 + z1)) / 0.026
+        front = N[belt, 1] < -0.5
+        r = (np.maximum(bx, 0) ** 6 + np.maximum(bz, 0) ** 6) ** (1 / 6)
+        plate = soft(r, 0.96, 1.0) * front
+        frame = plate * (1 - soft(r, 0.70, 0.74))
+        bar = plate * np.exp(-((Pb[:, 0]) / 0.003) ** 2) * (bz < 0.7)
+        h[belt] = (weave * 0.00002 + ribs * 0.00004) * (1 - plate) - edge * 0.00012 + plate * 0.0012 + frame * 0.0006 + bar * 0.0004
+        col[belt] = web * (1 + 0.1 * (weave[:, None] - 0.5) + 0.05 * mottle[belt, None])
+        metal_col = np.array([0.56, 0.55, 0.52])
+        col[belt] = col[belt] * (1 - plate[:, None]) + metal_col * plate[:, None]
+        brushed = fbm(Pb * np.array([1.0, 1.0, 40.0]), 400, 2, seed + 45)
+        rough[belt] = 0.8 * (1 - plate) + (0.32 + 0.06 * brushed - 0.1 * frame) * plate
+        metal[belt] = plate
+        cavity[belt] = 1 - 0.3 * edge - 0.4 * plate * (1 - frame) * (r > 0.66) * (r < 0.78)
+
+    # Backpack.
+    if pack.any():
+        Pp = P[pack]
+        Np = N[pack]
+        ax = np.abs(Np)
+        dominant = ax.argmax(1)
+        # Panel tape where the dominant axis changes (the rounded box edges).
+        second = np.sort(ax, 1)[:, -2]
+        tape = np.exp(-(((ax.max(1) - second) - 0.0) / 0.12) ** 2)
+        rip = (np.abs(np.sin(ij[pack, 0] * np.pi / 6)) > 0.97) | (np.abs(np.sin(ij[pack, 1] * np.pi / 6)) > 0.97)
+        weave = np.sin(ij[pack, 0] * np.pi / 1.0) * np.sin(ij[pack, 1] * np.pi / 1.0)
+        c = Pp.mean(0)
+        back_face = (dominant == 1) & (Np[:, 1] > 0)
+        zip_line = back_face * np.exp(-((Pp[:, 2] - (c[2] + 0.07)) / 0.0025) ** 2) * (np.abs(Pp[:, 0] - c[0]) < 0.10)
+        teeth = zip_line * (np.sin(2 * np.pi * Pp[:, 0] / 0.002) > 0)
+        straps = np.zeros(len(Pp))
+        for s in (-1, 1):
+            straps = np.maximum(straps, band(np.abs(Pp[:, 0] - (c[0] + s * 0.07)), -1, 0.018, 0.002) * back_face)
+        strap_rib = 0.5 + 0.5 * np.cos(2 * np.pi * Pp[:, 2] / 0.0018)
+        h[pack] = weave * 0.00002 + rip * 0.00008 - tape * 0.0003 + straps * (0.0015 + strap_rib * 0.00004) - zip_line * 0.0004 + teeth * 0.0002
+        col[pack] = gear * 1.25 * (1 + 0.06 * mottle[pack, None])
+        col[pack] = col[pack] * (1 - straps[:, None]) + web * straps[:, None]
+        col[pack] = col[pack] * (1 - tape[:, None] * 0.6) + (web * 0.6) * tape[:, None] * 0.6
+        col[pack] = col[pack] * (1 - zip_line[:, None]) + np.array([0.02, 0.02, 0.02]) * zip_line[:, None]
+        rough[pack] = 0.7 - 0.15 * tape + 0.1 * straps - 0.3 * teeth
+        metal[pack] = teeth * 0.8
+        cavity[pack] = 1 - 0.35 * tape - 0.3 * zip_line
+
+    # Pack shoulder straps: padded webbing with edge binding and a ladder-lock row.
+    if straps_k.any():
+        Ps = P[straps_k]
+        ribs = 0.5 + 0.5 * np.cos(2 * np.pi * (Ps @ np.array([0.0, 0.3, 1.0])) / 0.0018)
+        lat = np.abs(np.abs(Ps[:, 0]) - 0.095) / 0.02
+        bind = np.clip((lat - 0.8) * 5, 0, 1)
+        h[straps_k] = 0.0008 * np.sqrt(np.clip(1 - lat ** 2, 0, 1)) + ribs * 0.00004 - bind * 0.0002
+        col[straps_k] = web * (1 + 0.08 * (ribs[:, None] - 0.5)) * (1 - 0.3 * bind[:, None])
+        rough[straps_k] = 0.82
+        cavity[straps_k] = 1 - 0.25 * bind
+
+    # Rolled lips at the cut edges: tucked under, darker and slightly rougher.
+    col = col * (1 - 0.3 * cuff[:, None])
+    cavity = cavity * (1 - 0.3 * cuff)
+    return {"color": np.clip(col, 0, 1), "rough": np.clip(rough, 0.05, 1), "metal": np.clip(metal, 0, 1),
+            "height": h, "cavity": np.clip(cavity, 0, 1)}
 
 
 # ---- eyes ------------------------------------------------------------------------------

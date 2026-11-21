@@ -1890,3 +1890,23 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** `victus_gpu_tests -tc="gpu lods: cross-fade*"`: four fade frames each draw both levels (LOD0 + LOD1 triangles), no pre-pass draws, and at most 40 pixels differ from the solid coarse level by more than 90/255 (no background holes); the fifth frame draws only LOD1, matching the snapped image; untracked draws never fade. See STATUS.
 
 **Consequences:** During a fade a draw costs both levels' triangles and one extra draw call for the outgoing copy; fades last at most `lod_fade_frames` frames per switch, and hysteresis keeps switches rare. Fading draws lose early-Z from the pre-pass for those frames. Instanced foliage groups still snap.
+
+### ADR-0185: Modular starter-character equipment as weight-sharing shells
+
+- **Status:** Accepted (2026-11-21).
+- **Context:** The character brief asks for modular boots, gloves, belt and backpack with no clipping, toggleable per item, on both starter characters, made by the reusable pipeline (tools/characters, ADR-0179) rather than as one-off meshes. Unreal Engine's modular characters attach separate skeletal meshes that follow a leader pose ([Epic](https://dev.epicgames.com/documentation/en-us/unreal-engine/working-with-modular-characters-in-unreal-engine)); Unity uses several SkinnedMeshRenderers on one bone hierarchy. Hand-modelled clothing is usually kept clipping-free by sharing (transferring) the body's skin weights.
+- **Decision:** `tools/characters/gear.py` builds every item from the surface it covers. Gloves and the belt are shells cut out of the skin or suit along planes, pushed out along rest normals (1.8 mm, 5 mm) with rolled lips, copying the covered vertices' weights one to one. Boots are the fold-free radial graph of a union of two dilated convex hulls (foot; lower leg). That surface is star-shaped about a point in the ankle, so it holds every toe by construction. Each boot vertex takes the weights of its nearest suit point. The backpack is a rounded box bound to Chest, tilted along the back profile with a padded front that conforms to it, with suit-grown shoulder straps. All items use one `Gear` material (2048² baked PBR maps: leather, rubber tread, webbing, a metallic buckle, ripstop). The exporter writes one skinned node per item (`<Name>_Boots`, `_Gloves`, `_Belt`, `_Backpack`) on the body's skin, after the body mesh, so the existing mesh, material and entity indices are unchanged. The covered surfaces are kept, and the body's AO bake ignores the gear so that hiding an item leaves no holes or dark patches. The build refuses to write a character whose rest-pose LOD 0 has a covered point within 0.2 mm of the outside of its item, or a back closer than 2 mm to the pack, using closest-triangle signed distances. The same change removes the chest piping from the suit's emissive map (it is now a tape) and halves the emissive strength to 2, because the lit chest V read as a decal at gameplay distance.
+- **Alternatives:**
+  - Separate equipment GLBs attached through sockets: right for rigid props (weapons), but deforming items would need their own skin, and rest-pose alignment with each body would be duplicated.
+  - Deleting the covered surface: saves triangles but breaks hiding an item.
+  - Sculpted boots: not reproducible from the pipeline, and they would have to be redone per body.
+  - Laplacian shrink-wrapping the toe sock: it folded between the toes, and its clearance could not be checked.
+- **Evidence:**
+  - Both builds print their clearance margins: Orion boots 1.18 mm, gloves 1.10 mm, belt 2.62 mm, back to pack 7.85 mm; Nova 1.24 / 1.03 / 3.52 / 11.25 mm.
+  - `victus_asset_tests -tc="starter characters*"`: six materials, the four equipment nodes on skin 0 with Gear primitives and no morphs, 44 morphs on every body primitive, body 100k-140k and total 170k-230k triangles.
+  - `victus character-check orion|nova`: OK.
+  - Blender renders and VICTUS runtime screenshots are in docs/images/characters.
+- **Consequences:**
+  - LOD 0 grows from about 125k to about 205k triangles and from five to nine skinned draws when all items are visible. The GLBs grow by about 3 MB.
+  - The clearance gate is numerical only in the rest pose. In motion the shells inherit the covered surface's weights, but the rigid pack and the boots' toe box are judged from gameplay renders.
+  - Items attached at `Socket.Back` now sit over the pack unless it is hidden.
