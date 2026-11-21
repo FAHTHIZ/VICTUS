@@ -80,6 +80,12 @@ struct Material {
     // Project vertex function (ADR-0170): displaces vertices in every pass (forward, shadows) with
     // the built-in fragment shader or `surface_shader`. Not owned; null = the built-in vertex stage.
     const SurfaceVertexStage* vertex_stage{nullptr};
+    // Textures declared by the surface shader (`uniform sampler2D name;`, ADR-0171), by slot;
+    // bound to both stages of `surface_shader` / `vertex_stage`. `shader_texture_count` must equal
+    // the number the shader declares (the asset cache fills missing ones with the declared
+    // default), and invalid handles bind white.
+    std::array<rhi::TextureHandle, 4> shader_textures{};
+    std::uint8_t shader_texture_count{0};
     // Vertex alpha normally multiplies opacity. As a coverage mask it instead marks where the
     // scene's coverage layer may settle (alpha >= 0.5) and opacity ignores it.
     bool vertex_alpha_coverage_mask{false};
@@ -94,6 +100,39 @@ struct Material {
 enum class FogMode : std::uint8_t { None, Linear, Exponential, ExponentialSquared };
 [[nodiscard]] std::string_view fog_mode_name(FogMode m) noexcept;
 [[nodiscard]] std::optional<FogMode> parse_fog_mode(std::string_view name) noexcept;
+
+// Named declarations at file scope of a surface shader (ADR-0171), Godot-style:
+//   uniform float wind : hint_range(0, 2) = 0.5;   // -> shader_params slot 0, .x
+//   uniform vec3 tint : source_color = vec3(1, 0.5, 0);
+//   uniform sampler2D noise : hint_default_black;  // -> shader texture slot 0
+// Parameters take the four shader_params slots in order (float .x, vec2 .xy, vec3 .xyz, vec4);
+// textures take up to four texture slots (one on GLES). Both work in surface() and vertex().
+inline constexpr std::size_t kMaxSurfaceParams = 4, kMaxSurfaceTextures = 4, kMaxSurfaceTexturesGles = 1;
+enum class SurfaceTextureDefault : std::uint8_t { White, Black, Normal };
+struct SurfaceParamDecl {
+    std::string name;
+    std::uint8_t components{1}; // 1..4
+    std::uint8_t slot{0};
+    math::Vec4 value{};          // declared default
+    bool color{false};           // source_color
+    bool has_range{false};
+    float min{0.0f}, max{1.0f}, step{0.0f};
+    std::uint32_t line{0};
+};
+struct SurfaceTextureDecl {
+    std::string name;
+    std::uint8_t slot{0};
+    SurfaceTextureDefault fallback{SurfaceTextureDefault::White};
+    std::uint32_t line{0};
+};
+struct SurfaceDeclarations {
+    std::vector<SurfaceParamDecl> params;
+    std::vector<SurfaceTextureDecl> textures;
+    std::string error; // empty = valid
+    std::uint32_t error_line{0};
+    [[nodiscard]] bool ok() const noexcept { return error.empty(); }
+};
+[[nodiscard]] SurfaceDeclarations parse_surface_declarations(std::string_view code);
 
 // The built-in PBR fragment shader with a project surface function spliced in (GLSL 450 that
 // defines `void surface(SurfaceInput i, inout Surface s)`; see engine/render/shaders/pbr.frag).

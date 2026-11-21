@@ -694,10 +694,36 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
         // Nearest when the material asks for it or its base colour texture is imported as pixel art.
         m.nearest_filter = src->filter == assets::TextureFilter::Nearest || texture_nearest(src->base_color_texture);
         m.shader_params = src->shader_params;
+        std::vector<Uuid>& used = material_textures_[uuid];
+        used.clear();
         if (!src->shader.is_nil()) {
             if (auto sh = surface_shader(src->shader); sh) {
                 m.surface_shader = *sh;
                 m.vertex_stage = surface_vertex_stage(src->shader);
+                if (const render::SurfaceDeclarations* decl = surface_declarations(src->shader)) {
+                    // Slots the material does not set take the shader's declared defaults.
+                    for (const render::SurfaceParamDecl& p : decl->params)
+                        if (!src->shader_param_set(p.slot)) m.shader_params[p.slot] = p.value;
+                    m.shader_texture_count = static_cast<std::uint8_t>(decl->textures.size());
+                    for (const render::SurfaceTextureDecl& t : decl->textures) {
+                        rhi::TextureHandle& out = m.shader_textures[t.slot];
+                        out = t.fallback == render::SurfaceTextureDefault::Black    ? ctx_->black()
+                              : t.fallback == render::SurfaceTextureDefault::Normal ? ctx_->flat_normal()
+                                                                                    : ctx_->white();
+                        const Uuid& ref = src->shader_textures[t.slot];
+                        if (ref.is_nil()) continue;
+                        const assets::AssetRecord* rec = db_->find(ref);
+                        if (!rec || rec->kind != assets::AssetKind::Texture) {
+                            VICTUS_LOG_WARN("assets", "material {}: shader texture '{}' {} is missing", uuid.to_string(), t.name,
+                                            ref.to_string());
+                            continue;
+                        }
+                        used.push_back(ref);
+                        if (auto tex = texture(ref); tex) out = *tex;
+                        else if (tex.error().code != ErrorCode::Pending)
+                            VICTUS_LOG_WARN("assets", "material {}: {}", uuid.to_string(), tex.error().message);
+                    }
+                }
             }
             // else: already logged by surface_shader(); the material renders with built-in PBR
         }
@@ -707,8 +733,6 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
         m.blend = static_cast<render::MaterialBlend>(src->blend);
         rhi::TextureHandle* slots[4] = {&m.base_color_texture, &m.metallic_roughness_texture, &m.normal_texture, &m.emissive_texture};
         const auto refs = src->textures();
-        std::vector<Uuid>& used = material_textures_[uuid];
-        used.clear();
         for (std::size_t i = 0; i < 4; ++i) {
             if (refs[i]->is_nil()) continue;
             used.push_back(*refs[i]);
@@ -746,9 +770,11 @@ Result<rhi::ShaderHandle> GpuAssetCache::surface_shader(const Uuid& uuid) {
         auto code = load_surface_shader_code(*db_, uuid);
         if (!code) return std::move(code).error();
         auto fragment = create_surface_fragment(ctx_->device(), *code, path);
+        if (fragment) shader_declarations_[uuid] = render::parse_surface_declarations(*code);
         if (!fragment || !surface_shader_has_vertex(*code)) return fragment;
         auto stage = create_surface_vertex_stage(ctx_->device(), *code, path);
         if (!stage) {
+            shader_declarations_.erase(uuid);
             ctx_->device().destroy(*fragment);
             return std::move(stage).error();
         }
@@ -774,6 +800,12 @@ const render::SurfaceVertexStage* GpuAssetCache::surface_vertex_stage(const Uuid
     return it == vertex_stages_.end() ? nullptr : it->second.get();
 }
 
+const render::SurfaceDeclarations* GpuAssetCache::surface_declarations(const Uuid& uuid) {
+    if (!shaders_.contains(uuid)) (void)surface_shader(uuid);
+    const auto it = shader_declarations_.find(uuid);
+    return it == shader_declarations_.end() ? nullptr : &it->second;
+}
+
 void GpuAssetCache::evict_shaders() {
     materials_.clear(); // they hold the shader handles
     for (auto& [id, sh] : shaders_)
@@ -783,6 +815,7 @@ void GpuAssetCache::evict_shaders() {
         for (auto sh : stage->shaders)
             if (sh) ctx_->device().destroy(sh);
     vertex_stages_.clear();
+    shader_declarations_.clear();
 }
 
 Result<const GpuModel*> GpuAssetCache::model(const Uuid& uuid) {

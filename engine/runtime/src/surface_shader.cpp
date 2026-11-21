@@ -31,11 +31,14 @@ Result<shadercompiler::CompiledShader> compile_vertex(std::string_view code, std
     const bool skinned = variant == render::SurfaceVertexVariant::Skinned || variant == render::SurfaceVertexVariant::ShadowSkinned;
     const shadercompiler::ResourceCounts& c = compiled->counts;
     // Frame + VertexMaterial; skinned variants read the joint palette (a texture under ES).
+    // Declared textures (ADR-0171) take the first sampler slots.
+    const auto textures = static_cast<std::uint32_t>(render::parse_surface_declarations(code).textures.size());
     const std::uint32_t palette_samplers = (want_essl && skinned) ? 1u : 0u;
-    if (c.uniform_buffers > 2 || c.storage_textures != 0 || c.storage_buffers > (skinned ? 1u : 0u) || c.samplers > palette_samplers)
+    if (c.uniform_buffers > 2 || c.storage_textures != 0 || c.storage_buffers > (skinned ? 1u : 0u) ||
+        c.samplers > palette_samplers + textures)
         return make_error(ErrorCode::InvalidArgument,
-                          std::format("{}: vertex functions cannot declare their own uniforms, samplers or buffers "
-                                      "(use i.params[0..3] for per-material values)",
+                          std::format("{}: vertex functions cannot declare their own resources; declare parameters and "
+                                      "textures as `uniform float name = 1.0;` / `uniform sampler2D name;`",
                                       name));
     return compiled;
 }
@@ -43,6 +46,12 @@ Result<shadercompiler::CompiledShader> compile_vertex(std::string_view code, std
 Result<shadercompiler::CompiledShader> compile_surface(std::string_view code_in, std::string_view name, bool want_msl, bool want_essl,
                                                        std::vector<shadercompiler::Diagnostic>* diagnostics) {
     const std::string code = with_surface_function(code_in);
+    const render::SurfaceDeclarations decl = render::parse_surface_declarations(code);
+    if (!decl.ok()) return make_error(ErrorCode::InvalidArgument, std::format("{}:{}: {}", name, decl.error_line, decl.error));
+    if (want_essl && decl.textures.size() > render::kMaxSurfaceTexturesGles)
+        return make_error(ErrorCode::Unsupported,
+                          std::format("{}:{}: OpenGL ES supports {} shader texture (16 texture units per stage)", name,
+                                      decl.textures[render::kMaxSurfaceTexturesGles].line, render::kMaxSurfaceTexturesGles));
     shadercompiler::CompileOptions options;
     options.name = std::string(name);
     options.want_msl = want_msl;
@@ -57,11 +66,11 @@ Result<shadercompiler::CompiledShader> compile_surface(std::string_view code_in,
     const render::BuiltinShader* pbr = render::find_builtin_shader("pbr.frag");
     if (!pbr) return make_error(ErrorCode::Unknown, "built-in pbr.frag is missing");
     const shadercompiler::ResourceCounts& c = compiled->counts;
-    if (c.samplers != pbr->samplers || c.uniform_buffers != pbr->uniform_buffers || c.storage_buffers != pbr->storage_buffers ||
+    if (c.samplers != pbr->samplers + decl.textures.size() || c.uniform_buffers != pbr->uniform_buffers || c.storage_buffers != pbr->storage_buffers ||
         c.storage_textures != pbr->storage_textures)
         return make_error(ErrorCode::InvalidArgument,
-                          std::format("{}: surface shaders cannot declare their own uniforms, samplers or buffers "
-                                      "(use i.params[0..3] for per-material values)",
+                          std::format("{}: surface shaders cannot declare their own resources; declare parameters and "
+                                      "textures as `uniform float name = 1.0;` / `uniform sampler2D name;`",
                                       name));
     return compiled;
 }
@@ -142,6 +151,13 @@ std::string_view surface_shader_template() noexcept {
 // Material textures were already sampled into `s`; you can also sample them again with
 // texture(u_base_color, i.uv) (also u_metal_rough, u_normal_map, u_emissive).
 //
+// Named parameters and textures (shown by name in the Material Editor):
+//   uniform float speed : hint_range(0, 10) = 2.0;
+//   uniform vec3 tint : source_color = vec3(1.0);
+//   uniform sampler2D mask : hint_default_black;   // also hint_default_white, hint_normal
+// float/vec2/vec3/vec4, up to 4 parameters and 4 textures (1 on OpenGL ES); usable in both
+// functions. i.params[0..3] still read the raw slots in declaration order.
+//
 // Optional vertex function, run per vertex in every pass (including shadows):
 //   void vertex(VertexInput i, inout Vertex v)
 // VertexInput i:  position, normal (object space), uv, color, object_origin (world), time,
@@ -152,10 +168,13 @@ std::string_view surface_shader_template() noexcept {
 //       v.world_position.x += sin(i.time * 2.0 + i.object_origin.x) * 0.1 * i.position.y;
 //   }
 
+uniform vec3 glow_color : source_color = vec3(1.0, 0.5, 0.1);
+uniform float pulse_speed : hint_range(0, 10) = 2.0;
+
 void surface(SurfaceInput i, inout Surface s) {
-    // Pulse the emission with params[0].rgb as colour and params[0].w as speed.
-    float pulse = 0.5 + 0.5 * sin(i.time * max(i.params[0].w, 0.1));
-    s.emissive += i.params[0].rgb * pulse;
+    // Pulse the emission in glow_color at pulse_speed.
+    float pulse = 0.5 + 0.5 * sin(i.time * max(pulse_speed, 0.1));
+    s.emissive += glow_color * pulse;
 }
 )";
 }

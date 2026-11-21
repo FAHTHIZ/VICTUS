@@ -3,6 +3,7 @@
 // compiled at load time and changes what reaches the screen, per-material parameters and time
 // reach the shader, broken shaders fall back to built-in PBR, and hot reload recompiles them.
 #include "gpu_fixture.hpp"
+#include "victus/render/image.hpp"
 #include "victus/runtime/hot_reload.hpp"
 #include "victus/runtime/scene_rendering.hpp"
 #include "victus/runtime/surface_shader.hpp"
@@ -284,5 +285,126 @@ TEST_CASE("gpu: surface shader vertex functions move geometry in the main and sh
     MESSAGE("red at x=+2 m: shadow under the cube " << hidden << ", shadow moved out " << uncovered);
     CHECK(uncovered < hidden - 30.0);
     CHECK(mean_red(shadowed) < hidden_mean);
+    cache.clear();
+}
+
+TEST_CASE("gpu: surface shader named parameters and textures reach both stages") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& dev = gpu().ctx->device();
+    // Declarations: slots in order, hints, defaults; comments are ignored.
+    const auto d = render::parse_surface_declarations("uniform float wind : hint_range(0, 2, 0.5) = 0.5;\n"
+                                                      "// uniform float nope = 1.0;\n"
+                                                      "uniform vec3 tint : source_color = vec3(1, 0.5, 0);\n"
+                                                      "uniform vec2 scroll = vec2(2);\n"
+                                                      "uniform sampler2D mask : hint_default_black;\n"
+                                                      "uniform sampler2D bumps : hint_normal;\n"
+                                                      "void surface(SurfaceInput i, inout Surface s) {}\n");
+    REQUIRE(d.ok());
+    REQUIRE(d.params.size() == 3);
+    CHECK(d.params[0].name == "wind");
+    CHECK(d.params[0].components == 1);
+    CHECK(d.params[0].has_range);
+    CHECK(d.params[0].max == 2.0f);
+    CHECK(d.params[0].step == 0.5f);
+    CHECK(d.params[0].value.x == 0.5f);
+    CHECK(d.params[1].slot == 1);
+    CHECK(d.params[1].color);
+    CHECK(d.params[1].value == math::Vec4{1, 0.5f, 0, 0});
+    CHECK(d.params[1].line == 3);
+    CHECK(d.params[2].value == math::Vec4{2, 2, 0, 0});
+    REQUIRE(d.textures.size() == 2);
+    CHECK(d.textures[0].fallback == render::SurfaceTextureDefault::Black);
+    CHECK(d.textures[1].fallback == render::SurfaceTextureDefault::Normal);
+    CHECK(d.textures[1].slot == 1);
+    for (const char* bad : {"uniform float a = 1;\nuniform float a = 2;\n", "uniform float a : hint_rnge(0, 1);\n",
+                            "uniform vec3 c = vec2(1, 2);\n", "uniform float u_x;\n", "uniform sampler2D t = 1;\n",
+                            "uniform float a;\nuniform float b;\nuniform float c;\nuniform float d;\nuniform float e;\n",
+                            "uniform float a : source_color;\n"})
+        CHECK_FALSE(render::parse_surface_declarations(bad).ok());
+    auto dup = runtime::compile_surface_shader("void surface(SurfaceInput i, inout Surface s) {}\nuniform float a;\nuniform float a;\n",
+                                               "dup.vshader", false);
+    REQUIRE_FALSE(dup.ok());
+    CHECK(dup.error().message.find("dup.vshader:3") != std::string::npos);
+    // GLES: one shader texture (16 texture units per stage).
+    auto gles = runtime::compile_surface_shader("uniform sampler2D a;\nuniform sampler2D b;\nvoid surface(SurfaceInput i, inout Surface s) {}\n",
+                                                "two.vshader", rhi::Backend::GLES);
+    REQUIRE_FALSE(gles.ok());
+    CHECK(gles.error().message.find("two.vshader:2") != std::string::npos);
+    CHECK(runtime::compile_surface_shader("uniform sampler2D a;\nvoid surface(SurfaceInput i, inout Surface s) { s.base_color = texture(a, i.uv).rgb; }\n",
+                                          "one.vshader", rhi::Backend::GLES)
+              .ok());
+    // Four textures, used only by the vertex function, still compile for desktop backends.
+    CHECK(runtime::compile_surface_shader("uniform sampler2D a;\nuniform sampler2D b;\nuniform sampler2D c;\nuniform sampler2D e;\n"
+                                          "void vertex(VertexInput i, inout Vertex v) {\n"
+                                          "    v.world_position.y += textureLod(a, i.uv, 0.0).r + textureLod(e, i.uv, 0.0).r;\n}\n",
+                                          "four.vshader", false)
+              .ok());
+
+    ShaderScene s;
+    auto png = render::encode_png(render::make_checker(4, 1, 0xff0000ffu, 0xff0000ffu)); // solid red
+    REQUIRE(png.ok());
+    REQUIRE(fs::write_atomic(s.project / "assets" / "red.png", *png).ok());
+    (void)s.db->refresh();
+    const Uuid red = s.db->find_path("red.png")->uuid;
+    // tint (default blue) + mask (default black); the vertex function moves the plane by 10 m times
+    // the mask's red channel, so a red mask both colours and shifts it.
+    s.write_shader("uniform vec3 tint : source_color = vec3(0, 0, 1);\n"
+                   "uniform sampler2D mask : hint_default_black;\n"
+                   "void surface(SurfaceInput i, inout Surface s) {\n    s.base_color = tint + texture(mask, i.mesh_uv).rgb;\n}\n"
+                   "void vertex(VertexInput i, inout Vertex v) {\n    v.world_position.x += textureLod(mask, vec2(0.5), 0.0).r * 10.0;\n}\n");
+    assets::MaterialAsset m;
+    m.unlit = true;
+    m.shader = s.shader;
+    REQUIRE(assets::save_material_file(s.project / "assets" / "glow.vmat", m).ok());
+    (void)s.db->refresh();
+    constexpr std::uint32_t W = 96, H = 64;
+    auto frame = [&](runtime::GpuAssetCache& cache, const char* name) {
+        auto sr = render::SceneRenderer::create(*gpu().ctx);
+        REQUIRE(sr.ok());
+        auto target = test::make_target(W, H);
+        (void)runtime::extract_scene(s.scene, cache, **sr, {});
+        auto cmd = dev.begin_commands();
+        REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target);
+        REQUIRE(px.ok());
+        test::save_output(name, W, H, *px);
+        dev.destroy(target);
+        return *px;
+    };
+    runtime::GpuAssetCache cache(*gpu().ctx, s.db.get());
+    const auto* decl = cache.surface_declarations(s.shader);
+    REQUIRE(decl);
+    CHECK(decl->params.size() == 1);
+    CHECK(decl->textures.size() == 1);
+    {
+        auto mat = cache.material(s.material);
+        REQUIRE(mat.ok());
+        CHECK(mat->shader_texture_count == 1);
+        CHECK(mat->shader_params[0] == math::Vec4{0, 0, 1, 0}); // declared default
+        auto px = frame(cache, "surface_named_default");
+        CHECK(is_blue(pixel(px, W, W / 4, H / 2)));
+        CHECK(is_blue(pixel(px, W, 3 * W / 4, H / 2)));
+    }
+    // A material value overrides the default (green), and a texture fills the mask.
+    m.shader_params[0] = {0, 1, 0, 0};
+    m.shader_textures[0] = red;
+    REQUIRE(assets::save_material_file(s.project / "assets" / "glow.vmat", m).ok());
+    (void)s.db->refresh();
+    auto loaded = assets::load_material_file(s.project / "assets" / "glow.vmat");
+    REQUIRE(loaded.ok());
+    CHECK(loaded->shader_textures[0] == red);
+    cache.evict_materials();
+    for (int i = 0; i < 50 && !cache.material(s.material)->shader_textures[0]; ++i) {
+        cache.pump();
+        cache.evict_materials();
+    }
+    auto px = frame(cache, "surface_named_texture");
+    const std::uint32_t left = pixel(px, W, W / 4, H / 2), right = pixel(px, W, 3 * W / 4, H / 2);
+    MESSAGE("left " << std::hex << left << " right " << right);
+    // Shifted 10 m along +x: one half shows the clear colour, the other red + green (yellow).
+    const auto yellow = [](std::uint32_t p) { return channel(p, 0) > 150 && channel(p, 1) > 150 && channel(p, 2) < 60; };
+    CHECK(yellow(left) != yellow(right));
+    CHECK((yellow(left) || yellow(right)));
     cache.clear();
 }

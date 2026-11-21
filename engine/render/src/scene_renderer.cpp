@@ -91,6 +91,7 @@ std::uint64_t material_key(const Material& m) noexcept {
         h = mix(h, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(m.vertex_stage)));
         for (const Vec4& p : m.shader_params)
             for (float f : {p.x, p.y, p.z, p.w}) h = mix(h, bits(f));
+        for (std::size_t i = 0; i < m.shader_texture_count; ++i) h = mix(h, handle_bits(m.shader_textures[i]));
     }
     return mix(h, (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u) |
                       (m.vertex_alpha_coverage_mask ? 16u : 0u) | (m.shadow_only ? 32u : 0u) | (std::uint64_t{static_cast<std::uint8_t>(m.blend)} << 8));
@@ -105,6 +106,7 @@ bool same_material(const Material& a, const Material& b) noexcept {
            a.emissive_texture == b.emissive_texture && a.double_sided == b.double_sided && a.unlit == b.unlit &&
            a.cast_shadows == b.cast_shadows && a.uv_scale == b.uv_scale && a.uv_offset == b.uv_offset &&
            a.nearest_filter == b.nearest_filter && a.surface_shader == b.surface_shader && a.vertex_stage == b.vertex_stage &&
+           a.shader_texture_count == b.shader_texture_count && a.shader_textures == b.shader_textures &&
            std::equal(a.shader_params.begin(), a.shader_params.end(), b.shader_params.begin(),
                       [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; }) &&
            a.vertex_alpha_coverage_mask == b.vertex_alpha_coverage_mask && a.coverage_response == b.coverage_response &&
@@ -229,6 +231,7 @@ bool shadow_alpha_tested(const Material& m) noexcept { return m.alpha_cutoff > 0
 bool same_vertex_stage(const Material& a, const Material& b) noexcept {
     if (a.vertex_stage != b.vertex_stage) return false;
     if (!a.vertex_stage) return true;
+    if (a.shader_texture_count != b.shader_texture_count || a.shader_textures != b.shader_textures) return false;
     return std::equal(a.shader_params.begin(), a.shader_params.end(), b.shader_params.begin(),
                       [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; });
 }
@@ -3434,6 +3437,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const RGTexture out = graph.import_texture("target", target, target_desc);
     graph.mark_output(out);
 
+    // Textures a surface shader declares (ADR-0171): fragment slots 12.. and vertex slots 0...
+    const auto bind_shader_textures = [this, linear = material_linear.value()](rhi::RenderPass& pass, const Material& m, bool fragment) {
+        if (m.shader_texture_count == 0) return;
+        const rhi::SamplerHandle smp = m.nearest_filter ? ctx_.nearest_repeat() : linear;
+        for (std::uint32_t i = 0; i < m.shader_texture_count; ++i) {
+            const rhi::TextureHandle t = m.shader_textures[i] ? m.shader_textures[i] : ctx_.white();
+            if (fragment) pass.bind_texture(rhi::ShaderStage::Fragment, 12 + i, t, smp);
+            if (m.vertex_stage) pass.bind_texture(rhi::ShaderStage::Vertex, i, t, smp);
+        }
+    };
     // ADR-0067: texture and cutoff of an alpha-tested caster (shadow_alpha.frag).
     const auto bind_alpha_test = [this, linear = material_linear.value()](rhi::RenderPass& pass, rhi::CommandBuffer& cb,
                                                                           const Material& m) {
@@ -3471,7 +3484,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                             if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
                             bound = want;
                         }
-                        if (b.first->material.vertex_stage) push_vertex_material(ctx.cmd, b.first->material, true);
+                        if (b.first->material.vertex_stage) {
+                            push_vertex_material(ctx.cmd, b.first->material, true);
+                            bind_shader_textures(*ctx.pass, b.first->material, false);
+                        }
                         if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
                         if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
@@ -3509,7 +3525,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                             if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
                             bound = want;
                         }
-                        if (b.first->material.vertex_stage) push_vertex_material(ctx.cmd, b.first->material, true);
+                        if (b.first->material.vertex_stage) {
+                            push_vertex_material(ctx.cmd, b.first->material, true);
+                            bind_shader_textures(*ctx.pass, b.first->material, false);
+                        }
                         if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
                         if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
@@ -3544,7 +3563,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
                         bound = want;
                     }
-                    if (b.first->material.vertex_stage) push_vertex_material(ctx.cmd, b.first->material, true);
+                    if (b.first->material.vertex_stage) {
+                        push_vertex_material(ctx.cmd, b.first->material, true);
+                        bind_shader_textures(*ctx.pass, b.first->material, false);
+                    }
                     if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
                     if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                     ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
@@ -3799,6 +3821,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 10, lightmap_tex, ctx_.linear_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 11, lightmap_dir_tex, ctx_.linear_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 5, ao_tex, ctx_.linear_clamp());
+                if (m.surface_shader) bind_shader_textures(pass, m, true);
                 ProbeUniforms pu{};
                 rhi::TextureHandle env_cube = env_map && env_map->cube() ? env_map->cube() : ctx_.black_cube();
                 if (d->probe >= 0) {

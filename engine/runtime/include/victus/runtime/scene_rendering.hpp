@@ -212,6 +212,9 @@ public:
     // with it by surface_shader(); nullptr when it has none or failed (the material then uses the
     // built-in vertex stage).
     [[nodiscard]] const render::SurfaceVertexStage* surface_vertex_stage(const Uuid& uuid);
+    // The named parameters and textures a compiled surface shader declares (ADR-0171); nullptr
+    // when it failed to compile.
+    [[nodiscard]] const render::SurfaceDeclarations* surface_declarations(const Uuid& uuid);
     // Drops compiled surface shaders and the materials using them (after a .vshader changed).
     void evict_shaders();
     // The built-in terrain surface shader (terrain::terrain_surface_code()), compiled on first use.
@@ -298,6 +301,7 @@ private:
     std::unordered_map<Uuid, Result<render::Material>, UuidHash> materials_;
     std::unordered_map<Uuid, Result<rhi::ShaderHandle>, UuidHash> shaders_;
     std::unordered_map<Uuid, std::unique_ptr<render::SurfaceVertexStage>, UuidHash> vertex_stages_;
+    std::unordered_map<Uuid, render::SurfaceDeclarations, UuidHash> shader_declarations_;
     std::optional<Result<rhi::ShaderHandle>> terrain_shader_;
     struct ProceduralEntry {
         render::GpuMesh mesh;

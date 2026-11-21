@@ -16,7 +16,7 @@ bool for_gpu_assets(GpuAssetCache& cache, const Uuid& id, Fn&& fn) {
     case assets::AssetKind::Material: {
         auto m = db->resolve_material(id);
         if (!m) return false;
-        for (const Uuid* t : m->textures())
+        for (const Uuid* t : m->all_textures())
             if (!t->is_nil()) fn(*t, assets::LoadType::Texture);
         return true;
     }

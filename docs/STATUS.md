@@ -2415,3 +2415,15 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 Not covered: vertex functions in the depth prepass and motion vectors (no SSAO, static TAA reprojection), culling bounds growth, texture sampling in `vertex()`, named textures/uniforms; no per-frame cost benchmark yet (one extra pipeline per shader, no extra draws).
 
 Next task: GAP-17 slice 2 (named textures and uniforms in `.vshader`), then GAP-30 FBX import and glTF cameras/lights.
+
+## 2026-11-21 — Named surface shader parameters and textures (ADR-0171, GAP-17 slice 2)
+
+Built: Godot-style `uniform` declarations in `.vshader` files (`float`/`vec2`/`vec3`/`vec4` with `source_color`, `hint_range(min,max[,step])` and defaults, mapped onto the four parameter slots; `sampler2D` with `hint_default_white|black|normal`, up to four, one on GLES) usable in `surface()` and `vertex()`; `render::parse_surface_declarations`; declaration rewriting with line numbers kept; `VX_CUSTOM_TEXTURES` shifts the storage bindings in `pbr.frag` and the palette in the vertex template; `MaterialAsset::shader_textures` and the set-slot count (`shader_textures` JSON, export/validate/streaming see all eight textures); `GpuAssetCache::surface_declarations`, declared defaults and texture fallbacks at material resolve; renderer material keys, batching and shadow passes bind custom textures; Material Editor named parameter widgets and texture slots. Shader tools (`glslang-tools`, `spirv-cross`) are installed in the dev container, so `tools/shaders/compile_shaders.py --check` runs; regenerated SPIR-V for `pbr.frag` is byte-identical (default `VX_CUSTOM_TEXTURES` 0).
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- full `ctest` 41/41 pass (4 GPU reference suites skipped as usual), 0 compiler warnings.
+- `victus_gpu_tests -tc="*surface shader*"` 6 cases / 1409 assertions, including the new case: parsing (ranges, steps, colours, defaults, line numbers, comments, seven rejected forms), duplicate reported at `dup.vshader:3`, second texture refused on GLES at `two.vshader:2`, four vertex-only textures compile; plane with default blue tint and black-default mask is blue on both halves; with slot 0 set to green and a red texture, the vertex function moves the plane 10 m and one half reads 0x9f9f9f (clear) while the other reads 0xe6ff00 (red + green); `.vmat` round trip of `shader_textures`.
+
+Not covered: more than four parameter slots, int/bool/array uniforms, per-texture samplers or sRGB hints; vertex functions still skip the depth prepass and motion vectors and do not grow bounds; no per-frame cost benchmark (one extra descriptor per custom texture, no extra draws).
+
+Next task: GAP-30 FBX import (ufbx) and glTF cameras/lights, then GAP-27 audio effects and HRTF.

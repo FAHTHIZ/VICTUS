@@ -14,7 +14,9 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -329,11 +331,7 @@ void Editor::draw_material_editor() {
         if (ImGui::SmallButton("New")) {
             if (auto id = create_surface_shader(); id) {
                 m.shader = *id;
-                mark(true, F::Shader);
-                if (m.shader_params[0] == math::Vec4{}) {
-                    m.shader_params[0] = {1.0f, 0.5f, 0.1f, 2.0f}; // template: colour + speed
-                    mark(true, F::ShaderParams);
-                }
+                mark(true, F::Shader); // the template's parameters take their declared defaults
             } else {
                 notify("cannot create shader: " + id.error().message, true);
             }
@@ -367,12 +365,76 @@ void Editor::draw_material_editor() {
             else
                 ImGui::TextDisabled("compiled; saved edits reload live");
         }
-        for (int i = 0; i < 4; ++i) {
-            math::Vec4& p = m.shader_params[static_cast<std::size_t>(i)];
-            float v[4] = {p.x, p.y, p.z, p.w};
-            if (mark(ImGui::DragFloat4(std::format("params[{}]", i).c_str(), v, 0.01f), F::ShaderParams)) p = {v[0], v[1], v[2], v[3]};
+        // Named parameters and textures declared by the shader (ADR-0171); raw slots otherwise.
+        const render::SurfaceDeclarations* decl = sh && cache_ ? cache_->surface_declarations(m.shader) : nullptr;
+        const bool named = decl && (!decl->params.empty() || !decl->textures.empty());
+        // Marks slot `slot` as set; earlier unset slots get the shader's defaults so they keep their look.
+        auto set_slot = [&](std::size_t slot) {
+            if (decl)
+                for (const render::SurfaceParamDecl& d : decl->params)
+                    if (d.slot < slot && !m.shader_param_set(d.slot)) m.shader_params[d.slot] = d.value;
+            m.shader_params_set.count = static_cast<std::uint8_t>(std::max<std::size_t>(m.shader_params_set.count, slot + 1));
+        };
+        if (named) {
+            for (const render::SurfaceParamDecl& d : decl->params) {
+                const math::Vec4 cur = m.shader_param_set(d.slot) ? m.shader_params[d.slot] : d.value;
+                float v[4] = {cur.x, cur.y, cur.z, cur.w};
+                const int n = d.components;
+                bool ch = false;
+                if (d.color) ch = n == 4 ? ImGui::ColorEdit4(d.name.c_str(), v, ImGuiColorEditFlags_Float)
+                                         : ImGui::ColorEdit3(d.name.c_str(), v, ImGuiColorEditFlags_Float);
+                else if (d.has_range) ch = ImGui::SliderScalarN(d.name.c_str(), ImGuiDataType_Float, v, n, &d.min, &d.max);
+                else ch = ImGui::DragScalarN(d.name.c_str(), ImGuiDataType_Float, v, n, 0.01f);
+                if (d.has_range && d.step > 0.0f)
+                    for (float& f : v) f = d.min + std::round((f - d.min) / d.step) * d.step;
+                if (mark(ch, F::ShaderParams)) {
+                    set_slot(d.slot);
+                    m.shader_params[d.slot] = {v[0], v[1], v[2], v[3]};
+                }
+            }
+            if (!decl->params.empty()) inherit_button(F::ShaderParams);
+            for (const render::SurfaceTextureDecl& d : decl->textures) {
+                Uuid& ref = m.shader_textures[d.slot];
+                ImGui::PushID(100 + d.slot);
+                const assets::AssetRecord* t = ref.is_nil() ? nullptr : db_->find(ref);
+                static constexpr const char* kDefaults[] = {"(white)", "(black)", "(flat normal)"};
+                const std::string slot_label = ref.is_nil() ? kDefaults[static_cast<int>(d.fallback)] : t ? t->path : "(missing) " + ref.to_string();
+                ImGui::Text("%s:", d.name.c_str());
+                ImGui::SameLine();
+                ImGui::Button(slot_label.c_str(), ImVec2(instance ? -150.0f : -60.0f, 0.0f));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop a texture from Assets here");
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload(kAssetPayload)) {
+                        Uuid id;
+                        std::memcpy(&id, pl->Data, sizeof(Uuid));
+                        if (const auto* r = db_->find(id); r && r->kind == assets::AssetKind::Texture) {
+                            ref = id;
+                            mark(true, F::ShaderTextures);
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear") && !ref.is_nil()) {
+                    ref = {};
+                    mark(true, F::ShaderTextures);
+                }
+                ImGui::PopID();
+            }
+            if (!decl->textures.empty()) inherit_button(F::ShaderTextures);
         }
-        inherit_button(F::ShaderParams); // the four rows are one field
+        if (!named || ImGui::TreeNode("Raw parameter slots")) {
+            for (int i = 0; i < 4; ++i) {
+                math::Vec4& p = m.shader_params[static_cast<std::size_t>(i)];
+                float v[4] = {p.x, p.y, p.z, p.w};
+                if (mark(ImGui::DragFloat4(std::format("params[{}]", i).c_str(), v, 0.01f), F::ShaderParams)) {
+                    set_slot(static_cast<std::size_t>(i));
+                    p = {v[0], v[1], v[2], v[3]};
+                }
+            }
+            if (!named) inherit_button(F::ShaderParams); // the four rows are one field
+            else ImGui::TreePop();
+        }
     }
     if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {
         mark(ImGui::SliderFloat("Alpha Cutoff", &m.alpha_cutoff, 0.0f, 1.0f), F::AlphaCutoff);

@@ -184,12 +184,12 @@ Result<ExportReport> export_game(const ExportOptions& o) {
             errors.push_back(m.error().message);
             continue;
         }
-        const auto refs = m->textures();
+        const auto refs = m->all_textures();
         for (std::size_t i = 0; i < refs.size(); ++i) {
             if (refs[i]->is_nil()) continue;
             const assets::AssetRecord* t = (*db)->find(*refs[i]);
             if (!t || t->kind != assets::AssetKind::Texture)
-                errors.push_back(std::format("{}: {} texture {} does not exist", r.path, assets::kMaterialTextureSlotNames[i],
+                errors.push_back(std::format("{}: {} texture {} does not exist", r.path, assets::kMaterialAllTextureNames[i],
                                              refs[i]->to_string()));
         }
         if (!m->shader.is_nil()) {
