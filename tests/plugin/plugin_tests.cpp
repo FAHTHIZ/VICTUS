@@ -193,7 +193,7 @@ TEST_CASE("plugin: a native plugin loads, runs systems, serves functions and shu
         REQUIRE(alpha);
         CHECK(alpha->state == pl::State::Loaded);
         CHECK(alpha->systems == std::vector<std::string>{"plugin.alpha.mover"});
-        CHECK(alpha->functions.size() == 6);
+        CHECK(alpha->functions.size() == 7);
         CHECK(pm.has_function("beta.greet"));
         CHECK(logs.lines("init") == std::vector<std::string>{"plugin.alpha", "plugin.beta"});
 
@@ -265,7 +265,7 @@ TEST_CASE("plugin: failures are isolated per plugin with readable reasons") {
     CHECK_FALSE(pm.has_function("crashy.greet"));
     CHECK(state("needs_crashy") == pl::State::Skipped);
     CHECK(state("newer") == pl::State::Failed);
-    CHECK(error("newer").find("built against plugin API 1.1") != std::string::npos);
+    CHECK(error("newer").find("built against plugin API 1.2") != std::string::npos);
     CHECK(state("noentry") == pl::State::Failed);
     CHECK(error("noentry") == "library does not export 'victus_plugin_entry'");
     CHECK(state("future_api") == pl::State::Rejected);
@@ -289,7 +289,85 @@ TEST_CASE("plugin: the editor target loads editor plugins and a missing director
     pl::PluginManager editor({.target = "editor"});
     editor.load_directory(dir.root);
     CHECK(editor.loaded_count() == 1);
+    CHECK(*editor.call("editor_only.has_editor", "null") == "true");
     pl::PluginManager none;
     none.load_directory(dir.root / "does_not_exist");
     CHECK(none.statuses().empty());
+}
+
+TEST_CASE("plugin: editor hosts serve victus.editor.1 commands; players do not") {
+    PluginDir dir("commands");
+    dir.add("tools", VICTUS_TEST_PLUGIN_OK);
+    std::vector<std::string> notes;
+    pl::HostOptions options{.target = "editor"};
+    options.notify = [&](std::string_view plugin, std::string_view message, bool error) {
+        notes.push_back(std::format("{}:{}:{}", plugin, message, error));
+    };
+    pl::PluginManager editor(std::move(options));
+    editor.load_directory(dir.root);
+    REQUIRE(editor.loaded_count() == 1);
+    const auto cmds = editor.commands();
+    REQUIRE(cmds.size() == 4); // the duplicate and the invalid name were refused
+    CHECK(cmds[0].id == "tools.spawn");
+    CHECK(cmds[0].label == "Spawn Plugin Cube");
+    CHECK(cmds[0].plugin == "tools");
+    CHECK(cmds[3].label == "broken"); // empty label falls back to the name
+    CHECK(editor.status("tools")->commands.size() == 4);
+
+    scene::Scene s;
+    REQUIRE(editor.run_command("tools.spawn", s).ok());
+    const auto cube = s.find_by_name("PluginCube");
+    REQUIRE_FALSE(cube.is_null());
+    CHECK(s.world().get<scene::Transform>(cube)->position.y == doctest::Approx(2.0f));
+    CHECK(s.children(cube).size() == 1);
+    REQUIRE(notes.size() == 1);
+    CHECK(notes[0] == "tools:spawned:false");
+    REQUIRE(editor.run_command("tools.clear", s).ok());
+    CHECK(s.find_by_name("PluginCube").is_null());
+    auto broken = editor.run_command("tools.broken", s);
+    REQUIRE_FALSE(broken.ok());
+    CHECK(broken.error().message == "broken failed: nothing selected");
+    CHECK_FALSE(editor.run_command("tools.missing", s).ok());
+
+    // The same library in a player host gets no editor interface and registers no commands.
+    pl::PluginManager player({.target = "player"});
+    PluginDir pdir("commands_player");
+    pdir.add("tools", VICTUS_TEST_PLUGIN_OK);
+    player.load_directory(pdir.root);
+    REQUIRE(player.loaded_count() == 1);
+    CHECK(player.commands().empty());
+    CHECK(*player.call("tools.has_editor", "null") == "false");
+    player.shutdown();
+
+    // After shutdown the commands are gone.
+    editor.shutdown();
+    CHECK(editor.commands().empty());
+    CHECK_FALSE(editor.run_command("tools.spawn", s).ok());
+}
+
+TEST_CASE("plugin: scaffold writes a buildable template and set_enabled edits only that field") {
+    PluginDir dir("scaffold");
+    REQUIRE(pl::scaffold(dir.root, "hello").ok());
+    CHECK_FALSE(pl::scaffold(dir.root, "hello").ok()); // exists
+    CHECK_FALSE(pl::scaffold(dir.root, "Bad Name").ok());
+    const fs::Path m = dir.root / "hello" / "hello.vplugin";
+    auto parsed = pl::read_manifest(m);
+    REQUIRE(parsed.ok());
+    CHECK(parsed->name == "hello");
+    CHECK(parsed->api == pl::host_api_version());
+    CHECK(parsed->enabled);
+    auto c = fs::read_text(dir.root / "hello" / "src" / "hello.c");
+    REQUIRE(c.ok());
+    CHECK(c->find("VICTUS_EDITOR_INTERFACE_1") != std::string::npos);
+    CHECK(c->find("add_spinner") != std::string::npos);
+    auto sdk = fs::read_text(dir.root / "hello" / "include" / "victus" / "plugin" / "victus_plugin.h");
+    REQUIRE(sdk.ok());
+    CHECK(sdk->find("VictusEditorV1") != std::string::npos);
+    REQUIRE(pl::set_enabled(m, false).ok());
+    parsed = pl::read_manifest(m);
+    REQUIRE(parsed.ok());
+    CHECK_FALSE(parsed->enabled);
+    CHECK(parsed->libraries.size() == 3);
+    CHECK(parsed->targets.size() == 2);
+    CHECK_FALSE(pl::set_enabled(dir.root / "nope.vplugin", true).ok());
 }

@@ -409,6 +409,11 @@ foreach(mode IN ITEMS OK FAIL_INIT NEWER_API NO_ENTRY)
     target_compile_definitions(victus_plugin_tests PRIVATE
         VICTUS_TEST_PLUGIN_${mode}="$<TARGET_FILE:victus_test_plugin_${mode_lower}>")
 endforeach()
+if(TARGET victus_editor_tests)
+    # Studio plugin loading (ADR-0192) runs the same test library inside the editor.
+    add_dependencies(victus_editor_tests victus_test_plugin_ok)
+    target_compile_definitions(victus_editor_tests PRIVATE VICTUS_TEST_PLUGIN_OK="$<TARGET_FILE:victus_test_plugin_ok>")
+endif()
 
 victus_add_test(victus_gameplay_tests
     SOURCES gameplay/schedule_tests.cpp

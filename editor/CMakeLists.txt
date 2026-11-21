@@ -33,6 +33,7 @@ add_library(victus_editor_core STATIC
     src/assets_panel.cpp
     src/import_files.cpp
     src/import_queue_panel.cpp
+    src/plugins_panel.cpp
     src/add_component.cpp
     src/roles.cpp
     src/lessons.cpp

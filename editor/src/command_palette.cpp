@@ -205,6 +205,13 @@ std::vector<EditorCommand> Editor::commands() {
         add(std::string("Window: Layout ") + layout_name(l), {}, true, [this, l] { apply_layout(l); });
     }
     add("Window: Reset Layout", {}, true, [this] { apply_layout(layout_); });
+    // Studio commands of editor plugins (ADR-0192).
+    if (editor_plugins_)
+        for (const auto& c : editor_plugins_->commands())
+            add("Plugin: " + c.label, {}, play_state_ == PlayState::Editing, [this, id = c.id] {
+                if (auto st = run_plugin_command(id); !st.ok()) notify(st.error().message, true);
+            });
+    add("Plugins: Reload", {}, play_state_ == PlayState::Editing && project_ && !safe_mode_, [this] { reload_plugins(); });
     for (auto tier :
          {render::QualityTier::Low, render::QualityTier::Medium, render::QualityTier::High, render::QualityTier::Ultra})
         add("View: Rendering Quality " + std::string(render::quality_tier_name(tier)), {}, quality_ != tier,

@@ -392,6 +392,12 @@ struct PluginManager::Impl {
         void* user{nullptr};
         std::size_t owner{0};
     };
+    struct CommandEntry {
+        Command info;
+        VictusCommandFn fn{nullptr};
+        void* user{nullptr};
+        std::size_t owner{0};
+    };
     struct Live {
         std::unique_ptr<VictusHost> host;
         std::unique_ptr<Library> library;
@@ -404,6 +410,7 @@ struct PluginManager::Impl {
     std::vector<Live> live; // init order
     std::vector<std::shared_ptr<SystemEntry>> systems;
     std::map<std::string, FunctionEntry, std::less<>> functions;
+    std::vector<CommandEntry> commands; // registration order
     gameplay::Simulation* attached{nullptr};
     std::size_t attached_count{0};
     bool loaded{false};
@@ -413,6 +420,7 @@ struct PluginManager::Impl {
     static const VictusSystemsV1 kSystems;
     static const VictusSceneV1 kScene;
     static const VictusFunctionsV1 kFunctions;
+    static const VictusEditorV1 kEditor;
 
     static const void* get_interface(VictusHost* host, const char* name) {
         if (!host || !name) return nullptr;
@@ -421,6 +429,7 @@ struct PluginManager::Impl {
         if (n == VICTUS_SYSTEMS_INTERFACE_1) return &kSystems;
         if (n == VICTUS_SCENE_INTERFACE_1) return &kScene;
         if (n == VICTUS_FUNCTIONS_INTERFACE_1) return &kFunctions;
+        if (n == VICTUS_EDITOR_INTERFACE_1 && host->impl && host->impl->options.target == "editor") return &kEditor;
         return nullptr;
     }
     static void set_host_error(VictusHost* host, const char* message) {
@@ -458,6 +467,38 @@ struct PluginManager::Impl {
         impl.statuses[host->status].functions.push_back(full);
         impl.functions.emplace(std::move(full), FunctionEntry{fn, user, host->status});
         return VICTUS_PLUGIN_OK;
+    }
+    static int add_command(VictusHost* host, const char* name, const char* label, VictusCommandFn fn, void* user) {
+        if (!host || !host->initializing || !name || !fn || !valid_member_name(name)) return VICTUS_PLUGIN_ERROR;
+        Impl& impl = *host->impl;
+        std::string id = std::format("{}.{}", host->name, name);
+        for (const auto& c : impl.commands)
+            if (c.info.id == id) return VICTUS_PLUGIN_ERROR;
+        std::string text = label && *label ? std::string(label) : std::string(name);
+        if (text.size() > 128) text.resize(128);
+        impl.statuses[host->status].commands.push_back(id);
+        impl.commands.push_back({{std::move(id), std::move(text), host->name}, fn, user, host->status});
+        return VICTUS_PLUGIN_OK;
+    }
+    static void editor_notify(VictusHost* host, const char* message, int is_error) {
+        if (!host || !message) return;
+        Impl& impl = *host->impl;
+        log::logger().write(is_error ? log::Level::Error : log::Level::Info, "plugin." + host->name, message);
+        if (impl.options.notify) impl.options.notify(host->name, message, is_error != 0);
+    }
+    Status run_command(std::string_view id, scene::Scene& scene) {
+        const auto it = std::find_if(commands.begin(), commands.end(), [&](const CommandEntry& c) { return c.info.id == id; });
+        if (it == commands.end()) return make_error(ErrorCode::NotFound, std::format("no plugin command '{}'", id));
+        VictusHost* host = nullptr;
+        for (auto& l : live)
+            if (l.host->status == it->owner) host = l.host.get();
+        if (!host) return make_error(ErrorCode::InvalidArgument, std::format("plugin '{}' is not loaded", it->info.plugin));
+        host->error.clear();
+        VictusScene vs{&scene};
+        if (it->fn(it->user, &vs) != VICTUS_PLUGIN_OK)
+            return make_error(ErrorCode::Unknown,
+                              std::format("{} failed{}", it->info.label, host->error.empty() ? std::string() : ": " + host->error));
+        return {};
     }
     static void set_result(VictusCallResult* result, const char* json_text) {
         if (result && json_text) result->json = json_text;
@@ -500,8 +541,10 @@ struct PluginManager::Impl {
     void drop_registrations(std::size_t owner) {
         std::erase_if(systems, [owner](const auto& s) { return s->owner == owner; });
         std::erase_if(functions, [owner](const auto& f) { return f.second.owner == owner; });
+        std::erase_if(commands, [owner](const auto& c) { return c.owner == owner; });
         statuses[owner].systems.clear();
         statuses[owner].functions.clear();
+        statuses[owner].commands.clear();
     }
 
     void fail(std::size_t index, State state, std::string why) {
@@ -578,8 +621,8 @@ struct PluginManager::Impl {
         l.initialized = true;
         st.state = State::Loaded;
         st.error.clear();
-        VICTUS_LOG_INFO(kCategory, "loaded plugin '{}' {} ({} systems, {} functions)", st.name, to_string(st.version),
-                        st.systems.size(), st.functions.size());
+        VICTUS_LOG_INFO(kCategory, "loaded plugin '{}' {} ({} systems, {} functions, {} commands)", st.name,
+                        to_string(st.version), st.systems.size(), st.functions.size(), st.commands.size());
         live.push_back(std::move(l));
     }
 
@@ -640,6 +683,7 @@ struct PluginManager::Impl {
         }
         live.clear();
         functions.clear();
+        commands.clear();
     }
 };
 
@@ -648,6 +692,7 @@ const VictusSystemsV1 PluginManager::Impl::kSystems{sizeof(VictusSystemsV1), &Im
 const VictusFunctionsV1 PluginManager::Impl::kFunctions{sizeof(VictusFunctionsV1), &Impl::register_function,
                                                         &Impl::set_result, &Impl::set_call_error,
                                                         &Impl::call_from_plugin};
+const VictusEditorV1 PluginManager::Impl::kEditor{sizeof(VictusEditorV1), &Impl::add_command, &Impl::editor_notify};
 
 namespace {
 VictusEntity scene_find(VictusScene* s, const char* name) {
@@ -761,6 +806,12 @@ void PluginManager::shutdown() {
 }
 const std::vector<PluginStatus>& PluginManager::statuses() const noexcept { return impl_->statuses; }
 const PluginStatus* PluginManager::status(std::string_view name) const noexcept { return impl_->find_status(name); }
+std::vector<Command> PluginManager::commands() const {
+    std::vector<Command> out;
+    for (const auto& c : impl_->commands) out.push_back(c.info);
+    return out;
+}
+Status PluginManager::run_command(std::string_view id, scene::Scene& scene) { return impl_->run_command(id, scene); }
 std::size_t PluginManager::loaded_count() const noexcept {
     return static_cast<std::size_t>(std::count_if(impl_->statuses.begin(), impl_->statuses.end(),
                                                   [](const PluginStatus& s) { return s.state == State::Loaded; }));

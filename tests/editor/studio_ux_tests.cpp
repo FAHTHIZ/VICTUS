@@ -27,6 +27,7 @@
 #include <optional>
 #include <fstream>
 #include <filesystem>
+#include <format>
 #include <functional>
 
 using namespace victus;
@@ -2232,3 +2233,80 @@ TEST_CASE("studio import queue: reimport runs in the background, the panel lists
     CHECK(again.up_to_date + 1 == again.total);
     h.frames(1);
 }
+
+#ifdef VICTUS_TEST_PLUGIN_OK
+TEST_CASE("studio plugins: editor plugins add undoable commands; Play loads player copies") {
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    const sfs::path root = h.dir / "Plugin Game";
+    REQUIRE(h.ed->create_project(root, "Plugin Game", "3d").ok());
+    CHECK(h.ed->plugin_manifests().empty());
+
+    // A plugin folder like `victus plugins new` makes, holding the test library.
+    const sfs::path pdir = root / "plugins" / "tools";
+    sfs::create_directories(pdir / "bin");
+    const sfs::path lib(VICTUS_TEST_PLUGIN_OK);
+    sfs::copy_file(lib, pdir / "bin" / lib.filename());
+    std::ofstream(pdir / "tools.vplugin") << std::format(
+        R"({{"name":"tools","version":"1.0.0","api":"1.1","libraries":{{"{}":"bin/{}"}}}})", plugin::platform_key(),
+        lib.filename().string());
+    h.ed->reload_plugins();
+    REQUIRE(h.ed->plugin_manifests().size() == 1);
+    REQUIRE(h.ed->editor_plugins() != nullptr);
+    CHECK(h.ed->editor_plugins()->loaded_count() == 1);
+    REQUIRE(h.ed->editor_plugins()->commands().size() == 4);
+    h.ed->set_panel_open(editor::Panel::Plugins, true);
+    h.frames(3);
+
+    // A command edits the scene as one undo step.
+    REQUIRE(h.ed->run_plugin_command("tools.spawn").ok());
+    const auto cube = h.ed->active_scene().find_by_name("PluginCube");
+    REQUIRE_FALSE(cube.is_null());
+    CHECK_FALSE(h.ed->active_scene().find_by_name("PluginCubeChild").is_null());
+    h.ed->undo();
+    CHECK(h.ed->active_scene().find_by_name("PluginCube").is_null());
+    CHECK(h.ed->active_scene().find_by_name("PluginCubeChild").is_null());
+    h.ed->redo();
+    CHECK_FALSE(h.ed->active_scene().find_by_name("PluginCube").is_null());
+    const auto broken = h.ed->run_plugin_command("tools.broken");
+    REQUIRE_FALSE(broken.ok());
+    CHECK(broken.error().message == "broken failed: nothing selected");
+    h.frames(2);
+
+    // Play swaps the editor copy for a fresh player copy (no editor interface, no commands).
+    h.ed->play();
+    h.frames(2);
+    CHECK(h.ed->editor_plugins() == nullptr);
+    REQUIRE(h.ed->play_plugins() != nullptr);
+    CHECK(h.ed->play_plugins()->loaded_count() == 1);
+    CHECK(h.ed->play_plugins()->commands().empty());
+    CHECK(*h.ed->play_plugins()->call("tools.has_editor", "null") == "false");
+    CHECK_FALSE(h.ed->run_plugin_command("tools.spawn").ok());
+    h.ed->stop();
+    h.frames(2);
+    CHECK(h.ed->play_plugins() == nullptr);
+    REQUIRE(h.ed->play_plugin_statuses().size() == 1);
+    CHECK(h.ed->play_plugin_statuses()[0].state == plugin::State::Loaded);
+    REQUIRE(h.ed->editor_plugins() != nullptr);
+    CHECK(h.ed->editor_plugins()->loaded_count() == 1);
+
+    // Disabling writes the manifest and unloads; enabling brings it back.
+    REQUIRE(h.ed->set_plugin_enabled("tools", false).ok());
+    CHECK(h.ed->editor_plugins()->loaded_count() == 0);
+    CHECK(h.ed->editor_plugins()->commands().empty());
+    REQUIRE(h.ed->set_plugin_enabled("tools", true).ok());
+    CHECK(h.ed->editor_plugins()->loaded_count() == 1);
+
+    // New Plugin scaffolds a folder; it shows as unbuilt until compiled.
+    REQUIRE(h.ed->create_plugin("my_tool").ok());
+    CHECK(sfs::exists(root / "plugins" / "my_tool" / "my_tool.vplugin"));
+    CHECK(h.ed->plugin_manifests().size() == 2);
+    CHECK_FALSE(h.ed->create_plugin("my_tool").ok());
+    h.frames(3);
+
+    h.ed->unload_plugins();
+    CHECK(h.ed->editor_plugins() == nullptr);
+    h.frames(1);
+}
+#endif

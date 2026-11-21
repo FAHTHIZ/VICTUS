@@ -68,6 +68,8 @@ const char* window_id(Panel p) noexcept {
         return "###BehaviourTree";
     case Panel::ImportQueue:
         return "Import Queue";
+    case Panel::Plugins:
+        return "Plugins";
     case Panel::Count:
         break;
     }
@@ -124,6 +126,8 @@ const char* panel_hint(Panel p) noexcept {
         return "Build AI decisions as a tree of nodes, and watch them run during Play";
     case Panel::ImportQueue:
         return "Background imports: progress, errors per file, cancel and retry";
+    case Panel::Plugins:
+        return "Native plugins in this project: load state, errors, Studio commands, enable and reload";
     case Panel::Count:
         break;
     }
@@ -223,6 +227,8 @@ bool* Editor::panel_flag(Panel p) noexcept {
         return &show_bt_editor_;
     case Panel::ImportQueue:
         return &show_import_queue_;
+    case Panel::Plugins:
+        return &show_plugins_;
     default:
         return nullptr;
     }
@@ -372,7 +378,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::Assets, Panel::Console, Panel::Problems, Panel::ImportQueue, Panel::Animation, Panel::Sequencer, Panel::Profiler,
                   Panel::Network, Panel::ScriptDebugger},
                  bottom);
-        dock_all({Panel::ProjectSettings, Panel::History}, right);
+        dock_all({Panel::ProjectSettings, Panel::History, Panel::Plugins}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore, Panel::BehaviorTreeEditor}, center);
         break;
     }
@@ -385,7 +391,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all(
             {Panel::Inspector, Panel::TerrainTools, Panel::TilePalette, Panel::MaterialEditor, Panel::InputActions},
             right);
-        dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
+        dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History, Panel::Plugins}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore, Panel::BehaviorTreeEditor}, center);
         dock_all({Panel::Animation, Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger, Panel::ScriptDebugger},
                  left_bottom);
@@ -402,7 +408,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
             right);
         dock_all({Panel::Animation, Panel::Assets, Panel::Console, Panel::Problems, Panel::ImportQueue}, bottom);
         dock_all({Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger, Panel::ScriptDebugger}, bottom_right);
-        dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
+        dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History, Panel::Plugins}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore, Panel::BehaviorTreeEditor}, center);
         break;
     }
@@ -419,7 +425,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::ScriptDebugger, Panel::Console, Panel::Problems, Panel::ImportQueue, Panel::Profiler, Panel::Animation, Panel::Sequencer,
                   Panel::Network, Panel::AiDebugger},
                  bottom);
-        dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
+        dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History, Panel::Plugins}, right);
         dock_all({Panel::GraphEditor, Panel::Viewport, Panel::AssetStore, Panel::BehaviorTreeEditor}, center);
         break;
     }
@@ -434,7 +440,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
                  right);
         dock_all({Panel::ScriptDebugger, Panel::Console, Panel::Problems, Panel::ImportQueue, Panel::Assets, Panel::Animation, Panel::Sequencer}, bottom);
         dock(Panel::Profiler, bottom_right);
-        dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
+        dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History, Panel::Plugins}, right);
         dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore, Panel::BehaviorTreeEditor}, center);
         break;
     }
@@ -462,7 +468,7 @@ void Editor::draw_window_menu() {
     ImGui::Separator();
     ImGui::TextDisabled("Tools");
     for (Panel p : {Panel::Animation, Panel::Sequencer, Panel::GraphEditor, Panel::BehaviorTreeEditor, Panel::MaterialEditor, Panel::TilePalette,
-                    Panel::TerrainTools, Panel::InputActions, Panel::ProjectSettings, Panel::History})
+                    Panel::TerrainTools, Panel::InputActions, Panel::Plugins, Panel::ProjectSettings, Panel::History})
         item(p);
     ImGui::Separator();
     ImGui::TextDisabled("Debug");

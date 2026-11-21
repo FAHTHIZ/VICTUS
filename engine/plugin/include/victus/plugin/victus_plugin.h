@@ -33,7 +33,7 @@ extern "C" {
 #endif
 
 #define VICTUS_PLUGIN_API_MAJOR 1
-#define VICTUS_PLUGIN_API_MINOR 0
+#define VICTUS_PLUGIN_API_MINOR 1
 
 #if defined(_WIN32)
 #define VICTUS_PLUGIN_EXPORT __declspec(dllexport)
@@ -147,6 +147,23 @@ typedef struct VictusFunctionsV1 {
     int (*call)(VictusHost* host, const char* full_name, const char* args_json, char* buffer, size_t cap,
                 size_t* out_len);
 } VictusFunctionsV1;
+
+/* ---- "victus.editor.1" (API 1.1) -------------------------------------------------------- */
+/* Studio commands. Served only when the plugin is loaded by VICTUS Studio (manifest target
+ * "editor"); players return NULL, so check the pointer and skip editor features there. */
+#define VICTUS_EDITOR_INTERFACE_1 "victus.editor.1"
+/* Runs on the scene open in the Studio (never on a Play session). Everything the command changes
+ * is recorded as one undo step named after the command. Return VICTUS_PLUGIN_OK, or
+ * VICTUS_PLUGIN_ERROR after host->set_error / notify to report why it did nothing. */
+typedef int (*VictusCommandFn)(void* user, VictusScene* scene);
+typedef struct VictusEditorV1 {
+    uint32_t struct_size;
+    /* Adds "<plugin>.<name>" to the Studio Plugins menu and command search, shown as `label`
+     * (any text, e.g. "Scatter Rocks"). Only valid during init; names are [a-z0-9_]. */
+    int (*add_command)(VictusHost* host, const char* name, const char* label, VictusCommandFn fn, void* user);
+    /* Shows a Studio status message (is_error: 1 also writes it to the Console as an error). */
+    void (*notify)(VictusHost* host, const char* message, int is_error);
+} VictusEditorV1;
 
 #ifdef __cplusplus
 } /* extern "C" */

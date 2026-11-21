@@ -145,13 +145,14 @@ VICTUS_PLUGIN_EXPORT int victus_plugin_entry(const VictusHostApi* h, VictusPlugi
 }
 ```
 
-### Interfaces (API 1.0)
+### Interfaces (API 1.1)
 
 | Name | Functions |
 |---|---|
 | `victus.log.1` | `write(host, level, message)`: engine log under `plugin.<name>` |
 | `victus.systems.1` | `add_system(host, name, phase, fn, user)`: a per-frame system `plugin.<plugin>.<name>` in PreUpdate, FixedUpdate, Update or PostUpdate; only during `init` |
 | `victus.scene.1` | `find_by_name`, `create`, `destroy`, `alive`, `entity_count`, `get_name`, `get/set_position`, `get/set_rotation` (quaternion xyzw), `get/set_scale`, `parent`; valid inside a system callback |
+| `victus.editor.1` (API 1.1, editor host only) | `add_command(host, name, label, fn, user)` (only during `init`) adds a Studio command `<plugin>.<name>` shown in the Plugins menu, the Plugins panel and the command palette as `label`; `fn(user, scene)` edits the open scene and returns `VICTUS_PLUGIN_OK` or an error after `host->set_error`. `notify(host, message, is_error)` shows a Studio notification and logs it |
 | `victus.functions.1` | `register_function(host, name, fn, user)` (only during `init`) as `<plugin>.<name>`; inside a function, `set_result(result, json)` and `set_error(result, message)`; `call(host, full_name, args_json, buffer, cap, out_len)` to call another plugin's function |
 
 Plugin functions take and return JSON text, so Luau tables, strings, numbers, booleans and nil
@@ -169,6 +170,45 @@ reason in diagnostics.
   entity's handle stays dead even if its slot is reused.
 - Keep the `VictusHostApi*` pointer; it stays valid until `shutdown` returns.
 
+## Plugins in the Studio
+
+When a project opens (not in safe mode), the Studio reads every manifest under `plugins/` and
+loads the ones whose `targets` include `"editor"` in an editor host. Only editor hosts serve
+`victus.editor.1`, so the same library can check `get_interface(..., VICTUS_EDITOR_INTERFACE_1)`
+and add commands only when it runs inside the Studio:
+
+```c
+static const VictusEditorV1* editor; /* NULL in the player */
+
+static int add_marker(void* user, VictusScene* scene) {
+    VictusEntity e = scene_api->create(scene, "Marker", 0);
+    editor->notify(host->host, "added a marker", 0);
+    return e ? VICTUS_PLUGIN_OK : VICTUS_PLUGIN_ERROR;
+}
+
+static int init(void* user) {
+    if (editor) editor->add_command(host->host, "add_marker", "Add Marker", add_marker, 0);
+    return VICTUS_PLUGIN_OK;
+}
+/* in victus_plugin_entry: editor = h->get_interface(h->host, VICTUS_EDITOR_INTERFACE_1); */
+```
+
+- Running a command records the whole scene before and after and adds one undo step
+  ("Plugin: <label>") if anything changed; a command that fails leaves no undo step and its
+  reason appears as a notification.
+- The **Plugins** panel (Window > Tools > Plugins, or the Plugins menu) lists every manifest with
+  its Studio state and its state in the last Play session, the reason for any failure, what it
+  registered, an Enabled checkbox (rewrites `enabled` in the manifest and reloads), a Run button
+  per command, the CMake build command for plugins whose library is not built yet, and a
+  New Plugin field that writes the same template as `victus plugins --new`.
+- **Reload** rescans `plugins/` and reloads the editor plugins, picking up rebuilt libraries.
+  **Unload** releases them; on Windows a loaded `.dll` is locked, so unload before rebuilding.
+- **Play** unloads the editor plugins and loads the `"player"` plugins fresh, like `victus run`:
+  their systems tick, `plugins.call` reaches their functions, and failures appear as
+  notifications. **Stop** unloads them and reloads the editor plugins, so each Play starts from
+  a clean `init`.
+- Editor plugins' systems do not tick while editing; commands are the way to act on the scene.
+
 ## Compatibility promise
 
 - `VICTUS_PLUGIN_API_MAJOR` changes only for a breaking change. A plugin built for API 1.x loads
@@ -185,8 +225,10 @@ reason in diagnostics.
 - No sandbox: plugins are native code with full process access. A crash in a plugin crashes the
   game (and writes a crash report, docs/DIAGNOSTICS.md).
 - No hot reload: plugins load once at startup; restart to pick up a rebuilt library.
-- The editor does not load plugins yet and has no plugin manager window. `victus plugins` and
-  `victus check` are the tools for now.
+- Reload is manual (Reload in the Plugins panel or Play/Stop); the Studio does not watch the
+  library for changes, and state inside a plugin does not survive a reload.
+- Editor commands receive the whole scene but not the selection, and cannot add panels,
+  inspectors or viewport drawing.
 - No custom components, renderer hooks, asset importers or physics callbacks through the C ABI
   yet; plugins change transforms, create and destroy entities, log, and serve functions.
 - `victus export` copies libraries for the host platform only and does not sign them.

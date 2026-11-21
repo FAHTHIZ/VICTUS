@@ -2715,3 +2715,18 @@ Verified (Release, gcc, 2 vCPU, lavapipe):
 Not covered: multi-node drag, auto-scroll at the canvas edge; the drag was exercised by automated input, not by a person.
 
 Next task: editor plugin loading, then the visual UI editor canvas.
+
+## 2026-11-22 — Native plugins in the Studio with editor commands (ADR-0192)
+
+Plugin API 1.1 adds `victus.editor.1` (`add_command`, `notify`), served only to editor hosts. The Studio loads editor-target plugins with the project (not in safe mode); plugin commands run on the open scene as one undo step and appear in a Plugins menu, the Plugins panel and the command palette. Play unloads them and loads the player-target plugins fresh (systems tick, `plugins.call` works); Stop restores the editor plugins and keeps the Play states for the panel. The Plugins panel shows Studio and last-Play state with reasons, registrations, Enabled toggles (rewrites the manifest), Run buttons, build hints, Reload/Unload and New Plugin. The template moved from the CLI into `plugin::scaffold` and now includes an editor command.
+
+Verified (Release, gcc, 2 vCPU, lavapipe):
+- `victus_plugin_tests`: 8 cases / 144 assertions pass (2 new: editor interface and commands only for editor hosts, run/failure/notify/cleanup; scaffold and `set_enabled`).
+- `victus_editor_tests -tc="studio plugins*,studio workspace*"`: 4 cases / 292 assertions pass (new: load with project, command as one undo step with undo/redo, failing command, Play swaps in a player copy, Stop restores, Enabled toggle, New Plugin, panel and menu draw).
+- `ctest -R victus_cli_plugins`: the scaffolded template with its editor command builds with CMake and loads.
+- `run_clang_tidy.py` on plugins_panel.cpp, scaffold.cpp, plugin.cpp, command_palette.cpp, editor.cpp, tools/cli/main.cpp: clean.
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build -j2`: 42/42 passed (622 s).
+
+Not covered: Windows DLL locking during Reload (only Linux was run), plugin panels or inspectors, selection access for commands; the panel was exercised by automated frames, not by a person.
+
+Next task: the visual UI editor canvas.

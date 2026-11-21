@@ -470,6 +470,7 @@ void Editor::draw_workspace(float) {
     draw_project_settings();
     draw_asset_store();
     draw_import_queue();
+    draw_plugins_panel();
     draw_behavior_tree_editor();
     draw_trash();
     draw_asset_dialogs();
@@ -623,6 +624,10 @@ void Editor::draw_menu_bar() {
         ImGui::EndMenu();
     }
     draw_window_menu();
+    if (ImGui::BeginMenu("Plugins")) {
+        draw_plugin_menu_items();
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("Play")) {
         if (ImGui::MenuItem(editing ? "Play" : "Resume", editing ? "Ctrl+P" : nullptr, false, play_state_ != PlayState::Playing)) play();
         if (ImGui::MenuItem("Pause", nullptr, false, play_state_ == PlayState::Playing)) pause();

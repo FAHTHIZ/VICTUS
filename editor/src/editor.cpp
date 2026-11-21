@@ -97,6 +97,9 @@ Editor::~Editor() {
     stop_editor_clients();
     if (play_server_) play_server_->shutdown(sim_.time().time); // tell joined players we are gone
     play_server_.reset();
+    play_scripts_.reset(); // holds calls into play_plugins_
+    play_plugins_.reset();
+    editor_plugins_.reset();
     if (log_sink_) log::logger().remove_sink(log_sink_);
     thumbnails_.reset();
     cache_.reset();
@@ -169,6 +172,7 @@ Status Editor::open_project(const fs::Path& path) {
         if (auto host = script::ScriptHost::create(so)) edit_scripts_ = std::move(host).value();
         else notify("scripting unavailable: " + host.error().message, true);
     }
+    reload_plugins(); // editor-target native plugins (ADR-0192); skipped in safe mode
     recent_->add(project_->root());
     (void)recent_->save();
     const std::string startup = project_->settings().startup_scene;
@@ -227,6 +231,10 @@ void Editor::close_project() {
     problems_.reset();
     problems_error_.clear();
     stop();
+    unload_plugins();
+    plugin_manifests_.clear();
+    plugin_issues_.clear();
+    play_plugin_statuses_.clear();
     close_sequence();
     gizmo_cancel();
     selection_.clear();
@@ -1190,6 +1198,22 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
     play_scene_ = std::move(copy);
     reset_simulation();
     play_physics_.reset();
+    // Native plugins (ADR-0192): Play runs the "player" plugins like `victus run`, loaded fresh so
+    // a rebuilt library is picked up. The editor copies are unloaded meanwhile: a library loaded
+    // twice shares its globals, and the plugin would keep the host pointer of the wrong copy.
+    if (editor_plugins_) {
+        editor_plugins_.reset();
+        plugins_suspended_ = true;
+    }
+    play_plugins_.reset();
+    play_plugin_statuses_.clear();
+    if (project_) {
+        play_plugins_ = std::make_unique<plugin::PluginManager>(plugin::HostOptions{.target = "player"});
+        play_plugins_->load_directory(project_->root() / "plugins");
+        for (const auto& st : play_plugins_->statuses())
+            if (st.state == plugin::State::Failed || st.state == plugin::State::Rejected || st.state == plugin::State::Skipped)
+                notify(std::format("Plugin {} {}: {}", st.name, plugin::to_string(st.state), st.error), true);
+    }
     {
         physics::PhysicsSettings ps;
         ps.jobs = &workers();
@@ -1217,6 +1241,10 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
         }
         // Scene transitions while playing replace only the play copy; the authored scene and
         // its path stay as they are, and Stop returns to it.
+        if (play_plugins_ && !play_plugins_->function_names().empty()) {
+            so.plugin_call = [pm = play_plugins_.get()](std::string_view name, std::string_view args) { return pm->call(name, args); };
+            so.plugin_has = [pm = play_plugins_.get()](std::string_view name) { return pm->has_function(name); };
+        }
         so.on_scene_loaded = [this](scene::Scene&, std::string_view path) {
             if (play_physics_) play_physics_->clear();
             if (auto* a = audio()) a->stop_all();
@@ -1256,6 +1284,7 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
         a->stop_all();
         audio::add_audio_systems(sim_, *a);
     }
+    if (play_plugins_) play_plugins_->attach(sim_); // after the engine's own systems, as in the player
     if (networked) {
         if (auto st = start_hosting(); !st.ok()) {
             notify("cannot host: " + st.error().message, true);
@@ -1269,6 +1298,11 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
             play_navigation_.reset();
             play_ai_.reset();
             play_sequencer_.reset();
+            play_plugins_.reset();
+            if (plugins_suspended_) {
+                plugins_suspended_ = false;
+                reload_plugins();
+            }
             return;
         }
     }
@@ -1366,9 +1400,17 @@ void Editor::stop() {
     play_navigation_.reset();
     play_ai_.reset();
     play_sequencer_.reset();
+    if (play_plugins_) { // after the scripts and systems that call into it
+        play_plugin_statuses_ = play_plugins_->statuses();
+        play_plugins_.reset();
+    }
     if (audio_) audio_->stop_all();
     if (input_) input_->set_enabled(false);
     play_state_ = PlayState::Editing;
+    if (plugins_suspended_) {
+        plugins_suspended_ = false;
+        reload_plugins();
+    }
     pending_before_.clear();
     pending_dirty_ = false;
     prune_selection();

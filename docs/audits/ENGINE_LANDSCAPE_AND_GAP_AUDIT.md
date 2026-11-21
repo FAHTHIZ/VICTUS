@@ -114,7 +114,7 @@ Status: **open** · **partly** (some of it exists) · **blocked** (needs hardwar
 
 | ID | Gap | Leaders | VICTUS today | Sev. | Status | Fix direction |
 |---|---|---|---|---|---|---|
-| GAP-28 | **Editor not extensible** (no editor plugins) | Godot editor plugins, Unity packages, UE editor modules | Runtime C ABI plugins only | S2 | open | As COMPETITOR_BENCHMARK |
+| GAP-28 | **Editor not extensible** (no editor plugins) | Godot editor plugins, Unity packages, UE editor modules | Runtime C ABI plugins; the Studio loads editor-target plugins with undoable commands and a Plugins panel (ADR-0192); no plugin panels/inspectors | S2 | partial | As COMPETITOR_BENCHMARK |
 | GAP-29 | **No UI editor canvas, rich text, sliders, text input** | UMG, UI Toolkit, Godot Control nodes; Flax rich text wrap | Runtime UI with sliders, toggles, text fields, progress bars and `<b>`/`<color>` rich text (ADR-0169); no visual UI editor canvas | S2 | partial | UI editor canvas in Studio |
 | GAP-30 | **No FBX import; glTF cameras/lights ignored** | Unreal Interchange, Unity FBX, Godot FBX2glTF | glTF with `KHR_lights_punctual` lights and cameras imported, instantiated and exported (ADR-0172); FBX (binary/ASCII) and OBJ/MTL import through ufbx with meshes, materials, textures, skins, blend shapes, baked animation, lights and cameras (ADR-0173) | S3 | done | separate roughness/metalness texture packing, bump-to-normal conversion, animated light/camera properties (documented limits) |
 | GAP-31 | **Build size and startup unknown** (see GAP-05) | Defold 2.56 MB empty build | Unknown; the Special Ops build carries a ~601 MB content pack (Project- BUILD_AND_TEST_LOG), so engine size is hidden | S2 | open | Measure; strip unused modules per project like Defold's App Manifest |

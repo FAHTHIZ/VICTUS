@@ -76,10 +76,6 @@
 
 using namespace victus;
 
-namespace victus_cli {
-extern const std::string_view kPluginSdkHeader; // generated from victus_plugin.h (CMakeLists.txt)
-}
-
 namespace {
 
 constexpr const char* kUsage =
@@ -1206,128 +1202,9 @@ int cmd_diagnose(const std::vector<std::string>& a) {
 
 // Native plugins (ADR-0078, docs/PLUGINS.md): list and check `<project>/plugins`, load them for
 // real with --load, or scaffold a new C plugin with --new NAME.
-constexpr std::string_view kPluginTemplateC = R"C(/* NAME: a VICTUS native plugin (docs/PLUGINS.md). */
-#include "victus/plugin/victus_plugin.h"
-
-static const VictusHostApi* g_host;
-static const VictusLogV1* g_log;
-static const VictusSystemsV1* g_systems;
-static const VictusSceneV1* g_scene;
-static const VictusFunctionsV1* g_functions;
-
-/* Runs every frame: spins the entity named "Spinner" around Y, if the scene has one. */
-static void spin(void* user, VictusScene* scene, float dt) {
-    static float angle;
-    float q[4];
-    VictusEntity e = g_scene->find_by_name(scene, "Spinner");
-    (void)user;
-    if (e == VICTUS_NULL_ENTITY) return;
-    angle += dt;
-    /* Quaternion for `angle` radians about +Y (small-angle-safe without libm). */
-    q[0] = 0.0f;
-    q[1] = angle / 2.0f - (angle * angle * angle) / 48.0f;
-    q[2] = 0.0f;
-    q[3] = 1.0f - (angle * angle) / 8.0f;
-    if (angle > 1.0f) angle = 0.0f;
-    g_scene->set_rotation(scene, e, q);
-}
-
-/* Luau: plugins.call("NAME.greet", "world") --> "hello from NAME" */
-static int greet(void* user, const char* args_json, VictusCallResult* result) {
-    (void)user;
-    (void)args_json;
-    g_functions->set_result(result, "\"hello from NAME\"");
-    return VICTUS_PLUGIN_OK;
-}
-
-static int init(void* user) {
-    (void)user;
-    if (g_systems->add_system(g_host->host, "spin", VICTUS_PHASE_UPDATE, spin, 0) != VICTUS_PLUGIN_OK) return VICTUS_PLUGIN_ERROR;
-    if (g_functions->register_function(g_host->host, "greet", greet, 0) != VICTUS_PLUGIN_OK) return VICTUS_PLUGIN_ERROR;
-    g_log->write(g_host->host, VICTUS_LOG_INFO, "NAME plugin initialized");
-    return VICTUS_PLUGIN_OK;
-}
-
-static void shutdown(void* user) {
-    (void)user;
-    g_log->write(g_host->host, VICTUS_LOG_INFO, "NAME plugin shut down");
-}
-
-VICTUS_PLUGIN_EXPORT int victus_plugin_entry(const VictusHostApi* host, VictusPluginDesc* out) {
-    if (host->api_major != VICTUS_PLUGIN_API_MAJOR) return VICTUS_PLUGIN_ERROR;
-    g_host = host;
-    g_log = (const VictusLogV1*)host->get_interface(host->host, VICTUS_LOG_INTERFACE_1);
-    g_systems = (const VictusSystemsV1*)host->get_interface(host->host, VICTUS_SYSTEMS_INTERFACE_1);
-    g_scene = (const VictusSceneV1*)host->get_interface(host->host, VICTUS_SCENE_INTERFACE_1);
-    g_functions = (const VictusFunctionsV1*)host->get_interface(host->host, VICTUS_FUNCTIONS_INTERFACE_1);
-    if (!g_log || !g_systems || !g_scene || !g_functions) return VICTUS_PLUGIN_ERROR;
-    out->struct_size = sizeof *out;
-    out->api_major = VICTUS_PLUGIN_API_MAJOR;
-    out->api_minor = VICTUS_PLUGIN_API_MINOR;
-    out->user = 0;
-    out->init = init;
-    out->shutdown = shutdown;
-    return VICTUS_PLUGIN_OK;
-}
-)C";
-
-constexpr std::string_view kPluginTemplateCMake = R"CM(# Builds the NAME plugin library into bin/ next to NAME.vplugin:
-#   cmake -S . -B build && cmake --build build --config Release
-cmake_minimum_required(VERSION 3.20)
-project(NAME C)
-add_library(NAME MODULE src/NAME.c)
-target_include_directories(NAME PRIVATE include)
-# "$<1:...>" keeps multi-config generators from adding a Debug/Release subfolder.
-set_target_properties(NAME PROPERTIES PREFIX "" C_VISIBILITY_PRESET hidden
-    LIBRARY_OUTPUT_DIRECTORY "$<1:${CMAKE_CURRENT_SOURCE_DIR}/bin>")
-if(APPLE)
-    set_target_properties(NAME PROPERTIES SUFFIX ".dylib")
-endif()
-)CM";
-
-constexpr std::string_view kPluginTemplateManifest = R"J({
-  "name": "NAME",
-  "version": "0.1.0",
-  "api": "API",
-  "description": "A native VICTUS plugin.",
-  "libraries": {
-    "linux": "bin/NAME.so",
-    "windows": "bin/NAME.dll",
-    "macos": "bin/NAME.dylib"
-  },
-  "dependencies": {},
-  "targets": ["player", "editor"],
-  "enabled": true
-}
-)J";
-
-std::string fill_template(std::string_view text, std::string_view name) {
-    std::string out(text);
-    auto replace_all = [&out](std::string_view key, const std::string& value) {
-        for (std::size_t at = out.find(key); at != std::string::npos; at = out.find(key, at + value.size()))
-            out.replace(at, key.size(), value);
-    };
-    replace_all("NAME", std::string(name));
-    replace_all("\"API\"", std::format("\"{}.{}\"", VICTUS_PLUGIN_API_MAJOR, VICTUS_PLUGIN_API_MINOR));
-    return out;
-}
-
 int plugins_new(const fs::Path& root, const std::string& name) {
+    if (auto st = plugin::scaffold(root / "plugins", name); !st) return error(st.error().message);
     const fs::Path dir = root / "plugins" / name;
-    std::error_code ec;
-    if (std::filesystem::exists(dir, ec)) return error(dir.string() + " already exists");
-    std::filesystem::create_directories(dir / "src", ec);
-    std::filesystem::create_directories(dir / "include" / "victus" / "plugin", ec);
-    if (ec) return error("cannot create " + dir.string() + ": " + ec.message());
-    const std::pair<fs::Path, std::string> files[] = {
-        {dir / (name + std::string(plugin::kManifestExtension)), fill_template(kPluginTemplateManifest, name)},
-        {dir / "src" / (name + ".c"), fill_template(kPluginTemplateC, name)},
-        {dir / "CMakeLists.txt", fill_template(kPluginTemplateCMake, name)},
-        {dir / "include" / "victus" / "plugin" / "victus_plugin.h", std::string(victus_cli::kPluginSdkHeader)},
-        {dir / ".gitignore", "build/\nbin/\n"},
-    };
-    for (const auto& [path, text] : files)
-        if (auto st = fs::write_text_atomic(path, text); !st) return error(st.error().message);
     std::printf("created plugin '%s' in %s\n", name.c_str(), dir.string().c_str());
     std::printf("build it: cmake -S %s -B %s && cmake --build %s --config Release\n", dir.string().c_str(),
                 (dir / "build").string().c_str(), (dir / "build").string().c_str());
@@ -1343,11 +1220,7 @@ int cmd_plugins(const std::vector<std::string>& a) {
     if (auto st = p.parse(a); !st) return error(st.error().message);
     auto proj = project::Project::open(p.get("project"));
     if (!proj) return error(proj.error().message);
-    if (!p.get("new").empty()) {
-        if (auto m = plugin::parse_manifest(std::format(R"({{"name":"{}","version":"0.1.0","api":"1.0"}})", p.get("new")), {}); !m)
-            return error("plugin names are 1-64 characters of [a-z0-9_]");
-        return plugins_new(proj->root(), p.get("new"));
-    }
+    if (!p.get("new").empty()) return plugins_new(proj->root(), p.get("new"));
     const fs::Path dir = proj->root() / "plugins";
     std::printf("plugin API %u.%u, platform %s\n", VICTUS_PLUGIN_API_MAJOR, VICTUS_PLUGIN_API_MINOR,
                 std::string(plugin::platform_key()).c_str());

@@ -15,6 +15,7 @@ static const VictusLogV1* g_log;
 static const VictusSystemsV1* g_systems;
 static const VictusSceneV1* g_scene;
 static const VictusFunctionsV1* g_functions;
+static const VictusEditorV1* g_editor; /* NULL unless loaded by an editor host */
 static int g_ticks;
 
 static void mover(void* user, VictusScene* scene, float dt) {
@@ -91,6 +92,42 @@ static int relay(void* user, const char* args, VictusCallResult* result) {
     return VICTUS_PLUGIN_OK;
 }
 
+/* Studio commands (victus.editor.1). */
+static int cmd_spawn(void* user, VictusScene* scene) {
+    float p[3] = {1.0f, 2.0f, 3.0f};
+    VictusEntity e;
+    (void)user;
+    e = g_scene->create(scene, "PluginCube", VICTUS_NULL_ENTITY);
+    if (e == VICTUS_NULL_ENTITY) return VICTUS_PLUGIN_ERROR;
+    g_scene->set_position(scene, e, p);
+    g_scene->create(scene, "PluginCubeChild", e);
+    g_editor->notify(g_host->host, "spawned", 0);
+    return VICTUS_PLUGIN_OK;
+}
+static int cmd_clear(void* user, VictusScene* scene) {
+    VictusEntity e;
+    (void)user;
+    while ((e = g_scene->find_by_name(scene, "PluginCube")) != VICTUS_NULL_ENTITY) g_scene->destroy(scene, e);
+    return VICTUS_PLUGIN_OK;
+}
+static int cmd_noop(void* user, VictusScene* scene) {
+    (void)user;
+    (void)scene;
+    return VICTUS_PLUGIN_OK;
+}
+static int cmd_broken(void* user, VictusScene* scene) {
+    (void)user;
+    (void)scene;
+    g_host->set_error(g_host->host, "nothing selected");
+    return VICTUS_PLUGIN_ERROR;
+}
+static int has_editor(void* user, const char* args, VictusCallResult* result) {
+    (void)user;
+    (void)args;
+    g_functions->set_result(result, g_editor ? "true" : "false");
+    return VICTUS_PLUGIN_OK;
+}
+
 static int plugin_init(void* user) {
     (void)user;
     g_log->write(g_host->host, VICTUS_LOG_INFO, "init");
@@ -103,6 +140,15 @@ static int plugin_init(void* user) {
     g_functions->register_function(g_host->host, "fail", fail, NULL);
     g_functions->register_function(g_host->host, "relay", relay, NULL);
     if (g_functions->register_function(g_host->host, "greet", greet, NULL) == VICTUS_PLUGIN_OK) return 1;
+    g_functions->register_function(g_host->host, "has_editor", has_editor, NULL);
+    if (g_editor) {
+        if (g_editor->add_command(g_host->host, "spawn", "Spawn Plugin Cube", cmd_spawn, NULL) != VICTUS_PLUGIN_OK) return 1;
+        if (g_editor->add_command(g_host->host, "spawn", "again", cmd_spawn, NULL) == VICTUS_PLUGIN_OK) return 1;
+        if (g_editor->add_command(g_host->host, "Bad Name", "x", cmd_spawn, NULL) == VICTUS_PLUGIN_OK) return 1;
+        g_editor->add_command(g_host->host, "clear", "Clear Plugin Cubes", cmd_clear, NULL);
+        g_editor->add_command(g_host->host, "noop", "Do Nothing", cmd_noop, NULL);
+        g_editor->add_command(g_host->host, "broken", "", cmd_broken, NULL);
+    }
 #if TEST_PLUGIN_MODE == MODE_FAIL_INIT
     g_host->set_error(g_host->host, "boom");
     return VICTUS_PLUGIN_ERROR;
@@ -127,6 +173,7 @@ VICTUS_PLUGIN_EXPORT int victus_plugin_entry(const VictusHostApi* host, VictusPl
     g_functions = (const VictusFunctionsV1*)host->get_interface(host->host, VICTUS_FUNCTIONS_INTERFACE_1);
     if (!g_log || !g_systems || !g_scene || !g_functions) return VICTUS_PLUGIN_ERROR;
     if (host->get_interface(host->host, "victus.does_not_exist.1") != NULL) return VICTUS_PLUGIN_ERROR;
+    g_editor = (const VictusEditorV1*)host->get_interface(host->host, VICTUS_EDITOR_INTERFACE_1);
     out->struct_size = sizeof *out;
     out->api_major = VICTUS_PLUGIN_API_MAJOR;
 #if TEST_PLUGIN_MODE == MODE_NEWER_API

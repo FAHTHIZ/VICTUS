@@ -98,11 +98,28 @@ struct PluginStatus {
     fs::Path library; // resolved library path (empty when none for this platform)
     std::vector<std::string> systems;   // registered system names
     std::vector<std::string> functions; // registered function names
+    std::vector<std::string> commands;  // registered Studio command ids (editor target)
 };
 
 struct HostOptions {
     std::string target{"player"}; // matched against Manifest::targets
+    // Receives victus.editor.1 notify() calls (plugin name, message, is_error). Editor hosts only.
+    std::function<void(std::string_view plugin, std::string_view message, bool error)> notify;
 };
+
+// A Studio command registered through victus.editor.1 (editor target only).
+struct Command {
+    std::string id;     // "<plugin>.<name>"
+    std::string label;  // shown in menus
+    std::string plugin; // owner
+};
+
+// Creates `<plugins_dir>/<name>/` with a manifest, a C template (a system, a function and a Studio
+// command), a CMake file, the SDK header and a .gitignore. Fails when the name is invalid or the
+// folder exists. Used by `victus plugins --new` and the Studio's Plugins panel.
+Status scaffold(const fs::Path& plugins_dir, std::string_view name);
+// Rewrites the manifest's "enabled" field, keeping every other field as it was.
+Status set_enabled(const fs::Path& manifest_path, bool enabled);
 
 class PluginManager {
 public:
@@ -125,6 +142,11 @@ public:
     [[nodiscard]] Result<std::string> call(std::string_view full_name, std::string_view args_json);
     [[nodiscard]] bool has_function(std::string_view full_name) const;
     [[nodiscard]] std::vector<std::string> function_names() const;
+
+    // Studio commands of loaded plugins, in registration order.
+    [[nodiscard]] std::vector<Command> commands() const;
+    // Runs a command on `scene`. Errors name the command and carry the plugin's reason.
+    Status run_command(std::string_view id, scene::Scene& scene);
 
     // Shuts loaded plugins down in reverse init order and unloads their libraries. Idempotent;
     // also run by the destructor.

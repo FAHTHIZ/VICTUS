@@ -14,6 +14,7 @@
 #include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/assets/import_queue.hpp"
+#include "victus/plugin/plugin.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/asset_store.hpp"
 #include "victus/editor/bt_document.hpp"
@@ -163,6 +164,7 @@ enum class Panel : std::uint8_t {
     AssetStore,
     BehaviorTreeEditor,
     ImportQueue,
+    Plugins,
     Count
 };
 [[nodiscard]] const char* panel_title(Panel panel) noexcept;
@@ -309,6 +311,26 @@ public:
     // collider meshes, reports failures, and summarises a batch when the queue goes idle. Called
     // every frame; returns how many finished items were handled.
     std::size_t poll_imports();
+
+    // ---- native plugins (ADR-0192, docs/PLUGINS.md) ----
+    // Plugins whose manifest targets "editor" load when a project opens (not in safe mode) and can
+    // add Studio commands; Play loads the "player" plugins fresh, like `victus run`, and the
+    // editor ones are unloaded for the duration (one copy of a library at a time). Rescans the
+    // manifests and reloads the editor plugins (picks up rebuilt libraries); no-op while playing.
+    void reload_plugins();
+    void unload_plugins(); // unloads the editor plugins (e.g. so a rebuild can replace a locked .dll)
+    [[nodiscard]] plugin::PluginManager* editor_plugins() noexcept { return editor_plugins_.get(); }
+    [[nodiscard]] plugin::PluginManager* play_plugins() noexcept { return play_plugins_.get(); }
+    [[nodiscard]] const std::vector<plugin::Manifest>& plugin_manifests() const noexcept { return plugin_manifests_; }
+    // Plugin states from the last Play session (kept after Stop for the Plugins panel).
+    [[nodiscard]] const std::vector<plugin::PluginStatus>& play_plugin_statuses() const noexcept { return play_plugin_statuses_; }
+    // Runs a Studio command ("<plugin>.<name>") on the open scene as one undo step (nothing is
+    // recorded when it changes nothing). Refused during Play.
+    Status run_plugin_command(std::string_view id);
+    // Writes "enabled" into the plugin's manifest and reloads.
+    Status set_plugin_enabled(std::string_view name, bool enabled);
+    // Creates plugins/<name> from the C template (plugin::scaffold) and rescans.
+    Status create_plugin(std::string_view name);
     // Copies files (or whole folders) from anywhere on disk into the project's assets and imports
     // them: what dropping files on the Studio window and Assets > Import do. Files go to the folder
     // selected in the Assets panel, else to a folder for their type (images -> textures/, models ->
@@ -1192,6 +1214,16 @@ private:
     void draw_asset_item(const assets::AssetRecord& r); // context menu, drag source, double-click, tooltip
     std::unique_ptr<runtime::AssetHotReloader> hot_reload_; // watches assets/ while a project is open
     std::unique_ptr<assets::ImportQueue> imports_;          // background imports (ADR-0189)
+    std::unique_ptr<plugin::PluginManager> editor_plugins_; // "editor" target, while editing
+    std::unique_ptr<plugin::PluginManager> play_plugins_;   // "player" target, during Play
+    std::vector<plugin::Manifest> plugin_manifests_;
+    std::vector<plugin::DiscoveryIssue> plugin_issues_;
+    std::vector<plugin::PluginStatus> play_plugin_statuses_;
+    bool plugins_suspended_{false}; // editor plugins unloaded for Play; reload on Stop
+    bool show_plugins_{false};
+    std::string plugin_new_name_;
+    void draw_plugins_panel();
+    void draw_plugin_menu_items();
     struct ImportBatch {
         std::size_t imported{0}, up_to_date{0}, failed{0}, cancelled{0};
         bool reported{true};
