@@ -186,7 +186,9 @@ TEST_CASE("pack v2: a damaged zstd frame never decodes to wrong bytes") {
     REQUIRE(w.add("scene.json", compressible(100000)).ok());
     const fs::Path good = dir.path / "good.vpak";
     REQUIRE(w.write(good).ok());
-    const auto* e = (*pack::Pack::open(good))->find("scene.json");
+    auto good_pack = pack::Pack::open(good); // keep the pack alive: find() points into it
+    REQUIRE(good_pack.ok());
+    const auto* e = (*good_pack)->find("scene.json");
     REQUIRE(e);
     REQUIRE(e->codec == pack::Codec::Zstd);
     for (std::uint64_t at : {std::uint64_t{0}, std::uint64_t{5}, e->stored_size / 2, e->stored_size - 1}) {
