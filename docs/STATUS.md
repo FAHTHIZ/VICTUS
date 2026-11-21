@@ -2334,3 +2334,17 @@ Verified (Release, GCC, lavapipe, 2 vCPU):
 Not covered: no real GPU or phone frame capture; no compute culling; the draw-distance edge is cluster-granular; painting a chunk rebuilds the entity's whole group.
 
 Next task: simulation schedule with phases and LOD tick rates (GAP-09, ADR-0165).
+
+## 2026-11-21 — Ordered systems and simulation LOD (ADR-0165, GAP-09 slice 1)
+
+Built: `Simulation::add_system(name, phase, fn, SystemOptions{after, before, interval, offset})` with a stable depth-first order per phase, cycle and unknown-name reporting (`schedule_diagnostics()`, logged by the player), interval systems that receive the summed delta of skipped passes, and `schedule(phase)` for tools. `SimulationLod` / `SimulationLodSource` components, `SimulationLodSettings` resource (30/80/200 m, every 1/2/4/8 frames, 10 % hysteresis, camera fallback) and the built-in `simlod.assign` PreUpdate system with staggered due frames. Consumers: behaviour trees (component and `set_tree` trees; `AiStats::lod_skipped`), animators (`AnimationStats::lod_skipped`), Rotator, Oscillator. Player profile counters `sim.lod_entities`, `sim.lod_due`, `sim.lod_tier0..3`.
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- `victus_gameplay_tests` (new): 9 cases, 370 assertions pass; `simlod.assign` for 20,000 agents measured at 0.37 ms per frame.
+- `victus_ai_tests`: 7/7 cases, 133 assertions pass; the new case shows a tier-3 tree skipping most frames and finishing a 1 s wait within 8 frames of the near tree.
+- `victus_animation_tests`: 943 assertions pass.
+- full build with warnings checked (one `-Wshadow=local` in player.cpp fixed), then `ctest --test-dir build -j2`: 40/40 pass; 4 GPU reference suites skipped as in earlier runs.
+
+Not covered: no parallel execution of independent systems; physics, scripts and particles ignore LOD; no screen-size or visibility term; no city-scale frame capture yet.
+
+Next task: GAP-24 wheeled vehicles on Jolt's `VehicleConstraint` (ADR-0166).

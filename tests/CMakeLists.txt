@@ -391,3 +391,8 @@ foreach(mode IN ITEMS OK FAIL_INIT NEWER_API NO_ENTRY)
     target_compile_definitions(victus_plugin_tests PRIVATE
         VICTUS_TEST_PLUGIN_${mode}="$<TARGET_FILE:victus_test_plugin_${mode_lower}>")
 endforeach()
+
+victus_add_test(victus_gameplay_tests
+    SOURCES gameplay/schedule_tests.cpp
+    DEPS VICTUS::Gameplay VICTUS::Core
+    LABELS gameplay)

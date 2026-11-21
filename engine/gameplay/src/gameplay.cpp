@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/gameplay/framework.hpp"
+#include "victus/gameplay/sim_lod.hpp"
 #include "victus/gameplay/water.hpp"
 
 #include "victus/core/profiler.hpp"
@@ -15,8 +16,21 @@ namespace victus::gameplay {
 using json::Value;
 
 void Simulation::add_system(std::string name, Phase phase, SystemFn fn) {
+    add_system(std::move(name), phase, std::move(fn), SystemOptions{});
+}
+
+void Simulation::add_system(std::string name, Phase phase, SystemFn fn, SystemOptions options) {
     const char* zone = profiler::intern("system." + name);
-    systems_.push_back({std::move(name), phase, std::move(fn), true, zone});
+    options.interval = std::max<std::uint32_t>(options.interval, 1);
+    options.offset %= options.interval;
+    SystemInfo info;
+    info.name = std::move(name);
+    info.phase = phase;
+    info.fn = std::move(fn);
+    info.zone = zone;
+    info.options = std::move(options);
+    systems_.push_back(std::move(info));
+    order_dirty_ = true;
 }
 
 SystemInfo* Simulation::find(std::string_view name) {
@@ -29,13 +43,126 @@ void Simulation::reset() noexcept {
     accumulator_ = 0;
     time_ = {};
     fixed_steps_ = 0;
+    for (auto& s : systems_) {
+        s.passes = 0;
+        s.runs = 0;
+        s.pending_dt = 0;
+    }
+}
+
+// Stable topological sort per phase (Kahn's algorithm, ready systems taken in registration
+// order). Members of a cycle are appended in registration order and reported.
+void Simulation::build_order() {
+    if (!order_dirty_) return;
+    order_dirty_ = false;
+    diagnostics_.clear();
+    for (std::size_t p = 0; p < order_.size(); ++p) {
+        auto& order = order_[p];
+        order.clear();
+        std::vector<std::size_t> members;
+        for (std::size_t i = 0; i < systems_.size(); ++i)
+            if (static_cast<std::size_t>(systems_[i].phase) == p) members.push_back(i);
+        if (members.empty()) continue;
+        const auto local = [&](std::string_view name) -> std::ptrdiff_t {
+            for (std::size_t k = 0; k < members.size(); ++k)
+                if (systems_[members[k]].name == name) return static_cast<std::ptrdiff_t>(k);
+            return -1;
+        };
+        std::vector<std::vector<std::size_t>> edges(members.size()); // a -> b: a runs before b
+        std::vector<std::size_t> indegree(members.size(), 0);
+        const auto edge = [&](std::size_t a, std::size_t b) {
+            if (a == b) return;
+            if (std::find(edges[a].begin(), edges[a].end(), b) != edges[a].end()) return;
+            edges[a].push_back(b);
+            ++indegree[b];
+        };
+        for (std::size_t k = 0; k < members.size(); ++k) {
+            const SystemInfo& s = systems_[members[k]];
+            for (const auto& a : s.options.after) {
+                const auto o = local(a);
+                if (o < 0) diagnostics_.push_back("system '" + s.name + "': after '" + a + "' is not in its phase");
+                else edge(static_cast<std::size_t>(o), k);
+            }
+            for (const auto& b : s.options.before) {
+                const auto o = local(b);
+                if (o < 0) diagnostics_.push_back("system '" + s.name + "': before '" + b + "' is not in its phase");
+                else edge(k, static_cast<std::size_t>(o));
+            }
+        }
+        // Members of cycles: whatever Kahn's algorithm cannot remove.
+        std::vector<std::size_t> in = indegree;
+        std::vector<bool> removed(members.size(), false);
+        for (bool progress = true; progress;) {
+            progress = false;
+            for (std::size_t k = 0; k < members.size(); ++k)
+                if (!removed[k] && in[k] == 0) {
+                    removed[k] = true;
+                    progress = true;
+                    for (const std::size_t b : edges[k]) --in[b];
+                }
+        }
+        // Each system is placed in registration order, right after the systems it must follow
+        // (placed first, recursively), so constraints move as few systems as possible.
+        std::vector<std::vector<std::size_t>> preds(members.size());
+        for (std::size_t k = 0; k < members.size(); ++k)
+            for (const std::size_t b : edges[k]) preds[b].push_back(k);
+        for (auto& pr : preds) std::sort(pr.begin(), pr.end());
+        std::vector<bool> placed(members.size(), false);
+        const auto place = [&](auto&& self, std::size_t k) -> void {
+            if (placed[k] || !removed[k]) return;
+            placed[k] = true;
+            for (const std::size_t q : preds[k]) self(self, q);
+            order.push_back(members[k]);
+        };
+        // A system's predecessors are emitted before it, so mark-then-recurse is safe in a DAG.
+        for (std::size_t k = 0; k < members.size(); ++k) {
+            if (placed[k] || !removed[k]) continue;
+            place(place, k);
+        }
+        std::string cycle;
+        for (std::size_t k = 0; k < members.size(); ++k)
+            if (!removed[k]) {
+                if (!cycle.empty()) cycle += ", ";
+                cycle += systems_[members[k]].name;
+                order.push_back(members[k]);
+            }
+        if (!cycle.empty()) diagnostics_.push_back("ordering cycle among: " + cycle + " (registration order kept)");
+    }
+}
+
+std::vector<std::string> Simulation::schedule(Phase phase) {
+    build_order();
+    std::vector<std::string> names;
+    for (const std::size_t i : order_[static_cast<std::size_t>(phase)]) names.push_back(systems_[i].name);
+    return names;
+}
+
+const std::vector<std::string>& Simulation::schedule_diagnostics() {
+    build_order();
+    return diagnostics_;
 }
 
 void Simulation::run_phase(scene::Scene& scene, Phase phase, const FrameTime& t) {
-    for (auto& s : systems_) {
-        if (!s.enabled || s.phase != phase || !s.fn) continue;
+    build_order();
+    for (const std::size_t i : order_[static_cast<std::size_t>(phase)]) {
+        SystemInfo& s = systems_[i];
+        if (!s.enabled || !s.fn) continue;
+        const std::uint32_t interval = s.options.interval;
+        const std::uint64_t pass = s.passes++;
+        if (interval <= 1) {
+            ++s.runs;
+            profiler::ScopedZone zone(s.zone ? s.zone : "system");
+            s.fn(scene, t);
+            continue;
+        }
+        s.pending_dt += t.dt;
+        if ((pass + s.options.offset) % interval != 0) continue;
+        FrameTime st = t;
+        st.dt = static_cast<float>(s.pending_dt);
+        s.pending_dt = 0;
+        ++s.runs;
         profiler::ScopedZone zone(s.zone ? s.zone : "system");
-        s.fn(scene, t);
+        s.fn(scene, st);
     }
 }
 
@@ -86,6 +213,7 @@ void Simulation::tick(scene::Scene& scene, float dt) {
 void register_components() {
     register_framework_components();
     register_water_components();
+    register_simulation_lod_components();
     auto& r = scene::SerializerRegistry::instance();
     r.add<RotatorComponent>(
         "Rotator",
@@ -266,15 +394,19 @@ void register_components() {
 
 void add_builtin_systems(Simulation& sim) {
     sim.add_system("gameplay.events", Phase::PreUpdate, [](scene::Scene& s, const FrameTime&) { begin_event_tick(s); });
+    sim.add_system("simlod.assign", Phase::PreUpdate, [](scene::Scene& s, const FrameTime& t) { update_simulation_lod(s, t); });
     sim.add_system("gameplay.water", Phase::FixedUpdate, [](scene::Scene& s, const FrameTime& t) { advance_water_time(s, t.dt); });
     sim.add_system("gameplay.timers", Phase::FixedUpdate, [](scene::Scene& s, const FrameTime& t) { update_timers(s, static_cast<float>(t.dt)); });
     sim.add_system("gameplay.attributes", Phase::FixedUpdate,
                    [](scene::Scene& s, const FrameTime& t) { update_attributes(s, static_cast<float>(t.dt)); });
     sim.add_system("builtin.rotator", Phase::Update, [](scene::Scene& s, const FrameTime& t) {
         VICTUS_PROFILE_SCOPE("gameplay.rotator");
-        s.world().each<RotatorComponent, scene::Transform>([&](const RotatorComponent& r, scene::Transform& tr) {
+        auto& w = s.world();
+        w.each<RotatorComponent, scene::Transform>([&](scene::Entity e, const RotatorComponent& r, scene::Transform& tr) {
             if (math::length(r.axis) <= 0) return;
-            const math::Quat dq = math::Quat::axis_angle(r.axis, math::radians(r.degrees_per_second) * t.dt);
+            const LodTick lt = simulation_lod_tick(w.get<SimulationLodComponent>(e), t.dt);
+            if (!lt.due) return;
+            const math::Quat dq = math::Quat::axis_angle(r.axis, math::radians(r.degrees_per_second) * lt.dt);
             tr.rotation = math::normalize(tr.rotation * dq);
         });
     });
@@ -290,7 +422,9 @@ void add_builtin_systems(Simulation& sim) {
     sim.add_system("builtin.oscillator", Phase::Update, [](scene::Scene& s, const FrameTime& t) {
         VICTUS_PROFILE_SCOPE("gameplay.oscillator");
         const double now = t.time + t.dt;
-        s.world().each<OscillatorComponent, scene::Transform>([&](OscillatorComponent& o, scene::Transform& tr) {
+        auto& w = s.world();
+        w.each<OscillatorComponent, scene::Transform>([&](scene::Entity e, OscillatorComponent& o, scene::Transform& tr) {
+            if (o.has_origin && !simulation_lod_tick(w.get<SimulationLodComponent>(e), t.dt).due) return;
             if (!o.has_origin) {
                 o.origin = tr.position;
                 o.has_origin = true;

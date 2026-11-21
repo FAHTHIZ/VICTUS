@@ -3,6 +3,7 @@
 // navigation-driven move_to, perception (sight cone, teams, occlusion, memory, hearing) and the
 // BehaviorTree component with a tree loader.
 #include "victus/ai/ai.hpp"
+#include "victus/gameplay/sim_lod.hpp"
 #include "victus/navigation/navigation.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/scene/reflect.hpp"
@@ -400,4 +401,41 @@ TEST_CASE("ai: BehaviorTree components load trees through the loader, reload and
     // Components are reflected for scenes and the inspector.
     for (const char* n : {"BehaviorTree", "Perception", "Perceptible"}) CHECK(scene::find_schema(n));
     CHECK(scene::find_schema("Perception")->field("fov")->hint == "degrees");
+}
+
+TEST_CASE("ai: simulation LOD ticks far trees less often with the same simulated time (ADR-0165)") {
+    gameplay::register_components();
+    Scene s;
+    AiSystem ai;
+    gameplay::Simulation sim;
+    gameplay::add_builtin_systems(sim);
+    add_ai_systems(sim, ai);
+    const Entity src = actor(s, {0, 0, 0}, "Player");
+    s.world().add<gameplay::SimulationLodSource>(src);
+    const Entity near = actor(s, {2, 0, 0}, "Near");
+    const Entity far = actor(s, {400, 0, 0}, "Far");
+    for (const Entity e : {near, far}) s.world().add<gameplay::SimulationLodComponent>(e);
+    const auto waiter = tree(R"({"root": {"type": "sequence", "children": [
+        {"type": "wait", "seconds": 1}, {"type": "set", "key": "done", "value": true}]}})");
+    sim.tick(s, 1.0f / 60.0f);
+    sim.tick(s, 1.0f / 60.0f);
+    ai.set_tree(s, near, waiter);
+    ai.set_tree(s, far, waiter);
+    std::uint32_t skipped = 0;
+    int near_frames = -1, far_frames = -1;
+    for (int i = 0; i < 120 && (near_frames < 0 || far_frames < 0); ++i) {
+        sim.tick(s, 1.0f / 60.0f);
+        skipped += ai.stats().lod_skipped;
+        if (near_frames < 0 && ai.blackboard(s, near)->has("done")) near_frames = i;
+        if (far_frames < 0 && ai.blackboard(s, far)->has("done")) far_frames = i;
+    }
+    CHECK(s.world().get<gameplay::SimulationLodComponent>(far)->tier == 3);
+    CHECK(skipped > 40); // the far tree runs on one frame in eight
+    REQUIRE(near_frames >= 0);
+    REQUIRE(far_frames >= 0);
+    CHECK(near_frames >= 58);
+    CHECK(near_frames <= 62);
+    // The far agent finishes on its first due frame after one second: at most one interval late.
+    CHECK(far_frames >= near_frames);
+    CHECK(far_frames <= near_frames + 8);
 }

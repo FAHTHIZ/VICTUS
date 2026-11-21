@@ -189,6 +189,7 @@ struct AnimatorStatus {
 struct AnimationStats {
     std::uint32_t animators{0}, channels_sampled{0}, nodes_written{0}, missing_models{0};
     std::uint32_t controlled{0}, transitions{0}, controller_errors{0};
+    std::uint32_t lod_skipped{0}; // animators not due this frame under simulation LOD (ADR-0165)
     IkStats ik; // inverse kinematics applied after the animated pose (ik.hpp)
     FootPlacementStats feet; // foot placement before IK (foot_placement.hpp; needs a ground probe)
 };

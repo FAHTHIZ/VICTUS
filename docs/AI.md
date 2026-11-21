@@ -11,6 +11,19 @@ clients all run an `AiSystem` after navigation.
 | `BehaviorTree` | `tree` (asset path, e.g. `ai/guard.vbt`), `tick_interval` (s, 0 = every frame), `enabled` | Runs a tree on the entity |
 | `Perception` | `sight_range`, `fov` (full cone around +Z), `eye_height`, `hearing_range`, `memory`, `target_mask`, `occlusion_mask`, `line_of_sight`, `target_key` | Sees and hears |
 | `Perceptible` | `team` (bits), `height` (aim point), `enabled` | Can be noticed |
+| `SimulationLod` | `bias` (m), `always_full` | Far agents tick on fewer frames with the summed delta (see below) |
+
+### Simulation LOD (ADR-0165)
+
+Add `SimulationLod` to agents in large worlds and `SimulationLodSource` to the player (without a
+source the primary camera is used). Each frame `simlod.assign` places the agent in a tier by its
+distance to the nearest source: within 30 m it updates every frame, then every 2nd (80 m), 4th
+(200 m) and 8th frame beyond. A tree that is not due is skipped; when it is due it receives the
+time since its last update, so waits, timers and movement keep exact totals. Due frames are
+staggered across agents, so a thousand far agents cost about 125 tree updates per frame.
+`always_full` pins important agents to full rate; `bias` adds metres to the distance. The scene's
+`SimulationLodSettings` resource changes the distances, intervals and hysteresis.
+`AiStats::lod_skipped` counts skipped trees; the player reports `sim.lod_tier0..3`.
 
 ## Tree files (`.vbt`)
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // AiSystem: perception, behaviour tree execution and registration.
 #include "victus/ai/ai.hpp"
+#include "victus/gameplay/sim_lod.hpp"
 
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
@@ -586,6 +587,7 @@ void AiSystem::update(Scene& scene, float dt) {
     w.each<BehaviorTreeComponent>([&](Entity e, BehaviorTreeComponent& c) { trees.emplace_back(e, c); });
     for (auto& [e, inst] : im.instances) inst.seen = false;
     stats_.trees = 0;
+    stats_.lod_skipped = 0;
     for (const auto& [e, c] : trees) {
         Instance& inst = im.instances[e];
         inst.seen = true;
@@ -604,7 +606,13 @@ void AiSystem::update(Scene& scene, float dt) {
         }
         if (!inst.tree) continue;
         ++stats_.trees;
-        inst.acc += dt;
+        // Simulation LOD (ADR-0165): far agents tick on their due frames with the summed delta.
+        const gameplay::LodTick lod = gameplay::simulation_lod_tick(w.get<gameplay::SimulationLodComponent>(e), dt);
+        if (!lod.due) {
+            ++stats_.lod_skipped;
+            continue;
+        }
+        inst.acc += lod.dt;
         const float interval = std::isfinite(c.tick_interval) ? std::max(c.tick_interval, 0.0f) : 0.0f;
         if (interval > 0 && inst.acc + 1e-6f < interval) continue;
         const float step = inst.acc;
@@ -618,10 +626,16 @@ void AiSystem::update(Scene& scene, float dt) {
             if (!it->second.seen && it->second.override_tree && w.alive(it->first) && it->second.tree) {
                 im.e = it->first;
                 Instance& inst = it->second;
-                inst.acc = 0;
-                im.run(inst, dt);
-                ++stats_.ticks;
                 ++stats_.trees;
+                const gameplay::LodTick lod =
+                    gameplay::simulation_lod_tick(w.get<gameplay::SimulationLodComponent>(it->first), dt);
+                if (lod.due) {
+                    inst.acc = 0;
+                    im.run(inst, lod.dt);
+                    ++stats_.ticks;
+                } else {
+                    ++stats_.lod_skipped;
+                }
             }
             if (!w.alive(it->first)) {
                 it = im.instances.erase(it);
