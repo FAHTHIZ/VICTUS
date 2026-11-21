@@ -76,6 +76,7 @@ void Editor::start_editor_clients() {
             so.input_map = project_->settings().input;
             so.save_version = project_->settings().save_version;
             so.default_locale = project_->settings().default_locale;
+            so.script_api = project_->settings().script_api;
             so.save_directory = project_->dev_save_directory();
             if (auto host = script::ScriptHost::create(so)) {
                 c->scripts = std::move(host).value();

@@ -2,6 +2,7 @@
 victus_add_module(script
     SOURCES
         src/script.cpp
+        src/api.cpp
         src/script_lua.cpp
         src/debugger.cpp
         src/dap.cpp

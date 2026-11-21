@@ -53,6 +53,7 @@ Value settings_to_json(const ProjectSettings& s) {
     v.set("input", s.input.to_json());
     if (s.save_version != 1) v.set("save_version", s.save_version);
     if (s.default_locale != "en") v.set("default_locale", s.default_locale);
+    v.set("script_api", script::to_string(s.script_api));
     return v;
 }
 
@@ -108,11 +109,19 @@ Status settings_from_json(const Value& source, ProjectSettings& s) {
     if (s.default_locale.empty() || s.default_locale.size() > 32 ||
         !std::ranges::all_of(s.default_locale, [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_'; }))
         return bad("default_locale must be a locale code such as \"en\" or \"pt-BR\"");
+    if (const Value* api = v.find("script_api")) {
+        if (!api->is_string()) return bad("script_api must be a version string such as \"1.0\"");
+        auto parsed = script::parse_api_version(api->as_string());
+        if (!parsed) return bad(parsed.error().message);
+        s.script_api = *parsed;
+    } else {
+        s.script_api = {1, 0}; // written before the script API was versioned
+    }
     s.extra = Value::object();
     for (const auto& [key, value] : v.as_object()) {
         if (key == "format" || key == "version" || key == "name" || key == "startup_scene" || key == "template" ||
             key == "engine_version" || key == "window" || key == "rendering" || key == "input" ||
-            key == "save_version" || key == "default_locale")
+            key == "save_version" || key == "default_locale" || key == "script_api")
             continue;
         s.extra.set(key, value);
     }

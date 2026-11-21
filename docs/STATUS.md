@@ -2235,3 +2235,13 @@ Verified (Release, GCC 15.2, lavapipe, Ubuntu 26.04, 2 vCPU): `victus_core_tests
 Not covered: decode cost on a phone; Windows `BCryptGenRandom` path of `os_random_bytes` compiled only in CI; installers, OS code signing and patches remain open (B6).
 
 Next task: confirm CI; then the next blocker in docs/PRODUCTION_READINESS_ROADMAP.md (B7 script API versioning or B3 device loss).
+
+## 2026-11-21 — Versioned script API 1.0 (ADR-0155, blocker B7)
+
+Built: `victus/script/api.hpp` (`kScriptApiVersion` 1.0, `parse_api_version`, `check_api_requirement`, `describe_api`, `api_symbols`, `diff_api`, `check_compatibility`, `check_snapshot_folder`); frozen snapshot `engine/script/api/victus_script_api_1.0.json` (20 globals, 126 Entity methods, 14 Entity members, 6 Bridge methods, 15 callbacks); `Entity` members moved from `strcmp` chains to one property table shared by `__index`/`__newindex` and the description; `HostOptions::script_api` (create() returns `VersionMismatch` when incompatible); `victus.project` `"script_api"` (new projects stamp 1.0, files without it read as 1.0, malformed values rejected), passed by the player, CLI and the three Studio script hosts; `victus check` project error; `victus script-api [--out|--write|--check]`; `victus info`/`version` print it; docs/SCRIPT_API.md. Also fixed the pack v2 test use-after-free that kept CI red after 8649027 (c444772).
+
+Verified (Release, GCC 15.2, lavapipe, Ubuntu 26.04, 2 vCPU): `victus_script_tests` 6 new cases (88 assertions: version parsing, compatibility rules incl. narrowing rw to r, live description includes VICTUS bindings and excludes Luau libraries, snapshot match, folder error messages, host refusal); `victus_project_tests` new script_api case (25 assertions); `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build/release -j2` 39/39; `victus script-api --check engine/script/api` passes; clang-tidy clean on api.cpp, script_lua.cpp, project.cpp. `victus_core_tests` 75/75 under ASan+UBSan for c444772.
+
+Not covered: argument lists and return-table shapes; deprecation warnings.
+
+Next task: confirm CI on this commit; then B3 (GPU device-loss recovery design) or generated Luau type definitions.

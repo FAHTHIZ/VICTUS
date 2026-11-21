@@ -9,6 +9,7 @@
 #include "victus/gameplay/input_map.hpp"
 #include "victus/project/characters.hpp"
 #include "victus/scene/scene.hpp"
+#include "victus/script/api.hpp"
 
 #include <string>
 #include <string_view>
@@ -62,6 +63,9 @@ struct ProjectSettings {
     // Locale whose string table (assets/localization/<locale>.vstrings) is used first and fills
     // in keys other locales lack ("default_locale").
     std::string default_locale{"en"};
+    // Script API the project's scripts are written for ("script_api", ADR-0155). New projects
+    // get the engine's current version; projects saved before the key existed read as 1.0.
+    script::ApiVersion script_api{script::kScriptApiVersion};
     json::Value extra = json::Value::object(); // unknown keys preserved verbatim
 };
 

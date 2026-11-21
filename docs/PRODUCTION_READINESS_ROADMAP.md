@@ -35,7 +35,7 @@ Items that keep the whole engine from production use, regardless of feature work
 | B4 | No shipped or external project | Workflows are verified by tests, not by an external developer building a game | External testers | [ ] |
 | B5 | Windows rendering untested | CI Windows runners have no GPU; D3D12 unusable (no DXIL) | Windows GPU machine | [!] blocked on hardware |
 | B6 | Packaging lacks installers, OS code signing, patches, cross-export (pack compression and pack signing done, ADR-0154) | Required for store distribution | Signing certificates for release | [~] |
-| B7 | Scripting API is unversioned | Game code can break between engine versions | — | [ ] |
+| B7 | Scripting API was unversioned | Game code could break between engine versions | — | [x] 2026-11-21 (ADR-0155): versioned, frozen snapshots enforced in CI; argument lists/return shapes not covered, no deprecation warnings yet |
 
 ## Subsystems
 
@@ -59,7 +59,7 @@ Items that keep the whole engine from production use, regardless of feature work
 | Navigation (Recast/Detour) | Usable | Single tile; whole-mesh rebuilds; no off-mesh links | Tiled navmesh |
 | Gameplay AI | Usable | No visual tree editor, no environment queries | Visual BT editor |
 | Gameplay framework / no-code behaviours | Usable | Attributes/inventories not replicated, no Studio inspector for them; no session/level lifecycle | Session lifecycle |
-| Scripting (Luau) | Usable | Unversioned API (B7); no attach to running player; interpreter only | API versioning |
+| Scripting (Luau) | Usable | Snapshot does not cover signatures or return shapes; no deprecation warnings; no attach to running player; interpreter only | Generated Luau type definitions (signatures in the snapshot, editor autocomplete) |
 | Visual scripting | Experimental | No breakpoints, user functions or comments | Breakpoints |
 | Audio (miniaudio) | Usable | Simple comb reverb; no per-source effects, HRTF, ducking, profiler | Ducking and per-source effects |
 | Particles / VFX | Experimental | CPU emitters do not collide; GPU emitters 3D only; no mesh particles | Mesh particles |
@@ -93,6 +93,7 @@ Newest first. Feature history before this file existed is in [../CHANGELOG.md](.
 
 | Date | Change | Evidence |
 |---|---|---|
+| 2026-11-21 | Versioned script API 1.0 (ADR-0155, closes B7): `kScriptApiVersion`, `victus.project` `script_api`, hosts refuse incompatible scripts, `victus check` error, frozen snapshot in `engine/script/api/` checked by `victus_script_tests`, `victus script-api`; Entity members moved to one property table | STATUS.md 2026-11-21 (script API) |
 | 2026-11-21 | Fixed red CI after ADR-0154: `pack_tests.cpp` read a `PackEntry*` from a destroyed temporary `Pack` (ASan heap-use-after-free; random codec value on macOS/Windows). Test now keeps the pack alive | `victus_core_tests` 75/75 under ASan+UBSan locally |
 | 2026-11-21 | `.vpak` v2 (ADR-0154): per-entry zstd (3D template pack 6.50 MB to 2.43 MB), BLAKE2b-256 digests, Ed25519 signatures enforced by the player, `victus pack keygen/verify/list` | STATUS.md 2026-11-21 |
 | 2026-11-21 | FP16 PBR keeps Lambert and environment BRDF in FP32 (ADR-0153): FP16-vs-FP32 error halved on all four reference scenes, fixing the red CI reference gate | STATUS.md 2026-11-21 |

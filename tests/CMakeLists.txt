@@ -46,6 +46,7 @@ victus_add_test(victus_scene_tests
 victus_add_test(victus_script_tests
     SOURCES
         script/script_tests.cpp
+        script/api_tests.cpp
         script/procedural_bridge_tests.cpp
         script/input_map_tests.cpp
         script/save_tests.cpp
@@ -59,6 +60,7 @@ victus_add_test(victus_script_tests
         script/behaviour_tests.cpp
     DEPS VICTUS::Script VICTUS::Animation VICTUS::Tilemap
     LABELS script)
+target_compile_definitions(victus_script_tests PRIVATE VICTUS_SCRIPT_API_DIR="${PROJECT_SOURCE_DIR}/engine/script/api")
 
 victus_add_test(victus_project_tests
     SOURCES
