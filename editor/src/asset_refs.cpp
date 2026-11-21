@@ -6,10 +6,12 @@
 #include "widgets.hpp"
 
 #include <imgui.h>
+#include <imgui_stdlib.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <format>
 #include <functional>
 
@@ -20,6 +22,7 @@ namespace tok = ui::tokens;
 namespace {
 constexpr const char* kRefsWindow = "References###asset_refs";
 constexpr const char* kRenamePopup = "Rename Asset";
+constexpr const char* kFolderPopup = "Rename Folder";
 constexpr const char* kDeletePopup = "Delete Asset";
 
 std::string file_name(std::string_view rel) {
@@ -60,6 +63,47 @@ Result<assets::RenameReport> Editor::rename_asset(const Uuid& asset, std::string
     notify(r->rewritten.empty() ? std::format("Renamed to {}", r->to)
                                 : std::format("Renamed to {} and updated {} file{}", r->to, r->rewritten.size(), r->rewritten.size() == 1 ? "" : "s"));
     return r;
+}
+
+Result<assets::FolderRenameReport> Editor::rename_asset_folder(std::string from, std::string to) {
+    if (!db_ || !project_) return make_error(ErrorCode::InvalidArgument, "no project is open");
+    if (play_state_ != PlayState::Editing) return make_error(ErrorCode::InvalidArgument, "stop play mode before moving folders");
+    const bool reload = !scene_path_.empty();
+    if (reload && dirty()) VICTUS_TRY_STATUS(save_scene());
+    auto r = assets::rename_folder(*db_, from, to);
+    if (!r) return r;
+    if (reload && std::find(r->rewritten.begin(), r->rewritten.end(), scene_path_) != r->rewritten.end()) {
+        const std::string path = scene_path_;
+        if (auto st = open_scene(path); !st) notify("Could not reload " + path + ": " + st.error().message, true);
+    }
+    // Keep the folder view on the moved folder (or the matching sub-folder).
+    if (asset_folder_ == r->from) asset_folder_ = r->to;
+    else if (asset_folder_.starts_with(r->from + "/")) asset_folder_ = r->to + asset_folder_.substr(r->from.size());
+    cache_->clear();
+    if (thumbnails_) thumbnails_->clear();
+    if (asset_store_) asset_store_->invalidate_installed();
+    refs_stale_ = true;
+    notify(std::format("Moved {} to {} ({} asset{}{})", r->from, r->to, r->moved, r->moved == 1 ? "" : "s",
+                       r->rewritten.empty() ? std::string()
+                                            : std::format(", updated {} file{}", r->rewritten.size(), r->rewritten.size() == 1 ? "" : "s")));
+    return r;
+}
+
+Status Editor::move_asset_to_folder(const Uuid& asset, std::string_view folder) {
+    const auto* r = db_ ? db_->find(asset) : nullptr;
+    if (!r) return make_error(ErrorCode::NotFound, "asset not found");
+    const std::string name = std::filesystem::path(r->path).filename().generic_string();
+    const std::string target = folder.empty() ? name : std::string(folder) + "/" + name;
+    if (target == r->path) return {};
+    if (auto res = rename_asset(asset, target); !res) return make_error(res.error().code, res.error().message);
+    asset_focus_ = asset;
+    return {};
+}
+
+void Editor::begin_rename_folder(std::string folder) {
+    folder_rename_text_ = folder;
+    folder_rename_from_ = std::move(folder);
+    folder_rename_error_.clear();
 }
 
 Status Editor::delete_asset(const Uuid& asset) {
@@ -356,6 +400,44 @@ void Editor::draw_asset_dialogs() {
                 rename_target_ = {};
                 ImGui::CloseCurrentPopup();
             }
+        }
+        ImGui::EndPopup();
+    }
+
+    // ---- Rename / Move Folder ----
+    if (!folder_rename_from_.empty()) ImGui::OpenPopup(kFolderPopup);
+    if (ImGui::BeginPopupModal(kFolderPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Rename or move assets/%s", folder_rename_from_.c_str());
+        ImGui::TextColored(tok::kTextMuted, "New folder path inside assets/ (use / for sub-folders):");
+        ImGui::SetNextItemWidth(420);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        const bool enter = ImGui::InputText("##folder_rename", &folder_rename_text_, ImGuiInputTextFlags_EnterReturnsTrue);
+        const std::string prefix = folder_rename_from_ + "/";
+        const auto recs = db_ ? db_->records() : std::vector<assets::AssetRecord>{};
+        const auto inside = std::count_if(recs.begin(), recs.end(), [&](const assets::AssetRecord& r) { return r.path.starts_with(prefix); });
+        ImGui::TextColored(tok::kInfo, "%td asset%s move with it and keep their IDs; files that name them by path are updated.",
+                           inside, inside == 1 ? "" : "s");
+        if (dirty()) ImGui::TextColored(tok::kWarning, "The open scene is saved first.");
+        if (!folder_rename_error_.empty()) {
+            ImGui::PushTextWrapPos(420);
+            ImGui::TextColored(tok::kDanger, "%s", folder_rename_error_.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        const bool changed = !folder_rename_text_.empty() && folder_rename_text_ != folder_rename_from_;
+        ImGui::BeginDisabled(!changed);
+        if (ImGui::Button("Rename", ImVec2(120, 0)) || (enter && changed)) {
+            if (auto res = rename_asset_folder(folder_rename_from_, folder_rename_text_); res) {
+                folder_rename_from_.clear();
+                ImGui::CloseCurrentPopup();
+            } else {
+                folder_rename_error_ = res.error().message;
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            folder_rename_from_.clear();
+            ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }

@@ -231,6 +231,68 @@ Result<RenameReport> rename_asset(AssetDatabase& db, const Uuid& asset, std::str
     return report;
 }
 
+Result<FolderRenameReport> rename_folder(AssetDatabase& db, std::string_view from_folder, std::string_view to_folder) {
+    if (db.packaged()) return make_error(ErrorCode::InvalidArgument, "an exported game cannot be changed");
+    std::string from(from_folder), to(to_folder);
+    while (from.ends_with('/')) from.pop_back();
+    while (to.ends_with('/')) to.pop_back();
+    if (from.empty() || !safe_relative(from)) return make_error(ErrorCode::InvalidArgument, std::format("'{}' is not a folder in assets/", from_folder));
+    if (to.empty() || !safe_relative(to))
+        return make_error(ErrorCode::InvalidArgument, std::format("'{}' is not a valid folder name (no '..', hidden names or special characters)", to_folder));
+    if (from == to) return make_error(ErrorCode::InvalidArgument, "the new name is the same as the old one");
+    if (to.starts_with(from + "/")) return make_error(ErrorCode::InvalidArgument, "a folder cannot be moved inside itself");
+    const fs::Path src = db.assets_dir() / fs::Path(from);
+    const fs::Path dst = db.assets_dir() / fs::Path(to);
+    std::error_code ec;
+    if (!sfs::is_directory(src, ec)) return make_error(ErrorCode::NotFound, std::format("assets/{} is not a folder", from));
+    if (sfs::exists(dst, ec)) return make_error(ErrorCode::AlreadyExists, std::format("assets/{} already exists", to));
+
+    // Old path -> new path for every asset in the folder, and the files that name them by path.
+    const std::string prefix = from + "/";
+    std::unordered_map<std::string, std::string> moved;
+    std::vector<Uuid> ids;
+    for (const AssetRecord& r : db.records())
+        if (r.path.starts_with(prefix)) {
+            moved.emplace(r.path, to + r.path.substr(from.size()));
+            ids.push_back(r.uuid);
+        }
+    const ReferenceIndex idx = ReferenceIndex::build(db);
+    std::vector<std::string> files;
+    for (const Uuid& id : ids)
+        for (const auto& u : idx.users(id))
+            if (u.by_path && std::find(files.begin(), files.end(), u.file) == files.end()) files.push_back(u.file);
+
+    sfs::create_directories(dst.parent_path(), ec);
+    if (ec) return make_error(ErrorCode::IoError, std::format("cannot create {}: {}", dst.parent_path().string(), ec.message()));
+    sfs::rename(src, dst, ec);
+    if (ec) return make_error(ErrorCode::IoError, std::format("cannot move assets/{}: {}", from, ec.message()));
+
+    FolderRenameReport report;
+    report.from = from;
+    report.to = to;
+    report.moved = moved.size();
+    const std::string old_file_prefix = "assets/" + prefix;
+    for (std::string file : files) {
+        if (file.starts_with(old_file_prefix)) file = "assets/" + to + file.substr(old_file_prefix.size() - 1);
+        const fs::Path path = db.project_root() / fs::Path(file);
+        auto text = fs::read_text(path, kMaxScanBytes);
+        if (!text) continue;
+        std::size_t n = 0;
+        for (const auto& [old_path, new_path] : moved)
+            for (const char q : {'"', '\''}) {
+                replace_all(*text, std::format("{}{}{}", q, old_path, q), std::format("{}{}{}", q, new_path, q), n);
+                replace_all(*text, std::format("{}assets/{}{}", q, old_path, q), std::format("{}assets/{}{}", q, new_path, q), n);
+            }
+        if (n == 0) continue;
+        if (auto st = fs::write_text_atomic(path, *text); !st)
+            return make_error(ErrorCode::IoError, std::format("moved, but could not update {}: {}", file, st.error().message));
+        report.rewritten.push_back(file);
+    }
+    std::sort(report.rewritten.begin(), report.rewritten.end());
+    (void)db.refresh();
+    return report;
+}
+
 Status delete_asset(AssetDatabase& db, const Uuid& asset) {
     if (db.packaged()) return make_error(ErrorCode::InvalidArgument, "an exported game cannot be changed");
     const AssetRecord* rec = db.find(asset);

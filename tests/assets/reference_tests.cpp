@@ -182,3 +182,54 @@ TEST_CASE("asset trash: delete keeps the ID, restore brings references back, pur
     REQUIRE(assets::purge_trash(d).ok());
     CHECK(assets::list_trash(d).empty());
 }
+
+TEST_CASE("asset folders: rename and move a folder with path rewrites, IDs and companions kept") {
+    Proj p;
+    p.write("assets/audio/hit.wav", "RIFF");
+    p.write("assets/audio/sfx/jump.wav", "RIFF");
+    p.write("assets/models/door.gltf", "{\"buffers\":[{\"uri\":\"door.bin\"}]}");
+    p.write("assets/models/door.bin", "bin");
+    p.write("assets/audio/notes.txt", "not an asset");
+    auto db = assets::AssetDatabase::open(p.root);
+    REQUIRE(db.ok());
+    auto& d = **db;
+    const Uuid hit = d.find_path("audio/hit.wav")->uuid;
+    const Uuid jump = d.find_path("audio/sfx/jump.wav")->uuid;
+    // A scene names both sounds by path; a script inside the folder names one with assets/.
+    p.write("scenes/main.vscene", "{\"a\":\"audio/hit.wav\",\"b\":\"audio/sfx/jump.wav\",\"c\":\"audio/hit.wav.bak\"}");
+    p.write("assets/audio/play.luau", "local s = 'assets/audio/sfx/jump.wav'\n");
+    REQUIRE(d.refresh().errors.empty());
+
+    // Refusals change nothing.
+    CHECK_FALSE(assets::rename_folder(d, "audio", "audio/inner").ok()); // inside itself
+    CHECK_FALSE(assets::rename_folder(d, "audio", "models").ok());       // exists
+    CHECK_FALSE(assets::rename_folder(d, "audio", "../outside").ok());   // unsafe
+    CHECK_FALSE(assets::rename_folder(d, "missing", "x").ok());          // not a folder
+    CHECK_FALSE(assets::rename_folder(d, "audio", "audio").ok());        // same
+    CHECK(sfs::exists(p.root / "assets/audio/hit.wav"));
+
+    auto r = assets::rename_folder(d, "audio/", "game/sound");
+    REQUIRE(r.ok());
+    CHECK(r->from == "audio");
+    CHECK(r->to == "game/sound");
+    CHECK(r->moved >= 3); // hit.wav, sfx/jump.wav, play.luau (and notes.txt if registered)
+    CHECK_FALSE(sfs::exists(p.root / "assets/audio"));
+    CHECK(sfs::exists(p.root / "assets/game/sound/notes.txt")); // non-asset files move too
+    REQUIRE(d.find_path("game/sound/hit.wav"));
+    CHECK(d.find_path("game/sound/hit.wav")->uuid == hit);
+    CHECK(d.find_path("game/sound/sfx/jump.wav")->uuid == jump);
+    CHECK(sfs::exists(p.root / "assets/game/sound/hit.wav.meta"));
+    const std::string scene = p.read("scenes/main.vscene");
+    CHECK(scene.find("\"game/sound/hit.wav\"") != std::string::npos);
+    CHECK(scene.find("\"game/sound/sfx/jump.wav\"") != std::string::npos);
+    CHECK(scene.find("\"audio/hit.wav.bak\"") != std::string::npos); // not an asset path: untouched
+    CHECK(p.read("assets/game/sound/play.luau").find("'assets/game/sound/sfx/jump.wav'") != std::string::npos);
+    CHECK(std::ranges::find(r->rewritten, "assets/game/sound/play.luau") != r->rewritten.end());
+    CHECK(std::ranges::find(r->rewritten, "scenes/main.vscene") != r->rewritten.end());
+
+    // A .gltf moves with its buffer when its whole folder moves.
+    auto m = assets::rename_folder(d, "models", "props");
+    REQUIRE(m.ok());
+    CHECK(sfs::exists(p.root / "assets/props/door.bin"));
+    CHECK(d.find_path("props/door.gltf"));
+}

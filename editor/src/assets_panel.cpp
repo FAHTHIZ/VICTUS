@@ -8,12 +8,15 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cstring>
 #include <format>
 #include <set>
 
 namespace victus::editor {
 
 namespace tk = ui::tokens;
+
+constexpr const char* kAssetPayload = "VICTUS_ASSET"; // matches the asset browser's drag source
 
 namespace {
 
@@ -99,6 +102,24 @@ void Editor::draw_asset_folders(const std::vector<std::string>& folders) {
         const bool selected = asset_folder_ == folder;
         const ImVec2 start = ImGui::GetCursorPos();
         if (ImGui::Selectable("##folder", selected)) asset_folder_ = folder;
+        // Drop an asset on a folder to move it there (same as Rename or Move with a new folder).
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
+                Uuid id;
+                std::memcpy(&id, p->Data, sizeof(Uuid));
+                if (auto st = move_asset_to_folder(id, folder); !st.ok()) notify(st.error().message, true);
+            }
+            ImGui::EndDragDropTarget();
+        }
+        if (!folder.empty() && ImGui::BeginPopupContextItem("##folder_menu")) {
+            ImGui::TextDisabled("%s", folder.c_str());
+            ImGui::Separator();
+            if (ImGui::MenuItem("Rename or Move Folder...")) begin_rename_folder(folder);
+            if (ImGui::MenuItem("Copy Path") && platform_) platform_->set_clipboard(folder);
+            ImGui::EndPopup();
+        }
+        if (ImGui::IsItemHovered() && !folder.empty())
+            ImGui::SetTooltip("Drop assets here to move them into %s. Right-click to rename the folder.", folder.c_str());
         ImGui::SetCursorPos(ImVec2(start.x + static_cast<float>(depth) * tk::kSpace4 * 2, start.y));
         kit::icon(open_icon ? kit::Icon::FolderOpen : kit::Icon::Folder, selected ? tk::kAccent : tk::kTextMuted);
         ImGui::SameLine(0, tk::kSpace2);
