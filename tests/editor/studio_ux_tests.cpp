@@ -1739,6 +1739,28 @@ TEST_CASE("studio asset references: find users, rename keeps the scene working, 
     CHECK(h.ed->asset_users(script).size() == 1);
     CHECK(h.ed->trash_entries().empty());
     h.frames(2); // the empty Trash draws
+
+    // Folders: rename the whole folder (scene rewritten and reloaded), then drag-move one asset.
+    h.ed->set_asset_folder("scripts/movement");
+    h.ed->begin_rename_folder("scripts");
+    h.frames(2); // the Rename Folder dialog draws
+    auto fr = h.ed->rename_asset_folder("scripts", "logic");
+    REQUIRE_MESSAGE(fr.ok(), fr.error().message);
+    // The scene names our script; the template's crate prefab names its own scripts by path.
+    CHECK(std::ranges::find(fr->rewritten, h.ed->scene_path()) != fr->rewritten.end());
+    CHECK(h.ed->asset_folder() == "logic/movement");
+    CHECK(h.ed->assets()->find(script)->path == "logic/movement/mover_v2.luau");
+    {
+        const auto moved = h.ed->active_scene().find(entity);
+        REQUIRE_FALSE(moved.is_null());
+        CHECK(h.ed->active_scene().world().get<script::ScriptComponent>(moved)->script == "logic/movement/mover_v2.luau");
+    }
+    CHECK_FALSE(h.ed->rename_asset_folder("logic", "logic/inner").ok());
+    REQUIRE(h.ed->move_asset_to_folder(script, "").ok()); // to the assets root
+    CHECK(h.ed->assets()->find(script)->path == "mover_v2.luau");
+    CHECK(h.ed->move_asset_to_folder(script, "").ok());   // already there: nothing to do
+    CHECK(h.ed->asset_users(script).size() == 1);
+    h.frames(2);
     REQUIRE(h.ed->delete_asset(script).ok());
     REQUIRE(h.ed->purge_trashed().ok());
     CHECK(h.ed->trash_entries().empty());

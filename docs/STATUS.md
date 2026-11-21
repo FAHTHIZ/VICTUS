@@ -2525,3 +2525,11 @@ Follows `8739164` (asset trash). The Inspector's BehaviorTree component shows Ne
 Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 - `victus_editor_tests -tc="studio behaviour tree*,studio guide*,*help*"` 3 cases / 192 assertions: suggested paths (`"Guard 1 (blue)"` → `ai/Guard1blue.vbt`, taken `guard` → `ai/guard_2.vbt`, `"../.."` → none), the inspector draws the component with Edit Tree, help search finds the new topic.
 - clang-tidy on `editor/src/bt_editor.cpp`, `editor/src/guide.cpp`, `editor/src/panels.cpp`: no new diagnostics.
+
+## 2026-11-21 — Folder rename/move and drag-to-folder (ADR-0178)
+
+Follows `5f46244`. `assets::rename_folder` moves a folder under `assets/` in one rename (companions and non-asset files included), keeps every UUID and rewrites path references to the moved assets. Studio: right-click a folder in the Assets folder list for Rename or Move Folder...; drop an asset on a folder (or All assets) to move it there.
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- `victus_asset_tests -tc="asset*"`: 32 cases / 2136 assertions pass, including "asset folders: rename and move a folder with path rewrites, IDs and companions kept".
+- `victus_editor_tests -tc="studio asset*"`: 2 cases pass; "studio asset references" covers the Rename Folder dialog, a folder rename that rewrites and reloads the scene (and the template's crate prefab, which names template scripts by path), the folder view following the move, move-into-itself refused, and moving an asset to the root.

@@ -59,6 +59,17 @@ struct RenameReport {
 // companion files that must stay beside it (a .gltf moved to another folder).
 [[nodiscard]] Result<RenameReport> rename_asset(AssetDatabase& db, const Uuid& asset, std::string_view new_relative);
 
+// Moves a whole folder under assets/ (every file in it, including companions such as .gltf
+// buffers), keeping every asset's UUID, then rewrites path references to the moved assets in
+// project text files (files that moved with the folder included). `to` must not exist and must
+// not be inside `from`. `moved` counts the assets that moved.
+struct FolderRenameReport {
+    std::string from, to;
+    std::size_t moved{0};
+    std::vector<std::string> rewritten; // project-relative, at their new location
+};
+[[nodiscard]] Result<FolderRenameReport> rename_folder(AssetDatabase& db, std::string_view from, std::string_view to);
+
 // Deletes an asset's source, .meta and cooked data, then refreshes the database. References to
 // it are left as they are (callers show ReferenceIndex::users first).
 [[nodiscard]] Status delete_asset(AssetDatabase& db, const Uuid& asset);

@@ -992,6 +992,12 @@ public:
     // Moves/renames an asset, keeping its ID and updating files that name it by path; the open
     // scene is saved first and reloaded when it changed on disk.
     [[nodiscard]] Result<assets::RenameReport> rename_asset(const Uuid& asset, std::string new_relative);
+    // Renames or moves a whole folder under assets/ (every asset keeps its ID; path references
+    // are rewritten), saving and reloading the open scene like rename_asset.
+    [[nodiscard]] Result<assets::FolderRenameReport> rename_asset_folder(std::string from, std::string to);
+    // Moves an asset into `folder` (empty: the assets root), keeping its file name.
+    [[nodiscard]] Status move_asset_to_folder(const Uuid& asset, std::string_view folder);
+    void begin_rename_folder(std::string folder); // the Rename Folder dialog
     // Moves the asset to the project trash (ADR-0177); restore_trashed brings it back with the
     // same ID. Trash entries are newest first.
     [[nodiscard]] Status delete_asset(const Uuid& asset);
@@ -1340,6 +1346,7 @@ private:
     Uuid refs_asset_, refs_cache_asset_, rename_target_, delete_target_;
     std::vector<assets::AssetReference> refs_users_, refs_deps_, rename_users_;
     std::string rename_text_, rename_error_;
+    std::string folder_rename_from_, folder_rename_text_, folder_rename_error_;
     void draw_asset_store();
     void draw_behavior_tree_editor();
     void draw_bt_palette();
