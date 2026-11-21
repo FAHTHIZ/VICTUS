@@ -265,7 +265,8 @@ struct DeviceStats {
 // failed command-buffer acquisitions, swapchain acquisitions and submissions. A run of
 // kDeviceLostAfterFailures consecutive failures of one kind marks the device lost: the driver
 // was reset, the GPU removed or the swapchain is permanently gone. Callers check lost() once per
-// frame and shut down cleanly (the editor autosaves first) instead of spinning or crashing.
+// frame. The player recreates its GPU objects on a new device (ADR-0157); the editor autosaves
+// and exits instead of spinning or crashing.
 enum class GpuFailure : std::uint8_t { None, CommandBuffer, Swapchain, Submit };
 [[nodiscard]] const char* to_string(GpuFailure f) noexcept;
 inline constexpr std::uint32_t kDeviceLostAfterFailures = 30; // about half a second at 60 Hz
@@ -379,6 +380,9 @@ struct DeviceDesc {
     // (ADR-0144 phase 3) instead of failing. Windows presented by a GLES device need
     // WindowDesc::opengl, so create the device before the window.
     bool gles_fallback{false};
+    // Read VICTUS_GPU_FAIL (fault injection) at creation. Off for devices recreated after a loss,
+    // so an injected loss behaves like a one-time driver reset.
+    bool env_fault_injection{true};
 };
 
 class Device {

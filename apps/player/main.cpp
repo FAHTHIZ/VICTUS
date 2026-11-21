@@ -26,6 +26,7 @@ int main(int argc, char** argv) {
         .option("server-key", "refuse servers whose public key differs")
         .option("password", "password of a protected server (or of the hosted session)")
         .flag("insecure", "no encryption: join a server started with --insecure, or host one")
+        .option("device-recoveries", "GPU device losses to recover from before giving up", "3")
         .option("saves", "save games folder (default: the per-user VICTUS saves folder)");
     if (auto st = p.parse(argc, argv); !st) return std::fprintf(stderr, "%s\n%s", st.error().message.c_str(), p.help().c_str()), 2;
     // Crash reports and a session log in the per-user diagnostics folder (ADR-0072).
@@ -54,6 +55,7 @@ int main(int argc, char** argv) {
     o.max_clients = static_cast<std::uint16_t>(p.get_number("max-clients", 8));
     o.host_key = p.get("key");
     o.saves = p.get("saves");
+    o.device_recoveries = static_cast<std::uint32_t>(p.get_number("device-recoveries", 3));
     auto r = victus::player::run(o);
     if (!r) {
         std::fprintf(stderr, "victus_player: %s\n", r.error().message.c_str());
@@ -61,5 +63,6 @@ int main(int argc, char** argv) {
         if (r.error().code == victus::ErrorCode::DeviceError) (void)victus::platform::Platform::show_error_box("VICTUS", r.error().message);
         return r.error().code == victus::ErrorCode::DeviceError ? 3 : 1;
     }
+    if (r->device_recoveries) std::fprintf(stderr, "victus_player: GPU device recreated after %u device loss(es)\n", r->device_recoveries);
     return 0;
 }

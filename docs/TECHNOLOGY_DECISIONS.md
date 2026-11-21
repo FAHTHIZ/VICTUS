@@ -1632,3 +1632,12 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 - **Alternatives:** Larger default budget (hides real runaway loops longer and still flakes); pure CPU-time checks (8x more expensive per check); a watchdog thread (cross-thread interrupts, more complexity).
 - **Evidence:** CI run 44858500077 failure; `victus_script_tests` budget case (blocked 300 ms on a 50 ms budget survives, busy loops still stop).
 - **Consequences:** Budgets now mean CPU time; a script blocked in a slow native call is not stopped by the budget (native calls must bound themselves). On Windows the CPU clock is coarse (~15.6 ms ticks), so expiry there may land up to one tick late.
+
+### ADR-0157: GPU device-loss recovery by rebuilding the GPU layer
+
+- **Status:** Accepted (2026-11-21). Player only; the editor keeps autosave-and-exit.
+- **Context:** Blocker B3: a lost GPU device ended the game (exit code 3). SDL_GPU 3.4 has no device-lost or reset notification and no way to revive a device, so loss is inferred from failed operations (rhi::DeviceHealth). Game state (ECS scene, scripts, physics, audio, network) is CPU-side; GPU state is derived from assets and the scene.
+- **Decision:** Treat the whole GPU layer as disposable. On loss, at the start of the next frame, destroy the scene view, frame target, cached GPU assets, GPU context and device in that order, create a new device from the same description (retrying ~10 s), attach the same window and rebuild context, cache contents (`GpuAssetCache::rebind`) and view with the previous render settings. Bounded by `device_recoveries` (default 3); then, or if rebuilding fails, exit with the loss as before.
+- **Alternatives:** Recreate SDL_GPU objects in place inside rhi::Device behind stable handles (every higher layer would still hold stale pipelines and baked data, and the GLES backend would need the same); restart the process and reload the last checkpoint (loses unsaved state and multiplayer sessions); wait for upstream SDL support (no timeline).
+- **Evidence:** `victus_device_loss`: three injected failure kinds recover; final frame vs clean run FLIP <= 0.010, SSIM >= 0.991 (2D), FLIP 0.0031, SSIM 0.9977 (3D, manual run).
+- **Consequences:** The first frames after a recovery re-upload assets (a hitch, async loading where enabled). Objects outside the player that cache GPU handles must be rebuilt by their owner; runtime `add_model` models are dropped. A GLES/Vulkan switch would need a new window and is refused. Real driver resets are untested.

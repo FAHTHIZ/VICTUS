@@ -35,6 +35,9 @@ struct PlayerOptions {
     // per-frame budget (V.A.U.L.T., ADR-0087); fixed-frame, recorded and replayed runs always
     // load synchronously so captures and screenshots stay deterministic.
     bool async_assets{true};
+    // GPU device losses survived by recreating the device and every GPU object (ADR-0157). After
+    // that many, or when recreation fails, the player stops with the loss (ErrorCode::DeviceError).
+    std::uint32_t device_recoveries{3};
     bool hot_reload{false};      // reload changed scripts, textures, models and audio while running (development)
     std::string quality;         // low|medium|high|ultra|auto; empty = project rendering.quality
     // Packed R11G11B10F HDR scene colour; unset = compact_hdr_by_default(tier, mobile).
@@ -105,6 +108,7 @@ struct PlayerReport {
     std::string final_scene;        // the scene running when the player stopped
     std::uint32_t world_cells_peak{0}; // world streaming: most cells active at once (ADR-0090)
     std::uint64_t world_cell_loads{0}; // world streaming: cells activated
+    std::uint32_t device_recoveries{0}; // GPU device losses recovered from (ADR-0157)
     profiler::FrameReport profile;  // with PlayerOptions::profile or trace
 };
 
