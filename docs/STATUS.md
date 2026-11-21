@@ -2213,3 +2213,15 @@ Verified: Linux gcc Release build; `victus_render_tests` 67/67 (render-graph res
 Not covered: no phone run; the cost of the multisampled pass on a Mali GPU is not measured. Vulkan sample-count support comes from SDL_GPU's format query and is not tested on a device here.
 
 Next task: prologue camp at night on Low (terrain cut, ambient fill, ground noise).
+
+## 2026-11-21 — FP16 PBR: Lambert and environment BRDF in FP32; CI reference gate (ADR-0153)
+
+Built: in `pbr.frag#fp16` the environment-BRDF fit and the Lambert product are FP32; GGX, Smith and Schlick stay half precision. FP32 shader unchanged. New tracker `docs/PRODUCTION_READINESS_ROADMAP.md`.
+
+Why: CI's Linux Release lane had failed `victus_reference_scenes` on every push since d1f895b (photoreal FP16 mean FLIP 0.0052 against the 0.005 limit on CI's Mesa; 0.0038 locally). Earlier entries listed only the suites that passed locally.
+
+Verified (Release, GCC 15.2, lavapipe, Ubuntu 26.04, 2 vCPU): `python3 tools/shaders/compile_shaders.py --check` up to date (62); `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build/rel` 39/39. Reference scenes FP16 FLIP: photoreal 0.0038 to 0.0017, exterior 0.0027 to 0.0014, interior 0.0034 to 0.0021, effects 0.0039 to 0.0014; FP32 goldens FLIP 0.
+
+Not covered: CI's Mesa numbers are confirmed only by the CI run of this commit.
+
+Next task: confirm CI green; then the next production blocker in docs/PRODUCTION_READINESS_ROADMAP.md.
