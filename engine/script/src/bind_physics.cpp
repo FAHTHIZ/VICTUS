@@ -204,6 +204,60 @@ int entity_joint_state(lua_State* L) {
 }
 
 
+// entity:set_vehicle_input(forward, steer, brake?, handbrake?): driver controls for a Vehicle.
+int entity_set_vehicle_input(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    physics::VehicleInput in;
+    in.forward = static_cast<float>(luaL_optnumber(L, 2, 0.0));
+    in.steer = static_cast<float>(luaL_optnumber(L, 3, 0.0));
+    in.brake = static_cast<float>(luaL_optnumber(L, 4, 0.0));
+    in.handbrake = static_cast<float>(luaL_optnumber(L, 5, 0.0));
+    if (auto* w = physics::world_of(s)) w->set_vehicle_input(e, in);
+    return 0;
+}
+
+// entity:vehicle_state() -> {valid, speed, rpm, gear, wheels_in_contact, wheels = {{contact, suspension, steer, rpm}}, error}
+int entity_vehicle_state(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const auto* w = physics::world_of(s);
+    const physics::VehicleState st = w ? w->vehicle_state(e) : physics::VehicleState{};
+    lua_createtable(L, 0, 7);
+    lua_pushboolean(L, st.valid);
+    lua_setfield(L, -2, "valid");
+    lua_pushnumber(L, st.speed);
+    lua_setfield(L, -2, "speed");
+    lua_pushnumber(L, st.engine_rpm);
+    lua_setfield(L, -2, "rpm");
+    lua_pushinteger(L, st.gear);
+    lua_setfield(L, -2, "gear");
+    lua_pushinteger(L, static_cast<int>(st.wheels_in_contact));
+    lua_setfield(L, -2, "wheels_in_contact");
+    lua_createtable(L, static_cast<int>(st.wheels.size()), 0);
+    for (std::size_t i = 0; i < st.wheels.size(); ++i) {
+        const auto& wh = st.wheels[i];
+        lua_createtable(L, 0, 5);
+        push_entity(L, wh.wheel);
+        lua_setfield(L, -2, "entity");
+        lua_pushboolean(L, wh.contact);
+        lua_setfield(L, -2, "contact");
+        lua_pushnumber(L, wh.suspension);
+        lua_setfield(L, -2, "suspension");
+        lua_pushnumber(L, wh.steer_degrees);
+        lua_setfield(L, -2, "steer");
+        lua_pushnumber(L, wh.rpm);
+        lua_setfield(L, -2, "rpm");
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    lua_setfield(L, -2, "wheels");
+    if (!st.error.empty()) {
+        lua_pushlstring(L, st.error.data(), st.error.size());
+        lua_setfield(L, -2, "error");
+    }
+    return 1;
+}
+
 // entity:set_motor(enabled, speed): hinge/revolute/wheel (deg/s) or slider/prismatic (m/s) motor, 3D or 2D.
 int entity_set_motor(lua_State* L) {
     auto& s = scene_of(L);

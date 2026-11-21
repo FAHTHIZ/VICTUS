@@ -45,6 +45,9 @@
 #include <Jolt/Skeleton/Skeleton.h>
 #include <Jolt/Skeleton/SkeletonPose.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
+#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
+#include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
@@ -429,12 +432,14 @@ public:
         sync_characters(scene);
         sync_joints(scene);
         sync_ragdolls(scene, dt);
+        sync_vehicles(scene);
     }
 
     void step(scene::Scene& scene, float dt, std::vector<ContactEvent>& events) override {
         sync(scene, dt);
         update_characters(dt);
         apply_buoyancy(scene, dt);
+        apply_vehicle_inputs();
         {
             VICTUS_PROFILE_SCOPE("physics.step3d");
             const auto t0 = std::chrono::steady_clock::now();
@@ -466,6 +471,7 @@ public:
             c.position = from_jolt(c.ch->GetPosition());
             write_world_pose(scene, e, c.position, world_pose(scene, e).rotation);
         }
+        write_vehicle_wheels(scene);
         read_ragdolls();
         check_joints(dt);
         const std::size_t before = events.size();
@@ -475,6 +481,10 @@ public:
 
     void clear() override {
         water_.clear();
+        for (auto& [k, v] : vehicles_) destroy_vehicle(v);
+        vehicles_.clear();
+        vehicle_inputs_.clear();
+        warned_vehicle_.clear();
         for (auto& [k, r] : ragdolls_) destroy_ragdoll(r);
         ragdolls_.clear();
         ragdoll_bones_.clear();
@@ -1244,6 +1254,8 @@ private:
                 destroy_joint(j);
                 j.a = {};
             }
+        for (auto& [k, v] : vehicles_)
+            if (v.body == b.id) destroy_vehicle(v); // sync_vehicles rebuilds it on the new body
         auto& bi = system_->GetBodyInterface();
         bi.RemoveBody(b.id);
         bi.DestroyBody(b.id);
@@ -1972,6 +1984,245 @@ private:
         }
     }
 
+    // ---- vehicles (ADR-0166) ----
+
+    struct Vehicle {
+        JPH::Ref<JPH::VehicleConstraint> c;
+        JPH::Ref<JPH::VehicleCollisionTester> tester;
+        VehicleComponent comp;
+        std::vector<VehicleWheelComponent> wheel_comps;
+        std::vector<std::uint64_t> wheels;   // entity bits, in Jolt wheel order
+        std::vector<math::Vec3> rest;        // authored wheel centres (full droop), chassis space
+        JPH::BodyID body;
+        std::string error;
+        std::uint64_t seen{0};
+    };
+
+    static Entity entity_of(std::uint64_t k) {
+        return Entity{static_cast<std::uint32_t>(k), static_cast<std::uint32_t>(k >> 32)};
+    }
+
+    void sync_vehicles(scene::Scene& scene) {
+        auto& ecs = scene.world();
+        ecs.each<VehicleComponent>([&](Entity e, VehicleComponent& comp) {
+            Vehicle& v = vehicles_[e.bits()];
+            v.seen = generation_;
+            const auto ib = bodies_.find(e.bits());
+            std::string error;
+            if (ib == bodies_.end()) error = "needs a Collider and a RigidBody on the same entity";
+            else if (ib->second.motion != JPH::EMotionType::Dynamic) error = "the RigidBody must be dynamic";
+            std::vector<std::uint64_t> wheels;
+            std::vector<VehicleWheelComponent> comps;
+            for (const Entity c : scene.children(e))
+                if (const auto* w = ecs.get<VehicleWheelComponent>(c)) {
+                    wheels.push_back(c.bits());
+                    comps.push_back(*w);
+                    if (ecs.get<ColliderComponent>(c) && warned_vehicle_.insert(c.bits()).second)
+                        VICTUS_LOG_WARN("physics", "entity {}: a VehicleWheel should not have a Collider (the wheel is a "
+                                                   "ray/cylinder cast; the collider becomes a separate body)", c.index);
+                }
+            if (error.empty() && wheels.empty()) error = "has no child entities with VehicleWheel";
+            if (!error.empty()) {
+                destroy_vehicle(v);
+                if (v.error != error) VICTUS_LOG_WARN("physics", "entity {}: vehicle {}; not simulated", e.index, error);
+                v.error = error;
+                return;
+            }
+            v.error.clear();
+            const JPH::BodyID id = ib->second.id;
+            if (v.c && v.body == id && v.comp == comp && v.wheels == wheels && v.wheel_comps == comps) return;
+            // The wheels' Transforms are written by the simulation: keep the authored rest positions
+            // across rebuilds of the same wheel set and read them from the scene only for new wheels.
+            std::vector<math::Vec3> rest(wheels.size());
+            const Pose chassis = world_pose(scene, e);
+            const math::Quat inv = chassis.rotation.conjugate();
+            for (std::size_t i = 0; i < wheels.size(); ++i) {
+                const auto old = std::find(v.wheels.begin(), v.wheels.end(), wheels[i]);
+                if (old != v.wheels.end() && v.rest.size() == v.wheels.size())
+                    rest[i] = v.rest[static_cast<std::size_t>(old - v.wheels.begin())];
+                else
+                    rest[i] = inv.rotate(world_pose(scene, entity_of(wheels[i])).position - chassis.position);
+            }
+            destroy_vehicle(v);
+            v.comp = comp;
+            v.wheels = std::move(wheels);
+            v.wheel_comps = std::move(comps);
+            v.rest = std::move(rest);
+            v.body = id;
+            create_vehicle(v);
+        });
+        for (auto it = vehicles_.begin(); it != vehicles_.end();) {
+            if (it->second.seen != generation_) {
+                destroy_vehicle(it->second);
+                vehicle_inputs_.erase(it->first);
+                it = vehicles_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    void create_vehicle(Vehicle& v) {
+        const VehicleComponent& vc = v.comp;
+        JPH::VehicleConstraintSettings vs;
+        vs.mUp = JPH::Vec3::sAxisY();
+        vs.mForward = JPH::Vec3::sAxisZ();
+        vs.mMaxPitchRollAngle = JPH::DegreesToRadians(std::clamp(vc.max_pitch_roll, 0.0f, 180.0f));
+        for (std::size_t i = 0; i < v.wheels.size(); ++i) {
+            const VehicleWheelComponent& w = v.wheel_comps[i];
+            auto* ws = new JPH::WheelSettingsWV();
+            const float len = std::max(w.suspension_length, 0.0f);
+            ws->mPosition = to_jolt(v.rest[i] + math::Vec3{0, len, 0}); // attachment point above the wheel
+            ws->mSuspensionDirection = JPH::Vec3(0, -1, 0);
+            ws->mSuspensionMaxLength = len;
+            ws->mSuspensionMinLength = std::clamp(len - std::max(w.suspension_travel, 0.0f), 0.0f, len);
+            ws->mSuspensionSpring.mFrequency = std::max(w.spring_frequency, 0.01f);
+            ws->mSuspensionSpring.mDamping = std::clamp(w.spring_damping, 0.0f, 1.0f);
+            ws->mRadius = std::max(w.radius, 0.01f);
+            ws->mWidth = std::max(w.width, 0.01f);
+            ws->mMaxSteerAngle = JPH::DegreesToRadians(std::clamp(w.steer_degrees, 0.0f, 89.0f));
+            ws->mMaxBrakeTorque = std::max(w.brake_torque, 0.0f);
+            ws->mMaxHandBrakeTorque = std::max(w.handbrake_torque, 0.0f);
+            const float grip = std::max(w.grip, 0.0f);
+            for (auto& pt : ws->mLongitudinalFriction.mPoints) pt.mY *= grip;
+            for (auto& pt : ws->mLateralFriction.mPoints) pt.mY *= grip;
+            vs.mWheels.push_back(ws);
+        }
+        // Axles: wheels whose rest positions share a Z (within 10 cm), left (+X) before right.
+        std::vector<std::vector<int>> axles;
+        std::vector<std::size_t> order(v.wheels.size());
+        for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+        std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return v.rest[a].z > v.rest[b].z; });
+        for (const std::size_t i : order) {
+            if (axles.empty() || std::abs(v.rest[static_cast<std::size_t>(axles.back().front())].z - v.rest[i].z) > 0.1f)
+                axles.emplace_back();
+            axles.back().push_back(static_cast<int>(i));
+        }
+        auto* cs = new JPH::WheeledVehicleControllerSettings();
+        cs->mEngine.mMaxTorque = std::max(vc.engine_torque, 0.0f);
+        cs->mEngine.mMinRPM = std::max(vc.min_rpm, 1.0f);
+        cs->mEngine.mMaxRPM = std::max(vc.max_rpm, cs->mEngine.mMinRPM + 1.0f);
+        cs->mTransmission.mShiftUpRPM = std::clamp(vc.shift_up_rpm, cs->mEngine.mMinRPM, cs->mEngine.mMaxRPM);
+        cs->mTransmission.mShiftDownRPM = std::clamp(vc.shift_down_rpm, cs->mEngine.mMinRPM, cs->mTransmission.mShiftUpRPM);
+        for (auto& axle : axles) {
+            std::stable_sort(axle.begin(), axle.end(),
+                             [&](int a, int b) { return v.rest[static_cast<std::size_t>(a)].x > v.rest[static_cast<std::size_t>(b)].x; });
+            if (axle.size() >= 2 && vc.anti_roll > 0) {
+                JPH::VehicleAntiRollBar bar;
+                bar.mLeftWheel = axle.front();
+                bar.mRightWheel = axle.back();
+                bar.mStiffness = vc.anti_roll;
+                vs.mAntiRollBars.push_back(bar);
+            }
+            std::vector<int> driven;
+            for (const int i : axle)
+                if (v.wheel_comps[static_cast<std::size_t>(i)].driven) driven.push_back(i);
+            for (std::size_t k = 0; k < driven.size(); k += 2) {
+                JPH::VehicleDifferentialSettings d;
+                d.mLeftWheel = driven[k];
+                d.mRightWheel = k + 1 < driven.size() ? driven[k + 1] : -1;
+                d.mDifferentialRatio = std::max(vc.differential_ratio, 0.01f);
+                d.mLimitedSlipRatio = std::max(vc.limited_slip_ratio, 1.0f);
+                cs->mDifferentials.push_back(d);
+            }
+        }
+        for (auto& d : cs->mDifferentials) d.mEngineTorqueRatio = 1.0f / static_cast<float>(cs->mDifferentials.size());
+        vs.mController = cs;
+        {
+            JPH::BodyLockWrite lock(system_->GetBodyLockInterface(), v.body);
+            if (!lock.Succeeded()) return;
+            v.c = new JPH::VehicleConstraint(lock.GetBody(), vs);
+        }
+        const JPH::ObjectLayer layer = system_->GetBodyInterface().GetObjectLayer(v.body);
+        v.tester = new JPH::VehicleCollisionTesterCastCylinder(layer);
+        v.c->SetVehicleCollisionTester(v.tester);
+        system_->AddConstraint(v.c);
+        system_->AddStepListener(v.c);
+    }
+
+    void destroy_vehicle(Vehicle& v) {
+        if (!v.c) return;
+        system_->RemoveStepListener(v.c);
+        system_->RemoveConstraint(v.c);
+        v.c = nullptr;
+        v.tester = nullptr;
+        v.body = {};
+    }
+
+    void apply_vehicle_inputs() {
+        auto& bi = system_->GetBodyInterface();
+        for (auto& [k, v] : vehicles_) {
+            if (!v.c) continue;
+            VehicleInput in;
+            if (const auto it = vehicle_inputs_.find(k); it != vehicle_inputs_.end()) in = it->second;
+            auto* ctl = static_cast<JPH::WheeledVehicleController*>(v.c->GetController());
+            ctl->SetDriverInput(in.forward, in.steer, in.brake, in.handbrake);
+            if ((in.forward != 0 || in.steer != 0) && !bi.IsActive(v.body)) bi.ActivateBody(v.body);
+        }
+    }
+
+    void write_vehicle_wheels(scene::Scene& scene) {
+        for (auto& [k, v] : vehicles_) {
+            if (!v.c || !scene.world().alive(entity_of(k))) continue;
+            const auto ib = bodies_.find(k);
+            if (ib == bodies_.end()) continue;
+            const math::Vec3 cp = ib->second.position;
+            const math::Quat cq = ib->second.rotation;
+            for (std::size_t i = 0; i < v.wheels.size(); ++i) {
+                const Entity w = entity_of(v.wheels[i]);
+                if (!scene.world().alive(w)) continue;
+                const JPH::Mat44 m = v.c->GetWheelLocalTransform(static_cast<JPH::uint>(i), JPH::Vec3(-1, 0, 0), JPH::Vec3::sAxisY());
+                write_world_pose(scene, w, cp + cq.rotate(from_jolt(m.GetTranslation())),
+                                 math::normalize(cq * from_jolt(m.GetQuaternion())));
+            }
+        }
+    }
+
+    void set_vehicle_input(Entity e, const VehicleInput& in) override {
+        VehicleInput c;
+        c.forward = std::clamp(in.forward, -1.0f, 1.0f);
+        c.steer = std::clamp(in.steer, -1.0f, 1.0f);
+        c.brake = std::clamp(in.brake, 0.0f, 1.0f);
+        c.handbrake = std::clamp(in.handbrake, 0.0f, 1.0f);
+        vehicle_inputs_[e.bits()] = c;
+    }
+
+    VehicleInput vehicle_input(Entity e) const override {
+        const auto it = vehicle_inputs_.find(e.bits());
+        return it == vehicle_inputs_.end() ? VehicleInput{} : it->second;
+    }
+
+    VehicleState vehicle_state(Entity e) const override {
+        VehicleState st;
+        const auto it = vehicles_.find(e.bits());
+        if (it == vehicles_.end()) {
+            st.error = "no VehicleComponent";
+            return st;
+        }
+        const Vehicle& v = it->second;
+        st.error = v.error;
+        if (!v.c) return st;
+        st.valid = true;
+        const auto& bi = system_->GetBodyInterface();
+        const JPH::Vec3 fwd = bi.GetRotation(v.body) * JPH::Vec3::sAxisZ();
+        st.speed = bi.GetLinearVelocity(v.body).Dot(fwd);
+        const auto* ctl = static_cast<const JPH::WheeledVehicleController*>(v.c->GetController());
+        st.engine_rpm = ctl->GetEngine().GetCurrentRPM();
+        st.gear = ctl->GetTransmission().GetCurrentGear();
+        for (std::size_t i = 0; i < v.wheels.size(); ++i) {
+            const JPH::Wheel* w = v.c->GetWheel(static_cast<JPH::uint>(i));
+            VehicleWheelState ws;
+            ws.wheel = entity_of(v.wheels[i]);
+            ws.contact = w->HasContact();
+            ws.suspension = w->GetSuspensionLength();
+            ws.steer_degrees = JPH::RadiansToDegrees(w->GetSteerAngle());
+            ws.rpm = w->GetAngularVelocity() * 60.0f / (2.0f * JPH::JPH_PI);
+            if (ws.contact) ++st.wheels_in_contact;
+            st.wheels.push_back(ws);
+        }
+        return st;
+    }
+
     // ---- joints ----
 
     void sync_joints(scene::Scene& scene) {
@@ -2224,6 +2475,9 @@ private:
     std::uint64_t field_builds_{0}, field_updates_{0};
     std::unordered_map<std::uint64_t, Character> chars_;
     std::unordered_map<std::uint64_t, Joint> joints_;
+    std::unordered_map<std::uint64_t, Vehicle> vehicles_;
+    std::unordered_map<std::uint64_t, VehicleInput> vehicle_inputs_; // survives vehicle rebuilds
+    std::unordered_set<std::uint64_t> warned_vehicle_;
     std::unordered_map<std::uint64_t, RagdollEntry> ragdolls_;
     std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::size_t>> ragdoll_bones_; // bone -> (root, index)
     std::unordered_set<std::uint64_t> warned_ragdoll_;

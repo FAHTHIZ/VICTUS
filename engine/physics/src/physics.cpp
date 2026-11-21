@@ -248,6 +248,9 @@ CharacterState PhysicsWorld::character_state(Entity e) const {
 bool PhysicsWorld::drop_through(Entity e, float seconds) { return impl_->w2->drop_through(e, seconds); }
 RagdollState PhysicsWorld::ragdoll_state(Entity root) const { return impl_->w3->ragdoll_state(root); }
 WaterContact PhysicsWorld::water_contact(Entity e) const { return impl_->w3->water_contact(e); }
+void PhysicsWorld::set_vehicle_input(Entity e, const VehicleInput& input) { impl_->w3->set_vehicle_input(e, input); }
+VehicleInput PhysicsWorld::vehicle_input(Entity e) const { return impl_->w3->vehicle_input(e); }
+VehicleState PhysicsWorld::vehicle_state(Entity e) const { return impl_->w3->vehicle_state(e); }
 void PhysicsWorld::set_ragdoll_mode(scene::Scene& scene, Entity root, RagdollComponent::Mode mode) {
     if (auto* r = scene.world().get<RagdollComponent>(root)) r->mode = mode;
 }
@@ -360,12 +363,49 @@ void physics_probe(const scene::Scene& cs, std::vector<std::string>& lines) {
 
 } // namespace
 
+VehicleInput vehicle_input_from(const gameplay::InputSource* in, float speed) {
+    VehicleInput v;
+    if (!in) return v;
+    auto key = [&](const char* a, const char* b) { return in->key_down(a) || in->key_down(b) ? 1.0f : 0.0f; };
+    float throttle = key("W", "Up") - key("S", "Down");
+    float steer = key("D", "Right") - key("A", "Left");
+    float handbrake = in->key_down("Space") ? 1.0f : 0.0f;
+    if (in->gamepad_connected(0)) {
+        const float rt = in->gamepad_axis(0, gameplay::gamepad_axis_index("RightTrigger"));
+        const float lt = in->gamepad_axis(0, gameplay::gamepad_axis_index("LeftTrigger"));
+        const float lx = in->gamepad_axis(0, gameplay::gamepad_axis_index("LeftX"));
+        throttle += rt - lt;
+        if (std::abs(lx) > 0.15f) steer += lx;
+        if (in->gamepad_button(0, gameplay::gamepad_button_index("South"))) handbrake = 1.0f;
+    }
+    throttle = std::clamp(throttle, -1.0f, 1.0f);
+    // Pressing against the direction of travel brakes first; below 1 m/s it drives that way.
+    if ((throttle < 0 && speed > 1.0f) || (throttle > 0 && speed < -1.0f)) {
+        v.brake = std::abs(throttle);
+        throttle = 0;
+    }
+    v.forward = throttle;
+    v.steer = std::clamp(steer, -1.0f, 1.0f);
+    v.handbrake = handbrake;
+    return v;
+}
+
 void add_physics_systems(gameplay::Simulation& sim, PhysicsWorld& world) {
     gameplay::register_state_probe("physics", physics_probe);
     PhysicsWorld* w = &world;
     sim.add_system("physics.begin_frame", gameplay::Phase::PreUpdate, [w](scene::Scene& scene, const gameplay::FrameTime&) {
         if (world_of(scene) != w) bind(scene, w);
         w->begin_frame();
+    });
+    // Vehicles with player_input read the keyboard and pad 0 (or the entity's routed input).
+    gameplay::Simulation* simp = &sim;
+    sim.add_system("physics.vehicle_input", gameplay::Phase::PreUpdate, [w, simp](scene::Scene& scene, const gameplay::FrameTime&) {
+        scene.world().each<VehicleComponent>([&](Entity e, VehicleComponent& vc) {
+            if (!vc.player_input) return;
+            const gameplay::InputSource* in = simp->input;
+            if (const auto* r = scene.world().resource<gameplay::InputRouting>(); r && r->route) in = r->route(e, in);
+            w->set_vehicle_input(e, vehicle_input_from(in, w->vehicle_state(e).speed));
+        });
     });
     sim.add_system("physics.step", gameplay::Phase::FixedUpdate, [w](scene::Scene& scene, const gameplay::FrameTime& t) {
         if (world_of(scene) != w) bind(scene, w);

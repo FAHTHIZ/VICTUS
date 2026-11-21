@@ -300,6 +300,7 @@ victus_add_test(victus_physics_tests
         physics/ragdoll_tests.cpp
         physics/destruction_tests.cpp
         physics/water_buoyancy_tests.cpp
+        physics/vehicle_tests.cpp
     DEPS VICTUS::Physics VICTUS::Core
     LABELS physics)
 

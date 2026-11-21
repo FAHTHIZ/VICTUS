@@ -172,6 +172,43 @@ struct JointComponent {
     friend bool operator==(const JointComponent&, const JointComponent&) = default;
 };
 
+// Wheeled vehicle (ADR-0166, GAP-24) on an entity with a dynamic RigidBody and a Collider (the
+// chassis). Its wheels are direct children carrying VehicleWheel; each wheel's authored position
+// is the wheel centre with the suspension fully extended, in the chassis' frame (+Z forward, +Y
+// up, +X left). Physics writes the wheels' Transforms every step (suspension travel, steering and
+// spin), so a wheel mesh whose axle is its local X axis turns correctly. Driven wheels on the same
+// axle share a limited-slip differential and the engine torque is split evenly across axles; the
+// gearbox shifts automatically. Drive it with PhysicsWorld::set_vehicle_input, or set
+// `player_input` to read W/S/A/D, the arrow keys, Space (handbrake) and a gamepad.
+struct VehicleComponent {
+    float engine_torque{500.0f};      // N*m at the flywheel
+    float min_rpm{1000.0f};
+    float max_rpm{6000.0f};
+    float shift_up_rpm{4000.0f};
+    float shift_down_rpm{2000.0f};
+    float differential_ratio{3.42f};
+    float limited_slip_ratio{1.4f};   // max/min wheel speed on an axle before torque moves to the slow wheel
+    float max_pitch_roll{60.0f};      // degrees the body may tilt from upright (180 = unlimited)
+    float anti_roll{1000.0f};         // anti-roll bar stiffness per steered/driven axle (N/m); 0 = none
+    bool player_input{false};         // drive from the keyboard and gamepad
+    friend bool operator==(const VehicleComponent&, const VehicleComponent&) = default;
+};
+
+struct VehicleWheelComponent {
+    float radius{0.35f};              // m
+    float width{0.25f};               // m
+    float suspension_length{0.4f};    // m from the attachment point to the wheel centre at full droop
+    float suspension_travel{0.25f};   // m the wheel can rise from full droop
+    float spring_frequency{1.5f};     // Hz
+    float spring_damping{0.5f};       // 0..1
+    float steer_degrees{0.0f};        // maximum steering angle; 0 = fixed
+    bool driven{true};                // receives engine torque
+    float brake_torque{1500.0f};      // N*m
+    float handbrake_torque{0.0f};     // N*m (usually only the rear wheels)
+    float grip{1.0f};                 // scales tyre friction
+    friend bool operator==(const VehicleWheelComponent&, const VehicleWheelComponent&) = default;
+};
+
 // Articulated ragdoll (A.R.C. stage 1, ADR-0091) on the character root. The skeleton is the set of
 // descendant entities carrying a RagdollBone; each becomes a Jolt body joined to its nearest bone
 // ancestor by a swing-twist constraint whose pivot is the bone's origin. Bodies follow (Kinematic)
@@ -520,6 +557,44 @@ struct RagdollState {
     float get_up_progress{0};      // 0..1 through that blend
 };
 
+// Makes `chassis` drivable: adds a box Collider when it has none, a dynamic 1,500 kg RigidBody
+// (an existing one becomes dynamic) and a VehicleComponent. Children named like a wheel ("wheel",
+// "tire", "tyre", case-insensitive) get VehicleWheel; when there are none, four wheel children are
+// created at the corners of the box collider. Front wheels (local +Z) steer 30 degrees, rear
+// wheels get the handbrake, all are driven. Returns the number of wheels (0 if `chassis` is dead).
+std::size_t make_vehicle(scene::Scene& scene, Entity chassis);
+
+// Driver controls for a vehicle; values are clamped.
+struct VehicleInput {
+    float forward{0};    // -1 (reverse) .. 1 (full throttle)
+    float steer{0};      // -1 (left) .. 1 (right)
+    float brake{0};      // 0 .. 1
+    float handbrake{0};  // 0 .. 1
+};
+
+struct VehicleWheelState {
+    Entity wheel;
+    bool contact{false};
+    float suspension{0};      // current suspension length (m)
+    float steer_degrees{0};
+    float rpm{0};             // wheel rotation speed
+};
+
+struct VehicleState {
+    bool valid{false};        // the entity has a simulated vehicle
+    float speed{0};           // m/s along the chassis' forward axis (negative when reversing)
+    float engine_rpm{0};
+    int gear{0};              // -1 reverse, 0 neutral, 1.. forward gears
+    std::uint32_t wheels_in_contact{0};
+    std::vector<VehicleWheelState> wheels;
+    std::string error;        // why the vehicle is not simulated (no body, no wheels...)
+};
+
+// Keyboard/gamepad mapping used by VehicleComponent::player_input: W/Up throttle, S/Down brake then
+// reverse, A/D or Left/Right and the left stick steer, Space or South handbrake, RT/LT throttle and
+// brake. `speed` is the current forward speed (m/s).
+[[nodiscard]] VehicleInput vehicle_input_from(const gameplay::InputSource* input, float speed);
+
 // Result of PhysicsWorld::begin_ragdoll_get_up.
 struct RagdollGetUp {
     bool started{false};
@@ -636,6 +711,12 @@ public:
     [[nodiscard]] JointState joint_state(Entity e) const;
     // Writes the Joint/Joint2D motor fields and applies them to the live constraint without rebuilding it.
     void set_joint_motor(scene::Scene& scene, Entity e, bool enabled, float speed);
+
+    // ---- vehicles (VehicleComponent, ADR-0166) ----
+    // Persists until changed. Ignored for entities without a simulated vehicle.
+    void set_vehicle_input(Entity e, const VehicleInput& input);
+    [[nodiscard]] VehicleInput vehicle_input(Entity e) const;
+    [[nodiscard]] VehicleState vehicle_state(Entity e) const;
 
     // ---- water (gameplay::WaterComponent volumes, ADR-0095) ----
     // Dynamic 3D bodies inside a water volume float by Jolt's submerged-volume buoyancy; this is

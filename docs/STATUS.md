@@ -2348,3 +2348,17 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 Not covered: no parallel execution of independent systems; physics, scripts and particles ignore LOD; no screen-size or visibility term; no city-scale frame capture yet.
 
 Next task: GAP-24 wheeled vehicles on Jolt's `VehicleConstraint` (ADR-0166).
+
+## 2026-11-21 — Wheeled vehicles (ADR-0166, GAP-24)
+
+Built: `Vehicle` and `VehicleWheel` components (engine, gearbox, differentials, anti-roll, per-wheel suspension, steering, brakes, grip) driving Jolt's `WheeledVehicleController` through `VehicleConstraint`; `make_vehicle(scene, chassis)` for a 4-wheel default; `PhysicsWorld::set_vehicle_input` / `vehicle_input` / `vehicle_state`; `vehicle_input_from(InputSource*, speed)` and the `physics.vehicle_input` PreUpdate system for player-driven cars (honours input routing). Wheel transforms are written back each step. Luau `entity:set_vehicle_input(forward, steer, brake, handbrake)` and `entity:vehicle_state()` (script API 1.1, unreleased). Studio "Drivable vehicle" card with undoable `Editor::make_vehicle` and a player-input toggle.
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- `victus_physics_tests`: all cases, 4,469 assertions pass; 7 vehicle cases. AWD car reaches 20.59 m/s after 5 s of full throttle (gear 2, 4,102 rpm); a 500 N·m RWD car stays in gear 1 at 6,000 rpm and 16.7 m/s because Jolt does not shift up while a driven wheel slips; the car settles with 4 wheels in contact (wheel centre 0.35 m, chassis 0.505 m).
+- `victus_script_tests`: vehicle input/state case passes; API snapshot regenerated (2 added lines).
+- `victus_editor_tests -tc="studio vehicle*"`: 50 assertions pass.
+- full build, 0 warnings; `ctest --test-dir build -j2`: 40/40 pass; 4 GPU reference suites skipped as before.
+
+Not covered: no tracked vehicles or motorcycles; no tyre-model tuning against real data; no network replication of vehicle state; no AI drivers yet (traffic is next).
+
+Next task: GAP-22 lane-graph traffic with signals and IDM agents (ADR-0167).
