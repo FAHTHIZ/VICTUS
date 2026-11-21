@@ -201,6 +201,8 @@ public:
     void show_open_files_dialog(Window* parent, const std::string& default_location,
                                 std::function<void(std::vector<std::string>)> done);
     [[nodiscard]] const char* video_driver() const noexcept;
+    // Opens `url` in the user's web browser (SDL_OpenURL). False when the platform refused.
+    static bool open_url(const std::string& url);
     [[nodiscard]] static double seconds() noexcept;
     // Writable per-user folder for saves, caches and unpacked content (ends with a separator). On Android this is
     // the app's internal storage; on desktop the OS preference folder for `org`/`app`. Empty on failure.

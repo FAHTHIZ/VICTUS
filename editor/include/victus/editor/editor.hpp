@@ -14,6 +14,7 @@
 #include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/core/log.hpp"
+#include "victus/editor/asset_store.hpp"
 #include "victus/editor/gizmo.hpp"
 #include "victus/editor/thumbnails.hpp"
 #include "victus/editor/undo.hpp"
@@ -156,6 +157,7 @@ enum class Panel : std::uint8_t {
     ProjectSettings,
     History,
     ScriptDebugger,
+    AssetStore,
     Count
 };
 [[nodiscard]] const char* panel_title(Panel panel) noexcept;
@@ -967,6 +969,7 @@ public:
     void set_asset_filter(std::string text) { asset_search_ = std::move(text); }
     void set_asset_kind_filter(std::optional<assets::AssetKind> kind) noexcept { asset_kind_filter_ = kind; }
     void set_asset_folder(std::string folder) { asset_folder_ = std::move(folder); }
+    [[nodiscard]] const std::string& asset_folder() const noexcept { return asset_folder_; }
     [[nodiscard]] std::size_t asset_rows() const;              // assets shown with the current filters
     [[nodiscard]] std::vector<std::string> asset_folders() const; // every folder holding assets, sorted
     // Plain name for an asset kind: Texture -> "Image", Model -> "3D Model", SpriteSheet -> "Sprite Sheet".
@@ -989,6 +992,21 @@ public:
 
     [[nodiscard]] const std::vector<std::string>& messages() const noexcept { return status_messages_; }
     void notify(std::string message, bool error = false);
+
+    // ---- Asset Store (asset_store.cpp, ADR-0174) ----
+    // The store behind Window > Asset Store, created on first use with the network transport.
+    [[nodiscard]] AssetStore& asset_store();
+    // Tests (and embedders) replace it, e.g. with a fixture HTTP client.
+    void set_asset_store(std::unique_ptr<AssetStore> store);
+    // Moves a staged store download into the project, imports it and reveals it in the Assets
+    // panel (main thread). Called by the store; the staging folder is consumed either way.
+    [[nodiscard]] Result<library::InstallResult> commit_store_install(library::StagedInstall staged);
+    // Native "open file" picker (asynchronous; `done` gets the paths, empty when cancelled or
+    // when there is no window).
+    void pick_files(std::function<void(std::vector<std::string>)> done);
+    // Opens a web page in the user's browser; false when the platform cannot.
+    bool open_url(const std::string& url);
+    [[nodiscard]] render::GpuContext& gpu() noexcept { return gpu_; }
 
 private:
     Editor(render::GpuContext& gpu, ui::UiContext& ui, platform::Platform* platform, platform::Window* window);
@@ -1270,6 +1288,9 @@ private:
     std::uint32_t guide_done_{0};
     bool guide_dismissed_{false}, guide_auto_opened_{false};
     bool show_getting_started_{false}, show_help_{false}, show_project_settings_{false}, show_history_{false};
+    bool show_asset_store_{false};
+    std::unique_ptr<AssetStore> asset_store_;
+    void draw_asset_store();
     bool show_script_debugger_{false};
     std::string help_topic_, help_query_;
     int help_focus_{0};

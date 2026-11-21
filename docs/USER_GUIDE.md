@@ -220,7 +220,13 @@ Object and asset fields in the Inspector (a material, a model, a target object) 
 
 ### Asset Store
 
-The Asset Store adds free, legally reusable content to your project: scanned materials and HDR skies from Poly Haven and ambientCG, museum scans from the Smithsonian, models from Sketchfab, sound effects from BigSoundBank, nature recordings from the U.S. National Park Service, and Kenney's game kits. From a terminal:
+The Asset Store adds free, legally reusable content to your project: scanned materials and HDR skies from Poly Haven and ambientCG, museum scans from the Smithsonian, models from Sketchfab, sound effects from BigSoundBank, nature recordings from the U.S. National Park Service, and Kenney's game kits.
+
+In the Studio open it from Assets > Asset Store... (or Window > Content > Asset Store); it opens as a tab next to the Viewport. Pick a source on the left, type what you want (results update as you type) and choose a type such as Material or Sound. Click a tile to see a big preview and what the licence lets you do; pick a resolution or format if there is a choice, then Add to Project (or double-click the tile). When it is done, Place in Scene drops a model into the scene, Use on Selected Object puts a material on the selected object, and Show in Assets jumps to the files. "In this project" on the left lists everything you added with its licence and lets you remove it. Sketchfab asks once for your own free token, which stays on your computer. For Kenney, Get it on Kenney opens the pack page; after downloading, Import Downloaded ZIP... adds it.
+
+![Asset Store](images/studio_asset_store.jpg)
+
+From a terminal:
 
 ```
 victus library providers                         # what each source offers

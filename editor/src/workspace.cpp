@@ -62,6 +62,8 @@ const char* window_id(Panel p) noexcept {
         return "Undo History";
     case Panel::ScriptDebugger:
         return "Script Debugger";
+    case Panel::AssetStore:
+        return "Asset Store";
     case Panel::Count:
         break;
     }
@@ -112,6 +114,8 @@ const char* panel_hint(Panel p) noexcept {
         return "Every change to the scene; click one to go back to it";
     case Panel::ScriptDebugger:
         return "Breakpoints, stepping, call stack and variables of running scripts";
+    case Panel::AssetStore:
+        return "Free models, materials, skies and sounds from Poly Haven, ambientCG, Smithsonian, Sketchfab and more, with their licences";
     case Panel::Count:
         break;
     }
@@ -203,6 +207,8 @@ bool* Editor::panel_flag(Panel p) noexcept {
         return &show_history_;
     case Panel::ScriptDebugger:
         return &show_script_debugger_;
+    case Panel::AssetStore:
+        return &show_asset_store_;
     default:
         return nullptr;
     }
@@ -353,7 +359,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
                   Panel::Network, Panel::ScriptDebugger},
                  bottom);
         dock_all({Panel::ProjectSettings, Panel::History}, right);
-        dock_all({Panel::Viewport, Panel::GraphEditor}, center);
+        dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore}, center);
         break;
     }
     case Layout::LevelDesign: {
@@ -366,7 +372,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
             {Panel::Inspector, Panel::TerrainTools, Panel::TilePalette, Panel::MaterialEditor, Panel::InputActions},
             right);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
-        dock_all({Panel::Viewport, Panel::GraphEditor}, center);
+        dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore}, center);
         dock_all({Panel::Animation, Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger, Panel::ScriptDebugger},
                  left_bottom);
         break;
@@ -383,7 +389,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::Animation, Panel::Assets, Panel::Console, Panel::Problems}, bottom);
         dock_all({Panel::Sequencer, Panel::Profiler, Panel::Network, Panel::AiDebugger, Panel::ScriptDebugger}, bottom_right);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
-        dock_all({Panel::Viewport, Panel::GraphEditor}, center);
+        dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore}, center);
         break;
     }
     case Layout::Scripting: {
@@ -400,7 +406,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
                   Panel::Network, Panel::AiDebugger},
                  bottom);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
-        dock_all({Panel::GraphEditor, Panel::Viewport}, center);
+        dock_all({Panel::GraphEditor, Panel::Viewport, Panel::AssetStore}, center);
         break;
     }
     case Layout::Debugging: {
@@ -415,7 +421,7 @@ void Editor::build_layout(unsigned int dockspace_id, Layout l) {
         dock_all({Panel::ScriptDebugger, Panel::Console, Panel::Problems, Panel::Assets, Panel::Animation, Panel::Sequencer}, bottom);
         dock(Panel::Profiler, bottom_right);
         dock_all({Panel::GettingStarted, Panel::ProjectSettings, Panel::History}, right);
-        dock_all({Panel::Viewport, Panel::GraphEditor}, center);
+        dock_all({Panel::Viewport, Panel::GraphEditor, Panel::AssetStore}, center);
         break;
     }
     }
@@ -435,6 +441,9 @@ void Editor::draw_window_menu() {
     for (Panel p :
          {Panel::Viewport, Panel::Hierarchy, Panel::Inspector, Panel::Assets, Panel::Console, Panel::Problems})
         item(p);
+    ImGui::Separator();
+    ImGui::TextDisabled("Content");
+    item(Panel::AssetStore);
     ImGui::Separator();
     ImGui::TextDisabled("Tools");
     for (Panel p : {Panel::Animation, Panel::Sequencer, Panel::GraphEditor, Panel::MaterialEditor, Panel::TilePalette,

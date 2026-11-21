@@ -383,6 +383,11 @@ void Platform::show_folder_dialog(Window* parent, const std::string& default_loc
         default_location.empty() ? nullptr : default_location.c_str(), false);
 }
 
+bool Platform::open_url(const std::string& url) {
+    if (!url.starts_with("https://") && !url.starts_with("http://")) return false;
+    return SDL_OpenURL(url.c_str());
+}
+
 void Platform::show_open_files_dialog(Window* parent, const std::string& default_location,
                                       std::function<void(std::vector<std::string>)> done) {
     if (!dialogs_) dialogs_ = std::make_shared<DialogState>();
