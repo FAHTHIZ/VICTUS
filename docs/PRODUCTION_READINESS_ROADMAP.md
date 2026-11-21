@@ -64,13 +64,13 @@ Items that keep the whole engine from production use, regardless of feature work
 | Audio (miniaudio) | Usable | Simple comb reverb; no per-source effects, HRTF, ducking, profiler | Ducking and per-source effects |
 | Particles / VFX | Experimental | CPU emitters do not collide; GPU emitters 3D only; no mesh particles | Mesh particles |
 | Terrain and foliage | Experimental | Per-instance CPU culling of foliage; no impostors, wind, holes | Impostors for far trees |
-| Sequencer | Experimental | No curve editor, multi-key select, video export | Curve editor |
+| Sequencer | Experimental | No multi-key select or video export (curve editor and property tracks done, ADR-0190) | Multi-key editing |
 | In-game UI | Usable | No UI editor canvas, rich text, sliders, text input | Sliders and text input |
 | Localization | Usable | No shaping/RTL, plurals or translation editor | Plural rules |
 | Networking (ENet) | Experimental | Loopback only; no NAT traversal, host migration, lag compensation | Lag-compensated hits |
 | Save games / save history | Usable | No compression, cloud saves, restore UI | Generation restore UI |
 | Plugins / modding | Usable for trusted code | No sandbox, hot reload, editor loading, signing | Editor plugin loading |
-| VICTUS Studio (editor) | Usable on Linux | Never run on Windows/macOS by a person; no UI canvas, curve editor (BT editor done, ADR-0176) | ROADMAP §1 Studio maturity |
+| VICTUS Studio (editor) | Usable on Linux | Never run on Windows/macOS by a person; no UI canvas (BT editor ADR-0176 and sequencer curve editor ADR-0190 done) | ROADMAP §1 Studio maturity |
 | Debugging, profiling, perceptual compare | Usable for CPU | No GPU timings; compare is LDR-only; goldens are lavapipe-only | — |
 | Packaging and export | Usable on host platform | B6: installers, OS code signing, delta patches, cross-export; trusted pack key comes from `export.json` (not tamper-proof without code signing) | Delta patch packs signed with the game's key |
 | Android | Incomplete | B2 | Hardware |

@@ -113,6 +113,7 @@ struct SequencerSystem::Impl {
         bool resolved{false};
         bool warned{false};
         bool has_base{false};
+        bool property_warned{false};
         scene::Transform base;
     };
     struct Instance {
@@ -232,12 +233,26 @@ struct SequencerSystem::Impl {
         in.camera = active->camera;
     }
 
-    // Continuous state at time t: transform channels and camera cuts.
+    // Continuous state at time t: transform channels, property tracks and camera cuts.
     void apply_state(Instance& in, Scene& s, Entity player, float t, SequencerStats& stats) {
         if (!in.seq) return;
         for (std::size_t i = 0; i < in.seq->tracks.size(); ++i) {
             const Track& tr = in.seq->tracks[i];
-            if (tr.type != TrackType::Transform || tr.muted) continue;
+            if (tr.muted) continue;
+            if (tr.type == TrackType::Property) {
+                const auto v = sample(tr.values, t);
+                if (!v) continue;
+                const Entity e = target_of(in, i, s, player, stats);
+                TrackState& ps = in.tracks[i];
+                if (!e.is_null() && !write_property(s, e, tr.component, tr.property, *v) && !ps.property_warned) {
+                    ps.property_warned = true;
+                    ++stats.missing_targets;
+                    VICTUS_LOG_WARN("sequencer", "{}: track {}: '{}' has no animatable {}.{}", in.seq->name, i, tr.target,
+                                    tr.component, tr.property);
+                }
+                continue;
+            }
+            if (tr.type != TrackType::Transform) continue;
             const Entity e = target_of(in, i, s, player, stats);
             auto* xf = e.is_null() ? nullptr : s.world().get<scene::Transform>(e);
             if (!xf) continue;

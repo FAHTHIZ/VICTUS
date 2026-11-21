@@ -10,6 +10,7 @@
 
 #include <doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <map>
@@ -524,4 +525,167 @@ TEST_CASE("sequencer: runs inside a Simulation and reads files with directory_lo
     CHECK_FALSE(bad.state(s2, q).valid);
     CHECK_FALSE(bad.state(s2, q).error.empty());
     std::filesystem::remove_all(dir);
+}
+
+// ---- curves and property tracks (ADR-0190) ------------------------------------------------------
+
+namespace {
+
+float sample_x(const std::vector<Key<math::Vec3>>& keys, float t) { return sample(keys, t)->x; }
+
+Key<math::Vec3> bez(float t, float v, Tangent tangent = Tangent::Auto, float in = 0, float out = 0) {
+    Key<math::Vec3> k;
+    k.time = t;
+    k.value = {v, 0, 0};
+    k.interp = Interp::Bezier;
+    k.tangent = tangent;
+    k.in_slope = {in, 0, 0};
+    k.out_slope = {out, 0, 0};
+    return k;
+}
+
+} // namespace
+
+TEST_CASE("sequencer curves: bezier segments follow key slopes and tangent modes") {
+    // Flat ends: a two-key bezier is the smoothstep ease.
+    std::vector<Key<math::Vec3>> keys{bez(0, 0), bez(2, 4)};
+    CHECK(sample_x(keys, 1.0f) == doctest::Approx(2.0f));
+    CHECK(sample_x(keys, 0.5f) == doctest::Approx(4.0f * (3 * 0.0625f - 2 * 0.015625f)));
+    // A user slope leaves the first key at that rate (finite difference near t = 0).
+    keys[0].tangent = Tangent::User;
+    keys[0].out_slope = {6, 0, 0};
+    const float h = 1e-3f;
+    CHECK((sample_x(keys, h) - sample_x(keys, 0)) / h == doctest::Approx(6.0f).epsilon(0.01));
+    CHECK(key_slopes(keys, 0).in.x == doctest::Approx(6.0f)); // user: both sides
+    // Broken: the arriving slope at the last key is independent of its leaving slope.
+    keys[1].tangent = Tangent::Broken;
+    keys[1].in_slope = {-2, 0, 0};
+    keys[1].out_slope = {9, 0, 0};
+    CHECK((sample_x(keys, 2.0f) - sample_x(keys, 2.0f - h)) / h == doctest::Approx(-2.0f).epsilon(0.02));
+    CHECK(sample_x(keys, 2.0f) == doctest::Approx(4.0f));
+    keys[1].tangent = Tangent::Flat;
+    CHECK(key_slopes(keys, 1).in.x == 0.0f);
+    CHECK(key_slopes(keys, 1).out.x == 0.0f);
+}
+
+TEST_CASE("sequencer curves: auto tangents are smooth across uneven keys and never overshoot") {
+    // Uneven spacing: the auto slope is shared by both sides of the middle key (C1), unlike the
+    // uniform Catmull-Rom of `cubic`, and a plateau gets a flat tangent (no bump past 1).
+    std::vector<Key<math::Vec3>> keys{bez(0, 0), bez(0.5f, 1), bez(3, 2), bez(4, 2), bez(5, 0)};
+    const float h = 1e-3f;
+    const float left = (sample_x(keys, 0.5f) - sample_x(keys, 0.5f - h)) / h;
+    const float right = (sample_x(keys, 0.5f + h) - sample_x(keys, 0.5f)) / h;
+    CHECK(left == doctest::Approx(right).epsilon(0.02));
+    CHECK(key_slopes(keys, 3).out.x == 0.0f); // peak/plateau
+    float lo = 1e9f, hi = -1e9f;
+    for (int i = 0; i <= 500; ++i) {
+        const float v = sample_x(keys, 5.0f * static_cast<float>(i) / 500.0f);
+        lo = std::min(lo, v);
+        hi = std::max(hi, v);
+        if (i > 0 && 5.0f * static_cast<float>(i) / 500.0f <= 3.0f) CHECK(v >= sample_x(keys, 5.0f * static_cast<float>(i - 1) / 500.0f) - 1e-5f);
+    }
+    CHECK(lo >= -1e-5f);
+    CHECK(hi <= 2.0f + 1e-5f);
+    // Rotations treat bezier as smooth.
+    std::vector<Key<math::Quat>> rot{{0, math::Quat{}, Interp::Bezier},
+                                     {1, math::Quat::axis_angle({0, 1, 0}, 1.0f), Interp::Linear}};
+    const auto mid = sample(rot, 0.5f);
+    REQUIRE(mid);
+    CHECK(std::abs(mid->y) > 0.0f);
+}
+
+TEST_CASE("sequencer curves: tangents and property tracks round-trip through JSON and validate") {
+    auto s = seq(R"({ "tracks": [
+      { "type": "transform", "target": "Door", "position": [
+          { "t": 0, "v": [0, 0, 0], "interp": "bezier", "tangent": "user", "out": [1, 2, 3] },
+          { "t": 1, "v": [1, 1, 1], "interp": "bezier", "tangent": "broken", "in": [0, 1, 0], "out": [4, 0, 0] },
+          { "t": 2, "v": [2, 2, 2], "tangent": "flat" } ] },
+      { "type": "property", "target": "Lamp", "component": "Light", "property": "color",
+        "keys": [ { "t": 0, "v": [1, 0, 0, 1] }, { "t": 2, "v": [0, 0, 1, 1], "interp": "bezier" } ] },
+      { "type": "property", "target": "Lamp", "component": "Light", "property": "intensity",
+        "keys": [ { "t": 0.5, "v": 2, "interp": "bezier", "tangent": "user", "out": 5 } ] } ] })");
+    const Track& t = s->tracks[0];
+    REQUIRE(t.position.size() == 3);
+    CHECK(t.position[0].tangent == Tangent::User);
+    CHECK(t.position[0].out_slope == math::Vec3{1, 2, 3});
+    CHECK(t.position[0].in_slope == math::Vec3{1, 2, 3});
+    CHECK(t.position[1].tangent == Tangent::Broken);
+    CHECK(t.position[1].in_slope == math::Vec3{0, 1, 0});
+    CHECK(t.position[2].tangent == Tangent::Flat);
+    const Track& c = s->tracks[1];
+    CHECK(c.type == TrackType::Property);
+    CHECK(c.component == "Light");
+    CHECK(c.property == "color");
+    CHECK(c.channels == 4);
+    CHECK(c.values[1].value == math::Vec4{0, 0, 1, 1});
+    CHECK(s->tracks[2].channels == 1);
+    CHECK(s->tracks[2].values[0].out_slope.x == doctest::Approx(5));
+    CHECK(s->duration == doctest::Approx(2));
+
+    auto again = Sequence::from_json(s->to_json(), "test.vseq");
+    REQUIRE(again.ok());
+    CHECK((*again)->tracks == s->tracks);
+    const std::string text = json::stringify((*again)->to_json());
+    CHECK(contains(text, "broken"));
+    CHECK_FALSE(contains(text, "\"auto\"")); // the default is omitted
+
+    CHECK(contains(parse_error(R"({"tracks":[{"type":"property","property":"intensity"}]})"), "component"));
+    CHECK(contains(parse_error(R"({"tracks":[{"type":"property","component":"Light"}]})"), "property"));
+    CHECK(contains(parse_error(R"({"tracks":[{"type":"property","component":"Light","property":"color",
+        "keys":[{"t":0,"v":[1,0,0,1]},{"t":1,"v":[1,0]}]}]})"), "expected 4 values"));
+    CHECK(contains(parse_error(R"({"tracks":[{"type":"transform","position":[{"t":0,"v":[0,0,0],"tangent":"wobbly"}]}]})"),
+                   "unknown tangent"));
+    CHECK(contains(parse_error(R"({"tracks":[{"type":"transform","position":[{"t":0,"v":[0,0,0],"tangent":"user"}]}]})"),
+                   ".out"));
+    CHECK(contains(parse_error(R"({"tracks":[{"type":"transform","position":[{"t":0,"v":[0,0,0],"interp":"wavy"}]}]})"),
+                   "bezier"));
+}
+
+TEST_CASE("sequencer curves: property tracks animate built-in and reflected component fields") {
+    register_components();
+    Scene s;
+    const Entity player = s.create("Player");
+    const Entity lamp = s.create("Lamp", player);
+    auto& light = s.world().add<scene::LightComponent>(lamp);
+    light.intensity = 1.0f;
+    s.world().add<SequencePlayerComponent>(player);
+
+    const auto props = animatable_properties(s, lamp);
+    const auto has = [&](std::string_view c, std::string_view p, std::uint8_t n) {
+        return std::any_of(props.begin(), props.end(), [&](const AnimatableProperty& a) {
+            return a.component == c && a.property == p && a.channels == n;
+        });
+    };
+    CHECK(has("Light", "intensity", 1));
+    CHECK(has("Light", "color", 4));
+    CHECK_FALSE(has("Camera", "fov_y", 1)); // no Camera on the lamp
+    CHECK(has("SequencePlayer", "speed", 1) == false);
+    CHECK(std::any_of(animatable_properties(s, player).begin(), animatable_properties(s, player).end(),
+                      [](const AnimatableProperty& a) { return a.component == "SequencePlayer" && a.property == "speed"; }));
+
+    SequencerSystem sys;
+    sys.set_sequence(s, player, seq(R"({ "duration": 2, "tracks": [
+      { "type": "property", "target": "Lamp", "component": "Light", "property": "intensity",
+        "keys": [ { "t": 0, "v": 0 }, { "t": 2, "v": 10 } ] },
+      { "type": "property", "target": "Lamp", "component": "Light", "property": "color",
+        "keys": [ { "t": 0, "v": [1, 0, 0, 1] }, { "t": 2, "v": [0, 0, 1, 1] } ] },
+      { "type": "property", "component": "SequencePlayer", "property": "speed",
+        "keys": [ { "t": 0, "v": 50 } ] },
+      { "type": "property", "target": "Lamp", "component": "Camera", "property": "fov_y",
+        "keys": [ { "t": 0, "v": 30 } ] } ] })"));
+    REQUIRE(sys.seek(s, player, 0.5f));
+    CHECK(light.intensity == doctest::Approx(2.5f));
+    CHECK(light.color.r == doctest::Approx(0.75f));
+    CHECK(light.color.b == doctest::Approx(0.25f));
+    // Reflected fields clamp to their declared range (speed is -10..10).
+    CHECK(s.world().get<SequencePlayerComponent>(player)->speed == doctest::Approx(10.0f));
+    // A missing component is reported once, not applied.
+    CHECK(sys.stats().missing_targets == 1);
+    REQUIRE(sys.seek(s, player, 1.5f));
+    CHECK(sys.stats().missing_targets == 1);
+    CHECK(light.intensity == doctest::Approx(7.5f));
+
+    CHECK(read_property(s, lamp, "Light", "intensity")->x == doctest::Approx(7.5f));
+    CHECK_FALSE(read_property(s, lamp, "Light", "nope"));
+    CHECK_FALSE(write_property(s, lamp, "Nope", "intensity", {}));
 }

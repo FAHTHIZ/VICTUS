@@ -51,18 +51,34 @@ enum class Interp : std::uint8_t {
     Linear, // straight line (slerp for rotations)
     Smooth, // ease in and out between the two keys (zero slope at both)
     Cubic,  // Catmull-Rom through the neighbouring keys (smooth paths; rotations use Smooth)
+    Bezier, // cubic Hermite with this key's out slope and the next key's in slope (curve editor;
+            // rotations use Smooth)
 };
 [[nodiscard]] std::string_view interp_name(Interp i) noexcept;
 [[nodiscard]] std::optional<Interp> interp_from_name(std::string_view name) noexcept;
+
+// How a key's slopes are chosen for Bezier segments (ADR-0190), per component:
+enum class Tangent : std::uint8_t {
+    Auto,   // from the neighbouring keys, flattened at peaks and limited so the curve does not
+            // overshoot between keys (monotone, Fritsch-Carlson); flat at the first and last key
+    Flat,   // zero slope on both sides
+    User,   // `out_slope` on both sides (handles kept in line)
+    Broken, // `in_slope` arriving and `out_slope` leaving, independently
+};
+[[nodiscard]] std::string_view tangent_name(Tangent t) noexcept;
+[[nodiscard]] std::optional<Tangent> tangent_from_name(std::string_view name) noexcept;
 
 template <class T> struct Key {
     float time{0};
     T value{};
     Interp interp{Interp::Linear};
+    Tangent tangent{Tangent::Auto};
+    T in_slope{};  // units per second; used when tangent is Broken
+    T out_slope{}; // units per second; used when tangent is User or Broken
     friend bool operator==(const Key&, const Key&) = default;
 };
 
-enum class TrackType : std::uint8_t { Transform, Animation, Audio, Event, Camera };
+enum class TrackType : std::uint8_t { Transform, Animation, Audio, Event, Camera, Property };
 [[nodiscard]] std::string_view track_type_name(TrackType t) noexcept;
 
 struct AnimationKey {
@@ -112,6 +128,13 @@ struct Track {
     std::vector<AudioKey> audio;
     std::vector<EventKey> events;
     std::vector<CameraKey> cameras;
+    // Property: animates one number, vector or colour field of a component on the target
+    // ("Light" / "intensity", "Camera" / "fov_y", any reflected component field). `values` holds
+    // `channels` (1-4) components per key in x, y, z, w; colours are r, g, b, a.
+    std::string component;
+    std::string property;
+    std::uint8_t channels{1};
+    std::vector<Key<math::Vec4>> values;
     friend bool operator==(const Track&, const Track&) = default;
 
     [[nodiscard]] std::size_t key_count() const noexcept;
@@ -138,6 +161,39 @@ class Sequence {
 // Samples a channel at `time` (clamped to the first/last key). Empty channels return nullopt.
 [[nodiscard]] std::optional<math::Vec3> sample(const std::vector<Key<math::Vec3>>& keys, float time) noexcept;
 [[nodiscard]] std::optional<math::Quat> sample(const std::vector<Key<math::Quat>>& keys, float time) noexcept;
+[[nodiscard]] std::optional<math::Vec4> sample(const std::vector<Key<math::Vec4>>& keys, float time) noexcept;
+
+// The slopes (units per second) a Bezier segment uses arriving at and leaving key `i`, after
+// applying its tangent mode. The curve editor draws its handles from these.
+struct Slopes3 {
+    math::Vec3 in, out;
+};
+struct Slopes4 {
+    math::Vec4 in, out;
+};
+[[nodiscard]] Slopes3 key_slopes(const std::vector<Key<math::Vec3>>& keys, std::size_t i) noexcept;
+[[nodiscard]] Slopes4 key_slopes(const std::vector<Key<math::Vec4>>& keys, std::size_t i) noexcept;
+
+// ---- property tracks --------------------------------------------------------------------------
+
+// A component field a property track can animate.
+struct AnimatableProperty {
+    std::string component; // "Light", "Camera", a reflected component name
+    std::string property;  // serialized field name, e.g. "intensity"
+    std::string label;     // inspector label
+    std::uint8_t channels{1};
+    bool color{false};    // channels are r, g, b, a
+    bool discrete{false}; // integers and booleans: rounded (booleans: on above 0.5)
+};
+// The fields of `e`'s components that property tracks can animate (numbers, vectors, colours,
+// integers and booleans of built-in and reflected components).
+[[nodiscard]] std::vector<AnimatableProperty> animatable_properties(scene::Scene& scene, Entity e);
+// Reads or writes a property as up to four floats. False / nullopt when the entity has no such
+// component or field. Writes clamp to the field's declared range.
+[[nodiscard]] std::optional<math::Vec4> read_property(scene::Scene& scene, Entity e, std::string_view component,
+                                                      std::string_view property);
+bool write_property(scene::Scene& scene, Entity e, std::string_view component, std::string_view property,
+                    math::Vec4 value);
 
 // ---- components -------------------------------------------------------------------------------
 

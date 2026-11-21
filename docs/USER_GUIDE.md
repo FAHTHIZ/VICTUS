@@ -130,7 +130,7 @@ AI: add `BehaviorTree` with a `.vbt` tree (JSON: sequence/selector/parallel, gua
 
 ### Cinematics
 
-Cinematics: add `SequencePlayer` with a `.vseq` timeline (JSON tracks for transforms with step/linear/smooth/cubic keys, animation clips, audio one-shots, camera cuts and events) to animate doors, lifts and cutscenes. Scripts call `entity:play_sequence/seek_sequence/stop_sequence`, receive `on_sequence_event`, and sequences hot reload during play. Author them in the editor's Window > Sequencer timeline panel. See [docs/SEQUENCER.md](docs/SEQUENCER.md).
+Cinematics: add `SequencePlayer` with a `.vseq` timeline (JSON tracks for transforms with step/linear/smooth/cubic/bezier keys, property tracks for light, camera, material and any reflected component field, animation clips, audio one-shots, camera cuts and events) to animate doors, lifts and cutscenes. Scripts call `entity:play_sequence/seek_sequence/stop_sequence`, receive `on_sequence_event`, and sequences hot reload during play. Author them in the editor's Window > Sequencer timeline panel; its Curves toggle opens a curve editor with draggable keys and tangent handles (auto, flat, user, broken). See [docs/SEQUENCER.md](docs/SEQUENCER.md).
 
 ### Terrain
 

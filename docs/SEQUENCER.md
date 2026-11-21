@@ -40,9 +40,49 @@ time) and a `tracks` array. Every track has a `type`, an optional `name`, `targe
 | `audio` | `clip`, `volume`, `pitch`, `bus` (Master/Music/Sfx/Ui/Voice/Ambient), `spatial` | Fires a one-shot (at the target's position when spatial) |
 | `camera` | `camera` (target path) | Camera cuts: the latest cut at or before the playhead is the only primary camera; the original flags are restored when playback stops, finishes or the player is removed |
 | `event` | `name`, `payload` | Calls `on_sequence_event` in scripts and the C++ event handler |
+| `property` | `component`, `property` and `keys` of `{t, v, interp}` where `v` is a number or an array of 2-4 numbers (the same arity on every key) | Sampled every frame into one field of the target's component (see Property tracks) |
 
 Interpolation (`interp`, from a key to the next): `step`, `linear` (default; quaternions slerp),
-`smooth` (ease in/out) and `cubic` (Catmull-Rom through neighbouring keys).
+`smooth` (ease in/out), `cubic` (Catmull-Rom through neighbouring keys) and `bezier` (cubic Hermite
+using the key's tangents; rotations treat `cubic` and `bezier` as `smooth`).
+
+### Tangents (bezier keys)
+
+A `bezier` segment leaves its key with the key's out slope and arrives at the next key with that
+key's in slope (value units per second, per component). `tangent` chooses the slopes:
+
+| `tangent` | Slopes |
+|---|---|
+| `auto` (default, omitted when saving) | From the neighbouring keys, smooth through the key (shared in/out slope), flat at peaks, plateaus and the first and last key, limited so the curve never overshoots between keys (monotone Fritsch-Carlson). Moves with the keys |
+| `flat` | Zero on both sides |
+| `user` | `out` on both sides (handles kept in line). Needs `"out": [x, y, z]` (a number for 1-channel property tracks) |
+| `broken` | `in` arriving and `out` leaving, independently. Needs `in` and `out` |
+
+```json
+{ "t": 1, "v": [0, 2, 0], "interp": "bezier", "tangent": "broken", "in": [0, 4, 0], "out": [0, -1, 0] }
+```
+
+Tangent fields are written only for `user`/`broken` keys, so older sequences round-trip unchanged.
+
+### Property tracks
+
+```json
+{ "type": "property", "target": "Lamp", "component": "Light", "property": "intensity",
+  "keys": [ { "t": 0, "v": 0 }, { "t": 2, "v": 12, "interp": "bezier" } ] }
+```
+
+Animatable properties (`sequencer::animatable_properties(scene, entity)` lists what an entity has):
+
+- Built-in components: `Camera.fov_y`, `Camera.ortho_height`; `Light.color` (4), `intensity`,
+  `range`, `inner_angle`, `outer_angle`; `MeshRenderer.base_color` (4), `metallic`, `roughness`;
+  `Sprite.tint` (4), `size` (2).
+- Every reflected component (`scene::Schema`, including gameplay, physics and script-registered
+  ones): Float, Vec2, Vec3 and Color fields, plus Int/UInt (rounded) and Bool (on above 0.5)
+  fields. Values clamp to the field's declared range.
+
+A track whose target lacks the component or field is warned once and skipped (counted in
+`stats().missing_targets`). Like transforms, property values keep their last sampled value when
+playback stops; the Studio preview restores the values it changed.
 
 Targets: `""` or `.` is the player entity, `A/B` walks children by name (`..` goes up), otherwise
 the first descendant with that name, otherwise any entity in the scene with that name. Missing
@@ -105,4 +145,6 @@ Window > Sequencer (or the command palette entry "Sequencer") opens the timeline
 - + Track adds transform, animation, audio, camera-cut or event tracks. The track context menu sets the target entity name, toggles relative (offset) transforms and removes the track.
 - Click or drag the ruler to scrub. Play previews in edit mode through `SequencerSystem::seek`; stopping or closing the preview restores the transforms, primary camera and animator state it touched. Saving the scene, switching scenes and entering play mode end the preview first, and autosave pauses during preview.
 - Double-click a lane to add a key, drag diamonds to retime them, Delete Key removes the selection. Record Key captures the target's current transform at the playhead (as an offset for relative tracks). The key inspector edits per-type values; audio clips can be dropped from the asset browser.
+- + Track > Property lists the animatable properties of the selection (or the player) grouped by component. Record Key and double-clicking a property lane key the target's current value; the key inspector edits the value (a colour picker for colours), interpolation and tangent mode with its slopes.
+- Curves (toolbar toggle) swaps the lanes for a curve editor of one transform (position and scale x/y/z) or property track, chosen from its track list. Drag keys to change time and value, drag the tangent handles of the selected key to set its slopes (an auto or flat key becomes user; hold Alt to break it), double-click a curve to insert a key that keeps its shape, right-click a key for interpolation, tangent mode and Delete. The mouse wheel zooms values (Shift: time), middle-drag pans, Frame or F fits the visible curves. Every drag is one undo step and the preview follows the edit. Rotation keys stay in the timeline (quaternions have no per-component curves).
 - Sequence edits have their own undo/redo stack; Save writes deterministic JSON via `Sequence::to_json`. Changes made outside the editor reload the open sequence unless it has unsaved edits.

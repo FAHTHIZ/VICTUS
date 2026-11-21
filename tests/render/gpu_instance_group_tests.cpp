@@ -112,7 +112,8 @@ TEST_CASE("gpu instance group: same image as per-frame instances, no per-frame u
         CHECK(grouped.stats.instances_uploaded < 8);
         CHECK(reference.stats.instances_uploaded > 400);
         CHECK(grouped.stats.main_batches <= 1 + 7);
-        if (occlusion) CHECK(grouped.stats.occlusion);
+        // GPU occlusion needs compute shaders (some CI devices have none; ADR-0162).
+        if (occlusion) CHECK(grouped.stats.occlusion == ctx.device().capabilities().compute);
     }
     r.destroy_instance_group(id.value());
     ctx.destroy(cube);

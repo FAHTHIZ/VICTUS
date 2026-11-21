@@ -2686,3 +2686,19 @@ Next task: sequencer curve editor.
 CI run 44942634058 (4031b8f) failed `gpu lods: cross-fade dissolves a level change` on Ubuntu and macOS Release: 56 pixels > 40 differed from the solid coarse level. There the switch distance is closer (the coarsest level is already drawn at distance 1), so the silhouettes of the two levels differ by more pixels than the margin. A dithered pixel may legitimately show either level, so the test now also renders the finer level forced at the same distance and counts only pixels that match neither (holes or artefacts), still at most 40.
 
 Verified: `victus_gpu_tests -tc="gpu lods*"`: 7 cases / 456 assertions pass; 0-2 pixels match neither level per fade frame, also with the search started closer (0.96) to mimic the CI geometry.
+
+## 2026-11-22 — Sequencer bezier tangents, property tracks and curve editor (ADR-0190)
+
+Sequences gain `bezier` keys (cubic Hermite with per-key `auto`/`flat`/`user`/`broken` tangents; auto is monotone Fritsch-Carlson, so no overshoot) and `property` tracks that animate one field of a built-in (Camera, Light, MeshRenderer, Sprite) or any reflected component. The Studio Sequencer gets + Track > Property, property keys and tangent editing in the key inspector, and a Curves view: pan/zoom/frame, per-curve toggles, key and tangent-handle dragging (Alt breaks), double-click insert that keeps the curve shape, right-click interpolation/tangent menu. The preview restores every property it changed.
+
+Also: `gpu instance group` test now expects occlusion only when the device has compute shaders (CI run 44946348361, Ubuntu Release, ran on a device without compute).
+
+Verified (Release, gcc, 2 vCPU, lavapipe):
+- `victus_sequencer_tests`: 15 cases / 588 assertions pass (4 new "sequencer curves" cases).
+- `victus_editor_tests -tc="*sequencer*"`: 2 cases pass, including the new curve-editor case with a real ImGui mouse drag of a key in the Curves view, undo, property preview restore and save/parse.
+- `run_clang_tidy.py` on engine/sequencer/src and editor/src/sequencer_panel.cpp: clean after removing one unused local.
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build -j2`: 42/42 passed (583 s).
+
+Not covered: multi-key/box selection, rotation curves (timeline only), per-component tangent modes; the curve view was exercised by automated input, not by a person.
+
+Next task: Studio drag-and-drop reparenting in the behaviour-tree editor, then editor plugin loading.

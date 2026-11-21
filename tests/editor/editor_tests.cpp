@@ -21,6 +21,8 @@
 #include "victus/graph/material_graph.hpp"
 #include "victus/script/script.hpp"
 #include "victus/tilemap/tilemap.hpp"
+#include <imgui.h>
+#include <imgui_internal.h>
 #include <thread>
 
 #include <algorithm>
@@ -2610,4 +2612,161 @@ TEST_CASE("editor: the sequencer panel edits, previews, records and saves sequen
     ed.close_sequence();
     CHECK(ed.editing_sequence() == nullptr);
     CHECK(door_pos() == math::Vec3{1, 0, 0});
+}
+
+TEST_CASE("editor: the sequencer curve editor edits tangents and property tracks") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Curves", "Curves", "3d").ok());
+    h.frames(2);
+    auto& ed = *h.ed;
+    Scene& s = ed.edit_scene();
+    using sequencer::Interp;
+    using sequencer::Tangent;
+    using sequencer::TrackType;
+    using SeqChannel = editor::Editor::SeqChannel;
+    using SeqSide = editor::Editor::SeqSide;
+    const Entity rig = s.create("Rig");
+    const Entity lamp = s.create("Lamp", rig);
+    s.world().add<LightComponent>(lamp);
+    auto light = [&]() -> LightComponent& { return *s.world().get<LightComponent>(lamp); };
+    light().intensity = 3.0f;
+    light().color = {1, 1, 1, 1};
+    auto path = ed.create_sequence();
+    REQUIRE(path.ok());
+    REQUIRE(ed.open_sequence(*path).ok());
+    REQUIRE(ed.assign_sequence(rig));
+
+    // Property tracks need a target that has the property.
+    CHECK(ed.sequence_add_property_track("Lamp", "Light", "nope") == -1);
+    CHECK(ed.sequence_add_property_track("Ghost", "Light", "intensity") == -1);
+    const int pt = ed.sequence_add_property_track("Lamp", "Light", "intensity");
+    REQUIRE(pt == 0);
+    CHECK(ed.editing_sequence()->tracks[0].channels == 1);
+    const int ct = ed.sequence_add_property_track("Lamp", "Light", "color");
+    REQUIRE(ct == 1);
+    CHECK(ed.editing_sequence()->tracks[1].channels == 4);
+
+    // Keys record the current value; scrubbing animates it and ending the preview restores it.
+    const auto k0 = ed.sequence_add_key(pt, 0);
+    REQUIRE(k0.valid());
+    CHECK(*ed.sequence_key_value(k0, 0) == doctest::Approx(3));
+    const auto k1 = ed.sequence_add_key(pt, 2.0f);
+    REQUIRE(k1.valid());
+    CHECK(ed.sequence_key_components(k1) == 1);
+    CHECK_FALSE(ed.sequence_key_value(k1, 1));
+    REQUIRE(ed.sequence_set_key_value(k1, 0, 7.0f));
+    REQUIRE(ed.sequence_add_key(ct, 0).valid());
+    const auto c1 = ed.sequence_add_key(ct, 2.0f);
+    REQUIRE(ed.sequence_set_key_value(c1, 2, 0.0f)); // blue goes to 0
+    ed.sequence_seek(1.0f);
+    CHECK(ed.sequence_previewing());
+    CHECK(light().intensity == doctest::Approx(5.0f));
+    CHECK(light().color.b == doctest::Approx(0.5f));
+
+    // Bezier with auto tangents: two keys ease like smoothstep (flat ends).
+    REQUIRE(ed.sequence_set_key_interp(k0, Interp::Bezier));
+    ed.sequence_seek(0.5f);
+    CHECK(light().intensity == doctest::Approx(3.0f + 4.0f * 0.15625f));
+    // A user slope on the first key (switching freezes the current 0 slope first).
+    REQUIRE(ed.sequence_set_key_tangent(k0, Tangent::User));
+    CHECK(ed.editing_sequence()->tracks[0].values[0].out_slope.x == doctest::Approx(0));
+    REQUIRE(ed.sequence_set_key_slope(k0, 0, SeqSide::Out, 8.0f));
+    CHECK(ed.editing_sequence()->tracks[0].values[0].in_slope.x == doctest::Approx(8));
+    ed.sequence_seek(0.01f);
+    CHECK(light().intensity == doctest::Approx(3.0f + 0.08f).epsilon(0.01));
+    // Breaking (Alt-drag) keeps the other side.
+    REQUIRE(ed.sequence_set_key_slope(k0, 0, SeqSide::In, -1.0f, true));
+    CHECK(ed.editing_sequence()->tracks[0].values[0].tangent == Tangent::Broken);
+    CHECK(ed.editing_sequence()->tracks[0].values[0].out_slope.x == doctest::Approx(8));
+    CHECK(ed.editing_sequence()->tracks[0].values[0].in_slope.x == doctest::Approx(-1));
+    CHECK(ed.sequence_undo());
+    CHECK(ed.editing_sequence()->tracks[0].values[0].tangent == Tangent::User);
+    CHECK_FALSE(ed.sequence_set_key_slope(k0, 0, SeqSide::Out, std::nanf("")));
+
+    // Curve drags move time and value in one undo step; a neighbour is never merged.
+    const auto moved = ed.sequence_move_curve_key(k1, 1.0f, 0, 9.0f);
+    REQUIRE(moved.valid());
+    CHECK(*ed.sequence_key_time(moved) == doctest::Approx(1));
+    CHECK(*ed.sequence_key_value(moved, 0) == doctest::Approx(9));
+    const auto onto = ed.sequence_move_curve_key(moved, 0.0f, 0, 9.0f);
+    REQUIRE(onto.valid());
+    CHECK(ed.editing_sequence()->tracks[0].values.size() == 2);
+    CHECK(ed.sequence_undo());
+    CHECK(ed.sequence_undo());
+    CHECK(*ed.sequence_key_time(k1) == doctest::Approx(2));
+
+    // Inserting on the curve keeps its shape.
+    ed.sequence_seek(1.3f);
+    const float before = light().intensity;
+    const auto ins = ed.sequence_insert_curve_key(pt, SeqChannel::Keys, 1.3f);
+    REQUIRE(ins.valid());
+    CHECK(ed.editing_sequence()->tracks[0].values.size() == 3);
+    CHECK(*ed.sequence_key_value(ins, 0) == doctest::Approx(before));
+
+    // Transform curves: position keys are curve keys, rotations are not.
+    const int tt = ed.sequence_add_track(TrackType::Transform, "Lamp");
+    const auto pk = ed.sequence_record_transform(tt, 0);
+    REQUIRE(pk.valid());
+    CHECK(ed.sequence_key_components(pk) == 3);
+    CHECK(ed.sequence_key_components({tt, SeqChannel::Rotation, 0}) == 0);
+    CHECK_FALSE(ed.sequence_set_key_tangent({tt, SeqChannel::Rotation, 0}, Tangent::Flat));
+    CHECK(ed.sequence_set_key_interp({tt, SeqChannel::Rotation, 0}, Interp::Bezier));
+    const auto pk2 = ed.sequence_insert_curve_key(tt, SeqChannel::Position, 1.0f);
+    REQUIRE(pk2.valid());
+    CHECK(ed.editing_sequence()->tracks[2].position.size() == 2);
+    CHECK(ed.editing_sequence()->tracks[2].rotation.size() == 1); // only that channel
+    CHECK(ed.sequence_delete_key(pk2, false));
+    CHECK(ed.editing_sequence()->tracks[2].position.size() == 1);
+
+    // The panel draws the curve view for property and transform tracks.
+    REQUIRE(ed.sequence_set_key_value(pk, 0, 2.0f)); // separate the x, y and z curves
+    REQUIRE(ed.sequence_set_key_value(pk, 2, -2.0f));
+    ed.set_sequence_curves_view(true);
+    h.frames(3);
+    CHECK(ed.sequence_curves_view());
+    // Dragging a key in the curve view (real mouse input) moves its value as one undo step.
+    {
+        const SeqChannel pos = SeqChannel::Position;
+        const editor::Editor::SeqKey key{tt, pos, 0};
+        const auto at = ed.sequence_curve_key_screen(key, 1);
+        REQUIRE(at);
+        const float y0 = *ed.sequence_key_value(key, 1);
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(at->x, at->y);
+        h.frames(1);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        h.frames(1);
+        for (int i = 1; i <= 4; ++i) {
+            io.AddMousePosEvent(at->x, at->y - 10.0f * static_cast<float>(i));
+            h.frames(1);
+        }
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        h.frames(2);
+        CHECK(*ed.sequence_key_value(key, 1) > y0 + 1e-3f);
+        CHECK(*ed.sequence_key_time(key) == doctest::Approx(0));
+        REQUIRE(ed.sequence_undo());
+        CHECK(*ed.sequence_key_value(key, 1) == doctest::Approx(y0));
+        io.AddMousePosEvent(-1000, -1000);
+        h.frames(1);
+    }
+
+    // Saving writes tangents and property tracks the runtime reads back.
+    REQUIRE(ed.save_sequence().ok());
+    auto text = fs::read_text(ed.assets()->assets_dir() / *path);
+    REQUIRE(text.ok());
+    auto back = sequencer::Sequence::parse(*text);
+    REQUIRE(back.ok());
+    REQUIRE((*back)->tracks.size() == 3);
+    CHECK((*back)->tracks[0].type == TrackType::Property);
+    CHECK((*back)->tracks[0].values.size() == 3);
+    CHECK((*back)->tracks[0].values[0].tangent == Tangent::User);
+    CHECK((*back)->tracks[0].values[0].out_slope.x == doctest::Approx(8));
+    CHECK((*back)->tracks[1].channels == 4);
+    CHECK((*back)->tracks[1].property == "color");
+
+    ed.end_sequence_preview();
+    CHECK(light().intensity == doctest::Approx(3.0f));
+    CHECK(light().color.b == doctest::Approx(1.0f));
 }

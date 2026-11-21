@@ -7,6 +7,8 @@
 #include <cmath>
 #include <format>
 #include <optional>
+#include <type_traits>
+#include <utility>
 
 namespace victus::sequencer {
 
@@ -17,7 +19,15 @@ struct InterpName {
     std::string_view name;
 };
 constexpr InterpName kInterps[] = {
-    {Interp::Step, "step"}, {Interp::Linear, "linear"}, {Interp::Smooth, "smooth"}, {Interp::Cubic, "cubic"}};
+    {Interp::Step, "step"}, {Interp::Linear, "linear"}, {Interp::Smooth, "smooth"}, {Interp::Cubic, "cubic"},
+    {Interp::Bezier, "bezier"}};
+
+struct TangentName {
+    Tangent tangent;
+    std::string_view name;
+};
+constexpr TangentName kTangents[] = {
+    {Tangent::Auto, "auto"}, {Tangent::Flat, "flat"}, {Tangent::User, "user"}, {Tangent::Broken, "broken"}};
 
 struct TrackName {
     TrackType type;
@@ -27,7 +37,8 @@ constexpr TrackName kTracks[] = {{TrackType::Transform, "transform"},
                                  {TrackType::Animation, "animation"},
                                  {TrackType::Audio, "audio"},
                                  {TrackType::Event, "event"},
-                                 {TrackType::Camera, "camera"}};
+                                 {TrackType::Camera, "camera"},
+                                 {TrackType::Property, "property"}};
 
 Error fail(const std::string& where, const std::string& what) {
     return make_error(ErrorCode::ParseError, std::format("sequence: {}: {}", where, what));
@@ -49,7 +60,15 @@ Result<Interp> key_interp(const json::Value& k, const std::string& where) {
     if (!i) return Interp::Linear;
     if (!i->is_string()) return fail(where, "\"interp\" must be a string");
     if (auto r = interp_from_name(i->as_string())) return *r;
-    return fail(where, "unknown interp \"" + i->as_string() + "\" (step, linear, smooth or cubic)");
+    return fail(where, "unknown interp \"" + i->as_string() + "\" (step, linear, smooth, cubic or bezier)");
+}
+
+Result<Tangent> key_tangent(const json::Value& k, const std::string& where) {
+    const json::Value* i = k.find("tangent");
+    if (!i) return Tangent::Auto;
+    if (!i->is_string()) return fail(where, "\"tangent\" must be a string");
+    if (auto r = tangent_from_name(i->as_string())) return *r;
+    return fail(where, "unknown tangent \"" + i->as_string() + "\" (auto, flat, user or broken)");
 }
 
 Result<math::Vec3> vec3_of(const json::Value* v, const std::string& where) {
@@ -114,7 +133,24 @@ Status parse_channel(const json::Value& track, std::string_view field, const std
         if (!in) return std::move(in).error();
         auto v = value(k.find("v") ? k.find("v") : k.find("value"), at);
         if (!v) return std::move(v).error();
-        out.push_back({*t, *v, *in});
+        Key<T> key{*t, *v, *in};
+        if constexpr (!std::is_same_v<T, math::Quat>) {
+            auto tg = key_tangent(k, at);
+            if (!tg) return std::move(tg).error();
+            key.tangent = *tg;
+            if (key.tangent == Tangent::User || key.tangent == Tangent::Broken) {
+                auto o = value(k.find("out"), at + ".out");
+                if (!o) return std::move(o).error();
+                key.out_slope = *o;
+                key.in_slope = *o;
+            }
+            if (key.tangent == Tangent::Broken) {
+                auto is = value(k.find("in"), at + ".in");
+                if (!is) return std::move(is).error();
+                key.in_slope = *is;
+            }
+        }
+        out.push_back(key);
     }
     sort_keys(out);
     return {};
@@ -168,17 +204,45 @@ json::Value quat_json(math::Quat q) {
 }
 
 template <class T, class Fn>
-void write_channel(json::Value& track, std::string_view field, const std::vector<Key<T>>& keys, Fn value) {
-    if (keys.empty()) return;
+json::Value channel_json(const std::vector<Key<T>>& keys, Fn value) {
     json::Value arr = json::Value::array();
     for (const auto& k : keys) {
         json::Value o = json::Value::object();
         o.set("t", k.time);
         o.set("v", value(k.value));
         if (k.interp != Interp::Linear) o.set("interp", interp_name(k.interp));
+        if constexpr (!std::is_same_v<T, math::Quat>) {
+            if (k.tangent != Tangent::Auto) o.set("tangent", tangent_name(k.tangent));
+            if (k.tangent == Tangent::Broken) o.set("in", value(k.in_slope));
+            if (k.tangent == Tangent::User || k.tangent == Tangent::Broken) o.set("out", value(k.out_slope));
+        }
         arr.push(std::move(o));
     }
-    track.set(field, std::move(arr));
+    return arr;
+}
+
+template <class T, class Fn>
+void write_channel(json::Value& track, std::string_view field, const std::vector<Key<T>>& keys, Fn value) {
+    if (keys.empty()) return;
+    track.set(field, channel_json(keys, value));
+}
+
+// Property values: a number for one channel, else [x, y(, z(, w))].
+Result<math::Vec4> vec4_of(const json::Value* v, const std::string& where, std::uint8_t& channels) {
+    math::Vec4 r;
+    if (v && v->is_number()) {
+        r.x = v->as_float(NAN);
+        if (!finite(r.x)) return fail(where, "value must be a finite number");
+        channels = 1;
+        return r;
+    }
+    if (!v || !v->is_array() || v->size() < 1 || v->size() > 4) return fail(where, "value must be a number or 2 to 4 numbers");
+    for (std::size_t c = 0; c < v->size(); ++c) {
+        r[static_cast<int>(c)] = (*v)[c].as_float(NAN);
+        if (!finite(r[static_cast<int>(c)])) return fail(where, "values must be finite numbers");
+    }
+    channels = static_cast<std::uint8_t>(v->size());
+    return r;
 }
 
 // Index of the last key with time <= t (keys sorted), or -1 when t is before the first key.
@@ -188,13 +252,6 @@ template <class K> std::ptrdiff_t segment(const std::vector<K>& keys, float t) n
 }
 
 float ease(float u) noexcept { return u * u * (3.0f - 2.0f * u); }
-
-math::Vec3 catmull_rom(math::Vec3 p0, math::Vec3 p1, math::Vec3 p2, math::Vec3 p3, float u) noexcept {
-    const float u2 = u * u, u3 = u2 * u;
-    return (p1 * 2.0f + (p2 - p0) * u + (p0 * 2.0f - p1 * 5.0f + p2 * 4.0f - p3) * u2 +
-            (p1 * 3.0f - p0 - p2 * 3.0f + p3) * u3) *
-           0.5f;
-}
 
 } // namespace
 
@@ -210,6 +267,18 @@ std::optional<Interp> interp_from_name(std::string_view name) noexcept {
     return std::nullopt;
 }
 
+std::string_view tangent_name(Tangent t) noexcept {
+    for (const auto& n : kTangents)
+        if (n.tangent == t) return n.name;
+    return "auto";
+}
+
+std::optional<Tangent> tangent_from_name(std::string_view name) noexcept {
+    for (const auto& n : kTangents)
+        if (n.name == name) return n.tangent;
+    return std::nullopt;
+}
+
 std::string_view track_type_name(TrackType t) noexcept {
     for (const auto& n : kTracks)
         if (n.type == t) return n.name;
@@ -218,7 +287,7 @@ std::string_view track_type_name(TrackType t) noexcept {
 
 std::size_t Track::key_count() const noexcept {
     return position.size() + rotation.size() + scale.size() + animation.size() + audio.size() + events.size() +
-           cameras.size();
+           cameras.size() + values.size();
 }
 
 float Track::end_time() const noexcept {
@@ -233,6 +302,7 @@ float Track::end_time() const noexcept {
     last(audio);
     last(events);
     last(cameras);
+    last(values);
     return e;
 }
 
@@ -264,7 +334,7 @@ Result<std::shared_ptr<const Sequence>> Sequence::from_json(const json::Value& d
                                       [&](const TrackName& n) { return n.name == type->as_string(); });
         if (tn == std::end(kTracks))
             return fail(where, "unknown track type \"" + type->as_string() +
-                                   "\" (transform, animation, audio, event or camera)");
+                                   "\" (transform, animation, audio, event, camera or property)");
         Track t;
         t.type = tn->type;
         t.name = tv["name"].as_string_or("");
@@ -321,6 +391,31 @@ Result<std::shared_ptr<const Sequence>> Sequence::from_json(const json::Value& d
                                 return {};
                             });
             break;
+        case TrackType::Property: {
+            const json::Value* comp = tv.find("component");
+            const json::Value* prop = tv.find("property");
+            if (!comp || !comp->is_string() || comp->as_string().empty())
+                return fail(where, "property track needs a \"component\" (e.g. \"Light\")");
+            if (!prop || !prop->is_string() || prop->as_string().empty())
+                return fail(where, "property track needs a \"property\" (e.g. \"intensity\")");
+            t.component = comp->as_string();
+            t.property = prop->as_string();
+            int arity = -1;
+            st = parse_channel<math::Vec4>(tv, "keys", where, t.values,
+                                           [&](const json::Value* v, const std::string& at) -> Result<math::Vec4> {
+                                               std::uint8_t n = 0;
+                                               auto r = vec4_of(v, at, n);
+                                               if (!r) return r;
+                                               // Slopes ("in", "out") must match the values' arity too.
+                                               if (arity < 0) arity = n;
+                                               else if (n != arity)
+                                                   return fail(at, std::format("expected {} value{} like the first key", arity,
+                                                                               arity == 1 ? "" : "s"));
+                                               return r;
+                                           });
+            t.channels = static_cast<std::uint8_t>(arity < 0 ? 1 : arity);
+            break;
+        }
         case TrackType::Camera:
             st = parse_keys(tv, where, t.cameras,
                             [](const json::Value& k, CameraKey& c, const std::string& at) -> Status {
@@ -411,6 +506,18 @@ json::Value Sequence::to_json() const {
             o.set("keys", std::move(keys));
             break;
         }
+        case TrackType::Property: {
+            o.set("component", t.component);
+            o.set("property", t.property);
+            const std::uint8_t n = std::clamp<std::uint8_t>(t.channels, 1, 4);
+            o.set("keys", channel_json(t.values, [n](math::Vec4 v) {
+                      if (n == 1) return json::Value(v.x);
+                      json::Value a = json::Value::array();
+                      for (int c = 0; c < n; ++c) a.push(v[c]);
+                      return a;
+                  }));
+            break;
+        }
         case TrackType::Camera: {
             json::Value keys = json::Value::array();
             for (const auto& k : t.cameras) {
@@ -429,12 +536,40 @@ json::Value Sequence::to_json() const {
     return doc;
 }
 
-std::optional<math::Vec3> sample(const std::vector<Key<math::Vec3>>& keys, float time) noexcept {
-    if (keys.empty()) return std::nullopt;
-    const std::ptrdiff_t i = segment(keys, time);
-    if (i < 0) return keys.front().value;
+namespace {
+
+template <class T> constexpr int kDims = std::is_same_v<T, math::Vec4> ? 4 : 3;
+
+// Fritsch-Carlson limited slope of one component at an interior key: zero at a peak or plateau,
+// otherwise the centred difference clamped to three times either side's secant.
+float auto_slope(float p0, float p1, float p2, float dt0, float dt1) noexcept {
+    const float d0 = dt0 > 0 ? (p1 - p0) / dt0 : 0.0f, d1 = dt1 > 0 ? (p2 - p1) / dt1 : 0.0f;
+    if (d0 * d1 <= 0.0f) return 0.0f;
+    const float s = (dt0 + dt1) > 0 ? (p2 - p0) / (dt0 + dt1) : 0.0f;
+    const float limit = 3.0f * std::min(std::abs(d0), std::abs(d1));
+    return std::clamp(s, -limit, limit);
+}
+
+template <class T> std::pair<T, T> slopes_of(const std::vector<Key<T>>& keys, std::size_t i) noexcept {
+    if (i >= keys.size()) return {};
+    const Key<T>& k = keys[i];
+    switch (k.tangent) {
+    case Tangent::Flat: return {};
+    case Tangent::User: return {k.out_slope, k.out_slope};
+    case Tangent::Broken: return {k.in_slope, k.out_slope};
+    case Tangent::Auto: break;
+    }
+    if (i == 0 || i + 1 >= keys.size()) return {};
+    const Key<T>& a = keys[i - 1];
+    const Key<T>& b = keys[i + 1];
+    T s{};
+    for (int c = 0; c < kDims<T>; ++c)
+        s[c] = auto_slope(a.value[c], k.value[c], b.value[c], k.time - a.time, b.time - k.time);
+    return {s, s};
+}
+
+template <class T> T sample_vec(const std::vector<Key<T>>& keys, std::ptrdiff_t i, float time) noexcept {
     const auto n = static_cast<std::ptrdiff_t>(keys.size());
-    if (i >= n - 1) return keys.back().value;
     const auto& a = keys[static_cast<std::size_t>(i)];
     const auto& b = keys[static_cast<std::size_t>(i + 1)];
     const float span = b.time - a.time;
@@ -443,16 +578,54 @@ std::optional<math::Vec3> sample(const std::vector<Key<math::Vec3>>& keys, float
     case Interp::Step:
         return u >= 1.0f ? b.value : a.value;
     case Interp::Linear:
-        return math::lerp(a.value, b.value, u);
+        return a.value + (b.value - a.value) * u;
     case Interp::Smooth:
-        return math::lerp(a.value, b.value, ease(u));
+        return a.value + (b.value - a.value) * ease(u);
     case Interp::Cubic: {
-        const math::Vec3 p0 = i > 0 ? keys[static_cast<std::size_t>(i - 1)].value : a.value;
-        const math::Vec3 p3 = i + 2 < n ? keys[static_cast<std::size_t>(i + 2)].value : b.value;
-        return catmull_rom(p0, a.value, b.value, p3, u);
+        const T p0 = i > 0 ? keys[static_cast<std::size_t>(i - 1)].value : a.value;
+        const T p3 = i + 2 < n ? keys[static_cast<std::size_t>(i + 2)].value : b.value;
+        const float u2 = u * u, u3 = u2 * u;
+        return (a.value * 2.0f + (b.value - p0) * u + (p0 * 2.0f - a.value * 5.0f + b.value * 4.0f - p3) * u2 +
+                (a.value * 3.0f - p0 - b.value * 3.0f + p3) * u3) *
+               0.5f;
+    }
+    case Interp::Bezier: {
+        const T m0 = slopes_of(keys, static_cast<std::size_t>(i)).second;
+        const T m1 = slopes_of(keys, static_cast<std::size_t>(i + 1)).first;
+        const float u2 = u * u, u3 = u2 * u;
+        const float h00 = 2 * u3 - 3 * u2 + 1, h10 = u3 - 2 * u2 + u, h01 = -2 * u3 + 3 * u2, h11 = u3 - u2;
+        return a.value * h00 + m0 * (h10 * span) + b.value * h01 + m1 * (h11 * span);
     }
     }
     return a.value;
+}
+
+template <class T> std::optional<T> sample_channel(const std::vector<Key<T>>& keys, float time) noexcept {
+    if (keys.empty()) return std::nullopt;
+    const std::ptrdiff_t i = segment(keys, time);
+    if (i < 0) return keys.front().value;
+    if (i >= static_cast<std::ptrdiff_t>(keys.size()) - 1) return keys.back().value;
+    return sample_vec(keys, i, time);
+}
+
+} // namespace
+
+std::optional<math::Vec3> sample(const std::vector<Key<math::Vec3>>& keys, float time) noexcept {
+    return sample_channel(keys, time);
+}
+
+std::optional<math::Vec4> sample(const std::vector<Key<math::Vec4>>& keys, float time) noexcept {
+    return sample_channel(keys, time);
+}
+
+Slopes3 key_slopes(const std::vector<Key<math::Vec3>>& keys, std::size_t i) noexcept {
+    const auto [in, out] = slopes_of(keys, i);
+    return {in, out};
+}
+
+Slopes4 key_slopes(const std::vector<Key<math::Vec4>>& keys, std::size_t i) noexcept {
+    const auto [in, out] = slopes_of(keys, i);
+    return {in, out};
 }
 
 std::optional<math::Quat> sample(const std::vector<Key<math::Quat>>& keys, float time) noexcept {
@@ -471,6 +644,7 @@ std::optional<math::Quat> sample(const std::vector<Key<math::Quat>>& keys, float
         return math::slerp(a.value, b.value, u);
     case Interp::Smooth:
     case Interp::Cubic:
+    case Interp::Bezier:
         return math::slerp(a.value, b.value, ease(u));
     }
     return a.value;

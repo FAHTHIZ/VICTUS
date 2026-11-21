@@ -547,10 +547,43 @@ public:
     // Adds a key to a non-transform track: `value` is the clip (animation/audio), event name or
     // camera target. A key at the same time is replaced.
     SeqKey sequence_add_key(int track, float time, std::string value = {});
+    // Property tracks additionally key their target's current value of component.property.
+    // Appends a property track for `component.property` on the track target (resolved like the
+    // runtime does from the preview player). -1 when the target lacks that animatable property.
+    int sequence_add_property_track(std::string target, std::string component, std::string property);
     // Moves a key to a new time (clamped to >= 0); returns its new position after re-sorting.
     SeqKey sequence_move_key(SeqKey key, float time);
-    bool sequence_delete_key(SeqKey key);
+    // Deletes a key. Transform keys remove the key at that time from all three channels unless
+    // `all_channels` is false (curve editor).
+    bool sequence_delete_key(SeqKey key, bool all_channels = true);
     [[nodiscard]] std::optional<float> sequence_key_time(SeqKey key) const;
+    // ---- curve editing (ADR-0190): position/scale and property keys; rotation is timeline-only ----
+    // Number of float components a curve key has (3 for position/scale, the property arity, 0
+    // for keys without curves).
+    [[nodiscard]] int sequence_key_components(SeqKey key) const;
+    [[nodiscard]] std::optional<float> sequence_key_value(SeqKey key, int component) const;
+    // Sets one component of a key's value (one undo step).
+    bool sequence_set_key_value(SeqKey key, int component, float value);
+    // Moves a key in time and sets one value component in a single undo step (curve drag).
+    SeqKey sequence_move_curve_key(SeqKey key, float time, int component, float value);
+    bool sequence_set_key_interp(SeqKey key, sequencer::Interp interp);
+    // Switching to User/Broken freezes the current (auto) slopes so the curve does not jump.
+    bool sequence_set_key_tangent(SeqKey key, sequencer::Tangent tangent);
+    enum class SeqSide : std::uint8_t { In, Out };
+    // Sets the slope (value units per second) of one side of a key's tangent for one component.
+    // Auto/Flat keys become User (both sides move); Broken keys change only `side`.
+    // `break_tangent` makes the key Broken first (Alt-dragging a handle).
+    bool sequence_set_key_slope(SeqKey key, int component, SeqSide side, float slope, bool break_tangent = false);
+    // Inserts a key on a curve channel at `time` holding the value the curve has there, so the
+    // shape is kept. Returns the new key.
+    SeqKey sequence_insert_curve_key(int track, SeqChannel channel, float time);
+    [[nodiscard]] bool sequence_curves_view() const noexcept { return seq_curves_; }
+    void set_sequence_curves_view(bool on) noexcept {
+        if (on && !seq_curves_) seq_curve_frame_ = true;
+        seq_curves_ = on;
+    }
+    // Screen position of a curve key in the last drawn curve view (tests, tooling).
+    [[nodiscard]] std::optional<math::Vec2> sequence_curve_key_screen(SeqKey key, int component) const;
     bool sequence_undo();
     bool sequence_redo();
     [[nodiscard]] bool sequence_can_undo() const noexcept { return !seq_undo_.empty(); }
@@ -1534,6 +1567,23 @@ private:
         bool moved{false};
     };
     std::optional<SeqDrag> seq_drag_;
+    // curve editor view
+    bool seq_curves_{false};
+    float seq_curve_lo_{-1.0f}, seq_curve_hi_{1.0f}; // visible value range
+    float seq_curve_t0_{0.0f};                        // time at the left edge
+    std::uint32_t seq_curve_hidden_{0};               // bit per curve (channel * 4 + component)
+    math::Vec4 seq_curve_canvas_{0, 0, 0, 0};          // last canvas: x, y, width, height
+    bool seq_curve_frame_{true};                      // frame the selected track on the next draw
+    int seq_curve_component_{0};                      // component of seq_selected_ being edited
+    struct SeqCurveDrag {
+        SeqKey key;
+        int component{0};
+        int handle{0}; // 0 key, 1 in-tangent, 2 out-tangent
+        float time{0}, value{0}, slope{0};
+        bool moved{false};
+    };
+    std::optional<SeqCurveDrag> seq_curve_drag_;
+    void draw_sequence_curves(float height);
     sequencer::Track seq_scratch_; // key inspector edits (committed when an edit finishes)
     SeqKey seq_scratch_for_;
     char seq_target_buf_[128]{};
@@ -1546,6 +1596,12 @@ private:
             std::optional<animation::AnimatorComponent> animator;
         };
         std::vector<Item> items;
+        struct Property { // values property tracks change, captured when first previewed
+            Uuid uuid;
+            std::string component, property;
+            math::Vec4 value;
+        };
+        std::vector<Property> properties;
     };
     std::optional<SeqBackup> seq_backup_;
     // animation window (animation_panel.cpp)
