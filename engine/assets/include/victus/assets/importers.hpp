@@ -42,6 +42,12 @@ struct ModelImportSettings {
     bool optimize_meshes{true};
     std::uint32_t lods{3};      // coarser levels per mesh (0..7); needs optimize_meshes
     float lod_error{0.05f};     // largest simplification error, relative to the mesh size
+    bool import_lights{true};   // glTF KHR_lights_punctual / FBX lights -> ModelLight
+    bool import_cameras{true};  // glTF / FBX cameras -> ModelCamera
+    // Multiplies light intensities on import. glTF lights are photometric (lux, candela); the
+    // default 1/683 turns them back into the watt-based values Blender shows (its exporter
+    // multiplies by 683 lm/W), which match VICTUS light units. Use 1 for files written unitless.
+    float light_intensity_scale{1.0f / 683.0f};
     [[nodiscard]] json::Value to_json() const;
     static ModelImportSettings from_json(const json::Value& v);
 };
@@ -52,7 +58,7 @@ struct ImportResult {
 };
 
 inline constexpr std::uint32_t kTextureImporterVersion = 4; // v2: HDR (.hdr) sources keep linear float data; v3: BC/ASTC variants; v4: alpha_coverage_cutoff
-inline constexpr std::uint32_t kModelImporterVersion = 7; // v2: skins and animations; v3: COLOR_0 vertex colours; v4: BC/ASTC textures; v5: mesh optimisation + LODs; v6: coverage-preserving base colour mips for MASK materials; v7: card LODs for leaf canopies
+inline constexpr std::uint32_t kModelImporterVersion = 8; // v8: node lights and cameras; v2: skins and animations; v3: COLOR_0 vertex colours; v4: BC/ASTC textures; v5: mesh optimisation + LODs; v6: coverage-preserving base colour mips for MASK materials; v7: card LODs for leaf canopies
 
 [[nodiscard]] Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSettings& settings);
 // HDR (.hdr) sources: half-float pixels (limited to max_size x max_size/2), SH9 irradiance and a

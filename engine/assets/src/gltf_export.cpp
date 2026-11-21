@@ -256,10 +256,70 @@ Result<std::string> export_gltf_json(const CookedModel& model) {
         if (!n.meshes.empty()) node.set("mesh", mesh_of[n.meshes]);
         if (n.skin >= 0) node.set("skin", n.skin);
         if (!n.morph_weights.empty()) node.set("weights", floats(n.morph_weights));
+        if (n.camera >= 0) node.set("camera", n.camera);
+        if (n.light >= 0) {
+            json::Value ref = json::Value::object();
+            ref.set("light", n.light);
+            json::Value ext = json::Value::object();
+            ext.set("KHR_lights_punctual", std::move(ref));
+            node.set("extensions", std::move(ext));
+        }
         if (children[i].size()) node.set("children", std::move(children[i]));
         nodes.push(std::move(node));
     }
     doc.set("nodes", std::move(nodes));
+    if (!model.cameras.empty()) {
+        json::Value cams = json::Value::array();
+        for (const ModelCamera& c : model.cameras) {
+            json::Value cam = json::Value::object();
+            cam.set("name", c.name);
+            json::Value p = json::Value::object();
+            if (c.orthographic) {
+                cam.set("type", "orthographic");
+                p.set("ymag", c.ymag);
+                p.set("xmag", c.ymag * (c.aspect > 0.0f ? c.aspect : 1.0f));
+                p.set("znear", c.znear);
+                p.set("zfar", c.zfar > c.znear ? c.zfar : c.znear + 100.0f); // required for orthographic
+                cam.set("orthographic", std::move(p));
+            } else {
+                cam.set("type", "perspective");
+                p.set("yfov", c.yfov);
+                p.set("znear", c.znear);
+                if (c.zfar > 0.0f) p.set("zfar", c.zfar);
+                if (c.aspect > 0.0f) p.set("aspectRatio", c.aspect);
+                cam.set("perspective", std::move(p));
+            }
+            cams.push(std::move(cam));
+        }
+        doc.set("cameras", std::move(cams));
+    }
+    if (!model.lights.empty()) {
+        // Photometric units (the importer's default light_intensity_scale divides by 683 again).
+        json::Value lights = json::Value::array();
+        for (const ModelLight& l : model.lights) {
+            json::Value light = json::Value::object();
+            light.set("name", l.name);
+            light.set("type", l.type == ModelLight::Type::Directional ? "directional" : l.type == ModelLight::Type::Spot ? "spot" : "point");
+            light.set("color", floats({l.color.r, l.color.g, l.color.b}));
+            light.set("intensity", l.intensity * 683.0f);
+            if (l.range > 0.0f && l.type != ModelLight::Type::Directional) light.set("range", l.range);
+            if (l.type == ModelLight::Type::Spot) {
+                json::Value spot = json::Value::object();
+                spot.set("innerConeAngle", l.inner_cone);
+                spot.set("outerConeAngle", l.outer_cone);
+                light.set("spot", std::move(spot));
+            }
+            lights.push(std::move(light));
+        }
+        json::Value khr = json::Value::object();
+        khr.set("lights", std::move(lights));
+        json::Value ext = json::Value::object();
+        ext.set("KHR_lights_punctual", std::move(khr));
+        doc.set("extensions", std::move(ext));
+        json::Value used = json::Value::array();
+        used.push("KHR_lights_punctual");
+        doc.set("extensionsUsed", std::move(used));
+    }
     json::Value scene = json::Value::object();
     scene.set("nodes", std::move(roots));
     json::Value scenes = json::Value::array();
