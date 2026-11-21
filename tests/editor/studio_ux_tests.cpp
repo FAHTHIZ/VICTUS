@@ -699,12 +699,40 @@ TEST_CASE("studio assets: search, type and folder filters, plain type names, emp
     std::size_t in_folders = 0;
     for (const auto& f : folders) {
         h.ed->set_asset_folder(f);
+        const auto recs = h.ed->assets()->records();
+        if (std::none_of(recs.begin(), recs.end(), [&](const auto& r) { return r.path.starts_with(f + "/"); })) continue; // empty on disk
         CHECK(h.ed->asset_rows() > 0);
         CHECK(h.ed->asset_rows() <= total);
         if (f.find('/') == std::string::npos) in_folders += h.ed->asset_rows();
     }
     h.ed->set_asset_folder("");
     CHECK(in_folders <= total);
+
+    // Empty folders: create (shown in the list and selected), refuse bad names, delete when empty.
+    REQUIRE(h.ed->create_asset_folder("levels/forest").ok());
+    CHECK(h.ed->asset_folder() == "levels/forest");
+    {
+        const auto now = h.ed->asset_folders();
+        CHECK(std::ranges::find(now, "levels/forest") != now.end());
+        CHECK(std::ranges::find(now, "levels") != now.end());
+    }
+    CHECK_FALSE(h.ed->create_asset_folder("levels/forest").ok()); // exists
+    CHECK_FALSE(h.ed->create_asset_folder("../escape").ok());
+    CHECK_FALSE(h.ed->create_asset_folder(".hidden").ok());
+    CHECK_FALSE(h.ed->create_asset_folder("a:b").ok());
+    h.ed->begin_new_folder("levels");
+    h.frames(2); // the New Folder dialog draws
+    std::ofstream(h.ed->project()->assets_dir() / "levels" / "forest" / "notes.txt") << "x";
+    CHECK_FALSE(h.ed->delete_asset_folder("levels").ok()); // holds a file
+    sfs::remove(h.ed->project()->assets_dir() / "levels" / "forest" / "notes.txt");
+    REQUIRE(h.ed->delete_asset_folder("levels").ok());
+    CHECK(h.ed->asset_folder().empty());
+    CHECK_FALSE(sfs::exists(h.ed->project()->assets_dir() / "levels"));
+    {
+        const auto now = h.ed->asset_folders();
+        CHECK(std::ranges::find(now, "levels") == now.end());
+    }
+    h.ed->set_asset_folder("");
 
     // One type, or a search by name or by type name.
     h.ed->set_asset_kind_filter(assets::AssetKind::Model);

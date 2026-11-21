@@ -998,6 +998,11 @@ public:
     // Moves an asset into `folder` (empty: the assets root), keeping its file name.
     [[nodiscard]] Status move_asset_to_folder(const Uuid& asset, std::string_view folder);
     void begin_rename_folder(std::string folder); // the Rename Folder dialog
+    // Creates assets/<relative> (an empty folder shows in the folder list) and selects it.
+    [[nodiscard]] Status create_asset_folder(std::string_view relative);
+    // Removes a folder that holds no files (only empty sub-folders); refuses otherwise.
+    [[nodiscard]] Status delete_asset_folder(std::string_view relative);
+    void begin_new_folder(std::string parent); // the New Folder dialog (inside `parent`)
     // Moves the asset to the project trash (ADR-0177); restore_trashed brings it back with the
     // same ID. Trash entries are newest first.
     [[nodiscard]] Status delete_asset(const Uuid& asset);
@@ -1347,6 +1352,11 @@ private:
     std::vector<assets::AssetReference> refs_users_, refs_deps_, rename_users_;
     std::string rename_text_, rename_error_;
     std::string folder_rename_from_, folder_rename_text_, folder_rename_error_;
+    std::optional<std::string> new_folder_parent_;
+    std::string new_folder_text_, new_folder_error_;
+    // Folders on disk under assets/ (including empty ones), rescanned every few seconds.
+    mutable std::vector<std::string> disk_folders_;
+    mutable double disk_folders_time_{-1.0};
     void draw_asset_store();
     void draw_behavior_tree_editor();
     void draw_bt_palette();

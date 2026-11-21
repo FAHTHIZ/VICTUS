@@ -548,6 +548,7 @@ void Editor::draw_menu_bar() {
     }
     if (ImGui::BeginMenu("Assets")) {
         if (ImGui::MenuItem("Asset Store...", nullptr, show_asset_store_)) show_panel(Panel::AssetStore);
+        if (ImGui::MenuItem("New Folder...", nullptr, false, db_ != nullptr)) begin_new_folder(asset_folder_);
         if (ImGui::MenuItem("Trash...", nullptr, show_trash_, db_ != nullptr)) show_trash_ = true;
         kit::tooltip("Free models, materials, skies and sounds with their licences, added to this project in one click");
         ImGui::Separator();

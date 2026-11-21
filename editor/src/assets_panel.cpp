@@ -3,13 +3,16 @@
 #include "victus/editor/editor.hpp"
 #include "widgets.hpp"
 
+#include "victus/core/fs.hpp"
 #include "victus/ui/style.hpp"
 
 #include <imgui.h>
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <format>
+#include <ranges>
 #include <set>
 
 namespace victus::editor {
@@ -85,11 +88,83 @@ std::size_t Editor::asset_rows() const {
 
 std::vector<std::string> Editor::asset_folders() const {
     std::set<std::string> out;
-    if (db_)
+    if (db_) {
         for (const auto& r : db_->records())
             for (std::string f = folder_of(r.path); !f.empty(); f = folder_of(f))
                 out.insert(f);
+        // Empty folders exist only on disk; rescan them every couple of seconds (and after
+        // folder changes, which reset the timer).
+        const double now = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0.0;
+        if (disk_folders_time_ < 0.0 || now - disk_folders_time_ > 2.0 || now < disk_folders_time_) {
+            disk_folders_.clear();
+            std::error_code ec;
+            const std::filesystem::path root = db_->assets_dir();
+            for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
+                 !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+                const std::string name = it->path().filename().string();
+                if (name.starts_with('.')) {
+                    if (it->is_directory(ec)) it.disable_recursion_pending();
+                    continue;
+                }
+                if (!it->is_directory(ec) || disk_folders_.size() >= 4096) continue;
+                disk_folders_.push_back(std::filesystem::relative(it->path(), root, ec).generic_string());
+            }
+            disk_folders_time_ = now;
+        }
+        out.insert(disk_folders_.begin(), disk_folders_.end());
+    }
     return {out.begin(), out.end()};
+}
+
+Status Editor::create_asset_folder(std::string_view relative) {
+    if (!db_) return make_error(ErrorCode::InvalidArgument, "no project is open");
+    std::string rel(relative);
+    while (rel.ends_with('/')) rel.pop_back();
+    auto clean = fs::sanitize_relative(rel);
+    if (rel.empty() || !clean || clean->empty())
+        return make_error(ErrorCode::InvalidArgument, std::format("'{}' is not a valid folder name", relative));
+    for (std::string_view part : std::views::split(std::string_view(*clean), '/') | std::views::transform([](auto r) {
+             return std::string_view(r.begin(), r.end());
+         }))
+        if (part.empty() || part.starts_with('.') || part.find_first_of("\\:*?\"<>|") != std::string_view::npos)
+            return make_error(ErrorCode::InvalidArgument, std::format("'{}' is not a valid folder name (no hidden names or special characters)", relative));
+    const std::filesystem::path dir = db_->assets_dir() / *clean;
+    std::error_code ec;
+    if (std::filesystem::exists(dir, ec)) return make_error(ErrorCode::AlreadyExists, std::format("assets/{} already exists", *clean));
+    std::filesystem::create_directories(dir, ec);
+    if (ec) return make_error(ErrorCode::IoError, std::format("cannot create assets/{}: {}", *clean, ec.message()));
+    disk_folders_time_ = -1.0;
+    asset_folder_ = *clean;
+    notify("Created folder " + *clean + ". Drag assets onto it in the folder list to move them in.");
+    return {};
+}
+
+Status Editor::delete_asset_folder(std::string_view relative) {
+    if (!db_) return make_error(ErrorCode::InvalidArgument, "no project is open");
+    auto clean = fs::sanitize_relative(relative);
+    if (!clean || clean->empty()) return make_error(ErrorCode::InvalidArgument, std::format("'{}' is not a folder in assets/", relative));
+    const std::filesystem::path dir = db_->assets_dir() / *clean;
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec)) return make_error(ErrorCode::NotFound, std::format("assets/{} is not a folder", *clean));
+    std::size_t files = 0;
+    for (auto it = std::filesystem::recursive_directory_iterator(dir, ec); !ec && it != std::filesystem::recursive_directory_iterator();
+         it.increment(ec))
+        if (!it->is_directory(ec)) ++files;
+    if (files > 0)
+        return make_error(ErrorCode::InvalidArgument,
+                          std::format("assets/{} still holds {} file{}; move or delete them first", *clean, files, files == 1 ? "" : "s"));
+    std::filesystem::remove_all(dir, ec);
+    if (ec) return make_error(ErrorCode::IoError, std::format("cannot remove assets/{}: {}", *clean, ec.message()));
+    disk_folders_time_ = -1.0;
+    if (asset_folder_ == *clean || in_folder(asset_folder_, *clean)) asset_folder_ = folder_of(*clean);
+    notify("Removed empty folder " + *clean);
+    return {};
+}
+
+void Editor::begin_new_folder(std::string parent) {
+    new_folder_parent_ = std::move(parent);
+    new_folder_text_ = "New Folder";
+    new_folder_error_.clear();
 }
 
 void Editor::draw_asset_folders(const std::vector<std::string>& folders) {
@@ -115,6 +190,12 @@ void Editor::draw_asset_folders(const std::vector<std::string>& folders) {
             ImGui::TextDisabled("%s", folder.c_str());
             ImGui::Separator();
             if (ImGui::MenuItem("Rename or Move Folder...")) begin_rename_folder(folder);
+            if (ImGui::MenuItem("New Folder Inside...")) begin_new_folder(folder);
+            const bool empty = count(folder) == 0;
+            if (ImGui::MenuItem("Delete Folder", nullptr, false, empty))
+                if (auto st = delete_asset_folder(folder); !st.ok()) notify(st.error().message, true);
+            if (!empty && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Only empty folders can be deleted. Move or delete the assets inside first.");
             if (ImGui::MenuItem("Copy Path") && platform_) platform_->set_clipboard(folder);
             ImGui::EndPopup();
         }
