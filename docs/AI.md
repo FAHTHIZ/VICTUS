@@ -74,7 +74,11 @@ Blackboard keys written: `<target_key>` (entity, removed when forgotten),
 Double-click a `.vbt` in Assets (or Assets > New Behaviour Tree) to open the Behaviour Tree Editor.
 The tree is drawn top-down; children run left to right. Right-click a node to Add Child, Wrap In a
 decorator, Change To another type, Move Left/Right, Duplicate or Delete; the Nodes list on the left
-adds the clicked type under the selected node. The right-hand pane edits the selected node's
+adds the clicked type under the selected node. Drag a node (with its subtree) onto another to move
+it: dropping on the middle of a node makes it that node's last child, the left or right edge places
+it before or after that node among its siblings. The drop target is outlined (red with the reason
+when the move is not allowed: the root, into its own subtree, onto a leaf or a full decorator);
+Escape cancels and each move is one undo step. Dragging the background pans. The right-hand pane edits the selected node's
 settings and the tree's blackboard defaults. Nodes with a problem (a sequence without children, a
 check without a key) are outlined in red and the toolbar says "Will not run" with the reason.
 Ctrl+Z / Ctrl+Y undo and redo, Ctrl+S saves, Delete removes the selected node, F frames the tree.

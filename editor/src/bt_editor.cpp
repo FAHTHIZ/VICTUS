@@ -304,7 +304,8 @@ void Editor::draw_bt_canvas(const std::optional<ai::TreeDebug>& live) {
         bt_pan_x_ = mx - (mx - bt_pan_x_) * (bt_zoom_ / old);
         bt_pan_y_ = my - (my - bt_pan_y_) * (bt_zoom_ / old);
     }
-    if (active && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) || ImGui::IsMouseDragging(ImGuiMouseButton_Left) ||
+    if (active && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
+                   (ImGui::IsMouseDragging(ImGuiMouseButton_Left) && bt_drag_node_ < 0) ||
                    ImGui::IsMouseDragging(ImGuiMouseButton_Right))) {
         bt_pan_x_ += io.MouseDelta.x;
         bt_pan_y_ += io.MouseDelta.y;
@@ -350,6 +351,11 @@ void Editor::draw_bt_canvas(const std::optional<ai::TreeDebug>& live) {
 
     int hovered_node = -1;
     const float font = ImGui::GetFontSize();
+    bt_node_screen_.resize(nodes.size());
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        const ImVec2 a = to_screen(lay.pos[i]);
+        bt_node_screen_[i] = math::Vec4{a.x, a.y, w, h};
+    }
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         const Node& n = nodes[i];
         const BtNodeInfo& info = bt_node_info(n.type);
@@ -386,7 +392,66 @@ void Editor::draw_bt_canvas(const std::optional<ai::TreeDebug>& live) {
             }
         }
     }
+    // Drag a node onto another to reparent it: the left or right third of the target inserts
+    // before or after it among its siblings, the middle makes it the target's last child.
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) bt_drag_node_ = hovered_node > 0 ? hovered_node : -1;
+    if (bt_drag_node_ >= static_cast<int>(nodes.size())) bt_drag_node_ = -1;
+    // Past-threshold stays true on the release frame, so the drop sees the same target.
+    const bool dragging_node = bt_drag_node_ > 0 && io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] >= io.MouseDragThreshold * io.MouseDragThreshold &&
+                               (ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseReleased(ImGuiMouseButton_Left));
+    struct Drop {
+        int parent{-1}, index{-1}, target{-1};
+        std::string problem;
+    } drop;
+    if (dragging_node) {
+        if (hovered_node >= 0 && hovered_node != bt_drag_node_ && !doc.is_descendant(hovered_node, bt_drag_node_)) {
+            const ImVec2 a = to_screen(lay.pos[static_cast<std::size_t>(hovered_node)]);
+            const float fx = (io.MousePos.x - a.x) / w;
+            const int tp = doc.parent_of(hovered_node);
+            drop.target = hovered_node;
+            if ((fx < 0.3f || fx > 0.7f) && tp >= 0) {
+                // Sibling position counted without the dragged node.
+                int at = 0;
+                for (const std::uint32_t c : nodes[static_cast<std::size_t>(tp)].children) {
+                    if (static_cast<int>(c) == hovered_node) break;
+                    if (static_cast<int>(c) != bt_drag_node_) ++at;
+                }
+                drop.parent = tp;
+                drop.index = fx < 0.3f ? at : at + 1;
+                const float x = fx < 0.3f ? a.x - 6.0f * bt_zoom_ : a.x + w + 6.0f * bt_zoom_;
+                drop.problem = doc.reparent_problem(bt_drag_node_, tp);
+                dl->AddLine(ImVec2(x, a.y - 4.0f), ImVec2(x, a.y + h + 4.0f), u32(drop.problem.empty() ? tk::kAccent : tk::kDanger), 3.0f);
+            } else {
+                drop.parent = hovered_node;
+                drop.problem = doc.reparent_problem(bt_drag_node_, hovered_node);
+                dl->AddRect(ImVec2(a.x - 3, a.y - 3), ImVec2(a.x + w + 3, a.y + h + 3),
+                            u32(drop.problem.empty() ? tk::kAccent : tk::kDanger), tk::kRadius * bt_zoom_, 3.0f);
+            }
+        }
+        // Ghost of the dragged node under the cursor.
+        const Node& dn = nodes[static_cast<std::size_t>(bt_drag_node_)];
+        const ImVec2 g(io.MousePos.x - w * 0.5f, io.MousePos.y - h * 0.5f);
+        dl->AddRectFilled(g, ImVec2(g.x + w, g.y + h), u32(tk::kSurfaceRaised, 0.7f), tk::kRadius * bt_zoom_);
+        dl->AddRect(g, ImVec2(g.x + w, g.y + h), u32(tk::kAccent, 0.8f), tk::kRadius * bt_zoom_);
+        if (bt_zoom_ >= 0.45f)
+            dl->AddText(ImVec2(g.x + 10.0f * bt_zoom_, g.y + 7.0f * bt_zoom_), u32(tk::kText, 0.8f),
+                        dn.name.empty() ? bt_node_info(dn.type).label : dn.name.c_str());
+    }
     dl->PopClipRect();
+    if (dragging_node) {
+        if (drop.target < 0)
+            ImGui::SetTooltip("Drop on a node: middle makes it a child, left or right edge places it beside");
+        else if (!drop.problem.empty())
+            ImGui::SetTooltip("Cannot move here: %s", drop.problem.c_str());
+    }
+    if (bt_drag_node_ >= 0 && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+        if (dragging_node && drop.parent >= 0 && drop.problem.empty())
+            bt_apply(doc.reparent(bt_drag_node_, drop.parent, drop.index));
+        else if (dragging_node && !drop.problem.empty())
+            bt_message_ = drop.problem;
+        bt_drag_node_ = -1;
+    }
+    if (bt_drag_node_ >= 0 && ImGui::IsKeyPressed(ImGuiKey_Escape)) bt_drag_node_ = -1;
 
     if (hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && ImGui::GetMouseDragDelta(ImGuiMouseButton_Left).x == 0.0f &&
         ImGui::GetMouseDragDelta(ImGuiMouseButton_Left).y == 0.0f)
@@ -414,7 +479,7 @@ void Editor::draw_bt_canvas(const std::optional<ai::TreeDebug>& live) {
         ImGui::SetTooltip("%s — %s%s", info.label, info.description, "\nRight-click for options");
     }
     if (nodes.size() <= 2 && !live_ok) {
-        const char* hint = "Right-click a node to add children, wrap it or change its type. Drag to pan, scroll to zoom.";
+        const char* hint = "Right-click a node to add children, wrap it or change its type. Drag a node onto another to move it; drag the background to pan, scroll to zoom.";
         const ImVec2 ts = ImGui::CalcTextSize(hint);
         dl->AddText(ImVec2(origin.x + (size.x - ts.x) * 0.5f, end.y - ts.y - 12.0f), u32(tk::kTextDisabled), hint);
     }

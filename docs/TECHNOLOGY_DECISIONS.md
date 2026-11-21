@@ -1980,3 +1980,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences:** Rotation keys are edited in the timeline only (bezier rotations ease). Multi-key selection and box select are not implemented; tangents are per key with the same mode for all components. Property values are not restored when runtime playback stops (same as transforms).
 
+### ADR-0191: Drag-and-drop reparenting in the behaviour-tree editor
+
+**Status:** Accepted (2026-11-22). Closes the "drag-and-drop reparenting in the behaviour-tree editor" part of the ROADMAP Studio maturity item.
+
+**Context:** The Behaviour Tree Editor (ADR-0176) could only reorder a node among its siblings (Move Left/Right); moving a branch to another parent meant deleting and rebuilding it. Established tree editors let a node be dragged onto another: Unreal's Behavior Tree editor and Unity's hierarchy drop onto an item to parent under it and between items to place beside it.
+
+**Decision:** `BehaviorTreeDocument::reparent(node, new_parent, index)` detaches the node with its subtree and inserts it at `index` among the new parent's children (counted without the node, `-1` appends), renormalises pre-order and records one undo step (none for a no-op). `reparent_problem` returns the plain-words reason a move is refused: the root, a target inside the node's own subtree (no cycles), a leaf, or a decorator that already has its one child (moving within the same decorator stays allowed). On the canvas a left press on a non-root node arms a drag (the background still pans); past ImGui's drag threshold a ghost follows the cursor, the middle 40% of a target box outlines it (drop as last child) and the outer 30% on each side draws an insertion bar (drop before/after among its siblings). Invalid targets are drawn in the danger colour with the reason as a tooltip; release applies through `bt_apply` (selecting the moved node), Escape cancels. `behavior_tree_node_screen` exposes last-frame node rectangles for tests and tooling.
+
+**Alternatives:** ImGui's drag-and-drop payload API: it targets items with IDs, while the canvas is one invisible button with custom hit testing and zoom, so the drag is handled by the canvas itself. Dropping onto link lines: harder to hit at low zoom than node edges.
+
+**Evidence:** `victus_editor_tests -tc="behaviour tree document: reparent*"` (moves within and across parents, index clamping, whole subtrees, every refusal reason, no undo step for a no-op, undo back to the original) and `-tc="*dragging a node*"` (real ImGui mouse drags on the canvas: onto the middle of a sequence, onto the left edge of a sibling, refused drops onto a leaf and into the node's own child, undo per drop).
+
+**Consequences:** One node is dragged at a time (no multi-select). Dropping in empty canvas space does nothing. Auto-scroll at the canvas edge is not implemented; zoom out or pan first for distant targets.
+

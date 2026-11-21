@@ -2702,3 +2702,16 @@ Verified (Release, gcc, 2 vCPU, lavapipe):
 Not covered: multi-key/box selection, rotation curves (timeline only), per-component tangent modes; the curve view was exercised by automated input, not by a person.
 
 Next task: Studio drag-and-drop reparenting in the behaviour-tree editor, then editor plugin loading.
+
+## 2026-11-22 — Drag-and-drop reparenting in the behaviour-tree editor (ADR-0191)
+
+`BehaviorTreeDocument::reparent(node, new_parent, index)` moves a node with its subtree under another parent or to another position (one undo step, none for a no-op); `reparent_problem` explains refusals (the root, into its own subtree, a leaf, a full decorator). The canvas drags a node onto another: the middle makes it the last child, the left/right edge places it before/after among the target's siblings, with a ghost, outline or insertion bar, red with a tooltip reason for invalid drops, Escape to cancel. Dragging the background still pans.
+
+Verified (Release, gcc, 2 vCPU, lavapipe):
+- `victus_editor_tests -tc="*reparent*,*dragging a node*,*behaviour tree*"`: 6 cases / 496 assertions pass (2 new: document reparent rules and undo; real ImGui mouse drags on the canvas onto a node's middle and a sibling's edge, refused drops, undo).
+- `run_clang_tidy.py` on editor/src/bt_editor.cpp and bt_document.cpp: clean.
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build -j2`: 42/42 passed (564 s).
+
+Not covered: multi-node drag, auto-scroll at the canvas edge; the drag was exercised by automated input, not by a person.
+
+Next task: editor plugin loading, then the visual UI editor canvas.

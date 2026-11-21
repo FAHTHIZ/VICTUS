@@ -61,6 +61,12 @@ public:
     Result<int> move(int node, int delta);              // reorder among siblings
     Result<int> change_type(int node, ai::NodeType type);
     Result<int> duplicate(int node);                    // copy of the subtree after the original
+    // Moves `node` and its subtree under `new_parent` at child position `index` (-1 appends;
+    // positions count the new parent's children without `node`). Works within one parent too.
+    Result<int> reparent(int node, int new_parent, int index = -1);
+    // Why reparent(node, new_parent) would be refused, in plain words; empty when allowed.
+    [[nodiscard]] std::string reparent_problem(int node, int new_parent) const;
+    [[nodiscard]] bool is_descendant(int node, int ancestor) const noexcept; // node inside ancestor's subtree
 
     // Property edits: call begin_edit() before changing the node (once per gesture), then
     // mutable_node(); end_edit() marks the document dirty.

@@ -622,6 +622,11 @@ public:
     [[nodiscard]] BehaviorTreeDocument* behavior_tree_document() noexcept { return bt_doc_ ? &*bt_doc_ : nullptr; }
     [[nodiscard]] int behavior_tree_selection() const noexcept { return bt_selected_; }
     void select_behavior_tree_node(int index) noexcept { bt_selected_ = index; }
+    // Screen-space top-left and size of a node box in the last drawn canvas (tests, tooling).
+    [[nodiscard]] std::optional<math::Vec4> behavior_tree_node_screen(int node) const {
+        if (node < 0 || node >= static_cast<int>(bt_node_screen_.size())) return std::nullopt;
+        return bt_node_screen_[static_cast<std::size_t>(node)];
+    }
     [[nodiscard]] bool graph_editor_open() const noexcept { return show_graph_editor_; }
     [[nodiscard]] const Uuid& editing_graph_asset() const noexcept { return graph_asset_; }
     [[nodiscard]] const graph::ScriptGraph& editing_graph() const noexcept { return graph_; }
@@ -1429,6 +1434,8 @@ private:
     std::string bt_message_;
     std::string bt_edit_gesture_;
     std::string bt_new_key_;
+    int bt_drag_node_{-1}; // node pressed on the canvas (dragging it reparents on release)
+    std::vector<math::Vec4> bt_node_screen_; // x, y, width, height per node, last frame
     ai::Blackboard* live_bb_{nullptr};
     bool show_script_debugger_{false};
     std::string help_topic_, help_query_;

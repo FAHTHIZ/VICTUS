@@ -2027,6 +2027,147 @@ TEST_CASE("studio behaviour tree editor: open from Assets, edit, save, and live 
     h.frames(2);
 }
 
+TEST_CASE("behaviour tree document: reparent moves subtrees, refuses loops and full parents, one undo step") {
+    using ai::NodeType;
+    editor::BehaviorTreeDocument doc; // selector { wait }
+    auto seq = doc.add_child(0, NodeType::Sequence);
+    REQUIRE(seq.ok());
+    REQUIRE(doc.add_child(*seq, NodeType::Set).ok());
+    auto inv = doc.add_child(0, NodeType::Inverter);
+    REQUIRE(inv.ok());
+    REQUIRE(doc.add_child(*inv, NodeType::Succeed).ok());
+    // 0 selector, 1 wait, 2 sequence, 3 set, 4 invert, 5 succeed
+    REQUIRE(doc.nodes().size() == 6);
+    CHECK(doc.is_descendant(3, 2));
+    CHECK_FALSE(doc.is_descendant(2, 3));
+
+    // Refusals in plain words; nothing changes and no undo step is recorded.
+    const auto steps_before = [&] {
+        editor::BehaviorTreeDocument copy = doc;
+        int n = 0;
+        while (copy.undo()) ++n;
+        return n;
+    };
+    const int base = steps_before();
+    CHECK(doc.reparent_problem(0, 2) == "the root cannot be moved");
+    CHECK(doc.reparent_problem(2, 3) == "a node cannot move inside itself");
+    CHECK(doc.reparent_problem(2, 2) == "a node cannot move inside itself");
+    CHECK(doc.reparent_problem(1, 3).find("cannot have children") != std::string::npos);
+    CHECK(doc.reparent_problem(1, 4).find("already has its one child") != std::string::npos);
+    CHECK_FALSE(doc.reparent(1, 4).ok());
+    CHECK(doc.reparent_problem(5, 4).empty()); // staying under the same decorator is allowed
+    auto same = doc.reparent(5, 4, 0);
+    REQUIRE(same.ok());
+    CHECK(*same == 5);
+    CHECK(steps_before() == base); // a no-op move records nothing
+
+    // Move the wait into the sequence, before the set.
+    auto moved = doc.reparent(1, 2, 0);
+    REQUIRE(moved.ok());
+    // 0 selector, 1 sequence, 2 wait, 3 set, 4 invert, 5 succeed
+    CHECK(*moved == 2);
+    CHECK(doc.nodes()[2].type == NodeType::Wait);
+    CHECK(doc.nodes()[2].depth == 2);
+    CHECK(doc.parent_of(2) == 1);
+    CHECK(doc.nodes()[3].type == NodeType::Set);
+    CHECK(doc.validate().empty());
+    CHECK(doc.dirty());
+    CHECK(steps_before() == base + 1);
+    // Reorder within one parent with an index past the end: appended.
+    auto last = doc.reparent(2, 1, 99);
+    REQUIRE(last.ok());
+    CHECK(doc.nodes()[static_cast<std::size_t>(*last)].type == NodeType::Wait);
+    CHECK(*last == 3);
+    // Move a whole subtree: the sequence (with both children) goes under nothing else but
+    // can move after the invert at the root.
+    auto sub = doc.reparent(1, 0, -1);
+    REQUIRE(sub.ok());
+    CHECK(doc.nodes()[1].type == NodeType::Inverter);
+    CHECK(doc.nodes()[static_cast<std::size_t>(*sub)].type == NodeType::Sequence);
+    CHECK(doc.nodes()[static_cast<std::size_t>(*sub)].children.size() == 2);
+    REQUIRE(doc.undo());
+    REQUIRE(doc.undo());
+    REQUIRE(doc.undo());
+    CHECK(doc.nodes()[1].type == NodeType::Wait);
+    CHECK(doc.parent_of(1) == 0);
+    CHECK(doc.nodes()[2].type == NodeType::Sequence);
+}
+
+TEST_CASE("studio behaviour tree editor: dragging a node on the canvas reparents it") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    REQUIRE(h.ed->create_project(h.dir / "BT Drag", "BT Drag", "3d").ok());
+    h.frames(2);
+    h.ed->show_panel(editor::Panel::BehaviorTreeEditor);
+    REQUIRE(h.ed->create_behavior_tree("ai/drag").ok());
+    auto* doc = h.ed->behavior_tree_document();
+    REQUIRE(doc);
+    auto seq = doc->add_child(0, ai::NodeType::Sequence);
+    REQUIRE(seq.ok());
+    REQUIRE(doc->add_child(*seq, ai::NodeType::Set).ok());
+    // 0 selector, 1 wait, 2 sequence, 3 set
+    h.frames(4);
+
+    ImGuiIO& io = ImGui::GetIO();
+    const auto drag = [&](int node, int onto, float fx) {
+        const auto a = h.ed->behavior_tree_node_screen(node);
+        const auto b = h.ed->behavior_tree_node_screen(onto);
+        REQUIRE(a);
+        REQUIRE(b);
+        const float sx = a->x + a->z * 0.5f, sy = a->y + a->w * 0.5f;
+        const float tx = b->x + b->z * fx, ty = b->y + b->w * 0.5f;
+        io.AddMousePosEvent(sx, sy);
+        h.frames(1);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        h.frames(1);
+        for (int i = 1; i <= 6; ++i) {
+            const float t = static_cast<float>(i) / 6.0f;
+            io.AddMousePosEvent(sx + (tx - sx) * t, sy + (ty - sy) * t);
+            h.frames(1);
+        }
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        h.frames(2);
+        io.AddMousePosEvent(-1000, -1000);
+        h.frames(1);
+    };
+    const auto r0 = h.ed->behavior_tree_node_screen(0);
+    REQUIRE(r0);
+    CHECK(r0->z > 20.0f);
+
+    // Drop the wait on the middle of the sequence: it becomes the sequence's last child.
+    drag(1, 2, 0.5f);
+    REQUIRE(doc->nodes().size() == 4);
+    CHECK(doc->nodes()[1].type == ai::NodeType::Sequence);
+    CHECK(doc->nodes()[3].type == ai::NodeType::Wait);
+    CHECK(doc->parent_of(3) == 1);
+    CHECK(h.ed->behavior_tree_selection() == 3);
+    h.frames(2); // layout changes; the canvas redraws
+
+    // Drop it on the left edge of the set: placed before it among the sequence's children.
+    drag(3, 2, 0.1f);
+    CHECK(doc->nodes()[2].type == ai::NodeType::Wait);
+    CHECK(doc->nodes()[3].type == ai::NodeType::Set);
+    CHECK(doc->parent_of(2) == 1);
+    h.frames(2);
+
+    // A leaf refuses children: dropping the set onto the middle of the wait changes nothing.
+    drag(3, 2, 0.5f);
+    CHECK(doc->nodes()[2].type == ai::NodeType::Wait);
+    CHECK(doc->nodes()[3].type == ai::NodeType::Set);
+    // Dragging the sequence into its own child is refused too.
+    drag(1, 3, 0.5f);
+    CHECK(doc->nodes()[1].type == ai::NodeType::Sequence);
+    CHECK(doc->parent_of(1) == 0);
+
+    // Each successful drop is one undo step.
+    REQUIRE(doc->undo());
+    REQUIRE(doc->undo());
+    CHECK(doc->nodes()[1].type == ai::NodeType::Wait);
+    CHECK(doc->nodes()[2].type == ai::NodeType::Sequence);
+}
+
 TEST_CASE("studio import queue: reimport runs in the background, the panel lists results, cancel and retry") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;

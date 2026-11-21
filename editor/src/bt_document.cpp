@@ -350,6 +350,42 @@ Result<int> BehaviorTreeDocument::duplicate(int node) {
     return normalize(static_cast<int>(added));
 }
 
+bool BehaviorTreeDocument::is_descendant(int node, int ancestor) const noexcept {
+    for (int p = node; p >= 0; p = parent_of(p))
+        if (p == ancestor) return true;
+    return false;
+}
+
+std::string BehaviorTreeDocument::reparent_problem(int node, int new_parent) const {
+    const int count = static_cast<int>(nodes_.size());
+    if (node < 0 || node >= count || new_parent < 0 || new_parent >= count) return "select a node first";
+    if (node == 0) return "the root cannot be moved";
+    if (is_descendant(new_parent, node)) return "a node cannot move inside itself";
+    const Node& p = nodes_[static_cast<std::size_t>(new_parent)];
+    if (parent_of(node) != new_parent && !can_add_child(new_parent))
+        return std::format("{} {}", bt_node_info(p.type).label,
+                           ai::node_arity(p.type) == NodeArity::Leaf ? "cannot have children" : "already has its one child");
+    return {};
+}
+
+Result<int> BehaviorTreeDocument::reparent(int node, int new_parent, int index) {
+    if (const std::string why = reparent_problem(node, new_parent); !why.empty())
+        return make_error(ErrorCode::InvalidArgument, why);
+    const int old_parent = parent_of(node);
+    auto& from = nodes_[static_cast<std::size_t>(old_parent)].children;
+    const auto old_pos = std::find(from.begin(), from.end(), static_cast<std::uint32_t>(node)) - from.begin();
+    std::vector<std::uint32_t> to = nodes_[static_cast<std::size_t>(new_parent)].children;
+    std::erase(to, static_cast<std::uint32_t>(node));
+    const auto at = index < 0 ? to.size() : std::min<std::size_t>(static_cast<std::size_t>(index), to.size());
+    if (old_parent == new_parent && static_cast<std::ptrdiff_t>(at) == old_pos) return node; // no change, no undo step
+    push_undo(std::format("Move {}", bt_node_info(nodes_[static_cast<std::size_t>(node)].type).label));
+    std::erase(from, static_cast<std::uint32_t>(node));
+    to.insert(to.begin() + static_cast<std::ptrdiff_t>(at), static_cast<std::uint32_t>(node));
+    nodes_[static_cast<std::size_t>(new_parent)].children = std::move(to);
+    dirty_ = true;
+    return normalize(node);
+}
+
 std::string BehaviorTreeDocument::node_problem(int node) const {
     if (node < 0 || node >= static_cast<int>(nodes_.size())) return {};
     const Node& n = nodes_[static_cast<std::size_t>(node)];
