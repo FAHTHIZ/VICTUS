@@ -8,9 +8,12 @@
 // shader may change colours, normals, roughness, emission, alpha, etc. but cannot declare new
 // uniforms or samplers; it reads material values through the existing material/textures and
 // up to four per-material vec4 parameters (`i.params[0..3]`, MaterialAsset::shader_params).
+// An optional `void vertex(VertexInput i, inout Vertex v)` in the same file moves vertices in world
+// space in every pass (ADR-0170); a file may hold only a vertex function.
 #pragma once
 #include "victus/assets/database.hpp"
 #include "victus/core/result.hpp"
+#include "victus/render/scene_renderer.hpp"
 #include "victus/rhi/rhi.hpp"
 #include "victus/shadercompiler/shader_compiler.hpp"
 
@@ -37,6 +40,14 @@ namespace victus::runtime {
 // The surface function of a shader asset: a .vshader's text, or the GLSL a .vmatgraph material
 // graph compiles to (ADR-0062). Graph errors name the file and node.
 [[nodiscard]] Result<std::string> load_surface_shader_code(const assets::AssetDatabase& db, const Uuid& uuid);
+
+// Whether surface shader code defines a vertex function `void vertex(VertexInput i, inout Vertex v)`
+// (ADR-0170). Shaders may define surface(), vertex() or both.
+[[nodiscard]] bool surface_shader_has_vertex(std::string_view code);
+// Compiles the vertex function into the five vertex shaders (static, skinned, lightmapped, shadow,
+// skinned shadow) the scene renderer binds for materials using the shader. The caller owns them.
+[[nodiscard]] Result<render::SurfaceVertexStage> create_surface_vertex_stage(rhi::Device& device, std::string_view code,
+                                                                             std::string_view name);
 
 // Template written by the editor's "New Surface Shader" action.
 [[nodiscard]] std::string_view surface_shader_template() noexcept;

@@ -44,6 +44,16 @@ enum class MaterialBlend : std::uint8_t { Opaque, Alpha, Additive };
 [[nodiscard]] std::string_view material_blend_name(MaterialBlend b) noexcept;
 [[nodiscard]] std::optional<MaterialBlend> parse_material_blend(std::string_view name) noexcept;
 
+// Vertex shaders compiled from a surface shader's `vertex()` function (surface_vertex_source(),
+// ADR-0170), one per pipeline family. Owned by whoever compiled them (runtime::GpuAssetCache);
+// a Material points at them while they are alive.
+enum class SurfaceVertexVariant : std::uint8_t { Static, Skinned, Lightmapped, Shadow, ShadowSkinned };
+inline constexpr std::size_t kSurfaceVertexVariants = 5;
+struct SurfaceVertexStage {
+    std::array<rhi::ShaderHandle, kSurfaceVertexVariants> shaders{}; // indexed by SurfaceVertexVariant
+    [[nodiscard]] rhi::ShaderHandle get(SurfaceVertexVariant v) const noexcept { return shaders[static_cast<std::size_t>(v)]; }
+};
+
 struct Material {
     math::Color base_color{1, 1, 1, 1}; // linear
     math::Color emissive{0, 0, 0, 1};   // linear rgb, multiplied by emissive_strength
@@ -67,6 +77,9 @@ struct Material {
     // below); invalid = the built-in PBR shader. `shader_params` reach it as material.custom[].
     rhi::ShaderHandle surface_shader;
     std::array<math::Vec4, 4> shader_params{};
+    // Project vertex function (ADR-0170): displaces vertices in every pass (forward, shadows) with
+    // the built-in fragment shader or `surface_shader`. Not owned; null = the built-in vertex stage.
+    const SurfaceVertexStage* vertex_stage{nullptr};
     // Vertex alpha normally multiplies opacity. As a coverage mask it instead marks where the
     // scene's coverage layer may settle (alpha >= 0.5) and opacity ignores it.
     bool vertex_alpha_coverage_mask{false};
@@ -86,6 +99,14 @@ enum class FogMode : std::uint8_t { None, Linear, Exponential, ExponentialSquare
 // defines `void surface(SurfaceInput i, inout Surface s)`; see engine/render/shaders/pbr.frag).
 // `#line` directives keep compiler messages on the user's own line numbers.
 [[nodiscard]] std::string surface_shader_source(std::string_view surface_code);
+// Whether surface shader code defines `void surface(...)` / `void vertex(...)` (comments ignored).
+[[nodiscard]] bool surface_code_has_function(std::string_view code, std::string_view name);
+// `code` with the definition of function `name` blanked out (newlines kept, so compiler line
+// numbers stay the user's); unchanged when it is not defined.
+[[nodiscard]] std::string surface_code_without_function(std::string_view code, std::string_view name);
+// The surface vertex template (engine/render/shaders/templates/surface_vertex.glsl) for
+// `variant` with `surface_code`'s vertex function spliced in (its surface function removed).
+[[nodiscard]] std::string surface_vertex_source(std::string_view surface_code, SurfaceVertexVariant variant);
 // The unmodified pbr.frag source.
 [[nodiscard]] std::string_view pbr_fragment_source() noexcept;
 
@@ -971,7 +992,13 @@ private:
     // Vertex variants of the PBR pipelines: kVertexStatic (mesh.vert), kVertexSkinned
     // (mesh_skinned.vert) and kVertexLightmapped (mesh_lightmap.vert, ADR-0122).
     static constexpr std::uint32_t kVertexStatic = 0, kVertexSkinned = 1, kVertexLightmapped = 2, kVertexVariants = 3;
-    [[nodiscard]] rhi::PipelineHandle surface_pipeline(rhi::ShaderHandle fragment, std::uint32_t variant, bool double_sided,
+    // Pushes a vertex function's VertexMaterial block (time, shadow flag, shader_params) to vertex
+    // uniform slot 1 (ADR-0170).
+    void push_vertex_material(rhi::CommandBuffer& cmd, const Material& m, bool shadow) const;
+    float shader_time_{0}; // seconds, as lighting.screen.z for this frame
+    // Shadow-map pipeline for a material with a vertex function (ADR-0170): [skinned][alpha cut].
+    [[nodiscard]] rhi::PipelineHandle surface_shadow_pipeline(const SurfaceVertexStage& stage, bool skinned, bool cut);
+    [[nodiscard]] rhi::PipelineHandle surface_pipeline(rhi::ShaderHandle fragment, const SurfaceVertexStage* vertex, std::uint32_t variant, bool double_sided,
                                                        MaterialBlend blend);
     [[nodiscard]] rhi::PipelineHandle blend_pipeline(MaterialBlend blend, std::uint32_t variant, bool double_sided);
     // Forward pipelines remember their description so multisampled (and alpha-to-coverage)
@@ -1007,6 +1034,10 @@ private:
     std::unordered_map<std::string, rhi::PipelineHandle> post_; // "<shader>/<format>/<blend>"
     // Built-in PBR pipeline descriptions, reused for surface shader variants.
     rhi::PipelineDesc opaque_desc_, skinned_desc_, lightmap_desc_;
+    rhi::PipelineDesc shadow_desc_;                    // sun/local/rain shadow depth (static)
+    rhi::ShaderHandle pbr_fragment_, shadow_fragment_, shadow_alpha_fragment_;
+    // Vertex-function shadow pipelines by the stage's static shadow shader handle: [skinned * 2 + cut].
+    std::unordered_map<std::uint64_t, std::array<rhi::PipelineHandle, 4>> surface_shadow_pipelines_;
     // Surface shader pipelines by shader handle: [blend][variant][double_sided]; all invalid
     // when creation failed (the built-in pipeline is used and the failure logged once).
     std::unordered_map<std::uint64_t, std::array<rhi::PipelineHandle, 4 * kVertexVariants * 2>> surface_pipelines_;

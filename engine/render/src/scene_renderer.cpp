@@ -86,8 +86,9 @@ std::uint64_t material_key(const Material& m) noexcept {
         h = mix(h, bits(f));
     for (auto t : {m.base_color_texture, m.metallic_roughness_texture, m.normal_texture, m.emissive_texture})
         h = mix(h, handle_bits(t));
-    if (m.surface_shader) {
+    if (m.surface_shader || m.vertex_stage) {
         h = mix(h, (std::uint64_t{m.surface_shader.generation} << 32) | m.surface_shader.index);
+        h = mix(h, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(m.vertex_stage)));
         for (const Vec4& p : m.shader_params)
             for (float f : {p.x, p.y, p.z, p.w}) h = mix(h, bits(f));
     }
@@ -103,7 +104,7 @@ bool same_material(const Material& a, const Material& b) noexcept {
            a.metallic_roughness_texture == b.metallic_roughness_texture && a.normal_texture == b.normal_texture &&
            a.emissive_texture == b.emissive_texture && a.double_sided == b.double_sided && a.unlit == b.unlit &&
            a.cast_shadows == b.cast_shadows && a.uv_scale == b.uv_scale && a.uv_offset == b.uv_offset &&
-           a.nearest_filter == b.nearest_filter && a.surface_shader == b.surface_shader &&
+           a.nearest_filter == b.nearest_filter && a.surface_shader == b.surface_shader && a.vertex_stage == b.vertex_stage &&
            std::equal(a.shader_params.begin(), a.shader_params.end(), b.shader_params.begin(),
                       [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; }) &&
            a.vertex_alpha_coverage_mask == b.vertex_alpha_coverage_mask && a.coverage_response == b.coverage_response &&
@@ -224,6 +225,13 @@ struct AlphaTestUniforms {
 };
 // ADR-0067: casters drawn with the alpha-tested shadow pipeline.
 bool shadow_alpha_tested(const Material& m) noexcept { return m.alpha_cutoff > 0.0f && static_cast<bool>(m.base_color_texture); }
+// Shadow batches merge draws of one mesh across materials; vertex functions must match too.
+bool same_vertex_stage(const Material& a, const Material& b) noexcept {
+    if (a.vertex_stage != b.vertex_stage) return false;
+    if (!a.vertex_stage) return true;
+    return std::equal(a.shader_params.begin(), a.shader_params.end(), b.shader_params.begin(),
+                      [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; });
+}
 bool same_alpha_test(const Material& a, const Material& b) noexcept {
     const bool ta = shadow_alpha_tested(a), tb = shadow_alpha_tested(b);
     if (ta != tb) return false;
@@ -795,6 +803,10 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     p = dev.create_pipeline(shadow);
     if (!p) return std::move(p).error();
     r->shadow_pipeline_ = p.value();
+    r->shadow_desc_ = shadow;
+    r->pbr_fragment_ = pbr_fs.value();
+    r->shadow_fragment_ = shadow_fs.value();
+    r->shadow_alpha_fragment_ = shadow_alpha_fs.value();
     shadow.name = "shadow_depth_skinned";
     shadow.vertex = skin_shadow_vs.value();
     shadow.vertex_buffers = {mesh_layout, instance_layout, skin_layout};
@@ -950,10 +962,19 @@ rhi::PipelineHandle SceneRenderer::blend_pipeline(MaterialBlend blend, std::uint
     return blend_pipelines_[i];
 }
 
-rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, std::uint32_t variant, bool double_sided,
-                                                    MaterialBlend blend) {
+namespace {
+std::uint64_t shader_bits(rhi::ShaderHandle h) noexcept { return (std::uint64_t{h.generation} << 32) | h.index; }
+} // namespace
+
+rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, const SurfaceVertexStage* vertex, std::uint32_t variant,
+                                                    bool double_sided, MaterialBlend blend) {
     if (variant >= kVertexVariants) return {};
-    const std::uint64_t key = (std::uint64_t{fragment.generation} << 32) | fragment.index;
+    if (!fragment) fragment = pbr_fragment_; // vertex function with the built-in surface
+    // Vertex variants: Static, Skinned, Lightmapped match kVertexStatic/Skinned/Lightmapped.
+    const rhi::ShaderHandle vs = vertex ? vertex->shaders[variant] : rhi::ShaderHandle{};
+    if (vertex && !vs) return {};
+    std::uint64_t key = shader_bits(fragment);
+    if (vertex) key ^= (shader_bits(vertex->shaders[0]) + 0x9e3779b97f4a7c15ull) * 0xff51afd7ed558ccdull;
     auto it = surface_pipelines_.find(key);
     if (it == surface_pipelines_.end()) {
         // Hot reload creates new shader handles; drop the oldest sets instead of growing forever.
@@ -976,6 +997,7 @@ rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, 
         rhi::PipelineDesc d = variant_desc(variant);
         d.name = std::format("surface_{}_{}", fragment.index, i);
         d.fragment = fragment;
+        if (vs) d.vertex = vs;
         d.cull = double_sided ? rhi::CullMode::None : rhi::CullMode::Back;
         if (blend != MaterialBlend::Opaque) {
             d.depth_write = false;
@@ -989,6 +1011,49 @@ rhi::PipelineHandle SceneRenderer::surface_pipeline(rhi::ShaderHandle fragment, 
         }
         it->second[i] = *p;
         remember_forward(*p, d);
+    }
+    return it->second[i];
+}
+
+void SceneRenderer::push_vertex_material(rhi::CommandBuffer& cmd, const Material& m, bool shadow) const {
+    struct VertexMaterialUniforms {
+        Vec4 time;
+        std::array<Vec4, 4> params;
+    } u{Vec4(shader_time_, shadow ? 1.0f : 0.0f, 0.0f, 0.0f), m.shader_params};
+    cmd.push_uniforms(rhi::ShaderStage::Vertex, 1, u);
+}
+
+rhi::PipelineHandle SceneRenderer::surface_shadow_pipeline(const SurfaceVertexStage& stage, bool skinned, bool cut) {
+    const rhi::ShaderHandle vs = stage.get(skinned ? SurfaceVertexVariant::ShadowSkinned : SurfaceVertexVariant::Shadow);
+    if (!vs) return {};
+    const std::uint64_t key = shader_bits(stage.get(SurfaceVertexVariant::Shadow));
+    auto it = surface_shadow_pipelines_.find(key);
+    if (it == surface_shadow_pipelines_.end()) {
+        if (surface_shadow_pipelines_.size() >= 64) {
+            for (auto& [k, set] : surface_shadow_pipelines_)
+                for (auto pl : set)
+                    if (pl) ctx_.device().destroy(pl);
+            surface_shadow_pipelines_.clear();
+        }
+        it = surface_shadow_pipelines_.emplace(key, std::array<rhi::PipelineHandle, 4>{}).first;
+    }
+    const std::size_t i = (skinned ? 2u : 0u) + (cut ? 1u : 0u);
+    if (!it->second[i]) {
+        if (surface_failed_.contains(key ^ 1ull)) return {};
+        rhi::PipelineDesc d = shadow_desc_;
+        const rhi::PipelineDesc& forward = variant_desc(skinned ? kVertexSkinned : kVertexStatic);
+        d.name = std::format("surface_shadow_{}_{}", vs.index, i);
+        d.vertex = vs;
+        d.fragment = cut ? shadow_alpha_fragment_ : shadow_fragment_;
+        d.vertex_buffers = forward.vertex_buffers;
+        d.attributes = forward.attributes;
+        auto p = ctx_.device().create_pipeline(d);
+        if (!p) {
+            VICTUS_LOG_ERROR("render", "surface shader shadow pipeline: {}", p.error().message);
+            surface_failed_.insert(key ^ 1ull);
+            return {};
+        }
+        it->second[i] = *p;
     }
     return it->second[i];
 }
@@ -1074,6 +1139,9 @@ SceneRenderer::~SceneRenderer() {
     if (cluster_buffer_) d.destroy(cluster_buffer_);
     for (auto& [k, pl] : post_) d.destroy(pl);
     for (auto& [k, set] : surface_pipelines_)
+        for (auto pl : set)
+            if (pl) d.destroy(pl);
+    for (auto& [k, set] : surface_shadow_pipelines_)
         for (auto pl : set)
             if (pl) d.destroy(pl);
     for (auto& [k, pl] : msaa_pipelines_)
@@ -2215,7 +2283,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         auto& moving = F.moving;
         for (const Draw* d : visible) {
             // Alpha-tested draws would write motion through their holes (no discard here).
-            if (d->motion_id == 0 || d->material.alpha_cutoff > 0.0f) continue;
+            // Vertex functions animate in the shader, which the motion pass does not run.
+            if (d->motion_id == 0 || d->material.alpha_cutoff > 0.0f || d->material.vertex_stage) continue;
             const auto it = motion_prev_.find(d->motion_id);
             if (it == motion_prev_.end()) continue;
             const MotionState& prev = it->second;
@@ -2329,7 +2398,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 const Draw* f = out.back().first;
                 if (f->mesh == d->mesh && out.back().lod == lod && f->skinned == d->skinned &&
                     (!match_material || (same_material(f->material, d->material) && f->probe == d->probe)) &&
-                    (match_material || same_alpha_test(f->material, d->material))) {
+                    (match_material || (same_alpha_test(f->material, d->material) && same_vertex_stage(f->material, d->material)))) {
                     ++out.back().instance_count;
                     continue;
                 }
@@ -2989,6 +3058,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         double t = time_ ? *time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - render_epoch()).count();
         t = std::fmod(std::max(t, 0.0), 3600.0); // keeps float precision for sin(time) and scrolling
         lighting.screen = inv_size(rw, rh, static_cast<float>(t), hdr_quant);
+        shader_time_ = static_cast<float>(t);
         const float ai = env_.ambient_intensity;
         lighting.fog_color = {env_.fog_color.r * ai, env_.fog_color.g * ai, env_.fog_color.b * ai,
                               static_cast<float>(env_.fog_mode)};
@@ -3393,12 +3463,15 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     rhi::PipelineHandle bound{};
                     for (const Batch& b : local_batches[v]) {
                         const bool cut = !b.first->skinned && shadow_alpha_tested(b.first->material);
-                        const rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : cut ? shadow_alpha_ : shadow_pipeline_;
+                        rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : cut ? shadow_alpha_ : shadow_pipeline_;
+                        if (const SurfaceVertexStage* vx = b.first->material.vertex_stage)
+                            if (const auto custom = surface_shadow_pipeline(*vx, b.first->skinned, cut)) want = custom;
                         if (!(bound == want)) {
                             ctx.pass->bind_pipeline(want);
                             if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
                             bound = want;
                         }
+                        if (b.first->material.vertex_stage) push_vertex_material(ctx.cmd, b.first->material, true);
                         if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
                         if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
@@ -3428,12 +3501,15 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     rhi::PipelineHandle bound{};
                     for (const Batch& b : shadow_batches[c]) {
                         const bool cut = !b.first->skinned && shadow_alpha_tested(b.first->material);
-                        const rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : cut ? shadow_alpha_ : shadow_pipeline_;
+                        rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : cut ? shadow_alpha_ : shadow_pipeline_;
+                        if (const SurfaceVertexStage* vx = b.first->material.vertex_stage)
+                            if (const auto custom = surface_shadow_pipeline(*vx, b.first->skinned, cut)) want = custom;
                         if (!(bound == want)) {
                             ctx.pass->bind_pipeline(want);
                             if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
                             bound = want;
                         }
+                        if (b.first->material.vertex_stage) push_vertex_material(ctx.cmd, b.first->material, true);
                         if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
                         if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
@@ -3460,12 +3536,15 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 rhi::PipelineHandle bound{};
                 for (const Batch& b : F.rain_batches) {
                     const bool cut = !b.first->skinned && shadow_alpha_tested(b.first->material);
-                    const rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : cut ? shadow_alpha_ : shadow_pipeline_;
+                    rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : cut ? shadow_alpha_ : shadow_pipeline_;
+                    if (const SurfaceVertexStage* vx = b.first->material.vertex_stage)
+                        if (const auto custom = surface_shadow_pipeline(*vx, b.first->skinned, cut)) want = custom;
                     if (!(bound == want)) {
                         ctx.pass->bind_pipeline(want);
                         if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
                         bound = want;
                     }
+                    if (b.first->material.vertex_stage) push_vertex_material(ctx.cmd, b.first->material, true);
                     if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
                     if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                     ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
@@ -3514,7 +3593,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     // Alpha-tested and surface-shaded draws (which may discard): depth comes from the main pass.
                     // With MSAA the main pass depth is multisampled and not sampled later, so surface-shaded
                     // draws without an alpha test (terrain) are written here; alpha-tested ones are left out.
-                    if (d->material.alpha_cutoff > 0.0f || (d->material.surface_shader && msaa <= 1)) continue;
+                    // Vertex functions move vertices: their depth always comes from the main pass.
+                    if (d->material.alpha_cutoff > 0.0f || d->material.vertex_stage || (d->material.surface_shader && msaa <= 1)) continue;
                     const rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_prepass_double_ : skin_prepass_cull_)
                                                                 : (d->material.double_sided ? prepass_double_ : prepass_cull_);
                     if (!(bound == want)) {
@@ -3705,6 +3785,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 // blend.z: alpha to coverage (ADR-0152) - the cut-out becomes a coverage ramp.
                 mat.blend = {static_cast<float>(m.blend), std::clamp(m.occlusion_strength, 0.0f, 1.0f), a2c_of(m) ? 1.0f : 0.0f, 0};
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
+                if (m.vertex_stage) push_vertex_material(ctx.cmd, m, false);
                 auto pick = [](rhi::TextureHandle t, rhi::TextureHandle fallback) { return t ? t : fallback; };
                 const rhi::SamplerHandle tex_sampler = m.nearest_filter ? ctx_.nearest_repeat() : material_linear.value();
                 pass.bind_texture(rhi::ShaderStage::Fragment, 0, pick(m.base_color_texture, ctx_.white()), tex_sampler);
@@ -3756,9 +3837,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 rhi::PipelineHandle want = variant == kVertexSkinned       ? (d->material.double_sided ? skin_double_ : skin_cull_)
                                            : variant == kVertexLightmapped ? (d->material.double_sided ? lightmap_double_ : lightmap_cull_)
                                                                            : (d->material.double_sided ? opaque_double_ : opaque_cull_);
-                if (d->material.surface_shader)
-                    if (const auto custom = surface_pipeline(d->material.surface_shader, variant, d->material.double_sided,
-                                                             MaterialBlend::Opaque))
+                if (d->material.surface_shader || d->material.vertex_stage)
+                    if (const auto custom = surface_pipeline(d->material.surface_shader, d->material.vertex_stage, variant,
+                                                             d->material.double_sided, MaterialBlend::Opaque))
                         want = custom;
                 want = ms_pipe(want, a2c_of(d->material));
                 if (want) draw_batch(b, want, occlusion && bi < occl_batches_ ? static_cast<int>(bi) : -1);
@@ -3768,9 +3849,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             for (const Batch& b : transparent_batches) {
                 const Draw* d = b.first;
                 rhi::PipelineHandle want = blend_pipeline(d->material.blend, vertex_variant(d), d->material.double_sided);
-                if (d->material.surface_shader)
-                    if (const auto custom = surface_pipeline(d->material.surface_shader, vertex_variant(d), d->material.double_sided,
-                                                             d->material.blend))
+                if (d->material.surface_shader || d->material.vertex_stage)
+                    if (const auto custom = surface_pipeline(d->material.surface_shader, d->material.vertex_stage, vertex_variant(d),
+                                                             d->material.double_sided, d->material.blend))
                         want = custom;
                 want = ms_pipe(want, false);
                 if (want) draw_batch(b, want);
