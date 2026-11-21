@@ -2008,3 +2008,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** `victus_plugin_tests` ("editor hosts serve victus.editor.1 commands; players do not": registration rules, run, failure reason, notify, no interface or commands in a player host, cleanup on shutdown; "scaffold writes a buildable template and set_enabled edits only that field"), `victus_editor_tests -tc="studio plugins*"` (loads with the project, a command creates entities as one undo step with undo/redo, a failing command, Play swaps in a player copy without the editor interface, Stop restores, Enabled toggle, New Plugin, panel draws), `ctest -R victus_cli_plugins` (the template with its editor command builds and loads).
 
 **Consequences:** Commands get the scene but not the selection and cannot add panels, inspectors or viewport drawing (a future `victus.editor.2`). Reload is manual. Editor plugins' systems do not tick while editing.
+
+### ADR-0193: Visual UI Editor canvas in the Studio
+
+**Status:** Accepted (2026-11-22). Closes the last open GAP-29 item and the UI editor part of the ROADMAP Studio maturity item.
+
+**Context:** Game UI (ADR-0169 and earlier) was authored only through Inspector fields: anchors, pivot, position and size typed as numbers, with no view of the result except the game viewport. Established engines author UI on a dedicated canvas: Unity's RectTransform tool with its anchor preset picker (https://docs.unity3d.com/Manual/UIBasicLayout.html), Unreal's UMG Designer with screen-size previews (https://dev.epicgames.com/documentation/en-us/unreal-engine/umg-ui-designer-user-guide-for-unreal-engine), Godot's Control layout presets (https://docs.godotengine.org/en/stable/tutorials/ui/size_and_anchors.html).
+
+**Decision:** A UI Editor window renders only the edited canvas through the same `GameUiRenderer` the player uses, into an editor texture at a chosen preview size (reference size, common desktop, phone and tablet sizes), so the canvas shows what ships. Editing works in the parent's local rect space through new headless helpers in `engine/gameui` (`local_rect`, `set_local_rect`, `set_anchors`, `parent_element`, `parent_size`, `placed_by_layout`), which rewrite `UiRect` offsets so the element keeps its on-screen rect under any anchors; changing anchors therefore never moves an element, as in Unity and Godot. Click to pick (topmost hit), drag to move, eight handles to resize, grid snap with Alt override, arrow-key nudges, Escape to cancel; each gesture records one undo step on release. Layout children only resize because the layout owns their position. Add creates the twelve element kinds under the selection (and a canvas if none exists) as one undo step. Play makes the canvas view only.
+
+**Alternatives:** Drawing the UI with ImGui primitives: it would drift from the runtime renderer (fonts, rich text, clipping). Editing in the game viewport: it mixes 3D gizmos with UI and cannot preview other screen sizes.
+
+**Evidence:** `victus_gameui_tests` ("gameui authoring: local rects round-trip and anchor changes keep the element in place", "gameui authoring: canvas, parent element, layout placement and parent size"), `victus_editor_tests -tc="studio UI editor*"` (add elements, preview sizes, drag move and resize with snap, anchors, undo/redo, 165 assertions; preview image checked by eye), full ctest.
+
+**Consequences:** Single selection only; no alignment, distribute, style or theme tools; scroll-view children use the content-area approximation; no moderated user test yet.

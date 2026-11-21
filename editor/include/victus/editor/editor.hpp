@@ -15,6 +15,8 @@
 #include "victus/assets/database.hpp"
 #include "victus/assets/import_queue.hpp"
 #include "victus/plugin/plugin.hpp"
+#include "victus/gameui/gameui.hpp"
+#include "victus/runtime/game_ui.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/asset_store.hpp"
 #include "victus/editor/bt_document.hpp"
@@ -165,6 +167,7 @@ enum class Panel : std::uint8_t {
     BehaviorTreeEditor,
     ImportQueue,
     Plugins,
+    UiEditor,
     Count
 };
 [[nodiscard]] const char* panel_title(Panel panel) noexcept;
@@ -194,6 +197,28 @@ struct NetPlaySettings {
 };
 
 enum class Primitive : std::uint8_t { Empty, Cube, Sphere, Plane, Cylinder, Camera, DirectionalLight, PointLight, SpotLight, Sprite, Decal, Light2D, FogVolume };
+
+// UI Editor (ADR-0193): elements the toolbar's Add menu creates, and anchor presets.
+enum class UiElementKind : std::uint8_t {
+    Canvas, Panel, Image, Text, Button, Slider, Toggle, TextField, ProgressBar, VerticalLayout, HorizontalLayout, ScrollView
+};
+[[nodiscard]] const char* ui_element_label(UiElementKind kind) noexcept;
+// Rows top/middle/bottom/stretch x columns left/centre/right/stretch, like a 4x4 anchor picker.
+enum class UiAnchorPreset : std::uint8_t {
+    TopLeft, Top, TopRight, TopStretch,
+    Left, Center, Right, MiddleStretch,
+    BottomLeft, Bottom, BottomRight, BottomStretch,
+    StretchLeft, StretchCenter, StretchRight, StretchAll
+};
+[[nodiscard]] const char* ui_anchor_preset_label(UiAnchorPreset preset) noexcept;
+// Anchor min/max and pivot of a preset.
+void ui_anchor_preset_values(UiAnchorPreset preset, math::Vec2& anchor_min, math::Vec2& anchor_max, math::Vec2& pivot) noexcept;
+struct UiPreviewSize {
+    const char* name;
+    std::uint32_t width, height;
+};
+// Screen sizes the UI Editor previews (desktop, ultrawide, phones, tablet).
+[[nodiscard]] const std::vector<UiPreviewSize>& ui_preview_sizes();
 
 // Lessons: build a small game step by step in a new scene; steps watch the scene and tick off.
 enum class Lesson : std::uint8_t { None, First2D, First3D };
@@ -648,6 +673,32 @@ public:
     [[nodiscard]] std::optional<math::Vec4> behavior_tree_node_screen(int node) const {
         if (node < 0 || node >= static_cast<int>(bt_node_screen_.size())) return std::nullopt;
         return bt_node_screen_[static_cast<std::size_t>(node)];
+    }
+    // ---- UI Editor (ADR-0193, docs/USER_GUIDE.md) ----
+    // The canvas being edited: the one set last, else the selection's canvas, else the first.
+    [[nodiscard]] scene::Entity ui_editor_canvas();
+    void set_ui_editor_canvas(scene::Entity canvas);
+    // Preview screen size in pixels; 0 x 0 previews the canvas's reference size.
+    void set_ui_preview_size(std::uint32_t width, std::uint32_t height) noexcept;
+    [[nodiscard]] math::Vec2 ui_preview_size();
+    // Creates an element under `parent` (null: the selected element or the edited canvas; a canvas
+    // is created first when there is none) as one undo step and selects it. Null in Play mode.
+    scene::Entity create_ui_element(UiElementKind kind, scene::Entity parent = {});
+    // Sets an element's rectangle inside its parent (canvas units, from the parent's top-left)
+    // keeping its anchors, as one undo step. Elements placed by a parent's UiLayout only resize.
+    bool set_ui_element_rect(scene::Entity element, const gameui::Rect& local);
+    [[nodiscard]] std::optional<gameui::Rect> ui_element_rect(scene::Entity element);
+    // Applies an anchor preset without moving the element (one undo step).
+    bool apply_ui_anchor_preset(scene::Entity element, UiAnchorPreset preset);
+    // Last UI Editor render: the preview texture and each element's rect in preview pixels.
+    [[nodiscard]] rhi::TextureHandle ui_editor_texture() const noexcept { return ui_tex_; }
+    [[nodiscard]] std::optional<gameui::Rect> ui_editor_preview_rect(scene::Entity element) const;
+    // Screen-space x, y, width, height of an element in the last drawn UI Editor canvas.
+    [[nodiscard]] std::optional<math::Vec4> ui_editor_element_screen(scene::Entity element) const;
+    [[nodiscard]] float ui_editor_zoom() const noexcept { return ui_zoom_shown_; }
+    void set_ui_snap(bool snap, float grid = 10.0f) noexcept {
+        ui_snap_ = snap;
+        ui_grid_ = std::max(grid, 1.0f);
     }
     [[nodiscard]] bool graph_editor_open() const noexcept { return show_graph_editor_; }
     [[nodiscard]] const Uuid& editing_graph_asset() const noexcept { return graph_asset_; }
@@ -1468,6 +1519,40 @@ private:
     std::string bt_new_key_;
     int bt_drag_node_{-1}; // node pressed on the canvas (dragging it reparents on release)
     std::vector<math::Vec4> bt_node_screen_; // x, y, width, height per node, last frame
+    // UI Editor (ui_editor.cpp).
+    bool show_ui_editor_{false};
+    bool ui_visible_{false}; // drawn (not collapsed) last frame: render the preview
+    Uuid ui_canvas_;
+    std::uint32_t ui_preview_w_{0}, ui_preview_h_{0};
+    rhi::TextureHandle ui_tex_;
+    std::uint32_t ui_tex_w_{0}, ui_tex_h_{0};
+    std::unique_ptr<runtime::GameUiRenderer> ui_renderer_;
+    struct UiEditRect {
+        Uuid uuid;
+        gameui::Rect rect; // preview pixels
+        float scale{1};
+        std::uint32_t order{0};
+        bool visible{false};
+    };
+    std::vector<UiEditRect> ui_rects_;                         // canvas first, then elements, last render
+    std::vector<std::pair<Uuid, math::Vec4>> ui_screen_;       // last drawn canvas
+    math::Vec2 ui_rendered_size_{0, 0};
+    float ui_zoom_{0};        // 0 = fit
+    float ui_zoom_shown_{1};
+    float ui_pan_x_{0}, ui_pan_y_{0};
+    bool ui_snap_{true};
+    float ui_grid_{10};
+    int ui_drag_mode_{-1};    // -1 none, 0 move, 1..8 handles (N, NE, E, SE, S, SW, W, NW)
+    bool ui_drag_live_{false};
+    Uuid ui_drag_target_;
+    gameui::Rect ui_drag_start_{};
+    math::Vec2 ui_drag_parent_{0, 0};
+    math::Vec2 ui_drag_start_size_{0, 0};
+    float ui_drag_scale_{1};
+    std::vector<EntityState> ui_drag_before_;
+    Status render_ui_editor(rhi::CommandBuffer& cmd);
+    Status ensure_ui_texture(std::uint32_t w, std::uint32_t h);
+    void draw_ui_editor();
     ai::Blackboard* live_bb_{nullptr};
     bool show_script_debugger_{false};
     std::string help_topic_, help_query_;

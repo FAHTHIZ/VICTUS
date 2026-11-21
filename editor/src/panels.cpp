@@ -472,6 +472,7 @@ void Editor::draw_workspace(float) {
     draw_import_queue();
     draw_plugins_panel();
     draw_behavior_tree_editor();
+    draw_ui_editor();
     draw_trash();
     draw_asset_dialogs();
     ImGui::EndDisabled();

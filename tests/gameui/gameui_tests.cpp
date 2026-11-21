@@ -7,6 +7,8 @@
 
 #include <doctest.h>
 
+#include <cmath>
+
 using namespace victus;
 using namespace victus::gameui;
 using math::Vec2;
@@ -831,4 +833,81 @@ TEST_CASE("ui rich text: bold and colour tags become styled runs") {
     build_draw_list(s, items);
     REQUIRE(items.size() == 1);
     CHECK(items[0].rich);
+}
+
+TEST_CASE("gameui authoring: local rects round-trip and anchor changes keep the element in place") {
+    const Vec2 parent{1280, 720};
+    const auto near = [](const Rect& a, const Rect& b) {
+        return std::abs(a.x - b.x) < 1e-3f && std::abs(a.y - b.y) < 1e-3f && std::abs(a.w - b.w) < 1e-3f && std::abs(a.h - b.h) < 1e-3f;
+    };
+    // Centre anchor, centre pivot: 200x60 at the middle.
+    UiRectComponent r;
+    Rect l = local_rect(r, parent);
+    CHECK(near(l, Rect{540, 330, 200, 60}));
+    set_local_rect(r, parent, {100, 50, 300, 80});
+    CHECK(near(local_rect(r, parent), Rect{100, 50, 300, 80}));
+    CHECK(r.size.x == doctest::Approx(300));
+    CHECK(r.position.x == doctest::Approx(100 + 150 - 640));
+
+    // Every anchor preset style keeps the rect: corner, edge stretch, full stretch, odd pivots.
+    const Rect keep{100, 50, 300, 80};
+    const Vec2 mins[] = {{0, 0}, {1, 1}, {0, 0.5f}, {0, 0}, {0.2f, 0.3f}};
+    const Vec2 maxs[] = {{0, 0}, {1, 1}, {1, 0.5f}, {1, 1}, {0.6f, 0.9f}};
+    const Vec2 pivots[] = {{0, 0}, {1, 1}, {0.5f, 0.5f}, {0.5f, 0.5f}, {0.25f, 0.75f}};
+    for (int i = 0; i < 5; ++i) {
+        set_anchors(r, parent, mins[i], maxs[i], pivots[i]);
+        CHECK(near(local_rect(r, parent), keep));
+        CHECK(r.anchor_min.x == doctest::Approx(mins[i].x));
+        CHECK(r.anchor_max.y == doctest::Approx(maxs[i].y));
+    }
+    // Full stretch: size is the inset from the parent (negative = smaller than the parent).
+    set_anchors(r, parent, {0, 0}, {1, 1}, {0.5f, 0.5f});
+    CHECK(r.size.x == doctest::Approx(300 - 1280));
+    // A stretched element follows a resized parent; a corner-anchored one keeps its size.
+    CHECK(local_rect(r, {1920, 1080}).w == doctest::Approx(300 + 640));
+    set_anchors(r, parent, {1, 1}, {1, 1}, {1, 1});
+    const Rect moved = local_rect(r, {1920, 1080});
+    CHECK(moved.w == doctest::Approx(300));
+    CHECK(moved.x + moved.w == doctest::Approx(1920 - (1280 - 400)));
+    // Anchors are clamped to 0..1 and max >= min; negative widths become 0.
+    set_anchors(r, parent, {-1, 0.8f}, {2, 0.2f}, {0.5f, 0.5f});
+    CHECK(r.anchor_min.x == 0.0f);
+    CHECK(r.anchor_max.x == 1.0f);
+    CHECK(r.anchor_max.y == doctest::Approx(0.8f));
+    set_local_rect(r, parent, {10, 10, -5, 20});
+    CHECK(local_rect(r, parent).w == doctest::Approx(0));
+}
+
+TEST_CASE("gameui authoring: canvas, parent element, layout placement and parent size") {
+    Scene s;
+    const Entity c = canvas(s);
+    s.world().get<UiCanvasComponent>(c)->reference_size = {1280, 720};
+    const Entity panel = element(s, c, "Panel", corner({0.5f, 0.5f}, {0.5f, 0.5f}, {0, 0}, {400, 300}));
+    const Entity group = s.create("Group", panel); // no UiRect: transparent for parenting
+    const Entity child = element(s, group, "Child", corner({0, 0}, {0, 0}, {10, 10}, {50, 50}));
+    const Entity list = element(s, c, "List", corner({0, 0}, {0, 0}, {0, 0}, {200, 400}));
+    s.world().add<UiLayoutComponent>(list);
+    const Entity item = element(s, list, "Item", corner({0, 0}, {0, 0}, {0, 0}, {100, 40}));
+    const Entity outside = s.create("Outside");
+
+    CHECK(canvas_of(s, child) == c);
+    CHECK(canvas_of(s, c) == c);
+    CHECK(canvas_of(s, outside).is_null());
+    CHECK(parent_element(s, child) == panel);
+    CHECK(parent_element(s, panel) == c);
+    CHECK(parent_element(s, c).is_null());
+    CHECK_FALSE(placed_by_layout(s, child));
+    CHECK(placed_by_layout(s, item));
+    CHECK_FALSE(placed_by_layout(s, list));
+
+    CHECK_FALSE(parent_size(s, child).has_value()); // no layout yet
+    set_screen_size(s, {2560, 1440});               // scale 2
+    layout(s);
+    const auto ps = parent_size(s, child);
+    REQUIRE(ps.has_value());
+    CHECK(ps->x == doctest::Approx(400));
+    const auto cs = parent_size(s, panel);
+    REQUIRE(cs.has_value());
+    CHECK(cs->x == doctest::Approx(1280));
+    CHECK(cs->y == doctest::Approx(720));
 }

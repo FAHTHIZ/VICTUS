@@ -2310,3 +2310,167 @@ TEST_CASE("studio plugins: editor plugins add undoable commands; Play loads play
     h.frames(1);
 }
 #endif
+
+TEST_CASE("studio UI editor: add elements, preview sizes, drag to move and resize, anchors, undo") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    REQUIRE(h.ed->create_project(h.dir / "UI Game", "UI Game", "2d").ok());
+    h.frames(2);
+    h.ed->new_scene(); // the 2D template's scene already has a HUD canvas
+    h.ed->show_panel(editor::Panel::UiEditor);
+    h.frames(2); // empty state: no canvas yet
+    auto& s = h.ed->active_scene();
+    auto& w = s.world();
+    CHECK(h.ed->ui_editor_canvas().is_null());
+
+    // Adding a button with no canvas creates both, as one undo step.
+    const std::size_t undo_before = h.ed->undo_stack().position();
+    const auto button = h.ed->create_ui_element(editor::UiElementKind::Button);
+    REQUIRE_FALSE(button.is_null());
+    const auto canvas = h.ed->ui_editor_canvas();
+    REQUIRE_FALSE(canvas.is_null());
+    CHECK(gameui::parent_element(s, button) == canvas);
+    CHECK(w.has<gameui::UiButtonComponent>(button));
+    CHECK(w.get<gameui::UiTextComponent>(button)->text == "Button");
+    CHECK(h.ed->undo_stack().position() == undo_before + 1);
+    REQUIRE(h.ed->selection().size() == 1);
+    CHECK(h.ed->selection()[0] == s.uuid(button));
+    h.frames(3);
+
+    // The preview renders at the canvas reference size with the button drawn in its place.
+    REQUIRE(h.ed->ui_editor_texture().valid());
+    const auto* desc = gpu().ctx->device().describe(h.ed->ui_editor_texture());
+    REQUIRE(desc);
+    CHECK(desc->width == 1280);
+    CHECK(desc->height == 720);
+    const auto pr = h.ed->ui_editor_preview_rect(button);
+    REQUIRE(pr);
+    CHECK(pr->x == doctest::Approx(640 - 120));
+    CHECK(pr->w == doctest::Approx(240));
+    {
+        auto px = gpu().ctx->device().read_texture(h.ed->ui_editor_texture());
+        REQUIRE(px.ok());
+        test::save_output("ui_editor_preview", 1280, 720, *px);
+        const auto bg = test::pixel(*px, 1280, 20, 20);
+        const auto on = test::pixel(*px, 1280, 640 - 100, 360 - 20); // inside the button, left of the label
+        CHECK(test::channel(bg, 2) < 60);
+        CHECK(test::channel(on, 2) > 65); // the button's blue-grey fill (0.30 blue)
+    }
+
+    // Undo removes the canvas and the button together; redo brings both back.
+    const Uuid canvas_id = s.uuid(canvas);
+    h.ed->undo();
+    CHECK(s.find(canvas_id).is_null());
+    h.ed->redo();
+    const auto c2 = h.ed->ui_editor_canvas();
+    REQUIRE_FALSE(c2.is_null());
+    const auto btn = s.find_by_name("Button");
+    REQUIRE_FALSE(btn.is_null());
+    h.ed->select(btn);
+    h.frames(3);
+
+    // Drag the button with the mouse: one undo step, snapped to the 10-unit grid.
+    ImGuiIO& io = ImGui::GetIO();
+    const auto drag = [&](float sx, float sy, float dx, float dy) {
+        io.AddMousePosEvent(sx, sy);
+        h.frames(1);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        h.frames(1);
+        for (int i = 1; i <= 5; ++i) {
+            io.AddMousePosEvent(sx + dx * static_cast<float>(i) / 5.0f, sy + dy * static_cast<float>(i) / 5.0f);
+            h.frames(1);
+        }
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        h.frames(2);
+        io.AddMousePosEvent(-1000, -1000);
+        h.frames(1);
+    };
+    const auto before = h.ed->ui_element_rect(btn);
+    REQUIRE(before);
+    const auto scr = h.ed->ui_editor_element_screen(btn);
+    REQUIRE(scr);
+    const float z = h.ed->ui_editor_zoom();
+    REQUIRE(z > 0.05f);
+    const std::size_t pos0 = h.ed->undo_stack().position();
+    drag(scr->x + scr->z * 0.3f, scr->y + scr->w * 0.5f, 100.0f * z, 50.0f * z); // 100 x 50 canvas units
+    const auto moved = h.ed->ui_element_rect(btn);
+    REQUIRE(moved);
+    CHECK(moved->x == doctest::Approx(before->x + 100).epsilon(0.02));
+    CHECK(moved->y == doctest::Approx(before->y + 50).epsilon(0.02));
+    CHECK(std::fmod(moved->x, 10.0f) == doctest::Approx(0.0f));
+    CHECK(moved->w == doctest::Approx(before->w));
+    CHECK(h.ed->undo_stack().position() == pos0 + 1);
+
+    // Drag the east handle: wider, left edge fixed.
+    const auto scr2 = h.ed->ui_editor_element_screen(btn);
+    REQUIRE(scr2);
+    drag(scr2->x + scr2->z, scr2->y + scr2->w * 0.5f, 60.0f * z, 0.0f);
+    const auto wider = h.ed->ui_element_rect(btn);
+    REQUIRE(wider);
+    CHECK(wider->x == doctest::Approx(moved->x));
+    CHECK(wider->w == doctest::Approx(moved->w + 60).epsilon(0.02));
+    CHECK(h.ed->undo_stack().position() == pos0 + 2);
+    h.ed->undo();
+    CHECK(h.ed->ui_element_rect(btn)->w == doctest::Approx(moved->w));
+    h.ed->undo();
+    CHECK(h.ed->ui_element_rect(btn)->x == doctest::Approx(before->x));
+
+    // Clicking an empty spot selects the canvas.
+    const auto cs = h.ed->ui_editor_element_screen(c2);
+    REQUIRE(cs);
+    io.AddMousePosEvent(cs->x + 8, cs->y + 8);
+    h.frames(1);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    h.frames(1);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    h.frames(1);
+    REQUIRE(h.ed->selection().size() == 1);
+    CHECK(h.ed->selection()[0] == s.uuid(c2));
+
+    // Anchor presets keep the element in place; with Top Left it keeps its size on a wider screen.
+    const auto keep = h.ed->ui_element_rect(btn);
+    REQUIRE(h.ed->apply_ui_anchor_preset(btn, editor::UiAnchorPreset::TopLeft));
+    const auto* rc = w.get<gameui::UiRectComponent>(btn);
+    CHECK(rc->anchor_min.x == 0.0f);
+    CHECK(rc->pivot.y == 0.0f);
+    const auto same = h.ed->ui_element_rect(btn);
+    CHECK(same->x == doctest::Approx(keep->x));
+    CHECK(same->y == doctest::Approx(keep->y));
+    REQUIRE(h.ed->apply_ui_anchor_preset(btn, editor::UiAnchorPreset::StretchAll));
+    CHECK(w.get<gameui::UiRectComponent>(btn)->anchor_max.x == 1.0f);
+    CHECK(h.ed->ui_element_rect(btn)->w == doctest::Approx(keep->w));
+
+    // Phone portrait preview re-renders at that size; the stretched button follows the width.
+    h.ed->set_ui_preview_size(1080, 2340);
+    h.frames(3);
+    desc = gpu().ctx->device().describe(h.ed->ui_editor_texture());
+    REQUIRE(desc);
+    CHECK(desc->width == 1080);
+    CHECK(desc->height == 2340);
+    REQUIRE(h.ed->ui_editor_preview_rect(btn));
+    h.ed->set_ui_preview_size(0, 0);
+    h.frames(2);
+
+    // Elements in a layout group only resize.
+    const auto list = h.ed->create_ui_element(editor::UiElementKind::VerticalLayout, c2);
+    const auto text = h.ed->create_ui_element(editor::UiElementKind::Text, list);
+    REQUIRE_FALSE(text.is_null());
+    CHECK(gameui::placed_by_layout(s, text));
+    CHECK_FALSE(h.ed->apply_ui_anchor_preset(text, editor::UiAnchorPreset::Center));
+    REQUIRE(h.ed->set_ui_element_rect(text, {500, 500, 280, 48}));
+    CHECK(w.get<gameui::UiRectComponent>(text)->size.y == doctest::Approx(48));
+    CHECK(w.get<gameui::UiRectComponent>(text)->position.x == doctest::Approx(0));
+    h.frames(2);
+
+    // Every kind can be added and the window draws with it; Play makes the editor view-only.
+    for (int k = static_cast<int>(editor::UiElementKind::Panel); k <= static_cast<int>(editor::UiElementKind::ScrollView); ++k)
+        CHECK_FALSE(h.ed->create_ui_element(static_cast<editor::UiElementKind>(k), c2).is_null());
+    h.frames(2);
+    h.ed->play();
+    h.frames(2);
+    CHECK(h.ed->create_ui_element(editor::UiElementKind::Panel).is_null());
+    h.ed->stop();
+    h.frames(2);
+}

@@ -1017,4 +1017,69 @@ void build_draw_list(Scene& scene, std::vector<DrawItem>& out) {
     }
 }
 
+// ---- authoring helpers -------------------------------------------------------------------------------
+
+Rect local_rect(const UiRectComponent& r, math::Vec2 parent_size) noexcept {
+    return place(r, {0, 0, parent_size.x, parent_size.y}, 1.0f);
+}
+
+void set_local_rect(UiRectComponent& r, math::Vec2 parent_size, const Rect& rect) noexcept {
+    // Inverse of place() at scale 1: width = span + size, pivot point = a0 + span * pivot + position.
+    const auto axis = [](float span_total, float amin, float amax, float pivot, float x, float w, float& pos, float& size) {
+        w = std::max(0.0f, w);
+        const float a0 = span_total * amin, span = span_total * (amax - amin);
+        size = w - span;
+        pos = (x + pivot * w) - (a0 + span * pivot);
+    };
+    axis(parent_size.x, r.anchor_min.x, r.anchor_max.x, r.pivot.x, rect.x, rect.w, r.position.x, r.size.x);
+    axis(parent_size.y, r.anchor_min.y, r.anchor_max.y, r.pivot.y, rect.y, rect.h, r.position.y, r.size.y);
+}
+
+void set_anchors(UiRectComponent& r, math::Vec2 parent_size, math::Vec2 anchor_min, math::Vec2 anchor_max,
+                 math::Vec2 pivot) noexcept {
+    const Rect keep = local_rect(r, parent_size);
+    const auto c01 = [](math::Vec2 v) { return math::Vec2{std::clamp(v.x, 0.0f, 1.0f), std::clamp(v.y, 0.0f, 1.0f)}; };
+    r.anchor_min = c01(anchor_min);
+    r.anchor_max = c01(anchor_max);
+    r.anchor_max = {std::max(r.anchor_max.x, r.anchor_min.x), std::max(r.anchor_max.y, r.anchor_min.y)};
+    r.pivot = c01(pivot);
+    set_local_rect(r, parent_size, keep);
+}
+
+Entity canvas_of(const Scene& scene, Entity e) {
+    const ecs::World& w = scene.world();
+    for (Entity c = e; !c.is_null() && w.alive(c);) {
+        if (w.has<UiCanvasComponent>(c)) return c;
+        const auto* h = w.get<scene::Hierarchy>(c);
+        c = h ? h->parent : Entity{};
+    }
+    return {};
+}
+
+Entity parent_element(const Scene& scene, Entity e) {
+    const ecs::World& w = scene.world();
+    if (e.is_null() || !w.alive(e) || w.has<UiCanvasComponent>(e)) return {};
+    const auto* h = w.get<scene::Hierarchy>(e);
+    for (Entity c = h ? h->parent : Entity{}; !c.is_null();) {
+        if (w.has<UiRectComponent>(c) || w.has<UiCanvasComponent>(c)) return c;
+        const auto* ch = w.get<scene::Hierarchy>(c);
+        c = ch ? ch->parent : Entity{};
+    }
+    return {};
+}
+
+bool placed_by_layout(const Scene& scene, Entity e) {
+    const Entity p = parent_element(scene, e);
+    return !p.is_null() && !scene.world().has<UiCanvasComponent>(p) && scene.world().has<UiLayoutComponent>(p) &&
+           scene.world().has<UiRectComponent>(e);
+}
+
+std::optional<math::Vec2> parent_size(Scene& scene, Entity e) {
+    const Entity p = parent_element(scene, e);
+    if (p.is_null()) return std::nullopt;
+    const auto* st = scene.world().get<UiStateComponent>(p);
+    if (!st || st->scale <= 0.0f) return std::nullopt;
+    return math::Vec2{st->rect.w / st->scale, st->rect.h / st->scale};
+}
+
 } // namespace victus::gameui

@@ -104,6 +104,8 @@ Editor::~Editor() {
     thumbnails_.reset();
     cache_.reset();
     if (viewport_tex_) gpu_.device().destroy(viewport_tex_);
+    if (ui_tex_) gpu_.device().destroy(ui_tex_);
+    ui_renderer_.reset();
 }
 
 void Editor::notify(std::string message, bool error) {
@@ -1634,6 +1636,8 @@ const render::SceneStats& Editor::render_stats() const { return view_->renderer(
 Status Editor::render(rhi::CommandBuffer& cmd) {
     VICTUS_PROFILE_SCOPE("editor.render");
     if (!project_ || !cache_) return {};
+    // Before the viewport, whose layout of the scene's UI for its own size must come last.
+    VICTUS_TRY_STATUS(render_ui_editor(cmd));
     const std::uint32_t w = forced_w_ ? forced_w_ : viewport_w_;
     const std::uint32_t h = forced_h_ ? forced_h_ : viewport_h_;
     if (w == 0 || h == 0) return {};

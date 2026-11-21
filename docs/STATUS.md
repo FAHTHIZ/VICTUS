@@ -2734,3 +2734,16 @@ Next task: the visual UI editor canvas.
 ## 2026-11-22 — CI: main runs are no longer cancelled by the next push
 
 Every main CI run since 44942634058 ended "cancelled" because each push cancelled the run in progress, so no recent main commit completed CI. `cancel-in-progress` is now false for `refs/heads/main` (GitHub keeps the running run plus only the newest pending one) and stays true for other refs. Verified: the workflow parses (`yaml.safe_load`); the effect is checked on the next pushes with `gh run list`.
+
+## 2026-11-22 — Studio: visual UI Editor canvas (ADR-0193)
+
+Built: `engine/gameui` authoring helpers (`local_rect`, `set_local_rect`, `set_anchors`, `canvas_of`, `parent_element`, `placed_by_layout`, `parent_size`); a UI Editor window (`editor/src/ui_editor.cpp`) that renders the edited canvas through the runtime `GameUiRenderer` at a chosen preview size, with Add menu (12 element kinds), 4x4 anchor presets, click to pick, drag move and handle resize with grid snap, nudges, zoom/pan/fit, one undo step per gesture, and view-only mode during Play. Docked in the centre of every layout and listed in Window > Tools.
+
+Verified:
+- `build/bin/victus_gameui_tests`: 17 cases / 343 assertions pass (2 new "gameui authoring" cases).
+- `victus_editor_tests -tc="studio UI editor*"`: passes, 165 assertions; `build/test_output/ui_editor_preview.png` checked by eye (button centred on the canvas).
+- `python3 tools/lint/run_clang_tidy.py -p build editor/src/ui_editor.cpp engine/gameui/src/gameui.cpp`: 0 diagnostics.
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build -j2`: 42/42 pass (577 s).
+
+Not verified: use by a person (moderated test). Limits in KNOWN_LIMITATIONS (single selection, no alignment or style tools).
+Next task: rendering gaps (area lights and cookies, GAP-13).

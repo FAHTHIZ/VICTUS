@@ -19,6 +19,7 @@
 #include "victus/scene/scene.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -309,5 +310,24 @@ void build_draw_list(scene::Scene& scene, std::vector<DrawItem>& out);
 // Sets a scroll view's offset (canvas units, clamped at the next layout) and lays out again.
 // False when `view` has no UiScroll.
 bool scroll_to(scene::Scene& scene, scene::Entity view, math::Vec2 offset);
+
+// ---- authoring helpers (Studio UI Editor, ADR-0193) ----
+// The rectangle UiRect placement gives the element inside a parent of `parent_size` canvas units,
+// relative to the parent's top-left, in canvas units (layout groups are not applied).
+[[nodiscard]] Rect local_rect(const UiRectComponent& r, math::Vec2 parent_size) noexcept;
+// Sets position and size so that local_rect(r, parent_size) == rect; anchors and pivot are kept.
+// Width and height are clamped to >= 0.
+void set_local_rect(UiRectComponent& r, math::Vec2 parent_size, const Rect& rect) noexcept;
+// Changes anchors and pivot without moving the element (position and size are recomputed).
+void set_anchors(UiRectComponent& r, math::Vec2 parent_size, math::Vec2 anchor_min, math::Vec2 anchor_max,
+                 math::Vec2 pivot) noexcept;
+// The canvas `e` belongs to (itself for a canvas); null when it is not under one.
+[[nodiscard]] scene::Entity canvas_of(const scene::Scene& scene, scene::Entity e);
+// The nearest ancestor that is a UI element or a canvas (entities without UiRect are skipped).
+[[nodiscard]] scene::Entity parent_element(const scene::Scene& scene, scene::Entity e);
+// True when the parent element's UiLayout positions `e` (its anchors and position are ignored).
+[[nodiscard]] bool placed_by_layout(const scene::Scene& scene, scene::Entity e);
+// The parent element's size in canvas units from the last layout(); nullopt before one.
+[[nodiscard]] std::optional<math::Vec2> parent_size(scene::Scene& scene, scene::Entity e);
 
 } // namespace victus::gameui
