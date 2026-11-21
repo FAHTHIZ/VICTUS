@@ -2320,3 +2320,17 @@ Built: `FootPlacement`/`FootContact` components (engine/animation/foot_placement
 Verified: `victus_animation_tests` (7 foot placement cases, Release), `victus_editor_tests` "studio feet" (GPU, offscreen), full ctest and clang-tidy on the changed files. Not verified: visual inspection on an animated walk over stairs (the template Robot has no walk clip on stairs); Windows/macOS builds rely on CI.
 
 Next task: GAP-24 wheeled vehicles behind the physics interface, or sync markers for the animation row.
+
+## 2026-11-21 — Foliage on cached instance groups (ADR-0164, GAP-08 slice 2)
+
+Built: `SceneRenderer::cached_instance_group` (groups kept by caller key, rebuilt only when the revision, mesh, material or cluster size changes, released after 120 unused frames) and `submit_instance_group(id, {max_distance, shadow_distance})` (per-cluster draw and shadow distance limits, returns copies submitted). `extract_scene` now submits each foliage entity and mesh as one cached group of 32-copy clusters instead of rebuilding and distance-testing every copy each frame.
+
+Verified (Release, GCC, lavapipe, 2 vCPU):
+- full `victus_gpu_tests`: 205/205 cases, 27,735 assertions pass (foliage test updated: copies counted through `group_instances_drawn`, shadow triangles still emitted, batch bound now terrain chunks + 2 + visible/4; new 10-frame steady-state measurement).
+- foliage steady state, 25,872 copies, one renderer, three runs each: `extract_scene` 1.67 → 0.07 ms per frame; `render()` recording 2.69 → 0.44 ms; per-frame instance uploads 5,394 → 4; main batches 5 → 19.
+- short range on the 1,609-copy layer: 480 copies draw instead of 263 (a cluster inside the range draws all its copies). This is a visible trade-off, recorded in KNOWN_LIMITATIONS.
+- `victus_terrain_tests`: 11/11 cases, 12,757 assertions pass. `victus_editor_tests`: 65/65 cases, 5,139 assertions pass.
+
+Not covered: no real GPU or phone frame capture; no compute culling; the draw-distance edge is cluster-granular; painting a chunk rebuilds the entity's whole group.
+
+Next task: simulation schedule with phases and LOD tick rates (GAP-09, ADR-0165).

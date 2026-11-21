@@ -13,6 +13,7 @@
 #include "victus/gameplay/water.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <chrono>
 #include <cmath>
 #include <span>
@@ -1700,49 +1701,51 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 ++stats.terrain_chunks;
             }
         });
-    // Foliage entities draw their MeshRenderer once per scattered instance near the camera; the
-    // renderer merges the copies into instanced batches (one draw per LOD/probe/pass).
-    // Low/Medium tiers shorten the range and keep shadows for the nearer part (ADR-0150).
-    std::vector<math::Mat4> foliage;        // casts shadows (if the material does)
-    std::vector<math::Mat4> foliage_far;    // beyond the tier's shadow fraction: lit, shadowless
+    // Foliage entities draw their MeshRenderer once per scattered instance. The copies live in a
+    // retained instance group per entity and mesh (ADR-0164), rebuilt only when the scatter, the
+    // terrain transform, the mesh or the material change; each frame the renderer keeps the
+    // clusters within the draw distance and drops shadows beyond the tier's shadow fraction
+    // (ADR-0150), per cluster rather than per instance.
+    // Small clusters keep the draw-distance edge close to the per-instance one (ADR-0164).
+    constexpr std::uint32_t kFoliageCluster = 32;
     const float foliage_scale = renderer.settings().foliage_distance_scale;
     const float foliage_shadow = renderer.settings().foliage_shadow_fraction;
-    const auto foliage_instances = [&](Entity entity) -> bool {
+    struct FoliageView {
+        const terrain::FoliageRuntime* runtime{nullptr};
+        math::Mat4 model{math::Mat4::identity()};
+        std::uint64_t revision{0};
+        render::SceneRenderer::InstanceGroupDraw limits;
+        bool counted{false};
+    };
+    FoliageView fv;
+    const auto foliage_view = [&](Entity entity) -> bool {
         const auto* fr = w.get<terrain::FoliageRuntime>(entity);
         const auto* fc = fr ? w.get<terrain::FoliageComponent>(entity) : nullptr;
         if (!fc) return false;
-        foliage.clear();
-        foliage_far.clear();
+        fv = FoliageView{};
         const auto* twt = fr->terrain.is_null() ? nullptr : w.get<WorldTransform>(fr->terrain);
         if (!twt || fr->instances == 0) return true;
-        const math::Mat4 model = terrain::rigid_matrix(twt->matrix);
+        fv.runtime = fr;
+        fv.model = terrain::rigid_matrix(twt->matrix);
         const float range = (std::isfinite(fc->draw_distance) ? std::max(fc->draw_distance, 0.0f) : 0.0f) * foliage_scale;
-        const float range2 = range * range;
-        const float shadow_range2 = range2 * foliage_shadow * foliage_shadow;
-        for (std::size_t c = 0; c < fr->chunks.size(); ++c) {
-            const auto& list = fr->chunks[c];
-            if (list.empty() || !fr->chunk_bounds[c].valid()) continue;
-            // Skip whole chunks beyond the draw distance (bounding sphere of the instance origins).
-            const math::Aabb& b = fr->chunk_bounds[c];
-            const math::Vec3 centre = model.transform_point(b.center());
-            const float radius = math::length(b.extents());
-            if (math::length(centre - camera.position) - radius > range) continue;
-            for (const math::Mat4& local : list) {
-                const math::Mat4 world = model * local;
-                const math::Vec3 p = world.transform_point({});
-                const math::Vec3 d = p - camera.position;
-                const float d2 = math::dot(d, d);
-                if (d2 > range2) continue;
-                (d2 <= shadow_range2 ? foliage : foliage_far).push_back(world);
-            }
-        }
-        stats.foliage_instances += static_cast<std::uint32_t>(foliage.size() + foliage_far.size());
+        fv.limits.max_distance = range;
+        fv.limits.shadow_distance = range * foliage_shadow;
+        std::uint64_t h = 1469598103934665603ull;
+        const auto hash = [&h](const void* data, std::size_t n) {
+            const auto* b = static_cast<const std::uint8_t*>(data);
+            for (std::size_t i = 0; i < n; ++i) h = (h ^ b[i]) * 1099511628211ull;
+        };
+        hash(&fr->settings, sizeof(fr->settings));
+        hash(&fr->instances, sizeof(fr->instances));
+        hash(&fv.model, sizeof(fv.model));
+        if (!fr->chunk_built.empty()) hash(fr->chunk_built.data(), fr->chunk_built.size() * sizeof(std::uint64_t));
+        fv.revision = h;
         return true;
     };
     w.each<MeshRendererComponent, WorldTransform>([&](Entity entity, const MeshRendererComponent& mr, const WorldTransform& wt) {
         if (!mr.visible) return;
         const std::uint64_t motion_id = entity.bits() + 1; // stable per entity; never 0 for live entities
-        const bool scattered = foliage_instances(entity);
+        const bool scattered = foliage_view(entity);
         const auto emit = [&](const render::GpuMesh& base, const render::Material& m) {
             // Baked lighting (ADR-0125): static renderers draw their lightmapped copy when the
             // scene's lightmap has a current bake for them.
@@ -1759,11 +1762,26 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 renderer.submit(mesh, m, wt.matrix, motion_id, lmm.uv_offset);
                 return;
             }
-            if (!foliage.empty()) renderer.submit_instances(mesh, m, foliage); // static: no motion id
-            if (!foliage_far.empty()) {
-                render::Material shadowless = m;
-                shadowless.cast_shadows = false;
-                renderer.submit_instances(mesh, shadowless, foliage_far);
+            if (!fv.runtime) return;
+            const terrain::FoliageRuntime& fr = *fv.runtime;
+            const std::uint64_t key = (entity.bits() * 0x9E3779B97F4A7C15ull) ^ reinterpret_cast<std::uintptr_t>(&mesh);
+            // A mesh replaced at the same address (hot reload) must not reuse stale cluster bounds.
+            std::uint64_t revision = fv.revision;
+            for (const float f : {mesh.bounds.min.x, mesh.bounds.min.y, mesh.bounds.min.z, mesh.bounds.max.x, mesh.bounds.max.y,
+                                  mesh.bounds.max.z}) {
+                std::uint32_t bits = 0;
+                std::memcpy(&bits, &f, sizeof(bits));
+                revision = (revision ^ bits) * 1099511628211ull;
+            }
+            const std::uint32_t group = renderer.cached_instance_group(key, revision, mesh, m, [&](std::vector<math::Mat4>& out) {
+                out.reserve(fr.instances);
+                for (const auto& list : fr.chunks)
+                    for (const math::Mat4& local : list) out.push_back(fv.model * local);
+            }, kFoliageCluster);
+            const std::uint32_t drawn = renderer.submit_instance_group(group, fv.limits); // static: no motion id
+            if (!fv.counted) {
+                stats.foliage_instances += drawn;
+                fv.counted = true;
             }
         };
         const auto* pm = w.get<scene::ProceduralMeshComponent>(entity);
