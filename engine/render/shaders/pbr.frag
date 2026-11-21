@@ -336,13 +336,15 @@ vec3 env_specular(vec3 r, float roughness, vec3 p) {
     if (lighting.env_params.x < 0.5) return environment(r, roughness);
     return textureLod(u_env, env_rotate(r), roughness * lighting.env_params.y).rgb * lighting.env_params.z;
 }
-// Karis' analytic approximation of the split-sum environment BRDF (mobile).
+// Karis' analytic approximation of the split-sum environment BRDF (mobile). FP32 in every variant:
+// its scale/bias multiply the whole environment specular, and in half precision the bias term
+// (1.04 * a004 + r.w) loses most of its bits to cancellation (ADR-0153). It is five ALU ops.
 vec2 env_brdf(float NdotV, float roughness) {
-    const mvec4 c0 = mvec4(-1.0, -0.0275, -0.572, 0.022);
-    const mvec4 c1 = mvec4(1.0, 0.0425, 1.04, -0.04);
-    mvec4 r = mfloat(roughness) * c0 + c1;
-    mfloat a004 = min(r.x * r.x, mfloat(exp2(-9.28 * NdotV))) * r.x + r.y;
-    return vec2(mvec2(-1.04, 1.04) * a004 + r.zw);
+    const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+    const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
+    vec4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+    return vec2(-1.04, 1.04) * a004 + r.zw;
 }
 
 vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float metallic, float roughness) {
@@ -367,8 +369,10 @@ vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float metallic, fl
     mfloat nv = mfloat(NdotV), nl = mfloat(NdotL);
     mfloat Gh = nv / (nv * (mfloat(1.0) - kh) + kh) * (nl / (nl * (mfloat(1.0) - kh) + kh));
     mvec3 spec_h = Dh * Gh * Fh / (mfloat(4.0) * nv * nl + mfloat(1e-4));
-    mvec3 kd_h = (mvec3(1.0) - Fh) * (mfloat(1.0) - m);
-    return vec3((kd_h * a * mfloat(1.0 / PI) + spec_h) * nl) * radiance;
+    // The Lambert term is a few FP32 multiplies; in half it shifted large sunlit areas by one 8-bit
+    // step (ADR-0153). Only the specular D, G and F terms, where FP16 saves registers, stay in half.
+    vec3 kd_f = vec3((mvec3(1.0) - Fh) * (mfloat(1.0) - m));
+    return (kd_f * albedo * (NdotL / PI) + vec3(spec_h * nl)) * radiance;
 #endif
     vec3 f0 = mix(vec3(0.04), albedo, metallic);
     vec3 F = fresnel_schlick(max(dot(H, V), 0.0), f0);
