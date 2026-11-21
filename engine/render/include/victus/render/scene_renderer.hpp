@@ -653,6 +653,9 @@ struct SceneStats {
     std::uint32_t water_surfaces{0};   // water surfaces drawn (after frustum culling)
     std::uint32_t reflection_probes{0}, probe_draws{0}; // probes used / visible draws lit by a probe
     std::uint32_t instances_uploaded{0};
+    // Retained instance groups (ADR-0162): clusters submitted / clusters passing the main-view
+    // frustum test / instances those clusters draw in the main pass.
+    std::uint32_t group_clusters{0}, group_clusters_visible{0}, group_instances_drawn{0};
     std::uint32_t skinned_draws{0};    // skinned submissions this frame
     std::uint32_t joints_uploaded{0};  // joint matrices in the per-frame palette
     std::uint32_t particle_batches{0}; // visible particle batches (one draw each)
@@ -751,6 +754,26 @@ public:
     // grows once. The copies are still culled, LOD-selected and shadowed per instance and merge
     // into instanced batches like any other identical draws.
     void submit_instances(const GpuMesh& mesh, const Material& material, std::span<const math::Mat4> models);
+    // Retained instance groups (ADR-0162): many static copies of one mesh+material registered once.
+    // The copies are ordered along a Morton curve and split into clusters of `cluster_size`;
+    // their per-instance data lives in a GPU buffer written once (on the next render after
+    // creation). Each frame submit_instance_group() costs one cull, LOD pick and probe pick per
+    // cluster instead of per instance, and nothing is re-uploaded. Trade-offs: a visible cluster
+    // draws all its copies (no per-instance frustum culling inside it), every copy of a cluster
+    // uses the cluster's LOD (picked from the cluster bounds and its largest-scale copy), and
+    // group draws are not GPU occlusion culled and write no object motion vectors (static).
+    // The mesh must outlive the group. Groups are owned by this renderer and die with it.
+    struct InstanceGroupDesc {
+        const GpuMesh* mesh{nullptr};
+        Material material;
+        std::span<const math::Mat4> models;
+        std::span<const math::Vec2> lightmap_offsets; // empty, or one per model (ADR-0135)
+        std::uint32_t cluster_size{64};               // clamped to [1, 4096]
+    };
+    Result<std::uint32_t> create_instance_group(const InstanceGroupDesc& desc); // id > 0
+    void destroy_instance_group(std::uint32_t id);
+    void submit_instance_group(std::uint32_t id); // unknown ids are ignored
+    std::uint32_t instance_group_clusters(std::uint32_t id) const noexcept;
     // Skinned draw (GPU skinning). `joints` are skin matrices in the mesh's model space
     // (inverse(model) * joint_world * inverse_bind); `world_bounds` must contain the posed mesh.
     // Falls back to submit() when the mesh has no skin stream or no joints are given. Skinned
@@ -854,6 +877,9 @@ private:
         std::uint64_t motion_id{0};
         std::uint32_t joint_count{0}; // skinned only
         math::Vec2 lightmap_offset{};  // lightmapped meshes: per-instance atlas uv shift (ADR-0135)
+        std::int32_t group{-1};   // retained instance group slot (ADR-0162); world_bounds holds the cluster bounds
+        std::uint32_t cluster_first{0}, cluster_count{0}; // its instances in the group buffer
+        bool has_bounds() const noexcept { return skinned || group >= 0; }
     };
     // Previous-frame state of a tracked object (motion vectors).
     struct MotionState {
@@ -865,6 +891,22 @@ private:
         const Draw* first;
         std::uint32_t instance_offset, instance_count;
         std::uint8_t lod{0}; // level drawn by every instance of the batch
+        rhi::BufferHandle buffer{}; // retained group buffer (ADR-0162); empty = the per-frame instance buffer
+    };
+    struct InstanceCluster {
+        math::Aabb bounds;
+        math::Mat4 representative; // largest-scale copy (LOD and shadow LOD scale)
+        std::uint32_t first, count;
+    };
+    struct InstanceGroup {
+        const GpuMesh* mesh{nullptr};
+        Material material;
+        std::uint64_t key{0};
+        std::vector<InstanceCluster> clusters;
+        std::vector<std::uint8_t> pending; // instance data not yet uploaded
+        rhi::BufferHandle buffer;
+        std::uint32_t generation{0};
+        bool live{false};
     };
     struct ParticleBatch {
         ParticleMaterial material;
@@ -978,6 +1020,7 @@ private:
     rhi::BufferHandle line_buffer_;
     std::uint32_t line_capacity_{0};
     rhi::BufferHandle instance_buffer_;
+    std::vector<InstanceGroup> groups_; // slot i has id (generation << 16) | (i + 1)
     std::uint32_t instance_capacity_{0}; // in instances
     rhi::BufferHandle palette_buffer_;
     std::uint32_t palette_capacity_{0}; // in matrices

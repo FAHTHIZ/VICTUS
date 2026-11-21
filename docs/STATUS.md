@@ -2299,3 +2299,16 @@ Built: [docs/audits/ENGINE_LANDSCAPE_AND_GAP_AUDIT.md](audits/ENGINE_LANDSCAPE_A
 Verified: documentation only; no code changed, nothing built. Competitor rows come from vendor documentation; no side-by-side measurement exists.
 
 Next task: GAP-08 (persistent GPU instance buffers and culling) measured with `victus_render_bench` before and after.
+
+## 2026-11-21 — Retained instance groups with cluster culling (ADR-0162, GAP-08 slice 1)
+
+Built: `SceneRenderer::create_instance_group` / `submit_instance_group` / `destroy_instance_group`: static copies sorted along a Morton curve into clusters, instance data written once to a GPU buffer, per-cluster frustum, cascade, receiver, probe and LOD work each frame, neighbouring clusters merged into one draw bound at an offset (GLES-compatible). Group batches skip GPU occlusion culling and sort after per-frame draws so the occlusion pass keeps its layout. New stats: `group_clusters`, `group_clusters_visible`, `group_instances_drawn`. `victus_bench_render` gains 16,384-cube per-frame vs retained cases.
+
+Verified (Release, GCC, lavapipe, 2 vCPU):
+- `victus_gpu_tests -tc="gpu instance group*"`: 3 cases, 62 assertions pass (image equal to `submit_instances` within 2/255 with and without occlusion culling; second frame bit-identical; per-frame uploads < 8 vs > 400; off-view clusters culled; ids/validation).
+- full `victus_gpu_tests`: 205/205 cases, 27,707 assertions pass.
+- `victus_bench_render`: 16,384 cubes, Low, 320x180: CPU begin+submit+render 6.83 ms/frame per-frame vs 0.43 ms retained (18 frames each); uploads 23,120 vs 0 instances; 13,440 copies drawn from 210/256 visible clusters vs 12,790 individually visible; whole frame p50 169.3 vs 168.6 ms (lavapipe rasterisation dominates). This run's 4,096-cube instanced case was 58.9 ms p50 (earlier records 21.8 ms): the machine was slower this session, so compare cases within one run only.
+
+Not covered: no real GPU or phone; foliage, terrain scatter and world scenes still use the per-frame path; no compute culling inside clusters; no editing of individual copies.
+
+Next task: move foliage scatter onto instance groups (GAP-08 slice 2), then the simulation scheduler (GAP-09).
