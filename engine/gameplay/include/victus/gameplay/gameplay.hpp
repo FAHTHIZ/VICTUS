@@ -174,22 +174,46 @@ void set_game_paused(scene::Scene& scene, bool paused);
 
 using SystemFn = std::function<void(scene::Scene&, const FrameTime&)>;
 
+// Scheduling constraints for one system (ADR-0165). `after`/`before` name other systems of the
+// same phase; names that are not registered are ignored (optional modules) and reported by
+// Simulation::schedule_diagnostics(). `interval` runs the system on every Nth pass of its phase
+// (1 = every pass) with the summed delta of the skipped passes, so its total time is exact;
+// `offset` (0..interval-1) staggers systems that share an interval across passes.
+struct SystemOptions {
+    std::vector<std::string> after;
+    std::vector<std::string> before;
+    std::uint32_t interval{1};
+    std::uint32_t offset{0};
+};
+
 struct SystemInfo {
     std::string name;
     Phase phase{Phase::Update};
     SystemFn fn;
     bool enabled{true};
     const char* zone{nullptr}; // profiler scope "system.<name>"
+    SystemOptions options;
+    // Scheduler state.
+    std::uint64_t passes{0};   // passes of its phase seen while enabled
+    std::uint64_t runs{0};     // times it actually ran
+    double pending_dt{0};      // delta accumulated since its last run (interval > 1)
 };
 
 // Runs registered systems over a scene. Fixed-update systems run 0..max_steps times per tick
-// at `fixed_dt` (accumulator); other phases run once per tick with the frame delta.
+// at `fixed_dt` (accumulator); other phases run once per tick with the frame delta. Within a
+// phase systems run in registration order unless SystemOptions order them (stable topological
+// sort; a cycle keeps the registration order of its members and is reported).
 class Simulation {
 public:
     explicit Simulation(float fixed_dt = 1.0f / 60.0f) : fixed_dt_(fixed_dt) {}
     void add_system(std::string name, Phase phase, SystemFn fn);
+    void add_system(std::string name, Phase phase, SystemFn fn, SystemOptions options);
     [[nodiscard]] SystemInfo* find(std::string_view name);
     [[nodiscard]] const std::vector<SystemInfo>& systems() const noexcept { return systems_; }
+    // Names of a phase's systems in the order they run.
+    [[nodiscard]] std::vector<std::string> schedule(Phase phase);
+    // Cycles and unknown `after`/`before` names found when the order was last built.
+    [[nodiscard]] const std::vector<std::string>& schedule_diagnostics();
 
     // Advances by `dt` seconds (clamped to max_frame_dt). Updates world transforms at the end.
     void tick(scene::Scene& scene, float dt);
@@ -205,7 +229,11 @@ public:
 
 private:
     void run_phase(scene::Scene& scene, Phase phase, const FrameTime& t);
+    void build_order();
     std::vector<SystemInfo> systems_;
+    std::array<std::vector<std::size_t>, 4> order_; // indices into systems_ per phase
+    std::vector<std::string> diagnostics_;
+    bool order_dirty_{true};
     float fixed_dt_;
     double accumulator_{0};
     FrameTime time_;

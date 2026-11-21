@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/animation/animation.hpp"
+#include "victus/gameplay/sim_lod.hpp"
 #include "victus/animation/retarget.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/core/jobs.hpp"
@@ -189,6 +190,7 @@ struct Work {
     AnimatorComponent* a;
     AnimatorState* s;
     std::uint32_t channels{0}, written{0}, transitions{0};
+    float dt{0}; // this animator's delta (simulation LOD may sum skipped frames)
 };
 
 // ---- controller runtime ----
@@ -1173,10 +1175,22 @@ void AnimationSystem::update(Scene& scene, float dt) {
 
     auto& work = impl_->work;
     work.clear();
-    world.each<AnimatorComponent, AnimatorState>([&](Entity e, AnimatorComponent& a, AnimatorState& s) { work.push_back({e, &a, &s}); });
+    std::uint32_t lod_skipped = 0;
+    world.each<AnimatorComponent, AnimatorState>([&](Entity e, AnimatorComponent& a, AnimatorState& s) {
+        // Simulation LOD (ADR-0165): an animator that is not due keeps its last pose this frame.
+        const gameplay::LodTick lod = gameplay::simulation_lod_tick(world.get<gameplay::SimulationLodComponent>(e), dt);
+        if (!lod.due) {
+            ++lod_skipped;
+            return;
+        }
+        Work w{e, &a, &s};
+        w.dt = lod.dt;
+        work.push_back(w);
+    });
 
     stats_ = {};
-    stats_.animators = static_cast<std::uint32_t>(work.size());
+    stats_.animators = static_cast<std::uint32_t>(work.size()) + lod_skipped;
+    stats_.lod_skipped = lod_skipped;
     for (Work& w : work) {
         impl_->prepare(scene, w.entity, *w.a, *w.s);
         if (!w.s->set) ++stats_.missing_models;
@@ -1191,10 +1205,10 @@ void AnimationSystem::update(Scene& scene, float dt) {
     jobs::JobSystem* js = impl_->settings.jobs;
     if (js && work.size() >= impl_->settings.parallel_threshold) {
         js->parallel_for(0, work.size(), 8, [&](std::size_t b, std::size_t end) {
-            for (std::size_t i = b; i < end; ++i) evaluate(scene, work[i], dt);
+            for (std::size_t i = b; i < end; ++i) evaluate(scene, work[i], work[i].dt);
         });
     } else {
-        for (Work& w : work) evaluate(scene, w, dt);
+        for (Work& w : work) evaluate(scene, w, w.dt);
     }
     for (const Work& w : work) {
         stats_.channels_sampled += w.channels;

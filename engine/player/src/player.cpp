@@ -13,6 +13,7 @@
 #include "victus/core/memory.hpp"
 #include "victus/gameplay/capture.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/gameplay/sim_lod.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
 #include "victus/terrain/terrain.hpp"
@@ -324,6 +325,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         audio_for_scenes = audio_engine->get();
     }
     else VICTUS_LOG_WARN("player", "audio disabled: {}", audio_engine.error().message);
+    for (const auto& d : sim.schedule_diagnostics()) VICTUS_LOG_WARN("player", "schedule: {}", d);
     sim.input = &input;
     // Captures drive the simulation through a ReplayInput in both directions, so a recording sees
     // exactly the input states its replay will feed back.
@@ -728,6 +730,13 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         c.emplace_back("frame.ui_items", static_cast<double>(last_view.ui.items));
         c.emplace_back("scene.entities", static_cast<double>(scene.size()));
         c.emplace_back("sim.systems", static_cast<double>(sim.systems().size()));
+        if (const auto* lod = gameplay::simulation_lod_stats(scene)) {
+            c.emplace_back("sim.lod_entities", static_cast<double>(lod->entities));
+            c.emplace_back("sim.lod_due", static_cast<double>(lod->due));
+            for (int ti = 0; ti < gameplay::kSimulationLodTiers; ++ti)
+                c.emplace_back(std::string("sim.lod_tier") + static_cast<char>('0' + ti),
+                               static_cast<double>(lod->tiers[static_cast<std::size_t>(ti)]));
+        }
         if (memory::allocation_tracking_enabled()) {
             const auto ms = memory::allocation_stats();
             c.emplace_back("cpu.live_bytes", static_cast<double>(ms.live_bytes));

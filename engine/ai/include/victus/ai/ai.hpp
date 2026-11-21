@@ -210,6 +210,7 @@ struct AiStats {
     std::uint32_t perceivers{0};
     std::uint64_t ticks{0};
     std::uint32_t load_errors{0};
+    std::uint32_t lod_skipped{0}; // trees not due this frame under simulation LOD (ADR-0165)
 };
 
 // Reads tree text by asset path (e.g. from the project's assets folder or a package mount).

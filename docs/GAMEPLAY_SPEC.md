@@ -11,6 +11,7 @@ Provide reusable, engine-level foundations for complete playable games. The fram
 - **Controller and pawn/character:** input/AI control separated from the entity being controlled; support non-humanoid agents.
 - **Camera/view:** player and cinematic viewpoints independent of simulation ownership.
 - **Components and systems:** composable behavior with clear ownership and data access.
+- **Schedule:** systems run in four phases (PreUpdate, FixedUpdate, Update, PostUpdate); within a phase `SystemOptions` orders them (`after`/`before`) and rate-limits them (`interval`, `offset`), and simulation LOD tiers let per-entity systems update far agents less often with exact accumulated time (ADR-0165).
 - **Spawn/despawn and prefab system:** validated reusable entities, variants, overrides and deterministic instantiation where feasible.
 
 ## Player and gameplay systems
