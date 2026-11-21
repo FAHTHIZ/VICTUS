@@ -108,6 +108,16 @@ constexpr HelpTopic kTopics[] = {
      "View > Rendering Quality picks Low, Medium, High or Ultra. Lower tiers run faster on weak computers and "
      "phones; the choice is saved with the project and used by the exported game too.",
      "quality graphics performance fast slow fps low high ultra"},
+    {"Logic without code", "Behaviour trees: smarter enemies",
+     "A behaviour tree decides what an AI character does each moment: patrol, chase, attack, flee. Select the "
+     "character, Add Component > BehaviorTree, then press New Tree in the Inspector (or Edit Tree if it already "
+     "has one). Assets > New Behaviour Tree and double-clicking a .vbt file open the same Behaviour Tree Editor.\n\n"
+     "Select a node, then click a node type in the palette on the left to add it underneath, or right-click a node for Add Child, Wrap In and Change To. "
+     "Sequences run children in order until one fails; Selectors try children until one succeeds. Select a node "
+     "to edit it on the right; Blackboard holds the values the tree reads and writes. Ctrl+S saves, Ctrl+Z undoes. "
+     "Press Play with the character selected to watch each node light up green (succeeded), red (failed) or "
+     "orange (running).",
+     "behaviour behavior tree ai enemy npc decision sequence selector blackboard patrol chase vbt"},
     {"Logic without code", "Behaviours: gameplay without code",
      "Behaviours are ready-made abilities. Select an object, press Add Component and open the Behaviours group. "
      "Each one starts working the moment you press Play.\n\n"
@@ -166,6 +176,10 @@ constexpr const char* kShortcuts[][2] = {
     {"Mouse wheel", "Zoom the viewport"},
     {"Ctrl+Shift+P or F1", "Search every command"},
     {"Ctrl+= / Ctrl+- / Ctrl+0", "Bigger / smaller / default interface size"},
+    {"F2 (Assets panel)", "Rename the clicked asset"},
+    {"Delete (Assets panel)", "Move the clicked asset to the Trash"},
+    {"Shift+Alt+F (Assets panel)", "Find what uses the clicked asset"},
+    {"F2 (elsewhere)", "Help topics"},
 };
 
 std::string lower(std::string_view s) {

@@ -569,6 +569,8 @@ public:
     Status open_behavior_tree(const Uuid& asset);
     Status open_behavior_tree_path(std::string_view asset_path);
     Result<Uuid> create_behavior_tree(std::string_view relative_path = {});
+    // "ai/<name>.vbt" (letters, digits, '_' and '-' of the object name; numbered if taken), or empty.
+    [[nodiscard]] std::string suggested_behavior_tree_path(std::string_view object_name) const;
     Status save_behavior_tree();
     [[nodiscard]] BehaviorTreeDocument* behavior_tree_document() noexcept { return bt_doc_ ? &*bt_doc_ : nullptr; }
     [[nodiscard]] int behavior_tree_selection() const noexcept { return bt_selected_; }

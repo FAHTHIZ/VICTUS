@@ -896,6 +896,9 @@ TEST_CASE("studio guide: interface size, Getting Started steps, help search, und
     REQUIRE_FALSE(ragdoll.empty());
     CHECK(std::string_view(ragdoll.front()->title) == "Physics and ragdolls");
     CHECK(std::string_view(editor::find_help_topics("bigger text")[0]->title) == "Make the Studio bigger or smaller");
+    const auto bt_help = editor::find_help_topics("behaviour tree");
+    REQUIRE_FALSE(bt_help.empty());
+    CHECK(std::string_view(bt_help.front()->title) == "Behaviour trees: smarter enemies");
     CHECK(editor::find_help_topics("qqqzzz").empty());
     h.ed->open_help("Keyboard shortcuts");
     h.ed->show_panel(editor::Panel::ProjectSettings);
@@ -1895,6 +1898,10 @@ TEST_CASE("studio behaviour tree editor: open from Assets, edit, save, and live 
     REQUIRE(rec);
     CHECK(rec->path == "ai/guard.vbt");
     CHECK_FALSE(h.ed->create_behavior_tree("ai/guard").ok()); // already exists
+    // Inspector "New Tree" names the file after the object; taken names are numbered.
+    CHECK(h.ed->suggested_behavior_tree_path("Guard 1 (blue)") == "ai/Guard1blue.vbt");
+    CHECK(h.ed->suggested_behavior_tree_path("guard") == "ai/guard_2.vbt");
+    CHECK(h.ed->suggested_behavior_tree_path("../..") == "");
     auto* doc = h.ed->behavior_tree_document();
     REQUIRE(doc);
     CHECK(doc->asset_path() == "ai/guard.vbt");
@@ -1930,6 +1937,8 @@ TEST_CASE("studio behaviour tree editor: open from Assets, edit, save, and live 
     auto& s = h.ed->edit_scene();
     const auto e = s.create("Guard");
     s.world().add<ai::BehaviorTreeComponent>(e, ai::BehaviorTreeComponent{.tree = "ai/guard.vbt"});
+    h.ed->select(e, false);
+    h.frames(2); // the inspector draws the component with its Edit Tree button
     h.ed->play();
     h.frames(6);
     REQUIRE(h.ed->play_ai() != nullptr);
