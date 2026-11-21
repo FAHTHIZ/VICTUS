@@ -33,6 +33,8 @@
 #include "victus/player/validate.hpp"
 #include "victus/plugin/plugin.hpp"
 #include "victus/project/project.hpp"
+#include "victus/project/characters.hpp"
+#include "victus/assets/importers.hpp"
 #include "victus/library/install.hpp"
 #include "victus/library/library.hpp"
 #include "victus/runtime/scene_lightmap.hpp"
@@ -46,6 +48,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -110,6 +113,7 @@ constexpr const char* kUsage =
     "  bake-lighting <project> [--scene S] [--samples N] [--density T] [--mark-static]  bake lightmaps for Static Lighting meshes\n"
     "  library providers|search|install|import-zip|list|remove|credits ...  Asset Store: CC0/CC BY content into a project\n"
     "  diagnose [project] --out FILE.zip [--no-logs] [--keep-paths] ...  bundle crash reports, logs and checks\n"
+    "  character-check <model|orion|nova> [--json] [--any-joints] check a model can stand in for a starter character\n"
     "  script-api [--out FILE] [--write DIR] [--check DIR]        print, freeze or check the versioned Luau API\n"
     "  version                                                    print the engine version\n"
     "\n"
@@ -188,6 +192,85 @@ int cmd_script_api(const std::vector<std::string>& a) {
         std::printf("%s", text.c_str());
     }
     return 0;
+}
+
+// Character validation (docs/CHARACTERS.md#validating-a-character): imports a .glb/.gltf/.fbx (or
+// an embedded starter character by id) and reports what would break the templates, the shared
+// controller or socket attachment. Exit 1 when there are errors.
+int cmd_character_check(const std::vector<std::string>& a) {
+    cli::Parser p("victus character-check", "Check that a model can replace a VICTUS starter character");
+    p.positional("model", "a .glb, .gltf or .fbx file, or a starter character id (orion, nova)", true)
+        .flag("json", "print the report as JSON")
+        .flag("any-joints", "do not warn when the joint count differs from the VICTUS skeleton")
+        .flag("strict", "treat warnings as errors (exit 1)");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message + "\n" + p.help());
+    const std::string what = p.get("model");
+    assets::ModelImportSettings settings;
+    settings.max_texture_size = 256; // the check needs which maps exist, not their full resolution
+    settings.optimize_meshes = true;
+    assets::ImportResult import_info;
+    Result<assets::CookedModel> model = make_error(ErrorCode::NotFound, "");
+    if (const auto* starter = project::find_starter_character(what)) {
+        model = assets::import_gltf_memory(project::starter_character_glb(*starter), std::string(starter->model_path),
+                                           settings, &import_info);
+    } else {
+        const fs::Path path(what);
+        std::string ext = path.extension().string();
+        std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (!std::filesystem::exists(path)) return error(std::format("'{}' is neither a file nor a starter character id", what));
+        const fs::Path sandbox = std::filesystem::absolute(path).parent_path();
+        if (ext == ".fbx" || ext == ".obj") model = assets::import_fbx(path, settings, sandbox, &import_info);
+        else model = assets::import_gltf(path, settings, sandbox, &import_info);
+    }
+    if (!model) return error(model.error().message);
+    project::CharacterValidationOptions o;
+    if (p.has("any-joints")) o.expect_joint_count = 0;
+    const auto r = project::validate_character(*model, o);
+    const bool failed = !r.ok() || (p.has("strict") && !r.issues.empty());
+    using Sev = project::CharacterIssue::Severity;
+    if (p.has("json")) {
+        json::Value doc = json::Value::object();
+        doc.set("model", what);
+        doc.set("ok", !failed);
+        doc.set("joints", static_cast<double>(r.joints));
+        doc.set("sockets", static_cast<double>(r.sockets));
+        doc.set("triangles", static_cast<double>(r.triangles));
+        doc.set("lods", static_cast<double>(r.lods));
+        doc.set("clips", static_cast<double>(r.clips));
+        doc.set("morph_targets", static_cast<double>(r.morphs));
+        doc.set("materials", static_cast<double>(r.materials));
+        doc.set("textures", static_cast<double>(r.textures));
+        doc.set("height", static_cast<double>(r.height));
+        json::Value issues = json::Value::array();
+        for (const auto& i : r.issues) {
+            json::Value v = json::Value::object();
+            v.set("severity", i.severity == Sev::Error ? "error" : "warning");
+            v.set("code", i.code);
+            v.set("message", i.message);
+            issues.push(std::move(v));
+        }
+        for (const auto& w : import_info.warnings) {
+            json::Value v = json::Value::object();
+            v.set("severity", "warning");
+            v.set("code", "import");
+            v.set("message", w);
+            issues.push(std::move(v));
+        }
+        doc.set("issues", std::move(issues));
+        std::printf("%s\n", json::stringify(doc, true).c_str());
+        return failed ? 1 : 0;
+    }
+    std::printf("%s: %u joints, %zu/%zu sockets, %zu triangles, %u LODs, %zu clips, %zu morph targets, %zu materials, "
+                "%zu textures, %.3f m tall\n",
+                what.c_str(), r.joints, r.sockets, project::character_socket_names().size(), r.triangles, r.lods, r.clips,
+                r.morphs, r.materials, r.textures, static_cast<double>(r.height));
+    for (const auto& w : import_info.warnings) std::printf("  warning [import] %s\n", w.c_str());
+    for (const auto& i : r.issues)
+        std::printf("  %s [%s] %s\n", i.severity == Sev::Error ? "error" : "warning", i.code.c_str(), i.message.c_str());
+    std::printf("%s: %zu errors, %zu warnings\n", failed ? "FAILED" : "OK", r.count(Sev::Error),
+                r.count(Sev::Warning) + import_info.warnings.size());
+    return failed ? 1 : 0;
 }
 
 int cmd_templates() {
@@ -1830,6 +1913,7 @@ int main(int argc, char** argv) {
     if (cmd == "library") return cmd_library(args);
     if (cmd == "crash-test") return cmd_crash_test(args);
     if (cmd == "script-api") return cmd_script_api(args);
+    if (cmd == "character-check") return cmd_character_check(args);
     if (cmd == "version" || cmd == "--version")
         return std::printf("VICTUS %s (script API %s)\n", build::version(), script::to_string(script::kScriptApiVersion).c_str()), 0;
     if (cmd == "help" || cmd == "--help" || cmd == "-h") return std::printf("%s", kUsage), 0;

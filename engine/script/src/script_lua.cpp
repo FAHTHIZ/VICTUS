@@ -297,6 +297,30 @@ int entity_find_child(lua_State* L) {
 }
 
 
+// entity:find_descendant(name): first node with that name anywhere under the entity, or nil.
+int entity_find_descendant(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const Entity d = s.find_descendant(e, luaL_checkstring(L, 2));
+    if (d.is_null()) lua_pushnil(L);
+    else push_entity(L, d);
+    return 1;
+}
+
+
+// character:attach(item, socket [, keep_world]): parents item under the named socket node
+// (e.g. "Socket.Hand.R"); returns the socket entity, or nil when there is no such socket.
+int entity_attach(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity root = check_live(L, 1, s);
+    const Entity item = check_live(L, 2, s);
+    const Entity sock = s.attach_to_socket(item, root, luaL_checkstring(L, 3), lua_toboolean(L, 4) != 0);
+    if (sock.is_null()) lua_pushnil(L);
+    else push_entity(L, sock);
+    return 1;
+}
+
+
 int entity_children(lua_State* L) {
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);

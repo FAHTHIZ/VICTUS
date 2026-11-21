@@ -227,6 +227,14 @@ public:
     [[nodiscard]] std::vector<Entity> children(Entity e) const;
     [[nodiscard]] std::vector<Entity> roots() const;
     [[nodiscard]] bool is_descendant(Entity e, Entity ancestor) const noexcept;
+    // First entity named `name` in the subtree under `root` (breadth-first, `root` excluded), or
+    // null. Finds nested nodes such as a character's `Socket.Hand.R` under its skeleton.
+    [[nodiscard]] Entity find_descendant(Entity root, std::string_view name) const;
+    // Parents `item` under the descendant of `root` named `socket` (typically a character's
+    // `Socket.*` node). With keep_world false the item snaps to the socket (identity local
+    // transform, scale kept); otherwise it keeps its world placement. Null when the socket is
+    // missing or the reparent is rejected (cycles); returns the socket entity on success.
+    Entity attach_to_socket(Entity item, Entity root, std::string_view socket, bool keep_world = false);
     // Deep copy of an entity subtree (new UUIDs), parented next to the original.
     Entity duplicate(Entity e);
     // Moves `e` immediately before sibling `next` (adopting next's parent), or to the end of

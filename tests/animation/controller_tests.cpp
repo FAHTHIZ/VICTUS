@@ -569,3 +569,66 @@ TEST_CASE("root motion moves the Animator entity and keeps the root node in plac
         CHECK(near(rig.system.root_motion(rig.scene, rig.root).yaw, 0.0f));      // finished: no more turn
     }
 }
+
+TEST_CASE("twist drivers: a forearm twist joint shares the wrist roll, parent sources counter-rotate (ADR-0182)") {
+    // Arm along +X: LowerArm > {Twist (mid forearm), Hand (wrist)}; UpperTwist under LowerArm too
+    // as a parent-sourced driver of a child joint.
+    auto set = std::make_shared<AnimationSet>();
+    set->nodes.push_back({.name = "LowerArm", .parent = -1});
+    set->nodes.push_back({.name = "Twist", .parent = 0, .rest = {.translation = {0.12f, 0, 0}}});
+    set->nodes.push_back({.name = "Hand", .parent = 0, .rest = {.translation = {0.25f, 0, 0}}});
+    set->nodes.push_back({.name = "Child", .parent = 0, .rest = {.translation = {0.0f, 0, 0.3f}}});
+    // Hand: roll 80 degrees about the forearm (+X) and bend 30 degrees about Z (a pure swing).
+    const math::Quat roll = math::Quat::axis_angle({1, 0, 0}, math::radians(80.0f));
+    const math::Quat bend = math::Quat::axis_angle({0, 0, 1}, math::radians(30.0f));
+    const math::Quat hand = bend * roll;
+    // LowerArm itself rolls 40 degrees about +Z, the Child's bone axis.
+    const math::Quat arm = math::Quat::axis_angle({0, 0, 1}, math::radians(40.0f));
+    Clip c{.name = "Pose", .duration = 1.0f};
+    Channel h{.node = 2, .path = Path::Rotation, .interpolation = Interpolation::Linear, .times = {0, 1}};
+    h.values = {hand.x, hand.y, hand.z, hand.w, hand.x, hand.y, hand.z, hand.w};
+    Channel l{.node = 0, .path = Path::Rotation, .interpolation = Interpolation::Linear, .times = {0, 1}};
+    l.values = {arm.x, arm.y, arm.z, arm.w, arm.x, arm.y, arm.z, arm.w};
+    c.channels = {h, l};
+    set->clips.push_back(std::move(c));
+
+    const std::string doc = R"({ "states": [ { "name": "Pose", "clip": "Pose" } ],
+      "twist": [ { "joint": "Twist", "source": "Hand", "weight": 0.5 },
+                 { "joint": "Child", "source": "LowerArm", "weight": -0.25 } ] })";
+    auto parsed = Controller::parse(doc, "t.vanim");
+    REQUIRE(parsed.ok());
+    REQUIRE((*parsed)->twists.size() == 2);
+    auto again = Controller::from_json((*parsed)->to_json());
+    REQUIRE(again.ok());
+    CHECK((*again)->twists == (*parsed)->twists);
+
+    Scene scene;
+    Uuid model = Uuid::generate();
+    AnimationSystem system{AnimationSettings{.controllers = [&](std::string_view) -> Result<std::string> { return doc; }}};
+    system.add_set(model, set);
+    const Entity root = scene.create("Character");
+    const Entity la = scene.create("LowerArm", root);
+    const Entity tw = scene.create("Twist", la);
+    scene.create("Hand", la);
+    const Entity child = scene.create("Child", la);
+    auto& a = scene.world().add<AnimatorComponent>(root);
+    a.model = model;
+    a.controller = "c.vanim";
+    system.update(scene, 0.1f);
+    // Half of the 80 degree roll, none of the bend.
+    const math::Quat got = scene.world().get<scene::Transform>(tw)->rotation;
+    const math::Quat want = math::Quat::axis_angle({1, 0, 0}, math::radians(40.0f));
+    CHECK(std::abs(got.x * want.x + got.y * want.y + got.z * want.z + got.w * want.w) == doctest::Approx(1.0f).epsilon(1e-4));
+    // Child counter-rotates a quarter of LowerArm's 40 degree roll about its +Z axis.
+    const math::Quat gc = scene.world().get<scene::Transform>(child)->rotation;
+    const math::Quat wc = math::Quat::axis_angle({0, 0, 1}, math::radians(-10.0f));
+    CHECK(std::abs(gc.x * wc.x + gc.y * wc.y + gc.z * wc.z + gc.w * wc.w) == doctest::Approx(1.0f).epsilon(1e-4));
+
+    const std::string same = parse_error(R"({ "states": [ { "name": "S", "clip": "Idle" } ], "twist": [ { "joint": "A", "source": "A" } ] })");
+    INFO(same);
+    CHECK(same.find("must differ") != std::string::npos);
+    const std::string range =
+        parse_error(R"({ "states": [ { "name": "S", "clip": "Idle" } ], "twist": [ { "joint": "A", "source": "B", "weight": 2 } ] })");
+    INFO(range);
+    CHECK(range.find("[-1, 1]") != std::string::npos);
+}

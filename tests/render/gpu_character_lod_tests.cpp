@@ -143,7 +143,7 @@ TEST_CASE("gpu character lods: Orion silhouette over poses and distances") {
             // anatomical silhouette is slimmer than the old boxy robot's: about 290 px side-on at 20 m.
             CHECK(covered > 250);
             CHECK(static_cast<double>(changed) <= 0.06 * static_cast<double>(covered)); // edge pixels only
-            // Textured characters (ADR-0174) lose a few more isolated pixels than flat-shaded ones:
+            // Textured characters (ADR-0179) lose a few more isolated pixels than flat-shaded ones:
             // the emissive piping and suit seams are high-contrast texture edges, and a simplified
             // triangle interpolates their UVs slightly differently. Measured worst case 0.31% of
             // the covered pixels (Interact at 2.5 m), all single pixels along piping and outlines.

@@ -49,6 +49,34 @@ TEST_CASE("scene: hierarchy ordering, reparenting and cycle rejection") {
     CHECK(s.find_by_name("A3") == a3);
 }
 
+TEST_CASE("scene: find_descendant and attach_to_socket") {
+    Scene s;
+    const Entity character = s.create("Character");
+    const Entity hips = s.create("Hips", character);
+    const Entity hand = s.create("Hand.R", hips);
+    const Entity socket = s.create("Socket.Hand.R", hand);
+    s.world().get<Transform>(hand)->position = {0.5f, 1.0f, 0};
+    CHECK(s.find_descendant(character, "Socket.Hand.R") == socket);
+    CHECK(s.find_descendant(character, "Character").is_null()); // root excluded
+    CHECK(s.find_descendant(hand, "Hips").is_null());
+    const Entity sword = s.create("Sword");
+    s.world().get<Transform>(sword)->position = {3, 0, 0};
+    s.world().get<Transform>(sword)->scale = {2, 2, 2};
+    CHECK(s.attach_to_socket(sword, character, "Socket.Hand.R") == socket);
+    CHECK(s.parent(sword) == socket);
+    CHECK(s.world().get<Transform>(sword)->position.x == 0.0f);
+    CHECK(s.world().get<Transform>(sword)->scale.x == 2.0f);
+    CHECK(s.attach_to_socket(sword, character, "Socket.Back").is_null());
+    CHECK(s.parent(sword) == socket);
+    // keep_world keeps the item where it is.
+    const Entity shield = s.create("Shield");
+    s.world().get<Transform>(shield)->position = {1.5f, 1.0f, 0};
+    REQUIRE(s.attach_to_socket(shield, character, "Socket.Hand.R", true) == socket);
+    CHECK(s.world().get<Transform>(shield)->position.x == doctest::Approx(1.0f));
+    // Attaching a character's ancestor into its own socket is a cycle and is rejected.
+    CHECK(s.attach_to_socket(character, character, "Socket.Hand.R").is_null());
+}
+
 TEST_CASE("scene: world transforms propagate parent before child") {
     Scene s;
     const Entity root = s.create("root");

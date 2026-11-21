@@ -168,6 +168,30 @@ Layers cannot declare parameters, nested layers, `root_node` or root-motion stat
 
 Luau: `entity:set_anim_layer_weight(name, weight)` → `true` when the layer exists, `entity:anim_layer_weight(name)` → number or `nil`, and `entity:anim_controller().layers` → `{{name, blend, weight, effective_weight, state, previous_state, normalized_time, blend_progress}}`. Visual scripts: Set Anim Layer Weight. C++: `AnimationSystem::set_layer_weight`, `layer_weight`, `ControllerStatus::layers`.
 
+## Twist drivers
+
+A controller can list twist drivers after its layers (ADR-0182). Each makes a twist joint take a
+share of another joint's roll about the twist joint's bone axis, so skin weighted across a
+forearm twist bone keeps its volume when a clip rolls the wrist instead of collapsing at the
+wrist ("candy wrapper"):
+
+```json
+"twist": [
+  { "joint": "LowerArmTwist.L", "source": "Hand.L", "weight": 0.5 },
+  { "joint": "LowerArmTwist.R", "source": "Hand.R", "weight": 0.5 }
+]
+```
+
+- `source` is a sibling of `joint` (the twist the sibling's rotation adds in the shared parent's
+  frame, about the sibling's rest offset: the forearm case) or its parent (the parent's twist
+  relative to its own rest, about the joint's rest offset; negative weights counter-rotate).
+- `weight` is from -1 to 1 (default 0.5). Only the twist part counts (swing-twist decomposition);
+  bends of the source do not move the twist joint.
+- Drivers run after the layers and before IK, multiply the twist joint's own pose, and are
+  skipped for models without the named joints, so one controller serves skeletons with and
+  without twist bones. The starter characters' shared controller drives both forearm twist
+  joints at 0.5.
+
 ## Inverse kinematics
 
 An `IKConstraint` component on the end of a chain (a hand, foot or head) bends its ancestors toward a target after the clips and controller have been sampled, every frame, before transforms propagate (ADR-0073).

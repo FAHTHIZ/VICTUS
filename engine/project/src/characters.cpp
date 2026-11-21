@@ -103,6 +103,10 @@ std::string starter_character_controller() {
     { "from": "Land", "to": "Locomotion", "duration": 0.2, "exit_time": 0.6 },
     { "from": "Locomotion", "to": "Interact", "duration": 0.15, "conditions": [ { "parameter": "interact" } ] },
     { "from": "Interact", "to": "Locomotion", "duration": 0.25, "exit_time": 0.92 }
+  ],
+  "twist": [
+    { "joint": "LowerArmTwist.L", "source": "Hand.L", "weight": 0.5 },
+    { "joint": "LowerArmTwist.R", "source": "Hand.R", "weight": 0.5 }
   ]
 }
 )";

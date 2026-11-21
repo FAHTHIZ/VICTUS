@@ -2554,3 +2554,10 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 - **Verified:** `build_characters.py --out /tmp/full` (Nova 128,816 triangles, 60 joints, 44 blend shapes, 41 clips); `victus_asset_tests -tc="starter characters*"` 3 cases / 727 assertions passed; `victus run --frames 90 --quality high --screenshot` for an Orion and a Nova project, crops saved as `docs/images/characters/victus_runtime_{orion,nova}.jpg` (VICTUS runtime renders).
 - **Not covered:** full `ctest` not rerun on this tree.
 - **Next task:** full ctest; equipment parts and attach API.
+
+## 2026-11-21 — Character validation, socket attachment and twist drivers (ADR-0181, ADR-0182)
+
+- **Built:** `project::validate_character` (`engine/project/src/character_validate.cpp`) and `victus character-check <model|orion|nova> [--json] [--any-joints] [--strict]`; `Scene::find_descendant` / `Scene::attach_to_socket` with Luau `entity:find_descendant(name)` and `character:attach(item, socket [, keep_world])` (script API 1.1 snapshot updated); controller twist drivers (`"twist"` in `.vanim`, applied after layers, before IK) and the starter controller driving `LowerArmTwist.L/R` from the hands at 0.5. Docs: CHARACTERS.md (validating a character, attaching), ANIMATION.md (twist drivers).
+- **Verified:** full `ctest --test-dir build/release -j2` before these changes on main 52922f6: 42/42 passed (526 s). After them: `victus_animation_tests` 66 cases passed (new "twist drivers"), `victus_scene_tests` and `victus_script_tests` all passed, `victus_asset_tests -tc="starter characters*,character validation*"` 4 cases / 749 assertions passed, `victus_editor_tests -tc="*nim*,*ontroller*,*script api*,*character*"` passed, `ctest -R "cli_smoke|tools|script|scene"` passed; `victus character-check orion` and `nova`: OK, 0 errors, 0 warnings (60 joints, 8/8 sockets, 125,184 / 128,816 triangles, 3 LODs, 41 clips).
+- **Not covered:** full ctest not rerun after these changes; no visual before/after of the forearm twist in a render.
+- **Next task:** authored equipment parts on the sockets; Studio character validation panel.
