@@ -52,9 +52,9 @@ const char* default_folder(assets::AssetKind kind) {
 
 std::string unsupported_reason(const sfs::path& p) {
     const std::string ext = lower(p.extension().string());
-    if (ext == ".fbx" || ext == ".obj" || ext == ".blend" || ext == ".dae" || ext == ".3ds")
-        return std::format("{}: {} models are not supported yet. Export it as glTF (.glb) - Blender: File > Export "
-                           "> glTF 2.0.",
+    if (ext == ".blend" || ext == ".dae" || ext == ".3ds" || ext == ".max" || ext == ".ma" || ext == ".mb")
+        return std::format("{}: {} models are not supported yet. Export it as glTF (.glb) or FBX - Blender: File > "
+                           "Export > glTF 2.0.",
                            p.filename().string(), ext.substr(1));
     if (ext == ".psd" || ext == ".gif" || ext == ".webp" || ext == ".tif" || ext == ".tiff" || ext == ".exr")
         return std::format("{}: save it as PNG or JPG first.", p.filename().string());
@@ -100,6 +100,52 @@ std::vector<std::string> gltf_companions(const sfs::path& gltf) {
             out.push_back(rel.generic_string());
         }
     }
+    return out;
+}
+
+// Relative files a Wavefront .obj needs: its `mtllib` material libraries and the texture maps
+// (`map_*`, `bump`, `disp`, `norm`) those reference. The map's file name is the last token.
+std::vector<std::string> obj_companions(const sfs::path& obj) {
+    std::vector<std::string> out;
+    const auto relative = [](std::string u) -> std::string {
+        std::replace(u.begin(), u.end(), '\\', '/');
+        const sfs::path rel = sfs::path(u).lexically_normal();
+        if (rel.is_absolute() || rel.empty() || *rel.begin() == "..") return {};
+        return rel.generic_string();
+    };
+    const auto lines = [](const sfs::path& p, auto&& fn) {
+        std::error_code ec;
+        if (sfs::file_size(p, ec) > kMaxGltfBytes || ec) return;
+        std::ifstream in(p, std::ios::binary);
+        for (std::string line; std::getline(in, line);) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            const auto b = line.find_first_not_of(" \t");
+            if (b == std::string::npos) continue;
+            fn(std::string_view(line).substr(b));
+        }
+    };
+    std::vector<std::string> libs;
+    lines(obj, [&](std::string_view l) {
+        if (!l.starts_with("mtllib ")) return;
+        const auto b = l.find_first_not_of(" \t", 7);
+        if (b == std::string_view::npos) return;
+        if (std::string r = relative(std::string(l.substr(b))); !r.empty()) libs.push_back(std::move(r));
+    });
+    for (const std::string& lib : libs) {
+        out.push_back(lib);
+        lines(obj.parent_path() / lib, [&](std::string_view l) {
+            const std::string key = lower(std::string(l.substr(0, l.find_first_of(" \t"))));
+            if (!(key.starts_with("map_") || key == "bump" || key == "disp" || key == "norm" || key == "refl")) return;
+            const auto e = l.find_last_not_of(" \t");
+            const auto b = l.find_last_of(" \t", e);
+            if (b == std::string_view::npos) return;
+            if (std::string r = relative(std::string(l.substr(b + 1, e - b))); !r.empty()) out.push_back(std::move(r));
+        });
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    std::error_code ec;
+    std::erase_if(out, [&](const std::string& r) { return !sfs::is_regular_file(obj.parent_path() / r, ec); });
     return out;
 }
 
@@ -152,10 +198,12 @@ Editor::ImportedFiles Editor::import_files(const std::vector<sfs::path>& sources
         const sfs::path dir = asset_folder_.empty() ? assets / default_folder(kind) : assets / asset_folder_;
         sfs::create_directories(dir, ec);
         sfs::path dest = free_name(dir, src.filename());
-        const auto companions =
-            lower(src.extension().string()) == ".gltf" ? gltf_companions(src) : std::vector<std::string>{};
+        const std::string ext = lower(src.extension().string());
+        const auto companions = ext == ".gltf" ? gltf_companions(src)
+                                : ext == ".obj" ? obj_companions(src)
+                                                : std::vector<std::string>{};
         if (!companions.empty()) {
-            // The .gltf finds its files by relative path: keep them together in their own folder.
+            // The .gltf/.obj finds its files by relative path: keep them together in their own folder.
             const sfs::path folder = free_name(dir, src.stem());
             sfs::create_directories(folder, ec);
             dest = folder / src.filename();

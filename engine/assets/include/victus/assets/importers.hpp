@@ -82,6 +82,19 @@ inline constexpr std::uint32_t kModelImporterVersion = 8; // v8: node lights and
                                                      const ModelImportSettings& settings,
                                                      ImportResult* result = nullptr);
 
+// Imports Autodesk FBX (binary and ASCII, 6.x-7.x) and Wavefront OBJ (+ .mtl) through ufbx
+// (ADR-0173), converted to VICTUS space (Y up, -Z forward, metres) with pivots and geometric
+// transforms folded in: meshes per material, PBR/legacy materials, embedded or sandboxed external
+// textures, nodes, skins, blend shapes, baked animation stacks, lights and cameras. Same sandbox
+// rules as import_gltf.
+[[nodiscard]] Result<CookedModel> import_fbx(const fs::Path& path, const ModelImportSettings& settings,
+                                             const fs::Path& sandbox_root, ImportResult* result = nullptr);
+// FBX/OBJ from memory: embedded textures only, external references fail. `name` must end in
+// .fbx or .obj (the format is detected from the content, the name labels messages).
+[[nodiscard]] Result<CookedModel> import_fbx_memory(std::span<const std::uint8_t> bytes, std::string_view name,
+                                                    const ModelImportSettings& settings,
+                                                    ImportResult* result = nullptr);
+
 // Writes a cooked model as glTF 2.0 JSON with an embedded base64 buffer: geometry, skin
 // streams, material factors (no textures), nodes, skins and animations. Round-trips through
 // import_gltf (with scale 1).

@@ -407,7 +407,9 @@ public:
         }
         import_skins();
         import_animations();
-        if (model_.meshes.empty()) return make_error(ErrorCode::InvalidArgument, "glTF contains no triangle meshes");
+        // Scenes of only lights/cameras (lighting rigs, camera paths) are valid models.
+        if (model_.meshes.empty() && model_.lights.empty() && model_.cameras.empty())
+            return make_error(ErrorCode::InvalidArgument, "glTF contains no triangle meshes, lights or cameras");
         if (auto st = validate_model(model_); !st)
             return make_error(ErrorCode::ParseError, std::format("{}: {}", path_.filename().string(), st.error().message));
         return std::move(model_);

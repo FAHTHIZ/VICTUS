@@ -77,7 +77,7 @@ AssetKind kind_for_extension(std::string_view extension) noexcept {
     std::string e;
     for (const char c : extension) e.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     if (e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".tga" || e == ".bmp" || e == ".hdr") return AssetKind::Texture;
-    if (e == ".gltf" || e == ".glb") return AssetKind::Model;
+    if (e == ".gltf" || e == ".glb" || e == ".fbx" || e == ".obj") return AssetKind::Model;
     if (e == ".vscene") return AssetKind::Scene;
     if (e == ".luau" || e == ".vgraph") return AssetKind::Script;
     if (e == ".vprefab") return AssetKind::Prefab;
@@ -301,7 +301,11 @@ Result<bool> AssetDatabase::import(const Uuid& uuid, std::vector<std::string>* m
         bytes = serialize(header, *tex);
     } else {
         ImportResult result;
-        auto model = import_gltf(src, ModelImportSettings::from_json(r.settings), assets_dir(), &result);
+        std::string ext = src.extension().string();
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        const ModelImportSettings settings = ModelImportSettings::from_json(r.settings);
+        auto model = ext == ".fbx" || ext == ".obj" ? import_fbx(src, settings, assets_dir(), &result)
+                                                    : import_gltf(src, settings, assets_dir(), &result);
         if (messages)
             for (const auto& w : result.warnings) messages->push_back(std::format("{}: warning: {}", r.path, w));
         if (!model) return make_error(model.error().code, std::format("{}: {}", r.path, model.error().message));

@@ -740,7 +740,12 @@ TEST_CASE("studio import: dropped files are copied into the right folders and im
     const sfs::path outside = h.dir / "Downloads";
     sfs::create_directories(outside / "pack" / "more");
     std::ofstream(outside / "hello.luau") << "print('hello')\n";
-    std::ofstream(outside / "hero.fbx") << "not really";
+    std::ofstream(outside / "hero.blend") << "not really";
+    // An .obj brings its material library and the textures that library names (ADR-0173).
+    std::ofstream(outside / "crate.obj") << "mtllib crate.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl Wood\nf 1 2 3\n";
+    std::ofstream(outside / "crate.mtl") << "newmtl Wood\nKd 1 1 1\nmap_Kd -bm 1 tex/wood.png\nmap_Bump ../secret.png\n";
+    sfs::create_directories(outside / "tex");
+    std::ofstream(outside / "tex" / "wood.png") << "png?";
     std::ofstream(outside / "pack" / "a.luau") << "return 1\n";
     std::ofstream(outside / "pack" / "more" / "b.luau") << "return 2\n";
     // A .gltf with an outside buffer and texture, plus a data: URI and an escaping path that are ignored.
@@ -752,8 +757,8 @@ TEST_CASE("studio import: dropped files are copied into the right folders and im
     sfs::create_directories(outside / "tex");
     std::ofstream(outside / "tex" / "hull.png") << "png?";
 
-    const auto r = h.ed->import_files({outside / "hello.luau", outside / "hero.fbx", outside / "pack",
-                                       outside / "ship.gltf", outside / "missing.png"});
+    const auto r = h.ed->import_files({outside / "hello.luau", outside / "hero.blend", outside / "pack",
+                                       outside / "ship.gltf", outside / "missing.png", outside / "crate.obj"});
     const sfs::path assets = h.dir / "Drop Game" / "assets";
     CHECK(sfs::exists(assets / "scripts" / "hello.luau"));
     CHECK(sfs::exists(assets / "pack" / "more" / "b.luau"));
@@ -761,6 +766,9 @@ TEST_CASE("studio import: dropped files are copied into the right folders and im
     CHECK(sfs::exists(assets / "models" / "ship" / "ship data.bin"));
     CHECK(sfs::exists(assets / "models" / "ship" / "tex" / "hull.png"));
     CHECK_FALSE(sfs::exists(assets / "models" / "secret.png"));
+    CHECK(sfs::exists(assets / "models" / "crate" / "crate.obj"));
+    CHECK(sfs::exists(assets / "models" / "crate" / "crate.mtl"));
+    CHECK(sfs::exists(assets / "models" / "crate" / "tex" / "wood.png"));
     const auto added = [&](std::string_view p) {
         return std::find(r.added.begin(), r.added.end(), p) != r.added.end();
     };
@@ -768,12 +776,13 @@ TEST_CASE("studio import: dropped files are copied into the right folders and im
     CHECK(added("pack/a.luau"));
     CHECK(added("pack/more/b.luau"));
     CHECK(added("models/ship/ship.gltf"));
+    CHECK(added("models/crate/crate.obj"));
     // Unsupported and missing files are explained, not silently dropped.
     const auto said = [&](std::string_view needle) {
         return std::any_of(r.skipped.begin(), r.skipped.end(),
                            [&](const std::string& s) { return s.find(needle) != std::string::npos; });
     };
-    CHECK(said("hero.fbx"));
+    CHECK(said("hero.blend"));
     CHECK(said("glTF"));
     CHECK(said("missing.png"));
 

@@ -2439,3 +2439,17 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 Not covered: FBX import, light cookies/IES, physical camera properties (aperture, sensor), animated light/camera properties.
 
 Next task: GAP-30 slice 2, FBX and OBJ import through ufbx.
+
+## 2026-11-21 — FBX and OBJ import through ufbx (ADR-0173, GAP-30 slice 2)
+
+Built: vendored ufbx v0.23.1 (`third_party/ufbx`, MIT or public domain, static `victus_ufbx`, recorded in `tools/deps/dependencies.json` and THIRD_PARTY_AND_LICENSES); `assets::import_fbx` / `import_fbx_memory` (`engine/assets/src/fbx_import.cpp`) for binary/ASCII FBX and OBJ + MTL, converted to Y-up, -Z forward, metres with pivots and geometric transforms folded in; meshes per material with control-point-aware de-duplication, tangents, LODs and vertex-cache optimisation; PBR/legacy materials; embedded and sandboxed external textures; skins with an extra mesh-node joint for unweighted vertices; blend shapes and animated `DeformPercent` weights; baked animation stacks; lights and cameras onto ADR-0172's data. `.fbx`/`.obj` are model assets in the database; Studio drops copy an `.obj`'s `mtllib` and its maps into one folder; models with only lights or cameras are valid (glTF too).
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- full `ctest` 41/41 pass (4 GPU reference suites skipped as usual), 0 compiler warnings.
+- `victus_asset_tests -tc="assets fbx*"` 7 cases / 168 assertions on unmodified ufbx corpus files (`tests/data/fbx`): Maya ASCII cube 24 vertices / 36 indices / `lambert1` 0.4, scale 2 doubles it; Blender binary cube upright (2 m, centred) with 3 embedded textures cooked; half-skinned plane matches Blender's posed OBJ within 1 mm while unweighted vertices stay put; blend-shape cube with 2 targets and an animated 0..1 weights channel; camera/light rig along -Z, 16:9; OBJ + MTL + PNG (two materials, red texel, v flipped, 2 dependencies, `../` library refused, memory import, garbage rejected); database cook of an `.fbx`. Each case 0.3-2.5 ms.
+- `victus_editor_tests -tc="studio import: dropped*"` 31 assertions (`.obj` copied with `.mtl` and texture).
+- `tools/deps/victus_deps.py check` 21 dependencies, 0 problems; `osv`: ufbx 0.23.1 no known vulnerabilities.
+
+Not covered: separate roughness/metalness texture packing, bump-to-normal conversion, layered/procedural textures, animated light/camera/material properties, more than one skin deformer per mesh, a Studio UI for model import settings; no large-file import benchmark yet.
+
+Next task: GAP-27 audio effects and HRTF.

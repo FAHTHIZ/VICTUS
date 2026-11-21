@@ -79,8 +79,10 @@ victus_add_test(victus_asset_tests
         assets/mesh_lod_asset_tests.cpp
         assets/morph_asset_tests.cpp
         assets/model_scene_objects_tests.cpp
+        assets/fbx_import_tests.cpp
     DEPS VICTUS::Assets VICTUS::Project
     LABELS assets)
+target_compile_definitions(victus_asset_tests PRIVATE VICTUS_FBX_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/fbx")
 
 victus_add_test(victus_robustness_tests
     SOURCES

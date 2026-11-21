@@ -72,6 +72,18 @@
       ]
     },
     {
+      "name": "ufbx",
+      "version": "0.23.1",
+      "license": "MIT OR Unlicense",
+      "repo": "https://github.com/ufbx/ufbx",
+      "path": "third_party/ufbx",
+      "files": [
+        "ufbx.c",
+        "ufbx.h",
+        "LICENSE"
+      ]
+    },
+    {
       "name": "Dear ImGui",
       "version": "b916186e66aa3c02b72c6ca17455516512ed8049",
       "commit": "b916186e66aa3c02b72c6ca17455516512ed8049",
