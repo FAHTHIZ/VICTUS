@@ -11,6 +11,7 @@
 #pragma once
 #include "victus/assets/database.hpp"
 
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -61,5 +62,27 @@ struct RenameReport {
 // Deletes an asset's source, .meta and cooked data, then refreshes the database. References to
 // it are left as they are (callers show ReferenceIndex::users first).
 [[nodiscard]] Status delete_asset(AssetDatabase& db, const Uuid& asset);
+
+// ---- trash (ADR-0177) ------------------------------------------------------------------------
+// Recoverable delete: the source and its .meta move to <project>/.victus/trash/<id>/ with an
+// entry.json recording the original path, so Restore brings the asset back with the same UUID
+// (every by-ID reference works again). Cooked data is dropped and rebuilt on restore. The trash
+// is local to this machine (.victus/ is not committed); deleting .victus/ empties it.
+struct TrashEntry {
+    std::string id;            // folder name under .victus/trash
+    std::string original_path; // assets-relative path the asset had
+    Uuid uuid;
+    std::int64_t deleted_unix{0};
+    std::uint64_t bytes{0};    // size of the trashed source
+};
+[[nodiscard]] fs::Path trash_dir(const AssetDatabase& db);
+[[nodiscard]] Result<TrashEntry> trash_asset(AssetDatabase& db, const Uuid& asset);
+// Newest first. Folders without a readable entry.json are skipped.
+[[nodiscard]] std::vector<TrashEntry> list_trash(const AssetDatabase& db);
+// Moves the asset back to its original path. Fails when that path is taken or an asset with the
+// same UUID exists again; `to` restores under a different assets-relative path instead.
+[[nodiscard]] Status restore_from_trash(AssetDatabase& db, std::string_view id, std::string_view to = {});
+// Removes one entry for good (all entries when `id` is empty).
+[[nodiscard]] Status purge_trash(AssetDatabase& db, std::string_view id = {});
 
 } // namespace victus::assets

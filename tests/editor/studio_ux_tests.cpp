@@ -1720,6 +1720,26 @@ TEST_CASE("studio asset references: find users, rename keeps the scene working, 
     CHECK_FALSE(sfs::exists(root / "assets" / "scripts" / "movement" / "mover_v2.luau"));
     h.frames(2); // dialogs close themselves when their asset is gone
     CHECK_FALSE(h.ed->asset_references_open());
+
+    // Delete moved it to the Trash; Restore brings it back with the same ID (ADR-0177).
+    const auto trash = h.ed->trash_entries();
+    REQUIRE(trash.size() == 1);
+    CHECK(trash[0].original_path == "scripts/movement/mover_v2.luau");
+    CHECK(trash[0].uuid == script);
+    h.ed->open_trash();
+    h.frames(2);
+    CHECK(h.ed->trash_open());
+    REQUIRE(h.ed->restore_trashed(trash[0].id).ok());
+    REQUIRE(h.ed->assets()->find(script));
+    CHECK(h.ed->assets()->find(script)->path == "scripts/movement/mover_v2.luau");
+    CHECK(h.ed->focused_asset() == script);
+    CHECK(h.ed->asset_users(script).size() == 1);
+    CHECK(h.ed->trash_entries().empty());
+    h.frames(2); // the empty Trash draws
+    REQUIRE(h.ed->delete_asset(script).ok());
+    REQUIRE(h.ed->purge_trashed().ok());
+    CHECK(h.ed->trash_entries().empty());
+    CHECK(h.ed->focused_asset().is_nil());
 }
 
 TEST_CASE("behaviour tree document: structural edits keep pre-order, undo restores, save reloads the same tree") {

@@ -113,3 +113,72 @@ TEST_CASE("asset references: users by UUID and by path, dependencies, unreferenc
     CHECK(d.find(unused) == nullptr);
     CHECK_FALSE(assets::delete_asset(d, unused).ok());
 }
+
+TEST_CASE("asset trash: delete keeps the ID, restore brings references back, purge removes for good (ADR-0177)") {
+    Proj p;
+    p.write("assets/textures/brick.png", "\x89PNG not really");
+    p.write("assets/audio/hit.wav", "RIFF1234");
+    auto db = assets::AssetDatabase::open(p.root);
+    REQUIRE(db.ok());
+    auto& d = **db;
+    const Uuid brick = d.find_path("textures/brick.png")->uuid;
+    const Uuid hit = d.find_path("audio/hit.wav")->uuid;
+    p.write("assets/materials/wall.vmat", "{\"victus_material\":1,\"base_color_texture\":\"" + brick.to_string() + "\"}");
+    REQUIRE(d.refresh().errors.empty());
+    CHECK(assets::list_trash(d).empty());
+
+    auto t = assets::trash_asset(d, brick);
+    REQUIRE(t.ok());
+    CHECK(t->original_path == "textures/brick.png");
+    CHECK(t->uuid == brick);
+    CHECK(t->bytes > 0);
+    CHECK(d.find(brick) == nullptr);
+    CHECK_FALSE(sfs::exists(p.root / "assets/textures/brick.png"));
+    CHECK_FALSE(sfs::exists(p.root / "assets/textures/brick.png.meta"));
+    CHECK(sfs::exists(assets::trash_dir(d) / t->id / "brick.png"));
+    CHECK(sfs::exists(assets::trash_dir(d) / t->id / "brick.png.meta"));
+    CHECK_FALSE(assets::trash_asset(d, brick).ok());
+
+    auto t2 = assets::trash_asset(d, hit);
+    REQUIRE(t2.ok());
+    auto list = assets::list_trash(d);
+    REQUIRE(list.size() == 2);
+    CHECK(list[0].deleted_unix >= list[1].deleted_unix);
+
+    // The material's by-ID reference has no target while the texture is in the trash...
+    CHECK(assets::ReferenceIndex::build(d).dependencies("assets/materials/wall.vmat").empty());
+    // ...and works again after restore: same UUID, same path.
+    REQUIRE(assets::restore_from_trash(d, t->id).ok());
+    const auto* back = d.find_path("textures/brick.png");
+    REQUIRE(back);
+    CHECK(back->uuid == brick);
+    CHECK(assets::ReferenceIndex::build(d).users(brick).size() == 1);
+    CHECK_FALSE(sfs::exists(assets::trash_dir(d) / t->id));
+    CHECK_FALSE(assets::restore_from_trash(d, t->id).ok());
+
+    // Restoring onto a taken path is refused; restoring under another name works.
+    p.write("assets/audio/hit.wav", "RIFFnew");
+    REQUIRE(d.refresh().errors.empty());
+    const auto blocked = assets::restore_from_trash(d, t2->id);
+    REQUIRE_FALSE(blocked.ok());
+    CHECK(blocked.error().message.find("already exists") != std::string::npos);
+    CHECK_FALSE(assets::restore_from_trash(d, t2->id, "audio/hit_old.mp3").ok()); // extension change
+    REQUIRE(assets::restore_from_trash(d, t2->id, "audio/hit_old.wav").ok());
+    const auto* old = d.find_path("audio/hit_old.wav");
+    REQUIRE(old);
+    CHECK(old->uuid == hit);
+    CHECK(p.read("assets/audio/hit_old.wav") == "RIFF1234");
+
+    // Unsafe ids are refused; purge one and all.
+    CHECK_FALSE(assets::restore_from_trash(d, "../../etc").ok());
+    CHECK_FALSE(assets::purge_trash(d, "../x").ok());
+    auto t3 = assets::trash_asset(d, old->uuid);
+    REQUIRE(t3.ok());
+    auto t4 = assets::trash_asset(d, brick);
+    REQUIRE(t4.ok());
+    REQUIRE(assets::purge_trash(d, t3->id).ok());
+    CHECK(assets::list_trash(d).size() == 1);
+    CHECK_FALSE(assets::purge_trash(d, t3->id).ok());
+    REQUIRE(assets::purge_trash(d).ok());
+    CHECK(assets::list_trash(d).empty());
+}

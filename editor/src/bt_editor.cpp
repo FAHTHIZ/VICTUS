@@ -584,6 +584,7 @@ void Editor::draw_bt_details(const std::optional<ai::TreeDebug>& live) {
 }
 
 void Editor::draw_behavior_tree_editor() {
+    bt_focused_ = false;
     if (!show_bt_editor_) return;
     std::string title = "Behaviour Tree";
     if (bt_doc_) title += std::string(" - ") + bt_doc_->asset_path() + (bt_doc_->dirty() ? " *" : "");
@@ -651,8 +652,10 @@ void Editor::draw_behavior_tree_editor() {
         ImGui::TextColored(tk::kWarning, "%s", bt_message_.c_str());
     }
 
-    // Keyboard shortcuts while the window is focused (and no text field is being edited).
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
+    // Keyboard shortcuts while the window is focused (and no text field is being edited); the
+    // scene's own Ctrl+S/Z/Y and Delete stand aside meanwhile (bt_focused_).
+    bt_focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    if (bt_focused_ && !ImGui::GetIO().WantTextInput) {
         const bool ctrl = ImGui::GetIO().KeyCtrl;
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
             if (auto st = save_behavior_tree(); !st.ok()) notify("cannot save: " + st.error().message, true);

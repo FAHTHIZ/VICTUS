@@ -990,7 +990,17 @@ public:
     // Moves/renames an asset, keeping its ID and updating files that name it by path; the open
     // scene is saved first and reloaded when it changed on disk.
     [[nodiscard]] Result<assets::RenameReport> rename_asset(const Uuid& asset, std::string new_relative);
+    // Moves the asset to the project trash (ADR-0177); restore_trashed brings it back with the
+    // same ID. Trash entries are newest first.
     [[nodiscard]] Status delete_asset(const Uuid& asset);
+    [[nodiscard]] std::vector<assets::TrashEntry> trash_entries() const;
+    [[nodiscard]] Status restore_trashed(std::string_view id);
+    [[nodiscard]] Status purge_trashed(std::string_view id = {}); // empty id: empty the trash
+    void open_trash() noexcept { show_trash_ = true; }
+    [[nodiscard]] bool trash_open() const noexcept { return show_trash_; }
+    // The asset last clicked in the Assets panel (F2 renames it, Delete trashes it).
+    [[nodiscard]] const Uuid& focused_asset() const noexcept { return asset_focus_; }
+    void focus_asset(const Uuid& asset) noexcept { asset_focus_ = asset; }
     void open_asset_references(const Uuid& asset); // the References window
     void begin_rename_asset(const Uuid& asset);    // the Rename Asset dialog
     void begin_delete_asset(const Uuid& asset);    // the Delete Asset confirmation
@@ -1319,6 +1329,11 @@ private:
     void draw_asset_dialogs();
     void draw_asset_context_items(const assets::AssetRecord& r);
     bool show_asset_refs_{false};
+    bool show_trash_{false};
+    bool confirm_empty_trash_{false};
+    Uuid asset_focus_;
+    void draw_trash();
+    void handle_asset_shortcuts();
     bool refs_stale_{true};
     Uuid refs_asset_, refs_cache_asset_, rename_target_, delete_target_;
     std::vector<assets::AssetReference> refs_users_, refs_deps_, rename_users_;
@@ -1525,6 +1540,8 @@ private:
     bool show_graph_editor_{false};
     bool graph_dirty_{false};
     bool graph_focused_{false};
+    bool bt_focused_{false};     // Behaviour Tree Editor has focus (owns Ctrl+S/Z/Y, Delete)
+    bool assets_focused_{false}; // Assets panel has focus with an asset clicked (owns F2, Delete)
     Uuid graph_asset_;
     std::string graph_path_;
     std::uint64_t graph_disk_hash_{0};

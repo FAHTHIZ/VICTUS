@@ -3,10 +3,12 @@
 #include "victus/assets/references.hpp"
 
 #include "victus/core/fs.hpp"
+#include "victus/core/json.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <chrono>
 #include <format>
 #include <map>
 #include <set>
@@ -240,6 +242,129 @@ Status delete_asset(AssetDatabase& db, const Uuid& asset) {
     sfs::remove(fs::Path(src.string() + ".meta"), ec);
     sfs::remove(db.cooked_path(asset), ec);
     (void)db.refresh();
+    return {};
+}
+
+fs::Path trash_dir(const AssetDatabase& db) { return db.project_root() / ".victus" / "trash"; }
+
+namespace {
+
+bool valid_trash_id(std::string_view id) {
+    if (id.empty() || id.size() > 64) return false;
+    return std::all_of(id.begin(), id.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '-'; });
+}
+
+// Moves a file, falling back to copy + remove across filesystems.
+Status move_file(const fs::Path& from, const fs::Path& to) {
+    std::error_code ec;
+    sfs::create_directories(to.parent_path(), ec);
+    sfs::rename(from, to, ec);
+    if (!ec) return {};
+    ec.clear();
+    sfs::copy_file(from, to, sfs::copy_options::overwrite_existing, ec);
+    if (ec) return make_error(ErrorCode::IoError, std::format("cannot move {}: {}", from.string(), ec.message()));
+    sfs::remove(from, ec);
+    return {};
+}
+
+std::optional<TrashEntry> read_entry(const fs::Path& folder) {
+    auto text = fs::read_text(folder / "entry.json", 1u << 16);
+    if (!text) return std::nullopt;
+    auto doc = json::parse(*text);
+    if (!doc || !doc->is_object()) return std::nullopt;
+    TrashEntry e;
+    e.id = folder.filename().string();
+    e.original_path = (*doc)["path"].as_string_or("");
+    if (e.original_path.empty() || !Uuid::parse((*doc)["uuid"].as_string_or(""), e.uuid)) return std::nullopt;
+    e.deleted_unix = (*doc)["deleted"].as_int(0);
+    e.bytes = static_cast<std::uint64_t>(std::max<std::int64_t>((*doc)["bytes"].as_int(0), 0));
+    return e;
+}
+
+} // namespace
+
+Result<TrashEntry> trash_asset(AssetDatabase& db, const Uuid& asset) {
+    if (db.packaged()) return make_error(ErrorCode::InvalidArgument, "an exported game cannot be changed");
+    const AssetRecord* rec = db.find(asset);
+    if (!rec) return make_error(ErrorCode::NotFound, "asset not found");
+    const fs::Path src = db.source_path(*rec);
+    TrashEntry e;
+    e.original_path = rec->path;
+    e.uuid = asset;
+    e.deleted_unix = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    std::error_code ec;
+    e.bytes = sfs::file_size(src, ec);
+    if (ec) e.bytes = 0;
+    e.id = std::format("{}-{}", e.deleted_unix, asset.to_string().substr(0, 8));
+    for (int i = 2; sfs::exists(trash_dir(db) / e.id); ++i) e.id = std::format("{}-{}-{}", e.deleted_unix, asset.to_string().substr(0, 8), i);
+    const fs::Path folder = trash_dir(db) / e.id;
+    sfs::create_directories(folder, ec);
+    if (ec) return make_error(ErrorCode::IoError, std::format("cannot create {}: {}", folder.string(), ec.message()));
+    json::Value doc = json::Value::object();
+    doc.set("path", e.original_path);
+    doc.set("uuid", asset.to_string());
+    doc.set("deleted", e.deleted_unix);
+    doc.set("bytes", e.bytes);
+    VICTUS_TRY_STATUS(fs::write_text_atomic(folder / "entry.json", json::stringify(doc, true)));
+    const std::string file = src.filename().string();
+    if (auto st = move_file(src, folder / file); !st.ok()) {
+        sfs::remove_all(folder, ec);
+        return std::move(st).error();
+    }
+    const fs::Path meta(src.string() + ".meta");
+    if (sfs::exists(meta)) (void)move_file(meta, folder / (file + ".meta"));
+    sfs::remove(db.cooked_path(asset), ec);
+    (void)db.refresh();
+    return e;
+}
+
+std::vector<TrashEntry> list_trash(const AssetDatabase& db) {
+    std::vector<TrashEntry> out;
+    std::error_code ec;
+    for (sfs::directory_iterator it(trash_dir(db), ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_directory(ec))
+            if (auto e = read_entry(it->path())) out.push_back(std::move(*e));
+    std::sort(out.begin(), out.end(), [](const TrashEntry& a, const TrashEntry& b) {
+        return a.deleted_unix != b.deleted_unix ? a.deleted_unix > b.deleted_unix : a.id > b.id;
+    });
+    return out;
+}
+
+Status restore_from_trash(AssetDatabase& db, std::string_view id, std::string_view to) {
+    if (db.packaged()) return make_error(ErrorCode::InvalidArgument, "an exported game cannot be changed");
+    if (!valid_trash_id(id)) return make_error(ErrorCode::InvalidArgument, "not a trash entry");
+    const fs::Path folder = trash_dir(db) / std::string(id);
+    auto e = read_entry(folder);
+    if (!e) return make_error(ErrorCode::NotFound, std::format("trash entry {} not found", id));
+    auto rel = fs::sanitize_relative(to.empty() ? std::string_view(e->original_path) : to);
+    if (!rel) return std::move(rel).error();
+    const fs::Path original(e->original_path);
+    if (fs::Path(*rel).extension() != original.extension())
+        return make_error(ErrorCode::InvalidArgument, "keep the file extension " + original.extension().string());
+    const fs::Path dest = db.assets_dir() / *rel;
+    if (sfs::exists(dest)) return make_error(ErrorCode::AlreadyExists, *rel + " already exists; restore under another name");
+    if (db.find(e->uuid)) return make_error(ErrorCode::AlreadyExists, "an asset with the same ID is back in the project");
+    const std::string file = original.filename().string();
+    VICTUS_TRY_STATUS(move_file(folder / file, dest));
+    if (sfs::exists(folder / (file + ".meta"))) (void)move_file(folder / (file + ".meta"), fs::Path(dest.string() + ".meta"));
+    std::error_code ec;
+    sfs::remove_all(folder, ec);
+    (void)db.refresh();
+    return {};
+}
+
+Status purge_trash(AssetDatabase& db, std::string_view id) {
+    std::error_code ec;
+    if (id.empty()) {
+        sfs::remove_all(trash_dir(db), ec);
+        if (ec) return make_error(ErrorCode::IoError, "cannot empty the trash: " + ec.message());
+        return {};
+    }
+    if (!valid_trash_id(id)) return make_error(ErrorCode::InvalidArgument, "not a trash entry");
+    const fs::Path folder = trash_dir(db) / std::string(id);
+    if (!sfs::is_directory(folder)) return make_error(ErrorCode::NotFound, std::format("trash entry {} not found", id));
+    sfs::remove_all(folder, ec);
+    if (ec) return make_error(ErrorCode::IoError, "cannot delete: " + ec.message());
     return {};
 }
 
