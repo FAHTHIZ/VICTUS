@@ -2547,3 +2547,10 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 - **Verified:** `ninja -C build/release` OK; `victus_asset_tests -tc="starter characters*,shared cooked*,model import settings*,texture compression*"` 10 cases / 912 assertions passed; `tools/characters/test_pipeline.py` 7/7 earlier in the session; `victus new --template 3d` 24.4 s first project, 1.3 s second; runtime screenshot of the idle pose checked in `victus run --screenshot`.
 - **Not covered:** the full `ctest` suite was not rerun on this exact tree (earlier run failed only on cases since fixed: upstream FBX fixture, LOD threshold, perf budgets re-baselined). The committed GLBs predate the idle-arm fix in `anim.py`; Idle still holds the arms near the bind A-pose until the regenerated GLBs land in the next commit.
 - **Next task:** commit regenerated GLBs with the idle-arm regression test, runtime screenshots, full ctest; then equipment parts and attach API.
+
+## 2026-11-21 — Starter characters: natural idle arms (ADR-0179 follow-up)
+
+- **Built:** `tools/characters/anim.py` measures arm angles from the rest A-pose and rotates the upper arms down before the clip bends (children conjugated), so Idle, Walk, Run and Interact hold the arms at the sides instead of in the bind A-pose. Regenerated `victus_orion.glb` and `victus_nova.glb` (engine data and arena sample; asset IDs unchanged). New regression check in `tests/assets/template_character_tests.cpp`: during Idle the shoulder-to-wrist vector stays within about 25 degrees of vertical.
+- **Verified:** `build_characters.py --out /tmp/full` (Nova 128,816 triangles, 60 joints, 44 blend shapes, 41 clips); `victus_asset_tests -tc="starter characters*"` 3 cases / 727 assertions passed; `victus run --frames 90 --quality high --screenshot` for an Orion and a Nova project, crops saved as `docs/images/characters/victus_runtime_{orion,nova}.jpg` (VICTUS runtime renders).
+- **Not covered:** full `ctest` not rerun on this tree.
+- **Next task:** full ctest; equipment parts and attach API.
