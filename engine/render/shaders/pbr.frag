@@ -160,7 +160,8 @@ layout(set = 3, binding = 1) uniform Material {
     vec4 flags;          // x has normal map, y unlit, z vertex alpha is a coverage mask, w coverage response
     vec4 uv_transform;   // xy scale, zw offset (material tiling)
     vec4 custom[4];      // surface shader parameters (material "shader_params")
-    vec4 blend;          // x: 0 opaque, 1 alpha blended, 2 additive (volumetric fog, ADR-0119); y: ORM occlusion strength (ADR-0139)
+    vec4 blend;          // x: 0 opaque, 1 alpha blended, 2 additive (volumetric fog, ADR-0119); y: ORM occlusion strength (ADR-0139),
+                         // z: alpha to coverage, w: LOD cross-fade (ADR-0184; > 0 keeps dither < w, < 0 keeps dither >= -w)
 } material;
 
 // Local reflection probe for this draw (box-projected cube bound to u_env instead of the scene's
@@ -584,6 +585,12 @@ void main() {
         if (s.alpha <= 0.0) discard;
     } else if (s.alpha < material.params.w) {
         discard;
+    }
+    if (material.blend.w != 0.0) {
+        // LOD cross-fade (ADR-0184): the incoming and outgoing levels keep complementary pixels
+        // of one screen-door pattern, so together they cover every pixel exactly once.
+        float dither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+        if ((dither < abs(material.blend.w)) != (material.blend.w > 0.0)) discard;
     }
     if (s.unlit) {
         out_color = vec4(blended_fog(s.base_color + s.emissive), s.alpha);

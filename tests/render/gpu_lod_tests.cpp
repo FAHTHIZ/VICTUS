@@ -429,6 +429,7 @@ TEST_CASE("gpu lods: hysteresis keeps a level at a threshold without exceeding t
     RenderSettings stateless = RenderSettings::preset(QualityTier::High);
     stateless.lod_error_pixels = 0.25f;
     stateless.lod_hysteresis = 0.0f;
+    stateless.lod_fade_frames = 0; // counts triangles of one level per frame
     RenderSettings held = stateless;
     held.lod_hysteresis = 0.25f;
     SceneRenderer& r = *sr.value();
@@ -651,5 +652,77 @@ TEST_CASE("gpu shadows: per-cascade LOD cuts shadow triangles without changing t
     (void)frame(s, full);
     CHECK(forced.shadow_triangles == full.shadow_triangles);
     ctx.destroy(ground);
+    ctx.destroy(sphere);
+}
+
+TEST_CASE("gpu lods: cross-fade dissolves a level change over lod_fade_frames without holes") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    MeshData data = make_uv_sphere(0.5f, 64, 32);
+    REQUIRE(generate_lods(data) == 3);
+    optimize_mesh(data);
+    auto sphere = ctx.create_mesh(data, "lod_fade_sphere").value();
+    Material mat;
+    auto tracked = [&](SceneRenderer& r) { r.submit(sphere, mat, math::Mat4::identity(), 7); };
+    RenderSettings snap = RenderSettings::preset(QualityTier::High);
+    snap.lod_error_pixels = 2.0f; // switch while the sphere is still large on screen
+    snap.lod_hysteresis = 0.0f;
+    snap.lod_fade_frames = 0;
+    RenderSettings fade = snap;
+    fade.lod_fade_frames = 4;
+    SceneRenderer& r = *sr.value();
+    const auto at = [&](const RenderSettings& s, float z) { return view_stats(r, s, {0, 0, z}, 60.0f, 160, 96, tracked); };
+
+    const std::uint64_t lod0 = at(snap, 1.0f).triangles;
+    float lo = 1.0f, hi = 60.0f;
+    REQUIRE(at(snap, hi).triangles < lod0);
+    while (hi - lo > 1e-3f) {
+        const float mid = 0.5f * (lo + hi);
+        (at(snap, mid).triangles == lod0 ? lo : hi) = mid;
+    }
+    const float near_z = lo * 0.97f, far_z = hi * 1.03f;
+    r.reset_history();
+    const Shot solid_far = shoot(r, snap, {0, 0, far_z}, tracked, "lod_fade_solid");
+    const std::uint64_t lod1 = solid_far.stats.triangles;
+    REQUIRE(lod1 < lod0);
+    INFO("threshold " << lo << ", LOD0 " << lod0 << " tris, LOD1 " << lod1);
+
+    // Without cross-fade the level snaps in one frame.
+    r.reset_history();
+    (void)shoot(r, snap, {0, 0, near_z}, tracked);
+    CHECK(shoot(r, snap, {0, 0, far_z}, tracked).stats.lod_fading == 0);
+
+    r.reset_history();
+    const Shot first = shoot(r, fade, {0, 0, near_z}, tracked);
+    CHECK(first.stats.lod_fading == 0); // no history: nothing to fade from
+    CHECK(first.stats.triangles == lod0);
+    for (int frame = 1; frame <= 4; ++frame) {
+        const Shot s = shoot(r, fade, {0, 0, far_z}, tracked, frame == 2 ? "lod_fade_mid" : nullptr);
+        INFO("fade frame " << frame);
+        CHECK(s.stats.lod_fading == 1);
+        CHECK(s.stats.triangles == lod0 + lod1); // both levels drawn
+        CHECK(s.stats.prepass_draws == 0);       // dithered draws take their depth from the main pass
+        // The two levels cover complementary pixels: the image matches the solid coarse level
+        // (no holes showing the background), up to the small shape difference between levels.
+        std::size_t far_off = 0;
+        for (std::size_t i = 0; i < s.px.size(); i += 4) {
+            int d = 0;
+            for (std::size_t c = 0; c < 3; ++c) d += std::abs(int(s.px[i + c]) - int(solid_far.px[i + c]));
+            if (d > 90) ++far_off;
+        }
+        CHECK(far_off <= 40);
+    }
+    const Shot done = shoot(r, fade, {0, 0, far_z}, tracked);
+    CHECK(done.stats.lod_fading == 0);
+    CHECK(done.stats.triangles == lod1);
+    CHECK(mean_diff(done.px, solid_far.px) < 0.05);
+
+    // Untracked draws (no motion id) never fade.
+    auto untracked = [&](SceneRenderer& rr) { rr.submit(sphere, mat, math::Mat4::identity()); };
+    r.reset_history();
+    (void)shoot(r, fade, {0, 0, near_z}, untracked);
+    CHECK(shoot(r, fade, {0, 0, far_z}, untracked).stats.lod_fading == 0);
     ctx.destroy(sphere);
 }

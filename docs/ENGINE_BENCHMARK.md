@@ -77,7 +77,7 @@ in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
 Ordered by visible quality per unit of work, and by what everything else depends on:
 
 1. Contact shadows (done for the sun: ADR-0183).
-2. LOD dithered cross-fade, so LOD switches stop popping.
+2. LOD dithered cross-fade, so LOD switches stop popping. Done: ADR-0184.
 3. Volumetric fog noise and self-shadowing, then clouds in reflection probes and temporal
    reprojection of the cloud target.
 4. Light cookies and rectangular area lights (LTC).
