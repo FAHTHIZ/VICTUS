@@ -326,12 +326,81 @@ int entity_look_at(lua_State* L) {
 }
 
 
+namespace {
+using PropertyGet = void (*)(lua_State*, scene::Scene&, Entity);
+using PropertySet = void (*)(lua_State*, scene::Scene&, Entity, int value);
+struct EntityPropertyImpl {
+    EntityProperty info;
+    PropertyGet get;
+    PropertySet set; // nullptr: read-only
+};
+
+// The members of Entity besides its methods. Part of the versioned script API (script/api.hpp):
+// renaming or removing one, or making it read-only, needs a major API version.
+const EntityPropertyImpl kEntityPropertyImpls[] = {
+    {{"position", true}, [](lua_State* L, scene::Scene& s, Entity e) { push_vec3(L, s.world().get<scene::Transform>(e)->position); },
+     [](lua_State* L, scene::Scene& s, Entity e, int v) { s.world().get<scene::Transform>(e)->position = check_vec3(L, v); }},
+    {{"rotation", true}, [](lua_State* L, scene::Scene& s, Entity e) { push_vec3(L, euler_degrees(s.world().get<scene::Transform>(e)->rotation)); },
+     [](lua_State* L, scene::Scene& s, Entity e, int v) { s.world().get<scene::Transform>(e)->rotation = from_euler_degrees(check_vec3(L, v)); }},
+    {{"scale", true}, [](lua_State* L, scene::Scene& s, Entity e) { push_vec3(L, s.world().get<scene::Transform>(e)->scale); },
+     [](lua_State* L, scene::Scene& s, Entity e, int v) { s.world().get<scene::Transform>(e)->scale = check_vec3(L, v); }},
+    {{"forward", false}, [](lua_State* L, scene::Scene& s, Entity e) { push_vec3(L, s.world().get<scene::Transform>(e)->rotation.rotate({0, 0, -1})); }, nullptr},
+    {{"right", false}, [](lua_State* L, scene::Scene& s, Entity e) { push_vec3(L, s.world().get<scene::Transform>(e)->rotation.rotate({1, 0, 0})); }, nullptr},
+    {{"up", false}, [](lua_State* L, scene::Scene& s, Entity e) { push_vec3(L, s.world().get<scene::Transform>(e)->rotation.rotate({0, 1, 0})); }, nullptr},
+    {{"world_position", false}, [](lua_State* L, scene::Scene& s, Entity e) { push_vec3(L, s.world_matrix(e).transform_point({0, 0, 0})); }, nullptr},
+    {{"name", true},
+     [](lua_State* L, scene::Scene& s, Entity e) {
+         const auto* n = s.world().get<scene::Name>(e);
+         lua_pushstring(L, n ? n->value.c_str() : "");
+     },
+     [](lua_State* L, scene::Scene& s, Entity e, int v) {
+         if (auto* n = s.world().get<scene::Name>(e)) n->value = luaL_checkstring(L, v);
+     }},
+    {{"parent", false}, [](lua_State* L, scene::Scene& s, Entity e) { push_entity(L, s.parent(e)); }, nullptr},
+    {{"id", false}, [](lua_State* L, scene::Scene& s, Entity e) { lua_pushstring(L, s.uuid(e).to_string().c_str()); }, nullptr},
+    {{"velocity", true},
+     [](lua_State* L, scene::Scene& s, Entity e) {
+         const auto* w = physics::world_of(s);
+         push_vec3(L, w ? w->linear_velocity(e) : math::Vec3{});
+     },
+     [](lua_State* L, scene::Scene& s, Entity e, int v) {
+         if (auto* w = physics::world_of(s)) w->set_linear_velocity(e, check_vec3(L, v));
+     }},
+    {{"angular_velocity", true},
+     [](lua_State* L, scene::Scene& s, Entity e) {
+         const auto* w = physics::world_of(s);
+         push_vec3(L, w ? w->angular_velocity(e) : math::Vec3{});
+     },
+     [](lua_State* L, scene::Scene& s, Entity e, int v) {
+         if (auto* w = physics::world_of(s)) w->set_angular_velocity(e, check_vec3(L, v));
+     }},
+    {{"grounded", false},
+     [](lua_State* L, scene::Scene& s, Entity e) {
+         const auto* w = physics::world_of(s);
+         lua_pushboolean(L, w && w->character_state(e).grounded);
+     },
+     nullptr},
+};
+
+const EntityPropertyImpl* find_property(const char* key) {
+    for (const auto& p : kEntityPropertyImpls)
+        if (std::strcmp(p.info.name, key) == 0) return &p;
+    return nullptr;
+}
+} // namespace
+
+std::vector<EntityProperty> entity_properties() {
+    std::vector<EntityProperty> out{{"valid", false}};
+    for (const auto& p : kEntityPropertyImpls) out.push_back(p.info);
+    return out;
+}
+
 int entity_index(lua_State* L) {
     const Entity e = check_entity(L, 1);
     const char* key = luaL_checkstring(L, 2);
     auto& s = scene_of(L);
     const bool alive = s.world().alive(e);
-    if (std::strcmp(key, "valid") == 0) {
+    if (std::strcmp(key, "valid") == 0) { // the one member that works on destroyed entities
         lua_pushboolean(L, alive);
         return 1;
     }
@@ -341,29 +410,9 @@ int entity_index(lua_State* L) {
     if (!lua_isnil(L, -1)) return 1;
     lua_pop(L, 1);
     if (!alive) luaL_error(L, "entity was destroyed (reading '%s')", key);
-    const auto* t = s.world().get<scene::Transform>(e);
-    if (std::strcmp(key, "position") == 0) push_vec3(L, t->position);
-    else if (std::strcmp(key, "rotation") == 0) push_vec3(L, euler_degrees(t->rotation));
-    else if (std::strcmp(key, "scale") == 0) push_vec3(L, t->scale);
-    else if (std::strcmp(key, "forward") == 0) push_vec3(L, t->rotation.rotate({0, 0, -1}));
-    else if (std::strcmp(key, "right") == 0) push_vec3(L, t->rotation.rotate({1, 0, 0}));
-    else if (std::strcmp(key, "up") == 0) push_vec3(L, t->rotation.rotate({0, 1, 0}));
-    else if (std::strcmp(key, "world_position") == 0) push_vec3(L, s.world_matrix(e).transform_point({0, 0, 0}));
-    else if (std::strcmp(key, "name") == 0) {
-        const auto* n = s.world().get<scene::Name>(e);
-        lua_pushstring(L, n ? n->value.c_str() : "");
-    } else if (std::strcmp(key, "parent") == 0) push_entity(L, s.parent(e));
-    else if (std::strcmp(key, "id") == 0) lua_pushstring(L, s.uuid(e).to_string().c_str());
-    else if (std::strcmp(key, "velocity") == 0) {
-        const auto* w = physics::world_of(s);
-        push_vec3(L, w ? w->linear_velocity(e) : math::Vec3{});
-    } else if (std::strcmp(key, "angular_velocity") == 0) {
-        const auto* w = physics::world_of(s);
-        push_vec3(L, w ? w->angular_velocity(e) : math::Vec3{});
-    } else if (std::strcmp(key, "grounded") == 0) {
-        const auto* w = physics::world_of(s);
-        lua_pushboolean(L, w && w->character_state(e).grounded);
-    } else luaL_error(L, "Entity has no member '%s'", key);
+    const auto* p = find_property(key);
+    if (!p) luaL_error(L, "Entity has no member '%s'", key);
+    p->get(L, s, e);
     return 1;
 }
 
@@ -372,18 +421,9 @@ int entity_newindex(lua_State* L) {
     auto& s = scene_of(L);
     const Entity e = check_live(L, 1, s);
     const char* key = luaL_checkstring(L, 2);
-    auto* t = s.world().get<scene::Transform>(e);
-    if (std::strcmp(key, "position") == 0) t->position = check_vec3(L, 3);
-    else if (std::strcmp(key, "rotation") == 0) t->rotation = from_euler_degrees(check_vec3(L, 3));
-    else if (std::strcmp(key, "scale") == 0) t->scale = check_vec3(L, 3);
-    else if (std::strcmp(key, "name") == 0) {
-        auto* n = s.world().get<scene::Name>(e);
-        if (n) n->value = luaL_checkstring(L, 3);
-    } else if (std::strcmp(key, "velocity") == 0) {
-        if (auto* w = physics::world_of(s)) w->set_linear_velocity(e, check_vec3(L, 3));
-    } else if (std::strcmp(key, "angular_velocity") == 0) {
-        if (auto* w = physics::world_of(s)) w->set_angular_velocity(e, check_vec3(L, 3));
-    } else luaL_error(L, "Entity member '%s' is read-only or unknown", key);
+    const auto* p = find_property(key);
+    if (!p || !p->set) luaL_error(L, "Entity member '%s' is read-only or unknown", key);
+    p->set(L, s, e, 3);
     return 0;
 }
 

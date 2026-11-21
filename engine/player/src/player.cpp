@@ -187,6 +187,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     so.input_map = proj->settings().input;
     so.save_version = proj->settings().save_version;
     so.default_locale = proj->settings().default_locale;
+    so.script_api = proj->settings().script_api;
     so.save_directory = !o.saves.empty() ? o.saves
                         : packaged      ? gameplay::default_save_directory(proj->settings().name)
                                         : proj->dev_save_directory();

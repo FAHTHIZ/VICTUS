@@ -3,6 +3,8 @@
 // whole Lua API (open_victus_libs). The bindings themselves live in bind_*.cpp and script_lua.cpp.
 #include "script_internal.hpp"
 
+#include "victus/script/api.hpp"
+
 #include "victus/gameplay/framework.hpp"
 
 namespace victus::script {
@@ -402,6 +404,7 @@ ScriptHost::ScriptHost(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 ScriptHost::~ScriptHost() = default;
 
 Result<std::unique_ptr<ScriptHost>> ScriptHost::create(HostOptions options) {
+    if (const Status api = check_api_requirement(options.script_api); !api) return api.error();
     register_components();
     auto impl = std::make_unique<Impl>();
     impl->options = std::move(options);
@@ -411,6 +414,11 @@ Result<std::unique_ptr<ScriptHost>> ScriptHost::create(HostOptions options) {
     lua_callbacks(L)->userdata = impl.get();
     lua_callbacks(L)->interrupt = &interrupt;
     luaL_openlibs(L);
+    lua_pushnil(L);
+    while (lua_next(L, LUA_GLOBALSINDEX) != 0) {
+        if (lua_type(L, -2) == LUA_TSTRING) impl->builtin_globals.emplace_back(lua_tostring(L, -2));
+        lua_pop(L, 1);
+    }
     open_victus_libs(L);
     if (const std::uint64_t seed = impl->options.random_seed) {
         // math.randomseed takes a 32-bit integer; fold the 64-bit seed into it.

@@ -95,6 +95,9 @@ struct ScriptHost::Impl {
 
     HostOptions options;
     lua_State* L{nullptr};
+    // Globals present after luaL_openlibs and before open_victus_libs: the standard Luau
+    // libraries, which are not part of the versioned script API (api.hpp).
+    std::vector<std::string> builtin_globals;
     std::size_t heap{0};
     double deadline{0};
     std::uint32_t interrupt_counter{0};
@@ -523,6 +526,21 @@ int entity_set_parent(lua_State* L);
 int entity_translate(lua_State* L);
 int entity_rotate(lua_State* L);
 int entity_look_at(lua_State* L);
+// Methods the engine calls on script instances when a script defines them. Part of the
+// versioned script API (api.hpp); keep in sync with the call sites in script.cpp/bind_save.cpp.
+inline constexpr const char* kScriptCallbacks[] = {
+    "start",          "update",          "fixed_update",       "reload",
+    "on_collision_enter", "on_collision_exit", "on_trigger_enter", "on_trigger_exit",
+    "on_click",       "on_event",        "on_sequence_event",  "on_net_message",
+    "save_state",     "load_state",      "on_task_abort",
+};
+
+// Entity members that are not methods ("valid" first); writable ones accept assignment.
+struct EntityProperty {
+    const char* name;
+    bool writable;
+};
+[[nodiscard]] std::vector<EntityProperty> entity_properties();
 int entity_index(lua_State* L);
 int entity_newindex(lua_State* L);
 int entity_eq(lua_State* L);

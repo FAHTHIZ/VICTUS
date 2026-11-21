@@ -153,6 +153,7 @@ Status Editor::open_project(const fs::Path& path) {
     if (!safe_mode_) {
         script::HostOptions so;
         so.assets_root = db_->assets_dir();
+        so.script_api = project_->settings().script_api;
         if (auto host = script::ScriptHost::create(so)) edit_scripts_ = std::move(host).value();
         else notify("scripting unavailable: " + host.error().message, true);
     }
@@ -1188,6 +1189,7 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
             so.input_map = project_->settings().input;
             so.save_version = project_->settings().save_version;
             so.default_locale = project_->settings().default_locale;
+            so.script_api = project_->settings().script_api;
             so.save_directory = project_->dev_save_directory();
             so.project_root = project_->root();
             so.bridge_launcher = [project = &*project_, saves = so.save_directory](std::string_view name) {

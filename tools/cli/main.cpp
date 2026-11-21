@@ -105,6 +105,7 @@ constexpr const char* kUsage =
     "  world <project> --scene S --out DIR [--cell-size N]       split a scene into streamed world cells (.vworld)\n"
     "  bake-lighting <project> [--scene S] [--samples N] [--density T] [--mark-static]  bake lightmaps for Static Lighting meshes\n"
     "  diagnose [project] --out FILE.zip [--no-logs] [--keep-paths] ...  bundle crash reports, logs and checks\n"
+    "  script-api [--out FILE] [--write DIR] [--check DIR]        print, freeze or check the versioned Luau API\n"
     "  version                                                    print the engine version\n"
     "\n"
     "Run `victus <command> --help` for command options. The editor is `victus_editor`.\n";
@@ -154,6 +155,36 @@ int cmd_new(const std::vector<std::string>& a) {
     return 0;
 }
 
+// The versioned script API (ADR-0155): print it, write the snapshot of this version into a
+// folder, or check a folder of snapshots against the live bindings and each other.
+int cmd_script_api(const std::vector<std::string>& a) {
+    cli::Parser p("victus script-api", "Print, freeze or check the versioned Luau scripting API");
+    p.option("out", "write the API description (JSON) to FILE instead of stdout")
+        .option("write", "write victus_script_api_<version>.json into DIR (freezes this version)")
+        .option("check", "verify DIR's snapshots: newest equals this build, each step follows the rules");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message);
+    auto api = script::describe_api();
+    if (!api) return error(api.error().message);
+    const std::string text = json::stringify(*api, true) + "\n";
+    if (const std::string dir = p.get("write"); !dir.empty()) {
+        const fs::Path file = fs::Path(dir) / script::snapshot_file_name(script::kScriptApiVersion);
+        if (auto st = fs::write_text_atomic(file, text); !st) return error(st.error().message);
+        std::printf("wrote %s\n", file.string().c_str());
+    }
+    if (const std::string dir = p.get("check"); !dir.empty()) {
+        auto st = script::check_snapshot_folder(dir, *api);
+        if (!st) return error(st.error().message);
+        std::printf("script API %s matches %s\n", script::to_string(script::kScriptApiVersion).c_str(), dir.c_str());
+    }
+    if (const std::string out = p.get("out"); !out.empty()) {
+        if (auto st = fs::write_text_atomic(out, text); !st) return error(st.error().message);
+    } else if (p.get("write").empty() && p.get("check").empty()) {
+        std::printf("%s", text.c_str());
+    }
+    return 0;
+}
+
 int cmd_templates() {
     for (const auto& t : project::templates()) std::printf("%-12s %-12s %s\n", t.id.c_str(), t.display_name.c_str(), t.description.c_str());
     return 0;
@@ -170,6 +201,8 @@ int cmd_info(const std::vector<std::string>& a) {
     std::printf("name:          %s\nroot:          %s\ntemplate:      %s\nengine:        %s\nstartup scene: %s\nwindow:        %dx%d vsync=%s\n",
                 s.name.c_str(), proj->root().string().c_str(), s.template_id.c_str(), s.engine_version.c_str(),
                 s.startup_scene.c_str(), s.window_width, s.window_height, s.vsync ? "on" : "off");
+    std::printf("script API:    %s (engine provides %s)\n", script::to_string(s.script_api).c_str(),
+                script::to_string(script::kScriptApiVersion).c_str());
     std::printf("scenes:\n");
     for (const auto& sc : proj->scenes()) std::printf("  %s\n", sc.c_str());
     auto db = assets::AssetDatabase::open(proj->root());
@@ -424,6 +457,7 @@ struct Headless {
         so.input_map = proj->settings().input;
         so.save_version = proj->settings().save_version;
         so.default_locale = proj->settings().default_locale;
+        so.script_api = proj->settings().script_api;
         so.save_directory = saves.empty() ? proj->dev_save_directory() : fs::Path(saves);
         so.random_seed = random_seed;
         so.debugger = debugger;
@@ -1629,7 +1663,9 @@ int main(int argc, char** argv) {
     if (cmd == "world") return cmd_world(args);
     if (cmd == "bake-lighting") return cmd_bake_lighting(args);
     if (cmd == "crash-test") return cmd_crash_test(args);
-    if (cmd == "version" || cmd == "--version") return std::printf("VICTUS %s\n", build::version()), 0;
+    if (cmd == "script-api") return cmd_script_api(args);
+    if (cmd == "version" || cmd == "--version")
+        return std::printf("VICTUS %s (script API %s)\n", build::version(), script::to_string(script::kScriptApiVersion).c_str()), 0;
     if (cmd == "help" || cmd == "--help" || cmd == "-h") return std::printf("%s", kUsage), 0;
     std::fprintf(stderr, "victus: unknown command '%s'\n\n%s", cmd.c_str(), kUsage);
     return 2;

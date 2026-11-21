@@ -116,6 +116,7 @@
 #include "victus/core/json.hpp"
 #include "victus/core/process.hpp"
 #include "victus/core/result.hpp"
+#include "victus/script/api.hpp"
 #include "victus/script/debugger.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/gameplay/input_map.hpp"
@@ -203,6 +204,9 @@ struct HostOptions {
     // Compiles scripts with full debug information (local names) and enables the source
     // debugger (set_debug_handler, ADR-0099). Off: breakpoints are never hit.
     bool debugger{false};
+    // Script API the game's scripts were written for (victus.project "script_api", ADR-0155).
+    // create() fails when this build cannot run them (different major, or a newer minor).
+    ApiVersion script_api{kScriptApiVersion};
 };
 
 // The most recent runtime error of a visual script graph.
@@ -301,6 +305,7 @@ public:
     struct Impl;
 
 private:
+    friend Result<json::Value> describe_api();
     explicit ScriptHost(std::unique_ptr<Impl> impl);
     void dispatch_physics_events(scene::Scene& scene);
     void dispatch_ui_events(scene::Scene& scene);

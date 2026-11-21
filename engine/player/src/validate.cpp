@@ -104,6 +104,11 @@ Result<ValidationReport> validate_project(const project::Project& proj) {
              [](std::string_view k) { return platform::key_from_name(k) != platform::Key::Unknown; }))
         sink.error(Category::Project, std::string(project::kProjectFileName), std::string(project::kProjectFileName) + ": " + msg,
                    "Fix the input action in Project Settings or victus.project; key names are listed in docs/USER_GUIDE.md.");
+    if (const Status api = script::check_api_requirement(proj.settings().script_api); !api)
+        sink.error(Category::Project, std::string(project::kProjectFileName),
+                   std::string(project::kProjectFileName) + ": " + api.error().message,
+                   "Open the project with a VICTUS build that provides this script API, or port the scripts and "
+                   "update \"script_api\" (docs/SCRIPT_API.md).");
 
     std::vector<std::string> prefab_files;
     std::set<Uuid> prefab_uuids;

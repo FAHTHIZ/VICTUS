@@ -16,7 +16,9 @@
 #include "victus/script/script.hpp"
 #include "victus/net/net.hpp"
 
+#include <algorithm>
 #include <filesystem>
+#include <format>
 #include <functional>
 #include <set>
 
@@ -1317,4 +1319,43 @@ TEST_CASE("project: bridges section resolves helper process launches") {
     REQUIRE_FALSE(missing);
     CHECK(missing.error().message.find("no bridge named 'other'") != std::string::npos);
     sfs::remove_all(dir);
+}
+
+TEST_CASE("project: script_api is stamped on new projects, defaults to 1.0 and is validated") {
+    const auto dir = temp_dir("script_api");
+    auto p = project::Project::create(dir, "Api", "simulation");
+    REQUIRE(p.ok());
+    CHECK(p->settings().script_api == script::kScriptApiVersion);
+    auto doc = json::parse(*fs::read_text(dir / "victus.project"));
+    REQUIRE(doc.ok());
+    CHECK((*doc)["script_api"].as_string_or("") == script::to_string(script::kScriptApiVersion));
+
+    // Projects saved before the key existed were written against what is now 1.0.
+    json::Value legacy = *doc;
+    legacy.as_object().erase(std::remove_if(legacy.as_object().begin(), legacy.as_object().end(),
+                                            [](const auto& kv) { return kv.first == "script_api"; }),
+                             legacy.as_object().end());
+    REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(legacy)).ok());
+    auto q = project::Project::open(dir);
+    REQUIRE(q.ok());
+    CHECK(q->settings().script_api == script::ApiVersion{1, 0});
+    CHECK_FALSE(q->settings().extra.find("script_api"));
+
+    for (const char* bad : {"", "x", "1.", "0.3", "1.2.3", "-1"}) {
+        doc->set("script_api", bad);
+        REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(*doc)).ok());
+        CHECK_FALSE(project::Project::open(dir).ok());
+    }
+    doc->set("script_api", 7);
+    REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(*doc)).ok());
+    CHECK_FALSE(project::Project::open(dir).ok());
+
+    // A newer API than this build opens (so the developer can read it) but `check` reports it.
+    doc->set("script_api", std::format("{}.{}", script::kScriptApiVersion.major, script::kScriptApiVersion.minor + 1));
+    REQUIRE(fs::write_text_atomic(dir / "victus.project", json::stringify(*doc)).ok());
+    auto newer = project::Project::open(dir);
+    REQUIRE(newer.ok());
+    CHECK_FALSE(script::check_api_requirement(newer->settings().script_api).ok());
+    std::error_code ec;
+    sfs::remove_all(dir, ec);
 }
