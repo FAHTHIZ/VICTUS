@@ -376,13 +376,13 @@ bool Scene::is_descendant(Entity e, Entity ancestor) const noexcept {
     return false;
 }
 
-Entity Scene::find_descendant(Entity root, std::string_view name) const {
+Entity Scene::find_descendant(Entity root, std::string_view wanted) const {
     if (!world_.alive(root)) return kNullEntity;
     std::vector<Entity> queue = children(root);
     for (std::size_t i = 0; i < queue.size(); ++i) {
         const Entity e = queue[i];
         const auto* n = world_.get<Name>(e);
-        if (n && n->value == name) return e;
+        if (n && n->value == wanted) return e;
         for (const Entity c : children(e)) queue.push_back(c);
     }
     return kNullEntity;

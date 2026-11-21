@@ -493,9 +493,9 @@ TEST_CASE("gpu volumetric fog: noise breaks the fog into drifting patches with t
         const std::uint32_t n = 120 * 60;
         for (std::uint32_t y = 18; y < 78; ++y)
             for (std::uint32_t x = 20; x < 140; ++x) {
-                const double v = s.red(x, y);
-                sum += v;
-                sq += v * v;
+                const double red = s.red(x, y);
+                sum += red;
+                sq += red * red;
             }
         const double mean = sum / n;
         return std::pair{mean, std::sqrt(std::max(sq / n - mean * mean, 0.0))};

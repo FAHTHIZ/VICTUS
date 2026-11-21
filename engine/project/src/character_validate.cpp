@@ -54,23 +54,20 @@ void add(CharacterReport& r, CharacterIssue::Severity sev, std::string code, std
 
 } // namespace
 
-std::span<const char* const> character_core_joint_names() {
-    static const auto names = [] {
-        std::array<const char*, kCharacterCoreJointCount> n{};
-        for (std::size_t i = 0; i < kCore.size(); ++i) n[i] = kCore[i].name;
-        return n;
-    }();
-    return names;
+namespace {
+template <typename Spec, std::size_t N>
+constexpr std::array<const char*, N> spec_names(const std::array<Spec, N>& specs) {
+    std::array<const char*, N> n{};
+    for (std::size_t i = 0; i < N; ++i) n[i] = specs[i].name;
+    return n;
 }
+constexpr auto kCoreNames = spec_names(kCore);
+constexpr auto kSocketNames = spec_names(kSockets);
+} // namespace
 
-std::span<const char* const> character_socket_names() {
-    static const auto names = [] {
-        std::array<const char*, kSockets.size()> n{};
-        for (std::size_t i = 0; i < kSockets.size(); ++i) n[i] = kSockets[i].name;
-        return n;
-    }();
-    return names;
-}
+std::span<const char* const> character_core_joint_names() { return kCoreNames; }
+
+std::span<const char* const> character_socket_names() { return kSocketNames; }
 
 std::span<const char* const> character_controller_clip_names() {
     static constexpr std::array<const char*, 7> names = {"Idle", "Walk", "Run", "Jump", "Fall", "Land", "Interact"};
