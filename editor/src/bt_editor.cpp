@@ -15,6 +15,7 @@
 #include <imgui_stdlib.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <format>
@@ -154,6 +155,16 @@ Result<Uuid> Editor::create_behavior_tree(std::string_view relative_path) {
     notify("Created behaviour tree " + *clean);
     VICTUS_TRY_STATUS(open_behavior_tree(rec->uuid));
     return rec->uuid;
+}
+
+std::string Editor::suggested_behavior_tree_path(std::string_view object_name) const {
+    std::string base;
+    for (const char c : object_name)
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') base += c;
+    if (base.empty() || !db_) return {};
+    std::string rel = "ai/" + base + ".vbt";
+    for (int i = 2; sfs::exists(db_->assets_dir() / rel); ++i) rel = std::format("ai/{}_{}.vbt", base, i);
+    return rel;
 }
 
 Status Editor::open_behavior_tree(const Uuid& asset) {

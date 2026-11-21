@@ -1629,8 +1629,34 @@ bool Editor::inspect_components(Entity e) {
         ImGui::PushID(schema->name.c_str());
         bool remove = false;
         const std::string comp_header = kit::humanize(schema->name) + "###" + schema->name;
-        if (removable(comp_header.c_str(), remove))
+        if (removable(comp_header.c_str(), remove)) {
             for (const auto& f : schema->fields) changed |= field_edit(f, comp, db_.get(), &s);
+            // Behaviour tree fields get a shortcut into the Behaviour Tree Editor.
+            for (const auto& f : schema->fields) {
+                if (f.kind != scene::FieldKind::String || f.hint != "behavior_tree" || !db_) continue;
+                auto& tree = f.ref<std::string>(comp);
+                ImGui::PushID(f.name.c_str());
+                if (tree.empty()) {
+                    if (kit::icon_text_button("New Tree", kit::Icon::Tree, true)) {
+                        const auto* n = w.get<scene::Name>(e);
+                        const std::string rel = suggested_behavior_tree_path(n ? n->value : std::string());
+                        if (auto id = create_behavior_tree(rel); !id) {
+                            notify("cannot create behaviour tree: " + id.error().message, true);
+                        } else if (const auto* rec = db_->find(*id)) {
+                            tree = rec->path;
+                            changed = true;
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create a new behaviour tree for this object and open it");
+                } else {
+                    if (kit::icon_text_button("Edit Tree", kit::Icon::Tree, false)) {
+                        if (auto st = open_behavior_tree_path(tree); !st.ok()) notify(st.error().message, true);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open %s in the Behaviour Tree Editor", tree.c_str());
+                }
+                ImGui::PopID();
+            }
+        }
         if (remove) remove_schema = schema;
         ImGui::PopID();
     }

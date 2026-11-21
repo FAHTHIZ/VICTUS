@@ -2517,3 +2517,11 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 - clang-tidy on `engine/assets/src/references.cpp`, `editor/src/asset_refs.cpp`, `editor/src/bt_editor.cpp`, `editor/src/panels.cpp`: no new diagnostics (pre-existing `bugprone-signed-bitwise`, one `bugprone-suspicious-enum-usage` and one analyzer note in unchanged `panels.cpp` lines).
 
 Not covered: the OS trash, sharing the Trash through version control, moving `.gltf`/`.obj` companion files, folder delete.
+
+## 2026-11-21 — Behaviour tree from the Inspector
+
+Follows `8739164` (asset trash). The Inspector's BehaviorTree component shows New Tree when no tree is set (creates `ai/<object name>.vbt` from the object's letters, digits, `_` and `-`, numbered when taken, assigns it through the normal undoable component edit and opens it in the Behaviour Tree Editor) and Edit Tree when one is set. Help gains the topic "Behaviour trees: smarter enemies", and the Keyboard shortcuts list now includes the Assets panel's F2, Delete and Shift+Alt+F.
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- `victus_editor_tests -tc="studio behaviour tree*,studio guide*,*help*"` 3 cases / 192 assertions: suggested paths (`"Guard 1 (blue)"` → `ai/Guard1blue.vbt`, taken `guard` → `ai/guard_2.vbt`, `"../.."` → none), the inspector draws the component with Edit Tree, help search finds the new topic.
+- clang-tidy on `editor/src/bt_editor.cpp`, `editor/src/guide.cpp`, `editor/src/panels.cpp`: no new diagnostics.
