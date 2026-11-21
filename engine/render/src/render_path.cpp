@@ -233,7 +233,8 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
         const bool reduced = S.volumetric_fog_tile > ref.volumetric_fog_tile || S.volumetric_fog_slices < ref.volumetric_fog_slices;
         const bool matches = S.volumetric_fog_tile == tier.volumetric_fog_tile && S.volumetric_fog_slices == tier.volumetric_fog_slices;
         add("volumetric_fog", reduced ? PathState::Reduced : PathState::Active, reduced ? by(matches) : PathReason::None,
-            std::format("{}x{}x{} froxels", f.fog_x, f.fog_y, f.fog_slices));
+            std::format("{}x{}x{} froxels{}{}", f.fog_x, f.fog_y, f.fog_slices, f.fog_noise ? ", noise" : "",
+                        f.fog_self_shadow ? std::format(", self-shadow {} steps", S.volumetric_fog_shadow_steps) : std::string{}));
     }
 
     if (!f.clouds_requested) add("volumetric_clouds", PathState::Off, PathReason::Scene, "no cloud layer");

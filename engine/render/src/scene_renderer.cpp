@@ -529,6 +529,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.local_shadow_tile = 256;
         s.dynamic_gi = false;
         s.volumetric_fog_slices = 48;
+        s.volumetric_fog_shadow_steps = 2;
         s.cloud_downsample = 4;
         s.cloud_steps = 32;
         s.cloud_light_steps = 4;
@@ -552,6 +553,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.local_shadow_atlas = 4096;
         s.volumetric_fog_tile = 8;
         s.volumetric_fog_slices = 96;
+        s.volumetric_fog_shadow_steps = 6;
         s.cloud_steps = 64;
         s.cloud_light_steps = 8;
         s.max_decals = SceneRenderer::kMaxDecals;
@@ -598,6 +600,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.local_shadow_tile = std::clamp(s.local_shadow_tile, std::max(64u, s.local_shadow_atlas / 8u), s.local_shadow_atlas);
     s.volumetric_fog_tile = std::clamp(s.volumetric_fog_tile, 4u, 64u);
     s.volumetric_fog_slices = std::clamp(s.volumetric_fog_slices, 16u, 128u);
+    s.volumetric_fog_shadow_steps = std::min(s.volumetric_fog_shadow_steps, 16u);
     s.cloud_downsample = std::clamp(s.cloud_downsample, 1u, 8u);
     s.cloud_steps = std::clamp(s.cloud_steps, 8u, 128u);
     s.cloud_light_steps = std::clamp(s.cloud_light_steps, 1u, 16u);
@@ -3161,9 +3164,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         Vec4 camera_pos, camera_forward, prev_camera_pos, prev_camera_forward, grid;
         Vec4 sun_dir, sun_color, ambient, albedo, height_fog;
         Vec4 shadow_params, cascade_params, cascade_splits, cluster_grid, cluster_depth, local_shadow;
+        Vec4 noise, media; // ADR-0186: noise offset (xyz) and frequency (w); amount, shadow steps/distance/strength
         Vec4 volumes[kMaxFogVolumes * 5];
     };
-    static_assert(sizeof(FogUniforms) == 1280);
+    static_assert(sizeof(FogUniforms) == 1312);
     struct FogApplyUniforms {
         Vec4 proj, screen, grid;
     };
@@ -3227,6 +3231,21 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         fog_u.cluster_grid = lighting.cluster_grid;
         fog_u.cluster_depth = lighting.cluster_depth;
         fog_u.local_shadow = lighting.local_shadow;
+        // Heterogeneous media and self-shadowing (ADR-0186). The noise drifts with the wind over
+        // the shader clock (wrapped at an hour, like surface shader time).
+        {
+            const float amount = std::clamp(finite_or(vf.noise, 0.0f), 0.0f, 1.0f);
+            const float scale = std::clamp(finite_or(vf.noise_scale, 6.0f), 0.25f, 1000.0f);
+            const Vec3 wind{finite_or(vf.wind.x, 0.0f), finite_or(vf.wind.y, 0.0f), finite_or(vf.wind.z, 0.0f)};
+            const Vec3 drift = wind * shader_time_;
+            fog_u.noise = {drift.x, drift.y, drift.z, 1.0f / scale};
+            const float strength = std::clamp(finite_or(vf.self_shadow, 0.0f), 0.0f, 4.0f);
+            const std::uint32_t steps = strength > 0.0f && sun_.intensity > 0.0f ? S.volumetric_fog_shadow_steps : 0u;
+            fog_u.media = {amount, static_cast<float>(steps), std::clamp(finite_or(vf.self_shadow_distance, 16.0f), 1.0f, 200.0f),
+                           strength};
+            facts_.fog_noise = amount > 0.0f;
+            facts_.fog_self_shadow = steps > 0;
+        }
         // Fog volumes inside the view frustum, nearest first.
         std::vector<std::pair<float, const FogVolume*>> vols;
         {

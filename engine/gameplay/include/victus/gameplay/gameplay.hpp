@@ -346,6 +346,10 @@ struct EnvironmentComponent {
     float volumetric_ambient{1.0f};
     float volumetric_local_lights{1.0f};
     float volumetric_temporal{0.9f};       // history weight (0 = no temporal filtering)
+    float volumetric_noise{0.0f};          // ADR-0186: 0 uniform .. 1 drifting patches
+    float volumetric_noise_scale{6.0f};    // metres per patch
+    math::Vec3 volumetric_wind{0.6f, 0.0f, 0.25f}; // m/s the patches drift
+    float volumetric_self_shadow{0.0f};    // fog dims the sun light behind it (1 = physical)
     // Volumetric clouds (ADR-0111): a ray-marched cloud layer lit by the directional light.
     bool clouds{false};
     float cloud_coverage{0.5f};            // 0 clear .. 1 overcast

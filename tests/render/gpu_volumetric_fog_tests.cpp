@@ -411,3 +411,114 @@ TEST_CASE("gpu volumetric fog: blended surfaces and particles take the fog in fr
     off.volumetric_fog.enabled = false;
     CHECK(shoot(r, off, with_pane, nullptr, fog_settings(), no_sun()).red(W / 2, H / 2) >= 254);
 }
+
+TEST_CASE("gpu volumetric fog: self-shadowing dims sun light under a dense fog layer (ADR-0186)") {
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    Scene3 sc(ctx, 0.0f);
+    DirectionalLight sun;
+    sun.direction = {0, -1, 0};
+    sun.intensity = 6.0f;
+    sun.shadows = false; // only the fog itself can shade the fog
+    Environment env = fog_env(0.0f, 0.05f);
+    env.volumetric_fog.sun_intensity = 1.0f;
+    env.volumetric_fog.anisotropy = 0.0f;
+    env.volumetric_fog.self_shadow_distance = 16.0f;
+    // A dense layer 4..8 m up over the left half of the view, above everything the bottom rows see.
+    FogVolume layer;
+    layer.transform = math::Mat4::trs({-20.5f, 6.0f, 0}, {}, {40, 4, 60});
+    layer.density = 0.5f;
+    layer.edge_fade = 0.02f;
+    RenderSettings s = fog_settings();
+    s.volumetric_fog_shadow_steps = 4;
+    const auto frame = [&](const Environment& e, const RenderSettings& rs, const char* save = nullptr) {
+        return shoot(
+            r, e,
+            [&](SceneRenderer& rr) {
+                sc.submit_wall(rr, -10.0f);
+                rr.add_fog_volume(layer);
+            },
+            save, rs, sun);
+    };
+    const Shot off = frame(env, s, "fog_self_shadow_off");
+    const double off_left = off.mean_red(10, 70, 60, 92), off_right = off.mean_red(100, 70, 150, 92);
+    INFO("self-shadow off: left " << off_left << ", right " << off_right);
+    CHECK(off_right > 25);
+    CHECK(std::abs(off_left - off_right) < 4); // without self-shadowing the layer above changes nothing below
+
+    Environment shaded = env;
+    shaded.volumetric_fog.self_shadow = 1.0f;
+    const Shot on = frame(shaded, s, "fog_self_shadow_on");
+    const double on_left = on.mean_red(10, 70, 60, 92), on_right = on.mean_red(100, 70, 150, 92);
+    INFO("self-shadow on: left " << on_left << ", right " << on_right);
+    CHECK(on_left < 0.6 * on_right);  // under the layer: e^-2 of the sun light
+    CHECK(on_right > 0.6 * off_right); // open sky: only the thin global fog (e^-0.8 linear) dims it
+    CHECK(on_right < off_right);
+    CHECK(r.path_report().find("volumetric_fog")->detail.find("self-shadow 4 steps") != std::string::npos);
+
+    // No steps (the tier or the user turned it off): identical to off.
+    RenderSettings none = s;
+    none.volumetric_fog_shadow_steps = 0;
+    const Shot zero = frame(shaded, none);
+    CHECK(std::abs(zero.mean_red(10, 70, 60, 92) - off_left) < 0.5);
+}
+
+TEST_CASE("gpu volumetric fog: noise breaks the fog into drifting patches with the same mean (ADR-0186)") {
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    Scene3 sc(ctx, 0.0f);
+    Environment env = fog_env(0.6f, 0.0f);
+    FogVolume v;
+    v.transform = math::Mat4::trs({0, 0, 4}, {}, {30, 30, 4}); // a 4 m slab in front of the wall
+    v.density = 0.25f;
+    v.edge_fade = 0.01f;
+    const auto frame = [&](const Environment& e, double time, const char* save = nullptr) {
+        r.set_time(time);
+        return shoot(
+            r, e,
+            [&](SceneRenderer& rr) {
+                sc.submit_wall(rr);
+                rr.add_fog_volume(v);
+            },
+            save, fog_settings(), no_sun());
+    };
+    const auto stats = [](const Shot& s) {
+        double sum = 0, sq = 0;
+        const std::uint32_t n = 120 * 60;
+        for (std::uint32_t y = 18; y < 78; ++y)
+            for (std::uint32_t x = 20; x < 140; ++x) {
+                const double v = s.red(x, y);
+                sum += v;
+                sq += v * v;
+            }
+        const double mean = sum / n;
+        return std::pair{mean, std::sqrt(std::max(sq / n - mean * mean, 0.0))};
+    };
+    const Shot even = frame(env, 1.0, "fog_noise_off");
+    Environment patchy = env;
+    patchy.volumetric_fog.noise = 1.0f;
+    patchy.volumetric_fog.noise_scale = 2.0f;
+    patchy.volumetric_fog.wind = {2.0f, 0.0f, 0.0f};
+    const Shot noisy = frame(patchy, 1.0, "fog_noise_on");
+    const auto [even_mean, even_sd] = stats(even);
+    const auto [noisy_mean, noisy_sd] = stats(noisy);
+    INFO("even mean " << even_mean << " sd " << even_sd << "; noisy mean " << noisy_mean << " sd " << noisy_sd);
+    CHECK(even_sd < 4.0); // only the longer oblique paths through the slab
+    CHECK(noisy_sd > even_sd + 6.0);
+    CHECK(std::abs(noisy_mean - even_mean) < 0.3 * even_mean);
+    CHECK(r.path_report().find("volumetric_fog")->detail.find("noise") != std::string::npos);
+
+    // The wind moves the patches over time; uniform fog does not change.
+    const Shot later = frame(patchy, 2.0);
+    std::size_t moved = 0;
+    for (std::size_t i = 0; i < later.px.size(); i += 4) moved += std::abs(int(later.px[i]) - int(noisy.px[i])) > 6 ? 1u : 0u;
+    CHECK(moved > 500);
+    const Shot even_later = frame(env, 2.0);
+    CHECK(even_later.px == even.px);
+}

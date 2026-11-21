@@ -78,8 +78,8 @@ Ordered by visible quality per unit of work, and by what everything else depends
 
 1. Contact shadows (done for the sun: ADR-0183).
 2. LOD dithered cross-fade, so LOD switches stop popping. Done: ADR-0184.
-3. Volumetric fog noise and self-shadowing, then clouds in reflection probes and temporal
-   reprojection of the cloud target.
+3. Volumetric fog noise and self-shadowing (done: ADR-0186), then clouds in reflection probes and
+   temporal reprojection of the cloud target.
 4. Light cookies and rectangular area lights (LTC).
 5. Thermal / night-vision post effect driven by a per-material heat value.
 6. Virtual shadow-map paging for the sun.

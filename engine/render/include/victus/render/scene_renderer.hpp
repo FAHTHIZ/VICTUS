@@ -336,6 +336,15 @@ struct VolumetricFog {
     float ambient_intensity{1.0f};
     float local_light_intensity{1.0f};
     float temporal{0.9f};          // weight of the reprojected history (0 = none, deterministic)
+    // Heterogeneous media (ADR-0186): procedural 3D noise breaks height fog and fog volumes into
+    // drifting patches, keeping the mean density.
+    float noise{0.0f};             // 0 uniform .. 1 patches with clear gaps
+    float noise_scale{6.0f};       // metres per noise feature (0.25..1000)
+    math::Vec3 wind{0.6f, 0.0f, 0.25f}; // metres per second the noise drifts
+    // Self-shadowing (ADR-0186): the fog between a froxel and the sun dims the sun light it
+    // scatters (RenderSettings::volumetric_fog_shadow_steps samples towards the sun).
+    float self_shadow{0.0f};       // 0 off .. 1 physical optical depth (up to 4 exaggerates)
+    float self_shadow_distance{16.0f}; // metres marched towards the sun (1..200)
 };
 
 // A box of extra fog for this frame: `transform` maps the unit cube [-0.5, 0.5]^3 to the world.
@@ -650,6 +659,9 @@ struct RenderSettings {
     bool volumetric_fog{true};
     std::uint32_t volumetric_fog_tile{16};
     std::uint32_t volumetric_fog_slices{64};
+    // Samples towards the sun for VolumetricFog::self_shadow (ADR-0186; 0 disables, max 16).
+    // Medium 2, High 4, Ultra 6.
+    std::uint32_t volumetric_fog_shadow_steps{4};
     // Volumetric clouds (ADR-0111; scenes enable them through Environment::clouds): the cloud
     // target is the render resolution divided by `cloud_downsample` (1..8), marched with
     // `cloud_steps` samples per ray (8..128) and `cloud_light_steps` towards the sun (1..16).
