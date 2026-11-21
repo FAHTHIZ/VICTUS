@@ -38,7 +38,7 @@ struct ApiVersion {
 };
 
 // The script API this build of the engine provides.
-inline constexpr ApiVersion kScriptApiVersion{1, 0};
+inline constexpr ApiVersion kScriptApiVersion{1, 1};
 
 // "1" or "1.2" (a missing minor is 0).
 [[nodiscard]] Result<ApiVersion> parse_api_version(std::string_view text);

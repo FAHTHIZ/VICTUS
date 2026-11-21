@@ -642,6 +642,31 @@ return { valid = rs.valid, mode = rs.mode, bodies = rs.bodies, vy = rs.velocity.
     CHECK(st.value()["cy"].as_number() < 1.2);
     CHECK(st.value()["root"].as_string() == "Dummy");
     CHECK(st.value()["none"].as_bool()); // the owner itself is not a bone
+
+    // No ground: the dummy falls freely; get-up places the root under the hips anyway.
+    auto gu = host->eval(R"lua(
+local d = scene.find("Dummy")
+local g, why = d:ragdoll_get_up(0.25)
+local rs = d:ragdoll_state()
+local off, reason = scene.find("Chest"):ragdoll_get_up()
+return { started = g ~= nil, face_up = g and g.face_up or false, gy = g and g.position.y or 0,
+         rpy = d.position.y, getting_up = rs.getting_up, progress = rs.get_up_progress,
+         mode = rs.mode, off = off == nil, reason = reason or "",
+         bad = pcall(function() d:ragdoll_get_up(-1) end) }
+)lua", &s);
+    REQUIRE(gu.ok());
+    CHECK(gu.value()["started"].as_bool());
+    CHECK(gu.value()["rpy"].as_number() == doctest::Approx(gu.value()["gy"].as_number()).epsilon(0.001));
+    CHECK(gu.value()["getting_up"].as_bool());
+    CHECK(gu.value()["progress"].as_number() == doctest::Approx(0.0));
+    CHECK(gu.value()["mode"].as_string() == "kinematic");
+    CHECK(gu.value()["off"].as_bool());
+    CHECK_FALSE(gu.value()["reason"].as_string().empty());
+    CHECK_FALSE(gu.value()["bad"].as_bool());
+    for (int i = 0; i < 30; ++i) sim.tick(s, 1.0f / 60);
+    auto done = host->eval(R"lua(return { getting_up = scene.find("Dummy"):ragdoll_state().getting_up })lua", &s);
+    REQUIRE(done.ok());
+    CHECK_FALSE(done.value()["getting_up"].as_bool());
 }
 
 TEST_CASE("script: damaging a destructible breaks it into fragments") {

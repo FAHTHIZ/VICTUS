@@ -64,6 +64,7 @@ void open_victus_libs(lua_State* L) {
                                 {"set_ragdoll", entity_set_ragdoll},
                                 {"ragdoll_state", entity_ragdoll_state},
                                 {"ragdoll_root", entity_ragdoll_root},
+                                {"ragdoll_get_up", entity_ragdoll_get_up},
                                 {"damage", entity_damage},
                                 {"destructible_state", entity_destructible_state},
                                 {"has_tag", entity_has_tag},

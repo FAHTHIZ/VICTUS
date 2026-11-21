@@ -709,6 +709,9 @@ public:
     std::size_t make_ragdoll(scene::Entity root);
     bool set_ragdoll_mode(scene::Entity root, physics::RagdollComponent::Mode mode);
     std::size_t remove_ragdoll(scene::Entity root);
+    // Play mode only: stands a fallen passive/powered ragdoll back up (ADR-0158), blending from the
+    // lying pose to the animation. Not an edit (no undo step); false with a notice when it cannot.
+    bool ragdoll_get_up(scene::Entity root);
     // Starter characters (Orion "orion", Nova "nova"): copies the model into the project
     // when missing and adds it, optionally as a ragdoll in `mode`. One undo step when `record`.
     Result<Uuid> ensure_starter_character(std::string_view id);

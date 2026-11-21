@@ -82,6 +82,7 @@ void register_components() {
             .field(&RagdollComponent::angular_damping, "angular_damping", {.min = 0, .max = 100, .speed = 0.01f})
             .field(&RagdollComponent::layer, "layer", {.min = 0, .max = 15})
             .field(&RagdollComponent::mask, "mask", {.hint = "bitmask16"})
+            .field(&RagdollComponent::front, "front", {.tooltip = "local axis the character faces (get-up heading)"})
             .commit();
         scene::Schema<RagdollBoneComponent>("RagdollBone", "Physics 3D")
             .enumeration(&RagdollBoneComponent::shape, "shape", {"capsule", "box", "sphere"})

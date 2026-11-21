@@ -197,6 +197,9 @@ struct RagdollComponent {
     float angular_damping{0.05f};
     std::uint32_t layer{0};
     std::uint32_t mask{kAllLayers};
+    // Local axis of the root the character faces (get-up heading, face-up/down test). -Z matches
+    // the built-in movement behaviours; glTF/Mixamo rigs facing +Z under an unrotated root use +Z.
+    math::Vec3 front{0, 0, -1};
     friend bool operator==(const RagdollComponent&, const RagdollComponent&) = default;
 };
 
@@ -513,6 +516,17 @@ struct RagdollState {
     math::Vec3 center_of_mass;     // world space, after the last step
     math::Vec3 velocity;           // centre-of-mass velocity (m/s)
     float pose_error{0};           // mean distance (m) between bodies and their animated targets
+    bool getting_up{false};        // a get-up blend (begin_ragdoll_get_up) is running
+    float get_up_progress{0};      // 0..1 through that blend
+};
+
+// Result of PhysicsWorld::begin_ragdoll_get_up.
+struct RagdollGetUp {
+    bool started{false};
+    bool face_up{false};      // lying on the back: play a get-up-from-back animation, else from front
+    math::Vec3 position;      // world position the root was moved to (ground under the hips)
+    math::Quat rotation;      // world rotation the root was given (yaw only)
+    std::string reason;       // why it did not start
 };
 
 struct PhysicsSettings {
@@ -636,6 +650,12 @@ public:
     void set_ragdoll_mode(scene::Scene& scene, Entity root, RagdollComponent::Mode mode);
     // The ragdoll root owning a bone entity's body, or null.
     [[nodiscard]] Entity ragdoll_of(Entity bone) const;
+    // Recovery from a fallen (Passive or Powered) ragdoll (ADR-0158): moves the root to the ground
+    // under the hips with the yaw a get-up animation starts from (face up: facing the feet; face
+    // down: facing the head), switches the ragdoll to Kinematic and blends the bones from the
+    // lying pose into whatever animation plays over `blend_seconds`. The caller starts the
+    // matching get-up clip (RagdollGetUp::face_up) in the same frame. Applies immediately.
+    RagdollGetUp begin_ragdoll_get_up(scene::Scene& scene, Entity root, float blend_seconds = 0.4f);
     // Writes simulated ragdoll poses into the bone Transforms (installed in Phase::PostUpdate by
     // add_physics_systems, after animation).
     void update_ragdoll_poses(scene::Scene& scene);

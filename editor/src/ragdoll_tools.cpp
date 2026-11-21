@@ -115,6 +115,22 @@ bool Editor::set_ragdoll_mode(Entity root, RagdollMode mode) {
     return true;
 }
 
+bool Editor::ragdoll_get_up(Entity root) {
+    if (play_state_ == PlayState::Editing || !play_physics_) {
+        notify("Get Up works in play mode: press Play, let the character fall, then press Get Up.");
+        return false;
+    }
+    Scene& s = active_scene();
+    if (!s.world().alive(root)) return false;
+    const physics::RagdollGetUp g = play_physics_->begin_ragdoll_get_up(s, root);
+    if (!g.started) {
+        notify(std::format("Cannot get up: {}.", g.reason));
+        return false;
+    }
+    notify(g.face_up ? "Getting up from the back." : "Getting up from the front.");
+    return true;
+}
+
 std::size_t Editor::remove_ragdoll(Entity root) {
     Scene& s = active_scene();
     const auto all = subtree(s, root);
@@ -277,10 +293,16 @@ void Editor::draw_ragdoll_section(Entity e) {
         ImGui::PopTextWrapPos();
         if (bones == 0 && kit::icon_text_button("Make Ragdoll", kit::Icon::Plus, true)) (void)make_ragdoll(e);
         if (bones == 0) ImGui::SameLine();
+        if (play_state_ != PlayState::Editing && (rd->mode == RagdollMode::Passive || rd->mode == RagdollMode::Powered)) {
+            if (kit::icon_text_button("Get Up", kit::Icon::Play)) (void)ragdoll_get_up(e);
+            kit::tooltip("Stands the fallen character up where it lies: it turns to face where a get-up "
+                         "animation starts and blends smoothly from the lying pose back to its animation.");
+            ImGui::SameLine();
+        }
         if (kit::icon_text_button("Remove Ragdoll", kit::Icon::Close)) (void)remove_ragdoll(e);
         kit::tooltip("Removes the ragdoll from this character and all its bones.");
         ImGui::SameLine();
-        ImGui::TextDisabled("Scripts: entity:set_ragdoll(\"passive\")");
+        ImGui::TextDisabled("Scripts: entity:set_ragdoll(\"passive\"), entity:ragdoll_get_up()");
     }
     ImGui::EndChild();
     ImGui::PopStyleVar(2);

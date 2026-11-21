@@ -1159,7 +1159,16 @@ TEST_CASE("studio ragdolls: Make Ragdoll on Orion, behaviour buttons, undo, and 
     h.frames(90);
     const float y1 = play.world_matrix(head).transform_point({}).y;
     CHECK(y1 < y0 - 0.3f);
+    // Get Up stands Orion back up: kinematic, and after the blend the head is high again.
+    const scene::Entity play_v01 = play.find_by_name("Orion");
+    h.ed->select(play_v01);
+    h.frames(2); // the Get Up button draws
+    CHECK(h.ed->ragdoll_get_up(play_v01));
+    CHECK(play.world().get<physics::RagdollComponent>(play_v01)->mode == physics::RagdollComponent::Mode::Kinematic);
+    h.frames(60);
+    CHECK(play.world_matrix(head).transform_point({}).y > y1 + 0.5f);
     h.ed->stop();
+    CHECK_FALSE(h.ed->ragdoll_get_up(lab_v01)); // edit mode: nothing to stand up
 }
 
 TEST_CASE("studio safe mode: unfinished openings switch it on, it skips project content and restarts normally") {

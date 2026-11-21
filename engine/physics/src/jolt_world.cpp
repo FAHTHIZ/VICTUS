@@ -700,6 +700,28 @@ public:
                 }
             }
             r.has_target = true;
+            if (!r.get_up_from.empty()) {
+                if (r.get_up_from.size() != n) {
+                    r.get_up_from.clear();
+                    r.wrote = false;
+                    continue;
+                }
+                const bool done = r.get_up_elapsed >= r.get_up_duration;
+                // Smoothstep weight: no velocity jump at either end of the blend.
+                for (std::size_t i = 0; i < n; ++i) {
+                    RagdollBody& b = r.bones[i];
+                    auto* t = scene.world().get<scene::Transform>(b.entity);
+                    if (!t) continue;
+                    const auto [p, q] = drive_target(r, i);
+                    t->position = p;
+                    t->rotation = q;
+                    b.written_pos = t->position;
+                    b.written_rot = t->rotation;
+                }
+                r.wrote = !done;
+                if (done) r.get_up_from.clear(); // final frame written exactly; the animation owns the bones again
+                continue;
+            }
             const bool show = (r.comp.mode == Mode::Powered || r.comp.mode == Mode::Passive) && r.has_sim;
             if (!show) {
                 r.wrote = false;
@@ -736,6 +758,8 @@ public:
         s.mode = r.comp.mode;
         s.bodies = static_cast<std::uint32_t>(r.bones.size());
         s.pose_error = r.pose_error;
+        s.getting_up = !r.get_up_from.empty();
+        if (s.getting_up) s.get_up_progress = std::clamp(r.get_up_elapsed / std::max(r.get_up_duration, 1e-4f), 0.0f, 1.0f);
         float mass = 0;
         for (const RagdollBody& b : r.bones) {
             s.awake = s.awake || bi.IsActive(b.id);
@@ -755,6 +779,93 @@ public:
         if (it == ragdoll_bones_.end()) return {};
         const std::uint64_t k = it->second.first;
         return Entity{static_cast<std::uint32_t>(k), static_cast<std::uint32_t>(k >> 32)};
+    }
+
+    RagdollGetUp begin_get_up(scene::Scene& scene, Entity root, float blend_seconds) override {
+        using Mode = RagdollComponent::Mode;
+        RagdollGetUp out;
+        const auto it = ragdolls_.find(root.bits());
+        auto* comp = scene.world().get<RagdollComponent>(root);
+        auto* root_t = scene.world().get<scene::Transform>(root);
+        if (it == ragdolls_.end() || !it->second.ragdoll || !comp || !root_t) {
+            out.reason = "the entity has no simulated ragdoll";
+            return out;
+        }
+        RagdollEntry& r = it->second;
+        if ((r.comp.mode != Mode::Passive && r.comp.mode != Mode::Powered) || !r.has_sim || !r.has_target) {
+            out.reason = "the ragdoll is not simulating (mode must be passive or powered after a step)";
+            return out;
+        }
+        const std::size_t n = r.bones.size();
+        std::size_t hips = n;
+        for (std::size_t i = 0; i < n; ++i)
+            if (r.bones[i].anchor < 0) {
+                hips = i;
+                break;
+            }
+        if (hips == n) {
+            out.reason = "the ragdoll has no root bone";
+            return out;
+        }
+        // Animated (target) world pose of the hips under the current root, and the simulated one.
+        std::vector<math::Mat4> target_world(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto* t = scene.world().get<scene::Transform>(r.bones[i].entity);
+            const math::Vec3 scale = t ? t->scale : math::Vec3{1, 1, 1};
+            target_world[i] = parent_world(scene, r, i, target_world) * math::Mat4::trs(r.bones[i].target_pos, r.bones[i].target_rot, scale);
+        }
+        const math::Mat4 root_world = scene.world_matrix(root);
+        math::Vec3 rp, rs, hp, hs;
+        math::Quat rq, hq;
+        math::decompose(root_world, rp, rq, rs);
+        math::decompose(target_world[hips], hp, hq, hs);
+        const float hips_height = math::dot(hp - rp, rq.rotate({0, 1, 0})); // hips above the feet when standing
+        const RagdollBody& h = r.bones[hips];
+        // Rotation taking the standing hips to the lying ones carries the body's front and up.
+        const math::Quat delta = math::normalize(h.sim_rot * math::normalize(hq).conjugate());
+        const math::Vec3 front_local = math::length(r.comp.front) > 1e-6f ? math::normalize(r.comp.front) : math::Vec3{0, 0, -1};
+        const math::Vec3 front = delta.rotate(rq.rotate(front_local));
+        const math::Vec3 spine = delta.rotate(rq.rotate({0, 1, 0}));
+        out.face_up = front.y > 0.0f;
+        // Face up the character sits up towards its feet; face down it pushes up towards its head.
+        math::Vec3 heading{spine.x, 0, spine.z};
+        if (out.face_up) heading = heading * -1.0f;
+        if (math::length(heading) < 1e-3f) heading = {front.x, 0, front.z}; // lying curled up: keep the front
+        if (math::length(heading) < 1e-3f) heading = rq.rotate(front_local);
+        heading.y = 0;
+        heading = math::length(heading) > 1e-6f ? math::normalize(heading) : math::Vec3{0, 0, -1};
+        const float yaw = std::atan2(heading.x, heading.z) - std::atan2(front_local.x, front_local.z);
+        out.rotation = math::Quat::axis_angle({0, 1, 0}, yaw);
+        // Ground under the hips (the ragdoll and the root's own bodies are ignored).
+        const math::Vec3 up{0, 1, 0};
+        const math::Vec3 from = h.sim_pos + up * 0.5f;
+        if (const auto hit = raycast(from, {0, -1, 0}, 0.5f + std::max(hips_height, 0.1f) * 3.0f, r.comp.mask, root)) out.position = hit->point;
+        else out.position = h.sim_pos - up * std::max(hips_height, 0.0f);
+        // Snapshot the lying pose (world), move the root, then express the snapshot in local space
+        // under the moved root so the first blended frame shows exactly the lying ragdoll.
+        std::vector<math::Mat4> lying(n);
+        for (std::size_t i = 0; i < n; ++i) lying[i] = math::Mat4::trs(r.bones[i].sim_pos, r.bones[i].sim_rot, r.bones[i].world_scale);
+        const Entity parent = scene.parent(root);
+        const math::Mat4 parent_inv = parent.is_null() ? math::Mat4::identity() : math::inverse(scene.world_matrix(parent));
+        math::Vec3 lp, ls;
+        math::Quat lq;
+        math::decompose(parent_inv * math::Mat4::trs(out.position, out.rotation, rs), lp, lq, ls);
+        root_t->position = lp;
+        root_t->rotation = math::normalize(lq);
+        r.get_up_from.assign(n, {});
+        for (std::size_t i = 0; i < n; ++i) {
+            const math::Mat4 local = math::inverse(parent_world(scene, r, i, lying)) * lying[i];
+            math::Vec3 p, s;
+            math::Quat q;
+            math::decompose(local, p, q, s);
+            r.get_up_from[i] = {p, math::normalize(q)};
+        }
+        r.get_up_elapsed = 0;
+        r.get_up_duration = std::max(blend_seconds, 0.0f);
+        comp->mode = Mode::Kinematic;
+        r.comp.mode = Mode::Kinematic;
+        out.started = true;
+        return out;
     }
 
     WaterContact water_contact(Entity e) const override {
@@ -1417,6 +1528,9 @@ private:
         bool wrote{false};   // the bones currently show the simulation
         bool has_sim{false}; // sim poses are valid
         bool has_target{false};
+        // Get-up blend (ADR-0158): local poses of the lying ragdoll, faded into the animation.
+        std::vector<std::pair<math::Vec3, math::Quat>> get_up_from;
+        float get_up_elapsed{0}, get_up_duration{0};
         JPH::BodyID character; // inner body of a CharacterController on the root
         std::uint64_t seen{0};
         float pose_error{0};
@@ -1458,6 +1572,19 @@ private:
         math::Mat4 m = worlds[static_cast<std::size_t>(b.anchor)];
         for (auto it = b.between.rbegin(); it != b.between.rend(); ++it) m = m * local_matrix(scene, *it);
         return m;
+    }
+
+    // Local pose the bodies are driven to: the animated target, or during a get-up the same blend
+    // the bones show, so kinematic bodies sweep up with the visible pose instead of snapping.
+    static float get_up_weight(const RagdollEntry& r) {
+        const float x = std::clamp(r.get_up_elapsed / std::max(r.get_up_duration, 1e-4f), 0.0f, 1.0f);
+        return x * x * (3.0f - 2.0f * x);
+    }
+    static std::pair<math::Vec3, math::Quat> drive_target(const RagdollEntry& r, std::size_t i) {
+        const RagdollBody& b = r.bones[i];
+        if (r.get_up_from.size() != r.bones.size()) return {b.target_pos, b.target_rot};
+        const float k = get_up_weight(r);
+        return {math::lerp(r.get_up_from[i].first, b.target_pos, k), math::normalize(math::slerp(r.get_up_from[i].second, b.target_rot, k))};
     }
 
     static bool same_build(const RagdollEntry& r, const RagdollComponent& c, const std::vector<RagdollBody>& bones) {
@@ -1706,6 +1833,10 @@ private:
             } else {
                 r.character = JPH::BodyID();
             }
+            if (!r.get_up_from.empty()) {
+                if (r.comp.mode != RagdollComponent::Mode::Kinematic) r.get_up_from.clear(); // knocked down again
+                else r.get_up_elapsed += dt;
+            }
             drive_ragdoll(scene, r, dt);
         });
         for (auto it = ragdolls_.begin(); it != ragdolls_.end();) {
@@ -1747,7 +1878,8 @@ private:
             RagdollBody& b = r.bones[i];
             const auto* t = scene.world().get<scene::Transform>(b.entity);
             const math::Vec3 scale = t ? t->scale : math::Vec3{1, 1, 1};
-            worlds[i] = parent_world(scene, r, i, worlds) * math::Mat4::trs(b.target_pos, b.target_rot, scale);
+            const auto [tp, tq] = drive_target(r, i);
+            worlds[i] = parent_world(scene, r, i, worlds) * math::Mat4::trs(tp, tq, scale);
             math::Vec3 p, s;
             math::Quat q;
             math::decompose(worlds[i], p, q, s);
