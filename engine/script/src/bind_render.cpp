@@ -13,10 +13,48 @@ int entity_set_text(lua_State* L) {
     const Entity e = check_live(L, 1, s);
     size_t len = 0;
     const char* text = luaL_tolstring(L, 2, &len);
+    if (auto* field = s.world().get<gameui::UiTextInputComponent>(e); field && !s.world().has<gameui::UiTextComponent>(e)) {
+        field->text.assign(text, len); // text fields: no change event (scripts already know)
+        return 0;
+    }
     auto* t = s.world().get<gameui::UiTextComponent>(e);
-    if (!t) luaL_error(L, "entity has no UiText component");
+    if (!t) luaL_error(L, "entity has no UiText or UiTextInput component");
     t->text.assign(text, len);
     t->key.clear(); // literal text from a script replaces any localization key
+    return 0;
+}
+
+// entity:ui_value() -> a UiSlider's number, a UiToggle's boolean, a UiTextInput's string or a
+// UiProgressBar's number; nil for other entities.
+int entity_ui_value(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const ecs::World& w = s.world();
+    if (const auto* sl = w.get<gameui::UiSliderComponent>(e)) lua_pushnumber(L, sl->value);
+    else if (const auto* tg = w.get<gameui::UiToggleComponent>(e)) lua_pushboolean(L, tg->on);
+    else if (const auto* ti = w.get<gameui::UiTextInputComponent>(e)) lua_pushlstring(L, ti->text.data(), ti->text.size());
+    else if (const auto* pb = w.get<gameui::UiProgressBarComponent>(e)) lua_pushnumber(L, pb->value);
+    else lua_pushnil(L);
+    return 1;
+}
+
+// entity:set_ui_value(v): slider number (snapped, sends on_value_changed when it changes), toggle
+// boolean (same), text field string, progress bar number (clamped to 0..1).
+int entity_set_ui_value(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    ecs::World& w = s.world();
+    if (w.has<gameui::UiSliderComponent>(e)) (void)gameui::set_value(s, e, static_cast<float>(luaL_checknumber(L, 2)));
+    else if (w.has<gameui::UiToggleComponent>(e)) (void)gameui::set_value(s, e, lua_toboolean(L, 2) ? 1.0f : 0.0f);
+    else if (auto* ti = w.get<gameui::UiTextInputComponent>(e)) {
+        size_t len = 0;
+        const char* text = luaL_tolstring(L, 2, &len);
+        ti->text.assign(text, len);
+    } else if (auto* pb = w.get<gameui::UiProgressBarComponent>(e)) {
+        pb->value = std::clamp(static_cast<float>(luaL_checknumber(L, 2)), 0.0f, 1.0f);
+    } else {
+        luaL_error(L, "entity has no UiSlider, UiToggle, UiTextInput or UiProgressBar component");
+    }
     return 0;
 }
 
@@ -60,6 +98,7 @@ int entity_text(lua_State* L) {
     const Entity e = check_live(L, 1, s);
     const auto* t = s.world().get<gameui::UiTextComponent>(e);
     if (t) lua_pushlstring(L, t->text.data(), t->text.size());
+    else if (const auto* field = s.world().get<gameui::UiTextInputComponent>(e)) lua_pushlstring(L, field->text.data(), field->text.size());
     else lua_pushnil(L);
     return 1;
 }

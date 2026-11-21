@@ -1256,6 +1256,106 @@ return { hovered = st.hovered, x = st.x, w = st.width, clicks = st.clicks, click
     CHECK(bad.error().message.find("no UiText") != std::string::npos);
 }
 
+TEST_CASE("script: UI widgets report on_value_changed and on_submit; ui_value reads and writes") {
+    TempDir d("victus_script_ui_widgets");
+    d.write("scripts/options.luau", R"lua(
+local Options = {}
+function Options:start()
+    self.log = {}
+end
+function Options:on_value_changed(widget, action, value)
+    table.insert(self.log, widget.name .. ":" .. action .. "=" .. tostring(value))
+end
+function Options:on_submit(widget, action, text)
+    table.insert(self.log, "submit:" .. action .. "=" .. text)
+end
+function Options:update(dt)
+    scene.find("Log"):set_text(table.concat(self.log, ","))
+end
+return Options
+)lua");
+    auto host = make_host(d);
+    gameui::register_components();
+    gameplay::Simulation sim;
+    gameui::add_ui_systems(sim);
+    script::add_script_systems(sim, *host);
+    gameplay::ManualInput input;
+    sim.input = &input;
+    Scene s;
+    gameui::set_screen_size(s, {640, 360});
+    const Entity canvas = scripted(s, "Options", "scripts/options.luau");
+    s.world().add<gameui::UiCanvasComponent>(canvas).reference_size = {640, 360};
+    const auto rect = [&](const char* name, math::Vec2 pos, math::Vec2 size) {
+        const Entity e = s.create(name, canvas);
+        gameui::UiRectComponent r;
+        r.anchor_min = r.anchor_max = {0, 0};
+        r.pivot = {0, 0};
+        r.position = pos;
+        r.size = size;
+        s.world().add<gameui::UiRectComponent>(e, r);
+        return e;
+    };
+    const Entity volume = rect("Volume", {10, 10}, {200, 30});
+    auto& sl = s.world().add<gameui::UiSliderComponent>(volume);
+    sl.action = "volume";
+    sl.max_value = 10;
+    sl.step = 1;
+    const Entity mute = rect("Mute", {10, 60}, {60, 30});
+    s.world().add<gameui::UiToggleComponent>(mute).action = "mute";
+    const Entity name = rect("Name", {10, 110}, {200, 40});
+    s.world().add<gameui::UiTextInputComponent>(name).action = "name";
+    const Entity bar = rect("Bar", {10, 170}, {200, 20});
+    s.world().add<gameui::UiProgressBarComponent>(bar);
+    const Entity log = rect("Log", {300, 10}, {300, 40});
+    s.world().add<gameui::UiTextComponent>(log);
+    const auto tick = [&] {
+        sim.tick(s, 1.0f / 60);
+        input.end_frame();
+    };
+    const auto click = [&](math::Vec2 p) {
+        input.set_mouse_position(p);
+        input.set_mouse(0, true);
+        tick();
+        input.set_mouse(0, false);
+        tick();
+    };
+    tick();
+    // Script writes: the slider snaps to its step and reports the change; the bar clamps.
+    auto w = host->eval(R"lua(
+scene.find("Volume"):set_ui_value(6.6)
+scene.find("Bar"):set_ui_value(2)
+return { scene.find("Volume"):ui_value(), scene.find("Bar"):ui_value(), scene.find("Mute"):ui_value(),
+         scene.find("Name"):ui_value(), scene.find("Log"):ui_value() == nil }
+)lua", &s);
+    REQUIRE(w.ok());
+    CHECK(w.value()[std::size_t{0}].as_number() == doctest::Approx(7));
+    CHECK(w.value()[std::size_t{1}].as_number() == doctest::Approx(1));
+    CHECK_FALSE(w.value()[std::size_t{2}].as_bool());
+    CHECK(w.value()[std::size_t{3}].as_string().empty());
+    CHECK(w.value()[std::size_t{4}].as_bool());
+    tick();
+    // A real click flips the toggle; typing then Enter submits the field.
+    click({40, 75});
+    CHECK(s.world().get<gameui::UiToggleComponent>(mute)->on);
+    click({50, 130});
+    REQUIRE(gameui::editing(s) == name);
+    input.add_text("Ada");
+    tick();
+    input.set_key("Enter", true);
+    tick();
+    input.set_key("Enter", false);
+    tick();
+    CHECK(gameui::editing(s).is_null());
+    CHECK(s.world().get<gameui::UiTextComponent>(log)->text ==
+          "Volume:volume=7,Mute:mute=true,Name:name=Ada,submit:name=Ada");
+    auto r = host->eval("return scene.find('Name'):ui_value()", &s);
+    REQUIRE(r.ok());
+    CHECK(r.value().as_string() == "Ada");
+    auto bad = host->eval("scene.find('Log'):set_ui_value(1)", &s);
+    REQUIRE_FALSE(bad.ok());
+    CHECK(bad.error().message.find("no UiSlider") != std::string::npos);
+}
+
 TEST_CASE("script: navigation queries and agents (nav.*, set_destination, nav_state)") {
     TempDir d("victus_script_nav");
     d.write("scripts/walker.luau", R"lua(

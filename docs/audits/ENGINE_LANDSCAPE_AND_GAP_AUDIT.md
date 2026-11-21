@@ -115,7 +115,7 @@ Status: **open** · **partly** (some of it exists) · **blocked** (needs hardwar
 | ID | Gap | Leaders | VICTUS today | Sev. | Status | Fix direction |
 |---|---|---|---|---|---|---|
 | GAP-28 | **Editor not extensible** (no editor plugins) | Godot editor plugins, Unity packages, UE editor modules | Runtime C ABI plugins only | S2 | open | As COMPETITOR_BENCHMARK |
-| GAP-29 | **No UI editor canvas, rich text, sliders, text input** | UMG, UI Toolkit, Godot Control nodes; Flax rich text wrap | Runtime UI only | S2 | open | As ROADMAP Studio maturity |
+| GAP-29 | **No UI editor canvas, rich text, sliders, text input** | UMG, UI Toolkit, Godot Control nodes; Flax rich text wrap | Runtime UI with sliders, toggles, text fields, progress bars and `<b>`/`<color>` rich text (ADR-0169); no visual UI editor canvas | S2 | partial | UI editor canvas in Studio |
 | GAP-30 | **No FBX import; glTF cameras/lights ignored** | Unreal Interchange, Unity FBX, Godot FBX2glTF | glTF only | S3 | open | Document the Blender → glTF path as primary; import glTF lights/cameras |
 | GAP-31 | **Build size and startup unknown** (see GAP-05) | Defold 2.56 MB empty build | Unknown; the Special Ops build carries a ~601 MB content pack (Project- BUILD_AND_TEST_LOG), so engine size is hidden | S2 | open | Measure; strip unused modules per project like Defold's App Manifest |
 | GAP-32 | **No visual behaviour-tree editor, no environment queries** | StateTree, EQS, Behavior Trees | Runtime BTs + debugger | S3 | open | |

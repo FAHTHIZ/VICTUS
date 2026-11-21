@@ -102,6 +102,8 @@ void open_victus_libs(lua_State* L) {
                                 {"scroll_to", entity_scroll_to},
                                 {"scroll", entity_scroll},
                                 {"text", entity_text},
+                                {"ui_value", entity_ui_value},
+                                {"set_ui_value", entity_set_ui_value},
                                 {"set_visible", entity_set_visible},
                                 {"visible", entity_visible},
                                 {"ui_state", entity_ui_state},
@@ -670,11 +672,35 @@ void ScriptHost::dispatch_ui_events(scene::Scene& scene) {
             if (it == h.instances.end() || it->second.faulted || !it->second.started) continue;
             lua_State* L = h.L;
             h.route(e);
-            (void)h.call_with(it->second, "on_click", [&] {
-                push_entity(L, scene.world().alive(ev.button) ? ev.button : Entity{});
-                lua_pushlstring(L, ev.action.data(), ev.action.size());
-                return 2;
-            });
+            const Entity source = scene.world().alive(ev.button) ? ev.button : Entity{};
+            switch (ev.kind) {
+            case gameui::UiEventKind::Click:
+                (void)h.call_with(it->second, "on_click", [&] {
+                    push_entity(L, source);
+                    lua_pushlstring(L, ev.action.data(), ev.action.size());
+                    return 2;
+                });
+                break;
+            case gameui::UiEventKind::Changed:
+                // Sliders pass a number, toggles a boolean, text fields a string.
+                (void)h.call_with(it->second, "on_value_changed", [&] {
+                    push_entity(L, source);
+                    lua_pushlstring(L, ev.action.data(), ev.action.size());
+                    if (scene.world().has<gameui::UiTextInputComponent>(ev.button)) lua_pushlstring(L, ev.text.data(), ev.text.size());
+                    else if (scene.world().has<gameui::UiToggleComponent>(ev.button)) lua_pushboolean(L, ev.value != 0.0f);
+                    else lua_pushnumber(L, ev.value);
+                    return 3;
+                });
+                break;
+            case gameui::UiEventKind::Submitted:
+                (void)h.call_with(it->second, "on_submit", [&] {
+                    push_entity(L, source);
+                    lua_pushlstring(L, ev.action.data(), ev.action.size());
+                    lua_pushlstring(L, ev.text.data(), ev.text.size());
+                    return 3;
+                });
+                break;
+            }
         }
     }
 }

@@ -88,9 +88,13 @@ constexpr Blurb kBlurbs[] = {
     {"UiImage", "An image in the interface"},
     {"UiLayout", "Arranges child elements in a row or column"},
     {"UiPanel", "A background panel for other elements"},
+    {"UiProgressBar", "A bar that fills up, for health or loading"},
     {"UiRect", "Position and size on the screen"},
     {"UiScroll", "An area that scrolls when its content is too big"},
+    {"UiSlider", "A handle players drag to pick a value"},
     {"UiText", "Text on the screen"},
+    {"UiTextInput", "A box players can type into"},
+    {"UiToggle", "An on/off switch"},
 };
 
 std::string_view blurb(std::string_view id) {

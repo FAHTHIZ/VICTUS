@@ -126,6 +126,79 @@ ImFont* GameUiRenderer::font_for(const gameui::DrawItem& item, GpuAssetCache& as
     return it->second.font;
 }
 
+// Rich text: runs from gameui::parse_rich_text laid out word by word (bold runs use the bold
+// built-in weight unless the item has a project font), wrapped at the rect width when `wrap`.
+void GameUiRenderer::draw_rich_text(ImDrawList* dl, const gameui::DrawItem& d, ImFont* regular) {
+    const float fs = d.font_size;
+    const std::vector<gameui::TextRun> runs = gameui::parse_rich_text(d.text, d.color, d.bold, d.opacity);
+    struct Seg {
+        ImFont* font;
+        ImU32 color;
+        const char* b;
+        const char* e;
+        float x, w;
+    };
+    struct RLine {
+        std::vector<Seg> segs;
+        float w{0};
+    };
+    std::vector<RLine> lines(1);
+    float x = 0;
+    const bool custom = !d.font.empty();
+    for (const gameui::TextRun& r : runs) {
+        ImFont* font = custom ? regular : (r.bold ? bold_ : medium_);
+        const ImU32 col = to_imgui(r.color);
+        const char* p = r.text.data();
+        const char* end = p + r.text.size();
+        while (p < end) {
+            if (*p == '\n') {
+                lines.emplace_back();
+                x = 0;
+                ++p;
+                continue;
+            }
+            const bool space = *p == ' ';
+            const char* q = p;
+            while (q < end && *q != '\n' && (*q == ' ') == space) ++q;
+            const float w = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, p, q).x;
+            if (d.wrap && !space && x > 0 && x + w > d.rect.w) {
+                RLine& prev = lines.back();
+                while (!prev.segs.empty() && *prev.segs.back().b == ' ') { // drop trailing spaces
+                    prev.w = prev.segs.back().x;
+                    prev.segs.pop_back();
+                }
+                lines.emplace_back();
+                x = 0;
+            }
+            if (!(space && x == 0 && lines.size() > 1 && d.wrap)) {
+                lines.back().segs.push_back({font, col, p, q, x, w});
+                x += w;
+                lines.back().w = x;
+            }
+            p = q;
+        }
+    }
+    const float total = fs * static_cast<float>(lines.size());
+    float y = d.rect.y;
+    if (d.vertical_align == gameui::VerticalAlign::Middle) y += (d.rect.h - total) * 0.5f;
+    else if (d.vertical_align == gameui::VerticalAlign::Bottom) y += d.rect.h - total;
+    const bool shadow = d.shadow_color.a > 0 && (d.shadow_offset.x != 0 || d.shadow_offset.y != 0);
+    for (const RLine& l : lines) {
+        float x0 = d.rect.x;
+        if (d.align == gameui::TextAlign::Center) x0 += (d.rect.w - l.w) * 0.5f;
+        else if (d.align == gameui::TextAlign::Right) x0 += d.rect.w - l.w;
+        x0 = std::floor(x0 + 0.5f);
+        const float ly = std::floor(y + 0.5f);
+        for (const Seg& sg : l.segs) {
+            if (*sg.b == ' ') continue;
+            if (shadow)
+                dl->AddText(sg.font, fs, {x0 + sg.x + d.shadow_offset.x, ly + d.shadow_offset.y}, to_imgui(d.shadow_color), sg.b, sg.e);
+            dl->AddText(sg.font, fs, {x0 + sg.x, ly}, sg.color, sg.b, sg.e);
+        }
+        y += fs;
+    }
+}
+
 Result<GameUiStats> GameUiRenderer::render(rhi::CommandBuffer& cmd, scene::Scene& scene, GpuAssetCache& assets,
                                            rhi::TextureHandle target, std::uint32_t width, std::uint32_t height) {
     VICTUS_PROFILE_SCOPE("runtime.game_ui");
@@ -187,6 +260,10 @@ Result<GameUiStats> GameUiRenderer::render(rhi::CommandBuffer& cmd, scene::Scene
         case gameui::DrawItem::Kind::Text: {
             ImFont* font = font_for(d, assets, stats);
             const float fs = d.font_size;
+            if (d.rich) {
+                draw_rich_text(dl, d, font);
+                break;
+            }
             struct Line {
                 const char* b;
                 const char* e;
@@ -201,16 +278,29 @@ Result<GameUiStats> GameUiRenderer::render(rhi::CommandBuffer& cmd, scene::Scene
             if (d.vertical_align == gameui::VerticalAlign::Middle) y += (d.rect.h - total) * 0.5f;
             else if (d.vertical_align == gameui::VerticalAlign::Bottom) y += d.rect.h - total;
             const bool shadow = d.shadow_color.a > 0 && (d.shadow_offset.x != 0 || d.shadow_offset.y != 0);
+            // Text fields: caret offset in the first line, scrolled into view on single lines.
+            const float caret_w = d.caret >= 0 ? font->CalcTextSizeA(fs, FLT_MAX, 0.0f, d.text.data(),
+                                                                     d.text.data() + std::min<std::size_t>(static_cast<std::size_t>(d.caret), d.text.size())).x
+                                               : 0.0f;
+            const float shift = d.scroll_to_caret && caret_w > d.rect.w - 2.0f ? caret_w - d.rect.w + 2.0f : 0.0f;
+            bool first = true;
             for (const Line& l : lines) {
-                float x = d.rect.x;
-                if (d.align == gameui::TextAlign::Center) x += (d.rect.w - l.w) * 0.5f;
-                else if (d.align == gameui::TextAlign::Right) x += d.rect.w - l.w;
+                float x = d.rect.x - shift;
+                if (shift == 0.0f) {
+                    if (d.align == gameui::TextAlign::Center) x += (d.rect.w - l.w) * 0.5f;
+                    else if (d.align == gameui::TextAlign::Right) x += d.rect.w - l.w;
+                }
                 x = std::floor(x + 0.5f);
                 const float ly = std::floor(y + 0.5f);
                 if (l.e > l.b) {
                     if (shadow) dl->AddText(font, fs, {x + d.shadow_offset.x, ly + d.shadow_offset.y}, to_imgui(d.shadow_color), l.b, l.e);
                     dl->AddText(font, fs, {x, ly}, to_imgui(d.color), l.b, l.e);
                 }
+                if (first && d.caret >= 0) {
+                    const float cx = std::floor(x + caret_w + 0.5f), cw = std::max(1.0f, std::floor(fs * 0.07f));
+                    dl->AddRectFilled({cx, ly + fs * 0.1f}, {cx + cw, ly + fs * 0.95f}, to_imgui(math::Color{d.color.r, d.color.g, d.color.b, d.opacity}));
+                }
+                first = false;
                 y += fs;
             }
             break;

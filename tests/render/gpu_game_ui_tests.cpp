@@ -180,3 +180,92 @@ TEST_CASE("gpu ui: non-ASCII UTF-8 text draws real glyphs") {
     CHECK(lpx != fpx);
     dev.destroy(target);
 }
+
+// Widgets and rich text: a slider's fill and handle, a toggle's track, a text field's caret and
+// coloured rich-text runs all reach the frame.
+TEST_CASE("gpu ui: widgets, text field caret and rich text runs draw") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    gameui::register_components();
+    scene::Scene s;
+    const scene::Entity cam = s.create("Camera");
+    s.world().add<scene::CameraComponent>(cam).projection = scene::CameraComponent::Projection::Orthographic;
+    const scene::Entity canvas = s.create("HUD");
+    s.world().add<gameui::UiCanvasComponent>(canvas).reference_size = {static_cast<float>(W), static_cast<float>(H)};
+    // Slider at 50 %: green fill on the left half, white handle in the middle.
+    const scene::Entity sl = rect(s, canvas, "Slider", {10, 10}, {200, 30});
+    auto& slider = s.world().add<gameui::UiSliderComponent>(sl);
+    slider.value = 0.5f;
+    slider.fill = {0, 1, 0, 1};
+    slider.track_thickness = 8;
+    slider.handle_size = 20;
+    // Toggle on: blue track.
+    const scene::Entity tg = rect(s, canvas, "Toggle", {230, 10}, {60, 30});
+    auto& toggle = s.world().add<gameui::UiToggleComponent>(tg);
+    toggle.on = true;
+    toggle.on_color = {0, 0, 1, 1};
+    // Rich text: red and plain white words.
+    const scene::Entity label = rect(s, canvas, "Label", {10, 60}, {300, 50});
+    auto& t = s.world().add<gameui::UiTextComponent>(label);
+    t.text = "<color=#ff0000>RED</color> WHITE";
+    t.rich = true;
+    t.font_size = 36;
+    t.align = gameui::TextAlign::Left;
+    t.shadow_color = {0, 0, 0, 0};
+    // Text field being edited, empty: only the caret draws inside it.
+    const scene::Entity field = rect(s, canvas, "Field", {10, 120}, {200, 44});
+    auto& ti = s.world().add<gameui::UiTextInputComponent>(field);
+    ti.background = {0, 0, 0, 1};
+    ti.border = ti.focused_border = {0, 0, 0, 0};
+    ti.color = {1, 1, 1, 1};
+    s.update_transforms();
+    gameui::layout(s);
+    REQUIRE(gameui::begin_editing(s, field));
+    gameui::update(s, nullptr); // blink phase 1: caret visible
+
+    runtime::GpuAssetCache assets(ctx, nullptr);
+    auto view = runtime::SceneView::create(ctx, rhi::Format::RGBA8_UNORM);
+    REQUIRE(view.ok());
+    auto target = test::make_target(W, H);
+    runtime::SceneViewOptions o;
+    o.clear_2d = {0, 0, 0, 1};
+    auto cmd = dev.begin_commands();
+    auto st = (*view)->render(cmd, s, assets, target, W, H, o);
+    REQUIRE_MESSAGE(st.ok(), (st.ok() ? "" : st.error().message));
+    cmd.submit_and_wait();
+    auto px = dev.read_texture(target).value();
+    test::save_output("game_ui_widgets", W, H, px);
+    // Slider: fill left of the handle, handle white at the centre, track (dim) right of it.
+    const auto fill = test::pixel(px, W, 50, 25);
+    CHECK(channel(fill, 1) > 200);
+    CHECK(channel(fill, 0) < 40);
+    const auto handle = test::pixel(px, W, 110, 25);
+    CHECK(channel(handle, 0) > 200);
+    CHECK(channel(handle, 1) > 200);
+    CHECK(channel(test::pixel(px, W, 170, 25), 1) < 120);
+    // Toggle track blue next to the knob (knob sits on the right when on).
+    const auto track = test::pixel(px, W, 245, 25);
+    CHECK(channel(track, 2) > 200);
+    CHECK(channel(track, 0) < 40);
+    // Rich text: strongly red pixels in the first word, white pixels after it.
+    int red = 0, white = 0;
+    for (std::uint32_t y = 60; y < 110; ++y)
+        for (std::uint32_t x = 10; x < 310; ++x) {
+            const auto p = test::pixel(px, W, x, y);
+            if (channel(p, 0) > 200 && channel(p, 1) < 60) ++red;
+            if (channel(p, 0) > 200 && channel(p, 1) > 200 && channel(p, 2) > 200) ++white;
+        }
+    MESSAGE("rich text: red " << red << ", white " << white);
+    CHECK(red > 40);
+    CHECK(white > 40);
+    // Caret: a thin bright column near the field's left padding.
+    int caret = 0;
+    for (std::uint32_t y = 120; y < 164; ++y)
+        for (std::uint32_t x = 10; x < 210; ++x)
+            if (channel(test::pixel(px, W, x, y), 0) > 200) ++caret;
+    MESSAGE("caret pixels " << caret);
+    CHECK(caret > 10);
+    CHECK(caret < 120);
+    dev.destroy(target);
+}

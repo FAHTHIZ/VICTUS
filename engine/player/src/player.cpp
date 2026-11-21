@@ -292,6 +292,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     physics_for_scenes = physics_world->get();
     (*physics_world)->set_mesh_provider(assets::collision_mesh_provider(**db));
     PlatformInput input((*plat)->input());
+    bool text_input_on = false;
     gameplay::Simulation sim;
     gameplay::add_builtin_systems(sim);
     gameui::add_ui_systems(sim);
@@ -537,7 +538,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
             continue;
         }
-        if ((*plat)->input().key_pressed(platform::Key::Escape) && !o.fullscreen && o.max_frames == 0) break;
+        // Escape quits windowed runs, unless it is ending a text field edit.
+        if ((*plat)->input().key_pressed(platform::Key::Escape) && !o.fullscreen && o.max_frames == 0 &&
+            gameui::editing(scene).is_null())
+            break;
         if (frame_cap) {
             const double t = platform::Platform::seconds();
             busy_ms = static_cast<float>((t - frame_begin) * 1000.0);
@@ -582,6 +586,11 @@ Result<PlayerReport> run(const PlayerOptions& o) {
             captured_input.set(state);
         }
         sim.tick(scene, dt);
+        // Platform text input (IME, on-screen keyboard on phones) only while a UI text field edits.
+        if (const bool want_text = !gameui::editing(scene).is_null(); want_text != text_input_on) {
+            (*window)->set_text_input(want_text);
+            text_input_on = want_text;
+        }
         if (replay) {
             if (!replay->end_tick(scene)) VICTUS_LOG_WARN("player", "replay diverged at {}", replay->mismatch());
         } else if (!o.record.empty()) {

@@ -44,6 +44,28 @@ void build(scene::Scene& s, int columns, int rows) {
     }
 }
 
+// An options screen: rows of slider, toggle, text field and progress bar (four widgets per row).
+void build_widgets(scene::Scene& s, int rows) {
+    const scene::Entity canvas = s.create("Options");
+    s.world().add<gameui::UiCanvasComponent>(canvas).keyboard_navigation = true;
+    for (int i = 0; i < rows; ++i) {
+        const auto widget = [&](float x, float w) {
+            const scene::Entity e = s.create("Widget", canvas);
+            gameui::UiRectComponent r;
+            r.anchor_min = r.anchor_max = {0, 0};
+            r.pivot = {0, 0};
+            r.position = {x, static_cast<float>(i) * 24.0f};
+            r.size = {w, 20};
+            s.world().add<gameui::UiRectComponent>(e, r);
+            return e;
+        };
+        s.world().add<gameui::UiSliderComponent>(widget(0, 300)).value = static_cast<float>(i % 10) / 10.0f;
+        s.world().add<gameui::UiToggleComponent>(widget(310, 40)).on = (i % 2) == 0;
+        s.world().add<gameui::UiTextInputComponent>(widget(360, 300)).text = "Player " + std::to_string(i);
+        s.world().add<gameui::UiProgressBarComponent>(widget(670, 300)).value = 0.5f;
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -62,6 +84,19 @@ int main(int argc, char** argv) {
         h.run("ui/update_" + n + "_elements", elements, [&] { gameui::update(s, &input); });
         std::vector<gameui::DrawItem> items;
         h.run("ui/draw_list_" + n + "_elements", elements, [&] { gameui::build_draw_list(s, items); });
+    }
+    {
+        scene::Scene s;
+        build_widgets(s, 64);
+        gameui::set_screen_size(s, {1920, 1080});
+        gameplay::ManualInput input;
+        input.set_mouse_position({150, 10});
+        gameui::update(s, &input);
+        const std::uint32_t widgets = gameui::stats(s).widgets;
+        if (widgets != 192) return 3; // progress bars are not interactive
+        h.run("ui/update_64_option_rows", 256, [&] { gameui::update(s, &input); });
+        std::vector<gameui::DrawItem> items;
+        h.run("ui/draw_list_64_option_rows", 256, [&] { gameui::build_draw_list(s, items); });
     }
     return 0;
 }
