@@ -277,3 +277,102 @@ TEST_CASE("layers: hot reload keeps runtime layer weights; removing the controll
     r.system.update(r.scene, 0);
     CHECK(r.system.controller_status(r.scene, r.root).layers.empty());
 }
+
+TEST_CASE("layers: weighted masks scale the influence of each subtree (ADR-0159)") {
+    // Spine at 25 %, Arm (under Spine) at 100 %; Leg is not listed: with only weights, they are the mask.
+    Rig r(layer_doc(R"({ "name": "Aim", "mask_weights": { "Spine": 0.25, "Arm": 1 },
+        "states": [ { "name": "Aim", "clip": "Aim" } ] })"));
+    r.system.update(r.scene, 0);
+    CHECK(near(r.x(r.hips), 1));
+    CHECK(near(r.x(r.spine), 2)); // 1 + 0.25 * (5 - 1)
+    CHECK(near(r.x(r.arm), 5));
+    CHECK(near(r.x(r.leg), 1));
+    CHECK(r.system.controller_status(r.scene, r.root).layers[0].affected_nodes == 2);
+    // The layer weight multiplies the mask weight.
+    REQUIRE(r.system.set_layer_weight(r.scene, r.root, "Aim", 0.5f));
+    r.system.update(r.scene, 0.1f);
+    CHECK(near(r.x(r.spine), 1.5f));
+    CHECK(near(r.x(r.arm), 3));
+
+    // Mixed with a plain mask and an exclusion: the nearest listed ancestor decides.
+    Rig mixed(layer_doc(R"({ "name": "M", "mask": ["Leg"], "mask_weights": { "Spine": 0.5 },
+        "states": [ { "name": "Aim", "clip": "Aim" } ] })"));
+    mixed.system.update(mixed.scene, 0);
+    CHECK(near(mixed.x(mixed.leg), 5));
+    CHECK(near(mixed.x(mixed.spine), 3));
+    CHECK(near(mixed.x(mixed.arm), 3)); // inherits Spine's 0.5
+    Rig excl(layer_doc(R"({ "name": "E", "exclude": ["Arm"], "mask_weights": { "Spine": 0.5 },
+        "states": [ { "name": "Aim", "clip": "Aim" } ] })"));
+    excl.system.update(excl.scene, 0);
+    CHECK(near(excl.x(excl.spine), 3));
+    CHECK(near(excl.x(excl.arm), 1));
+    CHECK(near(excl.x(excl.leg), 1)); // weights present: unlisted nodes are outside
+
+    // Additive layers scale the added difference: Lean adds +4 on Arm against the rest pose.
+    Rig add(layer_doc(R"({ "name": "A", "blend": "additive", "reference": "rest", "mask_weights": { "Arm": 0.5 },
+        "states": [ { "name": "S", "clip": "Lean" } ] })"));
+    add.system.update(add.scene, 0);
+    CHECK(near(add.x(add.arm), 3)); // 1 + 0.5 * 4
+
+    // Round-trip keeps the order and values; validation names the problem.
+    auto c = Controller::parse(layer_doc(R"({ "name": "W", "mask_weights": { "Spine": 0.25, "Arm": 1 },
+        "states": [ { "name": "Aim", "clip": "Aim" } ] })"));
+    REQUIRE(c);
+    const auto& mw = (*c)->layers[0].mask_weights;
+    REQUIRE(mw.size() == 2);
+    CHECK(mw[0].first == "Spine");
+    CHECK(mw[0].second == 0.25f);
+    auto rt = Controller::from_json((*c)->to_json());
+    REQUIRE(rt);
+    CHECK(json::stringify((*rt)->to_json()) == json::stringify((*c)->to_json()));
+    CHECK((*rt)->layers[0].mask_weights == mw);
+    const std::string s = R"("states": [ { "name": "S", "clip": "Aim" } ])";
+    CHECK(parse_error(layer_doc(R"({ "name": "L", "mask_weights": { "Spine": 1.5 }, )" + s + "}"))
+              .find("\"mask_weights\".\"Spine\" must be a number from 0 to 1") != std::string::npos);
+    CHECK(parse_error(layer_doc(R"({ "name": "L", "mask_weights": ["Spine"], )" + s + "}")).find("must be an object") !=
+          std::string::npos);
+    CHECK(parse_error(layer_doc(R"({ "name": "L", "mask": ["Spine"], "mask_weights": { "Spine": 0.5 }, )" + s + "}"))
+              .find("listed twice") != std::string::npos);
+}
+
+TEST_CASE("layers: a synced layer's looping states follow the base layer's phase (ADR-0160)") {
+    // Base Wave (1 s) at speed 2 runs two cycles per second; the layer's Lean2 clip is 4 s long.
+    // Unsynced, the layer would be at 1/8 of its cycle after 0.25 s; synced it is at the base phase.
+    const char* doc = R"({ "states": [ { "name": "Base", "clip": "Wave", "speed": 2 } ],
+      "layers": [ { "name": "S", "sync": true, "mask": ["Arm"],
+                    "states": [ { "name": "Slow", "clip": "Slow" } ] } ] })";
+    auto setup = [](Rig& r) {
+        auto set = make_set();
+        Clip slow{.name = "Slow", .duration = 4}; // Arm.x 0 -> 8 over 4 s
+        slow.channels.push_back(tx(kArm, 4, 0, 8));
+        set->clips.push_back(std::move(slow));
+        r.system.add_set(r.model, set);
+    };
+    Rig r(doc);
+    setup(r);
+    r.system.update(r.scene, 0);
+    r.system.update(r.scene, 0.2f); // base phase 0.4
+    const ControllerStatus cs = r.system.controller_status(r.scene, r.root);
+    REQUIRE(cs.layers.size() == 1);
+    CHECK(near(cs.normalized_time, 0.4f, 1e-3f));
+    CHECK(near(cs.layers[0].normalized_time, cs.normalized_time, 1e-4f));
+    CHECK(near(r.x(r.arm), 0.4f * 8.0f, 1e-3f));
+
+    std::string unsynced = doc;
+    unsynced.replace(unsynced.find("\"sync\": true"), 12, "\"sync\": false");
+    Rig u(unsynced);
+    setup(u);
+    u.system.update(u.scene, 0);
+    u.system.update(u.scene, 0.2f);
+    CHECK(near(u.system.controller_status(u.scene, u.root).layers[0].normalized_time, 0.05f, 1e-3f)); // 0.2 s of 4 s
+    CHECK(near(u.x(u.arm), 0.4f, 1e-3f));
+
+    auto c = Controller::parse(doc);
+    REQUIRE(c);
+    CHECK((*c)->layers[0].sync);
+    auto rt = Controller::from_json((*c)->to_json());
+    REQUIRE(rt);
+    CHECK((*rt)->layers[0].sync);
+    CHECK(parse_error(layer_doc(R"({ "name": "L", "sync": 1, "states": [ { "name": "S", "clip": "Aim" } ] })"))
+              .find("\"sync\" must be true or false") != std::string::npos);
+}

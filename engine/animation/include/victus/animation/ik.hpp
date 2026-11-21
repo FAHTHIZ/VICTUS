@@ -45,8 +45,11 @@ struct FabrikResult {
 };
 // FABRIK (Aristidou & Lasenby 2011) on `points` (root first, end last) in place. The root stays
 // fixed and bone lengths are kept exactly. An out-of-reach target straightens the chain toward it.
+// `max_bend` (radians, ADR-0161) limits every joint to a cone: each bone stays within that angle of
+// the bone before it, and the first bone within that angle of its input direction. pi = no limit.
+// With a limit the target may be missed; the result reports the remaining error.
 FabrikResult solve_fabrik(std::span<math::Vec3> points, math::Vec3 target, std::uint32_t max_iterations = 10,
-                          float tolerance = 1e-3f) noexcept;
+                          float tolerance = 1e-3f, float max_bend = 3.14159265f) noexcept;
 
 // World rotations that carry a chain from `before` to `after` joint positions (same count):
 // joint i turns by the shortest rotation taking its old bone direction (as already rotated by
@@ -81,6 +84,7 @@ struct IkConstraintComponent {
     float max_extension{0.999f};   // TwoBone: fraction of full reach (avoids a locked, popping knee)
     math::Vec3 aim_axis{0, 0, 1};  // LookAt: local axis of this joint that should point at the target
     float max_angle{90.0f};        // LookAt: largest turn away from the animated direction, degrees
+    float max_bend{180.0f};        // Chain: largest bend at each joint, degrees (cone limit; 180 = free)
 };
 
 struct IkStats {

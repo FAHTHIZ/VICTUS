@@ -158,11 +158,13 @@ Visual scripts have matching nodes in the Animation category: Play Animation, Se
 | `weight_parameter` | Optional float/int parameter, clamped to 0..1, multiplied into the weight |
 | `blend` | `override` (default): replaces the masked nodes the layer's clips animate. `additive`: adds the layer clip's change from its reference pose |
 | `reference` | Additive only: `first_frame` (default; each state's pose at normalized time 0, as in Unity) or `rest` (the model's rest pose) |
-| `mask` | Node names; each includes its descendants. Empty or absent: every node |
+| `mask` | Node names; each includes its descendants. Empty or absent (and no `mask_weights`): every node |
+| `mask_weights` | Weighted mask (ADR-0159): `{ "Spine": 0.3, "Chest": 0.6, "Neck": 1 }` gives each listed subtree that share of the layer weight, so an aim layer can turn the lower spine a little and the chest fully. With no `mask`, the weighted names are the mask. A node may appear in only one of `mask`, `exclude` and `mask_weights` |
 | `exclude` | Node names whose subtrees the layer never touches. The nearest listed ancestor decides, so `"mask": ["Spine"], "exclude": ["LeftArm"]` covers the spine and right arm |
+| `sync` | `true`: the layer's looping states take the base layer's normalized time instead of their own (ADR-0160), so a limp or carry upper-body cycle stays in step with locomotion at any speed. One-shot states keep their own clock |
 | `default_state`, `states`, `transitions` | As at the top level. A layer state with no `clip` or blend space is empty: the layer has no influence while it is there, and fades out of and into it blend with the base pose |
 
-Layers cannot declare parameters, nested layers, `root_node` or root-motion states; errors name the element (`layers[0].transitions[1]: unknown state "Shot"`). A trigger consumed by any layer's transition is consumed for all. Nodes outside the mask, and nodes the layer's clips do not animate, keep the pose from the layers below. `victus check` checks layer clips like the base layer's. Unknown mask node names are logged once and ignored.
+Layers cannot declare parameters, nested layers, `root_node` or root-motion states; errors name the element (`layers[0].transitions[1]: unknown state "Shot"`). A trigger consumed by any layer's transition is consumed for all. Nodes outside the mask, and nodes the layer's clips do not animate, keep the pose from the layers below. `victus check` checks layer clips like the base layer's. Unknown mask node names are logged once and ignored. The Studio Animation window's Layers section shows each layer's state, a weight slider and its mask with the weight of every listed bone.
 
 Luau: `entity:set_anim_layer_weight(name, weight)` → `true` when the layer exists, `entity:anim_layer_weight(name)` → number or `nil`, and `entity:anim_controller().layers` → `{{name, blend, weight, effective_weight, state, previous_state, normalized_time, blend_progress}}`. Visual scripts: Set Anim Layer Weight. C++: `AnimationSystem::set_layer_weight`, `layer_weight`, `ControllerStatus::layers`.
 
@@ -178,6 +180,7 @@ An `IKConstraint` component on the end of a chain (a hand, foot or head) bends i
 | `pole` | Optional entity the middle joint bends toward (two_bone) |
 | `match_rotation` | Also copy the target entity's rotation to the end |
 | `iterations`, `tolerance` | FABRIK limits |
+| `max_bend` | Chain: largest bend at each joint in degrees (a cone around the bone before it; the first bone around its animated direction). 180 = free. Stops tails and spines folding back on themselves; limited chains may miss a target outside the cones and converge more slowly (ADR-0161) |
 | `max_extension` | Two-bone reach fraction (0.999 avoids a locked straight knee) |
 
 Unreachable targets stretch the chain straight toward them. Chains are solved parents first, so a spine chain can feed an arm's two-bone constraint.

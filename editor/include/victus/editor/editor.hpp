@@ -366,6 +366,8 @@ public:
     [[nodiscard]] animation::AnimationSystem* animation_inspected();
     bool set_animation_parameter(scene::Entity e, std::string_view name, float value);
     bool fire_animation_trigger(scene::Entity e, std::string_view name);
+    // Runtime weight of a controller layer (Animation window Layers slider); not an edit.
+    bool set_animation_layer_weight(scene::Entity e, std::string_view layer, float weight);
     bool enter_animation_state(scene::Entity e, std::string_view state);
     // Text form of the Animation window: "controller <path> state <S> time <t>", "fade from ...",
     // "weight <clip> <w>" and "param <name> <type> = <value>" lines; empty when nothing is inspected.

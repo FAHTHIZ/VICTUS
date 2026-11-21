@@ -2258,6 +2258,20 @@ Not covered: CPU clock granularity on Windows (`GetThreadTimes` ticks at about 1
 
 Next task: confirm CI; then B3 (GPU device-loss recovery design) or generated Luau type definitions.
 
+## 2026-11-21 — Weighted bone masks, layer sync, FABRIK joint limits and the Studio Layers view (ADR-0159-0161)
+
+Built: animation controller layers accept `"mask_weights": { node: 0..1 }`; the nearest listed ancestor among `mask`, `exclude` and `mask_weights` decides each node's influence, which scales override blends and additive deltas; with no `mask`, weighted names are the mask; duplicates across the three lists are a parse error; `to_json` round-trips them. Studio's Animation window has a Layers section (blend, state and fade, runtime weight slider, effective weight with the weight parameter, affected bone count, mask entries with weight bars); `Editor::set_animation_layer_weight`; `animation_debug_lines` lists layers.
+
+Verified (Release, GCC, 2 vCPU): new `victus_animation_tests` case (values in ADR-0159), all 56 animation cases pass; `victus_editor_tests` Animation window case extended with a weighted-mask layer on the 3D template robot (layer line, nonzero affected nodes, weight 0.50 after the slider call). Full `ctest` under `VICTUS_REQUIRE_GPU=1` before push.
+
+Also built: layer `"sync": true` (ADR-0160): looping layer states take the base layer's normalized time (also on entry), one-shots keep their own clock; Studio's Layers section marks synced layers. Verified by a new `victus_animation_tests` case (synced 0.4 vs unsynced 0.05 normalized time after 0.2 s; values in ADR-0160); 57 animation cases pass.
+
+Also built: FABRIK cone joint limits (ADR-0161): `solve_fabrik(..., max_bend)` and `IKConstraint::max_bend` (degrees, 180 = free) keep every bone within a cone of the previous one (the first around its animated direction). Verified by a new `victus_animation_tests` case: four targets with a 20 deg limit keep all bends within the cone and never beat the free chain; a reachable target ends 1.7 mm away after 30 iterations (free chain 0.1 mm); a scene tail with `max_bend` 25 aimed behind itself stays within 25 deg; 58 animation cases pass.
+
+Not covered: the window shows masks read-only (edit the .vanim); no sync markers (foot-contact events); no reusable mask assets; IK limits are one symmetric cone per chain (no per-joint, elliptical or twist limits); no foot locking.
+
+Next task: foot locking / automatic foot placement, or Studio front-end (curve editor).
+
 ## 2026-11-21 — Ragdoll get-up (ADR-0158)
 
 Built: `PhysicsWorld::begin_ragdoll_get_up(scene, root, blend_seconds)` returns `RagdollGetUp {started, face_up, position, rotation, reason}`. A passive/powered ragdoll's hips orientation tells whether it lies on its back (new serialized `RagdollComponent::front`, default -Z); the root moves to the ground under the hips (raycast ignoring the character) and turns towards the feet (face up) or head (face down), the mode switches to Kinematic and the bones and kinematic bodies blend (smoothstep, parent-local lerp/slerp) from the lying pose to the animation over `blend_seconds`; the last frame writes the animated pose exactly. `RagdollState::getting_up`, `get_up_progress`. Luau `entity:ragdoll_get_up([blend])` returns `{face_up, position, rotation}` or `nil, reason`; script API raised to 1.1 with a new frozen snapshot. Studio: the Ragdoll card shows "Get Up" in play mode (`Editor::ragdoll_get_up`).

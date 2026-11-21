@@ -5,7 +5,10 @@
 
 #include <doctest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <string>
+#include <vector>
 #include <numbers>
 
 using namespace victus;
@@ -102,6 +105,57 @@ TEST_CASE("ik: FABRIK reaches reachable targets and straightens toward unreachab
     CHECK_FALSE(u.reached);
     CHECK(near(q.back(), {4, 0, 0}));
     CHECK(near(u.error, 6.0f));
+}
+
+TEST_CASE("ik: FABRIK joint limits keep every bend inside its cone (ADR-0161)") {
+    const auto angle = [](Vec3 a, Vec3 b) {
+        return std::acos(std::clamp(math::dot(math::normalize(a), math::normalize(b)), -1.0f, 1.0f));
+    };
+    const std::vector<Vec3> orig{{0, 0, 0}, {0, 1, 0}, {0, 2, 0}, {0, 3, 0}, {0, 4, 0}};
+    const float limit = 20.0f * 3.14159265f / 180.0f;
+    for (const Vec3 target : {Vec3{2, 2, 1}, Vec3{3, 1, 0}, Vec3{0, -2, 0.5f}, Vec3{10, 0, 0}}) {
+        CAPTURE(target.x);
+        CAPTURE(target.y);
+        std::vector<Vec3> free = orig, lim = orig;
+        const FabrikResult rf = solve_fabrik(free, target, 30, 1e-4f);
+        const FabrikResult rl = solve_fabrik(lim, target, 30, 1e-4f, limit);
+        CHECK(near(lim.front(), orig.front()));
+        for (std::size_t i = 0; i + 1 < lim.size(); ++i) CHECK(near(math::length(lim[i + 1] - lim[i]), 1.0f));
+        CHECK(angle(lim[1] - lim[0], orig[1] - orig[0]) <= limit + 1e-3f);
+        for (std::size_t i = 1; i + 1 < lim.size(); ++i) CHECK(angle(lim[i + 1] - lim[i], lim[i] - lim[i - 1]) <= limit + 1e-3f);
+        CHECK(rl.error + 1e-4f >= rf.error); // a limit never gets closer than the free chain
+        CHECK(std::isfinite(rl.error));
+    }
+    // A target the cones allow is still reached (limited chains converge more slowly: ~2 mm after
+    // 30 iterations here, measured).
+    std::vector<Vec3> soft = orig;
+    const FabrikResult rs = solve_fabrik(soft, {0.6f, 3.9f, 0}, 30, 1e-4f, limit);
+    CHECK(rs.error < 0.005f);
+    // 180 degrees behaves like no limit.
+    std::vector<Vec3> a = orig, b = orig;
+    (void)solve_fabrik(a, {2, 2, 1}, 20, 1e-4f);
+    (void)solve_fabrik(b, {2, 2, 1}, 20, 1e-4f, 3.14159265f);
+    for (std::size_t i = 0; i < a.size(); ++i) CHECK(near(a[i], b[i]));
+
+    // The IKConstraint field applies it in the scene: a tail never folds back on itself.
+    Scene scene;
+    std::vector<Entity> tail{scene.create("Tail0")};
+    for (int i = 1; i < 5; ++i) {
+        tail.push_back(scene.create("Tail" + std::to_string(i), tail.back()));
+        scene.world().get<Transform>(tail.back())->position = {0, 1, 0};
+    }
+    auto& c = scene.world().add<IkConstraintComponent>(tail.back());
+    c.solver = IkSolver::Chain;
+    c.chain_length = 4;
+    c.iterations = 30;
+    c.max_bend = 25.0f;
+    c.target_position = {0, -1, 0.3f}; // behind the root: a free chain would fold over
+    (void)apply_ik(scene);
+    std::vector<Vec3> w;
+    for (const Entity e : tail) w.push_back(world_pos(scene, e));
+    for (std::size_t i = 1; i + 1 < w.size(); ++i)
+        CHECK(angle(w[i + 1] - w[i], w[i] - w[i - 1]) <= 25.0f * 3.14159265f / 180.0f + 2e-3f);
+    CHECK(angle(w[1] - w[0], {0, 1, 0}) <= 25.0f * 3.14159265f / 180.0f + 2e-3f);
 }
 
 TEST_CASE("ik: aim rotation points an axis at the target and respects the angle clamp") {

@@ -86,7 +86,17 @@ TwoBoneResult solve_two_bone(Vec3 root, Vec3 mid, Vec3 tip, Vec3 target, Vec3 be
     return r;
 }
 
-FabrikResult solve_fabrik(std::span<Vec3> p, Vec3 target, std::uint32_t max_iterations, float tolerance) noexcept {
+namespace {
+// `d` (unit) turned toward `ref` (unit) until the angle between them is at most `max_angle`.
+Vec3 clamp_direction(Vec3 d, Vec3 ref, float max_angle) noexcept {
+    const float angle = std::acos(std::clamp(dot(d, ref), -1.0f, 1.0f));
+    if (angle <= max_angle || angle < kEps) return d;
+    return normalize(scale_rotation(rotation_between(ref, d), std::max(0.0f, max_angle) / angle).rotate(ref));
+}
+} // namespace
+
+FabrikResult solve_fabrik(std::span<Vec3> p, Vec3 target, std::uint32_t max_iterations, float tolerance,
+                          float max_bend) noexcept {
     FabrikResult out;
     const std::size_t n = p.size();
     if (n < 2) return out;
@@ -94,9 +104,16 @@ FabrikResult solve_fabrik(std::span<Vec3> p, Vec3 target, std::uint32_t max_iter
     float total = 0;
     for (std::size_t i = 0; i + 1 < n; ++i) total += len[i] = length(p[i + 1] - p[i]);
     const Vec3 root = p[0];
+    const bool limited = std::isfinite(max_bend) && max_bend < std::numbers::pi_v<float> - 1e-4f;
+    const Vec3 first_dir = len[0] > kEps ? (p[1] - p[0]) * (1.0f / len[0]) : Vec3{0, 1, 0};
+    // Places joint i + 1 from joint i along `dir`, inside the cone around the previous bone.
+    auto place = [&](std::size_t i, Vec3 dir) {
+        if (limited) dir = clamp_direction(dir, i == 0 ? first_dir : normalize(p[i] - p[i - 1]), max_bend);
+        p[i + 1] = p[i] + dir * len[i];
+    };
     if (length(target - root) >= total) { // out of reach: straighten toward the target
         const Vec3 dir = length(target - root) > kEps ? normalize(target - root) : Vec3{0, 1, 0};
-        for (std::size_t i = 0; i + 1 < n; ++i) p[i + 1] = p[i] + dir * len[i];
+        for (std::size_t i = 0; i + 1 < n; ++i) place(i, dir);
         out.error = length(p[n - 1] - target);
         out.reached = out.error <= tolerance;
         return out;
@@ -111,9 +128,17 @@ FabrikResult solve_fabrik(std::span<Vec3> p, Vec3 target, std::uint32_t max_iter
         ++out.iterations;
         p[n - 1] = target; // backward: end on the target
         for (std::size_t i = n - 1; i-- > 0;) p[i] = toward(p[i + 1], p[i], len[i], Vec3{0, -1, 0});
-        p[0] = root; // forward: root back in place
-        for (std::size_t i = 0; i + 1 < n; ++i) p[i + 1] = toward(p[i], p[i + 1], len[i], Vec3{0, 1, 0});
-        out.error = length(p[n - 1] - target);
+        p[0] = root; // forward: root back in place (and the joint limits applied)
+        for (std::size_t i = 0; i + 1 < n; ++i) {
+            const Vec3 next = toward(p[i], p[i + 1], len[i], Vec3{0, 1, 0});
+            place(i, len[i] > kEps ? (next - p[i]) * (1.0f / len[i]) : Vec3{0, 1, 0});
+        }
+        const float error = length(p[n - 1] - target);
+        if (limited && std::abs(error - out.error) < tolerance * 0.01f) {
+            out.error = error; // a limit holds the chain: further passes cannot get closer
+            break;
+        }
+        out.error = error;
     }
     out.reached = out.error <= tolerance;
     return out;
@@ -219,6 +244,8 @@ void register_ik_components() {
             .field(&IkConstraintComponent::max_extension, "max_extension", {.min = 0.5f, .max = 1, .speed = 0.001f})
             .field(&IkConstraintComponent::aim_axis, "aim_axis", {.speed = 0.01f, .tooltip = "look_at: local axis pointed at the target"})
             .field(&IkConstraintComponent::max_angle, "max_angle", {.min = 0, .max = 180, .speed = 0.5f, .tooltip = "look_at: degrees"})
+            .field(&IkConstraintComponent::max_bend, "max_bend",
+                   {.min = 0, .max = 180, .speed = 0.5f, .tooltip = "chain: largest bend at each joint, degrees (180 = free)"})
             .commit();
     });
 }
@@ -302,7 +329,8 @@ IkStats apply_ik(Scene& scene) {
             } else {
                 for (std::size_t i = 0; i + 1 < n; ++i)
                     if (length(before[i + 1] - before[i]) < kEps) valid = false;
-                const FabrikResult r = solve_fabrik(after, target, std::max(1u, c.iterations), std::max(0.0f, c.tolerance));
+                const FabrikResult r = solve_fabrik(after, target, std::max(1u, c.iterations), std::max(0.0f, c.tolerance),
+                                                    std::clamp(c.max_bend, 0.0f, 180.0f) * std::numbers::pi_v<float> / 180.0f);
                 if (!r.reached) ++stats.unreachable;
             }
             rotations_from_positions(before, after, world_rot);

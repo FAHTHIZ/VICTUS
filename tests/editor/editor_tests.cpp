@@ -2438,6 +2438,29 @@ TEST_CASE("editor: the Animation window previews and drives animation controller
     CHECK(ed.animation_debug_lines(probot)[0].find("state Jump") != std::string::npos);
     ed.stop();
     CHECK(ed.animation_inspected() == nullptr);
+
+    // Layers: a weighted-mask upper-body layer shows in the window and its weight is adjustable.
+    REQUIRE(fs::write_text_atomic(h.dir / "Anim" / "assets" / "anim" / "layered.vanim",
+                             R"({ "states": [ { "name": "Idle", "clip": "Idle" } ],
+                                  "layers": [ { "name": "Upper", "mask_weights": { "Spine": 0.4, "Chest": 1 },
+                                                "states": [ { "name": "Wave", "clip": "Interact" } ] } ] })")
+                .ok());
+    s.world().get<animation::AnimatorComponent>(robot)->controller = "anim/layered.vanim";
+    REQUIRE(ed.begin_animation_preview(robot));
+    h.frames(3); // the Layers section draws
+    lines = ed.animation_debug_lines(robot);
+    const auto layer_line = std::find_if(lines.begin(), lines.end(), [](const std::string& l) { return l.starts_with("layer Upper"); });
+    REQUIRE(layer_line != lines.end());
+    CHECK(layer_line->starts_with("layer Upper override state Wave weight 1.00 nodes "));
+    CHECK(layer_line->substr(layer_line->rfind(' ') + 1) != "0");
+    REQUIRE(ed.set_animation_layer_weight(robot, "Upper", 0.5f));
+    CHECK_FALSE(ed.set_animation_layer_weight(robot, "Nope", 0.5f));
+    h.frames(2);
+    lines = ed.animation_debug_lines(robot);
+    CHECK(std::find_if(lines.begin(), lines.end(), [](const std::string& l) {
+              return l.starts_with("layer Upper override state Wave weight 0.50");
+          }) != lines.end());
+    ed.end_animation_preview();
 }
 
 TEST_CASE("editor: the sequencer panel edits, previews, records and saves sequences") {
