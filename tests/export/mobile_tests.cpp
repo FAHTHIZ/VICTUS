@@ -30,7 +30,9 @@ void write_pack(const fs::Path& path, const std::string& text, std::size_t big =
     pack::PackWriter w;
     REQUIRE(w.add_text("victus.project", text).ok());
     if (big) REQUIRE(w.add("big.bin", std::vector<std::uint8_t>(big, 0x5a)).ok());
-    REQUIRE(w.write(path).ok());
+    pack::WriteOptions o;
+    o.compress = false; // keep the pack larger than one copy chunk
+    REQUIRE(w.write(path, o).ok());
 }
 
 std::filesystem::file_time_type mtime(const fs::Path& p) { return std::filesystem::last_write_time(p); }

@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cctype>
 #include <format>
+#include <optional>
 #include <set>
 
 namespace victus::player {
@@ -376,13 +377,28 @@ Result<ExportReport> export_game(const ExportOptions& o) {
     sfs::create_directories(game_dir, ec);
     if (ec) return make_error(ErrorCode::IoError, std::format("cannot create {}: {}", game_dir.string(), ec.message()));
     report.pack = game_dir / std::string(kPackFile);
-    VICTUS_TRY_STATUS(pw.write(report.pack));
+    pack::WriteOptions wo;
+    wo.compress = o.compress;
+    wo.level = o.compression_level;
+    std::optional<pack::SigningKey> key;
+    pack::OpenOptions verify;
+    if (!o.signing_key.empty()) {
+        auto loaded = pack::load_signing_key(o.signing_key);
+        if (!loaded) return std::move(loaded).error();
+        key = *loaded;
+        wo.signing_key = &*key;
+        verify.trusted_keys.push_back(key->public_key());
+        report.signer = pack::to_hex(verify.trusted_keys.back());
+    }
+    pack::WriteStats ws;
+    VICTUS_TRY_STATUS(pw.write(report.pack, wo, &ws));
     report.files = pw.size();
     report.payload_bytes = pw.payload_bytes();
+    report.compressed_entries = ws.compressed_entries;
     report.pack_bytes = sfs::file_size(report.pack, ec);
 
-    // Validate the archive we just wrote before declaring success.
-    auto written = pack::Pack::open(report.pack);
+    // Validate the archive we just wrote (and its signature) before declaring success.
+    auto written = pack::Pack::open(report.pack, verify);
     if (!written) return std::move(written).error();
     for (const auto& e : (*written)->entries())
         if (auto bytes = (*written)->read(e.path); !bytes) return std::move(bytes).error();
@@ -434,7 +450,9 @@ Result<ExportReport> export_game(const ExportOptions& o) {
         json::Value f = json::Value::object();
         f.set("path", e.path);
         f.set("bytes", static_cast<double>(e.size));
-        f.set("fnv1a64", std::format("{:016x}", e.hash));
+        f.set("stored_bytes", static_cast<double>(e.stored_size));
+        f.set("codec", e.codec == pack::Codec::Zstd ? "zstd" : "stored");
+        f.set("blake2b256", pack::to_hex(e.digest));
         files.push(std::move(f));
     }
     json::Value manifest = json::Value::object();
@@ -447,6 +465,9 @@ Result<ExportReport> export_game(const ExportOptions& o) {
     manifest.set("executable", report.executable.empty() ? std::string() : report.executable.filename().string());
     manifest.set("pack", std::format("{}/{}", kGameFolder, kPackFile));
     manifest.set("pack_bytes", static_cast<double>(report.pack_bytes));
+    manifest.set("pack_version", static_cast<double>(pack::kPackVersion));
+    manifest.set("payload_bytes", static_cast<double>(report.payload_bytes));
+    manifest.set("signing_public_key", report.signer);
     manifest.set("target", report.target);
     manifest.set("cooked_bytes", static_cast<double>(report.cooked_bytes_in));
     manifest.set("cooked_bytes_shipped", static_cast<double>(report.cooked_bytes_out));
@@ -458,6 +479,30 @@ Result<ExportReport> export_game(const ExportOptions& o) {
     VICTUS_LOG_INFO("export", "exported '{}' to {} ({} files, {} bytes)", proj->settings().name, out.string(), report.files,
                     report.pack_bytes);
     return report;
+}
+
+Result<pack::OpenOptions> pack_open_options(const fs::Path& game_dir, std::string_view explicit_key) {
+    pack::OpenOptions po;
+    std::string expected(explicit_key);
+    if (expected.empty()) {
+        fs::Path dir = game_dir.lexically_normal();
+        if (!dir.has_filename()) dir = dir.parent_path();
+        const fs::Path manifest = dir.parent_path() / "export.json";
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(manifest, ec)) {
+            auto text = fs::read_text(manifest, 1u << 24);
+            if (!text) return std::move(text).error();
+            auto doc = json::parse(*text);
+            if (!doc) return make_error(ErrorCode::ParseError, std::format("{}: {}", manifest.string(), doc.error().message));
+            if (const auto* k = doc->find("signing_public_key"); k && k->is_string()) expected = k->as_string();
+        }
+    }
+    if (!expected.empty()) {
+        auto key = pack::public_key_from_hex(expected);
+        if (!key) return make_error(ErrorCode::InvalidArgument, std::format("pack signer key: {}", key.error().message));
+        po.trusted_keys.push_back(*key);
+    }
+    return po;
 }
 
 } // namespace victus::player

@@ -2225,3 +2225,13 @@ Verified (Release, GCC 15.2, lavapipe, Ubuntu 26.04, 2 vCPU): `python3 tools/sha
 Not covered: CI's Mesa numbers are confirmed only by the CI run of this commit.
 
 Next task: confirm CI green; then the next production blocker in docs/PRODUCTION_READINESS_ROADMAP.md.
+
+## 2026-11-21 — `.vpak` v2: zstd compression, BLAKE2b digests, Ed25519 signing (ADR-0154)
+
+Built: pack format version 2 (`engine/core/src/pack.cpp`): per-entry zstd frames with a 3 % minimum saving, BLAKE2b-256 per entry and over the TOC, optional Ed25519 signature trailer, strict end-of-file checks, parallel deterministic compression, per-read file handles (no reader mutex), version 1 read compatibility. `pack::generate/save/load_signing_key`, `pack::OpenOptions{trusted_keys, require_signature}`. Export: compression on by default, `--sign-key`, `--no-compress`, `--compression-level`; `export.json` gains `pack_version`, `payload_bytes`, `signing_public_key` and per-file `stored_bytes`, `codec`, `blake2b256` (replacing `fnv1a64`). Player: `player::pack_open_options` trusts the manifest's signer (or `--pack-key`). New `victus pack keygen|verify|list`. Zstandard 1.5.7 added to the fetched, pinned dependencies; `victus::os_random_bytes` moved to core.
+
+Verified (Release, GCC 15.2, lavapipe, Ubuntu 26.04, 2 vCPU): `victus_core_tests` pack cases 7/7 (319 assertions: compressed/stored round trip, incompressible data stays raw, deterministic signed and unsigned output, every non-padding byte of a signed pack flipped is rejected on open or read, trusted/untrusted/missing signatures, stripped signature, damaged zstd frames, hand-built v1 archive); `victus_export_tests` 23/23 (new signed-export case); `python3 tools/deps/victus_deps.py check` 20 dependencies, 0 problems; `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build/rel` 39/39. 3D template pack: 6,500,578 to 2,426,626 bytes (zstd 12); signed export ran in the player and an unsigned replacement pack was refused.
+
+Not covered: decode cost on a phone; Windows `BCryptGenRandom` path of `os_random_bytes` compiled only in CI; installers, OS code signing and patches remain open (B6).
+
+Next task: confirm CI; then the next blocker in docs/PRODUCTION_READINESS_ROADMAP.md (B7 script API versioning or B3 device loss).

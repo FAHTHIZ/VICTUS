@@ -51,6 +51,10 @@ struct PlayerOptions {
     std::string player_name{"player"}; // name shown to other players when connected
     std::string net_conditions;  // link emulation for testing, e.g. "latency=80,loss=0.05"
     std::string server_key;      // expected server public key (hex); empty = accept and report it
+    // Expected Ed25519 signer of game.vpak (hex, ADR-0154). Empty = the `signing_public_key` of
+    // the export.json next to the game folder, if any. When a signer is expected an unsigned or
+    // differently signed pack is refused; a signed pack's signature is always checked.
+    std::string pack_key;
     std::string net_password;    // sent to servers started with --password (over the encrypted channel)
     bool insecure{false};        // connect without encryption (to servers started with --insecure)
     // Listen server: host a session on UDP `host_port` and play in it (others join with

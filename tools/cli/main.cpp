@@ -8,6 +8,7 @@
 #include "victus/core/crash.hpp"
 #include "victus/core/log.hpp"
 #include "victus/core/json.hpp"
+#include "victus/core/pack.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/render/image.hpp"
 #include "victus/render/image_compare.hpp"
@@ -99,6 +100,8 @@ constexpr const char* kUsage =
     "  check <project>                                            validate scenes and script syntax\n"
     "  plugins <project> [--load] [--new NAME]                    list, load or create native plugins\n"
     "  export <project> --out DIR [--name EXE] [--player PATH]    package a runnable game folder\n"
+    "         [--sign-key FILE] [--no-compress] [--compression-level N]  ...sign / compress game.vpak\n"
+    "  pack keygen --out FILE | verify PAK [--key HEX] | list PAK  pack signing keys, verification, contents\n"
     "  world <project> --scene S --out DIR [--cell-size N]       split a scene into streamed world cells (.vworld)\n"
     "  bake-lighting <project> [--scene S] [--samples N] [--density T] [--mark-static]  bake lightmaps for Static Lighting meshes\n"
     "  diagnose [project] --out FILE.zip [--no-logs] [--keep-paths] ...  bundle crash reports, logs and checks\n"
@@ -230,6 +233,7 @@ int cmd_run(const std::vector<std::string>& a) {
         .option("name", "player name shown to others when connected", "player")
         .option("server-key", "with --connect: refuse servers whose public key differs (printed by `victus serve`)")
         .option("password", "with --connect: password of a protected server; with --host: require it")
+        .option("pack-key", "exported game: required game.vpak signer (hex; default: export.json signing_public_key)")
         .flag("insecure", "no encryption: join a server started with --insecure, or host one")
         .option("conditions", "emulate a bad link, e.g. latency=80,jitter=10,loss=0.05")
         .option("saves", "save games folder (default: <project>/.victus/saves)")
@@ -250,6 +254,7 @@ int cmd_run(const std::vector<std::string>& a) {
     o.player_name = p.get("name");
     o.net_conditions = p.get("conditions");
     o.server_key = p.get("server-key");
+    o.pack_key = p.get("pack-key");
     o.net_password = p.get("password");
     o.insecure = p.has("insecure");
     o.host = p.has("host");
@@ -939,7 +944,10 @@ int cmd_export(const std::vector<std::string>& a) {
         .option("name", "executable name (default: project name)", "")
         .option("player", "player executable to ship (default: victus_player next to victus)", "")
         .option("target", "texture profile: all (cooked cache as is), desktop (no ASTC), android (ASTC, 1024 px cap)", "all")
-        .flag("pack-only", "write game/game.vpak and the manifest without copying the player");
+        .flag("pack-only", "write game/game.vpak and the manifest without copying the player")
+        .option("sign-key", "Ed25519 key file (`victus pack keygen`) to sign game.vpak with; the player then requires it", "")
+        .flag("no-compress", "store every entry raw (faster export, larger pack)")
+        .option("compression-level", "zstd level 1..19 (decoding speed does not depend on it)", "12");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message);
     if (p.get("out").empty()) return error("export needs --out DIR");
@@ -950,6 +958,10 @@ int cmd_export(const std::vector<std::string>& a) {
     o.player_executable = p.get("player");
     o.include_player = !p.has("pack-only");
     o.target = p.get("target");
+    o.compress = !p.has("no-compress");
+    o.compression_level = static_cast<int>(p.get_number("compression-level", 12));
+    if (o.compression_level < 1 || o.compression_level > 19) return error("--compression-level must be 1..19");
+    o.signing_key = p.get("sign-key");
     auto r = player::export_game(o);
     if (!r) return error(r.error().message);
     for (const auto& w : r->warnings) std::printf("warning: %s\n", w.c_str());
@@ -958,8 +970,67 @@ int cmd_export(const std::vector<std::string>& a) {
     if (r->target != "all")
         std::printf("target %s: cooked assets %llu -> %llu bytes\n", r->target.c_str(), static_cast<unsigned long long>(r->cooked_bytes_in),
                     static_cast<unsigned long long>(r->cooked_bytes_out));
+    std::printf("pack payload %llu bytes, %zu entries zstd-compressed\n", static_cast<unsigned long long>(r->payload_bytes),
+                r->compressed_entries);
+    if (!r->signer.empty()) std::printf("signed by %s\n", r->signer.c_str());
     if (r->plugins) std::printf("exported %zu native plugin(s) to game/plugins\n", r->plugins);
     if (!r->executable.empty()) std::printf("run: %s\n", r->executable.string().c_str());
+    return 0;
+}
+
+// Pack tools (ADR-0154): signing keys, full verification and listing of .vpak archives.
+int cmd_pack(const std::vector<std::string>& a) {
+    cli::Parser p("victus pack", "keygen --out FILE: new Ed25519 signing key; verify PAK: check structure, signature and every "
+                                 "entry digest; list PAK: entries with sizes and codecs");
+    p.positional("action", "keygen, verify or list", true)
+        .positional("pack", "pack file (verify, list)")
+        .option("out", "keygen: key file to create (must not exist)", "")
+        .option("key", "verify: required signer public key (hex)", "")
+        .flag("require-signature", "verify: fail on unsigned packs");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message);
+    const std::string action = p.get("action");
+    if (action == "keygen") {
+        const fs::Path out = p.get("out");
+        if (out.empty()) return error("pack keygen needs --out FILE");
+        std::error_code ec;
+        if (std::filesystem::exists(out, ec)) return error("refusing to overwrite " + out.string());
+        auto key = pack::generate_signing_key();
+        if (!key) return error(key.error().message);
+        if (auto st = pack::save_signing_key(*key, out); !st) return error(st.error().message);
+        std::printf("wrote %s (keep it secret)\npublic key: %s\n", out.string().c_str(), pack::to_hex(key->public_key()).c_str());
+        return 0;
+    }
+    if (action != "verify" && action != "list") return error("unknown pack action '" + action + "' (keygen, verify, list)");
+    if (p.get("pack").empty()) return error("pack " + action + " needs a pack file");
+    pack::OpenOptions po;
+    po.require_signature = p.has("require-signature");
+    if (!p.get("key").empty()) {
+        auto k = pack::public_key_from_hex(p.get("key"));
+        if (!k) return error("--key: " + k.error().message);
+        po.trusted_keys.push_back(*k);
+    }
+    auto pk = pack::Pack::open(p.get("pack"), po);
+    if (!pk) return error(pk.error().message);
+    const auto& pack = **pk;
+    std::uint64_t raw = 0, stored = 0;
+    std::size_t compressed = 0;
+    for (const auto& e : pack.entries()) {
+        raw += e.size;
+        stored += e.stored_size;
+        if (e.codec == pack::Codec::Zstd) ++compressed;
+        if (action == "list")
+            std::printf("%12llu %12llu %-6s %s\n", static_cast<unsigned long long>(e.size), static_cast<unsigned long long>(e.stored_size),
+                        e.codec == pack::Codec::Zstd ? "zstd" : "stored", e.path.c_str());
+    }
+    if (action == "verify") {
+        for (const auto& e : pack.entries())
+            if (auto bytes = pack.read(e.path); !bytes) return error(e.path + ": " + bytes.error().message);
+    }
+    std::printf("%s: version %u, %zu entries (%zu zstd), %llu bytes -> %llu stored, %s\n", p.get("pack").c_str(), pack.version(),
+                pack.entries().size(), compressed, static_cast<unsigned long long>(raw), static_cast<unsigned long long>(stored),
+                pack.signer() ? ("signed by " + pack::to_hex(*pack.signer())).c_str() : "unsigned");
+    if (action == "verify") std::printf("ok: every entry digest matches\n");
     return 0;
 }
 
@@ -1553,6 +1624,7 @@ int main(int argc, char** argv) {
     if (cmd == "compare") return cmd_compare(args);
     if (cmd == "plugins") return cmd_plugins(args);
     if (cmd == "export") return cmd_export(args);
+    if (cmd == "pack") return cmd_pack(args);
     if (cmd == "diagnose") return cmd_diagnose(args);
     if (cmd == "world") return cmd_world(args);
     if (cmd == "bake-lighting") return cmd_bake_lighting(args);

@@ -2,6 +2,7 @@
 #include "victus/player/mobile.hpp"
 
 #include "victus/core/log.hpp"
+#include "victus/core/pack.hpp"
 #include "victus/player/export.hpp"
 
 #include <algorithm>
@@ -13,7 +14,8 @@
 namespace victus::player {
 
 namespace {
-constexpr std::size_t kHeaderBytes = 40; // see victus/core/pack.hpp
+// The v2 header ends with the TOC digest, so these bytes change whenever any entry does.
+constexpr std::size_t kHeaderBytes = pack::kPackIdentityBytes;
 
 std::vector<std::uint8_t> installed_header(const fs::Path& path, std::uint64_t* size) {
     std::error_code ec;

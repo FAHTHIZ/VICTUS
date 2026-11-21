@@ -62,9 +62,9 @@ with optimizations (`RelWithDebInfo`), because an unoptimized renderer is unusab
   bundled pack changes (an app update), `player::install_bundled_pack` streams
   `assets/game.vpak` to the app's internal storage in 1 MiB chunks. It writes to a `.tmp` file
   and renames it into place, so an interrupted copy never leaves a broken pack. The installed
-  pack is reused when its size and 40-byte header match: the header holds the hash of the table
-  of contents, which holds the hash of every payload. The pack is stored uncompressed in the APK
-  (`noCompress 'vpak'`).
+  pack is reused when its size and 64-byte header match: the header holds the BLAKE2b-256 of the
+  table of contents, which holds the digest of every payload (ADR-0154). The APK stores the pack
+  without its own zip compression (`noCompress 'vpak'`); entries inside are zstd frames already.
 - Save games go to the app's internal storage (`Platform::user_data_dir`).
 
 ## Runtime behaviour on phones

@@ -58,7 +58,7 @@ The owner's target: images that read as photoreal on hardware as weak as entry-l
 
 - [~] **Untrusted-input robustness.** Mutation tests cover 30 formats. Remaining: coverage-guided fuzzing in a nightly lane for the highest-risk parsers (glTF, `.vpak`, network packets).
 - [~] **Reliability and recovery.** Done: durable verified writes with generations (ADR-0082), format migrators (ADR-0100), editor safe mode (ADR-0101). Remaining: save-game and cooked-asset migrations, an editor UI for restoring generations, GPU device recreation if SDL_GPU can support it.
-- [ ] **Packaging.** Cross-export, code signing, installers and patches; compressed and signed `.vpak` archives.
+- [~] **Packaging.** Done: compressed (zstd) and signed (Ed25519) `.vpak` v2 archives with BLAKE2b digests (ADR-0154). Remaining: cross-export, OS code signing, installers and patches.
 - [ ] **Collaboration.** Source-control-friendly scene diffs and merges, conflict handling.
 - [ ] **Modding.** Sandboxed, permissioned plugins and signed mod packages; plugin hot reload.
 - [~] **Static analysis gate.** clang-tidy analyses every engine/editor/tools/apps source with zero diagnostics. Remaining: making it a required status check is a branch-protection setting only the owner can change.

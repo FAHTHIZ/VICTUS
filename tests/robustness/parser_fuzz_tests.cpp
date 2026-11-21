@@ -785,8 +785,15 @@ TEST_CASE("fuzz: pack archives") {
     REQUIRE(writer.add("textures/a.bin", Bytes(300, 0xAB)).ok());
     const stdfs::path seed_path = dir / "seed.vpak";
     REQUIRE(writer.write(seed_path).ok());
+    // Second seed: signed (ADR-0154), so mutations also reach the signature block.
+    pack::SigningKey key; // fixed seed keeps the corpus reproducible
+    for (std::size_t i = 0; i < key.seed.size(); ++i) key.seed[i] = static_cast<std::uint8_t>(i * 7 + 1);
+    pack::WriteOptions signed_options;
+    signed_options.signing_key = &key;
+    const stdfs::path signed_path = dir / "signed.vpak";
+    REQUIRE(writer.write(signed_path, signed_options).ok());
     const stdfs::path file = dir / "mutated.vpak";
-    fuzz_bytes("pack", {read_file(seed_path)}, [&](const Bytes& b, bool& ok) {
+    fuzz_bytes("pack", {read_file(seed_path), read_file(signed_path)}, [&](const Bytes& b, bool& ok) {
         write_file(file, b);
         auto pack = pack::Pack::open(file);
         ok = pack.ok();
