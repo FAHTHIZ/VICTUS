@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Minimal ZIP archives (PKWARE APPNOTE 6.3.x subset): entries are stored (method 0, no
 // compression), no ZIP64, no encryption. Enough for diagnostics bundles that any OS can open.
-// The reader accepts only that subset and bounds-checks every offset (untrusted input).
+// The reader accepts only that subset and bounds-checks every offset (untrusted input). Callers
+// that need deflate (method 8, e.g. downloaded asset packs) pass a decompressor in ReadOptions;
+// core itself carries no inflate implementation.
 #pragma once
 #include "victus/core/fs.hpp"
 #include "victus/core/result.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -38,8 +41,20 @@ struct Entry {
     std::string name;
     std::vector<std::uint8_t> data;
 };
+// Raw-deflate decompressor: `compressed` must expand to exactly `expected_size` bytes.
+using Inflate = std::function<Result<std::vector<std::uint8_t>>(std::span<const std::uint8_t> compressed,
+                                                                std::size_t expected_size)>;
+
+struct ReadOptions {
+    Inflate inflate;                        // null: compressed entries are rejected
+    std::uint64_t max_total_bytes{1ull << 32}; // sum of uncompressed sizes (decompression bombs)
+    bool skip_directories{false};           // ignore "folder/" entries instead of rejecting them
+};
+
 // Reads a stored-only archive written by Writer (or any tool using method 0 without ZIP64);
 // checks CRCs. Rejects unsafe names, compressed entries and inconsistent offsets.
 [[nodiscard]] Result<std::vector<Entry>> read(std::span<const std::uint8_t> archive);
+// Same, with deflate through `options.inflate` and an uncompressed-size budget.
+[[nodiscard]] Result<std::vector<Entry>> read(std::span<const std::uint8_t> archive, const ReadOptions& options);
 
 } // namespace victus::zip

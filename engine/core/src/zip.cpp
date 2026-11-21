@@ -146,7 +146,9 @@ std::vector<std::uint8_t> Writer::finish() {
     return out;
 }
 
-Result<std::vector<Entry>> read(std::span<const std::uint8_t> b) {
+Result<std::vector<Entry>> read(std::span<const std::uint8_t> b) { return read(b, ReadOptions{}); }
+
+Result<std::vector<Entry>> read(std::span<const std::uint8_t> b, const ReadOptions& options) {
     const auto bad = [](const std::string& why) { return make_error(ErrorCode::ParseError, "zip: " + why); };
     if (b.size() < 22) return bad("too small");
     // End of central directory: last 22 bytes plus at most a 64 KiB comment.
@@ -164,6 +166,7 @@ Result<std::vector<Entry>> read(std::span<const std::uint8_t> b) {
     std::vector<Entry> out;
     std::set<std::string> seen;
     std::size_t at = cd_offset;
+    std::uint64_t total = 0;
     for (std::uint32_t i = 0; i < count; ++i) {
         if (at + 46 > static_cast<std::size_t>(cd_offset) + cd_size || rd32(b, at) != kCentralSig) return bad("bad central directory entry");
         const std::uint32_t flags = rd16(b, at + 8), method = rd16(b, at + 10), crc = rd32(b, at + 16), csize = rd32(b, at + 20),
@@ -171,16 +174,31 @@ Result<std::vector<Entry>> read(std::span<const std::uint8_t> b) {
                             local = rd32(b, at + 42);
         if (at + 46 + nlen > b.size()) return bad("entry name out of bounds");
         std::string name(reinterpret_cast<const char*>(b.data() + at + 46), nlen);
+        if (options.skip_directories && !name.empty() && name.back() == '/' && usize == 0) {
+            if (!safe_name(std::string_view(name).substr(0, name.size() - 1))) return bad("unsafe entry name '" + name + "'");
+            at += 46 + nlen + xlen + clen;
+            continue;
+        }
         if (!safe_name(name)) return bad("unsafe entry name '" + name + "'");
         if (!seen.insert(name).second) return bad("duplicate entry '" + name + "'");
         if (flags & 0x1u) return bad(name + ": encrypted entries are not supported");
-        if (method != 0 || csize != usize) return bad(name + ": compressed entries are not supported");
+        const bool deflated = method == 8 && options.inflate;
+        if (!deflated && (method != 0 || csize != usize)) return bad(name + ": compressed entries are not supported");
+        total += usize;
+        if (total > options.max_total_bytes) return bad("uncompressed size exceeds the limit");
         if (static_cast<std::uint64_t>(local) + 30 > b.size() || rd32(b, local) != kLocalSig) return bad(name + ": bad local header");
         const std::uint64_t data_at = static_cast<std::uint64_t>(local) + 30 + rd16(b, local + 26) + rd16(b, local + 28);
-        if (data_at + usize > cd_offset) return bad(name + ": data out of bounds");
+        if (data_at + csize > cd_offset) return bad(name + ": data out of bounds");
         Entry e;
         e.name = std::move(name);
-        e.data.assign(b.begin() + static_cast<std::ptrdiff_t>(data_at), b.begin() + static_cast<std::ptrdiff_t>(data_at + usize));
+        if (deflated) {
+            auto inflated = options.inflate(b.subspan(static_cast<std::size_t>(data_at), csize), usize);
+            if (!inflated) return bad(e.name + ": " + inflated.error().message);
+            if (inflated->size() != usize) return bad(e.name + ": inflated size mismatch");
+            e.data = std::move(inflated.value());
+        } else {
+            e.data.assign(b.begin() + static_cast<std::ptrdiff_t>(data_at), b.begin() + static_cast<std::ptrdiff_t>(data_at + usize));
+        }
         if (crc32(e.data) != crc) return bad(e.name + ": CRC mismatch");
         out.push_back(std::move(e));
         at += 46 + nlen + xlen + clen;

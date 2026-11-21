@@ -218,6 +218,21 @@ Characters and ragdolls: the Add menu's Characters group adds Orion or Nova (the
 
 Object and asset fields in the Inspector (a material, a model, a target object) show the current choice with its icon: click it to pick from a searchable list of the right type, drag one in from Assets or the Hierarchy, or press x to clear it.
 
+### Asset Store
+
+The Asset Store adds free, legally reusable content to your project: scanned materials and HDR skies from Poly Haven and ambientCG, museum scans from the Smithsonian, models from Sketchfab, sound effects from BigSoundBank, nature recordings from the U.S. National Park Service, and Kenney's game kits. From a terminal:
+
+```
+victus library providers                         # what each source offers
+victus library search ambientcg wood --type material
+victus library install MyGame ambientcg Wood096 --variant 2K-JPG
+victus library install MyGame polyhaven rock_face_02 --variant 1k
+victus library list MyGame                       # installed assets and their licences
+victus library remove MyGame library/ambientcg/wood096
+```
+
+Installed assets go to `assets/library/<source>/<name>` and are imported straight away; material sets get a ready `.vmat`. Only licences that let you sell a game, change the asset and ship it inside the game are offered (CC0, CC BY and public domain). Each folder keeps `LICENSE.txt` and `provenance.json`, and `CREDITS.md` at the project root lists everything you installed; credits marked "attribution required" (CC BY models from Sketchfab) must appear in your game's credits, and `victus export` copies `CREDITS.md` next to the game. Sketchfab downloads need your own API token from https://sketchfab.com/settings/password (set `VICTUS_SKETCHFAB_TOKEN`). Kenney packs are downloaded on kenney.nl (where you can donate); then run `victus library import-zip MyGame kenney nature-kit ~/Downloads/kenney_nature-kit.zip`.
+
 ### Basics
 
 In the editor: Play/Stop runs the scene in place on a copy (edits made during play are discarded), Ctrl+S saves, Ctrl+Z/Ctrl+Y undo/redo, F frames the selection, right-drag orbits, middle-drag pans, the wheel zooms. Drop `.gltf`/`.glb`/`.png`/`.jpg` files into the project's `assets/` folder and press Reimport; drag a model from the asset table into the viewport to instantiate it, or a `.luau` script onto an entity's Script component (double-click attaches it to the selection).

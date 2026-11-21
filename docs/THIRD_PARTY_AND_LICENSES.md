@@ -48,6 +48,20 @@ Mandatory for code, libraries, SDKs, tools, datasets, fonts, models, textures, a
 | ambientCG materials (PavingStones138, Bricks090, WoodFloor051, Metal049A, Rock030) | 1K-JPG downloads from `https://ambientcg.com/get?file=<id>_1K-JPG.zip`, resized to 512 x 512 and repacked (colour, OpenGL normal, ORM = AO/roughness/metalness) by `samples/reference_scenes/tools/fetch_cc0_materials.py` into `samples/reference_scenes/assets/textures` | CC0 1.0 Universal (https://docs.ambientcg.com/license/) | Photoreal reference scene textures (ADR-0140) | Sample content only; not linked into the engine or shipped in exported games |
 | Mesa lavapipe | CI/test environment only | MIT | Software Vulkan for headless GPU tests | Not shipped |
 
+## Asset Store providers (ADR-0174)
+
+VICTUS ships no provider content. Studio's Asset Store and `victus library` download an asset only when the user asks, into that user's project, and only when its licence allows commercial use, modification and redistribution inside a game. Each install keeps `provenance.json` and `LICENSE.txt` in its folder and is listed in the project's `CREDITS.md`, which `victus export` copies next to the game. Terms checked on 2026-11-21:
+
+| Provider | Access | Licence of installable content | Obligations VICTUS follows |
+|---|---|---|---|
+| Poly Haven | Public API `https://api.polyhaven.com` | CC0 1.0 (https://polyhaven.com/license) | API ToS (https://github.com/Poly-Haven/Public-API/blob/master/ToS.md): unique User-Agent `VICTUS-Studio/<version> (+https://github.com/FAHTHIZ/VICTUS)`, visible "Powered by Poly Haven" credit in the store, no implied endorsement; results cached in the user data dir |
+| ambientCG | Public API v2 `https://ambientcg.com/api/v2/full_json` | CC0 1.0 (https://docs.ambientcg.com/license/) | Credit shown in the store and CREDITS.md (not required) |
+| Kenney | Website listing only | CC0 1.0 (https://kenney.nl/support) | Downloads stay on kenney.nl (donation dialog, signed links); Studio opens the page and imports the ZIP the user downloaded |
+| Smithsonian Open Access 3D | 3D API `https://3d-api.si.edu` | CC0 1.0 Open Access (https://3d-api.si.edu/api-docs/, https://www.si.edu/openaccess/faq) | Trademarks, logos and privacy/publicity rights are not covered; the note is in LICENSE.txt. Humanorigins.si.edu's own (non-commercial) downloads are not used |
+| Sketchfab | Data API v3 (https://sketchfab.com/developers/data-api/v3) | Per model; only CC0 1.0 and CC BY 4.0 are listed and installed (BY-SA, BY-ND, BY-NC and Standard/Editorial licences excluded) | Downloads use the user's own API token (`Authorization: Token`, never stored in projects); CC BY entries are marked "attribution required" with author and model URL |
+| BigSoundBank | Website search, direct Ogg files | CC0 1.0 / WTFPL (https://bigsoundbank.com/droit.html) | User-initiated downloads only, one file per click |
+| U.S. National Park Service Sound Gallery | Website pages (https://www.nps.gov/subjects/sound/gallery.htm) | U.S. federal government work, public domain in the U.S. (https://www.nps.gov/aboutus/disclaimer.htm) | Each page's "Credit / Author" is checked; recordings credited to anyone other than the NPS are refused |
+
 ## Candidate list — not adopted
 Evaluated alternatives that are not dependencies today. Adopted components (Jolt, Box2D, meshoptimizer, cgltf for glTF, miniaudio and the rest) are listed only in the table above.
 
