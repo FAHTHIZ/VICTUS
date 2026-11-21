@@ -2571,3 +2571,17 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 - `victus_gpu_tests -tc="*contact*,*SSAO*"`: 2 cases pass. Ground behind a 0.3 m cube with shadow maps off: luminance 634 → 417 with contact shadows; open ground 626 → 626 and the sun side 629 → 629; length 0 removes the pass.
 - `VICTUS_REQUIRE_GPU=1 ctest -R "gpu|editor|reference|render_compare|perf"`: all pass (perf budgets run at Medium, where contact shadows stay off; an earlier build with them on at Medium pushed the 3D template to 17 render passes and 101 draw calls, over budget, which is why Medium matches SSAO). Full `ctest --preset release -j2`: 42/42.
 - 3D template at High, `victus run --frames 30 --screenshot` with length 0 vs 0.3: 1700 pixels darker by more than 8/255 (crate bases, character feet, props), 5 brighter (TAA jitter), no other change.
+
+## 2026-11-21 — Dithered LOD cross-fade (ADR-0184)
+
+Follows `24e361a`. LOD switches on tracked opaque draws now dissolve over `lod_fade_frames` (default 8) instead of popping: the new level and a copy of the old one draw complementary pixels of one screen-door dither, so the TAA history averages them into a smooth transition.
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- `tools/shaders/compile_shaders.py --check`: generated shaders match the sources.
+- `victus_gpu_tests -tc="*lod*"`: 10 cases pass, including the new "gpu lods: cross-fade dissolves a level change over lod_fade_frames without holes" (both levels drawn for 4 frames with `lod_fade_frames = 4`, no pre-pass draws while fading, no background holes, the next frame matches the snapped coarse level, untracked draws never fade). The hysteresis test now sets `lod_fade_frames = 0` because it counts one level's triangles per frame.
+- `VICTUS_REQUIRE_GPU=1 ctest --preset release -j2`: 41/42 passed first; `victus_perf_budgets` failed on `sample-arena` with 13 main batches (budget 12) because its measured last frame is mid-fade (the outgoing copies add draws: 22 visible). Budget moved to `main_batches` [5, 15] and `visible` [10, 26]; rerun of `victus_perf_budgets` passes.
+- Mid-fade screenshot of the test sphere (`test_output/lod_fade_mid.png`) checked by eye against the snapped coarse level: identical silhouette, no holes.
+
+Not covered: instanced foliage groups and blended draws still snap; no geomorphing; cost on real GPUs unmeasured.
+
+Next task: volumetric fog noise and self-shadowing (ENGINE_BENCHMARK gap 3).

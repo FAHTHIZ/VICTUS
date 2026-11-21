@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Dithered LOD cross-fade: level changes dissolve over `lod_fade_frames` (default 8) instead of popping (ADR-0184). ([evidence](docs/STATUS.md#2026-11-21--dithered-lod-cross-fade-adr-0184))
 - Screen-space sun contact shadows: `contact_shadow_length` on the Environment adds sharp small-scale sun shadows, on in the 3D templates (ADR-0183). ([evidence](docs/STATUS.md#2026-11-21--sun-contact-shadows-adr-0183))
 - docs/ENGINE_BENCHMARK.md compares VICTUS with IW 8.0, RAGE, id Tech 7, Unreal Engine 5, Frostbite and Decima and orders the remaining gaps. ([evidence](docs/STATUS.md#2026-11-21--sun-contact-shadows-adr-0183))
 - `victus character-check <model|orion|nova>` validates that a glTF/FBX can replace a starter character (core joints and order, sockets, controller clips, weights, scale, LODs, PBR maps), with `--json` for CI; Luau `character:attach(item, "Socket.Hand.R")` and `entity:find_descendant(name)` attach equipment to nested sockets (ADR-0181). ([evidence](docs/STATUS.md#2026-11-21--character-validation-socket-attachment-and-twist-drivers-adr-0181-adr-0182))

@@ -569,6 +569,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.shadow_resolution = std::clamp(s.shadow_resolution, 64u, 4096u);
     s.cascade_split_lambda = std::isfinite(s.cascade_split_lambda) ? std::clamp(s.cascade_split_lambda, 0.0f, 1.0f) : 0.8f;
     s.ssao_samples = std::clamp(s.ssao_samples, 4u, 32u);
+    s.lod_fade_frames = std::min(s.lod_fade_frames, 64u);
     s.contact_shadow_steps = std::clamp(s.contact_shadow_steps, 4u, 32u);
     s.bloom_levels = std::clamp(s.bloom_levels, 1u, 8u);
     s.sharpen = std::isfinite(s.sharpen) ? std::clamp(s.sharpen, 0.0f, 1.0f) : 0.0f;
@@ -2150,23 +2151,49 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const float lod_pixels_per_unit = static_cast<float>(rh) / (2.0f * std::tan(std::max(camera_.fov_y, 1e-3f) * 0.5f));
     // LOD hysteresis history only carries over between consecutive frames of the same output size.
     // Frames with LODs off or forced record nothing, so they do not pin the next frame's levels.
-    const bool lod_record = S.lod_hysteresis > 0.0f && S.lods && S.force_lod < 0;
+    const bool lod_record = (S.lod_hysteresis > 0.0f || S.lod_fade_frames > 0) && S.lods && S.force_lod < 0;
     const bool lod_history = lod_record && lod_history_valid_ && lod_history_w_ == width && lod_history_h_ == height;
     lod_next_.clear(lod_record ? draws_.size() : 0);
     const auto lod_key = [](const Draw& d) { return mix(d.motion_id, reinterpret_cast<std::uintptr_t>(d.mesh)); };
+    // Outgoing-level copies of cross-fading draws (ADR-0184); reserved so pointers stay valid.
+    lod_fade_out_.clear();
+    lod_fade_out_.reserve(S.lod_fade_frames > 0 ? draws_.size() : 0);
+    const auto foliage_biased = [&](const Draw& d, std::uint8_t lod) {
+        if (S.foliage_lod_bias > 0 && d.material.alpha_cutoff > 0.0f && S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
+            return static_cast<std::uint8_t>(std::min<std::uint32_t>(lod + S.foliage_lod_bias, d.mesh->lod_count - 1u));
+        return lod;
+    };
     for (Draw& d : draws_) {
         const Aabb world = d.has_bounds() ? d.world_bounds : d.mesh->bounds.transformed(d.model);
         const bool blended = d.material.blend != MaterialBlend::Opaque;
-        int previous = -1;
-        if (lod_history && d.motion_id != 0)
-            previous = lod_prev_.find(lod_key(d));
+        LodHistory::Entry previous;
+        if (lod_history && d.motion_id != 0) previous = lod_prev_.entry(lod_key(d));
         std::uint8_t stateless = 0;
-        d.lod = select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S, previous, &stateless);
-        if (previous >= 0 && d.lod != stateless) ++stats_.lod_held;
-        if (lod_record && d.motion_id != 0) lod_next_.insert(lod_key(d), d.lod);
+        d.lod = select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S, previous.lod, &stateless);
+        if (previous.lod >= 0 && d.lod != stateless) ++stats_.lod_held;
+        // Cross-fade: a level change starts a fade from the previous level; a fade in progress
+        // advances one step per frame and ends after lod_fade_frames.
+        std::uint8_t fade_from = 0, fade_step = 0;
+        d.lod_fade = 0.0f;
+        if (S.lod_fade_frames > 0 && previous.lod >= 0 && !blended && d.group < 0 && !d.material.shadow_only) {
+            if (d.lod != previous.lod) {
+                fade_from = static_cast<std::uint8_t>(previous.lod);
+                fade_step = 1;
+            } else if (previous.step > 0 && previous.step < S.lod_fade_frames) {
+                fade_from = previous.from;
+                fade_step = static_cast<std::uint8_t>(previous.step + 1);
+            }
+            if (fade_step > 0 && fade_from == d.lod) fade_step = 0;
+        }
+        if (lod_record && d.motion_id != 0) lod_next_.insert(lod_key(d), d.lod, fade_from, fade_step);
         // The history keeps the unbiased pick, so the hysteresis bands stay those of the budget.
-        if (S.foliage_lod_bias > 0 && d.material.alpha_cutoff > 0.0f && S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
-            d.lod = static_cast<std::uint8_t>(std::min<std::uint32_t>(d.lod + S.foliage_lod_bias, d.mesh->lod_count - 1u));
+        d.lod = foliage_biased(d, d.lod);
+        std::uint8_t fade_lod = d.lod;
+        if (fade_step > 0) {
+            fade_lod = foliage_biased(d, fade_from);
+            if (fade_lod != d.lod)
+                d.lod_fade = static_cast<float>(fade_step) / static_cast<float>(S.lod_fade_frames + 1u);
+        }
         d.shadow_lod = d.lod;
         if (S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
             d.shadow_lod = static_cast<std::uint8_t>(std::min<std::uint32_t>(d.lod + S.shadow_lod_bias, d.mesh->lod_count - 1u));
@@ -2251,6 +2278,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         else if (d.material.alpha_cutoff > 0.0f) ++stats_.alpha_tested_draws;
         if (d.material.surface_shader) ++stats_.surface_shader_draws;
         (blended ? transparent : visible).push_back(&d);
+        if (d.lod_fade > 0.0f) {
+            // The outgoing level fills exactly the pixels the incoming one leaves out. It casts no
+            // shadow (the shadow passes switch at once) and is not drawn in the depth pre-pass.
+            Draw& out = lod_fade_out_.emplace_back(d);
+            out.lod = fade_lod;
+            out.lod_fade = -d.lod_fade;
+            ++stats_.lod_fading;
+            stats_.triangles += d.mesh->lods[out.lod].index_count / 3;
+            visible.push_back(&out);
+        }
     }
     std::swap(lod_prev_, lod_next_);
     lod_history_w_ = width;
@@ -2276,6 +2313,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             return a->material.base_color_texture.index < b->material.base_color_texture.index;
         if (a->batch_key != b->batch_key) return a->batch_key < b->batch_key;
         if (a->lod != b->lod) return a->lod < b->lod;
+        if (a->lod_fade != b->lod_fade) return a->lod_fade < b->lod_fade;
         if (a->probe != b->probe) return a->probe < b->probe;
         // Clusters of one group in buffer order, so neighbours merge into one draw.
         if (a->group >= 0 && a->group == b->group) return a->cluster_first < b->cluster_first;
@@ -2407,7 +2445,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (S.instancing && !out.empty()) {
                 const Draw* f = out.back().first;
                 if (f->mesh == d->mesh && out.back().lod == lod && f->skinned == d->skinned &&
-                    (!match_material || (same_material(f->material, d->material) && f->probe == d->probe)) &&
+                    (!match_material || (same_material(f->material, d->material) && f->probe == d->probe && f->lod_fade == d->lod_fade)) &&
                     (match_material || (same_alpha_test(f->material, d->material) && same_vertex_stage(f->material, d->material)))) {
                     ++out.back().instance_count;
                     continue;
@@ -3630,7 +3668,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     // With MSAA the main pass depth is multisampled and not sampled later, so surface-shaded
                     // draws without an alpha test (terrain) are written here; alpha-tested ones are left out.
                     // Vertex functions move vertices: their depth always comes from the main pass.
-                    if (d->material.alpha_cutoff > 0.0f || d->material.vertex_stage || (d->material.surface_shader && msaa <= 1)) continue;
+                    // Cross-fading draws (ADR-0184) dither in the main pass, so they are left out too.
+                    if (d->material.alpha_cutoff > 0.0f || d->material.vertex_stage || (d->material.surface_shader && msaa <= 1) ||
+                        d->lod_fade != 0.0f)
+                        continue;
                     const rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_prepass_double_ : skin_prepass_cull_)
                                                                 : (d->material.double_sided ? prepass_double_ : prepass_cull_);
                     if (!(bound == want)) {
@@ -3827,7 +3868,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 mat.uv_transform = {m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y};
                 for (std::size_t i = 0; i < 4; ++i) mat.custom[i] = m.shader_params[i];
                 // blend.z: alpha to coverage (ADR-0152) - the cut-out becomes a coverage ramp.
-                mat.blend = {static_cast<float>(m.blend), std::clamp(m.occlusion_strength, 0.0f, 1.0f), a2c_of(m) ? 1.0f : 0.0f, 0};
+                mat.blend = {static_cast<float>(m.blend), std::clamp(m.occlusion_strength, 0.0f, 1.0f), a2c_of(m) ? 1.0f : 0.0f,
+                             d->lod_fade};
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
                 if (m.vertex_stage) push_vertex_material(ctx.cmd, m, false);
                 auto pick = [](rhi::TextureHandle t, rhi::TextureHandle fallback) { return t ? t : fallback; };

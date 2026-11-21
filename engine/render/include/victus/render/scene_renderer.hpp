@@ -574,6 +574,11 @@ struct RenderSettings {
     // History is per renderer and per output size; reset_history() and a different output size
     // (another view) fall back to the stateless rule. 0 disables (0..0.9).
     float lod_hysteresis{0.25f};
+    // LOD cross-fade (ADR-0184): when a tracked draw (motion id) changes level, the old and new
+    // levels are drawn together for this many frames with complementary screen-door dithering, so
+    // the switch dissolves instead of popping (Unity's LOD Cross Fade, Unreal's dithered LOD
+    // transition). Opaque per-frame draws only; shadows switch at once. 0 disables (0..64).
+    std::uint32_t lod_fade_frames{8};
     // Shadow casters (directional cascades and local shadow tiles) draw this many levels coarser
     // than the level picked for the main camera (0..3, clamped per mesh). The main-camera pick
     // plus this bias is the finest level any shadow pass draws, so shadows and the lit surface
@@ -740,6 +745,7 @@ struct SceneStats {
     std::uint32_t gpu_particle_trail_emitters{0}, gpu_particle_trail_vertices{0}, gpu_particle_trails_reduced{0};
     std::uint32_t lod_draws{0};        // visible draws using a coarser level than LOD 0
     std::uint32_t lod_held{0};         // draws kept finer than the stateless pick by lod_hysteresis
+    std::uint32_t lod_fading{0};       // draws cross-fading between two levels (each drawn twice)
     std::uint64_t triangles{0};        // triangles in the main and transparent passes (all instances)
     std::uint64_t shadow_triangles{0}; // triangles drawn into directional cascades and local shadow tiles
     // GPU occlusion culling this frame: instances tested on the GPU / main batches drawn
@@ -957,6 +963,7 @@ private:
         std::uint32_t palette{0}; // first joint matrix in palette_ (skinned only)
         bool skinned{false};
         std::uint8_t lod{0};      // level of detail picked for this frame
+        float lod_fade{0.0f};     // cross-fade (ADR-0184): > 0 keeps dither < f, < 0 keeps dither >= -f, 0 solid
         std::uint8_t shadow_lod{0}; // level used by the shadow passes (lod + shadow_lod_bias)
         std::array<std::uint8_t, 4> cascade_lod{}; // level per directional cascade (>= shadow_lod)
         math::Aabb world_bounds;  // skinned only (static draws use mesh bounds * model)
@@ -1144,7 +1151,13 @@ private:
     struct LodHistory {
         std::vector<std::uint64_t> keys; // 0: empty slot (real keys are remapped away from 0)
         std::vector<std::uint8_t> lods;
+        // Cross-fade state (ADR-0184): level faded from and frames into the fade (0 = not fading).
+        std::vector<std::uint8_t> from, step;
         std::size_t count{0};
+        struct Entry {
+            int lod{-1};
+            std::uint8_t from{0}, step{0};
+        };
         static std::uint64_t slot_key(std::uint64_t k) noexcept { return k ? k : 0x9e3779b97f4a7c15ull; }
         void clear(std::size_t expected) {
             std::size_t cap = 16;
@@ -1152,13 +1165,15 @@ private:
             if (keys.size() != cap) {
                 keys.assign(cap, 0);
                 lods.assign(cap, 0);
+                from.assign(cap, 0);
+                step.assign(cap, 0);
             } else if (count > 0) {
                 std::fill(keys.begin(), keys.end(), 0);
             }
             count = 0;
         }
         // First insert of a key wins (as std::unordered_map::emplace).
-        void insert(std::uint64_t k, std::uint8_t lod) noexcept {
+        void insert(std::uint64_t k, std::uint8_t lod, std::uint8_t fade_from = 0, std::uint8_t fade_step = 0) noexcept {
             if (keys.empty() || (count + 1) * 2 > keys.size()) return; // sized by clear()
             k = slot_key(k);
             const std::size_t mask = keys.size() - 1;
@@ -1167,22 +1182,26 @@ private:
                 if (keys[i] == 0) {
                     keys[i] = k;
                     lods[i] = lod;
+                    from[i] = fade_from;
+                    step[i] = fade_step;
                     ++count;
                     return;
                 }
             }
         }
-        [[nodiscard]] int find(std::uint64_t k) const noexcept {
-            if (count == 0) return -1;
+        [[nodiscard]] Entry entry(std::uint64_t k) const noexcept {
+            if (count == 0) return {};
             k = slot_key(k);
             const std::size_t mask = keys.size() - 1;
             for (std::size_t i = static_cast<std::size_t>(k * 0x9e3779b97f4a7c15ull >> 17) & mask;; i = (i + 1) & mask) {
-                if (keys[i] == k) return lods[i];
-                if (keys[i] == 0) return -1;
+                if (keys[i] == k) return {lods[i], from[i], step[i]};
+                if (keys[i] == 0) return {};
             }
         }
+        [[nodiscard]] int find(std::uint64_t k) const noexcept { return entry(k).lod; }
     };
     LodHistory lod_prev_, lod_next_;
+    std::vector<Draw> lod_fade_out_; // this frame's outgoing-level copies of cross-fading draws
     std::uint32_t lod_history_w_{0}, lod_history_h_{0};
     bool lod_history_valid_{false};
     std::vector<math::Mat4> motion_joints_, motion_joints_next_;
