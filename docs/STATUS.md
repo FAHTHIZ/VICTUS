@@ -2730,3 +2730,7 @@ Verified (Release, gcc, 2 vCPU, lavapipe):
 Not covered: Windows DLL locking during Reload (only Linux was run), plugin panels or inspectors, selection access for commands; the panel was exercised by automated frames, not by a person.
 
 Next task: the visual UI editor canvas.
+
+## 2026-11-22 — CI: main runs are no longer cancelled by the next push
+
+Every main CI run since 44942634058 ended "cancelled" because each push cancelled the run in progress, so no recent main commit completed CI. `cancel-in-progress` is now false for `refs/heads/main` (GitHub keeps the running run plus only the newest pending one) and stays true for other refs. Verified: the workflow parses (`yaml.safe_load`); the effect is checked on the next pushes with `gh run list`.

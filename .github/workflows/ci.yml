@@ -8,11 +8,12 @@ on:
     - cron: '17 3 * * 1' # weekly: new advisories against unchanged pins
 permissions:
   contents: read
-# A newer push to the same ref supersedes an in-flight run (main previously queued 1 h runs behind
-# each other and macOS jobs were cancelled by the runner limit instead).
+# One run per ref at a time. On main the running run always finishes (cancelling it meant no main
+# commit ever completed CI); GitHub keeps only the newest pending run, so pushes cannot queue
+# up behind each other. Superseded branch and PR runs are still cancelled.
 concurrency:
   group: ci-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 env:
   # Compiler cache (Linux/macOS lanes; Windows uses the Visual Studio generator, which ccache
   # does not wrap). Keys include the commit, restore-keys fall back to the newest cache of the
