@@ -27,5 +27,6 @@ victus_add_module(runtime
         src/hot_reload.cpp
         src/surface_shader.cpp
         src/world_streaming.cpp
+        src/physics_ground_probe.cpp
         ${_fonts_cpp}
-    DEPS VICTUS::Assets VICTUS::Scene VICTUS::Gameplay VICTUS::Animation VICTUS::Particles VICTUS::Gameui VICTUS::Ui VICTUS::Shadercompiler VICTUS::Tilemap VICTUS::Terrain VICTUS::Graph VICTUS::World)
+    DEPS VICTUS::Assets VICTUS::Scene VICTUS::Gameplay VICTUS::Animation VICTUS::Physics VICTUS::Particles VICTUS::Gameui VICTUS::Ui VICTUS::Shadercompiler VICTUS::Tilemap VICTUS::Terrain VICTUS::Graph VICTUS::World)

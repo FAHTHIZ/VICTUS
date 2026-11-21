@@ -106,7 +106,7 @@ Status: **open** · **partly** (some of it exists) · **blocked** (needs hardwar
 | ID | Gap | Leaders | VICTUS today | Sev. | Status | Fix direction |
 |---|---|---|---|---|---|---|
 | GAP-24 | **No vehicle physics** | Godot vehicles; Chaos vehicles | Missing (Special Ops Mule is kinematic) | **S1 for the city** | open | Jolt `VehicleConstraint` wheeled vehicles behind the physics interface |
-| GAP-25 | **Animation tooling** (no Control Rig, bone-map editor, foot IK, root motion axes, GPU morphs) | Control Rig, IK Retargeter, MetaHuman Animator | Runtime layers/masks/IK exist; tools missing (ADR-0159-0161 just added weighted masks and joint limits) | S2 | partly | Foot/contact IK and GPU morphs first; editor tools after |
+| GAP-25 | **Animation tooling** (no Control Rig, bone-map editor, foot IK, root motion axes, GPU morphs) | Control Rig, IK Retargeter, MetaHuman Animator | Runtime layers/masks/IK exist; foot placement and foot locking done (ADR-0163); tools missing (ADR-0159-0161 added weighted masks and joint limits) | S2 | partly | GPU morphs and sync markers next; editor tools after |
 | GAP-26 | **No soft bodies / cloth** | Chaos cloth; Godot soft bodies | Missing | S3 | open | Jolt soft bodies for flags/awnings (cheap city detail) |
 | GAP-27 | **Audio: no HRTF, ducking, per-source effects; never heard on a phone** | MetaSounds; Godot buses/effects | Buses, spatialisation, occlusion, reverb zones | S2 | partly | City ambience needs many quiet emitters: virtual-voice budget exists; add ducking and per-zone ambience beds (ties to VICTUS Library and contextual audio) |
 

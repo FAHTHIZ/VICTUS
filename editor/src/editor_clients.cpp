@@ -15,6 +15,7 @@
 #include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
 #include "victus/script/script.hpp"
+#include "victus/runtime/physics_ground_probe.hpp"
 
 #include <format>
 
@@ -94,7 +95,8 @@ void Editor::start_editor_clients() {
             animation::AnimationSettings{.provider = db_ ? assets::animation_provider(*db_) : animation::SetProvider{},
                                          .controllers = db_ ? animation::directory_loader(db_->assets_dir()) : animation::ControllerLoader{},
                                          .sheets = db_ ? assets::sprite_sheet_provider(*db_) : animation::SheetProvider{},
-                                         .jobs = &workers()});
+                                         .jobs = &workers(),
+                                         .ground = c->physics ? runtime::physics_ground_probe(*c->physics) : animation::GroundProbe{}});
         animation::add_animation_systems(c->sim, *c->animation);
         if (!tilemaps_) tilemaps_ = std::make_unique<tilemap::TilemapSystem>();
         tilemap::add_tilemap_systems(c->sim, *tilemaps_);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/animation/ik.hpp"
+#include "ik_internal.hpp"
 
 #include "victus/scene/reflect.hpp"
 #include "victus/scene/scene.hpp"
@@ -170,12 +171,7 @@ Quat aim_rotation(Vec3 pivot, Vec3 aim, Vec3 target, float max_angle) noexcept {
 
 namespace {
 
-// Runtime (not serialized): the joint list and the pose IK last read and wrote, so procedural
-// chains that nothing re-animates solve from their own pose instead of IK's previous output.
-struct IkRuntime {
-    std::vector<Entity> joints;
-    std::vector<Quat> input, output;
-};
+using detail::IkRuntime;
 
 struct Joint {
     Entity e;
@@ -375,5 +371,23 @@ void ik_lines(Scene& scene, const std::function<void(Vec3, Vec3)>& emit) {
         emit(t - Vec3{0, 0, s}, t + Vec3{0, 0, s});
     });
 }
+
+namespace detail {
+void restore_ik_input(Scene& scene, Entity end) {
+    auto* rt = scene.world().get<IkRuntime>(end);
+    if (!rt || rt->input.size() != rt->joints.size() || rt->output.size() != rt->joints.size()) return;
+    for (std::size_t i = 0; i < rt->joints.size(); ++i)
+        if (auto* t = scene.world().alive(rt->joints[i]) ? scene.world().get<scene::Transform>(rt->joints[i]) : nullptr;
+            t && t->rotation == rt->output[i])
+            t->rotation = rt->input[i];
+}
+
+void set_ik_output_rotation(Scene& scene, Entity end, Entity joint, Quat local) {
+    auto* rt = scene.world().get<IkRuntime>(end);
+    if (!rt || rt->output.size() != rt->joints.size()) return;
+    for (std::size_t i = 0; i < rt->joints.size(); ++i)
+        if (rt->joints[i] == joint) rt->output[i] = local;
+}
+} // namespace detail
 
 } // namespace victus::animation

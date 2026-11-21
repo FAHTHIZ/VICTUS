@@ -8,6 +8,7 @@
 // Transforms of the bound entities; GPU skinning (runtime) then reads their world transforms.
 #pragma once
 #include "victus/animation/controller.hpp"
+#include "victus/animation/foot_placement.hpp"
 #include "victus/animation/ik.hpp"
 #include "victus/animation/sprite.hpp"
 #include "victus/core/math.hpp"
@@ -189,6 +190,7 @@ struct AnimationStats {
     std::uint32_t animators{0}, channels_sampled{0}, nodes_written{0}, missing_models{0};
     std::uint32_t controlled{0}, transitions{0}, controller_errors{0};
     IkStats ik; // inverse kinematics applied after the animated pose (ik.hpp)
+    FootPlacementStats feet; // foot placement before IK (foot_placement.hpp; needs a ground probe)
 };
 
 // Reads a .vanim asset's text by its path (relative to the assets folder).
@@ -239,6 +241,7 @@ struct AnimationSettings {
     SheetProvider sheets; // sprite sheets for SpriteAnimator (assets::sprite_sheet_provider)
     jobs::JobSystem* jobs{nullptr}; // evaluates animators in parallel when set
     std::uint32_t parallel_threshold{32};
+    GroundProbe ground; // FootPlacement raycasts (runtime::physics_ground_probe); none = feet keep the animated pose
 };
 
 class AnimationSystem {
@@ -253,6 +256,8 @@ public:
     // Forgets cached sets (e.g. after re-import) so the provider is asked again.
     void invalidate(const Uuid& model);
     void clear_cache();
+    // Replaces the ground probe used by FootPlacement (e.g. once the physics world exists).
+    void set_ground_probe(GroundProbe probe);
 
     // Advances and applies every Animator by dt seconds.
     void update(scene::Scene& scene, float dt);

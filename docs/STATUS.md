@@ -2312,3 +2312,11 @@ Verified (Release, GCC, lavapipe, 2 vCPU):
 Not covered: no real GPU or phone; foliage, terrain scatter and world scenes still use the per-frame path; no compute culling inside clusters; no editing of individual copies.
 
 Next task: move foliage scatter onto instance groups (GAP-08 slice 2), then the simulation scheduler (GAP-09).
+
+### 2026-11-21 — Foot placement and foot locking (ADR-0163)
+
+Built: `FootPlacement`/`FootContact` components (engine/animation/foot_placement), evaluated by the animation system between sampling and IK: ground probes under each foot, pelvis drop for the lower foot, smoothing, tilt to the ground normal, foot locking with release distance. `runtime::physics_ground_probe` connects them to the physics world in the player, CLI and Studio play mode. Studio: Inspector "Feet on the ground" card (add, locking toggle, remove; undoable), command search entry, View > IK and Foot Placement overlay.
+
+Verified: `victus_animation_tests` (7 foot placement cases, Release), `victus_editor_tests` "studio feet" (GPU, offscreen), full ctest and clang-tidy on the changed files. Not verified: visual inspection on an animated walk over stairs (the template Robot has no walk clip on stairs); Windows/macOS builds rely on CI.
+
+Next task: GAP-24 wheeled vehicles behind the physics interface, or sync markers for the animation row.

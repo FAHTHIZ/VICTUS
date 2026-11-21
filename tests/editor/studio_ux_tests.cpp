@@ -2,6 +2,7 @@
 // VICTUS Studio UX: design tokens (WCAG contrast), typography, and the workspace chrome (toolbar,
 // status bar, console counts) driven headlessly on the GPU.
 #include "../render/gpu_fixture.hpp"
+#include "victus/animation/animation.hpp"
 #include "victus/core/log.hpp"
 #include "victus/editor/editor.hpp"
 #include "victus/gameplay/framework.hpp"
@@ -1169,6 +1170,59 @@ TEST_CASE("studio ragdolls: Make Ragdoll on Orion, behaviour buttons, undo, and 
     CHECK(play.world_matrix(head).transform_point({}).y > y1 + 0.5f);
     h.ed->stop();
     CHECK_FALSE(h.ed->ragdoll_get_up(lab_v01)); // edit mode: nothing to stand up
+}
+
+TEST_CASE("studio feet: Add Foot Placement on Orion, undo, foot locking, and the IK overlay in play") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Feet", "Feet", "3d").ok());
+    h.frames(2);
+    scene::Scene& s = h.ed->edit_scene();
+    const scene::Entity robot = s.find_by_name("Robot");
+    REQUIRE_FALSE(robot.is_null());
+    h.ed->select(robot);
+    h.frames(2); // the "Feet on the ground" card offers Add Foot Placement
+
+    const std::size_t undo_before = h.ed->undo_stack().size();
+    CHECK(h.ed->add_foot_placement(robot) == 2); // Foot.L and Foot.R; the toes ride along
+    CHECK(h.ed->undo_stack().size() == undo_before + 1);
+    CHECK(h.ed->foot_contact_count(robot) == 2);
+    const auto* fp = s.world().get<animation::FootPlacementComponent>(robot);
+    REQUIRE(fp);
+    const scene::Entity hips = s.find(fp->pelvis);
+    REQUIRE_FALSE(hips.is_null());
+    CHECK(s.world().get<scene::Name>(hips)->value == "Hips");
+    for (const char* foot : {"Foot.L", "Foot.R"}) {
+        const scene::Entity f = s.find_by_name(foot);
+        REQUIRE_FALSE(f.is_null());
+        CHECK_MESSAGE(s.world().get<animation::FootContactComponent>(f) != nullptr, foot);
+        CHECK_MESSAGE(s.world().get<animation::IkConstraintComponent>(f) != nullptr, foot);
+    }
+    h.frames(2); // the card shows the feet and the locking toggle
+    CHECK(h.ed->set_foot_locking(robot, false));
+    CHECK_FALSE(s.world().get<animation::FootPlacementComponent>(robot)->lock_feet);
+    h.ed->undo();
+    CHECK(s.world().get<animation::FootPlacementComponent>(robot)->lock_feet);
+    h.ed->undo();
+    CHECK(s.world().get<animation::FootPlacementComponent>(robot) == nullptr);
+    CHECK(h.ed->foot_contact_count(robot) == 0);
+    CHECK(s.world().get<animation::IkConstraintComponent>(s.find_by_name("Foot.L")) == nullptr);
+    h.ed->redo();
+    CHECK(h.ed->foot_contact_count(robot) == 2);
+
+    // The overlay: IK chains in edit mode; in play the foot probes and ground points are added.
+    h.ed->set_show_ik(true);
+    const std::size_t edit_lines = h.ed->ik_overlay_lines().size();
+    CHECK(edit_lines >= 2 * (2 + 3)); // two chains of two bones plus target crosses
+    h.ed->play();
+    h.frames(10);
+    CHECK(h.ed->ik_overlay_lines().size() > edit_lines);
+    h.ed->stop();
+    h.ed->set_show_ik(false);
+    CHECK(h.ed->remove_foot_placement(robot) == 5);
+    h.ed->undo();
+    CHECK(h.ed->foot_contact_count(robot) == 2);
 }
 
 TEST_CASE("studio safe mode: unfinished openings switch it on, it skips project content and restarts normally") {

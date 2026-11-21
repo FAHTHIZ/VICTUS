@@ -137,6 +137,8 @@ std::vector<EditorCommand> Editor::commands() {
     add("Entity: Add Ragdoll Lab", {}, has_db && editing, [this] { (void)add_ragdoll_lab(); });
     add("Entity: Make Ragdoll", {}, !selection_.empty() && can_make_ragdoll(selected()),
         [this] { (void)make_ragdoll(selected()); });
+    add("Entity: Add Foot Placement", {}, !selection_.empty() && can_make_ragdoll(selected()),
+        [this] { (void)add_foot_placement(selected()); });
 
     // Help
     add("Help: Getting Started", {}, project_.has_value(), [this] { show_panel(Panel::GettingStarted); });
@@ -188,6 +190,7 @@ std::vector<EditorCommand> Editor::commands() {
     // View
     toggle("Physics Colliders", &show_colliders_);
     toggle("Navigation Mesh", &show_navmesh_);
+    toggle("IK and Foot Placement", &show_ik_);
     add("View: Toggle Profiler", {}, true, [this] { set_show_profiler(!show_profiler_); });
     // Window
     for (int i = 0; i < static_cast<int>(Panel::Count); ++i) {

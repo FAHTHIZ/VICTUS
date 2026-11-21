@@ -3,6 +3,7 @@
 #include "victus/player/player.hpp"
 #include "victus/plugin/plugin.hpp"
 #include "victus/runtime/hot_reload.hpp"
+#include "victus/runtime/physics_ground_probe.hpp"
 
 #include "victus/assets/database.hpp"
 #include "victus/core/hash.hpp"
@@ -297,7 +298,8 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     animation::AnimationSystem animations(
         {.provider = assets::animation_provider(**db),
          .controllers = animation::directory_loader((*db)->assets_dir()),
-         .sheets = assets::sprite_sheet_provider(**db), .jobs = &workers});
+         .sheets = assets::sprite_sheet_provider(**db), .jobs = &workers,
+         .ground = runtime::physics_ground_probe(**physics_world)});
     animation::add_animation_systems(sim, animations);
     tilemap::TilemapSystem tilemaps(assets::tileset_provider(**db));
     tilemap::add_tilemap_systems(sim, tilemaps);

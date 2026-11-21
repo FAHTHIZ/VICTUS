@@ -11,6 +11,7 @@
 #include "victus/core/hash.hpp"
 #include "victus/core/profiler.hpp"
 #include "victus/platform/platform.hpp"
+#include "victus/runtime/physics_ground_probe.hpp"
 
 #include <algorithm>
 #include <iterator>
@@ -1217,7 +1218,8 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
         animation::AnimationSettings{.provider = db_ ? assets::animation_provider(*db_) : animation::SetProvider{},
                                      .controllers = db_ ? animation::directory_loader(db_->assets_dir()) : animation::ControllerLoader{},
                                      .sheets = db_ ? assets::sprite_sheet_provider(*db_) : animation::SheetProvider{},
-                                     .jobs = &workers()});
+                                     .jobs = &workers(),
+                                     .ground = play_physics_ ? runtime::physics_ground_probe(*play_physics_) : animation::GroundProbe{}});
     animation::add_animation_systems(sim_, *play_animation_);
     if (!tilemaps_) tilemaps_ = std::make_unique<tilemap::TilemapSystem>();
     tilemap::add_tilemap_systems(sim_, *tilemaps_);
@@ -1420,11 +1422,22 @@ void Editor::draw_overlays_3d(render::SceneRenderer& r) {
         nav->debug_lines(nav_scratch_);
         for (const auto& l : nav_scratch_) r.line(l.a, l.b, l.color);
     }
+    if (show_ik_)
+        for (const auto& [a, b] : ik_overlay_lines()) r.line(a, b, {0.3f, 0.9f, 1.0f, 1});
     if (show_ai_ && play_ai_ && play_state_ != PlayState::Editing) {
         ai_scratch_.clear();
         play_ai_->debug_lines(s, ai_scratch_);
         for (const auto& l : ai_scratch_) r.line(l.a, l.b, l.color);
     }
+}
+
+std::vector<std::pair<math::Vec3, math::Vec3>> Editor::ik_overlay_lines() {
+    std::vector<std::pair<math::Vec3, math::Vec3>> out;
+    Scene& s = active_scene();
+    const auto emit = [&](math::Vec3 a, math::Vec3 b) { out.emplace_back(a, b); };
+    animation::ik_lines(s, emit);
+    if (play_state_ != PlayState::Editing) animation::foot_placement_lines(s, emit);
+    return out;
 }
 
 void Editor::draw_overlays_2d(render::SpriteBatch& b) {
