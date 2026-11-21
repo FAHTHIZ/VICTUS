@@ -695,7 +695,10 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
         m.nearest_filter = src->filter == assets::TextureFilter::Nearest || texture_nearest(src->base_color_texture);
         m.shader_params = src->shader_params;
         if (!src->shader.is_nil()) {
-            if (auto sh = surface_shader(src->shader); sh) m.surface_shader = *sh;
+            if (auto sh = surface_shader(src->shader); sh) {
+                m.surface_shader = *sh;
+                m.vertex_stage = surface_vertex_stage(src->shader);
+            }
             // else: already logged by surface_shader(); the material renders with built-in PBR
         }
         m.vertex_alpha_coverage_mask = src->vertex_alpha_coverage_mask;
@@ -742,7 +745,15 @@ Result<rhi::ShaderHandle> GpuAssetCache::surface_shader(const Uuid& uuid) {
         const std::string path = rec->path; // records may move on refresh
         auto code = load_surface_shader_code(*db_, uuid);
         if (!code) return std::move(code).error();
-        return create_surface_fragment(ctx_->device(), *code, path);
+        auto fragment = create_surface_fragment(ctx_->device(), *code, path);
+        if (!fragment || !surface_shader_has_vertex(*code)) return fragment;
+        auto stage = create_surface_vertex_stage(ctx_->device(), *code, path);
+        if (!stage) {
+            ctx_->device().destroy(*fragment);
+            return std::move(stage).error();
+        }
+        vertex_stages_[uuid] = std::make_unique<render::SurfaceVertexStage>(*stage);
+        return fragment;
     };
     auto result = build();
     if (!result) VICTUS_LOG_ERROR("assets", "{}", result.error().message);
@@ -757,11 +768,21 @@ Result<rhi::ShaderHandle> GpuAssetCache::terrain_shader() {
     return *terrain_shader_;
 }
 
+const render::SurfaceVertexStage* GpuAssetCache::surface_vertex_stage(const Uuid& uuid) {
+    if (!shaders_.contains(uuid)) (void)surface_shader(uuid);
+    const auto it = vertex_stages_.find(uuid);
+    return it == vertex_stages_.end() ? nullptr : it->second.get();
+}
+
 void GpuAssetCache::evict_shaders() {
     materials_.clear(); // they hold the shader handles
     for (auto& [id, sh] : shaders_)
         if (sh) ctx_->device().destroy(*sh);
     shaders_.clear();
+    for (auto& [id, stage] : vertex_stages_)
+        for (auto sh : stage->shaders)
+            if (sh) ctx_->device().destroy(sh);
+    vertex_stages_.clear();
 }
 
 Result<const GpuModel*> GpuAssetCache::model(const Uuid& uuid) {

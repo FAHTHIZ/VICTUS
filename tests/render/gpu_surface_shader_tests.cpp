@@ -174,3 +174,115 @@ TEST_CASE("gpu: surface shaders recolour meshes, read params and time, fall back
     CHECK(is_blue(centre(s, cache)));
     cache.clear();
 }
+
+namespace {
+// Mean of the red channel over the image (RGBA8).
+double mean_red(const std::vector<std::uint8_t>& px) {
+    double sum = 0;
+    for (std::size_t i = 0; i < px.size(); i += 4) sum += px[i];
+    return sum / static_cast<double>(px.size() / 4);
+}
+} // namespace
+
+TEST_CASE("gpu: surface shader vertex functions move geometry in the main and shadow passes") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& dev = gpu().ctx->device();
+    // Code checks first: function detection ignores comments and prototypes.
+    CHECK(render::surface_code_has_function("void vertex(VertexInput i, inout Vertex v) { }", "vertex"));
+    CHECK_FALSE(render::surface_code_has_function("// void vertex(VertexInput i, inout Vertex v) { }", "vertex"));
+    CHECK_FALSE(render::surface_code_has_function("void vertex(VertexInput i, inout Vertex v);", "vertex"));
+    CHECK_FALSE(render::surface_code_has_function("void vertexy(VertexInput i) {}", "vertex"));
+    const std::string both = "void surface(SurfaceInput i, inout Surface s) {\n s.base_color = vec3(1);\n}\nvoid vertex(VertexInput i, inout Vertex v) {\n}\n";
+    const std::string no_vertex = render::surface_code_without_function(both, "vertex");
+    CHECK(std::count(no_vertex.begin(), no_vertex.end(), '\n') == std::count(both.begin(), both.end(), '\n'));
+    CHECK(no_vertex.find("vertex") == std::string::npos);
+    CHECK(no_vertex.find("surface") != std::string::npos);
+    // Vertex-only shaders compile (built-in surface), errors carry the user's line, resources are refused.
+    CHECK(runtime::compile_surface_shader("void vertex(VertexInput i, inout Vertex v) {\n    v.world_position.y += 1.0;\n}\n", "ok", false).ok());
+    auto bad = runtime::compile_surface_shader("void vertex(VertexInput i, inout Vertex v) {\n\n    v.world_position = nope;\n}\n", "wave.vshader", false);
+    REQUIRE_FALSE(bad.ok());
+    CHECK(bad.error().message.find("wave.vshader:3") != std::string::npos);
+    auto res = runtime::compile_surface_shader("layout(set = 0, binding = 0) uniform sampler2D extra;\n"
+                                               "void vertex(VertexInput i, inout Vertex v) { v.world_position.y += texture(extra, i.uv).r; }\n",
+                                               "res", false);
+    REQUIRE_FALSE(res.ok());
+
+    ShaderScene s;
+    // Main pass: a 20 m plane shifted 10 m along +x by params[0].x leaves half the view empty.
+    s.write_shader("void surface(SurfaceInput i, inout Surface s) {\n    s.base_color = i.params[0].yzw;\n}\n"
+                   "void vertex(VertexInput i, inout Vertex v) {\n    v.world_position.x += i.params[0].x;\n}\n");
+    assets::MaterialAsset m;
+    m.unlit = true;
+    m.shader = s.shader;
+    m.shader_params[0] = {0, 0, 0, 1};
+    REQUIRE(assets::save_material_file(s.project / "assets" / "glow.vmat", m).ok());
+    (void)s.db->refresh();
+    constexpr std::uint32_t W = 96, H = 64;
+    auto frame = [&](runtime::GpuAssetCache& cache) {
+        auto sr = render::SceneRenderer::create(*gpu().ctx);
+        REQUIRE(sr.ok());
+        (*sr)->set_time(0.0);
+        auto target = test::make_target(W, H);
+        (void)runtime::extract_scene(s.scene, cache, **sr, {});
+        auto cmd = dev.begin_commands();
+        REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target);
+        REQUIRE(px.ok());
+        dev.destroy(target);
+        return *px;
+    };
+    {
+        runtime::GpuAssetCache cache(*gpu().ctx, s.db.get());
+        REQUIRE(cache.surface_vertex_stage(s.shader));
+        auto still = frame(cache);
+        CHECK(is_blue(pixel(still, W, W / 4, H / 2)));
+        CHECK(is_blue(pixel(still, W, 3 * W / 4, H / 2)));
+        m.shader_params[0] = {10, 0, 0, 1};
+        REQUIRE(assets::save_material_file(s.project / "assets" / "glow.vmat", m).ok());
+        (void)s.db->refresh();
+        cache.evict_materials();
+        auto moved = frame(cache);
+        test::save_output("surface_vertex_shift", W, H, moved);
+        const bool left = is_blue(pixel(moved, W, W / 4, H / 2)), right = is_blue(pixel(moved, W, 3 * W / 4, H / 2));
+        CHECK(left != right);
+        cache.clear();
+    }
+
+    // Shadow pass: a cube over a lit floor under an overhead sun hides its own shadow; moving it
+    // 2 m sideways only while drawing shadows uncovers a dark patch on the floor.
+    Scene& sc = s.scene;
+    auto* floor_mr = sc.world().get<MeshRendererComponent>(s.plane);
+    floor_mr->material_asset = Uuid{};
+    const Entity sun = sc.create("Sun");
+    sc.world().get<Transform>(sun)->rotation = math::Quat::axis_angle({1, 0, 0}, math::radians(-90));
+    sc.world().add<LightComponent>(sun).intensity = 3.0f;
+    const Entity cube = sc.create("Cube");
+    sc.world().get<Transform>(cube)->position = {0, 1.5f, 0};
+    auto& cmr = sc.world().add<MeshRendererComponent>(cube);
+    cmr.primitive = "cube";
+    cmr.material_asset = s.material;
+    sc.update_transforms();
+    m.unlit = false;
+    m.shader_params[0] = {0, 0, 0, 1};
+    s.write_shader("void vertex(VertexInput i, inout Vertex v) {\n    if (i.shadow) v.world_position.x += i.params[0].x;\n}\n");
+    m.shader = s.shader;
+    REQUIRE(assets::save_material_file(s.project / "assets" / "glow.vmat", m).ok());
+    (void)s.db->refresh();
+    runtime::GpuAssetCache cache(*gpu().ctx, s.db.get());
+    // The camera looks straight down from 6 m: floor x = +2 m lands near pixel (66, 32).
+    auto red_at = [&](const std::vector<std::uint8_t>& px) { return double(px[(std::size_t(H / 2) * W + 66) * 4]); };
+    const auto still = frame(cache);
+    const double hidden = red_at(still), hidden_mean = mean_red(still);
+    m.shader_params[0] = {2, 0, 0, 1};
+    REQUIRE(assets::save_material_file(s.project / "assets" / "glow.vmat", m).ok());
+    (void)s.db->refresh();
+    cache.evict_materials();
+    auto shadowed = frame(cache);
+    test::save_output("surface_vertex_shadow", W, H, shadowed);
+    const double uncovered = red_at(shadowed);
+    MESSAGE("red at x=+2 m: shadow under the cube " << hidden << ", shadow moved out " << uncovered);
+    CHECK(uncovered < hidden - 30.0);
+    CHECK(mean_red(shadowed) < hidden_mean);
+    cache.clear();
+}

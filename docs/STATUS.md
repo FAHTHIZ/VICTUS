@@ -2403,3 +2403,15 @@ Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
 Not covered: visual UI editor canvas, text selection/clipboard/multi-line, key repeat, Studio play-mode text input.
 
 Next task: GAP-17 custom shaders beyond the surface-shader limits (UI editor canvas follows later in GAP-29).
+
+## 2026-11-21 — Surface shader vertex functions (ADR-0170, GAP-17 slice 1)
+
+Built: optional `void vertex(VertexInput i, inout Vertex v)` in `.vshader` files; embedded vertex template compiled per shader in five variants (static, skinned, lightmapped, shadow, skinned shadow); vertex uniform slot `VertexMaterial`; per-shader forward and shadow pipelines (sun cascades, local lights, rain occlusion); `GpuAssetCache::surface_vertex_stage`; `compile_surface_shader` validates the vertex stage for Studio, `victus check` and `victus export`.
+
+Verified (Release, GCC 15.2, 2 vCPU, lavapipe under xvfb):
+- full `ctest` 41/41 pass (4 GPU reference suites skipped as usual), 0 compiler warnings.
+- `victus_gpu_tests -tc="gpu: surface shader*"` 2 cases / 89 assertions: function detection and stripping, vertex-only compile, error at `wave.vshader:3`, extra sampler refused; plane moved 10 m covers one half of the view only; shadow-pass-only offset of 2 m moves the cube's shadow beside it (floor red 237 under the cube vs 175 moved; `surface_vertex_shift.png`, `surface_vertex_shadow.png` inspected).
+
+Not covered: vertex functions in the depth prepass and motion vectors (no SSAO, static TAA reprojection), culling bounds growth, texture sampling in `vertex()`, named textures/uniforms; no per-frame cost benchmark yet (one extra pipeline per shader, no extra draws).
+
+Next task: GAP-17 slice 2 (named textures and uniforms in `.vshader`), then GAP-30 FBX import and glTF cameras/lights.
