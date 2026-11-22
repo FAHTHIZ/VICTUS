@@ -405,3 +405,44 @@ TEST_CASE("model import settings: rgba8_max_size keeps only small RGBA8 levels w
     CHECK(level0->width == 1024);
     CHECK(level0->pixels.size() == std::size_t{1024} * 1024 * 4);
 }
+
+TEST_CASE("texture compression: model decode keeps only the variant the device would upload") {
+    CookedTexture t = cook_texture(test_image(32, 16), "albedo", true, true, 4096);
+    REQUIRE(compress_cooked_texture(t, "auto").ok()); // BC7 then ASTC 4x4
+    CookedModel model;
+    ModelMaterial mat;
+    mat.base_color_texture = 0;
+    model.materials.push_back(mat);
+    model.textures.push_back(t);
+    model.meshes.push_back({"quad", render::make_plane({1, 1}, 1), 0});
+    ModelNode node;
+    node.name = "root";
+    node.meshes = {0};
+    model.nodes.push_back(node);
+    CookedHeader h;
+    const auto bytes = serialize(h, model);
+
+    const auto only_astc = [](TextureCodec c, bool) { return c == TextureCodec::ASTC4x4; };
+    auto phone = deserialize_model(bytes, only_astc);
+    REQUIRE(phone.ok());
+    REQUIRE(phone->textures[0].compressed.size() == 1);
+    CHECK(phone->textures[0].compressed[0].codec == TextureCodec::ASTC4x4);
+    CHECK(phone->textures[0].compressed[0].levels == t.compressed[1].levels);
+    CHECK(phone->textures[0].mips.size() == t.mips.size());
+
+    auto desktop = deserialize_model(bytes, [](TextureCodec, bool) { return true; }); // first accepted wins
+    REQUIRE(desktop.ok());
+    REQUIRE(desktop->textures[0].compressed.size() == 1);
+    CHECK(desktop->textures[0].compressed[0].codec == TextureCodec::BC7);
+
+    auto none = deserialize_model(bytes, [](TextureCodec, bool) { return false; }); // CPU decode needs them all
+    REQUIRE(none.ok());
+    CHECK(none->textures[0].compressed.size() == 2);
+    CHECK(deserialize_model(bytes)->textures[0].compressed.size() == 2);
+
+    auto one = deserialize_model_texture(bytes, 0, only_astc);
+    REQUIRE(one.ok());
+    REQUIRE(one->compressed.size() == 1);
+    CHECK(one->compressed[0].codec == TextureCodec::ASTC4x4);
+    for (std::size_t n = 0; n < bytes.size(); n += 53) CHECK_FALSE(deserialize_model(std::span(bytes.data(), n), only_astc).ok());
+}

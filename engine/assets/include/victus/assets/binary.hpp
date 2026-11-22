@@ -98,6 +98,14 @@ public:
         pos_ += n * sizeof(T);
         return true;
     }
+    // A raw() block as a view into the input (valid while the input is).
+    bool view_raw(std::span<const std::uint8_t>& out, std::uint64_t max_len = 1ull << 32) {
+        std::uint64_t n = 0;
+        if (!u64(n) || n > max_len || !need(n)) return fail();
+        out = data_.subspan(pos_, static_cast<std::size_t>(n));
+        pos_ += n;
+        return true;
+    }
     // Skip a raw() block or an array() of T without copying it (partial decoding).
     bool skip_raw(std::uint64_t max_len = 1ull << 32) {
         std::uint64_t n = 0;

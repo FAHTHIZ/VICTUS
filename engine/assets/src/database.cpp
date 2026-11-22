@@ -2,6 +2,7 @@
 #include "victus/assets/database.hpp"
 
 #include "victus/core/log.hpp"
+#include "victus/core/profiler.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -550,7 +551,8 @@ Result<CookedTexture> AssetDatabase::load_texture(const Uuid& uuid) {
     return deserialize_texture(*bytes);
 }
 
-Result<CookedModel> AssetDatabase::load_model(const Uuid& uuid) {
+Result<CookedModel> AssetDatabase::load_model(const Uuid& uuid, const VariantFilter& keep) {
+    VICTUS_PROFILE_SCOPE("assets.load_model");
     const AssetRecord* rec = find(uuid);
     if (!rec || rec->importer != "gltf") return make_error(ErrorCode::NotFound, "no model asset " + uuid.to_string());
     auto imported = import(uuid);
@@ -562,7 +564,7 @@ Result<CookedModel> AssetDatabase::load_model(const Uuid& uuid) {
     }
     auto bytes = fs::map_file(cooked_path(uuid)); // no file-sized copy next to the decoded model
     if (!bytes) return std::move(bytes).error();
-    return deserialize_model(bytes->bytes());
+    return keep ? deserialize_model(bytes->bytes(), keep) : deserialize_model(bytes->bytes());
 }
 
 Result<CookedModel> AssetDatabase::load_model_geometry(const Uuid& uuid) {
@@ -591,7 +593,7 @@ Result<CookedModel> AssetDatabase::load_model_skeleton(const Uuid& uuid) {
     return deserialize_model_skeleton(view->bytes());
 }
 
-Result<CookedTexture> AssetDatabase::load_model_texture(const Uuid& uuid, std::uint32_t index) {
+Result<CookedTexture> AssetDatabase::load_model_texture(const Uuid& uuid, std::uint32_t index, const VariantFilter& keep) {
     const AssetRecord* rec = find(uuid);
     if (!rec || rec->importer != "gltf") return make_error(ErrorCode::NotFound, "no model asset " + uuid.to_string());
     auto imported = import(uuid);
@@ -601,7 +603,7 @@ Result<CookedTexture> AssetDatabase::load_model_texture(const Uuid& uuid, std::u
     }
     auto bytes = fs::map_file(cooked_path(uuid)); // only the pages up to this texture are read
     if (!bytes) return std::move(bytes).error();
-    return deserialize_model_texture(bytes->bytes(), index);
+    return deserialize_model_texture(bytes->bytes(), index, keep);
 }
 
 Status AssetDatabase::set_settings(const Uuid& uuid, json::Value settings) {

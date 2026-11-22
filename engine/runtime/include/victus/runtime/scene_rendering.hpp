@@ -163,6 +163,8 @@ public:
     [[nodiscard]] std::uint32_t atmosphere_bakes() const noexcept { return atmosphere_bakes_; }
     // Block-compressed uploads (on by default; off forces RGBA8 for every texture loaded later).
     void set_compressed_textures(bool enabled) noexcept { allow_compressed_ = enabled; }
+    // Which compressed texture variants to decode for this device (assets::VariantFilter).
+    [[nodiscard]] assets::VariantFilter variant_filter() const;
     [[nodiscard]] std::uint32_t compressed_texture_count() const noexcept { return compressed_uploads_; }
 
     // Reflection probe captures (managed by extract_scene, keyed by entity).

@@ -13,6 +13,7 @@
 #include "victus/gameplay/water.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <chrono>
 #include <cmath>
@@ -99,6 +100,7 @@ void GpuAssetCache::evict(const Uuid& uuid) {
     }
 }
 
+<<<<<<< Updated upstream
 Result<render::Image> load_cookie_image(assets::AssetDatabase& db, const Uuid& texture) {
     auto cooked = db.load_texture(texture);
     if (!cooked) return std::move(cooked).error();
@@ -136,6 +138,24 @@ const GpuAssetCache::CookieImage* GpuAssetCache::cookie(const Uuid& texture) {
     c.version = ++cookie_versions_;
     slot = std::move(c);
     return &*slot;
+=======
+assets::VariantFilter GpuAssetCache::variant_filter() const {
+    // Snapshot of what this device samples, so loader threads never query the device. Only the
+    // variant upload_cooked_texture would pick is decoded; with compressed uploads off nothing
+    // matches and every variant is kept (they are decoded on the CPU).
+    if (!ctx_ || !allow_compressed_) return {};
+    std::array<bool, 2 * 8> ok{};
+    for (std::uint8_t c = 1; c < 8; ++c) {
+        const auto codec = static_cast<assets::TextureCodec>(c);
+        if (!assets::parse_texture_codec(assets::to_string(codec))) continue;
+        for (const bool srgb : {false, true})
+            ok[std::size_t{c} * 2 + (srgb ? 1 : 0)] = ctx_->device().supports_format(assets::codec_format(codec, srgb), rhi::TextureUsageSampled);
+    }
+    return [ok](assets::TextureCodec codec, bool srgb) {
+        const std::size_t i = std::size_t{static_cast<std::uint8_t>(codec)} * 2 + (srgb ? 1 : 0);
+        return i < ok.size() && ok[i];
+    };
+>>>>>>> Stashed changes
 }
 
 Result<rhi::TextureHandle> upload_cooked_texture(render::GpuContext& ctx, const assets::CookedTexture& texture, bool allow_compressed,
@@ -389,7 +409,7 @@ void GpuAssetCache::restream(const Uuid& uuid, std::uint32_t level) {
     }
     if (!db_) return;
     const auto ref = embedded_->find(uuid);
-    auto cooked = ref ? db_->load_model_texture(ref->model, ref->index) : db_->load_texture(uuid);
+    auto cooked = ref ? db_->load_model_texture(ref->model, ref->index, variant_filter()) : db_->load_texture(uuid);
     if (!cooked) {
         VICTUS_LOG_WARN("assets", "mip streaming: reload of {} failed: {}", uuid.to_string(), cooked.error().message);
         return;
@@ -543,14 +563,14 @@ void GpuAssetCache::set_async_loading(jobs::JobSystem* jobs, const AsyncLoadingS
     assets::AssetDatabase* db = db_;
     loader_ = std::make_unique<assets::AsyncLoader>(
         jobs,
-        [db, embedded = embedded_](const Uuid& uuid, assets::LoadType type) -> Result<assets::LoadPayload> {
+        [db, embedded = embedded_, keep = variant_filter()](const Uuid& uuid, assets::LoadType type) -> Result<assets::LoadPayload> {
             if (type == assets::LoadType::Texture) {
                 const auto ref = embedded->find(uuid); // a model texture re-streaming its mips
-                auto t = ref ? db->load_model_texture(ref->model, ref->index) : db->load_texture(uuid);
+                auto t = ref ? db->load_model_texture(ref->model, ref->index, keep) : db->load_texture(uuid);
                 if (!t) return std::move(t).error();
                 return assets::LoadPayload{std::move(t).value()};
             }
-            auto m = db->load_model(uuid);
+            auto m = db->load_model(uuid, keep);
             if (!m) return std::move(m).error();
             return assets::LoadPayload{std::move(m).value()};
         },
@@ -871,12 +891,13 @@ Result<const GpuModel*> GpuAssetCache::model(const Uuid& uuid) {
         (void)loader_->request(uuid, assets::LoadType::Model);
         return not_resident(*loader_, uuid, assets::LoadType::Model);
     }
-    auto cooked = db_->load_model(uuid);
+    auto cooked = db_->load_model(uuid, variant_filter());
     if (!cooked) return std::move(cooked).error();
     return add_model(uuid, std::move(cooked).value());
 }
 
 Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::CookedModel model) {
+    VICTUS_PROFILE_SCOPE("GpuAssetCache::add_model");
     evict(uuid);
     const std::size_t bytes = assets::upload_bytes(model);
     auto gpu = std::make_unique<GpuModel>();

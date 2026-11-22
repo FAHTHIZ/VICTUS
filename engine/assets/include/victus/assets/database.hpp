@@ -95,9 +95,9 @@ public:
 
     // Loads cooked data, importing first when stale.
     [[nodiscard]] Result<CookedTexture> load_texture(const Uuid& uuid);
-    [[nodiscard]] Result<CookedModel> load_model(const Uuid& uuid);
+    [[nodiscard]] Result<CookedModel> load_model(const Uuid& uuid, const VariantFilter& keep = {});
     // One embedded texture of a model (index into CookedModel::textures) without its meshes.
-    [[nodiscard]] Result<CookedTexture> load_model_texture(const Uuid& uuid, std::uint32_t index);
+    [[nodiscard]] Result<CookedTexture> load_model_texture(const Uuid& uuid, std::uint32_t index, const VariantFilter& keep = {});
     // Nodes, skins, clips and morph names only (deserialize_model_skeleton): what the animation
     // system needs, without copying the model's texture and mesh data.
     [[nodiscard]] Result<CookedModel> load_model_skeleton(const Uuid& uuid);

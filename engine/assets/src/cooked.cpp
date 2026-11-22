@@ -75,7 +75,7 @@ void write_texture_body(BinaryWriter& w, const CookedTexture& t) {
     }
 }
 
-bool read_texture_body(BinaryReader& r, CookedTexture& t) {
+bool read_texture_body(BinaryReader& r, CookedTexture& t, const VariantFilter* keep = nullptr) {
     std::uint32_t mips = 0;
     if (!r.str(t.name) || !r.boolean(t.srgb) || !r.u32(mips) || mips == 0 || mips > 16) return false;
     t.mips.resize(mips);
@@ -103,16 +103,32 @@ bool read_texture_body(BinaryReader& r, CookedTexture& t) {
     }
     std::uint32_t variants = 0;
     if (!r.u32(variants) || variants > 8) return false;
-    t.compressed.resize(variants);
-    for (auto& v : t.compressed) {
+    // Variants are located first and copied after, so a filter can keep only the one wanted.
+    struct Located {
+        TextureCodec codec;
+        std::vector<std::span<const std::uint8_t>> levels;
+    };
+    std::vector<Located> found(variants);
+    for (auto& v : found) {
         std::uint8_t codec = 0;
         if (!r.u8(codec) || !parse_texture_codec(to_string(static_cast<TextureCodec>(codec)))) return false;
         v.codec = static_cast<TextureCodec>(codec);
         v.levels.resize(t.mips.size());
         for (std::size_t m = 0; m < t.mips.size(); ++m) {
             const std::uint64_t bytes = rhi::mip_size_bytes(codec_format(v.codec, t.srgb), t.mips[m].width, t.mips[m].height);
-            if (!r.raw(v.levels[m], bytes) || v.levels[m].size() != bytes) return false;
+            if (!r.view_raw(v.levels[m], bytes) || v.levels[m].size() != bytes) return false;
         }
+    }
+    std::ptrdiff_t only = -1; // the first variant the filter accepts; none = keep them all
+    if (keep && *keep)
+        for (std::size_t i = 0; i < found.size() && only < 0; ++i)
+            if ((*keep)(found[i].codec, t.srgb)) only = static_cast<std::ptrdiff_t>(i);
+    for (std::size_t i = 0; i < found.size(); ++i) {
+        if (only >= 0 && static_cast<std::ptrdiff_t>(i) != only) continue;
+        CompressedMips& v = t.compressed.emplace_back();
+        v.codec = found[i].codec;
+        v.levels.reserve(found[i].levels.size());
+        for (const auto level : found[i].levels) v.levels.emplace_back(level.begin(), level.end());
     }
     // A level without RGBA8 pixels must be recoverable from a compressed variant.
     if (t.compressed.empty() && !t.has_rgba8()) return false;
@@ -397,7 +413,7 @@ Result<CookedTexture> deserialize_texture(std::span<const std::uint8_t> bytes) {
     return t;
 }
 
-Result<CookedTexture> deserialize_model_texture(std::span<const std::uint8_t> bytes, std::uint32_t index) {
+Result<CookedTexture> deserialize_model_texture(std::span<const std::uint8_t> bytes, std::uint32_t index, const VariantFilter& keep) {
     BinaryReader r(bytes);
     CookedHeader h;
     if (!parse_header(r, h)) return corrupt("header");
@@ -408,15 +424,19 @@ Result<CookedTexture> deserialize_model_texture(std::span<const std::uint8_t> by
     if (index >= n) return make_error(ErrorCode::NotFound, "model has no texture " + std::to_string(index));
     // Textures come first in a cooked model: read up to the one wanted and stop.
     CookedTexture t;
-    for (std::uint32_t i = 0; i <= index; ++i) {
-        t = CookedTexture{};
-        if (!read_texture_body(r, t)) return corrupt("model texture");
-    }
+    for (std::uint32_t i = 0; i < index; ++i)
+        if (!skip_texture_body(r)) return corrupt("model texture");
+    if (!read_texture_body(r, t, &keep)) return corrupt("model texture");
     return t;
 }
 
+Result<CookedTexture> deserialize_model_texture(std::span<const std::uint8_t> bytes, std::uint32_t index) {
+    return deserialize_model_texture(bytes, index, VariantFilter{});
+}
+
 namespace {
-Result<CookedModel> deserialize_model_impl(std::span<const std::uint8_t> bytes, bool skip_textures, bool skeleton_only) {
+Result<CookedModel> deserialize_model_impl(std::span<const std::uint8_t> bytes, bool skip_textures, bool skeleton_only,
+                                           const VariantFilter* keep = nullptr) {
     BinaryReader r(bytes);
     CookedHeader h;
     if (!parse_header(r, h)) return corrupt("header");
@@ -431,7 +451,7 @@ Result<CookedModel> deserialize_model_impl(std::span<const std::uint8_t> bytes, 
     } else {
         m.textures.resize(n);
         for (auto& t : m.textures)
-            if (!read_texture_body(r, t)) return corrupt("model texture");
+            if (!read_texture_body(r, t, keep)) return corrupt("model texture");
     }
     const std::size_t texture_count = n;
     if (!r.u32(n) || n > kMaxItems) return corrupt("material count");
@@ -574,6 +594,10 @@ Result<CookedModel> deserialize_model_impl(std::span<const std::uint8_t> bytes, 
 } // namespace
 
 Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) { return deserialize_model_impl(bytes, false, false); }
+
+Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes, const VariantFilter& keep) {
+    return deserialize_model_impl(bytes, false, false, &keep);
+}
 
 Result<CookedModel> deserialize_model_skeleton(std::span<const std::uint8_t> bytes) { return deserialize_model_impl(bytes, true, true); }
 

@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
@@ -160,6 +161,13 @@ struct CookedHeader {
 [[nodiscard]] Result<CookedHeader> read_header(std::span<const std::uint8_t> bytes);
 [[nodiscard]] Result<CookedTexture> deserialize_texture(std::span<const std::uint8_t> bytes);
 [[nodiscard]] Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes);
+// Picks which compressed variants of each texture to keep: the first variant `keep` accepts
+// (in cooked order, the order upload_cooked_texture tries them) is kept and the others are
+// skipped without copying. A texture with no accepted variant keeps all of them, so it can still
+// be decoded on the CPU. RGBA8 levels are always kept. A desktop GPU then never holds the ASTC
+// copy of a character's textures in memory, and a phone never holds the BC7 copy.
+using VariantFilter = std::function<bool(TextureCodec codec, bool srgb)>;
+[[nodiscard]] Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes, const VariantFilter& keep);
 // Nodes, skins, clips and mesh morph names/weights of a cooked model, skipping texture pixels and
 // mesh vertex/index data without copying them: everything make_animation_set reads. Meshes come
 // back with empty geometry, textures are left empty and materials are kept.
@@ -169,5 +177,7 @@ struct CookedHeader {
 [[nodiscard]] Result<CookedModel> deserialize_model_geometry(std::span<const std::uint8_t> bytes);
 // One embedded texture of a cooked model, without decoding the meshes (mip re-streaming).
 [[nodiscard]] Result<CookedTexture> deserialize_model_texture(std::span<const std::uint8_t> bytes, std::uint32_t index);
+[[nodiscard]] Result<CookedTexture> deserialize_model_texture(std::span<const std::uint8_t> bytes, std::uint32_t index,
+                                                         const VariantFilter& keep);
 
 } // namespace victus::assets
