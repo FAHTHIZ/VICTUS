@@ -17,7 +17,7 @@ Dependencies point inward toward VICTUS-owned contracts. Public APIs should not 
 
 ## Module map
 
-Every engine module is a static library `victus_<name>` (alias `VICTUS::<Name>`) under `engine/<name>/`, with public headers in `include/victus/<name>/`. Layers are enforced by `cmake/VictusTargets.cmake` (`VICTUS_MODULE_LAYERS`): a module may link only modules on a strictly lower layer, so the configure fails on an upward dependency or a cycle. Third-party libraries are linked privately unless a public header needs them (SDL3, Luau, Jolt, Box2D, miniaudio, Recast, ENet and cgltf are all private).
+Every engine module is a static library `victus_<name>` (alias `VICTUS::<Name>`) under `engine/<name>/`, with public headers in `include/victus/<name>/`. Layers are enforced by `cmake/VictusTargets.cmake` (`VICTUS_MODULE_LAYERS`): a module may link only modules on a strictly lower layer, so the configure fails on an upward dependency or a cycle. Third-party libraries are linked privately unless a public header needs them (SDL3, Luau, Jolt, Box2D, miniaudio, Recast, ENet, cgltf, ufbx, zstd, Monocypher, glslang, SPIRV-Cross, meshoptimizer, xatlas, bc7enc and astcenc are all private). Two are public by design: `render` exposes stb's image headers and `ui` exposes Dear ImGui to the editor.
 
 | Layer | Modules | Owns |
 |---|---|---|
@@ -34,15 +34,18 @@ Every engine module is a static library `victus_<name>` (alias `VICTUS::<Name>`)
 | 4 | `ui` | Dear ImGui on the RHI (editor and debug UI) |
 | 4 | `physics`, `animation`, `particles`, `audio`, `gameui` | Jolt/Box2D bodies and characters; clips and skinning; CPU emitters; miniaudio; in-game UI components |
 | 4 | `plugin` | Native plugin host: `.vplugin` manifests, dependency resolution, versioned C ABI (`victus_plugin.h`), lifecycle (ADR-0078) |
-| 5 | `navigation`, `tilemap`, `terrain`, `sequencer`, `net` | Navmesh and agents; tile sets and colliders; heightfields and foliage; timeline playback; transport, replication, sessions |
+| 5 | `navigation`, `traffic`, `tilemap`, `terrain`, `sequencer`, `net` | Navmesh (single or tiled) and agents; lane-graph road traffic with signals and IDM drivers (ADR-0167); tile sets and colliders; heightfields and foliage; timeline playback with curves and property tracks; transport, replication, sessions |
 | 6 | `ai` | Behaviour trees, blackboard, perception |
 | 6 | `assets` | Asset database, importers, cooker, GPU-ready model/texture data; providers that hand cooked data to lower layers (animation sets, tilesets, height fields, collision meshes for physics) |
 | 7 | `script` | Luau ScriptHost and the scripting API over every gameplay system; loads `.vgraph` through `graph` |
+| 7 | `library` | Asset Store: licence-checked search and install from open asset providers (Poly Haven, ambientCG, Sketchfab and others) into `assets/library/`, provenance and `CREDITS.md` (ADR-0174). Host tools only: built with `VICTUS_BUILD_TOOLS` and linked by the Studio and the CLI, never by shipped games |
 | 8 | `runtime` | Scene to renderer extraction, SceneView, GPU asset cache, surface shaders (material graphs through `graph`), hot reload |
 | 8 | `project` | Project manifest, templates, component registration for every module |
 | 9 | `player` | Game loop for `victus run`, the exported player and Android; export; project validation (`victus check`, editor Problems panel); diagnostics bundles (`victus diagnose`) |
 
-Above the engine: `editor/` (VICTUS Studio, links `player`-level modules and `ui`), `tools/cli` (`victus`), `apps/player`. Rule of thumb: put code in the lowest module that has everything it needs; integration code that wires several systems together belongs in `script`, `runtime`, `project` or `player`, not in a system module.
+Above the engine: `editor/` (VICTUS Studio, links `player`-level modules, `ui` and `library`), `tools/cli` (`victus`), `apps/player`, and `apps/android` (the Android activity and game shared library).
+
+`VICTUS_WITH_GRAPHICS=OFF` configures the headless core: layers 0-7 without `platform`, `rhi`, `render`, `shadercompiler`, `ui` and everything that needs them (`assets`, `runtime`, `project`, `player`, `library`, the editor and the CLI). It is the build for simulation libraries and servers that must not pull in SDL or a GPU stack. Rule of thumb: put code in the lowest module that has everything it needs; integration code that wires several systems together belongs in `script`, `runtime`, `project` or `player`, not in a system module.
 
 ## Runtime modes and lifetimes
 Separate editor, game runtime, headless simulation, dedicated server, asset cooker, test runner and benchmark targets. Headless/server builds must not initialize graphics, windowing or audio devices. Editor dependencies and authoring metadata must not leak into shipped game binaries. Define startup/shutdown order and ownership explicitly.

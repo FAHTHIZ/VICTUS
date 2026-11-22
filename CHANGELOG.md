@@ -96,6 +96,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 - Studio: shortcuts pressed in the Behaviour Tree Editor (Ctrl+S, Ctrl+Z/Y, Delete) also acted on the scene; F2 and Delete in the Assets panel opened Help and deleted the selected entity. ([evidence](docs/STATUS.md#2026-11-21--asset-trash-and-assets-shortcuts-adr-0177))
 - `victus run --quality <unknown tier>` now reports the error before creating a window or GPU device; on lavapipe the late exit could crash in the driver instead. ([STATUS](docs/STATUS.md#2026-11-21--behaviour-tree-editor-adr-0176))
 - Physics: a ragdoll getting up could end with a bone (head, hips, an arm) still bent the way it lay instead of back in the animated pose. The check for "was this bone re-animated since the ragdoll wrote it?" compared quaternions with a threshold tighter than float rounding, so an unchanged lying pose was sometimes taken as the new animation target. The comparison is now exact; regression pushes added to the get-up test.
+- Build: `-DVICTUS_WITH_GRAPHICS=OFF` configures and builds the headless core again. `engine/project` and the platform, project and animation tests and the animation benchmark depend on graphics-only modules, so they are now built only with graphics on. Verified locally: the headless build passes 19 of 19 test suites.
 
 ### Security
 

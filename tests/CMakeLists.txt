@@ -23,11 +23,13 @@ victus_add_test(victus_core_tests
     DEPS VICTUS::Core
     LABELS core)
 
+if(VICTUS_WITH_GRAPHICS)
 victus_add_test(victus_platform_tests
     SOURCES
         platform/input_state_tests.cpp
     DEPS VICTUS::Platform
     LABELS platform)
+endif()
 
 victus_add_test(victus_ecs_tests
     SOURCES
@@ -62,13 +64,13 @@ victus_add_test(victus_script_tests
     LABELS script)
 target_compile_definitions(victus_script_tests PRIVATE VICTUS_SCRIPT_API_DIR="${PROJECT_SOURCE_DIR}/engine/script/api")
 
+if(VICTUS_WITH_GRAPHICS)
 victus_add_test(victus_project_tests
     SOURCES
         project/project_tests.cpp
     DEPS VICTUS::Project VICTUS::Assets
     LABELS project)
 
-if(VICTUS_WITH_GRAPHICS)
 victus_add_test(victus_asset_tests
     SOURCES
         assets/asset_tests.cpp
@@ -346,11 +348,14 @@ victus_add_test(victus_audio_tests
     LABELS audio)
 target_compile_definitions(victus_audio_tests PRIVATE VICTUS_MINIAUDIO_DATA_DIR="${VICTUS_MINIAUDIO_DIR}/data")
 
+# The animation suite drives retargeting and foot placement through runtime (graphical build only).
+if(VICTUS_WITH_GRAPHICS)
 victus_add_test(victus_animation_tests
     SOURCES animation/animation_tests.cpp animation/sprite_animation_tests.cpp animation/controller_tests.cpp animation/ik_tests.cpp animation/layer_tests.cpp animation/retarget_tests.cpp animation/morph_tests.cpp
         animation/foot_placement_tests.cpp
     DEPS VICTUS::Animation VICTUS::Runtime VICTUS::Physics VICTUS::Core
     LABELS animation)
+endif()
 
 victus_add_test(victus_gameui_tests
     SOURCES gameui/gameui_tests.cpp
