@@ -790,6 +790,16 @@ std::vector<std::uint8_t> render_low_scene(render::GpuContext& ctx, std::uint32_
     sr.value()->submit(cube, {}, math::Mat4::translation({0, 1, 0}));
     sr.value()->submit_skinned(column, red, math::Mat4::translation({2.5f, 0, 0}), palette,
                                math::Aabb{{1.2f, -0.3f, -0.3f}, {2.8f, 1.3f, 0.3f}});
+    // A crowd-style draw (ADR-0200): the same pose as frame 1 of a persistent baked palette buffer.
+    const math::Mat4 baked[4] = {math::Mat4::identity(), math::Mat4::identity(), palette[0], palette[1]};
+    auto baked_buf = dev.create_buffer({"gles_crowd_palette", sizeof(baked), rhi::BufferUsageStorageRead}).value();
+    {
+        auto up = dev.begin_commands();
+        up.upload_buffer(baked_buf, 0, {reinterpret_cast<const std::uint8_t*>(baked), sizeof(baked)});
+        up.submit();
+    }
+    sr.value()->submit_skinned(column, red, math::Mat4::translation({-2.5f, 0, 0}), baked_buf, 2, 2,
+                               math::Aabb{{-3.8f, -0.3f, -0.3f}, {-2.2f, 1.3f, 0.3f}}, 7);
     auto cmd = dev.begin_commands();
     auto st = sr.value()->render(cmd, target, w, h, rhi::Format::RGBA8_UNORM);
     if (!st) error = "render: " + st.error().message;
@@ -803,6 +813,7 @@ std::vector<std::uint8_t> render_low_scene(render::GpuContext& ctx, std::uint32_
     ctx.destroy(cube);
     ctx.destroy(plane);
     ctx.destroy(column);
+    dev.destroy(baked_buf);
     return px;
 }
 
@@ -839,9 +850,16 @@ TEST_CASE("gles: the scene renderer draws the Low tier like Vulkan") {
     CHECK(mean < 1.0);
     CHECK(over8 * 100 <= got.size() / 4 * 3);
     // The bent skinned column is on screen (reddish pixels), not collapsed by a wrong palette.
-    std::size_t red_px = 0;
-    for (std::size_t i = 0; i + 3 < got.size(); i += 4) red_px += (got[i] > 120 && got[i] > got[i + 1] + 60) ? 1 : 0;
+    std::size_t red_px = 0, red_left = 0;
+    for (std::size_t i = 0; i + 3 < got.size(); i += 4) {
+        const bool r = got[i] > 120 && got[i] > got[i + 1] + 60;
+        red_px += r ? 1 : 0;
+        red_left += r && (i / 4) % W < W / 2 ? 1 : 0;
+    }
     CHECK(red_px > 100);
+    // The column drawn from the baked palette buffer (left) reads it through the GLES storage mirror.
+    CHECK(red_left > 50);
+    CHECK(red_left * 3 > red_px); // roughly as many red pixels as the per-frame palette column
 }
 
 // ADR-0144 phase 3: the player asks for the SDL_GPU backends with gles_fallback, then creates its

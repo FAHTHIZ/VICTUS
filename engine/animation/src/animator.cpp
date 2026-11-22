@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/animation/animation.hpp"
+#include "victus/animation/crowd.hpp"
 #include "victus/gameplay/sim_lod.hpp"
 #include "victus/animation/retarget.hpp"
 #include "victus/core/fs.hpp"
@@ -52,6 +53,7 @@ void register_components() {
     });
     register_ik_components();
     register_foot_placement_components();
+    register_crowd_components();
 }
 
 namespace {
@@ -1225,6 +1227,7 @@ std::optional<float> AnimationSystem::morph_weight(Scene& scene, Entity e, std::
 
 void AnimationSystem::update(Scene& scene, float dt) {
     update_sprites(scene, dt);
+    update_crowd(scene.world(), dt);
     ecs::World& world = scene.world();
     // Structural changes first: add state to new animators, drop state of removed ones.
     std::vector<Entity> missing, orphans;

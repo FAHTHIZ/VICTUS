@@ -1958,6 +1958,27 @@ void SceneRenderer::submit_skinned(const GpuMesh& mesh, const Material& material
     draws_.push_back(d);
 }
 
+void SceneRenderer::submit_skinned(const GpuMesh& mesh, const Material& material, const Mat4& model, rhi::BufferHandle palette,
+                                   std::uint32_t first_joint, std::uint32_t joint_count, const Aabb& world_bounds,
+                                   std::uint64_t motion_id) {
+    if (!mesh.skinned() || !palette || joint_count == 0) {
+        submit(mesh, material, model, motion_id);
+        return;
+    }
+    if (!mesh.valid()) return;
+    ++stats_.submitted;
+    ++stats_.skinned_draws;
+    const auto src = (std::uint64_t{palette.index} << 32) | palette.generation;
+    Draw d{&mesh, material, model, 0.0f, mix(mix(mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh)), 0x5c1du), src)};
+    d.palette = first_joint;
+    d.skinned = true;
+    d.palette_src = palette;
+    d.world_bounds = world_bounds;
+    d.motion_id = motion_id;
+    d.joint_count = joint_count;
+    draws_.push_back(d);
+}
+
 void SceneRenderer::submit_ribbons(std::span<const RibbonPoint> points, std::span<const std::uint32_t> strips,
                                    const ParticleMaterial& material, const math::Aabb& bounds) {
     if (points.empty() || strips.empty() || !bounds.valid()) return;
@@ -2495,15 +2516,20 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             const MotionState& prev = it->second;
             // Bitwise on purpose: any change, including -0/+0, counts as motion (Mat4 has no padding).
             const bool moved = std::memcmp(&prev.model, &d->model, sizeof(Mat4)) != 0; // NOLINT(bugprone-suspicious-memory-comparison)
-            const bool same_skeleton = d->skinned && prev.joint_count == d->joint_count;
-            const bool posed = same_skeleton && std::memcmp(motion_joints_.data() + prev.joint_offset, palette_.data() + d->palette,
-                                                            d->joint_count * sizeof(Mat4)) != 0;
+            const bool same_skeleton = d->skinned && prev.joint_count == d->joint_count && prev.palette_src == d->palette_src;
+            const bool baked = d->skinned && d->palette_src.valid();
+            // Baked palettes (ADR-0200): the previous pose is still in the same buffer at its old offset.
+            const bool posed = same_skeleton && (baked ? prev.joint_offset != d->palette
+                                                       : std::memcmp(motion_joints_.data() + prev.joint_offset, palette_.data() + d->palette,
+                                                                     d->joint_count * sizeof(Mat4)) != 0);
             if (!moved && !posed) continue;
             MotionInstance mi{};
             mi.model = d->model;
             for (int r = 0; r < 3; ++r) mi.prev_rows[r] = {prev.model.c[0][r], prev.model.c[1][r], prev.model.c[2][r], prev.model.c[3][r]};
             std::uint32_t prev_base = d->palette;
-            if (posed) {
+            if (posed && baked) {
+                prev_base = prev.joint_offset;
+            } else if (posed) {
                 prev_base = static_cast<std::uint32_t>(palette_.size());
                 palette_.insert(palette_.end(), motion_joints_.begin() + prev.joint_offset,
                                 motion_joints_.begin() + prev.joint_offset + prev.joint_count);
@@ -2523,7 +2549,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 motion_instances.push_back(mi);
                 if (!motion_batches.empty()) {
                     const Draw* f = motion_batches.back().first;
-                    if (f->mesh == d->mesh && f->lod == d->lod && f->skinned == d->skinned &&
+                    if (f->mesh == d->mesh && f->lod == d->lod && f->skinned == d->skinned && f->palette_src == d->palette_src &&
                         f->material.double_sided == d->material.double_sided) {
                         ++motion_batches.back().instance_count;
                         continue;
@@ -2542,7 +2568,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         for (const Draw& d : draws_) {
             if (d.motion_id == 0) continue;
             MotionState st{d.model, 0, 0};
-            if (d.skinned) {
+            if (d.skinned && d.palette_src.valid()) {
+                st.joint_offset = d.palette;
+                st.joint_count = d.joint_count;
+                st.palette_src = d.palette_src;
+            } else if (d.skinned) {
                 st.joint_offset = static_cast<std::uint32_t>(motion_joints_next_.size());
                 st.joint_count = d.joint_count;
                 motion_joints_next_.insert(motion_joints_next_.end(), palette_.begin() + d.palette,
@@ -2601,7 +2631,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             instances.push_back(make_instance(d->model, d->palette, d->lightmap_offset));
             if (S.instancing && !out.empty()) {
                 const Draw* f = out.back().first;
-                if (f->mesh == d->mesh && out.back().lod == lod && f->skinned == d->skinned &&
+                if (f->mesh == d->mesh && out.back().lod == lod && f->skinned == d->skinned && f->palette_src == d->palette_src &&
                     (!match_material || (same_material(f->material, d->material) && f->probe == d->probe && f->lod_fade == d->lod_fade)) &&
                     (match_material || (same_alpha_test(f->material, d->material) && same_vertex_stage(f->material, d->material)))) {
                     ++out.back().instance_count;
@@ -3806,7 +3836,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                             if (const auto custom = surface_shadow_pipeline(*vx, b.first->skinned, cut)) want = custom;
                         if (!(bound == want)) {
                             ctx.pass->bind_pipeline(want);
-                            if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                            if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*b.first));
                             bound = want;
                         }
                         if (b.first->material.vertex_stage) {
@@ -3814,7 +3844,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                             bind_shader_textures(*ctx.pass, b.first->material, false);
                         }
                         if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
-                        if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
+                        if (b.first->skinned) {
+                            ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
+                            ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*b.first));
+                        }
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
                         ctx.pass->bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
                         ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
@@ -3847,7 +3880,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                             if (const auto custom = surface_shadow_pipeline(*vx, b.first->skinned, cut)) want = custom;
                         if (!(bound == want)) {
                             ctx.pass->bind_pipeline(want);
-                            if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                            if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*b.first));
                             bound = want;
                         }
                         if (b.first->material.vertex_stage) {
@@ -3855,7 +3888,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                             bind_shader_textures(*ctx.pass, b.first->material, false);
                         }
                         if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
-                        if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
+                        if (b.first->skinned) {
+                            ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
+                            ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*b.first));
+                        }
                         ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
                         ctx.pass->bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
                         ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
@@ -3885,7 +3921,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         if (const auto custom = surface_shadow_pipeline(*vx, b.first->skinned, cut)) want = custom;
                     if (!(bound == want)) {
                         ctx.pass->bind_pipeline(want);
-                        if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                        if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*b.first));
                         bound = want;
                     }
                     if (b.first->material.vertex_stage) {
@@ -3893,7 +3929,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         bind_shader_textures(*ctx.pass, b.first->material, false);
                     }
                     if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
-                    if (b.first->skinned) ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
+                    if (b.first->skinned) {
+                        ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
+                        ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*b.first));
+                    }
                     ctx.pass->bind_vertex_buffer(0, b.first->mesh->vertices);
                     ctx.pass->bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
                     ctx.pass->bind_index_buffer(b.first->mesh->indices, rhi::IndexType::U32);
@@ -3949,10 +3988,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                                                                 : (d->material.double_sided ? prepass_double_ : prepass_cull_);
                     if (!(bound == want)) {
                         pass.bind_pipeline(want);
-                        if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                        if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
                         bound = want;
                     }
-                    if (d->skinned) pass.bind_vertex_buffer(2, d->mesh->skin);
+                    if (d->skinned) {
+                        pass.bind_vertex_buffer(2, d->mesh->skin);
+                        pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
+                    }
                     pass.bind_vertex_buffer(0, d->mesh->vertices);
                     pass.bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
                     pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
@@ -4131,10 +4173,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 const Draw* d = b.first;
                 if (!(bound == want)) {
                     pass.bind_pipeline(want);
-                    if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                    if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
                     bound = want;
                 }
-                if (d->skinned) pass.bind_vertex_buffer(2, d->mesh->skin);
+                if (d->skinned) {
+                    pass.bind_vertex_buffer(2, d->mesh->skin);
+                    pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
+                }
                 const Material& m = d->material;
                 MaterialUniforms mat{};
                 mat.base_color = m.base_color.vec();
@@ -4574,7 +4619,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     if (!want) continue;
                     if (!(bound == want)) {
                         pass.bind_pipeline(want);
-                        if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                        if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
                         bound = want;
                     }
                     const Material& m = d->material;
@@ -4588,7 +4633,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     const rhi::SamplerHandle tex_sampler = m.nearest_filter ? ctx_.nearest_repeat() : material_linear.value();
                     pass.bind_texture(rhi::ShaderStage::Fragment, 0, m.base_color_texture ? m.base_color_texture : ctx_.white(), tex_sampler);
                     pass.bind_texture(rhi::ShaderStage::Fragment, 1, depth_tex, ctx_.nearest_clamp());
-                    if (d->skinned) pass.bind_vertex_buffer(2, d->mesh->skin);
+                    if (d->skinned) {
+                        pass.bind_vertex_buffer(2, d->mesh->skin);
+                        pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
+                    }
                     pass.bind_vertex_buffer(0, d->mesh->vertices);
                     if (v == kVertexLightmapped) pass.bind_vertex_buffer(3, d->mesh->lightmap_uv);
                     pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
@@ -4823,10 +4871,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                                                                     : (d->material.double_sided ? motion_double_ : motion_cull_);
                         if (!(bound == want)) {
                             pass.bind_pipeline(want);
-                            if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                            if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
                             bound = want;
                         }
-                        if (d->skinned) pass.bind_vertex_buffer(2, d->mesh->skin);
+                        if (d->skinned) {
+                            pass.bind_vertex_buffer(2, d->mesh->skin);
+                            pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
+                        }
                         pass.bind_vertex_buffer(0, d->mesh->vertices);
                         pass.bind_vertex_buffer(1, motion_buffer_, b.instance_offset * static_cast<std::uint32_t>(sizeof(MotionInstance)));
                         pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
@@ -5021,10 +5072,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         const rhi::PipelineHandle want = overdraw_[d->skinned ? 1 : 0][d->material.double_sided ? 1 : 0];
                         if (!(bound == want)) {
                             pass.bind_pipeline(want);
-                            if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_buffer_);
+                            if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
                             bound = want;
                         }
-                        if (d->skinned) pass.bind_vertex_buffer(2, d->mesh->skin);
+                        if (d->skinned) {
+                            pass.bind_vertex_buffer(2, d->mesh->skin);
+                            pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
+                        }
                         pass.bind_vertex_buffer(0, d->mesh->vertices);
                         pass.bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
                         pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);

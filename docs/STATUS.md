@@ -2964,3 +2964,22 @@ Verified:
 - `victus run --quality high` on a fresh 3D project: plank crates and gate, rock steps, steel posts.
 
 Not verified: real GPUs.
+
+## 2026-11-22 — Crowd agents draw baked skin palettes (ADR-0200)
+
+- **Built:**
+  - `engine/animation/crowd.hpp/.cpp`: `bake_crowd` (clips sampled at 30 fps into per-frame skin matrices, frame 0 = bind pose, per-clip bounds, 1800-frame and 64 MB caps), `CrowdBake::frame_at` (wrap/clamp, nearest sample), the reflected `CrowdAgent` component and `update_crowd`, which AnimationSystem::update runs.
+  - `GpuAssetCache::crowd_clip`: bakes one (model, skin, clip) into a storage buffer on first use. The bake is released by `evict`/`clear` and rebuilt when the model is reloaded. Also adds `crowd_clip_count`/`crowd_bytes`.
+  - `SceneRenderer::submit_skinned` overload with an external palette buffer and first joint. Batching, the shadow and pre-pass paths and motion vectors are keyed on the palette buffer.
+  - `extract_scene` draws every mesh of an agent's skin with the model's materials × tint. Adds `ExtractStats::crowd_agents`.
+- **Verified:**
+  - `victus_animation_tests -tc="crowd*"`: 4 cases, 59 assertions. They cover: the bake equals per-frame `sample` + hierarchy evaluation; the bind pose at frame 0; the bounds; wrap, clamp and NaN handling in `frame_at`; refused inputs; sparse sampling; and update plus JSON round-trip.
+  - `victus_gpu_tests -tc="gpu skinning*"` on lavapipe: 5 cases, 95 assertions. A crowd agent renders like the Animator-driven model at the same pose (max channel difference ≤ 8). Unknown clips fall back to the bind pose. 64 agents draw in at most 2 main batches. Eviction releases the bakes and the next frame bakes them again. 1,000 agents of the 2-joint test column measured 0.19 ms CPU per frame (animation, transforms and extraction) against 0.90 ms for 1,000 Animator characters.
+  - `gles: the scene renderer draws the Low tier like Vulkan`: a column drawn from a baked buffer through the GLES storage mirror matches Vulkan (max diff 0).
+  - Full `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1 VICTUS_NO_AUDIO=1 ctest --test-dir build/release -j2`: 43/43 passed (578 s).
+- **Not verified:**
+  - Real GPUs, Metal and D3D12.
+  - Phone frame times.
+  - The CPU gap for 60-joint characters (Orion/Nova); only the 2-joint test rig was timed.
+  - A scene with thousands of agents in the Studio.
+- **Next task:** GAP-10 slice 2: a crowd spawner, animation LOD (Animator hand-off near the camera) and impostor cards far away, sharing GAP-11's impostor baker.

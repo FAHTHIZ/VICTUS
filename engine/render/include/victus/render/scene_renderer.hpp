@@ -962,6 +962,13 @@ public:
     void submit_skinned(const GpuMesh& mesh, const Material& material, const math::Mat4& model,
                         std::span<const math::Mat4> joints, const math::Aabb& world_bounds,
                         std::uint64_t motion_id = 0);
+    // Skinned draw from a palette that already lives on the GPU (crowds, ADR-0200): `palette` is a
+    // storage buffer of Mat4 skin matrices (BufferUsageStorageRead) owned by the caller and kept
+    // alive until the frame is submitted; the mesh reads `joint_count` matrices from `first_joint`.
+    // Nothing is uploaded per draw. Draws with the same mesh, material and palette buffer batch.
+    void submit_skinned(const GpuMesh& mesh, const Material& material, const math::Mat4& model, rhi::BufferHandle palette,
+                        std::uint32_t first_joint, std::uint32_t joint_count, const math::Aabb& world_bounds,
+                        std::uint64_t motion_id = 0);
     // One batch of billboards sharing a material (e.g. one emitter); `bounds` (world space,
     // including particle sizes) is used for frustum culling and batch ordering.
     void submit_particles(std::span<const ParticleInstance> particles, const ParticleMaterial& material,
@@ -1048,8 +1055,9 @@ private:
         math::Mat4 model;
         float distance;
         std::uint64_t batch_key; // equal keys => same mesh and identical material
-        std::uint32_t palette{0}; // first joint matrix in palette_ (skinned only)
+        std::uint32_t palette{0}; // first joint matrix in palette_ (skinned only), or in palette_src
         bool skinned{false};
+        rhi::BufferHandle palette_src{}; // external baked palette (ADR-0200); null = this frame's palette_
         std::uint8_t lod{0};      // level of detail picked for this frame
         float lod_fade{0.0f};     // cross-fade (ADR-0184): > 0 keeps dither < f, < 0 keeps dither >= -f, 0 solid
         std::uint8_t shadow_lod{0}; // level used by the shadow passes (lod + shadow_lod_bias)
@@ -1063,10 +1071,13 @@ private:
         std::uint32_t cluster_first{0}, cluster_count{0}; // its instances in the group buffer
         bool has_bounds() const noexcept { return skinned || group >= 0; }
     };
+    // Storage buffer a skinned draw's palette offsets index: its baked palette or this frame's.
+    [[nodiscard]] rhi::BufferHandle palette_of(const Draw& d) const noexcept { return d.palette_src ? d.palette_src : palette_buffer_; }
     // Previous-frame state of a tracked object (motion vectors).
     struct MotionState {
         math::Mat4 model;
-        std::uint32_t joint_offset{0}, joint_count{0}; // into motion_joints_
+        std::uint32_t joint_offset{0}, joint_count{0}; // into motion_joints_, or into palette_src when set
+        rhi::BufferHandle palette_src{};
     };
     // A run of consecutive instances in the per-frame instance buffer sharing one mesh/material.
     struct Batch {

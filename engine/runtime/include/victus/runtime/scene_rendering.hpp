@@ -6,6 +6,7 @@
 #pragma once
 #include <cstdlib>
 #include "victus/animation/animation.hpp"
+#include "victus/animation/crowd.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/assets/async_loader.hpp"
 #include "victus/assets/database.hpp"
@@ -241,6 +242,21 @@ public:
     [[nodiscard]] const render::GpuMesh* morphed(std::uint64_t key, const Uuid& model_id, const GpuModel& model,
                                                  std::uint32_t mesh, std::span<const float> weights);
     [[nodiscard]] std::size_t morphed_count() const noexcept { return morphed_.size(); }
+    // Crowd animation (ADR-0200): one clip of a model's skin baked into a GPU palette buffer
+    // (frame 0 = bind pose, frames 1.. = the clip). Baked on first use per (model, skin, clip) and
+    // released when the model is evicted or reloaded. nullptr when the model has no such skin or
+    // the bake failed (logged once). An empty or unknown clip name gives the bind pose only.
+    struct CrowdClip {
+        const GpuModel* model{nullptr};
+        animation::CrowdBake bake;         // at most one clip
+        rhi::BufferHandle buffer;          // bake.matrices, storage-read
+        std::vector<std::uint32_t> meshes; // model meshes skinned by the skin
+        bool failed{false};
+    };
+    [[nodiscard]] const CrowdClip* crowd_clip(const Uuid& model_id, const GpuModel& model, std::uint32_t skin,
+                                              std::string_view clip);
+    [[nodiscard]] std::size_t crowd_clip_count() const noexcept;
+    [[nodiscard]] std::size_t crowd_bytes() const noexcept;
     [[nodiscard]] std::uint64_t morph_uploads() const noexcept { return morph_uploads_; }
     // Baked lighting (ADR-0125). The lightmap file at a project-relative path, read, validated and
     // uploaded on first use (invalid texture when missing or damaged; the failure is logged once).
@@ -310,6 +326,19 @@ private:
     std::unordered_map<std::uint64_t, IrradianceBake> irradiance_;
     std::uint32_t irradiance_budget_{8}, irradiance_completed_{0};
     std::unordered_map<Uuid, std::unique_ptr<GpuModel>, UuidHash> models_;
+    struct CrowdKey {
+        Uuid model;
+        std::uint32_t skin{0};
+        std::string clip;
+        bool operator==(const CrowdKey&) const = default;
+    };
+    struct CrowdKeyHash {
+        std::size_t operator()(const CrowdKey& k) const noexcept {
+            return UuidHash{}(k.model) ^ (std::hash<std::string>{}(k.clip) * 31u) ^ (k.skin * 0x9E3779B9u);
+        }
+    };
+    std::unordered_map<CrowdKey, std::unique_ptr<CrowdClip>, CrowdKeyHash> crowd_;
+    void drop_crowd(const Uuid* model); // nullptr = every bake
     std::unordered_map<std::string, render::GpuMesh> primitives_;
     std::unordered_map<Uuid, Result<render::Material>, UuidHash> materials_;
     std::unordered_map<Uuid, Result<rhi::ShaderHandle>, UuidHash> shaders_;
@@ -419,6 +448,7 @@ struct ExtractStats {
     std::uint32_t irradiance_probes_refreshed{0}; // dynamic-volume probes re-captured during this call
     std::uint32_t skinned{0}; // meshes drawn with GPU skinning
     std::uint32_t morphed{0}; // meshes drawn with morph targets applied
+    std::uint32_t crowd_agents{0}; // CrowdAgent entities drawn from baked clips (ADR-0200)
     std::uint32_t lightmapped{0}; // meshes drawn with baked lighting (ADR-0125)
     std::uint32_t terrain_chunks{0}; // terrain chunk meshes submitted (before culling)
     std::uint32_t foliage_instances{0}; // foliage instances submitted (within draw distance, before culling)

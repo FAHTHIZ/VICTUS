@@ -19,6 +19,7 @@
 #include <cmath>
 #include <span>
 #include <format>
+#include <limits>
 
 namespace victus::runtime {
 
@@ -46,6 +47,7 @@ void GpuAssetCache::clear() {
     irradiance_.clear();
     probe_renderer_.reset();
     drop_morphed(nullptr);
+    drop_crowd(nullptr);
     for (auto& [id, model] : models_) {
         for (auto& m : model->meshes) ctx_->destroy(m);
         for (auto& t : model->textures) ctx_->device().destroy(t);
@@ -92,12 +94,100 @@ void GpuAssetCache::evict(const Uuid& uuid) {
         textures_.erase(it);
     }
     drop_morphed(&uuid);
+    drop_crowd(&uuid);
     if (const auto it = models_.find(uuid); it != models_.end()) {
         forget_model_streams(*it->second, uuid);
         for (auto& m : it->second->meshes) ctx_->destroy(m);
         for (auto& t : it->second->textures) ctx_->device().destroy(t);
         models_.erase(it);
     }
+}
+
+void GpuAssetCache::drop_crowd(const Uuid* model) {
+    for (auto it = crowd_.begin(); it != crowd_.end();) {
+        if (model && it->first.model != *model) {
+            ++it;
+            continue;
+        }
+        if (it->second->buffer) ctx_->device().destroy(it->second->buffer);
+        it = crowd_.erase(it);
+    }
+}
+
+std::size_t GpuAssetCache::crowd_clip_count() const noexcept {
+    std::size_t n = 0;
+    for (const auto& [key, c] : crowd_) n += c->failed ? 0 : 1;
+    return n;
+}
+
+std::size_t GpuAssetCache::crowd_bytes() const noexcept {
+    std::size_t n = 0;
+    for (const auto& [key, c] : crowd_) n += c->failed ? 0 : c->bake.bytes();
+    return n;
+}
+
+const GpuAssetCache::CrowdClip* GpuAssetCache::crowd_clip(const Uuid& model_id, const GpuModel& model, std::uint32_t skin,
+                                                          std::string_view clip) {
+    CrowdKey key{model_id, skin, std::string(clip)};
+    auto& slot = crowd_[key];
+    if (slot && slot->model != &model) { // the model was reloaded under the same id
+        if (slot->buffer) ctx_->device().destroy(slot->buffer);
+        slot.reset();
+    }
+    if (slot) return slot->failed ? nullptr : slot.get();
+    slot = std::make_unique<CrowdClip>();
+    CrowdClip& c = *slot;
+    c.model = &model;
+    const auto fail = [&](std::string_view why) -> const CrowdClip* {
+        c.failed = true;
+        VICTUS_LOG_WARN("runtime", "crowd: model {} skin {} clip '{}': {}", model_id.to_string(), skin, clip, why);
+        return nullptr;
+    };
+    const assets::CookedModel& cpu = model.cpu;
+    if (skin >= cpu.skins.size()) return fail("the model has no such skin");
+    const assets::ModelSkin& ms = cpu.skins[skin];
+    // Meshes the skin deforms, and the union of their per-joint bounds.
+    std::vector<math::Aabb> joint_bounds(ms.joints.size());
+    for (const assets::ModelNode& n : cpu.nodes) {
+        if (n.skin != static_cast<std::int32_t>(skin)) continue;
+        for (const std::uint32_t mi : n.meshes) {
+            if (mi >= model.meshes.size() || model.max_joint[mi] < 0) continue;
+            if (std::find(c.meshes.begin(), c.meshes.end(), mi) == c.meshes.end()) c.meshes.push_back(mi);
+            const auto& jb = model.joint_bounds[mi];
+            for (std::size_t j = 0; j < jb.size() && j < joint_bounds.size(); ++j)
+                if (jb[j].valid()) {
+                    joint_bounds[j].expand(jb[j].min);
+                    joint_bounds[j].expand(jb[j].max);
+                }
+        }
+    }
+    if (c.meshes.empty()) return fail("no mesh is skinned by the skin");
+    std::span<const animation::Clip> clips;
+    for (const animation::Clip& a : cpu.animations)
+        if (!clip.empty() && a.name == clip) {
+            clips = std::span<const animation::Clip>(&a, 1);
+            break;
+        }
+    if (!clip.empty() && clips.empty()) VICTUS_LOG_WARN("runtime", "crowd: model {} has no clip '{}'; drawing the bind pose", model_id.to_string(), clip);
+    animation::CrowdBakeInput in;
+    in.nodes = model.skeleton;
+    in.clips = clips;
+    in.joints = ms.joints;
+    in.inverse_bind = ms.inverse_bind;
+    in.joint_bounds = joint_bounds;
+    auto bake = animation::bake_crowd(in);
+    if (!bake) return fail(bake.error().message);
+    c.bake = std::move(*bake);
+    const std::size_t bytes = c.bake.bytes();
+    if (bytes > std::numeric_limits<std::uint32_t>::max()) return fail("bake too large");
+    auto buf = ctx_->device().create_buffer({std::format("crowd_{}_{}", model_id.to_string(), clip), static_cast<std::uint32_t>(bytes),
+                                             rhi::BufferUsageStorageRead});
+    if (!buf) return fail(buf.error().message);
+    c.buffer = *buf;
+    auto cmd = ctx_->device().begin_commands();
+    cmd.upload_buffer(c.buffer, 0, {reinterpret_cast<const std::uint8_t*>(c.bake.matrices.data()), bytes});
+    cmd.submit();
+    return &c;
 }
 
 Result<render::Image> load_cookie_image(assets::AssetDatabase& db, const Uuid& texture) {
@@ -2085,6 +2175,45 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         apply_overrides(entity, m);
         emit(*mesh, m);
         ++stats.meshes;
+    });
+
+    // Crowd agents (ADR-0200): whole skinned models drawn from clips baked once per (model, skin,
+    // clip); no joint entities and no per-agent palette upload, so agents of one clip batch.
+    w.each<animation::CrowdAgentComponent, WorldTransform>([&](Entity entity, const animation::CrowdAgentComponent& ca,
+                                                               const WorldTransform& wt) {
+        if (ca.model.is_nil()) return;
+        auto model = assets.model(ca.model);
+        if (!model) {
+            if (model.error().code == ErrorCode::Pending) ++stats.loading_assets;
+            else ++stats.missing_assets;
+            return;
+        }
+        const GpuModel& gm = **model;
+        const GpuAssetCache::CrowdClip* cc = assets.crowd_clip(ca.model, gm, ca.skin, ca.clip);
+        if (!cc) {
+            ++stats.missing_assets;
+            return;
+        }
+        const animation::CrowdBake& bake = cc->bake;
+        const bool clip = !bake.clips.empty();
+        const std::uint32_t frame = clip ? bake.frame_at(0, ca.time, ca.loop) : 0;
+        const math::Aabb bounds = (clip && bake.clips[0].bounds.valid() ? bake.clips[0].bounds : bake.rest_bounds).transformed(wt.matrix);
+        const float px = streaming ? runtime::projected_pixels(camera, bounds, assets.residency_settings().screen_height) : 0.0f;
+        for (std::size_t k = 0; k < cc->meshes.size(); ++k) {
+            const std::uint32_t mi = cc->meshes[k];
+            render::Material m = gm.mesh_materials[mi];
+            m.base_color = {m.base_color.r * ca.tint.r, m.base_color.g * ca.tint.g, m.base_color.b * ca.tint.b, m.base_color.a * ca.tint.a};
+            m.cast_shadows = ca.cast_shadows;
+            apply_overrides(entity, m);
+            if (streaming) assets.note_model_footprint(ca.model, mi, px);
+            // Stable and non-zero per (agent, primitive).
+            const std::uint64_t motion_id = ((entity.bits() + 1) * 0x9E3779B97F4A7C15ull) ^ (k + 1);
+            renderer.submit_skinned(gm.meshes[mi], m, wt.matrix, cc->buffer, frame * bake.joints, bake.joints, bounds,
+                                    motion_id ? motion_id : 1);
+            ++stats.meshes;
+            ++stats.skinned;
+        }
+        ++stats.crowd_agents;
     });
 
     std::vector<particles::EmitterView> emitters;
