@@ -36,6 +36,7 @@ Every engine module is a static library `victus_<name>` (alias `VICTUS::<Name>`)
 | 4 | `plugin` | Native plugin host: `.vplugin` manifests, dependency resolution, versioned C ABI (`victus_plugin.h`), lifecycle (ADR-0078) |
 | 5 | `navigation`, `traffic`, `tilemap`, `terrain`, `sequencer`, `net` | Navmesh (single or tiled) and agents; lane-graph road traffic with signals and IDM drivers (ADR-0167); tile sets and colliders; heightfields and foliage; timeline playback with curves and property tracks; transport, replication, sessions |
 | 6 | `ai` | Behaviour trees, blackboard, perception |
+| 6 | `procgen` | Procedural cities from a seed: road grid, blocks, lots, building massing, street furniture, per-cell meshes, static colliders, a traffic lane graph and sidewalk pedestrians (ADR-0202) |
 | 6 | `assets` | Asset database, importers, cooker, GPU-ready model/texture data; providers that hand cooked data to lower layers (animation sets, tilesets, height fields, collision meshes for physics) |
 | 7 | `script` | Luau ScriptHost and the scripting API over every gameplay system; loads `.vgraph` through `graph` |
 | 7 | `library` | Asset Store: licence-checked search and install from open asset providers (Poly Haven, ambientCG, Sketchfab and others) into `assets/library/`, provenance and `CREDITS.md` (ADR-0174). Host tools only: built with `VICTUS_BUILD_TOOLS` and linked by the Studio and the CLI, never by shipped games |

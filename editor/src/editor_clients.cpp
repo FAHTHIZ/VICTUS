@@ -11,6 +11,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/gameui/gameui.hpp"
 #include "victus/navigation/navigation.hpp"
+#include "victus/procgen/city.hpp"
 #include "victus/traffic/traffic.hpp"
 #include "victus/particles/particles.hpp"
 #include "victus/physics/physics.hpp"
@@ -109,6 +110,7 @@ void Editor::start_editor_clients() {
         navigation::add_navigation_systems(c->sim, *c->navigation);
         c->ai = std::make_unique<ai::AiSystem>(db_ ? ai::directory_loader(db_->assets_dir()) : ai::TreeLoader{});
         ai::add_ai_systems(c->sim, *c->ai);
+        procgen::add_procgen_systems(c->sim);
         traffic::add_traffic_systems(c->sim, db_ ? traffic::directory_loader(db_->assets_dir()) : traffic::NetworkLoader{});
         c->sequencer = std::make_unique<sequencer::SequencerSystem>(db_ ? sequencer::directory_loader(db_->assets_dir()) : sequencer::SequenceLoader{});
         sequencer::add_sequencer_systems(c->sim, *c->sequencer);

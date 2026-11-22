@@ -2994,3 +2994,22 @@ Verified:
 - `victus_render_tests` 70/70; `victus_scene_tests`; `victus_export_tests -tc="*cookie*"`; `ctest -R "victus_reference_scenes|perf"` passes with unchanged goldens and budgets.
 
 Not verified: real GPUs, Metal and D3D12 (compiled only); `victus_editor_tests` left to CI.
+
+## 2026-11-22 — Procedural city from one seed (ADR-0202)
+
+- **Built:**
+  - New `procgen` module (layer 6). `generate_city`: irregular road grid with avenues, kerbed blocks with sidewalks, lots (back-to-back rows or a ring around a courtyard), buildings with downtown height falloff and setback tiers, parks, street lights, trees and one walking loop per block, all from a SplitMix64 seed.
+  - `build_city_meshes`: one vertex-coloured mesh per (cell, layer) for Ground (asphalt, lane markings, zebra crossings, kerb plates, parks), Buildings (tiers with per-floor window bands, roof units), Props (light poles) and Foliage (trees). Each face's winding comes from its intended outward normal.
+  - `City` component and "procgen.update" system (player and Studio Play): builds the meshes, optional static box colliders, a traffic lane graph with `vehicles` agents (first child = vehicle template) and `pedestrians` CrowdAgents (ADR-0200) walking the sidewalk loops. Exposed in the Inspector through the "City" and "Pedestrian" schemas.
+  - `scene::TransientComponent`: `Scene::save` and `save_subtree` skip such entities and their descendants (sibling `next` links skip them too), so saved scenes keep only the settings.
+- **Verified:**
+  - `victus_procgen_tests`: 5 cases, 1,896 assertions. Same seed gives the same city and a different seed differs; every lot sits inside its block, lots in a block do not overlap and tiers are nested; road count is 2·cols·rows + cols + rows; walk loops close, wrap and stay on the sidewalk; bad settings are rejected; every non-degenerate triangle faces its shading normal (0 flipped, 0 degenerate) and splitting into cells keeps the triangle count; the scene build creates 20 vehicles, 50 pedestrians and one collider per ground/kerb/tier box, hides the vehicle template, saves nothing generated, moves pedestrians at their speed, and a reloaded scene rebuilds the same city.
+  - Timing on the 2-core sandbox: a 12×12 city (1,018 buildings, 4,313 props, 208,424 triangles in 100 meshes) generates in 0.3 ms and meshes in 14–29 ms.
+  - `victus_scene_tests -tc="*transient*"`: 10 assertions, including a reload and the `next` link skipping a transient sibling.
+  - `victus_gpu_tests -tc="gpu: procedural city*"` on lavapipe (High): a 5×5 city (203 buildings, 24 meshes, 37,728 triangles) drawn from the air and from street level. Images: [aerial](images/procgen_city_aerial.png), [street](images/procgen_city_street.png). Inspected by eye: towers downtown, low-rise edges, lane markings, crossings, trees and light poles, no missing faces.
+  - Full `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1 VICTUS_NO_AUDIO=1 ctest --test-dir build/release -j2`: 44/44 passed (592 s).
+- **Not verified:**
+  - Real GPUs and phones.
+  - A city with thousands of pedestrians *and* vehicles in the player (each was tested separately at small counts).
+  - Physics cost of the static colliders at large city sizes.
+- **Next task:** GAP-14 emissive night windows and street lights for the generated city, then GAP-11 HLOD/impostors for distant cells.

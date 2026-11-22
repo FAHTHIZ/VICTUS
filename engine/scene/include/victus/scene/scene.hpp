@@ -133,6 +133,9 @@ struct ProceduralMesh {
 // shares the mesh. Fails on out-of-range indices, mismatched attribute counts or an index count
 // that is not a multiple of three.
 [[nodiscard]] Result<std::shared_ptr<const ProceduralMesh>> publish_mesh(ProceduralMesh mesh);
+// Marks generated content (procedural cities, spawned crowds): save() and save_subtree() skip
+// the entity and its descendants, so regenerating on load never duplicates it. Not serialized.
+struct TransientComponent {};
 // Drawn through the entity's MeshRenderer (material, tint, shadows, visibility) in place of
 // its mesh asset or primitive. Runtime-only: not saved with the scene.
 struct ProceduralMeshComponent {
@@ -307,6 +310,8 @@ private:
     void link_child(Entity parent, Entity child);
     void unlink(Entity child);
     void collect_subtree(Entity e, std::vector<Entity>& out) const;
+    // collect_subtree without Transient entities and their descendants.
+    void collect_persistent(Entity e, std::vector<Entity>& out) const;
     void fix_depth(Entity e, std::uint32_t depth);
     [[nodiscard]] Status load_components(Entity e, const json::Value& comps);
     [[nodiscard]] Status load_entities(const json::Value& entities, std::vector<Entity>& created);

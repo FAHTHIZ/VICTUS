@@ -295,3 +295,30 @@ TEST_CASE("scene: entity snapshots restore state, subtrees and sibling order") {
     CHECK(s.world().get<Hierarchy>(a)->depth == 1);
     CHECK(s.children(nb).back() == a);
 }
+
+TEST_CASE("scene: transient entities and their descendants are not saved") {
+    Scene s;
+    const Entity root = s.create("City");
+    const Entity keep = s.create("Keep", root);
+    const Entity gen = s.create("Generated", root);
+    s.world().add<TransientComponent>(gen);
+    (void)s.create("Generated Child", gen);
+    const Entity last = s.create("Last", root);
+    const json::Value doc = s.save();
+    const std::string text = json::stringify(doc);
+    CHECK(text.find("Generated") == std::string::npos);
+    CHECK(text.find("Keep") != std::string::npos);
+    CHECK(text.find("Last") != std::string::npos);
+    Scene t;
+    REQUIRE(t.load(doc));
+    CHECK(t.world().count<Hierarchy>() == 3);
+
+    // A subtree snapshot skips them too and links "Keep" to the next persistent sibling.
+    const json::Value sub = s.save_subtree(root);
+    REQUIRE(sub.is_array());
+    CHECK(sub.size() == 3);
+    const std::string subtext = json::stringify(sub);
+    CHECK(subtext.find("Generated") == std::string::npos);
+    CHECK(sub[1]["next"].as_string() == s.uuid(last).to_string()); // Keep -> Last, skipping Generated
+    CHECK(sub[1]["uuid"].as_string() == s.uuid(keep).to_string());
+}

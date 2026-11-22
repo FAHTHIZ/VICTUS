@@ -12,6 +12,7 @@
 #include "victus/core/profiler.hpp"
 #include "victus/platform/platform.hpp"
 #include "victus/runtime/physics_ground_probe.hpp"
+#include "victus/procgen/city.hpp"
 #include "victus/traffic/traffic.hpp"
 
 #include <algorithm>
@@ -1290,6 +1291,7 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
     navigation::add_navigation_systems(sim_, *play_navigation_);
     play_ai_ = std::make_unique<ai::AiSystem>(db_ ? ai::directory_loader(db_->assets_dir()) : ai::TreeLoader{});
     ai::add_ai_systems(sim_, *play_ai_);
+    procgen::add_procgen_systems(sim_);
     traffic::add_traffic_systems(sim_, db_ ? traffic::directory_loader(db_->assets_dir()) : traffic::NetworkLoader{});
     play_sequencer_ = std::make_unique<sequencer::SequencerSystem>(db_ ? sequencer::directory_loader(db_->assets_dir()) : sequencer::SequenceLoader{});
     sequencer::add_sequencer_systems(sim_, *play_sequencer_);

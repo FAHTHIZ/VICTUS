@@ -174,7 +174,8 @@ victus_add_test(victus_gpu_tests
         render/gpu_texture_3d_tests.cpp
         render/gpu_effect_fog_tests.cpp
         render/gpu_light2d_tests.cpp
-    DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui
+        render/gpu_city_tests.cpp
+    DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui VICTUS::Procgen
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output"
     VICTUS_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -433,3 +434,8 @@ victus_add_test(victus_traffic_tests
     SOURCES traffic/traffic_tests.cpp
     DEPS VICTUS::Traffic VICTUS::Scene VICTUS::Core
     LABELS traffic)
+
+victus_add_test(victus_procgen_tests
+    SOURCES procgen/city_tests.cpp
+    DEPS VICTUS::Procgen VICTUS::Traffic VICTUS::Animation VICTUS::Physics VICTUS::Scene VICTUS::Core
+    LABELS procgen)

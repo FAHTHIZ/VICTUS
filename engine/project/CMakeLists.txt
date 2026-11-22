@@ -53,4 +53,4 @@ endforeach()
 victus_add_module(project
     SOURCES src/project.cpp src/templates.cpp src/sprite_art.cpp src/characters.cpp src/character_validate.cpp
             src/starter_materials.cpp ${_victus_character_sources}
-    DEPS VICTUS::Assets VICTUS::Scene VICTUS::Gameplay VICTUS::Script VICTUS::Physics VICTUS::Audio VICTUS::Animation VICTUS::Particles VICTUS::Gameui VICTUS::Navigation VICTUS::Traffic VICTUS::Ai VICTUS::Sequencer VICTUS::Net VICTUS::Tilemap VICTUS::Terrain VICTUS::World)
+    DEPS VICTUS::Assets VICTUS::Scene VICTUS::Gameplay VICTUS::Script VICTUS::Physics VICTUS::Audio VICTUS::Animation VICTUS::Particles VICTUS::Gameui VICTUS::Navigation VICTUS::Traffic VICTUS::Procgen VICTUS::Ai VICTUS::Sequencer VICTUS::Net VICTUS::Tilemap VICTUS::Terrain VICTUS::World)

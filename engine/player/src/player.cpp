@@ -19,6 +19,7 @@
 #include "victus/terrain/terrain.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/ai/ai.hpp"
+#include "victus/procgen/city.hpp"
 #include "victus/traffic/traffic.hpp"
 #include "victus/sequencer/sequencer.hpp"
 #include "victus/navigation/navigation.hpp"
@@ -320,6 +321,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     navigation::add_navigation_systems(sim, nav);
     ai::AiSystem ai_system(ai::directory_loader((*db)->assets_dir()));
     ai::add_ai_systems(sim, ai_system);
+    procgen::add_procgen_systems(sim);
     traffic::add_traffic_systems(sim, traffic::directory_loader((*db)->assets_dir()));
     sequencer::SequencerSystem sequencer_system(sequencer::directory_loader((*db)->assets_dir()));
     sequencer::add_sequencer_systems(sim, sequencer_system);

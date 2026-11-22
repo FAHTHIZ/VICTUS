@@ -376,6 +376,14 @@ void Scene::collect_subtree(Entity e, std::vector<Entity>& out) const {
     for (Entity c = h->first_child; !c.is_null(); c = world_.get<Hierarchy>(c)->next_sibling) collect_subtree(c, out);
 }
 
+void Scene::collect_persistent(Entity e, std::vector<Entity>& out) const {
+    if (world_.has<TransientComponent>(e)) return;
+    out.push_back(e);
+    const Hierarchy* h = world_.get<Hierarchy>(e);
+    if (!h) return;
+    for (Entity c = h->first_child; !c.is_null(); c = world_.get<Hierarchy>(c)->next_sibling) collect_persistent(c, out);
+}
+
 void Scene::destroy(Entity e) {
     if (!world_.alive(e)) return;
     std::vector<Entity> subtree;
@@ -592,10 +600,12 @@ Value Scene::save_subtree(Entity e) const {
     Value out = Value::array();
     if (!world_.alive(e)) return out;
     std::vector<Entity> order;
-    collect_subtree(e, order);
+    collect_persistent(e, order);
     for (const Entity x : order) {
         Value ev = save_entity(x);
-        if (const Entity n = next_sibling(x); !n.is_null()) ev.set("next", uuid_value(uuid(n)));
+        Entity n = next_sibling(x);
+        while (!n.is_null() && world_.has<TransientComponent>(n)) n = next_sibling(n);
+        if (!n.is_null()) ev.set("next", uuid_value(uuid(n)));
         out.push(std::move(ev));
     }
     return out;
@@ -608,7 +618,7 @@ Value Scene::save() const {
     doc.set("name", name);
     Value entities = Value::array();
     std::vector<Entity> order;
-    for (const Entity r : roots()) collect_subtree(r, order);
+    for (const Entity r : roots()) collect_persistent(r, order);
     for (const Entity e : order) entities.push(save_entity(e));
     doc.set("entities", std::move(entities));
     return doc;
