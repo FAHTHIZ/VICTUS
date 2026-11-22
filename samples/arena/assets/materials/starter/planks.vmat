@@ -1,0 +1,28 @@
+{
+  "victus_material": 1,
+  "base_color": [1, 1, 1, 1],
+  "base_color_texture": "dd414392-69f6-41c6-a485-e422625ee8b0",
+  "metallic": 0,
+  "roughness": 1,
+  "metallic_roughness_texture": "2c259177-28b9-4410-9b2d-77da20d490e6",
+  "normal_texture": "f19edca1-36c8-459f-9da4-ed9405718742",
+  "normal_scale": 1,
+  "emissive": [0, 0, 0],
+  "emissive_strength": 1,
+  "emissive_texture": null,
+  "alpha_cutoff": 0,
+  "uv_scale": [0.5, 0.5],
+  "uv_offset": [0, 0],
+  "filter": "linear",
+  "unlit": false,
+  "double_sided": false,
+  "shader": null,
+  "shader_params": [],
+  "vertex_alpha": "opacity",
+  "coverage_response": 1,
+  "blend": "opaque",
+  "occlusion_strength": 1,
+  "triplanar": true,
+  "triplanar_sharpness": 12
+}
+

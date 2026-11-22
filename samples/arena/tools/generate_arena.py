@@ -23,6 +23,9 @@ NS = uuid.UUID("0b8f7c52-3a5e-4c0c-9a51-7e1f2a6d4b10")
 GROUND_MATERIAL = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f003"
 ENERGY_SHADER = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f004"
 GROUND_TEXTURE = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f002"
+# CC0 starter materials the 3D template writes (engine/project/src/starter_materials.cpp, ADR-0197).
+STARTER = {"rock": "41d1b30b-56c2-4579-aa04-8db688955042", "planks": "d2db09c1-abda-4fb5-9ab7-65355bad2577",
+           "paving": "126386bf-b6d7-49b8-a925-f68faa031016"}
 
 
 def plain_clips(entities):
@@ -144,6 +147,14 @@ def main():
             (a_dst / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(a_src / (rel + suffix), a_dst / (rel + suffix))
 
+    # Starter materials (triplanar, so they tile per metre on the scaled walls) and the HDR sky.
+    starter = [f"textures/starter/{m}_{k}.jpg" for m in STARTER for k in ("color", "normal", "orm")]
+    starter += [f"materials/starter/{m}.vmat" for m in STARTER] + ["textures/sky/partly_cloudy.hdr"]
+    for rel in starter:
+        for suffix in ["", ".meta"]:
+            (a_dst / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(a_src / (rel + suffix), a_dst / (rel + suffix))
+
     # The arena floor is larger than the template's 20 m ground: keep the grid at 2 m cells.
     ground = json.loads((a_src / "materials/ground.vmat").read_text())
     ground["uv_scale"] = [16, 16]
@@ -200,16 +211,20 @@ def main():
     floor["name"] = "Arena Floor"
     floor["uuid"] = uid("Arena Floor")
     floor["components"]["Transform"]["scale"] = [32, 1, 32]
+    floor["components"]["MeshRenderer"]["material"] = STARTER["paving"]
+    floor["components"]["MeshRenderer"]["base_color"] = [0.9, 0.88, 0.86, 1]
     level.append(floor)
-    stone = (0.42, 0.4, 0.45)
+    stone = (0.8, 0.78, 0.82)
     for name, pos, scale in [("Wall North", (0, 1, -15.5), (32, 2, 1)), ("Wall South", (0, 1, 15.5), (32, 2, 1)),
                              ("Wall West", (-15.5, 1, 0), (1, 2, 30)), ("Wall East", (15.5, 1, 0), (1, 2, 30))]:
-        level.append(solid(name, "cube", pos, scale, stone, roughness=0.9))
+        level.append(solid(name, "cube", pos, scale, stone, roughness=0.9, material=STARTER["rock"]))
     for i, (x, z) in enumerate([(-5, -5), (5, -5), (5, 5), (-5, 5)]):
-        level.append(solid(f"Pillar {i + 1}", "cylinder", (x, 1.5, z), (1.2, 3, 1.2), (0.92, 0.9, 0.85), 1.0, 0.3))
+        level.append(solid(f"Pillar {i + 1}", "cylinder", (x, 1.5, z), (1.2, 3, 1.2), (1.0, 0.97, 0.92), 0.0, 0.8,
+                           material=STARTER["rock"]))
     for i, (pos, scale) in enumerate([((0, 0.5, -8.5), (3, 1, 1)), ((0, 0.5, 8.5), (3, 1, 1)),
                                       ((-8.5, 0.5, 0), (1, 1, 3)), ((8.5, 0.5, 0), (1, 1, 3))]):
-        level.append(solid(f"Cover {i + 1}", "cube", pos, scale, (0.55, 0.43, 0.3), roughness=0.75))
+        level.append(solid(f"Cover {i + 1}", "cube", pos, scale, (1, 1, 1), roughness=0.75,
+                           material=STARTER["planks"]))
     # Spawn gates in the corners: two glowing posts and a red light each.
     for i, (x, z) in enumerate([(-12, -12), (12, -12), (12, 12), (-12, 12)]):
         sx, sz = (1 if x > 0 else -1), (1 if z > 0 else -1)

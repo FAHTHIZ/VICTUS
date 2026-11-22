@@ -2892,3 +2892,14 @@ Verified:
 - Vulkan (lavapipe) `victus_gpu_tests -tc="*triplanar*,*material assets texture*"`: 2 cases, 69 assertions; the new triplanar case shows mesh UVs halving their on-screen cells when the floor doubles while triplanar cells stay within one transition.
 
 Not verified: GLES devices with only 16 fragment units (custom-texture surface shaders still cannot link there; documented in KNOWN_LIMITATIONS).
+
+## 2026-11-22 — Robot Arena on the starter materials (ADR-0197)
+
+Built: samples/arena copies the rock, planks and paving starter sets and the HDR sky with the template's UUIDs. Its floor is paving, the walls and pillars are rock (pillars no longer metallic), the cover blocks are planks, and the Environment uses the sky. `tools/generate_arena.py` does the same on regeneration; the committed scenes were patched in place so unrelated UUIDs did not change. docs/images/sample_arena.jpg was re-captured (`victus run samples/arena --quality high`, lavapipe).
+
+Verified:
+- `ctest -R "victus_robustness_tests|victus_cli_determinism|victus_sample_arena"`: pass.
+- `ctest -R victus_perf_budgets`: sample-arena live textures 66 (was 57 max) and texture bytes 229.4 MB re-baselined to 73 / 252.3 MB, then passes.
+- Tried `compression: auto` on the starter textures: `victus new --template nocode3d` took 2 min 57 s vs 47 s in Debug, so it was reverted (KNOWN_LIMITATIONS).
+
+Not verified: real GPUs.
