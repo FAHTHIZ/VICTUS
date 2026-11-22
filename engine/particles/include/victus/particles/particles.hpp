@@ -30,6 +30,10 @@ namespace victus::particles {
 enum class Shape : std::uint8_t { Point, Sphere, Cone, Box };
 enum class Blend : std::uint8_t { Alpha, Additive };
 enum class SubEmitterTrigger : std::uint8_t { Death, Birth };
+// What an emitter does while no viewer can see its bounds (ADR-0210).
+enum class Offscreen : std::uint8_t { Simulate, Throttle, Pause };
+// Simulation level an emitter ran at in the last update (ADR-0210).
+enum class Lod : std::uint8_t { Full, Throttled, Paused, Culled };
 
 // Emits along the entity's local +Y axis (Sphere emits outward in all directions).
 struct ParticleEmitterComponent {
@@ -112,6 +116,27 @@ struct ParticleEmitterComponent {
     SubEmitterTrigger sub_emitter_trigger{SubEmitterTrigger::Death};
     std::uint32_t sub_emitter_count{8};
     float sub_emitter_inherit_velocity{0};
+    // Simulation LOD (ADR-0210), measured from the nearest viewer (ParticleSystem::set_viewers, or
+    // every primary camera in the scene). No viewers: every emitter runs at full rate.
+    //   cull_distance: farther than this, the emitter's particles are removed and it stops
+    //     emitting until a viewer comes back within range (its cycle and bursts restart).
+    //   lod_distance: farther than this, the emitter updates only lod_rate times per second (with
+    //     the elapsed time, so motion and lifetimes stay correct) and spawns lod_spawn_scale of its
+    //     rate and bursts.
+    //   offscreen: no viewer's frustum touches its bounds: keep simulating, throttle like a
+    //     distant emitter, or pause (frozen, no spawning) until seen again.
+    float cull_distance{0};   // metres; 0 = never
+    float lod_distance{0};    // metres; 0 = never throttle by distance
+    float lod_rate{15};       // updates per second while throttled
+    float lod_spawn_scale{0.5f}; // 0..1 fraction of rate and bursts while throttled
+    Offscreen offscreen{Offscreen::Simulate};
+};
+
+// A point of view for particle LOD: its position, and optionally the frustum it renders.
+struct ParticleViewer {
+    math::Vec3 position;
+    math::Frustum frustum{};
+    bool has_frustum{false}; // false: sees every emitter (distance rules still apply)
 };
 
 constexpr std::uint32_t kMaxCpuParticles = 65536;
@@ -211,6 +236,8 @@ struct EmitterStatus {
     std::uint64_t emitted{0}; // total since start
     float time{0};            // seconds into the current cycle
     bool finished{false};     // non-looping cycle ended and every particle died
+    Lod lod{Lod::Full};       // simulation level in the last update (ADR-0210)
+    float viewer_distance{-1}; // metres to the nearest viewer in the last update; -1 = no viewers
 };
 
 struct ParticleStats {
@@ -218,11 +245,18 @@ struct ParticleStats {
     std::uint32_t gpu_emitters{0}, gpu_alive{0}; // subset simulated on the GPU
     std::uint32_t sub_emitter_events{0};  // source particle births/deaths delivered to a target this update
     std::uint32_t sub_emitter_dropped{0}; // events with no valid target (missing, self, not an emitter) or over the target's queue
+    // Simulation LOD (ADR-0210): emitters per level this update, and throttled emitters that
+    // skipped this update (waiting for their next lod_rate step).
+    std::uint32_t lod_full{0}, lod_throttled{0}, lod_paused{0}, lod_culled{0}, lod_skipped{0};
+    std::uint32_t viewers{0};
 };
 
 struct ParticleSettings {
     jobs::JobSystem* jobs{nullptr};    // simulates emitters in parallel when set
     std::uint32_t parallel_threshold{4}; // minimum emitters before using jobs
+    // Width / height assumed for automatic camera viewers (the simulation does not know the
+    // window): wide by default so off-screen tests stay conservative on any screen.
+    float viewer_aspect{2.4f};
 };
 
 class ParticleSystem {
@@ -233,15 +267,24 @@ public:
     ParticleSystem& operator=(const ParticleSystem&) = delete;
     void update(scene::Scene& scene, float dt);
     [[nodiscard]] const ParticleStats& stats() const noexcept { return stats_; }
+    // Viewers for simulation LOD (ADR-0210); replaces the automatic scene-camera viewers until
+    // use_scene_cameras(). An empty span means "no viewers": every emitter at full rate.
+    void set_viewers(std::span<const ParticleViewer> viewers);
+    void use_scene_cameras();
+    [[nodiscard]] std::span<const ParticleViewer> viewers() const noexcept { return viewers_; }
 
 private:
     ParticleSettings settings_;
     ParticleStats stats_;
+    std::vector<ParticleViewer> viewers_;
+    bool explicit_viewers_{false};
     struct Work;
     std::vector<Work> work_;
 };
 
 void register_components();
+// Primary cameras of `scene` as viewers (perspective or orthographic frustum at `aspect`).
+[[nodiscard]] std::vector<ParticleViewer> camera_viewers(scene::Scene& scene, float aspect);
 // Installs "particles.update" (Phase::PostUpdate, after scripts and physics moved the emitters).
 void add_particle_systems(gameplay::Simulation& sim, ParticleSystem& system);
 

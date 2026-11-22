@@ -2252,3 +2252,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** listed in docs/STATUS.md under this ADR.
 
 **Consequences:** Empty curves keep existing emitters bit-identical. Keys beyond eight are ignored on both paths (the Studio does not yet warn). Speed, rotation and emission-rate curves are not covered yet.
+
+### ADR-0210: Particle simulation LOD by distance and visibility
+
+**Status:** Accepted (2026-11-22)
+
+**Context:** The VFX audit found that every `ParticleEmitter` simulated and spawned at full rate every frame wherever it was: a torch 300 m away or behind the camera cost as much as one in front of the player. Large worlds and the effect budgets in the brief need distance- and visibility-based update rates. [Unity's Culling Mode](https://docs.unity3d.com/Manual/PartSysMainModule.html) (Automatic, Pause and Catch-up, Pause, Always Simulate) and Niagara's scalability settings (cull by distance or visibility, spawn-count scaling) are the usual model.
+
+**Decision:** (1) Per-emitter fields: `cull_distance` (beyond it the particles are removed and the emitter sleeps until a viewer returns, then its cycle and bursts restart), `lod_distance` with `lod_rate` (updates per second while throttled) and `lod_spawn_scale` (fraction of rate and bursts), and `offscreen` (`Simulate`, `Throttle`, `Pause`) tested against each viewer's frustum and the emitter's bounds. All default off, so existing emitters are bit-identical. (2) Viewers come from `ParticleSystem::set_viewers` or, by default, every primary `CameraComponent` in the scene (`camera_viewers`, perspective or orthographic frustum at `ParticleSettings::viewer_aspect`, 2.4 by default so the test stays conservative on any screen). No viewers means full rate. (3) A throttled emitter accumulates time and simulates one step of the accumulated time at `lod_rate`, so motion and lifetimes follow wall time; returning to full rate catches up the remainder. A paused emitter's clock stops. GPU emitters follow the same emitter clock and a culled one bumps its generation so the renderer drops its GPU particles. (4) `EmitterStatus` reports `lod` and `viewer_distance`; `ParticleStats` counts emitters per level, skipped updates and viewers.
+
+**Alternatives:** (1) A global particle budget that drops the farthest emitters: useful later, but it needs sorting every frame and does not express per-effect intent. (2) Throttling only by visibility (as Unity's Automatic mode): distant visible emitters would still cost full rate. (3) Interpolating throttled particles between steps: smoother but needs two states per particle; distant effects do not show the steps at 15 Hz.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Throttled emitters integrate with larger steps, so drag, collision and turbulence differ slightly from full rate (no claim of identical results). The automatic viewers do not know the real window aspect. Overdraw diagnostics and a global budget remain to do.

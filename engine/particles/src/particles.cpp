@@ -5,6 +5,7 @@
 #include "victus/scene/reflect.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <atomic>
 #include <cmath>
 #include <deque>
@@ -92,6 +93,11 @@ struct EmitterState {
     GpuBook book;
     std::vector<SubEvent> events;   // produced by the last update (this emitter as a source)
     std::vector<SubEvent> incoming; // delivered by sources, spawned on the next update
+    // Simulation LOD (ADR-0210).
+    float spawn_scale{1};      // applied to rate and bursts by schedule()
+    float lod_accumulator{0};  // seconds not yet simulated while throttled
+    Lod lod{Lod::Full};
+    float viewer_distance{-1};
 };
 
 float clamp01(float v) { return std::clamp(v, 0.0f, 1.0f); }
@@ -329,23 +335,25 @@ std::uint32_t schedule(const ParticleEmitterComponent& e, EmitterState& s, float
     s.pending = 0;
     active = true;
     if (!e.emitting) return spawn;
+    const auto burst = s.spawn_scale >= 1.0f ? e.burst
+                                              : static_cast<std::uint32_t>(std::lround(static_cast<double>(e.burst) * std::max(0.0f, s.spawn_scale)));
     if (!s.started) {
         s.started = true;
         s.time = 0;
-        spawn += e.burst;
+        spawn += burst;
     } else {
         s.time += dt;
     }
     if (e.duration > 0 && s.time >= e.duration) {
         if (e.loop) {
             s.time = std::fmod(s.time, e.duration);
-            spawn += e.burst;
+            spawn += burst;
         } else {
             active = false;
         }
     }
     if (active && e.rate > 0) {
-        s.accumulator += e.rate * dt;
+        s.accumulator += e.rate * std::clamp(s.spawn_scale, 0.0f, 1.0f) * dt;
         const float whole = std::floor(s.accumulator);
         s.accumulator -= whole;
         spawn += static_cast<std::uint32_t>(std::min(whole, static_cast<float>(limit)));
@@ -749,7 +757,70 @@ struct ParticleSystem::Work {
     Mat4 world;
     std::uint64_t seed{0};
     Counts counts;
+    bool skipped{false}; // throttled and waiting for its next step (ADR-0210)
 };
+
+namespace {
+
+// Kills every particle and restarts the cycle (reset(), and LOD culling).
+void clear_state(EmitterState& s) {
+    s.particles.clear();
+    s.billboards.clear();
+    s.velocities.clear();
+    s.trail.clear();
+    s.ribbon_points.clear();
+    s.ribbon_strips.clear();
+    s.bounds = {};
+    s.started = false;
+    s.finished = false;
+    s.time = 0;
+    s.accumulator = 0;
+    s.lod_accumulator = 0;
+    s.pending = 0;
+    s.events.clear();
+    s.incoming.clear();
+    if (s.book.capacity > 0) reset_book(s.book, s.book.capacity);
+    s.book.view.generation = s.book.generation;
+    s.book.view.alive = 0;
+    s.book.view.records = {};
+}
+
+// Bounds used for the off-screen test: the particles' bounds, or the emission volume when empty.
+Aabb visibility_bounds(const ParticleEmitterComponent& e, const EmitterState& s, const Mat4& world) {
+    if (s.bounds.valid()) return s.bounds;
+    const float r = std::max({0.0f, std::isfinite(e.radius) ? e.radius : 0.0f, 0.5f * std::max({e.box.x, e.box.y, e.box.z})}) +
+                    max_size(e) + 0.5f;
+    const Vec3 c = world.transform_point({0, 0, 0});
+    return {c - Vec3{r}, c + Vec3{r}};
+}
+
+// Level an emitter runs at for these viewers (ADR-0210).
+Lod choose_lod(const ParticleEmitterComponent& e, const EmitterState& s, const Mat4& world, std::span<const ParticleViewer> viewers,
+               float& distance) {
+    distance = -1;
+    if (viewers.empty()) return Lod::Full;
+    const Vec3 p = world.transform_point({0, 0, 0});
+    float d2 = std::numeric_limits<float>::max();
+    for (const ParticleViewer& v : viewers) {
+        const Vec3 d = v.position - p;
+        d2 = std::min(d2, math::dot(d, d));
+    }
+    distance = std::sqrt(d2);
+    if (e.cull_distance > 0 && distance > e.cull_distance) return Lod::Culled;
+    bool far = e.lod_distance > 0 && distance > e.lod_distance;
+    if (e.offscreen != Offscreen::Simulate) {
+        const Aabb box = visibility_bounds(e, s, world);
+        bool seen = false;
+        for (const ParticleViewer& v : viewers) seen = seen || !v.has_frustum || v.frustum.intersects(box);
+        if (!seen) {
+            if (e.offscreen == Offscreen::Pause) return Lod::Paused;
+            far = true;
+        }
+    }
+    return far ? Lod::Throttled : Lod::Full;
+}
+
+} // namespace
 
 void register_components() {
     static std::once_flag once;
@@ -812,6 +883,11 @@ void register_components() {
             .enumeration(&ParticleEmitterComponent::sub_emitter_trigger, "sub_emitter_trigger", {"death", "birth"})
             .field(&ParticleEmitterComponent::sub_emitter_count, "sub_emitter_count", {.min = 0, .max = 65536, .tooltip = "Particles per birth or death"})
             .field(&ParticleEmitterComponent::sub_emitter_inherit_velocity, "sub_emitter_inherit_velocity", {.min = -10, .max = 10, .speed = 0.01f, .tooltip = "Fraction of the particle's velocity passed on"})
+            .field(&ParticleEmitterComponent::cull_distance, "cull_distance", {.min = 0, .max = 1e5f, .speed = 0.5f, .tooltip = "Metres from the nearest camera beyond which the effect is removed and stops; 0 = never"})
+            .field(&ParticleEmitterComponent::lod_distance, "lod_distance", {.min = 0, .max = 1e5f, .speed = 0.5f, .tooltip = "Metres beyond which the effect updates less often and spawns fewer particles; 0 = never"})
+            .field(&ParticleEmitterComponent::lod_rate, "lod_rate", {.min = 0.1f, .max = 240, .speed = 0.5f, .tooltip = "Updates per second while throttled"})
+            .field(&ParticleEmitterComponent::lod_spawn_scale, "lod_spawn_scale", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Fraction of the rate and bursts while throttled"})
+            .enumeration(&ParticleEmitterComponent::offscreen, "offscreen", {"simulate", "throttle", "pause"})
             .commit();
     });
 }
@@ -831,14 +907,48 @@ void ParticleSystem::update(Scene& scene, float dt) {
 
     work_.clear();
     world.each<ParticleEmitterComponent, EmitterState>([&](Entity e, ParticleEmitterComponent& c, EmitterState& s) {
-        work_.push_back({e, &c, &s, scene.world_matrix(e), seed_of(scene.uuid(e), e), {}});
+        work_.push_back({e, &c, &s, scene.world_matrix(e), seed_of(scene.uuid(e), e), {}, false});
     });
+    if (!explicit_viewers_) viewers_ = camera_viewers(scene, settings_.viewer_aspect);
+    const std::span<const ParticleViewer> viewers(viewers_);
     const auto run = [&](std::size_t begin, std::size_t end) {
         for (std::size_t i = begin; i < end; ++i) {
             Work& w = work_[i];
-            switch_path(*w.state, w.emitter->gpu);
-            w.counts = w.emitter->gpu ? simulate_gpu(*w.emitter, *w.state, w.world, dt, w.seed)
-                                      : simulate(*w.emitter, *w.state, w.world, dt, w.seed);
+            EmitterState& st = *w.state;
+            const ParticleEmitterComponent& em = *w.emitter;
+            const Lod lod = choose_lod(em, st, w.world, viewers, st.viewer_distance);
+            float step = dt;
+            st.spawn_scale = 1;
+            if (lod == Lod::Culled) {
+                // Out of range: drop the particles once and stay asleep (no spawning, no events).
+                if (st.lod != Lod::Culled) clear_state(st);
+                st.incoming.clear();
+                st.lod = lod;
+                continue;
+            }
+            if (lod == Lod::Paused) {
+                st.lod = lod;
+                st.lod_accumulator = 0;
+                continue;
+            }
+            if (lod == Lod::Throttled) {
+                st.spawn_scale = std::clamp(std::isfinite(em.lod_spawn_scale) ? em.lod_spawn_scale : 1.0f, 0.0f, 1.0f);
+                st.lod_accumulator += std::max(0.0f, std::isfinite(dt) ? dt : 0.0f);
+                const float interval = 1.0f / std::max(0.1f, std::isfinite(em.lod_rate) ? em.lod_rate : 15.0f);
+                if (st.lod_accumulator + 1e-6f < interval) {
+                    st.lod = lod;
+                    w.skipped = true;
+                    continue;
+                }
+                step = st.lod_accumulator;
+                st.lod_accumulator = 0;
+            } else if (st.lod_accumulator > 0) {
+                step += st.lod_accumulator; // back to full rate: catch up the time not yet simulated
+                st.lod_accumulator = 0;
+            }
+            st.lod = lod;
+            switch_path(st, em.gpu);
+            w.counts = em.gpu ? simulate_gpu(em, st, w.world, step, w.seed) : simulate(em, st, w.world, step, w.seed);
         }
     };
     if (settings_.jobs && work_.size() >= std::max<std::uint32_t>(2, settings_.parallel_threshold)) settings_.jobs->parallel_for(0, work_.size(), 1, run);
@@ -856,7 +966,15 @@ void ParticleSystem::update(Scene& scene, float dt) {
         }
         stats_.spawned += w.counts.spawned;
         stats_.died += w.counts.died;
+        switch (w.state->lod) {
+        case Lod::Full: ++stats_.lod_full; break;
+        case Lod::Throttled: ++stats_.lod_throttled; break;
+        case Lod::Paused: ++stats_.lod_paused; break;
+        case Lod::Culled: ++stats_.lod_culled; break;
+        }
+        stats_.lod_skipped += w.skipped ? 1u : 0u;
     }
+    stats_.viewers = static_cast<std::uint32_t>(viewers_.size());
     // Deliver sub-emitter events serially in work order, so the result does not depend on jobs.
     for (Work& w : work_) {
         std::vector<SubEvent>& events = w.state->events;
@@ -877,6 +995,42 @@ void ParticleSystem::update(Scene& scene, float dt) {
     }
 }
 
+void ParticleSystem::set_viewers(std::span<const ParticleViewer> viewers) {
+    viewers_.assign(viewers.begin(), viewers.end());
+    explicit_viewers_ = true;
+}
+
+void ParticleSystem::use_scene_cameras() {
+    viewers_.clear();
+    explicit_viewers_ = false;
+}
+
+std::vector<ParticleViewer> camera_viewers(Scene& scene, float aspect) {
+    std::vector<ParticleViewer> out;
+    aspect = std::isfinite(aspect) && aspect > 0.01f ? aspect : 16.0f / 9.0f;
+    scene.world().each<scene::CameraComponent>([&](Entity e, scene::CameraComponent& c) {
+        if (!c.primary) return;
+        Vec3 t, sc;
+        math::Quat r;
+        math::decompose(scene.world_matrix(e), t, r, sc);
+        const Mat4 view = math::inverse(Mat4::trs(t, r, {1, 1, 1}));
+        const float zn = std::max(1e-3f, c.z_near), zf = std::max(zn * 1.001f, c.z_far);
+        Mat4 proj;
+        if (c.projection == scene::CameraComponent::Projection::Orthographic) {
+            const float h = 0.5f * std::max(1e-3f, c.ortho_height), w = h * aspect;
+            proj = Mat4::orthographic(-w, w, -h, h, -zf, zf);
+        } else {
+            proj = Mat4::perspective(math::radians(std::clamp(c.fov_y_degrees, 1.0f, 179.0f)), aspect, zn, zf);
+        }
+        ParticleViewer v;
+        v.position = t;
+        v.frustum = math::Frustum::from_matrix(proj * view);
+        v.has_frustum = true;
+        out.push_back(v);
+    });
+    return out;
+}
+
 void add_particle_systems(gameplay::Simulation& sim, ParticleSystem& system) {
     ParticleSystem* sys = &system;
     sim.add_system("particles.update", gameplay::Phase::PostUpdate,
@@ -895,26 +1049,7 @@ bool emit(Scene& scene, Entity e, std::uint32_t count) {
 bool reset(Scene& scene, Entity e) {
     ecs::World& world = scene.world();
     if (!world.has<ParticleEmitterComponent>(e)) return false;
-    if (auto* s = world.get<EmitterState>(e)) {
-        s->particles.clear();
-        s->billboards.clear();
-        s->velocities.clear();
-        s->trail.clear();
-        s->ribbon_points.clear();
-        s->ribbon_strips.clear();
-        s->bounds = {};
-        s->started = false;
-        s->finished = false;
-        s->time = 0;
-        s->accumulator = 0;
-        s->pending = 0;
-        s->events.clear();
-        s->incoming.clear();
-        if (s->book.capacity > 0) reset_book(s->book, s->book.capacity);
-        s->book.view.generation = s->book.generation;
-        s->book.view.alive = 0;
-        s->book.view.records = {};
-    }
+    if (auto* s = world.get<EmitterState>(e)) clear_state(*s);
     return true;
 }
 
@@ -928,6 +1063,8 @@ EmitterStatus status(Scene& scene, Entity e) {
         out.emitted = s->emitted;
         out.time = s->time;
         out.finished = s->finished;
+        out.lod = s->lod;
+        out.viewer_distance = s->viewer_distance;
     }
     return out;
 }

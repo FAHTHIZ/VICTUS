@@ -3120,3 +3120,18 @@ Verified (dev build, 2-core sandbox):
 - `victus_scene_tests`, `victus_sequencer_tests` pass; `compile_shaders.py --check`: up to date (63 shaders).
 - Not verified: Metal and D3D12 (shader text translated by SPIRV-Cross, not run); GLES has no GPU particle path; GPU cost of the curve lookups on real hardware.
 - Next task: speed and rotation over life and per-emitter LOD (distance and visibility based update rates), then the reference effects scene.
+
+## 2026-11-22 — Particle simulation LOD (ADR-0210)
+
+Second piece of the VFX audit. Before this, every emitter simulated and spawned at full rate every frame, however far away or off-screen it was.
+
+- `ParticleEmitterComponent` fields `cull_distance`, `lod_distance`, `lod_rate`, `lod_spawn_scale` and `offscreen` (`Simulate`, `Throttle`, `Pause`), all off by default, reflected so the Studio Inspector and scene files pick them up.
+- `ParticleSystem::set_viewers` / `use_scene_cameras`, and `particles::camera_viewers` (every primary `CameraComponent`, perspective or orthographic frustum). Without viewers every emitter runs at full rate.
+- Throttled emitters accumulate time and simulate it at `lod_rate`, with rate and bursts scaled by `lod_spawn_scale`; paused emitters freeze; culled emitters drop their particles once (GPU emitters bump their generation) and restart their cycle when a viewer returns.
+- `EmitterStatus::lod` / `viewer_distance` and `ParticleStats::lod_full` / `lod_throttled` / `lod_paused` / `lod_culled` / `lod_skipped` / `viewers`.
+
+Verified (dev build, 2-core sandbox):
+- `victus_particles_tests`: 29 cases, 75,219 assertions pass. New cases: an emitter 100 m away with `lod_distance` 50 and `lod_rate` 10 ran 20 updates and skipped 100 of 120 frames, emitted 122 particles against 242 for the near one (half rate) and kept the expected live count for 0.5 s lifetimes; a 40-particle burst gave exactly 20 at half scale; `cull_distance` cleared every particle, stopped emission while away and restarted with the burst on return, and a culled GPU emitter changed generation with 0 alive; with a real scene camera, an emitter behind it paused (0 particles) while one in front ran, the `Throttle` mode throttled, turning the camera swapped them and froze the now-hidden particles in place, and a non-primary camera gave no viewers; 12 emitters with a moving viewer gave byte-identical particles serially and on two worker threads; the five fields survive scene save/load.
+- Existing particle cases unchanged (defaults are bit-identical). `victus_scene_tests` (16 cases), `victus_gpu_tests -tc="gpu particles*"` (Vulkan, lavapipe, 13 cases), `victus_editor_tests -tc="studio inspector*"` (3 cases) and `ctest -R "project_tests|cli_smoke|docs"` pass.
+- Not verified: frame-time savings in a real scene or on hardware (only skipped-update counts are measured); throttled GPU emitters were not read back on the GPU (they follow the same emitter clock); the automatic viewers assume a 2.4 aspect rather than the window's.
+- Next task: speed and rotation over life, then overdraw diagnostics.

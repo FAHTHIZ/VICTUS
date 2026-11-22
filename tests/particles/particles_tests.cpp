@@ -1084,3 +1084,214 @@ TEST_CASE("gpu reference billboards use the over-life curves") {
     CHECK(near(b.color.r, 0.75f));
     CHECK(near(b.color.a, 0.75f));
 }
+
+namespace {
+
+Entity lod_emitter(Scene& s, const char* name, Vec3 at) {
+    const Entity e = s.create(name);
+    s.world().get<scene::Transform>(e)->position = at;
+    auto& c = s.world().add<ParticleEmitterComponent>(e);
+    c.rate = 120;
+    c.max_particles = 4096;
+    c.lifetime_min = c.lifetime_max = 0.5f;
+    c.shape = Shape::Point;
+    c.speed_min = c.speed_max = 1;
+    c.gravity = {0, -2, 0};
+    return e;
+}
+
+ParticleEmitterComponent& emitter_of(Scene& s, Entity e) { return *s.world().get<ParticleEmitterComponent>(e); }
+
+} // namespace
+
+TEST_CASE("particle LOD: distant emitters update less often, spawn less and keep correct lifetimes (ADR-0210)") {
+    Scene s;
+    const Entity near_e = lod_emitter(s, "Near", {0, 0, 0});
+    const Entity far_e = lod_emitter(s, "Far", {100, 0, 0});
+    for (const Entity e : {near_e, far_e}) {
+        emitter_of(s, e).lod_distance = 50;
+        emitter_of(s, e).lod_rate = 10;
+        emitter_of(s, e).lod_spawn_scale = 0.5f;
+    }
+    s.update_transforms();
+    ParticleSystem sys;
+    // No cameras in the scene and no viewers set: everything at full rate.
+    sys.update(s, 1.0f / 60.0f);
+    CHECK(sys.stats().viewers == 0);
+    CHECK(status(s, far_e).lod == Lod::Full);
+    CHECK(status(s, far_e).viewer_distance < 0);
+    reset(s, near_e);
+    reset(s, far_e);
+
+    const ParticleViewer eye{{0, 0, 5}, {}, false};
+    sys.set_viewers(std::span(&eye, 1));
+    std::uint32_t skipped = 0, steps = 0;
+    for (int f = 0; f < 120; ++f) { // two seconds
+        sys.update(s, 1.0f / 60.0f);
+        skipped += sys.stats().lod_skipped;
+        steps += status(s, far_e).lod == Lod::Throttled && sys.stats().lod_skipped == 0;
+    }
+    CHECK(status(s, near_e).lod == Lod::Full);
+    CHECK(status(s, far_e).lod == Lod::Throttled);
+    CHECK(std::abs(status(s, far_e).viewer_distance - std::sqrt(100.0f * 100.0f + 25.0f)) < 1e-2f);
+    CHECK(sys.stats().lod_throttled == 1);
+    CHECK(sys.stats().lod_full == 1);
+    MESSAGE("throttled emitter: " << steps << " updates and " << skipped << " skipped in 120 frames");
+    CHECK(steps >= 19);
+    CHECK(steps <= 21); // 10 updates per second
+    CHECK(skipped >= 99);
+    // Half the rate: 120/s for 2 s at full rate (240) against about 120 throttled.
+    const auto near_emitted = status(s, near_e).emitted, far_emitted = status(s, far_e).emitted;
+    MESSAGE("emitted: near " << near_emitted << ", far " << far_emitted);
+    CHECK(near_emitted >= 239);
+    CHECK(far_emitted >= 115);
+    CHECK(far_emitted <= 124);
+    // Lifetimes follow elapsed time: with 0.5 s lives at 60 particles/s about 30 stay alive.
+    CHECK(status(s, far_e).alive >= 25);
+    CHECK(status(s, far_e).alive <= 36);
+    // Bursts are scaled too.
+    auto& fc = emitter_of(s, far_e);
+    fc.burst = 40;
+    fc.duration = 10;
+    fc.loop = false;
+    fc.rate = 0;
+    reset(s, far_e);
+    const auto before = status(s, far_e).emitted;
+    for (int f = 0; f < 12; ++f) sys.update(s, 1.0f / 60.0f);
+    CHECK(status(s, far_e).emitted - before == 20);
+}
+
+TEST_CASE("particle LOD: emitters beyond cull_distance drop their particles and wake up on return") {
+    Scene s;
+    const Entity e = lod_emitter(s, "Torch", {0, 0, 0});
+    emitter_of(s, e).cull_distance = 60;
+    emitter_of(s, e).burst = 10;
+    s.update_transforms();
+    ParticleSystem sys;
+    ParticleViewer eye{{0, 0, 10}, {}, false};
+    sys.set_viewers(std::span(&eye, 1));
+    for (int f = 0; f < 30; ++f) sys.update(s, 1.0f / 60.0f);
+    CHECK(status(s, e).alive > 20);
+    eye.position = {0, 0, 80};
+    sys.set_viewers(std::span(&eye, 1));
+    sys.update(s, 1.0f / 60.0f);
+    CHECK(status(s, e).lod == Lod::Culled);
+    CHECK(status(s, e).alive == 0);
+    CHECK(billboards_of(s, e).empty());
+    const auto emitted = status(s, e).emitted;
+    for (int f = 0; f < 30; ++f) sys.update(s, 1.0f / 60.0f);
+    CHECK(status(s, e).emitted == emitted); // asleep
+    CHECK(sys.stats().lod_culled == 1);
+    emit(s, e, 5); // queued requests wait while culled
+    eye.position = {0, 0, 10};
+    sys.set_viewers(std::span(&eye, 1));
+    sys.update(s, 1.0f / 60.0f);
+    CHECK(status(s, e).lod == Lod::Full);
+    CHECK(status(s, e).alive >= 10); // the cycle restarted with its burst
+    // GPU emitters: culling bumps the generation so the renderer drops their GPU particles.
+    emitter_of(s, e).gpu = true;
+    for (int f = 0; f < 10; ++f) sys.update(s, 1.0f / 60.0f);
+    std::vector<EmitterView> views;
+    gather(s, views);
+    REQUIRE(views.size() == 1);
+    REQUIRE(views[0].gpu);
+    const auto generation = views[0].gpu->generation;
+    eye.position = {0, 0, 80};
+    sys.set_viewers(std::span(&eye, 1));
+    sys.update(s, 1.0f / 60.0f);
+    views.clear();
+    gather(s, views);
+    REQUIRE(views.size() == 1);
+    CHECK(views[0].gpu->generation != generation);
+    CHECK(views[0].gpu->alive == 0);
+}
+
+TEST_CASE("particle LOD: off-screen emitters pause or throttle using the scene's primary cameras") {
+    Scene s;
+    const Entity cam = s.create("Camera");
+    s.world().add<scene::CameraComponent>(cam); // at the origin looking down -Z
+    const Entity ahead = lod_emitter(s, "Ahead", {0, 0, -10});
+    const Entity behind = lod_emitter(s, "Behind", {0, 0, 10});
+    const Entity behind_throttled = lod_emitter(s, "BehindThrottled", {2, 0, 10});
+    emitter_of(s, ahead).offscreen = Offscreen::Pause;
+    emitter_of(s, behind).offscreen = Offscreen::Pause;
+    emitter_of(s, behind_throttled).offscreen = Offscreen::Throttle;
+    emitter_of(s, behind_throttled).lod_rate = 20;
+    s.update_transforms();
+    ParticleSystem sys;
+    for (int f = 0; f < 30; ++f) sys.update(s, 1.0f / 60.0f);
+    CHECK(sys.stats().viewers == 1);
+    CHECK(status(s, ahead).lod == Lod::Full);
+    CHECK(status(s, ahead).alive > 0);
+    CHECK(status(s, behind).lod == Lod::Paused);
+    CHECK(status(s, behind).alive == 0);
+    CHECK(status(s, behind_throttled).lod == Lod::Throttled);
+    CHECK(sys.stats().lod_paused == 1);
+    // Turn the camera around: the paused emitter starts, the visible one freezes in place.
+    const auto frozen = billboards_of(s, ahead);
+    s.world().get<scene::Transform>(cam)->rotation = math::Quat::axis_angle({0, 1, 0}, math::kPi);
+    s.update_transforms();
+    sys.update(s, 1.0f / 60.0f);
+    CHECK(status(s, behind).lod == Lod::Full);
+    CHECK(status(s, behind).alive > 0);
+    CHECK(status(s, ahead).lod == Lod::Paused);
+    sys.update(s, 0.1f);
+    const auto still = billboards_of(s, ahead);
+    REQUIRE(still.size() == frozen.size());
+    for (std::size_t i = 0; i < still.size(); ++i) CHECK(still[i].position.y == frozen[i].position.y);
+    // A non-primary camera is ignored.
+    s.world().get<scene::CameraComponent>(cam)->primary = false;
+    sys.update(s, 1.0f / 60.0f);
+    CHECK(sys.stats().viewers == 0);
+    CHECK(status(s, ahead).lod == Lod::Full);
+}
+
+TEST_CASE("particle LOD: results are identical serially and on jobs; fields serialize") {
+    register_components();
+    const auto run = [](jobs::JobSystem* js) {
+        Scene s;
+        std::vector<Entity> es;
+        for (int i = 0; i < 12; ++i) {
+            const Entity e = lod_emitter(s, "E", {static_cast<float>(i) * 15.0f, 0, 0});
+            emitter_of(s, e).seed = 7 + static_cast<std::uint32_t>(i);
+            emitter_of(s, e).lod_distance = 40;
+            emitter_of(s, e).cull_distance = 140;
+            emitter_of(s, e).lod_rate = 12;
+            es.push_back(e);
+        }
+        s.update_transforms();
+        ParticleSystem sys({.jobs = js, .parallel_threshold = 2});
+        ParticleViewer eye{{0, 0, 0}, {}, false};
+        sys.set_viewers(std::span(&eye, 1));
+        std::vector<float> out;
+        for (int f = 0; f < 90; ++f) {
+            eye.position.x = static_cast<float>(f);
+            sys.set_viewers(std::span(&eye, 1));
+            sys.update(s, 1.0f / 60.0f);
+        }
+        for (const Entity e : es)
+            for (const auto& b : billboards_of(s, e)) out.push_back(b.position.x + b.position.y * 3 + b.size);
+        return out;
+    };
+    jobs::JobSystem js(2);
+    const auto serial = run(nullptr), parallel = run(&js);
+    REQUIRE(serial.size() == parallel.size());
+    CHECK(std::memcmp(serial.data(), parallel.data(), serial.size() * sizeof(float)) == 0);
+
+    Scene s;
+    const Entity e = lod_emitter(s, "Saved", {});
+    auto& c = emitter_of(s, e);
+    c.cull_distance = 80;
+    c.lod_distance = 30;
+    c.lod_rate = 8;
+    c.lod_spawn_scale = 0.25f;
+    c.offscreen = Offscreen::Throttle;
+    Scene loaded;
+    REQUIRE(loaded.load(json::parse(json::stringify(s.save())).value()).ok());
+    const auto& lc = *loaded.world().get<ParticleEmitterComponent>(loaded.find_by_name("Saved"));
+    CHECK(near(lc.cull_distance, 80));
+    CHECK(near(lc.lod_distance, 30));
+    CHECK(near(lc.lod_rate, 8));
+    CHECK(near(lc.lod_spawn_scale, 0.25f));
+    CHECK(lc.offscreen == Offscreen::Throttle);
+}
