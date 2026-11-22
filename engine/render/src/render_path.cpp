@@ -292,6 +292,31 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
         add("ssr", reduced ? PathState::Reduced : PathState::Active, reduced ? by(S.ssr_steps == tier.ssr_steps) : PathReason::None,
             std::format("{} steps over {:g} m on water", S.ssr_steps, S.ssr_max_distance));
     }
+    const bool opaque_ssr_set = S.screen_space_reflections && S.ssr_max_roughness > 0.0f;
+    const bool opaque_ssr_tier = tier.screen_space_reflections && tier.ssr_max_roughness > 0.0f;
+    switch (opaque_ssr_set ? f.opaque_ssr : RenderPathFacts::OpaqueSsr::Disabled) {
+    case RenderPathFacts::OpaqueSsr::Active:
+        add("ssr_opaque", PathState::Active, PathReason::None,
+            std::format("{} steps over {:g} m, roughness below {:g}, from last frame", std::max(S.ssr_steps / 2u, 8u), S.ssr_max_distance,
+                        S.ssr_max_roughness));
+        break;
+    case RenderPathFacts::OpaqueSsr::Disabled:
+        add("ssr_opaque", PathState::Off, by(opaque_ssr_set == opaque_ssr_tier),
+            "glossy surfaces reflect probes and the environment only");
+        break;
+    case RenderPathFacts::OpaqueSsr::NeedsTaa:
+        add("ssr_opaque", PathState::Off, f.capture_mode ? PathReason::CaptureMode : PathReason::Requires, "needs the TAA history");
+        break;
+    case RenderPathFacts::OpaqueSsr::Backend:
+        add("ssr_opaque", PathState::Off, PathReason::Unsupported, "no spare texture units on OpenGL ES");
+        break;
+    case RenderPathFacts::OpaqueSsr::Projection:
+        add("ssr_opaque", PathState::Off, PathReason::NotNeeded, "orthographic camera");
+        break;
+    case RenderPathFacts::OpaqueSsr::NoHistory:
+        add("ssr_opaque", PathState::Off, PathReason::NoHistory, "first frame: no history yet");
+        break;
+    }
 
     const std::uint32_t emitters = f.particle_batches_submitted + f.gpu_emitters_submitted;
     if (emitters == 0) add("particles", PathState::Off, PathReason::Scene, "no particle emitters in the scene");

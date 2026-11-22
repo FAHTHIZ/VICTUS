@@ -54,6 +54,9 @@ layout(set = 2, binding = 11) uniform sampler2D u_lightmap_dir;
 // (offset, count) header followed by the flattened light index list.
 // spot: x cos(inner), y 1 = spot, z first shadow tile + 1 (0 = unshadowed), w shadow texel angle.
 // Shadow matrices (world -> atlas uv/depth) follow the lights in the same array, one per tile.
+#ifndef VX_CUSTOM_TEXTURES
+#define VX_CUSTOM_TEXTURES 0
+#endif
 struct LocalLight { vec4 position_range; vec4 color_intensity; vec4 direction_cos_outer; vec4 spot; };
 // SDL_GPU: SPIR-V fragment storage buffers follow the 11 textures in set 2; MSL buffers are the
 // 3 uniform buffers first, then storage buffers ([[buffer(3)]], [[buffer(4)]]).
@@ -83,14 +86,19 @@ layout(std430, set = 2, binding = 4) readonly buffer Clusters { uint cluster_dat
 layout(std430, set = 2, binding = 5) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
 layout(std430, set = 2, binding = 6) readonly buffer Cookies { uint cookie_data[]; }; // ADR-0195
 #else
-// Surface shader textures (ADR-0171) take bindings 12.. and the storage buffers follow them.
-#ifndef VX_CUSTOM_TEXTURES
-#define VX_CUSTOM_TEXTURES 0
+// Surface shader textures (ADR-0171) take bindings 12.., the two screen-space reflection inputs
+// follow them (ADR-0199), then the storage buffers.
+layout(std430, set = 2, binding = 14 + VX_CUSTOM_TEXTURES) readonly buffer Lights { LocalLight local_lights[]; };
+layout(std430, set = 2, binding = 15 + VX_CUSTOM_TEXTURES) readonly buffer Clusters { uint cluster_data[]; };
+layout(std430, set = 2, binding = 16 + VX_CUSTOM_TEXTURES) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
+layout(std430, set = 2, binding = 17 + VX_CUSTOM_TEXTURES) readonly buffer Cookies { uint cookie_data[]; }; // ADR-0195
 #endif
-layout(std430, set = 2, binding = 12 + VX_CUSTOM_TEXTURES) readonly buffer Lights { LocalLight local_lights[]; };
-layout(std430, set = 2, binding = 13 + VX_CUSTOM_TEXTURES) readonly buffer Clusters { uint cluster_data[]; };
-layout(std430, set = 2, binding = 14 + VX_CUSTOM_TEXTURES) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
-layout(std430, set = 2, binding = 15 + VX_CUSTOM_TEXTURES) readonly buffer Cookies { uint cookie_data[]; }; // ADR-0195
+#if !defined(VICTUS_ESSL)
+// ADR-0199: last frame's TAA-resolved HDR colour and linear depth history, for screen-space
+// reflections on opaque glossy surfaces. GLSL ES has no spare texture units for them.
+#define VX_SSR 1
+layout(set = 2, binding = 12 + VX_CUSTOM_TEXTURES) uniform sampler2D u_ssr_color;
+layout(set = 2, binding = 13 + VX_CUSTOM_TEXTURES) uniform sampler2D u_ssr_depth;
 #endif
 #if !defined(VICTUS_ESSL)
 #define LOCAL_LIGHT(i) local_lights[i]
@@ -131,6 +139,9 @@ layout(set = 3, binding = 0) uniform Lighting {
     mat4 rain_vp;        // world -> rain occlusion map
     vec4 puddles;        // x 1 / puddle size (m), y ripple strength, z 1 / ripple cell size (m), w ripples per second
     vec4 volumetric;     // volumetric fog grid for blended draws (ADR-0119): xyz froxels, w far (0 off)
+    mat4 ssr_prev_vp;    // ADR-0199: world -> previous frame clip (unjittered); clip w is the history's linear depth
+    vec4 ssr_params;     // x ray steps (0 off), y max distance (m), z thickness (m), w max roughness
+    vec4 ssr_frame;      // x frame index (noise offset), y history intensity scale
 } lighting;
 
 // Stochastic rounding to R11G11B10_FLOAT (compact HDR, ADR-0129). The result is exactly
@@ -348,6 +359,56 @@ vec3 env_specular(vec3 r, float roughness, vec3 p) {
     if (lighting.env_params.x < 0.5) return environment(r, roughness);
     return textureLod(u_env, env_rotate(r), roughness * lighting.env_params.y).rgb * lighting.env_params.z;
 }
+#ifdef VX_SSR
+// Screen-space reflection against the previous frame (ADR-0199). The reflected ray is marched in
+// world space with quadratically growing steps and each point is projected with last frame's
+// view-projection, where clip w is the linear depth the TAA depth history stores. A point is a hit
+// when it lies behind the stored surface by less than the thickness plus 2% of its depth plus the
+// step length; five bisection steps refine it. Returns the history colour and, in w, a confidence
+// that fades at the screen edges, near the maximum distance and towards the roughness limit.
+vec4 ssr_trace(vec3 p, vec3 r, vec3 n, float roughness) {
+    vec4 sp = lighting.ssr_params;
+    if (sp.x < 0.5 || roughness >= sp.w) return vec4(0.0);
+    int steps = int(sp.x + 0.5);
+    vec2 q = gl_FragCoord.xy + 5.588238 * lighting.ssr_frame.x;
+    float jitter = fract(52.9829189 * fract(dot(q, vec2(0.06711056, 0.00583715))));
+    vec3 origin = p + n * 0.02;
+    float t_prev = 0.0, t_hit = -1.0;
+    for (int i = 0; i < steps; ++i) {
+        float s = (float(i) + jitter) / float(steps);
+        float t = max(s * s * sp.y, 0.05);
+        vec4 c = lighting.ssr_prev_vp * vec4(origin + r * t, 1.0);
+        if (c.w <= 0.0) break;
+        vec2 uv = vec2(c.x / c.w * 0.5 + 0.5, 0.5 - c.y / c.w * 0.5);
+        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) break;
+        float scene = textureLod(u_ssr_depth, uv, 0.0).r;
+        float behind = c.w - scene;
+        if (behind > 0.0 && behind < sp.z + 0.02 * c.w + (t - t_prev)) {
+            float lo = t_prev, hi = t;
+            for (int k = 0; k < 5; ++k) {
+                float mid = 0.5 * (lo + hi);
+                vec4 m = lighting.ssr_prev_vp * vec4(origin + r * mid, 1.0);
+                vec2 muv = vec2(m.x / m.w * 0.5 + 0.5, 0.5 - m.y / m.w * 0.5);
+                if (m.w > textureLod(u_ssr_depth, muv, 0.0).r) hi = mid;
+                else lo = mid;
+            }
+            t_hit = hi;
+            break;
+        }
+        // A step that jumps far behind a surface passed under an object: keep marching.
+        t_prev = t;
+    }
+    if (t_hit < 0.0) return vec4(0.0);
+    vec4 c = lighting.ssr_prev_vp * vec4(origin + r * t_hit, 1.0);
+    vec2 uv = vec2(c.x / c.w * 0.5 + 0.5, 0.5 - c.y / c.w * 0.5);
+    vec2 edge = min(uv, 1.0 - uv);
+    float conf = clamp(min(edge.x, edge.y) / 0.08, 0.0, 1.0);
+    conf *= clamp((1.0 - t_hit / sp.y) / 0.25, 0.0, 1.0);
+    conf *= 1.0 - smoothstep(sp.w * 0.6, sp.w, roughness);
+    vec3 hit = min(textureLod(u_ssr_color, uv, 0.0).rgb * lighting.ssr_frame.y, vec3(64.0));
+    return vec4(hit, conf);
+}
+#endif
 // Karis' analytic approximation of the split-sum environment BRDF (mobile). FP32 in every variant:
 // its scale/bias multiply the whole environment specular, and in half precision the bias term
 // (1.04 * a004 + r.w) loses most of its bits to cancellation (ADR-0153). It is five ALU ops.
@@ -926,7 +987,12 @@ void main() {
     vec3 R = reflect(-V, N);
     // Specular occlusion approximation: reflections below the local horizon are dimmed.
     float horizon = clamp(1.0 + dot(R, geometric_n), 0.0, 1.0);
-    vec3 specular = env_specular(R, roughness, v_world_pos) * (f0 * ab.x + ab.y) * horizon * horizon;
+    vec3 env_radiance = env_specular(R, roughness, v_world_pos);
+#ifdef VX_SSR
+    vec4 ssr = ssr_trace(v_world_pos, R, geometric_n, roughness);
+    env_radiance = mix(env_radiance, ssr.rgb, ssr.a);
+#endif
+    vec3 specular = env_radiance * (f0 * ab.x + ab.y) * horizon * horizon;
     float ao = screen_occlusion.r;
     ao *= s.occlusion;
     // Specular occlusion from AO (Lagarde & de Rousiers 2014 approximation).

@@ -2940,3 +2940,16 @@ Not verified: real GPUs. The 3D template's crates and moving platforms keep flat
 - **Verified:** `victus new --template 3d [--character nova]`, then `victus run --frames 40|90 --width 1280 --height 720 --quality ultra --screenshot` on lavapipe. For the close-ups the follow camera was replaced by a fixed camera 4.3 m in front and the HUD was removed. Checked by eye: Orion's cyan visor eyes and chevron, Nova's amber trim; no missing textures or skinning errors in the bind pose.
 - **Not verified:** real GPUs; moving poses up close.
 - **Next task:** Blender head close-up (`blender_render_heads.jpg`) and `nocode_3d.jpg`.
+
+## 2026-11-22 — Screen-space reflections on opaque glossy surfaces (ADR-0199)
+
+Built: `pbr.frag` traces reflections for surfaces smoother than `RenderSettings::ssr_max_roughness` (default 0.5) against last frame's TAA-resolved colour and linear depth history (half of `ssr_steps`, at least 8, plus five bisection steps). Hits replace the prefiltered environment sample before the split-sum BRDF, so misses fall back to probes and the sky. Both inputs bind after the surface-shader textures and the storage buffers move two slots up. The trace is off without TAA (Medium, Low, captures), with orthographic cameras and on OpenGL ES. The render path report gains `ssr_opaque` and `SceneStats::opaque_ssr` records it.
+
+Verified:
+- `victus_gpu_tests -tc="gpu opaque ssr*"` (Vulkan lavapipe): 2 cases, 45 assertions. A glowing pillar on a mirror floor gives 297 green floor pixels with opaque SSR vs 0 without, and the floor below the foot reads g 255 vs 60. The report is Off on the first frame, Active afterwards and Off/Requires on Medium.
+- Full `victus_gpu_tests`: Vulkan 226/226 cases (28 621 assertions), GLES 226/226 (26 417 assertions).
+- `victus_render_tests`: 70/70, with the new `ssr_opaque` render path checks (tier, setting, requires).
+- `ctest -E "victus_editor_tests|victus_gpu_tests"`: all pass after `VICTUS_UPDATE_GOLDENS=1` for the reference scenes. The exterior drifted (worst-tile FLIP 0.052) because its chrome spheres now reflect their red neighbours, which was checked by eye against the old golden.
+- `victus run --quality high` on fresh 3D and Multiplayer projects: the steel pillars reflect the paving and the characters.
+
+Not verified: real GPUs, Metal and D3D12 (compiled only); `victus_editor_tests` was left to CI.

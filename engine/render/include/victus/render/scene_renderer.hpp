@@ -562,6 +562,10 @@ struct RenderSettings {
     std::uint32_t ssr_steps{32};    // 4..64 ray steps per pixel
     float ssr_max_distance{60.0f};  // metres along the reflected ray (1..500)
     float ssr_thickness{0.3f};      // metres a surface is assumed to extend behind its depth (0.01..10)
+    // ADR-0199: opaque and blended PBR surfaces smoother than this also trace screen-space
+    // reflections, against last frame's TAA history (so only with TAA, High and Ultra), with half
+    // of ssr_steps (at least 8). 0 turns opaque reflections off; water keeps its own trace.
+    float ssr_max_roughness{0.5f};
     bool bloom{true};
     std::uint32_t bloom_levels{5};        // 1..8 mip levels
     bool fxaa{true};                      // ignored while TAA is active
@@ -771,6 +775,7 @@ struct SceneStats {
     std::uint32_t render_width{0}, render_height{0};
     bool taa{false};                   // TAA resolved this frame
     bool taa_by_scale{false};          // ... because the render scale fell below taa_below_scale (ADR-0188)
+    bool opaque_ssr{false};            // ADR-0199: opaque surfaces traced screen-space reflections
     bool taa_history{false};           // ... with a valid history (false on the first frame / after a reset)
     bool taa_disocclusion{false};      // ... with the depth-history disocclusion test (ADR-0147)
     bool taa_thin_features{false};     // ... with thin-feature locks (ADR-0148)

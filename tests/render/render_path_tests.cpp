@@ -233,11 +233,24 @@ TEST_CASE("render path: effect budgets scale with the tier and name the tier, a 
     CHECK(get(r, "particles").state == PathState::Reduced);
     CHECK(get(r, "particles").reason == PathReason::QualityTier);
     CHECK(get(r, "particles").detail == "12000 particles in 2 batches; nearest 12000 of 30000 CPU particles in view (max_particles 16384)");
-    CHECK(r.reduced_summary().find("decals (quality_tier), water (quality_tier), ssr off (quality_tier), particles (quality_tier)") !=
+    CHECK(r.reduced_summary().find("decals (quality_tier), water (quality_tier), ssr off (quality_tier), ssr_opaque off (quality_tier), particles (quality_tier)") !=
           std::string::npos);
     // ADR-0196: water reflections follow the tier: off on Low, reduced steps below Ultra.
     CHECK(get(r, "ssr").state == PathState::Off);
     CHECK(get(r, "ssr").reason == PathReason::QualityTier);
+    // ADR-0199: opaque reflections follow the same switch, and ssr_max_roughness 0 is a setting.
+    CHECK(get(r, "ssr_opaque").state == PathState::Off);
+    CHECK(get(r, "ssr_opaque").reason == PathReason::QualityTier);
+    {
+        RenderSettings no_opaque = ultra;
+        no_opaque.ssr_max_roughness = 0.0f;
+        f.opaque_ssr = RenderPathFacts::OpaqueSsr::Active;
+        CHECK(get(describe_render_path(no_opaque, f), "ssr_opaque").reason == PathReason::Setting);
+        CHECK(get(describe_render_path(ultra, f), "ssr_opaque").state == PathState::Active);
+        f.opaque_ssr = RenderPathFacts::OpaqueSsr::NeedsTaa;
+        CHECK(get(describe_render_path(ultra, f), "ssr_opaque").reason == PathReason::Requires);
+        f.opaque_ssr = RenderPathFacts::OpaqueSsr::NoHistory;
+    }
     CHECK(get(describe_render_path(RenderSettings::preset(QualityTier::High), f), "ssr").state == PathState::Reduced);
     CHECK(get(describe_render_path(RenderSettings::preset(QualityTier::Ultra), f), "ssr").detail == "48 steps over 60 m on water");
     RenderPathFacts dry = f;

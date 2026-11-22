@@ -142,6 +142,9 @@ struct LightingUniforms {
     Mat4 rain_vp; // world -> rain occlusion map (ADR-0114)
     Vec4 puddles; // x 1 / puddle size, y ripple strength, z 1 / ripple cell, w ripples per second (ADR-0117)
     Vec4 volumetric; // volumetric fog grid for blended draws: xyz froxels, w far, 0 off (ADR-0119)
+    Mat4 ssr_prev_vp; // ADR-0199: world -> previous frame clip (unjittered)
+    Vec4 ssr_params;  // x ray steps (0 off), y max distance, z thickness, w max roughness
+    Vec4 ssr_frame;   // x frame index, y history intensity scale
 };
 struct MaterialUniforms {
     Vec4 base_color;
@@ -275,7 +278,7 @@ struct TaaUpscaleUniforms {
     Vec4 depth_clip; // as TaaUniforms::depth_clip
     Vec4 lock;       // as TaaUniforms::lock
 };
-static_assert(sizeof(LightingUniforms) == 38 * 16 + 64 * 5);
+static_assert(sizeof(LightingUniforms) == 40 * 16 + 64 * 6);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 // Fraction at the far end of each cascade's slice where pbr.frag dithers into the next cascade.
@@ -591,6 +594,7 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.ssr_steps = std::clamp(s.ssr_steps, 4u, 64u);
     s.ssr_max_distance = std::isfinite(s.ssr_max_distance) ? std::clamp(s.ssr_max_distance, 1.0f, 500.0f) : 60.0f;
     s.ssr_thickness = std::isfinite(s.ssr_thickness) ? std::clamp(s.ssr_thickness, 0.01f, 10.0f) : 0.3f;
+    s.ssr_max_roughness = std::isfinite(s.ssr_max_roughness) ? std::clamp(s.ssr_max_roughness, 0.0f, 1.0f) : 0.5f;
     s.bloom_levels = std::clamp(s.bloom_levels, 1u, 8u);
     s.sharpen = std::isfinite(s.sharpen) ? std::clamp(s.sharpen, 0.0f, 1.0f) : 0.0f;
     s.upscale_mip_bias = std::isfinite(s.upscale_mip_bias) ? std::clamp(s.upscale_mip_bias, -2.0f, 0.0f) : 0.0f;
@@ -3328,6 +3332,27 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     lighting.sky_color = rgb(env_.sky_zenith, env_.ambient_intensity, env_.exposure);
     lighting.horizon_color = rgb(env_.sky_horizon, env_.ambient_intensity);
     lighting.ground_color = rgb(env_.ground, env_.ambient_intensity, static_cast<float>(local_lights.size()));
+    // ADR-0199: opaque glossy surfaces trace reflections against last frame's TAA-resolved colour
+    // and linear depth history. Needs TAA (the history), a perspective camera (clip w is the
+    // stored linear depth) and a backend with the two spare texture units (not GLES).
+    const std::uint32_t hist = history_index_;
+    {
+        using O = RenderPathFacts::OpaqueSsr;
+        O state = O::Active;
+        if (!S.screen_space_reflections || S.ssr_max_roughness <= 0.0f) state = O::Disabled;
+        else if (!taa) state = O::NeedsTaa;
+        else if (dev.capabilities().backend == rhi::Backend::GLES) state = O::Backend;
+        else if (!(proj_unjittered[2].w < 0.0f) || depth_history_format_ == rhi::Format::RGBA8_UNORM) state = O::Projection;
+        else if (!history_valid_ || !history_[hist] || !depth_history_[hist]) state = O::NoHistory;
+        facts_.opaque_ssr = state;
+        stats_.opaque_ssr = state == O::Active;
+        if (state == O::Active) {
+            lighting.ssr_prev_vp = prev_view_proj_;
+            lighting.ssr_params = {static_cast<float>(std::max(S.ssr_steps / 2u, 8u)), S.ssr_max_distance, S.ssr_thickness,
+                                   S.ssr_max_roughness};
+            lighting.ssr_frame = {static_cast<float>(frame_index_ % 64u), 1.0f, 0.0f, 0.0f};
+        }
+    }
     lighting.cluster_grid = {static_cast<float>(clusters.grid.tiles_x), static_cast<float>(clusters.grid.tiles_y),
                              static_cast<float>(clusters.grid.slices), static_cast<float>(clusters.grid.max_lights_per_cluster)};
     lighting.cluster_depth = {clusters.z_near, static_cast<float>(clusters.grid.slices) / std::log(clusters.z_far / clusters.z_near), 0, 0};
@@ -4085,6 +4110,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             const rhi::TextureHandle rain_tex = rain_map.valid() ? ctx.texture(rain_map) : no_shadow_;
             const rhi::TextureHandle ao_tex = ao.valid() ? ctx.texture(ao) : ctx_.white();
             const rhi::TextureHandle lightmap_tex = env_.lightmap ? env_.lightmap : ctx_.black();
+            const bool gles = dev.capabilities().backend == rhi::Backend::GLES;
+            const bool ssr_on = facts_.opaque_ssr == RenderPathFacts::OpaqueSsr::Active;
+            const rhi::TextureHandle ssr_color_tex = ssr_on ? history_[hist] : ctx_.black();
+            const rhi::TextureHandle ssr_depth_tex = ssr_on ? depth_history_[hist] : ctx_.black();
             const rhi::TextureHandle lightmap_dir_tex =
                 env_.lightmap && env_.lightmap_direction ? env_.lightmap_direction : ctx_.no_light_direction();
             // Lightmapped meshes need a lightmap to sample; without one they draw like any static mesh.
@@ -4135,6 +4164,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 11, lightmap_dir_tex, ctx_.linear_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 5, ao_tex, ctx_.linear_clamp());
                 if (m.surface_shader) bind_shader_textures(pass, m, true);
+                if (!gles) {
+                    const std::uint32_t ssr_slot = 12u + (m.surface_shader ? m.shader_texture_count : 0u);
+                    pass.bind_texture(rhi::ShaderStage::Fragment, ssr_slot, ssr_color_tex, ctx_.linear_clamp());
+                    pass.bind_texture(rhi::ShaderStage::Fragment, ssr_slot + 1, ssr_depth_tex, ctx_.nearest_clamp());
+                }
                 ProbeUniforms pu{};
                 rhi::TextureHandle env_cube = env_map && env_map->cube() ? env_map->cube() : ctx_.black_cube();
                 if (d->probe >= 0) {
