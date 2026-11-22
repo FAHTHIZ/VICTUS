@@ -8,7 +8,7 @@ How VICTUS versions are numbered, what a release contains, and the exact steps t
 - Tags are `vX.Y.Z` (pre-releases `vX.Y.Z-rc.N`, published as GitHub pre-releases). Every tag is cut from `main`.
 - Before 1.0.0: a minor version (0.3.0) may change public C++ headers and the Lua API; a patch version (0.2.1) only fixes bugs and never changes file formats incompatibly.
 - File formats (`victus.project`, `.vscene`, `.vmat`, `.vpak`, save games, network protocol) carry their own version numbers. A release must open everything the previous release wrote (migrations on load, tested); anything that cannot be migrated is listed under "Changed" with the manual step. Exported games embed the player they were exported with, so shipped games never change underneath their players.
-- Native plugins use a versioned C ABI (`engine/plugin/include/victus/plugin/victus_plugin.h`, ADR-0078). It is at `VICTUS_PLUGIN_API_MAJOR 1`, `MINOR 1`, and the host loads only plugins built against the same major version. Binary compatibility is promised for that C ABI, not for the C++ engine headers.
+- Native plugins use a versioned C ABI (`engine/plugin/include/victus/plugin/victus_plugin.h`, ADR-0078). It is at `VICTUS_PLUGIN_API_MAJOR 1`, `MINOR 1`, and the host loads a plugin only when the majors match and the plugin's minor is no higher than the host's (see [PLUGINS.md](PLUGINS.md)). Binary compatibility is promised for that C ABI, not for the C++ engine headers.
 
 ## Changelog rules
 
