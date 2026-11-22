@@ -1363,3 +1363,90 @@ TEST_CASE("particle speed and spin curves over life scale motion and rotation (A
     CHECK(near(lc.speed_over_life[1].y, 0.5f));
     REQUIRE(lc.spin_over_life.size() == 1);
 }
+
+TEST_CASE("particle budget: the nearest emitters keep spawning, distant ones wait, GPU emitters are exempt (ADR-0213)") {
+    const auto make = [](Scene& s, const char* name, Vec3 at) {
+        const Entity e = lod_emitter(s, name, at);
+        auto& c = emitter_of(s, e);
+        c.rate = 300;
+        c.lifetime_min = c.lifetime_max = 0.5f;
+        c.max_particles = 1000;
+        return e;
+    };
+    Scene s;
+    const Entity a = make(s, "A", {0, 0, 0});
+    const Entity b = make(s, "B", {40, 0, 0});
+    const Entity g = make(s, "Gpu", {80, 0, 0});
+    emitter_of(s, g).gpu = true;
+    s.update_transforms();
+    ParticleSystem sys({.max_cpu_particles = 120});
+    ParticleViewer eye{{0, 0, 2}, {}, false};
+    sys.set_viewers(std::span(&eye, 1));
+    std::uint32_t worst = 0;
+    for (int f = 0; f < 60; ++f) {
+        sys.update(s, 1.0f / 60.0f);
+        worst = std::max(worst, status(s, a).alive + status(s, b).alive);
+    }
+    MESSAGE("budget 120: A " << status(s, a).alive << ", B " << status(s, b).alive << ", GPU " << status(s, g).alive << ", worst CPU total "
+                             << worst << ", denied " << sys.stats().budget_denied);
+    CHECK(worst <= 120);
+    CHECK(status(s, a).alive >= 110); // the nearest emitter gets its steady state (150 wanted, 120 allowed)
+    CHECK(status(s, b).alive <= 10);
+    CHECK(status(s, b).budget_limited);
+    CHECK(sys.stats().budget_limited >= 1);
+    CHECK(sys.stats().budget_denied > 0);
+    CHECK(status(s, g).alive >= 140); // GPU emitter unaffected
+    CHECK_FALSE(status(s, g).budget_limited);
+    // The viewer walks over to B: B takes the room as A's particles die out.
+    eye.position = {40, 0, 2};
+    sys.set_viewers(std::span(&eye, 1));
+    for (int f = 0; f < 60; ++f) {
+        sys.update(s, 1.0f / 60.0f);
+        worst = std::max(worst, status(s, a).alive + status(s, b).alive);
+    }
+    CHECK(worst <= 120);
+    CHECK(status(s, b).alive >= 110);
+    CHECK(status(s, a).alive <= 10);
+    // Without a budget both run freely (300/s for 0.5 s each).
+    ParticleSystem free_sys;
+    free_sys.set_viewers(std::span(&eye, 1));
+    reset(s, a);
+    reset(s, b);
+    for (int f = 0; f < 60; ++f) free_sys.update(s, 1.0f / 60.0f);
+    CHECK(status(s, a).alive >= 140);
+    CHECK(status(s, b).alive >= 140);
+    CHECK(free_sys.stats().budget_limited == 0);
+}
+
+TEST_CASE("particle budget: identical serially and on jobs") {
+    const auto run = [](jobs::JobSystem* js) {
+        Scene s;
+        std::vector<Entity> es;
+        for (int i = 0; i < 10; ++i) {
+            const Entity e = lod_emitter(s, "E", {static_cast<float>((i * 7) % 10) * 5.0f, 0, 0});
+            emitter_of(s, e).seed = 3 + static_cast<std::uint32_t>(i);
+            emitter_of(s, e).rate = 200;
+            es.push_back(e);
+        }
+        s.update_transforms();
+        ParticleSystem sys({.jobs = js, .parallel_threshold = 2, .max_cpu_particles = 300});
+        ParticleViewer eye{{0, 0, 0}, {}, false};
+        std::vector<float> out;
+        std::uint32_t worst = 0;
+        for (int f = 0; f < 90; ++f) {
+            eye.position.x = static_cast<float>(f) * 0.5f;
+            sys.set_viewers(std::span(&eye, 1));
+            sys.update(s, 1.0f / 60.0f);
+            worst = std::max(worst, sys.stats().alive);
+        }
+        CHECK(worst <= 300);
+        for (const Entity e : es)
+            for (const auto& bb : billboards_of(s, e)) out.push_back(bb.position.x + bb.position.y * 3 + bb.size);
+        return out;
+    };
+    jobs::JobSystem js(2);
+    const auto serial = run(nullptr), parallel = run(&js);
+    REQUIRE(serial.size() == parallel.size());
+    CHECK(serial.size() > 200);
+    CHECK(std::memcmp(serial.data(), parallel.data(), serial.size() * sizeof(float)) == 0);
+}

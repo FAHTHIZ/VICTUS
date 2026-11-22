@@ -3180,3 +3180,16 @@ Verified (Release, 2-core sandbox):
 - `victus_editor_tests -tc="*corrective*"`: on the 3D template's Orion, Bake corrective writes the import settings, the re-imported model has 3 drivers, residual 0.00036 mm; the same corrective again and a socket joint are refused without changing the settings.
 - Not verified: GPU morphing (morphs are applied on the CPU); Metal and D3D12; shoulder correctives driven by two axes.
 - Next task: skeleton and animation LOD, then facial-expression and equipment attachment tests.
+
+## 2026-11-22 — Particle simulation budget, nearest emitters first (ADR-0213)
+
+Fifth piece of the VFX audit. The renderer capped drawn particles (ADR-0109), but every emitter still simulated and spawned without limit.
+
+- `ParticleSettings::max_cpu_particles` (0 = unlimited): a serial pre-pass keeps particles that outlive the step in place and hands the free room to CPU emitters nearest the viewers first, reserving each one's steady-state need. Emitters without room stop spawning (regular and sub-emitter spawns) and their particles live out. GPU emitters are excluded.
+- `EmitterStatus::budget_limited`, `ParticleStats::budget_limited` and `budget_denied`.
+
+Verified (dev build, 2-core sandbox):
+- `victus_particles_tests`: 32 cases, 75,262 assertions pass. New cases: with a budget of 120 and two CPU emitters that each want 150, the near one held 120 and the far one 0, the CPU total never exceeded 120 over 60 frames, and a GPU emitter kept 150; after the viewer moved to the other emitter the roles swapped within a second, still never above 120; without a budget both reached 150. Ten emitters with a moving viewer and a budget of 300 never exceeded it and gave byte-identical particles serially and on two worker threads.
+- `victus_scene_tests` (16 cases), `victus_gpu_tests -tc="*particle*"` (19 cases, lavapipe), `victus_editor_tests -tc="studio inspector*"` (3 cases), `ctest -R "project_tests|cli_smoke|docs"` pass.
+- Not verified: CPU time saved in a real scene or on hardware; the player and Studio do not yet set the budget from the quality tier.
+- Next task: lit particles, then mesh particles and particle events.

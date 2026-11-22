@@ -98,6 +98,9 @@ struct EmitterState {
     float lod_accumulator{0};  // seconds not yet simulated while throttled
     Lod lod{Lod::Full};
     float viewer_distance{-1};
+    // Simulation budget (ADR-0213): new particles this emitter may add in the coming update.
+    std::uint32_t budget_room{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t budget_denied{0}; // particles the budget held back in the last update
 };
 
 float clamp01(float v) { return std::clamp(v, 0.0f, 1.0f); }
@@ -454,8 +457,16 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
     const std::uint32_t max_alive = std::min(e.max_particles, kHardCap);
     const std::uint32_t room = max_alive > s.particles.size() ? max_alive - static_cast<std::uint32_t>(s.particles.size()) : 0;
     spawn = std::min(spawn, room);
+    // The simulation budget (ADR-0213) caps regular and sub-emitter spawns together.
+    std::uint32_t wanted_sub = 0;
+    for (const SubEvent& ev : s.incoming) wanted_sub = std::min(room - spawn, wanted_sub + ev.count);
+    const std::uint32_t wanted = spawn + wanted_sub;
+    const std::uint32_t allowed = std::min(wanted, s.budget_room);
+    s.budget_denied = wanted - allowed;
+    const std::uint32_t budget_room = allowed;
+    spawn = std::min(spawn, budget_room);
     std::uint32_t sub_spawn = 0; // particles requested by sources' events, within the remaining room
-    for (const SubEvent& ev : s.incoming) sub_spawn = std::min(room - spawn, sub_spawn + ev.count);
+    for (const SubEvent& ev : s.incoming) sub_spawn = std::min(budget_room - spawn, sub_spawn + ev.count);
     const float life_lo = std::max(0.001f, std::min(e.lifetime_min, e.lifetime_max));
     const float life_hi = std::max(life_lo, std::max(e.lifetime_min, e.lifetime_max));
     const float spin_to_rad = kPi / 180.0f;
@@ -933,6 +944,53 @@ void ParticleSystem::update(Scene& scene, float dt) {
     });
     if (!explicit_viewers_) viewers_ = camera_viewers(scene, settings_.viewer_aspect);
     const std::span<const ParticleViewer> viewers(viewers_);
+    // Simulation budget (ADR-0213): room for new CPU particles, nearest emitter first. Serial and
+    // ordered by (distance, scene order), so the result does not depend on jobs.
+    if (settings_.max_cpu_particles > 0) {
+        std::vector<std::pair<float, std::size_t>> order;
+        std::vector<std::uint32_t> survivors(work_.size(), 0);
+        order.reserve(work_.size());
+        const float step = std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
+        for (std::size_t i = 0; i < work_.size(); ++i) {
+            work_[i].state->budget_room = std::numeric_limits<std::uint32_t>::max();
+            if (work_[i].emitter->gpu) continue;
+            float d2 = 0;
+            if (!viewers.empty()) {
+                const Vec3 p = work_[i].world.transform_point({0, 0, 0});
+                d2 = std::numeric_limits<float>::max();
+                for (const ParticleViewer& v : viewers) {
+                    const Vec3 d = v.position - p;
+                    d2 = std::min(d2, math::dot(d, d));
+                }
+            }
+            order.emplace_back(d2, i);
+            // Particles that outlive this frame's step keep their place (a throttled emitter's
+            // longer step only frees more, so the count stays conservative).
+            std::uint32_t n = 0;
+            for (const Particle& p : work_[i].state->particles) n += p.age + step < p.life ? 1u : 0u;
+            survivors[i] = n;
+        }
+        std::sort(order.begin(), order.end());
+        std::uint64_t used = 0;
+        for (const auto& o : order) used += survivors[o.second];
+        // Live particles keep their place; the free room goes to the nearest emitters first.
+        std::uint64_t free = used < settings_.max_cpu_particles ? settings_.max_cpu_particles - used : 0;
+        for (const auto& o : order) {
+            EmitterState& st = *work_[o.second].state;
+            st.budget_room = static_cast<std::uint32_t>(std::min<std::uint64_t>(free, std::numeric_limits<std::uint32_t>::max()));
+            // Reserve what the emitter needs to reach its steady state (rate x longest life plus its
+            // burst, within max_particles); particles that die this step free room next update.
+            const ParticleEmitterComponent& em = *work_[o.second].emitter;
+            const double life = std::max(0.0f, std::max(em.lifetime_min, em.lifetime_max));
+            const double rate = std::isfinite(em.rate) ? std::max(0.0f, em.rate) : 0.0;
+            const double steady = std::ceil(rate * life) + em.burst + st.pending;
+            const std::uint64_t need = static_cast<std::uint64_t>(std::min<double>(steady, std::min(em.max_particles, kHardCap)));
+            const std::uint64_t alive = survivors[o.second];
+            free -= std::min<std::uint64_t>(free, need > alive ? need - alive : 0);
+        }
+    } else {
+        for (Work& w : work_) w.state->budget_room = std::numeric_limits<std::uint32_t>::max();
+    }
     const auto run = [&](std::size_t begin, std::size_t end) {
         for (std::size_t i = begin; i < end; ++i) {
             Work& w = work_[i];
@@ -941,6 +999,7 @@ void ParticleSystem::update(Scene& scene, float dt) {
             const Lod lod = choose_lod(em, st, w.world, viewers, st.viewer_distance);
             float step = dt;
             st.spawn_scale = 1;
+            st.budget_denied = 0;
             if (lod == Lod::Culled) {
                 // Out of range: drop the particles once and stay asleep (no spawning, no events).
                 if (st.lod != Lod::Culled) clear_state(st);
@@ -995,6 +1054,10 @@ void ParticleSystem::update(Scene& scene, float dt) {
         case Lod::Culled: ++stats_.lod_culled; break;
         }
         stats_.lod_skipped += w.skipped ? 1u : 0u;
+        if (!w.skipped && w.state->budget_denied > 0) {
+            ++stats_.budget_limited;
+            stats_.budget_denied += w.state->budget_denied;
+        }
     }
     stats_.viewers = static_cast<std::uint32_t>(viewers_.size());
     // Deliver sub-emitter events serially in work order, so the result does not depend on jobs.
@@ -1087,6 +1150,7 @@ EmitterStatus status(Scene& scene, Entity e) {
         out.finished = s->finished;
         out.lod = s->lod;
         out.viewer_distance = s->viewer_distance;
+        out.budget_limited = s->budget_denied > 0;
     }
     return out;
 }

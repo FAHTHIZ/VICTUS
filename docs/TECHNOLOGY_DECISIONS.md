@@ -2307,3 +2307,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** listed in docs/STATUS.md under this ADR.
 
 **Consequences:** Baked shapes match DQS, so they inherit its bend behaviour (Orion's knee at 115 degrees still collapses 4 triangles, as DQS does); an artist-sculpted morph can be driven instead. Between keys the cross-fade is approximate. Morphing still runs on the CPU over the whole mesh while a weight changes (about 2.2 ms per frame for Orion's forearm correctives, which touch two meshes of 89,889 vertices); a sparse or GPU morph path is follow-up work. Baked offsets cost 28 bytes per moved vertex per shape.
+
+### ADR-0213: Particle simulation budget, nearest emitters first
+
+**Status:** Accepted (2026-11-22)
+
+**Context:** The renderer already caps the CPU particles it draws per frame (ADR-0109), but every emitter still simulates and spawns: a scene full of emitters costs CPU time and memory whether or not the particles are drawn. The VFX brief asks for budgets and quality-tier fallbacks. Niagara's scalability budgets and Unity's per-system Max Particles both bound the simulation itself.
+
+**Decision:** `ParticleSettings::max_cpu_particles` (0 = unlimited) bounds the live particles of every CPU emitter together. Each update, a serial pre-pass orders CPU emitters by distance to the nearest viewer (ADR-0210; scene order without viewers), keeps the particles that will outlive the step in place, and hands the free room out nearest first, reserving each emitter's steady-state need (rate x longest life plus burst and queued requests, within max_particles). Emitters past the room stop spawning (regular and sub-emitter spawns together) and their particles live out; as the viewer moves, room passes to the new nearest emitters as the old particles die. `EmitterStatus::budget_limited` and `ParticleStats::budget_limited` / `budget_denied` report it. GPU emitters are excluded; they are bounded by their own `max_particles` and by the renderer.
+
+**Alternatives:** (1) Killing far particles to make room: visible popping. (2) Proportional scaling of every emitter: the effect next to the player thins out as soon as anything far away emits. (3) A budget in the renderer only (the existing ADR-0109 cap): saves GPU work but not simulation.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** The live count never exceeds the budget. The pre-pass reads every CPU particle's age once per update (serial). The budget is per `ParticleSystem`, so games choose it per quality tier; the player does not yet set it from the quality tier.

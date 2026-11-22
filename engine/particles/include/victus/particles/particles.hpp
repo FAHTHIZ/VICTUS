@@ -249,6 +249,7 @@ struct EmitterStatus {
     bool finished{false};     // non-looping cycle ended and every particle died
     Lod lod{Lod::Full};       // simulation level in the last update (ADR-0210)
     float viewer_distance{-1}; // metres to the nearest viewer in the last update; -1 = no viewers
+    bool budget_limited{false}; // the simulation budget cut its spawning in the last update (ADR-0213)
 };
 
 struct ParticleStats {
@@ -260,6 +261,8 @@ struct ParticleStats {
     // skipped this update (waiting for their next lod_rate step).
     std::uint32_t lod_full{0}, lod_throttled{0}, lod_paused{0}, lod_culled{0}, lod_skipped{0};
     std::uint32_t viewers{0};
+    // ADR-0213: emitters whose spawning the budget cut, and particles not spawned because of it.
+    std::uint32_t budget_limited{0}, budget_denied{0};
 };
 
 struct ParticleSettings {
@@ -268,6 +271,11 @@ struct ParticleSettings {
     // Width / height assumed for automatic camera viewers (the simulation does not know the
     // window): wide by default so off-screen tests stay conservative on any screen.
     float viewer_aspect{2.4f};
+    // Simulation budget (ADR-0213): live particles across every CPU emitter, 0 = unlimited.
+    // Each update hands out room nearest emitter first (distance to the nearest viewer, then
+    // scene order), so distant emitters stop spawning when the budget is full and their existing
+    // particles live out. GPU emitters are bounded by their max_particles and the renderer.
+    std::uint32_t max_cpu_particles{0};
 };
 
 class ParticleSystem {
