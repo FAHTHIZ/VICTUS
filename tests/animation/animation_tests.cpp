@@ -128,6 +128,71 @@ TEST_CASE("clip validation rejects corrupt channels") {
     CHECK_FALSE(validate(c, 1).ok());
 }
 
+TEST_CASE("keyframe reduction keeps the curve within tolerance") {
+    // Translation: a straight ramp, then a sine. The ramp collapses to its end keys.
+    Channel t;
+    t.path = Path::Translation;
+    for (int k = 0; k <= 120; ++k) {
+        const float time = static_cast<float>(k) / 30.0f;
+        t.times.push_back(time);
+        const float y = k <= 60 ? time : 2.0f + 0.5f * std::sin((time - 2.0f) * 3.0f);
+        t.values.insert(t.values.end(), {1.0f, y, 0.0f});
+    }
+    const Channel original = t;
+    const KeyframeReduction settings;
+    const std::size_t removed = reduce_keyframes(t, settings);
+    CHECK(removed > 60);
+    CHECK(t.times.size() + removed == original.times.size());
+    CHECK(t.times.front() == original.times.front());
+    CHECK(t.times.back() == original.times.back());
+    REQUIRE(validate(Clip{.name = "c", .duration = 4, .channels = {t}}, 1).ok());
+    float worst = 0;
+    for (int i = 0; i <= 400; ++i) {
+        const float time = 4.0f * static_cast<float>(i) / 400.0f;
+        worst = std::max(worst, length(sample_vec3(t, time) - sample_vec3(original, time)));
+    }
+    CHECK(worst <= 0.0025f + 1e-5f); // 0.1% of the largest value (2.5); only y differs
+
+    // Rotation: a constant-speed turn about Y is exactly reproduced by slerp of its end keys.
+    Channel r;
+    r.path = Path::Rotation;
+    for (int k = 0; k <= 30; ++k) {
+        r.times.push_back(static_cast<float>(k) / 30.0f);
+        const Quat q = math::Quat::axis_angle({0, 1, 0}, static_cast<float>(k) * 0.05f);
+        r.values.insert(r.values.end(), {q.x, q.y, q.z, q.w});
+    }
+    // A wiggle in the middle must survive.
+    const Quat bump = math::Quat::axis_angle({1, 0, 0}, 0.2f);
+    r.values[15 * 4 + 0] = bump.x, r.values[15 * 4 + 1] = bump.y, r.values[15 * 4 + 2] = bump.z, r.values[15 * 4 + 3] = bump.w;
+    const Channel rot = r;
+    reduce_keyframes(r, settings);
+    CHECK(r.times.size() < rot.times.size());
+    CHECK(std::find(r.times.begin(), r.times.end(), rot.times[15]) != r.times.end());
+    for (std::size_t k = 0; k < rot.times.size(); ++k) {
+        const Quat a = sample_quat(r, rot.times[k]), b = sample_quat(rot, rot.times[k]);
+        CHECK(std::abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w) >= std::cos(0.05f * std::numbers::pi_v<float> / 360.0f) - 1e-6f);
+    }
+
+    // Step keys: only value changes stay. Cubic splines and short channels are untouched.
+    Channel s;
+    s.path = Path::Scale;
+    s.interpolation = Interpolation::Step;
+    for (int k = 0; k < 6; ++k) {
+        s.times.push_back(static_cast<float>(k));
+        const float v = k < 3 ? 1.0f : 2.0f;
+        s.values.insert(s.values.end(), {v, v, v});
+    }
+    CHECK(reduce_keyframes(s, settings) == 3); // keeps 0, 3 and the last key
+    CHECK(s.times == std::vector<float>{0, 3, 5});
+    Channel c = original;
+    c.interpolation = Interpolation::CubicSpline;
+    CHECK(reduce_keyframes(c, settings) == 0);
+    Channel two;
+    two.times = {0, 1};
+    two.values = {0, 0, 0, 1, 1, 1};
+    CHECK(reduce_keyframes(two, settings) == 0);
+}
+
 TEST_CASE("wrap_time loops and clamps") {
     CHECK(near(wrap_time(2.5f, 1.0f, true), 0.5f));
     CHECK(near(wrap_time(-0.25f, 1.0f, true), 0.75f));

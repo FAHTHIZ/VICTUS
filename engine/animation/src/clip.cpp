@@ -161,6 +161,70 @@ Quat sample_quat(const Channel& ch, float time) noexcept {
     return normalize(Quat{cubic(ch, s, 0), cubic(ch, s, 1), cubic(ch, s, 2), cubic(ch, s, 3)});
 }
 
+std::size_t reduce_keyframes(Channel& ch, const KeyframeReduction& settings) {
+    const std::size_t keys = ch.times.size();
+    const std::uint32_t n = ch.components();
+    if (keys < 3 || n == 0 || ch.interpolation == Interpolation::CubicSpline || ch.values.size() != keys * n) return 0;
+    const auto at = [&](std::size_t k, std::uint32_t c) { return ch.values[k * n + c]; };
+    std::vector<std::size_t> kept{0};
+    if (ch.interpolation == Interpolation::Step) {
+        for (std::size_t k = 1; k + 1 < keys; ++k) {
+            bool same = true;
+            for (std::uint32_t c = 0; c < n && same; ++c) same = at(k, c) == at(kept.back(), c);
+            if (!same) kept.push_back(k);
+        }
+    } else {
+        const bool rotation = ch.path == Path::Rotation;
+        float largest = 0;
+        for (const float v : ch.values) largest = std::max(largest, std::abs(v));
+        const float tolerance = std::max(settings.relative * largest, settings.min_error);
+        const float min_dot = std::cos(settings.rotation_degrees * (3.14159265358979f / 180.0f) * 0.5f);
+        const auto quat = [&](std::size_t k) { return Quat{at(k, 0), at(k, 1), at(k, 2), at(k, 3)}; };
+        // True when interpolating keys a..b reproduces every key strictly between them.
+        const auto spans = [&](std::size_t a, std::size_t b) {
+            const float t0 = ch.times[a], dt = ch.times[b] - t0;
+            for (std::size_t k = a + 1; k < b; ++k) {
+                const float u = dt > 0 ? (ch.times[k] - t0) / dt : 0.0f;
+                if (rotation) {
+                    const Quat q = normalize(slerp(quat(a), quat(b), u));
+                    const Quat o = normalize(quat(k));
+                    if (std::abs(q.x * o.x + q.y * o.y + q.z * o.z + q.w * o.w) < min_dot) return false;
+                } else {
+                    for (std::uint32_t c = 0; c < n; ++c)
+                        if (std::abs(at(a, c) + (at(b, c) - at(a, c)) * u - at(k, c)) > tolerance) return false;
+                }
+            }
+            return true;
+        };
+        constexpr std::size_t kMaxSpan = 256; // bounds the cost per kept key
+        std::size_t anchor = 0;
+        for (std::size_t k = 2; k < keys; ++k) {
+            if (k - anchor <= kMaxSpan && spans(anchor, k)) continue;
+            anchor = k - 1;
+            kept.push_back(anchor);
+        }
+    }
+    kept.push_back(keys - 1);
+    if (kept.size() == keys) return 0;
+    std::vector<float> times, values;
+    times.reserve(kept.size());
+    values.reserve(kept.size() * n);
+    for (const std::size_t k : kept) {
+        times.push_back(ch.times[k]);
+        values.insert(values.end(), ch.values.begin() + static_cast<std::ptrdiff_t>(k * n),
+                      ch.values.begin() + static_cast<std::ptrdiff_t>((k + 1) * n));
+    }
+    ch.times = std::move(times);
+    ch.values = std::move(values);
+    return keys - kept.size();
+}
+
+std::size_t reduce_keyframes(Clip& clip, const KeyframeReduction& settings) {
+    std::size_t removed = 0;
+    for (Channel& ch : clip.channels) removed += reduce_keyframes(ch, settings);
+    return removed;
+}
+
 void sample(const Clip& clip, float time, std::span<NodePose> pose) noexcept {
     const float t = std::clamp(time, 0.0f, std::max(clip.duration, 0.0f));
     for (const Channel& ch : clip.channels) {

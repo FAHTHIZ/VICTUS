@@ -61,6 +61,9 @@ json::Value ModelImportSettings::to_json() const {
     if (!import_lights) v.set("import_lights", false);
     if (!import_cameras) v.set("import_cameras", false);
     if (light_intensity_scale != ModelImportSettings{}.light_intensity_scale) v.set("light_intensity_scale", light_intensity_scale);
+    if (!keyframe_reduction) v.set("keyframe_reduction", false);
+    if (keyframe_rotation_error != ModelImportSettings{}.keyframe_rotation_error) v.set("keyframe_rotation_error", keyframe_rotation_error);
+    if (keyframe_error != ModelImportSettings{}.keyframe_error) v.set("keyframe_error", keyframe_error);
     return v;
 }
 
@@ -84,6 +87,11 @@ ModelImportSettings ModelImportSettings::from_json(const json::Value& v) {
     s.import_cameras = v["import_cameras"].as_bool(s.import_cameras);
     s.light_intensity_scale = v["light_intensity_scale"].as_float(s.light_intensity_scale);
     if (!(s.light_intensity_scale >= 0.0f) || !std::isfinite(s.light_intensity_scale)) s.light_intensity_scale = 1.0f / 683.0f;
+    s.keyframe_reduction = v["keyframe_reduction"].as_bool(s.keyframe_reduction);
+    s.keyframe_rotation_error = std::clamp(v["keyframe_rotation_error"].as_float(s.keyframe_rotation_error), 0.0f, 10.0f);
+    if (!std::isfinite(s.keyframe_rotation_error)) s.keyframe_rotation_error = ModelImportSettings{}.keyframe_rotation_error;
+    s.keyframe_error = std::clamp(v["keyframe_error"].as_float(s.keyframe_error), 0.0f, 0.1f);
+    if (!std::isfinite(s.keyframe_error)) s.keyframe_error = ModelImportSettings{}.keyframe_error;
     return s;
 }
 
@@ -1022,6 +1030,9 @@ private:
                     continue;
                 }
                 clip.duration = std::max(clip.duration, out.times.back());
+                if (settings_.keyframe_reduction)
+                    (void)animation::reduce_keyframes(out, {.rotation_degrees = settings_.keyframe_rotation_error,
+                                                            .relative = settings_.keyframe_error});
                 clip.channels.push_back(std::move(out));
             }
             if (clip.channels.empty()) {

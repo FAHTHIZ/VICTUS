@@ -103,6 +103,21 @@ void expand_morph_weights(AnimationSet& set, std::span<const MorphNode> morphs);
 // Validates node indices, key ordering, finite values and value counts.
 [[nodiscard]] Status validate(const Clip& clip, std::size_t node_count);
 
+// Keyframe reduction (as Unity's import option): removes keys that interpolation between the kept
+// neighbours reproduces within the given errors. The first and last keys always stay, so clip
+// duration is unchanged. Linear channels drop keys within tolerance; Step channels drop keys equal
+// to the previous one; cubic-spline channels are left alone.
+struct KeyframeReduction {
+    float rotation_degrees{0.05f}; // angle between the original and the interpolated rotation
+    // Translation, scale and morph weight error: this fraction of the channel's largest absolute
+    // value (at least `min_error`), per component.
+    float relative{0.001f};
+    float min_error{1e-5f};
+};
+// Returns the number of keys removed.
+std::size_t reduce_keyframes(Channel& channel, const KeyframeReduction& settings = {});
+std::size_t reduce_keyframes(Clip& clip, const KeyframeReduction& settings = {});
+
 [[nodiscard]] math::Vec3 sample_vec3(const Channel& channel, float time) noexcept;
 [[nodiscard]] math::Quat sample_quat(const Channel& channel, float time) noexcept;
 // Writes every channel of `clip` at `time` (clamped to the clip) into `pose` (indexed by node).

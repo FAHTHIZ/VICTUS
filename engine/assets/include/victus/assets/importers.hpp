@@ -53,6 +53,12 @@ struct ModelImportSettings {
     // default 1/683 turns them back into the watt-based values Blender shows (its exporter
     // multiplies by 683 lm/W), which match VICTUS light units. Use 1 for files written unitless.
     float light_intensity_scale{1.0f / 683.0f};
+    // glTF clips: drop keys that linear interpolation reproduces (animation::reduce_keyframes).
+    // keyframe_rotation_error is in degrees; keyframe_error is relative to each channel's largest
+    // value. FBX clips are reduced by ufbx when they are baked.
+    bool keyframe_reduction{true};
+    float keyframe_rotation_error{0.05f};
+    float keyframe_error{0.001f};
     [[nodiscard]] json::Value to_json() const;
     static ModelImportSettings from_json(const json::Value& v);
 };
@@ -63,7 +69,7 @@ struct ImportResult {
 };
 
 inline constexpr std::uint32_t kTextureImporterVersion = 4; // v2: HDR (.hdr) sources keep linear float data; v3: BC/ASTC variants; v4: alpha_coverage_cutoff
-inline constexpr std::uint32_t kModelImporterVersion = 8; // v8: node lights and cameras; v2: skins and animations; v3: COLOR_0 vertex colours; v4: BC/ASTC textures; v5: mesh optimisation + LODs; v6: coverage-preserving base colour mips for MASK materials; v7: card LODs for leaf canopies
+inline constexpr std::uint32_t kModelImporterVersion = 9; // v9: glTF keyframe reduction; v8: node lights and cameras; v2: skins and animations; v3: COLOR_0 vertex colours; v4: BC/ASTC textures; v5: mesh optimisation + LODs; v6: coverage-preserving base colour mips for MASK materials; v7: card LODs for leaf canopies
 
 [[nodiscard]] Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSettings& settings);
 // HDR (.hdr) sources: half-float pixels (limited to max_size x max_size/2), SH9 irradiance and a
