@@ -3063,7 +3063,7 @@ Verified (Release, 2-core sandbox):
   - `victus_asset_tests -tc="skeleton*"`: 8 cases, 276 assertions, including import from a file with a migration (applied, compatible, listed as a dependency), the same migration listed twice (fails naming the file), escaping and missing paths (fail), memory import (warns, skips).
   - `victus_editor_tests -tc="studio skeleton*"` (Vulkan lavapipe): 36 assertions. On the 3D template's Orion: DQS on every skinned mesh and back with one undo step; LowerArm.R rolled 150 and bent 110 degrees: 15 collapsed triangles with LBS, 0 with DQS (of 182,096); a `Socket.Visor` bone added as `orion.glb.rig2.vrig` re-imports with every existing bone compatible; a duplicate bone writes nothing.
   - `victus skeleton orion --deformation` (ctest `victus_cli_skeleton`): 69 bones, 60 joints, 8 sockets, layout d833069a902c6d93; LowerLeg.L rolled 150 and bent 115 degrees: 36 collapsed triangles with LBS, 7 with DQS.
-- Next task: viewport bone and weight heatmap overlays in the Studio, then creature and complex humanoid test rigs with runtime-renderer deformation captures and CPU/GPU/memory measurements.
+- Next task: creature and complex humanoid test rigs with runtime-renderer deformation captures and CPU/GPU/memory measurements (done, ADR-0207), then viewport bone and weight heatmap overlays in the Studio.
 
 ## 2026-11-22 — Skin weight import warnings
 
@@ -3074,3 +3074,20 @@ Verified (dev build, 2-core sandbox):
 - `victus_asset_tests`: 72 cases pass, including the warning text test and the Orion/Nova import tests (zero importer warnings, 528 assertions).
 - `victus_animation_tests`: 71 cases pass.
 - Not verified: a real production FBX with more than four influences per vertex (covered only by synthetic stats).
+
+## 2026-11-22 — Reference creature and mechanical rigs verified in the runtime renderer (ADR-0207)
+
+Built:
+- `assets/reference_rigs.hpp` (ADR-0207): a procedural quadruped creature (38 joints, 2 sockets, 4,516 vertices, 8,996 triangles; Walk, Sit, Shake) and mechanical loader (13 joints, every part rigid on one joint; Work, Spin), plus `complex_humanoid_extension()` (the 19-bone Orion/Nova extension, now shared with `skeleton_tests`).
+- `tests/assets/reference_rig_tests.cpp` (5 cases) and `tests/render/gpu_rig_deformation_tests.cpp` (3 cases).
+- CPU dual quaternion skinning converts each palette matrix once per call instead of once per vertex influence.
+- `victus skeleton quadruped|mech` (ctest `victus_cli_skeleton_quadruped`); benchmarks `animation/rig_pose_*`, `animation/skin_cpu_*` (victus_bench_animation) and `scene/frame_16_quadrupeds_640p_*` (victus_bench_render).
+
+Verified (Release, 2-core sandbox):
+- `victus_asset_tests -tc="reference rigs*"`: 5 cases pass. Quadruped roles: 7 tail, 10 leg, 1 jaw, 2 ear, 1 secondary bone; weights normalised, at most two influences, no unweighted joint. Worst volume change over 11 samples per clip, LBS / DQS: Walk 0.05% / 0.008%, Sit 1.1% / 0.46%, Shake 0.44% / 0.14%; collapsed triangles: 0 / 0 except Sit 0 / 2 (DQS bulge on the inside of the ~125 degree hind knee bend). Extreme pose (tail rolled 120 degrees per joint, neck turned and rolled, hind knee folded 150 degrees, foreleg twisted): volume LBS 0.974 / DQS 0.995, collapsed triangles 2 / 0, smallest area ratio 0.066 / 0.162. Mech: every triangle keeps its area (within 0.1%) in 18 sampled poses with both methods.
+- `victus_gpu_tests -tc="gpu rig*"` on Vulkan (lavapipe) and GLES (llvmpipe): 3 cases pass. Seven poses (quadruped Walk, Sit and the extreme pose; mech Work; Orion's ADR-0206 extreme pose; the complex humanoid, 74 joints, in Walk with its roll joints, antenna and lip corner posed), each rendered lit with shadows as GPU LBS, GPU DQS and both CPU-skinned references: 0 pixels differ by more than 40/255 between GPU and CPU on both backends (1,950 to 5,644 covered pixels per image at 256x192). LBS and DQS images differ by 205-207 pixels on the twisted tail and 0 on the mech. Images in `build/test_output/rig_*.png`.
+- Benchmarks (p50, one run): pose + palette from a clip: quadruped 0.002 ms, mech 0.001 ms, Orion 0.004 ms. CPU skinning, LBS / DQS: quadruped (4,516 verts) 0.108 / 0.234 ms, mech (336) 0.007 / 0.016 ms, Orion body (60,140) 1.69 / 3.39 ms; Orion DQS was 8.93 ms before the per-palette conversion. Sixteen walking quadrupeds at 640x360 High with shadows on lavapipe: static pre-skinned 96.4 ms, GPU LBS 119.9 ms, GPU DQS 112.2 ms per frame (software rasteriser; the LBS/DQS difference is within its noise).
+- Memory: palette 64 B per joint per skinned instance (quadruped 2,432 B, mech 832 B, Orion 3,840 B, complex humanoid 4,736 B); skin stream 24 B per vertex (quadruped 108,384 B).
+- `victus skeleton quadruped --deformation`: 40 bones, 38 joints, layout 83bccaeb875432a0; FrontUpperLeg.L rolled 150 and bent 115 degrees: 5 collapsed triangles with LBS, 0 with DQS.
+- Not verified: GPU cost on real hardware; Metal and D3D12.
+- Next task: Studio viewport bone and weight heatmap overlays, pose and IK preview, socket editing.

@@ -2210,3 +2210,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** listed in docs/STATUS.md under this ADR.
 
 **Consequences:** DQS ignores non-uniform scale shear (scale is blended linearly per joint), is about three times the CPU-skinning cost of LBS in our scalar code, and bulges slightly at bent joints. Skeleton edits run on cooked models; the importer hook, CLI and Studio skeleton panel come in follow-up units. The starter GLBs are unchanged.
+
+### ADR-0207: Reference creature and mechanical rigs, verified in the runtime renderer
+
+**Status:** Accepted (2026-11-22)
+
+**Context:** ADR-0206 measured deformation on a test tube and on Orion with the CPU skinner. The character brief asks for creature and mechanically articulated characters and a more complex humanoid, verified in the runtime renderer rather than by an importer accepting a file, with CPU, GPU and memory costs. The repository had no non-humanoid skinned asset, and the GPU skinning tests compared a two-joint tube only.
+
+**Decision:** (1) `assets/reference_rigs.hpp` builds two rigs in code, so every bind transform and weight is known: a quadruped creature (38 joints: spine, two-joint neck, head, jaw, ears, a seven-joint tail, four five-segment legs, a jiggle belly; 4,516 vertices of closed tubes with smooth two-bone blends at every joint; Walk, Sit and Shake clips) and a mechanical loader (13 joints: turret, boom, stick, rolling wrist, two claw hinges, a two-part piston and four wheels; every part a box weighted 100% to one joint; Work and Spin clips). `complex_humanoid_extension()` is the 19-bone extension of ADR-0206 (facial bones, tongue, toe segments, forearm roll joints, a secondary antenna chain, IK targets, poles and an equipment socket), now shared by tests, benchmarks and tools. (2) `gpu_rig_deformation_tests` renders each pose four ways in the real SceneRenderer (GPU LBS, GPU DQS, and the CPU-skinned pose of each drawn as a static mesh, lit with shadows) and requires the GPU images to match the CPU references; it also checks that the two methods give different images where they should (twisted tail) and identical ones where they should not (rigid mech). (3) The CPU DQS skinner converts each palette matrix to a dual quaternion once per call instead of once per influence. (4) `victus skeleton quadruped|mech` and benchmarks `animation/rig_pose_*`, `animation/skin_cpu_*` and `scene/frame_16_quadrupeds_640p_*`.
+
+**Alternatives:** (1) Ship creature GLBs authored in Blender: closer to production assets, but the weights would be opaque to the tests and the file would need a licence and a cook; procedural rigs can still be exported later. (2) Compare GPU output against stored golden images: brittle across drivers; comparing against a CPU reference rendered the same frame on the same device isolates skinning.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Measured, DQS is not uniformly better: on the quadruped's Sit clip (hind knees bent about 125 degrees) DQS collapses two triangles on the inside of the bend where LBS collapses none, while on twists it is far better. That keeps the per-mesh choice and motivates joint-angle corrective shapes (a later unit). GPU timings come from Mesa's software rasteriser only and do not show the cost of DQS on real hardware.

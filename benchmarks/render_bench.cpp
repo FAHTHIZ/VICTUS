@@ -4,7 +4,9 @@
 #include "bench_harness.hpp"
 
 #include "victus/platform/platform.hpp"
+#include "victus/assets/reference_rigs.hpp"
 #include "victus/render/scene_renderer.hpp"
+#include "victus/render/skinning.hpp"
 #include "victus/render/sprite_batch.hpp"
 
 #include <chrono>
@@ -209,6 +211,65 @@ int main(int argc, char** argv) {
         d.destroy(small);
         ctx->destroy(cube);
         ctx->destroy(plane);
+    }
+    {
+        // Skinned characters (ADR-0207): 16 reference quadrupeds (4,516 vertices, 38 joints) posed
+        // by the Walk clip at different times, drawn GPU-skinned with linear and dual quaternion
+        // palettes, against the same poses pre-skinned on the CPU and drawn as static meshes (the
+        // vertex shader's skinning cost is the difference). 640x360 High tier with shadows.
+        auto scene = render::SceneRenderer::create(*ctx).value();
+        const assets::CookedModel rig = assets::make_reference_rig(assets::ReferenceRig::Quadruped);
+        const render::MeshData& md = rig.meshes[0].data;
+        auto skinned = ctx->create_mesh(md, "quadruped").value();
+        constexpr int kCount = 16;
+        std::vector<std::vector<Mat4>> lbs(kCount), dqs(kCount);
+        std::vector<render::GpuMesh> baked;
+        std::vector<Mat4> place;
+        for (int i = 0; i < kCount; ++i) {
+            lbs[i] = assets::pose_palette(rig, assets::pose_world(rig, &rig.animations[0], 0.0625f * static_cast<float>(i)));
+            dqs[i] = lbs[i];
+            render::encode_dq_palette(dqs[i]);
+            render::MeshData cpu = md;
+            render::skin_vertices(md, lbs[i], render::SkinningMethod::Linear, cpu.vertices);
+            cpu.skin.clear();
+            baked.push_back(ctx->create_mesh(cpu, "quadruped_cpu").value());
+            place.push_back(Mat4::translation({static_cast<float>(i % 4 - 2) * 1.2f, 0, static_cast<float>(i / 4 - 2) * 1.4f}));
+        }
+        auto mid = d.create_texture([&] {
+            rhi::TextureDesc sd = td;
+            sd.name = "bench_skin";
+            sd.width = 640;
+            sd.height = 360;
+            return sd;
+        }()).value();
+        const render::Camera3D cam = render::Camera3D::look_at({0, 3.5f, 6}, {0, 0.4f, -0.6f});
+        render::DirectionalLight sun;
+        sun.shadow_distance = 20;
+        render::Material m;
+        scene->set_settings(render::RenderSettings::preset(render::QualityTier::High));
+        const math::Aabb local{{-0.6f, -0.2f, -1.2f}, {0.6f, 1.4f, 1.0f}};
+        for (int mode = 0; mode < 3; ++mode) {
+            const char* name = mode == 0 ? "scene/frame_16_quadrupeds_640p_static_gpu"
+                             : mode == 1 ? "scene/frame_16_quadrupeds_640p_skinned_lbs_gpu"
+                                         : "scene/frame_16_quadrupeds_640p_skinned_dqs_gpu";
+            h.run(name, kCount, [&] {
+                scene->begin(cam, sun, {});
+                for (int i = 0; i < kCount; ++i) {
+                    if (mode == 0) scene->submit(baked[static_cast<std::size_t>(i)], m, place[static_cast<std::size_t>(i)]);
+                    else
+                        scene->submit_skinned(skinned, m, place[static_cast<std::size_t>(i)], mode == 1 ? lbs[static_cast<std::size_t>(i)] : dqs[static_cast<std::size_t>(i)],
+                                              local.transformed(place[static_cast<std::size_t>(i)]));
+                }
+                auto cmd = d.begin_commands();
+                if (!scene->render(cmd, mid, 640, 360, td.format).ok()) std::abort();
+                cmd.submit_and_wait();
+            });
+        }
+        std::printf("skinned quadrupeds: palette %zu B per instance, skin stream %zu B per mesh (%zu B/vertex)\n",
+                    lbs[0].size() * sizeof(Mat4), md.skin.size() * sizeof(render::SkinVertex), sizeof(render::SkinVertex));
+        for (auto& b : baked) ctx->destroy(b);
+        ctx->destroy(skinned);
+        d.destroy(mid);
     }
     d.destroy(target);
     ctx.reset();

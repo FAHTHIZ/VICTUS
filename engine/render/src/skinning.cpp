@@ -106,6 +106,28 @@ void encode_dq_palette(std::span<Mat4> palette) noexcept {
         if (!is_dq_joint(m)) m = encode_dq_joint(m);
 }
 
+namespace {
+// Dual quaternion blend of one vertex; `dq_of(joint, &scale)` yields a joint's dual quaternion
+// and scale (converted on the fly, or looked up from a per-palette cache).
+template <typename DqOf>
+Mat4 blend_dq(const SkinVertex& v, DqOf&& dq_of) noexcept {
+    Vec3 s0;
+    const DualQuat first = dq_of(v.joints[0], &s0);
+    DualQuat acc{qscale(first.real, v.weights[0]), qscale(first.dual, v.weights[0])};
+    Vec3 scale = s0 * v.weights[0];
+    for (int k = 1; k < 4; ++k) {
+        if (v.weights[k] == 0.0f) continue;
+        Vec3 sk;
+        const DualQuat dq = dq_of(v.joints[k], &sk);
+        const float w = qdot(first.real, dq.real) < 0.0f ? -v.weights[k] : v.weights[k];
+        acc.real = qadd(acc.real, qscale(dq.real, w));
+        acc.dual = qadd(acc.dual, qscale(dq.dual, w));
+        scale = scale + sk * v.weights[k];
+    }
+    return to_matrix(acc, scale);
+}
+} // namespace
+
 Mat4 blend_skin_matrix(const SkinVertex& v, std::span<const Mat4> palette, SkinningMethod method) noexcept {
     const auto joint = [&](std::uint16_t j) -> const Mat4& {
         static const Mat4 identity{};
@@ -119,28 +141,34 @@ Mat4 blend_skin_matrix(const SkinVertex& v, std::span<const Mat4> palette, Skinn
         return acc;
     }
     // DQS with antipodality fix against the first influence (as the shaders do).
-    Vec3 s0;
-    const DualQuat first = to_dual_quat(joint(v.joints[0]), &s0);
-    DualQuat acc{qscale(first.real, v.weights[0]), qscale(first.dual, v.weights[0])};
-    Vec3 scale = s0 * v.weights[0];
-    for (int k = 1; k < 4; ++k) {
-        if (v.weights[k] == 0.0f) continue;
-        Vec3 sk;
-        const DualQuat dq = to_dual_quat(joint(v.joints[k]), &sk);
-        const float w = qdot(first.real, dq.real) < 0.0f ? -v.weights[k] : v.weights[k];
-        acc.real = qadd(acc.real, qscale(dq.real, w));
-        acc.dual = qadd(acc.dual, qscale(dq.dual, w));
-        scale = scale + sk * v.weights[k];
-    }
-    return to_matrix(acc, scale);
+    const auto dq_of = [&](std::uint16_t j, Vec3* sc) { return to_dual_quat(joint(j), sc); };
+    return blend_dq(v, dq_of);
 }
 
 void skin_vertices(const MeshData& mesh, std::span<const Vertex3D> base, std::span<const Mat4> palette,
                    SkinningMethod method, std::vector<Vertex3D>& out) {
     out.assign(base.begin(), base.end());
     if (!mesh.skinned() || base.size() != mesh.skin.size()) return;
+    // DQS: convert each palette matrix once (the conversion dominates the per-vertex cost).
+    std::vector<DualQuat> dqs;
+    std::vector<Vec3> scales;
+    if (method == SkinningMethod::DualQuaternion) {
+        dqs.resize(palette.size());
+        scales.resize(palette.size());
+        for (std::size_t j = 0; j < palette.size(); ++j) dqs[j] = to_dual_quat(palette[j], &scales[j]);
+    }
+    const DualQuat identity_dq = to_dual_quat(Mat4{});
+    const auto cached = [&](std::uint16_t j, Vec3* sc) -> DualQuat {
+        if (j >= dqs.size()) {
+            *sc = {1, 1, 1};
+            return identity_dq;
+        }
+        *sc = scales[j];
+        return dqs[j];
+    };
     for (std::size_t i = 0; i < base.size(); ++i) {
-        const Mat4 m = blend_skin_matrix(mesh.skin[i], palette, method);
+        const Mat4 m = method == SkinningMethod::DualQuaternion ? blend_dq(mesh.skin[i], cached)
+                                                                : blend_skin_matrix(mesh.skin[i], palette, method);
         Vertex3D& o = out[i];
         o.position = m.transform_point(base[i].position);
         o.normal = math::normalize(m.transform_vector(base[i].normal));

@@ -66,6 +66,7 @@ std::size_t detail(const std::vector<std::uint8_t>& px) {
 } // namespace
 
 TEST_CASE("gpu: procedural city draws from the air and from the street") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
     procgen::register_components();
     Scene s;
     const Entity cam = s.create("Camera");

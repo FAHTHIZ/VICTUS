@@ -6,13 +6,20 @@
 // (two clips sampled and blended). "_1thread" runs serially, "_jobs" through parallel_for.
 // "animation/character_*" runs the real Orion starter character (60 joints, 41 clips) under its
 // shared locomotion controller, walking-to-running blend (two clips sampled per character).
+// "animation/rig_*" (ADR-0207) poses the reference quadruped (38 joints), mech (13 joints) and
+// Orion (60 joints) from a clip into a skin palette, and "animation/skin_cpu_*" skins their
+// meshes on the CPU with linear and dual quaternion skinning (the CPU fallback and the cost
+// reference for the vertex shader's work).
 #include "bench_harness.hpp"
 
 #include "victus/animation/animation.hpp"
 #include "victus/assets/cooked.hpp"
 #include "victus/assets/importers.hpp"
+#include "victus/assets/reference_rigs.hpp"
+#include "victus/assets/skeleton.hpp"
 #include "victus/core/jobs.hpp"
 #include "victus/project/characters.hpp"
+#include "victus/render/skinning.hpp"
 
 #include <cmath>
 #include <memory>
@@ -135,6 +142,39 @@ int main(int argc, char** argv) {
             if (sys.stats().animators != static_cast<std::uint32_t>(n)) return 5;
             h.run("animation/character_" + std::to_string(n) + "x21_joints_controller" + suffix, static_cast<std::size_t>(n),
                   [&] { sys.update(s, 1.0f / 60); });
+        }
+    }
+    {
+        std::vector<std::pair<std::string, assets::CookedModel>> rigs;
+        rigs.emplace_back("quadruped", assets::make_reference_rig(assets::ReferenceRig::Quadruped));
+        rigs.emplace_back("mech", assets::make_reference_rig(assets::ReferenceRig::Mech));
+        if (const project::StarterCharacter* c = project::find_starter_character("orion")) {
+            assets::ModelImportSettings is;
+            is.import_textures = false;
+            is.lods = 0;
+            if (auto m = assets::import_gltf_memory(project::starter_character_glb(*c), c->model_path, is); m.ok())
+                rigs.emplace_back("orion", std::move(m.value()));
+        }
+        for (auto& [name, m] : rigs) {
+            const animation::Clip* clip = &m.animations[0];
+            for (const auto& a : m.animations)
+                if (a.name == "Walk") clip = &a;
+            float t = 0;
+            std::vector<math::Mat4> palette;
+            h.run("animation/rig_pose_" + name + "_" + std::to_string(m.skins[0].joints.size()) + "_joints", 1, [&] {
+                t = std::fmod(t + 1.0f / 60, clip->duration);
+                palette = assets::pose_palette(m, assets::pose_world(m, clip, t));
+            });
+            std::size_t mesh = 0;
+            for (std::size_t i = 0; i < m.meshes.size(); ++i)
+                if (m.meshes[i].data.skinned() && m.meshes[i].data.vertices.size() > m.meshes[mesh].data.vertices.size()) mesh = i;
+            const render::MeshData& d = m.meshes[mesh].data;
+            std::vector<render::Vertex3D> out;
+            for (const auto method : {render::SkinningMethod::Linear, render::SkinningMethod::DualQuaternion}) {
+                const char* tag = method == render::SkinningMethod::Linear ? "lbs" : "dqs";
+                h.run("animation/skin_cpu_" + name + "_" + std::to_string(d.vertices.size()) + "_verts_" + tag, d.vertices.size(),
+                      [&] { render::skin_vertices(d, palette, method, out); });
+            }
         }
     }
     return h.finish();

@@ -35,6 +35,7 @@
 #include "victus/project/project.hpp"
 #include "victus/project/characters.hpp"
 #include "victus/assets/importers.hpp"
+#include "victus/assets/reference_rigs.hpp"
 #include "victus/assets/skeleton.hpp"
 #include "victus/render/skinning.hpp"
 #include "victus/library/install.hpp"
@@ -112,7 +113,7 @@ constexpr const char* kUsage =
     "  library providers|search|install|import-zip|list|remove|credits ...  Asset Store: CC0/CC BY content into a project\n"
     "  diagnose [project] --out FILE.zip [--no-logs] [--keep-paths] ...  bundle crash reports, logs and checks\n"
     "  character-check <model|orion|nova> [--json] [--any-joints] check a model can stand in for a starter character\n"
-    "  skeleton <model|orion|nova> [--migration F]... [--json]    bones, roles, weights; apply/check skeleton migrations\n"
+    "  skeleton <model|orion|nova|quadruped|mech> [--migration F]... [--json]  bones, roles, weights; apply/check skeleton migrations\n"
     "  script-api [--out FILE] [--write DIR] [--check DIR]        print, freeze or check the versioned Luau API\n"
     "  version                                                    print the engine version\n"
     "\n"
@@ -199,7 +200,7 @@ int cmd_script_api(const std::vector<std::string>& a) {
 // linear and dual quaternion skinning of the largest skinned mesh under a twisted-limb pose.
 int cmd_skeleton(const std::vector<std::string>& a) {
     cli::Parser p("victus skeleton", "Inspect a model's skeleton and check skeleton migrations");
-    p.positional("model", "a .glb, .gltf or .fbx file, or a starter character id (orion, nova)", true)
+    p.positional("model", "a .glb, .gltf or .fbx file, a starter character id (orion, nova) or a reference rig (quadruped, mech)", true)
         .option("migration", "a victus.skeleton_migration JSON file to apply (repeat in order: comma-separated)")
         .option("write", "also write the JSON report to this file")
         .flag("deformation", "measure LBS against DQS on a twisted, bent limb")
@@ -211,8 +212,11 @@ int cmd_skeleton(const std::vector<std::string>& a) {
     settings.import_textures = false;
     settings.lods = 0;
     Result<assets::CookedModel> model = make_error(ErrorCode::NotFound, "");
+    assets::ReferenceRig reference{};
     if (const auto* starter = project::find_starter_character(what)) {
         model = assets::import_gltf_memory(project::starter_character_glb(*starter), std::string(starter->model_path), settings);
+    } else if (assets::parse_reference_rig(what, reference)) {
+        model = assets::make_reference_rig(reference); // ADR-0207 reference creature / mech
     } else {
         const fs::Path path(what);
         std::string ext = path.extension().string();

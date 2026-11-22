@@ -365,7 +365,7 @@ TEST_CASE("gpu skinning: crowd agents cost less CPU per frame than animator char
     CHECK(crowd_ms < animator_ms);
 }
 
-// ADR-0205: dual quaternion skinning on the GPU. A tube (elbow/forearm stand-in) is twisted 170
+// ADR-0206: dual quaternion skinning on the GPU. A tube (elbow/forearm stand-in) is twisted 170
 // degrees about its axis and drawn side-on; linear blending pinches the middle to a thread while
 // dual quaternions keep its width. The DQS draw must also match the CPU reference
 // (render::skin_vertices) drawn as a static mesh, so shader and CPU fallback agree.

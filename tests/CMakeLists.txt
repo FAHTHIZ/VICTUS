@@ -85,6 +85,7 @@ victus_add_test(victus_asset_tests
         assets/model_scene_objects_tests.cpp
         assets/fbx_import_tests.cpp
         assets/skeleton_tests.cpp
+        assets/reference_rig_tests.cpp
     DEPS VICTUS::Assets VICTUS::Project
     LABELS assets)
 target_compile_definitions(victus_asset_tests PRIVATE VICTUS_FBX_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/fbx")
@@ -178,7 +179,8 @@ victus_add_test(victus_gpu_tests
         render/gpu_effect_fog_tests.cpp
         render/gpu_light2d_tests.cpp
         render/gpu_city_tests.cpp
-    DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui VICTUS::Procgen
+        render/gpu_rig_deformation_tests.cpp
+    DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui VICTUS::Procgen VICTUS::Project
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output"
     VICTUS_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -247,6 +249,10 @@ set_tests_properties(victus_cli_diagnostics PROPERTIES LABELS "cli")
 add_test(NAME victus_cli_skeleton COMMAND victus_cli skeleton orion --deformation)
 set_tests_properties(victus_cli_skeleton PROPERTIES LABELS "cli"
     PASS_REGULAR_EXPRESSION "orion: [0-9]+ bones, 60 joints, 8 sockets.*Hand\\.R  \\[hand\\] joint 12.*collapsed triangles LBS [0-9]+, DQS [0-9]+")
+
+add_test(NAME victus_cli_skeleton_quadruped COMMAND victus_cli skeleton quadruped --deformation)
+set_tests_properties(victus_cli_skeleton_quadruped PROPERTIES LABELS "cli"
+    PASS_REGULAR_EXPRESSION "quadruped: [0-9]+ bones, 38 joints, 2 sockets.*Tail7  \\[tail\\].*collapsed triangles LBS [0-9]+, DQS [0-9]+")
 
 # Script debugging over the Debug Adapter Protocol end to end (ADR-0099). No GPU needed.
 find_package(Python3 COMPONENTS Interpreter QUIET)

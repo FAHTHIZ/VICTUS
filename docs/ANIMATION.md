@@ -250,6 +250,21 @@ Using migrations:
 - CLI: `victus skeleton <model|orion|nova> [--migration a.vrig,b.vrig] [--deformation] [--json]`
   prints the bone tree, applies migrations and reports compatibility (exit 1 when broken).
 
+## Reference rigs
+
+`assets/reference_rigs.hpp` (ADR-0207) builds test rigs in code: `make_reference_rig(ReferenceRig::Quadruped)` (a 38-joint creature with a seven-joint tail, jaw, ears, four legs and a jiggle belly; clips Walk, Sit, Shake) and `ReferenceRig::Mech` (a 13-joint loader whose parts are each rigid on one joint; clips Work, Spin). `complex_humanoid_extension()` returns the 19 bone edits that turn Orion or Nova into a more complex humanoid without changing existing deformation. `victus skeleton quadruped --deformation` inspects them like any model.
+
+They are what the deformation tests run on. `gpu_rig_deformation_tests` draws each pose GPU-skinned with linear and dual quaternion palettes and compares the image with the same pose skinned on the CPU and drawn as a static mesh; on Vulkan and GLES the images match pixel for pixel. Measured on them:
+
+| Case | Linear blend | Dual quaternion |
+|---|---|---|
+| Quadruped Walk / Shake, worst volume change | 0.05% / 0.44% | 0.008% / 0.14% |
+| Quadruped Sit (knees bent ~125 degrees), collapsed triangles | 0 | 2 |
+| Tail rolled 120 degrees per joint, neck turned, leg twisted: collapsed triangles | 2 | 0 |
+| Mech, any pose: triangle area change | 0 | 0 |
+
+So neither method wins everywhere: use dual quaternions where limbs twist (forearms, tails, necks) and linear blend, or corrective shapes, where joints bend hard.
+
 ## Inverse kinematics
 
 An `IKConstraint` component on the end of a chain (a hand, foot or head) bends its ancestors toward a target after the clips and controller have been sampled, every frame, before transforms propagate (ADR-0073).

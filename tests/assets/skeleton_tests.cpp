@@ -4,6 +4,7 @@
 // existing pose, keep joint indices, sockets and clips, and pass character validation.
 #include "doctest.h"
 #include "victus/assets/importers.hpp"
+#include "victus/assets/reference_rigs.hpp"
 #include "victus/assets/skeleton.hpp"
 #include "victus/core/fs.hpp"
 #include "victus/core/hash.hpp"
@@ -59,44 +60,7 @@ float max_deformation_delta(const CookedModel& a, const CookedModel& b, std::str
     return worst;
 }
 
-std::vector<BoneEdit> extension_edits() {
-    std::vector<BoneEdit> e;
-    const auto add = [&](std::string bone, std::string parent, Vec3 t, bool deform = true) {
-        BoneEdit b;
-        b.op = BoneEdit::Op::Add;
-        b.bone = std::move(bone);
-        b.parent = std::move(parent);
-        b.translation = t;
-        b.deform = deform;
-        e.push_back(b);
-        return &e.back();
-    };
-    // Facial bones on the head and jaw.
-    for (const char* side : {"L", "R"}) {
-        const float x = side[0] == 'L' ? 0.03f : -0.03f;
-        add(std::string("Brow.") + side, "Head", {x, 0.09f, 0.09f});
-        add(std::string("Lid.Upper.") + side, "Head", {x, 0.065f, 0.085f});
-        add(std::string("Lip.Corner.") + side, "Jaw", {x * 0.8f, -0.02f, 0.08f});
-        // Toes: a second toe segment per foot.
-        add(std::string("Toe2.") + side, std::string("Toe.") + side, {0, 0.03f, 0});
-        // IK targets and poles: helpers that do not deform.
-        add(std::string("IK.Hand.") + side, "Hips", {x * 15.0f, 0.0f, 0.2f}, false);
-        add(std::string("Pole.Elbow.") + side, "Hips", {x * 15.0f, 0.2f, -0.4f}, false);
-        // A forearm roll joint taking half of the forearm's weights toward the wrist.
-        BoneEdit* roll = add(std::string("ForeArmRoll.") + side, std::string("LowerArm.") + side, {0, 0.12f, 0});
-        roll->weights_from = std::string("LowerArm.") + side;
-        roll->weight_share = 0.5f;
-        roll->weight_start = 0.2f;
-        roll->weight_end = 1.0f;
-    }
-    add("Lip.Upper", "Head", {0, -0.01f, 0.095f});
-    add("Tongue1", "Jaw", {0, 0.0f, 0.04f});
-    // Secondary motion and an equipment bone.
-    add("Dyn.Antenna1", "Head", {0.05f, 0.12f, -0.02f});
-    add("Dyn.Antenna2", "Dyn.Antenna1", {0, 0.06f, 0});
-    add("Socket.Shoulder.R", "Shoulder.R", {0, 0.05f, 0}, false);
-    return e;
-}
+std::vector<BoneEdit> extension_edits() { return complex_humanoid_extension(); }
 
 } // namespace
 
