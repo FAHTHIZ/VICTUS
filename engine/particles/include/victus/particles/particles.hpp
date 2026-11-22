@@ -74,6 +74,9 @@ struct ParticleEmitterComponent {
     Blend blend{Blend::Alpha};
     Uuid texture;              // optional texture asset; nil = built-in soft disc
     float softness{0.25f};     // metres over which particles fade into geometry
+    // Lit (ADR-0214): smoke and dust take the sun (with its cascaded shadows) and the sky and
+    // ground ambient; off = unlit colour (fire, sparks, energy). Local lights are not applied.
+    bool lit{false};
     std::int32_t layer{0};     // 2D sprite layer
     std::uint32_t seed{0};     // 0 = derived from the entity UUID
     // Flipbook: the texture is a grid of frames, left to right then top to bottom.

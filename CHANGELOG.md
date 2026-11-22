@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Lit particles (ADR-0214). A new `lit` emitter option makes smoke and dust billboards and trails take the sun (wrapped around the camera-facing normal), the sun's cascaded shadow and the sky/ground ambient, on CPU and GPU emitters. Unlit emitters (fire, sparks, energy) are unchanged. ([evidence](docs/STATUS.md#2026-11-22--lit-particles-sun-shadows-and-sky-ambient-adr-0214))
 - Particle simulation budget (ADR-0213). `ParticleSettings::max_cpu_particles` bounds the live particles of all CPU emitters together; the nearest emitters keep spawning and distant ones wait, without popping. ([evidence](docs/STATUS.md#2026-11-22--particle-simulation-budget-nearest-emitters-first-adr-0213))
 - Particle overdraw in the overdraw debug view (ADR-0212). View > Overdraw View now counts particle billboards and trails (CPU and GPU emitters), and `SceneRenderer::read_overdraw()` reports the particle share: pixels touched, layers, the worst pixel and fill per screen pixel. ([evidence](docs/STATUS.md#2026-11-22--particle-overdraw-in-the-overdraw-debug-view-adr-0212))
 - Particle speed and spin curves over life (ADR-0211). `ParticleEmitter` fields `speed_over_life` and `spin_over_life` scale each particle's movement and spin over its life on CPU and GPU emitters, edited as curves in the Studio Inspector. ([evidence](docs/STATUS.md#2026-11-22--particle-speed-and-spin-curves-over-life-adr-0211))

@@ -2265,6 +2265,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         render::ParticleMaterial pm;
         pm.blend = v.emitter->blend == particles::Blend::Additive ? render::ParticleBlend::Additive : render::ParticleBlend::Alpha;
         pm.softness = v.emitter->softness;
+        pm.lit = v.emitter->lit;
         if (!v.emitter->texture.is_nil()) {
             auto tex = assets.texture(v.emitter->texture);
             if (tex) pm.texture = *tex;

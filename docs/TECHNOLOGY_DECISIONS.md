@@ -2321,3 +2321,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** listed in docs/STATUS.md under this ADR.
 
 **Consequences:** The live count never exceeds the budget. The pre-pass reads every CPU particle's age once per update (serial). The budget is per `ParticleSystem`, so games choose it per quality tier; the player does not yet set it from the quality tier.
+
+### ADR-0214: Lit particles (sun, cascaded shadows and sky ambient)
+
+**Status:** Accepted (2026-11-22)
+
+**Context:** Every particle drew its authored colour. Smoke and dust stayed equally bright in sunlight, in a building's shadow and at night, which reads as glowing; only additive effects (fire, sparks, energy) should look like that.
+
+**Decision:** `ParticleEmitterComponent::lit` (default off, reflected and serialized) sets `render::ParticleMaterial::lit`. In `particle.frag`, lit fragments multiply the texture colour by ambient + sun. The ambient comes from the sky/ground values pbr.frag uses for a normal pointing up or down: the environment map's SH9, or the analytic sky gradient blurred, evaluated on the CPU and blended by the height of the camera-facing normal. The sun term is radiance / pi times a half-Lambert wrap around that normal, times one hardware-filtered tap of the sun's cascaded shadow map (the same lookup as the volumetric fog injection). `particle.vert` and `ribbon.vert` pass the world position; the shadow sampler sits at set 2 binding 2, and the SPIR-V fog grid moves to binding 3. The pass reads the shadow map when there is one; otherwise it binds the 1x1 white dummy.
+
+**Alternatives:** (1) Per-particle normals or normal-mapped flipbooks: these need authored content and a vertex format change; the wrap term covers soft puffs. (2) Lighting per particle in the simulation (CPU or compute): a separate path for each simulator, and no per-pixel shadow edges. (3) Volumetric self-shadowing / deep opacity maps: costly; out of scope for a first lit path.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Lit particles cost one shadow tap and a few ALU per pixel; unlit particles skip them behind a uniform branch. Local (point/spot) lights, irradiance volumes, reflection probes and self-shadowing are not applied to particles. 2D sprite particles are unlit.

@@ -889,6 +889,7 @@ void register_components() {
             .enumeration(&ParticleEmitterComponent::blend, "blend", {"alpha", "additive"})
             .field(&ParticleEmitterComponent::texture, "texture", {.tooltip = "Optional texture; empty = soft disc", .hint = "texture"})
             .field(&ParticleEmitterComponent::softness, "softness", {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "metres"})
+            .field(&ParticleEmitterComponent::lit, "lit", {.tooltip = "Take sun, sun shadows and sky light (smoke, dust); off for glowing effects"})
             .field(&ParticleEmitterComponent::layer, "layer", {.min = -1000, .max = 1000, .tooltip = "2D sprite layer"})
             .field(&ParticleEmitterComponent::seed, "seed", {.tooltip = "0 = derived from the entity"})
             .field(&ParticleEmitterComponent::flipbook_columns, "flipbook_columns", {.min = 1, .max = 15, .tooltip = "Texture frame grid columns"})

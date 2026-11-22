@@ -3193,3 +3193,24 @@ Verified (dev build, 2-core sandbox):
 - `victus_scene_tests` (16 cases), `victus_gpu_tests -tc="*particle*"` (19 cases, lavapipe), `victus_editor_tests -tc="studio inspector*"` (3 cases), `ctest -R "project_tests|cli_smoke|docs"` pass.
 - Not verified: CPU time saved in a real scene or on hardware; the player and Studio do not yet set the budget from the quality tier.
 - Next task: lit particles, then mesh particles and particle events.
+
+## 2026-11-22 — Lit particles: sun, shadows and sky ambient (ADR-0214)
+
+Sixth piece of the VFX audit. Before this, smoke and dust drew their authored colour in sunlight, in shadow and at night alike.
+
+- `ParticleEmitterComponent::lit` (inspector field "lit") reaches `ParticleMaterial::lit` for CPU emitters, GPU-simulated emitters and trails. Lit fragments get the sky/ground ambient blended by the camera-facing normal (SH9 of the environment map, else the blurred analytic sky, both evaluated on the CPU), plus the sun with half-Lambert wrap and one tap of its cascaded shadow map.
+- `particle.vert` and `ribbon.vert` output the world position; `particle.frag` adds the sun shadow sampler (set 2 binding 2; the SPIR-V fog grid moves to binding 3). There are still 64 built-in shaders.
+
+Verified (dev build, 2-core sandbox, lavapipe):
+- New `tests/render/gpu_lit_particle_tests.cpp`, 3 cases:
+  - Under a sun of radiance pi straight down, a lit white puff in the light read 175-200 in sRGB (expected 0.5 linear, about 188). The same puff under a roof read below 20. Unlit puffs stayed at 250 or more in both places.
+  - With the sun at the puff's face it read above 250; with the sun behind the puff it read below 45 (wrap about 0.015).
+  - With no sun and a uniform 0.25 ambient it read 128-146 (expected about 137). A blue sky over a black ground gave a blue-dominant puff.
+  - The `lit` flag, set through runtime extraction, darkened both a CPU and a GPU emitter in the default scene (no sun, dim ambient) by more than 40 levels against unlit.
+- `victus_gpu_tests -tc="*particle*,*overdraw*,*fog*,*reactive*"` (39 cases) and `-tc="*gles*"` (14 cases) pass. So do `victus_particles_tests` (75,262 assertions), `victus_scene_tests`, `victus_editor_tests -tc="studio inspector*"`, `ctest -R "project_tests|cli_smoke|docs"` and `compile_shaders.py --check`.
+- Not verified:
+  - Metal and GLES hardware. The MSL is generated but not run; the GLES tests ran on the sandbox's software driver.
+  - Cost on physical hardware.
+  - Visual quality in a full scene; the reference effects scene does not use `lit` yet.
+- Not implemented: local lights, irradiance volumes and reflection probes on particles, self-shadowing, lit 2D sprite particles.
+- Next task: mesh particles, then particle events.

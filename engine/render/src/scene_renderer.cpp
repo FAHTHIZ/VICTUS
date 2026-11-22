@@ -194,7 +194,32 @@ struct ParticleUniforms {
     Vec4 fog_color, fog_params; // distance fog, as LightingUniforms (ADR-0116)
     Vec4 view;   // xy: 1 / projection x and y scale
     Vec4 volumetric; // volumetric fog grid: xyz froxels, w far, 0 off (ADR-0119)
+    // Lit particles (ADR-0214), as particle.frag.
+    Vec4 lit;        // x lit, y sun shadows on
+    Vec4 sun_dir, sun_color;
+    Vec4 ambient_up, ambient_down; // irradiance from above and below, as pbr.frag's ambient
+    Vec4 camera_pos, camera_forward;
+    Vec4 shadow_params, cascade_params, cascade_splits;
+    Mat4 cascade_vp[4];
 };
+// Ambient for lit particles: what pbr.frag's diffuse ambient gives a normal pointing straight up
+// (`up`) or down. The environment map's SH9 when there is one, else the analytic sky gradient
+// fully blurred (pbr.frag `environment(n, 1.0)`). Rotation about +Y leaves +-Y unchanged.
+static Vec4 particle_ambient(const LightingUniforms& l, float y) {
+    if (l.env_params.x > 0.5f) {
+        const auto& c = l.env_sh;
+        Vec4 r{};
+        for (int k = 0; k < 3; ++k)
+            r[k] = std::max(0.0f, c[0][k] * 0.282095f + c[1][k] * (0.488603f * y) - c[6][k] * 0.315392f -
+                                      c[8][k] * 0.546274f * y * y);
+        return r;
+    }
+    const float t = y * 0.5f + 0.5f;
+    Vec4 r{};
+    for (int k = 0; k < 3; ++k)
+        r[k] = (l.ground_color[k] + (l.sky_color[k] - l.ground_color[k]) * t) * 0.5f + l.horizon_color[k] * 0.5f;
+    return r;
+}
 struct PrecipitationUniforms {
     Mat4 view_proj;
     Vec4 eye;      // xyz camera, w wrapped time
@@ -4816,11 +4841,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             "particles",
             [&](PassBuilder& b) {
                 b.read(depth);
+                if (shadow_map.valid()) b.read(shadow_map);
                 b.write_color(hdr, rhi::LoadOp::Load);
                 write_reactive(b);
             },
             [&, pf, proj, rw, rh](PassContext& ctx) {
                 rhi::RenderPass& pass = *ctx.pass;
+                const rhi::TextureHandle sun_shadow = shadow_map.valid() ? ctx.texture(shadow_map) : no_shadow_;
+                const Vec4 amb_up = particle_ambient(lighting, 1.0f), amb_down = particle_ambient(lighting, -1.0f);
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, pf);
                 if (particle_buffer_) pass.bind_vertex_buffer(0, particle_buffer_);
                 rhi::PipelineHandle bound{};
@@ -4841,7 +4869,21 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     pu.fog_params = lighting.fog_params;
                     pu.view = {1.0f / proj[0].x, 1.0f / proj[1].y, 0, 0};
                     pu.volumetric = lighting.volumetric;
+                    if (b.material.lit) {
+                        pu.lit = {1.0f, shadow_map.valid() && lighting.sun_dir.w > 0.5f ? 1.0f : 0.0f, 0, 0};
+                        pu.sun_dir = lighting.sun_dir;
+                        pu.sun_color = lighting.sun_color;
+                        pu.ambient_up = amb_up;
+                        pu.ambient_down = amb_down;
+                        pu.camera_pos = lighting.camera_pos;
+                        pu.camera_forward = lighting.camera_forward;
+                        pu.shadow_params = lighting.shadow_params;
+                        pu.cascade_params = lighting.cascade_params;
+                        pu.cascade_splits = lighting.cascade_splits;
+                        for (int c = 0; c < 4; ++c) pu.cascade_vp[c] = lighting.cascade_vp[c];
+                    }
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, pu);
+                    pass.bind_texture(rhi::ShaderStage::Fragment, 2, sun_shadow, ctx_.shadow_compare());
                     pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 0, fog_grid_buffer());
                     pass.bind_texture(rhi::ShaderStage::Fragment, 0, b.material.texture ? b.material.texture : ctx_.soft_particle(),
                                       ctx_.linear_clamp());

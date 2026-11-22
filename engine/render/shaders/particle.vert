@@ -14,6 +14,7 @@ layout(set = 1, binding = 0) uniform Frame {
 layout(location = 0) out vec2 v_uv;
 layout(location = 1) out vec4 v_color;
 layout(location = 2) out float v_distance; // view-space depth (clip w)
+layout(location = 3) out vec3 v_world;     // lit particles (ADR-0214)
 void main() {
     const vec2 corners[6] = vec2[](vec2(-1, -1), vec2(1, -1), vec2(1, 1), vec2(-1, -1), vec2(1, 1), vec2(-1, 1));
     vec2 c = corners[gl_VertexIndex % 6];
@@ -22,6 +23,7 @@ void main() {
     vec2 r = vec2(q.x * k - q.y * s, q.x * s + q.y * k);
     vec3 world = in_pos_size.xyz + (frame.right.xyz * r.x + frame.up.xyz * r.y) * (0.5 * in_pos_size.w);
     gl_Position = frame.view_proj * vec4(world, 1.0);
+    v_world = world;
     v_uv = c * vec2(0.5, -0.5) + 0.5;
     if (in_params.z >= 17.0) { // flipbook: frames run left to right, top to bottom
         float cols = floor(in_params.z / 16.0), rows = in_params.z - cols * 16.0;

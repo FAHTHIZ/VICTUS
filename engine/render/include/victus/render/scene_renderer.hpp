@@ -264,6 +264,7 @@ struct ParticleMaterial {
     rhi::TextureHandle texture; // invalid => built-in soft disc
     ParticleBlend blend{ParticleBlend::Alpha};
     float softness{0.25f};      // metres over which particles fade into geometry
+    bool lit{false};            // sun (with cascaded shadows) and sky ambient (ADR-0214)
 };
 
 // GPU-simulated particles (ADR-0097). The caller (the particle system) owns the emission schedule

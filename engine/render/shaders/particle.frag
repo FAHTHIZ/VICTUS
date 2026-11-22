@@ -7,8 +7,10 @@
 layout(location = 0) in vec2 v_uv;
 layout(location = 1) in vec4 v_color;
 layout(location = 2) in float v_distance;
+layout(location = 3) in vec3 v_world;
 layout(set = 2, binding = 0) uniform sampler2D u_texture;
 layout(set = 2, binding = 1) uniform sampler2D u_depth;
+layout(set = 2, binding = 2) uniform sampler2DShadow u_shadow; // sun cascades (lit particles, ADR-0214)
 layout(set = 3, binding = 0) uniform Params {
     vec4 proj;   // scene view depth = proj.x / (depth + proj.y)
     vec4 screen; // xy: 1 / render size, z: 1 / softness (metres), w: 1 for additive blending
@@ -16,8 +18,20 @@ layout(set = 3, binding = 0) uniform Params {
     vec4 fog_params; // x start, y end, z density, w max opacity
     vec4 view;       // xy: 1 / projection x and y scale (view ray per unit depth)
     vec4 volumetric; // volumetric fog grid (ADR-0119): xyz froxels, w far (0 off)
+    // Lit particles (ADR-0214).
+    vec4 lit;            // x 1 = lit, y shadows on
+    vec4 sun_dir;        // xyz direction the light travels
+    vec4 sun_color;      // rgb radiance (as pbr.frag)
+    vec4 ambient_up;     // rgb irradiance / pi from above (sky)
+    vec4 ambient_down;   // rgb irradiance / pi from below (ground)
+    vec4 camera_pos;
+    vec4 camera_forward;
+    vec4 shadow_params;  // as pbr.frag: x atlas texel, y depth bias, w cascade count
+    vec4 cascade_params; // y tile size (uv), z fade band
+    vec4 cascade_splits;
+    mat4 cascade_vp[4];
 } u;
-// SPIR-V: after the two samplers in set 2; MSL: after the one uniform buffer.
+// SPIR-V: after the three samplers in set 2; MSL: after the one uniform buffer.
 #if defined(VICTUS_ESSL)
 // GLSL ES 3.00: the RHI mirrors the storage buffer into an RGBA32UI texture (1024 texels per row).
 layout(set = 2, binding = 20) uniform highp usampler2D vx_storage0;
@@ -26,7 +40,7 @@ vec4 vx_texel0(uint t) { return uintBitsToFloat(texelFetch(vx_storage0, ivec2(in
 #elif defined(VICTUS_MSL)
 layout(std430, set = 2, binding = 1) readonly buffer FogGrid { vec4 fog_grid[]; };
 #else
-layout(std430, set = 2, binding = 2) readonly buffer FogGrid { vec4 fog_grid[]; };
+layout(std430, set = 2, binding = 3) readonly buffer FogGrid { vec4 fog_grid[]; };
 #endif
 #if !defined(VICTUS_ESSL)
 #define FOG_GRID(i) fog_grid[i]
@@ -87,8 +101,46 @@ float distance_fog(float view_depth) {
     }
     return f * u.fog_params.w;
 }
+// Sun visibility at a world position: one hardware-filtered tap in the cascade that holds it,
+// fading out over the last cascade like fog_inject.comp (particles are soft; no PCF kernel).
+float sun_shadow(vec3 p) {
+    if (u.lit.y < 0.5) return 1.0;
+    float depth = dot(p - u.camera_pos.xyz, u.camera_forward.xyz);
+    int count = int(u.shadow_params.w);
+    int c = 0;
+    while (c < count - 1 && depth > u.cascade_splits[c]) ++c;
+    float far_d = u.cascade_splits[c];
+    if (depth > far_d) return 1.0;
+    vec4 p4 = u.cascade_vp[c] * vec4(p, 1.0);
+    vec3 q = p4.xyz / p4.w;
+    if (q.z > 1.0) return 1.0;
+    vec2 uv = q.xy * vec2(0.5, -0.5) + 0.5;
+    float tile = u.cascade_params.y;
+    vec2 origin = vec2(float(c & 1), float(c >> 1)) * tile;
+    float texel = u.shadow_params.x;
+    vec2 auv = clamp(origin + uv * tile, origin + vec2(texel), origin + vec2(tile - texel));
+    float s = texture(u_shadow, vec3(auv, q.z - u.shadow_params.y));
+    if (c == count - 1) {
+        float near_d = c == 0 ? 0.0 : u.cascade_splits[c - 1];
+        float t = (depth - near_d) / max(far_d - near_d, 1e-4);
+        s = mix(1.0, s, clamp((1.0 - t) / max(u.cascade_params.z, 1e-4), 0.0, 1.0));
+    }
+    return s;
+}
+
+// Lit particles (ADR-0214): the billboard is treated as a thin, camera-facing volume. Sky and
+// ground ambient by the facing normal's height, plus the sun with half-Lambert wrap (light
+// through the puff from behind still shows) and its cascaded shadow.
+vec3 particle_light(vec3 p) {
+    vec3 n = normalize(u.camera_pos.xyz - p);
+    vec3 ambient = mix(u.ambient_down.rgb, u.ambient_up.rgb, n.y * 0.5 + 0.5);
+    float wrap = 0.5 * (1.0 + dot(n, -u.sun_dir.xyz));
+    return ambient + u.sun_color.rgb * (wrap * sun_shadow(p) / 3.14159265);
+}
+
 void main() {
     vec4 c = texture(u_texture, v_uv) * v_color;
+    if (u.lit.x > 0.5) c.rgb *= particle_light(v_world);
     float scene = u.proj.x / (textureLod(u_depth, gl_FragCoord.xy * u.screen.xy, 0.0).r + u.proj.y);
     float gap = scene - v_distance;
     if (gap <= 0.0) discard;

@@ -132,6 +132,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_scene_tests.cpp
         render/gpu_ui_tests.cpp
         render/gpu_particle_tests.cpp
+        render/gpu_lit_particle_tests.cpp
         render/gpu_game_ui_tests.cpp
         render/gpu_hot_reload_tests.cpp
         render/gpu_async_loading_tests.cpp
