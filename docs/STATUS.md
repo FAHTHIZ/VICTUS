@@ -3149,3 +3149,17 @@ Verified (dev build, 2-core sandbox):
 - `victus_scene_tests`, `victus_editor_tests -tc="studio inspector*"`, `ctest -R "project_tests|cli_smoke|docs"` pass; `compile_shaders.py --check`: up to date (63 shaders).
 - Not verified: Metal and D3D12 (translated shader text, not run); GPU cost on real hardware.
 - Next task: overdraw diagnostics for particles.
+
+## 2026-11-22 — Particle overdraw in the overdraw debug view (ADR-0212)
+
+Fourth piece of the VFX audit. The overdraw view (ADR-0071) counted meshes only, so the biggest fill-rate cost in effects scenes, particles, was invisible.
+
+- In `DebugView::Overdraw` the particle batches the frame would draw (CPU billboards, GPU emitters, CPU and GPU ribbons, after culling, budgets and GPU sorting) are rasterised again with `overdraw_particle.frag`: red counts all layers (the heat ramp includes particles), green counts particle layers.
+- `OverdrawStats::particle_pixels`, `particle_layers`, `particle_max_layers`, `particle_average()`, `particle_fill()`.
+
+Verified (dev build, 2-core sandbox, Vulkan on lavapipe):
+- `victus_gpu_tests -tc="gpu overdraw*"`: new subcase. Five billboards stacked 9 m away over a floor plane cover 324 pixels (geometric estimate 341) with exactly 5 particle layers each, 6 in total with the floor; additive billboards and a ribbon across them reach 6 particle layers; without particles the particle counts are 0.
+- `victus_gpu_tests`: new case through runtime extraction. A dense GPU emitter (66 particles) gave 128 pixels, 35.8 particle layers on average and 66 at worst; the same emitter on the CPU path gave 135 pixels, 34.3 average and 67 at worst. 20 particle and overdraw cases pass.
+- `victus_editor_tests -tc="*overdraw*,studio inspector*"` (4 cases), `ctest -R "project_tests|cli_smoke|docs"` pass; `compile_shaders.py --check`: up to date (64 shaders).
+- Not verified: Metal and D3D12 (translated shader text, not run); precipitation and water are not counted; the Studio shows the heat map but not the particle numbers.
+- Next task: a global particle budget, then lit and mesh particles.

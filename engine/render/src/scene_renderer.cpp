@@ -1433,8 +1433,37 @@ Result<OverdrawStats> SceneRenderer::read_overdraw() {
         ++s.covered_pixels;
         s.layers += n;
         s.max_layers = std::max(s.max_layers, n);
+        const std::uint32_t p = bytes[i + 1]; // particle layers (overdraw_particle.frag)
+        if (p == 0) continue;
+        ++s.particle_pixels;
+        s.particle_layers += p;
+        s.particle_max_layers = std::max(s.particle_max_layers, p);
     }
     return s;
+}
+
+Result<rhi::PipelineHandle> SceneRenderer::overdraw_particle_pipeline(int kind) {
+    const std::string key = kind == 0 ? "overdraw_particles" : "overdraw_ribbons";
+    if (auto it = post_.find(key); it != post_.end()) return it->second;
+    auto vs = ctx_.shader(kind == 0 ? "particle.vert" : "ribbon.vert");
+    if (!vs) return std::move(vs).error();
+    auto fs = ctx_.shader("overdraw_particle.frag");
+    if (!fs) return std::move(fs).error();
+    rhi::PipelineDesc d;
+    d.name = key;
+    d.vertex = vs.value();
+    d.fragment = fs.value();
+    d.cull = rhi::CullMode::None;
+    // Same layout as the particle and ribbon pipelines (create()).
+    d.vertex_buffers = {{0, sizeof(ParticleInstance), kind == 0}};
+    d.attributes = {{0, 0, rhi::VertexFormat::Float4, 0}, {1, 0, rhi::VertexFormat::Float4, 16}, {2, 0, rhi::VertexFormat::Float4, 32}};
+    d.depth_test = d.depth_write = false;
+    d.depth_format = rhi::Format::Invalid;
+    d.color_targets = {{rhi::Format::RGBA8_UNORM, rhi::BlendMode::Additive}};
+    auto p = ctx_.device().create_pipeline(d);
+    if (!p) return p;
+    post_.emplace(key, p.value());
+    return p;
 }
 
 Result<rhi::PipelineHandle> SceneRenderer::precipitation_pipeline(bool splash, bool reactive) {
@@ -5124,6 +5153,22 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             overdraw_h_ = rh;
         }
         const RGTexture counts = graph.import_texture("overdraw_count", overdraw_tex_, color_desc(rhi::Format::RGBA8_UNORM, rw, rh));
+        // Particle billboards and ribbons (ADR-0212): the batches the particle pass would draw
+        // (after culling, budgets and GPU sorting), counted into red and green.
+        rhi::PipelineHandle od_particles[2]{};
+        ParticleFrameUniforms od_pf{};
+        if (!particle_draws.empty()) {
+            for (int kind = 0; kind < 2; ++kind) {
+                auto p = overdraw_particle_pipeline(kind);
+                if (!p) return std::move(p).error();
+                od_particles[kind] = p.value();
+            }
+            od_pf.view_proj = view_proj;
+            const Mat4 cam_world = inverse(camera_.view);
+            od_pf.right = Vec4(normalize(cam_world.transform_vector({1, 0, 0})), 0);
+            od_pf.up = Vec4(normalize(cam_world.transform_vector({0, 1, 0})), 0);
+            od_pf.eye = Vec4(camera_.position, 1);
+        }
         graph.add_pass(
             "overdraw_count", [&](PassBuilder& b) { b.write_color(counts, rhi::LoadOp::Clear, math::Color{0, 0, 0, 0}); },
             [&](PassContext& ctx) {
@@ -5149,6 +5194,23 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
                         draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
                     }
+                if (particle_draws.empty()) return;
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, od_pf);
+                bound = {};
+                for (const ParticleBatch& b : particle_draws) {
+                    const rhi::PipelineHandle want = od_particles[b.ribbon ? 1 : 0];
+                    if (!(bound == want)) {
+                        pass.bind_pipeline(want);
+                        bound = want;
+                    }
+                    if (b.buffer) pass.bind_vertex_buffer(0, b.buffer);
+                    else pass.bind_vertex_buffer(0, particle_buffer_, b.offset * static_cast<std::uint32_t>(sizeof(ParticleInstance)));
+                    if (b.index) {
+                        pass.bind_index_buffer(b.index, rhi::IndexType::U32);
+                        pass.draw_indexed(b.count, 1);
+                    } else if (b.ribbon) pass.draw(b.count, 1);
+                    else pass.draw(6, b.count);
+                }
             });
         auto heat = post_pipeline("overdraw_heat.frag", target_format);
         if (!heat) return std::move(heat).error();

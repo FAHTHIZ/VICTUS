@@ -2280,3 +2280,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** listed in docs/STATUS.md under this ADR.
 
 **Consequences:** Empty curves keep existing emitters bit-identical. Sampling at the step start is first-order: big throttled steps (ADR-0210) follow sharp curve changes less exactly.
+
+### ADR-0212: Particle overdraw in the overdraw debug view
+
+**Status:** Accepted (2026-11-22)
+
+**Context:** The overdraw debug view (ADR-0071) counted mesh layers only. In effects-heavy scenes the main fill-rate cost is particle billboards and trails: large, overlapping, alpha-blended quads, most of whose fragments are shaded even where the texture is transparent. The VFX brief asks for overdraw diagnostics and budgets; Unreal's Shader Complexity / Quad Overdraw and Unity's Overdraw scene view both include particles.
+
+**Decision:** In `DebugView::Overdraw` the particle batches the frame would draw (after culling, effect budgets and GPU sorting; CPU billboards, GPU emitters, CPU and GPU ribbons) are rasterised again without depth testing by `particle.vert` / `ribbon.vert` with `overdraw_particle.frag`, which adds one step to red (all layers, so the heat ramp includes them) and one to green (particle layers). `OverdrawStats` gains `particle_pixels`, `particle_layers`, `particle_max_layers`, `particle_average()` and `particle_fill()` (particle fragments per render pixel). Whole quads count, including transparent corners, because the GPU shades them.
+
+**Alternatives:** (1) A CPU estimate from projected billboard areas: works without the debug view but misses GPU emitters, whose particles never reach the CPU. (2) Counting only fragments above an alpha threshold: under-reports the real shading cost. (3) A separate particle-only view: one view with a split readback is simpler for authors.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Precipitation and water are still not counted. Depth-tested-away particles count, as for meshes (depth complexity). Reading the stats waits for the GPU, so the Studio shows the heat map but does not read the numbers every frame.

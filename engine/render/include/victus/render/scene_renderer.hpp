@@ -732,7 +732,8 @@ struct RenderSettings {
     std::uint32_t local_shadow_tile{512};   // 64..atlas
     std::uint32_t max_point_lights{512};  // local (point + spot) lights per frame, <= SceneRenderer::kMaxLights
     // Debug views replace the final image. Overdraw: every visible opaque, alpha-tested and blended
-    // draw is rasterised again without depth testing and counted per pixel, shown as a heat ramp
+    // draw, particle billboard and ribbon (ADR-0212) is rasterised again without depth testing and
+    // counted per pixel, shown as a heat ramp
     // (black 0, blue 1, green 2, yellow 3, orange 4, red 5-7, white 8+); read_overdraw() returns the
     // counts. Depth complexity, not shaded fragments: the depth pre-pass and early-z reject many of
     // these layers in the normal image.
@@ -782,9 +783,23 @@ struct OverdrawStats {
     std::uint32_t covered_pixels{0}; // pixels with at least one layer
     std::uint64_t layers{0};         // rasterised fragments over all pixels (saturates at 255 per pixel)
     std::uint32_t max_layers{0};
+    // The share drawn by particle billboards and ribbons (ADR-0212): pixels they touch, their
+    // layers (included in `layers`) and the most particle layers in one pixel.
+    std::uint32_t particle_pixels{0};
+    std::uint64_t particle_layers{0};
+    std::uint32_t particle_max_layers{0};
     // Mean layers per covered pixel (1.0 = no overdraw); 0 when nothing was drawn.
     [[nodiscard]] double average() const noexcept {
         return covered_pixels ? static_cast<double>(layers) / static_cast<double>(covered_pixels) : 0.0;
+    }
+    // Mean particle layers per pixel particles touch; 0 without particles.
+    [[nodiscard]] double particle_average() const noexcept {
+        return particle_pixels ? static_cast<double>(particle_layers) / static_cast<double>(particle_pixels) : 0.0;
+    }
+    // Particle fragments per render pixel: 1.0 = the effects filled the screen once.
+    [[nodiscard]] double particle_fill() const noexcept {
+        const std::uint64_t n = std::uint64_t{width} * height;
+        return n ? static_cast<double>(particle_layers) / static_cast<double>(n) : 0.0;
     }
 };
 
@@ -1168,6 +1183,8 @@ private:
     // ADR-0143: particle/ribbon/water pipelines with the reactive mask as a second colour target,
     // created on first use. kind: 0 particles, 1 ribbons, 2 water.
     Result<rhi::PipelineHandle> reactive_pipeline(int kind, bool additive);
+    // DebugView::Overdraw counting pipeline for particle billboards (kind 0) or ribbons (kind 1).
+    Result<rhi::PipelineHandle> overdraw_particle_pipeline(int kind);
     // Mesh vertex stage + reactive_mesh.frag into the R8 mask (ADR-0187); cached in post_.
     Result<rhi::PipelineHandle> reactive_mesh_pipeline(std::uint32_t variant, bool double_sided);
     [[nodiscard]] Result<rhi::PipelineHandle> post_pipeline(const char* fragment, rhi::Format format,

@@ -1226,3 +1226,52 @@ TEST_CASE("gpu particles: speed and spin curves over life match the CPU referenc
     CHECK(slowed > 0);
     dev.destroy(target);
 }
+
+TEST_CASE("gpu particles: the overdraw view counts GPU and CPU emitters through runtime extraction (ADR-0212)") {
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    GpuFx fx;
+    {
+        auto& c = fx.emitter();
+        c.rate = 200;
+        c.max_particles = 128;
+        c.size_start = c.size_end = 0.6f;
+        c.speed_min = c.speed_max = 0.3f;
+    }
+    runtime::GpuAssetCache assets(ctx, nullptr);
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    RenderSettings rs = RenderSettings::preset(QualityTier::Medium);
+    rs.debug_view = DebugView::Overdraw;
+    r.set_settings(rs);
+    auto target = test::make_target(W, H);
+    const auto render_frames = [&](int n) {
+        for (int f = 0; f < n; ++f) {
+            fx.ps.update(fx.s, 1.0f / 60.0f);
+            fx.s.update_transforms();
+            (void)runtime::extract_scene(fx.s, assets, r, {}, nullptr);
+            auto cmd = dev.begin_commands();
+            REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+            cmd.submit_and_wait();
+        }
+        auto st = r.read_overdraw();
+        REQUIRE(st.ok());
+        return st.value();
+    };
+    const OverdrawStats gpu_only = render_frames(20);
+    MESSAGE("GPU emitter: " << fx.view().alive << " particles, " << gpu_only.particle_pixels << " pixels, average "
+                            << gpu_only.particle_average() << ", worst " << gpu_only.particle_max_layers << ", fill " << gpu_only.particle_fill());
+    CHECK(fx.view().alive > 30);
+    CHECK(gpu_only.particle_pixels > 100);
+    CHECK(gpu_only.particle_max_layers > 3); // a dense emitter piles up
+    CHECK(gpu_only.particle_layers == gpu_only.layers); // nothing else in the scene
+    // The same emitter on the CPU path: the same kind of pile-up, now from CPU batches.
+    fx.emitter().gpu = false;
+    const OverdrawStats cpu = render_frames(20);
+    MESSAGE("CPU emitter: " << cpu.particle_pixels << " pixels, average " << cpu.particle_average() << ", worst " << cpu.particle_max_layers);
+    CHECK(cpu.particle_pixels > 100);
+    CHECK(cpu.particle_max_layers > 3);
+    dev.destroy(target);
+}
