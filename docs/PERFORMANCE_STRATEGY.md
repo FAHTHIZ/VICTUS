@@ -2,6 +2,8 @@
 
 Performance is a measured property of a specific build, device, driver, workload and quality profile—not a marketing adjective. Scale simulation and rendering from capable desktops to constrained mobile hardware without silently changing authoritative game rules.
 
+The prioritized visual-quality and performance work items are maintained in [VISUAL_QUALITY_AND_PERFORMANCE_GAP_REGISTER.md](VISUAL_QUALITY_AND_PERFORMANCE_GAP_REGISTER.md). This document defines measurement discipline, workloads and benchmark evidence; the register defines what to build next.
+
 ## Measurement
 Track CPU/GPU frame time and subsystem timings; simulation tick and queue depth; resident/peak memory and allocations; asset import/decode/upload; streaming latency/cache hit rate; shader compilation; network bandwidth/latency; save/load; startup/package size; mobile battery and sustained thermals where hardware permits. Record hardware, OS, driver, power mode, build flags, scene, settings, cache state, repetitions and variance. Report percentiles where meaningful.
 
