@@ -38,3 +38,17 @@ Expose replaceable interfaces for identity, lobbies, matchmaking, friends, leade
 
 ## Acceptance
 A sample multiplayer game must run with at least two clients and a dedicated authoritative server, show replicated state and responsive movement under simulated network conditions, and pass validation/security tests. Do not mark multiplayer complete based on local loopback alone.
+
+## Current state (2026-11-22)
+
+`engine/net` has had no feature changes since the editor replication inspector (ADR-0032) and in-editor clients (ADR-0033). Later commits touched only warnings and pack signing. Checked against `engine/net/include/victus/net/net.hpp`:
+
+| Spec area | On main | Missing |
+|---|---|---|
+| Authority and replication | Server-authoritative ECS replication over ENet with reliable and unreliable channels (ADR-0020), delta snapshots against acknowledged baselines (ADR-0025), per-template ownership, a bandwidth budget with relevancy radius and priority, and replicated script variables. | Snapshots already carry quantised transforms and input axes (`session.cpp`). Scripts exchange named, ordered messages (`on_net_message`). Missing: property-level permissions, typed RPCs bound to entities, and interest groups beyond distance. |
+| Responsive simulation | Client prediction of the local player, reconciliation with error blending (`correction_rate`), interpolation of remote entities (`interpolation_delay`), and input redundancy. | Lag-compensated hit detection (server rewind) and rollback. Prediction covers the player hierarchy only, not physics objects or abilities. Unity's Netcode for GameObjects added GhostObjects prediction in 2026 (see [the Unity/Unreal audit](audits/UNITY_UNREAL_2026_11.md)). |
+| Dedicated servers | `victus serve` runs the authoritative session with a long-term key (ADR-0028). | Structured health endpoint, persistence hooks and deployment packaging. Never run off loopback. |
+| Test and debug | Network condition decorator (latency, jitter, loss, bandwidth; parsed from `latency=80,jitter=10,...`), replication inspector and per-client diagnostics (ADR-0032), and play-in-editor clients over loopback UDP (ADR-0033). | Tests run on loopback only. No packet capture or replay of network sessions. |
+| Sessions | Encryption (ADR-0028), listen server (ADR-0029) and reconnect with tokens (ADR-0030). | NAT traversal, relays, matchmaking, lobbies and host migration. |
+
+This is the "Networking (ENet) — Experimental" row in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
