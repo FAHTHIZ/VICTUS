@@ -207,7 +207,7 @@ VICTUS renderer): Orion front and three-quarter, Nova front and back three-quart
 
 ![Blender render: Orion and Nova heads](images/characters/blender_render_heads.jpg)
 
-VICTUS runtime (the engine's own renderer, `victus run --screenshot` on a fresh 3D template):
+VICTUS runtime (the engine's own renderer: `victus run --frames 40 --quality ultra --screenshot` on a fresh 3D template, with the follow camera replaced by a fixed front camera and the HUD removed; lavapipe):
 
 ![VICTUS runtime: Orion in the 3D template](images/characters/victus_runtime_orion.jpg)
 

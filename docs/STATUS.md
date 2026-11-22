@@ -2933,3 +2933,10 @@ Not verified: real GPUs. The 3D template's crates and moving platforms keep flat
   - Plate overlap at extreme poses has not been checked numerically.
   - Real GPUs.
 - **Next task:** Recapture the runtime screenshots and the head close-up; posed plate clearance check over the clip library.
+
+## 2026-11-22 — Runtime screenshots of the Frame mannequins
+
+- **Built:** recaptured `docs/images/characters/victus_runtime_orion.jpg` and `victus_runtime_nova.jpg` (600x600 crops) and `docs/images/template_3d.jpg` (1280x720) with the ADR-0198 characters.
+- **Verified:** `victus new --template 3d [--character nova]`, then `victus run --frames 40|90 --width 1280 --height 720 --quality ultra --screenshot` on lavapipe. For the close-ups the follow camera was replaced by a fixed camera 4.3 m in front and the HUD was removed. Checked by eye: Orion's cyan visor eyes and chevron, Nova's amber trim; no missing textures or skinning errors in the bind pose.
+- **Not verified:** real GPUs; moving poses up close.
+- **Next task:** Blender head close-up (`blender_render_heads.jpg`) and `nocode_3d.jpg`.
