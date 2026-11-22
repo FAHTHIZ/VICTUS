@@ -21,6 +21,31 @@ using Path = std::filesystem::path;
 
 [[nodiscard]] Result<std::vector<std::uint8_t>> read_binary(const Path& path, std::uint64_t max_bytes = 1ull << 32);
 [[nodiscard]] Result<std::string> read_text(const Path& path, std::uint64_t max_bytes = 1ull << 30);
+
+// Read-only bytes of a file. Loose files on disk are memory-mapped, so pages are read only when
+// touched: a decoder that skips regions of a large file (deserialize_model_skeleton) never reads
+// them. Entries of mounted packs, empty files and platforms without mapping fall back to
+// read_binary. Files are replaced by rename (write_atomic), so a mapping keeps the old contents.
+class FileView {
+public:
+    FileView() = default;
+    FileView(FileView&& other) noexcept;
+    FileView& operator=(FileView&& other) noexcept;
+    FileView(const FileView&) = delete;
+    FileView& operator=(const FileView&) = delete;
+    ~FileView();
+    [[nodiscard]] std::span<const std::uint8_t> bytes() const noexcept { return {data_, size_}; }
+    [[nodiscard]] bool mapped() const noexcept { return mapping_ != nullptr; }
+
+private:
+    friend Result<FileView> map_file(const Path& path, std::uint64_t max_bytes);
+    void release() noexcept;
+    const std::uint8_t* data_{nullptr};
+    std::size_t size_{0};
+    void* mapping_{nullptr};          // mapped base address (nullptr when `owned_` holds the bytes)
+    std::vector<std::uint8_t> owned_; // read_binary fallback
+};
+[[nodiscard]] Result<FileView> map_file(const Path& path, std::uint64_t max_bytes = 1ull << 32);
 // Writes via a hidden sibling temporary file and rename so a crash never leaves a truncated
 // file. The data is flushed to the device (fsync / FlushFileBuffers) and read back before the
 // rename, and the directory entry is flushed after it, so the new file survives power loss and a

@@ -160,6 +160,13 @@ struct CookedHeader {
 [[nodiscard]] Result<CookedHeader> read_header(std::span<const std::uint8_t> bytes);
 [[nodiscard]] Result<CookedTexture> deserialize_texture(std::span<const std::uint8_t> bytes);
 [[nodiscard]] Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes);
+// Nodes, skins, clips and mesh morph names/weights of a cooked model, skipping texture pixels and
+// mesh vertex/index data without copying them: everything make_animation_set reads. Meshes come
+// back with empty geometry, textures are left empty and materials are kept.
+[[nodiscard]] Result<CookedModel> deserialize_model_skeleton(std::span<const std::uint8_t> bytes);
+// Everything except textures (collision meshes, validation): `textures` is left empty and every
+// material texture index is -1.
+[[nodiscard]] Result<CookedModel> deserialize_model_geometry(std::span<const std::uint8_t> bytes);
 // One embedded texture of a cooked model, without decoding the meshes (mip re-streaming).
 [[nodiscard]] Result<CookedTexture> deserialize_model_texture(std::span<const std::uint8_t> bytes, std::uint32_t index);
 

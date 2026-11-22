@@ -526,9 +526,35 @@ Result<CookedModel> AssetDatabase::load_model(const Uuid& uuid) {
         if (packaged_ || !std::filesystem::is_regular_file(cooked_path(uuid), ec)) return std::move(imported).error();
         VICTUS_LOG_WARN("assets", "{}; using the previous import", imported.error().message);
     }
-    auto bytes = fs::read_binary(cooked_path(uuid));
+    auto bytes = fs::map_file(cooked_path(uuid)); // no file-sized copy next to the decoded model
     if (!bytes) return std::move(bytes).error();
-    return deserialize_model(*bytes);
+    return deserialize_model(bytes->bytes());
+}
+
+Result<CookedModel> AssetDatabase::load_model_geometry(const Uuid& uuid) {
+    const AssetRecord* rec = find(uuid);
+    if (!rec || rec->importer != "gltf") return make_error(ErrorCode::NotFound, "no model asset " + uuid.to_string());
+    if (auto imported = import(uuid); !imported) {
+        std::error_code ec;
+        if (packaged_ || !std::filesystem::is_regular_file(cooked_path(uuid), ec)) return std::move(imported).error();
+    }
+    auto view = fs::map_file(cooked_path(uuid));
+    if (!view) return std::move(view).error();
+    return deserialize_model_geometry(view->bytes());
+}
+
+Result<CookedModel> AssetDatabase::load_model_skeleton(const Uuid& uuid) {
+    const AssetRecord* rec = find(uuid);
+    if (!rec || rec->importer != "gltf") return make_error(ErrorCode::NotFound, "no model asset " + uuid.to_string());
+    if (auto imported = import(uuid); !imported) {
+        std::error_code ec;
+        if (packaged_ || !std::filesystem::is_regular_file(cooked_path(uuid), ec)) return std::move(imported).error();
+    }
+    // Mapped, so only the pages the skeleton decoder touches are read (the textures and meshes
+    // that make up nearly all of a cooked character are skipped).
+    auto view = fs::map_file(cooked_path(uuid));
+    if (!view) return std::move(view).error();
+    return deserialize_model_skeleton(view->bytes());
 }
 
 Result<CookedTexture> AssetDatabase::load_model_texture(const Uuid& uuid, std::uint32_t index) {
@@ -539,9 +565,9 @@ Result<CookedTexture> AssetDatabase::load_model_texture(const Uuid& uuid, std::u
         std::error_code ec;
         if (packaged_ || !std::filesystem::is_regular_file(cooked_path(uuid), ec)) return std::move(imported).error();
     }
-    auto bytes = fs::read_binary(cooked_path(uuid));
+    auto bytes = fs::map_file(cooked_path(uuid)); // only the pages up to this texture are read
     if (!bytes) return std::move(bytes).error();
-    return deserialize_model_texture(*bytes, index);
+    return deserialize_model_texture(bytes->bytes(), index);
 }
 
 Status AssetDatabase::set_settings(const Uuid& uuid, json::Value settings) {
@@ -561,7 +587,7 @@ animation::SetProvider animation_provider(AssetDatabase& db) {
     return [&db](const Uuid& uuid) -> std::shared_ptr<const animation::AnimationSet> {
         const AssetRecord* r = db.find(uuid);
         if (!r || r->kind != AssetKind::Model) return nullptr;
-        auto model = db.load_model(uuid);
+        auto model = db.load_model_skeleton(uuid);
         if (!model || model->nodes.empty()) return nullptr;
         return std::make_shared<animation::AnimationSet>(make_animation_set(*model));
     };
@@ -712,7 +738,7 @@ physics::CollisionMeshProvider collision_mesh_provider(AssetDatabase& db) {
             if (!mesh) VICTUS_LOG_WARN("assets", "collision mesh: unknown primitive '{}'", src.primitive);
             return mesh;
         }
-        auto model = db.load_model(src.model);
+        auto model = db.load_model_geometry(src.model);
         if (!model) {
             VICTUS_LOG_WARN("assets", "collision mesh: {}", model.error().message);
             return nullptr;

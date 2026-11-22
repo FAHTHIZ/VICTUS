@@ -98,6 +98,21 @@ public:
         pos_ += n * sizeof(T);
         return true;
     }
+    // Skip a raw() block or an array() of T without copying it (partial decoding).
+    bool skip_raw(std::uint64_t max_len = 1ull << 32) {
+        std::uint64_t n = 0;
+        if (!u64(n) || n > max_len || !need(n)) return fail();
+        pos_ += n;
+        return true;
+    }
+    template <typename T>
+    bool skip_array(std::uint64_t max_count = 1ull << 28) {
+        static_assert(std::is_trivially_copyable_v<T>);
+        std::uint64_t n = 0;
+        if (!u64(n) || n > max_count || !need(n * sizeof(T))) return fail();
+        pos_ += n * sizeof(T);
+        return true;
+    }
     [[nodiscard]] bool ok() const noexcept { return ok_; }
     [[nodiscard]] bool at_end() const noexcept { return pos_ == data_.size(); }
     [[nodiscard]] std::size_t position() const noexcept { return pos_; }

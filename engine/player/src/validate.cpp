@@ -305,7 +305,7 @@ Result<ValidationReport> validate_project(const project::Project& proj) {
                        "Assign an existing model to the collider's mesh_asset.", model);
                 return;
             }
-            if (auto cooked = (*db)->load_model(model); cooked && index >= cooked->meshes.size())
+            if (auto cooked = (*db)->load_model_skeleton(model); cooked && index >= cooked->meshes.size())
                 entity(Severity::Error, e,
                        who(e) + ": " + kind + " collider uses mesh " + std::to_string(index) + " of a model with " +
                            std::to_string(cooked->meshes.size()) + " meshes",

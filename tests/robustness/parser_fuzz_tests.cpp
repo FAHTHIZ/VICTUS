@@ -678,6 +678,24 @@ TEST_CASE("fuzz: cooked textures and models") {
             if (std::string why = verdict(assets::validate_model(*m)); !why.empty()) return why;
             if (!assets::validate_model(*m).ok()) return std::string("deserialize_model accepted an invalid model");
             (void)assets::make_animation_set(*m);
+            // The skeleton-only decoder accepts everything the full decoder accepts.
+            if (!assets::deserialize_model_skeleton(b).ok()) return std::string("deserialize_model_skeleton rejected a valid model");
+            if (!assets::deserialize_model_geometry(b).ok()) return std::string("deserialize_model_geometry rejected a valid model");
+        }
+        return verdict(m);
+    });
+    fuzz_bytes("cooked_model_skeleton", model_seeds, [](const Bytes& b, bool& ok) {
+        auto m = assets::deserialize_model_skeleton(b);
+        ok = m.ok();
+        if (ok) (void)assets::make_animation_set(*m); // must not crash on what it accepted
+        return verdict(m);
+    });
+    fuzz_bytes("cooked_model_geometry", model_seeds, [](const Bytes& b, bool& ok) {
+        auto m = assets::deserialize_model_geometry(b);
+        ok = m.ok();
+        if (ok) {
+            if (std::string why = verdict(assets::validate_model(*m)); !why.empty()) return why;
+            (void)assets::make_animation_set(*m);
         }
         return verdict(m);
     });

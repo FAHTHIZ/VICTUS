@@ -5,6 +5,7 @@
 #include "doctest.h"
 #include "victus/assets/cooked.hpp"
 #include "victus/assets/database.hpp"
+#include "victus/core/fs.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -178,4 +179,76 @@ TEST_CASE("render: morph targets apply, survive mesh optimisation and validate")
     render::MeshData merged = mesh;
     merged.append(render::make_cube(), math::Mat4::identity());
     CHECK(merged.morphs.empty()); // appended geometry has no deltas: targets are dropped
+}
+
+TEST_CASE("assets: skeleton-only and geometry-only decoders match the full decoder") {
+    const CookedModel model = make_face();
+    CookedHeader h;
+    const auto bytes = serialize(h, model);
+    auto full = deserialize_model(bytes);
+    auto skel = deserialize_model_skeleton(bytes);
+    REQUIRE(full.ok());
+    REQUIRE(skel.ok());
+    CHECK(skel->textures.empty());
+    REQUIRE(skel->meshes.size() == 1);
+    CHECK(skel->meshes[0].data.vertices.empty());
+    CHECK(skel->meshes[0].data.indices.empty());
+    REQUIRE(skel->meshes[0].data.morphs.size() == 2);
+    CHECK(skel->meshes[0].data.morphs[1].name == "Push");
+    CHECK(skel->meshes[0].data.morphs[1].positions.empty());
+
+    const animation::AnimationSet a = make_animation_set(*full);
+    const animation::AnimationSet b = make_animation_set(*skel);
+    REQUIRE(a.nodes.size() == b.nodes.size());
+    for (std::size_t i = 0; i < a.nodes.size(); ++i) {
+        CHECK(a.nodes[i].name == b.nodes[i].name);
+        CHECK(a.nodes[i].parent == b.nodes[i].parent);
+        CHECK(a.nodes[i].morph_node == b.nodes[i].morph_node);
+        CHECK(a.nodes[i].morph_index == b.nodes[i].morph_index);
+        CHECK(a.nodes[i].rest.translation.x == b.nodes[i].rest.translation.x);
+    }
+    REQUIRE(a.clips.size() == b.clips.size());
+    CHECK(a.clips[0].name == b.clips[0].name);
+    CHECK(a.clips[0].channels.size() == b.clips[0].channels.size());
+    REQUIRE(a.mesh_morphs.size() == b.mesh_morphs.size());
+    CHECK(a.mesh_morphs[0].names == b.mesh_morphs[0].names);
+    CHECK(a.mesh_morphs[0].defaults == b.mesh_morphs[0].defaults);
+
+    auto geo = deserialize_model_geometry(bytes);
+    REQUIRE(geo.ok());
+    CHECK(geo->textures.empty());
+    CHECK(geo->meshes[0].data.vertices.size() == full->meshes[0].data.vertices.size());
+    CHECK(geo->meshes[0].data.indices == full->meshes[0].data.indices);
+    CHECK(geo->materials[0].base_color_texture == -1);
+
+    for (std::size_t n = 0; n < bytes.size(); n += 37) CHECK_FALSE(deserialize_model_skeleton(std::span(bytes.data(), n)).ok());
+    CookedModel bad = make_face();
+    bad.animations[0].channels[0].node = 7; // channel targets a missing node
+    CHECK_FALSE(deserialize_model_skeleton(serialize(h, bad)).ok());
+}
+
+TEST_CASE("fs: map_file maps loose files and falls back for empty ones") {
+    TempDir dir("victus_map_file");
+    const fs::Path file = dir.path / "data.bin";
+    const std::vector<std::uint8_t> payload = {1, 2, 3, 4, 5, 250};
+    REQUIRE(fs::write_atomic(file, payload).ok());
+    auto view = fs::map_file(file);
+    REQUIRE(view.ok());
+    CHECK(std::equal(view->bytes().begin(), view->bytes().end(), payload.begin(), payload.end()));
+    fs::FileView moved = std::move(*view);
+    CHECK(moved.bytes().size() == payload.size());
+    CHECK(moved.bytes()[5] == 250);
+    // Replacing the file (write_atomic renames) leaves the existing view on the old bytes.
+    REQUIRE(fs::write_atomic(file, std::vector<std::uint8_t>{9}).ok());
+    CHECK(moved.bytes().size() == payload.size());
+    CHECK(fs::map_file(file)->bytes().size() == 1);
+
+    const fs::Path empty = dir.path / "empty.bin";
+    REQUIRE(fs::write_atomic(empty, std::vector<std::uint8_t>{}).ok());
+    auto e = fs::map_file(empty);
+    REQUIRE(e.ok());
+    CHECK(e->bytes().empty());
+    CHECK_FALSE(e->mapped());
+    CHECK_FALSE(fs::map_file(dir.path / "missing.bin").ok());
+    CHECK_FALSE(fs::map_file(file, 0).ok()); // over the size limit
 }

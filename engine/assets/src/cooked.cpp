@@ -119,6 +119,50 @@ bool read_texture_body(BinaryReader& r, CookedTexture& t) {
     return true;
 }
 
+// read_texture_body without keeping the pixels: same validation of sizes, no copies.
+bool skip_texture_body(BinaryReader& r) {
+    std::string name;
+    bool srgb = false;
+    std::uint32_t mips = 0;
+    if (!r.str(name) || !r.boolean(srgb) || !r.u32(mips) || mips == 0 || mips > 16) return false;
+    std::uint32_t dims[16][2]{};
+    bool all_rgba8 = true;
+    for (std::uint32_t m = 0; m < mips; ++m) {
+        std::uint32_t& w = dims[m][0];
+        std::uint32_t& h = dims[m][1];
+        if (!r.u32(w) || !r.u32(h) || w == 0 || h == 0 || w > kMaxTextureDim || h > kMaxTextureDim) return false;
+        std::uint8_t stored = 0;
+        if (!r.u8(stored) || stored > 1) return false;
+        if (stored == 0) {
+            all_rgba8 = false;
+            continue;
+        }
+        if (!r.skip_raw(std::uint64_t{w} * h * 4)) return false;
+    }
+    bool hdr = false;
+    if (!r.boolean(hdr)) return false;
+    if (hdr) {
+        std::uint32_t w = 0, h = 0;
+        if (!r.u32(w) || !r.u32(h) || w == 0 || h == 0 || w > kMaxTextureDim || h > kMaxTextureDim) return false;
+        if (!r.skip_raw(std::uint64_t{w} * h * 8)) return false;
+        for (int i = 0; i < 9 * 3; ++i) {
+            float f = 0;
+            if (!r.f32(f) || !std::isfinite(f)) return false;
+        }
+    }
+    std::uint32_t variants = 0;
+    if (!r.u32(variants) || variants > 8) return false;
+    for (std::uint32_t v = 0; v < variants; ++v) {
+        std::uint8_t codec = 0;
+        if (!r.u8(codec) || !parse_texture_codec(to_string(static_cast<TextureCodec>(codec)))) return false;
+        for (std::uint32_t m = 0; m < mips; ++m) {
+            const std::uint64_t bytes = rhi::mip_size_bytes(codec_format(static_cast<TextureCodec>(codec), srgb), dims[m][0], dims[m][1]);
+            if (!r.skip_raw(bytes)) return false;
+        }
+    }
+    return variants != 0 || all_rgba8;
+}
+
 void write_color(BinaryWriter& w, math::Color c) {
     w.f32(c.r);
     w.f32(c.g);
@@ -371,7 +415,8 @@ Result<CookedTexture> deserialize_model_texture(std::span<const std::uint8_t> by
     return t;
 }
 
-Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) {
+namespace {
+Result<CookedModel> deserialize_model_impl(std::span<const std::uint8_t> bytes, bool skip_textures, bool skeleton_only) {
     BinaryReader r(bytes);
     CookedHeader h;
     if (!parse_header(r, h)) return corrupt("header");
@@ -380,9 +425,15 @@ Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) {
     CookedModel m;
     std::uint32_t n = 0;
     if (!r.u32(n) || n > kMaxItems) return corrupt("texture count");
-    m.textures.resize(n);
-    for (auto& t : m.textures)
-        if (!read_texture_body(r, t)) return corrupt("model texture");
+    if (skip_textures) {
+        for (std::uint32_t i = 0; i < n; ++i)
+            if (!skip_texture_body(r)) return corrupt("model texture");
+    } else {
+        m.textures.resize(n);
+        for (auto& t : m.textures)
+            if (!read_texture_body(r, t)) return corrupt("model texture");
+    }
+    const std::size_t texture_count = n;
     if (!r.u32(n) || n > kMaxItems) return corrupt("material count");
     m.materials.resize(n);
     for (auto& mat : m.materials) {
@@ -393,11 +444,38 @@ Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) {
             !r.i32(mat.emissive_texture))
             return corrupt("material");
         for (const std::int32_t ti : {mat.base_color_texture, mat.metallic_roughness_texture, mat.normal_texture, mat.emissive_texture})
-            if (ti < -1 || ti >= static_cast<std::int32_t>(m.textures.size())) return corrupt("material texture index");
+            if (ti < -1 || ti >= static_cast<std::int32_t>(texture_count)) return corrupt("material texture index");
     }
     if (!r.u32(n) || n > kMaxItems) return corrupt("mesh count");
     m.meshes.resize(n);
     for (auto& mesh : m.meshes) {
+        if (skeleton_only) {
+            using V = decltype(mesh.data.vertices)::value_type;
+            using I = decltype(mesh.data.indices)::value_type;
+            using S = decltype(mesh.data.skin)::value_type;
+            if (!r.str(mesh.name) || !r.u32(mesh.material) || !r.skip_array<V>() || !r.skip_array<I>() || !r.skip_array<S>())
+                return corrupt("mesh");
+            if (mesh.material >= m.materials.size()) return corrupt("mesh material index");
+            std::uint32_t lods = 0;
+            if (!r.u32(lods) || lods >= render::kMaxMeshLods) return corrupt("mesh lod count");
+            for (std::uint32_t l = 0; l < lods; ++l) {
+                float error = 0;
+                if (!r.f32(error) || !r.skip_array<I>()) return corrupt("mesh lod");
+            }
+            std::uint32_t morphs = 0;
+            if (!r.u32(morphs) || morphs > render::kMaxMorphTargets) return corrupt("mesh morph count");
+            mesh.data.morphs.resize(morphs);
+            for (auto& t : mesh.data.morphs) {
+                using MV = decltype(t.vertices)::value_type;
+                using MP = decltype(t.positions)::value_type;
+                using MN = decltype(t.normals)::value_type;
+                if (!r.str(t.name) || !r.skip_array<MV>(kMaxItems * 64) || !r.skip_array<MP>(kMaxItems * 64) ||
+                    !r.skip_array<MN>(kMaxItems * 64))
+                    return corrupt("mesh morph target");
+            }
+            if (!r.array(mesh.data.morph_weights, render::kMaxMorphTargets)) return corrupt("mesh morph weights");
+            continue;
+        }
         if (!r.str(mesh.name) || !r.u32(mesh.material) || !r.array(mesh.data.vertices) || !r.array(mesh.data.indices) ||
             !r.array(mesh.data.skin))
             return corrupt("mesh");
@@ -474,9 +552,32 @@ Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) {
         c.orthographic = ortho != 0;
     }
     if (!r.at_end()) return corrupt("trailing bytes");
+    if (skip_textures && !skeleton_only) {
+        // validate_model also checks material texture indices, which were checked above against
+        // the skipped texture count.
+        for (auto& mat : m.materials)
+            mat.base_color_texture = mat.metallic_roughness_texture = mat.normal_texture = mat.emissive_texture = -1;
+    }
+    if (skeleton_only) {
+        // validate_model checks skin streams against mesh geometry, which was skipped; check the
+        // parts the animation system uses.
+        for (const auto& skin : m.skins)
+            for (const std::uint32_t j : skin.joints)
+                if (j >= m.nodes.size()) return corrupt("skin joint index");
+        for (const auto& clip : m.animations)
+            if (auto st = animation::validate(clip, m.nodes.size()); !st) return corrupt(st.error().message);
+        return m;
+    }
     if (auto st = validate_model(m); !st) return corrupt(st.error().message);
     return m;
 }
+} // namespace
+
+Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes) { return deserialize_model_impl(bytes, false, false); }
+
+Result<CookedModel> deserialize_model_skeleton(std::span<const std::uint8_t> bytes) { return deserialize_model_impl(bytes, true, true); }
+
+Result<CookedModel> deserialize_model_geometry(std::span<const std::uint8_t> bytes) { return deserialize_model_impl(bytes, true, false); }
 
 render::ImageF CookedTexture::hdr_image() const {
     render::ImageF img;

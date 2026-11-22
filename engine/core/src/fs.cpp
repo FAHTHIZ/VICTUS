@@ -12,6 +12,7 @@
 #include <format>
 #include <fstream>
 #include <algorithm>
+#include <limits>
 #include <mutex>
 #include <random>
 #include <set>
@@ -32,6 +33,7 @@
 #endif
 #if !defined(_WIN32)
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -169,6 +171,75 @@ Result<std::vector<std::uint8_t>> read_binary(const Path& path, std::uint64_t ma
     if (size && !in.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(size)))
         return make_error(ErrorCode::IoError, std::format("short read from '{}'", path.string()));
     return data;
+}
+
+FileView::FileView(FileView&& other) noexcept { *this = std::move(other); }
+
+FileView& FileView::operator=(FileView&& other) noexcept {
+    if (this == &other) return *this;
+    release();
+    owned_ = std::move(other.owned_);
+    mapping_ = std::exchange(other.mapping_, nullptr);
+    size_ = std::exchange(other.size_, 0);
+    data_ = mapping_ ? static_cast<const std::uint8_t*>(mapping_) : owned_.data();
+    other.data_ = nullptr;
+    return *this;
+}
+
+FileView::~FileView() { release(); }
+
+void FileView::release() noexcept {
+    if (mapping_) {
+#if defined(_WIN32)
+        UnmapViewOfFile(mapping_);
+#else
+        munmap(mapping_, size_);
+#endif
+    }
+    mapping_ = nullptr;
+    data_ = nullptr;
+    size_ = 0;
+    owned_.clear();
+}
+
+Result<FileView> map_file(const Path& path, std::uint64_t max_bytes) {
+    FileView view;
+    const auto fallback = [&]() -> Result<FileView> {
+        auto bytes = read_binary(path, max_bytes);
+        if (!bytes) return std::move(bytes).error();
+        view.owned_ = std::move(*bytes);
+        view.data_ = view.owned_.data();
+        view.size_ = view.owned_.size();
+        return std::move(view);
+    };
+    if (is_virtual(path)) return fallback();
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) return make_error(ErrorCode::NotFound, std::format("cannot stat '{}': {}", path.string(), ec.message()));
+    if (size > max_bytes)
+        return make_error(ErrorCode::LimitExceeded, std::format("'{}' is {} bytes; limit is {}", path.string(), size, max_bytes));
+    if (size == 0 || size > std::numeric_limits<std::size_t>::max()) return fallback();
+#if defined(_WIN32)
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE | FILE_SHARE_WRITE, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return fallback();
+    HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    CloseHandle(file);
+    if (!mapping) return fallback();
+    void* base = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+    CloseHandle(mapping); // the view keeps the mapping alive
+    if (!base) return fallback();
+#else
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return fallback();
+    void* base = ::mmap(nullptr, static_cast<std::size_t>(size), PROT_READ, MAP_PRIVATE, fd, 0);
+    ::close(fd); // the mapping keeps the file alive
+    if (base == MAP_FAILED) return fallback();
+#endif
+    view.mapping_ = base;
+    view.data_ = static_cast<const std::uint8_t*>(base);
+    view.size_ = static_cast<std::size_t>(size);
+    return view;
 }
 
 Result<std::string> read_text(const Path& path, std::uint64_t max_bytes) {

@@ -98,6 +98,11 @@ public:
     [[nodiscard]] Result<CookedModel> load_model(const Uuid& uuid);
     // One embedded texture of a model (index into CookedModel::textures) without its meshes.
     [[nodiscard]] Result<CookedTexture> load_model_texture(const Uuid& uuid, std::uint32_t index);
+    // Nodes, skins, clips and morph names only (deserialize_model_skeleton): what the animation
+    // system needs, without copying the model's texture and mesh data.
+    [[nodiscard]] Result<CookedModel> load_model_skeleton(const Uuid& uuid);
+    // Meshes, nodes and clips without textures (deserialize_model_geometry): collision meshes.
+    [[nodiscard]] Result<CookedModel> load_model_geometry(const Uuid& uuid);
     // Material assets (.vmat) are read from source; texture references are not resolved here.
     [[nodiscard]] Result<MaterialAsset> load_material(const Uuid& uuid) const;
     // The material with its parent chain applied (instances inherit unset fields). Fails on a
