@@ -161,7 +161,8 @@ Prefab crate_prefab() {
     (void)Uuid::parse(kCrateLocalUuid, local);
     const Entity crate = s.create("Crate", kNullEntity, local);
     s.world().get<Transform>(crate)->scale = {0.6f, 0.6f, 0.6f};
-    mesh(s, crate, "cube", {0.62f, 0.45f, 0.28f, 1}, 0.0f, 0.7f);
+    // Planks on the cube's own UVs (one board pattern per face), so it stays put as the crate tumbles.
+    mesh(s, crate, "cube", {1, 1, 1, 1}, 0.0f, 0.7f).material_asset = starter_material_uuid(StarterMaterial::Crate);
     s.world().add<physics::RigidBodyComponent>(crate).mass = 4.0f;
     s.world().add<physics::ColliderComponent>(crate).friction = 0.7f;
     attach(s, crate, "scripts/crate.luau");
@@ -500,7 +501,7 @@ void build_3d(Scene& s, const TemplateOptions& options) {
         eyes.memory = 1.5f;
         const Entity base = add(s, "Base", {0, 0.6f, 0}, sentry);
         s.world().get<Transform>(base)->scale = {0.8f, 1.2f, 0.8f};
-        mesh(s, base, "cylinder", {0.25f, 0.26f, 0.3f, 1}, 1.0f, 0.45f);
+        mesh(s, base, "cylinder", {0.55f, 0.56f, 0.6f, 1}, 1.0f, 0.45f).material_asset = starter_material_uuid(StarterMaterial::Metal);
         s.world().add<physics::RigidBodyComponent>(base).type = physics::BodyType::Static;
         s.world().add<physics::ColliderComponent>(base).shape = physics::ColliderComponent::Shape::Cylinder;
         const Entity head = add(s, "Head", {0, 1.45f, 0.05f}, sentry);
@@ -513,7 +514,9 @@ void build_3d(Scene& s, const TemplateOptions& options) {
         const float h = 0.3f * static_cast<float>(i + 1);
         const Entity step = add(s, "Step " + std::to_string(i + 1), {-5.0f - 0.8f * static_cast<float>(i), h * 0.5f, -4.0f});
         s.world().get<Transform>(step)->scale = {0.8f, h, 3.0f};
-        mesh(s, step, "cube", {0.55f, 0.57f, 0.6f, 1}, 0.0f, 0.8f).lightmapped = true;
+        auto& sm = mesh(s, step, "cube", {0.85f, 0.85f, 0.85f, 1}, 0.0f, 0.8f);
+        sm.material_asset = starter_material_uuid(StarterMaterial::Rock);
+        sm.lightmapped = true;
         s.world().add<physics::ColliderComponent>(step);
     }
 
@@ -521,11 +524,14 @@ void build_3d(Scene& s, const TemplateOptions& options) {
     {
         const Entity post = add(s, "Gate Post", {-6.0f, 1.0f, 4.0f});
         s.world().get<Transform>(post)->scale = {0.2f, 2.0f, 0.2f};
-        mesh(s, post, "cube", {0.3f, 0.3f, 0.32f, 1}, 1.0f, 0.4f).lightmapped = true;
+        auto& pm = mesh(s, post, "cube", {0.7f, 0.7f, 0.72f, 1}, 1.0f, 0.4f);
+        pm.material_asset = starter_material_uuid(StarterMaterial::Metal);
+        pm.lightmapped = true;
         s.world().add<physics::ColliderComponent>(post);
         const Entity gate = add(s, "Gate", {-5.0f, 1.0f, 4.0f});
         s.world().get<Transform>(gate)->scale = {1.8f, 1.6f, 0.1f};
-        mesh(s, gate, "cube", {0.75f, 0.2f, 0.18f, 1}, 0.0f, 0.6f);
+        // A swinging body: the crate material keeps the planks on its own UVs, tinted red.
+        mesh(s, gate, "cube", {0.95f, 0.55f, 0.5f, 1}, 0.0f, 0.6f).material_asset = starter_material_uuid(StarterMaterial::Crate);
         s.world().add<physics::ColliderComponent>(gate);
         auto& rb = s.world().add<physics::RigidBodyComponent>(gate);
         rb.mass = 6.0f;

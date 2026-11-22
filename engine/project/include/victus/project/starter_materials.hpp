@@ -3,8 +3,9 @@
 // and a CC0 HDR sky, embedded in the engine so the 3D templates start with real surfaces and
 // image-based lighting instead of flat colours. Sources and licences: data/materials/LICENSE.md.
 //
-// Every material is a world-space triplanar .vmat (uv_scale = repeats per metre), so it can be
-// put on any scaled primitive block without stretching.
+// The five texture sets are world-space triplanar .vmat files (uv_scale = repeats per metre), so
+// they can be put on any scaled static block without stretching. Crate reuses the planks textures
+// with the mesh's own UVs (one repeat per face), so the texture stays on moving bodies.
 #pragma once
 #include "victus/core/hash.hpp"
 #include "victus/project/project.hpp"
@@ -14,7 +15,7 @@
 
 namespace victus::project {
 
-enum class StarterMaterial : std::uint8_t { Grass, Rock, Planks, Metal, Paving, Count };
+enum class StarterMaterial : std::uint8_t { Grass, Rock, Planks, Metal, Paving, Crate, Count };
 
 struct StarterMaterialInfo {
     std::string_view id;            // "grass"

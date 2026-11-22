@@ -2953,3 +2953,14 @@ Verified:
 - `victus run --quality high` on fresh 3D and Multiplayer projects: the steel pillars reflect the paving and the characters.
 
 Not verified: real GPUs, Metal and D3D12 (compiled only); `victus_editor_tests` was left to CI.
+
+## 2026-11-22 — Textured crates, gate, steps and posts in the 3D template (ADR-0197)
+
+Built: a sixth starter material, `crate` (`assets/materials/starter/crate.vmat`), reuses the planks textures on the mesh's own UVs (not triplanar), so the texture stays on moving bodies. The 3D template's crates (prefab) and the swinging gate use it (the gate tinted red). The static steps are rock, and the gate post and sentry base are steel (world triplanar).
+
+Verified:
+- `victus_project_tests -tc="*starter materials*"`: 338 assertions, including the crate material reusing the planks texture, being non-triplanar, and the 3D template's Step / Gate / Crate materials.
+- `ctest -R "victus_perf_budgets|victus_export_tests|victus_cli_smoke|victus_project_tests|victus_robustness"`: 5/5 pass, with no budget changes.
+- `victus run --quality high` on a fresh 3D project: plank crates and gate, rock steps, steel posts.
+
+Not verified: real GPUs.

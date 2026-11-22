@@ -524,12 +524,15 @@ TEST_CASE("templates: 3D templates ship the CC0 starter materials and HDR sky (A
             REQUIRE(parsed.ok());
             auto mat = assets::MaterialAsset::from_json(*parsed);
             REQUIRE(mat.ok());
-            CHECK(mat->triplanar);
+            const bool crate = static_cast<project::StarterMaterial>(i) == project::StarterMaterial::Crate;
+            CHECK(mat->triplanar == !crate); // the crate keeps mesh UVs so moving bodies keep their texture
             CHECK_FALSE(mat->base_color_texture.is_nil());
             CHECK_FALSE(mat->normal_texture.is_nil());
             CHECK(mat->occlusion_strength == doctest::Approx(1.0f));
+            const std::string set = crate ? "planks" : std::string(info.id);
+            if (crate) CHECK(mat->base_color_texture == assets::MaterialAsset::from_json(*json::parse(find(project::starter_material(project::StarterMaterial::Planks).material_path)->content))->base_color_texture);
             for (const char* suffix : {"_color.jpg", "_normal.jpg", "_orm.jpg"}) {
-                const auto* tex = find("assets/textures/starter/" + std::string(info.id) + suffix);
+                const auto* tex = find("assets/textures/starter/" + set + suffix);
                 REQUIRE(tex);
                 CHECK(tex->content.size() > 4000); // real 1K JPEGs, not placeholders (a flat metal ORM is ~6 KB)
                 CHECK(static_cast<unsigned char>(tex->content[0]) == 0xFF);
@@ -557,6 +560,17 @@ TEST_CASE("templates: 3D templates ship the CC0 starter materials and HDR sky (A
     CHECK(material_of("Bridge") == project::starter_material_uuid(project::StarterMaterial::Planks));
     CHECK(material_of("Turret") == project::starter_material_uuid(project::StarterMaterial::Metal));
     CHECK(s.world().get<physics::ColliderComponent>(s.find_by_name("Start Island Turf")) == nullptr); // visual only
+    // The 3D template: static steps are rock, the moving gate and crates use the mesh-UV crate material.
+    scene::Scene s3;
+    REQUIRE(project::build_template_scene("3d", s3).ok());
+    const auto material_3d = [&](std::string_view name) {
+        const auto* m = s3.world().get<scene::MeshRendererComponent>(s3.find_by_name(name));
+        REQUIRE(m);
+        return m->material_asset;
+    };
+    CHECK(material_3d("Step 1") == project::starter_material_uuid(project::StarterMaterial::Rock));
+    CHECK(material_3d("Gate") == project::starter_material_uuid(project::StarterMaterial::Crate));
+    CHECK(material_3d("Crate 1") == project::starter_material_uuid(project::StarterMaterial::Crate));
 }
 
 TEST_CASE("templates: the No-Code 3D Adventure plays with behaviours alone") {
