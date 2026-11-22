@@ -34,6 +34,7 @@
 #include "victus/plugin/plugin.hpp"
 #include "victus/project/project.hpp"
 #include "victus/project/characters.hpp"
+#include "victus/assets/correctives.hpp"
 #include "victus/assets/importers.hpp"
 #include "victus/assets/reference_rigs.hpp"
 #include "victus/assets/skeleton.hpp"
@@ -204,6 +205,7 @@ int cmd_skeleton(const std::vector<std::string>& a) {
         .option("migration", "a victus.skeleton_migration JSON file to apply (repeat in order: comma-separated)")
         .option("write", "also write the JSON report to this file")
         .flag("deformation", "measure LBS against DQS on a twisted, bent limb")
+        .option("corrective", "bake a corrective shape: joint:axis:degrees[:start] (axis x, y = twist, or z; ADR-0220)")
         .flag("json", "print the report as JSON");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message + "\n" + p.help());
@@ -326,6 +328,70 @@ int cmd_skeleton(const std::vector<std::string>& a) {
             doc.set("deformation", std::move(d));
             text += std::format("deformation ({} rolled 150 deg, bent 115 deg): collapsed triangles LBS {}, DQS {}\n", limb->name, c_lbs, c_dqs);
         }
+    }
+    if (!p.get("corrective").empty()) {
+        // joint:axis:degrees[:start]; the joint name may itself contain dots but not colons.
+        std::vector<std::string> f;
+        for (std::size_t start = 0; start <= p.get("corrective").size();) {
+            const std::string& spec = p.get("corrective");
+            const std::size_t colon = std::min(spec.find(':', start), spec.size());
+            f.push_back(spec.substr(start, colon - start));
+            start = colon + 1;
+        }
+        if (f.size() < 3 || f.size() > 4 || f[1].size() != 1 || std::string_view("xyzXYZ").find(f[1][0]) == std::string_view::npos)
+            return error("--corrective wants joint:axis:degrees[:start] with axis x, y or z");
+        assets::CorrectiveSettings c;
+        c.joint = f[0];
+        const char ax = static_cast<char>(std::tolower(static_cast<unsigned char>(f[1][0])));
+        c.axis = {ax == 'x' ? 1.0f : 0.0f, ax == 'y' ? 1.0f : 0.0f, ax == 'z' ? 1.0f : 0.0f};
+        char* end = nullptr;
+        c.degrees = std::strtof(f[2].c_str(), &end);
+        if (end == f[2].c_str()) return error("--corrective: degrees is not a number");
+        if (f.size() == 4) c.start_degrees = std::strtof(f[3].c_str(), nullptr);
+        auto r = assets::add_corrective(*model, c);
+        if (!r) return error(std::format("--corrective: {}", r.error().message));
+        // Collapsed triangles at the full angle: LBS, LBS with the corrective, DQS.
+        std::uint32_t node = 0;
+        for (std::size_t n = 0; n < model->nodes.size(); ++n)
+            if (model->nodes[n].name == c.joint) node = static_cast<std::uint32_t>(n);
+        const math::Quat local = model->nodes[node].rotation * math::Quat::axis_angle(c.axis, c.degrees * 3.14159265f / 180.0f);
+        const std::pair<std::uint32_t, math::Quat> pose[1] = {{node, local}};
+        const auto rest = assets::pose_palette(*model, assets::pose_world(*model, nullptr, 0));
+        const auto posed = assets::pose_palette(*model, assets::pose_world(*model, nullptr, 0, pose));
+        std::size_t c_lbs = 0, c_fixed = 0, c_dqs = 0;
+        std::vector<render::Vertex3D> base, v0, v1, v2, v3;
+        std::vector<float> weights;
+        for (const auto& mesh : model->meshes) {
+            if (!mesh.data.skinned()) continue;
+            const auto rot = [&](std::uint32_t n) { return n == node ? local : model->nodes[n].rotation; };
+            (void)assets::corrective_mesh_weights(*model, model->skins[0], mesh.data, mesh.data.morph_weights, rot, weights);
+            (void)render::apply_morphs(mesh.data, weights, base);
+            render::skin_vertices(mesh.data, rest, render::SkinningMethod::Linear, v0);
+            render::skin_vertices(mesh.data, posed, render::SkinningMethod::Linear, v1);
+            render::skin_vertices(mesh.data, base, posed, render::SkinningMethod::Linear, v2);
+            render::skin_vertices(mesh.data, posed, render::SkinningMethod::DualQuaternion, v3);
+            c_lbs += render::measure_deformation(v0, v1, mesh.data.indices).collapsed_triangles;
+            c_fixed += render::measure_deformation(v0, v2, mesh.data.indices).collapsed_triangles;
+            c_dqs += render::measure_deformation(v0, v3, mesh.data.indices).collapsed_triangles;
+        }
+        json::Value d = json::Value::object();
+        d.set("joint", c.joint);
+        d.set("morph", r->morph);
+        json::Value shapes = json::Value::array();
+        for (const auto& m : r->morphs) shapes.push(m);
+        d.set("shapes", std::move(shapes));
+        d.set("meshes", static_cast<double>(r->meshes));
+        d.set("vertices", static_cast<double>(r->vertices));
+        d.set("max_offset", static_cast<double>(r->max_offset));
+        d.set("max_residual", static_cast<double>(r->max_residual));
+        d.set("collapsed_triangles_linear", static_cast<double>(c_lbs));
+        d.set("collapsed_triangles_corrected", static_cast<double>(c_fixed));
+        d.set("collapsed_triangles_dual_quaternion", static_cast<double>(c_dqs));
+        doc.set("corrective", std::move(d));
+        text += std::format("corrective {} ({} shapes): {} vertices on {} meshes, max offset {:.2f} cm, residual {:.4f} mm; "
+                            "collapsed triangles at {:.0f} deg: LBS {}, LBS+corrective {}, DQS {}\n",
+                            r->morph, r->morphs.size(), r->vertices, r->meshes, r->max_offset * 100.0f, r->max_residual * 1000.0f,
+                            c.degrees, c_lbs, c_fixed, c_dqs);
     }
     if (!p.get("write").empty()) {
         if (auto st = fs::write_text_atomic(fs::Path(p.get("write")), json::stringify(doc, true)); !st) return error(st.error().message);

@@ -294,6 +294,15 @@ std::vector<std::uint8_t> serialize(const CookedHeader& header, const CookedMode
         w.str(skin.name);
         w.array(skin.joints);
         w.array(skin.inverse_bind);
+        w.u32(static_cast<std::uint32_t>(skin.correctives.size()));
+        for (const ModelCorrective& c : skin.correctives) {
+            w.str(c.morph);
+            w.u32(c.joint);
+            w.pod(c.axis);
+            w.f32(c.start);
+            w.f32(c.end);
+            w.f32(c.release);
+        }
     }
     w.u32(static_cast<std::uint32_t>(model.animations.size()));
     for (const auto& clip : model.animations) {
@@ -341,6 +350,12 @@ Status validate_model(const CookedModel& model) {
         if (skin.inverse_bind.size() != skin.joints.size()) return bad(std::format("skin {} inverse bind count mismatch", si));
         for (const std::uint32_t j : skin.joints)
             if (j >= model.nodes.size()) return bad(std::format("skin {} joint node out of range", si));
+        for (const ModelCorrective& c : skin.correctives) {
+            if (c.joint >= skin.joints.size()) return bad(std::format("skin {} corrective '{}' joint out of range", si, c.morph));
+            const bool release_ok = c.release == c.end || (c.end > c.start ? c.release > c.end : c.release < c.end);
+            if (!(math::length(c.axis) > 0.5f) || !std::isfinite(c.start + c.end + c.release) || c.start == c.end || !release_ok)
+                return bad(std::format("skin {} corrective '{}' has an invalid axis or range", si, c.morph));
+        }
     }
     for (const ModelMesh& mesh : model.meshes) {
         if (!mesh.data.skin.empty() && mesh.data.skin.size() != mesh.data.vertices.size())
@@ -539,8 +554,14 @@ Result<CookedModel> deserialize_model_impl(std::span<const std::uint8_t> bytes, 
     }
     if (!r.u32(n) || n > kMaxItems) return corrupt("skin count");
     m.skins.resize(n);
-    for (auto& skin : m.skins)
+    for (auto& skin : m.skins) {
         if (!r.str(skin.name) || !r.array(skin.joints, kMaxItems) || !r.array(skin.inverse_bind, kMaxItems)) return corrupt("skin");
+        std::uint32_t nc = 0;
+        if (!r.u32(nc) || nc > render::kMaxMorphTargets) return corrupt("skin correctives");
+        skin.correctives.resize(nc);
+        for (ModelCorrective& c : skin.correctives)
+            if (!r.str(c.morph) || !r.u32(c.joint) || !r.pod(c.axis) || !r.f32(c.start) || !r.f32(c.end) || !r.f32(c.release)) return corrupt("skin corrective");
+    }
     if (!r.u32(n) || n > kMaxItems) return corrupt("animation count");
     m.animations.resize(n);
     for (auto& clip : m.animations) {

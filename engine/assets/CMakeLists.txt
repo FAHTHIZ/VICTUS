@@ -14,6 +14,7 @@ victus_add_module(assets
         src/async_loader.cpp
         src/cooked.cpp
         src/skeleton.cpp
+        src/correctives.cpp
         src/reference_rigs.cpp
         src/database.cpp
         src/importers.cpp

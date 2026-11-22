@@ -448,6 +448,7 @@ struct ExtractStats {
     std::uint32_t irradiance_probes_refreshed{0}; // dynamic-volume probes re-captured during this call
     std::uint32_t skinned{0}; // meshes drawn with GPU skinning
     std::uint32_t morphed{0}; // meshes drawn with morph targets applied
+    std::uint32_t correctives{0}; // meshes with at least one corrective shape weighted in (ADR-0220)
     std::uint32_t crowd_agents{0}; // CrowdAgent entities drawn from baked clips (ADR-0200)
     std::uint32_t lightmapped{0}; // meshes drawn with baked lighting (ADR-0125)
     std::uint32_t terrain_chunks{0}; // terrain chunk meshes submitted (before culling)

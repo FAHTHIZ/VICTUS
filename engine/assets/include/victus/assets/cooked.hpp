@@ -26,7 +26,7 @@ namespace victus::assets {
 // v5: block-compressed texture variants (BC/ASTC, ADR-0047); v6: mesh LODs (ADR-0049).
 // v9: RGBA8 mip levels may be stored without pixels when a compressed variant covers them
 // (mobile export profile, ADR-0149).
-inline constexpr std::uint32_t kCookedFormatVersion = 11; // 7: morph targets, weight channels; 8: material occlusion; 10: node lights and cameras; 11: clear coat
+inline constexpr std::uint32_t kCookedFormatVersion = 12; // 7: morph targets, weight channels; 8: material occlusion; 10: node lights and cameras; 11: clear coat; 12: corrective shapes
 
 enum class AssetKind : std::uint8_t { Unknown = 0, Texture = 1, Model = 2, Scene = 3, Script = 4, Audio = 5, Prefab = 6, Material = 7, Shader = 8, SpriteSheet = 9, Tileset = 10, Terrain = 11, BehaviorTree = 12, Sequence = 13, StringTable = 14, AnimController = 15 };
 [[nodiscard]] const char* to_string(AssetKind kind) noexcept;
@@ -123,10 +123,25 @@ struct ModelCamera {
 
 // A glTF skin: joint nodes and their inverse bind matrices (model space -> joint space at bind).
 // Vertex joint indices of meshes bound to the skin index into `joints`.
+// A corrective shape (ADR-0220): the morph target `morph` of every mesh skinned by the skin is
+// weighted by how far `joint` has turned about `axis` (in the joint's rest frame) from its rest
+// rotation: rising linearly from 0 at `start` to 1 at `end`, then either held at 1 (`release` ==
+// `end`) or falling back to 0 at `release` (radians, signed; end < start drives the negative
+// direction). In-between shapes use the falling side so neighbouring keys cross-fade. The
+// renderer evaluates drivers each frame from the posed skeleton and adds them to the mesh's morph
+// weights, so they follow clips, IK and Studio poses alike.
+struct ModelCorrective {
+    std::string morph;
+    std::uint32_t joint{0}; // skin joint index
+    math::Vec3 axis{1, 0, 0};
+    float start{0.0f}, end{1.5707964f}, release{1.5707964f};
+};
+
 struct ModelSkin {
     std::string name;
     std::vector<std::uint32_t> joints; // indices into CookedModel::nodes
     std::vector<math::Mat4> inverse_bind;
+    std::vector<ModelCorrective> correctives;
 };
 
 struct CookedModel {

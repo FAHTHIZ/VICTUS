@@ -5,6 +5,7 @@
 // importer produces: meshes split per material, materials, textures, nodes, skins, morph
 // targets, baked animation clips, lights and cameras.
 #include "victus/assets/importers.hpp"
+#include "victus/assets/correctives.hpp"
 #include "victus/assets/skeleton.hpp"
 
 #include "ufbx.h"
@@ -742,6 +743,8 @@ Result<CookedModel> import_fbx(const fs::Path& path, const ModelImportSettings& 
     auto model = import_ufbx_bytes(*bytes, path, settings, files, res);
     if (model)
         if (auto m = apply_import_skeleton_migrations(*model, settings, path, sandbox_root, deps); !m) return std::move(m).error();
+    if (model)
+        if (auto c = apply_import_correctives(*model, settings); !c) return std::move(c).error();
     std::sort(deps.begin(), deps.end());
     deps.erase(std::unique(deps.begin(), deps.end()), deps.end());
     res.dependencies = std::move(deps);
@@ -754,7 +757,10 @@ Result<CookedModel> import_fbx_memory(std::span<const std::uint8_t> bytes, std::
     ImportResult& res = result ? *result : local;
     FileContext files{{}, nullptr, &res.warnings, true};
     if (!settings.skeleton_migrations.empty()) res.warnings.push_back("skeleton migrations need a file import; skipped");
-    return import_ufbx_bytes(bytes, utf8_path(name), settings, files, res);
+    auto model = import_ufbx_bytes(bytes, utf8_path(name), settings, files, res);
+    if (model)
+        if (auto c = apply_import_correctives(*model, settings); !c) return std::move(c).error();
+    return model;
 }
 
 } // namespace victus::assets

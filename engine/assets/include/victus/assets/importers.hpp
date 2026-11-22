@@ -32,6 +32,27 @@ struct TextureImportSettings {
     static TextureImportSettings from_json(const json::Value& v);
 };
 
+// A corrective shape on a model (ADR-0220). With `morph` empty a shape is baked at import: the
+// offsets that make linear blend skinning reproduce the `target` method ("dual_quaternion") with
+// `joint` turned `degrees` about `axis` (its rest frame), named "Corrective.<joint>.<degrees>".
+// With `morph` set, that existing target (sculpted in Blender, say) is driven instead. Either way
+// its weight rises from 0 at `start_degrees` to 1 at `degrees`. A baked corrective is split into
+// `steps` shapes at evenly spaced angles (in-betweens, "Corrective.<joint>.<angle>" each) that
+// cross-fade, because an offset that is exact at one angle overshoots at half the weight.
+struct CorrectiveSettings {
+    std::string joint;
+    math::Vec3 axis{1, 0, 0};
+    float degrees{90.0f};
+    float start_degrees{0.0f};
+    std::string morph;
+    std::string target{"dual_quaternion"};
+    std::uint32_t skin{0};
+    std::uint32_t steps{3}; // baked shapes (1..8)
+    [[nodiscard]] json::Value to_json() const;
+    static Result<CorrectiveSettings> from_json(const json::Value& v);
+    bool operator==(const CorrectiveSettings&) const = default;
+};
+
 struct ModelImportSettings {
     float scale{1.0f};
     bool generate_tangents{true};    // when the source has none
@@ -64,6 +85,9 @@ struct ModelImportSettings {
     // checks the skeleton layout it was written for, so a changed source fails loudly instead of
     // being silently re-rigged. File imports only; memory imports warn and skip them.
     std::vector<std::string> skeleton_migrations;
+    // Corrective shapes driven by joint angles (ADR-0220, assets/correctives.hpp), applied after
+    // the migrations so they may name added joints.
+    std::vector<CorrectiveSettings> correctives;
     [[nodiscard]] json::Value to_json() const;
     static ModelImportSettings from_json(const json::Value& v);
 };
@@ -74,7 +98,7 @@ struct ImportResult {
 };
 
 inline constexpr std::uint32_t kTextureImporterVersion = 4; // v2: HDR (.hdr) sources keep linear float data; v3: BC/ASTC variants; v4: alpha_coverage_cutoff
-inline constexpr std::uint32_t kModelImporterVersion = 10; // v10: skeleton migrations; v9: glTF keyframe reduction; v8: node lights and cameras; v2: skins and animations; v3: COLOR_0 vertex colours; v4: BC/ASTC textures; v5: mesh optimisation + LODs; v6: coverage-preserving base colour mips for MASK materials; v7: card LODs for leaf canopies
+inline constexpr std::uint32_t kModelImporterVersion = 11; // v11: corrective shapes; v10: skeleton migrations; v9: glTF keyframe reduction; v8: node lights and cameras; v2: skins and animations; v3: COLOR_0 vertex colours; v4: BC/ASTC textures; v5: mesh optimisation + LODs; v6: coverage-preserving base colour mips for MASK materials; v7: card LODs for leaf canopies
 
 [[nodiscard]] Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSettings& settings);
 // HDR (.hdr) sources: half-float pixels (limited to max_size x max_size/2), SH9 irradiance and a

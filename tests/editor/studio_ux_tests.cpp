@@ -1433,6 +1433,51 @@ TEST_CASE("studio skeleton: bone and weight overlays follow the pose, pose editi
     CHECK(h.ed->skeleton_overlay_lines(robot).size() == lines.size());
 }
 
+TEST_CASE("studio skeleton: a twist corrective is baked into Orion's import settings and refused when unsafe") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Correct", "Correct", "3d").ok());
+    h.frames(2);
+    scene::Scene& s = h.ed->edit_scene();
+    const scene::Entity robot = s.find_by_name("Robot");
+    REQUIRE_FALSE(robot.is_null());
+    h.ed->select(robot);
+    h.frames(2);
+    const Uuid model = h.ed->skinned_model_of(robot);
+    REQUIRE_FALSE(model.is_nil());
+
+    assets::CorrectiveSettings c;
+    c.joint = "LowerArm.R";
+    c.axis = {0, 1, 0}; // twist
+    c.degrees = 150.0f;
+    auto r = h.ed->add_corrective(model, c);
+    REQUIRE_MESSAGE(r.ok(), (r.ok() ? "" : r.error().message));
+    MESSAGE("Studio corrective " << r->morph << ": " << r->vertices << " vertices, max offset " << r->max_offset
+                                 << " m, residual " << r->max_residual << " m");
+    CHECK(r->baked);
+    CHECK(r->morphs.size() == 3);
+    CHECK(r->vertices > 0);
+    CHECK(r->max_residual < 1e-3f);
+    // The re-imported model carries the shapes and their drivers; the settings list the corrective.
+    auto after = h.ed->assets()->load_model_geometry(model);
+    REQUIRE(after.ok());
+    std::size_t drivers = 0;
+    for (const auto& skin : after->skins) drivers += skin.correctives.size();
+    CHECK(drivers == 3);
+    const assets::AssetRecord* rec = h.ed->assets()->find(model);
+    REQUIRE(rec);
+    CHECK(assets::ModelImportSettings::from_json(rec->settings).correctives.size() == 1);
+    // The same corrective again is refused and leaves the settings alone; so is a socket.
+    CHECK_FALSE(h.ed->add_corrective(model, c).ok());
+    c.joint = "Socket.Hand.R";
+    CHECK_FALSE(h.ed->add_corrective(model, c).ok());
+    CHECK(assets::ModelImportSettings::from_json(h.ed->assets()->find(model)->settings).correctives.size() == 1);
+    // Twisting the forearm in the scene renders with the corrective active.
+    REQUIRE(h.ed->pose_bone(robot, "LowerArm.R", math::Quat::axis_angle({0, 1, 0}, 2.6f)));
+    h.frames(3);
+}
+
 TEST_CASE("studio feet: Add Foot Placement on Orion, undo, foot locking, and the IK overlay in play") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;

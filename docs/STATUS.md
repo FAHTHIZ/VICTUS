@@ -3103,7 +3103,7 @@ Verified (Release, 2-core sandbox):
 - `victus_editor_tests -tc="studio skeleton*"` (Vulkan lavapipe): 2 cases pass. On the 3D template's Orion: 92 overlay lines, one highlighted, at least 32 socket lines; the centre of the vertices weighted above 0.5 to Hand.R lies 0.06 m from the joint ((-0.488, 0.813, 0.513) vs (-0.453, 0.857, 0.517)) and follows it when LowerArm.R is posed, and undo restores it to 1e-4 m; reset pose restores two posed bones in one step; a socket moved 4 cm in the scene is saved as a `.vrig` migration and the re-imported model has the new transform; Hand.R is refused.
 - Overlay cost on Orion (CPU, measured in the test, 10 calls averaged, one run): bones 0.61 ms for 92 lines; weights 3.50 ms for 3,859 points (it skins all of Orion's vertices; CPU LBS alone measured 1.69 ms under ADR-0207).
 - Not verified: the overlay on a real display (the tests run offscreen); IK preview in the card (the existing View > IK overlay still covers IK chains).
-- Next task: corrective blend shapes driven by joint angles, then skeleton and animation LOD.
+- Next task: corrective blend shapes driven by joint angles (done, ADR-0220), then skeleton and animation LOD.
 
 ## 2026-11-22 — Particle colour gradients and size curves (ADR-0209)
 
@@ -3163,3 +3163,20 @@ Verified (dev build, 2-core sandbox, Vulkan on lavapipe):
 - `victus_editor_tests -tc="*overdraw*,studio inspector*"` (4 cases), `ctest -R "project_tests|cli_smoke|docs"` pass; `compile_shaders.py --check`: up to date (64 shaders).
 - Not verified: Metal and D3D12 (translated shader text, not run); precipitation and water are not counted; the Studio shows the heat map but not the particle numbers.
 - Next task: a global particle budget, then lit and mesh particles.
+## 2026-11-22 — Corrective shapes driven by joint angles (ADR-0220)
+
+Built:
+- `assets/correctives.hpp` (ADR-0220): `ModelCorrective` drivers on `ModelSkin` (cooked model format 12), `corrective_angle` / `corrective_weight` (swing-twist), `add_corrective` (bakes `M^-1 (DQS - LBS)` in-between shapes or drives an authored morph), `ModelImportSettings::correctives` applied by glTF and FBX import (importer version 11).
+- Runtime renderer: drivers evaluated from the posed joint entities and added to the mesh's morph weights; `ExtractStats::correctives`.
+- Studio: `Editor::add_corrective` and the Skeleton card's "Corrective shape" section. CLI: `victus skeleton <model> --corrective joint:axis:degrees[:start]` (ctest `victus_cli_skeleton_corrective`).
+- Tests: `tests/assets/corrective_tests.cpp` (4 cases), `tests/render/gpu_corrective_tests.cpp` (1 case), `studio skeleton: a twist corrective...` in `studio_ux_tests`.
+
+Verified (Release, 2-core sandbox):
+- Orion LowerArm.R twisted about Y, corrective to 150 degrees in 3 shapes: 2,688 vertex entries on 2 meshes, max offset 15.98 cm, residual 0.00036 mm, baked in 56 ms, 75,264 B. At 150 degrees: collapsed triangles LBS 11, LBS + corrective 0, DQS 0; local volume 0.743 / 1.028 / 1.028; max distance from DQS 4.19 cm / 0.00075 mm. Between keys, distance from DQS (LBS against LBS + corrective): 25 degrees 1.34 mm / 1.51 mm (a slight overshoot below the first key), 75 degrees 1.17 cm / 0.31 cm, 125 degrees 3.05 cm / 1.40 cm. At rest and twisted the other way the shapes stay at weight 0.
+- Knee LowerLeg.L about X to 115 degrees from 20: 4,131 entries; collapsed LBS 11, LBS + corrective 4, DQS 4 (the baked shape inherits DQS's bend collapse); local volume 1.103 / 1.190 / 1.190. Quadruped Tail3 twisted 120 degrees (CLI): 180 vertices, collapsed 2 / 0 / 0.
+- A single shape scaled by angle (the first design) was worse than LBS between keys: 5.2 cm against 1.2 cm from DQS at 75 degrees; rejected in favour of in-betweens.
+- `victus_gpu_tests -tc="gpu correctives*"` on Vulkan (lavapipe) and GLES (llvmpipe): Orion's forearm twisted 150 degrees in the runtime SceneRenderer, lit with shadows, at 256x192 (38,555 covered pixels): LBS + corrective and GPU DQS images differ in 0 pixels, plain LBS differs from DQS in 249; 2 drivers active; at rest 0 active and the image is identical to the model without correctives. Images in `build/test_output/corrective_*.png`. Existing morph, skinning and rig GPU tests (16 cases) still pass on both backends.
+- CPU cost per frame while the forearm correctives are active (75 degrees, mean of 20 runs, one run): 2.23 ms for weights plus morphing 89,889 vertices (both meshes are morphed whole; no cost when weights are unchanged).
+- `victus_editor_tests -tc="*corrective*"`: on the 3D template's Orion, Bake corrective writes the import settings, the re-imported model has 3 drivers, residual 0.00036 mm; the same corrective again and a socket joint are refused without changing the settings.
+- Not verified: GPU morphing (morphs are applied on the CPU); Metal and D3D12; shoulder correctives driven by two axes.
+- Next task: skeleton and animation LOD, then facial-expression and equipment attachment tests.

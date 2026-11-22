@@ -348,6 +348,24 @@ local open = face:morph_weight("JawOpen")         -- number, or nil for an unkno
 
 Visual scripts: Set Morph Weight. C++: `AnimationSystem::morph_targets`, `set_morph_weight`, `morph_weight` (0-based index or name), `render::apply_morphs`. Morphing runs on the CPU for each entity whose weights are not all zero and uploads a new vertex copy only when the weights change; keep morphing to faces and hero props rather than crowds (see KNOWN_LIMITATIONS).
 
+## Corrective shapes
+
+A corrective is a morph target whose weight follows one joint's angle (ADR-0220). Use it where linear blend skinning loses volume, such as a forearm that twists or an elbow or knee that bends, without switching the whole mesh to dual quaternion skinning. List correctives in a model's import settings and every re-import applies them; the source file is unchanged:
+
+```json
+"correctives": [
+  {"joint": "LowerArm.R", "axis": [0, 1, 0], "degrees": 150, "steps": 3},
+  {"joint": "LowerLeg.L", "axis": [1, 0, 0], "degrees": 115, "start_degrees": 20},
+  {"joint": "UpperArm.L", "axis": [0, 0, 1], "degrees": 90, "morph": "ShoulderUp.L"}
+]
+```
+
+- `axis` is in the joint's rest frame; Y runs along the bone, so Y is a twist. Only rotation about this axis counts (swing-twist decomposition).
+- Without `morph`, the shapes are baked: `steps` (1 to 8) shapes named `Corrective.<joint>.<degrees>` are keyed evenly from `start_degrees` to `degrees`, each making LBS match `target` (`dual_quaternion`) exactly at its key, and they cross-fade in between.
+- With `morph`, an existing shape key (for example one sculpted in Blender) is driven from 0 at `start_degrees` to 1 at `degrees`.
+
+The renderer evaluates the drivers from the posed skeleton every frame and adds them to the mesh's morph weights, so animation, IK and Studio poses all trigger them. Studio: select the character, pick a joint in the Skeleton card and use Corrective shape > Bake corrective. CLI: `victus skeleton orion --corrective LowerArm.R:y:150` bakes on a copy and prints the collapsed triangles with LBS, LBS plus corrective and DQS. Morphing runs on the CPU over the whole mesh while a weight changes (see ADR-0220 for the measured cost).
+
 ## Editor
 
 Window > Animation opens the Animation window for the selected entity's Animator. It shows the controller path, the states (the current one highlighted with its normalized time; click one to enter it), the previous state and fade progress during a cross-fade, the current clip weights as bars (missing clips flagged) and a control per parameter: float sliders spanning the blend thresholds, int drags, bool checkboxes and trigger buttons. Preview runs the controller on the edit scene through `AnimationSystem::update_entity`; Pause and Restart control it, End Preview restores the Animator and the skeleton transforms. A preview is ended (and restored) before saving, autosave skips while one runs, and play mode, scene switches and closing the project end it. Root-motion states are tagged `[root motion]`, and the window shows the root node and how far it moves per frame. Controller edits hot reload into the preview. `victus_editor <project> --select <entity> --show animation-preview` opens it from the command line.

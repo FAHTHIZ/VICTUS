@@ -86,6 +86,7 @@ victus_add_test(victus_asset_tests
         assets/fbx_import_tests.cpp
         assets/skeleton_tests.cpp
         assets/reference_rig_tests.cpp
+        assets/corrective_tests.cpp
     DEPS VICTUS::Assets VICTUS::Project
     LABELS assets)
 target_compile_definitions(victus_asset_tests PRIVATE VICTUS_FBX_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/fbx")
@@ -180,6 +181,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_light2d_tests.cpp
         render/gpu_city_tests.cpp
         render/gpu_rig_deformation_tests.cpp
+        render/gpu_corrective_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui VICTUS::Procgen VICTUS::Project
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output"
@@ -249,6 +251,12 @@ set_tests_properties(victus_cli_diagnostics PROPERTIES LABELS "cli")
 add_test(NAME victus_cli_skeleton COMMAND victus_cli skeleton orion --deformation)
 set_tests_properties(victus_cli_skeleton PROPERTIES LABELS "cli"
     PASS_REGULAR_EXPRESSION "orion: [0-9]+ bones, 60 joints, 8 sockets.*Hand\\.R  \\[hand\\] joint 12.*collapsed triangles LBS [0-9]+, DQS [0-9]+")
+
+# Baking a forearm twist corrective on Orion (ADR-0220): LBS with the corrective collapses no
+# triangles at 150 degrees.
+add_test(NAME victus_cli_skeleton_corrective COMMAND victus_cli skeleton orion --corrective LowerArm.R:y:150)
+set_tests_properties(victus_cli_skeleton_corrective PROPERTIES LABELS "cli"
+    PASS_REGULAR_EXPRESSION "corrective Corrective\\.LowerArm\\.R\\.150 \\(3 shapes\\).*LBS [1-9][0-9]*, LBS\\+corrective 0, DQS 0")
 
 add_test(NAME victus_cli_skeleton_quadruped COMMAND victus_cli skeleton quadruped --deformation)
 set_tests_properties(victus_cli_skeleton_quadruped PROPERTIES LABELS "cli"

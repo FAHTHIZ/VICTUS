@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/assets/importers.hpp"
+#include "victus/assets/correctives.hpp"
 #include "victus/assets/skeleton.hpp"
 #include "victus/render/environment_map.hpp"
 
@@ -47,6 +48,44 @@ TextureImportSettings TextureImportSettings::from_json(const json::Value& v) {
     return s;
 }
 
+json::Value CorrectiveSettings::to_json() const {
+    json::Value v = json::Value::object();
+    v.set("joint", joint);
+    json::Value a = json::Value::array();
+    a.push(axis.x);
+    a.push(axis.y);
+    a.push(axis.z);
+    v.set("axis", std::move(a));
+    v.set("degrees", degrees);
+    if (start_degrees != 0.0f) v.set("start_degrees", start_degrees);
+    if (!morph.empty()) v.set("morph", morph);
+    else if (target != "dual_quaternion") v.set("target", target);
+    if (skin != 0) v.set("skin", static_cast<std::int64_t>(skin));
+    if (morph.empty() && steps != CorrectiveSettings{}.steps) v.set("steps", static_cast<std::int64_t>(steps));
+    return v;
+}
+
+Result<CorrectiveSettings> CorrectiveSettings::from_json(const json::Value& v) {
+    if (!v.is_object()) return make_error(ErrorCode::InvalidArgument, "corrective is not an object");
+    CorrectiveSettings c;
+    c.joint = v["joint"].as_string_or("");
+    if (c.joint.empty() || c.joint.size() > 256) return make_error(ErrorCode::InvalidArgument, "corrective without a joint");
+    if (const json::Value* a = v.find("axis")) {
+        if (!a->is_array() || a->as_array().size() != 3 || !(*a)[0].is_number() || !(*a)[1].is_number() || !(*a)[2].is_number())
+            return make_error(ErrorCode::InvalidArgument, std::format("corrective '{}': axis must be [x, y, z]", c.joint));
+        c.axis = {(*a)[0].as_float(), (*a)[1].as_float(), (*a)[2].as_float()};
+    }
+    c.degrees = v["degrees"].as_float(c.degrees);
+    c.start_degrees = v["start_degrees"].as_float(c.start_degrees);
+    c.morph = v["morph"].as_string_or("");
+    c.target = v["target"].as_string_or(c.target);
+    c.skin = static_cast<std::uint32_t>(std::clamp<std::int64_t>(v["skin"].as_int(0), 0, 65535));
+    c.steps = static_cast<std::uint32_t>(std::clamp<std::int64_t>(v["steps"].as_int(c.steps), 1, 8));
+    if (!std::isfinite(c.axis.x + c.axis.y + c.axis.z + c.degrees + c.start_degrees))
+        return make_error(ErrorCode::InvalidArgument, std::format("corrective '{}': non-finite values", c.joint));
+    return c;
+}
+
 json::Value ModelImportSettings::to_json() const {
     json::Value v = json::Value::object();
     v.set("scale", scale);
@@ -69,6 +108,11 @@ json::Value ModelImportSettings::to_json() const {
         json::Value a = json::Value::array();
         for (const std::string& m : skeleton_migrations) a.as_array().emplace_back(m);
         v.set("skeleton_migrations", std::move(a));
+    }
+    if (!correctives.empty()) {
+        json::Value a = json::Value::array();
+        for (const CorrectiveSettings& c : correctives) a.push(c.to_json());
+        v.set("correctives", std::move(a));
     }
     return v;
 }
@@ -101,6 +145,12 @@ ModelImportSettings ModelImportSettings::from_json(const json::Value& v) {
     if (v["skeleton_migrations"].is_array())
         for (const json::Value& m : v["skeleton_migrations"].as_array())
             if (m.is_string() && !m.as_string().empty() && s.skeleton_migrations.size() < 64) s.skeleton_migrations.push_back(m.as_string());
+    // Malformed entries are dropped here (settings parsing never fails); add_corrective reports
+    // the rest at import.
+    if (v["correctives"].is_array())
+        for (const json::Value& c : v["correctives"].as_array())
+            if (auto parsed = CorrectiveSettings::from_json(c); parsed && s.correctives.size() < render::kMaxMorphTargets)
+                s.correctives.push_back(std::move(*parsed));
     return s;
 }
 
@@ -1142,6 +1192,8 @@ Result<CookedModel> import_gltf(const fs::Path& path, const ModelImportSettings&
     auto model = import_gltf_bytes(*bytes, path, settings, ctx, res);
     if (model)
         if (auto m = apply_import_skeleton_migrations(*model, settings, path, sandbox_root, deps); !m) return std::move(m).error();
+    if (model)
+        if (auto c = apply_import_correctives(*model, settings); !c) return std::move(c).error();
     std::sort(deps.begin(), deps.end());
     deps.erase(std::unique(deps.begin(), deps.end()), deps.end());
     res.dependencies = std::move(deps);
@@ -1154,7 +1206,10 @@ Result<CookedModel> import_gltf_memory(std::span<const std::uint8_t> bytes, std:
     ImportResult& res = result ? *result : local;
     ReadContext ctx{{}, nullptr, {}, true};
     if (!settings.skeleton_migrations.empty()) res.warnings.push_back("skeleton migrations need a file import; skipped");
-    return import_gltf_bytes(bytes, utf8_path(name), settings, ctx, res);
+    auto model = import_gltf_bytes(bytes, utf8_path(name), settings, ctx, res);
+    if (model)
+        if (auto c = apply_import_correctives(*model, settings); !c) return std::move(c).error();
+    return model;
 }
 
 } // namespace victus::assets

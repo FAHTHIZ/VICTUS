@@ -5,6 +5,7 @@
 // twisted, bent limb, and bone creation written as a versioned skeleton migration next to the
 // model, so the source file and every existing joint, socket and clip stay untouched.
 #include "victus/editor/editor.hpp"
+#include "victus/assets/correctives.hpp"
 #include "victus/render/skinning.hpp"
 #include "widgets.hpp"
 
@@ -82,6 +83,28 @@ Result<std::string> Editor::add_skeleton_migration(const Uuid& model, std::span<
     ++skeleton_generation_;
     notify(std::format("Skeleton migration {} added ({} edits). The source model is unchanged.", rel, edits.size()));
     return rel;
+}
+
+Result<assets::CorrectiveReport> Editor::add_corrective(const Uuid& model, const assets::CorrectiveSettings& corrective) {
+    if (!db_) return make_error(ErrorCode::InvalidArgument, "no project is open");
+    const assets::AssetRecord* rec = db_->find(model);
+    if (!rec || rec->kind != assets::AssetKind::Model) return make_error(ErrorCode::NotFound, "not a model asset");
+    auto current = db_->load_model_geometry(model);
+    if (!current) return std::move(current).error();
+    // Dry run on a copy: a refused corrective changes nothing on disk.
+    assets::CookedModel trial = *current;
+    auto report = assets::add_corrective(trial, corrective);
+    if (!report) return std::move(report).error();
+    assets::ModelImportSettings settings = assets::ModelImportSettings::from_json(rec->settings);
+    settings.correctives.push_back(corrective);
+    const Uuid uuid = model;
+    if (auto st = db_->set_settings(uuid, settings.to_json()); !st) return std::move(st).error();
+    if (auto imported = db_->import(uuid); !imported) return std::move(imported).error();
+    skeleton_card_.stamp = 0; // re-read
+    ++skeleton_generation_;
+    notify(std::format("Corrective {} added: {} vertices, largest offset {:.1f} cm. The source model is unchanged.",
+                       report->morph, report->vertices, report->max_offset * 100.0f));
+    return report;
 }
 
 Result<Editor::DeformationCheck> Editor::check_deformation(const Uuid& model, std::string_view bone, float roll_degrees,
@@ -318,7 +341,16 @@ void Editor::draw_skeleton_section(Entity e) {
     if (model.is_nil()) return;
     SkeletonCardState& st = skeleton_card_;
     if (st.model != model || st.stamp == 0) {
-        st = SkeletonCardState{};
+        SkeletonCardState fresh;
+        if (st.model == model) { // re-read after an edit: keep the selection and the last report
+            fresh.selected = st.selected;
+            fresh.corrective = std::move(st.corrective);
+            fresh.corrective_axis = st.corrective_axis;
+            fresh.corrective_degrees = st.corrective_degrees;
+            fresh.corrective_start = st.corrective_start;
+            fresh.corrective_steps = st.corrective_steps;
+        }
+        st = std::move(fresh);
         st.model = model;
         st.stamp = 1;
         // Weighted vertex counts need the geometry; read once per model (and after a migration).
@@ -428,6 +460,32 @@ void Editor::draw_skeleton_section(Entity e) {
             ImGui::SameLine();
             if (kit::icon_text_button("Reset pose", kit::Icon::Undo, false, editing)) (void)reset_skeleton_pose(e);
             kit::tooltip("Puts every bone back in the model's rest pose (one undo step).");
+            ImGui::TreePop();
+        }
+        if (sel->joint >= 0 && ImGui::TreeNode("Corrective shape")) {
+            const char* axes[] = {"X (bend)", "Y (twist, along the bone)", "Z (bend)"};
+            ImGui::Combo("Axis", &st.corrective_axis, axes, 3);
+            ImGui::SliderFloat("Angle", &st.corrective_degrees, -180.0f, 180.0f, "%.0f deg");
+            ImGui::SliderFloat("Starts at", &st.corrective_start, -180.0f, 180.0f, "%.0f deg");
+            ImGui::SliderInt("Shapes", &st.corrective_steps, 1, 8);
+            kit::tooltip("In-between shapes keyed evenly from the start to the full angle; more shapes follow dual "
+                         "quaternion skinning more closely between keys.");
+            if (kit::icon_text_button("Bake corrective", kit::Icon::Play, true, play_state_ == PlayState::Editing)) {
+                assets::CorrectiveSettings c;
+                c.joint = sel->name;
+                c.axis = {st.corrective_axis == 0 ? 1.0f : 0.0f, st.corrective_axis == 1 ? 1.0f : 0.0f,
+                          st.corrective_axis == 2 ? 1.0f : 0.0f};
+                c.degrees = st.corrective_degrees;
+                c.start_degrees = st.corrective_start;
+                c.steps = static_cast<std::uint32_t>(st.corrective_steps);
+                if (auto r = add_corrective(model, c)) st.corrective = *r;
+                else notify(r.error().message, true);
+            }
+            kit::tooltip("Bakes shapes that make linear skinning match dual quaternion skinning as this joint turns, "
+                         "driven by the joint angle at runtime. Stored in the import settings; the source is unchanged.");
+            if (st.corrective)
+                ImGui::Text("%s: %zu vertices, max %.1f cm, residual %.3f mm", st.corrective->morph.c_str(), st.corrective->vertices,
+                            st.corrective->max_offset * 100.0f, st.corrective->max_residual * 1000.0f);
             ImGui::TreePop();
         }
         if (sel->joint < 0 && ImGui::TreeNode("Socket")) {

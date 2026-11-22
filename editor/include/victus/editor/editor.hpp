@@ -12,6 +12,7 @@
 #include "victus/navigation/navigation.hpp"
 #include "victus/net/net.hpp"
 #include "victus/particles/particles.hpp"
+#include "victus/assets/correctives.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/assets/import_queue.hpp"
 #include "victus/assets/skeleton.hpp"
@@ -881,6 +882,10 @@ public:
     // path relative to assets/.
     Result<std::string> add_skeleton_migration(const Uuid& model, std::span<const assets::BoneEdit> edits,
                                                std::string description = {});
+    // Bakes (or binds) a corrective shape driven by one joint's angle (ADR-0220): tried on a copy
+    // of the imported model first, then listed in the model's import settings and re-imported.
+    // Returns the full-angle shape's name.
+    Result<assets::CorrectiveReport> add_corrective(const Uuid& model, const assets::CorrectiveSettings& corrective);
     // LBS against DQS collapsed-triangle counts of `model` with `bone` rolled and bent (degrees).
     struct DeformationCheck {
         std::string bone;
@@ -1673,6 +1678,10 @@ private:
         float roll{150.0f}, bend{110.0f};
         std::optional<DeformationCheck> check;
         float pose_euler[3]{0, 0, 0};
+        int corrective_axis{1}; // X, Y (along the bone: twist), Z
+        float corrective_degrees{150.0f}, corrective_start{0.0f};
+        int corrective_steps{3};
+        std::optional<assets::CorrectiveReport> corrective;
     };
     SkeletonCardState skeleton_card_;
     // Geometry of the model the viewport overlays read (shared; reloaded when the model changes).

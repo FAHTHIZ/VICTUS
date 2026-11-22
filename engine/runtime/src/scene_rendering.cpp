@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/runtime/scene_rendering.hpp"
 #include "victus/render/skinning.hpp"
+#include "victus/assets/correctives.hpp"
 #include "victus/render/reflection_capture.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/runtime/scene_lightmap.hpp"
@@ -1934,6 +1935,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     }
 
     std::vector<math::Mat4> palette;
+    std::vector<float> corrective_weights; // morph weights with corrective shapes added (ADR-0220)
     const auto apply_overrides = [&](Entity entity, render::Material& m) {
         const auto* o = w.get<gameplay::MaterialOverridesComponent>(entity);
         if (!o) return;
@@ -2127,6 +2129,24 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                             weights = nw;
                             break;
                         }
+                }
+                // Corrective shapes (ADR-0220): weights driven by the posed joints' local rotations,
+                // so clips, IK and edited poses all reach them; evaluated before skinning.
+                if (const auto* sk = w.get<animation::SkinnedMeshComponent>(entity);
+                    sk && sk->skin < gm.cpu.skins.size() && !gm.cpu.skins[sk->skin].correctives.empty()) {
+                    const Entity root = scene.find(sk->skeleton);
+                    if (root != Entity{}) {
+                        const auto& nodes = skeleton_nodes(scene, root, mr.mesh_asset, gm);
+                        const auto local = [&](std::uint32_t node) {
+                            const Entity je = node < nodes.size() ? nodes[node] : Entity{};
+                            const auto* t = je != Entity{} ? w.get<scene::Transform>(je) : nullptr;
+                            return t ? t->rotation : gm.cpu.nodes[node].rotation;
+                        };
+                        if (assets::corrective_mesh_weights(gm.cpu, gm.cpu.skins[sk->skin], gm.cpu.meshes[mr.mesh_index].data, weights, local,
+                                                            corrective_weights) > 0)
+                            ++stats.correctives;
+                        weights = corrective_weights;
+                    }
                 }
                 if (const render::GpuMesh* mm = assets.morphed(entity.bits(), mr.mesh_asset, gm, mr.mesh_index, weights)) {
                     drawn = mm;
