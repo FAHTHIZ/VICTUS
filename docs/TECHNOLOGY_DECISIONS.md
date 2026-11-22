@@ -9,15 +9,20 @@ A candidate is not adopted until exact version, license, platform matrix and mai
 | Platform | SDL3 3.4.20 (window, input, gamepad, lifecycle) behind `victus::platform` | Accepted (ADR-0007) |
 | Graphics | VICTUS RHI with SDL_GPU (Vulkan/Metal/D3D12) as first backend | Accepted (ADR-0003) |
 | Shaders | GLSL 450 → SPIR-V (glslang) + MSL 2.1 (SPIRV-Cross), offline, committed | Accepted (ADR-0003) |
-| ECS | Compare Flecs, EnTT, custom SoA | Open |
-| Scheduler | Compare Taskflow, enkiTS, custom | Open |
-| Physics | Box2D v3.2.0 (2D) and Jolt v5.7.0 (3D) candidates, versions verified 2026-11-16 | Open (next slice) |
-| Navigation | Recast/Detour candidate | Open |
-| Animation | ozz-animation candidate | Open |
+| ECS | Owned archetype ECS with SoA columns (`engine/ecs`) | Accepted provisionally (ADR-0004) |
+| Scheduler | Owned job system (`core/jobs.hpp`); ordered, rate-limited systems with simulation LOD tiers | Accepted (ADR-0004, ADR-0165) |
+| Physics | Box2D v3.2.0 (2D) and Jolt v5.7.0 (3D) behind `victus::physics` | Accepted (ADR-0009) |
+| Navigation | Recast & Detour v1.6.0, tiled navmesh with per-tile rebuilds | Accepted (ADR-0019, ADR-0168) |
+| Animation | Owned `victus::animation` sampling glTF channels, GPU skinning (ozz-animation rejected) | Accepted (ADR-0015) |
 | Editor UI | Dear ImGui 1.93 docking on the VICTUS RHI | Accepted (ADR-0005) |
-| Asset interchange | glTF 2.0 first; evaluate OpenUSD | Open |
-| Audio | miniaudio candidate | Open |
-| Scripting | Luau 0.747 (sandboxed VM, gradual types) behind `victus::script` | Accepted (ADR-0008); visual scripting open |
+| Asset interchange | glTF 2.0 (cgltf 1.15); FBX and OBJ through ufbx 0.23.1. OpenUSD not evaluated | Accepted (ADR-0008, ADR-0173); USD open |
+| Audio | miniaudio 0.11.26 behind `victus::audio` | Accepted (ADR-0010) |
+| Scripting | Luau 0.747 (sandboxed VM, gradual types) behind `victus::script`; visual graphs compile to Luau | Accepted (ADR-0008, ADR-0058, ADR-0155) |
+| Networking | ENet 1.3.18 behind `net::Transport`; Monocypher 4.0.2 for encrypted sessions | Accepted (ADR-0020, ADR-0028) |
+
+The full list of pinned dependencies is printed by `python3 tools/deps/victus_deps.py list`.
+
+**Numbering note.** Three ADR numbers were each used by two different decisions: ADR-0008 (scene format and asset pipeline; gameplay scripting language), ADR-0037 (packed vertex colour and fog; scene transitions) and ADR-0038 (sprite sheets; blended materials). They are kept as they are, because other documents cite them. Cite them with their topic, for example "ADR-0008 (scripting)". New ADRs continue from the highest number.
 
 ## ADR-0001 — C++20 dependency-light foundation
 Accepted for bootstrap. Standard-library-only core gives CI a reliable baseline. Revisit C++23 only after compiler/platform validation.
