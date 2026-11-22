@@ -39,6 +39,7 @@ struct Particle {
     float size_scale{1};
     std::uint32_t start_frame{0};
     std::uint32_t trail_count{0}; // recorded trail points (in EmitterState::trail)
+    Vec3 axis{0, 1, 0};           // mesh particles: tumble axis (unit)
 };
 
 struct TrailPoint {
@@ -75,6 +76,7 @@ struct EmitterState {
     std::vector<Particle> particles;
     std::vector<Billboard> billboards;
     std::vector<Vec3> velocities;
+    std::vector<Mat4> mesh_transforms; // mesh emitters (ADR-0215), replaces billboards
     std::vector<TrailPoint> trail; // trail_cap points per particle, parallel to particles
     std::uint32_t trail_cap{0};
     std::vector<RibbonPoint> ribbon_points;
@@ -310,6 +312,10 @@ float max_size(const ParticleEmitterComponent& e) {
     return std::isfinite(m) ? m : 0.0f;
 }
 
+bool has_mesh(const ParticleEmitterComponent& e) { return !e.mesh_asset.is_nil() || !e.mesh_primitive.empty(); }
+
+bool simulated_on_gpu(const ParticleEmitterComponent& e) { return e.gpu && !has_mesh(e); }
+
 Billboard gpu_billboard(const ParticleEmitterComponent& e, const GpuParticle& p, const Mat4& world, const Mat4& view) {
     Billboard b;
     if (!(p.age < p.life)) return b;
@@ -338,6 +344,32 @@ Billboard gpu_billboard(const ParticleEmitterComponent& e, const GpuParticle& p,
 }
 
 namespace {
+
+// Mesh particle world matrix (ADR-0215): translate to the particle, orient (tumble about the
+// particle's axis by its rotation, or +Y along the motion when stretched), scale by its size.
+Mat4 mesh_transform(const ParticleEmitterComponent& e, const Particle& p, const Billboard& b, const Vec3& velocity,
+                    const Mat4& world) {
+    math::Quat q = math::Quat::axis_angle(p.axis, p.rotation);
+    const float speed = math::length(velocity);
+    if (speed > 1e-6f) {
+        const Vec3 d = velocity / speed;
+        const Vec3 up{0, 1, 0};
+        const float c = math::dot(up, d);
+        const Vec3 ax = math::cross(up, d);
+        const float s = math::length(ax);
+        q = s > 1e-6f ? math::Quat::axis_angle(ax / s, std::atan2(s, c))
+                      : (c > 0 ? math::Quat{} : math::Quat::axis_angle({1, 0, 0}, kPi));
+        q = q * math::Quat::axis_angle(up, p.rotation); // roll about the motion keeps the tumble phase
+    } else if (!e.world_space) {
+        // Local-space emitters: particle orientations follow the emitter's rotation.
+        const Mat4 r = Mat4::trs({}, q, Vec3{1});
+        Mat4 rw = world;
+        rw[3] = math::Vec4(0, 0, 0, 1);
+        const Mat4 m = rw * r;
+        return Mat4::trs(b.position, {}, Vec3{1}) * m * Mat4::trs({}, {}, Vec3{b.size});
+    }
+    return Mat4::trs(b.position, q, Vec3{b.size});
+}
 
 struct Counts {
     std::uint32_t spawned{0}, died{0};
@@ -403,6 +435,7 @@ void record_trail(const ParticleEmitterComponent& e, Particle& p, TrailPoint* bl
 }
 
 Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& world, float dt, std::uint64_t uuid_seed) {
+    const bool mesh = has_mesh(e);
     Counts counts;
     if (!s.seeded) {
         const std::uint64_t seed = e.seed != 0 ? e.seed : uuid_seed;
@@ -496,6 +529,11 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
             const std::uint32_t n = flipbook_frame_count(e);
             if (n > 1) p.start_frame = std::min(n - 1, static_cast<std::uint32_t>(s.rng.next_float() * static_cast<float>(n)));
         }
+        if (mesh) { // uniform on the sphere
+            const float z = s.rng.next_float() * 2.0f - 1.0f, a = s.rng.next_float() * 2.0f * kPi;
+            const float r = std::sqrt(std::max(0.0f, 1.0f - z * z));
+            p.axis = {r * std::cos(a), r * std::sin(a), z};
+        }
         if (ev != nullptr) {
             place_sub(e, world, *ev, pos, dir, speed, p.position, p.velocity);
         } else if (e.world_space) {
@@ -523,6 +561,7 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
     s.billboards.resize(s.particles.size());
     const bool stretched = e.velocity_stretch > 0 && std::isfinite(e.velocity_stretch);
     s.velocities.resize(stretched ? s.particles.size() : 0);
+    s.mesh_transforms.resize(mesh ? s.particles.size() : 0);
     s.bounds = {};
     const float intensity = std::max(0.0f, e.intensity);
     const std::uint32_t cols = grid_axis(e.flipbook_columns), rows = grid_axis(e.flipbook_rows);
@@ -556,6 +595,7 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
         const Vec3 half{extent * 0.5f};
         s.bounds.expand(b.position - half);
         s.bounds.expand(b.position + half);
+        if (mesh) s.mesh_transforms[i] = mesh_transform(e, p, b, stretched ? s.velocities[i] : Vec3{}, world);
     }
 
     // Trails: recorded points from tail to head, then the particle's current position.
@@ -593,6 +633,7 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
         // Trails only: keep the bounds of the trails, drop the heads.
         s.billboards.clear();
         s.velocities.clear();
+        s.mesh_transforms.clear();
         s.bounds = {};
         for (const RibbonPoint& r : s.ribbon_points) {
             const Vec3 half{r.width * 0.5f};
@@ -767,6 +808,7 @@ void switch_path(EmitterState& s, bool gpu) {
     s.particles.clear();
     s.billboards.clear();
     s.velocities.clear();
+    s.mesh_transforms.clear();
     s.trail.clear();
     s.ribbon_points.clear();
     s.ribbon_strips.clear();
@@ -798,6 +840,7 @@ void clear_state(EmitterState& s) {
     s.particles.clear();
     s.billboards.clear();
     s.velocities.clear();
+    s.mesh_transforms.clear();
     s.trail.clear();
     s.ribbon_points.clear();
     s.ribbon_strips.clear();
@@ -905,6 +948,11 @@ void register_components() {
             .field(&ParticleEmitterComponent::trail_width_end, "trail_width_end", {.min = 0, .max = 10, .speed = 0.01f, .tooltip = "Tail width as a fraction of the head"})
             .field(&ParticleEmitterComponent::trail_alpha_end, "trail_alpha_end", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Tail alpha as a fraction of the head"})
             .field(&ParticleEmitterComponent::trail_billboards, "trail_billboards", {.tooltip = "Also draw the particles"})
+            .field(&ParticleEmitterComponent::mesh_primitive, "mesh_primitive", {.tooltip = "Mesh particles: cube|sphere|plane|cylinder; empty = billboards (CPU simulation only)"})
+            .field(&ParticleEmitterComponent::mesh_asset, "mesh_asset", {.tooltip = "Mesh particles: model asset (overrides mesh_primitive)", .hint = "model"})
+            .field(&ParticleEmitterComponent::mesh_index, "mesh_index", {.max = 4096, .tooltip = "Mesh within the model"})
+            .field(&ParticleEmitterComponent::mesh_material, "mesh_material", {.tooltip = "Mesh particles: material asset; empty = the model's material or a default tinted by color_start", .hint = "material"})
+            .field(&ParticleEmitterComponent::mesh_cast_shadows, "mesh_cast_shadows", {.tooltip = "Mesh particles cast sun and local-light shadows"})
             .field(&ParticleEmitterComponent::turbulence, "turbulence", {.min = 0, .max = 1000, .speed = 0.05f, .tooltip = "Swirling curl-noise acceleration (m/s^2); 0 = off"})
             .field(&ParticleEmitterComponent::turbulence_frequency, "turbulence_frequency", {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "Swirls per metre"})
             .field(&ParticleEmitterComponent::turbulence_speed, "turbulence_speed", {.min = 0, .max = 100, .speed = 0.01f, .tooltip = "How fast the swirls change"})
@@ -954,7 +1002,7 @@ void ParticleSystem::update(Scene& scene, float dt) {
         const float step = std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
         for (std::size_t i = 0; i < work_.size(); ++i) {
             work_[i].state->budget_room = std::numeric_limits<std::uint32_t>::max();
-            if (work_[i].emitter->gpu) continue;
+            if (simulated_on_gpu(*work_[i].emitter)) continue;
             float d2 = 0;
             if (!viewers.empty()) {
                 const Vec3 p = work_[i].world.transform_point({0, 0, 0});
@@ -1029,8 +1077,9 @@ void ParticleSystem::update(Scene& scene, float dt) {
                 st.lod_accumulator = 0;
             }
             st.lod = lod;
-            switch_path(st, em.gpu);
-            w.counts = em.gpu ? simulate_gpu(em, st, w.world, step, w.seed) : simulate(em, st, w.world, step, w.seed);
+            const bool on_gpu = simulated_on_gpu(em);
+            switch_path(st, on_gpu);
+            w.counts = on_gpu ? simulate_gpu(em, st, w.world, step, w.seed) : simulate(em, st, w.world, step, w.seed);
         }
     };
     if (settings_.jobs && work_.size() >= std::max<std::uint32_t>(2, settings_.parallel_threshold)) settings_.jobs->parallel_for(0, work_.size(), 1, run);
@@ -1166,9 +1215,15 @@ void gather(Scene& scene, std::vector<EmitterView>& out) {
             out.push_back(v);
             return;
         }
-        if (s.billboards.empty() && s.ribbon_strips.empty()) return;
-        out.push_back({e, &c, std::span<const Billboard>(s.billboards), std::span<const Vec3>(s.velocities), s.bounds,
-                       std::span<const RibbonPoint>(s.ribbon_points), std::span<const std::uint32_t>(s.ribbon_strips)});
+        if (s.billboards.empty() && s.ribbon_strips.empty() && s.mesh_transforms.empty()) return;
+        EmitterView v{e, &c, std::span<const Billboard>(s.billboards), std::span<const Vec3>(s.velocities), s.bounds,
+                      std::span<const RibbonPoint>(s.ribbon_points), std::span<const std::uint32_t>(s.ribbon_strips)};
+        if (!s.mesh_transforms.empty()) {
+            v.billboards = {};
+            v.velocities = {};
+            v.mesh_transforms = s.mesh_transforms;
+        }
+        out.push_back(v);
     });
 }
 

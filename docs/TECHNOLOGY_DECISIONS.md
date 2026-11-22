@@ -2349,3 +2349,29 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** listed in docs/STATUS.md under this ADR.
 
 **Consequences:** Body, socket and IK joints are untouched, so equipment stays attached and gameplay that reads joint positions is unaffected. The skinning palette still holds every joint, so GPU skinning cost is unchanged; the saving is animation sampling and blending on the CPU. Rigs without bone roles get no detail nodes.
+### ADR-0215: Mesh particles
+
+**Status:** Accepted (2026-11-22)
+
+**Context:** Every particle was a camera-facing billboard. Debris, shards, casings and leaves need real geometry: lit from every side, opaque, and casting shadows. Effects authors had to fake them with flipbooks or spawn entities.
+
+**Decision:** `ParticleEmitterComponent` gains `mesh_primitive`, `mesh_asset`/`mesh_index`, `mesh_material` and `mesh_cast_shadows`. A mesh emitter keeps the CPU simulation unchanged (it ignores `gpu`) and outputs one world matrix per particle (`EmitterView::mesh_transforms`) instead of billboards:
+- translation at the particle;
+- uniform scale by the particle size;
+- rotation about a random unit axis per particle by the particle rotation (spin included), or +Y along the velocity when `velocity_stretch` > 0;
+- local-space emitters add the emitter's rotation.
+
+The axis is drawn from the emitter's random stream only for mesh emitters, so other emitters keep their exact sequences. The runtime submits the matrices with `SceneRenderer::submit_instances()`, so mesh particles reuse the opaque path's per-instance culling, LOD, shadows, probes and instanced batching. The material comes from `mesh_material`, else the model's own, else a default tinted by `color_start`. Trails still draw as ribbons.
+
+**Alternatives:**
+1. GPU-instanced meshes fed from the GPU particle buffer: needs an indirect, compute-fed instance path in the opaque pass. Deferred; CPU budgets (ADR-0213) bound the cost meanwhile.
+2. Per-particle colour through instance data: needs a material-instance channel the opaque path lacks.
+3. Spawning entities: no pooling and heavy per-particle ECS cost.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:**
+- Colour and alpha over life do not apply to mesh particles; size and spin curves do.
+- Mesh particles write no object motion vectors (TAA treats them as static).
+- They are not GPU-simulated.
+- 2D sprite rendering does not draw them.

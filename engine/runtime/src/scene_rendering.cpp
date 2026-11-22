@@ -2341,6 +2341,49 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             stats.particles += gv.alive;
             continue;
         }
+        if (!v.mesh_transforms.empty()) {
+            // Mesh particles (ADR-0215): instanced lit meshes through the opaque path (culled,
+            // LOD-selected and shadowed per instance like submit_instances() props).
+            const particles::ParticleEmitterComponent& e = *v.emitter;
+            const render::GpuMesh* mesh = nullptr;
+            render::Material m;
+            m.base_color = {e.color_start.r, e.color_start.g, e.color_start.b, 1.0f};
+            m.roughness = 0.6f;
+            if (!e.mesh_asset.is_nil()) {
+                auto model = assets.model(e.mesh_asset);
+                if (!model && model.error().code == ErrorCode::Pending) {
+                    ++stats.loading_assets;
+                    continue;
+                }
+                if (!model || e.mesh_index >= (*model)->meshes.size()) {
+                    ++stats.missing_assets;
+                    continue;
+                }
+                mesh = &(*model)->meshes[e.mesh_index];
+                m = (*model)->mesh_materials[e.mesh_index];
+            } else {
+                mesh = assets.primitive(e.mesh_primitive);
+                if (!mesh) {
+                    ++stats.missing_assets;
+                    continue;
+                }
+            }
+            if (!e.mesh_material.is_nil()) {
+                if (auto mat = assets.material(e.mesh_material); mat) m = *mat;
+                else ++stats.missing_assets;
+            }
+            m.cast_shadows = e.mesh_cast_shadows;
+            renderer.submit_instances(*mesh, m, v.mesh_transforms);
+            if (!v.ribbon_strips.empty()) {
+                renderer.submit_ribbons({reinterpret_cast<const render::RibbonPoint*>(v.ribbon_points.data()), v.ribbon_points.size()},
+                                        v.ribbon_strips, pm, v.bounds);
+                stats.particle_trails += static_cast<std::uint32_t>(v.ribbon_strips.size());
+            }
+            ++stats.particle_emitters;
+            stats.particles += static_cast<std::uint32_t>(v.mesh_transforms.size());
+            stats.particle_meshes += static_cast<std::uint32_t>(v.mesh_transforms.size());
+            continue;
+        }
         // Billboard and ParticleInstance share one 48-byte layout (position+size, colour, rotation).
         static_assert(sizeof(particles::Billboard) == sizeof(render::ParticleInstance));
         std::span<const render::ParticleInstance> instances(reinterpret_cast<const render::ParticleInstance*>(v.billboards.data()),

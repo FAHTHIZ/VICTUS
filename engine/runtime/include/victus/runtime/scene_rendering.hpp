@@ -455,6 +455,7 @@ struct ExtractStats {
     std::uint32_t foliage_instances{0}; // foliage instances submitted (within draw distance, before culling)
     std::uint32_t particle_emitters{0}, particles{0}; // submitted (before camera culling)
     std::uint32_t particle_trails{0};                 // ribbon strips submitted
+    std::uint32_t particle_meshes{0};                 // mesh particles submitted (ADR-0215), also in `particles`
     std::uint32_t decals{0}; // visible decal components submitted (before camera culling)
     std::uint32_t water_surfaces{0}; // visible water volumes submitted (before camera culling)
     std::uint32_t fog_volumes{0};    // visible fog volumes submitted (ADR-0098; before camera culling)

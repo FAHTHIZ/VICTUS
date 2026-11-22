@@ -97,6 +97,18 @@ struct ParticleEmitterComponent {
     float trail_width_end{0};         // width at the tail as a fraction of the head width
     float trail_alpha_end{0};         // alpha at the tail as a fraction of the particle's alpha
     bool trail_billboards{true};      // also draw the particles themselves
+    // Mesh particles (ADR-0215): each particle draws a lit, shadowed mesh instead of a billboard
+    // (debris, shards, leaves, casings). The mesh is a built-in primitive or a model asset's mesh;
+    // its size is the particle size (scale), it tumbles about a random per-particle axis by the
+    // particle rotation and spin, or points its +Y along the motion when velocity_stretch > 0.
+    // The material asset (or the model's own material, or a default one tinted by color_start)
+    // is shared by every particle: colour/alpha over life does not apply to mesh particles.
+    // CPU simulation only: a mesh emitter ignores `gpu`.
+    std::string mesh_primitive;       // cube|sphere|plane|cylinder; empty and mesh_asset nil = billboards
+    Uuid mesh_asset;                  // model asset; overrides mesh_primitive
+    std::uint32_t mesh_index{0};      // mesh within the model
+    Uuid mesh_material;               // optional material asset
+    bool mesh_cast_shadows{true};
     // Turbulence (both paths): a divergence-free curl-noise acceleration field (Bridson et al. 2007)
     // that swirls particles without bunching them. Units: m/s^2 at peak; frequency in cycles per
     // metre; speed = how fast the field evolves (radians per second of field phase).
@@ -167,6 +179,9 @@ constexpr std::uint32_t kMaxSubEmitterEvents = 4096;
 [[nodiscard]] float size_at(const ParticleEmitterComponent& e, float t);
 // Largest size_at over the particle's life (bounds).
 [[nodiscard]] float max_size(const ParticleEmitterComponent& e);
+// Mesh particles (ADR-0215): the emitter draws meshes, and is then always CPU-simulated.
+[[nodiscard]] bool has_mesh(const ParticleEmitterComponent& e);
+[[nodiscard]] bool simulated_on_gpu(const ParticleEmitterComponent& e);
 // Speed and spin multipliers at normalised age t (1 when the curve is empty; ADR-0211).
 [[nodiscard]] float speed_at(const ParticleEmitterComponent& e, float t);
 [[nodiscard]] float spin_at(const ParticleEmitterComponent& e, float t);
@@ -242,6 +257,8 @@ struct EmitterView {
     std::span<const RibbonPoint> ribbon_points; // every trail, tail to head
     std::span<const std::uint32_t> ribbon_strips; // point count of each trail (>= 2)
     const GpuEmitterView* gpu{nullptr}; // GPU emitters: simulated by the renderer (billboards empty)
+    // Mesh emitters (ADR-0215): one world matrix per particle (billboards empty).
+    std::span<const math::Mat4> mesh_transforms;
 };
 
 struct EmitterStatus {

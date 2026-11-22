@@ -3228,3 +3228,25 @@ Verified (Release, 2-core sandbox):
 - `victus_animation_tests` 71/71, `victus_asset_tests` 85/85, `victus_gameplay_tests`, `victus_gpu_tests` and `victus_editor_tests` pass.
 - Not verified: a pixel comparison of a distant Orion in the GPU renderer (the reduced pose is measured on CPU-skinned vertices); GPU skinning cost is unchanged because the palette still holds every joint.
 - Next task: facial-expression and equipment attachment tests on Orion and Nova, then Studio IK configuration and retargeting.
+## 2026-11-22 — Mesh particles (ADR-0215)
+
+Seventh piece of the VFX audit. Before this, every particle was a billboard.
+
+- `ParticleEmitterComponent`:
+  - New fields: `mesh_primitive` (cube|sphere|plane|cylinder), `mesh_asset` + `mesh_index`, `mesh_material` and `mesh_cast_shadows`. They appear in the Studio inspector with model/material pickers.
+  - `has_mesh()` and `simulated_on_gpu()`: mesh emitters always simulate on the CPU.
+  - Their particles come out as world matrices in `EmitterView::mesh_transforms`, oriented by a per-particle tumble axis or along the velocity.
+- The runtime submits them through `SceneRenderer::submit_instances()`, so they get the opaque path's culling, LOD, shadows and instancing. `ExtractStats::particle_meshes` counts them.
+
+Verified (dev build, 2-core sandbox, lavapipe):
+- `victus_particles_tests`: 34 cases, 75,426 assertions pass.
+  - New: a `gpu` mesh emitter of 20 cubes simulated on the CPU. Each transform has uniform scale 0.5 and orthogonal axes and sits at its particle; orientations differ between particles. One second of 90 deg/s spin changed every orientation without moving the particles. Clearing the mesh brought the billboards back.
+  - New: a stretched cylinder emitter pointed +Y along the motion. All five mesh fields survived a save/load round trip.
+  - All earlier cases are unchanged, so the random sequences of non-mesh emitters held.
+- New `tests/render/gpu_mesh_particle_tests.cpp`, through runtime extraction with a sun straight down:
+  - The cube rendered red and opaque, counted as 1 mesh particle and 0 billboards.
+  - The floor under it read green 147 against 222 beside it. With `mesh_cast_shadows` off, the floor under it read within 12 of the lit floor.
+- `victus_gpu_tests -tc="*particle*,*overdraw*,*instanc*"`, `victus_scene_tests`, `victus_editor_tests -tc="studio inspector*"` and `ctest -R "project_tests|cli_smoke|docs"` pass.
+- Not verified: cost with thousands of mesh particles, physical hardware, model-asset meshes in a GPU test (only the primitive path ran on the GPU).
+- Not implemented: GPU-simulated mesh particles, per-particle colour or alpha over life on meshes, motion vectors for mesh particles.
+- Next task: particle events, then a node-based effect graph.

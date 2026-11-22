@@ -1450,3 +1450,102 @@ TEST_CASE("particle budget: identical serially and on jobs") {
     CHECK(serial.size() > 200);
     CHECK(std::memcmp(serial.data(), parallel.data(), serial.size() * sizeof(float)) == 0);
 }
+
+namespace {
+std::vector<math::Mat4> mesh_transforms_of(Scene& s, Entity e, bool* has_billboards = nullptr) {
+    std::vector<EmitterView> views;
+    gather(s, views);
+    for (const EmitterView& v : views)
+        if (v.entity == e) {
+            if (has_billboards) *has_billboards = !v.billboards.empty() || v.gpu != nullptr;
+            return {v.mesh_transforms.begin(), v.mesh_transforms.end()};
+        }
+    return {};
+}
+} // namespace
+
+TEST_CASE("mesh particles: one transform per particle at its position and size, tumbling, CPU-simulated (ADR-0215)") {
+    register_components();
+    Scene s;
+    const Entity e = s.create("Debris");
+    auto& c = s.world().add<ParticleEmitterComponent>(e);
+    c.rate = 0;
+    c.burst = 20;
+    c.lifetime_min = c.lifetime_max = 10;
+    c.speed_min = c.speed_max = 0;
+    c.size_start = c.size_end = 0.5f;
+    c.spin_min = c.spin_max = 90; // degrees per second
+    c.seed = 3;
+    c.gpu = true; // ignored: mesh emitters are CPU-simulated
+    c.mesh_primitive = "cube";
+    CHECK(has_mesh(c));
+    CHECK_FALSE(simulated_on_gpu(c));
+    ParticleSystem sys;
+    sys.update(s, 0.0f);
+    bool has_billboards = true;
+    const auto t0 = mesh_transforms_of(s, e, &has_billboards);
+    REQUIRE(t0.size() == 20);
+    CHECK_FALSE(has_billboards);
+    CHECK(sys.stats().gpu_emitters == 0);
+    std::set<int> axes;
+    for (const math::Mat4& m : t0) {
+        // Uniform scale 0.5 (columns of length 0.5), orthogonal rotation.
+        for (int k = 0; k < 3; ++k) CHECK(near(math::length(Vec3{m[k].x, m[k].y, m[k].z}), 0.5f, 1e-4f));
+        CHECK(near(math::dot(Vec3{m[0].x, m[0].y, m[0].z}, Vec3{m[1].x, m[1].y, m[1].z}), 0.0f, 1e-4f));
+        CHECK(math::length(Vec3{m[3].x, m[3].y, m[3].z}) <= 0.2f); // at the particle (default cone base radius 0.1)
+        axes.insert(static_cast<int>(std::round(m[1].y * 8))); // orientations differ between particles
+    }
+    CHECK(axes.size() > 3);
+    // Spin turns each mesh about its own axis: 1 s at 90 deg/s changes every orientation, keeps positions.
+    sys.update(s, 1.0f);
+    const auto t1 = mesh_transforms_of(s, e);
+    REQUIRE(t1.size() == 20);
+    for (std::size_t i = 0; i < t1.size(); ++i) {
+        CHECK(near(t1[i][3].x, t0[i][3].x));
+        CHECK(math::length(Vec3{t1[i][1].x - t0[i][1].x, t1[i][1].y - t0[i][1].y, t1[i][1].z - t0[i][1].z}) > 0.05f);
+    }
+    // Without a mesh the same emitter draws billboards again (on the GPU path, as authored).
+    s.world().get<ParticleEmitterComponent>(e)->mesh_primitive.clear();
+    s.world().get<ParticleEmitterComponent>(e)->gpu = false;
+    sys.update(s, 0.0f);
+    CHECK(mesh_transforms_of(s, e, &has_billboards).empty());
+    CHECK(has_billboards);
+}
+
+TEST_CASE("mesh particles: stretched emitters point +Y along the motion; fields serialize") {
+    register_components();
+    Scene s;
+    const Entity e = s.create("Shards");
+    auto& c = s.world().add<ParticleEmitterComponent>(e);
+    c.rate = 0;
+    c.burst = 8;
+    c.lifetime_min = c.lifetime_max = 10;
+    c.shape = Shape::Point;
+    c.angle = 0; // straight up the emitter's +Y
+    c.speed_min = c.speed_max = 4;
+    c.gravity = {0, 0, 0};
+    c.velocity_stretch = 0.1f;
+    c.size_start = c.size_end = 1;
+    c.seed = 5;
+    c.mesh_primitive = "cylinder";
+    ParticleSystem sys;
+    sys.update(s, 0.0f);
+    sys.update(s, 0.1f);
+    const auto t = mesh_transforms_of(s, e);
+    REQUIRE(t.size() == 8);
+    for (const math::Mat4& m : t) CHECK(near(m[1].y, 1.0f, 1e-3f)); // +Y column (unit size) along the motion
+
+    auto& w = *s.world().get<ParticleEmitterComponent>(e);
+    w.mesh_asset = Uuid::generate();
+    w.mesh_index = 2;
+    w.mesh_material = Uuid::generate();
+    w.mesh_cast_shadows = false;
+    Scene loaded;
+    REQUIRE(loaded.load(json::parse(json::stringify(s.save())).value()).ok());
+    const auto& lc = *loaded.world().get<ParticleEmitterComponent>(loaded.find_by_name("Shards"));
+    CHECK(lc.mesh_primitive == "cylinder");
+    CHECK(lc.mesh_asset == w.mesh_asset);
+    CHECK(lc.mesh_index == 2);
+    CHECK(lc.mesh_material == w.mesh_material);
+    CHECK_FALSE(lc.mesh_cast_shadows);
+}
