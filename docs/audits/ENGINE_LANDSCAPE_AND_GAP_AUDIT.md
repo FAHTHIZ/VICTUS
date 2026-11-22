@@ -48,7 +48,7 @@ The snapshot recorded a broad engine foundation: a tested ECS/runtime, rendering
 
 The project also has an internal integration consumer, Special Ops, which exercises a full mission path. It is not a publicly released VICTUS game and does not establish external production use.
 
-The accurate qualification is: **VICTUS is pre-release and its visual quality/performance remain unproven on physical target hardware.** Its automated render tests use software Vulkan/GLES and CI's virtualised Apple GPU. No physical Android install or sustained phone benchmark is recorded in the platform matrix. The blanket claim that VICTUS's tools are behind every engine is removed; tool maturity should be compared workflow by workflow, not asserted as a universal ranking.
+The accurate qualification is: **VICTUS is pre-release and its visual quality/performance remain unproven on physical target hardware.** Its automated render tests use software Vulkan/GLES and CI's virtualised Apple GPU. No physical Android install or sustained phone benchmark is recorded in the platform matrix. Tool maturity should be evaluated workflow by workflow, not summarized as a universal engine-wide ranking.
 
 Use the current gap register for the actual next work. The remainder of this file is a dated comparison snapshot and its old gap IDs should not be used as a live task list.
 
