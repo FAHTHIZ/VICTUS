@@ -2774,3 +2774,10 @@ Verified:
 
 Not verified: real GPUs (lavapipe only). No real-time area shadows (documented in KNOWN_LIMITATIONS).
 Next task: light cookies for spot lights (remaining half of GAP-13).
+
+## 2026-11-22 — Documentation drift lint (GAP-42)
+
+Built: `tools/lint/check_docs.py`, registered as CTest `victus_docs_lint` (label `tools`, needs Python 3). It fails when an `engine/<name>/` module is missing from the ARCHITECTURE.md module map, when an ADR number repeats in TECHNOLOGY_DECISIONS.md (except the historical ADR-0008/0037/0038 duplicates), or when an ADR from ADR-0149 on is not cited in CHANGELOG.md (ADR-0153 is listed as internal). The first run found ADR-0154 (`.vpak` v2) uncited; the CHANGELOG export entry now cites it.
+
+Verified: `python3 tools/lint/check_docs.py` passes on main; with an extra `engine/zzz/CMakeLists.txt` in a copy of the tree it exits 1 and names `zzz`.
+Not verified: spec current-state tables are still refreshed by hand; the lint does not read them.

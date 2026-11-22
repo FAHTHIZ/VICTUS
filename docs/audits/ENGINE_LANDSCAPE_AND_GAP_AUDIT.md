@@ -141,7 +141,7 @@ Evidence and fix directions are in [UNITY_UNREAL_2026_11.md](UNITY_UNREAL_2026_1
 | GAP-39 | **Order-dependent transparency** | Unreal 5.9 Preview AVBOIT | Blended batches far to near; alpha particles GPU-sorted | S3 | open | Weighted blended OIT as an opt-in on Medium/High, measured on GLES first |
 | GAP-40 | **Iteration times not measured** | Unity Fast Enter Play Mode default from 6.6, Fast Build Profile in 6.7 | Shared cooked cache measured (ADR-0180); no Studio-open, Play-entry or pipeline-compile numbers | S2 | open | Add the three numbers to PERFORMANCE_STRATEGY.md and track them per release |
 | GAP-41 | **No text shaping, right-to-left layout or plural rules** | Unity 6.7 text shaping with RTL, built-in Localization and Smart Strings | `.vstrings` tables with placeholders; Latin, Cyrillic and Greek fonts | S2 | open | HarfBuzz + a bidi library behind `gameui`; Bengali and Arabic test strings |
-| GAP-42 | **Specification documents drift behind the code** | Epic AI-audited 72 lighting pages against 5.9 source | Specs 140-450 commits behind main on 2026-11-22 | S3 | partly (manual refresh under way) | `tools/lint` check: ADRs in CHANGELOG, modules in the ARCHITECTURE map |
+| GAP-42 | **Specification documents drift behind the code** | Epic AI-audited 72 lighting pages against 5.9 source | Specs 140-450 commits behind main on 2026-11-22 | S3 | partly: manual refresh under way; `tools/lint/check_docs.py` (CTest `victus_docs_lint`) fails when an engine module is missing from the ARCHITECTURE map, an ADR number repeats, or an ADR from 0149 on is not cited in CHANGELOG | Spec current-state tables still refreshed by hand |
 
 ## 5. The showcase-critical path
 

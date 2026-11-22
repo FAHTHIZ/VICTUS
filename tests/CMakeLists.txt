@@ -393,6 +393,9 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME victus_release_tools COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/release_tests.py)
     set_tests_properties(victus_release_tools PROPERTIES LABELS "tools")
+    # Documentation drift (GAP-42): module map, ADR numbering, ADR citations in CHANGELOG.md.
+    add_test(NAME victus_docs_lint COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/lint/check_docs.py ${PROJECT_SOURCE_DIR})
+    set_tests_properties(victus_docs_lint PROPERTIES LABELS "tools")
 endif()
 
 # Native plugin SDK (ADR-0078): one C source built as several plugin libraries.
