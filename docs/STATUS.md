@@ -2790,3 +2790,25 @@ Found: the 3D template's `game.vpak` is 73.1 MB with `--target all` (two cooked 
 
 Checked: a `victus new --template 3d` segfault in `render::Tracer::direct` came from a binary compiled while sources were pulled mid-build (its symbol had the pre-ADR-0194 signature). A clean incremental rebuild at c5b6238 bakes the template in 1.6 s without error; no engine bug.
 Not verified: editor project open, Enter Play, script reload and shader edit times (still not instrumented); real GPUs.
+
+## 2026-11-22: Skeleton-only model decode and memory-mapped cooked files (60ad501)
+
+Built:
+- `assets::deserialize_model_skeleton` keeps nodes, skins, clips and morph names, and skips texture and mesh bytes without copying them.
+- `deserialize_model_geometry` keeps everything except textures. Collision meshes and validation use it.
+- `BinaryReader::skip_raw` and `skip_array`.
+- `fs::map_file` with `FileView`: mmap on POSIX, `MapViewOfFile` on Windows, falling back to `read_binary` for mounted pack entries and empty files.
+- `AssetDatabase::load_model_skeleton` and `load_model_geometry`. `animation_provider` uses the skeleton loader. `load_model` and `load_model_texture` decode straight from the mapping.
+
+Verified:
+- `victus_asset_tests` passes (59 cases). The new case checks that the skeleton and geometry decoders build the same animation set as the full decode and reject truncated input.
+- `victus_robustness_tests` "fuzz: cooked textures and models" passes. It has two new fuzz targets, and checks that both partial decoders accept every model the full decoder accepts.
+- `victus_core_tests`, `victus_export_tests`, `victus_animation_tests` and `victus_physics_tests` pass in Release.
+- An exported desktop game runs.
+- Before/after timings are in PERFORMANCE_STRATEGY.md "Startup and memory". The first-frame animation update dropped from 455–597 ms to 71–81 ms.
+
+Measured: the Android-profile 3D pack peaks at 760 MB resident under lavapipe, but the engine's heap is only about 100 MB of that (heaptrack). The rest is the software driver.
+
+Not verified:
+- The Windows mapping path, which is compiled only on CI.
+- Phone memory and GPU memory.

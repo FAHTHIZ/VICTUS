@@ -80,3 +80,24 @@ Release CLI built at c5b6238 (GCC, `VICTUS_WITH_GRAPHICS=ON`), 2 vCPU Intel Xeon
 | Export, `--target desktop` / `android` | 3.64 s, 42.8 MB / 2.01 s, 22.7 MB | not measured |
 
 The 3D pack is dominated by the two starter characters (ADR-0179): each 20 MB `.glb` cooks to about 178 MB with every texture variant, so `--target all` ships 356 MB of payload compressed to 73 MB. See KNOWN_LIMITATIONS.
+
+### Startup and memory (2026-11-22, commit 60ad501)
+
+Same machine. Each figure was measured in three runs, comparing the build before and after 60ad501.
+
+| Metric | Before (558ef34) | After (60ad501) |
+|---|---|---|
+| First frame `system.animation.update`, 3D template (`run --frames 2 --quality low --trace`) | 455–597 ms | 71–81 ms |
+| Wall time, `victus run --frames 2`, 3D template | 3.08–3.34 s | 2.48–2.80 s |
+| Peak resident set, same run | 835–843 MB | 836–844 MB |
+
+- The animation system used to decode each starter character's whole 178 MB cooked model (every texture variant) just to read its skeleton and clips. It now uses a skeleton-only decode over a memory-mapped file.
+- Most of the remaining 71–81 ms is the import up-to-date check, about 30 ms per model.
+
+Peak memory of the exported 3D template, run by the desktop player from the Android-profile pack (ASTC only) at `--quality low` under heaptrack 1.5:
+
+- Peak resident set: 760 MB. The 2D template reaches 208 MB.
+- Peak heap: 337 MB. Of that, 239 MB is lavapipe's own allocations (shader compilation), so the engine's heap at peak is about 100 MB.
+- Most of the rest of the resident set is lavapipe device memory, which a phone GPU would hold in its own allocation.
+- **This sandbox cannot say what a phone will use.** GPU memory has to be read on a device (GAP-02, GAP-03).
+
