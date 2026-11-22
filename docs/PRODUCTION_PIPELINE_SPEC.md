@@ -43,3 +43,19 @@ Define plugin lifecycle, versioned API, permissions, capability grants, isolatio
 
 ## Acceptance
 A clean machine can clone a reference project, validate/import/cook assets, build the runtime, run automated tests, produce a distributable package and inspect diagnostics using documented commands.
+
+## Current state (2026-11-22)
+
+Checked against `engine/assets`, `engine/player` (export, validate, migrate), `.github/workflows` and the ADRs. Limits are in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
+
+| Spec area | On main | Missing |
+|---|---|---|
+| Project and asset database | Stable UUIDs in `.meta` files (ADR-0008, scene format), versioned formats with per-component migrators and `victus migrate` (ADR-0100), reference-safe rename, move and delete (ADR-0175, ADR-0178), and durable writes with two verified generations (ADR-0082). Asset Store installs record licence and provenance and write CREDITS.md into exports (ADR-0174). | Licence and provenance fields for assets that are not installed from the store. |
+| Import and cooking | Background import queue with per-file results, cooperative cancellation and retry (ADR-0189), a cooked cache plus a machine-wide shared cache (ADR-0180), BC and ASTC variants (ADR-0047), per-platform texture profiles (ADR-0149), and meshoptimizer LODs (ADR-0049). | Cook reports on duplicates and unsupported features. The export report gives only counts and payload bytes. Audio has no per-platform variants. |
+| Build and package | CMake presets; `victus export` validates scenes and scripts, re-imports stale assets and writes a byte-reproducible `.vpak` v2 with zstd, BLAKE2b digests and optional Ed25519 signing (ADR-0154), plus notices and a manifest. Release CI packages Linux, Windows and macOS with separate symbols, SHA256SUMS and an SBOM. | Cross-platform export (exports are host-only), installers, OS code signing, store packaging and patching. |
+| Hot reload | Assets and shaders (ADR-0022), and Luau modules with a `reload()` hook on script instances. | Native plugin code reload. |
+| Testing and release | Unit, editor-workflow, sample-game, export, determinism, perceptual-reference and performance-budget suites in CTest. Crash reports and diagnostics bundles (ADR-0072). | Performance comparison on named physical hardware (CI is lavapipe). No release tag exists yet, so the release process has never run end to end. |
+| Collaboration and source control | Scenes, prefabs, materials and the project file are text JSON. | No VCS status, diff or merge tooling in the Studio, no binary-asset locking and no multi-user editing. |
+| Modding and plugins | Versioned native C ABI with manifests, dependency order and per-plugin failure isolation (ADR-0078). Editor plugins with undoable commands (ADR-0192). | No sandbox, permissions or capability grants, and no signing or trust model for plugins. Native plugins are trusted code. |
+
+Acceptance: CI covers a clean checkout through configure, build, tests and (in `release.yml`) packaging for three desktop platforms. "Clone a reference project and produce a distributable package" is exercised by the sample-game and export tests, not by a separate reference-project repository.
