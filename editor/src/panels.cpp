@@ -654,7 +654,8 @@ void Editor::draw_menu_bar() {
                     if (auto st = replay(c); !st.ok()) notify("cannot replay: " + st.error().message, true);
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Copy Captures Folder Path", nullptr, false, project_.has_value() && platform_ != nullptr))
+        if (ImGui::MenuItem("Copy Captures Folder Path", nullptr, false, project_.has_value() && platform_ != nullptr) &&
+            project_.has_value() && platform_ != nullptr)
             platform_->set_clipboard((project_->root() / ".victus" / "captures").string());
         ImGui::EndMenu();
     }
@@ -1249,6 +1250,7 @@ void Editor::draw_create_entity_items(Entity parent) {
          Primitive::DirectionalLight);
     item("Point Light", kit::Icon::Light, "A bulb that lights everything around it", Primitive::PointLight);
     item("Spot Light", kit::Icon::Light, "A cone of light, like a torch or stage light", Primitive::SpotLight);
+    item("Area Light", kit::Icon::Light, "A glowing rectangle, like a window, screen or softbox", Primitive::AreaLight);
     item("Camera", kit::Icon::Camera, "What the player sees when the game runs", Primitive::Camera);
     if (project_) {
         ImGui::SeparatorText("Characters");
@@ -1452,7 +1454,7 @@ bool Editor::inspect_components(Entity e) {
     }
     if (auto* l = w.get<LightComponent>(e); l && removable("Light", remove_light)) {
         int type = static_cast<int>(l->type);
-        if (ImGui::Combo("Type", &type, "Directional\0Point\0Spot\0")) {
+        if (ImGui::Combo("Type", &type, "Directional\0Point\0Spot\0Area\0")) {
             l->type = static_cast<LightComponent::Type>(type);
             changed = true;
         }
@@ -1463,7 +1465,23 @@ bool Editor::inspect_components(Entity e) {
             changed |= ImGui::DragFloat("Inner Angle", &l->inner_angle_degrees, 0.25f, 0.0f, l->outer_angle_degrees, "%.1f deg");
             changed |= ImGui::DragFloat("Outer Angle", &l->outer_angle_degrees, 0.25f, 0.1f, 89.5f, "%.1f deg");
         }
+        if (l->type == LightComponent::Type::Point) {
+            changed |= ImGui::DragFloat("Radius", &l->radius, 0.01f, 0.0f, 100.0f, "%.2f m");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Size of the bulb: larger gives softer, wider highlights");
+        }
+        if (l->type == LightComponent::Type::Area) {
+            changed |= ImGui::DragFloat("Width", &l->width, 0.01f, 0.01f, 1000.0f, "%.2f m");
+            changed |= ImGui::DragFloat("Height", &l->height, 0.01f, 0.01f, 1000.0f, "%.2f m");
+        }
         changed |= ImGui::Checkbox("Shadows", &l->shadows);
+        if (l->type == LightComponent::Type::Area && !l->baked && ImGui::IsItemHovered())
+            ImGui::SetTooltip("Area lights cast shadows only when Baked");
+        if (l->type != LightComponent::Type::Directional) {
+            changed |= ImGui::Checkbox("Baked", &l->baked);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Bake Lighting stores this light (with soft shadows) in the lightmap and light probes;\n"
+                                  "it is then not lit in real time while that lightmap is loaded");
+        }
     }
     if (auto* m = w.get<MeshRendererComponent>(e); m && removable("Mesh Renderer", remove_mesh)) {
         if (m->mesh_asset.is_nil()) {

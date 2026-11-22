@@ -167,6 +167,9 @@ struct PointLight {
     math::Color color{1, 1, 1, 1};
     float intensity{10.0f};
     float range{10.0f};
+    // Radius of the emitting sphere in metres (0 = a point). Larger bulbs give wider, softer
+    // highlights with the same total energy (representative point, Karis 2013).
+    float radius{0.0f};
     bool cast_shadows{false}; // six atlas tiles (cube faces) when within RenderSettings' budget
 };
 
@@ -182,6 +185,26 @@ struct SpotLight {
     float outer_angle{0.5f};
     bool cast_shadows{false}; // one atlas tile; cones wider than 85 degrees stay unshadowed
 };
+
+// One-sided rectangular area light (ADR-0194), like a window, screen or softbox. It emits along
+// `direction` from a `width` x `height` rectangle centred on `position` whose width runs along
+// `right`. Diffuse light is the exact form factor of the rectangle with horizon clipping
+// approximated by a sphere; specular uses the representative point with energy normalisation.
+// `intensity` matches a point light seen straight on, so swapping one for the other keeps the
+// brightness; `range` is measured from the rectangle. Not shadowed in real time (bake it).
+struct AreaLight {
+    math::Vec3 position;
+    math::Vec3 direction{0, -1, 0}; // direction light travels (the lit side)
+    math::Vec3 right{1, 0, 0};      // width axis, made perpendicular to `direction`
+    math::Color color{1, 1, 1, 1};
+    float intensity{10.0f};
+    float range{10.0f};
+    float width{1.0f}, height{1.0f};
+};
+// Packs an area light's frame into GpuLight form: an angle around `direction` relative to the
+// branchless orthonormal basis of Duff et al. 2017 (the shader rebuilds `right` from it).
+[[nodiscard]] float area_light_basis_angle(math::Vec3 direction, math::Vec3 right) noexcept;
+[[nodiscard]] math::Vec3 area_light_right(math::Vec3 direction, float angle) noexcept;
 
 // Particles are camera-facing billboards drawn after opaque geometry into the HDR target, as
 // soft particles (they fade where they meet scene depth). Alpha batches are drawn back to front
@@ -721,6 +744,7 @@ struct SceneStats {
     std::uint32_t anisotropy{1}; // anisotropic filtering level applied to material textures this frame
     std::uint32_t point_lights{0};      // local lights used (point + spot)
     std::uint32_t spot_lights{0};
+    std::uint32_t area_lights{0};
     std::uint32_t light_indices{0};     // clustered light index list length
     std::uint32_t max_cluster_lights{0}; // most lights in one cluster
     std::uint32_t shadow_cascades{0}, shadow_draws{0}, prepass_draws{0};
@@ -840,6 +864,7 @@ public:
 
     void begin(const Camera3D& camera, const DirectionalLight& sun, const Environment& env);
     void add_point_light(const PointLight& light);
+    void add_area_light(const AreaLight& light);
     void add_spot_light(const SpotLight& light);
     // `motion_id` (non-zero, unique per object and stable across frames, e.g. an entity id) lets
     // the renderer compare the draw with the previous frame and write object motion vectors for
@@ -1240,6 +1265,7 @@ private:
     Environment env_;
     std::vector<PointLight> points_;
     std::vector<SpotLight> spots_;
+    std::vector<AreaLight> areas_;
     rhi::BufferHandle light_buffer_, cluster_buffer_;
     std::uint32_t light_capacity_{0}, cluster_capacity_{0}; // bytes
     std::vector<Draw> draws_;

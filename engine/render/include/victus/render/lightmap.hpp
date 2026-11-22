@@ -78,7 +78,7 @@ struct LightmapInstance {
 };
 
 struct LightmapLight {
-    enum class Type : std::uint8_t { Directional, Point, Spot };
+    enum class Type : std::uint8_t { Directional, Point, Spot, Area };
     Type type{Type::Directional};
     math::Vec3 position;
     math::Vec3 direction{0, -1, 0}; // direction the light travels (directional and spot)
@@ -86,7 +86,15 @@ struct LightmapLight {
     float range{10.0f};
     float cos_inner{0.94f};
     float cos_outer{0.88f};
+    // Area (ADR-0194): a one-sided width x height rectangle at `position` emitting along
+    // `direction`, width along `right`. Baked as a grid of shadowed sample points (4 to 8 per side, one per 12.5 cm)
+    // with Lambert emission, so it casts soft shadows; same brightness as the real-time light.
+    math::Vec3 right{1, 0, 0};
+    float width{1.0f}, height{1.0f};
     bool cast_shadows{true};
+    // Baked light (Unity's Baked mode): its direct light is baked into receivers and probes even
+    // without `include_direct`; the renderer skips it while the lightmap is loaded.
+    bool baked{false};
 };
 
 // Sky radiance for rays that leave the scene. Defaults to the renderer's analytic gradient

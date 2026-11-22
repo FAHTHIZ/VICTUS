@@ -2760,3 +2760,17 @@ Verified: `build/bin/victus_asset_tests -tc="import queue*"` 3/3 cases, 112 asse
 - Docs: CHANGELOG entries for ADR-0180 and ADR-0187 to ADR-0193 (11f4fac); [Unity/Unreal November 2026 audit](audits/UNITY_UNREAL_2026_11.md) and gap register GAP-38 to GAP-42 (c5b1802); implementation-status table in RENDERING_SPEC.md (da2ce45); ARCHITECTURE module map now lists `traffic` and `library`.
 - Found, not fixed: ADR numbers 0008, 0037 and 0038 are each used by two different decisions in TECHNOLOGY_DECISIONS.md.
 - CI: new `headless` job (Ubuntu, only a compiler, Ninja and ccache installed) configures with `-DVICTUS_WITH_GRAPHICS=OFF -DVICTUS_WARNINGS_AS_ERRORS=ON`, builds and runs ctest, so the headless core cannot break again unnoticed. Locally the same build printed no compiler warnings and does not fetch or build SDL. First CI result pending.
+
+## 2026-11-22 — Rectangle area lights, bulb radius and baked lights (ADR-0194)
+
+Built: `AreaLight` in `SceneRenderer` (one-sided rectangle; exact diffuse irradiance from the vector form factor, representative-point specular with Karis energy normalisation), `PointLight::radius` (sphere lights), clustered culling bounds for rectangles, volumetric fog injection for rectangles; lightmap/probe baker area lights (shadowed 4-8 per side grid, soft shadows) and `LightmapLight::baked`; `LightComponent` type `area` with `width`, `height`, `radius` and `baked` (scene format, validation, sequencer properties); runtime extraction (entity scale stretches the rectangle; baked lights skipped only while the scene lightmap is loaded); Studio Add > Area Light, command palette entry, Inspector fields and a viewport outline. Also guards a clang-analyzer null-pointer report in the Captures menu of `editor/src/panels.cpp`.
+
+Verified:
+- `build/bin/victus_render_tests -tc="lightmap area*"`: 2 cases pass; baked irradiance within 0.3% of the analytic rectangle value; penumbra ratios 0.23 / 0.70 / 1.0 vs point 0 / 1.
+- `build/bin/victus_gpu_tests -tc="*area light*,*bulb radius*"`: 3 cases pass (strip 414 vs 114, swapped when rotated; 0.2 m panel 606 vs point 597; highlight sizes 31 / 208 / 215 px; scene-authored light lit at 729). `build/test_output/area_light_*.png` checked by eye.
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen build/bin/victus_editor_tests`: 79/79 cases, 6276 assertions.
+- `python3 tools/lint/run_clang_tidy.py -p build` on the changed engine and editor sources: 0 diagnostics.
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build -j2`: 42/42 pass (729 s).
+
+Not verified: real GPUs (lavapipe only). No real-time area shadows (documented in KNOWN_LIMITATIONS).
+Next task: light cookies for spot lights (remaining half of GAP-13).

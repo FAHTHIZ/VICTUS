@@ -412,40 +412,80 @@ public:
 
     // Sum of light radiance * N.L arriving at p (shadowed), the shader's direct irradiance.
     // `dir_acc` (optional) gains each light's direction weighted by its luminance / pi.
-    Vec3 direct(Vec3 p, Vec3 n, std::uint64_t& rays, Vec3* dir_acc = nullptr) const {
+    // `baked_only`: just the lights marked `baked` (their direct light belongs in the lightmap).
+    Vec3 direct(Vec3 p, Vec3 n, std::uint64_t& rays, Vec3* dir_acc = nullptr, bool baked_only = false) const {
         Vec3 e{0, 0, 0};
         const Vec3 origin = p + n * eps_;
-        for (const LightmapLight& l : scene_.lights) {
-            Vec3 ldir;
-            float dist = std::numeric_limits<float>::max();
-            float atten = 1.0f;
-            if (l.type == LightmapLight::Type::Directional) {
-                ldir = -math::normalize(l.direction);
-            } else {
-                const Vec3 to = l.position - p;
-                dist = math::length(to);
-                if (!(dist > 1e-5f) || dist >= l.range) continue;
-                ldir = to / dist;
-                const float r = dist / std::max(l.range, 1e-4f);
-                const float falloff = math::saturate(1.0f - r * r * r * r);
-                atten = falloff * falloff / (dist * dist + 1.0f);
-                if (l.type == LightmapLight::Type::Spot) {
-                    const float cd = math::dot(-ldir, math::normalize(l.direction));
-                    const float t = math::saturate((cd - l.cos_outer) / std::max(l.cos_inner - l.cos_outer, 1e-4f));
-                    atten *= t * t;
+        for (const LightmapLight& l : scene_.lights)
+            if (!baked_only || l.baked) for_each_light_sample(l, p, [&](Vec3 ldir, float dist, float atten, Vec3 radiance) {
+                const float ndl = math::dot(n, ldir);
+                if (ndl <= 0.0f || atten <= 0.0f) return;
+                if (l.cast_shadows) {
+                    ++rays;
+                    const float tmax = l.type == LightmapLight::Type::Directional ? 1e30f : std::max(dist - 2.0f * eps_, 0.0f);
+                    if (bvh_.occluded(make_ray(origin, ldir), tmax)) return;
                 }
-            }
-            const float ndl = math::dot(n, ldir);
-            if (ndl <= 0.0f || atten <= 0.0f) continue;
-            if (l.cast_shadows) {
-                ++rays;
-                const float tmax = l.type == LightmapLight::Type::Directional ? 1e30f : std::max(dist - 2.0f * eps_, 0.0f);
-                if (bvh_.occluded(make_ray(origin, ldir), tmax)) continue;
-            }
-            e += l.radiance * (ndl * atten);
-            if (dir_acc) *dir_acc += ldir * (luminance(l.radiance) * ndl * atten * (1.0f / math::kPi));
-        }
+                e += radiance * (ndl * atten);
+                if (dir_acc) *dir_acc += ldir * (luminance(radiance) * ndl * atten * (1.0f / math::kPi));
+            });
         return e;
+    }
+
+    // Calls fn(direction to the light, distance, attenuation, radiance) for each sample of `l`
+    // as seen from p: one for punctual lights, a grid of cell centres for area lights (each
+    // with its share of the radiance and a Lambert emission factor).
+    template <typename F> static void for_each_light_sample(const LightmapLight& l, Vec3 p, F&& fn) {
+        if (l.type == LightmapLight::Type::Directional) {
+            if (!(math::length(l.direction) > 1e-6f)) return;
+            fn(-math::normalize(l.direction), std::numeric_limits<float>::max(), 1.0f, l.radiance);
+            return;
+        }
+        if (l.type == LightmapLight::Type::Area) {
+            const Vec3 nl = math::length(l.direction) > 1e-6f ? math::normalize(l.direction) : Vec3{0, -1, 0};
+            Vec3 ex = l.right - nl * math::dot(l.right, nl);
+            ex = math::length(ex) > 1e-6f ? math::normalize(ex) : math::normalize(math::cross(nl, std::abs(nl.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0}));
+            const Vec3 ey = math::cross(nl, ex);
+            const float w = std::max(l.width, 0.01f), h = std::max(l.height, 0.01f);
+            if (math::dot(p - l.position, nl) <= 0.0f) return; // behind the emitting face
+            // Range is measured from the nearest point of the rectangle, as in the shader.
+            const Vec3 d = p - l.position;
+            const float qx = std::clamp(math::dot(d, ex), -w * 0.5f, w * 0.5f), qy = std::clamp(math::dot(d, ey), -h * 0.5f, h * 0.5f);
+            const float near = math::length(l.position + ex * qx + ey * qy - p);
+            if (near >= l.range) return;
+            const float rr = near / std::max(l.range, 1e-4f);
+            const float falloff = math::saturate(1.0f - rr * rr * rr * rr);
+            const int nx = std::clamp(static_cast<int>(std::ceil(w / 0.125f)), 4, 8);
+            const int ny = std::clamp(static_cast<int>(std::ceil(h / 0.125f)), 4, 8);
+            const float cell = (w / static_cast<float>(nx)) * (h / static_cast<float>(ny));
+            const Vec3 share = l.radiance * (1.0f / static_cast<float>(nx * ny));
+            for (int j = 0; j < ny; ++j)
+                for (int i = 0; i < nx; ++i) {
+                    const Vec3 sp = l.position + ex * ((static_cast<float>(i) + 0.5f) / static_cast<float>(nx) - 0.5f) * w +
+                                    ey * ((static_cast<float>(j) + 0.5f) / static_cast<float>(ny) - 0.5f) * h;
+                    const Vec3 to = sp - p;
+                    const float dist = math::length(to);
+                    if (!(dist > 1e-5f)) continue;
+                    const Vec3 ldir = to / dist;
+                    const float emit = math::dot(-ldir, nl);
+                    if (emit <= 0.0f) continue;
+                    // A cell closer than its own size stops acting like a point: clamp its 1/d^2.
+                    fn(ldir, dist, falloff * falloff * emit / std::max(dist * dist, cell), share);
+                }
+            return;
+        }
+        const Vec3 to = l.position - p;
+        const float dist = math::length(to);
+        if (!(dist > 1e-5f) || dist >= l.range) return;
+        const Vec3 ldir = to / dist;
+        const float r = dist / std::max(l.range, 1e-4f);
+        const float falloff = math::saturate(1.0f - r * r * r * r);
+        float atten = falloff * falloff / (dist * dist + 1.0f);
+        if (l.type == LightmapLight::Type::Spot) {
+            const float cd = math::dot(-ldir, math::normalize(l.direction));
+            const float t = math::saturate((cd - l.cos_outer) / std::max(l.cos_inner - l.cos_outer, 1e-4f));
+            atten *= t * t;
+        }
+        fn(ldir, dist, atten, l.radiance);
     }
 
     struct Surface {
@@ -519,36 +559,17 @@ public:
 
     // Each bake light's unoccluded radiance at a free point (no surface normal), with the
     // direction it arrives from: what a light probe sees of the lights directly.
-    template <typename F> void lights_at(Vec3 p, std::uint64_t& rays, F&& fn) const {
-        for (const LightmapLight& l : scene_.lights) {
-            Vec3 ldir;
-            float dist = std::numeric_limits<float>::max();
-            float atten = 1.0f;
-            if (l.type == LightmapLight::Type::Directional) {
-                if (!(math::length(l.direction) > 1e-6f)) continue;
-                ldir = -math::normalize(l.direction);
-            } else {
-                const Vec3 to = l.position - p;
-                dist = math::length(to);
-                if (!(dist > 1e-5f) || dist >= l.range) continue;
-                ldir = to / dist;
-                const float r = dist / std::max(l.range, 1e-4f);
-                const float falloff = math::saturate(1.0f - r * r * r * r);
-                atten = falloff * falloff / (dist * dist + 1.0f);
-                if (l.type == LightmapLight::Type::Spot) {
-                    const float cd = math::dot(-ldir, math::normalize(l.direction));
-                    const float t = math::saturate((cd - l.cos_outer) / std::max(l.cos_inner - l.cos_outer, 1e-4f));
-                    atten *= t * t;
+    template <typename F> void lights_at(Vec3 p, std::uint64_t& rays, F&& fn, bool baked_only = false) const {
+        for (const LightmapLight& l : scene_.lights)
+            if (!baked_only || l.baked) for_each_light_sample(l, p, [&](Vec3 ldir, float dist, float atten, Vec3 radiance) {
+                if (atten <= 0.0f) return;
+                if (l.cast_shadows) {
+                    ++rays;
+                    const float tmax = l.type == LightmapLight::Type::Directional ? 1e30f : std::max(dist - 2.0f * eps_, 0.0f);
+                    if (bvh_.occluded(make_ray(p, ldir), tmax)) return;
                 }
-            }
-            if (atten <= 0.0f) continue;
-            if (l.cast_shadows) {
-                ++rays;
-                const float tmax = l.type == LightmapLight::Type::Directional ? 1e30f : std::max(dist - 2.0f * eps_, 0.0f);
-                if (bvh_.occluded(make_ray(p, ldir), tmax)) continue;
-            }
-            fn(ldir, l.radiance * atten);
-        }
+                fn(ldir, radiance * atten);
+            });
     }
 
     // Irradiance / pi arriving at (p, n) from `samples` cosine-distributed paths. Returns the
@@ -1125,11 +1146,13 @@ std::array<Vec3, 9> bake_probe(const Tracer& tracer, Vec3 p, std::uint32_t sampl
     }
     const float w = 4.0f * math::kPi / static_cast<float>(samples);
     for (auto& c : L) c = c * w;
-    if (include_direct)
-        tracer.lights_at(p, rays, [&](Vec3 ldir, Vec3 radiance) {
+    tracer.lights_at(
+        p, rays,
+        [&](Vec3 ldir, Vec3 radiance) {
             const auto b = sh_basis(ldir);
             for (std::size_t k = 0; k < 9; ++k) L[k] += radiance * b[k];
-        });
+        },
+        !include_direct);
     for (std::size_t k = 0; k < 9; ++k) L[k] = L[k] * kShBand[k];
     inside = static_cast<float>(backfaces) > 0.25f * static_cast<float>(samples);
     return L;
@@ -1310,7 +1333,7 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
                 float backface = 0;
                 Vec3 dsum{0, 0, 0};
                 Vec3 e = tracer.gather(t.p, t.n, t.geo_n, i, backface, noise[i], rays, dsum);
-                if (settings.include_direct) e += tracer.direct(t.p, t.n, rays, &dsum) * (1.0f / math::kPi);
+                e += tracer.direct(t.p, t.n, rays, &dsum, !settings.include_direct) * (1.0f / math::kPi);
                 if (!vis.empty()) vis[i] = sun_visibility(t, i, rays);
                 if (!dirs.empty()) {
                     const float le = luminance(e);

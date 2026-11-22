@@ -388,6 +388,115 @@ vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float metallic, fl
     return (kd * albedo / PI + spec) * radiance * NdotL;
 }
 
+// ---- Area lights (ADR-0194) ----
+// GGX specular lobe times N.L for light from L, with the distribution scaled by `norm`.
+vec3 specular_lobe(vec3 N, vec3 V, vec3 L, vec3 f0, float roughness, float norm) {
+    float NdotL = max(dot(N, L), 0.0);
+    if (NdotL <= 0.0) return vec3(0.0);
+    vec3 H = normalize(V + L);
+    float NdotV = max(dot(N, V), 1e-4);
+    vec3 F = fresnel_schlick(max(dot(H, V), 0.0), f0);
+    float D = distribution_ggx(max(dot(N, H), 0.0), roughness * roughness) * norm;
+    float G = geometry_smith(NdotV, NdotL, roughness);
+    return D * G * F / (4.0 * NdotV * NdotL + 1e-4) * NdotL;
+}
+// Lambert diffuse weight (without N.L) with the Fresnel and metallic split used by brdf().
+vec3 diffuse_lobe(vec3 V, vec3 L, vec3 albedo, float metallic) {
+    vec3 f0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F = fresnel_schlick(max(dot(normalize(V + L), V), 0.0), f0);
+    return (1.0 - F) * (1.0 - metallic) * albedo / PI;
+}
+// Point light with a spherical bulb of radius r: diffuse as a point (exact above the horizon),
+// specular from the point of the sphere nearest the reflection ray with energy normalisation
+// (Karis 2013, eq. 10, 11 and 14).
+vec3 sphere_light(vec3 N, vec3 V, vec3 to_light, float r, vec3 radiance, vec3 albedo, float metallic, float roughness) {
+    float dist = length(to_light);
+    vec3 Ld = to_light / max(dist, 1e-4);
+    vec3 R = reflect(-V, N);
+    vec3 center_to_ray = dot(to_light, R) * R - to_light;
+    vec3 closest = to_light + center_to_ray * clamp(r / max(length(center_to_ray), 1e-5), 0.0, 1.0);
+    vec3 Ls = normalize(closest);
+    float a = max(roughness * roughness, 1e-3);
+    float a2 = clamp(a + r / (3.0 * max(dist, 1e-4)), 0.0, 1.0);
+    float norm = (a / a2) * (a / a2);
+    vec3 f0 = mix(vec3(0.04), albedo, metallic);
+    return (diffuse_lobe(V, Ld, albedo, metallic) * max(dot(N, Ld), 0.0) + specular_lobe(N, V, Ls, f0, roughness, norm)) * radiance;
+}
+// Same branchless basis as scene_renderer.cpp (Duff et al. 2017), so the CPU can send the width
+// axis as one angle.
+vec3 area_right(vec3 n, float angle) {
+    float sgn = n.z >= 0.0 ? 1.0 : -1.0;
+    float a = -1.0 / (sgn + n.z);
+    float b = n.x * n.y * a;
+    vec3 t = vec3(1.0 + sgn * n.x * n.x * a, sgn * b, -sgn * n.x);
+    vec3 bt = vec3(b, sgn + n.y * n.y * a, -n.y);
+    return t * cos(angle) + bt * sin(angle);
+}
+// Edge term of a polygon's vector form factor: acos(dot(a, b)) * normalize(cross(a, b)) / (2 pi),
+// with Heitz et al.'s rational fit of theta / (2 pi sin(theta)) (LTC reference code, 2017).
+vec3 form_factor_edge(vec3 a, vec3 b) {
+    float x = dot(a, b);
+    float y = abs(x);
+    float u = 0.8543985 + (0.4965155 + 0.0145206 * y) * y;
+    float v = 3.4175940 + (4.1616724 + y) * y;
+    float t = u / v;
+    float theta_sin = x > 0.0 ? t : 0.5 * inversesqrt(max(1.0 - x * x, 1e-7)) - t;
+    return cross(a, b) * theta_sin;
+}
+// Clipping of a light partly below the horizon, approximated by a sphere with the same form
+// factor (the "horizon cos wrap" used by UE4 rect lights); exact when fully above.
+float horizon_wrap(float cos_n, float form_factor) {
+    float sin_a = sqrt(clamp(form_factor, 0.0, 1.0));
+    if (cos_n < sin_a) {
+        cos_n = max(cos_n, -sin_a);
+        cos_n = (sin_a + cos_n) * (sin_a + cos_n) / (4.0 * max(sin_a, 1e-4));
+    }
+    return cos_n;
+}
+// One-sided rectangle light (light_clusters.hpp layout). Diffuse: exact irradiance from the
+// rectangle's vector form factor; specular: representative point where the reflection ray
+// meets the rectangle (clamped to it), energy-normalised along each axis.
+vec3 rect_light(LocalLight l, vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float roughness) {
+    vec3 c = l.position_range.xyz;
+    vec3 nl = normalize(l.direction_cos_outer.xyz);
+    vec3 d = P - c;
+    if (dot(d, nl) <= 1e-4) return vec3(0.0); // behind the emitting face
+    vec3 ex = area_right(nl, l.direction_cos_outer.w);
+    vec3 ey = cross(nl, ex);
+    float hw = l.spot.x, hh = l.spot.w;
+    vec2 q = clamp(vec2(dot(d, ex), dot(d, ey)), -vec2(hw, hh), vec2(hw, hh));
+    float dist = length(c + ex * q.x + ey * q.y - P);
+    float falloff = clamp(1.0 - pow(dist / l.position_range.w, 4.0), 0.0, 1.0);
+    falloff *= falloff;
+    if (falloff <= 0.0) return vec3(0.0);
+    vec3 v0 = normalize(c - ex * hw - ey * hh - P);
+    vec3 v1 = normalize(c + ex * hw - ey * hh - P);
+    vec3 v2 = normalize(c + ex * hw + ey * hh - P);
+    vec3 v3 = normalize(c - ex * hw + ey * hh - P);
+    // Summed edge terms = vector form factor; times pi = integral of cos over the rectangle.
+    vec3 F = PI * (form_factor_edge(v0, v1) + form_factor_edge(v1, v2) + form_factor_edge(v2, v3) + form_factor_edge(v3, v0));
+    if (dot(F, c - P) < 0.0) F = -F; // winding seen from P
+    float len = length(F); // irradiance on a surface facing the light, per unit radiance
+    if (len <= 1e-7) return vec3(0.0);
+    float E = len * horizon_wrap(dot(F, N) / len, len / PI);
+    vec3 radiance = l.color_intensity.rgb * (l.color_intensity.w / (4.0 * hw * hh)) * falloff;
+    vec3 Lc = normalize(c - P);
+    vec3 color = diffuse_lobe(V, dot(N, Lc) > 0.0 ? Lc : N, albedo, metallic) * (E * radiance);
+    // Specular representative point.
+    vec3 R = reflect(-V, N);
+    float denom = dot(R, nl);
+    vec3 hit = denom < -1e-4 ? P + R * (dot(c - P, nl) / denom) : P + R * max(dot(c - P, R), 0.0);
+    vec2 h = clamp(vec2(dot(hit - c, ex), dot(hit - c, ey)), -vec2(hw, hh), vec2(hw, hh));
+    vec3 to_p = c + ex * h.x + ey * h.y - P;
+    float ds = max(length(to_p), 1e-4);
+    float a = max(roughness * roughness, 1e-3);
+    float ax = clamp(a + hw / (3.0 * ds), 0.0, 1.0), ay = clamp(a + hh / (3.0 * ds), 0.0, 1.0);
+    float norm = (a / ax) * (a / ay);
+    vec3 f0 = mix(vec3(0.04), albedo, metallic);
+    color += specular_lobe(N, V, to_p / ds, f0, roughness, norm) * (len * radiance);
+    return color;
+}
+
 float interleaved_gradient_noise(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 
 float sample_cascade(int c, vec3 N, vec3 L) {
@@ -686,6 +795,10 @@ void main() {
         uint first = CLUSTER(2u * cluster), count = min(CLUSTER(2u * cluster + 1u), uint(lighting.cluster_grid.w));
         for (uint i = 0u; i < count; ++i) {
             LocalLight l = LOCAL_LIGHT(CLUSTER(first + i));
+            if (l.spot.y > 1.5) {
+                color += rect_light(l, v_world_pos, N, V, albedo, metallic, roughness);
+                continue;
+            }
             vec3 to_light = l.position_range.xyz - v_world_pos;
             float dist = length(to_light);
             float range = l.position_range.w;
@@ -701,7 +814,8 @@ void main() {
             atten *= local_shadow(l, Ld, dist, N);
             if (atten <= 0.0) continue;
             vec3 radiance = l.color_intensity.rgb * l.color_intensity.w * atten;
-            color += brdf(N, V, Ld, radiance, albedo, metallic, roughness);
+            if (l.spot.y < 0.5 && l.spot.x > 0.0) color += sphere_light(N, V, to_light, l.spot.x, radiance, albedo, metallic, roughness);
+            else color += brdf(N, V, Ld, radiance, albedo, metallic, roughness);
         }
     }
 

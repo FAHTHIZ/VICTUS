@@ -223,6 +223,8 @@ Result<PreparedLightmapBake> prepare_scene_lightmap(scene::Scene& scene, assets:
         render::LightmapLight light;
         light.radiance = rgb(l.color) * finite_nonneg(l.intensity, 0.0f);
         light.cast_shadows = l.shadows;
+        // Baked lights: their direct light and shadows go into the bake (area lights have no real-time shadows).
+        light.baked = l.baked && l.type != scene::LightComponent::Type::Directional;
         light.range = finite_nonneg(l.range, 10.0f);
         light.position = wt.matrix.transform_point({});
         light.direction = math::normalize(wt.matrix.transform_vector({0, 0, -1}));
@@ -236,6 +238,12 @@ Result<PreparedLightmapBake> prepare_scene_lightmap(scene::Scene& scene, assets:
             const float inner = std::isfinite(l.inner_angle_degrees) ? std::clamp(l.inner_angle_degrees, 0.0f, outer) : outer;
             light.cos_outer = std::cos(math::radians(outer));
             light.cos_inner = std::cos(math::radians(inner));
+        } else if (l.type == scene::LightComponent::Type::Area) {
+            light.type = render::LightmapLight::Type::Area;
+            const math::Vec3 x = wt.matrix.transform_vector({1, 0, 0}), y = wt.matrix.transform_vector({0, 1, 0});
+            light.right = math::length(x) > 1e-6f ? math::normalize(x) : math::Vec3{1, 0, 0};
+            light.width = finite_nonneg(l.width, 1.0f) * math::length(x);
+            light.height = finite_nonneg(l.height, 1.0f) * math::length(y);
         } else {
             light.type = render::LightmapLight::Type::Point;
         }

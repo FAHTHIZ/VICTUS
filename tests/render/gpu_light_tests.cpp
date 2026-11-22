@@ -5,6 +5,7 @@
 #include "victus/assets/database.hpp"
 #include "victus/runtime/scene_rendering.hpp"
 
+#include <algorithm>
 #include <filesystem>
 
 using namespace victus;
@@ -256,4 +257,194 @@ TEST_CASE("gpu: shadow-only draws cast a shadow but are not drawn") {
     CHECK(lum(shade) + 120 < lum(sunny));                        // ...and the floor under it is still in shadow
     ctx.destroy(*plane);
     ctx.destroy(*cube);
+}
+
+namespace {
+Material matte_floor() {
+    Material m;
+    m.base_color = {0.8f, 0.8f, 0.8f, 1};
+    m.roughness = 0.9f;
+    return m;
+}
+// Pixels brighter than half of the image's own peak: the size of a highlight, independent of
+// how bright it is (a larger source of the same intensity has a dimmer, larger reflection).
+int highlight_pixels(const std::vector<std::uint8_t>& img) {
+    int peak = 0;
+    for (std::uint32_t y = 0; y < H; ++y)
+        for (std::uint32_t x = 0; x < W; ++x) peak = std::max(peak, lum(pixel(img, W, x, y)));
+    const int threshold = peak / 2;
+    int n = 0;
+    for (std::uint32_t y = 0; y < H; ++y)
+        for (std::uint32_t x = 0; x < W; ++x) n += lum(pixel(img, W, x, y)) > threshold ? 1 : 0;
+    return n;
+}
+} // namespace
+
+TEST_CASE("gpu: area lights are one-sided, shaped by their rectangle and match a point light from afar (ADR-0194)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+    auto plane = ctx.create_mesh(make_plane({20, 20}), "floor");
+    REQUIRE(plane.ok());
+    const Camera3D cam = Camera3D::look_at({0, 10, 6}, {0, 0, 0}, {0, 1, 0});
+    const auto render_with = [&](const auto& add) {
+        (*sr)->begin(cam, no_sun(), dark_env());
+        (*sr)->submit(*plane, matte_floor(), math::Mat4::identity());
+        add(**sr);
+        return shoot(**sr);
+    };
+    // A long, thin strip 1 m above the floor: it spreads light along its width axis.
+    AreaLight strip;
+    strip.position = {0, 1, 0};
+    strip.direction = {0, -1, 0};
+    strip.right = {1, 0, 0};
+    strip.width = 4.0f;
+    strip.height = 0.3f;
+    strip.intensity = 3.0f;
+    strip.range = 12.0f;
+    const auto along_x = render_with([&](SceneRenderer& r) { r.add_area_light(strip); });
+    CHECK((*sr)->stats().area_lights == 1);
+    CHECK((*sr)->stats().spot_lights == 0);
+    test::save_output("area_light_strip", W, H, along_x);
+    const auto [ex, ey] = project(cam, {1.8f, 0, 0});
+    const auto [ez, ezy] = project(cam, {0, 0, 1.8f});
+    const int x_end = lum(pixel(along_x, W, ex, ey)), z_end = lum(pixel(along_x, W, ez, ezy));
+    MESSAGE("strip along x: x end " << x_end << " z end " << z_end);
+    CHECK(x_end > 2 * z_end);
+    // Turning its width to Z swaps them (the width axis survives the GPU packing).
+    strip.right = {0, 0, 1};
+    const auto along_z = render_with([&](SceneRenderer& r) { r.add_area_light(strip); });
+    const int x_end2 = lum(pixel(along_z, W, ex, ey)), z_end2 = lum(pixel(along_z, W, ez, ezy));
+    MESSAGE("strip along z: x end " << x_end2 << " z end " << z_end2);
+    CHECK(z_end2 > 2 * x_end2);
+    // One-sided: facing up, the floor stays dark.
+    strip.direction = {0, 1, 0};
+    const auto up = render_with([&](SceneRenderer& r) { r.add_area_light(strip); });
+    CHECK(lum(pixel(up, W, W / 2, H / 2)) < 6);
+    // Far away a small panel is as bright as a point light of the same intensity.
+    AreaLight small;
+    small.position = {0, 4, 0};
+    small.direction = {0, -1, 0};
+    small.width = small.height = 0.2f;
+    small.intensity = 30.0f;
+    small.range = 30.0f;
+    PointLight point;
+    point.position = small.position;
+    point.intensity = small.intensity;
+    point.range = small.range;
+    const auto [cx, cy] = project(cam, {0, 0, 0});
+    const int a = lum(pixel(render_with([&](SceneRenderer& r) { r.add_area_light(small); }), W, cx, cy));
+    const int p = lum(pixel(render_with([&](SceneRenderer& r) { r.add_point_light(point); }), W, cx, cy));
+    MESSAGE("small panel " << a << " point " << p);
+    CHECK(a > 40);
+    CHECK(static_cast<float>(a) > 0.85f * static_cast<float>(p));
+    CHECK(static_cast<float>(a) < 1.15f * static_cast<float>(p));
+    ctx.destroy(*plane);
+}
+
+TEST_CASE("gpu: bulb radius and area lights widen glossy highlights") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+    auto plane = ctx.create_mesh(make_plane({20, 20}), "floor");
+    REQUIRE(plane.ok());
+    const Camera3D cam = Camera3D::look_at({0, 2, 5}, {0, 0, -1}, {0, 1, 0});
+    Material glossy;
+    glossy.base_color = {0.9f, 0.9f, 0.9f, 1};
+    glossy.metallic = 1.0f;
+    glossy.roughness = 0.06f;
+    const auto render_with = [&](const auto& add) {
+        (*sr)->begin(cam, no_sun(), dark_env());
+        (*sr)->submit(*plane, glossy, math::Mat4::identity());
+        add(**sr);
+        return shoot(**sr);
+    };
+    PointLight point;
+    point.position = {0, 2, -2};
+    point.intensity = 4.0f;
+    point.range = 15.0f;
+    const auto tiny = render_with([&](SceneRenderer& r) { r.add_point_light(point); });
+    test::save_output("area_light_glossy_point", W, H, tiny);
+    point.radius = 0.5f;
+    const auto bulb = render_with([&](SceneRenderer& r) { r.add_point_light(point); });
+    test::save_output("area_light_glossy_bulb", W, H, bulb);
+    AreaLight panel;
+    panel.position = point.position;
+    panel.direction = {0, -1, 0};
+    panel.width = panel.height = 1.5f;
+    panel.intensity = point.intensity;
+    panel.range = point.range;
+    const auto area = render_with([&](SceneRenderer& r) { r.add_area_light(panel); });
+    test::save_output("area_light_glossy", W, H, area);
+    const int n_tiny = highlight_pixels(tiny), n_bulb = highlight_pixels(bulb), n_area = highlight_pixels(area);
+    MESSAGE("highlight pixels: point " << n_tiny << " bulb " << n_bulb << " panel " << n_area);
+    CHECK(n_tiny > 0);
+    CHECK(n_bulb > 2 * n_tiny);
+    CHECK(n_area > 4 * n_tiny);
+    // The panel's reflection sits on the mirror point.
+    const auto [mx, my] = project(cam, {0, 0, 1.5f}); // mirror of (0, 2, -2) seen from (0, 2, 5): halfway, z = 1.5
+    CHECK(lum(pixel(area, W, mx, my)) > 40);
+    ctx.destroy(*plane);
+}
+
+TEST_CASE("gpu: scenes author area lights through LightComponent; baked ones stay lit until a lightmap holds them") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    const fs::Path project = std::filesystem::temp_directory_path() / ("victus_area_" + Uuid::generate().to_string().substr(0, 8));
+    std::filesystem::create_directories(project / "assets");
+    auto db = assets::AssetDatabase::open(project);
+    REQUIRE(db.ok());
+    scene::Scene authored;
+    const auto floor = authored.create("Floor");
+    authored.world().add<scene::MeshRendererComponent>(floor).primitive = "plane";
+    authored.world().get<scene::Transform>(floor)->scale = {10, 1, 10};
+    const auto panel = authored.create("Panel");
+    authored.world().get<scene::Transform>(panel)->position = {0, 2, 0};
+    authored.world().get<scene::Transform>(panel)->rotation = math::Quat::axis_angle({1, 0, 0}, math::radians(-90)); // -Z -> down
+    auto& l = authored.world().add<scene::LightComponent>(panel);
+    l.type = scene::LightComponent::Type::Area;
+    l.intensity = 30.0f;
+    l.width = 3.0f;
+    l.height = 0.5f;
+    l.baked = true;
+    const auto bulb = authored.create("Bulb");
+    authored.world().get<scene::Transform>(bulb)->position = {3, 1, 0};
+    auto& b = authored.world().add<scene::LightComponent>(bulb);
+    b.type = scene::LightComponent::Type::Point;
+    b.radius = 0.25f;
+    const auto cam = authored.create("Camera");
+    authored.world().get<scene::Transform>(cam)->position = {0, 10, 6};
+    authored.world().get<scene::Transform>(cam)->rotation = math::Quat::axis_angle({1, 0, 0}, std::atan2(-10.0f, 6.0f));
+    authored.world().add<scene::CameraComponent>(cam);
+    REQUIRE(authored.save_file(project / "assets" / "area.vscene").ok());
+    scene::Scene s;
+    REQUIRE(s.load_file(project / "assets" / "area.vscene").ok());
+    const auto* loaded = s.world().get<scene::LightComponent>(s.find_by_name("Panel"));
+    REQUIRE(loaded);
+    CHECK(loaded->type == scene::LightComponent::Type::Area);
+    CHECK(loaded->width == doctest::Approx(3.0f));
+    CHECK(loaded->height == doctest::Approx(0.5f));
+    CHECK(loaded->baked);
+    CHECK(s.world().get<scene::LightComponent>(s.find_by_name("Bulb"))->radius == doctest::Approx(0.25f));
+    s.update_transforms();
+    runtime::GpuAssetCache cache(ctx, db->get());
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+    runtime::SceneViewSettings view;
+    view.environment = dark_env();
+    (void)runtime::extract_scene(s, cache, **sr, view);
+    const auto img = shoot(**sr);
+    // No lightmap is loaded, so the baked panel is still lit in real time.
+    CHECK((*sr)->stats().area_lights == 1);
+    CHECK((*sr)->stats().point_lights == 2);
+    const int centre = lum(pixel(img, W, W / 2, H / 2)), corner = lum(pixel(img, W, 8, H - 8));
+    MESSAGE("authored panel centre " << centre << " corner " << corner);
+    CHECK(centre > 150);
+    CHECK(corner < 40);
+    std::filesystem::remove_all(project);
 }

@@ -59,7 +59,8 @@ constexpr EnumName<CameraComponent::Projection> kProjections[] = {
     {CameraComponent::Projection::Orthographic, "orthographic"}};
 constexpr EnumName<LightComponent::Type> kLightTypes[] = {{LightComponent::Type::Directional, "directional"},
                                                           {LightComponent::Type::Point, "point"},
-                                                          {LightComponent::Type::Spot, "spot"}};
+                                                          {LightComponent::Type::Spot, "spot"},
+                                                          {LightComponent::Type::Area, "area"}};
 
 Value uuid_value(const Uuid& u) { return Value(u.to_string()); }
 bool read_uuid(const Value& v, Uuid& out) {
@@ -201,6 +202,12 @@ SerializerRegistry::SerializerRegistry() {
                 v.set("inner_angle", l.inner_angle_degrees);
                 v.set("outer_angle", l.outer_angle_degrees);
             }
+            if (l.type == LightComponent::Type::Point && l.radius != 0.0f) v.set("radius", l.radius);
+            if (l.baked) v.set("baked", true);
+            if (l.type == LightComponent::Type::Area) {
+                v.set("width", l.width);
+                v.set("height", l.height);
+            }
             return v;
         },
         [](LightComponent& l, const Value& v) -> Status {
@@ -211,6 +218,11 @@ SerializerRegistry::SerializerRegistry() {
             l.shadows = v["shadows"].as_bool(l.shadows);
             l.inner_angle_degrees = v["inner_angle"].as_float(l.inner_angle_degrees);
             l.outer_angle_degrees = v["outer_angle"].as_float(l.outer_angle_degrees);
+            l.radius = v["radius"].as_float(l.radius);
+            l.width = v["width"].as_float(l.width);
+            l.height = v["height"].as_float(l.height);
+            l.baked = v["baked"].as_bool(l.baked);
+            if (!(l.radius >= 0.0f) || !(l.width > 0.0f) || !(l.height > 0.0f)) return bad("Light radius/width/height");
             return {};
         });
 

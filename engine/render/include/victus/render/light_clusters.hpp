@@ -17,7 +17,11 @@ struct GpuLight {
     math::Vec4 position_range;      // xyz world position, w range
     math::Vec4 color_intensity;     // rgb linear colour, w intensity
     math::Vec4 direction_cos_outer; // xyz spot direction (light travels along it), w cos(outer angle)
-    math::Vec4 spot;                // x cos(inner angle), y 1 = spot / 0 = point
+    math::Vec4 spot;                // y type: 0 point, 1 spot, 2 rectangle (ADR-0194)
+    // point: x sphere radius, z first shadow tile + 1, w shadow texel angle
+    // spot: x cos(inner angle), z/w shadow as for points
+    // rectangle: position = centre, direction = emission direction, direction_cos_outer.w = basis
+    // angle of the width axis (area_light_basis_angle), x half width, w half height, z 0
 };
 static_assert(sizeof(GpuLight) == 64);
 

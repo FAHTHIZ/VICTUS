@@ -1553,6 +1553,7 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     env_ = env;
     points_.clear();
     spots_.clear();
+    areas_.clear();
     draws_.clear();
     probes_.clear();
     probe_requests_ = probe_unbaked_ = probe_over_budget_ = 0;
@@ -1581,6 +1582,33 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
 
 void SceneRenderer::add_point_light(const PointLight& light) { points_.push_back(light); }
 void SceneRenderer::add_spot_light(const SpotLight& light) { spots_.push_back(light); }
+void SceneRenderer::add_area_light(const AreaLight& light) { areas_.push_back(light); }
+
+namespace {
+// Branchless orthonormal basis around unit `n` (Duff et al. 2017); pbr.frag has the same code.
+void duff_basis(Vec3 n, Vec3& t, Vec3& b) noexcept {
+    const float sign = n.z >= 0.0f ? 1.0f : -1.0f;
+    const float a = -1.0f / (sign + n.z);
+    const float c = n.x * n.y * a;
+    t = {1.0f + sign * n.x * n.x * a, sign * c, -sign * n.x};
+    b = {c, sign + n.y * n.y * a, -n.y};
+}
+} // namespace
+
+float area_light_basis_angle(Vec3 direction, Vec3 right) noexcept {
+    const Vec3 n = length(direction) > 1e-6f ? normalize(direction) : Vec3{0, -1, 0};
+    Vec3 t, b;
+    duff_basis(n, t, b);
+    const float x = dot(right, t), y = dot(right, b);
+    return (std::abs(x) + std::abs(y) > 1e-6f) ? std::atan2(y, x) : 0.0f;
+}
+
+Vec3 area_light_right(Vec3 direction, float angle) noexcept {
+    const Vec3 n = length(direction) > 1e-6f ? normalize(direction) : Vec3{0, -1, 0};
+    Vec3 t, b;
+    duff_basis(n, t, b);
+    return t * std::cos(angle) + b * std::sin(angle);
+}
 
 void SceneRenderer::set_irradiance_volume(const IrradianceVolume* volume, float intensity, float normal_offset, bool baked) {
     volume_ = volume;
@@ -2655,8 +2683,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     // Local lights: frustum-cull bounding spheres, keep the nearest when over budget, then
     // assign them to view-space clusters and upload both storage buffers.
     std::vector<GpuLight> local_lights;
-    local_lights.reserve(points_.size() + spots_.size());
-    std::uint32_t spot_count = 0;
+    local_lights.reserve(points_.size() + spots_.size() + areas_.size());
+    std::uint32_t spot_count = 0, area_count = 0;
     {
         const auto finite_or = [](float v, float d) { return std::isfinite(v) ? v : d; };
         for (std::size_t i = 0; i < points_.size(); ++i) {
@@ -2664,7 +2692,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             GpuLight g{};
             g.position_range = Vec4(pl.position, std::max(finite_or(pl.range, 0.01f), 0.01f));
             g.color_intensity = rgb(pl.color, 1.0f, std::max(finite_or(pl.intensity, 0.0f), 0.0f));
-            if (point_shadow[i].first >= 0) g.spot = {0.0f, 0.0f, static_cast<float>(point_shadow[i].first + 1), point_shadow[i].second};
+            g.spot.x = std::clamp(finite_or(pl.radius, 0.0f), 0.0f, g.position_range.w);
+            if (point_shadow[i].first >= 0) {
+                g.spot.z = static_cast<float>(point_shadow[i].first + 1);
+                g.spot.w = point_shadow[i].second;
+            }
             local_lights.push_back(g);
         }
         for (std::size_t i = 0; i < spots_.size(); ++i) {
@@ -2681,6 +2713,17 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 g.spot.z = static_cast<float>(spot_shadow[i].first + 1);
                 g.spot.w = spot_shadow[i].second;
             }
+            local_lights.push_back(g);
+        }
+        for (const AreaLight& al : areas_) {
+            GpuLight g{};
+            const Vec3 dir = length(al.direction) > 1e-6f ? normalize(al.direction) : Vec3{0, -1, 0};
+            g.position_range = Vec4(al.position, std::max(finite_or(al.range, 0.01f), 0.01f));
+            g.color_intensity = rgb(al.color, 1.0f, std::max(finite_or(al.intensity, 0.0f), 0.0f));
+            g.direction_cos_outer = Vec4(dir, area_light_basis_angle(dir, al.right));
+            const float hw = std::clamp(finite_or(al.width, 1.0f), 0.01f, 1000.0f) * 0.5f;
+            const float hh = std::clamp(finite_or(al.height, 1.0f), 0.01f, 1000.0f) * 0.5f;
+            g.spot = {hw, 2.0f, 0.0f, hh};
             local_lights.push_back(g);
         }
         std::erase_if(local_lights, [&](const GpuLight& g) {
@@ -2701,12 +2744,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         std::vector<GpuLight> kept(budget);
         for (std::size_t i = 0; i < budget; ++i) kept[i] = local_lights[order[i].second];
         local_lights = std::move(kept);
-        for (const GpuLight& g : local_lights) spot_count += g.spot.y > 0.5f ? 1u : 0u;
+        for (const GpuLight& g : local_lights) {
+            spot_count += (g.spot.y > 0.5f && g.spot.y < 1.5f) ? 1u : 0u;
+            area_count += g.spot.y > 1.5f ? 1u : 0u;
+        }
     }
     const LightClusters clusters =
         build_light_clusters(local_lights, camera_.view, proj_unjittered, camera_.z_near, camera_.z_far);
     stats_.point_lights = static_cast<std::uint32_t>(local_lights.size());
     stats_.spot_lights = spot_count;
+    stats_.area_lights = area_count;
     stats_.light_indices = clusters.index_count;
     stats_.max_cluster_lights = clusters.max_per_cluster;
     {

@@ -62,7 +62,7 @@ struct CameraComponent {
     bool pixel_snap{false};
 };
 struct LightComponent {
-    enum class Type : std::uint8_t { Directional, Point, Spot };
+    enum class Type : std::uint8_t { Directional, Point, Spot, Area };
     Type type{Type::Directional};
     math::Color color{1, 1, 1, 1}; // linear
     float intensity{3.0f};
@@ -72,6 +72,17 @@ struct LightComponent {
     // spots shine along the entity's local -Z axis.
     float inner_angle_degrees{20.0f};
     float outer_angle_degrees{30.0f};
+    // Point: radius of the bulb in metres (0 = a point; softer, wider highlights when larger).
+    float radius{0.0f};
+    // Area (ADR-0194): a one-sided width x height rectangle in the entity's local X/Y plane,
+    // shining along local -Z like a spot. Lit in real time without shadows; baked lightmaps
+    // and probes get soft shadows from it.
+    float width{1.0f};
+    float height{1.0f};
+    // Baked mode (Unity's Light Mode Baked): Bake Lighting stores this light's direct light and
+    // soft shadows in the lightmap and probes, and the renderer skips it while that lightmap is
+    // loaded. Off: lit in real time, only its bounce light is baked.
+    bool baked{false};
 };
 // References a mesh inside an asset (glTF/model) by asset UUID and sub-mesh index, plus a
 // material override index (-1 = mesh's own material).

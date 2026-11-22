@@ -2475,3 +2475,30 @@ TEST_CASE("studio UI editor: add elements, preview sizes, drag to move and resiz
     h.ed->stop();
     h.frames(2);
 }
+
+TEST_CASE("studio area light: create from the command palette, edit in the Inspector, draw its outline, undo") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    const sfs::path root = h.dir / "Area Game";
+    REQUIRE(h.ed->create_project(root, "Area Game", "3d").ok());
+    auto& w = h.ed->edit_scene().world();
+    const std::size_t before = w.alive_count();
+    CHECK(h.ed->run_command("Entity: Create Area Light"));
+    CHECK(w.alive_count() == before + 1);
+    const scene::Entity panel = h.ed->selected(); // new entities are selected
+    REQUIRE_FALSE(panel.is_null());
+    const auto* l = w.get<scene::LightComponent>(panel);
+    REQUIRE(l != nullptr);
+    CHECK(l->type == scene::LightComponent::Type::Area);
+    CHECK(l->width == doctest::Approx(2.0f));
+    CHECK(l->height == doctest::Approx(1.0f));
+    CHECK_FALSE(l->baked);
+    CHECK(w.get<scene::Name>(panel)->value == "Area Light");
+    // Selected: the Inspector shows its fields and the viewport draws its outline.
+    h.ed->show_panel(editor::Panel::Inspector);
+    h.frames(3);
+    CHECK(h.ed->run_command("Edit: Undo"));
+    CHECK(w.alive_count() == before);
+}

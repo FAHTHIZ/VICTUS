@@ -13,6 +13,8 @@ Vec4 light_bounding_sphere(const GpuLight& l) noexcept {
     const Vec3 p{l.position_range.x, l.position_range.y, l.position_range.z};
     const float range = l.position_range.w;
     if (l.spot.y < 0.5f) return {p.x, p.y, p.z, range};
+    if (l.spot.y > 1.5f) // rectangle: range is measured from the nearest point of the rectangle
+        return {p.x, p.y, p.z, range + std::sqrt(l.spot.x * l.spot.x + l.spot.w * l.spot.w)};
     const Vec3 d = math::normalize(Vec3{l.direction_cos_outer.x, l.direction_cos_outer.y, l.direction_cos_outer.z});
     const float cos_a = std::clamp(l.direction_cos_outer.w, -1.0f, 1.0f);
     if (cos_a <= 0.70710678f) { // wide cone: the sphere through the cap's rim

@@ -121,6 +121,7 @@ std::vector<EditorCommand> Editor::commands() {
                                                        {"Directional Light", Primitive::DirectionalLight},
                                                        {"Point Light", Primitive::PointLight},
                                                        {"Spot Light", Primitive::SpotLight},
+                                                       {"Area Light", Primitive::AreaLight},
                                                        {"Decal", Primitive::Decal},
                                                        {"2D Light", Primitive::Light2D},
                                                        {"Fog Volume", Primitive::FogVolume}};

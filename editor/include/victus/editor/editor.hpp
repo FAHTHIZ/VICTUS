@@ -196,7 +196,7 @@ struct NetPlaySettings {
     friend bool operator==(const NetPlaySettings&, const NetPlaySettings&) = default;
 };
 
-enum class Primitive : std::uint8_t { Empty, Cube, Sphere, Plane, Cylinder, Camera, DirectionalLight, PointLight, SpotLight, Sprite, Decal, Light2D, FogVolume };
+enum class Primitive : std::uint8_t { Empty, Cube, Sphere, Plane, Cylinder, Camera, DirectionalLight, PointLight, SpotLight, Sprite, Decal, Light2D, FogVolume, AreaLight };
 
 // UI Editor (ADR-0193): elements the toolbar's Add menu creates, and anchor presets.
 enum class UiElementKind : std::uint8_t {

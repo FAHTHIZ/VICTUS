@@ -485,8 +485,8 @@ Entity Editor::create_entity(Primitive kind, Entity parent) {
     Scene& s = active_scene();
     static constexpr const char* kNames[] = {"Entity", "Cube", "Sphere", "Plane", "Cylinder", "Camera",
                                              "Directional Light", "Point Light", "Spot Light", "Sprite", "Decal", "2D Light",
-                                             "Fog Volume"};
-    static_assert(std::size(kNames) == static_cast<std::size_t>(Primitive::FogVolume) + 1, "one name per Primitive");
+                                             "Fog Volume", "Area Light"};
+    static_assert(std::size(kNames) == static_cast<std::size_t>(Primitive::AreaLight) + 1, "one name per Primitive");
     const Entity e = s.create(kNames[static_cast<int>(kind)], parent);
     auto& w = s.world();
     // Place new objects in front of the editor camera focus.
@@ -523,6 +523,17 @@ Entity Editor::create_entity(Primitive kind, Entity parent) {
         l.intensity = 20.0f;
         w.get<Transform>(e)->position.y += 3.0f;
         w.get<Transform>(e)->rotation = math::Quat::euler(math::radians(-90.0f), 0, 0); // points down
+        break;
+    }
+    case Primitive::AreaLight: {
+        // A 2 x 1 m panel 3 m up facing down, like a ceiling light or softbox.
+        auto& l = w.add<LightComponent>(e);
+        l.type = LightComponent::Type::Area;
+        l.intensity = 20.0f;
+        l.width = 2.0f;
+        l.height = 1.0f;
+        w.get<Transform>(e)->position.y += 3.0f;
+        w.get<Transform>(e)->rotation = math::Quat::euler(math::radians(-90.0f), 0, 0);
         break;
     }
     case Primitive::Sprite: w.add<SpriteComponent>(e); break;
@@ -1464,6 +1475,18 @@ void Editor::draw_overlays_3d(render::SceneRenderer& r) {
                                               {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
         for (const auto& edge : kEdges) r.line(c[edge[0]], c[edge[1]], {1.0f, 0.55f, 0.1f, 1});
         for (const auto& l : behaviour_guides(e, false)) r.line(l.a, l.b, l.color);
+        // Area light: its rectangle and a short arrow along the lit side.
+        if (const auto* l = s.world().get<LightComponent>(e); l && l->type == LightComponent::Type::Area) {
+            const float hw = l->width * 0.5f, hh = l->height * 0.5f;
+            const math::Vec3 q[4] = {m.transform_point({-hw, -hh, 0}), m.transform_point({hw, -hh, 0}), m.transform_point({hw, hh, 0}),
+                                     m.transform_point({-hw, hh, 0})};
+            const math::Color yellow{1.0f, 0.9f, 0.3f, 1};
+            for (int i = 0; i < 4; ++i) r.line(q[i], q[(i + 1) % 4], yellow);
+            r.line(q[0], q[2], yellow);
+            r.line(q[1], q[3], yellow);
+            const math::Vec3 o = m.transform_point({}), dir = math::normalize(m.transform_vector({0, 0, -1}));
+            r.line(o, o + dir * std::max(0.5f, std::min(hw, hh)), yellow);
+        }
     }
     draw_terrain_overlay(r);
     if (show_colliders_) {

@@ -1559,8 +1559,14 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     bool has_sun = false;
     std::vector<render::PointLight> points;
     std::vector<render::SpotLight> spots;
+    std::vector<render::AreaLight> areas;
+    // Baked lights (LightComponent::baked) are dropped below when the scene's lightmap loads.
+    std::vector<render::PointLight> baked_points;
+    std::vector<render::SpotLight> baked_spots;
+    std::vector<render::AreaLight> baked_areas;
     w.each<LightComponent, WorldTransform>([&](const LightComponent& l, const WorldTransform& wt) {
         ++stats.lights;
+        const bool baked = l.baked && l.type != LightComponent::Type::Directional;
         if (l.type == LightComponent::Type::Directional) {
             if (has_sun) return;
             has_sun = true;
@@ -1579,7 +1585,20 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             const float outer = std::isfinite(l.outer_angle_degrees) ? std::clamp(l.outer_angle_degrees, 0.1f, 89.5f) : 30.0f;
             sl.outer_angle = math::radians(outer);
             sl.inner_angle = math::radians(std::isfinite(l.inner_angle_degrees) ? std::clamp(l.inner_angle_degrees, 0.0f, outer) : outer);
-            spots.push_back(sl);
+            (baked ? baked_spots : spots).push_back(sl);
+        } else if (l.type == LightComponent::Type::Area) {
+            render::AreaLight al;
+            al.position = wt.matrix.transform_point({});
+            al.direction = math::normalize(wt.matrix.transform_vector({0, 0, -1}));
+            const math::Vec3 x = wt.matrix.transform_vector({1, 0, 0}), y = wt.matrix.transform_vector({0, 1, 0});
+            al.right = math::length(x) > 1e-6f ? math::normalize(x) : math::Vec3{1, 0, 0};
+            al.color = l.color;
+            al.intensity = l.intensity;
+            al.range = l.range;
+            // The entity's scale stretches the rectangle like any other child of the transform.
+            al.width = l.width * math::length(x);
+            al.height = l.height * math::length(y);
+            (baked ? baked_areas : areas).push_back(al);
         } else {
             render::PointLight p;
             p.position = wt.matrix.transform_point({});
@@ -1587,7 +1606,8 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             p.intensity = l.intensity;
             p.range = l.range;
             p.cast_shadows = l.shadows;
-            points.push_back(p);
+            p.radius = std::isfinite(l.radius) ? std::max(l.radius, 0.0f) : 0.0f;
+            (baked ? baked_points : points).push_back(p);
         }
     });
     if (!has_sun) sun.intensity = 0.0f;
@@ -1631,9 +1651,15 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             }
         }
     });
+    if (lightmap_path.empty()) { // no lightmap holds them: light them in real time
+        points.insert(points.end(), baked_points.begin(), baked_points.end());
+        spots.insert(spots.end(), baked_spots.begin(), baked_spots.end());
+        areas.insert(areas.end(), baked_areas.begin(), baked_areas.end());
+    }
     renderer.begin(camera, sun, env);
     for (const auto& p : points) renderer.add_point_light(p);
     for (const auto& sl : spots) renderer.add_spot_light(sl);
+    for (const auto& al : areas) renderer.add_area_light(al);
     if (!assets.capturing_probes()) {
         apply_reflection_probes(scene, assets, renderer, settings, stats);
         apply_irradiance_volumes(scene, assets, renderer, settings, camera.position, stats,

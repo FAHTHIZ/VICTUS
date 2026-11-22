@@ -247,6 +247,10 @@ Installed assets go to `assets/library/<source>/<name>` and are imported straigh
 
 In the editor: Play/Stop runs the scene in place on a copy (edits made during play are discarded), Ctrl+S saves, Ctrl+Z/Ctrl+Y undo/redo, F frames the selection, right-drag orbits, middle-drag pans, the wheel zooms. Drop `.gltf`/`.glb`/`.png`/`.jpg` files into the project's `assets/` folder and press Reimport; drag a model from the asset table into the viewport to instantiate it, or a `.luau` script onto an entity's Script component (double-click attaches it to the selection).
 
+### Lights
+
+Add > Directional, Point, Spot or Area Light. A point light's Radius is the size of the bulb: bigger bulbs give wider, softer highlights on shiny surfaces with the same brightness. An Area Light is a glowing rectangle (a window, screen, ceiling panel or softbox) that shines from one side, along the entity's -Z axis; Width and Height set its size in metres (the entity's scale stretches it too) and the viewport draws its outline when selected. Its Intensity matches a point light seen straight on, so swapping one for the other keeps the brightness. Area lights have no real-time shadows: tick Baked on any point, spot or area light and Bake Lighting stores its light, with soft shadows, in the lightmap and light probes; while that lightmap is loaded the light is not drawn in real time, so it costs nothing. Without a lightmap a baked light is still lit in real time.
+
 ### Prefabs
 
 Prefabs: select an entity in the editor and choose Create Prefab (hierarchy context menu) to save it and its children as `assets/prefabs/<Name>.vprefab`; drag or double-click the prefab to place instances. Changes you make to an instance are kept as overrides (shown in the inspector's Prefab section) when the prefab changes; Apply writes them back to the prefab, Revert discards them and Unpack turns the instance into plain entities. Scripts spawn prefabs with `scene.instantiate("prefabs/crate.vprefab", { position = vector.create(0, 2, 0) })`; in the 3D template, E or the gamepad X button drops a crate.

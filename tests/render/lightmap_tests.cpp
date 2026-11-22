@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <optional>
+#include <vector>
 
 using namespace victus;
 using namespace victus::render;
@@ -824,4 +825,116 @@ TEST_CASE("lightmap unwrap shares uvs between congruent copies (ADR-0135)") {
     auto separate = unwrap_lightmaps(scene, s);
     REQUIRE(separate);
     CHECK(separate->instances[1].indices.size() == cube.indices.size());
+}
+
+namespace {
+// Exact irradiance per unit radiance (integral of cos over the solid angle) of a polygon seen
+// from p with normal n: 0.5 * sum of edge angle * (edge normal . n) (Lambert's formula).
+float polygon_irradiance(const std::vector<Vec3>& corners, Vec3 p, Vec3 n) {
+    float e = 0.0f;
+    for (std::size_t i = 0; i < corners.size(); ++i) {
+        const Vec3 a = math::normalize(corners[i] - p), b = math::normalize(corners[(i + 1) % corners.size()] - p);
+        const float theta = std::acos(std::clamp(math::dot(a, b), -1.0f, 1.0f));
+        e += theta * math::dot(math::normalize(math::cross(a, b)), n);
+    }
+    return std::fabs(0.5f * e);
+}
+LightmapLight ceiling_panel(float size) {
+    LightmapLight l;
+    l.type = LightmapLight::Type::Area;
+    l.position = {0, 2, 0};
+    l.direction = {0, -1, 0};
+    l.right = {1, 0, 0};
+    l.width = l.height = size;
+    l.radiance = {10, 10, 10};
+    l.range = 50.0f;
+    l.baked = true;
+    return l;
+}
+} // namespace
+
+TEST_CASE("lightmap area lights: baked direct light matches the exact rectangle irradiance (ADR-0194)") {
+    const MeshData floor = make_plane({6, 6}, 6);
+    LightmapScene scene;
+    scene.instances.push_back({&floor});
+    scene.sky = uniform_sky(0.0f);
+    scene.lights.push_back(ceiling_panel(1.0f));
+    LightmapSettings s = fast_settings();
+    s.texels_per_unit = 8.0f;
+    s.bounces = 0;
+    s.denoise = false;
+    auto bake = bake_lightmaps(scene, s);
+    REQUIRE(bake);
+    // Radiance of the panel = intensity / area; the lightmap stores irradiance / pi.
+    const std::vector<Vec3> rect{{-0.5f, 2, -0.5f}, {0.5f, 2, -0.5f}, {0.5f, 2, 0.5f}, {-0.5f, 2, 0.5f}};
+    for (const Vec3 at : {Vec3{0, 0, 0}, Vec3{1.0f, 0, 0}, Vec3{0, 0, -1.5f}}) {
+        const auto v = lightmap_at(scene, bake.value(), 0, at);
+        REQUIRE(v);
+        // Window falloff from the nearest point of the panel (range 50 m, so close to 1).
+        const float nx = std::max(std::fabs(at.x) - 0.5f, 0.0f), nz = std::max(std::fabs(at.z) - 0.5f, 0.0f);
+        const float falloff = math::saturate(1.0f - std::pow(std::sqrt(nx * nx + nz * nz + 4.0f) / 50.0f, 4.0f));
+        const float expected = 10.0f * polygon_irradiance(rect, at, {0, 1, 0}) / math::kPi;
+        MESSAGE("at " << at.x << "," << at.z << " baked " << v->x << " exact " << expected);
+        CHECK(v->x == doctest::Approx(expected * falloff * falloff).epsilon(0.06));
+    }
+    // A light that is not baked leaves its direct light to the renderer (only bounces baked).
+    scene.lights[0].baked = false;
+    auto realtime = bake_lightmaps(scene, s);
+    REQUIRE(realtime);
+    CHECK(lightmap_at(scene, realtime.value(), 0, {0, 0, 0})->x == doctest::Approx(0.0f));
+    // Facing away from the floor: nothing reaches it.
+    scene.lights[0].baked = true;
+    scene.lights[0].direction = {0, 1, 0};
+    auto away = bake_lightmaps(scene, s);
+    REQUIRE(away);
+    CHECK(lightmap_at(scene, away.value(), 0, {0, 0, 0})->x == doctest::Approx(0.0f));
+}
+
+TEST_CASE("lightmap area lights cast soft shadows with a penumbra a point light does not have") {
+    const MeshData floor = make_plane({6, 6}, 6);
+    const MeshData box = make_cube({0.2f, 0.2f, 0.2f}); // half extents: a 0.4 m box
+    LightmapSettings s = fast_settings();
+    s.texels_per_unit = 8.0f;
+    s.bounces = 0;
+    s.denoise = false;
+    const auto bake_with = [&](const LightmapLight& light, bool occluder) {
+        LightmapScene scene;
+        scene.instances.push_back({&floor});
+        if (occluder) {
+            LightmapInstance o{&box, math::Mat4::translation({0, 1.0f, 0})};
+            o.receives = false;
+            scene.instances.push_back(o);
+        }
+        scene.sky = uniform_sky(0.0f);
+        scene.lights.push_back(light);
+        auto bake = bake_lightmaps(scene, s);
+        REQUIRE(bake);
+        return std::pair{scene, std::move(bake.value())};
+    };
+    const auto ratio = [&](const LightmapLight& light, Vec3 at) {
+        const auto [lit_scene, lit] = bake_with(light, false);
+        const auto [sh_scene, shadowed] = bake_with(light, true);
+        const float open = lightmap_at(lit_scene, lit, 0, at)->x, blocked = lightmap_at(sh_scene, shadowed, 0, at)->x;
+        return open > 1e-6f ? blocked / open : 1.0f;
+    };
+    const LightmapLight area = ceiling_panel(1.0f);
+    LightmapLight point;
+    point.type = LightmapLight::Type::Point;
+    point.position = {0, 2, 0};
+    point.radiance = {10, 10, 10};
+    point.range = 50.0f;
+    point.baked = true;
+    // Under the box the area light is partly hidden (a 0.4 m box half way up hides about 64% of a
+    // 1 m panel), 0.6 m to the side it is mostly visible, 1.4 m away fully; a point light is
+    // either fully hidden or fully visible.
+    const float a0 = ratio(area, {0, 0, 0}), a1 = ratio(area, {0.6f, 0, 0}), a2 = ratio(area, {1.4f, 0, 0});
+    const float p0 = ratio(point, {0, 0, 0}), p1 = ratio(point, {0.6f, 0, 0});
+    MESSAGE("area " << a0 << " " << a1 << " " << a2 << " point " << p0 << " " << p1);
+    CHECK(a0 > 0.2f);
+    CHECK(a0 < 0.65f);
+    CHECK(a1 > a0 + 0.15f);
+    CHECK(a1 < 0.97f);
+    CHECK(a2 > 0.97f);
+    CHECK(p0 < 0.05f);
+    CHECK(p1 > 0.97f);
 }
