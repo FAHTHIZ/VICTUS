@@ -130,6 +130,18 @@ Result<ExportReport> export_game(const ExportOptions& o) {
                 errors.push_back(std::format("{}: {}", r.path, st.error().message));
                 continue;
             }
+            if (r.importer == "gltf") {
+                // Animation reads only the skeleton; ship it separately (AssetDatabase::load_model_skeleton).
+                auto sidecar = assets::make_skeleton_sidecar(*shipped);
+                if (!sidecar) {
+                    errors.push_back(std::format("{}: skeleton: {}", r.path, sidecar.error().message));
+                    continue;
+                }
+                if (auto st = pw.add(std::format(".victus/cache/{}.vskel", r.uuid.to_string()), *sidecar); !st) {
+                    errors.push_back(std::format("{}: {}", r.path, st.error().message));
+                    continue;
+                }
+            }
             ++report.cooked_assets;
             continue;
         }

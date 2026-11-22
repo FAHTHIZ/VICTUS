@@ -172,6 +172,10 @@ using VariantFilter = std::function<bool(TextureCodec codec, bool srgb)>;
 // mesh vertex/index data without copying them: everything make_animation_set reads. Meshes come
 // back with empty geometry, textures are left empty and materials are kept.
 [[nodiscard]] Result<CookedModel> deserialize_model_skeleton(std::span<const std::uint8_t> bytes);
+// A cooked model holding only what deserialize_model_skeleton returns (no textures, no mesh
+// geometry, material texture indices -1), for export: a game reads its animation data from this
+// small pack entry instead of decompressing the whole model (`.vskel`, AssetDatabase).
+[[nodiscard]] Result<std::vector<std::uint8_t>> make_skeleton_sidecar(std::span<const std::uint8_t> model_bytes);
 // Everything except textures (collision meshes, validation): `textures` is left empty and every
 // material texture index is -1.
 [[nodiscard]] Result<CookedModel> deserialize_model_geometry(std::span<const std::uint8_t> bytes);

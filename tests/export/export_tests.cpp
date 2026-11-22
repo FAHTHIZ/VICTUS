@@ -140,6 +140,14 @@ TEST_CASE("export: pack contains cooked assets and runs in packaged mode") {
     REQUIRE(m.ok());
     CHECK(m->meshes.size() == 1);
     CHECK(m->textures.size() == 1);
+    // The skeleton comes from the small .vskel sidecar export writes next to each model.
+    CHECK(fs::exists((*db)->skeleton_path(model->uuid)));
+    auto skel = (*db)->load_model_skeleton(model->uuid);
+    REQUIRE(skel.ok());
+    CHECK(skel->textures.empty());
+    CHECK(skel->nodes.size() == m->nodes.size());
+    CHECK(skel->meshes.size() == m->meshes.size());
+    CHECK(skel->meshes[0].data.vertices.empty());
     const auto imported = (*db)->import_all();
     CHECK(imported.imported + imported.failed + imported.up_to_date == 0);
     CHECK_FALSE((*db)->set_settings(logo->uuid, json::Value::object()).ok());

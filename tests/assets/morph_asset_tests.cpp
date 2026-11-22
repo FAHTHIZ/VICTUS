@@ -222,6 +222,21 @@ TEST_CASE("assets: skeleton-only and geometry-only decoders match the full decod
     CHECK(geo->materials[0].base_color_texture == -1);
 
     for (std::size_t n = 0; n < bytes.size(); n += 37) CHECK_FALSE(deserialize_model_skeleton(std::span(bytes.data(), n)).ok());
+    // The exported sidecar decodes to the same skeleton and is a fraction of the model.
+    auto sidecar = make_skeleton_sidecar(bytes);
+    REQUIRE(sidecar.ok());
+    CHECK(sidecar->size() < bytes.size() / 2);
+    auto side = deserialize_model_skeleton(*sidecar);
+    REQUIRE(side.ok());
+    const animation::AnimationSet c = make_animation_set(*side);
+    REQUIRE(c.nodes.size() == a.nodes.size());
+    for (std::size_t i = 0; i < a.nodes.size(); ++i) CHECK(c.nodes[i].name == a.nodes[i].name);
+    REQUIRE(c.clips.size() == a.clips.size());
+    CHECK(c.clips[0].channels.size() == a.clips[0].channels.size());
+    CHECK(c.mesh_morphs[0].names == a.mesh_morphs[0].names);
+    CHECK(c.mesh_morphs[0].defaults == a.mesh_morphs[0].defaults);
+    CHECK_FALSE(make_skeleton_sidecar(std::span(bytes.data(), bytes.size() / 2)).ok());
+
     CookedModel bad = make_face();
     bad.animations[0].channels[0].node = 7; // channel targets a missing node
     CHECK_FALSE(deserialize_model_skeleton(serialize(h, bad)).ok());

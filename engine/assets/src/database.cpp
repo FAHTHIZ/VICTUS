@@ -281,6 +281,7 @@ json::Value AssetDatabase::index_json() const {
 fs::Path AssetDatabase::source_path(const AssetRecord& r) const { return assets_dir() / fs::Path(r.path); }
 
 fs::Path AssetDatabase::cooked_path(const Uuid& uuid) const { return cache_dir() / (uuid.to_string() + ".vcooked"); }
+fs::Path AssetDatabase::skeleton_path(const Uuid& uuid) const { return cache_dir() / (uuid.to_string() + ".vskel"); }
 
 namespace {
 std::string meta_text(const AssetRecord& r, int version) {
@@ -585,6 +586,16 @@ Result<CookedModel> AssetDatabase::load_model_skeleton(const Uuid& uuid) {
     if (auto imported = import(uuid); !imported) {
         std::error_code ec;
         if (packaged_ || !std::filesystem::is_regular_file(cooked_path(uuid), ec)) return std::move(imported).error();
+    }
+    if (packaged_) {
+        // Exported games: a pack entry is decompressed whole on every read, so the small sidecar
+        // saves decompressing tens of MB of textures and meshes per character.
+        const fs::Path sidecar = skeleton_path(uuid);
+        if (fs::exists(sidecar)) {
+            auto view = fs::map_file(sidecar);
+            if (!view) return std::move(view).error();
+            return deserialize_model_skeleton(view->bytes());
+        }
     }
     // Mapped, so only the pages the skeleton decoder touches are read (the textures and meshes
     // that make up nearly all of a cooked character are skipped).

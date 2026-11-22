@@ -2829,6 +2829,17 @@ Verified at 14edaa7 (Release, lavapipe):
 
 Not verified: real GPUs and phones; the Windows build of this change (CI).
 
+## 2026-11-22: Skeleton sidecar in exported packs
+
+Built: `assets::make_skeleton_sidecar`; export writes `.victus/cache/<uuid>.vskel` next to every cooked model; `AssetDatabase::skeleton_path`, and `load_model_skeleton` reads the sidecar in packaged mode when present (older packs fall back to the full entry). Profile zones `pack.read`, `pack.verify`, `pack.decompress`.
+
+Verified (Release, lavapipe):
+- `victus_asset_tests` 4849 assertions, `victus_export_tests` 645, `victus_core_tests` 12170: all pass. The sidecar decodes to the same nodes, clips and morph names as the full model and rejects truncated input; the exported test game loads its skeleton from the sidecar.
+- 3D template Android pack: first-frame animation update 150–168 ms before, 8.6–8.9 ms after (three runs each); pack 22.65 MB to 22.96 MB.
+
+Found: in packs, BLAKE2b verification is about 13 ms per 11 MB entry and zstd about 52 ms per 42 MB; an unrolled BLAKE2b written to replace Monocypher's was slower here (19.4 ms vs 13.2 ms) and was not kept.
+Not verified: phones; collision geometry (`load_model_geometry`) still decompresses the whole model.
+
 ## 2026-11-22 — Spot light cookies (ADR-0195)
 
 Built: `SceneRenderer` cookie atlas (`set_cookie`/`remove_cookie`/`has_cookie`, 64 slots of 256×256 sRGB RGBA8 in one storage buffer, linear-light resampling), per-light cookie projection records in the light buffer (shadow tile and cookie record packed in `spot.z`), manual bilinear sRGB sampling in `pbr.frag`, nearest-texel cookies in `fog_inject.comp`, `SpotLight::right`, `SceneStats::cookie_lights`/`missing_cookies`; lightmap baker `LightmapLight::cookie` and `spot_cookie_tint`; `LightComponent::cookie` (scene format), runtime `load_cookie_image` and `GpuAssetCache::cookie` with reload versions, `ExtractStats::light_cookies`; baked cookies in `scene_lightmap`; Studio Cookie texture field (shared `asset_reference_field` helper); validation error for missing or non-texture cookies and warning for cookies on non-spot lights.

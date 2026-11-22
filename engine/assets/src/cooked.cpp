@@ -601,6 +601,16 @@ Result<CookedModel> deserialize_model(std::span<const std::uint8_t> bytes, const
 
 Result<CookedModel> deserialize_model_skeleton(std::span<const std::uint8_t> bytes) { return deserialize_model_impl(bytes, true, true); }
 
+Result<std::vector<std::uint8_t>> make_skeleton_sidecar(std::span<const std::uint8_t> model_bytes) {
+    auto header = read_header(model_bytes);
+    if (!header) return std::move(header).error();
+    auto m = deserialize_model_skeleton(model_bytes);
+    if (!m) return std::move(m).error();
+    for (auto& mat : m->materials)
+        mat.base_color_texture = mat.metallic_roughness_texture = mat.normal_texture = mat.emissive_texture = -1;
+    return serialize(*header, *m);
+}
+
 Result<CookedModel> deserialize_model_geometry(std::span<const std::uint8_t> bytes) { return deserialize_model_impl(bytes, true, false); }
 
 render::ImageF CookedTexture::hdr_image() const {

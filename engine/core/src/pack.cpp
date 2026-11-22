@@ -3,6 +3,7 @@
 
 #include "victus/core/hash.hpp"
 #include "victus/core/os_random.hpp"
+#include "victus/core/profiler.hpp"
 
 #include <monocypher-ed25519.h>
 #include <monocypher.h>
@@ -440,6 +441,7 @@ const EntryInfo* Pack::find(std::string_view path) const {
 bool Pack::contains(std::string_view path) const { return find(path) != nullptr; }
 
 Result<std::vector<std::uint8_t>> Pack::read(std::string_view path, std::uint64_t max_bytes) const {
+    VICTUS_PROFILE_SCOPE("pack.read");
     const EntryInfo* e = find(path);
     if (!e) return make_error(ErrorCode::NotFound, std::format("'{}' not in pack '{}'", path, path_.string()));
     if (e->size > max_bytes)
@@ -451,7 +453,10 @@ Result<std::vector<std::uint8_t>> Pack::read(std::string_view path, std::uint64_
         if (!read_at(in, e->offset, data))
             return make_error(ErrorCode::IoError, std::format("short read of '{}' from pack '{}'", path, path_.string()));
     }
-    const bool intact = version_ == 1 ? fnv1a64(std::span<const std::uint8_t>(data)) == e->hash : blake2b256(data) == e->digest;
+    const bool intact = [&] {
+        VICTUS_PROFILE_SCOPE("pack.verify");
+        return version_ == 1 ? fnv1a64(std::span<const std::uint8_t>(data)) == e->hash : blake2b256(data) == e->digest;
+    }();
     if (!intact) return make_error(ErrorCode::ParseError, std::format("'{}' in pack '{}' failed its checksum", path, path_.string()));
     if (e->codec == Codec::Stored) return data;
 
@@ -464,6 +469,7 @@ Result<std::vector<std::uint8_t>> Pack::read(std::string_view path, std::uint64_
     if (ZSTD_findFrameCompressedSize(data.data(), data.size()) != data.size()) return bad("trailing bytes after the compressed frame");
     thread_local std::unique_ptr<ZSTD_DCtx, ZstdDctxDeleter> dctx(ZSTD_createDCtx());
     if (!dctx) return make_error(ErrorCode::OutOfMemory, "cannot create a zstd decoder");
+    VICTUS_PROFILE_SCOPE("pack.decompress");
     std::vector<std::uint8_t> raw(static_cast<std::size_t>(e->size));
     const std::size_t n = ZSTD_decompressDCtx(dctx.get(), raw.data(), raw.size(), data.data(), data.size());
     if (ZSTD_isError(n)) return bad(std::format("decompression failed: {}", ZSTD_getErrorName(n)));

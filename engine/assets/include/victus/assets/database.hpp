@@ -99,7 +99,9 @@ public:
     // One embedded texture of a model (index into CookedModel::textures) without its meshes.
     [[nodiscard]] Result<CookedTexture> load_model_texture(const Uuid& uuid, std::uint32_t index, const VariantFilter& keep = {});
     // Nodes, skins, clips and morph names only (deserialize_model_skeleton): what the animation
-    // system needs, without copying the model's texture and mesh data.
+    // system needs, without copying the model's texture and mesh data. An exported game reads the
+    // `.vskel` entry export writes next to the model (make_skeleton_sidecar) when it has one, so it
+    // does not decompress the whole model from the pack for its skeleton.
     [[nodiscard]] Result<CookedModel> load_model_skeleton(const Uuid& uuid);
     // Meshes, nodes and clips without textures (deserialize_model_geometry): collision meshes.
     [[nodiscard]] Result<CookedModel> load_model_geometry(const Uuid& uuid);
@@ -125,6 +127,7 @@ public:
     [[nodiscard]] fs::Path cache_dir() const { return root_ / ".victus" / "cache"; }
     [[nodiscard]] fs::Path source_path(const AssetRecord& r) const;
     [[nodiscard]] fs::Path cooked_path(const Uuid& uuid) const;
+    [[nodiscard]] fs::Path skeleton_path(const Uuid& uuid) const; // exported `.vskel` sidecar
     // Imports satisfied from the shared cooked-data cache (see shared_cooked_cache_dir) since open.
     [[nodiscard]] std::uint32_t shared_cache_hits() const noexcept { return shared_hits_.load(); }
 
