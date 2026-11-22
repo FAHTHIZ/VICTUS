@@ -129,7 +129,7 @@ Status: **open** · **partly** (some of it exists) · **blocked** (needs hardwar
 | GAP-34b | **No iOS, consoles, XR** | All three ship iOS | Missing | S2 | open / blocked (console access, Apple hardware) | iOS after the Android device run (GAP-03) |
 | GAP-35 | **No release ever tagged, no LTS** | Unity two-year LTS; UE hotfixes; Godot maintenance branches | Process documented, never run | S2 | open | Tag 0.1 with the showcase |
 | GAP-36 | **No community, docs site, asset store, tutorials** | Godot Asset Store (4.7), Fab, Unity Asset Store | In-Studio Asset Store over open providers with licence checks and credits (ADR-0174); otherwise repo docs only | S2 | partly | Public docs site generated from `docs/`; a showcase devlog |
-| GAP-37 | **Networking on loopback only** | Production netcode in all three | Authoritative server, prediction, encryption, loopback tests | S3 | open | Not needed for the showcase |
+| GAP-37 | **Networking on loopback only** | Production netcode in all three | Authoritative server, prediction, encryption, loopback tests. No lag compensation, predicted spawns or off-loopback runs ([NETCODE_RESEARCH_2026_11.md](NETCODE_RESEARCH_2026_11.md), 2026-11-22) | S3 | open | Not needed for the showcase. Lag compensation first when networking work resumes |
 
 ### H. Added 2026-11-22 from the Unity/Unreal update
 

@@ -52,3 +52,5 @@ A sample multiplayer game must run with at least two clients and a dedicated aut
 | Sessions | Encryption (ADR-0028), listen server (ADR-0029) and reconnect with tokens (ADR-0030). | NAT traversal, relays, matchmaking, lobbies and host migration. |
 
 This is the "Networking (ENet) — Experimental" row in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
+
+Comparison with Unity Netcode 7.2 and Unreal Iris, and the recommended order of the missing pieces: [audits/NETCODE_RESEARCH_2026_11.md](audits/NETCODE_RESEARCH_2026_11.md).
