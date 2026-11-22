@@ -48,3 +48,31 @@ Keyboard-first workflows; undo/redo for destructive operations; autosave and rec
 **Editor beta:** undo/redo, asset browser, materials, logs, profiler, import queue, specialized editors and platform build profiles.
 
 **Editor 1.0:** stable end-to-end workflows, recovery, extension points, tutorials, sample projects, accessibility/localization checks and usability testing.
+
+## Current state (2026-11-22)
+
+Checked against `editor/src` (Dear ImGui). The detailed UX review is [audits/STUDIO_UX_AUDIT.md](audits/STUDIO_UX_AUDIT.md), and limits are in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
+
+| Spec area | In the Studio | Missing or partial |
+|---|---|---|
+| Workspace | Launcher with templates and recent projects, docking with saved layouts, command palette, UI size (Bigger/Smaller), autosave and crash recovery, Safe Mode, diagnostics bundles | Rebindable shortcuts |
+| Hierarchy and inspector | Multi-selection, prefabs (create, apply, revert, unpack), undo history, add-component search, roles | Multi-object editing is partial (see the UX audit) |
+| Viewports | 2D and 3D, gizmos with snapping, overlays for colliders, the navmesh and overdraw | — |
+| Asset browser | Thumbnails, reference-safe rename, move and delete (ADR-0175), Trash, import settings, import queue window (ADR-0189), Asset Store | Dependency-graph view, tags |
+| Console and Problems | Structured log, Problems panel with jump-to-source | — |
+| Profiler | CPU and GPU timings, frame breakdown | Memory and allocation tracking, network timeline |
+| 2D | Sprite sheets, tile sets and tilemaps | — |
+| 3D | Terrain sculpt, paint and scatter, lighting bake | Foliage painting as its own tool, spline and road tools |
+| Materials | Material editor, material graph, surface shaders | — |
+| Animation | Clips, state machine and blend-space panel, IK and foot placement, ragdoll tools | Retargeting UI |
+| Gameplay | Visual scripts, behaviour-tree editor, AI debugger, script debugger, input actions, vehicle tools | — |
+| Effects | Particle components edited in the inspector | Dedicated VFX graph and preview |
+| UI | UI editor | Localization preview (reloads at run time only) |
+| Audio | Audio components in the inspector | Mixer and bus panel |
+| Cinematics | Sequencer panel | Render-to-file output |
+| Production | Export dialog with validation, import queue, Report a Problem | Test runner, crash-report viewer, source-control status |
+| Multiplayer | Play as Host, up to three in-editor clients, Network window (Slices 30 and 31) | — |
+| Play-in-editor | Play, pause, stop, record and replay a capture | Single-step |
+| Extensions | Editor plugins with undoable commands (ADR-0192) | — |
+
+Acceptance: alpha is met. Beta is mostly met; the profiler and platform build profiles are partial (exports are host-only). 1.0 needs usability testing with real users, which has not happened.
