@@ -1,12 +1,13 @@
 # VICTUS Characters — the character pipeline, Orion and Nova
 
-The 3D and multiplayer templates ship two VICTUS characters, **Orion** and **Nova**: human pilots
-in VICTUS flight suits, built by the VICTUS character pipeline (`tools/characters`, ADR-0179) from
-the CC0 MakeHuman base mesh. They share one skeleton layout, one clip library, one animation
-controller and one set of gameplay scripts; swapping one for the other changes the look and
-proportions, not the behaviour. They replace the signed-distance-field android mannequins of
-ADR-0121 (which replaced the Vanguard robots of ADR-0069). Asset ids, file paths and UUIDs are
-unchanged, so existing projects keep their references.
+The 3D and multiplayer templates ship two VICTUS characters, **Orion** and **Nova**: Frame
+mannequins - armoured sci-fi test dummies in the spirit of Unreal's Manny and Quinn - built by the
+VICTUS character pipeline (`tools/characters`, ADR-0198) from the CC0 MakeHuman base mesh. They
+share one skeleton layout, one clip library, one animation controller and one set of gameplay
+scripts; swapping one for the other changes the look and proportions, not the behaviour. They
+replace the realistic human pilots of ADR-0179 (which replaced the signed-distance-field androids
+of ADR-0121 and the Vanguard robots of ADR-0069). Asset ids, file paths, UUIDs, joint names,
+sockets and clips are unchanged, so existing projects keep their references.
 
 | | Orion | Nova |
 |---|---|---|
@@ -15,40 +16,46 @@ unchanged, so existing projects keep their references.
 | Stable UUID (`.meta`) | `8e84eb12-63c8-4aed-aae2-517c038d3071` | `44037d0d-1627-44a8-a225-633971f196b2` |
 | Skeleton profile | `VictusHumanoid.Orion` | `VictusHumanoid.Nova` |
 | Build | masculine, athletic (MakeHuman macro: gender 1.0, muscle 0.62, weight 0.48) | feminine, slender (gender 0.0, muscle 0.55, weight 0.42) |
-| Look | cropped hair, stubble, graphite suit with cyan piping | hair in a low bun, freckles, ivory suit with amber piping |
-| Height (floor to top of hair) | 1.77 m | 1.68 m |
-| Triangles (LOD 0, as exported) | 125,184 | 128,816 |
-| GLB size | 15.9 MB | 15.8 MB |
+| Look | graphite undersuit, white satin-ceramic plates, gunmetal hardware, cyan light | pearl undersuit, graphite plates, copper hardware, amber light |
+| Height (floor to top of the head) | 1.76 m | 1.67 m |
+| Triangles (LOD 0, as exported) | 156,576 | 159,696 |
+| GLB size | 11.17 MB | 11.59 MB |
 
 Both stand on Y = 0, face +Z with their left on +X, and are authored in the A-pose the earlier
-characters used (arms 40° from vertical), so existing clips and ragdoll setups line up.
+characters used (arms 40 degrees from vertical), so existing clips and ragdoll setups line up.
+
+Why a mannequin: a realistic human needs skin, eye and hair shading (subsurface scattering, strand
+hair) the renderer does not have yet, and falls into the uncanny valley without it. A mannequin
+shows what the engine does well - layered PBR (satin ceramic, rubberised fabric, brushed metal,
+glass), emissive trims with bloom, normal-mapped detail, skinning and blend shapes - and reads as
+a deliberate design, the way engine sample characters usually are.
 
 ## What a character contains
 
 Each GLB is self-contained (no external buffers or images). One skinned mesh node
-`<Name>_Body` carries five primitives, one per material, and four equipment nodes share the same
-skin and a sixth material (see [Equipment](#equipment)), so a fully equipped character costs nine
-skinned draws per pass:
+`<Name>_Body` carries three primitives, one per material, so a character costs three skinned draws
+per pass:
 
 | Material | Part | Maps | Notes |
 |---|---|---|---|
-| `<Name>_Skin` | head, neck, hands (the bare skin) | base colour, normal, ORM (AO/roughness/metal) | 2048² atlas; the head and hands are repacked from MakeHuman's UV layout at 2.3× texel density. Skin tone, lip tint, pores, stubble/freckles, nail plates, knuckle creases, skin lines and redness over the cheeks, nose and ears are baked per texel (no subsurface scattering yet; the engine's PBR shader is a standard metal/rough BRDF) |
-| `<Name>_Suit` | flight suit | base colour, normal, ORM, emissive | 2048²; panel seams, stitching, knee and shoulder pads, collar and wrist cuffs, piping down the arms and legs on the emissive map (strength 2, `KHR_materials_emissive_strength`); the chest outline is a non-emissive bonded tape |
-| `<Name>_Eye` | eyeballs | base colour, normal, ORM | 512²; MakeHuman high-poly eye proxy; iris stroma and collarette, limbal ring, sclera veins |
-| `<Name>_Mouth` | teeth, gums, tongue | base colour, normal, ORM | 512²; separate upper teeth (Head) and lower teeth/tongue (Jaw) |
-| `<Name>_Groom` | scalp hair, brows, lashes (and Nova's bun) | base colour with alpha, normal, ORM | 2048², alpha mask 0.5, double-sided; strand patterns are line-integral-convolved along a hair flow field |
-| `<Name>_Gear` | boots, gloves, belt, backpack and its straps | base colour, normal, ORM | 2048²; pebbled leather uppers over a rubber lug sole with a stitched welt, synthetic-leather gloves with a dotted grip palm and a ribbed knuckle panel, woven webbing with a brushed-metal buckle (metallic 1), coated ripstop with taped seams, a zip track and webbing straps |
+| `<Name>_Frame` | undersuit body (collar to ankles, both hands) and the head shell | base colour, normal, ORM, emissive | 2048²; the MakeHuman body smoothed into an idealised form (Taubin smoothing, the fingers keep their shape); a hexagonal micro-weave, ribbed flex zones at the neck, shoulders, elbows, wrists, waist and knees, recessed piping down the outside of every limb carrying a thin light line; the head is a featureless shell (the head's blurred volume, shrink-wrapped by a quad cube-sphere and cut flat under the jaw) with a centre crest seam |
+| `<Name>_Armor` | 23 hard-surface plates, boots, ear pods, back core | base colour, normal, ORM, emissive | 2048²; plates are shells grown from the body inside planes (chest, back, three abdominal plates, lumbar, pelvis, hips, shoulders, upper arms, forearms, backs of the hands, thighs, knees, shins) with straight cut lines and edges rolled under; rounded bevels and an inset groove 1 cm in from every edge, a light strip in the groove of the larger plates, a contrasting stripe down the limb plates, a chevron emblem on the chest; boots with a moulded lug sole and accent toe caps; machined-metal ear pods with light rings and a back core with a glowing cell behind vents |
+| `<Name>_Visor` | faceplate and face display | base colour, normal, ORM, emissive | 1024²; smoked glass with a fine scan-line grid in its reflection and a metal rim; two eye glyphs and a mouth bar floating just above the glass, driven by blend shapes |
 
-All maps are baked from the actual surface (per-texel world position and normal, a Cycles
-ambient-occlusion bake against the whole character) — there are no flat material colours and no
-placeholder textures. Albedo and ORM are JPEG, the groom is PNG (it needs alpha). The engine's
-texture cooker builds mips and GPU block compression (BC7/ASTC) at import like any other model.
+Emissive strengths (`KHR_materials_emissive_strength`): Frame 3, Armor 4, Visor 6, so the trims
+bloom in the post stack. All maps are baked from the actual surface (per-texel world position and
+normal, a Cycles ambient-occlusion bake against the whole character) - there are no flat material
+colours and no placeholder textures. Every material is opaque (no alpha). The engine's texture
+cooker builds mips and GPU block compression (BC7/ASTC) at import like any other model.
 
-Blend shapes: every body primitive carries the same 44 ARKit-style facial targets (`browDown_L`,
-`eyeBlink_L`, `eyeWide_L`, `cheekPuff`, `mouthSmile_L`, `mouthFrown_R`, `mouthPucker`, `tongueOut`,
-...), derived from MakeHuman's facial pose units. Jaw opening is the `Jaw` joint, eye gaze the
-`Eye.L` / `Eye.R` joints. Morph deltas are sparse and stored as normalised integers
-(`KHR_mesh_quantization`: 0.03 mm position resolution), which the importer reads natively.
+Blend shapes: every primitive lists the same 26 face-display targets (`eyeBlink_L/R`,
+`eyeWide_L/R`, `eyeSquint_L/R`, `browDown_L/R`, `browInnerUp_L/R`, `browOuterUp_L/R`,
+`cheekSquint_L/R`, `jawOpen`, `mouthSmile_L/R`, `mouthFrown_L/R`, `mouthStretch_L/R`,
+`mouthPucker`, `mouthRollUpper`, `mouthRollLower`, `mouthUpperUp`, `mouthLowerDown`); only the
+Visor's glyphs move (the eye glyphs close, widen, squint and tilt like brows; the mouth bar opens,
+curves and purses). The names are the ARKit ones the human characters used, so facial clips and
+scripts keep working. Morph deltas are sparse and stored as normalised integers
+(`KHR_mesh_quantization`), which the importer reads natively.
 
 ## Skeleton
 
@@ -65,7 +72,9 @@ per skeleton profile):
 - `Jaw`, `Eye.L`, `Eye.R`.
 
 Skin weights come from MakeHuman's 163-bone reference weights, collapsed onto this layout and
-limited to four influences (stored as normalised bytes). Clips store rotations plus the Hips
+limited to four influences (stored as normalised bytes); every armour vertex keeps the weights of
+the body vertex it was grown from, so plates follow the body they cover. The head shell, visor
+and ear pods are rigid on `Head`; `Jaw` and `Eye.L/R` remain for retargeting and attachments. Clips store rotations plus the Hips
 translation, so one clip drives both profiles.
 
 ## Sockets
@@ -76,9 +85,9 @@ authored for one character fits the other:
 | Node | Parent | Frame |
 |---|---|---|
 | `Socket.Root` | `Rig` | ground, character facing |
-| `Socket.Head` | Head | top of the skull, character facing (hats, helmets) |
+| `Socket.Head` | Head | top of the head shell, character facing (hats, helmets) |
 | `Socket.Face` | Head | 3 cm in front of the eyes (visors, glasses) |
-| `Socket.Back` | Chest | 2 cm behind the upper back (backpacks, weapons) |
+| `Socket.Back` | Chest | 2 cm behind the back plate (backpacks, weapons) |
 | `Socket.Hand.L`, `Socket.Hand.R` | Hand.L / Hand.R | grip centre; +Y along the fingers, +Z out of the palm |
 | `Socket.Hip.L`, `Socket.Hip.R` | Hips | outside of each hip (holsters, pouches) |
 
@@ -108,7 +117,8 @@ Added: `Idle_Look`, `Idle_Shift`; strafes and backpedals `Walk_Back/Left/Right`,
 `Turn_Left_90`, `Turn_Right_90`, `Land_Hard`; crouch `Crouch_Idle`, `Crouch_Walk(_Back/_Left/_Right)`,
 `Crouch_Enter/Exit`; actions `Pickup`, `Wave`, `Point`, `Aim`; hand poses `Grip_L`, `Grip_R`; and
 facial clips `Face_Blink`, `Face_Talk`, `Face_Smile`, `Face_Frown`, `Face_Surprise` (blend-shape
-and jaw/eye channels only, for an upper or face layer). The GLB's `extras.victus.clips` lists each
+and jaw/eye channels only, for an upper or face layer; on the mannequins they animate the face
+display, `jawOpen` following the jaw angle). The GLB's `extras.victus.clips` lists each
 clip with its length, loop flag and layer.
 
 `assets/anim/characters/victus_locomotion.vanim` drives both characters. Parameters: `speed`
@@ -122,39 +132,17 @@ clip with its length, loop flag and layer.
 
 ## Equipment
 
-Four items ship on both characters, each its own skinned mesh node under `Rig` (they are listed in
-the GLB's `extras.victus.equipment`):
-
-| Node | Made from | Deforms with |
-|---|---|---|
-| `<Name>_Boots` | per foot, the radial graph about a point in the ankle of the union of two convex hulls (foot, lower leg up to 8.5 cm above the ankle), dilated 5 mm; cut at the boot top with a lip tucked onto the leg | the weights of the nearest suit point (Foot, Toe, LowerLeg) |
-| `<Name>_Gloves` | the bare hand beyond a plane 3 cm up the forearm, 1.8 mm out along the rest normal; the cuff starts under the sleeve | the hand's own weights, vertex for vertex |
-| `<Name>_Belt` | a 4.5 cm band of the suit around the waist seam, 5 mm out, with rolled lips on both edges | the suit's weights |
-| `<Name>_Backpack` | a rounded box (27 x 11 x 31 cm) leaning on the back along the side-profile line with the least gap, whose padded front conforms to the back with 8 mm clearance, plus two 4 cm shoulder straps grown from the suit | the box: Chest only; straps: the suit's weights |
-
-The covered surface is kept, so each item can be hidden on its own without holes, and nothing
-under an item is darkened by it (the body's AO bake ignores equipment; the equipment's bake sees
-the body). The build fails if, in the shipped LOD 0 in the rest pose, any covered body point lies
-less than 0.2 mm inside its boots, gloves or belt, or the back comes closer than 2 mm to the pack
-(`check_gear_clearance` in `build_characters.py`: distance to the closest item triangle, signed by
-its normal; it prints the margins: boots >= 1.18 mm, gloves >= 1.03 mm, belt >= 2.62 mm, back to
-pack >= 7.85 mm on both characters). In motion the shells share the weights of the surface they
-cover, so they follow it; the rigid pack and the boots' toe box are checked only in gameplay
-renders, not numerically per pose.
-
-Hide or show an item in a script, or untick Visible on its Mesh Renderer in Studio:
-
-```lua
-local pack = self.entity:find_descendant("Orion_Backpack")
-pack:set_visible(false)
-```
+The mannequins carry no separate equipment nodes (the human pilots' boots, gloves, belt and
+backpack of ADR-0179 are gone; the boots and hand plates are part of the armour). Gear attaches
+through the [sockets](#sockets); `Socket.Back` sits behind the back plate, clear of the back core.
+To hide armour in a script, untick Visible on `<Name>_Body[1]` (the Armor primitive) or call
+`set_visible(false)` on it.
 
 ## LODs and budgets
 
-LOD 0 is one Catmull-Clark subdivision of the MakeHuman topology (about 125k triangles for the
-body, about 205k with the equipment): the
-high-end PC budget, with clean edge loops at the eyes, mouth, shoulders, elbows, knees and
-fingers. The importer generates three coarser LODs with meshoptimizer
+LOD 0 is one Catmull-Clark subdivision of the quad meshes (about 160k triangles: the high-end PC
+budget, with clean edge loops at the shoulders, elbows, knees and fingers and smooth plate
+bevels). The importer generates three coarser LODs with meshoptimizer
 (`ModelImportSettings::lods`), and per-cascade shadow LOD applies as for any model. Templates
 scale the character to the gameplay capsule (player 1.45 m) uniformly, keeping Orion taller than
 Nova.
@@ -168,22 +156,24 @@ python3.11 -m venv /tmp/bpyenv
 /tmp/bpyenv/bin/python tools/characters/build_characters.py --out engine/project/data/characters
 ```
 
-The full build takes about 12 minutes on two cores (most of it is per-texel baking and the Cycles
+The full build takes about 11 minutes on two cores (most of it is per-texel baking and the Cycles
 AO bake); `--only orion --size 0.25 --no-ao` gives a quick preview in under a minute. Output is
 deterministic for one environment. Stages:
 
 | Module | Stage |
 |---|---|
 | `mh.py` | MakeHuman loaders: base mesh (`hm08`), macro targets (gender, muscle, weight, ethnic mix), proxy fitting (`.mhclo`), the reference rig and weights, facial pose units (BVH) |
-| `fit.py` | shapes the body from the character's `Spec`, poses it into the A-pose, collapses the reference rig onto the 60-joint layout, derives the 44 facial blend shapes, converts to VICTUS space |
-| `assemble.py` | cuts the body into skin and suit (suit offset outward with cut-plane cuffs, skin overlapping under it so nothing gaps or clips while posing), builds eyes, mouth, scalp hair shell, brow shells, lash cards and Nova's bun, and repacks UV islands |
+| `fit.py` | shapes the body from the character's `Spec`, poses it into the A-pose, collapses the reference rig onto the 60-joint layout, converts to VICTUS space |
+| `mannequin.py` | the Frame mannequin: smooths the body, builds the head shell from the head's blurred occupancy volume, grows the armour plates (`plate_regions`: planes plus a bone-segment radius per plate; `gear.shell` offsets them along the rest normal and rolls the cut edges under), boots, ear pods and back core, the visor and the face-display glyphs with their blend shapes, and repacks UV islands; `Style` holds each character's colours |
+| `assemble.py`, `gear.py` | shared helpers: `Part`, joint maps, shells, boots, rounded boxes (the human pilots' skin/suit/groom assembly of ADR-0179 is kept for reference but no longer built) |
 | `meshops.py` | Catmull-Clark subdivision as a sparse operator (weights and morphs subdivide with the positions), GPU vertices and tangents |
-| `materials.py`, `bake.py` | per-texel material functions, height → normal conversion, Cycles AO bake, encoding |
+| `mannequin_materials.py`, `bake.py` | per-texel material functions (Frame, Armor, Visor), height → normal conversion, Cycles AO bake, encoding |
 | `anim.py` | the clip library |
 | `gltf.py`, `build_characters.py` | skeleton frames, sockets, clips and the GLB writer; `characters.build.json` records each output's size, SHA-256 and counts |
 
-To make a new character, add a `Spec` (macro values and skull height) in `fit.py` and a `Style`
-(skin, lips, iris, hair colour and style, suit and trim colours) in `assemble.py`, then build it.
+To make a new character, add a `Spec` (macro values) in `fit.py` and a `Style` (undersuit, plate,
+accent, metal, light and glass colours, plate and undersuit roughness) in `mannequin.py`, then
+build it. Plate layout changes go in `mannequin.plate_regions`.
 
 The GLBs under `engine/project/data/characters` are embedded into the engine at build time
 (`cmake/EmbedBinary.cmake`, assembler `.incbin` on GCC/Clang, byte arrays on MSVC) and written
@@ -194,8 +184,9 @@ into new projects by the templates.
 - `tools/characters/test_pipeline.py`: subdivision operator, tangent handedness, quaternions,
   quantised sparse morphs and byte weights, the skeleton layout's backward compatibility, the clip
   library's original durations.
-- `victus_asset_tests` "starter characters" cases: zero importer warnings, five materials each with
-  albedo, normal and ORM textures, 100k-140k triangles, 44 blend shapes on every part, 60 joints
+- `victus_asset_tests` "starter characters" cases: zero importer warnings, three opaque materials
+  each with albedo, normal, ORM and emissive textures, 140k-190k triangles, 26 blend shapes on
+  every part, 60 joints
   with the original 21 first, the per-character height, the original seven clips with their
   lengths, every socket under its parent, and the shared controller driving Idle, Walk, Jump,
   Fall, Land and Interact on the imported model.
@@ -255,7 +246,8 @@ any issue with `--strict`); `--json` prints the same report as JSON for CI. The 
 The base mesh, targets, reference rig, weights, facial pose units, eye and eyelash geometry come
 from MakeHuman's asset library, released under CC0 1.0 (vendored unmodified, gzip-compressed, in
 `third_party/makehuman`, commit `a8bc2d54ff0ac92e78ff71431b1023eda42bf482`; see its README). The
-MakeHuman application code (AGPL-3.0) is not used or included. Everything else — the suit,
-groom, materials, textures, sockets, clips and the pipeline — is original VICTUS work, Apache-2.0.
+MakeHuman application code (AGPL-3.0) is not used or included. Everything else - the mannequin
+geometry, armour, visor, materials, textures, sockets, clips and the pipeline - is original
+VICTUS work, Apache-2.0.
 Blender (`bpy`, GPL) is a build-time tool for the AO bake only; its output belongs to the user
-([Blender license](https://www.blender.org/about/license/)). See ADR-0069, ADR-0121 and ADR-0179.
+([Blender license](https://www.blender.org/about/license/)). See ADR-0069, ADR-0121, ADR-0179 and ADR-0198.

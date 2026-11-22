@@ -78,60 +78,40 @@ TEST_CASE("starter characters: Orion and Nova import cleanly with one shared ske
         CHECK(messages.empty()); // zero importer warnings
         auto model = (*db)->load_model(rec->uuid);
         REQUIRE(model.ok());
-        // Skin, Suit, Eye, Mouth (teeth/tongue), Groom (hair, brows, lashes) on the body node, plus
-        // the Gear material shared by the four equipment nodes (docs/CHARACTERS.md#equipment).
-        const char* parts[] = {"Skin", "Suit", "Eye", "Mouth", "Groom", "Gear"};
-        const char* equipment[] = {"Boots", "Gloves", "Belt", "Backpack"};
-        constexpr std::size_t kBodyParts = 5;
-        CHECK(model->meshes.size() == kBodyParts + std::size(equipment));
+        // The Frame mannequin (ADR-0186): Frame (undersuit body and head shell), Armor (plates,
+        // boots, ear pods, back core) and Visor (faceplate and face-display glyphs), one skinned
+        // primitive each on the body node (docs/CHARACTERS.md#parts).
+        const char* parts[] = {"Frame", "Armor", "Visor"};
+        REQUIRE(model->meshes.size() == std::size(parts));
         REQUIRE(model->materials.size() == std::size(parts));
         for (std::size_t i = 0; i < std::size(parts); ++i) {
             const auto& mat = model->materials[i];
             INFO(mat.name);
             CHECK(mat.name == std::string(c.display_name) + "_" + parts[i]);
-            // Real texture sets, not flat colours: albedo, tangent-space normal and ORM on every part.
+            // Real texture sets, not flat colours: albedo, tangent-space normal, ORM and the
+            // emissive light trims on every part.
             CHECK(mat.base_color_texture >= 0);
             CHECK(mat.normal_texture >= 0);
             CHECK(mat.metallic_roughness_texture >= 0);
+            CHECK(mat.emissive_texture >= 0);
+            CHECK(mat.alpha_cutoff == 0.0f); // fully opaque: no strand alpha left
         }
-        CHECK(model->materials[4].alpha_cutoff > 0.0f); // strand alpha (MASK)
         REQUIRE(model->skins.size() == 1);
         CHECK(model->skins[0].joints.size() == project::kCharacterJointCount);
-        // Each equipment item is its own skinned node on the shared skin, one Gear primitive.
-        for (const char* item : equipment) {
-            const std::string node_name = std::string(c.display_name) + "_" + item;
-            INFO(node_name);
-            const auto it = std::find_if(model->nodes.begin(), model->nodes.end(),
-                                         [&](const assets::ModelNode& n) { return n.name == node_name; });
-            REQUIRE(it != model->nodes.end());
-            REQUIRE(it->meshes.size() == 1);
-            CHECK(it->skin == 0);
-            const auto& mesh = model->meshes[it->meshes[0]];
-            CHECK(model->materials[mesh.material].name == std::string(c.display_name) + "_Gear");
-            CHECK(mesh.data.morphs.empty());
-            CHECK(mesh.data.triangle_count() > 0);
-        }
-        // High-end budget: 170k-230k triangles at LOD0 with equipment (100k-140k body alone), with
-        // generated coarser LODs.
+        // High-end budget: 140k-190k triangles at LOD0, with generated coarser LODs.
         const std::size_t tris = model->triangle_count();
         MESSAGE(c.id << ": " << tris << " triangles");
-        CHECK(tris >= 170000);
-        CHECK(tris <= 230000);
-        std::size_t body_tris = 0;
+        CHECK(tris >= 140000);
+        CHECK(tris <= 190000);
         for (std::size_t i = 0; i < model->meshes.size(); ++i) {
             const auto& m = model->meshes[i];
             CHECK(m.data.skinned());
             CHECK(m.data.lods.size() >= 1);
-            // Every body part carries the same 44 ARKit-style facial blend shapes (jawOpen,
-            // eyeBlink_L ...); equipment carries none.
-            if (m.material < kBodyParts) {
-                CHECK(m.data.morphs.size() == 44);
-                body_tris += m.data.triangle_count();
-            }
+            // Every primitive carries the same 26 face-display blend shapes (jawOpen,
+            // eyeBlink_L ...); only the Visor's glyphs move.
+            CHECK(m.data.morphs.size() == 26);
         }
-        CHECK(body_tris >= 100000);
-        CHECK(body_tris <= 140000);
-        // Feet on the ground plane, arms in an A-pose, the character's own height to the hair.
+        // Feet on the ground plane, arms in an A-pose, the character's own height to the head shell.
         math::Aabb bounds;
         for (const auto& m : model->meshes)
             for (const auto& v : m.data.vertices) bounds.expand(v.position);

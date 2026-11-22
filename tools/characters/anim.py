@@ -522,6 +522,7 @@ def face_talk(b, p, u):
     a, c = VISEMES[seq[i]], VISEMES[seq[(i + 1) % len(seq)]]
     jaw = a[0] * (1 - t) + c[0] * t
     p.rot("Jaw", rx(-jaw))
+    p.face(jawOpen=jaw / 14.0)  # the mannequin's face display has no jaw bone to follow
     for k in set(a[1]) | set(c[1]):
         p.face(**{k: a[1].get(k, 0) * (1 - t) + c[1].get(k, 0) * t})
     p.face(browInnerUp_L=0.15 * math.sin(2 * math.pi * u) ** 2, browInnerUp_R=0.15 * math.sin(2 * math.pi * u) ** 2)
@@ -535,6 +536,7 @@ def face_expression(**w):
         if "jaw" in w:
             p.morph.pop("jaw")
             p.rot("Jaw", rx(-w["jaw"] * k))
+            p.face(jawOpen=w["jaw"] * k / 14.0)
 
     return f
 

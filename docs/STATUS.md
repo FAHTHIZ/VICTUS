@@ -2914,3 +2914,22 @@ Verified:
 - `victus run --screenshot --quality high` on fresh 3d and multiplayer projects: paving floor, rock walls and steel pillars render as expected.
 
 Not verified: real GPUs. The 3D template's crates and moving platforms keep flat colours because world-space triplanar swims on moving objects (object-space triplanar is the follow-up).
+## 2026-11-22 — Orion and Nova become Frame mannequins (ADR-0198)
+
+- **Built:**
+  - The starter characters are rebuilt as stylised sci-fi mannequins: a smoothed undersuit Frame, 23 satin-ceramic armour plates, boots, ear pods, a back core and a glass visor face display.
+  - New `tools/characters/mannequin.py` (geometry) and `mannequin_materials.py` (baked maps). `build_characters.py` is at pipeline version 4, with three materials (Frame, Armor, Visor; base colour, normal, ORM and emissive each).
+  - The 26 ARKit-named blend shapes, including `jawOpen` in the talk and expression clips, drive the visor's eye and mouth glyphs. The skeleton, 41 clips, 8 sockets, asset paths and UUIDs are unchanged.
+  - The separate equipment nodes (Boots, Gloves, Belt, Backpack) are removed from the template and the Robot Arena scenes and prefab. Socket transforms are updated from the new GLBs.
+  - Orion: 11.17 MB, 156,576 triangles, 1.767 m. Nova: 11.59 MB, 159,696 triangles, 1.676 m.
+- **Verified:**
+  - `tools/characters/test_pipeline.py`: 9/9.
+  - `victus character-check orion|nova`: OK, 0 errors, 0 warnings (3 materials, 12 textures, 3 LODs).
+  - `victus_asset_tests`: 4739 assertions passed. `victus_project_tests`: 1678 passed. `victus_editor_tests`: 6277 passed.
+  - Full `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1 VICTUS_NO_AUDIO=1 ctest --test-dir build/release -j2`: 43/43 passed (532 s). After rebasing onto 0c6eec5 (template materials), the perf, project, docs, arena, CLI and asset suites were rerun: 12/12 passed.
+  - Blender render `docs/images/characters/blender_render_bodies.jpg` checked by eye.
+- **Not verified:**
+  - Runtime screenshots (`victus_runtime_*.jpg`, `template_3d.jpg`) still show the previous characters.
+  - Plate overlap at extreme poses has not been checked numerically.
+  - Real GPUs.
+- **Next task:** Recapture the runtime screenshots and the head close-up; posed plate clearance check over the clip library.

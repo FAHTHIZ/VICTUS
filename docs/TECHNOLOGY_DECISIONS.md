@@ -2084,3 +2084,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** listed in docs/STATUS.md under this ADR.
 
 **Consequences:** Three texture fetches per map instead of one (up to 12 extra samples for a fully textured material). Projection is in world space, so textures slide across moving or animated objects; the template crates stay untextured for that reason. The shadow-alpha and TAA reactive passes still use mesh UVs, so alpha-tested triplanar materials cut out by the mesh UV. Surface shaders see the mesh UV in `si.uv`. The engine binary grows by ~6 MB.
+
+### ADR-0198: Orion and Nova become Frame mannequins
+
+**Status:** Accepted (2026-11-22). Supersedes the look of ADR-0179 (the pipeline, skeleton, clips, sockets, asset paths and UUIDs stay).
+
+**Context:** The ADR-0179 starters were realistic human pilots. Without subsurface scattering, strand hair or eye shading in the renderer they read as uncanny, and they did not show what the engine renders well. Engine sample characters are usually stylised test dummies for this reason: Unreal's Manny and Quinn mannequins, Unity's Robot Kyle, Godot's demo robots. The user asked for mannequin-style characters that showcase the engine and look more detailed and "cool".
+
+**Decision:** `tools/characters/mannequin.py` turns the fitted MakeHuman body into a Frame mannequin with three parts, one primitive and material each. **Frame** is the body smoothed with Taubin smoothing (no nipples, navel or toes; the fingers keep their shape) plus a featureless head shell: the head's Gaussian-blurred occupancy volume (13 mm) shrink-wrapped by a 22x22-per-face quad cube-sphere and cut flat under the jaw. **Armor** is 23 plates grown as shells from body regions bounded by planes and a bone-segment radius per plate (`plate_regions`). Each plate is offset 4.2 mm along the rest normal, snapped to its planes at the edge and rolled under, and keeps the source vertex's skin weights. Armor also holds the boots, ear pods and a back core. **Visor** is a glass shell over the face plus emissive eye and mouth glyphs whose 26 blend shapes keep the ARKit names (`eyeBlink_L`, `jawOpen`, `mouthSmile_R`, ...), so the facial clips drive a face display. `mannequin_materials.py` bakes the detail per texel. Frame gets a hexagonal micro-weave, ribbed flex zones and limb piping with light lines. Armor gets bevels and inset grooves (lit on the larger plates), limb stripes, a chest chevron, boot soles and machined pods and core. Visor gets smoked glass with scan lines. Emissive strengths are 3, 4 and 6. The face clips now also key `jawOpen` from the jaw angle. `PIPELINE_VERSION` becomes 4.
+
+**Alternatives:** (1) A CC0 base character pack (Quaternius Universal Base Characters): stylised low-poly, a different skeleton, and it would not exercise the pipeline. (2) Keep the humans and add skin SSS and strand hair first: months of renderer work before the templates look good. (3) A plain smooth Manny-style dummy: less to show (no emissive, layered materials or blend shapes).
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Three skinned draws per character instead of nine, and 12 texture maps instead of 19. The separate equipment nodes (`<Name>_Boots/Gloves/Belt/Backpack`) are gone, so scripts that looked them up get nil. The face has no eyes or mouth geometry, so `Eye.L/R` and `Jaw` still animate but move nothing visible. The human-pilot modules (`assemble.py` parts, `materials.py`) stay in the tree but are not built.

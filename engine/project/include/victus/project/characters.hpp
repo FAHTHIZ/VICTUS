@@ -27,7 +27,7 @@ struct StarterCharacter {
     std::string_view description;
     std::string_view model_path; // project-relative, "assets/models/characters/victus_orion.glb"
     std::string_view uuid;       // stable asset identity written to the model's .meta
-    float height = 1.70f;        // floor to top of hair in the model's own units (metres)
+    float height = 1.70f;        // floor to top of the head in the model's own units (metres)
 };
 
 // TemplateOptions::character value for templates without a starter character.

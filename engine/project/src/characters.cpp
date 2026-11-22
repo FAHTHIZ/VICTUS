@@ -20,13 +20,14 @@ std::span<const std::uint8_t> kNovaGlb();
 const std::vector<StarterCharacter>& starter_characters() {
     static const std::vector<StarterCharacter> list = {
         {"orion", "Orion",
-         "Masculine-presenting human pilot: athletic 1.77 m build, cropped hair and stubble, graphite flight suit with "
-         "cyan piping; 60-joint skeleton, 44 facial blend shapes, full PBR texture set.",
-         "assets/models/characters/victus_orion.glb", "8e84eb12-63c8-4aed-aae2-517c038d3071", 1.7697f},
+         "Masculine-build Frame mannequin: athletic 1.76 m, graphite undersuit under white ceramic armour plates, cyan "
+         "light trims and face display; 60-joint skeleton, 26 face-display blend shapes, full PBR + emissive set.",
+         "assets/models/characters/victus_orion.glb", "8e84eb12-63c8-4aed-aae2-517c038d3071", 1.7635f},
         {"nova", "Nova",
-         "Feminine-presenting human pilot: slender 1.68 m build, hair in a low bun, freckles, ivory flight suit with "
-         "amber piping; 60-joint skeleton, 44 facial blend shapes, full PBR texture set.",
-         "assets/models/characters/victus_nova.glb", "44037d0d-1627-44a8-a225-633971f196b2", 1.6827f},
+         "Feminine-build Frame mannequin: slender 1.67 m, pearl undersuit under graphite armour plates with copper "
+         "hardware, amber light trims and face display; 60-joint skeleton, 26 face-display blend shapes, full PBR + "
+         "emissive set.",
+         "assets/models/characters/victus_nova.glb", "44037d0d-1627-44a8-a225-633971f196b2", 1.6726f},
     };
     return list;
 }

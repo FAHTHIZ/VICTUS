@@ -2445,92 +2445,6 @@
       }
     },
     {
-      "uuid": "7102346a-b3d3-4479-8156-ddfbfc7db93e",
-      "name": "Orion_Body[3]",
-      "parent": "495c9cca-d7b7-4ac4-b765-dca957049bbf",
-      "components": {
-        "MeshRenderer": {
-          "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
-          "mesh_index": 3,
-          "base_color": [
-            1,
-            1,
-            1,
-            1
-          ],
-          "metallic": 0,
-          "roughness": 0.5,
-          "cast_shadows": true,
-          "visible": true
-        },
-        "SkinnedMesh": {
-          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
-          "skin": 0
-        },
-        "Transform": {
-          "position": [
-            0,
-            0,
-            0
-          ],
-          "rotation": [
-            0,
-            0,
-            0,
-            1
-          ],
-          "scale": [
-            1,
-            1,
-            1
-          ]
-        }
-      }
-    },
-    {
-      "uuid": "37068b0c-e805-4738-b437-92872e336efb",
-      "name": "Orion_Body[4]",
-      "parent": "495c9cca-d7b7-4ac4-b765-dca957049bbf",
-      "components": {
-        "MeshRenderer": {
-          "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
-          "mesh_index": 4,
-          "base_color": [
-            1,
-            1,
-            1,
-            1
-          ],
-          "metallic": 0,
-          "roughness": 0.5,
-          "cast_shadows": true,
-          "visible": true
-        },
-        "SkinnedMesh": {
-          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
-          "skin": 0
-        },
-        "Transform": {
-          "position": [
-            0,
-            0,
-            0
-          ],
-          "rotation": [
-            0,
-            0,
-            0,
-            1
-          ],
-          "scale": [
-            1,
-            1,
-            1
-          ]
-        }
-      }
-    },
-    {
       "uuid": "d522ee9d-3413-4769-bdf3-b4fa45ef74e3",
       "name": "Socket.Root",
       "parent": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
@@ -2762,15 +2676,15 @@
       "components": {
         "Transform": {
           "position": [
-            0,
-            0.14807820320129395,
-            0.0030688298866152763
+            0.0,
+            0.1465832617626668,
+            0.003037847958281111
           ],
           "rotation": [
-            0.01036052405834198,
-            0,
-            0,
-            0.9999463558197021
+            0.01036052402536204,
+            0.0,
+            0.0,
+            0.9999463283306359
           ],
           "scale": [
             1,
@@ -2787,15 +2701,15 @@
       "components": {
         "Transform": {
           "position": [
-            0,
-            0.03768988698720932,
-            0.11137072741985321
+            0.0,
+            0.03768988855969427,
+            0.11137072715525372
           ],
           "rotation": [
-            0.01036052405834198,
-            0,
-            0,
-            0.9999463558197021
+            0.01036052402536204,
+            0.0,
+            0.0,
+            0.9999463283306359
           ],
           "scale": [
             1,
@@ -3287,15 +3201,15 @@
       "components": {
         "Transform": {
           "position": [
-            -0.01915111020207405,
-            0.08579519391059875,
-            -0.016069689765572548
+            -0.019151111077974455,
+            0.08579519370301604,
+            -0.016069690242163436
           ],
           "rotation": [
-            1.13133664432445e-16,
-            -0.9063078165054321,
-            -2.317532105396764e-17,
-            0.4226182699203491
+            1.1313366278495225e-16,
+            -0.9063077870366498,
+            -2.3175320883121016e-17,
+            0.4226182617406998
           ],
           "scale": [
             1,
@@ -3837,15 +3751,15 @@
       "components": {
         "Transform": {
           "position": [
-            0.01915111020207405,
-            0.08579519391059875,
-            -0.016069689765572548
+            0.019151111077974455,
+            0.08579519370301604,
+            -0.016069690242163436
           ],
           "rotation": [
-            1.13133664432445e-16,
-            0.9063078165054321,
-            2.317532105396764e-17,
-            0.4226182699203491
+            1.1313366278495225e-16,
+            0.9063077870366498,
+            2.3175320883121016e-17,
+            0.4226182617406998
           ],
           "scale": [
             1,
@@ -3912,15 +3826,15 @@
       "components": {
         "Transform": {
           "position": [
-            0,
-            0.07119120657444,
-            -0.08170957863330841
+            0.0,
+            0.07110023930252164,
+            -0.08250635861053893
           ],
           "rotation": [
-            -0.05680637061595917,
-            0,
-            0,
-            0.9983852505683899
+            -0.0568063675781894,
+            0.0,
+            0.0,
+            0.9983852145352372
           ],
           "scale": [
             1,
@@ -4187,15 +4101,15 @@
       "components": {
         "Transform": {
           "position": [
-            0.17958474159240723,
-            -0.0187718253582716,
-            -0.006900623440742493
+            0.18137793184734521,
+            -0.018771824565070996,
+            -0.006900623341278517
           ],
           "rotation": [
-            0.17522667348384857,
-            0,
-            0,
-            0.984528124332428
+            0.1752266699826986,
+            0.0,
+            0.0,
+            0.9845281174891728
           ],
           "scale": [
             1,
@@ -4212,187 +4126,15 @@
       "components": {
         "Transform": {
           "position": [
-            -0.17958474159240723,
-            -0.0187718253582716,
-            -0.006900623440742493
+            -0.18137793184734521,
+            -0.018771824565070996,
+            -0.006900623341278517
           ],
           "rotation": [
-            0.17522667348384857,
-            0,
-            0,
-            0.984528124332428
-          ],
-          "scale": [
-            1,
-            1,
-            1
-          ]
-        }
-      }
-    },
-    {
-      "uuid": "886596db-e08c-478c-a54f-71c06fdbca43",
-      "name": "Orion_Boots",
-      "parent": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
-      "components": {
-        "MeshRenderer": {
-          "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
-          "mesh_index": 5,
-          "base_color": [
-            1,
-            1,
-            1,
-            1
-          ],
-          "metallic": 0,
-          "roughness": 0.5,
-          "cast_shadows": true,
-          "visible": true
-        },
-        "SkinnedMesh": {
-          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
-          "skin": 0
-        },
-        "Transform": {
-          "position": [
-            0,
-            0,
-            0
-          ],
-          "rotation": [
-            0,
-            0,
-            0,
-            1
-          ],
-          "scale": [
-            1,
-            1,
-            1
-          ]
-        }
-      }
-    },
-    {
-      "uuid": "c38eecf4-e768-42a5-a8fe-41f097432da1",
-      "name": "Orion_Gloves",
-      "parent": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
-      "components": {
-        "MeshRenderer": {
-          "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
-          "mesh_index": 6,
-          "base_color": [
-            1,
-            1,
-            1,
-            1
-          ],
-          "metallic": 0,
-          "roughness": 0.5,
-          "cast_shadows": true,
-          "visible": true
-        },
-        "SkinnedMesh": {
-          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
-          "skin": 0
-        },
-        "Transform": {
-          "position": [
-            0,
-            0,
-            0
-          ],
-          "rotation": [
-            0,
-            0,
-            0,
-            1
-          ],
-          "scale": [
-            1,
-            1,
-            1
-          ]
-        }
-      }
-    },
-    {
-      "uuid": "80cbd9d3-6917-4f77-9a90-7bf2557a1f51",
-      "name": "Orion_Belt",
-      "parent": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
-      "components": {
-        "MeshRenderer": {
-          "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
-          "mesh_index": 7,
-          "base_color": [
-            1,
-            1,
-            1,
-            1
-          ],
-          "metallic": 0,
-          "roughness": 0.5,
-          "cast_shadows": true,
-          "visible": true
-        },
-        "SkinnedMesh": {
-          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
-          "skin": 0
-        },
-        "Transform": {
-          "position": [
-            0,
-            0,
-            0
-          ],
-          "rotation": [
-            0,
-            0,
-            0,
-            1
-          ],
-          "scale": [
-            1,
-            1,
-            1
-          ]
-        }
-      }
-    },
-    {
-      "uuid": "35300049-6bf7-4bc9-a645-f7f9e953a973",
-      "name": "Orion_Backpack",
-      "parent": "d407fdc2-604a-47c8-abd7-82f7e7fbe04a",
-      "components": {
-        "MeshRenderer": {
-          "mesh": "8e84eb12-63c8-4aed-aae2-517c038d3071",
-          "mesh_index": 8,
-          "base_color": [
-            1,
-            1,
-            1,
-            1
-          ],
-          "metallic": 0,
-          "roughness": 0.5,
-          "cast_shadows": true,
-          "visible": true
-        },
-        "SkinnedMesh": {
-          "skeleton": "78fef8ad-1174-48af-b416-2104f5cd8c64",
-          "skin": 0
-        },
-        "Transform": {
-          "position": [
-            0,
-            0,
-            0
-          ],
-          "rotation": [
-            0,
-            0,
-            0,
-            1
+            0.1752266699826986,
+            0.0,
+            0.0,
+            0.9845281174891728
           ],
           "scale": [
             1,

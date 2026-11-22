@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Build the VICTUS starter characters, Orion and Nova (docs/CHARACTERS.md, ADR-0179).
+"""Build the VICTUS starter characters, Orion and Nova (docs/CHARACTERS.md, ADR-0179, ADR-0198).
 
 Usage (Python 3.11 with NumPy, SciPy, Pillow; Blender's `bpy` module for the ambient-occlusion
 bake; see docs/CHARACTERS.md for the exact environment):
@@ -9,9 +9,10 @@ bake; see docs/CHARACTERS.md for the exact environment):
 Pipeline per character:
   fit.build          MakeHuman base mesh (CC0, third_party/makehuman) shaped by macro targets,
                      facial pose units as blend shapes, A-pose, VICTUS Humanoid skeleton;
-  assemble.assemble  skin / suit / eyes / mouth / groom parts with weights, morphs, UVs;
+  mannequin.assemble the Frame mannequin (ADR-0198): undersuit body and head shell, hard-surface
+                     armour plates, visor and face-display glyphs, with weights, morphs, UVs;
   meshops            one Catmull-Clark step for the highest LOD, GPU vertices with tangents;
-  materials + bake   per-texel PBR maps (base colour, normal, ORM, emissive) and Cycles AO;
+  mannequin_materials + bake  per-texel PBR maps (base colour, normal, ORM, emissive) and Cycles AO;
   anim               the clip library sampled at 30 fps into each joint's rest frame;
   gltf.Writer        one self-contained GLB per character.
 
@@ -36,12 +37,15 @@ import assemble  # noqa: E402
 import bake  # noqa: E402
 import fit  # noqa: E402
 import gltf  # noqa: E402
+import mannequin  # noqa: E402
+import mannequin_materials as mmat  # noqa: E402
 import materials  # noqa: E402
 import meshops  # noqa: E402
 
-PIPELINE_VERSION = 3
-MATERIAL_ORDER = ("Skin", "Suit", "Eye", "Mouth", "Groom", "Gear")
-TEXTURE_SIZE = {"Skin": 2048, "Suit": 2048, "Eye": 512, "Mouth": 512, "Groom": 2048, "Gear": 2048}
+PIPELINE_VERSION = 4
+MATERIAL_ORDER = ("Frame", "Armor", "Visor")
+TEXTURE_SIZE = {"Frame": 2048, "Armor": 2048, "Visor": 1024}
+EMISSIVE_STRENGTH = {"Frame": 3.0, "Armor": 4.0, "Visor": 6.0}
 
 
 def log(*a):
@@ -96,30 +100,25 @@ def bake_part(lod: Lod0, L, style, all_lods, size, ao, seed):
     N /= np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-9)
     attrs = {k: tx.interp(a[r.src]) for k, a in lod.attrs.items()}
     name = lod.part.name
-    if name == "Skin":
-        m = materials.skin_maps(tx, P, N, L, style, seed)
-    elif name == "Suit":
-        cuff = lod.face_attrs["cuff"][lod.tri_face[tx.tri_id]].astype(float)
-        m = materials.suit_maps(tx, P, N, L, style, cuff, seed)
-    elif name == "Eye":
-        m = materials.eye_maps(tx, P, N, attrs, style, seed)
-    elif name == "Mouth":
-        m = materials.mouth_maps(tx, P, N, attrs, seed)
-    elif name == "Gear":
-        fa = lod.tri_face[tx.tri_id]
-        kind = lod.face_attrs["kind"][fa].astype(float)
-        cuff = lod.face_attrs["cuff"][fa].astype(float)
-        m = materials.gear_maps(tx, P, N, L, style, kind, cuff, seed)
+    fa = lod.tri_face[tx.tri_id]
+    if name == "Frame":
+        m = mmat.frame_maps(tx, P, N, L, style, lod.face_attrs["kind"][fa].astype(float), seed)
+    elif name == "Armor":
+        m = mmat.armor_maps(tx, P, N, L, style, lod.face_attrs["kind"][fa].astype(float),
+                            lod.face_attrs["cuff"][fa].astype(float), lod.face_attrs["trim"][fa].astype(float), attrs, seed)
+    elif name == "Visor":
+        m = mmat.visor_maps(tx, P, N, L, style, lod.face_attrs["kind"][fa].astype(float),
+                            lod.face_attrs["cuff"][fa].astype(float), seed)
     else:
-        m = materials.groom_maps(tx, P, N, attrs, style, seed)
+        raise ValueError(f"no material for part {name}")
     mask = tx.mask()
     occl = np.ones((size, size))
-    if ao and name != "Groom":
+    if ao:
         # Equipment is optional (each item can be hidden), so it never darkens the body maps;
         # the body does occlude the equipment (pack against the back, cuffs, boot tops).
         others = [(o.r.pos, o.r.tri) for o in all_lods
                   if o is not lod and o.part.name not in ("Groom", "Gear")]
-        dist = {"Skin": 0.08, "Suit": 0.12, "Eye": 0.03, "Mouth": 0.05, "Gear": 0.08}[name]
+        dist = {"Frame": 0.10, "Armor": 0.06, "Visor": 0.03}.get(name, 0.08)
         occl = bake.bake_ao(r, size, occluders=others, samples=64 if size <= 1024 else 32, distance=dist)
     out = {}
     color = tx.image(m["color"], fill=0.0)
@@ -253,11 +252,12 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
         w.node(sname, parent=joint_nodes[j], t=t, r=gltf.quat_from_matrix(r))
 
     J = L.J
-    socket("Socket.Head", "Head", np.array([0, J["Head"][0][1], spec.skull_top]))
+    top = max(lod.r.pos[np.abs(lod.r.pos[:, 0]) < 0.02][:, 2].max() for lod in lods if lod.part.name == "Frame")
+    socket("Socket.Head", "Head", np.array([0, J["Head"][0][1], top]))
     socket("Socket.Face", "Head", L.eye_mid + np.array([0, -0.03, 0]))
-    suit = next(lod for lod in lods if lod.part.name == "Suit")
+    surf = np.concatenate([lod.r.pos for lod in lods if lod.part.name in ("Frame", "Armor")])
     chest_z = J["Chest"][0][2] + 0.08
-    sv = suit.r.pos[np.abs(suit.r.pos[:, 2] - chest_z) < 0.02]
+    sv = surf[np.abs(surf[:, 2] - chest_z) < 0.02]
     back_y = sv[np.abs(sv[:, 0]) < 0.05][:, 1].max()
     socket("Socket.Back", "Chest", np.array([0, back_y + 0.02, chest_z]))
     for t, s in (("L", 1), ("R", -1)):
@@ -270,7 +270,8 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
         Ra = np.stack([np.cross(along, palm), along, palm], 1)
         socket(f"Socket.Hand.{t}", f"Hand.{t}", grip, C @ Ra)
         hips = J["Hips"][0]
-        hv = suit.r.pos[np.abs(suit.r.pos[:, 2] - (hips[2] - 0.02)) < 0.015]
+        # The torso only: the hands hang at hip height in the A-pose.
+        hv = surf[(np.abs(surf[:, 2] - (hips[2] - 0.02)) < 0.015) & (np.abs(surf[:, 0]) < 0.25)]
         hx = np.abs(hv[:, 0]).max()
         socket(f"Socket.Hip.{t}", "Hips", np.array([s * (hx + 0.01), hips[1], hips[2] - 0.02]))
 
@@ -288,7 +289,7 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
         if "emissive" in ti:
             m["emissiveTexture"] = {"index": ti["emissive"]}
             m["emissiveFactor"] = [1.0, 1.0, 1.0]
-            m["extensions"] = {"KHR_materials_emissive_strength": {"emissiveStrength": 2.0}}
+            m["extensions"] = {"KHR_materials_emissive_strength": {"emissiveStrength": EMISSIVE_STRENGTH.get(mname, 2.0)}}
             w.used_ext.add("KHR_materials_emissive_strength")
         if mname == "Groom":
             m["alphaMode"] = "MASK"
@@ -403,11 +404,12 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
         "kind": "character", "pipeline": "tools/characters", "pipelineVersion": PIPELINE_VERSION,
         "character": spec.key, "displayName": name, "profile": spec.profile,
         "skeleton": "VictusHumanoid", "coreJoints": 21, "joints": len(sk.names),
-        "height": float(max(lod.r.pos[:, 2].max() for lod in lods)), "skullTop": spec.skull_top,
+        "height": float(max(lod.r.pos[:, 2].max() for lod in lods)), "skullTop": float(top),
+        "look": "mannequin",
         "materials": list(MATERIAL_ORDER), "blendShapes": targets, "equipment": equipment, "clips": clip_meta,
         "sockets": ["Socket.Root", "Socket.Head", "Socket.Face", "Socket.Back", "Socket.Hand.L", "Socket.Hand.R",
                     "Socket.Hip.L", "Socket.Hip.R"],
-        "provenance": {"baseMesh": "MakeHuman hm08 (CC0 1.0), third_party/makehuman",
+        "provenance": {"baseMesh": "MakeHuman hm08 (CC0 1.0), third_party/makehuman; mannequin shell (tools/characters/mannequin.py)",
                        "makehumanCommit": "a8bc2d54ff0ac92e78ff71431b1023eda42bf482",
                        "macro": spec.macro.__dict__},
     }}
@@ -459,8 +461,8 @@ def build_one(spec, out_dir, size_scale, ao):
     t0 = time.time()
     log(f"{spec.name}: fitting")
     body = fit.build(spec)
-    parts, style = assemble.assemble(body)
-    L = materials.Landmarks(body, parts)
+    parts, style, info = mannequin.assemble(body)
+    L = mmat.Landmarks(body, info)
     log(f"{spec.name}: subdividing")
     lods = [Lod0(p) for p in parts]
     # Smooth normals over shared positions inside each part (subdivision splits UV seams).
