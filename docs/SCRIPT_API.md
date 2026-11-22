@@ -39,6 +39,15 @@ cannot run the project's scripts:
 
 `victus info <project>` and `victus version` print the versions.
 
+## Versions
+
+| Version | Added | Snapshot |
+|---|---|---|
+| 1.0 | First frozen API (ADR-0155) | `victus_script_api_1.0.json` |
+| 1.1 | `entity:ragdoll_get_up` (ADR-0158); `entity:set_vehicle_input`, `entity:vehicle_state` (ADR-0166); `entity:ui_value`, `entity:set_ui_value` and the `on_value_changed` and `on_submit` callbacks (ADR-0169); `entity:find_descendant`, `entity:attach` (ADR-0181) | `victus_script_api_1.1.json` |
+
+The repository has no release tag yet, so 1.1 was extended in place by three commits after it was first frozen (2c44a8b, 4d0b22b, f3194ce). That is allowed while no engine with 1.1 has been released. After the first release, every addition needs a new minor version.
+
 ## For engine developers
 
 Each released API version is frozen as `engine/script/api/victus_script_api_<version>.json`.
