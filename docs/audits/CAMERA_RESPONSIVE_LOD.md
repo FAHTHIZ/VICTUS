@@ -108,6 +108,15 @@ as `SceneStats::anisotropy`. Evidence (`gpu_anisotropy_tests.cpp`): on a checker
 grazing angle the contrast left near the horizon is 0.28 at 1x, 3.78 at 4x and 7.29 at 16x, while
 magnified near rows are unchanged.
 
+## Changes since the audit (2026-11-22)
+
+Checked against the ADRs. The findings above are kept as written; these entries supersede parts of them.
+
+- Finding 1: per-cascade selection now exists. `RenderSettings::shadow_lod_texels` (default 1) moves each directional-cascade caster to a coarser level while that level's error stays under the cascade's texel size (ADR-0132).
+- Finding 3: level changes now dissolve over `lod_fade_frames` (default 8) with a dithered cross-fade instead of popping (ADR-0184). Geomorphing is still not implemented.
+- Thin geometry (item 8 below): the TAA and temporal-upscaling resolves add FSR2-style depth disocclusion (ADR-0147) and thin-feature locks (ADR-0148). The new `gpu: taa keeps sub-pixel wires (ADR-0148)` test measures native error falling from 47.0 to 36.0 and half-resolution upscaling error from 60.4 to 25.1 against an 8x8 supersampled reference ([STATUS.md](../STATUS.md)). Phone-wire AA is still open.
+- Still open: per-view LOD budgets (finding 4), mip streaming (finding 5), GPU execution time (finding 6) and hashed alpha testing (finding 7).
+
 ## Not covered yet
 
 - H3 item 8, thin opaque geometry: measured, not solved. `gpu_thin_geometry_tests.cpp` draws a 2 cm
