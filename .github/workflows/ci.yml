@@ -195,6 +195,33 @@ jobs:
           name: android-3d-template-debug-apk
           path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
 
+  headless:
+    # VICTUS_WITH_GRAPHICS=OFF must build the headless core (TECHNOLOGY_DECISIONS) on a machine
+    # with no X11, Wayland or audio headers: only a compiler and Ninja are installed here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja and ccache
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build ccache
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-headless-${{ github.sha }}
+          restore-keys: ccache-headless-
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVICTUS_WITH_GRAPHICS=OFF -DVICTUS_BUILD_TESTS=ON \
+            -DVICTUS_WARNINGS_AS_ERRORS=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build
+        run: |
+          ccache -z
+          cmake --build build --parallel
+          ccache -s
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   sanitizers:
     strategy:
       fail-fast: false
