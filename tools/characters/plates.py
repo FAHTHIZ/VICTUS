@@ -592,7 +592,13 @@ def layout(J, torso: Torso, key):
                  (-30, 0.27)])
         add(Plate("Pauldron.L", ua, paul, extra={"xmin": 0.148 if nova else 0.15},
                   thickness=0.018 if nova else 0.027, crown=0.05, trim=1, round=0.016, gate=arm_gate,
-                  facets=4 if nova else 6, facet_mix=0.55 if nova else 1.0, lift=0.002))
+                  facets=4 if nova else 5, facet_mix=0.55 if nova else 0.9, lift=0.002))
+        if not nova:
+            # Layered shoulder (the sheet's front and three-quarter views): a second, smaller
+            # faceted shell rides on top of the pauldron, its edge standing clear of the one below.
+            add(Plate("PauldronTop.L", ua, [(5, -0.10), (90, -0.15), (175, -0.10), (178, 0.12), (90, 0.20), (2, 0.12)],
+                      extra={"xmin": 0.15}, thickness=0.010, crown=0.03, round=0.012, gate=arm_gate,
+                      lift=0.036, fair=16))
         add(Plate("Lame.L", ua, [(-45, 0.40), (40, 0.46), (130, 0.50), (215, 0.44), (210, 0.58), (120, 0.62),
                                 (30, 0.58), (-40, 0.54)],
                   thickness=0.015 * k, crown=0.02, round=0.008, gate=arm_gate, tone=1))
@@ -631,6 +637,10 @@ def layout(J, torso: Torso, key):
                       thickness=0.017, crown=0.045, trim=1, round=0.014, gate=thick_gate, facets=5, facet_mix=0.4))
             add(Plate("Hamstring.L", th, [(205, 0.34), (238, 0.36), (238, 0.82), (205, 0.84)],
                       thickness=0.008, crown=0.015, tone=0, round=0.006, gate=thick_gate))
+            # A raised outer-thigh panel over the sweep, its own lit groove the sheet's violet line.
+            add(Plate("ThighPanel.L", th, [(35, 0.20), (125, 0.24), (125, 0.56), (35, 0.52)],
+                      thickness=0.008, crown=0.015, round=0.010, trim=1, gate=thick_gate, lift=0.017,
+                      facets=3, facet_mix=0.6))
         # Knee: a faceted graphite cop.
         ks = Chart("limb", 1.0, kn, an, seam=-120, radius=0.06)
         add(Plate("Kneecap.L", ks, [(0, -0.075), (40, -0.05), (42, 0.035), (0, 0.075), (-42, 0.035), (-40, -0.05)],

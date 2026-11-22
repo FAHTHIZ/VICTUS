@@ -3365,3 +3365,17 @@ Verified (2-core sandbox):
 - Not verified: the VICTUS runtime close-ups.
 - Next task: layered pauldrons and Nova's thigh details (ADR-0225).
 
+## 2026-11-22 — Orion layered pauldrons and Nova thigh panels (ADR-0225)
+
+Built:
+- Orion: `PauldronTop.L/R`, a second, smaller shell standing 36 mm off the deltoid on top of each pauldron (faired 16 passes), the sheet's layered shoulder; the pauldron below back to five planes at 90%.
+- Nova: `ThighPanel.L/R`, a raised outer-thigh panel over the sweeping thigh plate with its own lit groove (the sheet's violet line).
+
+Verified (2-core sandbox):
+- `tools/characters/test_pipeline.py` 12/12.
+- `build_characters.py --out engine/project/data/characters`: Orion 188,952 triangles, 14.08 MB; Nova 182,712 triangles, 13.68 MB (budget 140k-190k); copied to the arena sample.
+- `victus_asset_tests -tc="*character*"` (Release, rebuilt with the new GLBs): 8 cases, 139,054 assertions pass.
+- Blender renders: rest front and three-quarter (`docs/images/characters/blender_render_bodies.jpg` updated) and the squat stress pose from three-quarter and back for both, checked by eye: the new layers follow the skin, no plate leaves its limb; the thigh and knee plates overlap in the deep squat, as overlapping plates do. Still short of the sheet: Orion's shoulder layers read as one rounded mass at full-body distance, and Orion has only 1,048 triangles of budget left.
+- Not verified: the VICTUS runtime close-ups.
+- Next task: runtime close-up review of both characters in the arena sample (ADR-0225).
+
