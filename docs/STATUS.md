@@ -3272,3 +3272,11 @@ Verified (Release, 2-core sandbox):
 - Not verified: expressions on physical GPUs; props with their own physics or cloth; mesh intersection between a worn prop and the armour (only the distance to the carrying surface is measured).
 - Next task: Studio IK configuration and retargeting, then sparse or GPU morphing.
 
+## 2026-11-22 — CI: macOS shader literal length and Windows skinning test
+
+Main had been failing on macOS and Windows since a4bc30d and 2aa3a69 (Linux jobs passed).
+- macOS (Debug and Release): `engine/render/generated/builtin_shaders.cpp` failed with `-Werror,-Woverlength-strings`: the Metal source of `pbr.frag` is 70,294 characters (`pbr.frag#fp16` 70,912), over the 65,536 that C++ requires compilers to accept. Clang accepts it; the warning is now off for that generated file only (not MSVC, whose per-literal limit the generator's 12,000-character chunks already respect).
+- Windows (Debug and Release): `skinning_tests.cpp` read the scale written by `to_dual_quat` in the same call expression, so MSVC's right-to-left argument order passed it uninitialised. The test now converts first. The skinning code was not at fault.
+- Verified: local Release build with GCC, `victus_render_tests -tc="skinning*"` 5/5; the macOS and Windows results are in the CI run of this commit.
+- Next task: Studio IK configuration and retargeting.
+

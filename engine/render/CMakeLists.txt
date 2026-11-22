@@ -45,6 +45,12 @@ victus_add_module(render
         ${_vertex_cpp}
         generated/builtin_shaders.cpp
     DEPS VICTUS::Core VICTUS::Rhi)
+# The generated Metal source of pbr.frag is over 64 KiB, the length C++ requires compilers to
+# accept; Clang and GCC accept far longer literals but -Wpedantic warns (an error in CI). MSVC's
+# own limit is per chunk, which compile_shaders.py keeps under it.
+if(NOT MSVC)
+    set_source_files_properties(generated/builtin_shaders.cpp PROPERTIES COMPILE_OPTIONS "-Wno-overlength-strings")
+endif()
 # stb implementations are third-party code: compiled without VICTUS warning flags.
 add_library(victus_stb STATIC src/stb_impl.cpp)
 target_include_directories(victus_stb PUBLIC ${PROJECT_SOURCE_DIR}/third_party/stb)

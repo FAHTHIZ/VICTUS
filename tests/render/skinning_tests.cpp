@@ -52,7 +52,8 @@ TEST_CASE("skinning: dual quaternions round-trip rigid and scaled joint matrices
     // Mirrored joints keep their handedness.
     const Mat4 mirror = Mat4::trs({1, 0, 0}, Quat::axis_angle({0, 1, 0}, 0.4f), {-1, 1, 1});
     Vec3 s;
-    CHECK(near(to_matrix(to_dual_quat(mirror, &s), s), mirror));
+    const DualQuat mirror_dq = to_dual_quat(mirror, &s); // before reading s: argument order is unspecified
+    CHECK(near(to_matrix(mirror_dq, s), mirror));
     std::vector<Mat4> palette = {mirror, Mat4::identity()};
     encode_dq_palette(palette);
     CHECK(is_dq_joint(palette[0]));

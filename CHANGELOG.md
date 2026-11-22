@@ -123,6 +123,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Fixed
 
+- CI on macOS and Windows: the generated shader source no longer fails macOS builds (the Metal source of `pbr.frag` is over the 64 KiB literal length `-Wpedantic` warns about), and the dual quaternion mirror test no longer reads a value before it is written under MSVC's argument order. ([evidence](docs/STATUS.md#2026-11-22--ci-macos-shader-literal-length-and-windows-skinning-test))
 - Model import no longer drops skin influences silently. glTF (a second `JOINTS_1`/`WEIGHTS_1` set) and FBX (up to 64 clusters per vertex) influences are merged per joint, the four largest kept and renormalised, and the import reports how many vertices lost influences and the largest weight dropped, how many listed one joint twice, and how many had no weight (bound to the root). Orion and Nova still import with zero warnings. ([evidence](docs/STATUS.md#2026-11-22--skin-weight-import-warnings))
 - Studio: shortcuts pressed in the Behaviour Tree Editor (Ctrl+S, Ctrl+Z/Y, Delete) also acted on the scene; F2 and Delete in the Assets panel opened Help and deleted the selected entity. ([evidence](docs/STATUS.md#2026-11-21--asset-trash-and-assets-shortcuts-adr-0177))
 - `victus run --quality <unknown tier>` now reports the error before creating a window or GPU device; on lavapipe the late exit could crash in the driver instead. ([STATUS](docs/STATUS.md#2026-11-21--behaviour-tree-editor-adr-0176))
