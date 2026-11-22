@@ -660,7 +660,10 @@ TEST_CASE("sequencer curves: property tracks animate built-in and reflected comp
     CHECK(has("Light", "color", 4));
     CHECK_FALSE(has("Camera", "fov_y", 1)); // no Camera on the lamp
     CHECK(has("SequencePlayer", "speed", 1) == false);
-    CHECK(std::any_of(animatable_properties(s, player).begin(), animatable_properties(s, player).end(),
+    // One vector: begin() and end() of two separate temporaries is undefined behaviour (MSVC's
+    // checked iterators abort the Debug build on it).
+    const std::vector<AnimatableProperty> player_props = animatable_properties(s, player);
+    CHECK(std::any_of(player_props.begin(), player_props.end(),
                       [](const AnimatableProperty& a) { return a.component == "SequencePlayer" && a.property == "speed"; }));
 
     SequencerSystem sys;
