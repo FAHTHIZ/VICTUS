@@ -2266,3 +2266,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** listed in docs/STATUS.md under this ADR.
 
 **Consequences:** Throttled emitters integrate with larger steps, so drag, collision and turbulence differ slightly from full rate (no claim of identical results). The automatic viewers do not know the real window aspect. Overdraw diagnostics and a global budget remain to do.
+
+### ADR-0211: Particle speed and spin curves over life
+
+**Status:** Accepted (2026-11-22)
+
+**Context:** After ADR-0209 the VFX audit still could not express motion over life: sparks that burst out and then crawl, embers that hang before rising, debris that tumbles and then settles. [Unity's Velocity over Lifetime Speed Modifier](https://docs.unity3d.com/Manual/PartSysVelOverLifeModule.html) and Rotation over Lifetime, and Niagara's velocity and rotation-rate scale curves, are the usual tools.
+
+**Decision:** (1) `ParticleEmitterComponent::speed_over_life` and `spin_over_life` (curves of normalised age, the same key rules and 8-key limit as ADR-0209, empty = 1). (2) The speed curve scales how far a particle moves along its velocity each step; gravity, drag and turbulence still act on the velocity itself, so a curve that drops to 0 parks the particle without discarding its momentum. Velocity stretch and the reported velocities use the scaled motion. The spin curve scales the spin rate. (3) Both are sampled at the start of each step on the CPU path, in `gpu_integrate` and in `particle_sim.comp` (uniforms 688 → 816 bytes). GPU bounds grow by the largest speed multiplier.
+
+**Alternatives:** (1) Scaling the velocity itself (Unity's Limit Velocity / multiply): compounds every frame, so the result depends on frame rate. (2) A per-axis velocity-over-life vector curve: more control, but three curves per emitter for little gain in the brief's effects; can come later through the effect graph.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Empty curves keep existing emitters bit-identical. Sampling at the step start is first-order: big throttled steps (ADR-0210) follow sharp curve changes less exactly.

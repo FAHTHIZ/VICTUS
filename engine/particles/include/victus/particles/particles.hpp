@@ -64,6 +64,12 @@ struct ParticleEmitterComponent {
     // then slowly, sparks that pop then shrink). Empty = the linear start/end behaviour.
     std::vector<scene::GradientKey> color_over_life;
     std::vector<math::Vec2> size_over_life;
+    // Motion multipliers over life (ADR-0211), same key rules; empty = 1. speed_over_life scales
+    // how far the particle moves along its velocity each step (forces still act on the velocity),
+    // so sparks can burst out then crawl and embers can slow before rising again; spin_over_life
+    // scales the spin (debris that tumbles fast then settles).
+    std::vector<math::Vec2> speed_over_life;
+    std::vector<math::Vec2> spin_over_life;
     float spin_min{0}, spin_max{0}; // degrees per second
     Blend blend{Blend::Alpha};
     Uuid texture;              // optional texture asset; nil = built-in soft disc
@@ -158,6 +164,11 @@ constexpr std::uint32_t kMaxSubEmitterEvents = 4096;
 [[nodiscard]] float size_at(const ParticleEmitterComponent& e, float t);
 // Largest size_at over the particle's life (bounds).
 [[nodiscard]] float max_size(const ParticleEmitterComponent& e);
+// Speed and spin multipliers at normalised age t (1 when the curve is empty; ADR-0211).
+[[nodiscard]] float speed_at(const ParticleEmitterComponent& e, float t);
+[[nodiscard]] float spin_at(const ParticleEmitterComponent& e, float t);
+// Largest |speed_at| over the particle's life (bounds).
+[[nodiscard]] float max_speed_scale(const ParticleEmitterComponent& e);
 // Frame shown at `age` of `life` seconds, given the particle's start frame (exposed for tests).
 [[nodiscard]] std::uint32_t flipbook_frame(const ParticleEmitterComponent& e, float age, float life, std::uint32_t start);
 // Usable frame count (columns x rows, clamped by flipbook_frames); 1 when the flipbook is off.

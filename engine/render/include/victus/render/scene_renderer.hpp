@@ -306,6 +306,9 @@ struct GpuParticleParams {
     std::uint32_t color_keys{0}, size_keys{0}; // <= 8 each, times ascending
     std::array<math::Vec4, 8> color_key{};
     std::array<float, 8> color_time{}, size_time{}, size_value{};
+    // Motion multipliers over life (ADR-0211; particles::speed_at / spin_at): 0 keys = 1.
+    std::uint32_t speed_keys{0}, spin_keys{0};
+    std::array<float, 8> speed_time{}, speed_value{}, spin_time{}, spin_value{};
 };
 struct GpuParticleEmitter {
     std::uint64_t key{0};        // stable per emitter; selects the renderer's GPU state

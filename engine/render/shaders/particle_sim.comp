@@ -62,7 +62,11 @@ layout(std140, set = 2, binding = 0) uniform Params {
     vec4 color_times[2];
     vec4 size_times[2]; // over-life size curve (particles::size_at)
     vec4 size_values[2];
-    uvec4 curve_meta;   // x colour keys, y size keys (0 = linear start/end)
+    vec4 speed_times[2]; // ADR-0211 motion multipliers over life (particles::speed_at / spin_at)
+    vec4 speed_values[2];
+    vec4 spin_times[2];
+    vec4 spin_values[2];
+    uvec4 curve_meta;   // x colour keys, y size keys (0 = linear start/end), z speed keys, w spin keys (0 = 1)
 } u;
 
 float key_time(vec4 v[2], uint i) { return v[i >> 2u][i & 3u]; }
@@ -106,6 +110,23 @@ float size_at(float t) {
     return u.size.x * v;
 }
 
+// scene::sample_curve with fallback 1 (speed and spin multipliers).
+float curve_at(vec4 times[2], vec4 values[2], uint n, float t) {
+    if (n == 0u) return 1.0;
+    if (!(t > key_time(times, 0u))) return key_time(values, 0u);
+    for (uint i = 1u; i < n; ++i) {
+        float t1 = key_time(times, i);
+        if (t <= t1) {
+            float t0 = key_time(times, i - 1u);
+            float span = t1 - t0;
+            float f = span > 0.0 ? (t - t0) / span : 1.0;
+            float a = key_time(values, i - 1u);
+            return a + (key_time(values, i) - a) * f;
+        }
+    }
+    return key_time(values, n - 1u);
+}
+
 const float kPi = 3.14159265358979;
 
 vec3 curl_octave(vec3 x, float k, float ph) {
@@ -131,8 +152,9 @@ void integrate(inout Particle p, float dt, float phase) {
     for (int i = 0; i < steps; ++i) {
         vec3 a = u.gravity_drag.xyz + turbulence_at(p.pos_age.xyz, phase);
         p.vel_life.xyz = (p.vel_life.xyz + a * h) * damping;
-        p.pos_age.xyz += p.vel_life.xyz * h;
-        p.misc.x += p.misc.y * h;
+        float t = p.vel_life.w > 0.0 ? clamp(p.pos_age.w / p.vel_life.w, 0.0, 1.0) : 0.0; // at the step's start
+        p.pos_age.xyz += p.vel_life.xyz * (curve_at(u.speed_times, u.speed_values, u.curve_meta.z, t) * h);
+        p.misc.x += p.misc.y * curve_at(u.spin_times, u.spin_values, u.curve_meta.w, t) * h;
         p.pos_age.w += h;
         phase += u.turb.z * h;
     }
@@ -214,7 +236,8 @@ Instance billboard(Particle p) {
         o.params.z = u.flip.x * 16.0 + u.flip.y;
     }
     if ((u.meta.w & 8u) != 0u) {
-        vec3 v = world_space ? p.vel_life.xyz : (u.world * vec4(p.vel_life.xyz, 0.0)).xyz;
+        vec3 v = (world_space ? p.vel_life.xyz : (u.world * vec4(p.vel_life.xyz, 0.0)).xyz) *
+                 curve_at(u.speed_times, u.speed_values, u.curve_meta.z, t);
         float speed = length(v);
         if (size > 0.0 && speed > 1e-6) {
             aspect = 1.0 + speed * u.size.w / size;

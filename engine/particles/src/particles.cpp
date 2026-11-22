@@ -263,8 +263,9 @@ void gpu_integrate(const ParticleEmitterComponent& e, GpuParticle& p, float dt, 
     for (int i = 0; i < steps; ++i) {
         const Vec3 a = e.gravity + turbulence_at(e, p.position, phase);
         p.velocity = (p.velocity + a * h) * damping;
-        p.position = p.position + p.velocity * h;
-        p.rotation += p.spin * h;
+        const float t = p.life > 0 ? std::clamp(p.age / p.life, 0.0f, 1.0f) : 0.0f; // at the step's start
+        p.position = p.position + p.velocity * (speed_at(e, t) * h);
+        p.rotation += p.spin * spin_at(e, t) * h;
         p.age += h;
         phase += dphase;
     }
@@ -279,6 +280,22 @@ Color color_at(const ParticleEmitterComponent& e, float t) {
 float size_at(const ParticleEmitterComponent& e, float t) {
     if (e.size_over_life.empty()) return math::lerp(e.size_start, e.size_end, t);
     return e.size_start * scene::sample_curve(e.size_over_life, t, kMaxCurveKeys, 1.0f);
+}
+
+float speed_at(const ParticleEmitterComponent& e, float t) {
+    return e.speed_over_life.empty() ? 1.0f : scene::sample_curve(e.speed_over_life, t, kMaxCurveKeys, 1.0f);
+}
+
+float spin_at(const ParticleEmitterComponent& e, float t) {
+    return e.spin_over_life.empty() ? 1.0f : scene::sample_curve(e.spin_over_life, t, kMaxCurveKeys, 1.0f);
+}
+
+float max_speed_scale(const ParticleEmitterComponent& e) {
+    if (e.speed_over_life.empty()) return 1.0f;
+    float m = 0;
+    const std::size_t n = std::min(e.speed_over_life.size(), kMaxCurveKeys);
+    for (std::size_t i = 0; i < n; ++i) m = std::max(m, std::fabs(e.speed_over_life[i].y));
+    return std::isfinite(m) ? m : 0.0f;
 }
 
 float max_size(const ParticleEmitterComponent& e) {
@@ -306,7 +323,7 @@ Billboard gpu_billboard(const ParticleEmitterComponent& e, const GpuParticle& p,
         b.frame = static_cast<float>(flipbook_frame(e, p.age, p.life, static_cast<std::uint32_t>(p.start_frame)));
     }
     if (e.velocity_stretch > 0 && std::isfinite(e.velocity_stretch)) {
-        const Vec3 v = e.world_space ? p.velocity : world.transform_vector(p.velocity);
+        const Vec3 v = (e.world_space ? p.velocity : world.transform_vector(p.velocity)) * speed_at(e, t);
         const float speed = math::length(v);
         if (b.size > 0 && speed > 1e-6f) {
             b.aspect = 1.0f + speed * e.velocity_stretch / b.size;
@@ -406,11 +423,13 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
     const bool sub_death = sub && e.sub_emitter_trigger == SubEmitterTrigger::Death;
     for (std::size_t i = 0; i < s.particles.size();) {
         Particle& p = s.particles[i];
+        const float t0 = clamp01(p.age / p.life); // over-life motion curves at the step's start
+        const float speed_scale = speed_at(e, t0);
         p.age += dt;
         if (p.age >= p.life) {
             if (sub_death) {
                 // Where the particle would be at the end of the step it dies in.
-                const Vec3 at = p.position + p.velocity * dt;
+                const Vec3 at = p.position + p.velocity * (speed_scale * dt);
                 push_event(e, s, e.world_space ? at : world.transform_point(at), e.world_space ? p.velocity : world.transform_vector(p.velocity));
             }
             const std::size_t last = s.particles.size() - 1;
@@ -422,8 +441,8 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
         }
         const Vec3 accel = turbulent ? e.gravity + turbulence_at(e, p.position, phase) : e.gravity;
         p.velocity = (p.velocity + accel * dt) * damping;
-        p.position = p.position + p.velocity * dt;
-        p.rotation += p.spin * dt;
+        p.position = p.position + p.velocity * (speed_scale * dt);
+        p.rotation += p.spin * spin_at(e, t0) * dt;
         if (cap > 0) record_trail(e, p, s.trail.data() + i * cap, cap);
         ++i;
     }
@@ -512,7 +531,7 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
         b.aspect = 0;
         float extent = b.size;
         if (stretched) {
-            const Vec3 v = e.world_space ? p.velocity : world.transform_vector(p.velocity);
+            const Vec3 v = (e.world_space ? p.velocity : world.transform_vector(p.velocity)) * speed_at(e, t);
             s.velocities[i] = v;
             const float speed = math::length(v);
             if (b.size > 0 && speed > 1e-6f) {
@@ -596,8 +615,9 @@ Aabb gpu_bounds(const ParticleEmitterComponent& e, const GpuBook& g, const Mat4&
         box.expand(b.second.max);
     }
     if (!box.valid()) return box;
-    const float speed = std::max(std::fabs(e.speed_min), std::fabs(e.speed_max));
-    const float accel = math::length(e.gravity) + (std::isfinite(e.turbulence) ? std::fabs(e.turbulence) : 0.0f);
+    const float scale = max_speed_scale(e);
+    const float speed = std::max(std::fabs(e.speed_min), std::fabs(e.speed_max)) * scale;
+    const float accel = (math::length(e.gravity) + (std::isfinite(e.turbulence) ? std::fabs(e.turbulence) : 0.0f)) * scale;
     const float travel = speed * life_hi + 0.5f * accel * life_hi * life_hi;
     const float largest = max_size(e);
     float extent = largest * 0.5f;
@@ -850,6 +870,8 @@ void register_components() {
             .field(&ParticleEmitterComponent::color_end, "color_end")
             .field(&ParticleEmitterComponent::color_over_life, "color_over_life", {.tooltip = "Colour and alpha over each particle's life (time 0..1, up to 8 keys); empty = Color Start to Color End"})
             .field(&ParticleEmitterComponent::size_over_life, "size_over_life", {.tooltip = "Size Start multiplier over each particle's life (time 0..1, up to 8 points); empty = Size Start to Size End", .hint = "curve"})
+            .field(&ParticleEmitterComponent::speed_over_life, "speed_over_life", {.tooltip = "Movement speed multiplier over each particle's life (time 0..1, up to 8 points); empty = 1", .hint = "curve"})
+            .field(&ParticleEmitterComponent::spin_over_life, "spin_over_life", {.tooltip = "Spin multiplier over each particle's life (time 0..1, up to 8 points); empty = 1", .hint = "curve"})
             .field(&ParticleEmitterComponent::intensity, "intensity", {.min = 0, .max = 1e3f, .speed = 0.05f, .tooltip = "> 1 glows through bloom"})
             .field(&ParticleEmitterComponent::spin_min, "spin_min", {.min = -1e4f, .max = 1e4f, .speed = 1, .hint = "degrees"})
             .field(&ParticleEmitterComponent::spin_max, "spin_max", {.min = -1e4f, .max = 1e4f, .speed = 1, .hint = "degrees"})

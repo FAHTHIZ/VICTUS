@@ -2295,6 +2295,15 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 p.size_time[k] = e.size_over_life[k].x;
                 p.size_value[k] = e.size_over_life[k].y;
             }
+            const auto curve = [](const std::vector<math::Vec2>& c, std::uint32_t& n, std::array<float, 8>& times, std::array<float, 8>& values) {
+                n = static_cast<std::uint32_t>(std::min(c.size(), particles::kMaxCurveKeys));
+                for (std::uint32_t k = 0; k < n; ++k) {
+                    times[k] = c[k].x;
+                    values[k] = c[k].y;
+                }
+            };
+            curve(e.speed_over_life, p.speed_keys, p.speed_time, p.speed_value); // ADR-0211
+            curve(e.spin_over_life, p.spin_keys, p.spin_time, p.spin_value);
             p.world_space = e.world_space;
             p.collide = e.collision;
             if (e.trail_lifetime > 0 && std::isfinite(e.trail_lifetime)) { // trails (ADR-0110)

@@ -1295,3 +1295,71 @@ TEST_CASE("particle LOD: results are identical serially and on jobs; fields seri
     CHECK(near(lc.lod_spawn_scale, 0.25f));
     CHECK(lc.offscreen == Offscreen::Throttle);
 }
+
+TEST_CASE("particle speed and spin curves over life scale motion and rotation (ADR-0211)") {
+    const auto run = [](std::vector<math::Vec2> speed, std::vector<math::Vec2> spin, int frames, bool stretch = false) {
+        Scene s;
+        const Entity e = s.create("Spark");
+        auto& c = s.world().add<ParticleEmitterComponent>(e);
+        c.rate = 0;
+        c.burst = 1;
+        c.duration = 5;
+        c.loop = false;
+        c.shape = Shape::Point;
+        c.angle = 0;
+        c.speed_min = c.speed_max = 2;
+        c.lifetime_min = c.lifetime_max = 1;
+        c.spin_min = c.spin_max = 90;
+        c.seed = 5;
+        c.velocity_stretch = stretch ? 0.1f : 0.0f; // stretched billboards aim along motion instead of spinning
+        c.speed_over_life = std::move(speed);
+        c.spin_over_life = std::move(spin);
+        s.update_transforms();
+        ParticleSystem sys;
+        for (int f = 0; f < frames; ++f) sys.update(s, 1.0f / 60.0f);
+        const auto b = billboards_of(s, e);
+        REQUIRE(b.size() == 1);
+        return b[0];
+    };
+    const Billboard plain = run({}, {}, 54, true);
+    // Moves at full speed for the first half of its life, then stops (a step at t = 0.5).
+    const Billboard stopping = run({{0, 1}, {0.5f, 1}, {0.5f, 0}}, {}, 54, true);
+    MESSAGE("travelled: plain " << math::length(plain.position) << " m, stopping " << math::length(stopping.position) << " m");
+    CHECK(math::length(plain.position) > 1.7f);
+    CHECK(std::abs(math::length(stopping.position) - 1.0f) < 0.06f);
+    CHECK(stopping.aspect <= 1.0f); // stopped: no velocity stretch left
+    CHECK(plain.aspect > 1.5f);
+    // Constant 2x spin doubles the rotation; a spin curve to 0 stops it.
+    const float r1 = run({}, {}, 30).rotation, r2 = run({}, {{0, 2}, {1, 2}}, 30).rotation;
+    const float r0 = run({}, {}, 1).rotation;
+    CHECK(r1 - r0 > 0.5f);
+    CHECK(std::abs((r2 - r0) - 2 * (r1 - r0)) < 0.06f); // the first frame spins at the base rate either way
+    const float settled_a = run({}, {{0, 1}, {0.25f, 0}}, 30).rotation, settled_b = run({}, {{0, 1}, {0.25f, 0}}, 50).rotation;
+    CHECK(std::abs(settled_a - settled_b) < 1e-5f);
+    // Helpers and the reference kernel follow the same curves.
+    ParticleEmitterComponent e;
+    CHECK(speed_at(e, 0.3f) == 1.0f);
+    CHECK(spin_at(e, 0.3f) == 1.0f);
+    CHECK(max_speed_scale(e) == 1.0f);
+    e.speed_over_life = {{0, 3}, {1, -0.5f}};
+    CHECK(near(speed_at(e, 0.5f), 1.25f));
+    CHECK(near(max_speed_scale(e), 3));
+    GpuParticle p;
+    p.life = 1;
+    p.velocity = {1, 0, 0};
+    gpu_integrate(e, p, 0.01f, 0);
+    CHECK(near(p.position.x, 0.03f));
+    // Round trip through a scene file.
+    register_components();
+    Scene sc;
+    const Entity se = sc.create("Saved");
+    auto& c = sc.world().add<ParticleEmitterComponent>(se);
+    c.speed_over_life = {{0, 2}, {1, 0.5f}};
+    c.spin_over_life = {{0.5f, 0}};
+    Scene loaded;
+    REQUIRE(loaded.load(json::parse(json::stringify(sc.save())).value()).ok());
+    const auto& lc = *loaded.world().get<ParticleEmitterComponent>(loaded.find_by_name("Saved"));
+    REQUIRE(lc.speed_over_life.size() == 2);
+    CHECK(near(lc.speed_over_life[1].y, 0.5f));
+    REQUIRE(lc.spin_over_life.size() == 1);
+}

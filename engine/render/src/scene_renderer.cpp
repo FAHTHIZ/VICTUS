@@ -3020,9 +3020,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         std::array<Vec4, 8> color_keys;   // ADR-0209 over-life gradient
         std::array<float, 8> color_times; // two vec4s in std140
         std::array<float, 8> size_times, size_values;
-        std::array<std::uint32_t, 4> curve_meta; // x colour keys, y size keys
+        std::array<float, 8> speed_times, speed_values, spin_times, spin_values; // ADR-0211
+        std::array<std::uint32_t, 4> curve_meta; // x colour keys, y size keys, z speed keys, w spin keys
     };
-    static_assert(sizeof(ParticleSimUniforms) == 688);
+    static_assert(sizeof(ParticleSimUniforms) == 816);
     struct GpuParticleJob {
         const GpuParticleState* state;
         std::uint32_t spawns;
@@ -3175,7 +3176,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 u.color_times = g.color_time;
                 u.size_times = g.size_time;
                 u.size_values = g.size_value;
-                u.curve_meta = {std::min<std::uint32_t>(g.color_keys, 8u), std::min<std::uint32_t>(g.size_keys, 8u), 0u, 0u};
+                u.speed_times = g.speed_time;
+                u.speed_values = g.speed_value;
+                u.spin_times = g.spin_time;
+                u.spin_values = g.spin_value;
+                u.curve_meta = {std::min<std::uint32_t>(g.color_keys, 8u), std::min<std::uint32_t>(g.size_keys, 8u),
+                                std::min<std::uint32_t>(g.speed_keys, 8u), std::min<std::uint32_t>(g.spin_keys, 8u)};
                 gpu_jobs.push_back(job);
             }
             ++stats_.gpu_particle_emitters;

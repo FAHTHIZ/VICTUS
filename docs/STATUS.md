@@ -3135,3 +3135,17 @@ Verified (dev build, 2-core sandbox):
 - Existing particle cases unchanged (defaults are bit-identical). `victus_scene_tests` (16 cases), `victus_gpu_tests -tc="gpu particles*"` (Vulkan, lavapipe, 13 cases), `victus_editor_tests -tc="studio inspector*"` (3 cases) and `ctest -R "project_tests|cli_smoke|docs"` pass.
 - Not verified: frame-time savings in a real scene or on hardware (only skipped-update counts are measured); throttled GPU emitters were not read back on the GPU (they follow the same emitter clock); the automatic viewers assume a 2.4 aspect rather than the window's.
 - Next task: speed and rotation over life, then overdraw diagnostics.
+
+## 2026-11-22 — Particle speed and spin curves over life (ADR-0211)
+
+Third piece of the VFX audit: motion over life, needed for sparks that burst then crawl, hanging embers and debris that tumbles then settles.
+
+- `ParticleEmitterComponent::speed_over_life` (scales how far a particle moves along its velocity each step; forces still act on the velocity) and `spin_over_life` (scales the spin), with `particles::speed_at`, `spin_at` and `max_speed_scale`. Velocity stretch and reported velocities use the scaled motion; GPU bounds grow by the largest multiplier.
+- Same rule on the CPU path, in `gpu_integrate` and in `particle_sim.comp` (simulation uniforms 816 bytes). The Studio Inspector edits both as curves (reflected `Vec2List` fields with the `curve` hint).
+
+Verified (dev build, 2-core sandbox):
+- `victus_particles_tests`: 30 cases, 75,243 assertions pass. New case: a particle at 2 m/s with a speed step to 0 at half life travelled 1.00 m against 1.77 m without the curve and lost its velocity stretch; a constant 2x spin curve doubled the rotation; a spin curve to 0 at a quarter of the life kept the rotation fixed afterwards; helper values, `gpu_integrate` and scene save/load.
+- `victus_gpu_tests -tc="*particle*"` (Vulkan, lavapipe): 18 cases pass. New case: a GPU emitter with speed and spin curves, gravity, drag and velocity stretch; 138 live particles after 36 frames, worst position error 0 m, rotation error 0 rad and stretch error 2.4e-7 against `gpu_integrate` / `gpu_billboard`, with the stretch visibly reduced by the curve.
+- `victus_scene_tests`, `victus_editor_tests -tc="studio inspector*"`, `ctest -R "project_tests|cli_smoke|docs"` pass; `compile_shaders.py --check`: up to date (63 shaders).
+- Not verified: Metal and D3D12 (translated shader text, not run); GPU cost on real hardware.
+- Next task: overdraw diagnostics for particles.

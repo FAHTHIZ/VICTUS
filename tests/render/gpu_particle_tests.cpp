@@ -1138,3 +1138,91 @@ TEST_CASE("gpu particles: over-life colour gradient and size curve match the CPU
     CHECK(worst_size < 1e-5f);
     dev.destroy(target);
 }
+
+TEST_CASE("gpu particles: speed and spin curves over life match the CPU reference kernel (ADR-0211)") {
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    GpuFx fx;
+    {
+        auto& c = fx.emitter();
+        c.rate = 240;
+        c.max_particles = 192;
+        c.lifetime_min = 0.4f;
+        c.lifetime_max = 1.0f;
+        c.speed_min = 1;
+        c.speed_max = 3;
+        c.angle = 35;
+        c.gravity = {0, -1, 0};
+        c.drag = 0.2f;
+        c.spin_min = 90;
+        c.spin_max = 360;
+        c.velocity_stretch = 0.05f;
+        c.blend = particles::Blend::Additive;
+        c.speed_over_life = {{0.0f, 2.5f}, {0.2f, 0.4f}, {0.6f, 0.1f}, {1.0f, 1.0f}};
+        c.spin_over_life = {{0.0f, 3.0f}, {0.5f, 0.0f}};
+    }
+    runtime::GpuAssetCache assets(ctx, nullptr);
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    RenderSettings rs = RenderSettings::preset(QualityTier::Medium);
+    rs.bloom = false;
+    r.set_settings(rs);
+    auto target = test::make_target(W, H);
+    std::vector<particles::GpuParticle> ref(192);
+    std::uint64_t seen = 0;
+    double last = 0;
+    fx.ps.update(fx.s, 0.0f);
+    for (int f = 0; f < 36; ++f) {
+        fx.ps.update(fx.s, 1.0f / 60.0f);
+        fx.s.update_transforms();
+        const particles::GpuEmitterView v = fx.view();
+        const auto& c = fx.emitter();
+        for (auto& p : ref)
+            if (p.age < p.life) particles::gpu_integrate(c, p, static_cast<float>(v.time - last), last);
+        for (const auto& rec : v.records) {
+            if (rec.index < seen || rec.time + rec.particle.life <= v.time) continue;
+            particles::GpuParticle p = rec.particle;
+            particles::gpu_integrate(c, p, static_cast<float>(v.time - rec.time), rec.time);
+            ref[rec.particle.meta[0]] = p;
+        }
+        seen = v.spawned;
+        last = v.time;
+        (void)runtime::extract_scene(fx.s, assets, r, {}, nullptr);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+    }
+    const particles::GpuEmitterView v = fx.view();
+    const auto state = read_state(r, v.key);
+    REQUIRE(state.size() == 192);
+    auto drawn = r.read_gpu_particle_draw(v.key);
+    REQUIRE(drawn.ok());
+    REQUIRE(drawn.value().size() == state.size());
+    std::uint32_t compared = 0;
+    float worst = 0, worst_rot = 0, worst_aspect = 0;
+    // Without the curves the same particles would have travelled farther: check the curve acts.
+    particles::ParticleEmitterComponent plain = fx.emitter();
+    plain.speed_over_life.clear();
+    float slowed = 0;
+    const math::Mat4 view = math::Mat4::translation({0, 0, -6}); // the camera at (0, 0, 6) looking down -Z
+    for (std::size_t i = 0; i < state.size(); ++i) {
+        if (!(state[i].age < state[i].life) || !(ref[i].age < ref[i].life)) continue;
+        worst = std::max(worst, math::length(state[i].position - ref[i].position));
+        worst_rot = std::max(worst_rot, std::abs(state[i].rotation - ref[i].rotation));
+        const particles::Billboard want = particles::gpu_billboard(fx.emitter(), state[i], math::Mat4::identity(), view);
+        worst_aspect = std::max(worst_aspect, std::abs(drawn.value()[i].params.w - want.aspect));
+        const particles::Billboard unscaled = particles::gpu_billboard(plain, state[i], math::Mat4::identity(), view);
+        slowed += unscaled.aspect - want.aspect;
+        ++compared;
+    }
+    MESSAGE("speed/spin curves: " << compared << " particles, worst position error " << worst << " m, rotation " << worst_rot
+                                  << " rad, stretch " << worst_aspect << "; stretch reduced by " << slowed);
+    CHECK(compared > 80);
+    CHECK(worst < 5e-3f);
+    CHECK(worst_rot < 2e-3f);
+    CHECK(worst_aspect < 1e-3f);
+    CHECK(slowed > 0);
+    dev.destroy(target);
+}
