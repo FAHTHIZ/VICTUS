@@ -2813,6 +2813,22 @@ Not verified:
 - The Windows mapping path, which is compiled only on CI.
 - Phone memory and GPU memory.
 
+## 2026-11-22: Source hash cache and device-filtered texture decode (32434f9, a51dddc, 14edaa7)
+
+Built:
+- `hash_file_seeded` caches each source hash per (path, seed) while size and mtime are unchanged. Files modified in the last 3 s are re-hashed. `source_key` uses it.
+- `assets::VariantFilter`; `deserialize_model` and `deserialize_model_texture` take it and copy only the first accepted texture variant (all of them when none is accepted). `AssetDatabase::load_model` and `load_model_texture` pass it through.
+- `GpuAssetCache::variant_filter` snapshots `supports_format` per codec and colour space, and is used by the synchronous load, the async loader and mip re-streaming.
+- Profile zones `assets.load_model` and `GpuAssetCache::add_model`.
+- 14edaa7 removes merge markers that a51dddc carried after an autostash conflict with 384500c (main failed to compile between those two commits).
+
+Verified at 14edaa7 (Release, lavapipe):
+- `victus_asset_tests`: 4837 assertions pass, including the new import-queue hash cache case and "texture compression: model decode keeps only the variant the device would upload".
+- `victus_gpu_tests`: 28538 assertions pass.
+- First-frame animation update 9.3–9.6 ms (was 71–81 ms); `assets.load_model` 34–52 ms per character, warm cache. Details in PERFORMANCE_STRATEGY.md "Startup and memory".
+
+Not verified: real GPUs and phones; the Windows build of this change (CI).
+
 ## 2026-11-22 — Spot light cookies (ADR-0195)
 
 Built: `SceneRenderer` cookie atlas (`set_cookie`/`remove_cookie`/`has_cookie`, 64 slots of 256×256 sRGB RGBA8 in one storage buffer, linear-light resampling), per-light cookie projection records in the light buffer (shadow tile and cookie record packed in `spot.z`), manual bilinear sRGB sampling in `pbr.frag`, nearest-texel cookies in `fog_inject.comp`, `SpotLight::right`, `SceneStats::cookie_lights`/`missing_cookies`; lightmap baker `LightmapLight::cookie` and `spot_cookie_tint`; `LightComponent::cookie` (scene format), runtime `load_cookie_image` and `GpuAssetCache::cookie` with reload versions, `ExtractStats::light_cookies`; baked cookies in `scene_lightmap`; Studio Cookie texture field (shared `asset_reference_field` helper); validation error for missing or non-texture cookies and warning for cookies on non-spot lights.

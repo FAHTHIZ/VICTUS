@@ -93,6 +93,7 @@ Same machine. Each figure was measured in three runs, comparing the build before
 
 - The animation system used to decode each starter character's whole 178 MB cooked model (every texture variant) just to read its skeleton and clips. It now uses a skeleton-only decode over a memory-mapped file.
 - Most of the remaining 71–81 ms was the import up-to-date check, about 30 ms per model, which re-hashed each 20 MB source on every load. A per-(path, size, mtime) hash cache brings the first-frame animation update to 9.3–9.6 ms and the two-frame run to 2.35–2.44 s.
+- a51dddc decodes only the texture variant the device will upload (`assets::VariantFilter`, from `GpuAssetCache::variant_filter`). On lavapipe, which samples BC7, each starter character's decode drops from every variant (BC7 74.8 MB + ASTC 74.8 MB + RGBA8 6.6 MB) to the BC7 one. With the warm cache, `assets.load_model` takes 34–52 ms per character over three runs at 14edaa7. `GpuAssetCache::add_model` (76–117 ms) and the first `pass.forward` (lavapipe pipeline compilation) are now the largest first-frame costs.
 
 Peak memory of the exported 3D template, run by the desktop player from the Android-profile pack (ASTC only) at `--quality low` under heaptrack 1.5:
 
