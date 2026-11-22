@@ -1,15 +1,16 @@
 # Engine landscape and gap audit
 
-Dated **2026-11-21**. VICTUS revision: `main` at `2c38903`. Requested by the owner: study what a game engine is and why it matters, compare VICTUS with the leading engines, and flag every place where VICTUS is behind or not yet good enough, ordered so the gaps can be closed.
+Historical comparison snapshot dated **2026-11-21**, pinned to VICTUS revision `2c38903`. This is not a live status page. Since that snapshot, main has added more rendering, crowd and procedural-city work. Current subsystem maturity is in [KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md), implementation evidence is in [STATUS.md](../STATUS.md), and the current prioritized visual/performance work plan is [VISUAL_QUALITY_AND_PERFORMANCE_GAP_REGISTER.md](../VISUAL_QUALITY_AND_PERFORMANCE_GAP_REGISTER.md).
 
-This document extends, and does not replace, [COMPETITOR_BENCHMARK.md](COMPETITOR_BENCHMARK.md) (the workflow-by-workflow table for Godot, Unity and Unreal, 2026-11-18/20). That table stays the per-workflow classification. This audit adds:
+This audit retains its competitor comparison and the `GAP-xx` identifiers as research notes tied to the historical revision. Its numbered gap list is **not exhaustive and must not be read as current implementation status**. The 2026-11-22 visual-quality register is the current prioritized plan.
 
-1. the fundamentals (what an engine has to provide and why studios depend on one);
-2. a wider field (O3DE, Bevy, Defold, Flax, Stride, CRYENGINE and in-house engines, not only the big three);
-3. a numbered register of **every gap found** (`GAP-xx`), with the leaders' documented capability, VICTUS's recorded state, severity and the fix direction;
-4. the gaps that matter for the owner's showcase direction of 2026-11-21: a living, simulated, stylised-realism city in the spirit of *The Matrix Awakens*, running on an entry-level phone (Infinix Hot 10S class).
+The snapshot covers:
+1. engine fundamentals and production workflows;
+2. a wider comparison set, including O3DE, Bevy, Defold, Flax, Stride and CRYENGINE;
+3. gaps identified at the pinned revision, with competitor references and proposed directions;
+4. the then-selected city showcase direction.
 
-Rules used here, the same as the rest of the repo: competitor claims come from vendor documentation and are not reproduced; VICTUS claims come from `docs/STATUS.md`, `docs/KNOWN_LIMITATIONS.md` and the code at the revision above; nothing has been measured on real GPU hardware (only Mesa lavapipe, Mesa GLES and CI's virtual Apple GPU), so every performance row is **unmeasured** unless stated.
+Competitor statements are tied to their cited documentation and the stated research date. VICTUS implementation claims in this historical snapshot refer to the pinned revision. For current execution evidence, use `docs/PLATFORM_SUPPORT.md`; tests on Mesa lavapipe, Mesa GLES or CI's virtualised Apple GPU are not physical-device performance results.
 
 ---
 
@@ -41,16 +42,15 @@ What this means for VICTUS: a feature counts as competitive only when it is reac
 | **CRYENGINE 5.7 LTS** | Source on request | Long-term-support release; source via private repository on request ([support](https://www.cryengine.com/support/view/general)). | Shows the risk of a technically strong engine with stalled tools and community. |
 | **In-house engines** (id Tech, Decima, Frostbite, RE Engine and others) | Proprietary | 13 % of surveyed developers (GDC 2025). Built for a studio's genres and platforms. | VICTUS today is effectively an in-house engine with one game (Special Ops) as its consumer. |
 
-## 3. Where VICTUS actually stands
+## 3. Where VICTUS stood at the pinned revision
 
-Strengths with evidence (do not lose these while closing gaps):
+The snapshot recorded a broad engine foundation: a tested ECS/runtime, rendering and asset pipelines, deterministic tools, a GLES fallback tested on Mesa and a growing Studio editor. Those are implementation facts, not proof that a finished game looks polished or that the engine meets a physical-device frame budget.
 
-- **Breadth with tests.** About 131 k lines of engine C++, 19 k editor, 49 k test lines; 160+ ADRs; test suites also run under ASan+UBSan and TSan presets ([STATUS](../STATUS.md)).
-- **Low-end-first rendering discipline.** Per-tier quality with perceptual goldens (`victus compare`), packed HDR on phones, FP16 BRDF, baked directional lightmaps, shadowmask and probes, an FSR2-style temporal upscaler, a GLES 3.0 fallback that passes the GPU suite on Mesa (ADR-0122-0148).
-- **Determinism and replay.** Capture/replay with divergence reports; reproducible cooks; signed `.vpak` v2 (ADR-0154).
-- **A real consumer.** The Special Ops game (Project-) runs a full mission on VICTUS; it found real engine/content issues (for example cutscene cameras needing streaming sources, fixed in content with the existing StreamingSource API, game commit `fd695da`).
+The project also has an internal integration consumer, Special Ops, which exercises a full mission path. It is not a publicly released VICTUS game and does not establish external production use.
 
-The honest summary: VICTUS is **broad but unproven**. It has no shipped game, has never rendered on a real GPU, has never been installed on a phone, and its tools are behind every engine in the table. The gaps below are ordered by how much they block the owner's goals: (1) a showcase that hooks people, (2) on an entry-level phone, (3) an engine others could use.
+The accurate qualification is: **VICTUS is pre-release and its visual quality/performance remain unproven on physical target hardware.** Its automated render tests use software Vulkan/GLES and CI's virtualised Apple GPU. No physical Android install or sustained phone benchmark is recorded in the platform matrix. The blanket claim that VICTUS's tools are behind every engine is removed; tool maturity should be compared workflow by workflow, not asserted as a universal ranking.
+
+Use the current gap register for the actual next work. The remainder of this file is a dated comparison snapshot and its old gap IDs should not be used as a live task list.
 
 ## 4. Gap register
 
