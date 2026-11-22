@@ -77,6 +77,7 @@ struct RenderPathFacts {
     // Surface and effect passes (submitted this frame -> inside the view -> drawn).
     std::uint32_t decals_submitted{0}, decals_in_view{0}, decals_drawn{0}, decal_budget{0};
     std::uint32_t water_submitted{0}, water_in_view{0}, water_drawn{0}, water_budget{0};
+    bool ssr{false}; // ADR-0196: water traced screen-space reflections this frame
     std::uint32_t particle_batches_submitted{0}, particle_batches_drawn{0}, particles_drawn{0}, ribbon_vertices{0};
     // CPU batches and their particles (billboards + ribbon vertices) inside the view, before the
     // max_particles budget (ADR-0109).

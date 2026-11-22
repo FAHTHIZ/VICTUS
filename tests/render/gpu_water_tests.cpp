@@ -9,6 +9,8 @@
 #include "victus/runtime/scene_rendering.hpp"
 #include "victus/scene/scene.hpp"
 
+#include <optional>
+
 using namespace victus;
 using namespace victus::render;
 using victus::test::channel;
@@ -222,4 +224,84 @@ TEST_CASE("gpu water: Water components render through runtime extraction") {
     CHECK(st2.water_surfaces == 0);
     CHECK(hidden.stats.water_surfaces == 0);
     CHECK(hidden.center() != shot.center());
+}
+
+TEST_CASE("gpu water: screen-space reflections mirror objects above the surface (ADR-0196)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    const Floor floor(ctx);
+    auto cube = ctx.create_mesh(make_cube(), "ssr_pillar").value();
+    Material green;
+    green.base_color = {0.0f, 0.0f, 0.0f, 1};
+    green.emissive = {0.1f, 1.0f, 0.1f, 1};
+    green.emissive_strength = 3.0f;
+    // A glowing pillar standing in murky, mirror-calm water, seen at a grazing angle.
+    const math::Mat4 pillar = math::Mat4::trs({0, 1.0f, -6}, {}, {1.5f, 3.0f, 0.6f});
+    WaterSurface w = calm(0.05f);
+    w.roughness = 0.02f;
+    w.refraction = 0.0f;
+    for (auto& wave : w.waves) wave.amplitude = 0.0f;
+    const Camera3D low = Camera3D::look_at({0, 0.7f, 4}, {0, 0.2f, -6});
+    const auto render = [&](RenderSettings s, const char* save) {
+        r.set_settings(s);
+        auto& dev = gpu().ctx->device();
+        auto target = test::make_target(W, H);
+        DirectionalLight sun;
+        sun.direction = {0.3f, -1, -0.2f};
+        sun.intensity = 1.0f;
+        sun.shadows = false;
+        r.begin(low, sun, flat_env());
+        floor.submit(r);
+        r.submit(cube, green, pillar);
+        r.add_water(w);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        Shot out{dev.read_texture(target).value(), r.stats()};
+        test::save_output(save, W, H, out.px);
+        dev.destroy(target);
+        return out;
+    };
+    // Pixels of the water (below the pillar's foot on screen) that look green.
+    const auto green_water = [&](const Shot& s, std::uint32_t foot) {
+        int n = 0;
+        for (std::uint32_t y = foot + 2; y < H; ++y)
+            for (std::uint32_t x = 0; x < W; ++x) {
+                const std::uint32_t c = s.at(x, y);
+                if (channel(c, 1) > 60 && channel(c, 1) > channel(c, 0) + 30) ++n;
+            }
+        return n;
+    };
+    RenderSettings on = flat_settings();
+    on.screen_space_reflections = true;
+    on.ssr_steps = 32;
+    RenderSettings off = on;
+    off.screen_space_reflections = false;
+    const Shot with = render(on, "water_ssr");
+    const auto ssr_state = [&] {
+        for (const auto& f : r.path_report().features)
+            if (f.name == "ssr") return std::optional<PathState>(f.state);
+        return std::optional<PathState>();
+    };
+    CHECK(ssr_state() == PathState::Reduced); // 32 of Ultra's 48 steps
+    const Shot without = render(off, "water_ssr_off");
+    // The pillar's lowest visible row: the last row in the centre column that is green without SSR.
+    std::uint32_t foot = 0;
+    for (std::uint32_t y = 0; y < H; ++y)
+        if (channel(without.at(W / 2, y), 1) > 100) foot = y;
+    REQUIRE(foot > 0);
+    const int lit_on = green_water(with, foot), lit_off = green_water(without, foot);
+    const std::uint32_t below = with.at(W / 2, std::min(foot + 6, H - 1)), below_off = without.at(W / 2, std::min(foot + 6, H - 1));
+    MESSAGE("pillar foot row " << foot << ": green water pixels with SSR " << lit_on << ", without " << lit_off << "; below foot g "
+                               << channel(below, 1) << " vs " << channel(below_off, 1));
+    CHECK(lit_off == 0);
+    CHECK(lit_on > 100);
+    CHECK(channel(below, 1) > channel(below_off, 1) + 40);
+    // The pillar itself is unchanged: SSR only touches the water.
+    CHECK(with.at(W / 2, foot - 15) == without.at(W / 2, foot - 15));
+    CHECK(ssr_state() == PathState::Off); // the last frame had it off
+    ctx.destroy(cube);
 }

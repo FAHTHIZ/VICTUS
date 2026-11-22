@@ -284,6 +284,14 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
         add("water", PathState::Reduced, cut(S.max_water_surfaces, tier.max_water_surfaces, ref.max_water_surfaces),
             std::format("nearest {} of {} surfaces in view (max {})", f.water_drawn, f.water_in_view, f.water_budget));
     else add("water", PathState::Active, PathReason::None, std::format("{}, refraction from the opaque scene", count(f.water_drawn, "surface", "surfaces")));
+    if (f.water_drawn == 0) add("ssr", PathState::Off, PathReason::NotNeeded, "no water drawn");
+    else if (!S.screen_space_reflections)
+        add("ssr", PathState::Off, by(S.screen_space_reflections == tier.screen_space_reflections), "water reflects the environment only");
+    else {
+        const bool reduced = S.ssr_steps < ref.ssr_steps;
+        add("ssr", reduced ? PathState::Reduced : PathState::Active, reduced ? by(S.ssr_steps == tier.ssr_steps) : PathReason::None,
+            std::format("{} steps over {:g} m on water", S.ssr_steps, S.ssr_max_distance));
+    }
 
     const std::uint32_t emitters = f.particle_batches_submitted + f.gpu_emitters_submitted;
     if (emitters == 0) add("particles", PathState::Off, PathReason::Scene, "no particle emitters in the scene");

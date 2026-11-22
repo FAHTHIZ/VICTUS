@@ -5,7 +5,9 @@
 // over the water thickness reconstructed from scene depth, GGX sun glint, shoreline and crest
 // foam, the scene's distance fog and a soft edge where the surface meets geometry. The pass has
 // no depth attachment: it tests against sampled opaque depth itself (water depth is written by
-// a following depth-only pass).
+// a following depth-only pass). Screen-space reflections (ADR-0196) march the reflected ray
+// through the opaque depth and fetch the hit from the scene copy; misses and fades fall back to the
+// environment, so off-screen objects reflect the sky as before.
 layout(set = 2, binding = 0) uniform sampler2D u_scene; // copy of the HDR colour before water
 layout(set = 2, binding = 1) uniform sampler2D u_depth;
 layout(set = 2, binding = 2) uniform samplerCube u_env;
@@ -26,6 +28,8 @@ layout(set = 3, binding = 0) uniform Params {
     vec4 fog_params;    // x start, y end, z density, w max opacity
     vec4 wave_a[4];
     vec4 wave_b[4];
+    mat4 view_proj; // jittered, matches the depth buffer (ADR-0196)
+    vec4 ssr;       // x steps (0 = off), y max distance (m), z thickness (m), w intensity
 } u;
 layout(location = 0) in vec3 v_world;
 layout(location = 1) in vec2 v_rest;
@@ -46,6 +50,57 @@ vec3 world_at(vec2 suv, float depth) {
     vec4 wp = u.inv_view_proj * vec4(suv.x * 2.0 - 1.0, 1.0 - suv.y * 2.0, depth, 1.0);
     return wp.xyz / wp.w;
 }
+// Interleaved gradient noise (Jimenez 2014): per-pixel ray start offset, averaged away by TAA.
+float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+vec2 to_uv(vec4 clip) { return vec2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5); }
+
+// Screen-space reflection (ADR-0196): marches `steps` points along R with quadratically growing
+// spacing, projects each into the depth buffer and reports the first point that lies behind the
+// opaque surface by less than the thickness (camera distance, so the test does not depend on the
+// depth encoding), refined by a binary search. Returns the hit colour in rgb and its confidence in
+// a: fading at the screen border and towards the ray's end so reflections do not pop.
+vec4 trace_reflection(vec3 origin, vec3 R) {
+    int steps = int(u.ssr.x + 0.5);
+    if (steps <= 0) return vec4(0.0);
+    float max_dist = u.ssr.y;
+    float jitter = ign(gl_FragCoord.xy);
+    float prev_t = 0.0;
+    for (int i = 1; i <= 64; ++i) {
+        if (i > steps) break;
+        float f = (float(i) - 1.0 + jitter) / float(steps);
+        float t = max_dist * f * f + 0.05;
+        vec4 clip = u.view_proj * vec4(origin + R * t, 1.0);
+        if (clip.w <= 1e-4) break;
+        vec2 uv = to_uv(clip);
+        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) break;
+        float d = textureLod(u_depth, uv, 0.0).r;
+        if (d < 1.0) {
+            vec3 p = origin + R * t;
+            float ray_d = length(p - u.camera.xyz);
+            float scene_d = length(world_at(uv, d) - u.camera.xyz);
+            float thick = u.ssr.z + 0.02 * scene_d + (t - prev_t);
+            if (ray_d > scene_d && ray_d - scene_d < thick) {
+                float lo = prev_t, hi = t;
+                for (int k = 0; k < 6; ++k) {
+                    float mid = 0.5 * (lo + hi);
+                    vec4 mc = u.view_proj * vec4(origin + R * mid, 1.0);
+                    vec2 muv = to_uv(mc);
+                    float md = textureLod(u_depth, muv, 0.0).r;
+                    float mray = length(origin + R * mid - u.camera.xyz);
+                    float mscene = md < 1.0 ? length(world_at(muv, md) - u.camera.xyz) : 1e9;
+                    if (mray > mscene) { hi = mid; uv = muv; }
+                    else lo = mid;
+                }
+                vec2 edge = min(uv, 1.0 - uv);
+                float fade = smoothstep(0.0, 0.08, min(edge.x, edge.y)) * (1.0 - smoothstep(0.75, 1.0, hi / max_dist));
+                return vec4(textureLod(u_scene, uv, 0.0).rgb, fade * u.ssr.w);
+            }
+        }
+        prev_t = t;
+    }
+    return vec4(0.0);
+}
+
 vec3 sky_radiance(vec3 dir, float roughness) {
     if (u.params.z > 0.5) {
         float c = cos(u.env.y), s = sin(u.env.y);
@@ -124,6 +179,8 @@ void main() {
         vec3 R = reflect(-V, N);
         R.y = abs(R.y);
         reflected = sky_radiance(R, u.params.y);
+        vec4 hit = trace_reflection(v_world, R);
+        reflected = mix(reflected, hit.rgb, clamp(hit.a, 0.0, 1.0));
     }
     vec3 color = mix(refracted, reflected, fresnel);
 

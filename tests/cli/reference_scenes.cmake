@@ -51,7 +51,7 @@ endfunction()
 
 set(expect_exterior sun_shadows volumetric_fog bloom ssao taa)
 set(expect_interior local_lights local_shadows volumetric_fog bloom ssao)
-set(expect_effects decals water particles gpu_particles reflection_probes sun_shadows)
+set(expect_effects decals water ssr particles gpu_particles reflection_probes sun_shadows)
 set(expect_photoreal sun_shadows ssao taa bloom)
 set(summary "")
 foreach(scene exterior interior effects photoreal)

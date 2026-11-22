@@ -549,6 +549,13 @@ struct RenderSettings {
     // Environment sets a contact_shadow_length; forces the depth prepass like SSAO.
     bool contact_shadows{true};
     std::uint32_t contact_shadow_steps{12}; // 4..32 depth taps per pixel
+    // Screen-space reflections (ADR-0196): water reflects the opaque scene by marching the
+    // reflected ray through the depth buffer, falling back to the environment where the ray
+    // leaves the screen. Off on Low; 16 / 32 / 48 steps on Medium / High / Ultra.
+    bool screen_space_reflections{true};
+    std::uint32_t ssr_steps{32};    // 4..64 ray steps per pixel
+    float ssr_max_distance{60.0f};  // metres along the reflected ray (1..500)
+    float ssr_thickness{0.3f};      // metres a surface is assumed to extend behind its depth (0.01..10)
     bool bloom{true};
     std::uint32_t bloom_levels{5};        // 1..8 mip levels
     bool fxaa{true};                      // ignored while TAA is active

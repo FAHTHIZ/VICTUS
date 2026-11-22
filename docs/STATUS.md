@@ -2854,3 +2854,17 @@ Verified:
 
 Not verified: real GPUs (lavapipe only). Point and directional cookies, mip maps for cookies (documented in KNOWN_LIMITATIONS).
 Next task: screen-space / planar reflections (GAP-16).
+
+## 2026-11-22 — Screen-space reflections on water (ADR-0196)
+
+Built: reflected-ray march in `water.frag` (quadratic step spacing, camera-distance thickness test, six bisection steps, interleaved-gradient start jitter, screen-edge and distance fades, environment fallback) using the opaque scene copy and depth the water pass already binds; `WaterUniforms::view_proj`/`ssr`; `RenderSettings::screen_space_reflections`, `ssr_steps` (off / 16 / 32 / 48 on Low / Medium / High / Ultra), `ssr_max_distance`, `ssr_thickness` with sanitising; `ssr` in the render path report; `ssr` expected in the effects reference scene, whose goldens were regenerated (the other scenes stayed bit-exact).
+
+Verified:
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen build/bin/victus_gpu_tests -tc="gpu water*"`: 4 cases, 50 assertions. Glowing pillar in calm water: 140 green water pixels with SSR, 0 without (160x96); just below the foot green 220 vs 84; pillar pixels unchanged; path report Reduced (32 steps) then Off. `build/test_output/water_ssr.png` checked by eye: the full mirrored height.
+- `build/bin/victus_render_tests`: 70/70 cases (render path: Low `ssr off (quality_tier)`, High Reduced, Ultra "48 steps over 60 m on water", no water NotNeeded).
+- `ctest -R victus_reference_scenes` after `VICTUS_UPDATE_GOLDENS=1`: passes; only `effects/frame_00015.png` and `frame_00030.png` changed (crate and pool rim now reflect, compared by eye with the old golden).
+- `python3 tools/lint/run_clang_tidy.py -p build -j 1 engine/render/src/scene_renderer.cpp engine/render/src/render_path.cpp`: 0 diagnostics.
+- Full ctest before the golden and changelog update: 41/43, failing only `victus_reference_scenes` (the expected water change, worst tile FLIP 0.027) and `victus_docs_lint` (ADR-0196 not yet in CHANGELOG); both pass when rerun after the fix (`ctest -R "victus_reference_scenes|victus_docs_lint"`); no code changed between the runs.
+
+Not verified: real GPUs (lavapipe only).
+Next task: screen-space reflections on opaque glossy surfaces.

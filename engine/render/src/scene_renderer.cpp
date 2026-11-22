@@ -219,8 +219,10 @@ struct WaterUniforms {
     Mat4 inv_view_proj;
     Vec4 camera, sun_dir, sun_color, shallow, deep, params, env, sky, horizon, ground, screen, fog_color, fog_params;
     Vec4 wave_a[4], wave_b[4];
+    Mat4 view_proj; // ADR-0196: projects reflected rays into the depth buffer
+    Vec4 ssr;       // x steps (0 = off), y max distance, z thickness, w intensity
 };
-static_assert(sizeof(WaterUniforms) == 64 + 21 * 16);
+static_assert(sizeof(WaterUniforms) == 2 * 64 + 22 * 16);
 struct BloomDownUniforms {
     Vec4 params;
     Vec4 threshold;
@@ -492,6 +494,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.soft_shadows = false;
         s.ssao = false;
         s.contact_shadows = false;
+        s.screen_space_reflections = false;
         s.bloom = false;
         s.bloom_levels = 4;
         s.fxaa = true;
@@ -524,6 +527,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.soft_shadows = true;
         s.ssao = false;
         s.contact_shadows = false; // like SSAO: the depth prepass it needs is the main cost
+        s.ssr_steps = 16;
         s.bloom = true;
         s.bloom_levels = 4;
         s.fxaa = true;
@@ -554,6 +558,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.ssao_half_resolution = false;
         s.ssao_samples = 16;
         s.contact_shadow_steps = 16;
+        s.ssr_steps = 48;
         s.bloom_levels = 6;
         s.max_point_lights = 1024;
         s.lod_error_pixels = 0.5f;
@@ -581,6 +586,9 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.ssao_samples = std::clamp(s.ssao_samples, 4u, 32u);
     s.lod_fade_frames = std::min(s.lod_fade_frames, 64u);
     s.contact_shadow_steps = std::clamp(s.contact_shadow_steps, 4u, 32u);
+    s.ssr_steps = std::clamp(s.ssr_steps, 4u, 64u);
+    s.ssr_max_distance = std::isfinite(s.ssr_max_distance) ? std::clamp(s.ssr_max_distance, 1.0f, 500.0f) : 60.0f;
+    s.ssr_thickness = std::isfinite(s.ssr_thickness) ? std::clamp(s.ssr_thickness, 0.01f, 10.0f) : 0.3f;
     s.bloom_levels = std::clamp(s.bloom_levels, 1u, 8u);
     s.sharpen = std::isfinite(s.sharpen) ? std::clamp(s.sharpen, 0.0f, 1.0f) : 0.0f;
     s.upscale_mip_bias = std::isfinite(s.upscale_mip_bias) ? std::clamp(s.upscale_mip_bias, -2.0f, 0.0f) : 0.0f;
@@ -4349,6 +4357,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         base.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), 0, 0};
         base.fog_color = lighting.fog_color;
         base.fog_params = lighting.fog_params;
+        base.view_proj = view_proj;
+        const bool ssr = S.screen_space_reflections;
+        base.ssr = {ssr ? static_cast<float>(S.ssr_steps) : 0.0f, S.ssr_max_distance, S.ssr_thickness, 1.0f};
+        facts_.ssr = ssr;
         auto frame_of = [&](const WaterSurface& w) {
             WaterFrameUniforms f{};
             f.view_proj = view_proj;
