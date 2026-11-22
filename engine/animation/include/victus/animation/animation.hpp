@@ -75,6 +75,10 @@ struct AnimationSet {
         // `morph_node` (also its parent) in translation.x. Never bound to an entity.
         std::int32_t morph_node{-1};
         std::uint32_t morph_index{0};
+        // Skeleton LOD (ADR-0221): 1 for detail nodes (fingers, toes, face, eyes, jaw, tongue,
+        // secondary chains and face morph weights) that distant animators ease to rest and stop
+        // sampling; 0 for the nodes that carry the silhouette.
+        std::uint8_t lod{0};
         [[nodiscard]] bool is_morph() const noexcept { return morph_node >= 0; }
     };
     // Morph target names and default weights of one model mesh (empty for meshes without).
@@ -122,6 +126,10 @@ std::size_t reduce_keyframes(Clip& clip, const KeyframeReduction& settings = {})
 [[nodiscard]] math::Quat sample_quat(const Channel& channel, float time) noexcept;
 // Writes every channel of `clip` at `time` (clamped to the clip) into `pose` (indexed by node).
 void sample(const Clip& clip, float time, std::span<NodePose> pose) noexcept;
+// As above, skipping channels of nodes whose AnimationSet::Node::lod is above `max_lod`; returns
+// the number of channels sampled.
+std::uint32_t sample(const Clip& clip, float time, std::span<NodePose> pose, std::span<const AnimationSet::Node> nodes,
+                     std::uint8_t max_lod) noexcept;
 // Linear blend of two poses (shortest-path normalized quaternion lerp), weight 0 = a, 1 = b.
 [[nodiscard]] NodePose blend(const NodePose& a, const NodePose& b, float weight) noexcept;
 // Wraps (loop) or clamps a playback time into [0, duration].
@@ -155,6 +163,11 @@ struct AnimatorComponent {
     // motion is only reported (AnimationSystem::root_motion, Luau entity:root_motion()) for a
     // script to apply, e.g. through a CharacterController.
     bool apply_root_motion{true};
+    // Skeleton LOD (ADR-0221): from this SimulationLod tier on, detail joints (fingers, toes,
+    // face, eyes, jaw, tongue, secondary chains) and face morph weights ease to their rest pose
+    // over `detail_fade` seconds and are then no longer sampled. -1: never; 0: always.
+    std::int32_t detail_lod_tier{2};
+    float detail_fade{0.3f};
 };
 
 // Root motion extracted by the latest update of one Animator.
@@ -212,6 +225,7 @@ struct AnimationStats {
     std::uint32_t animators{0}, channels_sampled{0}, nodes_written{0}, missing_models{0};
     std::uint32_t controlled{0}, transitions{0}, controller_errors{0};
     std::uint32_t lod_skipped{0}; // animators not due this frame under simulation LOD (ADR-0165)
+    std::uint32_t detail_reduced{0}; // animators with detail joints eased out by skeleton LOD (ADR-0221)
     IkStats ik; // inverse kinematics applied after the animated pose (ik.hpp)
     FootPlacementStats feet; // foot placement before IK (foot_placement.hpp; needs a ground probe)
 };

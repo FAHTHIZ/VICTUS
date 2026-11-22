@@ -87,6 +87,7 @@ victus_add_test(victus_asset_tests
         assets/skeleton_tests.cpp
         assets/reference_rig_tests.cpp
         assets/corrective_tests.cpp
+        assets/skeleton_lod_tests.cpp
     DEPS VICTUS::Assets VICTUS::Project
     LABELS assets)
 target_compile_definitions(victus_asset_tests PRIVATE VICTUS_FBX_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/fbx")

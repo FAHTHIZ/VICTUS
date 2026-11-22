@@ -366,6 +366,15 @@ A corrective is a morph target whose weight follows one joint's angle (ADR-0220)
 
 The renderer evaluates the drivers from the posed skeleton every frame and adds them to the mesh's morph weights, so animation, IK and Studio poses all trigger them. Studio: select the character, pick a joint in the Skeleton card and use Corrective shape > Bake corrective. CLI: `victus skeleton orion --corrective LowerArm.R:y:150` bakes on a copy and prints the collapsed triangles with LBS, LBS plus corrective and DQS. Morphing runs on the CPU over the whole mesh while a weight changes (see ADR-0220 for the measured cost).
 
+## Skeleton LOD
+
+Distant characters do not need finger curls, toe roll, eye and jaw motion or face shapes. When an animated entity also has a `SimulationLodComponent` (ADR-0165; tiers at 30/80/200 m by default), `AnimatorComponent::detail_lod_tier` (default 2, so beyond 80 m) chooses the tier at which detail nodes are eased back to their rest pose over `detail_fade` seconds (default 0.3) and then are no longer sampled. -1 never reduces; 0 always does. Coming back into range eases them in again, so nothing snaps.
+
+- Detail nodes are tagged when the animation set is built from a model (`AnimationSet::Node::lod = 1`): joints whose bone roles are only finger, toe, face, eye, jaw, tongue or secondary, and morph-weight channels. Sockets, IK targets and poles, mechanical, spine, head, neck, hand, arm, leg, foot and root bones always stay, so attachments and IK keep their positions.
+- Orion and Nova: 35 of 96 animation nodes are detail joints (30 finger joints, both toes, jaw and eyes) plus 26 face morph weights; the reference quadruped has 6 of 41, the mechanical loader none.
+- Body joints are unchanged by the reduction; `AnimationStats::channels_sampled` counts only the channels actually sampled and `detail_reduced` the animators currently reduced.
+- This is separate from mesh LOD (fewer vertices) and from the update-rate throttling of distant animators; all three combine.
+
 ## Editor
 
 Window > Animation opens the Animation window for the selected entity's Animator. It shows the controller path, the states (the current one highlighted with its normalized time; click one to enter it), the previous state and fade progress during a cross-fade, the current clip weights as bars (missing clips flagged) and a control per parameter: float sliders spanning the blend thresholds, int drags, bool checkboxes and trigger buttons. Preview runs the controller on the edit scene through `AnimationSystem::update_entity`; Pause and Restart control it, End Preview restores the Animator and the skeleton transforms. A preview is ended (and restored) before saving, autosave skips while one runs, and play mode, scene switches and closing the project end it. Root-motion states are tagged `[root motion]`, and the window shows the root node and how far it moves per frame. Controller edits hot reload into the preview. `victus_editor <project> --select <entity> --show animation-preview` opens it from the command line.

@@ -239,6 +239,35 @@ void sample(const Clip& clip, float time, std::span<NodePose> pose) noexcept {
     }
 }
 
+std::uint32_t sample(const Clip& clip, float time, std::span<NodePose> pose, std::span<const AnimationSet::Node> nodes,
+                     std::uint8_t max_lod) noexcept {
+    if (max_lod == 0xff) {
+        sample(clip, time, pose);
+        return static_cast<std::uint32_t>(clip.channels.size());
+    }
+    const float t = std::clamp(time, 0.0f, std::max(clip.duration, 0.0f));
+    std::uint32_t sampled = 0;
+    for (const Channel& ch : clip.channels) {
+        if (ch.node >= pose.size() || (ch.node < nodes.size() && nodes[ch.node].lod > max_lod)) continue;
+        ++sampled;
+        NodePose& p = pose[ch.node];
+        switch (ch.path) {
+        case Path::Translation:
+            p.translation = sample_vec3(ch, t);
+            break;
+        case Path::Rotation:
+            p.rotation = sample_quat(ch, t);
+            break;
+        case Path::Scale:
+            p.scale = sample_vec3(ch, t);
+            break;
+        case Path::Weights:
+            break;
+        }
+    }
+    return sampled;
+}
+
 NodePose blend(const NodePose& a, const NodePose& b, float w) noexcept {
     NodePose out;
     out.translation = lerp(a.translation, b.translation, w);

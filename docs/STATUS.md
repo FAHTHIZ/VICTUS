@@ -3179,7 +3179,7 @@ Verified (Release, 2-core sandbox):
 - CPU cost per frame while the forearm correctives are active (75 degrees, mean of 20 runs, one run): 2.23 ms for weights plus morphing 89,889 vertices (both meshes are morphed whole; no cost when weights are unchanged).
 - `victus_editor_tests -tc="*corrective*"`: on the 3D template's Orion, Bake corrective writes the import settings, the re-imported model has 3 drivers, residual 0.00036 mm; the same corrective again and a socket joint are refused without changing the settings.
 - Not verified: GPU morphing (morphs are applied on the CPU); Metal and D3D12; shoulder correctives driven by two axes.
-- Next task: skeleton and animation LOD, then facial-expression and equipment attachment tests.
+- Next task: skeleton and animation LOD (done, ADR-0221), then facial-expression and equipment attachment tests.
 
 ## 2026-11-22 — Particle simulation budget, nearest emitters first (ADR-0213)
 
@@ -3214,3 +3214,17 @@ Verified (dev build, 2-core sandbox, lavapipe):
   - Visual quality in a full scene; the reference effects scene does not use `lit` yet.
 - Not implemented: local lights, irradiance volumes and reflection probes on particles, self-shadowing, lit 2D sprite particles.
 - Next task: mesh particles, then particle events.
+
+## 2026-11-22 — Skeleton LOD for distant animators (ADR-0221)
+
+Built:
+- `AnimationSet::Node::lod`, tagged by `make_animation_set` from bone roles (finger, toe, face, eye, jaw, tongue, secondary) and for morph weights; `AnimatorComponent::detail_lod_tier` and `detail_fade`; a `sample` overload that skips detail channels and returns the count sampled; `AnimationStats::detail_reduced`, and `channels_sampled` now counts sampled channels (ADR-0221).
+
+Verified (Release, 2-core sandbox):
+- `victus_asset_tests -tc="skeleton lod*"`: 3 cases pass. Orion: 96 animation nodes, 35 detail joints (30 fingers, Toe.L/R, Jaw, Eye.L/R) and 26 detail morph weights; the reference quadruped 6 of 41, the mechanical loader 0 of 15; no socket, IK, hand or body joint is tagged.
+- Orion running with the template controller, moved to 120 m from a `SimulationLodSource` (tier 2) and back: the largest per-frame detail-joint turn while easing out is 9.41 degrees (11.12 degrees with full detail from the animation itself; switching instantly would jump 31.14 degrees); channels sampled per update 126 to 36; body joints differ from the full-detail animator by at most 1.7e-6 degrees; after returning, detail joints match the full-detail animator again.
+- Reduced pose on the skinned mesh (CPU LBS): 13,282 of 96,448 vertices move, at most 7.19 cm (fingers and face), which is under a pixel beyond 80 m at 1080p and 60 degrees field of view.
+- Cost (measured in the test, 64 Orions, single thread, one run): animation update 0.389 ms full detail, 0.270 ms reduced (31% less); channels 8,064 to 2,304.
+- `victus_animation_tests` 71/71, `victus_asset_tests` 85/85, `victus_gameplay_tests`, `victus_gpu_tests` and `victus_editor_tests` pass.
+- Not verified: a pixel comparison of a distant Orion in the GPU renderer (the reduced pose is measured on CPU-skinned vertices); GPU skinning cost is unchanged because the palette still holds every joint.
+- Next task: facial-expression and equipment attachment tests on Orion and Nova, then Studio IK configuration and retargeting.

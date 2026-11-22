@@ -2335,3 +2335,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** listed in docs/STATUS.md under this ADR.
 
 **Consequences:** Lit particles cost one shadow tap and a few ALU per pixel; unlit particles skip them behind a uniform branch. Local (point/spot) lights, irradiance volumes, reflection probes and self-shadowing are not applied to particles. 2D sprite particles are unlit.
+
+### ADR-0221: Skeleton LOD eases detail joints out on distant animators
+
+**Status:** Accepted (2026-11-22)
+
+**Context:** The rigging brief asks for skeleton and animation LOD. Skinned meshes already have mesh LOD, and ADR-0165 lets distant animators update less often through `SimulationLodComponent` tiers, but every update still sampled every channel: Orion and Nova evaluate 96 animation nodes, of which 35 joints (fingers, toes, jaw, eyes) and 26 face morph weights are invisible a few dozen metres away.
+
+**Decision:** (1) `AnimationSet::Node::lod`: `make_animation_set` tags a node as detail (1) when its bone roles are only finger, toe, face, eye, jaw, tongue or secondary, and every morph-weight channel; sockets, IK targets and poles, mechanical, spine, head, neck, hand, arm, leg, foot and root bones are never detail. (2) `AnimatorComponent::detail_lod_tier` (default 2; -1 never, 0 always) and `detail_fade` (default 0.3 s): when the entity's simulation LOD tier reaches the threshold, a per-animator detail weight ramps to 0 over the fade, blending detail nodes towards their rest pose, and once it reaches 0 those channels are not sampled at all (a `sample` overload with a node LOD limit). Moving back in ramps the weight up again. (3) `AnimationStats::channels_sampled` now counts the channels actually sampled; `detail_reduced` counts reduced animators.
+
+**Alternatives:** (1) Freezing detail joints at their last pose instead of rest: no fade needed, but a hand could stay frozen mid-gesture indefinitely and the frozen pose depends on when the switch happened. (2) Switching instantly: measured as a 31 degree single-frame jump on a finger joint, visible as a pop at mid distance. (3) A separate reduced skeleton per LOD with retargeted clips: halves palette uploads too, but needs per-model authoring and remapping of sockets; the skinning palette still covers all joints here.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Body, socket and IK joints are untouched, so equipment stays attached and gameplay that reads joint positions is unaffected. The skinning palette still holds every joint, so GPU skinning cost is unchanged; the saving is animation sampling and blending on the CPU. Rigs without bone roles get no detail nodes.

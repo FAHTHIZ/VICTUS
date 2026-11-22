@@ -37,6 +37,14 @@ void register_components() {
             .field(&AnimatorComponent::time, "time", {.min = 0, .max = 1e6f, .speed = 0.01f, .tooltip = "seconds"})
             .field(&AnimatorComponent::apply_root_motion, "apply_root_motion",
                    {.tooltip = "Root-motion states move this entity (off: scripts read entity:root_motion())"})
+            .field(&AnimatorComponent::detail_lod_tier, "detail_lod_tier",
+                   {.min = -1,
+                    .max = 3,
+                    .tooltip =
+                        "Simulation LOD tier from which fingers, toes, face and secondary bones ease to rest and stop "
+                        "animating (-1 never, 0 always)"})
+            .field(&AnimatorComponent::detail_fade, "detail_fade",
+                   {.min = 0, .max = 5, .speed = 0.01f, .tooltip = "seconds"})
             .commit();
         scene::Schema<SpriteAnimatorComponent>("SpriteAnimator", "Animation")
             .field(&SpriteAnimatorComponent::sheet, "sheet", {.tooltip = "Sprite sheet (.vsheet) asset", .hint = "spritesheet"})
@@ -84,7 +92,8 @@ struct ControllerRun {
     float fade_duration{0}, fade_elapsed{0};
     std::vector<NodePose> frozen_pose, scratch;
     std::vector<float> weights;
-    std::int32_t root{-1}; // root-motion node index in the set (-1 = none)
+    std::uint8_t max_lod{0xff}; // skeleton LOD: highest Node::lod sampled (ADR-0221)
+    std::int32_t root{-1};      // root-motion node index in the set (-1 = none)
     struct Twist {
         std::int32_t joint{-1}, source{-1};
         bool from_parent{false}; // source is the joint's parent (else a sibling)
@@ -123,6 +132,7 @@ struct AnimatorState {
     std::vector<LayerRun> layers;
     std::vector<NodePose> base_out; // base layer output before layers (frozen-fade source)
     RootMotion motion; // latest update
+    float detail{1.0f}; // skeleton LOD (ADR-0221): weight of the detail nodes' animation (0 = at rest, not sampled)
 };
 
 struct SystemBinding {
@@ -203,6 +213,7 @@ struct Work {
     AnimatorState* s;
     std::uint32_t channels{0}, written{0}, transitions{0};
     float dt{0}; // this animator's delta (simulation LOD may sum skipped frames)
+    int tier{0}; // SimulationLod tier (0 without the component)
 };
 
 // ---- controller runtime ----
@@ -562,8 +573,7 @@ void sample_state(ControllerRun& r, const AnimationSet& set, const Playback& pb,
     if (contributors == 1) {
         if (const std::int32_t ci = clips[only]; ci >= 0) {
             const Clip& clip = set.clips[static_cast<std::size_t>(ci)];
-            sample(clip, phase * clip.duration, out);
-            channels += static_cast<std::uint32_t>(clip.channels.size());
+            channels += sample(clip, phase * clip.duration, out, set.nodes, r.max_lod);
         }
         return;
     }
@@ -577,8 +587,7 @@ void sample_state(ControllerRun& r, const AnimationSet& set, const Playback& pb,
         for (std::size_t i = 0; i < n; ++i) tmp[i] = base(i);
         if (const std::int32_t ci = clips[k]; ci >= 0) {
             const Clip& clip = set.clips[static_cast<std::size_t>(ci)];
-            sample(clip, phase * clip.duration, tmp);
-            channels += static_cast<std::uint32_t>(clip.channels.size());
+            channels += sample(clip, phase * clip.duration, tmp, set.nodes, r.max_lod);
         }
         for (std::size_t i = 0; i < n; ++i) {
             NodePose& o = out[i];
@@ -711,6 +720,27 @@ void apply_twists(AnimatorState& s) {
         if (t.weight < 0) tw = tw.conjugate();
         s.pose[j].rotation = math::normalize(tw * s.pose[j].rotation); // the joint's own pose, usually rest
     }
+}
+
+// Skeleton LOD (ADR-0221): moves the animator's detail weight towards its target for this tier
+// and eases detail nodes towards rest by it. At 0 they are not sampled at all.
+void update_detail(Work& w, float dt) {
+    AnimatorState& s = *w.s;
+    const AnimatorComponent& a = *w.a;
+    const bool reduce = a.detail_lod_tier >= 0 && w.tier >= a.detail_lod_tier;
+    const float target = reduce ? 0.0f : 1.0f;
+    const float step = a.detail_fade > 0.0f ? std::abs(dt) / a.detail_fade : 1.0f;
+    s.detail = s.detail < target ? std::min(target, s.detail + step) : std::max(target, s.detail - step);
+    s.ctl.max_lod = s.detail > 0.0f ? std::uint8_t{0xff} : std::uint8_t{0};
+    for (LayerRun& lr : s.layers) lr.run.max_lod = s.ctl.max_lod;
+}
+
+void ease_detail(AnimatorState& s) {
+    if (s.detail >= 1.0f || !s.set) return;
+    const std::size_t n = std::min(s.pose.size(), s.set->nodes.size());
+    for (std::size_t i = 0; i < n; ++i)
+        if (s.set->nodes[i].lod > 0)
+            s.pose[i] = s.detail > 0.0f ? blend(s.set->nodes[i].rest, s.pose[i], s.detail) : s.set->nodes[i].rest;
 }
 
 void write_pose(Scene& scene, Work& w) {
@@ -899,12 +929,14 @@ void evaluate_controller(Scene& scene, Work& w, float dt) {
             evaluate_layer(s, s.layers[i], r.ctrl->layers[i], a, dt, w);
     }
     apply_twists(s);
+    ease_detail(s);
     write_pose(scene, w);
 }
 
 void evaluate(Scene& scene, Work& w, float dt) {
     AnimatorState& s = *w.s;
     AnimatorComponent& a = *w.a;
+    update_detail(w, dt);
     if (s.set && s.ctl.ctrl && s.ctl.cur.state >= 0) {
         evaluate_controller(scene, w, dt);
         return;
@@ -923,8 +955,7 @@ void evaluate(Scene& scene, Work& w, float dt) {
     const std::size_t n = s.set->nodes.size();
     s.pose.resize(n);
     for (std::size_t i = 0; i < n; ++i) s.pose[i] = s.set->nodes[i].rest;
-    sample(clip, a.time, s.pose);
-    w.channels += static_cast<std::uint32_t>(clip.channels.size());
+    w.channels += sample(clip, a.time, s.pose, s.set->nodes, s.detail > 0.0f ? std::uint8_t{0xff} : std::uint8_t{0});
 
     if (s.previous >= 0) {
         const Clip& prev = s.set->clips[static_cast<std::size_t>(s.previous)];
@@ -932,8 +963,8 @@ void evaluate(Scene& scene, Work& w, float dt) {
         if (a.playing) s.previous_time = advance(s.previous_time, delta, prev.duration, a.loop, prev_done);
         s.pose_b.resize(n);
         for (std::size_t i = 0; i < n; ++i) s.pose_b[i] = s.set->nodes[i].rest;
-        sample(prev, s.previous_time, s.pose_b);
-        w.channels += static_cast<std::uint32_t>(prev.channels.size());
+        w.channels += sample(prev, s.previous_time, s.pose_b, s.set->nodes,
+                             s.detail > 0.0f ? std::uint8_t{0xff} : std::uint8_t{0});
         s.fade_elapsed += std::abs(dt);
         const float weight = s.fade_duration > 0.0f ? std::clamp(s.fade_elapsed / s.fade_duration, 0.0f, 1.0f) : 1.0f;
         for (std::size_t i = 0; i < n; ++i)
@@ -944,6 +975,7 @@ void evaluate(Scene& scene, Work& w, float dt) {
         }
     }
 
+    ease_detail(s);
     write_pose(scene, w);
 }
 
@@ -1253,6 +1285,7 @@ void AnimationSystem::update(Scene& scene, float dt) {
         }
         Work w{e, &a, &s};
         w.dt = lod.dt;
+        if (const auto* sl = world.get<gameplay::SimulationLodComponent>(e)) w.tier = sl->tier;
         work.push_back(w);
     });
 
@@ -1284,6 +1317,7 @@ void AnimationSystem::update(Scene& scene, float dt) {
         stats_.transitions += w.transitions;
         if (w.s->ctl.ctrl) ++stats_.controlled;
         else if (!w.a->controller.empty()) ++stats_.controller_errors;
+        if (w.s->detail < 1.0f) ++stats_.detail_reduced;
     }
     // IK post-processes the pose every animator just wrote (and procedural rigs without one);
     // foot placement sets the foot targets first and tilts the feet after.

@@ -7,6 +7,7 @@
 #include <string>
 
 #include "victus/assets/binary.hpp"
+#include "victus/assets/skeleton.hpp"
 
 #include <format>
 
@@ -407,6 +408,21 @@ animation::AnimationSet make_animation_set(const CookedModel& model) {
                 break;
             }
     animation::expand_morph_weights(set, morphs);
+    // Skeleton LOD (ADR-0221): fingers, toes, face, eyes, jaw, tongue, secondary chains and face
+    // morph weights are detail; anything that also carries the body, an attachment, IK or a
+    // mechanical part is not.
+    constexpr std::uint32_t kDetail =
+        kBoneFinger | kBoneToe | kBoneFace | kBoneEye | kBoneJaw | kBoneTongue | kBoneSecondary;
+    constexpr std::uint32_t kKeep = kBoneSocket | kBoneIkTarget | kBoneIkPole | kBoneMechanical | kBoneSpine |
+                                    kBoneHead | kBoneNeck | kBoneHand | kBoneArm | kBoneLeg | kBoneFoot | kBoneRoot;
+    for (animation::AnimationSet::Node& n : set.nodes) {
+        std::string_view name = n.name;
+        if (n.is_morph())
+            if (const std::size_t slash = name.rfind('/'); slash != std::string_view::npos)
+                name.remove_prefix(slash + 1);
+        const std::uint32_t roles = infer_bone_roles(name);
+        n.lod = (roles & kDetail) && !(roles & kKeep) ? 1 : 0;
+    }
     return set;
 }
 
