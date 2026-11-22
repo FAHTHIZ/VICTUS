@@ -49,3 +49,19 @@ Use stable workloads, warm/cold cache cases, repeated runs and machine-readable 
 Fixed-frame runs use a fixed script seed (`kFixedRunSeed`, overridable with `--seed`), so these counters are identical from run to run on one machine; `victus_cli_determinism` guards that. Maxima are the measured value + 10 % (at least +2); minima are half the measured value for counters that prove the frame drew something. `frame_p95_ms_max` is a coarse ceiling (about 5x the Debug lavapipe time) that only catches catastrophic slowdowns, because CI runners are shared and timing cannot be gated tightly.
 
 The gate runs only where a GPU is required (`VICTUS_REQUIRE_GPU=1`, i.e. the Linux CI lanes on Mesa lavapipe) and reports skipped elsewhere. To update budgets after an intended change, run `ctest --preset dev -R perf_budgets`, read `build/dev/test_output/perf_budgets/measured.json` and edit `budgets.json` in the same commit, explaining why. Frame-time budgets per real device class are not established yet.
+
+## Iteration times (GAP-40)
+
+Unity 6.6 makes Fast Enter Play Mode the default, and 6.7 adds a Fast Build Profile (see [the Unity/Unreal audit](audits/UNITY_UNREAL_2026_11.md)). Iteration speed is now something competitors advertise. VICTUS measures only the shared cooked cache (ADR-0180). The engine has no timers for the numbers below, so until it does they are measured as wall-clock time from outside the process.
+
+| Metric | Definition | How to measure now |
+|---|---|---|
+| Project open | `victus_editor <project>` start → first frame with the scene loaded, warm cooked cache | Not instrumented. Needs a timestamp at `begin_startup()` and at the first presented frame (`editor/src/editor.cpp`). |
+| Enter Play | Play pressed → first simulated frame of the copied scene | Not instrumented. |
+| Script reload | `.luau` file saved → new code running | Not instrumented. |
+| Shader edit | `.vshader` saved → recompiled pipeline used | Not instrumented. |
+| Headless run | `victus simulate <project> --frames 1` wall time, warm | `/usr/bin/time -f %e` |
+| Player start | `victus run <project> --frames 1` wall time, warm, offscreen | `/usr/bin/time -f %e` with `SDL_VIDEO_DRIVER=offscreen` |
+| Export | `victus export <project> --out <dir>`, cold and warm | `/usr/bin/time -f %e` |
+
+Record the machine, build type, driver (lavapipe numbers say nothing about real GPUs), and cold or warm cache, as the rest of this document requires. Results go in STATUS.md with the commands used. The goal is to track trends per release, not to compare these numbers with Unity or Unreal.
