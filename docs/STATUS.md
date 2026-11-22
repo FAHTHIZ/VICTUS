@@ -3227,7 +3227,7 @@ Verified (Release, 2-core sandbox):
 - Cost (measured in the test, 64 Orions, single thread, one run): animation update 0.389 ms full detail, 0.270 ms reduced (31% less); channels 8,064 to 2,304.
 - `victus_animation_tests` 71/71, `victus_asset_tests` 85/85, `victus_gameplay_tests`, `victus_gpu_tests` and `victus_editor_tests` pass.
 - Not verified: a pixel comparison of a distant Orion in the GPU renderer (the reduced pose is measured on CPU-skinned vertices); GPU skinning cost is unchanged because the palette still holds every joint.
-- Next task: facial-expression and equipment attachment tests on Orion and Nova, then Studio IK configuration and retargeting.
+- Next task: facial-expression and equipment attachment tests on Orion and Nova (done, ADR-0222), then Studio IK configuration and retargeting.
 ## 2026-11-22 — Mesh particles (ADR-0215)
 
 Seventh piece of the VFX audit. Before this, every particle was a billboard.
@@ -3250,3 +3250,25 @@ Verified (dev build, 2-core sandbox, lavapipe):
 - Not verified: cost with thousands of mesh particles, physical hardware, model-asset meshes in a GPU test (only the primitive path ran on the GPU).
 - Not implemented: GPU-simulated mesh particles, per-particle colour or alpha over life on meshes, motion vectors for mesh particles.
 - Next task: particle events, then a node-based effect graph.
+
+## 2026-11-22 — Facial expressions and equipment verified on Orion and Nova (ADR-0222)
+
+Built:
+- Starter controller: int parameter `expression` and a `Face` layer (Neutral/Talk/Smile/Frown/Surprise from the facial clips, 0.25 s cross-fades over any base state) (ADR-0222).
+- `render::morphs_active`; `GpuAssetCache::morphed` no longer copies or uploads primitives whose weighted targets move nothing; `apply_morphs` skips empty targets.
+- Tests: `tests/assets/character_expression_tests.cpp` (4 cases) and `tests/render/gpu_expression_tests.cpp` (2 cases).
+
+Verified (Release, 2-core sandbox):
+- `victus_asset_tests -tc="character e*"`: 4 cases pass on Orion and Nova.
+  - Shapes: of 3 primitives (96,448 / 98,352 vertices) only the visor (`Body#2`) moves; every one of the 26 shapes moves vertices, offsets are finite and at most 9 mm (`jawOpen`: 75 vertices, 8.96 mm; `eyeBlink_L`: 119 vertices, 4.37 mm); each `_L` shape moves as many vertices as its `_R` mirror with the same largest offset (2%); all 26 at weight 1 keep the visor inside its rest bounds with unit normals.
+  - Face layer over the walk-run blend: Smile, Frown, Surprise and Talk reach their shapes (mouthSmile_L at least 0.5 and so on) and Neutral fades the smile out; the largest per-frame weight change while switching is 0.117 (cross-faded, no cut); body joints match the same animator without expressions to 1.7e-6 degrees.
+  - Sockets over 369 poses of all 41 clips: the distance from each of seven sockets to the nearest vertex weighted at least 0.9 to its carrying joint changes by at most 2.17 mm (Orion) and 2.32 mm (Nova), both `Socket.Hip.L` in `Crouch_Walk_Left`.
+  - A prop attached to `Socket.Hand.R` (and one on `Socket.Back`) while Orion runs 2 s: offset to the socket 0 mm every frame, hand travel 64 cm, and 0 mm difference with skeleton LOD easing the fingers out.
+- `victus_gpu_tests -tc="gpu expressions*,gpu equipment*"` on Vulkan (lavapipe) and GLES (llvmpipe), with textures, 256x192:
+  - Close-up of Orion's visor: smile 41 px changed (GLES 43), blink 61 (60), jaw open 47 (42), surprise 40 (32), all inside the projected visor rectangle (0 px outside); 1 of 3 primitives morphed (3 of 3 before the fix). Captures: `build/test_output/expression_*.png`.
+  - CPU cost of extract_scene with the face weights changing every frame, Orion alone, mean of 40 calls, one run: 1.10 ms before the fix, 0.14 ms after; held weights 0.03 ms.
+  - A 10 cm green cube in `Socket.Hand.R` of GPU-skinned Orion at four times of `Run`: 97 to 200 green pixels within 12 px of the projected socket and none elsewhere; the socket moves up to 30 px between poses.
+- `victus_animation_tests` 71/71, `victus_asset_tests` 89/89, `victus_render_tests` 76/76, `victus_gpu_tests` 245/245 on Vulkan and GLES, `victus_editor_tests`, script, export, project, scene, gameplay and robustness suites pass.
+- Not verified: expressions on physical GPUs; props with their own physics or cloth; mesh intersection between a worn prop and the armour (only the distance to the carrying surface is measured).
+- Next task: Studio IK configuration and retargeting, then sparse or GPU morphing.
+

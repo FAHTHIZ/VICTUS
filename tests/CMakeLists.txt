@@ -88,6 +88,7 @@ victus_add_test(victus_asset_tests
         assets/reference_rig_tests.cpp
         assets/corrective_tests.cpp
         assets/skeleton_lod_tests.cpp
+        assets/character_expression_tests.cpp
     DEPS VICTUS::Assets VICTUS::Project
     LABELS assets)
 target_compile_definitions(victus_asset_tests PRIVATE VICTUS_FBX_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/fbx")
@@ -185,6 +186,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_city_tests.cpp
         render/gpu_rig_deformation_tests.cpp
         render/gpu_corrective_tests.cpp
+        render/gpu_expression_tests.cpp
     DEPS VICTUS::Runtime VICTUS::Platform VICTUS::Ui VICTUS::Procgen VICTUS::Project
     LABELS gpu)
 target_compile_definitions(victus_gpu_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output"

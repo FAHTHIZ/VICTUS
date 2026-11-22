@@ -1131,6 +1131,15 @@ const render::GpuMesh* GpuAssetCache::morphed(std::uint64_t key, const Uuid& mod
     if (mesh >= model.meshes.size() || mesh >= model.cpu.meshes.size()) return nullptr;
     const render::MeshData& base = model.cpu.meshes[mesh].data;
     if (base.morphs.empty() || base.vertices.size() != model.meshes[mesh].vertex_count) return nullptr;
+    // Nothing weighted moves a vertex of this primitive (all zero, or only targets other primitives
+    // of the glTF mesh use): draw the base mesh, without copying it (ADR-0222).
+    if (!render::morphs_active(base, weights)) {
+        if (auto old = morphed_.find(key); old != morphed_.end()) {
+            if (old->second.gpu.valid()) ctx_->destroy_vertex_variant(old->second.gpu);
+            morphed_.erase(old);
+        }
+        return nullptr;
+    }
     auto [it, inserted] = morphed_.try_emplace(key);
     MorphEntry& e = it->second;
     e.last_used = procedural_clock_;

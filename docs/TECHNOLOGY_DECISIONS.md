@@ -2375,3 +2375,19 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - Mesh particles write no object motion vectors (TAA treats them as static).
 - They are not GPU-simulated.
 - 2D sprite rendering does not draw them.
+
+
+### ADR-0222: Face layer in the starter controller, verified expressions and equipment, and morphs only where targets move
+
+**Status:** Accepted (2026-11-22)
+
+**Context:** The rigging brief asks for Orion and Nova to be tested with facial expressions and equipment attachments, verified in the runtime renderer rather than by the importer accepting the file. The characters ship 26 ARKit-named face-display shapes and five facial clips, and eight sockets, but the starter controller never played the facial clips, nothing checked what the shapes move, and props on sockets were only checked for their parent bone. Measuring the face in the renderer showed a cost problem: glTF morph targets belong to a mesh, so all three primitives of each character (body, armour, visor) carry the 26 targets although only the visor's move vertices, and a non-zero face weight made the renderer copy, morph and upload all three (96,448 vertices) every frame the weights changed.
+
+**Decision:** (1) The starter controller gets an int parameter `expression` and a `Face` override layer with states Neutral (`Face_Blink`), Talk, Smile, Frown and Surprise, reached from any state by `expression == 0..4` with 0.25 s cross-fades. The layer has no mask: the facial clips animate only the face weights and the jaw and eye joints, so the body keeps the base pose. (2) `render::morphs_active` reports whether any weighted target moves a vertex; `GpuAssetCache::morphed` draws the base mesh without a copy when none does, and `apply_morphs` ignores targets with no vertices. (3) Tests: shape audit (only the visor moves, finite offsets, left/right mirror, all 26 at once stay inside the visor), the Face layer over locomotion on both characters, socket-to-surface drift over every clip, attached props with and without skeleton LOD (ADR-0221), and GPU renders of four expressions and of a prop held while running.
+
+**Alternatives:** (1) A face mask on the layer: not needed while the facial clips animate nothing else, and a mask naming the visor node would break if a project renamed it. (2) Splitting the shared targets per primitive at import: the same effect, but it changes the cooked data and every consumer of target indices; skipping empty targets at draw time keeps the indices. (3) GPU morphing: removes the CPU cost entirely, still follow-up work; the skip already reduces a changing expression from 1.10 to 0.14 ms per frame.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Existing projects keep their copy of the controller asset until they regenerate it; new templates get the Face layer. A primitive with a moving target still morphs and uploads all of its vertices on the CPU when a weight changes (6,559 for the visor); a sparse upload or GPU morphing is the next step.
+

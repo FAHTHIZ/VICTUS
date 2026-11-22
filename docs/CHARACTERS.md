@@ -131,13 +131,18 @@ display, `jawOpen` following the jaw angle). The GLB's `extras.victus.clips` lis
 clip with its length, loop flag and layer.
 
 `assets/anim/characters/victus_locomotion.vanim` drives both characters. Parameters: `speed`
-(m/s), `grounded` (default true), triggers `jump` and `interact`.
+(m/s), `grounded` (default true), triggers `jump` and `interact`, and the int `expression` for the
+`Face` layer (ADR-0222).
 
 - `Locomotion`: 1D blend of Idle (0), Walk (2.5) and Run (5).
 - `jump` from Locomotion, Land or Interact enters `Jump`; after it, `Fall` loops while airborne.
 - Leaving the ground without jumping also enters `Fall`.
 - Touching down enters `Land`, which returns to `Locomotion`.
 - `interact` (E / gamepad West in the templates) plays `Interact` and returns to `Locomotion`.
+- The `Face` layer plays the facial clips over every base state: `expression` 0 `Face_Blink`
+  (neutral, the default), 1 `Face_Talk`, 2 `Face_Smile`, 3 `Face_Frown`, 4 `Face_Surprise`, each
+  cross-faded over 0.25 s. They animate only the face display (and the jaw and eye joints), so the
+  body keeps the locomotion pose: `entity:set_anim_param("expression", 2)` smiles while running.
 
 ## Equipment
 
@@ -146,6 +151,13 @@ backpack of ADR-0179 are gone; the boots and hand plates are part of the armour)
 through the [sockets](#sockets); `Socket.Back` sits behind the back plate, clear of the back core.
 To hide armour in a script, untick Visible on `<Name>_Body[1]` (the Armor primitive) or call
 `set_visible(false)` on it.
+
+Measured on both characters (ADR-0222, `victus_asset_tests -tc="character equipment*"`): over
+369 poses of all 41 clips, the distance from each of the seven body sockets to the skinned surface
+that carries it changes by at most 2.3 mm (`Socket.Hip.L` in `Crouch_Walk_Left`), so worn and held
+props stay on the deforming armour; a prop attached with `attach_to_socket` follows its socket
+exactly every frame, also when skeleton LOD has eased the fingers out. In the runtime renderer a
+prop in `Socket.Hand.R` is drawn where the GPU-skinned hand puts it in every pose of `Run`.
 
 ## LODs and budgets
 

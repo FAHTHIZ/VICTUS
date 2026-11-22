@@ -132,6 +132,13 @@ std::string validate_morphs(const MeshData& mesh) {
     return {};
 }
 
+bool morphs_active(const MeshData& mesh, std::span<const float> weights) noexcept {
+    const std::size_t n = std::min(weights.size(), mesh.morphs.size());
+    for (std::size_t t = 0; t < n; ++t)
+        if (weights[t] != 0.0f && std::isfinite(weights[t]) && !mesh.morphs[t].vertices.empty()) return true;
+    return false;
+}
+
 bool apply_morphs(const MeshData& mesh, std::span<const float> weights, std::vector<Vertex3D>& out) {
     out.assign(mesh.vertices.begin(), mesh.vertices.end());
     bool any = false, normals = false;
@@ -140,6 +147,9 @@ bool apply_morphs(const MeshData& mesh, std::span<const float> weights, std::vec
         const float w = weights[t];
         if (w == 0.0f || !std::isfinite(w)) continue;
         const MorphTarget& m = mesh.morphs[t];
+        // A target that moves no vertex here (the face shapes every primitive of a glTF mesh
+        // carries, of which only the visor's move) leaves the mesh exact: no copy to upload.
+        if (m.vertices.empty()) continue;
         any = true;
         for (std::size_t i = 0; i < m.vertices.size(); ++i) {
             const std::uint32_t v = m.vertices[i];

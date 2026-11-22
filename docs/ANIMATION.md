@@ -334,7 +334,7 @@ Rest poses should be similar (both T-pose or both A-pose); there is no automatic
 
 glTF morph targets (blend shapes) import with their names (`mesh.extras.targetNames`, else `target0`, `target1`, …), default weights (`mesh.weights`, overridden per node by `node.weights`) and `weights` animation channels (ADR-0076). Position and normal deltas are applied; tangent deltas are ignored.
 
-Animated weights blend like bones: each target becomes a weight node named `<node>/<target>` under its mesh node, so cross-fades, blend spaces, override and additive layers, and masks that include the mesh node all mix morph weights too. The Animator writes them into a `MorphWeights` component on the mesh node's entity. Weights are not clamped (glTF allows negative and above-1 values).
+Animated weights blend like bones: each target becomes a weight node named `<node>/<target>` under its mesh node, so cross-fades, blend spaces, override and additive layers, and masks that include the mesh node all mix morph weights too. The Animator writes them into a `MorphWeights` component on the mesh node's entity. The renderer applies morph targets on the CPU and uploads a morphed copy only of primitives whose weighted targets move vertices: a glTF mesh's targets are shared by all its primitives, so on Orion and Nova only the visor primitive (6,559 vertices) is morphed for a face expression, not the body and armour (ADR-0222). Weights are not clamped (glTF allows negative and above-1 values).
 
 Set weights from code by name or index — they persist until an animation that animates that target overwrites them:
 

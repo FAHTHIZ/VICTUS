@@ -109,8 +109,11 @@ struct MeshData {
 // Writes `mesh.vertices` deformed by its morph targets at `weights` (one per target; missing
 // entries count as 0) into `out`: positions and normals get the weighted deltas, normals are
 // renormalized and tangents re-orthogonalized against them. Returns false (and copies the base
-// vertices) when every weight is 0. Weights are not clamped (glTF allows negative and >1).
+// vertices) when every weight is 0 or every weighted target moves no vertex. Weights are not clamped (glTF allows negative and >1).
 bool apply_morphs(const MeshData& mesh, std::span<const float> weights, std::vector<Vertex3D>& out);
+// Whether apply_morphs would change anything: some target with a non-zero, finite weight moves a
+// vertex. Cheap (no vertex is touched), for callers that skip the copy otherwise.
+[[nodiscard]] bool morphs_active(const MeshData& mesh, std::span<const float> weights) noexcept;
 
 // Recomputes per-vertex tangents from positions/uvs (Lengyel's method) with Gram-Schmidt.
 void compute_tangents(MeshData& mesh);

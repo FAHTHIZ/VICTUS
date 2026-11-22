@@ -74,13 +74,17 @@ std::string starter_character_controller() {
     // Locomotion blends Idle/Walk/Run by ground speed (m/s), phase-synced. A jump plays the
     // one-shot Jump, then Fall loops until "grounded"; walking off a ledge goes straight to Fall.
     // Land absorbs the impact and hands back to Locomotion. Interact is a short hand reach.
+    // The Face layer plays the face-display clips over everything: "expression" 0 blinks, 1 talks,
+    // 2 smiles, 3 frowns, 4 looks surprised. Its clips animate only morph weights, so the body
+    // keeps the base layer's pose.
     return R"({
   "version": 1,
   "parameters": [
     { "name": "speed", "type": "float" },
     { "name": "grounded", "type": "bool", "default": true },
     { "name": "jump", "type": "trigger" },
-    { "name": "interact", "type": "trigger" }
+    { "name": "interact", "type": "trigger" },
+    { "name": "expression", "type": "int" }
   ],
   "default_state": "Locomotion",
   "states": [
@@ -105,6 +109,18 @@ std::string starter_character_controller() {
     { "from": "Land", "to": "Locomotion", "duration": 0.2, "exit_time": 0.6 },
     { "from": "Locomotion", "to": "Interact", "duration": 0.15, "conditions": [ { "parameter": "interact" } ] },
     { "from": "Interact", "to": "Locomotion", "duration": 0.25, "exit_time": 0.92 }
+  ],
+  "layers": [
+    { "name": "Face", "default_state": "Neutral",
+      "states": [ { "name": "Neutral", "clip": "Face_Blink" }, { "name": "Talk", "clip": "Face_Talk" },
+        { "name": "Smile", "clip": "Face_Smile" }, { "name": "Frown", "clip": "Face_Frown" },
+        { "name": "Surprise", "clip": "Face_Surprise" } ],
+      "transitions": [
+        { "from": "*", "to": "Neutral", "duration": 0.25, "conditions": [ { "parameter": "expression", "op": "==", "value": 0 } ] },
+        { "from": "*", "to": "Talk", "duration": 0.25, "conditions": [ { "parameter": "expression", "op": "==", "value": 1 } ] },
+        { "from": "*", "to": "Smile", "duration": 0.25, "conditions": [ { "parameter": "expression", "op": "==", "value": 2 } ] },
+        { "from": "*", "to": "Frown", "duration": 0.25, "conditions": [ { "parameter": "expression", "op": "==", "value": 3 } ] },
+        { "from": "*", "to": "Surprise", "duration": 0.25, "conditions": [ { "parameter": "expression", "op": "==", "value": 4 } ] } ] }
   ],
   "twist": [
     { "joint": "LowerArmTwist.L", "source": "Hand.L", "weight": 0.5 },
