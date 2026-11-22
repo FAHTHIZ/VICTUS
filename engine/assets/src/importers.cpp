@@ -106,6 +106,21 @@ ModelImportSettings ModelImportSettings::from_json(const json::Value& v) {
 
 // ---- textures ----------------------------------------------------------------------------------
 
+std::vector<std::string> skin_weight_warnings(std::string_view mesh, const render::SkinWeightStats& s) {
+    std::vector<std::string> out;
+    if (s.unweighted)
+        out.push_back(std::format("{}: {} of {} skinned vertices have no joint weights and are bound to the first joint", mesh,
+                                  s.unweighted, s.vertices));
+    if (s.over_limit)
+        out.push_back(std::format("{}: {} vertices have more than 4 joint influences; the weakest were dropped and the rest "
+                                  "renormalized (largest dropped weight {:.3f}; limit influences in the source tool)",
+                                  mesh, s.over_limit, s.max_dropped_weight));
+    if (s.duplicate_joints)
+        out.push_back(std::format("{}: {} vertices list the same joint more than once; their weights were merged", mesh,
+                                  s.duplicate_joints));
+    return out;
+}
+
 CookedTexture cook_texture(const render::Image& image, std::string name, bool srgb, bool mipmaps, std::uint32_t max_size,
                            float alpha_coverage_cutoff) {
     CookedTexture t;
@@ -778,6 +793,7 @@ private:
                     weights[set]->count != count)
                     return make_error(ErrorCode::ParseError, out.name + ": JOINTS/WEIGHTS must be vec4 with one entry per vertex");
             out.data.skin.resize(count);
+            render::SkinWeightStats ws;
             for (cgltf_size i = 0; i < count; ++i) {
                 std::uint32_t j[8]{};
                 float w[8]{};
@@ -792,8 +808,9 @@ private:
                         w[set * 4 + static_cast<cgltf_size>(k)] = std::isfinite(wf[k]) ? std::max(wf[k], 0.0f) : 0.0f;
                     }
                 }
-                out.data.skin[i] = render::make_skin_vertex(j, w, sets * 4);
+                out.data.skin[i] = render::make_skin_vertex(j, w, sets * 4, &ws);
             }
+            for (auto& msg : skin_weight_warnings(out.name, ws)) warn(std::move(msg));
         } else if (joints[0] || weights[0]) {
             warn(out.name + ": JOINTS_0 without WEIGHTS_0 (or the reverse); skin ignored");
         }

@@ -321,3 +321,19 @@ TEST_CASE("assets fbx: the asset database imports .fbx and .obj as models") {
     CHECK(model->meshes[0].data.morphs.size() == 2);
     CHECK(model->animations.size() == 1);
 }
+
+TEST_CASE("assets: skin weight warnings describe dropped, merged and missing influences") {
+    victus::render::SkinWeightStats s;
+    CHECK(victus::assets::skin_weight_warnings("Body", s).empty());
+    s.vertices = 10;
+    s.over_limit = 3;
+    s.max_dropped_weight = 0.08f;
+    s.duplicate_joints = 1;
+    s.unweighted = 2;
+    const auto w = victus::assets::skin_weight_warnings("Body", s);
+    REQUIRE(w.size() == 3);
+    CHECK(w[0].find("2 of 10") != std::string::npos);
+    CHECK(w[1].find("3 vertices have more than 4") != std::string::npos);
+    CHECK(w[1].find("0.080") != std::string::npos);
+    CHECK(w[2].find("merged") != std::string::npos);
+}

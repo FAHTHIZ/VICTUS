@@ -3064,3 +3064,13 @@ Verified (Release, 2-core sandbox):
   - `victus_editor_tests -tc="studio skeleton*"` (Vulkan lavapipe): 36 assertions. On the 3D template's Orion: DQS on every skinned mesh and back with one undo step; LowerArm.R rolled 150 and bent 110 degrees: 15 collapsed triangles with LBS, 0 with DQS (of 182,096); a `Socket.Visor` bone added as `orion.glb.rig2.vrig` re-imports with every existing bone compatible; a duplicate bone writes nothing.
   - `victus skeleton orion --deformation` (ctest `victus_cli_skeleton`): 69 bones, 60 joints, 8 sockets, layout d833069a902c6d93; LowerLeg.L rolled 150 and bent 115 degrees: 36 collapsed triangles with LBS, 7 with DQS.
 - Next task: viewport bone and weight heatmap overlays in the Studio, then creature and complex humanoid test rigs with runtime-renderer deformation captures and CPU/GPU/memory measurements.
+
+## 2026-11-22 — Skin weight import warnings
+
+- `render::make_skin_vertex` takes any number of influences, merges duplicate joints (up to 64 distinct), keeps the four largest, renormalises and fills an optional `SkinWeightStats` (vertices, over-limit vertices, largest dropped weight, duplicate joints, unweighted vertices). The glTF importer passes both `JOINTS_0`/`JOINTS_1` sets (8 influences), the FBX importer up to 64 clusters per vertex; `assets::skin_weight_warnings` turns the stats into one import warning each per mesh. Before this, influences past the fourth were discarded with no message and a joint listed twice took two slots.
+
+Verified (dev build, 2-core sandbox):
+- `victus_render_tests`: 76 cases pass, including `make_skin_vertex merges duplicate joints...` (15 assertions: merge, top-4 selection, dropped weight 0.06, unweighted fallback).
+- `victus_asset_tests`: 72 cases pass, including the warning text test and the Orion/Nova import tests (zero importer warnings, 528 assertions).
+- `victus_animation_tests`: 71 cases pass.
+- Not verified: a real production FBX with more than four influences per vertex (covered only by synthetic stats).

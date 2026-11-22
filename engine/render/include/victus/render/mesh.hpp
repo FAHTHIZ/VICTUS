@@ -40,9 +40,22 @@ struct SkinVertex {
 };
 static_assert(sizeof(SkinVertex) == 24);
 
-// Keeps the four largest influences of (joint, weight) pairs and normalizes them; vertices with
-// no positive weight bind fully to joint 0.
-[[nodiscard]] SkinVertex make_skin_vertex(const std::uint32_t* joints, const float* weights, std::size_t count) noexcept;
+// Import-time accounting of what make_skin_vertex changed, so importers can report it instead of
+// silently reshaping the authored weights.
+struct SkinWeightStats {
+    std::size_t vertices{0};
+    std::size_t unweighted{0};       // no positive weight: bound fully to joint 0
+    std::size_t over_limit{0};       // more than four distinct influences: the weakest were dropped
+    std::size_t duplicate_joints{0}; // the same joint listed twice: weights were merged
+    float max_dropped_weight{0};     // largest normalized weight removed by the four-influence limit
+};
+
+// Keeps the four largest influences of (joint, weight) pairs (a joint listed more than once
+// counts once, with its weights summed; at most 64 distinct joints are considered) and normalizes
+// them; vertices with no positive weight bind fully to joint 0. `stats`, when given, accumulates
+// what was changed.
+[[nodiscard]] SkinVertex make_skin_vertex(const std::uint32_t* joints, const float* weights, std::size_t count,
+                                          SkinWeightStats* stats = nullptr) noexcept;
 
 // A coarser level of detail of a mesh: its own triangle list over the mesh's vertices, and the
 // geometric error of the simplification in the mesh's own units (how far, at most, the surface

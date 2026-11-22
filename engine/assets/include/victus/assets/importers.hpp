@@ -120,4 +120,9 @@ void strip_rgba8_levels(CookedTexture& texture, std::uint32_t max_size);
 [[nodiscard]] Result<std::string> export_gltf_json(const CookedModel& model);
 [[nodiscard]] Status export_gltf(const CookedModel& model, const fs::Path& path);
 
+// Importer warnings for what reducing a mesh's authored weights to four normalized influences
+// changed: unweighted vertices, dropped influences (with the largest dropped weight) and duplicate
+// joint entries. Empty when nothing changed.
+[[nodiscard]] std::vector<std::string> skin_weight_warnings(std::string_view mesh, const render::SkinWeightStats& stats);
+
 } // namespace victus::assets

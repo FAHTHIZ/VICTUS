@@ -31,28 +31,56 @@ Aabb MeshData::bounds() const noexcept {
     return box;
 }
 
-SkinVertex make_skin_vertex(const std::uint32_t* joints, const float* weights, std::size_t count) noexcept {
+SkinVertex make_skin_vertex(const std::uint32_t* joints, const float* weights, std::size_t count,
+                            SkinWeightStats* stats) noexcept {
     SkinVertex out;
     out.weights[0] = 0.0f;
-    // Insertion into a 4-slot list sorted by descending weight.
-    std::uint32_t best_j[4]{0, 0, 0, 0};
-    float best_w[4]{0, 0, 0, 0};
+    if (stats) ++stats->vertices;
+    // Distinct joints with summed weights (exporters sometimes list a joint twice), then the four
+    // strongest by insertion into a sorted list; `rest` collects what does not fit.
+    constexpr std::size_t kMax = 64;
+    std::uint32_t uj[kMax];
+    float uw[kMax];
+    std::size_t n = 0;
+    bool dup = false;
     for (std::size_t i = 0; i < count; ++i) {
         const float w = weights[i];
-        if (!(w > 0.0f)) continue;
-        std::uint32_t j = joints[i];
-        float wv = w;
+        if (!(w > 0.0f) || !std::isfinite(w)) continue;
+        std::size_t k = 0;
+        while (k < n && uj[k] != joints[i]) ++k;
+        if (k < n) {
+            uw[k] += w;
+            dup = true;
+        } else if (n < kMax) {
+            uj[n] = joints[i];
+            uw[n++] = w;
+        }
+    }
+    if (stats && dup) ++stats->duplicate_joints;
+    std::uint32_t best_j[4]{0, 0, 0, 0};
+    float best_w[4]{0, 0, 0, 0};
+    float total = 0.0f, dropped_max = 0.0f;
+    for (std::size_t i = 0; i < n; ++i) {
+        total += uw[i];
+        std::uint32_t j = uj[i];
+        float wv = uw[i];
         for (int k = 0; k < 4; ++k) {
             if (wv > best_w[k]) {
                 std::swap(wv, best_w[k]);
                 std::swap(j, best_j[k]);
             }
         }
+        dropped_max = std::max(dropped_max, wv); // whatever fell off the end of the list
     }
     const float sum = best_w[0] + best_w[1] + best_w[2] + best_w[3];
     if (!(sum > 0.0f)) {
         out.weights[0] = 1.0f;
+        if (stats) ++stats->unweighted;
         return out;
+    }
+    if (stats && n > 4) {
+        ++stats->over_limit;
+        stats->max_dropped_weight = std::max(stats->max_dropped_weight, dropped_max / total);
     }
     for (int k = 0; k < 4; ++k) {
         out.joints[k] = static_cast<std::uint16_t>(std::min<std::uint32_t>(best_j[k], 0xffffu));

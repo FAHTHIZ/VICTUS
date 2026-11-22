@@ -411,13 +411,16 @@ private:
         std::vector<render::SkinVertex> point_skin;
         if (sk) {
             point_skin.resize(mesh.num_vertices);
+            render::SkinWeightStats weight_stats;
             for (std::size_t vi = 0; vi < mesh.num_vertices && vi < sk->vertices.count; ++vi) {
                 const ufbx_skin_vertex& sv = sk->vertices.data[vi];
-                std::uint32_t j[8]{};
-                float w[8]{};
+                // Every authored influence is read (up to 64); make_skin_vertex keeps the four
+                // strongest and the dropped ones are reported once per mesh.
+                std::uint32_t j[64]{};
+                float w[64]{};
                 std::size_t n = 0;
                 const std::int32_t rigid = rigid_joint_[sk];
-                for (std::size_t wi = 0; wi < sv.num_weights && n < 8; ++wi) {
+                for (std::size_t wi = 0; wi < sv.num_weights && n < 64; ++wi) {
                     const ufbx_skin_weight& sw = sk->weights.data[sv.weight_begin + wi];
                     if (sw.cluster_index > 65535 || !std::isfinite(sw.weight)) continue;
                     j[n] = sw.cluster_index;
@@ -430,8 +433,9 @@ private:
                     w[0] = 1.0f;
                     n = 1;
                 }
-                point_skin[vi] = render::make_skin_vertex(j, w, n);
+                point_skin[vi] = render::make_skin_vertex(j, w, n, &weight_stats);
             }
+            for (auto& msg : skin_weight_warnings(mesh_name, weight_stats)) warn(std::move(msg));
         }
         // Blend channels (morph targets), indexed by control point.
         std::vector<const ufbx_blend_channel*> channels;

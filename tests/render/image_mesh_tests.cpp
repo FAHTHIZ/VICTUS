@@ -124,3 +124,37 @@ TEST_CASE("mesh append transforms geometry") {
     CHECK(merged.bounds().max.x == doctest::Approx(10.5f));
     CHECK(merged.indices[36] == 24);
 }
+
+TEST_CASE("make_skin_vertex merges duplicate joints, keeps the four largest and reports what changed") {
+    SkinWeightStats st;
+    {
+        const std::uint32_t j[3] = {2, 5, 2};
+        const float w[3] = {0.25f, 0.5f, 0.25f};
+        const auto v = make_skin_vertex(j, w, 3, &st);
+        CHECK(v.joints[0] == 2); // the merged 0.5 is listed first and ties joint 5
+        CHECK(v.joints[1] == 5);
+        CHECK(v.weights[0] + v.weights[1] == doctest::Approx(1.0f));
+        CHECK(v.weights[2] == 0.0f);
+    }
+    CHECK(st.duplicate_joints == 1);
+    CHECK(st.over_limit == 0);
+    {
+        const std::uint32_t j[6] = {0, 1, 2, 3, 4, 5};
+        const float w[6] = {0.3f, 0.25f, 0.2f, 0.15f, 0.06f, 0.04f};
+        const auto v = make_skin_vertex(j, w, 6, &st);
+        CHECK(v.joints[0] == 0);
+        CHECK(v.joints[3] == 3);
+        CHECK(v.weights[0] + v.weights[1] + v.weights[2] + v.weights[3] == doctest::Approx(1.0f));
+    }
+    CHECK(st.over_limit == 1);
+    CHECK(st.max_dropped_weight == doctest::Approx(0.06f).epsilon(1e-3));
+    {
+        const std::uint32_t j[2] = {7, 8};
+        const float w[2] = {0, 0};
+        const auto v = make_skin_vertex(j, w, 2, &st);
+        CHECK(v.joints[0] == 0);
+        CHECK(v.weights[0] == 1.0f);
+    }
+    CHECK(st.unweighted == 1);
+    CHECK(st.vertices == 3);
+}
