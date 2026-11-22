@@ -602,6 +602,32 @@ Result<SkeletonEditReport> apply_skeleton_edits(CookedModel& model, std::span<co
             r.reparented.push_back(e.bone);
             break;
         }
+        case BoneEdit::Op::Move: {
+            if (node < 0) return fail(std::format("move: bone '{}' not found", e.bone));
+            // The node and everything under it must be free of skin joints in every skin.
+            std::vector<bool> under(m.nodes.size(), false);
+            under[static_cast<std::size_t>(node)] = true;
+            for (std::size_t i = static_cast<std::size_t>(node) + 1; i < m.nodes.size(); ++i)
+                if (m.nodes[i].parent >= 0 && under[static_cast<std::size_t>(m.nodes[i].parent)]) under[i] = true;
+            for (const ModelSkin& sk : m.skins)
+                for (const std::uint32_t jn : sk.joints)
+                    if (jn < under.size() && under[jn])
+                        return fail(std::format("move: '{}' is or carries the deforming joint '{}'; only sockets, IK targets and helpers move",
+                                                e.bone, m.nodes[jn].name));
+            if (!m.nodes[static_cast<std::size_t>(node)].meshes.empty()) return fail(std::format("move: '{}' carries meshes", e.bone));
+            for (const animation::Clip& c : m.animations)
+                for (const animation::Channel& ch : c.channels)
+                    if (ch.node == static_cast<std::uint32_t>(node) && ch.path != animation::Path::Weights) {
+                        r.warnings.push_back(std::format("move '{}': clip '{}' animates it and overrides the new rest transform", e.bone, c.name));
+                        break;
+                    }
+            ModelNode& mn = m.nodes[static_cast<std::size_t>(node)];
+            mn.translation = e.translation;
+            mn.rotation = math::normalize(e.rotation);
+            mn.scale = e.scale;
+            r.moved.push_back(e.bone);
+            break;
+        }
         case BoneEdit::Op::Remove: {
             if (node < 0) return fail(std::format("remove: bone '{}' not found", e.bone));
             if (is_protected(o, e.bone) && !e.force) return fail(std::format("remove: '{}' is protected; set force", e.bone));
@@ -698,6 +724,7 @@ const char* op_name(BoneEdit::Op op) {
     case BoneEdit::Op::Rename: return "rename";
     case BoneEdit::Op::Reparent: return "reparent";
     case BoneEdit::Op::Remove: return "remove";
+    case BoneEdit::Op::Move: return "move";
     }
     return "add";
 }
@@ -736,7 +763,7 @@ json::Value SkeletonMigration::to_json() const {
         o.set("bone", e.bone);
         if (!e.parent.empty() || e.op == BoneEdit::Op::Add) o.set("parent", e.parent);
         if (!e.name.empty()) o.set("name", e.name);
-        if (e.op == BoneEdit::Op::Add) {
+        if (e.op == BoneEdit::Op::Add || e.op == BoneEdit::Op::Move) {
             o.set("translation", vec({e.translation.x, e.translation.y, e.translation.z}));
             o.set("rotation", vec({e.rotation.x, e.rotation.y, e.rotation.z, e.rotation.w}));
             o.set("scale", vec({e.scale.x, e.scale.y, e.scale.z}));
@@ -790,6 +817,7 @@ Result<SkeletonMigration> SkeletonMigration::from_json(const json::Value& v) {
         else if (op == "rename") e.op = BoneEdit::Op::Rename;
         else if (op == "reparent") e.op = BoneEdit::Op::Reparent;
         else if (op == "remove") e.op = BoneEdit::Op::Remove;
+        else if (op == "move") e.op = BoneEdit::Op::Move;
         else return bad("unknown op '" + op + "'");
         e.bone = o["bone"].as_string_or("");
         if (e.bone.empty() || e.bone.size() > 256) return bad("edit without a valid bone name");

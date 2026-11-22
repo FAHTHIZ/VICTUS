@@ -615,6 +615,8 @@ void Editor::draw_menu_bar() {
         ImGui::MenuItem("Physics Colliders", nullptr, &show_colliders_);
         ImGui::MenuItem("Navigation Mesh", nullptr, &show_navmesh_);
         ImGui::MenuItem("IK and Foot Placement", nullptr, &show_ik_);
+        ImGui::MenuItem("Bones", nullptr, &show_bones_);
+        ImGui::MenuItem("Skin Weights", nullptr, &show_weights_);
         kit::tooltip("IK chains and targets; in play, foot probes, ground points and locked feet");
         ImGui::MenuItem("UI Demo Window", nullptr, &show_demo_);
         if (ImGui::BeginMenu("Rendering Quality")) {

@@ -1294,6 +1294,110 @@ TEST_CASE("studio skeleton: Orion's skeleton card, dual quaternion skinning with
     h.frames(2); // the card re-reads the migrated skeleton
 }
 
+TEST_CASE("studio skeleton: bone and weight overlays follow the pose, pose editing undoes, and a socket is saved as a migration") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Pose", "Pose", "3d").ok());
+    h.frames(2);
+    scene::Scene& s = h.ed->edit_scene();
+    const scene::Entity robot = s.find_by_name("Robot");
+    REQUIRE_FALSE(robot.is_null());
+    h.ed->select(robot);
+    h.ed->set_show_bones(true);
+    h.ed->set_show_weights(true);
+    h.frames(2); // overlays draw
+
+    // One line per bone (minus the root) plus socket crosses, coloured by role.
+    const auto lines = h.ed->skeleton_overlay_lines(robot, "Hand.R");
+    CHECK(lines.size() >= 59);
+    std::size_t white = 0, yellow = 0;
+    for (const auto& l : lines) {
+        white += (l.color.r == 1 && l.color.g == 1 && l.color.b == 1) ? 1 : 0;
+        yellow += (l.color.r == 1 && l.color.g > 0.8f && l.color.b < 0.3f) ? 1 : 0;
+    }
+    CHECK(white == 1);
+    CHECK(yellow >= 8 * 4); // 8 sockets: a line and a three-line cross each
+
+    // Weights of Hand.R sit around the hand entity.
+    const scene::Entity hand = s.find_by_name("Hand.R");
+    REQUIRE_FALSE(hand.is_null());
+    auto centre_of = [&](const std::vector<editor::Editor::WeightPoint>& pts) {
+        math::Vec3 c{};
+        float n = 0;
+        for (const auto& p : pts)
+            if (p.weight > 0.5f) {
+                c = c + p.position;
+                n += 1;
+            }
+        return n > 0 ? c * (1.0f / n) : math::Vec3{1e9f, 0, 0};
+    };
+    const auto w0 = h.ed->weight_overlay_points(robot, "Hand.R");
+    REQUIRE_FALSE(w0.empty());
+    CHECK(w0.size() <= 4000);
+    const math::Vec3 hand_pos = s.world_matrix(hand).transform_point({});
+    const math::Vec3 c0 = centre_of(w0);
+    MESSAGE("Hand.R weighted centre " << c0.x << " " << c0.y << " " << c0.z << " vs joint " << hand_pos.x << " " << hand_pos.y << " " << hand_pos.z);
+    CHECK(math::length(c0 - hand_pos) < 0.15f);
+    const auto none = h.ed->weight_overlay_points(robot, "NoSuchBone");
+    CHECK(none.size() == w0.size());
+    CHECK(std::count_if(none.begin(), none.end(), [](const auto& p) { return p.weight != 0.0f; }) == 0);
+    // Per-frame cost of the overlays on Orion (CPU; the viewport calls both while they are on).
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 10; ++i) (void)h.ed->skeleton_overlay_lines(robot, "Hand.R");
+        const auto t1 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 10; ++i) (void)h.ed->weight_overlay_points(robot, "Hand.R");
+        const auto t2 = std::chrono::steady_clock::now();
+        MESSAGE("overlay cost per frame: bones " << std::chrono::duration<double, std::milli>(t1 - t0).count() / 10 << " ms ("
+                                                 << lines.size() << " lines), weights "
+                                                 << std::chrono::duration<double, std::milli>(t2 - t1).count() / 10 << " ms ("
+                                                 << w0.size() << " points)");
+    }
+
+    // Posing the forearm carries the hand's skinned vertices with it; undo puts them back.
+    const std::size_t undo_before = h.ed->undo_stack().size();
+    REQUIRE(h.ed->pose_bone(robot, "LowerArm.R", math::Quat::axis_angle({1, 0, 0}, 1.2f)));
+    CHECK(h.ed->undo_stack().size() == undo_before + 1);
+    const math::Vec3 c1 = centre_of(h.ed->weight_overlay_points(robot, "Hand.R"));
+    const math::Vec3 hand_posed = s.world_matrix(hand).transform_point({});
+    CHECK(math::length(c1 - c0) > 0.05f);
+    CHECK(math::length(c1 - hand_posed) < 0.15f);
+    h.frames(2);
+    h.ed->undo();
+    CHECK(math::length(centre_of(h.ed->weight_overlay_points(robot, "Hand.R")) - c0) < 1e-4f);
+    CHECK_FALSE(h.ed->pose_bone(robot, "NoSuchBone", {}));
+
+    // Reset pose restores rest transforms in one step.
+    REQUIRE(h.ed->pose_bone(robot, "Head", math::Quat::axis_angle({0, 1, 0}, 0.7f)));
+    REQUIRE(h.ed->pose_bone(robot, "UpperLeg.L", math::Quat::axis_angle({1, 0, 0}, -0.9f)));
+    CHECK(h.ed->reset_skeleton_pose(robot) >= 2);
+    CHECK(h.ed->reset_skeleton_pose(robot) == 0);
+
+    // Socket editing: move the right-hand socket in the scene and save it into the model.
+    const Uuid model = h.ed->skinned_model_of(robot);
+    const scene::Entity sock = s.find_by_name("Socket.Hand.R");
+    REQUIRE_FALSE(sock.is_null());
+    s.world().get<scene::Transform>(sock)->position = s.world().get<scene::Transform>(sock)->position + math::Vec3{0, 0.04f, 0};
+    const math::Vec3 wanted = s.world().get<scene::Transform>(sock)->position;
+    auto rel = h.ed->save_socket_transform(robot, "Socket.Hand.R");
+    REQUIRE_MESSAGE(rel.ok(), (rel.ok() ? "" : rel.error().message));
+    CHECK(rel->ends_with(".vrig"));
+    auto after = h.ed->assets()->load_model_geometry(model);
+    REQUIRE(after.ok());
+    bool found = false;
+    for (const auto& n : after->nodes)
+        if (n.name == "Socket.Hand.R") {
+            found = true;
+            CHECK(math::length(n.translation - wanted) < 1e-5f);
+        }
+    CHECK(found);
+    // Joints cannot be moved this way.
+    CHECK_FALSE(h.ed->save_socket_transform(robot, "Hand.R").ok());
+    h.frames(2); // overlays re-read the migrated model
+    CHECK(h.ed->skeleton_overlay_lines(robot).size() == lines.size());
+}
+
 TEST_CASE("studio feet: Add Foot Placement on Orion, undo, foot locking, and the IK overlay in play") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;

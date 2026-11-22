@@ -3090,4 +3090,18 @@ Verified (Release, 2-core sandbox):
 - Memory: palette 64 B per joint per skinned instance (quadruped 2,432 B, mech 832 B, Orion 3,840 B, complex humanoid 4,736 B); skin stream 24 B per vertex (quadruped 108,384 B).
 - `victus skeleton quadruped --deformation`: 40 bones, 38 joints, layout 83bccaeb875432a0; FrontUpperLeg.L rolled 150 and bent 115 degrees: 5 collapsed triangles with LBS, 0 with DQS.
 - Not verified: GPU cost on real hardware; Metal and D3D12.
-- Next task: Studio viewport bone and weight heatmap overlays, pose and IK preview, socket editing.
+- Next task: Studio viewport bone and weight heatmap overlays, pose editing and socket editing (done, ADR-0208), then corrective shapes driven by joint angles.
+
+## 2026-11-22 — Studio skeleton overlays, pose editing and socket moves (ADR-0208)
+
+Built:
+- `Editor::skeleton_overlay_lines`, `weight_overlay_points`, `pose_bone`, `reset_skeleton_pose` and `save_socket_transform` (ADR-0208); View > Bones and View > Skin Weights (also in the command palette); the Skeleton card's "Show bones" / "Show weights" checkboxes, Pose section and a socket's "Save transform to model".
+- `assets::BoneEdit::Op::Move` (JSON `"move"`): sets the rest transform of a socket, IK target, pole or helper; refuses deforming joints, nodes carrying them and nodes with meshes.
+
+Verified (Release, 2-core sandbox):
+- `victus_asset_tests`: 78 cases pass, including `skeleton: moving a socket...`. On Orion, moving Socket.Hand.R round-trips as JSON, changes no deformed vertex (Idle with LBS, Run with DQS: difference exactly 0) and is reported by the compatibility check; moving Hand.R, Spine, Hips or a missing bone is refused with the layout unchanged.
+- `victus_editor_tests -tc="studio skeleton*"` (Vulkan lavapipe): 2 cases pass. On the 3D template's Orion: 92 overlay lines, one highlighted, at least 32 socket lines; the centre of the vertices weighted above 0.5 to Hand.R lies 0.06 m from the joint ((-0.488, 0.813, 0.513) vs (-0.453, 0.857, 0.517)) and follows it when LowerArm.R is posed, and undo restores it to 1e-4 m; reset pose restores two posed bones in one step; a socket moved 4 cm in the scene is saved as a `.vrig` migration and the re-imported model has the new transform; Hand.R is refused.
+- Overlay cost on Orion (CPU, measured in the test, 10 calls averaged, one run): bones 0.61 ms for 92 lines; weights 3.50 ms for 3,859 points (it skins all of Orion's vertices; CPU LBS alone measured 1.69 ms under ADR-0207).
+- Not verified: the overlay on a real display (the tests run offscreen); IK preview in the card (the existing View > IK overlay still covers IK chains).
+- Next task: corrective blend shapes driven by joint angles, then skeleton and animation LOD.
+

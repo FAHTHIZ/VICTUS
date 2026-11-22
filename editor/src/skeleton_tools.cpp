@@ -11,6 +11,7 @@
 #include <imgui.h>
 
 #include <format>
+#include <unordered_map>
 
 namespace victus::editor {
 
@@ -78,6 +79,7 @@ Result<std::string> Editor::add_skeleton_migration(const Uuid& model, std::span<
     if (auto st = db_->set_settings(uuid, settings.to_json()); !st) return std::move(st).error();
     if (auto imported = db_->import(uuid); !imported) return std::move(imported).error();
     skeleton_card_.stamp = 0; // re-read
+    ++skeleton_generation_;
     notify(std::format("Skeleton migration {} added ({} edits). The source model is unchanged.", rel, edits.size()));
     return rel;
 }
@@ -110,6 +112,204 @@ Result<Editor::DeformationCheck> Editor::check_deformation(const Uuid& model, st
         out.triangles += mesh.data.indices.size() / 3;
     }
     return out;
+}
+
+// ---- viewport skeleton tools (ADR-0208) --------------------------------------------------------
+
+namespace {
+float quat_alignment(math::Quat a, math::Quat b) noexcept { return std::abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w); }
+} // namespace
+
+const assets::CookedModel* Editor::overlay_model(const Uuid& model) {
+    if (!db_ || model.is_nil()) return nullptr;
+    OverlayGeometry& g = overlay_geometry_;
+    if (g.model != model || g.generation != skeleton_generation_ || !g.geometry) {
+        g = OverlayGeometry{};
+        g.model = model;
+        g.generation = skeleton_generation_;
+        auto m = db_->load_model_geometry(model);
+        if (!m) return nullptr;
+        g.geometry = std::make_shared<const assets::CookedModel>(std::move(*m));
+    }
+    return g.geometry.get();
+}
+
+std::optional<Editor::SkeletonBinding> Editor::bind_skeleton(Entity root) {
+    Scene& s = active_scene();
+    for (const Entity e : subtree(s, root)) {
+        const auto* sm = s.world().get<animation::SkinnedMeshComponent>(e);
+        const auto* mr = s.world().get<MeshRendererComponent>(e);
+        if (!sm || !mr || mr->mesh_asset.is_nil()) continue;
+        const assets::CookedModel* m = overlay_model(mr->mesh_asset);
+        const Entity skel = s.find(sm->skeleton);
+        if (!m || skel.is_null()) return std::nullopt;
+        SkeletonBinding b;
+        b.model = mr->mesh_asset;
+        b.skeleton_root = skel;
+        std::unordered_map<std::string, Entity> by_name;
+        for (const Entity c : subtree(s, skel))
+            if (const auto* n = s.world().get<Name>(c)) by_name.emplace(n->value, c);
+        b.node_entity.assign(m->nodes.size(), Entity{});
+        for (std::size_t i = 0; i < m->nodes.size(); ++i)
+            if (auto it = by_name.find(m->nodes[i].name); it != by_name.end()) b.node_entity[i] = it->second;
+        return b;
+    }
+    return std::nullopt;
+}
+
+std::vector<Editor::OverlayLine> Editor::skeleton_overlay_lines(Entity root, std::string_view highlight) {
+    std::vector<OverlayLine> out;
+    const auto b = bind_skeleton(root);
+    if (!b) return out;
+    const assets::CookedModel* m = overlay_model(b->model);
+    Scene& s = active_scene();
+    const assets::SkeletonInfo info = assets::describe_skeleton(*m);
+    for (const assets::SkeletonBone& bone : info.bones) {
+        const auto n = static_cast<std::size_t>(bone.node);
+        const std::int32_t parent = m->nodes[n].parent;
+        if (parent < 0 || b->node_entity[n].is_null() || b->node_entity[static_cast<std::size_t>(parent)].is_null()) continue;
+        // Bones hang from their parent; the skeleton's root helper ("Rig") draws no line.
+        if (!info.find(m->nodes[static_cast<std::size_t>(parent)].name)) continue;
+        const math::Vec3 a = s.world_matrix(b->node_entity[static_cast<std::size_t>(parent)]).transform_point({});
+        const math::Vec3 p = s.world_matrix(b->node_entity[n]).transform_point({});
+        math::Color c{0.75f, 0.75f, 0.8f, 1};
+        if (bone.roles & assets::kBoneSocket) c = {1.0f, 0.85f, 0.2f, 1};
+        else if (bone.roles & (assets::kBoneIkTarget | assets::kBoneIkPole)) c = {0.3f, 0.9f, 1.0f, 1};
+        else if (bone.roles & assets::kBoneMechanical) c = {1.0f, 0.55f, 0.15f, 1};
+        else if (bone.roles & (assets::kBoneFace | assets::kBoneJaw | assets::kBoneTongue)) c = {1.0f, 0.5f, 0.8f, 1};
+        else if (bone.roles & assets::kBoneSecondary) c = {0.4f, 1.0f, 0.5f, 1};
+        if (!highlight.empty() && bone.name == highlight) c = {1, 1, 1, 1};
+        out.push_back({a, p, c});
+        // A small cross marks sockets and IK targets, which often sit on top of a bone.
+        if (bone.roles & (assets::kBoneSocket | assets::kBoneIkTarget)) {
+            constexpr float k = 0.02f;
+            for (const math::Vec3 d : {math::Vec3{k, 0, 0}, math::Vec3{0, k, 0}, math::Vec3{0, 0, k}}) out.push_back({p - d, p + d, c});
+        }
+    }
+    return out;
+}
+
+std::vector<Editor::WeightPoint> Editor::weight_overlay_points(Entity root, std::string_view bone, std::size_t max_points) {
+    std::vector<WeightPoint> out;
+    const auto b = bind_skeleton(root);
+    if (!b || max_points == 0) return out;
+    const assets::CookedModel* m = overlay_model(b->model);
+    Scene& s = active_scene();
+    std::uint32_t joint = render::kDominantJoint;
+    const assets::ModelSkin* skin = nullptr;
+    std::vector<math::Mat4> palette;
+    std::size_t total = 0;
+    struct Part {
+        const render::MeshData* mesh;
+    };
+    std::vector<Part> parts;
+    for (const Entity e : subtree(s, root)) {
+        const auto* sm = s.world().get<animation::SkinnedMeshComponent>(e);
+        const auto* mr = s.world().get<MeshRendererComponent>(e);
+        if (!sm || !mr || mr->mesh_asset != b->model || mr->mesh_index >= m->meshes.size() || sm->skin >= m->skins.size()) continue;
+        if (!m->meshes[mr->mesh_index].data.skinned()) continue;
+        skin = &m->skins[sm->skin];
+        parts.push_back({&m->meshes[mr->mesh_index].data});
+        total += m->meshes[mr->mesh_index].data.vertices.size();
+    }
+    if (!skin || parts.empty()) return out;
+    if (!bone.empty()) {
+        joint = 0xfffffffeu; // no joint: every vertex reads zero weight
+        for (std::size_t j = 0; j < skin->joints.size(); ++j)
+            if (m->nodes[skin->joints[j]].name == bone) joint = static_cast<std::uint32_t>(j);
+    }
+    // World-space skin matrices from the scene's joint entities (the pose the viewport shows).
+    palette.resize(skin->joints.size());
+    for (std::size_t j = 0; j < skin->joints.size(); ++j) {
+        const Entity je = b->node_entity[skin->joints[j]];
+        palette[j] = je.is_null() ? math::Mat4{} : s.world_matrix(je) * skin->inverse_bind[j];
+    }
+    const std::size_t step = std::max<std::size_t>(1, (total + max_points - 1) / max_points);
+    std::vector<render::Vertex3D> posed;
+    out.reserve(std::min(total, max_points) + 1);
+    for (const Part& part : parts) {
+        render::skin_vertices(*part.mesh, palette, render::SkinningMethod::Linear, posed);
+        const std::vector<std::uint32_t> colours = render::weight_heatmap_colors(*part.mesh, joint);
+        for (std::size_t i = 0; i < posed.size(); i += step) {
+            const std::uint32_t c = colours[i];
+            float w = 0;
+            if (joint < skin->joints.size())
+                for (int k = 0; k < 4; ++k)
+                    if (part.mesh->skin[i].joints[k] == joint) w += part.mesh->skin[i].weights[k];
+            out.push_back({posed[i].position, w,
+                           {static_cast<float>(c & 0xff) / 255.0f, static_cast<float>((c >> 8) & 0xff) / 255.0f,
+                            static_cast<float>((c >> 16) & 0xff) / 255.0f, 1}});
+        }
+    }
+    return out;
+}
+
+bool Editor::pose_bone(Entity root, std::string_view bone, math::Quat local_rotation) {
+    const auto b = bind_skeleton(root);
+    if (!b) return false;
+    const assets::CookedModel* m = overlay_model(b->model);
+    Scene& s = active_scene();
+    for (std::size_t i = 0; i < m->nodes.size(); ++i) {
+        if (m->nodes[i].name != bone || b->node_entity[i].is_null()) continue;
+        const Uuid id = s.uuid(b->node_entity[i]);
+        auto before = capture(s, {id});
+        s.world().get<Transform>(b->node_entity[i])->rotation = math::normalize(local_rotation);
+        record_edit(std::format("Pose {}", bone), std::move(before));
+        return true;
+    }
+    return false;
+}
+
+std::size_t Editor::reset_skeleton_pose(Entity root) {
+    const auto b = bind_skeleton(root);
+    if (!b) return 0;
+    const assets::CookedModel* m = overlay_model(b->model);
+    Scene& s = active_scene();
+    std::vector<Uuid> ids;
+    for (std::size_t i = 0; i < m->nodes.size(); ++i) {
+        const Entity e = b->node_entity[i];
+        if (e.is_null()) continue;
+        const Transform* t = s.world().get<Transform>(e);
+        const assets::ModelNode& n = m->nodes[i];
+        if (t && (math::length(t->position - n.translation) > 1e-6f || quat_alignment(t->rotation, n.rotation) < 1.0f - 1e-6f ||
+                  math::length(t->scale - n.scale) > 1e-6f))
+            ids.push_back(s.uuid(e));
+    }
+    if (ids.empty()) return 0;
+    auto before = capture(s, ids);
+    for (const Uuid& u : ids) {
+        const Entity e = s.find(u);
+        for (std::size_t i = 0; i < m->nodes.size(); ++i)
+            if (b->node_entity[i] == e) {
+                Transform* t = s.world().get<Transform>(e);
+                t->position = m->nodes[i].translation;
+                t->rotation = m->nodes[i].rotation;
+                t->scale = m->nodes[i].scale;
+            }
+    }
+    record_edit("Reset Pose", std::move(before));
+    return ids.size();
+}
+
+Result<std::string> Editor::save_socket_transform(Entity root, std::string_view socket) {
+    const auto b = bind_skeleton(root);
+    if (!b) return make_error(ErrorCode::NotFound, "no skinned character under the selection");
+    const assets::CookedModel* m = overlay_model(b->model);
+    Scene& s = active_scene();
+    for (std::size_t i = 0; i < m->nodes.size(); ++i) {
+        if (m->nodes[i].name != socket) continue;
+        if (b->node_entity[i].is_null()) return make_error(ErrorCode::NotFound, std::format("'{}' is not in the scene", socket));
+        const Transform& t = *s.world().get<Transform>(b->node_entity[i]);
+        assets::BoneEdit e;
+        e.op = assets::BoneEdit::Op::Move;
+        e.bone = std::string(socket);
+        e.translation = t.position;
+        e.rotation = t.rotation;
+        e.scale = t.scale;
+        const assets::BoneEdit one[1] = {e};
+        return add_skeleton_migration(b->model, one, std::format("Move {}", socket));
+    }
+    return make_error(ErrorCode::NotFound, std::format("no bone '{}'", socket));
 }
 
 void Editor::draw_skeleton_section(Entity e) {
@@ -203,6 +403,38 @@ void Editor::draw_skeleton_section(Entity e) {
             if (st.check && st.check->bone == sel->name)
                 ImGui::Text("Collapsed triangles: linear %zu, dual quaternion %zu (of %zu)", st.check->collapsed_linear,
                             st.check->collapsed_dual_quaternion, st.check->triangles);
+            ImGui::TreePop();
+        }
+        ImGui::Checkbox("Show bones", &show_bones_);
+        ImGui::SameLine();
+        ImGui::Checkbox("Show weights", &show_weights_);
+        kit::tooltip("Draws the selected character's bones in the viewport (sockets yellow, IK cyan, mechanical orange, face pink, "
+                     "secondary green) and this bone's skin weights from blue (0) to red (1).");
+        if (ImGui::TreeNode("Pose")) {
+            ImGui::DragFloat3("Rotate", st.pose_euler, 1.0f, -180.0f, 180.0f, "%.0f deg");
+            kit::tooltip("Rotation about the bone's X, Y and Z axes, on top of its rest pose.");
+            const bool editing = play_state_ == PlayState::Editing;
+            if (kit::icon_text_button("Apply", kit::Icon::Play, true, editing)) {
+                constexpr float kDeg = 3.14159265f / 180.0f;
+                math::Quat rest{};
+                if (const auto* g = overlay_model(model))
+                    for (const auto& n : g->nodes)
+                        if (n.name == sel->name) rest = n.rotation;
+                const math::Quat q = rest * math::Quat::axis_angle({0, 0, 1}, st.pose_euler[2] * kDeg) *
+                                     math::Quat::axis_angle({0, 1, 0}, st.pose_euler[1] * kDeg) *
+                                     math::Quat::axis_angle({1, 0, 0}, st.pose_euler[0] * kDeg);
+                if (!pose_bone(e, sel->name, q)) notify(std::format("'{}' is not in the scene", sel->name), true);
+            }
+            ImGui::SameLine();
+            if (kit::icon_text_button("Reset pose", kit::Icon::Undo, false, editing)) (void)reset_skeleton_pose(e);
+            kit::tooltip("Puts every bone back in the model's rest pose (one undo step).");
+            ImGui::TreePop();
+        }
+        if (sel->joint < 0 && ImGui::TreeNode("Socket")) {
+            ImGui::TextWrapped("Move %s with the gizmo (select it in the Hierarchy), then save its transform into the model.", sel->name.c_str());
+            if (kit::icon_text_button("Save transform to model", kit::Icon::Save, true, play_state_ == PlayState::Editing))
+                if (auto r = save_socket_transform(e, sel->name); !r) notify(r.error().message, true);
+            kit::tooltip("Writes a skeleton migration (.vrig) that moves this socket on import. The source model is unchanged.");
             ImGui::TreePop();
         }
         if (ImGui::TreeNode("Add child bone")) {

@@ -1512,6 +1512,26 @@ void Editor::draw_overlays_3d(render::SceneRenderer& r) {
     }
     if (show_ik_)
         for (const auto& [a, b] : ik_overlay_lines()) r.line(a, b, {0.3f, 0.9f, 1.0f, 1});
+    if (show_bones_ || show_weights_) {
+        // Skeleton overlays of the selected characters (ADR-0208); the Skeleton card's selected
+        // bone is highlighted and, with weights on, its skin weights are drawn as coloured ticks.
+        std::string highlight;
+        if (skeleton_card_.selected >= 0 && static_cast<std::size_t>(skeleton_card_.selected) < skeleton_card_.info.bones.size())
+            highlight = skeleton_card_.info.bones[static_cast<std::size_t>(skeleton_card_.selected)].name;
+        for (const Uuid& u : selection_) {
+            const Entity e = s.find(u);
+            if (e.is_null()) continue;
+            if (show_bones_)
+                for (const auto& l : skeleton_overlay_lines(e, highlight)) r.line(l.a, l.b, l.color);
+            if (show_weights_ && !highlight.empty())
+                for (const auto& p : weight_overlay_points(e, highlight)) {
+                    if (p.weight <= 0.0f) continue;
+                    constexpr float k = 0.004f;
+                    r.line(p.position - math::Vec3{k, 0, 0}, p.position + math::Vec3{k, 0, 0}, p.color);
+                    r.line(p.position - math::Vec3{0, k, 0}, p.position + math::Vec3{0, k, 0}, p.color);
+                }
+        }
+    }
     if (show_ai_ && play_ai_ && play_state_ != PlayState::Editing) {
         ai_scratch_.clear();
         play_ai_->debug_lines(s, ai_scratch_);

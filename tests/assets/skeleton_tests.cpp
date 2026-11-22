@@ -375,3 +375,54 @@ TEST_CASE("skeleton: model import settings apply migrations from files and fail 
     CHECK(mem_res.warnings.size() == 1);
     CHECK(describe_skeleton(*mem).find("ForeArmRoll.L") == nullptr);
 }
+
+TEST_CASE("skeleton: moving a socket changes only that socket, round-trips as JSON and refuses deforming joints") {
+    const CookedModel& orion = starter("orion");
+    std::int32_t hand = -1;
+    for (std::size_t i = 0; i < orion.nodes.size(); ++i)
+        if (orion.nodes[i].name == "Socket.Hand.R") hand = static_cast<std::int32_t>(i);
+    REQUIRE(hand >= 0);
+    BoneEdit mv{.op = BoneEdit::Op::Move, .bone = "Socket.Hand.R"};
+    mv.translation = orion.nodes[static_cast<std::size_t>(hand)].translation + Vec3{0.0f, 0.05f, 0.02f};
+    mv.rotation = Quat::axis_angle({0, 0, 1}, 0.5f);
+    mv.scale = {1, 1, 1};
+
+    SkeletonMigration mig;
+    mig.requires_layout = skeleton_layout_hash(orion);
+    mig.edits = {mv};
+    const std::string text = write_skeleton_migration(mig);
+    CHECK(text.find("\"move\"") != std::string::npos);
+    auto parsed = parse_skeleton_migration(text);
+    REQUIRE(parsed.ok());
+    REQUIRE(parsed->edits.size() == 1);
+    CHECK(parsed->edits[0].op == BoneEdit::Op::Move);
+    CHECK(math::length(parsed->edits[0].translation - mv.translation) < 1e-5f);
+    CHECK(write_skeleton_migration(*parsed) == text);
+
+    CookedModel m = orion;
+    auto r = apply_skeleton_migration(m, *parsed);
+    REQUIRE(r.ok());
+    REQUIRE(r->moved.size() == 1);
+    CHECK(r->moved[0] == "Socket.Hand.R");
+    const ModelNode& n = m.nodes[static_cast<std::size_t>(hand)];
+    CHECK(math::length(n.translation - mv.translation) < 1e-6f);
+    CHECK(std::abs(n.rotation.x * mv.rotation.x + n.rotation.y * mv.rotation.y + n.rotation.z * mv.rotation.z + n.rotation.w * mv.rotation.w) > 0.9999f);
+    // Same nodes, same joints: no deformed vertex changes in any pose.
+    CHECK(m.nodes.size() == orion.nodes.size());
+    CHECK(max_deformation_delta(orion, m, "Idle", 0.4f) == 0.0f);
+    CHECK(max_deformation_delta(orion, m, "Run", 0.2f, render::SkinningMethod::DualQuaternion) == 0.0f);
+    // The compatibility check reports the moved socket, so references to it can be reviewed.
+    CHECK_FALSE(check_skeleton_compatibility(orion, m).ok());
+
+    // Deforming joints (and nodes carrying them) cannot be moved: that would change the bind pose.
+    for (const char* joint : {"Hand.R", "Spine", "Hips"}) {
+        CookedModel bad = orion;
+        const BoneEdit one[1] = {{.op = BoneEdit::Op::Move, .bone = joint, .translation = {0, 1, 0}}};
+        auto refused = apply_skeleton_edits(bad, one, {});
+        CHECK_FALSE(refused.ok());
+        CHECK(skeleton_layout_hash(bad) == skeleton_layout_hash(orion));
+    }
+    CookedModel missing = orion;
+    const BoneEdit nobody[1] = {{.op = BoneEdit::Op::Move, .bone = "NoSuchSocket"}};
+    CHECK_FALSE(apply_skeleton_edits(missing, nobody, {}).ok());
+}

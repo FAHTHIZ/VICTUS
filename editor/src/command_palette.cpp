@@ -195,6 +195,8 @@ std::vector<EditorCommand> Editor::commands() {
     toggle("Physics Colliders", &show_colliders_);
     toggle("Navigation Mesh", &show_navmesh_);
     toggle("IK and Foot Placement", &show_ik_);
+    toggle("Bones", &show_bones_);
+    toggle("Skin Weights", &show_weights_);
     add("View: Toggle Profiler", {}, true, [this] { set_show_profiler(!show_profiler_); });
     // Window
     for (int i = 0; i < static_cast<int>(Panel::Count); ++i) {

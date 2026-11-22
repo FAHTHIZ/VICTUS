@@ -224,6 +224,9 @@ result with the original. Rules:
 - Reparenting keeps the bone's world rest transform and re-bakes its clip channels.
 - Removing a bone hands its weights to the nearest ancestor joint (or a named one) and keeps its
   skin slot (`compact_joints` renumbers instead, which the compatibility check reports).
+- Moving (`"op": "move"`, ADR-0208) sets the rest translation, rotation and scale of a socket, IK
+  target, pole or helper. A node that deforms, carries a deforming joint or carries meshes is
+  refused; a clip that animates the node is reported because it overrides the new rest transform.
 - The 21 core starter joints are protected by passing them as `protected_bones`; `force` overrides.
 
 A `SkeletonMigration` is a versioned JSON list of edits (`"format": "victus.skeleton_migration"`)
@@ -247,6 +250,14 @@ Using migrations:
   with roles, joints and weighted vertex counts, the skinning method (one undo step), a
   deformation check (collapsed triangles with each method for a chosen roll and bend) and "Add
   child bone", which writes the next `.vrig` migration next to the model and re-imports it.
+- Studio viewport (ADR-0208): View > Bones draws the selected character's bones from each bone to
+  its parent in the current pose (sockets yellow with a cross, IK targets and poles cyan,
+  mechanical orange, face pink, secondary green, the card's selected bone white); View > Skin
+  Weights draws the selected bone's weights as blue-to-red ticks on the CPU-skinned vertices
+  (at most 4,000). The card's Pose section rotates the selected bone on top of its rest pose
+  (one undo step each) and Reset pose restores every bone. For a socket, IK target or helper,
+  "Save transform to model" writes its scene transform as a `move` edit in the next `.vrig`;
+  moving a deforming joint is refused because it would change the bind pose.
 - CLI: `victus skeleton <model|orion|nova> [--migration a.vrig,b.vrig] [--deformation] [--json]`
   prints the bone tree, applies migrations and reports compatibility (exit 1 when broken).
 

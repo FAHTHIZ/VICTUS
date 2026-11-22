@@ -445,6 +445,8 @@ public:
     // View > IK and Foot Placement: IK chains and targets, and (in play) foot probe rays, ground
     // points with normals and boxes around locked feet. The segments drawn this frame.
     void set_show_ik(bool show) noexcept { show_ik_ = show; }
+    void set_show_bones(bool show) noexcept { show_bones_ = show; }
+    void set_show_weights(bool show) noexcept { show_weights_ = show; }
     [[nodiscard]] std::vector<std::pair<math::Vec3, math::Vec3>> ik_overlay_lines();
     [[nodiscard]] const navigation::NavigationSystem* navmesh_preview() const noexcept { return edit_navigation_.get(); }
     // Audio engine for play sessions and clip preview (null if no engine could be created).
@@ -886,6 +888,32 @@ public:
     };
     [[nodiscard]] Result<DeformationCheck> check_deformation(const Uuid& model, std::string_view bone, float roll_degrees,
                                                              float bend_degrees);
+    // Viewport skeleton tools (ADR-0208). Lines from every bone of the skinned character under
+    // `root` to its parent bone, in the current scene pose, coloured by role (sockets yellow, IK
+    // targets and poles cyan, mechanical orange, face pink, secondary green, others grey); the
+    // `highlight` bone is drawn white.
+    struct OverlayLine {
+        math::Vec3 a, b;
+        math::Color color;
+    };
+    [[nodiscard]] std::vector<OverlayLine> skeleton_overlay_lines(scene::Entity root, std::string_view highlight = {});
+    // Skinned vertices of `root`'s meshes in the current scene pose (CPU-skinned with the scene's
+    // joint transforms), coloured by `bone`'s weight (blue 0 .. red 1), or by dominant joint when
+    // `bone` is empty. Evenly subsampled to at most `max_points`.
+    struct WeightPoint {
+        math::Vec3 position;
+        float weight{0};
+        math::Color color;
+    };
+    [[nodiscard]] std::vector<WeightPoint> weight_overlay_points(scene::Entity root, std::string_view bone, std::size_t max_points = 4000);
+    // Pose editing on the scene's joint entities, one undo step each: pose_bone sets a bone's
+    // local rotation; reset_skeleton_pose restores every bone's rest transform from the model.
+    bool pose_bone(scene::Entity root, std::string_view bone, math::Quat local_rotation);
+    std::size_t reset_skeleton_pose(scene::Entity root);
+    // Socket editing: writes the socket's (or IK target's, or helper's) local transform as it is
+    // in the scene into a skeleton migration (BoneEdit::Op::Move), so the model keeps it on
+    // re-import. Deforming joints are refused.
+    Result<std::string> save_socket_transform(scene::Entity root, std::string_view socket);
     // Vehicles (Inspector "Drivable vehicle" card, ADR-0166). make_vehicle runs
     // physics::make_vehicle in one undoable step (wheels it creates are removed by undo) and
     // returns the wheel count; set_vehicle_player_input toggles keyboard/gamepad driving.
@@ -1352,6 +1380,8 @@ private:
     bool show_colliders_{true};
     bool show_navmesh_{false};
     bool show_ik_{false};
+    bool show_bones_{false};   // selected characters' bones (ADR-0208)
+    bool show_weights_{false}; // weights of the Skeleton card's selected bone
     std::unique_ptr<navigation::NavigationSystem> edit_navigation_; // navmesh preview while editing
     std::vector<navigation::DebugLine> nav_scratch_;
     render::QualityTier quality_{render::QualityTier::High};
@@ -1642,8 +1672,24 @@ private:
         float weight_share{0.0f};
         float roll{150.0f}, bend{110.0f};
         std::optional<DeformationCheck> check;
+        float pose_euler[3]{0, 0, 0};
     };
     SkeletonCardState skeleton_card_;
+    // Geometry of the model the viewport overlays read (shared; reloaded when the model changes).
+    struct OverlayGeometry {
+        Uuid model;
+        std::uint64_t generation{0};
+        std::shared_ptr<const assets::CookedModel> geometry;
+    } overlay_geometry_;
+    std::uint64_t skeleton_generation_{1}; // bumped by migrations
+    [[nodiscard]] const assets::CookedModel* overlay_model(const Uuid& model);
+    // Name -> entity map of the skeleton under the skinned mesh in `root`'s subtree.
+    struct SkeletonBinding {
+        Uuid model;
+        scene::Entity skeleton_root;
+        std::vector<scene::Entity> node_entity; // per model node (null when absent)
+    };
+    [[nodiscard]] std::optional<SkeletonBinding> bind_skeleton(scene::Entity root);
     void draw_vehicle_section(scene::Entity e);
     int help_place_{0};
     bool help_was_open_{false};

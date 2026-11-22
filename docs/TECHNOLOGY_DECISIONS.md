@@ -2224,3 +2224,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** listed in docs/STATUS.md under this ADR.
 
 **Consequences:** Measured, DQS is not uniformly better: on the quadruped's Sit clip (hind knees bent about 125 degrees) DQS collapses two triangles on the inside of the bend where LBS collapses none, while on twists it is far better. That keeps the per-mesh choice and motivates joint-angle corrective shapes (a later unit). GPU timings come from Mesa's software rasteriser only and do not show the cost of DQS on real hardware.
+
+### ADR-0208: Viewport bone and weight overlays, pose editing and socket moves in the Studio
+
+**Status:** Accepted (2026-11-22)
+
+**Context:** ADR-0206 gave the Studio a Skeleton card with a bone list, skinning method, deformation check and "add bone as migration", but no way to see the skeleton or its weights on the character, to pose it, or to adjust a socket. The rigging brief asks for bone visualisation, weight inspection, pose editing and socket editing without modifying the source model.
+
+**Decision:** (1) `Editor::skeleton_overlay_lines` draws each bone of the selected character from its parent in the current scene pose, read from the scene's joint entities, so it shows whatever the animator, IK or the user's pose has done. Colours follow `infer_bone_roles`: sockets yellow with a cross, IK targets and poles cyan, mechanical orange, face pink, secondary green, other bones grey, and the card's selected bone white. View > Bones and the command palette toggle it. (2) `weight_overlay_points` CPU-skins the character's meshes with the scene's joint transforms and colours an even subsample (at most 4,000 vertices) with `weight_heatmap_colors` for the selected bone, drawn as small ticks (View > Skin Weights). The cooked geometry is cached per model and reloaded when a migration changes it. (3) `pose_bone` sets a joint entity's local rotation as one undo step; `reset_skeleton_pose` restores every bone's rest transform from the model in one step. The card's Pose section applies X/Y/Z degrees on top of the rest rotation. (4) A new skeleton edit, `BoneEdit::Op::Move` (JSON `"move"`), sets the rest transform of a node that neither deforms nor carries a deforming joint or a mesh. `save_socket_transform` writes the socket's scene transform as a Move into the next `.vrig` migration, so the change survives re-import and the source file is untouched. Moving a deforming joint is refused because it would change the bind pose and every frame of every clip.
+
+**Alternatives:** (1) Draw bones from the cooked model with a sampled clip: simpler, but it would not show the live pose, IK or the user's edits. (2) GPU weight visualisation through a debug shader mode: cheaper per frame, but it needs a variant on every backend and does not show the weights of a hidden bone in context. The CPU path costs about 3.5 ms on Orion and only runs while the toggle is on. (3) Let Move apply to joints and re-bake the inverse bind matrices: possible, but it silently changes deformation; a joint can still be added, reparented or removed with the existing edits.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Sockets moved this way show up in `check_skeleton_compatibility` as moved sockets, so attachments that depend on them get reviewed. A clip that animates a moved node overrides the new rest transform; the edit reports this as a warning. The weight overlay uses LBS even when the mesh renders with DQS, which can differ slightly on twisted joints.

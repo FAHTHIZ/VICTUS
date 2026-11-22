@@ -118,12 +118,15 @@ struct SkeletonInfo {
 // ---- editing -----------------------------------------------------------------------------------
 
 struct BoneEdit {
-    enum class Op : std::uint8_t { Add, Rename, Reparent, Remove };
+    // Move (ADR-0208): sets the rest transform (relative to its parent) of a node that does not
+    // deform and has no deforming descendant: sockets, IK targets, poles, helpers. Joints are
+    // refused because moving one changes its bind and every pose of the mesh.
+    enum class Op : std::uint8_t { Add, Rename, Reparent, Remove, Move };
     Op op{Op::Add};
     std::string bone;   // Add: new name; others: existing bone
     std::string parent; // Add / Reparent: parent bone (must exist)
     std::string name;   // Rename: new name; Remove: joint receiving the weights ("" = nearest weighted ancestor)
-    // Add: rest transform relative to the parent.
+    // Add / Move: rest transform relative to the parent.
     math::Vec3 translation{};
     math::Quat rotation{};
     math::Vec3 scale{1, 1, 1};
@@ -141,6 +144,7 @@ struct SkeletonEditReport {
     std::vector<std::string> added, removed;
     std::vector<std::pair<std::string, std::string>> renamed; // (old, new)
     std::vector<std::string> reparented;
+    std::vector<std::string> moved;
     std::vector<std::int32_t> node_remap;  // old node index -> new (-1 removed); identity when no removal
     std::vector<std::int32_t> joint_remap; // old joint index -> new (-1 removed)
     std::size_t vertices_reweighted{0};
