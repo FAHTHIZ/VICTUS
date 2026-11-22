@@ -60,7 +60,7 @@ Checked against `editor/src` (Dear ImGui). The detailed UX review is [audits/STU
 | Viewports | 2D and 3D, gizmos with snapping, overlays for colliders, the navmesh and overdraw | — |
 | Asset browser | Thumbnails, reference-safe rename, move and delete (ADR-0175), Trash, import settings, import queue window (ADR-0189), Asset Store | Dependency-graph view, tags |
 | Console and Problems | Structured log, Problems panel with jump-to-source | — |
-| Profiler | CPU and GPU timings, frame breakdown | Memory and allocation tracking, network timeline |
+| Profiler | CPU and GPU timings (scripts, render passes, GPU waits), memory and GPU resource counters, pause and trace recording | Per-allocation tracking, a streaming view and a network timeline in the profiler (network stats live in the Network window) |
 | 2D | Sprite sheets, tile sets and tilemaps | — |
 | 3D | Terrain sculpt, paint and scatter, lighting bake | Foliage painting as its own tool, spline and road tools |
 | Materials | Material editor, material graph, surface shaders | — |
@@ -75,4 +75,4 @@ Checked against `editor/src` (Dear ImGui). The detailed UX review is [audits/STU
 | Play-in-editor | Play, pause, stop, record and replay a capture | Single-step |
 | Extensions | Editor plugins with undoable commands (ADR-0192) | — |
 
-Acceptance: alpha is met. Beta is mostly met; the profiler and platform build profiles are partial (exports are host-only). 1.0 needs usability testing with real users, which has not happened.
+Acceptance: alpha is met. Beta is mostly met; the platform build profiles are partial (exports are host-only). 1.0 needs usability testing with real users, which has not happened.
