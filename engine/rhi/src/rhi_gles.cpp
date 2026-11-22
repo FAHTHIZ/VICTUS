@@ -40,6 +40,7 @@ using GLsizeiptr = std::intptr_t;
 constexpr GLenum GL_NO_ERROR = 0, GL_FALSE_ = 0, GL_TRUE_ = 1;
 constexpr GLenum GL_RENDERER = 0x1F01, GL_VERSION = 0x1F02, GL_EXTENSIONS = 0x1F03;
 constexpr GLenum GL_NUM_EXTENSIONS = 0x821D, GL_MAX_TEXTURE_SIZE = 0x0D33, GL_MAX_SAMPLES = 0x8D57;
+constexpr GLenum GL_MAX_TEXTURE_IMAGE_UNITS = 0x8872, GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS = 0x8B4C;
 constexpr GLenum GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS = 0x8B4D, GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT = 0x8A34;
 constexpr GLenum GL_TEXTURE_2D = 0x0DE1, GL_TEXTURE_3D = 0x806F, GL_TEXTURE_2D_ARRAY = 0x8C1A, GL_TEXTURE_CUBE_MAP = 0x8513,
                  GL_TEXTURE_CUBE_MAP_POSITIVE_X = 0x8515;
@@ -389,7 +390,12 @@ std::uint64_t texture_bytes(const TextureDesc& d) {
     return total * layers * d.sample_count;
 }
 
-constexpr std::uint32_t kFragmentUnitBase = 0, kVertexUnitBase = 16, kUnitsPerStage = 16;
+// Texture units: the fragment stage owns units [0, fragment_units) and the vertex stage the next
+// vertex_units (GlesBackend::State). Storage buffers are emulated as data textures on the units
+// after a stage's samplers, so the PBR variants with surface-shader textures need more than
+// OpenGL ES 3.0's minimum of 16 fragment units; drivers that expose more (Mesa, most desktop
+// GPUs) get them all.
+constexpr std::uint32_t kFragmentUnitBase = 0, kMinUnitsPerStage = 16, kMaxUnitsPerStage = 32;
 constexpr std::uint32_t kStorageRowTexels = 1024;
 constexpr std::uint32_t kVertexUboBase = 0, kFragmentUboBase = 4, kUniformSlots = 4;
 constexpr std::uint32_t kMaxVertexBuffers = 8;
@@ -439,6 +445,7 @@ struct GlesBackend::State {
     std::vector<std::string> extensions;
     bool float_targets{false}, half_targets{false}, anisotropy{false}, indexed_blend{false};
     GLint ubo_align{256};
+    std::uint32_t fragment_units{kMinUnitsPerStage}, vertex_unit_base{kMinUnitsPerStage}, vertex_units{kMinUnitsPerStage};
     GLuint vao{0}, fbo{0}, read_fbo{0}, ring{0}, storage_sampler{0};
     GLsizeiptr ring_offset{0};
     // Last pushed uniform data per stage (0 vertex, 1 fragment) and slot: re-uploaded when the
@@ -514,11 +521,17 @@ Result<std::unique_ptr<GlesBackend>> GlesBackend::create(Device& device, const D
     s.indexed_blend = gl.Enablei && gl.Disablei && gl.BlendFuncSeparatei &&
                       (ver[10] > '3' || (ver.size() > 12 && ver[12] >= '2') || has("GL_OES_draw_buffers_indexed") ||
                        has("GL_EXT_draw_buffers_indexed"));
-    GLint units = 0;
+    GLint units = 0, frag_units = 0, vert_units = 0;
     gl.GetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &units);
-    if (units < 32)
+    gl.GetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &frag_units);
+    gl.GetIntegerv(GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS, &vert_units);
+    s.fragment_units = std::clamp<std::uint32_t>(static_cast<std::uint32_t>(std::max(frag_units, 0)), kMinUnitsPerStage, kMaxUnitsPerStage);
+    s.vertex_unit_base = s.fragment_units;
+    const GLint left = std::max(0, units - static_cast<GLint>(s.fragment_units));
+    s.vertex_units = static_cast<std::uint32_t>(std::clamp<GLint>(std::min(vert_units, left), 0, kMaxUnitsPerStage));
+    if (s.vertex_units < kMinUnitsPerStage)
         VICTUS_LOG_WARN("rhi", "GLES: {} combined texture units; vertex-stage samplers above slot {} are unavailable", units,
-                        std::max(0, units - 17));
+                        static_cast<int>(s.vertex_units) - 1);
     gl.GetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &s.ubo_align);
     s.ubo_align = std::max<GLint>(s.ubo_align, 16);
     gl.GenVertexArrays(1, &s.vao);
@@ -813,21 +826,23 @@ Result<PipelineHandle> GlesBackend::create_pipeline(const PipelineDesc& desc) {
             if (const GLuint idx = gl.GetUniformBlockIndex(p.program, name.c_str()); idx != GL_INVALID_INDEX)
                 gl.UniformBlockBinding(p.program, idx, ubo_base + slot);
     };
-    bind(*vs, kVertexUnitBase, kVertexUboBase);
+    bind(*vs, s_->vertex_unit_base, kVertexUboBase);
     // Storage slots take the texture units after the stage's samplers.
     const auto bind_storage = [&](const ShaderEntry& sh, std::uint32_t unit_base, std::uint32_t stage) -> bool {
         p.storage_unit[stage] = unit_base + sh.sampler_units();
+        const std::uint32_t limit = stage == 0 ? s_->vertex_units : s_->fragment_units;
         for (const auto& [slot, name] : sh.storage) {
-            if (sh.sampler_units() + slot >= kUnitsPerStage) return false;
+            if (sh.sampler_units() + slot >= limit) return false;
             if (const GLint loc = gl.GetUniformLocation(p.program, name.c_str()); loc >= 0)
                 gl.Uniform1i(loc, static_cast<GLint>(p.storage_unit[stage] + slot));
         }
         return true;
     };
-    if (!bind_storage(*vs, kVertexUnitBase, 0) || !bind_storage(*fs, kFragmentUnitBase, 1)) {
+    if (!bind_storage(*vs, s_->vertex_unit_base, 0) || !bind_storage(*fs, kFragmentUnitBase, 1)) {
         gl.DeleteProgram(p.program);
-        return make_error(ErrorCode::Unsupported, std::format("pipeline '{}': more than {} samplers and storage buffers in one stage",
-                                                              desc.name, kUnitsPerStage));
+        return make_error(ErrorCode::Unsupported,
+                          std::format("pipeline '{}': more samplers and storage buffers than the device's {} fragment / {} vertex texture units",
+                                      desc.name, s_->fragment_units, s_->vertex_units));
     }
     p.base_instance = gl.GetUniformLocation(p.program, "SPIRV_Cross_BaseInstance");
     bind(*fs, kFragmentUnitBase, kFragmentUboBase);
@@ -1414,7 +1429,7 @@ void GlesBackend::bind_texture(ShaderStage stage, std::uint32_t slot, TextureHan
         return;
     }
     auto& gl = s_->gl;
-    const std::uint32_t unit = (stage == ShaderStage::Vertex ? kVertexUnitBase : kFragmentUnitBase) + slot;
+    const std::uint32_t unit = (stage == ShaderStage::Vertex ? s_->vertex_unit_base : kFragmentUnitBase) + slot;
     gl.ActiveTexture(GL_TEXTURE0 + unit);
     gl.BindTexture(t->target, t->tex);
     gl.BindSampler(unit, *smp);

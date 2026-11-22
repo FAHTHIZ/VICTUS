@@ -2882,3 +2882,13 @@ Verified:
 
 Not verified: real GPUs (lavapipe only); the full ctest run; reference-scene goldens (no reference scene uses triplanar, so none should change).
 Next task: object-space triplanar for moving objects; starter materials in samples/arena.
+
+## 2026-11-22 — GLES: per-device texture unit limits (fixes CI)
+
+Built: the GLES backend reads `GL_MAX_TEXTURE_IMAGE_UNITS` / `GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS` instead of a fixed 16 + 16 split. The fragment stage gets every unit the driver exposes (16..32) and the vertex stage the following ones. ADR-0195's cookie atlas made the PBR surface-shader variant need 12 samplers + 4 emulated storage buffers + its custom textures. With a fixed 16 fragment units the pipeline failed to link, so meshes with custom-texture surface shaders were not drawn on GLES. That was the `gpu: surface shader named parameters and textures reach both stages` failure in CI run 44976520208 (ubuntu Debug and Release, "GPU tests on OpenGL ES").
+
+Verified:
+- `VICTUS_GPU_DRIVER=gles victus_gpu_tests -tc="*named*,*triplanar*"` on Mesa llvmpipe (GLES 3.2): 2 cases, 90 assertions, reproduced failing before the change; full GLES suite 224/224 cases, 26403 assertions.
+- Vulkan (lavapipe) `victus_gpu_tests -tc="*triplanar*,*material assets texture*"`: 2 cases, 69 assertions; the new triplanar case shows mesh UVs halving their on-screen cells when the floor doubles while triplanar cells stay within one transition.
+
+Not verified: GLES devices with only 16 fragment units (custom-texture surface shaders still cannot link there; documented in KNOWN_LIMITATIONS).
