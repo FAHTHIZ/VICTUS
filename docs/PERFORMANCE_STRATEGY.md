@@ -31,7 +31,7 @@ Budget CPU/GPU memory and bandwidth; manage thermal throttling; handle suspend/r
 Measure server tick budget, entity count, replication bandwidth, serialization cost, packet loss behavior, connection count, memory per session and recovery. Test headless servers independently of render workloads.
 
 ## Benchmark quality
-Use stable workloads, warm/cold cache cases, repeated runs and machine-readable results. Never compare unequal scenes, quality settings, drivers or thermal conditions. Keep raw data and commands so another developer can reproduce every published claim.
+Use stable workloads, warm/cold cache cases, repeated runs and machine-readable results. Never compare unequal scenes, quality settings, drivers or thermal conditions. Keep raw data and commands so another developer can reproduce every published claim. Compare `victus.bench.v1` captures with `python3 tools/perf/compare_bench.py BEFORE AFTER [--limit-pct N]`. The comparator refuses captures with different machine/settings, workloads or case sets; exit 0 means reported, 1 means the requested timing limit was crossed, and 2 means the captures are not comparable. This check is not a substitute for repeated runs on matched target hardware.
 
 ## Performance budgets (CI gate)
 
@@ -104,4 +104,3 @@ Peak memory of the exported 3D template, run by the desktop player from the Andr
 - Peak heap: 337 MB. Of that, 239 MB is lavapipe's own allocations (shader compilation), so the engine's heap at peak is about 100 MB.
 - Most of the rest of the resident set is lavapipe device memory, which a phone GPU would hold in its own allocation.
 - **This sandbox cannot say what a phone will use.** GPU memory has to be read on a device (GAP-02, GAP-03).
-
