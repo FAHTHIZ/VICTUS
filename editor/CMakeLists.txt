@@ -41,6 +41,7 @@ add_library(victus_editor_core STATIC
     src/guide.cpp
     src/ragdoll_tools.cpp
     src/foot_tools.cpp
+    src/skeleton_tools.cpp
     src/vehicle_tools.cpp
     src/safe_mode.cpp
     src/asset_store.cpp

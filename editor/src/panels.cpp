@@ -1918,6 +1918,7 @@ void Editor::draw_inspector() {
         draw_prefab_section(e);
         if (!multi) draw_ragdoll_section(e);
         if (!multi) draw_foot_section(e);
+        if (!multi) draw_skeleton_section(e);
         if (!multi) draw_vehicle_section(e);
         begin_inspector_frame(e);
         const json::Value before_frame = multi ? active_scene().save_entity(e) : json::Value();

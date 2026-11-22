@@ -49,6 +49,9 @@ void register_components() {
         scene::Schema<SkinnedMeshComponent>("SkinnedMesh", "Animation")
             .field(&SkinnedMeshComponent::skeleton, "skeleton", {.tooltip = "Root entity of the skeleton", .hint = "entity"})
             .field(&SkinnedMeshComponent::skin, "skin", {.min = 0, .max = 1024})
+            .enumeration(&SkinnedMeshComponent::method, "method", {"linear", "dual_quaternion"},
+                         {.tooltip = "Linear blend skinning, or dual quaternion skinning that keeps volume at bent and "
+                                     "twisted joints (elbows, knees, forearms)"})
             .commit();
     });
     register_ik_components();

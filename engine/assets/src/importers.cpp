@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/assets/importers.hpp"
+#include "victus/assets/skeleton.hpp"
 #include "victus/render/environment_map.hpp"
 
 #include "cgltf.h"
@@ -64,6 +65,11 @@ json::Value ModelImportSettings::to_json() const {
     if (!keyframe_reduction) v.set("keyframe_reduction", false);
     if (keyframe_rotation_error != ModelImportSettings{}.keyframe_rotation_error) v.set("keyframe_rotation_error", keyframe_rotation_error);
     if (keyframe_error != ModelImportSettings{}.keyframe_error) v.set("keyframe_error", keyframe_error);
+    if (!skeleton_migrations.empty()) {
+        json::Value a = json::Value::array();
+        for (const std::string& m : skeleton_migrations) a.as_array().emplace_back(m);
+        v.set("skeleton_migrations", std::move(a));
+    }
     return v;
 }
 
@@ -92,6 +98,9 @@ ModelImportSettings ModelImportSettings::from_json(const json::Value& v) {
     if (!std::isfinite(s.keyframe_rotation_error)) s.keyframe_rotation_error = ModelImportSettings{}.keyframe_rotation_error;
     s.keyframe_error = std::clamp(v["keyframe_error"].as_float(s.keyframe_error), 0.0f, 0.1f);
     if (!std::isfinite(s.keyframe_error)) s.keyframe_error = ModelImportSettings{}.keyframe_error;
+    if (v["skeleton_migrations"].is_array())
+        for (const json::Value& m : v["skeleton_migrations"].as_array())
+            if (m.is_string() && !m.as_string().empty() && s.skeleton_migrations.size() < 64) s.skeleton_migrations.push_back(m.as_string());
     return s;
 }
 
@@ -1114,6 +1123,8 @@ Result<CookedModel> import_gltf(const fs::Path& path, const ModelImportSettings&
     auto bytes = fs::read_binary(path, 1ull << 31);
     if (!bytes) return std::move(bytes).error();
     auto model = import_gltf_bytes(*bytes, path, settings, ctx, res);
+    if (model)
+        if (auto m = apply_import_skeleton_migrations(*model, settings, path, sandbox_root, deps); !m) return std::move(m).error();
     std::sort(deps.begin(), deps.end());
     deps.erase(std::unique(deps.begin(), deps.end()), deps.end());
     res.dependencies = std::move(deps);
@@ -1125,6 +1136,7 @@ Result<CookedModel> import_gltf_memory(std::span<const std::uint8_t> bytes, std:
     ImportResult local;
     ImportResult& res = result ? *result : local;
     ReadContext ctx{{}, nullptr, {}, true};
+    if (!settings.skeleton_migrations.empty()) res.warnings.push_back("skeleton migrations need a file import; skipped");
     return import_gltf_bytes(bytes, utf8_path(name), settings, ctx, res);
 }
 

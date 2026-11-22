@@ -192,6 +192,64 @@ wrist ("candy wrapper"):
   without twist bones. The starter characters' shared controller drives both forearm twist
   joints at 0.5.
 
+## Skinning methods
+
+`SkinnedMeshComponent::method` picks how joints blend on each vertex (ADR-0206):
+
+- `linear` (default): linear blend skinning. Cheapest; twisted forearms collapse past about
+  120 degrees of roll and bent elbows and knees lose some volume.
+- `dual_quaternion`: dual quaternion skinning. Keeps the width of twisted limbs and the volume
+  of bent joints; slight bulging on the outside of sharp bends; scale is blended per joint.
+
+Both run in every skinned vertex shader (lit, depth, shadow, motion vectors) from the same
+64-byte palette entry, so switching needs no reimport. `render/skinning.hpp` also has
+`skin_vertices` (the CPU skinner used for fallbacks and diagnostics), `analyze_skin_weights`,
+`normalize_skin_weights`, `limit_skin_influences`, `weight_heatmap_colors` and
+`measure_deformation` (volume, triangle area extremes, collapsed and flipped triangles).
+
+Measured (docs/STATUS.md, ADR-0206): a tube twisted 170 degrees keeps 100% of its mid width with
+DQS against 9% with LBS (3 px against 14 px wide on screen); Orion's body in an extreme pose has 4
+collapsed triangles with DQS against 22 with LBS.
+
+## Extending skeletons
+
+`assets/skeleton.hpp` edits cooked skeletons without breaking what already uses them:
+`describe_skeleton` lists bones with inferred roles, `apply_skeleton_edits` adds, renames,
+reparents and removes bones (transactionally), and `check_skeleton_compatibility` compares the
+result with the original. Rules:
+
+- Added bones are appended: every existing node and joint index stays valid. A deforming bone can
+  take a share of a parent's weights (`weights_from`, `weight_share`, `weight_start/end` along the
+  parent bone), except on vertices already using four influences.
+- Reparenting keeps the bone's world rest transform and re-bakes its clip channels.
+- Removing a bone hands its weights to the nearest ancestor joint (or a named one) and keeps its
+  skin slot (`compact_joints` renumbers instead, which the compatibility check reports).
+- The 21 core starter joints are protected by passing them as `protected_bones`; `force` overrides.
+
+A `SkeletonMigration` is a versioned JSON list of edits (`"format": "victus.skeleton_migration"`)
+that names the layout hash it applies to and refuses any other skeleton:
+
+```json
+{ "format": "victus.skeleton_migration", "profile": "VictusHumanoid", "from_version": 1, "to_version": 2,
+  "requires_layout": "9f3c...", "edits": [
+    { "op": "add", "bone": "ForeArmRoll.R", "parent": "LowerArm.R", "translation": [0, 0.12, 0],
+      "weights_from": "LowerArm.R", "weight_share": 0.5, "weight_start": 0.2, "weight_end": 1 },
+    { "op": "add", "bone": "IK.Hand.R", "parent": "Hips", "deform": false } ] }
+```
+
+Using migrations:
+
+- Import: list migration files in the model's `.meta` settings, relative to the model:
+  `"skeleton_migrations": ["orion.glb.rig2.vrig"]`. They are applied in order after every import
+  (the source file is never modified); editing one re-imports the model, and a file written for
+  another layout fails the import with its name in the error.
+- Studio: select a character and open the Inspector's "Skeleton and skinning" card: the bone list
+  with roles, joints and weighted vertex counts, the skinning method (one undo step), a
+  deformation check (collapsed triangles with each method for a chosen roll and bend) and "Add
+  child bone", which writes the next `.vrig` migration next to the model and re-imports it.
+- CLI: `victus skeleton <model|orion|nova> [--migration a.vrig,b.vrig] [--deformation] [--json]`
+  prints the bone tree, applies migrations and reports compatibility (exit 1 when broken).
+
 ## Inverse kinematics
 
 An `IKConstraint` component on the end of a chain (a hand, foot or head) bends its ancestors toward a target after the clips and controller have been sampled, every frame, before transforms propagate (ADR-0073).

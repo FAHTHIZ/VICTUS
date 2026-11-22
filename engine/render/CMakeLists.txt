@@ -36,6 +36,7 @@ victus_add_module(render
         src/render_path.cpp
         src/mesh.cpp
         src/mesh_optimize.cpp
+        src/skinning.cpp
         src/render_graph.cpp
         src/scene_renderer.cpp
         src/sprite_batch.cpp

@@ -14,6 +14,7 @@
 #include "victus/particles/particles.hpp"
 #include "victus/assets/database.hpp"
 #include "victus/assets/import_queue.hpp"
+#include "victus/assets/skeleton.hpp"
 #include "victus/plugin/plugin.hpp"
 #include "victus/gameui/gameui.hpp"
 #include "victus/runtime/game_ui.hpp"
@@ -867,6 +868,24 @@ public:
     std::size_t remove_foot_placement(scene::Entity root);
     bool set_foot_locking(scene::Entity root, bool on);
     [[nodiscard]] std::size_t foot_contact_count(scene::Entity root) const;
+    // Skeleton and skinning (Inspector "Skeleton and skinning" card, ADR-0206).
+    // skinned_model_of: the model asset of the first skinned mesh in `root`'s subtree (nil when none).
+    [[nodiscard]] Uuid skinned_model_of(scene::Entity root);
+    // Every SkinnedMesh in the subtree switches to `mode` in one undoable step; returns the count.
+    std::size_t set_skinning_method(scene::Entity root, animation::SkinningMode mode);
+    // Writes `edits` as the model's next skeleton migration (`<model>.rigN.vrig` next to it, tied
+    // to the current skeleton layout), lists it in the model's import settings and re-imports.
+    // Edits are tried on a copy first, so an unsafe edit changes nothing. Returns the new file's
+    // path relative to assets/.
+    Result<std::string> add_skeleton_migration(const Uuid& model, std::span<const assets::BoneEdit> edits,
+                                               std::string description = {});
+    // LBS against DQS collapsed-triangle counts of `model` with `bone` rolled and bent (degrees).
+    struct DeformationCheck {
+        std::string bone;
+        std::size_t collapsed_linear{0}, collapsed_dual_quaternion{0}, triangles{0};
+    };
+    [[nodiscard]] Result<DeformationCheck> check_deformation(const Uuid& model, std::string_view bone, float roll_degrees,
+                                                             float bend_degrees);
     // Vehicles (Inspector "Drivable vehicle" card, ADR-0166). make_vehicle runs
     // physics::make_vehicle in one undoable step (wheels it creates are removed by undo) and
     // returns the wheel count; set_vehicle_player_input toggles keyboard/gamepad driving.
@@ -1610,6 +1629,21 @@ private:
     void draw_prefab_section(scene::Entity e);
     void draw_ragdoll_section(scene::Entity e);
     void draw_foot_section(scene::Entity e);
+    void draw_skeleton_section(scene::Entity e);
+    struct SkeletonCardState {
+        Uuid model;
+        std::uint64_t stamp{0};
+        assets::SkeletonInfo info;
+        std::string error;
+        int selected{-1};
+        char new_bone[64]{};
+        float offset[3]{0, 0.05f, 0};
+        bool deform{true};
+        float weight_share{0.0f};
+        float roll{150.0f}, bend{110.0f};
+        std::optional<DeformationCheck> check;
+    };
+    SkeletonCardState skeleton_card_;
     void draw_vehicle_section(scene::Entity e);
     int help_place_{0};
     bool help_was_open_{false};

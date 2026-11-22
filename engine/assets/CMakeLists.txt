@@ -13,6 +13,7 @@ victus_add_module(assets
     SOURCES
         src/async_loader.cpp
         src/cooked.cpp
+        src/skeleton.cpp
         src/database.cpp
         src/importers.cpp
         src/instantiate.cpp

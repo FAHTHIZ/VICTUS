@@ -80,6 +80,12 @@ the body vertex it was grown from, so plates follow the body they cover. The hel
 and ear pods are rigid on `Head`; `Jaw` and `Eye.L/R` remain for retargeting and attachments. Clips store rotations plus the Hips
 translation, so one clip drives both profiles.
 
+Extra bones (facial, toes, roll, IK targets and poles, secondary motion, equipment) are added with
+a skeleton migration rather than by changing the GLBs (docs/ANIMATION.md, "Extending skeletons";
+ADR-0206). Adding 19 such bones to Orion leaves every existing joint index, socket and clip in
+place and moves no vertex of any of the 41 clips by more than 0.001 mm, and the extended model
+still passes character validation.
+
 ## Sockets
 
 Attachment points are named child nodes. Their frames follow one convention so equipment

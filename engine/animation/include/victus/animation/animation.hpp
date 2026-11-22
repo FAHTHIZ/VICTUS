@@ -173,11 +173,18 @@ struct MorphWeightsComponent {
     std::vector<float> weights;
 };
 
+// How joint transforms are blended per vertex (ADR-0205, render/skinning.hpp). Linear is linear
+// blend skinning (the cheapest; candy-wraps under twist and thins bent joints); DualQuaternion
+// blends rigid transforms as dual quaternions, keeping volume at elbows, knees and twisting
+// forearms for a few extra ALU per vertex.
+enum class SkinningMode : std::uint8_t { Linear, DualQuaternion };
+
 // Marks a MeshRenderer as GPU-skinned by `skin` of its model, with joints bound by name under
 // the `skeleton` entity (the model's instantiated root).
 struct SkinnedMeshComponent {
     Uuid skeleton;
     std::uint32_t skin{0};
+    SkinningMode method{SkinningMode::Linear};
 };
 
 // Registers Animator, SkinnedMesh and SpriteAnimator (reflection: serialization, inspector,

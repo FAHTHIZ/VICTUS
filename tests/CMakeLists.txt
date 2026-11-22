@@ -84,6 +84,7 @@ victus_add_test(victus_asset_tests
         assets/morph_asset_tests.cpp
         assets/model_scene_objects_tests.cpp
         assets/fbx_import_tests.cpp
+        assets/skeleton_tests.cpp
     DEPS VICTUS::Assets VICTUS::Project
     LABELS assets)
 target_compile_definitions(victus_asset_tests PRIVATE VICTUS_FBX_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/fbx")
@@ -111,6 +112,7 @@ victus_add_test(victus_render_tests
         render/render_path_tests.cpp
         render/lightmap_tests.cpp
         render/device_class_tests.cpp
+        render/skinning_tests.cpp
     DEPS VICTUS::Render VICTUS::Shadercompiler
     LABELS render)
 target_compile_definitions(victus_render_tests PRIVATE VICTUS_SHADER_SOURCE_DIR="${PROJECT_SOURCE_DIR}/engine/render/shaders")
@@ -239,6 +241,12 @@ add_test(NAME victus_cli_diagnostics
         -DWORK=${CMAKE_BINARY_DIR}/test_output/cli_diagnostics
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/diagnostics_smoke.cmake)
 set_tests_properties(victus_cli_diagnostics PROPERTIES LABELS "cli")
+
+# `victus skeleton` on the embedded Orion (ADR-0206): bone list, layout hash and the LBS/DQS
+# deformation check. No GPU needed.
+add_test(NAME victus_cli_skeleton COMMAND victus_cli skeleton orion --deformation)
+set_tests_properties(victus_cli_skeleton PROPERTIES LABELS "cli"
+    PASS_REGULAR_EXPRESSION "orion: [0-9]+ bones, 60 joints, 8 sockets.*Hand\\.R  \\[hand\\] joint 12.*collapsed triangles LBS [0-9]+, DQS [0-9]+")
 
 # Script debugging over the Debug Adapter Protocol end to end (ADR-0099). No GPU needed.
 find_package(Python3 COMPONENTS Interpreter QUIET)

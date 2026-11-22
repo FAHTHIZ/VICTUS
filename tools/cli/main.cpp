@@ -35,6 +35,8 @@
 #include "victus/project/project.hpp"
 #include "victus/project/characters.hpp"
 #include "victus/assets/importers.hpp"
+#include "victus/assets/skeleton.hpp"
+#include "victus/render/skinning.hpp"
 #include "victus/library/install.hpp"
 #include "victus/library/library.hpp"
 #include "victus/runtime/scene_lightmap.hpp"
@@ -110,6 +112,7 @@ constexpr const char* kUsage =
     "  library providers|search|install|import-zip|list|remove|credits ...  Asset Store: CC0/CC BY content into a project\n"
     "  diagnose [project] --out FILE.zip [--no-logs] [--keep-paths] ...  bundle crash reports, logs and checks\n"
     "  character-check <model|orion|nova> [--json] [--any-joints] check a model can stand in for a starter character\n"
+    "  skeleton <model|orion|nova> [--migration F]... [--json]    bones, roles, weights; apply/check skeleton migrations\n"
     "  script-api [--out FILE] [--write DIR] [--check DIR]        print, freeze or check the versioned Luau API\n"
     "  version                                                    print the engine version\n"
     "\n"
@@ -188,6 +191,144 @@ int cmd_script_api(const std::vector<std::string>& a) {
         std::printf("%s", text.c_str());
     }
     return 0;
+}
+
+// Skeleton inspection and migration check (docs/ANIMATION.md#extending-skeletons, ADR-0206):
+// prints the bone tree with roles, skin joints and weighted vertex counts; --migration applies
+// migration files in order and reports compatibility with the original; --deformation compares
+// linear and dual quaternion skinning of the largest skinned mesh under a twisted-limb pose.
+int cmd_skeleton(const std::vector<std::string>& a) {
+    cli::Parser p("victus skeleton", "Inspect a model's skeleton and check skeleton migrations");
+    p.positional("model", "a .glb, .gltf or .fbx file, or a starter character id (orion, nova)", true)
+        .option("migration", "a victus.skeleton_migration JSON file to apply (repeat in order: comma-separated)")
+        .option("write", "also write the JSON report to this file")
+        .flag("deformation", "measure LBS against DQS on a twisted, bent limb")
+        .flag("json", "print the report as JSON");
+    if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
+    if (auto st = p.parse(a); !st) return error(st.error().message + "\n" + p.help());
+    const std::string what = p.get("model");
+    assets::ModelImportSettings settings;
+    settings.import_textures = false;
+    settings.lods = 0;
+    Result<assets::CookedModel> model = make_error(ErrorCode::NotFound, "");
+    if (const auto* starter = project::find_starter_character(what)) {
+        model = assets::import_gltf_memory(project::starter_character_glb(*starter), std::string(starter->model_path), settings);
+    } else {
+        const fs::Path path(what);
+        std::string ext = path.extension().string();
+        std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (!std::filesystem::exists(path)) return error(std::format("'{}' is neither a file nor a starter character id", what));
+        const fs::Path sandbox = std::filesystem::absolute(path).parent_path();
+        if (ext == ".fbx" || ext == ".obj") model = assets::import_fbx(path, settings, sandbox);
+        else model = assets::import_gltf(path, settings, sandbox);
+    }
+    if (!model) return error(model.error().message);
+    if (model->skins.empty()) return error(std::format("{}: the model has no skin", what));
+    const assets::CookedModel original = *model;
+    json::Value doc = json::Value::object();
+    doc.set("model", what);
+    bool failed = false;
+    std::string text;
+    if (!p.get("migration").empty()) {
+        std::string list = p.get("migration");
+        json::Value applied = json::Value::array();
+        for (std::size_t start = 0; start <= list.size();) {
+            const std::size_t comma = std::min(list.find(',', start), list.size());
+            const std::string file = list.substr(start, comma - start);
+            start = comma + 1;
+            if (file.empty()) continue;
+            auto txt = fs::read_text(fs::Path(file), 16u << 20);
+            if (!txt) return error(std::format("{}: {}", file, txt.error().message));
+            auto mig = assets::parse_skeleton_migration(*txt);
+            if (!mig) return error(std::format("{}: {}", file, mig.error().message));
+            auto r = assets::apply_skeleton_migration(*model, *mig);
+            if (!r) return error(std::format("{}: {}", file, r.error().message));
+            text += std::format("applied {} ({} v{} -> v{}): +{} bones, -{} bones, {} renamed, {} reparented, {} vertices reweighted, "
+                                "{} left alone (4 influences)\n",
+                                file, mig->profile, mig->from_version, mig->to_version, r->added.size(), r->removed.size(),
+                                r->renamed.size(), r->reparented.size(), r->vertices_reweighted, r->vertices_full);
+            for (const auto& w : r->warnings) text += "  warning " + w + "\n";
+            applied.push(file);
+        }
+        doc.set("migrations", std::move(applied));
+        const assets::SkeletonCompatibility c = assets::check_skeleton_compatibility(original, *model);
+        failed = !c.ok();
+        json::Value issues = json::Value::array();
+        using Sev = assets::SkeletonCompatibilityIssue::Severity;
+        for (const auto& i : c.issues) {
+            const char* sev = i.severity == Sev::Error ? "error" : i.severity == Sev::Warning ? "warning" : "info";
+            if (i.severity != Sev::Info) text += std::format("  {} [{}] {}\n", sev, i.bone, i.message);
+            json::Value v = json::Value::object();
+            v.set("severity", sev);
+            v.set("bone", i.bone);
+            v.set("message", i.message);
+            issues.push(std::move(v));
+        }
+        text += std::format("compatibility: {} preserved, {} added, {} missing: {}\n", c.preserved_bones, c.added_bones,
+                            c.missing_bones, failed ? "BROKEN" : "OK");
+        doc.set("compatible", !failed);
+        doc.set("issues", std::move(issues));
+    }
+    const assets::SkeletonInfo info = assets::describe_skeleton(*model);
+    text += std::format("{}: {} bones, {} joints, {} sockets, {} helpers, depth {}, {} unweighted joints, layout {:016x}\n", what,
+                        info.bones.size(), info.joints, info.sockets, info.helpers, info.max_depth, info.unweighted_joints,
+                        info.layout_hash);
+    json::Value bones = json::Value::array();
+    for (const assets::SkeletonBone& b : info.bones) {
+        text += std::format("  {:{}}{}  [{}]{}{}{}\n", "", static_cast<int>(b.depth) * 2, b.name, assets::bone_roles_string(b.roles),
+                            b.joint >= 0 ? std::format(" joint {}", b.joint) : std::string(" helper"),
+                            b.joint >= 0 ? std::format(", {} verts", b.weighted_vertices) : std::string(),
+                            b.animated ? ", animated" : "");
+        json::Value v = json::Value::object();
+        v.set("name", b.name);
+        v.set("parent", b.parent_node >= 0 ? json::Value(model->nodes[static_cast<std::size_t>(b.parent_node)].name) : json::Value());
+        v.set("joint", static_cast<double>(b.joint));
+        v.set("roles", assets::bone_roles_string(b.roles));
+        v.set("weighted_vertices", static_cast<double>(b.weighted_vertices));
+        v.set("length", static_cast<double>(b.length));
+        v.set("animated", b.animated);
+        bones.push(std::move(v));
+    }
+    doc.set("layout_hash", std::format("{:016x}", info.layout_hash));
+    doc.set("joints", static_cast<double>(info.joints));
+    doc.set("sockets", static_cast<double>(info.sockets));
+    doc.set("bones", std::move(bones));
+    if (p.has("deformation")) {
+        // Roll and bend the first arm (or any limb) joint with a parent and a child.
+        const assets::SkeletonBone* limb = nullptr;
+        for (const auto& b : info.bones)
+            if (b.joint >= 0 && b.weighted_vertices > 0 && b.length > 0 && (b.roles & (assets::kBoneArm | assets::kBoneLeg)) &&
+                !(b.roles & assets::kBoneTwist) && b.depth > 2 && (!limb || b.weighted_vertices > limb->weighted_vertices))
+                limb = &b;
+        if (limb) {
+            const std::pair<std::uint32_t, math::Quat> pose[1] = {
+                {static_cast<std::uint32_t>(limb->node), math::Quat::axis_angle({0, 1, 0}, 2.6f) * math::Quat::axis_angle({1, 0, 0}, 2.0f)}};
+            const auto rest = assets::pose_palette(*model, assets::pose_world(*model, nullptr, 0));
+            const auto posed = assets::pose_palette(*model, assets::pose_world(*model, nullptr, 0, pose));
+            json::Value d = json::Value::object();
+            d.set("bone", limb->name);
+            std::size_t c_lbs = 0, c_dqs = 0;
+            for (const auto& mesh : model->meshes) {
+                if (!mesh.data.skinned()) continue;
+                std::vector<render::Vertex3D> v0, v1, v2;
+                render::skin_vertices(mesh.data, rest, render::SkinningMethod::Linear, v0);
+                render::skin_vertices(mesh.data, posed, render::SkinningMethod::Linear, v1);
+                render::skin_vertices(mesh.data, posed, render::SkinningMethod::DualQuaternion, v2);
+                c_lbs += render::measure_deformation(v0, v1, mesh.data.indices).collapsed_triangles;
+                c_dqs += render::measure_deformation(v0, v2, mesh.data.indices).collapsed_triangles;
+            }
+            d.set("collapsed_triangles_linear", static_cast<double>(c_lbs));
+            d.set("collapsed_triangles_dual_quaternion", static_cast<double>(c_dqs));
+            doc.set("deformation", std::move(d));
+            text += std::format("deformation ({} rolled 150 deg, bent 115 deg): collapsed triangles LBS {}, DQS {}\n", limb->name, c_lbs, c_dqs);
+        }
+    }
+    if (!p.get("write").empty()) {
+        if (auto st = fs::write_text_atomic(fs::Path(p.get("write")), json::stringify(doc, true)); !st) return error(st.error().message);
+    }
+    if (p.has("json")) std::printf("%s\n", json::stringify(doc, true).c_str());
+    else std::printf("%s", text.c_str());
+    return failed ? 1 : 0;
 }
 
 // Character validation (docs/CHARACTERS.md#validating-a-character): imports a .glb/.gltf/.fbx (or
@@ -1787,6 +1928,7 @@ int main(int argc, char** argv) {
     if (cmd == "crash-test") return cmd_crash_test(args);
     if (cmd == "script-api") return cmd_script_api(args);
     if (cmd == "character-check") return cmd_character_check(args);
+    if (cmd == "skeleton") return cmd_skeleton(args);
     if (cmd == "version" || cmd == "--version")
         return std::printf("VICTUS %s (script API %s)\n", build::version(), script::to_string(script::kScriptApiVersion).c_str()), 0;
     if (cmd == "help" || cmd == "--help" || cmd == "-h") return std::printf("%s", kUsage), 0;

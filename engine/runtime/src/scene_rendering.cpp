@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/runtime/scene_rendering.hpp"
+#include "victus/render/skinning.hpp"
 #include "victus/render/reflection_capture.hpp"
 #include "victus/tilemap/tilemap.hpp"
 #include "victus/runtime/scene_lightmap.hpp"
@@ -2154,6 +2155,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                             bounds.expand(b.max);
                         }
                     }
+                    if (skinned->method == animation::SkinningMode::DualQuaternion) render::encode_dq_palette(palette);
                     if (streaming) {
                         const float px = runtime::projected_pixels(camera, bounds, assets.residency_settings().screen_height);
                         if (!mr.material_asset.is_nil()) assets.note_material_footprint(mr.material_asset, px);

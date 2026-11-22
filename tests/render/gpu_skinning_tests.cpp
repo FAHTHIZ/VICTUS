@@ -4,6 +4,8 @@
 // instantiate -> Animator -> extract_scene) poses the mesh from animated entities.
 #include "../assets/skinned_model.hpp"
 #include "gpu_fixture.hpp"
+#include "skin_test_meshes.hpp"
+#include "victus/render/skinning.hpp"
 #include "victus/runtime/scene_rendering.hpp"
 
 #include <chrono>
@@ -361,4 +363,59 @@ TEST_CASE("gpu skinning: crowd agents cost less CPU per frame than animator char
     CHECK(c.crowd_agents == N);
     MESSAGE(N << " skinned characters, CPU animation+extract: Animator " << animator_ms << " ms, CrowdAgent " << crowd_ms << " ms");
     CHECK(crowd_ms < animator_ms);
+}
+
+// ADR-0205: dual quaternion skinning on the GPU. A tube (elbow/forearm stand-in) is twisted 170
+// degrees about its axis and drawn side-on; linear blending pinches the middle to a thread while
+// dual quaternions keep its width. The DQS draw must also match the CPU reference
+// (render::skin_vertices) drawn as a static mesh, so shader and CPU fallback agree.
+TEST_CASE("gpu skinning: dual quaternion palettes keep a twisted limb's width in the runtime renderer") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    render::MeshData tube = test::make_tube();
+    auto mesh = ctx.create_mesh(tube, "dq_tube").value();
+    REQUIRE(mesh.skinned());
+    const Material mat = column_material();
+    const math::Mat4 place = math::Mat4::translation({-1, 1, 0});
+    const math::Mat4 twist = test::joint1(math::Quat::axis_angle({1, 0, 0}, math::radians(170.0f)));
+    std::vector<math::Mat4> lbs = {math::Mat4::identity(), twist};
+    std::vector<math::Mat4> dqs = lbs;
+    render::encode_dq_palette(dqs);
+    const math::Aabb bounds = math::Aabb{{-0.3f, -0.3f, -0.3f}, {2.3f, 0.3f, 0.3f}}.transformed(place);
+    const math::Vec3 eye{0, 1, 3};
+    const Shot shot_l = shoot(*sr.value(), [&](SceneRenderer& r) { r.submit_skinned(mesh, mat, place, lbs, bounds); }, true,
+                              "skinning_twist_lbs", eye);
+    const Shot shot_d = shoot(*sr.value(), [&](SceneRenderer& r) { r.submit_skinned(mesh, mat, place, dqs, bounds); }, true,
+                              "skinning_twist_dqs", eye);
+    // CPU reference of the same DQS pose as a plain mesh.
+    render::MeshData cpu = tube;
+    render::skin_vertices(tube, lbs, render::SkinningMethod::DualQuaternion, cpu.vertices);
+    cpu.skin.clear();
+    auto cpu_mesh = ctx.create_mesh(cpu, "dq_tube_cpu").value();
+    const Shot shot_c = shoot(*sr.value(), [&](SceneRenderer& r) { r.submit(cpu_mesh, mat, place); }, true, "skinning_twist_cpu", eye);
+
+    // Covered pixels in the image column through the tube's middle (world x = 0).
+    const auto column_height = [&](const Shot& s) {
+        const math::Vec4 clip = s.cam.projection(float(W) / float(H)) * s.cam.view * math::Vec4(math::Vec3{0, 1, 0}, 1.0f);
+        const auto x = static_cast<std::uint32_t>((clip.x / clip.w * 0.5f + 0.5f) * float(W));
+        int n = 0;
+        for (std::uint32_t y = 0; y < H; ++y) {
+            const auto c = test::pixel(s.px, W, x, y);
+            if (channel(c, 0) > 80 && channel(c, 0) > channel(c, 1) + 50) ++n;
+        }
+        return n;
+    };
+    const int h_l = column_height(shot_l), h_d = column_height(shot_d), h_c = column_height(shot_c);
+    MESSAGE("twisted tube middle column: LBS " << h_l << " px, DQS " << h_d << " px, CPU DQS " << h_c << " px");
+    CHECK(shot_d.stats.skinned_draws == 1);
+    CHECK(h_d >= 3 * std::max(h_l, 1));          // LBS pinches the middle, DQS does not
+    CHECK(std::abs(h_d - h_c) <= 1);             // GPU DQS == CPU reference
+    CHECK(max_diff(shot_d.px, shot_c.px) <= 24); // whole image (shading on the pinch-free tube)
+    // The tube's ends are rigid: both methods agree there.
+    CHECK(shot_l.red({-0.8f, 1.0f, 0.2f}));
+    CHECK(shot_d.red({-0.8f, 1.0f, 0.2f}));
+    ctx.destroy(cpu_mesh);
+    ctx.destroy(mesh);
 }

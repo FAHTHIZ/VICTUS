@@ -59,6 +59,11 @@ struct ModelImportSettings {
     bool keyframe_reduction{true};
     float keyframe_rotation_error{0.05f};
     float keyframe_error{0.001f};
+    // Skeleton migration files (`victus.skeleton_migration` JSON, ADR-0206), relative to the
+    // model's directory and inside the import sandbox, applied in order after import. Each one
+    // checks the skeleton layout it was written for, so a changed source fails loudly instead of
+    // being silently re-rigged. File imports only; memory imports warn and skip them.
+    std::vector<std::string> skeleton_migrations;
     [[nodiscard]] json::Value to_json() const;
     static ModelImportSettings from_json(const json::Value& v);
 };
@@ -69,7 +74,7 @@ struct ImportResult {
 };
 
 inline constexpr std::uint32_t kTextureImporterVersion = 4; // v2: HDR (.hdr) sources keep linear float data; v3: BC/ASTC variants; v4: alpha_coverage_cutoff
-inline constexpr std::uint32_t kModelImporterVersion = 9; // v9: glTF keyframe reduction; v8: node lights and cameras; v2: skins and animations; v3: COLOR_0 vertex colours; v4: BC/ASTC textures; v5: mesh optimisation + LODs; v6: coverage-preserving base colour mips for MASK materials; v7: card LODs for leaf canopies
+inline constexpr std::uint32_t kModelImporterVersion = 10; // v10: skeleton migrations; v9: glTF keyframe reduction; v8: node lights and cameras; v2: skins and animations; v3: COLOR_0 vertex colours; v4: BC/ASTC textures; v5: mesh optimisation + LODs; v6: coverage-preserving base colour mips for MASK materials; v7: card LODs for leaf canopies
 
 [[nodiscard]] Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSettings& settings);
 // HDR (.hdr) sources: half-float pixels (limited to max_size x max_size/2), SH9 irradiance and a

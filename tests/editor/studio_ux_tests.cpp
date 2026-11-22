@@ -1226,6 +1226,74 @@ TEST_CASE("studio ragdolls: Make Ragdoll on Orion, behaviour buttons, undo, and 
     CHECK_FALSE(h.ed->ragdoll_get_up(lab_v01)); // edit mode: nothing to stand up
 }
 
+TEST_CASE("studio skeleton: Orion's skeleton card, dual quaternion skinning with undo, and a bone added as a migration") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    REQUIRE(h.ed->create_project(h.dir / "Rig", "Rig", "3d").ok());
+    h.frames(2);
+    scene::Scene& s = h.ed->edit_scene();
+    const scene::Entity robot = s.find_by_name("Robot");
+    REQUIRE_FALSE(robot.is_null());
+    h.ed->select(robot);
+    h.frames(2); // the card draws and reads the skeleton
+    const Uuid model = h.ed->skinned_model_of(robot);
+    REQUIRE_FALSE(model.is_nil());
+
+    // Skinning method: every skinned mesh of the character, one undo step.
+    const std::size_t undo_before = h.ed->undo_stack().size();
+    const std::size_t meshes = h.ed->set_skinning_method(robot, animation::SkinningMode::DualQuaternion);
+    CHECK(meshes > 0);
+    CHECK(h.ed->undo_stack().size() == undo_before + 1);
+    std::size_t dq = 0;
+    s.world().each<animation::SkinnedMeshComponent>([&](ecs::Entity, const animation::SkinnedMeshComponent& sm) {
+        dq += sm.method == animation::SkinningMode::DualQuaternion ? 1 : 0;
+    });
+    CHECK(dq == meshes);
+    h.frames(2); // renders with DQ palettes
+    h.ed->undo();
+    dq = 0;
+    s.world().each<animation::SkinnedMeshComponent>([&](ecs::Entity, const animation::SkinnedMeshComponent& sm) {
+        dq += sm.method == animation::SkinningMode::DualQuaternion ? 1 : 0;
+    });
+    CHECK(dq == 0);
+
+    // Deformation check on the right forearm: DQS collapses fewer triangles than LBS.
+    auto check = h.ed->check_deformation(model, "LowerArm.R", 150.0f, 110.0f);
+    REQUIRE(check.ok());
+    MESSAGE("LowerArm.R rolled 150 / bent 110: collapsed triangles LBS " << check->collapsed_linear << ", DQS "
+                                                                         << check->collapsed_dual_quaternion << " of " << check->triangles);
+    CHECK(check->collapsed_dual_quaternion <= check->collapsed_linear);
+    CHECK_FALSE(h.ed->check_deformation(model, "NoSuchBone", 90, 90).ok());
+
+    // A new bone becomes a migration next to the model; the re-imported model has it and keeps
+    // every existing joint index.
+    auto before = h.ed->assets()->load_model_geometry(model);
+    REQUIRE(before.ok());
+    assets::BoneEdit e;
+    e.op = assets::BoneEdit::Op::Add;
+    e.bone = "Socket.Visor";
+    e.parent = "Head";
+    e.translation = {0, 0.1f, 0.12f};
+    e.deform = false;
+    const assets::BoneEdit one[1] = {e};
+    auto rel = h.ed->add_skeleton_migration(model, one, "visor socket");
+    REQUIRE_MESSAGE(rel.ok(), (rel.ok() ? "" : rel.error().message));
+    CHECK(rel->ends_with(".rig2.vrig"));
+    CHECK(std::filesystem::exists(h.ed->assets()->assets_dir() / fs::Path(*rel)));
+    auto after = h.ed->assets()->load_model_geometry(model);
+    REQUIRE(after.ok());
+    CHECK(assets::describe_skeleton(*after).find("Socket.Visor"));
+    CHECK(assets::check_skeleton_compatibility(*before, *after).ok());
+    // An unsafe edit writes nothing.
+    e.bone = "Head";
+    const assets::BoneEdit dup[1] = {e};
+    CHECK_FALSE(h.ed->add_skeleton_migration(model, dup).ok());
+    CHECK_FALSE(std::filesystem::exists(h.ed->assets()->assets_dir() / fs::Path(*rel).parent_path() /
+                                        (fs::Path(*rel).filename().string().replace(fs::Path(*rel).filename().string().find("rig2"), 4, "rig3"))));
+    h.frames(2); // the card re-reads the migrated skeleton
+}
+
 TEST_CASE("studio feet: Add Foot Placement on Orion, undo, foot locking, and the IK overlay in play") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;

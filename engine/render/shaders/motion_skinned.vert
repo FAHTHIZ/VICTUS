@@ -31,6 +31,38 @@ layout(std430, set = 0, binding = 1) readonly buffer Joints { mat4 joints[]; } p
 layout(std430, set = 0, binding = 0) readonly buffer Joints { mat4 joints[]; } palette;
 #define JOINT(i) palette.joints[i]
 #endif
+// Skin matrix of up to four influences (ADR-0205). The palette's first influence picks the
+// method: affine LBS matrices have column 3 w = 1; dual quaternion entries (render/skinning.hpp)
+// store real, dual and scale in columns 0-2 and w = -1. The branch is uniform per draw.
+// Kept identical in every skinned stage (invariant depth between passes).
+mat4 victus_skin(uint base, uvec4 j, vec4 w) {
+    mat4 m0 = JOINT(base + j.x);
+    mat4 m1 = JOINT(base + j.y);
+    mat4 m2 = JOINT(base + j.z);
+    mat4 m3 = JOINT(base + j.w);
+    if (m0[3].w > 0.0) return w.x * m0 + w.y * m1 + w.z * m2 + w.w * m3;
+    vec4 q0 = m0[0];
+    vec4 real = w.x * q0;
+    vec4 dual = w.x * m0[1];
+    vec3 scale = w.x * m0[2].xyz + w.y * m1[2].xyz + w.z * m2[2].xyz + w.w * m3[2].xyz;
+    float s1 = dot(q0, m1[0]) < 0.0 ? -w.y : w.y;
+    float s2 = dot(q0, m2[0]) < 0.0 ? -w.z : w.z;
+    float s3 = dot(q0, m3[0]) < 0.0 ? -w.w : w.w;
+    real += s1 * m1[0] + s2 * m2[0] + s3 * m3[0];
+    dual += s1 * m1[1] + s2 * m2[1] + s3 * m3[1];
+    float inv = inversesqrt(max(dot(real, real), 1e-20));
+    real *= inv;
+    dual *= inv;
+    vec3 t = 2.0 * (real.w * dual.xyz - dual.w * real.xyz + cross(real.xyz, dual.xyz));
+    float x2 = real.x + real.x, y2 = real.y + real.y, z2 = real.z + real.z;
+    float xx = real.x * x2, yy = real.y * y2, zz = real.z * z2;
+    float xy = real.x * y2, xz = real.x * z2, yz = real.y * z2;
+    float wx = real.w * x2, wy = real.w * y2, wz = real.w * z2;
+    return mat4(vec4((1.0 - (yy + zz)) * scale.x, (xy + wz) * scale.x, (xz - wy) * scale.x, 0.0),
+                vec4((xy - wz) * scale.y, (1.0 - (xx + zz)) * scale.y, (yz + wx) * scale.y, 0.0),
+                vec4((xz + wy) * scale.z, (yz - wx) * scale.z, (1.0 - (xx + yy)) * scale.z, 0.0),
+                vec4(t, 1.0));
+}
 layout(set = 1, binding = 0) uniform Frame {
     mat4 view_proj;
     mat4 prev_view_proj;
@@ -40,14 +72,12 @@ layout(location = 1) out vec4 v_previous;
 invariant gl_Position;
 void main() {
     uint base = uint(in_params.x + 0.5);
-    mat4 skin = in_weights.x * JOINT(base + in_joints.x) + in_weights.y * JOINT(base + in_joints.y) +
-                in_weights.z * JOINT(base + in_joints.z) + in_weights.w * JOINT(base + in_joints.w);
+    mat4 skin = victus_skin(base, in_joints, in_weights);
     mat4 model = mat4(in_model0, in_model1, in_model2, in_model3);
     vec4 world = model * (skin * vec4(in_pos, 1.0));
     gl_Position = frame.view_proj * world;
     uint pb = uint(in_params.y + 0.5);
-    mat4 prev_skin = in_weights.x * JOINT(pb + in_joints.x) + in_weights.y * JOINT(pb + in_joints.y) +
-                     in_weights.z * JOINT(pb + in_joints.z) + in_weights.w * JOINT(pb + in_joints.w);
+    mat4 prev_skin = victus_skin(pb, in_joints, in_weights);
     vec4 p = prev_skin * vec4(in_pos, 1.0);
     vec3 prev_world = vec3(dot(in_prev_row0, p), dot(in_prev_row1, p), dot(in_prev_row2, p));
     v_current = frame.prev_view_proj * world;
