@@ -181,6 +181,91 @@ TEST_CASE("gpu ui: non-ASCII UTF-8 text draws real glyphs") {
     dev.destroy(target);
 }
 
+// Shaped scripts (ADR-0224): Bengali conjuncts and Arabic joined right-to-left text draw from the
+// embedded Noto fallbacks with no missing glyphs; repeated frames reuse the cached layout and the
+// uploaded glyph atlas; right-to-left fields align to the right.
+TEST_CASE("gpu ui: Bengali and Arabic text are shaped and drawn") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    gameui::register_components();
+    runtime::GpuAssetCache assets(ctx, nullptr);
+    auto view = runtime::SceneView::create(ctx, rhi::Format::RGBA8_UNORM);
+    REQUIRE(view.ok());
+    auto target = test::make_target(W, H);
+    struct Frame {
+        runtime::GameUiStats ui;
+        std::vector<std::uint8_t> px;
+    };
+    const auto render_text = [&](const char* text, gameui::TextAlign align, float size = 40) {
+        scene::Scene s;
+        const scene::Entity cam = s.create("Camera");
+        s.world().add<scene::CameraComponent>(cam).projection = scene::CameraComponent::Projection::Orthographic;
+        const scene::Entity canvas = s.create("HUD");
+        s.world().add<gameui::UiCanvasComponent>(canvas).reference_size = {static_cast<float>(W), static_cast<float>(H)};
+        const scene::Entity label = rect(s, canvas, "Label", {0, 0}, {static_cast<float>(W), static_cast<float>(H)});
+        auto& t = s.world().add<gameui::UiTextComponent>(label);
+        t.text = text;
+        t.font_size = size;
+        t.wrap = true;
+        t.align = align;
+        t.color = {1, 1, 1, 1};
+        t.shadow_color = {0, 0, 0, 0};
+        s.update_transforms();
+        runtime::SceneViewOptions o;
+        o.clear_2d = {0, 0, 0, 1};
+        auto cmd = dev.begin_commands();
+        auto st = (*view)->render(cmd, s, assets, target, W, H, o);
+        REQUIRE(st.ok());
+        cmd.submit_and_wait();
+        return Frame{st->ui, dev.read_texture(target).value()};
+    };
+    const char* bangla = "\xE0\xA6\xAC\xE0\xA6\xBE\xE0\xA6\x82\xE0\xA6\xB2\xE0\xA6\xBE \xE0\xA6\x95\xE0\xA7\x8D\xE0\xA6\xB7"; // বাংলা ক্ষ
+    const char* arabic = "\xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7"; // مرحبا
+    const Frame bn = render_text(bangla, gameui::TextAlign::Center);
+    test::save_output("game_ui_bengali", W, H, bn.px);
+    CHECK(bn.ui.missing_glyphs == 0);
+    CHECK(bn.ui.glyphs > 0);
+    CHECK(bright_pixels(bn.px, 0, 0, W, H) > 150);
+    const Frame ar = render_text(arabic, gameui::TextAlign::Center);
+    test::save_output("game_ui_arabic", W, H, ar.px);
+    CHECK(ar.ui.missing_glyphs == 0);
+    CHECK(bright_pixels(ar.px, 0, 0, W, H) > 150);
+    // Same text again: cached layout, glyphs already resident, no atlas upload.
+    const Frame again = render_text(arabic, gameui::TextAlign::Center);
+    CHECK(again.ui.atlas_uploads == 0);
+    CHECK(again.px == ar.px);
+    // Alignment is physical: right-aligned Arabic sits in the right half.
+    const Frame right = render_text(arabic, gameui::TextAlign::Right);
+    CHECK(bright_pixels(right.px, W / 2, 0, W, H) > 150);
+    CHECK(bright_pixels(right.px, 0, 0, W / 2, H) == 0);
+    // A script no built-in font covers is reported, not silently drawn as boxes.
+    const Frame cjk = render_text("\xE4\xB8\xAD\xE6\x96\x87", gameui::TextAlign::Center); // 中文
+    CHECK(cjk.ui.missing_glyphs == 2);
+    // The atlas starts at 256x256 and these strings fit without growing it.
+    CHECK(again.ui.atlas_width == 256);
+    CHECK(again.ui.atlas_height == 256);
+    // Many distinct large glyphs in one frame make the atlas grow mid-frame. Every glyph is
+    // requested before vertices are written, so the frame that grew draws like the next one.
+    std::string many = "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789 ";
+    many += bangla;
+    many += arabic;
+    const Frame grown = render_text(many.c_str(), gameui::TextAlign::Left, 60);
+    CHECK(grown.ui.atlas_width * grown.ui.atlas_height > 256u * 256u);
+    CHECK(grown.ui.missing_glyphs == 0);
+    const Frame steady = render_text(many.c_str(), gameui::TextAlign::Left, 60);
+    CHECK(steady.ui.atlas_uploads == 0);
+    CHECK(steady.px == grown.px);
+    test::save_output("game_ui_atlas_growth", W, H, grown.px);
+    MESSAGE("growth: atlas " << grown.ui.atlas_width << "x" << grown.ui.atlas_height << ", " << grown.ui.atlas_glyphs
+                             << " glyphs, " << bright_pixels(grown.px, 0, 0, W, H) << " bright px");
+    MESSAGE("bengali: " << bn.ui.glyphs << " glyphs, " << bright_pixels(bn.px, 0, 0, W, H) << " bright px; arabic: "
+                        << ar.ui.glyphs << " glyphs, " << bright_pixels(ar.px, 0, 0, W, H) << " bright px; resident "
+                        << again.ui.atlas_glyphs << " glyphs in " << again.ui.atlas_width << "x" << again.ui.atlas_height
+                        << ", layouts " << again.ui.layouts);
+    dev.destroy(target);
+}
+
 // Widgets and rich text: a slider's fill and handle, a toggle's track, a text field's caret and
 // coloured rich-text runs all reach the frame.
 TEST_CASE("gpu ui: widgets, text field caret and rich text runs draw") {

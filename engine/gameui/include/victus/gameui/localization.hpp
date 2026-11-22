@@ -7,8 +7,9 @@
 // - Lookups try the current locale, then the fallback locale (the project's "default_locale").
 // - `{name}` in a string is a placeholder filled by format_text (scripts: loc.text(key, params));
 //   `{{` and `}}` are literal braces.
-// - Text renders through the UI fonts as UTF-8; there is no shaping, so scripts that need it
-//   (Arabic, Indic scripts) do not render correctly yet.
+// - Text is UTF-8. The runtime shapes and lays it out with victus::text (HarfBuzz, Unicode bidi;
+//   ADR-0224), so Bengali, Arabic and other complex or right-to-left scripts render correctly when
+//   a font covers them (built in: Latin, Cyrillic, Greek, Bengali, Arabic).
 #pragma once
 #include "victus/core/fs.hpp"
 #include "victus/core/result.hpp"

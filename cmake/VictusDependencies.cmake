@@ -516,3 +516,49 @@ function(victus_fetch_zstd)
     target_compile_options(victus_zstd PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w,-w>)
     victus_third_party_tsan(victus_zstd)
 endfunction()
+
+# HarfBuzz 15.2.0 (Old MIT, see COPYING). https://github.com/harfbuzz/harfbuzz/releases/tag/15.2.0
+# OpenType text shaping for game UI text (engine/text, ADR-0224): ligatures, contextual forms,
+# Indic conjuncts and reordering, mark positioning, kerning. Only the amalgamated core
+# (src/harfbuzz.cc) is built, with HarfBuzz's own OpenType font functions: no FreeType, ICU,
+# GLib, CoreText, DirectWrite or subsetter.
+function(victus_fetch_harfbuzz)
+    if(TARGET victus_harfbuzz)
+        return()
+    endif()
+    FetchContent_Declare(harfbuzz
+        URL https://github.com/harfbuzz/harfbuzz/releases/download/15.2.0/harfbuzz-15.2.0.tar.xz
+        URL_HASH SHA256=e2ec49090744383cdbe7df808c1cedaafba06a97be8dc4211fe546ba585f12cb
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        SOURCE_SUBDIR victus_no_cmake)
+    FetchContent_MakeAvailable(harfbuzz)
+    add_library(victus_harfbuzz STATIC ${harfbuzz_SOURCE_DIR}/src/harfbuzz.cc)
+    target_include_directories(victus_harfbuzz SYSTEM PUBLIC ${harfbuzz_SOURCE_DIR}/src)
+    # No exceptions or RTTI are needed; HarfBuzz builds with either. Single-threaded atomics
+    # are not used: shaping runs on job threads with immutable font objects.
+    set_target_properties(victus_harfbuzz PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_STANDARD 17)
+    target_compile_options(victus_harfbuzz PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w /bigobj,-w>)
+    victus_third_party_tsan(victus_harfbuzz)
+endfunction()
+
+# SheenBidi 3.0.0 (Apache-2.0). https://github.com/Tehreer/SheenBidi/releases/tag/v3.0.0
+# Unicode Bidirectional Algorithm (UAX #9) and script runs (UAX #24) for right-to-left and
+# mixed-direction UI text (engine/text, ADR-0224). Built as its single unity source file.
+function(victus_fetch_sheenbidi)
+    if(TARGET victus_sheenbidi)
+        return()
+    endif()
+    FetchContent_Declare(sheenbidi
+        URL https://github.com/Tehreer/SheenBidi/archive/refs/tags/v3.0.0.tar.gz
+        URL_HASH SHA256=86c56014034739ba39a24c23eb00323b0bf6f737354f665786015fca842af786
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        SOURCE_SUBDIR victus_no_cmake)
+    FetchContent_MakeAvailable(sheenbidi)
+    add_library(victus_sheenbidi STATIC ${sheenbidi_SOURCE_DIR}/Source/SheenBidi.c)
+    target_include_directories(victus_sheenbidi SYSTEM PUBLIC ${sheenbidi_SOURCE_DIR}/Headers)
+    target_include_directories(victus_sheenbidi PRIVATE ${sheenbidi_SOURCE_DIR}/Source)
+    target_compile_definitions(victus_sheenbidi PRIVATE SB_CONFIG_UNITY)
+    set_target_properties(victus_sheenbidi PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 11)
+    target_compile_options(victus_sheenbidi PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w /utf-8,-w>)
+    victus_third_party_tsan(victus_sheenbidi)
+endfunction()

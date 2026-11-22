@@ -498,6 +498,7 @@ void register_components() {
             .field(&UiTextComponent::shadow_offset, "shadow_offset", {.speed = 0.25f})
             .field(&UiTextComponent::font, "font", {.tooltip = "Font asset path under assets/ (.ttf/.otf); empty = built-in"})
             .field(&UiTextComponent::rich, "rich", {.tooltip = "Markup: <b>bold</b>, <color=#ff8800>colour</color>"})
+            .enumeration(&UiTextComponent::direction, "direction", {"auto", "ltr", "rtl"})
             .commit();
         scene::Schema<UiButtonComponent>("UiButton", "UI")
             .field(&UiButtonComponent::interactable, "interactable")
@@ -552,6 +553,7 @@ void register_components() {
             .field(&UiTextInputComponent::focused_border, "focused_border")
             .field(&UiTextInputComponent::corner_radius, "corner_radius", {.min = 0, .max = 1000, .speed = 0.5f})
             .field(&UiTextInputComponent::padding, "padding", {.min = 0, .max = 1000, .speed = 0.5f})
+            .enumeration(&UiTextInputComponent::direction, "direction", {"auto", "ltr", "rtl"})
             .commit();
         scene::Schema<UiProgressBarComponent>("UiProgressBar", "UI")
             .field(&UiProgressBarComponent::value, "value", {.min = 0, .max = 1, .speed = 0.01f})
@@ -962,6 +964,7 @@ void build_draw_list(Scene& scene, std::vector<DrawItem>& out) {
             d.shadow_color = {0, 0, 0, 0};
             d.opacity = st->opacity;
             d.scroll_to_caret = true;
+            d.direction = ti->direction;
             const std::size_t caret = std::min(f.caret, ti->text.size());
             if (ti->text.empty()) {
                 d.text = is_editing ? std::string{} : ti->placeholder;
@@ -1011,6 +1014,7 @@ void build_draw_list(Scene& scene, std::vector<DrawItem>& out) {
             d.shadow_color = with_opacity(txt->shadow_color, st->opacity);
             d.shadow_offset = {txt->shadow_offset.x * st->scale, txt->shadow_offset.y * st->scale};
             d.rich = txt->rich;
+            d.direction = txt->direction;
             d.opacity = st->opacity;
             if (d.color.a > 0 || d.rich) out.push_back(std::move(d));
         }

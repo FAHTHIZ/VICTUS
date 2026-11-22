@@ -25,6 +25,7 @@ Every engine module is a static library `victus_<name>` (alias `VICTUS::<Name>`)
 | 1 | `platform` | SDL3 windows, input, lifecycle, clipboard |
 | 1 | `ecs` | Archetype world, queries, command buffers |
 | 1 | `shadercompiler` | GLSL to SPIR-V/MSL at run time (glslang, SPIRV-Cross) |
+| 1 | `text` | Text shaping (HarfBuzz), bidirectional and script runs (SheenBidi), line layout, carets and a glyph atlas for UI text (ADR-0224) |
 | 1 | `graph` | Typed node-graph documents, validation, serialization, compilers to Luau source and GLSL surface functions (no Luau or GPU dependency) |
 | 2 | `rhi` | Device, resources, pipelines, swapchain on SDL_GPU |
 | 2 | `scene` | Entities with UUIDs, hierarchy, transforms, reflection and serialization |

@@ -15,7 +15,9 @@
     "astcenc": "Apache-2.0",
     "meshoptimizer": "MIT",
     "xatlas": "MIT",
-    "zstd": "BSD-3-Clause"
+    "zstd": "BSD-3-Clause",
+    "harfbuzz": "MIT-Modern-Variant",
+    "sheenbidi": "Apache-2.0"
   },
   "doc_names": {
     "SDL3": "SDL3",
@@ -32,7 +34,9 @@
     "astcenc": "Arm ASTC Encoder",
     "meshoptimizer": "meshoptimizer",
     "xatlas": "xatlas",
-    "zstd": "Zstandard"
+    "zstd": "Zstandard",
+    "harfbuzz": "HarfBuzz",
+    "sheenbidi": "SheenBidi"
   },
   "vendored": [
     {
@@ -113,6 +117,22 @@
         "Inter-Bold-cyrillic.ttf",
         "Inter-Medium-greek.ttf",
         "Inter-Bold-greek.ttf"
+      ]
+    },
+    {
+      "name": "Noto Sans Bengali and Noto Sans Arabic (fonts)",
+      "version": "Bengali 3.011, Arabic 2.013",
+      "license": "OFL-1.1",
+      "repo": "https://github.com/notofonts",
+      "path": "third_party/fonts/noto",
+      "files": [
+        "OFL-Bengali.txt",
+        "OFL-Arabic.txt",
+        "VICTUS_VENDOR.md",
+        "NotoSansBengali-Medium.ttf",
+        "NotoSansBengali-Bold.ttf",
+        "NotoSansArabic-Medium.ttf",
+        "NotoSansArabic-Bold.ttf"
       ]
     }
   ],

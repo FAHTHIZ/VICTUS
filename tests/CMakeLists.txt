@@ -393,6 +393,12 @@ victus_add_test(victus_gameui_tests
     DEPS VICTUS::Gameui VICTUS::Core
     LABELS gameui)
 
+victus_add_test(victus_text_tests
+    SOURCES text/text_tests.cpp
+    DEPS VICTUS::Text VICTUS::Core
+    LABELS text)
+target_compile_definitions(victus_text_tests PRIVATE VICTUS_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
 victus_add_test(victus_particles_tests
     SOURCES particles/particles_tests.cpp
     DEPS VICTUS::Particles VICTUS::Core

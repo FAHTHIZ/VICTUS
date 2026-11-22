@@ -3297,3 +3297,19 @@ Main had been failing on macOS and Windows since a4bc30d and 2aa3a69 (Linux jobs
 - Verified: local Release build with GCC, `victus_render_tests -tc="skinning*"` 5/5; the macOS and Windows results are in the CI run of this commit.
 - Next task: Studio IK configuration and retargeting.
 
+## 2026-11-22 — Text shaping and bidirectional layout (ADR-0224)
+
+Built:
+- New `engine/text` module: HarfBuzz 15.2.0 shaping and SheenBidi 3.0.0 bidirectional layout (UAX #9) over stb_truetype rasterising, with per-glyph font fallback (Inter, then built-in Noto Sans Bengali and Noto Sans Arabic) (ADR-0224).
+- `UiTextComponent::direction` (auto, ltr, rtl); the in-game UI renderer shapes every run, requests all glyphs before writing vertices and draws the whole UI with one atlas texture.
+- Glyph atlas starts at 256x256, grows (width first, UVs rescaled) up to 2048x2048 and recycles only when full at the maximum; borders and rounded corners no longer depend on the ImGui font texture.
+- Fix: `tests/cli/cli_smoke.cmake` had failed on every CI platform since c0b2fb1, because the ADR-0222 `Face` layer has its own `default_state` and the test's `string(REPLACE)` also injected the root node into that layer. It now patches only the first occurrence.
+
+Verified (Release, 2-core sandbox):
+- `victus_text_tests`: 13 cases, 979,095 assertions pass; an earlier ASan+UBSan scratch build (12 cases, 979,077 assertions) and 20,000 fuzzed strings were clean.
+- `victus_gpu_tests -tc="*game ui*"` on Vulkan (lavapipe): Bengali conjunct ক্ষ and joined Arabic render correctly (captures `build/release/test_output/game_ui_bengali.png`, `game_ui_arabic.png`, checked by eye); 87 distinct 60 px glyphs grow the atlas to 512x512 in one frame and the next frame is pixel-identical with 0 uploads.
+- Draw calls unchanged (template-2d 3, sample-platformer 3, sample-dungeon_crawler 2, sample-arena 56). Texture bytes rose by the 256 KiB atlas; budgets rebaselined in `tests/perf/budgets.json`.
+- Full `ctest`: 47/48 passed before the CHANGELOG entry; the only failure was `victus_docs_lint` for the then-missing ADR-0224 citation, which now passes.
+- Not verified: physical GPUs, line breaking per UAX #14, CJK fonts; Studio's own UI still uses ImGui fonts.
+- Next task: Studio MCP server for agent-driven editing (GAP-38), then iteration times (GAP-40).
+

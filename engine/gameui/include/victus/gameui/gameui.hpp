@@ -29,6 +29,9 @@ namespace victus::gameui {
 enum class ScaleMode : std::uint8_t { ConstantPixelSize, ScaleWithScreen };
 enum class TextAlign : std::uint8_t { Left, Center, Right };
 enum class VerticalAlign : std::uint8_t { Top, Middle, Bottom };
+// Paragraph base direction for the Unicode Bidirectional Algorithm (ADR-0224). Auto takes it from
+// the first strong character, so Arabic or Hebrew text lays out right to left by itself.
+enum class TextDirection : std::uint8_t { Auto, LeftToRight, RightToLeft };
 enum class LayoutDirection : std::uint8_t { Vertical, Horizontal };
 enum class LayoutAlign : std::uint8_t { Start, Center, End, Stretch };
 
@@ -90,6 +93,7 @@ struct UiTextComponent {
     // Inline markup: <b>bold</b>, <color=#ff8800>colour</color> (#rrggbb, #rrggbbaa or a name such
     // as red, green, blue, yellow, orange, white, black, gray), nestable. Unknown tags stay literal.
     bool rich{false};
+    TextDirection direction{TextDirection::Auto};
 };
 
 // Clickable element: draws its background in the state colour (keeping a UiPanel's radius and
@@ -149,6 +153,7 @@ struct UiTextInputComponent {
     math::Color focused_border{0.35f, 0.6f, 1.0f, 1.0f};
     float corner_radius{6};
     float padding{10};
+    TextDirection direction{TextDirection::Auto}; // right-to-left fields align to the right
 };
 
 // Read-only bar filled to `value` (0..1): health, loading, cooldowns.
@@ -242,6 +247,7 @@ struct DrawItem {
     float opacity{1};           // element opacity (rich text multiplies explicit colours by it)
     int caret{-1};              // text fields: caret byte offset into `text` when drawn, else -1
     bool scroll_to_caret{false};// single-line field: shift left so the caret stays visible
+    TextDirection direction{TextDirection::Auto};
 };
 
 // A run of rich text with one style.
