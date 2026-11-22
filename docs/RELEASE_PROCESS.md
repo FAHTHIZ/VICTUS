@@ -8,7 +8,7 @@ How VICTUS versions are numbered, what a release contains, and the exact steps t
 - Tags are `vX.Y.Z` (pre-releases `vX.Y.Z-rc.N`, published as GitHub pre-releases). Every tag is cut from `main`.
 - Before 1.0.0: a minor version (0.3.0) may change public C++ headers and the Lua API; a patch version (0.2.1) only fixes bugs and never changes file formats incompatibly.
 - File formats (`victus.project`, `.vscene`, `.vmat`, `.vpak`, save games, network protocol) carry their own version numbers. A release must open everything the previous release wrote (migrations on load, tested); anything that cannot be migrated is listed under "Changed" with the manual step. Exported games embed the player they were exported with, so shipped games never change underneath their players.
-- A versioned plugin/module SDK does not exist yet (roadmap 6b, Workstream D: plugin SDK ADR); until it does, no binary compatibility is promised for C++ extensions.
+- Native plugins use a versioned C ABI (`engine/plugin/include/victus/plugin/victus_plugin.h`, ADR-0078). It is at `VICTUS_PLUGIN_API_MAJOR 1`, `MINOR 1`, and the host loads only plugins built against the same major version. Binary compatibility is promised for that C ABI, not for the C++ engine headers.
 
 ## Changelog rules
 
@@ -41,6 +41,10 @@ Symbol archives are what turn crash-report frames into function names (`tools/cr
 8. Afterwards: record the release in docs/STATUS.md (what was verified, on which machines).
 
 Dry run: Actions → "VICTUS release" → Run workflow with a tag name builds and packages without creating a release (an unreleased version only warns in the check job); the archives are attached to the run as artifacts.
+
+## Release history
+
+No version has been tagged yet. Two dry runs were made on 2026-11-18: [44313240171](https://github.com/FAHTHIZ/VICTUS/actions/runs/44313240171) found the Windows crash-log and exception-reason problems fixed in 25314ce. In [44321781036](https://github.com/FAHTHIZ/VICTUS/actions/runs/44321781036) the check job and the Linux and Windows packaging jobs passed, but the macOS job was cancelled after 15 minutes with no failing step. A complete dry run on all three platforms is still needed before the first tag.
 
 ## Not done by the pipeline
 
