@@ -2781,3 +2781,12 @@ Built: `tools/lint/check_docs.py`, registered as CTest `victus_docs_lint` (label
 
 Verified: `python3 tools/lint/check_docs.py` passes on main; with an extra `engine/zzz/CMakeLists.txt` in a copy of the tree it exits 1 and names `zzz`.
 Not verified: spec current-state tables are still refreshed by hand; the lint does not read them.
+
+## 2026-11-22 — Iteration times and export sizes measured (GAP-40)
+
+Measured with a Release CLI at c5b6238, 2 vCPU Xeon @ 2.90 GHz, lavapipe, offscreen; table in PERFORMANCE_STRATEGY.md "First measurements". 3D template: `victus new` 1.61 s, `simulate --frames 1` 0.45 s, `run --frames 1` 5.61 s first and 2.40 s second, export 5.2 s (`--target all`). 2D template: run 0.55 s, export 0.06 s.
+
+Found: the 3D template's `game.vpak` is 73.1 MB with `--target all` (two cooked starter characters of about 178 MB each, 356 MB payload before zstd), 42.8 MB with `--target desktop` and 22.7 MB with `--target android`. The CHANGELOG's earlier "2.4 MB" was measured before ADR-0179 and is now annotated; KNOWN_LIMITATIONS has the current numbers.
+
+Checked: a `victus new --template 3d` segfault in `render::Tracer::direct` came from a binary compiled while sources were pulled mid-build (its symbol had the pre-ADR-0194 signature). A clean incremental rebuild at c5b6238 bakes the template in 1.6 s without error; no engine bug.
+Not verified: editor project open, Enter Play, script reload and shader edit times (still not instrumented); real GPUs.

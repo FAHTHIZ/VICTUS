@@ -65,3 +65,18 @@ Unity 6.6 makes Fast Enter Play Mode the default, and 6.7 adds a Fast Build Prof
 | Export | `victus export <project> --out <dir>`, cold and warm | `/usr/bin/time -f %e` |
 
 Record the machine, build type, driver (lavapipe numbers say nothing about real GPUs), and cold or warm cache, as the rest of this document requires. Results go in STATUS.md with the commands used. The goal is to track trends per release, not to compare these numbers with Unity or Unreal.
+
+### First measurements (2026-11-22)
+
+Release CLI built at c5b6238 (GCC, `VICTUS_WITH_GRAPHICS=ON`), 2 vCPU Intel Xeon @ 2.90 GHz, 7 GB RAM, Mesa lavapipe (llvmpipe, LLVM 21.1.8), `SDL_VIDEO_DRIVER=offscreen`. Wall-clock times from `date +%s.%N` around each command; projects fresh from `victus new` with their cooked caches already filled by the template bake. Software rasterizer numbers: real GPUs will differ, especially for the 3D rows.
+
+| Metric | 3D template | 2D template |
+|---|---|---|
+| `victus new` (includes the template lightmap bake for 3D) | 1.61 s | 0.02 s |
+| Headless run (`simulate --frames 1`) | 0.45–0.47 s | 0.01 s |
+| Player start (`run --frames 1`), first / second run | 5.61 s / 2.40 s | 0.55 s / 0.55 s |
+| Exported player (`<game> --frames 1`, `--target desktop`) | 2.21–2.53 s | 0.58 s |
+| Export, `--target all` (two runs) | 5.25 s / 5.17 s, pack 73.1 MB | 0.06 s, pack 0.19 MB |
+| Export, `--target desktop` / `android` | 3.64 s, 42.8 MB / 2.01 s, 22.7 MB | not measured |
+
+The 3D pack is dominated by the two starter characters (ADR-0179): each 20 MB `.glb` cooks to about 178 MB with every texture variant, so `--target all` ships 356 MB of payload compressed to 73 MB. See KNOWN_LIMITATIONS.
