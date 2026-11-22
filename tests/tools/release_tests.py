@@ -182,5 +182,18 @@ class PackageTests(unittest.TestCase):
         self.assertIn("mismatch", why)
 
 
+class BenchmarkComparisonTests(unittest.TestCase):
+    def test_comparison_regressions(self):
+        test_script = ROOT / "tests" / "perf" / "test_compare_bench.py"
+        comparator = ROOT / "tools" / "perf" / "compare_bench.py"
+        result = subprocess.run(
+            [sys.executable, str(test_script), str(comparator)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
