@@ -28,7 +28,7 @@ class Panel:
     seam: bool = True  # False: a light line only (an open polyline, no seam or relief)
 
 
-RELIEF_SCALE = 0.55
+RELIEF_SCALE = 0.40
 
 
 def panels(J, torso: Torso, key):

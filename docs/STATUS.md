@@ -3331,3 +3331,21 @@ Verified (2-core sandbox):
 - Blender renders from front, three-quarter, side and back views and head close-ups compared by eye with the design sheet (`docs/images/characters/blender_render_bodies.jpg`, `blender_render_heads.jpg`). Matches the sheet: Orion's white breastplate over a segmented black abdomen with cyan lines, Nova's bust over a smooth black corset, the face-shaped visor with a coloured rim. Still short of the sheet: rounded pauldrons rather than layered angular ones, plain white thigh plates without panel cuts, knees without the white cap and black frame, slim boots, a back that is the same on both characters, and the visor's glow is a rim line rather than the sheet's soft inner light.
 - Not verified: extreme poses and armour intersections, the VICTUS runtime close-ups.
 - Next task: shoulders, then back and spine, arms, hips and thighs, knees, shins and boots (ADR-0225).
+
+## 2026-11-22 — Orion and Nova armour: hard-surface plates and component rebuild (ADR-0225)
+
+Built:
+- `plates.py`: `surface_fit` refits each plate's outer surface as a cubic height field over its chart (capped at 12 mm, at least 70% of the thickness kept off the suit), so anatomy no longer shows through the plates; `facet` pulls faceted plates onto planes from spherical k-means of their normals; `Plate.fit`, `facets`, `facet_mix`, `lift`. Each lip strip has its own UV island.
+- `meshops.catmull_clark(sharp=...)`: crease edges; `build_characters` creases the rim between each Armor face and its lip and shades the two sides with split normals.
+- Components: Orion pauldrons faceted and sized to the deltoid, white outer upper-arm plates, thighs split into upper and lower panels, white kneecaps over graphite knee frames, faceted shins and gauntlets, flank plates, five graphite spine vertebrae, a larger back reactor in a machined housing; boots 15 mm higher over the ankle; Nova's smaller pauldrons and white ceramic boots; bar (Orion) and arc (Nova) eye glyphs; undersuit relief 0.40 (was 0.55), 14 Taubin passes.
+- `render_preview.py --pose squat|reach|CLIP@SECONDS` stress poses; `VICTUS_CLAY=1` renders untextured grey for geometry review.
+- Mirrored face shapes export whole glyphs and drop sub-0.02 mm offsets, so `eyeWide_L`/`_R` keep equal vertex counts.
+
+Verified (2-core sandbox):
+- `tools/characters/test_pipeline.py` 12/12 (new `test_facet_pulls_a_dome_onto_planes`).
+- `build_characters.py --out engine/project/data/characters`: Orion 187,672 triangles, 13.91 MB; Nova 181,880 triangles, 13.57 MB; 60 joints, 26 blend shapes, 41 clips. Copied to the arena sample.
+- `victus_asset_tests -tc="*character*"` (Release, rebuilt so the embedded GLBs are the new ones): 8 cases, 138,913 assertions pass. A first run failed on Nova's `eyeWide_L` 173 against `eyeWide_R` 172 moving vertices; fixed as above.
+- Blender renders (front, three-quarter, side, back, head; textured and clay) compared by eye with the design sheet; `docs/images/characters/blender_render_bodies.jpg` and `blender_render_heads.jpg` updated. Better than before: crisp plate rims instead of rounded cushions, a smooth breastplate without pectoral folds, Orion's split thigh plates and white kneecaps, the back reactor. Squat, reach and Run at 0.15 s: plates follow the skin with no explosions. Still short of the sheet: Orion's pauldrons still read as rounded masses rather than layered angular shells, the graphite plates are too close in tone to the undersuit, the visor is black rather than the sheet's blue-tinted glass with inner light, Nova lacks the violet lines on her thighs.
+- Not verified: the VICTUS runtime close-ups.
+- Next task: material separation (graphite composite, undersuit, visor glow), then Nova details (ADR-0225).
+

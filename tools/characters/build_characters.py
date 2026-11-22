@@ -58,11 +58,25 @@ def log(*a):
 # ---- geometry ---------------------------------------------------------------------------
 
 
+def label_seams(f, label):
+    """Edges between faces of different `label` (an armour plate's face and its rolled lip), kept
+    sharp through subdivision so cut edges read as machined rims rather than pillows."""
+    if label is None:
+        return None
+    e = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 3]], f[:, [3, 0]]])
+    lab = np.tile(label, 4)
+    key = np.sort(e, 1)
+    order = np.lexsort((key[:, 1], key[:, 0]))
+    k, l_ = key[order], lab[order]
+    same = (k[1:] == k[:-1]).all(1) & (l_[1:] != l_[:-1])
+    return k[1:][same]
+
+
 class Lod0:
     """A subdivided part in GPU form."""
 
     def __init__(self, part: assemble.Part):
-        q1, S = meshops.catmull_clark(part.q)
+        q1, S = meshops.catmull_clark(part.q, sharp=label_seams(part.q.f, part.face_attrs.get("cuff")))
         self.part = part
         self.q = q1
         W = S @ part.W
@@ -75,6 +89,17 @@ class Lod0:
         self.r = meshops.renderable(q1)
         nf = len(q1.f)
         self.tri_face = np.concatenate([np.arange(nf), np.arange(nf)])
+        cuff = self.face_attrs.get("cuff")
+        if cuff is not None and part.name == "Armor":
+            # Hard-surface shading: a plate's face and its lip strip have their own UVs, so their
+            # render vertices are separate; normals are smoothed within each side only, so the
+            # creased rim shades as a crisp edge instead of a rounded pillow.
+            lab_v = np.zeros(len(self.r.pos), np.int64)
+            tl = cuff[self.tri_face]
+            for k in range(3):
+                lab_v[self.r.tri[:, k]] = tl
+            self.r.group = self.r.src.astype(np.int64) * 2 + lab_v
+            self.r.nrm = meshops.vertex_normals(self.r.pos, self.r.tri)
 
 
 def top4(W):
@@ -314,6 +339,17 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
         r = lod.r
         idx, wts = top4(lod.W[r.src])
         morphs = []
+        glyph_island = None
+        if "glyph" in lod.attrs:
+            from scipy.sparse import coo_matrix
+            from scipy.sparse.csgraph import connected_components
+
+            gv = lod.attrs["glyph"][r.src, 0] > 0.5
+            t_ = r.tri[gv[r.tri].all(1)]
+            nvr = len(r.pos)
+            a_ = coo_matrix((np.ones(t_.size), (np.repeat(t_[:, 0], 3), t_.reshape(-1))), shape=(nvr, nvr))
+            _, comp = connected_components(a_ + a_.T, directed=False)
+            glyph_island = np.where(gv, comp, -1)
         for k in targets:
             d = lod.morphs.get(k)
             if d is None:
@@ -329,6 +365,11 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
             n2 = _seam_normals(r, n2)
             dn = n2 - r.nrm
             changed = moved | (np.linalg.norm(dn, axis=1) > 8e-3)
+            if glyph_island is not None:
+                # A face glyph moves as a whole: export every vertex of each glyph the shape
+                # touches, so mirrored shapes stay mirrored (thresholds on float noise do not).
+                hit = np.unique(glyph_island[changed & (glyph_island >= 0)])
+                changed = changed | np.isin(glyph_island, hit)
             ii = np.where(changed)[0]
             morphs.append((ii, gltf.to_gl(dv[ii]), gltf.to_gl(dn[ii])))
         prims.append(w.skinned_primitive(gltf.to_gl(r.pos), gltf.to_gl(r.nrm), r.uv, gltf.to_gl_tangent(r.tan), r.tri,
@@ -429,9 +470,11 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
 
 
 def _seam_normals(r, n):
-    acc = np.zeros((r.src.max() + 1, 3))
-    np.add.at(acc, r.src, n)
-    acc = acc[r.src]
+    g = getattr(r, "group", None)
+    g = r.src if g is None else g
+    acc = np.zeros((g.max() + 1, 3))
+    np.add.at(acc, g, n)
+    acc = acc[g]
     return acc / np.maximum(np.linalg.norm(acc, axis=1, keepdims=True), 1e-12)
 
 

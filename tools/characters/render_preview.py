@@ -117,15 +117,54 @@ def strip_to_suit(objs):
         bm.free()
 
 
-def import_glb(path, x=0.0, suit=False, turn=0.0):
+# Extreme review poses (deformation and armour-intersection checks): rotations about world axes
+# at each joint, applied parent first. The character faces -Y in Blender, its left is +X.
+STRESS_POSES = {
+    "squat": [("Hips", "X", 0.0), ("UpperLeg.L", "X", -105), ("UpperLeg.R", "X", -105), ("LowerLeg.L", "X", 135),
+              ("LowerLeg.R", "X", 135), ("Foot.L", "X", -25), ("Foot.R", "X", -25), ("Spine", "X", -20),
+              ("UpperArm.L", "Y", -45), ("UpperArm.R", "Y", 45), ("LowerArm.L", "X", -110), ("LowerArm.R", "X", -110)],
+    "reach": [("UpperArm.L", "Y", -125), ("UpperArm.R", "X", -95), ("LowerArm.L", "X", -60), ("LowerArm.R", "X", -135),
+              ("Chest", "Z", 35), ("Spine", "Y", 15), ("Head", "Z", -40), ("Head", "X", 25),
+              ("UpperLeg.L", "X", -70), ("LowerLeg.L", "X", 100), ("UpperLeg.R", "X", 25), ("UpperLeg.R", "Y", -25)],
+}
+
+
+def apply_pose(objs, pose):
+    """pose: a STRESS_POSES key, or CLIP@SECONDS to sample one of the GLB's clips."""
+    from mathutils import Matrix
+
+    arm = next((o for o in objs if o.type == "ARMATURE"), None)
+    if arm is None:
+        return
+    if "@" in pose:
+        clip, t = pose.split("@")
+        act = next((ac for ac in bpy.data.actions if ac.name == clip or ac.name.startswith(clip + "_")), None)
+        if act is None:
+            raise SystemExit(f"no clip {clip}: {[ac.name for ac in bpy.data.actions]}")
+        arm.animation_data_create()
+        arm.animation_data.action = act
+        if hasattr(arm.animation_data, "action_slot") and act.slots:
+            arm.animation_data.action_slot = act.slots[0]
+        bpy.context.scene.frame_set(int(round(float(t) * 30)) + 1)
+        bpy.context.view_layer.update()
+        return
+    for bone, axis, deg in STRESS_POSES[pose]:
+        pb = arm.pose.bones.get(bone)
+        if pb is None:
+            continue
+        bpy.context.view_layer.update()
+        head = arm.matrix_world @ pb.head
+        R = (Matrix.Translation(head) @ Matrix.Rotation(math.radians(deg), 4, axis) @ Matrix.Translation(-head))
+        world = arm.matrix_world @ pb.matrix
+        pb.matrix = arm.matrix_world.inverted() @ (R @ world)
+    bpy.context.view_layer.update()
+
+
+def import_glb(path, x=0.0, suit=False, turn=0.0, pose=None):
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=path)
     new = [o for o in bpy.data.objects if o not in before]
     roots = [o for o in new if o.parent is None]
-    for r in roots:
-        r.location.x += x
-        r.rotation_mode = "XYZ"
-        r.rotation_euler.z += math.radians(turn)
     # Rest pose: no clip applied.
     for o in new:
         if o.animation_data:
@@ -133,8 +172,24 @@ def import_glb(path, x=0.0, suit=False, turn=0.0):
         if o.type == "ARMATURE":
             for pb in o.pose.bones:
                 pb.matrix_basis.identity()
+    if pose:  # posed in the character's own frame, before it turns to the camera
+        apply_pose(new, pose)
+    for r in roots:
+        r.location.x += x
+        r.rotation_mode = "XYZ"
+        r.rotation_euler.z += math.radians(turn)
     if suit:
         strip_to_suit(new)
+    if os.environ.get("VICTUS_CLAY"):  # geometry review: one untextured grey for every surface
+        clay = bpy.data.materials.new("Clay")
+        clay.use_nodes = True
+        bsdf = clay.node_tree.nodes["Principled BSDF"]
+        bsdf.inputs["Base Color"].default_value = (0.5, 0.5, 0.5, 1)
+        bsdf.inputs["Roughness"].default_value = 0.3
+        for o in new:
+            if o.type == "MESH":
+                for i in range(len(o.material_slots)):
+                    o.material_slots[i].material = clay
     bpy.context.view_layer.update()
     zs = [ (o.matrix_world @ Vector(c)).z for o in new if o.type == "MESH" for c in o.bound_box]
     return new, max(zs)
@@ -174,6 +229,7 @@ def main(argv):
     ap.add_argument("--samples", type=int, default=48)
     ap.add_argument("--res", type=int, default=720)
     ap.add_argument("--suit", action="store_true", help="the undersuit only (Armor and Visor removed)")
+    ap.add_argument("--pose", help="squat | reach (stress poses) or CLIP@SECONDS, e.g. Run@0.2")
     ap.add_argument("--lineup", help="render all GLBs side by side into this file (front and three-quarter)")
     a = ap.parse_args(argv)
     if a.lineup:
@@ -201,14 +257,17 @@ def main(argv):
             sc = reset()
             az, hf, fr = VIEWS[v]
             # The character turns, not the camera: the studio lights stay where they flatter.
-            _, h = import_glb(g, suit=a.suit, turn=-az)
+            _, h = import_glb(g, suit=a.suit, turn=-az, pose=a.pose)
+            if a.pose:
+                h = {"orion": 1.78, "nova": 1.69}.get(stem.split("_")[-1], h)
             if a.suit:
                 h = {"orion": 1.78, "nova": 1.69}.get(stem.split("_")[-1], h)
             studio(h)
             camera(sc, 0.0, hf, fr, h)
             ry = a.res
             rx = int(a.res * (0.6 if fr == "body" else 1.0))
-            render(sc, os.path.join(a.out, f"{stem}_{v}.png"), rx, ry, a.samples)
+            tag = f"_{a.pose.replace('@', '_')}" if a.pose else ""
+            render(sc, os.path.join(a.out, f"{stem}_{v}{tag}.png"), rx, ry, a.samples)
     return 0
 
 

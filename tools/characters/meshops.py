@@ -49,14 +49,19 @@ def _edges(f):
     return uniq, inv.reshape(4, -1).T, counts  # inv[(face, k)] = edge of side k (k: 0-1,1-2,2-3,3-0)
 
 
-def catmull_clark(q: Quads):
-    """Returns (Quads, S): the subdivided mesh and the (N', N) operator mapping vertex data."""
+def catmull_clark(q: Quads, sharp=None):
+    """Returns (Quads, S): the subdivided mesh and the (N', N) operator mapping vertex data.
+    `sharp`: optional (k, 2) vertex pairs subdivided as creases (the cut rims of armour plates)."""
     N, M = len(q.v), len(q.f)
     E, fe, ecount = _edges(q.f)
     nE = len(E)
     # Creases: open boundary edges, and non-manifold edges (three or more faces) as well; averaging
     # three face points into an edge point would give it weights summing past one and fling it off.
     boundary_e = ecount != 2
+    if sharp is not None and len(sharp):
+        key = E[:, 0].astype(np.int64) * N + E[:, 1]
+        sk = np.sort(np.asarray(sharp), 1)
+        boundary_e = boundary_e | np.isin(key, sk[:, 0].astype(np.int64) * N + sk[:, 1])
     rows, cols, vals = [], [], []
 
     def add(r, c, w):
@@ -81,8 +86,8 @@ def catmull_clark(q: Quads):
     # Vertex points.
     valence = np.bincount(E.reshape(-1), minlength=N).astype(float)
     nfaces = np.bincount(q.f.reshape(-1), minlength=N).astype(float)
-    on_boundary = np.zeros(N, bool)
-    on_boundary[E[boundary_e].reshape(-1)] = True
+    # A vertex on one crease edge only (where a crease ends) keeps the smooth rule.
+    on_boundary = np.bincount(E[boundary_e].reshape(-1), minlength=N) >= 2
     inner_v = ~on_boundary
     n = np.maximum(valence, 1)
     # Interior: (F + 2R + (n - 3)P) / n with F the mean face point, R the mean edge midpoint.

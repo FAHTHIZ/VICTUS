@@ -479,7 +479,7 @@ def assemble(body: fit.Body):
     v = q.v
     hand_d = np.min([np.linalg.norm(v - J[f"Hand.{t}"][0], axis=1) for t in ("L", "R")], axis=0)
     mask = smooth01((hand_d - 0.03) / 0.05)
-    q = Quads(taubin(v, q.f, mask, iters=10), q.f, q.uv, q.fuv)
+    q = Quads(taubin(v, q.f, mask, iters=14), q.f, q.uv, q.fuv)
 
     # The jaw cut: a plane under the chin rising to the base of the skull.
     jaw_tip = J["Jaw"][1]
@@ -542,8 +542,11 @@ def assemble(body: fit.Body):
         dw[:, names.index(joint)] = 1
         pieces.append((dq, dw, kind, np.zeros(len(dq.f), np.int32), pname, 1, 0, None))
 
-    puck("Spine", zt(0.76), False, 0.060 if nova else 0.068, 0.020, 3, "Core")
-    puck("Sternum" if nova else "Chest", zt(0.80), True, 0.014 if nova else 0.020, 0.010, 5, "Emblem")
+    # The sheet's back view: a large reactor ring between the shoulder blades, set in a machined
+    # housing collar; a hexagon-sized emblem on the breastplate.
+    puck("Spine", zt(0.76), False, 0.092 if nova else 0.104, 0.016, 2, "CoreHousing")
+    puck("Spine", zt(0.76), False, 0.074 if nova else 0.086, 0.030, 3, "Core")
+    puck("Sternum" if nova else "Chest", zt(0.80), True, 0.018 if nova else 0.027, 0.012, 5, "Emblem")
 
     # Helmet: a ceramic shell over the head volume (cut lower than the head shell, so it covers
     # the jaw), inflated more at the crown and the back so it reads as a helmet, not a scalp.
@@ -555,7 +558,11 @@ def assemble(body: fit.Body):
     hvol = Head(J, body.v, np.array([[c_[0] for c_ in obj.faces[i]] for i in faces]), hplane, blur=0.026)
 
     def puff(d):
-        return 0.0125 + 0.006 * np.clip(d[:, 2], 0, 1) + 0.005 * np.clip(d[:, 1], 0, 1)
+        # A full helmet rather than a scalp: thicker over the crown and the back of the skull,
+        # with a brow that overhangs the visor.
+        up, back_, fwd = np.clip(d[:, 2], 0, 1), np.clip(d[:, 1], 0, 1), np.clip(-d[:, 1], 0, 1)
+        brow = np.exp(-((d[:, 2] - 0.42) / 0.16) ** 2) * fwd
+        return 0.0165 + 0.010 * up + 0.010 * back_ + 0.006 * brow
 
     helm = HullSurface(hvol, puff)
     hm = head_quads(helm, n=27)
@@ -598,10 +605,12 @@ def assemble(body: fit.Body):
     eye_dirs = {1.0: J["Eye.L"][0] - head.c, -1.0: J["Eye.R"][0] - head.c}
     for side in (1.0, -1.0):
         dd = eye_dirs[side] + np.array([side * 0.006, 0, 0.002])
-        gq_, S, T, fr = glyph(glass_s, dd, 0.032, 0.0062, 0.0009, nu=12, nv=3, bend=-0.0055)
+        # Orion: level bar eyes; Nova: soft arcs (the sheet's visor glyphs).
+        gq_, S, T, fr = glyph(glass_s, dd, 0.030 if nova else 0.033, 0.0060 if nova else 0.0066, 0.0009, nu=12, nv=3,
+                              bend=-0.0042 if nova else -0.0016)
         glyphs.append((gq_, eye_morphs(S, T, fr, side), 1))
     mouth_dir = np.array([0, -1.0, 0]) * 0.1 + np.array([0, 0, (eye[2] - 0.056) - head.c[2]])
-    gq_, S, T, fr = glyph(glass_s, mouth_dir, 0.040, 0.0036, 0.0009, nu=12, nv=2)
+    gq_, S, T, fr = glyph(glass_s, mouth_dir, 0.024 if nova else 0.028, 0.0032, 0.0009, nu=12, nv=2)
     glyphs.append((gq_, mouth_morphs(S, T, fr), 2))
 
     # ---- parts ----
@@ -635,6 +644,8 @@ def assemble(body: fit.Body):
             morphs.setdefault(k, np.zeros((len(visor_q.v), 3)))[off:off + len(g[0].v)] += dv
         off += len(g[0].v)
     morphs = {k: morphs[k] for k in FACE_SHAPES if k in morphs}
+    for d_ in morphs.values():  # sub-0.02 mm offsets are float noise: keep mirrored shapes mirrored
+        d_[np.linalg.norm(d_, axis=1) < 2e-5] = 0.0
     glyph_v = np.zeros(len(visor_q.v))
     glyph_v[nvis:] = 1
     visor_lip = np.concatenate([vlab, np.zeros(len(visor_q.f) - len(vlab), np.int32)])

@@ -216,6 +216,38 @@ def test_clip_library_keeps_original_durations():
     assert len(clips) >= 40
 
 
+def test_facet_pulls_a_dome_onto_planes():
+    """plates.facet turns a smooth dome into flat panels: after faceting, almost every vertex lies
+    on one of the k planes, offsets stay inside the clamp, and mix 0 leaves the surface alone."""
+    import plates
+    from meshops import triangulate, vertex_normals
+
+    n = 24
+    u = np.linspace(-1, 1, n + 1)
+    U, V = np.meshgrid(u, u, indexing="ij")
+    base = np.stack([U.reshape(-1) * 0.1, V.reshape(-1) * 0.1, np.zeros((n + 1) ** 2)], 1)
+    nrm = np.tile([0, 0, 1.0], (len(base), 1))
+    dome = 0.02 * (1 - 0.5 * (U.reshape(-1) ** 2 + V.reshape(-1) ** 2))
+    pos = base + nrm * dome[:, None]
+    idx = np.arange((n + 1) ** 2).reshape(n + 1, n + 1)
+    f = np.stack([idx[:-1, :-1], idx[1:, :-1], idx[1:, 1:], idx[:-1, 1:]], -1).reshape(-1, 4)
+    w = np.ones(len(pos))
+    out = plates.facet(pos, base, nrm, f, 5, 1.0, lo=0.002, hi=0.05, w=w)
+    t = out[:, 2]
+    assert (t >= 0.002 - 1e-9).all() and (t <= 0.05 + 1e-9).all()
+    N = vertex_normals(out, triangulate(f))
+    C, lab = plates._kmeans_dirs(N, w, 5)
+    # Planar: within each cluster the points fit one plane to a fraction of a millimetre.
+    for i in range(5):
+        P = out[lab == i]
+        if len(P) < 10:
+            continue
+        P = P - P.mean(0)
+        assert np.linalg.svd(P, compute_uv=False)[-1] / np.sqrt(len(P)) < 0.0012, i
+    same = plates.facet(pos, base, nrm, f, 5, 0.0, lo=0.002, hi=0.05, w=w)
+    assert np.allclose(same, pos)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

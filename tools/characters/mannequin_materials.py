@@ -325,6 +325,8 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
             hc = J[f"Foot.{t}"][0] + np.array([0, 0.05, -0.02])
             heel = np.maximum(heel, soft(dist_to(Pb, hc), 0.05, 0.055) * (z > sole_top + 0.004))
         white = np.clip(cap + heel, 0, 1)
+        if L.key == "nova":  # Nova's boots: pearl ceramic shells over a graphite sole and ankle band
+            white = np.maximum(white, soft(z, sole_top + 0.012, sole_top + 0.016) * (1 - soft(z, 0.105, 0.11)))
         cb = np.tile(accent, (len(Pb), 1)) * (1 - white[:, None]) + armor * white[:, None]
         rubber = np.array([0.012, 0.012, 0.014])
         hb = sole * (tread * 0.0009 + ribs * 0.0003 * (N[boot, 2] > -0.3)) - np.exp(-((z - sole_top) / 0.0012) ** 2) * 0.0005
@@ -348,7 +350,12 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
         side = np.sign(centre[pod, 0])
         outer = (N[pod, 0] * side) > 0.7
         rr = np.linalg.norm(rel[:, 1:], axis=1)
-        R = rr.max()
+        # Per piece (the ear pods and the core housing collar share this kind).
+        key = np.round(centre[pod] * 1000).astype(np.int64)
+        _, gi = np.unique(key, axis=0, return_inverse=True)
+        R = np.zeros(gi.max() + 1)
+        np.maximum.at(R, gi.reshape(-1), rr)
+        R = R[gi.reshape(-1)]
         ring = outer * np.exp(-((rr - R * 0.62) / 0.0013) ** 2)
         cap = outer * (rr < R * 0.5)
         h[pod] += -ring * 0.0004 + cap * 0.0003

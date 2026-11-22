@@ -29,7 +29,7 @@ GLOVE_UNDER_SLEEVE = 0.03  # glove cuff starts this far up the forearm from the 
 
 def boot_heights(J):
     ankle = 0.5 * (J["Foot.L"][0][2] + J["Foot.R"][0][2])
-    return ankle, ankle + 0.085
+    return ankle, ankle + 0.10
 
 
 def belt_heights(J):
@@ -207,6 +207,7 @@ def cube_sphere(n):
 
 BOOT_GRID = 22
 BOOT_OFFSET = 0.005
+BOOT_FOOT_OFFSET = 0.013  # chunky armoured boots: the foot hull stands well off the suit
 
 
 def boot(J, t, suit_v, suit_n):
@@ -223,7 +224,7 @@ def boot(J, t, suit_v, suit_n):
     side = np.sign(suit_v[:, 0]) == np.sign(fx)
     foot_pts = suit_v[side & (suit_v[:, 2] < ankle + 0.05)]
     leg_pts = suit_v[side & (suit_v[:, 2] > ankle - 0.01) & (suit_v[:, 2] < top + 0.02)]
-    H1, H2 = _hull(foot_pts, BOOT_OFFSET), _hull(leg_pts, BOOT_OFFSET)
+    H1, H2 = _hull(foot_pts, BOOT_FOOT_OFFSET), _hull(leg_pts, BOOT_OFFSET + 0.004)
     ring = leg_pts[np.abs(leg_pts[:, 2] - (ankle + 0.02)) < 0.01]
     c = np.array([ring[:, 0].mean(), ring[:, 1].mean(), ankle + 0.02])
     sph = cube_sphere(BOOT_GRID)
