@@ -19,3 +19,6 @@ B metalness; the glTF ORM layout the PBR shader reads).
 
 Modification: the grass set's roughness (ORM green) is remapped to 0.75 + 0.2 x source, because
 the source map averaged 0.26 and rendered grass as wet plastic.
+
+Modification: the metal set's colour is rebalanced to a neutral steel F0 (linear mean 0.56, 0.56, 0.57)
+because the source averaged sRGB 0.49 / 0.54 / 0.58 and rendered navy blue under the sky.

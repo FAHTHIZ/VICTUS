@@ -2903,3 +2903,14 @@ Verified:
 - Tried `compression: auto` on the starter textures: `victus new --template nocode3d` took 2 min 57 s vs 47 s in Debug, so it was reverted (KNOWN_LIMITATIONS).
 
 Not verified: real GPUs.
+
+## 2026-11-22 — 3D and Multiplayer templates on the starter materials (ADR-0197)
+
+Built: the 3D template's ground is starter paving (the `ground.vmat` / `ground_grid.png` files are still written for existing projects and tests) and its pillar uses the metal set. The Multiplayer template ships the starter materials and HDR sky: paving arena floor, rock walls, metal pillars. The metal colour map is rebalanced to a neutral steel F0 (linear mean 0.56) because the source rendered navy blue under the sky (noted in `data/materials/LICENSE.md`).
+
+Verified:
+- `ctest -R "victus_project_tests|victus_export_tests|victus_cli_smoke"`: pass; the starter-materials project test now covers the 3d, nocode3d and multiplayer templates.
+- `ctest -R victus_perf_budgets`: re-baselined template-3d (66 textures, 213.1 MB) and template-multiplayer (50 textures, 156.6 MB), then passes.
+- `victus run --screenshot --quality high` on fresh 3d and multiplayer projects: paving floor, rock walls and steel pillars render as expected.
+
+Not verified: real GPUs. The 3D template's crates and moving platforms keep flat colours because world-space triplanar swims on moving objects (object-space triplanar is the follow-up).

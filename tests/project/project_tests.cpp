@@ -506,7 +506,7 @@ TEST_CASE("templates: the No-Code Platformer plays with behaviours alone") {
 
 TEST_CASE("templates: 3D templates ship the CC0 starter materials and HDR sky (ADR-0197)") {
     project::register_components();
-    for (const char* id : {"3d", "nocode3d"}) {
+    for (const char* id : {"3d", "nocode3d", "multiplayer"}) {
         CAPTURE(id);
         const auto files = project::template_files(id);
         const auto find = [&](std::string_view path) -> const project::TemplateFile* {

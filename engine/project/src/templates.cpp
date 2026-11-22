@@ -410,8 +410,9 @@ void build_3d(Scene& s, const TemplateOptions& options) {
     s.world().get<Transform>(ground)->scale = {20, 1, 20};
     // Static scenery is marked Static Lighting: `victus new` and Studio bake it (ADR-0134).
     {
-        auto& gm = mesh(s, ground, "plane", {1, 1, 1, 1}, 0.0f, 0.9f);
-        (void)Uuid::parse(kGroundMaterialUuid, gm.material_asset);
+        // CC0 paving (ADR-0197); assets/materials/ground.vmat stays as the UV-tiling example.
+        auto& gm = mesh(s, ground, "plane", {0.92f, 0.9f, 0.88f, 1}, 0.0f, 0.9f);
+        gm.material_asset = starter_material_uuid(StarterMaterial::Paving);
         gm.lightmapped = true;
     }
     {
@@ -559,7 +560,11 @@ void build_3d(Scene& s, const TemplateOptions& options) {
 
     const Entity pillar = add(s, "Metal Pillar", {2.4f, 1.0f, -0.4f});
     s.world().get<Transform>(pillar)->scale = {1.0f, 2.0f, 1.0f};
-    mesh(s, pillar, "cylinder", {0.95f, 0.93f, 0.88f, 1}, 1.0f, 0.3f).lightmapped = true;
+    {
+        auto& pm = mesh(s, pillar, "cylinder", {0.95f, 0.93f, 0.88f, 1}, 1.0f, 0.3f);
+        pm.material_asset = starter_material_uuid(StarterMaterial::Metal);
+        pm.lightmapped = true;
+    }
     s.world().add<physics::RigidBodyComponent>(pillar).type = physics::BodyType::Static;
     s.world().add<physics::ColliderComponent>(pillar).shape = physics::ColliderComponent::Shape::Cylinder;
 
@@ -663,10 +668,15 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
         env.ao_intensity = 1.0f;
         env.shadow_distance = 34.0f;
         env.contact_shadow_length = 0.3f;
+        env.environment_map = starter_sky_uuid(); // CC0 HDR sky (ADR-0197)
     }
     const Entity ground = add(s, "Arena Floor", {0, 0, 0});
     s.world().get<Transform>(ground)->scale = {24, 1, 24};
-    mesh(s, ground, "plane", {0.14f, 0.16f, 0.2f, 1}, 0.0f, 0.85f).lightmapped = true; // baked on creation (ADR-0134)
+    {
+        auto& gm = mesh(s, ground, "plane", {0.62f, 0.64f, 0.7f, 1}, 0.0f, 0.85f);
+        gm.material_asset = starter_material_uuid(StarterMaterial::Paving);
+        gm.lightmapped = true; // baked on creation (ADR-0134)
+    }
     {
         s.world().add<physics::RigidBodyComponent>(ground).type = physics::BodyType::Static;
         auto& c = s.world().add<physics::ColliderComponent>(ground);
@@ -674,7 +684,7 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
         c.offset = {0, -0.1f, 0};
     }
     // Low walls around the 24 x 24 arena.
-    const math::Color wall_color{0.32f, 0.36f, 0.45f, 1};
+    const math::Color wall_color{0.75f, 0.78f, 0.86f, 1}; // tints the starter rock
     const struct {
         const char* name;
         math::Vec3 at, size;
@@ -685,7 +695,9 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
     for (const auto& w : walls) {
         const Entity e = add(s, w.name, w.at);
         s.world().get<Transform>(e)->scale = w.size;
-        mesh(s, e, "cube", wall_color, 0.0f, 0.7f).lightmapped = true;
+        auto& wm = mesh(s, e, "cube", wall_color, 0.0f, 0.7f);
+        wm.material_asset = starter_material_uuid(StarterMaterial::Rock);
+        wm.lightmapped = true;
         s.world().add<physics::RigidBodyComponent>(e).type = physics::BodyType::Static;
         s.world().add<physics::ColliderComponent>(e);
     }
@@ -694,7 +706,9 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
         const float a = 0.7854f + 1.5708f * static_cast<float>(i);
         const Entity e = add(s, "Pillar " + std::to_string(i + 1), {std::cos(a) * 6.0f, 1.25f, std::sin(a) * 6.0f});
         s.world().get<Transform>(e)->scale = {1.1f, 2.5f, 1.1f};
-        mesh(s, e, "cylinder", {0.9f, 0.9f, 0.95f, 1}, 1.0f, 0.25f).lightmapped = true;
+        auto& pm = mesh(s, e, "cylinder", {0.9f, 0.9f, 0.95f, 1}, 1.0f, 0.25f);
+        pm.material_asset = starter_material_uuid(StarterMaterial::Metal);
+        pm.lightmapped = true;
         s.world().add<physics::RigidBodyComponent>(e).type = physics::BodyType::Static;
         s.world().add<physics::ColliderComponent>(e).shape = physics::ColliderComponent::Shape::Cylinder;
         const Entity lamp = add(s, "Pillar Light " + std::to_string(i + 1), {std::cos(a) * 6.0f, 2.9f, std::sin(a) * 6.0f});
@@ -2043,6 +2057,7 @@ std::vector<TemplateFile> template_files(std::string_view id, const TemplateOpti
                                            {"assets/scripts/net_hud.luau", kNetHud},
                                            {"assets/scripts/hud.luau", kHud},
                                            {"assets/localization/en.vstrings", kHudStrings}};
+        add_starter_material_files(files);
         add_character_files(files, options);
         return files;
     }
