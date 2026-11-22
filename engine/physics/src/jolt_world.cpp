@@ -45,6 +45,9 @@
 #include <Jolt/Skeleton/Skeleton.h>
 #include <Jolt/Skeleton/SkeletonPose.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
+#include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
+#include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
 #include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
 #include <Jolt/Physics/Vehicle/VehicleConstraint.h>
 #include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
@@ -52,6 +55,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <deque>
@@ -433,6 +437,7 @@ public:
         sync_joints(scene);
         sync_ragdolls(scene, dt);
         sync_vehicles(scene);
+        sync_cloths(scene, dt);
     }
 
     void step(scene::Scene& scene, float dt, std::vector<ContactEvent>& events) override {
@@ -440,6 +445,7 @@ public:
         update_characters(dt);
         apply_buoyancy(scene, dt);
         apply_vehicle_inputs();
+        drive_cloths(scene, dt);
         {
             VICTUS_PROFILE_SCOPE("physics.step3d");
             const auto t0 = std::chrono::steady_clock::now();
@@ -472,6 +478,7 @@ public:
             write_world_pose(scene, e, c.position, world_pose(scene, e).rotation);
         }
         write_vehicle_wheels(scene);
+        write_cloths(scene);
         read_ragdolls();
         check_joints(dt);
         const std::size_t before = events.size();
@@ -481,6 +488,9 @@ public:
 
     void clear() override {
         water_.clear();
+        for (auto& [k, c] : cloths_) destroy_cloth(c);
+        cloths_.clear();
+        cloth_settings_.clear();
         for (auto& [k, v] : vehicles_) destroy_vehicle(v);
         vehicles_.clear();
         vehicle_inputs_.clear();
@@ -690,6 +700,11 @@ public:
         out.heightfield_builds += field_builds_;
         out.heightfield_updates += field_updates_;
         out.mesh_shapes_built += mesh_shapes_built_;
+        for (const auto& kv : cloths_)
+            if (!kv.second.id.IsInvalid()) {
+                ++out.cloths;
+                out.cloth_particles += static_cast<std::uint32_t>(kv.second.grid.rest.size());
+            }
         for (const auto& kv : shape_cache_) out.mesh_shapes_pending += (kv.second.convex_build != nullptr) + (kv.second.triangles_build != nullptr);
     }
 
@@ -2443,6 +2458,299 @@ private:
         }
     }
 
+
+    // ---- cloth (ADR-0205) ----------------------------------------------------------------------
+    struct ClothEntry {
+        ClothComponent comp;
+        ClothGrid grid;
+        JPH::BodyID id;
+        JPH::RefConst<JPH::SoftBodySharedSettings> shared;
+        Pose pose;                       // entity pose the pins were last driven to
+        std::vector<math::Vec3> local;   // scratch: particles in entity space
+        std::vector<math::Vec3> normals; // scratch for cloth_mesh
+        std::string reason;
+        std::uint64_t seen{0};
+        bool wrote{false};
+    };
+
+    static math::Vec3 apply_pose(const Pose& p, math::Vec3 v) { return p.position + p.rotation.rotate(v * p.scale); }
+    static math::Vec3 inverse_pose(const Pose& p, math::Vec3 w) {
+        const math::Vec3 l = p.rotation.conjugate().rotate(w - p.position);
+        const auto safe = [](float s) { return std::abs(s) > 1e-8f ? s : 1e-8f; };
+        return {l.x / safe(p.scale.x), l.y / safe(p.scale.y), l.z / safe(p.scale.z)};
+    }
+
+    // Identical sheets (a street of flags) share one constraint set: only the scale differs per
+    // instance, so the key includes it.
+    JPH::RefConst<JPH::SoftBodySharedSettings> cloth_shared(const ClothComponent& c, const ClothGrid& g, math::Vec3 scale) {
+        std::uint64_t h = 1469598103934665603ull;
+        const auto mix = [&](const void* p, std::size_t n) {
+            const auto* b = static_cast<const unsigned char*>(p);
+            for (std::size_t i = 0; i < n; ++i) h = (h ^ b[i]) * 1099511628211ull;
+        };
+        mix(&c.size, sizeof c.size);
+        mix(&c.segments_x, sizeof c.segments_x);
+        mix(&c.segments_y, sizeof c.segments_y);
+        mix(&c.pin, sizeof c.pin);
+        mix(&c.mass, sizeof c.mass);
+        mix(&c.stretch_compliance, sizeof c.stretch_compliance);
+        mix(&c.shear_compliance, sizeof c.shear_compliance);
+        mix(&c.bend_compliance, sizeof c.bend_compliance);
+        mix(&scale, sizeof scale);
+        if (auto it = cloth_settings_.find(h); it != cloth_settings_.end()) return it->second;
+        JPH::Ref<JPH::SoftBodySharedSettings> s = new JPH::SoftBodySharedSettings();
+        const std::size_t n = g.rest.size();
+        const float free_particles = static_cast<float>(std::max<std::size_t>(1, n - g.pinned_count));
+        const float inv_mass = free_particles / std::max(c.mass, 1e-4f);
+        s->mVertices.reserve(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            const math::Vec3 p = g.rest[i] * scale; // rotation is applied by the body
+            s->mVertices.emplace_back(JPH::Float3(p.x, p.y, p.z), JPH::Float3(0, 0, 0), g.pinned[i] ? 0.0f : inv_mass);
+        }
+        for (std::size_t t = 0; t + 2 < g.indices.size(); t += 3)
+            s->AddFace(JPH::SoftBodySharedSettings::Face(g.indices[t], g.indices[t + 1], g.indices[t + 2]));
+        const float bend = c.bend_compliance > 1e6f ? FLT_MAX : std::max(0.0f, c.bend_compliance);
+        const JPH::SoftBodySharedSettings::VertexAttributes attr(
+            std::max(0.0f, c.stretch_compliance), std::max(0.0f, c.shear_compliance), bend,
+            g.pinned_count > 0 ? JPH::SoftBodySharedSettings::ELRAType::EuclideanDistance : JPH::SoftBodySharedSettings::ELRAType::None,
+            1.02f);
+        s->CreateConstraints(&attr, 1, JPH::SoftBodySharedSettings::EBendType::Distance);
+        s->Optimize();
+        cloth_settings_.emplace(h, s);
+        return s;
+    }
+
+    void sync_cloths(scene::Scene& scene, float dt) {
+        auto& ecs = scene.world();
+        auto& bi = system_->GetBodyInterface();
+        ecs.each<ClothComponent>([&](Entity e, ClothComponent& comp) {
+            ClothEntry& c = cloths_[e.bits()];
+            c.seen = generation_;
+            const Pose pose = world_pose(scene, e);
+            const bool rebuild = c.id.IsInvalid() || !cloth_same_shape(c.comp, comp) || !nearly_equal(c.pose.scale, pose.scale, 1e-4f);
+            if (rebuild) {
+                destroy_cloth(c);
+                c.comp = comp;
+                if (!cloth_grid(comp, c.grid)) {
+                    if (c.reason.empty()) VICTUS_LOG_WARN("physics", "entity {}: cloth size must be positive; not simulated", e.index);
+                    c.reason = "size must be positive";
+                    return;
+                }
+                c.reason.clear();
+                c.shared = cloth_shared(comp, c.grid, pose.scale);
+                JPH::SoftBodyCreationSettings cs(c.shared, to_jolt_r(pose.position), to_jolt(pose.rotation),
+                                                 make_layer(std::min<std::uint32_t>(comp.layer, 15u), comp.mask, true));
+                cs.mNumIterations = std::clamp<std::uint32_t>(comp.iterations, 1u, 64u);
+                cs.mLinearDamping = std::max(0.0f, comp.damping);
+                cs.mFriction = std::max(0.0f, comp.friction);
+                cs.mGravityFactor = comp.gravity_scale;
+                cs.mVertexRadius = std::max(0.0f, comp.thickness);
+                cs.mUpdatePosition = c.grid.pinned_count == 0; // pinned sheets hang from the entity
+                cs.mFacesDoubleSided = true;
+                cs.mUserData = encode(e);
+                c.id = bi.CreateAndAddSoftBody(cs, JPH::EActivation::Activate);
+                if (c.id.IsInvalid()) {
+                    c.reason = "too many bodies";
+                    VICTUS_LOG_WARN("physics", "entity {}: cloth could not be created (max_bodies reached)", e.index);
+                    return;
+                }
+                c.pose = pose;
+                c.wrote = false;
+                if (!ecs.get<scene::MeshRendererComponent>(e) && warned_cloth_.insert(e.bits()).second)
+                    VICTUS_LOG_WARN("physics", "entity {}: cloth has no MeshRenderer, so it is simulated but not drawn", e.index);
+                return;
+            }
+            // Live-tunable fields.
+            if (!(c.comp == comp)) {
+                if (JPH::BodyLockWrite lock(system_->GetBodyLockInterface(), c.id); lock.Succeeded()) {
+                    JPH::Body& body = lock.GetBody();
+                    auto* mp = static_cast<JPH::SoftBodyMotionProperties*>(body.GetMotionProperties());
+                    mp->SetNumIterations(std::clamp<std::uint32_t>(comp.iterations, 1u, 64u));
+                    mp->SetLinearDamping(std::max(0.0f, comp.damping));
+                    mp->SetGravityFactor(comp.gravity_scale);
+                    body.SetFriction(std::max(0.0f, comp.friction));
+                }
+                const bool wake = comp.wind != c.comp.wind || comp.gravity_scale != c.comp.gravity_scale;
+                c.comp = comp;
+                if (wake) bi.ActivateBody(c.id);
+            }
+            (void)dt;
+        });
+        for (auto it = cloths_.begin(); it != cloths_.end();) {
+            if (it->second.seen != generation_) {
+                destroy_cloth(it->second);
+                it = cloths_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        if (cloth_settings_.size() > 64) {
+            for (auto it = cloth_settings_.begin(); it != cloth_settings_.end();)
+                it = it->second->GetRefCount() <= 1 ? cloth_settings_.erase(it) : std::next(it);
+        }
+    }
+
+    void destroy_cloth(ClothEntry& c) {
+        if (c.id.IsInvalid()) return;
+        auto& bi = system_->GetBodyInterface();
+        bi.RemoveBody(c.id);
+        bi.DestroyBody(c.id);
+        c.id = JPH::BodyID();
+        c.shared = nullptr;
+    }
+
+    // Smooth value noise in [-1, 1] for gusts: deterministic in time and position.
+    static float gust(float t, float x) {
+        return 0.55f * std::sin(t * 1.7f + x * 0.9f) + 0.3f * std::sin(t * 4.3f + x * 2.3f + 1.3f) +
+               0.15f * std::sin(t * 9.1f - x * 3.7f + 2.1f);
+    }
+
+    // Before the solver: pinned particles follow the entity, wind pushes the faces.
+    void drive_cloths(scene::Scene& scene, float dt) {
+        if (cloths_.empty() || dt <= 0) return;
+        VICTUS_PROFILE_SCOPE("physics.cloth_drive");
+        auto& bi = system_->GetBodyInterface();
+        const float time = static_cast<float>(steps_) * dt;
+        for (auto& [key, c] : cloths_) {
+            if (c.id.IsInvalid()) continue;
+            const Entity e = entity_of(key);
+            if (!scene.world().alive(e)) continue;
+            const Pose pose = world_pose(scene, e);
+            const bool moved = !nearly_equal(pose.position, c.pose.position) || !nearly_equal(pose.rotation, c.pose.rotation);
+            const bool windy = c.comp.wind_drag > 0 && math::dot(c.comp.wind, c.comp.wind) > 1e-8f;
+            if (moved || windy) bi.ActivateBody(c.id);
+            if (!bi.IsActive(c.id)) continue;
+            JPH::BodyLockWrite lock(system_->GetBodyLockInterface(), c.id);
+            if (!lock.Succeeded()) continue;
+            JPH::Body& body = lock.GetBody();
+            auto* mp = static_cast<JPH::SoftBodyMotionProperties*>(body.GetMotionProperties());
+            auto& verts = mp->GetVertices();
+            const math::Vec3 com = from_jolt(body.GetCenterOfMassPosition());
+            const math::Quat body_rot = from_jolt(body.GetRotation());
+            const math::Quat inv_body = body_rot.conjugate();
+            const float inv_dt = 1.0f / dt;
+            if (c.grid.pinned_count > 0) {
+                for (std::size_t i = 0; i < verts.size() && i < c.grid.pinned.size(); ++i) {
+                    if (!c.grid.pinned[i]) continue;
+                    const math::Vec3 target = inv_body.rotate(apply_pose(pose, c.grid.rest[i]) - com);
+                    const math::Vec3 cur = from_jolt(verts[i].mPosition);
+                    const math::Vec3 delta = target - cur;
+                    // Large jumps are teleports: snap instead of flinging the sheet.
+                    if (math::dot(delta, delta) > 1.0f) {
+                        verts[i].mPosition = to_jolt(target);
+                        verts[i].mPreviousPosition = verts[i].mPosition;
+                        verts[i].mVelocity = JPH::Vec3::sZero();
+                    } else {
+                        verts[i].mVelocity = to_jolt(delta * inv_dt);
+                    }
+                }
+            }
+            if (windy) {
+                // Per-face aerodynamic force F = 1/2 rho Cd A (v_rel . n) |v_rel| n, shared by its corners.
+                constexpr float kAirDensity = 1.225f;
+                const math::Vec3 wind = inv_body.rotate(c.comp.wind);
+                const float wind_speed = math::length(wind);
+                const float turb = std::clamp(c.comp.turbulence, 0.0f, 1.0f);
+                // Flutter: a cross-wind component, so a sheet edge-on to the wind (a flag along its
+                // pole's wind) still leaves its plane as real ones do.
+                math::Vec3 side = math::cross(wind, math::Vec3{0, 1, 0});
+                if (math::dot(side, side) < 1e-8f) side = math::cross(wind, math::Vec3{1, 0, 0});
+                side = math::normalize(side) * (wind_speed * 0.25f * turb);
+                const auto& faces = mp->GetFaces();
+                for (const auto& f : faces) {
+                    auto& a = verts[f.mVertex[0]];
+                    auto& b = verts[f.mVertex[1]];
+                    auto& d = verts[f.mVertex[2]];
+                    const math::Vec3 pa = from_jolt(a.mPosition), pb = from_jolt(b.mPosition), pd = from_jolt(d.mPosition);
+                    const math::Vec3 n2 = math::cross(pb - pa, pd - pa); // 2 * area * normal
+                    const float n2l = math::length(n2);
+                    if (n2l < 1e-10f) continue;
+                    const math::Vec3 nrm = n2 / n2l;
+                    const math::Vec3 centre = (pa + pb + pd) * (1.0f / 3.0f) + com;
+                    const float g = 1.0f + turb * gust(time, centre.x * 0.37f + centre.z * 0.21f + centre.y * 0.11f);
+                    const math::Vec3 vel = from_jolt((a.mVelocity + b.mVelocity + d.mVelocity) / 3.0f);
+                    const float flutter = gust(time * 1.9f + 3.7f, centre.x * 0.53f - centre.z * 0.47f);
+                    const math::Vec3 rel = wind * g + side * flutter - vel;
+                    const float vn = math::dot(rel, nrm);
+                    const float rl = math::length(rel);
+                    if (rl < 1e-6f || wind_speed < 1e-6f) continue;
+                    const math::Vec3 force = nrm * (0.5f * kAirDensity * c.comp.wind_drag * (0.5f * n2l) * vn * rl);
+                    const JPH::Vec3 dv = to_jolt(force * (dt / 3.0f));
+                    a.mVelocity += dv * a.mInvMass;
+                    b.mVelocity += dv * b.mInvMass;
+                    d.mVelocity += dv * d.mInvMass;
+                }
+            }
+            c.pose = pose;
+        }
+    }
+
+    // After the solver: the simulated surface becomes the entity's mesh (entity-local space).
+    void write_cloths(scene::Scene& scene) {
+        if (cloths_.empty()) return;
+        VICTUS_PROFILE_SCOPE("physics.cloth_write");
+        auto& bi = system_->GetBodyInterface();
+        for (auto& [key, c] : cloths_) {
+            if (c.id.IsInvalid()) continue;
+            const Entity e = entity_of(key);
+            if (!scene.world().alive(e)) continue;
+            if (c.wrote && !bi.IsActive(c.id)) continue; // asleep: the last mesh is still exact
+            {
+                JPH::BodyLockRead lock(system_->GetBodyLockInterface(), c.id);
+                if (!lock.Succeeded()) continue;
+                const JPH::Body& body = lock.GetBody();
+                const auto* mp = static_cast<const JPH::SoftBodyMotionProperties*>(body.GetMotionProperties());
+                const auto& verts = mp->GetVertices();
+                const math::Vec3 com = from_jolt(body.GetCenterOfMassPosition());
+                const math::Quat rot = from_jolt(body.GetRotation());
+                c.local.resize(verts.size());
+                for (std::size_t i = 0; i < verts.size(); ++i)
+                    c.local[i] = inverse_pose(c.pose, com + rot.rotate(from_jolt(verts[i].mPosition)));
+            }
+            auto mesh = cloth_mesh(c.grid, c.local, c.comp.double_sided, c.normals);
+            if (!mesh) continue;
+            if (auto* pm = scene.world().get<scene::ProceduralMeshComponent>(e)) pm->mesh = std::move(mesh);
+            else scene.world().add<scene::ProceduralMeshComponent>(e, scene::ProceduralMeshComponent{std::move(mesh)});
+            c.wrote = true;
+        }
+    }
+
+    ClothState cloth_state(Entity e) const override {
+        ClothState s;
+        const auto it = cloths_.find(e.bits());
+        if (it == cloths_.end()) {
+            s.reason = "no Cloth component seen by the physics world";
+            return s;
+        }
+        const ClothEntry& c = it->second;
+        s.reason = c.reason;
+        if (c.id.IsInvalid()) return s;
+        s.simulated = true;
+        s.particles = static_cast<std::uint32_t>(c.grid.rest.size());
+        s.pinned = c.grid.pinned_count;
+        s.sleeping = !system_->GetBodyInterface().IsActive(c.id);
+        return s;
+    }
+
+    void add_cloth_impulse(Entity e, math::Vec3 point, math::Vec3 velocity, float radius) override {
+        const auto it = cloths_.find(e.bits());
+        if (it == cloths_.end() || it->second.id.IsInvalid() || radius <= 0) return;
+        system_->GetBodyInterface().ActivateBody(it->second.id);
+        JPH::BodyLockWrite lock(system_->GetBodyLockInterface(), it->second.id);
+        if (!lock.Succeeded()) return;
+        JPH::Body& body = lock.GetBody();
+        auto* mp = static_cast<JPH::SoftBodyMotionProperties*>(body.GetMotionProperties());
+        const math::Vec3 com = from_jolt(body.GetCenterOfMassPosition());
+        const math::Quat inv = from_jolt(body.GetRotation()).conjugate();
+        const math::Vec3 local_point = inv.rotate(point - com);
+        const JPH::Vec3 dv = to_jolt(inv.rotate(velocity));
+        for (auto& v : mp->GetVertices()) {
+            if (v.mInvMass <= 0) continue;
+            const float d = math::length(from_jolt(v.mPosition) - local_point);
+            if (d < radius) v.mVelocity += dv * (1.0f - d / radius);
+        }
+    }
+
     std::vector<Entity> overlap(const JPH::Shape& shape, JPH::RMat44Arg xf, std::uint32_t mask) const {
         JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
         JPH::CollideShapeSettings cs;
@@ -2481,6 +2789,9 @@ private:
     std::unordered_map<std::uint64_t, RagdollEntry> ragdolls_;
     std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::size_t>> ragdoll_bones_; // bone -> (root, index)
     std::unordered_set<std::uint64_t> warned_ragdoll_;
+    std::unordered_map<std::uint64_t, ClothEntry> cloths_;
+    std::unordered_map<std::uint64_t, JPH::RefConst<JPH::SoftBodySharedSettings>> cloth_settings_;
+    std::unordered_set<std::uint64_t> warned_cloth_;
     JPH::Ref<JointPairFilter> group_filter_;
     JPH::CollisionGroup::GroupID next_group_{0};
     std::uint64_t generation_{0};

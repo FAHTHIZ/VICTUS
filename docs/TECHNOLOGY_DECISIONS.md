@@ -2183,3 +2183,16 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 
 **Consequences:** About 26k more triangles per character at LOD 0 (182k and 186k, inside the 140k-190k test budget) and about 1 MB more per GLB. `Socket.Head` is now the top of the helmet, 1-1.5 cm higher than before. The characters stand taller by the helmet's thickness, which the templates' uniform scaling to the capsule absorbs.
 
+### ADR-0205: Cloth sheets on Jolt soft bodies
+
+**Status:** Accepted (2026-11-22)
+
+**Context:** GAP-26 listed cloth as missing. Flags, banners, curtains and capes are common in games, and Jolt 5.7.0 (already the 3D backend) ships an XPBD soft-body solver with distance, bend and long-range-attachment constraints, collision against rigid bodies and sleeping.
+
+**Decision:** A `ClothComponent` describes a rectangular sheet (size, segments, pin pattern, mass, stretch/shear/bend compliance, damping, friction, gravity scale, thickness, solver iterations, wind, wind drag, turbulence, double-sided, layer/mask). `PhysicsWorld` builds one Jolt soft body per sheet from `SoftBodySharedSettings` cached by an FNV hash of the shape, so identical sheets share constraints. Pinned vertices have zero inverse mass and follow the entity transform each step (driven by velocity, snapped if they jump more than 1 m); pinned sheets get long-range attachments so they do not stretch. Before each step a per-face aerodynamic force pushes along the face normal by the relative wind, with seeded gusts and a small cross-wind flutter so edge-on flags still lift. After each step the simulated vertices are written to the entity's `ProceduralMeshComponent` (smooth normals, mirrored back faces when double-sided); sleeping sheets are skipped. Scripts get `entity_cloth_state`, `entity_cloth_impulse` and `entity_set_wind` in API 1.1.
+
+**Alternatives:** (1) A custom Verlet mass-spring solver: simple, but would duplicate collision against Jolt bodies and stretch under load without LRA. (2) GPU cloth in a compute shader: faster for many sheets, but no rigid-body collision or headless tests, and SDL_GPU compute is not available on every backend we target. (3) Skinned clothing on characters: needs skinning-to-soft-body binding; deferred to a later slice on top of this one.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Only rectangular grids; no arbitrary cloth meshes, tearing, self-collision or skinned clothing yet. Each step publishes a new procedural mesh, so the renderer re-uploads the sheet every frame until a streaming path exists. Cost scales with particles × iterations on the physics thread (about 0.6 ms for a 32×32 sheet on the 2-core sandbox).

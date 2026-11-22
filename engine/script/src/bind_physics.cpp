@@ -398,4 +398,50 @@ int entity_ragdoll_root(lua_State* L) {
     return 1;
 }
 
+// entity:cloth_state() -> {simulated, sleeping, particles, pinned, reason} for a Cloth, or nil.
+int entity_cloth_state(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    if (!s.world().get<physics::ClothComponent>(e)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const auto* w = physics::world_of(s);
+    const physics::ClothState st = w ? w->cloth_state(e) : physics::ClothState{.reason = "no physics world"};
+    lua_createtable(L, 0, 5);
+    lua_pushboolean(L, st.simulated);
+    lua_setfield(L, -2, "simulated");
+    lua_pushboolean(L, st.sleeping);
+    lua_setfield(L, -2, "sleeping");
+    lua_pushinteger(L, static_cast<int>(st.particles));
+    lua_setfield(L, -2, "particles");
+    lua_pushinteger(L, static_cast<int>(st.pinned));
+    lua_setfield(L, -2, "pinned");
+    lua_pushstring(L, st.reason.c_str());
+    lua_setfield(L, -2, "reason");
+    return 1;
+}
+
+// entity:cloth_impulse(point, velocity, radius): adds `velocity` (m/s) to the cloth particles within
+// `radius` m of a world point, fading to zero at the edge.
+int entity_cloth_impulse(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const math::Vec3 point = check_vec3(L, 2);
+    const math::Vec3 velocity = check_vec3(L, 3);
+    const float radius = static_cast<float>(luaL_checknumber(L, 4));
+    if (!std::isfinite(radius) || radius <= 0) luaL_error(L, "cloth_impulse: radius must be positive");
+    if (auto* w = physics::world_of(s)) w->add_cloth_impulse(e, point, velocity, radius);
+    return 0;
+}
+
+// entity:set_wind(velocity): world-space wind (m/s) on a Cloth; applied on the next step.
+int entity_set_wind(lua_State* L) {
+    auto& s = scene_of(L);
+    const Entity e = check_live(L, 1, s);
+    const math::Vec3 v = check_vec3(L, 2);
+    if (auto* c = s.world().get<physics::ClothComponent>(e)) c->wind = v;
+    return 0;
+}
+
 } // namespace victus::script::detail

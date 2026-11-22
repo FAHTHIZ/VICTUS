@@ -120,6 +120,8 @@ public:
     virtual void set_vehicle_input(Entity e, const VehicleInput& input) = 0;
     [[nodiscard]] virtual VehicleInput vehicle_input(Entity e) const = 0;
     [[nodiscard]] virtual VehicleState vehicle_state(Entity e) const = 0;
+    [[nodiscard]] virtual ClothState cloth_state(Entity e) const = 0;
+    virtual void add_cloth_impulse(Entity e, math::Vec3 point, math::Vec3 velocity, float radius) = 0;
     // Captures the animated bone pose and writes the simulated one (Phase::PostUpdate).
     virtual void write_ragdolls(scene::Scene& scene) = 0;
     virtual void set_gravity(math::Vec3 g) = 0;
@@ -161,5 +163,30 @@ public:
     [[nodiscard]] virtual math::Vec2 gravity() const = 0;
     virtual void stats(PhysicsStats& out) const = 0;
 };
+
+} // namespace victus::physics::detail
+
+namespace victus::physics::detail {
+
+// ---- cloth (cloth.cpp, ADR-0205) ----
+// Particle grid of a ClothComponent in entity-local space: (segments_x + 1) * (segments_y + 1)
+// particles, row-major from the top-left corner, with front triangles (counter-clockwise seen from
+// +Z, diagonals alternating so folds have no preferred direction).
+struct ClothGrid {
+    std::uint32_t columns{0}, rows{0}; // particles per row / per column
+    std::vector<math::Vec3> rest;
+    std::vector<math::Vec2> uvs;
+    std::vector<std::uint32_t> indices;
+    std::vector<std::uint8_t> pinned; // one per particle
+    std::uint32_t pinned_count{0};
+};
+// False (and an empty grid) for degenerate sizes; segment counts are clamped to 1..128.
+bool cloth_grid(const ClothComponent& cloth, ClothGrid& out);
+// Mesh of the grid with particles at `positions` (entity-local), smooth normals, and a mirrored
+// back copy when `double_sided`. `normals` is scratch storage reused between calls.
+std::shared_ptr<const scene::ProceduralMesh> cloth_mesh(const ClothGrid& grid, const std::vector<math::Vec3>& positions,
+                                                        bool double_sided, std::vector<math::Vec3>& normals);
+// Fields whose change rebuilds the soft body (the others are applied live).
+[[nodiscard]] bool cloth_same_shape(const ClothComponent& a, const ClothComponent& b);
 
 } // namespace victus::physics::detail

@@ -141,6 +141,30 @@ void register_components() {
             .field(&DestructibleFragmentComponent::piece, "piece")
             .field(&DestructibleFragmentComponent::age, "age")
             .commit();
+        scene::Schema<ClothComponent>("Cloth", "Physics 3D")
+            .field(&ClothComponent::size, "size", {.min = 0.01f, .max = 1000, .speed = 0.01f, .tooltip = "m: width (local X) and height (local Y)"})
+            .field(&ClothComponent::segments_x, "segments_x", {.min = 1, .max = 128, .tooltip = "Quads across; more = finer folds, more cost"})
+            .field(&ClothComponent::segments_y, "segments_y", {.min = 1, .max = 128, .tooltip = "Quads down"})
+            .enumeration(&ClothComponent::pin, "pin", {"none", "top_edge", "top_corners", "left_edge", "corners"},
+                         {.tooltip = "Particles held by the entity: top_edge = curtain or banner, left_edge = flag on a pole"})
+            .field(&ClothComponent::mass, "mass", {.min = 0.001f, .max = 1e4f, .speed = 0.01f, .tooltip = "kg for the whole sheet"})
+            .field(&ClothComponent::stretch_compliance, "stretch_compliance",
+                   {.min = 0, .max = 1, .speed = 1e-5f, .tooltip = "0 = does not stretch; larger = elastic"})
+            .field(&ClothComponent::shear_compliance, "shear_compliance", {.min = 0, .max = 1, .speed = 1e-5f})
+            .field(&ClothComponent::bend_compliance, "bend_compliance",
+                   {.min = 0, .max = 10, .speed = 1e-3f, .tooltip = "0 = stiff like card; larger = soft silk"})
+            .field(&ClothComponent::damping, "damping", {.min = 0, .max = 10, .speed = 0.01f})
+            .field(&ClothComponent::friction, "friction", {.min = 0, .max = 10, .speed = 0.01f})
+            .field(&ClothComponent::gravity_scale, "gravity_scale", {.min = -10, .max = 10, .speed = 0.05f})
+            .field(&ClothComponent::thickness, "thickness", {.min = 0, .max = 1, .speed = 0.001f, .tooltip = "m kept from colliders"})
+            .field(&ClothComponent::iterations, "iterations", {.min = 1, .max = 64, .tooltip = "Solver iterations: more = stiffer, more cost"})
+            .field(&ClothComponent::wind, "wind", {.speed = 0.05f, .tooltip = "m/s, world space"})
+            .field(&ClothComponent::wind_drag, "wind_drag", {.min = 0, .max = 10, .speed = 0.01f})
+            .field(&ClothComponent::turbulence, "turbulence", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Gusts and flutter"})
+            .field(&ClothComponent::double_sided, "double_sided", {.tooltip = "Draw the back face too"})
+            .field(&ClothComponent::layer, "layer", {.min = 0, .max = 15})
+            .field(&ClothComponent::mask, "mask", {.hint = "bitmask16"})
+            .commit();
         scene::Schema<RigidBody2DComponent>("RigidBody2D", "Physics 2D")
             .enumeration(&RigidBody2DComponent::type, "type", {"static", "kinematic", "dynamic"})
             .field(&RigidBody2DComponent::mass, "mass", {.min = 0.001f, .max = 1e6f, .speed = 0.1f})

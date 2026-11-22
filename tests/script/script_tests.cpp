@@ -780,6 +780,43 @@ return { broken = st.broken, fragments = st.fragments, loose = st.loose }
     CHECK(st.value()["loose"].as_number() >= 1);
 }
 
+TEST_CASE("script: cloth state, wind and impulses") {
+    TempDir d("victus_script_cloth");
+    auto host = make_host(d);
+    auto pw = physics::PhysicsWorld::create();
+    REQUIRE(pw.ok());
+    auto& world = *pw.value();
+    gameplay::Simulation sim;
+    script::add_script_systems(sim, *host);
+    physics::add_physics_systems(sim, world);
+    Scene s;
+    const Entity banner = s.create("Banner");
+    s.world().get<scene::Transform>(banner)->position = {0, 3, 0};
+    s.world().add<scene::MeshRendererComponent>(banner);
+    physics::ClothComponent cc;
+    cc.segments_x = cc.segments_y = 6;
+    s.world().add<physics::ClothComponent>(banner, cc);
+    const Entity plain = s.create("Plain");
+    (void)plain;
+    for (int i = 0; i < 3; ++i) sim.tick(s, 1.0f / 60);
+    auto q = host->eval(R"lua(
+local b = scene.find("Banner")
+local st = b:cloth_state()
+b:set_wind(vector.create(4, 0, 2))
+b:cloth_impulse(b.position, vector.create(0, 0, 3), 2)
+return { simulated = st.simulated, particles = st.particles, pinned = st.pinned,
+         none = scene.find("Plain"):cloth_state() == nil,
+         bad = pcall(function() b:cloth_impulse(b.position, vector.create(0, 0, 1), 0) end) }
+)lua", &s);
+    REQUIRE(q.ok());
+    CHECK(q.value()["simulated"].as_bool());
+    CHECK(q.value()["particles"].as_number() == doctest::Approx(49));
+    CHECK(q.value()["pinned"].as_number() == doctest::Approx(7));
+    CHECK(q.value()["none"].as_bool());
+    CHECK_FALSE(q.value()["bad"].as_bool());
+    CHECK(s.world().get<physics::ClothComponent>(banner)->wind == math::Vec3{4, 0, 2});
+}
+
 TEST_CASE("script: 2D character, one-way drop-through and 2D joint motor") {
     TempDir d("victus_script_character2d");
     d.write("scripts/runner.luau", R"lua(

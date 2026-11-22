@@ -248,6 +248,10 @@ CharacterState PhysicsWorld::character_state(Entity e) const {
 bool PhysicsWorld::drop_through(Entity e, float seconds) { return impl_->w2->drop_through(e, seconds); }
 RagdollState PhysicsWorld::ragdoll_state(Entity root) const { return impl_->w3->ragdoll_state(root); }
 WaterContact PhysicsWorld::water_contact(Entity e) const { return impl_->w3->water_contact(e); }
+ClothState PhysicsWorld::cloth_state(Entity e) const { return impl_->w3->cloth_state(e); }
+void PhysicsWorld::add_cloth_impulse(Entity e, math::Vec3 point, math::Vec3 velocity, float radius) {
+    impl_->w3->add_cloth_impulse(e, point, velocity, radius);
+}
 void PhysicsWorld::set_vehicle_input(Entity e, const VehicleInput& input) { impl_->w3->set_vehicle_input(e, input); }
 VehicleInput PhysicsWorld::vehicle_input(Entity e) const { return impl_->w3->vehicle_input(e); }
 VehicleState PhysicsWorld::vehicle_state(Entity e) const { return impl_->w3->vehicle_state(e); }

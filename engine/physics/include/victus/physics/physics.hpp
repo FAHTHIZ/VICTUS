@@ -263,6 +263,41 @@ struct RagdollBoneComponent {
 // number of bones configured (0 when no hips/pelvis bone was found).
 std::size_t make_humanoid_ragdoll(scene::Scene& scene, Entity root);
 
+// Cloth (ADR-0205): a rectangular sheet simulated as a Jolt soft body. The sheet lies in the
+// entity's local XY plane, centred on its origin and facing +Z, `size` metres wide (X) and tall
+// (Y), split into `segments_x` by `segments_y` quads. Pinned vertices follow the entity's
+// Transform (a flag on a moving pole, a curtain on a door); the others fall, collide with every 3D
+// collider, flap in `wind` and settle. While playing, the simulated surface is written into the
+// entity's ProceduralMeshComponent in entity-local space and drawn through its MeshRenderer
+// (material, tint, shadows), so add a MeshRenderer to see it. Outside play the rest sheet is shown.
+struct ClothComponent {
+    enum class Pin : std::uint8_t { None, TopEdge, TopCorners, LeftEdge, Corners };
+    math::Vec2 size{2.0f, 2.0f};      // m: local X width, local Y height
+    std::uint32_t segments_x{16};     // quads across (1..128)
+    std::uint32_t segments_y{16};     // quads down (1..128)
+    Pin pin{Pin::TopEdge};
+    float mass{1.0f};                 // kg for the whole sheet
+    float stretch_compliance{0.0f};   // inverse stiffness of the grid edges; 0 = inextensible
+    float shear_compliance{1e-4f};    // diagonal edges
+    float bend_compliance{0.02f};     // across two quads; larger = softer folds
+    float damping{0.1f};              // linear damping of every particle
+    float friction{0.4f};
+    float gravity_scale{1.0f};
+    float thickness{0.02f};           // m: particles keep this far from colliders
+    std::uint32_t iterations{6};      // solver iterations per step (1..64)
+    math::Vec3 wind;                  // m/s, world space; gameplay can change it every frame
+    float wind_drag{1.0f};            // aerodynamic coefficient (0 = wind ignored)
+    float turbulence{0.35f};          // 0..1: gust and flutter strength relative to `wind`
+    bool double_sided{true};          // also draw the back with its own normals
+    std::uint32_t layer{0};
+    std::uint32_t mask{kAllLayers};
+    friend bool operator==(const ClothComponent&, const ClothComponent&) = default;
+};
+
+// Rest geometry of a cloth sheet in entity-local space (what the editor shows and what the
+// simulation starts from), with back faces when `double_sided`. Null for an invalid component.
+[[nodiscard]] std::shared_ptr<const scene::ProceduralMesh> cloth_rest_mesh(const ClothComponent& cloth);
+
 // ---- 2D components --------------------------------------------------------------------------
 
 struct RigidBody2DComponent {
@@ -565,6 +600,14 @@ struct RagdollState {
 std::size_t make_vehicle(scene::Scene& scene, Entity chassis);
 
 // Driver controls for a vehicle; values are clamped.
+struct ClothState {
+    bool simulated{false};
+    bool sleeping{false};
+    std::uint32_t particles{0};
+    std::uint32_t pinned{0};
+    std::string reason; // why it is not simulated
+};
+
 struct VehicleInput {
     float forward{0};    // -1 (reverse) .. 1 (full throttle)
     float steer{0};      // -1 (left) .. 1 (right)
@@ -637,6 +680,8 @@ struct PhysicsStats {
     std::uint64_t heightfield_updates{0}; // in-place `dirty` rectangle updates
     std::uint64_t mesh_shapes_built{0};   // convex hulls and triangle meshes built (shared by bodies using one mesh)
     std::uint32_t mesh_shapes_pending{0}; // background shape builds in flight (bodies not created yet)
+    std::uint32_t cloths{0};              // simulated cloth sheets
+    std::uint32_t cloth_particles{0};     // particles across them
 };
 
 // Line segments for debug visualization (editor overlays, `victus run --physics-debug`).
@@ -740,6 +785,12 @@ public:
     // Writes simulated ragdoll poses into the bone Transforms (installed in Phase::PostUpdate by
     // add_physics_systems, after animation).
     void update_ragdoll_poses(scene::Scene& scene);
+
+    // ---- cloth (Cloth, ADR-0205) ----
+    [[nodiscard]] ClothState cloth_state(Entity e) const;
+    // Instant velocity change (m/s) of the cloth particles within `radius` of a world point,
+    // falling off linearly to the edge (a gust, a character brushing through, a hit).
+    void add_cloth_impulse(Entity e, math::Vec3 point, math::Vec3 velocity, float radius);
 
     // ---- destruction (Destructible + DestructibleFragment) ----
     // Damages a destructible (or the destructible owning a fragment) at a world point; applied in
