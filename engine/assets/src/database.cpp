@@ -10,6 +10,8 @@
 #include <format>
 #include <fstream>
 #include <set>
+#include <unordered_map>
+#include <mutex>
 
 namespace victus::assets {
 
@@ -67,11 +69,45 @@ Result<std::vector<std::uint8_t>> read_prefix(const fs::Path& p, std::size_t max
     return bytes;
 }
 
-Result<std::uint64_t> hash_file(const fs::Path& p) {
+// fnv1a64 of a file's bytes from `seed`, remembered per (path, seed) while the file's size and
+// modification time stay the same: up-to-date checks re-hash every source on each load, and the
+// starter characters are 20 MB each. As in git's "racy" check, a file modified within the last
+// few seconds is never cached, so an edit that keeps the size inside one timestamp tick is still
+// seen.
+Result<std::uint64_t> hash_file_seeded(const fs::Path& p, std::uint64_t seed) {
+    struct Entry {
+        std::uintmax_t size{0};
+        std::filesystem::file_time_type mtime{};
+        std::uint64_t hash{0};
+    };
+    static std::mutex mutex;
+    static std::unordered_map<std::string, Entry> cache;
+    if (fs::is_virtual(p)) { // pack entries cannot change while mounted, but have no mtime
+        auto bytes = fs::read_binary(p);
+        if (!bytes) return std::move(bytes).error();
+        return fnv1a64(*bytes, seed);
+    }
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(p, ec);
+    const auto mtime = ec ? std::filesystem::file_time_type{} : std::filesystem::last_write_time(p, ec);
+    const std::string key = std::format("{}|{:016x}", p.string(), seed);
+    if (!ec) {
+        std::lock_guard lock(mutex);
+        if (const auto it = cache.find(key); it != cache.end() && it->second.size == size && it->second.mtime == mtime)
+            return it->second.hash;
+    }
     auto bytes = fs::read_binary(p);
     if (!bytes) return std::move(bytes).error();
-    return fnv1a64(*bytes);
+    const std::uint64_t hash = fnv1a64(*bytes, seed);
+    if (!ec && bytes->size() == size && std::filesystem::file_time_type::clock::now() - mtime > std::chrono::seconds(3)) {
+        std::lock_guard lock(mutex);
+        if (cache.size() > 4096) cache.clear();
+        cache[key] = {size, mtime, hash};
+    }
+    return hash;
 }
+
+Result<std::uint64_t> hash_file(const fs::Path& p) { return hash_file_seeded(p, 0xcbf29ce484222325ull); }
 
 // ---- shared cooked-data cache (ADR-0180) --------------------------------------------------------
 
@@ -373,10 +409,8 @@ std::vector<AssetRecord> AssetDatabase::records() const {
 }
 
 Result<std::uint64_t> AssetDatabase::source_key(const AssetRecord& r) const {
-    auto bytes = fs::read_binary(source_path(r));
-    if (!bytes) return std::move(bytes).error();
     const std::string salt = std::format("{}/{}/{}", r.importer, importer_version(r.importer), json::stringify(r.settings, false));
-    return fnv1a64(*bytes, fnv1a64(salt));
+    return hash_file_seeded(source_path(r), fnv1a64(salt));
 }
 
 Result<bool> AssetDatabase::is_up_to_date(const Uuid& uuid) const {

@@ -92,7 +92,7 @@ Same machine. Each figure was measured in three runs, comparing the build before
 | Peak resident set, same run | 835–843 MB | 836–844 MB |
 
 - The animation system used to decode each starter character's whole 178 MB cooked model (every texture variant) just to read its skeleton and clips. It now uses a skeleton-only decode over a memory-mapped file.
-- Most of the remaining 71–81 ms is the import up-to-date check, about 30 ms per model.
+- Most of the remaining 71–81 ms was the import up-to-date check, about 30 ms per model, which re-hashed each 20 MB source on every load. A per-(path, size, mtime) hash cache brings the first-frame animation update to 9.3–9.6 ms and the two-frame run to 2.35–2.44 s.
 
 Peak memory of the exported 3D template, run by the desktop player from the Android-profile pack (ASTC only) at `--quality low` under heaptrack 1.5:
 

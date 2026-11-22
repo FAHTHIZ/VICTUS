@@ -91,6 +91,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 ### Changed
 
 - Faster first frame for animated models. The animation system now reads only the skeleton, clips and morph names from a cooked model, skipping texture and mesh data, and loose cooked files are memory-mapped (`fs::map_file`). The model and texture loaders no longer copy the whole file before decoding, and collision meshes skip textures. Measured on the 3D template (Release, 2 vCPU, lavapipe): the first frame's `system.animation.update` dropped from 455-597 ms to 71-81 ms, and a two-frame `victus run` from 3.1-3.3 s to 2.5-2.8 s. Peak memory is unchanged at about 840 MB.
+- Asset up-to-date checks cache each source file's hash per path, size and modification time instead of re-reading it on every load. Files modified in the last 3 seconds are always re-hashed. With this, the 3D template's first-frame animation update is 9.3-9.6 ms (it was 71-81 ms after the decode change above), and a two-frame `victus run` takes 2.35-2.44 s.
 - Starter character suits: the chest outline is now a tape instead of emissive piping, and the emissive strength drops from 4 to 2 (ADR-0185). Character GLBs grow to about 20 MB and about 205k LOD 0 triangles with equipment. Existing mesh, material and entity indices are unchanged. ([evidence](docs/STATUS.md#2026-11-21--starter-character-equipment-adr-0185))
 
 ### Fixed

@@ -8,6 +8,7 @@
 #include "victus/render/image.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <format>
 
@@ -174,4 +175,29 @@ TEST_CASE("import queue: a deleted asset fails with a plain reason") {
     CHECK(items[0].state == ImportState::Failed);
     CHECK(items[0].error == "the asset is no longer in the project");
     CHECK(std::string(import_state_name(ImportState::UpToDate)) == "up to date");
+}
+
+TEST_CASE("asset database: cached source hashes notice edits to files with old timestamps") {
+    // Source hashes are cached per (path, size, mtime); files edited in the last few seconds are
+    // never cached. Back-date the source so the cache is used, then change it.
+    Project p("victus_hash_cache");
+    p.texture("t.png", 64, 0xff0000ffu);
+    const fs::Path file = p.path / "assets" / "textures" / "t.png";
+    const auto old = std::filesystem::file_time_type::clock::now() - std::chrono::hours(1);
+    std::filesystem::last_write_time(file, old);
+    auto db = AssetDatabase::open(p.path);
+    REQUIRE(db.ok());
+    (void)(*db)->refresh();
+    const AssetRecord* rec = (*db)->find_path("textures/t.png");
+    REQUIRE(rec != nullptr);
+    const Uuid id = rec->uuid;
+    REQUIRE((*db)->import(id).ok());
+    CHECK((*db)->is_up_to_date(id).value());
+    CHECK((*db)->is_up_to_date(id).value()); // served from the cache
+
+    p.texture("t.png", 64, 0xff00ff00u); // new pixels
+    std::filesystem::last_write_time(file, old + std::chrono::minutes(5));
+    CHECK_FALSE((*db)->is_up_to_date(id).value());
+    REQUIRE((*db)->import(id).ok());
+    CHECK((*db)->is_up_to_date(id).value());
 }
