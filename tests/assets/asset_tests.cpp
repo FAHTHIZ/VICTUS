@@ -546,6 +546,32 @@ TEST_CASE("material triplanar mapping round trips, clamps, inherits and is omitt
     CHECK_FALSE(apply_instance(parent, child).triplanar);
 }
 
+TEST_CASE("material clear coat round trips, clamps, inherits and is omitted at its default (ADR-0203)") {
+    auto m = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "clearcoat": 0.8, "clearcoat_roughness": 0.1})"));
+    REQUIRE(m.ok());
+    CHECK(m->clearcoat == doctest::Approx(0.8f));
+    CHECK(m->clearcoat_roughness == doctest::Approx(0.1f));
+    auto back = MaterialAsset::from_json(m->to_json());
+    REQUIRE(back.ok());
+    CHECK(back->clearcoat == doctest::Approx(0.8f));
+    CHECK(back->clearcoat_roughness == doctest::Approx(0.1f));
+    CHECK(MaterialAsset{}.to_json().find("clearcoat") == nullptr);
+    CHECK(MaterialAsset{}.to_json().find("clearcoat_roughness") == nullptr);
+    auto wild = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "clearcoat": 7, "clearcoat_roughness": -2})"));
+    REQUIRE(wild.ok());
+    CHECK(wild->clearcoat == doctest::Approx(1.0f));
+    CHECK(wild->clearcoat_roughness == doctest::Approx(0.0f));
+    MaterialAsset parent;
+    parent.clearcoat = 0.5f;
+    MaterialAsset child;
+    child.parent = Uuid::generate();
+    child.overrides = 0;
+    CHECK(apply_instance(parent, child).clearcoat == doctest::Approx(0.5f)); // inherited
+    child.overrides = field_bit(MaterialField::Clearcoat);
+    child.clearcoat = 0.0f;
+    CHECK(apply_instance(parent, child).clearcoat == doctest::Approx(0.0f));
+}
+
 TEST_CASE("assets: HDR textures cook to half floats with SH irradiance and an LDR preview") {
     TempDir dir("victus_hdr_cook");
     render::ImageF env;

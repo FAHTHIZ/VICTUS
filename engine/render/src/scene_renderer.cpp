@@ -157,6 +157,7 @@ struct MaterialUniforms {
     Vec4 custom[4];    // surface shader parameters
     Vec4 blend;        // x 0 opaque, 1 alpha, 2 additive (ADR-0119)
     Vec4 mapping;      // x triplanar (ADR-0197), y blend sharpness
+    Vec4 layers;       // x clear coat, y clear coat roughness (ADR-0203)
 };
 struct ProbeUniforms {
     Vec4 box_min, box_max, position;
@@ -4241,6 +4242,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 mat.blend = {static_cast<float>(m.blend), std::clamp(m.occlusion_strength, 0.0f, 1.0f), a2c_of(m) ? 1.0f : 0.0f,
                              d->lod_fade};
                 mat.mapping = {m.triplanar ? 1.0f : 0.0f, std::clamp(m.triplanar_sharpness, 1.0f, 64.0f), 0.0f, 0.0f};
+                mat.layers = {std::clamp(m.clearcoat, 0.0f, 1.0f), std::clamp(m.clearcoat_roughness, 0.0f, 1.0f), 0.0f, 0.0f};
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
                 if (m.vertex_stage) push_vertex_material(ctx.cmd, m, false);
                 auto pick = [](rhi::TextureHandle t, rhi::TextureHandle fallback) { return t ? t : fallback; };

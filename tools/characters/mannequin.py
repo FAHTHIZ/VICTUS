@@ -52,17 +52,19 @@ class Style:
 
 
 STYLES = {
-    # Orion: graphite undersuit, white ceramic plates, gunmetal hardware, cyan light.
-    "orion": Style(frame=(0.028, 0.030, 0.034), armor=(0.74, 0.75, 0.76), accent=(0.035, 0.038, 0.045),
-                   metal=(0.30, 0.31, 0.33), glow=(0.20, 0.80, 1.0), visor=(0.004, 0.006, 0.009)),
-    # Nova: pearl undersuit, graphite plates with copper hardware, amber light.
-    "nova": Style(frame=(0.56, 0.55, 0.53), armor=(0.045, 0.046, 0.052), accent=(0.62, 0.60, 0.57),
-                  metal=(0.80, 0.48, 0.30), glow=(1.0, 0.52, 0.16), visor=(0.006, 0.005, 0.005),
-                  armor_rough=0.36, frame_rough=0.55),
+    # Orion (Frame 01): white ceramic plates over a graphite composite undersuit, brushed-metal
+    # hardware, cyan light (the ORION & NOVA design sheet).
+    "orion": Style(frame=(0.022, 0.024, 0.028), armor=(0.80, 0.81, 0.82), accent=(0.030, 0.033, 0.039),
+                   metal=(0.56, 0.57, 0.60), glow=(0.10, 0.72, 1.0), visor=(0.003, 0.005, 0.008),
+                   armor_rough=0.24, frame_rough=0.58),
+    # Nova (Frame 02): pearl ceramic plates over a graphite undersuit, silver hardware, violet light.
+    "nova": Style(frame=(0.026, 0.025, 0.031), armor=(0.83, 0.81, 0.82), accent=(0.036, 0.034, 0.046),
+                  metal=(0.74, 0.74, 0.78), glow=(0.52, 0.26, 1.0), visor=(0.005, 0.003, 0.010),
+                  armor_rough=0.20, frame_rough=0.52),
 }
 
 # Face labels of the Armor part (bake masks and per-piece looks).
-ARMOR_KINDS = ("plate", "boot", "pod", "core")
+ARMOR_KINDS = ("plate", "boot", "pod", "core", "helmet")
 
 
 def _edges(f):
@@ -137,6 +139,9 @@ class Head:
         h = (p - po) @ pn  # > 0 below the cut
         return np.minimum(o, 0.5 - h / 0.008)
 
+    def inflated(self, amount):
+        return Inflated(self, amount)
+
     def radius(self, d):
         d = d / np.linalg.norm(d, axis=1, keepdims=True)
         rs = np.linspace(0.01, 0.16, 301)
@@ -158,7 +163,55 @@ class Head:
         return self.c + d * self.radius(d)[:, None]
 
 
-def head_quads(head: Head, n=22):
+class Inflated:
+    """The head's radial surface pushed out along each direction by amount(dir) metres: the
+    helmet, the visor glass and the glyphs are built on it."""
+
+    def __init__(self, base, amount):
+        self.base, self.amount, self.c = base, amount, base.c
+
+    def surface(self, d):
+        d = d / np.linalg.norm(d, axis=1, keepdims=True)
+        a = self.amount(d) if callable(self.amount) else self.amount
+        return self.c + d * (self.base.radius(d) + a)[:, None]
+
+
+class HullSurface:
+    """The convex hull of a radial surface, pushed out by amount(dir): helmets have no
+    concavities (no nose, lips or eye sockets showing through)."""
+
+    def __init__(self, base, amount, n=40):
+        self.c, self.amount = base.c, amount
+        pts = base.surface(gear.cube_sphere(n).v)
+        self.eq = gear._hull(pts, 0.0)
+
+    def radius(self, d):
+        return gear._ray_exit(self.eq, self.c, d)
+
+    def surface(self, d):
+        d = d / np.linalg.norm(d, axis=1, keepdims=True)
+        return self.c + d * (self.radius(d) + self.amount(d))[:, None]
+
+
+class RadialMesh:
+    """A star-shaped surface about c given by mesh vertices: the radius toward any direction is a
+    Gaussian-weighted blend of the nearest vertex directions (smooth at the glyph scale)."""
+
+    def __init__(self, c, v, offset=0.0):
+        self.c = c
+        rel = v - c
+        self.r = np.linalg.norm(rel, axis=1) + offset
+        self.tree = cKDTree(rel / np.linalg.norm(rel, axis=1, keepdims=True))
+
+    def surface(self, d):
+        d = d / np.linalg.norm(d, axis=1, keepdims=True)
+        dist, idx = self.tree.query(d, k=12)
+        w = np.exp(-(dist / max(float(np.median(dist[:, 3])), 1e-6)) ** 2)
+        r = (w * self.r[idx]).sum(1) / w.sum(1)
+        return self.c + d * r[:, None]
+
+
+def head_quads(head, n=22):
     sph = gear.cube_sphere(n)
     e = _edges(sph.f)
     deg = np.bincount(e.reshape(-1), minlength=len(sph.v)).astype(float)
@@ -205,14 +258,14 @@ def plate_regions(J):
     out.append(("Chest", [(np.array([0, 0, zt(0.92)]), Z),
                           (np.array([0, 0, zt(0.50)]), _unit([0.45, 0, -1])),
                           (np.array([0, 0, zt(0.50)]), _unit([-0.45, 0, -1])),
-                          (np.array([0.14, 0, 0]), X), (np.array([-0.14, 0, 0]), -X),
+                          (np.array([0.158, 0, 0]), X), (np.array([-0.158, 0, 0]), -X),
                           (np.array([0, yc - 0.01, 0]), Y)], torso))
     for i, (t0, t1, w) in enumerate(((0.335, 0.455, 0.092), (0.20, 0.315, 0.086), (0.07, 0.18, 0.08))):
         out.append((f"Abs{i}", [(np.array([0, 0, zt(t1)]), Z), (np.array([0, 0, zt(t0)]), -Z),
                                 (np.array([w, 0, 0]), X), (np.array([-w, 0, 0]), -X),
                                 (np.array([0, yc - 0.04, 0]), Y)], torso))
-    out.append(("Back", [(np.array([0, 0, zt(0.88)]), Z), (np.array([0, 0, zt(0.54)]), -Z),
-                         (np.array([0.125, 0, 0]), X), (np.array([-0.125, 0, 0]), -X),
+    out.append(("Back", [(np.array([0, 0, zt(0.92)]), Z), (np.array([0, 0, zt(0.50)]), -Z),
+                         (np.array([0.150, 0, 0]), X), (np.array([-0.150, 0, 0]), -X),
                          (np.array([0, yc + 0.012, 0]), -Y)], torso))
     out.append(("Lumbar", [(np.array([0, 0, zt(0.46)]), Z), (np.array([0, 0, zt(0.22)]), -Z),
                            (np.array([0.075, 0, 0]), X), (np.array([-0.075, 0, 0]), -X),
@@ -236,18 +289,18 @@ def plate_regions(J):
                                  (np.array([s * (abs(hp[0]) + 0.025), 0, 0]), -s * X),
                                  (np.array([0, hp[1] - 0.05, 0]), -Y), (np.array([0, hp[1] + 0.065, 0]), Y)],
                     (hp + Z * 0.08, hp - Z * 0.16, 0.22)))
-        out.append((f"Shoulder.{t}", [(sh + da * 0.085, da), (sh - outer * 0.004, -outer),
-                                      (sh - Y * 0.07, -Y), (sh + Y * 0.07, Y),
-                                      (np.array([s * (abs(sh[0]) - 0.055), 0, 0]), -s * X), side],
-                    (J[f"Shoulder.{t}"][0], sh + da * 0.12, 0.12)))
+        out.append((f"Shoulder.{t}", [(sh + da * 0.115, da), (sh - outer * 0.012, -outer),
+                                      (sh - Y * 0.078, -Y), (sh + Y * 0.078, Y),
+                                      (np.array([s * (abs(sh[0]) - 0.07), 0, 0]), -s * X), side],
+                    (J[f"Shoulder.{t}"][0], sh + da * 0.15, 0.13)))
         la = np.linalg.norm(el - sh)
-        out.append((f"UpperArm.{t}", [(sh + da * (0.42 * la), -da), (sh + da * (0.84 * la), da),
+        out.append((f"UpperArm.{t}", [(sh + da * (0.46 * la), -da), (sh + da * (0.84 * la), da),
                                       (sh + outer * 0.002, -outer), side], (sh, el, 0.08)))
         df = _unit(wr - el)
         of = _unit(outer - df * (outer @ df))
         lf = np.linalg.norm(wr - el)
         out.append((f"LowerArm.{t}", [(el + df * (0.20 * lf), -df), (el + df * (0.86 * lf), df),
-                                      (el - of * 0.014, -of), side], (el, wr, 0.07)))
+                                      (el - of * 0.034, -of), side], (el, wr, 0.07)))
         m1 = J[f"Middle1.{t}"][0]
         dh = _unit(m1 - wr)
         i1, p1 = J[f"Index1.{t}"][0], J[f"Pinky1.{t}"][0]
@@ -261,14 +314,29 @@ def plate_regions(J):
         dl = _unit(kn - hp)
         ll = np.linalg.norm(kn - hp)
         out.append((f"Thigh.{t}", [(hp + dl * (0.24 * ll), -dl), (hp + dl * (0.80 * ll), dl),
-                                   (hp, _front(dl)), side], (hp, kn, 0.16)))
+                                   (hp, _unit(_front(dl) - s * X * 0.55)), side], (hp, kn, 0.16)))
         ds = _unit(an - kn)
         ls = np.linalg.norm(an - kn)
         out.append((f"Knee.{t}", [(kn - ds * 0.05, -ds), (kn + ds * 0.055, ds), (kn - _front(ds) * 0.01, _front(ds)), side],
                     (kn - ds * 0.08, kn + ds * 0.08, 0.13)))
         out.append((f"Shin.{t}", [(kn + ds * (0.16 * ls), -ds), (kn + ds * (0.74 * ls), ds),
                                   (kn - _front(ds) * 0.004, _front(ds)), side], (kn, an, 0.12)))
+        out_calf = (f"Calf.{t}", [(kn + ds * (0.22 * ls), -ds), (kn + ds * (0.66 * ls), ds),
+                                  (kn + _front(ds) * 0.012, -_front(ds)), side], (kn, an, 0.12))
+        out.append(out_calf)
     return out
+
+
+# Plate thickness (metres off the undersuit) per plate; the edge sits a little lower so the plate
+# reads as a chamfered shell, and the lip rolls under to the suit.
+PLATE_THICKNESS = {"Chest": 0.013, "Back": 0.012, "Lumbar": 0.008, "Pelvis": 0.008, "Gorget": 0.010,
+                   "Abs0": 0.010, "Abs1": 0.010, "Abs2": 0.009, "Hip": 0.010, "Shoulder": 0.018,
+                   "UpperArm": 0.009, "LowerArm": 0.011, "Hand": 0.0045, "Thigh": 0.011, "Knee": 0.015,
+                   "Shin": 0.012, "Calf": 0.009}
+
+
+def plate_thickness(name):
+    return PLATE_THICKNESS.get(name.split(".")[0], 0.006)
 
 
 def seg_dist(p, a, b):
@@ -426,10 +494,10 @@ def assemble(body: fit.Body):
     # boots (the feet are inside them).
     c = q.v[q.f].mean(1)
     ankle, boot_top = gear.boot_heights(J)
-    keep = ((c - po) @ pn > -0.02) & (c[:, 2] > boot_top - 0.025)
+    keep = ((c - po) @ pn > 0.004) & (c[:, 2] > boot_top - 0.025)
     fq, fused = q.subset(np.where(keep)[0])
     frame_W = W[fused]
-    hq = head_quads(head)
+    hq = head_quads(head, n=14)
     head_W = np.zeros((len(hq.v), len(names)))
     head_W[:, names.index("Head")] = 1.0
     nrm_body = vertex_normals(q.v, triangulate(q.f))
@@ -440,24 +508,13 @@ def assemble(body: fit.Body):
         sel = _largest_component(q, region_faces(c, planes, seg))
         if len(sel) < 4:
             continue
-        sq, src, lab = gear.shell(q, nrm_body, sel, planes, PLATE_OFFSET, PLATE_OFFSET, -0.0015)
+        th = plate_thickness(pname) * (0.8 if body.spec.key == "nova" else 1.0)
+        sq, src, lab = gear.shell(q, nrm_body, sel, planes, th, th * 0.72, -0.0015)
         pieces.append((sq, W[src], 0, lab, pname))
     suit_n = nrm_body
     for t in ("L", "R"):
         bq, lab, near = gear.boot(J, t, q.v, suit_n)
         pieces.append((bq, W[near], 1, lab, f"Boot.{t}"))
-    # Ear pods: short rounded cylinders where the ears were.
-    for s in (1.0, -1.0):
-        dpod = np.array([s, 0.02, -0.08])
-        p, n, _, _ = _frame_at(head, dpod)
-        pod = gear.rounded_box(np.zeros(3), (0.011, 0.024, 0.024), 0.0105, n=6)
-        tt = _unit(np.cross(np.array([0, 0, 1.0]), n))
-        R = np.stack([n, tt, np.cross(n, tt)], 1)
-        pv = pod.v @ R.T + p + n * 0.002
-        pq = gear._orient_outward(Quads(pv, pod.f, pod.uv, pod.fuv), p - n * 0.01)
-        pw = np.zeros((len(pv), len(names)))
-        pw[:, names.index("Head")] = 1
-        pieces.append((pq, pw, 2, np.zeros(len(pq.f), np.int32), "Pod"))
     # Back core: a rounded power cell on the back plate.
     chest = J["Chest"][0]
     zc = J["Hips"][0][2] + (J["Neck"][0][2] - J["Hips"][0][2]) * 0.70
@@ -469,37 +526,78 @@ def assemble(body: fit.Body):
     cw[:, names.index("Chest")] = 1
     pieces.append((core, cw, 3, np.zeros(len(core.f), np.int32), "Core"))
 
-    # Visor: a glass shell over the front of the head.
-    hc = hq.v[hq.f].mean(1)
-    d = hc - head.c
-    az = np.degrees(np.arctan2(d[:, 0], -d[:, 1]))
-    eye = head.eye
-    vtop = eye[2] + 0.030
-    vbot = J["Jaw"][1][2] + 0.022
-    vis_planes = [(np.array([0, 0, vtop]), np.array([0, 0, 1.0])), (np.array([0, 0, vbot]), np.array([0, 0, -1.0]))]
-    for s in (1.0, -1.0):
-        a = np.radians(58)
-        nrm_side = np.array([s * np.cos(a), np.sin(a), 0.0])  # plane through c, 58 deg from the front
-        vis_planes.append((head.c.copy(), _unit(nrm_side)))
-    vsel = region_faces(hc, vis_planes)
-    vsel = vsel[d[vsel, 1] < 0]
-    del az
-    hn = vertex_normals(hq.v, triangulate(hq.f))
-    vq, vsrc, vlab = gear.shell(hq, hn, vsel, vis_planes, VISOR_OFFSET, VISOR_OFFSET, -0.001)
+    # Helmet: a ceramic shell over the head volume (cut lower than the head shell, so it covers
+    # the jaw), inflated more at the crown and the back so it reads as a helmet, not a scalp.
+    # Its front opening holds the visor: one wraparound pane of smoked glass from the brow to
+    # below the mouth, its lower corners chamfered into a shield outline.
+    jaw_z = J["Jaw"][1][2]
+    hpo = po + np.array([0.0, 0.0, -0.024])
+    hplane = (hpo, pn)
+    hvol = Head(J, body.v, np.array([[c_[0] for c_ in obj.faces[i]] for i in faces]), hplane, blur=0.026)
 
-    # Face display glyphs.
+    def puff(d):
+        return 0.0125 + 0.006 * np.clip(d[:, 2], 0, 1) + 0.005 * np.clip(d[:, 1], 0, 1)
+
+    helm = HullSurface(hvol, puff)
+    hm = head_quads(helm, n=30)
+    # Smooth the pane and shell: the head volume still carries the nose, lips and brow.
+    hm = Quads(taubin(hm.v, hm.f, np.ones(len(hm.v)), iters=30, lam=0.6, mu=-0.62), hm.f, hm.uv, hm.fuv)
+    hmc = hm.v[hm.f].mean(1)
+    eye = head.eye
+    vtop = eye[2] + 0.034
+    vbot = jaw_z + 0.020
+    vmid = eye[2] - 0.030
+    vis_planes = [(np.array([0, 0, vtop]), _unit([0, 0.18, 1.0])), (np.array([0, 0, vbot]), np.array([0, 0, -1.0]))]
+    for s_ in (1.0, -1.0):
+        a = np.radians(64)
+        vis_planes.append((head.c.copy(), _unit([s_ * np.cos(a), np.sin(a), 0.0])))
+    del vmid
+    front = (hmc - head.c)[:, 1] < -0.01
+    vsel = region_faces(hmc, vis_planes)
+    vsel = vsel[front[vsel]]
+    below = (hmc - hpo) @ pn > -0.002
+    hsel = _largest_component(hm, np.where(~below)[0])
+    vsel = np.intersect1d(vsel, hsel)
+    hn = vertex_normals(hm.v, triangulate(hm.f))
+    helm_q, _, helm_lab = gear.shell(hm, hn, hsel, [hplane], 0.0, -0.0008, -0.0105)
+    helm_W = np.zeros((len(helm_q.v), len(names)))
+    helm_W[:, names.index("Head")] = 1.0
+    pieces.append((helm_q, helm_W, 4, helm_lab, "Helmet"))
+    # Ear pods: machined discs on the helmet's sides, a light ring on each.
+    for s_ in (1.0, -1.0):
+        dpod = np.array([s_, 0.10, -0.10])
+        p, n, _, _ = _frame_at(helm, dpod)
+        pod = gear.rounded_box(np.zeros(3), (0.009, 0.026, 0.026), 0.0085, n=6)
+        tt = _unit(np.cross(np.array([0, 0, 1.0]), n))
+        R = np.stack([n, tt, np.cross(n, tt)], 1)
+        pv = pod.v @ R.T + p + n * 0.003
+        pq = gear._orient_outward(Quads(pv, pod.f, pod.uv, pod.fuv), p - n * 0.01)
+        pw = np.zeros((len(pv), len(names)))
+        pw[:, names.index("Head")] = 1
+        pieces.append((pq, pw, 2, np.zeros(len(pq.f), np.int32), "Pod"))
+
+    # Visor: a pane of glass standing proud of the helmet front, its edge rolling down into it.
+    gq = Quads(hm.v + hn * 0.0035, hm.f, hm.uv, hm.fuv)
+    glass_s = RadialMesh(head.c, gq.v)
+    vq, vsrc, vlab = gear.shell(gq, hn, vsel, vis_planes, 0.0, -0.0006, -0.0068)
+    head_W_v = np.zeros((len(vq.v), len(names)))
+    head_W_v[:, names.index("Head")] = 1.0
+
+    # Face display glyphs floating just above the glass.
     glyphs = []
     eye_dirs = {1.0: J["Eye.L"][0] - head.c, -1.0: J["Eye.R"][0] - head.c}
     for side in (1.0, -1.0):
-        dd = eye_dirs[side] + np.array([side * 0.004, 0, 0.0015])
-        gq, S, T, fr = glyph(head, dd, 0.024, 0.0075, VISOR_OFFSET + 0.0009, nu=8, nv=3)
-        glyphs.append((gq, eye_morphs(S, T, fr, side), 1))
-    mouth_dir = np.array([0, -1.0, 0]) * 0.1 + np.array([0, 0, (eye[2] - 0.052) - head.c[2]])
-    gq, S, T, fr = glyph(head, mouth_dir, 0.034, 0.0034, VISOR_OFFSET + 0.0009, nu=12, nv=2)
-    glyphs.append((gq, mouth_morphs(S, T, fr), 2))
+        dd = eye_dirs[side] + np.array([side * 0.006, 0, 0.002])
+        gq_, S, T, fr = glyph(glass_s, dd, 0.030, 0.0082, 0.0009, nu=8, nv=3)
+        glyphs.append((gq_, eye_morphs(S, T, fr, side), 1))
+    mouth_dir = np.array([0, -1.0, 0]) * 0.1 + np.array([0, 0, (eye[2] - 0.056) - head.c[2]])
+    gq_, S, T, fr = glyph(glass_s, mouth_dir, 0.040, 0.0036, 0.0009, nu=12, nv=2)
+    glyphs.append((gq_, mouth_morphs(S, T, fr), 2))
 
     # ---- parts ----
-    frame_q, frame_W, frame_kind = _merge([(fq, frame_W, 0), (hq, head_W, 1)])
+    # The helmet encloses the head, so the Frame stops at the neck (no head shell under it).
+    del hq
+    frame_q, frame_W, frame_kind = _merge([(fq, frame_W, 0)])
     frame_q = repack_islands(frame_q, density=np.where(frame_kind == 1, 1.6, 1.0))
     frame_part = Part("Frame", "Frame", frame_q, frame_W, {}, attrs={"rest": frame_q.v.copy()},
                       face_attrs={"kind": frame_kind})
@@ -514,7 +612,7 @@ def assemble(body: fit.Body):
                       attrs={"rest": armor_q.v.copy(), "edge": edge[:, None], "centre": centre},
                       face_attrs={"kind": armor_kind, "cuff": armor_lip, "trim": armor_trim})
 
-    vis_pieces = [(vq, head_W[vsrc], 0)] + [(g[0], np.tile(head_W[:1], (len(g[0].v), 1)), g[2]) for g in glyphs]
+    vis_pieces = [(vq, head_W_v, 0)] + [(g[0], np.tile(head_W_v[:1], (len(g[0].v), 1)), g[2]) for g in glyphs]
     visor_q, visor_W, visor_kind = _merge(vis_pieces)
     visor_q = repack_islands(visor_q, density=np.where(visor_kind > 0, 4.0, 1.0))
     nvis = len(vq.v)
@@ -537,7 +635,7 @@ def assemble(body: fit.Body):
 
 
 # Plates whose inset groove carries a light strip; 2 = the chest (the emblem as well).
-TRIM_PLATES = {"Chest": 2, "Back": 1, "Shin.L": 1, "Shin.R": 1, "LowerArm.L": 1, "LowerArm.R": 1,
+TRIM_PLATES = {"Chest": 2, "Back": 1, "Helmet": 1, "Shoulder.L": 1, "Shoulder.R": 1, "Shin.L": 1, "Shin.R": 1, "LowerArm.L": 1, "LowerArm.R": 1,
                "Thigh.L": 1, "Thigh.R": 1, "Boot.L": 1, "Boot.R": 1}
 
 

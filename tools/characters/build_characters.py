@@ -42,10 +42,13 @@ import mannequin_materials as mmat  # noqa: E402
 import materials  # noqa: E402
 import meshops  # noqa: E402
 
-PIPELINE_VERSION = 4
+PIPELINE_VERSION = 5
 MATERIAL_ORDER = ("Frame", "Armor", "Visor")
 TEXTURE_SIZE = {"Frame": 2048, "Armor": 2048, "Visor": 1024}
 EMISSIVE_STRENGTH = {"Frame": 3.0, "Armor": 4.0, "Visor": 6.0}
+# KHR_materials_clearcoat (ADR-0203): glazed ceramic armour and the visor's glass carry a
+# glossy coat over their textured base; the composite undersuit stays satin.
+CLEARCOAT = {"Armor": (0.65, 0.06), "Visor": (1.0, 0.02)}
 
 
 def log(*a):
@@ -252,7 +255,7 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
         w.node(sname, parent=joint_nodes[j], t=t, r=gltf.quat_from_matrix(r))
 
     J = L.J
-    top = max(lod.r.pos[np.abs(lod.r.pos[:, 0]) < 0.02][:, 2].max() for lod in lods if lod.part.name == "Frame")
+    top = max(lod.r.pos[np.abs(lod.r.pos[:, 0]) < 0.02][:, 2].max() for lod in lods if lod.part.name in ("Frame", "Armor"))
     socket("Socket.Head", "Head", np.array([0, J["Head"][0][1], top]))
     socket("Socket.Face", "Head", L.eye_mid + np.array([0, -0.03, 0]))
     surf = np.concatenate([lod.r.pos for lod in lods if lod.part.name in ("Frame", "Armor")])
@@ -291,6 +294,11 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
             m["emissiveFactor"] = [1.0, 1.0, 1.0]
             m["extensions"] = {"KHR_materials_emissive_strength": {"emissiveStrength": EMISSIVE_STRENGTH.get(mname, 2.0)}}
             w.used_ext.add("KHR_materials_emissive_strength")
+        if mname in CLEARCOAT:
+            coat, coat_rough = CLEARCOAT[mname]
+            m.setdefault("extensions", {})["KHR_materials_clearcoat"] = {"clearcoatFactor": coat,
+                                                                        "clearcoatRoughnessFactor": coat_rough}
+            w.used_ext.add("KHR_materials_clearcoat")
         if mname == "Groom":
             m["alphaMode"] = "MASK"
             m["alphaCutoff"] = 0.5

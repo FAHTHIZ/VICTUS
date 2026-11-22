@@ -71,6 +71,11 @@ struct Material {
     // is in world space, so a moving object's texture slides over it.
     bool triplanar{false};
     float triplanar_sharpness{4.0f}; // blend exponent between projections (1 soft .. 64 hard)
+    // Clear coat (ADR-0203, KHR_materials_clearcoat): a glossy dielectric layer over the base
+    // (lacquer, car paint, glazed ceramic, varnish). 0 = none; it has its own roughness and
+    // follows the vertex normal, so a normal-mapped base keeps a smooth reflection on top.
+    float clearcoat{0.0f};
+    float clearcoat_roughness{0.03f};
     bool nearest_filter{false}; // point sampling (pixel art); default is trilinear
     rhi::TextureHandle base_color_texture, metallic_roughness_texture, normal_texture, emissive_texture;
     bool double_sided{false};

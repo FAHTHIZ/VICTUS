@@ -634,6 +634,13 @@ private:
         if (out.emissive_texture >= 0 && out.emissive.r == 0 && out.emissive.g == 0 && out.emissive.b == 0)
             warn(out.name + ": emissive texture with zero emissiveFactor has no effect");
         out.emissive_strength = m->has_emissive_strength ? m->emissive_strength.emissive_strength : 1.0f;
+        if (m->has_clearcoat) {
+            const auto& cc = m->clearcoat;
+            out.clearcoat = std::clamp(cc.clearcoat_factor, 0.0f, 1.0f);
+            out.clearcoat_roughness = std::clamp(cc.clearcoat_roughness_factor, 0.0f, 1.0f);
+            if (cc.clearcoat_texture.texture || cc.clearcoat_roughness_texture.texture || cc.clearcoat_normal_texture.texture)
+                warn(out.name + ": KHR_materials_clearcoat textures are ignored (the coat uses its factors)");
+        }
         out.double_sided = m->double_sided;
         out.unlit = m->unlit;
         const auto index = static_cast<std::uint32_t>(model_.materials.size());

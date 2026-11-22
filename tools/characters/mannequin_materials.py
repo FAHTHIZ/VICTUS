@@ -75,6 +75,30 @@ def _hex(ij, cell):
     return (0.5 - r) * cell, cx * 7 + cy * 13
 
 
+def cells(P, spacing, seed=0, stretch=None):
+    """Jittered-cell partition of space: (distance in metres to the nearest cell border, i.e.
+    (F2 - F1) / 2, and a per-cell random value in [0, 1)). `stretch` scales axes before the lookup
+    (elongated cells)."""
+    from scipy.spatial import cKDTree
+
+    from bake import _hash3
+
+    Q = P * (np.asarray(stretch) if stretch is not None else 1.0)
+    lo = Q.min(0) - 2 * spacing
+    cell = np.unique(np.floor((Q - lo) / spacing).astype(np.int64), axis=0)
+    off = np.array([[a, b, c] for a in (-1, 0, 1) for b in (-1, 0, 1) for c in (-1, 0, 1)])
+    cell = np.unique((cell[:, None, :] + off[None]).reshape(-1, 3), axis=0)
+    jit = np.stack([_hash3(cell[:, 0], cell[:, 1], cell[:, 2], seed + k) for k in range(3)], 1)
+    pts = lo + (cell + 0.15 + 0.7 * jit) * spacing
+    d, i = cKDTree(pts).query(Q, k=2)
+    p1, p2 = pts[i[:, 0]], pts[i[:, 1]]
+    m = 0.5 * (p1 + p2)
+    nrm = (p2 - p1) / np.maximum(np.linalg.norm(p2 - p1, axis=1, keepdims=True), 1e-12)
+    border = np.abs(((Q - m) * nrm).sum(1))
+    val = _hash3(cell[i[:, 0], 0], cell[i[:, 0], 1], cell[i[:, 0], 2], seed + 7)
+    return border, val
+
+
 def frame_maps(tx, P, N, L: Landmarks, style, kind, seed):
     n = len(P)
     J = L.J
@@ -155,6 +179,15 @@ def frame_maps(tx, P, N, L: Landmarks, style, kind, seed):
     col = col * (1 - pb[:, None]) + glow * 0.25 * pb[:, None]
     rough -= pb * 0.25
 
+    # Composite segmentation: the undersuit is built from moulded panels elongated along the
+    # body, separated by fine recessed seams; alternate panels have a slightly glossier finish.
+    seg_b, seg_v = cells(P, 0.055, seed + 31, stretch=(1.0, 1.0, 0.55))
+    seam = np.exp(-(seg_b / 0.0011) ** 2) * body * (1 - zone_any) * (1 - pb)
+    h -= seam * 0.00030
+    cavity -= seam * 0.45
+    col = col * (1 - 0.35 * seam[:, None]) * (1 + 0.06 * (seg_v[:, None] - 0.5) * body[:, None])
+    rough += body * (seg_v > 0.6) * -0.12 + seam * 0.1
+
     # Head shell: satin finish, a centre crest seam front to back, two side seams.
     if head.any():
         Ph = P[head]
@@ -180,7 +213,7 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed):
     n = len(P)
     J = L.J
     k = np.rint(kind).astype(np.int64)
-    plate, boot, pod, core = (k == 0), (k == 1), (k == 2), (k == 3)
+    plate, boot, pod, core, helmet = (k == 0), (k == 1), (k == 2), (k == 3), (k == 4)
     trim = np.rint(trim).astype(np.int64)
     e = attrs["edge"][:, 0]
     centre = attrs["centre"]
@@ -197,7 +230,7 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed):
     mottle = fbm(P, 22, 3, seed + 11)
     fine = fbm(P, 700, 2, seed + 12)
 
-    shell = plate | boot
+    shell = plate | boot | helmet
     # Rounded bevel along the cut edge (the lip rolls under), an inset groove 1 cm in.
     bevel = np.exp(-(e / 0.0035) ** 2)
     groove_at = np.where(boot, 0.007, 0.0095)
@@ -299,6 +332,53 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed):
         frame_bolt = back * (np.abs(np.abs(rel[:, 0]) - 0.044) < 0.004) & (np.abs(np.abs(rel[:, 2]) - 0.064) < 0.004)
         h[core] += frame_bolt * 0.0004
         cavity[core] -= frame_bolt * 0.2
+
+    # Panel lines on the larger plates: fine recessed seams splitting each plate into moulded
+    # sections, a few sections inset in the graphite accent, and small fasteners near the seams.
+    inner = (plate | helmet) & (e > 0.016) & (cuff < 0.5)
+    pb_, pv_ = cells(P, 0.10, seed + 41)
+    pline = np.exp(-(pb_ / 0.0007) ** 2) * inner * soft(e, 0.016, 0.024)
+    insert = inner * (pv_ < 0.16) * soft(pb_, 0.0016, 0.0026) * soft(e, 0.020, 0.026) * plate
+    h += -pline * 0.00045 - insert * 0.0005
+    cavity -= pline * 0.5
+    col = col * (1 - 0.6 * pline[:, None])
+    col = col * (1 - insert[:, None]) + accent * insert[:, None]
+    rough += pline * 0.15 + insert * 0.12
+    fb_, fv_ = cells(P, 0.022, seed + 43)
+    del fb_
+    fast_c = worley(P, 0.022, seed + 43) * 0.022
+    fast = inner * (fv_ < 0.08) * np.exp(-(fast_c / 0.0016) ** 4) * (pb_ > 0.003)
+    h += fast * 0.0003
+    col = col * (1 - fast[:, None]) + metal_c * fast[:, None]
+    metal = np.maximum(metal, fast)
+    rough = rough * (1 - fast) + 0.3 * fast
+
+    # Helmet: graphite side panels behind the visor (inset, with a light line along their front
+    # edge), a raised crest ridge from the brow to the nape, and vent slots above the ear pods.
+    if helmet.any():
+        Ph, Nh = P[helmet], N[helmet]
+        c = L.head.c
+        rel = Ph - c
+        r = np.linalg.norm(rel, axis=1)
+        d = rel / r[:, None]
+        az = np.degrees(np.arctan2(np.abs(d[:, 0]), -d[:, 1]))  # 0 front, 90 side, 180 back
+        el = np.degrees(np.arcsin(np.clip(d[:, 2], -1, 1)))
+        eh = e[helmet]
+        side_panel = band(az, 74, 150, 3.0) * band(el, -40, 24 - 0.10 * np.abs(az - 110), 3.0) * (eh > 0.012)
+        panel_edge = np.exp(-((az - 74) / 0.9) ** 2) * band(el, -38, 22, 3.0) * (eh > 0.012)
+        crest = np.exp(-(np.abs(Ph[:, 0]) / 0.0075) ** 4) * (el > 8)
+        crest_edge = np.exp(-((np.abs(Ph[:, 0]) - 0.0085) / 0.0008) ** 2) * (el > 8)
+        vents = band(az, 96, 128, 1.0) * band(el, 18, 30, 1.0) * ((0.5 + 0.5 * np.cos(np.radians(az - 96) * 2 * np.pi / np.radians(6))) > 0.55)
+        hh = side_panel * -0.0006 + crest * 0.0012 - crest_edge * 0.0004 - vents * 0.0009 - panel_edge * 0.0004
+        h[helmet] += hh
+        ch = col[helmet]
+        ch = ch * (1 - side_panel[:, None]) + accent * side_panel[:, None]
+        ch = ch * (1 - vents[:, None] * 0.8)
+        col[helmet] = ch
+        rough[helmet] += side_panel * 0.18 + crest_edge * 0.1
+        cavity[helmet] -= crest_edge * 0.4 + panel_edge * 0.4 + vents * 0.5
+        em[helmet] += (panel_edge * 1.1)[:, None] * glow
+        del Nh
 
     # Ceramic micro-surface: faint orange peel in the clear coat, slight roughness variation.
     h += shell * fine * 0.000004

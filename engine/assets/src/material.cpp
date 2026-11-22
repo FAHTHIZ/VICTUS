@@ -95,6 +95,8 @@ const char* field_key(MaterialField f) noexcept {
     case MaterialField::Responsive: return "responsive";
     case MaterialField::Triplanar: return "triplanar";
     case MaterialField::TriplanarSharpness: return "triplanar_sharpness";
+    case MaterialField::Clearcoat: return "clearcoat";
+    case MaterialField::ClearcoatRoughness: return "clearcoat_roughness";
     default: return "";
     }
 }
@@ -130,6 +132,8 @@ void MaterialAsset::copy_field(const MaterialAsset& src, MaterialField f) {
     case MaterialField::Responsive: responsive = src.responsive; break;
     case MaterialField::Triplanar: triplanar = src.triplanar; break;
     case MaterialField::TriplanarSharpness: triplanar_sharpness = src.triplanar_sharpness; break;
+    case MaterialField::Clearcoat: clearcoat = src.clearcoat; break;
+    case MaterialField::ClearcoatRoughness: clearcoat_roughness = src.clearcoat_roughness; break;
     default: break;
     }
 }
@@ -193,6 +197,10 @@ json::Value MaterialAsset::to_json() const {
         v.set("triplanar", triplanar); // omitted when off, so older files round-trip
     if (triplanar_sharpness != 4.0f || (is_instance() && overrides_field(MaterialField::TriplanarSharpness)))
         v.set("triplanar_sharpness", num(triplanar_sharpness));
+    if (clearcoat != 0.0f || (is_instance() && overrides_field(MaterialField::Clearcoat)))
+        v.set("clearcoat", num(clearcoat)); // omitted when off, so older files round-trip
+    if (clearcoat_roughness != 0.03f || (is_instance() && overrides_field(MaterialField::ClearcoatRoughness)))
+        v.set("clearcoat_roughness", num(clearcoat_roughness));
     if (!is_instance()) return v;
     // Instances store only what they override.
     Value inst = Value::object();
@@ -224,7 +232,8 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
                     r.vec("uv_scale", &m.uv_scale.x, 2, 2) && r.vec("uv_offset", &m.uv_offset.x, 2, 2) &&
                     r.boolean("unlit", m.unlit) && r.boolean("double_sided", m.double_sided) &&
                     r.number("coverage_response", m.coverage_response) && r.number("occlusion_strength", m.occlusion_strength) && r.number("responsive", m.responsive) &&
-                    r.boolean("triplanar", m.triplanar) && r.number("triplanar_sharpness", m.triplanar_sharpness);
+                    r.boolean("triplanar", m.triplanar) && r.number("triplanar_sharpness", m.triplanar_sharpness) &&
+                    r.number("clearcoat", m.clearcoat) && r.number("clearcoat_roughness", m.clearcoat_roughness);
     if (!ok) return make_error(ErrorCode::ParseError, r.error);
     m.emissive = {emissive[0], emissive[1], emissive[2], 1.0f};
     if (!r.uuid("shader", m.shader)) return make_error(ErrorCode::ParseError, r.error);
@@ -282,6 +291,8 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
     m.triplanar_sharpness = std::isfinite(m.triplanar_sharpness) ? std::clamp(m.triplanar_sharpness, 1.0f, 64.0f) : 4.0f;
     m.metallic = std::clamp(m.metallic, 0.0f, 1.0f);
     m.roughness = std::clamp(m.roughness, 0.0f, 1.0f);
+    m.clearcoat = std::isfinite(m.clearcoat) ? std::clamp(m.clearcoat, 0.0f, 1.0f) : 0.0f;
+    m.clearcoat_roughness = std::isfinite(m.clearcoat_roughness) ? std::clamp(m.clearcoat_roughness, 0.0f, 1.0f) : 0.03f;
     m.alpha_cutoff = std::clamp(m.alpha_cutoff, 0.0f, 1.0f);
     m.emissive_strength = std::max(m.emissive_strength, 0.0f);
     return m;

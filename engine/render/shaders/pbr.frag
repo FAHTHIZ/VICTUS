@@ -182,6 +182,7 @@ layout(set = 3, binding = 1) uniform Material {
     vec4 blend;          // x: 0 opaque, 1 alpha blended, 2 additive (volumetric fog, ADR-0119); y: ORM occlusion strength (ADR-0139),
                          // z: alpha to coverage, w: LOD cross-fade (ADR-0184; > 0 keeps dither < w, < 0 keeps dither >= -w)
     vec4 mapping;        // x: 1 = world-space triplanar mapping (ADR-0197), y: blend sharpness
+    vec4 layers;         // x: clear coat strength (ADR-0203), y: clear coat roughness
 } material;
 
 // Local reflection probe for this draw (box-projected cube bound to u_env instead of the scene's
@@ -456,6 +457,29 @@ vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float metallic, fl
     vec3 spec = D * G * F / (4.0 * NdotV * NdotL + 1e-4);
     vec3 kd = (1.0 - F) * (1.0 - metallic);
     return (kd * albedo / PI + spec) * radiance * NdotL;
+}
+
+// ---- Clear coat (ADR-0203) ----
+// A thin dielectric layer (IOR 1.5, F0 0.04) over the base, as in KHR_materials_clearcoat and the
+// Filament / Unreal clear coat models: it has its own GGX lobe with its own roughness, uses the
+// interpolated vertex normal (the coat is smooth over the base's normal map: lacquer over
+// moulded detail), and the light it reflects no longer reaches the base, which is scaled by
+// 1 - Fc. Returns the coat's reflected radiance factor (times N.L) in rgb and the base scale in a.
+vec4 clear_coat(vec3 Nc, vec3 V, vec3 L, float coat, float coat_roughness) {
+    float NdotL = max(dot(Nc, L), 0.0);
+    vec3 H = normalize(V + L);
+    float NdotV = max(dot(Nc, V), 1e-4);
+    float Fc = (0.04 + 0.96 * pow(clamp(1.0 - max(dot(H, V), 0.0), 0.0, 1.0), 5.0)) * coat;
+    float D = distribution_ggx(max(dot(Nc, H), 0.0), coat_roughness * coat_roughness);
+    // Kelemen visibility, as Filament uses for the coat: cheap and energy-bounded.
+    float LdotH = max(dot(L, H), 1e-2);
+    float Vis = 0.25 / (LdotH * LdotH);
+    return vec4(vec3(D * Vis * Fc * NdotL), 1.0 - Fc);
+}
+vec3 with_coat(vec3 base_lit, vec3 Nc, vec3 V, vec3 L, vec3 radiance, float coat, float coat_roughness) {
+    if (coat <= 0.0) return base_lit;
+    vec4 k = clear_coat(Nc, V, L, coat, coat_roughness);
+    return base_lit * k.a + k.rgb * radiance;
 }
 
 // ---- Area lights (ADR-0194) ----
@@ -949,6 +973,12 @@ void main() {
         metallic = mix(metallic, 0.0, coverage);
     }
 
+    // Clear coat: strength 0..1 and its own roughness; the coat follows the vertex normal and
+    // dries off nothing (wet and coverage layers act on the base below it).
+    float coat = clamp(material.layers.x, 0.0, 1.0);
+    float coat_roughness = clamp(material.layers.y, 0.045, 1.0);
+    vec3 Nc = geometric_n;
+
     vec3 L = normalize(-lighting.sun_dir.xyz);
     vec4 lm_texel = v_lightmap.z > 0.5 ? texture(u_lightmap, v_lightmap.xy) : vec4(0.0, 0.0, 0.0, 1.0);
     // Ambient for unlightmapped surfaces comes from the probe volume, which also carries the baked
@@ -960,7 +990,10 @@ void main() {
     float baked_sun = lighting.cascade_params.w > 0.5 ? (v_lightmap.z > 0.5 ? lm_texel.a : probe_sun) : 1.0;
     vec2 screen_occlusion = lighting.camera_pos.w > 0.5 ? texture(u_ao, gl_FragCoord.xy * lighting.screen.xy).rg : vec2(1.0);
     float contact = lighting.camera_pos.w > 1.5 ? screen_occlusion.g : 1.0;
-    vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * (shadow_factor(N, L, baked_sun) * cloud_shadow(L) * contact) * sun_cookie(v_world_pos);
+    float sun_visibility = shadow_factor(N, L, baked_sun) * cloud_shadow(L) * contact;
+    vec3 sun_radiance = lighting.sun_color.rgb * sun_cookie(v_world_pos);
+    vec3 color = with_coat(brdf(N, V, L, sun_radiance, albedo, metallic, roughness), Nc, V, L, sun_radiance,
+                           coat, coat_roughness) * sun_visibility;
 
     if (lighting.ground_color.w > 0.5) {
         vec3 grid = lighting.cluster_grid.xyz;
@@ -991,8 +1024,9 @@ void main() {
             if (atten <= 0.0) continue;
             vec3 radiance = l.color_intensity.rgb * l.color_intensity.w * atten;
             if (l.spot.y < 1.5) radiance *= local_cookie(l, v_world_pos);
-            if (l.spot.y < 0.5 && l.spot.x > 0.0) color += sphere_light(N, V, to_light, l.spot.x, radiance, albedo, metallic, roughness);
-            else color += brdf(N, V, Ld, radiance, albedo, metallic, roughness);
+            vec3 lit = (l.spot.y < 0.5 && l.spot.x > 0.0) ? sphere_light(N, V, to_light, l.spot.x, radiance, albedo, metallic, roughness)
+                                                          : brdf(N, V, Ld, radiance, albedo, metallic, roughness);
+            color += with_coat(lit, Nc, V, Ld, radiance, coat, coat_roughness);
         }
     }
 
@@ -1031,7 +1065,23 @@ void main() {
     // Specular occlusion from AO (Lagarde & de Rousiers 2014 approximation).
     float spec_ao = clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
     spec_ao *= lightmap_occlusion;
-    color += kd * albedo * irradiance * ao + specular * spec_ao;
+    vec3 ambient = kd * albedo * irradiance * ao + specular * spec_ao;
+    if (coat > 0.0) {
+        // The coat's environment reflection along the vertex normal; it takes the screen-space
+        // reflection when the base traced one (close enough: the base normal is normal-mapped).
+        float NdotVc = max(dot(Nc, V), 1e-4);
+        vec2 abc = env_brdf(NdotVc, coat_roughness);
+        float Fcv = (0.04 * abc.x + abc.y) * coat;
+        vec3 Rc = reflect(-V, Nc);
+        vec3 coat_env = env_specular(Rc, coat_roughness, v_world_pos);
+#ifdef VX_SSR
+        coat_env = mix(coat_env, ssr.rgb, ssr.a);
+#endif
+        float coat_ao = clamp(pow(NdotVc + ao, exp2(-16.0 * coat_roughness - 1.0)) - 1.0 + ao, 0.0, 1.0) * lightmap_occlusion;
+        float coat_horizon = clamp(1.0 + dot(Rc, geometric_n), 0.0, 1.0);
+        ambient = ambient * (1.0 - Fcv) + coat_env * Fcv * coat_ao * coat_horizon;
+    }
+    color += ambient;
     color += s.emissive;
 
     int fog_mode = int(lighting.fog_color.w + 0.5);

@@ -3013,3 +3013,19 @@ Not verified: real GPUs, Metal and D3D12 (compiled only); `victus_editor_tests` 
   - A city with thousands of pedestrians *and* vehicles in the player (each was tested separately at small counts).
   - Physics cost of the static colliders at large city sizes.
 - **Next task:** GAP-14 emissive night windows and street lights for the generated city, then GAP-11 HLOD/impostors for distant cells.
+
+## 2026-11-22 — Clear coat materials and helmeted Frame redesign (ADR-0203, ADR-0204)
+
+Built:
+- Clear coat (ADR-0203): `render::Material::clearcoat` / `clearcoat_roughness` in a new `layers` vec4 of the material block. `pbr.frag` adds a second GGX lobe (F0 0.04, Kelemen visibility) along the vertex normal for the sun, point, spot and sphere lights, scaling the base by `1 - Fc`, and a coat environment term (its own split-sum, specular occlusion and horizon fade, reusing the opaque SSR hit). `.vmat` `clearcoat` / `clearcoat_roughness` (omitted at defaults, clamped, inherited by instances), Studio material panel sliders, `KHR_materials_clearcoat` factor import (coat textures warn and are ignored), cooked model format 11. Area lights light the base only.
+- Orion and Nova redesigned from the user's "VICTUS Frame Series" sheet (ADR-0204): a helmet built from the convex hull of the head volume with a wraparound black glass visor carrying the eye and mouth glyphs, ear pods on the helmet, 25 plates with per-plate thickness (new calf plates, larger shoulders, wider chest and back, outer-thigh plates), composite seams in the undersuit, Voronoi panel lines, graphite inserts, metal fasteners and helmet side panels, crest and vents. Orion white ceramic / graphite / brushed metal / cyan; Nova pearl ceramic / graphite / silver / violet. Armor and Visor export `KHR_materials_clearcoat` (0.65 / 0.06, 1.0 / 0.02). Pipeline version 5.
+- Orion: 12.27 MB, 182,096 triangles, 1.777 m. Nova: 12.41 MB, 186,048 triangles, 1.685 m. `starter_characters()` heights and descriptions updated. The Robot Arena sample's GLB copies are replaced and its `Socket.Head` / `Socket.Back` / `Socket.Hip.*` transforms updated from the new GLBs (joint transforms unchanged to 1e-5).
+
+Verified:
+- `victus_gpu_tests -tc="gpu clear coat*"` (Vulkan lavapipe): 1 case, 12 assertions. Brightest sphere pixel g 117 (no coat), 226 (glossy coat), 174 (satin coat); pixels brighter than the bare peak + 30: 6 glossy, 232 satin; the coat never brightens the body off the highlight. `build/test_output/clearcoat_*.png` checked by eye.
+- `victus_asset_tests`: 63/63 cases, 4752 assertions, including the new clear coat `.vmat` case and the starter character cases (triangle budget, 3 materials x 4 maps, 26 blend shapes, 60 joints, heights, sockets, clips).
+- `tools/characters/test_pipeline.py`: 9/9. `victus character-check orion|nova`: OK, 0 errors, 0 warnings.
+- Full `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1 ctest -j2`: 42/43 passed before these doc updates; the one failure was `victus_docs_lint` asking for ADR-0203/0201 in this changelog, fixed by this entry (rerun: pass). `victus_gpu_tests` passed inside it. After replacing the Robot Arena copies: `ctest -R "victus_perf_budgets|victus_sample_arena|victus_docs_lint"` 3/3 pass with no budget changes.
+- Blender renders (`docs/images/characters/blender_render_bodies.jpg`, `blender_render_heads.jpg`) and VICTUS runtime close-ups (`victus_runtime_orion.jpg`, `victus_runtime_nova.jpg`: `victus run --frames 40 --quality ultra --screenshot` on fresh 3D projects with a fixed camera 2.6 m in front, the HUD removed and the brazier moved out of frame) checked by eye.
+
+Not verified: real GPUs, Metal, D3D12 and GLES devices; posed plate clearance across the clip library; the helmet with every hat-style attachment on `Socket.Head`.

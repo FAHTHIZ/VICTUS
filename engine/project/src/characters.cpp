@@ -20,14 +20,15 @@ std::span<const std::uint8_t> kNovaGlb();
 const std::vector<StarterCharacter>& starter_characters() {
     static const std::vector<StarterCharacter> list = {
         {"orion", "Orion",
-         "Masculine-build Frame mannequin: athletic 1.76 m, graphite undersuit under white ceramic armour plates, cyan "
-         "light trims and face display; 60-joint skeleton, 26 face-display blend shapes, full PBR + emissive set.",
-         "assets/models/characters/victus_orion.glb", "8e84eb12-63c8-4aed-aae2-517c038d3071", 1.7635f},
+         "Masculine-build Frame (Frame 01): athletic 1.78 m with helmet, graphite composite undersuit under glazed white "
+         "ceramic armour with brushed-metal fasteners, a black glass visor with cyan eye glyphs and cyan light trims; "
+         "60-joint skeleton, 26 face-display blend shapes, full PBR + emissive + clear coat set.",
+         "assets/models/characters/victus_orion.glb", "8e84eb12-63c8-4aed-aae2-517c038d3071", 1.7770f},
         {"nova", "Nova",
-         "Feminine-build Frame mannequin: slender 1.67 m, pearl undersuit under graphite armour plates with copper "
-         "hardware, amber light trims and face display; 60-joint skeleton, 26 face-display blend shapes, full PBR + "
-         "emissive set.",
-         "assets/models/characters/victus_nova.glb", "44037d0d-1627-44a8-a225-633971f196b2", 1.6726f},
+         "Feminine-build Frame (Frame 02): slender 1.69 m with helmet, graphite composite undersuit under glazed pearl "
+         "ceramic armour with silver hardware, a black glass visor with violet eye glyphs and violet light trims; "
+         "60-joint skeleton, 26 face-display blend shapes, full PBR + emissive + clear coat set.",
+         "assets/models/characters/victus_nova.glb", "44037d0d-1627-44a8-a225-633971f196b2", 1.6854f},
     };
     return list;
 }

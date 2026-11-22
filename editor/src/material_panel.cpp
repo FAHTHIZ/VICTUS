@@ -290,6 +290,14 @@ void Editor::draw_material_editor() {
         texture_slot(2);
         mark(ImGui::DragFloat("Normal Scale", &m.normal_scale, 0.01f, 0.0f, 4.0f), F::NormalScale);
         inherit_button(F::NormalScale);
+        mark(ImGui::SliderFloat("Clear Coat", &m.clearcoat, 0.0f, 1.0f), F::Clearcoat);
+        ImGui::SetItemTooltip("A glossy transparent layer over the surface: lacquer, car paint, glazed ceramic, varnish");
+        inherit_button(F::Clearcoat);
+        if (m.clearcoat > 0.0f) {
+            mark(ImGui::SliderFloat("Coat Roughness", &m.clearcoat_roughness, 0.0f, 1.0f), F::ClearcoatRoughness);
+            ImGui::SetItemTooltip("How blurry the coat's reflection is, independent of the surface underneath");
+            inherit_button(F::ClearcoatRoughness);
+        }
     }
     if (ImGui::CollapsingHeader("Emission")) {
         mark(color("Emissive", m.emissive, false), F::Emissive);

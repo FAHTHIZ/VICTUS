@@ -2,7 +2,7 @@
 
 The 3D and multiplayer templates ship two VICTUS characters, **Orion** and **Nova**: Frame
 mannequins - armoured sci-fi test dummies in the spirit of Unreal's Manny and Quinn - built by the
-VICTUS character pipeline (`tools/characters`, ADR-0198) from the CC0 MakeHuman base mesh. They
+VICTUS character pipeline (`tools/characters`, ADR-0198; helmeted redesign ADR-0204) from the CC0 MakeHuman base mesh. They
 share one skeleton layout, one clip library, one animation controller and one set of gameplay
 scripts; swapping one for the other changes the look and proportions, not the behaviour. They
 replace the realistic human pilots of ADR-0179 (which replaced the signed-distance-field androids
@@ -16,18 +16,19 @@ sockets and clips are unchanged, so existing projects keep their references.
 | Stable UUID (`.meta`) | `8e84eb12-63c8-4aed-aae2-517c038d3071` | `44037d0d-1627-44a8-a225-633971f196b2` |
 | Skeleton profile | `VictusHumanoid.Orion` | `VictusHumanoid.Nova` |
 | Build | masculine, athletic (MakeHuman macro: gender 1.0, muscle 0.62, weight 0.48) | feminine, slender (gender 0.0, muscle 0.55, weight 0.42) |
-| Look | graphite undersuit, white satin-ceramic plates, gunmetal hardware, cyan light | pearl undersuit, graphite plates, copper hardware, amber light |
-| Height (floor to top of the head) | 1.76 m | 1.67 m |
-| Triangles (LOD 0, as exported) | 156,576 | 159,696 |
-| GLB size | 11.17 MB | 11.59 MB |
+| Design | Frame 01 | Frame 02 |
+| Look | graphite composite undersuit, glazed white ceramic plates, brushed-metal fasteners, black glass visor, cyan light | graphite composite undersuit, glazed pearl ceramic plates, silver hardware, black glass visor, violet light |
+| Height (floor to top of the helmet) | 1.78 m | 1.69 m |
+| Triangles (LOD 0, as exported) | 182,096 | 186,048 |
+| GLB size | 12.27 MB | 12.41 MB |
 
 Both stand on Y = 0, face +Z with their left on +X, and are authored in the A-pose the earlier
 characters used (arms 40 degrees from vertical), so existing clips and ragdoll setups line up.
 
 Why a mannequin: a realistic human needs skin, eye and hair shading (subsurface scattering, strand
 hair) the renderer does not have yet, and falls into the uncanny valley without it. A mannequin
-shows what the engine does well - layered PBR (satin ceramic, rubberised fabric, brushed metal,
-glass), emissive trims with bloom, normal-mapped detail, skinning and blend shapes - and reads as
+shows what the engine does well - layered PBR (clear-coated ceramic, composite fabric, brushed
+metal, glass), emissive trims with bloom, normal-mapped detail, skinning and blend shapes - and reads as
 a deliberate design, the way engine sample characters usually are.
 
 ## What a character contains
@@ -38,14 +39,16 @@ per pass:
 
 | Material | Part | Maps | Notes |
 |---|---|---|---|
-| `<Name>_Frame` | undersuit body (collar to ankles, both hands) and the head shell | base colour, normal, ORM, emissive | 2048²; the MakeHuman body smoothed into an idealised form (Taubin smoothing, the fingers keep their shape); a hexagonal micro-weave, ribbed flex zones at the neck, shoulders, elbows, wrists, waist and knees, recessed piping down the outside of every limb carrying a thin light line; the head is a featureless shell (the head's blurred volume, shrink-wrapped by a quad cube-sphere and cut flat under the jaw) with a centre crest seam |
-| `<Name>_Armor` | 23 hard-surface plates, boots, ear pods, back core | base colour, normal, ORM, emissive | 2048²; plates are shells grown from the body inside planes (chest, back, three abdominal plates, lumbar, pelvis, hips, shoulders, upper arms, forearms, backs of the hands, thighs, knees, shins) with straight cut lines and edges rolled under; rounded bevels and an inset groove 1 cm in from every edge, a light strip in the groove of the larger plates, a contrasting stripe down the limb plates, a chevron emblem on the chest; boots with a moulded lug sole and accent toe caps; machined-metal ear pods with light rings and a back core with a glowing cell behind vents |
-| `<Name>_Visor` | faceplate and face display | base colour, normal, ORM, emissive | 1024²; smoked glass with a fine scan-line grid in its reflection and a metal rim; two eye glyphs and a mouth bar floating just above the glass, driven by blend shapes |
+| `<Name>_Frame` | undersuit body (neck to ankles, both hands) | base colour, normal, ORM, emissive | 2048²; the MakeHuman body smoothed into an idealised form (Taubin smoothing, the fingers keep their shape); a hexagonal micro-weave split into composite panels by seams, ribbed flex zones at the neck, shoulders, elbows, wrists, waist and knees, recessed piping down the outside of every limb carrying a thin light line |
+| `<Name>_Armor` | helmet, 25 hard-surface plates, boots, ear pods, back core | base colour, normal, ORM, emissive; clear coat 0.65 (roughness 0.06) | 2048²; the helmet is the convex hull of the head's blurred volume, puffed out and shrink-wrapped by a 30x30-per-face quad cube-sphere, smoothed, with an open visor window, graphite side panels with a lit front edge, a crest ridge and vents; plates are shells grown from the body inside planes (a wide chest, back, three abdominal plates, lumbar, pelvis, hips, large shoulders, upper arms, forearms, backs of the hands, outer thighs, knees, shins, calves), 4.5-18 mm thick per plate (Nova's 20% thinner), with straight cut lines and edges rolled under; panel lines from a jittered Voronoi pattern, graphite inserts and metal fasteners; rounded bevels and an inset groove 1 cm in from every edge, a light strip in the groove of the larger plates, a contrasting stripe down the limb plates, a chevron emblem on the chest; boots with a moulded lug sole and accent toe caps; machined-metal ear pods with light rings and a back core with a glowing cell behind vents |
+| `<Name>_Visor` | wraparound visor and face display | base colour, normal, ORM, emissive; clear coat 1.0 (roughness 0.02) | 1024²; black glass filling the helmet's visor window (eye line to jaw, 64 degrees to each side) with a fine scan-line grid in its reflection; two eye glyphs and a mouth bar lying on the glass, driven by blend shapes |
 
 Emissive strengths (`KHR_materials_emissive_strength`): Frame 3, Armor 4, Visor 6, so the trims
 bloom in the post stack. All maps are baked from the actual surface (per-texel world position and
 normal, a Cycles ambient-occlusion bake against the whole character) - there are no flat material
-colours and no placeholder textures. Every material is opaque (no alpha). The engine's texture
+colours and no placeholder textures. Every material is opaque (no alpha). Armor and Visor carry
+`KHR_materials_clearcoat` factors, which the engine imports as a clear coat layer (ADR-0203): a
+sharp glossy reflection over the satin ceramic and the glass. The engine's texture
 cooker builds mips and GPU block compression (BC7/ASTC) at import like any other model.
 
 Blend shapes: every primitive lists the same 26 face-display targets (`eyeBlink_L/R`,
@@ -73,7 +76,7 @@ per skeleton profile):
 
 Skin weights come from MakeHuman's 163-bone reference weights, collapsed onto this layout and
 limited to four influences (stored as normalised bytes); every armour vertex keeps the weights of
-the body vertex it was grown from, so plates follow the body they cover. The head shell, visor
+the body vertex it was grown from, so plates follow the body they cover. The helmet, visor
 and ear pods are rigid on `Head`; `Jaw` and `Eye.L/R` remain for retargeting and attachments. Clips store rotations plus the Hips
 translation, so one clip drives both profiles.
 
@@ -85,7 +88,7 @@ authored for one character fits the other:
 | Node | Parent | Frame |
 |---|---|---|
 | `Socket.Root` | `Rig` | ground, character facing |
-| `Socket.Head` | Head | top of the head shell, character facing (hats, helmets) |
+| `Socket.Head` | Head | top of the helmet, character facing (hats, crests, antennae) |
 | `Socket.Face` | Head | 3 cm in front of the eyes (visors, glasses) |
 | `Socket.Back` | Chest | 2 cm behind the back plate (backpacks, weapons) |
 | `Socket.Hand.L`, `Socket.Hand.R` | Hand.L / Hand.R | grip centre; +Y along the fingers, +Z out of the palm |
@@ -140,7 +143,7 @@ To hide armour in a script, untick Visible on `<Name>_Body[1]` (the Armor primit
 
 ## LODs and budgets
 
-LOD 0 is one Catmull-Clark subdivision of the quad meshes (about 160k triangles: the high-end PC
+LOD 0 is one Catmull-Clark subdivision of the quad meshes (about 185k triangles: the high-end PC
 budget, with clean edge loops at the shoulders, elbows, knees and fingers and smooth plate
 bevels). The importer generates three coarser LODs with meshoptimizer
 (`ModelImportSettings::lods`), and per-cascade shadow LOD applies as for any model. Templates
@@ -164,7 +167,7 @@ deterministic for one environment. Stages:
 |---|---|
 | `mh.py` | MakeHuman loaders: base mesh (`hm08`), macro targets (gender, muscle, weight, ethnic mix), proxy fitting (`.mhclo`), the reference rig and weights, facial pose units (BVH) |
 | `fit.py` | shapes the body from the character's `Spec`, poses it into the A-pose, collapses the reference rig onto the 60-joint layout, converts to VICTUS space |
-| `mannequin.py` | the Frame mannequin: smooths the body, builds the head shell from the head's blurred occupancy volume, grows the armour plates (`plate_regions`: planes plus a bone-segment radius per plate; `gear.shell` offsets them along the rest normal and rolls the cut edges under), boots, ear pods and back core, the visor and the face-display glyphs with their blend shapes, and repacks UV islands; `Style` holds each character's colours |
+| `mannequin.py` | the Frame mannequin: smooths the body, builds the helmet from the convex hull of the head's blurred occupancy volume (`HullSurface`), grows the armour plates (`plate_regions`: planes plus a bone-segment radius per plate; `gear.shell` offsets them along the rest normal and rolls the cut edges under), boots, ear pods and back core, the visor and the face-display glyphs with their blend shapes, and repacks UV islands; `Style` holds each character's colours |
 | `assemble.py`, `gear.py` | shared helpers: `Part`, joint maps, shells, boots, rounded boxes (the human pilots' skin/suit/groom assembly of ADR-0179 is kept for reference but no longer built) |
 | `meshops.py` | Catmull-Clark subdivision as a sparse operator (weights and morphs subdivide with the positions), GPU vertices and tangents |
 | `mannequin_materials.py`, `bake.py` | per-texel material functions (Frame, Armor, Visor), height → normal conversion, Cycles AO bake, encoding |
@@ -201,13 +204,13 @@ into new projects by the templates.
 ### Renders
 
 Blender render (Cycles, the shipped GLBs imported into Blender 5.0, studio lighting; not the
-VICTUS renderer): Orion front and three-quarter, Nova front and back three-quarter.
+VICTUS renderer): Orion and Nova, each front and three-quarter.
 
 ![Blender render: Orion and Nova full body](images/characters/blender_render_bodies.jpg)
 
 ![Blender render: Orion and Nova heads](images/characters/blender_render_heads.jpg)
 
-VICTUS runtime (the engine's own renderer: `victus run --frames 40 --quality ultra --screenshot` on a fresh 3D template, with the follow camera replaced by a fixed front camera and the HUD removed; lavapipe):
+VICTUS runtime (the engine's own renderer: `victus run --frames 40 --quality ultra --screenshot` on a fresh 3D template, with the follow camera replaced by a fixed camera 2.6 m in front, the HUD removed and the brazier moved out of frame; lavapipe):
 
 ![VICTUS runtime: Orion in the 3D template](images/characters/victus_runtime_orion.jpg)
 
@@ -250,4 +253,4 @@ MakeHuman application code (AGPL-3.0) is not used or included. Everything else -
 geometry, armour, visor, materials, textures, sockets, clips and the pipeline - is original
 VICTUS work, Apache-2.0.
 Blender (`bpy`, GPL) is a build-time tool for the AO bake only; its output belongs to the user
-([Blender license](https://www.blender.org/about/license/)). See ADR-0069, ADR-0121, ADR-0179 and ADR-0198.
+([Blender license](https://www.blender.org/about/license/)). See ADR-0069, ADR-0121, ADR-0179, ADR-0198 and ADR-0204.
