@@ -60,7 +60,7 @@ Checked against `editor/src` (Dear ImGui). The detailed UX review is [audits/STU
 | Viewports | 2D and 3D, gizmos with snapping, overlays for colliders, the navmesh and overdraw | — |
 | Asset browser | Thumbnails, reference-safe rename, move and delete (ADR-0175), Trash, import settings, import queue window (ADR-0189), Asset Store | Dependency-graph view, tags |
 | Console and Problems | Structured log, Problems panel with jump-to-source | — |
-| Profiler | CPU and GPU timings (scripts, render passes, GPU waits), memory and GPU resource counters, pause and trace recording | Per-allocation tracking, a streaming view and a network timeline in the profiler (network stats live in the Network window) |
+| Profiler | CPU timings (scripts, per-pass CPU encode time, CPU time spent waiting on the GPU), process allocation totals and GPU resource counters, pause and Chrome/Perfetto trace recording | GPU timings (SDL_GPU exposes no timestamp queries, GAP-04), per-allocation call stacks, a streaming view and a network timeline in the profiler (network stats live in the Network window); see audits/PROFILING_AND_MOVEMENT_RESEARCH_2026_11.md |
 | 2D | Sprite sheets, tile sets and tilemaps | — |
 | 3D | Terrain sculpt, paint and scatter, lighting bake | Foliage painting as its own tool, spline and road tools |
 | Materials | Material editor, material graph, surface shaders | — |
