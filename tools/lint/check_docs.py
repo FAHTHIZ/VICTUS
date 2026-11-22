@@ -8,6 +8,7 @@
    unless it is listed in INTERNAL_ADRS below with the reason it is not user-visible.
 3. No ADR number is used twice in docs/TECHNOLOGY_DECISIONS.md except the known historical
    duplicates (cite those with their topic).
+4. Every Markdown file in docs/audits/ is listed in docs/audits/README.md.
 
 Usage: check_docs.py [repo_root]. Exits 1 and lists every problem when a check fails.
 """
@@ -60,6 +61,14 @@ def check(root: Path) -> list[str]:
         problems.append(
             f"ADR-{number:04d} is not cited in CHANGELOG.md (add it to the matching entry, or to "
             "INTERNAL_ADRS in tools/lint/check_docs.py with the reason it is not user-visible)")
+
+    audits = root / "docs/audits"
+    index = audits / "README.md"
+    if index.exists():
+        listed = index.read_text(encoding="utf-8")
+        for md in sorted(audits.glob("*.md")):
+            if md.name != "README.md" and f"({md.name})" not in listed:
+                problems.append(f"docs/audits/{md.name} is not listed in docs/audits/README.md")
     return problems
 
 
