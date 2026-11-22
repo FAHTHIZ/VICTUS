@@ -18,6 +18,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/project/characters.hpp"
+#include "victus/project/starter_materials.hpp"
 #include "victus/project/project.hpp"
 #include "victus/core/log.hpp"
 #include "victus/scene/prefab.hpp"
@@ -403,6 +404,7 @@ void build_3d(Scene& s, const TemplateOptions& options) {
         env.ao_intensity = 1.0f;
         env.shadow_distance = 30.0f;
         env.contact_shadow_length = 0.3f;
+        env.environment_map = starter_sky_uuid(); // CC0 HDR sky: background and image-based lighting
     }
     const Entity ground = add(s, "Ground", {0, 0, 0});
     s.world().get<Transform>(ground)->scale = {20, 1, 20};
@@ -1753,6 +1755,28 @@ Entity block(Scene& s, std::string_view name, math::Vec3 at, math::Vec3 size, ma
     return e;
 }
 
+// A static block surfaced with a starter material (triplanar, so any size tiles evenly, ADR-0197).
+// `tint` multiplies the textures; white keeps them as authored.
+Entity block(Scene& s, std::string_view name, math::Vec3 at, math::Vec3 size, StarterMaterial material,
+             math::Color tint = {1, 1, 1, 1}) {
+    const Entity e = block(s, name, at, size, tint);
+    s.world().get<MeshRendererComponent>(e)->material_asset = starter_material_uuid(material);
+    return e;
+}
+
+// An island: a rock block (the collider, unchanged gameplay footprint) capped with a thin grass
+// turf that overhangs it by a few centimetres. The turf is visual only and has no collider.
+Entity island(Scene& s, std::string_view name, math::Vec3 at, math::Vec3 size) {
+    const Entity e = block(s, name, at, size, StarterMaterial::Rock, {0.9f, 0.86f, 0.8f, 1});
+    const float top = at.y + size.y * 0.5f;
+    const Entity turf = add(s, std::string(name) + " Turf", {at.x, top - 0.05f, at.z});
+    s.world().get<Transform>(turf)->scale = {size.x + 0.08f, 0.12f, size.z + 0.08f};
+    auto& m = mesh(s, turf, "cube", {1, 1, 1, 1}, 0.0f, 1.0f);
+    m.material_asset = starter_material_uuid(StarterMaterial::Grass);
+    m.lightmapped = true;
+    return e;
+}
+
 // The starter character under `root` turned to look down -Z, the way Top-Down Movement, Patrol
 // and Chase face 3D walkers (the model itself looks down +Z).
 void face_forward(Scene& s, Entity root) {
@@ -1776,20 +1800,23 @@ void build_nocode3d(Scene& s, const TemplateOptions& options) {
         env.contact_shadow_length = 0.3f;
         env.sky_zenith = {0.16f, 0.36f, 0.8f, 1};
         env.sky_horizon = {0.7f, 0.8f, 0.92f, 1};
+        // A CC0 HDR sky (data/materials/LICENSE.md) lights the scene and fills the background.
+        env.environment_map = starter_sky_uuid();
     }
 
     // The course runs away from the camera (-Z): a start island, stepping stones over the lava,
     // a guarded island with a checkpoint, a narrow bridge and the goal island.
-    const math::Color stone{0.55f, 0.53f, 0.5f, 1}, moss{0.3f, 0.5f, 0.26f, 1}, wood{0.5f, 0.32f, 0.18f, 1},
-        grass{0.62f, 0.85f, 0.5f, 1};
-    block(s, "Start Island", {0, -0.5f, 0}, {10, 1, 10}, grass, true);
+    // Surfaces are the CC0 starter materials (rock, grass turf, planks, paving, metal).
+    island(s, "Start Island", {0, -0.5f, 0}, {10, 1, 10});
     const struct { float x, y, z; } stones[] = {{0, -0.25f, -6.8f}, {1.5f, 0.05f, -9.6f}, {0, 0.35f, -12.4f}};
     int k = 0;
-    for (const auto& st : stones) block(s, "Stepping Stone " + std::to_string(++k), {st.x, st.y, st.z}, {2.4f, 1, 2.4f}, moss);
-    block(s, "Middle Island", {0, -0.5f, -20}, {12, 1, 10}, grass, true);
-    block(s, "Bridge", {0, -0.2f, -29}, {1.6f, 0.4f, 8}, wood);
-    block(s, "Goal Island", {0, -0.5f, -37}, {8, 1, 8}, grass, true);
-    block(s, "Wall", {-3.5f, 0.75f, -21.5f}, {1, 1.5f, 3}, stone);
+    for (const auto& st : stones)
+        block(s, "Stepping Stone " + std::to_string(++k), {st.x, st.y, st.z}, {2.4f, 1, 2.4f}, StarterMaterial::Rock,
+              {0.75f, 0.8f, 0.72f, 1});
+    island(s, "Middle Island", {0, -0.5f, -20}, {12, 1, 10});
+    block(s, "Bridge", {0, -0.2f, -29}, {1.6f, 0.4f, 8}, StarterMaterial::Planks);
+    island(s, "Goal Island", {0, -0.5f, -37}, {8, 1, 8});
+    block(s, "Wall", {-3.5f, 0.75f, -21.5f}, {1, 1.5f, 3}, StarterMaterial::Paving);
 
     // Lava below everything: falling in costs a life. The glow comes from two warm lights.
     const Entity lava = add(s, "Lava", {0, -3, -18});
@@ -1880,7 +1907,8 @@ void build_nocode3d(Scene& s, const TemplateOptions& options) {
 
     // A turret on the goal island fires slow shots at the player when it is in range.
     {
-        const Entity base = block(s, "Turret", {2.6f, 0.5f, -38.5f}, {0.8f, 1.0f, 0.8f}, {0.3f, 0.31f, 0.36f, 1});
+        const Entity base = block(s, "Turret", {2.6f, 0.5f, -38.5f}, {0.8f, 1.0f, 0.8f}, StarterMaterial::Metal,
+                                  {0.55f, 0.57f, 0.62f, 1});
         s.world().get<physics::ColliderComponent>(base)->shape = physics::ColliderComponent::Shape::Cylinder;
         s.world().get<MeshRendererComponent>(base)->primitive = "cylinder";
         const Entity head = add(s, "Turret Head", {2.6f, 1.3f, -38.5f});
@@ -1970,6 +1998,7 @@ std::vector<TemplateFile> template_files(std::string_view id, const TemplateOpti
                 {std::string(kEnergyMaterialPath) + ".meta", asset_meta(kEnergyMaterialUuid, "")},
                 {"assets/scripts/hud.luau", kHud},
                 {"assets/localization/en.vstrings", kHudStrings}};
+        add_starter_material_files(files);
         add_character_files(files, options);
         return files;
     }
@@ -2002,6 +2031,7 @@ std::vector<TemplateFile> template_files(std::string_view id, const TemplateOpti
                                         {std::string(kLavaShaderPath) + ".meta", asset_meta(kLavaShaderUuid, "")},
                                         {kLavaMaterialPath, lava_material()},
                                         {std::string(kLavaMaterialPath) + ".meta", asset_meta(kLavaMaterialUuid, "")}};
+        add_starter_material_files(files);
         add_character_files(files, options);
         return files;
     }

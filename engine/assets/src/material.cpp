@@ -2,6 +2,7 @@
 #include "victus/assets/material.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <format>
 #include <string>
@@ -92,6 +93,8 @@ const char* field_key(MaterialField f) noexcept {
     case MaterialField::OcclusionStrength: return "occlusion_strength";
     case MaterialField::ShaderTextures: return "shader_textures";
     case MaterialField::Responsive: return "responsive";
+    case MaterialField::Triplanar: return "triplanar";
+    case MaterialField::TriplanarSharpness: return "triplanar_sharpness";
     default: return "";
     }
 }
@@ -125,6 +128,8 @@ void MaterialAsset::copy_field(const MaterialAsset& src, MaterialField f) {
     case MaterialField::Blend: blend = src.blend; break;
     case MaterialField::OcclusionStrength: occlusion_strength = src.occlusion_strength; break;
     case MaterialField::Responsive: responsive = src.responsive; break;
+    case MaterialField::Triplanar: triplanar = src.triplanar; break;
+    case MaterialField::TriplanarSharpness: triplanar_sharpness = src.triplanar_sharpness; break;
     default: break;
     }
 }
@@ -184,6 +189,10 @@ json::Value MaterialAsset::to_json() const {
         v.set("occlusion_strength", num(occlusion_strength)); // omitted at the default, so older files round-trip
     if (responsive != 0.0f || (is_instance() && overrides_field(MaterialField::Responsive)))
         v.set("responsive", num(responsive)); // omitted at the default
+    if (triplanar || (is_instance() && overrides_field(MaterialField::Triplanar)))
+        v.set("triplanar", triplanar); // omitted when off, so older files round-trip
+    if (triplanar_sharpness != 4.0f || (is_instance() && overrides_field(MaterialField::TriplanarSharpness)))
+        v.set("triplanar_sharpness", num(triplanar_sharpness));
     if (!is_instance()) return v;
     // Instances store only what they override.
     Value inst = Value::object();
@@ -214,7 +223,8 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
                     r.uuid("emissive_texture", m.emissive_texture) && r.number("alpha_cutoff", m.alpha_cutoff) &&
                     r.vec("uv_scale", &m.uv_scale.x, 2, 2) && r.vec("uv_offset", &m.uv_offset.x, 2, 2) &&
                     r.boolean("unlit", m.unlit) && r.boolean("double_sided", m.double_sided) &&
-                    r.number("coverage_response", m.coverage_response) && r.number("occlusion_strength", m.occlusion_strength) && r.number("responsive", m.responsive);
+                    r.number("coverage_response", m.coverage_response) && r.number("occlusion_strength", m.occlusion_strength) && r.number("responsive", m.responsive) &&
+                    r.boolean("triplanar", m.triplanar) && r.number("triplanar_sharpness", m.triplanar_sharpness);
     if (!ok) return make_error(ErrorCode::ParseError, r.error);
     m.emissive = {emissive[0], emissive[1], emissive[2], 1.0f};
     if (!r.uuid("shader", m.shader)) return make_error(ErrorCode::ParseError, r.error);
@@ -269,6 +279,7 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
     m.coverage_response = std::clamp(m.coverage_response, 0.0f, 1.0f);
     m.occlusion_strength = std::clamp(m.occlusion_strength, 0.0f, 1.0f);
     m.responsive = std::clamp(m.responsive, 0.0f, 1.0f);
+    m.triplanar_sharpness = std::isfinite(m.triplanar_sharpness) ? std::clamp(m.triplanar_sharpness, 1.0f, 64.0f) : 4.0f;
     m.metallic = std::clamp(m.metallic, 0.0f, 1.0f);
     m.roughness = std::clamp(m.roughness, 0.0f, 1.0f);
     m.alpha_cutoff = std::clamp(m.alpha_cutoff, 0.0f, 1.0f);

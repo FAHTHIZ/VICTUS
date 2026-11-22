@@ -752,6 +752,8 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
         m.unlit = src->unlit;
         m.uv_scale = src->uv_scale;
         m.uv_offset = src->uv_offset;
+        m.triplanar = src->triplanar;
+        m.triplanar_sharpness = src->triplanar_sharpness;
         // Nearest when the material asks for it or its base colour texture is imported as pixel art.
         m.nearest_filter = src->filter == assets::TextureFilter::Nearest || texture_nearest(src->base_color_texture);
         m.shader_params = src->shader_params;

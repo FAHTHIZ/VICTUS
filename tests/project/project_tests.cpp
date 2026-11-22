@@ -4,6 +4,9 @@
 #include "victus/gameplay/capture.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/project/project.hpp"
+#include "victus/project/starter_materials.hpp"
+#include "victus/assets/material.hpp"
+#include "victus/core/json.hpp"
 #include "victus/audio/audio.hpp"
 #include "victus/animation/animation.hpp"
 #include "victus/ai/ai.hpp"
@@ -499,6 +502,61 @@ TEST_CASE("templates: the No-Code Platformer plays with behaviours alone") {
     for (const auto& e : r->host->recent_errors()) MESSAGE(e);
     std::error_code ec;
     sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("templates: 3D templates ship the CC0 starter materials and HDR sky (ADR-0197)") {
+    project::register_components();
+    for (const char* id : {"3d", "nocode3d"}) {
+        CAPTURE(id);
+        const auto files = project::template_files(id);
+        const auto find = [&](std::string_view path) -> const project::TemplateFile* {
+            for (const auto& f : files)
+                if (f.path == path) return &f;
+            return nullptr;
+        };
+        for (std::size_t i = 0; i < static_cast<std::size_t>(project::StarterMaterial::Count); ++i) {
+            const auto& info = project::starter_material(static_cast<project::StarterMaterial>(i));
+            CAPTURE(info.id);
+            const auto* vmat = find(info.material_path);
+            REQUIRE(vmat);
+            REQUIRE(find(std::string(info.material_path) + ".meta"));
+            auto parsed = json::parse(vmat->content);
+            REQUIRE(parsed.ok());
+            auto mat = assets::MaterialAsset::from_json(*parsed);
+            REQUIRE(mat.ok());
+            CHECK(mat->triplanar);
+            CHECK_FALSE(mat->base_color_texture.is_nil());
+            CHECK_FALSE(mat->normal_texture.is_nil());
+            CHECK(mat->occlusion_strength == doctest::Approx(1.0f));
+            for (const char* suffix : {"_color.jpg", "_normal.jpg", "_orm.jpg"}) {
+                const auto* tex = find("assets/textures/starter/" + std::string(info.id) + suffix);
+                REQUIRE(tex);
+                CHECK(tex->content.size() > 4000); // real 1K JPEGs, not placeholders (a flat metal ORM is ~6 KB)
+                CHECK(static_cast<unsigned char>(tex->content[0]) == 0xFF);
+            }
+        }
+        const auto* sky = find(project::kStarterSkyPath);
+        REQUIRE(sky);
+        CHECK(sky->content.starts_with("#?RADIANCE"));
+        scene::Scene s;
+        REQUIRE(project::build_template_scene(id, s).ok());
+        Uuid env_map;
+        s.world().each<gameplay::EnvironmentComponent>([&](gameplay::EnvironmentComponent& env) { env_map = env.environment_map; });
+        CHECK(env_map == project::starter_sky_uuid());
+    }
+    // The no-code level's scenery is surfaced with them.
+    scene::Scene s;
+    REQUIRE(project::build_template_scene("nocode3d", s).ok());
+    const auto material_of = [&](std::string_view name) {
+        const auto* m = s.world().get<scene::MeshRendererComponent>(s.find_by_name(name));
+        REQUIRE(m);
+        return m->material_asset;
+    };
+    CHECK(material_of("Start Island") == project::starter_material_uuid(project::StarterMaterial::Rock));
+    CHECK(material_of("Start Island Turf") == project::starter_material_uuid(project::StarterMaterial::Grass));
+    CHECK(material_of("Bridge") == project::starter_material_uuid(project::StarterMaterial::Planks));
+    CHECK(material_of("Turret") == project::starter_material_uuid(project::StarterMaterial::Metal));
+    CHECK(s.world().get<physics::ColliderComponent>(s.find_by_name("Start Island Turf")) == nullptr); // visual only
 }
 
 TEST_CASE("templates: the No-Code 3D Adventure plays with behaviours alone") {

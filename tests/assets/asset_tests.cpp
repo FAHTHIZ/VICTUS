@@ -518,6 +518,34 @@ TEST_CASE("material responsive flag round trips, clamps, inherits and is omitted
     CHECK(apply_instance(parent, child).responsive == doctest::Approx(1.0f));
 }
 
+TEST_CASE("material triplanar mapping round trips, clamps, inherits and is omitted at its default (ADR-0197)") {
+    auto m = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "triplanar": true, "triplanar_sharpness": 8})"));
+    REQUIRE(m.ok());
+    CHECK(m->triplanar);
+    CHECK(m->triplanar_sharpness == doctest::Approx(8.0f));
+    auto back = MaterialAsset::from_json(m->to_json());
+    REQUIRE(back.ok());
+    CHECK(back->triplanar);
+    CHECK(back->triplanar_sharpness == doctest::Approx(8.0f));
+    CHECK(MaterialAsset{}.to_json().find("triplanar") == nullptr);
+    CHECK(MaterialAsset{}.to_json().find("triplanar_sharpness") == nullptr);
+    auto wild = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "triplanar": true, "triplanar_sharpness": 1000})"));
+    REQUIRE(wild.ok());
+    CHECK(wild->triplanar_sharpness == doctest::Approx(64.0f));
+    auto low = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "triplanar_sharpness": 0})"));
+    REQUIRE(low.ok());
+    CHECK(low->triplanar_sharpness == doctest::Approx(1.0f));
+    MaterialAsset parent;
+    parent.triplanar = true;
+    MaterialAsset child;
+    child.parent = Uuid::generate();
+    child.overrides = 0;
+    CHECK(apply_instance(parent, child).triplanar); // inherited
+    child.overrides = field_bit(MaterialField::Triplanar);
+    child.triplanar = false;
+    CHECK_FALSE(apply_instance(parent, child).triplanar);
+}
+
 TEST_CASE("assets: HDR textures cook to half floats with SH irradiance and an LDR preview") {
     TempDir dir("victus_hdr_cook");
     render::ImageF env;

@@ -168,6 +168,7 @@ layout(set = 3, binding = 1) uniform Material {
     vec4 custom[4];      // surface shader parameters (material "shader_params")
     vec4 blend;          // x: 0 opaque, 1 alpha blended, 2 additive (volumetric fog, ADR-0119); y: ORM occlusion strength (ADR-0139),
                          // z: alpha to coverage, w: LOD cross-fade (ADR-0184; > 0 keeps dither < w, < 0 keeps dither >= -w)
+    vec4 mapping;        // x: 1 = world-space triplanar mapping (ADR-0197), y: blend sharpness
 } material;
 
 // Local reflection probe for this draw (box-projected cube bound to u_env instead of the scene's
@@ -680,28 +681,75 @@ float local_shadow(LocalLight l, vec3 Ld, float dist, vec3 N) {
     return sum / 9.0;
 }
 
+// World-space triplanar mapping (ADR-0197). Each texture is projected along the three world axes
+// and the projections are blended by the surface normal, so scaled boxes, terrain-like blocks and
+// meshes without good UVs tile evenly at uv_transform.xy repeats per metre. The projected u axis
+// is flipped on faces that look down a negative axis so no face shows a mirrored image, and normal
+// maps are reoriented with the "whiteout" blend (Golus, "Normal Mapping for a Triplanar Shader").
+struct Triplanar { vec2 uv_x, uv_y, uv_z; vec3 w, s; };
+Triplanar triplanar_setup(vec3 n) {
+    Triplanar t;
+    vec3 p = v_world_pos;
+    t.s = vec3(n.x < 0.0 ? -1.0 : 1.0, n.y < 0.0 ? -1.0 : 1.0, n.z < 0.0 ? -1.0 : 1.0);
+    vec2 sc = material.uv_transform.xy, of = material.uv_transform.zw;
+    t.uv_x = vec2(-p.z * t.s.x, -p.y) * sc + of;
+    t.uv_y = vec2(-p.x * t.s.y, -p.z) * sc + of;
+    t.uv_z = vec2(p.x * t.s.z, -p.y) * sc + of;
+    vec3 w = pow(abs(n), vec3(max(material.mapping.y, 1.0)));
+    t.w = w / max(w.x + w.y + w.z, 1e-5);
+    return t;
+}
+vec4 triplanar_sample(sampler2D tex, Triplanar t) {
+    float bias = lighting.camera_forward.w;
+    return texture(tex, t.uv_x, bias) * t.w.x + texture(tex, t.uv_y, bias) * t.w.y + texture(tex, t.uv_z, bias) * t.w.z;
+}
+vec3 triplanar_normal(Triplanar t, vec3 n) {
+    float bias = lighting.camera_forward.w;
+    vec3 tx = texture(u_normal_map, t.uv_x, bias).xyz * 2.0 - 1.0;
+    vec3 ty = texture(u_normal_map, t.uv_y, bias).xyz * 2.0 - 1.0;
+    vec3 tz = texture(u_normal_map, t.uv_z, bias).xyz * 2.0 - 1.0;
+    tx.xy *= material.params.z;
+    ty.xy *= material.params.z;
+    tz.xy *= material.params.z;
+    tx.x *= -t.s.x;
+    ty.x *= -t.s.y;
+    tz.x *= t.s.z;
+    tx = vec3(tx.xy + n.zy, abs(tx.z) * n.x);
+    ty = vec3(ty.xy + n.xz, abs(ty.z) * n.y);
+    tz = vec3(tz.xy + n.xy, abs(tz.z) * n.z);
+    return normalize(tx.zyx * t.w.x + ty.xzy * t.w.y + tz.xyz * t.w.z);
+}
+
 void main() {
     vec2 uv = v_uv * material.uv_transform.xy + material.uv_transform.zw;
-    vec4 base = texture(u_base_color, uv, lighting.camera_forward.w) * material.base_color;
-    bool alpha_is_mask = material.flags.z > 0.5;
+    bool triplanar = material.mapping.x > 0.5;
     vec3 geometric_n = normalize(v_normal);
     if (!gl_FrontFacing) geometric_n = -geometric_n;
+    Triplanar tp = triplanar_setup(geometric_n);
+    vec4 base = (triplanar ? triplanar_sample(u_base_color, tp) : texture(u_base_color, uv, lighting.camera_forward.w)) *
+                material.base_color;
+    bool alpha_is_mask = material.flags.z > 0.5;
     Surface s;
     s.base_color = base.rgb * v_color.rgb;
     s.alpha = alpha_is_mask ? base.a : base.a * v_color.a;
-    s.emissive = texture(u_emissive, uv, lighting.camera_forward.w).rgb * material.emissive.rgb;
+    s.emissive = (triplanar ? triplanar_sample(u_emissive, tp) : texture(u_emissive, uv, lighting.camera_forward.w)).rgb *
+                 material.emissive.rgb;
     s.unlit = material.flags.y > 0.5;
-    vec4 mr = texture(u_metal_rough, uv, lighting.camera_forward.w);
+    vec4 mr = triplanar ? triplanar_sample(u_metal_rough, tp) : texture(u_metal_rough, uv, lighting.camera_forward.w);
     s.occlusion = 1.0 + material.blend.y * (mr.r - 1.0); // glTF ORM: red = ambient occlusion
     s.metallic = clamp(material.params.x * mr.b, 0.0, 1.0);
     s.roughness = clamp(material.params.y * mr.g, 0.045, 1.0);
     vec3 N = geometric_n;
     if (material.flags.x > 0.5) {
-        vec3 T = normalize(v_tangent.xyz - N * dot(N, v_tangent.xyz));
-        vec3 B = cross(N, T) * v_tangent.w;
-        vec3 tn = texture(u_normal_map, uv, lighting.camera_forward.w).xyz * 2.0 - 1.0;
-        tn.xy *= material.params.z;
-        N = normalize(mat3(T, B, N) * tn);
+        if (triplanar) {
+            N = triplanar_normal(tp, geometric_n);
+        } else {
+            vec3 T = normalize(v_tangent.xyz - N * dot(N, v_tangent.xyz));
+            vec3 B = cross(N, T) * v_tangent.w;
+            vec3 tn = texture(u_normal_map, uv, lighting.camera_forward.w).xyz * 2.0 - 1.0;
+            tn.xy *= material.params.z;
+            N = normalize(mat3(T, B, N) * tn);
+        }
     }
     s.normal = N;
     vec3 V = normalize(lighting.camera_pos.xyz - v_world_pos);

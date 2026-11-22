@@ -304,6 +304,17 @@ void Editor::draw_material_editor() {
         inherit_button(F::UvScale);
         if (mark(ImGui::DragFloat2("Offset", of, 0.01f), F::UvOffset)) m.uv_offset = {of[0], of[1]};
         inherit_button(F::UvOffset);
+        mark(ImGui::Checkbox("Triplanar (world space)", &m.triplanar), F::Triplanar);
+        ImGui::SetItemTooltip("Project the textures along the world axes instead of using the mesh's UVs, so scaled "
+                              "blocks and rocks tile evenly. Tiling then counts repeats per metre.");
+        inherit_button(F::Triplanar);
+        if (m.triplanar) {
+            mark(ImGui::SliderFloat("Blend Sharpness", &m.triplanar_sharpness, 1.0f, 64.0f, "%.1f",
+                                    ImGuiSliderFlags_Logarithmic),
+                 F::TriplanarSharpness);
+            ImGui::SetItemTooltip("How quickly one projection gives way to the next on curved surfaces");
+            inherit_button(F::TriplanarSharpness);
+        }
         int filter = m.filter == assets::TextureFilter::Nearest ? 1 : 0;
         if (mark(ImGui::Combo("Filter", &filter, "Linear (smooth)\0Nearest (pixel art)\0"), F::Filter))
             m.filter = filter == 1 ? assets::TextureFilter::Nearest : assets::TextureFilter::Linear;

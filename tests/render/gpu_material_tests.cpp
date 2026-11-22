@@ -9,6 +9,7 @@
 #include "victus/runtime/scene_rendering.hpp"
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 
 using namespace victus;
@@ -58,8 +59,9 @@ struct MaterialScene {
         std::error_code ec;
         sfs::remove_all(project, ec);
     }
-    void write_material(float tiling, int bump_seconds) {
+    void write_material(float tiling, int bump_seconds, bool triplanar = false) {
         assets::MaterialAsset m;
+        m.triplanar = triplanar;
         m.unlit = true; // exact texture colours on screen, independent of lighting
         m.filter = assets::TextureFilter::Nearest;
         m.base_color_texture = texture;
@@ -180,6 +182,35 @@ TEST_CASE("gpu: material assets texture meshes, tile, degrade and hot reload") {
     CHECK(stats.missing_assets == 1);
     CHECK(stats.meshes == 1);
     cache.clear();
+}
+
+TEST_CASE("gpu: triplanar materials tile per metre whatever the object's scale (ADR-0197)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    MaterialScene s;
+    int bump = 0;
+    const auto count = [&](float tiling, bool triplanar, float scale) {
+        s.write_material(tiling, bump += 5, triplanar); // a newer mtime each time, so the edit is seen
+        s.scene.world().get<Transform>(s.plane)->scale = {scale, 1, scale};
+        s.scene.update_transforms();
+        runtime::GpuAssetCache cache(*gpu().ctx, s.db.get());
+        runtime::ExtractStats stats;
+        const int n = transitions(s, cache, &stats);
+        CHECK(stats.missing_assets == 0);
+        cache.clear();
+        return n;
+    };
+    // Mesh UVs: the texture stretches with the object, so doubling the floor halves the cells on screen.
+    const int uv20 = count(8.0f, false, 20), uv40 = count(8.0f, false, 40);
+    CAPTURE(uv20);
+    CAPTURE(uv40);
+    CHECK(uv20 >= 6);
+    CHECK(uv40 <= uv20 / 2 + 1);
+    // Triplanar: 0.5 repeats per metre (1 m cells) at both sizes; the pattern stays put.
+    const int tp20 = count(0.5f, true, 20), tp40 = count(0.5f, true, 40);
+    CAPTURE(tp20);
+    CAPTURE(tp40);
+    CHECK(tp20 >= 6);
+    CHECK(std::abs(tp20 - tp40) <= 1);
 }
 
 TEST_CASE("scene: MeshRenderer material reference survives save/load") {

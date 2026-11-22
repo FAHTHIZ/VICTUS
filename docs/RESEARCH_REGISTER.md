@@ -160,7 +160,7 @@ No third-party code was added.
 ## Research conclusions added 2026-11-17 (Slice 33, material assets)
 - glTF KHR_texture_transform — https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_texture_transform/README.md (accessed 2026-11-17): an affine UV transform applied as scale, then rotation, then translation (`translation * rotation * scale`). VICTUS materials store scale and offset in the same order (`uv * scale + offset`), so glTF transforms without rotation map 1:1 if imported later.
 - Godot BaseMaterial3D — https://docs.godotengine.org/en/stable/classes/class_basematerial3d.html (accessed 2026-11-17): `uv1_scale` multiplies and `uv1_offset` adds to UVs; `texture_filter` offers nearest/linear with and without mipmaps and anisotropy. VICTUS starts with linear (trilinear, mipmapped) and nearest; anisotropic filtering is an open item.
-- Open questions: material graphs and project-authored shaders, triplanar mapping, per-texture sampler overrides, material instances (parent + overrides).
+- Open questions: material graphs and project-authored shaders, triplanar mapping (world-space done, ADR-0197; object-space open), per-texture sampler overrides, material instances (parent + overrides).
 
 ## Research conclusions added 2026-11-17 (Slice 31, in-editor clients)
 - Unreal Engine PIE multiplayer options — https://dev.epicgames.com/documentation/en-us/unreal-engine/play-in-editor-multiplayer-options-in-unreal-engine (accessed 2026-11-17): Number of Players and Play Number of Clients set how many client instances PIE creates alongside a listen server. VICTUS adopts the count-based model inside one process.

@@ -82,7 +82,7 @@ std::uint64_t material_key(const Material& m) noexcept {
     for (float f : {m.base_color.r, m.base_color.g, m.base_color.b, m.base_color.a, m.emissive.r, m.emissive.g,
                     m.emissive.b, m.emissive_strength, m.metallic, m.roughness, m.normal_scale, m.alpha_cutoff,
                     m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y, m.coverage_response,
-                    m.occlusion_strength})
+                    m.occlusion_strength, m.triplanar_sharpness})
         h = mix(h, bits(f));
     for (auto t : {m.base_color_texture, m.metallic_roughness_texture, m.normal_texture, m.emissive_texture})
         h = mix(h, handle_bits(t));
@@ -94,7 +94,7 @@ std::uint64_t material_key(const Material& m) noexcept {
         for (std::size_t i = 0; i < m.shader_texture_count; ++i) h = mix(h, handle_bits(m.shader_textures[i]));
     }
     return mix(h, (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u) |
-                      (m.vertex_alpha_coverage_mask ? 16u : 0u) | (m.shadow_only ? 32u : 0u) | (std::uint64_t{static_cast<std::uint8_t>(m.blend)} << 8));
+                      (m.vertex_alpha_coverage_mask ? 16u : 0u) | (m.shadow_only ? 32u : 0u) | (m.triplanar ? 64u : 0u) | (std::uint64_t{static_cast<std::uint8_t>(m.blend)} << 8));
 }
 
 bool same_material(const Material& a, const Material& b) noexcept {
@@ -110,7 +110,8 @@ bool same_material(const Material& a, const Material& b) noexcept {
            std::equal(a.shader_params.begin(), a.shader_params.end(), b.shader_params.begin(),
                       [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; }) &&
            a.vertex_alpha_coverage_mask == b.vertex_alpha_coverage_mask && a.coverage_response == b.coverage_response &&
-           a.occlusion_strength == b.occlusion_strength && a.blend == b.blend && a.shadow_only == b.shadow_only;
+           a.occlusion_strength == b.occlusion_strength && a.blend == b.blend && a.shadow_only == b.shadow_only &&
+           a.triplanar == b.triplanar && a.triplanar_sharpness == b.triplanar_sharpness;
 }
 struct LightingUniforms {
     Vec4 camera_pos;
@@ -150,6 +151,7 @@ struct MaterialUniforms {
     Vec4 uv_transform; // xy scale, zw offset
     Vec4 custom[4];    // surface shader parameters
     Vec4 blend;        // x 0 opaque, 1 alpha, 2 additive (ADR-0119)
+    Vec4 mapping;      // x triplanar (ADR-0197), y blend sharpness
 };
 struct ProbeUniforms {
     Vec4 box_min, box_max, position;
@@ -4116,6 +4118,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 // blend.z: alpha to coverage (ADR-0152) - the cut-out becomes a coverage ramp.
                 mat.blend = {static_cast<float>(m.blend), std::clamp(m.occlusion_strength, 0.0f, 1.0f), a2c_of(m) ? 1.0f : 0.0f,
                              d->lod_fade};
+                mat.mapping = {m.triplanar ? 1.0f : 0.0f, std::clamp(m.triplanar_sharpness, 1.0f, 64.0f), 0.0f, 0.0f};
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
                 if (m.vertex_stage) push_vertex_material(ctx.cmd, m, false);
                 auto pick = [](rhi::TextureHandle t, rhi::TextureHandle fallback) { return t ? t : fallback; };

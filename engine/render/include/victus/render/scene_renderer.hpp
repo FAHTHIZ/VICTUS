@@ -65,6 +65,12 @@ struct Material {
     // Texture coordinates are transformed as uv * uv_scale + uv_offset before sampling (tiling).
     math::Vec2 uv_scale{1, 1};
     math::Vec2 uv_offset{0, 0};
+    // World-space triplanar mapping (ADR-0197): textures are projected along the world axes and
+    // blended by the surface normal instead of using the mesh's uvs, and uv_scale becomes repeats
+    // per metre. Suits scaled blocks, rocks and level geometry without good uvs. The projection
+    // is in world space, so a moving object's texture slides over it.
+    bool triplanar{false};
+    float triplanar_sharpness{4.0f}; // blend exponent between projections (1 soft .. 64 hard)
     bool nearest_filter{false}; // point sampling (pixel art); default is trilinear
     rhi::TextureHandle base_color_texture, metallic_roughness_texture, normal_texture, emissive_texture;
     bool double_sided{false};
