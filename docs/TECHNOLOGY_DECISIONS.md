@@ -2405,6 +2405,20 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 
 **Consequences:** Triangle counts stay inside the 140k-190k budget (the helmet cube-sphere goes from 30 to 27 quads per face to pay for the plates). Heights to the top of the helmet are unchanged (1.777 / 1.685 m). The plate pass continues piece by piece under this ADR.
 
+### ADR-0225: Layered synthetic armour architecture for Orion and Nova
+
+**Status:** Accepted (2026-11-22). Continues ADR-0223 (same pipeline, skeleton, clips, sockets, asset paths and UUIDs); each armour component lands as its own commit under this ADR.
+
+**Context:** After ADR-0223 the bodies had the design sheet's proportions, but the owner's review found them still well short of the sheet: the undersuit read as human muscle, the plates as pillowy tiles (a six-pack plastron, two domed pectorals), and the visor as a black rectangle. The sheet's Orion and Nova are synthetic androids: an angular white ceramic breastplate, a segmented black abdomen, a rounded helmet with a face-shaped smoked-glass visor wrapping to the ear pods, separate pauldrons, gauntlets, thigh, knee and shin assemblies. The owner asked for the armour to be rebuilt component by component, each with deliberate geometry, thickness, attachment boundaries and clearances, with distinct identities (Orion industrial and cyan, Nova streamlined and violet) and physically separate materials, verified by renders from front, side, rear and three-quarter views against the sheet.
+
+**Decision:** (1) Plate shells are manufactured surfaces: every plate's base is Taubin-faired (10 passes, boundary fixed) before thickening, the bevel to full thickness is at most 18 mm and the edge keeps at least 55% of the thickness, so parts read as uniform-thickness mouldings, not cushions. Limb plates cut their unwrap in the middle of the outline's angular gap (asserted to be over 4 degrees), never through the plate. (2) Undersuit: 10 Taubin passes over the body (was 6) and the moulded panel relief scaled to 0.55, so the suit keeps the V-taper and hips but loses anatomical detail. (3) Torso, Orion: one breastplate from shoulder to shoulder, notched at the collar, chevron lower edge, carrying the emblem; four graphite chevron lames down the abdomen with gaps between them. Nova: a narrower bust plate and one smooth graphite corset front and back. (4) Helmet and visor: a new sphere chart (azimuth and elevation about the head centre) carries the visor as a shield outline; the glass is a shell over that outline standing proud of the helmet, its edge rolled into it; the glass is opaque smoked glass in the bake (the asset contract keeps three opaque materials) with a thin glow bled in from the rim, and the helmet gets brushed-metal side panels round the ear pods. (5) Catmull-Clark treats non-manifold edges (three or more faces) as creases, as it already treated boundary edges; averaging three face points gave edge points weights summing to 1.5 and flung them 60 cm off the abdomen lames.
+
+**Alternatives:** A transmissive (alpha or transmission) visor: the importer, the opaque-material test contract and the forward renderer's sorting would all change for one part; the rim glow and dark centre give the smoked look without it. Hand-modelled armour in Blender: not reproducible and not driven by each body's proportions. Keeping the six-panel plastron with flatter tiles: still reads as muscle.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Triangle counts stay inside the 140k-190k budget. Remaining components (shoulders, back and spine, arms, hips and thighs, knees, shins and ankles), extreme-pose intersection checks and a renewed runtime close-up follow under this ADR.
+
 ### ADR-0224: Text shaping and bidirectional layout with HarfBuzz and SheenBidi
 
 **Status:** Accepted (2026-11-22)

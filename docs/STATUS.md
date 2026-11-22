@@ -3313,3 +3313,21 @@ Verified (Release, 2-core sandbox):
 - Not verified: physical GPUs, line breaking per UAX #14, CJK fonts; Studio's own UI still uses ImGui fonts.
 - Next task: Studio MCP server for agent-driven editing (GAP-38), then iteration times (GAP-40).
 
+
+## 2026-11-22 — Orion and Nova armour architecture: torso, helmet and visor (ADR-0225)
+
+Built:
+- `plates.py`: plate bases faired before thickening (`Plate.fair`, 10 Taubin passes, boundary fixed); bevel to full thickness at most 18 mm, edge at least 55% thick; limb plates cut their unwrap in the outline's angular gap; `extra["xmin"]` clip (pauldrons stay clear of the chest); a `sphere` chart and `visor_outline`.
+- Orion torso: one breastplate (collar notch, chevron edge, emblem) and four graphite chevron abdominal lames with gaps, in place of two pectorals, a sternum keel and a six-tile plastron. Nova: narrower bust, one graphite corset front and back in place of six and four tiles.
+- Helmet and visor (`mannequin.py`, `mannequin_materials.py`): shield-outline smoked-glass visor on the sphere chart, from brow to chin and back to the ear pods (Nova 8% narrower), rim glow, arc eye glyphs; brushed-metal side panels round the ear pods; the floating HUD line removed.
+- Undersuit: 10 Taubin passes (was 6), panel relief scaled to 0.55 (`suit.RELIEF_SCALE`).
+- `meshops.catmull_clark`: non-manifold edges are creases; `test_catmull_clark_nonmanifold_edge_is_a_crease`.
+- `render_preview.py`: `headside` and `headback` views.
+
+Verified (2-core sandbox):
+- `tools/characters/test_pipeline.py` 11/11.
+- `build_characters.py --out engine/project/data/characters`: Orion 178,144 triangles, 12.48 MB; Nova 179,144 triangles, 13.04 MB; 60 joints, 26 blend shapes, 41 clips. Longest exported edge 4.67 cm (Orion) and 3.30 cm (Nova); before the Catmull-Clark fix the abdominal lames had 60 cm spikes, seen in a review render and traced to two non-manifold edges.
+- `victus_asset_tests -tc="*character*"` (Release): 8 cases, 52,951 assertions pass.
+- Blender renders from front, three-quarter, side and back views and head close-ups compared by eye with the design sheet (`docs/images/characters/blender_render_bodies.jpg`, `blender_render_heads.jpg`). Matches the sheet: Orion's white breastplate over a segmented black abdomen with cyan lines, Nova's bust over a smooth black corset, the face-shaped visor with a coloured rim. Still short of the sheet: rounded pauldrons rather than layered angular ones, plain white thigh plates without panel cuts, knees without the white cap and black frame, slim boots, a back that is the same on both characters, and the visor's glow is a rim line rather than the sheet's soft inner light.
+- Not verified: extreme poses and armour intersections, the VICTUS runtime close-ups.
+- Next task: shoulders, then back and spine, arms, hips and thighs, knees, shins and boots (ADR-0225).

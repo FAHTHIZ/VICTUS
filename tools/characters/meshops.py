@@ -54,7 +54,9 @@ def catmull_clark(q: Quads):
     N, M = len(q.v), len(q.f)
     E, fe, ecount = _edges(q.f)
     nE = len(E)
-    boundary_e = ecount == 1
+    # Creases: open boundary edges, and non-manifold edges (three or more faces) as well; averaging
+    # three face points into an edge point would give it weights summing past one and fling it off.
+    boundary_e = ecount != 2
     rows, cols, vals = [], [], []
 
     def add(r, c, w):

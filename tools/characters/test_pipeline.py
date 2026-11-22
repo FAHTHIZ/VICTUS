@@ -96,6 +96,17 @@ def test_catmull_clark_bowtie_vertex_stays_put():
     assert np.allclose(q2.v[2], v[2])
 
 
+def test_catmull_clark_nonmanifold_edge_is_a_crease():
+    # Three quads sharing one edge (a fin a thin plate's shell can leave): the edge point must
+    # stay on the edge, not average three face points with weights summing to 1.5.
+    v = np.array([[0, 0, 0], [0, 0, 1], [1, 0, 0], [1, 0, 1], [-1, 0, 0], [-1, 0, 1], [0, 1, 0], [0, 1, 1]], float)
+    f = np.array([[0, 2, 3, 1], [1, 5, 4, 0], [0, 1, 7, 6]])
+    q = meshops.Quads(v, f, v[:, :2].copy(), f.copy())
+    q2, S = meshops.catmull_clark(q)
+    assert np.allclose(np.asarray(S.sum(1)).ravel(), 1.0)
+    assert np.abs(q2.v[:, :2]).max() <= 1.0 + 1e-9
+
+
 def test_tangent_handedness():
     # A +Z-facing quad with u along +X and v along -Y (texture rows go down the image) is the
     # glTF convention: bitangent cross(N, T) * w must point toward decreasing v, i.e. +Y.

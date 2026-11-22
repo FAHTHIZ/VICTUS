@@ -479,7 +479,7 @@ def assemble(body: fit.Body):
     v = q.v
     hand_d = np.min([np.linalg.norm(v - J[f"Hand.{t}"][0], axis=1) for t in ("L", "R")], axis=0)
     mask = smooth01((hand_d - 0.03) / 0.05)
-    q = Quads(taubin(v, q.f, mask, iters=6), q.f, q.uv, q.fuv)
+    q = Quads(taubin(v, q.f, mask, iters=10), q.f, q.uv, q.fuv)
 
     # The jaw cut: a plane under the chin rising to the base of the skull.
     jaw_tip = J["Jaw"][1]
@@ -543,7 +543,7 @@ def assemble(body: fit.Body):
         pieces.append((dq, dw, kind, np.zeros(len(dq.f), np.int32), pname, 1, 0, None))
 
     puck("Spine", zt(0.76), False, 0.060 if nova else 0.068, 0.020, 3, "Core")
-    puck("Sternum", zt(0.80), True, 0.014 if nova else 0.020, 0.010, 5, "Emblem")
+    puck("Sternum" if nova else "Chest", zt(0.80), True, 0.014 if nova else 0.020, 0.010, 5, "Emblem")
 
     # Helmet: a ceramic shell over the head volume (cut lower than the head shell, so it covers
     # the jaw), inflated more at the crown and the back so it reads as a helmet, not a scalp.
@@ -565,15 +565,9 @@ def assemble(body: fit.Body):
     eye = head.eye
     vtop = eye[2] + 0.034
     vbot = jaw_z + 0.020
-    vmid = eye[2] - 0.030
-    vis_planes = [(np.array([0, 0, vtop]), _unit([0, 0.18, 1.0])), (np.array([0, 0, vbot]), np.array([0, 0, -1.0]))]
-    for s_ in (1.0, -1.0):
-        a = np.radians(64)
-        vis_planes.append((head.c.copy(), _unit([s_ * np.cos(a), np.sin(a), 0.0])))
-    del vmid
-    front = (hmc - head.c)[:, 1] < -0.01
-    vsel = region_faces(hmc, vis_planes)
-    vsel = vsel[front[vsel]]
+    vis_plate = plates.Plate("Visor", plates.Chart("sphere", a=head.c.copy(), radius=0.09), plates.visor_outline(body.spec.key),
+                             thickness=0.0002, crown=0.004, edge=1.0, round=0.004, mirror=False, fair=0)
+    vsel = plates.select(hm, vis_plate, hmc)
     below = (hmc - hpo) @ pn > -0.002
     hsel = _largest_component(hm, np.where(~below)[0])
     vsel = np.intersect1d(vsel, hsel)
@@ -595,7 +589,7 @@ def assemble(body: fit.Body):
     # Visor: a pane of glass standing proud of the helmet front, its edge rolling down into it.
     gq = Quads(hm.v + hn * 0.0035, hm.f, hm.uv, hm.fuv)
     glass_s = RadialMesh(head.c, gq.v)
-    vq, vsrc, vlab = gear.shell(gq, hn, vsel, vis_planes, 0.0, -0.0006, -0.0068)
+    vq, vsrc, vlab, _ = plates.shell(gq, hn, vsel, vis_plate, tuck=-0.0068)
     head_W_v = np.zeros((len(vq.v), len(names)))
     head_W_v[:, names.index("Head")] = 1.0
 
@@ -604,7 +598,7 @@ def assemble(body: fit.Body):
     eye_dirs = {1.0: J["Eye.L"][0] - head.c, -1.0: J["Eye.R"][0] - head.c}
     for side in (1.0, -1.0):
         dd = eye_dirs[side] + np.array([side * 0.006, 0, 0.002])
-        gq_, S, T, fr = glyph(glass_s, dd, 0.030, 0.0082, 0.0009, nu=8, nv=3)
+        gq_, S, T, fr = glyph(glass_s, dd, 0.032, 0.0062, 0.0009, nu=12, nv=3, bend=-0.0055)
         glyphs.append((gq_, eye_morphs(S, T, fr, side), 1))
     mouth_dir = np.array([0, -1.0, 0]) * 0.1 + np.array([0, 0, (eye[2] - 0.056) - head.c[2]])
     gq_, S, T, fr = glyph(glass_s, mouth_dir, 0.040, 0.0036, 0.0009, nu=12, nv=2)
@@ -648,7 +642,7 @@ def assemble(body: fit.Body):
                       attrs={"rest": visor_q.v.copy(), "glyph": glyph_v[:, None]},
                       face_attrs={"kind": visor_kind, "cuff": visor_lip})
     # Landmarks the materials and sockets use.
-    info = {"head": head, "plane": plane, "visor": (vbot, vtop), "torso": torso}
+    info = {"head": head, "plane": plane, "visor": (vbot, vtop), "torso": torso, "visor_plate": vis_plate}
     return [frame_part, armor_part, visor_part], style, info
 
 

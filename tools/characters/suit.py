@@ -28,6 +28,9 @@ class Panel:
     seam: bool = True  # False: a light line only (an open polyline, no seam or relief)
 
 
+RELIEF_SCALE = 0.55
+
+
 def panels(J, torso: Torso, key):
     nova = key == "nova"
     hips, neck = J["Hips"][0], J["Neck"][0]
@@ -43,6 +46,8 @@ def panels(J, torso: Torso, key):
 
     def add(name, chart, outline, mirror=True, g=None, **kw):
         p = Plate(name, chart, outline, round=kw.pop("round", 0.008), gate=gate if g is None else g)
+        # A manufactured suit, not a muscle suit: the panels read as moulded sections, low relief.
+        kw["relief"] = kw.get("relief", Panel.relief) * RELIEF_SCALE
         out.append(Panel(p, **kw))
         if mirror:
             out.append(Panel(mirrored(p), **kw))

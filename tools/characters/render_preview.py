@@ -29,6 +29,8 @@ VIEWS = {
     "back": (180, 0.55, "body"),
     "head": (22, 0.93, "head"),
     "headfront": (0, 0.93, "head"),
+    "headside": (90, 0.93, "head"),
+    "headback": (160, 0.93, "head"),
     "torso": (20, 0.75, "torso"),
     "torsoback": (180, 0.75, "torso"),
     "legs": (25, 0.28, "legs"),

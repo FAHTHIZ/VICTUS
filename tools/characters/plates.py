@@ -108,6 +108,11 @@ class Chart:
             yc = self.torso.centre(P[:, 2])
             ok = (P[:, 1] < yc) if self.kind == "front" else (P[:, 1] > yc)
             return np.stack([P[:, 0], P[:, 2]], 1), ok
+        if self.kind == "sphere":  # about centre a: (azimuth from the front, elevation) x radius
+            rel = P - self.a
+            az = np.arctan2(rel[:, 0], -rel[:, 1])
+            el = np.arctan2(rel[:, 2], np.hypot(rel[:, 0], rel[:, 1]))
+            return np.stack([az * self.radius, el * self.radius], 1), rel[:, 1] < 0.04
         if self.kind == "side":
             ok = P[:, 0] * self.side > 0.0
             return np.stack([-P[:, 1], P[:, 2]], 1), ok
@@ -123,6 +128,8 @@ class Chart:
         """Outline vertices in the plate's authoring units -> chart metres. Limb outlines are given
         as (degrees around, fraction of the bone length); torso outlines in metres."""
         poly = np.asarray(poly, float)
+        if self.kind == "sphere":  # outlines in degrees (azimuth, elevation)
+            return np.radians(poly) * self.radius
         if self.kind != "limb":
             return poly
         L = float(np.linalg.norm(self.b - self.a))
@@ -142,13 +149,16 @@ class Plate:
     edge: float = 0.35  # edge thickness as a fraction of the crown thickness
     gate: tuple | None = None  # (a, b, radius): only body faces within radius of the segment
     mirror: bool = True  # outline drawn for the left side; the right is mirrored
-    extra: dict = field(default_factory=dict)
+    fair: int = 10  # smoothing passes over the shell's base: a manufactured surface, not anatomy
+    extra: dict = field(default_factory=dict)  # "xmin": only points at least this far out from the midline
 
     def g(self, P):
         uv, ok = self.chart.coords(P)
         poly = self.chart.to_metric(self.outline)
         d = polygon_sdf(uv, poly) - self.round
         d = np.where(ok, d, 1.0)
+        if "xmin" in self.extra:
+            d = np.where(P[:, 0] * self.chart.side > self.extra["xmin"], d, 1.0)
         if self.gate is not None:
             a, b, r = self.gate
             d = np.where(_seg_dist(P, a, b) < r, d, 1.0)
@@ -273,6 +283,22 @@ def shell(q: Quads, nrm, faces, plate: Plate, tuck=-0.0015, scale=1.0):
     th = plate.thickness * scale
     prof = plate.edge + (1 - plate.edge) * smooth01(dist / max(plate.crown, 1e-4))
     pos = base + n_used * (th * prof)[:, None]
+    if plate.fair and len(used) > 8:
+        # Fair the outer surface (Taubin, boundary fixed) so the plate bridges the body's
+        # anatomy like a moulded part, then keep at least the edge thickness of clearance.
+        e = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 3]], f[:, [3, 0]]])
+        e = np.unique(np.sort(remap[e], 1), axis=0)
+        deg = np.bincount(e.reshape(-1), minlength=len(pos)).astype(float)
+        free = (~bmask)[:, None].astype(float)
+        for it in range(plate.fair * 2):
+            acc = np.zeros_like(pos)
+            np.add.at(acc, e[:, 0], pos[e[:, 1]])
+            np.add.at(acc, e[:, 1], pos[e[:, 0]])
+            lap = acc / np.maximum(deg, 1)[:, None] - pos
+            pos = pos + (0.5 if it % 2 == 0 else -0.53) * lap * free
+        off = ((pos - base) * n_used).sum(1)
+        need = th * prof
+        pos = pos + n_used * np.maximum(need * 0.85 - off, 0.0)[:, None]
     bverts = np.unique(edges[:, :2])
     low = -np.ones(len(q.v), np.int64)
     low[bverts] = len(pos) + np.arange(len(bverts))
@@ -319,6 +345,17 @@ def disc(center, normal, radius, depth, n=8, bevel=0.82):
 # ---- layouts -----------------------------------------------------------------------------
 
 
+def visor_outline(key):
+    """The visor's shield outline in degrees (azimuth from the front, elevation) about the head
+    centre: from the brow, widest at the eye line where it wraps toward the ear pods, narrowing to
+    the chin (the design sheet's face-shaped visor). Nova's is narrower and more oval."""
+    k = 0.92 if key == "nova" else 1.0
+    half = [(0, 25), (24, 24), (46, 19), (62, 9), (70 * k, -4), (68 * k, -18), (57 * k, -32), (40 * k, -44),
+            (20 * k, -51), (0, -53)]
+    right = [(-a, e) for a, e in half[1:-1]][::-1]
+    return half + right
+
+
 def layout(J, torso: Torso, key):
     """The plate set of one character: Orion (Frame 01) or Nova (Frame 02), after the ORION & NOVA
     design sheet. Left-side plates are mirrored to the right."""
@@ -336,22 +373,37 @@ def layout(J, torso: Torso, key):
     out = []
 
     def add(p, mirror=None):
+        # Manufactured parts: near-uniform thickness with a short bevel at the edge (the fairing
+        # in `shell` gives the surface its moulded form).
+        p.crown = min(p.crown, 0.018)
+        p.edge = max(p.edge, 0.55)
+        if p.chart.kind == "limb":
+            # Cut the unwrap in the middle of the outline's angular gap, never through the plate
+            # (a cut through it makes the edge snapping jump across the seam).
+            import copy
+
+            a = np.array([pt[0] for pt in p.outline], float)
+            gap = 360.0 - (a.max() - a.min())
+            p.chart = copy.copy(p.chart)
+            p.chart.seam = a.min() - max(gap, 0.0) * 0.5
+            assert gap > 4.0, f"{p.name}: the outline must leave a gap around the limb"
         out.append(p)
         if p.mirror if mirror is None else mirror:
             out.append(mirrored(p))
 
     if not nova:
-        # Chest: two domed pectoral plates either side of a graphite sternum keel.
-        add(Plate("Pec.L", F, [(0.026, z(0.93)), (0.07, z(0.95)), (0.118, z(0.935)), (0.148, z(0.89)),
-                               (0.156, z(0.77)), (0.145, z(0.665)), (0.11, z(0.605)), (0.06, z(0.59)), (0.026, z(0.62))],
-                  thickness=0.017, crown=0.05, trim=1, round=0.012, gate=torso_gate))
-        add(Plate("Sternum", F, [(-0.014, z(0.92)), (0.014, z(0.92)), (0.016, z(0.66)), (0.0, z(0.6)), (-0.016, z(0.66))],
-                  thickness=0.014, crown=0.012, tone=1, trim=2, round=0.004, gate=torso_gate, mirror=False))
-        # Abdomen: a six-panel graphite plastron, the top row the widest.
-        rows = ((0.545, 0.455, 0.078), (0.44, 0.35, 0.072), (0.335, 0.245, 0.066))
+        # Chest: one angular ceramic breastplate from shoulder to shoulder, notched at the collar,
+        # its lower edge a shallow chevron over the abdomen (the sheet's front view).
+        half = [(0.0, z(0.905)), (0.035, z(0.93)), (0.085, z(0.955)), (0.128, z(0.945)), (0.150, z(0.89)),
+                (0.153, z(0.77)), (0.142, z(0.685)), (0.105, z(0.64)), (0.045, z(0.625)), (0.0, z(0.605))]
+        add(Plate("Chest", F, half + [(-x_, z_) for x_, z_ in half[-2:0:-1]],
+                  thickness=0.016, crown=0.04, edge=0.45, trim=1, round=0.010, gate=torso_gate, mirror=False))
+        # Abdomen: four graphite lames stacked down the midline, each a chevron, with clear gaps
+        # between them (they slide over each other as the spine flexes).
+        rows = ((0.585, 0.505, 0.080), (0.49, 0.41, 0.076), (0.395, 0.315, 0.071), (0.30, 0.225, 0.064))
         for i, (t1, t0, w) in enumerate(rows):
-            add(Plate(f"Abs{i}.L", F, [(0.012, z(t1)), (w, z(t1 + 0.01)), (w - 0.006, z(t0)), (0.012, z(t0))],
-                      thickness=0.011, crown=0.016, tone=1, round=0.006, gate=torso_gate))
+            add(Plate(f"Abs{i}", F, [(-w, z(t1)), (w, z(t1)), (w - 0.005, z(t0 + 0.01)), (0.0, z(t0)), (-w + 0.005, z(t0 + 0.01))],
+                      thickness=0.010, crown=0.012, tone=1, round=0.005, gate=torso_gate, mirror=False))
         add(Plate("Oblique.L", F, [(0.094, z(0.555)), (0.148, z(0.60)), (0.152, z(0.38)), (0.118, z(0.25)), (0.088, z(0.27))],
                   thickness=0.009, crown=0.02, tone=1, round=0.006, gate=torso_gate))
         add(Plate("Belt", F, [(-0.16, z(0.205)), (0.16, z(0.205)), (0.16, z(0.13)), (-0.16, z(0.13))],
@@ -376,15 +428,17 @@ def layout(J, torso: Torso, key):
                   thickness=0.011, crown=0.012, tone=1, round=0.004, gate=torso_gate, mirror=False))
     else:
         # Chest: one sculpted bust plate split by a lit centre seam.
-        add(Plate("Bust.L", F, [(0.006, z(0.92)), (0.06, z(0.95)), (0.11, z(0.93)), (0.14, z(0.86)), (0.148, z(0.72)),
-                                (0.14, z(0.62)), (0.09, z(0.575)), (0.035, z(0.59)), (0.006, z(0.64))],
-                  thickness=0.012, crown=0.04, trim=1, round=0.012, gate=torso_gate))
+        add(Plate("Bust.L", F, [(0.006, z(0.90)), (0.05, z(0.93)), (0.092, z(0.915)), (0.118, z(0.85)), (0.122, z(0.74)),
+                                (0.114, z(0.65)), (0.08, z(0.605)), (0.035, z(0.61)), (0.006, z(0.645))],
+                  thickness=0.010, crown=0.035, edge=0.45, trim=1, round=0.014, gate=torso_gate))
         add(Plate("Sternum", F, [(-0.004, z(0.90)), (0.004, z(0.90)), (0.004, z(0.66)), (-0.004, z(0.66))],
                   thickness=0.006, crown=0.004, tone=1, trim=2, round=0.002, gate=torso_gate, mirror=False))
-        # Corset: graphite panels over a narrow waist, angled like ribs.
-        for i, (t1, t0, w) in enumerate(((0.52, 0.43, 0.085), (0.41, 0.32, 0.075), (0.30, 0.215, 0.07))):
-            add(Plate(f"Corset{i}.L", F, [(0.008, z(t1)), (w, z(t1 + 0.03)), (w + 0.01, z(t0 + 0.03)), (0.008, z(t0))],
-                      thickness=0.007, crown=0.012, tone=1, round=0.006, gate=torso_gate))
+        # Corset: one smooth graphite piece cinching the waist, pointed under the bust and at the
+        # groin (the sheet's leotard line); the undersuit's violet lines frame it.
+        add(Plate("Corset", F, [(0.0, z(0.585)), (0.05, z(0.57)), (0.092, z(0.56)), (0.084, z(0.44)), (0.080, z(0.32)),
+                                (0.092, z(0.20)), (0.06, z(0.12)), (0.0, z(0.08)), (-0.06, z(0.12)), (-0.092, z(0.20)),
+                                (-0.080, z(0.32)), (-0.084, z(0.44)), (-0.092, z(0.56)), (-0.05, z(0.57))],
+                  thickness=0.006, crown=0.03, edge=0.5, tone=1, round=0.010, gate=torso_gate, mirror=False))
         add(Plate("Hip.L", S, [(0.075, z(0.16)), (-0.03, z(0.16)), (-0.055, z(0.02)), (-0.045, z(-0.16)), (0.02, z(-0.22)),
                                (0.08, z(-0.12)), (0.095, z(0.02))],
                   thickness=0.010, crown=0.03, trim=1, round=0.012,
@@ -395,9 +449,11 @@ def layout(J, torso: Torso, key):
         add(Plate("Spine", B, [(-0.062, z(0.93)), (0.062, z(0.93)), (0.072, z(0.82)), (0.064, z(0.68)), (0.025, z(0.6)),
                                (-0.025, z(0.6)), (-0.064, z(0.68)), (-0.072, z(0.82))],
                   thickness=0.011, crown=0.02, tone=1, round=0.01, gate=torso_gate, mirror=False))
-        for i, (t1, t0) in enumerate(((0.54, 0.45), (0.43, 0.34))):
-            add(Plate(f"Lumbar{i}.L", B, [(0.008, z(t1)), (0.06, z(t1)), (0.055, z(t0)), (0.008, z(t0))],
-                      thickness=0.007, crown=0.012, tone=1, round=0.006, gate=torso_gate))
+        # The corset closes at the back: one smooth graphite piece under the spine housing.
+        add(Plate("CorsetBack", B, [(0.0, z(0.585)), (0.07, z(0.57)), (0.098, z(0.52)), (0.088, z(0.40)), (0.09, z(0.26)),
+                                    (0.06, z(0.20)), (0.0, z(0.19)), (-0.06, z(0.20)), (-0.09, z(0.26)), (-0.088, z(0.40)),
+                                    (-0.098, z(0.52)), (-0.07, z(0.57))],
+                  thickness=0.006, crown=0.03, edge=0.5, tone=1, round=0.010, gate=torso_gate, mirror=False))
 
     for t in ("L",):
         sh, el, wr = J[f"UpperArm.{t}"][0], J[f"LowerArm.{t}"][0], J[f"Hand.{t}"][0]
@@ -410,9 +466,9 @@ def layout(J, torso: Torso, key):
         k = 0.85 if nova else 1.0
         arm_gate = (sh - da * 0.12, el, 0.15)
         # Shoulders: a domed pauldron over the deltoid and a second lame below it.
-        add(Plate("Pauldron.L", ua, [(-70, -0.34), (40, -0.42), (140, -0.40), (235, -0.30), (240, 0.30), (120, 0.40),
-                                    (20, 0.36), (-60, 0.28)],
-                  thickness=0.024 * k, crown=0.05, trim=1, round=0.014, gate=arm_gate))
+        add(Plate("Pauldron.L", ua, [(-30, -0.02), (30, -0.14), (90, -0.20), (150, -0.14), (212, -0.02), (215, 0.34),
+                                    (120, 0.44), (40, 0.42), (-30, 0.30)], extra={"xmin": 0.148 if nova else 0.15},
+                  thickness=0.022 if nova else 0.03, crown=0.05, trim=1, round=0.016, gate=arm_gate))
         add(Plate("Lame.L", ua, [(-45, 0.40), (40, 0.46), (130, 0.50), (215, 0.44), (210, 0.58), (120, 0.62),
                                 (30, 0.58), (-40, 0.54)],
                   thickness=0.015 * k, crown=0.02, round=0.008, gate=arm_gate, tone=1 if not nova else 0))
@@ -421,8 +477,8 @@ def layout(J, torso: Torso, key):
         add(Plate("Elbow.L", fa, [(120, -0.08), (240, -0.08), (250, 0.10), (180, 0.14), (110, 0.10)],
                   thickness=0.013, crown=0.02, tone=1, round=0.008, gate=(el - da * 0.08, el + _unit(wr - el) * 0.08, 0.09)))
         # Forearm: a gauntlet wrapping all but the inner wrist, its top cut on a slant.
-        add(Plate("Gauntlet.L", fa, [(-110, 0.36), (-20, 0.20), (90, 0.12), (200, 0.18), (250, 0.36), (250, 0.90),
-                                    (-110, 0.90)],
+        add(Plate("Gauntlet.L", fa, [(-100, 0.36), (-20, 0.20), (90, 0.12), (200, 0.18), (240, 0.36), (240, 0.90),
+                                    (-100, 0.90)],
                   thickness=0.015 * k, crown=0.035, trim=1, round=0.010, gate=(el, wr, 0.09)))
         # Thighs: the front-outer plate with a slanted hip cut, a rear plate.
         thick_gate = (hp + _unit(kn - hp) * 0.02, kn, 0.14)

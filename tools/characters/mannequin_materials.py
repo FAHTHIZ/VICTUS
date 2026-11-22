@@ -30,6 +30,7 @@ class Landmarks:
         self.J = J
         self.head = info["head"]
         self.visor = info["visor"]
+        self.visor_plate = info.get("visor_plate")
         self.torso = info["torso"]
         self.key = body.spec.key
         self.eL, self.eR = J["Eye.L"][0], J["Eye.R"][0]
@@ -400,7 +401,18 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
         h[helmet] += crest * 0.0010 - crest_edge * 0.0004 - vents * 0.0008 - seam * 0.0004
         col[helmet] *= (1 - vents[:, None] * 0.85) * (1 - 0.5 * seam[:, None]) * (1 - 0.4 * crest_edge[:, None])
         cavity[helmet] -= crest_edge * 0.35 + vents * 0.5 + seam * 0.4
-        em[helmet] += (vents * 0.0 + crest_edge * 0.0)[:, None] * glow
+        # Side panels: brushed-metal covers around the ear pods, sweeping back toward the nape, framed by a recessed seam.
+        dbox = 36.0 * ((np.abs((az - 102) / 44) ** 4 + np.abs((el + 6) / 36) ** 4) ** 0.25 - 1.0)
+        tp = soft(dbox, -1.2, 0.0) * (eh > 0.004)
+        tseam = np.exp(-(dbox / 0.7) ** 2) * (eh > 0.004)
+        brushed = fbm(Ph * np.array([1.0, 1.0, 30.0]), 500, 2, seed + 15)
+        tcol = metal_c[None] * (0.30 + 0.04 * brushed)[:, None]
+        col[helmet] = col[helmet] * (1 - tp[:, None]) + tcol * tp[:, None]
+        metal[helmet] = np.maximum(metal[helmet], tp * 0.5)
+        rough[helmet] = rough[helmet] * (1 - tp) + (0.40 + 0.05 * brushed) * tp
+        h[helmet] += -tseam * 0.0005 - tp * 0.0003
+        col[helmet] *= (1 - 0.6 * tseam[:, None])
+        cavity[helmet] -= tseam * 0.45
 
     # Ceramic micro-surface: faint orange peel in the clear coat, slight roughness variation.
     h += shell * fine * 0.000004
@@ -437,9 +449,17 @@ def visor_maps(tx, P, N, L: Landmarks, style, kind, cuff, seed):
     col[rim] = np.array(style.metal) * 0.6
     metal[rim] = 1.0
     rough[rim] = 0.3
-    # A dim HUD line just inside the top edge of the glass.
-    top = glass & (np.abs(P[:, 2] - (L.visor[1] - 0.006)) < 0.0006) & (np.abs(P[:, 0]) < 0.035)
-    em[top] = glow * 0.35
+    # Smoked glass lit from its edge: a light guide in the rim bleeds a thin tinted glow inward,
+    # while the centre stays near-black so the display glyphs read.
+    if L.visor_plate is not None:
+        gv = L.visor_plate.g(P)
+        depth = np.clip(-gv, 0, None)
+        inner = np.exp(-depth / 0.005) * (glass & ~rim)
+        col += np.outer(inner, glow) * 0.02
+        em += np.outer(inner ** 2, glow) * 0.10
+        # A faint face-shaped tint band: the display substrate behind the glass.
+        band = np.exp(-((depth - 0.010) / 0.002) ** 2) * (glass & ~rim)
+        em += np.outer(band, glow) * 0.025
     # Glyphs: lit display segments.
     col[gl] = glow * 0.6
     em[gl] = glow
