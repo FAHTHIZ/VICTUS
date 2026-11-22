@@ -59,4 +59,4 @@ C++20; RAII and explicit ownership; no hidden global mutable state; return `Resu
 
 Use focused Conventional Commits, e.g. `feat(physics): add hinge motors`, `fix(assets): reject overflowing accessors`, `test(net): cover reconnect`, `docs: update platform matrix`. Each commit must build and pass the tests it touches. After a verified unit of work, update [docs/STATUS.md](docs/STATUS.md) (what, how verified, commands and results, known gaps) and ROADMAP.md. The owner currently asks for direct commits to `main`.
 
-User-visible changes also add a line under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md). Releases are cut by tagging `vX.Y.Z`; see [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md).
+User-visible changes also add a line under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md). Cite the ADR in that line; CTest `victus_docs_lint` (`python3 tools/lint/check_docs.py`) fails when a new ADR is not cited in CHANGELOG.md or a new `engine/` module is missing from the ARCHITECTURE.md module map. Releases are cut by tagging `vX.Y.Z`; see [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md).
