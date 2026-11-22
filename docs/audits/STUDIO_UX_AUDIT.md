@@ -118,6 +118,22 @@ Graph Editor (visual scripts, material graphs), Material Editor, Animation windo
 | Editor localisation | missing | — | S3 |
 | UI scale setting | partial | follows the display scale only; no user zoom | S2 |
 
+## Progress since the audit (2026-11-22)
+
+The matrix above is the Phase 0 audit at `9c65fd2`, kept as written. Slices 1 to 12 (STATUS.md, 2026-11-18 and 2026-11-19) and later ADRs closed most of it. Checked against `editor/src`:
+
+| Area | Closed by | Still open |
+|---|---|---|
+| Phase 1 shell | Slice 1: tokens in `victus/ui/style.hpp` (all 38 colour literals and the second accent removed), Inter Medium and Bold, about 60 vector icons, toolbar, and a status bar with project, save state and error counts. Slice 3: Window menu that reopens every panel, and five layout presets. Panel state is remembered (2026-11-19) | — |
+| Phase 2 onboarding | Slice 2: start screen with New Project, Recent (with Locate...), Samples and Learn, plus live name and folder validation. Slice 12: Getting Started checklist with "Do it for me", searchable Help (F2) and lessons for a first 2D and 3D game. The first S1 (no guided first task) and the second (export needs the terminal) are closed | Last-opened time in Recent |
+| Phase 3 scene and inspector | Slice 7: hierarchy search and one categorised create menu. Slice 8: Add Component search with descriptions. Slice 12: asset and object picker for reference fields. Inspector "Make it a..." roles | Visibility and lock toggles, a drop-insertion line, reset-to-default per component, mixed-value display for multi-edit |
+| Phase 4 assets | Slice 10: search, type filter and folders. Slice 11: import by drag and drop. Background import queue with cancel and retry (ADR-0189). Find References and reference-safe rename, move and delete (ADR-0175). Trash | A dependency graph view |
+| Phase 5 visual authoring | Behaviour Tree Editor (ADR-0191), UI Editor (ADR-0193), Sequencer curves (ADR-0190), Script Debugger (ADR-0106) | See [EDITOR_SPEC.md](../EDITOR_SPEC.md) current state |
+| Phase 6 play and ship | Slice 4: Problems panel on `player::validate_project`, which closes an S1. Slice 5: Export Game dialog, which closes an S1. Slice 6: Report a Problem. Slice 9: console filters, search, merged repeats and copy | Single-step and restart. GPU time in the profiler (it still shows GPU wait) |
+| Phase 7 project-wide | Slice 12: Project Settings window, Undo History, and Interface Size from 90 % to 175 % (Ctrl+= and Ctrl+-) | Editor localisation |
+
+No S1 item from this audit is still open. The blocked items below are unchanged: no external usability test has been run, and the Windows and macOS editors have never been opened interactively.
+
 ## Duplicated or conflicting systems
 
 1. **Two create-entity lists** (Entity menu and Hierarchy "+ Add") with different order and contents (Terrain is missing from "+ Add"). Fix: one shared, categorised table used by both and by the command palette.
