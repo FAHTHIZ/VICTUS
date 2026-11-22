@@ -55,9 +55,12 @@ TEST_CASE("import queue: imports in the background, reports per-file results and
     auto q = ImportQueue::open(p.path, 2);
     REQUIRE(q.ok());
     CHECK((*q)->worker_count() == 2);
+    // Paused, so the second call deterministically sees queued items (a finished item is queued again by design).
+    (*q)->set_paused(true);
     CHECK((*q)->enqueue_all() == 7);
     (void)(*q)->enqueue_all();
     CHECK((*q)->progress().total == 7); // not listed twice
+    (*q)->set_paused(false);
     REQUIRE((*q)->wait_idle());
     const ImportProgress pr = (*q)->progress();
     CHECK(pr.total == 7);

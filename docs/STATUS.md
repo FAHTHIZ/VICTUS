@@ -2747,3 +2747,8 @@ Verified:
 
 Not verified: use by a person (moderated test). Limits in KNOWN_LIMITATIONS (single selection, no alignment or style tools).
 Next task: rendering gaps (area lights and cookies, GAP-13).
+
+## 2026-11-22 — CI fixes: racy import queue test, missing GPU skip in the Studio plugin test
+
+CI run 44955332464 failed in two places. Debug: "import queue: imports in the background..." called `enqueue_all` twice and expected the second call to find the items still queued; on the CI runner the first batch finished first, so the finished items were rightly queued again (imported 0, finished 14). The test now pauses the queue around both calls. ASan: "studio plugins: ..." had no `VICTUS_REQUIRE_GPU_OR_SKIP()` and aborted under `VICTUS_NO_GPU=1`; the guard is added. A scan of every test file found no other GPU test without the guard.
+Verified: `build/bin/victus_asset_tests -tc="import queue*"` 3/3 cases, 112 assertions; `VICTUS_NO_GPU=1 build/bin/victus_editor_tests` 78/78 cases pass.

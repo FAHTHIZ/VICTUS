@@ -2236,6 +2236,7 @@ TEST_CASE("studio import queue: reimport runs in the background, the panel lists
 
 #ifdef VICTUS_TEST_PLUGIN_OK
 TEST_CASE("studio plugins: editor plugins add undoable commands; Play loads player copies") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
     Studio h;
     REQUIRE(h.init());
     ImGui::SetCurrentContext(h.ui->imgui());
