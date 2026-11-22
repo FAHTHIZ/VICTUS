@@ -17,10 +17,10 @@ sockets and clips are unchanged, so existing projects keep their references.
 | Skeleton profile | `VictusHumanoid.Orion` | `VictusHumanoid.Nova` |
 | Build | masculine, heroic athletic (MakeHuman macro: gender 1.0, muscle 0.92, weight 0.46) | feminine, slender (gender 0.0, muscle 0.62, weight 0.38) |
 | Design | Frame 01 | Frame 02 |
-| Look | graphite composite undersuit, glazed white ceramic plates, brushed-metal fasteners, black glass visor, cyan light | graphite composite undersuit, glazed pearl ceramic plates, silver hardware, black glass visor, violet light |
+| Look | graphite composite undersuit, glazed white ceramic plates, brushed-metal fasteners, black glass visor, cyan light, blue-tinted visor | graphite composite undersuit, glazed pearl ceramic plates, silver hardware, black glass visor, violet light, violet-tinted visor |
 | Height (floor to top of the helmet) | 1.78 m | 1.69 m |
 | Triangles (LOD 0, as exported) | 187,672 | 181,880 |
-| GLB size | 13.91 MB | 13.57 MB |
+| GLB size | 14.01 MB | 13.65 MB |
 
 Both stand on Y = 0, face +Z with their left on +X, and are authored in the A-pose the earlier
 characters used (arms 40 degrees from vertical), so existing clips and ragdoll setups line up.

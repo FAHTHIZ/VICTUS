@@ -3349,3 +3349,19 @@ Verified (2-core sandbox):
 - Not verified: the VICTUS runtime close-ups.
 - Next task: material separation (graphite composite, undersuit, visor glow), then Nova details (ADR-0225).
 
+## 2026-11-22 — Orion and Nova materials: graphite composite and visor inner light (ADR-0225)
+
+Built:
+- Graphite composite plates separated from the near-black undersuit: base colour about 3x the undersuit's (Orion 0.030-0.039, Nova 0.031-0.043 linear, undersuit 0.010-0.015), roughness +0.18 over the ceramic (satin, not glazed), twill relief 2.7x deeper.
+- Visor: blue (Orion) and violet (Nova) tinted glass with a faint inner light through the pane, brightest toward the edges and low, the centre dark so the glyphs read.
+- Light strips in the plate grooves 40% brighter and 1.4x wider.
+- Orion's pauldrons pulled fully onto six planes (was five, 85%).
+
+Verified (2-core sandbox):
+- `tools/characters/test_pipeline.py` 12/12.
+- `build_characters.py --out engine/project/data/characters`: Orion 187,672 triangles, 14.01 MB; Nova 181,880 triangles, 13.65 MB; copied to the arena sample.
+- `victus_asset_tests -tc="*character*"` (Release, rebuilt with the new GLBs): 8 cases, 139,054 assertions pass.
+- Blender renders compared by eye with the design sheet (`docs/images/characters/blender_render_bodies.jpg`, `blender_render_heads.jpg` updated): the visors now read as the sheet's tinted glass instead of black, and the abdominal lames, knee frames and Lame plates read as a separate satin composite over the darker suit. Still short: Orion's pauldrons are single masses rather than the sheet's layered shells; Nova's thigh light lines are faint at full-body distance.
+- Not verified: the VICTUS runtime close-ups.
+- Next task: layered pauldrons and Nova's thigh details (ADR-0225).
+

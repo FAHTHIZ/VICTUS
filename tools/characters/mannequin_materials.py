@@ -258,7 +258,7 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
     graphite = (np.rint(tone) == 1) if tone is not None else np.zeros(n, bool)
     graphite = graphite & ~boot
     col = np.where(graphite[:, None], accent[None], armor[None]).astype(float)
-    rough = np.where(graphite, style.armor_rough + 0.10, style.armor_rough)
+    rough = np.where(graphite, style.armor_rough + 0.18, style.armor_rough)  # satin composite, not glazed
     metal = np.zeros(n)
     h = np.zeros(n)
     cavity = np.ones(n)
@@ -271,13 +271,13 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
     # trimmed white plates the groove carries a thin light line.
     bevel = np.exp(-(e / 0.004) ** 2)
     groove_at = np.where(boot, 0.006, 0.008)
-    groove = np.exp(-((e - groove_at) / 0.0008) ** 2) * shell * (cuff < 0.5)
+    groove = np.exp(-((e - groove_at) / 0.0011) ** 2) * shell * (cuff < 0.5)
     h += shell * (-bevel * 0.0010) - groove * 0.0005
     cavity -= groove * 0.5 + shell * bevel * 0.10
     col = col * (1 - 0.5 * groove[:, None])
     rough += groove * 0.15
     lit = groove * (trim > 0) * ~graphite
-    em += lit[:, None] * glow * 1.0
+    em += lit[:, None] * glow * 1.4
     col = col * (1 - lit[:, None]) + glow * 0.3 * lit[:, None]
 
     # Graphite composite: a fine twill weave under the coat.
@@ -286,7 +286,7 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
         a_ = np.sin(2 * np.pi * (Pg[:, 0] + Pg[:, 2]) / 0.0042)
         b_ = np.sin(2 * np.pi * (Pg[:, 0] - Pg[:, 2] + Pg[:, 1]) / 0.0042)
         tw = 0.5 + 0.5 * np.sign(a_) * np.sign(b_) * np.minimum(np.abs(a_), np.abs(b_)) ** 0.5
-        h[graphite] += tw * 0.00003
+        h[graphite] += tw * 0.00008
         col[graphite] *= (0.85 + 0.3 * tw)[:, None]
         rough[graphite] += 0.06 * (1 - tw)
 
@@ -467,6 +467,13 @@ def visor_maps(tx, P, N, L: Landmarks, style, kind, cuff, seed):
         # A faint face-shaped tint band: the display substrate behind the glass.
         band = np.exp(-((depth - 0.010) / 0.002) ** 2) * (glass & ~rim)
         em += np.outer(band, glow) * 0.025
+        # The sheet's inner light: the tinted display substrate glows faintly through the whole
+        # pane, brightest low and toward the edges, dark enough behind the glyphs to keep them legible.
+        rel = P - L.head.c
+        low = np.clip(0.5 - rel[:, 2] / 0.12, 0, 1)
+        fill = (glass & ~rim) * (0.12 + 0.88 * np.exp(-depth / 0.014)) * (0.6 + 0.4 * low)
+        col += np.outer(fill, glow) * 0.004
+        em += np.outer(fill, glow) * 0.010
     # Glyphs: lit display segments.
     col[gl] = glow * 0.6
     em[gl] = glow

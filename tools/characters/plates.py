@@ -592,7 +592,7 @@ def layout(J, torso: Torso, key):
                  (-30, 0.27)])
         add(Plate("Pauldron.L", ua, paul, extra={"xmin": 0.148 if nova else 0.15},
                   thickness=0.018 if nova else 0.027, crown=0.05, trim=1, round=0.016, gate=arm_gate,
-                  facets=4 if nova else 5, facet_mix=0.55 if nova else 0.85, lift=0.002))
+                  facets=4 if nova else 6, facet_mix=0.55 if nova else 1.0, lift=0.002))
         add(Plate("Lame.L", ua, [(-45, 0.40), (40, 0.46), (130, 0.50), (215, 0.44), (210, 0.58), (120, 0.62),
                                 (30, 0.58), (-40, 0.54)],
                   thickness=0.015 * k, crown=0.02, round=0.008, gate=arm_gate, tone=1))

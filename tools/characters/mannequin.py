@@ -56,12 +56,12 @@ class Style:
 STYLES = {
     # Orion (Frame 01): white ceramic plates over a graphite composite undersuit, brushed-metal
     # hardware, cyan light (the ORION & NOVA design sheet).
-    "orion": Style(frame=(0.010, 0.011, 0.013), armor=(0.80, 0.81, 0.82), accent=(0.014, 0.016, 0.020),
-                   metal=(0.56, 0.57, 0.60), glow=(0.10, 0.72, 1.0), visor=(0.003, 0.005, 0.008),
+    "orion": Style(frame=(0.010, 0.011, 0.013), armor=(0.80, 0.81, 0.82), accent=(0.030, 0.033, 0.039),
+                   metal=(0.56, 0.57, 0.60), glow=(0.10, 0.72, 1.0), visor=(0.003, 0.010, 0.026),
                    armor_rough=0.24, frame_rough=0.58),
     # Nova (Frame 02): pearl ceramic plates over a graphite undersuit, silver hardware, violet light.
-    "nova": Style(frame=(0.012, 0.011, 0.015), armor=(0.83, 0.82, 0.84), accent=(0.017, 0.015, 0.024),
-                  metal=(0.74, 0.74, 0.78), glow=(0.52, 0.26, 1.0), visor=(0.005, 0.003, 0.010),
+    "nova": Style(frame=(0.012, 0.011, 0.015), armor=(0.83, 0.82, 0.84), accent=(0.034, 0.031, 0.043),
+                  metal=(0.74, 0.74, 0.78), glow=(0.52, 0.26, 1.0), visor=(0.010, 0.005, 0.026),
                   armor_rough=0.20, frame_rough=0.52),
 }
 
