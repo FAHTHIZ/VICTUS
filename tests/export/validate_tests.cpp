@@ -217,7 +217,7 @@ TEST_CASE("validate: convex and mesh colliders need geometry") {
     CHECK_FALSE(find(*r, "'Ball'"));
 }
 
-TEST_CASE("validate: light cookies must be textures on spot lights (ADR-0195)") {
+TEST_CASE("validate: light cookies must be textures on spot, point or directional lights (ADR-0195, ADR-0201)") {
     TempDir tmp("victus_validate_cookies");
     const fs::Path dir = tmp.path / "game";
     auto created = project::Project::create(dir, "Cookies", "3d");
@@ -236,6 +236,7 @@ TEST_CASE("validate: light cookies must be textures on spot lights (ADR-0195)") 
         };
         light("Torch", scene::LightComponent::Type::Spot);
         light("Bulb", scene::LightComponent::Type::Point);
+        light("Panel", scene::LightComponent::Type::Area);
         REQUIRE(s.save_file(*path).ok());
     }
     auto r = player::validate_project(*created);
@@ -245,7 +246,9 @@ TEST_CASE("validate: light cookies must be textures on spot lights (ADR-0195)") 
     REQUIRE(torch);
     CHECK(torch->severity == player::Severity::Error);
     CHECK(torch->asset == missing);
-    const auto* bulb = find(*r, "'Bulb' has a cookie but is not a spot light");
-    REQUIRE(bulb);
-    CHECK(bulb->severity == player::Severity::Warning);
+    CHECK(find(*r, "'Bulb' uses missing light cookie texture"));
+    CHECK_FALSE(find(*r, "'Bulb' has a cookie but is an area light"));
+    const auto* panel = find(*r, "'Panel' has a cookie but is an area light");
+    REQUIRE(panel);
+    CHECK(panel->severity == player::Severity::Warning);
 }

@@ -1486,6 +1486,18 @@ bool Editor::inspect_components(Entity e) {
             changed |= asset_reference_field("Cookie", "Cookie", db_.get(), assets::AssetKind::Texture, l->cookie,
                                              "Texture projected through the cone (a gobo): its colour tints the light and "
                                              "black blocks it. Its top follows the light's +Y axis.");
+        } else if (l->type == LightComponent::Type::Point) {
+            changed |= asset_reference_field("Cookie", "Cookie", db_.get(), assets::AssetKind::Texture, l->cookie,
+                                             "Panorama (latitude-longitude) wrapped around the bulb, like a lamp shade: "
+                                             "its centre faces the light's -Z, its top row points along +Y.");
+        } else if (l->type == LightComponent::Type::Directional) {
+            changed |= asset_reference_field("Cookie", "Cookie", db_.get(), assets::AssetKind::Texture, l->cookie,
+                                             "Texture tiled across the world as seen from the sun (leaf dapples, window "
+                                             "frames, caustics): its colour tints the sunlight.");
+            if (!l->cookie.is_nil()) {
+                changed |= ImGui::DragFloat("Cookie Size", &l->cookie_size, 0.1f, 0.01f, 10000.0f, "%.2f m");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Metres covered by one repeat of the cookie");
+            }
         }
         if (l->type != LightComponent::Type::Directional) {
             changed |= ImGui::Checkbox("Baked", &l->baked);

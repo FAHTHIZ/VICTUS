@@ -83,9 +83,12 @@ struct LightComponent {
     // soft shadows in the lightmap and probes, and the renderer skips it while that lightmap is
     // loaded. Off: lit in real time, only its bounce light is baked.
     bool baked{false};
-    // Spot light cookie (ADR-0195): a texture asset projected through the cone, its top along the
-    // entity's +Y and its left-to-right along +X; its colour multiplies the light. Nil = none.
+    // Light cookie: a texture asset whose colour multiplies the light. Nil = none. Spot (ADR-0195):
+    // projected through the cone, its top along the entity's +Y, left-to-right along +X. Point
+    // (ADR-0201): wrapped around the bulb as a lat-long panorama, centred on local -Z with +Y up.
+    // Directional (ADR-0201): tiled across the ground, `cookie_size` metres per repeat.
     Uuid cookie;
+    float cookie_size{10.0f};
 };
 // References a mesh inside an asset (glTF/model) by asset UUID and sub-mesh index, plus a
 // material override index (-1 = mesh's own material).

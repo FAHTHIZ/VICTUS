@@ -142,6 +142,8 @@ layout(set = 3, binding = 0) uniform Lighting {
     mat4 ssr_prev_vp;    // ADR-0199: world -> previous frame clip (unjittered); clip w is the history's linear depth
     vec4 ssr_params;     // x ray steps (0 off), y max distance (m), z thickness (m), w max roughness
     vec4 ssr_frame;      // x frame index (noise offset), y history intensity scale
+    vec4 sun_cookie;     // ADR-0201: x atlas slot + 1 (0 none), y 1 / tile size (m), zw offset (m)
+    vec4 sun_cookie_right; // xyz right axis across the sun (up = cross(right, sun_dir))
 } lighting;
 
 // Stochastic rounding to R11G11B10_FLOAT (compact HDR, ADR-0129). The result is exactly
@@ -692,22 +694,53 @@ vec3 cookie_texel(uint base, uint x, uint y) {
     vec3 c = vec3(uvec3(w, w >> 8u, w >> 16u) & 255u) / 255.0;
     return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); // sRGB -> linear
 }
-vec3 spot_cookie(LocalLight l, vec3 P) {
+// Bilinear cookie fetch at uv in [0,1]^2; wrap_x / wrap_y repeat the image instead of clamping.
+vec3 cookie_bilinear(uint slot, vec2 uv, bool wrap_x, bool wrap_y) {
+    vec2 t = uv * float(COOKIE_SIZE) - 0.5;
+    vec2 f = fract(t);
+    ivec2 n = ivec2(int(COOKIE_SIZE));
+    ivec2 i0 = ivec2(floor(t));
+    ivec2 i1 = i0 + 1;
+    ivec2 w0 = (i0 + n) % n, w1 = (i1 + n) % n; // i0 >= -1 for uv in [0, 1]
+    ivec2 c0 = clamp(i0, ivec2(0), n - 1), c1 = clamp(i1, ivec2(0), n - 1);
+    i0 = ivec2(wrap_x ? w0.x : c0.x, wrap_y ? w0.y : c0.y);
+    i1 = ivec2(wrap_x ? w1.x : c1.x, wrap_y ? w1.y : c1.y);
+    uint base = slot * COOKIE_SIZE * COOKIE_SIZE;
+    vec3 a = mix(cookie_texel(base, uint(i0.x), uint(i0.y)), cookie_texel(base, uint(i1.x), uint(i0.y)), f.x);
+    vec3 b = mix(cookie_texel(base, uint(i0.x), uint(i1.y)), cookie_texel(base, uint(i1.x), uint(i1.y)), f.x);
+    return mix(a, b, f.y);
+}
+// Spot and point light cookies (ADR-0195, ADR-0201). A spot record projects through the cone; a
+// point record (spot.y = 1) holds the light's right / up / forward axes and wraps the image
+// around the light as a latitude-longitude panorama.
+vec3 local_cookie(LocalLight l, vec3 P) {
     float record = floor((l.spot.z + 0.5) / 4096.0);
     if (record < 0.5) return vec3(1.0);
     LocalLight c = LOCAL_LIGHT(uint(record) - 1u);
+    uint slot = uint(c.spot.x + 0.5);
+    if (c.spot.y > 0.5) {
+        vec3 d = P - l.position_range.xyz;
+        float len = length(d);
+        if (len < 1e-5) return vec3(1.0);
+        d /= len;
+        vec3 q = vec3(dot(d, c.position_range.xyz), dot(d, c.color_intensity.xyz), dot(d, c.direction_cos_outer.xyz));
+        vec2 uv = vec2(0.5 + atan(q.x, q.z) * 0.15915494, acos(clamp(q.y, -1.0, 1.0)) * 0.31830989);
+        return cookie_bilinear(slot, uv, true, false);
+    }
     vec4 p = vec4(P, 1.0);
     float w = dot(c.direction_cos_outer, p);
     if (w <= 1e-5) return vec3(0.0);
     vec2 uv = clamp(vec2(dot(c.position_range, p), dot(c.color_intensity, p)) / w, 0.0, 1.0);
-    vec2 t = uv * float(COOKIE_SIZE) - 0.5;
-    vec2 f = fract(t);
-    ivec2 i0 = clamp(ivec2(floor(t)), ivec2(0), ivec2(int(COOKIE_SIZE) - 1));
-    ivec2 i1 = min(i0 + 1, ivec2(int(COOKIE_SIZE) - 1));
-    uint base = uint(c.spot.x + 0.5) * COOKIE_SIZE * COOKIE_SIZE;
-    vec3 a = mix(cookie_texel(base, uint(i0.x), uint(i0.y)), cookie_texel(base, uint(i1.x), uint(i0.y)), f.x);
-    vec3 b = mix(cookie_texel(base, uint(i0.x), uint(i1.y)), cookie_texel(base, uint(i1.x), uint(i1.y)), f.x);
-    return mix(a, b, f.y);
+    return cookie_bilinear(slot, uv, false, false);
+}
+// Directional light cookie (ADR-0201): the image tiles across the plane facing the sun.
+vec3 sun_cookie(vec3 P) {
+    if (lighting.sun_cookie.x < 0.5) return vec3(1.0);
+    vec3 d = normalize(lighting.sun_dir.xyz);
+    vec3 r = lighting.sun_cookie_right.xyz;
+    vec3 u = cross(r, d);
+    vec2 uv = (vec2(dot(P, r), -dot(P, u)) + lighting.sun_cookie.zw) * lighting.sun_cookie.y;
+    return cookie_bilinear(uint(lighting.sun_cookie.x - 0.5), fract(uv), true, true);
 }
 
 float local_shadow(LocalLight l, vec3 Ld, float dist, vec3 N) {
@@ -927,7 +960,7 @@ void main() {
     float baked_sun = lighting.cascade_params.w > 0.5 ? (v_lightmap.z > 0.5 ? lm_texel.a : probe_sun) : 1.0;
     vec2 screen_occlusion = lighting.camera_pos.w > 0.5 ? texture(u_ao, gl_FragCoord.xy * lighting.screen.xy).rg : vec2(1.0);
     float contact = lighting.camera_pos.w > 1.5 ? screen_occlusion.g : 1.0;
-    vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * (shadow_factor(N, L, baked_sun) * cloud_shadow(L) * contact);
+    vec3 color = brdf(N, V, L, lighting.sun_color.rgb, albedo, metallic, roughness) * (shadow_factor(N, L, baked_sun) * cloud_shadow(L) * contact) * sun_cookie(v_world_pos);
 
     if (lighting.ground_color.w > 0.5) {
         vec3 grid = lighting.cluster_grid.xyz;
@@ -957,7 +990,7 @@ void main() {
             atten *= local_shadow(l, Ld, dist, N);
             if (atten <= 0.0) continue;
             vec3 radiance = l.color_intensity.rgb * l.color_intensity.w * atten;
-            if (l.spot.y > 0.5) radiance *= spot_cookie(l, v_world_pos);
+            if (l.spot.y < 1.5) radiance *= local_cookie(l, v_world_pos);
             if (l.spot.y < 0.5 && l.spot.x > 0.0) color += sphere_light(N, V, to_light, l.spot.x, radiance, albedo, metallic, roughness);
             else color += brdf(N, V, Ld, radiance, albedo, metallic, roughness);
         }

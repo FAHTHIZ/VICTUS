@@ -209,6 +209,7 @@ SerializerRegistry::SerializerRegistry() {
                 v.set("height", l.height);
             }
             if (!l.cookie.is_nil()) v.set("cookie", uuid_value(l.cookie));
+            if (l.type == LightComponent::Type::Directional && l.cookie_size != 10.0f) v.set("cookie_size", l.cookie_size);
             return v;
         },
         [](LightComponent& l, const Value& v) -> Status {
@@ -224,6 +225,8 @@ SerializerRegistry::SerializerRegistry() {
             l.height = v["height"].as_float(l.height);
             l.baked = v["baked"].as_bool(l.baked);
             if (!read_uuid(v["cookie"], l.cookie)) return bad("Light.cookie");
+            l.cookie_size = v["cookie_size"].as_float(l.cookie_size);
+            if (!(l.cookie_size > 0.0f)) return bad("Light.cookie_size");
             if (!(l.radius >= 0.0f) || !(l.width > 0.0f) || !(l.height > 0.0f)) return bad("Light radius/width/height");
             return {};
         });

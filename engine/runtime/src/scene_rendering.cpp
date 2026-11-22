@@ -1717,6 +1717,21 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
     std::vector<render::PointLight> baked_points;
     std::vector<render::SpotLight> baked_spots;
     std::vector<render::AreaLight> baked_areas;
+    // Registers a light's cookie texture with the renderer (ADR-0195, ADR-0201); 0 = none drawn.
+    const auto cookie_key = [&](const Uuid& texture) -> std::uint64_t {
+        const GpuAssetCache::CookieImage* c = assets.cookie(texture);
+        if (!c) {
+            ++stats.missing_assets;
+            return 0;
+        }
+        if (renderer.cookie_version(c->key) != c->version) {
+            if (auto st = renderer.set_cookie(c->key, c->image, c->version); !st.ok())
+                VICTUS_LOG_WARN("runtime", "light cookie {}: {}", texture.to_string(), st.error().message);
+        }
+        if (!renderer.has_cookie(c->key)) return 0;
+        ++stats.light_cookies;
+        return c->key;
+    };
     w.each<LightComponent, WorldTransform>([&](const LightComponent& l, const WorldTransform& wt) {
         ++stats.lights;
         const bool baked = l.baked && l.type != LightComponent::Type::Directional;
@@ -1727,6 +1742,12 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             sun.color = l.color;
             sun.intensity = l.intensity;
             sun.shadows = l.shadows;
+            if (!l.cookie.is_nil()) {
+                const math::Vec3 x = wt.matrix.transform_vector({1, 0, 0});
+                sun.cookie_right = math::length(x) > 1e-6f ? math::normalize(x) : math::Vec3{1, 0, 0};
+                sun.cookie_size = std::isfinite(l.cookie_size) && l.cookie_size > 0.0f ? l.cookie_size : 10.0f;
+                sun.cookie = cookie_key(l.cookie);
+            }
         } else if (l.type == LightComponent::Type::Spot) {
             render::SpotLight sl;
             sl.position = wt.matrix.transform_point({});
@@ -1741,18 +1762,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             if (!l.cookie.is_nil()) {
                 const math::Vec3 x = wt.matrix.transform_vector({1, 0, 0});
                 sl.right = math::length(x) > 1e-6f ? math::normalize(x) : math::Vec3{1, 0, 0};
-                if (const GpuAssetCache::CookieImage* c = assets.cookie(l.cookie)) {
-                    if (renderer.cookie_version(c->key) != c->version) {
-                        if (auto st = renderer.set_cookie(c->key, c->image, c->version); !st.ok())
-                            VICTUS_LOG_WARN("runtime", "light cookie {}: {}", l.cookie.to_string(), st.error().message);
-                    }
-                    if (renderer.has_cookie(c->key)) {
-                        sl.cookie = c->key;
-                        ++stats.light_cookies;
-                    }
-                } else {
-                    ++stats.missing_assets;
-                }
+                sl.cookie = cookie_key(l.cookie);
             }
             (baked ? baked_spots : spots).push_back(sl);
         } else if (l.type == LightComponent::Type::Area) {
@@ -1776,6 +1786,12 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             p.range = l.range;
             p.cast_shadows = l.shadows;
             p.radius = std::isfinite(l.radius) ? std::max(l.radius, 0.0f) : 0.0f;
+            if (!l.cookie.is_nil()) {
+                const math::Vec3 x = wt.matrix.transform_vector({1, 0, 0}), f = wt.matrix.transform_vector({0, 0, -1});
+                p.right = math::length(x) > 1e-6f ? math::normalize(x) : math::Vec3{1, 0, 0};
+                p.forward = math::length(f) > 1e-6f ? math::normalize(f) : math::Vec3{0, 0, -1};
+                p.cookie = cookie_key(l.cookie);
+            }
             (baked ? baked_points : points).push_back(p);
         }
     });

@@ -145,6 +145,8 @@ struct LightingUniforms {
     Mat4 ssr_prev_vp; // ADR-0199: world -> previous frame clip (unjittered)
     Vec4 ssr_params;  // x ray steps (0 off), y max distance, z thickness, w max roughness
     Vec4 ssr_frame;   // x frame index, y history intensity scale
+    Vec4 sun_cookie;       // ADR-0201: x atlas slot + 1 (0 none), y 1 / tile size, zw offset (m)
+    Vec4 sun_cookie_right; // xyz right axis across the light (up = cross(right, sun_dir))
 };
 struct MaterialUniforms {
     Vec4 base_color;
@@ -278,7 +280,7 @@ struct TaaUpscaleUniforms {
     Vec4 depth_clip; // as TaaUniforms::depth_clip
     Vec4 lock;       // as TaaUniforms::lock
 };
-static_assert(sizeof(LightingUniforms) == 40 * 16 + 64 * 6);
+static_assert(sizeof(LightingUniforms) == 42 * 16 + 64 * 6);
 
 constexpr std::uint32_t kLuminanceSize = 64;
 // Fraction at the far end of each cascade's slice where pbr.frag dithers into the next cascade.
@@ -2823,6 +2825,24 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         r.spot = {static_cast<float>(slot), 0.0f, 0.0f, 0.0f};
         return r;
     };
+    // Point cookie records (ADR-0201): the light's orthonormal frame (right, up, forward) and the
+    // atlas slot; spot.y = 1 tells the shader to wrap the image around the light (lat-long).
+    const auto point_cookie_frame = [](const PointLight& pl, std::uint32_t slot) {
+        Vec3 f = length(pl.forward) > 1e-6f ? normalize(pl.forward) : Vec3{0, 0, -1};
+        Vec3 right = pl.right - f * dot(pl.right, f);
+        if (length(right) < 1e-4f) {
+            Vec3 t, b;
+            duff_basis(f, t, b);
+            right = t;
+        }
+        right = normalize(right);
+        GpuLight r{};
+        r.position_range = Vec4(right, 0.0f);
+        r.color_intensity = Vec4(cross(right, f), 0.0f);
+        r.direction_cos_outer = Vec4(f, 0.0f);
+        r.spot = {static_cast<float>(slot), 1.0f, 0.0f, 0.0f};
+        return r;
+    };
     {
         const auto finite_or = [](float v, float d) { return std::isfinite(v) ? v : d; };
         for (std::size_t i = 0; i < points_.size(); ++i) {
@@ -2834,6 +2854,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (point_shadow[i].first >= 0) {
                 g.spot.z = static_cast<float>(point_shadow[i].first + 1);
                 g.spot.w = point_shadow[i].second;
+            }
+            if (pl.cookie != 0) {
+                if (const auto it = cookie_slots_.find(pl.cookie); it != cookie_slots_.end()) {
+                    cookie_of.emplace_back(static_cast<std::uint32_t>(local_lights.size()),
+                                           point_cookie_frame(pl, it->second.slot));
+                } else {
+                    ++missing_cookies;
+                }
             }
             local_lights.push_back(g);
         }
@@ -3359,6 +3387,26 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     lighting.camera_forward = Vec4(camera_.forward(), texture_mip_bias);
     lighting.sun_dir = Vec4(normalize(sun_.direction), shadows ? 1.0f : 0.0f);
     lighting.sun_color = rgb(sun_.color, sun_.intensity);
+    stats_.sun_cookie = false;
+    if (sun_.cookie != 0 && sun_.intensity > 0.0f) {
+        if (const auto it = cookie_slots_.find(sun_.cookie); it != cookie_slots_.end()) {
+            const Vec3 d = normalize(sun_.direction);
+            Vec3 right = sun_.cookie_right - d * dot(sun_.cookie_right, d);
+            if (!(length(right) >= 1e-4f)) {
+                Vec3 t, b;
+                duff_basis(d, t, b);
+                right = t;
+            }
+            const float size = std::isfinite(sun_.cookie_size) ? std::clamp(sun_.cookie_size, 0.01f, 1.0e5f) : 10.0f;
+            const auto fin = [](float v) { return std::isfinite(v) ? v : 0.0f; };
+            lighting.sun_cookie = {static_cast<float>(it->second.slot + 1), 1.0f / size, fin(sun_.cookie_offset_x),
+                                   fin(sun_.cookie_offset_y)};
+            lighting.sun_cookie_right = Vec4(normalize(right), 0.0f);
+            stats_.sun_cookie = true;
+        } else {
+            ++stats_.missing_cookies;
+        }
+    }
     lighting.sky_color = rgb(env_.sky_zenith, env_.ambient_intensity, env_.exposure);
     lighting.horizon_color = rgb(env_.sky_horizon, env_.ambient_intensity);
     lighting.ground_color = rgb(env_.ground, env_.ambient_intensity, static_cast<float>(local_lights.size()));

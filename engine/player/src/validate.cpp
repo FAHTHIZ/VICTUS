@@ -277,9 +277,9 @@ Result<ValidationReport> validate_project(const project::Project& proj) {
             if (!t || t->kind != assets::AssetKind::Texture)
                 entity(Severity::Error, e, who(e) + " uses missing light cookie texture " + c.cookie.to_string(),
                        "Assign an existing texture as the light's Cookie in the Inspector, or clear it.", c.cookie);
-            if (c.type != scene::LightComponent::Type::Spot)
-                entity(Severity::Warning, e, who(e) + " has a cookie but is not a spot light; only spot lights draw cookies",
-                       "Make the light a Spot light, or clear its Cookie.", c.cookie);
+            if (c.type == scene::LightComponent::Type::Area)
+                entity(Severity::Warning, e, who(e) + " has a cookie but is an area light; area lights draw no cookies",
+                       "Make the light a Spot, Point or Directional light, or clear its Cookie.", c.cookie);
         });
         // Convex/mesh colliders need geometry: a model mesh that exists, or a mesh on the entity.
         scene.world().each<physics::ColliderComponent>([&](scene::Entity e, physics::ColliderComponent& c) {

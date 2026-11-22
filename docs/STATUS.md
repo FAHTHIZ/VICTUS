@@ -2983,3 +2983,14 @@ Not verified: real GPUs.
   - The CPU gap for 60-joint characters (Orion/Nova); only the 2-joint test rig was timed.
   - A scene with thousands of agents in the Studio.
 - **Next task:** GAP-10 slice 2: a crowd spawner, animation LOD (Animator hand-off near the camera) and impostor cards far away, sharing GAP-11's impostor baker.
+
+## 2026-11-22 — Point and directional light cookies (ADR-0201)
+
+Built: point lights wrap a cookie image around the bulb as a latitude-longitude panorama (oriented by `PointLight::forward` / `right`, from the entity's -Z / +X), and the sun tiles one across the world, `cookie_size` metres per repeat, scrollable with `cookie_offset_x/y`. Both reuse ADR-0195's storage-buffer atlas and cookie records; the sun's two parameters are new `Lighting` vec4s. `LightComponent::cookie_size` is saved for directional lights; the Inspector shows Cookie on point and directional lights; `victus check` warns only on area-light cookies.
+
+Verified:
+- `victus_gpu_tests -tc="*cookie*"` (Vulkan lavapipe and GLES): point cookie -X side r 237 g 0 (open 711), +X 0, turned light moves the red half to -Z, shadowed point light keeps the pattern, unknown key counted. Sun cookie: white 663 (same as without), red r 223 g 0, black 0, tiled copy 2 m away 663, half-tile scroll swaps columns. The authored-scene test registers three uses (spot, point, sun) of one image and round-trips `cookie_size` 3.5.
+- Full `victus_gpu_tests`: Vulkan 228/228 (28 676 assertions), GLES 228/228 (26 470 assertions); after rebasing onto the crowd agents (ADR-0200), Vulkan 230/230 (28 716 assertions).
+- `victus_render_tests` 70/70; `victus_scene_tests`; `victus_export_tests -tc="*cookie*"`; `ctest -R "victus_reference_scenes|perf"` passes with unchanged goldens and budgets.
+
+Not verified: real GPUs, Metal and D3D12 (compiled only); `victus_editor_tests` left to CI.

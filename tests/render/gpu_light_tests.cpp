@@ -553,6 +553,133 @@ TEST_CASE("gpu: spot light cookies project their image through the cone (ADR-019
     ctx.destroy(*cube);
 }
 
+TEST_CASE("gpu: point light cookies wrap their image around the bulb (ADR-0201)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+    auto plane = ctx.create_mesh(make_plane({20, 20}), "floor");
+    REQUIRE(plane.ok());
+    Material floor;
+    floor.base_color = {0.8f, 0.8f, 0.8f, 1};
+    floor.roughness = 0.9f;
+    const Camera3D cam = Camera3D::look_at({0, 10, 6}, {0, 0, 0}, {0, 1, 0});
+    constexpr std::uint64_t kCookie = 78;
+    REQUIRE((*sr)->set_cookie(kCookie, quadrant_cookie()).ok());
+    PointLight p;
+    p.position = {0, 1.5f, 0};
+    p.intensity = 40.0f;
+    p.range = 10.0f;
+    const auto render_with = [&](const PointLight& light) {
+        (*sr)->begin(cam, no_sun(), dark_env());
+        (*sr)->submit(*plane, floor, math::Mat4::identity());
+        (*sr)->add_point_light(light);
+        return shoot(**sr);
+    };
+    const auto at = [&](const std::vector<std::uint8_t>& img, math::Vec3 q) {
+        const auto [x, y] = project(cam, q);
+        return pixel(img, W, x, y);
+    };
+    const math::Vec3 west{-1.5f, 0, 0}, east{1.5f, 0, 0}, north{0, 0, -1.5f}, south{0, 0, 1.5f};
+    const auto open = render_with(p);
+    // Facing -Z with +Y up: the floor sees the image's lower half, the -X side its left (red)
+    // and the +X side its right (black).
+    p.cookie = kCookie;
+    const auto img = render_with(p);
+    test::save_output("point_cookie", W, H, img);
+    CHECK((*sr)->stats().cookie_lights == 1);
+    CHECK((*sr)->stats().missing_cookies == 0);
+    MESSAGE("open west " << lum(at(open, west)) << " cookie west r " << channel(at(img, west), 0) << " g "
+                         << channel(at(img, west), 1) << " east " << lum(at(img, east)));
+    CHECK(lum(at(open, west)) > 120);
+    CHECK(channel(at(img, west), 0) > 80);
+    CHECK(channel(at(img, west), 1) < 8);
+    CHECK(lum(at(img, east)) < 8);
+    // Turning the light to face +X (right +Z keeps +Y up) moves the red half to -Z.
+    PointLight turned = p;
+    turned.forward = {1, 0, 0};
+    turned.right = {0, 0, 1};
+    const auto rot = render_with(turned);
+    MESSAGE("turned north r " << channel(at(rot, north), 0) << " south " << lum(at(rot, south)));
+    CHECK(channel(at(rot, north), 0) > 80);
+    CHECK(channel(at(rot, north), 1) < 8);
+    CHECK(lum(at(rot, south)) < 8);
+    // Shadows and cookies share spot.z on point lights too.
+    PointLight shadowed = p;
+    shadowed.cast_shadows = true;
+    const auto sh = render_with(shadowed);
+    CHECK(channel(at(sh, west), 0) > 80);
+    CHECK(lum(at(sh, east)) < 8);
+    PointLight missing = p;
+    missing.cookie = 999;
+    const auto miss = render_with(missing);
+    CHECK((*sr)->stats().missing_cookies == 1);
+    CHECK(lum(at(miss, east)) > 120);
+    ctx.destroy(*plane);
+}
+
+TEST_CASE("gpu: directional light cookies tile across the world (ADR-0201)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+    auto plane = ctx.create_mesh(make_plane({20, 20}), "floor");
+    REQUIRE(plane.ok());
+    Material floor;
+    floor.base_color = {0.8f, 0.8f, 0.8f, 1};
+    floor.roughness = 0.9f;
+    const Camera3D cam = Camera3D::look_at({0, 10, 6}, {0, 0, 0}, {0, 1, 0});
+    constexpr std::uint64_t kCookie = 79;
+    REQUIRE((*sr)->set_cookie(kCookie, quadrant_cookie()).ok());
+    DirectionalLight sun;
+    sun.direction = {0, -1, 0};
+    sun.intensity = 3.0f;
+    sun.shadows = false;
+    sun.cookie_size = 2.0f;
+    sun.cookie_right = {1, 0, 0}; // up = right x direction = -Z: image rows run along +Z
+    const auto render_with = [&](const DirectionalLight& light) {
+        (*sr)->begin(cam, light, dark_env());
+        (*sr)->submit(*plane, floor, math::Mat4::identity());
+        return shoot(**sr);
+    };
+    const auto at = [&](const std::vector<std::uint8_t>& img, math::Vec3 q) {
+        const auto [x, y] = project(cam, q);
+        return pixel(img, W, x, y);
+    };
+    const auto open = render_with(sun);
+    CHECK_FALSE((*sr)->stats().sun_cookie);
+    sun.cookie = kCookie;
+    const auto img = render_with(sun);
+    test::save_output("sun_cookie", W, H, img);
+    CHECK((*sr)->stats().sun_cookie);
+    const math::Vec3 white{0.5f, 0, 0.5f}, red{0.5f, 0, 1.5f}, black{1.5f, 0, 0.5f}, tiled{-1.5f, 0, 0.5f};
+    MESSAGE("open " << lum(at(open, white)) << " white " << lum(at(img, white)) << " red r " << channel(at(img, red), 0)
+                    << " g " << channel(at(img, red), 1) << " black " << lum(at(img, black)) << " tiled "
+                    << lum(at(img, tiled)));
+    CHECK(lum(at(open, white)) > 120);
+    CHECK(static_cast<float>(lum(at(img, white))) > 0.9f * static_cast<float>(lum(at(open, white))));
+    CHECK(channel(at(img, red), 0) > 80);
+    CHECK(channel(at(img, red), 1) < 0.5f * static_cast<float>(channel(at(img, red), 0)));
+    CHECK(lum(at(img, black)) < 0.3f * static_cast<float>(lum(at(open, black))));
+    CHECK(lum(at(img, tiled)) > 120); // the image repeats every cookie_size metres
+    // Scrolling by half a tile swaps the white and black columns.
+    DirectionalLight scrolled = sun;
+    scrolled.cookie_offset_x = 1.0f;
+    const auto sc = render_with(scrolled);
+    CHECK(lum(at(sc, white)) < 0.3f * static_cast<float>(lum(at(open, white))));
+    CHECK(lum(at(sc, black)) > 120);
+    // An unknown key lights without a cookie and is counted.
+    DirectionalLight missing = sun;
+    missing.cookie = 999;
+    const auto miss = render_with(missing);
+    CHECK_FALSE((*sr)->stats().sun_cookie);
+    CHECK((*sr)->stats().missing_cookies == 1);
+    CHECK(lum(at(miss, black)) > 120);
+    ctx.destroy(*plane);
+}
+
 TEST_CASE("gpu: scenes author spot cookies through LightComponent texture assets (ADR-0195)") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     auto& ctx = *gpu().ctx;
@@ -587,6 +714,18 @@ TEST_CASE("gpu: scenes author spot cookies through LightComponent texture assets
     auto& m = authored.world().add<scene::LightComponent>(lost);
     m.type = scene::LightComponent::Type::Spot;
     m.cookie = Uuid::generate(); // no such asset
+    // ADR-0201: point and directional lights take cookies too (out of view / unlit here).
+    const auto bulb = authored.create("Bulb");
+    authored.world().get<scene::Transform>(bulb)->position = {40, 4, 0};
+    auto& pb = authored.world().add<scene::LightComponent>(bulb);
+    pb.type = scene::LightComponent::Type::Point;
+    pb.range = 2.0f;
+    pb.cookie = cookie;
+    auto& sun = authored.world().add<scene::LightComponent>(authored.create("Sun"));
+    sun.type = scene::LightComponent::Type::Directional;
+    sun.intensity = 0.0f;
+    sun.cookie = cookie;
+    sun.cookie_size = 3.5f;
     const auto cam = authored.create("Camera");
     authored.world().get<scene::Transform>(cam)->position = {0, 10, 6};
     authored.world().get<scene::Transform>(cam)->rotation = math::Quat::axis_angle({1, 0, 0}, std::atan2(-10.0f, 6.0f));
@@ -597,6 +736,10 @@ TEST_CASE("gpu: scenes author spot cookies through LightComponent texture assets
     const auto* loaded = s.world().get<scene::LightComponent>(s.find_by_name("Lamp"));
     REQUIRE(loaded);
     CHECK(loaded->cookie == cookie);
+    const auto* loaded_sun = s.world().get<scene::LightComponent>(s.find_by_name("Sun"));
+    REQUIRE(loaded_sun);
+    CHECK(loaded_sun->cookie == cookie);
+    CHECK(loaded_sun->cookie_size == doctest::Approx(3.5f));
     s.update_transforms();
     runtime::GpuAssetCache cache(ctx, db->get());
     auto sr = SceneRenderer::create(ctx);
@@ -605,7 +748,7 @@ TEST_CASE("gpu: scenes author spot cookies through LightComponent texture assets
     runtime::SceneViewSettings view;
     view.environment = dark_env();
     const auto stats = runtime::extract_scene(s, cache, **sr, view);
-    CHECK(stats.light_cookies == 1);
+    CHECK(stats.light_cookies == 3); // lamp, bulb and sun share one registered image
     CHECK(stats.missing_assets >= 1);
     const auto img = shoot(**sr);
     CHECK((*sr)->stats().cookie_lights == 1);

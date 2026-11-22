@@ -166,6 +166,15 @@ struct DirectionalLight {
     bool shadows{true};
     float shadow_distance{40.0f};
     std::uint32_t shadow_resolution{2048};
+    // Light cookie (ADR-0201): key of an image registered with SceneRenderer::set_cookie, 0 = none.
+    // The image tiles across the plane facing the light, `cookie_size` metres per repeat, its
+    // left-to-right along `cookie_right`; its colour multiplies the sunlight (canopy dapples,
+    // window frames, caustics). `cookie_offset` scrolls it (metres along right / up).
+    std::uint64_t cookie{0};
+    float cookie_size{10.0f};
+    math::Vec3 cookie_right{1, 0, 0};
+    float cookie_offset_x{0.0f};
+    float cookie_offset_y{0.0f};
 };
 
 struct PointLight {
@@ -177,6 +186,13 @@ struct PointLight {
     // highlights with the same total energy (representative point, Karis 2013).
     float radius{0.0f};
     bool cast_shadows{false}; // six atlas tiles (cube faces) when within RenderSettings' budget
+    // Light cookie (ADR-0201): key of an image registered with SceneRenderer::set_cookie, 0 = none.
+    // The image wraps around the light as a latitude-longitude panorama: its centre column faces
+    // `forward`, its left-to-right turns towards `right`, its top row points along
+    // up = cross(right, forward). Its colour multiplies the light (lamp shades, projector cages).
+    std::uint64_t cookie{0};
+    math::Vec3 forward{0, 0, -1};
+    math::Vec3 right{1, 0, 0};
 };
 
 // Cone light. Angles are half-angles in radians from the axis: full intensity inside
@@ -767,8 +783,9 @@ struct SceneStats {
     std::uint32_t point_lights{0};      // local lights used (point + spot)
     std::uint32_t spot_lights{0};
     std::uint32_t area_lights{0};
-    std::uint32_t cookie_lights{0};  // spot lights drawn with a cookie
-    std::uint32_t missing_cookies{0}; // spot lights whose cookie key was never registered (drawn without)
+    std::uint32_t cookie_lights{0};  // spot and point lights drawn with a cookie
+    std::uint32_t missing_cookies{0}; // lights (sun included) whose cookie key was never registered (drawn without)
+    bool sun_cookie{false};            // the directional light is drawn with a cookie (ADR-0201)
     std::uint32_t light_indices{0};     // clustered light index list length
     std::uint32_t max_cluster_lights{0}; // most lights in one cluster
     std::uint32_t shadow_cascades{0}, shadow_draws{0}, prepass_draws{0};
