@@ -3379,3 +3379,11 @@ Verified (2-core sandbox):
 - Not verified: the VICTUS runtime close-ups.
 - Next task: runtime close-up review of both characters in the arena sample (ADR-0225).
 
+## 2026-11-22 — Orion armour in the runtime renderer (ADR-0225)
+
+Verified (2-core sandbox, lavapipe Vulkan):
+- `victus_gpu_tests -tc="gpu character lods*"` against the new `victus_orion.glb` (commit 2c7a1ba): 1 case, 155 assertions pass; LOD images match LOD 0 within the test's one-pixel tolerance in Idle, Run, Jump and Interact at 2.5, 8 and 20 m.
+- Captures `build/release/test_output/charlod_{Idle,Run,Jump}_02_full.png` (256 px, 2.5 m) checked by eye: the creased plates, layered pauldrons, graphite lames and cyan lines render in the runtime renderer, and no plate separates from the body in Run or Jump.
+- Not verified: a high-resolution runtime close-up, Nova in the runtime renderer after these changes, physical GPUs.
+- Next task: Nova runtime close-up and a high-resolution runtime review (ADR-0225).
+
