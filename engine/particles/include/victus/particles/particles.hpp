@@ -12,6 +12,7 @@
 #include "victus/core/hash.hpp"
 #include "victus/core/math.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/scene/reflect.hpp"
 #include "victus/scene/scene.hpp"
 
 #include <cstdint>
@@ -52,6 +53,13 @@ struct ParticleEmitterComponent {
     math::Color color_start{1, 1, 1, 1};
     math::Color color_end{1, 1, 1, 0};
     float intensity{1};        // HDR multiplier on colour; > 1 glows through bloom
+    // Over-life curves (ADR-0209). Time is the particle's age / lifetime (0..1); keys ascending,
+    // at most kMaxCurveKeys used. A non-empty colour gradient replaces color_start -> color_end
+    // (fire: white -> yellow -> orange -> dark red -> transparent); a non-empty size curve makes
+    // the size size_start x curve(t) instead of size_start -> size_end (smoke puffs that grow fast
+    // then slowly, sparks that pop then shrink). Empty = the linear start/end behaviour.
+    std::vector<scene::GradientKey> color_over_life;
+    std::vector<math::Vec2> size_over_life;
     float spin_min{0}, spin_max{0}; // degrees per second
     Blend blend{Blend::Alpha};
     Uuid texture;              // optional texture asset; nil = built-in soft disc
@@ -108,6 +116,8 @@ struct ParticleEmitterComponent {
 
 constexpr std::uint32_t kMaxCpuParticles = 65536;
 constexpr std::uint32_t kMaxGpuParticles = 1u << 20;
+// Keys of color_over_life / size_over_life that are evaluated (both paths).
+constexpr std::size_t kMaxCurveKeys = 8;
 // Sub-emitter events one emitter can queue per update (further events are dropped).
 constexpr std::uint32_t kMaxSubEmitterEvents = 4096;
 
@@ -117,6 +127,12 @@ constexpr std::uint32_t kMaxSubEmitterEvents = 4096;
 // Phase used by the field for emitter time `time` (wrapped so float precision holds for days).
 [[nodiscard]] float turbulence_phase(const ParticleEmitterComponent& e, double time);
 
+// Colour (before intensity, alpha unclamped) and size factor (before the per-particle scale) at
+// normalised age t. Mirrored by particle_sim.comp.
+[[nodiscard]] math::Color color_at(const ParticleEmitterComponent& e, float t);
+[[nodiscard]] float size_at(const ParticleEmitterComponent& e, float t);
+// Largest size_at over the particle's life (bounds).
+[[nodiscard]] float max_size(const ParticleEmitterComponent& e);
 // Frame shown at `age` of `life` seconds, given the particle's start frame (exposed for tests).
 [[nodiscard]] std::uint32_t flipbook_frame(const ParticleEmitterComponent& e, float age, float life, std::uint32_t start);
 // Usable frame count (columns x rows, clamped by flipbook_frames); 1 when the flipbook is off.

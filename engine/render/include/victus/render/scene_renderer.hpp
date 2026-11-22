@@ -300,6 +300,12 @@ struct GpuParticleParams {
     math::Vec4 trail;                         // x lifetime (s), y min distance (m), z head width (x size), w tail width (fraction)
     float trail_alpha_end{0};                 // tail alpha as a fraction of the particle's
     bool trail_billboards{true};              // also draw the particles themselves
+    // Over-life curves (ADR-0209): with color_keys > 0 the colour is the piecewise-linear gradient
+    // through color_key[i] at color_time[i] (replacing color_start/end); with size_keys > 0 the size
+    // is size.x x the curve through (size_time[i], size_value[i]) (replacing size.x -> size.y).
+    std::uint32_t color_keys{0}, size_keys{0}; // <= 8 each, times ascending
+    std::array<math::Vec4, 8> color_key{};
+    std::array<float, 8> color_time{}, size_time{}, size_value{};
 };
 struct GpuParticleEmitter {
     std::uint64_t key{0};        // stable per emitter; selects the renderer's GPU state

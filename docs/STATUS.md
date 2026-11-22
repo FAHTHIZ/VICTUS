@@ -3105,3 +3105,18 @@ Verified (Release, 2-core sandbox):
 - Not verified: the overlay on a real display (the tests run offscreen); IK preview in the card (the existing View > IK overlay still covers IK chains).
 - Next task: corrective blend shapes driven by joint angles, then skeleton and animation LOD.
 
+## 2026-11-22 — Particle colour gradients and size curves (ADR-0209)
+
+First piece of the VFX audit. Before this, emitters could only ramp colour and size linearly from start to end values, so fire, smoke puffs and popping sparks could not be authored.
+
+- `scene::FieldKind::Gradient` (`std::vector<GradientKey>`, JSON `[[time, r, g, b, a], ...]`) with `scene::sample_gradient` / `sample_curve` (held ends, linear between keys, equal times step).
+- `ParticleEmitterComponent::color_over_life` and `size_over_life` (size = size_start x curve), up to 8 keys each, evaluated by `particles::color_at` / `size_at` on the CPU path, in `gpu_billboard` and in `particle_sim.comp` (keys passed in the simulation uniforms, 688 bytes). Emitter bounds use `max_size`.
+- Studio Inspector: gradient bar with key ticks and editable key rows (time, colour, add, remove, kept sorted); `Vec2List` fields with hint `curve` show a plot and keep their points sorted.
+
+Verified (dev build, 2-core sandbox):
+- `victus_particles_tests`: 25 cases, 75,108 assertions pass, including the linear fallback, a five-key fire gradient with a step, held ends, the 8-key limit, billboards drawn through the curves, scene save/load and rejection of malformed keys.
+- `victus_gpu_tests -tc="gpu particles*"` (Vulkan, lavapipe): 13 cases pass. New case: a 4-key gradient and 3-key size curve on a GPU emitter, 99 live particles read back after 30 frames, worst colour error 0 and worst size error 0 against `gpu_billboard`.
+- `victus_editor_tests -tc="studio inspector*"` (Vulkan, lavapipe): 3 cases pass, including the Inspector drawing a gradient and a curve for a selected emitter and the component saving and loading them.
+- `victus_scene_tests`, `victus_sequencer_tests` pass; `compile_shaders.py --check`: up to date (63 shaders).
+- Not verified: Metal and D3D12 (shader text translated by SPIRV-Cross, not run); GLES has no GPU particle path; GPU cost of the curve lookups on real hardware.
+- Next task: speed and rotation over life and per-emitter LOD (distance and visibility based update rates), then the reference effects scene.

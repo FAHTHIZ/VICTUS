@@ -264,15 +264,35 @@ void gpu_integrate(const ParticleEmitterComponent& e, GpuParticle& p, float dt, 
     }
 }
 
+Color color_at(const ParticleEmitterComponent& e, float t) {
+    const Color linear(math::lerp(e.color_start.r, e.color_end.r, t), math::lerp(e.color_start.g, e.color_end.g, t),
+                       math::lerp(e.color_start.b, e.color_end.b, t), math::lerp(e.color_start.a, e.color_end.a, t));
+    return scene::sample_gradient(e.color_over_life, t, kMaxCurveKeys, linear);
+}
+
+float size_at(const ParticleEmitterComponent& e, float t) {
+    if (e.size_over_life.empty()) return math::lerp(e.size_start, e.size_end, t);
+    return e.size_start * scene::sample_curve(e.size_over_life, t, kMaxCurveKeys, 1.0f);
+}
+
+float max_size(const ParticleEmitterComponent& e) {
+    if (e.size_over_life.empty()) return std::max(e.size_start, e.size_end);
+    // Piecewise linear: the extreme is at a key (the held end values are keys too).
+    float m = 0;
+    const std::size_t n = std::min(e.size_over_life.size(), kMaxCurveKeys);
+    for (std::size_t i = 0; i < n; ++i) m = std::max(m, e.size_start * e.size_over_life[i].y);
+    return std::isfinite(m) ? m : 0.0f;
+}
+
 Billboard gpu_billboard(const ParticleEmitterComponent& e, const GpuParticle& p, const Mat4& world, const Mat4& view) {
     Billboard b;
     if (!(p.age < p.life)) return b;
     const float t = std::clamp(p.age / p.life, 0.0f, 1.0f);
     const float intensity = std::max(0.0f, e.intensity);
     b.position = e.world_space ? p.position : world.transform_point(p.position);
-    b.size = std::max(0.0f, math::lerp(e.size_start, e.size_end, t) * p.size_scale);
-    b.color = Color(math::lerp(e.color_start.r, e.color_end.r, t) * intensity, math::lerp(e.color_start.g, e.color_end.g, t) * intensity,
-                    math::lerp(e.color_start.b, e.color_end.b, t) * intensity, std::clamp(math::lerp(e.color_start.a, e.color_end.a, t), 0.0f, 1.0f));
+    b.size = std::max(0.0f, size_at(e, t) * p.size_scale);
+    const Color c = color_at(e, t);
+    b.color = Color(c.r * intensity, c.g * intensity, c.b * intensity, std::clamp(c.a, 0.0f, 1.0f));
     b.rotation = p.rotation;
     const std::uint32_t cols = std::clamp<std::uint32_t>(e.flipbook_columns, 1, 15), rows = std::clamp<std::uint32_t>(e.flipbook_rows, 1, 15);
     if (cols * rows > 1) {
@@ -475,9 +495,9 @@ Counts simulate(const ParticleEmitterComponent& e, EmitterState& s, const Mat4& 
         const float t = clamp01(p.age / p.life);
         Billboard& b = s.billboards[i];
         b.position = e.world_space ? p.position : world.transform_point(p.position);
-        b.size = std::max(0.0f, math::lerp(e.size_start, e.size_end, t) * p.size_scale);
-        b.color = Color(math::lerp(e.color_start.r, e.color_end.r, t) * intensity, math::lerp(e.color_start.g, e.color_end.g, t) * intensity,
-                        math::lerp(e.color_start.b, e.color_end.b, t) * intensity, clamp01(math::lerp(e.color_start.a, e.color_end.a, t)));
+        b.size = std::max(0.0f, size_at(e, t) * p.size_scale);
+        const Color c = color_at(e, t);
+        b.color = Color(c.r * intensity, c.g * intensity, c.b * intensity, clamp01(c.a));
         b.rotation = p.rotation;
         b.frame = flipbook ? static_cast<float>(flipbook_frame(e, p.age, p.life, p.start_frame)) : 0.0f;
         b.grid = grid;
@@ -571,11 +591,12 @@ Aabb gpu_bounds(const ParticleEmitterComponent& e, const GpuBook& g, const Mat4&
     const float speed = std::max(std::fabs(e.speed_min), std::fabs(e.speed_max));
     const float accel = math::length(e.gravity) + (std::isfinite(e.turbulence) ? std::fabs(e.turbulence) : 0.0f);
     const float travel = speed * life_hi + 0.5f * accel * life_hi * life_hi;
-    float extent = std::max(e.size_start, e.size_end) * 0.5f;
+    const float largest = max_size(e);
+    float extent = largest * 0.5f;
     if (e.velocity_stretch > 0 && std::isfinite(e.velocity_stretch)) extent += (speed + accel * life_hi) * e.velocity_stretch;
     // Trails (ADR-0110) lie on positions the particles already passed, inside the travel box; only
     // their width can reach further out.
-    if (trail_capacity(e) > 0) extent = std::max(extent, std::max(e.size_start, e.size_end) * 0.5f * std::max(0.0f, e.trail_width));
+    if (trail_capacity(e) > 0) extent = std::max(extent, largest * 0.5f * std::max(0.0f, e.trail_width));
     const Vec3 grow{travel + extent};
     box.min = box.min - grow;
     box.max = box.max + grow;
@@ -756,6 +777,8 @@ void register_components() {
             .field(&ParticleEmitterComponent::size_variation, "size_variation", {.min = 0, .max = 1, .speed = 0.01f})
             .field(&ParticleEmitterComponent::color_start, "color_start")
             .field(&ParticleEmitterComponent::color_end, "color_end")
+            .field(&ParticleEmitterComponent::color_over_life, "color_over_life", {.tooltip = "Colour and alpha over each particle's life (time 0..1, up to 8 keys); empty = Color Start to Color End"})
+            .field(&ParticleEmitterComponent::size_over_life, "size_over_life", {.tooltip = "Size Start multiplier over each particle's life (time 0..1, up to 8 points); empty = Size Start to Size End", .hint = "curve"})
             .field(&ParticleEmitterComponent::intensity, "intensity", {.min = 0, .max = 1e3f, .speed = 0.05f, .tooltip = "> 1 glows through bloom"})
             .field(&ParticleEmitterComponent::spin_min, "spin_min", {.min = -1e4f, .max = 1e4f, .speed = 1, .hint = "degrees"})
             .field(&ParticleEmitterComponent::spin_max, "spin_max", {.min = -1e4f, .max = 1e4f, .speed = 1, .hint = "degrees"})

@@ -979,3 +979,108 @@ TEST_CASE("sub-emitters feed GPU and local-space targets; missing targets are co
     CHECK(sys.stats().sub_emitter_events == 0);
     CHECK(sys.stats().sub_emitter_dropped == 4);
 }
+
+TEST_CASE("over-life colour gradients and size curves replace the linear ramps (ADR-0209)") {
+    ParticleEmitterComponent e;
+    e.size_start = 2;
+    e.size_end = 0;
+    e.color_start = {1, 0, 0, 1};
+    e.color_end = {0, 0, 1, 0};
+    // Empty curves keep the old linear behaviour exactly.
+    CHECK(near(size_at(e, 0.25f), 1.5f));
+    CHECK(near(color_at(e, 0.25f).r, 0.75f));
+    CHECK(near(max_size(e), 2));
+    // Fire: white -> orange -> transparent dark red, with a step at 0.8.
+    e.color_over_life = {{0.0f, {1, 1, 1, 1}}, {0.4f, {1, 0.5f, 0, 1}}, {0.8f, {0.5f, 0, 0, 0.6f}}, {0.8f, {0.2f, 0, 0, 0.3f}}, {1.0f, {0, 0, 0, 0}}};
+    CHECK(near(color_at(e, -1).g, 1));       // before the first key: held
+    CHECK(near(color_at(e, 0.2f).g, 0.75f)); // halfway to the second key
+    CHECK(near(color_at(e, 0.6f).r, 0.75f));
+    CHECK(near(color_at(e, 0.8f).r, 0.5f));  // equal times step: t == 0.8 hits the first
+    CHECK(near(color_at(e, 0.9f).r, 0.1f));
+    CHECK(near(color_at(e, 2).a, 0));        // after the last key: held
+    // Size: pops to 3x, then settles at 1x.
+    e.size_over_life = {{0.0f, 0.5f}, {0.1f, 3.0f}, {1.0f, 1.0f}};
+    CHECK(near(size_at(e, 0.05f), 2 * 1.75f));
+    CHECK(near(size_at(e, 0.55f), 2 * 2.0f));
+    CHECK(near(size_at(e, 1.0f), 2));
+    CHECK(near(max_size(e), 6));
+    // Only kMaxCurveKeys keys count, in both lookups.
+    std::vector<math::Vec2> many;
+    for (int i = 0; i < 12; ++i) many.push_back({static_cast<float>(i) / 11.0f, static_cast<float>(i)});
+    e.size_over_life = many;
+    CHECK(near(size_at(e, 1.0f), 2 * 7.0f));
+    CHECK(near(max_size(e), 14));
+}
+
+TEST_CASE("emitters draw billboards through the over-life curves; curves serialize") {
+    register_components();
+    Scene s;
+    const Entity e = s.create("Smoke");
+    auto& c = s.world().add<ParticleEmitterComponent>(e);
+    c.rate = 0;
+    c.burst = 1;
+    c.shape = Shape::Point;
+    c.speed_min = c.speed_max = 0;
+    c.lifetime_min = c.lifetime_max = 1;
+    c.size_start = 1;
+    c.intensity = 2;
+    c.color_over_life = {{0, {0, 0, 0, 0}}, {0.5f, {1, 0.5f, 0.25f, 1}}, {1, {0, 0, 0, 0}}};
+    c.size_over_life = {{0, 0}, {0.5f, 4}};
+    ParticleSystem sys;
+    sys.update(s, 0.0f);
+    sys.update(s, 0.25f);
+    auto b = billboards_of(s, e);
+    REQUIRE(b.size() == 1);
+    CHECK(near(b[0].size, 2));
+    CHECK(near(b[0].color.r, 1)); // 0.5 x intensity 2
+    CHECK(near(b[0].color.a, 0.5f));
+    sys.update(s, 0.5f);
+    b = billboards_of(s, e);
+    REQUIRE(b.size() == 1);
+    CHECK(near(b[0].size, 4)); // held after the last point
+    CHECK(near(b[0].color.g, 0.5f));
+    std::vector<EmitterView> views;
+    gather(s, views);
+    REQUIRE(views.size() == 1);
+    CHECK(views[0].bounds.valid());
+
+    const auto keys = s.world().get<ParticleEmitterComponent>(e)->color_over_life;
+    CHECK(keys.size() == 3);
+    const std::string text = json::stringify(s.save());
+    CHECK(text.find("color_over_life") != std::string::npos);
+    Scene loaded;
+    REQUIRE(loaded.load(json::parse(text).value()).ok());
+    const auto* lc = loaded.world().get<ParticleEmitterComponent>(loaded.find_by_name("Smoke"));
+    REQUIRE(lc);
+    CHECK(lc->color_over_life == keys);
+    CHECK(lc->size_over_life.size() == 2);
+    CHECK(near(lc->size_over_life[1].y, 4));
+    // Malformed keys are rejected with the field named; four numbers mean opaque rgb.
+    const auto* schema = scene::find_schema("ParticleEmitter");
+    REQUIRE(schema);
+    ParticleEmitterComponent tmp;
+    auto bad = json::parse(R"({"color_over_life": [[0, 1, 1]]})");
+    REQUIRE(bad.ok());
+    const auto st = schema->load(&tmp, bad.value());
+    CHECK_FALSE(st.ok());
+    auto rgb = json::parse(R"({"color_over_life": [[0.5, 1, 0, 0]]})");
+    REQUIRE(schema->load(&tmp, rgb.value()).ok());
+    REQUIRE(tmp.color_over_life.size() == 1);
+    CHECK(near(tmp.color_over_life[0].color.a, 1));
+}
+
+TEST_CASE("gpu reference billboards use the over-life curves") {
+    ParticleEmitterComponent e;
+    e.gpu = true;
+    e.size_start = 0.5f;
+    e.color_over_life = {{0, {1, 1, 0, 1}}, {1, {0, 0, 1, 0}}};
+    e.size_over_life = {{0, 1}, {1, 3}};
+    GpuParticle p;
+    p.age = 0.5f;
+    p.life = 2;
+    p.size_scale = 1;
+    const Billboard b = gpu_billboard(e, p, math::Mat4::identity(), math::Mat4::identity());
+    CHECK(near(b.size, 0.5f * 1.5f));
+    CHECK(near(b.color.r, 0.75f));
+    CHECK(near(b.color.a, 0.75f));
+}

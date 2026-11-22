@@ -1079,3 +1079,62 @@ TEST_CASE("gpu particles: GPU trails record ring histories on the GPU and draw c
     }
     dev.destroy(target);
 }
+
+TEST_CASE("gpu particles: over-life colour gradient and size curve match the CPU reference (ADR-0209)") {
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    GpuFx fx;
+    auto& c = fx.emitter();
+    c.rate = 200;
+    c.max_particles = 128;
+    c.lifetime_min = 0.4f;
+    c.lifetime_max = 1.0f;
+    c.speed_min = 0.5f;
+    c.speed_max = 1.5f;
+    c.size_start = 0.3f;
+    c.size_variation = 0.3f;
+    c.intensity = 1.5f;
+    c.color_over_life = {{0.0f, {1, 1, 1, 1}}, {0.3f, {1, 0.6f, 0.1f, 1}}, {0.7f, {0.6f, 0.1f, 0.0f, 0.5f}}, {1.0f, {0.1f, 0, 0, 0}}};
+    c.size_over_life = {{0.0f, 0.2f}, {0.15f, 1.6f}, {1.0f, 0.6f}};
+    runtime::GpuAssetCache assets(ctx, nullptr);
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    RenderSettings rs = RenderSettings::preset(QualityTier::Medium);
+    rs.bloom = false;
+    r.set_settings(rs);
+    auto target = test::make_target(W, H);
+    fx.ps.update(fx.s, 0.0f);
+    for (int f = 0; f < 30; ++f) {
+        fx.ps.update(fx.s, 1.0f / 60.0f);
+        fx.s.update_transforms();
+        (void)runtime::extract_scene(fx.s, assets, r, {}, nullptr);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+    }
+    const particles::GpuEmitterView v = fx.view();
+    const auto state = read_state(r, v.key);
+    auto drawn = r.read_gpu_particle_draw(v.key); // additive: unsorted, instance i = slot i
+    REQUIRE(drawn.ok());
+    REQUIRE(drawn.value().size() == state.size());
+    std::uint32_t compared = 0;
+    float worst_color = 0, worst_size = 0;
+    for (std::size_t i = 0; i < state.size(); ++i) {
+        if (!(state[i].age < state[i].life)) continue;
+        // Fresh lookup: the system's runtime state moves the entity, so `c` no longer refers to it.
+        const particles::Billboard want = particles::gpu_billboard(fx.emitter(), state[i], math::Mat4::identity(), math::Mat4::identity());
+        const ParticleInstance& got = drawn.value()[i];
+        worst_size = std::max(worst_size, std::abs(got.position_size.w - want.size));
+        worst_color = std::max({worst_color, std::abs(got.color.x - want.color.r), std::abs(got.color.y - want.color.g),
+                                std::abs(got.color.z - want.color.b), std::abs(got.color.w - want.color.a)});
+        ++compared;
+    }
+    MESSAGE("over-life curves: " << compared << " particles compared, worst colour error " << worst_color << ", worst size error "
+                                 << worst_size << " m");
+    CHECK(compared > 50);
+    CHECK(worst_color < 1e-4f);
+    CHECK(worst_size < 1e-5f);
+    dev.destroy(target);
+}

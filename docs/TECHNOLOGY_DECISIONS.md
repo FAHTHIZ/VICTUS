@@ -2238,3 +2238,17 @@ FixedUpdate systems `gameplay.timers` and `gameplay.attributes` advance them det
 **Evidence:** listed in docs/STATUS.md under this ADR.
 
 **Consequences:** Sockets moved this way show up in `check_skeleton_compatibility` as moved sockets, so attachments that depend on them get reviewed. A clip that animates a moved node overrides the new rest transform; the edit reports this as a warning. The weight overlay uses LBS even when the mesh renders with DQS, which can differ slightly on twisted joints.
+
+### ADR-0209: Particle colour gradients and size curves over life
+
+**Status:** Accepted (2026-11-22)
+
+**Context:** The VFX audit for the effects brief (fire, smoke, sparks, explosions, magic) found that `ParticleEmitter` could only ramp colour and size linearly from a start to an end value. Fire needs white → yellow → orange → dark red → transparent; smoke puffs grow quickly then slowly; sparks pop then shrink. Engines express these as over-life curves: [Unity's Color over Lifetime and Size over Lifetime modules](https://docs.unity3d.com/Manual/PartSysColorOverLifeModule.html) (a gradient and a curve over normalised age) and Niagara's colour/scale curves sampled by normalised age.
+
+**Decision:** (1) A reflected `Gradient` field kind (`std::vector<scene::GradientKey>`, JSON `[[time, r, g, b, a], ...]`, alpha optional) beside `Vec2List`, with `scene::sample_gradient` / `sample_curve`: hold the end values, linear between keys, equal times make a step. (2) `ParticleEmitterComponent::color_over_life` (replaces color_start → color_end when not empty) and `size_over_life` (size = size_start × curve; replaces size_start → size_end when not empty), evaluated over age / life. At most 8 keys are used (`kMaxCurveKeys`). (3) The CPU path, the GPU reference kernel (`gpu_billboard`) and `particle_sim.comp` evaluate the same rule; the GPU receives the keys in the simulation uniforms (448 → 688 bytes). Bounds use the largest curve value. (4) Studio: the Inspector draws gradients as a bar with key ticks over a checkerboard and key rows (time, colour, add/remove, kept sorted), and `Vec2List` fields hinted `curve` as a plot with sorted points.
+
+**Alternatives:** (1) A baked 1D lookup texture per emitter: any number of keys and cheap sampling, but a texture per emitter and a second representation to keep in sync; eight keys cover the authored effects. (2) Bezier curves with tangents (as the Sequencer has, ADR-0190): smoother, but particles rarely need more than piecewise-linear and the GPU mirror stays simpler. (3) Separate colour and alpha gradients (Unity): one RGBA key list is easier to author and serialise.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Empty curves keep existing emitters bit-identical. Keys beyond eight are ignored on both paths (the Studio does not yet warn). Speed, rotation and emission-rate curves are not covered yet.

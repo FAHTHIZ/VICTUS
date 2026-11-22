@@ -58,7 +58,53 @@ layout(std140, set = 2, binding = 0) uniform Params {
     uvec4 meta;         // x mode, y count, z frame serial, w flags (1 world space, 2 collision, 4 flipbook, 8 stretch, 16 textured)
     vec4 trail;         // x lifetime (s), y min distance (m), z width at the head (x size), w width at the tail (fraction)
     uvec4 trail_meta;   // x points per slot (0 = no trails)
+    vec4 color_keys[8]; // ADR-0209 over-life colour gradient (particles::color_at)
+    vec4 color_times[2];
+    vec4 size_times[2]; // over-life size curve (particles::size_at)
+    vec4 size_values[2];
+    uvec4 curve_meta;   // x colour keys, y size keys (0 = linear start/end)
 } u;
+
+float key_time(vec4 v[2], uint i) { return v[i >> 2u][i & 3u]; }
+
+// scene::sample_gradient / sample_curve: hold the ends, linear between keys, equal times step.
+vec4 color_at(float t) {
+    uint n = u.curve_meta.x;
+    if (n == 0u) return mix(u.color_start, u.color_end, t);
+    if (!(t > key_time(u.color_times, 0u))) return u.color_keys[0];
+    for (uint i = 1u; i < n; ++i) {
+        float t1 = key_time(u.color_times, i);
+        if (t <= t1) {
+            float t0 = key_time(u.color_times, i - 1u);
+            float span = t1 - t0;
+            float f = span > 0.0 ? (t - t0) / span : 1.0;
+            return u.color_keys[i - 1u] + (u.color_keys[i] - u.color_keys[i - 1u]) * f;
+        }
+    }
+    return u.color_keys[n - 1u];
+}
+
+float size_at(float t) {
+    uint n = u.curve_meta.y;
+    if (n == 0u) return mix(u.size.x, u.size.y, t);
+    float v = key_time(u.size_values, n - 1u);
+    if (!(t > key_time(u.size_times, 0u))) {
+        v = key_time(u.size_values, 0u);
+    } else {
+        for (uint i = 1u; i < n; ++i) {
+            float t1 = key_time(u.size_times, i);
+            if (t <= t1) {
+                float t0 = key_time(u.size_times, i - 1u);
+                float span = t1 - t0;
+                float f = span > 0.0 ? (t - t0) / span : 1.0;
+                float a = key_time(u.size_values, i - 1u);
+                v = a + (key_time(u.size_values, i) - a) * f;
+                break;
+            }
+        }
+    }
+    return u.size.x * v;
+}
 
 const float kPi = 3.14159265358979;
 
@@ -158,8 +204,8 @@ Instance billboard(Particle p) {
     bool world_space = (u.meta.w & 1u) != 0u;
     float t = clamp(p.pos_age.w / p.vel_life.w, 0.0, 1.0);
     vec3 pos = world_space ? p.pos_age.xyz : (u.world * vec4(p.pos_age.xyz, 1.0)).xyz;
-    float size = max(0.0, mix(u.size.x, u.size.y, t) * p.misc.z);
-    vec4 col = mix(u.color_start, u.color_end, t);
+    float size = max(0.0, size_at(t) * p.misc.z);
+    vec4 col = color_at(t);
     o.pos_size = vec4(pos, size);
     o.color = vec4(col.rgb * max(0.0, u.size.z), clamp(col.a, 0.0, 1.0));
     float rotation = p.misc.x, aspect = 0.0;

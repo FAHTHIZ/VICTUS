@@ -2282,6 +2282,19 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                           static_cast<float>(particles::flipbook_frame_count(e)), e.flipbook_fps > 0 ? finite(e.flipbook_fps) : 0.0f};
             p.collision = {std::clamp(finite(e.bounce), 0.0f, 1.0f), std::clamp(finite(e.friction), 0.0f, 1.0f),
                            std::max(0.0f, finite(e.collision_thickness)), 0.0f};
+            const std::size_t ck = std::min(e.color_over_life.size(), particles::kMaxCurveKeys);
+            p.color_keys = static_cast<std::uint32_t>(ck);
+            for (std::size_t k = 0; k < ck; ++k) {
+                const auto& key = e.color_over_life[k];
+                p.color_key[k] = {key.color.r, key.color.g, key.color.b, key.color.a};
+                p.color_time[k] = key.time;
+            }
+            const std::size_t sk = std::min(e.size_over_life.size(), particles::kMaxCurveKeys);
+            p.size_keys = static_cast<std::uint32_t>(sk);
+            for (std::size_t k = 0; k < sk; ++k) {
+                p.size_time[k] = e.size_over_life[k].x;
+                p.size_value[k] = e.size_over_life[k].y;
+            }
             p.world_space = e.world_space;
             p.collide = e.collision;
             if (e.trail_lifetime > 0 && std::isfinite(e.trail_lifetime)) { // trails (ADR-0110)

@@ -13,6 +13,7 @@
 #include "victus/core/math.hpp"
 #include "victus/ecs/world.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -24,10 +25,51 @@
 
 namespace victus::scene {
 
-// Vec2List: std::vector<math::Vec2> (outline points), serialized as [[x, y], ...], at most
-// kMaxListLength entries.
-enum class FieldKind : std::uint8_t { Bool, Int, UInt, Float, Vec2, Vec3, Color, String, Enum, Uuid, Vec2List };
+// Vec2List: std::vector<math::Vec2> (outline points, curves), serialized as [[x, y], ...], at most
+// kMaxListLength entries. Gradient: std::vector<GradientKey>, serialized as [[time, r, g, b, a], ...].
+enum class FieldKind : std::uint8_t { Bool, Int, UInt, Float, Vec2, Vec3, Color, String, Enum, Uuid, Vec2List, Gradient };
 inline constexpr std::size_t kMaxListLength = 4096;
+
+// One colour key of a gradient; keys are kept in ascending time order (0..1 for lifetime gradients).
+struct GradientKey {
+    float time{0};
+    math::Color color{1, 1, 1, 1};
+    bool operator==(const GradientKey&) const = default;
+};
+
+// Piecewise-linear lookups shared by the runtime, the GPU mirrors (particle_sim.comp) and the
+// Studio previews. Only the first `max_keys` keys are used; before the first key the first value
+// holds, after the last the last value holds; keys with equal times make a step. Empty: `fallback`.
+[[nodiscard]] inline math::Color sample_gradient(const std::vector<GradientKey>& keys, float t, std::size_t max_keys,
+                                                 const math::Color& fallback) {
+    const std::size_t n = std::min(keys.size(), max_keys);
+    if (n == 0) return fallback;
+    if (!(t > keys[0].time)) return keys[0].color;
+    for (std::size_t i = 1; i < n; ++i) {
+        if (t <= keys[i].time) {
+            const float span = keys[i].time - keys[i - 1].time;
+            const float f = span > 0 ? (t - keys[i - 1].time) / span : 1.0f;
+            const math::Color& a = keys[i - 1].color;
+            const math::Color& b = keys[i].color;
+            return {a.r + (b.r - a.r) * f, a.g + (b.g - a.g) * f, a.b + (b.b - a.b) * f, a.a + (b.a - a.a) * f};
+        }
+    }
+    return keys[n - 1].color;
+}
+// Same rule for a curve of (time, value) points.
+[[nodiscard]] inline float sample_curve(const std::vector<math::Vec2>& keys, float t, std::size_t max_keys, float fallback) {
+    const std::size_t n = std::min(keys.size(), max_keys);
+    if (n == 0) return fallback;
+    if (!(t > keys[0].x)) return keys[0].y;
+    for (std::size_t i = 1; i < n; ++i) {
+        if (t <= keys[i].x) {
+            const float span = keys[i].x - keys[i - 1].x;
+            const float f = span > 0 ? (t - keys[i - 1].x) / span : 1.0f;
+            return keys[i - 1].y + (keys[i].y - keys[i - 1].y) * f;
+        }
+    }
+    return keys[n - 1].y;
+}
 
 // Optional presentation/validation hints. min == max means unbounded.
 struct FieldOptions {
@@ -103,6 +145,7 @@ constexpr FieldKind kind_of() {
     else if constexpr (std::is_same_v<M, std::string>) return FieldKind::String;
     else if constexpr (std::is_same_v<M, Uuid>) return FieldKind::Uuid;
     else if constexpr (std::is_same_v<M, std::vector<math::Vec2>>) return FieldKind::Vec2List;
+    else if constexpr (std::is_same_v<M, std::vector<GradientKey>>) return FieldKind::Gradient;
     else if constexpr (std::is_integral_v<M> && std::is_signed_v<M>) return FieldKind::Int;
     else if constexpr (std::is_integral_v<M> && std::is_unsigned_v<M>) return FieldKind::UInt;
     else static_assert(sizeof(M) == 0, "unsupported reflected field type");

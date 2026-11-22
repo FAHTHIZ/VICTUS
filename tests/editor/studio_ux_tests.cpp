@@ -10,6 +10,7 @@
 #include "victus/core/zip.hpp"
 #include "victus/core/json.hpp"
 #include "victus/render/image.hpp"
+#include "victus/particles/particles.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
 #include "victus/runtime/scene_lightmap.hpp"
@@ -629,6 +630,40 @@ TEST_CASE("studio inspector: Add Component lists plain names by category and add
     h.ed->select(cube);
     h.ed->open_add_component();
     h.frames(8);
+}
+
+TEST_CASE("studio inspector: particle colour gradients and size curves draw and save (ADR-0209)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Studio h;
+    REQUIRE(h.init());
+    ImGui::SetCurrentContext(h.ui->imgui());
+    REQUIRE(h.ed->create_project(h.dir / "Fx Game", "Fx Game", "3d").ok());
+    h.frames(2);
+    const auto fx = h.ed->create_entity(editor::Primitive::Empty, {});
+    REQUIRE_FALSE(fx.is_null());
+    REQUIRE(h.ed->add_component(fx, "ParticleEmitter"));
+    h.ed->select(fx);
+    h.frames(2);
+    // Look the component up after adding it (adding components moves the entity in storage).
+    auto* c = h.ed->edit_scene().world().get<particles::ParticleEmitterComponent>(fx);
+    REQUIRE(c);
+    c->color_over_life = {{0, {1, 1, 1, 1}}, {0.35f, {1, 0.5f, 0.1f, 1}}, {1, {0.2f, 0, 0, 0}}};
+    c->size_over_life = {{0, 0.3f}, {0.2f, 1.5f}, {1, 1}};
+    // The Inspector draws the gradient bar and the curve plot for the selected emitter.
+    h.frames(4);
+    // Serialized as [[time, r, g, b, a], ...] and [[time, value], ...]; loads back unchanged.
+    const auto* schema = scene::find_schema("ParticleEmitter");
+    REQUIRE(schema);
+    const json::Value v = schema->save(c);
+    const json::Value* grad = v.find("color_over_life");
+    REQUIRE(grad);
+    REQUIRE(grad->size() == 3);
+    CHECK((*grad)[1].size() == 5);
+    CHECK(std::abs((*grad)[1][0].as_float() - 0.35f) < 1e-6f);
+    particles::ParticleEmitterComponent back;
+    REQUIRE(schema->load(&back, v).ok());
+    CHECK(back.color_over_life == c->color_over_life);
+    CHECK(back.size_over_life.size() == 3);
 }
 
 TEST_CASE("studio console: severity toggles, search, merged repeats and copy text") {

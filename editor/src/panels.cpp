@@ -44,6 +44,33 @@ bool color_edit(const char* label, math::Color& c, bool alpha = true) {
     return changed;
 }
 
+// Full-width bar showing a gradient over 0..1 (checkerboard behind the alpha), one tick per key.
+void gradient_preview(const std::vector<scene::GradientKey>& keys) {
+    if (keys.empty()) return;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const float w = std::max(32.0f, ImGui::GetContentRegionAvail().x), h = 14.0f;
+    for (float x = 0; x < w; x += 7)
+        for (int r = 0; r < 2; ++r)
+            dl->AddRectFilled({p0.x + x, p0.y + r * 7.0f}, {p0.x + std::min(w, x + 7), p0.y + r * 7.0f + 7},
+                              ((static_cast<int>(x / 7) + r) & 1) ? IM_COL32(150, 150, 150, 255) : IM_COL32(90, 90, 90, 255));
+    constexpr int kSteps = 48;
+    for (int i = 0; i < kSteps; ++i) {
+        const auto col = [&](float t) {
+            const math::Color c = scene::sample_gradient(keys, t, keys.size(), {});
+            return ImGui::ColorConvertFloat4ToU32({std::clamp(c.r, 0.0f, 1.0f), std::clamp(c.g, 0.0f, 1.0f), std::clamp(c.b, 0.0f, 1.0f),
+                                                   std::clamp(c.a, 0.0f, 1.0f)});
+        };
+        const float t0 = static_cast<float>(i) / kSteps, t1 = static_cast<float>(i + 1) / kSteps;
+        dl->AddRectFilledMultiColor({p0.x + t0 * w, p0.y}, {p0.x + t1 * w, p0.y + h}, col(t0), col(t1), col(t1), col(t0));
+    }
+    for (const auto& k : keys) {
+        const float x = p0.x + std::clamp(k.time, 0.0f, 1.0f) * w;
+        dl->AddTriangleFilled({x, p0.y + h - 5}, {x - 4, p0.y + h + 2}, {x + 4, p0.y + h + 2}, IM_COL32(240, 240, 240, 255));
+    }
+    ImGui::Dummy({w, h + 4});
+}
+
 bool vec3_edit(const char* label, math::Vec3& v, float speed = 0.05f) {
     float f[3] = {v.x, v.y, v.z};
     const bool changed = ImGui::DragFloat3(label, f, speed, 0, 0, "%.3f");
@@ -247,11 +274,66 @@ bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db
     }
     case scene::FieldKind::Vec2: changed = vec2_edit(label, f.ref<math::Vec2>(comp), speed); break;
     case scene::FieldKind::Vec3: changed = vec3_edit(label, f.ref<math::Vec3>(comp), speed); break;
+    case scene::FieldKind::Gradient: {
+        // Preview bar (checkerboard under the alpha), then one row per key: time and colour.
+        // Keys are re-sorted by time after every edit so the runtime always sees ascending keys.
+        auto& keys = f.ref<std::vector<scene::GradientKey>>(comp);
+        const std::string head = shown_label.substr(0, shown_label.find("##")) + " (" + std::to_string(keys.size()) + ")##" + f.name;
+        const bool open = ImGui::TreeNode(head.c_str());
+        if (!f.tooltip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", f.tooltip.c_str());
+        gradient_preview(keys);
+        if (open) {
+            for (std::size_t i = 0; i < keys.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::SmallButton("x")) {
+                    keys.erase(keys.begin() + static_cast<std::ptrdiff_t>(i));
+                    changed = true;
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(70);
+                changed |= ImGui::DragFloat("##t", &keys[i].time, 0.005f, 0.0f, 1.0f, "%.3f");
+                ImGui::SameLine();
+                changed |= color_edit("##c", keys[i].color);
+                ImGui::PopID();
+            }
+            if (keys.size() < scene::kMaxListLength && ImGui::SmallButton("+ key")) {
+                // Insert halfway along the widest gap, with the colour the gradient has there.
+                float t = keys.empty() ? 0.0f : 1.0f;
+                if (keys.size() >= 2) {
+                    float gap = -1;
+                    for (std::size_t i = 1; i < keys.size(); ++i)
+                        if (keys[i].time - keys[i - 1].time > gap) {
+                            gap = keys[i].time - keys[i - 1].time;
+                            t = 0.5f * (keys[i].time + keys[i - 1].time);
+                        }
+                }
+                keys.push_back({t, scene::sample_gradient(keys, t, keys.size(), math::Color(1, 1, 1, 1))});
+                changed = true;
+            }
+            ImGui::TreePop();
+        }
+        if (changed)
+            std::stable_sort(keys.begin(), keys.end(), [](const scene::GradientKey& a, const scene::GradientKey& b) { return a.time < b.time; });
+        break;
+    }
     case scene::FieldKind::Vec2List: {
         // Outline points: one row per point, "+" appends a copy of the last point, "x" removes.
+        // Curves (hint "curve"): a plot of the curve over 0..1 and the points kept in time order.
         auto& list = f.ref<std::vector<math::Vec2>>(comp);
+        const bool curve = f.hint == "curve";
         const std::string head = shown_label.substr(0, shown_label.find("##")) + " (" + std::to_string(list.size()) + ")##" + f.name;
-        if (ImGui::TreeNode(head.c_str())) {
+        const bool open = ImGui::TreeNode(head.c_str());
+        if (!f.tooltip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", f.tooltip.c_str());
+        if (curve && !list.empty()) {
+            float samples[64];
+            for (int i = 0; i < 64; ++i) samples[i] = scene::sample_curve(list, static_cast<float>(i) / 63.0f, list.size(), 1.0f);
+            const auto [lo_it, hi_it] = std::minmax_element(std::begin(samples), std::end(samples));
+            ImGui::PlotLines(("##plot" + f.name).c_str(), samples, 64, 0, nullptr, std::min(0.0f, *lo_it), std::max(1.0f, *hi_it),
+                             ImVec2(-1, 48));
+        }
+        if (open) {
             for (std::size_t i = 0; i < list.size(); ++i) {
                 ImGui::PushID(static_cast<int>(i));
                 if (ImGui::SmallButton("x")) {
@@ -265,11 +347,16 @@ bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db
                 ImGui::PopID();
             }
             if (list.size() < scene::kMaxListLength && ImGui::SmallButton("+ point")) {
-                list.push_back(list.empty() ? math::Vec2{} : list.back() + math::Vec2{0.5f, 0});
+                if (curve)
+                    list.push_back(list.empty() ? math::Vec2{0, 1} : math::Vec2{1, list.back().y});
+                else
+                    list.push_back(list.empty() ? math::Vec2{} : list.back() + math::Vec2{0.5f, 0});
                 changed = true;
             }
             ImGui::TreePop();
         }
+        if (curve && changed)
+            std::stable_sort(list.begin(), list.end(), [](const math::Vec2& a, const math::Vec2& b) { return a.x < b.x; });
         break;
     }
     case scene::FieldKind::Color: changed = color_edit(label, f.ref<math::Color>(comp)); break;

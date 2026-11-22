@@ -3017,8 +3017,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         std::array<std::uint32_t, 4> meta;
         Vec4 trail;
         std::array<std::uint32_t, 4> trail_meta;
+        std::array<Vec4, 8> color_keys;   // ADR-0209 over-life gradient
+        std::array<float, 8> color_times; // two vec4s in std140
+        std::array<float, 8> size_times, size_values;
+        std::array<std::uint32_t, 4> curve_meta; // x colour keys, y size keys
     };
-    static_assert(sizeof(ParticleSimUniforms) == 448);
+    static_assert(sizeof(ParticleSimUniforms) == 688);
     struct GpuParticleJob {
         const GpuParticleState* state;
         std::uint32_t spawns;
@@ -3167,6 +3171,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 u.collide.w = std::clamp(fin(g.trail_alpha_end), 0.0f, 1.0f);
                 u.trail = {std::max(1e-4f, fin(g.trail.x)), std::max(0.0f, fin(g.trail.y)), std::max(0.0f, fin(g.trail.z)), std::max(0.0f, fin(g.trail.w))};
                 u.trail_meta = {st.trail_points, 0u, 0u, 0u};
+                u.color_keys = g.color_key;
+                u.color_times = g.color_time;
+                u.size_times = g.size_time;
+                u.size_values = g.size_value;
+                u.curve_meta = {std::min<std::uint32_t>(g.color_keys, 8u), std::min<std::uint32_t>(g.size_keys, 8u), 0u, 0u};
                 gpu_jobs.push_back(job);
             }
             ++stats_.gpu_particle_emitters;
