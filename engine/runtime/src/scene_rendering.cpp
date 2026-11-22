@@ -100,7 +100,6 @@ void GpuAssetCache::evict(const Uuid& uuid) {
     }
 }
 
-<<<<<<< Updated upstream
 Result<render::Image> load_cookie_image(assets::AssetDatabase& db, const Uuid& texture) {
     auto cooked = db.load_texture(texture);
     if (!cooked) return std::move(cooked).error();
@@ -138,7 +137,8 @@ const GpuAssetCache::CookieImage* GpuAssetCache::cookie(const Uuid& texture) {
     c.version = ++cookie_versions_;
     slot = std::move(c);
     return &*slot;
-=======
+}
+
 assets::VariantFilter GpuAssetCache::variant_filter() const {
     // Snapshot of what this device samples, so loader threads never query the device. Only the
     // variant upload_cooked_texture would pick is decoded; with compressed uploads off nothing
@@ -155,7 +155,6 @@ assets::VariantFilter GpuAssetCache::variant_filter() const {
         const std::size_t i = std::size_t{static_cast<std::uint8_t>(codec)} * 2 + (srgb ? 1 : 0);
         return i < ok.size() && ok[i];
     };
->>>>>>> Stashed changes
 }
 
 Result<rhi::TextureHandle> upload_cooked_texture(render::GpuContext& ctx, const assets::CookedTexture& texture, bool allow_compressed,
