@@ -9,7 +9,7 @@ The diagnostics folder is `VICTUS_DIAGNOSTICS_DIR` if set, otherwise `diagnostic
 | Folder | Contents | Kept |
 |---|---|---|
 | `crashes/` | `crash-<unix time>-<pid>-<app>.txt`, one per crash | newest 20 |
-| `logs/` | `<app>-<unix time>-<pid>.log`, one per session (`victus run`/`serve`/`simulate`, the player) | newest 5 per app |
+| `logs/` | `<app>-<unix time>-<pid>.log`, one per session (`victus run`/`serve`/`simulate`, the player) | newest 5 per app; on Windows the live log is opened shared for reading, so it can be read or bundled while the app runs |
 | `sessions/` | `<app>-<pid>.running` while a session runs | removed on clean exit |
 
 A `.running` marker whose process no longer exists means that session crashed, was killed or lost power; the next start of the same app logs "the previous ... session ended unexpectedly".
@@ -37,7 +37,7 @@ build: Release
 (the last 64 log lines)
 ```
 
-Reasons are fatal signals (SIGSEGV, SIGABRT, SIGFPE, SIGILL, SIGBUS), Windows structured exceptions, `std::terminate` with the exception message, and failed `VICTUS_VERIFY`/`VICTUS_ASSERT` (shown as SIGABRT, with the assertion text in the recent log). Tools can call `crash::write_report(reason)` to record a non-fatal problem in the same format.
+Reasons are fatal signals (SIGSEGV, SIGABRT, SIGFPE, SIGILL, SIGBUS), Windows structured exceptions (an unhandled MSVC C++ exception, code `0xE06D7363`, is decoded to its `std::exception::what()` text), `std::terminate` with the exception message, and failed `VICTUS_VERIFY`/`VICTUS_ASSERT` (shown as SIGABRT, with the assertion text in the recent log). Tools can call `crash::write_report(reason)` to record a non-fatal problem in the same format.
 
 The handler runs inside the crashing process. It is written to avoid allocation and locks, but a corrupted heap or stack can still stop it. There are no minidumps.
 
