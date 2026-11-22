@@ -2752,3 +2752,10 @@ Next task: rendering gaps (area lights and cookies, GAP-13).
 
 CI run 44955332464 failed in two places. Debug: "import queue: imports in the background..." called `enqueue_all` twice and expected the second call to find the items still queued; on the CI runner the first batch finished first, so the finished items were rightly queued again (imported 0, finished 14). The test now pauses the queue around both calls. ASan: "studio plugins: ..." had no `VICTUS_REQUIRE_GPU_OR_SKIP()` and aborted under `VICTUS_NO_GPU=1`; the guard is added. A scan of every test file found no other GPU test without the guard.
 Verified: `build/bin/victus_asset_tests -tc="import queue*"` 3/3 cases, 112 assertions; `VICTUS_NO_GPU=1 build/bin/victus_editor_tests` 78/78 cases pass.
+
+## 2026-11-22 — Headless build, MSVC sequencer test crash, docs catch-up
+
+- `-DVICTUS_WITH_GRAPHICS=OFF` failed to configure because `engine/project` links `assets` → `render`. `project`, the platform, project and animation tests and the animation benchmark are now gated on graphics (030b135). Verified: `cmake -S . -B /tmp/nog -G Ninja -DVICTUS_WITH_GRAPHICS=OFF -DVICTUS_BUILD_TESTS=ON && ninja -C /tmp/nog` builds 523/523 steps, and `ctest --test-dir /tmp/nog` passes 19/19. The graphics-on configure still generates every target.
+- CI run 44955332464 windows-latest Debug: `victus_sequencer_tests` exited 0xc0000409 ("vector iterators in range are from different containers"). The property-track test passed `begin()` and `end()` of two separate `animatable_properties()` temporaries to `std::any_of`. Fixed in a0f02bf. Verified on Linux: 15/15 cases, 588 assertions. Not verified on MSVC until the next Windows CI run.
+- Docs: CHANGELOG entries for ADR-0180 and ADR-0187 to ADR-0193 (11f4fac); [Unity/Unreal November 2026 audit](audits/UNITY_UNREAL_2026_11.md) and gap register GAP-38 to GAP-42 (c5b1802); implementation-status table in RENDERING_SPEC.md (da2ce45); ARCHITECTURE module map now lists `traffic` and `library`.
+- Found, not fixed: ADR numbers 0008, 0037 and 0038 are each used by two different decisions in TECHNOLOGY_DECISIONS.md.
