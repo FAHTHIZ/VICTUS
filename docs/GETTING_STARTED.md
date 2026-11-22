@@ -38,6 +38,14 @@ ctest --test-dir build -C Release --output-on-failure
 
 Binaries land in `build/<preset>/bin/` (`build/bin/<Config>/` with multi-config generators). A Debug build with tests needs about 5.5 GB of disk and takes roughly 40 minutes on 2 cores the first time; later builds are incremental.
 
+To build only the headless core (ECS, scene, scripting, physics, audio mixing, navigation, networking, gameplay; no renderer, editor, player or `victus` CLI), for example on a server or a machine without graphics headers:
+
+~~~bash
+cmake -S . -B build/headless -G Ninja -DVICTUS_WITH_GRAPHICS=OFF -DVICTUS_BUILD_TESTS=ON
+cmake --build build/headless
+ctest --test-dir build/headless   # 19 suites
+~~~
+
 Useful environment variables for tests:
 
 | Variable | Effect |
