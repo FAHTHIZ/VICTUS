@@ -33,6 +33,17 @@ std::vector<std::shared_ptr<ThreadBuffer>>& registry() {
 }
 std::vector<std::pair<std::uint32_t, std::string>> g_thread_names;
 
+double percentile_sorted(const std::vector<double>& sorted, double p) {
+    if (sorted.empty()) return 0.0;
+    p = std::clamp(p, 0.0, 100.0);
+    // Nearest-rank with linear interpolation between neighbours.
+    const double rank = p / 100.0 * static_cast<double>(sorted.size() - 1);
+    const auto lo = static_cast<std::size_t>(rank);
+    const std::size_t hi = std::min(lo + 1, sorted.size() - 1);
+    const double t = rank - static_cast<double>(lo);
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * t;
+}
+
 ThreadBuffer& local_buffer() {
     thread_local std::shared_ptr<ThreadBuffer> buffer = [] {
         auto b = std::make_shared<ThreadBuffer>();
@@ -171,13 +182,7 @@ double SampleWindow::percentile(double p) const {
     if (samples_.empty()) return 0.0;
     std::vector<double> sorted = samples_;
     std::sort(sorted.begin(), sorted.end());
-    p = std::clamp(p, 0.0, 100.0);
-    // Nearest-rank with linear interpolation between neighbours.
-    const double rank = p / 100.0 * static_cast<double>(sorted.size() - 1);
-    const auto lo = static_cast<std::size_t>(rank);
-    const std::size_t hi = std::min(lo + 1, sorted.size() - 1);
-    const double t = rank - static_cast<double>(lo);
-    return sorted[lo] + (sorted[hi] - sorted[lo]) * t;
+    return percentile_sorted(sorted, p);
 }
 
 double SampleWindow::mean() const {
@@ -231,9 +236,8 @@ void FrameProfiler::frame() {
         double ms{0};
         double calls{0};
     };
-    std::stable_sort(zones.begin(), zones.end(), [](const Zone& x, const Zone& y) {
-        return x.thread != y.thread ? x.thread < y.thread : x.begin_ns < y.begin_ns;
-    });
+    // Keep drain()'s chronological order; aggregation only needs each thread/name stream ordered.
+    // Sorting by thread again here would repeat work already done by drain().
     std::map<std::string_view, Acc> acc;
     std::map<std::pair<std::uint32_t, std::string_view>, std::uint64_t> open_until; // thread+name -> end of outermost
     for (const Zone& z : zones) {
@@ -269,9 +273,11 @@ FrameReport FrameProfiler::report() const {
     FrameReport r;
     r.frames = frame_ms_.count();
     r.mean_ms = frame_ms_.mean();
-    r.p50_ms = frame_ms_.percentile(50);
-    r.p95_ms = frame_ms_.percentile(95);
-    r.p99_ms = frame_ms_.percentile(99);
+    std::vector<double> sorted_frame_times = frame_ms_.ordered();
+    std::sort(sorted_frame_times.begin(), sorted_frame_times.end());
+    r.p50_ms = percentile_sorted(sorted_frame_times, 50);
+    r.p95_ms = percentile_sorted(sorted_frame_times, 95);
+    r.p99_ms = percentile_sorted(sorted_frame_times, 99);
     r.max_ms = frame_ms_.max();
     r.last_ms = frame_ms_.last();
     for (const auto& [name, sc] : scopes_)
