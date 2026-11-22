@@ -113,11 +113,14 @@ Template controls: 2D, A/D or arrows to run, Space to jump; 3D, WASD to walk, Sp
 
 ## Status
 
-VICTUS is under active development and is **not yet production-ready**. No game has shipped with it yet. Rendering has been validated on software Vulkan and CI's virtual Apple GPU, and it has not been run on a phone. Each feature listed above has automated tests, and the evidence is public:
+VICTUS is a **pre-release engine**. No public VICTUS release or externally shipped game is recorded. Special Ops is an internal integration consumer, not evidence of an external release. Rendering tests currently run on Mesa lavapipe (software Vulkan), Mesa GLES and CI's virtualised Apple GPU; these results do not establish performance on physical GPUs. The Android player is packaged in CI, but the platform matrix records no install on an emulator or physical phone. Sustained frame rate, memory use, thermals, battery impact and input behaviour on Android therefore remain unverified.
 
-- [Known limitations](docs/KNOWN_LIMITATIONS.md): the maturity of each subsystem and what is still missing
-- [Platform support](docs/PLATFORM_SUPPORT.md): what has been executed on each platform
-- [Engineering status](docs/STATUS.md): every slice, with the commands that verified it
+Automated tests prove the specific cases they exercise. They do not, by themselves, prove visual polish, production readiness or performance across all supported devices. Use the dated evidence and maturity labels below rather than treating the feature list as a quality guarantee:
+
+- [Visual quality and performance gap register](docs/VISUAL_QUALITY_AND_PERFORMANCE_GAP_REGISTER.md): prioritized work required for high visual quality and measured performance
+- [Known limitations](docs/KNOWN_LIMITATIONS.md): current subsystem maturity and concrete limitations
+- [Platform support](docs/PLATFORM_SUPPORT.md): what has actually been built and executed on each platform
+- [Engineering status](docs/STATUS.md): implementation and verification evidence by change
 - [Roadmap](ROADMAP.md) and [Changelog](CHANGELOG.md)
 
 ## Documentation
