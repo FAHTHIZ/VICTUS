@@ -186,6 +186,25 @@ bool reference_field(const char* id_label, const std::string& display, const std
     return changed;
 }
 
+// Asset reference of one kind: click to pick, drop one from Assets, clear.
+bool asset_reference_field(const char* id_label, const std::string& display, assets::AssetDatabase* db, assets::AssetKind kind, Uuid& id,
+                           std::string_view extra_help = {}) {
+    const std::string path = id.is_nil() ? std::string() : asset_label(db, id);
+    const std::string shown = id.is_nil() ? std::string("None") : std::filesystem::path(path).filename().string();
+    std::vector<std::pair<Uuid, std::string>> options;
+    if (db)
+        for (const auto& r : db->records())
+            if (r.kind == kind) options.emplace_back(r.uuid, r.path);
+    std::ranges::sort(options, {}, &std::pair<Uuid, std::string>::second);
+    const auto accept = [db, kind](const Uuid& dropped) {
+        const auto* rec = db ? db->find(dropped) : nullptr;
+        return rec && rec->kind == kind;
+    };
+    return reference_field(id_label, display, shown, kit::icon_for(kind), id, options, kAssetPayload, accept,
+                           std::format("{}{}{}{}Click to choose: {}. You can also drag one here from Assets.", path, path.empty() ? "" : "\n\n",
+                                       extra_help, extra_help.empty() ? "" : "\n\n", Editor::asset_kind_label(kind)));
+}
+
 // Editor widgets for one reflected field. Returns true when the value changed.
 bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db, const scene::Scene* scene) {
     // Readable label, stable ID: "linear_damping" shows as "Linear Damping".
@@ -319,20 +338,7 @@ bool field_edit(const scene::FieldInfo& f, void* comp, assets::AssetDatabase* db
                                       "Click to choose an object, or drag one here from the Hierarchy");
         } else if (const auto kind = asset_kind_for_hint(f.hint); kind != assets::AssetKind::Unknown) {
             // Asset reference: click to pick an asset of the right type, or drop one from Assets.
-            const std::string path = id.is_nil() ? std::string() : asset_label(db, id);
-            const std::string shown = id.is_nil() ? std::string("None") : std::filesystem::path(path).filename().string();
-            std::vector<std::pair<Uuid, std::string>> options;
-            if (db)
-                for (const auto& r : db->records())
-                    if (r.kind == kind) options.emplace_back(r.uuid, r.path);
-            std::ranges::sort(options, {}, &std::pair<Uuid, std::string>::second);
-            const auto accept = [db, kind](const Uuid& dropped) {
-                const auto* rec = db ? db->find(dropped) : nullptr;
-                return rec && rec->kind == kind;
-            };
-            changed = reference_field(label, display, shown, kit::icon_for(kind), id, options, kAssetPayload, accept,
-                                      std::format("{}{}Click to choose: {}. You can also drag one here from Assets.", path,
-                                                  path.empty() ? "" : "\n\n", Editor::asset_kind_label(kind)));
+            changed = asset_reference_field(label, display, db, kind, id);
         } else {
             ImGui::Text("%s: %s", label, id.to_string().c_str());
         }
@@ -1476,6 +1482,11 @@ bool Editor::inspect_components(Entity e) {
         changed |= ImGui::Checkbox("Shadows", &l->shadows);
         if (l->type == LightComponent::Type::Area && !l->baked && ImGui::IsItemHovered())
             ImGui::SetTooltip("Area lights cast shadows only when Baked");
+        if (l->type == LightComponent::Type::Spot) {
+            changed |= asset_reference_field("Cookie", "Cookie", db_.get(), assets::AssetKind::Texture, l->cookie,
+                                             "Texture projected through the cone (a gobo): its colour tints the light and "
+                                             "black blocks it. Its top follows the light's +Y axis.");
+        }
         if (l->type != LightComponent::Type::Directional) {
             changed |= ImGui::Checkbox("Baked", &l->baked);
             if (ImGui::IsItemHovered())

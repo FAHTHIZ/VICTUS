@@ -448,3 +448,181 @@ TEST_CASE("gpu: scenes author area lights through LightComponent; baked ones sta
     CHECK(corner < 40);
     std::filesystem::remove_all(project);
 }
+
+namespace {
+// 64x64 cookie: top-left white, bottom-left red, right half black.
+Image quadrant_cookie() {
+    Image img;
+    img.width = img.height = 64;
+    img.pixels.resize(64 * 64 * 4);
+    for (std::uint32_t y = 0; y < 64; ++y)
+        for (std::uint32_t x = 0; x < 64; ++x) {
+            std::uint8_t* p = &img.pixels[(y * 64 + x) * 4];
+            const bool left = x < 32, top = y < 32;
+            p[0] = left ? 255 : 0;
+            p[1] = p[2] = (left && top) ? 255 : 0;
+            p[3] = 255;
+        }
+    return img;
+}
+} // namespace
+
+TEST_CASE("gpu: spot light cookies project their image through the cone (ADR-0195)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+    auto plane = ctx.create_mesh(make_plane({20, 20}), "floor");
+    auto cube = ctx.create_mesh(make_cube({0.3f, 0.05f, 0.3f}), "blocker");
+    REQUIRE(plane.ok());
+    REQUIRE(cube.ok());
+    Material floor;
+    floor.base_color = {0.8f, 0.8f, 0.8f, 1};
+    floor.roughness = 0.9f;
+    const Camera3D cam = Camera3D::look_at({0, 10, 6}, {0, 0, 0}, {0, 1, 0});
+    constexpr std::uint64_t kCookie = 77;
+    REQUIRE((*sr)->set_cookie(kCookie, quadrant_cookie()).ok());
+    CHECK((*sr)->has_cookie(kCookie));
+    CHECK_FALSE((*sr)->set_cookie(0, quadrant_cookie()).ok());
+    SpotLight s;
+    s.position = {0, 4, 0};
+    s.direction = {0, -1, 0};
+    s.right = {1, 0, 0}; // image top towards -Z (up = right x direction)
+    s.intensity = 60.0f;
+    s.range = 12.0f;
+    s.inner_angle = 0.6f;
+    s.outer_angle = 0.7f;
+    const auto render_with = [&](const SpotLight& light, bool blocker = false) {
+        (*sr)->begin(cam, no_sun(), dark_env());
+        (*sr)->submit(*plane, floor, math::Mat4::identity());
+        if (blocker) (*sr)->submit(*cube, floor, math::Mat4::translation({-0.4f, 2.4f, -0.4f}));
+        (*sr)->add_spot_light(light);
+        return shoot(**sr);
+    };
+    const auto at = [&](const std::vector<std::uint8_t>& img, math::Vec3 p) {
+        const auto [x, y] = project(cam, p);
+        return pixel(img, W, x, y);
+    };
+    const math::Vec3 top_left{-1, 0, -1}, bottom_left{-1, 0, 1}, top_right{1, 0, -1}, bottom_right{1, 0, 1};
+    SpotLight plain = s;
+    const auto open = render_with(plain);
+    s.cookie = kCookie;
+    const auto img = render_with(s);
+    test::save_output("spot_cookie", W, H, img);
+    CHECK((*sr)->stats().cookie_lights == 1);
+    CHECK((*sr)->stats().missing_cookies == 0);
+    const int open_tl = lum(at(open, top_left)), tl = lum(at(img, top_left));
+    const std::uint32_t bl = at(img, bottom_left);
+    MESSAGE("open " << open_tl << " white quadrant " << tl << " red quadrant r " << channel(bl, 0) << " g " << channel(bl, 1)
+                    << " right " << lum(at(img, top_right)) << "/" << lum(at(img, bottom_right)));
+    CHECK(open_tl > 150);
+    CHECK(static_cast<float>(tl) > 0.9f * static_cast<float>(open_tl)); // white passes the light unchanged
+    CHECK(channel(bl, 0) > 80);
+    CHECK(channel(bl, 1) < 8); // red filters out green and blue
+    CHECK(lum(at(img, top_right)) < 8);
+    CHECK(lum(at(img, bottom_right)) < 8);
+    // Turning the light's right vector to +Z turns the image: the white quadrant moves to +X -Z.
+    SpotLight turned = s;
+    turned.right = {0, 0, 1}; // up = (0,0,1) x (0,-1,0) = (1,0,0): image top towards +X
+    const auto rot = render_with(turned);
+    MESSAGE("turned: +X-Z " << lum(at(rot, top_right)) << " -X-Z " << lum(at(rot, top_left)));
+    CHECK(lum(at(rot, top_right)) > 150);  // image top-left = top (+X), left (-Z)
+    CHECK(channel(at(rot, top_left), 0) > 80); // (-X, -Z) is now the image's bottom-left: red
+    CHECK(channel(at(rot, top_left), 1) < 8);
+    CHECK(lum(at(rot, bottom_right)) < 8);     // (+X, +Z): the image's top-right, black
+    // Shadows and cookies share spot.z: a shadowed cookie light keeps both.
+    SpotLight shadowed = s;
+    shadowed.cast_shadows = true;
+    const auto sh = render_with(shadowed);
+    const auto blocked = render_with(shadowed, true);
+    MESSAGE("shadowed " << lum(at(sh, top_left)) << " blocked " << lum(at(blocked, top_left)) << " right " << lum(at(sh, top_right)));
+    CHECK(lum(at(sh, top_left)) > 150);
+    CHECK(lum(at(sh, top_right)) < 8);
+    CHECK(lum(at(blocked, top_left)) < 0.3f * static_cast<float>(lum(at(sh, top_left))));
+    // An unknown key draws the light without a cookie and is counted.
+    SpotLight missing = plain;
+    missing.cookie = 999;
+    const auto miss = render_with(missing);
+    CHECK((*sr)->stats().missing_cookies == 1);
+    CHECK(lum(at(miss, top_right)) > 150);
+    // Removing frees the slot; the light falls back to no cookie.
+    (*sr)->remove_cookie(kCookie);
+    CHECK_FALSE((*sr)->has_cookie(kCookie));
+    ctx.destroy(*plane);
+    ctx.destroy(*cube);
+}
+
+TEST_CASE("gpu: scenes author spot cookies through LightComponent texture assets (ADR-0195)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    const fs::Path root = std::filesystem::temp_directory_path() / ("victus_cookie_" + Uuid::generate().to_string().substr(0, 8));
+    std::filesystem::create_directories(root / "assets");
+    auto png = encode_png(quadrant_cookie());
+    REQUIRE(png.ok());
+    REQUIRE(fs::write_atomic(root / "assets" / "cookie.png", *png).ok());
+    auto db = assets::AssetDatabase::open(root);
+    REQUIRE(db.ok());
+    REQUIRE((*db)->import_all().failed == 0);
+    const auto* rec = (*db)->find_path("cookie.png");
+    REQUIRE(rec);
+    const Uuid cookie = rec->uuid;
+    scene::Scene authored;
+    const auto floor = authored.create("Floor");
+    authored.world().add<scene::MeshRendererComponent>(floor).primitive = "plane";
+    authored.world().get<scene::Transform>(floor)->scale = {10, 1, 10};
+    const auto lamp = authored.create("Lamp");
+    authored.world().get<scene::Transform>(lamp)->position = {0, 4, 0};
+    authored.world().get<scene::Transform>(lamp)->rotation = math::Quat::axis_angle({1, 0, 0}, math::radians(-90)); // -Z -> down
+    auto& l = authored.world().add<scene::LightComponent>(lamp);
+    l.type = scene::LightComponent::Type::Spot;
+    l.intensity = 60.0f;
+    l.range = 12.0f;
+    l.inner_angle_degrees = 34.0f;
+    l.outer_angle_degrees = 40.0f;
+    l.cookie = cookie;
+    const auto lost = authored.create("Lost");
+    authored.world().get<scene::Transform>(lost)->position = {30, 4, 0};
+    authored.world().get<scene::Transform>(lost)->rotation = math::Quat::axis_angle({1, 0, 0}, math::radians(-90));
+    auto& m = authored.world().add<scene::LightComponent>(lost);
+    m.type = scene::LightComponent::Type::Spot;
+    m.cookie = Uuid::generate(); // no such asset
+    const auto cam = authored.create("Camera");
+    authored.world().get<scene::Transform>(cam)->position = {0, 10, 6};
+    authored.world().get<scene::Transform>(cam)->rotation = math::Quat::axis_angle({1, 0, 0}, std::atan2(-10.0f, 6.0f));
+    authored.world().add<scene::CameraComponent>(cam);
+    REQUIRE(authored.save_file(root / "assets" / "cookie.vscene").ok());
+    scene::Scene s;
+    REQUIRE(s.load_file(root / "assets" / "cookie.vscene").ok());
+    const auto* loaded = s.world().get<scene::LightComponent>(s.find_by_name("Lamp"));
+    REQUIRE(loaded);
+    CHECK(loaded->cookie == cookie);
+    s.update_transforms();
+    runtime::GpuAssetCache cache(ctx, db->get());
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    (*sr)->set_settings(plain_settings());
+    runtime::SceneViewSettings view;
+    view.environment = dark_env();
+    const auto stats = runtime::extract_scene(s, cache, **sr, view);
+    CHECK(stats.light_cookies == 1);
+    CHECK(stats.missing_assets >= 1);
+    const auto img = shoot(**sr);
+    CHECK((*sr)->stats().cookie_lights == 1);
+    const Camera3D view_cam = Camera3D::look_at({0, 10, 6}, {0, 0, 0}, {0, 1, 0});
+    const auto at = [&](math::Vec3 p) {
+        const auto [x, y] = project(view_cam, p);
+        return pixel(img, W, x, y);
+    };
+    const int tl = lum(at({-1, 0, -1})), tr = lum(at({1, 0, -1}));
+    const std::uint32_t bl = at({-1, 0, 1});
+    MESSAGE("authored cookie: white " << tl << " red r " << channel(bl, 0) << " g " << channel(bl, 1) << " right " << tr);
+    CHECK(tl > 120);
+    CHECK(channel(bl, 0) > 60);
+    CHECK(channel(bl, 1) < 10);
+    CHECK(tr < 10);
+    // A second extraction reuses the registered cookie.
+    (void)runtime::extract_scene(s, cache, **sr, view);
+    CHECK((*sr)->cookie_count() == 1);
+    std::filesystem::remove_all(root);
+}

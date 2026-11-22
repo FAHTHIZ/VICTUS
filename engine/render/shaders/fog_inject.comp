@@ -16,11 +16,13 @@ layout(set = 0, binding = 1) uniform sampler2DShadow u_local_shadow;
 layout(std430, set = 0, binding = 1) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 0, binding = 2) readonly buffer Clusters { uint cluster_data[]; };
 layout(std430, set = 0, binding = 3) readonly buffer History { vec4 history[]; };
-layout(std430, set = 1, binding = 4) buffer Froxels { vec4 froxels[]; };
+layout(std430, set = 0, binding = 4) readonly buffer Cookies { uint cookie_data[]; }; // ADR-0195
+layout(std430, set = 1, binding = 5) buffer Froxels { vec4 froxels[]; };
 #else
 layout(std430, set = 0, binding = 2) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 0, binding = 3) readonly buffer Clusters { uint cluster_data[]; };
 layout(std430, set = 0, binding = 4) readonly buffer History { vec4 history[]; };
+layout(std430, set = 0, binding = 5) readonly buffer Cookies { uint cookie_data[]; }; // ADR-0195
 layout(std430, set = 1, binding = 0) buffer Froxels { vec4 froxels[]; };
 #endif
 
@@ -88,9 +90,26 @@ float sun_shadow(vec3 p, float depth) {
     return s;
 }
 
+// Spot light cookie (ADR-0195), as in pbr.frag: light shafts take the cookie's pattern. Nearest
+// texel only: the froxels are far coarser than a cookie texel.
+vec3 spot_cookie(LocalLight l, vec3 p) {
+    float record = floor((l.spot.z + 0.5) / 4096.0);
+    if (record < 0.5) return vec3(1.0);
+    LocalLight c = local_lights[uint(record) - 1u];
+    vec4 p4 = vec4(p, 1.0);
+    float w = dot(c.direction_cos_outer, p4);
+    if (w <= 1e-5) return vec3(0.0);
+    vec2 uv = clamp(vec2(dot(c.position_range, p4), dot(c.color_intensity, p4)) / w, 0.0, 1.0);
+    uvec2 t = min(uvec2(uv * 256.0), uvec2(255u));
+    uint word = cookie_data[uint(c.spot.x + 0.5) * 65536u + t.y * 256u + t.x];
+    vec3 s = vec3(uvec3(word, word >> 8u, word >> 16u) & 255u) / 255.0;
+    return mix(s / 12.92, pow((s + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), s)); // sRGB -> linear
+}
+
 float local_shadow(LocalLight l, vec3 Ld, vec3 p) {
-    if (u.local_shadow.w < 0.5 || l.spot.z < 0.5) return 1.0;
-    int tile = int(l.spot.z + 0.5) - 1;
+    float slot = mod(l.spot.z + 0.5, 4096.0) - 0.5;
+    if (u.local_shadow.w < 0.5 || slot < 0.5) return 1.0;
+    int tile = int(slot + 0.5) - 1;
     if (l.spot.y < 0.5) {
         vec3 d = -Ld;
         vec3 a = abs(d);
@@ -238,7 +257,8 @@ void main() {
                 if (atten <= 0.0) continue;
                 atten *= local_shadow(l, Ld, p);
                 if (atten <= 0.0) continue;
-                local += l.color_intensity.rgb * (l.color_intensity.w * atten * hg_phase(dot(Ld, dir), g_aniso));
+                vec3 tint = (l.spot.y > 0.5 && l.spot.y < 1.5) ? spot_cookie(l, p) : vec3(1.0);
+                local += l.color_intensity.rgb * tint * (l.color_intensity.w * atten * hg_phase(dot(Ld, dir), g_aniso));
             }
             light += local * u.ambient.w;
         }

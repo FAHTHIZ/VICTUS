@@ -2812,3 +2812,18 @@ Measured: the Android-profile 3D pack peaks at 760 MB resident under lavapipe, b
 Not verified:
 - The Windows mapping path, which is compiled only on CI.
 - Phone memory and GPU memory.
+
+## 2026-11-22 — Spot light cookies (ADR-0195)
+
+Built: `SceneRenderer` cookie atlas (`set_cookie`/`remove_cookie`/`has_cookie`, 64 slots of 256×256 sRGB RGBA8 in one storage buffer, linear-light resampling), per-light cookie projection records in the light buffer (shadow tile and cookie record packed in `spot.z`), manual bilinear sRGB sampling in `pbr.frag`, nearest-texel cookies in `fog_inject.comp`, `SpotLight::right`, `SceneStats::cookie_lights`/`missing_cookies`; lightmap baker `LightmapLight::cookie` and `spot_cookie_tint`; `LightComponent::cookie` (scene format), runtime `load_cookie_image` and `GpuAssetCache::cookie` with reload versions, `ExtractStats::light_cookies`; baked cookies in `scene_lightmap`; Studio Cookie texture field (shared `asset_reference_field` helper); validation error for missing or non-texture cookies and warning for cookies on non-spot lights.
+
+Verified:
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen build/bin/victus_gpu_tests -tc="*cookie*"`: 3 cases, 67 assertions pass. Quadrant cookie: white 663 (open 663), red r 222 g 0, black 0/0; rotated `right` moves the image; shadowed 663, blocked 0; unknown key counted. Scene-authored texture asset: white 684, red r 230 g 0, black 0, `light_cookies` 1, one atlas slot after two extractions. Fog glow 30.19/30.19 without, 29.94/1.17 with a half-black cookie. `build/test_output/spot_cookie.png` checked by eye.
+- `build/bin/victus_gpu_tests -tc="*cookie*,*spot*,*area*"`: 9 cases, 162 assertions pass.
+- `build/bin/victus_render_tests -tc="*cookie*"`: baked cookie 0.548/0.548 white side, 0.548/0 red side, plain spot 0.548; direct `spot_cookie_tint` checks.
+- `build/bin/victus_export_tests -tc="validate*"`: 5 cases, 118 assertions; `build/bin/victus_scene_tests`: 15/15; `victus_editor_tests -tc="studio area light*"` (Cookie field draws): 26 assertions.
+- `python3 tools/lint/run_clang_tidy.py -p build -j 1` on the 7 changed engine and editor sources: 0 diagnostics.
+- `VICTUS_REQUIRE_GPU=1 SDL_VIDEO_DRIVER=offscreen ctest --test-dir build -j2`: 42/42 pass (683 s).
+
+Not verified: real GPUs (lavapipe only). Point and directional cookies, mip maps for cookies (documented in KNOWN_LIMITATIONS).
+Next task: screen-space / planar reflections (GAP-16).

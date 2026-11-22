@@ -271,6 +271,16 @@ Result<ValidationReport> validate_project(const project::Project& proj) {
                 entity(Severity::Error, e, who(e) + " uses missing material " + c.material_asset.to_string(),
                        "Assign an existing material in the Inspector.", c.material_asset);
         });
+        scene.world().each<scene::LightComponent>([&](scene::Entity e, scene::LightComponent& c) {
+            if (c.cookie.is_nil()) return;
+            const assets::AssetRecord* t = (*db)->find(c.cookie);
+            if (!t || t->kind != assets::AssetKind::Texture)
+                entity(Severity::Error, e, who(e) + " uses missing light cookie texture " + c.cookie.to_string(),
+                       "Assign an existing texture as the light's Cookie in the Inspector, or clear it.", c.cookie);
+            if (c.type != scene::LightComponent::Type::Spot)
+                entity(Severity::Warning, e, who(e) + " has a cookie but is not a spot light; only spot lights draw cookies",
+                       "Make the light a Spot light, or clear its Cookie.", c.cookie);
+        });
         // Convex/mesh colliders need geometry: a model mesh that exists, or a mesh on the entity.
         scene.world().each<physics::ColliderComponent>([&](scene::Entity e, physics::ColliderComponent& c) {
             if (c.shape != physics::ColliderComponent::Shape::Convex && c.shape != physics::ColliderComponent::Shape::Mesh) return;

@@ -71,13 +71,17 @@ LocalLight local_light(uint i) {
     return LocalLight(vx_texel0(t), vx_texel0(t + 1u), vx_texel0(t + 2u), vx_texel0(t + 3u));
 }
 uint cluster_word(uint i) { return texelFetch(vx_storage1, ivec2(int((i >> 2u) & 1023u), int(i >> 12u)), 0)[i & 3u]; }
+layout(set = 2, binding = 23) uniform highp usampler2D vx_storage3;
+uint cookie_word(uint i) { return texelFetch(vx_storage3, ivec2(int((i >> 2u) & 1023u), int(i >> 12u)), 0)[i & 3u]; }
 #define LOCAL_LIGHT(i) local_light(i)
 #define CLUSTER(i) cluster_word(i)
 #define FOG_GRID(i) vx_texel2(i)
+#define COOKIE(i) cookie_word(i)
 #elif defined(VICTUS_MSL)
 layout(std430, set = 2, binding = 3) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 2, binding = 4) readonly buffer Clusters { uint cluster_data[]; };
 layout(std430, set = 2, binding = 5) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
+layout(std430, set = 2, binding = 6) readonly buffer Cookies { uint cookie_data[]; }; // ADR-0195
 #else
 // Surface shader textures (ADR-0171) take bindings 12.. and the storage buffers follow them.
 #ifndef VX_CUSTOM_TEXTURES
@@ -86,11 +90,13 @@ layout(std430, set = 2, binding = 5) readonly buffer FogGrid { vec4 fog_grid[]; 
 layout(std430, set = 2, binding = 12 + VX_CUSTOM_TEXTURES) readonly buffer Lights { LocalLight local_lights[]; };
 layout(std430, set = 2, binding = 13 + VX_CUSTOM_TEXTURES) readonly buffer Clusters { uint cluster_data[]; };
 layout(std430, set = 2, binding = 14 + VX_CUSTOM_TEXTURES) readonly buffer FogGrid { vec4 fog_grid[]; }; // ADR-0119
+layout(std430, set = 2, binding = 15 + VX_CUSTOM_TEXTURES) readonly buffer Cookies { uint cookie_data[]; }; // ADR-0195
 #endif
 #if !defined(VICTUS_ESSL)
 #define LOCAL_LIGHT(i) local_lights[i]
 #define CLUSTER(i) cluster_data[i]
 #define FOG_GRID(i) fog_grid[i]
+#define COOKIE(i) cookie_data[i]
 #endif
 layout(set = 3, binding = 0) uniform Lighting {
     vec4 camera_pos;     // w: screen-space occlusion texture: 0 none, 1 ambient occlusion (r), 2 also sun contact shadows (g, ADR-0183)
@@ -615,9 +621,37 @@ float cloud_shadow(vec3 L) {
 
 // Shadow of a local light: spot lights use one atlas tile, point lights six (one per cube face,
 // +X -X +Y -Y +Z -Z, picked by the major axis of the light-to-surface vector).
+// Spot light cookie (ADR-0195). spot.z = shadow tile + 1 + 4096 * (cookie record + 1); the record
+// holds the rows of the cone's projection and the atlas slot. Cookies are packed sRGB RGBA8
+// texels (SceneRenderer::kCookieSize squared per slot), filtered bilinearly here.
+#define COOKIE_SIZE 256u
+vec3 cookie_texel(uint base, uint x, uint y) {
+    uint w = COOKIE(base + y * COOKIE_SIZE + x);
+    vec3 c = vec3(uvec3(w, w >> 8u, w >> 16u) & 255u) / 255.0;
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); // sRGB -> linear
+}
+vec3 spot_cookie(LocalLight l, vec3 P) {
+    float record = floor((l.spot.z + 0.5) / 4096.0);
+    if (record < 0.5) return vec3(1.0);
+    LocalLight c = LOCAL_LIGHT(uint(record) - 1u);
+    vec4 p = vec4(P, 1.0);
+    float w = dot(c.direction_cos_outer, p);
+    if (w <= 1e-5) return vec3(0.0);
+    vec2 uv = clamp(vec2(dot(c.position_range, p), dot(c.color_intensity, p)) / w, 0.0, 1.0);
+    vec2 t = uv * float(COOKIE_SIZE) - 0.5;
+    vec2 f = fract(t);
+    ivec2 i0 = clamp(ivec2(floor(t)), ivec2(0), ivec2(int(COOKIE_SIZE) - 1));
+    ivec2 i1 = min(i0 + 1, ivec2(int(COOKIE_SIZE) - 1));
+    uint base = uint(c.spot.x + 0.5) * COOKIE_SIZE * COOKIE_SIZE;
+    vec3 a = mix(cookie_texel(base, uint(i0.x), uint(i0.y)), cookie_texel(base, uint(i1.x), uint(i0.y)), f.x);
+    vec3 b = mix(cookie_texel(base, uint(i0.x), uint(i1.y)), cookie_texel(base, uint(i1.x), uint(i1.y)), f.x);
+    return mix(a, b, f.y);
+}
+
 float local_shadow(LocalLight l, vec3 Ld, float dist, vec3 N) {
-    if (lighting.local_shadow.w < 0.5 || l.spot.z < 0.5) return 1.0;
-    int tile = int(l.spot.z + 0.5) - 1;
+    float slot = mod(l.spot.z + 0.5, 4096.0) - 0.5;
+    if (lighting.local_shadow.w < 0.5 || slot < 0.5) return 1.0;
+    int tile = int(slot + 0.5) - 1;
     if (l.spot.y < 0.5) {
         vec3 d = -Ld;
         vec3 a = abs(d);
@@ -814,6 +848,7 @@ void main() {
             atten *= local_shadow(l, Ld, dist, N);
             if (atten <= 0.0) continue;
             vec3 radiance = l.color_intensity.rgb * l.color_intensity.w * atten;
+            if (l.spot.y > 0.5) radiance *= spot_cookie(l, v_world_pos);
             if (l.spot.y < 0.5 && l.spot.x > 0.0) color += sphere_light(N, V, to_light, l.spot.x, radiance, albedo, metallic, roughness);
             else color += brdf(N, V, Ld, radiance, albedo, metallic, roughness);
         }

@@ -938,3 +938,57 @@ TEST_CASE("lightmap area lights cast soft shadows with a penumbra a point light 
     CHECK(p0 < 0.05f);
     CHECK(p1 > 0.97f);
 }
+
+TEST_CASE("lightmap spot cookies tint baked light like the real-time projection (ADR-0195)") {
+    // Left half of the image white, right half red: with right = +X and the light pointing down,
+    // the image's left falls on -X and its top on -Z (up = right x direction).
+    auto img = std::make_shared<Image>();
+    img->width = img->height = 8;
+    img->pixels.assign(8 * 8 * 4, 255);
+    for (std::uint32_t y = 0; y < 8; ++y)
+        for (std::uint32_t x = 4; x < 8; ++x) img->pixels[(y * 8 + x) * 4 + 1] = img->pixels[(y * 8 + x) * 4 + 2] = 0;
+    LightmapLight spot;
+    spot.type = LightmapLight::Type::Spot;
+    spot.position = {0, 3, 0};
+    spot.direction = {0, -1, 0};
+    spot.right = {1, 0, 0};
+    spot.radiance = {20, 20, 20};
+    spot.range = 20.0f;
+    spot.cos_inner = std::cos(0.6f);
+    spot.cos_outer = std::cos(0.7f);
+    spot.baked = true;
+    spot.cookie = img;
+    const Vec3 left = spot_cookie_tint(spot, Vec3{-1, -3, 0}), right = spot_cookie_tint(spot, Vec3{1, -3, 0});
+    CHECK(left.x == doctest::Approx(1.0f));
+    CHECK(left.y == doctest::Approx(1.0f));
+    CHECK(right.x == doctest::Approx(1.0f));
+    CHECK(right.y == doctest::Approx(0.0f));
+    CHECK(spot_cookie_tint(spot, Vec3{0, 3, 0}).x == 0.0f); // behind the light
+    LightmapLight plain = spot;
+    plain.cookie.reset();
+    CHECK(spot_cookie_tint(plain, Vec3{1, -3, 0}).y == 1.0f);
+
+    const MeshData floor = make_plane({6, 6}, 6);
+    LightmapSettings s = fast_settings();
+    s.texels_per_unit = 8.0f;
+    s.bounces = 0;
+    s.denoise = false;
+    const auto bake_with = [&](const LightmapLight& light) {
+        LightmapScene scene;
+        scene.instances.push_back({&floor});
+        scene.sky = uniform_sky(0.0f);
+        scene.lights.push_back(light);
+        auto bake = bake_lightmaps(scene, s);
+        REQUIRE(bake);
+        return std::pair{scene, std::move(bake.value())};
+    };
+    const auto [cs, cookie_bake] = bake_with(spot);
+    const auto [ps, plain_bake] = bake_with(plain);
+    const Vec3 l = *lightmap_at(cs, cookie_bake, 0, {-1, 0, 0}), r = *lightmap_at(cs, cookie_bake, 0, {1, 0, 0});
+    const Vec3 open = *lightmap_at(ps, plain_bake, 0, {1, 0, 0});
+    MESSAGE("baked cookie: white side " << l.x << "," << l.y << " red side " << r.x << "," << r.y << " no cookie " << open.x);
+    CHECK(open.x > 0.0f);
+    CHECK(l.y == doctest::Approx(open.y).epsilon(0.05));
+    CHECK(r.x == doctest::Approx(open.x).epsilon(0.05));
+    CHECK(r.y < 0.05f * open.y);
+}

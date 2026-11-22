@@ -89,6 +89,9 @@ struct GpuModel {
 // Uploads a cooked texture: the first block-compressed variant the device can sample (in the
 // cooker's preference order) when `allow_compressed`, otherwise the RGBA8 mips. `chosen`
 // receives the uploaded codec, or nullopt for RGBA8.
+// A texture asset as a light cookie image (ADR-0195): the smallest mip with at least
+// SceneRenderer::kCookieSize pixels on its long side, sRGB-encoded RGBA8 (linear textures are encoded).
+[[nodiscard]] Result<render::Image> load_cookie_image(assets::AssetDatabase& db, const Uuid& texture);
 [[nodiscard]] Result<rhi::TextureHandle> upload_cooked_texture(render::GpuContext& ctx, const assets::CookedTexture& texture,
                                                                bool allow_compressed = true,
                                                                std::optional<assets::TextureCodec>* chosen = nullptr,
@@ -261,6 +264,14 @@ public:
     [[nodiscard]] LightmappedMesh lightmapped_mesh(std::string_view path, scene::Scene& scene, scene::Entity entity);
     // GPU meshes created for lightmapped renderers so far (shared copies count once).
     [[nodiscard]] std::size_t lightmapped_mesh_count() const noexcept;
+    // Light cookie image (ADR-0195) of a texture asset (load_cookie_image), read on first use;
+    // `version` changes when the asset is re-imported (evict), so renderers re-register it.
+    // nullptr when missing (logged once).
+    struct CookieImage {
+        render::Image image;
+        std::uint64_t key{0}, version{0};
+    };
+    [[nodiscard]] const CookieImage* cookie(const Uuid& texture);
     // Drops loaded lightmaps (after a re-bake) so the next request reads the file again.
     void evict_lightmaps();
     [[nodiscard]] std::size_t lightmap_count() const noexcept { return lightmaps_.size(); }
@@ -324,6 +335,8 @@ private:
         std::unordered_map<Uuid, std::optional<LightmappedMesh>, UuidHash> meshes; // nullopt = no entry or stale
     };
     std::unordered_map<std::string, LightmapEntry> lightmaps_;
+    std::unordered_map<Uuid, std::optional<CookieImage>, UuidHash> cookies_; // nullopt = failed
+    std::uint64_t cookie_versions_{0};
     struct MorphEntry {
         Uuid model;
         std::uint32_t mesh{0};
@@ -396,6 +409,7 @@ using assets::instantiate_model;
 
 struct ExtractStats {
     std::uint32_t meshes{0}, sprites{0}, lights{0}, missing_assets{0};
+    std::uint32_t light_cookies{0}; // spot lights drawn with a cookie texture (ADR-0195)
     std::uint32_t reflection_probes{0}; // captured probes handed to the renderer
     std::uint32_t irradiance_volumes{0}; // volumes with baked probes in the scene
     bool lightmap_probes{false};         // the lightmap's baked probes lit dynamic objects this frame (ADR-0133)

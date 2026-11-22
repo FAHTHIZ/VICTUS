@@ -39,6 +39,7 @@ void GpuAssetCache::clear() {
     nearest_.clear();
     environments_.clear();
     environment_errors_.clear();
+    cookies_.clear();
     atmosphere_.reset();
     probes_.clear();
     irradiance_.clear();
@@ -84,6 +85,7 @@ void GpuAssetCache::evict(const Uuid& uuid) {
     if (loader_) loader_->forget(uuid); // a reload in flight is discarded; the next request re-reads
     environments_.erase(uuid);
     environment_errors_.erase(uuid);
+    cookies_.erase(uuid); // the next request reads it again under a new version
     if (const auto it = textures_.find(uuid); it != textures_.end()) {
         ctx_->device().destroy(it->second);
         textures_.erase(it);
@@ -95,6 +97,45 @@ void GpuAssetCache::evict(const Uuid& uuid) {
         for (auto& t : it->second->textures) ctx_->device().destroy(t);
         models_.erase(it);
     }
+}
+
+Result<render::Image> load_cookie_image(assets::AssetDatabase& db, const Uuid& texture) {
+    auto cooked = db.load_texture(texture);
+    if (!cooked) return std::move(cooked).error();
+    if (cooked->mips.empty()) return make_error(ErrorCode::ParseError, "texture has no levels");
+    // The smallest level that still has at least SceneRenderer::kCookieSize pixels on its long side.
+    std::size_t level = 0;
+    while (level + 1 < cooked->mips.size() &&
+           std::max(cooked->mips[level + 1].width, cooked->mips[level + 1].height) >= render::SceneRenderer::kCookieSize)
+        ++level;
+    auto img = assets::rgba8_level(*cooked, level);
+    if (!img) return std::move(img).error();
+    if (!cooked->srgb) { // linear data textures (masks) store the value itself: encode it as sRGB
+        for (std::size_t i = 0; i < img->pixels.size(); ++i) {
+            if (i % 4 == 3) continue;
+            const float v = math::linear_to_srgb(static_cast<float>(img->pixels[i]) / 255.0f);
+            img->pixels[i] = static_cast<std::uint8_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
+        }
+    }
+    return img;
+}
+
+const GpuAssetCache::CookieImage* GpuAssetCache::cookie(const Uuid& texture) {
+    if (texture.is_nil()) return nullptr;
+    if (const auto it = cookies_.find(texture); it != cookies_.end()) return it->second ? &*it->second : nullptr;
+    auto& slot = cookies_[texture];
+    if (!db_) return nullptr;
+    auto img = load_cookie_image(*db_, texture);
+    if (!img) {
+        VICTUS_LOG_WARN("runtime", "light cookie {}: {}", texture.to_string(), img.error().message);
+        return nullptr;
+    }
+    CookieImage c;
+    c.image = std::move(*img);
+    c.key = UuidHash{}(texture) | 1u; // never 0 (0 = no cookie)
+    c.version = ++cookie_versions_;
+    slot = std::move(c);
+    return &*slot;
 }
 
 Result<rhi::TextureHandle> upload_cooked_texture(render::GpuContext& ctx, const assets::CookedTexture& texture, bool allow_compressed,
@@ -1585,6 +1626,22 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             const float outer = std::isfinite(l.outer_angle_degrees) ? std::clamp(l.outer_angle_degrees, 0.1f, 89.5f) : 30.0f;
             sl.outer_angle = math::radians(outer);
             sl.inner_angle = math::radians(std::isfinite(l.inner_angle_degrees) ? std::clamp(l.inner_angle_degrees, 0.0f, outer) : outer);
+            if (!l.cookie.is_nil()) {
+                const math::Vec3 x = wt.matrix.transform_vector({1, 0, 0});
+                sl.right = math::length(x) > 1e-6f ? math::normalize(x) : math::Vec3{1, 0, 0};
+                if (const GpuAssetCache::CookieImage* c = assets.cookie(l.cookie)) {
+                    if (renderer.cookie_version(c->key) != c->version) {
+                        if (auto st = renderer.set_cookie(c->key, c->image, c->version); !st.ok())
+                            VICTUS_LOG_WARN("runtime", "light cookie {}: {}", l.cookie.to_string(), st.error().message);
+                    }
+                    if (renderer.has_cookie(c->key)) {
+                        sl.cookie = c->key;
+                        ++stats.light_cookies;
+                    }
+                } else {
+                    ++stats.missing_assets;
+                }
+            }
             (baked ? baked_spots : spots).push_back(sl);
         } else if (l.type == LightComponent::Type::Area) {
             render::AreaLight al;

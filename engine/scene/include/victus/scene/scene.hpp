@@ -83,6 +83,9 @@ struct LightComponent {
     // soft shadows in the lightmap and probes, and the renderer skips it while that lightmap is
     // loaded. Off: lit in real time, only its bounce light is baked.
     bool baked{false};
+    // Spot light cookie (ADR-0195): a texture asset projected through the cone, its top along the
+    // entity's +Y and its left-to-right along +X; its colour multiplies the light. Nil = none.
+    Uuid cookie;
 };
 // References a mesh inside an asset (glTF/model) by asset UUID and sub-mesh index, plus a
 // material override index (-1 = mesh's own material).

@@ -184,6 +184,11 @@ struct SpotLight {
     float inner_angle{0.35f};
     float outer_angle{0.5f};
     bool cast_shadows{false}; // one atlas tile; cones wider than 85 degrees stay unshadowed
+    // Light cookie (ADR-0195): key of an image registered with SceneRenderer::set_cookie, 0 = none.
+    // The image is projected through the cone, its top along `up` = cross(right, direction), its
+    // left-to-right along `right`; its colour multiplies the light (black blocks it).
+    std::uint64_t cookie{0};
+    math::Vec3 right{1, 0, 0};
 };
 
 // One-sided rectangular area light (ADR-0194), like a window, screen or softbox. It emits along
@@ -745,6 +750,8 @@ struct SceneStats {
     std::uint32_t point_lights{0};      // local lights used (point + spot)
     std::uint32_t spot_lights{0};
     std::uint32_t area_lights{0};
+    std::uint32_t cookie_lights{0};  // spot lights drawn with a cookie
+    std::uint32_t missing_cookies{0}; // spot lights whose cookie key was never registered (drawn without)
     std::uint32_t light_indices{0};     // clustered light index list length
     std::uint32_t max_cluster_lights{0}; // most lights in one cluster
     std::uint32_t shadow_cascades{0}, shadow_draws{0}, prepass_draws{0};
@@ -866,6 +873,21 @@ public:
     void add_point_light(const PointLight& light);
     void add_area_light(const AreaLight& light);
     void add_spot_light(const SpotLight& light);
+    // Light cookies (ADR-0195). The image is resampled to kCookieSize x kCookieSize RGBA8 (sRGB) and
+    // kept on the GPU until removed; `key` is any non-zero id (the runtime uses the texture UUID).
+    // Registering the same key again replaces the image. Fails when kMaxCookies are registered.
+    static constexpr std::uint32_t kCookieSize = 256;
+    static constexpr std::uint32_t kMaxCookies = 64;
+    // `version` is the caller's revision of the image (e.g. bumped on re-import); cookie_version()
+    // returns it, so callers re-register only when it changed.
+    Status set_cookie(std::uint64_t key, const Image& image, std::uint64_t version = 0);
+    void remove_cookie(std::uint64_t key);
+    [[nodiscard]] bool has_cookie(std::uint64_t key) const noexcept { return cookie_slots_.contains(key); }
+    [[nodiscard]] std::optional<std::uint64_t> cookie_version(std::uint64_t key) const noexcept {
+        const auto it = cookie_slots_.find(key);
+        return it == cookie_slots_.end() ? std::nullopt : std::optional<std::uint64_t>(it->second.version);
+    }
+    [[nodiscard]] std::size_t cookie_count() const noexcept { return cookie_slots_.size(); }
     // `motion_id` (non-zero, unique per object and stable across frames, e.g. an entity id) lets
     // the renderer compare the draw with the previous frame and write object motion vectors for
     // TAA; 0 = no tracking (the object is treated as static, camera motion only).
@@ -1266,6 +1288,17 @@ private:
     std::vector<PointLight> points_;
     std::vector<SpotLight> spots_;
     std::vector<AreaLight> areas_;
+    // Cookie atlas (ADR-0195): kCookieSize^2 packed RGBA8 texels per slot, uploaded when dirty.
+    struct CookieSlot {
+        std::uint32_t slot{0};
+        std::uint64_t version{0};
+    };
+    std::unordered_map<std::uint64_t, CookieSlot> cookie_slots_;
+    std::vector<std::uint32_t> cookie_texels_;
+    std::vector<std::uint32_t> cookie_free_;
+    bool cookies_dirty_{true};
+    rhi::BufferHandle cookie_buffer_;
+    std::uint32_t cookie_capacity_{0}; // bytes
     rhi::BufferHandle light_buffer_, cluster_buffer_;
     std::uint32_t light_capacity_{0}, cluster_capacity_{0}; // bytes
     std::vector<Draw> draws_;

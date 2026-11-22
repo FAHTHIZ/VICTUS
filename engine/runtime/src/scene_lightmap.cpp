@@ -4,6 +4,7 @@
 #include "victus/animation/animation.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/render/scene_renderer.hpp"
+#include "victus/runtime/scene_rendering.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -238,6 +239,17 @@ Result<PreparedLightmapBake> prepare_scene_lightmap(scene::Scene& scene, assets:
             const float inner = std::isfinite(l.inner_angle_degrees) ? std::clamp(l.inner_angle_degrees, 0.0f, outer) : outer;
             light.cos_outer = std::cos(math::radians(outer));
             light.cos_inner = std::cos(math::radians(inner));
+            if (!l.cookie.is_nil()) {
+                const math::Vec3 x = wt.matrix.transform_vector({1, 0, 0});
+                light.right = math::length(x) > 1e-6f ? math::normalize(x) : math::Vec3{1, 0, 0};
+                if (!db) {
+                    out.warnings.push_back("a spot light's cookie is not baked: no asset database");
+                } else if (auto img = load_cookie_image(*db, l.cookie)) {
+                    light.cookie = std::make_shared<const render::Image>(std::move(*img));
+                } else {
+                    out.warnings.push_back(std::format("spot light cookie {} is not baked: {}", l.cookie.to_string(), img.error().message));
+                }
+            }
         } else if (l.type == scene::LightComponent::Type::Area) {
             light.type = render::LightmapLight::Type::Area;
             const math::Vec3 x = wt.matrix.transform_vector({1, 0, 0}), y = wt.matrix.transform_vector({0, 1, 0});

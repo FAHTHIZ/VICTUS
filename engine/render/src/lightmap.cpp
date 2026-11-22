@@ -480,12 +480,14 @@ public:
         const float r = dist / std::max(l.range, 1e-4f);
         const float falloff = math::saturate(1.0f - r * r * r * r);
         float atten = falloff * falloff / (dist * dist + 1.0f);
+        Vec3 radiance = l.radiance;
         if (l.type == LightmapLight::Type::Spot) {
             const float cd = math::dot(-ldir, math::normalize(l.direction));
             const float t = math::saturate((cd - l.cos_outer) / std::max(l.cos_inner - l.cos_outer, 1e-4f));
             atten *= t * t;
+            if (l.cookie && atten > 0.0f) radiance = radiance * spot_cookie_tint(l, -to);
         }
-        fn(ldir, dist, atten, l.radiance);
+        fn(ldir, dist, atten, radiance);
     }
 
     struct Surface {
@@ -1518,6 +1520,35 @@ Result<LightmapBake> bake_lightmaps(const LightmapScene& scene, const LightmapSe
     }
     bake.stats.post_ms = ms_since(t0);
     return bake;
+}
+
+Vec3 spot_cookie_tint(const LightmapLight& light, Vec3 to_surface) noexcept {
+    const Image* img = light.cookie.get();
+    if (!img || img->width == 0 || img->height == 0 || img->pixels.size() < std::size_t{img->width} * img->height * 4)
+        return {1, 1, 1};
+    const Vec3 dir = math::length(light.direction) > 1e-6f ? math::normalize(light.direction) : Vec3{0, -1, 0};
+    Vec3 right = light.right - dir * math::dot(light.right, dir);
+    if (math::length(right) < 1e-4f) right = std::abs(dir.x) < 0.9f ? math::cross(Vec3{1, 0, 0}, dir) : math::cross(Vec3{0, 1, 0}, dir);
+    right = math::normalize(right);
+    const Vec3 up = math::cross(right, dir);
+    const float z = math::dot(to_surface, dir);
+    if (z <= 1e-5f) return {0, 0, 0};
+    const float c = std::clamp(light.cos_outer, 0.0215f, 1.0f); // outer angle below ~88.8 degrees, as the renderer
+    const float tan_outer = std::sqrt(std::max(1.0f - c * c, 0.0f)) / c;
+    const float u = std::clamp(0.5f + 0.5f * math::dot(to_surface, right) / (z * tan_outer), 0.0f, 1.0f);
+    const float v = std::clamp(0.5f - 0.5f * math::dot(to_surface, up) / (z * tan_outer), 0.0f, 1.0f);
+    const float fx = std::clamp(u * static_cast<float>(img->width) - 0.5f, 0.0f, static_cast<float>(img->width - 1));
+    const float fy = std::clamp(v * static_cast<float>(img->height) - 0.5f, 0.0f, static_cast<float>(img->height - 1));
+    const auto x0 = static_cast<std::uint32_t>(fx), y0 = static_cast<std::uint32_t>(fy);
+    const std::uint32_t x1 = std::min(x0 + 1, img->width - 1), y1 = std::min(y0 + 1, img->height - 1);
+    const float tx = fx - static_cast<float>(x0), ty = fy - static_cast<float>(y0);
+    const auto at = [&](std::uint32_t x, std::uint32_t y) {
+        const std::uint8_t* p = &img->pixels[(std::size_t{y} * img->width + x) * 4];
+        return Vec3{math::srgb_to_linear(p[0] / 255.0f), math::srgb_to_linear(p[1] / 255.0f), math::srgb_to_linear(p[2] / 255.0f)};
+    };
+    const Vec3 top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx;
+    const Vec3 bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx;
+    return top + (bottom - top) * ty;
 }
 
 float lightmap_directional_scale(math::Vec4 texel, Vec3 normal) noexcept {

@@ -17,6 +17,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <span>
 #include <optional>
 #include <vector>
@@ -95,7 +96,14 @@ struct LightmapLight {
     // Baked light (Unity's Baked mode): its direct light is baked into receivers and probes even
     // without `include_direct`; the renderer skips it while the lightmap is loaded.
     bool baked{false};
+    // Spot cookie (ADR-0195): sRGB RGBA8 image projected through the cone like the real-time
+    // light (top along cross(right, direction)); its colour multiplies the baked light. Null = none.
+    std::shared_ptr<const Image> cookie;
 };
+
+// Linear colour a spot light's cookie passes towards `to_surface` (surface - light position),
+// bilinear like pbr.frag; white without a cookie, black behind the light.
+[[nodiscard]] math::Vec3 spot_cookie_tint(const LightmapLight& light, math::Vec3 to_surface) noexcept;
 
 // Sky radiance for rays that leave the scene. Defaults to the renderer's analytic gradient
 // (pbr.frag environment(dir, 0)); `radiance` overrides it (e.g. an environment map lookup).

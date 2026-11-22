@@ -1159,6 +1159,7 @@ SceneRenderer::~SceneRenderer() {
     if (motion_buffer_) d.destroy(motion_buffer_);
     if (palette_buffer_) d.destroy(palette_buffer_);
     if (light_buffer_) d.destroy(light_buffer_);
+    if (cookie_buffer_) d.destroy(cookie_buffer_);
     if (cluster_buffer_) d.destroy(cluster_buffer_);
     for (auto& [k, pl] : post_) d.destroy(pl);
     for (auto& [k, set] : surface_pipelines_)
@@ -1583,6 +1584,77 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
 void SceneRenderer::add_point_light(const PointLight& light) { points_.push_back(light); }
 void SceneRenderer::add_spot_light(const SpotLight& light) { spots_.push_back(light); }
 void SceneRenderer::add_area_light(const AreaLight& light) { areas_.push_back(light); }
+
+Status SceneRenderer::set_cookie(std::uint64_t key, const Image& image, std::uint64_t version) {
+    if (key == 0) return make_error(ErrorCode::InvalidArgument, "cookie key 0 is reserved for 'no cookie'");
+    if (image.width == 0 || image.height == 0 || image.pixels.size() < std::size_t{image.width} * image.height * 4)
+        return make_error(ErrorCode::InvalidArgument, "cookie image is empty");
+    std::uint32_t slot = 0;
+    if (const auto it = cookie_slots_.find(key); it != cookie_slots_.end()) {
+        slot = it->second.slot;
+    } else if (!cookie_free_.empty()) {
+        slot = cookie_free_.back();
+        cookie_free_.pop_back();
+    } else {
+        constexpr std::size_t kTexels = std::size_t{kCookieSize} * kCookieSize;
+        if (cookie_texels_.size() / kTexels >= kMaxCookies)
+            return make_error(ErrorCode::LimitExceeded, std::format("at most {} light cookies can be registered", kMaxCookies));
+        slot = static_cast<std::uint32_t>(cookie_texels_.size() / kTexels);
+        cookie_texels_.resize(cookie_texels_.size() + kTexels);
+    }
+    // Resample to kCookieSize^2 in linear light: a box over each target texel's footprint when
+    // shrinking (no aliasing from large gobo images), bilinear when enlarging.
+    std::array<float, 256> to_linear{};
+    for (std::size_t i = 0; i < to_linear.size(); ++i) to_linear[i] = math::srgb_to_linear(static_cast<float>(i) / 255.0f);
+    const auto texel = [&](std::uint32_t x, std::uint32_t y, std::uint32_t c) {
+        return to_linear[image.pixels[(std::size_t{y} * image.width + x) * 4 + c]];
+    };
+    const float sx = static_cast<float>(image.width) / kCookieSize, sy = static_cast<float>(image.height) / kCookieSize;
+    std::uint32_t* out = cookie_texels_.data() + std::size_t{slot} * kCookieSize * kCookieSize;
+    for (std::uint32_t y = 0; y < kCookieSize; ++y) {
+        for (std::uint32_t x = 0; x < kCookieSize; ++x) {
+            std::array<float, 3> c{};
+            if (sx > 1.0f || sy > 1.0f) {
+                const auto x0 = static_cast<std::uint32_t>(static_cast<float>(x) * sx);
+                const auto y0 = static_cast<std::uint32_t>(static_cast<float>(y) * sy);
+                const std::uint32_t x1 = std::clamp(static_cast<std::uint32_t>(std::ceil(static_cast<float>(x + 1) * sx)), x0 + 1, image.width);
+                const std::uint32_t y1 = std::clamp(static_cast<std::uint32_t>(std::ceil(static_cast<float>(y + 1) * sy)), y0 + 1, image.height);
+                for (std::uint32_t yy = y0; yy < y1; ++yy)
+                    for (std::uint32_t xx = x0; xx < x1; ++xx)
+                        for (std::uint32_t k = 0; k < 3; ++k) c[k] += texel(xx, yy, k);
+                const auto n = static_cast<float>((x1 - x0) * (y1 - y0));
+                for (float& v : c) v /= n;
+            } else {
+                const float fx = std::clamp((static_cast<float>(x) + 0.5f) * sx - 0.5f, 0.0f, static_cast<float>(image.width - 1));
+                const float fy = std::clamp((static_cast<float>(y) + 0.5f) * sy - 0.5f, 0.0f, static_cast<float>(image.height - 1));
+                const auto x0 = static_cast<std::uint32_t>(fx), y0 = static_cast<std::uint32_t>(fy);
+                const std::uint32_t x1 = std::min(x0 + 1, image.width - 1), y1 = std::min(y0 + 1, image.height - 1);
+                const float tx = fx - static_cast<float>(x0), ty = fy - static_cast<float>(y0);
+                for (std::uint32_t k = 0; k < 3; ++k) {
+                    const float top = texel(x0, y0, k) + (texel(x1, y0, k) - texel(x0, y0, k)) * tx;
+                    const float bottom = texel(x0, y1, k) + (texel(x1, y1, k) - texel(x0, y1, k)) * tx;
+                    c[k] = top + (bottom - top) * ty;
+                }
+            }
+            std::uint32_t packed = 0xff000000u;
+            for (std::uint32_t k = 0; k < 3; ++k) {
+                const float e = math::linear_to_srgb(std::clamp(c[k], 0.0f, 1.0f));
+                packed |= static_cast<std::uint32_t>(std::lround(e * 255.0f)) << (8u * k);
+            }
+            out[std::size_t{y} * kCookieSize + x] = packed;
+        }
+    }
+    cookie_slots_[key] = {slot, version};
+    cookies_dirty_ = true;
+    return {};
+}
+
+void SceneRenderer::remove_cookie(std::uint64_t key) {
+    const auto it = cookie_slots_.find(key);
+    if (it == cookie_slots_.end()) return;
+    cookie_free_.push_back(it->second.slot);
+    cookie_slots_.erase(it);
+}
 
 namespace {
 // Branchless orthonormal basis around unit `n` (Duff et al. 2017); pbr.frag has the same code.
@@ -2684,7 +2756,29 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     // assign them to view-space clusters and upload both storage buffers.
     std::vector<GpuLight> local_lights;
     local_lights.reserve(points_.size() + spots_.size() + areas_.size());
-    std::uint32_t spot_count = 0, area_count = 0;
+    std::uint32_t spot_count = 0, area_count = 0, cookie_count = 0, missing_cookies = 0;
+    // Cookie records (ADR-0195), keyed by the light's index before culling: rows mapping a world
+    // position to (u w, v w, w) of the cone's square, plus the atlas slot. They follow the shadow
+    // matrices in the light buffer; spot.z += 4096 * (record index + 1) points at one.
+    std::vector<std::pair<std::uint32_t, GpuLight>> cookie_of;
+    const auto cookie_projection = [](const SpotLight& sl, Vec3 dir, float outer, std::uint32_t slot) {
+        Vec3 right = sl.right - dir * dot(sl.right, dir);
+        if (length(right) < 1e-4f) {
+            Vec3 t, b;
+            duff_basis(dir, t, b);
+            right = t;
+        }
+        right = normalize(right);
+        const Vec3 up = cross(right, dir);
+        const float k = 0.5f / std::tan(std::min(outer, 1.55f));
+        const Vec3 ru = right * k + dir * 0.5f, rv = up * -k + dir * 0.5f;
+        GpuLight r{};
+        r.position_range = Vec4(ru, -dot(ru, sl.position));
+        r.color_intensity = Vec4(rv, -dot(rv, sl.position));
+        r.direction_cos_outer = Vec4(dir, -dot(dir, sl.position));
+        r.spot = {static_cast<float>(slot), 0.0f, 0.0f, 0.0f};
+        return r;
+    };
     {
         const auto finite_or = [](float v, float d) { return std::isfinite(v) ? v : d; };
         for (std::size_t i = 0; i < points_.size(); ++i) {
@@ -2713,6 +2807,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 g.spot.z = static_cast<float>(spot_shadow[i].first + 1);
                 g.spot.w = spot_shadow[i].second;
             }
+            if (sl.cookie != 0) {
+                if (const auto it = cookie_slots_.find(sl.cookie); it != cookie_slots_.end()) {
+                    cookie_of.emplace_back(static_cast<std::uint32_t>(local_lights.size()), cookie_projection(sl, dir, outer, it->second.slot));
+                } else {
+                    ++missing_cookies;
+                }
+            }
             local_lights.push_back(g);
         }
         for (const AreaLight& al : areas_) {
@@ -2726,24 +2827,41 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             g.spot = {hw, 2.0f, 0.0f, hh};
             local_lights.push_back(g);
         }
-        std::erase_if(local_lights, [&](const GpuLight& g) {
+        std::vector<std::pair<float, std::uint32_t>> order;
+        order.reserve(local_lights.size());
+        for (std::uint32_t i = 0; i < local_lights.size(); ++i) {
+            const GpuLight& g = local_lights[i];
             const Vec4 b = light_bounding_sphere(g);
-            return g.color_intensity.w <= 0.0f ||
-                   !frustum.intersects(Aabb{{b.x - b.w, b.y - b.w, b.z - b.w}, {b.x + b.w, b.y + b.w, b.z + b.w}});
-        });
-        // Nearest first: the budget and the per-cluster cap then drop the farthest lights.
-        const std::size_t budget = std::min<std::size_t>(S.max_point_lights, local_lights.size());
-        facts_.local_lights_visible = static_cast<std::uint32_t>(local_lights.size());
-        facts_.local_lights_kept = static_cast<std::uint32_t>(budget);
-        std::vector<std::pair<float, std::uint32_t>> order(local_lights.size());
-        for (std::uint32_t i = 0; i < order.size(); ++i) {
-            const Vec4 b = light_bounding_sphere(local_lights[i]);
-            order[i] = {length(Vec3{b.x, b.y, b.z} - camera_.position) - b.w, i};
+            if (g.color_intensity.w <= 0.0f ||
+                !frustum.intersects(Aabb{{b.x - b.w, b.y - b.w, b.z - b.w}, {b.x + b.w, b.y + b.w, b.z + b.w}}))
+                continue;
+            order.emplace_back(length(Vec3{b.x, b.y, b.z} - camera_.position) - b.w, i);
         }
+        // Nearest first: the budget and the per-cluster cap then drop the farthest lights.
+        const std::size_t budget = std::min<std::size_t>(S.max_point_lights, order.size());
+        facts_.local_lights_visible = static_cast<std::uint32_t>(order.size());
+        facts_.local_lights_kept = static_cast<std::uint32_t>(budget);
         std::partial_sort(order.begin(), order.begin() + static_cast<std::ptrdiff_t>(budget), order.end());
         std::vector<GpuLight> kept(budget);
-        for (std::size_t i = 0; i < budget; ++i) kept[i] = local_lights[order[i].second];
+        std::vector<std::int32_t> kept_at(local_lights.size(), -1);
+        for (std::size_t i = 0; i < budget; ++i) {
+            kept[i] = local_lights[order[i].second];
+            kept_at[order[i].second] = static_cast<std::int32_t>(i);
+        }
         local_lights = std::move(kept);
+        // Records referenced by kept lights, renumbered: record r lands at lights + tiles + r.
+        std::uint32_t records = 0;
+        for (auto& [light, record] : cookie_of) {
+            const std::int32_t at = kept_at[light];
+            if (at < 0) {
+                light = std::numeric_limits<std::uint32_t>::max();
+                continue;
+            }
+            light = static_cast<std::uint32_t>(at);
+            ++records;
+        }
+        std::erase_if(cookie_of, [](const auto& c) { return c.first == std::numeric_limits<std::uint32_t>::max(); });
+        cookie_count = records;
         for (const GpuLight& g : local_lights) {
             spot_count += (g.spot.y > 0.5f && g.spot.y < 1.5f) ? 1u : 0u;
             area_count += g.spot.y > 1.5f ? 1u : 0u;
@@ -2754,6 +2872,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     stats_.point_lights = static_cast<std::uint32_t>(local_lights.size());
     stats_.spot_lights = spot_count;
     stats_.area_lights = area_count;
+    stats_.cookie_lights = cookie_count;
+    stats_.missing_cookies = missing_cookies;
     stats_.light_indices = clusters.index_count;
     stats_.max_cluster_lights = clusters.max_per_cluster;
     {
@@ -2777,6 +2897,18 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         std::vector<GpuLight> light_data = local_lights;
         for (const LocalShadowView& v : local_views) {
             light_data.push_back({v.sample.c[0], v.sample.c[1], v.sample.c[2], v.sample.c[3]});
+        }
+        // Cookie records follow the shadow matrices; the index must stay exact in a float.
+        for (const auto& [light, record] : cookie_of) {
+            const auto index = static_cast<std::uint32_t>(light_data.size());
+            if (index >= 4095u) break;
+            light_data[light].spot.z += 4096.0f * static_cast<float>(index + 1);
+            light_data.push_back(record);
+        }
+        if (cookies_dirty_ || !cookie_buffer_) {
+            VICTUS_TRY_STATUS(upload(cookie_buffer_, cookie_capacity_, "light_cookies", cookie_texels_.data(),
+                                     cookie_texels_.size() * sizeof(std::uint32_t)));
+            cookies_dirty_ = false;
         }
         static_assert(sizeof(GpuLight) == sizeof(Mat4));
         VICTUS_TRY_STATUS(upload(light_buffer_, light_capacity_, "local_lights", light_data.data(),
@@ -4008,6 +4140,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 0, light_buffer_);
                 pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 1, cluster_buffer_);
                 pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 2, fog_grid_buffer());
+                pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 3, cookie_buffer_);
                 pass.bind_vertex_buffer(0, d->mesh->vertices);
                 if (vertex_variant(d) == kVertexLightmapped) pass.bind_vertex_buffer(3, d->mesh->lightmap_uv);
                 pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
@@ -4323,6 +4456,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 cp.bind_storage_buffer(0, light_buffer_);
                 cp.bind_storage_buffer(1, cluster_buffer_);
                 cp.bind_storage_buffer(2, fog_froxels_[fog_prev]);
+                cp.bind_storage_buffer(3, cookie_buffer_);
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Compute, 0, *pfog);
                 cp.dispatch((fog_dims[0] + 3) / 4, (fog_dims[1] + 3) / 4, (fog_dims[2] + 3) / 4);
                 cp.end();

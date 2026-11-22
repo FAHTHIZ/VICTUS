@@ -522,3 +522,49 @@ TEST_CASE("gpu volumetric fog: noise breaks the fog into drifting patches with t
     const Shot even_later = frame(env, 2.0);
     CHECK(even_later.px == even.px);
 }
+
+TEST_CASE("gpu volumetric fog: spot light cookies shape the light shafts (ADR-0195)") {
+    VICTUS_REQUIRE_COMPUTE_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    Scene3 sc(ctx, 0.0f); // black wall: everything seen is fog glow
+    Environment env = fog_env(0.0f, 0.1f);
+    // Left half white, right half black.
+    Image cookie;
+    cookie.width = cookie.height = 16;
+    cookie.pixels.assign(16 * 16 * 4, 255);
+    for (std::uint32_t y = 0; y < 16; ++y)
+        for (std::uint32_t x = 8; x < 16; ++x)
+            for (std::uint32_t c = 0; c < 3; ++c) cookie.pixels[(y * 16 + x) * 4 + c] = 0;
+    REQUIRE(r.set_cookie(5, cookie).ok());
+    SpotLight s;
+    s.position = {0, 0, 7};
+    s.direction = {0, 0, -1};
+    s.right = {1, 0, 0};
+    s.intensity = 200.0f;
+    s.range = 12.0f;
+    s.inner_angle = 0.5f;
+    s.outer_angle = 0.6f;
+    const auto glow = [&](const SpotLight& light, const char* save) {
+        return shoot(
+            r, env,
+            [&](SceneRenderer& rr) {
+                sc.submit_wall(rr);
+                rr.add_spot_light(light);
+            },
+            save, fog_settings(), no_sun());
+    };
+    const Shot open = glow(s, nullptr);
+    s.cookie = 5;
+    const Shot shaped = glow(s, "fog_spot_cookie");
+    CHECK(shaped.stats.cookie_lights == 1);
+    const double open_left = open.mean_red(30, 30, 75, 66), open_right = open.mean_red(85, 30, 130, 66);
+    const double left = shaped.mean_red(30, 30, 75, 66), right = shaped.mean_red(85, 30, 130, 66);
+    MESSAGE("fog glow without cookie " << open_left << " / " << open_right << ", with " << left << " / " << right);
+    CHECK(open_left > 20);
+    CHECK(std::abs(open_left - open_right) < 0.1 * open_left);
+    CHECK(left > 0.8 * open_left);
+    CHECK(right < 0.25 * open_right);
+}

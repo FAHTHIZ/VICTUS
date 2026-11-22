@@ -216,3 +216,36 @@ TEST_CASE("validate: convex and mesh colliders need geometry") {
     CHECK(barrel->entity_name == "Barrel");
     CHECK_FALSE(find(*r, "'Ball'"));
 }
+
+TEST_CASE("validate: light cookies must be textures on spot lights (ADR-0195)") {
+    TempDir tmp("victus_validate_cookies");
+    const fs::Path dir = tmp.path / "game";
+    auto created = project::Project::create(dir, "Cookies", "3d");
+    REQUIRE(created.ok());
+    const Uuid missing = Uuid::generate();
+    {
+        scene::Scene s;
+        auto path = created->startup_scene_path();
+        REQUIRE(path.ok());
+        REQUIRE(s.load_file(*path).ok());
+        const auto light = [&](const char* name, scene::LightComponent::Type type) {
+            auto& l = s.world().add<scene::LightComponent>(s.create(name));
+            l.type = type;
+            l.cookie = missing;
+            return &l;
+        };
+        light("Torch", scene::LightComponent::Type::Spot);
+        light("Bulb", scene::LightComponent::Type::Point);
+        REQUIRE(s.save_file(*path).ok());
+    }
+    auto r = player::validate_project(*created);
+    REQUIRE(r.ok());
+    for (const auto& d : r->diagnostics) MESSAGE(d.line());
+    const auto* torch = find(*r, "'Torch' uses missing light cookie texture");
+    REQUIRE(torch);
+    CHECK(torch->severity == player::Severity::Error);
+    CHECK(torch->asset == missing);
+    const auto* bulb = find(*r, "'Bulb' has a cookie but is not a spot light");
+    REQUIRE(bulb);
+    CHECK(bulb->severity == player::Severity::Warning);
+}

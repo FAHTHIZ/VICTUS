@@ -2499,6 +2499,14 @@ TEST_CASE("studio area light: create from the command palette, edit in the Inspe
     // Selected: the Inspector shows its fields and the viewport draws its outline.
     h.ed->show_panel(editor::Panel::Inspector);
     h.frames(3);
+    // As a spot light the Inspector also shows the Cookie texture field (ADR-0195); an unknown
+    // cookie id is drawn without crashing and survives the frames.
+    auto* spot = w.get<scene::LightComponent>(panel);
+    spot->type = scene::LightComponent::Type::Spot;
+    const Uuid cookie = Uuid::generate();
+    spot->cookie = cookie;
+    h.frames(3);
+    CHECK(w.get<scene::LightComponent>(panel)->cookie == cookie);
     CHECK(h.ed->run_command("Edit: Undo"));
     CHECK(w.alive_count() == before);
 }
