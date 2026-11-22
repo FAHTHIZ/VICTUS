@@ -72,6 +72,25 @@ Full-repository facts at `ded1487`: ~75 k lines of engine/editor/tools C++ (excl
 
 What is already right and should be kept: SDL_GPU device creation already relaxes clip-distance, depth-clamp and first-instance features for older Android drivers (`rhi_sdl.cpp`); the render graph uses `DontCare` loads where it can; ASTC/BC7 texture compression, meshoptimizer LODs, occlusion culling, dynamic resolution, a Low environment bake and perceptual image comparison (`victus compare`) all exist. The perceptual-equivalence brief already states the right goal.
 
+## Status of the findings (2026-11-22)
+
+The table above is the audit as written. Since then, checked against the code and the ADRs:
+
+| # | Now | Evidence |
+|---|---|---|
+| A1 | Done. Lightmaps v1 with a CPU baker, per-scene bake files and a Studio button; templates ship baked | ADR-0122, ADR-0125, ADR-0134, ADR-0135, ADR-0145 |
+| A2 | Still open. No phone or physical GPU has run VICTUS | [PLATFORM_SUPPORT.md](../PLATFORM_SUPPORT.md) |
+| A3 | Done in code. OpenGL ES 3.0 fallback; the GPU suite runs on Mesa GLES in CI. Never run on a phone | ADR-0144 |
+| A4 | Partly done. FP16 BRDF in `pbr.frag` behind a capability check; post passes are still FP32 | ADR-0137 |
+| A5 | Done. R11G11B10F scene colour by default on phones and the Low and Medium tiers, with stochastic rounding | ADR-0126, ADR-0129 |
+| A6 | Done. Device-class "auto" tier, recorded in the run report | ADR-0127 |
+| A7 | Open. Tonemap, upscale and FXAA are still separate passes (`scene_renderer.cpp`, ADR-0066 order). Low now switches to TAA with temporal upscaling below render scale 0.65 | ADR-0188, [LOW_TIER_AA.md](LOW_TIER_AA.md) |
+| A8 | Done. CC0 photoreal courtyard reference scene (ambientCG materials) | ADR-0140, `samples/reference_scenes` |
+| A9 | Mostly done. Directional lightmaps, sun shadowmask and baked probes exist; Arm ASR was evaluated and its mip bias adopted. Impostors and distance-field sun shadows are still missing | ADR-0130, ADR-0131, ADR-0133, ADR-0138, ADR-0141 |
+| A10 | Fixed | `ded1487` |
+
+Every image result above comes from lavapipe or Mesa llvmpipe. None of these changes has been measured for frame time or bandwidth on the Mali-G52 or Adreno 610 class this audit targets.
+
 ## Plan, in order
 
 Each item lands on `main` with tests and a `STATUS.md` entry before the next starts.
