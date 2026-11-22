@@ -18,6 +18,7 @@ from __future__ import annotations
 import numpy as np
 
 import fit
+import suit
 from bake import band, dist_to, fbm, soft, worley
 
 
@@ -29,6 +30,8 @@ class Landmarks:
         self.J = J
         self.head = info["head"]
         self.visor = info["visor"]
+        self.torso = info["torso"]
+        self.key = body.spec.key
         self.eL, self.eR = J["Eye.L"][0], J["Eye.R"][0]
         self.eye_mid = 0.5 * (self.eL + self.eR)
         self.collar = J["Neck"][0][2] + 0.35 * (J["Head"][0][2] - J["Neck"][0][2])
@@ -42,6 +45,11 @@ class Landmarks:
             if n[0] * side < 0:
                 n = -n
             self.hands[t] = {"dorsal": n, "wrist": wr}
+
+
+def smooth(t):
+    t = np.clip(t, 0, 1)
+    return t * t * (3 - 2 * t)
 
 
 def _unit(v):
@@ -179,14 +187,39 @@ def frame_maps(tx, P, N, L: Landmarks, style, kind, seed):
     col = col * (1 - pb[:, None]) + glow * 0.25 * pb[:, None]
     rough -= pb * 0.25
 
-    # Composite segmentation: the undersuit is built from moulded panels elongated along the
-    # body, separated by fine recessed seams; alternate panels have a slightly glossier finish.
-    seg_b, seg_v = cells(P, 0.055, seed + 31, stretch=(1.0, 1.0, 0.55))
-    seam = np.exp(-(seg_b / 0.0011) ** 2) * body * (1 - zone_any) * (1 - pb)
-    h -= seam * 0.00030
-    cavity -= seam * 0.45
-    col = col * (1 - 0.35 * seam[:, None]) * (1 + 0.06 * (seg_v[:, None] - 0.5) * body[:, None])
-    rough += body * (seg_v > 0.6) * -0.12 + seam * 0.1
+    # Moulded panels following the muscles (suit.py): a recessed seam along each outline, a soft
+    # crown inside it, light lines in the seams of the flagged panels and down the flanks.
+    seam_all = np.zeros(n)
+    relief = np.zeros(n)
+    line = np.zeros(n)
+    sat = np.zeros(n)  # alternate panels are glossier
+    free = body & (zone_any < 0.5)
+    for i, pn in enumerate(suit.panels(J, L.torso, L.key)):
+        gv = pn.plate.g(P)
+        inside = gv < 0
+        if not (inside & free).any() and not ((np.abs(gv) < 0.004) & free).any():
+            continue
+        if pn.seam:
+            seam_all = np.maximum(seam_all, np.exp(-(gv / 0.0015) ** 2))
+            relief = np.maximum(relief, inside * pn.relief * smooth(-gv / pn.crown))
+            sat = np.where(inside, (i % 3 == 0) * 1.0, sat)
+        if pn.glow:
+            line = np.maximum(line, pn.glow * np.exp(-(gv / 0.0011) ** 2))
+            seam_all = np.maximum(seam_all, np.exp(-(gv / 0.0018) ** 2))
+    fd, fon = suit.flank(P, L.torso, J, L.key)
+    fon = fon & (np.abs(P[:, 0]) < 0.21) & (np.abs(N[:, 0]) > 0.45)
+    line = np.maximum(line, fon * np.exp(-(fd / 0.0011) ** 2))
+    seam_all = np.maximum(seam_all, fon * np.exp(-(fd / 0.0013) ** 2))
+    mfree = free * (1 - pb)
+    seam_all *= mfree
+    line *= mfree
+    relief *= mfree
+    h += relief - seam_all * 0.00035
+    cavity -= seam_all * 0.5
+    col = col * (1 - 0.45 * seam_all[:, None])
+    rough += seam_all * 0.12 - 0.10 * sat * mfree
+    em += line[:, None] * glow * 0.9
+    col = col * (1 - line[:, None]) + glow * 0.25 * line[:, None]
 
     # Head shell: satin finish, a centre crest seam front to back, two side seams.
     if head.any():
@@ -209,11 +242,11 @@ def frame_maps(tx, P, N, L: Landmarks, style, kind, seed):
             "height": h, "cavity": np.clip(cavity, 0, 1), "emissive": np.clip(em, 0, 1)}
 
 
-def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed):
+def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, tone=None):
     n = len(P)
     J = L.J
     k = np.rint(kind).astype(np.int64)
-    plate, boot, pod, core, helmet = (k == 0), (k == 1), (k == 2), (k == 3), (k == 4)
+    plate, boot, pod, core, helmet, emblem = (k == 0), (k == 1), (k == 2), (k == 3), (k == 4), (k == 5)
     trim = np.rint(trim).astype(np.int64)
     e = attrs["edge"][:, 0]
     centre = attrs["centre"]
@@ -221,142 +254,138 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed):
     accent = np.array(style.accent)
     metal_c = np.array(style.metal)
     glow = np.array(style.glow)
-    col = np.tile(armor, (n, 1))
-    rough = np.full(n, style.armor_rough)
+    graphite = (np.rint(tone) == 1) if tone is not None else np.zeros(n, bool)
+    graphite = graphite & ~boot
+    col = np.where(graphite[:, None], accent[None], armor[None]).astype(float)
+    rough = np.where(graphite, style.armor_rough + 0.10, style.armor_rough)
     metal = np.zeros(n)
     h = np.zeros(n)
     cavity = np.ones(n)
     em = np.zeros((n, 3))
     mottle = fbm(P, 22, 3, seed + 11)
     fine = fbm(P, 700, 2, seed + 12)
-
     shell = plate | boot | helmet
-    # Rounded bevel along the cut edge (the lip rolls under), an inset groove 1 cm in.
-    bevel = np.exp(-(e / 0.0035) ** 2)
-    groove_at = np.where(boot, 0.007, 0.0095)
-    groove = np.exp(-((e - groove_at) / 0.0007) ** 2) * shell * (cuff < 0.5)
-    h += shell * (-bevel * 0.0009) - groove * 0.00045
-    cavity -= groove * 0.55 + shell * bevel * 0.12
-    col = col * (1 - 0.55 * groove[:, None])
-    rough += groove * 0.2
-    lit = groove * (trim > 0)
+
+    # Rolled edge: a soft bevel into the cut edge, then an inset groove 8 mm in from it; on the
+    # trimmed white plates the groove carries a thin light line.
+    bevel = np.exp(-(e / 0.004) ** 2)
+    groove_at = np.where(boot, 0.006, 0.008)
+    groove = np.exp(-((e - groove_at) / 0.0008) ** 2) * shell * (cuff < 0.5)
+    h += shell * (-bevel * 0.0010) - groove * 0.0005
+    cavity -= groove * 0.5 + shell * bevel * 0.10
+    col = col * (1 - 0.5 * groove[:, None])
+    rough += groove * 0.15
+    lit = groove * (trim > 0) * ~graphite
     em += lit[:, None] * glow * 1.0
-    col = col * (1 - lit[:, None]) + glow * 0.35 * lit[:, None]
+    col = col * (1 - lit[:, None]) + glow * 0.3 * lit[:, None]
 
-    # Accent field inside the groove on the larger plates: a contrasting panel stripe.
-    panel = shell * (trim > 0) * (e > groove_at + 0.0045) * (cuff < 0.5)
-    stripe = np.zeros(n)
-    for t, s in (("L", 1.0), ("R", -1.0)):
-        for a, b in ((J[f"UpperLeg.{t}"][0], J[f"LowerLeg.{t}"][0]), (J[f"LowerLeg.{t}"][0], J[f"Foot.{t}"][0]),
-                     (J[f"LowerArm.{t}"][0], J[f"Hand.{t}"][0])):
-            d = _unit(b - a)
-            outer = _unit(np.cross([0, 1.0, 0], d))
-            if outer[0] * s < 0:
-                outer = -outer
-            perp = _unit(np.cross(d, outer))
-            tt, radial = _seg(P, a, b)
-            # A stripe down the front of the limb plate.
-            w = np.abs(radial @ outer)
-            front = radial @ perp
-            fwd = (front * (1 if perp[1] < 0 else -1)) > 0
-            stripe = np.maximum(stripe, (tt > 0) & (tt < 1) & fwd & (w < 0.009))
-    stripe = soft(1 - stripe.astype(float), 0.0, 0.5) * panel
-    col = col * (1 - stripe[:, None]) + accent * stripe[:, None]
-    rough += stripe * 0.08
+    # Graphite composite: a fine twill weave under the coat.
+    if graphite.any():
+        Pg = P[graphite]
+        a_ = np.sin(2 * np.pi * (Pg[:, 0] + Pg[:, 2]) / 0.0042)
+        b_ = np.sin(2 * np.pi * (Pg[:, 0] - Pg[:, 2] + Pg[:, 1]) / 0.0042)
+        tw = 0.5 + 0.5 * np.sign(a_) * np.sign(b_) * np.minimum(np.abs(a_), np.abs(b_)) ** 0.5
+        h[graphite] += tw * 0.00003
+        col[graphite] *= (0.85 + 0.3 * tw)[:, None]
+        rough[graphite] += 0.06 * (1 - tw)
 
-    # Chest emblem: a chevron at the sternum (raised, with a light line in its groove).
-    chest = (trim == 2) & shell
-    if chest.any():
-        hips, neck = J["Hips"][0], J["Neck"][0]
-        zc = hips[2] + (neck[2] - hips[2]) * 0.74
-        u = np.abs(P[:, 0])
-        v = P[:, 2] - zc
-        front = N[:, 1] < -0.3
-        chev = np.abs(v + u * 0.75) < 0.0045
-        chev = chev & (u < 0.034) & front & chest
-        outline = (np.abs(np.abs(v + u * 0.75) - 0.0045) < 0.0009) & (u < 0.0345) & front & chest
-        h += chev * 0.0007 - outline * 0.0003
-        col = col * (1 - chev[:, None]) + accent * chev[:, None]
-        em += outline[:, None] * glow * 1.2
-        cavity -= outline * 0.3
-
-    # Boots: moulded sole with lugs, a toe cap in the accent colour, an ankle strap.
-    if boot.any():
-        Pb = P[boot]
-        z = Pb[:, 2]
-        sole_top = 0.03
-        sole = soft(z - sole_top, -0.0015, 0.0015)
-        tread = np.clip((worley(Pb * np.array([1, 1, 0.0]), 0.008, seed + 13) - 0.4) * 4, 0, 1) * (N[boot, 2] < -0.3)
-        ribs = 0.5 + 0.5 * np.sin(2 * np.pi * z / 0.0045)
-        toe = np.zeros(len(Pb))
-        for t in ("L", "R"):
-            toe = np.maximum(toe, soft(dist_to(Pb, J[f"Toe.{t}"][0] + np.array([0, -0.02, 0.0])), 0.045, 0.05))
-        hb = sole * (tread * 0.0009 + ribs * 0.0003 * (N[boot, 2] > -0.3)) - np.exp(-((z - sole_top) / 0.0012) ** 2) * 0.0005
-        h[boot] += hb
-        cb = col[boot] * (1 - toe[:, None]) + accent * toe[:, None]
-        rubber = np.array([0.02, 0.02, 0.022])
-        col[boot] = cb * (1 - sole[:, None]) + rubber * sole[:, None]
-        rough[boot] = rough[boot] * (1 - sole) + 0.85 * sole
-        cavity[boot] -= 0.3 * np.exp(-((z - sole_top) / 0.0015) ** 2)
-
-    # Machined metal: ear pods (a light ring on the outer face), the back core (a glowing cell
-    # behind vents).
-    hw = pod | core
-    if hw.any():
-        brushed = fbm(P[hw] * np.array([1.0, 1.0, 30.0]), 500, 2, seed + 14)
-        col[hw] = metal_c * (1 + 0.06 * brushed[:, None])
-        rough[hw] = 0.28 + 0.06 * brushed
-        metal[hw] = 1.0
-    if pod.any():
-        rel = P[pod] - centre[pod]
-        side = np.sign(centre[pod, 0])
-        outer = (N[pod, 0] * side) > 0.75
-        rr = np.linalg.norm(rel[:, 1:], axis=1)
-        ring = outer * np.exp(-((rr - 0.014) / 0.0012) ** 2)
-        cap = outer * (rr < 0.0115)
-        h[pod] += -ring * 0.0004 + cap * 0.0003
-        em[pod] += ring[:, None] * glow * 1.4
-        col[pod] = col[pod] * (1 - cap[:, None]) + armor * cap[:, None]
-        metal[pod] *= 1 - cap
-        rough[pod] = rough[pod] * (1 - cap) + style.armor_rough * cap
-    if core.any():
-        rel = P[core] - centre[core]
-        back = N[core, 1] > 0.75
-        win = back * band(np.abs(rel[:, 0]), -1, 0.032, 0.002) * band(np.abs(rel[:, 2]), -1, 0.052, 0.002)
-        slats = 0.5 + 0.5 * np.cos(2 * np.pi * rel[:, 2] / 0.0085)
-        vents = win * (slats > 0.45)
-        h[core] += -win * 0.0006 + vents * 0.0005
-        em[core] += (win * (1 - vents) * 2.0 + vents * 0.15)[:, None] * glow
-        col[core] = col[core] * (1 - win[:, None]) + np.array([0.02, 0.02, 0.025]) * win[:, None]
-        metal[core] *= 1 - 0.5 * win
-        frame_bolt = back * (np.abs(np.abs(rel[:, 0]) - 0.044) < 0.004) & (np.abs(np.abs(rel[:, 2]) - 0.064) < 0.004)
-        h[core] += frame_bolt * 0.0004
-        cavity[core] -= frame_bolt * 0.2
-
-    # Panel lines on the larger plates: fine recessed seams splitting each plate into moulded
-    # sections, a few sections inset in the graphite accent, and small fasteners near the seams.
-    inner = (plate | helmet) & (e > 0.016) & (cuff < 0.5)
-    pb_, pv_ = cells(P, 0.10, seed + 41)
-    pline = np.exp(-(pb_ / 0.0007) ** 2) * inner * soft(e, 0.016, 0.024)
-    insert = inner * (pv_ < 0.16) * soft(pb_, 0.0016, 0.0026) * soft(e, 0.020, 0.026) * plate
-    h += -pline * 0.00045 - insert * 0.0005
-    cavity -= pline * 0.5
-    col = col * (1 - 0.6 * pline[:, None])
+    # Panel lines on the larger white plates: a few recessed seams splitting each plate into
+    # moulded sections, small graphite inserts and fasteners near the seams.
+    inner = (plate | helmet) & (e > 0.018) & (cuff < 0.5) & ~graphite
+    pb_, pv_ = cells(P, 0.12, seed + 41)
+    pline = np.exp(-(pb_ / 0.0006) ** 2) * inner * soft(e, 0.018, 0.026)
+    insert = inner * (pv_ < 0.10) * soft(pb_, 0.0016, 0.0026) * soft(e, 0.024, 0.03) * plate
+    h += -pline * 0.0004 - insert * 0.0004
+    cavity -= pline * 0.45
+    col = col * (1 - 0.5 * pline[:, None])
     col = col * (1 - insert[:, None]) + accent * insert[:, None]
-    rough += pline * 0.15 + insert * 0.12
-    fb_, fv_ = cells(P, 0.022, seed + 43)
-    del fb_
+    rough += pline * 0.12 + insert * 0.1
+    fv_ = cells(P, 0.022, seed + 43)[1]
     fast_c = worley(P, 0.022, seed + 43) * 0.022
-    fast = inner * (fv_ < 0.08) * np.exp(-(fast_c / 0.0016) ** 4) * (pb_ > 0.003)
+    fast = inner * (fv_ < 0.06) * np.exp(-(fast_c / 0.0015) ** 4) * (pb_ > 0.003)
     h += fast * 0.0003
     col = col * (1 - fast[:, None]) + metal_c * fast[:, None]
     metal = np.maximum(metal, fast)
     rough = rough * (1 - fast) + 0.3 * fast
 
-    # Helmet: graphite side panels behind the visor (inset, with a light line along their front
-    # edge), a raised crest ridge from the brow to the nape, and vent slots above the ear pods.
+    # Boots: graphite uppers, a white ceramic toe cap and heel counter, a lug sole.
+    if boot.any():
+        Pb = P[boot]
+        z = Pb[:, 2]
+        sole_top = 0.034
+        sole = soft(z - sole_top, -0.0015, 0.0015)
+        tread = np.clip((worley(Pb * np.array([1, 1, 0.0]), 0.008, seed + 13) - 0.4) * 4, 0, 1) * (N[boot, 2] < -0.3)
+        ribs = 0.5 + 0.5 * np.sin(2 * np.pi * z / 0.0045)
+        cap = np.zeros(len(Pb))
+        heel = np.zeros(len(Pb))
+        for t in ("L", "R"):
+            toe = J[f"Toe.{t}"][0]
+            cap = np.maximum(cap, soft(dist_to(Pb, toe + np.array([0, -0.01, 0.0])), 0.055, 0.06) * (z > sole_top + 0.004))
+            hc = J[f"Foot.{t}"][0] + np.array([0, 0.05, -0.02])
+            heel = np.maximum(heel, soft(dist_to(Pb, hc), 0.05, 0.055) * (z > sole_top + 0.004))
+        white = np.clip(cap + heel, 0, 1)
+        cb = np.tile(accent, (len(Pb), 1)) * (1 - white[:, None]) + armor * white[:, None]
+        rubber = np.array([0.012, 0.012, 0.014])
+        hb = sole * (tread * 0.0009 + ribs * 0.0003 * (N[boot, 2] > -0.3)) - np.exp(-((z - sole_top) / 0.0012) ** 2) * 0.0005
+        hb += -np.exp(-((cap - 0.5) / 0.12) ** 2) * 0.0003 - np.exp(-((heel - 0.5) / 0.12) ** 2) * 0.0003
+        h[boot] += hb
+        col[boot] = cb * (1 - sole[:, None]) + rubber * sole[:, None]
+        rough[boot] = (style.armor_rough + 0.08 * (1 - white)) * (1 - sole) + 0.85 * sole
+        cavity[boot] -= 0.3 * np.exp(-((z - sole_top) / 0.0015) ** 2)
+        sole_line = np.exp(-((z - sole_top - 0.006) / 0.0008) ** 2) * (N[boot, 2] > -0.3)
+        em[boot] += sole_line[:, None] * glow * 0.8
+
+    # Machined hardware: ear pods, the back core and the chest emblem.
+    hw = pod | core | emblem
+    if hw.any():
+        brushed = fbm(P[hw] * np.array([1.0, 1.0, 30.0]), 500, 2, seed + 14)
+        col[hw] = metal_c * (1 + 0.06 * brushed[:, None])
+        rough[hw] = 0.26 + 0.06 * brushed
+        metal[hw] = 1.0
+    if pod.any():
+        rel = P[pod] - centre[pod]
+        side = np.sign(centre[pod, 0])
+        outer = (N[pod, 0] * side) > 0.7
+        rr = np.linalg.norm(rel[:, 1:], axis=1)
+        R = rr.max()
+        ring = outer * np.exp(-((rr - R * 0.62) / 0.0013) ** 2)
+        cap = outer * (rr < R * 0.5)
+        h[pod] += -ring * 0.0004 + cap * 0.0003
+        em[pod] += ring[:, None] * glow * 1.4
+        col[pod] = col[pod] * (1 - cap[:, None]) + accent * cap[:, None]
+        metal[pod] *= 1 - cap
+        rough[pod] = rough[pod] * (1 - cap) + 0.3 * cap
+    for msk, face_sign in ((core, 1.0), (emblem, -1.0)):
+        if not msk.any():
+            continue
+        rel = P[msk] - centre[msk]
+        face = (N[msk, 1] * face_sign) > 0.6
+        rr = np.linalg.norm(rel[:, [0, 2]], axis=1)
+        R = rr.max()
+        ang = np.arctan2(rel[:, 2], rel[:, 0])
+        if face_sign > 0:  # the core: three concentric light rings, segmented, a bright centre cell
+            rings = np.zeros(len(rr))
+            for fr, w in ((0.30, 0.05), (0.55, 0.035), (0.76, 0.03)):
+                rings = np.maximum(rings, np.exp(-((rr / R - fr) / w) ** 2))
+            seg = (0.5 + 0.5 * np.cos(ang * 12)) > 0.15
+            glow_m = face * (rings * np.where(rr / R > 0.45, seg, 1.0) + (rr / R < 0.16) * 1.0)
+            dark = (face & (rr / R < 0.86)).astype(float)
+        else:  # the emblem: a hexagonal light ring around a dark lens
+            hexr = rr * np.cos((ang % (np.pi / 3)) - np.pi / 6) / np.cos(np.pi / 6)
+            glow_m = face * (np.exp(-((hexr / R - 0.6) / 0.08) ** 2) + (hexr / R < 0.22))
+            dark = (face & (hexr / R < 0.8)).astype(float)
+        glow_m = np.clip(np.asarray(glow_m, float), 0, 1)
+        h[msk] += -dark * 0.0006 + glow_m * 0.0002
+        cm = col[msk] * (1 - dark[:, None]) + np.array([0.01, 0.012, 0.016]) * dark[:, None]
+        col[msk] = cm * (1 - glow_m[:, None]) + glow * 0.5 * glow_m[:, None]
+        metal[msk] *= 1 - dark
+        rough[msk] = rough[msk] * (1 - dark) + 0.12 * dark
+        em[msk] += glow_m[:, None] * glow * 2.0
+
+    # Helmet: a crest ridge from the brow to the nape, graphite cheek panels behind the visor and
+    # vent slots above the ear pods.
     if helmet.any():
-        Ph, Nh = P[helmet], N[helmet]
+        Ph = P[helmet]
         c = L.head.c
         rel = Ph - c
         r = np.linalg.norm(rel, axis=1)
@@ -364,29 +393,27 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed):
         az = np.degrees(np.arctan2(np.abs(d[:, 0]), -d[:, 1]))  # 0 front, 90 side, 180 back
         el = np.degrees(np.arcsin(np.clip(d[:, 2], -1, 1)))
         eh = e[helmet]
-        side_panel = band(az, 74, 150, 3.0) * band(el, -40, 24 - 0.10 * np.abs(az - 110), 3.0) * (eh > 0.012)
-        panel_edge = np.exp(-((az - 74) / 0.9) ** 2) * band(el, -38, 22, 3.0) * (eh > 0.012)
-        crest = np.exp(-(np.abs(Ph[:, 0]) / 0.0075) ** 4) * (el > 8)
-        crest_edge = np.exp(-((np.abs(Ph[:, 0]) - 0.0085) / 0.0008) ** 2) * (el > 8)
-        vents = band(az, 96, 128, 1.0) * band(el, 18, 30, 1.0) * ((0.5 + 0.5 * np.cos(np.radians(az - 96) * 2 * np.pi / np.radians(6))) > 0.55)
-        hh = side_panel * -0.0006 + crest * 0.0012 - crest_edge * 0.0004 - vents * 0.0009 - panel_edge * 0.0004
-        h[helmet] += hh
-        ch = col[helmet]
-        ch = ch * (1 - side_panel[:, None]) + accent * side_panel[:, None]
-        ch = ch * (1 - vents[:, None] * 0.8)
-        col[helmet] = ch
-        rough[helmet] += side_panel * 0.18 + crest_edge * 0.1
-        cavity[helmet] -= crest_edge * 0.4 + panel_edge * 0.4 + vents * 0.5
-        em[helmet] += (panel_edge * 1.1)[:, None] * glow
-        del Nh
+        crest = np.exp(-(np.abs(Ph[:, 0]) / 0.009) ** 4) * (el > 12)
+        crest_edge = np.exp(-((np.abs(Ph[:, 0]) - 0.0105) / 0.0008) ** 2) * (el > 12)
+        vents = band(az, 100, 124, 1.0) * band(el, 16, 26, 1.0) * ((0.5 + 0.5 * np.cos(np.radians(az - 100) * 2 * np.pi / np.radians(6))) > 0.55)
+        seam = np.exp(-((el - (10 - 0.18 * np.abs(az - 120))) / 0.5) ** 2) * band(az, 70, 175, 3) * (eh > 0.01)
+        h[helmet] += crest * 0.0010 - crest_edge * 0.0004 - vents * 0.0008 - seam * 0.0004
+        col[helmet] *= (1 - vents[:, None] * 0.85) * (1 - 0.5 * seam[:, None]) * (1 - 0.4 * crest_edge[:, None])
+        cavity[helmet] -= crest_edge * 0.35 + vents * 0.5 + seam * 0.4
+        em[helmet] += (vents * 0.0 + crest_edge * 0.0)[:, None] * glow
 
     # Ceramic micro-surface: faint orange peel in the clear coat, slight roughness variation.
     h += shell * fine * 0.000004
-    col = col * (1 + 0.03 * mottle[:, None] * shell[:, None])
+    col = col * (1 + 0.025 * mottle[:, None] * shell[:, None])
     rough += 0.03 * mottle
-    # Rolled lips: tucked under, darker.
+    # Rolled lips: tucked under, darker; the helmet's visor rim glows.
+    lip_glow = (cuff > 0.5) & helmet
     col = col * (1 - 0.45 * cuff[:, None])
     cavity = cavity * (1 - 0.35 * cuff)
+    if lip_glow.any():
+        vz = L.visor[0]
+        rim = lip_glow & (P[:, 2] > vz - 0.01) & (P[:, 1] < L.head.c[1])
+        em[rim] += glow * 1.2
     return {"color": np.clip(col, 0, 1), "rough": np.clip(rough, 0.05, 1), "metal": np.clip(metal, 0, 1),
             "height": h, "cavity": np.clip(cavity, 0, 1), "emissive": np.clip(em, 0, 1)}
 

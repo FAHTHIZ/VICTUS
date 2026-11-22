@@ -85,6 +85,17 @@ def test_catmull_clark_operator():
     assert np.allclose((S @ w).sum(1), 1.0)
 
 
+def test_catmull_clark_bowtie_vertex_stays_put():
+    # Two quads touching at one vertex (what culling hidden faces under a plate can leave): the
+    # shared vertex has four boundary edges; it must stay a corner, not be scaled away.
+    v = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 1, 0], [2, 2, 0], [1, 2, 0]], float) + 5.0
+    f = np.array([[0, 1, 2, 3], [2, 4, 5, 6]])
+    q = meshops.Quads(v, f, v[:, :2].copy(), f.copy())
+    q2, S = meshops.catmull_clark(q)
+    assert np.allclose(np.asarray(S.sum(1)).ravel(), 1.0)
+    assert np.allclose(q2.v[2], v[2])
+
+
 def test_tangent_handedness():
     # A +Z-facing quad with u along +X and v along -Y (texture rows go down the image) is the
     # glTF convention: bitangent cross(N, T) * w must point toward decreasing v, i.e. +Y.

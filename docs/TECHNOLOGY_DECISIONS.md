@@ -2391,3 +2391,16 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 
 **Consequences:** Existing projects keep their copy of the controller asset until they regenerate it; new templates get the Face layer. A primitive with a moving target still morphs and uploads all of its vertices on the CPU when a weight changes (6,559 for the visor); a sparse upload or GPU morphing is the next step.
 
+### ADR-0223: Sculpted Frame plates and a muscle-panelled undersuit for Orion and Nova
+
+**Status:** Accepted (2026-11-22). Refines ADR-0204 (same pipeline, skeleton, clips, sockets, asset paths and UUIDs).
+
+**Context:** The owner's ORION & NOVA design sheet shows a heroic, athletic Orion and a slender, feminine Nova in a dark graphite bodysuit with muscle panels and thin cyan or violet light lines, under sculpted white ceramic plates. The ADR-0204 models read as a grey mannequin with flat strip plates: the body was smoothed nearly featureless (14 Taubin passes), the undersuit's seams were a random Voronoi pattern, and plates were cut from the body by planes. The owner asked for the base body first, then the plates one at a time.
+
+**Decision:** (1) Body: MakeHuman macros Orion muscle 0.92 / weight 0.46 (was 0.62 / 0.48), Nova muscle 0.62 / weight 0.38 (was 0.55 / 0.42); 6 Taubin passes instead of 14 so the muscle forms survive. (2) Undersuit (`suit.py`): moulded panels that follow the muscles, drawn as outlines on the plate charts (pectorals or bust, rectus grid or corset, obliques, collar, trapezius, blades, erectors, lumbar, glutes, deltoids, biceps, triceps, forearms, quadriceps, vastus, hamstrings, calves, shins); the bake turns each outline's signed distance into a recessed seam and a soft crown inside it, and open polylines into light lines (abdomen sides into the hips, under the pectorals or bust, the blades, the flanks). (3) Plates (`plates.py`): outlines on front, back, side and limb charts select body faces, snap the boundary onto the outline and grow a crowned shell (thin at the edge, full thickness inside, the lip rolled under), with a per-plate tone (white ceramic or graphite) and trim flag; a disc back core and a sternum emblem. Undersuit faces more than 22 mm inside a plate are removed. (4) Catmull-Clark keeps non-manifold boundary vertices (more than two boundary edges, left by the removal) as corners. (5) `render_preview.py` renders the GLBs in a Cycles studio for review.
+
+**Alternatives:** Model the characters by hand in Blender: not reproducible from the pipeline and would not follow each body's proportions. Normal-map-only plates: no silhouette, which is what the sheet's plates are about. Muscle sculpting by displacement maps on the mesh: needs a denser base mesh than the triangle budget allows; the moulded crowns are baked into the normal map instead.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Triangle counts stay inside the 140k-190k budget (the helmet cube-sphere goes from 30 to 27 quads per face to pay for the plates). Heights to the top of the helmet are unchanged (1.777 / 1.685 m). The plate pass continues piece by piece under this ADR.

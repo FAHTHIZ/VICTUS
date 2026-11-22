@@ -100,9 +100,9 @@ class Spec:
     tweaks: dict = field(default_factory=dict)
 
 
-ORION = Spec("orion", "Orion", mh.Macro(gender=1.0, muscle=0.62, weight=0.48, african=0.55, asian=0.10, caucasian=0.35),
+ORION = Spec("orion", "Orion", mh.Macro(gender=1.0, muscle=0.92, weight=0.46, african=0.55, asian=0.10, caucasian=0.35),
              skull_top=1.765, profile="VictusHumanoid.Orion")
-NOVA = Spec("nova", "Nova", mh.Macro(gender=0.0, muscle=0.55, weight=0.42, african=0.10, asian=0.55, caucasian=0.35),
+NOVA = Spec("nova", "Nova", mh.Macro(gender=0.0, muscle=0.62, weight=0.38, african=0.10, asian=0.55, caucasian=0.35),
             skull_top=1.675, profile="VictusHumanoid.Nova")
 SPECS = {"orion": ORION, "nova": NOVA}
 

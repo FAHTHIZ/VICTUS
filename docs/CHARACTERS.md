@@ -15,12 +15,12 @@ sockets and clips are unchanged, so existing projects keep their references.
 | Model | `assets/models/characters/victus_orion.glb` | `assets/models/characters/victus_nova.glb` |
 | Stable UUID (`.meta`) | `8e84eb12-63c8-4aed-aae2-517c038d3071` | `44037d0d-1627-44a8-a225-633971f196b2` |
 | Skeleton profile | `VictusHumanoid.Orion` | `VictusHumanoid.Nova` |
-| Build | masculine, athletic (MakeHuman macro: gender 1.0, muscle 0.62, weight 0.48) | feminine, slender (gender 0.0, muscle 0.55, weight 0.42) |
+| Build | masculine, heroic athletic (MakeHuman macro: gender 1.0, muscle 0.92, weight 0.46) | feminine, slender (gender 0.0, muscle 0.62, weight 0.38) |
 | Design | Frame 01 | Frame 02 |
 | Look | graphite composite undersuit, glazed white ceramic plates, brushed-metal fasteners, black glass visor, cyan light | graphite composite undersuit, glazed pearl ceramic plates, silver hardware, black glass visor, violet light |
 | Height (floor to top of the helmet) | 1.78 m | 1.69 m |
-| Triangles (LOD 0, as exported) | 182,096 | 186,048 |
-| GLB size | 12.27 MB | 12.41 MB |
+| Triangles (LOD 0, as exported) | 180,872 | 182,480 |
+| GLB size | 13.27 MB | 13.11 MB |
 
 Both stand on Y = 0, face +Z with their left on +X, and are authored in the A-pose the earlier
 characters used (arms 40 degrees from vertical), so existing clips and ragdoll setups line up.
@@ -39,7 +39,7 @@ per pass:
 
 | Material | Part | Maps | Notes |
 |---|---|---|---|
-| `<Name>_Frame` | undersuit body (neck to ankles, both hands) | base colour, normal, ORM, emissive | 2048²; the MakeHuman body smoothed into an idealised form (Taubin smoothing, the fingers keep their shape); a hexagonal micro-weave split into composite panels by seams, ribbed flex zones at the neck, shoulders, elbows, wrists, waist and knees, recessed piping down the outside of every limb carrying a thin light line |
+| `<Name>_Frame` | undersuit body (neck to ankles, both hands) | base colour, normal, ORM, emissive | 2048²; the MakeHuman body lightly smoothed (6 Taubin passes, so the muscle forms survive; the fingers keep their shape); a hexagonal micro-weave split into moulded panels that follow the muscles (`suit.py`: pectorals or bust, a rectus grid or corset, obliques, collar, trapezius, shoulder blades, erectors, lumbar, glutes, deltoids, biceps, triceps, forearms, quadriceps, vastus, hamstrings, calves, shins), each with a recessed seam along its outline and a soft moulded crown inside it; thin light lines down the sides of the abdomen into the hips, under the pectorals or bust, along the shoulder blades and down the flanks; ribbed flex zones at the neck, shoulders, elbows, wrists, waist and knees; recessed piping down the outside of every limb carrying a light line; undersuit faces fully covered by a plate are removed |
 | `<Name>_Armor` | helmet, 25 hard-surface plates, boots, ear pods, back core | base colour, normal, ORM, emissive; clear coat 0.65 (roughness 0.06) | 2048²; the helmet is the convex hull of the head's blurred volume, puffed out and shrink-wrapped by a 30x30-per-face quad cube-sphere, smoothed, with an open visor window, graphite side panels with a lit front edge, a crest ridge and vents; plates are shells grown from the body inside planes (a wide chest, back, three abdominal plates, lumbar, pelvis, hips, large shoulders, upper arms, forearms, backs of the hands, outer thighs, knees, shins, calves), 4.5-18 mm thick per plate (Nova's 20% thinner), with straight cut lines and edges rolled under; panel lines from a jittered Voronoi pattern, graphite inserts and metal fasteners; rounded bevels and an inset groove 1 cm in from every edge, a light strip in the groove of the larger plates, a contrasting stripe down the limb plates, a chevron emblem on the chest; boots with a moulded lug sole and accent toe caps; machined-metal ear pods with light rings and a back core with a glowing cell behind vents |
 | `<Name>_Visor` | wraparound visor and face display | base colour, normal, ORM, emissive; clear coat 1.0 (roughness 0.02) | 1024²; black glass filling the helmet's visor window (eye line to jaw, 64 degrees to each side) with a fine scan-line grid in its reflection; two eye glyphs and a mouth bar lying on the glass, driven by blend shapes |
 
@@ -185,6 +185,9 @@ deterministic for one environment. Stages:
 |---|---|
 | `mh.py` | MakeHuman loaders: base mesh (`hm08`), macro targets (gender, muscle, weight, ethnic mix), proxy fitting (`.mhclo`), the reference rig and weights, facial pose units (BVH) |
 | `fit.py` | shapes the body from the character's `Spec`, poses it into the A-pose, collapses the reference rig onto the 60-joint layout, converts to VICTUS space |
+| `suit.py` | the undersuit's panel layout (outlines on the plate charts) and light lines |
+| `plates.py` | sculpted armour plates: outlines on front, back, side and limb charts grown into crowned shells |
+| `render_preview.py` | Cycles studio renders of the GLBs for review (`--views front,three,side,back,head,...`, `--suit` for the undersuit alone, `--lineup`) |
 | `mannequin.py` | the Frame mannequin: smooths the body, builds the helmet from the convex hull of the head's blurred occupancy volume (`HullSurface`), grows the armour plates (`plate_regions`: planes plus a bone-segment radius per plate; `gear.shell` offsets them along the rest normal and rolls the cut edges under), boots, ear pods and back core, the visor and the face-display glyphs with their blend shapes, and repacks UV islands; `Style` holds each character's colours |
 | `assemble.py`, `gear.py` | shared helpers: `Part`, joint maps, shells, boots, rounded boxes (the human pilots' skin/suit/groom assembly of ADR-0179 is kept for reference but no longer built) |
 | `meshops.py` | Catmull-Clark subdivision as a sparse operator (weights and morphs subdivide with the positions), GPU vertices and tangents |
@@ -194,7 +197,10 @@ deterministic for one environment. Stages:
 
 To make a new character, add a `Spec` (macro values) in `fit.py` and a `Style` (undersuit, plate,
 accent, metal, light and glass colours, plate and undersuit roughness) in `mannequin.py`, then
-build it. Plate layout changes go in `mannequin.plate_regions`.
+build it. Plate layout changes go in `plates.layout`, undersuit panels in `suit.panels`. Review renders:
+`/tmp/bpyenv/bin/python tools/characters/render_preview.py --glb <glb> --views front,three,back` (add
+`--suit` for the undersuit alone; build with `VICTUS_KEEP_SUIT=1` to keep the undersuit faces under
+the plates for that review).
 
 The GLBs under `engine/project/data/characters` are embedded into the engine at build time
 (`cmake/EmbedBinary.cmake`, assembler `.incbin` on GCC/Clang, byte arrays on MSVC) and written

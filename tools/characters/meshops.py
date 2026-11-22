@@ -98,11 +98,18 @@ def catmull_clark(q: Quads):
         m = inner_v[v]
         for j in range(4):
             add(v[m], q.f[m, j], 0.25 / (nfaces[v[m]] * n[v[m]]))
-    # Boundary vertices: (v_prev + 6v + v_next) / 8.
-    add(idx[on_boundary], idx[on_boundary], 0.75)
+    # Boundary vertices: (v_prev + 6v + v_next) / 8. A non-manifold vertex (two face fans meeting
+    # at one point: more than two boundary edges) is kept as a corner, or its weights would not
+    # sum to one and it would fly off.
+    nb = np.bincount(E[boundary_e].reshape(-1), minlength=N)
+    regular = on_boundary & (nb == 2)
+    corner = on_boundary & (nb != 2)
+    add(idx[regular], idx[regular], 0.75)
+    add(idx[corner], idx[corner], 1.0)
     be = E[boundary_e]
     for a, b in ((0, 1), (1, 0)):
-        add(be[:, a], be[:, b], 0.125)
+        m = regular[be[:, a]]
+        add(be[m, a], be[m, b], 0.125)
     S = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(N + nE + M, N))
     S.sum_duplicates()
 

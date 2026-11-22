@@ -3251,6 +3251,23 @@ Verified (dev build, 2-core sandbox, lavapipe):
 - Not implemented: GPU-simulated mesh particles, per-particle colour or alpha over life on meshes, motion vectors for mesh particles.
 - Next task: particle events, then a node-based effect graph.
 
+## 2026-11-22 — Orion and Nova base body and muscle-panelled undersuit (ADR-0223)
+
+Built:
+- `tools/characters/suit.py`: undersuit panels following the muscles and light lines, baked by `mannequin_materials.frame_maps` (seams, moulded crowns, glow) in place of the Voronoi seams.
+- `tools/characters/plates.py`: sculpted plates from chart outlines (first pass; the plate-by-plate pass continues), disc back core and sternum emblem; `mannequin.py` removes undersuit faces 22 mm inside a plate; helmet cube-sphere 27 quads per face.
+- `fit.py`: Orion muscle 0.92 / weight 0.46, Nova muscle 0.62 / weight 0.38; 6 Taubin passes (was 14).
+- `meshops.catmull_clark`: non-manifold boundary vertices stay corners (they were scaled 25% away, giving 28 cm spikes on Nova); `test_catmull_clark_bowtie_vertex_stays_put`.
+- `tools/characters/render_preview.py`: Cycles studio review renders (`--suit`, `--lineup`).
+
+Verified (2-core sandbox):
+- `tools/characters/test_pipeline.py` 10/10 (the new bow-tie test fails on the old operator).
+- `build_characters.py --out engine/project/data/characters`: Orion 180,872 triangles, 13.27 MB; Nova 182,480 triangles, 13.11 MB; 60 joints, 26 blend shapes, 41 clips; longest exported Frame edge checked by script (no edges over 5 cm after the fix).
+- `victus_asset_tests -tc="*character*"` (Release): 8 cases, 52,951 assertions pass; heights 1.777 m and 1.685 m.
+- Blender renders `docs/images/characters/blender_render_bodies.jpg` checked by eye against the design sheet.
+- Not verified: the VICTUS runtime close-ups were not recaptured for this change.
+- Next task: the plates one at a time (chest and emblem, abdomen and belt, hips, back and core, shoulders, arms, legs, boots, helmet and visor).
+
 ## 2026-11-22 — Facial expressions and equipment verified on Orion and Nova (ADR-0222)
 
 Built:

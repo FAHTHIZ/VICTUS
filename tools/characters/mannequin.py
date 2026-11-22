@@ -26,6 +26,7 @@ morphs and positions consistently for LOD 0.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -34,6 +35,7 @@ from scipy.spatial import cKDTree
 
 import fit
 import gear
+import plates
 from assemble import Part, joint_map
 from meshops import Quads, repack_islands, triangulate, vertex_normals
 
@@ -54,17 +56,17 @@ class Style:
 STYLES = {
     # Orion (Frame 01): white ceramic plates over a graphite composite undersuit, brushed-metal
     # hardware, cyan light (the ORION & NOVA design sheet).
-    "orion": Style(frame=(0.022, 0.024, 0.028), armor=(0.80, 0.81, 0.82), accent=(0.030, 0.033, 0.039),
+    "orion": Style(frame=(0.010, 0.011, 0.013), armor=(0.80, 0.81, 0.82), accent=(0.014, 0.016, 0.020),
                    metal=(0.56, 0.57, 0.60), glow=(0.10, 0.72, 1.0), visor=(0.003, 0.005, 0.008),
                    armor_rough=0.24, frame_rough=0.58),
     # Nova (Frame 02): pearl ceramic plates over a graphite undersuit, silver hardware, violet light.
-    "nova": Style(frame=(0.026, 0.025, 0.031), armor=(0.83, 0.81, 0.82), accent=(0.036, 0.034, 0.046),
+    "nova": Style(frame=(0.012, 0.011, 0.015), armor=(0.83, 0.82, 0.84), accent=(0.017, 0.015, 0.024),
                   metal=(0.74, 0.74, 0.78), glow=(0.52, 0.26, 1.0), visor=(0.005, 0.003, 0.010),
                   armor_rough=0.20, frame_rough=0.52),
 }
 
 # Face labels of the Armor part (bake masks and per-piece looks).
-ARMOR_KINDS = ("plate", "boot", "pod", "core", "helmet")
+ARMOR_KINDS = ("plate", "boot", "pod", "core", "helmet", "emblem")
 
 
 def _edges(f):
@@ -477,7 +479,7 @@ def assemble(body: fit.Body):
     v = q.v
     hand_d = np.min([np.linalg.norm(v - J[f"Hand.{t}"][0], axis=1) for t in ("L", "R")], axis=0)
     mask = smooth01((hand_d - 0.03) / 0.05)
-    q = Quads(taubin(v, q.f, mask, iters=14), q.f, q.uv, q.fuv)
+    q = Quads(taubin(v, q.f, mask, iters=6), q.f, q.uv, q.fuv)
 
     # The jaw cut: a plane under the chin rising to the base of the skull.
     jaw_tip = J["Jaw"][1]
@@ -495,36 +497,53 @@ def assemble(body: fit.Body):
     c = q.v[q.f].mean(1)
     ankle, boot_top = gear.boot_heights(J)
     keep = ((c - po) @ pn > 0.004) & (c[:, 2] > boot_top - 0.025)
-    fq, fused = q.subset(np.where(keep)[0])
-    frame_W = W[fused]
-    hq = head_quads(head, n=14)
-    head_W = np.zeros((len(hq.v), len(names)))
-    head_W[:, names.index("Head")] = 1.0
     nrm_body = vertex_normals(q.v, triangulate(q.f))
 
-    # Armour plates.
-    pieces = []  # (Quads, W, kind, lip label)
+    # Armour plates (plates.py): sculpted shells drawn as outlines on body charts; the backs of the
+    # hands keep their plane-bounded plates.
+    pieces = []  # (Quads, W, kind, lip label, name, tone, trim, edge distance)
+    torso = plates.Torso(q.v)
+    hidden = np.zeros(len(q.f), bool)
+    for pl in plates.layout(J, torso, body.spec.key):
+        sel = plates.select(q, pl, c)
+        if len(sel) < 4:
+            continue
+        sq, src, lab, dist = plates.shell(q, nrm_body, sel, pl)
+        pieces.append((sq, W[src], 0, lab, pl.name, pl.tone, pl.trim, dist))
+        # Suit faces well inside a plate never show: drop them from the Frame.
+        if not os.environ.get("VICTUS_KEEP_SUIT"):
+            hidden[sel[pl.g(c[sel]) < -0.022]] = True
     for pname, planes, seg in plate_regions(J):
+        if not pname.startswith("Hand."):
+            continue
         sel = _largest_component(q, region_faces(c, planes, seg))
         if len(sel) < 4:
             continue
         th = plate_thickness(pname) * (0.8 if body.spec.key == "nova" else 1.0)
         sq, src, lab = gear.shell(q, nrm_body, sel, planes, th, th * 0.72, -0.0015)
-        pieces.append((sq, W[src], 0, lab, pname))
+        pieces.append((sq, W[src], 0, lab, pname, 1, 0, None))
     suit_n = nrm_body
     for t in ("L", "R"):
         bq, lab, near = gear.boot(J, t, q.v, suit_n)
-        pieces.append((bq, W[near], 1, lab, f"Boot.{t}"))
-    # Back core: a rounded power cell on the back plate.
-    chest = J["Chest"][0]
-    zc = J["Hips"][0][2] + (J["Neck"][0][2] - J["Hips"][0][2]) * 0.70
-    sv = q.v[(np.abs(q.v[:, 0]) < 0.05) & (np.abs(q.v[:, 2] - zc) < 0.03)]
-    by = sv[:, 1].max()
-    core = gear.rounded_box(np.array([0.0, by + PLATE_OFFSET + 0.012, zc]), (0.055, 0.016, 0.075), 0.012, n=6)
-    core = gear._orient_outward(core, np.array([0.0, by, zc]))
-    cw = np.zeros((len(core.v), len(names)))
-    cw[:, names.index("Chest")] = 1
-    pieces.append((core, cw, 3, np.zeros(len(core.f), np.int32), "Core"))
+        pieces.append((bq, W[near], 1, lab, f"Boot.{t}", 1, 1, None))
+    # Back core: a power-cell puck on the graphite spine housing (glowing rings, the design
+    # sheet's back view), and a small emblem puck on the sternum keel.
+    zt = lambda t: J["Hips"][0][2] + (J["Neck"][0][2] - J["Hips"][0][2]) * t  # noqa: E731
+    by_name = {p_[4]: p_ for p_ in pieces}
+    nova = body.spec.key == "nova"
+
+    def puck(host, z0, front, radius, depth, kind, pname, joint="Chest"):
+        hv = by_name[host][0].v if host in by_name else q.v
+        m = (np.abs(hv[:, 0]) < 0.02) & (np.abs(hv[:, 2] - z0) < 0.02)
+        y0 = hv[m, 1].min() if front else hv[m, 1].max()
+        nrm = np.array([0, -1.0 if front else 1.0, 0])
+        dq = plates.disc(np.array([0.0, y0, z0]) + nrm * (depth * 0.5 - 0.002), nrm, radius, depth, n=8)
+        dw = np.zeros((len(dq.v), len(names)))
+        dw[:, names.index(joint)] = 1
+        pieces.append((dq, dw, kind, np.zeros(len(dq.f), np.int32), pname, 1, 0, None))
+
+    puck("Spine", zt(0.76), False, 0.060 if nova else 0.068, 0.020, 3, "Core")
+    puck("Sternum", zt(0.80), True, 0.014 if nova else 0.020, 0.010, 5, "Emblem")
 
     # Helmet: a ceramic shell over the head volume (cut lower than the head shell, so it covers
     # the jaw), inflated more at the crown and the back so it reads as a helmet, not a scalp.
@@ -539,7 +558,7 @@ def assemble(body: fit.Body):
         return 0.0125 + 0.006 * np.clip(d[:, 2], 0, 1) + 0.005 * np.clip(d[:, 1], 0, 1)
 
     helm = HullSurface(hvol, puff)
-    hm = head_quads(helm, n=30)
+    hm = head_quads(helm, n=27)
     # Smooth the pane and shell: the head volume still carries the nose, lips and brow.
     hm = Quads(taubin(hm.v, hm.f, np.ones(len(hm.v)), iters=30, lam=0.6, mu=-0.62), hm.f, hm.uv, hm.fuv)
     hmc = hm.v[hm.f].mean(1)
@@ -562,19 +581,16 @@ def assemble(body: fit.Body):
     helm_q, _, helm_lab = gear.shell(hm, hn, hsel, [hplane], 0.0, -0.0008, -0.0105)
     helm_W = np.zeros((len(helm_q.v), len(names)))
     helm_W[:, names.index("Head")] = 1.0
-    pieces.append((helm_q, helm_W, 4, helm_lab, "Helmet"))
+    pieces.append((helm_q, helm_W, 4, helm_lab, "Helmet", 0, 1, None))
     # Ear pods: machined discs on the helmet's sides, a light ring on each.
     for s_ in (1.0, -1.0):
-        dpod = np.array([s_, 0.10, -0.10])
+        dpod = np.array([s_, 0.12, -0.12])
         p, n, _, _ = _frame_at(helm, dpod)
-        pod = gear.rounded_box(np.zeros(3), (0.009, 0.026, 0.026), 0.0085, n=6)
-        tt = _unit(np.cross(np.array([0, 0, 1.0]), n))
-        R = np.stack([n, tt, np.cross(n, tt)], 1)
-        pv = pod.v @ R.T + p + n * 0.003
-        pq = gear._orient_outward(Quads(pv, pod.f, pod.uv, pod.fuv), p - n * 0.01)
-        pw = np.zeros((len(pv), len(names)))
+        pr = 0.027 if body.spec.key == "nova" else 0.032
+        pq = plates.disc(p + n * 0.004, n, pr, 0.016, n=8)
+        pw = np.zeros((len(pq.v), len(names)))
         pw[:, names.index("Head")] = 1
-        pieces.append((pq, pw, 2, np.zeros(len(pq.f), np.int32), "Pod"))
+        pieces.append((pq, pw, 2, np.zeros(len(pq.f), np.int32), "Pod", 0, 0, None))
 
     # Visor: a pane of glass standing proud of the helmet front, its edge rolling down into it.
     gq = Quads(hm.v + hn * 0.0035, hm.f, hm.uv, hm.fuv)
@@ -596,7 +612,8 @@ def assemble(body: fit.Body):
 
     # ---- parts ----
     # The helmet encloses the head, so the Frame stops at the neck (no head shell under it).
-    del hq
+    fq, fused = q.subset(np.where(keep & ~hidden)[0])
+    frame_W = W[fused]
     frame_q, frame_W, frame_kind = _merge([(fq, frame_W, 0)])
     frame_q = repack_islands(frame_q, density=np.where(frame_kind == 1, 1.6, 1.0))
     frame_part = Part("Frame", "Frame", frame_q, frame_W, {}, attrs={"rest": frame_q.v.copy()},
@@ -605,12 +622,13 @@ def assemble(body: fit.Body):
     aq_list = pieces
     armor_q, armor_W, armor_kind = _merge(aq_list)
     armor_lip = np.concatenate([p[3] for p in pieces])
-    armor_trim = np.concatenate([np.full(len(p[0].f), _trim_of(p[4]), np.int32) for p in pieces])
+    armor_trim = np.concatenate([np.full(len(p[0].f), p[6], np.int32) for p in pieces])
+    armor_tone = np.concatenate([np.full(len(p[0].f), p[5], np.int32) for p in pieces])
     edge, centre = _piece_edges(pieces)
     armor_q = repack_islands(armor_q)
     armor_part = Part("Armor", "Armor", armor_q, armor_W, {},
                       attrs={"rest": armor_q.v.copy(), "edge": edge[:, None], "centre": centre},
-                      face_attrs={"kind": armor_kind, "cuff": armor_lip, "trim": armor_trim})
+                      face_attrs={"kind": armor_kind, "cuff": armor_lip, "trim": armor_trim, "tone": armor_tone})
 
     vis_pieces = [(vq, head_W_v, 0)] + [(g[0], np.tile(head_W_v[:1], (len(g[0].v), 1)), g[2]) for g in glyphs]
     visor_q, visor_W, visor_kind = _merge(vis_pieces)
@@ -630,7 +648,7 @@ def assemble(body: fit.Body):
                       attrs={"rest": visor_q.v.copy(), "glyph": glyph_v[:, None]},
                       face_attrs={"kind": visor_kind, "cuff": visor_lip})
     # Landmarks the materials and sockets use.
-    info = {"head": head, "plane": plane, "visor": (vbot, vtop)}
+    info = {"head": head, "plane": plane, "visor": (vbot, vtop), "torso": torso}
     return [frame_part, armor_part, visor_part], style, info
 
 
@@ -647,7 +665,7 @@ def _piece_edges(pieces):
     """Per vertex of the merged armour: distance (metres) to its piece's open cut edge (the rolled
     lip), the bake's input for bevels and inset grooves; and the piece centroid."""
     edges, centres = [], []
-    for q, _, _, lab, _ in pieces:
+    for q, _, _, lab, *_ in pieces:
         lipv = np.unique(q.f[np.asarray(lab) > 0]) if np.any(np.asarray(lab) > 0) else np.zeros(0, np.int64)
         if len(lipv):
             d, _ = cKDTree(q.v[lipv]).query(q.v)
