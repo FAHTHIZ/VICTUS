@@ -165,7 +165,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Linux dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
