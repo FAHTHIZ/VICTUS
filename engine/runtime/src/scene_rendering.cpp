@@ -43,6 +43,7 @@ void GpuAssetCache::clear() {
     nearest_.clear();
     environments_.clear();
     environment_errors_.clear();
+    environment_suns_.clear();
     cookies_.clear();
     atmosphere_.reset();
     probes_.clear();
@@ -766,9 +767,21 @@ Result<const render::EnvironmentMap*> GpuAssetCache::environment(const Uuid& uui
         if (!cooked->hdr)
             return make_error(ErrorCode::InvalidArgument,
                               std::format("{}: environment maps need an HDR (.hdr) texture", cooked->name));
+        // ADR-0236: the scene's DirectionalLight is the sun, so the photographed sun is clamped out
+        // of the sky before it is projected into irradiance and prefiltered into reflections
+        // (otherwise it lights every shadow a second time). The cooked SH holds the unclamped sky,
+        // so it is re-projected from the clamped image (a 256x128 integral, well under a millisecond).
+        render::ImageF hdr = cooked->hdr_image();
+        const render::ExtractedSun sun = render::extract_sun(hdr);
+        environment_suns_[uuid] = sun;
+        if (sun.found) {
+            VICTUS_LOG_INFO("runtime", "environment map {}: removed the sky's sun ({} texels, irradiance {:.2f} {:.2f} {:.2f}); the scene's directional light replaces it",
+                            cooked->name, sun.texels, sun.irradiance.x, sun.irradiance.y, sun.irradiance.z);
+            return render::EnvironmentMap::create(*ctx_, hdr, render::SphericalHarmonics9::project(hdr), env_bake_);
+        }
         render::SphericalHarmonics9 sh;
         sh.coefficients = cooked->sh;
-        return render::EnvironmentMap::create(*ctx_, cooked->hdr_image(), sh, env_bake_);
+        return render::EnvironmentMap::create(*ctx_, hdr, sh, env_bake_);
     };
     auto env = build();
     if (!env) {
@@ -779,6 +792,11 @@ Result<const render::EnvironmentMap*> GpuAssetCache::environment(const Uuid& uui
     const render::EnvironmentMap* ptr = env->get();
     environments_.emplace(uuid, std::move(*env));
     return ptr;
+}
+
+render::ExtractedSun GpuAssetCache::environment_sun(const Uuid& uuid) const {
+    const auto it = environment_suns_.find(uuid);
+    return it != environment_suns_.end() ? it->second : render::ExtractedSun{};
 }
 
 Result<const render::EnvironmentMap*> GpuAssetCache::atmosphere(const render::AtmosphereSettings& s) {
@@ -1840,8 +1858,30 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             }
         }
         if (!e.environment_map.is_nil()) {
-            if (auto map = assets.environment(e.environment_map)) env.environment_map = *map;
-            else ++stats.missing_assets;
+            if (auto map = assets.environment(e.environment_map)) {
+                env.environment_map = *map;
+                const render::ExtractedSun removed = assets.environment_sun(e.environment_map);
+                if (removed.found && !has_sun) {
+                    // ADR-0236: a scene lit only by the HDR keeps its sun, now as a shadowed
+                    // directional light from the photo's sun direction (undoing the sky rotation).
+                    const float rot = env.environment_rotation, c = std::cos(rot), sn = std::sin(rot);
+                    const math::Vec3 d = removed.direction;
+                    const math::Vec3 towards{c * d.x - sn * d.z, d.y, sn * d.x + c * d.z};
+                    const float peak = std::max({removed.irradiance.x, removed.irradiance.y, removed.irradiance.z});
+                    if (peak > 0.0f) {
+                        has_sun = true;
+                        sun.direction = -math::normalize(towards);
+                        sun.color = {removed.irradiance.x / peak, removed.irradiance.y / peak, removed.irradiance.z / peak, 1};
+                        sun.intensity = peak * env.environment_intensity;
+                        sun.shadows = true;
+                    }
+                }
+                // The photographed sun was removed: draw the scene sun's disc instead, where the
+                // directional light actually is.
+                env.environment_sun_disc = has_sun && -sun.direction.y > -0.02f && removed.found;
+            } else {
+                ++stats.missing_assets;
+            }
         } else if (e.physical_sky) {
             render::AtmosphereSettings a;
             a.sun_direction = -sun.direction;

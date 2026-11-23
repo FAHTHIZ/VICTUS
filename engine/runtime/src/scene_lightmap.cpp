@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/runtime/scene_lightmap.hpp"
 
+#include "victus/render/environment_map.hpp"
+
 #include "victus/animation/animation.hpp"
 #include "victus/gameplay/gameplay.hpp"
+#include "victus/render/environment_map.hpp"
 #include "victus/render/scene_renderer.hpp"
 #include "victus/runtime/scene_rendering.hpp"
 
@@ -201,6 +204,8 @@ Result<PreparedLightmapBake> prepare_scene_lightmap(scene::Scene& scene, assets:
     if (receivers == 0) return make_error(ErrorCode::InvalidArgument, "no visible MeshRenderer is marked lightmapped (static lighting)");
 
     bool has_env = false;
+    render::ExtractedSun sky_sun; // the HDR sky's sun, removed from the bake sky (ADR-0236)
+    float sky_rotation = 0.0f;
     w.each<gameplay::EnvironmentComponent>([&](const gameplay::EnvironmentComponent& e) {
         if (has_env) return;
         has_env = true;
@@ -208,8 +213,33 @@ Result<PreparedLightmapBake> prepare_scene_lightmap(scene::Scene& scene, assets:
         out.sky.horizon = rgb(e.sky_horizon);
         out.sky.ground = rgb(e.ground);
         out.sky.intensity = finite_nonneg(e.ambient_intensity, 0.6f);
-        if (!e.environment_map.is_nil() || e.physical_sky)
-            out.warnings.push_back("the Environment's environment map / physical sky is not baked yet; the analytic sky colours are used");
+        if (!e.environment_map.is_nil() && db) {
+            // ADR-0236: bake under the same HDR sky the renderer lights dynamic objects with, its
+            // sun removed (the directional light is baked as the sun), at 256x128: bounce and sky
+            // light are low frequency, and the tracer samples it per ray.
+            auto tex = db->load_texture(e.environment_map);
+            if (tex && tex->hdr) {
+                render::ImageF img = tex->hdr_image();
+                sky_sun = render::extract_sun(img);
+                auto small = std::make_shared<const render::ImageF>(render::downsample_to_fit(img, 256, 128));
+                const float rot = std::isfinite(e.environment_rotation) ? math::radians(e.environment_rotation) : 0.0f;
+                sky_rotation = rot;
+                const float c = std::cos(rot), sn = std::sin(rot);
+                out.sky.intensity = std::isfinite(e.environment_intensity) ? std::max(e.environment_intensity, 0.0f) : 1.0f;
+                out.sky.radiance = [small, c, sn](math::Vec3 d) {
+                    const math::Vec3 r{c * d.x + sn * d.z, d.y, -sn * d.x + c * d.z};
+                    const math::Vec2 uv = render::equirect_uv(r);
+                    const auto x = std::min(small->width - 1, static_cast<std::uint32_t>(std::max(uv.x, 0.0f) * static_cast<float>(small->width)));
+                    const auto y = std::min(small->height - 1, static_cast<std::uint32_t>(std::max(uv.y, 0.0f) * static_cast<float>(small->height)));
+                    const math::Vec4 v = small->at(x, y);
+                    return math::Vec3{v.x, v.y, v.z};
+                };
+            } else {
+                out.warnings.push_back("the Environment's environment map could not be loaded as an HDR; the analytic sky colours are used");
+            }
+        } else if (e.physical_sky) {
+            out.warnings.push_back("the Environment's physical sky is not baked yet; the analytic sky colours are used");
+        }
     });
     if (!has_env) {
         // Same defaults the renderer uses without an Environment component.
@@ -261,6 +291,17 @@ Result<PreparedLightmapBake> prepare_scene_lightmap(scene::Scene& scene, assets:
         }
         out.lights.push_back(light);
     });
+    if (!has_sun && sky_sun.found) {
+        // Matches the renderer: an HDR-only scene is lit by its sun as a directional light.
+        const float c = std::cos(sky_rotation), sn = std::sin(sky_rotation);
+        const math::Vec3 d = sky_sun.direction;
+        render::LightmapLight light;
+        light.type = render::LightmapLight::Type::Directional;
+        light.direction = -math::normalize(math::Vec3{c * d.x - sn * d.z, d.y, sn * d.x + c * d.z});
+        light.radiance = sky_sun.irradiance * out.sky.intensity;
+        light.cast_shadows = true;
+        out.lights.push_back(light);
+    }
     return out;
 }
 

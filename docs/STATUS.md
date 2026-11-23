@@ -3591,3 +3591,19 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`):
 - `victus_asset_tests -tc="ies*"`: 4 cases, 49 assertions passed. A rotational downlight (peak 500 cd x multiplier 2) samples 1000 cd at nadir, 900 cd at 15 degrees, 500 cd at 45 degrees and 0 at 90 and 135 degrees; its cookie bottom row is above 250 grey and the rows above the horizon are 0. Quadrant, bilateral and full tables fold and wrap as LM-63 specifies (for example 30 cd halfway at 270 degrees in a 0-180 table); a full table with its peak at 90 degrees is brighter on the light's right than in front or on the left by over 100 grey. Missing TILT, TILT=<file>, Type B, truncated and descending tables are rejected; a `.ies` file imports as a 256 x 256 sRGB texture.
 - Full `ctest -j2`: 48/48 passed.
 - Next task: FFT ocean (GAP-16 remainder).
+
+## 2026-11-23 — Sun extraction from HDR skies (ADR-0236)
+
+Built:
+- `victus/render/environment_map.hpp`: `ExtractedSun` and `extract_sun(ImageF&, min_peak_ratio)`. Texels above max(p99.9, 16 x median) are clamped to the threshold keeping their colour; the removed energy is returned as an irradiance and a direction.
+- `GpuAssetCache::environment` removes the photographed sun before baking the SH9 irradiance and the prefiltered cubemap, so a scene's directional light no longer adds a second sun to the ambient and the reflections. A scene with an HDR and no directional light gets a synthesized shadowed sun from the removed energy (rotation and intensity applied), and the sun disc is drawn back on the sky.
+- Lightmap baking (`prepare_scene_lightmap`) samples the sun-free HDR (256 x 128, rotated and scaled) as its sky instead of the analytic sky, and adds the synthesized sun when the scene has no directional light.
+- Tests: 2 cases in `tests/render/environment_map_tests.cpp`.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`):
+- `victus_render_tests`: 78 cases, 58140 assertions passed (new: a 60000-peak sun is clamped and returned with its direction and irradiance; a sky without a sun is unchanged).
+- `victus_gpu_tests` under Xvfb on lavapipe: 251 cases, 29305 assertions passed.
+- `ctest -j2 -E gpu` under Xvfb: all tests passed (4 opt-in tests skipped as usual).
+- `victus new --template 3d` bakes and `victus run --quality high --screenshot` renders the starter scene with the HDR sky.
+- Next task: calibrate template lighting (sun intensity and elevation, exposure) against the sun-free sky.
+

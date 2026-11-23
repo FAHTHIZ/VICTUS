@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 using namespace victus;
 using namespace victus::render;
@@ -89,4 +90,45 @@ TEST_CASE("SH9 irradiance of constant and split environments") {
     CHECK(up.x > 2.5f);
     CHECK(down.x < 0.5f);
     CHECK(side.x == doctest::Approx(1.5f).epsilon(0.05)); // half the sky visible
+}
+
+TEST_CASE("sun extraction clamps a photographed sun and reports its irradiance") {
+    // A uniform sky of radiance 1 with a 3x3-texel sun of radiance 20000 at 45 degrees elevation.
+    ImageF img = make_env(256, 128, {1, 1, 1}, {0.2f, 0.2f, 0.2f});
+    const math::Vec3 sun_dir = math::normalize(math::Vec3{0.0f, 1.0f, -1.0f});
+    const math::Vec2 uv = equirect_uv(sun_dir);
+    const auto cx = static_cast<std::uint32_t>(uv.x * 256.0f), cy = static_cast<std::uint32_t>(uv.y * 128.0f);
+    double expected = 0.0;
+    for (std::uint32_t y = cy - 1; y <= cy + 1; ++y)
+        for (std::uint32_t x = cx - 1; x <= cx + 1; ++x) {
+            float* p = &img.pixels[(std::size_t{y} * 256 + x) * 4];
+            p[0] = p[1] = p[2] = 20000.0f;
+            const float v = (static_cast<float>(y) + 0.5f) / 128.0f;
+            expected += 2.0 * 3.14159265 / 256.0 * 3.14159265 / 128.0 * std::sin(v * 3.14159265);
+        }
+    const SphericalHarmonics9 before = SphericalHarmonics9::project(img);
+    const ExtractedSun sun = extract_sun(img);
+    REQUIRE(sun.found);
+    CHECK(sun.texels == 9);
+    CHECK(math::dot(sun.direction, sun_dir) > 0.999f);
+    // Nearly all of the sun's energy is removed: (20000 - threshold) per texel.
+    CHECK(sun.irradiance.x == doctest::Approx(expected * (20000.0 - sun.threshold)).epsilon(0.01));
+    CHECK(sun.threshold < 50.0f);
+    for (std::size_t i = 0; i < img.pixels.size(); i += 4) CHECK(img.pixels[i] <= sun.threshold + 1e-3f);
+    // The sky keeps its colour and the irradiance below the sun drops to about the sky's own.
+    const SphericalHarmonics9 after = SphericalHarmonics9::project(img);
+    CHECK(before.diffuse(sun_dir).x > 2.0f * after.diffuse(sun_dir).x);
+    CHECK(after.diffuse({0, 1, 0}).x == doctest::Approx(1.0f).epsilon(0.05));
+}
+
+TEST_CASE("sun extraction leaves skies without a sun unchanged") {
+    ImageF overcast = make_env(64, 32, {1.2f, 1.2f, 1.25f}, {0.3f, 0.3f, 0.3f});
+    overcast.pixels[(5 * 64 + 7) * 4] = 40.0f; // a bright cloud edge is not a sun
+    const std::vector<float> original = overcast.pixels;
+    const ExtractedSun sun = extract_sun(overcast);
+    CHECK_FALSE(sun.found);
+    CHECK(sun.texels == 0);
+    CHECK(overcast.pixels == original);
+    ImageF empty;
+    CHECK_FALSE(extract_sun(empty).found);
 }

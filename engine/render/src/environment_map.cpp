@@ -8,6 +8,7 @@
 #include <bit>
 #include <cmath>
 #include <format>
+#include <vector>
 
 namespace victus::render {
 using namespace math;
@@ -72,6 +73,59 @@ SphericalHarmonics9 SphericalHarmonics9::project(const ImageF& img) {
     // Cosine-lobe convolution A_l = pi, 2pi/3, pi/4, divided by pi (radiance of a white surface).
     const float band[9] = {1.0f, 2.0f / 3.0f, 2.0f / 3.0f, 2.0f / 3.0f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
     for (int i = 0; i < 9; ++i) out.coefficients[i] = L[i] * (norm * band[i]);
+    return out;
+}
+
+ExtractedSun extract_sun(ImageF& img, float min_peak_ratio) {
+    VICTUS_PROFILE_SCOPE("extract_sun");
+    ExtractedSun out;
+    const std::size_t n = std::size_t{img.width} * img.height;
+    if (img.width == 0 || img.height == 0 || img.pixels.size() < n * 4) return out;
+    auto lum = [&](std::size_t i) {
+        const float* p = &img.pixels[i * 4];
+        const float l = 0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2];
+        return std::isfinite(l) ? std::max(l, 0.0f) : 0.0f;
+    };
+    std::vector<float> l(n);
+    float peak = 0.0f;
+    for (std::size_t i = 0; i < n; ++i) peak = std::max(peak, l[i] = lum(i));
+    std::vector<float> sorted = l;
+    auto nth = [&](double q) {
+        const auto k = static_cast<std::ptrdiff_t>(std::min<double>(static_cast<double>(n - 1), q * static_cast<double>(n)));
+        std::nth_element(sorted.begin(), sorted.begin() + k, sorted.end());
+        return sorted[static_cast<std::size_t>(k)];
+    };
+    const float median = nth(0.5);
+    // A sun is a peak far above the median sky; overcast skies and interiors have none.
+    if (!(median > 0.0f) || peak < median * std::max(min_peak_ratio, 1.0f)) return out;
+    // Clamp to the 99.9th percentile (bright clouds survive; the solar disc and its aureole, a few
+    // hundred texels of a 1K map at most, do not), and never below 16x the median.
+    const float threshold = std::max(nth(0.999), 16.0f * median);
+    if (!(peak > threshold)) return out;
+    const float du = 1.0f / static_cast<float>(img.width), dv = 1.0f / static_cast<float>(img.height);
+    Vec3 removed{0, 0, 0}, dir{0, 0, 0};
+    for (std::uint32_t y = 0; y < img.height; ++y) {
+        const float v = (static_cast<float>(y) + 0.5f) * dv;
+        const float solid_angle = 2.0f * kPi * du * kPi * dv * std::sin(v * kPi);
+        for (std::uint32_t x = 0; x < img.width; ++x) {
+            const std::size_t i = std::size_t{y} * img.width + x;
+            if (l[i] <= threshold) continue;
+            float* p = &img.pixels[i * 4];
+            const float keep = threshold / l[i];
+            const Vec3 cut = Vec3{p[0], p[1], p[2]} * ((1.0f - keep) * solid_angle);
+            removed = removed + cut;
+            dir = dir + equirect_direction((static_cast<float>(x) + 0.5f) * du, v) * ((l[i] - threshold) * solid_angle);
+            p[0] *= keep;
+            p[1] *= keep;
+            p[2] *= keep;
+            ++out.texels;
+        }
+    }
+    const float len = length(dir);
+    out.found = out.texels > 0 && len > 0.0f;
+    out.direction = out.found ? dir * (1.0f / len) : Vec3{0, 1, 0};
+    out.irradiance = removed;
+    out.threshold = threshold;
     return out;
 }
 

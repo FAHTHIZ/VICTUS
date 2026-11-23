@@ -157,6 +157,9 @@ public:
     // HDR texture asset baked into an image-based-lighting environment map (created on first
     // use and cached; failures are cached and logged once until the asset is evicted).
     [[nodiscard]] Result<const render::EnvironmentMap*> environment(const Uuid& uuid);
+    // The sun removed from that HDR before baking (ADR-0236); `found` is false before the map is
+    // built, for sun-free skies and for unknown assets.
+    [[nodiscard]] render::ExtractedSun environment_sun(const Uuid& uuid) const;
     void set_environment_bake(const render::EnvironmentBakeSettings& s) noexcept { env_bake_ = s; }
     // Physical sky baked into an environment map; re-baked only when the settings change (the
     // sun by more than about half a degree), so animated time of day stays cheap.
@@ -311,6 +314,7 @@ private:
     std::unordered_map<Uuid, bool, UuidHash> nearest_;
     std::unordered_map<Uuid, std::unique_ptr<render::EnvironmentMap>, UuidHash> environments_;
     std::unordered_map<Uuid, Error, UuidHash> environment_errors_;
+    std::unordered_map<Uuid, render::ExtractedSun, UuidHash> environment_suns_;
     render::EnvironmentBakeSettings env_bake_;
     std::unique_ptr<render::EnvironmentMap> atmosphere_;
     render::AtmosphereSettings atmosphere_key_;
