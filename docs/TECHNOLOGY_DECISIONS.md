@@ -2771,3 +2771,44 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - Textures and normal maps stay on moving, rotating bodies: the measured image difference between a rest pose and a rigidly moved object, camera and sun is 0 in object space.
 - Every PBR draw carries one more vec4 varying. The derivative frame is computed only for object-space materials.
 - The frame is constant per pixel quad, so it is approximate at silhouettes. Object space follows the rest pose, so skinned meshes keep the texture on the bind pose, and vertex-function offsets do not move the projection. Mirrored and skinned cases are not image-tested.
+
+### ADR-0247: Orion and Nova from the owner's design sheet, with helmet and bare-head variants
+
+**Status:** Accepted (2026-11-24). Owner direction: match the Orion/Nova character sheet as closely as the engine allows, and offer Orion and Nova with and without the helmet.
+
+**Context:** The sheet shows Orion in black, glossy, carbon-textured armour with a black helmet, a red-tinted visor and red slit eyes, and a satin silver V on the chest. It shows Nova in white armour over a black high-cut leotard, black collar, gloves and flex zones, with ice-blue light and a bare head: a dark bob with a side-swept fringe and an East Asian face. Next to her is a helmeted turnaround. The shipped Frame 01/02 mannequins (ADR-0198, ADR-0204, ADR-0225) are white ceramic over graphite with cyan and violet light, and always wear a helmet. The renderer already has the shading a bare head needs: subsurface diffuse transmission for skin (ADR-0233), anisotropic specular for hair (ADR-0232), and alpha-tested, double-sided materials.
+
+**Decision:**
+- Each character now has seven primitives in a fixed order (`project::kCharacterFrameMesh` … `kCharacterHairMesh`): Frame, Armor, Visor, Helmet (the helmet set, 2-3), and Skin, Eye, Hair (the bare-head set, 4-6). The helmet shell now lives in its own primitive, so it can be hidden apart from the armour.
+- Bare head (`tools/characters/human.py`, `human_materials.py`):
+  - A MakeHuman head (CC0) fitted to the mannequin's neck, with each character's skin tone.
+  - Nova's face sculpted towards the sheet: fuller, narrower lips; larger eyes; a lifted lower face and a V-shaped jaw.
+  - Brows, lashes and eyes.
+  - Hair as layered strand cards on an eight-tile atlas: Nova's bob has three layers and a side-swept fringe, Orion's is a crop. The outer cards use the bright tiles and the inner ones the dark tiles.
+  - Materials: Skin uses `KHR_materials_diffuse_transmission`. Hair uses an alpha mask with cutoff 0.4, is double-sided, and has anisotropy along the strand.
+- Looks (`mannequin.py` `Style`, `mannequin_materials.py`):
+  - Orion: near-black glossy armour (clear coat), a dark steel frame and hardware, the trims' light turned off, a red-tinted visor with solid slanted slit eyes and no mouth glyph, and a satin silver painted V. The back core and emblem pucks are gone.
+  - Nova: white armour, and a black mask for the leotard, centre strip, spine, gloves and flex zones. She has a black V, ice-blue light and a ribbed black collar.
+- Engine/API:
+  - `CharacterHelmet {Default, On, Off}`, `parse_character_helmet` and `resolve_character_helmet`.
+  - `set_character_helmet(scene, root, on)` toggles the five head renderers of one instance and returns how many changed. `character_helmet(scene, root)` reports the current state.
+  - `instantiate_starter_character(..., helmet)`, `TemplateOptions::helmet` and `victus new --helmet auto|on|off`. With `auto`, Orion wears the helmet and Nova does not (`StarterCharacter::default_helmet`).
+  - Scripts toggle the variants with the existing `find_descendant("<Name>_Body[3]"):set_visible(...)`, so the Luau API version does not change.
+  - The arena's red-tinted enemy Nova wears the helmet, so her skin is not tinted.
+- Pipeline (version 6):
+  - The AO bake treats the two head sets as never shown together, so neither one darkens the other.
+  - `bake.rasterize` drops texels an earlier triangle already claimed, chunk by chunk. Its output is identical, but memory stays bounded by the texel count. Without this, the overlapping hair cards ran a 7 GB build out of memory.
+  - `render_preview.py --helmet on|off|auto` renders either variant.
+
+**Alternatives:**
+- Two GLBs per character (helmeted and bare-headed): this doubles the download and the embedded size, and a running game cannot switch between them.
+- A strand-based hair system (Kajiya-Kay with real strands): the cards plus the existing anisotropic lobe read correctly at gameplay distance, and real strands cost far more on the software and mobile renderers. A Kajiya-Kay term for the cards is possible follow-up work.
+- Keeping the helmet inside the Armor primitive and hiding it in a shader: that needs a per-instance mask, while visibility per primitive is already supported in every pass.
+
+**Evidence:** `victus_asset_tests -tc="starter characters*"`, including "helmet and bare-head variants (ADR-0247)"; `victus_project_tests -tc="templates*"`; `tools/characters/test_pipeline.py` (hair card tiles, UVs and winding; the material order matches `characters.hpp`); Cycles renders of both variants compared side by side with the sheet; STATUS.md entry for the commit.
+
+**Consequences:**
+- Each character costs up to seven skinned draws per pass, of which five are visible at a time (Frame, Armor, plus either Visor and Helmet or Skin, Eye and Hair).
+- The hair cards are alpha-tested, so they have no TAA motion artefacts but alias slightly at a distance on the Low tier.
+- The GLBs grow by about 4 MB each for the head textures.
+- Projects created before this change keep their copied GLBs. New projects, and the starters embedded in the engine, get the new look.

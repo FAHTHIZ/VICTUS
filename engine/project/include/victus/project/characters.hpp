@@ -14,6 +14,7 @@ struct CookedModel;
 } // namespace victus::assets
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -28,6 +29,7 @@ struct StarterCharacter {
     std::string_view model_path; // project-relative, "assets/models/characters/victus_orion.glb"
     std::string_view uuid;       // stable asset identity written to the model's .meta
     float height = 1.70f;        // floor to top of the head in the model's own units (metres)
+    bool default_helmet = true;  // the head variant shown unless asked otherwise (ADR-0247)
 };
 
 // TemplateOptions::character value for templates without a starter character.
@@ -54,11 +56,32 @@ inline constexpr float kCharacterHeight = 1.70f;
 [[nodiscard]] std::string starter_character_meta(const StarterCharacter& c);
 [[nodiscard]] std::string starter_character_controller();
 
+// Head variants (ADR-0247). The body mesh of a starter character carries both heads as separate
+// primitives: the helmet (Visor, Helmet) and the bare head (Skin, Eye, Hair). Exactly one set is
+// visible; Orion defaults to his helmet, Nova to her bare head. Primitive (mesh) order:
+inline constexpr std::uint32_t kCharacterFrameMesh = 0, kCharacterArmorMesh = 1, kCharacterVisorMesh = 2,
+                               kCharacterHelmetMesh = 3, kCharacterSkinMesh = 4, kCharacterEyeMesh = 5,
+                               kCharacterHairMesh = 6, kCharacterMeshCount = 7;
+enum class CharacterHelmet : std::uint8_t { Default, On, Off };
+// "auto" / "default" / "" -> Default, "on" / "helmet" -> On, "off" / "none" / "bare" -> Off.
+[[nodiscard]] std::optional<CharacterHelmet> parse_character_helmet(std::string_view text);
+[[nodiscard]] bool resolve_character_helmet(const StarterCharacter& c, CharacterHelmet h) noexcept;
+[[nodiscard]] bool character_mesh_is_helmet(std::uint32_t mesh_index) noexcept; // Visor, Helmet
+[[nodiscard]] bool character_mesh_is_head(std::uint32_t mesh_index) noexcept;   // Skin, Eye, Hair
+// Shows the helmet (true) or the bare head (false) on a character instance: the mesh renderers
+// under `root` (itself and descendants) that draw the root Animator's model (any model when the
+// root has no Animator), so attachments on sockets are untouched. Returns the renderers changed.
+std::size_t set_character_helmet(scene::Scene& s, scene::Entity root, bool helmet);
+// The visible variant: true helmet, false bare head, nullopt when `root` has no head variants.
+[[nodiscard]] std::optional<bool> character_helmet(const scene::Scene& s, scene::Entity root);
+
 // Creates the character's entity hierarchy under `parent` (root named `name`), exactly as
 // assets::instantiate_model does for the imported model, with the Animator driven by the shared
 // controller. The embedded model is parsed once and cached.
+// The head variant is c.default_helmet unless `helmet` says otherwise.
 [[nodiscard]] Result<scene::Entity> instantiate_starter_character(scene::Scene& s, const StarterCharacter& c,
-                                                                  std::string_view name, scene::Entity parent);
+                                                                  std::string_view name, scene::Entity parent,
+                                                                  CharacterHelmet helmet = CharacterHelmet::Default);
 
 // Core joint names in skin order, socket node names and the clips the shared controller plays.
 [[nodiscard]] std::span<const char* const> character_core_joint_names();

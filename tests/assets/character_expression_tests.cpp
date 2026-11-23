@@ -100,7 +100,7 @@ std::vector<float> weights_of(Rig& r, scene::Entity e) {
 
 } // namespace
 
-TEST_CASE("character expressions: the 26 face shapes move only the visor glyphs, stay finite and mirror") {
+TEST_CASE("character expressions: the 26 face shapes move the visor glyphs and the bare face, stay finite and mirror") {
     for (const char* id : {"orion", "nova"}) {
         INFO(id);
         const CookedModel& m = model_of(id);
@@ -108,20 +108,25 @@ TEST_CASE("character expressions: the 26 face shapes move only the visor glyphs,
         const std::size_t targets = m.meshes[0].data.morphs.size();
         REQUIRE(targets == 26);
         std::size_t moving_meshes = 0, total_vertices = 0;
-        std::map<std::string, std::pair<std::size_t, float>> per_target; // moved vertices, max offset
+        // moved vertices, max offset: on the visor (exact), and on the bare head (ADR-0247: the
+        // MakeHuman face, eyes, brows and lashes; counted above 0.1 mm, below which the sculpted
+        // pose units have small asymmetric tails)
+        std::map<std::string, std::pair<std::size_t, float>> per_target, per_head;
         std::string moving;
-        for (const auto& mesh : m.meshes) {
+        for (std::size_t mi = 0; mi < m.meshes.size(); ++mi) {
+            const auto& mesh = m.meshes[mi];
+            const bool head = project::character_mesh_is_head(static_cast<std::uint32_t>(mi));
             total_vertices += mesh.data.vertices.size();
             bool moves = false;
             CHECK(render::validate_morphs(mesh.data).empty());
             for (const auto& t : mesh.data.morphs) {
-                auto& [count, offset] = per_target[t.name];
+                auto& [count, offset] = (head ? per_head : per_target)[t.name];
                 for (const Vec3& d : t.positions) {
                     REQUIRE(std::isfinite(d.x));
                     REQUIRE(std::isfinite(d.y));
                     REQUIRE(std::isfinite(d.z));
                     const float len = math::length(d);
-                    if (len > 1e-6f) {
+                    if (len > (head ? 1e-4f : 1e-6f)) {
                         ++count;
                         moves = true;
                     }
@@ -135,7 +140,23 @@ TEST_CASE("character expressions: the 26 face shapes move only the visor glyphs,
         }
         MESSAGE(std::string(id) << ": " << m.meshes.size() << " primitives, " << total_vertices << " vertices; primitives the face shapes move: "
                    << moving_meshes << " (" << moving << ")");
-        CHECK(moving_meshes == 1);
+        // The Visor (helmet set) and Skin, Eye and Hair (bare-head set); never the body or armour.
+        CHECK(moving_meshes == 4);
+        CHECK(moving.find("#0 ") == std::string::npos);
+        CHECK(moving.find("#1 ") == std::string::npos);
+        CHECK(moving.find("#3 ") == std::string::npos);
+        for (const auto& [name, v] : per_head) {
+            INFO("bare head " << name);
+            CHECK(v.second < 0.03f); // face-sized offsets
+            const std::string other = mirrored(name);
+            if (other != name && per_head.contains(other)) {
+                const double a = double(v.first), b = double(per_head[other].first);
+                // MakeHuman's frown pose units are lopsided at the source (about 28 % more
+                // vertices on one side); the largest offsets mirror to 10 %.
+                CHECK(std::abs(a - b) <= 0.30 * std::max(a, b) + 8.0);
+                CHECK(per_head[other].second == doctest::Approx(v.second).epsilon(0.10));
+            }
+        }
         for (const auto& [name, v] : per_target) {
             INFO(name);
             CHECK(v.first > 0);         // every shape does something

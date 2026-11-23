@@ -56,6 +56,10 @@ def rasterize(r, size, chunk=200000):
     h = hi[:, 1] - lo[:, 1] + 1
     n = w * h
     out_ij, out_t, out_b = [], [], []
+    # Texels already claimed by an earlier triangle (the first triangle wins). Dropping them per
+    # chunk bounds memory by the texel count even when UVs overlap heavily (the hair cards of
+    # ADR-0247 share eight tiles: tens of thousands of triangles on the same texels).
+    taken = np.zeros(size * size, bool)
     tri_ids = np.arange(len(r.tri))
     start = 0
     cum = np.cumsum(n)
@@ -78,9 +82,15 @@ def rasterize(r, size, chunk=200000):
         l0 = 1 - l1 - l2
         eps = -1e-4
         inside = (l0 >= eps) & (l1 >= eps) & (l2 >= eps)
-        out_ij.append(np.stack([px[inside], py[inside]], 1))
-        out_t.append(tid[inside])
-        out_b.append(np.stack([l0, l1, l2], 1)[inside])
+        key = py * size + px
+        inside &= ~taken[key]
+        sel = np.flatnonzero(inside)
+        _, first = np.unique(key[sel], return_index=True)
+        sel = sel[first]
+        taken[key[sel]] = True
+        out_ij.append(np.stack([px[sel], py[sel]], 1))
+        out_t.append(tid[sel])
+        out_b.append(np.stack([l0[sel], l1[sel], l2[sel]], 1))
         start = end
     ij = np.concatenate(out_ij)
     t = np.concatenate(out_t)

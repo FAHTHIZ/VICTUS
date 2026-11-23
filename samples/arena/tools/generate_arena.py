@@ -290,8 +290,12 @@ def main():
     plain_clips(enemy)
     for e in enemy:
         if "_Body[" in e["name"]:
-            # Tint the character's own colours red; its PBR inputs stay as authored.
+            # Tint the character's own colours red; its PBR inputs stay as authored. The enemy
+            # wears the helmet (ADR-0247: primitives 2-3 helmet, 4-6 the bare head).
             mr = e["components"]["MeshRenderer"]
+            part = int(e["name"].rsplit("[", 1)[1].rstrip("]"))
+            if part >= 2:
+                mr["visible"] = part <= 3
             mr["base_color"] = [c * t for c, t in zip(mr["base_color"], (0.85, 0.16, 0.12, 1))]
     write_json(a_dst / "prefabs/enemy_robot.vprefab",
                {"format": "victus.prefab", "version": 1, "name": "Enemy Robot", "entities": enemy})

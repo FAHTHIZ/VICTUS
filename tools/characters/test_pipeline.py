@@ -248,6 +248,43 @@ def test_facet_pulls_a_dome_onto_planes():
     assert np.allclose(same, pos)
 
 
+def test_hair_cards_tiles_uvs_and_winding():
+    """Strand cards (human.py, ADR-0247): UVs inside the card region of the Hair atlas with u
+    along the strand, outer-layer cards on the bright tiles and inner ones on the dark tiles,
+    every face wound away from the head."""
+    import human  # noqa: E402
+
+    class Env:
+        c = np.zeros(3)
+
+    strands = []
+    for i in range(24):
+        a = 2 * np.pi * i / 24
+        d = np.array([np.sin(a), -np.cos(a), 0.0])
+        z = np.linspace(0.08, -0.05, 12)
+        P = d[None] * (0.1 + 0.01 * (z[:, None] < 0)) + np.outer(z, [0, 0, 1.0])
+        strands.append((P, i % 3, 0.012, a, np.linspace(0, 1, 12)))
+    q, S, T, layer, tile = human.strand_cards(strands, Env())
+    assert len(q.f) == 24 * 11 * 2
+    assert (q.uv[:, 1] >= 0).all() and (q.uv[:, 1] <= human.CARD_REGION).all()
+    assert (q.uv[:, 0] >= 0).all() and (q.uv[:, 0] <= 1).all()
+    assert np.allclose(q.uv[:, 0], 0.002 + T * 0.996)
+    flay = layer[q.f[:, 0]]
+    assert (tile[flay == 0] < human.TILES // 2).all() and (tile[flay > 0] >= human.TILES // 2).all()
+    n = meshops.vertex_normals(q.v, meshops.triangulate(q.f))
+    fc = q.v[q.f].mean(1)
+    assert (((fc - Env.c) * n[q.f].mean(1)).sum(1) >= 0).all()
+
+
+def test_head_variant_material_order_matches_the_engine():
+    """characters.hpp kCharacter*Mesh indices: Frame, Armor, Visor, Helmet, Skin, Eye, Hair."""
+    src = (Path(__file__).resolve().parent / "build_characters.py").read_text()
+    assert 'MATERIAL_ORDER = ("Frame", "Armor", "Visor", "Helmet", "Skin", "Eye", "Hair")' in src
+    hpp = (Path(__file__).resolve().parents[2] / "engine/project/include/victus/project/characters.hpp").read_text()
+    for i, name in enumerate(("Frame", "Armor", "Visor", "Helmet", "Skin", "Eye", "Hair")):
+        assert f"kCharacter{name}Mesh = {i}" in hpp, name
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

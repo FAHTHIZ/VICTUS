@@ -136,6 +136,7 @@ HAIRLINE = {
     "bun": ((0, 0.069), (20, 0.067), (35, 0.059), (48, 0.046), (60, 0.036), (68, 0.020), (76, 0.014), (83, 0.024),
             (95, 0.026), (108, 0.006), (125, -0.026), (150, -0.052), (180, -0.060)),
 }
+HAIRLINE["bob"] = HAIRLINE["bun"]  # human.py: the bob's cards cover the scalp shell
 
 
 def hair_margin(p, eye_mid, style):
@@ -324,6 +325,11 @@ def groom_parts(body: fit.Body, style: Style, skin_q_full: Quads, nrm_full, body
         crown = eye_mid + np.array([0.0, 0.035, 0.105])
         flow = tangent_project(hq.v - crown + np.array([0, -0.02, 0.0]), n)
         flow = tangent_project(flow + np.array([0, 0, -0.35]) * (az[:, None] > 70), n)
+    elif style.hair_style == "bob":
+        # A thin shell radiating from the crown whorl under the bob's cards (human.py).
+        top = 0.0030
+        crown = eye_mid + np.array([0.0, 0.07, 0.10])
+        flow = tangent_project(hq.v - crown + np.array([0, -0.03, 0.0]), n)
     else:
         top = 0.0085 - 0.0020 * np.clip((az - 60) / 60, 0, 1)
         bun_c = eye_mid + np.array([0.0, 0.085, 0.06])

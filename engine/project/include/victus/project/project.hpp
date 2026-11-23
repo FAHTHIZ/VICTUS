@@ -81,6 +81,9 @@ struct TemplateOptions {
     // Starter character (victus/project/characters.hpp) for templates with `characters`: "orion"
     // (default), "nova", or "none" for a plain capsule body without a skinned character.
     std::string character{kDefaultCharacter};
+    // The player character's head (ADR-0247): "auto" (the character's default: Orion helmeted,
+    // Nova bare-headed), "on" (helmet) or "off" (bare head). Companions keep their defaults.
+    std::string helmet{"auto"};
 };
 
 [[nodiscard]] const std::vector<TemplateInfo>& templates();

@@ -20,15 +20,15 @@ std::span<const std::uint8_t> kNovaGlb();
 const std::vector<StarterCharacter>& starter_characters() {
     static const std::vector<StarterCharacter> list = {
         {"orion", "Orion",
-         "Masculine-build Frame (Frame 01): athletic 1.78 m with helmet, graphite composite undersuit under glazed white "
-         "ceramic armour with brushed-metal fasteners, a black glass visor with cyan eye glyphs and cyan light trims; "
-         "60-joint skeleton, 26 face-display blend shapes, full PBR + emissive + clear coat set.",
-         "assets/models/characters/victus_orion.glb", "8e84eb12-63c8-4aed-aae2-517c038d3071", 1.7770f},
+         "Masculine-build Frame (Frame 01): athletic 1.79 m, black glossy armour over a black composite undersuit, dark "
+         "steel hardware, a silver V on the chest, a red-tinted visor with red slit eyes; helmet on by default, bare head "
+         "with a close crop as a variant. 60-joint skeleton, 26 face blend shapes, full PBR + clear coat set.",
+         "assets/models/characters/victus_orion.glb", "8e84eb12-63c8-4aed-aae2-517c038d3071", 1.7931f, true},
         {"nova", "Nova",
-         "Feminine-build Frame (Frame 02): slender 1.69 m with helmet, graphite composite undersuit under glazed pearl "
-         "ceramic armour with silver hardware, a black glass visor with violet eye glyphs and violet light trims; "
-         "60-joint skeleton, 26 face-display blend shapes, full PBR + emissive + clear coat set.",
-         "assets/models/characters/victus_nova.glb", "44037d0d-1627-44a8-a225-633971f196b2", 1.6854f},
+         "Feminine-build Frame (Frame 02): slender 1.71 m, white armour over a black high-cut suit with black collar and "
+         "gloves, ice-blue light; bare head with a dark side-swept bob by default, a white helmet with a black visor as a "
+         "variant. 60-joint skeleton, 26 face blend shapes, full PBR + clear coat, skin and hair shading.",
+         "assets/models/characters/victus_nova.glb", "44037d0d-1627-44a8-a225-633971f196b2", 1.7088f, false},
     };
     return list;
 }
@@ -130,8 +130,69 @@ std::string starter_character_controller() {
 )";
 }
 
+std::optional<CharacterHelmet> parse_character_helmet(std::string_view t) {
+    if (t.empty() || t == "auto" || t == "default") return CharacterHelmet::Default;
+    if (t == "on" || t == "helmet" || t == "true") return CharacterHelmet::On;
+    if (t == "off" || t == "none" || t == "bare" || t == "false") return CharacterHelmet::Off;
+    return std::nullopt;
+}
+
+bool resolve_character_helmet(const StarterCharacter& c, CharacterHelmet h) noexcept {
+    return h == CharacterHelmet::Default ? c.default_helmet : h == CharacterHelmet::On;
+}
+
+bool character_mesh_is_helmet(std::uint32_t mi) noexcept {
+    return mi == kCharacterVisorMesh || mi == kCharacterHelmetMesh;
+}
+
+bool character_mesh_is_head(std::uint32_t mi) noexcept {
+    return mi == kCharacterSkinMesh || mi == kCharacterEyeMesh || mi == kCharacterHairMesh;
+}
+
+namespace {
+
+template <class Fn>
+void for_character_renderers(const scene::Scene& s, scene::Entity root, Fn&& fn) {
+    Uuid model;
+    if (const auto* a = s.world().get<animation::AnimatorComponent>(root)) model = a->model;
+    std::vector<scene::Entity> stack{root};
+    while (!stack.empty()) {
+        const scene::Entity e = stack.back();
+        stack.pop_back();
+        if (const auto* mr = s.world().get<scene::MeshRendererComponent>(e))
+            if (!mr->mesh_asset.is_nil() && (model.is_nil() || mr->mesh_asset == model)) fn(e, *mr);
+        for (const scene::Entity c : s.children(e)) stack.push_back(c);
+    }
+}
+
+} // namespace
+
+std::size_t set_character_helmet(scene::Scene& s, scene::Entity root, bool helmet) {
+    std::size_t changed = 0;
+    for_character_renderers(s, root, [&](scene::Entity e, const scene::MeshRendererComponent& mr) {
+        const bool is_helmet = character_mesh_is_helmet(mr.mesh_index), is_head = character_mesh_is_head(mr.mesh_index);
+        if (!is_helmet && !is_head) return;
+        const bool visible = is_helmet ? helmet : !helmet;
+        auto* w = s.world().get<scene::MeshRendererComponent>(e);
+        if (w->visible != visible) {
+            w->visible = visible;
+            ++changed;
+        }
+    });
+    return changed;
+}
+
+std::optional<bool> character_helmet(const scene::Scene& s, scene::Entity root) {
+    std::optional<bool> out;
+    for_character_renderers(s, root, [&](scene::Entity, const scene::MeshRendererComponent& mr) {
+        if (character_mesh_is_helmet(mr.mesh_index) && mr.visible) out = true;
+        else if (character_mesh_is_head(mr.mesh_index) && mr.visible && !out) out = false;
+    });
+    return out;
+}
+
 Result<scene::Entity> instantiate_starter_character(scene::Scene& s, const StarterCharacter& c, std::string_view name,
-                                                    scene::Entity parent) {
+                                                    scene::Entity parent, CharacterHelmet helmet) {
     static std::mutex mutex;
     static std::array<std::optional<assets::CookedModel>, 2> cache;
     const std::size_t i = index_of(c);
@@ -153,6 +214,7 @@ Result<scene::Entity> instantiate_starter_character(scene::Scene& s, const Start
         a->clip = "Idle";
         a->controller = kCharacterControllerAsset;
     }
+    (void)set_character_helmet(s, root, resolve_character_helmet(c, helmet));
     return root;
 }
 

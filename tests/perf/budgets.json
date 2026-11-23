@@ -1,5 +1,5 @@
 {
-  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095); template-3d and template-multiplayer triangles, shadow triangles and buffer bytes re-baselined 2026-11-20 for the Orion/Nova starter characters (26.1k smooth-surface triangles replacing the 20.6k-triangle box robots, ADR-0121); template-3d and template-multiplayer shadow triangles re-baselined the same day at 23 180 and 15 459 for receiver-aware cascade culling (ADR-0124); sample-arena triangles, shadow triangles, entities and buffers re-baselined 2026-11-20 when the arena moved from the old box robot to Orion (player) and Nova (enemies); shadow triangles re-baselined the same day for per-cascade shadow LOD (ADR-0132): template-3d 23 180 to 19 094, template-multiplayer 15 459 to 14 457, sample-arena 28 328 to 24 178. sim.systems re-baselined 2026-11-21 at 31 after the simulation-LOD, vehicle and traffic work (ADR-0165-0167) registered more systems (min raised to half the count). See docs/PERFORMANCE_STRATEGY.md. Lightmapped templates (ADR-0134) re-baselined 2026-11-20: template-3d live buffers 60 and textures 22, template-multiplayer live buffers 53, textures 21 and main batches 13 (each lightmapped renderer owns its own atlas-space lightmap UV stream, so the arena's eight walls and pillars no longer instance together; per-instance lightmap scale/offset is the follow-up); the same day congruent lightmapped copies share one unwrap and batch again (ADR-0135): template-multiplayer main batches 13 to 9, live buffers 53 to 38. Re-baselined 2026-11-21 for the ADR-0179 human starter characters (60 joints, about 125k triangles, sixteen 2048 px PBR maps each as BC7/ASTC): triangles, shadow triangles, draw calls, batches, entities (the 60-joint node tree and eight sockets), buffers and textures for template-3d, template-multiplayer and sample-arena (template-3d texture bytes 29.1 MB to 141.8 MB with block compression, 490 MB without). Re-baselined 2026-11-21 for the ADR-0185 starter-character equipment (boots, gloves, belt and backpack: four more skinned nodes and a sixth 2048 px material per character, about 205k LOD 0 triangles): triangles, shadow triangles, draw calls, batches, visible, buffers and textures for template-3d, template-multiplayer and sample-arena. template-3d live textures re-baselined 2026-11-22 at 61 for the ADR-0197 HDR starter sky (budget 67); sample-arena live textures 66 and texture bytes 229.4 MB the same day for its starter materials and sky (nine uncompressed 1K maps). The same day the 3D and multiplayer templates moved onto the starter paving, rock and metal materials: template-3d live textures 66 and texture bytes 213.1 MB, template-multiplayer live textures 50 and texture bytes 156.6 MB. template-2d, sample-platformer and sample-dungeon_crawler texture bytes re-baselined 2026-11-22 (+256 KiB) for the in-game UI glyph atlas (ADR-0224: HarfBuzz-shaped text in a 256x256 RGBA8 atlas that grows on demand); the same change put UI fills, borders and text on that one texture, which lowered their draw calls (template-2d 3, sample-dungeon_crawler 2). Re-baselined 2026-11-23 for the ADR-0243 scenery trees (22 procedural trees, a trunk and a crown mesh each, with the foliage wind vertex function): template-3d triangles 60 312, visible 40, main batches 38, surface-shader draws 19, entities 247, live buffers 143; template-multiplayer draw calls 124, triangles 40 275, visible 39, main batches 29, shadow batches 86, shadow triangles 94 625, surface-shader draws 20, entities 175, live buffers 124.",
+  "comment": "Deterministic per-frame budgets for `victus run --frames 120 --width 640 --height 360 --quality medium` (last frame). Each counter is [min, max]: max = measured + 10 % (at least +2), min = half the measured value for counters that prove the frame drew something. Fixed-frame runs use a fixed script seed, so counters repeat exactly between runs on one machine. frame_p95_ms_max is a coarse ceiling (about 5x the Debug lavapipe time on a 2-vCPU machine) that only catches catastrophic regressions. Measured 2026-11-18 on Ubuntu 26.04, Mesa lavapipe; sim.systems re-baselined 2026-11-19 at 27 (ragdoll pose, gameplay timers/attributes and water systems, ADR-0091/0094/0095); template-3d and template-multiplayer triangles, shadow triangles and buffer bytes re-baselined 2026-11-20 for the Orion/Nova starter characters (26.1k smooth-surface triangles replacing the 20.6k-triangle box robots, ADR-0121); template-3d and template-multiplayer shadow triangles re-baselined the same day at 23 180 and 15 459 for receiver-aware cascade culling (ADR-0124); sample-arena triangles, shadow triangles, entities and buffers re-baselined 2026-11-20 when the arena moved from the old box robot to Orion (player) and Nova (enemies); shadow triangles re-baselined the same day for per-cascade shadow LOD (ADR-0132): template-3d 23 180 to 19 094, template-multiplayer 15 459 to 14 457, sample-arena 28 328 to 24 178. sim.systems re-baselined 2026-11-21 at 31 after the simulation-LOD, vehicle and traffic work (ADR-0165-0167) registered more systems (min raised to half the count). See docs/PERFORMANCE_STRATEGY.md. Lightmapped templates (ADR-0134) re-baselined 2026-11-20: template-3d live buffers 60 and textures 22, template-multiplayer live buffers 53, textures 21 and main batches 13 (each lightmapped renderer owns its own atlas-space lightmap UV stream, so the arena's eight walls and pillars no longer instance together; per-instance lightmap scale/offset is the follow-up); the same day congruent lightmapped copies share one unwrap and batch again (ADR-0135): template-multiplayer main batches 13 to 9, live buffers 53 to 38. Re-baselined 2026-11-21 for the ADR-0179 human starter characters (60 joints, about 125k triangles, sixteen 2048 px PBR maps each as BC7/ASTC): triangles, shadow triangles, draw calls, batches, entities (the 60-joint node tree and eight sockets), buffers and textures for template-3d, template-multiplayer and sample-arena (template-3d texture bytes 29.1 MB to 141.8 MB with block compression, 490 MB without). Re-baselined 2026-11-21 for the ADR-0185 starter-character equipment (boots, gloves, belt and backpack: four more skinned nodes and a sixth 2048 px material per character, about 205k LOD 0 triangles): triangles, shadow triangles, draw calls, batches, visible, buffers and textures for template-3d, template-multiplayer and sample-arena. template-3d live textures re-baselined 2026-11-22 at 61 for the ADR-0197 HDR starter sky (budget 67); sample-arena live textures 66 and texture bytes 229.4 MB the same day for its starter materials and sky (nine uncompressed 1K maps). The same day the 3D and multiplayer templates moved onto the starter paving, rock and metal materials: template-3d live textures 66 and texture bytes 213.1 MB, template-multiplayer live textures 50 and texture bytes 156.6 MB. template-2d, sample-platformer and sample-dungeon_crawler texture bytes re-baselined 2026-11-22 (+256 KiB) for the in-game UI glyph atlas (ADR-0224: HarfBuzz-shaped text in a 256x256 RGBA8 atlas that grows on demand); the same change put UI fills, borders and text on that one texture, which lowered their draw calls (template-2d 3, sample-dungeon_crawler 2). Re-baselined 2026-11-23 for the ADR-0243 scenery trees (22 procedural trees, a trunk and a crown mesh each, with the foliage wind vertex function): template-3d triangles 60 312, visible 40, main batches 38, surface-shader draws 19, entities 247, live buffers 143; template-multiplayer draw calls 124, triangles 40 275, visible 39, main batches 29, shadow batches 86, shadow triangles 94 625, surface-shader draws 20, entities 175, live buffers 124. Re-baselined 2026-11-24 for the ADR-0247 head variants (each character now carries both heads: helmet and visor, plus a bare head with skin, eye and alpha-tested hair-card materials at 2048 px, one set hidden per instance): sample-arena shadow triangles 165 621, buffer bytes 33 340 740, live textures 79, texture bytes 267 382 084; template-3d draw calls 124, shadow triangles 124 872, triangles 67 081, buffer bytes 34 325 856, live buffers 167, live textures 88, texture bytes 301 701 820; template-multiplayer buffer bytes 15 842 900, live textures 60, texture bytes 192 729 360.",
   "settings": {
     "frames": 120,
     "width": 640,
@@ -12,13 +12,13 @@
       "source": "3d",
       "frame_p95_ms_max": 400,
       "counters": {
-        "frame.draw_calls": [54, 120],
+        "frame.draw_calls": [62, 136],
         "frame.render_passes": [0, 15],
-        "frame.triangles": [26088, 66344],
+        "frame.triangles": [33540, 73789],
         "frame.visible": [16, 44],
         "frame.main_batches": [15, 42],
         "frame.shadow_batches": [0, 75],
-        "frame.shadow_triangles": [52247, 114944],
+        "frame.shadow_triangles": [62436, 137359],
         "frame.transparent_draws": [0, 2],
         "frame.transparent_triangles": [0, 2],
         "frame.alpha_tested_draws": [0, 2],
@@ -26,10 +26,10 @@
         "frame.sprites": [0, 2],
         "frame.ui_items": [0, 6],
         "scene.entities": [91, 272],
-        "gpu.texture_bytes": [0, 234408812],
-        "gpu.buffer_bytes": [0, 28975690],
-        "gpu.live_textures": [0, 72],
-        "gpu.live_buffers": [0, 158],
+        "gpu.texture_bytes": [0, 331872002],
+        "gpu.buffer_bytes": [0, 37758441],
+        "gpu.live_textures": [0, 96],
+        "gpu.live_buffers": [0, 183],
         "sim.systems": [16, 35]
       }
     },
@@ -104,9 +104,9 @@
         "frame.sprites": [0, 2],
         "frame.ui_items": [0, 9],
         "scene.entities": [54, 193],
-        "gpu.texture_bytes": [0, 172234713],
-        "gpu.buffer_bytes": [0, 14436269],
-        "gpu.live_textures": [0, 55],
+        "gpu.texture_bytes": [0, 212002296],
+        "gpu.buffer_bytes": [0, 17427190],
+        "gpu.live_textures": [0, 66],
         "gpu.live_buffers": [0, 137],
         "sim.systems": [16, 35]
       }
@@ -123,7 +123,7 @@
         "frame.visible": [12, 28],
         "frame.main_batches": [7, 17],
         "frame.shadow_batches": [0, 71],
-        "frame.shadow_triangles": [57980, 127557],
+        "frame.shadow_triangles": [82810, 182183],
         "frame.transparent_draws": [0, 2],
         "frame.transparent_triangles": [0, 2],
         "frame.alpha_tested_draws": [0, 2],
@@ -131,9 +131,9 @@
         "frame.sprites": [0, 2],
         "frame.ui_items": [0, 8],
         "scene.entities": [71, 299],
-        "gpu.texture_bytes": [0, 252307972],
-        "gpu.buffer_bytes": [0, 32827195],
-        "gpu.live_textures": [0, 73],
+        "gpu.texture_bytes": [0, 294120292],
+        "gpu.buffer_bytes": [0, 36674814],
+        "gpu.live_textures": [0, 86],
         "gpu.live_buffers": [0, 81],
         "sim.systems": [16, 35]
       }

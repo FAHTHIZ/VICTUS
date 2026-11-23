@@ -3803,3 +3803,59 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
 - clang-tidy on material.cpp, material_panel.cpp, scene_rendering.cpp and the new test: 0 diagnostics. The only error is clang not knowing the GCC-only `-Wshadow=local` flag.
 - Not verified: mirrored (negative-scale) objects and skinned meshes in object space, and real GPUs.
 - Next task: investigate the intermittent `victus_editor_tests` SIGSEGV, then continue with Rendering gaps (clear coat on area lights).
+
+## 2026-11-24 — Orion and Nova from the design sheet: helmet and bare-head variants (ADR-0247)
+
+Built (owner direction: match the Orion/Nova character sheet, and offer each character with and without the helmet):
+- `tools/characters` (pipeline version 6):
+  - New `human.py` and `human_materials.py`: a MakeHuman (CC0) head fitted to each mannequin's neck. Nova's face is sculpted towards the sheet (fuller, narrower lips; larger eyes; a lifted lower face and a V-shaped jaw). Both get brows, lashes and eyes, and hair as layered strand cards on an eight-tile atlas: Nova a three-layer side-swept bob, Orion a close crop.
+  - `mannequin.py` and `mannequin_materials.py` restyled:
+    - Orion: near-black glossy armour, dark steel hardware, the trim lights off, a red-tinted visor with solid slanted slit eyes and no mouth glyph, a satin silver painted V. The back core and emblem pucks are removed.
+    - Nova: white armour, and a black high-cut leotard, centre strip, spine, gloves and flex zones. She has a black V, ice-blue light and a ribbed black collar.
+  - Each GLB has seven primitives: Frame, Armor, Visor, Helmet, Skin, Eye, Hair. Hair is alpha-masked at 0.4, double-sided and anisotropic; Skin has diffuse transmission. The AO bake keeps the two head sets from darkening each other.
+  - `bake.rasterize` now drops texels an earlier triangle already claimed, chunk by chunk. The output is identical, but memory is bounded. Without this, Nova's overlapping hair cards ran the 7 GB build out of memory (killed twice).
+  - `render_preview.py --helmet on|off|auto`.
+- Engine:
+  - `project::CharacterHelmet`, `parse_character_helmet` and `resolve_character_helmet`.
+  - `set_character_helmet(scene, root, on)`, which toggles the five head renderers of one instance, and `character_helmet(scene, root)`.
+  - `kCharacter*Mesh` indices, `StarterCharacter::default_helmet` (Orion on, Nova off), `instantiate_starter_character(..., helmet)`, `TemplateOptions::helmet` and `victus new --helmet auto|on|off`.
+  - Character heights are now 1.7931 m and 1.7088 m.
+- Arena sample regenerated from a fresh 3D template. Its red-tinted enemy Nova wears the helmet. The regeneration also picks up the template's current lighting calibration (ADR-0237/0239).
+
+Verified (2-vCPU sandbox, GCC 15.2, Release, Xvfb + lavapipe):
+- Full-quality builds:
+  - Orion: 17.74 MB, 221,216 triangles (172,752 drawn with the helmet, 179,120 bare-headed), 601 s.
+  - Nova: 21.46 MB, 279,072 triangles (168,608 with the helmet, 236,816 bare-headed), 630 s.
+- Cycles renders of every variant (front, three-quarter, back, head) were compared side by side with the sheet crops. Fixed during review: Orion's silver helmet and boots (now dark steel), a V that rendered as an outline only, and a back disc the sheet does not have. `docs/images/characters/blender_render_{bodies,heads}.jpg` were regenerated.
+- `tools/characters/test_pipeline.py`: 14/14 passed, under both the bpy and plain-numpy environments. New checks: the hair cards' tiles, UVs and outward winding, and the material order matching `characters.hpp`.
+- `victus_asset_tests`: 101/101 passed.
+  - New case "helmet and bare-head variants (ADR-0247)".
+  - Seven materials in order.
+  - Triangle counts of 140k-260k per variant.
+  - The expression case now expects four morphing primitives: the Visor, plus Skin, Eye and Hair.
+- `victus_gpu_tests`: 254 cases.
+  - The first run had one failure: "gpu expressions" drew both head sets from the raw model. The test now shows the helmet set, as shipped. `jawOpen` changes 11 px, since Orion's visor no longer has a mouth glyph, so that case's threshold is 6.
+  - Rerun: passed, with morphing limited to the visor (1 of 7 primitives).
+- `victus_project_tests -tc="templates*"`: 14 cases passed.
+- `victus_editor_tests`: 84/84 passed when run alone.
+  - Inside a parallel `ctest -j2` run, with a Blender build using several GB at the same time, two different cases crashed with SIGSEGV on two runs (line 927, then line 819). Both pass alone, and the whole binary passes when run alone.
+  - This is the intermittent editor crash recorded in the ADR-0243 entry, made more likely by memory pressure.
+- Full `ctest -j2 -E perf_budgets`: 44/47 passed. The three failures were the expression case and the docs lint (CHANGELOG citation), both fixed and rerun, and the editor crash above.
+- `victus_perf_budgets`, `victus_cli_determinism`, `victus_sample_arena` and `victus_docs_lint`: 4/4 passed after re-baselining.
+  - Each character now carries both heads' textures: template-3d texture bytes went from 234.4 MB to 301.7 MB, and live textures to 88.
+  - The other counters are in the `budgets.json` comment.
+
+- After rebasing onto ADR-0246, everything was rebuilt and the full `ctest -j2` run again: 46/48 passed.
+  - `victus_perf_budgets` failed only on the coarse frame-time ceiling (template-3d 488 ms, run in parallel with `victus_cli_smoke`).
+  - `victus_editor_tests` crashed with the intermittent SIGSEGV, this time at line 2473.
+  - Run alone, both passed: perf budgets within all counters and ceilings, and the editor suite 84/84, at a peak RSS of 2.4 GB.
+
+Not covered:
+- The runtime screenshots in docs/CHARACTERS.md still show the previous look.
+- Known gaps against the sheet:
+  - Nova's bob is a stiffer, bowl-like shape than the sheet's soft, choppy cut.
+  - Orion has no carbon-weave detail.
+  - Nova's black shoulder and armpit panels are missing.
+  - Studio and the launcher have no helmet choice yet.
+  - MakeHuman's `mouthFrown` pose units are lopsided at the source: about 28 % more vertices on one side.
+- Next: hair shape and shading, then the material details above.

@@ -109,10 +109,10 @@ class Spec:
 
 
 ORION = Spec("orion", "Orion", mh.Macro(gender=1.0, muscle=0.92, weight=0.46, african=0.55, asian=0.10, caucasian=0.35),
-             skull_top=1.765, profile="VictusHumanoid.Orion", head_scale=0.86,
+             skull_top=1.785, profile="VictusHumanoid.Orion", head_scale=0.86,
              leg_scale=1.04, neck_scale=0.86)
-NOVA = Spec("nova", "Nova", mh.Macro(gender=0.0, muscle=0.52, weight=0.15, african=0.10, asian=0.55, caucasian=0.35),
-            skull_top=1.675, profile="VictusHumanoid.Nova", head_scale=0.88, leg_scale=1.09,
+NOVA = Spec("nova", "Nova", mh.Macro(gender=0.0, muscle=0.52, weight=0.15, african=0.0, asian=0.85, caucasian=0.15),
+            skull_top=1.695, profile="VictusHumanoid.Nova", head_scale=0.88, leg_scale=1.09,
             neck_scale=0.84)
 SPECS = {"orion": ORION, "nova": NOVA}
 

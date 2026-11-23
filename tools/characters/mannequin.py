@@ -51,22 +51,29 @@ class Style:
     visor: tuple  # glass tint
     armor_rough: float = 0.32
     frame_rough: float = 0.62
+    # Scale of the emissive light lines (suit piping, plate grooves, pods, visor edge light).
+    # The sheet's Frames are lit only by the visor eyes: 0 keeps the grooves, dark.
+    trim_light: float = 1.0
+    solid_eyes: bool = False  # filled eye glyphs (Orion's red slits) instead of hollow rings
+    mouth_glyph: bool = True  # the visor's mouth bar lights up
 
 
 STYLES = {
-    # Orion (Frame 01): white ceramic plates over a graphite composite undersuit, brushed-metal
-    # hardware, cyan light (the ORION & NOVA design sheet).
-    "orion": Style(frame=(0.010, 0.011, 0.013), armor=(0.80, 0.81, 0.82), accent=(0.030, 0.033, 0.039),
-                   metal=(0.56, 0.57, 0.60), glow=(0.10, 0.72, 1.0), visor=(0.0016, 0.0030, 0.0060),
-                   armor_rough=0.24, frame_rough=0.58),
-    # Nova (Frame 02): pearl ceramic plates over a graphite undersuit, silver hardware, violet light.
-    "nova": Style(frame=(0.012, 0.011, 0.015), armor=(0.83, 0.82, 0.84), accent=(0.034, 0.031, 0.043),
-                  metal=(0.74, 0.74, 0.78), glow=(0.52, 0.26, 1.0), visor=(0.0035, 0.0022, 0.0075),
-                  armor_rough=0.20, frame_rough=0.52),
+    # Orion (Frame 01, the ORION & NOVA design sheet): glossy black armour layered over a black
+    # carbon-weave undersuit, gunmetal secondary plates, brushed-steel hardware, red light, a red
+    # visor and a silver V on the chest; the hardware is dark steel.
+    "orion": Style(frame=(0.0075, 0.0078, 0.0085), armor=(0.016, 0.016, 0.018), accent=(0.026, 0.027, 0.029),
+                   metal=(0.17, 0.175, 0.185), glow=(1.0, 0.07, 0.035), visor=(0.010, 0.0012, 0.0010),
+                   armor_rough=0.14, frame_rough=0.48, trim_light=0.0, solid_eyes=True, mouth_glyph=False),
+    # Nova (Frame 02): a pearl-white undersuit and white ceramic plates over a glossy black
+    # leotard, collar, gloves and joints, silver hardware, ice-blue light.
+    "nova": Style(frame=(0.66, 0.66, 0.68), armor=(0.80, 0.80, 0.82), accent=(0.011, 0.011, 0.013),
+                  metal=(0.70, 0.71, 0.74), glow=(0.62, 0.84, 1.0), visor=(0.0020, 0.0030, 0.0050),
+                  armor_rough=0.18, frame_rough=0.46, trim_light=0.12),
 }
 
 # Face labels of the Armor part (bake masks and per-piece looks).
-ARMOR_KINDS = ("plate", "boot", "pod", "core", "helmet", "emblem")
+ARMOR_KINDS = ("plate", "boot", "pod", "core", "helmet", "emblem", "collar")
 
 
 def _edges(f):
@@ -391,7 +398,7 @@ def _frame_at(head: Head, d):
     return p, n, right, up
 
 
-def glyph(head: Head, center_dir, width, height, offset, nu=8, nv=3, bend=0.0):
+def glyph(head: Head, center_dir, width, height, offset, nu=8, nv=3, bend=0.0, slant=0.0):
     """A small quad grid hugging the head surface (offset above it) centred toward `center_dir`.
     Returns (Quads, s, t) with s in [-1, 1] across and t in [-1, 1] up per vertex."""
     s = np.linspace(-1, 1, nu + 1)
@@ -401,7 +408,7 @@ def glyph(head: Head, center_dir, width, height, offset, nu=8, nv=3, bend=0.0):
     p0, n0, r0, u0 = _frame_at(head, _unit(center_dir))
     # Pill outline: the ends round off (height shrinks toward s = +-1).
     hh = 0.5 * height * np.sqrt(np.clip(1 - np.clip((np.abs(S) - 0.78) / 0.22, 0, 1) ** 2, 0.05, 1))
-    local = p0 + np.outer(S * 0.5 * width, r0) + np.outer(T * hh + bend * S * S, u0)
+    local = p0 + np.outer(S * 0.5 * width, r0) + np.outer(T * hh + bend * S * S + slant * S * 0.5 * width, u0)
     dirs = local - head.c
     pos = head.surface(dirs)
     nrm = np.array([_frame_at(head, d)[1] for d in dirs])
@@ -526,6 +533,19 @@ def assemble(body: fit.Body):
     for t in ("L", "R"):
         bq, lab, near = gear.boot(J, t, q.v, suit_n)
         pieces.append((bq, W[near], 1, lab, f"Boot.{t}", 1, 1, None))
+    # Collar: a ribbed graphite band around the neck from its base to under the jaw (the sheet's
+    # high collar); the bare neck of the unhelmeted head (human.py) starts under its top edge.
+    import human
+
+    ctop = human.collar_top(J)
+    zlo = J["Neck"][0][2] - 0.004
+    cplanes = [(np.array([0, 0, ctop]), np.array([0, 0, 1.0])), (np.array([0, 0, zlo]), np.array([0, 0, -1.0]))]
+    neck_axis = (J["Neck"][0] - np.array([0, 0, 0.05]), J["Head"][0], 0.085)
+    csel = _largest_component(q, region_faces(c, cplanes, neck_axis))
+    csel = csel[((c[csel] - po) @ pn) > 0.006]
+    collar_q, csrc, clab = gear.shell(q, nrm_body, csel, cplanes, 0.0050, 0.0040, -0.0025)
+    pieces.append((collar_q, W[csrc], 6, clab, "Collar", 1, 0, None))
+
     # Back core: a power-cell puck on the graphite spine housing (glowing rings, the design
     # sheet's back view), and a small emblem puck on the sternum keel.
     zt = lambda t: J["Hips"][0][2] + (J["Neck"][0][2] - J["Hips"][0][2]) * t  # noqa: E731
@@ -542,11 +562,10 @@ def assemble(body: fit.Body):
         dw[:, names.index(joint)] = 1
         pieces.append((dq, dw, kind, np.zeros(len(dq.f), np.int32), pname, 1, 0, None))
 
-    # The sheet's back view: a large reactor ring between the shoulder blades, set in a machined
-    # housing collar; a hexagon-sized emblem on the breastplate.
-    puck("Spine", zt(0.76), False, 0.092 if nova else 0.104, 0.016, 2, "CoreHousing")
-    puck("Spine", zt(0.76), False, 0.074 if nova else 0.086, 0.030, 3, "Core")
-    puck("Sternum" if nova else "Chest", zt(0.80), True, 0.018 if nova else 0.027, 0.012, 5, "Emblem")
+    # (The ORION & NOVA sheet's backs carry no reactor ring: the graphite spine plate alone. The
+    # puck builder stays for gear that needs one.)
+    del puck
+    # (The chest emblem is the sheet's V, painted into the plate: mannequin_materials.armor_maps.)
 
     # Helmet: a ceramic shell over the head volume (cut lower than the head shell, so it covers
     # the jaw), inflated more at the crown and the back so it reads as a helmet, not a scalp.
@@ -584,7 +603,7 @@ def assemble(body: fit.Body):
     helm_q, _, helm_lab = gear.shell(hm, hn, hsel, [hplane], 0.0, -0.0008, -0.0105)
     helm_W = np.zeros((len(helm_q.v), len(names)))
     helm_W[:, names.index("Head")] = 1.0
-    pieces.append((helm_q, helm_W, 4, helm_lab, "Helmet", 0, 1, None))
+    helm_pieces = [(helm_q, helm_W, 4, helm_lab, "Helmet", 0, 1, None)]
     # Ear pods: machined discs on the helmet's sides, a light ring on each.
     for s_ in (1.0, -1.0):
         dpod = np.array([s_, 0.12, -0.12])
@@ -593,7 +612,7 @@ def assemble(body: fit.Body):
         pq = plates.disc(p + n * 0.004, n, pr, 0.016, n=8)
         pw = np.zeros((len(pq.v), len(names)))
         pw[:, names.index("Head")] = 1
-        pieces.append((pq, pw, 2, np.zeros(len(pq.f), np.int32), "Pod", 0, 0, None))
+        helm_pieces.append((pq, pw, 2, np.zeros(len(pq.f), np.int32), "Pod", 0, 0, None))
 
     # Visor: a pane of glass standing proud of the helmet front, its edge rolling down into it.
     gq = Quads(hm.v + hn * 0.0035, hm.f, hm.uv, hm.fuv)
@@ -608,8 +627,9 @@ def assemble(body: fit.Body):
     for side in (1.0, -1.0):
         dd = eye_dirs[side] + np.array([side * 0.006, 0, 0.002])
         # Orion: level bar eyes; Nova: soft arcs (the sheet's visor glyphs).
-        gq_, S, T, fr = glyph(glass_s, dd, 0.029 if nova else 0.031, 0.0105 if nova else 0.0120, 0.0009, nu=14, nv=6,
-                              bend=-0.0040 if nova else -0.0008)
+        # Orion: narrow slits slanting down toward the nose (the sheet's red eyes).
+        gq_, S, T, fr = glyph(glass_s, dd, 0.029 if nova else 0.034, 0.0105 if nova else 0.0068, 0.0009, nu=14, nv=6,
+                              bend=-0.0040 if nova else -0.0010, slant=0.0 if nova else 0.42 * side)
         glyphs.append((gq_, eye_morphs(S, T, fr, side), 1, S, T, fr))
     mouth_dir = np.array([0, -1.0, 0]) * 0.1 + np.array([0, 0, (eye[2] - 0.052) - head.c[2]])
     gq_, S, T, fr = glyph(glass_s, mouth_dir, 0.026 if nova else 0.022, 0.0050 if nova else 0.0034, 0.0009, nu=12, nv=3,
@@ -619,6 +639,9 @@ def assemble(body: fit.Body):
     # ---- parts ----
     # The helmet encloses the head, so the Frame stops at the neck (no head shell under it).
     fq, fused = q.subset(np.where(keep & ~hidden)[0])
+    # The neck above the collar sinks 3 mm, under the bare skin of the unhelmeted head.
+    sink = smooth01((fq.v[:, 2] - (ctop - 0.012)) / 0.008)[:, None] * 0.003
+    fq = Quads(fq.v - nrm_body[fused] * sink, fq.f, fq.uv, fq.fuv)
     frame_W = W[fused]
     frame_q, frame_W, frame_kind = _merge([(fq, frame_W, 0)])
     frame_q = repack_islands(frame_q, density=np.where(frame_kind == 1, 1.6, 1.0))
@@ -635,6 +658,16 @@ def assemble(body: fit.Body):
     armor_part = Part("Armor", "Armor", armor_q, armor_W, {},
                       attrs={"rest": armor_q.v.copy(), "edge": edge[:, None], "centre": centre},
                       face_attrs={"kind": armor_kind, "cuff": armor_lip, "trim": armor_trim, "tone": armor_tone})
+
+    helmet_q, helmet_W, helmet_kind = _merge(helm_pieces)
+    helmet_lip = np.concatenate([p[3] for p in helm_pieces])
+    hedge, hcentre = _piece_edges(helm_pieces)
+    helmet_q = repack_islands(helmet_q)
+    helmet_part = Part("Helmet", "Helmet", helmet_q, helmet_W, {},
+                       attrs={"rest": helmet_q.v.copy(), "edge": hedge[:, None], "centre": hcentre},
+                       face_attrs={"kind": helmet_kind, "cuff": helmet_lip,
+                                   "trim": np.concatenate([np.full(len(p[0].f), p[6], np.int32) for p in helm_pieces]),
+                                   "tone": np.concatenate([np.full(len(p[0].f), p[5], np.int32) for p in helm_pieces])})
 
     vis_pieces = [(vq, head_W_v, 0)] + [(g[0], np.tile(head_W_v[:1], (len(g[0].v), 1)), g[2]) for g in glyphs]
     visor_q, visor_W, visor_kind = _merge(vis_pieces)
@@ -668,7 +701,10 @@ def assemble(body: fit.Body):
                       face_attrs={"kind": visor_kind, "cuff": visor_lip})
     # Landmarks the materials and sockets use.
     info = {"head": head, "plane": plane, "visor": (vbot, vtop), "torso": torso, "visor_plate": vis_plate}
-    return [frame_part, armor_part, visor_part], style, info
+    # The unhelmeted head (human.py): skin, eyes and mouth, hair.
+    head_parts, head_style, head_L = human.build(body, head, FACE_SHAPES)
+    info.update(head_style=head_style, head_landmarks=head_L)
+    return [frame_part, armor_part, visor_part, helmet_part] + head_parts, style, info
 
 
 # Plates whose inset groove carries a light strip; 2 = the chest (the emblem as well).

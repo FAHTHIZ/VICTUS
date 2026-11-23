@@ -33,6 +33,8 @@ class Landmarks:
         self.visor_plate = info.get("visor_plate")
         self.torso = info["torso"]
         self.key = body.spec.key
+        self.head_L = info.get("head_landmarks")  # human.py: the unhelmeted head's landmarks
+        self.head_style = info.get("head_style")
         self.eL, self.eR = J["Eye.L"][0], J["Eye.R"][0]
         self.eye_mid = 0.5 * (self.eL + self.eR)
         self.collar = J["Neck"][0][2] + 0.35 * (J["Head"][0][2] - J["Neck"][0][2])
@@ -115,7 +117,7 @@ def frame_maps(tx, P, N, L: Landmarks, style, kind, seed):
     head = k == 1
     body = ~head
     base = np.array(style.frame)
-    glow = np.array(style.glow)
+    glow = np.array(style.glow) * style.trim_light
     col = np.tile(base, (n, 1))
     rough = np.full(n, style.frame_rough)
     metal = np.zeros(n)
@@ -243,9 +245,51 @@ def frame_maps(tx, P, N, L: Landmarks, style, kind, seed):
         rough[head] = style.frame_rough * 0.62 + 0.15 * seam
         cavity[head] = 1 - 0.5 * seam
 
+    if L.key == "nova":
+        dk = _nova_black(P, J, L, zone_any) * body
+        black = np.array(style.accent) * (1.0 + 0.05 * mottle[:, None])
+        col = col * (1 - dk[:, None]) + black * dk[:, None]
+        rough = rough * (1 - dk) + (0.30 + 0.08 * (1 - ribs)) * dk
+        em *= (1 - dk[:, None])
+
     rough += 0.04 * mottle
     return {"color": np.clip(col, 0, 1), "rough": np.clip(rough, 0.05, 1), "metal": metal,
             "height": h, "cavity": np.clip(cavity, 0, 1), "emissive": np.clip(em, 0, 1)}
+
+
+def _nova_black(P, J, L, zone_any):
+    """Nova's black under-layer (ORION & NOVA sheet, Frame 02): a high-cut leotard from under the
+    bust through the crotch covering the seat, a centre strip up to the collar, the spine, gloves,
+    and every flex zone (elbows, knees, shoulder caps, waist, neck). 1 = black, soft-edged."""
+    hips, neck = J["Hips"][0], J["Neck"][0]
+    zt = lambda t_: hips[2] + (neck[2] - hips[2]) * t_  # noqa: E731
+    x, y, z = P[:, 0], P[:, 1], P[:, 2]
+    ax = np.abs(x)
+    # Torso only: away from the arms.
+    arm_d = np.full(len(P), 9.0)
+    for t in ("L", "R"):
+        for a, b in (("UpperArm", "LowerArm"), ("LowerArm", "Hand")):
+            pa, pb_ = J[f"{a}.{t}"][0], J[f"{b}.{t}"][0]
+            tt = np.clip(((P - pa) @ (pb_ - pa)) / float((pb_ - pa) @ (pb_ - pa)), 0, 1.4)
+            arm_d = np.minimum(arm_d, np.linalg.norm(P - pa - np.outer(tt, pb_ - pa), axis=1))
+    torso = (ax < 0.20) * soft(-arm_d, -0.075, -0.060)
+    back = smooth((y - hips[1] + 0.01) / 0.05)  # 0 front, 1 back
+    # Leg line: high-cut over the hip bones in front, full seat behind.
+    front_leg = hips[2] - 0.115 + 1.35 * np.maximum(ax - 0.025, 0)
+    back_leg = hips[2] - 0.135 + 0.30 * np.maximum(ax - 0.03, 0)
+    leg_line = front_leg * (1 - back) + back_leg * back
+    top = zt(0.60) * (1 - back) + zt(0.66) * back
+    leo = soft(leg_line - z, -0.003, 0.003) * soft(z - top, -0.004, 0.004) * torso
+    # Centre strip to the collar and the spine.
+    strip = soft(ax - 0.016, -0.002, 0.002) * (z > zt(0.55)) * (z < neck[2] + 0.05) * (1 - back)
+    spine = soft(ax - 0.045, -0.003, 0.003) * (z > zt(0.30)) * (z < neck[2] + 0.05) * back
+    # Gloves: past the wrist.
+    glove = np.zeros(len(P))
+    for t in ("L", "R"):
+        el, wr = J[f"LowerArm.{t}"][0], J[f"Hand.{t}"][0]
+        d = _unit(wr - el)
+        glove = np.maximum(glove, soft(-((P - wr) @ d), -0.025, -0.012) * (np.linalg.norm(P - wr, axis=1) < 0.25))
+    return np.clip(np.maximum.reduce([leo, strip * torso, spine * torso, glove, zone_any]), 0, 1)
 
 
 def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, tone=None):
@@ -253,13 +297,14 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
     J = L.J
     k = np.rint(kind).astype(np.int64)
     plate, boot, pod, core, helmet, emblem = (k == 0), (k == 1), (k == 2), (k == 3), (k == 4), (k == 5)
+    collar = k == 6
     trim = np.rint(trim).astype(np.int64)
     e = attrs["edge"][:, 0]
     centre = attrs["centre"]
     armor = np.array(style.armor)
     accent = np.array(style.accent)
     metal_c = np.array(style.metal)
-    glow = np.array(style.glow)
+    glow = np.array(style.glow) * style.trim_light
     graphite = (np.rint(tone) == 1) if tone is not None else np.zeros(n, bool)
     graphite = graphite & ~boot
     col = np.where(graphite[:, None], accent[None], armor[None]).astype(float)
@@ -270,7 +315,7 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
     em = np.zeros((n, 3))
     mottle = fbm(P, 22, 3, seed + 11)
     fine = fbm(P, 700, 2, seed + 12)
-    shell = plate | boot | helmet
+    shell = plate | boot | helmet | collar
 
     # Rolled edge: a soft bevel into the cut edge, then an inset groove 8 mm in from it; on the
     # trimmed white plates the groove carries a thin light line.
@@ -456,6 +501,47 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
         col[helmet] *= (1 - 0.55 * seams[:, None])
         cavity[helmet] -= seams * 0.45
 
+    # Collar: a ribbed band (the sheet's high collar), the ribs a few millimetres apart with a
+    # smooth rolled top.
+    if collar.any():
+        zc = P[collar, 2]
+        rib = (0.5 + 0.5 * np.cos(2 * np.pi * zc / 0.0042)) ** 2 * soft(e[collar], 0.004, 0.007)
+        h[collar] += rib * 0.00035
+        cavity[collar] -= (1 - rib) * 0.25 * soft(e[collar], 0.004, 0.007)
+        rough[collar] = rough[collar] + 0.10 * (1 - rib)
+
+    # The sheet's chest emblem: a V in brushed steel standing proud of the breastplate (Orion), a
+    # small one at the top of the sternum seam (Nova).
+    zt = lambda t_: J["Hips"][0][2] + (J["Neck"][0][2] - J["Hips"][0][2]) * t_  # noqa: E731
+    if L.key == "nova":
+        vz, vw, vh, vt = zt(0.86), 0.032, 0.028, 0.0070
+    else:
+        vz, vw, vh, vt = zt(0.80), 0.050, 0.044, 0.0105
+    fr_ = (plate & (N[:, 1] < -0.35) & (np.abs(P[:, 0]) < vw + 0.01) & (np.abs(P[:, 2] - vz) < vh)).astype(float)
+    if fr_.any():
+        x_ = np.abs(P[:, 0])
+        zz = P[:, 2] - (vz - vh * 0.5)  # 0 at the V's point
+        # Distance to the stroke from the point (0, 0) to the arm tip (vw, vh).
+        ax_ = np.array([vw, vh]) / np.hypot(vw, vh)
+        rel_ = np.stack([x_, zz], 1)
+        tt_ = np.clip(rel_ @ ax_, 0, np.hypot(vw, vh))
+        dd = np.linalg.norm(rel_ - tt_[:, None] * ax_[None], axis=1)
+        vmask = soft(dd, vt * 0.5 - 0.0006, vt * 0.5) * fr_ * (zz > -0.002)
+        bev = np.exp(-((dd - vt * 0.5) / 0.0007) ** 2) * fr_
+        brushed_v = fbm(P * np.array([1.0, 1.0, 40.0]), 600, 2, seed + 17)
+        if L.key == "nova":  # a black V on the white plate
+            vcol = accent * (1.0 + 0.05 * brushed_v[:, None])
+            vrough, vmetal = 0.25, 0.0
+        else:  # brushed silver on the black plate
+            # (Satin, half-metallic: it reads silver under any light, not only in reflections.)
+            vcol = np.array([0.72, 0.73, 0.75]) * (1.0 + 0.06 * brushed_v[:, None])
+            vrough, vmetal = 0.38 + 0.05 * brushed_v, 0.5
+        col = col * (1 - vmask[:, None]) + vcol * vmask[:, None]
+        metal = np.maximum(metal, vmask * vmetal)
+        rough = rough * (1 - vmask) + vrough * vmask
+        h += vmask * 0.0008 - bev * 0.0002
+        cavity -= bev * 0.4
+
     # Ceramic micro-surface: faint orange peel in the clear coat, slight roughness variation.
     h += shell * fine * 0.000004
     col = col * (1 + 0.025 * mottle[:, None] * shell[:, None])
@@ -497,11 +583,12 @@ def visor_maps(tx, P, N, L: Landmarks, style, kind, cuff, seed, attrs=None):
         gv = L.visor_plate.g(P)
         depth = np.clip(-gv, 0, None)
         inner = np.exp(-depth / 0.005) * (glass & ~rim)
-        col += np.outer(inner, glow) * 0.02
-        em += np.outer(inner ** 2, glow) * 0.10
+        edge = glow * style.trim_light
+        col += np.outer(inner, edge) * 0.02
+        em += np.outer(inner ** 2, edge) * 0.10
         # A faint face-shaped tint band: the display substrate behind the glass.
         band = np.exp(-((depth - 0.010) / 0.002) ** 2) * (glass & ~rim)
-        em += np.outer(band, glow) * 0.025
+        em += np.outer(band, edge) * 0.025
         # Face contour lines (the sheet's visor): thin light guides tracing the cheekbones and
         # the jaw inside the glass, fading out toward the brow.
         rel_ = P - L.head.c
@@ -510,8 +597,8 @@ def visor_maps(tx, P, N, L: Landmarks, style, kind, cuff, seed, attrs=None):
         contour = np.exp(-((depth - 0.0055) / 0.0009) ** 2) * lowf * (np.abs(rel_[:, 0]) > 0.012)
         cheek = np.exp(-((np.abs(rel_[:, 0]) - 0.034) / 0.0010) ** 2) * np.clip((P[:, 2] - eye_z + 0.040) / 0.006 + 1, 0, 1) * np.clip((-0.012 - (P[:, 2] - eye_z)) / 0.006 + 1, 0, 1)
         lines = (glass & ~rim) * np.clip(contour + 0.0 * cheek, 0, 1)
-        em += np.outer(lines, glow) * 0.22
-        col += np.outer(lines, glow) * 0.05
+        em += np.outer(lines, edge) * 0.22
+        col += np.outer(lines, edge) * 0.05
         # The sheet's inner light: the tinted display substrate glows faintly through the whole
         # pane, brightest low and toward the edges, dark enough behind the glyphs to keep them legible.
         rel = P - L.head.c
@@ -527,7 +614,7 @@ def visor_maps(tx, P, N, L: Landmarks, style, kind, cuff, seed, attrs=None):
         eye_g = np.rint(g[:, 2]) == 1
         edge_d = np.minimum(g[:, 0], g[:, 1])
         r_ = 1 - soft(edge_d, 0.0011, 0.0019)  # 0 on the ring, 1 inside it
-        ring = np.where(eye_g, 1 - r_ * 0.985, 1.0)
+        ring = np.where(eye_g, 1.0 if style.solid_eyes else 1 - r_ * 0.985, 1.0 if style.mouth_glyph else 0.0)
     col[gl] = (glow * 0.6) * ring[gl, None] + np.array(style.visor) * (1 - ring[gl, None])
     em[gl] = glow * ring[gl, None]
     rough[gl] = 0.2

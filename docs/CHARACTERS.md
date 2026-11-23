@@ -2,7 +2,7 @@
 
 The 3D and multiplayer templates ship two VICTUS characters, **Orion** and **Nova**: Frame
 mannequins - armoured sci-fi test dummies in the spirit of Unreal's Manny and Quinn - built by the
-VICTUS character pipeline (`tools/characters`, ADR-0198; helmeted redesign ADR-0204) from the CC0 MakeHuman base mesh. They
+VICTUS character pipeline (`tools/characters`, ADR-0198; helmeted redesign ADR-0204; the owner's design sheet with helmet and bare-head variants, ADR-0247) from the CC0 MakeHuman base mesh. They
 share one skeleton layout, one clip library, one animation controller and one set of gameplay
 scripts; swapping one for the other changes the look and proportions, not the behaviour. They
 replace the realistic human pilots of ADR-0179 (which replaced the signed-distance-field androids
@@ -17,36 +17,44 @@ sockets and clips are unchanged, so existing projects keep their references.
 | Skeleton profile | `VictusHumanoid.Orion` | `VictusHumanoid.Nova` |
 | Build | masculine, heroic athletic (MakeHuman macro: gender 1.0, muscle 0.92, weight 0.46) | feminine, slender (gender 0.0, muscle 0.62, weight 0.38) |
 | Design | Frame 01 | Frame 02 |
-| Look | graphite composite undersuit, glazed white ceramic plates, brushed-metal fasteners, black glass visor, cyan light, blue-tinted visor | graphite composite undersuit, glazed pearl ceramic plates, silver hardware, black glass visor, violet light, violet-tinted visor |
-| Height (floor to top of the helmet) | 1.78 m | 1.69 m |
-| Triangles (LOD 0, as exported) | 188,952 | 182,712 |
-| GLB size | 14.08 MB | 13.68 MB |
+| Look | near-black glossy armour over a black composite undersuit, dark steel hardware, a red-tinted visor with red slit eyes, a satin silver V on the chest | white armour over a black high-cut leotard with black collar, gloves and flex zones, silver hardware, ice-blue light, a black V; bare head: dark side-swept bob |
+| Head (default) | helmet on (`--helmet off` for the bare head: a close dark crop) | bare head (`--helmet on` for the white helmet with the black visor) |
+| Height (floor to the top of the taller head variant) | 1.79 m | 1.71 m |
+| Triangles (LOD 0, as exported: both heads / drawn with the helmet / drawn bare-headed) | 221,216 / 172,752 / 179,120 | 279,072 / 168,608 / 236,816 |
+| GLB size | 17.74 MB | 21.46 MB |
 
 Both stand on Y = 0, face +Z with their left on +X, and are authored in the A-pose the earlier
 characters used (arms 40 degrees from vertical), so existing clips and ragdoll setups line up.
 
-Why a mannequin: a realistic human needs skin, eye and hair shading (subsurface scattering, strand
-hair) the renderer does not have yet, and falls into the uncanny valley without it. A mannequin
-shows what the engine does well - layered PBR (clear-coated ceramic, composite fabric, brushed
-metal, glass), emissive trims with bloom, normal-mapped detail, skinning and blend shapes - and reads as
-a deliberate design, the way engine sample characters usually are.
+Why a mannequin with an optional bare head: the armour shows what the engine does well (layered
+PBR with clear-coated plates, composite fabric, brushed metal and glass; emissive trims with bloom;
+normal-mapped detail; skinning and blend shapes) and reads as a deliberate design. The bare heads
+(ADR-0247) use the renderer's subsurface diffuse transmission for skin (ADR-0233), anisotropic
+specular for the hair cards (ADR-0232), and alpha-tested, double-sided hair. They follow the owner's
+design sheet: Nova is shown bare-headed by default, Orion helmeted.
 
 ## What a character contains
 
 Each GLB is self-contained (no external buffers or images). One skinned mesh node
-`<Name>_Body` carries three primitives, one per material, so a character costs three skinned draws
-per pass:
+`<Name>_Body` carries seven primitives, one per material, always in this order
+(`project::kCharacterFrameMesh` ... `kCharacterHairMesh`). Primitives 2-3 are the helmet set and
+4-6 the bare-head set, and only one set is visible at a time, so a character costs five skinned
+draws per pass:
 
 | Material | Part | Maps | Notes |
 |---|---|---|---|
 | `<Name>_Frame` | undersuit body (neck to ankles, both hands) | base colour, normal, ORM, emissive | 2048²; the MakeHuman body smoothed (10 Taubin passes: the proportions and V-taper survive, the anatomical detail does not; the fingers keep their shape); a hexagonal micro-weave split into moulded panels that follow the muscles (`suit.py`: pectorals or bust, a rectus grid or corset, obliques, collar, trapezius, shoulder blades, erectors, lumbar, glutes, deltoids, biceps, triceps, forearms, quadriceps, vastus, hamstrings, calves, shins), each with a recessed seam along its outline and a low moulded crown inside it (0.55 of the authored relief: a manufactured suit, not a muscle suit); thin light lines down the sides of the abdomen into the hips, under the pectorals or bust, along the shoulder blades and down the flanks; ribbed flex zones at the neck, shoulders, elbows, wrists, waist and knees; recessed piping down the outside of every limb carrying a light line; undersuit faces fully covered by a plate are removed |
-| `<Name>_Armor` | helmet, sculpted plates, boots, ear pods, back core, chest emblem | base colour, normal, ORM, emissive; clear coat 0.65 (roughness 0.06) | 2048²; the helmet is the convex hull of the head's blurred volume, puffed out and shrink-wrapped by a 24x24-per-face quad cube-sphere, framed by a graphite band around the visor, smoothed, with a shield-shaped visor opening, brushed-metal side panels around the ear pods framed by a recessed seam, a crest ridge and vents; plates (`plates.py`) are outlines on front, back, side, limb and sphere charts grown into near-uniform shells (a 18 mm bevel to full thickness, the base faired and the outer surface refit as a cubic panel over its chart so the surface is manufactured rather than anatomical, larger plates pulled onto planes, the lip rolled under along a creased, hard-shaded rim): Orion has one angular breastplate from shoulder to shoulder with a chevron lower edge, a sculpted six-pack of mirrored graphite abdominal plates in four rows, obliques, belt, groin, hips, shoulder-blade plates and a spine housing; Nova has a bust plate split by a lit seam, one smooth graphite corset front and back, hip flares, blades and spine housing; both have pauldrons kept clear of the chest (Orion's layered, a second shell on top), Nova raised outer-thigh panels, a lame, biceps band, elbow cop, slanted gauntlets, thigh and hamstring plates, knee cops, shins and calves, 6-30 mm thick; panel lines, graphite inserts and metal fasteners; rounded bevels and an inset groove 8 mm in from every edge with a light strip on the trimmed plates; boots with a moulded lug sole and ceramic toe caps and heels (Orion's with a ceramic instep strap, Nova's pearl ceramic shells over a graphite ankle band); machined-metal ear pods with light rings, a back core with glowing rings and a hexagonal chest emblem |
+| `<Name>_Armor` | sculpted plates, boots, the painted chest V (the helmet shell and ear pods moved to `<Name>_Helmet` in ADR-0247; the back core is gone) | base colour, normal, ORM, emissive; clear coat 0.65 (roughness 0.06) | 2048²; the helmet is the convex hull of the head's blurred volume, puffed out and shrink-wrapped by a 24x24-per-face quad cube-sphere, framed by a graphite band around the visor, smoothed, with a shield-shaped visor opening, brushed-metal side panels around the ear pods framed by a recessed seam, a crest ridge and vents; plates (`plates.py`) are outlines on front, back, side, limb and sphere charts grown into near-uniform shells (a 18 mm bevel to full thickness, the base faired and the outer surface refit as a cubic panel over its chart so the surface is manufactured rather than anatomical, larger plates pulled onto planes, the lip rolled under along a creased, hard-shaded rim): Orion has one angular breastplate from shoulder to shoulder with a chevron lower edge, a sculpted six-pack of mirrored graphite abdominal plates in four rows, obliques, belt, groin, hips, shoulder-blade plates and a spine housing; Nova has a bust plate split by a lit seam, one smooth graphite corset front and back, hip flares, blades and spine housing; both have pauldrons kept clear of the chest (Orion's layered, a second shell on top), Nova raised outer-thigh panels, a lame, biceps band, elbow cop, slanted gauntlets, thigh and hamstring plates, knee cops, shins and calves, 6-30 mm thick; panel lines, graphite inserts and metal fasteners; rounded bevels and an inset groove 8 mm in from every edge with a light strip on the trimmed plates; boots with a moulded lug sole and ceramic toe caps and heels (Orion's with a ceramic instep strap, Nova's pearl ceramic shells over a graphite ankle band); machined-metal ear pods with light rings, a back core with glowing rings and a hexagonal chest emblem |
 | `<Name>_Visor` | visor glass and face display | base colour, normal, ORM, emissive; clear coat 1.0 (roughness 0.02) | 1024²; one pane of smoked glass on a sphere chart around the head, a shield outline from the brow to the chin wrapping back to the ear pods (Nova's 8% narrower), its edge rolled into the helmet; a thin tinted glow bleeds in from the rim (cyan or violet) and the centre stays near-black; arc eye glyphs and a mouth bar lie on the glass, driven by blend shapes |
+| `<Name>_Helmet` | helmet shell and ear pods (helmet set) | base colour, normal, ORM, emissive; clear coat as Armor | 1024²; the hull helmet described above, in its own primitive so it can be hidden apart from the armour; Orion's is black gloss, Nova's white with a black visor |
+| `<Name>_Skin` | bare head and neck (bare-head set) | base colour, normal, ORM; `KHR_materials_diffuse_transmission` | 2048²; the MakeHuman head fitted to the mannequin's neck (Nova's face sculpted towards the sheet: fuller, narrower lips, larger eyes, a lifted lower face and a V-shaped jaw); skin pores, lips and brows painted per texel |
+| `<Name>_Eye` | eyes and mouth interior (bare-head set) | base colour, normal, ORM; clear coat (wet eyes) | 1024²; iris, sclera and cornea; follow the `Eye.L/R` joints and the eye blend shapes |
+| `<Name>_Hair` | hair cards, brows and lashes (bare-head set) | base colour with alpha, normal, ORM; alpha mask (cutoff 0.4), double-sided, `KHR_materials_anisotropy` along the strand | 2048²; strand cards in layers on an eight-tile atlas (outer cards on the four bright tiles, inner layers on the darker four); Nova's bob has three layers, a side-swept fringe and tapers toward the chin, Orion's is a close crop |
 
 Emissive strengths (`KHR_materials_emissive_strength`): Frame 3, Armor 4, Visor 6, so the trims
 bloom in the post stack. All maps are baked from the actual surface (per-texel world position and
 normal, a Cycles ambient-occlusion bake against the whole character) - there are no flat material
-colours and no placeholder textures. Every material is opaque (no alpha). Armor and Visor carry
+colours and no placeholder textures. Every material except Hair is opaque. Armor and Visor carry
 `KHR_materials_clearcoat` factors, which the engine imports as a clear coat layer (ADR-0203): a
 sharp glossy reflection over the satin ceramic and the glass. The engine's texture
 cooker builds mips and GPU block compression (BC7/ASTC) at import like any other model.
@@ -56,7 +64,7 @@ Blend shapes: every primitive lists the same 26 face-display targets (`eyeBlink_
 `cheekSquint_L/R`, `jawOpen`, `mouthSmile_L/R`, `mouthFrown_L/R`, `mouthStretch_L/R`,
 `mouthPucker`, `mouthRollUpper`, `mouthRollLower`, `mouthUpperUp`, `mouthLowerDown`); only the
 Visor's glyphs move (the eye glyphs close, widen, squint and tilt like brows; the mouth bar opens,
-curves and purses). The names are the ARKit ones the human characters used, so facial clips and
+curves and purses), and on the bare head the face, brows and lashes follow the same shapes. The names are the ARKit ones the human characters used, so facial clips and
 scripts keep working. Morph deltas are sparse and stored as normalised integers
 (`KHR_mesh_quantization`), which the importer reads natively.
 
@@ -161,8 +169,8 @@ prop in `Socket.Hand.R` is drawn where the GPU-skinned hand puts it in every pos
 
 ## LODs and budgets
 
-LOD 0 is one Catmull-Clark subdivision of the quad meshes (about 185k triangles: the high-end PC
-budget, with clean edge loops at the shoulders, elbows, knees and fingers and smooth plate
+LOD 0 is one Catmull-Clark subdivision of the quad meshes (170k-240k triangles drawn, depending on
+the head variant: the high-end PC budget, with clean edge loops at the shoulders, elbows, knees and fingers and smooth plate
 bevels). The importer generates three coarser LODs with meshoptimizer
 (`ModelImportSettings::lods`), and per-cascade shadow LOD applies as for any model. Templates
 scale the character to the gameplay capsule (player 1.45 m) uniformly, keeping Orion taller than
@@ -177,8 +185,8 @@ python3.11 -m venv /tmp/bpyenv
 /tmp/bpyenv/bin/python tools/characters/build_characters.py --out engine/project/data/characters
 ```
 
-The full build takes about 11 minutes on two cores (most of it is per-texel baking and the Cycles
-AO bake); `--only orion --size 0.25 --no-ao` gives a quick preview in under a minute. Output is
+The full build takes about 20 minutes on two cores (most of it is per-texel baking and the Cycles
+AO bake); `--only orion --size 0.25 --no-ao` gives a quick preview in about two minutes. Output is
 deterministic for one environment. Stages:
 
 | Module | Stage |
@@ -188,6 +196,7 @@ deterministic for one environment. Stages:
 | `suit.py` | the undersuit's panel layout (outlines on the plate charts) and light lines |
 | `plates.py` | sculpted armour plates: outlines on front, back, side and limb charts grown into crowned shells |
 | `render_preview.py` | Cycles studio renders of the GLBs for review (`--views front,three,side,back,head,...`, `--suit` for the undersuit alone, `--pose squat|reach|Clip@seconds` stress poses, `VICTUS_CLAY=1` untextured geometry, `--lineup`) |
+| `human.py`, `human_materials.py` | the bare heads (ADR-0247): the MakeHuman head fitted to the mannequin's neck, Nova's face sculpt, brows, lashes and eyes, the bob and crop as layered strand cards, and their per-texel skin, eye and hair-card maps |
 | `mannequin.py` | the Frame mannequin: smooths the body, builds the helmet from the convex hull of the head's blurred occupancy volume (`HullSurface`), grows the armour plates (`plate_regions`: planes plus a bone-segment radius per plate; `gear.shell` offsets them along the rest normal and rolls the cut edges under), boots, ear pods and back core, the visor and the face-display glyphs with their blend shapes, and repacks UV islands; `Style` holds each character's colours |
 | `assemble.py`, `gear.py` | shared helpers: `Part`, joint maps, shells, boots, rounded boxes (the human pilots' skin/suit/groom assembly of ADR-0179 is kept for reference but no longer built) |
 | `meshops.py` | Catmull-Clark subdivision as a sparse operator (weights and morphs subdivide with the positions), GPU vertices and tangents |
@@ -210,13 +219,18 @@ into new projects by the templates.
 
 - `tools/characters/test_pipeline.py`: subdivision operator, tangent handedness, quaternions,
   quantised sparse morphs and byte weights, the skeleton layout's backward compatibility, the clip
-  library's original durations.
-- `victus_asset_tests` "starter characters" cases: zero importer warnings, three opaque materials
-  each with albedo, normal, ORM and emissive textures, 140k-190k triangles, 26 blend shapes on
+  library's original durations, the hair cards' tiles, UVs and winding, and the material order
+  matching `characters.hpp`.
+- `victus_asset_tests` "starter characters" cases: zero importer warnings, seven materials in the
+  fixed order with albedo, normal and ORM textures (Hair alpha-masked, double-sided and anisotropic;
+  Skin with diffuse transmission), 140k-260k triangles per variant, 26 blend shapes on
   every part, 60 joints
   with the original 21 first, the per-character height, the original seven clips with their
   lengths, every socket under its parent, and the shared controller driving Idle, Walk, Jump,
   Fall, Land and Interact on the imported model.
+- `victus_asset_tests` "starter characters: helmet and bare-head variants (ADR-0247)": the
+  per-character default, `set_character_helmet` toggling five renderers of one instance only, and
+  the `--helmet` template option.
 - `victus_asset_tests` "character validation": both starters pass `project::validate_character`
   with no errors or warnings; a renamed core joint, reordered skin joints, a missing socket, a
   missing controller clip and centimetre units are each reported.
@@ -228,13 +242,15 @@ into new projects by the templates.
 ### Renders
 
 Blender render (Cycles, the shipped GLBs imported into Blender 5.0, studio lighting; not the
-VICTUS renderer): Orion and Nova, each front and three-quarter.
+VICTUS renderer). Bodies: Orion front and three-quarter, Nova bare-headed front and
+three-quarter, Nova with the helmet. Heads: Orion with and without the helmet, Nova without and
+with it.
 
 ![Blender render: Orion and Nova full body](images/characters/blender_render_bodies.jpg)
 
 ![Blender render: Orion and Nova heads](images/characters/blender_render_heads.jpg)
 
-VICTUS runtime (the engine's own renderer: `victus run --frames 40 --quality ultra --screenshot` on a fresh 3D template, with the follow camera replaced by a fixed camera 2.6 m in front, the HUD removed and the brazier moved out of frame; lavapipe):
+VICTUS runtime (these two screenshots predate ADR-0247 and still show the previous white Frame look; the engine's own renderer: `victus run --frames 40 --quality ultra --screenshot` on a fresh 3D template, with the follow camera replaced by a fixed camera 2.6 m in front, the HUD removed and the brazier moved out of frame; lavapipe):
 
 ![VICTUS runtime: Orion in the 3D template](images/characters/victus_runtime_orion.jpg)
 
@@ -258,6 +274,28 @@ or template changes:
 It prints a summary line, one line per issue and `OK` or `FAILED` (exit code 1 on errors, or on
 any issue with `--strict`); `--json` prints the same report as JSON for CI. The checks are
 `project::validate_character` in `engine/project/src/character_validate.cpp`.
+
+## Head variants
+
+Both characters ship both heads in one GLB; switching is per instance and costs nothing at load.
+
+- CLI: `victus new MyGame --template 3d --character nova --helmet on` (`auto`, the default, gives
+  Orion the helmet and Nova the bare head; `on` or `off` forces either).
+- C++: `project::instantiate_starter_character(..., project::CharacterHelmet::On)`, or
+  `project::set_character_helmet(scene, root, false)` on a placed character (returns how many
+  renderers changed); `project::character_helmet(scene, root)` reads the state.
+- Luau: toggle the primitives' visibility (`character` is the character root), for example for Nova:
+
+```lua
+local helmet_on = true
+for i = 2, 6 do
+    local part = character:find_descendant("Nova_Body[" .. i .. "]")
+    if part then part:set_visible((i <= 3) == helmet_on) end
+end
+```
+
+- Studio: tick Visible on `<Name>_Body[2]`/`[3]` (helmet) or `[4]`-`[6]` (bare head).
+- Review renders: `render_preview.py --helmet on|off`.
 
 ## Choosing a character
 

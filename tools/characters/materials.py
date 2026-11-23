@@ -69,9 +69,10 @@ def skin_maps(tx, P, N, L: Landmarks, style, seed):
 
     # Masks.
     m = L.mouth
-    dx = (P[:, 0] - m[0]) / 0.026
-    up = np.clip((P[:, 2] - m[2]) / 0.0105, 0, None)
-    dn = np.clip((m[2] - P[:, 2]) / 0.0125, 0, None)
+    ls = getattr(style, "lip_size", 1.0)
+    dx = (P[:, 0] - m[0]) / (0.026 * ls)
+    up = np.clip((P[:, 2] - m[2]) / (0.0105 * ls), 0, None)
+    dn = np.clip((m[2] - P[:, 2]) / (0.0125 * ls), 0, None)
     # Upper lip outline: a cupid's bow dips at the philtrum.
     bow = 1 - 0.18 * np.exp(-(dx * 6) ** 2)
     r_lip = np.sqrt(dx ** 2 + (up / bow) ** 2 + dn ** 2)

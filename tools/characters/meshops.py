@@ -242,8 +242,8 @@ def uv_islands(fuv, nuv):
     return lab
 
 
-def repack_islands(q: Quads, density=None, padding=0.006):
-    """Packs the UV islands of q into [0,1]^2, each scaled to equal texel density times
+def repack_islands(q: Quads, density=None, padding=0.006, aspect=1.0):
+    """Packs the UV islands of q into [0,1] x [0,aspect], each scaled to equal texel density times
     `density[face]` (mean over the island). Returns a new Quads sharing q's topology."""
     lab = uv_islands(q.fuv, len(q.uv))
     nisl = lab.max() + 1
@@ -279,7 +279,7 @@ def repack_islands(q: Quads, density=None, padding=0.006):
             place[i] = (x + padding * 0.5, y + padding * 0.5)
             x += w + padding
             shelf = max(shelf, h)
-        return place, y + shelf + padding <= 1.0
+        return place, y + shelf + padding <= aspect
 
     lo_s, hi_s = 0.01, 100.0
     for _ in range(40):

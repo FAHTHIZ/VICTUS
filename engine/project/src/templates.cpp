@@ -473,9 +473,11 @@ std::string companion_character(const std::string& player) {
 // The visible body under a gameplay root (origin at the feet), scaled so the 1.70 m character is
 // `height` tall: the chosen starter character named "Robot" (scripts find it by that name), or
 // a plain capsule body for "none".
-void character_visual(Scene& s, Entity parent, const std::string& character, float height) {
+void character_visual(Scene& s, Entity parent, const std::string& character, float height,
+                      std::string_view helmet = "auto") {
     if (const StarterCharacter* c = find_starter_character(character)) {
-        auto robot = instantiate_starter_character(s, *c, "Robot", parent);
+        auto robot = instantiate_starter_character(s, *c, "Robot", parent,
+                                                   parse_character_helmet(helmet).value_or(CharacterHelmet::Default));
         if (robot) {
             const float k = height / kCharacterHeight;
             s.world().get<Transform>(*robot)->scale = {k, k, k};
@@ -542,7 +544,7 @@ void build_3d(Scene& s, const TemplateOptions& options) {
     // The visible character is the chosen starter character (assets/models/characters/, 1.70 m)
     // scaled to the 1.4 m capsule; the player script feeds its animation controller (speed,
     // grounded, jump, interact) and turns it to face the direction of travel.
-    character_visual(s, player, options.character, 1.45f);
+    character_visual(s, player, options.character, 1.45f, options.helmet);
     {
         // Dust kicked up on jumps and landings: bursts emitted by player.luau.
         auto& d = emitter(s, add(s, "Dust", {0, 0.05f, 0}, player));
@@ -838,7 +840,7 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
         cc.height = 1.4f;
         cc.push_force = 200.0f;
     }
-    character_visual(s, player, options.character, 1.45f);
+    character_visual(s, player, options.character, 1.45f, options.helmet);
     {
         const Entity badge = add(s, "Badge", {0, 2.05f, 0}, player);
         s.world().get<Transform>(badge)->scale = {0.32f, 0.32f, 0.32f};
@@ -1972,7 +1974,7 @@ void build_nocode3d(Scene& s, const TemplateOptions& options) {
         cc.height = 1.6f;
         cc.push_force = 200.0f;
     }
-    character_visual(s, player, options.character, 1.7f);
+    character_visual(s, player, options.character, 1.7f, options.helmet);
     face_forward(s, player);
     auto& move = s.world().add<TopDownMovementComponent>(player);
     move.speed = 6;

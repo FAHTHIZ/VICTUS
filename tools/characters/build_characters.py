@@ -22,6 +22,7 @@ engine's importer (meshoptimizer) from the LOD 0 mesh.
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import json
 import math
@@ -42,13 +43,19 @@ import mannequin_materials as mmat  # noqa: E402
 import materials  # noqa: E402
 import meshops  # noqa: E402
 
-PIPELINE_VERSION = 5
-MATERIAL_ORDER = ("Frame", "Armor", "Visor")
-TEXTURE_SIZE = {"Frame": 2048, "Armor": 2048, "Visor": 1024}
-EMISSIVE_STRENGTH = {"Frame": 3.0, "Armor": 4.0, "Visor": 6.0}
-# KHR_materials_clearcoat (ADR-0203): glazed ceramic armour and the visor's glass carry a
+PIPELINE_VERSION = 6
+# Primitive order of <Name>_Body (ADR-0247): the suit, then the helmet set (Visor, Helmet), then
+# the bare-head set (Skin, Eye, Hair); project::set_character_helmet shows one set or the other.
+MATERIAL_ORDER = ("Frame", "Armor", "Visor", "Helmet", "Skin", "Eye", "Hair")
+HELMET_SET = ("Visor", "Helmet")
+HEAD_SET = ("Skin", "Eye", "Hair")
+TEXTURE_SIZE = {"Frame": 2048, "Armor": 2048, "Visor": 1024, "Helmet": 1024, "Skin": 2048, "Eye": 1024, "Hair": 2048}
+EMISSIVE_STRENGTH = {"Frame": 3.0, "Armor": 4.0, "Visor": 6.0, "Helmet": 4.0}
+# KHR_materials_clearcoat (ADR-0203): glazed armour, the visor's glass and the wet eyes carry a
 # glossy coat over their textured base; the composite undersuit stays satin.
-CLEARCOAT = {"Armor": (0.65, 0.06), "Visor": (1.0, 0.02)}
+CLEARCOAT = {"Armor": (0.65, 0.06), "Visor": (1.0, 0.02), "Helmet": (0.75, 0.05), "Eye": (1.0, 0.0)}
+# Skin: thin-layer subsurface (KHR_materials_diffuse_transmission -> the engine's subsurface term).
+SUBSURFACE = {"Skin": (0.32, (1.0, 0.36, 0.24))}
 
 
 def log(*a):
@@ -135,6 +142,14 @@ def bake_part(lod: Lod0, L, style, all_lods, size, ao, seed):
         m = mmat.armor_maps(tx, P, N, L, style, lod.face_attrs["kind"][fa].astype(float),
                             lod.face_attrs["cuff"][fa].astype(float), lod.face_attrs["trim"][fa].astype(float), attrs, seed,
                             tone=lod.face_attrs["tone"][fa].astype(float))
+    elif name == "Helmet":
+        m = mmat.armor_maps(tx, P, N, L, style, lod.face_attrs["kind"][fa].astype(float),
+                            lod.face_attrs["cuff"][fa].astype(float), lod.face_attrs["trim"][fa].astype(float), attrs, seed,
+                            tone=lod.face_attrs["tone"][fa].astype(float))
+    elif name in ("Skin", "Eye", "Hair"):
+        import human_materials
+
+        m = human_materials.maps(name, tx, P, N, L.head_L, L.head_style, attrs, lod.face_attrs, fa, seed)
     elif name == "Visor":
         m = mmat.visor_maps(tx, P, N, L, style, lod.face_attrs["kind"][fa].astype(float),
                             lod.face_attrs["cuff"][fa].astype(float), seed, attrs=attrs)
@@ -142,12 +157,15 @@ def bake_part(lod: Lod0, L, style, all_lods, size, ao, seed):
         raise ValueError(f"no material for part {name}")
     mask = tx.mask()
     occl = np.ones((size, size))
-    if ao:
+    if ao and name != "Hair":
         # Equipment is optional (each item can be hidden), so it never darkens the body maps;
         # the body does occlude the equipment (pack against the back, cuffs, boot tops).
+        # The helmet set and the bare-head set are never shown together: neither occludes the
+        # other; the hair cards are alpha-tested, so they do not occlude at all.
+        other_set = HEAD_SET if name in HELMET_SET else HELMET_SET if name in HEAD_SET else HEAD_SET
         others = [(o.r.pos, o.r.tri) for o in all_lods
-                  if o is not lod and o.part.name not in ("Groom", "Gear")]
-        dist = {"Frame": 0.10, "Armor": 0.06, "Visor": 0.03}.get(name, 0.08)
+                  if o is not lod and o.part.name not in ("Groom", "Gear", "Hair") and o.part.name not in other_set]
+        dist = {"Frame": 0.10, "Armor": 0.06, "Visor": 0.03, "Helmet": 0.04, "Skin": 0.03, "Eye": 0.02}.get(name, 0.08)
         occl = bake.bake_ao(r, size, occluders=others, samples=64 if size <= 1024 else 32, distance=dist)
     out = {}
     color = tx.image(m["color"], fill=0.0)
@@ -281,7 +299,7 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
         w.node(sname, parent=joint_nodes[j], t=t, r=gltf.quat_from_matrix(r))
 
     J = L.J
-    top = max(lod.r.pos[np.abs(lod.r.pos[:, 0]) < 0.02][:, 2].max() for lod in lods if lod.part.name in ("Frame", "Armor"))
+    top = max(lod.r.pos[np.abs(lod.r.pos[:, 0]) < 0.02][:, 2].max() for lod in lods if lod.part.name in ("Frame", "Armor", "Helmet"))
     socket("Socket.Head", "Head", np.array([0, J["Head"][0][1], top]))
     socket("Socket.Face", "Head", L.eye_mid + np.array([0, -0.03, 0]))
     surf = np.concatenate([lod.r.pos for lod in lods if lod.part.name in ("Frame", "Armor")])
@@ -325,10 +343,20 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
             m.setdefault("extensions", {})["KHR_materials_clearcoat"] = {"clearcoatFactor": coat,
                                                                         "clearcoatRoughnessFactor": coat_rough}
             w.used_ext.add("KHR_materials_clearcoat")
-        if mname == "Groom":
+        if mname in SUBSURFACE:
+            f_, col_ = SUBSURFACE[mname]
+            m.setdefault("extensions", {})["KHR_materials_diffuse_transmission"] = {
+                "diffuseTransmissionFactor": f_, "diffuseTransmissionColorFactor": list(col_)}
+            w.used_ext.add("KHR_materials_diffuse_transmission")
+        if mname in ("Groom", "Hair"):
             m["alphaMode"] = "MASK"
-            m["alphaCutoff"] = 0.5
+            m["alphaCutoff"] = 0.4
             m["doubleSided"] = True
+            aniso = getattr(L.head_style, "hair_anisotropy", 0.0) if hasattr(L, "head_style") else 0.0
+            if aniso > 0:
+                m.setdefault("extensions", {})["KHR_materials_anisotropy"] = {"anisotropyStrength": aniso,
+                                                                             "anisotropyRotation": 0.0}
+                w.used_ext.add("KHR_materials_anisotropy")
         mat_index[mname] = w.material(m)
 
     # Mesh: one primitive per material, every primitive carries every blend shape.
@@ -455,7 +483,9 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
         "character": spec.key, "displayName": name, "profile": spec.profile,
         "skeleton": "VictusHumanoid", "coreJoints": 21, "joints": len(sk.names),
         "height": float(max(lod.r.pos[:, 2].max() for lod in lods)), "skullTop": float(top),
-        "look": "mannequin",
+        "look": "frame",
+        "variants": {"helmet": list(HELMET_SET), "head": list(HEAD_SET),
+                     "defaultHelmet": spec.key == "orion"},
         "materials": list(MATERIAL_ORDER), "blendShapes": targets, "equipment": equipment, "clips": clip_meta,
         "sockets": ["Socket.Root", "Socket.Head", "Socket.Face", "Socket.Back", "Socket.Hand.L", "Socket.Hand.R",
                     "Socket.Hip.L", "Socket.Hip.R"],
@@ -528,6 +558,7 @@ def build_one(spec, out_dir, size_scale, ao):
     for lod in lods:
         size = int(TEXTURE_SIZE[lod.part.name] * size_scale)
         textures[lod.part.name], _ = bake_part(lod, L, style, lods, size, ao, seed)
+        gc.collect()  # the per-texel maps of one 2048² part are several hundred MB
     sk = Skeleton(body)
     path = os.path.join(out_dir, f"victus_{spec.key}.glb")
     data, targets, clips = export(spec, body, lods, textures, sk, L, style, path)

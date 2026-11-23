@@ -87,6 +87,7 @@ constexpr const char* kUsage =
     "\n"
     "commands:\n"
     "  new <folder> [--template 3d|2d|simulation|multiplayer] [--name NAME] [--character orion|nova|none]\n"
+    "      [--helmet auto|on|off]                                 ...the player's head: helmet or bare (ADR-0247)\n"
     "  templates                                                  list project templates\n"
     "  info <project>                                             show project settings, scenes, assets\n"
     "  import <project>                                           import changed assets (exit 1 on failure)\n"
@@ -143,6 +144,7 @@ int cmd_new(const std::vector<std::string>& a) {
         .option("template", "3d, 2d, nocode, nocode3d, simulation or multiplayer", "3d")
         .option("name", "project name (default: folder name)")
         .option("character", "starter character for 3d/multiplayer: orion, nova or none", "orion")
+        .option("helmet", "player character's head: auto (Orion helmeted, Nova bare-headed), on or off", "auto")
         .flag("no-bake", "do not bake the template's static lighting (victus bake-lighting can do it later)");
     if (wants_help(a)) return std::printf("%s", p.help().c_str()), 0;
     if (auto st = p.parse(a); !st) return error(st.error().message + "\n" + p.help());
@@ -150,6 +152,8 @@ int cmd_new(const std::vector<std::string>& a) {
     const std::string name = p.has("name") ? p.get("name") : dir.filename().string();
     project::TemplateOptions options;
     options.character = p.get("character");
+    options.helmet = p.get("helmet");
+    if (!project::parse_character_helmet(options.helmet)) return error("--helmet must be auto, on or off");
     auto proj = project::Project::create(dir, name, p.get("template"), options);
     if (!proj) return error(proj.error().message);
     std::printf("Created %s project '%s' in %s\n", p.get("template").c_str(), name.c_str(), proj->root().string().c_str());

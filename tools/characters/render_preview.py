@@ -102,6 +102,25 @@ def studio(height):
     wall.data.materials.append(wm)
 
 
+HELMET_SET = ("_Visor", "_Helmet")
+HEAD_SET = ("_Skin", "_Eye", "_Hair")
+
+
+def drop_materials(objs, suffixes):
+    """Deletes the faces whose material name ends with one of suffixes (a hidden variant)."""
+    import bmesh
+
+    for o in objs:
+        if o.type != "MESH":
+            continue
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        drop = {i for i, m in enumerate(o.data.materials) if m and m.name.endswith(tuple(suffixes))}
+        bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.material_index in drop], context="FACES")
+        bm.to_mesh(o.data)
+        bm.free()
+
+
 def strip_to_suit(objs):
     """Deletes the Armor and Visor faces: the undersuit layer on its own."""
     import bmesh
@@ -109,7 +128,7 @@ def strip_to_suit(objs):
     for o in objs:
         if o.type != "MESH":
             continue
-        keep = {i for i, m in enumerate(o.data.materials) if m and m.name.endswith("_Frame")}
+        keep = {i for i, m in enumerate(o.data.materials) if m and m.name.endswith(("_Frame", "_Skin", "_Eye", "_Hair"))}
         bm = bmesh.new()
         bm.from_mesh(o.data)
         bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.material_index not in keep], context="FACES")
@@ -163,10 +182,17 @@ def apply_pose(objs, pose):
     bpy.context.view_layer.update()
 
 
-def import_glb(path, x=0.0, suit=False, turn=0.0, pose=None):
+def helmet_on(path, mode):
+    if mode in ("on", "off"):
+        return mode == "on"
+    return "nova" not in os.path.basename(path)  # auto: the sheet's defaults
+
+
+def import_glb(path, x=0.0, suit=False, turn=0.0, pose=None, helmet="auto"):
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=path)
     new = [o for o in bpy.data.objects if o not in before]
+    drop_materials(new, HEAD_SET if helmet_on(path, helmet) else HELMET_SET)
     roots = [o for o in new if o.parent is None]
     # Rest pose: no clip applied.
     for o in new:
@@ -233,6 +259,8 @@ def main(argv):
     ap.add_argument("--res", type=int, default=720)
     ap.add_argument("--suit", action="store_true", help="the undersuit only (Armor and Visor removed)")
     ap.add_argument("--pose", help="stand | squat | reach (review poses) or CLIP@SECONDS, e.g. Run@0.2")
+    ap.add_argument("--helmet", default="auto", choices=("on", "off", "auto"),
+                    help="the helmet variant (Visor + Helmet) or the bare head (Skin + Eye + Hair)")
     ap.add_argument("--lineup", help="render all GLBs side by side into this file (front and three-quarter)")
     a = ap.parse_args(argv)
     if a.lineup:
@@ -240,7 +268,7 @@ def main(argv):
         n = len(a.glb)
         heights = []
         for i, g in enumerate(a.glb):
-            _, h = import_glb(g, x=(i - (n - 1) / 2) * 1.5, suit=a.suit, pose=a.pose)
+            _, h = import_glb(g, x=(i - (n - 1) / 2) * 1.5, suit=a.suit, pose=a.pose, helmet=a.helmet)
             heights.append(h)
         h = max(heights)
         studio(h)
@@ -260,7 +288,7 @@ def main(argv):
             sc = reset()
             az, hf, fr = VIEWS[v]
             # The character turns, not the camera: the studio lights stay where they flatter.
-            _, h = import_glb(g, suit=a.suit, turn=-az, pose=a.pose)
+            _, h = import_glb(g, suit=a.suit, turn=-az, pose=a.pose, helmet=a.helmet)
             if a.pose:
                 h = {"orion": 1.78, "nova": 1.69}.get(stem.split("_")[-1], h)
             if a.suit:
@@ -270,6 +298,8 @@ def main(argv):
             ry = a.res
             rx = int(a.res * (0.6 if fr == "body" else 1.0))
             tag = f"_{a.pose.replace('@', '_')}" if a.pose else ""
+            if a.helmet != "auto":
+                tag += f"_helmet{a.helmet}"
             render(sc, os.path.join(a.out, f"{stem}_{v}{tag}.png"), rx, ry, a.samples)
     return 0
 

@@ -10,6 +10,7 @@
 #include "victus/project/characters.hpp"
 #include "victus/runtime/scene_rendering.hpp"
 
+#include <algorithm>
 #include <chrono>
 
 using namespace victus;
@@ -118,15 +119,17 @@ TEST_CASE("gpu expressions: face-display shapes change only the visor in the run
     const scene::Entity root = assets::instantiate_model(s, id, m, "Orion");
     s.world().remove<animation::AnimatorComponent>(root);
     light(s);
-    // The visor: the one primitive whose shapes move vertices.
-    std::uint32_t visor = 0;
-    for (std::uint32_t i = 0; i < m.meshes.size(); ++i)
-        for (const auto& t : m.meshes[i].data.morphs)
-            if (!t.vertices.empty()) visor = i;
+    // Orion as shipped: helmet on, so the bare head (Skin, Eye, Hair, whose shapes also move
+    // vertices; ADR-0247) is hidden and the visor is the one visible primitive whose shapes move.
+    const std::uint32_t visor = project::kCharacterVisorMesh;
+    REQUIRE(m.meshes.size() == project::kCharacterMeshCount);
     std::vector<scene::Entity> face; // every entity drawing a primitive with targets
-    s.world().each<scene::MeshRendererComponent>([&](scene::Entity e, const scene::MeshRendererComponent& mr) {
+    s.world().each<scene::MeshRendererComponent>([&](scene::Entity e, scene::MeshRendererComponent& mr) {
+        if (project::character_mesh_is_head(mr.mesh_index)) mr.visible = false;
         if (mr.mesh_index < m.meshes.size() && !m.meshes[mr.mesh_index].data.morphs.empty()) face.push_back(e);
     });
+    REQUIRE(std::any_of(m.meshes[visor].data.morphs.begin(), m.meshes[visor].data.morphs.end(),
+                        [](const auto& t) { return !t.vertices.empty(); }));
     REQUIRE(face.size() == m.meshes.size());
     const auto& names = m.meshes[visor].data.morphs;
     auto set = [&](std::initializer_list<std::pair<const char*, float>> shape) {
@@ -156,10 +159,11 @@ TEST_CASE("gpu expressions: face-display shapes change only the visor in the run
     struct Case {
         const char* name;
         std::initializer_list<std::pair<const char*, float>> shape;
+        int min_changed = 20;
     };
     const Case cases[] = {{"expression_smile", {{"mouthSmile_L", 0.9f}, {"mouthSmile_R", 0.9f}, {"cheekSquint_L", 0.5f}, {"cheekSquint_R", 0.5f}}},
                           {"expression_blink", {{"eyeBlink_L", 1.0f}, {"eyeBlink_R", 1.0f}}},
-                          {"expression_jaw_open", {{"jawOpen", 1.0f}}},
+                          {"expression_jaw_open", {{"jawOpen", 1.0f}}, 6}, // no mouth glyph since ADR-0247 (the sheet's visor)
                           {"expression_surprise", {{"eyeWide_L", 0.9f}, {"eyeWide_R", 0.9f}, {"browInnerUp_L", 0.8f}, {"browInnerUp_R", 0.8f}, {"jawOpen", 0.4f}}}};
     for (const Case& c : cases) {
         set(c.shape);
@@ -168,7 +172,7 @@ TEST_CASE("gpu expressions: face-display shapes change only the visor in the run
         MESSAGE(std::string(c.name) << ": " << d.changed << " px changed, " << d.outside << " outside the visor rectangle [" << rx0 << "," << ry0 << "]-[" << rx1
                        << "," << ry1 << "], changes in [" << d.x0 << "," << d.y0 << "]-[" << d.x1 << "," << d.y1 << "]; primitives morphed " << f.stats.morphed
                        << " of " << face.size());
-        CHECK(d.changed > 20);
+        CHECK(d.changed > c.min_changed);
         CHECK(d.outside == 0);
         CHECK(f.stats.morphed == 1); // only the visor is morphed and uploaded
     }
