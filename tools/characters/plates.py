@@ -501,19 +501,20 @@ def layout(J, torso: Torso, key):
         # Chest: one angular ceramic breastplate from shoulder to shoulder, notched at the collar,
         # its lower edge a shallow chevron over the abdomen (the sheet's front view).
         half = [(0.0, z(0.905)), (0.035, z(0.93)), (0.085, z(0.955)), (0.128, z(0.945)), (0.150, z(0.89)),
-                (0.153, z(0.77)), (0.142, z(0.685)), (0.105, z(0.64)), (0.045, z(0.625)), (0.0, z(0.605))]
+                (0.153, z(0.80)), (0.146, z(0.735)), (0.110, z(0.665)), (0.050, z(0.630)), (0.0, z(0.600))]
         add(Plate("Chest", F, half + [(-x_, z_) for x_, z_ in half[-2:0:-1]],
-                  thickness=0.022, crown=0.04, edge=0.45, trim=1, round=0.010, gate=torso_gate, mirror=False,
-                  facets=6, facet_mix=0.85))
+                  thickness=0.018, crown=0.04, edge=0.45, trim=1, round=0.010, gate=torso_gate, mirror=False,
+                  facets=6, facet_mix=0.75))
         # Abdomen: four graphite lames stacked down the midline, each a chevron, with clear gaps
         # between them (they slide over each other as the spine flexes).
-        rows = ((0.585, 0.505, 0.080), (0.49, 0.41, 0.076), (0.395, 0.315, 0.071), (0.30, 0.225, 0.064))
+        # Split down the linea alba into a segmented six-pack (the sheet's front view).
+        rows = ((0.575, 0.495, 0.074), (0.48, 0.40, 0.070), (0.385, 0.305, 0.066), (0.29, 0.215, 0.058))
         for i, (t1, t0, w) in enumerate(rows):
-            add(Plate(f"Abs{i}", F, [(-w, z(t1)), (w, z(t1)), (w - 0.005, z(t0 + 0.01)), (0.0, z(t0)), (-w + 0.005, z(t0 + 0.01))],
-                      thickness=0.010, crown=0.012, tone=1, round=0.005, gate=torso_gate, mirror=False))
+            add(Plate(f"Abs{i}.L", F, [(0.008, z(t1)), (w, z(t1 + 0.012)), (w - 0.006, z(t0 + 0.006)), (0.008, z(t0))],
+                      thickness=0.010, crown=0.010, tone=1, round=0.005, gate=torso_gate, facets=2, facet_mix=0.6))
         add(Plate("Oblique.L", F, [(0.094, z(0.555)), (0.148, z(0.60)), (0.152, z(0.38)), (0.118, z(0.25)), (0.088, z(0.27))],
                   thickness=0.009, crown=0.02, tone=1, round=0.006, gate=torso_gate))
-        add(Plate("Belt", F, [(-0.16, z(0.205)), (0.16, z(0.205)), (0.16, z(0.13)), (-0.16, z(0.13))],
+        add(Plate("Belt", F, [(-0.16, z(0.185)), (0.16, z(0.185)), (0.16, z(0.145)), (-0.16, z(0.145))],
                   thickness=0.011, crown=0.012, tone=1, round=0.004, gate=torso_gate, mirror=False))
         add(Plate("Groin", F, [(-0.052, z(0.11)), (0.052, z(0.11)), (0.046, z(-0.03)), (0.0, z(-0.11)), (-0.046, z(-0.03))],
                   thickness=0.011, crown=0.02, tone=1, round=0.008, gate=(hips + np.array([0, 0, 0.1]), hips - np.array([0, 0, 0.16]), 0.2),
@@ -542,13 +543,13 @@ def layout(J, torso: Torso, key):
             add(Plate(f"Vertebra{i}", B, [(-w, z(t1)), (w, z(t1)), (w * 0.8, z(t1 - 0.05)), (-w * 0.8, z(t1 - 0.05))],
                       thickness=0.016, crown=0.008, tone=1, round=0.004, gate=torso_gate, mirror=False,
                       facets=3, facet_mix=0.9))
-        add(Plate("BeltBack", B, [(-0.16, z(0.205)), (0.16, z(0.205)), (0.16, z(0.13)), (-0.16, z(0.13))],
+        add(Plate("BeltBack", B, [(-0.16, z(0.185)), (0.16, z(0.185)), (0.16, z(0.145)), (-0.16, z(0.145))],
                   thickness=0.011, crown=0.012, tone=1, round=0.004, gate=torso_gate, mirror=False))
     else:
         # Chest: one sculpted bust plate split by a lit centre seam.
         add(Plate("Bust.L", F, [(0.006, z(0.90)), (0.05, z(0.93)), (0.092, z(0.915)), (0.118, z(0.85)), (0.122, z(0.74)),
                                 (0.114, z(0.65)), (0.08, z(0.605)), (0.035, z(0.61)), (0.006, z(0.645))],
-                  thickness=0.010, crown=0.035, edge=0.45, trim=1, round=0.014, gate=torso_gate))
+                  thickness=0.009, crown=0.035, edge=0.45, trim=1, round=0.014, gate=torso_gate, fit=0, fair=3))
         add(Plate("Sternum", F, [(-0.004, z(0.90)), (0.004, z(0.90)), (0.004, z(0.66)), (-0.004, z(0.66))],
                   thickness=0.006, crown=0.004, tone=1, trim=2, round=0.002, gate=torso_gate, mirror=False))
         # Corset: one smooth graphite piece cinching the waist, pointed under the bust and at the
@@ -559,7 +560,7 @@ def layout(J, torso: Torso, key):
                   thickness=0.006, crown=0.03, edge=0.5, tone=1, round=0.010, gate=torso_gate, mirror=False))
         add(Plate("Hip.L", S, [(0.075, z(0.16)), (-0.03, z(0.16)), (-0.055, z(0.02)), (-0.045, z(-0.16)), (0.02, z(-0.22)),
                                (0.08, z(-0.12)), (0.095, z(0.02))],
-                  thickness=0.010, crown=0.03, trim=1, round=0.012,
+                  thickness=0.007, crown=0.03, trim=1, round=0.012,
                   gate=(J["UpperLeg.L"][0] + np.array([0.03, 0, 0.12]), J["UpperLeg.L"][0] - np.array([-0.03, 0, 0.14]), 0.13)))
         add(Plate("Blade.L", B, [(0.08, z(0.94)), (0.125, z(0.92)), (0.142, z(0.82)), (0.14, z(0.68)), (0.115, z(0.60)),
                                  (0.078, z(0.64))],
@@ -586,19 +587,19 @@ def layout(J, torso: Torso, key):
         # Shoulders: a domed pauldron over the deltoid and a second lame below it.
         # Shoulders: Orion's broad, faceted pauldron over the whole deltoid; Nova's a smaller,
         # streamlined cap that leaves the graphite upper arm showing.
-        paul = ([(-25, -0.02), (30, -0.12), (90, -0.17), (150, -0.12), (205, -0.02), (205, 0.22), (120, 0.30), (40, 0.28),
-                 (-25, 0.20)] if nova else
-                [(-30, -0.02), (30, -0.14), (90, -0.19), (150, -0.14), (212, -0.02), (212, 0.30), (120, 0.38), (40, 0.36),
-                 (-30, 0.27)])
+        paul = ([(-12, -0.02), (35, -0.11), (90, -0.15), (145, -0.11), (192, -0.02), (190, 0.15), (120, 0.21), (50, 0.20),
+                 (-10, 0.14)] if nova else
+                [(-28, -0.02), (30, -0.13), (90, -0.17), (150, -0.13), (208, -0.02), (208, 0.25), (120, 0.32), (40, 0.30),
+                 (-28, 0.22)])
         add(Plate("Pauldron.L", ua, paul, extra={"xmin": 0.148 if nova else 0.15},
-                  thickness=0.018 if nova else 0.027, crown=0.05, trim=1, round=0.016, gate=arm_gate,
-                  facets=4 if nova else 5, facet_mix=0.55 if nova else 0.9, lift=0.002))
+                  thickness=0.012 if nova else 0.019, crown=0.05, trim=1, round=0.016, gate=arm_gate,
+                  facets=4, facet_mix=0.45 if nova else 0.55, lift=0.001))
         if not nova:
             # Layered shoulder (the sheet's front and three-quarter views): a second, smaller
             # faceted shell rides on top of the pauldron, its edge standing clear of the one below.
             add(Plate("PauldronTop.L", ua, [(5, -0.10), (90, -0.15), (175, -0.10), (178, 0.12), (90, 0.20), (2, 0.12)],
-                      extra={"xmin": 0.15}, thickness=0.010, crown=0.03, round=0.012, gate=arm_gate,
-                      lift=0.036, fair=16))
+                      extra={"xmin": 0.15}, thickness=0.008, crown=0.03, round=0.012, gate=arm_gate,
+                      lift=0.019, fair=16))
         add(Plate("Lame.L", ua, [(-45, 0.40), (40, 0.46), (130, 0.50), (215, 0.44), (210, 0.58), (120, 0.62),
                                 (30, 0.58), (-40, 0.54)],
                   thickness=0.015 * k, crown=0.02, round=0.008, gate=arm_gate, tone=1))
@@ -613,45 +614,45 @@ def layout(J, torso: Torso, key):
         # Forearm: a gauntlet wrapping all but the inner wrist, its top cut on a slant.
         add(Plate("Gauntlet.L", fa, [(-100, 0.36), (-20, 0.20), (90, 0.12), (200, 0.18), (240, 0.36), (240, 0.90),
                                     (-100, 0.90)],
-                  thickness=0.018 * k, crown=0.035, trim=1, round=0.010, gate=(el, wr, 0.09),
-                  facets=4 if nova else 6, facet_mix=0.5 if nova else 0.8))
+                  thickness=0.013 * k, crown=0.035, trim=1, round=0.010, gate=(el, wr, 0.09),
+                  facets=4 if nova else 6, facet_mix=0.45 if nova else 0.65))
         # Thighs: the front-outer plate with a slanted hip cut, a rear plate.
         thick_gate = (hp + _unit(kn - hp) * 0.02, kn, 0.14)
         if not nova:
             # Front-outer thigh armour in two layered plates (the graphite inner thigh and a
             # graphite band above the knee show between them, the sheet's front view).
-            add(Plate("Thigh.L", th, [(-18, 0.30), (0, 0.14), (60, 0.07), (140, 0.12), (165, 0.30), (165, 0.62), (70, 0.68),
-                                     (0, 0.66), (-18, 0.60)],
-                      thickness=0.022, crown=0.05, trim=1, round=0.012, gate=thick_gate, facets=6, facet_mix=0.85))
-            add(Plate("ThighLow.L", th, [(-25, 0.71), (60, 0.73), (150, 0.70), (150, 0.86), (60, 0.90), (-25, 0.87)],
-                      thickness=0.018, crown=0.03, round=0.010, gate=thick_gate, facets=4, facet_mix=0.8))
+            add(Plate("Thigh.L", th, [(-14, 0.30), (0, 0.14), (55, 0.07), (115, 0.12), (132, 0.30), (128, 0.60), (70, 0.67),
+                                     (0, 0.64), (-14, 0.58)],
+                      thickness=0.015, crown=0.05, trim=1, round=0.012, gate=thick_gate, facets=5, facet_mix=0.55))
+            add(Plate("ThighLow.L", th, [(-22, 0.72), (60, 0.74), (122, 0.71), (118, 0.86), (60, 0.90), (-22, 0.87)],
+                      thickness=0.013, crown=0.03, round=0.010, gate=thick_gate, facets=4, facet_mix=0.5))
             add(Plate("Hamstring.L", th, [(178, 0.28), (238, 0.34), (238, 0.80), (178, 0.76)],
                       thickness=0.010, crown=0.02, tone=1, round=0.008, gate=thick_gate))
         else:
             # Nova's broader thigh assembly: a long sweeping front-outer plate cut on a diagonal
             # above the knee, and a separate knee-guard plate below the cut.
-            add(Plate("ThighLow.L", th, [(-60, 0.80), (40, 0.74), (150, 0.70), (190, 0.74), (190, 0.88), (70, 0.92), (-45, 0.90)],
-                      thickness=0.015, crown=0.03, round=0.010, trim=0, gate=thick_gate, facets=4, facet_mix=0.4))
-            add(Plate("Thigh.L", th, [(-70, 0.30), (-30, 0.12), (60, 0.02), (150, 0.06), (195, 0.30), (195, 0.64),
-                                     (150, 0.62), (40, 0.68), (-60, 0.74), (-70, 0.70)],
-                      thickness=0.017, crown=0.045, trim=1, round=0.014, gate=thick_gate, facets=5, facet_mix=0.4))
+            add(Plate("ThighLow.L", th, [(-35, 0.80), (40, 0.74), (130, 0.70), (160, 0.74), (160, 0.88), (70, 0.92), (-30, 0.90)],
+                      thickness=0.009, crown=0.03, round=0.010, trim=0, gate=thick_gate, facets=4, facet_mix=0.35))
+            add(Plate("Thigh.L", th, [(-40, 0.30), (-20, 0.12), (60, 0.04), (140, 0.08), (165, 0.30), (165, 0.64),
+                                     (140, 0.62), (40, 0.68), (-35, 0.74), (-40, 0.70)],
+                      thickness=0.009, crown=0.045, trim=1, round=0.014, gate=thick_gate, facets=5, facet_mix=0.35))
             add(Plate("Hamstring.L", th, [(205, 0.34), (238, 0.36), (238, 0.82), (205, 0.84)],
                       thickness=0.008, crown=0.015, tone=0, round=0.006, gate=thick_gate))
             # A raised outer-thigh panel over the sweep, its own lit groove the sheet's violet line.
             add(Plate("ThighPanel.L", th, [(35, 0.20), (125, 0.24), (125, 0.56), (35, 0.52)],
-                      thickness=0.008, crown=0.015, round=0.010, trim=1, gate=thick_gate, lift=0.017,
+                      thickness=0.006, crown=0.015, round=0.010, trim=1, gate=thick_gate, lift=0.010,
                       facets=3, facet_mix=0.6))
         # Knee: a faceted graphite cop.
         ks = Chart("limb", 1.0, kn, an, seam=-120, radius=0.06)
         add(Plate("Kneecap.L", ks, [(0, -0.075), (40, -0.05), (42, 0.035), (0, 0.075), (-42, 0.035), (-40, -0.05)],
-                  thickness=0.030 * k, crown=0.02, round=0.006, trim=1, facets=4, facet_mix=0.5 if nova else 0.85,
+                  thickness=0.030 * k, crown=0.02, round=0.006, trim=1, tone=1 if nova else 0, facets=4, facet_mix=0.5 if nova else 0.85,
                   gate=(kn - _unit(an - kn) * 0.09, kn + _unit(an - kn) * 0.08, 0.12)))
         add(Plate("Knee.L", ks, [(0, -0.13), (58, -0.085), (62, 0.05), (0, 0.11), (-62, 0.05), (-58, -0.085)],
                   thickness=0.020 * k, crown=0.025, tone=1, round=0.008, gate=(kn - _unit(an - kn) * 0.09, kn + _unit(an - kn) * 0.08, 0.12)))
         # Shin guard (a wedge top under the knee) and calf plate.
-        add(Plate("Shin.L", sn, [(0, 0.135), (75, 0.17), (125, 0.26), (125, 0.80), (-75, 0.80), (-75, 0.26), (-55, 0.17)],
-                  thickness=0.020 * k, crown=0.04, trim=1, round=0.010, gate=(kn, an, 0.12),
-                  facets=4 if nova else 5, facet_mix=0.55 if nova else 0.85))
+        add(Plate("Shin.L", sn, [(0, 0.135), (70, 0.17), (105, 0.26), (100, 0.80), (-62, 0.80), (-66, 0.26), (-50, 0.17)],
+                  thickness=0.015 * k, crown=0.04, trim=1, round=0.010, gate=(kn, an, 0.12),
+                  facets=4 if nova else 5, facet_mix=0.45 if nova else 0.6))
         add(Plate("Calf.L", sn, [(140, 0.20), (238, 0.22), (238, 0.62), (140, 0.66)],
                   thickness=0.012 * k, crown=0.03, tone=0 if nova else 1, round=0.010, gate=(kn, an, 0.12)))
     return out

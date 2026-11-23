@@ -98,12 +98,19 @@ class Spec:
     # Facial identity: extra MakeHuman detail targets are not vendored; identity comes from the
     # macro mix plus these proportional tweaks applied in VICTUS space (see _identity).
     tweaks: dict = field(default_factory=dict)
+    # Heroic proportions (the ORION & NOVA design sheet): the head is scaled about the base of the
+    # skull before the height is normalised, so the body grows to fill the freed height (about
+    # eight heads tall instead of MakeHuman's seven).
+    head_scale: float = 1.0
+    # Leg length factor (hip joint to sole, applied through the leg skin weights).
+    leg_scale: float = 1.0
 
 
 ORION = Spec("orion", "Orion", mh.Macro(gender=1.0, muscle=0.92, weight=0.46, african=0.55, asian=0.10, caucasian=0.35),
-             skull_top=1.765, profile="VictusHumanoid.Orion")
-NOVA = Spec("nova", "Nova", mh.Macro(gender=0.0, muscle=0.62, weight=0.38, african=0.10, asian=0.55, caucasian=0.35),
-            skull_top=1.675, profile="VictusHumanoid.Nova")
+             skull_top=1.765, profile="VictusHumanoid.Orion", head_scale=0.86,
+             leg_scale=1.04)
+NOVA = Spec("nova", "Nova", mh.Macro(gender=0.0, muscle=0.52, weight=0.15, african=0.10, asian=0.55, caucasian=0.35),
+            skull_top=1.675, profile="VictusHumanoid.Nova", head_scale=0.88, leg_scale=1.09)
 SPECS = {"orion": ORION, "nova": NOVA}
 
 
@@ -225,10 +232,49 @@ FACE_UNITS = (
 )
 
 
+def heroic_head(v0, rig: mh.MhRig, k):
+    """Scales the head by k about the base of the skull (MakeHuman space), ramping in over the
+    neck so the throat narrows smoothly into the smaller head. Helper geometry (eyes, teeth)
+    is transformed with it, so proxies and the eye joints stay in place relative to the face."""
+    if abs(k - 1.0) < 1e-6:
+        return v0
+    pivot = rig.head_tail(v0, "head")[0]
+    y0 = rig.head_tail(v0, "neck02")[0][1]
+    t = np.clip((v0[:, 1] - y0) / max(pivot[1] - y0, 1e-6), 0, 1)
+    t = t * t * (3 - 2 * t)
+    # Only the head and neck column: the arms never reach this high in the MakeHuman rest pose,
+    # but the shoulders' tops do - keep them out by the distance from the neck axis.
+    r = np.hypot(v0[:, 0] - pivot[0], v0[:, 2] - pivot[2])
+    radial = np.clip((1.4 - r) / 0.4, 0, 1)
+    t *= np.maximum(radial, np.clip((v0[:, 1] - pivot[1]) / 0.15, 0, 1))
+    f = 1.0 + (k - 1.0) * t
+    return pivot + (v0 - pivot) * f[:, None]
+
+
+def long_legs(v0, rig: mh.MhRig, k):
+    """Stretches the legs by k below the hip joints (MakeHuman space, Y up), blended by the legs'
+    reference skin weights so the pelvis and crotch stay continuous and the hands (which hang
+    beside the thighs) are untouched."""
+    if abs(k - 1.0) < 1e-6:
+        return v0
+    w = np.zeros(len(v0))
+    for b, (vi, wt) in rig.weights.items():
+        if b.startswith(("upperleg", "lowerleg", "foot", "toe")):
+            np.add.at(w, vi, wt)
+    w = np.clip(w, 0, 1)
+    yh = 0.5 * (rig.head_tail(v0, "upperleg01.L")[0][1] + rig.head_tail(v0, "upperleg01.R")[0][1])
+    dy = np.minimum(v0[:, 1] - yh, 0.0) * (k - 1.0) * w
+    out = v0.copy()
+    out[:, 1] += dy
+    return out
+
+
 def build(spec: Spec) -> Body:
     obj = mh.load_obj("base.obj")
     v0 = obj.v + mh.macro_offsets(spec.macro, len(obj.v))
     rig = mh.load_rig()
+    v0 = heroic_head(v0, rig, spec.head_scale)
+    v0 = long_legs(v0, rig, spec.leg_scale)
     eyes = mh.load_obj("high-poly.obj")
     clo = mh.load_mhclo("high-poly.mhclo")
     eye0 = mh.fit_proxy(v0, clo)

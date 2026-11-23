@@ -57,11 +57,11 @@ STYLES = {
     # Orion (Frame 01): white ceramic plates over a graphite composite undersuit, brushed-metal
     # hardware, cyan light (the ORION & NOVA design sheet).
     "orion": Style(frame=(0.010, 0.011, 0.013), armor=(0.80, 0.81, 0.82), accent=(0.030, 0.033, 0.039),
-                   metal=(0.56, 0.57, 0.60), glow=(0.10, 0.72, 1.0), visor=(0.003, 0.010, 0.026),
+                   metal=(0.56, 0.57, 0.60), glow=(0.10, 0.72, 1.0), visor=(0.0016, 0.0030, 0.0060),
                    armor_rough=0.24, frame_rough=0.58),
     # Nova (Frame 02): pearl ceramic plates over a graphite undersuit, silver hardware, violet light.
     "nova": Style(frame=(0.012, 0.011, 0.015), armor=(0.83, 0.82, 0.84), accent=(0.034, 0.031, 0.043),
-                  metal=(0.74, 0.74, 0.78), glow=(0.52, 0.26, 1.0), visor=(0.010, 0.005, 0.026),
+                  metal=(0.74, 0.74, 0.78), glow=(0.52, 0.26, 1.0), visor=(0.0035, 0.0022, 0.0075),
                   armor_rough=0.20, frame_rough=0.52),
 }
 
@@ -562,10 +562,12 @@ def assemble(body: fit.Body):
         # with a brow that overhangs the visor.
         up, back_, fwd = np.clip(d[:, 2], 0, 1), np.clip(d[:, 1], 0, 1), np.clip(-d[:, 1], 0, 1)
         brow = np.exp(-((d[:, 2] - 0.42) / 0.16) ** 2) * fwd
-        return 0.0165 + 0.010 * up + 0.010 * back_ + 0.006 * brow
+        # Snug over the skull (the sheet's close-fitting android helmet), drawn out toward the back.
+        side = np.abs(d[:, 0])
+        return 0.0105 + 0.006 * up + 0.012 * back_ ** 1.5 + 0.004 * brow + 0.011 * side ** 1.5
 
     helm = HullSurface(hvol, puff)
-    hm = head_quads(helm, n=27)
+    hm = head_quads(helm, n=24)
     # Smooth the pane and shell: the head volume still carries the nose, lips and brow.
     hm = Quads(taubin(hm.v, hm.f, np.ones(len(hm.v)), iters=30, lam=0.6, mu=-0.62), hm.f, hm.uv, hm.fuv)
     hmc = hm.v[hm.f].mean(1)
@@ -606,12 +608,13 @@ def assemble(body: fit.Body):
     for side in (1.0, -1.0):
         dd = eye_dirs[side] + np.array([side * 0.006, 0, 0.002])
         # Orion: level bar eyes; Nova: soft arcs (the sheet's visor glyphs).
-        gq_, S, T, fr = glyph(glass_s, dd, 0.030 if nova else 0.033, 0.0060 if nova else 0.0066, 0.0009, nu=12, nv=3,
-                              bend=-0.0042 if nova else -0.0016)
-        glyphs.append((gq_, eye_morphs(S, T, fr, side), 1))
-    mouth_dir = np.array([0, -1.0, 0]) * 0.1 + np.array([0, 0, (eye[2] - 0.056) - head.c[2]])
-    gq_, S, T, fr = glyph(glass_s, mouth_dir, 0.024 if nova else 0.028, 0.0032, 0.0009, nu=12, nv=2)
-    glyphs.append((gq_, mouth_morphs(S, T, fr), 2))
+        gq_, S, T, fr = glyph(glass_s, dd, 0.029 if nova else 0.031, 0.0105 if nova else 0.0120, 0.0009, nu=14, nv=6,
+                              bend=-0.0040 if nova else -0.0008)
+        glyphs.append((gq_, eye_morphs(S, T, fr, side), 1, S, T, fr))
+    mouth_dir = np.array([0, -1.0, 0]) * 0.1 + np.array([0, 0, (eye[2] - 0.052) - head.c[2]])
+    gq_, S, T, fr = glyph(glass_s, mouth_dir, 0.026 if nova else 0.022, 0.0050 if nova else 0.0034, 0.0009, nu=12, nv=3,
+                          bend=0.0030 if nova else 0.0)
+    glyphs.append((gq_, mouth_morphs(S, T, fr), 2, S, T, fr))
 
     # ---- parts ----
     # The helmet encloses the head, so the Frame stops at the neck (no head shell under it).
@@ -648,9 +651,20 @@ def assemble(body: fit.Body):
         d_[np.linalg.norm(d_, axis=1) < 2e-5] = 0.0
     glyph_v = np.zeros(len(visor_q.v))
     glyph_v[nvis:] = 1
+    # Per glyph vertex: (metres from the glyph's side edge, from its top/bottom edge, kind) so the
+    # bake can draw the sheet's hollow ring eyes instead of solid bars.
+    gst = np.zeros((len(visor_q.v), 3))
+    off = nvis
+    for g in glyphs:
+        gq_, S_, T_, fr_ = g[0], g[3], g[4], g[5]
+        hw_, hh_ = fr_[3], fr_[4]
+        gst[off:off + len(gq_.v), 0] = (1 - np.abs(S_)) * hw_
+        gst[off:off + len(gq_.v), 1] = (1 - np.abs(T_)) * hh_
+        gst[off:off + len(gq_.v), 2] = g[2]
+        off += len(gq_.v)
     visor_lip = np.concatenate([vlab, np.zeros(len(visor_q.f) - len(vlab), np.int32)])
     visor_part = Part("Visor", "Visor", visor_q, visor_W, morphs,
-                      attrs={"rest": visor_q.v.copy(), "glyph": glyph_v[:, None]},
+                      attrs={"rest": visor_q.v.copy(), "glyph": glyph_v[:, None], "gst": gst},
                       face_attrs={"kind": visor_kind, "cuff": visor_lip})
     # Landmarks the materials and sockets use.
     info = {"head": head, "plane": plane, "visor": (vbot, vtop), "torso": torso, "visor_plate": vis_plate}

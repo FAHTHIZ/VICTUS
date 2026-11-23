@@ -137,7 +137,7 @@ def bake_part(lod: Lod0, L, style, all_lods, size, ao, seed):
                             tone=lod.face_attrs["tone"][fa].astype(float))
     elif name == "Visor":
         m = mmat.visor_maps(tx, P, N, L, style, lod.face_attrs["kind"][fa].astype(float),
-                            lod.face_attrs["cuff"][fa].astype(float), seed)
+                            lod.face_attrs["cuff"][fa].astype(float), seed, attrs=attrs)
     else:
         raise ValueError(f"no material for part {name}")
     mask = tx.mask()

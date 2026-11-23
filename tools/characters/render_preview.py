@@ -89,8 +89,8 @@ def studio(height):
     m = bpy.data.materials.new("Floor")
     m.use_nodes = True
     b = m.node_tree.nodes["Principled BSDF"]
-    b.inputs["Base Color"].default_value = (0.03, 0.032, 0.036, 1)
-    b.inputs["Roughness"].default_value = 0.85
+    b.inputs["Base Color"].default_value = (0.014, 0.015, 0.017, 1)  # the sheet's dark studio floor
+    b.inputs["Roughness"].default_value = 0.6
     floor.data.materials.append(m)
     bpy.ops.mesh.primitive_plane_add(size=30, location=(0, 6, 0), rotation=(math.radians(90), 0, 0))
     wall = bpy.context.active_object
@@ -120,6 +120,9 @@ def strip_to_suit(objs):
 # Extreme review poses (deformation and armour-intersection checks): rotations about world axes
 # at each joint, applied parent first. The character faces -Y in Blender, its left is +X.
 STRESS_POSES = {
+    # The design sheet's standing pose: arms relaxed near the sides, elbows a little bent.
+    "stand": [("UpperArm.L", "Y", 29), ("UpperArm.R", "Y", -29), ("LowerArm.L", "X", -12), ("LowerArm.R", "X", -12),
+              ("Hand.L", "Y", 6), ("Hand.R", "Y", -6), ("UpperLeg.L", "Y", 2), ("UpperLeg.R", "Y", -2)],
     "squat": [("Hips", "X", 0.0), ("UpperLeg.L", "X", -105), ("UpperLeg.R", "X", -105), ("LowerLeg.L", "X", 135),
               ("LowerLeg.R", "X", 135), ("Foot.L", "X", -25), ("Foot.R", "X", -25), ("Spine", "X", -20),
               ("UpperArm.L", "Y", -45), ("UpperArm.R", "Y", 45), ("LowerArm.L", "X", -110), ("LowerArm.R", "X", -110)],
@@ -229,7 +232,7 @@ def main(argv):
     ap.add_argument("--samples", type=int, default=48)
     ap.add_argument("--res", type=int, default=720)
     ap.add_argument("--suit", action="store_true", help="the undersuit only (Armor and Visor removed)")
-    ap.add_argument("--pose", help="squat | reach (stress poses) or CLIP@SECONDS, e.g. Run@0.2")
+    ap.add_argument("--pose", help="stand | squat | reach (review poses) or CLIP@SECONDS, e.g. Run@0.2")
     ap.add_argument("--lineup", help="render all GLBs side by side into this file (front and three-quarter)")
     a = ap.parse_args(argv)
     if a.lineup:
@@ -237,7 +240,7 @@ def main(argv):
         n = len(a.glb)
         heights = []
         for i, g in enumerate(a.glb):
-            _, h = import_glb(g, x=(i - (n - 1) / 2) * 1.5, suit=a.suit)
+            _, h = import_glb(g, x=(i - (n - 1) / 2) * 1.5, suit=a.suit, pose=a.pose)
             heights.append(h)
         h = max(heights)
         studio(h)

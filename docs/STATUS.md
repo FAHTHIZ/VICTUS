@@ -3404,3 +3404,19 @@ Verified (2-vCPU sandbox, GCC 15.2, Release, `-DVICTUS_WITH_GRAPHICS=OFF`):
 - `victus_bench_core --reps 40`, three alternating runs of the before and after binaries: `jobs/parallel_for_integrate_1M` allocations per call 7.6 → 0.075; p50 within ±20 % run-to-run noise on 2 vCPUs (0.40-0.51 vs 0.42-0.43 ms); `jobs/submit_wait_100k_empty` 40-44 vs 38-43 ms. A spin-before-sleep variant was measured slower here and dropped.
 - Not verified: graphics build (render, runtime, editor, animation tests) in this session; physical multi-core machines.
 - Next task: retained draw records for unchanged mesh renderers in scene extraction (CPU frame architecture item 3).
+## 2026-11-23 — Design-sheet proportions and detail pass (ADR-0225)
+
+Built:
+- Proportions (`fit.py`): `head_scale` scales the head about the head joint (Orion 0.86, Nova 0.88) for the sheet's heroic proportions; `leg_scale` stretches everything below the hips by the leg skin weights (Orion 1.04, Nova 1.09); Nova's macro slimmed (muscle 0.52, weight 0.15).
+- Helmet and visor (`mannequin.py`, `mannequin_materials.py`): rounder helmet puff (more at the back and sides), 24x24 cube-sphere faces; hollow ring eye glyphs, larger, and a mouth glyph; darker tinted glass; a graphite frame around the visor and crown panel seams; a quieter rim glow.
+- Plates (`plates.py`): Orion's abdomen as four rows of mirrored plates (six-pack), narrower belt, slimmer pauldrons, thinner and narrower thigh plates, shins and gauntlets; Nova's smaller shoulder caps, narrower and thinner thigh wraps, thinner hip flares and outer-thigh panels, a faired bust plate, graphite knee cops.
+- Boots: Orion's ceramic instep strap; Nova's pearl boot shells (the white band mask was inverted and drew nothing).
+- `render_preview.py`: the sheet's `stand` pose, a darker floor.
+
+Verified (2-core sandbox):
+- `tools/characters/test_pipeline.py` 12/12.
+- `build_characters.py --out engine/project/data/characters`: Orion 179,984 triangles, 13.81 MB, 1.773 m; Nova 174,912 triangles, 13.51 MB, 1.681 m (budget 140k-190k); copied to the arena sample.
+- `victus_asset_tests` (Release, rebuilt with the new GLBs): 89 cases, 144,435 assertions pass (the 8 character cases 139,614).
+- Blender renders in the stand pose compared side by side with the design sheet; `docs/images/characters/blender_render_bodies.jpg` and `blender_render_heads.jpg` updated. Closer: Nova's slender, long-legged silhouette, dark knees and white boots; Orion's six-pack and boot straps. Still short of the sheet: Nova's bust plate is flatter than the sheet's sculpted bust, the neck reads ribbed grey rather than slim black, Orion's thighs carry less dark gap detail.
+- Not verified: the VICTUS runtime renderer with these GLBs.
+- Next task: neck, bust and thigh detail, then the runtime close-up review (ADR-0225).
