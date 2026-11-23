@@ -3406,6 +3406,7 @@ Verified (2-vCPU sandbox, GCC 15.2, Release, `-DVICTUS_WITH_GRAPHICS=OFF`):
 - `victus_bench_core --reps 40`, three alternating runs of the before and after binaries: `jobs/parallel_for_integrate_1M` allocations per call 7.6 → 0.075; p50 within ±20 % run-to-run noise on 2 vCPUs (0.40-0.51 vs 0.42-0.43 ms); `jobs/submit_wait_100k_empty` 40-44 vs 38-43 ms. A spin-before-sleep variant was measured slower here and dropped.
 - Not verified: graphics build (render, runtime, editor, animation tests) in this session; physical multi-core machines.
 - Next task: retained draw records for unchanged mesh renderers in scene extraction (CPU frame architecture item 3).
+
 ## 2026-11-23 — Design-sheet proportions and detail pass (ADR-0225)
 
 Built:
@@ -3435,3 +3436,16 @@ Verified (2-vCPU sandbox, GCC 15.2, Release):
 - `victus_bench_core --reps 40`, two alternating runs: `math/trs_compose_100k` p50 4.16/4.18 → 3.55/3.61 ms (−14 %); `serial/integrate_1M` and `jobs/parallel_for_integrate_1M` unchanged within noise. `scene/update_transforms_*` unchanged within noise.
 - Next task: per-frame draw path in `SceneRenderer` (CPU frame architecture items 3-4).
 
+## 2026-11-23 — Slim dark neck column (ADR-0225)
+
+Built:
+- `fit.py`: `neck_scale` narrows the neck column about its axis by the neck bones' skin weights, masked to the column (Orion 0.86, Nova 0.84).
+- `mannequin_materials.py`: the neck flex zone is 55% darker with subtler ribs, the sheet's near-black neck.
+
+Verified (2-core sandbox):
+- `tools/characters/test_pipeline.py` 12/12.
+- `build_characters.py --out engine/project/data/characters`: Orion 180,256 triangles, 13.86 MB, 1.773 m; Nova 175,152 triangles, 13.48 MB, 1.681 m; copied to the arena sample.
+- `victus_asset_tests` (Release, rebuilt with the new GLBs): 89 cases, 145,109 assertions pass.
+- Blender head renders compared with the sheet's head crops (`docs/images/characters/blender_render_heads.jpg` updated): the neck reads as a slim dark column under the helmet. Still short: the sheet's helmets are a darker brushed silver with more panel lines.
+- Not verified: the VICTUS runtime renderer with these GLBs.
+- Next task: helmet panel detail, Nova's bust, then the runtime close-up review (ADR-0225).

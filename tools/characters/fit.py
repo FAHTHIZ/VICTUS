@@ -104,13 +104,16 @@ class Spec:
     head_scale: float = 1.0
     # Leg length factor (hip joint to sole, applied through the leg skin weights).
     leg_scale: float = 1.0
+    # The sheet's slim neck column: the neck is narrowed radially by this factor.
+    neck_scale: float = 1.0
 
 
 ORION = Spec("orion", "Orion", mh.Macro(gender=1.0, muscle=0.92, weight=0.46, african=0.55, asian=0.10, caucasian=0.35),
              skull_top=1.765, profile="VictusHumanoid.Orion", head_scale=0.86,
-             leg_scale=1.04)
+             leg_scale=1.04, neck_scale=0.86)
 NOVA = Spec("nova", "Nova", mh.Macro(gender=0.0, muscle=0.52, weight=0.15, african=0.10, asian=0.55, caucasian=0.35),
-            skull_top=1.675, profile="VictusHumanoid.Nova", head_scale=0.88, leg_scale=1.09)
+            skull_top=1.675, profile="VictusHumanoid.Nova", head_scale=0.88, leg_scale=1.09,
+            neck_scale=0.84)
 SPECS = {"orion": ORION, "nova": NOVA}
 
 
@@ -251,6 +254,28 @@ def heroic_head(v0, rig: mh.MhRig, k):
     return pivot + (v0 - pivot) * f[:, None]
 
 
+def slim_neck(v0, rig: mh.MhRig, k):
+    """Narrows the neck column by k about its axis (MakeHuman space, Y up), weighted by the neck
+    bones' reference skin weights and kept to the column so the trapezius slopes stay put."""
+    if abs(k - 1.0) < 1e-6:
+        return v0
+    w = np.zeros(len(v0))
+    for b, (vi, wt) in rig.weights.items():
+        if b.startswith("neck"):
+            np.add.at(w, vi, wt)
+    w = np.clip(w, 0, 1)
+    a = rig.head_tail(v0, "neck01")[0]
+    b = rig.head_tail(v0, "head")[0]
+    t = np.clip((v0[:, 1] - a[1]) / max(b[1] - a[1], 1e-6), 0, 1)
+    c = a + (b - a) * t[:, None]
+    d = v0 - c
+    d[:, 1] = 0.0
+    r = np.linalg.norm(d, axis=1)
+    w *= np.clip((1.1 - r) / 0.3, 0, 1)
+    out = v0 + d * ((k - 1.0) * w)[:, None]
+    return out
+
+
 def long_legs(v0, rig: mh.MhRig, k):
     """Stretches the legs by k below the hip joints (MakeHuman space, Y up), blended by the legs'
     reference skin weights so the pelvis and crotch stay continuous and the hands (which hang
@@ -275,6 +300,7 @@ def build(spec: Spec) -> Body:
     rig = mh.load_rig()
     v0 = heroic_head(v0, rig, spec.head_scale)
     v0 = long_legs(v0, rig, spec.leg_scale)
+    v0 = slim_neck(v0, rig, spec.neck_scale)
     eyes = mh.load_obj("high-poly.obj")
     clo = mh.load_mhclo("high-poly.mhclo")
     eye0 = mh.fit_proxy(v0, clo)

@@ -155,7 +155,8 @@ def frame_maps(tx, P, N, L: Landmarks, style, kind, seed):
         zones.append(flex(J[f"Shoulder.{t}"][0], sh, 1.0, 0.025, 0.005, 0.10))  # shoulder cap
     hips, neck, headj = J["Hips"][0], J["Neck"][0], J["Head"][0]
     zones.append(flex(hips, neck, 0.06, 0.035, 0.006, 0.25))  # waist
-    zones.append(flex(neck, headj, 0.45, 0.05, 0.005, 0.09))  # neck
+    neck_r, neck_z = flex(neck, headj, 0.45, 0.05, 0.005, 0.09)  # neck
+    zones.append((neck_r, neck_z))
     zone_any = np.zeros(n)
     for r, z in zones:
         ribs = np.maximum(ribs, r)
@@ -165,6 +166,10 @@ def frame_maps(tx, P, N, L: Landmarks, style, kind, seed):
     col = col * (1 - 0.25 * zb[:, None]) + (base * 0.6 + np.array(style.metal) * 0.05) * 0.25 * zb[:, None]
     rough += zb * (0.12 * (1 - ribs) - 0.05)
     cavity -= zb * 0.35 * (1 - ribs) ** 2
+    # The sheet's neck is a slim near-black column: darker and satin, its ribs subtler.
+    nz = neck_z * body
+    col = col * (1 - 0.55 * nz[:, None])
+    h -= nz * ribs ** 1.5 * 0.0003
 
     # Piping: a recessed seam along the outside of every limb carrying a thin light line.
     pipe = np.zeros(n)
