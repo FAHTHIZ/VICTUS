@@ -1103,6 +1103,12 @@ public:
     [[nodiscard]] const std::array<math::Mat4, 4>& cascade_view_projections() const noexcept { return cascade_vp_; }
     [[nodiscard]] const std::array<float, 4>& cascade_splits() const noexcept { return cascade_splits_; }
 
+    // Every Material field packed as 32-bit words (floats by bit pattern); equal signatures mean
+    // identical materials (ADR-0229). Public so file-local helpers in the renderer can fill it.
+    struct MaterialSignature {
+        std::array<std::uint32_t, 64> words; // 60 used, zero padded to whole 32-byte hash blocks
+        bool operator==(const MaterialSignature&) const noexcept = default;
+    };
 private:
     explicit SceneRenderer(GpuContext& ctx); // defined in the .cpp, where FrameScratch is complete
     struct Draw {
@@ -1379,7 +1385,9 @@ private:
     std::uint32_t material_count_{0};
     std::vector<std::uint32_t> material_table_; // open addressing: material index + 1, 0 = empty
     std::vector<std::uint64_t> material_keys_;  // material_key() per interned material
+    std::vector<MaterialSignature> material_sigs_; // packed fields per interned material
     const Material* intern_material(const Material& m, std::uint64_t key);
+    const Material* intern_material(const Material& m, const MaterialSignature& sig, std::uint64_t key);
     std::uint32_t lod_history_w_{0}, lod_history_h_{0};
     bool lod_history_valid_{false};
     std::vector<math::Mat4> motion_joints_, motion_joints_next_;

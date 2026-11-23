@@ -2405,6 +2405,20 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 
 **Consequences:** Triangle counts stay inside the 140k-190k budget (the helmet cube-sphere goes from 30 to 27 quads per face to pay for the plates). Heights to the top of the helmet are unchanged (1.777 / 1.685 m). The plate pass continues piece by piece under this ADR.
 
+### ADR-0229: Packed material signatures for interning and a runtime frame benchmark
+
+**Status:** Accepted (2026-11-23). Follow-up of ADR-0227 on the per-submit path; item 3 groundwork of the CPU frame-architecture plan in docs/audits/CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md.
+
+**Context:** A new benchmark, `victus_bench_runtime` (10,000 static primitive cubes through `Scene::update_transforms`, `runtime::extract_scene` and `SceneRenderer::render`, GPU waits outside the timed parts), showed 4.0 ms of CPU per frame, 1.76 ms of it in extraction. Callgrind attributed 68% of extraction instructions to `material_key` (about 380 instructions per submit, about 30 dependent hash-combine steps over individually loaded fields) and `same_material` (about 275 per submit, about 40 short-circuit field compares in the equal case).
+
+**Decision:** `pack_material` writes every `Material` field into a fixed 64-word `SceneRenderer::MaterialSignature` (floats by bit pattern, handles and the vertex-stage pointer split into words, flags in one word, zero padding). `material_key` hashes the signature with four independent add-multiply lanes and a final avalanche; `intern_material` stores each interned material's signature and compares signatures (a 256-byte `memcmp`) instead of calling `same_material`. `submit()` packs once and reuses the signature for the hash and the intern lookup. A `static_assert` on `sizeof(Material)` (64-bit) flags new fields that the signature must cover. `same_material` remains for batching, behind the pointer-equality fast path.
+
+**Alternatives:** Hashing `Material` bytes directly: padding bytes are indeterminate. Caller-provided material handles (Unity's BatchRendererGroup registers materials once): removes the per-submit cost entirely but needs lifetime rules; the retained static draw path planned next avoids most submits instead.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** Materials that differ only in the sign of a zero or in NaN payloads intern separately (bitwise rather than `==` equality); they render identically, so the only effect is a possible extra batch. 256 bytes of signature per distinct material per frame.
+
 ### ADR-0228: Two-phase per-draw visibility on the job system
 
 **Status:** Accepted (2026-11-23). The parallel-culling follow-up of item 4 of the CPU frame-architecture plan in docs/audits/CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md.

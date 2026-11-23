@@ -89,31 +89,62 @@ std::uint64_t mix(std::uint64_t h, std::uint64_t v) noexcept {
     h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
     return h;
 }
-std::uint64_t bits(float f) noexcept {
-    std::uint32_t u;
-    std::memcpy(&u, &f, sizeof u);
-    return u;
+
+// Every Material field as 32-bit words (floats by bit pattern), in a fixed layout: equal
+// signatures mean identical materials, and the hash covers all of it (ADR-0229).
+// A new Material field changes its size: add it to pack_material and same_material, then here.
+static_assert(sizeof(void*) != 8 || sizeof(Material) == 264, "pack_material and same_material must cover every Material field");
+void pack_material(const Material& m, SceneRenderer::MaterialSignature& sig) noexcept {
+    std::uint32_t* w = sig.words.data();
+    std::size_t n = 0;
+    const auto f = [&](float v) { std::memcpy(&w[n++], &v, sizeof v); };
+    const auto t = [&](rhi::TextureHandle h) {
+        w[n++] = h.index;
+        w[n++] = h.generation;
+    };
+    f(m.base_color.r), f(m.base_color.g), f(m.base_color.b), f(m.base_color.a);
+    f(m.emissive.r), f(m.emissive.g), f(m.emissive.b), f(m.emissive.a);
+    f(m.emissive_strength), f(m.metallic), f(m.roughness), f(m.normal_scale), f(m.alpha_cutoff);
+    f(m.uv_scale.x), f(m.uv_scale.y), f(m.uv_offset.x), f(m.uv_offset.y), f(m.coverage_response);
+    f(m.occlusion_strength), f(m.triplanar_sharpness), f(m.clearcoat), f(m.clearcoat_roughness), f(m.responsive);
+    t(m.base_color_texture), t(m.metallic_roughness_texture), t(m.normal_texture), t(m.emissive_texture);
+    w[n++] = (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u) |
+             (m.vertex_alpha_coverage_mask ? 16u : 0u) | (m.shadow_only ? 32u : 0u) | (m.triplanar ? 64u : 0u) |
+             (std::uint32_t{static_cast<std::uint8_t>(m.blend)} << 8) | (static_cast<std::uint32_t>(m.shader_texture_count) << 16);
+    w[n++] = m.surface_shader.index;
+    w[n++] = m.surface_shader.generation;
+    const auto stage = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(m.vertex_stage));
+    w[n++] = static_cast<std::uint32_t>(stage);
+    w[n++] = static_cast<std::uint32_t>(stage >> 32);
+    for (const Vec4& p : m.shader_params) f(p.x), f(p.y), f(p.z), f(p.w);
+    for (const rhi::TextureHandle& h : m.shader_textures) t(h);
+    while (n < sig.words.size()) w[n++] = 0;
 }
-std::uint64_t handle_bits(rhi::TextureHandle t) noexcept { return (std::uint64_t{t.generation} << 32) | t.index; }
+
+std::uint64_t signature_hash(const SceneRenderer::MaterialSignature& sig) noexcept {
+    // Four independent add-multiply lanes over 64-bit word pairs (short dependency chains), then a
+    // final avalanche. Collisions only cost a signature compare in intern_material.
+    static_assert(sizeof(sig.words) % 32 == 0);
+    std::uint64_t l[4] = {0x9E3779B97F4A7C15ull, 0xC2B2AE3D27D4EB4Full, 0x165667B19E3779F9ull, 0x27D4EB2F165667C5ull};
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(sig.words.data());
+    for (std::size_t i = 0; i < sizeof(sig.words); i += 32)
+        for (std::size_t k = 0; k < 4; ++k) {
+            std::uint64_t v;
+            std::memcpy(&v, p + i + 8 * k, sizeof v);
+            l[k] = (l[k] + v) * 0xFF51AFD7ED558CCDull;
+            l[k] ^= l[k] >> 32;
+        }
+    std::uint64_t h = l[0] ^ (l[1] * 0x9E3779B97F4A7C15ull) ^ (l[2] * 0xC4CEB9FE1A85EC53ull) ^ (l[3] * 0xFF51AFD7ED558CCDull);
+    h ^= h >> 33;
+    h *= 0xFF51AFD7ED558CCDull;
+    h ^= h >> 33;
+    return h;
+}
 
 std::uint64_t material_key(const Material& m) noexcept {
-    std::uint64_t h = 0;
-    for (float f : {m.base_color.r, m.base_color.g, m.base_color.b, m.base_color.a, m.emissive.r, m.emissive.g,
-                    m.emissive.b, m.emissive_strength, m.metallic, m.roughness, m.normal_scale, m.alpha_cutoff,
-                    m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y, m.coverage_response,
-                    m.occlusion_strength, m.triplanar_sharpness, m.clearcoat, m.clearcoat_roughness, m.responsive})
-        h = mix(h, bits(f));
-    for (auto t : {m.base_color_texture, m.metallic_roughness_texture, m.normal_texture, m.emissive_texture})
-        h = mix(h, handle_bits(t));
-    if (m.surface_shader || m.vertex_stage) {
-        h = mix(h, (std::uint64_t{m.surface_shader.generation} << 32) | m.surface_shader.index);
-        h = mix(h, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(m.vertex_stage)));
-        for (const Vec4& p : m.shader_params)
-            for (float f : {p.x, p.y, p.z, p.w}) h = mix(h, bits(f));
-        for (std::size_t i = 0; i < m.shader_texture_count; ++i) h = mix(h, handle_bits(m.shader_textures[i]));
-    }
-    return mix(h, (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u) |
-                      (m.vertex_alpha_coverage_mask ? 16u : 0u) | (m.shadow_only ? 32u : 0u) | (m.triplanar ? 64u : 0u) | (std::uint64_t{static_cast<std::uint8_t>(m.blend)} << 8));
+    SceneRenderer::MaterialSignature sig;
+    pack_material(m, sig);
+    return signature_hash(sig);
 }
 
 bool same_material(const Material& a, const Material& b) noexcept {
@@ -1924,6 +1955,12 @@ void SceneRenderer::add_water(const WaterSurface& water) {
 }
 
 const Material* SceneRenderer::intern_material(const Material& m, std::uint64_t key) {
+    MaterialSignature sig;
+    pack_material(m, sig);
+    return intern_material(m, sig, key);
+}
+
+const Material* SceneRenderer::intern_material(const Material& m, const MaterialSignature& sig, std::uint64_t key) {
     if (material_table_.size() < 2u * (material_count_ + 1u)) { // keep the load factor <= 1/2
         material_table_.assign(std::max<std::size_t>(64, material_table_.size() * 2), 0u);
         const std::size_t mask = material_table_.size() - 1;
@@ -1938,12 +1975,16 @@ const Material* SceneRenderer::intern_material(const Material& m, std::uint64_t 
     for (; material_table_[h] != 0u; h = (h + 1) & mask) {
         const std::uint32_t i = material_table_[h] - 1;
         Material& existing = material_chunks_[i / kMaterialChunk][i % kMaterialChunk];
-        if (material_keys_[i] == key && same_material(existing, m)) return &existing;
+        if (material_keys_[i] == key && material_sigs_[i] == sig) return &existing;
     }
     const std::uint32_t i = material_count_++;
     if (i / kMaterialChunk >= material_chunks_.size()) material_chunks_.push_back(std::make_unique<Material[]>(kMaterialChunk));
-    if (material_keys_.size() <= i) material_keys_.resize(i + 1);
+    if (material_keys_.size() <= i) {
+        material_keys_.resize(i + 1);
+        material_sigs_.resize(i + 1);
+    }
     material_keys_[i] = key;
+    material_sigs_[i] = sig;
     Material& slot = material_chunks_[i / kMaterialChunk][i % kMaterialChunk];
     slot = m;
     material_table_[h] = i + 1;
@@ -1954,8 +1995,10 @@ void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const 
                            Vec2 lightmap_uv_offset) {
     if (!mesh.valid()) return;
     ++stats_.submitted;
-    const std::uint64_t mkey = material_key(material);
-    Draw d{&mesh, intern_material(material, mkey), model, 0.0f, mix(mkey, reinterpret_cast<std::uintptr_t>(&mesh))};
+    MaterialSignature sig;
+    pack_material(material, sig);
+    const std::uint64_t mkey = signature_hash(sig);
+    Draw d{&mesh, intern_material(material, sig, mkey), model, 0.0f, mix(mkey, reinterpret_cast<std::uintptr_t>(&mesh))};
     d.motion_id = motion_id;
     d.lightmap_offset = lightmap_uv_offset;
     draws_.push_back(d);

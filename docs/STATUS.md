@@ -3478,3 +3478,16 @@ Verified (2-vCPU sandbox, GCC 15.2, Release, lavapipe, `SDL_VIDEO_DRIVER=offscre
 - 16,384 per-frame cubes, steady state, three runs, serial → one worker (`JobSystem(0)` = 1 worker here): `render()` 3.11/3.47/3.29 → 2.70/2.54/2.60 ms; visibility stage 1.82/1.97/1.81 → 1.32/1.24/1.23 ms. Serial path unchanged versus ADR-0227 (1.8-1.9 ms).
 - Not verified: ThreadSanitizer on the graphics build (the TSan build is headless); machines with more than 2 vCPUs.
 - Next task: runtime frame benchmark for a 10k static mesh-renderer scene, then retained draw records in `extract_scene`.
+
+## 2026-11-23 — Packed material signatures and runtime frame benchmark (ADR-0229)
+
+Built:
+- `pack_material` / `MaterialSignature` (64 words covering every `Material` field); `material_key` hashes it with four lanes; `intern_material` compares signatures; `submit()` packs once. `static_assert(sizeof(Material) == 264)` on 64-bit guards new fields.
+- New benchmark `victus_bench_runtime` (graphics builds): 10,000 static primitive cubes; per-frame transform, extraction and render CPU times printed separately, serial and with a job system.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release, lavapipe):
+- `victus_render_tests` 76 cases and `victus_gpu_tests` 248 cases SUCCESS.
+- Callgrind, `extract_scene` over 3 frames: 29.1M → 21.3M instructions.
+- `victus_bench_runtime --reps 10` (13 frames averaged), serial: before (one run) transforms 0.087, extract 1.763, render 2.167, total 4.017 ms; after (three runs) extract 1.46/1.36/1.53 ms, render 1.94/1.97/1.97 ms, total 3.49/3.43/3.60 ms. With a one-worker job system render is 1.67-1.78 ms.
+- Not verified: other compilers; machines with more than 2 vCPUs.
+- Next task: retained static draws (`SceneRenderer::submit_static`, auto instance groups for unchanged renderers) to bring the 10k static scene under 1 ms.
