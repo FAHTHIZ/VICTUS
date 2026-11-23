@@ -3431,7 +3431,7 @@ Built:
 
 Verified (2-vCPU sandbox, GCC 15.2, Release):
 - Headless `build/rel`: all 20 `bin/victus_*_tests` SUCCESS.
-- Graphics `build/gfx` (`-DVICTUS_WITH_GRAPHICS=ON`, lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`): all 36 `bin/victus_*_tests` SUCCESS, including gpu, render, animation, asset, editor and runtime-facing suites; this also covers the ADR-0226 transform changes.
+- Graphics `build/gfx` (`-DVICTUS_WITH_GRAPHICS=ON`, lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`): all 30 `bin/victus_*_tests` SUCCESS, including gpu, render, animation, asset, editor and gameui suites; this also covers the ADR-0226 transform changes.
 - `victus_bench_core --reps 40`, two alternating runs: `math/trs_compose_100k` p50 4.16/4.18 → 3.55/3.61 ms (−14 %); `serial/integrate_1M` and `jobs/parallel_for_integrate_1M` unchanged within noise. `scene/update_transforms_*` unchanged within noise.
 - Next task: per-frame draw path in `SceneRenderer` (CPU frame architecture items 3-4).
 
