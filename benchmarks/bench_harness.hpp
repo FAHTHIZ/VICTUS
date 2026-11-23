@@ -29,6 +29,10 @@ public:
     explicit Harness(Options options) : options_(std::move(options)) {}
     // `fn` runs one repetition and must process `items` work units.
     void run(const std::string& name, std::uint64_t items, const std::function<void()>& fn);
+    // Whether run(name, ...) would execute (the --filter matches); lets cases skip setup work.
+    [[nodiscard]] bool selected(const std::string& name) const {
+        return options_.filter.empty() || name.find(options_.filter) != std::string::npos;
+    }
     // Prints a table and writes JSON (with machine/build metadata) if requested. Returns exit code.
     int finish();
 

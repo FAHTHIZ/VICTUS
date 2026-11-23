@@ -100,6 +100,7 @@ int main(int argc, char** argv) {
         for (const Variant& v : {Variant{"runtime/frame_10k_static_cpu_gpu", "serial", false, false},
                                  Variant{"runtime/frame_10k_static_jobs_cpu_gpu", "jobs", true, false},
                                  Variant{"runtime/frame_10k_static_retained_cpu_gpu", "retained", false, true}}) {
+            if (!h.selected(v.name)) continue;
             jobs::JobSystem workers(0);
             renderer->set_job_system(v.jobs ? &workers : nullptr);
             render::RenderSettings rs = render::RenderSettings::preset(render::QualityTier::Low);

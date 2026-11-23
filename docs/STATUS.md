@@ -3506,4 +3506,18 @@ Verified (2-vCPU sandbox, GCC 15.2, Release, lavapipe, `SDL_VIDEO_DRIVER=offscre
 - `victus_bench_runtime --reps 10`, three runs, 10,000 static cubes, serial without → with retention: render 2.05/1.96/2.03 → 0.32/0.29/0.30 ms; extract 1.50/1.47/1.51 → 1.54/1.33/1.44 ms; total 3.65/3.52/3.63 → 1.94/1.71/1.82 ms. 32 groups, 160 visible clusters, 0 rebuilds in steady state.
 - Rejected first attempt (one run): 32 m cells gave 800 groups and 752 batches, render 2.23 ms and total 3.71 ms, worse than not retaining.
 - Not verified: GPU cost of drawing whole clusters (no per-instance frustum culling inside a group) on physical GPUs; the 1 ms accept target is not reached yet (extraction still about 1.4 ms).
+- Commit: b41ec42.
 - Next task: cut extraction cost (per-entity component lookups, material compare per retained object), then parallel batching.
+
+## 2026-11-23 — Smaller retained static records (ADR-0230 follow-up)
+
+Built:
+- Retained records reference a shared, reference-counted material table (deduplicated by packed signature) instead of each holding a 264-byte material copy and a 256-byte signature; the unchanged test compares bytes first and fields only when the bytes differ.
+- `bench::Harness::selected()`; `victus_bench_runtime --filter` now skips the warm-up frames of unselected variants (clean profiles of one variant).
+
+Verified (2-vCPU sandbox, GCC 15.2, Release, lavapipe):
+- All 30 graphics `bin/victus_*_tests` SUCCESS on the open-addressing variant below; the kept version re-ran `victus_gpu_tests` (249 cases) and `victus_render_tests` SUCCESS.
+- `victus_bench_runtime --reps 20 --filter retained`, five runs each, b41ec42 → this change: extract 1.35/1.40/1.55/1.37/1.34 → 1.49 (first-run outlier)/0.91/0.92/0.82/0.86 ms; total 1.75/1.79/1.95/1.76/1.72 → 1.90/1.29/1.30/1.20/1.24 ms.
+- Rejected: an open-addressing map for key → record, extract 1.07-1.28 ms against 0.86-1.03 ms with `std::unordered_map` (five runs each).
+- Not verified: the 1 ms accept target (transforms + extraction + submission about 1.0-1.1 ms; render adds 0.3 ms).
+- Next task: per-entity extraction work for unchanged renderers (component lookups, material assembly), then a measured LTO build.

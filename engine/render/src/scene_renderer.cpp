@@ -1799,6 +1799,7 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
                 static_buckets_[r.bucket].dirty = true;
             }
             static_index_.erase(r.key);
+            release_static_material(r.material);
             r = StaticRecord{};
             static_free_.push_back(i);
         }
@@ -2032,19 +2033,20 @@ void SceneRenderer::submit_static(std::uint64_t key, const GpuMesh& mesh, const 
         submit_packed(mesh, material, sig, signature_hash(sig), model, key, lightmap_uv_offset);
         return;
     }
-    auto [it, inserted] = static_index_.try_emplace(key, 0u);
+    auto [map_it, inserted] = static_index_.try_emplace(key, 0u);
+    std::uint32_t* const slot_index = &map_it->second;
     if (inserted) {
         if (!static_free_.empty()) {
-            it->second = static_free_.back();
+            *slot_index = static_free_.back();
             static_free_.pop_back();
         } else {
-            it->second = static_cast<std::uint32_t>(static_records_.size());
+            *slot_index = static_cast<std::uint32_t>(static_records_.size());
             static_records_.emplace_back();
         }
-        static_records_[it->second] = StaticRecord{};
-        static_records_[it->second].key = key;
+        static_records_[*slot_index] = StaticRecord{};
+        static_records_[*slot_index].key = key;
     }
-    const std::uint32_t index = it->second;
+    const std::uint32_t index = *slot_index;
     StaticRecord& r = static_records_[index];
     if (r.seen_frame == group_frame_ && !inserted) {
         // The same key twice in one frame: not one object; draw this copy individually.
@@ -2056,11 +2058,13 @@ void SceneRenderer::submit_static(std::uint64_t key, const GpuMesh& mesh, const 
     r.seen_frame = group_frame_;
     // A mesh replaced at the same address (hot reload, recycled procedural mesh) changes its
     // bounds or index count, which retained cluster bounds and draws depend on. The material is
-    // compared field by field against the stored copy (short-circuits; no packing or hashing).
+    // compared against the stored copy: bytewise first (copies of one material usually match,
+    // padding included), field by field when the bytes differ; no packing or hashing.
     const bool unchanged = !inserted && r.mesh == &mesh && r.mesh_bounds.min == mesh.bounds.min && r.mesh_bounds.max == mesh.bounds.max &&
                            r.mesh_indices == mesh.lods[0].index_count && std::memcmp(&r.model, &model, sizeof(Mat4)) == 0 &&
                            r.lightmap_offset.x == lightmap_uv_offset.x && r.lightmap_offset.y == lightmap_uv_offset.y &&
-                           same_material(r.material, material);
+                           (std::memcmp(&static_materials_[r.material].material, &material, sizeof(Material)) == 0 ||
+                            same_material(static_materials_[r.material].material, material));
     if (!unchanged) {
         if (r.bucket != ~0u) static_buckets_[r.bucket].dirty = true; // rebuilt without it
         r.bucket = ~0u;
@@ -2069,27 +2073,29 @@ void SceneRenderer::submit_static(std::uint64_t key, const GpuMesh& mesh, const 
         r.mesh_indices = mesh.lods[0].index_count;
         r.model = model;
         r.lightmap_offset = lightmap_uv_offset;
-        pack_material(material, r.sig);
-        r.mkey = signature_hash(r.sig);
-        r.material = material;
+        const std::uint32_t slot = acquire_static_material(material);
+        if (!inserted) release_static_material(r.material);
+        r.material = slot;
         r.stable = 0;
-        submit_packed(mesh, material, r.sig, r.mkey, model, key, lightmap_uv_offset);
+        const StaticMaterial& sm = static_materials_[slot];
+        submit_packed(mesh, material, sm.sig, sm.mkey, model, key, lightmap_uv_offset);
         return;
     }
-    const MaterialSignature& sig = r.sig;
+    const StaticMaterial& sm = static_materials_[r.material];
+    const MaterialSignature& sig = sm.sig;
     if (r.bucket != ~0u) {
         ++static_buckets_[r.bucket].seen;
         ++stats_.submitted;
         return;
     }
     if (++r.stable < settings_.static_promote_frames) {
-        submit_packed(mesh, material, sig, r.mkey, model, key, lightmap_uv_offset);
+        submit_packed(mesh, material, sig, sm.mkey, model, key, lightmap_uv_offset);
         return;
     }
     // Promote: join (or open) the bucket of its mesh, material and 256 m cell.
     const auto cell = [](float v) { return static_cast<std::uint64_t>(static_cast<std::int64_t>(std::floor(v * (1.0f / 256.0f))) & 0x1FFFFF); };
     const std::uint64_t cell_key = cell(model.c[3].x) | (cell(model.c[3].y) << 21) | (cell(model.c[3].z) << 42);
-    const std::uint64_t bucket_key = mix(mix(r.mkey, reinterpret_cast<std::uintptr_t>(&mesh)), cell_key);
+    const std::uint64_t bucket_key = mix(mix(sm.mkey, reinterpret_cast<std::uintptr_t>(&mesh)), cell_key);
     auto [bit, bnew] = static_bucket_index_.try_emplace(bucket_key, 0u);
     if (bnew) {
         if (!static_bucket_free_.empty()) {
@@ -2106,8 +2112,8 @@ void SceneRenderer::submit_static(std::uint64_t key, const GpuMesh& mesh, const 
     StaticBucket& b = static_buckets_[bit->second];
     if (!b.members.empty()) {
         const StaticRecord& first = static_records_[b.members.front()];
-        if (b.mesh != &mesh || !(first.sig == sig)) { // bucket key collision: stay individual
-            submit_packed(mesh, material, sig, r.mkey, model, key, lightmap_uv_offset);
+        if (b.mesh != &mesh || first.material != r.material) { // bucket key collision: stay individual
+            submit_packed(mesh, material, sig, sm.mkey, model, key, lightmap_uv_offset);
             return;
         }
     }
@@ -2120,6 +2126,41 @@ void SceneRenderer::submit_static(std::uint64_t key, const GpuMesh& mesh, const 
 
 // Rebuilds the retained groups whose membership changed and submits every retained group; once
 // per frame, at the start of render().
+std::uint32_t SceneRenderer::acquire_static_material(const Material& m) {
+    MaterialSignature sig;
+    pack_material(m, sig);
+    const std::uint64_t mkey = signature_hash(sig);
+    auto [it, fresh] = static_material_index_.try_emplace(mkey, 0u);
+    if (!fresh && static_materials_[it->second].sig == sig) {
+        ++static_materials_[it->second].refs;
+        return it->second;
+    }
+    std::uint32_t slot;
+    if (!static_material_free_.empty()) {
+        slot = static_material_free_.back();
+        static_material_free_.pop_back();
+    } else {
+        slot = static_cast<std::uint32_t>(static_materials_.size());
+        static_materials_.emplace_back();
+    }
+    StaticMaterial& e = static_materials_[slot];
+    e.material = m;
+    e.sig = sig;
+    e.mkey = mkey;
+    e.refs = 1;
+    if (fresh) it->second = slot; // a hash collision leaves the entry unindexed (still valid)
+    return slot;
+}
+
+void SceneRenderer::release_static_material(std::uint32_t slot) {
+    if (slot >= static_materials_.size() || static_materials_[slot].refs == 0) return;
+    StaticMaterial& e = static_materials_[slot];
+    if (--e.refs != 0) return;
+    if (auto it = static_material_index_.find(e.mkey); it != static_material_index_.end() && it->second == slot)
+        static_material_index_.erase(it);
+    static_material_free_.push_back(slot);
+}
+
 void SceneRenderer::flush_static_groups() {
     if (static_flushed_frame_ == group_frame_) return;
     static_flushed_frame_ = group_frame_;
@@ -2150,7 +2191,7 @@ void SceneRenderer::flush_static_groups() {
                 }
                 InstanceGroupDesc desc;
                 desc.mesh = b.mesh;
-                desc.material = static_records_[b.members.front()].material;
+                desc.material = static_materials_[static_records_[b.members.front()].material].material;
                 desc.models = static_models_;
                 if (offsets) desc.lightmap_offsets = static_offsets_;
                 if (auto id = create_instance_group(desc)) {
@@ -2161,7 +2202,8 @@ void SceneRenderer::flush_static_groups() {
                         StaticRecord& r = static_records_[m];
                         r.bucket = ~0u;
                         r.stable = 0;
-                        submit_packed(*r.mesh, r.material, r.sig, r.mkey, r.model, r.key, r.lightmap_offset);
+                        const StaticMaterial& sm = static_materials_[r.material];
+                        submit_packed(*r.mesh, sm.material, sm.sig, sm.mkey, r.model, r.key, r.lightmap_offset);
                         --stats_.submitted; // counted when submitted to the bucket
                     }
                     b.members.clear();

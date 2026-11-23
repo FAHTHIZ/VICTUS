@@ -1414,9 +1414,7 @@ private:
         std::uint32_t mesh_indices{0};
         math::Mat4 model;
         math::Vec2 lightmap_offset{};
-        MaterialSignature sig{};
-        std::uint64_t mkey{0};
-        Material material;
+        std::uint32_t material{~0u}; // static_materials_ slot (shared: records stay small)
         std::uint64_t seen_frame{0};
         std::uint32_t stable{0};    // consecutive unchanged submissions
         std::uint32_t bucket{~0u};  // retained group bucket, ~0u = drawn individually
@@ -1429,9 +1427,22 @@ private:
         std::uint32_t seen{0}; // members submitted this frame
         bool dirty{false};
     };
+    // Materials of static records, deduplicated by signature and reference counted: thousands
+    // of records usually share a handful, and the per-frame compare then reads hot entries.
+    struct StaticMaterial {
+        Material material;
+        MaterialSignature sig{};
+        std::uint64_t mkey{0};
+        std::uint32_t refs{0};
+    };
+    std::vector<StaticMaterial> static_materials_;
+    std::vector<std::uint32_t> static_material_free_;
+    std::unordered_map<std::uint64_t, std::uint32_t> static_material_index_; // mkey -> slot
+    std::uint32_t acquire_static_material(const Material& m);
+    void release_static_material(std::uint32_t slot);
     std::vector<StaticRecord> static_records_;
     std::vector<std::uint32_t> static_free_;
-    std::unordered_map<std::uint64_t, std::uint32_t> static_index_;  // key -> record
+    std::unordered_map<std::uint64_t, std::uint32_t> static_index_; // key -> record
     std::vector<StaticBucket> static_buckets_;
     std::vector<std::uint32_t> static_bucket_free_;
     std::unordered_map<std::uint64_t, std::uint32_t> static_bucket_index_; // bucket key -> bucket

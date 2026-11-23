@@ -2417,7 +2417,7 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 
 **Evidence:** listed in docs/STATUS.md under this ADR.
 
-**Consequences:** A retained object costs about one record (≈ 400 bytes with its material copy) plus its instance data on the GPU. Moving an object out of its group rebuilds that group (one upload of the group's instances), so objects that move every few frames should not be submitted as static; the promotion delay keeps them out. Statistics: `static_retained`, `static_groups`, `static_rebuilds`.
+**Consequences:** A retained object costs a record of about 130 bytes (its material lives once in a reference-counted, signature-deduplicated table, so the per-frame unchanged test reads a few hot material entries: bytewise compare first, field compare when bytes differ) plus its instance data on the GPU. An open-addressing key map was tried in place of `std::unordered_map` and was slower in the benchmark (records are inserted in entity order, which the node map's allocation order follows), so it was not kept. Moving an object out of its group rebuilds that group (one upload of the group's instances), so objects that move every few frames should not be submitted as static; the promotion delay keeps them out. Statistics: `static_retained`, `static_groups`, `static_rebuilds`.
 
 ### ADR-0229: Packed material signatures for interning and a runtime frame benchmark
 
