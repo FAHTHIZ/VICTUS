@@ -17,6 +17,7 @@
 #include "victus/net/net.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/project/project.hpp"
+#include "victus/project/starter_materials.hpp"
 #include "victus/runtime/surface_shader.hpp"
 #include "victus/graph/material_graph.hpp"
 #include "victus/script/script.hpp"
@@ -2769,4 +2770,58 @@ TEST_CASE("editor: the sequencer curve editor edits tangents and property tracks
     ed.end_sequence_preview();
     CHECK(light().intensity == doctest::Approx(3.0f));
     CHECK(light().color.b == doctest::Approx(1.0f));
+}
+
+TEST_CASE("editor: New Scene keeps the HDR sky its sun is calibrated for, or a default sun without it (ADR-0242)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    Harness h;
+    REQUIRE(h.init());
+    const auto count_env = [](scene::Scene& s, gameplay::EnvironmentComponent* out) {
+        int n = 0;
+        s.world().each<gameplay::EnvironmentComponent>([&](scene::Entity, gameplay::EnvironmentComponent& env) {
+            ++n;
+            if (out) *out = env;
+        });
+        return n;
+    };
+    const auto sun_intensity = [](scene::Scene& s) {
+        float v = -1;
+        s.world().each<scene::LightComponent>([&](scene::Entity, scene::LightComponent& l) {
+            if (l.type == scene::LightComponent::Type::Directional) v = l.intensity;
+        });
+        return v;
+    };
+    const auto clipped = [&] {
+        const auto px = h.viewport();
+        std::size_t n = 0, total = 0;
+        for (std::uint32_t y = 0; y < Harness::VH; y += 2)
+            for (std::uint32_t x = 0; x < Harness::VW; x += 2, ++total) {
+                const auto p = pixel(px, Harness::VW, x, y);
+                if (channel(p, 0) > 250 && channel(p, 1) > 250 && channel(p, 2) > 250) ++n;
+            }
+        return static_cast<double>(n) / static_cast<double>(total);
+    };
+
+    REQUIRE(h.ed->create_project(h.dir / "Sky", "Sky", "3d").ok());
+    h.ed->new_scene();
+    scene::Scene& s = h.ed->edit_scene();
+    gameplay::EnvironmentComponent env;
+    REQUIRE(count_env(s, &env) == 1);
+    CHECK(env.environment_map == project::starter_sky_uuid());
+    CHECK(env.exposure == doctest::Approx(0.6f));
+    CHECK(env.fog_from_sky);
+    CHECK(env.lightmap.empty());
+    CHECK(sun_intensity(s) == doctest::Approx(5.0f));
+    CHECK(s.find_by_name("Backdrop").is_null());
+    CHECK(s.find_by_name("Ground").is_null());
+    h.frames(3);
+    const double hdr_clip = clipped();
+
+    REQUIRE(h.ed->create_project(h.dir / "Flat", "Flat", "2d").ok());
+    h.ed->new_scene();
+    scene::Scene& s2 = h.ed->edit_scene();
+    CHECK(count_env(s2, nullptr) == 0);
+    CHECK(sun_intensity(s2) == doctest::Approx(scene::LightComponent{}.intensity));
+    MESSAGE("New Scene viewport: " << hdr_clip * 100.0 << " % clipped white pixels with the HDR sky");
+    CHECK(hdr_clip < 0.02); // the sky renders without blowing out
 }

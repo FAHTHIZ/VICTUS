@@ -3678,3 +3678,14 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
 - Reference scene goldens regenerated for the SSR change (reviewed side by side): interior FLIP mean 0.0096, worst tile 0.070 (the glossy floor now mirrors the red wall where it reflected the sky); exterior 0.0013, effects 0.0007, photoreal 0.0007 (mirror-sphere reflections only). `reference_scenes`, `render_compare` and `cli_smoke` pass against them.
 - Full `VICTUS_REQUIRE_GPU=1 ctest -j2 -E perf_budgets`: 46/47 passed before the golden update (only `reference_scenes`); `perf_budgets` alone passed (frame p95 224 ms against the 400 ms ceiling).
 - Next task: Studio New Scene keeps the template's HDR-calibrated sun without the HDR sky, exposure and fog (ADR-0237 regression); then foliage wind.
+
+## 2026-11-23 — Studio New Scene keeps the HDR environment (ADR-0242)
+
+Built:
+- `Editor::new_scene` keeps the template's Environment (HDR sky, exposure 0.6, sky fog, AO, contact shadows; lightmap reference cleared) when the project has the starter sky, and otherwise drops it and resets the sun to intensity 3.
+- Test: `editor: New Scene keeps the HDR sky its sun is calibrated for, or a default sun without it (ADR-0242)`.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
+- The new test passes: in a 3D project one Environment with the starter sky, exposure 0.6, sky fog and no lightmap, sun 5, no ground or backdrop, 0 % clipped pixels in the viewport; in a 2D project no Environment and sun 3. With the old behaviour forced (Environment dropped, sun kept), 5 of its checks fail.
+- `victus_editor_tests` (whole binary): 84 cases, 6449 assertions passed.
+- Next task: foliage wind.

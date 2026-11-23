@@ -13,6 +13,8 @@
 #include "victus/platform/platform.hpp"
 #include "victus/runtime/physics_ground_probe.hpp"
 #include "victus/procgen/city.hpp"
+#include "victus/project/starter_materials.hpp"
+#include "victus/gameplay/gameplay.hpp"
 #include "victus/traffic/traffic.hpp"
 
 #include <algorithm>
@@ -452,14 +454,20 @@ void Editor::new_scene() {
     project::TemplateOptions bare;
     bare.character = std::string(project::kNoCharacter); // stripped below anyway
     (void)project::build_template_scene("3d", *s, bare);
-    // A new scene starts with camera + light only.
+    // A new scene starts with camera + sun, plus the template's Environment (HDR sky, exposure,
+    // fog, AO) when this project has the starter sky: the sun is calibrated against that sky's
+    // exposure (ADR-0237), so without it lit surfaces would be 5/3 as bright as calibrated (ADR-0242).
+    const bool hdr_sky = db_ && db_->find(project::starter_sky_uuid()) != nullptr;
     std::vector<Entity> remove;
     for (const Entity e : s->roots()) {
-        if (!s->world().has<CameraComponent>(e) && !s->world().has<LightComponent>(e)) remove.push_back(e);
-        else if (const auto* l = s->world().get<LightComponent>(e); l && l->type != LightComponent::Type::Directional)
-            remove.push_back(e);
+        if (s->world().has<gameplay::EnvironmentComponent>(e)) {
+            if (!hdr_sky) remove.push_back(e);
+        } else if (!s->world().has<CameraComponent>(e) && !s->world().has<LightComponent>(e)) remove.push_back(e);
+        else if (auto* l = s->world().get<LightComponent>(e); l && l->type != LightComponent::Type::Directional) remove.push_back(e);
+        else if (l && !hdr_sky) l->intensity = LightComponent{}.intensity; // analytic sky: default sun
     }
     for (const Entity e : remove) s->destroy(e);
+    s->world().each<gameplay::EnvironmentComponent>([](Entity, gameplay::EnvironmentComponent& env) { env.lightmap.clear(); });
     // Only the camera and sun themselves: the template's camera script and behaviours belong to
     // the template's files, which this project may not have.
     for (const Entity e : s->roots()) {

@@ -142,6 +142,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Fixed
 
+- Studio's New Scene keeps the HDR sky, exposure and fog in 3D projects, so its sun is no longer too bright on the plain default sky; in projects without the starter sky it uses the default sun (ADR-0242). ([evidence](docs/STATUS.md#2026-11-23--studio-new-scene-keeps-the-hdr-environment-adr-0242))
 - The CLI smoke test failed on every CI platform since the facial-expression controller (ADR-0222) gave its `Face` layer its own default state; the test now edits only the base layer. ([evidence](docs/STATUS.md#2026-11-22--text-shaping-and-bidirectional-layout-adr-0224))
 - CI on macOS and Windows: the generated shader source no longer fails macOS builds (the Metal source of `pbr.frag` is over the 64 KiB literal length `-Wpedantic` warns about), and the dual quaternion mirror test no longer reads a value before it is written under MSVC's argument order. ([evidence](docs/STATUS.md#2026-11-22--ci-macos-shader-literal-length-and-windows-skinning-test))
 - Model import no longer drops skin influences silently. glTF (a second `JOINTS_1`/`WEIGHTS_1` set) and FBX (up to 64 clusters per vertex) influences are merged per joint, the four largest kept and renormalised, and the import reports how many vertices lost influences and the largest weight dropped, how many listed one joint twice, and how many had no weight (bound to the root). Orion and Nova still import with zero warnings. ([evidence](docs/STATUS.md#2026-11-22--skin-weight-import-warnings))

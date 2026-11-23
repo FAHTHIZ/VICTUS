@@ -2656,3 +2656,17 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 **Evidence:** `victus_procgen_tests -tc="*city*"`, `victus_gpu_tests -tc="*procedural city*"` and `-tc="*grazing*"`; STATUS.md entry for the commit.
 
 **Consequences:** Buildings read as buildings at street level and from the air, and the glass reflects. A 12x12 city has 2.7x the triangles (562k) and its meshes build in about 30 ms instead of 17 ms. The SSR fallback can show a reflection of an object a ray passed behind where a correct trace would have reached the sky; at 85 % confidence and behind real geometry this is rarely visible, and it is far less visible than the dither. Closed rooms gain the most: a glossy floor reflects the walls where rays that slipped behind them used to reflect the sky (reference scene goldens regenerated).
+
+### ADR-0242: Studio New Scene keeps the HDR environment its sun is calibrated for
+
+**Status:** Accepted (2026-11-23). Seventh item of the look pass.
+
+**Context:** Studio's File > New Scene builds the 3D template scene and keeps only the camera and the directional light. ADR-0237 raised that template sun from 3 to 5 and paired it with the HDR sky at exposure 0.6, but the Environment entity carrying the sky, exposure, fog, AO and contact shadows was dropped, so a new scene got the analytic default sky and lit surfaces 5/3 as bright as calibrated. Unreal's and Godot's empty new levels start with their sky, sun, exposure and fog already set up together; a new scene is where most users first judge the look.
+
+**Decision:** `Editor::new_scene` keeps the template's Environment entity (with any lightmap reference cleared) when the project's asset database contains the starter HDR sky; otherwise it drops the Environment and resets the sun to the default `LightComponent` intensity (3).
+
+**Alternatives:** (1) Change `render::Environment` defaults to the HDR look: breaks every GPU golden and scenes without the sky asset. (2) Always keep the Environment: a missing-asset sky in projects made from the 2D or simulation templates.
+
+**Evidence:** `victus_editor_tests -tc="*New Scene keeps*"`; STATUS.md entry for the commit.
+
+**Consequences:** New scenes in 3D, no-code 3D and multiplayer projects start with the same sky, exposure, fog and ambient occlusion as the templates. Other projects get the pre-ADR-0237 sun.
