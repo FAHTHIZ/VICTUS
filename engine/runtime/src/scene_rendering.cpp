@@ -864,6 +864,7 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
         m.uv_offset = src->uv_offset;
         m.triplanar = src->triplanar;
         m.triplanar_sharpness = src->triplanar_sharpness;
+        m.anti_tiling = src->anti_tiling;
         m.clearcoat = src->clearcoat;
         m.clearcoat_roughness = src->clearcoat_roughness;
         m.sheen_color = src->sheen_color;

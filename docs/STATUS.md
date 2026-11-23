@@ -3650,3 +3650,16 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
 - Full `ctest -j2` (other tests): 44 of 44 passed (device loss skipped as usual).
 - Next task: anti-tiling for the starter materials (the grass backdrop shows repetition).
 
+## 2026-11-23 — Anti-tiling for repeating materials (ADR-0240)
+
+Built:
+- `.vmat` `anti_tiling` (`MaterialField::AntiTiling`, instance override, Studio material panel slider) to `render::Material::anti_tiling` and `mapping.z` in `pbr.frag`: world-space two-octave macro variation of the albedo, and above 0.5 a distance blend with a 0.23x-frequency sample. Regenerated the built-in shader library.
+- Starter materials: grass and rock 1.0, paving 0.5, planks 0.3.
+- Tests: `material anti-tiling round trips, clamps, inherits and is omitted at its default (ADR-0240)` (asset tests), `gpu: anti-tiling varies the albedo across repeats and is off by default (ADR-0240)`.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
+- Asset test: 10 assertions passed. GPU test: with anti-tiling off two renders match exactly; at 1.0, 40 % (mesh UVs) and 39 % (triplanar) of red-cell texels move by more than 6 levels with a 23-level range.
+- A low camera over the 3D template's grass backdrop: the uniform grid of repeats becomes irregular light and dark patches.
+- Full `VICTUS_REQUIRE_GPU=1 ctest -j2 -E perf_budgets`: 47/47 passed; `perf_budgets` alone: passed.
+- Next task: procedural city materials (windows, facade variation) and foliage.
+

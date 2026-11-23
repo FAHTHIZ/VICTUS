@@ -2628,3 +2628,17 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 **Evidence:** STATUS.md entry for the commit.
 
 **Consequences:** Template scenes run to a soft horizon. One extra texture fetch per fogged opaque pixel when the option is on. Existing scenes are unchanged (the option defaults off and modes 0-3 decode as before).
+
+### ADR-0240: Anti-tiling for repeating materials
+
+**Status:** Accepted (2026-11-23). Fifth item of the look pass.
+
+**Context:** Large surfaces with one repeating texture show the repeat as a regular grid, most of all on the grass backdrop of ADR-0239 and on open ground seen at a grazing angle. Megascans landscape materials in Unreal multiply a macro-variation texture over the albedo, and Unity and Unreal terrain shaders resample the texture at a larger scale with distance; Inigo Quilez's "texture repetition" techniques and Mikkelsen's hex-tiling (2022) randomise tiles instead, at 2-3x the texture fetches per projection.
+
+**Decision:** `.vmat` `anti_tiling` (0..1, default 0, material-instance field, Studio slider) reaching the shader in `mapping.z`. Macro variation: two octaves of world-space value noise (periods about 9 m and 2.5 m) scale the albedo by 0.72-1.28, weighted by `min(2 x anti_tiling, 1)`; no extra fetch. Above 0.5, pixels beyond 6-40 m also blend up to 50 % of the base colour sampled at 0.23x frequency (triplanar or mesh UV), one extra albedo fetch per projection, skipped when the blend weight is 0. Starter materials: grass and rock 1.0 (both), paving 0.5 and planks 0.3 (macro variation only, since a resampled regular pattern ghosts), metal and crate 0.
+
+**Alternatives:** (1) Hex-tiling: best quality, but 3 fetches per projection for every map, 9 per map with triplanar. (2) Quilez technique 3 (noise-indexed offsets): 2 fetches per map and visible blending of regular patterns. (3) A macro-variation texture: an extra asset to ship and bind.
+
+**Evidence:** `victus_asset_tests -tc="*anti-tiling*"`, `victus_gpu_tests -tc="*anti-tiling*"`; STATUS.md entry for the commit.
+
+**Consequences:** Starter grass, rock and paving no longer read as a grid. Existing materials are unchanged (off by default). The macro variation costs about 30 ALU per pixel on anti-tiled materials only.

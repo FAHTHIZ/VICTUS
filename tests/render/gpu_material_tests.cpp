@@ -59,9 +59,12 @@ struct MaterialScene {
         std::error_code ec;
         sfs::remove_all(project, ec);
     }
-    void write_material(float tiling, int bump_seconds, bool triplanar = false) {
+    void write_material(float tiling, int bump_seconds, bool triplanar = false, float anti_tiling = 0.0f,
+                        float brightness = 1.0f) {
         assets::MaterialAsset m;
+        m.base_color = {brightness, brightness, brightness, 1};
         m.triplanar = triplanar;
+        m.anti_tiling = anti_tiling;
         m.unlit = true; // exact texture colours on screen, independent of lighting
         m.filter = assets::TextureFilter::Nearest;
         m.base_color_texture = texture;
@@ -211,6 +214,64 @@ TEST_CASE("gpu: triplanar materials tile per metre whatever the object's scale (
     CAPTURE(tp40);
     CHECK(tp20 >= 6);
     CHECK(std::abs(tp20 - tp40) <= 1);
+}
+
+TEST_CASE("gpu: anti-tiling varies the albedo across repeats and is off by default (ADR-0240)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    MaterialScene s;
+    int bump = 0;
+    constexpr std::uint32_t W = 160, H = 96;
+    const auto render = [&](float anti_tiling, bool triplanar) {
+        // Dim texels keep the tonemapper in its linear range, where the variation is visible.
+        s.write_material(triplanar ? 0.5f : 8.0f, bump += 5, triplanar, anti_tiling, 0.25f);
+        runtime::GpuAssetCache cache(*gpu().ctx, s.db.get());
+        auto& dev = gpu().ctx->device();
+        auto sr = render::SceneRenderer::create(*gpu().ctx);
+        REQUIRE(sr.ok());
+        auto target = test::make_target(W, H);
+        s.scene.update_transforms();
+        (void)runtime::extract_scene(s.scene, cache, **sr, {});
+        auto cmd = dev.begin_commands();
+        REQUIRE((*sr)->render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        auto px = dev.read_texture(target);
+        REQUIRE(px.ok());
+        test::save_output("material_anti_tiling", W, H, *px);
+        std::vector<std::uint32_t> out;
+        for (std::uint32_t y = 0; y < H; ++y)
+            for (std::uint32_t x = 0; x < W; ++x) out.push_back(pixel(*px, W, x, y));
+        dev.destroy(target);
+        cache.clear();
+        return out;
+    };
+    // Red-cell texels whose brightness the macro variation moved by more than 6 levels, and the
+    // range of those changes: anti-tiling must touch most of the screen with a broad variation.
+    const auto changed = [](const std::vector<std::uint32_t>& a, const std::vector<std::uint32_t>& b, int& range) {
+        int n = 0, red = 0, lo = 255, hi = -255;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (channel(a[i], 0) < 60 || channel(a[i], 1) > 20) continue; // inside red cells
+            ++red;
+            const int d = static_cast<int>(channel(b[i], 0)) - static_cast<int>(channel(a[i], 0));
+            lo = std::min(lo, d);
+            hi = std::max(hi, d);
+            if (std::abs(d) > 6) ++n;
+        }
+        range = hi - lo;
+        return red > 0 ? static_cast<double>(n) / red : 0.0;
+    };
+    int range = 0;
+    const auto off_uv = render(0.0f, false);
+    CHECK(changed(off_uv, render(0.0f, false), range) == doctest::Approx(0.0)); // off = unchanged and deterministic
+    const double uv = changed(off_uv, render(1.0f, false), range);
+    CAPTURE(uv);
+    CAPTURE(range);
+    CHECK(uv > 0.2);
+    CHECK(range >= 12);
+    const auto off_tp = render(0.0f, true);
+    const double tp = changed(off_tp, render(1.0f, true), range);
+    CAPTURE(tp);
+    CHECK(tp > 0.2);
+    CHECK(range >= 12);
 }
 
 TEST_CASE("scene: MeshRenderer material reference survives save/load") {

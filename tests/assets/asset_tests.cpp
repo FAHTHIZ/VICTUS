@@ -687,6 +687,29 @@ TEST_CASE("assets: glTF KHR_materials_anisotropy factors import and survive the 
     CHECK(back->materials[0].anisotropy_rotation == doctest::Approx(0.8f));
 }
 
+TEST_CASE("material anti-tiling round trips, clamps, inherits and is omitted at its default (ADR-0240)") {
+    auto m = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "anti_tiling": 0.75})"));
+    REQUIRE(m.ok());
+    CHECK(m->anti_tiling == doctest::Approx(0.75f));
+    auto back = MaterialAsset::from_json(m->to_json());
+    REQUIRE(back.ok());
+    CHECK(back->anti_tiling == doctest::Approx(0.75f));
+    CHECK(MaterialAsset{}.to_json().find("anti_tiling") == nullptr);
+    auto wild = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "anti_tiling": 7})"));
+    REQUIRE(wild.ok());
+    CHECK(wild->anti_tiling == doctest::Approx(1.0f));
+    CHECK_FALSE(MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "anti_tiling": "yes"})")).ok());
+    MaterialAsset parent;
+    parent.anti_tiling = 0.5f;
+    MaterialAsset child;
+    child.parent = Uuid::generate();
+    child.overrides = 0;
+    CHECK(apply_instance(parent, child).anti_tiling == doctest::Approx(0.5f)); // inherited
+    child.overrides = field_bit(MaterialField::AntiTiling);
+    child.anti_tiling = 0.0f;
+    CHECK(apply_instance(parent, child).anti_tiling == doctest::Approx(0.0f)); // overridden
+}
+
 TEST_CASE("material subsurface round trips, clamps, inherits and is omitted at its default (ADR-0233)") {
     auto m = MaterialAsset::from_json(
         *json::parse(R"({"victus_material": 1, "subsurface_color": [1.0, 0.3, 0.2], "subsurface_thickness": 0.2})"));

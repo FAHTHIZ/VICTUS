@@ -28,6 +28,7 @@
 //     "anisotropy_rotation": 0.0   // radians from the mesh tangent
 //     "subsurface_color": [r, g, b] // skin / wax / leaf scattering colour, linear (ADR-0233); black = none
 //     "subsurface_thickness": 0.5  // 1 = opaque body, 0 = thin (light passes through)
+//     "anti_tiling": 0             // 0..1 macro variation; > 0.5 adds a distant large-scale blend (ADR-0240)
 //   }
 //
 // Material instances name a parent and contain only the fields they override; everything else
@@ -60,7 +61,7 @@ enum class MaterialField : std::uint8_t {
     EmissiveStrength, EmissiveTexture, AlphaCutoff, UvScale, UvOffset, Filter, Unlit, DoubleSided, Shader, ShaderParams,
     VertexAlpha, CoverageResponse, Blend, OcclusionStrength, ShaderTextures, Responsive, Triplanar, TriplanarSharpness,
     Clearcoat, ClearcoatRoughness, SheenColor, SheenRoughness, Anisotropy, AnisotropyRotation, SubsurfaceColor,
-    SubsurfaceThickness, Count
+    SubsurfaceThickness, AntiTiling, Count
 };
 inline constexpr std::size_t kMaterialFieldCount = static_cast<std::size_t>(MaterialField::Count);
 [[nodiscard]] constexpr std::uint64_t field_bit(MaterialField f) noexcept { return std::uint64_t{1} << static_cast<unsigned>(f); }
@@ -98,6 +99,9 @@ struct MaterialAsset {
     // Subsurface scattering (ADR-0233): skin, wax, marble, leaves. Black = none.
     math::Vec3 subsurface_color{0, 0, 0};
     float subsurface_thickness{0.5f};
+    // Anti-tiling (ADR-0240), 0..1: world-space macro variation of the albedo that breaks visible
+    // repeats; above 0.5 distant pixels also blend in a 4x larger sample of the textures. 0 = off.
+    float anti_tiling{0.0f};
     TextureFilter filter{TextureFilter::Linear};
     bool unlit{false};
     bool double_sided{false};

@@ -904,11 +904,11 @@ float local_shadow(LocalLight l, vec3 Ld, float dist, vec3 N) {
 // is flipped on faces that look down a negative axis so no face shows a mirrored image, and normal
 // maps are reoriented with the "whiteout" blend (Golus, "Normal Mapping for a Triplanar Shader").
 struct Triplanar { vec2 uv_x, uv_y, uv_z; vec3 w, s; };
-Triplanar triplanar_setup(vec3 n) {
+Triplanar triplanar_setup(vec3 n, float scale) {
     Triplanar t;
     vec3 p = v_world_pos;
     t.s = vec3(n.x < 0.0 ? -1.0 : 1.0, n.y < 0.0 ? -1.0 : 1.0, n.z < 0.0 ? -1.0 : 1.0);
-    vec2 sc = material.uv_transform.xy, of = material.uv_transform.zw;
+    vec2 sc = material.uv_transform.xy * scale, of = material.uv_transform.zw;
     t.uv_x = vec2(-p.z * t.s.x, -p.y) * sc + of;
     t.uv_y = vec2(-p.x * t.s.y, -p.z) * sc + of;
     t.uv_z = vec2(p.x * t.s.z, -p.y) * sc + of;
@@ -937,14 +937,44 @@ vec3 triplanar_normal(Triplanar t, vec3 n) {
     return normalize(tx.zyx * t.w.x + ty.xzy * t.w.y + tz.xyz * t.w.z);
 }
 
+// Anti-tiling (ADR-0240). Value noise in world space for the macro variation.
+float at_hash(vec2 p) {
+    vec3 q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+}
+float at_noise(vec2 p) {
+    vec2 c = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(at_hash(c), at_hash(c + vec2(1, 0)), u.x), mix(at_hash(c + vec2(0, 1)), at_hash(c + vec2(1, 1)), u.x), u.y);
+}
+
 void main() {
     vec2 uv = v_uv * material.uv_transform.xy + material.uv_transform.zw;
     bool triplanar = material.mapping.x > 0.5;
     vec3 geometric_n = normalize(v_normal);
     if (!gl_FrontFacing) geometric_n = -geometric_n;
-    Triplanar tp = triplanar_setup(geometric_n);
-    vec4 base = (triplanar ? triplanar_sample(u_base_color, tp) : texture(u_base_color, uv, lighting.camera_forward.w)) *
-                material.base_color;
+    Triplanar tp = triplanar_setup(geometric_n, 1.0);
+    vec4 base = triplanar ? triplanar_sample(u_base_color, tp) : texture(u_base_color, uv, lighting.camera_forward.w);
+    float anti_tiling = material.mapping.z;
+    if (anti_tiling > 0.0) {
+        // Far pixels blend in the same texture at a quarter of the frequency (Unity/Unreal terrain
+        // "distance resampling"), which hides the grid the repeats form towards the horizon.
+        float far = smoothstep(6.0, 40.0, length(lighting.camera_pos.xyz - v_world_pos)) * 0.5 *
+                    clamp(anti_tiling * 2.0 - 1.0, 0.0, 1.0);
+        if (far > 0.0) {
+            vec4 big = triplanar ? triplanar_sample(u_base_color, triplanar_setup(geometric_n, 0.23))
+                                 : texture(u_base_color, uv * 0.23, lighting.camera_forward.w);
+            base.rgb = mix(base.rgb, big.rgb, far); // same texture, same mean: only the pattern changes
+        }
+        // Macro variation: two octaves of world-space noise (2.5 m and 9 m) modulate the albedo,
+        // like the macro-variation maps of Megascans landscape materials.
+        vec3 wp = v_world_pos;
+        vec2 mp = vec2(wp.x + wp.y * 0.71, wp.z - wp.y * 0.53);
+        float m = 0.6 * at_noise(mp * 0.11) + 0.4 * at_noise(mp * 0.4 + 17.0);
+        base.rgb *= mix(1.0, 0.72 + 0.56 * m, min(anti_tiling * 2.0, 1.0));
+    }
+    base *= material.base_color;
     bool alpha_is_mask = material.flags.z > 0.5;
     Surface s;
     s.base_color = base.rgb * v_color.rgb;

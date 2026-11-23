@@ -108,7 +108,7 @@ void pack_material(const Material& m, SceneRenderer::MaterialSignature& sig) noe
     f(m.uv_scale.x), f(m.uv_scale.y), f(m.uv_offset.x), f(m.uv_offset.y), f(m.coverage_response);
     f(m.occlusion_strength), f(m.triplanar_sharpness), f(m.clearcoat), f(m.clearcoat_roughness), f(m.responsive);
     f(m.sheen_color.x), f(m.sheen_color.y), f(m.sheen_color.z), f(m.sheen_roughness), f(m.anisotropy), f(m.anisotropy_rotation);
-    f(m.subsurface_color.x), f(m.subsurface_color.y), f(m.subsurface_color.z), f(m.subsurface_thickness);
+    f(m.subsurface_color.x), f(m.subsurface_color.y), f(m.subsurface_color.z), f(m.subsurface_thickness), f(m.anti_tiling);
     t(m.base_color_texture), t(m.metallic_roughness_texture), t(m.normal_texture), t(m.emissive_texture);
     w[n++] = (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u) |
              (m.vertex_alpha_coverage_mask ? 16u : 0u) | (m.shadow_only ? 32u : 0u) | (m.triplanar ? 64u : 0u) |
@@ -166,7 +166,7 @@ bool same_material(const Material& a, const Material& b) noexcept {
            a.triplanar == b.triplanar && a.triplanar_sharpness == b.triplanar_sharpness && a.clearcoat == b.clearcoat &&
            a.clearcoat_roughness == b.clearcoat_roughness && a.responsive == b.responsive && a.sheen_color == b.sheen_color &&
            a.sheen_roughness == b.sheen_roughness && a.anisotropy == b.anisotropy && a.anisotropy_rotation == b.anisotropy_rotation &&
-           a.subsurface_color == b.subsurface_color && a.subsurface_thickness == b.subsurface_thickness;
+           a.subsurface_color == b.subsurface_color && a.subsurface_thickness == b.subsurface_thickness && a.anti_tiling == b.anti_tiling;
 }
 struct LightingUniforms {
     Vec4 camera_pos;
@@ -4781,7 +4781,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 // blend.z: alpha to coverage (ADR-0152) - the cut-out becomes a coverage ramp.
                 mat.blend = {static_cast<float>(m.blend), std::clamp(m.occlusion_strength, 0.0f, 1.0f), a2c_of(m) ? 1.0f : 0.0f,
                              d->lod_fade};
-                mat.mapping = {m.triplanar ? 1.0f : 0.0f, std::clamp(m.triplanar_sharpness, 1.0f, 64.0f), 0.0f, 0.0f};
+                mat.mapping = {m.triplanar ? 1.0f : 0.0f, std::clamp(m.triplanar_sharpness, 1.0f, 64.0f),
+                               std::clamp(finite_or(m.anti_tiling, 0.0f), 0.0f, 1.0f), 0.0f};
                 mat.layers = {std::clamp(m.clearcoat, 0.0f, 1.0f), std::clamp(m.clearcoat_roughness, 0.0f, 1.0f), 0.0f, 0.0f};
                 mat.sheen = {std::clamp(m.sheen_color.x, 0.0f, 1.0f), std::clamp(m.sheen_color.y, 0.0f, 1.0f),
                              std::clamp(m.sheen_color.z, 0.0f, 1.0f), std::clamp(m.sheen_roughness, 0.0f, 1.0f)};

@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Anti-tiling for repeating materials (ADR-0240): `.vmat` `anti_tiling` adds large-scale brightness variation and, for organic surfaces, a distant larger-scale blend, so grass, rock and paving no longer show a grid of repeats. The starter grass, rock, paving and planks use it. ([evidence](docs/STATUS.md#2026-11-23--anti-tiling-for-repeating-materials-adr-0240))
 - Sky-coloured fog (ADR-0239): Environment `fog_from_sky` makes distance fog take the HDR sky's colour behind each pixel, so distant ground fades into the horizon. The 3D, no-code 3D and multiplayer templates use it, with a wide grass backdrop (or wider lava) so the world no longer ends in an edge. ([evidence](docs/STATUS.md#2026-11-23--sky-coloured-fog-and-horizon-backdrop-adr-0239))
 - Lava that looks molten in the no-code 3D template (ADR-0238): a dark cooled crust broken by thin, glowing, slowly flowing cracks instead of pastel blobs. ([evidence](docs/STATUS.md#2026-11-23--cracked-crust-lava-adr-0238))
 - Calibrated lighting in the 3D, no-code 3D and multiplayer templates (ADR-0237): a stronger, lower afternoon sun from the side and exposure 0.6, so new projects start with long readable shadows and no washed-out ground. ([evidence](docs/STATUS.md#2026-11-23--template-lighting-calibration-adr-0237))

@@ -96,6 +96,7 @@ struct Material {
     // softer terminator; 0 = thin, light passes through).
     math::Vec3 subsurface_color{0, 0, 0};
     float subsurface_thickness{0.5f};
+    float anti_tiling{0.0f}; // 0..1 macro variation, > 0.5 also a distant large-scale blend (ADR-0240)
     bool nearest_filter{false}; // point sampling (pixel art); default is trilinear
     rhi::TextureHandle base_color_texture, metallic_roughness_texture, normal_texture, emissive_texture;
     bool double_sided{false};
@@ -1143,7 +1144,7 @@ public:
     // Every Material field packed as 32-bit words (floats by bit pattern); equal signatures mean
     // identical materials (ADR-0229). Public so file-local helpers in the renderer can fill it.
     struct MaterialSignature {
-        std::array<std::uint32_t, 72> words; // 70 used, zero padded to whole 32-byte hash blocks
+        std::array<std::uint32_t, 72> words; // 71 used, zero padded to whole 32-byte hash blocks
         bool operator==(const MaterialSignature&) const noexcept = default;
     };
 private:

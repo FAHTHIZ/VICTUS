@@ -347,6 +347,10 @@ void Editor::draw_material_editor() {
             ImGui::SetItemTooltip("How quickly one projection gives way to the next on curved surfaces");
             inherit_button(F::TriplanarSharpness);
         }
+        mark(ImGui::SliderFloat("Anti-Tiling", &m.anti_tiling, 0.0f, 1.0f), F::AntiTiling);
+        ImGui::SetItemTooltip("Breaks up visible texture repeats: large-scale brightness variation, and above 0.5 a "
+                              "larger copy of the texture blended in with distance (for grass, rock, dirt)");
+        inherit_button(F::AntiTiling);
         int filter = m.filter == assets::TextureFilter::Nearest ? 1 : 0;
         if (mark(ImGui::Combo("Filter", &filter, "Linear (smooth)\0Nearest (pixel art)\0"), F::Filter))
             m.filter = filter == 1 ? assets::TextureFilter::Nearest : assets::TextureFilter::Linear;
