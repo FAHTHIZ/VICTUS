@@ -2812,3 +2812,26 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - The hair cards are alpha-tested, so they have no TAA motion artefacts but alias slightly at a distance on the Low tier.
 - The GLBs grow by about 4 MB each for the head textures.
 - Projects created before this change keep their copied GLBs. New projects, and the starters embedded in the engine, get the new look.
+### ADR-0248: Clear coat and sheen under rectangle area lights
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** Rectangle area lights (ADR-0194) shaded only the base layer, so clear coat (ADR-0203) and sheen (ADR-0231) materials under them rendered exactly like plain ones. While adding the coat, a second problem showed up. The representative-point specular for sphere bulbs and rectangles scaled `D(a)` by the Karis energy normalisation `(a / a')^2`. `distribution_ggx` adds a 1e-7 guard to its denominator, which caps the peak at `a^2 * 1e7` for alpha below about 0.018 (roughness below about 0.13). The normalisation then scaled that capped peak down, so very glossy surfaces showed a small dim dot instead of the bulb or panel.
+
+**Decision:**
+- `rect_light` takes the coat normal, coat strength and roughness, and the sheen colour, roughness and albedo scale.
+  - Sheen: the Charlie lobe towards the light's centre (the diffuse direction) times the rectangle's irradiance. The base is scaled by the sheen albedo term, as for point lights.
+  - Coat: its own representative point for the coat normal and roughness. The Kelemen-visibility coat lobe times the form factor, and the layers below are scaled by 1 - Fc, in the same order as `with_coat(with_sheen(...))`.
+- The representative-point lobes (base and coat on rectangles, base on sphere bulbs) evaluate GGX with the widened alpha (`sqrt(a_x a_y)` for rectangles, `a'` for spheres) instead of `D(a) * norm`. The peak is the same, `1 / (pi a_x a_y)`, and the guard no longer matters because the widened alpha is at least the light's angular size. `rect_specular_dir` is shared by both layers. Point lights without a bulb radius and the sun keep `D(a)` unchanged.
+
+**Alternatives:**
+- Linearly transformed cosines (Heitz 2016) for each lobe: accurate for rough lobes, but they need a 64x64 LTC table per BRDF (two for GGX, one for Charlie) and a bound texture on every PBR pipeline, including GLES.
+- Drop the 1e-7 guard in `distribution_ggx`: fixes the cap everywhere, but it also changes every sun and point-light highlight on glossy materials and needs a separate firefly policy. That is a larger look change than this item.
+
+**Evidence:** `victus_gpu_tests -tc="gpu clear coat and sheen*"` (tests/render/gpu_clearcoat_tests.cpp) plus the existing area-light, bulb, clear-coat, sheen, anisotropy and subsurface cases; STATUS.md entry for the commit.
+
+**Consequences:**
+- Coated and cloth materials respond to area lights.
+- Glossy highlights from bulbs and panels are larger and brighter than before. On the 0.06-roughness metal floor test, the highlight grew from 208 to 927 pixels for a 0.5 m bulb and from 215 to 1388 for a 1.5 m panel, because the old values were capped. Scenes that were lit for the old look may need less light intensity on glossy floors.
+- One more representative point per coated pixel per rectangle light. Sheen and coat are skipped when off.
+- Sheen from the centre direction is approximate for large, close panels. Subsurface scattering and anisotropy are still not shaded by area lights.

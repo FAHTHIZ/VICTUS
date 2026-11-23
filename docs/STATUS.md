@@ -3881,3 +3881,22 @@ Open:
 - The sheet's fringe is softer and more see-through. Overlapping card layers still hide most of the short pieces, so the fringe reads as a solid edge.
 - Skin is paler and less warm than the sheet.
 - Nova's black shoulder and underarm panels are not modelled yet, and Orion has no carbon-weave detail.
+
+## 2026-11-24 — Clear coat and sheen under area lights (ADR-0248)
+
+Built:
+- `rect_light` in pbr.frag shades sheen (the Charlie lobe towards the light's centre times the irradiance) and the clear coat (its own representative point for the coat normal and roughness, with the layers below scaled by 1 - Fc). `rect_specular_dir` is shared by the base and coat lobes.
+- Representative-point lobes on rectangles and sphere bulbs evaluate GGX at the widened alpha instead of `D(a) * (a / a')^2`. The old form lost its peak to `distribution_ggx`'s 1e-7 guard below roughness of about 0.13.
+- Test `gpu clear coat and sheen: rectangle area lights shade both layers (ADR-0248)`: a dark blue sphere under a 1 m panel, lit by nothing else.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
+- Before the change, the coated sphere rendered like the plain one under the panel. In the first draft (coat only, `D(a) * norm`), the glossy coat's peak was 115 against 117 plain, which is how the 1e-7 cap was found.
+- After: green peak 118 plain, 235 with a glossy coat (0.03) and 165 with a satin coat (0.45). 906 and 447 pixels sit above the base peak + 30, and 0 without a coat. Off the highlight the coat does not brighten the body.
+- Sheen: the sphere's summed RGB is 1,079,530 without sheen and 1,422,172 with velvet sheen.
+- Images inspected (`area_clearcoat_on`, `area_clearcoat_satin`, `area_sheen_on`, `area_light_glossy*`): a sharp square reflection of the panel on the coat, a soft one on satin, a velvet rim, and round bulb and rectangular panel highlights on the glossy metal floor.
+- Existing bulb/panel test on the 0.06-roughness metal floor: highlight pixels were point 31, bulb 208 and panel 215 before, and are point 31, bulb 927 and panel 1388 after. The point light is unchanged, and the bulb and panel highlights are no longer capped.
+- `victus_gpu_tests` on clear coat, sheen, lights, bulbs, anisotropy, subsurface and materials: 49 cases passed. `victus_reference_scenes` passed in the full run.
+- Full `VICTUS_REQUIRE_GPU=1 ctest -j2 -E perf_budgets`: 46/47 passed. The one failure was the intermittent `victus_editor_tests` SIGSEGV, this time in `studio feet: Add Foot Placement...`; see the next entry. The whole editor binary passed 84/84 under the Khronos validation layer with this tree.
+- `ctest -R perf_budgets`: all budgets met. Frame p95 values were 217, 6.0, 10.6, 15.5, 270, 260 and 86 ms.
+- clang-tidy on gpu_clearcoat_tests.cpp: 0 diagnostics apart from the GCC-only flag.
+- Next task: the intermittent editor-test SIGSEGV (see the following entry), then SSR on Medium/GLES.

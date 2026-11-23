@@ -481,16 +481,19 @@ vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float metallic, fl
 // interpolated vertex normal (the coat is smooth over the base's normal map: lacquer over
 // moulded detail), and the light it reflects no longer reaches the base, which is scaled by
 // 1 - Fc. Returns the coat's reflected radiance factor (times N.L) in rgb and the base scale in a.
-vec4 clear_coat(vec3 Nc, vec3 V, vec3 L, float coat, float coat_roughness) {
+vec4 clear_coat_alpha(vec3 Nc, vec3 V, vec3 L, float coat, float alpha) {
     float NdotL = max(dot(Nc, L), 0.0);
     vec3 H = normalize(V + L);
     float NdotV = max(dot(Nc, V), 1e-4);
     float Fc = (0.04 + 0.96 * pow(clamp(1.0 - max(dot(H, V), 0.0), 0.0, 1.0), 5.0)) * coat;
-    float D = distribution_ggx(max(dot(Nc, H), 0.0), coat_roughness * coat_roughness);
+    float D = distribution_ggx(max(dot(Nc, H), 0.0), alpha);
     // Kelemen visibility, as Filament uses for the coat: cheap and energy-bounded.
     float LdotH = max(dot(L, H), 1e-2);
     float Vis = 0.25 / (LdotH * LdotH);
     return vec4(vec3(D * Vis * Fc * NdotL), 1.0 - Fc);
+}
+vec4 clear_coat(vec3 Nc, vec3 V, vec3 L, float coat, float coat_roughness) {
+    return clear_coat_alpha(Nc, V, L, coat, coat_roughness * coat_roughness);
 }
 vec3 with_coat(vec3 base_lit, vec3 Nc, vec3 V, vec3 L, vec3 radiance, float coat, float coat_roughness) {
     if (coat <= 0.0) return base_lit;
@@ -595,14 +598,17 @@ vec3 with_sheen(vec3 base_lit, vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 sheen
 }
 
 // ---- Area lights (ADR-0194) ----
-// GGX specular lobe times N.L for light from L, with the distribution scaled by `norm`.
-vec3 specular_lobe(vec3 N, vec3 V, vec3 L, vec3 f0, float roughness, float norm) {
+// GGX specular lobe times N.L for light from L, with the distribution widened to `alpha` (>= the
+// surface's roughness^2). Widening has the energy normalisation of Karis 2013 at the peak,
+// 1 / (pi a_x a_y) = (a^2 / (a_x a_y)) / (pi a^2), but unlike scaling D(a) by that factor it does
+// not lose the peak to distribution_ggx's 1e-7 guard for very smooth surfaces (ADR-0248).
+vec3 specular_lobe(vec3 N, vec3 V, vec3 L, vec3 f0, float roughness, float alpha) {
     float NdotL = max(dot(N, L), 0.0);
     if (NdotL <= 0.0) return vec3(0.0);
     vec3 H = normalize(V + L);
     float NdotV = max(dot(N, V), 1e-4);
     vec3 F = fresnel_schlick(max(dot(H, V), 0.0), f0);
-    float D = distribution_ggx(max(dot(N, H), 0.0), roughness * roughness) * norm;
+    float D = distribution_ggx(max(dot(N, H), 0.0), alpha);
     float G = geometry_smith(NdotV, NdotL, roughness);
     return D * G * F / (4.0 * NdotV * NdotL + 1e-4) * NdotL;
 }
@@ -624,9 +630,8 @@ vec3 sphere_light(vec3 N, vec3 V, vec3 to_light, float r, vec3 radiance, vec3 al
     vec3 Ls = normalize(closest);
     float a = max(roughness * roughness, 1e-3);
     float a2 = clamp(a + r / (3.0 * max(dist, 1e-4)), 0.0, 1.0);
-    float norm = (a / a2) * (a / a2);
     vec3 f0 = mix(vec3(0.04), albedo, metallic);
-    return (diffuse_lobe(V, Ld, albedo, metallic) * max(dot(N, Ld), 0.0) + specular_lobe(N, V, Ls, f0, roughness, norm)) * radiance;
+    return (diffuse_lobe(V, Ld, albedo, metallic) * max(dot(N, Ld), 0.0) + specular_lobe(N, V, Ls, f0, roughness, a2)) * radiance;
 }
 // Same branchless basis as scene_renderer.cpp (Duff et al. 2017), so the CPU can send the width
 // axis as one angle.
@@ -659,10 +664,29 @@ float horizon_wrap(float cos_n, float form_factor) {
     }
     return cos_n;
 }
+// Representative point (Karis 2013) of the rectangle for a GGX lobe around N: the point where the
+// reflection ray meets the rectangle, clamped to it. Returns the unit direction to it and, in
+// `alpha`, the lobe widened by the rectangle's size seen from P (geometric mean of both axes).
+vec3 rect_specular_dir(vec3 c, vec3 ex, vec3 ey, vec3 nl, float hw, float hh, vec3 P, vec3 N, vec3 V, float roughness,
+                       out float alpha) {
+    vec3 R = reflect(-V, N);
+    float denom = dot(R, nl);
+    vec3 hit = denom < -1e-4 ? P + R * (dot(c - P, nl) / denom) : P + R * max(dot(c - P, R), 0.0);
+    vec2 h = clamp(vec2(dot(hit - c, ex), dot(hit - c, ey)), -vec2(hw, hh), vec2(hw, hh));
+    vec3 to_p = c + ex * h.x + ey * h.y - P;
+    float ds = max(length(to_p), 1e-4);
+    float a = max(roughness * roughness, 1e-3);
+    float ax = clamp(a + hw / (3.0 * ds), 0.0, 1.0), ay = clamp(a + hh / (3.0 * ds), 0.0, 1.0);
+    alpha = sqrt(ax * ay);
+    return to_p / ds;
+}
 // One-sided rectangle light (light_clusters.hpp layout). Diffuse: exact irradiance from the
-// rectangle's vector form factor; specular: representative point where the reflection ray
-// meets the rectangle (clamped to it), energy-normalised along each axis.
-vec3 rect_light(LocalLight l, vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float roughness) {
+// rectangle's vector form factor; specular: representative point, energy-normalised along each
+// axis. Sheen (ADR-0231) takes its lobe towards the light's centre times the irradiance; the clear
+// coat (ADR-0203) gets its own representative point for the coat normal and roughness and dims the
+// layers under it by 1 - Fc, as for point lights and the sun (ADR-0248).
+vec3 rect_light(LocalLight l, vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float roughness, vec3 Nc, float coat,
+                float coat_roughness, vec3 sheen_color, float sheen_roughness, float sheen_scale) {
     vec3 c = l.position_range.xyz;
     vec3 nl = normalize(l.direction_cos_outer.xyz);
     vec3 d = P - c;
@@ -687,19 +711,24 @@ vec3 rect_light(LocalLight l, vec3 P, vec3 N, vec3 V, vec3 albedo, float metalli
     float E = len * horizon_wrap(dot(F, N) / len, len / PI);
     vec3 radiance = l.color_intensity.rgb * (l.color_intensity.w / (4.0 * hw * hh)) * falloff;
     vec3 Lc = normalize(c - P);
-    vec3 color = diffuse_lobe(V, dot(N, Lc) > 0.0 ? Lc : N, albedo, metallic) * (E * radiance);
-    // Specular representative point.
-    vec3 R = reflect(-V, N);
-    float denom = dot(R, nl);
-    vec3 hit = denom < -1e-4 ? P + R * (dot(c - P, nl) / denom) : P + R * max(dot(c - P, R), 0.0);
-    vec2 h = clamp(vec2(dot(hit - c, ex), dot(hit - c, ey)), -vec2(hw, hh), vec2(hw, hh));
-    vec3 to_p = c + ex * h.x + ey * h.y - P;
-    float ds = max(length(to_p), 1e-4);
-    float a = max(roughness * roughness, 1e-3);
-    float ax = clamp(a + hw / (3.0 * ds), 0.0, 1.0), ay = clamp(a + hh / (3.0 * ds), 0.0, 1.0);
-    float norm = (a / ax) * (a / ay);
+    vec3 Ld = dot(N, Lc) > 0.0 ? Lc : N;
+    vec3 color = diffuse_lobe(V, Ld, albedo, metallic) * (E * radiance);
+    float alpha;
+    vec3 Ls = rect_specular_dir(c, ex, ey, nl, hw, hh, P, N, V, roughness, alpha);
     vec3 f0 = mix(vec3(0.04), albedo, metallic);
-    color += specular_lobe(N, V, to_p / ds, f0, roughness, norm) * (len * radiance);
+    color += specular_lobe(N, V, Ls, f0, roughness, alpha) * (len * radiance);
+    if (max3(sheen_color) > 0.0) {
+        float NdotV = max(dot(N, V), 1e-4);
+        float lobe = distribution_charlie(max(dot(N, normalize(V + Ld)), 0.0), sheen_roughness) *
+                     visibility_neubelt(NdotV, max(dot(N, Ld), 0.0));
+        color = color * sheen_scale + sheen_color * lobe * (E * radiance);
+    }
+    if (coat > 0.0) {
+        float coat_alpha;
+        vec3 Lcoat = rect_specular_dir(c, ex, ey, nl, hw, hh, P, Nc, V, coat_roughness, coat_alpha);
+        vec4 k = clear_coat_alpha(Nc, V, Lcoat, coat, coat_alpha);
+        color = color * k.a + k.rgb * (len * radiance);
+    }
     return color;
 }
 
@@ -1202,7 +1231,8 @@ void main() {
         for (uint i = 0u; i < count; ++i) {
             LocalLight l = LOCAL_LIGHT(CLUSTER(first + i));
             if (l.spot.y > 1.5) {
-                color += rect_light(l, v_world_pos, N, V, albedo, metallic, roughness);
+                color += rect_light(l, v_world_pos, N, V, albedo, metallic, roughness, Nc, coat, coat_roughness, sheen_color,
+                                    sheen_roughness, sheen_scale);
                 continue;
             }
             vec3 to_light = l.position_range.xyz - v_world_pos;
