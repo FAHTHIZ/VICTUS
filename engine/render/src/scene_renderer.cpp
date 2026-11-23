@@ -5039,7 +5039,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 2, fog_grid_buffer());
                 pass.bind_storage_buffer(rhi::ShaderStage::Fragment, 3, cookie_buffer_);
                 pass.bind_vertex_buffer(0, d->mesh->vertices);
-                if (vertex_variant(d) == kVertexLightmapped) pass.bind_vertex_buffer(3, d->mesh->lightmap_uv);
+                if (vertex_variant(d) == kVertexLightmapped) {
+                    // SDL_GPU binds vertex slots 0..3 as one range: slot 2 (skinning, unused by the
+                    // lightmap pipeline) must still hold a valid buffer, or Vulkan receives
+                    // VK_NULL_HANDLE (VUID-vkCmdBindVertexBuffers-pBuffers-04001).
+                    pass.bind_vertex_buffer(2, d->mesh->vertices);
+                    pass.bind_vertex_buffer(3, d->mesh->lightmap_uv);
+                }
                 pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
                 if (indirect >= 0) {
                     // Survivors are packed from the batch's own offset; first_instance stays 0
@@ -5445,7 +5451,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                         pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
                     }
                     pass.bind_vertex_buffer(0, d->mesh->vertices);
-                    if (v == kVertexLightmapped) pass.bind_vertex_buffer(3, d->mesh->lightmap_uv);
+                    if (v == kVertexLightmapped) {
+                        pass.bind_vertex_buffer(2, d->mesh->vertices); // see the main pass: no null slot 2
+                        pass.bind_vertex_buffer(3, d->mesh->lightmap_uv);
+                    }
                     pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
                     pass.bind_vertex_buffer(1, b.buffer ? b.buffer : instance_buffer_, b.instance_offset * kInstanceStride);
                     draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);

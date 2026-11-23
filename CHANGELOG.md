@@ -149,6 +149,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Fixed
 
+- Lightmapped meshes no longer pass an invalid null vertex buffer to Vulkan, which the validation layer reported on every lightmapped draw. ([evidence](docs/STATUS.md#2026-11-24--lightmapped-draws-no-longer-bind-a-null-vertex-buffer))
 - Studio's New Scene keeps the HDR sky, exposure and fog in 3D projects, so its sun is no longer too bright on the plain default sky; in projects without the starter sky it uses the default sun (ADR-0242). ([evidence](docs/STATUS.md#2026-11-23--studio-new-scene-keeps-the-hdr-environment-adr-0242))
 - The CLI smoke test failed on every CI platform since the facial-expression controller (ADR-0222) gave its `Face` layer its own default state; the test now edits only the base layer. ([evidence](docs/STATUS.md#2026-11-22--text-shaping-and-bidirectional-layout-adr-0224))
 - CI on macOS and Windows: the generated shader source no longer fails macOS builds (the Metal source of `pbr.frag` is over the 64 KiB literal length `-Wpedantic` warns about), and the dual quaternion mirror test no longer reads a value before it is written under MSVC's argument order. ([evidence](docs/STATUS.md#2026-11-22--ci-macos-shader-literal-length-and-windows-skinning-test))

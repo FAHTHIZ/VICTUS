@@ -3900,3 +3900,20 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
 - `ctest -R perf_budgets`: all budgets met. Frame p95 values were 217, 6.0, 10.6, 15.5, 270, 260 and 86 ms.
 - clang-tidy on gpu_clearcoat_tests.cpp: 0 diagnostics apart from the GCC-only flag.
 - Next task: the intermittent editor-test SIGSEGV (see the following entry), then SSR on Medium/GLES.
+
+## 2026-11-24 — Lightmapped draws no longer bind a null vertex buffer
+
+Built:
+- Lightmapped draws (the main pass and the reactive-mask pass in scene_renderer.cpp) bound vertex slots 0, 1 and 3 and left slot 2 (skinning) empty. SDL_GPU's Vulkan backend binds vertex buffers as one range from slot 0, so Vulkan received `VK_NULL_HANDLE` for slot 2, which is invalid without the `nullDescriptor` feature (VUID-vkCmdBindVertexBuffers-pBuffers-04001). Slot 2 now holds the mesh's vertex buffer, which the lightmap pipeline does not read.
+
+Verified:
+- With the Khronos validation layer (`vulkan-validationlayers` 1.4.341, `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`):
+  - Before the fix: 10 such errors in `victus_editor_tests -tc="studio: the Script Debugger*,studio workspace: every panel*"` and 10 in `victus_gpu_tests` (lightmap cases).
+  - After: 0 validation errors in the whole `victus_editor_tests` binary (84/84 passed) and in the GPU lightmap and cookie cases (12 passed).
+- An earlier validated run of the whole `victus_gpu_tests` binary (259/259 passed) aborted inside the validation layer at exit, in `VULKAN_Wait` from the static test fixture's `~Device`. That happened after all cases had finished. A later validated run of a subset exited cleanly. This is recorded, not explained.
+- The intermittent `victus_editor_tests` SIGSEGV is not fixed by this. With core dumps enabled, two crashes were caught:
+  - In lavapipe's queue thread, executing an unmapped JIT address while the main thread waited in `submit_and_wait` (`studio: the Script Debugger...`).
+  - On the main thread inside lavapipe's descriptor-set allocation, reached from SDL_GPU's `VULKAN_DispatchCompute` in a SceneRenderer compute pass (`studio feet: Add Foot Placement...`).
+  - Crash sites that differ each time suggest heap corruption. lavapipe keeps GPU memory in the process heap, so a GPU-side out-of-bounds write is one candidate.
+  - GPU-assisted validation (`VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT`) on `studio feet*` reported no out-of-bounds access in a passing run. The cause is still open.
+- Next task: keep narrowing the editor SIGSEGV (GPU-assisted validation over the whole editor binary; an AddressSanitizer build), then SSR on Medium/GLES.
