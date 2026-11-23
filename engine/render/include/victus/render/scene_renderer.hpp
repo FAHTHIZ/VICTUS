@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -21,6 +22,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace victus::render {
@@ -1098,7 +1100,7 @@ private:
     explicit SceneRenderer(GpuContext& ctx); // defined in the .cpp, where FrameScratch is complete
     struct Draw {
         const GpuMesh* mesh;
-        Material material;
+        const Material* material; // interned for this frame (intern_material), valid until begin()
         math::Mat4 model;
         float distance;
         std::uint64_t batch_key; // equal keys => same mesh and identical material
@@ -1352,6 +1354,25 @@ private:
     };
     LodHistory lod_prev_, lod_next_;
     std::vector<Draw> lod_fade_out_; // this frame's outgoing-level copies of cross-fading draws
+    // Reused scratch of SceneRenderer's draw sorts: interned state tuples and their ranks, and one
+    // (rank << 32 | tail, draw address) entry per draw, and the radix sort's second buffer.
+    struct DrawSortScratch {
+        using State = std::array<std::uint64_t, 5>;
+        std::vector<State> states;
+        std::vector<std::uint32_t> table, order, rank;
+        std::vector<std::pair<std::uint64_t, std::uintptr_t>> entries, swap;
+    };
+    DrawSortScratch sort_scratch_; // scratch for sort_draws (reused every frame)
+    // This frame's distinct submitted materials (Unreal-style state deduplication): draws point
+    // at one shared copy instead of each holding 264 bytes, so the per-draw passes touch less
+    // memory and identical materials compare by address. Chunked so pointers stay valid; reset
+    // by begin(), the storage is kept.
+    static constexpr std::size_t kMaterialChunk = 64;
+    std::vector<std::unique_ptr<Material[]>> material_chunks_;
+    std::uint32_t material_count_{0};
+    std::vector<std::uint32_t> material_table_; // open addressing: material index + 1, 0 = empty
+    std::vector<std::uint64_t> material_keys_;  // material_key() per interned material
+    const Material* intern_material(const Material& m, std::uint64_t key);
     std::uint32_t lod_history_w_{0}, lod_history_h_{0};
     bool lod_history_valid_{false};
     std::vector<math::Mat4> motion_joints_, motion_joints_next_;

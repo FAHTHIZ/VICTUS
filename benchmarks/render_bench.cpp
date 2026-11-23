@@ -5,12 +5,16 @@
 
 #include "victus/platform/platform.hpp"
 #include "victus/assets/reference_rigs.hpp"
+#include "victus/core/profiler.hpp"
 #include "victus/render/scene_renderer.hpp"
 #include "victus/render/skinning.hpp"
 #include "victus/render/sprite_batch.hpp"
 
 #include <chrono>
 #include <cstdio>
+#include <cstring>
+#include <map>
+#include <string>
 #include <vector>
 #include <cstdlib>
 
@@ -204,6 +208,33 @@ int main(int argc, char** argv) {
                             retained ? "retained group" : "per-frame", frames ? cpu_ms / frames : 0.0, frames, st.visible,
                             st.instances_uploaded, st.main_batches, st.shadow_batches, st.group_clusters,
                             st.group_clusters_visible, st.group_instances_drawn);
+                // Where the CPU time goes: the renderer's sequential render.cpu.* stage zones,
+                // averaged over 10 profiled frames (wall clock, main thread).
+                constexpr int kProfiled = 10;
+                profiler::begin_capture();
+                double submit_ms = 0, render_ms = 0;
+                for (int f = 0; f < kProfiled; ++f) {
+                    const std::uint64_t t0 = profiler::now_ns();
+                    scene->begin(city_cam, city_sun, {});
+                    if (retained)
+                        scene->submit_instance_group(group);
+                    else
+                        scene->submit_instances(cube, m, city);
+                    auto cmd = d.begin_commands();
+                    const std::uint64_t t1 = profiler::now_ns();
+                    if (!scene->render(cmd, small, 320, 180, td.format).ok()) std::abort();
+                    const std::uint64_t t2 = profiler::now_ns();
+                    submit_ms += static_cast<double>(t1 - t0) * 1e-6;
+                    render_ms += static_cast<double>(t2 - t1) * 1e-6;
+                    cmd.submit_and_wait();
+                }
+                std::map<std::string, double> stage_ms;
+                for (const auto& z : profiler::end_capture())
+                    if (std::strncmp(z.name, "render.cpu.", 11) == 0) stage_ms[z.name] += static_cast<double>(z.end_ns - z.begin_ns) * 1e-6;
+                std::printf("16384 cubes %s steady state (ms/frame): begin+submit %.3f render %.3f; stages:",
+                            retained ? "retained group" : "per-frame", submit_ms / kProfiled, render_ms / kProfiled);
+                for (const auto& [name, ms] : stage_ms) std::printf(" %s %.3f", name.c_str() + 11, ms / kProfiled);
+                std::printf("\n");
             }
             std::printf("instance group create (16384 copies, 256 clusters): %.3f ms\n", create_ms);
             scene->destroy_instance_group(group);

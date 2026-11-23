@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstring>
 #include <format>
+#include <type_traits>
 
 namespace victus::render {
 using namespace math;
@@ -49,8 +50,25 @@ static_assert(sizeof(InstanceData) == 112);
 InstanceData make_instance(const Mat4& model, std::uint32_t palette = 0, Vec2 lightmap_offset = {}) {
     InstanceData d;
     d.model = model;
-    const Mat4 n = transpose(inverse(model));
-    for (int i = 0; i < 3; ++i) d.normal[i] = Vec4(n[i].x, n[i].y, n[i].z, 0.0f);
+    if (model.c[0].w == 0.0f && model.c[1].w == 0.0f && model.c[2].w == 0.0f && model.c[3].w == 1.0f) {
+        // Affine (every TRS): the inverse's 3x3 block has rows (b x c, c x a, a x b) / det of the
+        // basis columns a, b, c, the same cofactors and reciprocal as inverse(), without the
+        // 4x4 expansion. Columns of transpose(inverse) are those rows.
+        const Vec3 a = model.c[0].xyz(), b = model.c[1].xyz(), c = model.c[2].xyz();
+        const Vec3 r0 = cross(b, c), r1 = cross(c, a), r2 = cross(a, b);
+        float det = a.x * r0.x + a.y * r0.y + a.z * r0.z;
+        if (std::fabs(det) < 1e-30f) {
+            for (int i = 0; i < 3; ++i) d.normal[i] = Vec4(i == 0 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f, i == 2 ? 1.0f : 0.0f, 0.0f);
+        } else {
+            det = 1.0f / det;
+            d.normal[0] = Vec4(r0.x * det, r0.y * det, r0.z * det, 0.0f);
+            d.normal[1] = Vec4(r1.x * det, r1.y * det, r1.z * det, 0.0f);
+            d.normal[2] = Vec4(r2.x * det, r2.y * det, r2.z * det, 0.0f);
+        }
+    } else {
+        const Mat4 n = transpose(inverse(model));
+        for (int i = 0; i < 3; ++i) d.normal[i] = Vec4(n[i].x, n[i].y, n[i].z, 0.0f);
+    }
     d.normal[0].w = static_cast<float>(palette);
     d.normal[1].w = lightmap_offset.x;
     d.normal[2].w = lightmap_offset.y;
@@ -82,7 +100,7 @@ std::uint64_t material_key(const Material& m) noexcept {
     for (float f : {m.base_color.r, m.base_color.g, m.base_color.b, m.base_color.a, m.emissive.r, m.emissive.g,
                     m.emissive.b, m.emissive_strength, m.metallic, m.roughness, m.normal_scale, m.alpha_cutoff,
                     m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y, m.coverage_response,
-                    m.occlusion_strength, m.triplanar_sharpness})
+                    m.occlusion_strength, m.triplanar_sharpness, m.clearcoat, m.clearcoat_roughness, m.responsive})
         h = mix(h, bits(f));
     for (auto t : {m.base_color_texture, m.metallic_roughness_texture, m.normal_texture, m.emissive_texture})
         h = mix(h, handle_bits(t));
@@ -111,7 +129,8 @@ bool same_material(const Material& a, const Material& b) noexcept {
                       [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; }) &&
            a.vertex_alpha_coverage_mask == b.vertex_alpha_coverage_mask && a.coverage_response == b.coverage_response &&
            a.occlusion_strength == b.occlusion_strength && a.blend == b.blend && a.shadow_only == b.shadow_only &&
-           a.triplanar == b.triplanar && a.triplanar_sharpness == b.triplanar_sharpness;
+           a.triplanar == b.triplanar && a.triplanar_sharpness == b.triplanar_sharpness && a.clearcoat == b.clearcoat &&
+           a.clearcoat_roughness == b.clearcoat_roughness && a.responsive == b.responsive;
 }
 struct LightingUniforms {
     Vec4 camera_pos;
@@ -279,6 +298,98 @@ bool same_vertex_stage(const Material& a, const Material& b) noexcept {
     if (a.shader_texture_count != b.shader_texture_count || a.shader_textures != b.shader_textures) return false;
     return std::equal(a.shader_params.begin(), a.shader_params.end(), b.shader_params.begin(),
                       [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; });
+}
+using SortState = std::array<std::uint64_t, 5>; // SceneRenderer::DrawSortScratch::State
+// Order-preserving map of a float onto an unsigned key (negatives below positives).
+std::uint32_t float_key(float f) noexcept {
+    std::uint32_t u;
+    std::memcpy(&u, &f, sizeof u);
+    return (u & 0x80000000u) ? ~u : (u | 0x80000000u);
+}
+std::uint32_t int_key(std::int32_t i) noexcept { return static_cast<std::uint32_t>(i) ^ 0x80000000u; }
+std::uint64_t hash_state(const SortState& st) noexcept {
+    std::uint64_t h = 0x9E3779B97F4A7C15ull;
+    for (std::uint64_t w : st) {
+        h ^= w + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+        h *= 0xBF58476D1CE4E5B9ull;
+    }
+    return h ^ (h >> 31);
+}
+// Stable LSD radix sort of (key, payload) pairs by key, 8 bits per pass; passes whose digit is
+// the same for every entry are skipped (draw keys vary in a few bytes only). Equal keys keep
+// their input order.
+void radix_sort(std::vector<std::pair<std::uint64_t, std::uintptr_t>>& a, std::vector<std::pair<std::uint64_t, std::uintptr_t>>& tmp) {
+    const std::size_t n = a.size();
+    if (n < 2) return;
+    std::array<std::array<std::uint32_t, 256>, 8> count{};
+    for (const auto& e : a)
+        for (int b = 0; b < 8; ++b) ++count[static_cast<std::size_t>(b)][(e.first >> (8 * b)) & 0xFFu];
+    tmp.resize(n);
+    for (int b = 0; b < 8; ++b) {
+        auto& c = count[static_cast<std::size_t>(b)];
+        if (c[(a[0].first >> (8 * b)) & 0xFFu] == n) continue; // one bucket: order unchanged
+        std::uint32_t sum = 0;
+        for (auto& x : c) {
+            const std::uint32_t k = x;
+            x = sum;
+            sum += k;
+        }
+        for (const auto& e : a) tmp[c[(e.first >> (8 * b)) & 0xFFu]++] = e;
+        a.swap(tmp);
+    }
+}
+// Sorts draw pointers by (state tuple, 32-bit tail); equal keys keep their order in `v`.
+// `key` fills a draw's state words (compared lexicographically) and returns its tail. Draws
+// share a handful of distinct states, so each state is interned once and ranked; the sort then
+// radix-sorts one 64-bit key (rank << 32 | tail) per draw instead of chasing two draws
+// through a multi-field comparator (state buckets and sort keys, as in Unreal's mesh draw
+// commands).
+template <class D, class Scratch, class KeyFn>
+void sort_draws(std::vector<const D*>& v, Scratch& s, KeyFn&& key) {
+    static_assert(std::is_same_v<typename Scratch::State, SortState>);
+    if (v.size() < 2) return;
+    s.states.clear();
+    s.entries.resize(v.size());
+    std::size_t cap = 64;
+    s.table.assign(cap, ~0u);
+    std::uint32_t last = ~0u;
+    SortState st{};
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        const std::uint32_t tail = key(*v[i], st);
+        std::uint32_t id = last;
+        if (id == ~0u || s.states[id] != st) {
+            std::size_t mask = cap - 1, h = static_cast<std::size_t>(hash_state(st)) & mask;
+            while (s.table[h] != ~0u && s.states[s.table[h]] != st) h = (h + 1) & mask;
+            if (s.table[h] == ~0u) {
+                id = static_cast<std::uint32_t>(s.states.size());
+                s.states.push_back(st);
+                s.table[h] = id;
+                if (s.states.size() * 2 > cap) { // grow and rehash
+                    cap *= 2;
+                    mask = cap - 1;
+                    s.table.assign(cap, ~0u);
+                    for (std::uint32_t k = 0; k < s.states.size(); ++k) {
+                        std::size_t g = static_cast<std::size_t>(hash_state(s.states[k])) & mask;
+                        while (s.table[g] != ~0u) g = (g + 1) & mask;
+                        s.table[g] = k;
+                    }
+                }
+            } else {
+                id = s.table[h];
+            }
+            last = id;
+        }
+        s.entries[i] = {(std::uint64_t{id} << 32) | tail, reinterpret_cast<std::uintptr_t>(v[i])};
+    }
+    // Rank the distinct states in key order.
+    s.order.resize(s.states.size());
+    for (std::uint32_t k = 0; k < s.order.size(); ++k) s.order[k] = k;
+    std::sort(s.order.begin(), s.order.end(), [&](std::uint32_t a, std::uint32_t b) { return s.states[a] < s.states[b]; });
+    s.rank.resize(s.states.size());
+    for (std::uint32_t r = 0; r < s.order.size(); ++r) s.rank[s.order[r]] = r;
+    for (auto& e : s.entries) e.first = (std::uint64_t{s.rank[e.first >> 32]} << 32) | (e.first & 0xFFFFFFFFu);
+    radix_sort(s.entries, s.swap);
+    for (std::size_t i = 0; i < v.size(); ++i) v[i] = reinterpret_cast<const D*>(s.entries[i].second);
 }
 bool same_alpha_test(const Material& a, const Material& b) noexcept {
     const bool ta = shadow_alpha_tested(a), tb = shadow_alpha_tested(b);
@@ -1627,6 +1738,8 @@ void SceneRenderer::begin(const Camera3D& camera, const DirectionalLight& sun, c
     spots_.clear();
     areas_.clear();
     draws_.clear();
+    material_count_ = 0;
+    std::fill(material_table_.begin(), material_table_.end(), 0u);
     probes_.clear();
     probe_requests_ = probe_unbaked_ = probe_over_budget_ = 0;
     volume_ = nullptr;
@@ -1808,11 +1921,39 @@ void SceneRenderer::add_water(const WaterSurface& water) {
     waters_.push_back(w);
 }
 
+const Material* SceneRenderer::intern_material(const Material& m, std::uint64_t key) {
+    if (material_table_.size() < 2u * (material_count_ + 1u)) { // keep the load factor <= 1/2
+        material_table_.assign(std::max<std::size_t>(64, material_table_.size() * 2), 0u);
+        const std::size_t mask = material_table_.size() - 1;
+        for (std::uint32_t i = 0; i < material_count_; ++i) {
+            std::size_t h = static_cast<std::size_t>(material_keys_[i] * 0x9E3779B97F4A7C15ull >> 32) & mask;
+            while (material_table_[h] != 0u) h = (h + 1) & mask;
+            material_table_[h] = i + 1;
+        }
+    }
+    const std::size_t mask = material_table_.size() - 1;
+    std::size_t h = static_cast<std::size_t>(key * 0x9E3779B97F4A7C15ull >> 32) & mask;
+    for (; material_table_[h] != 0u; h = (h + 1) & mask) {
+        const std::uint32_t i = material_table_[h] - 1;
+        Material& existing = material_chunks_[i / kMaterialChunk][i % kMaterialChunk];
+        if (material_keys_[i] == key && same_material(existing, m)) return &existing;
+    }
+    const std::uint32_t i = material_count_++;
+    if (i / kMaterialChunk >= material_chunks_.size()) material_chunks_.push_back(std::make_unique<Material[]>(kMaterialChunk));
+    if (material_keys_.size() <= i) material_keys_.resize(i + 1);
+    material_keys_[i] = key;
+    Material& slot = material_chunks_[i / kMaterialChunk][i % kMaterialChunk];
+    slot = m;
+    material_table_[h] = i + 1;
+    return &slot;
+}
+
 void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const Mat4& model, std::uint64_t motion_id,
                            Vec2 lightmap_uv_offset) {
     if (!mesh.valid()) return;
     ++stats_.submitted;
-    Draw d{&mesh, material, model, 0.0f, mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh))};
+    const std::uint64_t mkey = material_key(material);
+    Draw d{&mesh, intern_material(material, mkey), model, 0.0f, mix(mkey, reinterpret_cast<std::uintptr_t>(&mesh))};
     d.motion_id = motion_id;
     d.lightmap_offset = lightmap_uv_offset;
     draws_.push_back(d);
@@ -1821,9 +1962,11 @@ void SceneRenderer::submit(const GpuMesh& mesh, const Material& material, const 
 void SceneRenderer::submit_instances(const GpuMesh& mesh, const Material& material, std::span<const Mat4> models) {
     if (!mesh.valid() || models.empty()) return;
     stats_.submitted += static_cast<std::uint32_t>(models.size());
-    const std::uint64_t key = mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh));
+    const std::uint64_t mkey = material_key(material);
+    const std::uint64_t key = mix(mkey, reinterpret_cast<std::uintptr_t>(&mesh));
+    const Material* shared = intern_material(material, mkey);
     draws_.reserve(draws_.size() + models.size());
-    for (const Mat4& model : models) draws_.push_back(Draw{&mesh, material, model, 0.0f, key});
+    for (const Mat4& model : models) draws_.push_back(Draw{&mesh, shared, model, 0.0f, key});
 }
 
 namespace {
@@ -1934,6 +2077,8 @@ std::uint32_t SceneRenderer::submit_instance_group(std::uint32_t id, const Insta
     const Vec3 eye = camera_.position;
     std::uint32_t submitted = 0;
     draws_.reserve(draws_.size() + g->clusters.size());
+    const Material* casting = intern_material(g->material, material_key(g->material));
+    const Material* non_casting = nullptr; // clusters beyond the shadow distance, interned on demand
     for (const InstanceCluster& cl : g->clusters) {
         bool shadows = g->material.cast_shadows;
         if (limited) {
@@ -1945,8 +2090,16 @@ std::uint32_t SceneRenderer::submit_instance_group(std::uint32_t id, const Insta
             if (!(max_d >= 0.0f) || d2 > max2) continue;
             if (!(shadow_d >= 0.0f) || d2 > shadow2) shadows = false;
         }
-        Draw d{g->mesh, g->material, cl.representative, 0.0f, g->key};
-        d.material.cast_shadows = shadows;
+        const Material* mat = casting;
+        if (!shadows && casting->cast_shadows) {
+            if (!non_casting) {
+                Material m = g->material;
+                m.cast_shadows = false;
+                non_casting = intern_material(m, material_key(m));
+            }
+            mat = non_casting;
+        }
+        Draw d{g->mesh, mat, cl.representative, 0.0f, g->key};
         d.group = slot;
         d.cluster_first = cl.first;
         d.cluster_count = cl.count;
@@ -2005,7 +2158,8 @@ void SceneRenderer::submit_skinned(const GpuMesh& mesh, const Material& material
     if (!mesh.valid()) return;
     ++stats_.submitted;
     ++stats_.skinned_draws;
-    Draw d{&mesh, material, model, 0.0f, mix(mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh)), 0x5c1du)};
+    const std::uint64_t mkey = material_key(material);
+    Draw d{&mesh, intern_material(material, mkey), model, 0.0f, mix(mix(mkey, reinterpret_cast<std::uintptr_t>(&mesh)), 0x5c1du)};
     d.palette = static_cast<std::uint32_t>(palette_.size());
     d.skinned = true;
     d.world_bounds = world_bounds;
@@ -2026,7 +2180,8 @@ void SceneRenderer::submit_skinned(const GpuMesh& mesh, const Material& material
     ++stats_.submitted;
     ++stats_.skinned_draws;
     const auto src = (std::uint64_t{palette.index} << 32) | palette.generation;
-    Draw d{&mesh, material, model, 0.0f, mix(mix(mix(material_key(material), reinterpret_cast<std::uintptr_t>(&mesh)), 0x5c1du), src)};
+    const std::uint64_t mkey = material_key(material);
+    Draw d{&mesh, intern_material(material, mkey), model, 0.0f, mix(mix(mix(mkey, reinterpret_cast<std::uintptr_t>(&mesh)), 0x5c1du), src)};
     d.palette = first_joint;
     d.skinned = true;
     d.palette_src = palette;
@@ -2394,13 +2549,13 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     lod_fade_out_.clear();
     lod_fade_out_.reserve(S.lod_fade_frames > 0 ? draws_.size() : 0);
     const auto foliage_biased = [&](const Draw& d, std::uint8_t lod) {
-        if (S.foliage_lod_bias > 0 && d.material.alpha_cutoff > 0.0f && S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
+        if (S.foliage_lod_bias > 0 && d.material->alpha_cutoff > 0.0f && S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
             return static_cast<std::uint8_t>(std::min<std::uint32_t>(lod + S.foliage_lod_bias, d.mesh->lod_count - 1u));
         return lod;
     };
     for (Draw& d : draws_) {
         const Aabb world = d.has_bounds() ? d.world_bounds : d.mesh->bounds.transformed(d.model);
-        const bool blended = d.material.blend != MaterialBlend::Opaque;
+        const bool blended = d.material->blend != MaterialBlend::Opaque;
         LodHistory::Entry previous;
         if (lod_history && d.motion_id != 0) previous = lod_prev_.entry(lod_key(d));
         std::uint8_t stateless = 0;
@@ -2410,7 +2565,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         // advances one step per frame and ends after lod_fade_frames.
         std::uint8_t fade_from = 0, fade_step = 0;
         d.lod_fade = 0.0f;
-        if (S.lod_fade_frames > 0 && previous.lod >= 0 && !blended && d.group < 0 && !d.material.shadow_only) {
+        if (S.lod_fade_frames > 0 && previous.lod >= 0 && !blended && d.group < 0 && !d.material->shadow_only) {
             if (d.lod != previous.lod) {
                 fade_from = static_cast<std::uint8_t>(previous.lod);
                 fade_step = 1;
@@ -2432,7 +2587,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         d.shadow_lod = d.lod;
         if (S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
             d.shadow_lod = static_cast<std::uint8_t>(std::min<std::uint32_t>(d.lod + S.shadow_lod_bias, d.mesh->lod_count - 1u));
-        if (d.material.cast_shadows && !blended) {
+        if (d.material->cast_shadows && !blended) {
             bool any = false;
             bool have_light_box = false;
             math::Aabb light_box;
@@ -2480,7 +2635,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (any) ++stats_.shadow_casters;
         }
         if (rain_occlusion && !blended && rain_frustum.intersects(world)) F.rain_casters.push_back(&d);
-        if (d.material.shadow_only) continue; // casts, never drawn
+        if (d.material->shadow_only) continue; // casts, never drawn
         if (!frustum.intersects(world)) {
             ++stats_.culled;
             continue;
@@ -2510,8 +2665,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         // Shading-cost counters (H2): kept apart from geometry so a fill/shading bottleneck is
         // visible as such.
         if (blended) stats_.transparent_triangles += tris;
-        else if (d.material.alpha_cutoff > 0.0f) ++stats_.alpha_tested_draws;
-        if (d.material.surface_shader) ++stats_.surface_shader_draws;
+        else if (d.material->alpha_cutoff > 0.0f) ++stats_.alpha_tested_draws;
+        if (d.material->surface_shader) ++stats_.surface_shader_draws;
         (blended ? transparent : visible).push_back(&d);
         if (d.lod_fade > 0.0f) {
             // The outgoing level fills exactly the pixels the incoming one leaves out. It casts no
@@ -2532,27 +2687,24 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     auto& local_casters = F.local_casters; // at least local_views.size() lists, all empty
     if (!local_views.empty())
         for (const Draw& d : draws_) {
-            if (!d.material.cast_shadows || d.material.blend != MaterialBlend::Opaque) continue;
+            if (!d.material->cast_shadows || d.material->blend != MaterialBlend::Opaque) continue;
             const Aabb world = d.has_bounds() ? d.world_bounds : d.mesh->bounds.transformed(d.model);
             for (std::size_t v = 0; v < local_views.size(); ++v)
                 if (local_views[v].frustum.intersects(world)) local_casters[v].push_back(&d);
         }
-    std::sort(visible.begin(), visible.end(), [](const Draw* a, const Draw* b) {
-        // Retained-group clusters last: per-frame draws own instances [0, n) of the frame buffer
-        // in order, which GPU occlusion culling relies on (ADR-0162).
-        if ((a->group >= 0) != (b->group >= 0)) return b->group >= 0;
-        if (a->material.surface_shader.index != b->material.surface_shader.index)
-            return a->material.surface_shader.index < b->material.surface_shader.index;
-        if (a->material.double_sided != b->material.double_sided) return !a->material.double_sided;
-        if (a->material.base_color_texture.index != b->material.base_color_texture.index)
-            return a->material.base_color_texture.index < b->material.base_color_texture.index;
-        if (a->batch_key != b->batch_key) return a->batch_key < b->batch_key;
-        if (a->lod != b->lod) return a->lod < b->lod;
-        if (a->lod_fade != b->lod_fade) return a->lod_fade < b->lod_fade;
-        if (a->probe != b->probe) return a->probe < b->probe;
-        // Clusters of one group in buffer order, so neighbours merge into one draw.
-        if (a->group >= 0 && a->group == b->group) return a->cluster_first < b->cluster_first;
-        return a->distance < b->distance;
+    // Retained-group clusters last: per-frame draws own instances [0, n) of the frame buffer in
+    // order, which GPU occlusion culling relies on (ADR-0162). Then pipeline state, texture,
+    // batch, LOD, fade, probe; clusters of one group in buffer order so neighbours merge into
+    // one draw; front to back.
+    sort_draws(visible, sort_scratch_, [](const Draw& d, SortState& k) {
+        k[0] = (std::uint64_t{d.group >= 0} << 32) | d.material->surface_shader.index;
+        k[1] = (std::uint64_t{d.material->double_sided} << 32) | d.material->base_color_texture.index;
+        k[2] = d.batch_key;
+        k[3] = (std::uint64_t{d.lod} << 32) | float_key(d.lod_fade);
+        k[4] = (std::uint64_t{int_key(d.probe)} << 32) | int_key(d.group);
+        // Group draws never share a state with per-frame ones (k[0]), and one group's clusters
+        // are distinct, so the tail is the cluster's buffer position or the distance.
+        return d.group >= 0 ? d.cluster_first : float_key(d.distance);
     });
     stats_.visible = static_cast<std::uint32_t>(visible.size());
 
@@ -2567,7 +2719,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         for (const Draw* d : visible) {
             // Alpha-tested draws would write motion through their holes (no discard here).
             // Vertex functions animate in the shader, which the motion pass does not run.
-            if (d->motion_id == 0 || d->material.alpha_cutoff > 0.0f || d->material.vertex_stage) continue;
+            if (d->motion_id == 0 || d->material->alpha_cutoff > 0.0f || d->material->vertex_stage) continue;
             const auto it = motion_prev_.find(d->motion_id);
             if (it == motion_prev_.end()) continue;
             const MotionState& prev = it->second;
@@ -2597,7 +2749,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         if (!moving.empty() && ensure_motion_pipelines()) {
             std::stable_sort(moving.begin(), moving.end(), [](const auto& a, const auto& b) {
                 if (a.first->skinned != b.first->skinned) return !a.first->skinned;
-                if (a.first->material.double_sided != b.first->material.double_sided) return !a.first->material.double_sided;
+                if (a.first->material->double_sided != b.first->material->double_sided) return !a.first->material->double_sided;
                 if (a.first->mesh != b.first->mesh) return a.first->mesh < b.first->mesh;
                 return a.first->lod < b.first->lod;
             });
@@ -2607,7 +2759,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 if (!motion_batches.empty()) {
                     const Draw* f = motion_batches.back().first;
                     if (f->mesh == d->mesh && f->lod == d->lod && f->skinned == d->skinned && f->palette_src == d->palette_src &&
-                        f->material.double_sided == d->material.double_sided) {
+                        f->material->double_sided == d->material->double_sided) {
                         ++motion_batches.back().instance_count;
                         continue;
                     }
@@ -2689,8 +2841,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             if (S.instancing && !out.empty()) {
                 const Draw* f = out.back().first;
                 if (f->mesh == d->mesh && out.back().lod == lod && f->skinned == d->skinned && f->palette_src == d->palette_src &&
-                    (!match_material || (same_material(f->material, d->material) && f->probe == d->probe && f->lod_fade == d->lod_fade)) &&
-                    (match_material || (same_alpha_test(f->material, d->material) && same_vertex_stage(f->material, d->material)))) {
+                    (!match_material || ((f->material == d->material || same_material(*f->material, *d->material)) &&
+                                         f->probe == d->probe && f->lod_fade == d->lod_fade)) &&
+                    (match_material || f->material == d->material ||
+                     (same_alpha_test(*f->material, *d->material) && same_vertex_stage(*f->material, *d->material)))) {
                     ++out.back().instance_count;
                     continue;
                 }
@@ -2705,43 +2859,39 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     stats_.transparent_draws = static_cast<std::uint32_t>(transparent.size());
     auto& shadow_batches = F.shadow_batches;
     for (std::uint32_t c = 0; c < cascade_count_; ++c) {
-        std::sort(casters[c].begin(), casters[c].end(), [c](const Draw* a, const Draw* b) {
-            if (a->skinned != b->skinned) return !a->skinned;
-            if (shadow_alpha_tested(a->material) != shadow_alpha_tested(b->material)) return !shadow_alpha_tested(a->material);
-            if (a->mesh != b->mesh) return a->mesh < b->mesh;
-            if (a->cascade_lod[c] != b->cascade_lod[c]) return a->cascade_lod[c] < b->cascade_lod[c];
-            if (a->material.base_color_texture.index != b->material.base_color_texture.index)
-                return a->material.base_color_texture.index < b->material.base_color_texture.index;
-            if (a->group != b->group) return a->group < b->group;
-            return a->cluster_first < b->cluster_first;
+        sort_draws(casters[c], sort_scratch_, [c](const Draw& d, SortState& k) {
+            k[0] = (std::uint64_t{d.skinned} << 1) | std::uint64_t{shadow_alpha_tested(*d.material)};
+            k[1] = reinterpret_cast<std::uintptr_t>(d.mesh);
+            k[2] = (std::uint64_t{d.cascade_lod[c]} << 32) | d.material->base_color_texture.index;
+            k[3] = int_key(d.group);
+            k[4] = 0;
+            return d.cluster_first;
         });
         build_batches(casters[c], false, shadow_batches[c], static_cast<int>(c));
         stats_.shadow_batches += static_cast<std::uint32_t>(shadow_batches[c].size());
         for (const Batch& b : shadow_batches[c]) stats_.shadow_triangles += std::uint64_t{b.first->mesh->lods[b.lod].index_count / 3} * b.instance_count;
     }
     if (rain_occlusion) {
-        std::sort(F.rain_casters.begin(), F.rain_casters.end(), [](const Draw* a, const Draw* b) {
-            if (a->skinned != b->skinned) return !a->skinned;
-            if (shadow_alpha_tested(a->material) != shadow_alpha_tested(b->material)) return !shadow_alpha_tested(a->material);
-            if (a->mesh != b->mesh) return a->mesh < b->mesh;
-            if (a->shadow_lod != b->shadow_lod) return a->shadow_lod < b->shadow_lod;
-            if (a->group != b->group) return a->group < b->group;
-            return a->cluster_first < b->cluster_first;
+        sort_draws(F.rain_casters, sort_scratch_, [](const Draw& d, SortState& k) {
+            k[0] = (std::uint64_t{d.skinned} << 1) | std::uint64_t{shadow_alpha_tested(*d.material)};
+            k[1] = reinterpret_cast<std::uintptr_t>(d.mesh);
+            k[2] = d.shadow_lod;
+            k[3] = int_key(d.group);
+            k[4] = 0;
+            return d.cluster_first;
         });
         build_batches(F.rain_casters, false, F.rain_batches);
         stats_.precipitation_occluders = static_cast<std::uint32_t>(F.rain_casters.size());
     }
     auto& local_batches = F.local_batches; // at least local_views.size() lists, all empty
     for (std::size_t v = 0; v < local_views.size(); ++v) {
-        std::sort(local_casters[v].begin(), local_casters[v].end(), [](const Draw* a, const Draw* b) {
-            if (a->skinned != b->skinned) return !a->skinned;
-            if (shadow_alpha_tested(a->material) != shadow_alpha_tested(b->material)) return !shadow_alpha_tested(a->material);
-            if (a->mesh != b->mesh) return a->mesh < b->mesh;
-            if (a->shadow_lod != b->shadow_lod) return a->shadow_lod < b->shadow_lod;
-            if (a->material.base_color_texture.index != b->material.base_color_texture.index)
-                return a->material.base_color_texture.index < b->material.base_color_texture.index;
-            if (a->group != b->group) return a->group < b->group;
-            return a->cluster_first < b->cluster_first;
+        sort_draws(local_casters[v], sort_scratch_, [](const Draw& d, SortState& k) {
+            k[0] = (std::uint64_t{d.skinned} << 1) | std::uint64_t{shadow_alpha_tested(*d.material)};
+            k[1] = reinterpret_cast<std::uintptr_t>(d.mesh);
+            k[2] = (std::uint64_t{d.shadow_lod} << 32) | d.material->base_color_texture.index;
+            k[3] = int_key(d.group);
+            k[4] = 0;
+            return d.cluster_first;
         });
         build_batches(local_casters[v], false, local_batches[v]);
         for (const Batch& b : local_batches[v]) stats_.shadow_triangles += std::uint64_t{b.first->mesh->lods[b.lod].index_count / 3} * b.instance_count;
@@ -3948,20 +4098,20 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, su);
                     rhi::PipelineHandle bound{};
                     for (const Batch& b : local_batches[v]) {
-                        const bool cut = !b.first->skinned && shadow_alpha_tested(b.first->material);
+                        const bool cut = !b.first->skinned && shadow_alpha_tested(*b.first->material);
                         rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : cut ? shadow_alpha_ : shadow_pipeline_;
-                        if (const SurfaceVertexStage* vx = b.first->material.vertex_stage)
+                        if (const SurfaceVertexStage* vx = b.first->material->vertex_stage)
                             if (const auto custom = surface_shadow_pipeline(*vx, b.first->skinned, cut)) want = custom;
                         if (!(bound == want)) {
                             ctx.pass->bind_pipeline(want);
                             if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*b.first));
                             bound = want;
                         }
-                        if (b.first->material.vertex_stage) {
-                            push_vertex_material(ctx.cmd, b.first->material, true);
-                            bind_shader_textures(*ctx.pass, b.first->material, false);
+                        if (b.first->material->vertex_stage) {
+                            push_vertex_material(ctx.cmd, *b.first->material, true);
+                            bind_shader_textures(*ctx.pass, *b.first->material, false);
                         }
-                        if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
+                        if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, *b.first->material);
                         if (b.first->skinned) {
                             ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                             ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*b.first));
@@ -3992,20 +4142,20 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, su);
                     rhi::PipelineHandle bound{};
                     for (const Batch& b : shadow_batches[c]) {
-                        const bool cut = !b.first->skinned && shadow_alpha_tested(b.first->material);
+                        const bool cut = !b.first->skinned && shadow_alpha_tested(*b.first->material);
                         rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : cut ? shadow_alpha_ : shadow_pipeline_;
-                        if (const SurfaceVertexStage* vx = b.first->material.vertex_stage)
+                        if (const SurfaceVertexStage* vx = b.first->material->vertex_stage)
                             if (const auto custom = surface_shadow_pipeline(*vx, b.first->skinned, cut)) want = custom;
                         if (!(bound == want)) {
                             ctx.pass->bind_pipeline(want);
                             if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*b.first));
                             bound = want;
                         }
-                        if (b.first->material.vertex_stage) {
-                            push_vertex_material(ctx.cmd, b.first->material, true);
-                            bind_shader_textures(*ctx.pass, b.first->material, false);
+                        if (b.first->material->vertex_stage) {
+                            push_vertex_material(ctx.cmd, *b.first->material, true);
+                            bind_shader_textures(*ctx.pass, *b.first->material, false);
                         }
-                        if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
+                        if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, *b.first->material);
                         if (b.first->skinned) {
                             ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                             ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*b.first));
@@ -4033,20 +4183,20 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, su);
                 rhi::PipelineHandle bound{};
                 for (const Batch& b : F.rain_batches) {
-                    const bool cut = !b.first->skinned && shadow_alpha_tested(b.first->material);
+                    const bool cut = !b.first->skinned && shadow_alpha_tested(*b.first->material);
                     rhi::PipelineHandle want = b.first->skinned ? skin_shadow_ : cut ? shadow_alpha_ : shadow_pipeline_;
-                    if (const SurfaceVertexStage* vx = b.first->material.vertex_stage)
+                    if (const SurfaceVertexStage* vx = b.first->material->vertex_stage)
                         if (const auto custom = surface_shadow_pipeline(*vx, b.first->skinned, cut)) want = custom;
                     if (!(bound == want)) {
                         ctx.pass->bind_pipeline(want);
                         if (b.first->skinned) ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*b.first));
                         bound = want;
                     }
-                    if (b.first->material.vertex_stage) {
-                        push_vertex_material(ctx.cmd, b.first->material, true);
-                        bind_shader_textures(*ctx.pass, b.first->material, false);
+                    if (b.first->material->vertex_stage) {
+                        push_vertex_material(ctx.cmd, *b.first->material, true);
+                        bind_shader_textures(*ctx.pass, *b.first->material, false);
                     }
-                    if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, b.first->material);
+                    if (cut) bind_alpha_test(*ctx.pass, ctx.cmd, *b.first->material);
                     if (b.first->skinned) {
                         ctx.pass->bind_vertex_buffer(2, b.first->mesh->skin);
                         ctx.pass->bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*b.first));
@@ -4099,11 +4249,11 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     // draws without an alpha test (terrain) are written here; alpha-tested ones are left out.
                     // Vertex functions move vertices: their depth always comes from the main pass.
                     // Cross-fading draws (ADR-0184) dither in the main pass, so they are left out too.
-                    if (d->material.alpha_cutoff > 0.0f || d->material.vertex_stage || (d->material.surface_shader && msaa <= 1) ||
+                    if (d->material->alpha_cutoff > 0.0f || d->material->vertex_stage || (d->material->surface_shader && msaa <= 1) ||
                         d->lod_fade != 0.0f)
                         continue;
-                    const rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_prepass_double_ : skin_prepass_cull_)
-                                                                : (d->material.double_sided ? prepass_double_ : prepass_cull_);
+                    const rhi::PipelineHandle want = d->skinned ? (d->material->double_sided ? skin_prepass_double_ : skin_prepass_cull_)
+                                                                : (d->material->double_sided ? prepass_double_ : prepass_cull_);
                     if (!(bound == want)) {
                         pass.bind_pipeline(want);
                         if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
@@ -4298,7 +4448,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     pass.bind_vertex_buffer(2, d->mesh->skin);
                     pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
                 }
-                const Material& m = d->material;
+                const Material& m = *d->material;
                 MaterialUniforms mat{};
                 mat.base_color = m.base_color.vec();
                 mat.emissive = rgb(m.emissive, m.emissive_strength);
@@ -4369,24 +4519,24 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 const Batch& b = main_batches[bi];
                 const Draw* d = b.first;
                 const std::uint32_t variant = vertex_variant(d);
-                rhi::PipelineHandle want = variant == kVertexSkinned       ? (d->material.double_sided ? skin_double_ : skin_cull_)
-                                           : variant == kVertexLightmapped ? (d->material.double_sided ? lightmap_double_ : lightmap_cull_)
-                                                                           : (d->material.double_sided ? opaque_double_ : opaque_cull_);
-                if (d->material.surface_shader || d->material.vertex_stage)
-                    if (const auto custom = surface_pipeline(d->material.surface_shader, d->material.vertex_stage, variant,
-                                                             d->material.double_sided, MaterialBlend::Opaque))
+                rhi::PipelineHandle want = variant == kVertexSkinned       ? (d->material->double_sided ? skin_double_ : skin_cull_)
+                                           : variant == kVertexLightmapped ? (d->material->double_sided ? lightmap_double_ : lightmap_cull_)
+                                                                           : (d->material->double_sided ? opaque_double_ : opaque_cull_);
+                if (d->material->surface_shader || d->material->vertex_stage)
+                    if (const auto custom = surface_pipeline(d->material->surface_shader, d->material->vertex_stage, variant,
+                                                             d->material->double_sided, MaterialBlend::Opaque))
                         want = custom;
-                want = ms_pipe(want, a2c_of(d->material));
+                want = ms_pipe(want, a2c_of(*d->material));
                 if (want) draw_batch(b, want, occlusion && bi < occl_batches_ ? static_cast<int>(bi) : -1);
             }
             if (!blended_phase) return;
             // Blended geometry after every opaque draw (and the decals), far to near.
             for (const Batch& b : transparent_batches) {
                 const Draw* d = b.first;
-                rhi::PipelineHandle want = blend_pipeline(d->material.blend, vertex_variant(d), d->material.double_sided);
-                if (d->material.surface_shader || d->material.vertex_stage)
-                    if (const auto custom = surface_pipeline(d->material.surface_shader, d->material.vertex_stage, vertex_variant(d),
-                                                             d->material.double_sided, d->material.blend))
+                rhi::PipelineHandle want = blend_pipeline(d->material->blend, vertex_variant(d), d->material->double_sided);
+                if (d->material->surface_shader || d->material->vertex_stage)
+                    if (const auto custom = surface_pipeline(d->material->surface_shader, d->material->vertex_stage, vertex_variant(d),
+                                                             d->material->double_sided, d->material->blend))
                         want = custom;
                 want = ms_pipe(want, false);
                 if (want) draw_batch(b, want);
@@ -4457,8 +4607,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     // Blended meshes opt in per material (Material::responsive, ADR-0187). Custom vertex stages
     // are skipped: the mask pass draws with the built-in vertex functions and would misplace them.
     const auto responsive_draw = [](const Draw* d) {
-        return d->material.blend != MaterialBlend::Opaque && d->material.responsive > 0.0f && std::isfinite(d->material.responsive) &&
-               !d->material.vertex_stage;
+        return d->material->blend != MaterialBlend::Opaque && d->material->responsive > 0.0f && std::isfinite(d->material->responsive) &&
+               !d->material->vertex_stage;
     };
     const auto mesh_variant = [&](const Draw* d) {
         return d->skinned ? kVertexSkinned : (env_.lightmap && d->mesh->lightmapped()) ? kVertexLightmapped : kVertexStatic;
@@ -4486,7 +4636,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         for (const Batch& b : transparent_batches) {
             if (!responsive_draw(b.first)) continue;
             const std::uint32_t v = mesh_variant(b.first);
-            const int ds = b.first->material.double_sided ? 1 : 0;
+            const int ds = b.first->material->double_sided ? 1 : 0;
             if (!reactive_mesh_pl[v][ds]) use(reactive_mesh_pipeline(v, ds != 0), reactive_mesh_pl[v][ds]);
         }
         rhi::PipelineHandle rp{}, rs{};
@@ -4734,14 +4884,14 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     const Draw* d = b.first;
                     if (!responsive_draw(d)) continue;
                     const std::uint32_t v = mesh_variant(d);
-                    const rhi::PipelineHandle want = reactive_mesh_pl[v][d->material.double_sided ? 1 : 0];
+                    const rhi::PipelineHandle want = reactive_mesh_pl[v][d->material->double_sided ? 1 : 0];
                     if (!want) continue;
                     if (!(bound == want)) {
                         pass.bind_pipeline(want);
                         if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
                         bound = want;
                     }
-                    const Material& m = d->material;
+                    const Material& m = *d->material;
                     ReactiveMeshUniforms u{};
                     u.base_color = m.base_color.vec();
                     u.uv_transform = {m.uv_scale.x, m.uv_scale.y, m.uv_offset.x, m.uv_offset.y};
@@ -5003,8 +5153,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     rhi::PipelineHandle bound{};
                     for (const auto& b : motion_batches) {
                         const Draw* d = b.first;
-                        const rhi::PipelineHandle want = d->skinned ? (d->material.double_sided ? skin_motion_double_ : skin_motion_cull_)
-                                                                    : (d->material.double_sided ? motion_double_ : motion_cull_);
+                        const rhi::PipelineHandle want = d->skinned ? (d->material->double_sided ? skin_motion_double_ : skin_motion_cull_)
+                                                                    : (d->material->double_sided ? motion_double_ : motion_cull_);
                         if (!(bound == want)) {
                             pass.bind_pipeline(want);
                             if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
@@ -5221,7 +5371,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 for (const std::vector<Batch>* list : {&main_batches, &transparent_batches})
                     for (const Batch& b : *list) {
                         const Draw* d = b.first;
-                        const rhi::PipelineHandle want = overdraw_[d->skinned ? 1 : 0][d->material.double_sided ? 1 : 0];
+                        const rhi::PipelineHandle want = overdraw_[d->skinned ? 1 : 0][d->material->double_sided ? 1 : 0];
                         if (!(bound == want)) {
                             pass.bind_pipeline(want);
                             if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));

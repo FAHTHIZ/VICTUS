@@ -2405,6 +2405,20 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 
 **Consequences:** Triangle counts stay inside the 140k-190k budget (the helmet cube-sphere goes from 30 to 27 quads per face to pay for the plates). Heights to the top of the helmet are unchanged (1.777 / 1.685 m). The plate pass continues piece by piece under this ADR.
 
+### ADR-0227: Per-frame material interning and state-ranked radix draw sorting
+
+**Status:** Accepted (2026-11-23). Items 4 (sort keys) and part of 3 (lighter per-draw records) of the CPU frame-architecture plan in docs/audits/CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md.
+
+**Context:** With 16,384 per-frame cube draws (`victus_bench_render`, Low tier), `SceneRenderer` spent about 7.3 ms of CPU per frame in steady state: 1.2 ms in `submit_instances` and 6.0 ms in `render()`. Each `Draw` carried its own copy of the 264-byte `Material`, so every per-draw pass streamed megabytes. The visible, shadow-caster, rain and local-light lists were sorted with `std::sort` comparators that dereferenced two draws and walked up to ten fields per comparison. Every instance computed its normal matrix with a general 4x4 inverse. `same_material` and `material_key` ignored `clearcoat`, `clearcoat_roughness` and `responsive`, so instancing merged draws that differed only in those. Unreal caches mesh draw commands with deduplicated state and sorts them by compact keys; Unity's SRP Batcher and BatchRendererGroup likewise share material state between draws.
+
+**Decision:** (1) `SceneRenderer::intern_material`: every submit stores its material once per frame in a chunked arena (pointers stay valid until `begin()`), deduplicated by `material_key` plus a full `same_material` check in an open-addressing table; `Draw::material` is a `const Material*`. Instance groups intern their material once per submit (and a non-casting copy on demand). (2) Batching treats equal material pointers as equal before the field-by-field compare. (3) `sort_draws`: a key function fills a five-word state tuple and a 32-bit tail per draw; distinct tuples are interned and ranked, and the (rank << 32 | tail) keys are sorted with a stable 8-bit LSD radix sort that skips constant digits. The keys encode the old comparators' orders, with two deliberate changes: equal keys keep list order (the old order among exact ties was unspecified), and clusters of different instance groups with the same state are ordered by group slot (the old comparator compared those by distance but same-group clusters by buffer position, which is not a strict weak order). (4) `make_instance` computes affine normal matrices from the cross products of the basis columns and one reciprocal of the determinant (the same cofactors and reciprocal as `inverse`), keeping the general inverse for non-affine models. (5) `same_material` and `material_key` cover every `Material` field.
+
+**Alternatives:** Interning into a persistent cross-frame material table: needs invalidation when callers change materials in place; per-frame interning gives the memory win without lifetime rules. A comparator sort over compact keys (no ranking): measured about 10% faster than the old sort but still dominated by multi-word comparisons. Retained per-entity draw records (Unreal's cached draw commands): still planned (item 3); interning and keys are prerequisites that also help dynamic draws.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** 256 bytes less per draw (an 8-byte pointer instead of the copy) and one material copy per distinct material per frame. Sort cost is linear in the number of draws. Draws whose materials differed only in clear coat or responsiveness no longer share a batch (a correctness fix, covered by `gpu instancing: different materials or meshes never share a batch`). `Draw` pointers into the material arena must not outlive the frame, as `Draw` pointers already could not.
+
 ### ADR-0226: Change-driven transform propagation and batch-claiming parallel_for
 
 **Status:** Accepted (2026-11-23). First item of the CPU frame-architecture plan in docs/audits/CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md.

@@ -21,8 +21,8 @@ VICTUS's algorithms are mostly sound; what it lacks is the *retained, change-dri
 1. **Change-driven transform update (ADR-0226, done).** `Scene::update_transforms` keeps a flattened parent-first order with direct component pointers, valid while the hierarchy version and the new `World::structural_version()` are unchanged, plus a per-slot snapshot of the local `Transform` that produced each world matrix. Unchanged subtrees cost a 40-byte compare; changed ones recompute from the parent's cached matrix. This is Unity's packed-hierarchy model, adapted to VICTUS's plain mutable `Transform` component (no setters, so change detection compares values instead of reading dirty bits).
 2. **`parallel_for` without per-chunk jobs (done, same commit).** One shared atomic cursor; at most `worker_count()` helper jobs, each claiming chunks with `fetch_add` (the batch-claiming scheme of Unity's `IJobParallelFor` and TBB's partitioners). Submit only takes the sleep lock and wakes a worker when one is asleep.
 3. **Next: retained draw records for unchanged mesh renderers** (the Unreal cached-mesh-draw-command model) so extraction and sort keys are rebuilt only for entities whose WorldTransform, mesh or material changed — the natural consumer of the transform snapshots above.
-4. **Next: parallel culling and sort-key generation** on the job system, then 64-bit radix-sortable keys instead of the comparator sort.
-5. **Next: inline hot math** (`Mat4::trs`, `Aabb::transformed`, `Frustum::intersects`) and an optional IPO/LTO Release build, measured.
+4. **Sort keys and lighter draws (ADR-0227, done):** per-frame material interning (each `Draw` points at one shared `Material` instead of copying 264 bytes), draw lists sorted by interned state ranks with a stable radix sort, and affine normal matrices from cross products. **Next:** parallel culling and key generation on the job system.
+5. **Inline hot math (done, a6d5dcd):** `Mat4::trs`, `Mat4::rotation`, `Aabb::transformed` and `Frustum::intersects` are header-inline. **Next:** an optional IPO/LTO Release build, measured.
 6. **Later: ECS change versions per archetype column** so systems beyond transforms can skip unchanged data.
 
 ## Measured so far
@@ -33,6 +33,8 @@ See the ADR-0226 entry in [STATUS.md](../STATUS.md) for the commands. `victus_be
 - `scene/update_transforms_10k_all_moving` (every root moves, so every matrix is recomputed; new case): 0.16-0.25 ms against the old algorithm's 0.56 ms, which always recomputed everything.
 - `scene/update_transforms_10k_component_churn` (a component added or removed every frame; new case): 0.18 ms.
 - `jobs/parallel_for_integrate_1M`: heap allocations per call 7.6 → 0.075; time unchanged within the 2-vCPU sandbox's noise (±20%).
+- `math/trs_compose_100k` (inline math): 4.17 → 3.58 ms.
+- 16,384 per-frame cube draws, steady-state CPU per frame (ADR-0227, `victus_bench_render` "steady state" line, three alternating runs): submit 1.24-1.45 → 0.63-0.68 ms, `render()` 5.9-7.0 → 3.19-3.25 ms (visibility stage 3.2-3.7 → 1.8-1.9 ms). The retained instance-group path stays at about 0.4 ms.
 
 ## Sources (accessed 2026-11-23)
 

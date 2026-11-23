@@ -134,6 +134,8 @@ TEST_CASE("gpu instancing: different materials or meshes never share a batch") {
     b.base_color = {0.2f, 0.2f, 0.9f, 1};
     Material a_rough = a;
     a_rough.roughness = 0.9f;
+    Material a_coat = a; // differs only in the clear coat layer (interned and batched apart)
+    a_coat.clearcoat = 0.8f;
     const Shot s = shoot(*sr.value(), true, [&](SceneRenderer& r) {
         for (int i = 0; i < 4; ++i) {
             const float x = static_cast<float>(i) * 1.5f - 6.0f;
@@ -141,10 +143,11 @@ TEST_CASE("gpu instancing: different materials or meshes never share a batch") {
             r.submit(cube, b, math::Mat4::translation({x, 0.5f, 0}));        // batch 2
             r.submit(sphere, a, math::Mat4::translation({x, 0.5f, 2}));      // batch 3
             r.submit(cube, a_rough, math::Mat4::translation({x + 6, 0.5f, 0})); // batch 4
+            r.submit(cube, a_coat, math::Mat4::translation({x + 6, 0.5f, 2}));  // batch 5
         }
     });
-    CHECK(s.stats.visible == 16);
-    CHECK(s.stats.main_batches == 4);
+    CHECK(s.stats.visible == 20);
+    CHECK(s.stats.main_batches == 5);
     // Shadows ignore materials: cubes (any material) and spheres, per cascade.
     CHECK(s.stats.shadow_batches <= 2 * s.stats.shadow_cascades);
     ctx.destroy(cube);
