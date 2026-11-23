@@ -203,7 +203,8 @@ bool is_importable(const AssetRecord& r) noexcept { return r.importer == "textur
 AssetKind kind_for_extension(std::string_view extension) noexcept {
     std::string e;
     for (const char c : extension) e.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-    if (e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".tga" || e == ".bmp" || e == ".hdr") return AssetKind::Texture;
+    if (e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".tga" || e == ".bmp" || e == ".hdr" || e == ".ies")
+        return AssetKind::Texture; // .ies: photometric profile baked to a light cookie (ADR-0235)
     if (e == ".gltf" || e == ".glb" || e == ".fbx" || e == ".obj") return AssetKind::Model;
     if (e == ".vscene") return AssetKind::Scene;
     if (e == ".luau" || e == ".vgraph") return AssetKind::Script;

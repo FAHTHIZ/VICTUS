@@ -23,6 +23,7 @@ victus_add_module(assets
         src/fbx_import.cpp
         src/material.cpp
         src/texture_compression.cpp
+        src/ies.cpp
         src/export_profile.cpp
         src/references.cpp
         src/import_queue.cpp

@@ -3579,3 +3579,15 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Mesa lavapipe Vulkan):
 - The curve on grey (computed from the same polynomial): 0.01 to 0.006, 0.18 to 0.215, 1 to 0.59, 4 to 0.861, 16 to 0.995 display-linear.
 - Full `ctest -j2`: 48/48 passed.
 - Next task: IES light profiles for point and spot lights (GAP-13 remainder).
+
+## 2026-11-23 — IES light profiles (ADR-0235)
+
+Built:
+- `victus/assets/ies.hpp`: `IesProfile` (angles, candela, multiplier applied, peak, `sample(vertical, horizontal)` with bilinear interpolation and symmetry folding), `parse_ies` (LM-63 Type C, TILT=NONE/INCLUDE), `ies_cookie_image` (256 x 256 grey sRGB panorama in the ADR-0201 point-cookie layout).
+- `.ies` is `AssetKind::Texture`; texture importer version 5 cooks it as an sRGB cookie.
+- Tests: `tests/assets/ies_tests.cpp` (4 cases).
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`):
+- `victus_asset_tests -tc="ies*"`: 4 cases, 49 assertions passed. A rotational downlight (peak 500 cd x multiplier 2) samples 1000 cd at nadir, 900 cd at 15 degrees, 500 cd at 45 degrees and 0 at 90 and 135 degrees; its cookie bottom row is above 250 grey and the rows above the horizon are 0. Quadrant, bilateral and full tables fold and wrap as LM-63 specifies (for example 30 cd halfway at 270 degrees in a 0-180 table); a full table with its peak at 90 degrees is brighter on the light's right than in front or on the left by over 100 grey. Missing TILT, TILT=<file>, Type B, truncated and descending tables are rejected; a `.ies` file imports as a 256 x 256 sRGB texture.
+- Full `ctest -j2`: 48/48 passed.
+- Next task: FFT ocean (GAP-16 remainder).

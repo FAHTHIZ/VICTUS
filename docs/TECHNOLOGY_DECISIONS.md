@@ -2558,3 +2558,17 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 **Evidence:** `victus_gpu_tests -tc="gpu quality: tonemappers*"`; numbers are in STATUS.md for the commit.
 
 **Consequences:** One more branch in the tonemap pass, no cost for the other curves. Probe captures stay linear (the tonemapper is not applied there). AgX output is slightly lower in contrast than the ACES fit; projects that switch may want the existing contrast control.
+
+### ADR-0235: IES light profiles as point-light cookies
+
+**Status:** Accepted (2026-11-23). Closes the IES remainder of GAP-13 after spot cookies (ADR-0195) and point and directional cookies (ADR-0201).
+
+**Context:** Architectural and product lighting is specified with IES LM-63 photometric files: every downlight, wall washer, street lamp and track spot from a manufacturer ships one, and they are what make a corridor of downlights read as real (the scalloped cone on the wall, the dark band under the ceiling). Unreal applies IES profiles to point, spot and rect lights, Unity HDRP imports `.ies` into a cookie, and Blender and V-Ray accept them directly. VICTUS already samples a lat-long panorama per point light (ADR-0201) with the right orientation, so an IES file only needs to become that panorama.
+
+**Decision:** `.ies` is a texture asset kind. `victus::assets::parse_ies` reads LM-63-1995/2002 Type C photometry (TILT=NONE, and TILT=INCLUDE whose tilt table is skipped; TILT=<file> is rejected), applies the candela multiplier, checks that vertical and horizontal angles are ascending and that the table is complete, and samples with bilinear interpolation and the standard horizontal symmetries (a single angle is rotationally symmetric, 0-90 is folded into a quadrant, 0-180 is mirrored, 90-270 is mirrored about 90 and 270, 0-360 wraps). Angles above the last vertical angle are dark. `ies_cookie_image` bakes the profile into a 256 x 256 grey sRGB panorama in ADR-0201's point-cookie layout: rows run from the IES 180 degree vertical (up, top row) to 0 degrees (down, bottom row), columns from -180 to 180 degrees around the light with the IES 0 degree horizontal plane along the light's forward (-Z) and 90 degrees to its right. The texture importer (version 5) cooks it like any other cookie, so a point light that references the `.ies` asset as its cookie emits the profile; the peak direction gets the light's intensity.
+
+**Alternatives:** (1) A 1D or 2D IES texture sampled with its own angles in `pbr.frag` (Unreal's approach): exact at the poles, but a new sampler and code path in every lit shader, while the cookie path already exists on every tier including GLES. (2) Lumen-based intensity from the file: physically exact, but VICTUS lights are authored in relative intensity everywhere else; the parsed `lumens_per_lamp` is kept for a future photometric mode. (3) IES on spot lights: spot cookies are 2D projections inside the cone, so a profile needs the point-light panorama; spot cones remain available for hard cut-offs.
+
+**Evidence:** `victus_asset_tests -tc="ies*"`; numbers are in STATUS.md for the commit.
+
+**Consequences:** No new shader work or GPU cost beyond the existing point-light cookie lookup. The panorama squeezes the poles, so very narrow beams (under about 2 degrees) are softened by the 256-row resolution. Type A and Type B photometry (automotive and floodlight measurements) are rejected with an error. IES on spot and rect lights and lumen-based intensity are future work.

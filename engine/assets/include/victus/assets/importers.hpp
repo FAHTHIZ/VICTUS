@@ -97,7 +97,7 @@ struct ImportResult {
     std::vector<std::string> warnings;
 };
 
-inline constexpr std::uint32_t kTextureImporterVersion = 4; // v2: HDR (.hdr) sources keep linear float data; v3: BC/ASTC variants; v4: alpha_coverage_cutoff
+inline constexpr std::uint32_t kTextureImporterVersion = 5; // v5: IES profiles; v2: HDR (.hdr) sources keep linear float data; v3: BC/ASTC variants; v4: alpha_coverage_cutoff
 inline constexpr std::uint32_t kModelImporterVersion = 11; // v11: corrective shapes; v10: skeleton migrations; v9: glTF keyframe reduction; v8: node lights and cameras; v2: skins and animations; v3: COLOR_0 vertex colours; v4: BC/ASTC textures; v5: mesh optimisation + LODs; v6: coverage-preserving base colour mips for MASK materials; v7: card LODs for leaf canopies
 
 [[nodiscard]] Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSettings& settings);

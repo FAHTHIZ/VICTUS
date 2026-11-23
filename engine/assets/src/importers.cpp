@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/assets/importers.hpp"
 #include "victus/assets/correctives.hpp"
+#include "victus/assets/ies.hpp"
 #include "victus/assets/skeleton.hpp"
 #include "victus/render/environment_map.hpp"
 
@@ -254,6 +255,16 @@ Result<CookedTexture> import_texture(const fs::Path& path, const TextureImportSe
     {
         auto bytes = fs::read_binary(path);
         if (!bytes) return std::move(bytes).error();
+        std::string ext = path.extension().string();
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (ext == ".ies") {
+            // Photometric profile (ADR-0235): baked to a sRGB lat-long light cookie, uncompressed
+            // (block compression would band the smooth falloff) and without mips (the cookie
+            // atlas samples one 256 x 256 level).
+            auto ies = parse_ies(std::string_view(reinterpret_cast<const char*>(bytes->data()), bytes->size()));
+            if (!ies) return make_error(ErrorCode::ParseError, std::format("{}: {}", path.string(), ies.error().message));
+            return cook_texture(ies_cookie_image(*ies), path.filename().string(), true, false, 256);
+        }
         if (render::is_hdr_image(*bytes)) {
             auto hdr = render::decode_image_hdr(*bytes);
             if (!hdr) return make_error(ErrorCode::ParseError, std::format("{}: {}", path.string(), hdr.error().message));

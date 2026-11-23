@@ -80,6 +80,7 @@ victus_add_test(victus_asset_tests
         assets/animation_asset_tests.cpp
         assets/template_character_tests.cpp
         assets/texture_compression_tests.cpp
+        assets/ies_tests.cpp
         assets/mesh_lod_asset_tests.cpp
         assets/morph_asset_tests.cpp
         assets/model_scene_objects_tests.cpp
