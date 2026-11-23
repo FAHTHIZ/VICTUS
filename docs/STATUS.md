@@ -3552,3 +3552,17 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Mesa lavapipe Vulkan, `SD
 - Full `ctest -j2`: 48/48 passed (762 s).
 - Not verified: physical GPUs, Metal, GLES device runs.
 - Next task: subsurface scattering for skin, wax and leaves (wrapped diffuse with a subsurface colour and thickness-based transmission).
+
+## 2026-11-23 — Subsurface scattering (ADR-0233)
+
+Built:
+- `render::Material::subsurface_color` / `subsurface_thickness`, a `subsurface` vec4 in the material uniform block; `pbr.frag` energy-conserving wrapped Lambert (w = 0.5) and Filament's forward/back-scattering transmission lobe for the sun and point, spot and sphere lights; the sun's transmission is shadowed with the cascade sampled along `-N` plus the cloud shadow; ambient transmission from the irradiance and the blurred environment behind the surface. `pack_material` / `same_material` cover the fields (`sizeof(Material)` 304, 70/72 signature words).
+- `.vmat` `subsurface_color` / `subsurface_thickness` (omitted at defaults, clamped, inherited); glTF `KHR_materials_diffuse_transmission` mapped to colour = factor x colour factor, thickness = 1 - factor, with a warning for its textures; cooked model format 15; `GpuAssetCache` passes both through; Studio material panel Subsurface and Thickness.
+- Tests: `gpu subsurface: thin parts transmit back light and the terminator softens`, `material subsurface round trips, clamps, inherits and is omitted at its default`, `assets: glTF KHR_materials_diffuse_transmission maps onto subsurface and survives cooking`.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Mesa lavapipe Vulkan, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- `python3 tools/shaders/compile_shaders.py` regenerated pbr.frag and pbr.frag#fp16 (64 shaders); `--check` up to date.
+- `victus_gpu_tests -tc="gpu subsurface*"` (skin-tone sphere, roughness 0.6, sun 4): back-lit centre red/blue plain 142.9/141.7, thin (colour 1/0.25/0.12, thickness 0.1) 238.8/179.9, thick (1.0) 142.9/141.7; side-lit band just past the terminator red plain 142.5, wrapped 183.4; black subsurface identical at any thickness. `build/rel/test_output/sss_*.png` checked by eye.
+- Full `ctest -j2`: 47/48 passed; `victus_perf_budgets` failed under the parallel load and passed when re-run alone (86 s; worst frame p95 195.6 ms against its 400 ms ceiling).
+- Not verified: physical GPUs, Metal, GLES device runs; sun transmission through a shadow-casting thin card.
+- Next task: AgX tonemapper (Blender/Godot/three.js filmic view with better highlight desaturation than the ACES fit).

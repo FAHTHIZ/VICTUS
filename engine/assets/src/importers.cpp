@@ -729,6 +729,19 @@ private:
             if (an.anisotropy_texture.texture)
                 warn(out.name + ": the KHR_materials_anisotropy texture is ignored (the anisotropy uses its factors)");
         }
+        if (m->has_diffuse_transmission) {
+            // Diffuse transmission (leaves, paper, thin cloth) maps onto the subsurface model as a
+            // thin layer: colour = factor x colour factor, thickness = 1 - factor.
+            const auto& dt = m->diffuse_transmission;
+            const float f = std::isfinite(dt.diffuse_transmission_factor) ? std::clamp(dt.diffuse_transmission_factor, 0.0f, 1.0f) : 0.0f;
+            for (int i = 0; i < 3; ++i) {
+                const float c = dt.diffuse_transmission_color_factor[i];
+                out.subsurface_color[i] = f * (std::isfinite(c) ? std::clamp(c, 0.0f, 1.0f) : 1.0f);
+            }
+            out.subsurface_thickness = 1.0f - f;
+            if (dt.diffuse_transmission_texture.texture || dt.diffuse_transmission_color_texture.texture)
+                warn(out.name + ": KHR_materials_diffuse_transmission textures are ignored (the subsurface layer uses its factors)");
+        }
         out.double_sided = m->double_sided;
         out.unlit = m->unlit;
         const auto index = static_cast<std::uint32_t>(model_.materials.size());

@@ -26,6 +26,8 @@
 //     "sheen_roughness": 0.3       // how wide the sheen rim spreads
 //     "anisotropy": 0.0            // brushed metal / hair highlight stretch 0..1 (ADR-0232)
 //     "anisotropy_rotation": 0.0   // radians from the mesh tangent
+//     "subsurface_color": [r, g, b] // skin / wax / leaf scattering colour, linear (ADR-0233); black = none
+//     "subsurface_thickness": 0.5  // 1 = opaque body, 0 = thin (light passes through)
 //   }
 //
 // Material instances name a parent and contain only the fields they override; everything else
@@ -57,7 +59,8 @@ enum class MaterialField : std::uint8_t {
     BaseColor, BaseColorTexture, Metallic, Roughness, MetallicRoughnessTexture, NormalTexture, NormalScale, Emissive,
     EmissiveStrength, EmissiveTexture, AlphaCutoff, UvScale, UvOffset, Filter, Unlit, DoubleSided, Shader, ShaderParams,
     VertexAlpha, CoverageResponse, Blend, OcclusionStrength, ShaderTextures, Responsive, Triplanar, TriplanarSharpness,
-    Clearcoat, ClearcoatRoughness, SheenColor, SheenRoughness, Anisotropy, AnisotropyRotation, Count
+    Clearcoat, ClearcoatRoughness, SheenColor, SheenRoughness, Anisotropy, AnisotropyRotation, SubsurfaceColor,
+    SubsurfaceThickness, Count
 };
 inline constexpr std::size_t kMaterialFieldCount = static_cast<std::size_t>(MaterialField::Count);
 [[nodiscard]] constexpr std::uint64_t field_bit(MaterialField f) noexcept { return std::uint64_t{1} << static_cast<unsigned>(f); }
@@ -92,6 +95,9 @@ struct MaterialAsset {
     // anisotropy_rotation (radians): brushed metal, hair, satin. 0 = isotropic.
     float anisotropy{0.0f};
     float anisotropy_rotation{0.0f};
+    // Subsurface scattering (ADR-0233): skin, wax, marble, leaves. Black = none.
+    math::Vec3 subsurface_color{0, 0, 0};
+    float subsurface_thickness{0.5f};
     TextureFilter filter{TextureFilter::Linear};
     bool unlit{false};
     bool double_sided{false};

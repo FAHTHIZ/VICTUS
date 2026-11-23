@@ -101,6 +101,8 @@ const char* field_key(MaterialField f) noexcept {
     case MaterialField::SheenRoughness: return "sheen_roughness";
     case MaterialField::Anisotropy: return "anisotropy";
     case MaterialField::AnisotropyRotation: return "anisotropy_rotation";
+    case MaterialField::SubsurfaceColor: return "subsurface_color";
+    case MaterialField::SubsurfaceThickness: return "subsurface_thickness";
     default: return "";
     }
 }
@@ -142,6 +144,8 @@ void MaterialAsset::copy_field(const MaterialAsset& src, MaterialField f) {
     case MaterialField::SheenRoughness: sheen_roughness = src.sheen_roughness; break;
     case MaterialField::Anisotropy: anisotropy = src.anisotropy; break;
     case MaterialField::AnisotropyRotation: anisotropy_rotation = src.anisotropy_rotation; break;
+    case MaterialField::SubsurfaceColor: subsurface_color = src.subsurface_color; break;
+    case MaterialField::SubsurfaceThickness: subsurface_thickness = src.subsurface_thickness; break;
     default: break;
     }
 }
@@ -217,6 +221,10 @@ json::Value MaterialAsset::to_json() const {
         v.set("anisotropy", num(anisotropy)); // omitted when off
     if (anisotropy_rotation != 0.0f || (is_instance() && overrides_field(MaterialField::AnisotropyRotation)))
         v.set("anisotropy_rotation", num(anisotropy_rotation));
+    if (subsurface_color != math::Vec3{} || (is_instance() && overrides_field(MaterialField::SubsurfaceColor)))
+        v.set("subsurface_color", floats({subsurface_color.x, subsurface_color.y, subsurface_color.z})); // omitted when off
+    if (subsurface_thickness != 0.5f || (is_instance() && overrides_field(MaterialField::SubsurfaceThickness)))
+        v.set("subsurface_thickness", num(subsurface_thickness));
     if (!is_instance()) return v;
     // Instances store only what they override.
     Value inst = Value::object();
@@ -251,7 +259,8 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
                     r.boolean("triplanar", m.triplanar) && r.number("triplanar_sharpness", m.triplanar_sharpness) &&
                     r.number("clearcoat", m.clearcoat) && r.number("clearcoat_roughness", m.clearcoat_roughness) &&
                     r.vec("sheen_color", &m.sheen_color.x, 3, 3) && r.number("sheen_roughness", m.sheen_roughness) &&
-                    r.number("anisotropy", m.anisotropy) && r.number("anisotropy_rotation", m.anisotropy_rotation);
+                    r.number("anisotropy", m.anisotropy) && r.number("anisotropy_rotation", m.anisotropy_rotation) &&
+                    r.vec("subsurface_color", &m.subsurface_color.x, 3, 3) && r.number("subsurface_thickness", m.subsurface_thickness);
     if (!ok) return make_error(ErrorCode::ParseError, r.error);
     m.emissive = {emissive[0], emissive[1], emissive[2], 1.0f};
     if (!r.uuid("shader", m.shader)) return make_error(ErrorCode::ParseError, r.error);
@@ -315,6 +324,9 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
         *ch = std::isfinite(*ch) ? std::clamp(*ch, 0.0f, 1.0f) : 0.0f;
     m.sheen_roughness = std::isfinite(m.sheen_roughness) ? std::clamp(m.sheen_roughness, 0.0f, 1.0f) : 0.3f;
     m.anisotropy = std::isfinite(m.anisotropy) ? std::clamp(m.anisotropy, 0.0f, 1.0f) : 0.0f;
+    for (float* ch : {&m.subsurface_color.x, &m.subsurface_color.y, &m.subsurface_color.z})
+        *ch = std::isfinite(*ch) ? std::clamp(*ch, 0.0f, 1.0f) : 0.0f;
+    m.subsurface_thickness = std::isfinite(m.subsurface_thickness) ? std::clamp(m.subsurface_thickness, 0.0f, 1.0f) : 0.5f;
     m.anisotropy_rotation = std::isfinite(m.anisotropy_rotation) ? std::remainder(m.anisotropy_rotation, 6.2831853f) : 0.0f;
     m.alpha_cutoff = std::clamp(m.alpha_cutoff, 0.0f, 1.0f);
     m.emissive_strength = std::max(m.emissive_strength, 0.0f);

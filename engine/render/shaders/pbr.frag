@@ -185,6 +185,7 @@ layout(set = 3, binding = 1) uniform Material {
     vec4 layers;         // x: clear coat strength (ADR-0203), y: clear coat roughness
     vec4 sheen;          // rgb: sheen colour, linear (ADR-0231, KHR_materials_sheen; 0 = none), a: sheen roughness
     vec4 anisotropy;     // x: anisotropy strength 0..1 (ADR-0232, KHR_materials_anisotropy; 0 = none), y: rotation (radians, from the tangent)
+    vec4 subsurface;     // rgb: subsurface scattering colour, linear (ADR-0233; 0 = none), a: thickness 0..1
 } material;
 
 // Local reflection probe for this draw (box-projected cube bound to u_env instead of the scene's
@@ -522,6 +523,28 @@ vec3 brdf_any(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float metallic
               float aniso) {
     return aniso > 0.0 ? brdf_aniso(N, V, L, radiance, albedo, metallic, roughness, Ta, Ba, aniso)
                        : brdf(N, V, L, radiance, albedo, metallic, roughness);
+}
+
+// ---- Subsurface scattering (ADR-0233) ----
+// Skin, wax, marble, jade, leaves, ears and candles: light enters, scatters and leaves elsewhere.
+// Filament's subsurface model: the diffuse term wraps past the terminator (energy-conserving
+// wrapped Lambert, w = 0.5) so the shadow edge softens and reddens, and a transmission lobe lets
+// light through thin parts, strongest looking towards the light (forward scattering, power 12.234)
+// and weaker as back scattering; both fade with thickness (1 = opaque, 0 = paper thin).
+const float kSubsurfaceWrap = 0.5;
+const float kSubsurfacePower = 12.234;
+// Change to the base's Lambert term (times N.L) from wrapping it; negative on the lit side.
+vec3 subsurface_wrap(vec3 N, vec3 L, vec3 radiance, vec3 albedo, float metallic) {
+    float nl = dot(N, L);
+    float wrapped = clamp((nl + kSubsurfaceWrap) / ((1.0 + kSubsurfaceWrap) * (1.0 + kSubsurfaceWrap)), 0.0, 1.0);
+    return albedo * (1.0 - metallic) * ((wrapped - max(nl, 0.0)) / PI) * radiance;
+}
+// Light transmitted through the surface from L, tinted by the subsurface colour.
+vec3 subsurface_transmission(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 sss_color, float thickness) {
+    float scatter_voh = clamp(dot(V, -L), 0.0, 1.0);
+    float forward = exp2(scatter_voh * kSubsurfacePower - kSubsurfacePower);
+    float back = clamp(dot(N, L) * thickness + (1.0 - thickness), 0.0, 1.0) * 0.5;
+    return sss_color * (mix(back, 1.0, forward) * (1.0 - thickness) / PI) * radiance;
 }
 
 // ---- Sheen (ADR-0231) ----
@@ -1060,6 +1083,10 @@ void main() {
     float sheen_scale = 1.0 - max3(sheen_color) * sheen_albedo(max(dot(N, V), 1e-4), sheen_roughness);
     // Anisotropy: the direction is the mesh tangent rotated about the shading normal (meshes
     // without tangents fall back to the horizontal direction around the normal).
+    // Subsurface: colour 0 = none.
+    vec3 sss_color = max(material.subsurface.rgb, vec3(0.0));
+    float sss_thickness = clamp(material.subsurface.a, 0.0, 1.0);
+    bool sss = max3(sss_color) > 0.0;
     float aniso = clamp(material.anisotropy.x, 0.0, 1.0);
     vec3 Ta = vec3(1.0, 0.0, 0.0), Ba = vec3(0.0, 0.0, 1.0);
     if (aniso > 0.0) {
@@ -1088,6 +1115,14 @@ void main() {
     vec3 color = with_coat(with_sheen(brdf_any(N, V, L, sun_radiance, albedo, metallic, roughness, Ta, Ba, aniso), N, V, L, sun_radiance,
                                       sheen_color, sheen_roughness, sheen_scale),
                            Nc, V, L, sun_radiance, coat, coat_roughness) * sun_visibility;
+    if (sss) {
+        // The wrapped diffuse shares the surface's shadow; the transmitted light is shadowed
+        // as seen from the far side (normal offset along -N), so thin leaves and ears pass
+        // sunlight while a thick body still blocks it.
+        color += subsurface_wrap(N, L, sun_radiance, albedo, metallic) * sun_visibility;
+        float through = shadow_factor(-N, L, baked_sun) * cloud_shadow(L);
+        color += subsurface_transmission(N, V, L, sun_radiance, sss_color, sss_thickness) * through;
+    }
 
     if (lighting.ground_color.w > 0.5) {
         vec3 grid = lighting.cluster_grid.xyz;
@@ -1121,6 +1156,9 @@ void main() {
             vec3 lit = (l.spot.y < 0.5 && l.spot.x > 0.0) ? sphere_light(N, V, to_light, l.spot.x, radiance, albedo, metallic, roughness)
                                                           : brdf_any(N, V, Ld, radiance, albedo, metallic, roughness, Ta, Ba, aniso);
             lit = with_sheen(lit, N, V, Ld, radiance, sheen_color, sheen_roughness, sheen_scale);
+            if (sss)
+                lit += subsurface_wrap(N, Ld, radiance, albedo, metallic) +
+                       subsurface_transmission(N, V, Ld, radiance, sss_color, sss_thickness);
             color += with_coat(lit, Nc, V, Ld, radiance, coat, coat_roughness);
         }
     }
@@ -1175,6 +1213,12 @@ void main() {
         // pre-filtered environment, weighted by the lobe's directional albedo.
         float sheen_dg = sheen_albedo(NdotV, sheen_roughness);
         ambient = ambient * sheen_scale + sheen_color * irradiance * (sheen_dg * ao * lightmap_occlusion);
+    }
+    if (sss) {
+        // Ambient transmission (Filament's subsurface IBL): the diffuse irradiance plus the
+        // blurred environment behind the surface, seen through it.
+        vec3 behind = env_specular(-V, 1.0, v_world_pos);
+        ambient += sss_color * (irradiance + behind) * ((1.0 - sss_thickness) / (2.0 * PI)) * ao * lightmap_occlusion;
     }
     if (coat > 0.0) {
         // The coat's environment reflection along the vertex normal; it takes the screen-space

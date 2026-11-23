@@ -314,6 +314,14 @@ void Editor::draw_material_editor() {
             ImGui::SetItemTooltip("Turns the stretch direction away from the mesh tangent");
             inherit_button(F::AnisotropyRotation);
         }
+        mark(ImGui::ColorEdit3("Subsurface", &m.subsurface_color.x, ImGuiColorEditFlags_Float), F::SubsurfaceColor);
+        ImGui::SetItemTooltip("Light scattering inside the material: skin, wax, marble, jade, leaves. Black = off");
+        inherit_button(F::SubsurfaceColor);
+        if (m.subsurface_color != math::Vec3{}) {
+            mark(ImGui::SliderFloat("Thickness", &m.subsurface_thickness, 0.0f, 1.0f), F::SubsurfaceThickness);
+            ImGui::SetItemTooltip("1: a solid body (softer shadow edge only). 0: thin, light shines through (ears, leaves)");
+            inherit_button(F::SubsurfaceThickness);
+        }
     }
     if (ImGui::CollapsingHeader("Emission")) {
         mark(color("Emissive", m.emissive, false), F::Emissive);

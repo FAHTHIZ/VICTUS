@@ -35,7 +35,7 @@ Ready-made **Behaviours** cover movement, enemies, pickups, health, checkpoints,
 <td width="33%" valign="top">
 
 #### Photoreal, scaled to the device
-Clustered PBR, clear coat, sheen and anisotropic layers, baked directional lightmaps, IBL, SSR, volumetrics and temporal upscaling, with tiers from phones to desktops.
+Clustered PBR, clear coat, sheen, anisotropic and subsurface layers, baked directional lightmaps, IBL, SSR, volumetrics and temporal upscaling, with tiers from phones to desktops.
 
 </td>
 <td width="33%" valign="top">
@@ -89,7 +89,7 @@ Every behaviour sends events (`collected`, `died`, `bounced`, `triggered`, `talk
 ## What's inside
 
 <table>
-<tr><td width="22%"><b>Rendering</b></td><td>SDL_GPU render graph (Vulkan, Metal, D3D12) and an OpenGL ES 3 fallback · clustered forward PBR with clear coat, sheen and anisotropic specular · cascaded and local shadows · baked directional lightmaps, shadowmasks and light probes (CPU path tracer) · IBL, physical sky and atmosphere · reflection probes and screen-space reflections · SSAO · TAA and temporal upscaling · bloom, auto exposure, lens effects · volumetric fog and clouds · water, rain and snow coverage · decals, area lights and cookies · terrain and foliage · GPU particles · LODs, occlusion culling, retained instancing · device-class quality tiers</td></tr>
+<tr><td width="22%"><b>Rendering</b></td><td>SDL_GPU render graph (Vulkan, Metal, D3D12) and an OpenGL ES 3 fallback · clustered forward PBR with clear coat, sheen, anisotropic specular and subsurface scattering · cascaded and local shadows · baked directional lightmaps, shadowmasks and light probes (CPU path tracer) · IBL, physical sky and atmosphere · reflection probes and screen-space reflections · SSAO · TAA and temporal upscaling · bloom, auto exposure, lens effects · volumetric fog and clouds · water, rain and snow coverage · decals, area lights and cookies · terrain and foliage · GPU particles · LODs, occlusion culling, retained instancing · device-class quality tiers</td></tr>
 <tr><td><b>Gameplay</b></td><td>Archetype ECS · prefabs · scenes with stable IDs · input actions with gamepad support · 2D and 3D character controllers · save games · localisation · in-game UI with shaping and right-to-left text · world streaming · procedural generation</td></tr>
 <tr><td><b>Physics</b></td><td>Jolt (3D) and Box2D (2D) · joints and motors · triggers · convex and mesh colliders · ragdolls · cloth · destruction</td></tr>
 <tr><td><b>AI</b></td><td>Recast/Detour tiled navmeshes and crowds · behaviour trees with perception, a visual editor and a debugger · traffic simulation</td></tr>

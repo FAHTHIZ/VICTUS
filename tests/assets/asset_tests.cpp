@@ -687,6 +687,66 @@ TEST_CASE("assets: glTF KHR_materials_anisotropy factors import and survive the 
     CHECK(back->materials[0].anisotropy_rotation == doctest::Approx(0.8f));
 }
 
+TEST_CASE("material subsurface round trips, clamps, inherits and is omitted at its default (ADR-0233)") {
+    auto m = MaterialAsset::from_json(
+        *json::parse(R"({"victus_material": 1, "subsurface_color": [1.0, 0.3, 0.2], "subsurface_thickness": 0.2})"));
+    REQUIRE(m.ok());
+    CHECK(m->subsurface_color.y == doctest::Approx(0.3f));
+    CHECK(m->subsurface_thickness == doctest::Approx(0.2f));
+    auto back = MaterialAsset::from_json(m->to_json());
+    REQUIRE(back.ok());
+    CHECK(back->subsurface_color.z == doctest::Approx(0.2f));
+    CHECK(back->subsurface_thickness == doctest::Approx(0.2f));
+    CHECK(MaterialAsset{}.to_json().find("subsurface_color") == nullptr);
+    CHECK(MaterialAsset{}.to_json().find("subsurface_thickness") == nullptr);
+    auto wild = MaterialAsset::from_json(
+        *json::parse(R"({"victus_material": 1, "subsurface_color": [2, -1, 0.5], "subsurface_thickness": -3})"));
+    REQUIRE(wild.ok());
+    CHECK(wild->subsurface_color.x == doctest::Approx(1.0f));
+    CHECK(wild->subsurface_color.y == doctest::Approx(0.0f));
+    CHECK(wild->subsurface_thickness == doctest::Approx(0.0f));
+    CHECK_FALSE(MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "subsurface_color": [1, 1]})")).ok());
+    MaterialAsset parent;
+    parent.subsurface_color = {0.5f, 0.2f, 0.1f};
+    MaterialAsset child;
+    child.parent = Uuid::generate();
+    child.overrides = 0;
+    CHECK(apply_instance(parent, child).subsurface_color.x == doctest::Approx(0.5f)); // inherited
+    child.overrides = field_bit(MaterialField::SubsurfaceColor);
+    child.subsurface_color = {};
+    CHECK(apply_instance(parent, child).subsurface_color.x == doctest::Approx(0.0f));
+}
+
+TEST_CASE("assets: glTF KHR_materials_diffuse_transmission maps onto subsurface and survives cooking (ADR-0233)") {
+    TempDir dir("victus_gltf_sss");
+    test::GltfFixture fx;
+    json::Value mat = fx.doc["materials"][0];
+    json::Value dt = json::Value::object();
+    dt.set("diffuseTransmissionFactor", 0.75);
+    dt.set("diffuseTransmissionColorFactor", json::Value(json::Array{json::Value(0.4), json::Value(1.0), json::Value(0.2)}));
+    json::Value ext = json::Value::object();
+    ext.set("KHR_materials_diffuse_transmission", dt);
+    mat.set("extensions", ext);
+    fx.doc.set("materials", json::Value(json::Array{mat}));
+    fx.doc.set("extensionsUsed", json::Value(json::Array{json::Value("KHR_materials_diffuse_transmission")}));
+    fx.set_buffer_uri("quad.bin");
+    write_bytes(dir.path / "quad.bin", fx.bin);
+    write_text(dir.path / "leaf.gltf", json::stringify(fx.doc));
+    auto m = import_gltf(dir.path / "leaf.gltf", {}, dir.path);
+    REQUIRE_MESSAGE(m.ok(), (m.ok() ? "" : m.error().message));
+    REQUIRE(m->materials.size() == 1);
+    CHECK(m->materials[0].subsurface_color[0] == doctest::Approx(0.3f));
+    CHECK(m->materials[0].subsurface_color[1] == doctest::Approx(0.75f));
+    CHECK(m->materials[0].subsurface_color[2] == doctest::Approx(0.15f));
+    CHECK(m->materials[0].subsurface_thickness == doctest::Approx(0.25f));
+    CookedHeader h;
+    h.kind = AssetKind::Model;
+    auto back = deserialize_model(serialize(h, *m));
+    REQUIRE(back.ok());
+    CHECK(back->materials[0].subsurface_color[1] == doctest::Approx(0.75f));
+    CHECK(back->materials[0].subsurface_thickness == doctest::Approx(0.25f));
+}
+
 TEST_CASE("assets: HDR textures cook to half floats with SH irradiance and an LDR preview") {
     TempDir dir("victus_hdr_cook");
     render::ImageF env;
